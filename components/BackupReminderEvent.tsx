@@ -50,7 +50,7 @@ export const BackupReminderPopup: React.FC<BackupReminderPopupProps> = ({ onDism
                 <div className="px-6 pt-5 pb-2 space-y-3">
                     <div className="bg-gradient-to-br from-rose-50 to-orange-50 border border-rose-100 rounded-2xl p-4 space-y-2.5">
                         <p className="text-[13px] text-slate-700 leading-relaxed">
-                            <strong>您本周没有进行备份，请注意。</strong>
+                            <strong>距离上次备份已超过 {interval} 天，请注意。</strong>
                         </p>
                         <p className="text-[12.5px] text-slate-600 leading-relaxed">
                             糯米机的数据完全掌握在<strong className="text-rose-500">您自己手中</strong>——
@@ -81,7 +81,7 @@ export const BackupReminderPopup: React.FC<BackupReminderPopupProps> = ({ onDism
                         onClick={onDismiss}
                         className="w-full py-2.5 text-slate-400 font-medium text-[12px] active:scale-95 transition-transform"
                     >
-                        知道了，稍后再说
+                        知道了（桌面上会留个提示，直到你备份）
                     </button>
                 </div>
             </div>
