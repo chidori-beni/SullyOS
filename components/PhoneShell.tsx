@@ -100,7 +100,7 @@ import { WorkerUpdateReminderController, shouldShowWorkerUpdateReminder, rearmWo
 import { InstantPushSunsetController, shouldShowInstantPushSunsetNotice } from './InstantPushSunsetEvent';
 import { loadInstantConfig, probeInstantWorkerVersion } from '../utils/instantPushClient';
 import { BackupReminderController } from './BackupReminderEvent';
-import { shouldShowBackupReminder, markBackupReminderShown, daysSinceLastBackup } from '../utils/backupReminder';
+import { isBackupOverdue, daysSinceLastBackup } from '../utils/backupReminder';
 import { formatBytes } from '../utils/format';
 import { trackEvent } from '../utils/analytics';
 import { AppID } from '../types';
@@ -448,6 +448,9 @@ const AppLoadingFallback: React.FC<{ onReturn?: () => void; animationEnabled?: b
   );
 };
 
+/** 「该备份啦」弹窗的一次性标记：sessionStorage 作用域 = 这一次打开 App。 */
+const BACKUP_POPUP_SESSION_KEY = 'sullyos_backup_popup_shown_this_session';
+
 const PhoneShell: React.FC = () => {
   const { theme, isLocked, unlock, activeApp, closeApp, openApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, handleBack, suspendedCall, resumeCall, activeCharacterId, errorDialog, dismissError } = useOS();
   const useIOSStandaloneLayout = isIOSStandaloneWebApp();
@@ -691,25 +694,49 @@ const PhoneShell: React.FC = () => {
     }).catch(() => { /* 探测失败不打扰 */ });
   }, [isDataLoaded]);
 
-  // 「该备份啦」提醒 — local-first 数据只在本机，隔 N 天（默认 7，可在设置里改）没导出就弹一次
+  // 「该备份啦」提醒 — local-first 数据只在本机，隔 N 天（在设置里改，最短 1 天）没备份就催。
+  //
+  // 与上游的差别：上游弹过一次就冷却一整个间隔，关掉这事就算了了；这里改成
+  // **一直催到真的备份为止**，因为「忘掉的那一次」正是会出事的那一次：
+  //   · 弹窗：每次进 App（每个会话）最多弹一次，不打断连续使用；
+  //   · 常驻小条：关掉弹窗后仍留在桌面上，一眼能看见，随手能点。
+  //
+  // 两者都只看 isBackupOverdue()。备份成功由 exportSystem 统一调 markBackupDone()——
+  // 本地导出 / 云备份、纯文字 / 完整，哪种都算——所以用户一备完，提示自己就消失了。
+  // 刻意不做「开 App 自动备份」：备份体积会随聊天记录一起长，把它压在启动路径上，
+  // 早晚变成每次进 App 都要等的那几秒。
   const [showBackupReminder, setShowBackupReminder] = useState(false);
+  const [backupOverdue, setBackupOverdue] = useState(false);
+
+  // 过期状态每分钟自查一次：跨过间隔那一刻能自己亮起来，备份完也能在一分钟内自己熄灭
+  // （纯本地时间比较，不碰 IndexedDB / 网络，开销可以忽略）。
+  useEffect(() => {
+    if (!isDataLoaded || isLocked) return;
+    const tick = () => setBackupOverdue(isBackupOverdue());
+    tick();
+    const timer = window.setInterval(tick, 60_000);
+    return () => window.clearInterval(timer);
+  }, [isDataLoaded, isLocked, activeApp]);
+
   useEffect(() => {
     if (showDisclaimer || showImportRecoveryPrompt || showAuthorLetter || showUpdateNotification || showQixiLaunchPopup || showLike520Popup || showInstantPushSunset || showWorkerUpdateReminder) return;
-    if (!isDataLoaded || isLocked) return;
-    if (shouldShowBackupReminder()) {
-      setShowBackupReminder(true);
-      // 只报「从未备份 / 已过期」这一个二选一，不报具体天数、也不报用户设的提醒间隔。
-      trackEvent('弹出该备份啦提醒', { state: daysSinceLastBackup() == null ? '从未备份' : '已过期' });
-    }
-  }, [showDisclaimer, showImportRecoveryPrompt, showAuthorLetter, showUpdateNotification, showQixiLaunchPopup, showLike520Popup, showInstantPushSunset, showWorkerUpdateReminder, isDataLoaded, isLocked]);
+    if (!isDataLoaded || isLocked || !backupOverdue) return;
+    // sessionStorage 而不是 localStorage：关掉只压住「这一次打开」，下次进来该催还是催。
+    try {
+      if (sessionStorage.getItem(BACKUP_POPUP_SESSION_KEY)) return;
+      sessionStorage.setItem(BACKUP_POPUP_SESSION_KEY, '1');
+    } catch { /* 隐私模式读不到：那就每次都弹，宁可啰嗦也别漏 */ }
+    setShowBackupReminder(true);
+    // 只报「从未备份 / 已过期」这一个二选一，不报具体天数、也不报用户设的提醒间隔。
+    trackEvent('弹出该备份啦提醒', { state: daysSinceLastBackup() == null ? '从未备份' : '已过期' });
+  }, [showDisclaimer, showImportRecoveryPrompt, showAuthorLetter, showUpdateNotification, showQixiLaunchPopup, showLike520Popup, showInstantPushSunset, showWorkerUpdateReminder, isDataLoaded, isLocked, backupOverdue]);
 
+  // 关掉弹窗不再推进任何冷却——常驻小条接手，直到真备份为止。
   const dismissBackupReminder = () => {
-    markBackupReminderShown();
     setShowBackupReminder(false);
     trackEvent('点知道了稍后再说');
   };
   const goBackupFromReminder = () => {
-    markBackupReminderShown();
     setShowBackupReminder(false);
     openApp(AppID.Settings);
     trackEvent('点立即备份');
@@ -1071,6 +1098,26 @@ const PhoneShell: React.FC = () => {
 
           {/* Overlays: 梦境生成全局指示条 */}
           <DreamSimIndicator />
+
+          {/* Overlays: 常驻「该备份啦」小条。
+              只在桌面显示（进了任何 App 就让位，不挡内容），过期就一直在，
+              一次成功备份后 isBackupOverdue 转 false，它自己消失。
+              z 比 toast 低一档：偶尔跟 toast 撞上时让 toast 盖在上面。 */}
+          {activeApp === AppID.Launcher && backupOverdue && !showBackupReminder && (
+              <div className="absolute top-12 left-0 w-full flex justify-center z-[55] pointer-events-none">
+                  <button
+                      onClick={() => { openApp(AppID.Settings); trackEvent('点立即备份'); }}
+                      className="pointer-events-auto animate-fade-in flex items-center gap-2 pl-3 pr-3.5 py-1.5 rounded-full bg-amber-50/95 backdrop-blur-xl border border-amber-200/80 shadow-lg shadow-amber-100/50 active:scale-95 transition-transform"
+                  >
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+                      <span className="text-[11px] font-bold text-amber-900 whitespace-nowrap">
+                          {daysSinceLastBackup() == null
+                              ? '还没备份过 · 去备份'
+                              : `已 ${daysSinceLastBackup()} 天没备份 · 去备份`}
+                      </span>
+                  </button>
+              </div>
+          )}
 
           {/* Overlays: Toasts (Top) */}
           <div className="absolute top-12 left-0 w-full flex flex-col items-center gap-2 pointer-events-none z-[60]">
