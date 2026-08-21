@@ -95,6 +95,24 @@ export function shouldShowBackupReminder(now: number = Date.now()): boolean {
     return true;
 }
 
+/**
+ * 是否「已过期未备份」——纯判定，**不看提醒冷却**。
+ *
+ * 跟 `shouldShowBackupReminder` 的分工：
+ *  - `shouldShowBackupReminder`：管**弹不弹窗**，弹过一次就歇一个间隔（防打扰）；
+ *  - `isBackupOverdue`：管**常驻提示亮不亮**，只要过期就一直亮，直到一次成功备份
+ *    把 `lastBackupAt` 推上去（`markBackupDone` 在 exportSystem 里调，本地导出 /
+ *    云备份、纯文字 / 完整，通通都算）。
+ *
+ * 分成两个函数而不是给旧的加参数：调用点语义完全不同，混在一起以后一定会有人调错。
+ */
+export function isBackupOverdue(now: number = Date.now()): boolean {
+    const st = getBackupReminderState(now);
+    const anchor = st.lastBackupAt > 0 ? st.lastBackupAt : st.firstSeenAt;
+    if (anchor <= 0) return false;
+    return now - anchor >= st.intervalDays * DAY_MS;
+}
+
 /** 距上次备份过了几天（向下取整）；从未备份返回 null。给弹窗文案用。 */
 export function daysSinceLastBackup(now: number = Date.now()): number | null {
     const st = getBackupReminderState(now);
