@@ -1,12 +1,11 @@
 /**
  * ImageGenSettings.tsx —— 角色生图（NovelAI）的设置面板。
  *
- * 单独成文件而不是塞进 apps/Settings.tsx：那份已经 4000+ 行，
- * 每加一块功能都往里堆，改一处要重贴整份，代价越来越高。
+ * 单独成文件而不是塞进 apps/Settings.tsx：那份已经 4000+ 行、上游一个月改 120 次，
+ * 每加一块功能都往里堆，以后合并上游会很疼。
  *
  * 配置存 localStorage（见 utils/novelaiImage.ts），面板只管收集和自检。
- * 「测试生图」会真的画一张——这是唯一能证明「地址 + Token + 模型 + 参数」四样都对的办法，
- * 花几个 Anlas 换一个确定答案，比在聊天里反复试便宜得多。
+ * 「测试生图」会真的画一张——这是唯一能同时证明「地址 + Token + 模型 + 参数」都对的办法。
  */
 
 import React, { useState } from 'react';
@@ -16,21 +15,34 @@ import {
     isImageGenReady,
     pingRelay,
     generateImageDataUrl,
+    calcSkipCfgAboveSigma,
+    parseSize,
+    SIZE_PRESETS,
+    MODEL_PRESETS,
+    SAMPLER_PRESETS,
+    NOISE_SCHEDULES,
+    PRESET_FIELDS,
     type ImageGenConfig,
+    type ImageGenPreset,
 } from '../../utils/novelaiImage';
+import type { CharacterProfile } from '../../types';
 
 const field = 'w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:border-violet-400 bg-white';
 const label = 'text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1';
+const hint = 'text-[10px] text-slate-400 mt-1 pl-1 leading-relaxed';
 
 interface Props {
     addToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
+    characters: CharacterProfile[];
 }
 
-export const ImageGenSettings: React.FC<Props> = ({ addToast }) => {
+export const ImageGenSettings: React.FC<Props> = ({ addToast, characters }) => {
     const [cfg, setCfg] = useState<ImageGenConfig>(() => getImageGenConfig());
     const [busy, setBusy] = useState<'' | 'ping' | 'draw'>('');
     const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
-    const [preview, setPreview] = useState<string>('');
+    const [preview, setPreview] = useState('');
+    const [presetName, setPresetName] = useState('');
+    const [charId, setCharId] = useState(() => characters[0]?.id || '');
 
     const patch = (next: Partial<ImageGenConfig>) => setCfg(prev => ({ ...prev, ...next }));
     const save = (next: Partial<ImageGenConfig> = {}) => {
@@ -63,12 +75,12 @@ export const ImageGenSettings: React.FC<Props> = ({ addToast }) => {
         }
         setBusy('draw'); setResult(null); setPreview('');
         try {
-            const url = await generateImageDataUrl(
-                '1girl, silver hair, red eyes, upper body, looking at viewer',
-                { ...merged, enabled: true },
-            );
+            const look = (merged.characterAppearance[charId] || '').trim();
+            // 有外观提示词就拿它试——顺便验证「画他自己像不像」，比画个陌生人有用。
+            const prompt = look || '1girl, silver hair, red eyes, upper body, looking at viewer';
+            const url = await generateImageDataUrl(prompt, { ...merged, enabled: true });
             setPreview(url);
-            setResult({ ok: true, msg: '成功！这条路整条都是通的。' });
+            setResult({ ok: true, msg: look ? '成功！这就是他现在会被画成的样子。' : '成功！这条路整条都是通的。' });
         } catch (e: any) {
             // NovelAI 的原话原样显示——改写成「生成失败」等于把唯一的线索扔了。
             setResult({ ok: false, msg: e?.message || String(e) });
@@ -76,60 +88,128 @@ export const ImageGenSettings: React.FC<Props> = ({ addToast }) => {
         setBusy('');
     };
 
+    // ── 预设 ──
+    const applyPreset = (id: string) => {
+        const p = cfg.presets.find(x => x.id === id);
+        if (!p) return;
+        const next: any = {};
+        PRESET_FIELDS.forEach(k => { next[k] = (p as any)[k]; });
+        save(next);
+        addToast(`已套用「${p.name}」`, 'success');
+    };
+    const savePreset = () => {
+        const name = presetName.trim();
+        if (!name) { addToast('先给这套预设起个名字', 'error'); return; }
+        const item: ImageGenPreset = { id: `p_${Date.now()}`, name } as ImageGenPreset;
+        PRESET_FIELDS.forEach(k => { (item as any)[k] = (cfg as any)[k]; });
+        // 同名就覆盖，省得存出一堆「新预设 1/2/3」
+        const rest = cfg.presets.filter(p => p.name !== name);
+        save({ presets: [...rest, item] });
+        setPresetName('');
+        addToast(`预设「${name}」已保存`, 'success');
+    };
+    const deletePreset = (id: string) => save({ presets: cfg.presets.filter(p => p.id !== id) });
+
+    const { width, height } = parseSize(cfg.size);
+    const sigma = calcSkipCfgAboveSigma(width, height, cfg.model);
+
     return (
         <div className="space-y-3">
             <div className="flex items-center justify-between gap-3 bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3">
                 <div className="min-w-0">
                     <div className="text-sm font-bold text-slate-700">让角色自己发图</div>
-                    <div className="text-[11px] text-slate-400 mt-0.5">
-                        角色想给你看什么的时候，用 NovelAI 现画一张
-                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">想给你看什么的时候，用 NovelAI 现画一张</div>
                 </div>
-                <input
-                    type="checkbox"
-                    checked={cfg.enabled}
+                <input type="checkbox" checked={cfg.enabled}
                     onChange={e => patch({ enabled: e.target.checked })}
-                    className="w-11 h-6 shrink-0 accent-violet-500 cursor-pointer"
-                />
+                    className="w-11 h-6 shrink-0 accent-violet-500 cursor-pointer" />
             </div>
 
-            <p className="text-xs leading-relaxed text-slate-500">
-                需要你自己部署一个生图中转站（NovelAI 不允许网页直连）。关闭时角色不会发图，
-                也不会消耗任何额度。
-            </p>
-
+            {/* ── 连接 ── */}
             <div>
                 <label className={label}>中转站地址</label>
                 <input className={field} value={cfg.relayUrl} autoComplete="off"
                     placeholder="https://xxx.你的名字.workers.dev"
                     onChange={e => patch({ relayUrl: e.target.value })} />
             </div>
-
             <div>
                 <label className={label}>NovelAI 持久 Token</label>
                 <input className={field} type="password" value={cfg.token} autoComplete="off"
-                    placeholder="pst-..."
-                    onChange={e => patch({ token: e.target.value })} />
-                <p className="text-[10px] text-slate-400 mt-1 pl-1">
-                    NovelAI 网站 → Account → Get Persistent API Token。只存在这台设备上。
+                    placeholder="pst-..." onChange={e => patch({ token: e.target.value })} />
+                <p className={hint}>NovelAI 网站 → Account → Get Persistent API Token。只存在这台设备上。</p>
+            </div>
+
+            {/* ── 角色外观 ── */}
+            <div className="bg-violet-50/60 border border-violet-100 rounded-2xl p-3 space-y-2">
+                <div className="text-[11px] font-bold text-violet-700">这个角色长什么样</div>
+                <p className="text-[10px] text-slate-500 leading-relaxed">
+                    他用 <code className="font-mono">[[SEND_SELFIE]]</code> 画自己时，这段会自动拼在最前面。
+                    <b>让主模型每次自己回忆长相，画出来一定飘</b>——固定写死在这里最稳。
+                </p>
+                <select className={field} value={charId} onChange={e => setCharId(e.target.value)}>
+                    {characters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <textarea
+                    className={`${field} min-h-[4.5rem] resize-y font-mono text-[11px]`}
+                    placeholder="1boy, silver hair, red eyes, mole under eye, skull necklace, black jacket"
+                    value={cfg.characterAppearance[charId] || ''}
+                    onChange={e => patch({
+                        characterAppearance: { ...cfg.characterAppearance, [charId]: e.target.value },
+                    })}
+                />
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                    只写<b>长相和标志性穿着</b>（发色瞳色发型痣配饰）。动作、场景、表情让他自己写。
                 </p>
             </div>
 
+            {/* ── 画风预设 ── */}
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 space-y-2">
+                <div className="text-[11px] font-bold text-slate-600">画风预设</div>
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                    把下面整套参数（画质词、负面词、尺寸、步数、Scale、采样器、Variety+）存成一套，随时切换。
+                </p>
+                {cfg.presets.length > 0 && (
+                    <div className="space-y-1.5">
+                        {cfg.presets.map(p => (
+                            <div key={p.id} className="flex items-center gap-2">
+                                <button type="button" onClick={() => applyPreset(p.id)}
+                                    className="flex-1 px-3 py-2 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600 text-left active:scale-95 transition-transform">
+                                    {p.name}
+                                    <span className="ml-2 text-[10px] font-normal text-slate-400">{p.size} · {p.steps}步</span>
+                                </button>
+                                <button type="button" onClick={() => deletePreset(p.id)}
+                                    className="px-2.5 py-2 rounded-xl text-[10px] font-bold text-rose-400 bg-white border border-slate-200">删</button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+                <div className="flex gap-2">
+                    <input className={field} value={presetName} placeholder="给当前这套起个名字"
+                        onChange={e => setPresetName(e.target.value)} />
+                    <button type="button" onClick={savePreset}
+                        className="shrink-0 px-3 py-2 rounded-xl text-xs font-bold bg-slate-200 text-slate-600 active:scale-95 transition-transform">存为预设</button>
+                </div>
+            </div>
+
+            {/* ── 生成参数 ── */}
             <div className="grid grid-cols-2 gap-2">
                 <div className="col-span-2">
                     <label className={label}>模型</label>
-                    <input className={field} value={cfg.model} autoComplete="off"
-                        onChange={e => patch({ model: e.target.value })} />
+                    <select className={field} value={cfg.model} onChange={e => patch({ model: e.target.value })}>
+                        {MODEL_PRESETS.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
                 </div>
                 <div>
-                    <label className={label}>宽</label>
-                    <input className={field} type="number" value={cfg.width}
-                        onChange={e => patch({ width: parseInt(e.target.value, 10) || 832 })} />
+                    <label className={label}>尺寸</label>
+                    <select className={field} value={cfg.size} onChange={e => patch({ size: e.target.value })}>
+                        {SIZE_PRESETS.map(sz => <option key={sz} value={sz}>{sz}</option>)}
+                    </select>
                 </div>
                 <div>
-                    <label className={label}>高</label>
-                    <input className={field} type="number" value={cfg.height}
-                        onChange={e => patch({ height: parseInt(e.target.value, 10) || 1216 })} />
+                    <label className={label}>采样器</label>
+                    <select className={field} value={cfg.sampler} onChange={e => patch({ sampler: e.target.value })}>
+                        {SAMPLER_PRESETS.map(x => <option key={x} value={x}>{x}</option>)}
+                    </select>
                 </div>
                 <div>
                     <label className={label}>步数</label>
@@ -141,11 +221,47 @@ export const ImageGenSettings: React.FC<Props> = ({ addToast }) => {
                     <input className={field} type="number" step="0.5" value={cfg.scale}
                         onChange={e => patch({ scale: parseFloat(e.target.value) || 5 })} />
                 </div>
+                <div>
+                    <label className={label}>噪声调度</label>
+                    <select className={field} value={cfg.noiseSchedule} onChange={e => patch({ noiseSchedule: e.target.value })}>
+                        {NOISE_SCHEDULES.map(x => <option key={x} value={x}>{x}</option>)}
+                    </select>
+                </div>
+                <div>
+                    <label className={label}>种子（0=每次随机）</label>
+                    <input className={field} type="number" value={cfg.seed}
+                        onChange={e => patch({ seed: parseInt(e.target.value, 10) || 0 })} />
+                </div>
             </div>
 
+            <label className="flex items-center gap-2.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 cursor-pointer">
+                <input type="checkbox" checked={cfg.varietyPlus}
+                    onChange={e => patch({ varietyPlus: e.target.checked })}
+                    className="w-4 h-4 accent-violet-500" />
+                <span className="min-w-0">
+                    <span className="text-xs font-bold text-slate-600">Variety+</span>
+                    <span className="block text-[10px] text-slate-400 leading-relaxed">
+                        构图更多样，对应官网那个开关。当前尺寸下会把 skip_cfg_above_sigma 设成 {sigma.toFixed(1)}
+                    </span>
+                </span>
+            </label>
+
+            <label className="flex items-center gap-2.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 cursor-pointer">
+                <input type="checkbox" checked={cfg.officialQualityTags}
+                    onChange={e => patch({ officialQualityTags: e.target.checked })}
+                    className="w-4 h-4 accent-violet-500" />
+                <span className="min-w-0">
+                    <span className="text-xs font-bold text-slate-600">NovelAI 官方画质词</span>
+                    <span className="block text-[10px] text-slate-400 leading-relaxed">
+                        官网的 Quality Tags 开关。开着时 NovelAI 自己会追加官方那串，你下面就<b>不用再写一遍</b>
+                    </span>
+                </span>
+            </label>
+
             <div>
-                <label className={label}>画质词（每张自动追加）</label>
+                <label className={label}>我的画质词（每张追加）</label>
                 <input className={field} value={cfg.qualityTags} autoComplete="off"
+                    placeholder="留空即可，上面那个开关已经补了官方的"
                     onChange={e => patch({ qualityTags: e.target.value })} />
             </div>
 
@@ -155,19 +271,37 @@ export const ImageGenSettings: React.FC<Props> = ({ addToast }) => {
                     onChange={e => patch({ negativePrompt: e.target.value })} />
             </div>
 
+            {/* ── 存储 ── */}
+            <div className="grid grid-cols-2 gap-2">
+                <div>
+                    <label className={label}>存进 App 时缩到</label>
+                    <select className={field} value={String(cfg.storeMaxWidth)}
+                        onChange={e => patch({ storeMaxWidth: parseInt(e.target.value, 10) })}>
+                        <option value="0">原尺寸（不缩）</option>
+                        <option value="1024">1024 宽</option>
+                        <option value="832">832 宽</option>
+                        <option value="640">640 宽</option>
+                    </select>
+                </div>
+                <div>
+                    <label className={label}>存图质量</label>
+                    <input className={field} type="number" step="0.05" min="0.3" max="1" value={cfg.storeQuality}
+                        onChange={e => patch({ storeQuality: parseFloat(e.target.value) || 0.9 })} />
+                </div>
+            </div>
+            <p className={hint}>
+                原尺寸最清楚但最占地方。<b>之前这里写死 832，所以你画 1024 存下来变成了 832</b>——现在默认不缩了。
+            </p>
+
             <details className="bg-slate-50 border border-slate-200 rounded-2xl p-3">
-                <summary className="text-[11px] font-bold text-slate-500 cursor-pointer">
-                    高级 · 覆盖生成参数
-                </summary>
+                <summary className="text-[11px] font-bold text-slate-500 cursor-pointer">高级 · 覆盖生成参数</summary>
                 <p className="text-[10px] text-slate-400 mt-2 mb-1.5 leading-relaxed">
-                    一段 JSON，会合并进 parameters 覆盖默认值。留空即不覆盖；写错了只会被忽略，不影响生图。
+                    上面每一项最后都会变成一段发给 NovelAI 的 JSON。这里填的会<b>盖掉</b>算出来的值——
+                    只在你想用界面上没有的参数时才需要（比如某个新采样器）。写错了会被忽略，不影响生图。
                 </p>
-                <textarea
-                    className={`${field} min-h-[5rem] font-mono text-[11px] resize-y`}
-                    placeholder='{"sampler": "k_dpmpp_2m"}'
-                    value={cfg.extraParams}
-                    onChange={e => patch({ extraParams: e.target.value })}
-                />
+                <textarea className={`${field} min-h-[5rem] font-mono text-[11px] resize-y`}
+                    placeholder='{"cfg_rescale": 0.2}'
+                    value={cfg.extraParams} onChange={e => patch({ extraParams: e.target.value })} />
             </details>
 
             <div className="grid grid-cols-3 gap-2">
@@ -190,10 +324,8 @@ export const ImageGenSettings: React.FC<Props> = ({ addToast }) => {
 
             {result && (
                 <div className={`rounded-xl px-3 py-2.5 text-[11px] leading-relaxed border ${
-                    result.ok
-                        ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                        : 'bg-rose-50 border-rose-200 text-rose-700'
-                }`}>
+                    result.ok ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                              : 'bg-rose-50 border-rose-200 text-rose-700'}`}>
                     <div className="font-bold mb-0.5">{result.ok ? '✓ 通了' : '✗ 没成'}</div>
                     <div className="whitespace-pre-wrap break-words font-mono text-[10px]">{result.msg}</div>
                 </div>

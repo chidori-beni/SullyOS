@@ -2426,7 +2426,7 @@ const Settings: React.FC = () => {
                 </div>
             }
         >
-            <ImageGenSettings addToast={addToast} />
+            <ImageGenSettings addToast={addToast} characters={characters} />
         </SettingsSection>
 
         {/* 独立识图 API：给不支持 image_url 的主模型补视觉能力；可手动从通用模型预设载入。 */}

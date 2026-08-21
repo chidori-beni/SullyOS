@@ -21,27 +21,101 @@ import { processImage } from './file';
 
 const LS_KEY = 'sullyos_imagegen_config_v1';
 
-/** 落库前把原图压一压：NovelAI 出的图 1~2MB，原样进 IndexedDB 几十张就上百兆了。
- *  比用户上传那条路（600px / 0.6）宽松些——这是角色的"作品"，值得留清楚一点。 */
-const STORE_MAX_WIDTH = 832;
-const STORE_QUALITY = 0.85;
+/** 尺寸下拉。抄自糯叽机那一份——都是 NovelAI 认的标准档。 */
+export const SIZE_PRESETS = [
+    '512x512', '512x768', '768x512', '768x768',
+    '832x1216', '1216x832', '1024x1024', '1024x1536', '1536x1024',
+] as const;
+
+/** 模型列表，同样抄自糯叽机。 */
+export const MODEL_PRESETS = [
+    'nai-diffusion-4-5-full', 'nai-diffusion-4-5-curated',
+    'nai-diffusion-4-full', 'nai-diffusion-4-curated-preview',
+    'nai-diffusion-3', 'nai-diffusion-furry-3',
+] as const;
+
+export const SAMPLER_PRESETS = [
+    'k_euler_ancestral', 'k_euler', 'k_dpmpp_2m', 'k_dpmpp_2m_sde',
+    'k_dpmpp_2s_ancestral', 'k_dpmpp_sde', 'ddim_v3',
+] as const;
+
+export const NOISE_SCHEDULES = ['karras', 'native', 'exponential', 'polyexponential'] as const;
+
+/**
+ * Variety+（官网那个开关）实为把 skip_cfg_above_sigma 从 null 换成一个**跟尺寸挂钩**的数，
+ * 不是固定值。公式与常数取自 SillyTavern 的实现（PR #4417）：
+ *     sqrt(w*h / 1011712) * 魔数      魔数：V4.5 用 58，其余用 19
+ * 1011712 = 832×1216，NovelAI 的参考尺寸。
+ */
+const VARIETY_REFERENCE_PIXELS = 1011712;
+export function calcSkipCfgAboveSigma(width: number, height: number, model: string): number {
+    const magic = model.includes('nai-diffusion-4-5') ? 58 : 19;
+    return Math.sqrt((width * height) / VARIETY_REFERENCE_PIXELS) * magic;
+}
+
+/** 把 '832x1216' 拆成数字；填了乱七八糟的东西就退回默认档。 */
+export function parseSize(size: string): { width: number; height: number } {
+    const m = /^(\d+)x(\d+)$/.exec((size || '').trim());
+    if (!m) return { width: 832, height: 1216 };
+    return { width: parseInt(m[1], 10), height: parseInt(m[2], 10) };
+}
+
+/** 一套画风预设：换风格时整套一起换，不用一个字段一个字段改。 */
+export interface ImageGenPreset {
+    id: string;
+    name: string;
+    qualityTags: string;
+    negativePrompt: string;
+    size: string;
+    steps: number;
+    scale: number;
+    sampler: string;
+    noiseSchedule: string;
+    varietyPlus: boolean;
+    officialQualityTags: boolean;
+}
+
+/** 预设里真正会被套用的那些字段。 */
+export const PRESET_FIELDS = [
+    'qualityTags', 'negativePrompt', 'size', 'steps', 'scale',
+    'sampler', 'noiseSchedule', 'varietyPlus', 'officialQualityTags',
+] as const;
 
 export interface ImageGenConfig {
-    /** 总开关。关掉时角色的 [[SEND_IMAGE:]] 会降级成一句文字，不发请求、不花额度。 */
+    /** 总开关。关掉时角色的发图指令降级成一句文字，不发请求、不花额度。 */
     enabled: boolean;
     /** 你自己部署的 novelai-relay Worker 地址 */
     relayUrl: string;
     /** NovelAI 持久 Token（Account → Get Persistent API Token） */
     token: string;
     model: string;
-    width: number;
-    height: number;
+    /** 形如 '832x1216'，见 SIZE_PRESETS */
+    size: string;
     steps: number;
     scale: number;
-    /** 每张图都会追加的画质词，省得每次让模型自己写 */
+    sampler: string;
+    noiseSchedule: string;
+    /** 固定种子；0 = 每次随机。想复现某张图才填具体数字。 */
+    seed: number;
+    /** Variety+：构图更多样，对应官网那个开关 */
+    varietyPlus: boolean;
+    /** 让 NovelAI 自动追加它自己的官方画质词（官网的 Quality Tags 开关） */
+    officialQualityTags: boolean;
+    /** 你自己的画质词，每张都追加在角色写的提示词后面 */
     qualityTags: string;
     negativePrompt: string;
-    /** 高级：一段 JSON，合并进 parameters 覆盖默认值。留空即不覆盖。 */
+    /**
+     * 落库时缩到多宽；**0 = 原尺寸不缩**。
+     * 之前写死 832，导致「画的是 1024，存下来变 832」——那是存储压缩，不是生成限制。
+     */
+    storeMaxWidth: number;
+    /** 存图的 JPEG 质量 0~1 */
+    storeQuality: number;
+    /** 每个角色自己的外观提示词：画「他自己」时自动拼在最前面。key = charId */
+    characterAppearance: Record<string, string>;
+    /** 存好的画风预设 */
+    presets: ImageGenPreset[];
+    /** 高级：一段 JSON，合并进 parameters，覆盖上面算出来的一切。留空即不覆盖。 */
     extraParams: string;
 }
 
@@ -50,12 +124,20 @@ export const DEFAULT_IMAGE_GEN_CONFIG: ImageGenConfig = {
     relayUrl: '',
     token: '',
     model: 'nai-diffusion-4-5-full',
-    width: 832,
-    height: 1216,
+    size: '832x1216',
     steps: 28,
     scale: 5,
-    qualityTags: 'best quality, amazing quality',
+    sampler: 'k_euler_ancestral',
+    noiseSchedule: 'karras',
+    seed: 0,
+    varietyPlus: false,
+    officialQualityTags: true,
+    qualityTags: '',
     negativePrompt: 'lowres, bad anatomy, bad hands, worst quality, watermark, signature',
+    storeMaxWidth: 0,
+    storeQuality: 0.9,
+    characterAppearance: {},
+    presets: [],
     extraParams: '',
 };
 
@@ -82,33 +164,37 @@ export function isImageGenReady(cfg: ImageGenConfig | undefined | null): boolean
 }
 
 /**
- * 组装 NovelAI 请求体（V4 / V4.5 结构；V3 也能吃，多出来的 v4_* 字段会被忽略）。
+ * 组装 NovelAI 请求体（V4 / V4.5 结构；V3 也吃，多出来的 v4_* 字段会被忽略）。
  * 已在真实接口上验证通过。
  */
 export function buildNovelAiBody(prompt: string, cfg: ImageGenConfig): any {
+    const { width, height } = parseSize(cfg.size);
     const positive = [prompt.trim(), cfg.qualityTags.trim()].filter(Boolean).join(', ');
     const negative = cfg.negativePrompt.trim();
 
     const parameters: any = {
         params_version: 3,
-        width: cfg.width,
-        height: cfg.height,
+        width,
+        height,
         scale: cfg.scale,
-        sampler: 'k_euler_ancestral',
+        sampler: cfg.sampler,
         steps: cfg.steps,
         n_samples: 1,
         ucPreset: 0,
-        qualityToggle: true,
+        // 官网的 Quality Tags 开关：开着 NovelAI 自己会追加一串官方画质词。
+        // 所以你自己的「画质词」是**额外**加的，不是替代——两边都写会重复。
+        qualityToggle: cfg.officialQualityTags,
         dynamic_thresholding: false,
         controlnet_strength: 1,
         legacy: false,
         add_original_image: true,
         cfg_rescale: 0,
-        noise_schedule: 'karras',
+        noise_schedule: cfg.noiseSchedule,
         legacy_v3_extend: false,
-        skip_cfg_above_sigma: null,
+        // Variety+ ：关 = null，开 = 按尺寸算出来的那个数（见 calcSkipCfgAboveSigma）
+        skip_cfg_above_sigma: cfg.varietyPlus ? calcSkipCfgAboveSigma(width, height, cfg.model) : null,
         use_coords: false,
-        seed: Math.floor(Math.random() * 4294967295),
+        seed: cfg.seed > 0 ? cfg.seed : Math.floor(Math.random() * 4294967295),
         negative_prompt: negative,
         v4_prompt: {
             caption: { base_caption: positive, char_captions: [] },
@@ -130,6 +216,15 @@ export function buildNovelAiBody(prompt: string, cfg: ImageGenConfig): any {
     }
 
     return { input: positive, model: cfg.model.trim(), action: 'generate', parameters };
+}
+
+/**
+ * 画「这个角色自己」时用的提示词：把他的外观提示词拼在最前面。
+ * 角色卡里的外观特征每次都让主模型自己写一遍，写出来必然飘——固定在这里最稳。
+ */
+export function buildSelfiePrompt(charId: string, scene: string, cfg: ImageGenConfig): string {
+    const look = (cfg.characterAppearance?.[charId] || '').trim();
+    return [look, scene.trim()].filter(Boolean).join(', ');
 }
 
 /**
@@ -212,10 +307,14 @@ export async function generateImageDataUrl(prompt: string, cfg: ImageGenConfig):
     }
 
     const { bytes } = await unzipFirstFile(await res.arrayBuffer());
-    // 用 Uint8Array 的实际视图切片喂给 Blob，避免把整个底层 buffer 带进去。
+    // 用实际视图切片喂给 Blob，避免把整个底层 buffer 带进去。
     const png = new Blob([bytes.slice()], { type: 'image/png' });
     const file = new File([png], 'novelai.png', { type: 'image/png' });
-    return processImage(file, { maxWidth: STORE_MAX_WIDTH, quality: STORE_QUALITY, forceJpeg: true });
+    // storeMaxWidth = 0 → 原尺寸不缩。之前这里写死 832，把 1024 的图存成了 832。
+    const opts: { maxWidth?: number; quality?: number; forceJpeg?: boolean } =
+        { quality: cfg.storeQuality, forceJpeg: true };
+    if (cfg.storeMaxWidth > 0) opts.maxWidth = cfg.storeMaxWidth;
+    return processImage(file, opts);
 }
 
 

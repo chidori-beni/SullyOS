@@ -4,6 +4,7 @@ import {
     buildNovelAiBody,
     isImageGenReady,
     readImageGenMeta,
+    buildSelfiePrompt,
     DEFAULT_IMAGE_GEN_CONFIG,
     type ImageGenConfig,
 } from './novelaiImage';
@@ -40,12 +41,44 @@ describe('buildNovelAiBody', () => {
             .toBe(body.parameters.negative_prompt);
     });
 
-    it('尺寸 / 步数 / scale 跟着配置走', () => {
-        const body = buildNovelAiBody('x', cfg({ width: 512, height: 768, steps: 20, scale: 6 }));
+    it('尺寸 / 步数 / scale / 采样器跟着配置走', () => {
+        const body = buildNovelAiBody('x', cfg({ size: '512x768', steps: 20, scale: 6, sampler: 'k_dpmpp_2m' }));
         expect(body.parameters.width).toBe(512);
         expect(body.parameters.height).toBe(768);
         expect(body.parameters.steps).toBe(20);
         expect(body.parameters.scale).toBe(6);
+        expect(body.parameters.sampler).toBe('k_dpmpp_2m');
+    });
+
+    it('尺寸填坏了退回默认档，不至于把请求发成 NaN', () => {
+        const body = buildNovelAiBody('x', cfg({ size: '乱写的' }));
+        expect(body.parameters.width).toBe(832);
+        expect(body.parameters.height).toBe(1216);
+    });
+
+    it('Variety+ 关着是 null，开着是按尺寸算的数（V4.5 魔数 58）', () => {
+        expect(buildNovelAiBody('x', cfg({ varietyPlus: false })).parameters.skip_cfg_above_sigma).toBeNull();
+        // 832x1216 正好是参考尺寸 → 比值 1 → 直接等于魔数
+        const on = buildNovelAiBody('x', cfg({ varietyPlus: true, size: '832x1216' }));
+        expect(on.parameters.skip_cfg_above_sigma).toBeCloseTo(58, 5);
+        // 尺寸小一半 → 开方后变小
+        const small = buildNovelAiBody('x', cfg({ varietyPlus: true, size: '512x512' }));
+        expect(small.parameters.skip_cfg_above_sigma).toBeLessThan(58);
+    });
+
+    it('V3 用魔数 19', () => {
+        const b = buildNovelAiBody('x', cfg({ varietyPlus: true, size: '832x1216', model: 'nai-diffusion-3' }));
+        expect(b.parameters.skip_cfg_above_sigma).toBeCloseTo(19, 5);
+    });
+
+    it('官方画质词开关直通 qualityToggle', () => {
+        expect(buildNovelAiBody('x', cfg({ officialQualityTags: false })).parameters.qualityToggle).toBe(false);
+        expect(buildNovelAiBody('x', cfg({ officialQualityTags: true })).parameters.qualityToggle).toBe(true);
+    });
+
+    it('种子填了就固定，填 0 才随机', () => {
+        expect(buildNovelAiBody('x', cfg({ seed: 12345 })).parameters.seed).toBe(12345);
+        expect(buildNovelAiBody('x', cfg({ seed: 12345 })).parameters.seed).toBe(12345);
     });
 
     it('每次种子都随机（不然同一句提示词永远出同一张图）', () => {
@@ -113,5 +146,31 @@ describe('readImageGenMeta', () => {
         expect(failed?.prompt).toBe('cat');   // 失败也要留住提示词，否则没法重画
 
         expect(readImageGenMeta({ imageGen: { status: 'generated', prompt: 'x' } })?.status).toBe('generated');
+    });
+});
+
+describe('buildSelfiePrompt', () => {
+    const base = cfg({ characterAppearance: { c1: '1boy, silver hair, red eyes, skull necklace' } });
+
+    it('自拍：角色外观拼在最前面，场景跟在后面', () => {
+        expect(buildSelfiePrompt('c1', 'in garage, holding wrench', base))
+            .toBe('1boy, silver hair, red eyes, skull necklace, in garage, holding wrench');
+    });
+
+    it('没给这个角色写外观 → 只用场景，不报错', () => {
+        expect(buildSelfiePrompt('c2', 'in garage', base)).toBe('in garage');
+    });
+
+    it('场景为空 → 只剩外观（他只想发张脸也行）', () => {
+        expect(buildSelfiePrompt('c1', '', base)).toBe('1boy, silver hair, red eyes, skull necklace');
+    });
+});
+
+describe('splitResponse 区分自拍和拍别的', () => {
+    it('SELFIE 和 IMAGE 各归各的类型', () => {
+        const parts = ChatParser.splitResponse('[[SEND_SELFIE: in garage]]和[[SEND_IMAGE: ramen, no humans]]');
+        expect(parts.map(p => p.type)).toEqual(['selfie', 'text', 'image']);
+        expect(parts[0].content).toBe('in garage');
+        expect(parts[2].content).toBe('ramen, no humans');
     });
 });

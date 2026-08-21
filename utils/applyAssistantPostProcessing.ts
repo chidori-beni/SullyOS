@@ -27,7 +27,7 @@
 
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, RealtimeConfig, GroupProfile } from '../types';
 import { DB } from './db';
-import { getImageGenConfig, isImageGenReady, runImageGeneration } from './novelaiImage';
+import { buildSelfiePrompt, getImageGenConfig, isImageGenReady, runImageGeneration } from './novelaiImage';
 import { ChatParser, type FrozenMusicSong } from './chatParser';
 import { resolveCharTimeZone } from './timezone';
 import { NotionManager, FeishuManager, XhsNote } from './realtimeContext';
@@ -742,8 +742,10 @@ export async function applyAssistantPostProcessing(
          *
          * 没配置就退回一条文字，不发请求、不花额度。
          */
-        const sendImageBubble = async (prompt: string): Promise<void> => {
-            const cleanPrompt = (prompt || '').trim();
+        const sendImageBubble = async (prompt: string, isSelfie = false): Promise<void> => {
+            const cfgNow = getImageGenConfig();
+            // 自拍：把这个角色的外观提示词拼在最前面，别让主模型每次自己回忆长什么样。
+            const cleanPrompt = (isSelfie ? buildSelfiePrompt(char.id, prompt || '', cfgNow) : (prompt || '')).trim();
             if (!cleanPrompt) return;
 
             if (!isImageGenReady(getImageGenConfig())) {
@@ -820,8 +822,8 @@ export async function applyAssistantPostProcessing(
                         await sendEmojiBubble(part.content);
                         continue;
                     }
-                    if (part.type === 'image') {
-                        await sendImageBubble(part.content);
+                    if (part.type === 'image' || part.type === 'selfie') {
+                        await sendImageBubble(part.content, part.type === 'selfie');
                         continue;
                     }
                     const cleaned = ChatParser.sanitize(part.content);
@@ -880,8 +882,8 @@ export async function applyAssistantPostProcessing(
 
                 if (part.type === 'emoji') {
                     await sendEmojiBubble(part.content);
-                } else if (part.type === 'image') {
-                    await sendImageBubble(part.content);
+                } else if (part.type === 'image' || part.type === 'selfie') {
+                    await sendImageBubble(part.content, part.type === 'selfie');
                 } else {
                     const rawBlocks = part.content.split(/^\s*---\s*$/m).filter(b => b.trim());
                     const allChunks: string[] = [];
