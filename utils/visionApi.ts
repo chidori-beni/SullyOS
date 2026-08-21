@@ -1,5 +1,6 @@
 import type { ApiPreset, Message, VisionApiConfig } from '../types';
 import { DB } from './db';
+import { processImage } from './file';
 import { extractContent, safeFetchJson } from './safeApi';
 import { normalizeApiBaseUrl, normalizeApiCredential, normalizeApiModel } from './apiConfigNormalize';
 
@@ -31,6 +32,34 @@ export const readVisionDescription = (message: Message): string => {
   const value = message.metadata?.[VISION_DESCRIPTION_METADATA_KEY];
   return typeof value === 'string' ? value.trim() : '';
 };
+
+/**
+ * 送去识图之前先把大图缩一缩。
+ *
+ * 聊天里的图未必都是本 App 压过的：从别的应用搬家进来的、早期版本存的，都可能是
+ * 一两 MB 的原图。base64 之后体积再涨三成，很多视觉模型直接拒收——**而拒收会让
+ * 整轮回复挂掉**。缩到 1024 宽对"看图说话"绰绰有余，还顺带省 token。
+ *
+ * 缩失败就用原图去试，不因为压缩本身再制造一次失败。
+ */
+const VISION_MAX_WIDTH = 1024;
+const VISION_SHRINK_THRESHOLD = 400_000;
+
+async function shrinkForVision(imageUrl: string): Promise<string> {
+  if (!imageUrl.startsWith('data:image/')) return imageUrl;
+  if (imageUrl.length < VISION_SHRINK_THRESHOLD) return imageUrl;
+  try {
+    const match = /^data:([^;]+);base64,(.+)$/.exec(imageUrl);
+    if (!match) return imageUrl;
+    const bin = atob(match[2]);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const file = new File([bytes], 'vision.jpg', { type: match[1] });
+    return await processImage(file, { maxWidth: VISION_MAX_WIDTH, quality: 0.8, forceJpeg: true });
+  } catch {
+    return imageUrl;
+  }
+}
 
 const cleanDescription = (value: string): string => value
   .replace(/^\s*\[?图片\s*[：:]\s*/i, '')
@@ -154,9 +183,31 @@ export async function materializeVisionDescriptions(
       prepared.push(message);
       continue;
     }
-    const description = descriptionByImage.get(imageUrl)
-      || await describeImageWithVisionApi(imageUrl, config);
+    // 一张图认不出来，**绝不能把整轮回复带走**。
+    //
+    // 上游原本让异常直接往上抛，于是只要历史里有一张识图模型吃不下的图（搬家进来的
+    // 大图最常见），用户就会陷入「每轮都失败、连天都聊不了」的死局，而且自己完全看不出
+    // 是哪张图的问题。现在退化成一句占位描述：那张图这轮读不懂，但天照聊。
+    //
+    // 失败的结果**不写回 metadata** —— 写了就等于永久放弃，下次换个模型也没机会重试了。
+    let description = descriptionByImage.get(imageUrl) || '';
+    let recognized = true;
+    if (!description) {
+      try {
+        description = await describeImageWithVisionApi(await shrinkForVision(imageUrl), config);
+      } catch (e) {
+        recognized = false;
+        description = '[图片：这次没能识别出内容]';
+        // 走 console.error 是为了让它出现在设置里的日志面板（那面板只收 error 通道）。
+        console.error('[识图] 这张图没认出来，本轮用占位描述顶上，聊天照常继续：', e);
+      }
+    }
     descriptionByImage.set(imageUrl, description);
+
+    if (!recognized) {
+      prepared.push({ ...message, metadata: { ...(message.metadata || {}), [VISION_DESCRIPTION_METADATA_KEY]: description } });
+      continue;
+    }
 
     const metadata = {
       ...(message.metadata || {}),

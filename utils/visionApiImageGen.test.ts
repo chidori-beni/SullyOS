@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 import { materializeVisionDescriptions, VISION_DESCRIPTION_METADATA_KEY } from './visionApi';
 import type { Message } from '../types';
+import { DB } from './db';
 
 const cfg = { enabled: true, baseUrl: 'https://x/v1', apiKey: 'k', model: 'm' } as any;
 
@@ -54,5 +55,32 @@ describe('生成图不走识图 API', () => {
         const msgs = [imageMsg()];
         expect(await materializeVisionDescriptions(msgs, { ...cfg, enabled: false })).toBe(msgs);
         expect(fetch).not.toHaveBeenCalled();
+    });
+});
+
+describe('一张图认不出来，不能把整轮回复带走', () => {
+    it('识图报错 → 用占位描述顶上，函数正常返回而不是抛出', async () => {
+        vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('payload too large'))));
+        const out = await materializeVisionDescriptions([imageMsg({ id: 11 })], cfg);
+        expect(out).toHaveLength(1);
+        expect(out[0].metadata[VISION_DESCRIPTION_METADATA_KEY]).toContain('没能识别');
+    });
+
+    it('识别失败的结果不写回数据库 —— 否则换个模型也永远没机会重试', async () => {
+        vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('boom'))));
+        const spy = vi.spyOn(DB, 'updateMessageMetadata');
+        await materializeVisionDescriptions([imageMsg({ id: 12 })], cfg);
+        expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('一张坏图不影响同一批里的其它消息', async () => {
+        vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('boom'))));
+        const out = await materializeVisionDescriptions([
+            { id: 20, charId: 'c1', role: 'user', type: 'text', content: '在吗', timestamp: 1 } as any,
+            imageMsg({ id: 21 }),
+            { id: 22, charId: 'c1', role: 'assistant', type: 'text', content: '在', timestamp: 2 } as any,
+        ], cfg);
+        expect(out.map(m => m.id)).toEqual([20, 21, 22]);
+        expect(out[2].content).toBe('在');
     });
 });
