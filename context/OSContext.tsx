@@ -51,6 +51,7 @@ import { buildChatRequestPayload } from '../utils/chatRequestPayload';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { extractHtmlBlocks } from '../utils/htmlPrompt';
 import { mergePalaceFragmentsIntoMemories } from '../utils/memoryPalace/pipeline';
+import { buildSelfiePrompt, getImageGenConfig, isImageGenReady, runImageGeneration } from '../utils/novelaiImage';
 import {
   MEMORY_AUTO_ARCHIVE_SYNC_EVENT,
   repairMissingAutoArchiveMemories,
@@ -2385,6 +2386,39 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   // 把每对原文/译文落成一条 text 消息,内容用 `\n%%BILINGUAL%%\n` 串联供渲染端识别。
                   const hasTranslationTags = /<翻译>\s*<原文>[\s\S]*?<\/原文>\s*<译文>[\s\S]*?<\/译文>\s*<\/翻译>/.test(aiContent);
 
+                  /**
+                   * 角色生图 —— **云端 / 推送这条落库路径**上的实现。
+                   *
+                   * 跟本地那条（applyAssistantPostProcessing 里的 sendImageBubble）逻辑一致：
+                   * 先落一条空的 image 消息、气泡显示「正在画」，生成扔后台，画完回填。
+                   *
+                   * 为什么这里要单独写一份：这两条路各有一套「把回复拆成气泡」的循环，
+                   * 只补了本地那条的话，**开着「即时对话」的用户永远看不到图**——
+                   * 回复是在云 Worker 里生成的，落库走的是这里，指令会被当成普通文字
+                   * 在 sanitize 那步整段丢掉，表现为「他说照片发了，但没有图」。
+                   */
+                  const saveGeneratedImageBubble = async (rawPrompt: string, isSelfie: boolean): Promise<void> => {
+                      const cfgNow = getImageGenConfig();
+                      const prompt = (isSelfie ? buildSelfiePrompt(charId, rawPrompt || '', cfgNow) : (rawPrompt || '')).trim();
+                      if (!prompt) return;
+
+                      if (!isImageGenReady(cfgNow)) {
+                          await DB.saveMessage({
+                              charId, role: 'assistant', type: 'text',
+                              content: `[想发一张图：${prompt}]`,
+                              timestamp: baseTimestamp + offset,
+                          });
+                          return;
+                      }
+
+                      const messageId = await DB.saveMessage({
+                          charId, role: 'assistant', type: 'image', content: '',
+                          timestamp: baseTimestamp + offset,
+                          metadata: { imageGen: { status: 'pending', prompt } },
+                      });
+                      void runImageGeneration(messageId, prompt);
+                  };
+
                   if (hasTranslationTags) {
                       // 表情包按模型写的位置原地插发（与 applyAssistantPostProcessing 双语分支同款修复）。
                       // 旧实现先把所有 [[SEND_EMOJI:]] 抽走、正文发完后统一追加到最后（还去了重），
@@ -2406,6 +2440,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       // 翻译标签之外的普通文本段：splitResponse 按出现顺序拆出文字 / 表情逐条发
                       const renderPlainSegment = async (segment: string): Promise<void> => {
                           for (const part of ChatParser.splitResponse(segment)) {
+                              if (part.type === 'image' || part.type === 'selfie') {
+                                  await saveGeneratedImageBubble(part.content, part.type === 'selfie');
+                                  continue;
+                              }
                               if (part.type === 'emoji') {
                                   await sendEmojiBubble(part.content);
                                   continue;
@@ -2469,6 +2507,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       const responseParts = ChatParser.splitResponse(aiContent);
 
                       for (const part of responseParts) {
+                          if (part.type === 'image' || part.type === 'selfie') {
+                              await saveGeneratedImageBubble(part.content, part.type === 'selfie');
+                              offset += 1;
+                              continue;
+                          }
                           if (part.type === 'emoji') {
                               const foundEmoji = emojis.find(e => e.name === part.content);
                               if (foundEmoji?.url) {
