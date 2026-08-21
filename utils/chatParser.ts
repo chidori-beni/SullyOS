@@ -503,19 +503,26 @@ export const ChatParser = {
         return stripped.length > 0;
     },
 
-    // Split text into bubbles (text and emojis)
-    splitResponse: (content: string): { type: 'text' | 'emoji', content: string }[] => {
-        const emojiPattern = /\[\[SEND_EMOJI:\s*(.*?)\]\]/g;
-        const parts: {type: 'text' | 'emoji', content: string}[] = [];
+    // Split text into bubbles (text / emojis / 生图)
+    //
+    // [[SEND_IMAGE: 提示词]] 跟 [[SEND_EMOJI:]] 走同一条正则扫描，为的是**保住出现顺序**：
+    // 角色常写「你看（图）……好看吧？」，图片必须插在两句话中间，而不是被抽到最后统一补发。
+    // 分开扫两遍就会丢掉这个顺序（表情包历史上正是这么踩过一次）。
+    splitResponse: (content: string): { type: 'text' | 'emoji' | 'image', content: string }[] => {
+        const directivePattern = /\[\[SEND_(EMOJI|IMAGE):\s*([\s\S]*?)\]\]/g;
+        const parts: {type: 'text' | 'emoji' | 'image', content: string}[] = [];
         let lastIndex = 0;
         let emojiMatch;
 
-        while ((emojiMatch = emojiPattern.exec(content)) !== null) {
+        while ((emojiMatch = directivePattern.exec(content)) !== null) {
             if (emojiMatch.index > lastIndex) {
                 const textBefore = content.slice(lastIndex, emojiMatch.index).trim();
                 if (textBefore) parts.push({ type: 'text', content: textBefore });
             }
-            parts.push({ type: 'emoji', content: emojiMatch[1].trim() });
+            parts.push({
+                type: emojiMatch[1] === 'IMAGE' ? 'image' : 'emoji',
+                content: emojiMatch[2].trim(),
+            });
             lastIndex = emojiMatch.index + emojiMatch[0].length;
         }
 

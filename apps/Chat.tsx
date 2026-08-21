@@ -1,3 +1,4 @@
+import { IMAGE_GEN_UPDATED_EVENT } from '../utils/novelaiImage';
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useOS } from '../context/OSContext';
@@ -883,6 +884,18 @@ const Chat: React.FC = () => {
         window.addEventListener(VOICE_FAVORITES_CHANGED_EVENT, syncFavoriteFlags);
         return () => window.removeEventListener(VOICE_FAVORITES_CHANGED_EVENT, syncFavoriteFlags);
     }, [messages]);
+
+    // 角色生图是后台跑的（先落一条 pending 气泡，画完再回填），落库那一刻只有一个
+    // window 事件通知得到这里 —— 收到就重读一次，气泡从「正在画」变成图片。
+    // 失败重试走的也是同一条广播。
+    useEffect(() => {
+        if (!char?.id) return;
+        const reload = async () => {
+            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+        };
+        window.addEventListener(IMAGE_GEN_UPDATED_EVENT, reload);
+        return () => window.removeEventListener(IMAGE_GEN_UPDATED_EVENT, reload);
+    }, [char?.id]);
 
     // Revoke blob URLs when switching characters / unmounting to avoid leaks.
     useEffect(() => {

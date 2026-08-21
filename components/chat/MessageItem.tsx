@@ -1,6 +1,7 @@
 
 
 
+import { readImageGenMeta, retryImageGeneration } from '../../utils/novelaiImage';
 import React, { useEffect, useRef, useState } from 'react';
 import { Message, ChatTheme } from '../../types';
 import { phoneFieldToText } from '../../utils/phoneEvidence';
@@ -3285,6 +3286,7 @@ const MessageItem = React.memo(({
     }
 
     if (m.type === 'image') {
+        const imageGenMeta = readImageGenMeta(m.metadata);
         return commonLayout(
             <div className="relative group">
                 {m.content ? (
@@ -3296,6 +3298,30 @@ const MessageItem = React.memo(({
                         decoding="async"
                         onLoad={() => onMediaLoad?.(m.id)}
                     />
+                ) : imageGenMeta ? (
+                    /* 角色生图的三态：正在画 / 失败可重试 / （成功的走上面的 <img>）。
+                       pending 也给重试入口——画到一半关掉页面的话，那条会永远停在 pending。 */
+                    <div className="px-4 py-3 rounded-2xl bg-slate-100 text-slate-500 text-xs min-w-[140px] max-w-[220px] space-y-1.5">
+                        {imageGenMeta.status === 'pending' ? (
+                            <div className="flex items-center gap-2">
+                                <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse shrink-0" />
+                                <span>正在画…</span>
+                            </div>
+                        ) : (
+                            <div className="font-bold text-rose-500">没画出来</div>
+                        )}
+                        <div className="text-[10px] text-slate-400 break-words leading-relaxed">{imageGenMeta.prompt}</div>
+                        {imageGenMeta.status === 'failed' && imageGenMeta.error && (
+                            <div className="text-[10px] text-rose-400 break-words leading-relaxed">{imageGenMeta.error}</div>
+                        )}
+                        <button
+                            type="button"
+                            onClick={() => { void retryImageGeneration(m.id, imageGenMeta.prompt); }}
+                            className="text-[10px] font-bold text-violet-500 active:scale-95 transition-transform"
+                        >
+                            {imageGenMeta.status === 'pending' ? '卡住了？重画一张' : '重画一张'}
+                        </button>
+                    </div>
                 ) : (
                     <div className="px-4 py-6 rounded-2xl bg-slate-100 text-slate-400 text-xs italic text-center min-w-[120px]">[图片已丢失]</div>
                 )}
@@ -3431,7 +3457,7 @@ const MessageItem = React.memo(({
         .replace(/\[[^\[\]\n「」]{0,24}引用了[^\[\]\n「」]{0,24}「[^」\n]*?」[^\[\]\n]{0,24}\]\s*/g, '')  // imitated history render [xx引用了xx说的「…」，并回复了 ↓]
         .replace(/\[回复\s*[""\u201C][^""\u201D]*?[""\u201D](?:\.{0,3})\]\s*[：:]?\s*/g, '')  // [回复 "content"]: format
         // Residual action/system tags that may have leaked through
-        .replace(/\[\[(?:ACTION|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|SEND_EMOJI|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END)[:\s][\s\S]*?\]\]/g, '')
+        .replace(/\[\[(?:ACTION|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|SEND_EMOJI|SEND_IMAGE|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END)[:\s][\s\S]*?\]\]/g, '')
         .replace(/\[schedule_message[^\]]*\]/g, '')
         .replace(/<[语語]音[^>]*>[\s\S]*?<\/\s*[语語]音\s*>/g, '')  // strip <语音 ...>...</语音> voice tags (tolerate emotion attr / spaced close)
         .replace(/<[语語]音[^>]*>[\s\S]*$/g, '')             // 未闭合开标签 (历史坏数据): 标签到末尾都是语音内容, 不当正文显示

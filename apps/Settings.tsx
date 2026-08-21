@@ -1,4 +1,6 @@
 
+import { getImageGenConfig, isImageGenReady } from '../utils/novelaiImage';
+import ImageGenSettings from '../components/settings/ImageGenSettings';
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { Capacitor } from '@capacitor/core';
@@ -555,6 +557,8 @@ const Settings: React.FC = () => {
   // 入口刻意低调：默认折叠，普通用户不需要碰，开箱即用。
   const [focusProxyConfigOnMount] = useState(() => consumeProxyWorkerSettingsFocus());
   const [proxyWorkerInput, setProxyWorkerInput] = useState(getProxyWorkerUrl());
+  // 「角色生图」那颗徽章：只读一次 localStorage，用来显示 已接入 / 未接入。
+  const [imageGenOn] = useState(() => isImageGenReady(getImageGenConfig()));
   const [showProxyConfig, setShowProxyConfig] = useState(focusProxyConfigOnMount);
   const proxyConfigSectionRef = useRef<HTMLElement | null>(null);
   const [analyticsEnabled, setAnalyticsEnabledState] = useState(() => isAnalyticsEnabled());
@@ -2401,6 +2405,28 @@ const Settings: React.FC = () => {
                     </div>
                 )}
             </div>
+        </SettingsSection>
+
+        {/* 角色生图（NovelAI）。面板本体在 components/settings/ImageGenSettings.tsx——
+            这份文件已经太长，新功能一律独立成组件，避免每次改一处都要重贴整份。 */}
+        <SettingsSection
+            title="角色生图"
+            badge={
+                <span className={`text-[9px] font-bold px-2 py-1 rounded-full ${
+                    imageGenOn ? 'bg-violet-100 text-violet-600' : 'bg-slate-100 text-slate-400'
+                }`}>
+                    {imageGenOn ? 'NovelAI' : '未接入'}
+                </span>
+            }
+            icon={
+                <div className="p-2 bg-violet-100/60 rounded-xl text-violet-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M18 8.25h.008v.008H18V8.25zm2.25 10.5H3.75A1.5 1.5 0 012.25 17.25V6.75A1.5 1.5 0 013.75 5.25h16.5a1.5 1.5 0 011.5 1.5v10.5a1.5 1.5 0 01-1.5 1.5z" />
+                    </svg>
+                </div>
+            }
+        >
+            <ImageGenSettings addToast={addToast} />
         </SettingsSection>
 
         {/* 独立识图 API：给不支持 image_url 的主模型补视觉能力；可手动从通用模型预设载入。 */}

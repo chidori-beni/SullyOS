@@ -27,6 +27,7 @@
 
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, RealtimeConfig, GroupProfile } from '../types';
 import { DB } from './db';
+import { getImageGenConfig, isImageGenReady, runImageGeneration } from './novelaiImage';
 import { ChatParser, type FrozenMusicSong } from './chatParser';
 import { resolveCharTimeZone } from './timezone';
 import { NotionManager, FeishuManager, XhsNote } from './realtimeContext';
@@ -732,6 +733,38 @@ export async function applyAssistantPostProcessing(
             setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
         };
 
+        /**
+         * 角色生图：把 [[SEND_IMAGE: 提示词]] 变成一张真的图。
+         *
+         * **不等画完**。先落一条空的 image 消息（气泡当场显示「正在画」），把生成扔到
+         * 后台，画完再回填。一张图十几到几十秒，卡在这个循环里会把角色后面几句话一起拖住——
+         * 借鉴自另一个开源小手机 float 的 pending / failed / generated 三态做法。
+         *
+         * 没配置就退回一条文字，不发请求、不花额度。
+         */
+        const sendImageBubble = async (prompt: string): Promise<void> => {
+            const cleanPrompt = (prompt || '').trim();
+            if (!cleanPrompt) return;
+
+            if (!isImageGenReady(getImageGenConfig())) {
+                await persistMessage({ charId: char.id, role: 'assistant', type: 'text',
+                    content: `[想发一张图：${cleanPrompt}]`, metadata: takeMeta(mcdInheritMeta) } as any);
+                setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                return;
+            }
+
+            // content 先留空：MessageItem 见到空 content + imageGen.status 会渲染「正在画」。
+            const messageId = await persistMessage({
+                charId: char.id, role: 'assistant', type: 'image', content: '',
+                metadata: { ...(takeMeta(mcdInheritMeta) || {}), imageGen: { status: 'pending', prompt: cleanPrompt } },
+            } as any);
+            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+
+            // 后台跑。runImageGeneration 自己吞掉所有异常并把结果写回库 + 广播，
+            // 这里不 await，也不需要 catch。
+            void runImageGeneration(messageId, cleanPrompt);
+        };
+
         // 把 [[QUOTE: ...]] / [回复 "..."] 的引用文本解析成"被回复的那条用户消息"。
         // 开了翻译的外语/粤语角色，引用文本往往是外语、或被 <原文>/<译文> 翻译标签包裹，
         // 跟库里中文用户消息逐字 includes 匹配会失败 → 之前表现为丢引用 / 空引用气泡。
@@ -785,6 +818,10 @@ export async function applyAssistantPostProcessing(
                 for (const part of ChatParser.splitResponse(segment)) {
                     if (part.type === 'emoji') {
                         await sendEmojiBubble(part.content);
+                        continue;
+                    }
+                    if (part.type === 'image') {
+                        await sendImageBubble(part.content);
                         continue;
                     }
                     const cleaned = ChatParser.sanitize(part.content);
@@ -843,6 +880,8 @@ export async function applyAssistantPostProcessing(
 
                 if (part.type === 'emoji') {
                     await sendEmojiBubble(part.content);
+                } else if (part.type === 'image') {
+                    await sendImageBubble(part.content);
                 } else {
                     const rawBlocks = part.content.split(/^\s*---\s*$/m).filter(b => b.trim());
                     const allChunks: string[] = [];

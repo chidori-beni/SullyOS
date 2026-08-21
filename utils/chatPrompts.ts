@@ -1,4 +1,5 @@
 
+import { getImageGenConfig, isImageGenReady } from './novelaiImage';
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, DailySchedule } from '../types';
 import { ContextBuilder } from './context';
 import { DB } from './db';
@@ -604,6 +605,18 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
         }
 
         const emojiContextStr = ChatPrompts.buildEmojiContext(emojis, categories);
+        // 生图：只有用户真的配好了 NovelAI 才把这条命令告诉角色。没配就一个字都不提——
+        // 否则角色会写出永远变不成图的 [[SEND_IMAGE:]]，用户看到的是一堆降级文字。
+        const imageGenGuide = isImageGenReady(getImageGenConfig())
+            ? `   - **发图（自拍 / 你眼前的东西 / 你画的东西）**: 用命令 \`[[SEND_IMAGE: 英文提示词]]\`。
+     · 提示词用**英文 danbooru 风格标签**，逗号分隔，由粗到细：主体 → 外貌 → 衣着 → 动作表情 → 环境 → 构图。
+     · **画你自己**时，务必把你自己的外貌特征写全（发色、瞳色、发型、标志性配饰），否则画出来不是你。
+     · **画物件 / 风景**（食物、街景、你手上的东西）时，**绝对不要**写 1girl / 1boy 之类的人物标签，
+       否则会画成一张人像——写 \`no humans\` 更保险。
+     · 画质词不用写，系统会自动补。
+     · 一条回复里最多发 **1 张**；生图要花钱也要等，别当表情包刷。
+     · 只在真的"该有一张图"的时候用（ta 要求看、你主动想给 ta 看），平时正常聊天不要发。`
+            : '';
         const searchEnabled = !!(realtimeConfig?.newsEnabled && realtimeConfig?.newsApiKey);
         const notionEnabled = !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionDatabaseId);
         const notionNotesEnabled = !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionNotesDatabaseId);
@@ -656,6 +669,7 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
    - **发送表情包**: 必须且只能使用命令: \`[[SEND_EMOJI: 表情名称]]\`。命令里只写下面方括号内的表情名称，不要带分类名。
    - **可用表情库 (按分类)**:
      ${emojiContextStr}
+${imageGenGuide}
    - **理解对方发的表情包**: 你看到的 \`[发送了表情包: xx]\` 只是图的名字。表情包是从有限图库里挑的，名字描述的是**图上画了什么**，不是**ta在做什么**，也不是"ta有这层意思"。按这个顺序读：
      ① 先接着上文读情绪——它通常是对刚才话题的一个态度（好笑/无语/心虚/敷衍/emo），比如聊到烦心事后发"喝酒"，读作"烦、想摆烂"，而不是ta喝了酒或想喝酒；
      ② 和上文对不上、也读不出态度的，就当随手斗图/活跃气氛，不要硬找含义，回应图本身的趣味就行；
