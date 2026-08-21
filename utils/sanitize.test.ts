@@ -585,3 +585,37 @@ describe('SEND_EMOJI 全角冒号容错', () => {
     expect(sanitizeForNotification('[[SEND_EMOJI：抱抱]]')).toBe('[表情：抱抱]');
   });
 });
+
+describe('发图指令不能在 worker 里被丢掉', () => {
+  it('独占一行的 [[SEND_SELFIE]] 挂到上一段尾巴，而不是整段消失', () => {
+    const segs = sanitizeIntoSegments(
+      '刚晨跑完冲了把脸，够不够新鲜？\n[[SEND_SELFIE: after morning run]]\n照片发了，拿什么当报酬？',
+    );
+    const allRaw = segs.map(s => s.raw).join('\n');
+    // 指令必须还在（客户端要靠它画图）
+    expect(allRaw).toContain('[[SEND_SELFIE: after morning run]]');
+    // 但不能自己成为一段：那样这条推送的 banner 是空的，iOS 会吊销订阅
+    expect(segs.every(s => s.sanitized.trim().length > 0)).toBe(true);
+    // 顺序：图挂在"够不够新鲜"那一段上，仍在"照片发了"之前
+    const idx = segs.findIndex(s => s.raw.includes('SEND_SELFIE'));
+    expect(segs[idx].raw).toContain('够不够新鲜');
+    expect(segs.slice(idx + 1).some(s => s.raw.includes('照片发了'))).toBe(true);
+  });
+
+  it('[[SEND_IMAGE]] 同样保住', () => {
+    const segs = sanitizeIntoSegments('看这个\n[[SEND_IMAGE: ramen, no humans]]');
+    expect(segs.map(s => s.raw).join('\n')).toContain('[[SEND_IMAGE: ramen, no humans]]');
+    expect(segs.every(s => s.sanitized.trim().length > 0)).toBe(true);
+  });
+
+  it('出现在最前面（前面没有正文段）时顺延给下一段，不丢', () => {
+    const segs = sanitizeIntoSegments('[[SEND_SELFIE: in garage]]\n看我');
+    expect(segs.map(s => s.raw).join('\n')).toContain('[[SEND_SELFIE: in garage]]');
+    expect(segs.every(s => s.sanitized.trim().length > 0)).toBe(true);
+  });
+
+  it('模型现编的未知标签照旧丢掉（这条老规矩不能被我改坏）', () => {
+    const segs = sanitizeIntoSegments('你好\n[[TOTALLY_MADE_UP: 什么东西]]');
+    expect(segs.map(s => s.raw).join('\n')).not.toContain('TOTALLY_MADE_UP');
+  });
+});

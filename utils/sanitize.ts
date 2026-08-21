@@ -82,6 +82,12 @@ const stripBusinessTagsForNotification = (t: string): string =>
  */
 const stripAllDoubleBracketTags = (t: string): string => t.replace(/\[\[[\s\S]*?\]\]/g, '');
 
+/**
+ * 发图指令：这几个标签独占一行时**不能当成"模型现编的未知标签"丢掉**。
+ * 客户端要靠它们才知道该画图（画图只能在客户端做，NovelAI 的 token 只在用户本机）。
+ */
+const MEDIA_TAG_RE = /\[\[SEND_(?:IMAGE|SELFIE)[:：]/i;
+
 /** 引用类: `[[QUOTE|引用]] / [QUOTE|引用] / [回复 "..."] / 模仿历史渲染的 [xx引用了xx「…」…]` */
 const stripQuotes = (t: string): string =>
   t
@@ -600,7 +606,23 @@ export function sanitizeIntoSegments(text: string): Segment[] {
       // 再按客户端口径判一次空：剥光所有 `[[...]]` 后什么都不剩的段（模型现编的未知
       // 标签独占一行），客户端不会落成气泡，这边也就别发横幅——两端判空规则一致，
       // 横幅数才等于气泡数。攒着的引用不消费，会继续顺延到后面真有正文的那一段。
-      if (!stripAllDoubleBracketTags(sanitized).trim()) continue;
+      if (!stripAllDoubleBracketTags(sanitized).trim()) {
+        // 发图指令几乎总是独占一行，会正好撞上这条「剥空即丢」的规则——这正是
+        // 「角色说照片发了，但一张图都没有」的原因：指令在 worker 里就没了，客户端
+        // 从没收到过。
+        //
+        // 但也不能让它自己成为一段：那样这条推送的 banner 是空的，而「发了推送却不弹
+        // 通知」在 iOS 上会被直接吊销订阅（见 amsg2 的送达约定）。
+        //
+        // 所以挂到**上一段的 raw 尾巴**上：推送数不变、banner 照旧非空，客户端
+        // splitResponse 会按出现顺序再拆一次，图仍然落在它该在的位置。
+        // 万一它出现在最前面（没有上一段），就走 pendingQuoteRaw 顺延给下一段。
+        if (MEDIA_TAG_RE.test(rawText)) {
+          if (segments.length > 0) segments[segments.length - 1].raw += `\n${rawText}`;
+          else pendingQuoteRaw += `${rawText}\n`;
+        }
+        continue;
+      }
       segments.push({
         raw: pendingQuoteRaw ? `${pendingQuoteRaw}${rawText}` : rawText,
         sanitized,

@@ -23,7 +23,15 @@ const CF_API = 'https://api.cloudflare.com/client/v4';
 
 /** 官方成品代码。跟代配脚本、手册附录指的是同一份。 */
 const BUNDLE_URL =
-  'https://raw.githubusercontent.com/Tosd0/sullyos-workers/main/amsg/worker.bundle.js';
+    // 指向**自己的** fork，而不是上游 Tosd0/sullyos-workers。
+  //
+  // 原因：这个 fork 的 worker 打了补丁（sanitize.ts 不再丢掉只含发图指令的整行，
+  // 否则开着即时对话时角色永远发不出图）。若仍指向上游，设置页那个「更新 Worker」
+  // 按钮会**静默地把补丁覆盖掉**，而且表现只是「图又不出来了」，极难联想到是它。
+  //
+  // 指向自己的 fork 之后：要么拉到的是带补丁的版本，要么（还没上传时）干脆 404 报错——
+  // 响亮地失败，好过悄悄回退。
+  'https://raw.githubusercontent.com/chidori-beni/sullyos-workers/main/amsg/worker.bundle.js';
 
 /** 上传时用的模块名，同时也是 metadata.main_module，两处必须一致。 */
 const MAIN_MODULE = 'worker.bundle.js';
