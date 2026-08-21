@@ -44,7 +44,12 @@ export const ImageGenSettings: React.FC<Props> = ({ addToast, characters }) => {
     const [presetName, setPresetName] = useState('');
     const [charId, setCharId] = useState(() => characters[0]?.id || '');
 
-    const patch = (next: Partial<ImageGenConfig>) => setCfg(prev => ({ ...prev, ...next }));
+    // 改动任何一个「属于预设」的字段，就把当前预设标记清掉——
+    // 否则界面会一直高亮着某套预设，而实际参数早已不是那一套了。
+    const patch = (next: Partial<ImageGenConfig>) => setCfg(prev => {
+        const touchedPresetField = PRESET_FIELDS.some(k => k in next);
+        return { ...prev, ...next, ...(touchedPresetField ? { activePresetId: '' } : {}) };
+    });
     const save = (next: Partial<ImageGenConfig> = {}) => {
         const merged = setImageGenConfig({ ...cfg, ...next });
         setCfg(merged);
@@ -92,10 +97,12 @@ export const ImageGenSettings: React.FC<Props> = ({ addToast, characters }) => {
     const applyPreset = (id: string) => {
         const p = cfg.presets.find(x => x.id === id);
         if (!p) return;
-        const next: any = {};
+        const next: any = { activePresetId: p.id };
         PRESET_FIELDS.forEach(k => { next[k] = (p as any)[k]; });
         save(next);
-        addToast(`已套用「${p.name}」`, 'success');
+        // 报一下画质词，让人一眼看出「确实换过来了」——这是最能说明差别的一栏。
+        const tail = p.qualityTags.trim();
+        addToast(`已套用「${p.name}」${tail ? '：' + tail.slice(0, 24) + (tail.length > 24 ? '…' : '') : '（画质词为空）'}`, 'success');
     };
     const savePreset = () => {
         const name = presetName.trim();
@@ -104,7 +111,7 @@ export const ImageGenSettings: React.FC<Props> = ({ addToast, characters }) => {
         PRESET_FIELDS.forEach(k => { (item as any)[k] = (cfg as any)[k]; });
         // 同名就覆盖，省得存出一堆「新预设 1/2/3」
         const rest = cfg.presets.filter(p => p.name !== name);
-        save({ presets: [...rest, item] });
+        save({ presets: [...rest, item], activePresetId: item.id });
         setPresetName('');
         addToast(`预设「${name}」已保存`, 'success');
     };
@@ -173,9 +180,18 @@ export const ImageGenSettings: React.FC<Props> = ({ addToast, characters }) => {
                         {cfg.presets.map(p => (
                             <div key={p.id} className="flex items-center gap-2">
                                 <button type="button" onClick={() => applyPreset(p.id)}
-                                    className="flex-1 px-3 py-2 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600 text-left active:scale-95 transition-transform">
-                                    {p.name}
+                                    className={`flex-1 px-3 py-2 rounded-xl text-xs font-bold text-left active:scale-95 transition-transform border ${
+                                        cfg.activePresetId === p.id
+                                            ? 'bg-violet-100 border-violet-300 text-violet-700'
+                                            : 'bg-white border-slate-200 text-slate-600'
+                                    }`}>
+                                    {cfg.activePresetId === p.id ? '● ' : ''}{p.name}
                                     <span className="ml-2 text-[10px] font-normal text-slate-400">{p.size} · {p.steps}步</span>
+                                    {p.qualityTags.trim() && (
+                                        <span className="block mt-0.5 text-[10px] font-normal text-slate-400 font-mono truncate">
+                                            {p.qualityTags.trim()}
+                                        </span>
+                                    )}
                                 </button>
                                 <button type="button" onClick={() => deletePreset(p.id)}
                                     className="px-2.5 py-2 rounded-xl text-[10px] font-bold text-rose-400 bg-white border border-slate-200">删</button>
@@ -259,10 +275,23 @@ export const ImageGenSettings: React.FC<Props> = ({ addToast, characters }) => {
             </label>
 
             <div>
-                <label className={label}>我的画质词（每张追加）</label>
-                <input className={field} value={cfg.qualityTags} autoComplete="off"
-                    placeholder="留空即可，上面那个开关已经补了官方的"
+                <label className={label}>
+                    画质词 / 画师串（每张追加）
+                    {cfg.activePresetId
+                        ? <span className="ml-2 normal-case tracking-normal text-violet-500">
+                            来自预设「{cfg.presets.find(p => p.id === cfg.activePresetId)?.name}」
+                          </span>
+                        : cfg.presets.length > 0
+                            ? <span className="ml-2 normal-case tracking-normal text-slate-400">手动改动中</span>
+                            : null}
+                </label>
+                <textarea className={`${field} min-h-[4rem] resize-y font-mono text-[11px]`}
+                    value={cfg.qualityTags}
+                    placeholder="artist:xxx, artist:yyy, best quality …（论坛上抄来的画师串就贴这里）"
                     onChange={e => patch({ qualityTags: e.target.value })} />
+                <p className={hint}>
+                    换预设时这一栏会跟着变，看它就知道换没换成功。
+                </p>
             </div>
 
             <div>

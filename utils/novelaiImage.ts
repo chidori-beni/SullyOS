@@ -18,6 +18,7 @@
 
 import { DB } from './db';
 import { processImage } from './file';
+import { VISION_DESCRIPTION_METADATA_KEY } from './visionApi';
 
 const LS_KEY = 'sullyos_imagegen_config_v1';
 
@@ -115,6 +116,8 @@ export interface ImageGenConfig {
     characterAppearance: Record<string, string>;
     /** 存好的画风预设 */
     presets: ImageGenPreset[];
+    /** 当前套用的是哪一套；手改过任何一个预设字段就清空，界面据此显示「已改动」。 */
+    activePresetId: string;
     /** 高级：一段 JSON，合并进 parameters，覆盖上面算出来的一切。留空即不覆盖。 */
     extraParams: string;
 }
@@ -138,6 +141,7 @@ export const DEFAULT_IMAGE_GEN_CONFIG: ImageGenConfig = {
     storeQuality: 0.9,
     characterAppearance: {},
     presets: [],
+    activePresetId: '',
     extraParams: '',
 };
 
@@ -368,6 +372,15 @@ export async function runImageGeneration(messageId: number, prompt: string): Pro
         await DB.updateMessageMetadata(messageId, (prev: any) => ({
             ...(prev || {}),
             imageGen: { status: 'generated', prompt } as ImageGenMeta,
+            // 顺手把「这张图画的是什么」写进识图缓存。
+            //
+            // 不然下一轮 materializeVisionDescriptions 会把这张图发给识图 API 去认——
+            // 又慢、又花钱、还可能因为图太大直接失败（表现为「识图 API 没有返回图片描述」，
+            // 整轮回复跟着挂掉）。而这张图本来就是我们按提示词画的，**我们比任何识图模型都更
+            // 清楚它画了什么**，没有任何理由再去问一遍。
+            [VISION_DESCRIPTION_METADATA_KEY]: `（这是一张刚生成的图，画面内容：${prompt}）`,
+            visionRecognizedAt: Date.now(),
+            visionModel: 'novelai-prompt',
         }));
     } catch (e: any) {
         const error = e?.message || String(e);
