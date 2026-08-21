@@ -2416,7 +2416,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                           timestamp: baseTimestamp + offset,
                           metadata: { imageGen: { status: 'pending', prompt } },
                       });
-                      void runImageGeneration(messageId, prompt);
+                      void runImageGeneration(messageId, prompt, charId);
                   };
 
                   if (hasTranslationTags) {

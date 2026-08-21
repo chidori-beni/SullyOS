@@ -3316,7 +3316,7 @@ const MessageItem = React.memo(({
                         )}
                         <button
                             type="button"
-                            onClick={() => { void retryImageGeneration(m.id, imageGenMeta.prompt); }}
+                            onClick={() => { void retryImageGeneration(m.id, imageGenMeta.prompt, m.charId); }}
                             className="text-[10px] font-bold text-violet-500 active:scale-95 transition-transform"
                         >
                             {imageGenMeta.status === 'pending' ? '卡住了？重画一张' : '重画一张'}

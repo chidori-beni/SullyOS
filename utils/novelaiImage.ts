@@ -335,6 +335,34 @@ export async function generateImageDataUrl(prompt: string, cfg: ImageGenConfig):
 //  和 failed 都给重试入口，而不是只有 failed 才给。
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * 把角色画的图也存进「相册」。
+ *
+ * 上游只在**用户自己发图**那条路上调 saveGalleryImage（见 apps/Chat.tsx 的 handleSendText），
+ * 所以角色发的图从来进不了相册 —— 表现为「生图成功了，但收藏不了、相册里找不到」。
+ * 既然生图是我加的功能，这一半也该我补齐。
+ *
+ * best-effort：相册写失败不该影响图片本身已经落进聊天记录这件事。
+ */
+async function saveToGallery(charId: string | undefined, dataUrl: string, prompt: string): Promise<void> {
+    if (!charId) return;
+    try {
+        const now = new Date();
+        const localDateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        await DB.saveGalleryImage({
+            id: `img-gen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            charId,
+            url: dataUrl,
+            timestamp: Date.now(),
+            savedDate: localDateKey,
+            // 相册里点开能看到当初那句提示词，比一张没头没脑的图有用得多。
+            chatContext: [`${prompt}`],
+        });
+    } catch (e) {
+        console.error('[生图] 存进相册失败（图本身已经在聊天记录里了）：', e);
+    }
+}
+
 /** 图片消息回填后广播，聊天页据此重新从库里读一次。 */
 export const IMAGE_GEN_UPDATED_EVENT = 'sullyos-imagegen-updated';
 
@@ -364,11 +392,12 @@ export function readImageGenMeta(metadata: any): ImageGenMeta | null {
  * 真正去画，然后把结果回填到那条已经落库的图片消息上。
  * **不抛异常**——失败也是一种要写回库、要让用户看见的结果，不是调用方需要接的错。
  */
-export async function runImageGeneration(messageId: number, prompt: string): Promise<void> {
+export async function runImageGeneration(messageId: number, prompt: string, charId?: string): Promise<void> {
     const cfg = getImageGenConfig();
     try {
         const dataUrl = await generateImageDataUrl(prompt, cfg);
         await DB.updateMessage(messageId, dataUrl);
+        await saveToGallery(charId, dataUrl, prompt);
         await DB.updateMessageMetadata(messageId, (prev: any) => ({
             ...(prev || {}),
             imageGen: { status: 'generated', prompt } as ImageGenMeta,
@@ -399,7 +428,7 @@ export async function runImageGeneration(messageId: number, prompt: string): Pro
  * 提示词由调用方（气泡）从 metadata 里读出来传进来——渲染层本来就拿着整条消息，
  * 为此在 db.ts 里加一个「按 id 取单条」反而是多一处要维护的读路径。
  */
-export async function retryImageGeneration(messageId: number, prompt: string): Promise<void> {
+export async function retryImageGeneration(messageId: number, prompt: string, charId?: string): Promise<void> {
     const clean = (prompt || '').trim();
     if (!clean) return;
 
@@ -408,5 +437,5 @@ export async function retryImageGeneration(messageId: number, prompt: string): P
         imageGen: { status: 'pending', prompt: clean } as ImageGenMeta,
     }));
     announceImageGenUpdated();
-    await runImageGeneration(messageId, clean);
+    await runImageGeneration(messageId, clean, charId);
 }

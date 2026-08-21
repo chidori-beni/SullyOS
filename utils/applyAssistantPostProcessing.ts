@@ -764,7 +764,7 @@ export async function applyAssistantPostProcessing(
 
             // 后台跑。runImageGeneration 自己吞掉所有异常并把结果写回库 + 广播，
             // 这里不 await，也不需要 catch。
-            void runImageGeneration(messageId, cleanPrompt);
+            void runImageGeneration(messageId, cleanPrompt, char.id);
         };
 
         // 把 [[QUOTE: ...]] / [回复 "..."] 的引用文本解析成"被回复的那条用户消息"。
