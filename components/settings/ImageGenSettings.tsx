@@ -117,6 +117,17 @@ export const ImageGenSettings: React.FC<Props> = ({ addToast, characters }) => {
     };
     const deletePreset = (id: string) => save({ presets: cfg.presets.filter(p => p.id !== id) });
 
+    /** 把现在这套参数写回当前选中的那个预设——调好了不用重新起名再存一遍。 */
+    const overwriteActivePreset = () => {
+        const target = cfg.presets.find(p => p.id === cfg.activePresetId);
+        if (!target) { addToast('先点一下要覆盖的那个预设', 'error'); return; }
+        const updated: ImageGenPreset = { id: target.id, name: target.name } as ImageGenPreset;
+        PRESET_FIELDS.forEach(k => { (updated as any)[k] = (cfg as any)[k]; });
+        save({ presets: cfg.presets.map(p => (p.id === target.id ? updated : p)), activePresetId: target.id });
+        addToast(`「${target.name}」已更新为当前参数`, 'success');
+    };
+
+    const activePreset = cfg.presets.find(p => p.id === cfg.activePresetId);
     const { width, height } = parseSize(cfg.size);
     const sigma = calcSkipCfgAboveSigma(width, height, cfg.model);
 
@@ -178,15 +189,17 @@ export const ImageGenSettings: React.FC<Props> = ({ addToast, characters }) => {
                 {cfg.presets.length > 0 && (
                     <div className="space-y-1.5">
                         {cfg.presets.map(p => (
-                            <div key={p.id} className="flex items-center gap-2">
+                            <div key={p.id} className="flex items-center gap-2 min-w-0">
                                 <button type="button" onClick={() => applyPreset(p.id)}
-                                    className={`flex-1 px-3 py-2 rounded-xl text-xs font-bold text-left active:scale-95 transition-transform border ${
+                                    className={`flex-1 min-w-0 overflow-hidden px-3 py-2 rounded-xl text-xs font-bold text-left active:scale-95 transition-transform border ${
                                         cfg.activePresetId === p.id
                                             ? 'bg-violet-100 border-violet-300 text-violet-700'
                                             : 'bg-white border-slate-200 text-slate-600'
                                     }`}>
-                                    {cfg.activePresetId === p.id ? '● ' : ''}{p.name}
-                                    <span className="ml-2 text-[10px] font-normal text-slate-400">{p.size} · {p.steps}步</span>
+                                    <span className="block truncate">
+                                        {cfg.activePresetId === p.id ? '● ' : ''}{p.name}
+                                        <span className="ml-2 text-[10px] font-normal text-slate-400">{p.size} · {p.steps}步</span>
+                                    </span>
                                     {p.qualityTags.trim() && (
                                         <span className="block mt-0.5 text-[10px] font-normal text-slate-400 font-mono truncate">
                                             {p.qualityTags.trim()}
@@ -199,11 +212,17 @@ export const ImageGenSettings: React.FC<Props> = ({ addToast, characters }) => {
                         ))}
                     </div>
                 )}
-                <div className="flex gap-2">
-                    <input className={field} value={presetName} placeholder="给当前这套起个名字"
+                {activePreset && (
+                    <button type="button" onClick={overwriteActivePreset}
+                        className="w-full px-3 py-2 rounded-xl text-xs font-bold bg-violet-500 text-white active:scale-95 transition-transform">
+                        用当前参数覆盖「{activePreset.name}」
+                    </button>
+                )}
+                <div className="flex gap-2 min-w-0">
+                    <input className={field} value={presetName} placeholder="另存为新预设，起个名字"
                         onChange={e => setPresetName(e.target.value)} />
                     <button type="button" onClick={savePreset}
-                        className="shrink-0 px-3 py-2 rounded-xl text-xs font-bold bg-slate-200 text-slate-600 active:scale-95 transition-transform">存为预设</button>
+                        className="shrink-0 px-3 py-2 rounded-xl text-xs font-bold bg-slate-200 text-slate-600 active:scale-95 transition-transform">另存为</button>
                 </div>
             </div>
 

@@ -121,6 +121,32 @@ export async function materializeVisionDescriptions(
       continue;
     }
 
+    // 角色自己生成的图（metadata.imageGen.prompt 就是当初那句提示词）永远不送识图。
+    //
+    // 我们比任何识图模型都清楚它画了什么，再问一遍是白花钱、白等一次往返；而且生成图
+    // 往往是原尺寸的大图，识图模型很可能直接拒掉 —— 那会让**整轮回复挂掉**，表现为
+    // 「回复处理失败: 识图 API 没有返回图片描述」。
+    //
+    // 放在 cached 检查之后、真正调用之前：这样连「装新版之前就已经生成、身上没写描述」
+    // 的老图也能就地自愈，不用用户回去手动删消息。
+    const genPrompt = (message.metadata as any)?.imageGen?.prompt;
+    if (typeof genPrompt === 'string' && genPrompt.trim()) {
+      const description = `（这是一张刚生成的图，画面内容：${genPrompt.trim()}）`;
+      descriptionByImage.set(message.content, description);
+      const metadata = {
+        ...(message.metadata || {}),
+        [VISION_DESCRIPTION_METADATA_KEY]: description,
+        visionRecognizedAt: Date.now(),
+        visionModel: 'novelai-prompt',
+      };
+      // 写回只是省下次的事，**不能因为它失败就把整轮回复带走**——这条路存在的全部意义
+      // 就是避免生成图搞挂聊天，自己再挂一次就荒唐了。（消息被删、库写不进去都可能。）
+      await DB.updateMessageMetadata(message.id, prev => ({ ...(prev || {}), ...metadata }))
+        .catch(() => { /* 缓存写不进去就算了，这轮照常用上面算好的描述 */ });
+      prepared.push({ ...message, metadata });
+      continue;
+    }
+
     const imageUrl = typeof message.content === 'string' ? message.content : '';
     // 纯文字备份会保留 image 消息但移除原图数据；这种历史沿用“图片已不可用”占位，
     // 不能因为新开了识图 API 就让整轮聊天失败。
