@@ -250,11 +250,11 @@ describe('useChatAI 的分流接缝', () => {
     expect(chatAiSrc).toMatch(/const fireLocalEmotionEval = \(emotionEvalEnabled && !cloudGenRoute/);
   });
 
-  it('不在这条路上开活跃会话租约（生成不在本机跑，没人需要它举手）', () => {
-    // 租约那句排在分支的 return 之后，走这条路根本到不了。
-    const leaseAt = chatAiSrc.indexOf('startAmsgChatPresence(char.id');
-    expect(leaseAt).toBeGreaterThan(chatAiSrc.indexOf(INSTANT_CHAT_BRANCH_HEAD));
-    expect(branchSrc()).not.toContain('startAmsgChatPresence');
+  it('上云前写好前台租约，并持续到收到回复后再停止', () => {
+    const branch = branchSrc();
+    expect(branch).toContain('await startAmsgChatPresence(char.id');
+    expect(chatAiSrc).toContain('if (!instantChatAccepted) stopAmsgChatPresence(char.id)');
+    expect(read('../utils/activeMsgRuntime.ts')).toContain('stopAmsgChatPresence(message.charId)');
   });
 });
 

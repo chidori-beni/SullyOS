@@ -685,20 +685,20 @@ const writeChatPresence = (charId: string, lastUserMessageAt: number | null) => 
     lastUserMessageAt,
   };
   // 写入失败只 warn：心跳故障不能打断正常聊天，下一次 interval 继续尝试；远端 45s TTL 兜底。
-  ActiveMsgClient.syncChatPresence(charId, presence).catch((error) => {
+  return ActiveMsgClient.syncChatPresence(charId, presence).catch((error) => {
     console.warn(`${HEADER} 活跃会话租约写入失败（45s TTL 自然失效）`, error);
   });
 };
 
 /** 一轮真实用户消息进入生成流程时启动租约：立即写一次，之后每 15s 续租。 */
 export const startAmsgChatPresence = (charId: string, lastUserMessageAt: number | null) => {
-  writeChatPresence(charId, lastUserMessageAt);
+  const firstWrite = writeChatPresence(charId, lastUserMessageAt);
 
   const existing = chatPresenceLeases.get(charId);
   if (existing) {
     // 已有 timer：只刷新本轮最新的 lastUserMessageAt，复用同一个心跳。
     existing.lastUserMessageAt = lastUserMessageAt;
-    return;
+    return firstWrite;
   }
 
   const timer = setInterval(() => {
@@ -709,6 +709,7 @@ export const startAmsgChatPresence = (charId: string, lastUserMessageAt: number 
     writeChatPresence(charId, lease.lastUserMessageAt);
   }, CHAT_PRESENCE_HEARTBEAT_MS);
   chatPresenceLeases.set(charId, { timer, lastUserMessageAt });
+  return firstWrite;
 };
 
 // 前后台切换要立即改租约，不能只等 45s TTL：否则用户刚退到后台、回复恰好生成时，

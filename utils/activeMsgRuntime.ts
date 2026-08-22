@@ -31,7 +31,7 @@ import {
 } from './amsgInstantChat';
 import { dispatchAmsgResult } from './amsgResults';
 import { reportSlowFlush, startFlushTimer } from './slowFlushProbe';
-import { flushAmsgState } from './amsgStateSync';
+import { flushAmsgState, stopAmsgChatPresence } from './amsgStateSync';
 import { describeInstantChatFailure, pruneStaleTasks, type RemoteTaskLastError } from './amsg2Tasks';
 // 线协议常量的唯一出处是 shared（amsg-sw 只是 re-export 同一份）。
 import { MULTIPART_FAILURE_REASON } from '@rei-standard/amsg-shared';
@@ -410,6 +410,7 @@ export const handleInstantErrorPushMessage = async (data: unknown): Promise<void
     ? describeInstantChatFailure({ reason, ...(errorCode ? { errorCode } : {}) })
     : null;
   await failInstantChatPending(charId, taskUuid, described ?? undefined);
+  stopAmsgChatPresence(charId);
 };
 
 /**
@@ -1907,6 +1908,7 @@ const flushInboxToChatImpl = async () => {
         const isLastSegment = !Number.isFinite(segTotal) || segTotal <= 1
           || (Number.isFinite(segIndex) && segIndex >= segTotal);
         if (isLastSegment && clearInstantChatPending(message.charId)) {
+          stopAmsgChatPresence(message.charId);
           scheduleNextInstantChatStatusCheck();
           // 「API 调用记录」里那笔（发出去时记的）在这里补完：用量挂在末条推送上，
           // 而这里正好是认末段的地方。
@@ -2297,6 +2299,7 @@ export const runInstantChatStatusCheck = async (): Promise<void> => {
         `联系不上云端 worker（连续 ${count} 次状态查询失败：${lastError.slice(0, 120)}）。`
         + 'worker 可能已被删除或共享密钥已变，去「设置 → 主动消息 2.0」重新连接并验证'
         + (taskCancelled ? '' : '；云端那条任务也没能取消，它要是自己跑完了，这一轮的回复稍后可能还会送到'));
+      stopAmsgChatPresence(pending.charId);
       continue;
     }
     instantStatusCheckFailures.delete(pending.uuid);
@@ -2323,6 +2326,7 @@ export const runInstantChatStatusCheck = async (): Promise<void> => {
       }
       log.warn('即时对话云端任务已失败', { charId: pending.charId, uuid: pending.uuid, reason });
       await failInstantChatPending(pending.charId, pending.uuid, reason ?? '生成失败（云端没记下原因）');
+      stopAmsgChatPresence(pending.charId);
     } else {
       // 「取不回」的结论 = 行没了 **且账本读到了、里面确实没有这一轮**。账本这一步
       // 没读成（null）的话，结论就建立在一次失败的网络读上——等下一跳再问，
@@ -2337,6 +2341,7 @@ export const runInstantChatStatusCheck = async (): Promise<void> => {
       const reason = await readInstantChatFailReason(pending.charId, pending.uuid);
       log.warn('即时对话云端那行已经没了，回复也取不回', { charId: pending.charId, uuid: pending.uuid, reason });
       await failInstantChatPending(pending.charId, pending.uuid, reason);
+      stopAmsgChatPresence(pending.charId);
     }
   }
   scheduleNextInstantChatStatusCheck();

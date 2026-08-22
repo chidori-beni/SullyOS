@@ -1337,6 +1337,10 @@ export const useChatAI = ({
             // 一台 enabled 的 MCP 服务器，即时对话就永远静默走回本地——设置页亮着
             // 「已开启」、界面毫无异样，正是 instant push 静默分流那个坑的复刻。
             if (instantChatRoute) {
+                // 即时对话也必须维持前台租约：worker 在真正投递前靠它判断“页面还开着，
+                // 只写 outbox、不发 iOS 系统 Push”。受理成功后由 activeMsgRuntime 在收到
+                // 末段或失败结论时停止，不能在 POST 返回 202 时就停。
+                await startAmsgChatPresence(char.id, getLastRealUserMessageAt(contextMsgs));
                 // 作废回执跟着 chat 段上云：检出（collectAmsg2TaskContext，带落台账的副作用）
                 // 在上面已经跑过了，本地路径靠 withAmsg2TaskContext 注入的排程清单和能力
                 // 简介到点由 worker 的 instant timely block 现算现渲，唯独回执云端没有——
@@ -2044,7 +2048,7 @@ export const useChatAI = ({
             setIsTyping(false);
             // 本轮生成结束（成功/失败/中断都经过）→ 停止本地续租；远端靠 45s TTL 自然失效。
             // 未开过租约（instant push / 非 amsg2 角色）时是幂等 no-op。
-            stopAmsgChatPresence(char.id);
+            if (!instantChatAccepted) stopAmsgChatPresence(char.id);
             // 全局横幅熄灭（成功/失败/instant 均经过这里；OSContext 同时借它兜底刷新，
             // 覆盖 catch 里落库的错误系统消息）。
             announceChatGen(CHAT_GEN_EVENTS.replyEnd, { charId: char.id, charName: char.name });
