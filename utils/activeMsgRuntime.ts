@@ -2159,6 +2159,32 @@ export const catchUpMissedPushesManually = async (): Promise<{ written: number; 
 
 let instantChatStatusPollTimer: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * iOS PWA 在前台时偶发丢掉 SW -> window 的 postMessage 唤醒：系统通知已经
+ * 弹出，正文也已经写进共享 IndexedDB inbox，但页面不知道该去消费，最后只能等
+ * 60s 的云端状态点名才补回。
+ *
+ * 这条本地保险丝只在“前台 + 确实有即时对话待收”时每秒消费一次本地 inbox：
+ * - 不调 Worker / LLM，没有网络请求；
+ * - await 上一趟再排下一趟，不会并发堆积；
+ * - 回复落库销掉 pending 后，下一次调度立即停止。
+ */
+export const INSTANT_CHAT_LOCAL_INBOX_CHECK_INTERVAL_MS = 1_000;
+let instantChatLocalInboxTimer: ReturnType<typeof setTimeout> | null = null;
+
+const scheduleLocalInstantChatInboxCheck = () => {
+  if (instantChatLocalInboxTimer != null) {
+    clearTimeout(instantChatLocalInboxTimer);
+    instantChatLocalInboxTimer = null;
+  }
+  if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+  if (listInstantChatPendings().length === 0) return;
+  instantChatLocalInboxTimer = setTimeout(() => {
+    instantChatLocalInboxTimer = null;
+    void flushInboxToChat().finally(() => scheduleLocalInstantChatInboxCheck());
+  }, INSTANT_CHAT_LOCAL_INBOX_CHECK_INTERVAL_MS);
+};
+
 // ─── 状态查询连续失败的判死线 ───
 // 「不按时长宣判」只对**云端还答得上话**的等待成立（pending 是云端亲口说的，等多久都对）。
 // 但 worker 被删（未知路由回 HTML 页）、共享密钥被换（401）这类用户自己动过环境的场景，
@@ -2555,6 +2581,7 @@ export const ActiveMsgRuntime = {
         // 先 await flush 落库 round-1 旁白, 再跑 runner 触发 round-2, 避免 "B+A".
         void (async () => {
           await flushInboxToChat();
+          scheduleLocalInstantChatInboxCheck();
           // 后台期间丢掉的推送去账本上捞回来。**不管有没有在等回复**：定时主动消息
           // 丢了的话，客户端这边没有任何本地状态知道它来过（见 catchUpMissedPushes）。
           // 自带节流，切标签页来回切不会每次都打网络。
@@ -2573,7 +2600,10 @@ export const ActiveMsgRuntime = {
 
     // 受理一轮即时对话之后（useChatAI 那边写记录 + 广播），把点名周期排上。
     if (typeof window !== 'undefined') {
-      window.addEventListener(AMSG_INSTANT_CHAT_PENDING_EVENT, () => scheduleNextInstantChatStatusCheck());
+      window.addEventListener(AMSG_INSTANT_CHAT_PENDING_EVENT, () => {
+        scheduleNextInstantChatStatusCheck();
+        scheduleLocalInstantChatInboxCheck();
+      });
     }
 
     // 订阅自检兜底：后台期间 SW 收到 pushsubscriptionchange 写了标记、而通知丢失
@@ -2592,6 +2622,7 @@ export const ActiveMsgRuntime = {
     // 上次会话发出去、回来前进程就没了的那一轮：指示灯靠 localStorage 记录挂回来，
     // 内容靠云端点名那一步补回来（它自带补收，还顺手把 60s 的点名周期排上）。
     if (listInstantChatPendings().length > 0) {
+      scheduleLocalInstantChatInboxCheck();
       void runInstantChatStatusCheck();
     }
     void drainPendingDiaries(loadRealtimeConfigFromLocalStorage(), (charId) => {
