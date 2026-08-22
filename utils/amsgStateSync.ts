@@ -715,23 +715,34 @@ export const startAmsgChatPresence = (charId: string, lastUserMessageAt: number 
 // 前后台切换要立即改租约，不能只等 45s TTL：否则用户刚退到后台、回复恰好生成时，
 // worker 会误以为页面仍在前台而不发系统通知。hidden 的网络写在 iOS 上仍可能被掐，
 // 所以 worker 侧读取失败会保留通知，TTL 继续做最后一道兜底。
+const markChatPresenceOffline = () => {
+  for (const [charId, lease] of chatPresenceLeases) {
+    ActiveMsgClient.syncChatPresence(charId, {
+      v: 1,
+      charId,
+      activeAt: 0,
+      lastUserMessageAt: lease.lastUserMessageAt,
+    }).catch((error) => {
+      console.warn(`${HEADER} 离开前台标记写入失败（TTL 将自然失效）`, error);
+    });
+  }
+};
+
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
-    for (const [charId, lease] of chatPresenceLeases) {
-      if (document.visibilityState === 'visible') {
+    if (document.visibilityState === 'visible') {
+      for (const [charId, lease] of chatPresenceLeases) {
         writeChatPresence(charId, lease.lastUserMessageAt);
-      } else {
-        ActiveMsgClient.syncChatPresence(charId, {
-          v: 1,
-          charId,
-          activeAt: 0,
-          lastUserMessageAt: lease.lastUserMessageAt,
-        }).catch((error) => {
-          console.warn(`${HEADER} 离开前台标记写入失败（TTL 将自然失效）`, error);
-        });
       }
+    } else {
+      markChatPresenceOffline();
     }
   });
+  // pagehide 补一刀：iOS 上「切后台 / 关标签」这类离开，visibilitychange 有时来不及
+  // 或压根不派发，pagehide 更靠得住。两条都只是「尽量早点说一声」——真正的兜底是
+  // 心跳停了之后 CHAT_PRESENCE_PUSH_FRESH_MS 内自动判定为已离开（App 被划掉时
+  // 一行代码都跑不了，只能靠沉默）。重复写同一份不产生副作用。
+  window.addEventListener('pagehide', markChatPresenceOffline);
 }
 
 /** 停止本地续租（不发「离线」写入，远端靠 45s TTL 自然失效）。 */

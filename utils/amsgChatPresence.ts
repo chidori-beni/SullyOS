@@ -13,8 +13,25 @@
  */
 
 export const AMSG_CHAT_PRESENCE_KEY = 'chat_presence';
-export const CHAT_PRESENCE_HEARTBEAT_MS = 15_000;
+export const CHAT_PRESENCE_HEARTBEAT_MS = 5_000;
 export const CHAT_PRESENCE_TTL_MS = 45_000;
+
+/**
+ * 「要不要发 iOS 系统通知」专用的新鲜度窗口，比 CHAT_PRESENCE_TTL_MS 短得多。
+ *
+ * 为什么不能共用 45s 的 TTL：那个 TTL 是给「expire AI 任务」用的，宽一点无所谓——
+ * 判错了最多是少发一条定时问候。但通知这件事判错的方向是**反的**：租约还没过期时
+ * worker 认为「人还在前台」→ 不发 Push。用户按下发送后立刻切后台 / 划掉 App，
+ * 云端回复通常 10~40 秒才到，全落在 45 秒窗口里 —— 结果就是**退到后台反而收不到通知**。
+ *
+ * 而「人已经走了」这个信号本身是不可靠的：iOS 上 App 被划掉时没有任何代码能跑，
+ * 切后台时那次「我走了」的网络写也可能被系统掐断。所以不能指望显式下线信号，
+ * 只能让**沉默本身**快速说明问题：心跳 5 秒一次，超过 12 秒没续上就当人已经离开。
+ *
+ * 12 = 心跳 5s × 2 + 2s 余量：允许丢一拍（网络抖动 / iOS 前台节流定时器），
+ * 连丢两拍就退回系统通知。判错的方向是**多弹一个横幅**，而不是漏掉消息。
+ */
+export const CHAT_PRESENCE_PUSH_FRESH_MS = 12_000;
 
 export interface AmsgChatPresence {
   v: 1;
@@ -36,6 +53,22 @@ export const parseAmsgChatPresence = (raw: string | undefined): AmsgChatPresence
     return null;
   }
 };
+
+/**
+ * 「此刻页面确实开着」——只用于决定要不要发系统通知。
+ *
+ * 与 isFreshChatPresence 的差别只有窗口长短，判定方向一致：拿不准就返回 false，
+ * 让调用方保留系统通知（漏一个横幅 = 用户以为角色没理他；多一个横幅只是小噪音）。
+ */
+export const isForegroundForPush = (
+  value: AmsgChatPresence | null | undefined,
+  charId: string,
+  nowMs: number,
+): boolean => Boolean(
+  value && value.v === 1 && value.charId === charId &&
+  value.activeAt > 0 &&
+  value.activeAt <= nowMs + 10_000 && nowMs - value.activeAt <= CHAT_PRESENCE_PUSH_FRESH_MS,
+);
 
 export const isFreshChatPresence = (
   value: AmsgChatPresence | null | undefined,
