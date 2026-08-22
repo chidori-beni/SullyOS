@@ -5,7 +5,7 @@ import { extractContent, safeFetchJson } from '../utils/safeApi';
 import { minimaxFetch } from '../utils/minimaxEndpoint';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { hashTtsParams, getCachedTts, saveCachedTts } from '../utils/ttsCache';
-import { cleanTextForTts, insertSpeechBreaks, convertHexAudioToBlob, fetchRemoteAudioBlob, VALID_EMOTIONS, stripEmotionTags, VOICE_ACTING_GUIDE, cleanVoiceMarkupForDisplay } from '../utils/minimaxTts';
+import { cleanTextForTts, insertSpeechBreaks, convertHexAudioToBlob, fetchRemoteAudioBlob, VALID_EMOTIONS, normalizeEmotionForApi, stripEmotionTags, VOICE_ACTING_GUIDE, cleanVoiceMarkupForDisplay } from '../utils/minimaxTts';
 import { normalizeVoiceTags } from '../utils/sanitize';
 import { FISH_VOICE_ACTING_GUIDE, synthesizeSpeechFishDetailed, resolveFishAudioApiKey, cleanTextForTtsFish, stripFishMarkupForDisplay } from '../utils/fishAudioTts';
 import { resolveTtsProvider, getTtsProvider, getVoicePromptOverride } from '../utils/ttsProvider';
@@ -1245,7 +1245,9 @@ const CallApp: React.FC = () => {
   const resolveVoiceSettingFields = (emotionOverride?: string) => {
     const vp = selectedChar?.voiceProfile;
     // Per-utterance emotion from <语音 emotion="…"> wins over the static voiceProfile emotion.
-    const emotion = (emotionOverride && VALID_EMOTIONS.has(emotionOverride)) ? emotionOverride : (vp?.emotion || '');
+    const picked = (emotionOverride && VALID_EMOTIONS.has(emotionOverride)) ? emotionOverride : (vp?.emotion || '');
+    // 送 API 前统一归一化：calm/fluent → neutral，非法值 → 不带这个字段（与 minimaxTts 同一套规则）。
+    const emotion = normalizeEmotionForApi(picked);
     return {
       // Clamp speed & pitch to safe human-like ranges
       speed: Math.max(0.75, Math.min(1.4, vp?.speed ?? 1)),

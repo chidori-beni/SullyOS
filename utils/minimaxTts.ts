@@ -16,10 +16,32 @@ export const VALID_INTERJECTION_TAGS = new Set([
   'lip-smacking', 'humming', 'hissing', 'emm',
 ]);
 
-// MiniMax voice_setting.emotion 合法取值（整条一个值）。其余/未知一律丢弃不传。
+// LLM 可以写在 <语音 emotion="…"> 里的取值。其余/未知一律丢弃不传。
+// 注意这不等于 MiniMax 的 API 枚举 —— 'calm' / 'fluent' 是本项目历史上教给模型的说法，
+// MiniMax 那边并不认，送上去等于送了个非法值。发请求前一律过 normalizeEmotionForApi()。
 export const VALID_EMOTIONS = new Set([
-  'happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised', 'calm', 'fluent',
+  'happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised', 'neutral', 'calm', 'fluent',
 ]);
+
+// MiniMax voice_setting.emotion 真正接受的枚举（整条一个值）。
+export const MINIMAX_API_EMOTIONS = new Set([
+  'happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised', 'neutral',
+]);
+
+/**
+ * 把「模型写出来的情绪」翻译成「MiniMax 认的情绪」。
+ * - 枚举内的原样返回；
+ * - calm / fluent 这两个 MiniMax 不认的，归到 neutral（平稳叙述，正是它们的本意）；
+ * - 其余一律返回 undefined = 不带 emotion 字段，让 MiniMax 用自己的默认。
+ * 这一步很关键：以前 calm/fluent 被原样送出去，而真正合法的 neutral 反而被白名单挡掉了。
+ */
+export const normalizeEmotionForApi = (raw?: string | null): string | undefined => {
+  const v = (raw || '').trim().toLowerCase();
+  if (!v) return undefined;
+  if (MINIMAX_API_EMOTIONS.has(v)) return v;
+  if (v === 'calm' || v === 'fluent') return 'neutral';
+  return undefined;
+};
 
 /**
  * 共享的「语音演出规范」——教 LLM 把台词写成能被 MiniMax 自然念出来的对白。
@@ -61,7 +83,7 @@ export const VOICE_ACTING_GUIDE = `### 让它听起来像活人在说话（重�
 （朗读语种不是中文时，上面示例里的中文语气词换成该语言里自然的叹词 / 填充词即可，呼吸和节奏的原理不变。）`;
 
 // [happy]/【angry】… 这类情绪标签是给系统读取/设定 emotion 用的，绝不能被朗读或显示出来。
-const EMOTION_TAG_RE = /[\[【]\s*(?:happy|sad|angry|fearful|disgusted|surprised|calm|fluent)\s*[\]】]/gi;
+const EMOTION_TAG_RE = /[\[【]\s*(?:happy|sad|angry|fearful|disgusted|surprised|neutral|calm|fluent)\s*[\]】]/gi;
 /** 移除文本里所有 [emotion] / 【emotion】 标记（任意位置），避免被朗读或显示。 */
 export const stripEmotionTags = (text: string): string => (text || '').replace(EMOTION_TAG_RE, '');
 
@@ -279,9 +301,11 @@ export const buildTtsExtras = (vp: CharacterProfile['voiceProfile']) => {
  * wins over the character's static voiceProfile.emotion. Invalid values are ignored.
  */
 export const buildVoiceSettings = (vp: CharacterProfile['voiceProfile'], emotionOverride?: string) => {
-  const emotion = (emotionOverride && VALID_EMOTIONS.has(emotionOverride))
+  const picked = (emotionOverride && VALID_EMOTIONS.has(emotionOverride))
     ? emotionOverride
     : (vp?.emotion || '');
+  // 送 API 前统一归一化：calm/fluent → neutral，非法值 → 不带这个字段。
+  const emotion = normalizeEmotionForApi(picked);
   return {
     // Clamp speed to 0.75–1.4 for natural human feel (API allows 0.5–2)
     speed: Math.max(0.75, Math.min(1.4, vp?.speed ?? 1)),

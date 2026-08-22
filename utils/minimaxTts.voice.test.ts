@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stripEmotionTags, cleanTextForTts, parseVoiceOutput, insertSpeechBreaks, cleanVoiceMarkupForDisplay } from './minimaxTts';
+import { stripEmotionTags, cleanTextForTts, parseVoiceOutput, insertSpeechBreaks, cleanVoiceMarkupForDisplay, normalizeEmotionForApi, buildVoiceSettings } from './minimaxTts';
 
 describe('stripEmotionTags', () => {
   it('removes [emotion] / 【emotion】 tags anywhere, leaves prose', () => {
@@ -124,5 +124,46 @@ describe('insertSpeechBreaks', () => {
     expect(out).toMatch(/<#0\.\d+#>/);
     const maxPause = Math.max(...[...out.matchAll(/<#([\d.]+)#>/g)].map(m => parseFloat(m[1])));
     expect(maxPause).toBeLessThanOrEqual(0.6);
+  });
+});
+
+describe('normalizeEmotionForApi — 送 MiniMax 前的情绪归一化', () => {
+  it('MiniMax 枚举内的原样通过', () => {
+    for (const e of ['happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised', 'neutral']) {
+      expect(normalizeEmotionForApi(e)).toBe(e);
+    }
+  });
+
+  it('calm / fluent 归到 neutral（MiniMax 不认这两个词）', () => {
+    expect(normalizeEmotionForApi('calm')).toBe('neutral');
+    expect(normalizeEmotionForApi('fluent')).toBe('neutral');
+  });
+
+  it('大小写和空格容错', () => {
+    expect(normalizeEmotionForApi('  Neutral ')).toBe('neutral');
+    expect(normalizeEmotionForApi('CALM')).toBe('neutral');
+  });
+
+  it('空值 / 未知值 → undefined（不带 emotion 字段）', () => {
+    expect(normalizeEmotionForApi('')).toBeUndefined();
+    expect(normalizeEmotionForApi(undefined)).toBeUndefined();
+    expect(normalizeEmotionForApi(null)).toBeUndefined();
+    expect(normalizeEmotionForApi('excited')).toBeUndefined();
+    expect(normalizeEmotionForApi('痞')).toBeUndefined();
+  });
+
+  it('neutral 现在能被 <语音 emotion="neutral"> 解析出来并送出去', () => {
+    const parsed = parseVoiceOutput('<语音 emotion="neutral">行吧。</语音>');
+    expect(parsed.emotion).toBe('neutral');
+    expect(buildVoiceSettings({ voiceId: 'v' } as any, parsed.emotion).emotion).toBe('neutral');
+  });
+
+  it('buildVoiceSettings 永远不会把 calm/fluent 原样送出去', () => {
+    expect(buildVoiceSettings({ voiceId: 'v', emotion: 'calm' } as any).emotion).toBe('neutral');
+    expect(buildVoiceSettings({ voiceId: 'v' } as any, 'fluent').emotion).toBe('neutral');
+  });
+
+  it('没有情绪时不带 emotion 字段', () => {
+    expect(buildVoiceSettings({ voiceId: 'v' } as any)).not.toHaveProperty('emotion');
   });
 });
