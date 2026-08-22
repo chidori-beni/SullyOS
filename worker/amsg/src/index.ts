@@ -419,6 +419,8 @@ interface FireStash {
   sceneSong: { id?: number; name: string; artists: string } | null;
   /** 这条任务是不是即时对话（用户刚发完消息在等回复）；决定要不要写 outbox。 */
   instant: boolean;
+  /** 到真正投递前重读一次前台租约；不能用 fire 开场快照，生成期间用户可能已退到后台。 */
+  readFreshChatPresence: () => Promise<boolean>;
   /**
    * 这一轮的情绪评估（副 API）。onBeforeFire 起跑、onLLMOutput 收尾时 await，
    * 结论挂上最后一条 push。没配评估 / 不是即时对话时是 null。
@@ -1833,6 +1835,13 @@ export const amsgHooks = {
       // （resolveFireSceneSong 与 renderFireSceneBlock 共用判定），冻的必然是正文里那首。
       sceneSong: resolveFireSceneSong(pack.scene, ctx.now.getTime(), tz),
       instant,
+      readFreshChatPresence: async () => {
+        const latest = await ctx.readState(amsgStateNamespace(charId));
+        const value = parseAmsgChatPresence(
+          latest.find((r) => r.key === AMSG_CHAT_PRESENCE_KEY)?.value,
+        );
+        return isFreshChatPresence(value, charId, Date.now());
+      },
       // 下面即时对话那一支起跑（要等请求消息拼完才知道给评估喂什么）。
       emotionEvalPromise: null,
       emotionLatePending: false,
@@ -2313,8 +2322,16 @@ export const amsgHooks = {
       // 更新，所以策略要知道自己是这一轮的第几段。收件兜底不在这里做——库自己会在
       // 每条推送发出去之前记进服务端账本，客户端按账本补收。
       if (stash.instant) {
+        // 页面还在前台时不发送 Web Push（iOS 17 收到后必须展示，不能在 SW 里偷偷吞掉）。
+        // 读取失败一律 fail-open 到正常系统通知，不能为了少一个横幅而漏掉后台提醒。
+        let appIsForeground = false;
+        try {
+          appIsForeground = await stash.readFreshChatPresence();
+        } catch (error) {
+          console.warn('[amsg:foreground-presence] 读取失败，保留系统通知', error);
+        }
         payloads = payloads.map((payload, index) =>
-          applyInstantNotificationPolicy(payload, stash.charId, index === 0));
+          applyInstantNotificationPolicy(payload, stash.charId, index === 0, appIsForeground));
       }
 
       return { ...decision, pushPayloads: payloads };

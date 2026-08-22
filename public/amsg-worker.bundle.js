@@ -8541,7 +8541,7 @@ var buildInstantTimelyBlock = (args) => {
 var NOTIFICATION_ALWAYS = "always";
 var NOTIFICATION_SILENT_WHEN_VISIBLE = "when-visible";
 var instantNotificationTag = (charId) => `amsg-instant-${charId}`;
-var applyInstantNotificationPolicy = (payload, charId, isFirstSegment = false) => {
+var applyInstantNotificationPolicy = (payload, charId, isFirstSegment = false, appIsForeground = false) => {
   const notification = payload.notification;
   const hasNotification = !!notification && typeof notification === "object" && !Array.isArray(notification);
   if (!hasNotification) return payload;
@@ -8552,7 +8552,9 @@ var applyInstantNotificationPolicy = (payload, charId, isFirstSegment = false) =
     ...payload,
     notification: {
       ...notification,
-      show: NOTIFICATION_ALWAYS,
+      // iOS 17 不允许「收到 Web Push 但不展示」。前台时必须从发送端就不发 Push，
+      // 只把正文留在 message_outbox 让页面主动取回；show:false 正是服务端的发送闸。
+      show: appIsForeground ? false : NOTIFICATION_ALWAYS,
       silent: NOTIFICATION_SILENT_WHEN_VISIBLE,
       // 认不出是哪个角色时就不折叠：通知栏里多几条只是吵，两个角色共用一个 tag 会
       // 互相顶掉，那是真的丢消息。renotify 跟着 tag 走——没有 tag 时带上它，
@@ -13257,6 +13259,13 @@ var amsgHooks = {
       // （resolveFireSceneSong 与 renderFireSceneBlock 共用判定），冻的必然是正文里那首。
       sceneSong: resolveFireSceneSong(pack.scene, ctx.now.getTime(), tz),
       instant,
+      readFreshChatPresence: async () => {
+        const latest = await ctx.readState(amsgStateNamespace(charId));
+        const value = parseAmsgChatPresence(
+          latest.find((r) => r.key === AMSG_CHAT_PRESENCE_KEY)?.value
+        );
+        return isFreshChatPresence(value, charId, Date.now());
+      },
       // 下面即时对话那一支起跑（要等请求消息拼完才知道给评估喂什么）。
       emotionEvalPromise: null,
       emotionLatePending: false
@@ -13556,7 +13565,13 @@ var amsgHooks = {
         payloads = budgeted;
       }
       if (stash.instant) {
-        payloads = payloads.map((payload, index) => applyInstantNotificationPolicy(payload, stash.charId, index === 0));
+        let appIsForeground = false;
+        try {
+          appIsForeground = await stash.readFreshChatPresence();
+        } catch (error) {
+          console.warn("[amsg:foreground-presence] \u8BFB\u53D6\u5931\u8D25\uFF0C\u4FDD\u7559\u7CFB\u7EDF\u901A\u77E5", error);
+        }
+        payloads = payloads.map((payload, index) => applyInstantNotificationPolicy(payload, stash.charId, index === 0, appIsForeground));
       }
       return { ...decision, pushPayloads: payloads };
     }

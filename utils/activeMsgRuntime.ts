@@ -2164,8 +2164,8 @@ let instantChatStatusPollTimer: ReturnType<typeof setTimeout> | null = null;
  * 弹出，正文也已经写进共享 IndexedDB inbox，但页面不知道该去消费，最后只能等
  * 60s 的云端状态点名才补回。
  *
- * 这条本地保险丝只在“前台 + 确实有即时对话待收”时每秒消费一次本地 inbox：
- * - 不调 Worker / LLM，没有网络请求；
+ * 这条保险丝只在“前台 + 确实有即时对话待收”时每秒查收一次：
+ * - 不调 LLM；会轻量读取云端 outbox，因为前台模式本来就不会发送 Web Push；
  * - await 上一趟再排下一趟，不会并发堆积；
  * - 回复落库销掉 pending 后，下一次调度立即停止。
  */
@@ -2181,7 +2181,9 @@ const scheduleLocalInstantChatInboxCheck = () => {
   if (listInstantChatPendings().length === 0) return;
   instantChatLocalInboxTimer = setTimeout(() => {
     instantChatLocalInboxTimer = null;
-    void flushInboxToChat().finally(() => scheduleLocalInstantChatInboxCheck());
+    // 前台时 worker 会刻意不发 Web Push（iOS 17 不能安全吞 Push），正文只进云端 outbox。
+    // 因而这里既查本地 SW inbox，也查云端账本；只在确实欠着即时回复时每秒运行。
+    void drainOutboxAndFlush().finally(() => scheduleLocalInstantChatInboxCheck());
   }, INSTANT_CHAT_LOCAL_INBOX_CHECK_INTERVAL_MS);
 };
 

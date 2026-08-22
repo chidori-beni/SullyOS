@@ -153,6 +153,7 @@ export const applyInstantNotificationPolicy = (
   payload: Record<string, unknown>,
   charId?: string | null,
   isFirstSegment = false,
+  appIsForeground = false,
 ): Record<string, unknown> => {
   const notification = payload.notification;
   const hasNotification = !!notification && typeof notification === 'object' && !Array.isArray(notification);
@@ -166,7 +167,9 @@ export const applyInstantNotificationPolicy = (
     ...payload,
     notification: {
       ...(notification as Record<string, unknown>),
-      show: NOTIFICATION_ALWAYS,
+      // iOS 17 不允许「收到 Web Push 但不展示」。前台时必须从发送端就不发 Push，
+      // 只把正文留在 message_outbox 让页面主动取回；show:false 正是服务端的发送闸。
+      show: appIsForeground ? false : NOTIFICATION_ALWAYS,
       silent: NOTIFICATION_SILENT_WHEN_VISIBLE,
       // 认不出是哪个角色时就不折叠：通知栏里多几条只是吵，两个角色共用一个 tag 会
       // 互相顶掉，那是真的丢消息。renotify 跟着 tag 走——没有 tag 时带上它，

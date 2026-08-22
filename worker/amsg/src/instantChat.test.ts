@@ -645,6 +645,15 @@ describe('buildInstantTimelyBlock', () => {
 });
 
 describe('applyInstantNotificationPolicy', () => {
+  it('页面在前台时从发送端关闭 Web Push，正文仍由 outbox 投递', () => {
+    const push = applyInstantNotificationPolicy(
+      { message: 'hi', notification: { title: 't', body: 'b' } },
+      'c1',
+      true,
+      true,
+    );
+    expect(push.notification).toMatchObject({ show: false, tag: 'amsg-instant-c1' });
+  });
   // 订阅是按 userVisibleOnly 建的：推了却不弹，Firefox 按配额退订、iOS 过了宽限期直接
   // 吊销，两边都静默发生。所以即时对话这条必推的路只能标 always，打扰交给折叠 + 静音压。
   // 回到 when-hidden（或任何「有时候不弹」的档）就是把订阅重新押上去，这条守着别退回去。

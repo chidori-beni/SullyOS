@@ -8,7 +8,7 @@ describe('iOS 前台即时对话本地 inbox 保险丝', () => {
     expect(source).toContain('INSTANT_CHAT_LOCAL_INBOX_CHECK_INTERVAL_MS = 1_000');
     expect(source).toContain("document.visibilityState !== 'visible'");
     expect(source).toContain('listInstantChatPendings().length === 0');
-    expect(source).toContain('flushInboxToChat().finally(() => scheduleLocalInstantChatInboxCheck())');
+    expect(source).toContain('drainOutboxAndFlush().finally(() => scheduleLocalInstantChatInboxCheck())');
   });
 
   it('受理新任务时同时排上 60s 云端点名与 1s 本地检查', () => {
