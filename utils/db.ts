@@ -523,6 +523,37 @@ export const DB = {
     });
   },
 
+  /**
+   * 按 id 单取一个角色。
+   *
+   * 为什么值得单独有一个：角色档案里塞着头像、聊天背景（上传时是**原画质**，一张手机
+   * 截图就是几 MB 的 base64）、记忆总结、世界书。`getAllCharacters()` 会把**所有**角色的
+   * 这些东西全反序列化进内存——只为拿其中一个角色的话，这笔开销纯属白花，而且它挡在
+   * 「推送到达 → 第一条气泡上屏」这条路的最前面。
+   */
+  getCharacter: async (id: string): Promise<CharacterProfile | undefined> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_CHARACTERS, 'readonly');
+      const store = transaction.objectStore(STORE_CHARACTERS);
+      const request = store.get(id);
+      request.onsuccess = () => resolve((request.result as CharacterProfile) || undefined);
+      request.onerror = () => reject(request.error);
+    });
+  },
+
+  /** 角色总数。只走索引计数，不反序列化任何记录——用来区分「库空了」和「这个角色没了」。 */
+  countCharacters: async (): Promise<number> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_CHARACTERS, 'readonly');
+      const store = transaction.objectStore(STORE_CHARACTERS);
+      const request = store.count();
+      request.onsuccess = () => resolve(request.result || 0);
+      request.onerror = () => reject(request.error);
+    });
+  },
+
   saveCharacter: async (character: CharacterProfile): Promise<void> => {
     const db = await openDB();
     // 等事务真正提交再 resolve —— 否则调用方 await 后立刻重读 DB 会拿到旧值 (情绪 buff 落库竞态根因).

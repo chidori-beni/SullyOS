@@ -2,6 +2,7 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, CharacterGroup, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile, MemoryPalaceFeatureFlags } from '../types';
 import { DB } from '../utils/db';
+import { SLOW_FLUSH_TIMING_EVENT } from '../utils/slowFlushProbe';
 import type { AvatarTouchRecord } from '../utils/avatarTouch';
 import { clampClaudeTemperature, modelRejectsSamplingParams, stripSamplingParams } from '../utils/samplingParamCompat';
 import { extractImagesInPlace, deepCloneForExport } from '../utils/backupExport';
@@ -2064,6 +2065,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       window.addEventListener(CHAT_GEN_EVENTS.replyArrived, chatReplyArrivedHandler);
       window.addEventListener(CHAT_GEN_EVENTS.replyEnd, chatReplyEndHandler);
       window.addEventListener(CHAT_GEN_EVENTS.emotionFailed, emotionFailHandler);
+      // 上屏耗时探针：一条推送从开始处理到气泡上屏慢过阈值时，activeMsgRuntime 会把
+      // 分段耗时报过来。iOS PWA 上接不了调试器，只能这样把数字摆到用户眼前；不慢就
+      // 一条都不会来（判定在 buildSlowFlushText 里）。
+      const slowFlushHandler = (e: Event) => {
+          const text = ((e as CustomEvent).detail || {}).text;
+          if (typeof text === 'string' && text) addToast(text, 'info');
+      };
+
+      window.addEventListener(SLOW_FLUSH_TIMING_EVENT, slowFlushHandler);
       window.addEventListener('memory-palace-processing', palaceProcessingHandler);
       document.addEventListener('visibilitychange', onVisible);
       return () => {
@@ -2075,6 +2085,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           window.removeEventListener(CHAT_GEN_EVENTS.replyArrived, chatReplyArrivedHandler);
           window.removeEventListener(CHAT_GEN_EVENTS.replyEnd, chatReplyEndHandler);
           window.removeEventListener(CHAT_GEN_EVENTS.emotionFailed, emotionFailHandler);
+          window.removeEventListener(SLOW_FLUSH_TIMING_EVENT, slowFlushHandler);
           window.removeEventListener('memory-palace-processing', palaceProcessingHandler);
           document.removeEventListener('visibilitychange', onVisible);
       };

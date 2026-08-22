@@ -30,6 +30,7 @@ import {
   settleInstantChatExpiredNotices,
 } from './amsgInstantChat';
 import { dispatchAmsgResult } from './amsgResults';
+import { reportSlowFlush, startFlushTimer } from './slowFlushProbe';
 import { flushAmsgState } from './amsgStateSync';
 import { describeInstantChatFailure, pruneStaleTasks, type RemoteTaskLastError } from './amsg2Tasks';
 // 线协议常量的唯一出处是 shared（amsg-sw 只是 re-export 同一份）。
@@ -547,19 +548,29 @@ const processInboxMessageWithPostProcessing = async (
 ): Promise<void> => {
   // 这一趟从云端旁路存储取回来的东西，等整条消息处理成功了再去删（见 OffloadedCleanup）。
   const offloadedCleanups: OffloadedCleanup[] = [];
-  const characters = await DB.getAllCharacters();
-  const char = characters.find(c => c.id === message.charId);
+  // ─── 上屏耗时探针 ───────────────────────────────────────────────
+  // 「推送横幅弹了、聊天界面还在转」这类问题在 iOS PWA 上没法接调试器看，只能让
+  // 它自己报数。慢过 SLOW_FLUSH_TOAST_MS 才吐一条 toast，不慢就完全不出现——
+  // 也就是说这东西修好之后自动闭嘴，不需要再发一版把它摘掉。
+  const { mark: markSegment, segments } = startFlushTimer();
+  // 单取这一个角色，别 getAllCharacters()：角色档案里带头像 / 原画质聊天背景（几 MB
+  // base64）/ 记忆总结 / 世界书，全角色整读一遍就横在「推送到达 → 第一条气泡上屏」
+  // 的最前面，而我们只要其中一个。
+  const char = await DB.getCharacter(message.charId);
   if (!char) {
     // 一个角色都读不到，多半是本地存储本身出了问题，而不是「这个角色被删了」——
     // 按可重试的普通失败处理，别把还在用的任务当孤儿取消掉。
-    if (characters.length === 0) {
+    // 计数走 store.count()，不反序列化记录；而且只有在真的没找到时才走这一步。
+    if ((await DB.countCharacters()) === 0) {
       throw new Error(`character lookup returned empty for charId=${message.charId}`);
     }
     throw new OrphanedCharacterError(message.charId);
   }
+  markSegment('角色');
 
   // 这是不是一次重试？是的话先清掉上次的半成品，并决定副作用要不要再跑一遍。
   const { replayDirectives } = await prepareInboxRetry(message);
+  markSegment('重试检查');
 
   const userProfile: UserProfile = (await DB.getUserProfile())
     ?? { name: 'User', avatar: '', bio: '' };
@@ -572,7 +583,9 @@ const processInboxMessageWithPostProcessing = async (
     await DB.getEmojiCategories(),
     message.charId,
   );
+  markSegment('表情包');
   const contextMsgs = await DB.getRecentMessagesByCharId(message.charId, 200);
+  markSegment('近史');
 
   const apiConfig = loadApiConfigFromLocalStorage();
   const realtimeConfig = loadRealtimeConfigFromLocalStorage();
@@ -767,6 +780,8 @@ const processInboxMessageWithPostProcessing = async (
     // 慢放只会让用户干等, 期间他插的话还会把时间戳倒挂的口子撑开。实时收到的照旧慢放。
     instantRender: !isFreshInboxDelivery(message.receivedAt, Date.now()),
   });
+  markSegment('落库上屏');
+  reportSlowFlush(segments);
 
   // ─── 即时对话（amsg2）的情绪评估结果 ───
   // 云端跟主回复并行跑完的那份，挂在最后一条 push 的 metadata 上（装不下时挪进
@@ -1536,6 +1551,16 @@ const handleInboxStageFailure = async (
   notifyInboxProcessFailed(message, 'swallowed');
 };
 
+/**
+ * 落库前查重要往回翻多少条聊天。
+ *
+ * 原来是 200。但这一读横在「推送到达 → 第一条气泡上屏」的路上，而消息记录里图片的
+ * content 是内联 base64（一张生成图 1~2MB），200 条整读一遍要把十几 MB 反序列化进内存。
+ * 要防的那两种重复（补收先落库 + 原始推送迟到几分钟、worker 重试重跑重叠段）都发生在
+ * 分钟级窗口内，60 条在一对一聊天里远远够用；真漏了也只是多一条重复气泡，不是数据损坏。
+ */
+const DEDUPE_LOOKBACK_MESSAGES = 60;
+
 const flushInboxToChatImpl = async () => {
   const pendingMessages = await ActiveMsgStore.consumeInboxMessages();
   activeMsgTrace('runtime-flush-start', { count: pendingMessages.length });
@@ -1554,7 +1579,7 @@ const flushInboxToChatImpl = async () => {
     if (!messageId) return false;
     let ids = persistedIdsByChar.get(charId);
     if (!ids) {
-      const recent = await DB.getRecentMessagesByCharId(charId, 200);
+      const recent = await DB.getRecentMessagesByCharId(charId, DEDUPE_LOOKBACK_MESSAGES);
       ids = new Set(
         recent
           .map((m: any) => m?.metadata?.activeMsg2?.messageId)
