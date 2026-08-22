@@ -1395,6 +1395,8 @@ interface MessageItemProps {
     voiceLoading?: boolean;
     isVoicePlaying?: boolean;
     onPlayVoice?: (id: number) => void;
+    /** 重新生成这条语音（跳过 TTS 缓存）。不传则语音条上不显示重生成按钮。 */
+    onRerollVoice?: (id: number) => void;
     // Chat layout customization
     avatarShape?: 'circle' | 'rounded' | 'square';
     avatarSize?: 'small' | 'medium' | 'large';
@@ -1453,6 +1455,7 @@ const MessageItem = React.memo(({
     voiceLoading,
     isVoicePlaying,
     onPlayVoice,
+    onRerollVoice,
     avatarShape = 'circle',
     avatarSize = 'medium',
     avatarMode = 'grouped',
@@ -3661,6 +3664,27 @@ const MessageItem = React.memo(({
                                         />
                                     ))}
                                 </div>
+                                {/* 重新生成：调语音提示词 / 音色参数时最常用的按钮。
+                                    跳过 TTS 缓存重新合成一条，正在合成时显示转圈并禁用。 */}
+                                {onRerollVoice && (
+                                    <div
+                                        role="button"
+                                        aria-label="重新生成语音"
+                                        title="重新生成语音"
+                                        className={`sully-voice-bar-reroll shrink-0 w-5 h-5 rounded-lg flex items-center justify-center transition-all ${voiceLoading ? 'opacity-50' : 'active:scale-90'}`}
+                                        style={{ color: vbText || 'rgba(100,116,139,0.7)', backgroundColor: 'rgba(0,0,0,0.04)' }}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            e.preventDefault();
+                                            if (voiceLoading) return;
+                                            onRerollVoice(m.id);
+                                        }}
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className={`w-3 h-3 ${voiceLoading ? 'animate-spin' : ''}`}>
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992V4.356m-4.992 4.992-1.5-1.5a7.5 7.5 0 1 0-1.06 10.607" />
+                                        </svg>
+                                    </div>
+                                )}
                                 {/* Text toggle button — always available so user can read the text */}
                                 <div
                                     className={`sully-voice-bar-toggle shrink-0 ml-0.5 px-1.5 py-0.5 rounded-lg text-[9px] font-medium transition-all ${showVoiceText ? 'ring-1 ring-current/20' : ''}`}

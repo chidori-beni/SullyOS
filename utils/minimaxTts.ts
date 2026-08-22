@@ -319,6 +319,24 @@ export const fetchRemoteAudioBlob = async (sourceUrl: string): Promise<Blob> => 
   return blob;
 };
 
+/**
+ * 合成选项。`forceRegenerate` / `speedJitter` 是「重新生成语音」（重 roll）用的：
+ *
+ * - forceRegenerate: 跳过本地 TTS 缓存直接请求 API。缓存是按「文本 + 全部语音参数」
+ *   哈希的，文本和设置都没变时必然命中，重 roll 就会拿回一模一样的旧音频 ——
+ *   这正是「点了重新生成但听起来没变」的原因。合成结果照常写回缓存（覆盖旧的）。
+ * - speedJitter: 叠加在语速上的极小偏移（调用方用 ±0.02 这个量级）。MiniMax 不提供
+ *   seed，同样的输入偶尔会返回完全一样的音频；这时调用方可以带一个听不出来的语速
+ *   偏移再试一次，逼出另一条。正常合成不要传这个字段。
+ */
+export interface TtsSynthOptions {
+  languageBoost?: string;
+  groupId?: string;
+  emotion?: string;
+  forceRegenerate?: boolean;
+  speedJitter?: number;
+}
+
 export interface TtsResult {
   /** Playable URL for <audio> — a blob: URL when `blob` is present, otherwise a remote MiniMax CDN URL */
   url: string;
@@ -335,7 +353,7 @@ export async function synthesizeSpeechDetailed(
   text: string,
   char: CharacterProfile,
   apiConfig: APIConfig,
-  options?: { languageBoost?: string; groupId?: string; emotion?: string }
+  options?: TtsSynthOptions
 ): Promise<TtsResult> {
   const apiKey = resolveMiniMaxApiKey(apiConfig);
   if (!apiKey) throw new Error('缺少 MiniMax API Key');
@@ -357,6 +375,15 @@ export async function synthesizeSpeechDetailed(
     audio_setting: { format: 'mp3' },
     ...buildTtsExtras(vp),
   };
+  // 重 roll 的语速微调：叠加后仍夹在 buildVoiceSettings 用的同一档安全区间内，
+  // 保证「听不出快慢差别，但请求体不同」——既换到另一条音频，也不改变角色语速手感。
+  if (options?.speedJitter) {
+    payload.voice_setting.speed = Math.max(
+      0.75,
+      Math.min(1.4, (payload.voice_setting.speed ?? 1) + options.speedJitter),
+    );
+  }
+
   // Only set language_boost when an explicit voice language is chosen. Leaving it
   // unset keeps Chinese prosody stable (auto-detect made the tone wobble per line).
   if (options?.languageBoost) payload.language_boost = options.languageBoost;
@@ -374,9 +401,12 @@ export async function synthesizeSpeechDetailed(
     language_boost: payload.language_boost,
     audio_setting: payload.audio_setting,
   });
-  const cached = await getCachedTts(cacheKey);
-  if (cached) {
-    return { url: URL.createObjectURL(cached), blob: cached };
+  // 重 roll 时跳过读缓存（写回照旧），否则拿回来的永远是同一条旧音频。
+  if (!options?.forceRegenerate) {
+    const cached = await getCachedTts(cacheKey);
+    if (cached) {
+      return { url: URL.createObjectURL(cached), blob: cached };
+    }
   }
 
   const headers: Record<string, string> = {
@@ -434,7 +464,7 @@ export async function synthesizeSpeech(
   text: string,
   char: CharacterProfile,
   apiConfig: APIConfig,
-  options?: { languageBoost?: string; groupId?: string; emotion?: string }
+  options?: TtsSynthOptions
 ): Promise<string> {
   const { url } = await synthesizeSpeechDetailed(text, char, apiConfig, options);
   return url;

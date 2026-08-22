@@ -8,13 +8,14 @@ import { CharacterProfile, APIConfig } from '../types';
 import {
   synthesizeSpeechDetailed as minimaxSynthesizeDetailed,
   type TtsResult,
+  type TtsSynthOptions,
 } from './minimaxTts';
 import { synthesizeSpeechFishDetailed } from './fishAudioTts';
 import { resolveTtsProvider } from './ttsProvider';
 
-export type { TtsResult };
+export type { TtsResult, TtsSynthOptions };
 
-type SynthOptions = { languageBoost?: string; groupId?: string; emotion?: string };
+type SynthOptions = TtsSynthOptions;
 
 export async function synthesizeSpeechDetailed(
   text: string,

@@ -50,6 +50,7 @@ import { useChatAI } from '../hooks/useChatAI';
 import { cleanTextForTts, parseVoiceOutput } from '../utils/minimaxTts';
 import { collectVoiceBatchSubtitle, isPoisonedVoiceSubtitle } from '../utils/voiceSubtitle';
 import { synthesizeSpeechDetailed, characterHasVoice } from '../utils/ttsRouter';
+import { blobsAreIdentical, speedJitterForAttempt } from '../utils/blobEquals';
 import { shouldAutoGenerateVoice, shouldAutoPlayGeneratedVoice } from '../utils/voicePlayback';
 import { fetchBlobForShare, shareOrDownloadBlob } from '../utils/shareExport';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
@@ -412,6 +413,9 @@ const Chat: React.FC = () => {
     const voiceFailedRef = useRef<Set<number>>(new Set());
     // Track blob: URLs we created so we can revoke them on character switch / unmount.
     const voiceBlobUrlsRef = useRef<Set<string>>(new Set());
+    // 每条消息重 roll 到第几次「拿回同一段音频」了。只用来给语速微偏移取下一个值
+    // （见 blobEquals.speedJitterForAttempt），换角色时清空。
+    const voiceRerollAttemptRef = useRef<Map<number, number>>(new Map());
     // We warn the user at most once (per character) that MiniMax voice isn't configured —
     // a character can produce many <语音> messages and we don't want to spam toasts.
     const minimaxWarnedRef = useRef(false);
@@ -507,12 +511,22 @@ const Chat: React.FC = () => {
         catch { try { return await attempt(); } catch { return ''; } }
     };
 
-    const handleManualTts = async (msg: Message, autoTriggered = false): Promise<GeneratedVoiceData | null> => {
+    const handleManualTts = async (msg: Message, autoTriggered = false, force = false): Promise<GeneratedVoiceData | null> => {
         if (voiceLoading.has(msg.id)) return null;
+        // 重 roll 时先把旧音频留一份，合成完拿来比对：MiniMax 偶尔会原样返回同一段，
+        // 那种情况下界面显示"重新生成成功"但听感一点没变，得自动再试一次（见下面 force 分支）。
+        let previousBlob: Blob | null = null;
         if (voiceDataMap[msg.id]) {
             if (autoTriggered) return null;
+            if (force) {
+                try {
+                    const stored = await DB.getAssetRaw(voiceAssetKey(msg.id)) as StoredVoice | null;
+                    if (stored?.blob instanceof Blob) previousBlob = stored.blob;
+                } catch { /* 拿不到就不比对，正常往下走 */ }
+            }
             // 手动点「转换语音」= 用户要求重新生成（典型场景：编辑了消息内容后）。
-            // 丢掉这条旧语音再走正常合成；文本没变时会命中共享 TTS 缓存，不会重复请求 API。
+            // 丢掉这条旧语音再走正常合成；文本没变时会命中共享 TTS 缓存，不会重复请求 API
+            //（force=true 的重 roll 会跳过缓存，见 minimaxTts.TtsSynthOptions）。
             discardVoiceForMessages([msg.id]);
         }
 
@@ -607,11 +621,29 @@ const Chat: React.FC = () => {
 
             if (!spokenText || spokenText.length < 2) return null;
 
-            const { url: blobUrl, blob } = await synthesizeSpeechDetailed(spokenText, char, apiConfig, {
+            const synthOptions = {
                 languageBoost: voiceLang || undefined,
                 groupId: apiConfig.minimaxGroupId || undefined,
                 emotion: voiceEmotion,
+            };
+            let { url: blobUrl, blob } = await synthesizeSpeechDetailed(spokenText, char, apiConfig, {
+                ...synthOptions,
+                forceRegenerate: force,
             });
+            // 重 roll 拿回来的还是同一段字节 —— MiniMax 没有 seed，偶尔会这样。
+            // 带一个听不出来的语速微偏移再请求一次，逼出另一条演绎。只重试一次，不无限试。
+            if (force && previousBlob && await blobsAreIdentical(previousBlob, blob)) {
+                const attempt = (voiceRerollAttemptRef.current.get(msg.id) || 0);
+                voiceRerollAttemptRef.current.set(msg.id, attempt + 1);
+                const retry = await synthesizeSpeechDetailed(spokenText, char, apiConfig, {
+                    ...synthOptions,
+                    forceRegenerate: true,
+                    speedJitter: speedJitterForAttempt(attempt),
+                });
+                if (blobUrl.startsWith('blob:')) { try { URL.revokeObjectURL(blobUrl); } catch { /* ignore */ } }
+                blobUrl = retry.url;
+                blob = retry.blob;
+            }
             if (blobUrl.startsWith('blob:')) voiceBlobUrlsRef.current.add(blobUrl);
             // 鱼声的 spokenText 里有 inline cue（[whispering] 等），转文字面板要剥掉再存，别让用户看到标记。
             const displaySpoken = isFishTts ? stripFishMarkupForDisplay(spokenText) : spokenText;
@@ -639,6 +671,31 @@ const Chat: React.FC = () => {
             setVoiceLoading(prev => { const next = new Set(prev); next.delete(msg.id); return next; });
         }
     };
+
+    /**
+     * 语音条上的「重新生成」（重 roll）。
+     * 和「转换语音」的区别只有一个：force=true 会跳过本地 TTS 缓存。
+     * 不跳的话，文本和语音设置都没变时必然命中缓存，点多少次都是同一条旧音频 ——
+     * 这正是调语音提示词时最难受的地方（听不出改动有没有生效）。
+     */
+    const handleRerollVoice = async (msgId: number) => {
+        const msg = messages.find(m => m.id === msgId);
+        if (!msg) return;
+        if (voiceLoading.has(msgId)) return;
+        if (!isMinimaxReady()) {
+            addToast(resolveTtsProvider(apiConfig) === 'fishaudio'
+                ? '该角色未配置鱼声音色或缺少 Fish API Key'
+                : '该角色未配置 MiniMax 语音', 'info');
+            return;
+        }
+        // 之前自动合成失败过的，重 roll 视为用户明确要求重试，把失败标记清掉。
+        voiceFailedRef.current.delete(msgId);
+        const result = await handleManualTts(msg, false, true);
+        if (result) trackEvent('重新生成语音条');
+    };
+    const handleRerollVoiceRef = useRef(handleRerollVoice);
+    handleRerollVoiceRef.current = handleRerollVoice;
+    const onRerollVoiceStable = useCallback((id: number) => { void handleRerollVoiceRef.current(id); }, []);
 
     // 长按语音菜单里的「下载」：移动端优先调系统分享/保存，桌面端才走浏览器下载。
     const handleDownloadVoice = async (msg: Message) => {
@@ -903,6 +960,8 @@ const Chat: React.FC = () => {
         minimaxWarnedRef.current = false;
         // 自动合成的失败记录也跟着换角色清空：这一位的失败不该拦着下一位。
         voiceFailedRef.current.clear();
+        // 重 roll 的抖动计数同理，按角色重来。
+        voiceRerollAttemptRef.current.clear();
         const urls = voiceBlobUrlsRef.current;
         return () => {
             urls.forEach(u => { try { URL.revokeObjectURL(u); } catch { /* ignore */ } });
@@ -3369,7 +3428,7 @@ const Chat: React.FC = () => {
                 chatVoiceLang={char.chatVoiceLang || ''}
                 onSetChatVoiceLang={(lang: string) => updateCharacter(char.id, { chatVoiceLang: lang })}
                 voiceAvailable={characterHasVoice(char, apiConfig)}
-                onGenerateVoice={selectedMessage ? () => handleManualTts(selectedMessage) : undefined}
+                onGenerateVoice={selectedMessage ? () => handleManualTts(selectedMessage, false, !!voiceDataMap[selectedMessage.id]) : undefined}
                 voiceDownloadable={!!(selectedMessage?.id && voiceDataMap[selectedMessage.id])}
                 voiceCollectable={!!(selectedMessage?.id && (voiceDataMap[selectedMessage.id] || parseVoiceOutput(selectedMessage.content || '').hasVoiceTag))}
                 onDownloadVoice={selectedMessage ? () => handleDownloadVoice(selectedMessage) : undefined}
@@ -3661,6 +3720,7 @@ const Chat: React.FC = () => {
                             voiceLoading={voiceLoading.has(m.id)}
                             isVoicePlaying={playingMsgId === m.id}
                             onPlayVoice={onPlayVoiceStable}
+                            onRerollVoice={onRerollVoiceStable}
                             avatarShape={osTheme.chatAvatarShape}
                             avatarSize={osTheme.chatAvatarSize}
                             avatarMode={osTheme.chatAvatarMode}

@@ -16,7 +16,7 @@ import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { hashTtsParams, getCachedTts, saveCachedTts } from './ttsCache';
 import { normalizeApiKey } from './minimaxApiKey';
 import { getProxyWorkerUrl } from './proxyWorker';
-import type { TtsResult } from './minimaxTts';
+import type { TtsResult, TtsSynthOptions } from './minimaxTts';
 import { isStaticWebDeployment } from './staticWebDeployment';
 
 const FISH_PROXY_PATH = '/api/fishaudio/tts';
@@ -353,7 +353,7 @@ export async function synthesizeSpeechFishDetailed(
   text: string,
   char: CharacterProfile,
   apiConfig: APIConfig,
-  options?: { languageBoost?: string; groupId?: string; emotion?: string },
+  options?: TtsSynthOptions,
 ): Promise<TtsResult> {
   const apiKey = resolveFishAudioApiKey(apiConfig);
   if (!apiKey) throw new Error('缺少鱼声 Fish Audio API Key');
@@ -393,7 +393,8 @@ export async function synthesizeSpeechFishDetailed(
   // 语速：角色配了就用角色的；没配则默认 0.9（比 1.0 慢一档）——鱼声默认读得偏赶，
   // 尤其外语长段落容易"一口气念完"，稍微放慢更像真人说话、段落停顿也更听得出。
   const speed = (typeof vp?.speed === 'number' && vp.speed > 0) ? vp.speed : 0.9;
-  payload.prosody = { speed: Math.max(0.5, Math.min(2, speed)) };
+  // speedJitter：重 roll 用的极小语速偏移，见 minimaxTts.TtsSynthOptions 的说明。
+  payload.prosody = { speed: Math.max(0.5, Math.min(2, speed + (options?.speedJitter || 0))) };
 
   const cacheKey = hashTtsParams({
     kind: 'fishaudio-tts',
@@ -403,9 +404,12 @@ export async function synthesizeSpeechFishDetailed(
     format: payload.format,
     prosody: payload.prosody,
   });
-  const cached = await getCachedTts(cacheKey);
-  if (cached) {
-    return { url: URL.createObjectURL(cached), blob: cached };
+  // 重 roll 时跳过读缓存（写回照旧），否则拿回来的永远是同一条旧音频。
+  if (!options?.forceRegenerate) {
+    const cached = await getCachedTts(cacheKey);
+    if (cached) {
+      return { url: URL.createObjectURL(cached), blob: cached };
+    }
   }
 
   const blob = await fishFetchAudio(payload, apiKey, model);
