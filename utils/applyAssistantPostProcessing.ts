@@ -392,6 +392,20 @@ export interface PostProcessMusicHooks {
 
 export interface PostProcessHooks {
     setMessages: (msgs: Message[]) => void;
+    /**
+     * 列表刷新的替代出口。传了它就**不再自己读库**，直接调它。
+     *
+     * 为什么需要：云端推送路径（activeMsgRuntime）的 `setMessages` 只是 fire 一个
+     * 'active-msg-progress' 事件，把传进去的数组**原样丢掉**——真正的刷新由 Chat.tsx
+     * 收到事件后自己 reloadMessages 完成。也就是说那条路上每落一条气泡，
+     * `DB.getRecentMessagesByCharId(char.id, 200)` 读出来的 200 条（图片消息的 content
+     * 是内联 base64，单张 1–2MB）全是白读，读完就扔。一条回复拆 6 个气泡就白读 6 次，
+     * 用户那边的表现是「推送横幅早弹了，聊天界面还在转」。
+     *
+     * 本地聊天路径不传这个，行为完全不变（仍旧全量重读，以便捡到期间被别的路径
+     * 写进库的消息）。
+     */
+    reloadMessages?: () => void;
     addToast: (msg: string, type: 'info' | 'success' | 'error') => void;
     setRecallStatus?: (s: string) => void;
     setSearchStatus?: (s: string) => void;
@@ -526,9 +540,21 @@ export async function applyAssistantPostProcessing(
         messageTimestamp,
     } = ctx;
     const { baseUrl, headers, effectiveApi } = api;
-    // 拟人打字延迟：流式预览已实时展示过气泡时（instantRender）跳过，避免二次慢放
-    const typingPause = (ms: number): Promise<void> =>
-        instantRender ? Promise.resolve() : new Promise(r => setTimeout(r, ms));
+    // 拟人打字延迟：流式预览已实时展示过气泡时（instantRender）跳过，避免二次慢放。
+    //
+    // 本轮的**第一条**气泡另外免除延迟：这一段延迟的意义是「角色正在打字」的节奏感，
+    // 而节奏感是从第一条**出现之后**才开始的。压在第一条前面只会变成「界面空着不动」——
+    // 云端推送路径尤其明显：推送横幅已经把整句话摊在用户眼前了，界面这边还要再等
+    // 0.5~2 秒才冒第一条。第二条起照常慢放，一条条冒出来的观感不变。
+    let firstBubbleShown = false;
+    const typingPause = (ms: number): Promise<void> => {
+        if (instantRender) return Promise.resolve();
+        if (!firstBubbleShown) {
+            firstBubbleShown = true;
+            return Promise.resolve();
+        }
+        return new Promise(r => setTimeout(r, ms));
+    };
     // 统一落库入口：ctx.messageTimestamp（若有）盖到每条消息上，保证同一轮拆出的
     // 正文 / 表情 / 卡片 / 系统提示时间戳一致；没传则维持 DB.saveMessage 默认（写库当刻）。
     // 全函数落库一律走这里，别直接调 DB.saveMessage——漏一处就会出现气泡时间戳互相打架。
@@ -536,6 +562,7 @@ export async function applyAssistantPostProcessing(
         DB.saveMessage(messageTimestamp != null ? { ...msg, timestamp: messageTimestamp } : msg);
     const {
         setMessages,
+        reloadMessages,
         addToast,
         notifyScheduleChangeFailed,
         setRecallStatus = () => {},
@@ -545,6 +572,17 @@ export async function applyAssistantPostProcessing(
         updateTokenUsage = () => {},
         musicHooks,
     } = hooks;
+    // 落一条气泡之后刷新列表的唯一出口。全函数一律走这里，别再散着写
+    // `setMessages(await DB.getRecentMessagesByCharId(...))`——漏一处就等于那条路上
+    // 又白读一次 200 条（含内联 base64 图片）。给了 reloadMessages 的调用方
+    // （云端推送）由它自己去刷，这里一个字节都不读库。
+    const refreshMessageList = async (): Promise<void> => {
+        if (reloadMessages) {
+            reloadMessages();
+            return;
+        }
+        setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+    };
     const {
         xsecTokenCache: xsecTokenCacheRef,
         commentUserIdCache: commentUserIdCacheRef,
@@ -730,7 +768,7 @@ export async function applyAssistantPostProcessing(
                 console.warn('[emoji] 表情库里没有这个名字，落降级文本气泡', { name, charId: char.id });
                 await persistMessage({ charId: char.id, role: 'assistant', type: 'text', content: `[表情：${name}]`, metadata: takeMeta(mcdInheritMeta) } as any);
             }
-            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+            await refreshMessageList();
         };
 
         /**
@@ -751,7 +789,7 @@ export async function applyAssistantPostProcessing(
             if (!isImageGenReady(getImageGenConfig())) {
                 await persistMessage({ charId: char.id, role: 'assistant', type: 'text',
                     content: `[想发一张图：${cleanPrompt}]`, metadata: takeMeta(mcdInheritMeta) } as any);
-                setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                await refreshMessageList();
                 return;
             }
 
@@ -760,7 +798,7 @@ export async function applyAssistantPostProcessing(
                 charId: char.id, role: 'assistant', type: 'image', content: '',
                 metadata: { ...(takeMeta(mcdInheritMeta) || {}), imageGen: { status: 'pending', prompt: cleanPrompt } },
             } as any);
-            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+            await refreshMessageList();
 
             // 后台跑。runImageGeneration 自己吞掉所有异常并把结果写回库 + 广播，
             // 这里不 await，也不需要 catch。
@@ -834,7 +872,7 @@ export async function applyAssistantPostProcessing(
                         const replyData = globalMsgIndex === 0 ? aiReplyTarget : undefined;
                         await typingPause(Math.min(Math.max(chunk.length * 50, 500), 2000));
                         await persistMessage({ charId: char.id, role: 'assistant', type: 'text', content: chunk, replyTo: replyData, metadata: takeMeta(mcdInheritMeta) } as any);
-                        setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                        await refreshMessageList();
                         globalMsgIndex++;
                     }
                 }
@@ -860,7 +898,7 @@ export async function applyAssistantPostProcessing(
                     const replyData = globalMsgIndex === 0 ? aiReplyTarget : undefined;
                     await typingPause(Math.min(Math.max(biContent.length * 30, 400), 2000));
                     await persistMessage({ charId: char.id, role: 'assistant', type: 'text', content: biContent, replyTo: replyData, metadata: takeMeta(mcdInheritMeta) } as any);
-                    setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                    await refreshMessageList();
                     globalMsgIndex++;
                 }
                 for (const name of inlineEmojis) await sendEmojiBubble(name);
@@ -911,7 +949,7 @@ export async function applyAssistantPostProcessing(
                             const cleanChunk = ChatParser.sanitize(chunk);
                             if (cleanChunk) {
                                 await persistMessage({ charId: char.id, role: 'assistant', type: 'text', content: cleanChunk, replyTo: replyData, metadata: takeMeta(mcdInheritMeta) } as any);
-                                setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                                await refreshMessageList();
                                 globalMsgIndex++;
                                 chunkSaved = true;
                             }
@@ -1617,7 +1655,7 @@ export async function applyAssistantPostProcessing(
                 // 跟正文气泡带同一个标记 (mcdInheritMeta): 主动消息重试时靠它认出"这张卡上一趟已经发过了"
                 metadata: { xhsNote: note, ...(mcdInheritMeta || {}) }
             });
-            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+            await refreshMessageList();
         } else {
             // 笔记缓冲为空 / 越界 → 卡片发不出来. instant 路径靠 saveXhsSessionNotes 持久化恢复,
             // 走到这里说明恢复也没命中 (TTL 过期 / 跨 session), 留日志便于排查, 不再静默吞掉.
@@ -1667,7 +1705,7 @@ export async function applyAssistantPostProcessing(
         if (parsedKey) sharedXhsCardKeys.add(parsedKey);
     }
     if (mimickedXhsShares.shares.length > 0) {
-        setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+        await refreshMessageList();
     }
     // [[XHS_POST: 标题 | 内容 | #标签1 #标签2]]
     const xhsPostMatch = aiContent.match(/\[\[XHS_POST:\s*(.+?)\]\]/s);
@@ -2217,7 +2255,7 @@ export async function applyAssistantPostProcessing(
                         ...(mcdInheritMeta || {}),
                     }),
                 } as any);
-                setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                await refreshMessageList();
                 await new Promise(r => setTimeout(r, 300));
             } catch (e) {
                 console.error('[HTML] 落库 html_card 失败', e);
@@ -2237,7 +2275,7 @@ export async function applyAssistantPostProcessing(
     // - 有重生指令但没真正发起二轮 (data 不变: 未配置/无结果/无日志/已激活/二轮异常 等): A 已展示, 跳过避免重复。
     // - 没有重生 (普通回复 / instant push): leadInRendered 必为 false, 正常展示本轮唯一回复。
     if (leadInRendered && data === initialData) {
-        setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+        await refreshMessageList();
     } else {
         const sanitizedBody = ChatParser.sanitize(aiContent, { keepCitations: true })
             .replace(/\[\[INNER_STATE:\s*[\s\S]*?\]\]/g, '')
@@ -2248,7 +2286,7 @@ export async function applyAssistantPostProcessing(
             // 跑过二轮却吐空, 且本轮还没展示过任何内容 → 至少补一句, 避免整轮静默。
             await renderAndPersist('嗯...', pendingThinkingChain);
         } else {
-            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+            await refreshMessageList();
         }
     }
 }

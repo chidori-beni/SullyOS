@@ -724,7 +724,13 @@ const processInboxMessageWithPostProcessing = async (
     hooks: {
       // setMessages 在 React 外面跑, 没法直接 setState, 只 fire 一次 progress 事件让
       // OSContext 推 lastMsgTimestamp, 然后 Chat.tsx 自然 reloadMessages 重新读库。
+      //
+      // reloadMessages 走同一件事, 但它让后处理**别去读库**: 上面这个 setMessages 把传进来的
+      // 数组原样丢掉, 而后处理为了凑出这个数组每条气泡都要 getRecentMessagesByCharId(200)
+      // ——图片消息 content 是内联 base64, 单张 1~2MB, 一条回复拆 6 个气泡就白读 6 次。
+      // 真正的刷新本来就由 Chat.tsx 那边完成, 这一读从来没人要。
       setMessages: () => { dispatchProgress(); },
+      reloadMessages: () => { dispatchProgress(); },
       // push 路径 deliberately 静默 toast — 避免在用户没在 chat 这个角色时狂弹 toast。
       // 如果真要给用户可见反馈, 应该走 'active-msg-received' 那条线 (toast / 未读 / 通知)。
       addToast: (msg: string, type: 'info' | 'success' | 'error') => {

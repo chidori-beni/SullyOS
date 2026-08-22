@@ -584,6 +584,11 @@ describe('flushInboxToChat 落库时间戳（走真库）', () => {
   // 一整个数量级。取 400ms 当界：慢机器把落库拖慢几倍也够不着，而慢放路径必然超过。
   // （别改成「补收比实时快」这种相对比较——接线被删掉时两边都慢放、耗时相当，
   //   谁快谁慢就由噪声决定，测试会时过时挂。）
+  //
+  // 正文必须能拆出**两条以上**气泡：本轮第一条气泡是免延迟的（见
+  // applyAssistantPostProcessing 的 firstBubbleShown——推送横幅已经把话摊在用户眼前，
+  // 第一条再压 0.5~2 秒就是「通知都弹了、界面还空着」）。单条气泡的正文两边都会秒落，
+  // 量不出慢放与否。这里用 `---` 强制拆两段，让节奏落在第二条上。
   it('补收的消息跳过拟人打字延迟，实时收到的照旧慢放', async () => {
     const runFlush = async (charId: string, receivedAt: number) => {
       await DB.saveCharacter({ id: charId, name: '打字节奏角色' } as any);
@@ -591,6 +596,7 @@ describe('flushInboxToChat 落库时间戳（走真库）', () => {
         messageId: `msg-pace-${charId}`,
         charId,
         messageType: 'text',
+        body: '还没睡吗\n---\n早点休息',
         sentAt: receivedAt,
         receivedAt,
       }));
