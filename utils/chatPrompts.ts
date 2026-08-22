@@ -15,6 +15,7 @@ import { isScheduleFeatureOn } from './scheduleFeature';
 import { VOICE_ACTING_GUIDE } from './minimaxTts';
 import { FISH_VOICE_ACTING_GUIDE } from './fishAudioTts';
 import { getTtsProvider, getVoicePromptOverride } from './ttsProvider';
+import { countRecentVoiceUsage, buildVoiceUsageHint } from './voiceFrequency';
 import { resolveCharTimeZone, nowInTimeZone } from './timezone';
 import { buildLifeRecordInjection } from './lifeRecords';
 import { isWorkerReachableUrl } from './amsgToolPack';
@@ -974,6 +975,14 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
             volatileState += `\n\n[系统提示｜模式切换（最高优先级）: 你刚刚结束了${modeLabel[returningFromMode]}，现在已经回到 ChatApp 的文字聊天界面。之前模式中的台词、旁白、动作、场景或转录格式只代表已经发生的历史，绝不是当前回复的格式范例。从这一条开始，只按 ChatApp 当前启用的输出规则回复：使用自然的 IM 短句/气泡，不沿用通话口吻、连续口语转录、动作描写、小说旁白、场景标题或说话人标签；如果 ChatApp 当前开启了语音消息，仍可遵守它自己的语音消息格式。你可以自然承接刚才发生的事，但必须以正在聊天界面发消息的方式表达。]`;
         }
 
+        // 语音用量反馈：跑偏了才注入，正常时返回空串。
+        // 必须进 volatileState 不能进 stable —— 它每轮都变，塞进稳定段会打断 prompt 前缀缓存。
+        // 静态那几条规则治不住"每轮都发语音"，因为最近几轮全是语音的历史本身就是最强的示范。
+        // forFirePack 跳过：模板打包这一刻的用量，到主动消息真正触发时早就过期了。
+        if (char.chatVoiceEnabled && !forFirePack) {
+            volatileState += buildVoiceUsageHint(countRecentVoiceUsage(currentMsgs));
+        }
+
         // Voice message prompt injection
         if (char.chatVoiceEnabled) {
             const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español', de: 'Deutsch', ru: 'Русский' };
@@ -989,25 +998,30 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
 <语音> 里是真正被朗读的${langLabel}，<字幕> 里是同一段话的中文——语音条的「转文字」面板会直接用它当对照翻译，用户对着中文听${langLabel}。
 
 规则：
-1. \`<语音>\` 里写${langLabel}——只写会被朗读的文字。可选 emotion 属性标整条情绪：\`<语音 emotion="happy">…</语音>\`，emotion 只能取 neutral/happy/sad/angry/fearful/disgusted/surprised/calm/fluent，默认用 neutral（情绪不强就别加）
+1. \`<语音>\` 里写${langLabel}——只写会被朗读的文字。**不要写 emotion 属性**（\`<语音 emotion="…">\` 一律不用）：它给整条语音套一个从头到尾不变的情绪，念出来会过火。情绪靠遣词、句子长短和停顿写出来，交给语音引擎自己演绎
 2. \`<字幕>\` 里写这条语音的中文版，内容和${langLabel}一致、逐段对齐（${langLabel}分几段中文就分几段）。**<字幕> 必须紧跟在 </语音> 后面，永远成对出现，不能单独用**
 3. 标签外可以照常发普通中文短消息（正常闲聊打字），它们显示成普通气泡，和语音内容互相独立、不要复读
 
 示例：
 你说真的假的？
-<语音 emotion="surprised">Wait... are you serious?</语音>
+<语音>Wait... are you serious?</语音>
 <字幕>等等……你是认真的？</字幕>
 
-<语音 emotion="sad">I don't wanna move anymore... (sighs)</语音>
+<语音>I don't wanna move anymore... (sighs)</语音>
 <字幕>啊不想动了……（叹气）</字幕>
 
 要求：
 - <语音> 里的${langLabel}要自然口语化，符合你的性格，不要机翻味
 - <语音> 里想要笑、叹气等真实语气用官方英文标签 (laughs)/(sighs)/(chuckle)/(gasps) 等，**不要写中文（轻笑）这类舞台指示**（中文括号会被直接删掉、不朗读）
 - 每条消息最多一个 <语音> + <字幕> 组合
-- 不是每条消息都要发语音！像真人一样，有时候打字，有时候发语音，自然切换
-- 比较适合发语音的场景：撒娇、吐槽、语气很重的话、懒得打字的时候
-- 比较适合打字的场景：发链接、正经讨论、很短的回复如"嗯"、"好"
+- **打字是默认，语音是例外。** 十轮对话里发一两轮语音就够了，绝大多数回合应该是纯文字。
+  连着两轮都发语音已经很反常——真人不会那样，那会让对方觉得被语音轰炸。
+- 发之前先问自己：**这句话不听语气会被误解吗？** 答案是"不会"就打字。
+  只是想表达得生动一点、只是内容有情绪，都**不构成**发语音的理由。
+- 值得发语音的场景（少数）：撒娇服软、阴阳怪气/吐槽这种全靠语气的话、
+  哄人安慰、说很长一段懒得打字、用户明确说想听你的声音
+- 应该打字的场景（多数）：发链接、正经讨论、交代事情、很短的回复如"嗯""好"、
+  以及**任何你只是习惯性想发语音的时候"
 
 ${voiceActingGuide()}`;
             } else {
@@ -1017,10 +1031,10 @@ ${voiceActingGuide()}`;
 
 **你可以发送语音消息！** 就像真人用微信一样，你可以选择打字或者发语音。
 用 \`<语音>要说的话</语音>\` 标签来发送语音。标签里的内容会被转成真正的语音条显示给用户。
-可选地用 emotion 属性设定整条语音的情绪：\`<语音 emotion="happy">…</语音>\`，emotion 只能取 neutral/happy/sad/angry/fearful/disgusted/surprised/calm/fluent，默认用 neutral（情绪不强就别加）。
+**不要写 emotion 属性**（\`<语音 emotion="…">\` 一律不用）：它给整条语音套一个从头到尾不变的情绪，念出来会过火。情绪靠遣词、句子长短和停顿写出来，交给语音引擎自己演绎。
 
 示例：
-<语音 emotion="happy">哎你今天干嘛去了啊？</语音>
+<语音>哎你今天干嘛去了啊？</语音>
 
 我看到一个好搞笑的视频
 <语音>你快去看！就那个什么……(chuckle)啊我忘了叫什么了，反正超搞笑的</语音>
@@ -1028,9 +1042,14 @@ ${voiceActingGuide()}`;
 要求：
 - <语音> 里只写会被朗读的文字，不要写中文舞台指示/括号动作；想要笑、叹气等真实语气，用官方英文标签 (laughs)/(sighs)/(chuckle)/(gasps) 等（中文括号会被直接删掉、不朗读）
 - 每条消息最多一个 <语音> 标签
-- 不是每条消息都要发语音！像真人一样，有时候打字，有时候发语音，自然切换
-- 比较适合发语音的场景：撒娇、吐槽、语气很重的话、懒得打字的时候、想让对方听到你语气的时候
-- 比较适合打字的场景：发链接、正经讨论、很短的回复如"嗯"、"好"
+- **打字是默认，语音是例外。** 十轮对话里发一两轮语音就够了，绝大多数回合应该是纯文字。
+  连着两轮都发语音已经很反常——真人不会那样，那会让对方觉得被语音轰炸。
+- 发之前先问自己：**这句话不听语气会被误解吗？** 答案是"不会"就打字。
+  只是想表达得生动一点、只是内容有情绪，都**不构成**发语音的理由。
+- 值得发语音的场景（少数）：撒娇服软、阴阳怪气/吐槽这种全靠语气的话、
+  哄人安慰、说很长一段懒得打字、用户明确说想听你的声音
+- 应该打字的场景（多数）：发链接、正经讨论、交代事情、很短的回复如"嗯""好"、
+  以及**任何你只是习惯性想发语音的时候"
 - 标签外的文字会正常显示为文本消息
 - **【重要】语音和文字是两种不同的表达方式，不要复读！** 如果你同时发了文字和语音，语音的内容不能是文字的重复或复述。要么单独发语音（不带文字），要么文字和语音表达不同的内容（比如文字聊正事，语音补一句吐槽/撒娇；或者文字发完一段话后，语音单独补充一个新的想法）。你不会打完字又发一条语音把同样的话再说一遍的——那很奇怪。
 
