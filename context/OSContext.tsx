@@ -59,7 +59,8 @@ import {
   type MemoryAutoArchiveSyncDetail,
 } from '../utils/memoryPalace/autoArchive';
 import { ActiveMsgClient } from '../utils/activeMsgClient';
-import { formatAmsgPreviewBody, formatAmsgToastText } from '../utils/amsgToastPreview';
+import { formatAmsgPreviewBody } from '../utils/amsgToastPreview';
+import { emitMessagePreview } from '../utils/messagePreview';
 import { resolveCharTimeZone } from '../utils/timezone';
 import { ActiveMsgStore, exportAmsg2GlobalConfig } from '../utils/activeMsgStore';
 import { charMayHaveCloudState, purgeCharCloudState } from '../utils/amsg2CharCleanup';
@@ -1786,9 +1787,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === char.id;
 
                       // If not chatting specifically with this char right now, mark as unread
-                      if (!isChattingWithThisChar) {
-                          addToast(`${char.name} 发来了一条消息`, 'success');
-                          unreadUpdates[char.id] = dueMessages.length;
+                       if (!isChattingWithThisChar) {
+                           emitMessagePreview({
+                               charId: char.id,
+                               charName: char.name,
+                               avatarUrl: char.avatar,
+                               body: dueMessages[0]?.content,
+                               timestamp: Date.now(),
+                           });
+                           unreadUpdates[char.id] = dueMessages.length;
 
                           // Web Notification
                           if (!Capacitor.isNativePlatform() && window.Notification && Notification.permission === 'granted') {
@@ -1839,29 +1846,31 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   useEffect(() => {
       let awayProactiveCount = 0;
 
-      const handler = (e: Event) => {
-          const { charId, charName, body } = (e as CustomEvent).detail as { charId: string; charName: string; body?: string };
+       const handler = (e: Event) => {
+           const { charId, charName, body } = (e as CustomEvent).detail as {
+               charId: string; charName: string; body?: string;
+           };
           // Only mark unread if user is NOT currently viewing this character's chat
           // Always bump timestamp so Chat reloads messages if currently open
           setLastMsgTimestamp(Date.now());
 
-          const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId;
-          if (!isChattingWithThisChar) {
-              const isVisible = document.visibilityState === 'visible';
-              if (isVisible) {
-                  addToast(`${charName} 主动发来了消息`, 'success');
-              } else {
-                  awayProactiveCount += 1;
-              }
-              setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
-              const preview = (body || `${charName} sent a proactive message`).replace(/\s+/g, ' ').trim() || `${charName} sent a proactive message`;
-              void sendProactiveNativeNotification(charId, charName, preview);
+           const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId;
+           if (!isChattingWithThisChar) {
+               const isVisible = document.visibilityState === 'visible';
+               const char = characters.find(c => c.id === charId);
+               const preview = (body || `${charName} sent a proactive message`).replace(/\s+/g, ' ').trim() || `${charName} sent a proactive message`;
+               if (isVisible) {
+                   emitMessagePreview({ charId, charName, avatarUrl: char?.avatar, body: preview, timestamp: Date.now() });
+               } else {
+                   awayProactiveCount += 1;
+               }
+               setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
+               void sendProactiveNativeNotification(charId, charName, preview);
 
               // Web Notification —— 走 Service Worker 的 showNotification（和"测试推送"
               // 同一条链路）。页面级 `new Notification(...)` 在标签后台 / PWA / 移动端会
               // 静默失败，必须走 SW registration 才稳定。
-              if (!Capacitor.isNativePlatform() && 'serviceWorker' in navigator && window.Notification && Notification.permission === 'granted') {
-                  const char = characters.find(c => c.id === charId);
+               if (!Capacitor.isNativePlatform() && 'serviceWorker' in navigator && window.Notification && Notification.permission === 'granted') {
                   navigator.serviceWorker.ready.then(reg => {
                       reg.showNotification(charName, {
                           body: preview,
@@ -1896,19 +1905,28 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   useEffect(() => {
       let awayActiveMsgCount = 0;
 
-      const handler = (e: Event) => {
-          const { charId, charName, body } = (e as CustomEvent).detail as { charId: string; charName: string; body?: string };
+       const handler = (e: Event) => {
+           const { charId, charName, body, avatarUrl, sentAt } = (e as CustomEvent).detail as {
+               charId: string; charName: string; body?: string; avatarUrl?: string; sentAt?: number;
+           };
           setLastMsgTimestamp(Date.now());
 
           const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId;
-          if (!isChattingWithThisChar) {
-              const isVisible = document.visibilityState === 'visible';
-              const preview = formatAmsgToastText(charName, body);
-              if (isVisible) {
-                  addToast(preview, 'success');
-              } else {
-                  awayActiveMsgCount += 1;
-              }
+           if (!isChattingWithThisChar) {
+               const isVisible = document.visibilityState === 'visible';
+               const preview = formatAmsgPreviewBody(body);
+               if (isVisible) {
+                   const char = characters.find(c => c.id === charId);
+                   emitMessagePreview({
+                       charId,
+                       charName,
+                       avatarUrl: avatarUrl || char?.avatar,
+                       body: preview,
+                       timestamp: sentAt || Date.now(),
+                   });
+               } else {
+                   awayActiveMsgCount += 1;
+               }
               setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
               void sendProactiveNativeNotification(charId, charName, formatAmsgPreviewBody(body));
               // SW push handler 已经 fire 过系统通知（不在前台时露出真实内容、在前台时

@@ -4,6 +4,7 @@
 import React, { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import { IMPORT_IN_PROGRESS_KEY, useOS } from '../context/OSContext';
 import StatusBar from './os/StatusBar';
+import MessagePreviewBanner from './MessagePreviewBanner';
 import Launcher from '../apps/Launcher';
 import CompanionLockChrome from './os/CompanionLockChrome';
 import { loadCompanionFrameStyle } from './os/companionFrameStyles';
@@ -1126,8 +1127,8 @@ const PhoneShell: React.FC = () => {
               </div>
           )}
 
-          {/* Overlays: Toasts (Top) */}
-          <div className="absolute top-12 left-0 w-full flex flex-col items-center gap-2 pointer-events-none z-[60]">
+           {/* Overlays: Toasts (Top) */}
+           <div className="absolute top-12 left-0 w-full flex flex-col items-center gap-2 pointer-events-none z-[60]">
               {toasts.map(toast => (
                  <div key={toast.id} className="animate-fade-in bg-white/95 backdrop-blur-xl px-4 py-3 rounded-2xl shadow-xl border border-black/5 flex items-start gap-3 max-w-[85%] ring-1 ring-white/20">
                      {toast.type === 'success' && <div className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0"></div>}
@@ -1136,8 +1137,12 @@ const PhoneShell: React.FC = () => {
                      <span className="min-w-0 text-left text-xs font-bold text-slate-800 whitespace-normal break-words [overflow-wrap:anywhere] leading-5">{toast.message}</span>
                  </div>
               ))}
-           </div>
-       </div>
+            </div>
+
+           {/* Overlays: 主动消息单卡横幅（前台内部）。卡片本身固定，只更新消息内容；
+               后台/彻底退出时仍由原有系统通知链路负责，不从这里重复弹。 */}
+           <MessagePreviewBanner />
+        </div>
 
        {/* Global error dialog (长报错走它, 替代单行 toast) */}
        <ErrorDialog
