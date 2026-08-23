@@ -5,7 +5,7 @@
  * 结果走 Web Push 回去。这份模块管三件事：
  *   1. `POST /instant-chat` 这条包装层路由（鉴权 → 内部转发 → 202 → 立刻起一跳）
  *   2. 即时对话那条 fire 用的「时效信息」块（当前时间 / 实时世界 / 排程说明拼一起）
- *   3. 推送的通知策略（前台可见时由 SW 静默，后台显示横幅）
+ *   3. 推送的通知策略（由 SW 按真实窗口可见性决定：前台不显示系统横幅，后台显示）
  *
  * 为什么要在包装层做而不是让客户端直接调上游的两个端点：两步有严格的先后和
  * 「前面失败就不能落任务」的语义（云端状态没传上去，到点的 fire 读到的还是上一轮的
@@ -96,17 +96,6 @@ export const buildInstantTimelyBlock = (args: {
 // ─── 通知策略 ───
 
 /**
- * 推了就一定弹（SW 的 shouldRenderNotification 认这个值）。
- *
- * 订阅是按 `userVisibleOnly: true` 建的，等于跟浏览器约好每条 push 都给用户一次可见
- * 反馈；收了 push 却不弹是违约，Firefox 按配额把订阅退掉，iOS 过了新订阅那几天宽限期
- * 一条就吊销，而且两边都是静默发生的——服务端只看得到后续推送返回 410。所以口径只有
- * 即时对话是用户按下发送、正盯着「正在输入…」等的那一轮，必须保留 push；前台由
- * SW 静默、后台显示，不能让云端一次过期租约把这条及时提醒压掉。
- */
-const NOTIFICATION_ALWAYS = 'always';
-
-/**
  * 交给 Service Worker 在收到 push 的那一刻按窗口真实可见性决定是否展示。
  *
  * 不能只相信云端的前后台租约：iOS 可能漏掉一次 visibility/pagehide，旧租约就会把
@@ -182,6 +171,7 @@ export const applyInstantNotificationPolicy = (
   payload: Record<string, unknown>,
   charId?: string | null,
   isFirstSegment = false,
+  // 保留这个参数只是兼容现有调用方/日志；实际横幅策略由 Service Worker 按真实窗口可见性决定。
   appIsForeground = false,
 ): Record<string, unknown> => {
   const notification = payload.notification;
@@ -196,10 +186,10 @@ export const applyInstantNotificationPolicy = (
     ...payload,
     notification: {
       ...(notification as Record<string, unknown>),
-      // 仍保留 appIsForeground 这个参数供调用方判断和日志使用，但不再让一次漏掉的
-      // lifecycle 事件把后台推送永久变成 show:false。push 交给 SW 后再按真实 visibility
-      // 决定：前台不展示、后台展示；这样云端旧租约不会吞掉来电横幅和普通回复。
-      show: appIsForeground ? NOTIFICATION_WHEN_HIDDEN : NOTIFICATION_ALWAYS,
+      // appIsForeground 不能决定是否显示：云端租约可能过期或漏掉生命周期事件。
+      // 所有即时 push 都交给 SW 按真实可见窗口判断：有可见窗口时不显示系统横幅，
+      // 由页面决定聊天页静默或其它页面显示内部横幅；没有可见窗口时才显示系统横幅。
+      show: NOTIFICATION_WHEN_HIDDEN,
       silent: NOTIFICATION_SILENT_WHEN_VISIBLE,
       // 认不出是哪个角色时就不折叠：通知栏里多几条只是吵，两个角色共用一个 tag 会
       // 互相顶掉，那是真的丢消息。renotify 跟着 tag 走——没有 tag 时带上它，
