@@ -4,13 +4,19 @@ import type {
   NaturalProactiveConfig,
   NaturalProactiveIntensity,
   NaturalProactiveProfile,
+  NaturalProactiveRelationship,
 } from '../types';
 import { safeFetchJson } from './safeApi';
 
 export const NATURAL_PROACTIVE_SUBTYPE = 'natural-proactive';
 export const NATURAL_PROACTIVE_PROFILE_VERSION = 1 as const;
 
-export type { NaturalProactiveConfig, NaturalProactiveIntensity, NaturalProactiveProfile } from '../types';
+export type {
+  NaturalProactiveConfig,
+  NaturalProactiveIntensity,
+  NaturalProactiveProfile,
+  NaturalProactiveRelationship,
+} from '../types';
 
 export interface NaturalProactiveDecisionInput {
   nowMs: number;
@@ -45,17 +51,60 @@ const textForProfile = (char: CharacterProfile): string => [
   char.writerPersona,
 ].filter(Boolean).join('\n\n').slice(0, 24_000);
 
+const inferRelationshipHints = (char: CharacterProfile): {
+  relationship: NaturalProactiveRelationship;
+  longDistance: boolean;
+} => {
+  const source = textForProfile(char).toLowerCase();
+  const romantic = /(情侣|恋人|爱人|伴侣|男朋友|女朋友|老公|老婆|未婚夫|未婚妻|恋爱|相爱|暧昧|lover|romantic partner|girlfriend|boyfriend|husband|wife|fiance)/i.test(source);
+  const close = /(亲密|亲近|挚友|知己|家人|最好的朋友|best friend|close friend)/i.test(source);
+  const longDistance = /(异地|远距离|远距|两地|跨城|分隔两地|不在身边|只能通过手机|只能靠手机|long[- ]distance|different cities|far apart|apart from)/i.test(source);
+  return {
+    relationship: romantic ? 'romantic' : close ? 'close' : 'neutral',
+    longDistance,
+  };
+};
+
+/**
+ * 给旧画像补上关系信号。关系信息来自角色档案，不需要再调用模型，
+ * 因此已经开启自然主动的角色也能在下一次打包状态时获得情侣/异地加权。
+ */
+export const enrichNaturalProfileForCharacter = (
+  profile: NaturalProactiveProfile,
+  char: CharacterProfile,
+): NaturalProactiveProfile => {
+  const hints = inferRelationshipHints(char);
+  const romantic = hints.relationship === 'romantic';
+  const longDistanceRomance = romantic && hints.longDistance;
+  return {
+    ...profile,
+    relationship: hints.relationship !== 'neutral' ? hints.relationship : (profile.relationship ?? 'neutral'),
+    longDistance: profile.longDistance === true || hints.longDistance,
+    threshold: romantic ? Math.min(profile.threshold, longDistanceRomance ? 0.48 : 0.54) : profile.threshold,
+    silenceSaturationHours: romantic
+      ? Math.min(profile.silenceSaturationHours, longDistanceRomance ? 5 : 6)
+      : profile.silenceSaturationHours,
+  };
+};
+
 /** 无 API / 模型格式跑偏时的保守画像；仍会从人设关键词推断亲疏与作息倾向。 */
 export const buildFallbackNaturalProfile = (char: CharacterProfile): NaturalProactiveProfile => {
   const source = textForProfile(char).toLowerCase();
+  const relationshipHints = inferRelationshipHints(char);
   const clingy = /(黏|粘人|依赖|占有|焦虑|敏感|患得患失|clingy|possessive|anxious)/i.test(source);
   const reserved = /(冷淡|疏离|寡言|克制|慢热|高冷|独立|reserved|aloof|stoic)/i.test(source);
   const nocturnal = /(夜猫|熬夜|昼夜颠倒|夜间|凌晨|night owl|nocturnal)/i.test(source);
-  const threshold = clingy ? 0.48 : reserved ? 0.68 : 0.58;
-  return {
+  const romantic = relationshipHints.relationship === 'romantic';
+  const longDistanceRomance = romantic && relationshipHints.longDistance;
+  const threshold = longDistanceRomance ? 0.40 : romantic ? 0.44 : clingy ? 0.48 : reserved ? 0.68 : 0.58;
+  return enrichNaturalProfileForCharacter({
     version: 1,
-    archetype: clingy ? '牵挂型' : reserved ? '克制型' : nocturnal ? '夜行型' : '自然型',
-    summary: clingy
+    archetype: romantic ? (relationshipHints.longDistance ? '异地牵挂型' : '恋人牵挂型') : clingy ? '牵挂型' : reserved ? '克制型' : nocturnal ? '夜行型' : '自然型',
+    summary: romantic
+      ? (relationshipHints.longDistance
+        ? '你们是亲密关系且身处异地，会更容易因为想念而联系，但连续未获回复时仍会收住。'
+        : '你们是亲密关系，会更容易因为想念和未完的话主动联系，但不会机械连发。')
+      : clingy
       ? '更容易因挂念和未说完的话主动联系，但仍会在连续未获回复时收住。'
       : reserved
         ? '通常给彼此留空间，只在沉默够久或确实想到事情时主动联系。'
@@ -67,13 +116,13 @@ export const buildFallbackNaturalProfile = (char: CharacterProfile): NaturalProa
       pendingTopic: clingy ? 0.22 : 0.26,
       spontaneousThought: reserved ? 0.08 : 0.14,
     },
-    silenceSaturationHours: clingy ? 3 : reserved ? 12 : 7,
+    silenceSaturationHours: longDistanceRomance ? 2.5 : romantic ? 3 : clingy ? 3 : reserved ? 12 : 7,
     quietHours: nocturnal ? [4, 10] : [0, 8],
     threshold,
-    spontaneousChancePerDay: clingy ? 0.7 : reserved ? 0.18 : 0.4,
+    spontaneousChancePerDay: longDistanceRomance ? 0.9 : romantic ? 0.78 : clingy ? 0.7 : reserved ? 0.18 : 0.4,
     derivedAt: Date.now(),
     source: 'fallback',
-  };
+  }, char);
 };
 
 const extractJsonObject = (raw: string): Record<string, unknown> | null => {
@@ -105,11 +154,11 @@ export const deriveNaturalProfile = async (
         messages: [
           {
             role: 'system',
-            content: '你是角色互动产品的行为画像器。只输出 JSON，不写解释。画像描述角色在没有任务指令时，自发联系亲近之人的倾向；不要把病理化焦虑当成必然骚扰。所有小数范围 0..1。',
+            content: '你是角色互动产品的行为画像器。只输出 JSON，不写解释。画像描述角色在没有任务指令时，自发联系亲近之人的倾向；请识别角色与用户是否是情侣/恋人/伴侣，以及是否异地或主要只能靠手机联系。情侣和异地应提高挂念与主动联系倾向，但不要把病理化焦虑当成必然骚扰，也不要机械连发。所有小数范围 0..1。',
           },
           {
             role: 'user',
-            content: `阅读下面角色档案，输出：{"archetype":"短标签","summary":"60字内","weights":{"silence":0.34,"timeOfDay":0.12,"emotion":0.14,"pendingTopic":0.26,"spontaneousThought":0.14},"silenceSaturationHours":7,"quietHours":[0,8],"threshold":0.58,"spontaneousChancePerDay":0.4}。weights 总和应接近 1；silenceSaturationHours 取 2..24；threshold 取 0.35..0.8；quietHours 是角色通常不打扰对方的本地小时区间。\n\n角色名：${char.name}\n${textForProfile(char)}`,
+            content: `阅读下面角色档案，输出：{"archetype":"短标签","summary":"60字内","relationship":"romantic|close|neutral","longDistance":false,"weights":{"silence":0.34,"timeOfDay":0.12,"emotion":0.14,"pendingTopic":0.26,"spontaneousThought":0.14},"silenceSaturationHours":7,"quietHours":[0,8],"threshold":0.58,"spontaneousChancePerDay":0.4}。relationship 只有在档案有明确依据时才写 romantic（情侣/恋人/伴侣）或 close（亲密关系/挚友），不确定写 neutral；异地、远距离、分隔两地或主要只能靠手机联系时 longDistance=true，否则 false。情侣+异地可以把 threshold 降到 0.35..0.5、silenceSaturationHours 取 2..5，但仍要保留深夜和连续未回复的克制。weights 总和应接近 1；silenceSaturationHours 取 2..24；threshold 取 0.35..0.8；quietHours 是角色通常不打扰对方的本地小时区间。\n\n角色名：${char.name}\n${textForProfile(char)}`,
           },
         ],
       }),
@@ -119,7 +168,10 @@ export const deriveNaturalProfile = async (
     if (!parsed) return fallback;
     const weights = (parsed.weights && typeof parsed.weights === 'object' ? parsed.weights : {}) as Record<string, unknown>;
     const quiet = Array.isArray(parsed.quietHours) ? parsed.quietHours : fallback.quietHours;
-    return {
+    const relationship = parsed.relationship === 'romantic' || parsed.relationship === 'close' || parsed.relationship === 'neutral'
+      ? parsed.relationship : fallback.relationship;
+    const longDistance = parsed.longDistance === true || (typeof parsed.longDistance === 'string' && parsed.longDistance.toLowerCase() === 'true');
+    return enrichNaturalProfileForCharacter({
       version: 1,
       archetype: typeof parsed.archetype === 'string' ? parsed.archetype.slice(0, 20) : fallback.archetype,
       summary: typeof parsed.summary === 'string' ? parsed.summary.slice(0, 120) : fallback.summary,
@@ -134,9 +186,11 @@ export const deriveNaturalProfile = async (
       quietHours: [Math.round(num(quiet[0], fallback.quietHours[0], 0, 23)), Math.round(num(quiet[1], fallback.quietHours[1], 0, 23))],
       threshold: num(parsed.threshold, fallback.threshold, 0.35, 0.8),
       spontaneousChancePerDay: num(parsed.spontaneousChancePerDay, fallback.spontaneousChancePerDay, 0, 1),
+      relationship,
+      longDistance: longDistance || fallback.longDistance === true,
       derivedAt: Date.now(),
       source: 'llm',
-    };
+    }, char);
   } catch (error) {
     console.warn('[NaturalProactive] 人设画像生成失败，使用本地保守画像', error);
     return fallback;
@@ -164,12 +218,18 @@ export const decideNaturalProactive = (input: NaturalProactiveDecisionInput): Na
   const recentSendMinutes = input.recentSelfSendAts.length
     ? (input.nowMs - Math.max(...input.recentSelfSendAts)) / 60_000 : Infinity;
   const spontaneous = input.random01 < profile.spontaneousChancePerDay / 36 ? 1 : 0;
+  const relationshipBoost = profile.relationship === 'romantic' ? 0.10 : profile.relationship === 'close' ? 0.03 : 0;
+  const distanceBoost = profile.longDistance ? 0.06 : 0;
   let score = silence * profile.weights.silence
     + (quiet ? 0 : 0.65) * profile.weights.timeOfDay
     + clamp(input.emotion ?? 0.25, 0, 1) * profile.weights.emotion
     + clamp(input.pendingTopic ?? 0.15, 0, 1) * profile.weights.pendingTopic
-    + spontaneous * profile.weights.spontaneousThought;
+    + spontaneous * profile.weights.spontaneousThought
+    + relationshipBoost
+    + distanceBoost;
   const reasons = [`沉默 ${hoursSilent.toFixed(1)} 小时`];
+  if (relationshipBoost > 0) reasons.push(profile.relationship === 'romantic' ? '亲密关系加权' : '亲近关系加权');
+  if (distanceBoost > 0) reasons.push('异地/手机联系加权');
   if (quiet) { score -= 0.28; reasons.push('安静时段'); }
   if (recentSendMinutes < 30) { score -= 0.42; reasons.push('刚主动联系过'); }
   else if (recentSendMinutes < 90) { score -= 0.22; reasons.push('近期主动联系过'); }
@@ -181,6 +241,7 @@ export const decideNaturalProactive = (input: NaturalProactiveDecisionInput): Na
   const threshold = clamp(profile.threshold + intensityShift - clamp(input.bias, -20, 20) / 100, 0.25, 0.9);
   const hardCap = input.intensity === 'low' ? 1 : input.intensity === 'high' ? 3 : 2;
   const shouldSend = input.unansweredCount < hardCap && score >= threshold;
-  const jitter = Math.floor(input.random01 * 31);
-  return { shouldSend, score, threshold, nextCheckMinutes: quiet ? 60 + jitter : 20 + jitter, reasons };
+  // 检查频率是「多久再想一次」，不是「多久一定发一次」；低分时不会调用 LLM。
+  const jitter = Math.floor(input.random01 * 16);
+  return { shouldSend, score, threshold, nextCheckMinutes: 15 + jitter, reasons };
 };

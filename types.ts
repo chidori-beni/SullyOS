@@ -2595,6 +2595,9 @@ export interface MemoryPalaceWaterlineConfig {
 
 export type NaturalProactiveIntensity = 'low' | 'normal' | 'high';
 
+/** 自然主动只在角色档案有依据时使用；不确定时保持 neutral，不强行把关系写成恋爱。 */
+export type NaturalProactiveRelationship = 'romantic' | 'close' | 'neutral' | 'reserved';
+
 export interface NaturalProactiveProfile {
   version: 1;
   archetype: string;
@@ -2610,6 +2613,10 @@ export interface NaturalProactiveProfile {
   quietHours: [number, number];
   threshold: number;
   spontaneousChancePerDay: number;
+  /** 由角色档案 / 首次画像推断出的关系倾向；旧画像缺省为 neutral。 */
+  relationship?: NaturalProactiveRelationship;
+  /** 角色档案明确提到异地、远距离或主要靠手机联系时为 true。 */
+  longDistance?: boolean;
   derivedAt: number;
   source: 'llm' | 'fallback';
 }

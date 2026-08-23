@@ -95,7 +95,7 @@ import { DB } from './db';
 import { copyWorkerBundleToClipboard } from './instantPushClient';
 import { collectMcpFireServers, getMcpUseNativeTools } from './mcpClient';
 import { safeResponseJson } from './safeApi';
-import { NATURAL_PROACTIVE_SUBTYPE } from './naturalProactive';
+import { enrichNaturalProfileForCharacter, NATURAL_PROACTIVE_SUBTYPE } from './naturalProactive';
 import { ActiveMsgStore } from './activeMsgStore';
 import { KeepAlive } from './keepAlive';
 import {
@@ -790,6 +790,14 @@ export const buildFirePack = async (
     `（开口前回到你自己：这条得是 ${char.name} 会发的那一条——语气、用词、节奏都只属于你。哪怕只是随口一句，也要是你。）`,
   ].join('\n');
 
+  // 每次打包都从当前角色档案补一次关系信号，兼容已经开启但还没有重新理解画像的旧配置。
+  const naturalProactive = char.naturalProactiveConfig?.profile
+    ? {
+        ...char.naturalProactiveConfig,
+        profile: enrichNaturalProfileForCharacter(char.naturalProactiveConfig.profile, char),
+      }
+    : char.naturalProactiveConfig;
+
   return {
     // 版本号只有 amsgFirePack 那一份说了算：写死数字的话，升版时 worker 侧的 parseFirePack
     // 已经在按新号校验，而这里还发着旧号，表现是每条任务到点都硬失败。
@@ -813,8 +821,8 @@ export const buildFirePack = async (
     // 角色级 2.0 开关随包上云：关着的角色即便走即时对话（全局开关是另一颗），云端
     // fire 也不给排程能力——本地的 amsg2ToolsInjected 闸门在云端的对应物就是它。
     selfScheduleEnabled: isAmsg2EnabledForChar(char),
-    ...(char.naturalProactiveConfig ? { naturalProactive: char.naturalProactiveConfig } : {}),
-    ...(char.naturalProactiveConfig ? { naturalSignals: { pendingTopic, emotion } } : {}),
+    ...(naturalProactive ? { naturalProactive } : {}),
+    ...(naturalProactive ? { naturalSignals: { pendingTopic, emotion } } : {}),
     // 到点时角色要知道自己还挂着什么，才不会把同一件事再排一遍。这里带原始记录，
     // 渲染成人话由 worker 现场做（时间要按 tzId 换算，且得摘掉正在发的那条）。
     pendingTasks: getPendingTasks(char.activeMsg2Config, Date.now()),

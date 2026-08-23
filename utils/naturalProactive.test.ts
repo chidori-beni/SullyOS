@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildFallbackNaturalProfile, decideNaturalProactive } from './naturalProactive';
+import { buildFallbackNaturalProfile, decideNaturalProactive, enrichNaturalProfileForCharacter } from './naturalProactive';
 import type { CharacterProfile, NaturalProactiveProfile } from '../types';
 
 const profile: NaturalProactiveProfile = {
@@ -50,9 +50,33 @@ describe('自然主动决策', () => {
   });
 
   it('本地兜底画像会识别人设里的克制与黏人倾向', () => {
-    const reserved = buildFallbackNaturalProfile({ name: 'A', description: '寡言、克制、慢热', systemPrompt: '', memories: [] } as CharacterProfile);
-    const clingy = buildFallbackNaturalProfile({ name: 'B', description: '敏感又有点黏人，很容易挂念对方', systemPrompt: '', memories: [] } as CharacterProfile);
+    const reserved = buildFallbackNaturalProfile({ name: 'A', description: '寡言、克制、慢热', systemPrompt: '', memories: [] } as unknown as CharacterProfile);
+    const clingy = buildFallbackNaturalProfile({ name: 'B', description: '敏感又有点黏人，很容易挂念对方', systemPrompt: '', memories: [] } as unknown as CharacterProfile);
     expect(reserved.threshold).toBeGreaterThan(clingy.threshold);
     expect(reserved.silenceSaturationHours).toBeGreaterThan(clingy.silenceSaturationHours);
+  });
+
+  it('每次只是重新确认是否要发消息，检查间隔为 15 到 30 分钟', () => {
+    expect(decide({ random01: 0 }).nextCheckMinutes).toBe(15);
+    expect(decide({ random01: 0.999999 }).nextCheckMinutes).toBe(30);
+  });
+
+  it('情侣且异地时会识别关系并提高主动联系倾向', () => {
+    const char = {
+      name: 'B',
+      description: '我们是恋人，目前异地，只能通过手机联系。',
+      systemPrompt: '',
+      memories: [],
+    } as unknown as CharacterProfile;
+    const inferred = buildFallbackNaturalProfile(char);
+    expect(inferred.relationship).toBe('romantic');
+    expect(inferred.longDistance).toBe(true);
+    expect(inferred.threshold).toBeLessThan(0.5);
+    const enriched = enrichNaturalProfileForCharacter({ ...profile }, char);
+    expect(enriched.relationship).toBe('romantic');
+    expect(enriched.longDistance).toBe(true);
+    expect(decide({ profile }).score + 0.15).toBeLessThanOrEqual(
+      decide({ profile: enriched }).score,
+    );
   });
 });
