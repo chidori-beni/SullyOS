@@ -23,6 +23,7 @@
 import { sanitizeForNotification } from '../../../utils/sanitize';
 import { extractTransferCommands, parseTransferAmount } from '../../../utils/transferFormat';
 import { extractScheduleChangeDirectives } from '../../../utils/scheduleChangeParse';
+import { extractCallInvite } from '../../../utils/incomingCallParse';
 
 export type ToolCall = {
   id: string;
@@ -57,6 +58,14 @@ export type Directive =
   // 里而走旁路，理由同转账：解析要认中文别名 / 全角标点 / 漏括号那一堆写法，那份容错
   // 跟客户端共用一份源码（utils/scheduleChangeParse）。
   | { type: 'change_schedule'; time: string; activity: string }
+  // 角色主动给用户打电话 [[ACTION:CALL|video|开场白]]。跟 change_schedule 一样走旁路而不进
+  // SIDE_EFFECT_TAGS：解析要认中文别名（视频/语音）、全角竖线、模式缺省那一堆写法，
+  // 那份容错跟客户端共用一份源码（utils/incomingCallParse）。
+  //
+  // 不走 directive 通道的话，标签会被 stripBusinessTagsForNotification（正则含 ACTION）
+  // 连 raw 一起剥掉——8/23 第一批上线后实测就是这样：角色说完「行，接好了」，
+  // 电话在云端被吃掉，手机上一点动静都没有。
+  | { type: 'call_invite'; mode: 'voice' | 'video'; opening: string }
   | { type: 'schedule_message'; time: string; text: string }
   // song 是可选的后补字段（见 MusicActionSong），只有主动消息 2.0 的定时路径会填。
   | { type: 'music_action'; verb: string; args: string[]; song?: MusicActionSong }
@@ -389,8 +398,19 @@ export function classifyLLMOutput(text: string): ClassificationResult {
     directives.push({ type: 'change_schedule', time: d.startTime, activity: d.activity });
   }
 
+  // 主动来电同理（见 Directive 里那条注释）。一轮只认第一个——extractCallInvite 自己保证。
+  const callParsed = extractCallInvite(textAfterSchedule);
+  const textAfterCall = callParsed.cleanedText;
+  if (callParsed.invite) {
+    directives.push({
+      type: 'call_invite',
+      mode: callParsed.invite.mode,
+      opening: callParsed.invite.opening,
+    });
+  }
+
   for (const spec of SIDE_EFFECT_TAGS) {
-    const matches = Array.from(textAfterSchedule.matchAll(spec.re));
+    const matches = Array.from(textAfterCall.matchAll(spec.re));
     for (const m of matches) {
       const d = spec.toDirective(m);
       if (d) directives.push(d);
@@ -414,7 +434,7 @@ export function classifyLLMOutput(text: string): ClassificationResult {
   }
 
   // 3. 不管 directives 有没有, 都剥光所有标签 (数据 + 副作用) 出干净文本.
-  let cleanedText = textAfterSchedule;
+  let cleanedText = textAfterCall;
   for (const spec of DATA_TAGS) cleanedText = cleanedText.replace(spec.re, '');
   for (const spec of SIDE_EFFECT_TAGS) cleanedText = cleanedText.replace(spec.re, '');
   cleanedText = cleanedText.trim();

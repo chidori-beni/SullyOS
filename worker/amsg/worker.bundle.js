@@ -9381,6 +9381,13 @@ var buildInstantTimelyBlock = (args) => {
 var NOTIFICATION_ALWAYS = "always";
 var NOTIFICATION_SILENT_WHEN_VISIBLE = "when-visible";
 var instantNotificationTag = (charId) => `amsg-instant-${charId}`;
+var instantCallNotificationTag = (charId) => `amsg-call-${charId}`;
+var isIncomingCallPush = (notification) => {
+  if (!notification || typeof notification !== "object" || Array.isArray(notification)) return false;
+  const data = notification.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+  return data.sullyIncomingCall === true;
+};
 var applyInstantNotificationPolicy = (payload, charId, isFirstSegment = false, appIsForeground = false) => {
   const notification = payload.notification;
   const hasNotification = !!notification && typeof notification === "object" && !Array.isArray(notification);
@@ -9399,7 +9406,10 @@ var applyInstantNotificationPolicy = (payload, charId, isFirstSegment = false, a
       // 认不出是哪个角色时就不折叠：通知栏里多几条只是吵，两个角色共用一个 tag 会
       // 互相顶掉，那是真的丢消息。renotify 跟着 tag 走——没有 tag 时带上它，
       // showNotification 会直接抛 TypeError。
-      ...target ? { tag: instantNotificationTag(target), ...isFirstSegment ? { renotify: true } : {} } : {}
+      // 来电走自己的 tag 且**一定** renotify：它是一轮里的最后一段，按普通规则会被静默
+      // 替换掉（见 instantCallNotificationTag）。silent 也摘掉 when-visible——前台这条
+      // 压根不会发（show:false），能走到这儿的都是后台，后台的电话就该响。
+      ...target ? isIncomingCallPush(notification) ? { tag: instantCallNotificationTag(target), renotify: true, silent: false } : { tag: instantNotificationTag(target), ...isFirstSegment ? { renotify: true } : {} } : {}
     }
   };
 };
@@ -12146,6 +12156,43 @@ var extractScheduleChangeDirectives = (text) => {
   };
 };
 
+// utils/incomingCallParse.ts
+var CALL_TAG_RE = /\[\[\s*ACTION\s*[:：]\s*CALL\s*(?:[:：|｜]\s*)?([\s\S]*?)\]\]/gu;
+var VIDEO_WORDS = /^(?:video|视频|視頻|视讯|視訊|影片|v)$/iu;
+var VOICE_WORDS = /^(?:voice|audio|语音|語音|电话|電話|通话|通話|a)$/iu;
+var readMode = (field) => {
+  const word = field.trim().replace(/[。．.!！?？，,]+$/u, "");
+  if (VIDEO_WORDS.test(word)) return "video";
+  if (VOICE_WORDS.test(word)) return "voice";
+  return null;
+};
+var parseBody = (body) => {
+  const parts = body.split(/[|｜]/u);
+  const head = parts.length > 1 ? readMode(parts[0]) : null;
+  if (head) {
+    return { mode: head, opening: parts.slice(1).join("|").trim() };
+  }
+  const whole = body.trim();
+  if (!whole) return null;
+  const soloMode = readMode(whole);
+  if (soloMode) return { mode: soloMode, opening: "" };
+  return { mode: "voice", opening: whole };
+};
+var extractCallInvite = (text) => {
+  if (!text || !text.includes("[[")) {
+    return { cleanedText: text ?? "", invite: null, malformedCount: 0 };
+  }
+  let invite = null;
+  let malformedCount = 0;
+  const cleanedText = text.replace(CALL_TAG_RE, (_full, body) => {
+    const parsed = parseBody(String(body ?? ""));
+    if (parsed && !invite) invite = parsed;
+    else if (!parsed) malformedCount += 1;
+    return "";
+  });
+  return { cleanedText, invite, malformedCount };
+};
+
 // worker/instant-push/src/classifier.ts
 var DATA_TAGS = [
   // [[RECALL: 2024-05]] / [[RECALL: 2024年5]]
@@ -12370,8 +12417,17 @@ function classifyLLMOutput(text) {
   for (const d of scheduleParsed.directives) {
     directives.push({ type: "change_schedule", time: d.startTime, activity: d.activity });
   }
+  const callParsed = extractCallInvite(textAfterSchedule);
+  const textAfterCall = callParsed.cleanedText;
+  if (callParsed.invite) {
+    directives.push({
+      type: "call_invite",
+      mode: callParsed.invite.mode,
+      opening: callParsed.invite.opening
+    });
+  }
   for (const spec of SIDE_EFFECT_TAGS) {
-    const matches = Array.from(textAfterSchedule.matchAll(spec.re));
+    const matches = Array.from(textAfterCall.matchAll(spec.re));
     for (const m of matches) {
       const d = spec.toDirective(m);
       if (d) directives.push(d);
@@ -12388,7 +12444,7 @@ function classifyLLMOutput(text) {
     seenDirectives.add(key);
     dedupedDirectives.push(d);
   }
-  let cleanedText = textAfterSchedule;
+  let cleanedText = textAfterCall;
   for (const spec of DATA_TAGS) cleanedText = cleanedText.replace(spec.re, "");
   for (const spec of SIDE_EFFECT_TAGS) cleanedText = cleanedText.replace(spec.re, "");
   cleanedText = cleanedText.trim();
@@ -12521,6 +12577,15 @@ function processLLMRound(state, llmOutputText, build, mcp, schedule, iteration) 
   const finishMeta = directives.length > 0 ? { directives, ...xhsSession ? { xhsSession } : {} } : void 0;
   const segments = sanitizeIntoSegments(cleanedText);
   if (segments.length === 0) {
+    const callOnly = directives.find(
+      (d) => d.type === "call_invite"
+    );
+    if (callOnly) {
+      return {
+        decision: "finish",
+        pushPayloads: [buildScheduledPush("", build, finishMeta, "", callOnly)]
+      };
+    }
     const scheduleChanges = directives.filter((d) => d.type === "change_schedule").map((d) => ({ startTime: d.time, activity: d.activity }));
     return {
       decision: "skip-push",
@@ -12532,11 +12597,21 @@ function processLLMRound(state, llmOutputText, build, mcp, schedule, iteration) 
   return {
     decision: "finish",
     pushPayloads: segments.map(
-      (seg, i) => buildScheduledPush(seg.raw, build, i === lastIdx ? finishMeta : void 0, seg.sanitized)
+      (seg, i) => buildScheduledPush(
+        seg.raw,
+        build,
+        i === lastIdx ? finishMeta : void 0,
+        seg.sanitized,
+        // 来电挂在最后一段（directives 也挂那一段）：横幅要在角色把话说完之后才变成
+        // 「来电」，顺序跟前台一致——先看见它说「我打给你」，然后电话响。
+        i === lastIdx ? directives.find(
+          (d) => d.type === "call_invite"
+        ) : void 0
+      )
     )
   };
 }
-function buildScheduledPush(message, build, extraMeta, bannerBody) {
+function buildScheduledPush(message, build, extraMeta, bannerBody, callInvite) {
   const title = `\u6765\u81EA ${build.contactName}`;
   return {
     messageKind: "content",
@@ -12553,7 +12628,18 @@ function buildScheduledPush(message, build, extraMeta, bannerBody) {
       amsgOccurrenceMs: build.occurrenceMs,
       ...extraMeta ?? {}
     },
-    ...bannerBody !== void 0 ? { notification: { title, body: bannerBody } } : {}
+    ...bannerBody !== void 0 ? { notification: { title, body: bannerBody } } : {},
+    ...callInvite ? {
+      notification: {
+        title: build.contactName,
+        body: callInvite.mode === "video" ? "\u{1F4F9} \u89C6\u9891\u901A\u8BDD\u2026\u70B9\u51FB\u63A5\u542C" : "\u{1F4DE} \u6765\u7535\u2026\u70B9\u51FB\u63A5\u542C",
+        data: {
+          sullyIncomingCall: true,
+          callMode: callInvite.mode,
+          charId: build.metadata?.charId ?? ""
+        }
+      }
+    } : {}
   };
 }
 
@@ -14322,6 +14408,11 @@ var src_default = {
           // 早期那版直接用 45s 的 TTL，导致「发完就切后台」的回复被当成前台、不发通知。
           foregroundPushWindowMs: CHAT_PRESENCE_PUSH_FRESH_MS,
           naturalProactive: true,
+          // 这份代码认不认「角色主动来电」：[[ACTION:CALL|…]] 走 classifier 的 directive
+          // 通道，而不是被 stripBusinessTagsForNotification 连 raw 一起剥掉。
+          // 同上，报的是能力不是版本号——8/23 第一批就是靠一条 curl 才断定
+          // 「代码是对的，只是云端把标签吃了」。
+          incomingCall: true,
           workerVersion: AMSG_BUNDLE_VERSION
         }
       });

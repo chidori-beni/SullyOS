@@ -1,20 +1,18 @@
 /**
- * 角色主动来电 —— 标签解析 + 冷却判定 + 待接来电的进程内暂存。
+ * 角色主动来电 —— 浏览器侧那一半：冷却、待接来电暂存、"从来电通知点进来"的窗口。
  *
- * 解析那一半是**纯函数、零依赖**（连 type import 都没有），浏览器与 Cloudflare Worker
- * 共用同一份。理由跟 utils/scheduleChangeParse.ts 一模一样：worker 侧必须认得出这个标签
- * ——它留在正文里的话会被 sanitizeIntoSegments 的 stripBusinessTagsForNotification
- * （正则含 ACTION）整块剥掉，连 raw 都不留，客户端永远收不到，角色嘴上说"我打给你了"
- * 而电话根本没响。走 worker classifier 的 directive 通道才到得了。
- *
- * 两边各写一份解析的话，前台聊天里打得通的电话、主动消息里打不通。
- *
- * ── 标签形态 ─────────────────────────────────────────────────────────────
- *   [[ACTION:CALL|video|想看看你现在在干嘛]]
- *   [[ACTION:CALL|voice|睡了吗]]
- * 容错：全角竖线/冒号、中文别名（视频/语音）、模式缺省（缺省按语音）、
- *      `[[ACTION:CALL:video|…]]` 这种冒号写法。
+ * **解析住在 utils/incomingCallParse.ts**（零依赖叶子，worker classifier 要引它）。
+ * 这里转发一道，现有调用点不用改 import——同 scheduleChange.ts 之于 scheduleChangeParse.ts。
  */
+
+export type {
+  CallInvite,
+  CallInviteMode,
+  ExtractedCallInvite,
+} from './incomingCallParse';
+export { extractCallInvite, formatCallInviteTag } from './incomingCallParse';
+
+import type { CallInvite } from './incomingCallParse';
 
 /** 来电界面/铃声的触发事件（window 级）。detail 是 PendingIncomingCall。 */
 export const INCOMING_CALL_EVENT = 'sully-incoming-call';
@@ -28,79 +26,6 @@ export const INCOMING_CALL_EVENT = 'sully-incoming-call';
  * 角色那句"我打给你了"照常显示，用户看到的最多是句没兑现的话，比一天八通电话好。
  */
 export const INCOMING_CALL_COOLDOWN_MS = 30 * 60 * 1000;
-
-export type CallInviteMode = 'voice' | 'video';
-
-export interface CallInvite {
-  mode: CallInviteMode;
-  /** 接通后角色的第一句话；空串代表让它到时候自己现编。 */
-  opening: string;
-}
-
-export interface ExtractedCallInvite {
-  cleanedText: string;
-  invite: CallInvite | null;
-  /** 认出了 CALL 标签但内容废掉的条数，只用来打日志，不影响正文。 */
-  malformedCount: number;
-}
-
-/**
- * 一整条 `[[ACTION:CALL …]]`。
- *
- * 用 `[\s\S]` 是有意的：开场白里模型经常自己换行。非贪婪 + 先到的 `]]` 收尾，
- * 跟 sanitize.ts 里那条 `\[\[(?:ACTION|…)[:\s][\s\S]*?\]\]` 的边界口径保持一致，
- * 免得两边对"这条标签到哪儿为止"的看法不同、剥完还剩半截。
- */
-const CALL_TAG_RE = /\[\[\s*ACTION\s*[:：]\s*CALL\s*(?:[:：|｜]\s*)?([\s\S]*?)\]\]/gu;
-
-const VIDEO_WORDS = /^(?:video|视频|視頻|视讯|視訊|影片|v)$/iu;
-const VOICE_WORDS = /^(?:voice|audio|语音|語音|电话|電話|通话|通話|a)$/iu;
-
-/** 把首字段判成模式；判不出来就说明模型没写模式，整段都是开场白。 */
-const readMode = (field: string): CallInviteMode | null => {
-  const word = field.trim().replace(/[。．.!！?？，,]+$/u, '');
-  if (VIDEO_WORDS.test(word)) return 'video';
-  if (VOICE_WORDS.test(word)) return 'voice';
-  return null;
-};
-
-const parseBody = (body: string): CallInvite | null => {
-  // 竖线（半角/全角）是规范分隔符；模型偶尔写成逗号，只在首段恰好是模式词时才认，
-  // 否则"喂，在吗"这种开场白会被从逗号处劈成两半。
-  const parts = body.split(/[|｜]/u);
-  const head = parts.length > 1 ? readMode(parts[0]) : null;
-  if (head) {
-    return { mode: head, opening: parts.slice(1).join('|').trim() };
-  }
-  const whole = body.trim();
-  if (!whole) return null;
-  // 没写分隔符但整段就是一个模式词：`[[ACTION:CALL|video]]`，开场白留空让它现编。
-  const soloMode = readMode(whole);
-  if (soloMode) return { mode: soloMode, opening: '' };
-  // 缺省按语音。视频要开摄像头、要渲染立绘，是更重的打扰；模型没明确说要视频时
-  // 不该替它选重的那个。
-  return { mode: 'voice', opening: whole };
-};
-
-export const extractCallInvite = (text: string): ExtractedCallInvite => {
-  if (!text || !text.includes('[[')) {
-    return { cleanedText: text ?? '', invite: null, malformedCount: 0 };
-  }
-  let invite: CallInvite | null = null;
-  let malformedCount = 0;
-  const cleanedText = text.replace(CALL_TAG_RE, (_full, body: string) => {
-    const parsed = parseBody(String(body ?? ''));
-    // 一轮里吐了好几个只认第一个。多打几通电话没有任何语义，后面那些一律当噪音。
-    if (parsed && !invite) invite = parsed;
-    else if (!parsed) malformedCount += 1;
-    return '';
-  });
-  return { cleanedText, invite, malformedCount };
-};
-
-/** 反向拼回标签 —— 给 worker directive 通道重放用（对齐 reconstructDirectiveTags 的写法）。 */
-export const formatCallInviteTag = (invite: CallInvite): string =>
-  `[[ACTION:CALL|${invite.mode}|${invite.opening}]]`;
 
 // ─── 冷却 ────────────────────────────────────────────────────────────────
 
@@ -123,6 +48,44 @@ export const readLastCallAt = (charId: string): number | null => {
 
 export const markCallFired = (charId: string, at: number = Date.now()): void => {
   try { localStorage.setItem(COOLDOWN_KEY_PREFIX + charId, String(at)); } catch { /* 同上 */ }
+};
+
+// ─── "用户点了来电横幅" ───────────────────────────────────────────────────
+
+const CALL_BANNER_OPEN_KEY = 'sully-incoming-call-opened-v1';
+
+/**
+ * 点了横幅之后多久之内还算"这一下是来接电话的"。
+ *
+ * 比自动响铃的 STALE_CALL_MS 宽得多，因为语义完全不同：自动响铃是系统替用户做主，
+ * 隔夜的电话不该突然响；而点横幅是**用户自己按下的接听**，从点到 App 起来、补收跑完
+ * 可能要好几秒甚至十几秒（冷启动 + 落库），这段时间不能把他刚按的那一下判成过期。
+ */
+export const CALL_BANNER_GRACE_MS = 10 * 60 * 1000;
+
+/**
+ * 记下"这一次进 App 是点来电横幅进来的"。
+ *
+ * 用 sessionStorage 而不是模块变量：冷启动时这面旗要跨过整个 App 初始化才被读到
+ * （SW 的 postMessage / URL 参数 → 补收落库 → applyAssistantPostProcessing），
+ * 中间但凡有一次模块重新求值，模块变量就没了。
+ */
+export const noteCallBannerOpened = (charId: string, at: number = Date.now()): void => {
+  try { sessionStorage.setItem(CALL_BANNER_OPEN_KEY, JSON.stringify({ charId, at })); } catch { /* 隐私模式 */ }
+};
+
+/** 读并清掉。只认同一个角色——横幅是谁的电话，接的就是谁。 */
+export const consumeCallBannerOpened = (charId: string, now: number = Date.now()): boolean => {
+  try {
+    const raw = sessionStorage.getItem(CALL_BANNER_OPEN_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as { charId?: string; at?: number };
+    if (parsed?.charId !== charId) return false;
+    sessionStorage.removeItem(CALL_BANNER_OPEN_KEY);
+    return typeof parsed.at === 'number' && now - parsed.at <= CALL_BANNER_GRACE_MS;
+  } catch {
+    return false;
+  }
 };
 
 // ─── 待接来电（进程内单例） ───────────────────────────────────────────────
@@ -178,7 +141,10 @@ export const requestIncomingCall = (
 ): IncomingCallResult => {
   const now = Date.now();
   const ringAt = call.ringAt ?? now;
-  if (isCallCoolingDown(readLastCallAt(call.charId), now)) {
+  // 用户刚在锁屏上点了这通电话的横幅 —— 那是一次明确的"接听"，冷却和过期都不该拦。
+  // 拦下来的话，用户按了接听、App 起来了、然后什么都没发生，比不响还糟。
+  const answeredFromBanner = consumeCallBannerOpened(call.charId, now);
+  if (!answeredFromBanner && isCallCoolingDown(readLastCallAt(call.charId), now)) {
     console.log('[IncomingCall] ⏳ 冷却中，这通电话不响了:', call.charId);
     return 'cooldown';
   }
@@ -187,7 +153,7 @@ export const requestIncomingCall = (
     console.log('[IncomingCall] ⏳ 已有一通在响，跳过:', call.charId);
     return 'busy';
   }
-  if (now - ringAt > STALE_CALL_MS) {
+  if (!answeredFromBanner && now - ringAt > STALE_CALL_MS) {
     console.log('[IncomingCall] ⏳ 这是补收回来的旧电话，只记未接:', call.charId);
     markCallFired(call.charId, now);
     return 'stale';

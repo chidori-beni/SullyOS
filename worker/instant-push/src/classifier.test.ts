@@ -437,3 +437,48 @@ describe('classifyLLMOutput — 日程修改走 directive 通道', () => {
   });
 });
 
+
+// ─── 主动来电 [[ACTION:CALL|…]] ───
+// 8/23 第一批上线后实测：即时对话开着时电话永远不响——标签在云端被
+// stripBusinessTagsForNotification 连 raw 一起剥掉了。这几条钉住"必须走 directive 通道"。
+describe('call_invite', () => {
+  it('摘成 directive，并从正文里剥干净', () => {
+    const r = classifyLLMOutput('行，接好了。\n[[ACTION:CALL | voice | 看你这会儿迷糊成什么样]]');
+    expect(r.kind).toBe('finish');
+    if (r.kind !== 'finish') return;
+    expect(r.directives).toContainEqual({
+      type: 'call_invite', mode: 'voice', opening: '看你这会儿迷糊成什么样',
+    });
+    expect(r.cleanedText).toBe('行，接好了。');
+    expect(r.cleanedText).not.toContain('ACTION:CALL');
+  });
+
+  it('视频 / 中文别名 / 全角竖线都认', () => {
+    const r = classifyLLMOutput('[[ACTION：CALL｜视频｜开门]]');
+    if (r.kind !== 'finish') throw new Error('应当是 finish');
+    expect(r.directives).toContainEqual({ type: 'call_invite', mode: 'video', opening: '开门' });
+  });
+
+  it('没有来电标签时正文一个字都不少', () => {
+    const r = classifyLLMOutput('今天挺累的，早点睡吧。');
+    if (r.kind !== 'finish') throw new Error('应当是 finish');
+    expect(r.cleanedText).toBe('今天挺累的，早点睡吧。');
+    expect(r.directives.filter(d => d.type === 'call_invite')).toHaveLength(0);
+  });
+
+  it('跟日程修改同时出现时两条都在（旁路解析是串起来的，别互相吃掉）', () => {
+    const r = classifyLLMOutput(
+      '那就八点。\n[[ACTION:CHANGE_SCHEDULE | 20:00 | 和你连麦]]\n[[ACTION:CALL|video|接一下]]',
+    );
+    if (r.kind !== 'finish') throw new Error('应当是 finish');
+    expect(r.directives).toContainEqual({ type: 'change_schedule', time: '20:00', activity: '和你连麦' });
+    expect(r.directives).toContainEqual({ type: 'call_invite', mode: 'video', opening: '接一下' });
+    expect(r.cleanedText).toBe('那就八点。');
+  });
+
+  it('一轮吐两个只留一个（复述型模型会把整条消息重写一遍）', () => {
+    const r = classifyLLMOutput('[[ACTION:CALL|voice|一]]\n[[ACTION:CALL|voice|一]]');
+    if (r.kind !== 'finish') throw new Error('应当是 finish');
+    expect(r.directives.filter(d => d.type === 'call_invite')).toHaveLength(1);
+  });
+});

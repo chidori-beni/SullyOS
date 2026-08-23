@@ -54,7 +54,7 @@ import { getLocalDateKey } from './localDate';
 import { normalizeAssistantActionFormatting } from './assistantActionFormat';
 import { markAmsgStateDirty } from './amsgStateSync';
 import { announceScheduleChanges, applyAssistantScheduleChanges } from './scheduleChange';
-import { extractCallInvite, requestIncomingCall } from './incomingCall';
+import { extractCallInvite, formatCallInviteTag, requestIncomingCall } from './incomingCall';
 
 // ─── 模块内辅助 ──────────────────────────────────────────────────────────────
 
@@ -244,6 +244,10 @@ export type PostProcessDirective =
     | { type: 'transfer_return' }
     | { type: 'add_event'; title: string; date: string }
     | { type: 'change_schedule'; time: string; activity: string }
+    // 角色主动来电 —— worker classifier 把 [[ACTION:CALL|…]] 摘成结构化的这条,
+    // 我们拼回原标签塞进正文, 由本文件末尾的 Step 7 统一响铃。跟本地路径同一份代码,
+    // 不为 push 路径另写一个来电触发器。
+    | { type: 'call_invite'; mode: 'voice' | 'video'; opening: string }
     | { type: 'schedule_message'; time: string; text: string }
     // song 是主动消息 2.0 的定时路径后补的「角色说的是哪首歌」（见 chatParser 的
     // FrozenMusicSong）；标签里只有歌单名带不动它，所以单独走 directive 字段。
@@ -297,6 +301,9 @@ function reconstructDirectiveTags(directives: PostProcessDirective[] | undefined
                 break;
             case 'change_schedule':
                 parts.push(`[[ACTION:CHANGE_SCHEDULE|${d.time}|${d.activity}]]`);
+                break;
+            case 'call_invite':
+                parts.push(formatCallInviteTag({ mode: d.mode, opening: d.opening }));
                 break;
             case 'schedule_message':
                 parts.push(`[schedule_message | ${d.time} | fixed | ${d.text}]`);

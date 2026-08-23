@@ -448,6 +448,20 @@ export function processLLMRound(
     // 看的动作，是角色在纠正自己的表：一起丢掉的话，下一次 fire 读到的还是那条旧安排，
     // 角色会反复想改又反复改不掉，用户那边则永远看到表和角色说的话对不上。emitResult
     // 落的是服务端收件箱，不占聊天正文，也不用为它硬发一条空推送。
+    // 主动来电是第二个例外，而且理由跟日程正相反：它**必须**有一条推送。
+    // 「电话响了」这件事本身就是要给用户看的内容，横幅正文写的是「来电…点击接听」
+    // ——那不是一条空白横幅，是这通电话的全部意义。角色一个字没说就直接打过来，
+    // 现实里也天天发生，不算穿帮。
+    const callOnly = directives.find(
+      (d): d is Extract<Directive, { type: 'call_invite' }> => d.type === 'call_invite',
+    );
+    if (callOnly) {
+      return {
+        decision: 'finish',
+        pushPayloads: [buildScheduledPush('', build, finishMeta, '', callOnly)],
+      };
+    }
+
     const scheduleChanges = directives
       .filter((d): d is Extract<Directive, { type: 'change_schedule' }> => d.type === 'change_schedule')
       .map((d) => ({ startTime: d.time, activity: d.activity }));
@@ -462,7 +476,18 @@ export function processLLMRound(
   return {
     decision: 'finish',
     pushPayloads: segments.map((seg, i) =>
-      buildScheduledPush(seg.raw, build, i === lastIdx ? finishMeta : undefined, seg.sanitized),
+      buildScheduledPush(
+        seg.raw, build,
+        i === lastIdx ? finishMeta : undefined,
+        seg.sanitized,
+        // 来电挂在最后一段（directives 也挂那一段）：横幅要在角色把话说完之后才变成
+        // 「来电」，顺序跟前台一致——先看见它说「我打给你」，然后电话响。
+        i === lastIdx
+          ? directives.find(
+              (d): d is Extract<Directive, { type: 'call_invite' }> => d.type === 'call_invite',
+            )
+          : undefined,
+      ),
     ),
   };
 }
@@ -482,6 +507,16 @@ function buildScheduledPush(
   build: PushBuildInput,
   extraMeta?: Record<string, unknown>,
   bannerBody?: string,
+  /**
+   * 这一段带着一通来电。带了就把横幅换成「来电…点击接听」，并在 notification.data 上
+   * 立一面旗——SW 靠它认出这是来电：连弹两下当铃声、点开直接进接听页
+   * （见 worker/sw-keep-alive.ts 的 incoming-call 分支）。
+   *
+   * 为什么横幅正文要盖掉角色说的那句话：iOS PWA 给不了自定义铃声（Web Push 根本没有
+   * sound 字段），能拉开「这是电话不是消息」的只剩文案、图标和响的次数。角色说的话
+   * 一个字都没丢——它在 message 里，点开就在聊天里。
+   */
+  callInvite?: { mode: 'voice' | 'video'; opening: string },
 ): Record<string, unknown> {
   const title = `来自 ${build.contactName}`;
   return {
@@ -500,5 +535,18 @@ function buildScheduledPush(
       ...(extraMeta ?? {}),
     },
     ...(bannerBody !== undefined ? { notification: { title, body: bannerBody } } : {}),
+    ...(callInvite
+      ? {
+          notification: {
+            title: build.contactName,
+            body: callInvite.mode === 'video' ? '\u{1F4F9} 视频通话…点击接听' : '\u{1F4DE} 来电…点击接听',
+            data: {
+              sullyIncomingCall: true,
+              callMode: callInvite.mode,
+              charId: (build.metadata as Record<string, unknown> | undefined)?.charId ?? '',
+            },
+          },
+        }
+      : {}),
   };
 }

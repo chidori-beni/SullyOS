@@ -3085,6 +3085,11 @@ export default {
           // 早期那版直接用 45s 的 TTL，导致「发完就切后台」的回复被当成前台、不发通知。
           foregroundPushWindowMs: CHAT_PRESENCE_PUSH_FRESH_MS,
           naturalProactive: true,
+          // 这份代码认不认「角色主动来电」：[[ACTION:CALL|…]] 走 classifier 的 directive
+          // 通道，而不是被 stripBusinessTagsForNotification 连 raw 一起剥掉。
+          // 同上，报的是能力不是版本号——8/23 第一批就是靠一条 curl 才断定
+          // 「代码是对的，只是云端把标签吃了」。
+          incomingCall: true,
           workerVersion: AMSG_BUNDLE_VERSION,
         },
       });

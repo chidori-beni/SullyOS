@@ -129,6 +129,24 @@ export const NOTIFICATION_SILENT_WHEN_VISIBLE = 'when-visible';
 export const instantNotificationTag = (charId: string) => `amsg-instant-${charId}`;
 
 /**
+ * 来电横幅自己的 tag。
+ *
+ * **不能跟消息共用** `amsg-instant-${charId}`：同 tag 的通知是静默替换，而来电横幅永远是
+ * 一轮里的最后一段（renotify 只给第一段），共用就意味着电话来了**一声不响**地把上一条
+ * 消息横幅顶掉——用户什么都察觉不到。iOS PWA 本来就没有自定义铃声可用（Web Push 没有
+ * sound 字段），再把这一声也丢了，来电就彻底沦为一条静音消息。
+ */
+export const instantCallNotificationTag = (charId: string) => `amsg-call-${charId}`;
+
+/** 这条推送是不是一通来电（旗子由 agentic.ts 的 buildScheduledPush 立在 notification.data 上）。 */
+export const isIncomingCallPush = (notification: unknown): boolean => {
+  if (!notification || typeof notification !== 'object' || Array.isArray(notification)) return false;
+  const data = (notification as Record<string, unknown>).data;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
+  return (data as Record<string, unknown>).sullyIncomingCall === true;
+};
+
+/**
  * 给即时对话的推送载荷表态通知策略：一定弹，按角色折叠，前台安静、后台叫人。
  *
  * 打扰不靠「不弹」来压，靠另外三个字段：
@@ -174,8 +192,13 @@ export const applyInstantNotificationPolicy = (
       // 认不出是哪个角色时就不折叠：通知栏里多几条只是吵，两个角色共用一个 tag 会
       // 互相顶掉，那是真的丢消息。renotify 跟着 tag 走——没有 tag 时带上它，
       // showNotification 会直接抛 TypeError。
+      // 来电走自己的 tag 且**一定** renotify：它是一轮里的最后一段，按普通规则会被静默
+      // 替换掉（见 instantCallNotificationTag）。silent 也摘掉 when-visible——前台这条
+      // 压根不会发（show:false），能走到这儿的都是后台，后台的电话就该响。
       ...(target
-        ? { tag: instantNotificationTag(target), ...(isFirstSegment ? { renotify: true } : {}) }
+        ? isIncomingCallPush(notification)
+          ? { tag: instantCallNotificationTag(target), renotify: true, silent: false }
+          : { tag: instantNotificationTag(target), ...(isFirstSegment ? { renotify: true } : {}) }
         : {}),
     },
   };

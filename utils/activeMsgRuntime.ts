@@ -9,6 +9,7 @@ import {
   type PostProcessDirective,
   type XhsCaches,
 } from './applyAssistantPostProcessing';
+import { noteCallBannerOpened } from './incomingCall';
 import { runPendingToolCalls } from './instantToolRunner';
 import { drainPendingDiaries } from './pendingDiary';
 import { applyEmotionEvalRaw } from './emotionApply';
@@ -2470,6 +2471,9 @@ const handleDeepLink = () => {
   const openApp = currentUrl.searchParams.get('openApp');
 
   if (openApp === 'chat' && charId) {
+    // 冷启动是点来电横幅进来的（SW 把旗插在 URL 上）。必须在补收落库**之前**记下来——
+    // 响不响铃是 applyAssistantPostProcessing 末尾算的，那时候这面旗得已经在了。
+    if (currentUrl.searchParams.get('incomingCall') === '1') noteCallBannerOpened(charId);
     window.dispatchEvent(new CustomEvent('active-msg-open', {
       detail: { charId },
     }));
@@ -2481,6 +2485,7 @@ const handleDeepLink = () => {
   if (charId !== null || openApp !== null) {
     currentUrl.searchParams.delete('openApp');
     currentUrl.searchParams.delete('activeMsgCharId');
+    currentUrl.searchParams.delete('incomingCall');
     // Keep same-page navigation markers (for example the browser back guard)
     // while removing only the consumed deep-link parameters from the URL.
     window.history.replaceState(window.history.state, '', currentUrl.toString());
@@ -2564,6 +2569,11 @@ export const ActiveMsgRuntime = {
         }
 
         if (type === 'active-msg-open') {
+          // App 还活着时点来电横幅走这条。同样要抢在 flushInboxToChat 前面立旗
+          // （见 handleDeepLink 里那条注释）。
+          if (event.data?.incomingCall && event.data?.charId) {
+            noteCallBannerOpened(String(event.data.charId));
+          }
           // 严格串行: 先把 inbox 里的 round-1 旁白落库, 再跑 tool runner (它会触发 round-2),
           // 保证用户回到界面时先看到旁白, 且 round-2 回复排在旁白之后.
           void (async () => {
