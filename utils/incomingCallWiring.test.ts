@@ -76,3 +76,23 @@ describe('来电时刻只能取 spokenAt', () => {
     expect(src).not.toContain('ringAt: messageTimestamp');
   });
 });
+
+describe('这条链上最容易被别的上传悄悄覆盖掉的两处', () => {
+  it('chatPrompts 里还教着 [[ACTION:CALL]]', () => {
+    const src = readFileSync(path.resolve(__dirname, './chatPrompts.ts'), 'utf8');
+    expect(src).toContain('[[ACTION:CALL');
+    expect(src).toContain('要打就带上那一行，不打就别说要打');
+  });
+
+  it('CallApp 还认得待接来电，也还知道方向', () => {
+    const src = readFileSync(path.resolve(__dirname, '../apps/CallApp.tsx'), 'utf8');
+    expect(src).toContain('getPendingIncomingCall');
+    expect(src).toContain('clearPendingIncomingCall');
+    expect(src).toContain('callDirection');
+  });
+
+  it('运行时提醒接在 volatileState 上（不能进 stable，会打断前缀缓存）', () => {
+    const src = readFileSync(path.resolve(__dirname, './chatPrompts.ts'), 'utf8');
+    expect(src).toContain('volatileState += buildCallHintFromMessages(currentMsgs)');
+  });
+});

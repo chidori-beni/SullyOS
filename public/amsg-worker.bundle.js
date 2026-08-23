@@ -617,7 +617,7 @@ var init_mcpFireCore = __esm({
 // worker/amsg/src/index.ts
 import { DurableObject } from "cloudflare:workers";
 
-// node_modules/.pnpm/@rei-standard+amsg-server@2_c57770165a8a2256e4acaa4bae2ba803/node_modules/@rei-standard/amsg-server/dist/chunk-GN44PST5.mjs
+// ../incoming-call-merge-20260823/node_modules/.pnpm/@rei-standard+amsg-server@2_c57770165a8a2256e4acaa4bae2ba803/node_modules/@rei-standard/amsg-server/dist/chunk-GN44PST5.mjs
 var UPDATABLE_COLUMNS = /* @__PURE__ */ new Set([
   "user_id",
   "uuid",
@@ -636,7 +636,7 @@ var UPDATABLE_COLUMNS = /* @__PURE__ */ new Set([
 var TASK_DELIVERY_COLUMNS = "id, user_id, uuid, encrypted_payload, message_type, next_send_at, retry_after, status, retry_count";
 var TASK_DETAIL_COLUMNS = "id, user_id, uuid, encrypted_payload, message_type, next_send_at, status, retry_count, last_error, created_at, updated_at";
 
-// node_modules/.pnpm/@rei-standard+amsg-shared@0.4.0-next.8/node_modules/@rei-standard/amsg-shared/dist/index.mjs
+// ../incoming-call-merge-20260823/node_modules/.pnpm/@rei-standard+amsg-shared@0.4.0-next.8/node_modules/@rei-standard/amsg-shared/dist/index.mjs
 var TEXT_ENCODER = new TextEncoder();
 var TEXT_DECODER = new TextDecoder("utf-8", { fatal: false });
 function toUint8(buf) {
@@ -1735,7 +1735,7 @@ function stringifyDecisionForError(value) {
   }
 }
 
-// node_modules/.pnpm/@rei-standard+amsg-server@2_c57770165a8a2256e4acaa4bae2ba803/node_modules/@rei-standard/amsg-server/dist/chunk-3JEWYDM4.mjs
+// ../incoming-call-merge-20260823/node_modules/.pnpm/@rei-standard+amsg-server@2_c57770165a8a2256e4acaa4bae2ba803/node_modules/@rei-standard/amsg-server/dist/chunk-3JEWYDM4.mjs
 var DAY_MS = 24 * 60 * 60 * 1e3;
 var MAX_LISTED_SKIPPED_OCCURRENCES = 32;
 var MAX_ADJUST_STEPS = 32;
@@ -8127,8 +8127,8 @@ var discardJob = async (writeState, jobId) => {
   }
 };
 var plateConsolidateHandler = {
-  async beforeFire({ ctx, charId, taskMeta: taskMeta2 }) {
-    const jobId = taskMeta2[AMSG_JOB_ID_KEY];
+  async beforeFire({ ctx, charId, taskMeta }) {
+    const jobId = taskMeta[AMSG_JOB_ID_KEY];
     if (typeof jobId !== "string" || !jobId) {
       throw new Error(`\u95E8\u724C\u6574\u7406\u4EFB\u52A1\u7684 metadata \u91CC\u6CA1\u6709 ${AMSG_JOB_ID_KEY}`);
     }
@@ -9399,6 +9399,13 @@ var buildInstantTimelyBlock = (args) => {
 var NOTIFICATION_ALWAYS = "always";
 var NOTIFICATION_SILENT_WHEN_VISIBLE = "when-visible";
 var instantNotificationTag = (charId) => `amsg-instant-${charId}`;
+var instantCallNotificationTag = (charId) => `amsg-call-${charId}`;
+var isIncomingCallPush = (notification) => {
+  if (!notification || typeof notification !== "object" || Array.isArray(notification)) return false;
+  const data = notification.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+  return data.sullyIncomingCall === true;
+};
 var applyInstantNotificationPolicy = (payload, charId, isFirstSegment = false, appIsForeground = false) => {
   const notification = payload.notification;
   const hasNotification = !!notification && typeof notification === "object" && !Array.isArray(notification);
@@ -9417,7 +9424,10 @@ var applyInstantNotificationPolicy = (payload, charId, isFirstSegment = false, a
       // 认不出是哪个角色时就不折叠：通知栏里多几条只是吵，两个角色共用一个 tag 会
       // 互相顶掉，那是真的丢消息。renotify 跟着 tag 走——没有 tag 时带上它，
       // showNotification 会直接抛 TypeError。
-      ...target ? { tag: instantNotificationTag(target), ...isFirstSegment ? { renotify: true } : {} } : {}
+      // 来电走自己的 tag 且**一定** renotify：它是一轮里的最后一段，按普通规则会被静默
+      // 替换掉（见 instantCallNotificationTag）。silent 也摘掉 when-visible——前台这条
+      // 压根不会发（show:false），能走到这儿的都是后台，后台的电话就该响。
+      ...target ? isIncomingCallPush(notification) ? { tag: instantCallNotificationTag(target), renotify: true, silent: false } : { tag: instantNotificationTag(target), ...isFirstSegment ? { renotify: true } : {} } : {}
     }
   };
 };
@@ -11633,7 +11643,7 @@ var buildDuplicateToolMessage = (name) => [
 // worker/amsg/src/index.ts
 init_proxyWorker();
 
-// node_modules/.pnpm/@rei-standard+amsg-instant@0.11.0-next.6/node_modules/@rei-standard/amsg-instant/dist/index.mjs
+// ../incoming-call-merge-20260823/node_modules/.pnpm/@rei-standard+amsg-instant@0.11.0-next.6/node_modules/@rei-standard/amsg-instant/dist/index.mjs
 var PUSH_PAYLOAD_BYTE_ENCODER = new TextEncoder();
 function segmentTextWithProtectedBlocks(text, options) {
   if (!text) return [];
@@ -12164,6 +12174,43 @@ var extractScheduleChangeDirectives = (text) => {
   };
 };
 
+// utils/incomingCallParse.ts
+var CALL_TAG_RE = /\[\[\s*ACTION\s*[:：]\s*CALL\s*(?:[:：|｜]\s*)?([\s\S]*?)\]\]/gu;
+var VIDEO_WORDS = /^(?:video|视频|視頻|视讯|視訊|影片|v)$/iu;
+var VOICE_WORDS = /^(?:voice|audio|语音|語音|电话|電話|通话|通話|a)$/iu;
+var readMode = (field) => {
+  const word = field.trim().replace(/[。．.!！?？，,]+$/u, "");
+  if (VIDEO_WORDS.test(word)) return "video";
+  if (VOICE_WORDS.test(word)) return "voice";
+  return null;
+};
+var parseBody = (body) => {
+  const parts = body.split(/[|｜]/u);
+  const head = parts.length > 1 ? readMode(parts[0]) : null;
+  if (head) {
+    return { mode: head, opening: parts.slice(1).join("|").trim() };
+  }
+  const whole = body.trim();
+  if (!whole) return null;
+  const soloMode = readMode(whole);
+  if (soloMode) return { mode: soloMode, opening: "" };
+  return { mode: "voice", opening: whole };
+};
+var extractCallInvite = (text) => {
+  if (!text || !text.includes("[[")) {
+    return { cleanedText: text ?? "", invite: null, malformedCount: 0 };
+  }
+  let invite = null;
+  let malformedCount = 0;
+  const cleanedText = text.replace(CALL_TAG_RE, (_full, body) => {
+    const parsed = parseBody(String(body ?? ""));
+    if (parsed && !invite) invite = parsed;
+    else if (!parsed) malformedCount += 1;
+    return "";
+  });
+  return { cleanedText, invite, malformedCount };
+};
+
 // worker/instant-push/src/classifier.ts
 var DATA_TAGS = [
   // [[RECALL: 2024-05]] / [[RECALL: 2024年5]]
@@ -12388,8 +12435,17 @@ function classifyLLMOutput(text) {
   for (const d of scheduleParsed.directives) {
     directives.push({ type: "change_schedule", time: d.startTime, activity: d.activity });
   }
+  const callParsed = extractCallInvite(textAfterSchedule);
+  const textAfterCall = callParsed.cleanedText;
+  if (callParsed.invite) {
+    directives.push({
+      type: "call_invite",
+      mode: callParsed.invite.mode,
+      opening: callParsed.invite.opening
+    });
+  }
   for (const spec of SIDE_EFFECT_TAGS) {
-    const matches = Array.from(textAfterSchedule.matchAll(spec.re));
+    const matches = Array.from(textAfterCall.matchAll(spec.re));
     for (const m of matches) {
       const d = spec.toDirective(m);
       if (d) directives.push(d);
@@ -12406,7 +12462,7 @@ function classifyLLMOutput(text) {
     seenDirectives.add(key);
     dedupedDirectives.push(d);
   }
-  let cleanedText = textAfterSchedule;
+  let cleanedText = textAfterCall;
   for (const spec of DATA_TAGS) cleanedText = cleanedText.replace(spec.re, "");
   for (const spec of SIDE_EFFECT_TAGS) cleanedText = cleanedText.replace(spec.re, "");
   cleanedText = cleanedText.trim();
@@ -12539,6 +12595,15 @@ function processLLMRound(state, llmOutputText, build, mcp, schedule, iteration) 
   const finishMeta = directives.length > 0 ? { directives, ...xhsSession ? { xhsSession } : {} } : void 0;
   const segments = sanitizeIntoSegments(cleanedText);
   if (segments.length === 0) {
+    const callOnly = directives.find(
+      (d) => d.type === "call_invite"
+    );
+    if (callOnly) {
+      return {
+        decision: "finish",
+        pushPayloads: [buildScheduledPush("", build, finishMeta, "", callOnly)]
+      };
+    }
     const scheduleChanges = directives.filter((d) => d.type === "change_schedule").map((d) => ({ startTime: d.time, activity: d.activity }));
     return {
       decision: "skip-push",
@@ -12550,11 +12615,21 @@ function processLLMRound(state, llmOutputText, build, mcp, schedule, iteration) 
   return {
     decision: "finish",
     pushPayloads: segments.map(
-      (seg, i) => buildScheduledPush(seg.raw, build, i === lastIdx ? finishMeta : void 0, seg.sanitized)
+      (seg, i) => buildScheduledPush(
+        seg.raw,
+        build,
+        i === lastIdx ? finishMeta : void 0,
+        seg.sanitized,
+        // 来电挂在最后一段（directives 也挂那一段）：横幅要在角色把话说完之后才变成
+        // 「来电」，顺序跟前台一致——先看见它说「我打给你」，然后电话响。
+        i === lastIdx ? directives.find(
+          (d) => d.type === "call_invite"
+        ) : void 0
+      )
     )
   };
 }
-function buildScheduledPush(message, build, extraMeta, bannerBody) {
+function buildScheduledPush(message, build, extraMeta, bannerBody, callInvite) {
   const title = `\u6765\u81EA ${build.contactName}`;
   return {
     messageKind: "content",
@@ -12571,7 +12646,18 @@ function buildScheduledPush(message, build, extraMeta, bannerBody) {
       amsgOccurrenceMs: build.occurrenceMs,
       ...extraMeta ?? {}
     },
-    ...bannerBody !== void 0 ? { notification: { title, body: bannerBody } } : {}
+    ...bannerBody !== void 0 ? { notification: { title, body: bannerBody } } : {},
+    ...callInvite ? {
+      notification: {
+        title: build.contactName,
+        body: callInvite.mode === "video" ? "\u{1F4F9} \u89C6\u9891\u901A\u8BDD\u2026\u70B9\u51FB\u63A5\u542C" : "\u{1F4DE} \u6765\u7535\u2026\u70B9\u51FB\u63A5\u542C",
+        data: {
+          sullyIncomingCall: true,
+          callMode: callInvite.mode,
+          charId: build.metadata?.charId ?? ""
+        }
+      }
+    } : {}
   };
 }
 
@@ -13453,10 +13539,10 @@ var amsgHooks = {
         throw fail2(`${label} \u89E3\u538B\u5931\u8D25\uFF08\u6570\u636E\u635F\u574F\uFF09`, { error: String(error) });
       }
     };
-    const taskMeta2 = ctx.task.metadata ?? {};
-    const policy = typeof taskMeta2.amsgExpirePolicy === "string" ? taskMeta2.amsgExpirePolicy : void 0;
+    const taskMeta = ctx.task.metadata ?? {};
+    const policy = typeof taskMeta.amsgExpirePolicy === "string" ? taskMeta.amsgExpirePolicy : void 0;
     const emotionEvalSpec = takeEmotionEvalSpec(ctx.task.metadata);
-    const taskKind = readTaskKind(taskMeta2);
+    const taskKind = readTaskKind(taskMeta);
     if (taskKind) {
       const handler = FIRE_KIND_HANDLERS[taskKind];
       if (!handler) {
@@ -13464,7 +13550,7 @@ var amsgHooks = {
       }
       let plan;
       try {
-        plan = await handler.beforeFire({ ctx, charId, taskMeta: taskMeta2 });
+        plan = await handler.beforeFire({ ctx, charId, taskMeta });
       } catch (error) {
         throw fail2(error instanceof Error ? error.message : String(error), { kind: taskKind });
       }
@@ -13519,7 +13605,7 @@ var amsgHooks = {
     const expireInput = {
       policy,
       recurrenceType: ctx.task.recurrenceType,
-      anchorMs: typeof taskMeta2.amsgAnchorMs === "number" ? taskMeta2.amsgAnchorMs : null,
+      anchorMs: typeof taskMeta.amsgAnchorMs === "number" ? taskMeta.amsgAnchorMs : null,
       lastUserMessageAt: laterOf(pack.lastUserMessageAt ?? null, presenceLastUserMessageAt),
       nowMs: ctx.now.getTime(),
       occurrenceMs
@@ -13529,7 +13615,7 @@ var amsgHooks = {
       await recordSkip(ctx, charId, "conversation-moved-on", occurrenceMs);
       return { skip: true };
     }
-    if (!instant && typeof taskMeta2.amsgTaskInstruction !== "string") {
+    if (!instant && typeof taskMeta.amsgTaskInstruction !== "string") {
       throw fail2("\u4EFB\u52A1 metadata \u7F3A amsgTaskInstruction\uFF08\u65E7\u683C\u5F0F\u4EFB\u52A1\uFF09");
     }
     const globalRows = await ctx.readState(AMSG_GLOBAL_NAMESPACE);
@@ -13546,7 +13632,7 @@ var amsgHooks = {
     const mcpNative = toolConfig.mcpUseNativeTools !== false;
     const storedSelfLog = parseSelfLog(charRows.find((r) => r.key === AMSG_SELF_LOG_KEY)?.value ?? "");
     const selfLog = reconcileSelfLogWithPack(storedSelfLog, pack, expireInput.lastUserMessageAt);
-    if (!instant && taskMeta2.amsgNaturalProactive === true) {
+    if (!instant && taskMeta.amsgNaturalProactive === true) {
       const natural = pack.naturalProactive;
       if (!natural?.enabled || !natural.profile) {
         console.log("[amsg:natural-stop]", { taskId: ctx.task.id, charId, reason: "disabled-or-no-profile" });
@@ -13621,7 +13707,7 @@ var amsgHooks = {
       if (!decision.shouldSend) return { skip: true };
     }
     const maxUnansweredSends = resolveMaxUnansweredSends(pack.maxUnansweredSends);
-    if (!instant && taskMeta2.amsgSelfScheduled === true && countUnansweredSends(selfLog) >= maxUnansweredSends) {
+    if (!instant && taskMeta.amsgSelfScheduled === true && countUnansweredSends(selfLog) >= maxUnansweredSends) {
       console.log("[amsg:unanswered-limit-skip]", {
         taskId: ctx.task.id,
         charId,
@@ -13635,7 +13721,7 @@ var amsgHooks = {
     const selfScheduleAllowed = pack.selfScheduleEnabled;
     const canSelfSchedule = typeof ctx.scheduleTask === "function" && selfScheduleAllowed;
     const tz = { tzId: pack.tzId };
-    const clientTaskId = typeof taskMeta2.amsgClientTaskId === "string" ? taskMeta2.amsgClientTaskId : "";
+    const clientTaskId = typeof taskMeta.amsgClientTaskId === "string" ? taskMeta.amsgClientTaskId : "";
     const { toolCtx, proxyWorkerUrl, xhsCookie } = buildToolCtx(toolPack, toolConfig);
     const plannedSelfSendTasks = livePendingTasks.filter((t) => t.source === "character" && isPendingTask(t, ctx.now.getTime()));
     const stash = {
@@ -13673,6 +13759,7 @@ var amsgHooks = {
       // （resolveFireSceneSong 与 renderFireSceneBlock 共用判定），冻的必然是正文里那首。
       sceneSong: resolveFireSceneSong(pack.scene, ctx.now.getTime(), tz),
       instant,
+      naturalProactive: !instant && taskMeta.amsgNaturalProactive === true,
       readFreshChatPresence: async () => {
         const latest = await ctx.readState(amsgStateNamespace(charId));
         const value = parseAmsgChatPresence(
@@ -13766,7 +13853,7 @@ var amsgHooks = {
         totalTimeoutMs: INSTANT_TOTAL_TIMEOUT_MS
       };
     }
-    const prompt = renderFirePack(pack, ctx.now.getTime(), taskMeta2.amsgTaskInstruction, {
+    const prompt = renderFirePack(pack, ctx.now.getTime(), taskMeta.amsgTaskInstruction, {
       selfLog,
       taskListBlock,
       realtimeWorldBlock,
@@ -13911,19 +13998,19 @@ var amsgHooks = {
       }
     }
     if (decision.decision === "finish") {
-      const naturalPayloads = taskMeta.amsgNaturalProactive === true ? decision.pushPayloads.slice(0, NATURAL_BATCH_HARD_CAP) : decision.pushPayloads;
-      if (taskMeta.amsgNaturalProactive === true && naturalPayloads.length < decision.pushPayloads.length) {
+      const pushPayloads = stash.naturalProactive ? decision.pushPayloads.slice(0, NATURAL_BATCH_HARD_CAP) : decision.pushPayloads;
+      if (stash.naturalProactive && pushPayloads.length < decision.pushPayloads.length) {
         console.warn("[amsg:natural-batch-limit]", {
-          taskId: ctx.task.id,
+          taskId: ctx.taskId,
           charId: stash.charId,
-          dropped: decision.pushPayloads.length - naturalPayloads.length,
+          dropped: decision.pushPayloads.length - pushPayloads.length,
           limit: NATURAL_BATCH_HARD_CAP
         });
       }
-      stash.selfLogTexts = naturalPayloads.map(
+      stash.selfLogTexts = pushPayloads.map(
         (p) => typeof p.message === "string" ? p.message : ""
       );
-      let payloads = attachScheduledTasks(naturalPayloads, stash.scheduledTasks);
+      let payloads = attachScheduledTasks(pushPayloads, stash.scheduledTasks);
       const attachMetaAt = (list, idx, extra) => list.map((payload, i) => i === idx ? { ...payload, metadata: { ...payload.metadata ?? {}, ...extra } } : payload);
       const cancelled = stash.cancelledTasks;
       const renewed = stash.renewedTasks;
@@ -14361,6 +14448,11 @@ var src_default = {
           // 早期那版直接用 45s 的 TTL，导致「发完就切后台」的回复被当成前台、不发通知。
           foregroundPushWindowMs: CHAT_PRESENCE_PUSH_FRESH_MS,
           naturalProactive: true,
+          // 这份代码认不认「角色主动来电」：[[ACTION:CALL|…]] 走 classifier 的 directive
+          // 通道，而不是被 stripBusinessTagsForNotification 连 raw 一起剥掉。
+          // 同上，报的是能力不是版本号——8/23 第一批就是靠一条 curl 才断定
+          // 「代码是对的，只是云端把标签吃了」。
+          incomingCall: true,
           workerVersion: AMSG_BUNDLE_VERSION
         }
       });

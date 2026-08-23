@@ -72,7 +72,12 @@ import {
 import { resolveFireSceneSong } from '../../../utils/amsgFireScene';
 import { shouldExpireFire } from '../../../utils/amsg2ExpireGuard';
 import { buildFireTaskListBlock, isPendingTask, MAX_ACTIVE_TASKS_PER_CHAR, shortTaskId } from '../../../utils/amsg2Tasks';
-import { decideNaturalProactive } from '../../../utils/naturalProactive';
+import {
+  decideNaturalProactive,
+  NATURAL_BATCH_HARD_CAP,
+  naturalUnansweredHardCap,
+  nextNaturalCheckAt,
+} from '../../../utils/naturalProactive';
 import {
   AMSG_FIRE_CANCEL_TOOL,
   AMSG_FIRE_RENEW_TOOL,
@@ -422,6 +427,8 @@ interface FireStash {
   sceneSong: { id?: number; name: string; artists: string } | null;
   /** 这条任务是不是即时对话（用户刚发完消息在等回复）；决定要不要写 outbox。 */
   instant: boolean;
+  /** 这条任务是不是隐藏的自然主动脉冲；用于投递前的单轮气泡硬上限。 */
+  naturalProactive: boolean;
   /** 到真正投递前重读一次前台租约；不能用 fire 开场快照，生成期间用户可能已退到后台。 */
   readFreshChatPresence: () => Promise<boolean>;
   /**
@@ -1778,11 +1785,12 @@ export const amsgHooks = {
         seed = Math.imul(seed, 0x01000193);
       }
       const random01 = (seed >>> 0) / 0xffffffff;
+      const naturalUnansweredCount = countUnansweredSends(selfLog);
       const decision = decideNaturalProactive({
         nowMs: ctx.now.getTime(),
         lastUserMessageAt: expireInput.lastUserMessageAt,
         recentSelfSendAts: selfLog.entries.filter((entry) => !entry.reply).map((entry) => entry.at),
-        unansweredCount: countUnansweredSends(selfLog),
+        unansweredCount: naturalUnansweredCount,
         random01,
         profile: natural.profile,
         intensity: natural.intensity ?? 'normal',
@@ -1791,7 +1799,8 @@ export const amsgHooks = {
         pendingTopic: pack.naturalSignals?.pendingTopic,
         emotion: pack.naturalSignals?.emotion,
       });
-      const nextAt = occurrenceMs + decision.nextCheckMinutes * 60_000;
+      // Worker / cron 停摆后，不追赶已经错过的整条时间线；从真实当前时刻续排下一次。
+      const nextAt = nextNaturalCheckAt(occurrenceMs, ctx.now.getTime(), decision.nextCheckMinutes);
       const nextUuid = `natural-${(seed >>> 0).toString(16).padStart(8, '0')}-${charId}-${nextAt}`;
       await ctx.scheduleTask({
         firstSendTime: new Date(nextAt).toISOString(),
@@ -1818,6 +1827,18 @@ export const amsgHooks = {
         nextCheckMinutes: decision.nextCheckMinutes,
         reasons: decision.reasons,
       });
+      // 到点硬闸：旧画像、旧 bundle 或并发重跑也不能突破连续未回复上限。
+      const naturalHardCap = naturalUnansweredHardCap(natural.intensity ?? 'normal');
+      if (naturalUnansweredCount >= naturalHardCap) {
+        console.log('[amsg:natural-unanswered-limit-skip]', {
+          taskId: ctx.task.id,
+          charId,
+          sends: naturalUnansweredCount,
+          limit: naturalHardCap,
+        });
+        await recordSkip(ctx, charId, 'unanswered-limit', occurrenceMs);
+        return { skip: true } as const;
+      }
       if (isFreshChatPresence(presence, charId, ctx.now.getTime())) {
         console.log('[amsg:natural-skip]', { taskId: ctx.task.id, charId, reason: 'active-chat-presence' });
         return { skip: true } as const;
@@ -1904,6 +1925,7 @@ export const amsgHooks = {
       // （resolveFireSceneSong 与 renderFireSceneBlock 共用判定），冻的必然是正文里那首。
       sceneSong: resolveFireSceneSong(pack.scene, ctx.now.getTime(), tz),
       instant,
+      naturalProactive: !instant && taskMeta.amsgNaturalProactive === true,
       readFreshChatPresence: async () => {
         const latest = await ctx.readState(amsgStateNamespace(charId));
         const value = parseAmsgChatPresence(
@@ -2272,14 +2294,26 @@ export const amsgHooks = {
     }
 
     if (decision.decision === 'finish') {
+      // 自然主动一轮最多落 20 个气泡；正常 prompt 是一到三句，这里只做最后保险。
+      const pushPayloads = stash.naturalProactive
+        ? decision.pushPayloads.slice(0, NATURAL_BATCH_HARD_CAP)
+        : decision.pushPayloads;
+      if (stash.naturalProactive && pushPayloads.length < decision.pushPayloads.length) {
+        console.warn('[amsg:natural-batch-limit]', {
+          taskId: ctx.taskId,
+          charId: stash.charId,
+          dropped: decision.pushPayloads.length - pushPayloads.length,
+          limit: NATURAL_BATCH_HARD_CAP,
+        });
+      }
       // 「我这次说了什么」不在这里写库（这里还没发出去），只把各段正文挂到本次 fire 的
       // scratch 上，等 onAfterSend 按真正送出去的段数落盘。
-      stash.selfLogTexts = decision.pushPayloads.map(
+      stash.selfLogTexts = pushPayloads.map(
         (p) => (typeof p.message === 'string' ? p.message : ''));
 
       // 角色这次给自己排的任务，随最后一条 push 带回客户端认领——不然它们只活在 D1 里，
       // 面板看不到、用户也没法取消。任务本身照常触发，客户端上线补进清单即可。
-      let payloads = attachScheduledTasks(decision.pushPayloads, stash.scheduledTasks);
+      let payloads = attachScheduledTasks(pushPayloads, stash.scheduledTasks);
 
       // 往指定那一条 push 的 metadata 上追加字段（其余条原样）。下面三处挂载共用：
       // 展开顺序固定「旧 metadata 在前、新字段在后」，键冲突时新值赢。

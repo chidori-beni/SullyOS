@@ -16,6 +16,7 @@ import { VOICE_ACTING_GUIDE } from './minimaxTts';
 import { FISH_VOICE_ACTING_GUIDE } from './fishAudioTts';
 import { getTtsProvider, getVoicePromptOverride } from './ttsProvider';
 import { countRecentVoiceUsage, buildVoiceUsageHint } from './voiceFrequency';
+import { buildCallHintFromMessages } from './callRequestHint';
 import { resolveCharTimeZone, nowInTimeZone } from './timezone';
 import { buildLifeRecordInjection } from './lifeRecords';
 import { isWorkerReachableUrl } from './amsgToolPack';
@@ -688,6 +689,21 @@ ${imageGenGuide}
    - **【重要】\`[[记录:...]]\` 是系统日志**: 历史里以 \`[[记录:\` 开头的标签是已经发生的事实（谁转给谁、什么状态），只供你了解，**严禁**在回复里照抄输出。你要做动作时只能用 \`[[ACTION:...]]\`。
    - 调取记忆: \`[[RECALL: YYYY-MM]]\`，请注意，当用户提及具体某个月份时，或者当你想仔细想某个月份的事情时，欢迎你随时使该动作
    - **添加纪念日**: 如果你觉得今天是个值得纪念的日子（或者你们约定了某天），你可以**主动**将它添加到用户的日历中。单独起一行输出: \`[[ACTION:ADD_EVENT | 标题(Title) | YYYY-MM-DD]]\`。
+   - **📞 打电话给对方（这是一个真动作，不是台词）**: 单独起一行输出 \`[[ACTION:CALL | voice | 接通后你想说的第一句]]\`。
+     第二格填 \`voice\`（语音）或 \`video\`（视频），你自己挑；第三格可留空，留空就到时候现说。
+     **只有这一行会让 ${userProfile.name} 的手机真的响起来。**
+     - ⚠️ **最容易犯的错**：在台词里写「这就给你拨过去」「手机拿好」「等我电话」，却没有输出上面那一行。
+       那样对方等来的是一片安静——你说了要打，电话却从来没响过。**要打就带上那一行，不打就别说要打。**
+     - 这不是"加强版的消息"，这是**打扰**——电话一响，对方手上在做的任何事都会被打断。
+       想说的事情打字能说清，就打字。正因为你不常打，打电话才有分量。
+     - 这一行之外，正文照常写——你此刻在做什么、为什么突然想打这一通。
+     - 对方没接的话，聊天里会留下一条未接来电，你下次能看见。
+     - **约个时间再打**：想约"今晚八点连麦"这种，需要**两件事一起做**，缺一件就对不上——
+       ① 用 schedule_active_message 把那个时刻排下来（到点你会带着那时候的上下文重新开口，
+       可以打电话、也可以只发条消息，看你到时候想怎么样）；② 用 \`[[ACTION:CHANGE_SCHEDULE | 20:00 | 和${userProfile.name}连麦]]\`
+       把它写进你自己那天的日程（时段要抄你日程表上已经有的那几个）。
+       只排不写日程的话，你的表上那个点还写着别的事，你自己读起来会自相矛盾。
+       到点了不想打就别打——那是约，不是任务。
 ${scheduleMessageTagEnabled ? `   - **定时发送消息**: 如果你想在未来某个时间主动发消息（比如晚安、早安或提醒），请单独起一行输出: \`[schedule_message | YYYY-MM-DD HH:MM:SS | fixed | 消息内容]\`，分行可以多输出很多该类消息。` : ''}
 ${notionEnabled ? `   - **翻阅日记(Notion)**: 你的记忆本身是完整可靠的，回忆过去优先靠记忆和 \`[[RECALL]]\`，**不需要**靠翻日记来"想起"事情。只有当你**自己**特别想重温那天日记里写下的心情、措辞或私密小细节时，才翻阅: \`[[READ_DIARY: 日期]]\`。支持格式: \`昨天\`、\`前天\`、\`3天前\`、\`1月15日\`、\`2024-01-15\`。` : ''}${feishuEnabled ? `
    - **翻阅日记(飞书)**: 同上——回忆优先靠记忆和 \`[[RECALL]]\`，只有你自己想重温那天日记的内容时才用: \`[[FS_READ_DIARY: 日期]]\`。支持格式同上。` : ''}${notionNotesEnabled ? `
@@ -981,6 +997,17 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
         // forFirePack 跳过：模板打包这一刻的用量，到主动消息真正触发时早就过期了。
         if (char.chatVoiceEnabled && !forFirePack) {
             volatileState += buildVoiceUsageHint(countRecentVoiceUsage(currentMsgs));
+        }
+
+        // 「该打电话时真的去打」——跟上面那块是同一类问题、同一个解法（见 utils/callRequestHint.ts）。
+        // 病症：用户点名要电话，角色回一句「这就给你拨过去」然后什么都没发生，
+        // 因为它把打电话**演**了一遍而不是输出 [[ACTION:CALL|…]]。静态规则治不住，
+        // 得按轮把「你说了却没打」这件事算出来告诉它。正常时返回空串，一个字都不注入。
+        //
+        // forFirePack 跳过的理由跟语音那块一样：模板打包这一刻的对话态，
+        // 到主动消息真正触发时早就过期了（那边到点会用当时的历史重新算）。
+        if (!forFirePack) {
+            volatileState += buildCallHintFromMessages(currentMsgs);
         }
 
         // Voice message prompt injection
