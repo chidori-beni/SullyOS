@@ -8482,6 +8482,7 @@ try {
 var log = makeDebugLogger("api", "SafeAPI");
 
 // utils/naturalProactive.ts
+var naturalUnansweredHardCap = (intensity) => intensity === "low" ? 1 : intensity === "high" ? 3 : 2;
 var clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 var hourInZone = (nowMs, tzId) => {
   const hour = new Intl.DateTimeFormat("en-US", { timeZone: tzId, hour: "2-digit", hour12: false }).formatToParts(new Date(nowMs)).find((p) => p.type === "hour")?.value;
@@ -8520,7 +8521,7 @@ var decideNaturalProactive = (input) => {
   }
   const intensityShift = input.intensity === "low" ? 0.12 : input.intensity === "high" ? -0.1 : 0;
   const threshold = clamp(profile.threshold + intensityShift - clamp(input.bias, -20, 20) / 100, 0.25, 0.9);
-  const hardCap = input.intensity === "low" ? 1 : input.intensity === "high" ? 3 : 2;
+  const hardCap = naturalUnansweredHardCap(input.intensity);
   const shouldSend = input.unansweredCount < hardCap && score >= threshold;
   const jitter = Math.floor(input.random01 * 16);
   return { shouldSend, score, threshold, nextCheckMinutes: 15 + jitter, reasons };
@@ -13548,11 +13549,12 @@ var amsgHooks = {
         seed = Math.imul(seed, 16777619);
       }
       const random01 = (seed >>> 0) / 4294967295;
+      const naturalUnansweredCount = countUnansweredSends(selfLog);
       const decision = decideNaturalProactive({
         nowMs: ctx.now.getTime(),
         lastUserMessageAt: expireInput.lastUserMessageAt,
         recentSelfSendAts: selfLog.entries.filter((entry) => !entry.reply).map((entry) => entry.at),
-        unansweredCount: countUnansweredSends(selfLog),
+        unansweredCount: naturalUnansweredCount,
         random01,
         profile: natural.profile,
         intensity: natural.intensity ?? "normal",
@@ -13588,6 +13590,17 @@ var amsgHooks = {
         nextCheckMinutes: decision.nextCheckMinutes,
         reasons: decision.reasons
       });
+      const naturalHardCap = naturalUnansweredHardCap(natural.intensity ?? "normal");
+      if (naturalUnansweredCount >= naturalHardCap) {
+        console.log("[amsg:natural-unanswered-limit-skip]", {
+          taskId: ctx.task.id,
+          charId,
+          sends: naturalUnansweredCount,
+          limit: naturalHardCap
+        });
+        await recordSkip(ctx, charId, "unanswered-limit", occurrenceMs);
+        return { skip: true };
+      }
       if (isFreshChatPresence(presence, charId, ctx.now.getTime())) {
         console.log("[amsg:natural-skip]", { taskId: ctx.task.id, charId, reason: "active-chat-presence" });
         return { skip: true };

@@ -40,6 +40,10 @@ export interface NaturalProactiveDecision {
   reasons: string[];
 }
 
+/** 自然主动在用户未回复期间的独立安全上限；不受 2.0 约定任务设置影响。 */
+export const naturalUnansweredHardCap = (intensity: NaturalProactiveIntensity): number =>
+  intensity === 'low' ? 1 : intensity === 'high' ? 3 : 2;
+
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const num = (value: unknown, fallback: number, min: number, max: number) =>
   clamp(typeof value === 'number' && Number.isFinite(value) ? value : fallback, min, max);
@@ -239,7 +243,7 @@ export const decideNaturalProactive = (input: NaturalProactiveDecisionInput): Na
   }
   const intensityShift = input.intensity === 'low' ? 0.12 : input.intensity === 'high' ? -0.1 : 0;
   const threshold = clamp(profile.threshold + intensityShift - clamp(input.bias, -20, 20) / 100, 0.25, 0.9);
-  const hardCap = input.intensity === 'low' ? 1 : input.intensity === 'high' ? 3 : 2;
+  const hardCap = naturalUnansweredHardCap(input.intensity);
   const shouldSend = input.unansweredCount < hardCap && score >= threshold;
   // 检查频率是「多久再想一次」，不是「多久一定发一次」；低分时不会调用 LLM。
   const jitter = Math.floor(input.random01 * 16);

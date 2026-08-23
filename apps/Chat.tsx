@@ -3,12 +3,12 @@ import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallba
 import { createPortal } from 'react-dom';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { AppID, Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
+import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
 import { processImage } from '../utils/file';
 import { safeResponseJson, extractContent } from '../utils/safeApi';
 import { buildChatFineTuneCss, mergeChatFineTune } from '../utils/chatFineTuneCss';
 import ChatFineTunePanel from '../components/chat/ChatFineTunePanel';
-import { FadersHorizontal, Phone } from '@phosphor-icons/react';
+import { FadersHorizontal } from '@phosphor-icons/react';
 import { generateDailyScheduleForChar, isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import { getDailyScheduleForChar } from '../utils/dailySchedule';
 import { useLocalDateKey } from '../hooks/useLocalDateKey';
@@ -61,8 +61,10 @@ import { resolveActiveSound, playWhiteboxSound, unlockWhiteboxAudio, parseWhiteb
 import WhiteboxSoundEditor from '../components/chat/WhiteboxSoundEditor';
 import { normalizeTranslationLangLabel, isTranslationLangPreset } from '../utils/translationLang';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
-import { trackEvent, noteMessageSent, presetOrCustom } from '../utils/analytics';
+import { trackEvent, noteMessageSent } from '../utils/analytics';
 import { markAmsgStateDirty, markAmsgStateDirtyForAll } from '../utils/amsgStateSync';
+import { ActiveMsgClient } from '../utils/activeMsgClient';
+import { deriveNaturalProfile } from '../utils/naturalProactive';
 import { AMSG_INSTANT_CHAT_PENDING_EVENT, AMSG_INSTANT_CHAT_PENDING_LS_KEY, getInstantChatPending } from '../utils/amsgInstantChat';
 import { formatAmsgToolTrace } from '../utils/amsgToolTrace';
 import {
@@ -95,7 +97,7 @@ type InstantToolUiStatus = {
 };
 
 const Chat: React.FC = () => {
-    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, openApp, customThemes, removeCustomTheme, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, openDateWithChar } = useOS();
+    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, openDateWithChar } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
     const localDateKey = useLocalDateKey();
 
@@ -359,7 +361,7 @@ const Chat: React.FC = () => {
     }, [activeCharacterId]);
 
     // --- Initialize Hook ---
-    const { isTyping, streamingBubbles, streamingThinking, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
+    const { isTyping, streamingBubbles, streamingThinking, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, stopProactiveChat, isProactiveActive } = useChatAI({
         char,
         userProfile,
         apiConfig,
@@ -3499,18 +3501,6 @@ const Chat: React.FC = () => {
                 tokenBreakdown={tokenBreakdown}
                 onClose={closeApp}
                 onTriggerAI={handleManualTrigger}
-                // 消息界面直接拨号（微信 / 糯叽机都有这颗）。借用 ChatHeaderShell 现成的
-                // extraAction 槽位——它本来就是给「标题栏多一颗按钮」准备的，两套标题栏布局
-                // 都已经接好线，也处理好了跟触发按钮抢 ml-auto 的问题，不用再加一个新 prop。
-                //
-                // 不在这里直接起通话，只把人送进「电话」App：语音还是视频得由用户挑，而那套
-                // 选择 + 音频预热 + 摄像头开关全长在 CallApp 自己的闭包里，硬提上来等于把
-                // CallApp 拆一半。那边已经按 activeCharacterId 预选好角色，进去就差点一下。
-                extraAction={{
-                    label: '打电话',
-                    icon: <Phone className="w-5 h-5" weight="fill" />,
-                    onClick: () => openApp(AppID.Call),
-                }}
                 onShowCharsPanel={() => setShowPanel('chars')}
                 onDeleteBuff={(buffId) => {
                     const currentBuffs = char.activeBuffs || [];
@@ -3959,7 +3949,7 @@ const Chat: React.FC = () => {
                     activeCategory={activeCategory}
                     onReroll={handleReroll}
                     canReroll={canReroll}
-                    isProactiveActive={isProactiveActive}
+                    isProactiveActive={isProactiveActive || char.naturalProactiveConfig?.enabled === true}
                     mcdConfigured={mcdConfiguredFlag}
                     mcdActivated={mcdActivated}
                     luckinConfigured={luckinConfiguredFlag}
@@ -3980,30 +3970,84 @@ const Chat: React.FC = () => {
                     isOpen={showProactiveModal}
                     onClose={() => setShowProactiveModal(false)}
                     char={char}
-                    isProactiveActive={isProactiveActive}
-                    onSave={(config) => {
-                        updateCharacter(char.id, { proactiveConfig: config });
-                        if (config.enabled) {
-                            startProactiveChat(config.intervalMinutes);
-                            // 界面只给 7 个档，但这个值是从持久化状态读回来的——导入的备份、
-                            // 老版本写进去的都可能是任意整数。收敛到写死的档位，其余归 custom。
-                            trackEvent('启动主动消息', {
-                                intervalMinutes: presetOrCustom(
-                                    String(config.intervalMinutes),
-                                    ['30', '60', '120', '240', '480', '720', '1440'],
-                                    '没设',
-                                ),
+                    isNaturalActive={char.naturalProactiveConfig?.enabled === true}
+                    onSave={async (config, refreshProfile) => {
+                        // 固定间隔入口由自然主动取代；先清掉旧设备计时器，避免两套同时响。
+                        stopProactiveChat();
+                        if (!config.enabled) {
+                            updateCharacter(char.id, {
+                                naturalProactiveConfig: config,
+                                ...(char.proactiveConfig ? { proactiveConfig: { ...char.proactiveConfig, enabled: false } } : {}),
                             });
-                            addToast(`已启动主动消息，每 ${config.intervalMinutes >= 60 ? (config.intervalMinutes / 60) + ' 小时' : config.intervalMinutes + ' 分钟'}发送一次`, 'success');
-                        } else {
-                            stopProactiveChat();
-                            addToast('已关闭主动消息', 'info');
+                            try { await ActiveMsgClient.cancelNaturalProactiveTasks(char.id); } catch (error) { console.warn('清理自然主动脉冲失败', error); }
+                            addToast('已关闭自然主动', 'info');
+                            return;
+                        }
+                        if (!await ActiveMsgClient.probeNaturalProactiveSupport()) {
+                            const error = new Error('云端 Worker 还不是支持自然主动的新版本。请先按我稍后给你的步骤重新部署 Worker。');
+                            addToast(error.message, 'error');
+                            throw error;
+                        }
+                        addToast(refreshProfile || !config.profile ? `正在理解 ${char.name} 的联络习惯…` : '正在连接自然主动…', 'info');
+                        const profile = refreshProfile || !config.profile
+                            ? await deriveNaturalProfile(char, apiConfig)
+                            : config.profile;
+                        const nextConfig = { ...config, enabled: true, profile };
+                        const nextChar = {
+                            ...char,
+                            naturalProactiveConfig: nextConfig,
+                            ...(char.proactiveConfig ? { proactiveConfig: { ...char.proactiveConfig, enabled: false } } : {}),
+                        };
+                        updateCharacter(char.id, {
+                            naturalProactiveConfig: nextConfig,
+                            ...(char.proactiveConfig ? { proactiveConfig: { ...char.proactiveConfig, enabled: false } } : {}),
+                        });
+                        try {
+                            // 先清旧脉冲再种一颗新的；角色之后会在云端自己续排，用户无需保持 App 打开。
+                            const cancelled = await ActiveMsgClient.cancelNaturalProactiveTasks(char.id);
+                            if (cancelled.failed.size > 0) {
+                                throw new Error(`还有 ${cancelled.failed.size} 个旧的自然主动检查没有取消成功。为防止重复发消息，这次没有重新安排；请稍后重试。`);
+                            }
+                            const cloudConfig = char.activeMsg2Config ?? {
+                                enabled: false,
+                                tasks: [],
+                                useSecondaryApi: char.proactiveConfig?.useSecondaryApi,
+                                secondaryApi: char.proactiveConfig?.secondaryApi,
+                            };
+                            await ActiveMsgClient.scheduleCharacterTask({
+                                char: nextChar,
+                                config: cloudConfig,
+                                task: {
+                                    mode: 'auto',
+                                    firstSendTime: new Date(Date.now() + 2 * 60_000).toISOString(),
+                                    recurrenceType: 'none',
+                                    internalNatural: true,
+                                },
+                                userProfile,
+                                groups,
+                                realtimeConfig,
+                                apiConfig,
+                            });
+                            trackEvent('启动自然主动', { intensity: config.intensity, bias: config.bias, profileSource: profile.source });
+                            addToast(refreshProfile
+                                ? `已重新理解 ${char.name}：联络画像已更新，之后会按新画像自然联系你`
+                                : `已开启：${char.name} 会按人设自然决定何时联系你`, 'success');
+                        } catch (error) {
+                            updateCharacter(char.id, { naturalProactiveConfig: { ...nextConfig, enabled: false } });
+                            const message = error instanceof Error ? error.message : String(error);
+                            addToast(`自然主动没能开启：${message}`, 'error');
+                            throw error;
                         }
                     }}
-                    onStop={() => {
+                    onStop={async () => {
                         stopProactiveChat();
-                        updateCharacter(char.id, { proactiveConfig: { ...char.proactiveConfig!, enabled: false } });
-                        addToast('已停止主动消息', 'info');
+                        updateCharacter(char.id, {
+                            naturalProactiveConfig: { ...(char.naturalProactiveConfig ?? { intensity: 'normal', bias: 0 }), enabled: false },
+                            ...(char.proactiveConfig ? { proactiveConfig: { ...char.proactiveConfig, enabled: false } } : {}),
+                        });
+                        const result = await ActiveMsgClient.cancelNaturalProactiveTasks(char.id);
+                        if (result.failed.size) throw new Error(`还有 ${result.failed.size} 个云端检查没有取消成功，请稍后再试。`);
+                        addToast('已停止自然主动；主动消息 2.0 的约定没有受影响', 'info');
                     }}
                 />
             )}

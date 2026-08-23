@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildFallbackNaturalProfile, decideNaturalProactive, enrichNaturalProfileForCharacter } from './naturalProactive';
+import { buildFallbackNaturalProfile, decideNaturalProactive, enrichNaturalProfileForCharacter, naturalUnansweredHardCap } from './naturalProactive';
 import type { CharacterProfile, NaturalProactiveProfile } from '../types';
 
 const profile: NaturalProactiveProfile = {
@@ -30,6 +30,12 @@ const decide = (overrides: Partial<Parameters<typeof decideNaturalProactive>[0]>
   });
 
 describe('自然主动决策', () => {
+  it('热络程度对应独立的未回复安全上限', () => {
+    expect(naturalUnansweredHardCap('low')).toBe(1);
+    expect(naturalUnansweredHardCap('normal')).toBe(2);
+    expect(naturalUnansweredHardCap('high')).toBe(3);
+  });
+
   it('沉默足够久且没有未回复消息时允许联系', () => {
     expect(decide().shouldSend).toBe(true);
   });
