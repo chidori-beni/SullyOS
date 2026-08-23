@@ -17,6 +17,9 @@ describe('isChunkLoadError', () => {
         expect(isChunkLoadError(new Error('Unable to preload CSS for /assets/Chat-D3xq.css'))).toBe(true);
         // 字符串形态也接受
         expect(isChunkLoadError('Importing a module script failed.')).toBe(true);
+        // Safari 某些版本会把失败包装成 Event-like 对象而不是 Error
+        expect(isChunkLoadError({ message: 'Importing a module script failed.' })).toBe(true);
+        expect(isChunkLoadError({ reason: { message: 'Failed to load module script' } })).toBe(true);
     });
 
     it('普通运行时错误不误判', () => {

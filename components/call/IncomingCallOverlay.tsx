@@ -8,8 +8,10 @@ import { isRinging, primeRingtone, startRingtone, stopRingtone } from '../../uti
 import {
   INCOMING_CALL_EVENT,
   clearPendingIncomingCall,
+  getIncomingCallPresentedAt,
   getPendingIncomingCall,
   isStaleIncomingCall,
+  markIncomingCallPresented,
   type PendingIncomingCall,
 } from '../../utils/incomingCall';
 
@@ -108,12 +110,27 @@ const IncomingCallOverlay: React.FC = () => {
 
     const begin = () => {
       if (disposed || settledRef.current) return;
+      // 锁屏→解锁、开机动画结束等会让 Overlay 重挂载。单例铃声还在响时只保留当前
+      // 音频，不能再次从头播放；若音频已因整页重载/离开页面停掉，而这通电话曾经响过，
+      // 也不要把旧 pending 当成新来电再次吓用户。
+      if (isRinging()) return;
+      if (getIncomingCallPresentedAt(call) != null) {
+        void settle('missed');
+        return;
+      }
+      markIncomingCallPresented(call);
       startRingtone(onTimeout);
     };
 
     if (typeof document === 'undefined' || document.visibilityState === 'visible') {
       begin();
-      return () => { disposed = true; stopRingtone(); };
+      return () => {
+        disposed = true;
+        const current = getPendingIncomingCall();
+        if (settledRef.current || !current || current.charId !== call.charId || current.ringAt !== call.ringAt) {
+          stopRingtone();
+        }
+      };
     }
 
     // 页面在后台：先不响。回到前台再开始，或者举太久了就认命记未接。
@@ -129,7 +146,12 @@ const IncomingCallOverlay: React.FC = () => {
       disposed = true;
       document.removeEventListener('visibilitychange', onVisible);
       window.clearTimeout(holdTimer);
-      stopRingtone();
+      // pending 仍属于这通未处理的电话时，Overlay 的短暂卸载不能掐掉单例铃声。
+      // pagehide/beforeunload 仍会在真正离开页面时兜底 stopRingtone。
+      const current = getPendingIncomingCall();
+      if (settledRef.current || !current || current.charId !== call.charId || current.ringAt !== call.ringAt) {
+        stopRingtone();
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [call?.charId, call?.ringAt]);

@@ -148,6 +148,51 @@ export const isStaleIncomingCall = (
   && now - ringAt > staleMs
 );
 
+/**
+ * 记录这通电话是否已经在本次 PWA 会话里真正开始过铃声。
+ *
+ * pending 是模块级内存；锁屏→解锁、开机动画结束等都会让 Overlay 重挂载。若没有这枚
+ * 标记，旧 pending 每次重挂载都会再 startRingtone 一遍。用 sessionStorage 跨过一次整页
+ * reload，避免懒加载失败自动刷新后同一通电话又被当成新来电；只保留很短的记录，避免无限增长。
+ */
+const PRESENTED_CALL_KEY_PREFIX = 'sully-incoming-call-presented-v1:';
+const PRESENTED_CALL_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+const presentedCallKey = (call: Pick<PendingIncomingCall, 'charId' | 'ringAt'>): string => (
+  `${PRESENTED_CALL_KEY_PREFIX}${encodeURIComponent(call.charId)}:${call.ringAt}`
+);
+
+export const markIncomingCallPresented = (
+  call: Pick<PendingIncomingCall, 'charId' | 'ringAt'>,
+  at: number = Date.now(),
+): void => {
+  try { sessionStorage.setItem(presentedCallKey(call), String(at)); } catch { /* 隐私模式 */ }
+};
+
+export const getIncomingCallPresentedAt = (
+  call: Pick<PendingIncomingCall, 'charId' | 'ringAt'>,
+  now: number = Date.now(),
+): number | null => {
+  try {
+    const key = presentedCallKey(call);
+    const raw = sessionStorage.getItem(key);
+    if (raw == null) return null;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || now - parsed > PRESENTED_CALL_RETENTION_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+export const hasIncomingCallBeenPresented = (
+  call: Pick<PendingIncomingCall, 'charId' | 'ringAt'>,
+  now: number = Date.now(),
+): boolean => getIncomingCallPresentedAt(call, now) != null;
+
 export type IncomingCallResult =
   /** 正在响 */
   | 'ringing'

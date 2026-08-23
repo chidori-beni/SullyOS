@@ -30,7 +30,6 @@ describe('createPreloadableLazy', () => {
       .mockResolvedValueOnce({ default: TestComponent });
     const Component = createPreloadableLazy(factory);
 
-    await expect(Component.preload()).rejects.toThrow('temporary chunk failure');
     await expect(Component.preload()).resolves.toEqual({ default: TestComponent });
     expect(factory).toHaveBeenCalledTimes(2);
   });

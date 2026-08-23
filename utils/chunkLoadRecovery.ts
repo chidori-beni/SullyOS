@@ -31,10 +31,21 @@ const CHUNK_ERROR_RE = new RegExp(
 );
 
 export const isChunkLoadError = (err: unknown): boolean => {
-    const msg = err instanceof Error
-        ? `${err.name}: ${err.message}`
-        : typeof err === 'string' ? err : '';
-    return CHUNK_ERROR_RE.test(msg);
+    const messages: string[] = [];
+    if (err instanceof Error) messages.push(`${err.name}: ${err.message}`);
+    else if (typeof err === 'string') messages.push(err);
+    else if (err && typeof err === 'object') {
+        const candidate = err as Record<string, unknown>;
+        if (typeof candidate.message === 'string') messages.push(candidate.message);
+        const reason = candidate.reason;
+        if (reason && typeof reason === 'object' && typeof (reason as Record<string, unknown>).message === 'string') {
+            messages.push(String((reason as Record<string, unknown>).message));
+        }
+        // iOS 某些 module-script 失败会以 Event-like 对象抛出，日志里只显示 [object Object]；
+        // 仍优先检查对象里的 message，最后再保留通用 String 兜底。
+        messages.push(String(err));
+    }
+    return messages.some(msg => CHUNK_ERROR_RE.test(msg));
 };
 
 /**

@@ -6,8 +6,12 @@ import {
   extractCallInvite,
   formatCallInviteTag,
   getPendingIncomingCall,
+  getIncomingCallPresentedAt,
+  hasIncomingCallBeenPresented,
+  isStaleIncomingCall,
   isCallCoolingDown,
   markCallFired,
+  markIncomingCallPresented,
   readLastCallAt,
   requestIncomingCall,
   STALE_CALL_MS,
@@ -158,5 +162,36 @@ describe('requestIncomingCall', () => {
   it.skipIf(!cooldownOn)('旧电话也占冷却配额——补收一次性灌进来五条时只该记一条', () => {
     expect(requestIncomingCall({ ...call, ringAt: Date.now() - STALE_CALL_MS - 1 })).toBe('stale');
     expect(requestIncomingCall({ ...call, ringAt: Date.now() - STALE_CALL_MS - 1 })).toBe('cooldown');
+  });
+});
+
+describe('过期来电守门', () => {
+  it('刚到的电话不算过期，超过界线才算过期', () => {
+    const now = 10_000;
+    expect(isStaleIncomingCall(now - STALE_CALL_MS, now)).toBe(false);
+    expect(isStaleIncomingCall(now - STALE_CALL_MS - 1, now)).toBe(true);
+  });
+
+  it('脏时间戳不应误触发过期清理', () => {
+    expect(isStaleIncomingCall(Number.NaN, 10_000)).toBe(false);
+    expect(isStaleIncomingCall(9_000, Number.NaN)).toBe(false);
+  });
+});
+
+describe('来电已响过标记', () => {
+  beforeEach(() => sessionStorage.clear());
+
+  it('同一 char + ringAt 可跨 Overlay 重挂载识别为已响过', () => {
+    const call = { charId: 'c-presented', ringAt: 20_000 };
+    expect(hasIncomingCallBeenPresented(call, 20_000)).toBe(false);
+    markIncomingCallPresented(call, 20_001);
+    expect(hasIncomingCallBeenPresented(call, 20_002)).toBe(true);
+    expect(getIncomingCallPresentedAt(call, 20_002)).toBe(20_001);
+  });
+
+  it('超过保留期自动清掉旧标记', () => {
+    const call = { charId: 'c-expired-presented', ringAt: 20_000 };
+    markIncomingCallPresented(call, 20_001);
+    expect(hasIncomingCallBeenPresented(call, 20_001 + 24 * 60 * 60 * 1000 + 1)).toBe(false);
   });
 });

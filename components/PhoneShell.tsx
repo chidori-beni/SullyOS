@@ -120,6 +120,8 @@ import ErrorDialog from './os/ErrorDialog';
 import BootSequence from './os/BootSequence';
 import { setAppPayloadWarmer, shouldUseIdleAppPreload } from './os/appPreload';
 import { isBrowserBackGuardState, makeBrowserBackGuardState } from '../utils/browserBackGuard';
+import { INCOMING_CALL_EVENT, getPendingIncomingCall } from '../utils/incomingCall';
+import { isRinging } from '../utils/callRingtone';
 
 /*
 // Internal Error Boundary Component
@@ -478,6 +480,9 @@ const PhoneShell: React.FC = () => {
   // 立刻取消所有尚未开始的任务；已经在飞的一个 import 无法中止，但最多只会与目标 App 并行一个。
   useEffect(() => {
     if (!bootDone || !isDataLoaded || activeApp !== AppID.Launcher) return;
+    // 来电启动/恢复期间不要让后台空闲预热和铃声、系统通知争抢首屏网络与解码资源。
+    // 尤其是 Chat chunk，抢在用户刚进 APP 时失败会被 iOS 记成 module-script error。
+    if (getPendingIncomingCall() || isRinging()) return;
     if (!shouldUseIdleAppPreload() || idlePreloadCursor >= APP_IDLE_PRELOAD_ORDER.length) return;
 
     let stoppedByInteraction = false;
@@ -515,7 +520,10 @@ const PhoneShell: React.FC = () => {
       }, delay);
     };
     const runStep = async () => {
-      if (stoppedByInteraction || document.visibilityState !== 'visible') return;
+      if (stoppedByInteraction || document.visibilityState !== 'visible' || getPendingIncomingCall() || isRinging()) {
+        stopForInteraction();
+        return;
+      }
       const next = APP_IDLE_PRELOAD_ORDER[idlePreloadCursor++];
       if (!next) return;
       try {
@@ -531,6 +539,7 @@ const PhoneShell: React.FC = () => {
       stoppedByInteraction = true;
       cancelScheduled();
     };
+    const stopForIncomingCall = () => stopForInteraction();
     const handleVisibilityChange = () => {
       cancelScheduled();
       if (document.visibilityState === 'visible' && !stoppedByInteraction) {
@@ -539,6 +548,7 @@ const PhoneShell: React.FC = () => {
     };
 
     window.addEventListener('pointerdown', stopForInteraction, { capture: true, once: true });
+    window.addEventListener(INCOMING_CALL_EVENT, stopForIncomingCall);
     document.addEventListener('visibilitychange', handleVisibilityChange);
     startTimer = window.setTimeout(() => scheduleStep(0), IDLE_PRELOAD_START_MS);
 
@@ -546,6 +556,7 @@ const PhoneShell: React.FC = () => {
       stoppedByInteraction = true;
       cancelScheduled();
       window.removeEventListener('pointerdown', stopForInteraction, { capture: true });
+      window.removeEventListener(INCOMING_CALL_EVENT, stopForIncomingCall);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [activeApp, bootDone, isDataLoaded]);
