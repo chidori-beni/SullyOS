@@ -145,11 +145,30 @@ if (typeof window !== 'undefined') {
   window.addEventListener('pagehide', stopOnPageExit);
   window.addEventListener('beforeunload', stopOnPageExit);
 
+  // iOS 可能把一次“回到 PWA”拆成 pageshow / focus / visibilitychange 三连事件。
+  // 第一个事件负责清掉冻结页面遗留的 Audio，后两个不能再把刚由 Overlay 启动的新来电掐掉。
+  const RESUME_EVENT_COALESCE_MS = 2_000;
+  let lastResumeStopAt = 0;
+  const stopOnAppResume = () => {
+    const now = Date.now();
+    if (now - lastResumeStopAt < RESUME_EVENT_COALESCE_MS) return;
+    lastResumeStopAt = now;
+    stopRingtone();
+  };
+  window.addEventListener('pageshow', stopOnAppResume);
+  window.addEventListener('focus', stopOnAppResume);
+
   // iOS 独立 PWA 退到后台时经常不会触发 pagehide/beforeunload，而是把整个 JS 页面冻结。
   // 若 Audio 仍在 loop，用户下次点开 App 会听到一通“上次的旧电话”从后台续播。
   // 一旦页面不可见立刻停掉；真正后台刚送达的来电尚未 startRingtone，不受影响，回前台时
   // Overlay 仍会按正常的新来电路径开始。
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') stopRingtone();
+    if (document.visibilityState === 'hidden') {
+      // 下一次恢复必须重新执行一次硬停，不能被之前的 pageshow 时间戳跳过。
+      lastResumeStopAt = 0;
+      stopRingtone();
+      return;
+    }
+    stopOnAppResume();
   });
 }

@@ -40,6 +40,18 @@ describe('铃声必须活在 React 之外', () => {
   it('停铃是幂等的，谁都能调', () => {
     expect(ringtone).toContain('export const stopRingtone');
   });
+
+  it('页面退出时也主动停掉单例声音', () => {
+    expect(ringtone).toContain("window.addEventListener('pagehide', stopOnPageExit)");
+    expect(ringtone).toContain("window.addEventListener('beforeunload', stopOnPageExit)");
+  });
+
+  it('PWA 恢复时硬停旧 Audio，并合并同一次恢复的多个浏览器事件', () => {
+    expect(ringtone).toContain("window.addEventListener('pageshow', stopOnAppResume)");
+    expect(ringtone).toContain("window.addEventListener('focus', stopOnAppResume)");
+    expect(ringtone).toContain('RESUME_EVENT_COALESCE_MS');
+    expect(ringtone).toContain('stopOnAppResume();');
+  });
 });
 
 describe('来电界面必须挂在锁屏那棵树上', () => {
@@ -74,6 +86,16 @@ describe('来电时刻只能取 spokenAt', () => {
     // 再 `?? Date.now()` 一兜底，几小时前的旧电话就成了「刚刚打来的」——
     // 8/23 实测：用户什么都没做，一进聊天页铃声就响个不停。
     expect(src).not.toContain('ringAt: messageTimestamp');
+  });
+});
+
+describe('Overlay 重挂载时不能让过期来电重新响铃', () => {
+  const overlay = read('../components/call/IncomingCallOverlay.tsx');
+
+  it('真正 startRingtone 前再次调用过期判定', () => {
+    expect(overlay).toContain('isStaleIncomingCall(call.ringAt)');
+    expect(overlay).toContain("void settle('missed')");
+    expect(overlay.indexOf('isStaleIncomingCall(call.ringAt)')).toBeLessThan(overlay.indexOf('startRingtone(onTimeout)'));
   });
 });
 

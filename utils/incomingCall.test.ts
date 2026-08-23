@@ -203,9 +203,24 @@ describe('来电已响过标记', () => {
   });
 
   it('同一条云端消息即使补收时 ringAt 被改成现在，也只能响一次', () => {
-    const first = { charId: 'c-push', ringAt: 20_000, sourceMessageId: 'push-message-42' };
-    const replay = { charId: 'c-push', ringAt: 99_999, sourceMessageId: 'push-message-42' };
+    const first = { charId: 'c-push', ringAt: 20_000, sourceMessageId: 'push-message-42', mode: 'voice' as const, opening: '喂，睡了吗' };
+    const replay = { charId: 'c-push', ringAt: 99_999, sourceMessageId: 'push-message-42', mode: 'voice' as const, opening: '喂，睡了吗' };
     markIncomingCallPresented(first, 20_001);
     expect(hasIncomingCallBeenPresented(replay, 20_002)).toBe(true);
+  });
+
+  it('同一通旧电话即使被换了 messageId，十分钟内也按内容指纹去重', () => {
+    const first = { charId: 'c-push', ringAt: 20_000, sourceMessageId: 'old-id', mode: 'voice' as const, opening: '喂，睡了吗' };
+    const replay = { ...first, ringAt: 99_999, sourceMessageId: 'new-id' };
+    markIncomingCallPresented(first, 20_001);
+    expect(hasIncomingCallBeenPresented(replay, 20_002)).toBe(true);
+    expect(hasIncomingCallBeenPresented(replay, 20_001 + 10 * 60 * 1000 + 1)).toBe(false);
+  });
+
+  it('同一角色的新开场白不是旧电话重放', () => {
+    const first = { charId: 'c-push', ringAt: 20_000, sourceMessageId: 'old-id', mode: 'voice' as const, opening: '喂，睡了吗' };
+    const next = { ...first, ringAt: 21_000, sourceMessageId: 'new-id', opening: '在干嘛呢' };
+    markIncomingCallPresented(first, 20_001);
+    expect(hasIncomingCallBeenPresented(next, 20_002)).toBe(false);
   });
 });

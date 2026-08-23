@@ -166,6 +166,13 @@ export const isStaleIncomingCall = (
  */
 const PRESENTED_CALL_KEY_PREFIX = 'sully-incoming-call-presented-v2:';
 const PRESENTED_CALL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const PRESENTED_CALL_FINGERPRINT_KEY_PREFIX = 'sully-incoming-call-fingerprint-v1:';
+/**
+ * Worker / outbox 的异常补收有机会给同一段旧回复重新生成 messageId。稳定 ID 去重因此
+ * 还需要一道短期内容指纹兜底。十分钟与正式来电冷却保持一致；只用于带 sourceMessageId
+ * 的云端来电，不影响用户在前台刚要求角色打来的本地新电话。
+ */
+export const PRESENTED_CALL_FINGERPRINT_RETENTION_MS = 10 * 60 * 1000;
 
 const presentedCallKey = (call: Pick<PendingIncomingCall, 'charId' | 'ringAt' | 'sourceMessageId'>): string => (
   `${PRESENTED_CALL_KEY_PREFIX}${encodeURIComponent(call.charId)}:${call.sourceMessageId
@@ -173,34 +180,70 @@ const presentedCallKey = (call: Pick<PendingIncomingCall, 'charId' | 'ringAt' | 
     : `ring:${call.ringAt}`}`
 );
 
+const hashCallFingerprint = (value: string): string => {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+};
+
+type PresentedCallIdentity = Pick<PendingIncomingCall, 'charId' | 'ringAt' | 'sourceMessageId'>
+  & Partial<Pick<PendingIncomingCall, 'mode' | 'opening'>>;
+
+const presentedCallFingerprintKey = (call: PresentedCallIdentity): string | null => {
+  if (!call.mode || typeof call.opening !== 'string') return null;
+  const normalizedOpening = call.opening.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+  const fingerprint = hashCallFingerprint(`${call.charId}\u0000${call.mode}\u0000${normalizedOpening}`);
+  return `${PRESENTED_CALL_FINGERPRINT_KEY_PREFIX}${encodeURIComponent(call.charId)}:${fingerprint}`;
+};
+
+const readPresentedAt = (key: string, now: number, retentionMs: number): number | null => {
+  const raw = localStorage.getItem(key);
+  if (raw == null) return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || now - parsed > retentionMs) {
+    localStorage.removeItem(key);
+    return null;
+  }
+  return parsed;
+};
+
 export const markIncomingCallPresented = (
-  call: Pick<PendingIncomingCall, 'charId' | 'ringAt' | 'sourceMessageId'>,
+  call: PresentedCallIdentity,
   at: number = Date.now(),
 ): void => {
-  try { localStorage.setItem(presentedCallKey(call), String(at)); } catch { /* 隐私模式 */ }
+  try {
+    localStorage.setItem(presentedCallKey(call), String(at));
+    if (call.sourceMessageId) {
+      const fingerprintKey = presentedCallFingerprintKey(call);
+      if (fingerprintKey) localStorage.setItem(fingerprintKey, String(at));
+    }
+  } catch { /* 隐私模式 */ }
 };
 
 export const getIncomingCallPresentedAt = (
-  call: Pick<PendingIncomingCall, 'charId' | 'ringAt' | 'sourceMessageId'>,
+  call: PresentedCallIdentity,
   now: number = Date.now(),
 ): number | null => {
   try {
-    const key = presentedCallKey(call);
-    const raw = localStorage.getItem(key);
-    if (raw == null) return null;
-    const parsed = Number(raw);
-    if (!Number.isFinite(parsed) || now - parsed > PRESENTED_CALL_RETENTION_MS) {
-      localStorage.removeItem(key);
-      return null;
-    }
-    return parsed;
+    const exact = readPresentedAt(presentedCallKey(call), now, PRESENTED_CALL_RETENTION_MS);
+    if (exact != null || !call.sourceMessageId) return exact;
+    const fingerprintKey = presentedCallFingerprintKey(call);
+    if (!fingerprintKey) return null;
+    return readPresentedAt(
+      fingerprintKey,
+      now,
+      PRESENTED_CALL_FINGERPRINT_RETENTION_MS,
+    );
   } catch {
     return null;
   }
 };
 
 export const hasIncomingCallBeenPresented = (
-  call: Pick<PendingIncomingCall, 'charId' | 'ringAt' | 'sourceMessageId'>,
+  call: PresentedCallIdentity,
   now: number = Date.now(),
 ): boolean => getIncomingCallPresentedAt(call, now) != null;
 
