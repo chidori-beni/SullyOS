@@ -22,8 +22,8 @@ if (import.meta.env.VITE_AMSG_NATIVE_PUSH === 'true' && Capacitor.isNativePlatfo
 
 // Register the keep-alive Service Worker early so it's ready before any AI calls
 KeepAlive.init().then(() => {
-  // Resume any active proactive schedule after SW is ready
-  ProactiveChat.resume();
+  // 自然主动已取代旧固定间隔：升级后撤掉手机 / SW / 旧唤醒 worker 里的遗留计划。
+  ProactiveChat.retireFixedSchedules();
   // Resume 「彼方」 autonomous-login schedules
   VRScheduler.resume();
   void ActiveMsgRuntime.init();

@@ -1,0 +1,354 @@
+
+ RUN  v2.1.9 D:/【AI】/【小手机】/_work/display-fix-verify
+
+ ✓ utils/companionHomeRuntimeReferences.test.ts (20 tests) 53ms
+ ✓ utils/sanitize.test.ts (90 tests) 20ms
+ ❯ worker/amsg/src/index.test.ts (0 test)
+ ✓ utils/amsgFirePack.test.ts (80 tests) 81ms
+ ✓ utils/amsg2Tasks.test.ts (74 tests) 37ms
+ ✓ worker/amsg/src/agentic.test.ts (52 tests) 38ms
+ ✓ worker/amsg/src/instantChat.test.ts (51 tests) 208ms
+ ✓ utils/mcpClient.test.ts (37 tests) 48ms
+ ✓ utils/amsgDiagnostics.test.ts (41 tests) 18ms
+ ✓ utils/amsgStateSync.test.ts (45 tests) 75ms
+ ✓ utils/amsgInstantChat.wiring.test.ts (28 tests) 9ms
+ ✓ utils/apiCallLog.test.ts (35 tests) 379ms
+   ✓ one-shot full API request capture > backfills the real response usage into the same one-shot capture 329ms
+ ✓ utils/networkFailureDiagnosis.test.ts (39 tests) 14ms
+ ✓ utils/memoryPalace/roomPlateCloud.test.ts (31 tests) 62ms
+ ✓ utils/analytics.test.ts (58 tests) 1236ms
+ ✓ utils/live2dModelStore.test.ts (19 tests) 210ms
+ ✓ utils/lifeRecords.test.ts (33 tests) 51ms
+ ✓ worker/xhs-lite/session-risk.test.ts (14 tests) 73ms
+ ✓ utils/cfProvision.test.ts (37 tests) 29ms
+ ✓ utils/amsg2ToolBridge.test.ts (24 tests) 55ms
+ ✓ utils/analyticsSnapshot.test.ts (30 tests) 28ms
+ ✓ utils/mcpFireCore.test.ts (26 tests) 46ms
+ ✓ utils/vrWorld/vrWorld.test.ts (56 tests) 67ms
+ ✓ utils/backupFormat.test.ts (20 tests) 23ms
+ ✓ utils/worldHome/worldHome.test.ts (67 tests) 55ms
+ ✓ worker/instant-push/src/classifier.test.ts (38 tests) 30ms
+ ✓ utils/lookbehindFree.test.ts (83 tests) 17ms
+ ✓ utils/activeMsgClient.test.ts (137 tests) 299ms
+ ✓ utils/callAppRuntimeReferences.test.ts (19 tests) 90ms
+ ✓ utils/transferFormat.test.ts (40 tests) 19ms
+ ✓ utils/backupRoundtrip.test.ts (14 tests) 2852ms
+   ✓ v2 真实链路：向量二进制旁路 > 4500×1024 真 ZIP → importFullData → 检索读取：数量、关联、元数据和全部 Float32 字节零变化 2789ms
+ ✓ utils/chatParser.amsg2Replay.test.ts (14 tests) 31ms
+ ✓ utils/amsgInstantChat.test.ts (77 tests) 789ms
+ ✓ utils/memoryPalace/roomPlateCore.test.ts (20 tests) 14ms
+ ❯ worker/amsg/src/plateFire.test.ts (0 test)
+ ✓ utils/scheduleChange.test.ts (34 tests) 25ms
+ ✓ utils/datePrompts.test.ts (28 tests) 37ms
+ ✓ utils/activeMsgRuntime.test.ts (114 tests) 953ms
+   ✓ flushInboxToChat 落库时间戳（走真库） > 补收的消息跳过拟人打字延迟，实时收到的照旧慢放 515ms
+ ✓ worker/instant-push/src/pushDecision.test.ts (29 tests) 35ms
+ ✓ utils/amsgFireSchedule.test.ts (31 tests) 36ms
+ ✓ utils/safeApi.stream.test.ts (15 tests) 49ms
+ ✓ utils/amsg2TaskContext.test.ts (21 tests) 30ms
+ ✓ utils/amsgFireScene.test.ts (22 tests) 42ms
+ ✓ utils/memoryPalace/conversationEngagement.test.ts (18 tests) 40ms
+ ✓ utils/amsgStateSync.gaps.test.ts (16 tests) 86ms
+ ✓ utils/memoryPalace/roomPlates.test.ts (25 tests) 11ms
+ ✓ utils/avatarTouch.test.ts (21 tests) 19ms
+ ✓ utils/activeMsgClient.credRefs.test.ts (16 tests) 103ms
+ ✓ utils/emotionApply.test.ts (24 tests) 16ms
+ ✓ utils/amsg2DebugView.test.ts (25 tests) 17ms
+ ✓ utils/voiceTagNormalize.test.ts (31 tests) 13ms
+ ✓ utils/applyAssistantPostProcessing.test.ts (29 tests) 3191ms
+   ✓ renderAndPersist 引用解析 > [[QUOTE:]] 单独成行 (后跟 SEND_EMOJI + 正文) 时引用顺延到第一条文字气泡 1097ms
+   ✓ renderAndPersist 引用解析 > 引用只挂一次: 顺延目标落到首条气泡后, 后续气泡不带 replyTo 1015ms
+   ✓ renderAndPersist 模仿历史渲染格式的引用兜底 > [我引用了你说的「…」，并回复了 ↓] 单独成行时解析为引用并顺延到正文气泡 511ms
+   ✓ renderAndPersist 模仿历史渲染格式的引用兜底 > 引用摘要带截断省略号时仍能匹配到原消息 512ms
+ ✓ utils/chatPrompts.firePack.test.ts (13 tests) 58ms
+ ✓ utils/chatRequestPayload.test.ts (10 tests) 42ms
+ ✓ utils/avatarAutonomy.test.ts (14 tests) 23ms
+ ✓ utils/memoryPalace/recallRouter.test.ts (45 tests) 58ms
+ ✓ utils/memoryPalace/export.test.ts (7 tests) 43ms
+ ✓ utils/xhsMcpClient.test.ts (6 tests) 44ms
+ ✓ utils/agenticTools.failures.test.ts (15 tests) 11ms
+ ✓ worker/amsg/src/realtimeWorld.test.ts (15 tests) 49ms
+ ✓ utils/qixiMemoryBundle.test.ts (8 tests) 20ms
+ ✓ utils/storageStats.test.ts (25 tests) 2125ms
+   ✓ computeStorageBreakdown（端到端） > 能把主库里的数据归类，且不会凭空建出别的库 1044ms
+   ✓ computeStorageBreakdown（端到端） > 浏览器不给枚举库列表时走兜底名单，不存在的库看一眼就删干净 1009ms
+ ✓ utils/agenticToolFeedback.test.ts (30 tests) 9ms
+ ✓ scripts/audit-online-bundle.test.ts (11 tests) 8ms
+ ✓ utils/memoryPalace/roomPlatesCloudFallback.test.ts (7 tests) 70ms
+ ✓ utils/amsg2CharCleanup.test.ts (16 tests) 74ms
+ ✓ worker/amsg/src/emotionEval.test.ts (14 tests) 13ms
+ ✓ utils/webpageExtractor.test.ts (20 tests) 18ms
+ ✓ utils/chatContextRange.test.ts (13 tests) 8ms
+ ✓ utils/activeMsgClient.backgroundJob.test.ts (14 tests) 40ms
+ ✓ utils/amsg2ExpireGuard.test.ts (18 tests) 15ms
+ ✓ utils/groupChat/redpacket.test.ts (23 tests) 10ms
+ ✓ utils/amsgLlmCredentials.test.ts (20 tests) 9ms
+ ✓ utils/songPrompts.test.ts (13 tests) 12ms
+ ✓ utils/qixiReunion.test.ts (9 tests) 11ms
+ ✓ worker/amsg/deno-proxy.test.ts (18 tests) 15ms
+ ✓ worker/amsg/src/selfUpdate.test.ts (16 tests) 36ms
+ ✓ utils/activeMsgStore.test.ts (13 tests) 19ms
+ ✓ utils/avatarPerformance.test.ts (16 tests) 12ms
+ ✓ utils/chatFineTuneCss.test.ts (16 tests) 8ms
+ ✓ utils/novelaiImage.test.ts (22 tests) 12ms
+ ✓ utils/memoryPalace/embedding.test.ts (11 tests) 1022ms
+   ✓ getEmbeddings 批量 400 自动降级为逐条 > 5xx 仍然重试一次后成功 1007ms
+ ✓ utils/minimaxTts.voice.test.ts (28 tests) 12ms
+ ✓ utils/instantPushClient.test.ts (10 tests) 9ms
+ ✓ utils/realtimeWorldCore.test.ts (14 tests) 35ms
+ ✓ utils/relationshipChat.test.ts (14 tests) 8ms
+ ✓ utils/worldHome/chapters.test.ts (12 tests) 13ms
+ ✓ utils/translationTagNormalize.test.ts (18 tests) 11ms
+ ✓ utils/avatarPerformanceRehearsal.test.ts (12 tests) 9ms
+ ✓ utils/amsg2Timezone.test.ts (12 tests) 37ms
+ ✓ utils/memoryPalace/explicitEntityRecall.test.ts (15 tests) 29ms
+ ✓ utils/videoParser.test.ts (10 tests) 11ms
+ ✓ utils/memoryPalace/externalMemory.test.ts (8 tests) 40ms
+ ✓ utils/amsgToolPack.test.ts (10 tests) 7ms
+ ✓ utils/memoryPalace/interactionAdaptation.test.ts (8 tests) 22ms
+ ✓ utils/worldbook.test.ts (7 tests) 7ms
+ ✓ utils/memoryPalace/memoryRepair.test.ts (7 tests) 29ms
+ ✓ utils/db.test.ts (8 tests) 78ms
+ ✓ worker/cfApiProxy.test.ts (12 tests) 21ms
+ ✓ utils/scheduleInjection.test.ts (12 tests) 13ms
+ ✓ utils/agenticTools.xhs.test.ts (3 tests) 8ms
+ ✓ utils/applyAssistantPostProcessing.unreachable.test.ts (6 tests) 64ms
+ ✓ utils/voiceMessageBackup.test.ts (6 tests) 7ms
+ ✓ utils/db.backupChunked.test.ts (10 tests) 97ms
+ ✓ utils/amsgStateSync.wiring.test.ts (10 tests) 55ms
+ ✓ utils/blobRef.test.ts (11 tests) 21ms
+ ✓ utils/memoryPalace/eventBoxLightIndex.test.ts (6 tests) 7ms
+ ✓ utils/streamPreview.test.ts (19 tests) 9ms
+ ✓ utils/memoryPalace/trace.test.ts (6 tests) 52ms
+ ✓ utils/realtimeContext.weather.test.ts (9 tests) 19ms
+ ✓ utils/backupExport.test.ts (13 tests) 8ms
+ ✓ utils/activeMsgClient.wiring.test.ts (7 tests) 30ms
+ ✓ utils/qixiEntry.wiring.test.ts (7 tests) 6ms
+ ✓ utils/dailySchedule.test.ts (7 tests) 40ms
+ ✓ utils/applyAssistantPostProcessing.amsg2Drift.test.ts (5 tests) 361ms
+   ✓ 打包之后配置被关掉 > HTML 卡片开着时照常出卡片（不回归） 313ms
+ ✓ utils/groupChat/parse.test.ts (20 tests) 8ms
+ ✓ utils/roomTemplateAssets.test.ts (6 tests) 10ms
+ ✓ utils/memoryPalace/deepEngagement.test.ts (7 tests) 24ms
+ ✓ utils/pushSubscribeShared.test.ts (7 tests) 7ms
+ ✓ utils/memoryPalace/bufferCount.test.ts (12 tests) 6ms
+ ✓ utils/avatarModelBackup.test.ts (5 tests) 20ms
+ ✓ utils/amsgResults.test.ts (6 tests) 47ms
+ ✓ utils/memoryPalace/querySanitizer.test.ts (9 tests) 7ms
+ ✓ utils/proxyWorker.test.ts (15 tests) 5ms
+ ✓ utils/pdfText.test.ts (8 tests) 6ms
+ ✓ utils/chatParser.scheduleMessage.test.ts (5 tests) 33ms
+ ✓ utils/xhsMcpClient.concurrency.test.ts (4 tests) 195ms
+ ✓ utils/applyAssistantPostProcessing.xhsOwnership.test.ts (3 tests) 76ms
+ ✓ utils/exportGuard.test.ts (14 tests) 7ms
+ ✓ utils/pushDiagnosticsView.test.ts (9 tests) 4ms
+ ✓ utils/reportedIssuesRegression.wiring.test.ts (8 tests) 52ms
+ ✓ utils/musicWorkerUrl.test.ts (7 tests) 8ms
+ ✓ utils/builtinSullyLive2D.test.ts (6 tests) 24ms
+ ✓ utils/apiPresetSwitch.wiring.test.ts (9 tests) 7ms
+ ✓ utils/voiceFrequency.test.ts (17 tests) 7ms
+ ✓ utils/instantPushSunset.test.ts (10 tests) 21ms
+ ✓ utils/memoryPalace/plateMutex.test.ts (4 tests) 1135ms
+   ✓ mutatePlate — 同一块门牌上的改动排队走 > 不同门牌各排各的，不互相堵 312ms
+   ✓ mutatePlate — 同一块门牌上的改动排队走 > change 回 null（不用改）→ 不落库，也不占着队不放 326ms
+ ✓ utils/companionWardrobe.test.ts (5 tests) 5ms
+ ✓ utils/dateHistory.test.ts (7 tests) 17ms
+ ✓ utils/translateCrashGuard.test.ts (6 tests) 5ms
+ ✓ utils/storyTheaterDeletion.test.ts (1 test) 23ms
+ ✓ utils/storyTheater.test.ts (44 tests) 67ms
+ ✓ utils/visionApiImageGen.test.ts (7 tests) 24ms
+ ✓ utils/scheduleTimezone.e2e.test.ts (6 tests) 33ms
+ ✓ utils/groupChat/prompts.test.ts (6 tests) 5ms
+ ✓ utils/db.storyTheater.test.ts (1 test) 23ms
+ ✓ utils/qixiStreaming.wiring.test.ts (3 tests) 7ms
+ ✓ utils/floatingBallBounds.test.ts (13 tests) 5ms
+ ✓ utils/memoryPalace/autoArchive.test.ts (3 tests) 23ms
+ ✓ utils/roomAmbient.test.ts (9 tests) 8ms
+ ✓ utils/amsgWorkerVersion.test.ts (14 tests) 10ms
+ ✓ utils/messageItemModuleLayout.test.ts (10 tests) 60ms
+ ✓ utils/qixiBridge.test.ts (4 tests) 7ms
+ ✓ utils/samplingParamCompat.test.ts (8 tests) 4ms
+ ✓ utils/companionAnalyticsRuntime.test.ts (4 tests) 7ms
+ ✓ utils/dateSessionHistory.test.ts (9 tests) 4ms
+ ✓ utils/scheduleGenerator.context.test.ts (5 tests) 12ms
+ ✓ utils/characterCard.test.ts (5 tests) 9ms
+ ✓ utils/contextVolatileSplit.test.ts (5 tests) 15ms
+ ✓ utils/chatPrompts.quote.test.ts (4 tests) 15ms
+ ✓ utils/chatPrompts.scheduleTag.test.ts (5 tests) 16ms
+ ✓ utils/visionApi.test.ts (4 tests) 27ms
+ ✓ utils/backupCcParts.test.ts (1 test) 14ms
+ ✓ utils/streamUpgrade.test.ts (7 tests) 8ms
+ ✓ utils/live2dCore.test.ts (8 tests) 7ms
+ ✓ utils/charPlaylistEdit.test.ts (9 tests) 5ms
+ ✓ utils/messageFormat.novelCard.test.ts (4 tests) 13ms
+ ✓ utils/githubClient.test.ts (8 tests) 11ms
+ ✓ utils/chatModeTransition.test.ts (8 tests) 21ms
+ ✓ utils/db.emojiResidue.test.ts (1 test) 15ms
+ ✓ utils/androidAppUpdate.test.ts (7 tests) 9ms
+ ✓ utils/assetUrl.test.ts (13 tests) 5ms
+ ✓ utils/timezone.test.ts (15 tests) 5ms
+ ✓ utils/apiPresetSwitch.test.ts (8 tests) 4ms
+ ✓ utils/dateSessionRecovery.test.ts (8 tests) 4ms
+ ✓ utils/groupChat/timeline.test.ts (5 tests) 14ms
+ ✓ utils/lsMirror.test.ts (6 tests) 12ms
+ ✓ utils/chatParser.transfer.test.ts (6 tests) 7ms
+ ✓ utils/memoryPalace/backupVectorChunked.test.ts (3 tests) 65ms
+ ✓ utils/backupReminder.test.ts (9 tests) 4ms
+ ✓ utils/memoryPalace/extractionFeatureFlag.test.ts (2 tests) 16ms
+ ✓ utils/xhsFreeRoamOwnership.test.ts (5 tests) 7ms
+ ✓ utils/companionPresets.test.ts (2 tests) 4ms
+ ✓ utils/backupOverdue.test.ts (6 tests) 4ms
+ ✓ utils/fishBackup.roundtrip.test.ts (2 tests) 11ms
+ ✓ utils/amsgToolTrace.test.ts (13 tests) 4ms
+ ✓ utils/chunkLoadRecovery.test.ts (5 tests) 5ms
+ ✓ utils/storyTheaterVectorMemory.test.ts (3 tests) 20ms
+ ✓ utils/storyTheaterBillingSafety.wiring.test.ts (3 tests) 5ms
+ ✓ utils/memoryPalace/digestion.test.ts (3 tests) 15ms
+ ✓ utils/chatPrompts.emojiVisibility.test.ts (4 tests) 4ms
+ ✓ utils/callReplyFormat.test.ts (6 tests) 7ms
+ ✓ utils/datePromptsTimezone.test.ts (3 tests) 33ms
+ ✓ utils/qixiSessionState.test.ts (6 tests) 5ms
+ ✓ utils/safeApi.extractJson.test.ts (5 tests) 5ms
+ ✓ utils/messageFormat.cards.test.ts (6 tests) 4ms
+ ✓ utils/safeApi.apiCallLog.test.ts (3 tests) 12ms
+ ✓ utils/db.apiCallLog.test.ts (5 tests) 19ms
+ ✓ utils/db.simlog.test.ts (1 test) 16ms
+ ✓ utils/amsg2ChatLoop.wiring.test.ts (6 tests) 4ms
+ ✓ utils/chatParser.chunkText.test.ts (6 tests) 5ms
+ ✓ utils/noLookbehind.test.ts (2 tests) 1807ms
+   ✓ no-lookbehind 守卫 > 源码 (剥注释后) 不含正则后行断言 1801ms
+ ✓ utils/memoryPalace/memoryEdit.test.ts (2 tests) 18ms
+ ✓ utils/qixiBGM.test.ts (7 tests) 5ms
+ ✓ utils/voiceFavorites.test.ts (3 tests) 15ms
+ ✓ utils/builtinPartsPack.test.ts (4 tests) 5ms
+ ✓ utils/amsgChatPresence.test.ts (12 tests) 5ms
+ ✓ utils/contextTimeAwareness.test.ts (5 tests) 11ms
+ ✓ utils/userCameraEmotion.test.ts (5 tests) 3ms
+ ✓ utils/creatorPartsBlob.test.ts (3 tests) 11ms
+ ✓ utils/memoryPalace/pinnedRestraint.test.ts (3 tests) 21ms
+ ✓ utils/companionThemeIsolation.test.ts (5 tests) 9ms
+ ✓ utils/groupChat/topicBoxes.test.ts (4 tests) 34ms
+ ✓ utils/realtimeFetchCore.test.ts (6 tests) 8ms
+ ✓ utils/memoryPalace/eventBoxSummaryBudget.test.ts (6 tests) 3ms
+ ✓ scripts/check-lockfile-links.test.ts (5 tests) 8ms
+ ✓ utils/wallClockToTimestamp.test.ts (5 tests) 32ms
+ ✓ utils/thinkingGate.test.ts (9 tests) 3ms
+ ✓ utils/groupChat/theme.test.ts (6 tests) 3ms
+ ✓ utils/quoteReplyBilingual.test.ts (3 tests) 11ms
+ ✓ utils/appPreload.test.ts (5 tests) 7ms
+ ✓ utils/localDate.test.ts (9 tests) 14ms
+ ✓ utils/qixiChatCard.test.ts (3 tests) 3ms
+ ✓ utils/chatRequestPayload.stripImages.test.ts (3 tests) 15ms
+ ✓ utils/psdCreatorImport.test.ts (8 tests) 5ms
+ ✓ utils/amsg2CharToggle.wiring.test.ts (5 tests) 3ms
+ ✓ utils/amsgScheduleResult.test.ts (8 tests) 3ms
+ ✓ utils/sharkpanAssetMigration.test.ts (5 tests) 5ms
+ ✓ utils/memoryPalace/digestReport.test.ts (3 tests) 48ms
+ ✓ utils/agenticTools.test.ts (6 tests) 5ms
+ ✓ utils/scheduleAppearance.test.ts (4 tests) 4ms
+ ✓ utils/chatPrompts.groupContext.test.ts (2 tests) 25ms
+ ✓ utils/callAudioFeed.test.ts (9 tests) 5ms
+ ✓ utils/realtimeContext.hotNews.test.ts (2 tests) 8ms
+ ✓ utils/xhsOwnedPosts.test.ts (2 tests) 15ms
+ ✓ utils/personaSimParser.test.ts (5 tests) 6ms
+ ✓ utils/live2dLipSync.test.ts (6 tests) 4ms
+ ✓ utils/chatPrompts.scheduleClock.test.ts (3 tests) 22ms
+ ✓ utils/safeAreaApps.test.ts (3 tests) 9ms
+ ✓ utils/storyTheaterBackup.test.ts (4 tests) 8ms
+ ✓ utils/assistantActionFormat.test.ts (4 tests) 6ms
+ ✓ utils/live2dBuildIsolation.test.ts (2 tests) 15ms
+ ✓ utils/companionVoiceAssets.test.ts (3 tests) 8ms
+ ✓ utils/messageFormat.sticker.test.ts (3 tests) 15ms
+ ✓ utils/blobEquals.test.ts (10 tests) 6ms
+ ✓ utils/scheduleTime.test.ts (3 tests) 33ms
+ ✓ utils/companionAvatar.test.ts (4 tests) 3ms
+ ✓ utils/voicePlayback.test.ts (5 tests) 3ms
+ ✓ utils/db.charGroups.test.ts (1 test) 17ms
+ ✓ utils/miniAppToolRoute.test.ts (5 tests) 3ms
+ ✓ utils/qixiLaunchPopup.test.ts (6 tests) 34ms
+ ✓ utils/db.hwmSelfHeal.test.ts (3 tests) 15ms
+ ✓ utils/safeApi.sse-toolcalls.test.ts (2 tests) 8ms
+ ✓ utils/memoryArchiveIndex.test.ts (4 tests) 13ms
+ ✓ utils/realtimeContext.specialDates.test.ts (3 tests) 31ms
+ ✓ utils/memoryPalace/highWaterMark.test.ts (3 tests) 12ms
+ ✓ utils/dateSprites.test.ts (7 tests) 4ms
+ ✓ utils/isStatusBarHidden.test.ts (6 tests) 3ms
+ ✓ utils/callPreferences.test.ts (3 tests) 5ms
+ ✓ utils/socialFeedMerge.test.ts (3 tests) 4ms
+ ✓ utils/systemMessageMerge.test.ts (4 tests) 4ms
+ ✓ utils/nativeAmsgInbox.test.ts (2 tests) 5ms
+ ✓ utils/storyTheaterArchiveView.wiring.test.ts (2 tests) 3ms
+ ✓ utils/callSnapshotRetention.test.ts (3 tests) 3ms
+ ✓ utils/companionPerformanceDirector.test.ts (3 tests) 4ms
+ ✓ utils/companionStartup.test.ts (3 tests) 8ms
+ ✓ utils/claudeProxyCompat.test.ts (2 tests) 3ms
+ ✓ utils/memoryPalace/rangeSelection.test.ts (4 tests) 4ms
+ ✓ utils/live2dParameterSemantics.test.ts (3 tests) 4ms
+ ✓ worker/amsg/src/nativeFcm.test.ts (3 tests) 6ms
+ ✓ utils/userCameraSnapshot.test.ts (3 tests) 4ms
+ ✓ utils/updateNotificationReferences.test.ts (2 tests) 10ms
+ ✓ utils/chatGenEvents.test.ts (3 tests) 6ms
+ ✓ utils/scheduleChangeNotice.test.ts (1 test) 8ms
+ ✓ utils/avatarModelStore.test.ts (4 tests) 4ms
+ ✓ utils/amsgInstantLocalInbox.wiring.test.ts (3 tests) 3ms
+ ✓ utils/apiConfigNormalize.test.ts (3 tests) 3ms
+ ✓ utils/memoryPalace/waterline.test.ts (6 tests) 4ms
+ ✓ utils/preloadableLazy.test.ts (2 tests) 5ms
+ ✓ utils/xhsOwnedPostReference.test.ts (3 tests) 5ms
+ ✓ utils/sullyAvatar.test.ts (9 tests) 3ms
+ ✓ utils/memoryPalace/pipelineRuntimeReferences.test.ts (3 tests) 8ms
+ ✓ utils/phoneEvidence.test.ts (3 tests) 3ms
+ ✓ utils/journalRerollRuntime.test.ts (1 test) 5ms
+ ✓ utils/theaterGenerator.test.ts (5 tests) 5ms
+ ✓ utils/chatRequestPayload.trackSwitch.test.ts (5 tests) 3ms
+ ✓ utils/toolCallCompat.test.ts (2 tests) 4ms
+ ✓ utils/xhsMcpConfig.test.ts (5 tests) 3ms
+ ✓ utils/wallpaperCompat.test.ts (4 tests) 3ms
+ ✓ utils/qixiJson.test.ts (4 tests) 5ms
+ ✓ utils/webdavClient.test.ts (1 test) 2ms
+ ✓ utils/vrWorldUploadStyle.test.ts (1 test) 3ms
+ ✓ utils/bubbleAppearance.test.ts (3 tests) 3ms
+ ✓ utils/vrWorldPdfImport.test.ts (1 test) 2ms
+ ✓ utils/groupChat/relativeTime.test.ts (3 tests) 3ms
+ ✓ utils/chatImageScrollRuntimeReferences.test.ts (2 tests) 10ms
+ ✓ utils/pendingReply.test.ts (4 tests) 3ms
+ ✓ utils/nativeAmsgPush.test.ts (2 tests) 3ms
+ ✓ utils/dominantHue.test.ts (3 tests) 3ms
+ ✓ utils/backupImportPolicy.test.ts (4 tests) 4ms
+ ✓ utils/memoryPalace/memoryDate.test.ts (3 tests) 3ms
+ ✓ utils/avatarStageCrop.test.ts (3 tests) 3ms
+ ✓ utils/modelList.test.ts (2 tests) 3ms
+ ✓ utils/browserBackGuard.test.ts (2 tests) 4ms
+ ✓ utils/applicationConsole.test.ts (2 tests) 2ms
+ ✓ utils/dateLaunch.test.ts (2 tests) 3ms
+ ✓ utils/staticWebDeployment.test.ts (7 tests) 2ms
+ ✓ utils/safeApi.content.test.ts (3 tests) 4ms
+ ✓ utils/translationLang.test.ts (2 tests) 3ms
+ ✓ utils/devDebug.test.ts (1 test) 3ms
+ ✓ utils/live2dTextureParser.test.ts (2 tests) 3ms
+ ✓ utils/slowFlushProbe.test.ts (9 tests) 5ms
+ ✓ utils/appIcon.test.ts (29 tests) 80ms
+ ✓ utils/iosStandalone.keyboard.test.ts (5 tests) 89ms
+ ✓ utils/iconRaster.test.ts (14 tests) 211ms
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  worker/amsg/src/index.test.ts [ worker/amsg/src/index.test.ts ]
+ FAIL  worker/amsg/src/plateFire.test.ts [ worker/amsg/src/plateFire.test.ts ]
+Error: Cannot find module 'cloudflare:workers' imported from 'D:/【AI】/【小手机】/_work/display-fix-verify/worker/amsg/src/index.ts'.
+
+- If you rely on tsconfig.json's "paths" to resolve modules, please install "vite-tsconfig-paths" plugin to handle module resolution.
+- Make sure you don't have relative aliases in your Vitest config. Use absolute paths instead. Read more: https://vitest.dev/guide/common-errors
+ ❯ worker/amsg/src/index.ts:1:1
+      1| /**
+       | ^
+      2|  * SullyOS 主动消息 2.0（amsg2）— 单用户 Cloudflare Worker 入口。
+      3|  *
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ Test Files  2 failed | 313 passed (315)
+      Tests  3848 passed (3848)
+   Start at  23:19:27
+   Duration  37.83s (transform 27.82s, setup 49.56s, collect 163.49s, tests 22.45s, environment 7.34s, prepare 131.42s)
+

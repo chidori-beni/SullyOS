@@ -1,0 +1,78 @@
+apps/MemoryPalaceApp.tsx(2829,26): error TS18048: 'char' is possibly 'undefined'.
+apps/MemoryPalaceApp.tsx(2838,54): error TS18048: 'char' is possibly 'undefined'.
+apps/MemoryPalaceApp.tsx(2885,27): error TS18048: 'char' is possibly 'undefined'.
+apps/MemoryPalaceApp.tsx(2901,22): error TS18048: 'char' is possibly 'undefined'.
+apps/MemoryPalaceApp.tsx(2944,90): error TS18048: 'char' is possibly 'undefined'.
+apps/MemoryPalaceApp.tsx(2949,45): error TS18048: 'char' is possibly 'undefined'.
+apps/MemoryPalaceApp.tsx(2954,80): error TS18048: 'char' is possibly 'undefined'.
+apps/MemoryPalaceApp.tsx(2969,90): error TS18048: 'char' is possibly 'undefined'.
+apps/MemoryPalaceApp.tsx(2975,45): error TS18048: 'char' is possibly 'undefined'.
+apps/MemoryPalaceApp.tsx(2979,80): error TS18048: 'char' is possibly 'undefined'.
+apps/MemoryPalaceApp.tsx(3794,64): error TS18048: 'char' is possibly 'undefined'.
+apps/MemoryPalaceApp.tsx(3817,64): error TS18048: 'char' is possibly 'undefined'.
+apps/MemoryPalaceApp.tsx(3856,43): error TS18048: 'char' is possibly 'undefined'.
+apps/MemoryPalaceApp.tsx(3877,60): error TS18048: 'char' is possibly 'undefined'.
+apps/MemoryPalaceApp.tsx(4252,37): error TS18048: 'char' is possibly 'undefined'.
+apps/MemoryPalaceApp.tsx(4253,28): error TS18048: 'char' is possibly 'undefined'.
+apps/MemoryPalaceApp.tsx(4416,41): error TS18048: 'char' is possibly 'undefined'.
+apps/MemoryPalaceApp.tsx(4532,31): error TS18048: 'char' is possibly 'undefined'.
+apps/MemoryPalaceApp.tsx(4697,70): error TS18048: 'char' is possibly 'undefined'.
+apps/MemoryPalaceApp.tsx(4843,35): error TS18048: 'char' is possibly 'undefined'.
+apps/MemoryPalaceApp.tsx(4844,26): error TS18048: 'char' is possibly 'undefined'.
+components/chat/MessageItem.tsx(431,86): error TS2769: No overload matches this call.
+  Overload 1 of 3, '(initialValue: "touch" | "mouse" | "pen"): MutableRefObject<"touch" | "mouse" | "pen">', gave the following error.
+    Argument of type '""' is not assignable to parameter of type '"touch" | "mouse" | "pen"'.
+  Overload 2 of 3, '(initialValue: "touch" | "mouse" | "pen" | null): RefObject<"touch" | "mouse" | "pen">', gave the following error.
+    Argument of type '""' is not assignable to parameter of type '"touch" | "mouse" | "pen" | null'.
+  Overload 3 of 3, '(initialValue?: undefined): MutableRefObject<"touch" | "mouse" | "pen" | undefined>', gave the following error.
+    Argument of type '""' is not assignable to parameter of type 'undefined'.
+components/os/CompanionHome.tsx(854,9): error TS18048: 'startup' is possibly 'undefined'.
+components/os/CompanionHome.tsx(3459,20): error TS2367: This comparison appears to be unintentional because the types '"tech"' and '"magazine"' have no overlap.
+components/os/CompanionHome.tsx(3464,23): error TS2367: This comparison appears to be unintentional because the types '"tech"' and '"archive"' have no overlap.
+components/os/CompanionHome.tsx(3469,118): error TS2367: This comparison appears to be unintentional because the types '"tech"' and '"idol"' have no overlap.
+scripts/audit-online-bundle.test.ts(114,41): error TS7006: Parameter 'f' implicitly has an 'any' type.
+utils/androidAppUpdate.test.ts(85,49): error TS2345: Argument of type '{ schemaVersion: number; versionCode: number; versionName: string; apkUrl: string; sha256: string; sizeBytes: number; releaseNotes: (string | number)[]; }' is not assignable to parameter of type 'AndroidUpdateManifest'.
+  Types of property 'schemaVersion' are incompatible.
+    Type 'number' is not assignable to type '1'.
+utils/apiCallLog.ts(708,37): error TS2339: Property 'role' does not exist on type 'Record<string, unknown> | { content: any; }'.
+  Property 'role' does not exist on type '{ content: any; }'.
+utils/apiCallLog.ts(708,65): error TS2339: Property 'role' does not exist on type 'Record<string, unknown> | { content: any; }'.
+  Property 'role' does not exist on type '{ content: any; }'.
+utils/builtinSullyLive2D.ts(17,15): error TS18048: 'framing' is possibly 'undefined'.
+utils/builtinSullyLive2D.ts(18,15): error TS18048: 'framing' is possibly 'undefined'.
+utils/builtinSullyLive2D.ts(19,15): error TS18048: 'framing' is possibly 'undefined'.
+utils/githubClient.test.ts(81,51): error TS2345: Argument of type '{ name: string; href: string; size: number; lastModified: number; }' is not assignable to parameter of type 'CloudBackupFile'.
+  Types of property 'lastModified' are incompatible.
+    Type 'number' is not assignable to type 'string'.
+utils/githubClient.test.ts(92,45): error TS2345: Argument of type '{ name: string; href: string; size: number; lastModified: number; }' is not assignable to parameter of type 'CloudBackupFile'.
+  Types of property 'lastModified' are incompatible.
+    Type 'number' is not assignable to type 'string'.
+utils/githubClient.test.ts(100,45): error TS2345: Argument of type '{ name: string; href: string; size: number; lastModified: number; }' is not assignable to parameter of type 'CloudBackupFile'.
+  Types of property 'lastModified' are incompatible.
+    Type 'number' is not assignable to type 'string'.
+utils/memoryPalace/pipeline.ts(1422,39): error TS18048: 'char.memoryPalaceInjection' is possibly 'undefined'.
+utils/memoryPalace/pipeline.ts(1440,42): error TS18048: 'char.roomPlatesInjection' is possibly 'undefined'.
+utils/qixiMemoryBundle.ts(190,25): error TS2352: Conversion of type '{ [k: string]: { transitionLines: never[]; sharedObject: string; memoryLine: string; options: never[]; charAction: string; reveal: string; artifactIds: never[]; charSelectionIds: never[]; }; }' to type 'Record<"reflection" | "lostLayer" | "doubleWish" | "threadNeedle" | "offerings" | "nightMarket" | "wordCloud", QixiScenePayload>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Type '{ [k: string]: { transitionLines: never[]; sharedObject: string; memoryLine: string; options: never[]; charAction: string; reveal: string; artifactIds: never[]; charSelectionIds: never[]; }; }' is missing the following properties from type 'Record<"reflection" | "lostLayer" | "doubleWish" | "threadNeedle" | "offerings" | "nightMarket" | "wordCloud", QixiScenePayload>': reflection, lostLayer, doubleWish, threadNeedle, and 3 more.
+utils/userCameraEmotion.ts(61,9): error TS2322: Type '{ value: number; emotion: string; threshold: number; eligible: boolean; }[]' is not assignable to type '{ emotion: "happy" | "sad" | "angry" | "disgusted" | "surprised" | "tired"; value: number; threshold: number; eligible: boolean; }[]'.
+  Type '{ value: number; emotion: string; threshold: number; eligible: boolean; }' is not assignable to type '{ emotion: "happy" | "sad" | "angry" | "disgusted" | "surprised" | "tired"; value: number; threshold: number; eligible: boolean; }'.
+    Types of property 'emotion' are incompatible.
+      Type 'string' is not assignable to type '"happy" | "sad" | "angry" | "disgusted" | "surprised" | "tired"'.
+vite.config.ts(94,9): error TS2769: No overload matches this call.
+  The last overload gave the following error.
+    Object literal may only specify known properties, and 'router' does not exist in type 'ProxyOptions'.
+      Object literal may only specify known properties, and 'router' does not exist in type 'ProxyOptions'.
+        Object literal may only specify known properties, and 'router' does not exist in type 'ProxyOptions'.
+vite.config.ts(94,18): error TS7006: Parameter 'req' implicitly has an 'any' type.
+vite.config.ts(104,9): error TS2769: No overload matches this call.
+  The last overload gave the following error.
+    Object literal may only specify known properties, and 'router' does not exist in type 'ProxyOptions'.
+      Object literal may only specify known properties, and 'router' does not exist in type 'ProxyOptions'.
+        Object literal may only specify known properties, and 'router' does not exist in type 'ProxyOptions'.
+vite.config.ts(104,18): error TS7006: Parameter 'req' implicitly has an 'any' type.
+vite.config.ts(114,9): error TS2769: No overload matches this call.
+  The last overload gave the following error.
+    Object literal may only specify known properties, and 'router' does not exist in type 'ProxyOptions'.
+      Object literal may only specify known properties, and 'router' does not exist in type 'ProxyOptions'.
+        Object literal may only specify known properties, and 'router' does not exist in type 'ProxyOptions'.
+vite.config.ts(114,18): error TS7006: Parameter 'req' implicitly has an 'any' type.

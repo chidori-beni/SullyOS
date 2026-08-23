@@ -2593,6 +2593,35 @@ export interface MemoryPalaceWaterlineConfig {
   bufferThreshold?: number;
 }
 
+export type NaturalProactiveIntensity = 'low' | 'normal' | 'high';
+
+export interface NaturalProactiveProfile {
+  version: 1;
+  archetype: string;
+  summary: string;
+  weights: {
+    silence: number;
+    timeOfDay: number;
+    emotion: number;
+    pendingTopic: number;
+    spontaneousThought: number;
+  };
+  silenceSaturationHours: number;
+  quietHours: [number, number];
+  threshold: number;
+  spontaneousChancePerDay: number;
+  derivedAt: number;
+  source: 'llm' | 'fallback';
+}
+
+export interface NaturalProactiveConfig {
+  enabled: boolean;
+  intensity: NaturalProactiveIntensity;
+  /** -20..20；0 表示完全服从人设画像。 */
+  bias: number;
+  profile?: NaturalProactiveProfile;
+}
+
 export interface CharacterProfile {
   id: string;
   name: string;
@@ -2929,6 +2958,12 @@ export interface CharacterProfile {
       model: string;
     };
   };
+
+  /**
+   * 自然主动：云端按人设与关系状态周期性判断「此刻会不会真的想联系」，
+   * 不是固定间隔发信。内部检查任务不会出现在主动消息 2.0 的约定清单中。
+   */
+  naturalProactiveConfig?: NaturalProactiveConfig;
 
   // 情绪Buff系统
   activeMsg2Config?: ActiveMsg2CharacterConfig;
