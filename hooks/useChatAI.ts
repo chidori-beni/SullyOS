@@ -721,6 +721,19 @@ export const useChatAI = ({
         // 早退路径也要熄「发送准备中」灯: caller (Chat.tsx) 是先 setInstantSendingActive(true)
         // 再调 triggerAI 的, 这里 return 掉而不通知的话指示灯会永远亮着。
         if (isTyping || !char) { onInstantPosted?.(); return; }
+        // 即时对话（amsg2）路径：POST 202 受理之后 isTyping 立刻回 false（生成挪去云端跑，
+        // 本机不再挂着这个请求），但那一轮的回复可能还要几十秒到几分钟才真正落库。这段
+        // 空窗期里单靠 isTyping 挡不住重复触发——sendInstantChatTurn 虽然会把上一条
+        // 未认领的任务标成 supersedesUuid 去顶替，但云端几乎在 202 那一刻就把任务
+        // kick 给 DO 认领开跑，顶替窗口窄到基本抓不住：旧任务顶不掉、照样跑完推送，
+        // 于是同一轮话题会收到两条独立生成、内容相近但用词不同的回复（用户反馈的
+        // "重复但又有点不一样"就是这个）。用 getInstantChatPending 把这段空窗也挡上，
+        // 该角色还欠着一条云端回复时不再重新起一轮生成。
+        if (getInstantChatPending(char.id)) {
+            addToast('角色还在回复上一条消息，等这条回来再发下一条', 'info');
+            onInstantPosted?.();
+            return;
+        }
         const effectiveApi = overrideApiConfig || apiConfig;
         if (!effectiveApi.baseUrl) { alert("请先在设置中配置 API URL"); onInstantPosted?.(); return; }
 

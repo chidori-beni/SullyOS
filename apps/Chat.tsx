@@ -1589,6 +1589,11 @@ const Chat: React.FC = () => {
     const handleManualTrigger = () => {
         // 同上：上一轮还在跑时 triggerAI 会静默 reject，提前挡掉避免指示灯卡死。
         if (isTyping) return;
+        // 即时对话（amsg2）那一轮 POST 完 isTyping 就回 false 了，但云端回复可能还没落库
+        // （instantChatPending 才是这段空窗期的真实状态）。这时候再点⚡会起第二轮独立生成，
+        // 两条任务谁都拦不住谁，最后收到两条内容相近但措辞不同的回复。这里提前挡一道，
+        // triggerAI 内部也补了同一道防线（双保险，见 useChatAI 里 getInstantChatPending 那段）。
+        if (instantChatPending) { addToast('角色还在回复上一条消息，等这条回来再发下一条', 'info'); return; }
         if (!isInstantConfigReady()) { triggerAI(messages); return; }
         // instantSendingActive 驱动 header "发送中…" 徽章 (拼接+发送窗口). 消息上的三个小圆点
         // 另走纯前端判定 (isTyping && 最后一条消息), 见渲染处.
