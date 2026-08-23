@@ -333,13 +333,24 @@ export const resumePendingAmsgStateSync = (scope: {
 // 交互」，不是 App 在线状态——切后台就停续租，别让一个闲置可见标签页无限续租。
 
 interface ChatPresenceLease {
-  timer: ReturnType<typeof setInterval>;
+  timer: ReturnType<typeof setInterval> | null;
   /** 本轮最新的「最近一条真实用户消息」时间戳；续租时读它，不吃闭包里的陈旧值。 */
   lastUserMessageAt: number | null;
+  /** pagehide/visibilitychange 后禁止旧 timer 把“已离开”重新续成前台。 */
+  backgrounded: boolean;
 }
 
 // charId → 心跳租约。同一 char 只保留一个 timer（重入只刷新 lastUserMessageAt）。
 const chatPresenceLeases = new Map<string, ChatPresenceLease>();
+
+const ensureChatPresenceTimer = (charId: string, lease: ChatPresenceLease) => {
+  if (lease.timer !== null) return;
+  lease.timer = setInterval(() => {
+    const current = chatPresenceLeases.get(charId);
+    if (!current || current.backgrounded || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return;
+    writeChatPresence(charId, current.lastUserMessageAt);
+  }, CHAT_PRESENCE_HEARTBEAT_MS);
+};
 
 /**
  * 实时感知配置（工具凭据）改动后，把云端的两份状态一起对齐。
@@ -710,17 +721,14 @@ export const startAmsgChatPresence = (charId: string, lastUserMessageAt: number 
   if (existing) {
     // 已有 timer：只刷新本轮最新的 lastUserMessageAt，复用同一个心跳。
     existing.lastUserMessageAt = lastUserMessageAt;
+    existing.backgrounded = false;
+    ensureChatPresenceTimer(charId, existing);
     return firstWrite;
   }
 
-  const timer = setInterval(() => {
-    // 切后台不再续租：一个闲置可见标签页不该无限续租；回前台下一轮真实消息重建。
-    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
-    const lease = chatPresenceLeases.get(charId);
-    if (!lease) return;
-    writeChatPresence(charId, lease.lastUserMessageAt);
-  }, CHAT_PRESENCE_HEARTBEAT_MS);
-  chatPresenceLeases.set(charId, { timer, lastUserMessageAt });
+  const lease: ChatPresenceLease = { timer: null, lastUserMessageAt, backgrounded: false };
+  chatPresenceLeases.set(charId, lease);
+  ensureChatPresenceTimer(charId, lease);
   return firstWrite;
 };
 
@@ -729,6 +737,14 @@ export const startAmsgChatPresence = (charId: string, lastUserMessageAt: number 
 // 所以 worker 侧读取失败会保留通知，TTL 继续做最后一道兜底。
 const markChatPresenceOffline = () => {
   for (const [charId, lease] of chatPresenceLeases) {
+    lease.backgrounded = true;
+    // Do not leave a timer alive while the page is hidden. Apart from wasting
+    // work, a queued heartbeat could race the offline write and restore a
+    // fresh foreground lease on the server.
+    if (lease.timer !== null) {
+      clearInterval(lease.timer);
+      lease.timer = null;
+    }
     ActiveMsgClient.syncChatPresence(charId, {
       v: 1,
       charId,
@@ -744,6 +760,8 @@ if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       for (const [charId, lease] of chatPresenceLeases) {
+        lease.backgrounded = false;
+        ensureChatPresenceTimer(charId, lease);
         writeChatPresence(charId, lease.lastUserMessageAt);
       }
     } else {
@@ -761,7 +779,7 @@ if (typeof document !== 'undefined') {
 export const stopAmsgChatPresence = (charId: string) => {
   const lease = chatPresenceLeases.get(charId);
   if (lease) {
-    clearInterval(lease.timer);
+    if (lease.timer !== null) clearInterval(lease.timer);
     chatPresenceLeases.delete(charId);
   }
 };

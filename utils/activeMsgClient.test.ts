@@ -50,6 +50,7 @@ import {
 } from './amsgFirePack';
 import { clearInstantChatPending, setInstantChatPending } from './amsgInstantChat';
 import { AMSG_TOOL_CONFIG_KEY, AMSG_TOOL_PACK_KEY } from './amsgToolPack';
+import { AMSG_CHAT_PRESENCE_KEY } from './amsgChatPresence';
 import * as dailySchedule from './dailySchedule';
 import { ChatPrompts } from './chatPrompts';
 import { DB } from './db';
@@ -135,6 +136,33 @@ describe('putClientStateOrThrow', () => {
     const put = vi.fn().mockRejectedValue(new Error(`Unexpected token '<'`));
     await expect(runWithTimers(putClientStateOrThrow(clientWith(put), ENTRIES, '上传云端状态')))
       .rejects.toThrow(/没有打到 Worker/);
+  });
+});
+
+describe('ActiveMsgClient.syncChatPresence', () => {
+  beforeEach(() => {
+    reiClient.putClientState.mockReset().mockResolvedValue({ success: true });
+    reiClient.init.mockResolvedValue(undefined);
+  });
+
+  it('下线哨兵 activeAt=0 仍用本次写入时间做 updatedAt，避免被 LWW 当成旧数据跳过', async () => {
+    const before = Date.now();
+    await ActiveMsgClient.syncChatPresence('char-offline', {
+      v: 1,
+      charId: 'char-offline',
+      activeAt: 0,
+      lastUserMessageAt: null,
+    });
+
+    const entries = reiClient.putClientState.mock.calls.at(-1)?.[0] as any[];
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      namespace: 'amsg:char:char-offline',
+      key: AMSG_CHAT_PRESENCE_KEY,
+      updatedAt: expect.any(Number),
+    });
+    expect(entries[0].updatedAt).toBeGreaterThanOrEqual(before);
+    expect(JSON.parse(entries[0].value).activeAt).toBe(0);
   });
 });
 

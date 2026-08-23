@@ -2754,7 +2754,11 @@ export const ActiveMsgClient = {
       namespace: amsgStateNamespace(charId),
       key: AMSG_CHAT_PRESENCE_KEY,
       value: JSON.stringify(presence),
-      updatedAt: presence.activeAt,
+      // `activeAt: 0` is the offline sentinel, but client-state is
+      // last-write-wins by updatedAt. Reusing activeAt here would make the
+      // offline write look older than the existing foreground lease, so the
+      // server would skip it and keep the stale lease alive.
+      updatedAt: Date.now(),
     }]);
     if (!response?.success) {
       throw new Error(response?.error?.message || '上传活跃会话租约失败。');
