@@ -59,6 +59,7 @@ import {
   type MemoryAutoArchiveSyncDetail,
 } from '../utils/memoryPalace/autoArchive';
 import { ActiveMsgClient } from '../utils/activeMsgClient';
+import { formatAmsgPreviewBody, formatAmsgToastText } from '../utils/amsgToastPreview';
 import { resolveCharTimeZone } from '../utils/timezone';
 import { ActiveMsgStore, exportAmsg2GlobalConfig } from '../utils/activeMsgStore';
 import { charMayHaveCloudState, purgeCharCloudState } from '../utils/amsg2CharCleanup';
@@ -1902,14 +1903,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId;
           if (!isChattingWithThisChar) {
               const isVisible = document.visibilityState === 'visible';
+              const preview = formatAmsgToastText(charName, body);
               if (isVisible) {
-                  addToast(`${charName} 给你发了消息`, 'success');
+                  addToast(preview, 'success');
               } else {
                   awayActiveMsgCount += 1;
               }
               setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
-              const preview = (body || `${charName} sent an active message`).replace(/\s+/g, ' ').trim() || `${charName} sent an active message`;
-              void sendProactiveNativeNotification(charId, charName, preview);
+              void sendProactiveNativeNotification(charId, charName, formatAmsgPreviewBody(body));
               // SW push handler 已经 fire 过系统通知（不在前台时露出真实内容、在前台时
               // silent + close 静默），这里不再补一次，避免重复弹窗。
           }

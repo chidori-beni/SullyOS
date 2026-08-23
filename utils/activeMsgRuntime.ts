@@ -38,6 +38,11 @@ import { describeInstantChatFailure, pruneStaleTasks, type RemoteTaskLastError }
 import { MULTIPART_FAILURE_REASON } from '@rei-standard/amsg-shared';
 import { appendInstantTraceEntry } from './instantTraceLog';
 import { trackEvent } from './analytics';
+import {
+  getInstantChunkIndex,
+  getInstantChunkPacingDelay,
+  getInstantChunkSessionId,
+} from './amsgInstantPacing';
 
 // 同一个 category，两个 tag——保持 console 里现有的 [ActiveMsg] / [amsg] 标签，
 // 方便用户 / 文档里 grep 历史报错信息。两条 tag 都归 instant-push 一类。
@@ -1223,6 +1228,36 @@ export const isFreshInboxDelivery = (
   return now - receivedAt <= INBOX_FRESH_DELIVERY_WINDOW_MS;
 };
 
+// 即时对话的一轮回复可能被拆成多个 content push。它们已经在 flush 链里串行，
+// 但每个 push 内部的「首条气泡免延迟」会让多段回复挤在同一秒出现。只给**实时到达**
+// 的 instant session 加一个很短的段间间隔；后台补收/冷启动仍一次性回填，避免用户打开
+// APP 后还要等旧消息慢慢播放。
+const instantChunkPacingAt = new Map<string, number>();
+
+const waitForInstantChunkPacing = async (message: ActiveMsg2InboxMessage): Promise<void> => {
+  if (message.source !== 'instant' && message.messageType !== 'instant') return;
+  const now = Date.now();
+  if (!isFreshInboxDelivery(message.receivedAt, now)) return;
+  const sessionId = getInstantChunkSessionId(message as any);
+  const messageIndex = getInstantChunkIndex(message as any);
+  if (!sessionId || messageIndex <= 1) return;
+  const delay = getInstantChunkPacingDelay(instantChunkPacingAt.get(sessionId) ?? null, now);
+  if (delay > 0) await new Promise<void>(resolve => setTimeout(resolve, delay));
+};
+
+const markInstantChunkShown = (message: ActiveMsg2InboxMessage): void => {
+  if (message.source !== 'instant' && message.messageType !== 'instant') return;
+  const now = Date.now();
+  if (!isFreshInboxDelivery(message.receivedAt, now)) return;
+  const sessionId = getInstantChunkSessionId(message as any);
+  if (!sessionId) return;
+  instantChunkPacingAt.set(sessionId, now);
+  // session 结束后清掉状态，避免长期运行的 PWA 留着无界的 session key。
+  setTimeout(() => {
+    if (instantChunkPacingAt.get(sessionId) === now) instantChunkPacingAt.delete(sessionId);
+  }, INBOX_FRESH_DELIVERY_WINDOW_MS);
+};
+
 /**
  * 算一条 inbox 消息落库该用的时间戳：一律取 sentAt（云端真正把这句话发出去的那一刻）。
  * 返回 undefined = 不指定，走 DB.saveMessage 默认的写库当刻（Date.now()）。
@@ -1667,7 +1702,8 @@ const flushInboxToChatImpl = async () => {
 
       // ─── 防穿帮闸·客户端兜底 ───
       // 只拦定时任务的 push（source==='scheduled' 且带策略字段）；instant 聊天
-      // 回复 source==='instant'，与这道闸无关。吞掉 = 不进聊天流、不重放
+      // 回复由 messageType==='instant'（部分旧包也带 source==='instant'）标记，
+      // 与这道闸无关。吞掉 = 不进聊天流、不重放
       // directives（作废消息的副作用一并作废）；生成 token 浪费掉，换不穿帮。
       // 系统通知层面：content push 默认可能在前台/后台先展示；页面线程无权追回
       // 已弹通知。防通知主力是 worker 预检 + chat_presence 活跃会话租约。
@@ -1742,6 +1778,10 @@ const flushInboxToChatImpl = async () => {
       // 写库当刻），主路径与下面的降级存原稿路径共用这一个值，两条路一个口径。
       // sentAt 缺失时退到 receivedAt（老 worker 的 push 可能不带 sentAt）。
       const persistTimestamp = await resolveInboxPersistTimestampForMessage(message, Date.now());
+
+      // 同一即时会话的后续 content push 之间留一点真实感；只影响实时到达，
+      // 不改变已经在后台生成好的补收消息。
+      await waitForInstantChunkPacing(message);
 
       // 白名单制: AI 文本类型基本封闭 (amsg-shared MESSAGE_TYPE 4 个 + SullyOS 3 个 legacy 别名);
       // 非 AI 类型 (forum / event / system / 未来扩展) 不可枚举, 不进 post-processing 防把它们当 AI 输出乱解析.
@@ -1879,6 +1919,7 @@ const flushInboxToChatImpl = async () => {
       // 保留原有 toast / 未读 / 通知 / sendInstantPush resolver 语义。body 用原文做预览即可。
       // sessionId 必须带出来: instantPushClient 的 observed listener 用它做 receipt identity 匹配,
       // 杜绝同 char 多轮并发 / 延迟到达的旧 push 被新一轮 send 误判为 delivered。
+      markInstantChunkShown(message);
       window.dispatchEvent(new CustomEvent('active-msg-received', {
         detail: {
           sessionId: (message as any).sessionId || (message.metadata as any)?.sessionId,
