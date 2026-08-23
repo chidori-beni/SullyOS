@@ -8,7 +8,7 @@
  */
 
 /** 同一 session 的相邻 content push 至少留出的可见间隔。 */
-export const INSTANT_CHUNK_PACING_MS = 1_000;
+export const INSTANT_CHUNK_PACING_MS = 1_200;
 
 export interface InstantChunkPacingMessage {
   source?: unknown;

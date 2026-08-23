@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { MESSAGE_PREVIEW_EVENT, MessagePreviewDetail } from '../utils/messagePreview';
 import { useOS } from '../context/OSContext';
 import { sanitizeMessageBannerCss } from '../utils/messageBannerCss';
@@ -15,6 +16,46 @@ const formatTime = (timestamp: number) => {
     if (Number.isNaN(date.getTime())) return '';
     return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 };
+
+/** 糯叽机通知栏的装饰层变量协议。保留 1–6 六个槽位，CSS 可直接控制图片、位置、层级与动画。 */
+const NUO_DECO_COMPAT_CSS = [1, 2, 3, 4, 5, 6].map((index) => `
+                .nuo-notif-deco-${index} {
+                    top: var(--nuo-notif-deco-${index}-top, 0);
+                    left: var(--nuo-notif-deco-${index}-left, 0);
+                    right: var(--nuo-notif-deco-${index}-right, auto);
+                    bottom: var(--nuo-notif-deco-${index}-bottom, auto);
+                    width: var(--nuo-notif-deco-${index}-width, 100%);
+                    height: var(--nuo-notif-deco-${index}-height, 100%);
+                    background: var(--nuo-notif-deco-${index}-bg, transparent);
+                    background-image: var(--nuo-notif-deco-${index}-image, none);
+                    background-size: var(--nuo-notif-deco-${index}-size, auto);
+                    background-position: var(--nuo-notif-deco-${index}-position, 0 0);
+                    background-repeat: var(--nuo-notif-deco-${index}-repeat, no-repeat);
+                    opacity: var(--nuo-notif-deco-${index}-opacity, 1);
+                    z-index: var(--nuo-notif-deco-${index}-z, ${index});
+                    transform: var(--nuo-notif-deco-${index}-transform, none);
+                    filter: var(--nuo-notif-deco-${index}-filter, none);
+                    mix-blend-mode: var(--nuo-notif-deco-${index}-mix-blend, normal);
+                    animation: var(--nuo-notif-deco-${index}-animation, none);
+                }
+`).join('');
+
+/** 糯叽机 CSS 常用的入场/装饰动画名；导入 CSS 后不再因为缺少 keyframes 而静默失效。 */
+const NUO_KEYFRAMES_CSS = `
+                @keyframes nuo-notif-fade-blur { from { opacity: 0; filter: blur(12px); } to { opacity: 1; filter: blur(0); } }
+                @keyframes nuo-notif-pop-bounce { 0% { opacity: 0; transform: translateY(-18px) scale(.82); } 65% { opacity: 1; transform: translateY(3px) scale(1.03); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+                @keyframes nuo-notif-rotate-in { from { opacity: 0; transform: rotate(-8deg) scale(.92); } to { opacity: 1; transform: rotate(0) scale(1); } }
+                @keyframes nuo-notif-glow-in { from { opacity: 0; filter: brightness(1.8) blur(8px); } to { opacity: 1; filter: brightness(1) blur(0); } }
+                @keyframes nuo-notif-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+                @keyframes nuo-notif-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.04); } }
+                @keyframes nuo-notif-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+                @keyframes nuo-notif-shimmer { from { background-position: -180% 0; } to { background-position: 180% 0; } }
+                @keyframes nuo-notif-glitch { 0%, 100% { transform: translate(0); } 20% { transform: translate(-2px, 1px); } 40% { transform: translate(2px, -1px); } 60% { transform: translate(-1px, 0); } }
+                @keyframes nuo-notif-twinkle { 0%, 100% { opacity: .35; transform: scale(.94); } 50% { opacity: 1; transform: scale(1.06); } }
+                @keyframes nuo-notif-drift { 0%, 100% { transform: translate3d(0, 0, 0); } 50% { transform: translate3d(8px, -4px, 0); } }
+                @keyframes nuo-notif-breathe { 0%, 100% { opacity: .72; } 50% { opacity: 1; } }
+                @keyframes nuo-notif-hue-rotate { from { filter: hue-rotate(0deg); } to { filter: hue-rotate(360deg); } }
+`;
 
 /**
  * 糯叽机风格的单卡消息横幅：同一张卡只更新内容，不按消息数量堆叠多张卡。
@@ -64,7 +105,7 @@ const MessagePreviewBanner: React.FC = () => {
 
     const customCss = theme.messageBannerCustomCss?.trim() || '';
 
-    return (
+    return createPortal((
         <div
             className={`sully-message-preview-container ios-notification-container${theme.darkMode ? ' dark-mode' : ''}`}
         >
@@ -77,7 +118,8 @@ const MessagePreviewBanner: React.FC = () => {
                     transform: translateX(-50%);
                     width: 92%;
                     max-width: 380px;
-                    z-index: 70;
+                    /* 高于 Sully 的持久「正在回复」状态条（z-index: 999），但低于来电接听层。 */
+                    z-index: 1200;
                     pointer-events: none;
                     padding-top: var(--nuo-notif-banner-offset-top, max(20px, var(--safe-top, env(safe-area-inset-top, 0px))));
                 }
@@ -227,10 +269,30 @@ const MessagePreviewBanner: React.FC = () => {
                     .sully-message-preview-time { color: var(--sully-msg-time-color, #aaa); }
                     .sully-message-preview-body { color: var(--sully-msg-body-color, #ddd); }
                 }
+                ${NUO_DECO_COMPAT_CSS}
+                .nuo-notif-overlay {
+                    top: 0;
+                    right: 0;
+                    bottom: 0;
+                    left: 0;
+                    background: var(--nuo-notif-overlay-bg, none);
+                    background-image: var(--nuo-notif-overlay-image, none);
+                    background-size: var(--nuo-notif-overlay-size, cover);
+                    background-position: var(--nuo-notif-overlay-position, center);
+                    background-repeat: var(--nuo-notif-overlay-repeat, no-repeat);
+                    mix-blend-mode: var(--nuo-notif-overlay-mix-blend, normal);
+                    opacity: var(--nuo-notif-overlay-opacity, 1);
+                    border-radius: inherit;
+                    z-index: var(--nuo-notif-overlay-z, 20);
+                    animation: var(--nuo-notif-overlay-animation, none);
+                    transform: var(--nuo-notif-overlay-transform, none);
+                    filter: var(--nuo-notif-overlay-filter, none);
+                }
+                ${NUO_KEYFRAMES_CSS}
             `}</style>
             {/* 自定义样式放在守护样式之后，糯叽机原 CSS 无需额外补 !important 也能覆盖默认值。 */}
             {customCss && <style>{sanitizeMessageBannerCss(customCss)}</style>}
-            <div className="sully-message-preview-card ios-notification-banner" role="status" aria-live="polite" onClick={openChat}>
+            <div className="sully-message-preview-card banner-card ios-notification-banner" role="status" aria-live="polite" onClick={openChat}>
                 <span className="nuo-notif-overlay" aria-hidden="true" />
                 {[1, 2, 3, 4, 5, 6].map((index) => <span key={index} className={`nuo-notif-deco nuo-notif-deco-${index}`} aria-hidden="true" />)}
                 <div className="sully-message-preview-avatar-wrap banner-avatar-wrap" aria-hidden="true">
@@ -258,7 +320,7 @@ const MessagePreviewBanner: React.FC = () => {
                 </div>
             </div>
         </div>
-    );
+    ), document.body);
 };
 
 export default MessagePreviewBanner;

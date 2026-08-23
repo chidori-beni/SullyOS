@@ -42,6 +42,7 @@ import {
   getInstantChunkIndex,
   getInstantChunkPacingDelay,
   getInstantChunkSessionId,
+  INSTANT_CHUNK_PACING_MS,
 } from './amsgInstantPacing';
 
 // 同一个 category，两个 tag——保持 console 里现有的 [ActiveMsg] / [amsg] 标签，
@@ -1240,8 +1241,17 @@ const waitForInstantChunkPacing = async (message: ActiveMsg2InboxMessage): Promi
   if (!isFreshInboxDelivery(message.receivedAt, now)) return;
   const sessionId = getInstantChunkSessionId(message as any);
   const messageIndex = getInstantChunkIndex(message as any);
-  if (!sessionId || messageIndex <= 1) return;
-  const delay = getInstantChunkPacingDelay(instantChunkPacingAt.get(sessionId) ?? null, now);
+  if (!sessionId) return;
+
+  // 先占住自己的可见时间槽，再等待。仅在 await 之后 mark 会让并发 flush 的几条消息
+  // 同时读到同一个旧时间戳，全部零等待地穿过去；这里的 reservation 让横幅切换本身
+  // 也按同一条 session 队列排开。首段仍立即显示，只负责占住 t=now 这一槽位。
+  const previousAt = instantChunkPacingAt.get(sessionId) ?? null;
+  const scheduledAt = previousAt == null
+    ? now
+    : Math.max(now, previousAt + INSTANT_CHUNK_PACING_MS);
+  instantChunkPacingAt.set(sessionId, scheduledAt);
+  const delay = messageIndex <= 1 ? 0 : getInstantChunkPacingDelay(scheduledAt, now, 0);
   if (delay > 0) await new Promise<void>(resolve => setTimeout(resolve, delay));
 };
 
@@ -1251,10 +1261,13 @@ const markInstantChunkShown = (message: ActiveMsg2InboxMessage): void => {
   if (!isFreshInboxDelivery(message.receivedAt, now)) return;
   const sessionId = getInstantChunkSessionId(message as any);
   if (!sessionId) return;
-  instantChunkPacingAt.set(sessionId, now);
+  // 不要用实际完成时刻把后续已经预定好的槽位往回拨；并发消息可能已经把 map
+  // 推到了未来。这样 mark 只是确认“已显示”，不会破坏队列节奏。
+  const shownAt = Math.max(instantChunkPacingAt.get(sessionId) ?? 0, now);
+  instantChunkPacingAt.set(sessionId, shownAt);
   // session 结束后清掉状态，避免长期运行的 PWA 留着无界的 session key。
   setTimeout(() => {
-    if (instantChunkPacingAt.get(sessionId) === now) instantChunkPacingAt.delete(sessionId);
+    if (instantChunkPacingAt.get(sessionId) === shownAt) instantChunkPacingAt.delete(sessionId);
   }, INBOX_FRESH_DELIVERY_WINDOW_MS);
 };
 
