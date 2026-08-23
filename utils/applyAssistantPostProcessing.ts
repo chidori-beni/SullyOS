@@ -2315,14 +2315,28 @@ export async function applyAssistantPostProcessing(
     // requestIncomingCall 自己带冷却闸，被挡下时只打日志、不提示用户——角色那句
     // "我打给你了" 照常显示，一句没兑现的话远比一天八通电话好收拾。
     if (callInviteParsed.invite) {
+        /**
+         * 这通电话是**什么时候打来的**。
+         *
+         * 只能用 spokenAt（推送路径 = push 的 sentAt），**绝不能用 messageTimestamp**。
+         * 后者是「这条消息该显示成几点」，它有自己的一套语义：本地已经有更晚的消息时会
+         * 被特意置成 undefined，好让补收的消息按写库当刻显示、不出现时间倒挂
+         * （见 activeMsgRuntime 的 resolveBackfillTimestamp）。
+         *
+         * 8/23 实测炸过：拿它当"来电时刻"，`?? Date.now()` 一兜底，几小时前的那通旧电话
+         * 就成了"刚刚打来的"——用户什么都没做，一进聊天页铃声就响。
+         *
+         * 两条路都拿不到时刻时**按旧的算**（不响，只记未接）：凭空响一次的代价，
+         * 比多一张未接来电卡片大得多。本地聊天路径不传 spokenAt，那时 Date.now() 才是对的。
+         */
+        const callRingAt = ctx.spokenAt ?? (directives && directives.length > 0 ? 0 : Date.now());
         const ringResult = requestIncomingCall({
             charId: char.id,
             charName: char.name,
             charAvatar: char.avatar,
             mode: callInviteParsed.invite.mode,
             opening: callInviteParsed.invite.opening,
-            // 补收路径要按 push 的发送时刻算，不是按用户打开 App 这一刻
-            ringAt: messageTimestamp ?? Date.now(),
+            ringAt: callRingAt,
         });
         // 没响成的那几种（隔夜补收 / 冷却期内 / 正在响别人的电话）**一律留一条未接来电**。
         // 不留的话，这通电话在角色眼里等于从没发生过——它下一轮读历史时看不到自己打过、
@@ -2334,7 +2348,7 @@ export async function applyAssistantPostProcessing(
                     charId: char.id,
                     charName: char.name,
                     mode: callInviteParsed.invite.mode,
-                    ringAt: messageTimestamp ?? Date.now(),
+                    ringAt: callRingAt,
                 },
                 ringResult,
             );
