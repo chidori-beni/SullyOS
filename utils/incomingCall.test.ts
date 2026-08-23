@@ -159,6 +159,13 @@ describe('requestIncomingCall', () => {
     expect(getPendingIncomingCall()).toBeNull();
   });
 
+  it('同一条已展示过的云端消息被重复补收，不重挂来电', () => {
+    const first = { ...call, ringAt: Date.now(), sourceMessageId: 'already-shown-push' };
+    markIncomingCallPresented(first);
+    expect(requestIncomingCall({ ...first, ringAt: Date.now() + 1_000 })).toBe('duplicate');
+    expect(getPendingIncomingCall()).toBeNull();
+  });
+
   it.skipIf(!cooldownOn)('旧电话也占冷却配额——补收一次性灌进来五条时只该记一条', () => {
     expect(requestIncomingCall({ ...call, ringAt: Date.now() - STALE_CALL_MS - 1 })).toBe('stale');
     expect(requestIncomingCall({ ...call, ringAt: Date.now() - STALE_CALL_MS - 1 })).toBe('cooldown');
@@ -179,7 +186,7 @@ describe('过期来电守门', () => {
 });
 
 describe('来电已响过标记', () => {
-  beforeEach(() => sessionStorage.clear());
+  beforeEach(() => localStorage.clear());
 
   it('同一 char + ringAt 可跨 Overlay 重挂载识别为已响过', () => {
     const call = { charId: 'c-presented', ringAt: 20_000 };
@@ -192,6 +199,13 @@ describe('来电已响过标记', () => {
   it('超过保留期自动清掉旧标记', () => {
     const call = { charId: 'c-expired-presented', ringAt: 20_000 };
     markIncomingCallPresented(call, 20_001);
-    expect(hasIncomingCallBeenPresented(call, 20_001 + 24 * 60 * 60 * 1000 + 1)).toBe(false);
+    expect(hasIncomingCallBeenPresented(call, 20_001 + 7 * 24 * 60 * 60 * 1000 + 1)).toBe(false);
+  });
+
+  it('同一条云端消息即使补收时 ringAt 被改成现在，也只能响一次', () => {
+    const first = { charId: 'c-push', ringAt: 20_000, sourceMessageId: 'push-message-42' };
+    const replay = { charId: 'c-push', ringAt: 99_999, sourceMessageId: 'push-message-42' };
+    markIncomingCallPresented(first, 20_001);
+    expect(hasIncomingCallBeenPresented(replay, 20_002)).toBe(true);
   });
 });

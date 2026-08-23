@@ -104,6 +104,11 @@ export interface PendingIncomingCall extends CallInvite {
   charId: string;
   charName: string;
   charAvatar?: string;
+  /**
+   * 云端这条消息的稳定 ID。PWA 被系统杀掉后会重新补收同一条消息；那时 ringAt 有可能
+   * 被旧 worker 重写成“现在”，只能靠这个 ID 才能认出它不是一通新电话。
+   */
+  sourceMessageId?: string;
   /** 角色说"我打给你"那一刻（ms）。补收路径传 push 的 sentAt。 */
   ringAt: number;
 }
@@ -153,33 +158,39 @@ export const isStaleIncomingCall = (
  *
  * pending 是模块级内存；锁屏→解锁、开机动画结束等都会让 Overlay 重挂载。若没有这枚
  * 标记，旧 pending 每次重挂载都会再 startRingtone 一遍。用 sessionStorage 跨过一次整页
- * reload，避免懒加载失败自动刷新后同一通电话又被当成新来电；只保留很短的记录，避免无限增长。
+ * reload，避免懒加载失败自动刷新后同一通电话又被当成新来电。
+ *
+ * 不能再用 sessionStorage：iOS 独立 PWA 从后台被系统回收、或用户划掉后重新打开时，
+ * sessionStorage 会消失，但 Worker 仍可能把同一条 inbox 消息再补收一次，结果就是“刚打开
+ * App 又响一遍”。localStorage 才能跨这次重启留下“这通已经响过”的回执。
  */
-const PRESENTED_CALL_KEY_PREFIX = 'sully-incoming-call-presented-v1:';
-const PRESENTED_CALL_RETENTION_MS = 24 * 60 * 60 * 1000;
+const PRESENTED_CALL_KEY_PREFIX = 'sully-incoming-call-presented-v2:';
+const PRESENTED_CALL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
-const presentedCallKey = (call: Pick<PendingIncomingCall, 'charId' | 'ringAt'>): string => (
-  `${PRESENTED_CALL_KEY_PREFIX}${encodeURIComponent(call.charId)}:${call.ringAt}`
+const presentedCallKey = (call: Pick<PendingIncomingCall, 'charId' | 'ringAt' | 'sourceMessageId'>): string => (
+  `${PRESENTED_CALL_KEY_PREFIX}${encodeURIComponent(call.charId)}:${call.sourceMessageId
+    ? `message:${encodeURIComponent(call.sourceMessageId)}`
+    : `ring:${call.ringAt}`}`
 );
 
 export const markIncomingCallPresented = (
-  call: Pick<PendingIncomingCall, 'charId' | 'ringAt'>,
+  call: Pick<PendingIncomingCall, 'charId' | 'ringAt' | 'sourceMessageId'>,
   at: number = Date.now(),
 ): void => {
-  try { sessionStorage.setItem(presentedCallKey(call), String(at)); } catch { /* 隐私模式 */ }
+  try { localStorage.setItem(presentedCallKey(call), String(at)); } catch { /* 隐私模式 */ }
 };
 
 export const getIncomingCallPresentedAt = (
-  call: Pick<PendingIncomingCall, 'charId' | 'ringAt'>,
+  call: Pick<PendingIncomingCall, 'charId' | 'ringAt' | 'sourceMessageId'>,
   now: number = Date.now(),
 ): number | null => {
   try {
     const key = presentedCallKey(call);
-    const raw = sessionStorage.getItem(key);
+    const raw = localStorage.getItem(key);
     if (raw == null) return null;
     const parsed = Number(raw);
     if (!Number.isFinite(parsed) || now - parsed > PRESENTED_CALL_RETENTION_MS) {
-      sessionStorage.removeItem(key);
+      localStorage.removeItem(key);
       return null;
     }
     return parsed;
@@ -189,13 +200,15 @@ export const getIncomingCallPresentedAt = (
 };
 
 export const hasIncomingCallBeenPresented = (
-  call: Pick<PendingIncomingCall, 'charId' | 'ringAt'>,
+  call: Pick<PendingIncomingCall, 'charId' | 'ringAt' | 'sourceMessageId'>,
   now: number = Date.now(),
 ): boolean => getIncomingCallPresentedAt(call, now) != null;
 
 export type IncomingCallResult =
   /** 正在响 */
   | 'ringing'
+  /** 同一条已展示过的推送被 PWA 重启后的补收路径再送了一遍；什么都不该再发生。 */
+  | 'duplicate'
   /** 冷却期内，这通不响也不记未接（它压根不该打这一通） */
   | 'cooldown'
   /** 已经在响别人的电话了 */
@@ -214,6 +227,12 @@ export const requestIncomingCall = (
 ): IncomingCallResult => {
   const now = Date.now();
   const ringAt = call.ringAt ?? now;
+  // 先于 pending / 冷却运行：这是“同一条已经给用户响过的云端消息”再次被补收，不是一
+  // 通被冷却挡下的新电话。不能重新挂 Overlay，更不能再落一条未接记录。
+  if (hasIncomingCallBeenPresented({ ...call, ringAt }, now)) {
+    console.log('[IncomingCall] ⏳ 同一条来电已展示过，跳过:', call.sourceMessageId || call.charId);
+    return 'duplicate';
+  }
   // 用户刚在锁屏上点了这通电话的横幅 —— 那是一次明确的"接听"，冷却和过期都不该拦。
   // 拦下来的话，用户按了接听、App 起来了、然后什么都没发生，比不响还糟。
   const answeredFromBanner = consumeCallBannerOpened(call.charId, now);

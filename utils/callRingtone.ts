@@ -144,4 +144,12 @@ if (typeof window !== 'undefined') {
   const stopOnPageExit = () => stopRingtone();
   window.addEventListener('pagehide', stopOnPageExit);
   window.addEventListener('beforeunload', stopOnPageExit);
+
+  // iOS 独立 PWA 退到后台时经常不会触发 pagehide/beforeunload，而是把整个 JS 页面冻结。
+  // 若 Audio 仍在 loop，用户下次点开 App 会听到一通“上次的旧电话”从后台续播。
+  // 一旦页面不可见立刻停掉；真正后台刚送达的来电尚未 startRingtone，不受影响，回前台时
+  // Overlay 仍会按正常的新来电路径开始。
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') stopRingtone();
+  });
 }

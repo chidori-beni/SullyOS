@@ -700,6 +700,9 @@ const processInboxMessageWithPostProcessing = async (
     // 日程改动按「角色说这句话的那一刻」判，不是按现在——这条可能在收件箱里躺了一夜，
     // 昨晚的「22:00 改成陪你聊天」不该落到今天的 22:00 上。
     spokenAt: message.sentAt,
+    // 这不是显示用 timestamp，而是这条云端消息的“身份证”。来电去重必须用它，不能只
+    // 靠 ringAt：iOS PWA 重启后补收旧包时，某些旧 Worker 会把后者写成当前时刻。
+    sourceMessageId: message.messageId,
     contextMsgs,
     // fullMessages / initialData: worker 不会传过来 (Phase 2 才有续跑), 二轮 LLM 又被关掉,
     // 这两个字段在 skipSecondPassLLM=true 时实际上不会被消费; 给个最小占位避免 undefined NPE。

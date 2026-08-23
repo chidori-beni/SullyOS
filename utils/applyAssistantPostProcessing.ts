@@ -453,6 +453,10 @@ export interface PostProcessCtx {
      * 日历日门槛兜底，隔天的整批丢弃）。
      */
     spokenAt?: number;
+    /**
+     * 主动消息 inbox 的稳定消息 ID。只在推送补收路径传；用于让同一通电话跨 PWA 重启也只响一次。
+     */
+    sourceMessageId?: string;
     /** 上下文消息窗 — 用来匹配 quote 目标 */
     contextMsgs: Message[];
     /** 发给 API 的完整 messages 数组 — 2nd-pass LLM 调用要带上 */
@@ -534,6 +538,7 @@ export async function applyAssistantPostProcessing(
         realtimeConfig,
         groups,
         spokenAt,
+        sourceMessageId,
         contextMsgs,
         fullMessages,
         initialData,
@@ -2337,12 +2342,15 @@ export async function applyAssistantPostProcessing(
             mode: callInviteParsed.invite.mode,
             opening: callInviteParsed.invite.opening,
             ringAt: callRingAt,
+            sourceMessageId,
         });
         // 没响成的那几种（隔夜补收 / 冷却期内 / 正在响别人的电话）**一律留一条未接来电**。
         // 不留的话，这通电话在角色眼里等于从没发生过——它下一轮读历史时看不到自己打过、
         // 也看不到你没接。8/23 实测踩到的更糟的一种：横幅都弹了、用户从后台切回来，
         // 界面上却干干净净，看着就像功能坏了。一通被系统吞掉的电话不该凭空消失。
-        if (ringResult !== 'ringing') {
+        // duplicate = 同一条已经响过的 push 被 PWA 冷启动补收，不是一次新的未接来电；
+        // 再落卡片会让聊天里凭空多出一串“未接来电”。
+        if (ringResult !== 'ringing' && ringResult !== 'duplicate') {
             await persistMissedCall(
                 {
                     charId: char.id,
