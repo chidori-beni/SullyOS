@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildFallbackNaturalProfile, decideNaturalProactive, enrichNaturalProfileForCharacter, naturalUnansweredHardCap } from './naturalProactive';
+import { buildFallbackNaturalProfile, decideNaturalProactive, enrichNaturalProfileForCharacter, naturalCheckWindowMinutes, naturalUnansweredHardCap, NATURAL_BATCH_HARD_CAP, NATURAL_UNANSWERED_HARD_CAP, nextNaturalCheckAt } from './naturalProactive';
 import type { CharacterProfile, NaturalProactiveProfile } from '../types';
 
 const profile: NaturalProactiveProfile = {
@@ -30,10 +30,23 @@ const decide = (overrides: Partial<Parameters<typeof decideNaturalProactive>[0]>
   });
 
 describe('自然主动决策', () => {
-  it('热络程度对应独立的未回复安全上限', () => {
-    expect(naturalUnansweredHardCap('low')).toBe(1);
-    expect(naturalUnansweredHardCap('normal')).toBe(2);
-    expect(naturalUnansweredHardCap('high')).toBe(3);
+  it('不同热络程度共用 20 条最终保险，但检查频率不同', () => {
+    expect(naturalUnansweredHardCap('low')).toBe(NATURAL_UNANSWERED_HARD_CAP);
+    expect(naturalUnansweredHardCap('normal')).toBe(NATURAL_UNANSWERED_HARD_CAP);
+    expect(naturalUnansweredHardCap('high')).toBe(NATURAL_UNANSWERED_HARD_CAP);
+    expect(NATURAL_BATCH_HARD_CAP).toBe(20);
+    expect(naturalCheckWindowMinutes('low', 0)).toBe(30);
+    expect(naturalCheckWindowMinutes('low', 0.999999)).toBe(60);
+    expect(naturalCheckWindowMinutes('normal', 0)).toBe(15);
+    expect(naturalCheckWindowMinutes('normal', 0.999999)).toBe(30);
+    expect(naturalCheckWindowMinutes('high', 0)).toBe(8);
+    expect(naturalCheckWindowMinutes('high', 0.999999)).toBe(20);
+  });
+
+  it('Worker 晚到时从现在重新排，不补跑过期时间线', () => {
+    const nowMs = Date.parse('2026-08-23T12:00:00Z');
+    expect(nextNaturalCheckAt(nowMs - 60 * 60_000, nowMs, 15)).toBe(nowMs + 15 * 60_000);
+    expect(nextNaturalCheckAt(nowMs, nowMs, 15)).toBe(nowMs + 15 * 60_000);
   });
 
   it('沉默足够久且没有未回复消息时允许联系', () => {
@@ -45,10 +58,10 @@ describe('自然主动决策', () => {
     expect(decide({ nowMs, recentSelfSendAts: [nowMs - 5 * 60_000] }).shouldSend).toBe(false);
   });
 
-  it('连续未获回复达到强度上限后硬停止', () => {
-    expect(decide({ intensity: 'low', unansweredCount: 1 }).shouldSend).toBe(false);
-    expect(decide({ intensity: 'normal', unansweredCount: 2 }).shouldSend).toBe(false);
-    expect(decide({ intensity: 'high', unansweredCount: 3 }).shouldSend).toBe(false);
+  it('连续未获回复达到 20 条最终保险后停止', () => {
+    expect(decide({ intensity: 'low', unansweredCount: 20 }).shouldSend).toBe(false);
+    expect(decide({ intensity: 'normal', unansweredCount: 20 }).shouldSend).toBe(false);
+    expect(decide({ intensity: 'high', unansweredCount: 20 }).shouldSend).toBe(false);
   });
 
   it('安静时段压低联系冲动', () => {

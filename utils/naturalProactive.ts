@@ -40,9 +40,45 @@ export interface NaturalProactiveDecision {
   reasons: string[];
 }
 
-/** 自然主动在用户未回复期间的独立安全上限；不受 2.0 约定任务设置影响。 */
-export const naturalUnansweredHardCap = (intensity: NaturalProactiveIntensity): number =>
-  intensity === 'low' ? 1 : intensity === 'high' ? 3 : 2;
+/**
+ * 自然主动在用户未回复期间的最终安全上限；不受 2.0 约定任务设置影响。
+ *
+ * 这个数是「防止失控」的保险丝，不是频率设置。真正的克制 / 自然 / 热络差异由
+ * `naturalCheckWindowMinutes` 和评分阈值体现；否则把上限设成很小的数字会让角色
+ * 因为用户暂时没回就永久变得像被掐断，而不是自然地隔一阵再想起用户。
+ */
+export const NATURAL_UNANSWERED_HARD_CAP = 20;
+export const naturalUnansweredHardCap = (_intensity: NaturalProactiveIntensity): number =>
+  NATURAL_UNANSWERED_HARD_CAP;
+
+/** 单次自然主动投递最多落成多少个聊天气泡；防止模型一次返回很长的分段列表。 */
+export const NATURAL_BATCH_HARD_CAP = 20;
+
+/** 下一次「考虑要不要联系」的检查窗口（分钟），不是保证发送的间隔。 */
+export const naturalCheckWindowMinutes = (
+  intensity: NaturalProactiveIntensity,
+  random01: number,
+): number => {
+  const safeRandom = clamp(random01, 0, 0.999999);
+  const [min, max] = intensity === 'low'
+    ? [30, 60]
+    : intensity === 'high'
+      ? [8, 20]
+      : [15, 30];
+  return min + Math.floor(safeRandom * (max - min + 1));
+};
+
+/**
+ * 计算自然主动下一次检查时间。
+ *
+ * Worker/cron 偶尔会停摆或晚到；这时 occurrenceMs 可能已经是过去的时间。
+ * 下一次必须从「现在」往后排，不能沿着过期时间线连续补跑。
+ */
+export const nextNaturalCheckAt = (
+  occurrenceMs: number,
+  nowMs: number,
+  nextCheckMinutes: number,
+): number => Math.max(occurrenceMs, nowMs) + Math.max(1, nextCheckMinutes) * 60_000;
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const num = (value: unknown, fallback: number, min: number, max: number) =>
@@ -246,6 +282,11 @@ export const decideNaturalProactive = (input: NaturalProactiveDecisionInput): Na
   const hardCap = naturalUnansweredHardCap(input.intensity);
   const shouldSend = input.unansweredCount < hardCap && score >= threshold;
   // 检查频率是「多久再想一次」，不是「多久一定发一次」；低分时不会调用 LLM。
-  const jitter = Math.floor(input.random01 * 16);
-  return { shouldSend, score, threshold, nextCheckMinutes: 15 + jitter, reasons };
+  return {
+    shouldSend,
+    score,
+    threshold,
+    nextCheckMinutes: naturalCheckWindowMinutes(input.intensity, input.random01),
+    reasons,
+  };
 };

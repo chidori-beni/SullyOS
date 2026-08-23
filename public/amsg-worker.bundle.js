@@ -8127,8 +8127,8 @@ var discardJob = async (writeState, jobId) => {
   }
 };
 var plateConsolidateHandler = {
-  async beforeFire({ ctx, charId, taskMeta }) {
-    const jobId = taskMeta[AMSG_JOB_ID_KEY];
+  async beforeFire({ ctx, charId, taskMeta: taskMeta2 }) {
+    const jobId = taskMeta2[AMSG_JOB_ID_KEY];
     if (typeof jobId !== "string" || !jobId) {
       throw new Error(`\u95E8\u724C\u6574\u7406\u4EFB\u52A1\u7684 metadata \u91CC\u6CA1\u6709 ${AMSG_JOB_ID_KEY}`);
     }
@@ -8482,7 +8482,15 @@ try {
 var log = makeDebugLogger("api", "SafeAPI");
 
 // utils/naturalProactive.ts
-var naturalUnansweredHardCap = (intensity) => intensity === "low" ? 1 : intensity === "high" ? 3 : 2;
+var NATURAL_UNANSWERED_HARD_CAP = 20;
+var naturalUnansweredHardCap = (_intensity) => NATURAL_UNANSWERED_HARD_CAP;
+var NATURAL_BATCH_HARD_CAP = 20;
+var naturalCheckWindowMinutes = (intensity, random01) => {
+  const safeRandom = clamp(random01, 0, 0.999999);
+  const [min, max] = intensity === "low" ? [30, 60] : intensity === "high" ? [8, 20] : [15, 30];
+  return min + Math.floor(safeRandom * (max - min + 1));
+};
+var nextNaturalCheckAt = (occurrenceMs, nowMs, nextCheckMinutes) => Math.max(occurrenceMs, nowMs) + Math.max(1, nextCheckMinutes) * 6e4;
 var clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 var hourInZone = (nowMs, tzId) => {
   const hour = new Intl.DateTimeFormat("en-US", { timeZone: tzId, hour: "2-digit", hour12: false }).formatToParts(new Date(nowMs)).find((p) => p.type === "hour")?.value;
@@ -8523,8 +8531,13 @@ var decideNaturalProactive = (input) => {
   const threshold = clamp(profile.threshold + intensityShift - clamp(input.bias, -20, 20) / 100, 0.25, 0.9);
   const hardCap = naturalUnansweredHardCap(input.intensity);
   const shouldSend = input.unansweredCount < hardCap && score >= threshold;
-  const jitter = Math.floor(input.random01 * 16);
-  return { shouldSend, score, threshold, nextCheckMinutes: 15 + jitter, reasons };
+  return {
+    shouldSend,
+    score,
+    threshold,
+    nextCheckMinutes: naturalCheckWindowMinutes(input.intensity, input.random01),
+    reasons
+  };
 };
 
 // utils/amsg2Tasks.ts
@@ -13440,10 +13453,10 @@ var amsgHooks = {
         throw fail2(`${label} \u89E3\u538B\u5931\u8D25\uFF08\u6570\u636E\u635F\u574F\uFF09`, { error: String(error) });
       }
     };
-    const taskMeta = ctx.task.metadata ?? {};
-    const policy = typeof taskMeta.amsgExpirePolicy === "string" ? taskMeta.amsgExpirePolicy : void 0;
+    const taskMeta2 = ctx.task.metadata ?? {};
+    const policy = typeof taskMeta2.amsgExpirePolicy === "string" ? taskMeta2.amsgExpirePolicy : void 0;
     const emotionEvalSpec = takeEmotionEvalSpec(ctx.task.metadata);
-    const taskKind = readTaskKind(taskMeta);
+    const taskKind = readTaskKind(taskMeta2);
     if (taskKind) {
       const handler = FIRE_KIND_HANDLERS[taskKind];
       if (!handler) {
@@ -13451,7 +13464,7 @@ var amsgHooks = {
       }
       let plan;
       try {
-        plan = await handler.beforeFire({ ctx, charId, taskMeta });
+        plan = await handler.beforeFire({ ctx, charId, taskMeta: taskMeta2 });
       } catch (error) {
         throw fail2(error instanceof Error ? error.message : String(error), { kind: taskKind });
       }
@@ -13506,7 +13519,7 @@ var amsgHooks = {
     const expireInput = {
       policy,
       recurrenceType: ctx.task.recurrenceType,
-      anchorMs: typeof taskMeta.amsgAnchorMs === "number" ? taskMeta.amsgAnchorMs : null,
+      anchorMs: typeof taskMeta2.amsgAnchorMs === "number" ? taskMeta2.amsgAnchorMs : null,
       lastUserMessageAt: laterOf(pack.lastUserMessageAt ?? null, presenceLastUserMessageAt),
       nowMs: ctx.now.getTime(),
       occurrenceMs
@@ -13516,7 +13529,7 @@ var amsgHooks = {
       await recordSkip(ctx, charId, "conversation-moved-on", occurrenceMs);
       return { skip: true };
     }
-    if (!instant && typeof taskMeta.amsgTaskInstruction !== "string") {
+    if (!instant && typeof taskMeta2.amsgTaskInstruction !== "string") {
       throw fail2("\u4EFB\u52A1 metadata \u7F3A amsgTaskInstruction\uFF08\u65E7\u683C\u5F0F\u4EFB\u52A1\uFF09");
     }
     const globalRows = await ctx.readState(AMSG_GLOBAL_NAMESPACE);
@@ -13533,7 +13546,7 @@ var amsgHooks = {
     const mcpNative = toolConfig.mcpUseNativeTools !== false;
     const storedSelfLog = parseSelfLog(charRows.find((r) => r.key === AMSG_SELF_LOG_KEY)?.value ?? "");
     const selfLog = reconcileSelfLogWithPack(storedSelfLog, pack, expireInput.lastUserMessageAt);
-    if (!instant && taskMeta.amsgNaturalProactive === true) {
+    if (!instant && taskMeta2.amsgNaturalProactive === true) {
       const natural = pack.naturalProactive;
       if (!natural?.enabled || !natural.profile) {
         console.log("[amsg:natural-stop]", { taskId: ctx.task.id, charId, reason: "disabled-or-no-profile" });
@@ -13563,7 +13576,7 @@ var amsgHooks = {
         pendingTopic: pack.naturalSignals?.pendingTopic,
         emotion: pack.naturalSignals?.emotion
       });
-      const nextAt = occurrenceMs + decision.nextCheckMinutes * 6e4;
+      const nextAt = nextNaturalCheckAt(occurrenceMs, ctx.now.getTime(), decision.nextCheckMinutes);
       const nextUuid = `natural-${(seed >>> 0).toString(16).padStart(8, "0")}-${charId}-${nextAt}`;
       await ctx.scheduleTask({
         firstSendTime: new Date(nextAt).toISOString(),
@@ -13608,7 +13621,7 @@ var amsgHooks = {
       if (!decision.shouldSend) return { skip: true };
     }
     const maxUnansweredSends = resolveMaxUnansweredSends(pack.maxUnansweredSends);
-    if (!instant && taskMeta.amsgSelfScheduled === true && countUnansweredSends(selfLog) >= maxUnansweredSends) {
+    if (!instant && taskMeta2.amsgSelfScheduled === true && countUnansweredSends(selfLog) >= maxUnansweredSends) {
       console.log("[amsg:unanswered-limit-skip]", {
         taskId: ctx.task.id,
         charId,
@@ -13622,7 +13635,7 @@ var amsgHooks = {
     const selfScheduleAllowed = pack.selfScheduleEnabled;
     const canSelfSchedule = typeof ctx.scheduleTask === "function" && selfScheduleAllowed;
     const tz = { tzId: pack.tzId };
-    const clientTaskId = typeof taskMeta.amsgClientTaskId === "string" ? taskMeta.amsgClientTaskId : "";
+    const clientTaskId = typeof taskMeta2.amsgClientTaskId === "string" ? taskMeta2.amsgClientTaskId : "";
     const { toolCtx, proxyWorkerUrl, xhsCookie } = buildToolCtx(toolPack, toolConfig);
     const plannedSelfSendTasks = livePendingTasks.filter((t) => t.source === "character" && isPendingTask(t, ctx.now.getTime()));
     const stash = {
@@ -13753,7 +13766,7 @@ var amsgHooks = {
         totalTimeoutMs: INSTANT_TOTAL_TIMEOUT_MS
       };
     }
-    const prompt = renderFirePack(pack, ctx.now.getTime(), taskMeta.amsgTaskInstruction, {
+    const prompt = renderFirePack(pack, ctx.now.getTime(), taskMeta2.amsgTaskInstruction, {
       selfLog,
       taskListBlock,
       realtimeWorldBlock,
@@ -13898,10 +13911,19 @@ var amsgHooks = {
       }
     }
     if (decision.decision === "finish") {
-      stash.selfLogTexts = decision.pushPayloads.map(
+      const naturalPayloads = taskMeta.amsgNaturalProactive === true ? decision.pushPayloads.slice(0, NATURAL_BATCH_HARD_CAP) : decision.pushPayloads;
+      if (taskMeta.amsgNaturalProactive === true && naturalPayloads.length < decision.pushPayloads.length) {
+        console.warn("[amsg:natural-batch-limit]", {
+          taskId: ctx.task.id,
+          charId: stash.charId,
+          dropped: decision.pushPayloads.length - naturalPayloads.length,
+          limit: NATURAL_BATCH_HARD_CAP
+        });
+      }
+      stash.selfLogTexts = naturalPayloads.map(
         (p) => typeof p.message === "string" ? p.message : ""
       );
-      let payloads = attachScheduledTasks(decision.pushPayloads, stash.scheduledTasks);
+      let payloads = attachScheduledTasks(naturalPayloads, stash.scheduledTasks);
       const attachMetaAt = (list, idx, extra) => list.map((payload, i) => i === idx ? { ...payload, metadata: { ...payload.metadata ?? {}, ...extra } } : payload);
       const cancelled = stash.cancelledTasks;
       const renewed = stash.renewedTasks;

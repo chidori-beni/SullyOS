@@ -72,7 +72,7 @@ import {
 import { resolveFireSceneSong } from '../../../utils/amsgFireScene';
 import { shouldExpireFire } from '../../../utils/amsg2ExpireGuard';
 import { buildFireTaskListBlock, isPendingTask, MAX_ACTIVE_TASKS_PER_CHAR, shortTaskId } from '../../../utils/amsg2Tasks';
-import { decideNaturalProactive, naturalUnansweredHardCap } from '../../../utils/naturalProactive';
+import { decideNaturalProactive, NATURAL_BATCH_HARD_CAP, naturalUnansweredHardCap, nextNaturalCheckAt } from '../../../utils/naturalProactive';
 import {
   AMSG_FIRE_CANCEL_TOOL,
   AMSG_FIRE_RENEW_TOOL,
@@ -1792,7 +1792,11 @@ export const amsgHooks = {
         pendingTopic: pack.naturalSignals?.pendingTopic,
         emotion: pack.naturalSignals?.emotion,
       });
-      const nextAt = occurrenceMs + decision.nextCheckMinutes * 60_000;
+      // 如果 cron / Worker 曾经停摆，occurrenceMs 可能已经落在过去。直接用
+      // occurrenceMs 往后加会把下一颗任务也排到过去，cron 下一分钟又立刻捞起来，
+      // 于是角色会把几个不同时间点的消息一次性补发，正是「突然刷屏、没有时间观念」
+      // 的表现。逾期时从真实当前时刻重新起算，只补一次检查，不追赶整条旧时间线。
+      const nextAt = nextNaturalCheckAt(occurrenceMs, ctx.now.getTime(), decision.nextCheckMinutes);
       const nextUuid = `natural-${(seed >>> 0).toString(16).padStart(8, '0')}-${charId}-${nextAt}`;
       await ctx.scheduleTask({
         firstSendTime: new Date(nextAt).toISOString(),
@@ -2288,14 +2292,28 @@ export const amsgHooks = {
     }
 
     if (decision.decision === 'finish') {
+      // 自然主动一轮最多落 20 个气泡。正常 prompt 会让模型只写一到三句，
+      // 这里是最后一道保险，防止模型把一整段时间线按换行拆成几十条。
+      const naturalPayloads = taskMeta.amsgNaturalProactive === true
+        ? decision.pushPayloads.slice(0, NATURAL_BATCH_HARD_CAP)
+        : decision.pushPayloads;
+      if (taskMeta.amsgNaturalProactive === true
+          && naturalPayloads.length < decision.pushPayloads.length) {
+        console.warn('[amsg:natural-batch-limit]', {
+          taskId: ctx.task.id,
+          charId: stash.charId,
+          dropped: decision.pushPayloads.length - naturalPayloads.length,
+          limit: NATURAL_BATCH_HARD_CAP,
+        });
+      }
       // 「我这次说了什么」不在这里写库（这里还没发出去），只把各段正文挂到本次 fire 的
       // scratch 上，等 onAfterSend 按真正送出去的段数落盘。
-      stash.selfLogTexts = decision.pushPayloads.map(
+      stash.selfLogTexts = naturalPayloads.map(
         (p) => (typeof p.message === 'string' ? p.message : ''));
 
       // 角色这次给自己排的任务，随最后一条 push 带回客户端认领——不然它们只活在 D1 里，
       // 面板看不到、用户也没法取消。任务本身照常触发，客户端上线补进清单即可。
-      let payloads = attachScheduledTasks(decision.pushPayloads, stash.scheduledTasks);
+      let payloads = attachScheduledTasks(naturalPayloads, stash.scheduledTasks);
 
       // 往指定那一条 push 的 metadata 上追加字段（其余条原样）。下面三处挂载共用：
       // 展开顺序固定「旧 metadata 在前、新字段在后」，键冲突时新值赢。
