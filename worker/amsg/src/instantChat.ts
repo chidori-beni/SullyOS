@@ -5,7 +5,7 @@
  * 结果走 Web Push 回去。这份模块管三件事：
  *   1. `POST /instant-chat` 这条包装层路由（鉴权 → 内部转发 → 202 → 立刻起一跳）
  *   2. 即时对话那条 fire 用的「时效信息」块（当前时间 / 实时世界 / 排程说明拼一起）
- *   3. 推送的通知策略（前台可见时不弹横幅）
+ *   3. 推送的通知策略（前台可见时由 SW 静默，后台显示横幅）
  *
  * 为什么要在包装层做而不是让客户端直接调上游的两个端点：两步有严格的先后和
  * 「前面失败就不能落任务」的语义（云端状态没传上去，到点的 fire 读到的还是上一轮的
@@ -101,10 +101,20 @@ export const buildInstantTimelyBlock = (args: {
  * 订阅是按 `userVisibleOnly: true` 建的，等于跟浏览器约好每条 push 都给用户一次可见
  * 反馈；收了 push 却不弹是违约，Firefox 按配额把订阅退掉，iOS 过了新订阅那几天宽限期
  * 一条就吊销，而且两边都是静默发生的——服务端只看得到后续推送返回 410。所以口径只有
- * 两档：要推就一定弹，不想弹就压根别推（内容落服务端收件箱，等客户端上线补拉）。
- * 即时对话是用户按下发送、正盯着「正在输入…」等的那一轮，必须推，于是选「一定弹」。
+ * 即时对话是用户按下发送、正盯着「正在输入…」等的那一轮，必须保留 push；前台由
+ * SW 静默、后台显示，不能让云端一次过期租约把这条及时提醒压掉。
  */
 const NOTIFICATION_ALWAYS = 'always';
+
+/**
+ * 交给 Service Worker 在收到 push 的那一刻按窗口真实可见性决定是否展示。
+ *
+ * 不能只相信云端的前后台租约：iOS 可能漏掉一次 visibility/pagehide，旧租约就会把
+ * 已经切到后台的页面误判成前台；若这时写 `show:false`，服务端会压根不发 push，
+ * 后面再也没有机会补救。`when-hidden` 至少保留了这次推送，让 SW 在真实后台状态下
+ * 展示横幅；页面仍在前台时则由 SW 抑制，不会重复弹通知。
+ */
+const NOTIFICATION_WHEN_HIDDEN = 'when-hidden';
 
 /**
  * 静音只在用户看得见页面的那一刻生效（SW 的 resolveNotificationSilent 认这个值）。
@@ -147,10 +157,11 @@ export const isIncomingCallPush = (notification: unknown): boolean => {
 };
 
 /**
- * 给即时对话的推送载荷表态通知策略：一定弹，按角色折叠，前台安静、后台叫人。
+ * 给即时对话的推送载荷表态通知策略：按角色折叠，前台安静、后台叫人。
  *
- * 打扰不靠「不弹」来压，靠另外三个字段：
+ * 打扰不靠服务端「不发」来压，靠另外三个字段：
  *   - `tag`      同一个角色只在通知栏留最新一条；
+ *   - `show`     `when-hidden`，由 SW 在收到时按真实窗口可见性决定展示；
  *   - `silent`   `when-visible`，用户看着页面时不响，切后台就照常响铃震动；
  *   - `renotify` 只给这一轮的第一段。同 tag 的通知默认是静默替换，上一轮的横幅还
  *                躺在通知栏没点掉时，新一轮的第一段就会被当成替换而不出声——那正是
@@ -185,16 +196,17 @@ export const applyInstantNotificationPolicy = (
     ...payload,
     notification: {
       ...(notification as Record<string, unknown>),
-      // iOS 17 不允许「收到 Web Push 但不展示」。前台时必须从发送端就不发 Push，
-      // 只把正文留在 message_outbox 让页面主动取回；show:false 正是服务端的发送闸。
-      show: appIsForeground ? false : NOTIFICATION_ALWAYS,
+      // 仍保留 appIsForeground 这个参数供调用方判断和日志使用，但不再让一次漏掉的
+      // lifecycle 事件把后台推送永久变成 show:false。push 交给 SW 后再按真实 visibility
+      // 决定：前台不展示、后台展示；这样云端旧租约不会吞掉来电横幅和普通回复。
+      show: appIsForeground ? NOTIFICATION_WHEN_HIDDEN : NOTIFICATION_ALWAYS,
       silent: NOTIFICATION_SILENT_WHEN_VISIBLE,
       // 认不出是哪个角色时就不折叠：通知栏里多几条只是吵，两个角色共用一个 tag 会
       // 互相顶掉，那是真的丢消息。renotify 跟着 tag 走——没有 tag 时带上它，
       // showNotification 会直接抛 TypeError。
       // 来电走自己的 tag 且**一定** renotify：它是一轮里的最后一段，按普通规则会被静默
-      // 替换掉（见 instantCallNotificationTag）。silent 也摘掉 when-visible——前台这条
-      // 压根不会发（show:false），能走到这儿的都是后台，后台的电话就该响。
+      // 替换掉（见 instantCallNotificationTag）。silent 也摘掉 when-visible——来电不论
+      // 是由哪一档 show 策略送到 SW，都应该作为电话提醒响铃。
       ...(target
         ? isIncomingCallPush(notification)
           ? { tag: instantCallNotificationTag(target), renotify: true, silent: false }

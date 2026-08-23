@@ -7384,7 +7384,7 @@ function createSingleUserCloudflareWorker(buildConfig, options = {}) {
 }
 
 // utils/amsgBundleVersion.ts
-var AMSG_BUNDLE_VERSION = "2026-08-23";
+var AMSG_BUNDLE_VERSION = "2026-08-23.2";
 
 // utils/amsgTaskKinds.ts
 var AMSG_TASK_KIND_KEY = "amsgKind";
@@ -9397,6 +9397,7 @@ var buildInstantTimelyBlock = (args) => {
   return [head, ...blocks].join("\n");
 };
 var NOTIFICATION_ALWAYS = "always";
+var NOTIFICATION_WHEN_HIDDEN = "when-hidden";
 var NOTIFICATION_SILENT_WHEN_VISIBLE = "when-visible";
 var instantNotificationTag = (charId) => `amsg-instant-${charId}`;
 var instantCallNotificationTag = (charId) => `amsg-call-${charId}`;
@@ -9417,16 +9418,17 @@ var applyInstantNotificationPolicy = (payload, charId, isFirstSegment = false, a
     ...payload,
     notification: {
       ...notification,
-      // iOS 17 不允许「收到 Web Push 但不展示」。前台时必须从发送端就不发 Push，
-      // 只把正文留在 message_outbox 让页面主动取回；show:false 正是服务端的发送闸。
-      show: appIsForeground ? false : NOTIFICATION_ALWAYS,
+      // 仍保留 appIsForeground 这个参数供调用方判断和日志使用，但不再让一次漏掉的
+      // lifecycle 事件把后台推送永久变成 show:false。push 交给 SW 后再按真实 visibility
+      // 决定：前台不展示、后台展示；这样云端旧租约不会吞掉来电横幅和普通回复。
+      show: appIsForeground ? NOTIFICATION_WHEN_HIDDEN : NOTIFICATION_ALWAYS,
       silent: NOTIFICATION_SILENT_WHEN_VISIBLE,
       // 认不出是哪个角色时就不折叠：通知栏里多几条只是吵，两个角色共用一个 tag 会
       // 互相顶掉，那是真的丢消息。renotify 跟着 tag 走——没有 tag 时带上它，
       // showNotification 会直接抛 TypeError。
       // 来电走自己的 tag 且**一定** renotify：它是一轮里的最后一段，按普通规则会被静默
-      // 替换掉（见 instantCallNotificationTag）。silent 也摘掉 when-visible——前台这条
-      // 压根不会发（show:false），能走到这儿的都是后台，后台的电话就该响。
+      // 替换掉（见 instantCallNotificationTag）。silent 也摘掉 when-visible——来电不论
+      // 是由哪一档 show 策略送到 SW，都应该作为电话提醒响铃。
       ...target ? isIncomingCallPush(notification) ? { tag: instantCallNotificationTag(target), renotify: true, silent: false } : { tag: instantNotificationTag(target), ...isFirstSegment ? { renotify: true } : {} } : {}
     }
   };
@@ -14438,12 +14440,14 @@ var src_default = {
           // 正常，而门牌永远不更新。报的是**这份代码有没有**，不是版本号：自更新永远由
           // 旧代码执行，版本号对上了不代表新逻辑真的在跑。
           backgroundJobs: true,
-          // 这份代码认不认「前台静默投递」：页面还开着时不发 iOS 系统 Push，
-          // 只写 message_outbox 让页面自己收。同 backgroundJobs 一个套路——报的是
-          // **这份代码有没有**，不是版本号，因为版本号常常忘了改、而且自更新前后
-          // 都可能是同一个号。有了它，`GET /config-check` 一次请求就能断定
-          // Cloudflare 上跑的到底是不是打了这个补丁的 bundle，不用再靠实机试。
+          // 这份代码认不认「前台静默投递」：页面还开着时由 SW 抑制横幅，但仍保留
+          // push 让它在真实后台状态下显示。同 backgroundJobs 一个套路——报的是
+          // **这份代码有没有**，不是只看版本号。
           foregroundSilentPush: true,
+          // 新版把 appIsForeground=true 从 show:false 改成 show:'when-hidden'，防止
+          // 漏掉一次 iOS 生命周期事件后把后台 push 永久吞掉。单独回显能力位，方便
+          // 用户只贴一条 config-check 就确认 Cloudflare 上跑的是哪份逻辑。
+          foregroundPushVisibilityFallback: true,
           // 判定「人还在前台」用的窗口（毫秒）。回显出来是为了能一眼看出跑的是哪一版：
           // 早期那版直接用 45s 的 TTL，导致「发完就切后台」的回复被当成前台、不发通知。
           foregroundPushWindowMs: CHAT_PRESENCE_PUSH_FRESH_MS,

@@ -2423,13 +2423,14 @@ export const amsgHooks = {
         payloads = budgeted;
       }
 
-      // 即时对话的通知策略：一定弹，按角色折叠成一条，前台安静、后台响铃，一轮只响
+      // 即时对话的通知策略：按角色折叠成一条，前台安静、后台响铃，一轮只响
       // 一声（见 applyInstantNotificationPolicy）。第一段要重新提醒、后面几段安静
       // 更新，所以策略要知道自己是这一轮的第几段。收件兜底不在这里做——库自己会在
       // 每条推送发出去之前记进服务端账本，客户端按账本补收。
       if (stash.instant) {
-        // 页面还在前台时不发送 Web Push（iOS 17 收到后必须展示，不能在 SW 里偷偷吞掉）。
         // 读取失败一律 fail-open 到正常系统通知，不能为了少一个横幅而漏掉后台提醒。
+        // 即使读到前台，也只发 when-hidden，由 SW 在收到时按真实 visibility 抑制；
+        // 不再用一次漏掉的 pagehide/visibilitychange 把后台推送压成 show:false。
         let appIsForeground = false;
         try {
           appIsForeground = await stash.readFreshChatPresence();
@@ -3109,12 +3110,14 @@ export default {
           // 正常，而门牌永远不更新。报的是**这份代码有没有**，不是版本号：自更新永远由
           // 旧代码执行，版本号对上了不代表新逻辑真的在跑。
           backgroundJobs: true,
-          // 这份代码认不认「前台静默投递」：页面还开着时不发 iOS 系统 Push，
-          // 只写 message_outbox 让页面自己收。同 backgroundJobs 一个套路——报的是
-          // **这份代码有没有**，不是版本号，因为版本号常常忘了改、而且自更新前后
-          // 都可能是同一个号。有了它，`GET /config-check` 一次请求就能断定
-          // Cloudflare 上跑的到底是不是打了这个补丁的 bundle，不用再靠实机试。
+          // 这份代码认不认「前台静默投递」：页面还开着时由 SW 抑制横幅，但仍保留
+          // push 让它在真实后台状态下显示。同 backgroundJobs 一个套路——报的是
+          // **这份代码有没有**，不是只看版本号。
           foregroundSilentPush: true,
+          // 新版把 appIsForeground=true 从 show:false 改成 show:'when-hidden'，防止
+          // 漏掉一次 iOS 生命周期事件后把后台 push 永久吞掉。单独回显能力位，方便
+          // 用户只贴一条 config-check 就确认 Cloudflare 上跑的是哪份逻辑。
+          foregroundPushVisibilityFallback: true,
           // 判定「人还在前台」用的窗口（毫秒）。回显出来是为了能一眼看出跑的是哪一版：
           // 早期那版直接用 45s 的 TTL，导致「发完就切后台」的回复被当成前台、不发通知。
           foregroundPushWindowMs: CHAT_PRESENCE_PUSH_FRESH_MS,
