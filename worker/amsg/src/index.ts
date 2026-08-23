@@ -2423,15 +2423,15 @@ export const amsgHooks = {
         payloads = budgeted;
       }
 
-      // 即时对话的通知策略：按角色折叠成一条，统一交给 SW 按真实窗口可见性处理，
-      // 前台安静、后台响铃，一轮只响
+      // 即时对话的通知策略：按角色折叠成一条。前台短租约新鲜时明确静默；租约停止
+      // 超过短窗口后再交给 SW 按真实窗口可见性处理，前台安静、后台响铃，一轮只响
       // 一声（见 applyInstantNotificationPolicy）。第一段要重新提醒、后面几段安静
       // 更新，所以策略要知道自己是这一轮的第几段。收件兜底不在这里做——库自己会在
       // 每条推送发出去之前记进服务端账本，客户端按账本补收。
       if (stash.instant) {
-        // presence 只保留给兼容调用方/日志；无论它读到什么，均由 SW 在收到时按真实
-        // visibility 处理 when-hidden，避免一次漏掉 pagehide/visibilitychange 后把前台
-        // 误标 always，或把后台推送压成 show:false。
+        // iOS PWA 的 WindowClient.visibilityState 偶尔会把可见窗口误报 hidden；因此前台
+        // 短租约新鲜时要明确 show:false。离开前台后心跳在 5s 内自然过期，再退回
+        // when-hidden，让 SW 负责真正的后台横幅；不依赖一次 pagehide 是否送达。
         let appIsForeground = false;
         try {
           appIsForeground = await stash.readFreshChatPresence();
@@ -3115,8 +3115,8 @@ export default {
           // push 让它在真实后台状态下显示。同 backgroundJobs 一个套路——报的是
           // **这份代码有没有**，不是只看版本号。
           foregroundSilentPush: true,
-          // 新版把即时 push 统一改成 show:'when-hidden'，由 SW 按真实可见窗口决定，防止
-          // 云端前台租约过期时误发 always、或漏掉一次生命周期事件后把后台 push 永久吞掉。单独回显能力位，方便
+          // 新版用“前台短租约 show:false + 过期后 when-hidden”的双保险，既避开 iOS PWA
+          // visibility 误报造成的前台横幅，也避免漏掉生命周期事件后把后台 push 永久吞掉。单独回显能力位，方便
           // 用户只贴一条 config-check 就确认 Cloudflare 上跑的是哪份逻辑。
           foregroundPushVisibilityFallback: true,
           // 判定「人还在前台」用的窗口（毫秒）。回显出来是为了能一眼看出跑的是哪一版：

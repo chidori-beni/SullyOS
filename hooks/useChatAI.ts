@@ -827,7 +827,9 @@ export const useChatAI = ({
             // fire 时独家供给），本地那份照旧全量。判定材料和下面的 payload.flags 同源：
             // luckinChatActive / mcdActive / luckinActive 就是由这三个值算出来的
             // （skipPromptBuild 那个 dev 开关下 flags 会整片置 false，那时只有这边的 ref 是准的）。
-            // IP 还开着（脏配置）时让 IP 先走、按全量构建——别把剥过时效段的 prompt 交给 IP。
+            // 历史 Instant Push 配置可能还留在本机；只要主动消息 2.0 已可用，就必须由
+            // 它优先接手。否则旧 Worker 会绕过本轮的前后台横幅策略，表现为代码已更新、
+            // 聊天页仍弹系统通知。
             //
             // Instant Push 配没配着，一回合只读这一次，下面所有用到的地方都吃这个值。
             // 从这里到真正分流之间隔着好几个 await（构建 payload、取 amsg2 任务现状…），
@@ -850,24 +852,24 @@ export const useChatAI = ({
             // 静默走本地。那是用户的主动选择，每条消息刷一遍 warn 就成骚扰了。
             const instantChatReadiness = await resolveInstantChatReadiness(char);
             const instantChatOn = instantChatReadiness.ready;
-            const instantChatRoute = instantChatOn && !instantChatVeto && !instantPushConfigured;
+            const instantChatRoute = instantChatOn && !instantChatVeto;
             // 「即时对话开着、这一轮却没上云」的所有情形都在这一处留痕，三种原因去向不同：
             //   · 点单流程否决：瑞幸/麦当劳是客户端交互式循环（选城市、确认单），云端接不了
             //     手，这一轮留在本地跑是对的；
             //   · MCP 地址 worker 够不着：同上，留在本地才有工具（见上面那段）；
-            //   · IP 配置也还在（脏配置）：这一轮交给下面的 Instant Push 分支，它也不接的话
-            //     （比如配了 MCP，在它的排除名单里）就一路落回本地。
+            //   · 旧 Instant Push 只在主动消息 2.0 未启用/不可用时才会接手；它不再抢占
+            //     已启用的即时对话。
             // 几个原因同时成立时报最前面那个——越靠前越具体，也更可能是用户真正想问的。
             // 不留痕的话，用户看到的是「开关亮着、消息照常出来」，查无可查——静默分流那个坑
             // 就是这么来的。这里只报不拦：拦不拦已经由 instantChatRoute 说了算。
             if (instantChatOn && !instantChatRoute) {
-                const skipReason = instantChatVeto ?? 'instant-push-configured';
+                const skipReason = instantChatVeto ?? 'not-ready';
                 console.warn(
                     skipReason === 'mcp-worker-unreachable'
                         ? '[AmsgInstantChat] 这一轮没上云（有 MCP 服务器填的是本机/内网地址，worker 够不着），本地生成，工具照常可用'
                         : instantChatVeto
                             ? `[AmsgInstantChat] 这一轮没上云（${instantChatVeto} 点单流程需要客户端交互），本地生成`
-                            : '[AmsgInstantChat] 这一轮没走即时对话（Instant Push 配置仍在，脏配置）：交给 Instant Push，它也不接就落回本地',
+                            : '[AmsgInstantChat] 这一轮没走即时对话（当前不可用），照本地路径继续',
                 );
                 appendInstantTraceEntry({
                     ts: new Date().toISOString(),
@@ -1267,7 +1269,7 @@ export const useChatAI = ({
             // 表现就是"选了城市也没用 / 角色不下单"。这些模式下跳过 instant push, 用本地 fetch 跑工具循环。
             // 双向互斥后理论上到不了：走到这条 trace 说明两边开关同时亮着（脏配置），当断言告警看。
             const AMSG2_SUPPRESSED_TRACE = 'amsg2-suppressed-by-instant';
-            if (instantPushConfigured && !payload.flags.luckinChatActive && !payload.flags.mcdActive && !payload.flags.luckinActive && !payload.flags.mcpChatActive) {
+            if (instantPushConfigured && !instantChatRoute && !payload.flags.luckinChatActive && !payload.flags.mcdActive && !payload.flags.luckinActive && !payload.flags.mcpChatActive) {
                 // 走这条路 = 上面那段 amsg2 的工具、排程现状块都白拼了（instant 发的是原始
                 // fullMessages、请求体不带 tools），下面的活跃会话租约也不会开。三样都是静默
                 // 失效，留一条 trace 让观察窗看得见，别让人对着「功能不响」凭空排查。
@@ -1323,8 +1325,8 @@ export const useChatAI = ({
             // ─── 即时对话（主动消息 2.0 云端生成）分支 ───
             // 和上面的 Instant Push 对称：这一轮的上下文 + 任务一个 POST 上云，云端跑完
             // 走推送回来（收件箱同一条管线入库），客户端发完那一刻就自由了。
-            // 设置页那道门已经把两条路做成双向互斥，正常情况下不可能两个都开；
-            // 上面的 Instant Push 分支只为历史配置兜底保留。
+            // 正常情况下两条路应互斥；即使旧 Instant Push 配置残留，只要即时对话可用，
+            // 上面的分支也会让位给这里，确保普通聊天使用同一套前后台横幅策略。
             //
             // 走不走这条路，构建 payload 之前的 instantChatRoute 已经算完了，这里只认它
             // 一个值：「这份 prompt 剥没剥时效段」和「这一轮走不走云端」必须是同一个判断，

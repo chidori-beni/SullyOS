@@ -7,13 +7,13 @@
  * DB / React / 任何浏览器环境依赖（与 utils/amsg2ExpireGuard.ts 同一约束）。
  *
  * 语义：一轮真实用户消息进入生成流程时立即写 `amsg:char:<charId>/chat_presence`，
- * 等待角色回复期间每 15s 续租；成功/失败/中断后停止续租，远端值靠 45s TTL 自然失效。
+ * 等待角色回复期间每 2s 续租；成功/失败/中断后停止续租，远端值靠 45s TTL 自然失效。
  * 它只代表「正在和这个角色交互」，不是 App 在线状态。worker 对 expire AI 任务先检查
  * 新鲜租约，新鲜则 { skip: true }，再走 last-message 规则。
  */
 
 export const AMSG_CHAT_PRESENCE_KEY = 'chat_presence';
-export const CHAT_PRESENCE_HEARTBEAT_MS = 5_000;
+export const CHAT_PRESENCE_HEARTBEAT_MS = 2_000;
 export const CHAT_PRESENCE_TTL_MS = 45_000;
 
 /**
@@ -26,12 +26,13 @@ export const CHAT_PRESENCE_TTL_MS = 45_000;
  *
  * 而「人已经走了」这个信号本身是不可靠的：iOS 上 App 被划掉时没有任何代码能跑，
  * 切后台时那次「我走了」的网络写也可能被系统掐断。所以不能指望显式下线信号，
- * 只能让**沉默本身**快速说明问题：心跳 5 秒一次，超过 12 秒没续上就当人已经离开。
+ * 只能让**沉默本身**快速说明问题：心跳 2 秒一次，超过 5 秒没续上就当人已经离开。
  *
- * 12 = 心跳 5s × 2 + 2s 余量：允许丢一拍（网络抖动 / iOS 前台节流定时器），
- * 连丢两拍就退回系统通知。判错的方向是**多弹一个横幅**，而不是漏掉消息。
+ * 5 = 心跳 2s × 2 + 1s 余量：允许丢一拍（网络抖动 / iOS 前台节流定时器），
+ * 连丢两拍就退回系统通知。这个短窗口还会让“发完立即切后台、5 秒后收到回复”
+ * 不会继续被旧前台租约压掉。
  */
-export const CHAT_PRESENCE_PUSH_FRESH_MS = 12_000;
+export const CHAT_PRESENCE_PUSH_FRESH_MS = 5_000;
 
 export interface AmsgChatPresence {
   v: 1;

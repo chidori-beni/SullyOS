@@ -171,7 +171,7 @@ export const applyInstantNotificationPolicy = (
   payload: Record<string, unknown>,
   charId?: string | null,
   isFirstSegment = false,
-  // 保留这个参数只是兼容现有调用方/日志；实际横幅策略由 Service Worker 按真实窗口可见性决定。
+  // 这是前台短租约的结果：iOS PWA 的 SW visibility 偶尔会误报 hidden，不能只靠 SW。
   appIsForeground = false,
 ): Record<string, unknown> => {
   const notification = payload.notification;
@@ -186,10 +186,10 @@ export const applyInstantNotificationPolicy = (
     ...payload,
     notification: {
       ...(notification as Record<string, unknown>),
-      // appIsForeground 不能决定是否显示：云端租约可能过期或漏掉生命周期事件。
-      // 所有即时 push 都交给 SW 按真实可见窗口判断：有可见窗口时不显示系统横幅，
-      // 由页面决定聊天页静默或其它页面显示内部横幅；没有可见窗口时才显示系统横幅。
-      show: NOTIFICATION_WHEN_HIDDEN,
+      // 双保险：短租约仍新鲜时明确不让 SW 弹系统横幅（iOS PWA 的 WindowClient
+      // visibilityState 偶尔会把前台误报 hidden）；租约一旦停止超过 5s，就交给 SW 的
+      // when-hidden 判定。于是聊天页静默、APP 其它页由页面显示内部横幅，退后台后又能叫人。
+      show: appIsForeground ? false : NOTIFICATION_WHEN_HIDDEN,
       silent: NOTIFICATION_SILENT_WHEN_VISIBLE,
       // 认不出是哪个角色时就不折叠：通知栏里多几条只是吵，两个角色共用一个 tag 会
       // 互相顶掉，那是真的丢消息。renotify 跟着 tag 走——没有 tag 时带上它，

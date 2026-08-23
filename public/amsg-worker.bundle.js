@@ -7384,7 +7384,7 @@ function createSingleUserCloudflareWorker(buildConfig, options = {}) {
 }
 
 // utils/amsgBundleVersion.ts
-var AMSG_BUNDLE_VERSION = "2026-08-23.2";
+var AMSG_BUNDLE_VERSION = "2026-08-23.3";
 
 // utils/amsgTaskKinds.ts
 var AMSG_TASK_KIND_KEY = "amsgKind";
@@ -8850,7 +8850,7 @@ var extractFireScheduleTextCalls = (content) => {
 // utils/amsgChatPresence.ts
 var AMSG_CHAT_PRESENCE_KEY = "chat_presence";
 var CHAT_PRESENCE_TTL_MS = 45e3;
-var CHAT_PRESENCE_PUSH_FRESH_MS = 12e3;
+var CHAT_PRESENCE_PUSH_FRESH_MS = 5e3;
 var parseAmsgChatPresence = (raw) => {
   try {
     const value = raw ? JSON.parse(raw) : null;
@@ -9417,10 +9417,10 @@ var applyInstantNotificationPolicy = (payload, charId, isFirstSegment = false, a
     ...payload,
     notification: {
       ...notification,
-      // appIsForeground 不能决定是否显示：云端租约可能过期或漏掉生命周期事件。
-      // 所有即时 push 都交给 SW 按真实可见窗口判断：有可见窗口时不显示系统横幅，
-      // 由页面决定聊天页静默或其它页面显示内部横幅；没有可见窗口时才显示系统横幅。
-      show: NOTIFICATION_WHEN_HIDDEN,
+      // 双保险：短租约仍新鲜时明确不让 SW 弹系统横幅（iOS PWA 的 WindowClient
+      // visibilityState 偶尔会把前台误报 hidden）；租约一旦停止超过 5s，就交给 SW 的
+      // when-hidden 判定。于是聊天页静默、APP 其它页由页面显示内部横幅，退后台后又能叫人。
+      show: appIsForeground ? false : NOTIFICATION_WHEN_HIDDEN,
       silent: NOTIFICATION_SILENT_WHEN_VISIBLE,
       // 认不出是哪个角色时就不折叠：通知栏里多几条只是吵，两个角色共用一个 tag 会
       // 互相顶掉，那是真的丢消息。renotify 跟着 tag 走——没有 tag 时带上它，
@@ -14443,8 +14443,8 @@ var src_default = {
           // push 让它在真实后台状态下显示。同 backgroundJobs 一个套路——报的是
           // **这份代码有没有**，不是只看版本号。
           foregroundSilentPush: true,
-          // 新版把即时 push 统一改成 show:'when-hidden'，由 SW 按真实可见窗口决定，防止
-          // 云端前台租约过期时误发 always、或漏掉一次生命周期事件后把后台 push 永久吞掉。单独回显能力位，方便
+          // 新版用“前台短租约 show:false + 过期后 when-hidden”的双保险，既避开 iOS PWA
+          // visibility 误报造成的前台横幅，也避免漏掉生命周期事件后把后台 push 永久吞掉。单独回显能力位，方便
           // 用户只贴一条 config-check 就确认 Cloudflare 上跑的是哪份逻辑。
           foregroundPushVisibilityFallback: true,
           // 判定「人还在前台」用的窗口（毫秒）。回显出来是为了能一眼看出跑的是哪一版：
