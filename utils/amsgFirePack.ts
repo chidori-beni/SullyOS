@@ -15,7 +15,7 @@
  * 运行时都自带），其余都是纯函数。
  */
 
-import type { ActiveMsg2TaskRecord } from '../types';
+import type { ActiveMsg2TaskRecord, NaturalProactiveConfig } from '../types';
 import { renderFireSceneBlock, type AmsgFireScene } from './amsgFireScene';
 
 export const AMSG_STATE_NAMESPACE_PREFIX = 'amsg:char:';
@@ -414,6 +414,10 @@ export interface AmsgFirePack {
    * 的容错方向是 fail-open（字段一丢开关就被静默重新打开），宁可整包打回。
    */
   selfScheduleEnabled: boolean;
+  /** 自然主动的角色画像与强度；缺省/disabled 时隐藏脉冲到点只收尾、不续排。 */
+  naturalProactive?: NaturalProactiveConfig;
+  /** 打包时从最近对话/情绪状态提取的小信号；只存数值，不重复上传一份对话。 */
+  naturalSignals?: { pendingTopic: number; emotion: number };
 }
 
 // ─── 按角色参照系渲染时间（②：worker 给角色看的一切时间只此一份） ───

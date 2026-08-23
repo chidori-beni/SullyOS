@@ -21,6 +21,7 @@ export const CARD_STRIPPED_FIELDS = [
   'emotionConfig',
   'embeddingConfig',
   'proactiveConfig',
+  'naturalProactiveConfig',
   'activeMsg2Config',
 
   // 2) 美化

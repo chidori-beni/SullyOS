@@ -178,6 +178,18 @@ describe('markAmsgStateDirty 同步门', () => {
     expect(ActiveMsgClient.syncCharFirePacks).not.toHaveBeenCalled();
   });
 
+  it('自然主动开启时即使没有 2.0 约定，也会同步最新角色上下文', async () => {
+    const char = {
+      id: nextCharId(), name: 'natural',
+      naturalProactiveConfig: { enabled: true, intensity: 'normal', bias: 0 },
+    } as unknown as CharacterProfile;
+    markAmsgStateDirty(snapshotOf(char));
+    await vi.advanceTimersByTimeAsync(FLUSH_DEBOUNCE_MS);
+    expect(ActiveMsgClient.syncCharFirePacks).toHaveBeenCalledWith([
+      expect.objectContaining({ char, config: undefined }),
+    ]);
+  });
+
   it('没配 workerUrl → 清空脏标记且不发请求', async () => {
     (ActiveMsgStore.getGlobalConfig as any).mockResolvedValue({ workerUrl: '' });
     const char = charWithAiTask(nextCharId());

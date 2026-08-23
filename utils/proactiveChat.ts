@@ -365,6 +365,23 @@ export const ProactiveChat = {
     }
   },
 
+  /**
+   * 自然主动取代固定间隔后的迁移清理。旧版可能在 localStorage、SW 和旧唤醒 worker
+   * 各留了一份计划，三处都要撤；只处理旧主动，不会碰主动消息 2.0。
+   */
+  retireFixedSchedules() {
+    const schedules = Object.values(loadSchedules());
+    saveSchedules({});
+    saveLastFireTimes({});
+    syncSchedulesToSW();
+    if (isPushConfigReady(loadPushConfig())) {
+      for (const schedule of schedules) void unregisterScheduleOnWorker(schedule.charId);
+    }
+    detachListeners();
+    stopHeartbeat();
+    if (schedules.length > 0) console.log(`[ProactiveChat] Retired ${schedules.length} legacy fixed schedule(s)`);
+  },
+
   /** Check if proactive is active for a given character */
   isActiveFor(charId: string): boolean {
     return !!loadSchedules()[charId];

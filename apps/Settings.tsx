@@ -788,9 +788,8 @@ const Settings: React.FC = () => {
       // 无论成败, 按钮都回归"重置订阅" — 下次出问题再次累计触发 morph
       setPpZombieStreak(0);
       if (res.ok) {
-          // ProactiveChat.resume() 把所有 schedule 推回新 SW. deepResetSubscription 内部
-          // 不调它是为了避免循环依赖 (ProactiveChat 反向依赖 proactivePushConfig).
-          try { ProactiveChat.resume(); } catch (e) { console.warn('[Settings] ProactiveChat.resume failed', e); }
+          // 旧固定间隔已退役；重建 SW 后再同步一次空清单，避免历史计划被旧缓存带回来。
+          try { ProactiveChat.retireFixedSchedules(); } catch (e) { console.warn('[Settings] legacy proactive cleanup failed', e); }
           trackEvent('深度重置推送订阅', { result: 'success' });
           setPpStatus('订阅已重建。可以再点"发一条测试推送"试一下。');
       } else {

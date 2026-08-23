@@ -9,6 +9,7 @@ describe('stripSensitiveCardFields', () => {
       emotionConfig: { enabled: true, api: { baseUrl: 'https://x', apiKey: 'sk-SECRET', model: 'gpt' } },
       embeddingConfig: { baseUrl: 'https://x', apiKey: 'sk-SECRET2', model: 'emb', dimensions: 1024 },
       proactiveConfig: { enabled: true, intervalMinutes: 60, secondaryApi: { baseUrl: 'https://x', apiKey: 'sk-SECRET3', model: 'gpt' } },
+      naturalProactiveConfig: { enabled: true, intensity: 'normal', bias: 0, profile: { summary: '私人联络画像' } },
       activeMsg2Config: { enabled: true, secondaryApi: { apiKey: 'sk-SECRET4' } },
     };
 
@@ -21,6 +22,7 @@ describe('stripSensitiveCardFields', () => {
     expect(out).not.toHaveProperty('emotionConfig');
     expect(out).not.toHaveProperty('embeddingConfig');
     expect(out).not.toHaveProperty('proactiveConfig');
+    expect(out).not.toHaveProperty('naturalProactiveConfig');
     expect(out).not.toHaveProperty('activeMsg2Config');
   });
 

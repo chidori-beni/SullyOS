@@ -61,8 +61,10 @@ import { resolveActiveSound, playWhiteboxSound, unlockWhiteboxAudio, parseWhiteb
 import WhiteboxSoundEditor from '../components/chat/WhiteboxSoundEditor';
 import { normalizeTranslationLangLabel, isTranslationLangPreset } from '../utils/translationLang';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
-import { trackEvent, noteMessageSent, presetOrCustom } from '../utils/analytics';
+import { trackEvent, noteMessageSent } from '../utils/analytics';
 import { markAmsgStateDirty, markAmsgStateDirtyForAll } from '../utils/amsgStateSync';
+import { ActiveMsgClient } from '../utils/activeMsgClient';
+import { deriveNaturalProfile } from '../utils/naturalProactive';
 import { AMSG_INSTANT_CHAT_PENDING_EVENT, AMSG_INSTANT_CHAT_PENDING_LS_KEY, getInstantChatPending } from '../utils/amsgInstantChat';
 import { formatAmsgToolTrace } from '../utils/amsgToolTrace';
 import {
@@ -359,7 +361,7 @@ const Chat: React.FC = () => {
     }, [activeCharacterId]);
 
     // --- Initialize Hook ---
-    const { isTyping, streamingBubbles, streamingThinking, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
+    const { isTyping, streamingBubbles, streamingThinking, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, stopProactiveChat, isProactiveActive } = useChatAI({
         char,
         userProfile,
         apiConfig,
@@ -3947,7 +3949,7 @@ const Chat: React.FC = () => {
                     activeCategory={activeCategory}
                     onReroll={handleReroll}
                     canReroll={canReroll}
-                    isProactiveActive={isProactiveActive}
+                    isProactiveActive={isProactiveActive || char.naturalProactiveConfig?.enabled === true}
                     mcdConfigured={mcdConfiguredFlag}
                     mcdActivated={mcdActivated}
                     luckinConfigured={luckinConfiguredFlag}
@@ -3968,30 +3970,79 @@ const Chat: React.FC = () => {
                     isOpen={showProactiveModal}
                     onClose={() => setShowProactiveModal(false)}
                     char={char}
-                    isProactiveActive={isProactiveActive}
-                    onSave={(config) => {
-                        updateCharacter(char.id, { proactiveConfig: config });
-                        if (config.enabled) {
-                            startProactiveChat(config.intervalMinutes);
-                            // 界面只给 7 个档，但这个值是从持久化状态读回来的——导入的备份、
-                            // 老版本写进去的都可能是任意整数。收敛到写死的档位，其余归 custom。
-                            trackEvent('启动主动消息', {
-                                intervalMinutes: presetOrCustom(
-                                    String(config.intervalMinutes),
-                                    ['30', '60', '120', '240', '480', '720', '1440'],
-                                    '没设',
-                                ),
+                    isNaturalActive={char.naturalProactiveConfig?.enabled === true}
+                    onSave={async (config, refreshProfile) => {
+                        // 固定间隔入口由自然主动取代；先清掉旧设备计时器，避免两套同时响。
+                        stopProactiveChat();
+                        if (!config.enabled) {
+                            updateCharacter(char.id, {
+                                naturalProactiveConfig: config,
+                                ...(char.proactiveConfig ? { proactiveConfig: { ...char.proactiveConfig, enabled: false } } : {}),
                             });
-                            addToast(`已启动主动消息，每 ${config.intervalMinutes >= 60 ? (config.intervalMinutes / 60) + ' 小时' : config.intervalMinutes + ' 分钟'}发送一次`, 'success');
-                        } else {
-                            stopProactiveChat();
-                            addToast('已关闭主动消息', 'info');
+                            try { await ActiveMsgClient.cancelNaturalProactiveTasks(char.id); } catch (error) { console.warn('清理自然主动脉冲失败', error); }
+                            addToast('已关闭自然主动', 'info');
+                            return;
+                        }
+                        if (!await ActiveMsgClient.probeNaturalProactiveSupport()) {
+                            const error = new Error('云端 Worker 还不是支持自然主动的新版本。请先按我稍后给你的步骤重新部署 Worker。');
+                            addToast(error.message, 'error');
+                            throw error;
+                        }
+                        addToast(refreshProfile || !config.profile ? `正在理解 ${char.name} 的联络习惯…` : '正在连接自然主动…', 'info');
+                        const profile = refreshProfile || !config.profile
+                            ? await deriveNaturalProfile(char, apiConfig)
+                            : config.profile;
+                        const nextConfig = { ...config, enabled: true, profile };
+                        const nextChar = {
+                            ...char,
+                            naturalProactiveConfig: nextConfig,
+                            ...(char.proactiveConfig ? { proactiveConfig: { ...char.proactiveConfig, enabled: false } } : {}),
+                        };
+                        updateCharacter(char.id, {
+                            naturalProactiveConfig: nextConfig,
+                            ...(char.proactiveConfig ? { proactiveConfig: { ...char.proactiveConfig, enabled: false } } : {}),
+                        });
+                        try {
+                            // 先清旧脉冲再种一颗新的；角色之后会在云端自己续排，用户无需保持 App 打开。
+                            await ActiveMsgClient.cancelNaturalProactiveTasks(char.id).catch(() => ({ targets: [], failed: new Set<string>() }));
+                            const cloudConfig = char.activeMsg2Config ?? {
+                                enabled: false,
+                                tasks: [],
+                                useSecondaryApi: char.proactiveConfig?.useSecondaryApi,
+                                secondaryApi: char.proactiveConfig?.secondaryApi,
+                            };
+                            await ActiveMsgClient.scheduleCharacterTask({
+                                char: nextChar,
+                                config: cloudConfig,
+                                task: {
+                                    mode: 'auto',
+                                    firstSendTime: new Date(Date.now() + 2 * 60_000).toISOString(),
+                                    recurrenceType: 'none',
+                                    internalNatural: true,
+                                },
+                                userProfile,
+                                groups,
+                                realtimeConfig,
+                                apiConfig,
+                            });
+                            trackEvent('启动自然主动', { intensity: config.intensity, bias: config.bias, profileSource: profile.source });
+                            addToast(`已开启：${char.name} 会按人设自然决定何时联系你`, 'success');
+                        } catch (error) {
+                            updateCharacter(char.id, { naturalProactiveConfig: { ...nextConfig, enabled: false } });
+                            const message = error instanceof Error ? error.message : String(error);
+                            addToast(`自然主动没能开启：${message}`, 'error');
+                            throw error;
                         }
                     }}
-                    onStop={() => {
+                    onStop={async () => {
                         stopProactiveChat();
-                        updateCharacter(char.id, { proactiveConfig: { ...char.proactiveConfig!, enabled: false } });
-                        addToast('已停止主动消息', 'info');
+                        updateCharacter(char.id, {
+                            naturalProactiveConfig: { ...(char.naturalProactiveConfig ?? { intensity: 'normal', bias: 0 }), enabled: false },
+                            ...(char.proactiveConfig ? { proactiveConfig: { ...char.proactiveConfig, enabled: false } } : {}),
+                        });
+                        const result = await ActiveMsgClient.cancelNaturalProactiveTasks(char.id);
+                        if (result.failed.size) throw new Error(`还有 ${result.failed.size} 个云端检查没有取消成功，请稍后再试。`);
+                        addToast('已停止自然主动；主动消息 2.0 的约定没有受影响', 'info');
                     }}
                 />
             )}

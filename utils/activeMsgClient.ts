@@ -95,6 +95,7 @@ import { DB } from './db';
 import { copyWorkerBundleToClipboard } from './instantPushClient';
 import { collectMcpFireServers, getMcpUseNativeTools } from './mcpClient';
 import { safeResponseJson } from './safeApi';
+import { NATURAL_PROACTIVE_SUBTYPE } from './naturalProactive';
 import { ActiveMsgStore } from './activeMsgStore';
 import { KeepAlive } from './keepAlive';
 import {
@@ -725,6 +726,12 @@ export const buildFirePack = async (
     .slice(-30)
     .map((message) => formatHistoryLine(message.role, message.content, char, userProfile))
     .join('\n\n');
+  const lastAssistant = [...recentMessages].reverse().find((message) => message.role === 'assistant');
+  const lastAssistantText = typeof lastAssistant?.content === 'string' ? lastAssistant.content : '';
+  const pendingTopic = /[?？]\s*$/.test(lastAssistantText.trim()) ? 1
+    : /(等你|回头告诉|之后再|下次|记得|答应)/.test(lastAssistantText) ? 0.65 : 0.15;
+  const buffText = `${char.buffInjection ?? ''} ${(char.activeBuffs ?? []).map((buff) => JSON.stringify(buff)).join(' ')}`;
+  const emotion = buffText.trim() ? (/焦虑|担心|想念|牵挂|生气|委屈|兴奋|开心/.test(buffText) ? 0.85 : 0.5) : 0.25;
 
   // 记忆库里有哪些月份查得到 —— 提示词一直在教角色用 [[RECALL: 年-月]]，却没说过
   // 哪些月份有东西。不报菜单的话它多半不查，直接凭空编一段「回忆」出来。
@@ -806,6 +813,8 @@ export const buildFirePack = async (
     // 角色级 2.0 开关随包上云：关着的角色即便走即时对话（全局开关是另一颗），云端
     // fire 也不给排程能力——本地的 amsg2ToolsInjected 闸门在云端的对应物就是它。
     selfScheduleEnabled: isAmsg2EnabledForChar(char),
+    ...(char.naturalProactiveConfig ? { naturalProactive: char.naturalProactiveConfig } : {}),
+    ...(char.naturalProactiveConfig ? { naturalSignals: { pendingTopic, emotion } } : {}),
     // 到点时角色要知道自己还挂着什么，才不会把同一件事再排一遍。这里带原始记录，
     // 渲染成人话由 worker 现场做（时间要按 tzId 换算，且得摘掉正在发的那条）。
     pendingTasks: getPendingTasks(char.activeMsg2Config, Date.now()),
@@ -2099,10 +2108,23 @@ export const ActiveMsgClient = {
     try {
       targets = (await this.listRemoteTasksForChar(charId))
         .filter((task) => task.messageSubtype !== AMSG_INSTANT_CHAT_SUBTYPE)
+        .filter((task) => task.messageSubtype !== NATURAL_PROACTIVE_SUBTYPE)
         .map((task) => task.uuid);
     } catch {
       targets = localTaskUuids;
     }
+    const failed = new Set<string>();
+    for (const uuid of targets) {
+      try { await this.cancelTask(uuid); } catch { failed.add(uuid); }
+    }
+    return { targets, failed };
+  },
+
+  /** 只清自然主动的隐藏脉冲，不碰用户在 2.0 里建立的约定。 */
+  async cancelNaturalProactiveTasks(charId: string): Promise<{ targets: string[]; failed: Set<string> }> {
+    const targets = (await this.listRemoteTasksForChar(charId))
+      .filter((task) => task.messageSubtype === NATURAL_PROACTIVE_SUBTYPE)
+      .map((task) => task.uuid);
     const failed = new Set<string>();
     for (const uuid of targets) {
       try { await this.cancelTask(uuid); } catch { failed.add(uuid); }
@@ -2124,6 +2146,8 @@ export const ActiveMsgClient = {
       expirePolicy?: ActiveMsg2ExpirePolicy;
       /** 角色自己排的（工具桥传 true）。带上 metadata 标记，连发上限的到点兜底闸只拦它。 */
       selfScheduled?: boolean;
+      /** 自然主动的隐藏脉冲；复用云端生成链路，但不进入 2.0 约定清单。 */
+      internalNatural?: boolean;
     };
     /** 编辑/续期时传旧任务 uuid：先取消它再新建（不传 = 纯新建）。 */
     replaceTaskUuid?: string;
@@ -2143,7 +2167,7 @@ export const ActiveMsgClient = {
     // 数量封顶：待触发任务（不含被替换的那个）满 5 个就拒绝，让角色/用户先清。
     const pendingOthers = getPendingTasks(config, Date.now())
       .filter((t) => t.taskUuid !== replaceTaskUuid);
-    if (pendingOthers.length >= MAX_ACTIVE_TASKS_PER_CHAR) {
+    if (!task.internalNatural && pendingOthers.length >= MAX_ACTIVE_TASKS_PER_CHAR) {
       throw new Error(`该角色的待触发任务已达上限 ${MAX_ACTIVE_TASKS_PER_CHAR} 个，请先取消或合并已有任务。`);
     }
 
@@ -2165,7 +2189,7 @@ export const ActiveMsgClient = {
     const anchorMs = firePack?.lastUserMessageAt ?? 0;
     // 任务身份：客户端自造 clientTaskId——远端 uuid 要创建成功后才有，而 metadata
     // 必须在创建时就带上归属键；push 原样透传，送达归属全靠它。
-    const clientTaskId = crypto.randomUUID();
+    const clientTaskId = task.internalNatural ? `natural:${char.id}` : crypto.randomUUID();
 
     const remoteAvatarUrl = toRemoteAvatarUrl(char.avatar);
     const payload: Record<string, any> = {
@@ -2173,7 +2197,7 @@ export const ActiveMsgClient = {
       // 本地 base64 头像过不了 worker 的校验，不合格干脆不带这个字段（见 toRemoteAvatarUrl）。
       ...(remoteAvatarUrl ? { avatarUrl: remoteAvatarUrl } : {}),
       messageType: task.mode,
-      messageSubtype: 'chat',
+      messageSubtype: task.internalNatural ? NATURAL_PROACTIVE_SUBTYPE : 'chat',
       firstSendTime,
       recurrenceType: task.recurrenceType,
       // 角色的时间参照系（与 fire_pack 同一份）。daily / weekly 由 worker 按这个时区的
@@ -2191,7 +2215,9 @@ export const ActiveMsgClient = {
         // recurrenceType / occurrenceMs 不往这儿抄：库会把它们盖在每条 push 顶层，
         // 角色在 fire 里自排的任务也一样有，抄一份反而多一处会漏写的地方。
         amsgClientTaskId: clientTaskId,
-        amsgExpirePolicy: resolveExpirePolicy(task.mode, task.expirePolicy),
+        ...(task.internalNatural ? { amsgNaturalProactive: true } : {
+          amsgExpirePolicy: resolveExpirePolicy(task.mode, task.expirePolicy),
+        }),
         amsgAnchorMs: anchorMs,
         // 自排标记：到点兜底闸只拦带它的任务（用户面板排的不带、不受连发上限管）。
         ...(task.selfScheduled ? { amsgSelfScheduled: true } : {}),
@@ -2210,7 +2236,9 @@ export const ActiveMsgClient = {
     } else {
       const activeApi = resolveApiConfig(char, config, apiConfig);
       // 「本次任务」指令随任务 metadata 走，worker 到点拿它填 fire_pack 的指令槽。
-      payload.metadata.amsgTaskInstruction = buildTaskInstruction(task.mode, task.promptHint);
+      payload.metadata.amsgTaskInstruction = task.internalNatural
+        ? '这是角色自然产生的联系冲动，不是用户颁布的任务。结合人设、关系、最近上下文和此刻生活状态，像真人一样发一到三句真正此刻想说的话；可以很轻、很短，不要解释系统判断，也不要说自己被定时唤醒。'
+        : buildTaskInstruction(task.mode, task.promptHint);
       // 服务端要求「completePrompt 或 messages」二选一，且 messages 必须非空、
       // content 必须非空字符串，所以这里给一条占位。到点真正发给 LLM 的 messages 由
       // worker 的 onBeforeFire 返回值覆盖（库用 { ...payload, messages } 调 LLM），
@@ -2314,6 +2342,17 @@ export const ActiveMsgClient = {
       // 解析好的绝对时刻（UTC ISO）。任务记录存这一份，字段口径才只有一种。
       firstSendAt: firstSendTime,
     };
+  },
+
+  /** 老 worker 会把隐藏脉冲当普通一次性消息直接发出；开启前必须确认代码已更新。 */
+  async probeNaturalProactiveSupport(): Promise<boolean> {
+    const config = await ensureWorkerReady();
+    try {
+      const { status, body } = await fetchWithAuthRaw(
+        'config-check', config, { method: 'GET' }, '自然主动能力探测',
+      );
+      return status === 200 && body?.success === true && body?.data?.naturalProactive === true;
+    } catch { return false; }
   },
 
   /**
@@ -2719,7 +2758,7 @@ export const ActiveMsgClient = {
   // 这里只是拿最新聊天状态去刷新云端那份，失败由调用方 warn（沿用上一份，上下文旧一点）。
   async syncCharFirePacks(items: Array<{
     char: CharacterProfile;
-    config: ActiveMsg2CharacterConfig;
+    config?: ActiveMsg2CharacterConfig;
     userProfile: UserProfile;
     groups: GroupProfile[];
     realtimeConfig?: RealtimeConfig;

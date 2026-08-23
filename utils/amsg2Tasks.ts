@@ -23,6 +23,7 @@ import {
 import { FIRE_GRACE_MS, recurrencePeriodMs } from './amsg2ExpireGuard';
 import { AMSG_INSTANT_CHAT_SUBTYPE, type AmsgTzRef, formatFireTimeShort } from './amsgFirePack';
 import { AMSG_BACKGROUND_JOB_SUBTYPE } from './amsgTaskKinds';
+import { NATURAL_PROACTIVE_SUBTYPE } from './naturalProactive';
 
 export const MAX_ACTIVE_TASKS_PER_CHAR = 5;
 
@@ -483,6 +484,7 @@ export const reconcileTasksWithRemote = (
       && row.status !== 'failed'
       && row.messageSubtype !== AMSG_INSTANT_CHAT_SUBTYPE
       && row.messageSubtype !== AMSG_BACKGROUND_JOB_SUBTYPE
+      && row.messageSubtype !== NATURAL_PROACTIVE_SUBTYPE
     ))
     .map((row): ActiveMsg2TaskRecord => ({
       taskUuid: row.uuid,

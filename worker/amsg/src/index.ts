@@ -72,6 +72,7 @@ import {
 import { resolveFireSceneSong } from '../../../utils/amsgFireScene';
 import { shouldExpireFire } from '../../../utils/amsg2ExpireGuard';
 import { buildFireTaskListBlock, isPendingTask, MAX_ACTIVE_TASKS_PER_CHAR, shortTaskId } from '../../../utils/amsg2Tasks';
+import { decideNaturalProactive } from '../../../utils/naturalProactive';
 import {
   AMSG_FIRE_CANCEL_TOOL,
   AMSG_FIRE_RENEW_TOOL,
@@ -91,6 +92,8 @@ import {
   AMSG_CHAT_PRESENCE_KEY,
   isFreshChatPresence,
   parseAmsgChatPresence,
+  isForegroundForPush,
+  CHAT_PRESENCE_PUSH_FRESH_MS,
 } from '../../../utils/amsgChatPresence';
 import {
   AMSG_GLOBAL_NAMESPACE,
@@ -1756,6 +1759,72 @@ export const amsgHooks = {
     const storedSelfLog = parseSelfLog(charRows.find((r) => r.key === AMSG_SELF_LOG_KEY)?.value ?? '');
     const selfLog = reconcileSelfLogWithPack(storedSelfLog, pack, expireInput.lastUserMessageAt);
 
+    // 自然主动不是一条固定间隔任务：这一行只是一次「要不要联系」的机会。
+    // 每次都先根据画像决定下次何时再想起这件事；分数不够就静默结束，不调用 LLM。
+    if (!instant && taskMeta.amsgNaturalProactive === true) {
+      const natural = pack.naturalProactive;
+      if (!natural?.enabled || !natural.profile) {
+        console.log('[amsg:natural-stop]', { taskId: ctx.task.id, charId, reason: 'disabled-or-no-profile' });
+        return { skip: true } as const;
+      }
+      if (typeof ctx.scheduleTask !== 'function') {
+        throw fail('当前 worker 不支持自然主动的续排能力，请重新部署最新版 Worker');
+      }
+      // 同一条 fire 重试时得到同一个随机数、同一个下次 uuid，避免一次故障排出多条脉冲。
+      const seedText = `${charId}|${occurrenceMs}`;
+      let seed = 0x811c9dc5;
+      for (let i = 0; i < seedText.length; i += 1) {
+        seed ^= seedText.charCodeAt(i);
+        seed = Math.imul(seed, 0x01000193);
+      }
+      const random01 = (seed >>> 0) / 0xffffffff;
+      const decision = decideNaturalProactive({
+        nowMs: ctx.now.getTime(),
+        lastUserMessageAt: expireInput.lastUserMessageAt,
+        recentSelfSendAts: selfLog.entries.filter((entry) => !entry.reply).map((entry) => entry.at),
+        unansweredCount: countUnansweredSends(selfLog),
+        random01,
+        profile: natural.profile,
+        intensity: natural.intensity ?? 'normal',
+        bias: natural.bias ?? 0,
+        tzId: pack.tzId,
+        pendingTopic: pack.naturalSignals?.pendingTopic,
+        emotion: pack.naturalSignals?.emotion,
+      });
+      const nextAt = occurrenceMs + decision.nextCheckMinutes * 60_000;
+      const nextUuid = `natural-${(seed >>> 0).toString(16).padStart(8, '0')}-${charId}-${nextAt}`;
+      await ctx.scheduleTask({
+        firstSendTime: new Date(nextAt).toISOString(),
+        recurrenceType: 'none',
+        messageType: 'auto',
+        uuid: nextUuid,
+        tzId: pack.tzId,
+        metadata: {
+          charId,
+          charName: ctx.task.contactName ?? '',
+          source: 'natural_proactive',
+          amsgMode: 'auto',
+          amsgClientTaskId: `natural:${charId}`,
+          amsgNaturalProactive: true,
+          amsgTaskInstruction: '这是角色自然产生的联系冲动，不是用户颁布的任务。结合人设、关系、最近上下文和此刻生活状态，像真人一样发一到三句真正此刻想说的话；可以很轻、很短，不要解释系统判断，也不要说自己被定时唤醒。',
+        },
+      });
+      console.log('[amsg:natural-decision]', {
+        taskId: ctx.task.id,
+        charId,
+        score: decision.score,
+        threshold: decision.threshold,
+        shouldSend: decision.shouldSend,
+        nextCheckMinutes: decision.nextCheckMinutes,
+        reasons: decision.reasons,
+      });
+      if (isFreshChatPresence(presence, charId, ctx.now.getTime())) {
+        console.log('[amsg:natural-skip]', { taskId: ctx.task.id, charId, reason: 'active-chat-presence' });
+        return { skip: true } as const;
+      }
+      if (!decision.shouldSend) return { skip: true } as const;
+    }
+
     // 连发上限·到点兜底闸（用户主权）：用户未回复期间，角色自己排的任务最多响这么多次。
     // 只拦自排（amsgSelfScheduled）——用户面板排的是明确意愿，不受自己的防骚扰上限误伤；
     // 即时对话在答用户刚说的话，更不归它管。排程工具那半边只能拦「再排新的」，
@@ -1840,7 +1909,10 @@ export const amsgHooks = {
         const value = parseAmsgChatPresence(
           latest.find((r) => r.key === AMSG_CHAT_PRESENCE_KEY)?.value,
         );
-        return isFreshChatPresence(value, charId, Date.now());
+        // 通知决策用更短的窗口（isForegroundForPush，12s），不是 45s 的 TTL：
+        // 用户发完消息立刻切后台 / 划掉 App 时，云端回复通常 10~40s 才到，
+        // 用 45s 判的话全落在「还在前台」里 —— 表现就是退到后台反而收不到通知。
+        return isForegroundForPush(value, charId, Date.now());
       },
       // 下面即时对话那一支起跑（要等请求消息拼完才知道给评估喂什么）。
       emotionEvalPromise: null,
@@ -3003,6 +3075,16 @@ export default {
           // 正常，而门牌永远不更新。报的是**这份代码有没有**，不是版本号：自更新永远由
           // 旧代码执行，版本号对上了不代表新逻辑真的在跑。
           backgroundJobs: true,
+          // 这份代码认不认「前台静默投递」：页面还开着时不发 iOS 系统 Push，
+          // 只写 message_outbox 让页面自己收。同 backgroundJobs 一个套路——报的是
+          // **这份代码有没有**，不是版本号，因为版本号常常忘了改、而且自更新前后
+          // 都可能是同一个号。有了它，`GET /config-check` 一次请求就能断定
+          // Cloudflare 上跑的到底是不是打了这个补丁的 bundle，不用再靠实机试。
+          foregroundSilentPush: true,
+          // 判定「人还在前台」用的窗口（毫秒）。回显出来是为了能一眼看出跑的是哪一版：
+          // 早期那版直接用 45s 的 TTL，导致「发完就切后台」的回复被当成前台、不发通知。
+          foregroundPushWindowMs: CHAT_PRESENCE_PUSH_FRESH_MS,
+          naturalProactive: true,
           workerVersion: AMSG_BUNDLE_VERSION,
         },
       });

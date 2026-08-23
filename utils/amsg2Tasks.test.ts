@@ -614,6 +614,10 @@ describe('reconcileTasksWithRemote（跟远端底账对一次账）', () => {
   it('远端那行是即时对话 → 不补进清单', () => {
     expect(reconcileTasksWithRemote([], [remoteRow({ messageSubtype: 'instant-chat' })])).toEqual([]);
   });
+
+  it('自然主动的内部检查 → 不补进 2.0 约定清单', () => {
+    expect(reconcileTasksWithRemote([], [remoteRow({ messageSubtype: 'natural-proactive' })])).toEqual([]);
+  });
 });
 
 describe('currentOccurrenceMs 跨夏令时', () => {

@@ -141,10 +141,15 @@ const bindLifecycleListener = () => {
   });
 };
 
-/** 一轮聊完（或角色资料变更后）打脏标记；非 amsg2 AI 任务角色直接忽略。 */
+const needsCloudCharacterState = (char: CharacterProfile): boolean => {
+  if (char.naturalProactiveConfig?.enabled) return true;
+  const config = char.activeMsg2Config;
+  return !!config?.enabled && hasActiveAiTask(config);
+};
+
+/** 一轮聊完（或角色资料变更后）打脏标记；无需云端角色状态的角色直接忽略。 */
 export const markAmsgStateDirty = (snapshot: AmsgSyncSnapshot) => {
-  const config = snapshot.char.activeMsg2Config;
-  if (!config?.enabled || !hasActiveAiTask(config)) return;
+  if (!needsCloudCharacterState(snapshot.char)) return;
 
   dirty.set(snapshot.char.id, snapshot);
   persistDirtyMark(snapshot.char.id);
@@ -232,7 +237,7 @@ export const flushAmsgState = async (reason: string): Promise<void> => {
     for (const snapshot of batch) dirty.delete(snapshot.char.id);
     await ActiveMsgClient.syncCharFirePacks(batch.map((snapshot) => ({
       char: snapshot.char,
-      config: snapshot.char.activeMsg2Config!,
+      config: snapshot.char.activeMsg2Config,
       userProfile: snapshot.userProfile,
       groups: snapshot.groups,
       realtimeConfig: snapshot.realtimeConfig,
@@ -495,8 +500,15 @@ export const buildCredentialRowsToResync = async (
   for (const { charId, purpose } of wanted) {
     const char = byId.get(charId);
     if (!char) continue;
+    const naturalLegacyApiConfig = char.naturalProactiveConfig?.enabled && !char.activeMsg2Config
+      ? {
+          enabled: false,
+          useSecondaryApi: char.proactiveConfig?.useSecondaryApi,
+          secondaryApi: char.proactiveConfig?.secondaryApi,
+        }
+      : char.activeMsg2Config;
     const row = purpose === 'chat'
-      ? buildCharChatCredRow(char, char.activeMsg2Config, apiConfig)
+      ? buildCharChatCredRow(char, naturalLegacyApiConfig, apiConfig)
       : buildCharEmotionCredRow(charId, char.emotionConfig?.api, apiConfig);
     if (row) rows.push(row);
   }
