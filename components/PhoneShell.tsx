@@ -100,6 +100,7 @@ import { WorkerUpdateReminderController, shouldShowWorkerUpdateReminder, rearmWo
 import { InstantPushSunsetController, shouldShowInstantPushSunsetNotice } from './InstantPushSunsetEvent';
 import { loadInstantConfig, probeInstantWorkerVersion } from '../utils/instantPushClient';
 import { BackupReminderController } from './BackupReminderEvent';
+import IncomingCallOverlay from './call/IncomingCallOverlay';
 import { isBackupOverdue, daysSinceLastBackup } from '../utils/backupReminder';
 import { formatBytes } from '../utils/format';
 import { trackEvent } from '../utils/analytics';
@@ -1195,6 +1196,11 @@ const PhoneShell: React.FC = () => {
            onGoBackup={goBackupFromReminder}
          />
        )}
+
+       {/* 角色主动来电。放在所有弹窗**之后**、且不受任何 show* 互斥链约束：
+           电话得能盖住用户此刻正在看的任何东西，这正是它跟"提醒类弹窗"的区别。
+           没有待接来电时它自己返回 null，不占任何东西。 */}
+       <IncomingCallOverlay />
     </div>
   );
 };

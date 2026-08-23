@@ -54,6 +54,7 @@ import { getLocalDateKey } from './localDate';
 import { normalizeAssistantActionFormatting } from './assistantActionFormat';
 import { markAmsgStateDirty } from './amsgStateSync';
 import { announceScheduleChanges, applyAssistantScheduleChanges } from './scheduleChange';
+import { extractCallInvite, requestIncomingCall } from './incomingCall';
 
 // ─── 模块内辅助 ──────────────────────────────────────────────────────────────
 
@@ -2215,6 +2216,16 @@ export async function applyAssistantPostProcessing(
     // 隔着 RECALL / SEARCH / XHS 几趟往返，隔夜补收的 spokenAt 会把新写的改动整批作废。
     aiContent = await consumeScheduleChanges(aiContent, new Date());
 
+    // ─── 角色主动来电：只在这里**摘下来**，真正响铃放到本轮气泡全部落地之后 ───
+    // 摘早了正文里就不会残留（下游 sanitize 也认得 [[ACTION:…]]，这里是双保险）；
+    // 响晚了才对——铃声压在气泡前面的话，用户看到的是"电话先响、它那句『我打给你』
+    // 后到"，顺序反了。同一个道理见 applyAssistantPostProcessing 里第一条气泡免延迟那段。
+    const callInviteParsed = extractCallInvite(aiContent);
+    aiContent = callInviteParsed.cleanedText;
+    if (callInviteParsed.malformedCount > 0) {
+        console.warn('[IncomingCall] 认出了来电标签但内容是废的，已丢弃:', callInviteParsed.malformedCount);
+    }
+
     // ─── Step 3: ChatParser.parseAndExecuteActions ───
     // mcdInheritMeta 一起传下去：戳一戳 / 转账卡 / 音乐卡 / 新闻卡 / 日程系统提示 / 生活记录卡
     // 跟正文气泡带同一个标记。主动消息处理失败重来时，靠这个标记才认得出「上一趟已经做过了」，
@@ -2287,6 +2298,44 @@ export async function applyAssistantPostProcessing(
             await renderAndPersist('嗯...', pendingThinkingChain);
         } else {
             await refreshMessageList();
+        }
+    }
+
+    // ─── Step 7: 主动来电 ───
+    // 放在整个函数最后一行：上面每一条路径（走没走二轮、有没有 HTML 卡片、正文空不空）
+    // 都已经把该落的气泡落完了，电话在这一刻才响。
+    // requestIncomingCall 自己带冷却闸，被挡下时只打日志、不提示用户——角色那句
+    // "我打给你了" 照常显示，一句没兑现的话远比一天八通电话好收拾。
+    if (callInviteParsed.invite) {
+        const ringResult = requestIncomingCall({
+            charId: char.id,
+            charName: char.name,
+            charAvatar: char.avatar,
+            mode: callInviteParsed.invite.mode,
+            opening: callInviteParsed.invite.opening,
+            // 补收路径要按 push 的发送时刻算，不是按用户打开 App 这一刻
+            ringAt: messageTimestamp ?? Date.now(),
+        });
+        // 隔夜补收回来的那通：不响铃，但要留一条未接来电。不留的话，角色下一轮读历史
+        // 时看不到自己打过、也看不到你没接，等于这通电话从没发生过。
+        if (ringResult === 'stale') {
+            try {
+                await persistMessage({
+                    charId: char.id,
+                    role: 'system',
+                    type: 'system',
+                    content: `未接来电 · ${char.name}`,
+                    metadata: {
+                        source: 'incoming-call-missed',
+                        callMode: callInviteParsed.invite.mode,
+                        reason: 'stale',
+                        ...(mcdInheritMeta || {}),
+                    },
+                } as any);
+                await refreshMessageList();
+            } catch (e) {
+                console.error('[IncomingCall] 未接来电落库失败', e);
+            }
         }
     }
 }

@@ -28,6 +28,11 @@ import VRMVideoCallStage from '../components/call/VRMVideoCallStage';
 import Live2DActionSettings from '../components/call/Live2DActionSettings';
 import VRoidBetaWarning from '../components/call/VRoidBetaWarning';
 import UserCameraModePicker, { type UserCameraMode } from '../components/call/UserCameraModePicker';
+import {
+  clearPendingIncomingCall,
+  getPendingIncomingCall,
+  type PendingIncomingCall,
+} from '../utils/incomingCall';
 import CallSetupGuide, { type CallSetupGuideStep } from '../components/call/CallSetupGuide';
 import CallPreferencesSheet from '../components/call/CallPreferencesSheet';
 import CallUpdateAnnouncement from '../components/call/CallUpdateAnnouncement';
@@ -117,6 +122,8 @@ import VoiceFavoriteActionSheet from '../components/voice/VoiceFavoriteActionShe
 import { getVoiceFavorite, removeVoiceFavorite, saveVoiceFavorite } from '../utils/voiceFavorites';
 type CallState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'ended' | 'error';
 type CallMode = 'voice' | 'video';
+/** 这通电话是谁打的。'incoming' = 角色打给用户、用户接了起来。 */
+type CallDirection = 'outgoing' | 'incoming';
 type VideoCallLayout = 'stage' | 'story' | 'mini';
 type UserCameraPreviewSize = 'small' | 'medium' | 'large';
 type ViewMode = 'role-select' | 'in-call' | 'history' | 'record-detail';
@@ -400,6 +407,16 @@ const buildCallPrompt = (
   voiceLang?: string,
   mode: CallMode = 'voice',
   tz?: string,
+  /**
+   * 这通电话是谁打的。默认 'outgoing'（用户拨过去，历史上唯一的形态）。
+   *
+   * 为什么必须显式告诉模型：整份提示词从头到尾只说「你正在通话中」，一个字都没提
+   * 方向。不补这一段的话，角色接起自己打出去的电话会问「你怎么突然打给我」——
+   * 主叫被当成被叫，第一句就穿帮。
+   */
+  direction: CallDirection = 'outgoing',
+  /** 角色自己排的开场白（只有 incoming 用得上）。空串 = 让它现场现编。 */
+  incomingOpening?: string,
 ) => {
   const resolvedCharName = charName || '你的角色';
   // 电话里角色说的「现在几点 / 今天什么日子」是 ta 那边的时间，跟角色自定义时区走
@@ -418,7 +435,25 @@ const buildCallPrompt = (
 这不是文字，这是一通真正的电话。你能听到对方的呼吸、语气、停顿。你也有自己的呼吸。
 
 ### 你正拿着手机贴在耳边`;
-  const callPrompt = `${sceneOpening}
+  // 方向块。放在场景描写正后面、其余所有规则之前——它决定的是"这通电话的第一句
+  // 该怎么开口"，比任何表演细则都靠前。
+  const directionBlock = direction === 'incoming'
+    ? `### 这通${mode === 'video' ? '视频' : '电话'}是**你打给${userName}的**
+
+是你按下的拨号键，对方刚刚接起来。
+- **不要表现得像你在接电话**——你是主叫。别问对方"怎么突然打给我"、也别问对方为什么接。
+- 开口就把"为什么打这一通"带出来，或者用一句自然的招呼引到它上面。翻一下历史：
+  如果你刚说过要打给对方、或者你们正聊到一半，**那就是你打这通电话的理由**。
+- 说完开场白就停下来听。别一个人往下讲。${incomingOpening ? `
+
+你按下拨号键那一刻想说的是：「${incomingOpening}」。
+照这个意思开口就好——**用你此刻真实的语气重讲一遍，不要逐字念**。要是这会儿的情境
+已经不适合说这句（对方看上去不在状态、或者你们刚说完别的），就顺着当下改口。` : ''}`
+    : '';
+
+  const callPrompt = `${sceneOpening}${directionBlock ? `
+
+${directionBlock}` : ''}
 
 你这会儿在做什么？在哪儿？身边什么声音？
 接${mode === 'video' ? '视频' : '电话'}的时候自然地带出来就好——不用刻意交代，但也别假装你只是一个回答问题的接口。
@@ -484,7 +519,7 @@ ${getVoicePromptOverride(getTtsProvider()) ?? (getTtsProvider() === 'fishaudio' 
 ### 历史消息的来源标记（重要）
 
 对话历史里每条消息都带来源标签：[聊天] 是你们平时在手机上打字聊的，[通话] 是打电话/视频时说的，[约会] 是见面时发生的。它们同属一段真实经历，按时间顺序排列。
-**你现在正在通话中**——历史末尾连续的 [通话] 消息就是这通${mode === 'video' ? '视频' : '电话'}的现场，对方刚说的话就在那里。之前的 [聊天] [约会] 是背景记忆，可以自然提起，但**不要把话题当成文字聊天的延续**，更不要忘记对方几秒钟前在电话里刚说过的话——真人打电话不会转头就忘。
+**你现在正在通话中**（${direction === 'incoming' ? '这一通是你打过去的' : '这一通是对方打过来的'}）——历史末尾连续的 [通话] 消息就是这通${mode === 'video' ? '视频' : '电话'}的现场，对方刚说的话就在那里。之前的 [聊天] [约会] 是背景记忆，可以自然提起，但**不要把话题当成文字聊天的延续**，更不要忘记对方几秒钟前在电话里刚说过的话——真人打电话不会转头就忘。
 
 ### 底线
 
@@ -583,6 +618,10 @@ const CallApp: React.FC = () => {
   // starts private/off. Only the still-image token is remembered locally.
   const [userCameraMode, setUserCameraMode] = useState<UserCameraMode>('off');
   const [showUserCameraModePicker, setShowUserCameraModePicker] = useState(false);
+  // 本通电话的方向。每次进 App 都从 'outgoing' 起（跟 userCameraMode 一样不持久化）：
+  // 上一通是角色打来的，不代表下一通也是。
+  const [callDirection, setCallDirection] = useState<CallDirection>('outgoing');
+  const [incomingOpening, setIncomingOpening] = useState('');
   const [userCameraLoading, setUserCameraLoading] = useState(false);
   const [fakeUserCameraRef, setFakeUserCameraRef] = useState<string>(() => {
     try { return localStorage.getItem(FAKE_USER_CAMERA_IMAGE_KEY) || ''; }
@@ -1469,6 +1508,47 @@ const CallApp: React.FC = () => {
       clearSuspendedCall();
     }
   }, [suspendedCall]);
+  /**
+   * 用户在来电界面点了"接听" → IncomingCallOverlay 只负责 openApp(Call)，真正把这通
+   * 电话接起来的是这里。走的是跟 suspendedCall 完全一样的约定：全局单例放着这通电话
+   * 的信息，CallApp 挂载后消费掉并自己清。
+   *
+   * 为什么不让 overlay 直接调 beginSelectedCall：那个函数活在 CallApp 的闭包里，认的是
+   * CallApp 自己的一堆 state（选中角色、模式、摄像头、音频预热）。overlay 够不着它，
+   * 硬把这些 state 提上去等于把 CallApp 拆一半。
+   */
+  useEffect(() => {
+    // suspendedCall 那个 effect 也挂在 'role-select' 上，且声明在前。两个 effect 在同一次
+    // 提交里读到的是同一个 viewMode，它把界面推进 in-call 的那一下我这边还看不见——
+    // 不显式让路的话，一次挂载会同时"恢复上一通"和"接起新来电"。挂起的那通优先：
+    // 那是用户自己打到一半的电话。
+    if (viewMode !== 'role-select' || suspendedCall) return;
+    const incoming: PendingIncomingCall | null = getPendingIncomingCall();
+    if (!incoming) return;
+    clearPendingIncomingCall();
+    const target = characters.find(c => c.id === incoming.charId);
+    if (!target) {
+      // 角色在响铃到接听之间被删了。极罕见，但真发生时别让界面卡在半路。
+      addToast('这个角色已经不在了', 'info');
+      return;
+    }
+    setSelectedCharId(target.id);
+    setCallMode(incoming.mode);
+    setCallDirection('incoming');
+    setIncomingOpening(incoming.opening);
+    resetCurrentCall();
+    // 接听那一下就是用户手势，音频通道在这一刻解锁——预热必须搭在它上面，
+    // 晚一步（等第一条 TTS 回来）就没有手势可借了。
+    primeCallAudioFromGesture();
+    setViewMode('in-call');
+    setCallStartedAt(Date.now());
+    setCallState('listening');
+    // 角色打过来的电话不开用户摄像头：来电是它发起的，不该顺手把你的镜头也打开。
+    // 想开的话在通话里点那颗按钮，跟平时一样。
+    stopUserCamera();
+    trackEvent('接起一通来电', { 模式: incoming.mode === 'video' ? '视频' : '语音' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, characters, suspendedCall]);
   useEffect(() => () => {
     revokeSessionBlobs();
     sttSessionRef.current?.stop();
@@ -1681,6 +1761,10 @@ const CallApp: React.FC = () => {
   };
   const beginSelectedCall = (cameraMode: UserCameraMode = 'off') => {
     closeCallSetupGuide();
+    // 用户自己拨出去的：把上一通来电留下的方向/开场白清掉，否则挂断后再手动拨一次，
+    // 角色还以为是它打的。
+    setCallDirection('outgoing');
+    setIncomingOpening('');
     resetCurrentCall();
     primeCallAudioFromGesture();
     setViewMode('in-call');
@@ -1985,8 +2069,10 @@ ${sentencePlan}`;
           voiceLang || undefined,
           callMode,
           resolveCharTimeZone(selectedChar),
+          callDirection,
+          incomingOpening,
         )
-      : buildCallPrompt(userName, undefined, undefined, voiceLang || undefined, callMode);
+      : buildCallPrompt(userName, undefined, undefined, voiceLang || undefined, callMode, undefined, callDirection, incomingOpening);
     const thinkingPrompt = selectedChar?.showThinkingChain
       ? [
           buildThinkingChainPrompt(selectedChar.name, userName),
