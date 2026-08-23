@@ -80,12 +80,19 @@ describe('extractCallInvite', () => {
 });
 
 describe('冷却', () => {
+  // 间隔显式传进来：上面那个常量在测试期被临时改成 0 了，机制本身照测。
+  const TEN_MIN = 10 * 60 * 1000;
+
   it('间隔内算冷却，超过就放行', () => {
     const now = 1_000_000_000;
-    expect(isCallCoolingDown(now - 1, now)).toBe(true);
-    expect(isCallCoolingDown(now - INCOMING_CALL_COOLDOWN_MS + 1, now)).toBe(true);
-    expect(isCallCoolingDown(now - INCOMING_CALL_COOLDOWN_MS, now)).toBe(false);
-    expect(isCallCoolingDown(null, now)).toBe(false);
+    expect(isCallCoolingDown(now - 1, now, TEN_MIN)).toBe(true);
+    expect(isCallCoolingDown(now - TEN_MIN + 1, now, TEN_MIN)).toBe(true);
+    expect(isCallCoolingDown(now - TEN_MIN, now, TEN_MIN)).toBe(false);
+    expect(isCallCoolingDown(null, now, TEN_MIN)).toBe(false);
+  });
+
+  it('间隔设成 0 = 关掉冷却（测试期就是这个状态）', () => {
+    expect(isCallCoolingDown(Date.now(), Date.now(), 0)).toBe(false);
   });
 
   it('读不到 / 读到脏值时不当成冷却——宁可多响一次也不要哑火', () => {
@@ -115,13 +122,17 @@ describe('requestIncomingCall', () => {
     expect(getPendingIncomingCall()?.opening).toBe('睡了吗');
   });
 
-  it('冷却期内的第二通被挡下', () => {
+  // 下面两条要靠 INCOMING_CALL_COOLDOWN_MS 真的大于 0。测试期它被临时改成 0，
+  // 这两条自动跳过；改回 10 分钟时它们会自己醒过来，别删。
+  const cooldownOn = INCOMING_CALL_COOLDOWN_MS > 0;
+
+  it.skipIf(!cooldownOn)('冷却期内的第二通被挡下', () => {
     markCallFired('c1');
     expect(requestIncomingCall(call)).toBe('cooldown');
     expect(getPendingIncomingCall()).toBeNull();
   });
 
-  it('没接的电话也占冷却配额——不接就被连着打是更差的体验', () => {
+  it.skipIf(!cooldownOn)('没接的电话也占冷却配额——不接就被连着打是更差的体验', () => {
     expect(requestIncomingCall(call)).toBe('ringing');
     clearPendingIncomingCall();
     expect(requestIncomingCall(call)).toBe('cooldown');
@@ -144,7 +155,7 @@ describe('requestIncomingCall', () => {
     expect(getPendingIncomingCall()).toBeNull();
   });
 
-  it('旧电话也占冷却配额——补收一次性灌进来五条时只该记一条', () => {
+  it.skipIf(!cooldownOn)('旧电话也占冷却配额——补收一次性灌进来五条时只该记一条', () => {
     expect(requestIncomingCall({ ...call, ringAt: Date.now() - STALE_CALL_MS - 1 })).toBe('stale');
     expect(requestIncomingCall({ ...call, ringAt: Date.now() - STALE_CALL_MS - 1 })).toBe('cooldown');
   });

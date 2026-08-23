@@ -973,6 +973,12 @@ const PhoneShell: React.FC = () => {
           <div className="w-1 h-8 rounded-full bg-gradient-to-b from-transparent to-current"></div>
           <span className="text-[10px] tracking-widest uppercase font-semibold">Tap to Unlock</span>
         </div>}
+
+        {/* 锁屏上也要能接电话——真手机就是这样，而且这里还有一条更硬的理由：
+            PhoneShell 在开机动画 / 数据加载 / 锁屏这三种情况下都会提前 return，
+            来电界面只挂在下面那棵树上的话，响铃途中一锁屏它就整个消失，
+            用户听得见铃声却找不到任何按钮。8/23 实测炸过。 */}
+        <IncomingCallOverlay />
       </div>
     );
   }

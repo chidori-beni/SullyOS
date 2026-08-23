@@ -18,25 +18,32 @@ import type { CallInvite } from './incomingCallParse';
 export const INCOMING_CALL_EVENT = 'sully-incoming-call';
 
 /**
- * 同一个角色两通来电之间的最短间隔。
+ * 同一个角色两通电话之间的最短间隔。
  *
  * 这个闸不是为了省资源，是为了保住"来电"这件事的分量：一天响八次的电话跟一条消息没有
  * 区别，而且每一次都强行打断用户在干的事。真正的风险是模型每一轮都吐一次这个标签
  * ——语音那次就是这么翻车的（见功能 4），只靠提示词治不住。
  *
- * 糯叽机那边是 30 分钟（localStorage 键 `bg_videocall_cooldown_*`），一开始照抄了，
- * 用户实测嫌长，8/23 改成 10 分钟。**冷却期内不是静悄悄丢掉**：照样留一条未接来电，
- * 否则横幅弹了、点进去什么都没有，看着就像功能坏了。
+ * ⚠️ **现在是 0（测试期临时关掉的）**，因为每次试都要等 10 分钟根本没法调。
+ * 测完记得改回 `10 * 60 * 1000`。糯叽机那边是 30 分钟，实测嫌长。
+ *
+ * 冷却期内**不是静悄悄丢掉**：照样留一条未接来电，否则横幅弹了、点进去什么都没有，
+ * 看着就像功能坏了。
  */
-export const INCOMING_CALL_COOLDOWN_MS = 10 * 60 * 1000;
+export const INCOMING_CALL_COOLDOWN_MS = 0;
 
 // ─── 冷却 ────────────────────────────────────────────────────────────────
 
 const COOLDOWN_KEY_PREFIX = 'sully-incoming-call-cooldown-v1:';
 
 /** 纯判定，方便测；调用方拿 readLastCallAt() 喂它。 */
-export const isCallCoolingDown = (lastAt: number | null, now: number = Date.now()): boolean =>
-  lastAt != null && Number.isFinite(lastAt) && now - lastAt < INCOMING_CALL_COOLDOWN_MS;
+export const isCallCoolingDown = (
+  lastAt: number | null,
+  now: number = Date.now(),
+  /** 间隔可以传进来，方便单测不依赖上面那个「测试期临时改成 0」的常量。 */
+  cooldownMs: number = INCOMING_CALL_COOLDOWN_MS,
+): boolean =>
+  cooldownMs > 0 && lastAt != null && Number.isFinite(lastAt) && now - lastAt < cooldownMs;
 
 export const readLastCallAt = (charId: string): number | null => {
   try {

@@ -3,12 +3,12 @@ import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallba
 import { createPortal } from 'react-dom';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
+import { AppID, Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
 import { processImage } from '../utils/file';
 import { safeResponseJson, extractContent } from '../utils/safeApi';
 import { buildChatFineTuneCss, mergeChatFineTune } from '../utils/chatFineTuneCss';
 import ChatFineTunePanel from '../components/chat/ChatFineTunePanel';
-import { FadersHorizontal } from '@phosphor-icons/react';
+import { FadersHorizontal, Phone } from '@phosphor-icons/react';
 import { generateDailyScheduleForChar, isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import { getDailyScheduleForChar } from '../utils/dailySchedule';
 import { useLocalDateKey } from '../hooks/useLocalDateKey';
@@ -95,7 +95,7 @@ type InstantToolUiStatus = {
 };
 
 const Chat: React.FC = () => {
-    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, openDateWithChar } = useOS();
+    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, openApp, customThemes, removeCustomTheme, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, openDateWithChar } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
     const localDateKey = useLocalDateKey();
 
@@ -3499,6 +3499,18 @@ const Chat: React.FC = () => {
                 tokenBreakdown={tokenBreakdown}
                 onClose={closeApp}
                 onTriggerAI={handleManualTrigger}
+                // 消息界面直接拨号（微信 / 糯叽机都有这颗）。借用 ChatHeaderShell 现成的
+                // extraAction 槽位——它本来就是给「标题栏多一颗按钮」准备的，两套标题栏布局
+                // 都已经接好线，也处理好了跟触发按钮抢 ml-auto 的问题，不用再加一个新 prop。
+                //
+                // 不在这里直接起通话，只把人送进「电话」App：语音还是视频得由用户挑，而那套
+                // 选择 + 音频预热 + 摄像头开关全长在 CallApp 自己的闭包里，硬提上来等于把
+                // CallApp 拆一半。那边已经按 activeCharacterId 预选好角色，进去就差点一下。
+                extraAction={{
+                    label: '打电话',
+                    icon: <Phone className="w-5 h-5" weight="fill" />,
+                    onClick: () => openApp(AppID.Call),
+                }}
                 onShowCharsPanel={() => setShowPanel('chars')}
                 onDeleteBuff={(buffId) => {
                     const currentBuffs = char.activeBuffs || [];

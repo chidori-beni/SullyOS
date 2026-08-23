@@ -3,38 +3,60 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 /**
- * 来电这条链上两个**实机炸过**的接线，用源码级断言钉住。
+ * 来电这条链上几个**实机炸过**的接线，用源码级断言钉住。
  *
- * 这两个都不是逻辑能单测出来的（一个是 React 的元素复用行为，一个是跨模块的语义误用），
- * 但两个都会让用户立刻看到最难受的症状，而且改别的地方时很容易被顺手改回去。
+ * 这些都不是逻辑能单测出来的（React 的卸载/元素复用行为、跨模块的语义误用、
+ * 组件挂在哪棵树上），但每一个都会让用户立刻听到最难受的那种故障——
+ * **响个不停、界面上却找不到任何按钮**——而且改别的地方时很容易被顺手改回去。
  * 同 utils/callAppRuntimeReferences.test.ts / utils/amsgStateSync.gaps.test.ts 的路子。
  */
 
 const read = (relative: string) => readFileSync(path.resolve(__dirname, relative), 'utf8');
 
-describe('来电铃声只能有一个 <audio>，而且必须常驻', () => {
-  const src = read('../components/call/IncomingCallOverlay.tsx');
+describe('铃声必须活在 React 之外', () => {
+  const overlay = read('../components/call/IncomingCallOverlay.tsx');
+  const ringtone = read('./callRingtone.ts');
 
-  it('整个组件只渲染一个挂着 audioRef 的 <audio>', () => {
-    // 8/23 事故：来电时渲染 A、没来电时渲染 B，两个分支各一个 <audio>。
-    // 界面一收起来，React 把正在放的那个从 DOM 摘掉、同时把 audioRef 指向新的那个，
-    // 正在响的成了孤儿——停不下来也找不到，用户只能划掉整个 App。
-    // 脱离 DOM 的 <audio> 会继续播，这一点跟直觉相反。
-    const matches = src.match(/<audio\s+ref=\{audioRef\}/g) ?? [];
-    expect(matches).toHaveLength(1);
+  it('来电界面里一个 <audio> 都没有', () => {
+    // 8/23 连炸两次的根源：铃声挂在这个组件里，而 PhoneShell 在开机动画 / 数据加载 /
+    // 锁屏三种情况下都会提前 return，整棵子树连 <audio> 一起消失。被摘出页面的
+    // <audio> **会继续播**（跟直觉相反），而 React 在跑清理函数前就断开了 ref，
+    // 代码想停也拿不到它 —— 用户听得见铃声、界面上什么都没有，只能划掉整个 App。
+    expect(overlay).not.toContain('<audio');
   });
 
-  it('<audio> 不在 `call` 的条件分支里（常驻，且解锁必须发生在来电之前）', () => {
-    const audioAt = src.indexOf('<audio ref={audioRef}');
-    const guardAt = src.indexOf('{call && (');
-    expect(audioAt).toBeGreaterThan(-1);
-    expect(guardAt).toBeGreaterThan(-1);
-    // 铃声元素要排在条件块**前面**——排后面就说明它又被塞进分支里了。
-    expect(audioAt).toBeLessThan(guardAt);
+  it('铃声单例用 new Audio()，从不进 DOM', () => {
+    expect(ringtone).toContain('new Audio(');
+    expect(ringtone).not.toContain('document.createElement');
   });
 
-  it('组件卸载时会停铃', () => {
-    expect(src).toContain('useEffect(() => stopRinging, [])');
+  it('开响就必须挂看门狗——声音是唯一一种"出错了用户还关不掉"的故障', () => {
+    expect(ringtone).toContain('watchdog = setTimeout(');
+    // 看门狗里必须真的停，不能只回调
+    const watchdogBody = ringtone.slice(ringtone.indexOf('watchdog = setTimeout('));
+    expect(watchdogBody).toContain('stopRingtone();');
+  });
+
+  it('停铃是幂等的，谁都能调', () => {
+    expect(ringtone).toContain('export const stopRingtone');
+  });
+});
+
+describe('来电界面必须挂在锁屏那棵树上', () => {
+  const shell = read('../components/PhoneShell.tsx');
+
+  it('PhoneShell 的两个分支都渲染了 IncomingCallOverlay', () => {
+    // 只挂在解锁那棵树上的话，响铃途中一锁屏界面就整个消失（铃声还在响）。
+    // 顺带也是对的产品行为：真手机就是能在锁屏上接电话。
+    const matches = shell.match(/<IncomingCallOverlay \/>/g) ?? [];
+    expect(matches.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('其中一处排在 isLocked 的提前 return 之前', () => {
+    const lockedAt = shell.indexOf('if (isLocked) {');
+    const firstOverlayAt = shell.indexOf('<IncomingCallOverlay />');
+    expect(lockedAt).toBeGreaterThan(-1);
+    expect(firstOverlayAt).toBeGreaterThan(lockedAt);
   });
 });
 
