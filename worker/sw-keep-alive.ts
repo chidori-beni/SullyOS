@@ -71,26 +71,12 @@ import { installReiSW } from '@rei-standard/amsg-sw';
  *  - 1.17.0: 升级 amsg-sw，通知的 silent 认 'when-visible' 这一档：静不静音改由 SW 按
  *            收到推送那一刻的窗口可见性算，用户看着页面时安静、切后台照常响铃震动。
  *            老 SW 把这个字符串当真值，会一律静音。
- *  - 1.18.0: 角色主动来电：收到带 sullyIncomingCall 旗的推送时补弹两条横幅当"铃声"
- *            （iOS PWA 没有自定义提示音，只能靠响的次数把电话和消息分开）；
- *            notificationclick 认出来电就直接把用户送进接听页而不是聊天页。
+ *  - 1.18.0: 角色主动来电：notificationclick 认出来电就把用户送进接听页而不是聊天页，
+ *            并把这通电话的横幅一起收走。
+ *            （一度试过"额外补弹两条横幅当铃声"，用户实测觉得通知栏刷三条比没铃声还烦，
+ *            已撤掉。iOS PWA 拿不到自定义提示音是 Apple 的口子没开，认了。）
  */
 const SW_VERSION = '1.18.0';
-
-/**
- * 来电横幅补弹几下、隔多久。
- *
- * iOS 的 Web Push 拿不到自定义提示音（Notification 根本没有 sound 字段，vibrate 也被
- * Safari 忽略），"这是电话不是消息"只能靠**响的次数**表达：连响三下 ≈ 铃声，一声 ≈ 消息。
- *
- * 补弹在 SW 本地做，不让服务端多发两条 Web Push——多发就要多占推送配额、可能被 APNs
- * 限流，而且客户端补收要按服务端账本对账，凭空多两条会对出幻影气泡来。
- *
- * 每条用不同的 tag，否则同 tag 会静默替换、一声都听不见。用户点掉/接起时这几条一起收走
- * （见 notificationclick）。
- */
-const CALL_BANNER_EXTRA_RINGS = 2;
-const CALL_BANNER_RING_GAP_MS = 1_800;
 
 /** 这条推送是不是一通来电（旗子由 worker/amsg/src/agentic.ts 立在 notification.data 上）。 */
 function isIncomingCallNotificationData(data: any): boolean {
@@ -705,51 +691,6 @@ async function saveIncomingActiveMessage(payload: any) {
 // 之前我们自己写 sw.addEventListener('push')，现在全量交由 amsg-sw 的 installReiSW
 // 在 onBusinessPayload 里回调，所以这里不再需要手写 push 监听。
 
-// ─── 来电"铃声"：同一条推送本地补弹两下 ──────────────────────────────────────
-// 这是**唯一**一处我们还自己挂 push 监听的地方，而且只做一件事：多弹两条横幅。
-// 正文的落库、去重、第一条横幅全部照旧由 installReiSW 负责，这里一个字都不碰——
-// 两个监听器互不知道对方存在，所以这里绝不能 throw，也绝不能动 inbox。
-//
-// 只认已经解出来的明文 JSON：分片推送的碎片上没有这面旗，自然会被下面这道门挡掉，
-// 不用（也不该）在这里重新拼分片。
-sw.addEventListener('push', (event: PushEvent) => {
-  let data: any;
-  try {
-    data = event.data?.json();
-  } catch {
-    return; // 不是 JSON（或是分片碎片）——不是我们要管的东西
-  }
-  const notification = data?.notification;
-  if (!notification || !isIncomingCallNotificationData(notification.data)) return;
-  // 前台不发 Push（服务端 show:false 就拦掉了），能走到这儿的都是后台。
-  if (notification.show === false) return;
-
-  const title = String(notification.title || '');
-  const body = String(notification.body || '');
-  const baseTag = String(notification.tag || `sully-call-${notification.data?.charId || ''}`);
-  event.waitUntil((async () => {
-    for (let i = 1; i <= CALL_BANNER_EXTRA_RINGS; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, CALL_BANNER_RING_GAP_MS));
-      try {
-        await sw.registration.showNotification(title, {
-          body,
-          icon: notification.icon || './icons/icon-192.png',
-          badge: './icons/icon-192.png',
-          // 每一下自己的 tag：同 tag 会被静默替换，那就一声都听不见了
-          tag: `${baseTag}-ring${i}`,
-          renotify: true,
-          data: { ...(notification.data || {}), sullyCallRing: i },
-        } as NotificationOptions);
-      } catch (error) {
-        // 弹不出来就算了（配额/权限/系统限流都可能）。第一条已经由包层弹过，
-        // 电话不会因为少响两下就丢。
-        console.warn('[amsg] 来电补弹失败', error);
-        return;
-      }
-    }
-  })());
-});
-
 // ─── pushsubscriptionchange：浏览器换掉了推送订阅 ────────────────────────────
 // 已排程任务体里的 pushSubscription 是排程那一刻冻结的，订阅一换端点，到点推送
 // 全打到作废端点上（静默失联）。这里做两件事，都是 best-effort：
@@ -805,17 +746,16 @@ sw.addEventListener('notificationclick', (event: NotificationEvent) => {
     || payload?.charId
     || event.notification.data?.charId
     || '';
-  // 来电：点的是哪一下都算接（补弹的那两条也带着同一面旗）。
+  // 来电：点哪一下都算接。
   const isCall = isIncomingCallNotificationData(event.notification.data)
     || isIncomingCallNotificationData(payload);
   event.notification.close();
 
   event.waitUntil((async () => {
-    // 补弹的"铃声"横幅得一起收走，不然接完电话通知栏里还躺着两条在叫你接。
+    // 接了电话之后，通知栏里同一通电话的横幅要一起收走，不然它还躺在那儿叫你接。
     if (isCall) {
       try {
-        const rest = await sw.registration.getNotifications();
-        for (const n of rest) {
+        for (const n of await sw.registration.getNotifications()) {
           if (isIncomingCallNotificationData(n.data)) n.close();
         }
       } catch { /* getNotifications 不是哪儿都有，收不掉就算了 */ }
@@ -825,8 +765,8 @@ sw.addEventListener('notificationclick', (event: NotificationEvent) => {
     if (clients.length > 0) {
       const client = clients[0];
       await client.focus();
-      // 来电和普通消息都要先把这一轮内容补收进来（应用侧同一条路），差别只在
-      // 补收完之后是落进聊天页还是弹接听界面——那面旗由这条消息带过去。
+      // 来电和普通消息都要先把这一轮内容补收进来（应用侧同一条路），差别只在补收完
+      // 之后是落进聊天页还是弹接听界面——那面旗由这条消息带过去。
       client.postMessage({ type: 'active-msg-open', charId, incomingCall: isCall });
       return;
     }

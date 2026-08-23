@@ -16,17 +16,22 @@ import {
  *
  * 为什么不做成一个 App：来电必须能盖住"用户此刻正在用的任何东西"，包括锁屏和别的
  * App。做成 App 就得先 openApp、把用户手上那个页面顶掉，拒接之后还回不去原来的地方。
- *
- * 铃声的现实：iOS PWA 里 `<audio>` 不经用户手势不一定放得出声。绝大多数情况下没问题
- * ——角色打来电话之前你刚跟它说过话（发消息本身就是手势），音频通道已经解锁；聊天里
- * 放过语音的话更是早就解锁了。真被拦下来时不弹任何报错：横幅/震动/界面本身就是提醒，
- * 铃声只是锦上添花。这一段永远不要 throw，它挂了整通电话就接不起来了。
  */
 
 const RINGTONE_URL = (((import.meta as any).env?.BASE_URL ?? '/') + 'sounds/incoming-call.mp3').replace(/([^:])\/\/+/g, '$1/');
 
 /** 响多久没人接算未接。真手机是 30 秒左右，照抄。 */
 const RING_TIMEOUT_MS = 30_000;
+
+/**
+ * 页面在后台时，这通电话最多"举着"多久等你回来。
+ *
+ * 8/23 实测出来的坑：推送到了、横幅弹了，但用户是**从后台切回来**的（没点横幅）。
+ * 那一刻补收在后台就跑完了，来电界面在看不见的页面上响了 30 秒然后自己判成未接——
+ * 用户切回来时什么都没有。所以页面不可见时**根本不开始计时**，等回到前台再响。
+ * 超过这个岁数才认命记未接：隔了半小时才回来的电话，响起来只会吓人。
+ */
+const BACKGROUND_HOLD_MS = 5 * 60_000;
 
 /** 震动节奏（安卓有效；iOS Safari 直接忽略 navigator.vibrate，不是 bug）。 */
 const VIBRATE_PATTERN = [400, 200, 400, 1400];
@@ -42,6 +47,49 @@ const IncomingCallOverlay: React.FC = () => {
 
   const char = call ? characters.find(c => c.id === call.charId) : undefined;
   const avatarUrl = useBlobRefUrl(char?.avatar || call?.charAvatar);
+
+  /**
+   * 借用户的第一次触摸解锁铃声。
+   *
+   * iOS 的自动播放限制是**按元素**算的：聊天里放过语音，解锁的是语音那个 <audio>，
+   * 跟这里这个毫无关系。所以第一批实测「电话打进来了但一点声音都没有」——铃声元素
+   * 从来没被任何手势碰过，play() 直接被拒。
+   *
+   * 做法跟 CallApp 的 primeCallAudioFromGesture 一样：随便哪次触摸，把这个元素静音
+   * 播一下再立刻停掉，之后它就一直是"解锁"状态了。只做一次，做完就把监听摘掉。
+   */
+  useEffect(() => {
+    let primed = false;
+    const detach = () => {
+      window.removeEventListener('pointerdown', prime);
+      window.removeEventListener('touchend', prime);
+      window.removeEventListener('keydown', prime);
+    };
+    function prime() {
+      if (primed) return;
+      const audio = audioRef.current;
+      if (!audio) return;
+      primed = true;
+      const previousVolume = audio.volume;
+      audio.volume = 0;
+      const done = () => {
+        try { audio.pause(); audio.currentTime = 0; } catch { /* 忽略 */ }
+        audio.volume = previousVolume;
+      };
+      try {
+        const attempt = audio.play();
+        if (attempt) void attempt.then(done).catch(() => { audio.volume = previousVolume; });
+        else done();
+      } catch {
+        audio.volume = previousVolume;
+      }
+      detach();
+    }
+    window.addEventListener('pointerdown', prime, { passive: true });
+    window.addEventListener('touchend', prime, { passive: true });
+    window.addEventListener('keydown', prime);
+    return detach;
+  }, []);
 
   useEffect(() => {
     const onIncoming = (event: Event) => {
@@ -64,58 +112,6 @@ const IncomingCallOverlay: React.FC = () => {
     }
   };
 
-  // 响铃 + 震动 + 超时。call 变了才重来一遍。
-  useEffect(() => {
-    if (!call) return;
-    const audio = audioRef.current;
-    if (audio) {
-      audio.loop = true;
-      audio.volume = 0.85;
-      // 播放失败只记一行日志：自动播放被拦是预期内的一种结果，不是错误。
-      void audio.play().catch(err => {
-        console.log('[IncomingCall] 铃声被浏览器拦下（没有近期用户手势），只走界面提醒:', err?.name || err);
-      });
-    }
-    try {
-      navigator.vibrate?.(VIBRATE_PATTERN);
-      vibrateTimerRef.current = window.setInterval(() => {
-        try { navigator.vibrate?.(VIBRATE_PATTERN); } catch { /* 同上 */ }
-      }, 2400);
-    } catch { /* iOS 没有这个 API */ }
-
-    timeoutRef.current = window.setTimeout(() => { void settle('missed'); }, RING_TIMEOUT_MS);
-    return stopRinging;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [call?.charId, call?.ringAt]);
-
-  /**
-   * 未接 / 拒接都往聊天里落一条系统消息。
-   *
-   * 为什么一定要落：不落的话这通电话在角色眼里等于没发生过——它下一轮读历史时看不到
-   * 自己打过、也看不到你没接，会当作什么都没说过。落了它才可能自然地提一句"刚才给你
-   * 打电话没人接"。type 用 'system' 跟"通话结束"那条对齐（CallApp.finishCall）。
-   */
-  const persistMissed = async (target: PendingIncomingCall, reason: 'missed' | 'declined') => {
-    try {
-      await DB.saveMessage({
-        charId: target.charId,
-        role: 'system',
-        type: 'system',
-        content: reason === 'declined'
-          ? `未接来电 · ${target.charName}（已拒接）`
-          : `未接来电 · ${target.charName}`,
-        metadata: {
-          source: 'incoming-call-missed',
-          callMode: target.mode,
-          reason,
-          ringAt: target.ringAt,
-        },
-      } as any);
-    } catch (e) {
-      console.error('[IncomingCall] 未接来电落库失败', e);
-    }
-  };
-
   const settle = async (action: 'accept' | 'declined' | 'missed') => {
     if (settledRef.current) return;
     settledRef.current = true;
@@ -131,17 +127,68 @@ const IncomingCallOverlay: React.FC = () => {
     }
     clearPendingIncomingCall();
     setCall(null);
-    await persistMissed(target, action === 'declined' ? 'declined' : 'missed');
+    await persistMissedCall(target, action === 'declined' ? 'declined' : 'missed');
   };
 
-  if (!call) return null;
+  // 响铃 + 震动 + 超时。页面不可见时先按住不动，等切回前台再响（见 BACKGROUND_HOLD_MS）。
+  useEffect(() => {
+    if (!call) return;
+    let disposed = false;
+
+    const startRinging = () => {
+      if (disposed || settledRef.current) return;
+      const audio = audioRef.current;
+      if (audio) {
+        audio.loop = true;
+        audio.volume = 0.85;
+        // 播放失败只记一行日志：自动播放被拦是预期内的一种结果，不是错误。
+        void audio.play().catch(err => {
+          console.log('[IncomingCall] 铃声被浏览器拦下（这个元素还没被任何手势解锁过）:', err?.name || err);
+        });
+      }
+      try {
+        navigator.vibrate?.(VIBRATE_PATTERN);
+        vibrateTimerRef.current = window.setInterval(() => {
+          try { navigator.vibrate?.(VIBRATE_PATTERN); } catch { /* 同上 */ }
+        }, 2400);
+      } catch { /* iOS 没有这个 API */ }
+      timeoutRef.current = window.setTimeout(() => { void settle('missed'); }, RING_TIMEOUT_MS);
+    };
+
+    if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+      startRinging();
+      return () => { disposed = true; stopRinging(); };
+    }
+
+    // 页面在后台：先不响。回到前台再开始，或者举太久了就认命记未接。
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      document.removeEventListener('visibilitychange', onVisible);
+      if (Date.now() - call.ringAt > BACKGROUND_HOLD_MS) { void settle('missed'); return; }
+      startRinging();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    const holdTimer = window.setTimeout(() => { void settle('missed'); }, BACKGROUND_HOLD_MS);
+    return () => {
+      disposed = true;
+      document.removeEventListener('visibilitychange', onVisible);
+      window.clearTimeout(holdTimer);
+      stopRinging();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [call?.charId, call?.ringAt]);
+
+  if (!call) {
+    // 铃声元素常驻。只在来电时才渲染的话，上面那次"借手势解锁"永远拿不到元素——
+    // 而解锁必须发生在电话打进来**之前**。
+    return <audio ref={audioRef} src={RINGTONE_URL} preload="auto" playsInline className="hidden" />;
+  }
 
   const isVideo = call.mode === 'video';
   const name = char?.name || call.charName;
 
   return (
     <div className="fixed inset-0 z-[100000] flex flex-col items-center justify-between bg-[#0b0b12] text-white animate-fade-in">
-      {/* 铃声：即使被拦下也要留着这个节点，用户点"接听"那一下会给音频通道解锁 */}
       <audio ref={audioRef} src={RINGTONE_URL} preload="auto" playsInline />
 
       {avatarUrl && (
@@ -186,6 +233,43 @@ const IncomingCallOverlay: React.FC = () => {
       </div>
     </div>
   );
+};
+
+/**
+ * 未接来电落一条系统消息，并让聊天界面立刻刷出来。
+ *
+ * **两件事缺一不可**。8/23 第一版只落了库没刷界面，结果用户从后台切回来时聊天页一片
+ * 干净——电话在数据库里，人在界面上什么都看不到，跟没发生过一样。
+ *
+ * 为什么一定要落库：不落的话这通电话在角色眼里等于没发生过，它下一轮读历史时看不到
+ * 自己打过、也看不到你没接，不会自然地提一句「刚给你打电话没人接」。
+ *
+ * 导出给 utils/applyAssistantPostProcessing 复用（冷却 / 过期 / 忙线拦下的那几种也走这里，
+ * 一通被系统吞掉的电话不该在任何一条路上凭空消失）。
+ */
+export const persistMissedCall = async (
+  target: { charId: string; charName: string; mode: 'voice' | 'video'; ringAt: number },
+  reason: 'missed' | 'declined' | 'stale' | 'cooldown' | 'busy',
+): Promise<void> => {
+  try {
+    await DB.saveMessage({
+      charId: target.charId,
+      role: 'system',
+      type: 'system',
+      content: reason === 'declined' ? `未接来电 · ${target.charName}（已拒接）` : `未接来电 · ${target.charName}`,
+      metadata: {
+        source: 'incoming-call-missed',
+        callMode: target.mode,
+        characterName: target.charName,
+        reason,
+        ringAt: target.ringAt,
+      },
+    } as any);
+    // 聊天页靠这个事件重读消息列表（推送落库走的是同一条路，见 activeMsgRuntime）。
+    window.dispatchEvent(new CustomEvent('active-msg-progress', { detail: { charId: target.charId } }));
+  } catch (e) {
+    console.error('[IncomingCall] 未接来电落库失败', e);
+  }
 };
 
 export default IncomingCallOverlay;

@@ -55,6 +55,7 @@ import { normalizeAssistantActionFormatting } from './assistantActionFormat';
 import { markAmsgStateDirty } from './amsgStateSync';
 import { announceScheduleChanges, applyAssistantScheduleChanges } from './scheduleChange';
 import { extractCallInvite, formatCallInviteTag, requestIncomingCall } from './incomingCall';
+import { persistMissedCall } from '../components/call/IncomingCallOverlay';
 
 // ─── 模块内辅助 ──────────────────────────────────────────────────────────────
 
@@ -2323,26 +2324,21 @@ export async function applyAssistantPostProcessing(
             // 补收路径要按 push 的发送时刻算，不是按用户打开 App 这一刻
             ringAt: messageTimestamp ?? Date.now(),
         });
-        // 隔夜补收回来的那通：不响铃，但要留一条未接来电。不留的话，角色下一轮读历史
-        // 时看不到自己打过、也看不到你没接，等于这通电话从没发生过。
-        if (ringResult === 'stale') {
-            try {
-                await persistMessage({
+        // 没响成的那几种（隔夜补收 / 冷却期内 / 正在响别人的电话）**一律留一条未接来电**。
+        // 不留的话，这通电话在角色眼里等于从没发生过——它下一轮读历史时看不到自己打过、
+        // 也看不到你没接。8/23 实测踩到的更糟的一种：横幅都弹了、用户从后台切回来，
+        // 界面上却干干净净，看着就像功能坏了。一通被系统吞掉的电话不该凭空消失。
+        if (ringResult !== 'ringing') {
+            await persistMissedCall(
+                {
                     charId: char.id,
-                    role: 'system',
-                    type: 'system',
-                    content: `未接来电 · ${char.name}`,
-                    metadata: {
-                        source: 'incoming-call-missed',
-                        callMode: callInviteParsed.invite.mode,
-                        reason: 'stale',
-                        ...(mcdInheritMeta || {}),
-                    },
-                } as any);
-                await refreshMessageList();
-            } catch (e) {
-                console.error('[IncomingCall] 未接来电落库失败', e);
-            }
+                    charName: char.name,
+                    mode: callInviteParsed.invite.mode,
+                    ringAt: messageTimestamp ?? Date.now(),
+                },
+                ringResult,
+            );
+            await refreshMessageList();
         }
     }
 }

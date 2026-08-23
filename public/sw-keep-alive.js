@@ -1580,8 +1580,6 @@ async function removeQueuedRequest(id) {
 
 // worker/sw-keep-alive.ts
 var SW_VERSION = "1.18.0";
-var CALL_BANNER_EXTRA_RINGS = 2;
-var CALL_BANNER_RING_GAP_MS = 1800;
 function isIncomingCallNotificationData(data) {
   return !!data && typeof data === "object" && data.sullyIncomingCall === true;
 }
@@ -2026,39 +2024,6 @@ async function saveIncomingActiveMessage(payload) {
       await saveContentToInbox(payload);
   }
 }
-sw.addEventListener("push", (event) => {
-  let data;
-  try {
-    data = event.data?.json();
-  } catch {
-    return;
-  }
-  const notification = data?.notification;
-  if (!notification || !isIncomingCallNotificationData(notification.data)) return;
-  if (notification.show === false) return;
-  const title = String(notification.title || "");
-  const body = String(notification.body || "");
-  const baseTag = String(notification.tag || `sully-call-${notification.data?.charId || ""}`);
-  event.waitUntil((async () => {
-    for (let i = 1; i <= CALL_BANNER_EXTRA_RINGS; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, CALL_BANNER_RING_GAP_MS));
-      try {
-        await sw.registration.showNotification(title, {
-          body,
-          icon: notification.icon || "./icons/icon-192.png",
-          badge: "./icons/icon-192.png",
-          // 每一下自己的 tag：同 tag 会被静默替换，那就一声都听不见了
-          tag: `${baseTag}-ring${i}`,
-          renotify: true,
-          data: { ...notification.data || {}, sullyCallRing: i }
-        });
-      } catch (error) {
-        console.warn("[amsg] \u6765\u7535\u8865\u5F39\u5931\u8D25", error);
-        return;
-      }
-    }
-  })());
-});
 sw.addEventListener("pushsubscriptionchange", (event) => {
   const e = event;
   traceSw("push-subscription-change", void 0, {
@@ -2096,8 +2061,7 @@ sw.addEventListener("notificationclick", (event) => {
   event.waitUntil((async () => {
     if (isCall) {
       try {
-        const rest = await sw.registration.getNotifications();
-        for (const n of rest) {
+        for (const n of await sw.registration.getNotifications()) {
           if (isIncomingCallNotificationData(n.data)) n.close();
         }
       } catch {
