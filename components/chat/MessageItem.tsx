@@ -1651,7 +1651,6 @@ const MessageItem = React.memo(({
     // --- SYSTEM MESSAGE RENDERING ---
     if (isSystem) {
         const isCallSummary = m.metadata?.source === 'call-end-popup';
-        const isMissedCall = m.metadata?.source === 'incoming-call-missed';
 
         // Guidebook end card — rendered as pretty card, not ugly system pill
         if (m.type === 'score_card') {
@@ -1807,46 +1806,6 @@ const MessageItem = React.memo(({
 
         // Clean up text: remove [System:] or [系统:] prefix for display
         const displayText = m.content.replace(/^\[(System|系统|System Log|系统记录)\s*[:：]?\s*/i, '').replace(/\]$/, '').trim();
-
-        // 未接来电 —— 跟「通了电话」那张卡同一套视觉语言，只是换成红色、没有那句寄语。
-        // 做成卡片而不是那条灰色小胶囊：错过一通电话跟「添加了纪念日」不是一个量级的事，
-        // 从聊天记录里划过去时得一眼看得见。
-        if (isMissedCall) {
-            const missedName = String(m.metadata?.characterName || charName);
-            const missedAvatar = m.metadata?.characterAvatar || charAvatar;
-            const wasVideo = m.metadata?.callMode === 'video';
-            const declined = m.metadata?.reason === 'declined';
-            const missedAt = new Date(m.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-            return (
-                <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
-                    {selectionMode && (
-                        <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
-                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
-                                {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
-                            </div>
-                        </div>
-                    )}
-                    <div className="w-full px-5 my-3" {...interactionProps}>
-                        <div className="rounded-3xl bg-gradient-to-br from-rose-50/90 to-slate-50 border border-rose-100 p-4 shadow-sm">
-                            <div className="flex items-center gap-3">
-                                {missedAvatar
-                                    ? <img src={missedAvatar} alt={missedName} className="h-9 w-9 rounded-full object-cover ring-1 ring-rose-100" loading="lazy" decoding="async" />
-                                    : <div className="h-9 w-9 rounded-full bg-rose-100 text-rose-500 flex items-center justify-center text-sm font-bold">{missedName.slice(0, 1)}</div>}
-                                <div className="min-w-0 flex-1">
-                                    <div className="text-sm font-medium text-rose-500/90 truncate">
-                                        {declined ? '已拒接' : '未接来电'} · {missedName}
-                                    </div>
-                                    <div className="text-xs text-slate-400 mt-0.5">{wasVideo ? '视频通话' : '语音通话'} · {missedAt}</div>
-                                </div>
-                                <svg className="w-5 h-5 text-rose-400 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                                    <path d="M21 15.46l-5.27-.61-2.52 2.52a15.05 15.05 0 01-6.59-6.59l2.53-2.53L8.54 3H3.03C2.45 13.18 10.82 21.55 21 20.97v-5.51z" />
-                                </svg>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            );
-        }
 
         if (isCallSummary) {
             const durationSec = Math.max(1, Number(m.metadata?.durationSec || 0));

@@ -167,3 +167,43 @@ describe('normalizeEmotionForApi — 送 MiniMax 前的情绪归一化', () => {
     expect(buildVoiceSettings({ voiceId: 'v' } as any)).not.toHaveProperty('emotion');
   });
 });
+
+describe('停顿封顶 —— 日常对话里超过 0.5s 就不像换气而像卡住', () => {
+  it('模型手写的超长停顿被削平到 0.5', () => {
+    expect(insertSpeechBreaks('等等<#1.0#>我想想')).toContain('<#0.50#>');
+    expect(insertSpeechBreaks('等等<#1.0#>我想想')).not.toContain('<#1.0#>');
+  });
+
+  it('0.5 以内的原样保留（只削超标的，不动正常值）', () => {
+    expect(insertSpeechBreaks('我没事<#0.30#>就是有点累')).toContain('<#0.30#>');
+  });
+
+  it('自动插的停顿本来就在范围内', () => {
+    const out = insertSpeechBreaks('行吧。那你继续。');
+    const times = [...out.matchAll(/<#([\d.]+)#>/g)].map(m => parseFloat(m[1]));
+    expect(times.length).toBeGreaterThan(0);
+    expect(Math.max(...times)).toBeLessThanOrEqual(0.5);
+  });
+
+  it('整段文本里不会有任何一个标记超过 0.5', () => {
+    const out = insertSpeechBreaks('等等<#2.0#>啊……我忘了<#0.9#>算了！真的假的？');
+    const times = [...out.matchAll(/<#([\d.]+)#>/g)].map(m => parseFloat(m[1]));
+    expect(Math.max(...times)).toBeLessThanOrEqual(0.5);
+  });
+});
+
+describe('语气声白名单 —— 补齐 MiniMax 官方列表', () => {
+  it('新补的 burps / sneezes 会被当成合法标签保留', () => {
+    expect(cleanTextForTts('(burps) 不好意思')).toContain('(burps)');
+    expect(cleanTextForTts('(sneezes) 冷死了')).toContain('(sneezes)');
+  });
+
+  it('拼错的仍然被删掉（gasp 不是官方写法，官方是 gasps）', () => {
+    expect(cleanTextForTts('(gasp) 你说真的')).not.toContain('gasp');
+    expect(cleanTextForTts('(gasps) 你说真的')).toContain('(gasps)');
+  });
+
+  it('(breath) 一直是合法的', () => {
+    expect(cleanTextForTts('(breath) 那我说了')).toContain('(breath)');
+  });
+});

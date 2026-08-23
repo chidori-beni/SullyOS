@@ -13,7 +13,7 @@ const DEFAULT_MODEL = 'speech-2.8-hd';
 export const VALID_INTERJECTION_TAGS = new Set([
   'chuckle', 'laughs', 'sighs', 'coughs', 'clear-throat', 'groans',
   'breath', 'pant', 'inhale', 'exhale', 'gasps', 'sniffs', 'snorts',
-  'lip-smacking', 'humming', 'hissing', 'emm',
+  'lip-smacking', 'humming', 'hissing', 'emm', 'burps', 'sneezes',
 ]);
 
 // LLM 可以写在 <语音 emotion="…"> 里的取值。其余/未知一律丢弃不传。
@@ -218,6 +218,12 @@ export const parseVoiceOutput = (raw: string): ParsedVoiceOutput => {
   return { display, speech, rawSpeech, emotion, hasVoiceTag: true, subtitle };
 };
 
+/**
+ * 停顿时长上限（秒）。日常对话里超过这个数就不像"换气"而像"卡住了"/"在演"，
+ * 所以不管是这里自动插的还是模型自己手写的，最后都削到这个值以内。
+ */
+const MAX_BREAK_SECONDS = 0.5;
+
 /** 为 TTS 文本插入 MiniMax 原生停顿标签 <#秒数#>，让语音有自然停顿
  * 停顿层次（从短到长）:
  *   ，、；  →  0.06s  微停（换气级）
@@ -244,11 +250,18 @@ export const insertSpeechBreaks = (text: string): string => {
     .replace(/([、；;：:])/g, '$1<#0.07#>')
     // 换行：段落间停顿
     .replace(/\n/g, '\n<#0.30#>')
-    // 去重：相邻多个停顿标签只保留最长的那个（封顶 0.6s）
+    // 去重：相邻多个停顿标签只保留最长的那个（封顶 MAX_BREAK_SECONDS）
     .replace(/(<#[\d.]+#>[\s]*){2,}/g, (match) => {
       const times = [...match.matchAll(/<#([\d.]+)#>/g)].map(m => parseFloat(m[1]));
-      const maxTime = Math.min(Math.max(...times), 0.6);
+      const maxTime = Math.min(Math.max(...times), MAX_BREAK_SECONDS);
       return `<#${maxTime.toFixed(2)}#>`;
+    })
+    // 单独一个的也要封顶：上面那条只处理"连着好几个"的情况，模型自己手写的
+    // <#1.0#> 会原样漏过去。日常对话里超过半秒的停顿听着就是"卡住了"，一律削平。
+    .replace(/<#\s*([\d.]+)\s*#>/g, (_m, sec: string) => {
+      const v = parseFloat(sec);
+      if (!Number.isFinite(v)) return '';
+      return `<#${Math.min(v, MAX_BREAK_SECONDS).toFixed(2)}#>`;
     })
     .trim();
 };
