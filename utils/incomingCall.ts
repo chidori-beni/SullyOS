@@ -130,6 +130,24 @@ export const clearPendingIncomingCall = (): void => { pending = null; };
  */
 export const STALE_CALL_MS = 3 * 60 * 1000;
 
+/**
+ * 判断待接来电是否已经老到不应该再唤醒铃声。
+ *
+ * 这个判定不能只放在 requestIncomingCall：离线补收和 React 组件重挂载之间
+ * 可能隔着几分钟，模块级 pending 仍然会被 Overlay 看到。把纯判定单独导出，
+ * 让界面在真正 startRingtone 前再守一遍门，也方便单测钉住这次实机 bug。
+ */
+export const isStaleIncomingCall = (
+  ringAt: number,
+  now: number = Date.now(),
+  staleMs: number = STALE_CALL_MS,
+): boolean => (
+  Number.isFinite(ringAt)
+  && Number.isFinite(now)
+  && staleMs >= 0
+  && now - ringAt > staleMs
+);
+
 export type IncomingCallResult =
   /** 正在响 */
   | 'ringing'

@@ -137,3 +137,11 @@ export const __resetRingtoneForTest = (): void => {
   audio = null;
   primed = false;
 };
+
+// PWA/WebView 可能在页面切换或整页退出时来不及跑 React effect cleanup。
+// 主动把单例声音停掉，避免旧页面的 Audio 在用户重新进入 APP 后继续响到看门狗。
+if (typeof window !== 'undefined') {
+  const stopOnPageExit = () => stopRingtone();
+  window.addEventListener('pagehide', stopOnPageExit);
+  window.addEventListener('beforeunload', stopOnPageExit);
+}

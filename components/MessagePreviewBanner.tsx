@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { MESSAGE_PREVIEW_EVENT, MessagePreviewDetail } from '../utils/messagePreview';
+import { useOS } from '../context/OSContext';
+import { sanitizeMessageBannerCss } from '../utils/messageBannerCss';
 
 interface VisiblePreview extends Required<Pick<MessagePreviewDetail, 'charName' | 'body'>> {
     charId?: string;
@@ -19,6 +21,7 @@ const formatTime = (timestamp: number) => {
  * CSS 变量是刻意保留的主题钩子，后续可以接 Sully 的外观设置而不改消息逻辑。
  */
 const MessagePreviewBanner: React.FC = () => {
+    const { theme } = useOS();
     const [preview, setPreview] = useState<VisiblePreview | null>(null);
     const [shown, setShown] = useState(false);
     const sequenceRef = useRef(0);
@@ -59,12 +62,15 @@ const MessagePreviewBanner: React.FC = () => {
         setShown(false);
     };
 
+    const customCss = theme.messageBannerCustomCss?.trim() || '';
+
     return (
         <div
-            className="sully-message-preview-container"
+            className={`sully-message-preview-container ios-notification-container${theme.darkMode ? ' dark-mode' : ''}`}
         >
-            <style>{`
+            <style>{` 
                 .sully-message-preview-container {
+                    --nuo-safe-top: var(--safe-top, env(safe-area-inset-top, 0px));
                     position: fixed;
                     top: 10px;
                     left: 50%;
@@ -73,15 +79,15 @@ const MessagePreviewBanner: React.FC = () => {
                     max-width: 380px;
                     z-index: 70;
                     pointer-events: none;
-                    padding-top: max(20px, var(--safe-top, env(safe-area-inset-top, 0px)));
+                    padding-top: var(--nuo-notif-banner-offset-top, max(20px, var(--safe-top, env(safe-area-inset-top, 0px))));
                 }
                 .sully-message-preview-card {
                     position: relative;
                     display: flex;
                     align-items: center;
-                    gap: 14px;
+                    gap: var(--nuo-notif-gap, 14px);
                     width: 100%;
-                    padding: 14px;
+                    padding: var(--nuo-notif-padding, 14px);
                     overflow: hidden;
                     cursor: pointer;
                     pointer-events: auto;
@@ -89,21 +95,34 @@ const MessagePreviewBanner: React.FC = () => {
                     -webkit-user-select: none;
                     touch-action: pan-y;
                     color: #1c1c1e;
-                    background: var(--sully-msg-bg, rgba(255, 255, 255, .72));
-                    backdrop-filter: blur(var(--sully-msg-blur, 25px)) saturate(var(--sully-msg-saturate, 180%));
-                    -webkit-backdrop-filter: blur(var(--sully-msg-blur, 25px)) saturate(var(--sully-msg-saturate, 180%));
-                    border: var(--sully-msg-border, 1px solid rgba(255, 255, 255, .48));
-                    border-radius: var(--sully-msg-radius, 18px);
-                    box-shadow: var(--sully-msg-shadow, 0 4px 30px rgba(0, 0, 0, .12));
-                    animation: sullyMessagePreviewIn .5s cubic-bezier(.32, .72, 0, 1);
+                    background: var(--nuo-notif-bg, var(--sully-msg-bg, rgba(255, 255, 255, .72)));
+                    background-image: var(--nuo-notif-bg-image, none);
+                    background-size: cover;
+                    background-position: center;
+                    backdrop-filter: var(--nuo-notif-backdrop-filter, blur(var(--sully-msg-blur, 25px)) saturate(var(--sully-msg-saturate, 180%)));
+                    -webkit-backdrop-filter: var(--nuo-notif-backdrop-filter, blur(var(--sully-msg-blur, 25px)) saturate(var(--sully-msg-saturate, 180%)));
+                    filter: var(--nuo-notif-filter, none);
+                    border: var(--nuo-notif-border, var(--sully-msg-border, 1px solid rgba(255, 255, 255, .48)));
+                    border-image: var(--nuo-notif-border-image, none);
+                    outline: var(--nuo-notif-outline, none);
+                    outline-offset: var(--nuo-notif-outline-offset, 0);
+                    border-radius: var(--nuo-notif-radius, var(--sully-msg-radius, 18px));
+                    box-shadow: var(--nuo-notif-shadow, var(--sully-msg-shadow, 0 4px 30px rgba(0, 0, 0, .12)));
+                    margin-bottom: 10px;
+                    font-family: var(--nuo-notif-font-family, inherit);
+                    animation: var(--nuo-notif-enter-name, sullyMessagePreviewIn) var(--nuo-notif-enter-duration, .5s) var(--nuo-notif-enter-easing, cubic-bezier(.32, .72, 0, 1));
                 }
                 .sully-message-preview-card:active { background: rgba(255, 255, 255, .86); }
+                .nuo-notif-overlay,
+                .nuo-notif-deco { position: absolute; pointer-events: none; }
                 .sully-message-preview-avatar-wrap {
                     position: relative;
-                    width: 44px;
-                    height: 44px;
-                    flex: 0 0 44px;
+                    width: var(--nuo-notif-avatar-size, 44px);
+                    height: var(--nuo-notif-avatar-size, 44px);
+                    flex: 0 0 var(--nuo-notif-avatar-size, 44px);
                     overflow: visible;
+                    z-index: 10;
+                    pointer-events: none;
                 }
                 .sully-message-preview-avatar,
                 .sully-message-preview-avatar-fallback {
@@ -113,20 +132,39 @@ const MessagePreviewBanner: React.FC = () => {
                     width: 100%;
                     height: 100%;
                     overflow: hidden;
-                    border-radius: 50%;
+                    border-radius: var(--nuo-notif-avatar-radius, 50%);
                     object-fit: cover;
                     background: linear-gradient(135deg, #a8edea, #fed6e3);
                     color: rgba(30, 40, 50, .78);
                     font-size: 18px;
                     font-weight: 700;
-                    box-shadow: 0 2px 8px rgba(0, 0, 0, .15);
+                    box-shadow: var(--nuo-notif-avatar-shadow, 0 2px 8px rgba(0, 0, 0, .15));
+                    pointer-events: none;
                 }
                 .sully-message-preview-avatar-ring {
                     position: absolute;
-                    inset: -3px;
-                    border: 2px solid rgba(255, 255, 255, .55);
-                    border-radius: 50%;
+                    inset: calc(0px - var(--nuo-notif-avatar-ring-offset, 3px));
+                    border-width: var(--nuo-notif-avatar-ring-width, 2px);
+                    border-style: var(--nuo-notif-avatar-ring-style, solid);
+                    border-color: var(--nuo-notif-avatar-ring-color, rgba(255, 255, 255, .55));
+                    background: var(--nuo-notif-avatar-ring-bg, transparent);
+                    border-radius: var(--nuo-notif-avatar-radius, 50%);
                     pointer-events: none;
+                    box-sizing: border-box;
+                }
+                .banner-avatar-status-dot {
+                    position: absolute;
+                    display: var(--nuo-notif-status-dot-display, none);
+                    width: var(--nuo-notif-status-dot-size, 10px);
+                    height: var(--nuo-notif-status-dot-size, 10px);
+                    right: var(--nuo-notif-status-dot-right, -1px);
+                    bottom: var(--nuo-notif-status-dot-bottom, -1px);
+                    border-radius: 50%;
+                    background: var(--nuo-notif-status-dot-color, #34c759);
+                    border: var(--nuo-notif-status-dot-border, 1.5px solid #fff);
+                    box-shadow: var(--nuo-notif-status-dot-shadow, 0 0 6px rgba(52, 199, 89, .6));
+                    pointer-events: none;
+                    box-sizing: border-box;
                 }
                 .sully-message-preview-content {
                     display: flex;
@@ -135,6 +173,9 @@ const MessagePreviewBanner: React.FC = () => {
                     flex-direction: column;
                     justify-content: center;
                     gap: 3px;
+                    pointer-events: none;
+                    position: relative;
+                    z-index: 10;
                 }
                 .sully-message-preview-swap { animation: sullyMessagePreviewSwap .24s ease-out; }
                 .sully-message-preview-header {
@@ -147,7 +188,7 @@ const MessagePreviewBanner: React.FC = () => {
                 .sully-message-preview-name {
                     max-width: 70%;
                     overflow: hidden;
-                    color: var(--sully-msg-title-color, #000);
+                    color: var(--nuo-notif-title-color, var(--sully-msg-title-color, #000));
                     font-size: 15px;
                     font-weight: 600;
                     opacity: .9;
@@ -156,7 +197,7 @@ const MessagePreviewBanner: React.FC = () => {
                 }
                 .sully-message-preview-time {
                     flex: 0 0 auto;
-                    color: var(--sully-msg-time-color, #666);
+                    color: var(--nuo-notif-time-color, var(--sully-msg-time-color, #666));
                     font-size: 12px;
                     opacity: .8;
                     white-space: nowrap;
@@ -164,7 +205,7 @@ const MessagePreviewBanner: React.FC = () => {
                 .sully-message-preview-body {
                     display: -webkit-box;
                     overflow: hidden;
-                    color: var(--sully-msg-body-color, #333);
+                    color: var(--nuo-notif-message-color, var(--sully-msg-body-color, #333));
                     font-size: 14px;
                     line-height: 1.35;
                     opacity: .86;
@@ -187,27 +228,32 @@ const MessagePreviewBanner: React.FC = () => {
                     .sully-message-preview-body { color: var(--sully-msg-body-color, #ddd); }
                 }
             `}</style>
-            <div className="sully-message-preview-card" role="status" aria-live="polite" onClick={openChat}>
-                <div className="sully-message-preview-avatar-wrap" aria-hidden="true">
+            {/* 自定义样式放在守护样式之后，糯叽机原 CSS 无需额外补 !important 也能覆盖默认值。 */}
+            {customCss && <style>{sanitizeMessageBannerCss(customCss)}</style>}
+            <div className="sully-message-preview-card ios-notification-banner" role="status" aria-live="polite" onClick={openChat}>
+                <span className="nuo-notif-overlay" aria-hidden="true" />
+                {[1, 2, 3, 4, 5, 6].map((index) => <span key={index} className={`nuo-notif-deco nuo-notif-deco-${index}`} aria-hidden="true" />)}
+                <div className="sully-message-preview-avatar-wrap banner-avatar-wrap" aria-hidden="true">
                     {preview.avatarUrl ? (
                         <img
-                            className="sully-message-preview-avatar"
+                            className="sully-message-preview-avatar banner-avatar"
                             src={preview.avatarUrl}
                             alt=""
                             onError={(event) => { event.currentTarget.style.display = 'none'; }}
                         />
                     ) : (
-                        <div className="sully-message-preview-avatar-fallback">{preview.charName.slice(0, 1)}</div>
+                        <div className="sully-message-preview-avatar-fallback banner-avatar">{preview.charName.slice(0, 1)}</div>
                     )}
-                    <span className="sully-message-preview-avatar-ring" />
+                    <span className="sully-message-preview-avatar-ring banner-avatar-ring" />
+                    <span className="banner-avatar-status-dot" />
                 </div>
-                <div className="sully-message-preview-content" key={preview.sequence}>
+                <div className="sully-message-preview-content banner-content-wrapper" key={preview.sequence}>
                     <div className="sully-message-preview-swap">
-                        <div className="sully-message-preview-header">
-                            <div className="sully-message-preview-name">{preview.charName}</div>
-                            <div className="sully-message-preview-time">{formatTime(preview.timestamp)}</div>
+                        <div className="sully-message-preview-header banner-header">
+                            <div className="sully-message-preview-name banner-title">{preview.charName}</div>
+                            <div className="sully-message-preview-time banner-time">{formatTime(preview.timestamp)}</div>
                         </div>
-                        <div className="sully-message-preview-body">{preview.body}</div>
+                        <div className="sully-message-preview-body banner-message">{preview.body}</div>
                     </div>
                 </div>
             </div>

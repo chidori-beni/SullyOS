@@ -174,6 +174,8 @@ export interface OSTheme {
   /** 聊天「白框」自定义 CSS：作用于 .sully-chat-root 下的顶栏、输入栏与消息布局钩子。
    *  可换色 / 贴图 / 改外形 / 挪位；稳定选择器清单见 ChromeCssEditor。 */
   chatChromeCustomCss?: string;
+  /** 内部消息横幅自定义 CSS；兼容糯叽机 .ios-notification-* / .banner-* 选择器与 --nuo-notif-* 变量。 */
+  messageBannerCustomCss?: string;
   /** 全局默认「白框提示音」：某角色未单独设提示音时回落到这里。src 同角色版（内置 key / 音频直链 / data:audio）。 */
   chatSound?: { src: string; volume?: number };
   /** 隐藏顶栏的情绪 buff 栏。 */

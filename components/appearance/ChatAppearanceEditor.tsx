@@ -3,6 +3,7 @@ import { AppID, OSTheme, ChatFineTuneFields } from '../../types';
 import WhiteboxSoundEditor from '../chat/WhiteboxSoundEditor';
 import { WhiteboxSound } from '../../utils/whiteboxSound';
 import ChatFineTunePanel from '../chat/ChatFineTunePanel';
+import MessageBannerCssEditor from './MessageBannerCssEditor';
 import { FadersHorizontal } from '@phosphor-icons/react';
 
 type Props = {
@@ -785,6 +786,19 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                     showBind={false}
                     onChangeSound={(s) => updateTheme({ chatSound: s || undefined })}
                     hint={<>🔔 <b>全局默认</b>：某角色未单独设提示音时，收到 ta 新发的最后一条消息就响这个。角色自己设的会盖过它。</>}
+                />
+            </section>
+
+            <section className={groupClass}>
+                <div className="mb-3">
+                    <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400">内部消息横幅 · CSS</h2>
+                    <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
+                        只有 APP 在前台、但当前不在聊天页时使用。可以直接导入糯叽机的通知栏 CSS，保存后实时生效；前台聊天页不显示横幅，后台系统通知也不受这里影响。
+                    </p>
+                </div>
+                <MessageBannerCssEditor
+                    value={theme.messageBannerCustomCss || ''}
+                    onChange={(css) => updateTheme({ messageBannerCustomCss: css })}
                 />
             </section>
 

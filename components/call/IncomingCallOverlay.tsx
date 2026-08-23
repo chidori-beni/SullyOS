@@ -9,6 +9,7 @@ import {
   INCOMING_CALL_EVENT,
   clearPendingIncomingCall,
   getPendingIncomingCall,
+  isStaleIncomingCall,
   type PendingIncomingCall,
 } from '../../utils/incomingCall';
 
@@ -97,6 +98,13 @@ const IncomingCallOverlay: React.FC = () => {
     if (!call) return;
     let disposed = false;
     const onTimeout = () => { void settle('missed'); };
+
+    // Overlay 可能在 APP 重进、锁屏切换或离线补收后重新挂载。pending 是模块级
+    // 单例，不能假设它一定是刚刚到达的电话；过期来电只记未接，绝不能重新响铃。
+    if (isStaleIncomingCall(call.ringAt)) {
+      void settle('missed');
+      return () => { disposed = true; stopRingtone(); };
+    }
 
     const begin = () => {
       if (disposed || settledRef.current) return;

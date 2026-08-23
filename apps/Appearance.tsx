@@ -523,7 +523,10 @@ const Appearance: React.FC = () => {
   // 兼作救援：单角色的坏 CSS 把聊天界面整崩、进不去该角色设置时，从这里一键全清即可恢复。
   const resetAllChromeCss = () => {
     let n = 0;
-    if (theme.chatChromeCustomCss) { updateTheme({ chatChromeCustomCss: '' }); n++; }
+    const themePatch: Partial<OSTheme> = {};
+    if (theme.chatChromeCustomCss) { themePatch.chatChromeCustomCss = ''; n++; }
+    if (theme.messageBannerCustomCss) { themePatch.messageBannerCustomCss = ''; n++; }
+    if (Object.keys(themePatch).length > 0) void updateTheme(themePatch);
     (characters || []).forEach((c: any) => {
       if (c?.chromeCustomCss) { updateCharacter(c.id, { chromeCustomCss: '' } as any); n++; }
     });
