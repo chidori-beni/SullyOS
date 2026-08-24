@@ -49,6 +49,7 @@ let watchdog: ReturnType<typeof setTimeout> | null = null;
 let vibrateTimer: ReturnType<typeof setInterval> | null = null;
 let primed = false;
 let ringtoneChannel: BroadcastChannel | null = null;
+let audioEpoch = 0;
 
 /**
  * 这条专项日志故意复用 lifecycle 分类：用户不需要再记一个新开关。
@@ -72,9 +73,14 @@ const stopDomRingtoneAudios = (): void => {
       const src = candidate.currentSrc || candidate.src || '';
       if (!src.includes('incoming-call.mp3')) return;
       try {
+        candidate.muted = true;
         candidate.pause();
         candidate.currentTime = 0;
         candidate.loop = false;
+        // iOS WebKit 偶尔会让 detached/hidden audio 在 pause() 后继续持有底层播放源。
+        // 移除 src + load() 才会真正切断这条旧媒体管线。
+        candidate.removeAttribute('src');
+        candidate.load();
       } catch { /* 某些 WebView 对已销毁元素会抛异常 */ }
     });
   } catch { /* querySelectorAll 不可用时只停单例 */ }
@@ -115,6 +121,11 @@ const getAudio = (): HTMLAudioElement | null => {
     audio = new Audio(RINGTONE_URL);
     audio.preload = 'auto';
     (audio as any).playsInline = true;
+  } else if (!(audio.currentSrc || audio.src).includes('incoming-call.mp3')) {
+    // stopRingtone 会清掉旧 src 来切断 iOS 的底层媒体管线；同一个元素仍然保留，
+    // 这样 iOS 按元素授予的播放权限不会因为每次切后台都换 Audio 而丢失。
+    audio.src = RINGTONE_URL;
+    audio.load();
   }
   return audio;
 };
@@ -141,6 +152,7 @@ export const primeRingtone = (): void => {
   if (!el.paused) { primed = true; return; } // 已经在响，本身就是解锁状态
   primed = true;
   el.muted = true;
+  const primeEpoch = audioEpoch;
   logRingtone('prime-start', {
     pausedBefore: el.paused,
     currentTimeBefore: el.currentTime,
@@ -149,11 +161,15 @@ export const primeRingtone = (): void => {
   // 再解除静音。旧代码在 catch 里只做了 unmuted，iOS 可能让一个“静音预播放”
   // 在之后变成可听见的声音；这正好符合“没有 start 日志、没有来电界面但 currentTime 已前进”的现象。
   const finishPrime = (event: string, error?: unknown) => {
+    const stale = audio !== el || primeEpoch !== audioEpoch;
     try { el.pause(); el.currentTime = 0; } catch { /* 忽略 */ }
-    el.muted = false;
+    // stopRingtone 可能在 play() promise settle 前已经销毁了这个元素。旧 promise
+    // 只能继续保持静音，绝不能把一个已脱离单例的旧元素重新 unmute。
+    if (!stale) el.muted = false;
     logRingtone(event, {
       currentTimeAfter: el.currentTime,
       pausedAfter: el.paused,
+      stale,
       ...(error && typeof error === 'object'
         ? { name: (error as { name?: unknown }).name, message: (error as { message?: unknown }).message }
         : {}),
@@ -219,23 +235,44 @@ export const stopRingtone = (): void => {
     hasAudio: !!audio,
     pausedBefore: audio?.paused,
     currentTimeBefore: audio?.currentTime,
+    loopBefore: audio?.loop,
+    readyStateBefore: audio?.readyState,
+    networkStateBefore: audio?.networkState,
+    srcBefore: audio?.currentSrc || audio?.src,
   });
   clearTimers();
   try { navigator.vibrate?.(0); } catch { /* 不支持就算了 */ }
   const el = audio;
   if (!el) return;
   try {
+    // `pause()` + `currentTime = 0` 在 iOS PWA 上不是绝对的硬停：旧 document
+    // 可能还保留一个 detached media pipeline。静音、暂停、清源、load 四步一起做，
+    // 把底层媒体管线切断，同时保留元素本身以免丢掉 iOS 的播放许可。
+    el.muted = true;
     el.pause();
     el.loop = false;
     el.currentTime = 0;
+    el.removeAttribute('src');
+    el.load();
   } catch { /* 忽略 */ }
+  // 不丢掉 Audio 元素本身：iOS 的播放许可有时按元素记录。只清掉 src，
+  // 下一次 getAudio() 会把同一个元素重新接回铃声文件。
+  audioEpoch += 1;
 };
 
 /** 只给测试用：把单例清干净。 */
 export const __resetRingtoneForTest = (): void => {
   clearTimers();
+  if (audio) {
+    try {
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+    } catch { /* ignore */ }
+  }
   audio = null;
   primed = false;
+  audioEpoch += 1;
 };
 
 // PWA/WebView 可能在页面切换或整页退出时来不及跑 React effect cleanup。
