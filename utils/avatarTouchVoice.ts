@@ -5,6 +5,7 @@ import type {
   CompanionTouchReaction,
 } from '../types';
 import { synthesizeSpeechDetailed } from './ttsRouter';
+import { resolveSpeechEmotion } from './voiceEmotionPolicy';
 import type { AvatarTouchReactionPack, AvatarTouchZone } from './avatarTouch';
 import {
   deleteCompanionVoiceBlob,
@@ -35,7 +36,8 @@ export const generateCompanionStartupVoice = async (options: {
       options.text,
       options.character,
       options.apiConfig,
-      { emotion: options.performance?.emotion, languageBoost: options.voiceLanguage || undefined },
+      // performance.emotion 是立绘表情，不是语音情绪——不能直接当 TTS emotion（见 voiceEmotionPolicy）。
+      { emotion: resolveSpeechEmotion(), languageBoost: options.voiceLanguage || undefined },
     );
     playableUrl = result.url;
     if (!result.blob) throw new Error('语音服务未返回可持久保存的音频');
@@ -115,7 +117,8 @@ export const generateAvatarTouchVoicePack = async (options: {
           spokenText,
           options.character,
           options.apiConfig,
-          { emotion: task.reaction.performance?.emotion, languageBoost: options.voiceLanguage || undefined },
+          // 同上：摸头反应的立绘表情不参与语音合成。
+          { emotion: resolveSpeechEmotion(), languageBoost: options.voiceLanguage || undefined },
         );
         playableUrl = result.url;
         if (!result.blob) throw new Error('语音服务未返回可持久保存的音频');

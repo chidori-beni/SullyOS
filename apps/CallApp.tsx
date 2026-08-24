@@ -6,6 +6,7 @@ import { minimaxFetch } from '../utils/minimaxEndpoint';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { hashTtsParams, getCachedTts, saveCachedTts } from '../utils/ttsCache';
 import { cleanTextForTts, insertSpeechBreaks, convertHexAudioToBlob, fetchRemoteAudioBlob, VALID_EMOTIONS, normalizeEmotionForApi, stripEmotionTags, VOICE_ACTING_GUIDE, cleanVoiceMarkupForDisplay } from '../utils/minimaxTts';
+import { resolveSpeechEmotion } from '../utils/voiceEmotionPolicy';
 import { normalizeVoiceTags } from '../utils/sanitize';
 import { FISH_VOICE_ACTING_GUIDE, synthesizeSpeechFishDetailed, resolveFishAudioApiKey, cleanTextForTtsFish, stripFishMarkupForDisplay } from '../utils/fishAudioTts';
 import { resolveTtsProvider, getTtsProvider, getVoicePromptOverride } from '../utils/ttsProvider';
@@ -257,15 +258,17 @@ const prepareCallAssistantReply = (reply: ParsedCallReply, enhanceBasicTimeline 
   const performanceText = voiceTag.display || voiceTag.voiceText || text;
   const inferredTimeline = inferAvatarPerformanceTimelineFromText(performanceText);
   const inferredPerformance = inferredTimeline[0]?.direction || inferAvatarPerformanceFromText(performanceText);
-  // Voice emotion must be derivable as soon as the final line exists so TTS can run
-  // in parallel with the secondary action director. Explicit voice/leading tags win;
-  // otherwise use the deterministic local text inference.
-  const speechEmotion = voiceTag.emotion || leadingEmotion || inferredPerformance.emotion;
+  // 立绘 / 模型表情：照旧吃本地文本推断 + 显式标签。脸该笑就是要笑，这条不动。
+  const avatarEmotion = voiceTag.emotion || leadingEmotion || inferredPerformance.emotion;
   const fallbackPerformance = {
     ...inferredPerformance,
-    emotion: normalizeAvatarEmotion(speechEmotion || inferredPerformance.emotion),
+    emotion: normalizeAvatarEmotion(avatarEmotion),
   };
-  const performance = resolveAvatarPerformance(reply.performance || fallbackPerformance, speechEmotion);
+  const performance = resolveAvatarPerformance(reply.performance || fallbackPerformance, avatarEmotion);
+  // 语音情绪：只认显式写出来的标签，**绝不拿上面那个立绘表情顶替**。
+  // 以前这里是 `… || inferredPerformance.emotion`，而「喂」在推断表里就是 happy ——
+  // 于是每通电话的第一句都被打上 happy 送进 TTS，一开口就用力上扬。详见 voiceEmotionPolicy。
+  const speechEmotion = resolveSpeechEmotion(voiceTag.emotion || leadingEmotion);
   // 演出时间轴：LLM 给了多条指令就全部保留（按正文位置比例调度）；
   // 一条没给时退化为"开头一条"的单指令时间轴。
   let performanceCues: AvatarPerformanceCue[];
@@ -2329,9 +2332,10 @@ ${sentencePlan}`;
     setErrorMessage('');
     try {
       const voiceTag = extractVoiceTag(bubble.text);
+      // 同上：`bubble.performance.emotion` 是立绘表情，不是嗓子里的情绪，不能拿来当 TTS emotion。
       const { url, traceIds } = await takeOrSynthesizeCallAudio(
         bubble.text,
-        voiceTag.emotion || bubble.performance?.emotion,
+        resolveSpeechEmotion(voiceTag.emotion),
       );
       if (!url) throw new Error('未获得可播放音频');
       trackBlobUrl(url);
@@ -2880,12 +2884,25 @@ ${sentencePlan}`;
     if (!editingBubble) return;
     const next = editingText.trim();
     if (!next) return addToast('内容不能为空', 'error');
-    setBubbles(prev => prev.map(b => b.id === editingBubble.id ? { ...b, text: next } : b));
+    const isAssistant = editingBubble.role === 'assistant';
+    // 改了角色的台词就必须把这条已经合成好的语音丢掉：留着的话点「重播语音」放的还是旧音频，
+    // 改词等于白改。清掉之后按钮会变回「播放语音」，点一下按新文本重新合成。
+    setBubbles(prev => prev.map(b => b.id === editingBubble.id
+      ? { ...b, text: next, ...(isAssistant ? { audioUrl: undefined } : {}) }
+      : b));
+    if (isAssistant) {
+      setCallRecords(previous => previous.map(record => ({
+        ...record,
+        transcript: record.transcript.map(item => item.id === editingBubble.id
+          ? { ...item, text: next, audioUrl: undefined }
+          : item),
+      })));
+    }
     if (editingBubble.dbId) await DB.updateMessage(editingBubble.dbId, next);
     setEditingBubble(null);
     setEditingText('');
-    addToast('已更新发言', 'success');
-    trackEvent('修改自己的通话发言');
+    addToast(isAssistant ? '已改词，点「播放语音」按新文本重新合成' : '已更新发言', 'success');
+    trackEvent(isAssistant ? '修改角色的通话台词' : '修改自己的通话发言');
   };
   const handleRerollAssistant = async (bubble: CallBubble) => {
     if (!selectedChar || bubble.role !== 'assistant') return;
@@ -4144,6 +4161,9 @@ ${sentencePlan}`;
                   {generatingAudioBubbleId === bubble.id ? '生成语音…' : bubble.audioUrl ? '重播语音' : '播放语音'}
                 </button>
                 {bubble.audioUrl && <button onClick={() => handleDownloadCallAudio(bubble.audioUrl, bubble.timestamp)} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15">下载</button>}
+                {/* 改词：长按角色气泡是「收藏语音」，所以编辑得单独给个入口。
+                    改完会丢掉已合成的音频，点「播放语音」按新文本重新合成。 */}
+                <button onClick={() => startEditBubble(bubble)} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15">改词</button>
                 {isLatest && <button onClick={() => handleRerollAssistant(bubble)} disabled={!!rerollingBubbleId} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15 disabled:opacity-40">{rerollingBubbleId === bubble.id ? '换一种说法…' : '换个说法'}</button>}
               </div>
             )}
@@ -4349,8 +4369,17 @@ ${sentencePlan}`;
       {editingBubble && (
         <div className="absolute inset-0 bg-black/60 flex items-end z-50">
           <div className={`w-full border-t border-white/10 p-5 space-y-3 ${lightTheme ? 'bg-[#f6f4fc]' : 'bg-[#120c22]'}`}>
-            <div className="text-sm text-white/70">改一下刚才说的话</div>
+            <div className="text-sm text-white/70">
+              {editingBubble.role === 'assistant' ? `改一下${selectedChar?.name || '对方'}这句台词` : '改一下刚才说的话'}
+            </div>
             <textarea value={editingText} onChange={(e) => setEditingText(e.target.value)} className="w-full h-24 bg-black/30 rounded-xl p-3 text-sm outline-none resize-none placeholder:text-white/30" placeholder="重新措辞……" autoFocus />
+            {editingBubble.role === 'assistant' && (
+              <p className="text-[11px] text-white/40 leading-relaxed">
+                改完这条已经合成的语音会被丢掉，点「播放语音」才按新文本重新合成。
+                想去掉念出来很怪的标记（<code className="text-white/55">{'<#0.5#>'}</code>、
+                <code className="text-white/55">(sighs)</code> 之类）在这里直接删掉即可。
+              </p>
+            )}
             <div className="flex gap-2">
               <button onClick={() => setEditingBubble(null)} className="flex-1 py-2.5 rounded-xl border border-white/15 text-white/70 transition active:scale-[0.97]">算了</button>
               <button onClick={saveEditedBubble} className="keep-white flex-1 py-2.5 rounded-xl font-medium text-white transition active:scale-[0.97]" style={{ backgroundColor: accentColor }}>就这样</button>
