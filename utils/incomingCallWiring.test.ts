@@ -54,6 +54,65 @@ describe('铃声必须活在 React 之外', () => {
   });
 });
 
+describe('预解锁绝不能碰真铃声（幽灵铃声根因）', () => {
+  const ringtone = read('./callRingtone.ts');
+
+  /**
+   * 8/24 折磨了十几轮的那个 bug：没有来电界面、没有 `start` 日志，却听得见铃声。
+   *
+   * 根因是 `primeRingtone()` 拿**真铃声 mp3** 做静音预播放。iOS 上 `volume` 对
+   * HTMLMediaElement 直接无效，`muted` 在「同一个手势里刚设 true 就 play()」这条路上
+   * 会漏出可听见的开头。响多久完全取决于 play() 的 promise 什么时候 settle：
+   * 快则 1 秒、慢则十几秒、不 settle 就整首 mp3 播完自己停——用户报的三种时长全对上。
+   *
+   * 修法不是再加兜底，是把「有声音可漏」这件事消掉：预解锁只播内联静音 WAV。
+   * 解锁是**按元素**记的，跟播哪个 URL 无关，所以完全不需要碰铃声文件。
+   */
+  it('primeRingtone 播的是内联静音 WAV，不是 RINGTONE_URL', () => {
+    expect(ringtone).toContain('SILENT_PRIME_URL');
+    expect(ringtone).toContain('data:audio/wav;base64,');
+    const primeBody = ringtone.slice(
+      ringtone.indexOf('export const primeRingtone'),
+      ringtone.indexOf('export const isRinging'),
+    );
+    expect(primeBody).toContain('el.src = SILENT_PRIME_URL');
+    expect(primeBody).toContain('el.play()');
+    // 关键断言：从「开始预解锁」到「装好回调」这一段**准备代码**里绝不能出现铃声 URL。
+    // 元素身上挂的必须是静音源，play() 才不可能漏出铃声。
+    // （finishPrime 里把 RINGTONE_URL 接回来是对的——那是解锁完成之后的事。）
+    const setup = primeBody.slice(
+      primeBody.indexOf('priming = true;'),
+      primeBody.indexOf('let settled = false;'),
+    );
+    expect(setup.length).toBeGreaterThan(0);
+    expect(setup).not.toContain('RINGTONE_URL');
+  });
+
+  it('预解锁期间 isRinging() 必须返回 false', () => {
+    // 否则刚好这时到达的真来电会被 Overlay 判成「已经在响」而直接 return：
+    // 界面亮着、没有声音、也没有看门狗，那通电话会永远挂在那儿。
+    expect(ringtone).toContain('let priming = false;');
+    expect(ringtone).toContain('!priming && !!audio && !audio.paused');
+  });
+
+  it('预解锁的迟到 promise 不许 pause 已经开始响的真来电', () => {
+    // startRingtone 推进 audioEpoch；迟到的 finishPrime 认出自己过期后必须整个跳过，
+    // 一个字都不能碰那个元素。旧代码在这里无条件 pause()，会把真铃声掐掉。
+    const startBody = ringtone.slice(ringtone.indexOf('export const startRingtone'));
+    expect(startBody.slice(0, startBody.indexOf('clearTimers();'))).toContain('audioEpoch += 1;');
+    const primeBody = ringtone.slice(
+      ringtone.indexOf('export const primeRingtone'),
+      ringtone.indexOf('export const isRinging'),
+    );
+    expect(primeBody.indexOf('if (stale)')).toBeLessThan(primeBody.indexOf('el.pause()'));
+  });
+
+  it('预解锁挂了兜底定时器，priming 不会永远悬着', () => {
+    expect(ringtone).toContain('PRIME_GUARD_MS');
+    expect(ringtone).toContain("finishPrime('prime-guard-timeout')");
+  });
+});
+
 describe('来电界面必须挂在锁屏那棵树上', () => {
   const shell = read('../components/PhoneShell.tsx');
 

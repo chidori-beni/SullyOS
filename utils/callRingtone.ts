@@ -28,12 +28,54 @@ import { appendDevDebugLog } from './devDebug';
 /** 响多久没人接算未接。真手机是 30 秒左右，照抄。 */
 export const RING_TIMEOUT_MS = 30_000;
 
+/**
+ * 预解锁最多允许"悬着"多久。
+ *
+ * 播的是内联静音 data URI，正常情况下 play() 的 promise 会立刻 settle。这个兜底是为了
+ * 防 promise 永远不 settle 的极端情况——那会让 `priming` 一直是 true，真来电就永远
+ * 被判成"已经在响"。宁可提前收工：解锁在 play() 被调用那一刻就已经拿到了。
+ */
+const PRIME_GUARD_MS = 1_000;
+
 /** 震动节奏（安卓有效；iOS Safari 直接忽略 navigator.vibrate，不是 bug）。 */
 const VIBRATE_PATTERN = [400, 200, 400, 1400];
 const VIBRATE_INTERVAL_MS = 2400;
 
 const RINGTONE_URL = (((import.meta as any).env?.BASE_URL ?? '/') + 'sounds/incoming-call.mp3')
   .replace(/([^:])\/\/+/g, '$1/');
+
+/**
+ * 预解锁**专用**的音源：0.05 秒、8kHz 单声道、全零采样的内联 WAV。
+ *
+ * ## 这就是「幽灵铃声」的根因
+ *
+ * 旧版 `primeRingtone()` 是拿**真铃声 mp3** 去做静音预播放的（`el.muted = true` 后
+ * `el.play()`，等 promise settle 再 pause）。问题在于 iOS 上这条路两个闸门都不可靠：
+ *
+ *  - `volume` 在 iOS 的 HTMLMediaElement 上**直接被忽略**（只读，写了没用）；
+ *  - `muted` 在「同一个用户手势里刚设 true 就 play()」这条路上会漏——WebKit 实测会先
+ *    出声，过一小会儿才真正静音。
+ *
+ * 于是就有了那个折磨了十几轮的现象：**没有来电界面、没有 `start` 日志，却听得见铃声**。
+ * 响多久完全取决于 `play()` 的 promise 什么时候 settle：
+ *
+ *  - settle 得快 → 只漏 1 秒左右（对应用户说的「响一下就断」）；
+ *  - settle 得慢（首次要下载/解码 mp3）→ 一路播到 `pause()` 才停（对应「响十几秒」）；
+ *  - promise 迟迟不 settle → mp3 自己播完（`loop` 是 false）→ 「响几十秒后自动停」。
+ *
+ * 第 12/13 轮那条 `pausedBefore: true, currentTimeBefore: 2.58` 的日志正是这件事的指纹：
+ * 元素最终确实是暂停的，但播放位置已经前进了 2.58 秒——那 2.58 秒就是用户听到的声音。
+ *
+ * ## 为什么换成静音 WAV 就能根治
+ *
+ * 解锁是**按元素**记的，跟具体播的是哪个 URL 无关。所以预解锁完全没必要碰真铃声：
+ * 用同一个 Audio 元素播一段内联静音，iOS 照样把这个元素标记为「已被手势解锁」，
+ * 而**就算 `muted` 彻底失效，用户能听到的也只有 0.05 秒的静音**。
+ * 这不是再加一道兜底，是把「有声音可漏」这件事本身消掉。
+ *
+ * data URI 还顺带解决了时间窗：不走网络，不用等 mp3 下载，promise 立刻 settle。
+ */
+const SILENT_PRIME_URL = 'data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 
 /**
  * iOS PWA 偶尔会在快速重开时留下一个仍属于旧 document 的 JS/audio 实例。
@@ -50,6 +92,12 @@ let vibrateTimer: ReturnType<typeof setInterval> | null = null;
 let primed = false;
 let ringtoneChannel: BroadcastChannel | null = null;
 let audioEpoch = 0;
+/**
+ * 正在跑预解锁的那一小段时间。元素此刻确实 `!paused`，但播的是静音 WAV，不是来电。
+ * `isRinging()` 必须把它排除掉，否则刚好这时到达的真来电会被 Overlay 当成"已经在响"
+ * 而直接 return：界面亮着、没有声音、也没有看门狗，那通电话会永远挂在那儿。
+ */
+let priming = false;
 
 /**
  * 这条专项日志故意复用 lifecycle 分类：用户不需要再记一个新开关。
@@ -151,30 +199,52 @@ export const primeRingtone = (): void => {
   if (!el) return;
   if (!el.paused) { primed = true; return; } // 已经在响，本身就是解锁状态
   primed = true;
-  el.muted = true;
+  priming = true;
   const primeEpoch = audioEpoch;
+  // ⚠️ 这一段的每一行都是「幽灵铃声」的直接修复，改动前请先读 SILENT_PRIME_URL 上面那段注释。
+  // 核心是：**预解锁期间元素上挂的绝不能是真铃声**。iOS 的 muted 不可靠、volume 干脆无效，
+  // 所以唯一稳的做法是让「可漏出来的声音」本身就是静音。
+  el.muted = true;   // 双保险：即使 muted 有效也没坏处，失效了也只是漏 0.05 秒静音
+  try { el.loop = false; } catch { /* 忽略 */ }
+  try { el.src = SILENT_PRIME_URL; el.load(); } catch { /* 忽略 */ }
   logRingtone('prime-start', {
     pausedBefore: el.paused,
     currentTimeBefore: el.currentTime,
+    source: 'silent-wav',
   });
-  // 无论 play() 成功、被浏览器拒绝，还是同步抛错，都必须先暂停并归零，
-  // 再解除静音。旧代码在 catch 里只做了 unmuted，iOS 可能让一个“静音预播放”
-  // 在之后变成可听见的声音；这正好符合“没有 start 日志、没有来电界面但 currentTime 已前进”的现象。
+
+  let settled = false;
+  let guard: ReturnType<typeof setTimeout> | null = null;
   const finishPrime = (event: string, error?: unknown) => {
+    if (settled) return;
+    settled = true;
+    if (guard != null) { clearTimeout(guard); guard = null; }
+    // stopRingtone / startRingtone 都会推进 audioEpoch。promise 迟到时若已经易主，
+    // **一个字都不能碰这个元素**：旧代码在这里无条件 pause()，正好会把刚开始响的
+    // 真来电掐掉（对应用户遇到过的「响一下就没了」的另一半）。
     const stale = audio !== el || primeEpoch !== audioEpoch;
+    if (stale) {
+      logRingtone(event, { stale: true, skipped: true });
+      return;
+    }
+    priming = false;
     try { el.pause(); el.currentTime = 0; } catch { /* 忽略 */ }
-    // stopRingtone 可能在 play() promise settle 前已经销毁了这个元素。旧 promise
-    // 只能继续保持静音，绝不能把一个已脱离单例的旧元素重新 unmute。
-    if (!stale) el.muted = false;
+    el.muted = false;
+    // 解锁已经拿到（按元素记，跟播的是哪个 URL 无关），把真铃声接回来预加载，
+    // 真来电时才不用等首字节。
+    try { el.src = RINGTONE_URL; el.load(); } catch { /* 忽略 */ }
     logRingtone(event, {
       currentTimeAfter: el.currentTime,
       pausedAfter: el.paused,
-      stale,
+      stale: false,
+      restored: (el.currentSrc || el.src).includes('incoming-call.mp3'),
       ...(error && typeof error === 'object'
         ? { name: (error as { name?: unknown }).name, message: (error as { message?: unknown }).message }
         : {}),
     });
   };
+  // 兜底：promise 万一永远不 settle，也必须把 priming 放掉、把铃声源接回来。
+  guard = setTimeout(() => finishPrime('prime-guard-timeout'), PRIME_GUARD_MS);
   try {
     const attempt = el.play();
     if (attempt) {
@@ -187,7 +257,10 @@ export const primeRingtone = (): void => {
   }
 };
 
-export const isRinging = (): boolean => !!audio && !audio.paused;
+/**
+ * 真铃声是否正在响。**预解锁那 0.05 秒不算**（见 `priming`）。
+ */
+export const isRinging = (): boolean => !priming && !!audio && !audio.paused;
 
 /**
  * 开响。`onTimeout` 是看门狗到点时的回调（上层据此记一条未接来电）。
@@ -201,7 +274,12 @@ export const startRingtone = (onTimeout: () => void): void => {
     hasAudio: !!el,
     pausedBefore: el?.paused,
     currentTimeBefore: el?.currentTime,
+    wasPriming: priming,
   });
+  // 推进 epoch：万一预解锁的 play() promise 还没 settle，它到点时会认出自己已经过期，
+  // 从而**不会**去 pause 这通刚开始响的真来电。
+  audioEpoch += 1;
+  priming = false;
   clearTimers();
   if (el) {
     el.loop = true;
@@ -241,6 +319,7 @@ export const stopRingtone = (): void => {
     srcBefore: audio?.currentSrc || audio?.src,
   });
   clearTimers();
+  priming = false;
   try { navigator.vibrate?.(0); } catch { /* 不支持就算了 */ }
   const el = audio;
   if (!el) return;
@@ -272,6 +351,7 @@ export const __resetRingtoneForTest = (): void => {
   }
   audio = null;
   primed = false;
+  priming = false;
   audioEpoch += 1;
 };
 
