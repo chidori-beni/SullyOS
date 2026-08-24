@@ -113,6 +113,76 @@ describe('预解锁绝不能碰真铃声（幽灵铃声根因）', () => {
   });
 });
 
+describe('生命周期事件不许掐掉正在响的真来电', () => {
+  const ringtone = read('./callRingtone.ts');
+
+  /**
+   * 8/24 第二个实机 bug：铃声不响、来电界面挂死、永远不变未接来电。
+   *
+   * 根因是 `stopRingtone()` 里的 `clearTimers()` 会把**看门狗一起干掉**，而第 10/13/15 轮
+   * 为了扑幽灵铃声，在 pageshow / focus / visibilitychange 上全挂了无条件 `stopRingtone()`。
+   * 合并窗口只有 2 秒，iOS 冷启动 / 从通知横幅进来时这几个事件会拖好几秒才到齐，于是一个
+   * 迟到的 `focus` 就能让一通刚开始响的真来电既没了声音、也永远不会超时。
+   *
+   * 幽灵铃声已经在根上修掉了，这些"逢事件必硬停"的锤子只剩误伤，必须让路给合法来电。
+   */
+  it('有合法来电在响时，恢复事件走"继续响"而不是硬停', () => {
+    expect(ringtone).toContain('let ringActive = false;');
+    const resumeBody = ringtone.slice(
+      ringtone.indexOf('const stopOnAppResume = () => {'),
+      ringtone.indexOf("window.addEventListener('pageshow', stopOnAppResume)"),
+    );
+    expect(resumeBody).toContain('if (ringActive)');
+    // ringActive 分支必须在任何 stopRingtone() 之前就 return
+    expect(resumeBody.indexOf('if (ringActive)')).toBeLessThan(resumeBody.indexOf('stopRingtone();'));
+    expect(resumeBody).toContain('resumeRingtoneForForeground(');
+  });
+
+  it('退到后台只按住声音，绝不碰看门狗', () => {
+    const pauseBody = ringtone.slice(
+      ringtone.indexOf('const pauseRingtoneForBackground'),
+      ringtone.indexOf('const resumeRingtoneForForeground'),
+    );
+    expect(pauseBody.length).toBeGreaterThan(0);
+    // 这一条就是 bug 本身：软停里但凡出现 clearTimers()，未接来电就又没了。
+    expect(pauseBody).not.toContain('clearTimers()');
+    expect(pauseBody).not.toContain('ringActive = false');
+    expect(pauseBody).toContain('el.pause()');
+  });
+
+  it('visibilitychange=hidden 在响铃时走软停', () => {
+    const hiddenBody = ringtone.slice(ringtone.indexOf("if (document.visibilityState === 'hidden')"));
+    const cut = hiddenBody.slice(0, hiddenBody.indexOf('lastResumeStopAt = 0;'));
+    expect(cut).toContain('if (ringActive)');
+    expect(cut).toContain('pauseRingtoneForBackground(');
+  });
+
+  it('跨页面熔断不许掐掉本页正在响的来电', () => {
+    const crossBody = ringtone.slice(
+      ringtone.indexOf('const receiveCrossContextStop'),
+      ringtone.indexOf('const ensureRingtoneChannel'),
+    );
+    expect(crossBody).toContain('if (ringActive)');
+    expect(crossBody.indexOf('if (ringActive)')).toBeLessThan(crossBody.indexOf('stopRingtone();'));
+  });
+
+  it('stopRingtone 仍然是"这通到此为止"：清看门狗 + 清 ringActive', () => {
+    // 接听 / 拒接 / 超时 / 真正离开页面走的还是它，语义不能被软停稀释掉。
+    const stopBody = ringtone.slice(
+      ringtone.indexOf('export const stopRingtone'),
+      ringtone.indexOf('export const __resetRingtoneForTest'),
+    );
+    expect(stopBody).toContain('clearTimers();');
+    expect(stopBody).toContain('ringActive = false;');
+  });
+
+  it('isRinging 认 ringActive——后台按住声音的那通电话也算在响', () => {
+    // 否则 Overlay 重挂载会以为"没在响"，再 startRingtone 一遍，把已经跑了一半的
+    // 看门狗重置掉，30 秒又从头算起。
+    expect(ringtone).toContain('ringActive || (!!audio && !audio.paused)');
+  });
+});
+
 describe('来电界面必须挂在锁屏那棵树上', () => {
   const shell = read('../components/PhoneShell.tsx');
 

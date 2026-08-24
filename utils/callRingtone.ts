@@ -100,6 +100,31 @@ let audioEpoch = 0;
 let priming = false;
 
 /**
+ * 当前是否有一通**合法的、上层还在等它的**来电正在响。
+ *
+ * ## 为什么必须有这个标志
+ *
+ * 第 10/13/15 轮为了扑幽灵铃声，在 `pageshow` / `focus` / `visibilitychange` 上全都挂了
+ * 无条件的 `stopRingtone()`。而 `stopRingtone()` 里有一行 `clearTimers()`——**它会把
+ * 看门狗一起干掉**。合并窗口只有 2 秒，iOS 冷启动 / 从通知横幅进来时这几个事件会拖上
+ * 好几秒才陆续到齐，于是：
+ *
+ *   一通刚开始响的真来电 → 2 秒后一个迟到的 `focus` → 铃声和看门狗一起没了
+ *   → 来电界面永远挂在那儿，永远不会变成未接来电。
+ *
+ * 8/24 实测复现的正是这一串：后台点横幅接的那通没有响铃，之后每一通都不响，
+ * 前台放着不接超过一分钟也不落未接来电。第一通之所以正常，只是它那 30 秒窗口里
+ * 恰好没落进生命周期事件。
+ *
+ * 幽灵铃声的根因（预解锁播真铃声）已经拔掉了，这些"逢事件必硬停"的锤子就只剩误伤。
+ * 现在改成：**有合法来电在响时，生命周期事件只许暂停/恢复声音，绝不许碰看门狗。**
+ *
+ * 这个标志不会卡死：看门狗最迟 `RING_TIMEOUT_MS` 就会 `stopRingtone()` 把它清掉，
+ * 所以它的生命周期有硬上界。
+ */
+let ringActive = false;
+
+/**
  * 这条专项日志故意复用 lifecycle 分类：用户不需要再记一个新开关。
  * 只记铃声状态和事件来源，不记角色名、开场白或聊天正文。
  */
@@ -136,6 +161,12 @@ const stopDomRingtoneAudios = (): void => {
 
 const receiveCrossContextStop = (source?: unknown): void => {
   if (source === RINGTONE_INSTANCE_ID) return;
+  // 本页正响着一通合法来电时不接受外部熔断：这道闸是用来清旧 document 的残留音的，
+  // 不是用来掐掉用户眼前这通电话的（连带把看门狗清掉，那通电话就再也不会变未接）。
+  if (ringActive) {
+    logRingtone('cross-context-stop-ignored', { source, reason: 'ring-active' });
+    return;
+  }
   logRingtone('cross-context-stop-received', { source });
   stopRingtone();
   stopDomRingtoneAudios();
@@ -181,6 +212,66 @@ const getAudio = (): HTMLAudioElement | null => {
 const clearTimers = () => {
   if (watchdog != null) { clearTimeout(watchdog); watchdog = null; }
   if (vibrateTimer != null) { clearInterval(vibrateTimer); vibrateTimer = null; }
+};
+
+const stopVibration = (): void => {
+  if (vibrateTimer != null) { clearInterval(vibrateTimer); vibrateTimer = null; }
+  try { navigator.vibrate?.(0); } catch { /* iOS 没有这个 API */ }
+};
+
+const startVibration = (): void => {
+  stopVibration();
+  try {
+    navigator.vibrate?.(VIBRATE_PATTERN);
+    vibrateTimer = setInterval(() => {
+      try { navigator.vibrate?.(VIBRATE_PATTERN); } catch { /* 同上 */ }
+    }, VIBRATE_INTERVAL_MS);
+  } catch { /* iOS 没有这个 API */ }
+};
+
+/**
+ * 退到后台时的"软停"：只把声音按住，**不碰看门狗、不清 `ringActive`**。
+ *
+ * 跟 `stopRingtone()` 的区别就是这一点，而这一点正是 8/24 那个"永远不变未接来电"的
+ * bug 的全部内容。用户没接就是没接，30 秒之后照样该落一条未接来电——哪怕这 30 秒里
+ * 他一直在别的 App 里。
+ */
+const pauseRingtoneForBackground = (reason: string): void => {
+  const el = audio;
+  logRingtone('background-pause', {
+    reason,
+    hasAudio: !!el,
+    pausedBefore: el?.paused,
+    watchdogArmed: watchdog != null,
+  });
+  stopVibration();
+  if (!el) return;
+  try {
+    el.muted = true;
+    el.pause();
+    el.currentTime = 0;
+  } catch { /* 忽略 */ }
+};
+
+/** 回到前台，把那通还没被接/拒/超时的电话继续响起来。 */
+const resumeRingtoneForForeground = (reason: string): void => {
+  const el = getAudio(); // src 被清过的话这里会自动接回铃声文件
+  logRingtone('background-resume', {
+    reason,
+    hasAudio: !!el,
+    watchdogArmed: watchdog != null,
+  });
+  if (!el) return;
+  try {
+    el.loop = true;
+    el.muted = false;
+    el.volume = 0.85;
+    try { el.currentTime = 0; } catch { /* 有些浏览器要等 metadata */ }
+    void el.play().catch((err) => {
+      logRingtone('resume-play-rejected', { name: err?.name, message: err?.message });
+    });
+  } catch { /* 忽略 */ }
+  startVibration();
 };
 
 /**
@@ -260,7 +351,9 @@ export const primeRingtone = (): void => {
 /**
  * 真铃声是否正在响。**预解锁那 0.05 秒不算**（见 `priming`）。
  */
-export const isRinging = (): boolean => !priming && !!audio && !audio.paused;
+export const isRinging = (): boolean => (
+  !priming && (ringActive || (!!audio && !audio.paused))
+);
 
 /**
  * 开响。`onTimeout` 是看门狗到点时的回调（上层据此记一条未接来电）。
@@ -280,6 +373,8 @@ export const startRingtone = (onTimeout: () => void): void => {
   // 从而**不会**去 pause 这通刚开始响的真来电。
   audioEpoch += 1;
   priming = false;
+  // 从这一刻起，生命周期事件只许暂停/恢复声音，不许再碰看门狗（见 ringActive 的注释）。
+  ringActive = true;
   clearTimers();
   if (el) {
     el.loop = true;
@@ -292,12 +387,7 @@ export const startRingtone = (onTimeout: () => void): void => {
       console.log('[IncomingCall] 铃声被浏览器拦下（还没有任何手势解锁过它）:', err?.name || err);
     });
   }
-  try {
-    navigator.vibrate?.(VIBRATE_PATTERN);
-    vibrateTimer = setInterval(() => {
-      try { navigator.vibrate?.(VIBRATE_PATTERN); } catch { /* 同上 */ }
-    }, VIBRATE_INTERVAL_MS);
-  } catch { /* iOS 没有这个 API */ }
+  startVibration();
 
   watchdog = setTimeout(() => {
     // 兜底：不管上层发生了什么，响到这里就必须停。
@@ -317,9 +407,13 @@ export const stopRingtone = (): void => {
     readyStateBefore: audio?.readyState,
     networkStateBefore: audio?.networkState,
     srcBefore: audio?.currentSrc || audio?.src,
+    ringActiveBefore: ringActive,
   });
   clearTimers();
   priming = false;
+  // 这是"这通电话到此为止"的语义（接听/拒接/超时/真正离开页面）。生命周期事件想要的
+  // 只是"先别出声"，它们该走 pauseRingtoneForBackground，不该走这里。
+  ringActive = false;
   try { navigator.vibrate?.(0); } catch { /* 不支持就算了 */ }
   const el = audio;
   if (!el) return;
@@ -352,6 +446,7 @@ export const __resetRingtoneForTest = (): void => {
   audio = null;
   primed = false;
   priming = false;
+  ringActive = false;
   audioEpoch += 1;
 };
 
@@ -383,11 +478,24 @@ if (typeof window !== 'undefined') {
   window.addEventListener('pagehide', stopOnPageExit);
   window.addEventListener('beforeunload', stopOnPageExit);
 
-  // iOS 可能把一次“回到 PWA”拆成 pageshow / focus / visibilitychange 三连事件。
-  // 第一个事件负责清掉冻结页面遗留的 Audio，后两个不能再把刚由 Overlay 启动的新来电掐掉。
+  // iOS 可能把一次“回到 PWA”拆成 pageshow / focus / visibilitychange 三连事件，
+  // 而且冷启动 / 从通知横幅进来时它们会拖上好几秒才陆续到齐。
+  //
+  // ⚠️ 8/24 实测炸过：这里原本是无条件 `stopRingtone()`，而 `stopRingtone()` 里的
+  // `clearTimers()` 会把**看门狗一起干掉**。合并窗口只有 2 秒，于是一个迟到的 `focus`
+  // 就能让一通刚开始响的真来电既没了声音、也永远不会变成未接来电——来电界面挂死。
+  //
+  // 现在分两种情况：
+  //  - 有合法来电在响（`ringActive`）→ 只做暂停/恢复，**一个字都不碰看门狗**；
+  //  - 没有（`ringActive` 为 false）→ 维持原来的硬停，继续清掉旧 document 的残留音。
   const RESUME_EVENT_COALESCE_MS = 2_000;
   let lastResumeStopAt = 0;
   const stopOnAppResume = () => {
+    if (ringActive) {
+      // 那通电话还没被接/拒/超时，用户刚回来——该继续响，而不是被清场。
+      resumeRingtoneForForeground('app-resume');
+      return;
+    }
     const now = Date.now();
     if (now - lastResumeStopAt < RESUME_EVENT_COALESCE_MS) {
       logRingtone('resume-stop-coalesced');
@@ -404,10 +512,14 @@ if (typeof window !== 'undefined') {
 
   // iOS 独立 PWA 退到后台时经常不会触发 pagehide/beforeunload，而是把整个 JS 页面冻结。
   // 若 Audio 仍在 loop，用户下次点开 App 会听到一通“上次的旧电话”从后台续播。
-  // 一旦页面不可见立刻停掉；真正后台刚送达的来电尚未 startRingtone，不受影响，回前台时
-  // Overlay 仍会按正常的新来电路径开始。
+  // 所以不可见时仍然要把声音按住；但**只按声音**——看门狗必须继续跑，用户没接就是没接，
+  // 30 秒后照样该落一条未接来电，哪怕这 30 秒他一直在别的 App 里。
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
+      if (ringActive) {
+        pauseRingtoneForBackground('visibility-hidden');
+        return;
+      }
       // 下一次恢复必须重新执行一次硬停，不能被之前的 pageshow 时间戳跳过。
       lastResumeStopAt = 0;
       logRingtone('visibility-hidden-stop');
