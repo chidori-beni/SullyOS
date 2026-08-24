@@ -35,10 +35,20 @@ const VIBRATE_INTERVAL_MS = 2400;
 const RINGTONE_URL = (((import.meta as any).env?.BASE_URL ?? '/') + 'sounds/incoming-call.mp3')
   .replace(/([^:])\/\/+/g, '$1/');
 
+/**
+ * iOS PWA 偶尔会在快速重开时留下一个仍属于旧 document 的 JS/audio 实例。
+ * 页面级 pagehide 只能停自己这一页；BroadcastChannel + storage 这道跨 document
+ * 闸用来通知同源旧页也停掉，不碰正常来电的展示逻辑。
+ */
+const RINGTONE_CONTROL_CHANNEL = 'sully-incoming-call-ringtone-v2';
+const RINGTONE_STOP_STORAGE_KEY = 'sully-incoming-call-ringtone-stop-v2';
+const RINGTONE_INSTANCE_ID = Math.random().toString(36).slice(2);
+
 let audio: HTMLAudioElement | null = null;
 let watchdog: ReturnType<typeof setTimeout> | null = null;
 let vibrateTimer: ReturnType<typeof setInterval> | null = null;
 let primed = false;
+let ringtoneChannel: BroadcastChannel | null = null;
 
 /**
  * 这条专项日志故意复用 lifecycle 分类：用户不需要再记一个新开关。
@@ -53,6 +63,50 @@ const logRingtone = (event: string, data: Record<string, unknown> = {}): void =>
       ...data,
     },
   });
+};
+
+const stopDomRingtoneAudios = (): void => {
+  if (typeof document === 'undefined') return;
+  try {
+    document.querySelectorAll('audio').forEach((candidate) => {
+      const src = candidate.currentSrc || candidate.src || '';
+      if (!src.includes('incoming-call.mp3')) return;
+      try {
+        candidate.pause();
+        candidate.currentTime = 0;
+        candidate.loop = false;
+      } catch { /* 某些 WebView 对已销毁元素会抛异常 */ }
+    });
+  } catch { /* querySelectorAll 不可用时只停单例 */ }
+};
+
+const receiveCrossContextStop = (source?: unknown): void => {
+  if (source === RINGTONE_INSTANCE_ID) return;
+  logRingtone('cross-context-stop-received', { source });
+  stopRingtone();
+  stopDomRingtoneAudios();
+};
+
+const ensureRingtoneChannel = (): BroadcastChannel | null => {
+  if (ringtoneChannel || typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') {
+    return ringtoneChannel;
+  }
+  try {
+    ringtoneChannel = new BroadcastChannel(RINGTONE_CONTROL_CHANNEL);
+    ringtoneChannel.addEventListener('message', (event: MessageEvent) => {
+      if (event.data?.type === 'hard-stop') receiveCrossContextStop(event.data.source);
+    });
+  } catch {
+    ringtoneChannel = null;
+  }
+  return ringtoneChannel;
+};
+
+const broadcastCrossContextStop = (reason: string): void => {
+  if (typeof window === 'undefined') return;
+  const message = { type: 'hard-stop', reason, source: RINGTONE_INSTANCE_ID, at: Date.now() };
+  try { ensureRingtoneChannel()?.postMessage(message); } catch { /* Safari 私有模式可能拒绝 */ }
+  try { window.localStorage.setItem(RINGTONE_STOP_STORAGE_KEY, JSON.stringify(message)); } catch { /* 隐私模式 */ }
 };
 
 const getAudio = (): HTMLAudioElement | null => {
@@ -170,9 +224,27 @@ export const __resetRingtoneForTest = (): void => {
 // PWA/WebView 可能在页面切换或整页退出时来不及跑 React effect cleanup。
 // 主动把单例声音停掉，避免旧页面的 Audio 在用户重新进入 APP 后继续响到看门狗。
 if (typeof window !== 'undefined') {
+  ensureRingtoneChannel();
+  try {
+    window.addEventListener('storage', (event) => {
+      if (event.key !== RINGTONE_STOP_STORAGE_KEY || !event.newValue) return;
+      try {
+        const message = JSON.parse(event.newValue) as { source?: unknown };
+        receiveCrossContextStop(message.source);
+      } catch { /* 忽略坏掉的旧标记 */ }
+    });
+  } catch { /* storage 事件不可用时仍保留 BroadcastChannel */ }
+
+  // 新页面初始化时先通知旧页面停铃，再继续正常初始化。
+  broadcastCrossContextStop('document-init');
+  stopRingtone();
+  stopDomRingtoneAudios();
+
   const stopOnPageExit = () => {
     logRingtone('page-exit-stop');
+    broadcastCrossContextStop('page-exit');
     stopRingtone();
+    stopDomRingtoneAudios();
   };
   window.addEventListener('pagehide', stopOnPageExit);
   window.addEventListener('beforeunload', stopOnPageExit);
@@ -189,7 +261,9 @@ if (typeof window !== 'undefined') {
     }
     lastResumeStopAt = now;
     logRingtone('resume-stop');
+    broadcastCrossContextStop('app-resume');
     stopRingtone();
+    stopDomRingtoneAudios();
   };
   window.addEventListener('pageshow', stopOnAppResume);
   window.addEventListener('focus', stopOnAppResume);
@@ -203,7 +277,9 @@ if (typeof window !== 'undefined') {
       // 下一次恢复必须重新执行一次硬停，不能被之前的 pageshow 时间戳跳过。
       lastResumeStopAt = 0;
       logRingtone('visibility-hidden-stop');
+      broadcastCrossContextStop('visibility-hidden');
       stopRingtone();
+      stopDomRingtoneAudios();
       return;
     }
     logRingtone('visibility-visible');
