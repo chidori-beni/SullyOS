@@ -3699,12 +3699,13 @@ const MessageItem = React.memo(({
         ?? m.content.match(/<[语語]音[^>]*>([\s\S]*)$/)?.[1]
         ?? ''
     ).replace(/<字幕>[\s\S]*?<\/字幕>/g, '').trim()) : '';
-    const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag;
+    const isUserVoiceMessage = isUser && m.type === 'voice';
+    const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag || isUserVoiceMessage;
     // Don't render empty bubbles (e.g. messages that were just "---"), unless voice data exists or pending
     if (!displayContent && !hasVoiceContent) return null;
 
     // Voice-only messages (no display text, only voice bar): skip bubble styling
-    const isVoiceOnlyMsg = !displayContent && hasVoiceContent && !isUser && m.type === 'text';
+    const isVoiceOnlyMsg = isUserVoiceMessage || (!displayContent && hasVoiceContent && !isUser && m.type === 'text');
 
     // 外语语音消息：语音条展开区（转文字）本身就完整呈现「口播原文 + 中文翻译」两行，
     // 顶部气泡再渲染一遍 displayContent 就成了重复——翻译模式下顶部是中文、语音条翻译行
@@ -3754,7 +3755,7 @@ const MessageItem = React.memo(({
 
             {/* Layer 4: Text Content — shown when there's visible text after stripping voice tags */}
             {/* 外语语音消息把双语文字交给下方语音条渲染，顶部不再重复正文 */}
-            {displayContent && !isForeignVoiceMsg && (
+            {displayContent && !isForeignVoiceMsg && !isUserVoiceMessage && (
             <div className="relative z-10 text-[15px] leading-relaxed whitespace-pre-wrap break-all select-text" style={{ color: styleConfig.textColor }}>
                 {renderContent(displayContent)}
                 {showExpandedTranslation && (
@@ -3793,7 +3794,7 @@ const MessageItem = React.memo(({
             )}
 
             {/* Layer 6: Voice Bar */}
-            {(voiceData?.url || voiceLoading || hasVoiceTag) && !isUser && m.type === 'text' && (() => {
+            {(voiceData?.url || voiceLoading || hasVoiceTag || isUserVoiceMessage) && ((!isUser && m.type === 'text') || isUserVoiceMessage) && (() => {
                 const vbBg = styleConfig.voiceBarBg;
                 const vbActiveBg = styleConfig.voiceBarActiveBg;
                 const vbBtn = styleConfig.voiceBarBtnColor;
@@ -3801,7 +3802,7 @@ const MessageItem = React.memo(({
                 const vbText = styleConfig.voiceBarTextColor;
                 // Voice-only mode: no visible text, voice bar is primary content.
                 // 外语语音消息顶部正文已隐藏（交给语音条渲染），同样按纯语音处理，去掉多余上间距。
-                const isVoiceOnly = !!voiceData?.url && (!displayContent || isForeignVoiceMsg);
+                const isVoiceOnly = isUserVoiceMessage || (!!voiceData?.url && (!displayContent || isForeignVoiceMsg));
                 return (
                 <div className={`sully-voice-bar-shell relative z-10 ${isVoiceOnly ? '' : 'mt-2.5'}`}>
                     {voiceData?.url ? (
@@ -3941,7 +3942,7 @@ const MessageItem = React.memo(({
                             </div>
                             <span className="text-[10px] shrink-0 animate-pulse" style={{ color: vbText || '#94a3b8' }}>合成中</span>
                         </div>
-                    ) : hasVoiceTag ? (
+                    ) : (hasVoiceTag || isUserVoiceMessage) ? (
                         /* Voice tag exists in content but no audio yet — either TTS is still
                            pending (app restart / auto-TTS) or the character has no MiniMax voice
                            configured. Offer a 转文字 toggle here too so the text stays readable,
@@ -3952,8 +3953,9 @@ const MessageItem = React.memo(({
                                 style={{ background: vbBg || 'linear-gradient(135deg, rgba(0,0,0,0.03) 0%, rgba(0,0,0,0.06) 100%)', border: '1px solid rgba(0,0,0,0.05)' }}
                             >
                                 <button
-                                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); onPlayVoice?.(m.id); }}
-                                    className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center active:scale-[0.92] transition-transform"
+                                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); if (!isUserVoiceMessage) onPlayVoice?.(m.id); }}
+                                    disabled={isUserVoiceMessage}
+                                    className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center active:scale-[0.92] transition-transform disabled:opacity-70"
                                     style={{ backgroundColor: vbBg ? 'rgba(255,255,255,0.25)' : 'rgba(148,163,184,0.2)' }}
                                 >
                                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill={vbBtn || '#64748b'} className="w-3 h-3 ml-0.5"><path d="M6.3 2.84A1.5 1.5 0 0 0 4 4.11v11.78a1.5 1.5 0 0 0 2.3 1.27l9.344-5.891a1.5 1.5 0 0 0 0-2.538L6.3 2.841Z" /></svg>

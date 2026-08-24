@@ -599,8 +599,10 @@ const CallApp: React.FC = () => {
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => `call-${Date.now()}`);
   const [draftInput, setDraftInput] = useState('');
   const [isListening, setIsListening] = useState(false);
+  const [isSttProcessing, setIsSttProcessing] = useState(false);
   const sttSessionRef = useRef<SttSession | null>(null);
-  const sttSupported = useMemo(() => isSttSupported(), []);
+  const speechProvider = apiConfig.speechRecognitionProvider || 'system';
+  const sttSupported = useMemo(() => isSttSupported(speechProvider), [speechProvider]);
   const [audioUrl, setAudioUrl] = useState<string>('');
   const [traceId, setTraceId] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -1251,7 +1253,7 @@ const CallApp: React.FC = () => {
     return raw;
   }, [selectedChar?.bubbleStyle, customThemes]);
   const callScrollableRef = useRef<HTMLDivElement | null>(null);
-  const draftInputRef = useRef<HTMLInputElement | null>(null);
+  const draftInputRef = useRef<HTMLTextAreaElement | null>(null);
   // 输入面板默认展开，但「进入通话」时不能自动聚焦输入框——移动端一聚焦就弹
   // 键盘、把整个界面往上顶（用户反馈的「一进通话就飞上去」）。只在用户后续
   // 手动展开面板时才聚焦，初次挂载跳过。
@@ -1556,15 +1558,24 @@ const CallApp: React.FC = () => {
     if (!sttSupported) { addToast('当前环境不支持语音输入', 'info'); return; }
     try {
       setIsListening(true);
+      setIsSttProcessing(false);
       trackEvent('切换语音输入', { action: 'start' });
       sttSessionRef.current = await startStt('zh-CN', {
         onPartial: (t) => setDraftInput(t),
         onFinal: (t) => setDraftInput(t),
         onError: (m) => { if (m) addToast(m, 'info'); },
-        onEnd: () => { setIsListening(false); sttSessionRef.current = null; },
+        onRecordingEnd: () => { setIsListening(false); setIsSttProcessing(speechProvider !== 'system'); },
+        onProviderFallback: (m) => addToast(m, 'info'),
+        onEnd: () => { setIsListening(false); setIsSttProcessing(false); sttSessionRef.current = null; },
+      }, {
+        provider: speechProvider,
+        apiKey: apiConfig.siliconFlowSpeechApiKey,
+        stripEmoji: apiConfig.speechRecognitionStripEmoji !== false,
+        fallbackToSenseVoice: true,
       });
     } catch (e: any) {
       setIsListening(false);
+      setIsSttProcessing(false);
       sttSessionRef.current = null;
       addToast(e?.message || '无法启动语音输入', 'error');
     }
@@ -1597,6 +1608,13 @@ const CallApp: React.FC = () => {
     if (!inputPanelMountedRef.current) { inputPanelMountedRef.current = true; return; }
     if (showInputPanel) draftInputRef.current?.focus();
   }, [showInputPanel]);
+  useEffect(() => {
+    const textarea = draftInputRef.current;
+    if (!textarea || !showInputPanel) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 144)}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 144 ? 'auto' : 'hidden';
+  }, [draftInput, showInputPanel]);
   const stopPlayback = () => {
     clearSilentSpeechTimer();
     clearPerformanceCueTimers();
@@ -4140,7 +4158,7 @@ ${sentencePlan}`;
             {sttSupported && (
               <button
                 onClick={toggleStt}
-                disabled={sendingBusy}
+                disabled={sendingBusy || isSttProcessing}
                 title={isListening ? '结束语音输入' : '按一下开始说话'}
                 className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition active:scale-90 disabled:opacity-40"
                 style={isListening ? { background: '#f0569f', boxShadow: '0 0 14px #f0569f99' } : { background: 'rgba(255,255,255,0.08)' }}
@@ -4148,17 +4166,19 @@ ${sentencePlan}`;
                 <Microphone size={18} weight="fill" className={isListening ? 'text-white animate-pulse' : 'text-white/70'} />
               </button>
             )}
-            <input
+            <textarea
               ref={draftInputRef}
+              rows={1}
               value={draftInput}
               onChange={(e) => setDraftInput(e.target.value)}
-              className="flex-1 min-w-0 bg-transparent px-2 text-sm outline-none placeholder:text-white/35"
-              placeholder={isListening ? '在听你说……' : sendingBusy ? `${selectedChar?.name || '对方'}正在想……` : pendingCallRetryText ? '上次回复中断，可直接重试' : `想对${selectedChar?.name || '对方'}说什么？`}
+              className="flex-1 min-w-0 min-h-9 max-h-36 resize-none bg-transparent px-2 py-2 text-sm leading-5 outline-none placeholder:text-white/35"
+              placeholder={isListening ? '在听你说……' : isSttProcessing ? '正在转录……' : sendingBusy ? `${selectedChar?.name || '对方'}正在想……` : pendingCallRetryText ? '上次回复中断，可直接重试' : `想对${selectedChar?.name || '对方'}说什么？`}
             />
-            <button onClick={handleTurn} disabled={sendingBusy} className="keep-white shrink-0 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-40 transition active:scale-95" style={{ backgroundColor: accentColor, boxShadow: `0 0 16px ${accentColor}66` }}>{sendingBusy ? '…' : '发送'}</button>
+            <button onClick={handleTurn} disabled={sendingBusy || isListening || isSttProcessing} className="keep-white shrink-0 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-40 transition active:scale-95" style={{ backgroundColor: accentColor, boxShadow: `0 0 16px ${accentColor}66` }}>{sendingBusy ? '…' : '发送'}</button>
           </div>
           {!sendingBusy && pendingCallRetryText && !draftInput.trim() && <div className="text-[10px] text-amber-200/70 mt-1 px-1">上一句话还没得到回复，点击重试即可继续</div>}
           {isListening && <div className="text-[10px] text-white/40 mt-1 px-1 animate-pulse">正在聆听，点麦克风结束</div>}
+          {isSttProcessing && <div className="text-[10px] text-cyan-100/65 mt-1 px-1 animate-pulse">正在把录音转成文字…</div>}
         </div>
       )}
       <div className={`shrink-0 ${callMode === 'video' ? 'px-3 pb-2 pt-0.5' : 'px-7 pb-2 pt-1.5'}`} data-testid={callMode === 'video' ? 'video-call-compact-controls' : undefined}>

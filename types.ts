@@ -264,6 +264,12 @@ export interface APIConfig {
   // 鱼声默认模型（s2.1-pro / s2-pro / s1）。缺省 → 's2.1-pro'。
   // 角色 voiceProfile.fishModel 优先于这个全局默认。
   fishAudioModel?: string;
+  // 语音转文字。system 使用浏览器 / 系统识别；另外两项走 SiliconFlow 的免费 ASR 模型。
+  speechRecognitionProvider?: 'system' | 'siliconflow-sensevoice' | 'siliconflow-telespeech';
+  // SiliconFlow 独立 Key，不复用聊天 LLM Key，避免切换主模型预设时把语音识别凭据一起换掉。
+  siliconFlowSpeechApiKey?: string;
+  // SenseVoice 会返回 <|情绪|> 标记和 emoji；缺省视为开启清理。
+  speechRecognitionStripEmoji?: boolean;
   // 用户自定义「语音表演指南」——注入到角色 system prompt、教模型怎么写出有情绪的语音台词。
   // minimax / fishaudio：聊天 + 电话共用，按 TTS 服务商分别存（两家标记体系不同，不能共用一份）；
   //   留空 → 用内置默认（minimaxTts.VOICE_ACTING_GUIDE / fishAudioTts.FISH_VOICE_ACTING_GUIDE）。

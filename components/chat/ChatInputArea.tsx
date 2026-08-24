@@ -16,6 +16,7 @@ interface ChatInputAreaProps {
     showPanel: 'none' | 'actions' | 'emojis' | 'chars';
     setShowPanel: (v: 'none' | 'actions' | 'emojis' | 'chars') => void;
     onSend: () => void;
+    onOpenVoiceInput?: () => void;
     onDeleteSelected: () => void;
     onForwardSelected?: () => void;
     selectedCount: number;
@@ -63,7 +64,7 @@ interface ChatInputAreaProps {
 
 const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     input, setInput, isTyping, selectionMode,
-    showPanel, setShowPanel, onSend, onDeleteSelected, onForwardSelected, selectedCount,
+    showPanel, setShowPanel, onSend, onOpenVoiceInput, onDeleteSelected, onForwardSelected, selectedCount,
     emojis, characters = [], activeCharacterId = '', onCharSelect = () => {},
     unreadMessages = {},
     customThemes = [], onUpdateTheme = () => {}, onRemoveTheme = () => {}, activeThemeId = '',
@@ -433,6 +434,11 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     <button onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className={actionButtonClass}>
                         <Plus className="w-6 h-6" weight="bold" />
                     </button>
+                    {onOpenVoiceInput && (
+                        <button onClick={onOpenVoiceInput} className={actionButtonClass} title="发送语音" aria-label="发送语音">
+                            <Waveform className="w-6 h-6" weight="bold" />
+                        </button>
+                    )}
                     <div className={`flex-1 min-w-0 flex items-center px-1 transition-all ${useIOSStandaloneInputFix ? 'overflow-visible' : 'overflow-hidden'} ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
                         <textarea 
                             ref={textareaRef}

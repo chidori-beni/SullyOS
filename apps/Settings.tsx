@@ -488,6 +488,11 @@ const Settings: React.FC = () => {
   );
   const [localFishKey, setLocalFishKey] = useState(apiConfig.fishAudioApiKey || '');
   const [localFishModel, setLocalFishModel] = useState(apiConfig.fishAudioModel || 's2.1-pro');
+  const [localSpeechProvider, setLocalSpeechProvider] = useState<NonNullable<APIConfig['speechRecognitionProvider']>>(
+    apiConfig.speechRecognitionProvider || 'system'
+  );
+  const [localSiliconFlowSpeechKey, setLocalSiliconFlowSpeechKey] = useState(apiConfig.siliconFlowSpeechApiKey || '');
+  const [localSpeechStripEmoji, setLocalSpeechStripEmoji] = useState(apiConfig.speechRecognitionStripEmoji !== false);
   // 自定义语音表演指南（留空 → 用内置默认）。按服务商分两份。
   const [localVoicePromptMinimax, setLocalVoicePromptMinimax] = useState(apiConfig.voicePrompts?.minimax || '');
   const [localVoicePromptFish, setLocalVoicePromptFish] = useState(apiConfig.voicePrompts?.fishaudio || '');
@@ -864,12 +869,16 @@ const Settings: React.FC = () => {
       setLocalTtsProvider(apiConfig.ttsProvider === 'fishaudio' ? 'fishaudio' : 'minimax');
       setLocalFishKey(apiConfig.fishAudioApiKey || '');
       setLocalFishModel(apiConfig.fishAudioModel || 's2.1-pro');
+      setLocalSpeechProvider(apiConfig.speechRecognitionProvider || 'system');
+      setLocalSiliconFlowSpeechKey(apiConfig.siliconFlowSpeechApiKey || '');
+      setLocalSpeechStripEmoji(apiConfig.speechRecognitionStripEmoji !== false);
       setLocalVoicePromptMinimax(apiConfig.voicePrompts?.minimax || '');
       setLocalVoicePromptFish(apiConfig.voicePrompts?.fishaudio || '');
       setLocalVoicePromptDate(apiConfig.voicePrompts?.dateVoice || '');
   }, [
       apiConfig.minimaxApiKey, apiConfig.minimaxGroupId, apiConfig.minimaxRegion, apiConfig.aceStepApiKey,
       apiConfig.ttsProvider, apiConfig.fishAudioApiKey, apiConfig.fishAudioModel,
+      apiConfig.speechRecognitionProvider, apiConfig.siliconFlowSpeechApiKey, apiConfig.speechRecognitionStripEmoji,
       apiConfig.voicePrompts?.minimax, apiConfig.voicePrompts?.fishaudio, apiConfig.voicePrompts?.dateVoice,
   ]);
 
@@ -1121,6 +1130,9 @@ const Settings: React.FC = () => {
       ttsProvider: localTtsProvider,
       fishAudioApiKey: localFishKey,
       fishAudioModel: localFishModel,
+      speechRecognitionProvider: localSpeechProvider,
+      siliconFlowSpeechApiKey: localSiliconFlowSpeechKey.trim(),
+      speechRecognitionStripEmoji: localSpeechStripEmoji,
       voicePrompts: {
         minimax: localVoicePromptMinimax.trim() ? localVoicePromptMinimax : undefined,
         fishaudio: localVoicePromptFish.trim() ? localVoicePromptFish : undefined,
@@ -2625,6 +2637,63 @@ const Settings: React.FC = () => {
                 <p className="text-[11px] text-slate-400 -mt-1 pl-1 leading-relaxed">
                     🎙️ 语音生成支持 <span className="font-semibold text-slate-500">MiniMax</span> 和 <span className="font-semibold text-slate-500">鱼声 Fish</span> 两家——下面两边都可以填，最后在底部「当前语音引擎」里二选一。
                 </p>
+
+                <div className="group rounded-2xl border border-cyan-200/70 bg-cyan-50/45 p-3 space-y-3">
+                    <div>
+                        <label className="text-[10px] font-bold text-cyan-700 uppercase tracking-widest block">语音转文字</label>
+                        <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                            通话输入与聊天里的用户语音共用。SenseVoice / TeleSpeech 由 SiliconFlow 提供，当前价格页标为免费；仍需你自己的 Key。
+                        </p>
+                    </div>
+                    <div className="space-y-2">
+                        {([
+                            ['system', '系统识别', '浏览器 / iPhone 自带，能否使用取决于系统环境'],
+                            ['siliconflow-sensevoice', 'SenseVoice Small · 高效', '普通话快而稳，会清理情绪标签与 emoji'],
+                            ['siliconflow-telespeech', 'TeleSpeech ASR · 专业', '普通话更精准；临时过载时自动回退 SenseVoice'],
+                        ] as const).map(([key, name, desc]) => {
+                            const active = localSpeechProvider === key;
+                            return (
+                                <button
+                                    key={key}
+                                    type="button"
+                                    onClick={() => setLocalSpeechProvider(key)}
+                                    className={`w-full flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-all ${active ? 'border-cyan-500 bg-white shadow-sm' : 'border-cyan-100 bg-white/65 active:bg-white'}`}
+                                >
+                                    <span className={`shrink-0 w-4 h-4 rounded-full border-2 flex items-center justify-center ${active ? 'border-cyan-500' : 'border-slate-300'}`}>
+                                        {active && <span className="w-2 h-2 rounded-full bg-cyan-500" />}
+                                    </span>
+                                    <span className="flex-1 min-w-0">
+                                        <span className={`text-sm font-semibold ${active ? 'text-cyan-700' : 'text-slate-700'}`}>{name}</span>
+                                        <span className="block text-[11px] text-slate-400 mt-0.5">{desc}</span>
+                                    </span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                    <div>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 block pl-1">SiliconFlow Key</label>
+                        <input
+                            type="password"
+                            name="siliconflow-speech-key"
+                            autoComplete="new-password"
+                            spellCheck={false}
+                            value={localSiliconFlowSpeechKey}
+                            onChange={(e) => setLocalSiliconFlowSpeechKey(e.target.value)}
+                            placeholder="sk-...（仅保存在本机与备份中）"
+                            className="w-full bg-white/80 border border-cyan-200/70 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all"
+                        />
+                        <p className="text-[11px] text-slate-400 mt-1 pl-1">
+                            在 <a href="https://cloud.siliconflow.cn/account/ak" target="_blank" rel="noopener noreferrer" className="text-cyan-700 hover:underline font-semibold">SiliconFlow API 密钥页</a> 创建。录音会直传 SiliconFlow，不经过 Sully Worker。
+                        </p>
+                    </div>
+                    <label className="flex items-start gap-2.5 rounded-xl bg-white/70 border border-cyan-100 px-3 py-2.5 cursor-pointer">
+                        <input type="checkbox" checked={localSpeechStripEmoji} onChange={(e) => setLocalSpeechStripEmoji(e.target.checked)} className="mt-0.5 accent-cyan-600" />
+                        <span>
+                            <span className="block text-xs font-semibold text-slate-700">清理自动情绪标签与 emoji</span>
+                            <span className="block text-[11px] text-slate-400 mt-0.5">建议开启；主要处理 SenseVoice 的 &lt;|情绪|&gt; 和自动表情。</span>
+                        </span>
+                    </label>
+                </div>
 
                 <div className="group">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">MiniMax 服务器</label>

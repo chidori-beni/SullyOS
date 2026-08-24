@@ -1,16 +1,29 @@
 /**
- * Unified speech-to-text (STT) — used by the Call app for voice input.
+ * Unified speech-to-text (STT) — used by calls and user voice messages.
  *
- * Hybrid strategy (A+B):
+ * Providers:
  *   - Web platform  → native `webkitSpeechRecognition` / `SpeechRecognition`
  *                     (zero dependency, streams interim results).
  *   - Capacitor app → `@capacitor-community/speech-recognition` (on-device capable),
  *                     loaded via dynamic import so it never enters the web bundle.
+ *   - SiliconFlow   → MediaRecorder + /v1/audio/transcriptions, using either
+ *                     SenseVoice Small or TeleSpeech ASR.
  *
  * The user speaks Chinese to the character by default, so the default recognition
  * language is zh-CN regardless of the character's TTS output language.
  */
 import { Capacitor } from '@capacitor/core';
+
+export type SttProvider = 'system' | 'siliconflow-sensevoice' | 'siliconflow-telespeech';
+
+export interface SttOptions {
+  provider?: SttProvider;
+  apiKey?: string;
+  /** Strip SenseVoice emotion/control tags and generated emoji. Defaults to true. */
+  stripEmoji?: boolean;
+  /** TeleSpeech temporary failures fall back to SenseVoice. Defaults to true. */
+  fallbackToSenseVoice?: boolean;
+}
 
 export interface SttCallbacks {
   /** Fired repeatedly with the best-so-far transcript (interim + final). */
@@ -21,6 +34,12 @@ export interface SttCallbacks {
   onError?: (message: string) => void;
   /** Fired when the session ends for any reason (success, error, or stop). */
   onEnd?: () => void;
+  /** Fired as soon as microphone recording ends, before cloud transcription finishes. */
+  onRecordingEnd?: () => void;
+  /** Raw user recording, used to persist a playable outgoing voice message. */
+  onAudio?: (blob: Blob, durationSeconds: number) => void;
+  /** Non-fatal provider fallback notice. */
+  onProviderFallback?: (message: string) => void;
 }
 
 export interface SttSession {
@@ -36,7 +55,12 @@ const getWebCtor = (): any =>
   (typeof window !== 'undefined' && ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)) || null;
 
 /** Whether voice input is usable in the current environment. */
-export const isSttSupported = (): boolean => {
+export const isSttSupported = (provider: SttProvider = 'system'): boolean => {
+  if (provider !== 'system') {
+    return typeof navigator !== 'undefined'
+      && !!navigator.mediaDevices?.getUserMedia
+      && typeof MediaRecorder !== 'undefined';
+  }
   if (isNative()) return true; // plugin present; actual availability resolved at start()
   return !!getWebCtor();
 };
@@ -53,6 +77,146 @@ const friendlyError = (raw: string): string => {
 // 在线识别后端不可用（国内套壳浏览器常见：有 webkitSpeechRecognition 对象、
 // 麦克风也亮，但永远不返回结果、也不报错）。
 const STT_WATCHDOG_MS = 7000;
+const SILICONFLOW_TRANSCRIPTION_URL = 'https://api.siliconflow.cn/v1/audio/transcriptions';
+const SILICONFLOW_MAX_AUDIO_BYTES = 50 * 1024 * 1024;
+const SENSEVOICE_MODEL = 'FunAudioLLM/SenseVoiceSmall';
+const TELESPEECH_MODEL = 'TeleAI/TeleSpeechASR';
+const SENSEVOICE_TAG_RE = /<\|[^|>]+\|>/g;
+const EMOJI_RE = /[\u{1F1E6}-\u{1F1FF}\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu;
+
+export const cleanSpeechTranscript = (text: string, stripEmoji = true): string => {
+  const raw = String(text || '');
+  if (!stripEmoji) return raw.trim();
+  return raw
+    .replace(SENSEVOICE_TAG_RE, ' ')
+    .replace(EMOJI_RE, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
+const normalizeApiKey = (value: string): string => value.trim().replace(/^Bearer\s+/i, '');
+
+const chooseRecorderMimeType = (): string => {
+  const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+  return candidates.find(type => MediaRecorder.isTypeSupported?.(type)) || '';
+};
+
+const extensionForMime = (mime: string): string => {
+  if (/mp4/i.test(mime)) return 'm4a';
+  if (/ogg/i.test(mime)) return 'ogg';
+  if (/wav/i.test(mime)) return 'wav';
+  return 'webm';
+};
+
+class SiliconFlowSttError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'SiliconFlowSttError';
+  }
+}
+
+const readErrorMessage = async (response: Response): Promise<string> => {
+  const body = await response.text().catch(() => '');
+  if (!body) return `HTTP ${response.status}`;
+  try {
+    const parsed = JSON.parse(body);
+    return String(parsed?.error?.message || parsed?.message || parsed?.data || body);
+  } catch {
+    return body.slice(0, 300);
+  }
+};
+
+export const transcribeWithSiliconFlow = async (
+  audio: Blob,
+  provider: Extract<SttProvider, `siliconflow-${string}`>,
+  apiKey: string,
+  stripEmoji = true,
+): Promise<string> => {
+  const key = normalizeApiKey(apiKey);
+  if (!key) throw new Error('请先到设置 → 其他 API 填写 SiliconFlow Key');
+  if (!audio.size) throw new Error('没有录到声音，请再试一次');
+  if (audio.size > SILICONFLOW_MAX_AUDIO_BYTES) throw new Error('录音超过 50MB，无法转写');
+
+  const model = provider === 'siliconflow-telespeech' ? TELESPEECH_MODEL : SENSEVOICE_MODEL;
+  const form = new FormData();
+  form.append('file', audio, `recording.${extensionForMime(audio.type)}`);
+  form.append('model', model);
+  const response = await fetch(SILICONFLOW_TRANSCRIPTION_URL, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}` },
+    body: form,
+  });
+  if (!response.ok) {
+    throw new SiliconFlowSttError(await readErrorMessage(response), response.status);
+  }
+  const data = await response.json();
+  return cleanSpeechTranscript(data?.text || '', stripEmoji);
+};
+
+const shouldFallbackFromTeleSpeech = (error: unknown): boolean => {
+  if (!(error instanceof SiliconFlowSttError)) return false;
+  if (error.status === 401 || error.status === 403) return false;
+  return error.status === 429 || error.status >= 500 || /overload|unavailable|timeout|繁忙|过载|限流/i.test(error.message);
+};
+
+const startSiliconFlow = async (
+  cb: SttCallbacks,
+  options: SttOptions,
+): Promise<SttSession> => {
+  const provider = options.provider === 'siliconflow-telespeech'
+    ? 'siliconflow-telespeech'
+    : 'siliconflow-sensevoice';
+  const key = normalizeApiKey(options.apiKey || '');
+  if (!key) throw new Error('请先到设置 → 其他 API 填写 SiliconFlow Key');
+  if (!isSttSupported(provider)) throw new Error('当前环境不支持录音');
+
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  });
+  const mime = chooseRecorderMimeType();
+  const recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+  const chunks: Blob[] = [];
+  const startedAt = Date.now();
+  let stopped = false;
+
+  recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
+  recorder.onstop = async () => {
+    stream.getTracks().forEach(track => track.stop());
+    cb.onRecordingEnd?.();
+    const blob = new Blob(chunks, { type: recorder.mimeType || mime || 'audio/webm' });
+    const duration = Math.max(0.2, (Date.now() - startedAt) / 1000);
+    cb.onAudio?.(blob, duration);
+    try {
+      let text: string;
+      try {
+        text = await transcribeWithSiliconFlow(blob, provider, key, options.stripEmoji !== false);
+      } catch (error) {
+        if (provider !== 'siliconflow-telespeech' || options.fallbackToSenseVoice === false || !shouldFallbackFromTeleSpeech(error)) throw error;
+        cb.onProviderFallback?.('TeleSpeech 暂时不可用，已自动改用 SenseVoice 完成识别');
+        text = await transcribeWithSiliconFlow(blob, 'siliconflow-sensevoice', key, options.stripEmoji !== false);
+      }
+      if (text) {
+        cb.onPartial?.(text);
+        cb.onFinal?.(text);
+      } else {
+        cb.onError?.('没有识别到文字，请靠近麦克风再试一次');
+      }
+    } catch (error: any) {
+      cb.onError?.(friendlyError(error?.message || String(error)));
+    } finally {
+      cb.onEnd?.();
+    }
+  };
+  recorder.onerror = () => cb.onError?.('录音失败，请检查麦克风权限');
+  recorder.start(250);
+  return {
+    stop: () => {
+      if (stopped) return;
+      stopped = true;
+      if (recorder.state !== 'inactive') recorder.stop();
+    },
+  };
+};
 
 const startWeb = (lang: string, cb: SttCallbacks): SttSession => {
   const Ctor = getWebCtor();
@@ -91,6 +255,7 @@ const startWeb = (lang: string, cb: SttCallbacks): SttSession => {
     if (ended) return;
     ended = true;
     clearWatchdog();
+    cb.onRecordingEnd?.();
     const f = finalText.trim();
     if (f) cb.onFinal?.(f);
     cb.onEnd?.();
@@ -126,6 +291,7 @@ const startNative = async (lang: string, cb: SttCallbacks): Promise<SttSession> 
     if (ended) return;
     ended = true;
     handle.remove();
+    cb.onRecordingEnd?.();
     if (errMsg) cb.onError?.(friendlyError(errMsg));
     else if (finalText) cb.onFinal?.(finalText);
     cb.onEnd?.();
@@ -143,8 +309,9 @@ const startNative = async (lang: string, cb: SttCallbacks): Promise<SttSession> 
  * Start a speech-to-text session. Resolves to a handle you can `stop()`.
  * All transcripts arrive via the callbacks.
  */
-export const startStt = async (lang: string, cb: SttCallbacks): Promise<SttSession> => {
+export const startStt = async (lang: string, cb: SttCallbacks, options: SttOptions = {}): Promise<SttSession> => {
   const language = lang || 'zh-CN';
+  if (options.provider && options.provider !== 'system') return startSiliconFlow(cb, options);
   if (isNative()) return startNative(language, cb);
   return startWeb(language, cb);
 };

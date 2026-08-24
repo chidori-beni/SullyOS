@@ -38,6 +38,7 @@ import ChatHeader from '../components/chat/ChatHeaderShell';
 import CharacterEntryTransition from '../components/chat/CharacterEntryTransition';
 import ChromeCssEditor from '../components/chat/ChromeCssEditor';
 import ChatInputArea from '../components/chat/ChatInputArea';
+import UserVoiceInputModal from '../components/chat/UserVoiceInputModal';
 import InstantChatRouteNotice from '../components/chat/InstantChatRouteNotice';
 import MemoryRepairPortal from '../components/chat/MemoryRepairPortal';
 import VoiceFavoritesPortal from '../components/chat/VoiceFavoritesPortal';
@@ -140,6 +141,7 @@ const Chat: React.FC = () => {
     const [showPanel, setShowPanel] = useState<'none' | 'actions' | 'emojis' | 'chars'>('none');
     const [memoryRepairOpen, setMemoryRepairOpen] = useState(false);
     const [voiceFavoritesOpen, setVoiceFavoritesOpen] = useState(false);
+    const [userVoiceInputOpen, setUserVoiceInputOpen] = useState(false);
     
     // Emoji State
     const [emojis, setEmojis] = useState<Emoji[]>([]);
@@ -867,7 +869,7 @@ const Chat: React.FC = () => {
     useEffect(() => {
         if (!messages.length) return;
         const map = voiceDataMap;
-        const toFetch = messages.filter(m => m.id && m.type === 'text' && m.role !== 'user' && !map[m.id]);
+        const toFetch = messages.filter(m => m.id && (m.type === 'voice' || (m.type === 'text' && m.role !== 'user')) && !map[m.id]);
         if (!toFetch.length) return;
         let cancelled = false;
         (async () => {
@@ -1409,7 +1411,11 @@ const Chat: React.FC = () => {
             addToast('图片已保存至相册', 'info');
         }
 
-        const msgPayload: any = { charId: char.id, role: 'user', type, content: text, metadata };
+        // Blob 只存 IndexedDB 资产，不塞进消息 metadata，避免消息序列化、同步和上下文膨胀。
+        const outgoingVoiceBlob = type === 'voice' && metadata?._voiceBlob instanceof Blob ? metadata._voiceBlob as Blob : null;
+        const persistedMetadata = metadata ? { ...metadata } : undefined;
+        if (persistedMetadata) delete persistedMetadata._voiceBlob;
+        const msgPayload: any = { charId: char.id, role: 'user', type, content: text, metadata: persistedMetadata };
         
         if (replyTarget) {
             msgPayload.replyTo = {
@@ -1421,6 +1427,13 @@ const Chat: React.FC = () => {
         }
 
         const savedUserMsgId = await DB.saveMessage(msgPayload);
+
+        if (type === 'voice' && outgoingVoiceBlob) {
+            const blobUrl = URL.createObjectURL(outgoingVoiceBlob);
+            voiceBlobUrlsRef.current.add(blobUrl);
+            setVoiceDataMap(prev => ({ ...prev, [savedUserMsgId]: { url: blobUrl, originalText: text } }));
+            await persistVoice(savedUserMsgId, blobUrl, outgoingVoiceBlob, text, undefined, undefined);
+        }
 
         // 小红书链接 → xhs_card。主路径不依赖任何后端：小红书分享文案自带标题（【标题】）
         // 和笔记 id/token，直接解析就能建卡，让「没部署小红书 MCP」的用户也能让角色看到分享了哪篇笔记。
@@ -3890,7 +3903,7 @@ const Chat: React.FC = () => {
                             voiceLoading={voiceLoading.has(m.id)}
                             isVoicePlaying={playingMsgId === m.id}
                             onPlayVoice={onPlayVoiceStable}
-                            onRerollVoice={onRerollVoiceStable}
+                            onRerollVoice={m.role === 'assistant' ? onRerollVoiceStable : undefined}
                             avatarShape={osTheme.chatAvatarShape}
                             avatarSize={osTheme.chatAvatarSize}
                             avatarMode={osTheme.chatAvatarMode}
@@ -4102,6 +4115,7 @@ const Chat: React.FC = () => {
                     isTyping={isTyping} selectionMode={selectionMode}
                     showPanel={showPanel} setShowPanel={setShowPanel}
                     onSend={handleSendCallback}
+                    onOpenVoiceInput={() => { setShowPanel('none'); setUserVoiceInputOpen(true); }}
                     onDeleteSelected={handleBatchDelete}
                     onForwardSelected={handleForwardSelected}
                     selectedCount={selectedMsgIds.size + Array.from(selectedThinkingMsgIds).filter(id => !selectedMsgIds.has(id)).length}
@@ -4131,6 +4145,20 @@ const Chat: React.FC = () => {
                     acnh={acnh}
                 />
             </div>
+
+            <UserVoiceInputModal
+                isOpen={userVoiceInputOpen}
+                apiConfig={apiConfig}
+                onClose={() => setUserVoiceInputOpen(false)}
+                addToast={addToast}
+                onSend={(transcript, voiceBlob, durationSeconds) => handleSendText(transcript, 'voice', {
+                    transcript,
+                    originalText: transcript,
+                    audioDuration: durationSeconds,
+                    userVoice: true,
+                    _voiceBlob: voiceBlob,
+                })}
+            />
 
 
             {/* Proactive Settings Modal */}
