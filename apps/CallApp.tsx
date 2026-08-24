@@ -2892,7 +2892,8 @@ ${sentencePlan}`;
     trackEvent('删除一条通话记录');
   };
   const startEditBubble = (bubble: CallBubble) => {
-    if (bubble.role !== 'user') return;
+    // 原来这里锁死只认 role === 'user'。加「改词」按钮时忘了把这道守卫一起放开——
+    // 于是角色气泡点「改词」会静默 return，不报错也不提示，看起来就像按钮没反应。
     setEditingBubble(bubble);
     setEditingText(bubble.text);
   };
