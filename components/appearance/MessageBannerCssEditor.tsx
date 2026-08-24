@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { DEFAULT_MESSAGE_BANNER_CSS } from '../../utils/messageBannerCss';
+import { DEFAULT_MESSAGE_BANNER_CSS, sanitizeMessageBannerCss } from '../../utils/messageBannerCss';
 import { DB } from '../../utils/db';
+import MessageBannerCard, { MESSAGE_BANNER_CARD_GUARD_CSS } from '../MessageBannerCard';
 
 interface Props {
   value: string;
@@ -38,6 +39,9 @@ const readPresets = (raw: unknown): MessageBannerPreset[] => {
 const MessageBannerCssEditor: React.FC<Props> = ({ value, onChange }) => {
   const fileRef = useRef<HTMLInputElement>(null);
   const [presets, setPresets] = useState<MessageBannerPreset[]>([]);
+  // 预览用固定背景切换，跟当前 App 主题的明暗无关：改 CSS 时经常两边都要确认可读性，
+  // 尤其是毛玻璃透明度、文字颜色这类只有配合深/浅底才看得出问题的样式。
+  const [previewDark, setPreviewDark] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -110,6 +114,40 @@ const MessageBannerCssEditor: React.FC<Props> = ({ value, onChange }) => {
 
   return (
     <div className="space-y-3">
+      <div className="rounded-2xl border border-slate-200 bg-slate-100 p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <div className="text-[11px] font-bold text-slate-500">实时预览</div>
+          <button
+            type="button"
+            onClick={() => setPreviewDark(v => !v)}
+            className="rounded-lg px-2 py-1 text-[10px] font-semibold text-slate-500 hover:bg-white"
+          >
+            {previewDark ? '☀️ 切到浅色底' : '🌙 切到深色底'}
+          </button>
+        </div>
+        <div
+          className="relative flex justify-center overflow-hidden rounded-2xl p-6"
+          style={{
+            background: previewDark
+              ? 'linear-gradient(160deg, #1c1c28, #33263f)'
+              : 'linear-gradient(160deg, #ffd9e6, #ffe8c9)',
+            backgroundImage: previewDark
+              ? 'radial-gradient(rgba(255,255,255,.08) 1px, transparent 1px), linear-gradient(160deg, #1c1c28, #33263f)'
+              : 'radial-gradient(rgba(255,255,255,.5) 1px, transparent 1px), linear-gradient(160deg, #ffd9e6, #ffe8c9)',
+            backgroundSize: '18px 18px, auto',
+          }}
+        >
+          <style>{MESSAGE_BANNER_CARD_GUARD_CSS}</style>
+          {/* 和真实横幅同一份守护 CSS + 同一份自定义 CSS，保证「这里看到的」和「真收到消息时看到的」一致。 */}
+          {value.trim() && <style>{sanitizeMessageBannerCss(value)}</style>}
+          <div className={`w-full max-w-[380px]${previewDark ? ' dark-mode' : ''}`}>
+            <MessageBannerCard charName="檸檬" body="剛剛看到一張很適合你的明信片，週末記得…" time="22:14" />
+          </div>
+        </div>
+        <div className="mt-2 text-[10px] leading-relaxed text-slate-400">
+          用固定示例文字预览卡片效果；角色头像换成了糯叽机同款的姓名首字占位。改动会立即反映在这里，不用先保存再去触发一条真消息才能看。
+        </div>
+      </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-[11px] font-bold text-slate-500">
           CSS 代码 <span className="font-normal text-slate-400">· 糯叽机格式兼容</span>

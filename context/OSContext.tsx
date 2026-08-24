@@ -875,6 +875,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [activeCharacterId, setActiveCharacterId] = useState<string>('');
+  // 'active-msg-received' handler（下方 Global Proactive Message Handler）依赖数组只有
+  // sendProactiveNativeNotification，不含 characters，若在 handler 里直接闭包 characters
+  // 会永远拿到挂载时那份空数组 —— 导致横幅头像查不到 char.avatar，退化成姓名首字兜底。
+  // 用 ref 绕开闭包，每次渲染同步最新值（与下方 activeAppRef / activeCharIdScheduleRef 同一手法）。
+  const charactersRef = useRef(characters);
+  charactersRef.current = characters;
 
   // 刷新后能恢复"上一次聊的角色"：所有调用方（聊天切换/通知 onclick/记忆宫殿 handleSwitchChar）
   // 都走裸 setActiveCharacterId，集中在这里同步到 localStorage，避免每个调用点各写一遍
@@ -1916,7 +1922,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                const isVisible = document.visibilityState === 'visible';
                const preview = formatAmsgPreviewBody(body);
                if (isVisible) {
-                   const char = characters.find(c => c.id === charId);
+                   const char = charactersRef.current.find(c => c.id === charId);
                    emitMessagePreview({
                        charId,
                        charName,
@@ -2116,9 +2122,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   // evolvedNarrative state so consecutive proactive triggers carry continuity.
   const proactiveInnerStateRef = useRef<Map<string, string>>(new Map());
 
-  // Refs to avoid stale closures in proactive callback
-  const charactersRef = useRef(characters);
-  charactersRef.current = characters;
+  // charactersRef 已在 characters state 声明处一并建好（供上面的 Global Proactive
+  // Message Handler 用），这里不再重复声明。
 
   // 同步 charId → 角色名 注册表，让 utils 层（群聊背景注入等）能标出真实发言人名。
   useEffect(() => {
