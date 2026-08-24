@@ -3,6 +3,8 @@ export interface CallPreferences {
   voiceAutoPlay: boolean;
   /** 通话进行中长时间无人说话时，是否允许角色主动接话。显式按需开启。 */
   idleNudgeEnabled: boolean;
+  /** 陪睡模式深夜的"梦话"彩蛋（角色睡着后偶尔冒出一两句梦呓）。默认开启，嫌吵可以关。 */
+  sleepDreamEnabled: boolean;
 }
 
 export const CALL_PREFERENCES_KEY = 'sully-call-preferences-v1';
@@ -12,6 +14,7 @@ export const DEFAULT_CALL_PREFERENCES: CallPreferences = {
   characterInitiative: true,
   voiceAutoPlay: true,
   idleNudgeEnabled: false,
+  sleepDreamEnabled: true,
 };
 
 export const parseCallPreferences = (raw: string | null | undefined): CallPreferences => {
@@ -22,6 +25,7 @@ export const parseCallPreferences = (raw: string | null | undefined): CallPrefer
       characterInitiative: parsed?.characterInitiative !== false,
       voiceAutoPlay: parsed?.voiceAutoPlay !== false,
       idleNudgeEnabled: parsed?.idleNudgeEnabled === true,
+      sleepDreamEnabled: parsed?.sleepDreamEnabled !== false,
     };
   } catch {
     return { ...DEFAULT_CALL_PREFERENCES };

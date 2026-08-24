@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChatCircleDots, Gear, Phone, SpeakerHigh, X } from '@phosphor-icons/react';
+import { ChatCircleDots, Gear, Moon, Phone, SpeakerHigh, X } from '@phosphor-icons/react';
 import type { CallPreferences } from '../../utils/callPreferences';
 
 interface CallPreferencesSheetProps {
@@ -147,6 +147,35 @@ const CallPreferencesSheet: React.FC<CallPreferencesSheetProps> = ({
               <span
                 className="absolute top-[3px] h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200"
                 style={{ left: 3, transform: preferences.idleNudgeEnabled ? 'translateX(20px)' : 'translateX(0)' }}
+              />
+            </button>
+          </div>
+
+          <div className="flex min-h-[4.75rem] items-center gap-3 py-3">
+            <span
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border"
+              style={{ color: preferences.sleepDreamEnabled ? accentColor : lightTheme ? 'rgba(38,34,57,.42)' : 'rgba(255,255,255,.38)', borderColor: preferences.sleepDreamEnabled ? `${accentColor}66` : lightTheme ? 'rgba(38,34,57,.1)' : 'rgba(255,255,255,.1)', background: preferences.sleepDreamEnabled ? `${accentColor}14` : lightTheme ? 'rgba(38,34,57,.025)' : 'rgba(255,255,255,.025)' }}
+            >
+              <Moon size={17} weight="fill" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className={`block text-[13px] font-medium ${lightTheme ? 'text-[#262239]/90' : 'text-white/85'}`}>陪睡梦话彩蛋</span>
+              <span className={`mt-0.5 block text-[10px] leading-4 ${lightTheme ? 'text-[#262239]/55' : 'text-white/38'}`}>开启「陪睡」后，深夜偶尔冒出一两句梦呓（说梦话）。关掉就只有开头那段哄睡语音，之后彻底安静。</span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={preferences.sleepDreamEnabled}
+              aria-label="陪睡梦话彩蛋"
+              onClick={() => onChange({ ...preferences, sleepDreamEnabled: !preferences.sleepDreamEnabled })}
+              className="relative h-7 w-12 shrink-0 rounded-full border transition-all duration-200 active:scale-95"
+              style={preferences.sleepDreamEnabled
+                ? { background: accentColor, borderColor: accentColor, boxShadow: `0 0 14px ${accentColor}44` }
+                : { background: lightTheme ? 'rgba(38,34,57,.07)' : 'rgba(255,255,255,.06)', borderColor: lightTheme ? 'rgba(38,34,57,.14)' : 'rgba(255,255,255,.13)' }}
+            >
+              <span
+                className="absolute top-[3px] h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200"
+                style={{ left: 3, transform: preferences.sleepDreamEnabled ? 'translateX(20px)' : 'translateX(0)' }}
               />
             </button>
           </div>

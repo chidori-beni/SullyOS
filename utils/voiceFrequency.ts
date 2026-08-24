@@ -70,16 +70,21 @@ export const countRecentVoiceUsage = (
   };
 };
 
-/** 语音轮占比超过这个值就算偏多（十轮里超过四轮）。 */
-const OVERUSE_RATIO = 0.4;
+/** 语音轮占比超过这个值就算偏多（约三成）。 */
+export const OVERUSE_RATIO = 0.35;
 /** 连着这么多轮都发语音就直接叫停。 */
-const STREAK_LIMIT = 2;
+export const STREAK_LIMIT = 2;
 /** 样本太少时不下判断（刚开聊两轮全是语音不代表跑偏）。 */
-const MIN_TURNS_FOR_RATIO = 4;
+export const MIN_TURNS_FOR_RATIO = 3;
 
 /**
- * 按实际用量生成一段注入文本。用量正常 → 返回空串（什么都不注入）。
- * 分两档：连着发太多 → 硬性叫停这一轮；总体偏多 → 提醒收敛。
+ * 按实际用量生成一段注入文本，塞进 volatileState（历史消息之后、离生成点还有
+ * 一段距离的位置）。用量正常 → 返回空串（什么都不注入）。分两档：连着发太多 →
+ * 硬性叫停这一轮；总体偏多 → 提醒收敛。
+ *
+ * 注意：streak 超限时这里的措辞只是"提醒"，真正的硬约束在 buildVoiceHardBlockTail——
+ * 那条会被拼进整段 prompt 的最后一句（recencyTail），模型开口前读到的最后内容，
+ * 比塞在 volatileState 中段（旁边一堆时间/心情/日程/群聊背景在抢注意力）管用得多。
  */
 export const buildVoiceUsageHint = (stats: VoiceUsageStats): string => {
   if (stats.streak >= STREAK_LIMIT) {
@@ -90,3 +95,18 @@ export const buildVoiceUsageHint = (stats: VoiceUsageStats): string => {
   }
   return '';
 };
+
+/** 是否要在这一轮硬性禁掉语音标签——只在"连着发"这个最极端的情况下才用。 */
+export const shouldHardBlockVoiceThisTurn = (stats: VoiceUsageStats): boolean =>
+  stats.streak >= STREAK_LIMIT;
+
+/**
+ * 拼进 recencyTail（整段 prompt 最后一句、模型开口前读到的最后内容）的硬性禁令。
+ * 用量正常时返回空串。跟 buildVoiceUsageHint 的 streak 分支说的是同一件事，
+ * 但这条放在真正管用的位置——上面 volatileState 里那条更像是"背景噪音里的一句提醒"，
+ * 这条才是最后拍板的那句话。
+ */
+export const buildVoiceHardBlockTail = (stats: VoiceUsageStats): string =>
+  shouldHardBlockVoiceThisTurn(stats)
+    ? `\n\n[系统提示｜语音频率（最高优先级）: 你已经连续 ${stats.streak} 轮发语音，这轮开始前必须先打字缓一缓。本轮回复禁止出现 <语音> 标签，不管内容是什么、不管有多想发——用文字说完这句话。]`
+    : '';

@@ -15,7 +15,7 @@ import { isScheduleFeatureOn } from './scheduleFeature';
 import { VOICE_ACTING_GUIDE } from './minimaxTts';
 import { FISH_VOICE_ACTING_GUIDE } from './fishAudioTts';
 import { getTtsProvider, getVoicePromptOverride } from './ttsProvider';
-import { countRecentVoiceUsage, buildVoiceUsageHint } from './voiceFrequency';
+import { countRecentVoiceUsage, buildVoiceUsageHint, buildVoiceHardBlockTail } from './voiceFrequency';
 import { buildCallHintFromMessages } from './callRequestHint';
 import { resolveCharTimeZone, nowInTimeZone } from './timezone';
 import { buildLifeRecordInjection } from './lifeRecords';
@@ -995,8 +995,11 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
         // 必须进 volatileState 不能进 stable —— 它每轮都变，塞进稳定段会打断 prompt 前缀缓存。
         // 静态那几条规则治不住"每轮都发语音"，因为最近几轮全是语音的历史本身就是最强的示范。
         // forFirePack 跳过：模板打包这一刻的用量，到主动消息真正触发时早就过期了。
-        if (char.chatVoiceEnabled && !forFirePack) {
-            volatileState += buildVoiceUsageHint(countRecentVoiceUsage(currentMsgs));
+        // voiceUsageStats 留到下面 recencyTail 那块再用一次——连着发太多时那边会追加一条硬性
+        // 禁令，放在整段 prompt 的最后一句（模型开口前读到的最后内容），比塞在这里管用得多。
+        const voiceUsageStats = (char.chatVoiceEnabled && !forFirePack) ? countRecentVoiceUsage(currentMsgs) : null;
+        if (voiceUsageStats) {
+            volatileState += buildVoiceUsageHint(voiceUsageStats);
         }
 
         // 「该打电话时真的去打」——跟上面那块是同一类问题、同一个解法（见 utils/callRequestHint.ts）。
@@ -1123,6 +1126,12 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
 只有一件事始终不变。
 
 每一句话，都应该像是不经意间，从 ${char.name} 心里自然冒出来的。`;
+
+        // 语音连着发太多时，把硬性禁令拼在整段 prompt 真正的最后一句——
+        // 比上面 volatileState 里那条"软提醒"管用得多，见 voiceFrequency.buildVoiceHardBlockTail。
+        if (voiceUsageStats) {
+            recencyTail += buildVoiceHardBlockTail(voiceUsageStats);
+        }
 
         const perfTotal = Math.round(performance.now() - perfT0);
         const timingStr = Object.entries(timings)

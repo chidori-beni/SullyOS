@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { isVoiceMessage, countRecentVoiceUsage, buildVoiceUsageHint } from './voiceFrequency';
+import {
+  isVoiceMessage,
+  countRecentVoiceUsage,
+  buildVoiceUsageHint,
+  shouldHardBlockVoiceThisTurn,
+  buildVoiceHardBlockTail,
+  STREAK_LIMIT,
+} from './voiceFrequency';
 import type { Message } from '../types';
 
 let seq = 0;
@@ -73,7 +80,7 @@ describe('countRecentVoiceUsage', () => {
 describe('buildVoiceUsageHint', () => {
   it('用量正常时什么都不注入', () => {
     expect(buildVoiceUsageHint({ turns: 10, voiceTurns: 2, streak: 0 })).toBe('');
-    expect(buildVoiceUsageHint({ turns: 10, voiceTurns: 4, streak: 1 })).toBe('');
+    expect(buildVoiceUsageHint({ turns: 10, voiceTurns: 3, streak: 1 })).toBe('');
   });
 
   it('连着两轮语音 → 硬性叫停这一轮', () => {
@@ -82,15 +89,19 @@ describe('buildVoiceUsageHint', () => {
     expect(hint).toContain('连着 2 轮');
   });
 
-  it('总体偏多 → 提醒收敛', () => {
-    const hint = buildVoiceUsageHint({ turns: 10, voiceTurns: 7, streak: 1 });
-    expect(hint).toContain('10 轮里你有 7 轮');
+  it('总体偏多 → 提醒收敛（阈值收紧到三成，样本窗口收紧到 3 轮）', () => {
+    const hint = buildVoiceUsageHint({ turns: 10, voiceTurns: 4, streak: 1 });
+    expect(hint).toContain('10 轮里你有 4 轮');
     expect(hint).toContain('优先打字');
   });
 
-  it('样本太少时不下判断（刚开聊别急着管）', () => {
-    expect(buildVoiceUsageHint({ turns: 2, voiceTurns: 1, streak: 1 })).toBe('');
-    expect(buildVoiceUsageHint({ turns: 3, voiceTurns: 2, streak: 1 })).toBe('');
+  it('样本太少时不下判断（只有两轮，刚开聊别急着管）', () => {
+    expect(buildVoiceUsageHint({ turns: 2, voiceTurns: 2, streak: 1 })).toBe('');
+  });
+
+  it('三轮就够判断了（MIN_TURNS_FOR_RATIO 收紧到 3，比原来更快反应）', () => {
+    const hint = buildVoiceUsageHint({ turns: 3, voiceTurns: 2, streak: 1 });
+    expect(hint).toContain('优先打字');
   });
 
   it('样本少但连着发照样叫停（streak 不看样本量）', () => {
@@ -99,5 +110,27 @@ describe('buildVoiceUsageHint', () => {
 
   it('完全没发过语音时保持安静', () => {
     expect(buildVoiceUsageHint({ turns: 10, voiceTurns: 0, streak: 0 })).toBe('');
+  });
+});
+
+describe('shouldHardBlockVoiceThisTurn / buildVoiceHardBlockTail', () => {
+  it('没连着发时不硬性拦', () => {
+    expect(shouldHardBlockVoiceThisTurn({ turns: 10, voiceTurns: 9, streak: 1 })).toBe(false);
+    expect(buildVoiceHardBlockTail({ turns: 10, voiceTurns: 9, streak: 1 })).toBe('');
+  });
+
+  it('连着达到上限就硬性拦，且措辞是明确禁止而不是建议', () => {
+    const stats = { turns: 5, voiceTurns: 2, streak: STREAK_LIMIT };
+    expect(shouldHardBlockVoiceThisTurn(stats)).toBe(true);
+    const tail = buildVoiceHardBlockTail(stats);
+    expect(tail).toContain('禁止出现');
+    expect(tail).toContain('最高优先级');
+    expect(tail).toContain(`连续 ${STREAK_LIMIT} 轮`);
+  });
+
+  it('只统计语音用量正常的情况下不会误伤——跟 buildVoiceUsageHint 用同一份 stats 判定一致', () => {
+    const stats = { turns: 8, voiceTurns: 1, streak: 0 };
+    expect(buildVoiceUsageHint(stats)).toBe('');
+    expect(buildVoiceHardBlockTail(stats)).toBe('');
   });
 });

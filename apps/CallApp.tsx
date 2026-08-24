@@ -35,6 +35,16 @@ import {
 } from '../utils/incomingCall';
 import CallSetupGuide, { type CallSetupGuideStep } from '../components/call/CallSetupGuide';
 import CallPreferencesSheet from '../components/call/CallPreferencesSheet';
+import SleepCompanionSheet from '../components/call/SleepCompanionSheet';
+import {
+  SLEEP_DREAM_CHECK_INTERVAL_MS,
+  SLEEP_DREAM_INSTRUCTION,
+  SLEEP_LULLABY_INSTRUCTION,
+  loadSleepAutoHangupMinutes,
+  saveSleepAutoHangupMinutes,
+  shouldFireSleepDream,
+  shouldScheduleNextSleepDreamCheck,
+} from '../utils/sleepCompanion';
 import CallUpdateAnnouncement from '../components/call/CallUpdateAnnouncement';
 import { deleteAvatarModel, inspectAvatarFile, saveAvatarModel } from '../utils/avatarModelStore';
 import { getLive2DAIActions, prewarmLive2DModelSource, saveLive2DModelFromFiles, saveLive2DModelFromZip, upgradeLive2DAutoPermissions, type Live2DAvatarConfig } from '../utils/live2dModelStore';
@@ -560,6 +570,17 @@ const CallApp: React.FC = () => {
   });
   const [callPreferences, setCallPreferences] = useState<CallPreferences>(loadCallPreferences);
   const [showCallPreferences, setShowCallPreferences] = useState(false);
+  // ── 陪睡 · 哄睡 ──
+  // sleepMode 只是给 UI 用的镜像；真正决定调度逻辑走不走的是 sleepModeRef（见下方 fire/schedule
+  // 函数——它们是普通异步函数，不是渲染期间读 state，必须读 ref 才不会拿到闭包里的旧值。
+  const [sleepMode, setSleepMode] = useState(false);
+  const [showSleepPanel, setShowSleepPanel] = useState(false);
+  const [sleepAutoHangupMinutes, setSleepAutoHangupMinutes] = useState<number>(loadSleepAutoHangupMinutes);
+  const sleepModeRef = useRef(false);
+  const sleepDreamCountRef = useRef(0);
+  const sleepBusyRef = useRef(false);
+  const sleepDreamTimerRef = useRef<number | null>(null);
+  const sleepAutoHangupTimerRef = useRef<number | null>(null);
   const [showCallUpdateAnnouncement, setShowCallUpdateAnnouncement] = useState(shouldShowCallUpdateAnnouncement);
   useEffect(() => saveCallPreferences(callPreferences), [callPreferences]);
   // 电话 App 独立的浅色主题偏好（覆盖选人页/通话中/视频/记录页）
@@ -1772,6 +1793,8 @@ const CallApp: React.FC = () => {
     beginSelectedCall(setupCameraMode);
   };
   const finishCall = async () => {
+    // 挂断（手动或陪睡定时挂断）时把陪睡计时器一起收掉，别让它们在通话结束后还傻等一小时。
+    exitSleepMode();
     if (selectedChar?.id) {
       const userTurns = bubbles.filter(b => b.role === 'user').length;
       const keepsakeLine = summarizeKeepsakeLine(bubbles, selectedChar.name);
@@ -3006,6 +3029,143 @@ ${sentencePlan}`;
     return () => window.clearTimeout(timer);
   }, [viewMode, callState, isAudioPlaying, bubbles, draftInput, callPreferences.idleNudgeEnabled]);
 
+  // ── 陪睡 · 哄睡 ──
+  // 跟 fireIdleNudge 走同一条路：把一段中文旁白当"本轮用户输入"喂给 requestAssistantReply，
+  // 不显示成用户气泡，模型照常按通话的语音演出规则（呼吸/停顿/不标情绪）说出来。
+  // 与 idleNudge 的区别只在触发方式——idleNudge 靠沉默计时，这里靠用户手动开启 +
+  // 之后的每小时定时检查（见 scheduleSleepDreamCheck），不依赖 bubbles/callState 变化去重新排。
+  const clearSleepDreamTimer = () => {
+    if (sleepDreamTimerRef.current != null) {
+      window.clearTimeout(sleepDreamTimerRef.current);
+      sleepDreamTimerRef.current = null;
+    }
+  };
+  const clearSleepAutoHangupTimer = () => {
+    if (sleepAutoHangupTimerRef.current != null) {
+      window.clearTimeout(sleepAutoHangupTimerRef.current);
+      sleepAutoHangupTimerRef.current = null;
+    }
+  };
+  const fireSleepLine = async (phase: 'lullaby' | 'dream') => {
+    if (sleepBusyRef.current || !selectedChar?.id) return;
+    if (document.visibilityState === 'hidden') return; // 后台时先跳过，等下一次检查窗口再试
+    sleepBusyRef.current = true;
+    try {
+      setCallState('thinking');
+      const instruction = phase === 'lullaby' ? SLEEP_LULLABY_INSTRUCTION : SLEEP_DREAM_INSTRUCTION;
+      const reply = prepareCallAssistantReply(
+        await requestAssistantReply(instruction),
+        callMode === 'video' && selectedChar?.videoCallPerformanceQuality !== 'high',
+      );
+      const ts = Date.now();
+      const sleepBubble: CallBubble = {
+        id: `${ts}-sleep-${phase}`,
+        role: 'assistant',
+        text: reply.text,
+        time: formatTime(),
+        timestamp: ts,
+        thinkingChain: reply.thinkingChain,
+        performance: reply.performance,
+        performanceTimeline: reply.performanceCues,
+      };
+      setAvatarEmotion(reply.performance.emotion);
+      setAvatarPerformance(reply.performance);
+      setBubbles(previous => [...previous, sleepBubble]);
+      const dbId = await DB.saveMessage({
+        charId: selectedChar.id,
+        role: 'assistant',
+        type: 'text',
+        content: reply.text,
+        metadata: {
+          source: 'call',
+          callSessionId: currentSessionId,
+          sleepPhase: phase,
+          ...(reply.thinkingChain ? { thinkingChain: reply.thinkingChain } : {}),
+          avatarPerformance: reply.performance,
+          avatarPerformanceCues: reply.performanceCues,
+        },
+      });
+      setBubbles(previous => previous.map(bubble => bubble.id === sleepBubble.id ? { ...bubble, dbId } : bubble));
+      markCallTurnDirty();
+      runCallMemoryPalaceHook(selectedChar);
+
+      let playbackStarted = false;
+      if (callPreferences.voiceAutoPlay && canSpeakVoice()) {
+        try {
+          const { url } = await takeOrSynthesizeCallAudio(reply.text, reply.speechEmotion);
+          if (url) {
+            trackBlobUrl(url);
+            setAudioUrl(url);
+            setBubbles(previous => previous.map(bubble => bubble.id === sleepBubble.id ? { ...bubble, audioUrl: url } : bubble));
+            window.setTimeout(() => playAudio(url, reply.performanceCues, estimateSpeechMs(reply.text)), 0);
+            playbackStarted = true;
+          }
+        } catch {
+          // 拿不到语音就留文字，走下面的降级——陪睡时台词往往很长，宁可保留文字也别整段丢掉。
+        }
+      }
+      if (!playbackStarted) {
+        if (callMode === 'video' && callPreferences.voiceAutoPlay) {
+          playSilentAvatarSpeech(reply.text, reply.performanceCues);
+        } else {
+          setCallState('listening');
+        }
+      }
+    } catch {
+      setCallState(previous => previous === 'thinking' ? 'listening' : previous);
+    } finally {
+      sleepBusyRef.current = false;
+    }
+  };
+  const scheduleSleepDreamCheck = () => {
+    clearSleepDreamTimer();
+    if (!sleepModeRef.current) return;
+    if (!shouldScheduleNextSleepDreamCheck(sleepDreamCountRef.current, callPreferences.sleepDreamEnabled)) return;
+    sleepDreamTimerRef.current = window.setTimeout(async () => {
+      sleepDreamTimerRef.current = null;
+      if (!sleepModeRef.current) return;
+      if (shouldFireSleepDream(sleepDreamCountRef.current, callPreferences.sleepDreamEnabled, Math.random()) && !sleepBusyRef.current) {
+        sleepDreamCountRef.current += 1;
+        await fireSleepLine('dream');
+      }
+      scheduleSleepDreamCheck();
+    }, SLEEP_DREAM_CHECK_INTERVAL_MS);
+  };
+  const scheduleSleepAutoHangup = (minutes: number) => {
+    clearSleepAutoHangupTimer();
+    if (!minutes || minutes <= 0) return;
+    sleepAutoHangupTimerRef.current = window.setTimeout(() => {
+      sleepAutoHangupTimerRef.current = null;
+      if (sleepModeRef.current) void finishCall();
+    }, minutes * 60 * 1000);
+  };
+  const enterSleepMode = async () => {
+    if (sleepModeRef.current) return;
+    setSleepMode(true);
+    sleepModeRef.current = true;
+    sleepDreamCountRef.current = 0;
+    setShowSleepPanel(false);
+    scheduleSleepAutoHangup(sleepAutoHangupMinutes);
+    trackEvent('开启陪睡模式', { 自动挂断分钟: sleepAutoHangupMinutes || 0 });
+    await fireSleepLine('lullaby');
+    if (sleepModeRef.current) scheduleSleepDreamCheck();
+  };
+  const exitSleepMode = () => {
+    if (!sleepModeRef.current) return;
+    setSleepMode(false);
+    sleepModeRef.current = false;
+    clearSleepDreamTimer();
+    clearSleepAutoHangupTimer();
+  };
+  const toggleSleepMode = () => { if (sleepModeRef.current) exitSleepMode(); else void enterSleepMode(); };
+  const handleChangeSleepAutoHangup = (minutes: number) => {
+    setSleepAutoHangupMinutes(minutes);
+    saveSleepAutoHangupMinutes(minutes);
+    if (sleepModeRef.current) scheduleSleepAutoHangup(minutes);
+  };
+  // 通话结束/组件卸载时把两个计时器一起清掉，别让陪睡的定时器在挂断之后还傻等一小时。
+  useEffect(() => () => { clearSleepDreamTimer(); clearSleepAutoHangupTimer(); }, []);
+
   // 用户在舞台上拖拽/缩放后的构图，写回角色的 videoAvatar 持久化。
   const handleStageFramingChange = (framing: AvatarStageFraming) => {
     if (!selectedChar?.videoAvatar) return;
@@ -3652,6 +3812,22 @@ ${sentencePlan}`;
           </span>
           <span style={{ color: accentColor }}>✦</span>
         </div>
+        {/* 陪睡 · 哄睡 入口：浮在右上角，不挤占底部那排固定按钮（video 是 grid-cols-5，塞不下第 6 个）。 */}
+        <button
+          type="button"
+          onClick={() => setShowSleepPanel(true)}
+          title="陪睡 · 哄睡"
+          aria-label="陪睡 · 哄睡"
+          className="absolute right-5 flex h-7 w-7 items-center justify-center rounded-full border backdrop-blur-md transition active:scale-90"
+          style={{
+            top: 'calc(max(2.25rem, var(--safe-top)) + 22px)',
+            background: sleepMode ? `${accentColor}33` : 'rgba(255,255,255,0.06)',
+            borderColor: sleepMode ? `${accentColor}88` : 'rgba(255,255,255,0.15)',
+            boxShadow: sleepMode ? `0 0 14px ${accentColor}55` : 'none',
+          }}
+        >
+          <Moon size={14} weight="fill" style={{ color: sleepMode ? accentColor : 'rgba(255,255,255,0.6)' }} />
+        </button>
         {/* name block */}
         <div className={`${callMode === 'video' ? 'pt-3' : 'pt-7'} text-center`}>
           {callMode !== 'video' && <div className="text-sm" style={{ color: `${accentColor}cc`, textShadow: `0 0 12px ${accentColor}` }}>❀</div>}
@@ -3683,6 +3859,11 @@ ${sentencePlan}`;
           {memoryPalaceStatus && (
             <div className="mt-1 text-[10px] text-white/55 animate-pulse">
               记忆整理 · {memoryPalaceStatus}
+            </div>
+          )}
+          {sleepMode && (
+            <div className="mt-1.5 inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[10px]" style={{ borderColor: `${accentColor}55`, background: `${accentColor}14`, color: accentColor }}>
+              🌙 陪睡中 · 你可以安心睡了
             </div>
           )}
         </div>
@@ -4098,6 +4279,18 @@ ${sentencePlan}`;
             </div>
           </div>
         </div>
+      )}
+      {showSleepPanel && (
+        <SleepCompanionSheet
+          charName={selectedChar?.name || '对方'}
+          sleepMode={sleepMode}
+          autoHangupMinutes={sleepAutoHangupMinutes}
+          accentColor={accentColor}
+          lightTheme={lightTheme}
+          onChangeAutoHangup={handleChangeSleepAutoHangup}
+          onToggleSleep={toggleSleepMode}
+          onClose={() => setShowSleepPanel(false)}
+        />
       )}
       {showHangupConfirm && (
         <div className="absolute inset-0 z-[70] bg-black/70 backdrop-blur-sm flex items-center justify-center px-6">
