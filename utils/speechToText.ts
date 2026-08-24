@@ -159,6 +159,76 @@ const shouldFallbackFromTeleSpeech = (error: unknown): boolean => {
   return error.status === 429 || error.status >= 500 || /overload|unavailable|timeout|繁忙|过载|限流/i.test(error.message);
 };
 
+// iOS PWA/WebKit can show the microphone prompt again when an app repeatedly
+// calls getUserMedia() and immediately stops the returned track. A call is a
+// single microphone session even though it contains many STT recordings, so
+// keep one stream alive between turns and only release it when the caller
+// leaves the call / closes the voice-message modal.
+let siliconFlowMicrophone: MediaStream | null = null;
+let siliconFlowMicrophoneRequest: Promise<MediaStream> | null = null;
+let siliconFlowMicrophoneGeneration = 0;
+
+const hasLiveMicrophoneTrack = (stream: MediaStream | null): stream is MediaStream => {
+  if (!stream) return false;
+  return stream.getAudioTracks().some(track => track.readyState !== 'ended');
+};
+
+const prepareSiliconFlowMicrophone = (stream: MediaStream) => {
+  stream.getAudioTracks().forEach(track => {
+    if (track.readyState === 'live') track.enabled = true;
+  });
+};
+
+const pauseSiliconFlowMicrophone = (stream: MediaStream) => {
+  // Disabling the track stops capture between turns while keeping the browser's
+  // permission/session alive for the next recording.
+  stream.getAudioTracks().forEach(track => {
+    if (track.readyState === 'live') track.enabled = false;
+  });
+};
+
+const getSiliconFlowMicrophone = async (): Promise<MediaStream> => {
+  if (hasLiveMicrophoneTrack(siliconFlowMicrophone)) {
+    prepareSiliconFlowMicrophone(siliconFlowMicrophone);
+    return siliconFlowMicrophone;
+  }
+  if (siliconFlowMicrophoneRequest) return siliconFlowMicrophoneRequest;
+
+  const generation = siliconFlowMicrophoneGeneration;
+  let request: Promise<MediaStream>;
+  request = navigator.mediaDevices.getUserMedia({
+    audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  }).then(stream => {
+    // If the owning call disappeared while the permission sheet was open, do
+    // not leave a newly granted stream running in the background.
+    if (generation !== siliconFlowMicrophoneGeneration) {
+      stream.getTracks().forEach(track => track.stop());
+      throw new Error('麦克风请求已取消');
+    }
+    siliconFlowMicrophone = stream;
+    stream.getTracks().forEach(track => {
+      track.addEventListener?.('ended', () => {
+        if (siliconFlowMicrophone === stream) siliconFlowMicrophone = null;
+      }, { once: true });
+    });
+    prepareSiliconFlowMicrophone(stream);
+    return stream;
+  }).finally(() => {
+    if (siliconFlowMicrophoneRequest === request) siliconFlowMicrophoneRequest = null;
+  });
+  siliconFlowMicrophoneRequest = request;
+  return request;
+};
+
+/** Release the cached SiliconFlow microphone when the call/modal is really closed. */
+export const releaseSiliconFlowMicrophone = () => {
+  siliconFlowMicrophoneGeneration += 1;
+  const stream = siliconFlowMicrophone;
+  siliconFlowMicrophone = null;
+  siliconFlowMicrophoneRequest = null;
+  stream?.getTracks().forEach(track => track.stop());
+};
+
 const startSiliconFlow = async (
   cb: SttCallbacks,
   options: SttOptions,
@@ -170,18 +240,17 @@ const startSiliconFlow = async (
   if (!key) throw new Error('请先到设置 → 其他 API 填写 SiliconFlow Key');
   if (!isSttSupported(provider)) throw new Error('当前环境不支持录音');
 
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-  });
+  const stream = await getSiliconFlowMicrophone();
   const mime = chooseRecorderMimeType();
   const recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
   const chunks: Blob[] = [];
   const startedAt = Date.now();
   let stopped = false;
 
+  prepareSiliconFlowMicrophone(stream);
   recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
   recorder.onstop = async () => {
-    stream.getTracks().forEach(track => track.stop());
+    pauseSiliconFlowMicrophone(stream);
     cb.onRecordingEnd?.();
     const blob = new Blob(chunks, { type: recorder.mimeType || mime || 'audio/webm' });
     const duration = Math.max(0.2, (Date.now() - startedAt) / 1000);

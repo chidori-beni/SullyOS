@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanSpeechTranscript, transcribeWithSiliconFlow } from './speechToText';
+import { cleanSpeechTranscript, releaseSiliconFlowMicrophone, startStt, transcribeWithSiliconFlow } from './speechToText';
 
 describe('speech-to-text transcript cleaning', () => {
   it('removes SenseVoice control tags and emotion emoji by default', () => {
@@ -12,7 +12,10 @@ describe('speech-to-text transcript cleaning', () => {
 });
 
 describe('SiliconFlow transcription request', () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    releaseSiliconFlowMicrophone();
+    vi.unstubAllGlobals();
+  });
 
   it.each([
     ['siliconflow-sensevoice' as const, 'FunAudioLLM/SenseVoiceSmall'],
@@ -43,5 +46,59 @@ describe('SiliconFlow transcription request', () => {
     await expect(transcribeWithSiliconFlow(new Blob(['audio']), 'siliconflow-sensevoice', ''))
       .rejects.toThrow('SiliconFlow Key');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('reuses one microphone stream across recordings until the call is released', async () => {
+    const track = {
+      enabled: true,
+      readyState: 'live' as MediaStreamTrackState,
+      stop: vi.fn(() => { track.readyState = 'ended'; }),
+      addEventListener: vi.fn(),
+    };
+    const stream = {
+      getAudioTracks: () => [track],
+      getTracks: () => [track],
+    } as unknown as MediaStream;
+    const getUserMedia = vi.fn(async () => stream);
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+
+    class FakeMediaRecorder {
+      static isTypeSupported = () => false;
+      state: RecordingState = 'inactive';
+      mimeType = 'audio/webm';
+      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor(_stream: MediaStream) {}
+      start() { this.state = 'recording'; }
+      stop() {
+        if (this.state === 'inactive') return;
+        this.state = 'inactive';
+        this.ondataavailable?.({ data: new Blob(['audio'], { type: 'audio/webm' }) });
+        this.onstop?.();
+      }
+    }
+    vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ text: '识别成功' }), { status: 200 })));
+
+    const runRecording = async () => {
+      let finish!: () => void;
+      const ended = new Promise<void>(resolve => { finish = resolve; });
+      const session = await startStt('zh-CN', { onEnd: finish }, {
+        provider: 'siliconflow-sensevoice',
+        apiKey: 'sf-test-key',
+      });
+      session.stop();
+      await ended;
+    };
+
+    await runRecording();
+    expect(track.enabled).toBe(false);
+    await runRecording();
+
+    expect(getUserMedia).toHaveBeenCalledOnce();
+    expect(track.stop).not.toHaveBeenCalled();
+    releaseSiliconFlowMicrophone();
+    expect(track.stop).toHaveBeenCalledOnce();
   });
 });

@@ -12,7 +12,7 @@ import { normalizeVoiceTags } from '../utils/sanitize';
 import { FISH_VOICE_ACTING_GUIDE, synthesizeSpeechFishDetailed, resolveFishAudioApiKey, cleanTextForTtsFish, stripFishMarkupForDisplay } from '../utils/fishAudioTts';
 import { resolveTtsProvider, getTtsProvider, getVoicePromptOverride } from '../utils/ttsProvider';
 import { VOICE_LANGUAGE_OPTIONS } from '../utils/voiceLanguage';
-import { startStt, isSttSupported, type SttSession } from '../utils/speechToText';
+import { startStt, isSttSupported, releaseSiliconFlowMicrophone, type SttSession } from '../utils/speechToText';
 import { ContextBuilder } from '../utils/context';
 import { resolveCharTimeZone } from '../utils/timezone';
 import {
@@ -607,6 +607,13 @@ const CallApp: React.FC = () => {
   const sttSessionRef = useRef<SttSession | null>(null);
   const speechProvider = apiConfig.speechRecognitionProvider || 'system';
   const sttSupported = useMemo(() => isSttSupported(speechProvider), [speechProvider]);
+  const stopCallStt = () => {
+    sttSessionRef.current?.stop();
+    sttSessionRef.current = null;
+    setIsListening(false);
+    setIsSttProcessing(false);
+    releaseSiliconFlowMicrophone();
+  };
   const [audioUrl, setAudioUrl] = useState<string>('');
   const [traceId, setTraceId] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -1558,7 +1565,7 @@ const CallApp: React.FC = () => {
   }, [viewMode, characters, suspendedCall]);
   useEffect(() => () => {
     revokeSessionBlobs();
-    sttSessionRef.current?.stop();
+    stopCallStt();
   }, []);
   // Voice input: toggle speech-to-text into the draft input box.
   const toggleStt = async () => {
@@ -1711,6 +1718,9 @@ const CallApp: React.FC = () => {
     markCallTurnDirty();
   };
   const resetCurrentCall = () => {
+    // A new call starts a fresh permission/session boundary. Within one call,
+    // SiliconFlow STT reuses its microphone stream between turns.
+    stopCallStt();
     revokeSessionBlobs();
     stopPlayback();
     pendingAvatarTouchesRef.current = [];
@@ -1819,6 +1829,7 @@ const CallApp: React.FC = () => {
     beginSelectedCall(setupCameraMode);
   };
   const finishCall = async () => {
+    stopCallStt();
     // 挂断（手动或陪睡定时挂断）时把陪睡计时器一起收掉，别让它们在通话结束后还傻等一小时。
     exitSleepMode();
     if (selectedChar?.id) {
@@ -4346,6 +4357,7 @@ ${sentencePlan}`;
               <button onClick={() => {
                 setShowHangupConfirm(false);
                 if (selectedChar) {
+                  stopCallStt();
                   suspendCall({
                     charId: selectedChar.id,
                     charName: selectedChar.name,

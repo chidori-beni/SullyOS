@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Microphone, PaperPlaneTilt, Stop, TextT } from '@phosphor-icons/react';
 import type { APIConfig } from '../../types';
 import Modal from '../os/Modal';
-import { isSttSupported, startStt, type SttSession } from '../../utils/speechToText';
+import { isSttSupported, releaseSiliconFlowMicrophone, startStt, type SttSession } from '../../utils/speechToText';
 
 interface UserVoiceInputModalProps {
     isOpen: boolean;
@@ -29,7 +29,13 @@ const UserVoiceInputModal: React.FC<UserVoiceInputModalProps> = ({ isOpen, apiCo
         : provider === 'siliconflow-sensevoice' ? 'SenseVoice Small' : '系统识别';
 
     useEffect(() => {
-        if (!isOpen) return;
+        if (!isOpen) {
+            runIdRef.current += 1;
+            sessionRef.current?.stop();
+            sessionRef.current = null;
+            releaseSiliconFlowMicrophone();
+            return;
+        }
         runIdRef.current += 1;
         sessionRef.current = null;
         setMode('speech');
@@ -49,6 +55,7 @@ const UserVoiceInputModal: React.FC<UserVoiceInputModalProps> = ({ isOpen, apiCo
     const close = () => {
         runIdRef.current += 1;
         stopRecording();
+        releaseSiliconFlowMicrophone();
         onClose();
     };
 
