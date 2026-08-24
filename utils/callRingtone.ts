@@ -125,6 +125,30 @@ let priming = false;
 let ringActive = false;
 
 /**
+ * 单例元素当前是否真的挂着铃声源。
+ *
+ * ## 为什么必须自己记一个标志，而不能读 `currentSrc` / `src`
+ *
+ * 第 15 轮的"硬销毁"用 `removeAttribute('src')` + `load()` 去切断 iOS 的底层媒体管线。
+ * 之后 WebKit 会把元素打成 `networkState = NETWORK_NO_SOURCE(3)`，
+ * **但 `currentSrc` 里仍然残留着旧的 mp3 URL**。
+ *
+ * 旧的 `getAudio()` 恰恰是拿这个字符串判断"要不要把源接回来"：
+ *
+ * ```ts
+ * } else if (!(audio.currentSrc || audio.src).includes('incoming-call.mp3')) { ... }
+ * ```
+ *
+ * 残留值让这个条件永远为 false ⇒ **第一通电话之后，音源再也不会被接回来**，
+ * `play()` 落在一个 NO_SOURCE 的空元素上：来电界面正常、看门狗正常、就是一点声音都没有；
+ * 冷启动重开 App 会 `new Audio(RINGTONE_URL)`，所以第一通永远是正常的。
+ *
+ * 8/24 实机日志里那条 `networkStateBefore: 3` 配着 `srcBefore: ".../incoming-call.mp3"`
+ * 就是这个状态的指纹——两者本不该同时成立。
+ */
+let srcAttached = false;
+
+/**
  * 这条专项日志故意复用 lifecycle 分类：用户不需要再记一个新开关。
  * 只记铃声状态和事件来源，不记角色名、开场白或聊天正文。
  */
@@ -194,17 +218,38 @@ const broadcastCrossContextStop = (reason: string): void => {
   try { window.localStorage.setItem(RINGTONE_STOP_STORAGE_KEY, JSON.stringify(message)); } catch { /* 隐私模式 */ }
 };
 
+/** `HTMLMediaElement.networkState` 的两个"没有可用音源"取值。 */
+const NETWORK_EMPTY = 0;
+const NETWORK_NO_SOURCE = 3;
+
+/**
+ * 把铃声源接回单例元素。**只保留元素本身**，不 new 新的：iOS 的自动播放许可是按元素
+ * 记的，每次切后台都换一个 Audio 就会把许可丢掉。
+ */
+const attachRingtoneSrc = (el: HTMLAudioElement): void => {
+  try {
+    el.src = RINGTONE_URL;
+    el.load();
+    srcAttached = true;
+  } catch { /* 某些 WebView 对已销毁元素会抛异常 */ }
+};
+
 const getAudio = (): HTMLAudioElement | null => {
   if (typeof Audio === 'undefined') return null; // SSR / 测试环境
   if (!audio) {
     audio = new Audio(RINGTONE_URL);
     audio.preload = 'auto';
     (audio as any).playsInline = true;
-  } else if (!(audio.currentSrc || audio.src).includes('incoming-call.mp3')) {
-    // stopRingtone 会清掉旧 src 来切断 iOS 的底层媒体管线；同一个元素仍然保留，
-    // 这样 iOS 按元素授予的播放权限不会因为每次切后台都换 Audio 而丢失。
-    audio.src = RINGTONE_URL;
-    audio.load();
+    srcAttached = true;
+    return audio;
+  }
+  // ⚠️ 这里**绝不能**再靠读 currentSrc / src 的字符串来判断（旧代码就是这么写的，
+  // 那正是"第二通开始没有声音"的根因，见 srcAttached 的注释）。只信自己记的标志，
+  // 外加一道用 networkState 兜底：WebKit 偶尔会把元素弄成 NO_SOURCE 而我们没记到。
+  if (!srcAttached
+    || audio.networkState === NETWORK_EMPTY
+    || audio.networkState === NETWORK_NO_SOURCE) {
+    attachRingtoneSrc(audio);
   }
   return audio;
 };
@@ -297,7 +342,7 @@ export const primeRingtone = (): void => {
   // 所以唯一稳的做法是让「可漏出来的声音」本身就是静音。
   el.muted = true;   // 双保险：即使 muted 有效也没坏处，失效了也只是漏 0.05 秒静音
   try { el.loop = false; } catch { /* 忽略 */ }
-  try { el.src = SILENT_PRIME_URL; el.load(); } catch { /* 忽略 */ }
+  try { el.src = SILENT_PRIME_URL; el.load(); srcAttached = false; } catch { /* 忽略 */ }
   logRingtone('prime-start', {
     pausedBefore: el.paused,
     currentTimeBefore: el.currentTime,
@@ -323,7 +368,7 @@ export const primeRingtone = (): void => {
     el.muted = false;
     // 解锁已经拿到（按元素记，跟播的是哪个 URL 无关），把真铃声接回来预加载，
     // 真来电时才不用等首字节。
-    try { el.src = RINGTONE_URL; el.load(); } catch { /* 忽略 */ }
+    attachRingtoneSrc(el);
     logRingtone(event, {
       currentTimeAfter: el.currentTime,
       pausedAfter: el.paused,
@@ -368,6 +413,10 @@ export const startRingtone = (onTimeout: () => void): void => {
     pausedBefore: el?.paused,
     currentTimeBefore: el?.currentTime,
     wasPriming: priming,
+    // 下次再出"有界面没声音"时，这三个字段一眼就能看出音源到底接上没有。
+    srcAttached,
+    readyStateBefore: el?.readyState,
+    networkStateBefore: el?.networkState,
   });
   // 推进 epoch：万一预解锁的 play() promise 还没 settle，它到点时会认出自己已经过期，
   // 从而**不会**去 pause 这通刚开始响的真来电。
@@ -428,6 +477,9 @@ export const stopRingtone = (): void => {
     el.removeAttribute('src');
     el.load();
   } catch { /* 忽略 */ }
+  // 源已经被摘掉了。必须自己记下来——WebKit 的 currentSrc 会残留旧 URL，读它会得出
+  // "源还在"的错误结论，下一通电话就再也接不回音源了（见 srcAttached 的注释）。
+  srcAttached = false;
   // 不丢掉 Audio 元素本身：iOS 的播放许可有时按元素记录。只清掉 src，
   // 下一次 getAudio() 会把同一个元素重新接回铃声文件。
   audioEpoch += 1;
@@ -447,6 +499,7 @@ export const __resetRingtoneForTest = (): void => {
   primed = false;
   priming = false;
   ringActive = false;
+  srcAttached = false;
   audioEpoch += 1;
 };
 

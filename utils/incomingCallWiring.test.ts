@@ -183,6 +183,76 @@ describe('生命周期事件不许掐掉正在响的真来电', () => {
   });
 });
 
+describe('音源是否还挂着，只能自己记，不能读 currentSrc', () => {
+  const ringtone = read('./callRingtone.ts');
+
+  /**
+   * 8/24 第三个实机 bug：第一通电话正常，**第二通开始有来电界面、有看门狗，就是没有声音**。
+   *
+   * 第 15 轮的"硬销毁"用 `removeAttribute('src')` + `load()` 切断 iOS 的底层媒体管线，
+   * 之后 WebKit 把元素打成 `networkState = NETWORK_NO_SOURCE(3)`，**但 `currentSrc` 里
+   * 仍然残留旧的 mp3 URL**。旧的 `getAudio()` 恰恰拿这个字符串判断要不要把源接回来，
+   * 残留值让条件永远为 false ⇒ 第一通之后音源再也接不回来，`play()` 落在空元素上。
+   *
+   * 实机日志里 `networkStateBefore: 3` 配着 `srcBefore: ".../incoming-call.mp3"`
+   * 就是这个状态的指纹——两者本不该同时成立。
+   */
+  const getAudioBody = () => {
+    const body = ringtone.slice(ringtone.indexOf('const getAudio'), ringtone.indexOf('const clearTimers'));
+    // 注释里提到 currentSrc 是为了警告后人，不能算违规；只看真代码。
+    return body
+      .split('\n')
+      .filter(line => {
+        const t = line.trim();
+        return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*');
+      })
+      .join('\n');
+  };
+
+  it('getAudio 不许再靠 currentSrc 字符串判断音源在不在', () => {
+    const body = getAudioBody();
+    expect(body.length).toBeGreaterThan(0);
+    expect(body).not.toContain('audio.currentSrc');
+    expect(body).not.toContain("includes('incoming-call.mp3')");
+  });
+
+  it('改用模块级 srcAttached 标志，外加 networkState 兜底', () => {
+    expect(ringtone).toContain('let srcAttached = false;');
+    const body = getAudioBody();
+    expect(body).toContain('!srcAttached');
+    expect(body).toContain('NETWORK_NO_SOURCE');
+    expect(body).toContain('NETWORK_EMPTY');
+  });
+
+  it('每一处摘掉音源的地方都必须把 srcAttached 置回 false', () => {
+    // 漏掉任何一处，那条路走过之后铃声就再也不会响了。
+    const stopBody = ringtone.slice(
+      ringtone.indexOf('export const stopRingtone'),
+      ringtone.indexOf('export const __resetRingtoneForTest'),
+    );
+    expect(stopBody).toContain("el.removeAttribute('src');");
+    expect(stopBody).toContain('srcAttached = false;');
+
+    const primeBody = ringtone.slice(
+      ringtone.indexOf('export const primeRingtone'),
+      ringtone.indexOf('export const isRinging'),
+    );
+    // 预解锁把静音 WAV 挂上去时也等于摘掉了铃声源
+    expect(primeBody).toContain('srcAttached = false;');
+    // 解锁完成后必须走同一个 helper 把铃声接回来
+    expect(primeBody).toContain('attachRingtoneSrc(el);');
+  });
+
+  it('start 日志带上音源状态，下次"有界面没声音"能一眼看出来', () => {
+    const startBody = ringtone.slice(
+      ringtone.indexOf('export const startRingtone'),
+      ringtone.indexOf('export const stopRingtone'),
+    );
+    expect(startBody).toContain('srcAttached,');
+    expect(startBody).toContain('networkStateBefore: el?.networkState');
+  });
+});
+
 describe('来电界面必须挂在锁屏那棵树上', () => {
   const shell = read('../components/PhoneShell.tsx');
 
