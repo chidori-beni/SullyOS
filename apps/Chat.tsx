@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
+import type { ActiveMsg2TaskRecord } from '../types';
 import { processImage } from '../utils/file';
 import { safeResponseJson, extractContent } from '../utils/safeApi';
 import { buildChatFineTuneCss, mergeChatFineTune } from '../utils/chatFineTuneCss';
@@ -12,7 +13,7 @@ import { FadersHorizontal } from '@phosphor-icons/react';
 import { generateDailyScheduleForChar, isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import { getDailyScheduleForChar } from '../utils/dailySchedule';
 import { useLocalDateKey } from '../hooks/useLocalDateKey';
-import { resolveCharTimeZone } from '../utils/timezone';
+import { resolveCharTimeZone, wallClockToTimestamp } from '../utils/timezone';
 import { generateSlotTheater } from '../utils/theaterGenerator';
 import TheaterPlayer from '../components/schedule/TheaterPlayer';
 import { formatMessageWithTime, normalizeMessageContent } from '../utils/messageFormat';
@@ -75,6 +76,16 @@ import {
     saveVoiceFavorite,
 } from '../utils/voiceFavorites';
 import { SCHEDULE_CHANGE_EVENT, type ScheduleChangeEventDetail } from '../utils/scheduleChange';
+import {
+    applyScheduleInviteToSchedule,
+    buildScheduleInviteReplyData,
+    ensureScheduleInviteMessage,
+    getScheduleInviteData,
+    getScheduleInviteEvents,
+    isScheduleInviteEnabled,
+    setScheduleInviteEnabled,
+} from '../utils/scheduleInvite';
+import { applyScheduledTask } from '../utils/amsg2Tasks';
 import {
     CONTEXT_RANGE_POLICY_VERSION,
     computeContextRangeSnapshot,
@@ -169,6 +180,7 @@ const Chat: React.FC = () => {
     // 切换角色时收掉装扮气泡：定制是 per-character 的，避免误改到下一个角色
     useEffect(() => { setFineTuneOpen(false); setFineTunePanelOpen(false); }, [activeCharacterId]);
     const [scheduleData, setScheduleData] = useState<DailySchedule | null>(null);
+    const [scheduleInviteEnabled, setScheduleInviteEnabledState] = useState<boolean>(() => isScheduleInviteEnabled());
     const [scheduleChangeNotice, setScheduleChangeNotice] = useState<ScheduleChangeEventDetail | null>(null);
     const dismissScheduleChangeNotice = useCallback(() => setScheduleChangeNotice(null), []);
     // 小剧场（窥视演出）：正在播放的时段索引（null = 未打开），以及生成中标志
@@ -1146,6 +1158,22 @@ const Chat: React.FC = () => {
 
     useEffect(() => setScheduleChangeNotice(null), [activeCharacterId]);
 
+    /**
+     * 日程是本地生成的，邀约卡也必须在同一处落库；这样旧日程升级、重新打开聊天、
+     * 手动重抽日程都走同一条去重路径，不会因为组件重渲染重复发卡。
+     */
+    const ensureScheduleInvite = useCallback(async (targetChar: typeof char, schedule: DailySchedule) => {
+        if (!targetChar || !isScheduleInviteEnabled()) return schedule;
+        try {
+            const result = await ensureScheduleInviteMessage({ char: targetChar, schedule });
+            if (result.created) await reloadMessages(visibleCountRef.current);
+            return result.schedule;
+        } catch (error) {
+            console.warn('[ScheduleInvite] create invite failed:', error);
+            return schedule;
+        }
+    }, [reloadMessages]);
+
     // Auto-generate daily schedule (fire-and-forget on chat load)
     // 总开关关闭时完全跳过：不查询 DB、不调用副 API、不跑兜底
     useEffect(() => {
@@ -1159,10 +1187,10 @@ const Chat: React.FC = () => {
                 // Generate in background, don't block chat
                 generateDailySchedule(char, false);
             } else {
-                setScheduleData(existing);
+                ensureScheduleInvite(char, existing).then(setScheduleData);
             }
         }).catch(() => {});
-    }, [activeCharacterId, char?.scheduleFeatureEnabled, char?.customTimezoneEnabled, char?.customTimezone, charDateKey]);
+    }, [activeCharacterId, char?.scheduleFeatureEnabled, char?.customTimezoneEnabled, char?.customTimezone, charDateKey, ensureScheduleInvite]);
 
     // 每次真正打开聊天设置时从角色持久化值重新初始化；避免用户在记忆宫殿页
     // 切换全自动模式后，隐藏着的 Chat 组件仍带着旧拉杆状态。
@@ -1582,6 +1610,124 @@ const Chat: React.FC = () => {
         }
         await reloadMessages(visibleCountRef.current);
     }, [char, reloadMessages, addToast, characters, userProfile, groups, realtimeConfig]);
+
+    /**
+     * 用户接受语音 / 视频邀约后，把“到点发起动作”接到已有的主动消息 2.0 排程。
+     * 邀约本身先落本地日程；云端排程失败不会回滚用户已经同意的安排，只会给出明确提示。
+     */
+    const scheduleAcceptedInviteCall = useCallback(async (event: ReturnType<typeof getScheduleInviteEvents>[number]): Promise<'scheduled' | 'skipped' | 'failed'> => {
+        if (!char || (event.kind !== 'voice' && event.kind !== 'video')) return 'skipped';
+        const config = char.activeMsg2Config;
+        if (!config?.enabled) return 'skipped';
+        const firstSendMs = wallClockToTimestamp(
+            `${event.date} ${event.startTime}:00`,
+            resolveCharTimeZone(char),
+        );
+        if (!Number.isFinite(firstSendMs) || firstSendMs <= Date.now() + 30_000) return 'skipped';
+
+        const callMode = event.kind === 'video' ? 'video' : 'voice';
+        const callLabel = event.kind === 'video' ? '视频通话' : '语音连麦';
+        const promptHint = [
+            `用户已经接受了今天 ${event.startTime}${event.endTime ? `-${event.endTime}` : ''} 的${callLabel}邀约。现在到了约定时间，请像真人一样先发一句很短的自然开场，然后立刻发起${callLabel}。`,
+            `必须使用电话动作标记 [[ACTION:CALL | ${callMode} | 你想对用户说的第一句开场白]]，不要把这个标记解释成系统提示，也不要只发文字不打电话。`,
+        ].join('\n');
+
+        try {
+            const result = await ActiveMsgClient.scheduleCharacterTask({
+                char,
+                config,
+                task: {
+                    mode: 'prompted',
+                    firstSendTime: new Date(firstSendMs).toISOString(),
+                    recurrenceType: 'none',
+                    promptHint,
+                    expirePolicy: 'force',
+                },
+                userProfile,
+                groups,
+                realtimeConfig,
+                apiConfig,
+            });
+            const record: ActiveMsg2TaskRecord = {
+                taskUuid: result.uuid,
+                clientTaskId: result.clientTaskId,
+                mode: 'prompted',
+                firstSendTime: result.firstSendAt,
+                nextSendAt: result.nextSendAt,
+                recurrenceType: 'none',
+                promptHint,
+                expirePolicy: 'force',
+                anchorLastUserMsgAt: result.anchorMs,
+                source: 'user',
+                status: 'scheduled',
+                createdAt: Date.now(),
+            };
+            updateCharacter(char.id, (prev) => ({
+                activeMsg2Config: {
+                    ...(prev.activeMsg2Config || config),
+                    tasks: applyScheduledTask(prev.activeMsg2Config?.tasks || config.tasks || [], record, {}, Date.now()),
+                },
+            }));
+            return 'scheduled';
+        } catch (error) {
+            console.warn('[ScheduleInvite] schedule accepted call failed:', error);
+            return 'failed';
+        }
+    }, [char, userProfile, groups, realtimeConfig, apiConfig, updateCharacter]);
+
+    const handleResolveScheduleInvite = useCallback(async (msg: Message, selectedIds: string[]) => {
+        if (!char) return;
+        const data = getScheduleInviteData(msg);
+        if (!data || data.status !== 'pending') return;
+        const eventIds = new Set(data.events.map(event => event.id));
+        const acceptedIds = data.events.filter(event => selectedIds.includes(event.id) && eventIds.has(event.id)).map(event => event.id);
+        const acceptedEvents = data.events.filter(event => acceptedIds.includes(event.id));
+        const declinedIds = data.events.filter(event => !acceptedIds.includes(event.id)).map(event => event.id);
+
+        await DB.updateMessageMetadata(msg.id, (previous) => ({
+            ...(previous || {}),
+            scheduleInviteData: {
+                ...data,
+                status: 'responded',
+                acceptedIds,
+                declinedIds,
+                responseAt: Date.now(),
+            },
+        }));
+
+        const storedSchedule = await getDailyScheduleForChar(char).catch(() => null);
+        if (storedSchedule && storedSchedule.date === data.date) {
+            const updatedSchedule = applyScheduleInviteToSchedule(storedSchedule, data.events, acceptedIds);
+            await DB.saveDailySchedule(updatedSchedule);
+            setScheduleData(updatedSchedule);
+            markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+        }
+
+        if (acceptedEvents.length > 0) {
+            const replyData = buildScheduleInviteReplyData(char.name, acceptedEvents);
+            await DB.saveMessage({
+                charId: char.id,
+                role: 'user',
+                type: 'schedule_invite_reply',
+                content: `💌 答应了邀约（${char.name}）：${acceptedEvents.map(event => event.activity).join('、')}`,
+                metadata: { source: 'schedule_invite_reply', scheduleInviteReplyData: replyData },
+            });
+        }
+
+        const results = await Promise.all(acceptedEvents.map(scheduleAcceptedInviteCall));
+        const scheduledCalls = results.filter(result => result === 'scheduled').length;
+        const failedCalls = results.filter(result => result === 'failed').length;
+        if (acceptedEvents.length === 0) {
+            addToast('已婉拒这次行程邀约', 'info');
+        } else if (failedCalls > 0) {
+            addToast(`已登记 ${acceptedEvents.length} 项邀约，但 ${failedCalls} 项自动连麦未排上，请检查主动消息 2.0`, 'error');
+        } else if (scheduledCalls > 0) {
+            addToast(`已答应 ${acceptedEvents.length} 项邀约，${scheduledCalls} 项已安排到点连麦`, 'success');
+        } else {
+            addToast(`已答应 ${acceptedEvents.length} 项邀约，并登记到日程`, 'success');
+        }
+        await reloadMessages(visibleCountRef.current);
+    }, [char, userProfile, groups, realtimeConfig, scheduleAcceptedInviteCall, addToast, reloadMessages]);
 
     // 顶栏 ⚡ 手动触发。instant 模式下给"上一条 assistant 之后的所有 user 消息"打上"准备中"
     // 三个点（从写入 DB 到 SSE POST 入队之间），由 onInstantPosted 清除 ——
@@ -2053,7 +2199,8 @@ const Chat: React.FC = () => {
         try {
             const result = await generateDailyScheduleForChar(targetChar, userProfile, apiConfig, forceRegenerate);
             if (result) {
-                setScheduleData(result);
+                const scheduleWithInvite = await ensureScheduleInvite(targetChar, result);
+                setScheduleData(scheduleWithInvite);
                 // 跨天后台重新生成也要刷云端：不刷的话角色到点照着昨天的作息表说话
                 markAmsgStateDirty({ char: targetChar, userProfile, groups, realtimeConfig });
             }
@@ -2076,7 +2223,7 @@ const Chat: React.FC = () => {
         setIsScheduleGenerating(true);
         try {
             const result = await generateDailyScheduleForChar(updatedChar, userProfile, apiConfig, true);
-            if (result) setScheduleData(result);
+            if (result) setScheduleData(await ensureScheduleInvite(updatedChar, result));
         } catch (e) {
             console.error('[Schedule] Regeneration after style change failed:', e);
         } finally {
@@ -2114,10 +2261,24 @@ const Chat: React.FC = () => {
         if (updatedChar.scheduleStyle) {
             const existing = await getDailyScheduleForChar(updatedChar).catch(() => null);
             if (existing) {
-                setScheduleData(existing);
+                setScheduleData(await ensureScheduleInvite(updatedChar, existing));
             } else {
                 generateDailySchedule(updatedChar, false);
             }
+        }
+    };
+
+    const handleToggleScheduleInvite = async () => {
+        const next = !scheduleInviteEnabled;
+        setScheduleInviteEnabled(next);
+        setScheduleInviteEnabledState(next);
+        if (!next) {
+            addToast('已关闭行程邀约；日程仍会照常生成', 'info');
+            return;
+        }
+        addToast('已开启行程邀约', 'success');
+        if (char && scheduleData) {
+            setScheduleData(await ensureScheduleInvite(char, scheduleData));
         }
     };
 
@@ -3451,6 +3612,8 @@ const Chat: React.FC = () => {
                 onPlayTheater={handlePlayTheater}
                 isScheduleFeatureEnabled={isScheduleFeatureOn(char)}
                 onToggleScheduleFeature={handleToggleScheduleFeature}
+                isScheduleInviteEnabled={scheduleInviteEnabled}
+                onToggleScheduleInvite={handleToggleScheduleInvite}
                 isMemoryPalaceEnabled={!!char.memoryPalaceEnabled}
                 isVectorizing={isVectorizing}
                 vectorizePendingCount={vectorizePendingCount}
@@ -3741,6 +3904,7 @@ const Chat: React.FC = () => {
                             onMcdCandidate={handleMcdCandidate}
                             onResolveTransfer={handleResolveTransfer}
                             onResolveLifeRecord={handleResolveLifeRecord}
+                            onResolveScheduleInvite={handleResolveScheduleInvite}
                             thinkingChainOptions={thinkingChainOptions}
                         />
                         {showToolTrace && (

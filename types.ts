@@ -743,10 +743,20 @@ export interface SlotTheater {
 
 export interface ScheduleSlot {
     startTime: string;    // "08:00"
+    /** 结束时间；主要用于线上邀约，旧日程没有时仍按单点展示。 */
+    endTime?: string;     // "09:00"
     activity: string;     // "晨跑"
     description?: string; // "在河边慢跑"
     emoji?: string;       // "🏃"
     location?: string;    // "河边"
+    /** 这是一段和用户共同进行的远程活动（语音/视频/一起在线追剧等）。 */
+    withUser?: boolean;
+    /** 邀约活动的类型；用于卡片文案和接受后安排对应的动作。 */
+    inviteKind?: 'voice' | 'video' | 'watch' | 'other';
+    /** 生成后写入的稳定邀约事件 id。 */
+    inviteId?: string;
+    /** 用户处理邀约后的状态；未出现在邀约里的普通日程不设此字段。 */
+    inviteStatus?: 'pending' | 'accepted' | 'declined';
     innerThought?: string; // 该时段的内心独白，生成时由AI写好，运行时直接注入
     theater?: SlotTheater; // 该时段的小剧场（窥视演出），按需生成并缓存
 }
@@ -3777,7 +3787,7 @@ export interface GameSession {
     lastPlayedAt: number;
 }
 
-export type MessageType = 'text' | 'image' | 'emoji' | 'voice' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'luckin_card' | 'html_card' | 'news_card' | 'vr_card' | 'trpg_card' | 'novel_card' | 'world_card' | 'sim_card' | 'phone_card' | 'webpage_card' | 'theater_card' | 'room_card' | 'life_card' | 'group_topic_card';
+export type MessageType = 'text' | 'image' | 'emoji' | 'voice' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'luckin_card' | 'html_card' | 'news_card' | 'vr_card' | 'trpg_card' | 'novel_card' | 'world_card' | 'sim_card' | 'phone_card' | 'webpage_card' | 'theater_card' | 'room_card' | 'life_card' | 'group_topic_card' | 'schedule_invite' | 'schedule_invite_reply';
 
 export interface Message {
     id: number;

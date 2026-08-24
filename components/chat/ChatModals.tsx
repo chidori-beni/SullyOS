@@ -130,6 +130,9 @@ interface ChatModalsProps {
     // Schedule master toggle
     isScheduleFeatureEnabled?: boolean;
     onToggleScheduleFeature?: () => void;
+    // Schedule invite toggle (global, matching the calendar invite behavior)
+    isScheduleInviteEnabled?: boolean;
+    onToggleScheduleInvite?: () => void;
     // Memory Palace force vectorize
     isMemoryPalaceEnabled?: boolean;
     isVectorizing?: boolean;
@@ -261,7 +264,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     onGenerateVoice, voiceAvailable, onDownloadVoice, voiceDownloadable, voiceCollectable, onToggleVoiceFavorite, voiceFavorited,
     scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
     onScheduleStyleChange, onPlayTheater,
-    isScheduleFeatureEnabled, onToggleScheduleFeature,
+    isScheduleFeatureEnabled, onToggleScheduleFeature, isScheduleInviteEnabled, onToggleScheduleInvite,
     isMemoryPalaceEnabled, isVectorizing, vectorizePendingCount, vectorizeProgress,
     retainRecentForVectorize, setRetainRecentForVectorize, vectorizeResult, onForceVectorize,
     apiPresets, onAddApiPreset, onSaveEmotion, onClearBuffs,
@@ -1180,6 +1183,28 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                     className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center flex-shrink-0 ${isScheduleFeatureEnabled ? 'bg-primary' : 'bg-slate-300'}`}
                                 >
                                     <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${isScheduleFeatureEnabled ? 'translate-x-4' : ''}`}></div>
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {isScheduleFeatureEnabled && onToggleScheduleInvite && (
+                        <div className="mb-4 bg-rose-50/60 border border-rose-100 rounded-2xl p-3">
+                            <div className="flex items-center justify-between">
+                                <div className="flex-1 min-w-0 pr-3">
+                                    <p className="text-xs font-bold text-rose-800">行程邀约</p>
+                                    <p className="text-[10px] text-rose-600 leading-relaxed mt-0.5">
+                                        {isScheduleInviteEnabled
+                                            ? '角色想和你共同进行的线上行程，会以聊天邀约卡发来；你勾选同意后才登记。'
+                                            : '已关闭：日程照常生成，但不再往聊天推送行程邀约。'}
+                                    </p>
+                                </div>
+                                <button
+                                    onClick={onToggleScheduleInvite}
+                                    aria-label="切换行程邀约"
+                                    className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center flex-shrink-0 ${isScheduleInviteEnabled ? 'bg-rose-400' : 'bg-slate-300'}`}
+                                >
+                                    <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${isScheduleInviteEnabled ? 'translate-x-4' : ''}`}></div>
                                 </button>
                             </div>
                         </div>

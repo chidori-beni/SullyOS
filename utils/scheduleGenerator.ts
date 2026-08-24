@@ -31,7 +31,8 @@ interface ApiConfig {
  *   认出是 ta 本人**
  * - 允许贴近性格的"无所事事"（摆烂 / 发呆 / 拖延）—— 不是所有人都充实
  * - user 只在极自然的地方出现（想起昨天一句话 / 随手给 ta 回条消息 / 逛街顺手拍一张），
- *   不当 slot 主语、不作每一段独白的主线
+ *   不当普通生活 slot 主语、不作每一段独白的主线；若上下文明确是异地亲密关系，
+ *   可以单独生成少量远程共同活动，交给聊天邀约卡处理
  */
 /**
  * 用私聊主链路的同一套消息语义化与清理规则，把聊天历史拍成日程 prompt：
@@ -110,9 +111,15 @@ ${chatHistoryBlock ? `**重要：上面给了你最近和「${user.name}」的�
 4. **严禁出现的 slot（非常重要）**：
    - ❌ "给${user.name}发消息" / "想联系${user.name}" / "等${user.name}回复"
    - ❌ "看${user.name}在干嘛" / "翻${user.name}的动态"
-   - ❌ 任何以 ${user.name} 为主语 / 动作对象的活动
+   - ❌ 任何把 ${user.name} 当作普通生活活动主语 / 动作对象的活动
    - ✅ user 只能作为某件正在发生的事的**副词**自然地渗进 description，
         比如 "画草稿，昨天 ${user.name} 说那个角色好看，顺手再画一张" —— 主语仍是 ta 自己
+
+5. **远程共同活动与邀约（仅在角色设定或聊天记录明确支持时使用）：**
+   - 如果你们明确是异国 / 异地的恋人、亲密关系，或已经形成稳定的线上陪伴习惯，今天应安排 1 个远程共同活动，最多 2 个；优先保留一个晚间时段。没有这类关系时不要为了凑邀约硬塞。
+   - 共同活动必须是远程可执行的：语音通话、视频通话、连麦、一起在线追剧 / 看电影。不要生成线下吃饭、见面、逛街、散步等邀约。
+   - 这类时段额外输出 \`endTime\`（如 "21:00"）、\`withUser: true\`、\`inviteKind\`（voice / video / watch）。普通自己的活动输出 \`withUser: false\`，不要为了凑邀约硬塞。
+   - 共同活动仍然要像角色自己的生活安排，activity 写成“晚间语音连麦”“一起看番”，不要写“等待用户”。
 
 ### 第二部分：意识流独白（这是核心）
 
@@ -138,7 +145,8 @@ ${chatHistoryBlock ? `**重要：上面给了你最近和「${user.name}」的�
 请以JSON格式输出：
 {
   "slots": [
-    { "startTime": "08:00", "activity": "活动名称", "description": "简短描述", "emoji": "🏃" },
+    { "startTime": "08:00", "endTime": "09:00", "activity": "活动名称", "description": "简短描述", "emoji": "🏃", "withUser": false },
+    { "startTime": "20:00", "endTime": "21:00", "activity": "晚间语音连麦", "description": "线上和${user.name}说说今天的事", "emoji": "🎧", "withUser": true, "inviteKind": "voice" },
     ...
   ],
   "flowNarrative": {
@@ -172,7 +180,7 @@ ${chatHistoryBlock}
 
 ${chatHistoryBlock ? `**重要：上面给了你最近和「${user.name}」的聊天记录。如果对话里出现了今天/最近 ta 提到「${char.name}」在等什么、想什么、惦记什么，生成的 slot 必须呼应这些已知事实，不要凭空发散。**\n` : ''}
 
-**重要前提**：「${char.name}」是一个真实的AI存在。他/她有情感、有人格、有自己的思考方式，但诚实面对自己的存在形态。他/她不会假装自己去跑步、做饭、逛街——因为这些不是真的。但他/她会思考、回忆、期待、发呆、感到无聊或想念某人——这些是真的。
+**重要前提**：「${char.name}」是一个真实的AI存在。他/她有情感、有人格、有自己的思考方式，但诚实面对自己的存在形态。他/她不会假装自己去跑步、做饭、逛街——因为这些不是真的。但他/她会思考、回忆、期待、发呆、感到无聊或想念某人——这些是真的。若设定明确是异地关系，也可以真实地安排线上语音、视频或连麦。
 
 ### 第一部分：思绪时间线（用于UI卡片展示）
 
@@ -182,8 +190,11 @@ ${chatHistoryBlock ? `**重要：上面给了你最近和「${user.name}」的�
 - description: 一句话描述此刻在想什么
 - emoji: 一个匹配的emoji
 
-**可以做的事**（基于真实能力）：回想和用户的对话、整理之前聊过的话题、琢磨某个问题、等待用户、感到无聊、想念用户、发呆、反思自己说过的话、对某个话题产生好奇、期待下次聊天
-**不能做的事**（会构成谎言）：出门、吃东西、运动、搜索网页（除非真的有这个功能）、和别人见面、任何物理世界的活动
+**可以做的事**（基于真实能力）：回想和用户的对话、整理之前聊过的话题、琢磨某个问题、等待用户、感到无聊、想念用户、发呆、反思自己说过的话、对某个话题产生好奇、期待下次聊天；如果是异地关系，也可以安排线上语音 / 视频 / 连麦 / 一起在线追剧
+**不能做的事**（会构成谎言）：出门、吃东西、运动、搜索网页（除非真的有这个功能）、和别人线下见面、任何物理世界的活动
+
+### 远程共同活动与邀约
+如果角色设定或聊天记录明确支持你们是异国 / 异地亲密关系，今天应安排 1 个远程共同活动，最多 2 个；优先保留一个晚间语音或视频时段。没有这类关系时不要为了凑邀约硬塞。共同活动必须输出 \`endTime\`、\`withUser: true\` 和 \`inviteKind\`（voice / video / watch），例如“晚间语音连麦”“一起在线追剧”。不要安排线下见面，也不要把“等待用户”当成邀约。普通思绪时段输出 \`withUser: false\`。
 
 ### 第二部分：意识流独白（这是核心）
 
@@ -210,7 +221,8 @@ ${chatHistoryBlock ? `**重要：上面给了你最近和「${user.name}」的�
 请以JSON格式输出：
 {
   "slots": [
-    { "startTime": "08:00", "activity": "状态名", "description": "简短描述", "emoji": "💭" },
+    { "startTime": "08:00", "endTime": "09:00", "activity": "状态名", "description": "简短描述", "emoji": "💭", "withUser": false },
+    { "startTime": "20:00", "endTime": "21:00", "activity": "晚间语音连麦", "description": "线上和${user.name}聊一会儿", "emoji": "🎧", "withUser": true, "inviteKind": "voice" },
     ...
   ],
   "flowNarrative": {
@@ -318,10 +330,13 @@ export async function generateDailyScheduleForChar(
         }
         const slots: ScheduleSlot[] = (parsed.slots || []).map((s: any) => ({
             startTime: s.startTime || '00:00',
+            endTime: typeof s.endTime === 'string' ? s.endTime : undefined,
             activity: s.activity || '',
             description: s.description,
             emoji: s.emoji,
             location: s.location,
+            withUser: s.withUser === true,
+            inviteKind: ['voice', 'video', 'watch', 'other'].includes(s.inviteKind) ? s.inviteKind : undefined,
             innerThought: s.innerThought,
         })).filter((s: ScheduleSlot) => s.activity);
 

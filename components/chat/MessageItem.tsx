@@ -4,6 +4,7 @@
 import { readImageGenMeta, retryImageGeneration } from '../../utils/novelaiImage';
 import React, { useEffect, useRef, useState } from 'react';
 import { Message, ChatTheme } from '../../types';
+import type { ScheduleInviteData, ScheduleInviteEvent, ScheduleInviteReplyData } from '../../utils/scheduleInvite';
 import { phoneFieldToText } from '../../utils/phoneEvidence';
 import { tryParseLifeSimResetCard } from '../../utils/lifeSimChatCard';
 import { VALID_INTERJECTION_TAGS, cleanVoiceMarkupForDisplay } from '../../utils/minimaxTts';
@@ -894,6 +895,131 @@ const LifeRecordCard: React.FC<{
     );
 };
 
+const ScheduleInviteCard: React.FC<{
+    data: ScheduleInviteData;
+    commonLayout: (content: React.ReactNode) => JSX.Element;
+    selectionMode: boolean;
+    onResolve?: (message: Message, selectedIds: string[]) => void;
+    message: Message;
+}> = ({ data, commonLayout, selectionMode, onResolve, message }) => {
+    const pending = data.status === 'pending';
+    const [selectedIds, setSelectedIds] = useState<string[]>(() => data.events.map(event => event.id));
+
+    useEffect(() => {
+        setSelectedIds(data.status === 'pending' ? data.events.map(event => event.id) : data.acceptedIds || []);
+    }, [data.batchId, data.status, data.acceptedIds, data.events]);
+
+    const selected = new Set(selectedIds);
+    const formatDate = (date: string) => {
+        const parts = date.split('-');
+        return parts.length === 3 ? `${Number(parts[1])}月${Number(parts[2])}日` : date;
+    };
+    const kindLabel = (kind: ScheduleInviteEvent['kind']) => ({
+        voice: '语音连麦',
+        video: '视频通话',
+        watch: '一起在线',
+        other: '线上安排',
+    }[kind]);
+    const respond = (ids: string[]) => {
+        if (!pending || !onResolve || selectionMode) return;
+        onResolve(message, ids);
+    };
+
+    const card = (
+        <div className="w-72 rounded-3xl overflow-hidden shadow-md" style={{ background: 'linear-gradient(180deg, #fff8f3 0%, #fffdfb 38%, #fff0f0 100%)', border: '1.5px solid rgba(227, 170, 177, 0.42)' }}>
+            <div className="px-4 pt-3.5 pb-3" style={{ background: 'linear-gradient(135deg, rgba(255, 224, 220, 0.72), rgba(255, 242, 222, 0.55))', borderBottom: '1px dashed rgba(211, 154, 162, 0.35)' }}>
+                <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                        <div className="text-[9px] font-bold tracking-[0.22em] uppercase" style={{ color: '#b77c87' }}>Schedule Invite · 行程邀约</div>
+                        <div className="mt-1 text-sm font-bold truncate" style={{ color: '#714c55' }}>{data.charName} 想和你约好</div>
+                    </div>
+                    <div className="shrink-0 text-right" style={{ color: '#a36d77' }}>
+                        <div className="text-[9px] font-mono">{formatDate(data.date)}</div>
+                        <div className="text-[10px] font-semibold">{data.events.length} 项线上安排</div>
+                    </div>
+                </div>
+                <div className="mt-2 text-[10px] leading-relaxed" style={{ color: '#a2757c' }}>
+                    {pending ? '挑选你想参加的时段，同意后会登记到你们的日程。' : '这张邀约已经处理过了。'}
+                </div>
+            </div>
+
+            <div className="px-3.5 py-2.5 space-y-2">
+                {data.events.map((event) => {
+                    const checked = selected.has(event.id);
+                    const eventTime = event.endTime ? `${event.startTime}–${event.endTime}` : event.startTime;
+                    return (
+                        <button
+                            key={event.id}
+                            type="button"
+                            disabled={!pending || selectionMode}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                if (!pending) return;
+                                setSelectedIds(prev => prev.includes(event.id) ? prev.filter(id => id !== event.id) : [...prev, event.id]);
+                            }}
+                            className={`w-full text-left flex items-start gap-2.5 rounded-2xl px-2.5 py-2 transition-all ${checked ? 'bg-white/85 shadow-sm' : 'bg-white/35 opacity-55'}`}
+                            style={{ border: checked ? '1px solid rgba(224, 174, 179, 0.32)' : '1px solid transparent' }}
+                        >
+                            <div className="flex flex-col items-center pt-0.5 shrink-0">
+                                <span className="text-sm leading-none">{event.emoji || '💌'}</span>
+                                <span className="mt-1 w-1.5 h-1.5 rounded-full" style={{ background: checked ? '#df8f9d' : '#cfc0c2' }} />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className={`text-xs font-bold truncate ${checked ? 'text-[#704d55]' : 'text-slate-400 line-through'}`}>{event.activity}</span>
+                                    <span className="text-[10px] font-mono shrink-0" style={{ color: '#a77c83' }}>{eventTime}</span>
+                                </div>
+                                <div className="mt-0.5 text-[10px] truncate" style={{ color: '#a68185' }}>{event.description || kindLabel(event.kind)}</div>
+                            </div>
+                            <span className={`mt-0.5 w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${checked ? 'bg-[#df8f9d] border-[#df8f9d] text-white' : 'border-[#d7c5c7] text-transparent'}`}>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="w-2.5 h-2.5"><path d="m5 12 4 4L19 6" /></svg>
+                            </span>
+                        </button>
+                    );
+                })}
+            </div>
+
+            {pending ? (
+                <div className="px-3.5 pb-3.5 pt-1 flex gap-2">
+                    <button type="button" onClick={(e) => { e.stopPropagation(); respond([]); }} disabled={selectionMode} className="flex-1 py-2 rounded-2xl bg-white/65 text-[11px] font-bold text-[#9e7d83] border border-white/80 active:scale-95 transition-transform">以后再说</button>
+                    <button type="button" onClick={(e) => { e.stopPropagation(); respond(selectedIds); }} disabled={selectionMode || selectedIds.length === 0} className="flex-1 py-2 rounded-2xl text-[11px] font-bold text-white active:scale-95 transition-transform disabled:opacity-45" style={{ background: 'linear-gradient(135deg, #e18f9b, #d87588)', boxShadow: '0 5px 12px rgba(216, 117, 136, 0.25)' }}>答应 {selectedIds.length} 项</button>
+                </div>
+            ) : (
+                <div className="px-4 pb-3.5 pt-1 text-[10px] font-semibold" style={{ color: data.acceptedIds?.length ? '#65a083' : '#a9999b' }}>
+                    {data.acceptedIds?.length ? `已答应 ${data.acceptedIds.length} 项，其他时段以后再约` : '这次先不约了'}
+                </div>
+            )}
+        </div>
+    );
+
+    return commonLayout(card);
+};
+
+const ScheduleInviteReplyCard: React.FC<{
+    data: ScheduleInviteReplyData;
+    commonLayout: (content: React.ReactNode) => JSX.Element;
+}> = ({ data, commonLayout }) => commonLayout(
+    <div className="w-64 rounded-3xl overflow-hidden shadow-sm" style={{ background: 'linear-gradient(180deg, #f0fff8 0%, #fff 45%, #f4fbf7 100%)', border: '1.5px solid rgba(144, 202, 176, 0.45)' }}>
+        <div className="px-4 pt-3.5 pb-3" style={{ background: 'linear-gradient(135deg, rgba(209, 245, 224, 0.7), rgba(239, 252, 241, 0.55))', borderBottom: '1px dashed rgba(127, 181, 151, 0.35)' }}>
+            <div className="text-[9px] font-bold tracking-[0.22em] uppercase text-[#75a98a]">Confirmed · 已确认</div>
+            <div className="mt-1 text-sm font-bold text-[#4c7460]">和 {data.charName} 约好了</div>
+        </div>
+        <div className="px-3.5 py-3 space-y-2">
+            {data.items.map((item) => (
+                <div key={item.id} className="flex items-center gap-2 rounded-2xl bg-white/75 border border-emerald-100/70 px-2.5 py-2">
+                    <span className="text-base">{item.emoji || '💌'}</span>
+                    <div className="min-w-0 flex-1">
+                        <div className="text-xs font-bold text-[#597565] truncate">{item.activity}</div>
+                        <div className="text-[10px] text-[#94ad9d] font-mono">{item.startTime}{item.endTime ? `–${item.endTime}` : ''}</div>
+                    </div>
+                    <span className="text-emerald-400 text-xs">✓</span>
+                </div>
+            ))}
+        </div>
+        <div className="px-4 py-2 text-[9px] text-[#9ab6a3] border-t border-emerald-100/60">已登记到今日日程</div>
+    </div>
+);
+
 const TransferCard: React.FC<{
     m: Message;
     isUser: boolean;
@@ -1422,6 +1548,8 @@ interface MessageItemProps {
     onResolveTransfer?: (m: Message, action: 'accepted' | 'returned') => void;
     /** 用户点「生活记录」卡 → 确认 / 否决（角色代记的记录） */
     onResolveLifeRecord?: (m: Message, action: 'confirmed' | 'rejected') => void;
+    /** 用户处理角色发来的日程邀约卡；selectedIds 为空代表全部拒绝。 */
+    onResolveScheduleInvite?: (m: Message, selectedIds: string[]) => void;
     /** 思考链卡片视觉与交互 */
     thinkingChainOptions?: {
         styleId?: ThinkingChainStyleId;
@@ -1472,6 +1600,7 @@ const MessageItem = React.memo(({
     onLuckinCandidate,
     onResolveTransfer,
     onResolveLifeRecord,
+    onResolveScheduleInvite,
     thinkingChainOptions,
 }: MessageItemProps) => {
     const isUser = m.role === 'user';
@@ -2069,6 +2198,20 @@ const MessageItem = React.memo(({
             </div>
         </>
     );
+
+    if (m.type === 'schedule_invite') {
+        const data = m.metadata?.scheduleInviteData as ScheduleInviteData | undefined;
+        if (data?.kind === 'schedule_invite' && Array.isArray(data.events)) {
+            return <ScheduleInviteCard data={data} message={m} commonLayout={commonLayout} selectionMode={selectionMode} onResolve={onResolveScheduleInvite} />;
+        }
+    }
+
+    if (m.type === 'schedule_invite_reply') {
+        const data = m.metadata?.scheduleInviteReplyData as ScheduleInviteReplyData | undefined;
+        if (data?.kind === 'schedule_invite_reply' && Array.isArray(data.items)) {
+            return <ScheduleInviteReplyCard data={data} commonLayout={commonLayout} />;
+        }
+    }
 
     // [New] Social Card Rendering
     // --- Chat Forward Card ---
