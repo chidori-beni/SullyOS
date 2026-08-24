@@ -819,11 +819,29 @@ describe('活跃会话租约', () => {
     const charId = nextCharId();
     startAmsgChatPresence(charId, Date.now());
     startAmsgChatPresence(charId, Date.now());
-    expect(ActiveMsgClient.syncChatPresence).toHaveBeenCalledTimes(2); // 两次立即写
+    expect(ActiveMsgClient.syncChatPresence).toHaveBeenCalledTimes(1); // 第二次并入在途写
 
     await vi.advanceTimersByTimeAsync(CHAT_PRESENCE_HEARTBEAT_MS + 100);
     // 只有一个 timer 在跑 → 只多一次，而不是两次
-    expect(ActiveMsgClient.syncChatPresence).toHaveBeenCalledTimes(3);
+    expect(ActiveMsgClient.syncChatPresence).toHaveBeenCalledTimes(2);
+    stopAmsgChatPresence(charId);
+  });
+
+  it('前一个心跳卡住时不叠加新的 PUT，恢复后再按心跳续租', async () => {
+    let release!: () => void;
+    (ActiveMsgClient.syncChatPresence as any).mockImplementationOnce(
+      () => new Promise<void>((resolve) => { release = resolve; }),
+    );
+    const charId = nextCharId();
+    startAmsgChatPresence(charId, Date.now());
+
+    await vi.advanceTimersByTimeAsync(CHAT_PRESENCE_HEARTBEAT_MS * 3 + 100);
+    expect(ActiveMsgClient.syncChatPresence).toHaveBeenCalledTimes(1);
+
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(CHAT_PRESENCE_HEARTBEAT_MS + 100);
+    expect(ActiveMsgClient.syncChatPresence).toHaveBeenCalledTimes(2);
     stopAmsgChatPresence(charId);
   });
 });

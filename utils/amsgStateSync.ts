@@ -338,10 +338,61 @@ interface ChatPresenceLease {
   lastUserMessageAt: number | null;
   /** pagehide/visibilitychange 后禁止旧 timer 把“已离开”重新续成前台。 */
   backgrounded: boolean;
+  /** 同一角色只允许一个 client-state PUT 在途，避免 2s 心跳叠在 6s 卡住的请求上。 */
+  writeInFlight: Promise<void> | null;
+  /** 在途期间只保留最新的一次写入；前台状态由下一次心跳发送，离线标记收尾时立即补写。 */
+  queuedPresence: AmsgChatPresence | null;
+  /** 网络抖动时逐步拉开重试间隔，避免把失败刷成一串网络日志。 */
+  writeFailureCount: number;
+  retryNotBefore: number;
 }
 
 // charId → 心跳租约。同一 char 只保留一个 timer（重入只刷新 lastUserMessageAt）。
 const chatPresenceLeases = new Map<string, ChatPresenceLease>();
+
+const CHAT_PRESENCE_RETRY_BACKOFF_MS = [2_000, 5_000, 10_000, 30_000] as const;
+
+const runChatPresenceWrite = (
+  charId: string,
+  lease: ChatPresenceLease,
+  presence: AmsgChatPresence,
+  force = false,
+): Promise<void> => {
+  if (lease.writeInFlight) {
+    // 只保留最新状态：如果切后台，activeAt: 0 会覆盖前台心跳；反之亦然。
+    lease.queuedPresence = presence;
+    return lease.writeInFlight;
+  }
+
+  if (!force && Date.now() < lease.retryNotBefore) return Promise.resolve();
+
+  let writePromise: Promise<void>;
+  writePromise = ActiveMsgClient.syncChatPresence(charId, presence)
+    .then(() => {
+      lease.writeFailureCount = 0;
+      lease.retryNotBefore = 0;
+    })
+    .catch((error) => {
+      const index = Math.min(lease.writeFailureCount, CHAT_PRESENCE_RETRY_BACKOFF_MS.length - 1);
+      lease.writeFailureCount += 1;
+      lease.retryNotBefore = Date.now() + CHAT_PRESENCE_RETRY_BACKOFF_MS[index];
+      console.warn(`${HEADER} 活跃会话租约写入失败（下次退避后重试，TTL 将自然失效）`, error);
+    })
+    .finally(() => {
+      if (lease.writeInFlight !== writePromise) return;
+      lease.writeInFlight = null;
+
+      // 离线标记不能等下一次前台心跳：如果它在当前 PUT 在途期间到来，
+      // 这里串行补一次；这样不会让旧的 activeAt 写入覆盖离开状态。
+      const queued = lease.queuedPresence;
+      lease.queuedPresence = null;
+      if (queued?.activeAt === 0 && lease.backgrounded && chatPresenceLeases.get(charId) === lease) {
+        void runChatPresenceWrite(charId, lease, queued, true);
+      }
+    });
+  lease.writeInFlight = writePromise;
+  return writePromise;
+};
 
 const ensureChatPresenceTimer = (charId: string, lease: ChatPresenceLease) => {
   if (lease.timer !== null) return;
@@ -701,35 +752,41 @@ export const wipeAmsgCloudData = async (
 };
 
 const writeChatPresence = (charId: string, lastUserMessageAt: number | null) => {
+  const lease = chatPresenceLeases.get(charId);
+  if (!lease) return Promise.resolve();
   const presence: AmsgChatPresence = {
     v: 1,
     charId,
     activeAt: Date.now(),
     lastUserMessageAt,
   };
-  // 写入失败只 warn：心跳故障不能打断正常聊天，下一次 interval 继续尝试；远端 45s TTL 兜底。
-  return ActiveMsgClient.syncChatPresence(charId, presence).catch((error) => {
-    console.warn(`${HEADER} 活跃会话租约写入失败（45s TTL 自然失效）`, error);
-  });
+  // 写入失败只 warn：心跳故障不能打断正常聊天；下一次心跳按退避重试，远端 TTL 兜底。
+  return runChatPresenceWrite(charId, lease, presence);
 };
 
 /** 一轮真实用户消息进入生成流程时启动租约：立即写一次，之后每 15s 续租。 */
 export const startAmsgChatPresence = (charId: string, lastUserMessageAt: number | null) => {
-  const firstWrite = writeChatPresence(charId, lastUserMessageAt);
-
   const existing = chatPresenceLeases.get(charId);
   if (existing) {
     // 已有 timer：只刷新本轮最新的 lastUserMessageAt，复用同一个心跳。
     existing.lastUserMessageAt = lastUserMessageAt;
     existing.backgrounded = false;
     ensureChatPresenceTimer(charId, existing);
-    return firstWrite;
+    return writeChatPresence(charId, lastUserMessageAt);
   }
 
-  const lease: ChatPresenceLease = { timer: null, lastUserMessageAt, backgrounded: false };
+  const lease: ChatPresenceLease = {
+    timer: null,
+    lastUserMessageAt,
+    backgrounded: false,
+    writeInFlight: null,
+    queuedPresence: null,
+    writeFailureCount: 0,
+    retryNotBefore: 0,
+  };
   chatPresenceLeases.set(charId, lease);
   ensureChatPresenceTimer(charId, lease);
-  return firstWrite;
+  return writeChatPresence(charId, lastUserMessageAt);
 };
 
 // 前后台切换要立即改租约，不能只等 45s TTL：否则用户刚退到后台、回复恰好生成时，
@@ -745,14 +802,12 @@ const markChatPresenceOffline = () => {
       clearInterval(lease.timer);
       lease.timer = null;
     }
-    ActiveMsgClient.syncChatPresence(charId, {
+    runChatPresenceWrite(charId, lease, {
       v: 1,
       charId,
       activeAt: 0,
       lastUserMessageAt: lease.lastUserMessageAt,
-    }).catch((error) => {
-      console.warn(`${HEADER} 离开前台标记写入失败（TTL 将自然失效）`, error);
-    });
+    }, true);
   }
 };
 
