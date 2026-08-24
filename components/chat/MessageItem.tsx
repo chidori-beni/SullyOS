@@ -1550,6 +1550,8 @@ interface MessageItemProps {
     onResolveLifeRecord?: (m: Message, action: 'confirmed' | 'rejected') => void;
     /** 用户处理角色发来的日程邀约卡；selectedIds 为空代表全部拒绝。 */
     onResolveScheduleInvite?: (m: Message, selectedIds: string[]) => void;
+    /** 点击已完成的通话卡，直达 CallApp 里的这一通详情。 */
+    onOpenCallRecord?: (charId: string, sessionId: string) => void;
     /** 思考链卡片视觉与交互 */
     thinkingChainOptions?: {
         styleId?: ThinkingChainStyleId;
@@ -1601,6 +1603,7 @@ const MessageItem = React.memo(({
     onResolveTransfer,
     onResolveLifeRecord,
     onResolveScheduleInvite,
+    onOpenCallRecord,
     thinkingChainOptions,
 }: MessageItemProps) => {
     const isUser = m.role === 'user';
@@ -1985,6 +1988,10 @@ const MessageItem = React.memo(({
             const memoTitle = m.metadata?.characterName || charName;
             const memoAvatar = m.metadata?.characterAvatar || charAvatar;
             const timeHint = durationSec <= 240 ? '差不多是一杯咖啡的时间' : '像听完一首喜欢的歌再多一点';
+            const sleepCompanion = m.metadata?.sleepCompanion === true;
+            const dreamCount = Math.max(0, Number(m.metadata?.sleepDreamCount || 0));
+            const callSessionId = String(m.metadata?.callSessionId || '');
+            const callCharId = String(m.metadata?.characterId || m.charId || '');
 
             return (
                 <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
@@ -1996,18 +2003,33 @@ const MessageItem = React.memo(({
                         </div>
                     )}
                     <div className="w-full px-5 my-3" {...interactionProps}>
-                        <div className="rounded-3xl bg-gradient-to-br from-slate-50 to-slate-100/80 border border-slate-200/50 p-4 shadow-sm">
+                        <button
+                            type="button"
+                            onClick={(event) => {
+                                if (selectionMode || !callSessionId || !callCharId) return;
+                                event.stopPropagation();
+                                onOpenCallRecord?.(callCharId, callSessionId);
+                            }}
+                            className="block w-full rounded-3xl bg-gradient-to-br from-slate-50 to-slate-100/80 border border-slate-200/50 p-4 shadow-sm text-left transition active:scale-[0.99]"
+                            aria-label="打开这通电话的通话记录"
+                        >
                             <div className="flex items-center gap-3">
                                 <img src={memoAvatar} alt={memoTitle} className="h-9 w-9 rounded-full object-cover ring-1 ring-slate-200/80" loading="lazy" decoding="async" />
                                 <div className="min-w-0 flex-1">
-                                    <div className="text-sm font-medium text-slate-600 truncate">和 {memoTitle} 通了电话</div>
+                                    <div className="text-sm font-medium text-slate-600 truncate">{sleepCompanion ? `和 ${memoTitle} 完成了陪睡` : `和 ${memoTitle} 通了电话`}</div>
                                     <div className="text-xs text-slate-400 mt-0.5">{durationText} · {turnCount}轮对话</div>
                                 </div>
                             </div>
                             <div className="mt-3 rounded-2xl bg-white/70 border border-slate-100 px-3.5 py-2.5 text-[13px] italic leading-relaxed text-slate-500">
                                 {callMemo}
                             </div>
-                        </div>
+                            {sleepCompanion && (
+                                <div className="mt-2 text-[11px] text-indigo-400/90">
+                                    {dreamCount > 0 ? `今晚说了 ${dreamCount} 句梦话 · 点开可回听` : '今晚没有生成梦话 · 点开看通话记录'}
+                                </div>
+                            )}
+                            <div className="mt-2 text-[10px] text-slate-400">点开查看通话记录</div>
+                        </button>
                     </div>
                 </div>
             );

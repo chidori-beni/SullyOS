@@ -87,6 +87,7 @@ import { exportDesktopSkinLocal } from '../utils/desktopSkinBackup';
 import { assertSupportedSullyBackup } from '../utils/backupImportPolicy';
 import { createBuiltinSullyLive2DConfig, isBuiltinSullyLive2D, upgradeBuiltinSullyLive2DDefaults } from '../utils/builtinSullyLive2D';
 import { normalizeCharacterRoomAssetsInPlace } from '../utils/roomTemplateAssets';
+import { recoverInterruptedSleepCompanionSession } from '../utils/sleepCompanionSession';
 
 interface ProactiveQueueEntry {
   charId: string;
@@ -1033,6 +1034,27 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           trackDataScaleOnce(await collectDataScale(characters));
       })();
   }, [isDataLoaded, characters]);
+
+  // 陪睡的梦话/自动挂断原本只靠 CallApp 里的 setTimeout。iOS 锁屏后
+  // 可能冻结甚至回收 PWA，finishCall 根本没机会写结束卡。数据库加载后
+  // 幂等恢复一次未收尾的陪睡 session，无论用户先打开哪个 App 都能看到卡片。
+  const sleepRecoveryCheckedRef = useRef(false);
+  useEffect(() => {
+      if (!isDataLoaded || sleepRecoveryCheckedRef.current) return;
+      sleepRecoveryCheckedRef.current = true;
+      void recoverInterruptedSleepCompanionSession()
+          .then(result => {
+              if (!result?.created) return;
+              setLastMsgTimestamp(Date.now());
+              addToast(
+                  result.dreamCount > 0
+                      ? `上一次陪睡已收尾，记录到 ${result.dreamCount} 句梦话`
+                      : '上一次陪睡已收尾，没有生成梦话',
+                  'info',
+              );
+          })
+          .catch(error => console.warn('[sleep-companion] recovery failed:', error));
+  }, [isDataLoaded]);
 
   // --- 使用统计：当前在用哪套外观 / 角色级设置 ---
   // 报「现在用的是哪个」而不是「点过哪个」——后者只有折腾的人会出现，

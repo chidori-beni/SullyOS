@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallba
 import { createPortal } from 'react-dom';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
+import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot, AppID } from '../types';
 import type { ActiveMsg2TaskRecord } from '../types';
 import { processImage } from '../utils/file';
 import { safeResponseJson, extractContent } from '../utils/safeApi';
@@ -96,6 +96,7 @@ import {
     resolveContextRangeMode,
     type ContextRangeMode,
 } from '../utils/chatContextRange';
+import { callLaunch } from '../utils/callLaunch';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 /** 即时对话那一轮回复「推送陆续到齐」的宽限时间，也就是自动合成的补扫窗口有多长（见下面的 auto-TTS effect）。 */
@@ -109,7 +110,7 @@ type InstantToolUiStatus = {
 };
 
 const Chat: React.FC = () => {
-    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, openDateWithChar } = useOS();
+    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, openApp, customThemes, removeCustomTheme, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, openDateWithChar } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
     const localDateKey = useLocalDateKey();
 
@@ -132,6 +133,12 @@ const Chat: React.FC = () => {
     const [visibleCount, setVisibleCount] = useState(30);
     const [windowedFocusMsgId, setWindowedFocusMsgId] = useState<number | null>(null);
     const [flashMsgId, setFlashMsgId] = useState<number | null>(null);
+    const handleOpenCallRecord = useCallback((charId: string, sessionId: string) => {
+        setActiveCharacterId(charId);
+        callLaunch.request({ charId, sessionId });
+        openApp(AppID.Call);
+        trackEvent('从聊天卡片打开通话记录');
+    }, [openApp, setActiveCharacterId]);
     // 角色切换/进入时的缓入开关：先 false（透明），下一帧转 true，靠 CSS transition 平滑淡入。
     // 初值 false 让首次打开也是淡入、且不会有"先显示再变透明"的闪烁。
     // 角色切换「登场」过场是否显示。切换/进入角色时由 useLayoutEffect 在绘制前置真，覆盖住加载、避免闪到新聊天。
@@ -3918,6 +3925,7 @@ const Chat: React.FC = () => {
                             onResolveTransfer={handleResolveTransfer}
                             onResolveLifeRecord={handleResolveLifeRecord}
                             onResolveScheduleInvite={handleResolveScheduleInvite}
+                            onOpenCallRecord={handleOpenCallRecord}
                             thinkingChainOptions={thinkingChainOptions}
                         />
                         {showToolTrace && (

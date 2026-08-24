@@ -132,6 +132,14 @@ import {
 import { addCompanionModelOutfit, addUploadedCompanionOutfit } from '../utils/companionWardrobe';
 import VoiceFavoriteActionSheet from '../components/voice/VoiceFavoriteActionSheet';
 import { getVoiceFavorite, removeVoiceFavorite, saveVoiceFavorite } from '../utils/voiceFavorites';
+import { callLaunch } from '../utils/callLaunch';
+import {
+  clearSleepCompanionSession,
+  loadSleepCompanionSession,
+  saveSleepCompanionSession,
+  summarizeCallKeepsake,
+  updateSleepCompanionSession,
+} from '../utils/sleepCompanionSession';
 type CallState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'ended' | 'error';
 type CallMode = 'voice' | 'video';
 /** 这通电话是谁打的。'incoming' = 角色打给用户、用户接了起来。 */
@@ -152,6 +160,7 @@ type CallBubble = {
   performanceTimeline?: AvatarPerformanceCue[];
   cameraSnapshotRef?: string;
   cameraSnapshotExpired?: boolean;
+  sleepPhase?: 'lullaby' | 'dream';
 };
 type CallRecord = {
   id: string;
@@ -161,6 +170,8 @@ type CallRecord = {
   createdAt: string;
   durationSec: number;
   mode?: CallMode;
+  sleepCompanion?: boolean;
+  dreamCount: number;
   transcript: CallBubble[];
 };
 type PendingVRoidImport = {
@@ -558,8 +569,9 @@ ${getVoicePromptOverride(getTtsProvider()) ?? (getTtsProvider() === 'fishaudio' 
 const CallApp: React.FC = () => {
   const { closeApp, openApp, characters, activeCharacterId, addToast, apiConfig, userProfile, customThemes, suspendCall, suspendedCall, clearSuspendedCall, updateCharacter, characterGroups, groups, realtimeConfig, memoryPalaceConfig } = useOS();
 
+  const initialCallLaunchIntentRef = useRef(callLaunch.peek());
   const [viewMode, setViewMode] = useState<ViewMode>('role-select');
-  const [selectedCharId, setSelectedCharId] = useState<string>(activeCharacterId || characters[0]?.id || '');
+  const [selectedCharId, setSelectedCharId] = useState<string>(initialCallLaunchIntentRef.current?.charId || activeCharacterId || characters[0]?.id || '');
   const ROLES_PER_PAGE = 6;
   const [roleGroupId, setRoleGroupId] = useState<string>(GROUP_FILTER_ALL); // 选人页的分组筛选
   const [rolePage, setRolePage] = useState<number>(() => {
@@ -600,6 +612,7 @@ const CallApp: React.FC = () => {
   const [avatarPerformance, setAvatarPerformance] = useState<AvatarPerformanceDirection>(DEFAULT_AVATAR_PERFORMANCE);
   const [bubbles, setBubbles] = useState<CallBubble[]>([]);
   const [callRecords, setCallRecords] = useState<CallRecord[]>([]);
+  const [callRecordsLoadedFor, setCallRecordsLoadedFor] = useState('');
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => `call-${Date.now()}`);
   const [draftInput, setDraftInput] = useState('');
   const [isListening, setIsListening] = useState(false);
@@ -1639,7 +1652,11 @@ const CallApp: React.FC = () => {
     setIsAudioPlaying(false);
   };
   const loadCallRecords = async (charId?: string) => {
-    if (!charId) return setCallRecords([]);
+    if (!charId) {
+      setCallRecords([]);
+      setCallRecordsLoadedFor('');
+      return;
+    }
     // includeProcessed=true：通话消息与聊天消息同存一个 store，记忆宫殿处理后会推进
     // 高水位标记 mp_lastMsgId_<charId>，默认的 getMessagesByCharId 会过滤掉水位线之前的
     // 消息——这会导致继续聊天后通话记录被"清空"。这里必须读取全部消息。
@@ -1666,6 +1683,7 @@ const CallApp: React.FC = () => {
       const savedDuration = Number(endMarker?.metadata?.durationSec);
       const savedMode = endMarker?.metadata?.callMode
         || msgs.find(message => message.metadata?.callMode)?.metadata?.callMode;
+      const dreamCount = msgs.filter(message => message.metadata?.sleepPhase === 'dream').length;
       return {
         id: sessionId,
         sessionId,
@@ -1676,6 +1694,9 @@ const CallApp: React.FC = () => {
           ? Math.max(1, Math.floor(savedDuration))
           : Math.max(1, Math.floor((end - start) / 1000)),
         mode: savedMode === 'voice' || savedMode === 'video' ? savedMode : undefined,
+        sleepCompanion: endMarker?.metadata?.sleepCompanion === true
+          || msgs.some(message => message.metadata?.sleepPhase === 'lullaby' || message.metadata?.sleepPhase === 'dream'),
+        dreamCount,
         transcript: msgs.map(m => ({
           id: `db-${m.id}`,
           dbId: m.id,
@@ -1689,12 +1710,16 @@ const CallApp: React.FC = () => {
             ? m.metadata.cameraSnapshotRef
             : undefined,
           cameraSnapshotExpired: m.metadata?.cameraSnapshotExpired === true,
+          sleepPhase: (m.metadata?.sleepPhase === 'dream'
+            ? 'dream'
+            : m.metadata?.sleepPhase === 'lullaby' ? 'lullaby' : undefined) as CallBubble['sleepPhase'],
           time: formatTimeByTs(m.timestamp),
           timestamp: m.timestamp,
         })),
       };
     }).sort((a, b) => (b.transcript[b.transcript.length - 1]?.timestamp || 0) - (a.transcript[a.transcript.length - 1]?.timestamp || 0));
     setCallRecords(records);
+    setCallRecordsLoadedFor(charId);
   };
   const pruneCallSnapshots = async (charId: string, sessionId: string) => {
     const all = await DB.getMessagesByCharId(charId, true);
@@ -1830,28 +1855,66 @@ const CallApp: React.FC = () => {
   };
   const finishCall = async () => {
     stopCallStt();
+    const persistedSleep = loadSleepCompanionSession();
+    const sleepSession = persistedSleep?.sessionId === currentSessionId ? persistedSleep : null;
     // 挂断（手动或陪睡定时挂断）时把陪睡计时器一起收掉，别让它们在通话结束后还傻等一小时。
-    exitSleepMode();
+    exitSleepMode(true);
     if (selectedChar?.id) {
-      const userTurns = bubbles.filter(b => b.role === 'user').length;
-      const keepsakeLine = summarizeKeepsakeLine(bubbles, selectedChar.name);
+      // 后台恢复事件可能持有较早一帧的 React 闭包；以 IndexedDB 里已经落盘的
+      // 本 session 内容作为收尾真相，避免卡片少算轮数/梦话或丢失陪睡标记。
+      const allMessages = await DB.getMessagesByCharId(selectedChar.id, true);
+      const savedTranscript = allMessages
+        .filter(message => message.metadata?.source === 'call'
+          && String(message.metadata?.callSessionId || '') === currentSessionId)
+        .sort((a, b) => a.timestamp - b.timestamp);
+      const transcript = savedTranscript.length
+        ? savedTranscript.map(message => ({ role: message.role, content: message.content } as Pick<Message, 'role' | 'content'>))
+        : bubbles.map(bubble => ({ role: bubble.role, content: bubble.text } as Pick<Message, 'role' | 'content'>));
+      const userTurns = transcript.filter(item => item.role === 'user').length;
+      const keepsakeLine = summarizeCallKeepsake(
+        transcript,
+        selectedChar.name,
+      );
+      const savedDreamCount = savedTranscript.filter(message => message.metadata?.sleepPhase === 'dream').length;
+      const hadSleep = Boolean(
+        sleepSession
+        || savedTranscript.some(message => message.metadata?.sleepPhase === 'lullaby' || message.metadata?.sleepPhase === 'dream')
+        || bubbles.some(bubble => bubble.sleepPhase === 'lullaby' || bubble.sleepPhase === 'dream'),
+      );
+      const dreamCount = savedTranscript.length
+        ? savedDreamCount
+        : sleepSession?.dreamCount ?? sleepDreamCountRef.current;
+      const endedAt = sleepSession?.autoHangupAt && sleepSession.autoHangupAt <= Date.now()
+        ? sleepSession.autoHangupAt
+        : Date.now();
+      const durationSec = sleepSession
+        ? Math.max(1, Math.floor((endedAt - sleepSession.startedAt) / 1000))
+        : callStartedAt ? Math.max(1, Math.floor((endedAt - callStartedAt) / 1000)) : elapsedSeconds;
       const payload = {
         characterId: selectedChar.id,
         characterName: selectedChar.name,
         characterAvatar: selectedChar.avatar,
-        durationSec: elapsedSeconds,
+        durationSec,
         turnCount: userTurns,
         keepsakeLine,
         callMode,
-        endedAt: Date.now(),
+        endedAt,
+        ...(hadSleep ? {
+          sleepCompanion: true,
+          sleepDreamCount: dreamCount,
+          sleepEndReason: 'normal',
+        } : {}),
       };
       await DB.saveMessage({
         charId: selectedChar.id,
         role: 'system',
         type: 'system',
-        content: `通话结束 · ${selectedChar.name}｜${formatDuration(elapsedSeconds)}｜${Math.max(1, userTurns)}轮对话`,
+        content: hadSleep
+          ? `陪睡通话已结束 · ${selectedChar.name}｜${formatDuration(durationSec)}｜梦话${dreamCount}句`
+          : `通话结束 · ${selectedChar.name}｜${formatDuration(durationSec)}｜${userTurns}轮对话`,
         metadata: { source: 'call-end-popup', callSessionId: currentSessionId, ...payload },
       });
+      if (sleepSession) clearSleepCompanionSession(currentSessionId);
       await loadCallRecords(selectedChar.id);
       trackEvent('结束一通通话', { 模式: callMode === 'video' ? '视频' : '语音' });
       // 挂断这一下最要紧：用户多半接着就把 App 关了，得把这最后一条也打脏——
@@ -2861,6 +2924,15 @@ ${sentencePlan}`;
   useEffect(() => {
     loadCallRecords(selectedCharId);
   }, [selectedCharId]);
+  useEffect(() => {
+    const intent = initialCallLaunchIntentRef.current;
+    if (!intent || callRecordsLoadedFor !== intent.charId) return;
+    const target = callRecords.find(record => record.sessionId === intent.sessionId);
+    setRecordDetailId(target?.id || '');
+    setViewMode(target ? 'record-detail' : 'history');
+    callLaunch.consume();
+    initialCallLaunchIntentRef.current = null;
+  }, [callRecords, callRecordsLoadedFor]);
   const handleDeleteRecord = async (record: CallRecord) => {
     setDeleteConfirmRecord(record);
   };
@@ -3098,9 +3170,9 @@ ${sentencePlan}`;
       sleepAutoHangupTimerRef.current = null;
     }
   };
-  const fireSleepLine = async (phase: 'lullaby' | 'dream') => {
-    if (sleepBusyRef.current || !selectedChar?.id) return;
-    if (document.visibilityState === 'hidden') return; // 后台时先跳过，等下一次检查窗口再试
+  const fireSleepLine = async (phase: 'lullaby' | 'dream'): Promise<boolean> => {
+    if (sleepBusyRef.current || !selectedChar?.id) return false;
+    if (document.visibilityState === 'hidden') return false; // 后台时先跳过，等下一次检查窗口再试
     sleepBusyRef.current = true;
     try {
       setCallState('thinking');
@@ -3119,6 +3191,7 @@ ${sentencePlan}`;
         thinkingChain: reply.thinkingChain,
         performance: reply.performance,
         performanceTimeline: reply.performanceCues,
+        sleepPhase: phase,
       };
       setAvatarEmotion(reply.performance.emotion);
       setAvatarPerformance(reply.performance);
@@ -3163,8 +3236,10 @@ ${sentencePlan}`;
           setCallState('listening');
         }
       }
+      return true;
     } catch {
       setCallState(previous => previous === 'thinking' ? 'listening' : previous);
+      return false;
     } finally {
       sleepBusyRef.current = false;
     }
@@ -3173,15 +3248,23 @@ ${sentencePlan}`;
     clearSleepDreamTimer();
     if (!sleepModeRef.current) return;
     if (!shouldScheduleNextSleepDreamCheck(sleepDreamCountRef.current, callPreferences.sleepDreamEnabled)) return;
+    const persisted = loadSleepCompanionSession();
+    const dueAt = persisted?.sessionId === currentSessionId && persisted.nextDreamCheckAt
+      ? persisted.nextDreamCheckAt
+      : Date.now() + SLEEP_DREAM_CHECK_INTERVAL_MS;
     sleepDreamTimerRef.current = window.setTimeout(async () => {
       sleepDreamTimerRef.current = null;
       if (!sleepModeRef.current) return;
       if (shouldFireSleepDream(sleepDreamCountRef.current, callPreferences.sleepDreamEnabled, Math.random()) && !sleepBusyRef.current) {
-        sleepDreamCountRef.current += 1;
-        await fireSleepLine('dream');
+        const created = await fireSleepLine('dream');
+        if (created) {
+          sleepDreamCountRef.current += 1;
+          updateSleepCompanionSession({ dreamCount: sleepDreamCountRef.current });
+        }
       }
+      updateSleepCompanionSession({ nextDreamCheckAt: Date.now() + SLEEP_DREAM_CHECK_INTERVAL_MS });
       scheduleSleepDreamCheck();
-    }, SLEEP_DREAM_CHECK_INTERVAL_MS);
+    }, Math.max(1000, dueAt - Date.now()));
   };
   const scheduleSleepAutoHangup = (minutes: number) => {
     clearSleepAutoHangupTimer();
@@ -3197,26 +3280,72 @@ ${sentencePlan}`;
     sleepModeRef.current = true;
     sleepDreamCountRef.current = 0;
     setShowSleepPanel(false);
+    const now = Date.now();
+    saveSleepCompanionSession({
+      charId: selectedChar?.id || selectedCharId,
+      charName: selectedChar?.name || '对方',
+      charAvatar: selectedChar?.avatar,
+      sessionId: currentSessionId,
+      startedAt: callStartedAt || now,
+      callMode,
+      autoHangupAt: sleepAutoHangupMinutes > 0 ? now + sleepAutoHangupMinutes * 60 * 1000 : null,
+      dreamEnabled: callPreferences.sleepDreamEnabled,
+      dreamCount: 0,
+      nextDreamCheckAt: callPreferences.sleepDreamEnabled ? now + SLEEP_DREAM_CHECK_INTERVAL_MS : null,
+    });
     scheduleSleepAutoHangup(sleepAutoHangupMinutes);
     trackEvent('开启陪睡模式', { 自动挂断分钟: sleepAutoHangupMinutes || 0 });
     await fireSleepLine('lullaby');
     if (sleepModeRef.current) scheduleSleepDreamCheck();
   };
-  const exitSleepMode = () => {
+  const exitSleepMode = (preservePersistedSession = false) => {
     if (!sleepModeRef.current) return;
     setSleepMode(false);
     sleepModeRef.current = false;
     clearSleepDreamTimer();
     clearSleepAutoHangupTimer();
+    if (!preservePersistedSession) clearSleepCompanionSession(currentSessionId);
   };
   const toggleSleepMode = () => { if (sleepModeRef.current) exitSleepMode(); else void enterSleepMode(); };
   const handleChangeSleepAutoHangup = (minutes: number) => {
     setSleepAutoHangupMinutes(minutes);
     saveSleepAutoHangupMinutes(minutes);
-    if (sleepModeRef.current) scheduleSleepAutoHangup(minutes);
+    if (sleepModeRef.current) {
+      updateSleepCompanionSession({ autoHangupAt: minutes > 0 ? Date.now() + minutes * 60 * 1000 : null });
+      scheduleSleepAutoHangup(minutes);
+    }
   };
-  // 通话结束/组件卸载时把两个计时器一起清掉，别让陪睡的定时器在挂断之后还傻等一小时。
-  useEffect(() => () => { clearSleepDreamTimer(); clearSleepAutoHangupTimer(); }, []);
+  // iOS 把 PWA 冻结后不会按时跑 setTimeout。页面真的恢复时立刻对照
+  // 持久化截止时间：到点就收尾；没到点就按剩余时间重排。梦话也只补一次
+  // 到期检查，不会在醒来后一口气追发整夜错过的多句。
+  useEffect(() => {
+    const reconcileSleepTimers = () => {
+      if (document.visibilityState === 'hidden' || !sleepModeRef.current) return;
+      const persisted = loadSleepCompanionSession();
+      if (!persisted || persisted.sessionId !== currentSessionId) return;
+      sleepDreamCountRef.current = persisted.dreamCount;
+      if (persisted.autoHangupAt && persisted.autoHangupAt <= Date.now()) {
+        void finishCall();
+        return;
+      }
+      if (persisted.autoHangupAt) {
+        clearSleepAutoHangupTimer();
+        sleepAutoHangupTimerRef.current = window.setTimeout(
+          () => { if (sleepModeRef.current) void finishCall(); },
+          Math.max(1000, persisted.autoHangupAt - Date.now()),
+        );
+      }
+      scheduleSleepDreamCheck();
+    };
+    window.addEventListener('pageshow', reconcileSleepTimers);
+    document.addEventListener('visibilitychange', reconcileSleepTimers);
+    return () => {
+      window.removeEventListener('pageshow', reconcileSleepTimers);
+      document.removeEventListener('visibilitychange', reconcileSleepTimers);
+      clearSleepDreamTimer();
+      clearSleepAutoHangupTimer();
+    };
+  }, [currentSessionId]);
 
   // 用户在舞台上拖拽/缩放后的构图，写回角色的 videoAvatar 持久化。
   const handleStageFramingChange = (framing: AvatarStageFraming) => {
@@ -3665,11 +3794,16 @@ ${sentencePlan}`;
                 <div className="w-10 h-10 rounded-full border border-white/20 flex items-center justify-center text-sm" style={{ backgroundColor: `${accentColor}35` }}>{record.characterName[0] || '角'}</div>
                 <div className="min-w-0 flex-1">
                   <div className="font-medium text-sm">{record.characterName}</div>
-                  <div className="text-xs text-white/45 mt-0.5">{record.mode === 'video' ? '视频' : record.mode === 'voice' ? '语音' : '通话'} · {formatDuration(record.durationSec)} · {turnCount}轮对话</div>
+                  <div className="text-xs text-white/45 mt-0.5">{record.sleepCompanion ? '陪睡' : record.mode === 'video' ? '视频' : record.mode === 'voice' ? '语音' : '通话'} · {formatDuration(record.durationSec)} · {turnCount}轮对话</div>
                 </div>
                 <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(record); }} className="text-xs px-2 py-1 rounded-lg text-white/35 transition hover:text-rose-300">删除</button>
               </div>
               <div className="text-xs text-white/60 mt-2.5 italic leading-relaxed line-clamp-2">{keepsake}</div>
+              {record.sleepCompanion && (
+                <div className={`mt-2 text-[11px] ${record.dreamCount > 0 ? 'text-indigo-200/75' : 'text-white/35'}`}>
+                  {record.dreamCount > 0 ? `梦话 ${record.dreamCount} 句 · 点开可回听` : '今晚没有生成梦话'}
+                </div>
+              )}
               <div className="text-[10px] text-white/30 mt-1.5">{record.createdAt}</div>
             </button>
           );})}
@@ -3736,7 +3870,9 @@ ${sentencePlan}`;
               }}
               className={`rounded-2xl px-3.5 py-2.5 border border-white/10 backdrop-blur-md ${item.role === 'user' ? 'bg-white/[0.07] ml-6' : 'bg-white/[0.03] mr-6'}`}
             >
-              <div className="text-[10px] text-white/45">{item.role === 'user' ? '你' : recordDetail.characterName} · {item.time}</div>
+              <div className="text-[10px] text-white/45">
+                {item.role === 'user' ? '你' : item.sleepPhase === 'dream' ? `${recordDetail.characterName}的梦话` : item.sleepPhase === 'lullaby' ? `${recordDetail.characterName}的哄睡` : recordDetail.characterName} · {item.time}
+              </div>
               {item.role === 'user' && <CallSnapshotImage imageRef={item.cameraSnapshotRef} expired={item.cameraSnapshotExpired} />}
               <div className="text-sm mt-1 leading-relaxed">{(() => {
                 if (item.role !== 'assistant') return item.text;
