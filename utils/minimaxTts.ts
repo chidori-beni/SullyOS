@@ -6,6 +6,7 @@ import { resolveMiniMaxApiKey } from './minimaxApiKey';
 import { minimaxFetch } from './minimaxEndpoint';
 import { hashTtsParams, getCachedTts, saveCachedTts } from './ttsCache';
 import { normalizeVoiceTags } from './sanitize';
+import { prepareNuojiSpeechText } from './nuojiSpeechText';
 
 const DEFAULT_MODEL = 'speech-2.8-hd';
 
@@ -325,8 +326,8 @@ export const buildVoiceSettings = (vp: CharacterProfile['voiceProfile'], emotion
     vol: Math.max(0.3, Math.min(2, vp?.vol ?? 1)),
     // Clamp base pitch to ±8 semitones (API allows ±12) to avoid alien sound
     pitch: Math.max(-8, Math.min(8, vp?.pitch ?? 0)),
-    // Normalize numbers/English so "2.8" etc. are read naturally
-    english_normalization: true,
+    // 注意：english_normalization **不在这里**。它是请求体的顶层参数，
+    // 塞进 voice_setting 会被 MiniMax 忽略掉（糯叽机放在顶层，这边跟着改了）。
     ...(emotion ? { emotion } : {}),
   };
 };
@@ -399,17 +400,24 @@ export async function synthesizeSpeechDetailed(
     throw new Error('角色未配置语音');
   }
 
-  // Insert natural pauses at punctuation marks
-  const processedText = insertSpeechBreaks(text);
+  // 停顿改用糯叽机那套稀疏规则（见 nuojiSpeechText）：文本里已经有 <#x#> / (chuckle)
+  // 就原样送、一个都不加；没有标记才在 …… 。！？ —— 和「逗号+转折连词」处插。
+  // 原来的 insertSpeechBreaks 是每个标点都插、还叠在模型写的标记之上，
+  // 同一个 speech-2.8-hd 在糯叽机自然、在这边夸张，主因就在这。
+  const processedText = prepareNuojiSpeechText(text);
 
   const payload: any = {
     model: vp?.model || DEFAULT_MODEL,
     text: processedText,
+    stream: false,
     voice_setting: {
       voice_id: vp?.voiceId || '',
       ...buildVoiceSettings(vp, options?.emotion),
     },
     audio_setting: { format: 'mp3' },
+    // english_normalization 是**顶层**参数，不是 voice_setting 的字段。
+    // 以前塞在 voice_setting 里，MiniMax 直接忽略 —— 数字/英文一直没被正常念。
+    english_normalization: true,
     ...buildTtsExtras(vp),
   };
   // 重 roll 的语速微调：叠加后仍夹在 buildVoiceSettings 用的同一档安全区间内，

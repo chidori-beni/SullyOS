@@ -5,8 +5,9 @@ import { extractContent, safeFetchJson } from '../utils/safeApi';
 import { minimaxFetch } from '../utils/minimaxEndpoint';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { hashTtsParams, getCachedTts, saveCachedTts } from '../utils/ttsCache';
-import { cleanTextForTts, insertSpeechBreaks, convertHexAudioToBlob, fetchRemoteAudioBlob, VALID_EMOTIONS, normalizeEmotionForApi, stripEmotionTags, VOICE_ACTING_GUIDE, cleanVoiceMarkupForDisplay } from '../utils/minimaxTts';
+import { cleanTextForTts, convertHexAudioToBlob, fetchRemoteAudioBlob, VALID_EMOTIONS, normalizeEmotionForApi, stripEmotionTags, VOICE_ACTING_GUIDE, cleanVoiceMarkupForDisplay } from '../utils/minimaxTts';
 import { resolveSpeechEmotion } from '../utils/voiceEmotionPolicy';
+import { prepareNuojiSpeechText } from '../utils/nuojiSpeechText';
 import { normalizeVoiceTags } from '../utils/sanitize';
 import { FISH_VOICE_ACTING_GUIDE, synthesizeSpeechFishDetailed, resolveFishAudioApiKey, cleanTextForTtsFish, stripFishMarkupForDisplay } from '../utils/fishAudioTts';
 import { resolveTtsProvider, getTtsProvider, getVoicePromptOverride } from '../utils/ttsProvider';
@@ -1349,7 +1350,9 @@ const CallApp: React.FC = () => {
     const minimaxApiKey = resolveMiniMaxApiKey(apiConfig);
     const voiceId = resolveVoiceId();
     const groupId = resolveGroupId();
-    const speechText = insertSpeechBreaks(cleanTextForTts(rawText));
+    // 停顿改用糯叽机的稀疏规则（见 utils/nuojiSpeechText）：有人工标记就原样送，
+    // 没有才在 …… 。！？ —— 和「逗号+转折连词」处插，逗号/顿号一律不插、句末不留尾巴。
+    const speechText = prepareNuojiSpeechText(cleanTextForTts(rawText));
     const model = resolveModel();
     if (!speechText.trim()) throw new Error('可朗读文本为空');
 
@@ -1361,6 +1364,8 @@ const CallApp: React.FC = () => {
         output_format: 'url',
         voice_setting: { voice_id: voiceId, ...resolveVoiceSettingFields(emotion) },
         audio_setting: { format: 'mp3', sample_rate: 32000, bitrate: 128000, channel: 1 },
+        // 顶层参数，不能塞进 voice_setting（塞进去会被忽略）。与 minimaxTts 保持一致。
+        english_normalization: true,
         ...(voiceLang ? { language_boost: voiceLang } : {}),
         ...buildTtsExtras(),
       };
