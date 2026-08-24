@@ -13,6 +13,7 @@ export type {
 export { extractCallInvite, formatCallInviteTag } from './incomingCallParse';
 
 import type { CallInvite } from './incomingCallParse';
+import { appendDevDebugLog } from './devDebug';
 
 /** 来电界面/铃声的触发事件（window 级）。detail 是 PendingIncomingCall。 */
 export const INCOMING_CALL_EVENT = 'sully-incoming-call';
@@ -122,9 +123,24 @@ export interface PendingIncomingCall extends CallInvite {
  */
 let pending: PendingIncomingCall | null = null;
 
+/** 来电专项诊断：只记录身份/时间/判定结果，不记录 opening 正文。 */
+const logIncomingCall = (event: string, data: Record<string, unknown> = {}): void => {
+  appendDevDebugLog('lifecycle', {
+    label: `[incomingCall] ${event}`,
+    data: { event, ...data },
+  });
+};
+
 export const getPendingIncomingCall = (): PendingIncomingCall | null => pending;
 
-export const clearPendingIncomingCall = (): void => { pending = null; };
+export const clearPendingIncomingCall = (): void => {
+  logIncomingCall('clear-pending', pending ? {
+    charId: pending.charId,
+    ringAt: pending.ringAt,
+    sourceMessageId: pending.sourceMessageId,
+  } : { hadPending: false });
+  pending = null;
+};
 
 /**
  * 一通来电"过期"的界线。
@@ -270,9 +286,18 @@ export const requestIncomingCall = (
 ): IncomingCallResult => {
   const now = Date.now();
   const ringAt = call.ringAt ?? now;
+  const debugBase = {
+    charId: call.charId,
+    ringAt,
+    ageMs: now - ringAt,
+    sourceMessageId: call.sourceMessageId,
+    hasOpening: typeof call.opening === 'string' && call.opening.length > 0,
+    mode: call.mode,
+  };
   // 先于 pending / 冷却运行：这是“同一条已经给用户响过的云端消息”再次被补收，不是一
   // 通被冷却挡下的新电话。不能重新挂 Overlay，更不能再落一条未接记录。
   if (hasIncomingCallBeenPresented({ ...call, ringAt }, now)) {
+    logIncomingCall('request-duplicate', debugBase);
     console.log('[IncomingCall] ⏳ 同一条来电已展示过，跳过:', call.sourceMessageId || call.charId);
     return 'duplicate';
   }
@@ -280,21 +305,25 @@ export const requestIncomingCall = (
   // 拦下来的话，用户按了接听、App 起来了、然后什么都没发生，比不响还糟。
   const answeredFromBanner = consumeCallBannerOpened(call.charId, now);
   if (!answeredFromBanner && isCallCoolingDown(readLastCallAt(call.charId), now)) {
+    logIncomingCall('request-cooldown', debugBase);
     console.log('[IncomingCall] ⏳ 冷却中，这通电话不响了:', call.charId);
     return 'cooldown';
   }
   // 已经在响一通了（多角色同时到点）——先来的那通留着，后到的丢掉。
   if (pending) {
+    logIncomingCall('request-busy', { ...debugBase, pendingCharId: pending.charId, pendingRingAt: pending.ringAt });
     console.log('[IncomingCall] ⏳ 已有一通在响，跳过:', call.charId);
     return 'busy';
   }
   if (!answeredFromBanner && now - ringAt > STALE_CALL_MS) {
+    logIncomingCall('request-stale', debugBase);
     console.log('[IncomingCall] ⏳ 这是补收回来的旧电话，只记未接:', call.charId);
     markCallFired(call.charId, now);
     return 'stale';
   }
   pending = { ...call, ringAt };
   markCallFired(call.charId, now);
+  logIncomingCall('request-ringing', debugBase);
   try {
     window.dispatchEvent(new CustomEvent(INCOMING_CALL_EVENT, { detail: pending }));
   } catch { /* 非浏览器环境（测试/worker）：暂存写好就行 */ }

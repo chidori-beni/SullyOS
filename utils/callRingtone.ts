@@ -23,6 +23,8 @@
  * "程序出错了用户却关不掉"的故障**，值得为它单独加一层保险。
  */
 
+import { appendDevDebugLog } from './devDebug';
+
 /** 响多久没人接算未接。真手机是 30 秒左右，照抄。 */
 export const RING_TIMEOUT_MS = 30_000;
 
@@ -37,6 +39,21 @@ let audio: HTMLAudioElement | null = null;
 let watchdog: ReturnType<typeof setTimeout> | null = null;
 let vibrateTimer: ReturnType<typeof setInterval> | null = null;
 let primed = false;
+
+/**
+ * 这条专项日志故意复用 lifecycle 分类：用户不需要再记一个新开关。
+ * 只记铃声状态和事件来源，不记角色名、开场白或聊天正文。
+ */
+const logRingtone = (event: string, data: Record<string, unknown> = {}): void => {
+  appendDevDebugLog('lifecycle', {
+    label: `[callRingtone] ${event}`,
+    data: {
+      event,
+      visibility: typeof document !== 'undefined' ? document.visibilityState : 'n/a',
+      ...data,
+    },
+  });
+};
 
 const getAudio = (): HTMLAudioElement | null => {
   if (typeof Audio === 'undefined') return null; // SSR / 测试环境
@@ -93,6 +110,11 @@ export const isRinging = (): boolean => !!audio && !audio.paused;
  */
 export const startRingtone = (onTimeout: () => void): void => {
   const el = getAudio();
+  logRingtone('start', {
+    hasAudio: !!el,
+    pausedBefore: el?.paused,
+    currentTimeBefore: el?.currentTime,
+  });
   clearTimers();
   if (el) {
     el.loop = true;
@@ -101,6 +123,7 @@ export const startRingtone = (onTimeout: () => void): void => {
     try { el.currentTime = 0; } catch { /* 有些浏览器要等 metadata */ }
     // 播放失败只记一行日志：自动播放被拦是预期内的一种结果，不是错误。
     void el.play().catch(err => {
+      logRingtone('play-rejected', { name: err?.name, message: err?.message });
       console.log('[IncomingCall] 铃声被浏览器拦下（还没有任何手势解锁过它）:', err?.name || err);
     });
   }
@@ -113,6 +136,7 @@ export const startRingtone = (onTimeout: () => void): void => {
 
   watchdog = setTimeout(() => {
     // 兜底：不管上层发生了什么，响到这里就必须停。
+    logRingtone('watchdog-timeout');
     stopRingtone();
     onTimeout();
   }, RING_TIMEOUT_MS);
@@ -120,6 +144,11 @@ export const startRingtone = (onTimeout: () => void): void => {
 
 /** 停响。**幂等**，随便谁、随便什么时候调都安全。 */
 export const stopRingtone = (): void => {
+  logRingtone('stop', {
+    hasAudio: !!audio,
+    pausedBefore: audio?.paused,
+    currentTimeBefore: audio?.currentTime,
+  });
   clearTimers();
   try { navigator.vibrate?.(0); } catch { /* 不支持就算了 */ }
   const el = audio;
@@ -141,7 +170,10 @@ export const __resetRingtoneForTest = (): void => {
 // PWA/WebView 可能在页面切换或整页退出时来不及跑 React effect cleanup。
 // 主动把单例声音停掉，避免旧页面的 Audio 在用户重新进入 APP 后继续响到看门狗。
 if (typeof window !== 'undefined') {
-  const stopOnPageExit = () => stopRingtone();
+  const stopOnPageExit = () => {
+    logRingtone('page-exit-stop');
+    stopRingtone();
+  };
   window.addEventListener('pagehide', stopOnPageExit);
   window.addEventListener('beforeunload', stopOnPageExit);
 
@@ -151,8 +183,12 @@ if (typeof window !== 'undefined') {
   let lastResumeStopAt = 0;
   const stopOnAppResume = () => {
     const now = Date.now();
-    if (now - lastResumeStopAt < RESUME_EVENT_COALESCE_MS) return;
+    if (now - lastResumeStopAt < RESUME_EVENT_COALESCE_MS) {
+      logRingtone('resume-stop-coalesced');
+      return;
+    }
     lastResumeStopAt = now;
+    logRingtone('resume-stop');
     stopRingtone();
   };
   window.addEventListener('pageshow', stopOnAppResume);
@@ -166,9 +202,11 @@ if (typeof window !== 'undefined') {
     if (document.visibilityState === 'hidden') {
       // 下一次恢复必须重新执行一次硬停，不能被之前的 pageshow 时间戳跳过。
       lastResumeStopAt = 0;
+      logRingtone('visibility-hidden-stop');
       stopRingtone();
       return;
     }
+    logRingtone('visibility-visible');
     stopOnAppResume();
   });
 }
