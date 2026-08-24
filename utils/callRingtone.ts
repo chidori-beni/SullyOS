@@ -141,16 +141,33 @@ export const primeRingtone = (): void => {
   if (!el.paused) { primed = true; return; } // 已经在响，本身就是解锁状态
   primed = true;
   el.muted = true;
-  const done = () => {
+  logRingtone('prime-start', {
+    pausedBefore: el.paused,
+    currentTimeBefore: el.currentTime,
+  });
+  // 无论 play() 成功、被浏览器拒绝，还是同步抛错，都必须先暂停并归零，
+  // 再解除静音。旧代码在 catch 里只做了 unmuted，iOS 可能让一个“静音预播放”
+  // 在之后变成可听见的声音；这正好符合“没有 start 日志、没有来电界面但 currentTime 已前进”的现象。
+  const finishPrime = (event: string, error?: unknown) => {
     try { el.pause(); el.currentTime = 0; } catch { /* 忽略 */ }
     el.muted = false;
+    logRingtone(event, {
+      currentTimeAfter: el.currentTime,
+      pausedAfter: el.paused,
+      ...(error && typeof error === 'object'
+        ? { name: (error as { name?: unknown }).name, message: (error as { message?: unknown }).message }
+        : {}),
+    });
   };
   try {
     const attempt = el.play();
-    if (attempt) void attempt.then(done).catch(() => { el.muted = false; });
-    else done();
-  } catch {
-    el.muted = false;
+    if (attempt) {
+      void attempt
+        .then(() => finishPrime('prime-play-resolved'))
+        .catch((error) => finishPrime('prime-play-rejected', error));
+    } else finishPrime('prime-play-no-promise');
+  } catch (error) {
+    finishPrime('prime-play-threw', error);
   }
 };
 
