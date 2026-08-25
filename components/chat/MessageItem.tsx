@@ -12,6 +12,7 @@ import { stripFishCuesForDisplay } from '../../utils/fishAudioTts';
 import { formatStatCount } from '../../utils/videoParser';
 import { trackEvent } from '../../utils/analytics';
 import { resolveBubbleCornerRadii, shouldHideBubbleTail } from '../../utils/bubbleAppearance';
+import { formatChatTimestamp } from '../../utils/chatTimestamp';
 import McdCard from './McdCard';
 import HtmlCard from './HtmlCard';
 import LuckinCard from './LuckinCard';
@@ -736,7 +737,7 @@ const ForwardCard: React.FC<{
         setExpanded(true);
     };
 
-    const formatTime = (ts: number) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    const formatTime = (ts: number) => formatChatTimestamp(ts);
 
     return (
         <>
@@ -1753,7 +1754,7 @@ const MessageItem = React.memo(({
         onClick: handleClick
     };
 
-    const formatTime = (ts: number) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    const formatTime = (ts: number) => formatChatTimestamp(ts);
 
     // Render Avatar with potential decoration/frame
     // Removed mb-5 from here, handled via absolute positioning in parent
@@ -1960,7 +1961,7 @@ const MessageItem = React.memo(({
             const missedAvatar = m.metadata?.characterAvatar || charAvatar;
             const wasVideo = m.metadata?.callMode === 'video';
             const declined = m.metadata?.reason === 'declined';
-            const missedAt = new Date(m.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+            const missedAt = formatChatTimestamp(m.timestamp);
             return (
                 <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
                     {selectionMode && (
@@ -2697,7 +2698,7 @@ const MessageItem = React.memo(({
         const roomInfo = { name: roomNameMap[md.room] || '彼方' };
         const activity: string = md.activity || '在彼方度过了一段时间。';
         const excerpts: string[] = Array.isArray(md.annotationExcerpts) ? md.annotationExcerpts : [];
-        const timeStr = new Date(m.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        const timeStr = formatChatTimestamp(m.timestamp);
         const card = (
             <div className="w-64">
                 <div
@@ -2753,7 +2754,7 @@ const MessageItem = React.memo(({
 
     if (m.type === 'sim_card') {
         const sc: any = m.metadata?.simCard || {};
-        const timeStr = new Date(m.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        const timeStr = formatChatTimestamp(m.timestamp);
         const accent = '#b89bff';
         const card = (
             <div className="w-64">
@@ -2831,7 +2832,7 @@ const MessageItem = React.memo(({
             contactName: phoneFieldToText(rawPhoneCard.contactName),
             action: phoneFieldToText(rawPhoneCard.action),
         };
-        const timeStr = new Date(m.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        const timeStr = formatChatTimestamp(m.timestamp);
 
         // 智能体卡片（偷看到 TA 在玩 AI：助手 / 树洞 / 酒馆）
         if (typeof pc.kind === 'string' && pc.kind.startsWith('ai_')) {
@@ -2943,7 +2944,7 @@ const MessageItem = React.memo(({
         const tMeta: any = m.metadata || {};
         const t: any = tMeta.theater || {};
         const lines: any[] = Array.isArray(t.lines) ? t.lines : [];
-        const timeStr = new Date(m.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        const timeStr = formatChatTimestamp(m.timestamp);
         const HUE = 262;
         const accent = `hsl(${HUE},75%,72%)`;
         const exposed = tMeta.exposed !== false; // 缺省按已暴露（兼容旧卡片）
@@ -3008,7 +3009,7 @@ const MessageItem = React.memo(({
         // 小屋「生活动态」轻量卡片：情绪评估顺风车偶尔捎带的一句小变化（utils/roomAmbient.ts）。
         // content 进上下文，角色自然记得自己干过啥——不额外建 feed，卡片即记录。
         const md: any = m.metadata || {};
-        const timeStr = new Date(m.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        const timeStr = formatChatTimestamp(m.timestamp);
         const card = (
             <div className="w-56">
                 <div
@@ -3034,7 +3035,7 @@ const MessageItem = React.memo(({
 
     if (m.type === 'world_card') {
         const md: any = m.metadata || {};
-        const timeStr = new Date(m.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        const timeStr = formatChatTimestamp(m.timestamp);
         const narrative: string = md.narrative || '';
         const panel: Record<string, any> = (md.statusPanel && typeof md.statusPanel === 'object') ? md.statusPanel : {};
         const posts: string[] = Array.isArray(md.phonePosts) ? md.phonePosts : [];
