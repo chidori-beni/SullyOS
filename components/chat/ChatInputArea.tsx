@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, PencilSimple, BellSimpleRinging, Alarm, Sparkle, FadersHorizontal, LinkSimple, Waveform } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Plus, Smiley, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, PencilSimple, BellSimpleRinging, Alarm, Sparkle, FadersHorizontal, LinkSimple, Waveform, CornersOut, CornersIn } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { AcnhActionTile } from '../os/acnhIcons';
@@ -56,6 +56,7 @@ interface ChatInputAreaProps {
     showThinkingChain?: boolean;
     // Input style
     inputStyle?: 'default' | 'rounded' | 'flat' | 'wechat' | 'ios' | 'telegram' | 'discord' | 'pixel';
+    /** 兼容旧调用方；消息栏现在统一由回车发送，不再渲染发送按钮。 */
     sendButtonStyle?: 'circle' | 'pill' | 'minimal';
     chromeStyle?: 'soft' | 'flat' | 'floating' | 'pixel';
     /** 动森彩蛋模式：输入栏换成木质草绿圆角。 */
@@ -80,12 +81,14 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     htmlModeEnabled = false,
     showThinkingChain = false,
     inputStyle = 'default',
-    sendButtonStyle = 'circle',
     chromeStyle = 'soft',
     acnh = false,
 }) => {
     const chatImageInputRef = useRef<HTMLInputElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const fullscreenTextareaRef = useRef<HTMLTextAreaElement>(null);
+    const [isFullscreenEditor, setIsFullscreenEditor] = useState(false);
+    const [isInputOverflowing, setIsInputOverflowing] = useState(false);
     const [actionsPage, setActionsPage] = useState<0 | 1 | 2>(0);
     // 气泡样式面板：搜索 + 两步确认删除（防止 hover 小 × 误删）
     const [bubbleSearch, setBubbleSearch] = useState('');
@@ -112,10 +115,15 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     const actionsSwipeMoved = useRef(false);
     const useIOSStandaloneInputFix = isIOSStandaloneWebApp();
 
+    const sendFromComposer = () => {
+        onSend();
+        setIsFullscreenEditor(false);
+    };
+
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            onSend();
+            sendFromComposer();
         }
     };
 
@@ -284,9 +292,24 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         const textarea = textareaRef.current;
         if (!textarea) return;
         textarea.style.height = 'auto';
+        const isOverflowing = textarea.scrollHeight > 144;
         textarea.style.height = `${Math.min(textarea.scrollHeight, 144)}px`;
-        textarea.style.overflowY = textarea.scrollHeight > 144 ? 'auto' : 'hidden';
-    }, [input]);
+        textarea.style.overflowY = isOverflowing ? 'auto' : 'hidden';
+        setIsInputOverflowing(previous => previous === isOverflowing ? previous : isOverflowing);
+    }, [input, selectionMode]);
+
+    React.useEffect(() => {
+        if (!isFullscreenEditor) return;
+        const textarea = fullscreenTextareaRef.current;
+        if (!textarea) return;
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    }, [isFullscreenEditor]);
+
+    const openFullscreenEditor = () => {
+        setShowPanel('none');
+        setIsFullscreenEditor(true);
+    };
 
     React.useEffect(() => {
         if (showPanel !== 'emojis') {
@@ -319,12 +342,12 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             ? 'bg-white/80 backdrop-blur-2xl border-t border-white/60 shadow-[0_-12px_30px_rgba(148,163,184,0.18)]'
             : 'bg-white/90 backdrop-blur-2xl border-t border-slate-200/50 shadow-[0_-5px_15px_rgba(0,0,0,0.02)]';
     const actionButtonClass = acnh
-        ? 'w-11 h-11 shrink-0 rounded-full bg-[#4cb89e] flex items-center justify-center text-white hover:bg-[#43ad93] transition-colors shadow-sm'
+        ? 'w-9 h-9 shrink-0 rounded-xl bg-transparent flex items-center justify-center text-[#367d68] hover:bg-[#d8f0df] active:scale-95 transition-all'
         : isPixelStyle
-        ? 'w-11 h-11 shrink-0 rounded-[4px] border-2 border-[#8f674a] bg-[#f8f0e0] flex items-center justify-center text-[#8f674a] hover:bg-[#fff7ed] transition-colors'
+        ? 'w-9 h-9 shrink-0 rounded-[4px] bg-transparent flex items-center justify-center text-[#8f674a] hover:bg-[#fff7ed] active:scale-95 transition-all'
         : isDiscordStyle
-          ? 'w-11 h-11 shrink-0 rounded-full bg-slate-800 flex items-center justify-center text-slate-200 hover:bg-slate-700 transition-colors'
-          : 'w-11 h-11 shrink-0 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-colors';
+          ? 'w-9 h-9 shrink-0 rounded-xl bg-transparent flex items-center justify-center text-slate-300 hover:bg-slate-800 active:scale-95 transition-all'
+          : 'w-9 h-9 shrink-0 rounded-xl bg-transparent flex items-center justify-center text-slate-500 hover:bg-slate-100 active:scale-95 transition-all';
     const inputWrapClass =
         acnh
             ? 'bg-[#fbf4de] border-2 border-[#e6dab4] rounded-full'
@@ -344,22 +367,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                       : inputStyle === 'pixel'
                         ? 'bg-[#f8f0e0] border-2 border-[#8f674a] rounded-[4px]'
                         : 'bg-slate-100 rounded-[24px]';
-    const sendButtonClass = acnh
-        ? 'w-11 h-11 shrink-0 rounded-full bg-[#f3d06a] text-[#6b5a3e] flex items-center justify-center shadow-md'
-        :
-        sendButtonStyle === 'pill'
-            ? isPixelStyle
-                ? 'h-11 min-w-[72px] shrink-0 rounded-[4px] border-2 border-[#8f674a] bg-[#c99872] px-4 text-[11px] font-bold text-[#fff7ed]'
-                : 'h-11 min-w-[72px] shrink-0 rounded-full bg-primary px-4 text-[11px] font-bold text-white shadow-lg'
-            : sendButtonStyle === 'minimal'
-              ? isPixelStyle
-                ? 'w-11 h-11 shrink-0 rounded-[4px] border-2 border-[#8f674a] bg-[#c99872] text-[#fff7ed] flex items-center justify-center'
-                : isDiscordStyle
-                  ? 'w-11 h-11 shrink-0 rounded-full bg-transparent text-sky-300 flex items-center justify-center'
-                  : 'w-11 h-11 shrink-0 rounded-full bg-transparent text-primary flex items-center justify-center'
-              : isPixelStyle
-                ? 'w-11 h-11 shrink-0 rounded-[4px] border-2 border-[#8f674a] bg-[#c99872] text-[#fff7ed] flex items-center justify-center'
-                : 'w-11 h-11 shrink-0 rounded-full bg-primary text-white flex items-center justify-center transition-all shadow-lg';
     const panelClass = acnh
         ? 'bg-[#f3ecdc] border-t-[3px] border-[#e0d6c0]'
         : isPixelStyle
@@ -440,13 +447,13 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     </button>
                 </div>
             ) : (
-                <div className="p-3 px-4 flex gap-3 items-end relative">
-                    <button onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className={actionButtonClass}>
-                        <Plus className="w-6 h-6" weight="bold" />
+                <div className="p-3 px-4 flex gap-2 items-end relative">
+                    <button type="button" onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className={actionButtonClass} aria-label="更多功能">
+                        <Plus className="w-5 h-5" weight="bold" />
                     </button>
                     {onOpenVoiceInput && (
-                        <button onClick={onOpenVoiceInput} className={actionButtonClass} title="发送语音" aria-label="发送语音">
-                            <Waveform className="w-6 h-6" weight="bold" />
+                        <button type="button" onClick={onOpenVoiceInput} className={actionButtonClass} title="发送语音" aria-label="发送语音">
+                            <Waveform className="w-5 h-5" weight="bold" />
                         </button>
                     )}
                     <div className={`flex-1 min-w-0 flex items-center px-1 transition-all ${useIOSStandaloneInputFix ? 'overflow-visible' : 'overflow-hidden'} ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
@@ -461,21 +468,19 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             enterKeyHint="send"
                             autoCorrect="on"
                             autoCapitalize="sentences"
-                            className={`flex-1 min-w-0 bg-transparent px-4 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-36 no-scrollbar ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`}
-                            placeholder="Message..." 
-                            style={{ height: 'auto' }} 
+                            className={`flex-1 min-w-0 bg-transparent px-3 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-36 overscroll-contain ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`}
+                            placeholder="Message..."
+                            style={{ height: 'auto' }}
                         />
-                        <button onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={`p-2 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}>
-                            <Smiley className="w-6 h-6" weight="regular" />
+                        {isInputOverflowing && (
+                            <button type="button" onClick={openFullscreenEditor} className={actionButtonClass} title="放大编辑" aria-label="放大编辑">
+                                <CornersOut className="w-5 h-5" weight="bold" />
+                            </button>
+                        )}
+                        <button type="button" onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={actionButtonClass} title="表情包" aria-label="表情包">
+                            <Smiley className="w-5 h-5" weight="bold" />
                         </button>
                     </div>
-                    <button 
-                        onClick={onSend} 
-                        disabled={!input.trim()} 
-                        className={`${sendButtonClass} ${input.trim() ? '' : 'opacity-45 shadow-none'}`}
-                    >
-                        {sendButtonStyle === 'pill' ? <span>发送</span> : <PaperPlaneTilt className="w-5 h-5" weight="fill" />}
-                    </button>
 
                     {emojiSelectionMode && (
                         <div className={`absolute inset-0 z-10 ${isPixelStyle ? 'bg-[#eadfce]/70 backdrop-blur-[2px]' : isDiscordStyle ? 'bg-slate-950/70 backdrop-blur-[2px]' : 'bg-white/60 backdrop-blur-[2px]'}`} />
@@ -1006,6 +1011,55 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                 </div>
             )}
         </div>
+        {isFullscreenEditor && (
+            <div
+                className={`fixed inset-0 z-[100] flex min-h-0 flex-col overflow-hidden ${
+                    acnh
+                        ? 'bg-[#fbf4de] text-[#4c6b56]'
+                        : isPixelStyle
+                        ? 'bg-[#f8f0e0] text-[#6a4c35]'
+                        : isDiscordStyle
+                        ? 'bg-slate-950 text-white'
+                        : 'bg-white text-slate-700'
+                }`}
+                style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
+                role="dialog"
+                aria-modal="true"
+                aria-label="全屏编辑消息"
+            >
+                <div className={`shrink-0 flex items-center gap-3 border-b px-4 py-3 ${
+                    isDiscordStyle ? 'border-white/10' : isPixelStyle ? 'border-[#8f674a]/30' : 'border-slate-200'
+                }`}>
+                    <button type="button" onClick={() => setIsFullscreenEditor(false)} className={actionButtonClass} title="退出全屏编辑" aria-label="退出全屏编辑">
+                        <CornersIn className="w-5 h-5" weight="bold" />
+                    </button>
+                    <div className="flex-1 text-center text-sm font-semibold">编辑消息</div>
+                    <div className="w-9 shrink-0" aria-hidden="true" />
+                </div>
+                <div className="flex-1 min-h-0 p-4">
+                    <textarea
+                        ref={fullscreenTextareaRef}
+                        value={input}
+                        onChange={(e) => setInput(e.target.value)}
+                        onKeyDown={handleKeyDown}
+                        inputMode="text"
+                        enterKeyHint="send"
+                        autoCorrect="on"
+                        autoCapitalize="sentences"
+                        autoFocus
+                        spellCheck
+                        className={`h-full w-full resize-none overflow-y-auto overscroll-contain rounded-2xl border p-4 text-[16px] leading-7 outline-none focus:ring-2 ${
+                            isDiscordStyle
+                                ? 'border-white/10 bg-white/[0.06] text-white focus:ring-sky-400/40'
+                                : isPixelStyle
+                                ? 'border-[#8f674a]/30 bg-[#fff7ed] text-[#6a4c35] focus:ring-[#a16207]/30'
+                                : 'border-slate-200 bg-slate-50 text-slate-700 focus:ring-primary/20'
+                        }`}
+                        aria-label="全屏消息编辑框"
+                    />
+                </div>
+            </div>
+        )}
         </>
     );
 };

@@ -39,4 +39,14 @@ describe('user voice message wiring', () => {
     expect(chatInput).toContain('Math.min(textarea.scrollHeight, 144)');
     expect(chatInput).toContain('max-h-36');
   });
+
+  it('keeps the chat composer compact and offers scroll/fullscreen controls for long text', () => {
+    const chatInput = read('components/chat/ChatInputArea.tsx');
+    expect(chatInput).toContain("textarea.style.overflowY = isOverflowing ? 'auto' : 'hidden'");
+    expect(chatInput).toContain('overscroll-contain');
+    expect(chatInput).toContain('CornersOut');
+    expect(chatInput).toContain('setIsFullscreenEditor(true)');
+    expect(chatInput).not.toContain('sendButtonClass');
+    expect(chatInput).not.toContain('PaperPlaneTilt');
+  });
 });
