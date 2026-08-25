@@ -18,6 +18,7 @@
 
 import { DB } from './db';
 import { processImage } from './file';
+import { saveImageToGallery } from './imageSave';
 import { VISION_DESCRIPTION_METADATA_KEY } from './visionApi';
 
 const LS_KEY = 'sullyos_imagegen_config_v1';
@@ -167,11 +168,22 @@ export function isImageGenReady(cfg: ImageGenConfig | undefined | null): boolean
     return Boolean(cfg.relayUrl.trim() && cfg.token.trim() && cfg.model.trim());
 }
 
+export interface GenerateOptions {
+    /**
+     * 强制换一个随机种子。
+     *
+     * 「重画」时必须开：`cfg.seed > 0` 是「锁脸」用的固定种子，同提示词 + 同种子
+     * = 同一张图，重画会原地踏步。这跟功能 4 语音重 roll 踩的是同一个坑
+     * （缓存 / 种子没变 → 拿回一模一样的东西），那次的教训是「重来就得真的重来」。
+     */
+    forceReseed?: boolean;
+}
+
 /**
  * 组装 NovelAI 请求体（V4 / V4.5 结构；V3 也吃，多出来的 v4_* 字段会被忽略）。
  * 已在真实接口上验证通过。
  */
-export function buildNovelAiBody(prompt: string, cfg: ImageGenConfig): any {
+export function buildNovelAiBody(prompt: string, cfg: ImageGenConfig, opts?: GenerateOptions): any {
     const { width, height } = parseSize(cfg.size);
     const positive = [prompt.trim(), cfg.qualityTags.trim()].filter(Boolean).join(', ');
     const negative = cfg.negativePrompt.trim();
@@ -198,7 +210,7 @@ export function buildNovelAiBody(prompt: string, cfg: ImageGenConfig): any {
         // Variety+ ：关 = null，开 = 按尺寸算出来的那个数（见 calcSkipCfgAboveSigma）
         skip_cfg_above_sigma: cfg.varietyPlus ? calcSkipCfgAboveSigma(width, height, cfg.model) : null,
         use_coords: false,
-        seed: cfg.seed > 0 ? cfg.seed : Math.floor(Math.random() * 4294967295),
+        seed: cfg.seed > 0 && !opts?.forceReseed ? cfg.seed : Math.floor(Math.random() * 4294967295),
         negative_prompt: negative,
         v4_prompt: {
             caption: { base_caption: positive, char_captions: [] },
@@ -295,14 +307,14 @@ export async function pingRelay(relayUrl: string): Promise<{ ok: boolean; messag
  * 失败时抛出的 Error 里带着 **NovelAI 的原话**——中转站不吞错误正文，
  * 这是排错唯一的线索，调用方应该原样显示给用户，不要改写成"生成失败"。
  */
-export async function generateImageDataUrl(prompt: string, cfg: ImageGenConfig): Promise<string> {
+export async function generateImageDataUrl(prompt: string, cfg: ImageGenConfig, genOpts?: GenerateOptions): Promise<string> {
     if (!isImageGenReady(cfg)) throw new Error('生图还没配置好（地址 / Token / 模型）');
 
     const url = cfg.relayUrl.trim().replace(/\/+$/, '');
     const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-nai-token': cfg.token.trim() },
-        body: JSON.stringify(buildNovelAiBody(prompt, cfg)),
+        body: JSON.stringify(buildNovelAiBody(prompt, cfg, genOpts)),
     });
 
     if (!res.ok) {
@@ -344,22 +356,14 @@ export async function generateImageDataUrl(prompt: string, cfg: ImageGenConfig):
  *
  * best-effort：相册写失败不该影响图片本身已经落进聊天记录这件事。
  */
-async function saveToGallery(charId: string | undefined, dataUrl: string, prompt: string): Promise<void> {
-    if (!charId) return;
+async function saveToGallery(charId: string | undefined, dataUrl: string, prompt: string): Promise<string | null> {
+    if (!charId) return null;
     try {
-        const now = new Date();
-        const localDateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-        await DB.saveGalleryImage({
-            id: `img-gen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            charId,
-            url: dataUrl,
-            timestamp: Date.now(),
-            savedDate: localDateKey,
-            // 相册里点开能看到当初那句提示词，比一张没头没脑的图有用得多。
-            chatContext: [`${prompt}`],
-        });
+        // 相册里点开能看到当初那句提示词，比一张没头没脑的图有用得多。
+        return await saveImageToGallery(charId, dataUrl, { chatContext: [`${prompt}`], idPrefix: 'img-gen' });
     } catch (e) {
         console.error('[生图] 存进相册失败（图本身已经在聊天记录里了）：', e);
+        return null;
     }
 }
 
@@ -370,9 +374,17 @@ export type ImageGenStatus = 'pending' | 'failed' | 'generated';
 
 export interface ImageGenMeta {
     status: ImageGenStatus;
-    /** 当初那句提示词。重试全靠它，别丢。 */
+    /** 当初那句提示词。重试和重画全靠它，别丢。 */
     prompt: string;
     error?: string;
+    /**
+     * 这张图在「相册」App 里那条记录的 id。
+     *
+     * 存在 = 已经进过相册，看大图时的「存到相册」按钮据此变灰，
+     * 不会每点一次就在相册里多堆一张一模一样的。
+     * 老消息没有这个字段，第一次手动存会补上。
+     */
+    galleryImageId?: string;
 }
 
 function announceImageGenUpdated(): void {
@@ -396,21 +408,7 @@ export async function runImageGeneration(messageId: number, prompt: string, char
     const cfg = getImageGenConfig();
     try {
         const dataUrl = await generateImageDataUrl(prompt, cfg);
-        await DB.updateMessage(messageId, dataUrl);
-        await saveToGallery(charId, dataUrl, prompt);
-        await DB.updateMessageMetadata(messageId, (prev: any) => ({
-            ...(prev || {}),
-            imageGen: { status: 'generated', prompt } as ImageGenMeta,
-            // 顺手把「这张图画的是什么」写进识图缓存。
-            //
-            // 不然下一轮 materializeVisionDescriptions 会把这张图发给识图 API 去认——
-            // 又慢、又花钱、还可能因为图太大直接失败（表现为「识图 API 没有返回图片描述」，
-            // 整轮回复跟着挂掉）。而这张图本来就是我们按提示词画的，**我们比任何识图模型都更
-            // 清楚它画了什么**，没有任何理由再去问一遍。
-            [VISION_DESCRIPTION_METADATA_KEY]: `（这是一张刚生成的图，画面内容：${prompt}）`,
-            visionRecognizedAt: Date.now(),
-            visionModel: 'novelai-prompt',
-        }));
+        await applyGeneratedImage(messageId, dataUrl, prompt, charId);
     } catch (e: any) {
         const error = e?.message || String(e);
         console.error('[生图] 失败', e);
@@ -419,6 +417,63 @@ export async function runImageGeneration(messageId: number, prompt: string, char
             imageGen: { status: 'failed', prompt, error } as ImageGenMeta,
         })).catch(() => { /* 库都写不进去就只能算了，至少别再抛一层 */ });
     }
+    announceImageGenUpdated();
+}
+
+/**
+ * 把一张已经画好的图写进那条消息：正文、相册、生图状态、识图缓存，一次搞定。
+ *
+ * 抽出来是因为现在有两条路会产出图：第一次生成（`runImageGeneration`）和看大图时的
+ * 重画确认（`components/chat/ImageViewer.tsx`）。两边必须写一模一样的东西，
+ * 尤其是那条识图缓存 —— 漏了它，重画出来的图下一轮会被送去识图 API 认一遍。
+ *
+ * 不广播事件，由调用方决定什么时候刷新聊天页。
+ */
+export async function applyGeneratedImage(
+    messageId: number,
+    dataUrl: string,
+    prompt: string,
+    charId?: string,
+): Promise<void> {
+    await DB.updateMessage(messageId, dataUrl);
+    const galleryImageId = await saveToGallery(charId, dataUrl, prompt);
+    await DB.updateMessageMetadata(messageId, (prev: any) => ({
+        ...(prev || {}),
+        imageGen: {
+            status: 'generated',
+            prompt,
+            ...(galleryImageId ? { galleryImageId } : {}),
+        } as ImageGenMeta,
+        // 顺手把「这张图画的是什么」写进识图缓存。
+        //
+        // 不然下一轮 materializeVisionDescriptions 会把这张图发给识图 API 去认——
+        // 又慢、又花钱、还可能因为图太大直接失败（表现为「识图 API 没有返回图片描述」，
+        // 整轮回复跟着挂掉）。而这张图本来就是我们按提示词画的，**我们比任何识图模型都更
+        // 清楚它画了什么**，没有任何理由再去问一遍。
+        [VISION_DESCRIPTION_METADATA_KEY]: `（这是一张刚生成的图，画面内容：${prompt}）`,
+        visionRecognizedAt: Date.now(),
+        visionModel: 'novelai-prompt',
+    }));
+}
+
+/**
+ * 重画：按提示词再画一张，**只把图片 data URL 交出来，一个字都不写库**。
+ *
+ * 为什么不直接覆盖那条消息：照糯叽机的做法，重画是「先看看，满意再换」。
+ * 一路重画出来的每一张都留在看图界面里可以来回翻，用户挑定哪张、或者干脆退回原图，
+ * 都由界面那边决定，最后才调 `applyGeneratedImage` 落库。
+ * 直接覆盖的话，第一张重画不满意就再也回不去了。
+ *
+ * `forceReseed` 恒为 true —— 见 `GenerateOptions.forceReseed` 的注释。
+ */
+export async function rerollImageOnce(prompt: string): Promise<string> {
+    const clean = (prompt || '').trim();
+    if (!clean) throw new Error('没有提示词，画不了');
+    return generateImageDataUrl(clean, getImageGenConfig(), { forceReseed: true });
+}
+
+/** 图片消息被改动后，让聊天页重读一次库。给 ImageViewer 这类库外调用方用。 */
+export function notifyImageGenUpdated(): void {
     announceImageGenUpdated();
 }
 

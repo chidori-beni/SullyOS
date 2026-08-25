@@ -42,6 +42,7 @@ import UserVoiceInputModal from '../components/chat/UserVoiceInputModal';
 import InstantChatRouteNotice from '../components/chat/InstantChatRouteNotice';
 import MemoryRepairPortal from '../components/chat/MemoryRepairPortal';
 import VoiceFavoritesPortal from '../components/chat/VoiceFavoritesPortal';
+import ImageViewer from '../components/chat/ImageViewer';
 import ChatModals from '../components/chat/ChatModals';
 import Modal from '../components/os/Modal';
 import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
@@ -3039,6 +3040,12 @@ const Chat: React.FC = () => {
         setModalType('message-options');
     }, []);
 
+    // 点图片气泡 → 大图页（看大图 / 存到手机 / 重画）。只存 id，图片正文从 messages 里现取，
+    // 免得把一张 1~2MB 的 base64 再复制一份挂到 state 上。
+    const [viewingImageId, setViewingImageId] = useState<number | null>(null);
+    const handleOpenImage = useCallback((msg: Message) => { setViewingImageId(msg.id); }, []);
+    const viewingImageMsg = viewingImageId == null ? null : messages.find(x => x.id === viewingImageId) || null;
+
     const handleBatchDelete = async () => {
         const msgIdsToDelete = new Set<number>(selectedMsgIds);
         // 思维链单独勾选、但宿主消息没选 -> 只清 metadata.thinkingChain，保留消息
@@ -3926,6 +3933,7 @@ const Chat: React.FC = () => {
                             onResolveLifeRecord={handleResolveLifeRecord}
                             onResolveScheduleInvite={handleResolveScheduleInvite}
                             onOpenCallRecord={handleOpenCallRecord}
+                            onOpenImage={handleOpenImage}
                             thinkingChainOptions={thinkingChainOptions}
                         />
                         {showToolTrace && (
@@ -4491,6 +4499,15 @@ const Chat: React.FC = () => {
 
             {voiceFavoritesOpen && (
                 <VoiceFavoritesPortal onClose={() => setVoiceFavoritesOpen(false)} />
+            )}
+
+            {viewingImageMsg && (
+                <ImageViewer
+                    message={viewingImageMsg}
+                    onClose={() => setViewingImageId(null)}
+                    onApplied={async () => { if (char?.id) setMessages(await DB.getRecentMessagesByCharId(char.id, 200)); }}
+                    addToast={addToast}
+                />
             )}
 
             <McdMiniApp

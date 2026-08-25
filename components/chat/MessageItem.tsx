@@ -1552,6 +1552,11 @@ interface MessageItemProps {
     onResolveScheduleInvite?: (m: Message, selectedIds: string[]) => void;
     /** 点击已完成的通话卡，直达 CallApp 里的这一通详情。 */
     onOpenCallRecord?: (charId: string, sessionId: string) => void;
+    /**
+     * 点图片气泡 → 打开大图页（看大图 / 存到手机 / 重画）。
+     * 不传就退回原来的行为：图片只是一张点不动的 img。
+     */
+    onOpenImage?: (m: Message) => void;
     /** 思考链卡片视觉与交互 */
     thinkingChainOptions?: {
         styleId?: ThinkingChainStyleId;
@@ -1604,6 +1609,7 @@ const MessageItem = React.memo(({
     onResolveLifeRecord,
     onResolveScheduleInvite,
     onOpenCallRecord,
+    onOpenImage,
     thinkingChainOptions,
 }: MessageItemProps) => {
     const isUser = m.role === 'user';
@@ -1624,6 +1630,9 @@ const MessageItem = React.memo(({
     const activePointerType = useRef<string>('');
     const replyGestureActiveRef = useRef(false);
     const replyReadyRef = useRef(false);
+    // 长按菜单弹出之后 pointerup 还会补一个 click，图片气泡不能把它当成「点开大图」，
+    // 否则长按菜单一出来大图页立刻盖在上面。按下时清零，长按真的触发时置位。
+    const longPressFiredRef = useRef(false);
 
     const styleConfig = isUser ? activeTheme.user : activeTheme.ai;
     const [showVoiceText, setShowVoiceText] = useState(false);
@@ -1650,6 +1659,7 @@ const MessageItem = React.memo(({
         activePointerId.current = e.pointerId;
         activePointerType.current = e.pointerType;
         startPos.current = { x: e.clientX, y: e.clientY };
+        longPressFiredRef.current = false;
         document.getSelection()?.removeAllRanges();
 
         clearLongPressTimer();
@@ -1657,6 +1667,7 @@ const MessageItem = React.memo(({
             longPressTimer.current = null;
             activePointerId.current = null;
             activePointerType.current = '';
+            longPressFiredRef.current = true;
             resetReplyGesture();
             onLongPress(m);
         }, 600);
@@ -3497,16 +3508,25 @@ const MessageItem = React.memo(({
 
     if (m.type === 'image') {
         const imageGenMeta = readImageGenMeta(m.metadata);
+        // 点开大图页。长按菜单刚弹出来那一下补发的 click 要挡掉，
+        // 侧滑回复松手时的 click 也一样（那时 replyGestureActiveRef 还没 reset）。
+        const openImage = (e: React.MouseEvent) => {
+            if (!onOpenImage || !m.content || selectionMode) return;
+            if (longPressFiredRef.current || replyGestureActiveRef.current) return;
+            e.stopPropagation();
+            onOpenImage(m);
+        };
         return commonLayout(
             <div className="relative group">
                 {m.content ? (
                     <img
                         src={m.content}
-                        className="max-w-[200px] max-h-[300px] rounded-2xl"
+                        className={`max-w-[200px] max-h-[300px] rounded-2xl ${onOpenImage ? 'cursor-zoom-in active:opacity-85 transition-opacity' : ''}`}
                         alt="Uploaded"
                         loading={isLatestMessage ? 'eager' : 'lazy'}
                         decoding="async"
                         onLoad={() => onMediaLoad?.(m.id)}
+                        onClick={openImage}
                     />
                 ) : imageGenMeta ? (
                     /* 角色生图的三态：正在画 / 失败可重试 / （成功的走上面的 <img>）。
