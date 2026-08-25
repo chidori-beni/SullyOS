@@ -278,6 +278,16 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         });
     };
 
+    // Keep long messages visible while they are being composed, matching the
+    // call composer: grow with the content up to six lines, then scroll inside.
+    React.useEffect(() => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        textarea.style.height = 'auto';
+        textarea.style.height = `${Math.min(textarea.scrollHeight, 144)}px`;
+        textarea.style.overflowY = textarea.scrollHeight > 144 ? 'auto' : 'hidden';
+    }, [input]);
+
     React.useEffect(() => {
         if (showPanel !== 'emojis') {
             setEmojiSelectionMode(false);
@@ -451,7 +461,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             enterKeyHint="send"
                             autoCorrect="on"
                             autoCapitalize="sentences"
-                            className={`flex-1 min-w-0 bg-transparent px-4 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-24 no-scrollbar ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`} 
+                            className={`flex-1 min-w-0 bg-transparent px-4 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-36 no-scrollbar ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`}
                             placeholder="Message..." 
                             style={{ height: 'auto' }} 
                         />

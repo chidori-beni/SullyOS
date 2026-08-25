@@ -32,4 +32,11 @@ describe('user voice message wiring', () => {
     expect(call).toContain('Math.min(textarea.scrollHeight, 144)');
     expect(call).toContain('<textarea');
   });
+
+  it('uses the same auto-growing textarea in the chat composer', () => {
+    const chatInput = read('components/chat/ChatInputArea.tsx');
+    expect(chatInput).toContain('textarea.style.height =');
+    expect(chatInput).toContain('Math.min(textarea.scrollHeight, 144)');
+    expect(chatInput).toContain('max-h-36');
+  });
 });
