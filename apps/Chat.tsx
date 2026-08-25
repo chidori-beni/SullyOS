@@ -1017,7 +1017,10 @@ const Chat: React.FC = () => {
             // 上下文截断仅作用于发给 LLM 的 prompt（在 chatPrompts.ts 里处理）。
             const chatScopeMsgs = recent
                 .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'story_theater_memory')
-                .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
+                .filter(m => !(currentChar?.hideSystemLogs
+                    && m.role === 'system'
+                    && m.type !== 'score_card'
+                    && m.metadata?.source !== 'call-end-popup'));
             // totalCount 走 charId 索引全量计数，包含群聊消息（以及上面被过滤的约会/通话
             // 消息）——它们永远不会出现在单聊列表里。直接拿它算「加载历史消息」会出现
             // 有计数、点击却加载不出任何东西的幽灵按钮。倒序游标没取满 fetchLimit 条
@@ -3219,7 +3222,13 @@ const Chat: React.FC = () => {
         const base = messages
             .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'story_theater_memory')
             .filter(m => !m.metadata?.proactiveHint)
-            .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card') return false; return true; });
+            .filter(m => {
+                if (char?.hideSystemLogs
+                    && m.role === 'system'
+                    && m.type !== 'score_card'
+                    && m.metadata?.source !== 'call-end-popup') return false;
+                return true;
+            });
         if (windowedFocusMsgId !== null) {
             const idx = base.findIndex(m => m.id === windowedFocusMsgId);
             if (idx >= 0) {

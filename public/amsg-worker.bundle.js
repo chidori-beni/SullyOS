@@ -7384,7 +7384,7 @@ function createSingleUserCloudflareWorker(buildConfig, options = {}) {
 }
 
 // utils/amsgBundleVersion.ts
-var AMSG_BUNDLE_VERSION = "2026-08-25.1";
+var AMSG_BUNDLE_VERSION = "2026-08-25.2";
 
 // utils/amsgTaskKinds.ts
 var AMSG_TASK_KIND_KEY = "amsgKind";
@@ -8282,6 +8282,217 @@ var buildCallJobMessages = (job) => [
   ...job.messages
 ];
 
+// utils/avatarPerformance.ts
+var AVATAR_EMOTIONS = ["neutral", "happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm", "relaxed"];
+var AVATAR_GESTURES = ["idle", "talk", "nod", "shake", "tilt", "explain", "wave", "shy", "lean-in", "lean-back"];
+var AVATAR_CAMERAS = ["close", "medium", "wide", "push-in", "pull-out"];
+var AVATAR_GAZES = ["viewer", "left", "right", "down"];
+var AVATAR_FACES = [
+  "wink",
+  "grin",
+  "pout",
+  "blush",
+  "eyes-closed",
+  "smile-eyes",
+  "brow-up",
+  "brow-sad",
+  "brow-angry"
+];
+var DEFAULT_AVATAR_PERFORMANCE = {
+  emotion: "calm",
+  gesture: "talk",
+  camera: "medium",
+  gaze: "viewer",
+  intensity: 0.7
+};
+var DIRECTIVE_RE = /\[\[\s*(?:AVATAR|PERFORMANCE|表演|演出)\s*:\s*([^\]]{0,320})\]\]/gi;
+var EMOTION_ALIASES = {
+  fun: "happy",
+  joy: "happy",
+  pleased: "happy",
+  sorrow: "sad",
+  upset: "sad",
+  fear: "fearful",
+  scared: "fearful",
+  disgust: "disgusted",
+  surprise: "surprised",
+  fluent: "calm",
+  relax: "relaxed"
+};
+var GESTURE_ALIASES = {
+  none: "idle",
+  neutral: "idle",
+  talking: "talk",
+  agree: "nod",
+  yes: "nod",
+  disagree: "shake",
+  no: "shake",
+  headtilt: "tilt",
+  "head-tilt": "tilt",
+  explainboth: "explain",
+  greeting: "wave",
+  bashful: "shy",
+  leanin: "lean-in",
+  forward: "lean-in",
+  closer: "lean-in",
+  leanback: "lean-back",
+  back: "lean-back",
+  backward: "lean-back",
+  recline: "lean-back"
+};
+var FACE_ALIASES = {
+  "wink-l": "wink",
+  "wink-r": "wink",
+  winking: "wink",
+  smirk: "grin",
+  "open-smile": "grin",
+  teeth: "grin",
+  sulk: "pout",
+  "pouty": "pout",
+  shy: "blush",
+  flush: "blush",
+  embarrassed: "blush",
+  "eyes-close": "eyes-closed",
+  eyesclosed: "eyes-closed",
+  "close-eyes": "eyes-closed",
+  squint: "smile-eyes",
+  "smiling-eyes": "smile-eyes",
+  smileeyes: "smile-eyes",
+  "happy-eyes": "smile-eyes",
+  "raise-brow": "brow-up",
+  "raised-brow": "brow-up",
+  browup: "brow-up",
+  "sad-brow": "brow-sad",
+  worried: "brow-sad",
+  "worried-brow": "brow-sad",
+  frown: "brow-angry",
+  "angry-brow": "brow-angry",
+  glare: "brow-angry"
+};
+var CAMERA_ALIASES = {
+  closeup: "close",
+  "close-up": "close",
+  portrait: "close",
+  mid: "medium",
+  normal: "medium",
+  full: "wide",
+  long: "wide",
+  pushin: "push-in",
+  zoomin: "push-in",
+  pullout: "pull-out",
+  zoomout: "pull-out"
+};
+var GAZE_ALIASES = {
+  camera: "viewer",
+  user: "viewer",
+  center: "viewer",
+  front: "viewer",
+  "away-left": "left",
+  awayleft: "left",
+  "away-right": "right",
+  awayright: "right",
+  lower: "down",
+  shy: "down"
+};
+var normalizeEnum = (value, allowed, aliases) => {
+  const normalized = value.trim().toLowerCase().replace(/_/g, "-");
+  if (allowed.includes(normalized)) return normalized;
+  return aliases[normalized] || aliases[normalized.replace(/-/g, "")];
+};
+var parseDirectiveBody = (body, base) => {
+  const values = {};
+  const pairRe = /([a-z_]+)\s*=\s*["']?([a-z0-9_,.-]+)["']?/gi;
+  let pair;
+  while ((pair = pairRe.exec(body)) !== null) values[pair[1].toLowerCase()] = pair[2];
+  const emotion = normalizeEnum(values.emotion || values.expression || "", AVATAR_EMOTIONS, EMOTION_ALIASES);
+  const gesture = normalizeEnum(values.gesture || values.action || "", AVATAR_GESTURES, GESTURE_ALIASES);
+  const camera = normalizeEnum(values.camera || values.shot || "", AVATAR_CAMERAS, CAMERA_ALIASES);
+  const gaze = normalizeEnum(values.gaze || values.look || "", AVATAR_GAZES, GAZE_ALIASES);
+  const faces = [...new Set(
+    (values.face || values.faces || "").split(",").map((item) => normalizeEnum(item, AVATAR_FACES, FACE_ALIASES)).filter((item) => Boolean(item))
+  )];
+  const parsedIntensity = Number.parseFloat(values.intensity || values.energy || "");
+  const direction = {
+    ...base,
+    ...emotion ? { emotion } : {},
+    ...gesture ? { gesture } : {},
+    ...camera ? { camera } : {},
+    ...gaze ? { gaze } : {},
+    ...Number.isFinite(parsedIntensity) ? { intensity: Math.max(0.2, Math.min(1, parsedIntensity)) } : {},
+    ...values.model_action || values.modelaction || values.action_id ? { modelAction: values.model_action || values.modelaction || values.action_id } : {}
+  };
+  if (faces.length) direction.faces = faces;
+  else delete direction.faces;
+  if (!(values.model_action || values.modelaction || values.action_id)) delete direction.modelAction;
+  return direction;
+};
+var extractAvatarPerformanceTimeline = (raw) => {
+  const source = raw || "";
+  const pending = [];
+  let cleaned = "";
+  let lastEnd = 0;
+  let previous = DEFAULT_AVATAR_PERFORMANCE;
+  DIRECTIVE_RE.lastIndex = 0;
+  let match;
+  while ((match = DIRECTIVE_RE.exec(source)) !== null) {
+    cleaned += source.slice(lastEnd, match.index);
+    previous = parseDirectiveBody(match[1], previous);
+    pending.push({ direction: previous, cleanedAt: cleaned.replace(/\s+$/, "").length });
+    lastEnd = match.index + match[0].length;
+    if (source[lastEnd] === "\r") lastEnd += 1;
+    if (source[lastEnd] === "\n") lastEnd += 1;
+  }
+  cleaned += source.slice(lastEnd);
+  const text = cleaned.replace(/\n{3,}/g, "\n\n").trim();
+  const total = Math.max(1, text.length);
+  return {
+    text,
+    cues: pending.map((item) => ({
+      direction: item.direction,
+      at: Math.max(0, Math.min(1, item.cleanedAt / total))
+    }))
+  };
+};
+
+// utils/callReplyFormat.ts
+var stripCallTextFormatting = (raw) => (raw || "").replace(/```(?:[a-z0-9_-]+)?\s*/gi, "").replace(/```/g, "").replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\[([^\]]+)\]\((?:https?:\/\/|\/)[^)]*\)/g, "$1").replace(/^(?:\s{0,3}#{1,6}\s+|\s{0,3}>\s?|\s*[-+*]\s+)/gm, "").replace(/(\*\*|__)([\s\S]*?)\1/g, "$2").replace(/([*_~`])([^\n]*?)\1/g, "$2").replace(/[\t ]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+var readContent = (content) => {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((block) => {
+    if (typeof block === "string") return block;
+    if (!block || typeof block !== "object") return "";
+    const item = block;
+    return typeof item.text === "string" ? item.text : typeof item.content === "string" ? item.content : "";
+  }).join("");
+};
+var parseCallAssistantMessage = (message, keepThinking = false) => {
+  const nativeReasoning = readContent(
+    message?.reasoning_content ?? message?.reasoning ?? message?.thinking ?? ""
+  ).trim();
+  const directContent = readContent(message?.content).trim();
+  const raw = directContent || nativeReasoning;
+  const nativeChain = directContent ? nativeReasoning : "";
+  const inlineChains = [];
+  const closedThinkRe = /<(think|thinking|thought)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi;
+  let cleaned = raw.replace(closedThinkRe, (_whole, _tag, body) => {
+    if (body.trim()) inlineChains.push(body.trim());
+    return "";
+  });
+  cleaned = cleaned.replace(/<(?:think|thinking|thought)\b[^>]*>([\s\S]*)$/i, (_whole, body) => {
+    if (body.trim()) inlineChains.push(body.trim());
+    return "";
+  });
+  cleaned = cleaned.replace(/<\/?(?:think|thinking|thought)\b[^>]*>/gi, "");
+  const { text, cues } = extractAvatarPerformanceTimeline(cleaned);
+  const uniqueChains = [...new Set([nativeChain, ...inlineChains].map((item) => item.trim()).filter(Boolean))];
+  return {
+    text,
+    ...keepThinking && uniqueChains.length ? { thinkingChain: uniqueChains.join("\n\n") } : {},
+    ...cues.length ? { performance: cues[0].direction, performanceCues: cues } : {}
+  };
+};
+
 // worker/amsg/src/callFire.ts
 var BACKGROUND_CALL_TIMEOUT_MS = 12e4;
 var discardJob2 = async (writeState, jobId) => {
@@ -8302,7 +8513,9 @@ var hash32 = (text) => {
 };
 var cleanGeneratedText = (raw) => raw.replace(/<think(?:ing|ought)?\b[^>]*>[\s\S]*?<\/think(?:ing|ought)?\s*>/gi, "").replace(/<think(?:ing|ought)?\b[^>]*>[\s\S]*$/gi, "").replace(/```(?:text|markdown)?/gi, "").replace(/```/g, "").trim();
 var previewText = (text) => {
-  const singleLine = text.replace(/\s+/g, " ").trim();
+  const parsed = parseCallAssistantMessage({ content: text }, false);
+  const readable = stripCallTextFormatting(parsed.text || text);
+  const singleLine = readable.replace(/\s+/g, " ").trim();
   return singleLine.length > 72 ? `${singleLine.slice(0, 72)}\u2026` : singleLine;
 };
 var readCallJob = async (ctx, jobId) => {
@@ -12329,7 +12542,7 @@ function extractTransferCommands(content) {
 
 // utils/scheduleChangeParse.ts
 var KEYWORD_RE = /^\s*(?:ACTION\s*[:：]\s*CHANGE_SCHEDULE|change[\s_-]*(?:schedule|schedue)|modify[\s_-]*schedule|修改(?:未来)?日程|更改(?:未来)?日程|改日程)(?=\s|[:：|=→>\-（(]|\d|$)/iu;
-var parseDirectiveBody = (input) => {
+var parseDirectiveBody2 = (input) => {
   const body = input.replace(/^[\s【\[]+|[\s】\]]+$/gu, "").trim();
   const keyword = body.match(KEYWORD_RE);
   if (!keyword) return { recognized: false };
@@ -12356,7 +12569,7 @@ var extractScheduleChangeDirectives = (text) => {
   const directives = [];
   let malformedCount = 0;
   const consumeBody = (body, original) => {
-    const parsed = parseDirectiveBody(body);
+    const parsed = parseDirectiveBody2(body);
     if (!parsed.recognized) return original;
     if (parsed.directive) directives.push(parsed.directive);
     else malformedCount += 1;

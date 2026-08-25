@@ -12,7 +12,7 @@ import { normalizeVoiceTags } from '../utils/sanitize';
 import { FISH_VOICE_ACTING_GUIDE, synthesizeSpeechFishDetailed, resolveFishAudioApiKey, cleanTextForTtsFish, stripFishMarkupForDisplay } from '../utils/fishAudioTts';
 import { resolveTtsProvider, getTtsProvider, getVoicePromptOverride } from '../utils/ttsProvider';
 import { VOICE_LANGUAGE_OPTIONS } from '../utils/voiceLanguage';
-import { startStt, isSttSupported, releaseSiliconFlowMicrophone, type SttSession } from '../utils/speechToText';
+import { startStt, isSttSupported, prepareSiliconFlowAudioPlayback, releaseSiliconFlowMicrophone, type SttSession } from '../utils/speechToText';
 import { ContextBuilder } from '../utils/context';
 import { resolveCharTimeZone } from '../utils/timezone';
 import {
@@ -116,7 +116,7 @@ import {
   isVisionInputUnsupportedError,
   USER_CAMERA_SNAPSHOT_SYSTEM_NOTE,
 } from '../utils/userCameraSnapshot';
-import { markAmsgStateDirty } from '../utils/amsgStateSync';
+import { markAmsgStateDirty, startAmsgChatPresence, stopAmsgChatPresence } from '../utils/amsgStateSync';
 import { trackEvent } from '../utils/analytics';
 import { fetchBlobForShare, shareOrDownloadBlob } from '../utils/shareExport';
 import { getPendingReplyText } from '../utils/pendingReply';
@@ -156,6 +156,7 @@ import {
   savePersistedCallSession,
 } from '../utils/callSessionRecovery';
 import { flattenContentPartsToText } from '../utils/promptMessageCleanup';
+import { injectWorldbookDepthEntries, resolveWorldbookEntries } from '../utils/worldbook';
 type CallState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'ended' | 'error';
 type CallMode = 'voice' | 'video';
 /** 这通电话是谁打的。'incoming' = 角色打给用户、用户接了起来。 */
@@ -522,6 +523,14 @@ ${directionBlock}` : ''}
 - 如果很晚了，你说话的方式自然会变——声音轻一点、语速慢一点、更容易说出平时不会说的话。
 - 如果对方刚刚才打过来又打过来了，你会好奇的。
 - 如果对方半天没说话……”喂？你还在吗？”
+
+### 陪伴，不监督（高优先级边界）
+
+对方提到正在吃饭、洗漱、戴牙套、准备睡觉或之后要做什么，通常是在分享近况，不是在把进度交给你管理。
+- 可以关心、陪着聊或自然回应一次，但不要催快点、追问做完没有、倒计时、布置下一步，也不要把每段话收尾成提醒或命令。
+- 同一件生活小事不要换个说法反复叮嘱。关心不等于监督，更不等于管教。
+- 如果对方说“别催”“不要管我”“别说教”或表达类似边界，这条边界在本通电话后续持续有效。简短认错后真正停止，不要嘴上答应、下一句结尾又重复催促。
+- 想表达在意时，优先用陪伴、共情、分享自己的反应或顺着话题聊天，而不是指挥对方立刻行动。
 
 ### 关于回复的长度
 
@@ -1598,12 +1607,21 @@ const CallApp: React.FC = () => {
   // /播放按钮生成，符合浏览器的媒体自动播放限制。
   useEffect(() => {
     const schedulePending = () => {
+      if (document.visibilityState === 'visible') return;
       void schedulePendingCallBackgroundJobs({ characters, api: apiConfig });
     };
     document.addEventListener('visibilitychange', schedulePending);
-    schedulePending();
     return () => document.removeEventListener('visibilitychange', schedulePending);
   }, [characters, apiConfig]);
+  // A visible call is an active conversation with this character. Reuse the
+  // chat lease so scheduled and natural proactive messages yield while the
+  // user is on the call. The lease marks itself offline when iOS backgrounds
+  // the PWA, so genuine background notifications remain available.
+  useEffect(() => {
+    if (viewMode !== 'in-call' || !selectedChar?.id) return;
+    void startAmsgChatPresence(selectedChar.id, null);
+    return () => stopAmsgChatPresence(selectedChar.id);
+  }, [viewMode, selectedChar?.id]);
   useEffect(() => () => {
     revokeSessionBlobs();
     stopCallStt();
@@ -2010,6 +2028,19 @@ const CallApp: React.FC = () => {
     const finalInput = timeGapHint ? `${taggedInput}\n\n${timeGapHint}` : taggedInput;
     return [...apiMessages, { role: 'user', content: finalInput }];
   };
+  const injectCallWorldbookDepth = (messages: any[]): any[] => {
+    if (!selectedChar) return messages;
+    const resolved = resolveWorldbookEntries(
+      selectedChar.mountedWorldbooks || [],
+      messages,
+      selectedChar.name,
+      userProfile?.name || '用户',
+    );
+    return injectWorldbookDepthEntries(
+      messages,
+      resolved.filter(entry => entry.position === 4),
+    );
+  };
   // 给 Worker 预排梦话用的提示词快照。它不调用 LLM，只复用通话的 system prompt 与当前
   // IndexedDB 历史；真正生成由 sleepDreamHandler 在未来的 cron tick 执行。
   const buildBackgroundCallSnapshot = async (instruction: string): Promise<{
@@ -2023,7 +2054,10 @@ const CallApp: React.FC = () => {
     const baseCallPrompt = buildCallPrompt(
       userName,
       selectedChar.name,
-      ContextBuilder.buildCoreContext(selectedChar, userProfile, true, undefined, undefined, { conversational: true }),
+      ContextBuilder.buildCoreContext(selectedChar, userProfile, true, undefined, undefined, {
+        conversational: true,
+        worldbookMessages: [...callMsgs, { role: 'user', content: instruction }],
+      }),
       voiceLang || undefined,
       callMode,
       resolveCharTimeZone(selectedChar),
@@ -2044,7 +2078,7 @@ const CallApp: React.FC = () => {
       callMode === 'video' ? buildAvatarPerformancePrompt(allowedModelActions) : '',
       thinkingPrompt,
     ].filter(Boolean).join('\n\n');
-    return { systemPrompt, messages: await buildHistoryMessages(instruction) };
+    return { systemPrompt, messages: injectCallWorldbookDepth(await buildHistoryMessages(instruction)) };
   };
   const getAllowedModelActions = (): Array<{
     id: string;
@@ -2236,8 +2270,9 @@ ${sentencePlan}`;
     const baseUrl = apiConfig.baseUrl?.replace(/\/+$/, '');
     if (!baseUrl) throw new Error('请先在设置里配置聊天 API URL');
     const userName = userProfile?.name?.trim() || '用户';
+    let callMsgs: Message[] = [];
     if (selectedChar) {
-      const callMsgs = await DB.getMessagesByCharId(selectedChar.id);
+      callMsgs = await DB.getMessagesByCharId(selectedChar.id);
       await injectMemoryPalace(selectedChar, callMsgs);
     }
     const baseCallPrompt = selectedChar
@@ -2245,7 +2280,10 @@ ${sentencePlan}`;
           userName,
           selectedChar.name,
           // conversational：通话是实时对话，时间块补那句语境框定（见 buildTimeAwarenessBlock）
-          ContextBuilder.buildCoreContext(selectedChar, userProfile, true, undefined, undefined, { conversational: true }),
+          ContextBuilder.buildCoreContext(selectedChar, userProfile, true, undefined, undefined, {
+            conversational: true,
+            worldbookMessages: [...callMsgs, { role: 'user', content: input }],
+          }),
           voiceLang || undefined,
           callMode,
           resolveCharTimeZone(selectedChar),
@@ -2295,7 +2333,7 @@ ${sentencePlan}`;
           userName,
         )
       : '';
-    const messages = await buildHistoryMessages(input, skipDbId, touchContext);
+    const messages = injectCallWorldbookDepth(await buildHistoryMessages(input, skipDbId, touchContext));
     const requestMessages = userCameraSnapshot
       ? attachSnapshotToLatestUserMessage(messages, userCameraSnapshot)
       : messages;
@@ -2455,6 +2493,7 @@ ${sentencePlan}`;
   }, [isSpeakerOn]);
 
   const startCallAudioElement = (audio: HTMLAudioElement, forceAudible = false): Promise<void> => {
+    prepareSiliconFlowAudioPlayback();
     audio.muted = forceAudible ? false : !isSpeakerOn;
     const feed = callMode === 'video' && !nativeCallAudioOnly ? getAudioFeed() : null;
     // Both calls are made immediately in the originating click stack. The graph
@@ -2949,6 +2988,9 @@ ${sentencePlan}`;
             // 正常前台请求先给一点时间完成；用户一旦切到后台则立即排队，避免页面冻结
             // 后再也没有机会把提示词快照上传到 Worker。
             window.setTimeout(() => {
+              // Slow foreground generation is still authoritative. Handoff is
+              // only for a page that iOS has actually hidden/frozen.
+              if (document.visibilityState === 'visible') return;
               const char = selectedChar;
               if (!char) return;
               void schedulePendingCallBackgroundJob({

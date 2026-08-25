@@ -60,7 +60,13 @@ describe('SiliconFlow transcription request', () => {
       getTracks: () => [track],
     } as unknown as MediaStream;
     const getUserMedia = vi.fn(async () => stream);
-    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+    const audioSessionTypes: string[] = [];
+    let audioSessionType = 'auto';
+    const audioSession = {
+      get type() { return audioSessionType; },
+      set type(value: string) { audioSessionType = value; audioSessionTypes.push(value); },
+    };
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia }, audioSession });
 
     class FakeMediaRecorder {
       static isTypeSupported = () => false;
@@ -94,6 +100,8 @@ describe('SiliconFlow transcription request', () => {
 
     await runRecording();
     expect(track.enabled).toBe(false);
+    expect(audioSessionTypes).toContain('play-and-record');
+    expect(audioSessionTypes.at(-1)).toBe('playback');
     await runRecording();
 
     expect(getUserMedia).toHaveBeenCalledOnce();

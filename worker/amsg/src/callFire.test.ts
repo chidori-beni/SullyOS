@@ -74,4 +74,20 @@ describe('Worker 通话后台 handler', () => {
     expect(payload.notification.data).toMatchObject({ charId: CHAR_ID, sessionId: 'call-1' });
     expect(writeState).toHaveBeenCalledWith(AMSG_JOB_NAMESPACE, [{ key: callJobKey(JOB_ID), value: null }]);
   });
+
+  it('系统通知正文不会泄露视频演出指令', async () => {
+    const writeState = vi.fn(async () => ({ upserted: 0, skipped: 0, deleted: 1 }));
+    const emitResult = vi.fn(async () => ({ messageId: 'result-2', pushed: true }));
+    await callReplyHandler.llmOutput({
+      ctx: {
+        llmOutputText: '[[AVATAR: emotion=relaxed; face=grin; gesture=lean-in]]\n别急，我陪你慢慢吃。',
+        emitResult,
+        writeState,
+      },
+      state: { jobId: JOB_ID, job },
+    });
+    const payload = (emitResult as any).mock.calls[0][0] as any;
+    expect(payload.text).toContain('AVATAR');
+    expect(payload.notification.body).toBe('别急，我陪你慢慢吃。');
+  });
 });

@@ -18,6 +18,7 @@ import {
   type CallJobInput,
 } from '../../../utils/amsgCallJob';
 import { unpackStateValue } from '../../../utils/amsgFirePack';
+import { parseCallAssistantMessage, stripCallTextFormatting } from '../../../utils/callReplyFormat';
 import type { FireKindHandler, KindFireCtx, KindSessionCtx, KindWriteState } from './fireKinds';
 
 const BACKGROUND_CALL_TIMEOUT_MS = 120_000;
@@ -54,7 +55,9 @@ const cleanGeneratedText = (raw: string): string => raw
   .trim();
 
 const previewText = (text: string): string => {
-  const singleLine = text.replace(/\s+/g, ' ').trim();
+  const parsed = parseCallAssistantMessage({ content: text }, false);
+  const readable = stripCallTextFormatting(parsed.text || text);
+  const singleLine = readable.replace(/\s+/g, ' ').trim();
   return singleLine.length > 72 ? `${singleLine.slice(0, 72)}…` : singleLine;
 };
 

@@ -15,7 +15,7 @@ describe('CallApp runtime references', () => {
     const source = readFileSync(path.resolve(__dirname, '../apps/CallApp.tsx'), 'utf8');
 
     expect(source).toContain("import { getPendingReplyText } from '../utils/pendingReply'");
-    expect(source).toContain("import { markAmsgStateDirty } from '../utils/amsgStateSync'");
+    expect(source).toContain("import { markAmsgStateDirty, startAmsgChatPresence, stopAmsgChatPresence } from '../utils/amsgStateSync'");
     expect(source).toContain("const [memoryPalaceStatus, setMemoryPalaceStatus] = useState('')");
     expect(source).toContain('const retryBubble = latestBubble?.role === \'user\'');
     expect(source.match(/markCallTurnDirty\(\)/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
@@ -262,5 +262,17 @@ describe('CallApp runtime references', () => {
     expect(source).toContain('const confirmVRoidImport = async () =>');
     expect(warningSource).toContain('并不是本次版本的开发重点');
     expect(warningSource).toContain('可能存在各种 Bug');
+  });
+
+  it('keeps foreground calls local, scans call text for worldbooks, and leases proactive messaging', () => {
+    const source = readFileSync(path.resolve(__dirname, '../apps/CallApp.tsx'), 'utf8');
+    expect(source).toContain("if (document.visibilityState === 'visible') return;");
+    expect(source).not.toContain('    schedulePending();');
+    expect(source).toContain('worldbookMessages: [...callMsgs, { role: \'user\', content: input }]');
+    expect(source).toContain('injectCallWorldbookDepth(await buildHistoryMessages(input, skipDbId, touchContext))');
+    expect(source).toContain('void startAmsgChatPresence(selectedChar.id, null)');
+    expect(source).toContain('return () => stopAmsgChatPresence(selectedChar.id)');
+    expect(source).toContain('### 陪伴，不监督（高优先级边界）');
+    expect(source).toContain('prepareSiliconFlowAudioPlayback();');
   });
 });

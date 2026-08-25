@@ -168,12 +168,40 @@ let siliconFlowMicrophone: MediaStream | null = null;
 let siliconFlowMicrophoneRequest: Promise<MediaStream> | null = null;
 let siliconFlowMicrophoneGeneration = 0;
 
+type WebAudioSessionType = 'auto' | 'playback' | 'play-and-record';
+
+/**
+ * Safari 16.4+ exposes a subset of the Audio Session API. Merely disabling a
+ * live microphone track does not reliably leave the play-and-record category
+ * on iPhone, so the next TTS turn can be routed through the receiver. Keep the
+ * stream for permission reuse, but explicitly switch the system session at the
+ * record/playback boundary whenever WebKit exposes the control.
+ */
+const setWebAudioSessionType = (type: WebAudioSessionType): boolean => {
+  try {
+    const audioSession = (navigator as Navigator & {
+      audioSession?: { type: WebAudioSessionType };
+    }).audioSession;
+    if (!audioSession) return false;
+    audioSession.type = type;
+    return audioSession.type === type;
+  } catch {
+    return false;
+  }
+};
+
+/** Reassert the loud media route immediately before call TTS playback. */
+export const prepareSiliconFlowAudioPlayback = (): void => {
+  setWebAudioSessionType('playback');
+};
+
 const hasLiveMicrophoneTrack = (stream: MediaStream | null): stream is MediaStream => {
   if (!stream) return false;
   return stream.getAudioTracks().some(track => track.readyState !== 'ended');
 };
 
 const prepareSiliconFlowMicrophone = (stream: MediaStream) => {
+  setWebAudioSessionType('play-and-record');
   stream.getAudioTracks().forEach(track => {
     if (track.readyState === 'live') track.enabled = true;
   });
@@ -185,6 +213,8 @@ const pauseSiliconFlowMicrophone = (stream: MediaStream) => {
   stream.getAudioTracks().forEach(track => {
     if (track.readyState === 'live') track.enabled = false;
   });
+  // Restore speaker/media volume for the role's next generated voice turn.
+  prepareSiliconFlowAudioPlayback();
 };
 
 const getSiliconFlowMicrophone = async (): Promise<MediaStream> => {
@@ -227,6 +257,7 @@ export const releaseSiliconFlowMicrophone = () => {
   siliconFlowMicrophone = null;
   siliconFlowMicrophoneRequest = null;
   stream?.getTracks().forEach(track => track.stop());
+  prepareSiliconFlowAudioPlayback();
 };
 
 const startSiliconFlow = async (
