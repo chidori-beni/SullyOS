@@ -7710,17 +7710,24 @@ var PRE_DAWN_END_HOUR = 5;
 var resolveScheduleSlots = (schedule, now) => {
   if (!schedule?.slots?.length) return { current: null, next: null };
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
-  for (let i = schedule.slots.length - 1; i >= 0; i--) {
-    const [h, m] = schedule.slots[i].startTime.split(":").map(Number);
-    if (!Number.isFinite(h) || !Number.isFinite(m)) continue;
-    if (currentMinutes >= h * 60 + m) {
-      return {
-        current: schedule.slots[i],
-        next: i < schedule.slots.length - 1 ? schedule.slots[i + 1] : null
-      };
+  const toMinutes = (value) => {
+    if (!value) return null;
+    const [h, m] = value.split(":").map(Number);
+    return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null;
+  };
+  for (let i = 0; i < schedule.slots.length; i++) {
+    const slot = schedule.slots[i];
+    const start = toMinutes(slot.startTime);
+    if (start == null) continue;
+    if (currentMinutes < start) return { current: null, next: slot };
+    const explicitEnd = toMinutes(slot.endTime);
+    const nextStart = i < schedule.slots.length - 1 ? toMinutes(schedule.slots[i + 1].startTime) : null;
+    const end = explicitEnd ?? nextStart ?? 24 * 60;
+    if (end > start && currentMinutes < end) {
+      return { current: slot, next: i < schedule.slots.length - 1 ? schedule.slots[i + 1] : null };
     }
   }
-  return { current: null, next: schedule.slots[0] };
+  return { current: null, next: null };
 };
 var buildScheduleInjection = (schedule, evolvedNarrative, now = /* @__PURE__ */ new Date(), options = {}) => {
   if (!schedule || !schedule.slots || schedule.slots.length === 0) return "";
@@ -7759,9 +7766,10 @@ var buildScheduleInjection = (schedule, evolvedNarrative, now = /* @__PURE__ */ 
   let out = "";
   if (options.includeFullDay) {
     const rows = schedule.slots.map((slot) => {
-      let line = withClock ? `- ${slot.startTime} ${slot.activity}` : `- ${slot.activity}`;
+      let line = withClock ? `- ${slot.startTime}${slot.endTime ? `-${slot.endTime}` : ""} ${slot.activity}` : `- ${slot.activity}`;
       if (slot.location) line += `\uFF08${slot.location}\uFF09`;
       if (slot.description) line += `\uFF1A${slot.description}`;
+      if (slot.busyLevel) line += ` [\u5FD9\u788C\u7A0B\u5EA6=${slot.busyLevel}]`;
       return line;
     });
     out += `\u4F60\u4ECA\u5929\u7684\u5B8C\u6574\u65E5\u7A0B\uFF1A

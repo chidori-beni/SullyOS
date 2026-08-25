@@ -703,7 +703,9 @@ export const buildFirePack = async (
         schedule: {
           slots: schedule.slots.map((s) => ({
             startTime: s.startTime,
+            ...(s.endTime ? { endTime: s.endTime } : {}),
             activity: s.activity,
+            ...(s.busyLevel ? { busyLevel: s.busyLevel } : {}),
             ...(s.description ? { description: s.description } : {}),
             ...(s.emoji ? { emoji: s.emoji } : {}),
             ...(s.location ? { location: s.location } : {}),

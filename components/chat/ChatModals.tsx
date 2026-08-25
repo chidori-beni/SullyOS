@@ -138,6 +138,14 @@ interface ChatModalsProps {
     // Schedule invite toggle (global, matching the calendar invite behavior)
     isScheduleInviteEnabled?: boolean;
     onToggleScheduleInvite?: () => void;
+    // Busy schedule auto reply (per character)
+    busyAutoReplyEnabled?: boolean;
+    busyAutoReplyUseScheduleText?: boolean;
+    busyAutoReplyBusyText?: string;
+    busyAutoReplySleepText?: string;
+    onToggleBusyAutoReply?: () => void;
+    onToggleBusyAutoReplyUseScheduleText?: () => void;
+    onSetBusyAutoReplyText?: (kind: 'busy' | 'sleep', value: string) => void;
     // Memory Palace force vectorize
     isMemoryPalaceEnabled?: boolean;
     isVectorizing?: boolean;
@@ -272,6 +280,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
     onScheduleStyleChange, onPlayTheater,
     isScheduleFeatureEnabled, onToggleScheduleFeature, isScheduleInviteEnabled, onToggleScheduleInvite,
+    busyAutoReplyEnabled, busyAutoReplyUseScheduleText, busyAutoReplyBusyText, busyAutoReplySleepText,
+    onToggleBusyAutoReply, onToggleBusyAutoReplyUseScheduleText, onSetBusyAutoReplyText,
     isMemoryPalaceEnabled, isVectorizing, vectorizePendingCount, vectorizeProgress,
     retainRecentForVectorize, setRetainRecentForVectorize, vectorizeResult, onForceVectorize,
     apiPresets, onAddApiPreset, onSaveEmotion, onClearBuffs,
@@ -1222,6 +1232,66 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                     <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${isScheduleInviteEnabled ? 'translate-x-4' : ''}`}></div>
                                 </button>
                             </div>
+                        </div>
+                    )}
+
+                    {isScheduleFeatureEnabled && onToggleBusyAutoReply && (
+                        <div className="mb-4 bg-indigo-50/70 border border-indigo-100 rounded-2xl p-3">
+                            <div className="flex items-center justify-between">
+                                <div className="flex-1 min-w-0 pr-3">
+                                    <p className="text-xs font-bold text-indigo-900">忙碌时自动回复</p>
+                                    <p className="text-[10px] text-indigo-700 leading-relaxed mt-0.5">
+                                        空闲时正常回复；可偷看手机时边忙边回；忙碌或睡眠时通常只发一条自动回复。连续催促、紧急消息或来电请求有概率让角色偷看一眼。
+                                    </p>
+                                </div>
+                                <button
+                                    onClick={onToggleBusyAutoReply}
+                                    aria-label="切换忙碌时自动回复"
+                                    className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center flex-shrink-0 ${busyAutoReplyEnabled ? 'bg-indigo-500' : 'bg-slate-300'}`}
+                                >
+                                    <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${busyAutoReplyEnabled ? 'translate-x-4' : ''}`}></div>
+                                </button>
+                            </div>
+
+                            {busyAutoReplyEnabled && (
+                                <div className="mt-3 pt-3 border-t border-indigo-100 space-y-2.5">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <div>
+                                            <p className="text-[11px] font-bold text-indigo-900">按当前日程写文案</p>
+                                            <p className="text-[9px] text-indigo-600">例如“车队会议中，稍后回复”</p>
+                                        </div>
+                                        <button
+                                            onClick={onToggleBusyAutoReplyUseScheduleText}
+                                            aria-label="切换自动回复文案模式"
+                                            className={`w-9 h-5 rounded-full p-0.5 transition-colors flex items-center flex-shrink-0 ${busyAutoReplyUseScheduleText === true ? 'bg-indigo-500' : 'bg-slate-300'}`}
+                                        >
+                                            <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${busyAutoReplyUseScheduleText === true ? 'translate-x-4' : ''}`}></div>
+                                        </button>
+                                    </div>
+                                    {busyAutoReplyUseScheduleText !== true && onSetBusyAutoReplyText && (
+                                        <>
+                                            <label className="block">
+                                                <span className="text-[10px] font-bold text-indigo-800">忙碌回复</span>
+                                                <input
+                                                    value={busyAutoReplyBusyText || ''}
+                                                    onChange={e => onSetBusyAutoReplyText('busy', e.target.value)}
+                                                    placeholder="[自动回复]现在在忙稍后回复"
+                                                    className="mt-1 w-full rounded-xl border border-indigo-100 bg-white/80 px-3 py-2 text-[11px] text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                                                />
+                                            </label>
+                                            <label className="block">
+                                                <span className="text-[10px] font-bold text-indigo-800">睡眠回复</span>
+                                                <input
+                                                    value={busyAutoReplySleepText || ''}
+                                                    onChange={e => onSetBusyAutoReplyText('sleep', e.target.value)}
+                                                    placeholder="[自动回复]睡了，醒来再回"
+                                                    className="mt-1 w-full rounded-xl border border-indigo-100 bg-white/80 px-3 py-2 text-[11px] text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                                                />
+                                            </label>
+                                        </>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     )}
 

@@ -3670,6 +3670,15 @@ const Chat: React.FC = () => {
                 onToggleScheduleFeature={handleToggleScheduleFeature}
                 isScheduleInviteEnabled={scheduleInviteEnabled}
                 onToggleScheduleInvite={handleToggleScheduleInvite}
+                busyAutoReplyEnabled={char.busyAutoReplyEnabled === true}
+                busyAutoReplyUseScheduleText={char.busyAutoReplyUseScheduleText === true}
+                busyAutoReplyBusyText={char.busyAutoReplyBusyText || ''}
+                busyAutoReplySleepText={char.busyAutoReplySleepText || ''}
+                onToggleBusyAutoReply={() => updateCharacter(char.id, { busyAutoReplyEnabled: char.busyAutoReplyEnabled !== true })}
+                onToggleBusyAutoReplyUseScheduleText={() => updateCharacter(char.id, { busyAutoReplyUseScheduleText: char.busyAutoReplyUseScheduleText !== true })}
+                onSetBusyAutoReplyText={(kind, value) => updateCharacter(char.id, kind === 'busy'
+                    ? { busyAutoReplyBusyText: value }
+                    : { busyAutoReplySleepText: value })}
                 isMemoryPalaceEnabled={!!char.memoryPalaceEnabled}
                 isVectorizing={isVectorizing}
                 vectorizePendingCount={vectorizePendingCount}

@@ -56,18 +56,28 @@ export const resolveScheduleSlots = (
 ): { current: ScheduleSlot | null; next: ScheduleSlot | null } => {
     if (!schedule?.slots?.length) return { current: null, next: null };
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
-    for (let i = schedule.slots.length - 1; i >= 0; i--) {
-        const [h, m] = schedule.slots[i].startTime.split(':').map(Number);
-        if (!Number.isFinite(h) || !Number.isFinite(m)) continue;
-        if (currentMinutes >= h * 60 + m) {
-            return {
-                current: schedule.slots[i],
-                next: i < schedule.slots.length - 1 ? schedule.slots[i + 1] : null,
-            };
+    const toMinutes = (value?: string): number | null => {
+        if (!value) return null;
+        const [h, m] = value.split(':').map(Number);
+        return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null;
+    };
+    for (let i = 0; i < schedule.slots.length; i++) {
+        const slot = schedule.slots[i];
+        const start = toMinutes(slot.startTime);
+        if (start == null) continue;
+        if (currentMinutes < start) return { current: null, next: slot };
+        const explicitEnd = toMinutes(slot.endTime);
+        const nextStart = i < schedule.slots.length - 1
+            ? toMinutes(schedule.slots[i + 1].startTime)
+            : null;
+        // 新日程有 endTime：结束后是真实空档，不把“开会”无限拖到下一格。
+        // 老数据没有 endTime 时仍沿用“持续到下一格 / 当日结束”的旧语义。
+        const end = explicitEnd ?? nextStart ?? 24 * 60;
+        if (end > start && currentMinutes < end) {
+            return { current: slot, next: i < schedule.slots.length - 1 ? schedule.slots[i + 1] : null };
         }
     }
-    // 今天第一条还没到点：没有「当前」，只有「稍后先做什么」。
-    return { current: null, next: schedule.slots[0] };
+    return { current: null, next: null };
 };
 
 /**
@@ -135,9 +145,12 @@ export const buildScheduleInjection = (
     let out = '';
     if (options.includeFullDay) {
         const rows = schedule.slots.map((slot) => {
-            let line = withClock ? `- ${slot.startTime} ${slot.activity}` : `- ${slot.activity}`;
+            let line = withClock
+                ? `- ${slot.startTime}${slot.endTime ? `-${slot.endTime}` : ''} ${slot.activity}`
+                : `- ${slot.activity}`;
             if (slot.location) line += `（${slot.location}）`;
             if (slot.description) line += `：${slot.description}`;
+            if (slot.busyLevel) line += ` [忙碌程度=${slot.busyLevel}]`;
             return line;
         });
         out += `你今天的完整日程：\n${rows.join('\n')}\n`;

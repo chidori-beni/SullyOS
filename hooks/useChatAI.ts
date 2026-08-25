@@ -15,6 +15,9 @@ import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } f
 // evolveFlowNarrative 保留为低频深刷新备用，日常意识流由副 API 的情绪评估同轮产出（innerState 字段）
 // import { evolveFlowNarrative } from '../utils/scheduleGenerator';
 import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
+import { getDailyScheduleForChar } from '../utils/dailySchedule';
+import { getScheduleWallClock } from '../utils/scheduleTime';
+import { decideBusyReply } from '../utils/busyAutoReply';
 import type { DigestResult } from '../utils/memoryPalace';
 // 麦当劳: useChatAI 现在只读 McdMiniApp 当前快照注入 system prompt + 给 LLM 一个
 // UI 钩子工具 propose_cart_items。MCP 实际调用都在 McdMiniApp 组件内做, useChatAI
@@ -733,6 +736,43 @@ export const useChatAI = ({
             addToast('角色还在回复上一条消息，等这条回来再发下一条', 'info');
             onInstantPosted?.();
             return;
+        }
+
+        // 忙碌自动回复必须在 API 配置检查、typing 状态和任何模型请求之前完成。
+        // 这样普通本地对话与即时云端对话共用同一入口，而且真正的自动回复不会消耗模型调用。
+        if (char.busyAutoReplyEnabled === true && isScheduleFeatureOn(char)) {
+            try {
+                const schedule = await getDailyScheduleForChar(char);
+                const busyDecision = decideBusyReply({
+                    char,
+                    schedule,
+                    messages: currentMsgs,
+                    now: getScheduleWallClock(char),
+                });
+                if (busyDecision.mode === 'auto-reply') {
+                    await DB.saveMessage({
+                        charId: char.id,
+                        role: 'assistant',
+                        type: 'text',
+                        content: busyDecision.text,
+                        metadata: {
+                            busyAutoReply: {
+                                level: busyDecision.level,
+                                activity: busyDecision.slot.activity,
+                                startTime: busyDecision.slot.startTime,
+                                endTime: busyDecision.slot.endTime,
+                                chance: busyDecision.chance,
+                            },
+                        },
+                    });
+                    setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                    onInstantPosted?.();
+                    return;
+                }
+            } catch (error) {
+                // 日程读取异常不能吞掉用户这一轮消息，安全降级为原有正常回复链路。
+                console.warn('[BusyAutoReply] failed to resolve schedule, falling back to normal reply', error);
+            }
         }
         const effectiveApi = overrideApiConfig || apiConfig;
         if (!effectiveApi.baseUrl) { alert("请先在设置中配置 API URL"); onInstantPosted?.(); return; }

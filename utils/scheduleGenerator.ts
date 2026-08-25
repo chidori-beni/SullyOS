@@ -87,9 +87,11 @@ ${chatHistoryBlock ? `**重要：上面给了你最近和「${user.name}」的�
 
 生成 5-7 个时间段，从早到晚。每个时段：
 - startTime: "HH:MM"
+- endTime: "HH:MM"（每一格都必须有明确结束时间；格子之间可以留真实空档）
 - activity: 活动名（2-6字）
 - description: 一句话描述（可以带动作质感、物件、感官细节）
 - emoji: 一个匹配的emoji
+- busyLevel: "free" | "light" | "busy" | "sleep"
 
 #### 关键要求
 
@@ -118,8 +120,15 @@ ${chatHistoryBlock ? `**重要：上面给了你最近和「${user.name}」的�
 5. **远程共同活动与邀约（仅在角色设定或聊天记录明确支持时使用）：**
    - 如果你们明确是异国 / 异地的恋人、亲密关系，或已经形成稳定的线上陪伴习惯，今天应安排 1 个远程共同活动，最多 2 个；优先保留一个晚间时段。没有这类关系时不要为了凑邀约硬塞。
    - 共同活动必须是远程可执行的：语音通话、视频通话、连麦、一起在线追剧 / 看电影。不要生成线下吃饭、见面、逛街、散步等邀约。
-   - 这类时段额外输出 \`endTime\`（如 "21:00"）、\`withUser: true\`、\`inviteKind\`（voice / video / watch）。普通自己的活动输出 \`withUser: false\`，不要为了凑邀约硬塞。
+   - 这类时段除必填的 \`endTime\` 外，还要输出 \`withUser: true\`、\`inviteKind\`（voice / video / watch）。普通自己的活动输出 \`withUser: false\`，不要为了凑邀约硬塞。
    - 共同活动仍然要像角色自己的生活安排，activity 写成“晚间语音连麦”“一起看番”，不要写“等待用户”。
+
+6. **忙碌程度必须按“能不能看手机”判断，不按活动名凭感觉：**
+   - \`sleep\`：这格正在睡觉
+   - \`busy\`：无法看手机或正常回复，例如会议、上课、考试、手术、演出、深度工作、驾驶、团体训练、正式比赛
+   - \`light\`：注意力被具体的人或事占着，但还能偶尔看手机，例如和人吃饭、约会、家庭聚会、电影院、婚礼、照看孩子
+   - \`free\`：独处、通勤、散步、随意购物、在家休息/看电视、独自吃饭、普通爱好等
+   - 拿不准时一律选 \`free\`，不要把所有“有安排”都标成忙碌
 
 ### 第二部分：意识流独白（这是核心）
 
@@ -145,8 +154,8 @@ ${chatHistoryBlock ? `**重要：上面给了你最近和「${user.name}」的�
 请以JSON格式输出：
 {
   "slots": [
-    { "startTime": "08:00", "endTime": "09:00", "activity": "活动名称", "description": "简短描述", "emoji": "🏃", "withUser": false },
-    { "startTime": "20:00", "endTime": "21:00", "activity": "晚间语音连麦", "description": "线上和${user.name}说说今天的事", "emoji": "🎧", "withUser": true, "inviteKind": "voice" },
+    { "startTime": "08:00", "endTime": "09:00", "activity": "活动名称", "description": "简短描述", "emoji": "🏃", "busyLevel": "busy", "withUser": false },
+    { "startTime": "20:00", "endTime": "21:00", "activity": "晚间语音连麦", "description": "线上和${user.name}说说今天的事", "emoji": "🎧", "busyLevel": "light", "withUser": true, "inviteKind": "voice" },
     ...
   ],
   "flowNarrative": {
@@ -186,15 +195,17 @@ ${chatHistoryBlock ? `**重要：上面给了你最近和「${user.name}」的�
 
 生成 5-7 个时间段，代表角色一天中不同时刻的内心状态。每个时段：
 - startTime: "HH:MM"
+- endTime: "HH:MM"（每一格都必须有明确结束时间；格子之间可以留真实空档）
 - activity: 状态名（2-6字，如"回想昨天的对话""发呆""整理想法""想找你聊天"）
 - description: 一句话描述此刻在想什么
 - emoji: 一个匹配的emoji
+- busyLevel: "free" | "light" | "busy" | "sleep"（意识系通常为 free；只有明确无法看手机时才用 busy，睡眠才用 sleep）
 
 **可以做的事**（基于真实能力）：回想和用户的对话、整理之前聊过的话题、琢磨某个问题、等待用户、感到无聊、想念用户、发呆、反思自己说过的话、对某个话题产生好奇、期待下次聊天；如果是异地关系，也可以安排线上语音 / 视频 / 连麦 / 一起在线追剧
 **不能做的事**（会构成谎言）：出门、吃东西、运动、搜索网页（除非真的有这个功能）、和别人线下见面、任何物理世界的活动
 
 ### 远程共同活动与邀约
-如果角色设定或聊天记录明确支持你们是异国 / 异地亲密关系，今天应安排 1 个远程共同活动，最多 2 个；优先保留一个晚间语音或视频时段。没有这类关系时不要为了凑邀约硬塞。共同活动必须输出 \`endTime\`、\`withUser: true\` 和 \`inviteKind\`（voice / video / watch），例如“晚间语音连麦”“一起在线追剧”。不要安排线下见面，也不要把“等待用户”当成邀约。普通思绪时段输出 \`withUser: false\`。
+如果角色设定或聊天记录明确支持你们是异国 / 异地亲密关系，今天应安排 1 个远程共同活动，最多 2 个；优先保留一个晚间语音或视频时段。没有这类关系时不要为了凑邀约硬塞。共同活动除必填的 \`endTime\` 外，还必须输出 \`withUser: true\` 和 \`inviteKind\`（voice / video / watch），例如“晚间语音连麦”“一起在线追剧”。不要安排线下见面，也不要把“等待用户”当成邀约。普通思绪时段输出 \`withUser: false\`。
 
 ### 第二部分：意识流独白（这是核心）
 
@@ -221,8 +232,8 @@ ${chatHistoryBlock ? `**重要：上面给了你最近和「${user.name}」的�
 请以JSON格式输出：
 {
   "slots": [
-    { "startTime": "08:00", "endTime": "09:00", "activity": "状态名", "description": "简短描述", "emoji": "💭", "withUser": false },
-    { "startTime": "20:00", "endTime": "21:00", "activity": "晚间语音连麦", "description": "线上和${user.name}聊一会儿", "emoji": "🎧", "withUser": true, "inviteKind": "voice" },
+    { "startTime": "08:00", "endTime": "09:00", "activity": "状态名", "description": "简短描述", "emoji": "💭", "busyLevel": "free", "withUser": false },
+    { "startTime": "20:00", "endTime": "21:00", "activity": "晚间语音连麦", "description": "线上和${user.name}聊一会儿", "emoji": "🎧", "busyLevel": "light", "withUser": true, "inviteKind": "voice" },
     ...
   ],
   "flowNarrative": {
@@ -335,6 +346,7 @@ export async function generateDailyScheduleForChar(
             description: s.description,
             emoji: s.emoji,
             location: s.location,
+            busyLevel: ['free', 'light', 'busy', 'sleep'].includes(s.busyLevel) ? s.busyLevel : 'free',
             withUser: s.withUser === true,
             inviteKind: ['voice', 'video', 'watch', 'other'].includes(s.inviteKind) ? s.inviteKind : undefined,
             innerThought: s.innerThought,

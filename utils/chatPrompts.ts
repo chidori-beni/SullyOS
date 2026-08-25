@@ -26,6 +26,7 @@ import { getLocalDateKey } from './localDate';
 import { getDailyScheduleForChar } from './dailySchedule';
 import { formatRelativeAge } from './groupChat/relativeTime';
 import { formatMessageReactionContext } from './messageReactions';
+import { buildAutoReplyCatchUpPrompt, buildBusyReplyPrompt, decideBusyReply } from './busyAutoReply';
 
 // 语音格式指导按当前 TTS 服务商二选一：用 MiniMax 才注入 MiniMax 那套（含 <#秒#> 停顿标记），
 // 用鱼声则注入鱼声版（去掉 MiniMax 专属标记，改用标点 / 省略号控制停顿）。
@@ -521,6 +522,16 @@ ${groupLogStr}\n`;
                     },
                 );
                 if (scheduleContext) volatileState += `\n${scheduleContext}\n`;
+                const busyDecision = decideBusyReply({
+                    char,
+                    schedule,
+                    messages: currentMsgs,
+                    now: charNow,
+                });
+                volatileState += buildBusyReplyPrompt(busyDecision);
+                if (busyDecision.mode === 'free' || busyDecision.mode === 'off') {
+                    volatileState += buildAutoReplyCatchUpPrompt(currentMsgs);
+                }
             } catch (e) {
                 console.error('Failed to inject schedule context:', e);
             }

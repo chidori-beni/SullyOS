@@ -755,6 +755,8 @@ export interface ScheduleSlot {
     description?: string; // "在河边慢跑"
     emoji?: string;       // "🏃"
     location?: string;    // "河边"
+    /** 当前活动对看手机/回复消息的占用程度。 */
+    busyLevel?: 'free' | 'light' | 'busy' | 'sleep';
     /** 这是一段和用户共同进行的远程活动（语音/视频/一起在线追剧等）。 */
     withUser?: boolean;
     /** 邀约活动的类型；用于卡片文案和接受后安排对应的动作。 */
@@ -3053,6 +3055,13 @@ export interface CharacterProfile {
    * - undefined：向后兼容——若 scheduleStyle 已设（老用户已隐式选风格）视为开启；否则默认关闭。
    */
   scheduleFeatureEnabled?: boolean;
+
+  /** 日程命中 busy/sleep 时启用自动回复；默认关闭，用户在日程面板中主动开启。 */
+  busyAutoReplyEnabled?: boolean;
+  /** true=按当前活动生成短文案；false/undefined=使用下面的自定义文案或 APK 原版默认文案。 */
+  busyAutoReplyUseScheduleText?: boolean;
+  busyAutoReplyBusyText?: string;
+  busyAutoReplySleepText?: string;
 
   /**
    * HTML 模块模式（per-character）。

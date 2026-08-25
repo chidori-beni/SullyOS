@@ -57,9 +57,11 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
     const { theme } = useOS();
     const [editingIdx, setEditingIdx] = useState<number | null>(null);
     const [editTime, setEditTime] = useState('');
+    const [editEndTime, setEditEndTime] = useState('');
     const [editActivity, setEditActivity] = useState('');
     const [editDesc, setEditDesc] = useState('');
     const [editEmoji, setEditEmoji] = useState('');
+    const [editBusyLevel, setEditBusyLevel] = useState<NonNullable<ScheduleSlot['busyLevel']>>('free');
     const coverInputRef = useRef<HTMLInputElement>(null);
 
     // 长按菜单状态：记录哪一条日程被长按触发 action sheet（修改 / 删除）
@@ -109,18 +111,24 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
     const startEdit = (idx: number, slot: ScheduleSlot) => {
         setEditingIdx(idx);
         setEditTime(slot.startTime);
+        setEditEndTime(slot.endTime || '');
         setEditActivity(slot.activity);
         setEditDesc(slot.description || '');
         setEditEmoji(slot.emoji || '');
+        setEditBusyLevel(slot.busyLevel || 'free');
     };
 
     const saveEdit = () => {
         if (editingIdx !== null && onEdit) {
+            const previous = schedule?.slots[editingIdx];
             onEdit(editingIdx, {
+                ...previous,
                 startTime: editTime,
+                endTime: editEndTime || undefined,
                 activity: editActivity,
                 description: editDesc || undefined,
                 emoji: editEmoji || undefined,
+                busyLevel: editBusyLevel,
             });
         }
         setEditingIdx(null);
@@ -286,11 +294,35 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
                                                 className="bg-white/10 rounded-lg px-2 py-1 text-xs font-mono w-24 border border-white/10 focus:outline-none"
                                             />
                                             <input
+                                                type="time"
+                                                value={editEndTime}
+                                                onChange={e => setEditEndTime(e.target.value)}
+                                                aria-label="结束时间"
+                                                className="bg-white/10 rounded-lg px-2 py-1 text-xs font-mono w-24 border border-white/10 focus:outline-none"
+                                            />
+                                            <input
                                                 value={editEmoji}
                                                 onChange={e => setEditEmoji(e.target.value)}
                                                 placeholder="emoji"
                                                 className="bg-white/10 rounded-lg px-2 py-1 text-xs w-14 border border-white/10 focus:outline-none text-center"
                                             />
+                                        </div>
+                                        <div className="grid grid-cols-4 gap-1 mb-2">
+                                            {([
+                                                ['free', '空闲'],
+                                                ['light', '可偷看'],
+                                                ['busy', '很忙'],
+                                                ['sleep', '睡眠'],
+                                            ] as const).map(([level, label]) => (
+                                                <button
+                                                    key={level}
+                                                    type="button"
+                                                    onClick={() => setEditBusyLevel(level)}
+                                                    className={`rounded-lg px-1 py-1 text-[9px] font-bold border ${editBusyLevel === level ? 'bg-white/30 border-white/30' : 'bg-white/5 border-white/10 opacity-60'}`}
+                                                >
+                                                    {label}
+                                                </button>
+                                            ))}
                                         </div>
                                         <input
                                             value={editActivity}
@@ -373,6 +405,11 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
                                         <div className="flex items-center gap-1.5">
                                             {slot.emoji && <span className="text-sm flex-shrink-0">{slot.emoji}</span>}
                                             <span className="sully-schedule-activity text-sm font-bold">{slot.activity}</span>
+                                            {slot.busyLevel && slot.busyLevel !== 'free' && (
+                                                <span className="ml-1.5 align-middle text-[8px] font-bold opacity-45">
+                                                    {slot.busyLevel === 'light' ? '可偷看手机' : slot.busyLevel === 'busy' ? '忙碌' : '睡眠'}
+                                                </span>
+                                            )}
                                         </div>
                                         {slot.description && (
                                             <p className="sully-schedule-description text-[11px] opacity-50 mt-0.5 leading-tight">{slot.description}</p>
