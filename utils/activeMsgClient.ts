@@ -175,6 +175,33 @@ interface ReiCryptoBridge {
 
 const ACTIVE_MSG_RUNTIME_HEADER = '[ActiveMsg2]';
 
+/**
+ * chat_presence 心跳/下线哨兵的超时护栏。见 syncChatPresence 里的详细说明——
+ * 这条 PUT 卡住会连带卡住排在它后面的下线哨兵写入，所以超时要远短于 AI 回复的
+ * 生成耗时（10~40s），让卡住的心跳尽快让路，而不是陪着一起等。
+ */
+const CHAT_PRESENCE_WRITE_TIMEOUT_MS = 6_000;
+
+/**
+ * 给一个不接受 signal/timeout 的 Promise（比如 SDK 内部裸 fetch）包一层超时。
+ *
+ * 注意这不是真正的「取消」——原 Promise 背后的网络请求仍在跑，只是我们不再等它。
+ * 对 chat_presence 这种「最新状态覆盖旧状态」的写入场景足够了：真正要紧的是让
+ * 调用方尽快解开排他锁、把下一次（可能是下线哨兵）写入发出去，不是把这次请求
+ * 真的掐断。
+ */
+const raceWithTimeout = <T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`chat_presence 写入超时（${Math.round(timeoutMs / 1000)}s 未响应，${label}）`)),
+      timeoutMs,
+    );
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+
 /** amsg-server 的 DELETE /cancel-message 找不到目标行时回的错误码（HTTP 404）。 */
 const REMOTE_TASK_NOT_FOUND_CODE = 'TASK_NOT_FOUND';
 /** 行还在、但已经跑完出清（sent / failed）时回的错误码（HTTP 409）。 */
@@ -2753,19 +2780,34 @@ export const ActiveMsgClient = {
   // 同角色活跃会话租约：只 PUT 这一条几十字节的 chat_presence，不复用胖 fire_pack。
   // worker 对 expire AI 任务到点前先读它——新鲜则 skip，避免正在聊天时又弹主动消息。
   // 写入失败由调用方（amsgStateSync 的 lease timer）只 warn，45s TTL 自然失效。
+  //
+  // ⚠️ 这里手动加了个超时护栏，因为 SDK 的 client.putClientState() 内部是裸 fetch，
+  // 不接受 signal/timeout 参数，也没有自己的超时（跟修过的 embedding.ts 是同一类问题：
+  // 网络卡住时会一直挂着）。这条 PUT 卡住不只是「这次心跳慢一点」——amsgStateSync 里
+  // 同一角色的写入是串行的（runChatPresenceWrite 的 writeInFlight 排他锁），退到后台时
+  // 那个「activeAt: 0」下线哨兵会在这条心跳后面排队，只有当前这条了结（成功或失败）才会
+  // 发出去。心跳卡在网络黑洞里不返回 = 下线哨兵跟着卡住不发 = worker 那边一直读到「还在
+  // 前台」的旧租约，回复生成完也不会弹系统通知，界面回前台才会看见消息突然冒出来——
+  // 这正是用户反馈的现象。给这条 PUT 一个远短于 AI 回复生成耗时（10~40s）的超时，
+  // 卡住时尽快放弃、解开排他锁，让下线哨兵能第一时间补上去，而不是陪着一条注定要等
+  // 好几分钟的请求一起卡住。
   async syncChatPresence(charId: string, presence: AmsgChatPresence): Promise<void> {
     const globalConfig = await ensureWorkerReady();
     const client = await initializeClient(globalConfig);
-    const response = await client.putClientState([{
-      namespace: amsgStateNamespace(charId),
-      key: AMSG_CHAT_PRESENCE_KEY,
-      value: JSON.stringify(presence),
-      // `activeAt: 0` is the offline sentinel, but client-state is
-      // last-write-wins by updatedAt. Reusing activeAt here would make the
-      // offline write look older than the existing foreground lease, so the
-      // server would skip it and keep the stale lease alive.
-      updatedAt: Date.now(),
-    }]);
+    const response = await raceWithTimeout(
+      client.putClientState([{
+        namespace: amsgStateNamespace(charId),
+        key: AMSG_CHAT_PRESENCE_KEY,
+        value: JSON.stringify(presence),
+        // `activeAt: 0` is the offline sentinel, but client-state is
+        // last-write-wins by updatedAt. Reusing activeAt here would make the
+        // offline write look older than the existing foreground lease, so the
+        // server would skip it and keep the stale lease alive.
+        updatedAt: Date.now(),
+      }]),
+      CHAT_PRESENCE_WRITE_TIMEOUT_MS,
+      `activeAt=${presence.activeAt}`,
+    );
     if (!response?.success) {
       throw new Error(response?.error?.message || '上传活跃会话租约失败。');
     }

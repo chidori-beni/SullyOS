@@ -164,6 +164,22 @@ describe('ActiveMsgClient.syncChatPresence', () => {
     expect(entries[0].updatedAt).toBeGreaterThanOrEqual(before);
     expect(JSON.parse(entries[0].value).activeAt).toBe(0);
   });
+
+  it('底层 putClientState 挂住不返回 → 6 秒后超时报错，不会无限期卡住调用方', async () => {
+    // SDK 内部裸 fetch 没有超时；模拟它挂住（永不 resolve/reject），
+    // 断言 syncChatPresence 自己的护栏能让调用方及时拿到错误而不是永远等下去。
+    reiClient.putClientState.mockReturnValue(new Promise(() => {}));
+
+    const promise = ActiveMsgClient.syncChatPresence('char-stuck', {
+      v: 1,
+      charId: 'char-stuck',
+      activeAt: 0,
+      lastUserMessageAt: null,
+    });
+    const assertion = expect(promise).rejects.toThrow(/超时/);
+    await vi.advanceTimersByTimeAsync(6_000);
+    await assertion;
+  });
 });
 
 describe('ActiveMsgClient.cancelTask', () => {
