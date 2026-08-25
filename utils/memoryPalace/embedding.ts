@@ -102,6 +102,15 @@ function modelSupportsDimensions(model: string): boolean {
     return /qwen3?-?embedding/i.test(model);
 }
 
+// 单次请求的硬超时。之前这里裸调 fetch，没有任何超时保护——如果代理/网关把连接
+// 吞掉（TCP 握手没人应答，即「黑洞」），fetch 会一直挂着，直到浏览器自己的极限
+// 超时（Safari 实测约 5 分钟）才抛出 TypeError: Load failed，期间检索/记忆写入
+// 全程卡住，且用户完全看不出这是"网络慢"还是"程序卡死"。30 秒对 embedding 这种
+// 通常几百毫秒到几秒就能回来的接口已经很宽松，卡住 30 秒基本可以断定是连接被吞，
+// 提前失败能让下面 retryable 逻辑（status===undefined 时可重试）尽快重试一次，
+// 而不是让用户对着卡住的界面等 5 分钟才看到一条读不懂的错误。
+const EMBEDDING_TIMEOUT_MS = 30_000;
+
 /**
  * 实际调用 Embedding API
  */
@@ -123,6 +132,12 @@ async function callEmbeddingAPI(
         body.dimensions = config.dimensions;
     }
 
+    const timeoutController = new AbortController();
+    const timeoutHandle = setTimeout(
+        () => timeoutController.abort(new Error(`timeout ${EMBEDDING_TIMEOUT_MS}ms`)),
+        EMBEDDING_TIMEOUT_MS,
+    );
+
     try {
         const response = await fetch(url, {
             method: 'POST',
@@ -131,6 +146,7 @@ async function callEmbeddingAPI(
                 'Authorization': `Bearer ${config.apiKey}`,
             },
             body: JSON.stringify(body),
+            signal: timeoutController.signal,
         });
 
         if (!response.ok) {
@@ -158,6 +174,11 @@ async function callEmbeddingAPI(
         return sorted.map((item: any) => item.embedding as number[]);
 
     } catch (err: any) {
+        // 超时中断（AbortError）没有 status，走跟网络错误一样的可重试分支；
+        // 把浏览器抛的那句难懂的 AbortError/TypeError 换成一眼能看出"卡住了"的说法。
+        if (err?.name === 'AbortError') {
+            err = new Error(`Embedding API 请求超时（${EMBEDDING_TIMEOUT_MS / 1000} 秒未响应，连接可能被代理/网关吞掉）`);
+        }
         const status: number | undefined = err?.status;
         // 参数类 4xx 重试同样的请求不会变好；网络错误 / 5xx / 429 才值得重试一次
         const retryable = status === undefined || status >= 500 || status === 429;
@@ -192,6 +213,8 @@ async function callEmbeddingAPI(
             return results;
         }
         throw err;
+    } finally {
+        clearTimeout(timeoutHandle);
     }
 }
 

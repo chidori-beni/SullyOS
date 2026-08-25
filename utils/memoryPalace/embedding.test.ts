@@ -176,6 +176,45 @@ describe('getEmbeddings 批量 400 自动降级为逐条', () => {
             .rejects.toThrow(/第 1\/2 条.*正常文本/s);
     });
 
+    it('请求挂住不返回（连接被吞）→ 超时后按可重试错误处理，重试成功', async () => {
+        vi.useFakeTimers();
+        try {
+            let calls = 0;
+            global.fetch = vi.fn((_url: any, init: any) => {
+                calls++;
+                if (calls === 1) {
+                    // 模拟连接被吞：fetch 挂住不 resolve，直到调用方的 AbortController 触发
+                    return new Promise((_resolve, reject) => {
+                        const signal = init.signal as AbortSignal;
+                        signal.addEventListener('abort', () => {
+                            const err = new Error('signal timed out');
+                            err.name = 'AbortError';
+                            reject(err);
+                        });
+                    });
+                }
+                const input: string[] = JSON.parse(init.body as string).input;
+                return Promise.resolve({
+                    ok: true,
+                    status: 200,
+                    json: async () => ({
+                        data: input.map((text, localIdx) => ({ index: localIdx, embedding: [parseFloat(text)] })),
+                    }),
+                } as any);
+            }) as any;
+
+            const promise = getEmbeddings(['9'], config);
+            // 推进到超时阈值，触发第一次尝试的 abort；随后 1s 重试等待也一并推进
+            await vi.advanceTimersByTimeAsync(30_000);
+            await vi.advanceTimersByTimeAsync(1_000);
+            const out = await promise;
+            expect(out[0][0]).toBe(9);
+            expect(calls).toBe(2);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('5xx 仍然重试一次后成功', async () => {
         let calls = 0;
         global.fetch = vi.fn(async (_url: any, init: any) => {
