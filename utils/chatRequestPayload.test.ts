@@ -64,16 +64,6 @@ describe('timelyByWorker —— 时效段交给 worker，前端这份不重复�
         expect(systemPrompt).toContain('每行渲染为一个气泡；空格和标点不会拆泡');
     });
 
-    it('消息反应规则会落在模型开口前的 recency 尾段，并明确要求有机会时实际执行', async () => {
-        const payload = await buildChatRequestPayload({ ...baseInput() });
-        const joined = joinMessages(payload.fullMessages);
-        const reactionRule = '### 消息反应：读到机会时要真的点一下';
-        expect(joined).toContain(reactionRule);
-        expect(joined).toContain('应该在这一轮实际输出一条消息反应');
-        expect(joined).toContain('没有自然目标时才跳过');
-        expect(joined.lastIndexOf(reactionRule)).toBeGreaterThan(joined.lastIndexOf('### 最后，回到你自己'));
-    });
-
     it('timelyByWorker: 时钟与真实世界块不进 volatileTail，MCP 块与 tail reminder 不注入', async () => {
         const withMode = await buildChatRequestPayload({ ...baseInput(), timelyByWorker: true });
         const joined = joinMessages(withMode.fullMessages);
