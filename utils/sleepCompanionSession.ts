@@ -29,6 +29,25 @@ const isFiniteTimestamp = (value: unknown): value is number => (
   typeof value === 'number' && Number.isFinite(value) && value > 0
 );
 
+/**
+ * Worker 任务已经排上但还没到触发时刻时，先不要在启动恢复里抢跑结束卡；到点后 outbox
+ * 结果会先落库，下一次恢复再按实际梦话数量收尾。到点已过的任务不拦恢复——它可能是
+ * Worker 按 25% 机会静默跳过，也可能结果正在补收，结束卡的幂等闸会挡住迟到结果。
+ */
+export const hasFutureBackgroundDreamJob = (sessionId: string, now = Date.now()): boolean => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem('sully-call-background-jobs-v1') || '[]');
+    return Array.isArray(parsed) && parsed.some((job: any) => (
+      job?.input?.sessionId === sessionId
+      && typeof job?.firstSendTime === 'string'
+      && Number.isFinite(Date.parse(job.firstSendTime))
+      && Date.parse(job.firstSendTime) > now
+    ));
+  } catch {
+    return false;
+  }
+};
+
 export const loadSleepCompanionSession = (): PersistedSleepCompanionSession | null => {
   try {
     const parsed = JSON.parse(localStorage.getItem(SLEEP_SESSION_KEY) || 'null');
@@ -107,6 +126,7 @@ export async function recoverInterruptedSleepCompanionSession(
 ): Promise<RecoveredSleepCompanionResult | null> {
   const session = loadSleepCompanionSession();
   if (!session) return null;
+  if (hasFutureBackgroundDreamJob(session.sessionId, now)) return null;
 
   const all = await DB.getMessagesByCharId(session.charId, true);
   const existing = all.find(message => (

@@ -3111,6 +3111,9 @@ export default {
           // 正常，而门牌永远不更新。报的是**这份代码有没有**，不是版本号：自更新永远由
           // 旧代码执行，版本号对上了不代表新逻辑真的在跑。
           backgroundJobs: true,
+          // 后台任务基础设施先于通话/陪睡任务上线。单独报这一位，避免只有旧的
+          // plate handler 的 Worker 被新前端误认为能接收 call-reply / sleep-dream。
+          callBackgroundJobs: true,
           // 这份代码认不认「前台静默投递」：页面还开着时由 SW 抑制横幅，但仍保留
           // push 让它在真实后台状态下显示。同 backgroundJobs 一个套路——报的是
           // **这份代码有没有**，不是只看版本号。

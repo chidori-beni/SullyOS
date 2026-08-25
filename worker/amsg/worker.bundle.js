@@ -7384,7 +7384,7 @@ function createSingleUserCloudflareWorker(buildConfig, options = {}) {
 }
 
 // utils/amsgBundleVersion.ts
-var AMSG_BUNDLE_VERSION = "2026-08-23";
+var AMSG_BUNDLE_VERSION = "2026-08-23.3";
 
 // utils/amsgTaskKinds.ts
 var AMSG_TASK_KIND_KEY = "amsgKind";
@@ -8201,10 +8201,208 @@ var plateConsolidateHandler = {
   }
 };
 
+// utils/amsgCallJob.ts
+var CALL_BACKGROUND_REPLY_KIND = "call-reply";
+var SLEEP_DREAM_KIND = "sleep-dream";
+var CALL_BACKGROUND_REPLY_RESULT_KIND = "call-reply";
+var SLEEP_DREAM_RESULT_KIND = "sleep-dream";
+var callJobKey = (jobId) => `call:${jobId}`;
+var isMode = (value) => value === "voice" || value === "video";
+var isPhase = (value) => value === "reply" || value === "dream";
+var parseMessages = (raw) => {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const messages = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const row = item;
+    if (row.role !== "system" && row.role !== "user" && row.role !== "assistant") return null;
+    if (typeof row.content !== "string") return null;
+    messages.push({ role: row.role, content: row.content });
+  }
+  return messages;
+};
+var parsePositiveNumber = (value) => typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+var parseCallJobInput = (raw) => {
+  let value = raw;
+  if (typeof raw === "string") {
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value;
+  const createdAt = parsePositiveNumber(row.createdAt);
+  const messages = parseMessages(row.messages);
+  if (row.v !== 1 || typeof row.charId !== "string" || !row.charId || typeof row.charName !== "string" || !row.charName || typeof row.sessionId !== "string" || !row.sessionId || !isMode(row.callMode) || !isPhase(row.phase) || typeof row.systemPrompt !== "string" || !row.systemPrompt || !messages || !createdAt) return null;
+  const sourceUserMessageId = typeof row.sourceUserMessageId === "number" && Number.isSafeInteger(row.sourceUserMessageId) && row.sourceUserMessageId > 0 ? row.sourceUserMessageId : void 0;
+  const autoHangupAt = row.autoHangupAt == null ? null : parsePositiveNumber(row.autoHangupAt);
+  if (row.autoHangupAt != null && autoHangupAt == null) return null;
+  const dreamIndex = typeof row.dreamIndex === "number" && Number.isSafeInteger(row.dreamIndex) && row.dreamIndex >= 0 ? row.dreamIndex : void 0;
+  return {
+    v: 1,
+    charId: row.charId,
+    charName: row.charName,
+    sessionId: row.sessionId,
+    callMode: row.callMode,
+    phase: row.phase,
+    systemPrompt: row.systemPrompt,
+    messages,
+    ...sourceUserMessageId ? { sourceUserMessageId } : {},
+    autoHangupAt,
+    ...dreamIndex !== void 0 ? { dreamIndex } : {},
+    createdAt
+  };
+};
+var buildCallJobResult = (args) => ({
+  resultKind: args.job.phase === "dream" ? SLEEP_DREAM_RESULT_KIND : CALL_BACKGROUND_REPLY_RESULT_KIND,
+  v: 1,
+  jobId: args.jobId,
+  charId: args.job.charId,
+  charName: args.job.charName,
+  sessionId: args.job.sessionId,
+  callMode: args.job.callMode,
+  phase: args.job.phase,
+  text: args.text.trim(),
+  generatedAt: args.generatedAt || Date.now(),
+  ...args.job.sourceUserMessageId ? { sourceUserMessageId: args.job.sourceUserMessageId } : {},
+  ...args.job.dreamIndex !== void 0 ? { dreamIndex: args.job.dreamIndex } : {}
+});
+var buildCallJobMessages = (job) => [
+  { role: "system", content: job.systemPrompt },
+  ...job.messages
+];
+
+// worker/amsg/src/callFire.ts
+var BACKGROUND_CALL_TIMEOUT_MS = 12e4;
+var discardJob2 = async (writeState, jobId) => {
+  if (!writeState) return;
+  try {
+    await writeState(AMSG_JOB_NAMESPACE, [{ key: callJobKey(jobId), value: null }]);
+  } catch (error) {
+    console.warn("[amsg:call] job \u884C\u6CA1\u5220\u6389\uFF08\u7B49 TTL \u515C\u5E95\uFF09", jobId, error);
+  }
+};
+var hash32 = (text) => {
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+};
+var cleanGeneratedText = (raw) => raw.replace(/<think(?:ing|ought)?\b[^>]*>[\s\S]*?<\/think(?:ing|ought)?\s*>/gi, "").replace(/<think(?:ing|ought)?\b[^>]*>[\s\S]*$/gi, "").replace(/```(?:text|markdown)?/gi, "").replace(/```/g, "").trim();
+var previewText = (text) => {
+  const singleLine = text.replace(/\s+/g, " ").trim();
+  return singleLine.length > 72 ? `${singleLine.slice(0, 72)}\u2026` : singleLine;
+};
+var readCallJob = async (ctx, jobId) => {
+  const rows = await ctx.readState(AMSG_JOB_NAMESPACE);
+  const row = rows.find((entry) => entry.key === callJobKey(jobId));
+  if (!row?.value) return null;
+  let json;
+  try {
+    json = await unpackStateValue(row.value);
+  } catch (error) {
+    await discardJob2(ctx.writeState, jobId);
+    throw new Error(`\u901A\u8BDD\u540E\u53F0 job ${jobId} \u7684\u8F93\u5165\u89E3\u538B\u5931\u8D25\uFF08\u6570\u636E\u635F\u574F\uFF09\uFF1A${String(error)}`);
+  }
+  const job = parseCallJobInput(json);
+  if (!job) {
+    await discardJob2(ctx.writeState, jobId);
+    throw new Error(`\u901A\u8BDD\u540E\u53F0 job ${jobId} \u7684\u8F93\u5165\u89E3\u6790\u5931\u8D25\uFF08\u6570\u636E\u635F\u574F\uFF09`);
+  }
+  if (job.charId !== ctx.task.metadata?.charId) {
+    await discardJob2(ctx.writeState, jobId);
+    throw new Error(`\u901A\u8BDD\u540E\u53F0 job ${jobId} \u7684 charId \u4E0E\u4EFB\u52A1\u5BF9\u4E0D\u4E0A`);
+  }
+  return job;
+};
+var buildHandler = (kind) => ({
+  async beforeFire({ ctx, taskMeta }) {
+    const jobId = taskMeta[AMSG_JOB_ID_KEY];
+    if (typeof jobId !== "string" || !jobId) {
+      throw new Error(`\u901A\u8BDD\u540E\u53F0\u4EFB\u52A1\u7684 metadata \u91CC\u6CA1\u6709 ${AMSG_JOB_ID_KEY}`);
+    }
+    const job = await readCallJob(ctx, jobId);
+    if (!job) return { skip: true, reason: `\u901A\u8BDD\u540E\u53F0 job ${jobId} \u7684\u8F93\u5165\u5DF2\u4E0D\u5728\uFF08\u8FC7\u671F\u6216\u5DF2\u64A4\u9500\uFF09` };
+    if (kind === CALL_BACKGROUND_REPLY_KIND && job.phase !== "reply" || kind === SLEEP_DREAM_KIND && job.phase !== "dream") {
+      await discardJob2(ctx.writeState, jobId);
+      throw new Error(`\u901A\u8BDD\u540E\u53F0 job ${jobId} \u7684\u4EFB\u52A1\u79CD\u7C7B\u4E0E phase \u4E0D\u4E00\u81F4`);
+    }
+    if (job.phase === "dream" && job.autoHangupAt && job.autoHangupAt <= ctx.now.getTime()) {
+      await discardJob2(ctx.writeState, jobId);
+      return { skip: true, reason: "sleep-auto-hangup-reached" };
+    }
+    if (job.phase === "dream" && hash32(`${jobId}|${job.dreamIndex ?? 0}`) % 100 >= 25) {
+      await discardJob2(ctx.writeState, jobId);
+      return { skip: true, reason: "sleep-dream-chance-missed" };
+    }
+    return {
+      messages: buildCallJobMessages(job),
+      totalTimeoutMs: BACKGROUND_CALL_TIMEOUT_MS,
+      state: { jobId, job }
+    };
+  },
+  async llmOutput({ ctx, state }) {
+    const { jobId, job } = state;
+    const text = cleanGeneratedText(ctx.llmOutputText || "");
+    if (!text) {
+      await discardJob2(ctx.writeState, jobId);
+      return { decision: "skip-push", reason: "call-empty-generation" };
+    }
+    if (typeof ctx.emitResult !== "function") {
+      console.warn("[amsg:call] \u5F53\u524D Worker \u6CA1\u6709 emitResult\uFF0C\u540E\u53F0\u901A\u8BDD\u7ED3\u679C\u65E0\u6CD5\u9001\u56DE\u5BA2\u6237\u7AEF", jobId);
+      await discardJob2(ctx.writeState, jobId);
+      return { decision: "skip-push", reason: "call-emit-result-unsupported" };
+    }
+    const result = buildCallJobResult({ jobId, job, text, generatedAt: Date.now() });
+    try {
+      await ctx.emitResult({
+        ...result,
+        // 页面不可见时显示通知；页面仍在前台则由 active-msg-result 直接落库，不额外打扰。
+        notification: {
+          show: "when-hidden",
+          title: job.phase === "dream" ? `${job.charName}\u8BF4\u4E86\u68A6\u8BDD` : `${job.charName}\u7684\u901A\u8BDD\u56DE\u590D\u5DF2\u751F\u6210`,
+          body: previewText(text),
+          // 每个梦话/回复各留一张提醒；只按 session+phase 会让第二句梦话把第一句通知
+          // 静默替换掉，用户醒来后只知道“有过一次”，不知道有几条可以回听。
+          tag: `amsg-call-${job.sessionId}-${job.phase}-${jobId}`,
+          data: {
+            openApp: "call",
+            charId: job.charId,
+            sessionId: job.sessionId,
+            resultKind: result.resultKind,
+            jobId
+          }
+        }
+      });
+    } catch (error) {
+      console.warn("[amsg:call] \u7ED3\u679C\u6CA1\u80FD\u5199\u8FDB\u6536\u4EF6\u7BB1\uFF0C\u672C\u8F6E\u8BA9\u4E0A\u6E38\u91CD\u8BD5", jobId, error);
+      throw error;
+    }
+    await discardJob2(ctx.writeState, jobId);
+    console.log("[amsg:call] \u540E\u53F0\u901A\u8BDD\u7ED3\u679C\u5DF2\u9001\u8FDB\u6536\u4EF6\u7BB1", {
+      jobId,
+      charId: job.charId,
+      sessionId: job.sessionId,
+      resultKind: result.resultKind
+    });
+    return { decision: "skip-push", reason: "call-result-emitted" };
+  }
+});
+var callReplyHandler = buildHandler(CALL_BACKGROUND_REPLY_KIND);
+var sleepDreamHandler = buildHandler(SLEEP_DREAM_KIND);
+
 // worker/amsg/src/fireKinds.ts
 var FIRE_KIND_HANDLERS = Object.assign(
   /* @__PURE__ */ Object.create(null),
-  { [PLATE_CONSOLIDATE_KIND]: plateConsolidateHandler }
+  {
+    [PLATE_CONSOLIDATE_KIND]: plateConsolidateHandler,
+    [CALL_BACKGROUND_REPLY_KIND]: callReplyHandler,
+    [SLEEP_DREAM_KIND]: sleepDreamHandler
+  }
 );
 var KIND_FIRE_SCRATCH_KEY = "kindFire";
 var putKindFireStash = (scratch, kind, state) => {
@@ -8482,6 +8680,15 @@ try {
 var log = makeDebugLogger("api", "SafeAPI");
 
 // utils/naturalProactive.ts
+var NATURAL_UNANSWERED_HARD_CAP = 20;
+var naturalUnansweredHardCap = (_intensity) => NATURAL_UNANSWERED_HARD_CAP;
+var NATURAL_BATCH_HARD_CAP = 20;
+var naturalCheckWindowMinutes = (intensity, random01) => {
+  const safeRandom = clamp(random01, 0, 0.999999);
+  const [min, max] = intensity === "low" ? [30, 60] : intensity === "high" ? [8, 20] : [15, 30];
+  return min + Math.floor(safeRandom * (max - min + 1));
+};
+var nextNaturalCheckAt = (occurrenceMs, nowMs, nextCheckMinutes) => Math.max(occurrenceMs, nowMs) + Math.max(1, nextCheckMinutes) * 6e4;
 var clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 var hourInZone = (nowMs, tzId) => {
   const hour = new Intl.DateTimeFormat("en-US", { timeZone: tzId, hour: "2-digit", hour12: false }).formatToParts(new Date(nowMs)).find((p) => p.type === "hour")?.value;
@@ -8497,8 +8704,12 @@ var decideNaturalProactive = (input) => {
   const quiet = isQuietHour(hour, profile.quietHours);
   const recentSendMinutes = input.recentSelfSendAts.length ? (input.nowMs - Math.max(...input.recentSelfSendAts)) / 6e4 : Infinity;
   const spontaneous = input.random01 < profile.spontaneousChancePerDay / 36 ? 1 : 0;
-  let score = silence * profile.weights.silence + (quiet ? 0 : 0.65) * profile.weights.timeOfDay + clamp(input.emotion ?? 0.25, 0, 1) * profile.weights.emotion + clamp(input.pendingTopic ?? 0.15, 0, 1) * profile.weights.pendingTopic + spontaneous * profile.weights.spontaneousThought;
+  const relationshipBoost = profile.relationship === "romantic" ? 0.1 : profile.relationship === "close" ? 0.03 : 0;
+  const distanceBoost = profile.longDistance ? 0.06 : 0;
+  let score = silence * profile.weights.silence + (quiet ? 0 : 0.65) * profile.weights.timeOfDay + clamp(input.emotion ?? 0.25, 0, 1) * profile.weights.emotion + clamp(input.pendingTopic ?? 0.15, 0, 1) * profile.weights.pendingTopic + spontaneous * profile.weights.spontaneousThought + relationshipBoost + distanceBoost;
   const reasons = [`\u6C89\u9ED8 ${hoursSilent.toFixed(1)} \u5C0F\u65F6`];
+  if (relationshipBoost > 0) reasons.push(profile.relationship === "romantic" ? "\u4EB2\u5BC6\u5173\u7CFB\u52A0\u6743" : "\u4EB2\u8FD1\u5173\u7CFB\u52A0\u6743");
+  if (distanceBoost > 0) reasons.push("\u5F02\u5730/\u624B\u673A\u8054\u7CFB\u52A0\u6743");
   if (quiet) {
     score -= 0.28;
     reasons.push("\u5B89\u9759\u65F6\u6BB5");
@@ -8516,10 +8727,15 @@ var decideNaturalProactive = (input) => {
   }
   const intensityShift = input.intensity === "low" ? 0.12 : input.intensity === "high" ? -0.1 : 0;
   const threshold = clamp(profile.threshold + intensityShift - clamp(input.bias, -20, 20) / 100, 0.25, 0.9);
-  const hardCap = input.intensity === "low" ? 1 : input.intensity === "high" ? 3 : 2;
+  const hardCap = naturalUnansweredHardCap(input.intensity);
   const shouldSend = input.unansweredCount < hardCap && score >= threshold;
-  const jitter = Math.floor(input.random01 * 31);
-  return { shouldSend, score, threshold, nextCheckMinutes: quiet ? 60 + jitter : 20 + jitter, reasons };
+  return {
+    shouldSend,
+    score,
+    threshold,
+    nextCheckMinutes: naturalCheckWindowMinutes(input.intensity, input.random01),
+    reasons
+  };
 };
 
 // utils/amsg2Tasks.ts
@@ -8832,7 +9048,7 @@ var extractFireScheduleTextCalls = (content) => {
 // utils/amsgChatPresence.ts
 var AMSG_CHAT_PRESENCE_KEY = "chat_presence";
 var CHAT_PRESENCE_TTL_MS = 45e3;
-var CHAT_PRESENCE_PUSH_FRESH_MS = 12e3;
+var CHAT_PRESENCE_PUSH_FRESH_MS = 5e3;
 var parseAmsgChatPresence = (raw) => {
   try {
     const value = raw ? JSON.parse(raw) : null;
@@ -9378,7 +9594,7 @@ var buildInstantTimelyBlock = (args) => {
   ].join("\n") : "\u3010\u6B64\u523B\u7684\u7CFB\u7EDF\u4FE1\u606F\xB7\u4EC5\u4F60\u53EF\u89C1\u3011";
   return [head, ...blocks].join("\n");
 };
-var NOTIFICATION_ALWAYS = "always";
+var NOTIFICATION_WHEN_HIDDEN = "when-hidden";
 var NOTIFICATION_SILENT_WHEN_VISIBLE = "when-visible";
 var instantNotificationTag = (charId) => `amsg-instant-${charId}`;
 var instantCallNotificationTag = (charId) => `amsg-call-${charId}`;
@@ -9399,16 +9615,17 @@ var applyInstantNotificationPolicy = (payload, charId, isFirstSegment = false, a
     ...payload,
     notification: {
       ...notification,
-      // iOS 17 不允许「收到 Web Push 但不展示」。前台时必须从发送端就不发 Push，
-      // 只把正文留在 message_outbox 让页面主动取回；show:false 正是服务端的发送闸。
-      show: appIsForeground ? false : NOTIFICATION_ALWAYS,
+      // 双保险：短租约仍新鲜时明确不让 SW 弹系统横幅（iOS PWA 的 WindowClient
+      // visibilityState 偶尔会把前台误报 hidden）；租约一旦停止超过 5s，就交给 SW 的
+      // when-hidden 判定。于是聊天页静默、APP 其它页由页面显示内部横幅，退后台后又能叫人。
+      show: appIsForeground ? false : NOTIFICATION_WHEN_HIDDEN,
       silent: NOTIFICATION_SILENT_WHEN_VISIBLE,
       // 认不出是哪个角色时就不折叠：通知栏里多几条只是吵，两个角色共用一个 tag 会
       // 互相顶掉，那是真的丢消息。renotify 跟着 tag 走——没有 tag 时带上它，
       // showNotification 会直接抛 TypeError。
       // 来电走自己的 tag 且**一定** renotify：它是一轮里的最后一段，按普通规则会被静默
-      // 替换掉（见 instantCallNotificationTag）。silent 也摘掉 when-visible——前台这条
-      // 压根不会发（show:false），能走到这儿的都是后台，后台的电话就该响。
+      // 替换掉（见 instantCallNotificationTag）。silent 也摘掉 when-visible——来电不论
+      // 是由哪一档 show 策略送到 SW，都应该作为电话提醒响铃。
       ...target ? isIncomingCallPush(notification) ? { tag: instantCallNotificationTag(target), renotify: true, silent: false } : { tag: instantNotificationTag(target), ...isFirstSegment ? { renotify: true } : {} } : {}
     }
   };
@@ -13630,11 +13847,12 @@ var amsgHooks = {
         seed = Math.imul(seed, 16777619);
       }
       const random01 = (seed >>> 0) / 4294967295;
+      const naturalUnansweredCount = countUnansweredSends(selfLog);
       const decision = decideNaturalProactive({
         nowMs: ctx.now.getTime(),
         lastUserMessageAt: expireInput.lastUserMessageAt,
         recentSelfSendAts: selfLog.entries.filter((entry) => !entry.reply).map((entry) => entry.at),
-        unansweredCount: countUnansweredSends(selfLog),
+        unansweredCount: naturalUnansweredCount,
         random01,
         profile: natural.profile,
         intensity: natural.intensity ?? "normal",
@@ -13643,7 +13861,7 @@ var amsgHooks = {
         pendingTopic: pack.naturalSignals?.pendingTopic,
         emotion: pack.naturalSignals?.emotion
       });
-      const nextAt = occurrenceMs + decision.nextCheckMinutes * 6e4;
+      const nextAt = nextNaturalCheckAt(occurrenceMs, ctx.now.getTime(), decision.nextCheckMinutes);
       const nextUuid = `natural-${(seed >>> 0).toString(16).padStart(8, "0")}-${charId}-${nextAt}`;
       await ctx.scheduleTask({
         firstSendTime: new Date(nextAt).toISOString(),
@@ -13670,6 +13888,17 @@ var amsgHooks = {
         nextCheckMinutes: decision.nextCheckMinutes,
         reasons: decision.reasons
       });
+      const naturalHardCap = naturalUnansweredHardCap(natural.intensity ?? "normal");
+      if (naturalUnansweredCount >= naturalHardCap) {
+        console.log("[amsg:natural-unanswered-limit-skip]", {
+          taskId: ctx.task.id,
+          charId,
+          sends: naturalUnansweredCount,
+          limit: naturalHardCap
+        });
+        await recordSkip(ctx, charId, "unanswered-limit", occurrenceMs);
+        return { skip: true };
+      }
       if (isFreshChatPresence(presence, charId, ctx.now.getTime())) {
         console.log("[amsg:natural-skip]", { taskId: ctx.task.id, charId, reason: "active-chat-presence" });
         return { skip: true };
@@ -13729,6 +13958,7 @@ var amsgHooks = {
       // （resolveFireSceneSong 与 renderFireSceneBlock 共用判定），冻的必然是正文里那首。
       sceneSong: resolveFireSceneSong(pack.scene, ctx.now.getTime(), tz),
       instant,
+      naturalProactive: !instant && taskMeta.amsgNaturalProactive === true,
       readFreshChatPresence: async () => {
         const latest = await ctx.readState(amsgStateNamespace(charId));
         const value = parseAmsgChatPresence(
@@ -13967,10 +14197,19 @@ var amsgHooks = {
       }
     }
     if (decision.decision === "finish") {
-      stash.selfLogTexts = decision.pushPayloads.map(
+      const pushPayloads = stash.naturalProactive ? decision.pushPayloads.slice(0, NATURAL_BATCH_HARD_CAP) : decision.pushPayloads;
+      if (stash.naturalProactive && pushPayloads.length < decision.pushPayloads.length) {
+        console.warn("[amsg:natural-batch-limit]", {
+          taskId: ctx.taskId,
+          charId: stash.charId,
+          dropped: decision.pushPayloads.length - pushPayloads.length,
+          limit: NATURAL_BATCH_HARD_CAP
+        });
+      }
+      stash.selfLogTexts = pushPayloads.map(
         (p) => typeof p.message === "string" ? p.message : ""
       );
-      let payloads = attachScheduledTasks(decision.pushPayloads, stash.scheduledTasks);
+      let payloads = attachScheduledTasks(pushPayloads, stash.scheduledTasks);
       const attachMetaAt = (list, idx, extra) => list.map((payload, i) => i === idx ? { ...payload, metadata: { ...payload.metadata ?? {}, ...extra } } : payload);
       const cancelled = stash.cancelledTasks;
       const renewed = stash.renewedTasks;
@@ -14398,12 +14637,17 @@ var src_default = {
           // 正常，而门牌永远不更新。报的是**这份代码有没有**，不是版本号：自更新永远由
           // 旧代码执行，版本号对上了不代表新逻辑真的在跑。
           backgroundJobs: true,
-          // 这份代码认不认「前台静默投递」：页面还开着时不发 iOS 系统 Push，
-          // 只写 message_outbox 让页面自己收。同 backgroundJobs 一个套路——报的是
-          // **这份代码有没有**，不是版本号，因为版本号常常忘了改、而且自更新前后
-          // 都可能是同一个号。有了它，`GET /config-check` 一次请求就能断定
-          // Cloudflare 上跑的到底是不是打了这个补丁的 bundle，不用再靠实机试。
+          // 后台任务基础设施先于通话/陪睡任务上线。单独报这一位，避免只有旧的
+          // plate handler 的 Worker 被新前端误认为能接收 call-reply / sleep-dream。
+          callBackgroundJobs: true,
+          // 这份代码认不认「前台静默投递」：页面还开着时由 SW 抑制横幅，但仍保留
+          // push 让它在真实后台状态下显示。同 backgroundJobs 一个套路——报的是
+          // **这份代码有没有**，不是只看版本号。
           foregroundSilentPush: true,
+          // 新版用“前台短租约 show:false + 过期后 when-hidden”的双保险，既避开 iOS PWA
+          // visibility 误报造成的前台横幅，也避免漏掉生命周期事件后把后台 push 永久吞掉。单独回显能力位，方便
+          // 用户只贴一条 config-check 就确认 Cloudflare 上跑的是哪份逻辑。
+          foregroundPushVisibilityFallback: true,
           // 判定「人还在前台」用的窗口（毫秒）。回显出来是为了能一眼看出跑的是哪一版：
           // 早期那版直接用 45s 的 TTL，导致「发完就切后台」的回复被当成前台、不发通知。
           foregroundPushWindowMs: CHAT_PRESENCE_PUSH_FRESH_MS,

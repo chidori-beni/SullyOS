@@ -10,6 +10,7 @@ import {
   type XhsCaches,
 } from './applyAssistantPostProcessing';
 import { noteCallBannerOpened } from './incomingCall';
+import { callLaunch } from './callLaunch';
 import { runPendingToolCalls } from './instantToolRunner';
 import { drainPendingDiaries } from './pendingDiary';
 import { applyEmotionEvalRaw } from './emotionApply';
@@ -2526,6 +2527,7 @@ const handleDeepLink = () => {
   const currentUrl = new URL(window.location.href);
   const charId = currentUrl.searchParams.get('activeMsgCharId');
   const openApp = currentUrl.searchParams.get('openApp');
+  const sessionId = currentUrl.searchParams.get('callSessionId');
 
   if (openApp === 'chat' && charId) {
     // 冷启动是点来电横幅进来的（SW 把旗插在 URL 上）。必须在补收落库**之前**记下来——
@@ -2533,6 +2535,12 @@ const handleDeepLink = () => {
     if (currentUrl.searchParams.get('incomingCall') === '1') noteCallBannerOpened(charId);
     window.dispatchEvent(new CustomEvent('active-msg-open', {
       detail: { charId },
+    }));
+  }
+  if (openApp === 'call' && charId && sessionId) {
+    callLaunch.request({ charId, sessionId });
+    window.dispatchEvent(new CustomEvent('active-msg-open', {
+      detail: { charId, openApp: 'call', sessionId },
     }));
   }
 
@@ -2543,6 +2551,7 @@ const handleDeepLink = () => {
     currentUrl.searchParams.delete('openApp');
     currentUrl.searchParams.delete('activeMsgCharId');
     currentUrl.searchParams.delete('incomingCall');
+    currentUrl.searchParams.delete('callSessionId');
     // Keep same-page navigation markers (for example the browser back guard)
     // while removing only the consumed deep-link parameters from the URL.
     window.history.replaceState(window.history.state, '', currentUrl.toString());
@@ -2635,8 +2644,20 @@ export const ActiveMsgRuntime = {
           // 保证用户回到界面时先看到旁白, 且 round-2 回复排在旁白之后.
           void (async () => {
             await flushInboxToChat();
+            // 通话/梦话结果不进共享 inbox，而是直接记在服务端 outbox。通知点击可能发生在
+            // 页面曾被冻结、因此错过 active-msg-result postMessage 的时刻；点开回听前强制
+            // 补收一次，确保 CallApp 打开的就是已经落库的完整记录。
+            if (event.data?.openApp === 'call') {
+              await catchUpMissedPushes('manual').catch(error => {
+                console.warn('[ActiveMsg] 打开通话前补收后台结果失败，稍后仍会按前台兜底重试', error);
+              });
+            }
             window.dispatchEvent(new CustomEvent('active-msg-open', {
-              detail: { charId: event.data?.charId },
+              detail: {
+                charId: event.data?.charId,
+                openApp: event.data?.openApp,
+                sessionId: event.data?.sessionId,
+              },
             }));
             await runPendingToolCallsSafely();
           })();

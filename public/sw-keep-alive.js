@@ -1579,7 +1579,7 @@ async function removeQueuedRequest(id) {
 }
 
 // worker/sw-keep-alive.ts
-var SW_VERSION = "1.18.0";
+var SW_VERSION = "1.18.1";
 function isIncomingCallNotificationData(data) {
   return !!data && typeof data === "object" && data.sullyIncomingCall === true;
 }
@@ -2056,6 +2056,8 @@ sw.addEventListener("pushsubscriptionchange", (event) => {
 sw.addEventListener("notificationclick", (event) => {
   const payload = event.notification.data?.payload || event.notification.data || {};
   const charId = payload?.metadata?.charId || payload?.charId || event.notification.data?.charId || "";
+  const openApp = payload?.notification?.data?.openApp || payload?.openApp || event.notification.data?.openApp || "";
+  const sessionId = payload?.notification?.data?.sessionId || payload?.sessionId || event.notification.data?.sessionId || "";
   const isCall = isIncomingCallNotificationData(event.notification.data) || isIncomingCallNotificationData(payload);
   event.notification.close();
   event.waitUntil((async () => {
@@ -2071,12 +2073,13 @@ sw.addEventListener("notificationclick", (event) => {
     if (clients.length > 0) {
       const client = clients[0];
       await client.focus();
-      client.postMessage({ type: "active-msg-open", charId, incomingCall: isCall });
+      client.postMessage({ type: "active-msg-open", charId, incomingCall: isCall, openApp, sessionId });
       return;
     }
     const openUrl = new URL(sw.registration.scope || sw.location.origin);
-    openUrl.searchParams.set("openApp", "chat");
+    openUrl.searchParams.set("openApp", openApp === "call" ? "call" : "chat");
     if (charId) openUrl.searchParams.set("activeMsgCharId", charId);
+    if (sessionId) openUrl.searchParams.set("callSessionId", sessionId);
     if (isCall) openUrl.searchParams.set("incomingCall", "1");
     await sw.clients.openWindow(openUrl.toString());
   })());

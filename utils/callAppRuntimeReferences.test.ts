@@ -49,7 +49,7 @@ describe('CallApp runtime references', () => {
     const preferenceSheetSource = readFileSync(path.resolve(__dirname, '../components/call/CallPreferencesSheet.tsx'), 'utf8');
 
     expect(source).toContain("onFinal: (t) => setDraftInput(t)");
-    expect(source).toContain("await requestAssistantReply(input, userDbId, pendingTouchesForTurn, true, userCameraSnapshotForTurn)");
+    expect(source).toMatch(/await requestAssistantReply\(\s*input,\s*userDbId,\s*pendingTouchesForTurn,\s*true,\s*userCameraSnapshotForTurn/);
     expect(source).toContain("{sendingBusy ? '…' : '发送'}");
     expect(source).toMatch(/const beginSelectedCall[\s\S]*?setViewMode\('in-call'\);\s+setCallStartedAt\(Date\.now\(\)\);\s+setCallState\('listening'\);/);
     expect(source).toContain('fireIdleNudge');
@@ -186,7 +186,7 @@ describe('CallApp runtime references', () => {
     expect(source).toContain('attachSnapshotToLatestUserMessage(messages, userCameraSnapshot)');
     expect(source).toContain('userCameraSnapshot ? 0 : 2');
     expect(source).toContain('isVisionInputUnsupportedError(error)');
-    expect(source).toContain('await requestAssistantReply(input, userDbId, pendingTouchesForTurn, true, userCameraSnapshotForTurn)');
+    expect(source).toMatch(/await requestAssistantReply\(\s*input,\s*userDbId,\s*pendingTouchesForTurn,\s*true,\s*userCameraSnapshotForTurn/);
     expect(source).toContain('await pruneCallSnapshots(selectedChar.id, currentSessionId)');
     expect(source).toContain('cameraSnapshotExpired: true');
     expect(source).toContain('<CallSnapshotImage imageRef={item.cameraSnapshotRef} expired={item.cameraSnapshotExpired} />');

@@ -75,8 +75,10 @@ import { installReiSW } from '@rei-standard/amsg-sw';
  *            并把这通电话的横幅一起收走。
  *            （一度试过"额外补弹两条横幅当铃声"，用户实测觉得通知栏刷三条比没铃声还烦，
  *            已撤掉。iOS PWA 拿不到自定义提示音是 Apple 的口子没开，认了。）
+ *  - 1.18.1: 后台通话/梦话结果通知带 openApp + sessionId，点击后先补收 outbox，再直达
+ *            对应通话记录详情，不再把这类结果误送到普通聊天页。
  */
-const SW_VERSION = '1.18.0';
+const SW_VERSION = '1.18.1';
 
 /** 这条推送是不是一通来电（旗子由 worker/amsg/src/agentic.ts 立在 notification.data 上）。 */
 function isIncomingCallNotificationData(data: any): boolean {
@@ -746,6 +748,14 @@ sw.addEventListener('notificationclick', (event: NotificationEvent) => {
     || payload?.charId
     || event.notification.data?.charId
     || '';
+  const openApp = payload?.notification?.data?.openApp
+    || payload?.openApp
+    || event.notification.data?.openApp
+    || '';
+  const sessionId = payload?.notification?.data?.sessionId
+    || payload?.sessionId
+    || event.notification.data?.sessionId
+    || '';
   // 来电：点哪一下都算接。
   const isCall = isIncomingCallNotificationData(event.notification.data)
     || isIncomingCallNotificationData(payload);
@@ -767,13 +777,14 @@ sw.addEventListener('notificationclick', (event: NotificationEvent) => {
       await client.focus();
       // 来电和普通消息都要先把这一轮内容补收进来（应用侧同一条路），差别只在补收完
       // 之后是落进聊天页还是弹接听界面——那面旗由这条消息带过去。
-      client.postMessage({ type: 'active-msg-open', charId, incomingCall: isCall });
+      client.postMessage({ type: 'active-msg-open', charId, incomingCall: isCall, openApp, sessionId });
       return;
     }
 
     const openUrl = new URL(sw.registration.scope || sw.location.origin);
-    openUrl.searchParams.set('openApp', 'chat');
+    openUrl.searchParams.set('openApp', openApp === 'call' ? 'call' : 'chat');
     if (charId) openUrl.searchParams.set('activeMsgCharId', charId);
+    if (sessionId) openUrl.searchParams.set('callSessionId', sessionId);
     // 冷启动没有 client 可 postMessage，只能把旗插在 URL 上带过去。
     if (isCall) openUrl.searchParams.set('incomingCall', '1');
     await sw.clients.openWindow(openUrl.toString());

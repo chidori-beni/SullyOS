@@ -17,6 +17,7 @@
 
 import { PLATE_CONSOLIDATE_RESULT_KIND } from './amsgPlateJob';
 import { SCHEDULE_CHANGE_RESULT_KIND } from './amsgScheduleResult';
+import { CALL_BACKGROUND_REPLY_RESULT_KIND, SLEEP_DREAM_RESULT_KIND } from './amsgCallJob';
 
 const HEADER = '[amsg2:result]';
 
@@ -113,6 +114,11 @@ const dispatchOne = async (payload: unknown, context?: AmsgResultContext): Promi
       case SCHEDULE_CHANGE_RESULT_KIND: {
         const { applyScheduleChangeResult } = await import('./amsgScheduleResultApply');
         return await applyScheduleChangeResult(payload, context);
+      }
+      case CALL_BACKGROUND_REPLY_RESULT_KIND:
+      case SLEEP_DREAM_RESULT_KIND: {
+        const { applyCallBackgroundResult } = await import('./callBackgroundJobs');
+        return await applyCallBackgroundResult(payload);
       }
       default:
         // 认不出来的多半是**前端比 worker 旧**：worker 可以脱开前端单独更新（fork 的

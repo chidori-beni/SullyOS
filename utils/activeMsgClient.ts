@@ -2366,11 +2366,12 @@ export const ActiveMsgClient = {
   /**
    * 这台 worker 上的代码认不认识「后台任务」。
    *
-   * 认的是 `GET /config-check` 里的 `backgroundJobs`——**这份 bundle 里有没有那段分派代码**，
-   * 不是版本号：自更新永远由用户那台 Worker 上的旧代码执行，「版本号对上了、新逻辑没生效」
-   * 是真实存在的中间态（即时对话那次踩过，见 probeInstantChatSupportDetailed）。
+   * 认的是 `GET /config-check` 里的 `backgroundJobs` + `callBackgroundJobs`——**这份 bundle
+   * 里有没有后台分派及通话 handler**，不是版本号：自更新永远由用户那台 Worker 上的旧代码
+   * 执行，「版本号对上了、新逻辑没生效」是真实存在的中间态（即时对话那次踩过，见
+   * probeInstantChatSupportDetailed）。
    *
-   * 老 bundle 不报这个字段 → false，调用方留在本地跑。老 worker 会把后台任务当聊天任务
+   * 老 bundle 不报任一字段 → false，调用方留在本地跑。老 worker 会把后台任务当聊天任务
    * 跑、卡在「本次任务指令缺失」终态失败，而那条任务行不在用户的清单里——面板一片正常，
    * 活儿却永远不干。这道门就是为了别走到那儿。
    *
@@ -2408,7 +2409,11 @@ export const ActiveMsgClient = {
         console.warn(`${ACTIVE_MSG_RUNTIME_HEADER} 后台任务能力问不到（HTTP ${status}），不记缓存`);
         return 'unknown';
       }
-      const supported = body?.data?.backgroundJobs === true;
+      // `backgroundJobs` 只证明基础设施（以及旧的门牌 kind）存在；通话/陪睡有自己的
+      // handler。旧 Worker 若只回前一位，必须留在前台，不能把 call-reply 送去一条它
+      // 不认识的任务种类里，后者会静默终态失败。
+      const supported = body?.data?.backgroundJobs === true
+        && body?.data?.callBackgroundJobs === true;
       backgroundJobProbe = { workerUrl: config.workerUrl, supported, at: Date.now() };
       return supported ? 'supported' : 'unsupported';
     } catch (error) {
@@ -2458,9 +2463,11 @@ export const ActiveMsgClient = {
      * 采样温度与输出上限：**同一件活儿在本地跑和在云端跑必须用同一组**。
      * 不传的话上游整个省略这两个字段，落到供应商默认值（温度常为 1.0、输出上限常远小于
      * 后台活儿需要的量）——同一批材料两条路会跑出不一样的结果，而界面上完全看不出来。
-     */
+    */
     temperature?: number;
     maxTokens?: number;
+    /** 可选的未来触发时刻；省略时沿用立即执行的后台任务路径。 */
+    firstSendTime?: string;
   }): Promise<{ uuid: string }> {
     const globalConfig = await ensureWorkerReady();
     const client = await initializeClient(globalConfig);
@@ -2484,11 +2491,10 @@ export const ActiveMsgClient = {
       messageType: 'auto',
       // 任务清单跟远端对账时靠它把这些行挡在外面（见 amsg2Tasks 的 reconcileTasksWithRemote）。
       messageSubtype: AMSG_BACKGROUND_JOB_SUBTYPE,
-      // 立刻可跑：到期时间由服务端自己盖，下一跳 cron（最多一分钟）就会捞起来。
-      // 不能改成客户端算一个 firstSendTime——那个时刻在上传输入、传凭据、加密、
-      // 发请求这一路上早就过去了，服务端一律打回「时间必须在未来」，整条云端路
-      // 每次都退回本地跑。即时对话那条路同样只用 immediate。
-      immediate: true,
+      // 普通后台回复仍然立刻可跑；陪睡预排的任务带一个明确的未来 firstSendTime。
+      ...(params.firstSendTime
+        ? { firstSendTime: params.firstSendTime }
+        : { immediate: true }),
       recurrenceType: 'none',
       metadata: {
         charId: params.charId,

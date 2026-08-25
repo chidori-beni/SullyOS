@@ -617,7 +617,7 @@ var init_mcpFireCore = __esm({
 // worker/amsg/src/index.ts
 import { DurableObject } from "cloudflare:workers";
 
-// ../incoming-call-merge-20260823/node_modules/.pnpm/@rei-standard+amsg-server@2_c57770165a8a2256e4acaa4bae2ba803/node_modules/@rei-standard/amsg-server/dist/chunk-GN44PST5.mjs
+// node_modules/.pnpm/@rei-standard+amsg-server@2_c57770165a8a2256e4acaa4bae2ba803/node_modules/@rei-standard/amsg-server/dist/chunk-GN44PST5.mjs
 var UPDATABLE_COLUMNS = /* @__PURE__ */ new Set([
   "user_id",
   "uuid",
@@ -636,7 +636,7 @@ var UPDATABLE_COLUMNS = /* @__PURE__ */ new Set([
 var TASK_DELIVERY_COLUMNS = "id, user_id, uuid, encrypted_payload, message_type, next_send_at, retry_after, status, retry_count";
 var TASK_DETAIL_COLUMNS = "id, user_id, uuid, encrypted_payload, message_type, next_send_at, status, retry_count, last_error, created_at, updated_at";
 
-// ../incoming-call-merge-20260823/node_modules/.pnpm/@rei-standard+amsg-shared@0.4.0-next.8/node_modules/@rei-standard/amsg-shared/dist/index.mjs
+// node_modules/.pnpm/@rei-standard+amsg-shared@0.4.0-next.8/node_modules/@rei-standard/amsg-shared/dist/index.mjs
 var TEXT_ENCODER = new TextEncoder();
 var TEXT_DECODER = new TextDecoder("utf-8", { fatal: false });
 function toUint8(buf) {
@@ -1735,7 +1735,7 @@ function stringifyDecisionForError(value) {
   }
 }
 
-// ../incoming-call-merge-20260823/node_modules/.pnpm/@rei-standard+amsg-server@2_c57770165a8a2256e4acaa4bae2ba803/node_modules/@rei-standard/amsg-server/dist/chunk-3JEWYDM4.mjs
+// node_modules/.pnpm/@rei-standard+amsg-server@2_c57770165a8a2256e4acaa4bae2ba803/node_modules/@rei-standard/amsg-server/dist/chunk-3JEWYDM4.mjs
 var DAY_MS = 24 * 60 * 60 * 1e3;
 var MAX_LISTED_SKIPPED_OCCURRENCES = 32;
 var MAX_ADJUST_STEPS = 32;
@@ -8201,10 +8201,208 @@ var plateConsolidateHandler = {
   }
 };
 
+// utils/amsgCallJob.ts
+var CALL_BACKGROUND_REPLY_KIND = "call-reply";
+var SLEEP_DREAM_KIND = "sleep-dream";
+var CALL_BACKGROUND_REPLY_RESULT_KIND = "call-reply";
+var SLEEP_DREAM_RESULT_KIND = "sleep-dream";
+var callJobKey = (jobId) => `call:${jobId}`;
+var isMode = (value) => value === "voice" || value === "video";
+var isPhase = (value) => value === "reply" || value === "dream";
+var parseMessages = (raw) => {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const messages = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const row = item;
+    if (row.role !== "system" && row.role !== "user" && row.role !== "assistant") return null;
+    if (typeof row.content !== "string") return null;
+    messages.push({ role: row.role, content: row.content });
+  }
+  return messages;
+};
+var parsePositiveNumber = (value) => typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+var parseCallJobInput = (raw) => {
+  let value = raw;
+  if (typeof raw === "string") {
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value;
+  const createdAt = parsePositiveNumber(row.createdAt);
+  const messages = parseMessages(row.messages);
+  if (row.v !== 1 || typeof row.charId !== "string" || !row.charId || typeof row.charName !== "string" || !row.charName || typeof row.sessionId !== "string" || !row.sessionId || !isMode(row.callMode) || !isPhase(row.phase) || typeof row.systemPrompt !== "string" || !row.systemPrompt || !messages || !createdAt) return null;
+  const sourceUserMessageId = typeof row.sourceUserMessageId === "number" && Number.isSafeInteger(row.sourceUserMessageId) && row.sourceUserMessageId > 0 ? row.sourceUserMessageId : void 0;
+  const autoHangupAt = row.autoHangupAt == null ? null : parsePositiveNumber(row.autoHangupAt);
+  if (row.autoHangupAt != null && autoHangupAt == null) return null;
+  const dreamIndex = typeof row.dreamIndex === "number" && Number.isSafeInteger(row.dreamIndex) && row.dreamIndex >= 0 ? row.dreamIndex : void 0;
+  return {
+    v: 1,
+    charId: row.charId,
+    charName: row.charName,
+    sessionId: row.sessionId,
+    callMode: row.callMode,
+    phase: row.phase,
+    systemPrompt: row.systemPrompt,
+    messages,
+    ...sourceUserMessageId ? { sourceUserMessageId } : {},
+    autoHangupAt,
+    ...dreamIndex !== void 0 ? { dreamIndex } : {},
+    createdAt
+  };
+};
+var buildCallJobResult = (args) => ({
+  resultKind: args.job.phase === "dream" ? SLEEP_DREAM_RESULT_KIND : CALL_BACKGROUND_REPLY_RESULT_KIND,
+  v: 1,
+  jobId: args.jobId,
+  charId: args.job.charId,
+  charName: args.job.charName,
+  sessionId: args.job.sessionId,
+  callMode: args.job.callMode,
+  phase: args.job.phase,
+  text: args.text.trim(),
+  generatedAt: args.generatedAt || Date.now(),
+  ...args.job.sourceUserMessageId ? { sourceUserMessageId: args.job.sourceUserMessageId } : {},
+  ...args.job.dreamIndex !== void 0 ? { dreamIndex: args.job.dreamIndex } : {}
+});
+var buildCallJobMessages = (job) => [
+  { role: "system", content: job.systemPrompt },
+  ...job.messages
+];
+
+// worker/amsg/src/callFire.ts
+var BACKGROUND_CALL_TIMEOUT_MS = 12e4;
+var discardJob2 = async (writeState, jobId) => {
+  if (!writeState) return;
+  try {
+    await writeState(AMSG_JOB_NAMESPACE, [{ key: callJobKey(jobId), value: null }]);
+  } catch (error) {
+    console.warn("[amsg:call] job \u884C\u6CA1\u5220\u6389\uFF08\u7B49 TTL \u515C\u5E95\uFF09", jobId, error);
+  }
+};
+var hash32 = (text) => {
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+};
+var cleanGeneratedText = (raw) => raw.replace(/<think(?:ing|ought)?\b[^>]*>[\s\S]*?<\/think(?:ing|ought)?\s*>/gi, "").replace(/<think(?:ing|ought)?\b[^>]*>[\s\S]*$/gi, "").replace(/```(?:text|markdown)?/gi, "").replace(/```/g, "").trim();
+var previewText = (text) => {
+  const singleLine = text.replace(/\s+/g, " ").trim();
+  return singleLine.length > 72 ? `${singleLine.slice(0, 72)}\u2026` : singleLine;
+};
+var readCallJob = async (ctx, jobId) => {
+  const rows = await ctx.readState(AMSG_JOB_NAMESPACE);
+  const row = rows.find((entry) => entry.key === callJobKey(jobId));
+  if (!row?.value) return null;
+  let json;
+  try {
+    json = await unpackStateValue(row.value);
+  } catch (error) {
+    await discardJob2(ctx.writeState, jobId);
+    throw new Error(`\u901A\u8BDD\u540E\u53F0 job ${jobId} \u7684\u8F93\u5165\u89E3\u538B\u5931\u8D25\uFF08\u6570\u636E\u635F\u574F\uFF09\uFF1A${String(error)}`);
+  }
+  const job = parseCallJobInput(json);
+  if (!job) {
+    await discardJob2(ctx.writeState, jobId);
+    throw new Error(`\u901A\u8BDD\u540E\u53F0 job ${jobId} \u7684\u8F93\u5165\u89E3\u6790\u5931\u8D25\uFF08\u6570\u636E\u635F\u574F\uFF09`);
+  }
+  if (job.charId !== ctx.task.metadata?.charId) {
+    await discardJob2(ctx.writeState, jobId);
+    throw new Error(`\u901A\u8BDD\u540E\u53F0 job ${jobId} \u7684 charId \u4E0E\u4EFB\u52A1\u5BF9\u4E0D\u4E0A`);
+  }
+  return job;
+};
+var buildHandler = (kind) => ({
+  async beforeFire({ ctx, taskMeta }) {
+    const jobId = taskMeta[AMSG_JOB_ID_KEY];
+    if (typeof jobId !== "string" || !jobId) {
+      throw new Error(`\u901A\u8BDD\u540E\u53F0\u4EFB\u52A1\u7684 metadata \u91CC\u6CA1\u6709 ${AMSG_JOB_ID_KEY}`);
+    }
+    const job = await readCallJob(ctx, jobId);
+    if (!job) return { skip: true, reason: `\u901A\u8BDD\u540E\u53F0 job ${jobId} \u7684\u8F93\u5165\u5DF2\u4E0D\u5728\uFF08\u8FC7\u671F\u6216\u5DF2\u64A4\u9500\uFF09` };
+    if (kind === CALL_BACKGROUND_REPLY_KIND && job.phase !== "reply" || kind === SLEEP_DREAM_KIND && job.phase !== "dream") {
+      await discardJob2(ctx.writeState, jobId);
+      throw new Error(`\u901A\u8BDD\u540E\u53F0 job ${jobId} \u7684\u4EFB\u52A1\u79CD\u7C7B\u4E0E phase \u4E0D\u4E00\u81F4`);
+    }
+    if (job.phase === "dream" && job.autoHangupAt && job.autoHangupAt <= ctx.now.getTime()) {
+      await discardJob2(ctx.writeState, jobId);
+      return { skip: true, reason: "sleep-auto-hangup-reached" };
+    }
+    if (job.phase === "dream" && hash32(`${jobId}|${job.dreamIndex ?? 0}`) % 100 >= 25) {
+      await discardJob2(ctx.writeState, jobId);
+      return { skip: true, reason: "sleep-dream-chance-missed" };
+    }
+    return {
+      messages: buildCallJobMessages(job),
+      totalTimeoutMs: BACKGROUND_CALL_TIMEOUT_MS,
+      state: { jobId, job }
+    };
+  },
+  async llmOutput({ ctx, state }) {
+    const { jobId, job } = state;
+    const text = cleanGeneratedText(ctx.llmOutputText || "");
+    if (!text) {
+      await discardJob2(ctx.writeState, jobId);
+      return { decision: "skip-push", reason: "call-empty-generation" };
+    }
+    if (typeof ctx.emitResult !== "function") {
+      console.warn("[amsg:call] \u5F53\u524D Worker \u6CA1\u6709 emitResult\uFF0C\u540E\u53F0\u901A\u8BDD\u7ED3\u679C\u65E0\u6CD5\u9001\u56DE\u5BA2\u6237\u7AEF", jobId);
+      await discardJob2(ctx.writeState, jobId);
+      return { decision: "skip-push", reason: "call-emit-result-unsupported" };
+    }
+    const result = buildCallJobResult({ jobId, job, text, generatedAt: Date.now() });
+    try {
+      await ctx.emitResult({
+        ...result,
+        // 页面不可见时显示通知；页面仍在前台则由 active-msg-result 直接落库，不额外打扰。
+        notification: {
+          show: "when-hidden",
+          title: job.phase === "dream" ? `${job.charName}\u8BF4\u4E86\u68A6\u8BDD` : `${job.charName}\u7684\u901A\u8BDD\u56DE\u590D\u5DF2\u751F\u6210`,
+          body: previewText(text),
+          // 每个梦话/回复各留一张提醒；只按 session+phase 会让第二句梦话把第一句通知
+          // 静默替换掉，用户醒来后只知道“有过一次”，不知道有几条可以回听。
+          tag: `amsg-call-${job.sessionId}-${job.phase}-${jobId}`,
+          data: {
+            openApp: "call",
+            charId: job.charId,
+            sessionId: job.sessionId,
+            resultKind: result.resultKind,
+            jobId
+          }
+        }
+      });
+    } catch (error) {
+      console.warn("[amsg:call] \u7ED3\u679C\u6CA1\u80FD\u5199\u8FDB\u6536\u4EF6\u7BB1\uFF0C\u672C\u8F6E\u8BA9\u4E0A\u6E38\u91CD\u8BD5", jobId, error);
+      throw error;
+    }
+    await discardJob2(ctx.writeState, jobId);
+    console.log("[amsg:call] \u540E\u53F0\u901A\u8BDD\u7ED3\u679C\u5DF2\u9001\u8FDB\u6536\u4EF6\u7BB1", {
+      jobId,
+      charId: job.charId,
+      sessionId: job.sessionId,
+      resultKind: result.resultKind
+    });
+    return { decision: "skip-push", reason: "call-result-emitted" };
+  }
+});
+var callReplyHandler = buildHandler(CALL_BACKGROUND_REPLY_KIND);
+var sleepDreamHandler = buildHandler(SLEEP_DREAM_KIND);
+
 // worker/amsg/src/fireKinds.ts
 var FIRE_KIND_HANDLERS = Object.assign(
   /* @__PURE__ */ Object.create(null),
-  { [PLATE_CONSOLIDATE_KIND]: plateConsolidateHandler }
+  {
+    [PLATE_CONSOLIDATE_KIND]: plateConsolidateHandler,
+    [CALL_BACKGROUND_REPLY_KIND]: callReplyHandler,
+    [SLEEP_DREAM_KIND]: sleepDreamHandler
+  }
 );
 var KIND_FIRE_SCRATCH_KEY = "kindFire";
 var putKindFireStash = (scratch, kind, state) => {
@@ -11644,7 +11842,7 @@ var buildDuplicateToolMessage = (name) => [
 // worker/amsg/src/index.ts
 init_proxyWorker();
 
-// ../incoming-call-merge-20260823/node_modules/.pnpm/@rei-standard+amsg-instant@0.11.0-next.6/node_modules/@rei-standard/amsg-instant/dist/index.mjs
+// node_modules/.pnpm/@rei-standard+amsg-instant@0.11.0-next.6/node_modules/@rei-standard/amsg-instant/dist/index.mjs
 var PUSH_PAYLOAD_BYTE_ENCODER = new TextEncoder();
 function segmentTextWithProtectedBlocks(text, options) {
   if (!text) return [];
@@ -14439,6 +14637,9 @@ var src_default = {
           // 正常，而门牌永远不更新。报的是**这份代码有没有**，不是版本号：自更新永远由
           // 旧代码执行，版本号对上了不代表新逻辑真的在跑。
           backgroundJobs: true,
+          // 后台任务基础设施先于通话/陪睡任务上线。单独报这一位，避免只有旧的
+          // plate handler 的 Worker 被新前端误认为能接收 call-reply / sleep-dream。
+          callBackgroundJobs: true,
           // 这份代码认不认「前台静默投递」：页面还开着时由 SW 抑制横幅，但仍保留
           // push 让它在真实后台状态下显示。同 backgroundJobs 一个套路——报的是
           // **这份代码有没有**，不是只看版本号。

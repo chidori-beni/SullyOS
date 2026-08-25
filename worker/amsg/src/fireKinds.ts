@@ -17,6 +17,8 @@
 import { readTaskKind } from '../../../utils/amsgTaskKinds';
 import { PLATE_CONSOLIDATE_KIND } from '../../../utils/amsgPlateJob';
 import { plateConsolidateHandler } from './plateFire';
+import { CALL_BACKGROUND_REPLY_KIND, SLEEP_DREAM_KIND } from '../../../utils/amsgCallJob';
+import { callReplyHandler, sleepDreamHandler } from './callFire';
 
 /** client_state 的写入口（value 传 null 即删除该 key）。 */
 export type KindWriteState = (
@@ -103,7 +105,11 @@ export interface FireKindHandler {
  */
 export const FIRE_KIND_HANDLERS: Record<string, FireKindHandler> = Object.assign(
   Object.create(null) as Record<string, FireKindHandler>,
-  { [PLATE_CONSOLIDATE_KIND]: plateConsolidateHandler },
+  {
+    [PLATE_CONSOLIDATE_KIND]: plateConsolidateHandler,
+    [CALL_BACKGROUND_REPLY_KIND]: callReplyHandler,
+    [SLEEP_DREAM_KIND]: sleepDreamHandler,
+  },
 );
 
 /** 挂在 scratch 上跨 hook 传递的键。 */

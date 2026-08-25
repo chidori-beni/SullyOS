@@ -40,6 +40,7 @@ import CallPreferencesSheet from '../components/call/CallPreferencesSheet';
 import SleepCompanionSheet from '../components/call/SleepCompanionSheet';
 import {
   SLEEP_DREAM_CHECK_INTERVAL_MS,
+  SLEEP_DREAM_MAX_COUNT,
   SLEEP_DREAM_INSTRUCTION,
   SLEEP_LULLABY_INSTRUCTION,
   loadSleepAutoHangupMinutes,
@@ -140,6 +141,21 @@ import {
   summarizeCallKeepsake,
   updateSleepCompanionSession,
 } from '../utils/sleepCompanionSession';
+import {
+  buildCallBackgroundInput,
+  cancelAllPendingCallBackgroundJobs,
+  cancelPendingCallBackgroundJob,
+  listPendingCallBackgroundJobs,
+  makeCallBackgroundJobId,
+  savePendingCallBackgroundJob,
+  schedulePendingCallBackgroundJob,
+  schedulePendingCallBackgroundJobs,
+} from '../utils/callBackgroundJobs';
+import {
+  clearPersistedCallSession,
+  savePersistedCallSession,
+} from '../utils/callSessionRecovery';
+import { flattenContentPartsToText } from '../utils/promptMessageCleanup';
 type CallState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'ended' | 'error';
 type CallMode = 'voice' | 'video';
 /** 这通电话是谁打的。'incoming' = 角色打给用户、用户接了起来。 */
@@ -595,6 +611,7 @@ const CallApp: React.FC = () => {
   const sleepModeRef = useRef(false);
   const sleepDreamCountRef = useRef(0);
   const sleepBusyRef = useRef(false);
+  const sleepBackgroundJobsActiveRef = useRef(false);
   const sleepDreamTimerRef = useRef<number | null>(null);
   const sleepAutoHangupTimerRef = useRef<number | null>(null);
   const [showCallUpdateAnnouncement, setShowCallUpdateAnnouncement] = useState(shouldShowCallUpdateAnnouncement);
@@ -1576,6 +1593,17 @@ const CallApp: React.FC = () => {
     trackEvent('接起一通来电', { 模式: incoming.mode === 'video' ? '视频' : '语音' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode, characters, suspendedCall]);
+  // 页面切到后台前，尽快把当前通话的提示词快照交给 Worker；重新打开时也会把上一次
+  // 没来得及排上的 pending job 补交。Worker 只生成文本，声音仍由用户回到 PWA 后点卡片
+  // /播放按钮生成，符合浏览器的媒体自动播放限制。
+  useEffect(() => {
+    const schedulePending = () => {
+      void schedulePendingCallBackgroundJobs({ characters, api: apiConfig });
+    };
+    document.addEventListener('visibilitychange', schedulePending);
+    schedulePending();
+    return () => document.removeEventListener('visibilitychange', schedulePending);
+  }, [characters, apiConfig]);
   useEffect(() => () => {
     revokeSessionBlobs();
     stopCallStt();
@@ -1628,6 +1656,19 @@ const CallApp: React.FC = () => {
     const timer = window.setInterval(() => setElapsedSeconds(Math.max(0, Math.floor((Date.now() - callStartedAt) / 1000))), 1000);
     return () => window.clearInterval(timer);
   }, [callStartedAt, callState]);
+  // 只保存一小份会话元数据；每轮正文仍然先写 IndexedDB。PWA 被系统回收时，OSContext
+  // 下次启动会用这份标记和 sessionId 补一张通话结束卡。
+  useEffect(() => {
+    if (viewMode !== 'in-call' || !selectedChar?.id || !callStartedAt || !currentSessionId) return;
+    savePersistedCallSession({
+      charId: selectedChar.id,
+      charName: selectedChar.name,
+      charAvatar: selectedChar.avatar,
+      sessionId: currentSessionId,
+      startedAt: callStartedAt,
+      callMode,
+    });
+  }, [viewMode, selectedChar?.id, selectedChar?.name, selectedChar?.avatar, callStartedAt, currentSessionId, callMode]);
   useEffect(() => {
     callScrollableRef.current?.scrollTo({ top: callScrollableRef.current.scrollHeight, behavior: 'smooth' });
   }, [bubbles]);
@@ -1855,6 +1896,7 @@ const CallApp: React.FC = () => {
   };
   const finishCall = async () => {
     stopCallStt();
+    await cancelAllPendingCallBackgroundJobs(currentSessionId);
     const persistedSleep = loadSleepCompanionSession();
     const sleepSession = persistedSleep?.sessionId === currentSessionId ? persistedSleep : null;
     // 挂断（手动或陪睡定时挂断）时把陪睡计时器一起收掉，别让它们在通话结束后还傻等一小时。
@@ -1922,6 +1964,7 @@ const CallApp: React.FC = () => {
       markCallTurnDirty();
       runCallMemoryPalaceHook(selectedChar);
     }
+    clearPersistedCallSession(currentSessionId);
     clearSuspendedCall();
     resetCurrentCall();
     setViewMode('history');
@@ -1966,6 +2009,42 @@ const CallApp: React.FC = () => {
     const taggedInput = `[${new Date().toLocaleString('zh-CN')}] [通话] ${inputWithTouch}`;
     const finalInput = timeGapHint ? `${taggedInput}\n\n${timeGapHint}` : taggedInput;
     return [...apiMessages, { role: 'user', content: finalInput }];
+  };
+  // 给 Worker 预排梦话用的提示词快照。它不调用 LLM，只复用通话的 system prompt 与当前
+  // IndexedDB 历史；真正生成由 sleepDreamHandler 在未来的 cron tick 执行。
+  const buildBackgroundCallSnapshot = async (instruction: string): Promise<{
+    systemPrompt: string;
+    messages: Array<{ role: string; content: unknown }>;
+  } | null> => {
+    if (!selectedChar?.id) return null;
+    const userName = userProfile?.name?.trim() || '用户';
+    const callMsgs = await DB.getMessagesByCharId(selectedChar.id);
+    await injectMemoryPalace(selectedChar, callMsgs);
+    const baseCallPrompt = buildCallPrompt(
+      userName,
+      selectedChar.name,
+      ContextBuilder.buildCoreContext(selectedChar, userProfile, true, undefined, undefined, { conversational: true }),
+      voiceLang || undefined,
+      callMode,
+      resolveCharTimeZone(selectedChar),
+      callDirection,
+      incomingOpening,
+    );
+    const thinkingPrompt = selectedChar.showThinkingChain
+      ? [
+          buildThinkingChainPrompt(selectedChar.name, userName),
+          selectedChar.thinkingChainCustomPrompt?.trim()
+            ? `【用户追加的 THINKING 要求】\n${selectedChar.thinkingChainCustomPrompt.trim()}`
+            : '',
+        ].filter(Boolean).join('\n\n')
+      : '';
+    const allowedModelActions = getAllowedModelActions();
+    const systemPrompt = [
+      baseCallPrompt,
+      callMode === 'video' ? buildAvatarPerformancePrompt(allowedModelActions) : '',
+      thinkingPrompt,
+    ].filter(Boolean).join('\n\n');
+    return { systemPrompt, messages: await buildHistoryMessages(instruction) };
   };
   const getAllowedModelActions = (): Array<{
     id: string;
@@ -2149,6 +2228,10 @@ ${sentencePlan}`;
     pendingTouches: AvatarTouchRecord[] = [],
     includeUserCameraContext = false,
     userCameraSnapshotForTurn?: string,
+    onPrepared?: (prepared: {
+      systemPrompt: string;
+      messages: Array<{ role: string; content: unknown }>;
+    }) => void,
   ): Promise<ParsedCallReply> => {
     const baseUrl = apiConfig.baseUrl?.replace(/\/+$/, '');
     if (!baseUrl) throw new Error('请先在设置里配置聊天 API URL');
@@ -2216,6 +2299,17 @@ ${sentencePlan}`;
     const requestMessages = userCameraSnapshot
       ? attachSnapshotToLatestUserMessage(messages, userCameraSnapshot)
       : messages;
+    onPrepared?.({
+      systemPrompt,
+      messages: requestMessages.map(message => ({
+        role: String(message.role),
+        content: typeof message.content === 'string'
+          ? message.content
+          : Array.isArray(message.content)
+            ? flattenContentPartsToText(message.content)
+            : String(message.content ?? ''),
+      })),
+    });
     const sendChatRequest = (
       nextMessages: any[],
       nextSystemPrompt: string,
@@ -2824,10 +2918,47 @@ ${sentencePlan}`;
     let turnSpeechEmotion: string | undefined;
     let turnPerformance = DEFAULT_AVATAR_PERFORMANCE;
     let turnPerformanceCues: AvatarPerformanceCue[] = [];
+    const backgroundJobId = selectedChar?.id
+      ? makeCallBackgroundJobId(currentSessionId, userDbId, userDbId ? '' : userBubble.id)
+      : '';
     try {
       setCallState('thinking');
       const reply = prepareCallAssistantReply(
-        await requestAssistantReply(input, userDbId, pendingTouchesForTurn, true, userCameraSnapshotForTurn),
+        await requestAssistantReply(
+          input,
+          userDbId,
+          pendingTouchesForTurn,
+          true,
+          userCameraSnapshotForTurn,
+          prepared => {
+            if (!selectedChar?.id || !backgroundJobId) return;
+            savePendingCallBackgroundJob({
+              jobId: backgroundJobId,
+              input: buildCallBackgroundInput({
+                charId: selectedChar.id,
+                charName: selectedChar.name,
+                sessionId: currentSessionId,
+                callMode,
+                phase: 'reply',
+                systemPrompt: prepared.systemPrompt,
+                messages: prepared.messages,
+                sourceUserMessageId: userDbId,
+              }),
+              createdAt: Date.now(),
+            });
+            // 正常前台请求先给一点时间完成；用户一旦切到后台则立即排队，避免页面冻结
+            // 后再也没有机会把提示词快照上传到 Worker。
+            window.setTimeout(() => {
+              const char = selectedChar;
+              if (!char) return;
+              void schedulePendingCallBackgroundJob({
+                jobId: backgroundJobId,
+                char,
+                api: apiConfig,
+              });
+            }, 8000);
+          },
+        ),
         callMode === 'video' && selectedChar?.videoCallPerformanceQuality !== 'high',
       );
       if (pendingTouchesForTurn.length) {
@@ -2848,6 +2979,11 @@ ${sentencePlan}`;
     } catch (err: any) {
       setErrorMessage(err?.message || '文本回复失败');
       setCallState('error');
+      if (backgroundJobId && selectedChar) {
+        // 前台请求已明确失败时不必等下一次 visibilitychange；把同一份快照交给 Worker
+        // 继续生成，用户回到应用后会从 outbox/通知收到结果。
+        void schedulePendingCallBackgroundJob({ jobId: backgroundJobId, char: selectedChar, api: apiConfig });
+      }
       return addToast(`文本回复失败：${err?.message || '未知错误'}`, 'error');
     }
     const assistantBubbleId = `${Date.now()}-a`;
@@ -2864,6 +3000,30 @@ ${sentencePlan}`;
     setBubbles(prev => [...prev, assistantBubble]);
     let assistantDbId: number | undefined;
     if (selectedChar?.id) {
+      // Worker 可能比前台请求更早完成；先查一次 backgroundJobId，避免两条竞速路径各写
+      // 一份角色回复。结果处理器和这里共用同一个 job id，前台赢则取消远端，Worker 赢则
+      // 直接复用已落库的那条。
+      if (backgroundJobId) {
+        const existingBackground = (await DB.getMessagesByCharId(selectedChar.id, true))
+          .find(message => message.metadata?.backgroundJobId === backgroundJobId);
+        if (existingBackground) {
+          await cancelPendingCallBackgroundJob(backgroundJobId);
+          setBubbles(previous => [
+            ...previous.filter(bubble => bubble.id !== assistantBubbleId),
+            {
+              id: `db-${existingBackground.id}`,
+              dbId: existingBackground.id,
+              role: 'assistant',
+              text: existingBackground.content,
+              time: formatTimeByTs(existingBackground.timestamp),
+              timestamp: existingBackground.timestamp,
+              sleepPhase: existingBackground.metadata?.sleepPhase === 'dream' ? 'dream' : undefined,
+            },
+          ]);
+          setCallState('listening');
+          return;
+        }
+      }
       assistantDbId = await DB.saveMessage({
         charId: selectedChar.id,
         role: 'assistant',
@@ -2873,6 +3033,10 @@ ${sentencePlan}`;
           source: 'call',
           callSessionId: currentSessionId,
           callMode,
+          ...(backgroundJobId ? {
+            backgroundJobId,
+            backgroundSourceUserMessageId: userDbId,
+          } : {}),
           ...(assistantThinkingChain ? { thinkingChain: assistantThinkingChain } : {}),
           avatarPerformance: turnPerformance,
           avatarPerformanceCues: turnPerformanceCues,
@@ -2884,6 +3048,7 @@ ${sentencePlan}`;
       }));
       markCallTurnDirty();
       runCallMemoryPalaceHook(selectedChar);
+      if (backgroundJobId) await cancelPendingCallBackgroundJob(backgroundJobId);
     }
     if (!callPreferences.voiceAutoPlay) {
       setCallState('listening');
@@ -2923,6 +3088,15 @@ ${sentencePlan}`;
   const displayCallState: CallState = isAudioPlaying ? 'speaking' : callState;
   useEffect(() => {
     loadCallRecords(selectedCharId);
+  }, [selectedCharId]);
+  useEffect(() => {
+    const handleBackgroundCallProgress = (event: Event) => {
+      const detail = (event as CustomEvent).detail || {};
+      if (detail.backgroundCall !== true || detail.charId !== selectedCharId) return;
+      void loadCallRecords(selectedCharId);
+    };
+    window.addEventListener('active-msg-progress', handleBackgroundCallProgress);
+    return () => window.removeEventListener('active-msg-progress', handleBackgroundCallProgress);
   }, [selectedCharId]);
   useEffect(() => {
     const intent = initialCallLaunchIntentRef.current;
@@ -3248,6 +3422,15 @@ ${sentencePlan}`;
     clearSleepDreamTimer();
     if (!sleepModeRef.current) return;
     if (!shouldScheduleNextSleepDreamCheck(sleepDreamCountRef.current, callPreferences.sleepDreamEnabled)) return;
+    // 能力探测可能在首次入睡时失败；页面重新回前台后全局 pending 补交成功时，
+    // 不要再让本地 setTimeout 与已经排在 Worker 的梦话各生成一遍。
+    if (listPendingCallBackgroundJobs().some(job => (
+      job.input.sessionId === currentSessionId
+      && job.input.phase === 'dream'
+      && !!job.taskUuid
+    ))) {
+      sleepBackgroundJobsActiveRef.current = true;
+    }
     const persisted = loadSleepCompanionSession();
     const dueAt = persisted?.sessionId === currentSessionId && persisted.nextDreamCheckAt
       ? persisted.nextDreamCheckAt
@@ -3255,6 +3438,12 @@ ${sentencePlan}`;
     sleepDreamTimerRef.current = window.setTimeout(async () => {
       sleepDreamTimerRef.current = null;
       if (!sleepModeRef.current) return;
+      if (sleepBackgroundJobsActiveRef.current) {
+        // 未来检查点已经在 Worker；前台不再重复调用模型。结果落库后，结束卡会从
+        // IndexedDB 统计实际梦话数量。
+        updateSleepCompanionSession({ nextDreamCheckAt: Date.now() + SLEEP_DREAM_CHECK_INTERVAL_MS });
+        return;
+      }
       if (shouldFireSleepDream(sleepDreamCountRef.current, callPreferences.sleepDreamEnabled, Math.random()) && !sleepBusyRef.current) {
         const created = await fireSleepLine('dream');
         if (created) {
@@ -3273,6 +3462,45 @@ ${sentencePlan}`;
       sleepAutoHangupTimerRef.current = null;
       if (sleepModeRef.current) void finishCall();
     }, minutes * 60 * 1000);
+  };
+  const queueSleepDreamJobs = async (session: {
+    sessionId: string;
+    startedAt: number;
+    autoHangupAt: number | null;
+  }) => {
+    if (!selectedChar?.id || !callPreferences.sleepDreamEnabled) return;
+    const snapshot = await buildBackgroundCallSnapshot(SLEEP_DREAM_INSTRUCTION);
+    if (!snapshot) return;
+    let scheduledCount = 0;
+    for (let dreamIndex = 0; dreamIndex < SLEEP_DREAM_MAX_COUNT; dreamIndex += 1) {
+      const dueAt = Date.now() + (dreamIndex + 1) * SLEEP_DREAM_CHECK_INTERVAL_MS;
+      if (session.autoHangupAt && dueAt >= session.autoHangupAt) break;
+      const jobId = makeCallBackgroundJobId(session.sessionId, undefined, `dream-${dreamIndex}`);
+      savePendingCallBackgroundJob({
+        jobId,
+        input: buildCallBackgroundInput({
+          charId: selectedChar.id,
+          charName: selectedChar.name,
+          sessionId: session.sessionId,
+          callMode,
+          phase: 'dream',
+          systemPrompt: snapshot.systemPrompt,
+          messages: snapshot.messages,
+          autoHangupAt: session.autoHangupAt,
+          dreamIndex,
+        }),
+        firstSendTime: new Date(dueAt).toISOString(),
+        createdAt: Date.now(),
+      });
+      const scheduled = await schedulePendingCallBackgroundJob({
+        jobId,
+        char: selectedChar,
+        api: apiConfig,
+        firstSendTime: new Date(dueAt).toISOString(),
+      });
+      if (scheduled) scheduledCount += 1;
+    }
+    sleepBackgroundJobsActiveRef.current = scheduledCount > 0;
   };
   const enterSleepMode = async () => {
     if (sleepModeRef.current) return;
@@ -3296,6 +3524,15 @@ ${sentencePlan}`;
     scheduleSleepAutoHangup(sleepAutoHangupMinutes);
     trackEvent('开启陪睡模式', { 自动挂断分钟: sleepAutoHangupMinutes || 0 });
     await fireSleepLine('lullaby');
+    // 哄睡正文先落库，再把带有这段现场上下文的未来梦话检查交给 Worker；页面锁屏/被
+    // 系统回收时，Worker 这条路独立继续，结果由 outbox handler 幂等落库。
+    if (sleepModeRef.current) {
+      void queueSleepDreamJobs({
+        sessionId: currentSessionId,
+        startedAt: callStartedAt || now,
+        autoHangupAt: sleepAutoHangupMinutes > 0 ? now + sleepAutoHangupMinutes * 60 * 1000 : null,
+      }).catch(error => console.warn('[sleep-companion] background dream queue failed:', error));
+    }
     if (sleepModeRef.current) scheduleSleepDreamCheck();
   };
   const exitSleepMode = (preservePersistedSession = false) => {
@@ -3304,7 +3541,11 @@ ${sentencePlan}`;
     sleepModeRef.current = false;
     clearSleepDreamTimer();
     clearSleepAutoHangupTimer();
-    if (!preservePersistedSession) clearSleepCompanionSession(currentSessionId);
+    if (!preservePersistedSession) {
+      clearSleepCompanionSession(currentSessionId);
+      void cancelAllPendingCallBackgroundJobs(currentSessionId);
+    }
+    sleepBackgroundJobsActiveRef.current = false;
   };
   const toggleSleepMode = () => { if (sleepModeRef.current) exitSleepMode(); else void enterSleepMode(); };
   const handleChangeSleepAutoHangup = (minutes: number) => {

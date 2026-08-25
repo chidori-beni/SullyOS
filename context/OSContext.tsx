@@ -88,6 +88,10 @@ import { assertSupportedSullyBackup } from '../utils/backupImportPolicy';
 import { createBuiltinSullyLive2DConfig, isBuiltinSullyLive2D, upgradeBuiltinSullyLive2DDefaults } from '../utils/builtinSullyLive2D';
 import { normalizeCharacterRoomAssetsInPlace } from '../utils/roomTemplateAssets';
 import { recoverInterruptedSleepCompanionSession } from '../utils/sleepCompanionSession';
+import { recoverInterruptedCallSession } from '../utils/callSessionRecovery';
+import { cancelAllPendingCallBackgroundJobs } from '../utils/callBackgroundJobs';
+import { callLaunch } from '../utils/callLaunch';
+import { runCallMemoryPalacePostFlow } from '../utils/memoryPalace/callPostFlow';
 
 interface ProactiveQueueEntry {
   charId: string;
@@ -1042,18 +1046,24 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   useEffect(() => {
       if (!isDataLoaded || sleepRecoveryCheckedRef.current) return;
       sleepRecoveryCheckedRef.current = true;
-      void recoverInterruptedSleepCompanionSession()
-          .then(result => {
-              if (!result?.created) return;
+      void (async () => {
+          const sleepResult = await recoverInterruptedSleepCompanionSession();
+          const callResult = await recoverInterruptedCallSession();
+          if (sleepResult?.created) {
               setLastMsgTimestamp(Date.now());
+              void cancelAllPendingCallBackgroundJobs(sleepResult.sessionId);
               addToast(
-                  result.dreamCount > 0
-                      ? `上一次陪睡已收尾，记录到 ${result.dreamCount} 句梦话`
+                  sleepResult.dreamCount > 0
+                      ? `上一次陪睡已收尾，记录到 ${sleepResult.dreamCount} 句梦话`
                       : '上一次陪睡已收尾，没有生成梦话',
                   'info',
               );
-          })
-          .catch(error => console.warn('[sleep-companion] recovery failed:', error));
+          } else if (callResult?.created) {
+              setLastMsgTimestamp(Date.now());
+              void cancelAllPendingCallBackgroundJobs(callResult.sessionId);
+              addToast('上一次通话被中断，已保存通话记录', 'info');
+          }
+      })().catch(error => console.warn('[call-recovery] recovery failed:', error));
   }, [isDataLoaded]);
 
   // --- 使用统计：当前在用哪套外观 / 角色级设置 ---
@@ -1966,9 +1976,18 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       };
 
       const openHandler = (e: Event) => {
-          const { charId } = (e as CustomEvent).detail as { charId?: string };
+          const { charId, openApp, sessionId } = (e as CustomEvent).detail as {
+              charId?: string;
+              openApp?: string;
+              sessionId?: string;
+          };
           if (!charId) return;
-          setActiveApp(AppID.Chat);
+          if (openApp === 'call' && sessionId) {
+              callLaunch.request({ charId, sessionId });
+              setActiveApp(AppID.Call);
+          } else {
+              setActiveApp(AppID.Chat);
+          }
           setActiveCharacterId(charId);
       };
 
@@ -1984,8 +2003,32 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       // 会逐条 saveMessage + fire 'active-msg-progress'; 这里只推 lastMsgTimestamp 让
       // Chat.tsx 的 useEffect 重新 reloadMessages, 不弹 toast / 不增加未读 / 不 resolve
       // sendInstantPush 那条 one-shot promise (那些只在 'active-msg-received' 触发一次)。
-      const progressHandler = () => {
+      const progressHandler = (event: Event) => {
           setLastMsgTimestamp(Date.now());
+          const detail = (event as CustomEvent).detail as {
+              backgroundCall?: boolean;
+              charId?: string;
+          } | undefined;
+          if (detail?.backgroundCall !== true || !detail.charId) return;
+          const char = charactersRef.current.find(item => item.id === detail.charId);
+          const currentUser = userProfileRef.current;
+          if (!char || !currentUser) return;
+          markAmsgStateDirty({
+              char,
+              userProfile: currentUser,
+              groups: groupsRef.current,
+              realtimeConfig: realtimeConfigRef.current,
+          });
+          // 后台结果绕过了 CallApp 的前台收尾钩子。这里补同一条记忆宫殿后置流程，
+          // 让锁屏期间生成的梦话/回复也进入自动归档与上下文水位，而不是只落在消息表。
+          void runCallMemoryPalacePostFlow({
+              char,
+              getLiveChar: () => charactersRef.current.find(item => item.id === char.id) || null,
+              memoryPalaceConfig: memoryPalaceConfigRef.current,
+              apiConfig: apiConfigRef.current,
+              userName: currentUser.name,
+              updateCharacter,
+          }).catch(error => console.warn('[call-recovery] background memory hook failed:', error));
       };
 
       // 情绪 buff 落地后同步进内存 characters —— 必须是 App 级、不限当前打开的角色:

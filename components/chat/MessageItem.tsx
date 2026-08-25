@@ -1989,6 +1989,7 @@ const MessageItem = React.memo(({
             const memoAvatar = m.metadata?.characterAvatar || charAvatar;
             const timeHint = durationSec <= 240 ? '差不多是一杯咖啡的时间' : '像听完一首喜欢的歌再多一点';
             const sleepCompanion = m.metadata?.sleepCompanion === true;
+            const callInterrupted = m.metadata?.callInterrupted === true;
             const dreamCount = Math.max(0, Number(m.metadata?.sleepDreamCount || 0));
             const callSessionId = String(m.metadata?.callSessionId || '');
             const callCharId = String(m.metadata?.characterId || m.charId || '');
@@ -2016,8 +2017,8 @@ const MessageItem = React.memo(({
                             <div className="flex items-center gap-3">
                                 <img src={memoAvatar} alt={memoTitle} className="h-9 w-9 rounded-full object-cover ring-1 ring-slate-200/80" loading="lazy" decoding="async" />
                                 <div className="min-w-0 flex-1">
-                                    <div className="text-sm font-medium text-slate-600 truncate">{sleepCompanion ? `和 ${memoTitle} 完成了陪睡` : `和 ${memoTitle} 通了电话`}</div>
-                                    <div className="text-xs text-slate-400 mt-0.5">{durationText} · {turnCount}轮对话</div>
+                                    <div className="text-sm font-medium text-slate-600 truncate">{sleepCompanion ? `和 ${memoTitle} 完成了陪睡` : `和 ${memoTitle} 通了电话`}{callInterrupted ? ' · 已保存' : ''}</div>
+                                    <div className="text-xs text-slate-400 mt-0.5">{callInterrupted ? '应用中断后恢复' : durationText} · {turnCount}轮对话</div>
                                 </div>
                             </div>
                             <div className="mt-3 rounded-2xl bg-white/70 border border-slate-100 px-3.5 py-2.5 text-[13px] italic leading-relaxed text-slate-500">

@@ -2,10 +2,8 @@
 //
 // 回归守卫（后台任务这条路怎么排上去）。两条都是本地端到端跑出来的坑：
 //
-//   1. 到期时间必须交给服务端盖（immediate: true），客户端绝不能自己算一个 firstSendTime。
-//      算了的话，那个时刻在「上传输入 → 传凭据 → 加密 → 发请求」这一路上早就过去了，
-//      上游一律打回「时间必须在未来」——云端这条路每次都失败、每次都退回本地跑，
-//      而用户那边只看得到门牌照常更新，完全不知道它从来没在云端跑过。
+//   1. 立即任务仍交给服务端盖（immediate: true）；需要真正预排未来检查点的调用方才传
+//      firstSendTime，不能把两个字段同时送上去。
 //
 //   2. 采样温度与输出上限要原样带上去。上游对缺省的这两个字段是整个省略，
 //      落到供应商默认值（温度常为 1.0，输出上限远小于四块门牌全量输出需要的量）——
@@ -100,6 +98,13 @@ describe('后台任务的到期时间', () => {
       .not.toHaveProperty('firstSendTime');
   });
 
+  it('陪睡这类未来检查点使用 firstSendTime，不带 immediate', async () => {
+    await schedule({ firstSendTime: '2026-08-25T09:00:00.000Z' });
+    const task = scheduledTask();
+    expect(task.firstSendTime).toBe('2026-08-25T09:00:00.000Z');
+    expect(task).not.toHaveProperty('immediate');
+  });
+
   it('一次性任务、带得上 kind 与 job 编号，且用 job 这个 subtype（不进用户的任务清单）', async () => {
     await schedule();
 
@@ -124,7 +129,7 @@ describe('后台任务能力探测的缓存', () => {
   const fetchCalls = () => (globalThis.fetch as any).mock.calls.length;
 
   it('拿到明确答复才记缓存（支持 → 第二次不再发请求）', async () => {
-    configCheck({ success: true, data: { backgroundJobs: true } });
+    configCheck({ success: true, data: { backgroundJobs: true, callBackgroundJobs: true } });
 
     expect(await ActiveMsgClient.probeBackgroundJobSupport()).toBe(true);
     expect(await ActiveMsgClient.probeBackgroundJobSupport()).toBe(true);
@@ -139,6 +144,13 @@ describe('后台任务能力探测的缓存', () => {
     expect(fetchCalls()).toBe(1);
   });
 
+  it('只有基础后台任务、没有通话 handler 的旧 Worker 仍按不支持处理', async () => {
+    configCheck({ success: true, data: { backgroundJobs: true } });
+
+    expect(await ActiveMsgClient.probeBackgroundJobSupport()).toBe(false);
+    expect(fetchCalls()).toBe(1);
+  });
+
   // 回归守卫：forgetBackgroundJobProbe 只盖得住「在设置页点按钮更新 Worker」这一条路，
   // 而换 bundle 不止这一条——文档里那条 GitHub「Sync fork」→ Cloudflare Workers Builds
   // 更新完，地址没变、整个过程也不经过前端。把「不支持」钉死一整个会话的话，这段时间
@@ -149,7 +161,7 @@ describe('后台任务能力探测的缓存', () => {
     expect(fetchCalls(), '同一轮里连着提交几个 job 不该重复问').toBe(1);
 
     vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 6 * 60_000);
-    configCheck({ success: true, data: { backgroundJobs: true } });
+    configCheck({ success: true, data: { backgroundJobs: true, callBackgroundJobs: true } });
 
     expect(
       await ActiveMsgClient.probeBackgroundJobSupport(),
@@ -178,7 +190,7 @@ describe('后台任务能力探测的缓存', () => {
   // 就能在任务还在云端跑着的时候把这一轮踢回本地，同一份快照烧两次副 API，两份结果先后
   // 落地互相盖（见 plateCloudGate）。
   it.each([
-    ['问到了、认识后台任务', { success: true, data: { backgroundJobs: true } }, 200, 'supported'],
+    ['问到了、认识通话后台任务', { success: true, data: { backgroundJobs: true, callBackgroundJobs: true } }, 200, 'supported'],
     ['问到了、是老 bundle', { success: true, data: {} }, 200, 'unsupported'],
     ['问不到（5xx）', { success: false }, 503, 'unknown'],
   ])('%s → %s', async (_name, body, status, expected) => {
@@ -203,7 +215,7 @@ describe('后台任务能力探测的缓存', () => {
       if (isSelfUpdate) upgraded = true;
       const body = isSelfUpdate
         ? { success: true, data: { message: '已经更新到最新版本。' } }
-        : { success: true, data: upgraded ? { backgroundJobs: true } : {} };
+        : { success: true, data: upgraded ? { backgroundJobs: true, callBackgroundJobs: true } : {} };
       return {
         status: 200,
         text: async () => JSON.stringify(body),
