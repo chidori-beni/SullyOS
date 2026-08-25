@@ -193,6 +193,18 @@ describe('processLLMRound — MUSIC_ACTION 冻结这次在听的那首歌', () =
 });
 
 describe('processLLMRound — 无正文边界', () => {
+  it('只有消息反应：发一条可读横幅并把 directive 交给客户端，不额外落聊天气泡', () => {
+    const decision = processLLMRound(createFireSessionState(), '[[REACT: 😮 | 我辞职了]]', build);
+    expect(decision.decision).toBe('finish');
+    if (decision.decision !== 'finish') return;
+    expect(decision.pushPayloads).toHaveLength(1);
+    expect(decision.pushPayloads[0].message).toBe('');
+    expect((decision.pushPayloads[0].metadata as any).directives).toEqual([
+      { type: 'message_reaction', emoji: '😮', target: '我辞职了' },
+    ]);
+    expect((decision.pushPayloads[0].notification as any).body).toBe('对你的消息做了 😮 反应');
+  });
+
   // 空正文的 push 连 banner body 都是空的：用户锁屏收到一条只有标题的空横幅、未读 +1、
   // 点进去 0 气泡。所以没正文就整条不发，副作用一起放弃，两种成因分开记进 last_skip。
   it('全程只有副作用标签、没有正文：整条不发，记 side-effects-only', () => {

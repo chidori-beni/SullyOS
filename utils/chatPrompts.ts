@@ -25,6 +25,7 @@ import { getCharNameById } from './charNameRegistry';
 import { getLocalDateKey } from './localDate';
 import { getDailyScheduleForChar } from './dailySchedule';
 import { formatRelativeAge } from './groupChat/relativeTime';
+import { formatMessageReactionContext } from './messageReactions';
 
 // 语音格式指导按当前 TTS 服务商二选一：用 MiniMax 才注入 MiniMax 那套（含 <#秒#> 停顿标记），
 // 用鱼声则注入鱼声版（去掉 MiniMax 专属标记，改用标点 / 省略号控制停顿）。
@@ -679,6 +680,12 @@ ${imageGenGuide}
      ③ 只有ta的文字和表情互相印证时才按字面理解（说"给自己倒了杯"又发"喝酒"，那就是真在喝）；对你做的直白互动动作（比心/抱抱/戳戳）也直接当作那个动作本身。
 4. **引用功能 (Quote/Reply)**:
    - 如果你想专门回复用户某句具体的话，可以在回复开头使用: \`[[QUOTE: 引用内容]]\`。这会在UI上显示为对该消息的引用。
+4.5 **给消息点 emoji 反应**:
+   - 你可以对用户发来的某一条消息作 emoji 反应，单独输出：\`[[REACT: ❤️ | 用户原话中的短片段]]\`。
+   - emoji 不限于示例，请完全按你自己的性格、当下心情和这句话的重要程度选择；惊讶、恼火、心软、赞同、吃醋等都可以有不同反应。
+   - 第二格要尽量原样抄一小段目标消息，以免点错；只有明确要回应最新一条用户消息时才可省略为 \`[[REACT: ❤️]]\`。
+   - 这是真实 UI 动作，不是台词。可以只点反应而不发文字，也可以和正常回复一起使用；不必固定频率，不要为了展示功能硬点，也不要对同一条消息重复同一个反应。
+   - 只能回应用户消息，不能给自己的消息点反应，也不要把这条命令解释给用户看。
 5. **环境感知**:
    - 留意 [系统提示] 中的时间跨度。如果用户消失了很久，请根据你们的关系做出反应（如撒娇、生气、担心或冷漠）。
    - 如果用户发送了图片，请对图片内容进行评论。
@@ -1187,6 +1194,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
             apiMessages: historySlice.map((m, index) => {
                 let content: any = m.content;
                 const timeStr = `[${ChatPrompts.formatDate(m.timestamp, charTz)}]`;
+                const reactionContext = formatMessageReactionContext(m, char.name || '你', userProfile?.name || '用户');
                 const sourceTag = (() => {
                     const source = m.metadata?.source;
                     if (source === 'call') return '[通话]';
@@ -1227,7 +1235,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                      if (visionDescription) {
                          let textPart = `${timeStr} [图片：${visionDescription}]`;
                          if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') textPart += `\n\n${timeGapHint}`;
-                         return { role: m.role, content: textPart };
+                         return { role: m.role, content: textPart + reactionContext };
                      }
                      // 向下兼容：如果图片数据缺失（例如只导入了文字备份），不要把空 URL 发给 API，否则会报错无法回应
                      const hasImageData = typeof m.content === 'string' && (m.content.startsWith('data:') || m.content.startsWith('http'));
@@ -1236,9 +1244,9 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                          : `${timeStr} [User sent an image, but the image data is no longer available]`;
                      if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') textPart += `\n\n${timeGapHint}`;
                      if (!hasImageData) {
-                         return { role: m.role, content: textPart };
+                         return { role: m.role, content: textPart + reactionContext };
                      }
-                     return { role: m.role, content: [{ type: "text", text: textPart }, { type: "image_url", image_url: { url: m.content } }] };
+                     return { role: m.role, content: [{ type: "text", text: textPart + reactionContext }, { type: "image_url", image_url: { url: m.content } }] };
                 }
                 
                 if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') content = `${content}\n\n${timeGapHint}`; 
@@ -1464,6 +1472,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                 }
                 else content = `${timeStr} ${sourceTag} ${content}`;
 
+                if (reactionContext) content = `${content}${reactionContext}`;
                 return { role: m.role, content };
             }),
             historySlice // Return original slice for Quote lookup

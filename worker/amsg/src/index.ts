@@ -3131,6 +3131,8 @@ export default {
           // 同上，报的是能力不是版本号——8/23 第一批就是靠一条 curl 才断定
           // 「代码是对的，只是云端把标签吃了」。
           incomingCall: true,
+          // 这份代码认不认角色对用户消息的 emoji 反应 directive；纯反应也会投递可读横幅。
+          messageReactions: true,
           workerVersion: AMSG_BUNDLE_VERSION,
         },
       });

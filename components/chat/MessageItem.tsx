@@ -17,6 +17,7 @@ import HtmlCard from './HtmlCard';
 import LuckinCard from './LuckinCard';
 import LuckinCheckoutCard from './LuckinCheckoutCard';
 import QixiEventCardView from './QixiEventCard';
+import { getMessageReactions, reactionSignature } from '../../utils/messageReactions';
 
 // 思考链卡片支持的 12 种风格预设 — 同时被 MessageItem 与 ThinkingChainSettingsModal 复用
 export type ThinkingChainStyleId = 'echo' | 'whisper' | 'minimal' | 'ink' | 'neon' | 'terminal' | 'stellar' | 'tama' | 'pixel' | 'muji' | 'ins' | 'custom';
@@ -2126,6 +2127,12 @@ const MessageItem = React.memo(({
             </div>
         </div>
     ) : null;
+    const reactionGroups = getMessageReactions(m).reduce<Array<{ emoji: string; actors: Set<string> }>>((groups, reaction) => {
+        const existing = groups.find((group) => group.emoji === reaction.emoji);
+        if (existing) existing.actors.add(reaction.by);
+        else groups.push({ emoji: reaction.emoji, actors: new Set([reaction.by]) });
+        return groups;
+    }, []);
     const commonLayout = (content: React.ReactNode) => (
         <>
             {centerModules && thinkingChainNode && (
@@ -2217,6 +2224,20 @@ const MessageItem = React.memo(({
                     <div className={selectionMode ? 'pointer-events-none' : ''}>
                         {content}
                     </div>
+                    {reactionGroups.length > 0 && (
+                        <div className={`sully-message-reactions mt-1 flex flex-wrap gap-1 ${isUser ? 'justify-end' : 'justify-start'}`} aria-label="消息反应">
+                            {reactionGroups.map(({ emoji, actors }) => (
+                                <span
+                                    key={emoji}
+                                    title={Array.from(actors).map((actor) => actor === 'user' ? '你' : charName).join('、')}
+                                    className="inline-flex min-w-7 h-6 items-center justify-center gap-0.5 rounded-full border border-white/80 bg-white/90 px-1.5 text-sm leading-none shadow-sm"
+                                >
+                                    <span>{emoji}</span>
+                                    {actors.size > 1 && <span className="text-[9px] text-slate-400">{actors.size}</span>}
+                                </span>
+                            ))}
+                        </div>
+                    )}
                     {isLastInGroup && showTimestamp !== 'never' && (
                         <div className={`absolute top-full ${isUser ? 'right-0' : 'left-0'} mt-0.5 px-1 text-[9px] text-slate-400/80 font-medium whitespace-nowrap pointer-events-none ${showTimestamp === 'hover' ? 'opacity-0 group-hover:opacity-100 transition-opacity' : ''}`}>{formatTime(m.timestamp)}</div>
                     )}
@@ -4050,6 +4071,7 @@ const MessageItem = React.memo(({
            prev.msg.metadata?.reviewStatus === next.msg.metadata?.reviewStatus &&
            prev.msg.metadata?.status === next.msg.metadata?.status &&
            prev.msg.metadata?.receipt === next.msg.metadata?.receipt &&
+           reactionSignature(prev.msg) === reactionSignature(next.msg) &&
            prev.isFirstInGroup === next.isFirstInGroup &&
            prev.isLastInGroup === next.isLastInGroup &&
            prev.activeTheme === next.activeTheme &&

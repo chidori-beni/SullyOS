@@ -2773,6 +2773,43 @@ var extractScheduleChangeDirectives = (text) => {
   };
 };
 
+// utils/incomingCallParse.ts
+var CALL_TAG_RE = /\[\[\s*ACTION\s*[:：]\s*CALL\s*(?:[:：|｜]\s*)?([\s\S]*?)\]\]/gu;
+var VIDEO_WORDS = /^(?:video|视频|視頻|视讯|視訊|影片|v)$/iu;
+var VOICE_WORDS = /^(?:voice|audio|语音|語音|电话|電話|通话|通話|a)$/iu;
+var readMode = (field) => {
+  const word = field.trim().replace(/[。．.!！?？，,]+$/u, "");
+  if (VIDEO_WORDS.test(word)) return "video";
+  if (VOICE_WORDS.test(word)) return "voice";
+  return null;
+};
+var parseBody = (body) => {
+  const parts = body.split(/[|｜]/u);
+  const head = parts.length > 1 ? readMode(parts[0]) : null;
+  if (head) {
+    return { mode: head, opening: parts.slice(1).join("|").trim() };
+  }
+  const whole = body.trim();
+  if (!whole) return null;
+  const soloMode = readMode(whole);
+  if (soloMode) return { mode: soloMode, opening: "" };
+  return { mode: "voice", opening: whole };
+};
+var extractCallInvite = (text) => {
+  if (!text || !text.includes("[[")) {
+    return { cleanedText: text ?? "", invite: null, malformedCount: 0 };
+  }
+  let invite = null;
+  let malformedCount = 0;
+  const cleanedText = text.replace(CALL_TAG_RE, (_full, body) => {
+    const parsed = parseBody(String(body ?? ""));
+    if (parsed && !invite) invite = parsed;
+    else if (!parsed) malformedCount += 1;
+    return "";
+  });
+  return { cleanedText, invite, malformedCount };
+};
+
 // worker/instant-push/src/classifier.ts
 var DATA_TAGS = [
   // [[RECALL: 2024-05]] / [[RECALL: 2024年5]]
@@ -2831,6 +2868,16 @@ var DATA_TAGS = [
   }
 ];
 var SIDE_EFFECT_TAGS = [
+  // [[REACT: ❤️ | 用户原话短片段]]；target 可省略，客户端回落到最近一条 user 消息。
+  {
+    re: /\[\[\s*REACT\s*[:：]\s*([^|｜\]\r\n]+?)(?:\s*[|｜]\s*([^\]\r\n]{0,120}?))?\s*\]\]/giu,
+    toDirective: (m) => {
+      const emoji = m[1].trim();
+      if (!emoji || emoji.length > 24) return null;
+      const target = m[2]?.trim().slice(0, 80);
+      return { type: "message_reaction", emoji, ...target ? { target } : {} };
+    }
+  },
   // [[ACTION:POKE]]
   {
     re: /\[\[ACTION:POKE\]\]/g,
@@ -2997,8 +3044,17 @@ function classifyLLMOutput(text) {
   for (const d of scheduleParsed.directives) {
     directives.push({ type: "change_schedule", time: d.startTime, activity: d.activity });
   }
+  const callParsed = extractCallInvite(textAfterSchedule);
+  const textAfterCall = callParsed.cleanedText;
+  if (callParsed.invite) {
+    directives.push({
+      type: "call_invite",
+      mode: callParsed.invite.mode,
+      opening: callParsed.invite.opening
+    });
+  }
   for (const spec of SIDE_EFFECT_TAGS) {
-    const matches = Array.from(textAfterSchedule.matchAll(spec.re));
+    const matches = Array.from(textAfterCall.matchAll(spec.re));
     for (const m of matches) {
       const d = spec.toDirective(m);
       if (d) directives.push(d);
@@ -3015,7 +3071,7 @@ function classifyLLMOutput(text) {
     seenDirectives.add(key);
     dedupedDirectives.push(d);
   }
-  let cleanedText = textAfterSchedule;
+  let cleanedText = textAfterCall;
   for (const spec of DATA_TAGS) cleanedText = cleanedText.replace(spec.re, "");
   for (const spec of SIDE_EFFECT_TAGS) cleanedText = cleanedText.replace(spec.re, "");
   cleanedText = cleanedText.trim();

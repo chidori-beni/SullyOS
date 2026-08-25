@@ -2868,6 +2868,16 @@ var DATA_TAGS = [
   }
 ];
 var SIDE_EFFECT_TAGS = [
+  // [[REACT: ❤️ | 用户原话短片段]]；target 可省略，客户端回落到最近一条 user 消息。
+  {
+    re: /\[\[\s*REACT\s*[:：]\s*([^|｜\]\r\n]+?)(?:\s*[|｜]\s*([^\]\r\n]{0,120}?))?\s*\]\]/giu,
+    toDirective: (m) => {
+      const emoji = m[1].trim();
+      if (!emoji || emoji.length > 24) return null;
+      const target = m[2]?.trim().slice(0, 80);
+      return { type: "message_reaction", emoji, ...target ? { target } : {} };
+    }
+  },
   // [[ACTION:POKE]]
   {
     re: /\[\[ACTION:POKE\]\]/g,

@@ -453,6 +453,14 @@ describe('call_invite', () => {
     expect(r.cleanedText).not.toContain('ACTION:CALL');
   });
 
+  it('消息反应变成 directive，正文不泄漏控制标签', () => {
+    const r = classifyLLMOutput('这句我记住了。\n[[REACT: 🥺 | 你居然还记得]]');
+    expect(r.kind).toBe('finish');
+    if (r.kind !== 'finish') return;
+    expect(r.cleanedText).toBe('这句我记住了。');
+    expect(r.directives).toEqual([{ type: 'message_reaction', emoji: '🥺', target: '你居然还记得' }]);
+  });
+
   it('视频 / 中文别名 / 全角竖线都认', () => {
     const r = classifyLLMOutput('[[ACTION：CALL｜视频｜开门]]');
     if (r.kind !== 'finish') throw new Error('应当是 finish');

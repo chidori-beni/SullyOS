@@ -462,6 +462,18 @@ export function processLLMRound(
       };
     }
 
+    // 只点反应也是完整、可见的聊天动作：push 仍须把 directive 带到客户端落到目标气泡上。
+    // 横幅用可读文案，避免 userVisibleOnly 订阅收到空通知；message 留空，客户端不会多落一条气泡。
+    const reactionOnly = directives.find(
+      (d): d is Extract<Directive, { type: 'message_reaction' }> => d.type === 'message_reaction',
+    );
+    if (reactionOnly) {
+      return {
+        decision: 'finish',
+        pushPayloads: [buildScheduledPush('', build, finishMeta, `对你的消息做了 ${reactionOnly.emoji} 反应`)],
+      };
+    }
+
     const scheduleChanges = directives
       .filter((d): d is Extract<Directive, { type: 'change_schedule' }> => d.type === 'change_schedule')
       .map((d) => ({ startTime: d.time, activity: d.activity }));

@@ -240,6 +240,7 @@ async function xhsReplyComment(conf: { mcpUrl: string }, feedId: string, xsecTok
  */
 export type PostProcessDirective =
     | { type: 'poke' }
+    | { type: 'message_reaction'; emoji: string; target?: string }
     | { type: 'transfer'; amount: number }
     | { type: 'transfer_accept' }
     | { type: 'transfer_return' }
@@ -284,6 +285,9 @@ function reconstructDirectiveTags(directives: PostProcessDirective[] | undefined
         switch (d.type) {
             case 'poke':
                 parts.push('[[ACTION:POKE]]');
+                break;
+            case 'message_reaction':
+                parts.push(`[[REACT: ${d.emoji}${d.target ? ` | ${d.target}` : ''}]]`);
                 break;
             case 'transfer':
                 parts.push(`[[ACTION:TRANSFER:${d.amount}]]`);

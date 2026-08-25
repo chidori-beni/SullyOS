@@ -7,6 +7,8 @@ import EmotionSettingsPanel from './EmotionSettingsPanel';
 import { isTranslationLangPreset, normalizeTranslationLangLabel, TRANSLATION_LANG_MAX_LENGTH, TRANSLATION_LANG_PRESETS } from '../../utils/translationLang';
 import type { ContextRangeMode, ContextRangeSnapshot } from '../../utils/chatContextRange';
 import { trackEvent } from '../../utils/analytics';
+import MessageReactionBar from './MessageReactionBar';
+import { getMessageReactions } from '../../utils/messageReactions';
 
 interface ChatModalsProps {
     modalType: string;
@@ -81,6 +83,9 @@ interface ChatModalsProps {
     onConfirmEditMessage: () => void;
     onDeleteMessage: () => void;
     onCopyMessage: () => void;
+    reactionShortcuts: string[];
+    onMessageReaction: (emoji: string) => void;
+    onChangeReactionShortcuts: (emojis: string[]) => void;
     onDeleteEmoji: () => void;
     onDeleteCategory: () => void;
     // Category Visibility
@@ -255,7 +260,9 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     onTransfer, onImportEmoji, onSaveSettings,
     onBgUpload, onRemoveBg, onClearHistory,
     onArchive, onCreatePrompt, onEditPrompt, onSavePrompt, onDeletePrompt,
-    onSetHistoryStart, onRestoreAdaptiveContext, onJumpToMessageInChat, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onCopyMessage, onDeleteEmoji, onDeleteCategory,
+    onSetHistoryStart, onRestoreAdaptiveContext, onJumpToMessageInChat, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onCopyMessage,
+    reactionShortcuts, onMessageReaction, onChangeReactionShortcuts,
+    onDeleteEmoji, onDeleteCategory,
     allCharacters = [], onSaveCategoryVisibility,
     translationEnabled, onToggleTranslation, translationExpanded, onToggleTranslationExpanded, translateSourceLang, translateTargetLang, onSetTranslateSourceLang, onSetTranslateLang,
     xhsEnabled, onToggleXhs,
@@ -975,6 +982,14 @@ const ChatModals: React.FC<ChatModalsProps> = ({
             </Modal>
 
             <Modal isOpen={modalType === 'message-options'} title="消息操作" onClose={() => setModalType('none')}>
+                {selectedMessage?.role === 'assistant' && (
+                    <MessageReactionBar
+                        shortcuts={reactionShortcuts}
+                        activeEmojis={getMessageReactions(selectedMessage).filter((reaction) => reaction.by === 'user').map((reaction) => reaction.emoji)}
+                        onReact={onMessageReaction}
+                        onChange={onChangeReactionShortcuts}
+                    />
+                )}
                 <div className="space-y-3">
                     <button onClick={onEnterSelectionMode} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
                         多选 / 批量删除

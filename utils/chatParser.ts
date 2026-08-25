@@ -6,6 +6,7 @@ import { sanitizeForBubble } from './sanitize';
 import { extractTransferCommands } from './transferFormat';
 import { executeLifeDirectives } from './lifeRecords';
 import { wallClockToTimestamp } from './timezone';
+import { addReactionToMetadata, extractMessageReactionCommands, findReactionTarget } from './messageReactions';
 
 export interface MusicActionSnapshot {
     songId: number;
@@ -156,7 +157,8 @@ export const ChatParser = {
          */
         frozenMusicSong?: FrozenMusicSong,
     ) => {
-        let content = aiContent;
+        const reactionResult = extractMessageReactionCommands(aiContent);
+        let content = reactionResult.text;
         /** 落库统一走这里，别直接调 DB.saveMessage —— 漏一处就是一条消息两个时间、重试时还认不出来。 */
         const persist = (msg: Parameters<typeof DB.saveMessage>[0]) => DB.saveMessage({
             ...msg,
@@ -164,6 +166,19 @@ export const ChatParser = {
             // 卡片自己的字段优先，inheritMeta 只补它没有的键（两边键名本来就不重叠，这里是防御）
             ...(inheritMeta ? { metadata: { ...inheritMeta, ...(msg.metadata || {}) } } : {}),
         });
+
+        // 角色可以只用一个 emoji 对用户的某条消息作反应，也可以一边回应一边点反应。
+        // target 是用户原话里的短片段；匹配不到时回落到最近一条 user 消息，避免标签泄漏成气泡。
+        if (reactionResult.commands.length > 0) {
+            const allMessages = await DB.getMessagesByCharId(charId, true);
+            for (const command of reactionResult.commands) {
+                const target = findReactionTarget(allMessages, command.target, messageTimestamp);
+                if (!target) continue;
+                await DB.updateMessageMetadata(target.id, (previous) =>
+                    addReactionToMetadata(previous, command.emoji, 'assistant', messageTimestamp ?? Date.now()));
+                target.metadata = addReactionToMetadata(target.metadata, command.emoji, 'assistant', messageTimestamp ?? Date.now());
+            }
+        }
 
         // POKE
         if (content.includes('[[ACTION:POKE]]')) {

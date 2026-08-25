@@ -48,6 +48,7 @@ export interface MusicActionSong {
 
 export type Directive =
   | { type: 'poke' }
+  | { type: 'message_reaction'; emoji: string; target?: string }
   | { type: 'transfer'; amount: number }
   // 角色收下 / 退回用户那笔待处理转账。老实现没把这两个标签列进 SIDE_EFFECT_TAGS,
   // 它们留在正文里被 sanitize 剥成空块然后整块丢掉 —— push 路径上收/退根本不生效。
@@ -186,6 +187,16 @@ interface SideEffectSpec {
 }
 
 const SIDE_EFFECT_TAGS: SideEffectSpec[] = [
+  // [[REACT: ❤️ | 用户原话短片段]]；target 可省略，客户端回落到最近一条 user 消息。
+  {
+    re: /\[\[\s*REACT\s*[:：]\s*([^|｜\]\r\n]+?)(?:\s*[|｜]\s*([^\]\r\n]{0,120}?))?\s*\]\]/giu,
+    toDirective: (m) => {
+      const emoji = m[1].trim();
+      if (!emoji || emoji.length > 24) return null;
+      const target = m[2]?.trim().slice(0, 80);
+      return { type: 'message_reaction', emoji, ...(target ? { target } : {}) };
+    },
+  },
   // [[ACTION:POKE]]
   {
     re: /\[\[ACTION:POKE\]\]/g,

@@ -98,6 +98,11 @@ import {
     type ContextRangeMode,
 } from '../utils/chatContextRange';
 import { callLaunch } from '../utils/callLaunch';
+import {
+    loadReactionShortcuts,
+    saveReactionShortcuts,
+    toggleReactionInMetadata,
+} from '../utils/messageReactions';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 /** 即时对话那一轮回复「推送陆续到齐」的宽限时间，也就是自动合成的补扫窗口有多长（见下面的 auto-TTS effect）。 */
@@ -157,6 +162,7 @@ const Chat: React.FC = () => {
     const [activeCategory, setActiveCategory] = useState<string>('default');
     const [newCategoryName, setNewCategoryName] = useState('');
     const [newEmojiName, setNewEmojiName] = useState(''); // 表情包重命名输入框
+    const [reactionShortcuts, setReactionShortcuts] = useState<string[]>(() => loadReactionShortcuts());
 
     const scrollRef = useRef<HTMLDivElement>(null);
     const lastMsgIdRef = useRef<number | null>(null);
@@ -3040,6 +3046,28 @@ const Chat: React.FC = () => {
         setModalType('message-options');
     }, []);
 
+    const handleUserMessageReaction = useCallback(async (emoji: string) => {
+        if (!selectedMessage || selectedMessage.role !== 'assistant') return;
+        const targetId = selectedMessage.id;
+        const nextMetadata = toggleReactionInMetadata(selectedMessage.metadata, emoji, 'user');
+        setMessages((previous) => previous.map((message) => message.id === targetId ? { ...message, metadata: nextMetadata } : message));
+        setSelectedMessage((previous) => previous?.id === targetId ? { ...previous, metadata: nextMetadata } : previous);
+        setModalType('none');
+        try {
+            // 用数据库当刻的 metadata 再切一次，避免后台反应恰好同时到达时被旧快照整块覆盖。
+            await DB.updateMessageMetadata(targetId, (previous) => toggleReactionInMetadata(previous, emoji, 'user'));
+        } catch (error) {
+            console.error('[Chat] 保存消息反应失败:', error);
+            addToast('没有保存成功，请再试一次', 'error');
+            const refreshed = await DB.getMessagesByCharId(char.id, true);
+            setMessages(refreshed);
+        }
+    }, [addToast, char.id, selectedMessage]);
+
+    const handleChangeReactionShortcuts = useCallback((emojis: string[]) => {
+        setReactionShortcuts(saveReactionShortcuts(emojis));
+    }, []);
+
     // 点图片气泡 → 大图页（看大图 / 存到手机 / 重画）。只存 id，图片正文从 messages 里现取，
     // 免得把一张 1~2MB 的 base64 再复制一份挂到 state 上。
     const [viewingImageId, setViewingImageId] = useState<number | null>(null);
@@ -3594,6 +3622,7 @@ const Chat: React.FC = () => {
                 onCreatePrompt={createNewPrompt} onEditPrompt={editSelectedPrompt} onSavePrompt={handleSavePrompt} onDeletePrompt={handleDeletePrompt}
                 onSetHistoryStart={handleSetHistoryStart} onRestoreAdaptiveContext={restoreAdaptiveContext} onJumpToMessageInChat={handleJumpToMessageInChat} onEnterSelectionMode={handleEnterSelectionMode}
                 onReplyMessage={handleReplyMessage} onEditMessageStart={() => { if (selectedMessage) { setEditContent(selectedMessage.content); setModalType('edit-message'); } }}
+                reactionShortcuts={reactionShortcuts} onMessageReaction={handleUserMessageReaction} onChangeReactionShortcuts={handleChangeReactionShortcuts}
                 onConfirmEditMessage={confirmEditMessage} onDeleteMessage={handleDeleteMessage} onCopyMessage={handleCopyMessage} onDeleteEmoji={handleDeleteEmoji} onDeleteCategory={handleDeleteCategory}
                 allCharacters={characters} onSaveCategoryVisibility={handleSaveCategoryVisibility}
                 translationEnabled={translationEnabled}

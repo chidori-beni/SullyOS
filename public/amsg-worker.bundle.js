@@ -7384,7 +7384,7 @@ function createSingleUserCloudflareWorker(buildConfig, options = {}) {
 }
 
 // utils/amsgBundleVersion.ts
-var AMSG_BUNDLE_VERSION = "2026-08-23.3";
+var AMSG_BUNDLE_VERSION = "2026-08-25.1";
 
 // utils/amsgTaskKinds.ts
 var AMSG_TASK_KIND_KEY = "amsgKind";
@@ -12468,6 +12468,16 @@ var DATA_TAGS = [
   }
 ];
 var SIDE_EFFECT_TAGS = [
+  // [[REACT: ❤️ | 用户原话短片段]]；target 可省略，客户端回落到最近一条 user 消息。
+  {
+    re: /\[\[\s*REACT\s*[:：]\s*([^|｜\]\r\n]+?)(?:\s*[|｜]\s*([^\]\r\n]{0,120}?))?\s*\]\]/giu,
+    toDirective: (m) => {
+      const emoji = m[1].trim();
+      if (!emoji || emoji.length > 24) return null;
+      const target = m[2]?.trim().slice(0, 80);
+      return { type: "message_reaction", emoji, ...target ? { target } : {} };
+    }
+  },
   // [[ACTION:POKE]]
   {
     re: /\[\[ACTION:POKE\]\]/g,
@@ -12801,6 +12811,15 @@ function processLLMRound(state, llmOutputText, build, mcp, schedule, iteration) 
       return {
         decision: "finish",
         pushPayloads: [buildScheduledPush("", build, finishMeta, "", callOnly)]
+      };
+    }
+    const reactionOnly = directives.find(
+      (d) => d.type === "message_reaction"
+    );
+    if (reactionOnly) {
+      return {
+        decision: "finish",
+        pushPayloads: [buildScheduledPush("", build, finishMeta, `\u5BF9\u4F60\u7684\u6D88\u606F\u505A\u4E86 ${reactionOnly.emoji} \u53CD\u5E94`)]
       };
     }
     const scheduleChanges = directives.filter((d) => d.type === "change_schedule").map((d) => ({ startTime: d.time, activity: d.activity }));
@@ -14657,6 +14676,8 @@ var src_default = {
           // 同上，报的是能力不是版本号——8/23 第一批就是靠一条 curl 才断定
           // 「代码是对的，只是云端把标签吃了」。
           incomingCall: true,
+          // 这份代码认不认角色对用户消息的 emoji 反应 directive；纯反应也会投递可读横幅。
+          messageReactions: true,
           workerVersion: AMSG_BUNDLE_VERSION
         }
       });
