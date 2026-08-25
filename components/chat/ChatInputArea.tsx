@@ -456,30 +456,33 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             <Waveform className="w-5 h-5" weight="bold" />
                         </button>
                     )}
-                    <div className={`flex-1 min-w-0 flex items-center px-1 transition-all ${useIOSStandaloneInputFix ? 'overflow-visible' : 'overflow-hidden'} ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
-                        <textarea 
-                            ref={textareaRef}
-                            rows={1} 
-                            value={input} 
-                            onChange={(e) => setInput(e.target.value)} 
-                            onKeyDown={handleKeyDown} 
-                            onFocus={handleInputFocus}
-                            inputMode="text"
-                            enterKeyHint="send"
-                            autoCorrect="on"
-                            autoCapitalize="sentences"
-                            className={`flex-1 min-w-0 bg-transparent px-3 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-36 overscroll-contain ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`}
-                            placeholder="Message..."
-                            style={{ height: 'auto' }}
-                        />
-                        {isInputOverflowing && (
-                            <button type="button" onClick={openFullscreenEditor} className={actionButtonClass} title="放大编辑" aria-label="放大编辑">
-                                <CornersOut className="w-5 h-5" weight="bold" />
+                    {/* 主题可以把外框做成直角、圆角或胶囊；内容层始终沿用外框的圆角并裁剪，避免文字从弧形边缘漏出。 */}
+                    <div className={`flex-1 min-w-0 flex items-center px-1 overflow-hidden transition-all ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
+                        <div className="sully-chat-input-clip flex min-w-0 flex-1 items-center" style={{ overflow: 'hidden', borderRadius: 'inherit' }}>
+                            <textarea
+                                ref={textareaRef}
+                                rows={1}
+                                value={input}
+                                onChange={(e) => setInput(e.target.value)}
+                                onKeyDown={handleKeyDown}
+                                onFocus={handleInputFocus}
+                                inputMode="text"
+                                enterKeyHint="send"
+                                autoCorrect="on"
+                                autoCapitalize="sentences"
+                                className={`flex-1 min-w-0 bg-transparent px-3 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-36 overscroll-contain ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`}
+                                placeholder="Message..."
+                                style={{ height: 'auto' }}
+                            />
+                            {isInputOverflowing && (
+                                <button type="button" onClick={openFullscreenEditor} className={actionButtonClass} title="放大编辑" aria-label="放大编辑">
+                                    <CornersOut className="w-5 h-5" weight="bold" />
+                                </button>
+                            )}
+                            <button type="button" onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={actionButtonClass} title="表情包" aria-label="表情包">
+                                <Smiley className="w-5 h-5" weight="bold" />
                             </button>
-                        )}
-                        <button type="button" onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={actionButtonClass} title="表情包" aria-label="表情包">
-                            <Smiley className="w-5 h-5" weight="bold" />
-                        </button>
+                        </div>
                     </div>
 
                     {emojiSelectionMode && (

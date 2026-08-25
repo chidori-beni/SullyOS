@@ -49,4 +49,11 @@ describe('user voice message wiring', () => {
     expect(chatInput).not.toContain('sendButtonClass');
     expect(chatInput).not.toContain('PaperPlaneTilt');
   });
+
+  it('clips composer content to the theme frame without assuming a rounded shape', () => {
+    const chatInput = read('components/chat/ChatInputArea.tsx');
+    expect(chatInput).toContain('sully-chat-input-clip');
+    expect(chatInput).toContain("style={{ overflow: 'hidden', borderRadius: 'inherit' }}");
+    expect(chatInput).toContain('px-1 overflow-hidden transition-all');
+  });
 });
