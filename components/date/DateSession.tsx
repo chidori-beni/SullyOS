@@ -202,7 +202,8 @@ const DateSession: React.FC<DateSessionProps> = ({
     
     // Dialogue Engine State
     const [dialogueQueue, setDialogueQueue] = useState<DialogueItem[]>([]);
-    const [dialogueBatch, setDialogueBatch] = useState<DialogueItem[]>([]); // For replaying current batch
+    const [dialogueBatch, setDialogueBatch] = useState<DialogueItem[]>([]); // Current visual-novel batch; never auto-replayed
+    const [currentDialogueIndex, setCurrentDialogueIndex] = useState(-1);
     const [currentText, setCurrentText] = useState('');
     const [displayedText, setDisplayedText] = useState('');
     const [isTextAnimating, setIsTextAnimating] = useState(false);
@@ -600,8 +601,14 @@ const DateSession: React.FC<DateSessionProps> = ({
             setCurrentSpriteKey(restoredSprite.key);
             setCurrentText(initialState.currentText || '');
             setDisplayedText(initialState.currentText || '');
-            setDialogueQueue(Array.isArray(initialState.dialogueQueue) ? initialState.dialogueQueue : []);
-            setDialogueBatch(Array.isArray(initialState.dialogueBatch) ? initialState.dialogueBatch : []);
+            const restoredQueue = Array.isArray(initialState.dialogueQueue) ? initialState.dialogueQueue : [];
+            const restoredBatch = Array.isArray(initialState.dialogueBatch) ? initialState.dialogueBatch : [];
+            const restoredIndex = typeof initialState.dialogueIndex === 'number'
+                ? initialState.dialogueIndex
+                : Math.max(-1, restoredBatch.length - restoredQueue.length - 1);
+            setDialogueQueue(restoredQueue);
+            setDialogueBatch(restoredBatch);
+            setCurrentDialogueIndex(restoredIndex);
             setIsNovelMode(!!initialState.isNovelMode);
         } else {
             // New Session - pick initial sprite from active skin set or default sprites
@@ -615,16 +622,16 @@ const DateSession: React.FC<DateSessionProps> = ({
             if (hasObservation(peekObs)) setObservation(peekObs);
             const items = parseDialogue(peekRest, 'normal');
             setDialogueBatch(items);
-            setDialogueQueue(items);
-            
+            setDialogueQueue(items.slice(1));
+
             if (items.length > 0) {
                 // Manually trigger first item processing
                 const first = items[0];
                 setCurrentText(first.text);
                 currentLineEmotionRef.current = first.voiceEmotion;
+                setCurrentDialogueIndex(0);
                 // Note: Not setting sprite here because useEffect below will handle emotion->sprite mapping if needed,
                 // or we rely on default.
-                setDialogueQueue(items.slice(1));
             }
         }
     }, []); // Run once on mount
@@ -668,9 +675,10 @@ const DateSession: React.FC<DateSessionProps> = ({
 
     // --- Logic ---
 
-    const processNextDialogue = (item: DialogueItem, remaining: DialogueItem[]) => {
+    const processNextDialogue = (item: DialogueItem, remaining: DialogueItem[], index: number) => {
         setCurrentText(item.text);
         currentLineEmotionRef.current = item.voiceEmotion;
+        setCurrentDialogueIndex(index);
         if (item.emotion && activeSprites) {
             const emotionKey = item.emotion.toLowerCase();
             if (dateEmotionKeys.includes(emotionKey)) {
@@ -709,7 +717,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         const items = parseDialogue(rest, 'normal');
         if (items.length === 0) return;
         setDialogueBatch(items);
-        processNextDialogue(items[0], items.slice(1));
+        processNextDialogue(items[0], items.slice(1), 0);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [lastAssistantContent]);
 
@@ -736,17 +744,19 @@ const DateSession: React.FC<DateSessionProps> = ({
 
         // Next item
         if (dialogueQueue.length > 0) {
-            processNextDialogue(dialogueQueue[0], dialogueQueue.slice(1));
+            processNextDialogue(dialogueQueue[0], dialogueQueue.slice(1), Math.max(0, currentDialogueIndex + 1));
             return;
         }
+    };
 
-        // Loop
-        if (dialogueBatch.length > 0) {
-            // Replay
-            addToast('重播对话', 'info');
-            processNextDialogue(dialogueBatch[0], dialogueBatch.slice(1));
-            return;
-        }
+    const handlePreviousDialogue = () => {
+        if (isTextAnimating || currentDialogueIndex <= 0 || !dialogueBatch[currentDialogueIndex - 1]) return;
+        const previousIndex = currentDialogueIndex - 1;
+        processNextDialogue(
+            dialogueBatch[previousIndex],
+            dialogueBatch.slice(previousIndex + 1),
+            previousIndex,
+        );
     };
 
     const handleSend = async () => {
@@ -770,9 +780,9 @@ const DateSession: React.FC<DateSessionProps> = ({
             if (hasObservation(obs)) setObservation(obs);
             const items = parseDialogue(rest, 'normal');
             setDialogueBatch(items);
-            setDialogueQueue(items);
+            setDialogueQueue(items.slice(1));
             if (items.length > 0) {
-                processNextDialogue(items[0], items.slice(1));
+                processNextDialogue(items[0], items.slice(1), 0);
             }
             setPendingRetryText('');
         } catch (e: any) {
@@ -794,8 +804,8 @@ const DateSession: React.FC<DateSessionProps> = ({
             if (hasObservation(obs)) setObservation(obs);
             const items = parseDialogue(rest, 'normal');
             setDialogueBatch(items);
-            setDialogueQueue(items);
-            if (items.length > 0) processNextDialogue(items[0], items.slice(1));
+            setDialogueQueue(items.slice(1));
+            if (items.length > 0) processNextDialogue(items[0], items.slice(1), 0);
         } catch(e: any) {
             // 父级 handleReroll 只抛不提示；这里不给反馈的话，点了「重新生成」
             // 没动静用户会以为没点上（旧版更糟：消息已被删还毫无提示）
@@ -810,6 +820,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         encounterStartedAt: initialState?.encounterStartedAt,
         dialogueQueue,
         dialogueBatch,
+        dialogueIndex: currentDialogueIndex,
         currentText,
         // Keep recovery snapshots light: don't duplicate base64 background/sprite data here.
         // TODO(date-assets): migrate CharacterProfile dateBackground/sprites/dateSkinSets themselves
@@ -1037,7 +1048,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                         {messages.length > 0 && !isBatchSelectMode && (
                             <button onClick={startBatchDelete} className="h-9 px-3.5 rounded-full flex items-center gap-2 text-xs font-bold border shadow-lg active:scale-95 transition-all bg-red-500/70 backdrop-blur-md border-white/20 text-white hover:bg-red-600">
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
-                                管理 / 删除记录
+                                删除记录
                             </button>
                         )}
 
@@ -1126,6 +1137,36 @@ const DateSession: React.FC<DateSessionProps> = ({
                             pointer-events: auto !important;
                             touch-action: manipulation;
                         }
+                        /* 阅读主题的稳定语义接口：叙述不再被宿主强行加竖线，
+                           引号台词仍交给 .tm-quote-block 做独立样式。 */
+                        #this-moment-screen .tm-body.tm-body-char,
+                        #this-moment-screen .tm-body.tm-body-user {
+                            color: #fff !important;
+                            font-size: var(--sully-date-font-size) !important;
+                        }
+                        #this-moment-screen .tm-para-block {
+                            color: inherit !important;
+                            font-size: var(--sully-date-font-size) !important;
+                            text-shadow: none;
+                        }
+                        #this-moment-screen .tm-para-block.tm-narration {
+                            border-left: 0 !important;
+                            padding-left: 0 !important;
+                            background: transparent !important;
+                        }
+                        #this-moment-screen .tm-para-block.tm-dialogue {
+                            color: #fff !important;
+                        }
+                        #this-moment-screen .tm-batch-selected {
+                            outline: 2px solid rgba(244, 63, 94, 0.95) !important;
+                            outline-offset: -2px;
+                            background: rgba(244, 63, 94, 0.16) !important;
+                        }
+                        #this-moment-screen .tm-batch-unselected {
+                            outline: 1px solid rgba(148, 163, 184, 0.42) !important;
+                            outline-offset: -1px;
+                            opacity: 0.82;
+                        }
                     `}</style>
                     <div className="tm-bg-image absolute inset-0 bg-cover bg-center" style={{ backgroundImage: bgImage ? `url(${bgImage})` : 'none' }} aria-hidden="true" />
                     <div className="tm-bg-overlay absolute inset-0 pointer-events-none" aria-hidden="true" />
@@ -1162,7 +1203,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                 <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { setShowExitModal(true); setShowMenu(false); }}>离开 / 结束</button>
                                 <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { const next = !observeEnabled; updateCharacter(char.id, { dateObserve: { ...char.dateObserve, enabled: next } }); setShowMenu(false); addToast(next ? '观测已开启 · 下条回复生效' : '观测已关闭', 'info'); }}>观测{observeEnabled ? ' · 开' : ' · 关'}</button>
                                 <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { updateCharacter(char.id, { dateVoiceEnabled: !voiceEnabled }); setShowMenu(false); setShowVoiceLangPicker(false); addToast(voiceEnabled ? '语音已关闭' : '语音已开启', 'info'); }}>语音{voiceEnabled ? ' · 开' : ' · 关'}</button>
-                                {messages.length > 0 && !isBatchSelectMode && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={startBatchDelete}>管理 / 删除记录</button>}
+                                {messages.length > 0 && !isBatchSelectMode && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={startBatchDelete}>删除记录</button>}
                             </div>
                         )}
                     </header>
@@ -1199,7 +1240,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                         </div>
                                         <div className="tm-body tm-body-char">
                                             {observeEnabled && hasObservation(peekObs) && <ObserveHUD observation={peekObs} variant="card" charName={char.name} config={char.dateObserve} />}
-                                            {(cleanTextForDisplay(peekBody) || '（见面已经开始）').split('\n').map((line, idx) => line.trim() && <p key={idx} style={{ fontSize: `${dateFontSize}px` }} className="tm-para-block tm-quote-block whitespace-pre-wrap">{line}</p>)}
+                            {(cleanTextForDisplay(peekBody) || '（见面已经开始）').split('\n').map((line, idx) => line.trim() && <p key={idx} style={{ fontSize: `${dateFontSize}px` }} className={`tm-para-block whitespace-pre-wrap ${isDialogueLine(line) ? 'tm-dialogue tm-quote-block' : 'tm-narration'}`}>{line}</p>)}
                                         </div>
                                     </article>
                                 );
@@ -1235,7 +1276,8 @@ const DateSession: React.FC<DateSessionProps> = ({
                             {visibleSessionMessages.map((msg) => (
                                 <article
                                     key={msg.id}
-                                    className={`tm-para ${msg.role === 'user' ? 'tm-para-user' : 'tm-para-char'} group relative ${isBatchSelectMode ? 'pl-10' : ''}`}
+                                    className={`tm-para ${msg.role === 'user' ? 'tm-para-user' : 'tm-para-char'} group relative ${isBatchSelectMode ? (selectedMsgIds.has(msg.id) ? 'tm-batch-selected pl-10' : 'tm-batch-unselected pl-10') : ''}`}
+                                    aria-pressed={isBatchSelectMode ? selectedMsgIds.has(msg.id) : undefined}
                                     onClick={(e) => {
                                         if (!isBatchSelectMode) return;
                                         e.stopPropagation();
@@ -1251,7 +1293,12 @@ const DateSession: React.FC<DateSessionProps> = ({
                                     onContextMenu={(e) => { e.preventDefault(); if (!isBatchSelectMode) { setSelectedMessage(msg); setModalType('options'); } }}
                                 >
                                     {isBatchSelectMode && (
-                                        <div className={`absolute left-0 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full border-2 flex items-center justify-center ${selectedMsgIds.has(msg.id) ? 'bg-primary border-primary' : 'bg-white border-stone-300'}`}>
+                                        <div
+                                            role="checkbox"
+                                            aria-checked={selectedMsgIds.has(msg.id)}
+                                            aria-label={selectedMsgIds.has(msg.id) ? '取消选择这条记录' : '选择这条记录'}
+                                            className={`absolute left-1 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full border-2 flex items-center justify-center shadow-sm transition-all ${selectedMsgIds.has(msg.id) ? 'bg-rose-500 border-rose-500 text-white scale-105' : 'bg-white/90 border-slate-400 text-transparent'}`}
+                                        >
                                             {selectedMsgIds.has(msg.id) && <span className="text-white text-[10px]">✓</span>}
                                         </div>
                                     )}
@@ -1268,7 +1315,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                                 <span className="tc-avatar-badge-user">{userProfile.name}</span>
                                             </div>
                                             <div className="tm-body tm-body-user">
-                                                <p style={{ fontSize: `${dateFontSize}px` }} className="tm-para-block whitespace-pre-wrap">{cleanTextForDisplay(msg.content)}</p>
+                                                <p style={{ fontSize: `${dateFontSize}px` }} className="tm-para-block tm-narration whitespace-pre-wrap">{cleanTextForDisplay(msg.content)}</p>
                                             </div>
                                         </>
                                     ) : (() => {
@@ -1321,7 +1368,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                                 return (
                                                     <div
                                                         key={idx}
-                                                        className="flex items-start gap-1 mb-4 last:mb-0"
+                                                        className={`tm-line-wrap flex items-start gap-1 mb-4 last:mb-0 ${lineIsDialogue ? 'tm-dialogue-line' : 'tm-narration-line'}`}
                                                         onClick={(e) => {
                                                             if (!voiceFavoriteLongPressTriggered.current) return;
                                                             e.stopPropagation();
@@ -1333,7 +1380,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                                         onMouseDown={voiceEnabled && lineIsDialogue && !isOpeningMsg ? (e) => e.stopPropagation() : undefined}
                                                         onContextMenu={voiceEnabled && lineIsDialogue && !isOpeningMsg ? (e) => { e.preventDefault(); e.stopPropagation(); void openDateVoiceFavorite(voiceTarget); } : undefined}
                                                     >
-                                                        <p style={{ fontSize: `${dateFontSize}px` }} className={`tm-para-block flex-1 whitespace-pre-wrap pl-4 ${char.dateLightReading ? 'text-stone-700 border-l-2 border-stone-200' : 'text-slate-200 drop-shadow-md border-l-2 border-white/10'}`}>{cleanLine}</p>
+                                                        <p style={{ fontSize: `${dateFontSize}px` }} className={`tm-para-block flex-1 whitespace-pre-wrap ${lineIsDialogue ? 'tm-dialogue tm-quote-block' : 'tm-narration'}`}>{cleanLine}</p>
                                                         {/* Voice button: only for dialogue lines, not opening */}
                                                         {voiceEnabled && lineIsDialogue && !isOpeningMsg && (
                                                             <button
@@ -1419,7 +1466,8 @@ const DateSession: React.FC<DateSessionProps> = ({
                                 </div>
                                 <p style={{ fontSize: `${dateFontSize}px` }} className="text-white/90 leading-relaxed font-light drop-shadow-md mt-2">{displayedText}{isTextAnimating && <span className="inline-block w-2 h-4 bg-white/70 ml-1 animate-pulse align-middle"></span>}</p>
                                 {!isTextAnimating && dialogueQueue.length > 0 && <div className="absolute bottom-3 right-4 animate-bounce opacity-70"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-white"><path fillRule="evenodd" d="M12.53 16.28a.75.75 0 0 1-1.06 0l-7.5-7.5a.75.75 0 0 1 1.06-1.06L12 14.69l6.97-6.97a.75.75 0 1 1 1.06 1.06l-7.5 7.5Z" clipRule="evenodd" /></svg></div>}
-                                {!isTextAnimating && dialogueQueue.length === 0 && dialogueBatch.length > 0 && <div className="absolute bottom-3 right-4 opacity-50 text-[10px] text-white flex items-center gap-1 animate-pulse"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>Loop</div>}
+                                {!isTextAnimating && currentDialogueIndex > 0 && <button type="button" onClick={(e) => { e.stopPropagation(); handlePreviousDialogue(); }} className="absolute bottom-2 left-4 rounded-full border border-white/20 bg-black/30 px-3 py-1.5 text-xs text-white/85 shadow-lg backdrop-blur-md transition-all active:scale-95" aria-label="上一条">← 上一条</button>}
+                                {!isTextAnimating && dialogueQueue.length === 0 && dialogueBatch.length > 0 && <span className="absolute bottom-3 right-4 text-[10px] text-white/55">本轮已读完</span>}
                             </div>
                         </div>
                     )}

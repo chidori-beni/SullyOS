@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { DateObservation, DateObserveConfig, DateObserveStyleId } from '../../types';
 import { resolveObserveFields } from '../../utils/datePrompts';
 
@@ -234,8 +234,12 @@ const PanelHeader: React.FC<{ theme: Theme; charName?: string; right?: React.Rea
 
 const ObserveHUD: React.FC<ObserveHUDProps> = ({ observation, variant = 'hud', charName, config }) => {
     // Hooks 必须无条件、且在任何 early-return 之前调用（React Rules of Hooks）。
-    const [collapsed, setCollapsed] = useState(false);
+    // 立绘模式默认收起，避免观测面板挡住角色；阅读模式的 card 仍始终展开。
+    const [collapsed, setCollapsed] = useState(() => variant === 'hud');
     const [expanded, setExpanded] = useState(false); // 独立全屏查看
+    useEffect(() => {
+        setCollapsed(variant === 'hud');
+    }, [variant]);
 
     const theme = getTheme(config?.style);
     const rows = buildRows(observation, config, charName);

@@ -13,7 +13,7 @@ import Modal from '../components/os/Modal';
 import DateSession from '../components/date/DateSession';
 import DateSettings from '../components/date/DateSettings';
 import { armDateResumeAttempt, clearDateResumeAttempt, takeCrashedDateResume } from '../utils/dateSessionRecovery';
-import { BookOpen, Sparkle, CaretLeft, GearSix } from '@phosphor-icons/react';
+import { BookOpen, Sparkle, CaretLeft, GearSix, Trash } from '@phosphor-icons/react';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
 import { trimHistoryThrough } from '../utils/dateSessionHistory';
 import { trackEvent } from '../utils/analytics';
@@ -32,6 +32,15 @@ import {
     type DateHistorySortOrder,
     type DateHistoryView,
 } from '../utils/dateHistory';
+
+const truncateHistoryPreview = (value: string, maxLength = 96): string => {
+    const normalized = value
+        .replace(/\[.*?\]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!normalized) return '这次见面没有摘要。';
+    return normalized.length > maxLength ? `${normalized.slice(0, maxLength).trimEnd()}…` : normalized;
+};
 
 const DateApp: React.FC = () => {
     const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, apiConfig, addToast, updateCharacter, virtualTime, userProfile, memoryPalaceConfig, dateAutoStartCharId, consumeDateAutoStart, characterGroups, groups, realtimeConfig } = useOS();
@@ -111,6 +120,8 @@ const DateApp: React.FC = () => {
     const [pendingHistoryOpen, setPendingHistoryOpen] = useState<{ charId: string; encounterId: string } | null>(null);
     const [historySelectedGroupId, setHistorySelectedGroupId] = useState<string | null>(null);
     const [historyQuery, setHistoryQuery] = useState('');
+    const [historyDeleteTarget, setHistoryDeleteTarget] = useState<DateHistoryGroup | null>(null);
+    const [historyDeleteBusy, setHistoryDeleteBusy] = useState(false);
     // History long-press context menu
     const [historyMenuMsg, setHistoryMenuMsg] = useState<Message | null>(null);
     const [historyMenuPos, setHistoryMenuPos] = useState<{x: number, y: number}>({x: 0, y: 0});
@@ -641,6 +652,48 @@ const DateApp: React.FC = () => {
         trackEvent('删除见面记录里的一条消息');
     };
 
+    /** 删除一整次分页/见面：正文、结束标记和同步到信息界面的完结卡片一起移除。 */
+    const confirmHistoryGroupDelete = async () => {
+        const target = historyDeleteTarget;
+        if (!char || !target || historyDeleteBusy) return;
+        setHistoryDeleteBusy(true);
+        try {
+            // 列表可能只加载了最近窗口；删除前完整读取，避免长见面只删掉屏幕上那一部分。
+            const allDateMessages = await DB.getRecentMessagesByCharIdAndSource(char.id, 'date', Number.MAX_SAFE_INTEGER);
+            const allEncounterGroups = buildDateHistoryGroups(allDateMessages, 'encounter', 'oldest');
+            const encounterId = target.messages.find(message => typeof message.metadata?.dateEncounterId === 'string')?.metadata?.dateEncounterId;
+            const fullTarget = allEncounterGroups.find(group => group.id === target.id)
+                || (encounterId ? allEncounterGroups.find(group => group.messages.some(message => message.metadata?.dateEncounterId === encounterId)) : undefined);
+            const resolvedEncounterId = encounterId
+                || fullTarget?.messages.find(message => typeof message.metadata?.dateEncounterId === 'string')?.metadata?.dateEncounterId;
+            const dateIds = (fullTarget?.messages || target.messages).map(message => message.id);
+
+            // 完结卡片使用独立 source 保存，否则只删正文会留下“见面结束”卡片。
+            const popupMessages = resolvedEncounterId
+                ? await DB.getRecentMessagesByCharIdAndSource(char.id, 'date-end-popup', Number.MAX_SAFE_INTEGER)
+                : [];
+            const popupIds = popupMessages
+                .filter(message => message.metadata?.dateEncounterId === resolvedEncounterId)
+                .map(message => message.id);
+            const ids = Array.from(new Set([...dateIds, ...popupIds]));
+            await DB.deleteMessages(ids);
+            setHistoryMessages(prev => prev.filter(message => !ids.includes(message.id)));
+            if (char.savedDateState?.encounterId && char.savedDateState.encounterId === resolvedEncounterId) {
+                updateCharacter(char.id, { savedDateState: undefined });
+            }
+            setHistoryDeleteTarget(null);
+            setHistorySelectedGroupId(null);
+            markDateTurnDirty(char);
+            addToast('整次见面已删除', 'success');
+            trackEvent('删除整次见面', { 消息数: ids.length });
+        } catch (error) {
+            console.error('Delete Date Encounter Error', error);
+            addToast('整次见面删除失败，请稍后重试', 'error');
+        } finally {
+            setHistoryDeleteBusy(false);
+        }
+    };
+
     const handleHistoryEditOpen = (msg: Message) => {
         setHistoryEditMsg(msg);
         setHistoryEditContent(msg.content);
@@ -757,6 +810,7 @@ const DateApp: React.FC = () => {
         setHistoryFocusEncounterId(focusEncounterId || null);
         setHistorySelectedGroupId(null);
         setHistoryQuery('');
+        setHistoryDeleteTarget(null);
         // 见面历史按 source=date 独立读取，不受聊天侧记忆宫殿高水位影响。
         const msgs = await DB.getRecentMessagesByCharIdAndSource(c.id, 'date', DATE_HISTORY_MESSAGE_LIMIT);
         setHistoryMessages(msgs);
@@ -1016,7 +1070,7 @@ const DateApp: React.FC = () => {
                     <div className="h-16 flex items-center justify-between px-4">
                         <button onClick={handleBack} className="p-2 -ml-2 rounded-full hover:bg-slate-100"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg></button>
                         <div className="text-center min-w-0">
-                            <div className="font-bold text-slate-700">{selectedHistoryGroup ? '见面对话' : '见面列表'}</div>
+                            <div className="font-bold text-slate-700">{selectedHistoryGroup ? '见面对话' : '分页记录'}</div>
                             <div className="text-[10px] text-slate-400 truncate max-w-36">{char.name}</div>
                         </div>
                         <button
@@ -1056,7 +1110,10 @@ const DateApp: React.FC = () => {
                                     <div className="text-[10px] text-slate-400 mt-1">{selectedHistoryGroup.messages.length} 句 · {selectedHistoryGroup.completed ? `已完结${selectedHistoryGroup.durationText ? ` · ${selectedHistoryGroup.durationText}` : ''}` : '进行中/旧存档'}</div>
                                     {selectedHistoryGroup.summary && <p className="mt-1 text-[11px] leading-relaxed text-slate-500">{selectedHistoryGroup.summary}</p>}
                                 </div>
-                                <button type="button" onClick={(event) => { event.stopPropagation(); exportHistoryGroups([selectedHistoryGroup], `${historyView === 'encounter' ? '本次' : '当天'}_${selectedHistoryGroup.dateKey}`); }} disabled={historyBusy} className="shrink-0 text-[11px] font-bold text-blue-500 bg-blue-50 px-3 py-1.5 rounded-full disabled:opacity-40">导出</button>
+                                <div className="flex shrink-0 items-center gap-1.5">
+                                    <button type="button" onClick={(event) => { event.stopPropagation(); exportHistoryGroups([selectedHistoryGroup], `${historyView === 'encounter' ? '本次' : '当天'}_${selectedHistoryGroup.dateKey}`); }} disabled={historyBusy} className="text-[11px] font-bold text-blue-500 bg-blue-50 px-3 py-1.5 rounded-full disabled:opacity-40">导出</button>
+                                    {historyView === 'encounter' && <button type="button" onClick={(event) => { event.stopPropagation(); setHistoryDeleteTarget(selectedHistoryGroup); }} disabled={historyBusy || historyDeleteBusy} aria-label="删除整次见面" className="flex h-8 w-8 items-center justify-center rounded-full bg-rose-50 text-rose-500 transition-colors hover:bg-rose-100 disabled:opacity-40"><Trash size={15} weight="bold" /></button>}
+                                </div>
                             </div>
                             <div className="p-4 space-y-4">
                                 {selectedHistoryGroup.messages.map(m => {
@@ -1079,16 +1136,36 @@ const DateApp: React.FC = () => {
                             <input value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} placeholder="搜索见面日期、摘要或内容…" className="min-w-0 flex-1 bg-transparent text-xs text-slate-700 outline-none placeholder:text-slate-300" />
                             {historyQuery && <button type="button" onClick={() => setHistoryQuery('')} className="text-slate-300">×</button>}
                         </label>
-                        {historyListGroups.length === 0 ? <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-2"><BookOpen size={48} className="opacity-50" /><span className="text-xs">{historyQuery ? '没有匹配的见面' : '暂无见面记录'}</span></div> : <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                        {historyListGroups.length === 0 ? <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-2"><BookOpen size={48} className="opacity-50" /><span className="text-xs">{historyQuery ? '没有匹配的分页' : '暂无分页记录'}</span></div> : <div className="space-y-2">
                             {historyListGroups.map((group, index) => {
-                                const preview = (group.summary || group.messages.filter(message => message.role !== 'system').map(message => message.content || '').join(' ') || '这次见面没有摘要。').replace(/\[.*?\]/g, '').replace(/\s+/g, ' ').trim();
+                                const preview = truncateHistoryPreview(group.summary || group.messages.filter(message => message.role !== 'system').map(message => message.content || '').join(' '));
                                 const originalIndex = historyGroups.findIndex(candidate => candidate.id === group.id);
                                 const encounterNumber = originalIndex < 0 ? historyListGroups.length - index : (historySortOrder === 'newest' ? historyGroups.length - originalIndex : originalIndex + 1);
-                                return <button type="button" key={group.id} onClick={() => setHistorySelectedGroupId(group.id)} className="flex w-full items-center gap-3 border-b border-slate-100 px-3 py-3 text-left transition-colors last:border-b-0 hover:bg-slate-50 active:bg-slate-100">
-                                    {char.avatar ? <img src={char.avatar} alt="" className="h-11 w-11 shrink-0 rounded-xl object-cover" /> : <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-rose-100 text-sm font-bold text-rose-400">{char.name.slice(0, 1)}</div>}
-                                    <span className="min-w-0 flex-1"><span className="flex items-center justify-between gap-2"><span className="truncate text-xs font-bold text-slate-700">{historyView === 'encounter' ? `第 ${encounterNumber} 次见面` : formatDateHistoryDate(group.startAt)}</span><span className="shrink-0 text-[10px] text-slate-400">{formatDateHistoryTime(group.startAt, true)}</span></span><span className="mt-1 block line-clamp-2 text-[11px] leading-relaxed text-slate-500">{preview}</span><span className="mt-1 block text-[10px] text-slate-400">{group.messages.length} 句 · {group.completed ? `已完结${group.durationText ? ` · ${group.durationText}` : ''}` : '进行中/旧存档'}</span></span>
-                                    <span className="text-slate-300">›</span>
-                                </button>;
+                                const dateLabel = group.dateKey.replace(/-/g, '/');
+                                const openGroup = () => setHistorySelectedGroupId(group.id);
+                                return (
+                                    <div
+                                        key={group.id}
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={openGroup}
+                                        onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openGroup(); } }}
+                                        className="group flex min-h-[92px] w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-left shadow-sm transition-all hover:border-slate-300 hover:shadow-md active:scale-[0.995]"
+                                    >
+                                        {char.avatar ? <img src={char.avatar} alt="" className="h-10 w-10 shrink-0 rounded-xl object-cover" /> : <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-100 text-sm font-bold text-rose-400">{char.name.slice(0, 1)}</div>}
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex items-center justify-between gap-2">
+                                                <span className="truncate text-sm font-bold text-slate-700">{historyView === 'encounter' ? `第 ${encounterNumber} 次见面` : dateLabel}</span>
+                                                <span className="shrink-0 text-[10px] text-slate-400">{formatDateHistoryTime(group.startAt, true)}</span>
+                                            </div>
+                                            <div className="mt-0.5 truncate text-[11px] font-medium text-slate-400">{historyView === 'encounter' ? dateLabel : `${group.encounterCount || 1} 次见面`}</div>
+                                            <div className="mt-1 max-h-[2.75rem] overflow-hidden text-[11px] leading-[1.35rem] text-slate-500">{preview}</div>
+                                            <div className="mt-1 text-[10px] text-slate-400">{group.messages.length} 句 · {group.completed ? `已完结${group.durationText ? ` · ${group.durationText}` : ''}` : '进行中/旧存档'}</div>
+                                        </div>
+                                        {historyView === 'encounter' && <button type="button" onClick={(event) => { event.stopPropagation(); setHistoryDeleteTarget(group); }} disabled={historyBusy || historyDeleteBusy} aria-label={`删除第 ${encounterNumber} 次见面`} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-300 transition-colors hover:bg-rose-50 hover:text-rose-500 disabled:opacity-40"><Trash size={15} /></button>}
+                                        <span className="shrink-0 text-lg text-slate-300">›</span>
+                                    </div>
+                                );
                             })}
                         </div>}
                         {!historyReachedEnd && historyMessages.length > 0 && <button type="button" onClick={handleLoadMoreHistory} disabled={historyBusy} className="mt-4 w-full py-3 rounded-2xl border border-slate-200 bg-white text-xs font-bold text-slate-500 disabled:opacity-50">{historyBusy ? '正在加载…' : '加载更早的见面记录'}</button>}
@@ -1119,6 +1196,22 @@ const DateApp: React.FC = () => {
                         </button>
                     </div>
                 )}
+
+                <Modal
+                    isOpen={!!historyDeleteTarget}
+                    title="删除整次见面？"
+                    onClose={() => { if (!historyDeleteBusy) setHistoryDeleteTarget(null); }}
+                    footer={
+                        <div className="flex w-full gap-3">
+                            <button type="button" onClick={() => setHistoryDeleteTarget(null)} disabled={historyDeleteBusy} className="flex-1 rounded-2xl bg-slate-100 py-3 font-bold text-slate-600 disabled:opacity-50">取消</button>
+                            <button type="button" onClick={() => void confirmHistoryGroupDelete()} disabled={historyDeleteBusy} className="flex-1 rounded-2xl bg-rose-500 py-3 font-bold text-white shadow-lg shadow-rose-200 disabled:opacity-50">{historyDeleteBusy ? '删除中…' : '删除整次'}</button>
+                        </div>
+                    }
+                >
+                    <p className="py-2 text-sm leading-relaxed text-slate-600">
+                        将删除 {historyDeleteTarget ? formatDateHistoryTime(historyDeleteTarget.startAt, true) : '这次'} 的整次见面、结束标记及同步卡片，共 {historyDeleteTarget?.messages.length || 0} 条已加载记录。此操作不可恢复。
+                    </p>
+                </Modal>
 
                 {/* History edit modal */}
                 <Modal isOpen={!!historyEditMsg} title="编辑消息" onClose={() => setHistoryEditMsg(null)} footer={

@@ -2108,6 +2108,8 @@ export interface DateState {
     encounterStartedAt?: number;
     dialogueQueue: DialogueItem[];
     dialogueBatch: DialogueItem[];
+    /** 当前立绘批次正在显示的条目位置，供上一条/恢复进度使用。 */
+    dialogueIndex?: number;
     currentText: string;
     /** @deprecated 旧版恢复快照会复制背景图，可能是超大 base64；新版恢复优先读角色上的 dateBackground。 */
     bgImage?: string;
