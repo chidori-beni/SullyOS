@@ -23,9 +23,19 @@ export const sortTasksForCalendar = (tasks: Task[]): Task[] => [...tasks].sort((
 export const tasksForDate = (tasks: Task[], date: string): Task[] =>
     sortTasksForCalendar(tasks.filter(task => taskDateKey(task) === date));
 
+/** Returns whether an event's saved date represents the supplied occurrence date. */
+export const eventOccursOnDate = (event: Anniversary, date: string): boolean => {
+    if (event.date === date) return true;
+    const repeat = event.repeat;
+    if (!repeat || repeat.type !== 'weekly' || repeat.weekdays.length === 0 || date < event.date) return false;
+    if (repeat.until && date > repeat.until) return false;
+    const [year, month, day] = date.split('-').map(Number);
+    return repeat.weekdays.includes(new Date(year, month - 1, day).getDay());
+};
+
 export const eventsForDate = (events: Anniversary[], date: string): Anniversary[] =>
     events
-        .filter(event => event.date === date)
+        .filter(event => eventOccursOnDate(event, date))
         .sort((a, b) => (a.startTime || '23:59').localeCompare(b.startTime || '23:59'));
 
 export const pendingTasksForSupervisor = (
@@ -48,7 +58,7 @@ export const buildUserCalendarContext = (params: {
 }): string => {
     const tasks = pendingTasksForSupervisor(params.tasks, params.supervisorId, params.today);
     const events = params.events
-        .filter(event => event.date === params.today)
+        .filter(event => eventOccursOnDate(event, params.today))
         .sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
     if (tasks.length === 0 && events.length === 0) return '';
 

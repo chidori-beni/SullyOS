@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Anniversary, Task } from '../types';
 import {
     buildUserCalendarContext,
+    eventOccursOnDate,
     eventsForDate,
     pendingTasksForSupervisor,
     taskDateKey,
@@ -60,5 +61,20 @@ describe('calendarIntegration', () => {
         expect(text).toContain('不要每轮重复');
         expect(text).toContain('09:00｜会议');
         expect(text).toContain('17:30｜交报告');
+    });
+
+    it('expands a weekly event only on selected weekdays and stops at until', () => {
+        const recurring: Anniversary = {
+            id: 'class', title: '上课', date: '2026-08-24', charId: '',
+            repeat: { type: 'weekly', weekdays: [1, 2, 3, 4, 5], until: '2026-09-04' },
+        };
+        expect(eventOccursOnDate(recurring, '2026-08-24')).toBe(true);
+        expect(eventOccursOnDate(recurring, '2026-08-28')).toBe(true);
+        expect(eventOccursOnDate(recurring, '2026-08-29')).toBe(false);
+        expect(eventOccursOnDate(recurring, '2026-09-07')).toBe(false);
+        expect(eventsForDate([recurring], '2026-08-26')).toEqual([recurring]);
+        expect(buildUserCalendarContext({
+            tasks: [], events: [recurring], supervisorId: 'char-a', userName: '千夜', today: '2026-08-26',
+        })).toContain('上课');
     });
 });

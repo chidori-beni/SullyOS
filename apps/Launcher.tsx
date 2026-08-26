@@ -13,7 +13,8 @@ import { getDailyScheduleForChar } from '../utils/dailySchedule';
 import { useLocalDateKey } from '../hooks/useLocalDateKey';
 import { resolveCharTimeZone } from '../utils/timezone';
 import { trackEvent } from '../utils/analytics';
-import { CALENDAR_DATA_UPDATED_EVENT, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey } from '../utils/calendarIntegration';
+import { CALENDAR_DATA_UPDATED_EVENT, eventOccursOnDate, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey } from '../utils/calendarIntegration';
+import { wrapPageIndex } from '../utils/circularPaging';
 
 const CompanionHome = React.lazy(() => import('../components/os/CompanionHome'));
 
@@ -391,7 +392,7 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, tasks, o
                       {calendarDays.map(day => {
                           const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                           const isToday = day === now.getDate();
-                          const hasEvent = anniversaries.some((a: any) => a.date === dateStr)
+                          const hasEvent = anniversaries.some((a: any) => eventOccursOnDate(a, dateStr))
                               || tasks.some((task: Task) => taskDateKey(task) === dateStr);
                           
                           return (
@@ -424,9 +425,10 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, tasks, o
                               className={`flex w-full items-center gap-3 rounded-xl p-3 text-left transition active:scale-[0.98] ${acnh ? 'bg-[#efe7d4] border border-[#e0d6c0]' : paper ? 'bg-[#f3ecdf]/70 border border-[#5b4833]/10' : 'bg-white/5 border border-white/10'}`}
                           >
                               <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 ${paper ? 'border-[#788369]/50' : 'border-white/50'}`} style={{ color: contentColor }} />
-                              <span className="min-w-0 flex-1">
-                                  <span className="block truncate text-sm font-bold" style={{ color: contentColor }}>{task.title}</span>
-                                  <span className="block truncate text-[10px] opacity-50" style={{ color: contentColor }}>
+                                  <span className="min-w-0 flex-1">
+                                      <span className="block truncate text-sm font-bold" style={{ color: contentColor }}>{task.title}</span>
+                                      {task.supervisorComment && <span className="block truncate text-[10px] italic opacity-65" style={{ color: contentColor }}>{task.supervisorComment}</span>}
+                                      <span className="block truncate text-[10px] opacity-50" style={{ color: contentColor }}>
                                       {taskDateKey(task) < todayStr ? '已到期' : taskDateKey(task) === todayStr ? '今天' : taskDateKey(task)}{task.dueTime ? ` · ${task.dueTime}` : ''}
                                   </span>
                               </span>
@@ -483,6 +485,7 @@ const Launcher: React.FC = () => {
   const startX = useRef(0);
   const scrollLeftRef = useRef(0);
   const dragMoved = useRef(0);
+  const touchStartX = useRef<number | null>(null);
 
   // Pagination Logic
   // 跟随 DevDebug 可用性：prod 用户在设置页连点 5 下解锁后，CharCreatorDev 立刻出现；
@@ -662,6 +665,18 @@ const Launcher: React.FC = () => {
       }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const jumpToPage = useCallback((page: number) => {
+      const scroller = scrollContainerRef.current;
+      if (!scroller || totalPages <= 0) return;
+      const next = Math.max(0, Math.min(totalPages - 1, page));
+      activePageIndexRef.current = next;
+      setActivePageIndex(next);
+      _lastPageIndex = next;
+      // A wrap should feel like a direct carousel jump, not an animation through
+      // every intervening page (the exact convenience this edge gesture provides).
+      scroller.scrollTo({ left: scroller.clientWidth * next, behavior: 'auto' });
+  }, [totalPages]);
+
   const handleScroll = () => {
       if (scrollContainerRef.current) {
           const width = scrollContainerRef.current.clientWidth;
@@ -671,6 +686,23 @@ const Launcher: React.FC = () => {
           activePageIndexRef.current = index;
           _lastPageIndex = index; // Persist across remounts
       }
+  };
+
+  // Native horizontal scrolling is kept for the normal mobile feel. At either edge,
+  // a swipe in the outward direction moves directly to the opposite page.
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+      if (!layoutEditing) touchStartX.current = e.touches[0]?.clientX ?? null;
+  };
+  const handleTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+      const start = touchStartX.current;
+      touchStartX.current = null;
+      if (layoutEditing || start == null || totalPages < 2) return;
+      const end = e.changedTouches[0]?.clientX ?? start;
+      const delta = end - start;
+      if (Math.abs(delta) < 42) return;
+      const current = activePageIndexRef.current;
+      if (current === 0 && delta > 0) jumpToPage(wrapPageIndex(current, -1, totalPages));
+      else if (current === totalPages - 1 && delta < 0) jumpToPage(wrapPageIndex(current, 1, totalPages));
   };
 
   // --- Mouse Drag Handlers ---
@@ -997,9 +1029,11 @@ const Launcher: React.FC = () => {
         onScroll={handleScroll}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseLeave}
-        onClickCapture={handleClickCapture}
+         onMouseUp={handleMouseUp}
+         onMouseLeave={handleMouseLeave}
+         onTouchStart={handleTouchStart}
+         onTouchEnd={handleTouchEnd}
+         onClickCapture={handleClickCapture}
         className="flex-1 flex overflow-x-auto snap-x snap-mandatory no-scrollbar cursor-grab active:cursor-grabbing"
         style={{
             scrollBehavior: 'smooth',

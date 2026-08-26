@@ -3682,6 +3682,9 @@ export interface Task {
     dueTime?: string;
     /** 是否允许监督角色在聊天里自然提起；旧数据默认允许。 */
     naturalReminder?: boolean;
+    /** 添加待办后由监督角色生成、持久显示在待办卡片下方的一句话。 */
+    supervisorComment?: string;
+    supervisorCommentGeneratedAt?: number;
     isCompleted: boolean;
     completedAt?: number;
     createdAt: number;
@@ -3691,6 +3694,7 @@ export interface Anniversary {
     id: string;
     title: string;
     date: string;
+    /** 关联角色；空字符串表示用户独立日程，保留 string 以兼容旧读取方。 */
     charId: string;
     /** 缺省为 anniversary，兼容旧纪念日记录。 */
     kind?: 'anniversary' | 'event';
@@ -3698,6 +3702,12 @@ export interface Anniversary {
     endTime?: string;
     location?: string;
     note?: string;
+    /** 每周重复规则；weekdays 使用 JS 星期编号，0=周日，1=周一……6=周六。 */
+    repeat?: {
+        type: 'weekly';
+        weekdays: number[];
+        until?: string;
+    };
     aiThought?: string;
     lastThoughtGeneratedAt?: number;
 }
