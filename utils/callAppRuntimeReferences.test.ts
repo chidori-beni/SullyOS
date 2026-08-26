@@ -275,4 +275,20 @@ describe('CallApp runtime references', () => {
     expect(source).toContain('### 陪伴，不监督（高优先级边界）');
     expect(source).toContain('prepareSiliconFlowAudioPlayback();');
   });
+
+  it('keeps the user-selected call output route across async TTS turns', () => {
+    const source = readFileSync(path.resolve(__dirname, '../apps/CallApp.tsx'), 'utf8');
+    expect(source).toContain("type SiliconFlowAudioRoute");
+    expect(source).toContain("const [audioOutputRoute, setAudioOutputRoute]");
+    expect(source).toContain('const audioOutputRouteRef = useRef<SiliconFlowAudioRoute>(audioOutputRoute)');
+    expect(source).toContain('setSiliconFlowAudioRoute(audioOutputRouteRef.current)');
+    expect(source).toContain('audio.muted = false;');
+    expect(source).toContain("const nextRoute: SiliconFlowAudioRoute = isSpeakerOn ? 'receiver' : 'speaker'");
+    expect(source).toContain('当前为外放，点击切换到听筒');
+    expect(source).toContain('当前为听筒，点击切换到外放');
+    expect(source).toContain("document.addEventListener('visibilitychange', reassertVisibleCallRoute)");
+    expect(source).toContain("audioSession?.addEventListener?.('statechange', reassertVisibleCallRoute)");
+    expect(source).not.toContain('if (!next && isAudioPlaying) pauseAudio();');
+    expect(source).not.toContain('const canSpeakVoice = (): boolean => isSpeakerOn');
+  });
 });

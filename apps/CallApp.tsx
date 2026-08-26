@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Microphone, SpeakerHigh, SpeakerSlash, PhoneDisconnect, Translate, Gear, Clock, CaretLeft, CaretRight, Phone, VideoCamera, VideoCameraSlash, Cube, FolderOpen, FileZip, Moon, Sun, Check } from '@phosphor-icons/react';
+import { Microphone, SpeakerHigh, PhoneDisconnect, Translate, Gear, Clock, CaretLeft, CaretRight, Phone, VideoCamera, VideoCameraSlash, Cube, FolderOpen, FileZip, Moon, Sun, Check } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { extractContent, safeFetchJson } from '../utils/safeApi';
 import { minimaxFetch } from '../utils/minimaxEndpoint';
@@ -12,7 +12,7 @@ import { normalizeVoiceTags } from '../utils/sanitize';
 import { FISH_VOICE_ACTING_GUIDE, synthesizeSpeechFishDetailed, resolveFishAudioApiKey, cleanTextForTtsFish, stripFishMarkupForDisplay } from '../utils/fishAudioTts';
 import { resolveTtsProvider, getTtsProvider, getVoicePromptOverride } from '../utils/ttsProvider';
 import { VOICE_LANGUAGE_OPTIONS } from '../utils/voiceLanguage';
-import { startStt, isSttSupported, prepareSiliconFlowAudioPlayback, releaseSiliconFlowMicrophone, type SttSession } from '../utils/speechToText';
+import { startStt, isSttSupported, prepareSiliconFlowAudioPlayback, setSiliconFlowAudioRoute, releaseSiliconFlowMicrophone, type SiliconFlowAudioRoute, type SttSession } from '../utils/speechToText';
 import { ContextBuilder } from '../utils/context';
 import { resolveCharTimeZone } from '../utils/timezone';
 import {
@@ -200,6 +200,7 @@ const VIDEO_CALL_LAYOUT_KEY = 'sully-call-video-layout-v1';
 const FAKE_USER_CAMERA_IMAGE_KEY = 'sully-call-fake-camera-image-v1';
 const USER_CAMERA_PREVIEW_SIZE_KEY = 'sully-call-camera-preview-size-v1';
 const CALL_SETUP_GUIDE_KEY = 'sully-call-setup-guide-v2';
+const CALL_AUDIO_ROUTE_KEY = 'sully-call-audio-route-v1';
 // Four 8-bit PCM silent samples. Playing this exact call audio element from the
 // user's “接通” gesture primes iOS media playback before the async TTS response arrives.
 const SILENT_CALL_AUDIO_DATA_URL = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAACAgICA';
@@ -227,6 +228,14 @@ const loadUserCameraPreviewSize = (): UserCameraPreviewSize => {
     return saved === 'small' || saved === 'medium' || saved === 'large' ? saved : 'medium';
   } catch {
     return 'medium';
+  }
+};
+const loadCallAudioRoute = (): SiliconFlowAudioRoute => {
+  try {
+    const saved = localStorage.getItem(CALL_AUDIO_ROUTE_KEY);
+    return saved === 'receiver' ? 'receiver' : 'speaker';
+  } catch {
+    return 'speaker';
   }
 };
 const buildMiniMaxErrorMessage = (rawMessage: string, traceId?: string): string => {
@@ -656,7 +665,12 @@ const CallApp: React.FC = () => {
   const [audioUrl, setAudioUrl] = useState<string>('');
   const [traceId, setTraceId] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState('');
-  const [isSpeakerOn, setIsSpeakerOn] = useState(true);
+  // This is an output-route preference, not a mute switch.  Keep it for the
+  // whole call (and remember the last choice for the next call) so a later
+  // TTS response cannot silently turn a speaker call into a receiver call.
+  const [audioOutputRoute, setAudioOutputRoute] = useState<SiliconFlowAudioRoute>(loadCallAudioRoute);
+  const audioOutputRouteRef = useRef<SiliconFlowAudioRoute>(audioOutputRoute);
+  const isSpeakerOn = audioOutputRoute === 'speaker';
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [callStartedAt, setCallStartedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -710,6 +724,36 @@ const CallApp: React.FC = () => {
   }
   const audioPrimingRef = useRef(false);
   const nativeCallAudioOnly = useMemo(() => shouldKeepNativeCallAudio(), []);
+  const applyAudioOutputRoute = (route: SiliconFlowAudioRoute) => {
+    // Update the ref synchronously: async TTS callbacks may still hold the
+    // previous React render while the user is switching routes.
+    audioOutputRouteRef.current = route;
+    setAudioOutputRoute(route);
+    setSiliconFlowAudioRoute(route);
+  };
+  useEffect(() => {
+    audioOutputRouteRef.current = audioOutputRoute;
+    try { localStorage.setItem(CALL_AUDIO_ROUTE_KEY, audioOutputRoute); } catch { /* private WebView */ }
+    // Do not change the PWA's global audio category while the phone app is on
+    // its role-picker/history screens.  The remembered route is applied as the
+    // call enters the in-call view and again at every playback boundary.
+    if (viewMode === 'in-call') setSiliconFlowAudioRoute(audioOutputRoute);
+  }, [audioOutputRoute, viewMode]);
+  useEffect(() => {
+    if (viewMode !== 'in-call') return;
+    const reassertVisibleCallRoute = () => {
+      if (document.visibilityState !== 'visible') return;
+      setSiliconFlowAudioRoute(audioOutputRouteRef.current);
+      if (audioRef.current && !audioRef.current.paused) prepareSiliconFlowAudioPlayback();
+    };
+    const audioSession = (navigator as Navigator & { audioSession?: EventTarget }).audioSession;
+    document.addEventListener('visibilitychange', reassertVisibleCallRoute);
+    audioSession?.addEventListener?.('statechange', reassertVisibleCallRoute);
+    return () => {
+      document.removeEventListener('visibilitychange', reassertVisibleCallRoute);
+      audioSession?.removeEventListener?.('statechange', reassertVisibleCallRoute);
+    };
+  }, [viewMode]);
   const userCameraVideoRef = useRef<HTMLVideoElement | null>(null);
   const userCameraStreamRef = useRef<MediaStream | null>(null);
   const userCameraRequestRef = useRef(0);
@@ -1372,7 +1416,8 @@ const CallApp: React.FC = () => {
     const hasTimber = (selectedChar?.voiceProfile?.timberWeights?.length || 0) > 1;
     return !!resolveMiniMaxApiKey(apiConfig) && (!!voiceId || hasTimber);
   };
-  const canSpeakVoice = (): boolean => isSpeakerOn && hasConfiguredVoice();
+  // Receiver mode is still an audible route; it must never disable TTS.
+  const canSpeakVoice = (): boolean => hasConfiguredVoice();
   // 鱼声合成：直接把（带 inline cue 的）文本交给鱼声合成器，由 cleanTextForTtsFish 做
   // 鱼声专属清洗——保留 [happy]/[whispering]/[break] 等 cue，只清系统标记 / <#秒#> 残留。
   // 绝不能先走 MiniMax 的 cleanTextForTts，那会把方括号 cue 全剥掉。
@@ -1848,11 +1893,13 @@ const CallApp: React.FC = () => {
     trackEvent('打开通话偏好');
   };
   const primeCallAudioFromGesture = (forceManualPlayback = false) => {
-    if (!forceManualPlayback && (!callPreferences.voiceAutoPlay || !isSpeakerOn)) return;
+    if (!forceManualPlayback && !callPreferences.voiceAutoPlay) return;
     const audio = audioRef.current;
     if (!audio) return;
 
-    if (forceManualPlayback && !isSpeakerOn) setIsSpeakerOn(true);
+    // Apply the route in the same user-gesture stack that unlocks the media
+    // element.  Do not force speaker here: receiver is a valid user choice.
+    setSiliconFlowAudioRoute(audioOutputRouteRef.current);
 
     // Desktop/Android may use WebAudio for real-time lip sync. Invoke resume()
     // directly in the click stack; never wait for React onPlay/useEffect.
@@ -1866,7 +1913,13 @@ const CallApp: React.FC = () => {
       audio.pause();
       audio.removeAttribute('src');
       audio.load();
-      window.setTimeout(() => { audioPrimingRef.current = false; }, 0);
+      // Pausing the priming element can make WebKit recompute its category;
+      // restore the selected route before the asynchronous TTS request.
+      prepareSiliconFlowAudioPlayback();
+      window.setTimeout(() => {
+        prepareSiliconFlowAudioPlayback();
+        audioPrimingRef.current = false;
+      }, 0);
     };
     try {
       const attempt = audio.play();
@@ -2488,19 +2541,29 @@ ${sentencePlan}`;
     };
   }, []);
 
-  useEffect(() => {
-    if (audioRef.current) audioRef.current.muted = !isSpeakerOn;
-  }, [isSpeakerOn]);
-
   const startCallAudioElement = (audio: HTMLAudioElement, forceAudible = false): Promise<void> => {
+    // TTS can resolve after several React renders.  Read the synchronous ref,
+    // then re-apply the same route immediately before and just after play().
+    // `forceAudible` is retained for the manual replay call site, but route
+    // selection itself must never be implemented by muting the element.
+    setSiliconFlowAudioRoute(audioOutputRouteRef.current);
     prepareSiliconFlowAudioPlayback();
-    audio.muted = forceAudible ? false : !isSpeakerOn;
+    audio.muted = false;
     const feed = callMode === 'video' && !nativeCallAudioOnly ? getAudioFeed() : null;
     // Both calls are made immediately in the originating click stack. The graph
     // is attached only after both succeeded, so a suspended context can never
     // steal otherwise-audible native media output.
     const unlockAttempt = feed?.unlock();
     const playbackAttempt = audio.play();
+    if (playbackAttempt) {
+      void playbackAttempt.then(() => {
+        // WebKit may recompute its category when the element actually starts.
+        // Reassert once in the resolved play turn and once after the route
+        // change has crossed the native event loop.
+        prepareSiliconFlowAudioPlayback();
+        window.setTimeout(() => prepareSiliconFlowAudioPlayback(), 0);
+      }).catch(() => { /* caller handles the original playback rejection */ });
+    }
     if (feed && unlockAttempt) {
       void Promise.allSettled([unlockAttempt, playbackAttempt]).then(([unlockResult, playbackResult]) => {
         if (unlockResult.status === 'fulfilled' && unlockResult.value && playbackResult.status === 'fulfilled') {
@@ -2571,7 +2634,6 @@ ${sentencePlan}`;
   const handlePlayBubbleAudio = async (bubble: CallBubble) => {
     if (bubble.role !== 'assistant' || generatingAudioBubbleId) return;
     if (bubble.audioUrl) {
-      if (!isSpeakerOn) setIsSpeakerOn(true);
       playAudio(bubble.audioUrl, bubble.performanceTimeline, estimateSpeechMs(bubble.text), true);
       trackEvent('重播一条通话语音');
       return;
@@ -2582,7 +2644,6 @@ ${sentencePlan}`;
     primeCallAudioFromGesture(true);
     const url = await ensureCallBubbleAudio(bubble);
     if (!url) return;
-    if (!isSpeakerOn) setIsSpeakerOn(true);
     playAudio(url, bubble.performanceTimeline, estimateSpeechMs(bubble.text), true);
     trackEvent('按需生成并播放通话语音');
   };
@@ -3102,7 +3163,7 @@ ${sentencePlan}`;
       } else {
         setCallState('listening');
       }
-      if (isSpeakerOn) addToast('语音未配置，先用文字聊吧', 'info');
+      addToast('语音未配置，先用文字聊吧', 'info');
       return;
     }
     try {
@@ -4682,22 +4743,28 @@ ${sentencePlan}`;
           {/* speaker */}
           <button
             onClick={() => {
-              const next = !isSpeakerOn;
-              setIsSpeakerOn(next);
-              if (!next && isAudioPlaying) pauseAudio();
-              if (next) primeCallAudioFromGesture(true);
+              const nextRoute: SiliconFlowAudioRoute = isSpeakerOn ? 'receiver' : 'speaker';
+              applyAudioOutputRoute(nextRoute);
+              // Re-apply the route to the currently playing element without
+              // stopping the turn.  The next generated reply will use the
+              // same ref even if this click races an async TTS callback.
+              if (isAudioPlaying && audioRef.current) {
+                startCallAudioElement(audioRef.current, true).catch(() => { /* route switch is best effort */ });
+              } else {
+                primeCallAudioFromGesture(true);
+              }
             }}
-            title={isSpeakerOn ? '外放开启' : '外放关闭'}
+            title={isSpeakerOn ? '当前为外放，点击切换到听筒' : '当前为听筒，点击切换到外放'}
             className={`flex flex-col items-center transition active:scale-95 ${callMode === 'video' ? 'gap-0.5' : 'gap-1.5'}`}
           >
             <span className={`${callControlSize} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
               style={isSpeakerOn ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.15)' }}>
               {isSpeakerOn
                 ? <SpeakerHigh size={22} weight="fill" className="text-white/90" />
-                : <SpeakerSlash size={22} weight="fill" className="text-white/50" />}
+                : <Phone size={22} weight="fill" className="text-white/70" />}
             </span>
-            <span className="text-[10px] text-white/70">外放</span>
-            {callMode !== 'video' && <span className="text-[8px] tracking-[0.15em]" style={{ color: isSpeakerOn ? accentColor : 'rgba(255,255,255,0.3)' }}>{isSpeakerOn ? 'ON' : 'OFF'}</span>}
+            <span className="text-[10px] text-white/70">{isSpeakerOn ? '外放' : '听筒'}</span>
+            {callMode !== 'video' && <span className="text-[8px] tracking-[0.15em]" style={{ color: isSpeakerOn ? accentColor : 'rgba(255,255,255,0.5)' }}>{isSpeakerOn ? 'SPEAKER' : 'RECEIVER'}</span>}
           </button>
         </div>
       </div>

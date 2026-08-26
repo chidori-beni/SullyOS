@@ -171,6 +171,21 @@ let siliconFlowMicrophoneGeneration = 0;
 type WebAudioSessionType = 'auto' | 'playback' | 'play-and-record';
 
 /**
+ * The route the user selected for role audio during a call.
+ *
+ * Web Audio has no portable "built-in speaker" / "receiver" sink id on iOS.
+ * The closest control exposed to a PWA is the Audio Session category:
+ * `playback` is the media/speaker attempt and `play-and-record` is the
+ * phone-call/receiver attempt.  Keep this preference in one module so the
+ * microphone boundary and every later TTS turn use the same choice.
+ */
+export type SiliconFlowAudioRoute = 'speaker' | 'receiver';
+let siliconFlowAudioRoute: SiliconFlowAudioRoute = 'speaker';
+
+const audioSessionTypeForRoute = (route: SiliconFlowAudioRoute): WebAudioSessionType =>
+  route === 'speaker' ? 'playback' : 'play-and-record';
+
+/**
  * Safari 16.4+ exposes a subset of the Audio Session API. Merely disabling a
  * live microphone track does not reliably leave the play-and-record category
  * on iPhone, so the next TTS turn can be routed through the receiver. Keep the
@@ -190,9 +205,22 @@ const setWebAudioSessionType = (type: WebAudioSessionType): boolean => {
   }
 };
 
-/** Reassert the loud media route immediately before call TTS playback. */
+/**
+ * Remember the user's route choice and apply it when WebKit exposes its
+ * Audio Session API.  The preference is deliberately module-scoped: a TTS
+ * request can finish after React has rendered another turn, so a stale
+ * component closure must not silently restore the old route.
+ */
+export const setSiliconFlowAudioRoute = (route: SiliconFlowAudioRoute): void => {
+  siliconFlowAudioRoute = route;
+  setWebAudioSessionType(audioSessionTypeForRoute(route));
+};
+
+export const getSiliconFlowAudioRoute = (): SiliconFlowAudioRoute => siliconFlowAudioRoute;
+
+/** Reassert the selected media route immediately before call TTS playback. */
 export const prepareSiliconFlowAudioPlayback = (): void => {
-  setWebAudioSessionType('playback');
+  setWebAudioSessionType(audioSessionTypeForRoute(siliconFlowAudioRoute));
 };
 
 const hasLiveMicrophoneTrack = (stream: MediaStream | null): stream is MediaStream => {
@@ -213,7 +241,7 @@ const pauseSiliconFlowMicrophone = (stream: MediaStream) => {
   stream.getAudioTracks().forEach(track => {
     if (track.readyState === 'live') track.enabled = false;
   });
-  // Restore speaker/media volume for the role's next generated voice turn.
+  // Restore the user's selected route for the role's next generated voice turn.
   prepareSiliconFlowAudioPlayback();
 };
 
@@ -264,7 +292,9 @@ export const releaseSiliconFlowMicrophone = () => {
   siliconFlowMicrophone = null;
   siliconFlowMicrophoneRequest = null;
   stream?.getTracks().forEach(track => track.stop());
-  prepareSiliconFlowAudioPlayback();
+  // Leaving a call should not leave the whole PWA in a phone-call category.
+  // The next call re-applies the remembered route before it plays/records.
+  setWebAudioSessionType('auto');
 };
 
 const startSiliconFlow = async (

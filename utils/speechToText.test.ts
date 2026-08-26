@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanSpeechTranscript, releaseSiliconFlowMicrophone, startStt, transcribeWithSiliconFlow } from './speechToText';
+import { cleanSpeechTranscript, prepareSiliconFlowAudioPlayback, releaseSiliconFlowMicrophone, setSiliconFlowAudioRoute, startStt, transcribeWithSiliconFlow } from './speechToText';
 
 describe('speech-to-text transcript cleaning', () => {
   it('removes SenseVoice control tags and emotion emoji by default', () => {
@@ -46,6 +46,25 @@ describe('SiliconFlow transcription request', () => {
     await expect(transcribeWithSiliconFlow(new Blob(['audio']), 'siliconflow-sensevoice', ''))
       .rejects.toThrow('SiliconFlow Key');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the selected call route when the Audio Session API is available', () => {
+    const audioSessionTypes: string[] = [];
+    let audioSessionType = 'auto';
+    vi.stubGlobal('navigator', {
+      audioSession: {
+        get type() { return audioSessionType; },
+        set type(value: string) { audioSessionType = value; audioSessionTypes.push(value); },
+      },
+    });
+
+    setSiliconFlowAudioRoute('receiver');
+    expect(audioSessionType).toBe('play-and-record');
+    prepareSiliconFlowAudioPlayback();
+    expect(audioSessionType).toBe('play-and-record');
+    setSiliconFlowAudioRoute('speaker');
+    expect(audioSessionType).toBe('playback');
+    expect(audioSessionTypes).toEqual(['play-and-record', 'play-and-record', 'playback']);
   });
 
   it('reuses one microphone stream across recordings until the call is released', async () => {
@@ -113,5 +132,6 @@ describe('SiliconFlow transcription request', () => {
     expect(track.stop).not.toHaveBeenCalled();
     releaseSiliconFlowMicrophone();
     expect(track.stop).toHaveBeenCalledOnce();
+    expect(audioSessionTypes.at(-1)).toBe('auto');
   });
 });
