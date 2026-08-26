@@ -92,6 +92,7 @@ import { recoverInterruptedCallSession } from '../utils/callSessionRecovery';
 import { cancelAllPendingCallBackgroundJobs } from '../utils/callBackgroundJobs';
 import { callLaunch } from '../utils/callLaunch';
 import { runCallMemoryPalacePostFlow } from '../utils/memoryPalace/callPostFlow';
+import { getActiveDatePresence } from '../utils/datePresence';
 
 interface ProactiveQueueEntry {
   charId: string;
@@ -2268,6 +2269,16 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (activeAppRef.current === AppID.Date && activeCharIdScheduleRef.current === charId) {
               drainQueuedProactive();
               console.log(`🔕 [Proactive/Global] Skipped for ${char.name}: 正在见面 (DateApp active)`);
+              return;
+          }
+
+          // DateApp may be temporarily unmounted while the user reads/replies in
+          // ChatApp. The persisted presence keeps the physical meeting semantics
+          // alive across that app switch, so local natural proactive must stay quiet.
+          const activeDatePresence = getActiveDatePresence(charId) || char.activeDateEncounter;
+          if (activeDatePresence?.status === 'active') {
+              drainQueuedProactive();
+              console.log(`🔕 [Proactive/Global] Skipped for ${char.name}: 正在面对面见面 (${activeDatePresence.encounterId})`);
               return;
           }
 

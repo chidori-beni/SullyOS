@@ -1,6 +1,6 @@
 
 import { getImageGenConfig, isImageGenReady } from './novelaiImage';
-import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, DailySchedule } from '../types';
+import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, DailySchedule, DateEncounterPresence } from '../types';
 import { ContextBuilder } from './context';
 import { DB } from './db';
 import { formatLifeSimResetCardForContext } from './lifeSimChatCard';
@@ -146,6 +146,8 @@ export interface PromptBuildOptions {
      * scheduleMessageTagEnabled 处的说明。
      */
     timelyByWorker?: boolean;
+    /** 用户和角色仍在同一次线下见面中，但此刻通过手机互发消息。 */
+    activeDateEncounter?: DateEncounterPresence;
 }
 
 export const ChatPrompts = {
@@ -289,6 +291,7 @@ export const ChatPrompts = {
         // 即时对话：这一轮交给 worker 生成，时钟和真实世界块由它在 fire 时刻补。
         // 本地私有的易变段照常烤进去（worker 拿不到，而这一刻它们是新鲜的）。
         const timelyByWorker = promptOptions?.timelyByWorker === true;
+        const activeMeeting = promptOptions?.activeDateEncounter?.status === 'active';
         // ── 分段计时（定位瓶颈用）──
         const perfT0 = performance.now();
         const timings: Record<string, number> = {};
@@ -663,7 +666,9 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
 
         baseSystemPrompt += `### 聊天 App 行为规范 (Chat App Rules)
 **TOP 1｜ChatApp 格式（本节最高优先级）**：你是发消息的真实存在，以自然短句、短气泡为主；一个气泡一行，气泡间直接另起一行（实际换行，不要输出“\\n”字样）。
-            **严格注意，你正在手机聊天，无论之前是什么模式，哪怕上一句话你们还面对面在一起，当前，你都是已经处于线上聊天状态了，请不要输出你的行为**
+            ${activeMeeting
+                ? '**当前场景：你们仍在同一地点面对面，只是用户正在用手机给你发消息。请继续使用手机聊天的短句/气泡格式，不要把这理解成刚结束见面或已经分开；可以自然意识到对方就在眼前，但不要凭空输出连续的线下动作描写。**'
+                : '**严格注意，你正在手机聊天，无论之前是什么模式，哪怕上一句话你们还面对面在一起，当前，你都是已经处于线上聊天状态了，请不要输出你的行为**'}
 1. **沉浸感**: 保持角色扮演。使用适合即时通讯(IM)的口语化风格。
 2. **行为模式**: 不要总是围绕用户转。分享你自己的生活、想法或随意的观察。有时候要”任性”或”以自我为中心”一点，这更像真人，具体的程度视你的性格而定。
 2.5 **对话质量 (极其重要)**:
@@ -999,9 +1004,12 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
         // 状态也会隐藏 date/call/story 消息，而 API 历史仍会携带它们。
         // fire_pack 不烤：打包时确实刚挂电话，但那条主动消息可能是第二天凌晨才发出去的，
         // 角色照着这句接一句「刚才电话里说的那个……」就穿帮了。
-        const returningFromMode = !forFirePack
+        const returningFromMode = !forFirePack && !activeMeeting
             ? (promptOptions?.returningFromMode || detectChatModeTransition(currentMsgs))
             : null;
+        if (activeMeeting && !forFirePack) {
+            volatileState += `\n\n[系统提示｜仍在进行的线下见面（最高优先级）: 你和用户仍在同一地点、同一场见面中，只是暂时用手机互发消息。不要说“刚结束见面”、不要把对方当成远方的线上联系人；这条回复仍必须是 ChatApp 的 IM 短句，不要输出连续的舞台动作或小说旁白。手机消息本身会在见面阅读页按时间线只读呈现，但那只是显示投影，不是新的记忆来源。]`;
+        }
         if (returningFromMode) {
             const modeLabel: Record<ChatModeTransition, string> = {
                 call: '语音通话',
@@ -1213,6 +1221,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     const source = m.metadata?.source;
                     if (source === 'call') return '[通话]';
                     if (source === 'date') return '[约会]';
+                    if (m.metadata?.datePhoneMessage === true) return '[面对面手机消息]';
                     if (source === 'story_theater_memory') return `[剧情：${m.metadata?.theaterTitle || '共同经历'}]`;
                     return '[聊天]';
                 })();

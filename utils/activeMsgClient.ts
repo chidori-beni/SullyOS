@@ -743,7 +743,14 @@ export const buildFirePack = async (
     undefined,
     // 模板是现在打好、到点才渲染的，凡是「打包这一刻」的状态都不烤进去。
     // 具体拿掉哪些块、到点由谁补，见 ChatPrompts.PromptBuildOptions 上的表。
-    { forFirePack: true },
+    {
+      forFirePack: true,
+      // 当前仍在面对面时，主动消息由 worker 硬闸拦截；保留 presence 也让
+      // 新版包在诊断/恢复时能明确知道为什么没有发出自然主动。
+      activeDateEncounter: char.activeDateEncounter?.status === 'active'
+        ? char.activeDateEncounter
+        : undefined,
+    },
   );
   const recentTranscript = templateStub ? '' : ChatPrompts.buildMessageHistory(
     recentMessages,
@@ -852,6 +859,9 @@ export const buildFirePack = async (
     selfScheduleEnabled: isAmsg2EnabledForChar(char),
     ...(naturalProactive ? { naturalProactive } : {}),
     ...(naturalProactive ? { naturalSignals: { pendingTopic, emotion } } : {}),
+    ...(char.activeDateEncounter?.status === 'active'
+      ? { activeDateEncounter: char.activeDateEncounter }
+      : {}),
     // 到点时角色要知道自己还挂着什么，才不会把同一件事再排一遍。这里带原始记录，
     // 渲染成人话由 worker 现场做（时间要按 tzId 换算，且得摘掉正在发的那条）。
     pendingTasks: getPendingTasks(char.activeMsg2Config, Date.now()),
@@ -2585,7 +2595,7 @@ export const ActiveMsgClient = {
    *
    * 请求体里两个信封都是这里加密好的（外壳是明文 JSON，包装层只搬不看）：
    *   statePayload —— 和 putClientState 逐字节同构的 `{ entries }`，带这一轮的 fire_pack
-   *                   （v7，多一段 chat）+ tool_pack + 全局工具凭据；
+   *                   （v8，多一段 chat + 线下 presence）+ tool_pack + 全局工具凭据；
    *   taskPayload  —— 和 scheduleCharacterTask 同构的排程体，标着 amsgInstantChat。
    *
    * 只有 202 才算受理。**任何别的状态都是「这条没发出去」**，抛错交调用方明说，

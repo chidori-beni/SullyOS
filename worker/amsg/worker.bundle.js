@@ -8086,7 +8086,7 @@ var renderFirePack = (pack, nowMs, taskInstruction, extras) => {
 ${realtimeWorld}` : "");
   return out;
 };
-var FIRE_PACK_VERSION = 7;
+var FIRE_PACK_VERSION = 8;
 var describeFirePackVersion = (value) => {
   let v;
   try {
@@ -14127,6 +14127,16 @@ var amsgHooks = {
           amsgTaskInstruction: "\u8FD9\u662F\u89D2\u8272\u81EA\u7136\u4EA7\u751F\u7684\u8054\u7CFB\u51B2\u52A8\uFF0C\u4E0D\u662F\u7528\u6237\u9881\u5E03\u7684\u4EFB\u52A1\u3002\u7ED3\u5408\u4EBA\u8BBE\u3001\u5173\u7CFB\u3001\u6700\u8FD1\u4E0A\u4E0B\u6587\u548C\u6B64\u523B\u751F\u6D3B\u72B6\u6001\uFF0C\u50CF\u771F\u4EBA\u4E00\u6837\u53D1\u4E00\u5230\u4E09\u53E5\u771F\u6B63\u6B64\u523B\u60F3\u8BF4\u7684\u8BDD\uFF1B\u53EF\u4EE5\u5F88\u8F7B\u3001\u5F88\u77ED\uFF0C\u4E0D\u8981\u89E3\u91CA\u7CFB\u7EDF\u5224\u65AD\uFF0C\u4E5F\u4E0D\u8981\u8BF4\u81EA\u5DF1\u88AB\u5B9A\u65F6\u5524\u9192\u3002"
         }
       });
+      if (pack.activeDateEncounter?.status === "active") {
+        console.log("[amsg:natural-skip]", {
+          taskId: ctx.task.id,
+          charId,
+          reason: "active-date-presence",
+          encounterId: pack.activeDateEncounter.encounterId
+        });
+        await recordSkip(ctx, charId, "active-date-presence", occurrenceMs);
+        return { skip: true };
+      }
       console.log("[amsg:natural-decision]", {
         taskId: ctx.task.id,
         charId,

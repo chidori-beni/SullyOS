@@ -2126,6 +2126,20 @@ export interface DateState {
     observation?: DateObservation;
 }
 
+/**
+ * 线下见面存在时的轻量 presence。
+ *
+ * 它不是一条消息，也不参与聊天正文；只是让 ChatApp / 主动消息 Worker 知道
+ * 角色和用户此刻仍在同一个现实场景里。真正的线上手机消息仍只保存一次，
+ * 见面阅读模式只根据这份 presence 做只读投影。
+ */
+export interface DateEncounterPresence {
+    encounterId: string;
+    startedAt: number;
+    status: 'active' | 'paused';
+    updatedAt: number;
+}
+
 // ─── 见面 · 剧情剧场 ────────────────────────────────────────────────
 
 /** 独立剧场达到水位后，旧正文的归档去向。切换策略只影响之后的新归档。 */
@@ -2900,6 +2914,8 @@ export interface CharacterProfile {
   dateObserve?: DateObserveConfig;
 
   savedDateState?: DateState;
+  /** 当前仍在进行的线下见面；仅为模式同步/主动消息闸门，不是聊天记录。 */
+  activeDateEncounter?: DateEncounterPresence;
   specialMomentRecords?: Record<string, SpecialMomentRecord>;
 
   /** QQ捏人工坊（神经链接）：三处 Q 版形象的捏人器 state 与 520 兜底图，见 ChibiStudioData */

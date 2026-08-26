@@ -724,12 +724,12 @@ describe('fire_pack 版本对不上时说清该做什么', () => {
   });
 });
 
-// ─── v7：即时对话的 chat 段 ───
+// ─── v8：即时对话的 chat 段 + 线下见面 presence ───
 //
 // 开发期规矩：版本对不上整包打回，不做任何形状兼容。v6 的包被放行的话，标了即时对话
 // 的任务会拿不到 chat 段——而那时 worker 已经走过版本门，只能一路跑到「用主动消息模板
 // 答用户刚说的话」，出来的东西驴唇不对马嘴且没有报错。
-describe('fire_pack v7 的 chat 段', () => {
+describe('fire_pack v8 的 chat 段与线下 presence', () => {
   const base: AmsgFirePack = {
     v: FIRE_PACK_VERSION, template: 'x', lastUserMessageAt: null,
     tzId: 'Asia/Shanghai', userTzId: 'Asia/Shanghai', targetName: '小明',
@@ -738,7 +738,7 @@ describe('fire_pack v7 的 chat 段', () => {
   const chat = { messages: [{ role: 'user', content: '在吗' }], builtAt: 1_700_000_000_000 };
 
   it('当前版本号是 7（升版要前端和 worker 一起动）', () => {
-    expect(FIRE_PACK_VERSION).toBe(7);
+    expect(FIRE_PACK_VERSION).toBe(8);
   });
 
   it('v6 的包直接拒（不做旧格式兼容）', () => {

@@ -93,4 +93,34 @@ describe('buildChatRequestPayload 模式切换接线', () => {
         expect(joined).toContain('现在已经回到 ChatApp 的文字聊天界面');
         expect(joined).toContain('如果 ChatApp 当前开启了语音消息，仍可遵守它自己的语音消息格式');
     });
+
+    it('进行中的见面里发手机消息时不注入“刚结束见面”，并保留一次面对面手机来源标记', async () => {
+        const historyMsgs = [
+            message(1, 'assistant'),
+            message(2, 'assistant', 'date', { dateEncounterId: 'enc-1' }),
+            message(3, 'user', 'chat', { datePhoneMessage: true, dateEncounterId: 'enc-1' }),
+        ];
+        const payload = await buildChatRequestPayload({
+            char: {
+                id: 'char-return',
+                name: '阿一',
+                timeAwarenessEnabled: false,
+                scheduleFeatureEnabled: false,
+                activeDateEncounter: { encounterId: 'enc-1', startedAt: 1, status: 'active', updatedAt: 2 },
+            } as any,
+            userProfile: { name: '小明' } as any,
+            groups: [],
+            emojis: [],
+            categories: [],
+            historyMsgs,
+            recentMsgsHint: historyMsgs,
+            contextLimit: 20,
+            realtimeConfig: { weatherEnabled: false, newsEnabled: false } as any,
+        });
+
+        const joined = payload.fullMessages.map(item => String(item.content || '')).join('\n');
+        expect(joined).toContain('仍在同一地点面对面');
+        expect(joined).not.toContain('刚刚结束了线下见面');
+        expect(joined).toContain('[面对面手机消息]');
+    });
 });

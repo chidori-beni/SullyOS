@@ -729,6 +729,7 @@ ${extraBlock ? `\n${extraBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlo
         })();
         const encounterMsgs = dateMsgs.slice(latestOpeningIndex);
         const encounterStartedAt = Number(encounterMsgs[0]?.metadata?.dateEncounterStartedAt || encounterMsgs[0]?.timestamp || now);
+        const encounterId = encounterMsgs.find(message => typeof message.metadata?.dateEncounterId === 'string')?.metadata?.dateEncounterId;
         const previousTurnAt = Number(encounterMsgs[encounterMsgs.length - 2]?.timestamp || encounterStartedAt);
         const elapsedMinutes = Math.max(0, Math.floor((now - encounterStartedAt) / 60000));
         const sincePreviousMinutes = Math.max(0, Math.floor((now - previousTurnAt) / 60000));
@@ -742,6 +743,16 @@ ${extraBlock ? `\n${extraBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlo
 - 当且仅当其中一人已经实际离开、双方不再面对面互动时，在自然的最后台词/描写之后单独输出 \`[[END_MEETING: 简短结束原因]]\`。这会在最后一段显示完后请求结束见面；只是准备走、短暂去洗手间、去隔壁房间或仍能当面互动时绝不能输出。
 - 不要因为用户没有重复提醒“还在做某事”就把该动作判定结束。`;
 
+        const hasFaceToFacePhoneMessages = allMsgs.some(message => (
+            message.metadata?.datePhoneMessage === true
+            && (!encounterId || message.metadata?.dateEncounterId === encounterId)
+        ));
+        const phoneContinuityBlock = hasFaceToFacePhoneMessages ? `
+### 面对面期间的手机消息（只读来源）
+[面对面手机消息] 表示这次见面中双方通过 ChatApp 发出的真实手机消息。它们已经在下方历史里按时间顺序出现一次，是唯一的记忆来源；阅读模式会额外做只读视觉投影，但不会形成第二条消息。
+- 直接理解这些消息并自然承接，不要把它们整段抄写、重复总结，或当成新的线下消息再次写入剧情。
+- 继续输出当前线下剧本格式；除非内容本身需要，不要因为手机消息就让双方瞬间换场或结束见面。` : '';
+
         const historyMsgs = buildDateHistory(
             allMsgs,
             char,
@@ -754,7 +765,8 @@ ${extraBlock ? `\n${extraBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlo
         await injectMemoryPalace(char, allMsgs, undefined, userProfile?.name);
         const systemPrompt = ContextBuilder.buildCoreContext(char, userProfile, true, undefined, undefined, { skipTimeAwareness: !isDateTimeAwarenessOn(char), conversational: true })
             + buildVNModeBlock(char, userProfile?.name || '')
-            + continuityBlock;
+            + continuityBlock
+            + phoneContinuityBlock;
 
         // 每轮轮换的聚焦线索：把注意力推向不同的具体方向，相邻回复天然有差异
         const focusLine = isDigDeeperOn(char.dateStyleConfig) ? ` 本轮线索：${pickFocusHint()}。` : '';

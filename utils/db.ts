@@ -19,6 +19,7 @@ import { exportMcpLocal, importMcpLocal } from './mcpClient';
 import { exportAmsg2GlobalConfig, importAmsg2GlobalConfig } from './activeMsgStore';
 import { exportWorldHomeLocal, importWorldHomeLocal } from './worldHome/localBackup';
 import { exportDesktopSkinLocal, importDesktopSkinLocal } from './desktopSkinBackup';
+import { getActiveDatePresence } from './datePresence';
 
 const DB_NAME = 'AetherOS_Data';
 // v67：两条并行线各自用掉了 v65/v66（A线: blob_assets + 生活记录；B线: room_plates 门牌 + digest_reports 消化日志），
@@ -802,12 +803,37 @@ export const DB = {
   },
 
   saveMessage: async (msg: Omit<Message, 'id' | 'timestamp'> & { timestamp?: number }): Promise<number> => {
+    const shouldBridgeToDate = msg.role !== 'system'
+        && msg.type === 'text'
+        && msg.metadata?.source !== 'date'
+        && msg.metadata?.source !== 'date-end-popup'
+        && msg.metadata?.datePhoneMessage !== true;
+    // localStorage is the fast path while DateApp/ChatApp share a tab. The profile
+    // fallback covers a tab reload or a second tab where the persisted encounter
+    // state exists but the in-memory/local registry has not been hydrated yet.
+    const activePresence = shouldBridgeToDate
+        ? (getActiveDatePresence(msg.charId) || (await DB.getCharacter(msg.charId))?.activeDateEncounter)
+        : null;
     const db = await openDB();
     return new Promise((resolve, reject) => {
         const transaction = db.transaction(STORE_MESSAGES, 'readwrite');
         const store = transaction.objectStore(STORE_MESSAGES);
         const timestamp = typeof msg.timestamp === 'number' ? msg.timestamp : Date.now();
-        const { timestamp: _ignored, ...payload } = msg;
+        // 在线聊天与线下见面可以在同一现实时间线上交错。面对面时，ChatApp
+        // 仍然只落库这一条真实手机消息；这里仅加关联元数据，供 DateApp 阅读模式
+        // 做只读投影。绝不另造一条“线下副本”，因此记忆宫殿 / prompt 不会重复读。
+        const persistedMsg = activePresence?.status === 'active'
+            ? {
+                ...msg,
+                metadata: {
+                    ...(msg.metadata || {}),
+                    datePhoneMessage: true,
+                    dateEncounterId: activePresence.encounterId,
+                    dateEncounterStartedAt: activePresence.startedAt,
+                },
+            }
+            : msg;
+        const { timestamp: _ignored, ...payload } = persistedMsg;
         const request = store.add({ ...payload, timestamp });
         request.onsuccess = () => {
             const newId = request.result as number;

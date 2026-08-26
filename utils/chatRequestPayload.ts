@@ -302,6 +302,9 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     // 但主 API 的 historyMsgsForPrompt 来自完整 DB，仍然会看到它们。模式切换必须以 API
     // 真正要发送的历史为准，否则模型会收到特殊模式正文，却收不到「切回聊天格式」的提示。
     const returningFromMode = detectChatModeTransition(historyMsgsForPrompt);
+    const activeDateEncounter = char.activeDateEncounter?.status === 'active'
+        ? char.activeDateEncounter
+        : undefined;
     const parts = await ChatPrompts.buildSystemPromptParts(
         char, userProfile, groups, emojis, categories, recentMsgsHint,
         realtimeConfig, innerState || undefined,
@@ -309,9 +312,10 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         !!isListeningTogether,
         musicCfg,
         recentTrackSwitch,
-        (input.timelyByWorker || returningFromMode) ? {
+        (input.timelyByWorker || returningFromMode || activeDateEncounter) ? {
             timelyByWorker: input.timelyByWorker === true,
-            returningFromMode: returningFromMode || undefined,
+            returningFromMode: activeDateEncounter ? undefined : (returningFromMode || undefined),
+            activeDateEncounter,
         } : undefined,
     );
     let systemPrompt = parts.stable;

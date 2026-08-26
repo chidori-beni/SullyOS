@@ -22,6 +22,8 @@ import StoryTheater from '../components/date/story/StoryTheater';
 import { dateLaunch } from '../utils/dateLaunch';
 import { materializeVisionDescriptions } from '../utils/visionApi';
 import { shareOrDownloadFile } from '../utils/shareExport';
+import { clearActiveDatePresence, getActiveDatePresence, makeDateEncounterPresence, setActiveDatePresence } from '../utils/datePresence';
+import { isDatePhoneBridge, mergeDatePhoneMessages } from '../utils/datePhoneBridge';
 import {
     buildDateHistoryGroups,
     formatDateHistoryDate,
@@ -166,6 +168,18 @@ const DateApp: React.FC = () => {
     const [editContent, setEditContent] = useState('');
 
     const char = characters.find(c => c.id === activeCharacterId);
+    const activateDateEncounter = (charId: string, encounter: { id: string; startedAt: number }) => {
+        const presence = makeDateEncounterPresence(encounter.id, encounter.startedAt, 'active');
+        setActiveDatePresence(charId, presence);
+        updateCharacter(charId, { activeDateEncounter: presence });
+        return presence;
+    };
+    const clearDateEncounter = (charId: string, encounterId?: string) => {
+        const current = getActiveDatePresence(charId) || charactersRef.current.find(item => item.id === charId)?.activeDateEncounter;
+        if (encounterId && current?.encounterId && current.encounterId !== encounterId) return;
+        clearActiveDatePresence(charId, encounterId);
+        updateCharacter(charId, { activeDateEncounter: undefined });
+    };
     const historyGroups = useMemo(
         () => buildDateHistoryGroups(historyMessages, historyView, historySortOrder),
         [historyMessages, historyView, historySortOrder],
@@ -192,7 +206,14 @@ const DateApp: React.FC = () => {
     // 内容也不会被角色到点又提一遍。快照里的消息在上传时从 DB 重读，打脏本身很便宜。
     const markDateTurnDirty = (target = char) => {
         if (!target) return;
-        markAmsgStateDirty({ char: target, userProfile, groups, realtimeConfig });
+        // DateApp handlers retain their original render closure across awaits. Prefer
+        // the latest context snapshot for ordinary calls so an activeDateEncounter
+        // update cannot be overwritten by a stale post-save mark; explicit snapshots
+        // (such as finishEncounter's cleared presence) remain authoritative.
+        const liveTarget = target === char
+            ? (charactersRef.current.find(item => item.id === target.id) || target)
+            : target;
+        markAmsgStateDirty({ char: liveTarget, userProfile, groups, realtimeConfig });
     };
 
     const getDateContextFetchLimit = (c: CharacterProfile) => Math.max(c.contextLimit || 500, DATE_SESSION_MESSAGE_LIMIT) + 32;
@@ -207,7 +228,22 @@ const DateApp: React.FC = () => {
             // 见面记录只取最近窗口，不再把该角色全部聊天 getAll 进内存。
             // TODO(date-assets): 后续把角色立绘/背景本体迁到 assets store 后，这里还能再把 limit 放宽。
             const filtered = await loadRecentDateMessages(char.id, limit);
-            setDateMessages(filtered);
+            const encounterId = activeEncounterRef.current?.id
+                || char.activeDateEncounter?.encounterId
+                || [...filtered].reverse().find(message => typeof message.metadata?.dateEncounterId === 'string')?.metadata?.dateEncounterId;
+            // 手机消息仍从同一 messages store 读取，只在本地生成阅读投影；不把投影
+            // 写回 DB，也不把它交给 prompt / memory pipeline。
+            const recentAll = encounterId
+                ? await DB.getRecentMessagesByCharId(char.id, Math.max(limit + 320, 500), true)
+                : [];
+            const timeline = mergeDatePhoneMessages(
+                filtered,
+                recentAll,
+                encounterId,
+                userProfile.name || '用户',
+                char.name,
+            );
+            setDateMessages(timeline);
             // 拿回来的比要的少 = 库里的见面记录已经取完，阅读模式不用再往前翻了。
             setDateHistoryReachedEnd(filtered.length < limit);
             
@@ -245,6 +281,7 @@ const DateApp: React.FC = () => {
         const crashed = characters.find(c => c.id === crashedCharId);
         trackEvent('检出见面存档崩溃并清理', { 处理结果: crashed?.savedDateState ? '已清理存档' : '无存档可清' });
         if (crashed?.savedDateState) {
+            clearDateEncounter(crashedCharId, crashed.savedDateState.encounterId);
             updateCharacter(crashedCharId, { savedDateState: undefined });
             addToast('上次见面异常退出，已清理存档，可重新开始', 'info');
         }
@@ -253,6 +290,10 @@ const DateApp: React.FC = () => {
     // --- Navigation Helpers ---
     const handleBack = () => {
         if (mode === 'peek') {
+            if (char && activeEncounterRef.current) {
+                clearDateEncounter(char.id, activeEncounterRef.current.id);
+                activeEncounterRef.current = null;
+            }
             // 来自聊天：从感知页退出直接回聊天，不落在见面选择页
             if (cameFromChat) { returnToChat(); return; }
             setMode('select');
@@ -294,6 +335,20 @@ const DateApp: React.FC = () => {
     const handleCharClick = (c: CharacterProfile) => {
         if (c.savedDateState) {
             setPendingSessionChar(c);
+        } else if (c.activeDateEncounter?.status === 'active') {
+            // DateApp can be unmounted when the user briefly switches to ChatApp.
+            // The presence is enough to resume the same encounter identity even
+            // when no explicit “退出并保存” snapshot was created yet.
+            activeEncounterRef.current = {
+                id: c.activeDateEncounter.encounterId,
+                startedAt: c.activeDateEncounter.startedAt,
+            };
+            activateDateEncounter(c.id, activeEncounterRef.current);
+            setActiveCharacterId(c.id);
+            setPeekStatus('');
+            setHasSavedOpening(true);
+            setMode('session');
+            trackEvent('恢复进行中的见面');
         } else {
             startPeek(c);
         }
@@ -326,6 +381,7 @@ const DateApp: React.FC = () => {
             id: pendingSessionChar.savedDateState?.encounterId || newEncounter().id,
             startedAt: pendingSessionChar.savedDateState?.encounterStartedAt || pendingSessionChar.savedDateState?.timestamp || Date.now(),
         };
+        activateDateEncounter(pendingSessionChar.id, activeEncounterRef.current);
         setActiveCharacterId(pendingSessionChar.id);
         setMode('session');
         setPendingSessionChar(null);
@@ -338,6 +394,7 @@ const DateApp: React.FC = () => {
         if (!pendingSessionChar) return;
         // 新会话没有恢复快照可重放，撤销任何残留哨兵。
         clearDateResumeAttempt();
+        clearDateEncounter(pendingSessionChar.id, pendingSessionChar.savedDateState?.encounterId);
         activeEncounterRef.current = newEncounter();
         updateCharacter(pendingSessionChar.id, { savedDateState: undefined });
         trackEvent('选择见面存档处理方式', { choice: 'new' });
@@ -350,6 +407,7 @@ const DateApp: React.FC = () => {
     const handleEnterSession = async () => {
         if (!char) return;
         const encounter = ensureEncounter();
+        activateDateEncounter(char.id, encounter);
 
         // 1. 如果有开场白且未保存，立即保存到数据库
         // 这确保了 user 发送第一句话时，AI 能在历史记录里读到这个开场
@@ -489,7 +547,7 @@ const DateApp: React.FC = () => {
         const preparedAllMsgs = await materializeVisionDescriptions(allMsgs, apiConfig.visionApi);
 
         // Update local state for display
-        setDateMessages(await loadRecentDateMessages(char.id));
+        await loadDateMessages(DATE_SESSION_MESSAGE_LIMIT);
 
         const emojis = await DB.getEmojis();
         const { messages } = await DatePrompts.buildSessionPayload({
@@ -511,7 +569,7 @@ const DateApp: React.FC = () => {
         markDateTurnDirty(char);
 
         // Refresh local state
-        setDateMessages(await loadRecentDateMessages(char.id));
+        await loadDateMessages(DATE_SESSION_MESSAGE_LIMIT);
 
         // Memory Palace 后台流程（不阻塞返回，与聊天侧一致）
         runMemoryPalacePostHook(char);
@@ -523,7 +581,7 @@ const DateApp: React.FC = () => {
         if (!char || dateMessages.length === 0) throw new Error("No context");
 
         const lastMsg = dateMessages[dateMessages.length - 1];
-        if (lastMsg.role !== 'assistant') throw new Error("Cannot reroll user message");
+        if (isDatePhoneBridge(lastMsg) || lastMsg.role !== 'assistant') throw new Error("Cannot reroll user message");
 
         // Keep the old reply until the replacement request succeeds.
         const allMsgs = await DB.getRecentMessagesByCharId(char.id, getDateContextFetchLimit(char), true);
@@ -554,8 +612,7 @@ const DateApp: React.FC = () => {
             // 阅读模式空会话时顶部渲染的开场 & 退出快照里的 peekStatus 同步成新开场
             setPeekStatus(content);
 
-            const freshMsgs = await DB.getMessagesByCharId(char.id, true);
-            setDateMessages(freshMsgs.filter(m => m.metadata?.source === 'date').sort((a,b) => a.timestamp - b.timestamp));
+            await loadDateMessages(DATE_SESSION_MESSAGE_LIMIT);
             return content;
         }
 
@@ -590,7 +647,7 @@ const DateApp: React.FC = () => {
         trackEvent('重掷见面回复', { 目标: '回复' });
 
         // Sync
-        setDateMessages(await loadRecentDateMessages(char.id));
+        await loadDateMessages(DATE_SESSION_MESSAGE_LIMIT);
 
         // Memory Palace 后台流程（Reroll 也算一轮新输出）
         runMemoryPalacePostHook(char);
@@ -685,6 +742,10 @@ const DateApp: React.FC = () => {
             if (char.savedDateState?.encounterId && char.savedDateState.encounterId === resolvedEncounterId) {
                 updateCharacter(char.id, { savedDateState: undefined });
             }
+            if (char.activeDateEncounter?.encounterId && char.activeDateEncounter.encounterId === resolvedEncounterId) {
+                clearDateEncounter(char.id, resolvedEncounterId);
+                activeEncounterRef.current = null;
+            }
             setHistoryDeleteTarget(null);
             setHistorySelectedGroupId(null);
             markDateTurnDirty(char);
@@ -733,7 +794,12 @@ const DateApp: React.FC = () => {
         clearDateResumeAttempt();
         if (char) {
             const encounter = ensureEncounter();
-            updateCharacter(char.id, { savedDateState: { ...finalState, encounterId: encounter.id, encounterStartedAt: encounter.startedAt } });
+            const presence = activateDateEncounter(char.id, encounter);
+            updateCharacter(char.id, {
+                savedDateState: { ...finalState, encounterId: encounter.id, encounterStartedAt: encounter.startedAt },
+                activeDateEncounter: presence,
+            });
+            activeEncounterRef.current = null;
             addToast('进度已保存', 'success');
         }
         // 来自聊天：退出见面回聊天
@@ -804,10 +870,13 @@ const DateApp: React.FC = () => {
             },
         });
         clearDateResumeAttempt();
-        updateCharacter(char.id, { savedDateState: undefined });
+        clearDateEncounter(char.id, encounter.id);
         activeEncounterRef.current = null;
         setEndSuggestedReason('');
-        markDateTurnDirty(char);
+        // updateCharacter is intentionally async; pass the post-finish snapshot to
+        // the first fire_pack sync as well, otherwise one stale pack could still
+        // advertise the meeting as active for a short window.
+        markDateTurnDirty({ ...char, activeDateEncounter: undefined, savedDateState: undefined });
         addToast('这次见面已完结，并同步到聊天', 'success');
         trackEvent('正式结束一次见面');
         returnToChat();
@@ -833,17 +902,26 @@ const DateApp: React.FC = () => {
             const allDateMessages = await DB.getRecentMessagesByCharIdAndSource(char.id, 'date', Number.MAX_SAFE_INTEGER);
             const allGroups = buildDateHistoryGroups(allDateMessages, historyView, historySortOrder);
             const fullGroup = allGroups.find(candidate => candidate.id === group.id) || group;
-            const replayMessages = fullGroup.messages.filter(message => message.metadata?.isDateEnding !== true);
+            const replayDateMessages = fullGroup.messages.filter(message => message.metadata?.isDateEnding !== true);
+            const encounterId = replayDateMessages.find(message => typeof message.metadata?.dateEncounterId === 'string')?.metadata?.dateEncounterId;
+            const allCharMessages = encounterId ? await DB.getMessagesByCharId(char.id, true) : [];
+            const replayMessages = mergeDatePhoneMessages(
+                replayDateMessages,
+                allCharMessages,
+                encounterId,
+                userProfile.name || '用户',
+                char.name,
+            );
             setHistoryReplayGroupId(fullGroup.id);
             setHistorySelectedGroupId(null);
             setDateMessages(replayMessages);
-            setDateLoadLimit(replayMessages.length);
+            setDateLoadLimit(replayDateMessages.length);
             setDateHistoryReachedEnd(true);
             setPeekStatus('');
             setHasSavedOpening(true);
             setEndSuggestedReason('');
             setMode('session');
-            trackEvent('打开见面回顾', { 记录: historyView === 'encounter' ? '按次' : '按日期', 消息数: replayMessages.length });
+            trackEvent('打开见面回顾', { 记录: historyView === 'encounter' ? '按次' : '按日期', 消息数: replayDateMessages.length });
         } catch (error) {
             console.error('Open Date History Replay Error', error);
             addToast('见面回顾加载失败，请稍后重试', 'error');

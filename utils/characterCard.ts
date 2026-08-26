@@ -57,6 +57,7 @@ export const CARD_STRIPPED_FIELDS = [
   'companionTouchSettings',
   'companionAvatar',
   'savedDateState',
+  'activeDateEncounter',
   'savedRoomState',
   'lastRoomDate',
   'phoneState',

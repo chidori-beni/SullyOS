@@ -1818,6 +1818,19 @@ export const amsgHooks = {
           amsgTaskInstruction: '这是角色自然产生的联系冲动，不是用户颁布的任务。结合人设、关系、最近上下文和此刻生活状态，像真人一样发一到三句真正此刻想说的话；可以很轻、很短，不要解释系统判断，也不要说自己被定时唤醒。',
         },
       });
+      // 见面期间角色和用户就在同一地点。自然主动即使已经排到，也必须静默，
+      // 否则会出现“人还在眼前却隔空发来无关消息”的割裂感。续排已在上面完成，
+      // 结束见面后下一次 fire_pack 更新即可恢复自然主动。
+      if (pack.activeDateEncounter?.status === 'active') {
+        console.log('[amsg:natural-skip]', {
+          taskId: ctx.task.id,
+          charId,
+          reason: 'active-date-presence',
+          encounterId: pack.activeDateEncounter.encounterId,
+        });
+        await recordSkip(ctx, charId, 'active-date-presence', occurrenceMs);
+        return { skip: true } as const;
+      }
       console.log('[amsg:natural-decision]', {
         taskId: ctx.task.id,
         charId,

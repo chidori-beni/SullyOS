@@ -252,7 +252,7 @@ describe('POST /instant-chat 的形状', () => {
     expect(task.messages).toHaveLength(1);
   });
 
-  it('云端状态是 v7 的 fire_pack，chat.messages 就是本地那串 fullMessages', async () => {
+  it('云端状态是当前版本的 fire_pack，chat.messages 就是本地那串 fullMessages', async () => {
     const fullMessages = [
       { role: 'system', content: 'SYSTEM' },
       { role: 'user', content: '今天怎么样' },

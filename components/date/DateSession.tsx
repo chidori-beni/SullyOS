@@ -17,6 +17,7 @@ import { getPendingReplyText } from '../../utils/pendingReply';
 import { fetchBlobForShare } from '../../utils/shareExport';
 import VoiceFavoriteActionSheet from '../voice/VoiceFavoriteActionSheet';
 import { getVoiceFavorite, makeVoiceFavoriteId, removeVoiceFavorite, saveVoiceFavorite } from '../../utils/voiceFavorites';
+import { getDatePhoneSpeaker, isDatePhoneBridge, formatDatePhoneMarkdown } from '../../utils/datePhoneBridge';
 import { ArrowLeft } from '@phosphor-icons/react';
 
 // 语音情绪标记 [v:xxx]：跟立绘情绪 [emotion] 分开的独立通道。立绘的 happy 是
@@ -422,7 +423,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         const originalText = extractDialogueText(currentText);
         for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex--) {
             const message = messages[messageIndex];
-            if (message.role !== 'assistant') continue;
+            if (message.role !== 'assistant' || isDatePhoneBridge(message)) continue;
             const { rest: body } = extractObservation(message.content || '', { lenient: observeEnabled, custom: char.dateObserve?.custom });
             const lines = body.split('\n');
             for (let lineIndex = lines.length - 1; lineIndex >= 0; lineIndex--) {
@@ -552,7 +553,9 @@ const DateSession: React.FC<DateSessionProps> = ({
     const replayDialogueItems = React.useMemo(() => {
         if (!historyReplay) return [];
         return messages
-            .filter(message => message.role === 'assistant' && message.metadata?.isDateEnding !== true)
+            .filter(message => message.role === 'assistant'
+                && message.metadata?.isDateEnding !== true
+                && !isDatePhoneBridge(message))
             .flatMap(message => {
                 const { rest } = extractObservation(message.content || '', {
                     lenient: observeEnabled,
@@ -745,7 +748,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     // 位置），isTyping 时也跳过（新回复交给 handleSend / handleRerollClick 处理，避免重复解析）。
     const lastAssistantContent = React.useMemo(() => {
         for (let i = messages.length - 1; i >= 0; i--) {
-            if (messages[i]?.role === 'assistant') return messages[i].content || '';
+            if (messages[i]?.role === 'assistant' && !isDatePhoneBridge(messages[i])) return messages[i].content || '';
         }
         return '';
     }, [messages]);
@@ -1031,7 +1034,11 @@ const DateSession: React.FC<DateSessionProps> = ({
     };
 
     // Determine if we can reroll (last message is assistant)
-    const canReroll = !historyReplay && messages.length > 0 && messages[messages.length - 1].role === 'assistant';
+    const lastTimelineMessage = messages[messages.length - 1];
+    const canReroll = !historyReplay
+        && !!lastTimelineMessage
+        && !isDatePhoneBridge(lastTimelineMessage)
+        && lastTimelineMessage.role === 'assistant';
     const hasReadingTheme = Boolean(char.dateReadingCustomCss?.trim());
 
     return (
@@ -1206,6 +1213,31 @@ const DateSession: React.FC<DateSessionProps> = ({
                         #this-moment-screen .tm-para-block {
                             font-size: var(--sully-date-font-size) !important;
                         }
+                        /* 面对面时的手机消息是 Markdown 语义投影：不写死颜色，
+                           让糯叽机兼容主题决定文字/背景；只清掉浏览器 blockquote 默认外距。 */
+                        #this-moment-screen .tm-phone-bridge,
+                        #this-moment-screen .tm-para-phone,
+                        #this-moment-screen .tm-phone-meta,
+                        #this-moment-screen .tm-phone-body {
+                            color: inherit;
+                        }
+                        /* 手机消息是阅读页里的轻量 Markdown 投影，不复用角色段落的
+                           立绘/照片伪元素；正文与主题已有的 tm-body / tm-quote-block
+                           合同保持一致，主题仍可完全接管布局、字体和颜色。 */
+                        #this-moment-screen .tm-para-phone {
+                            width: 100%;
+                            max-width: 100%;
+                            padding: 0.35rem 0;
+                        }
+                        #this-moment-screen .tm-phone-meta {
+                            margin: 0 0 0.35rem;
+                            font-size: 0.82em;
+                            line-height: 1.4;
+                        }
+                        #this-moment-screen .tm-phone-quote {
+                            margin: 0;
+                            color: inherit;
+                        }
                         #this-moment-screen .tm-batch-selected {
                             outline: 2px solid rgba(244, 63, 94, 0.95) !important;
                             outline-offset: -2px;
@@ -1325,7 +1357,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                             {visibleSessionMessages.map((msg) => (
                                 <article
                                     key={msg.id}
-                                    className={`tm-para ${msg.role === 'user' ? 'tm-para-user' : 'tm-para-char'} group relative ${isBatchSelectMode ? (selectedMsgIds.has(msg.id) ? 'tm-batch-selected pl-10' : 'tm-batch-unselected pl-10') : ''}`}
+                                    className={`tm-para ${isDatePhoneBridge(msg) ? 'tm-para-phone' : (msg.role === 'user' ? 'tm-para-user' : 'tm-para-char')} group relative ${isBatchSelectMode ? (selectedMsgIds.has(msg.id) ? 'tm-batch-selected pl-10' : 'tm-batch-unselected pl-10') : ''}`}
                                     aria-pressed={isBatchSelectMode ? selectedMsgIds.has(msg.id) : undefined}
                                     onClick={(e) => {
                                         if (!isBatchSelectMode) return;
@@ -1351,7 +1383,29 @@ const DateSession: React.FC<DateSessionProps> = ({
                                             {selectedMsgIds.has(msg.id) && <span className="text-white text-[10px]">✓</span>}
                                         </div>
                                     )}
-                                    {msg.role === 'user' ? (
+                                    {isDatePhoneBridge(msg) ? (() => {
+                                        const speaker = getDatePhoneSpeaker(msg, char, userProfile.name);
+                                        const markdown = typeof msg.metadata?.datePhoneMarkdown === 'string'
+                                            ? msg.metadata.datePhoneMarkdown
+                                            : formatDatePhoneMarkdown(msg, speaker);
+                                        return (
+                                            <>
+                                                <div className={`tm-body tm-phone-body ${msg.role === 'user' ? 'tm-body-user' : 'tm-body-char'}`} data-markdown={markdown}>
+                                                    <div className="tm-phone-meta tm-para-block" aria-label={`${speaker} 手机消息`}>
+                                                        <strong className="tm-phone-speaker">{speaker}</strong>
+                                                        <span className="tm-phone-channel"> · 手机消息</span>
+                                                    </div>
+                                                    {String(msg.content || '').split('\n').map((line, index) => (
+                                                        <blockquote
+                                                            key={`${msg.id}-phone-${index}`}
+                                                            style={{ fontSize: `${dateFontSize}px` }}
+                                                            className="tm-para-block tm-quote-block tm-phone-quote whitespace-pre-wrap"
+                                                        >{line || '\u00a0'}</blockquote>
+                                                    ))}
+                                                </div>
+                                            </>
+                                        );
+                                    })() : msg.role === 'user' ? (
                                         <>
                                             <div className="tc-header-user">
                                                 <ReadingAvatar
