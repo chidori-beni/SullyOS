@@ -177,7 +177,7 @@ describe('getEmbeddings 批量 400 自动降级为逐条', () => {
     });
 
     it('AbortSignal.timeout() 到点（连接被吞）→ 按可重试错误处理，重试成功', async () => {
-        // 不用假时钟推进真实的 30 秒等待：AbortSignal.timeout() 是原生平台计时器，
+        // 不用假时钟推进真实的 60 秒等待：AbortSignal.timeout() 是原生平台计时器，
         // 不保证受 vi.useFakeTimers() 影响。这里直接让第一次请求模拟浏览器到点后
         // 抛出的真实错误形态（TimeoutError，无 status），验证的是 callEmbeddingAPI
         // catch 分支「按可重试错误处理并重试一次」这段逻辑本身，不依赖计时器实现。
@@ -204,7 +204,7 @@ describe('getEmbeddings 批量 400 自动降级为逐条', () => {
         expect(calls).toBe(2);
     });
 
-    it('每次请求都带 30 秒 AbortSignal.timeout()，不再依赖手搓 AbortController', async () => {
+    it('每次请求都带 60 秒 AbortSignal.timeout()，不再依赖手搓 AbortController', async () => {
         let capturedSignal: AbortSignal | undefined;
         global.fetch = vi.fn((_url: any, init: any) => {
             capturedSignal = init.signal;

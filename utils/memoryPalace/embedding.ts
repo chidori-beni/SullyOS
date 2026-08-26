@@ -105,10 +105,14 @@ function modelSupportsDimensions(model: string): boolean {
 // 单次请求的硬超时。之前这里裸调 fetch，没有任何超时保护——如果代理/网关把连接
 // 吞掉（TCP 握手没人应答，即「黑洞」），fetch 会一直挂着，直到浏览器自己的极限
 // 超时（Safari 实测约 5 分钟）才抛出 TypeError: Load failed，期间检索/记忆写入
-// 全程卡住，且用户完全看不出这是"网络慢"还是"程序卡死"。30 秒对 embedding 这种
-// 通常几百毫秒到几秒就能回来的接口已经很宽松，卡住 30 秒基本可以断定是连接被吞，
-// 提前失败能让下面 retryable 逻辑（status===undefined 时可重试）尽快重试一次，
-// 而不是让用户对着卡住的界面等 5 分钟才看到一条读不懂的错误。
+// 全程卡住，且用户完全看不出这是"网络慢"还是"程序卡死"。
+//
+// 60 秒（而不是最初版本的 30 秒）：用户实测反馈向量化请求偶尔真的需要这么久才回来——
+// 硅基流动这类服务商的 embedding 接口在高峰期/冷启动时可能要排队，30 秒对「跨境访问
+// 国内服务商」这种本来就路由更长、更容易抖动的链路偏紧，会把「只是慢」误杀成「超时」。
+// 60 秒仍然远低于「无限等」，卡住这么久基本可以断定确实有问题（连接被吞或对方真的挂了），
+// 提前失败能让下面 retryable 逻辑（status===undefined 时可重试）尽快重试一次，而不是让
+// 用户对着卡住的界面等 5 分钟才看到一条读不懂的错误。
 //
 // 用 AbortSignal.timeout() 而不是手搓 `new AbortController() + setTimeout(() =>
 // controller.abort(reason))`：手搓版本第一次上线后，网络诊断面板（全局 fetch 拦截器）
@@ -119,7 +123,7 @@ function modelSupportsDimensions(model: string): boolean {
 // classifyFetchFailure() 只能按名字误判成"主动取消"。AbortSignal.timeout() 是
 // 专门为这个场景做的标准 API：到点后浏览器统一抛 `TimeoutError`（不是 `AbortError`），
 // 诊断面板本来就认这个名字、会给出正确的"请求超时"结论，不用我们自己再猜。
-const EMBEDDING_TIMEOUT_MS = 30_000;
+const EMBEDDING_TIMEOUT_MS = 60_000;
 
 /**
  * 实际调用 Embedding API
