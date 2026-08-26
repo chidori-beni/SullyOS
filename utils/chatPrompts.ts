@@ -25,7 +25,8 @@ import { getCharNameById } from './charNameRegistry';
 import { getLocalDateKey } from './localDate';
 import { getDailyScheduleForChar } from './dailySchedule';
 import { formatRelativeAge } from './groupChat/relativeTime';
-import { formatMessageReactionContext } from './messageReactions';
+import { formatMessageReactionContext, stripMessageReactionTags } from './messageReactions';
+import { stripFaceToFacePhoneSourceTags } from './sanitize';
 import { buildAutoReplyCatchUpPrompt, buildBusyReplyPrompt, decideBusyReply } from './busyAutoReply';
 
 // 语音格式指导按当前 TTS 服务商二选一：用 MiniMax 才注入 MiniMax 那套（含 <#秒#> 停顿标记），
@@ -686,6 +687,7 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
    - 每行渲染为一个气泡；空格和标点不会拆泡。
    - 【严禁】在输出中包含时间戳、名字前缀或"[角色名]:"。
    - **【严禁】模仿历史记录中的系统日志格式（如"[你 发送了...]"）。**
+   - 历史中可能出现内部来源标记 \`⟦SRC:FACE_PHONE⟧\`（旧数据中的面对面手机来源标记）。它们只用于区分面对面期间的手机消息，**绝不能原样输出、复述或写进台词/描写**。
    - **发送表情包**: 必须且只能使用命令: \`[[SEND_EMOJI: 表情名称]]\`。命令里只写下面方括号内的表情名称，不要带分类名。
    - **可用表情库 (按分类)**:
      ${emojiContextStr}
@@ -1156,16 +1158,6 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
 
 每一句话，都应该像是不经意间，从 ${char.name} 心里自然冒出来的。`;
 
-        // 通话里的「陪伴，不监督」边界也适用于普通聊天；但保留用户明确授权提醒的例外。
-        // 这块放在 recencyTail，确保它和其它模式说明之后、模型开口前仍处在高注意力位置。
-        recencyTail += `\n\n### 陪伴，不监督（高优先级边界）
-对方提到正在吃饭、洗漱、戴牙套、准备睡觉或之后要做什么，通常是在分享近况，不是在把进度交给你管理。
-- 可以关心、陪着聊或自然回应一次，但不要催快点、追问做完没有、倒计时、布置下一步，也不要把每段话收尾成提醒或命令。
-- 同一件生活小事不要换个说法反复叮嘱。关心不等于监督，更不等于管教。
-- 如果对方说“别催”“不要管我”“别说教”或表达类似边界，这条边界在本次对话后续持续有效。简短认错后真正停止，不要嘴上答应、下一句结尾又重复催促。
-- 只有对方明确要求你提醒、督促或帮忙安排时，才把它当成一次具体授权；只按对方指定的事情和范围提醒，不把一次授权扩展成长期监督，也不反复催促。
-- 想表达在意时，优先用陪伴、共情、分享自己的反应或顺着话题聊天，而不是指挥对方立刻行动。`;
-
         // 语音连着发太多时，把硬性禁令拼在整段 prompt 真正的最后一句——
         // 比上面 volatileState 里那条"软提醒"管用得多，见 voiceFrequency.buildVoiceHardBlockTail。
         if (voiceUsageStats) {
@@ -1224,14 +1216,21 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
 
         return {
             apiMessages: historySlice.map((m, index) => {
-                let content: any = m.content;
+                // Older rows may already contain a leaked source/reaction tag. Clean the
+                // prompt copy as well as the rendered bubble; otherwise the next model turn
+                // can still copy the historical leak even though new output is sanitized.
+                let content: any = typeof m.content === 'string'
+                    ? stripFaceToFacePhoneSourceTags(stripMessageReactionTags(m.content))
+                    : m.content;
                 const timeStr = `[${ChatPrompts.formatDate(m.timestamp, charTz)}]`;
                 const reactionContext = formatMessageReactionContext(m, char.name || '你', userProfile?.name || '用户');
                 const sourceTag = (() => {
                     const source = m.metadata?.source;
                     if (source === 'call') return '[通话]';
                     if (source === 'date') return '[约会]';
-                    if (m.metadata?.datePhoneMessage === true) return '[面对面手机消息]';
+                    // This is internal prompt metadata, not a label the character should quote.
+                    // Keep it terse and machine-like; the output sanitizer also accepts the old label.
+                    if (m.metadata?.datePhoneMessage === true) return '⟦SRC:FACE_PHONE⟧';
                     if (source === 'story_theater_memory') return `[剧情：${m.metadata?.theaterTitle || '共同经历'}]`;
                     return '[聊天]';
                 })();
@@ -1240,7 +1239,9 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     // 引用回复：把"被引用的原话"做成独立的上下文框，用户的新回复另起一行突出出来。
                     // 旧格式 [回复 "引用前50字..."]: 回复 会把引用和回复挤在一行，引用往往比回复长得多，
                     // 模型注意力被引用淹没、只对引用做反应而忽略真正的新消息（即"对方只看到引用看不到回复"）。
-                    let rawQuote = typeof m.replyTo.content === 'string' ? m.replyTo.content : '';
+                    let rawQuote = typeof m.replyTo.content === 'string'
+                        ? stripFaceToFacePhoneSourceTags(stripMessageReactionTags(m.replyTo.content))
+                        : '';
                     // 双语消息存储为 `原文\n%%BILINGUAL%%\n译文` —— 引用摘要只取原文侧。
                     // 关键：绝不能让 %%BILINGUAL%% 标记混进引用头。下游 cleanApiMessages 会把整条
                     // 消息在该标记处截断，用户引用双语消息时「并回复了 ↓」和用户的实际回复会被

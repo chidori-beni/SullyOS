@@ -25,6 +25,15 @@ const stripLiteralBackslashN = (t: string): string => t.replace(/\\n/g, '\n');
 /** 源标签 `[聊天]/[通话]/[约会]` → 换行 (保留分隔语义) */
 const stripSourceTags = (t: string): string => t.replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, '\n');
 
+/**
+ * 面对面期间的手机消息来源标记是 prompt 内部元数据，不是角色台词。
+ * 旧版本用 `[面对面手机消息]`，新版本使用不易被模型模仿的内部 token；
+ * 两种都清掉，兼容已经生成的历史和不同模型自发改写的括号形态。
+ */
+export const stripFaceToFacePhoneSourceTags = (t: string): string => t
+  .replace(/\s*[`'“”]*\s*(?:\[\s*面对面手机消息\s*\]|【\s*面对面手机消息\s*】|⟦\s*SRC\s*:\s*FACE[_ -]?PHONE\s*⟧|<\s*SOURCE\s*:\s*FACE[_ -]?TO[_ -]?FACE[_ -]?PHONE\s*>|<\s*FACE[_ -]?TO[_ -]?FACE[_ -]?PHONE\s*>)[`'“”]*\s*/giu, '\n')
+  .replace(/\s*面对面期间的手机消息（只读来源）\s*/gu, '\n');
+
 /** 4 种时间格式: 带括号 ISO / 行首裸 ISO / 中文 12h / 英文 12h */
 const stripTimestamps = (t: string): string =>
   t
@@ -390,6 +399,7 @@ export function sanitizeForNotification(text: string): string {
   result = stripSystemLogLeak(result);
   // 7. 源标签 [聊天] 等
   result = stripSourceTags(result);
+  result = stripFaceToFacePhoneSourceTags(result);
   // 8. 内部状态 / 业务标签 / 引用
   result = stripInnerState(result);
   result = stripBusinessTagsForNotification(result);
@@ -430,6 +440,7 @@ export function sanitizeForBubble(
   result = normalizeTranslationTags(result);
   // 2. 源标签 / 时间戳 / 系统日志 leak / 业务标签
   result = stripSourceTags(result);
+  result = stripFaceToFacePhoneSourceTags(result);
   result = stripTimestamps(result);
   result = stripSystemLogLeak(result);
   result = stripMarkdownHeaders(result);
@@ -550,6 +561,7 @@ export function sanitizeIntoSegments(text: string): Segment[] {
   cleaned = stripChineseDate(cleaned);
   cleaned = stripRoleNamePrefix(cleaned);
   cleaned = stripSourceTags(cleaned);
+  cleaned = stripFaceToFacePhoneSourceTags(cleaned);
   // 注意: 这里**不**剥 stripQuotes — 引用要带到客户端让 Step 7 配 aiReplyTarget.
   // sanitizeTextForBanner 单独剥引用给 notification.
   //

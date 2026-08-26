@@ -98,7 +98,7 @@ describe('buildChatRequestPayload 模式切换接线', () => {
         const historyMsgs = [
             message(1, 'assistant'),
             message(2, 'assistant', 'date', { dateEncounterId: 'enc-1' }),
-            message(3, 'user', 'chat', { datePhoneMessage: true, dateEncounterId: 'enc-1' }),
+            message(3, 'user', 'chat [面对面手机消息] 仍在同一地点', { datePhoneMessage: true, dateEncounterId: 'enc-1' }),
         ];
         const payload = await buildChatRequestPayload({
             char: {
@@ -121,6 +121,7 @@ describe('buildChatRequestPayload 模式切换接线', () => {
         const joined = payload.fullMessages.map(item => String(item.content || '')).join('\n');
         expect(joined).toContain('仍在同一地点面对面');
         expect(joined).not.toContain('刚刚结束了线下见面');
-        expect(joined).toContain('[面对面手机消息]');
+        expect(joined).toContain('⟦SRC:FACE_PHONE⟧');
+        expect(joined).not.toContain('[面对面手机消息]');
     });
 });

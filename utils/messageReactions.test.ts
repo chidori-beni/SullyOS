@@ -7,6 +7,7 @@ import {
     formatMessageReactionContext,
     getMessageReactions,
     parseReactionShortcutInput,
+    stripMessageReactionTags,
     toggleReactionInMetadata,
 } from './messageReactions';
 
@@ -20,6 +21,14 @@ describe('message reactions', () => {
             text: '知道了', commands: [{ emoji: '🫠', target: '今天真的好累' }],
         });
         expect(extractMessageReactionCommands('[[REACT：❤️]]').commands).toEqual([{ emoji: '❤️' }]);
+        expect(extractMessageReactionCommands('我就知道[REACT: 🙈 | 那好吧，我问吧。]')).toEqual({
+            text: '我就知道', commands: [{ emoji: '🙈', target: '那好吧，我问吧。' }],
+        });
+        expect(extractMessageReactionCommands('[REACT: 🐶 | 蓬头狗面]').text).toBe('');
+    });
+
+    it('历史气泡显示时兼容清掉单层和双层 REACT 标签', () => {
+        expect(stripMessageReactionTags('前文 [REACT: 🙈 | 目标] 后文 [[REACT: 🐶]]')).toBe('前文  后文 ');
     });
 
     it('按最新命中片段定位，找不到时回落到最近 user 消息', () => {

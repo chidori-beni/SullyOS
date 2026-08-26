@@ -18,6 +18,8 @@ import { fetchBlobForShare } from '../../utils/shareExport';
 import VoiceFavoriteActionSheet from '../voice/VoiceFavoriteActionSheet';
 import { getVoiceFavorite, makeVoiceFavoriteId, removeVoiceFavorite, saveVoiceFavorite } from '../../utils/voiceFavorites';
 import { getDatePhoneSpeaker, isDatePhoneBridge, formatDatePhoneMarkdown } from '../../utils/datePhoneBridge';
+import { stripMessageReactionTags } from '../../utils/messageReactions';
+import { stripFaceToFacePhoneSourceTags } from '../../utils/sanitize';
 import { ArrowLeft } from '@phosphor-icons/react';
 
 // 语音情绪标记 [v:xxx]：跟立绘情绪 [emotion] 分开的独立通道。立绘的 happy 是
@@ -49,7 +51,7 @@ const isContextNoise = (line: string) => {
 const cleanTextForDisplay = (text: string) => {
     // Remove content inside brackets [] and trim extra spaces
     // Also remove typical system prompts if any leak through
-    return text.replace(/\[.*?\]/g, '').trim();
+    return stripFaceToFacePhoneSourceTags(stripMessageReactionTags(text.replace(/\[.*?\]/g, ''))).trim();
 };
 
 // Helper: Check if a line is dialogue (starts with quoted speech "...")
@@ -1395,13 +1397,16 @@ const DateSession: React.FC<DateSessionProps> = ({
                                                         <strong className="tm-phone-speaker">{speaker}</strong>
                                                         <span className="tm-phone-channel"> · 手机消息</span>
                                                     </div>
-                                                    {String(msg.content || '').split('\n').map((line, index) => (
-                                                        <blockquote
-                                                            key={`${msg.id}-phone-${index}`}
-                                                            style={{ fontSize: `${dateFontSize}px` }}
-                                                            className="tm-para-block tm-quote-block tm-phone-quote whitespace-pre-wrap"
-                                                        >{line || '\u00a0'}</blockquote>
-                                                    ))}
+                                                    {String(msg.content || '').split('\n').map((line, index) => {
+                                                        const displayLine = stripFaceToFacePhoneSourceTags(stripMessageReactionTags(line)).trim();
+                                                        return (
+                                                            <blockquote
+                                                                key={`${msg.id}-phone-${index}`}
+                                                                style={{ fontSize: `${dateFontSize}px` }}
+                                                                className="tm-para-block tm-quote-block tm-phone-quote whitespace-pre-wrap"
+                                                            >{displayLine || '\u00a0'}</blockquote>
+                                                        );
+                                                    })}
                                                 </div>
                                             </>
                                         );

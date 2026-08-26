@@ -211,6 +211,12 @@ describe('sanitizeForBubble byte-alignment (C4 oracle)', () => {
 // ─── sanitizeForBubble 跟 sanitizeForNotification 差异点 ───────────────────
 
 describe('bubble vs notification differences', () => {
+  it('面对面手机消息来源标记只在 prompt 内部使用，不会漏进气泡或通知', () => {
+    const input = '前文[面对面手机消息]后文\n⟦SRC:FACE_PHONE⟧继续';
+    expect(sanitizeForBubble(input)).toBe('前文\n后文\n继续');
+    expect(sanitizeForNotification(input)).toBe('前文\n后文\n继续');
+  });
+
   it('A8 bubble 路径: markdown link → text (无 [链接：] 包装)', () => {
     // notification 把 [text](url) → [链接：text]; bubble 保留老行为 → text
     expect(sanitizeForBubble('see [click](https://x.com)')).toBe('see click');

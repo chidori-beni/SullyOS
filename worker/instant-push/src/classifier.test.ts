@@ -461,6 +461,14 @@ describe('call_invite', () => {
     expect(r.directives).toEqual([{ type: 'message_reaction', emoji: '🥺', target: '你居然还记得' }]);
   });
 
+  it('兼容模型漏掉一层括号的 REACT 标签', () => {
+    const r = classifyLLMOutput('我就知道[REACT: 🙈 | 那好吧，我问吧。]');
+    expect(r.kind).toBe('finish');
+    if (r.kind !== 'finish') return;
+    expect(r.cleanedText).toBe('我就知道');
+    expect(r.directives).toEqual([{ type: 'message_reaction', emoji: '🙈', target: '那好吧，我问吧。' }]);
+  });
+
   it('视频 / 中文别名 / 全角竖线都认', () => {
     const r = classifyLLMOutput('[[ACTION：CALL｜视频｜开门]]');
     if (r.kind !== 'finish') throw new Error('应当是 finish');

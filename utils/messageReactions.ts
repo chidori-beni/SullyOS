@@ -113,12 +113,23 @@ export const formatMessageReactionContext = (message: Message, charName = '你',
     return `\n${notes.join(' ')}`;
 };
 
-const REACTION_TAG_RE = /\[\[\s*REACT\s*[:：]\s*([^|｜\]\r\n]+?)(?:\s*[|｜]\s*([^\]\r\n]{0,120}?))?\s*\]\]/giu;
-const LOOSE_REACTION_TAG_RE = /\[\[\s*REACT\s*[:：][\s\S]*?\]\]/giu;
+// 模型有时会把提示里的规范双层括号简写成单层括号。
+// 两种都属于控制标签，必须在落库前消费，不能让 `[REACT: ...]` 变成普通气泡。
+// 双层分支放在前面，避免合法 `[[REACT:...]]` 被单层分支从第二个 `[` 开始误认。
+const REACTION_TAG_RE = /(?:\[\[\s*REACT\s*[:：]\s*([^|｜\]\r\n]+?)(?:\s*[|｜]\s*([^\]\r\n]{0,120}?))?\s*\]\]|\[\s*REACT\s*[:：]\s*([^|｜\]\r\n]+?)(?:\s*[|｜]\s*([^\]\r\n]{0,120}?))?\s*\])/giu;
+const LOOSE_REACTION_TAG_RE = /(?:\[\[\s*REACT\s*[:：][\s\S]*?\]\]|\[\s*REACT\s*[:：][^\]\r\n]*?\])/giu;
+
+/**
+ * 只用于历史消息的显示清理。新消息会在落库前由 extractMessageReactionCommands
+ * 消费标签并写入 metadata；这里不再尝试补写 reaction，避免渲染阶段产生副作用。
+ */
+export const stripMessageReactionTags = (content: string): string => content.replace(LOOSE_REACTION_TAG_RE, '');
 
 export const extractMessageReactionCommands = (content: string): { text: string; commands: MessageReactionCommand[] } => {
     const commands: MessageReactionCommand[] = [];
-    content.replace(REACTION_TAG_RE, (_full, emojiRaw: string, targetRaw?: string) => {
+    content.replace(REACTION_TAG_RE, (_full, doubleEmojiRaw: string, doubleTargetRaw: string | undefined, singleEmojiRaw: string, singleTargetRaw: string | undefined) => {
+        const emojiRaw = doubleEmojiRaw ?? singleEmojiRaw;
+        const targetRaw = doubleEmojiRaw !== undefined ? doubleTargetRaw : singleTargetRaw;
         const emoji = normalizeReactionEmoji(emojiRaw);
         if (emoji) {
             const target = typeof targetRaw === 'string' ? targetRaw.trim().slice(0, 80) : '';

@@ -196,13 +196,15 @@ const SIDE_EFFECT_TAGS: SideEffectSpec[] = [
       return invitation ? { type: 'meeting_invite', invitation } : null;
     },
   },
-  // [[REACT: ❤️ | 用户原话短片段]]；target 可省略，客户端回落到最近一条 user 消息。
+  // [[REACT: ❤️ | 用户原话短片段]] / [REACT: ❤️ | 用户原话短片段]
+  // target 可省略，客户端回落到最近一条 user 消息。两种括号都必须消费，
+  // 否则主动消息会把控制标签原样推到聊天气泡里。
   {
-    re: /\[\[\s*REACT\s*[:：]\s*([^|｜\]\r\n]+?)(?:\s*[|｜]\s*([^\]\r\n]{0,120}?))?\s*\]\]/giu,
+    re: /(?:\[\[\s*REACT\s*[:：]\s*([^|｜\]\r\n]+?)(?:\s*[|｜]\s*([^\]\r\n]{0,120}?))?\s*\]\]|\[\s*REACT\s*[:：]\s*([^|｜\]\r\n]+?)(?:\s*[|｜]\s*([^\]\r\n]{0,120}?))?\s*\])/giu,
     toDirective: (m) => {
-      const emoji = m[1].trim();
+      const emoji = (m[1] ?? m[3] ?? '').trim();
       if (!emoji || emoji.length > 24) return null;
-      const target = m[2]?.trim().slice(0, 80);
+      const target = (m[1] !== undefined ? m[2] : m[4])?.trim().slice(0, 80);
       return { type: 'message_reaction', emoji, ...(target ? { target } : {}) };
     },
   },

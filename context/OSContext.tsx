@@ -27,6 +27,7 @@ import { WorldScheduler, toTickEntries } from '../utils/worldHome/scheduler';
 import { runWorldEpisode, rerollWorldCharBeat } from '../utils/worldHome/engine';
 import { migrateWorldDaySegs } from '../utils/worldHome/prompts';
 import { ChatParser } from '../utils/chatParser';
+import { addReactionToMetadata, extractMessageReactionCommands, findReactionTarget } from '../utils/messageReactions';
 import { safeFetchJson } from '../utils/safeApi';
 import { captureApiRequestOnce, getApiCallAmbientContext, recordApiCall, setApiCallAmbientContext, updateApiRequestCaptureUsage } from '../utils/apiCallLog';
 import { isGlobalStreamEnabled, upgradeChatBodyToStream, assembleUpgradedResponse } from '../utils/streamUpgrade';
@@ -2458,6 +2459,22 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
               const savedPreviewChunks: string[] = [];
               const baseTimestamp = Date.now();
+              // The legacy local proactive path does not go through
+              // applyAssistantPostProcessing, so consume the same REACT protocol here.
+              // Otherwise a model using the common single-bracket shorthand would be
+              // persisted as visible text instead of becoming a reaction on the user message.
+              const reactionResult = extractMessageReactionCommands(aiContent);
+              aiContent = reactionResult.text;
+              if (reactionResult.commands.length > 0) {
+                  const allMessages = await DB.getMessagesByCharId(charId, true);
+                  for (const command of reactionResult.commands) {
+                      const target = findReactionTarget(allMessages, command.target, baseTimestamp);
+                      if (!target) continue;
+                      const at = baseTimestamp;
+                      await DB.updateMessageMetadata(target.id, (previous) =>
+                          addReactionToMetadata(previous, command.emoji, 'assistant', at));
+                  }
+              }
               let offset = 0;
               // 思考链只挂到本回合首条 assistant 消息上,避免每个气泡重复
               const consumeThinkingMeta = (): { thinkingChain: string } | undefined => {

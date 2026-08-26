@@ -24,6 +24,8 @@ import { materializeVisionDescriptions } from '../utils/visionApi';
 import { shareOrDownloadFile } from '../utils/shareExport';
 import { clearActiveDatePresence, getActiveDatePresence, makeDateEncounterPresence, setActiveDatePresence } from '../utils/datePresence';
 import { isDatePhoneBridge, mergeDatePhoneMessages } from '../utils/datePhoneBridge';
+import { stripMessageReactionTags } from '../utils/messageReactions';
+import { stripFaceToFacePhoneSourceTags } from '../utils/sanitize';
 import {
     buildDateHistoryGroups,
     formatDateHistoryDate,
@@ -36,10 +38,10 @@ import {
 } from '../utils/dateHistory';
 
 const truncateHistoryPreview = (value: string, maxLength = 96): string => {
-    const normalized = value
+    const normalized = stripFaceToFacePhoneSourceTags(stripMessageReactionTags(value)
         .replace(/\[.*?\]/g, '')
         .replace(/\s+/g, ' ')
-        .trim();
+        .trim());
     if (!normalized) return '这次见面没有摘要。';
     return normalized.length > maxLength ? `${normalized.slice(0, maxLength).trimEnd()}…` : normalized;
 };
@@ -328,7 +330,8 @@ const DateApp: React.FC = () => {
         // 会拿到空串且不报错：感知页黑屏卡死（无按钮可退），会话里则落库空消息。
         const content = extractContent(data);
         if (!content) throw new Error('模型返回了空回复，请重试或检查渠道/模型设置');
-        return content;
+        // Source markers are prompt metadata, never part of the saved/readable date story.
+        return stripFaceToFacePhoneSourceTags(stripMessageReactionTags(content));
     };
 
     // --- Resume / Start Logic ---
@@ -823,7 +826,12 @@ const DateApp: React.FC = () => {
         const endedAt = Date.now();
         const allDate = await DB.getRecentMessagesByCharIdAndSource(char.id, 'date', 500);
         const current = allDate.filter(m => m.metadata?.dateEncounterId === encounter.id);
-        const transcript = current.slice(-30).map(m => `${m.role === 'user' ? userProfile.name || '用户' : char.name}：${m.content}`).join('\n');
+        const transcript = current.slice(-30).map(m => {
+            const clean = typeof m.content === 'string'
+                ? stripFaceToFacePhoneSourceTags(stripMessageReactionTags(m.content))
+                : m.content;
+            return `${m.role === 'user' ? userProfile.name || '用户' : char.name}：${clean}`;
+        }).join('\n');
         let summary = '';
         try {
             summary = await callLLM([
@@ -1245,7 +1253,9 @@ const DateApp: React.FC = () => {
                             </div>
                             <div className="p-4 space-y-4">
                                 {selectedHistoryGroup.messages.map(m => {
-                                    const text = (m.content || '').replace(/\[.*?\]/g, '').trim();
+                                    const text = stripFaceToFacePhoneSourceTags(stripMessageReactionTags(m.content || '')
+                                        .replace(/\[.*?\]/g, '')
+                                        .trim());
                                     return (
                                         <div key={m.id} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'} select-none`} onTouchStart={(e) => handleHistoryLongPressStart(m, e)} onTouchEnd={handleHistoryLongPressEnd} onTouchMove={handleHistoryLongPressEnd} onMouseDown={(e) => handleHistoryLongPressStart(m, e)} onMouseUp={handleHistoryLongPressEnd} onMouseLeave={handleHistoryLongPressEnd} onContextMenu={(e) => { e.preventDefault(); setHistoryMenuMsg(m); setHistoryMenuPos({ x: e.clientX, y: e.clientY }); }}>
                                             <div className={`max-w-[90%] text-sm leading-relaxed whitespace-pre-wrap ${m.role === 'user' ? 'text-slate-500 text-right italic' : 'text-slate-800'}`}>{m.role === 'user' ? <span className="bg-slate-100 px-3 py-2 rounded-xl rounded-tr-none inline-block">{text}</span> : <span>{text || '(无内容)'}</span>}</div>

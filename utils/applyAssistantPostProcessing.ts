@@ -29,6 +29,7 @@ import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, RealtimeC
 import { DB } from './db';
 import { buildSelfiePrompt, getImageGenConfig, isImageGenReady, runImageGeneration } from './novelaiImage';
 import { ChatParser, type FrozenMusicSong } from './chatParser';
+import { stripFaceToFacePhoneSourceTags } from './sanitize';
 import { resolveCharTimeZone } from './timezone';
 import { NotionManager, FeishuManager, XhsNote } from './realtimeContext';
 import { enqueuePendingDiary, removePendingDiary } from './pendingDiary';
@@ -69,6 +70,10 @@ const normalizeAiContent = (raw: string): string => {
     cleaned = cleaned.replace(/^[\w一-龥]+:\s*/, '');
     // Strip source tags [聊天]/[通话]/[约会] leaked from history context — replace with newline to preserve intended splits
     cleaned = cleaned.replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, '\n');
+    // Face-to-face phone source markers are prompt metadata, never visible dialogue.
+    // Keep this early (before second-pass/tool detection) so a model echo cannot be
+    // fed back into the next round or persisted into memory.
+    cleaned = stripFaceToFacePhoneSourceTags(cleaned);
     cleaned = cleaned.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
     return cleaned;
 };
