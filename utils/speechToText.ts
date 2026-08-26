@@ -236,9 +236,19 @@ export const prepareSiliconFlowAudioPlayback = (): void => {
   );
 };
 
-/** Reassert a capture-compatible category in the originating mic-button turn. */
+/**
+ * Reassert a capture-compatible category in the originating mic-button turn.
+ * Once a call already owns a live reusable stream, `auto` is enough for
+ * MediaRecorder and avoids an unnecessary `auto` → `play-and-record` route
+ * transition (iOS can show the volume HUD for that transition even though the
+ * user did not press a volume key).
+ */
 export const prepareSiliconFlowAudioCapture = (): void => {
-  setWebAudioSessionType('play-and-record');
+  setWebAudioSessionType(
+    siliconFlowAudioRoute === 'speaker' && hasLiveMicrophoneTrack(siliconFlowMicrophone)
+      ? 'auto'
+      : 'play-and-record',
+  );
 };
 
 function hasLiveMicrophoneTrack(stream: MediaStream | null): stream is MediaStream {
@@ -246,8 +256,12 @@ function hasLiveMicrophoneTrack(stream: MediaStream | null): stream is MediaStre
   return stream.getAudioTracks().some(track => track.readyState !== 'ended');
 }
 
-const prepareSiliconFlowMicrophone = (stream: MediaStream) => {
-  setWebAudioSessionType('play-and-record');
+const prepareSiliconFlowMicrophone = (stream: MediaStream, preserveOutputRoute = false) => {
+  setWebAudioSessionType(
+    preserveOutputRoute && siliconFlowAudioRoute === 'speaker'
+      ? 'auto'
+      : 'play-and-record',
+  );
   stream.getAudioTracks().forEach(track => {
     if (track.readyState === 'live') track.enabled = true;
   });
@@ -268,7 +282,9 @@ const pauseSiliconFlowMicrophone = (stream: MediaStream) => {
 
 const getSiliconFlowMicrophone = async (): Promise<MediaStream> => {
   if (hasLiveMicrophoneTrack(siliconFlowMicrophone)) {
-    prepareSiliconFlowMicrophone(siliconFlowMicrophone);
+    // The stream already passed the permission boundary. Keep the speaker
+    // route in `auto` instead of toggling the Audio Session category again.
+    prepareSiliconFlowMicrophone(siliconFlowMicrophone, true);
     return siliconFlowMicrophone;
   }
   if (siliconFlowMicrophoneRequest) return siliconFlowMicrophoneRequest;
@@ -336,7 +352,6 @@ const startSiliconFlow = async (
   const startedAt = Date.now();
   let stopped = false;
 
-  prepareSiliconFlowMicrophone(stream);
   recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
   recorder.onstop = async () => {
     pauseSiliconFlowMicrophone(stream);

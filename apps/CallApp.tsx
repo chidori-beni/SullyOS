@@ -1682,12 +1682,21 @@ const CallApp: React.FC = () => {
   // Voice input: toggle speech-to-text into the draft input box.
   const toggleStt = async () => {
     if (isListening || sttStartPendingRef.current) {
-      sttStartTokenRef.current += 1;
-      sttStartPendingRef.current = false;
-      sttSessionRef.current?.stop();
+      const activeSession = sttSessionRef.current;
+      if (activeSession) {
+        // An active recorder is a normal two-tap flow: keep its start token
+        // valid so MediaRecorder.onstop can still transcribe and deliver the
+        // final text.  Only invalidate the token when the first tap is still
+        // waiting for getUserMedia; that path has no recorder to finish.
+        activeSession.stop();
+        sttStartPendingRef.current = false;
+      } else {
+        sttStartTokenRef.current += 1;
+        sttStartPendingRef.current = false;
+      }
       sttSessionRef.current = null;
       setIsListening(false);
-      setIsSttProcessing(false);
+      if (speechProvider === 'system') setIsSttProcessing(false);
       trackEvent('切换语音输入', { action: 'stop' });
       return;
     }

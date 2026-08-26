@@ -64,6 +64,13 @@ describe('CallApp runtime references', () => {
     expect(preferenceSheetSource).toContain('我先说');
   });
 
+  it('does not invalidate the active STT token before MediaRecorder transcribes the second tap', () => {
+    const source = readFileSync(path.resolve(__dirname, '../apps/CallApp.tsx'), 'utf8');
+
+    expect(source).toMatch(/const activeSession = sttSessionRef\.current;[\s\S]*?if \(activeSession\) \{[\s\S]*?activeSession\.stop\(\);[\s\S]*?\} else \{[\s\S]*?sttStartTokenRef\.current \+= 1;/);
+    expect(source).toContain("if (speechProvider === 'system') setIsSttProcessing(false);");
+  });
+
   it('keeps call autoplay separate from ChatApp and defers TTS when it is disabled', () => {
     const source = readFileSync(path.resolve(__dirname, '../apps/CallApp.tsx'), 'utf8');
     const preferenceSource = readFileSync(path.resolve(__dirname, './callPreferences.ts'), 'utf8');

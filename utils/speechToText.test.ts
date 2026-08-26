@@ -128,6 +128,8 @@ describe('SiliconFlow transcription request', () => {
     const runRecording = async () => {
       let finish!: () => void;
       const ended = new Promise<void>(resolve => { finish = resolve; });
+      // This mirrors the mic-button preflight in CallApp/UserVoiceInputModal.
+      prepareSiliconFlowAudioCapture();
       const session = await startStt('zh-CN', { onEnd: finish }, {
         provider: 'siliconflow-sensevoice',
         apiKey: 'sf-test-key',
@@ -143,9 +145,14 @@ describe('SiliconFlow transcription request', () => {
     // route without WebKit ending the capture track (which would prompt again
     // on the next tap).
     expect(audioSessionTypes.at(-1)).toBe('auto');
+    const routeChangesAfterFirstRecording = audioSessionTypes.length;
     await runRecording();
 
     expect(getUserMedia).toHaveBeenCalledOnce();
+    // A cached stream must not toggle back to play-and-record for every new
+    // tap; that transition is what makes iOS flash the volume HUD and can
+    // disturb the user's speaker route.
+    expect(audioSessionTypes.slice(routeChangesAfterFirstRecording)).not.toContain('play-and-record');
     expect(track.stop).not.toHaveBeenCalled();
     releaseSiliconFlowMicrophone();
     expect(track.stop).toHaveBeenCalledOnce();
