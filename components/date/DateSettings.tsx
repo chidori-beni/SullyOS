@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { useOS } from '../../context/OSContext';
-import { CharacterProfile, SpriteConfig, SkinSet, DateStyleConfig } from '../../types';
+import { CharacterProfile, SpriteConfig, SkinSet, DateStyleConfig, DateCssPreset } from '../../types';
 import { processImage } from '../../utils/file';
 import { pickDateFallbackSprite } from '../../utils/dateSprites';
 import { DATE_STYLE_PRESETS } from '../../utils/datePrompts';
@@ -32,10 +32,16 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const cssFileInputRef = useRef<HTMLInputElement>(null);
     const [readingCssDraft, setReadingCssDraft] = useState(char.dateReadingCustomCss || '');
-    useEffect(() => { setReadingCssDraft(char.dateReadingCustomCss || ''); }, [char.id]);
+    const [readingPresetName, setReadingPresetName] = useState('');
+    useEffect(() => { setReadingCssDraft(char.dateReadingCustomCss || ''); }, [char.id, char.dateReadingCustomCss]);
+
+    const readingCssPresets = char.dateReadingCssPresets || [];
+    const dateFontSize = Math.min(28, Math.max(10, Number(char.dateFontSize) || 14));
+
+    const makeCssPresetId = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     const saveReadingCss = () => {
-        updateCharacter(char.id, { dateReadingCustomCss: readingCssDraft || undefined });
+        updateCharacter(char.id, { dateReadingCustomCss: readingCssDraft.trim() || undefined, dateReadingCssPresetId: undefined });
         addToast(readingCssDraft.trim() ? '阅读美化 CSS 已保存' : '阅读美化 CSS 已清空', 'success');
     };
 
@@ -44,9 +50,52 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
         if (!file) return;
         const css = await file.text();
         setReadingCssDraft(css);
-        updateCharacter(char.id, { dateReadingCustomCss: css, dateReadingCssThemeName: file.name.replace(/\.(css|txt)$/i, '') });
+        updateCharacter(char.id, { dateReadingCustomCss: css, dateReadingCssThemeName: file.name.replace(/\.(css|txt)$/i, ''), dateReadingCssPresetId: undefined });
         addToast(`已导入 ${file.name}`, 'success');
         e.target.value = '';
+    };
+
+    const saveReadingPreset = () => {
+        const name = readingPresetName.trim();
+        const css = readingCssDraft.trim();
+        if (!name) { addToast('请先填写预设名称', 'error'); return; }
+        if (!css) { addToast('请先填写或导入 CSS', 'error'); return; }
+        const existing = readingCssPresets.find(p => p.name === name);
+        const preset: DateCssPreset = {
+            id: existing?.id || makeCssPresetId('tm_css'),
+            name,
+            css,
+            updatedAt: Date.now(),
+        };
+        const next = existing
+            ? readingCssPresets.map(p => p.id === existing.id ? preset : p)
+            : [...readingCssPresets, preset];
+        updateCharacter(char.id, {
+            dateReadingCssPresets: next,
+            dateReadingCustomCss: css,
+            dateReadingCssThemeName: name,
+            dateReadingCssPresetId: preset.id,
+        });
+        setReadingPresetName('');
+        addToast(existing ? `已更新阅读预设「${name}」` : `已保存阅读预设「${name}」`, 'success');
+    };
+
+    const applyReadingPreset = (preset: DateCssPreset) => {
+        setReadingCssDraft(preset.css);
+        updateCharacter(char.id, {
+            dateReadingCustomCss: preset.css,
+            dateReadingCssThemeName: preset.name,
+            dateReadingCssPresetId: preset.id,
+        });
+        addToast(`已切换阅读预设「${preset.name}」`, 'success');
+    };
+
+    const deleteReadingPreset = (preset: DateCssPreset) => {
+        updateCharacter(char.id, {
+            dateReadingCssPresets: readingCssPresets.filter(p => p.id !== preset.id),
+            ...(char.dateReadingCssPresetId === preset.id ? { dateReadingCssPresetId: undefined } : {}),
+        });
+        addToast(`已删除阅读预设「${preset.name}」`, 'success');
     };
 
     const exportReadingCss = () => {
@@ -324,6 +373,37 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                     </div>
                 </section>
 
+                <Section title="见面正文大小（阅读 / 立绘）" defaultOpen>
+                    <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                            <h3 className="text-xs font-bold text-slate-600">字体大小</h3>
+                            <p className="mt-1 text-[11px] leading-relaxed text-slate-400">阅读模式和立绘模式共用此设置；自定义 CSS 若使用 <code className="rounded bg-slate-100 px-1">!important</code> 指定字号，会优先于这里。</p>
+                        </div>
+                        <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary">{dateFontSize}px</span>
+                    </div>
+                    <input
+                        type="range"
+                        min="10"
+                        max="28"
+                        step="1"
+                        value={dateFontSize}
+                        onChange={e => updateCharacter(char.id, { dateFontSize: Number(e.target.value) })}
+                        aria-label="见面正文大小"
+                        className="mt-4 h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-slate-200 accent-primary"
+                    />
+                    <div className="mt-2 flex items-center justify-between text-[10px] text-slate-400"><span>小 10px</span><span>糯叽机兼容默认 14px</span><span>大 28px</span></div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                        {[12, 14, 16, 18, 20].map(size => (
+                            <button
+                                key={size}
+                                type="button"
+                                onClick={() => updateCharacter(char.id, { dateFontSize: size })}
+                                className={`rounded-full px-3 py-1.5 text-[11px] font-bold transition-colors ${dateFontSize === size ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500'}`}
+                            >{size}px</button>
+                        ))}
+                    </div>
+                </Section>
+
                 <Section title="阅读美化 CSS · 糯叽机兼容">
                     <p className="mb-3 text-[11px] leading-relaxed text-slate-400">可直接粘贴或导入糯叽机“此时此刻”的 CSS。Sully 阅读页按同一套 DOM 合同提供背景层、.tm-story、.tm-para、.tm-para-char、.tm-para-user、.tc-header、.tc-meta-*、.tc-avatar-*、.tc-header-user、.tm-body、.tm-thinking-toggle、.tm-header、.tm-compose、.tm-input、.tm-send-btn 等选择器；字体、布局和伪元素美化可以原样迁移。</p>
                     <textarea
@@ -339,7 +419,32 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                         <button type="button" onClick={exportReadingCss} disabled={!readingCssDraft} className="rounded-xl bg-slate-100 py-2.5 text-xs font-bold text-slate-600 disabled:opacity-40">导出 CSS</button>
                         <button type="button" onClick={saveReadingCss} className="rounded-xl bg-primary py-2.5 text-xs font-bold text-white">保存应用</button>
                     </div>
-                    <button type="button" onClick={() => { setReadingCssDraft(''); updateCharacter(char.id, { dateReadingCustomCss: undefined, dateReadingCssThemeName: undefined }); addToast('已恢复默认阅读样式', 'success'); }} className="mt-2 w-full py-2 text-[11px] font-bold text-rose-400">清空并恢复默认</button>
+                    <div className="mt-4 border-t border-slate-100 pt-3">
+                        <div className="flex gap-2">
+                            <input
+                                value={readingPresetName}
+                                onChange={e => setReadingPresetName(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter') saveReadingPreset(); }}
+                                placeholder="预设名称（如 夜行书简）"
+                                className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-primary"
+                            />
+                            <button type="button" onClick={saveReadingPreset} className="shrink-0 rounded-xl bg-slate-800 px-3 py-2 text-xs font-bold text-white">保存为预设</button>
+                        </div>
+                        {readingCssPresets.length > 0 && (
+                            <div className="mt-3 space-y-2">
+                                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">已保存预设 · 点击即可切换</div>
+                                {readingCssPresets.map(preset => (
+                                    <div key={preset.id} className="flex items-center gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+                                        <button type="button" onClick={() => applyReadingPreset(preset)} className={`min-w-0 flex-1 truncate text-left text-xs font-bold ${char.dateReadingCssPresetId === preset.id ? 'text-primary' : 'text-slate-600'}`}>
+                                            {char.dateReadingCssPresetId === preset.id ? '✓ ' : ''}{preset.name}
+                                        </button>
+                                        <button type="button" onClick={() => deleteReadingPreset(preset)} aria-label={`删除阅读预设 ${preset.name}`} className="shrink-0 px-1 text-sm text-slate-300 hover:text-rose-400">×</button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                    <button type="button" onClick={() => { setReadingCssDraft(''); updateCharacter(char.id, { dateReadingCustomCss: undefined, dateReadingCssThemeName: undefined, dateReadingCssPresetId: undefined }); addToast('已恢复默认阅读样式', 'success'); }} className="mt-2 w-full py-2 text-[11px] font-bold text-rose-400">清空并恢复默认</button>
                 </Section>
 
                 <ObserveSettings char={char} />

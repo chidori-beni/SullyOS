@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useOS } from '../../context/OSContext';
-import { CharacterProfile, DateObservation, DateObserveConfig, DateObserveStyleId } from '../../types';
+import { CharacterProfile, DateObservation, DateObserveConfig, DateObserveStyleId, DateCssPreset } from '../../types';
 import { OBSERVE_DIMENSIONS } from '../../utils/datePrompts';
 import ObserveHUD, { OBSERVE_STYLES } from './ObserveHUD';
 
@@ -46,18 +46,84 @@ const buildCustomDraft = (char: CharacterProfile): FieldDraft => {
 
 const ObserveSettings: React.FC<ObserveSettingsProps> = ({ char }) => {
     const { updateCharacter, addToast } = useOS();
+    const cssFileInputRef = useRef<HTMLInputElement>(null);
     const enabled = !!char.dateObserve?.enabled;
     const style = char.dateObserve?.style || 'hologram';
     const fields = char.dateObserve?.fields || {};
     const customs = char.dateObserve?.custom || [];
+    const cssDraft = char.dateObserve?.customCss || '';
+    const cssPresets = char.dateObserve?.cssPresets || [];
 
     const [open, setOpen] = useState(false); // 默认折叠
     const [draft, setDraft] = useState<FieldDraft>(() => buildFieldDraft(char));
     const [customDraft, setCustomDraft] = useState<FieldDraft>(() => buildCustomDraft(char));
+    const [observeCssDraft, setObserveCssDraft] = useState(cssDraft);
+    const [observePresetName, setObservePresetName] = useState('');
     useEffect(() => { setDraft(buildFieldDraft(char)); setCustomDraft(buildCustomDraft(char)); }, [char.id]);
+    useEffect(() => { setObserveCssDraft(char.dateObserve?.customCss || ''); }, [char.id, char.dateObserve?.customCss]);
 
     const patchObserve = (patch: Partial<DateObserveConfig>) =>
         updateCharacter(char.id, { dateObserve: { ...char.dateObserve, ...patch } });
+
+    const makeCssPresetId = () => `obs_css_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    const saveObserveCss = () => {
+        patchObserve({ customCss: observeCssDraft.trim() || undefined, cssPresetId: undefined });
+        addToast(observeCssDraft.trim() ? '观测面板 CSS 已保存并应用' : '观测面板 CSS 已清空', 'success');
+    };
+
+    const importObserveCss = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const css = await file.text();
+        const themeName = file.name.replace(/\.(css|txt)$/i, '');
+        setObserveCssDraft(css);
+        patchObserve({ customCss: css, cssThemeName: themeName, cssPresetId: undefined });
+        addToast(`已导入观测面板 CSS：${file.name}`, 'success');
+        e.target.value = '';
+    };
+
+    const exportObserveCss = () => {
+        const blob = new Blob([observeCssDraft], { type: 'text/css;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${char.name}_OBSERVE面板.css`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
+    const saveObservePreset = () => {
+        const name = observePresetName.trim();
+        const css = observeCssDraft.trim();
+        if (!name) { addToast('请先填写预设名称', 'error'); return; }
+        if (!css) { addToast('请先填写或导入 CSS', 'error'); return; }
+        const existing = cssPresets.find(p => p.name === name);
+        const preset: DateCssPreset = {
+            id: existing?.id || makeCssPresetId(),
+            name,
+            css,
+            updatedAt: Date.now(),
+        };
+        const next = existing ? cssPresets.map(p => p.id === existing.id ? preset : p) : [...cssPresets, preset];
+        patchObserve({ cssPresets: next, customCss: css, cssThemeName: name, cssPresetId: preset.id });
+        setObservePresetName('');
+        addToast(existing ? `已更新观测预设「${name}」` : `已保存观测预设「${name}」`, 'success');
+    };
+
+    const applyObservePreset = (preset: DateCssPreset) => {
+        setObserveCssDraft(preset.css);
+        patchObserve({ customCss: preset.css, cssThemeName: preset.name, cssPresetId: preset.id });
+        addToast(`已切换观测预设「${preset.name}」`, 'success');
+    };
+
+    const deleteObservePreset = (preset: DateCssPreset) => {
+        patchObserve({
+            cssPresets: cssPresets.filter(p => p.id !== preset.id),
+            ...(char.dateObserve?.cssPresetId === preset.id ? { cssPresetId: undefined } : {}),
+        });
+        addToast(`已删除观测预设「${preset.name}」`, 'success');
+    };
 
     // —— 默认维度 ——
     const patchField = (key: keyof DateObservation, partial: Record<string, unknown>) =>
@@ -86,10 +152,22 @@ const ObserveSettings: React.FC<ObserveSettingsProps> = ({ char }) => {
     };
 
     const resetAll = () => {
-        updateCharacter(char.id, { dateObserve: { enabled: char.dateObserve?.enabled, style: undefined, fields: undefined, custom: undefined } });
+        updateCharacter(char.id, {
+            dateObserve: {
+                enabled: char.dateObserve?.enabled,
+                style: undefined,
+                customCss: undefined,
+                cssThemeName: undefined,
+                cssPresetId: undefined,
+                cssPresets,
+                fields: undefined,
+                custom: undefined,
+            },
+        });
+        setObserveCssDraft('');
         setDraft(buildFieldDraft({ ...char, dateObserve: { enabled } }));
         setCustomDraft({});
-        addToast('观测样式与提示词已重置为默认', 'success');
+        addToast('观测样式、CSS 与提示词已重置为默认（已保留预设）', 'success');
     };
 
     // 预览：默认四维用示例文案，自定义维度塞占位内容，让样式预览也能看到追加的格子
@@ -153,6 +231,54 @@ const ObserveSettings: React.FC<ObserveSettingsProps> = ({ char }) => {
                                 <ObserveHUD observation={previewObs} variant="card" charName={char.name} config={char.dateObserve} />
                             </div>
                         </div>
+                    </div>
+
+                    {/* ── 面板 CSS 编辑 / 预设 ── */}
+                    <div>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                            <h4 className="text-[11px] font-bold text-slate-500">面板 CSS 美化</h4>
+                            {char.dateObserve?.cssThemeName && <span className="max-w-[12rem] truncate text-[10px] text-primary">当前：{char.dateObserve.cssThemeName}</span>}
+                        </div>
+                        <p className="text-[10px] text-slate-400 mb-2.5 leading-snug">可手动粘贴或导入 CSS。请用 <code className="rounded bg-slate-100 px-1">.sully-observe-panel</code>、<code className="rounded bg-slate-100 px-1">.sully-observe-header</code>、<code className="rounded bg-slate-100 px-1">.sully-observe-row</code>、<code className="rounded bg-slate-100 px-1">.sully-observe-value</code> 等选择器；主题的内联底色/边框需要在 CSS 中加 <code className="rounded bg-slate-100 px-1">!important</code> 才能覆盖。</p>
+                        <textarea
+                            value={observeCssDraft}
+                            onChange={e => setObserveCssDraft(e.target.value)}
+                            spellCheck={false}
+                            placeholder={'.sully-observe-panel {\n  border-radius: 24px !important;\n  background: #10131c !important;\n}\n.sully-observe-value { font-size: 14px; }'}
+                            className="h-44 w-full resize-y rounded-xl border border-slate-200 bg-slate-950 p-3 font-mono text-[11px] leading-relaxed text-emerald-200 outline-none focus:border-primary"
+                        />
+                        <input ref={cssFileInputRef} type="file" accept=".css,.txt,text/css,text/plain" className="hidden" onChange={importObserveCss} />
+                        <div className="mt-3 grid grid-cols-3 gap-2">
+                            <button type="button" onClick={() => cssFileInputRef.current?.click()} className="rounded-xl bg-slate-100 py-2.5 text-xs font-bold text-slate-600">导入 CSS</button>
+                            <button type="button" onClick={exportObserveCss} disabled={!observeCssDraft.trim()} className="rounded-xl bg-slate-100 py-2.5 text-xs font-bold text-slate-600 disabled:opacity-40">导出 CSS</button>
+                            <button type="button" onClick={saveObserveCss} className="rounded-xl bg-primary py-2.5 text-xs font-bold text-white">保存应用</button>
+                        </div>
+                        <div className="mt-4 border-t border-slate-100 pt-3">
+                            <div className="flex gap-2">
+                                <input
+                                    value={observePresetName}
+                                    onChange={e => setObservePresetName(e.target.value)}
+                                    onKeyDown={e => { if (e.key === 'Enter') saveObservePreset(); }}
+                                    placeholder="预设名称（如 霓虹观测）"
+                                    className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-primary"
+                                />
+                                <button type="button" onClick={saveObservePreset} className="shrink-0 rounded-xl bg-slate-800 px-3 py-2 text-xs font-bold text-white">保存为预设</button>
+                            </div>
+                            {cssPresets.length > 0 && (
+                                <div className="mt-3 space-y-2">
+                                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">已保存预设 · 点击即可切换</div>
+                                    {cssPresets.map(preset => (
+                                        <div key={preset.id} className="flex items-center gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+                                            <button type="button" onClick={() => applyObservePreset(preset)} className={`min-w-0 flex-1 truncate text-left text-xs font-bold ${char.dateObserve?.cssPresetId === preset.id ? 'text-primary' : 'text-slate-600'}`}>
+                                                {char.dateObserve?.cssPresetId === preset.id ? '✓ ' : ''}{preset.name}
+                                            </button>
+                                            <button type="button" onClick={() => deleteObservePreset(preset)} aria-label={`删除观测预设 ${preset.name}`} className="shrink-0 px-1 text-sm text-slate-300 hover:text-rose-400">×</button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        <button type="button" onClick={() => { setObserveCssDraft(''); patchObserve({ customCss: undefined, cssThemeName: undefined, cssPresetId: undefined }); addToast('已清空观测面板 CSS', 'success'); }} className="mt-2 w-full py-2 text-[11px] font-bold text-rose-400">清空当前 CSS（保留预设）</button>
                     </div>
 
                     {/* ── 每个维度的提示词与标签自定义 ── */}

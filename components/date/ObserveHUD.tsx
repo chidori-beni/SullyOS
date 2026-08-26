@@ -206,27 +206,27 @@ const CornerBrackets: React.FC<{ theme: Theme }> = ({ theme }) => (
 );
 
 const ObserveRow: React.FC<{ theme: Theme; glyph: string; en: string; cn: string; value: string }> = ({ theme, glyph, en, cn, value }) => (
-    <div className="flex items-start gap-2.5 py-1.5">
-        <span className={`mt-0.5 text-sm leading-none w-4 text-center shrink-0 ${theme.glyphClass}`}>{glyph}</span>
+    <div className="sully-observe-row flex items-start gap-2.5 py-1.5">
+        <span className={`sully-observe-glyph mt-0.5 text-sm leading-none w-4 text-center shrink-0 ${theme.glyphClass}`}>{glyph}</span>
         <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-                <span className={`text-[8px] font-bold tracking-[0.25em] ${theme.enClass}`}>{en}</span>
-                <span className={`text-[9px] ${theme.cnClass}`}>{cn}</span>
+                <span className={`sully-observe-label-en text-[8px] font-bold tracking-[0.25em] ${theme.enClass}`}>{en}</span>
+                <span className={`sully-observe-label-cn text-[9px] ${theme.cnClass}`}>{cn}</span>
             </div>
-            <p className={`text-[12px] leading-snug tracking-wide whitespace-pre-wrap break-words ${theme.valueClass}`}>{value}</p>
+            <p className={`sully-observe-value text-[12px] leading-snug tracking-wide whitespace-pre-wrap break-words ${theme.valueClass}`}>{value}</p>
         </div>
     </div>
 );
 
 const PanelHeader: React.FC<{ theme: Theme; charName?: string; right?: React.ReactNode }> = ({ theme, charName, right }) => (
-    <div className={`flex items-center justify-between px-3 pt-2.5 pb-1.5 border-b ${theme.headerBorderClass}`}>
+    <div className={`sully-observe-header flex items-center justify-between px-3 pt-2.5 pb-1.5 border-b ${theme.headerBorderClass}`}>
         <div className="flex items-center gap-2 min-w-0">
             <span className="relative flex h-1.5 w-1.5 shrink-0">
                 {theme.pulse && <span className={`absolute inline-flex h-full w-full rounded-full opacity-70 animate-ping ${theme.dotClass}`} />}
                 <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${theme.dotClass}`} />
             </span>
-            <span className={`text-[10px] font-bold tracking-[0.34em] ${theme.headerLabelClass}`}>{theme.headerLabel}</span>
-            <span className={`text-[9px] tracking-[0.2em] truncate ${theme.headerSubClass}`}>观测协议{charName ? ` · ${charName}` : ''}</span>
+            <span className={`sully-observe-header-label text-[10px] font-bold tracking-[0.34em] ${theme.headerLabelClass}`}>{theme.headerLabel}</span>
+            <span className={`sully-observe-header-sub text-[9px] tracking-[0.2em] truncate ${theme.headerSubClass}`}>观测协议{charName ? ` · ${charName}` : ''}</span>
         </div>
         {right}
     </div>
@@ -241,10 +241,15 @@ const ObserveHUD: React.FC<ObserveHUDProps> = ({ observation, variant = 'hud', c
     const rows = buildRows(observation, config, charName);
     if (rows.length === 0) return null;
 
+    const customCss = config?.customCss?.trim();
+    const customCssTag = customCss
+        ? <style data-sully-observe-css>{customCss.replace(/<\/style/gi, '<\\/style')}</style>
+        : null;
+
     const stop = (e: React.MouseEvent) => e.stopPropagation();
 
     const body = (dense: boolean) => (
-        <div className={`${dense ? 'px-3 py-1' : 'px-4 py-2'} ${theme.fontClass}`}>
+        <div className={`sully-observe-body ${dense ? 'px-3 py-1' : 'px-4 py-2'} ${theme.fontClass}`}>
             {rows.map(r => (
                 <ObserveRow key={r.key} theme={theme} glyph={r.glyph} en={r.en} cn={r.cn} value={r.value} />
             ))}
@@ -254,21 +259,25 @@ const ObserveHUD: React.FC<ObserveHUDProps> = ({ observation, variant = 'hud', c
     // ── 阅读模式内嵌卡片 ──
     if (variant === 'card') {
         return (
-            <div onClick={stop} className={`relative overflow-hidden mb-3 animate-fade-in ${theme.containerClass} ${theme.fontClass}`} style={theme.container}>
+            <>
+                {customCssTag}
+                <div onClick={stop} className={`sully-observe-panel sully-observe-card relative overflow-hidden mb-3 animate-fade-in ${theme.containerClass} ${theme.fontClass}`} style={theme.container}>
                 {theme.corners && <CornerBrackets theme={theme} />}
                 {theme.topLineClass && <div className={`absolute inset-x-0 top-0 h-px ${theme.topLineClass}`} />}
                 <PanelHeader theme={theme} charName={charName} />
                 {body(false)}
-            </div>
+                </div>
+            </>
         );
     }
 
     // ── 立绘模式悬浮 HUD ──
     return (
         <>
+            {customCssTag}
             <div
                 onClick={stop}
-                className={`control-panel relative w-[208px] overflow-hidden animate-fade-in ${theme.containerClass}`}
+                className={`sully-observe-panel sully-observe-hud control-panel relative w-[208px] overflow-hidden animate-fade-in ${theme.containerClass}`}
                 style={theme.container}
             >
                 {theme.corners && <CornerBrackets theme={theme} />}
@@ -309,7 +318,7 @@ const ObserveHUD: React.FC<ObserveHUDProps> = ({ observation, variant = 'hud', c
                     onClick={(e) => { e.stopPropagation(); setExpanded(false); }}
                     className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-black/70 backdrop-blur-sm animate-fade-in"
                 >
-                    <div onClick={stop} className={`relative w-full max-w-sm overflow-hidden ${theme.containerClass} ${theme.fontClass}`} style={theme.container}>
+                    <div onClick={stop} className={`sully-observe-panel sully-observe-expanded relative w-full max-w-sm overflow-hidden ${theme.containerClass} ${theme.fontClass}`} style={theme.container}>
                         {theme.corners && <CornerBrackets theme={theme} />}
                         {theme.topLineClass && <div className={`absolute inset-x-0 top-0 h-px ${theme.topLineClass}`} />}
                         <PanelHeader
@@ -327,13 +336,13 @@ const ObserveHUD: React.FC<ObserveHUDProps> = ({ observation, variant = 'hud', c
                         />
                         <div className="px-5 py-3">
                             {rows.map(r => (
-                                <div key={r.key} className={`py-2.5 border-b last:border-0 ${theme.headerBorderClass}`}>
+                                <div key={r.key} className={`sully-observe-row sully-observe-expanded-row py-2.5 border-b last:border-0 ${theme.headerBorderClass}`}>
                                     <div className="flex items-center gap-2 mb-1">
-                                        <span className={`text-base leading-none ${theme.glyphClass}`}>{r.glyph}</span>
-                                        <span className={`text-[9px] font-bold tracking-[0.3em] ${theme.enClass}`}>{r.en}</span>
-                                        <span className={`text-[10px] ${theme.cnClass}`}>{r.cn}</span>
+                                        <span className={`sully-observe-glyph text-base leading-none ${theme.glyphClass}`}>{r.glyph}</span>
+                                        <span className={`sully-observe-label-en text-[9px] font-bold tracking-[0.3em] ${theme.enClass}`}>{r.en}</span>
+                                        <span className={`sully-observe-label-cn text-[10px] ${theme.cnClass}`}>{r.cn}</span>
                                     </div>
-                                    <p className={`text-[14px] leading-relaxed tracking-wide whitespace-pre-wrap break-words pl-6 ${theme.valueClass}`}>{r.value}</p>
+                                    <p className={`sully-observe-value text-[14px] leading-relaxed tracking-wide whitespace-pre-wrap break-words pl-6 ${theme.valueClass}`}>{r.value}</p>
                                 </div>
                             ))}
                         </div>

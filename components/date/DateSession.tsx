@@ -209,6 +209,8 @@ const DateSession: React.FC<DateSessionProps> = ({
 
     // 观测协议 OBSERVE：当前批次解析出的结构化观测，驱动全息 HUD
     const observeEnabled = !!char.dateObserve?.enabled;
+    // 阅读与立绘共用一个正文大小设置。旧角色没有该字段时回到糯叽机兼容的 14px。
+    const dateFontSize = Math.min(28, Math.max(10, Number(char.dateFontSize) || 14));
     const [observation, setObservation] = useState<DateObservation | null>(initialState?.observation ?? null);
     
     // Interaction State
@@ -939,6 +941,15 @@ const DateSession: React.FC<DateSessionProps> = ({
         setSelectedMsgIds(new Set());
     };
 
+    /** 从任意模式进入可见的记录管理界面，避免用户只能猜长按手势。 */
+    const startBatchDelete = () => {
+        setIsNovelMode(true);
+        setIsBatchSelectMode(true);
+        setShowInputBox(false);
+        setShowMenu(false);
+        setShowVoiceLangPicker(false);
+    };
+
     const handleBatchDelete = async () => {
         if (selectedMsgIds.size === 0) return;
         await onDeleteMessages(Array.from(selectedMsgIds));
@@ -1023,10 +1034,10 @@ const DateSession: React.FC<DateSessionProps> = ({
                             {isNovelMode ? '立绘模式' : '阅读模式'}
                         </button>
 
-                        {isNovelMode && char.dateLightReading && !isBatchSelectMode && (
-                            <button onClick={() => { setIsBatchSelectMode(true); setShowMenu(false); setShowVoiceLangPicker(false); }} className="h-9 px-3.5 rounded-full flex items-center gap-2 text-xs font-bold border shadow-lg active:scale-95 transition-all bg-black/40 backdrop-blur-md border-white/15 text-white hover:bg-white/20">
+                        {messages.length > 0 && !isBatchSelectMode && (
+                            <button onClick={startBatchDelete} className="h-9 px-3.5 rounded-full flex items-center gap-2 text-xs font-bold border shadow-lg active:scale-95 transition-all bg-red-500/70 backdrop-blur-md border-white/20 text-white hover:bg-red-600">
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
-                                多选删除
+                                管理 / 删除记录
                             </button>
                         )}
 
@@ -1066,7 +1077,7 @@ const DateSession: React.FC<DateSessionProps> = ({
 
             {/* Novel Mode View */}
             {isNovelMode && (
-                <div id="this-moment-screen" className="tm-screen absolute inset-0 z-20 flex min-h-0 flex-col overflow-hidden no-scrollbar mask-image-gradient overscroll-contain" onClick={(e) => { e.stopPropagation(); if (showMenu) { setShowMenu(false); setShowVoiceLangPicker(false); return; } if (!(e.target as HTMLElement).closest('button, input, textarea, .tm-header, .tm-compose')) setShowInputBox(true); }}>
+                <div id="this-moment-screen" className="tm-screen absolute inset-0 z-20 flex min-h-0 flex-col overflow-hidden no-scrollbar mask-image-gradient overscroll-contain" style={{ ['--sully-date-font-size' as string]: `${dateFontSize}px` }} onClick={(e) => { e.stopPropagation(); if (showMenu) { setShowMenu(false); setShowVoiceLangPicker(false); return; } if (!(e.target as HTMLElement).closest('button, input, textarea, .tm-header, .tm-compose')) setShowInputBox(true); }}>
                     {char.dateReadingCustomCss && <style>{char.dateReadingCustomCss.replace(/<\/style/gi, '<\\/style')}</style>}
                     {/*
                      * 用户主题 CSS 只负责视觉表现。阅读页的滚动和触控层必须由宿主保底，
@@ -1151,7 +1162,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                 <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { setShowExitModal(true); setShowMenu(false); }}>离开 / 结束</button>
                                 <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { const next = !observeEnabled; updateCharacter(char.id, { dateObserve: { ...char.dateObserve, enabled: next } }); setShowMenu(false); addToast(next ? '观测已开启 · 下条回复生效' : '观测已关闭', 'info'); }}>观测{observeEnabled ? ' · 开' : ' · 关'}</button>
                                 <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { updateCharacter(char.id, { dateVoiceEnabled: !voiceEnabled }); setShowMenu(false); setShowVoiceLangPicker(false); addToast(voiceEnabled ? '语音已关闭' : '语音已开启', 'info'); }}>语音{voiceEnabled ? ' · 开' : ' · 关'}</button>
-                                {isNovelMode && char.dateLightReading && !isBatchSelectMode && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { setIsBatchSelectMode(true); setShowMenu(false); }}>多选删除</button>}
+                                {messages.length > 0 && !isBatchSelectMode && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={startBatchDelete}>管理 / 删除记录</button>}
                             </div>
                         )}
                     </header>
@@ -1160,7 +1171,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                         <div className="tm-story-inner mx-auto w-full min-h-full animate-fade-in">
                             {isBatchSelectMode && (
                                 <div className="tm-batch-toolbar sticky top-0 z-20 flex items-center justify-between rounded-xl px-3 py-2 text-xs">
-                                    <span>已选 {selectedMsgIds.size} 条</span>
+                                    <span>已选 {selectedMsgIds.size} 条 · 点击记录选择</span>
                                     <div className="flex gap-2">
                                         <button
                                             onClick={(e) => { e.stopPropagation(); exitBatchMode(); }}
@@ -1188,7 +1199,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                         </div>
                                         <div className="tm-body tm-body-char">
                                             {observeEnabled && hasObservation(peekObs) && <ObserveHUD observation={peekObs} variant="card" charName={char.name} config={char.dateObserve} />}
-                                            {(cleanTextForDisplay(peekBody) || '（见面已经开始）').split('\n').map((line, idx) => line.trim() && <p key={idx} className="tm-para-block tm-quote-block whitespace-pre-wrap">{line}</p>)}
+                                            {(cleanTextForDisplay(peekBody) || '（见面已经开始）').split('\n').map((line, idx) => line.trim() && <p key={idx} style={{ fontSize: `${dateFontSize}px` }} className="tm-para-block tm-quote-block whitespace-pre-wrap">{line}</p>)}
                                         </div>
                                     </article>
                                 );
@@ -1257,7 +1268,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                                 <span className="tc-avatar-badge-user">{userProfile.name}</span>
                                             </div>
                                             <div className="tm-body tm-body-user">
-                                                <p className="tm-para-block whitespace-pre-wrap">{cleanTextForDisplay(msg.content)}</p>
+                                                <p style={{ fontSize: `${dateFontSize}px` }} className="tm-para-block whitespace-pre-wrap">{cleanTextForDisplay(msg.content)}</p>
                                             </div>
                                         </>
                                     ) : (() => {
@@ -1322,7 +1333,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                                         onMouseDown={voiceEnabled && lineIsDialogue && !isOpeningMsg ? (e) => e.stopPropagation() : undefined}
                                                         onContextMenu={voiceEnabled && lineIsDialogue && !isOpeningMsg ? (e) => { e.preventDefault(); e.stopPropagation(); void openDateVoiceFavorite(voiceTarget); } : undefined}
                                                     >
-                                                        <p className={`tm-para-block flex-1 whitespace-pre-wrap font-serif text-[18px] text-justify leading-loose tracking-wide pl-4 ${char.dateLightReading ? 'text-stone-700 border-l-2 border-stone-200' : 'text-slate-200 drop-shadow-md border-l-2 border-white/10'}`}>{cleanLine}</p>
+                                                        <p style={{ fontSize: `${dateFontSize}px` }} className={`tm-para-block flex-1 whitespace-pre-wrap pl-4 ${char.dateLightReading ? 'text-stone-700 border-l-2 border-stone-200' : 'text-slate-200 drop-shadow-md border-l-2 border-white/10'}`}>{cleanLine}</p>
                                                         {/* Voice button: only for dialogue lines, not opening */}
                                                         {voiceEnabled && lineIsDialogue && !isOpeningMsg && (
                                                             <button
@@ -1406,7 +1417,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                         </button>
                                     )}
                                 </div>
-                                <p className="text-white/90 text-[16px] leading-relaxed font-light tracking-wide drop-shadow-md mt-2">{displayedText}{isTextAnimating && <span className="inline-block w-2 h-4 bg-white/70 ml-1 animate-pulse align-middle"></span>}</p>
+                                <p style={{ fontSize: `${dateFontSize}px` }} className="text-white/90 leading-relaxed font-light drop-shadow-md mt-2">{displayedText}{isTextAnimating && <span className="inline-block w-2 h-4 bg-white/70 ml-1 animate-pulse align-middle"></span>}</p>
                                 {!isTextAnimating && dialogueQueue.length > 0 && <div className="absolute bottom-3 right-4 animate-bounce opacity-70"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-white"><path fillRule="evenodd" d="M12.53 16.28a.75.75 0 0 1-1.06 0l-7.5-7.5a.75.75 0 0 1 1.06-1.06L12 14.69l6.97-6.97a.75.75 0 1 1 1.06 1.06l-7.5 7.5Z" clipRule="evenodd" /></svg></div>}
                                 {!isTextAnimating && dialogueQueue.length === 0 && dialogueBatch.length > 0 && <div className="absolute bottom-3 right-4 opacity-50 text-[10px] text-white flex items-center gap-1 animate-pulse"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>Loop</div>}
                             </div>

@@ -2074,11 +2074,27 @@ export interface DateObserveFieldConfig {
     enabled?: boolean;
 }
 
+/** 见面模式可复用的 CSS 预设（按角色保存，随角色导出/同步）。 */
+export interface DateCssPreset {
+    id: string;
+    name: string;
+    css: string;
+    updatedAt?: number;
+}
+
 /** 观测协议 OBSERVE 的 per-character 配置 */
 export interface DateObserveConfig {
     enabled?: boolean;
     /** HUD 视觉样式，默认 hologram */
     style?: DateObserveStyleId;
+    /** 当前启用的观测面板自定义 CSS。选择器以 .sully-observe-* 为主。 */
+    customCss?: string;
+    /** 当前 CSS 预设名称（仅用于显示/导出文件名）。 */
+    cssThemeName?: string;
+    /** 当前应用的 CSS 预设 id。 */
+    cssPresetId?: string;
+    /** 用户保存的观测面板 CSS 预设。 */
+    cssPresets?: DateCssPreset[];
     /** 四个维度的标签 / 提示自定义；不填回落默认值 */
     fields?: Partial<Record<keyof DateObservation, DateObserveFieldConfig>>;
     /** 用户追加的自定义维度（在四个默认维度之外） */
@@ -2869,6 +2885,12 @@ export interface CharacterProfile {
   /** 糯叽机「此时此刻」同名 .tm-* 选择器兼容的阅读模式自定义 CSS。 */
   dateReadingCustomCss?: string;
   dateReadingCssThemeName?: string;
+  /** 当前应用的阅读 CSS 预设 id。 */
+  dateReadingCssPresetId?: string;
+  /** 用户保存的阅读模式 CSS 预设。 */
+  dateReadingCssPresets?: DateCssPreset[];
+  /** 见面阅读/立绘模式正文大小（px），默认 14；范围由设置面板限制为 10–28。 */
+  dateFontSize?: number;
   dateSkinSets?: SkinSet[];     // Multiple skin sets for portrait mode
   activeSkinSetId?: string;     // Currently active skin set ID
   dateStyleConfig?: DateStyleConfig; // 见面模式文风（写作风格 / 叙事人称 / 自定义补充）
