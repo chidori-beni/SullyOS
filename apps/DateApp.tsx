@@ -118,6 +118,8 @@ const DateApp: React.FC = () => {
     const [historyBusy, setHistoryBusy] = useState(false);
     const [historyFocusEncounterId, setHistoryFocusEncounterId] = useState<string | null>(null);
     const [pendingHistoryOpen, setPendingHistoryOpen] = useState<{ charId: string; encounterId: string } | null>(null);
+    // 从分页记录进入的完结见面回顾：复用 DateSession 的阅读/立绘页面，但禁止回复与新存档。
+    const [historyReplayGroupId, setHistoryReplayGroupId] = useState<string | null>(null);
     const [historySelectedGroupId, setHistorySelectedGroupId] = useState<string | null>(null);
     const [historyQuery, setHistoryQuery] = useState('');
     const [historyDeleteTarget, setHistoryDeleteTarget] = useState<DateHistoryGroup | null>(null);
@@ -217,14 +219,14 @@ const DateApp: React.FC = () => {
     };
 
     useEffect(() => {
-        if (char && mode === 'session') {
+        if (char && mode === 'session' && !historyReplayGroupId) {
             // 进会话 / 换角色都从初始窗口重来。limit 必须显式传：setState 是异步的，
             // 靠 dateLoadLimit 闭包会读到上一个角色翻开的深度，和重置后的 state 对不上。
             setDateLoadLimit(DATE_SESSION_MESSAGE_LIMIT);
             setDateHistoryReachedEnd(false);
             loadDateMessages(DATE_SESSION_MESSAGE_LIMIT);
         }
-    }, [char, mode]);
+    }, [char, mode, historyReplayGroupId]);
 
 
     /** 阅读模式要更早的记录：limit 递增重取（反向游标，limit 越大够得越远）。 */
@@ -618,7 +620,9 @@ const DateApp: React.FC = () => {
     const confirmEditMessage = async () => {
         if (!editTargetMsg) return;
         await DB.updateMessage(editTargetMsg.id, editContent);
-        setDateMessages(prev => prev.map(m => m.id === editTargetMsg.id ? { ...m, content: editContent } : m));
+        const applyEdit = (m: Message) => m.id === editTargetMsg.id ? { ...m, content: editContent } : m;
+        setDateMessages(prev => prev.map(applyEdit));
+        setHistoryMessages(prev => prev.map(applyEdit));
         markDateTurnDirty();
         setIsEditModalOpen(false);
         setEditTargetMsg(null);
@@ -703,9 +707,9 @@ const DateApp: React.FC = () => {
     const handleHistoryEditConfirm = async () => {
         if (!historyEditMsg) return;
         await DB.updateMessage(historyEditMsg.id, historyEditContent);
-        setHistoryMessages(prev => prev.map(m => (
-            m.id === historyEditMsg.id ? { ...m, content: historyEditContent } : m
-        )));
+        const applyEdit = (m: Message) => m.id === historyEditMsg.id ? { ...m, content: historyEditContent } : m;
+        setHistoryMessages(prev => prev.map(applyEdit));
+        setDateMessages(prev => prev.map(applyEdit));
         markDateTurnDirty();
         setHistoryEditMsg(null);
         addToast('已修改', 'success');
@@ -713,6 +717,18 @@ const DateApp: React.FC = () => {
     };
 
     const onExitSession = (finalState: DateState) => {
+        if (historyReplayGroupId) {
+            clearDateResumeAttempt();
+            setHistoryReplayGroupId(null);
+            setHistorySelectedGroupId(null);
+            setDateMessages([]);
+            setPeekStatus('');
+            setHasSavedOpening(false);
+            setEndSuggestedReason('');
+            setMode('history');
+            trackEvent('退出见面回顾');
+            return;
+        }
         // 用户主动保存并退出 = 干净退出，撤销恢复哨兵。
         clearDateResumeAttempt();
         if (char) {
@@ -805,8 +821,40 @@ const DateApp: React.FC = () => {
         trackEvent('打开见面设置面板', { from: 'select' });
     };
 
+    /**
+     * 从分页卡片进入“见面回顾”：完整读取该分页，直接挂载同一套阅读/立绘会话。
+     * 回顾只把原消息交给 DateSession，不创建新消息、不恢复未结束存档。
+     */
+    const openHistoryReplay = async (group: DateHistoryGroup) => {
+        if (!char || historyBusy) return;
+        setHistoryBusy(true);
+        try {
+            // 列表可能只加载了最近窗口；回顾必须拿到这一页的完整正文。
+            const allDateMessages = await DB.getRecentMessagesByCharIdAndSource(char.id, 'date', Number.MAX_SAFE_INTEGER);
+            const allGroups = buildDateHistoryGroups(allDateMessages, historyView, historySortOrder);
+            const fullGroup = allGroups.find(candidate => candidate.id === group.id) || group;
+            const replayMessages = fullGroup.messages.filter(message => message.metadata?.isDateEnding !== true);
+            setHistoryReplayGroupId(fullGroup.id);
+            setHistorySelectedGroupId(null);
+            setDateMessages(replayMessages);
+            setDateLoadLimit(replayMessages.length);
+            setDateHistoryReachedEnd(true);
+            setPeekStatus('');
+            setHasSavedOpening(true);
+            setEndSuggestedReason('');
+            setMode('session');
+            trackEvent('打开见面回顾', { 记录: historyView === 'encounter' ? '按次' : '按日期', 消息数: replayMessages.length });
+        } catch (error) {
+            console.error('Open Date History Replay Error', error);
+            addToast('见面回顾加载失败，请稍后重试', 'error');
+        } finally {
+            setHistoryBusy(false);
+        }
+    };
+
     const openHistory = async (c: CharacterProfile, focusEncounterId?: string) => {
         setActiveCharacterId(c.id);
+        setHistoryReplayGroupId(null);
         setHistoryFocusEncounterId(focusEncounterId || null);
         setHistorySelectedGroupId(null);
         setHistoryQuery('');
@@ -839,8 +887,10 @@ const DateApp: React.FC = () => {
         if (mode !== 'history' || !historyFocusEncounterId) return;
         const group = historyGroups.find(candidate => candidate.messages.some(message => message.metadata?.dateEncounterId === historyFocusEncounterId));
         if (!group) return;
-        setHistorySelectedGroupId(group.id);
         setHistoryFocusEncounterId(null);
+        void openHistoryReplay(group);
+        // openHistoryReplay 只负责这次回顾导航；列表数据变化不应重复打开。
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [mode, historyFocusEncounterId, historyGroups]);
 
     const handleLoadMoreHistory = async () => {
@@ -1142,13 +1192,14 @@ const DateApp: React.FC = () => {
                                 const originalIndex = historyGroups.findIndex(candidate => candidate.id === group.id);
                                 const encounterNumber = originalIndex < 0 ? historyListGroups.length - index : (historySortOrder === 'newest' ? historyGroups.length - originalIndex : originalIndex + 1);
                                 const dateLabel = group.dateKey.replace(/-/g, '/');
-                                const openGroup = () => setHistorySelectedGroupId(group.id);
+                                const openGroup = () => { if (!historyBusy) void openHistoryReplay(group); };
                                 return (
                                     <div
                                         key={group.id}
                                         role="button"
                                         tabIndex={0}
                                         onClick={openGroup}
+                                        aria-disabled={historyBusy}
                                         onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openGroup(); } }}
                                         className="group flex min-h-[92px] w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-left shadow-sm transition-all hover:border-slate-300 hover:shadow-md active:scale-[0.995]"
                                     >
@@ -1277,8 +1328,9 @@ const DateApp: React.FC = () => {
                     char={char}
                     userProfile={userProfile}
                     messages={dateMessages}
-                    peekStatus={peekStatus}
-                    initialState={char.savedDateState}
+                    peekStatus={historyReplayGroupId ? '' : peekStatus}
+                    initialState={historyReplayGroupId ? undefined : char.savedDateState}
+                    historyReplay={Boolean(historyReplayGroupId)}
                     onSendMessage={handleSendMessage}
                     onReroll={handleReroll}
                     onExit={onExitSession}
@@ -1290,7 +1342,7 @@ const DateApp: React.FC = () => {
                     onSettings={() => {}} // Removed parent state change, DateSession handles it internally now
                     onLoadMoreHistory={handleLoadMoreDateHistory}
                     historyLoadLimit={dateLoadLimit}
-                    historyReachedEnd={dateHistoryReachedEnd}
+                    historyReachedEnd={historyReplayGroupId ? true : dateHistoryReachedEnd}
                 />
 
                 {/* 记忆整理中 — 顶部浮动胶囊（与聊天侧外观一致） */}
