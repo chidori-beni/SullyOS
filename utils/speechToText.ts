@@ -226,6 +226,13 @@ const getSiliconFlowMicrophone = async (): Promise<MediaStream> => {
 
   const generation = siliconFlowMicrophoneGeneration;
   let request: Promise<MediaStream>;
+  // TTS playback deliberately leaves WebKit's AudioSession in `playback` so
+  // role audio stays on the speaker. WebKit rejects getUserMedia while that
+  // category is active, and the rejection happens before the returned
+  // promise's `then()` can restore it. Switch to a recording-compatible
+  // category before requesting the first stream; cached streams already take
+  // this path in prepareSiliconFlowMicrophone().
+  setWebAudioSessionType('play-and-record');
   request = navigator.mediaDevices.getUserMedia({
     audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
   }).then(stream => {

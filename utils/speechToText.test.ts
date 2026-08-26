@@ -59,9 +59,14 @@ describe('SiliconFlow transcription request', () => {
       getAudioTracks: () => [track],
       getTracks: () => [track],
     } as unknown as MediaStream;
-    const getUserMedia = vi.fn(async () => stream);
     const audioSessionTypes: string[] = [];
-    let audioSessionType = 'auto';
+    let audioSessionType = 'playback';
+    const getUserMedia = vi.fn(async () => {
+      // Regression guard: after a TTS turn leaves the session in playback,
+      // the category must be changed before WebKit evaluates getUserMedia().
+      expect(audioSessionType).toBe('play-and-record');
+      return stream;
+    });
     const audioSession = {
       get type() { return audioSessionType; },
       set type(value: string) { audioSessionType = value; audioSessionTypes.push(value); },
