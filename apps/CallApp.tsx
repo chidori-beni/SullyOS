@@ -12,7 +12,7 @@ import { normalizeVoiceTags } from '../utils/sanitize';
 import { FISH_VOICE_ACTING_GUIDE, synthesizeSpeechFishDetailed, resolveFishAudioApiKey, cleanTextForTtsFish, stripFishMarkupForDisplay } from '../utils/fishAudioTts';
 import { resolveTtsProvider, getTtsProvider, getVoicePromptOverride } from '../utils/ttsProvider';
 import { VOICE_LANGUAGE_OPTIONS } from '../utils/voiceLanguage';
-import { startStt, isSttSupported, prepareSiliconFlowAudioPlayback, setSiliconFlowAudioRoute, releaseSiliconFlowMicrophone, type SiliconFlowAudioRoute, type SttSession } from '../utils/speechToText';
+import { startStt, isSttSupported, prepareSiliconFlowAudioCapture, prepareSiliconFlowAudioPlayback, setSiliconFlowAudioRoute, releaseSiliconFlowMicrophone, type SiliconFlowAudioRoute, type SttSession } from '../utils/speechToText';
 import { ContextBuilder } from '../utils/context';
 import { resolveCharTimeZone } from '../utils/timezone';
 import {
@@ -134,6 +134,7 @@ import { addCompanionModelOutfit, addUploadedCompanionOutfit } from '../utils/co
 import VoiceFavoriteActionSheet from '../components/voice/VoiceFavoriteActionSheet';
 import { getVoiceFavorite, removeVoiceFavorite, saveVoiceFavorite } from '../utils/voiceFavorites';
 import { callLaunch } from '../utils/callLaunch';
+import { resolveReusableCallAudioUrl } from '../utils/callAudioUrl';
 import {
   clearSleepCompanionSession,
   loadSleepCompanionSession,
@@ -653,9 +654,16 @@ const CallApp: React.FC = () => {
   const [isListening, setIsListening] = useState(false);
   const [isSttProcessing, setIsSttProcessing] = useState(false);
   const sttSessionRef = useRef<SttSession | null>(null);
+  // Starting SiliconFlow waits for getUserMedia/the permission sheet.  A
+  // second tap during that await must cancel the pending start rather than
+  // creating another recorder (and another apparent permission request).
+  const sttStartTokenRef = useRef(0);
+  const sttStartPendingRef = useRef(false);
   const speechProvider = apiConfig.speechRecognitionProvider || 'system';
   const sttSupported = useMemo(() => isSttSupported(speechProvider), [speechProvider]);
   const stopCallStt = () => {
+    sttStartTokenRef.current += 1;
+    sttStartPendingRef.current = false;
     sttSessionRef.current?.stop();
     sttSessionRef.current = null;
     setIsListening(false);
@@ -1673,29 +1681,63 @@ const CallApp: React.FC = () => {
   }, []);
   // Voice input: toggle speech-to-text into the draft input box.
   const toggleStt = async () => {
-    if (isListening) { sttSessionRef.current?.stop(); trackEvent('切换语音输入', { action: 'stop' }); return; }
+    if (isListening || sttStartPendingRef.current) {
+      sttStartTokenRef.current += 1;
+      sttStartPendingRef.current = false;
+      sttSessionRef.current?.stop();
+      sttSessionRef.current = null;
+      setIsListening(false);
+      setIsSttProcessing(false);
+      trackEvent('切换语音输入', { action: 'stop' });
+      return;
+    }
     if (!sttSupported) { addToast('当前环境不支持语音输入', 'info'); return; }
+    const startToken = ++sttStartTokenRef.current;
+    sttStartPendingRef.current = true;
     try {
+      // A role TTS element may still hold WebKit's output-only category. Move
+      // it to a capture-compatible category in the same mic-button gesture,
+      // before getUserMedia evaluates the request.
+      if (isAudioPlaying) pauseAudio();
+      if (speechProvider !== 'system') prepareSiliconFlowAudioCapture();
       setIsListening(true);
       setIsSttProcessing(false);
       trackEvent('切换语音输入', { action: 'start' });
-      sttSessionRef.current = await startStt('zh-CN', {
-        onPartial: (t) => setDraftInput(t),
-        onFinal: (t) => setDraftInput(t),
-        onError: (m) => { if (m) addToast(m, 'info'); },
-        onRecordingEnd: () => { setIsListening(false); setIsSttProcessing(speechProvider !== 'system'); },
-        onProviderFallback: (m) => addToast(m, 'info'),
-        onEnd: () => { setIsListening(false); setIsSttProcessing(false); sttSessionRef.current = null; },
+      const session = await startStt('zh-CN', {
+        onPartial: (t) => { if (sttStartTokenRef.current === startToken) setDraftInput(t); },
+        onFinal: (t) => { if (sttStartTokenRef.current === startToken) setDraftInput(t); },
+        onError: (m) => { if (sttStartTokenRef.current === startToken && m) addToast(m, 'info'); },
+        onRecordingEnd: () => {
+          if (sttStartTokenRef.current !== startToken) return;
+          setIsListening(false);
+          setIsSttProcessing(speechProvider !== 'system');
+        },
+        onProviderFallback: (m) => { if (sttStartTokenRef.current === startToken) addToast(m, 'info'); },
+        onEnd: () => {
+          if (sttStartTokenRef.current !== startToken) return;
+          setIsListening(false);
+          setIsSttProcessing(false);
+          sttSessionRef.current = null;
+          sttStartPendingRef.current = false;
+        },
       }, {
         provider: speechProvider,
         apiKey: apiConfig.siliconFlowSpeechApiKey,
         stripEmoji: apiConfig.speechRecognitionStripEmoji !== false,
         fallbackToSenseVoice: true,
       });
+      if (sttStartTokenRef.current !== startToken) {
+        session.stop();
+        return;
+      }
+      sttSessionRef.current = session;
+      sttStartPendingRef.current = false;
     } catch (e: any) {
+      if (sttStartTokenRef.current !== startToken) return;
       setIsListening(false);
       setIsSttProcessing(false);
       sttSessionRef.current = null;
+      sttStartPendingRef.current = false;
       addToast(e?.message || '无法启动语音输入', 'error');
     }
   };
@@ -1806,7 +1848,11 @@ const CallApp: React.FC = () => {
           dbId: m.id,
           role: m.role as 'user' | 'assistant',
           text: m.content,
-          audioUrl: m.metadata?.audioUrl,
+          // IndexedDB may contain a blob URL created by an earlier CallApp
+          // instance. Blob URLs are document-scoped; the favorite flow already
+          // regenerates these, so the record page must do the same instead of
+          // advertising a dead “重播语音” link.
+          audioUrl: resolveReusableCallAudioUrl(m.metadata?.audioUrl, sessionBlobUrlsRef.current),
           thinkingChain: typeof m.metadata?.thinkingChain === 'string' ? m.metadata.thinkingChain : undefined,
           performance: m.metadata?.avatarPerformance as AvatarPerformanceDirection | undefined,
           performanceTimeline: m.metadata?.avatarPerformanceCues as AvatarPerformanceCue[] | undefined,
@@ -2574,12 +2620,18 @@ ${sentencePlan}`;
     return playbackAttempt;
   };
 
-  const playAudio = (url?: string, cues?: AvatarPerformanceCue[], fallbackMs?: number, forceAudible = false) => {
+  const playAudio = (
+    url?: string,
+    cues?: AvatarPerformanceCue[],
+    fallbackMs?: number,
+    forceAudible = false,
+    suppressFailureToast = false,
+  ): Promise<boolean> => {
     const targetUrl = url || audioUrl;
     const estimatedDurationMs = fallbackMs || 4000;
     if (!targetUrl || !audioRef.current) {
       if (callMode === 'video') playSilentAvatarSpeech('', cues, estimatedDurationMs);
-      return;
+      return Promise.resolve(false);
     }
     clearSilentSpeechTimer();
     if (audioUrl !== targetUrl) setAudioUrl(targetUrl);
@@ -2588,13 +2640,28 @@ ${sentencePlan}`;
     const audio = audioRef.current;
     audio.src = targetUrl;
     audio.currentTime = 0;
-    startCallAudioElement(audio, forceAudible).catch(() => {
+    setCallState('speaking');
+    try {
+      return startCallAudioElement(audio, forceAudible)
+        .then(() => true)
+        .catch(() => {
+          pendingCueScheduleRef.current = null;
+          if (callMode === 'video') playSilentAvatarSpeech('', cues, estimatedDurationMs);
+          else setCallState('listening');
+          if (!suppressFailureToast) {
+            addToast(forceAudible ? '播放失败，请再点一次“重播语音”' : '浏览器拦截了本次自动播放；点“重播语音”即可恢复', 'info');
+          }
+          return false;
+        });
+    } catch {
       pendingCueScheduleRef.current = null;
       if (callMode === 'video') playSilentAvatarSpeech('', cues, estimatedDurationMs);
       else setCallState('listening');
-      addToast(forceAudible ? '播放失败，请再点一次“重播语音”' : '浏览器拦截了本次自动播放；点“重播语音”即可恢复', 'info');
-    });
-    setCallState('speaking');
+      if (!suppressFailureToast) {
+        addToast(forceAudible ? '播放失败，请再点一次“重播语音”' : '浏览器拦截了本次自动播放；点“重播语音”即可恢复', 'info');
+      }
+      return Promise.resolve(false);
+    }
   };
   const ensureCallBubbleAudio = async (bubble: CallBubble, forceRegenerate = false): Promise<string | null> => {
     if (bubble.role !== 'assistant' || generatingAudioBubbleId) return null;
@@ -2633,19 +2700,31 @@ ${sentencePlan}`;
   };
   const handlePlayBubbleAudio = async (bubble: CallBubble) => {
     if (bubble.role !== 'assistant' || generatingAudioBubbleId) return;
-    if (bubble.audioUrl) {
-      playAudio(bubble.audioUrl, bubble.performanceTimeline, estimateSpeechMs(bubble.text), true);
-      trackEvent('重播一条通话语音');
-      return;
+    const reusableAudioUrl = resolveReusableCallAudioUrl(bubble.audioUrl, sessionBlobUrlsRef.current);
+    if (reusableAudioUrl) {
+      // A history replay is an explicit user gesture. If a remote/saved URL has
+      // expired anyway, retry once through the same regeneration path used by
+      // voice favorites rather than trapping the user in a dead replay button.
+      const played = await playAudio(
+        reusableAudioUrl,
+        bubble.performanceTimeline,
+        estimateSpeechMs(bubble.text),
+        true,
+        true,
+      );
+      if (played) {
+        trackEvent('重播一条通话语音');
+        return;
+      }
     }
     // The click itself unlocks the persistent media element. TTS happens only
     // after this point when automatic voice is disabled.
     if (isAudioPlaying) pauseAudio();
     primeCallAudioFromGesture(true);
-    const url = await ensureCallBubbleAudio(bubble);
+    const url = await ensureCallBubbleAudio(bubble, Boolean(bubble.audioUrl));
     if (!url) return;
-    playAudio(url, bubble.performanceTimeline, estimateSpeechMs(bubble.text), true);
-    trackEvent('按需生成并播放通话语音');
+    const played = await playAudio(url, bubble.performanceTimeline, estimateSpeechMs(bubble.text), true);
+    if (played) trackEvent(bubble.audioUrl ? '重播一条通话语音' : '按需生成并播放通话语音');
   };
   const callFavoriteSourceKey = (charId: string, bubble: CallBubble) => `${charId}:${bubble.dbId || bubble.id}`;
   const openCallVoiceFavorite = async (bubble: CallBubble, charId = selectedChar?.id || '', charName = selectedChar?.name || '未知角色') => {
@@ -4234,7 +4313,11 @@ ${sentencePlan}`;
                   disabled={!!generatingAudioBubbleId}
                   className="mt-2 text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/60 transition hover:bg-white/15 disabled:opacity-40"
                 >
-                  {generatingAudioBubbleId === item.id ? '生成语音…' : item.audioUrl ? '重播语音' : '播放语音'}
+                  {generatingAudioBubbleId === item.id
+                    ? '生成语音…'
+                    : resolveReusableCallAudioUrl(item.audioUrl, sessionBlobUrlsRef.current)
+                      ? '重播语音'
+                      : '播放语音'}
                 </button>
               )}
             </div>
@@ -4655,7 +4738,11 @@ ${sentencePlan}`;
                   disabled={!!generatingAudioBubbleId}
                   className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15 disabled:opacity-40"
                 >
-                  {generatingAudioBubbleId === bubble.id ? '生成语音…' : bubble.audioUrl ? '重播语音' : '播放语音'}
+                  {generatingAudioBubbleId === bubble.id
+                    ? '生成语音…'
+                    : resolveReusableCallAudioUrl(bubble.audioUrl, sessionBlobUrlsRef.current)
+                      ? '重播语音'
+                      : '播放语音'}
                 </button>
                 {bubble.audioUrl && <button onClick={() => handleDownloadCallAudio(bubble.audioUrl, bubble.timestamp)} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15">下载</button>}
                 {/* 改词：长按角色气泡是「收藏语音」，所以编辑得单独给个入口。

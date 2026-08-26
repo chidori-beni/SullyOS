@@ -213,20 +213,38 @@ const setWebAudioSessionType = (type: WebAudioSessionType): boolean => {
  */
 export const setSiliconFlowAudioRoute = (route: SiliconFlowAudioRoute): void => {
   siliconFlowAudioRoute = route;
-  setWebAudioSessionType(audioSessionTypeForRoute(route));
+  // WebKit ends a live MediaStreamTrack as soon as the page changes to the
+  // output-only `playback` category.  Once a call has acquired its reusable
+  // microphone stream, keep the session in `auto` for the speaker route so the
+  // permission/session survives the next turn.  `auto` preserves the current
+  // hardware output route instead of silently forcing the receiver.
+  setWebAudioSessionType(
+    route === 'speaker' && hasLiveMicrophoneTrack(siliconFlowMicrophone)
+      ? 'auto'
+      : audioSessionTypeForRoute(route),
+  );
 };
 
 export const getSiliconFlowAudioRoute = (): SiliconFlowAudioRoute => siliconFlowAudioRoute;
 
 /** Reassert the selected media route immediately before call TTS playback. */
 export const prepareSiliconFlowAudioPlayback = (): void => {
-  setWebAudioSessionType(audioSessionTypeForRoute(siliconFlowAudioRoute));
+  setWebAudioSessionType(
+    siliconFlowAudioRoute === 'speaker' && hasLiveMicrophoneTrack(siliconFlowMicrophone)
+      ? 'auto'
+      : audioSessionTypeForRoute(siliconFlowAudioRoute),
+  );
 };
 
-const hasLiveMicrophoneTrack = (stream: MediaStream | null): stream is MediaStream => {
+/** Reassert a capture-compatible category in the originating mic-button turn. */
+export const prepareSiliconFlowAudioCapture = (): void => {
+  setWebAudioSessionType('play-and-record');
+};
+
+function hasLiveMicrophoneTrack(stream: MediaStream | null): stream is MediaStream {
   if (!stream) return false;
   return stream.getAudioTracks().some(track => track.readyState !== 'ended');
-};
+}
 
 const prepareSiliconFlowMicrophone = (stream: MediaStream) => {
   setWebAudioSessionType('play-and-record');
@@ -242,6 +260,9 @@ const pauseSiliconFlowMicrophone = (stream: MediaStream) => {
     if (track.readyState === 'live') track.enabled = false;
   });
   // Restore the user's selected route for the role's next generated voice turn.
+  // When the cached stream is still live, the speaker route deliberately uses
+  // `auto`: WebKit's Audio Session spec ends capture tracks in `playback`, which
+  // would turn every following tap into a fresh permission request.
   prepareSiliconFlowAudioPlayback();
 };
 

@@ -116,6 +116,7 @@ import AppErrorBoundary from './os/AppErrorBoundary';
 import GlobalMiniPlayer from './os/GlobalMiniPlayer';
 import PersonaSimIndicator from './os/PersonaSimIndicator';
 import DreamSimIndicator from './os/DreamSimIndicator';
+import SuspendedCallBar from './os/SuspendedCallBar';
 import ErrorDialog from './os/ErrorDialog';
 import BootSequence from './os/BootSequence';
 import { setAppPayloadWarmer, shouldUseIdleAppPreload } from './os/appPreload';
@@ -1097,16 +1098,10 @@ const PhoneShell: React.FC = () => {
               错误指示器、系统调试终端与开关无关、始终在。 */}
           <StatusBar />
           
-          {/* Overlays: Suspended Call Bar */}
+          {/* Overlays: Suspended Call Bar. It is portaled above notification cards so
+              returning from another chat remains a reliable tap target. */}
           {suspendedCall && activeApp !== AppID.Call && (
-            <button
-              onClick={resumeCall}
-              className="absolute top-7 left-0 w-full z-[55] flex items-center justify-center gap-2 bg-emerald-500 text-white text-xs font-bold py-1.5 animate-pulse cursor-pointer active:bg-emerald-600 transition-colors"
-            >
-              <span className="w-2 h-2 rounded-full bg-white animate-ping" />
-              <span>通话中 · {suspendedCall.charName}</span>
-              <span className="opacity-70">点击返回</span>
-            </button>
+            <SuspendedCallBar charName={suspendedCall.charName} onResume={resumeCall} />
           )}
 
           {/* Overlays: Global Mini Player (when music is playing in background) */}

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanSpeechTranscript, prepareSiliconFlowAudioPlayback, releaseSiliconFlowMicrophone, setSiliconFlowAudioRoute, startStt, transcribeWithSiliconFlow } from './speechToText';
+import { cleanSpeechTranscript, prepareSiliconFlowAudioCapture, prepareSiliconFlowAudioPlayback, releaseSiliconFlowMicrophone, setSiliconFlowAudioRoute, startStt, transcribeWithSiliconFlow } from './speechToText';
 
 describe('speech-to-text transcript cleaning', () => {
   it('removes SenseVoice control tags and emotion emoji by default', () => {
@@ -67,6 +67,20 @@ describe('SiliconFlow transcription request', () => {
     expect(audioSessionTypes).toEqual(['play-and-record', 'play-and-record', 'playback']);
   });
 
+  it('moves to a capture-compatible category before a microphone request', () => {
+    let audioSessionType = 'playback';
+    vi.stubGlobal('navigator', {
+      audioSession: {
+        get type() { return audioSessionType; },
+        set type(value: string) { audioSessionType = value; },
+      },
+    });
+
+    prepareSiliconFlowAudioCapture();
+
+    expect(audioSessionType).toBe('play-and-record');
+  });
+
   it('reuses one microphone stream across recordings until the call is released', async () => {
     const track = {
       enabled: true,
@@ -125,7 +139,10 @@ describe('SiliconFlow transcription request', () => {
     await runRecording();
     expect(track.enabled).toBe(false);
     expect(audioSessionTypes).toContain('play-and-record');
-    expect(audioSessionTypes.at(-1)).toBe('playback');
+    // The cached track is still live. `auto` preserves the selected speaker
+    // route without WebKit ending the capture track (which would prompt again
+    // on the next tap).
+    expect(audioSessionTypes.at(-1)).toBe('auto');
     await runRecording();
 
     expect(getUserMedia).toHaveBeenCalledOnce();

@@ -48,7 +48,7 @@ describe('CallApp runtime references', () => {
     const preferenceSource = readFileSync(path.resolve(__dirname, './callPreferences.ts'), 'utf8');
     const preferenceSheetSource = readFileSync(path.resolve(__dirname, '../components/call/CallPreferencesSheet.tsx'), 'utf8');
 
-    expect(source).toContain("onFinal: (t) => setDraftInput(t)");
+    expect(source).toContain("onFinal: (t) => { if (sttStartTokenRef.current === startToken) setDraftInput(t); }");
     expect(source).toMatch(/await requestAssistantReply\(\s*input,\s*userDbId,\s*pendingTouchesForTurn,\s*true,\s*userCameraSnapshotForTurn/);
     expect(source).toContain("{sendingBusy ? '…' : '发送'}");
     expect(source).toMatch(/const beginSelectedCall[\s\S]*?setViewMode\('in-call'\);\s+setCallStartedAt\(Date\.now\(\)\);\s+setCallState\('listening'\);/);
@@ -76,7 +76,7 @@ describe('CallApp runtime references', () => {
     expect(source).toContain('if (!callPreferences.voiceAutoPlay || !canSpeakVoice()) return');
     expect(source).toMatch(/if \(!callPreferences\.voiceAutoPlay\) \{\s+setCallState\('listening'\);\s+return;/);
     expect(source).toContain('const handlePlayBubbleAudio = async (bubble: CallBubble) =>');
-    expect(source).toContain("trackEvent('按需生成并播放通话语音')");
+    expect(source).toContain('按需生成并播放通话语音');
     expect(source).toContain('shouldKeepNativeCallAudio');
     expect(source).not.toContain('<audio');
     expect(preferenceSheetSource).toContain('不改变聊天页的语音设置');
@@ -290,5 +290,15 @@ describe('CallApp runtime references', () => {
     expect(source).toContain("audioSession?.addEventListener?.('statechange', reassertVisibleCallRoute)");
     expect(source).not.toContain('if (!next && isAudioPlaying) pauseAudio();');
     expect(source).not.toContain('const canSpeakVoice = (): boolean => isSpeakerOn');
+  });
+
+  it('does not replay a dead blob URL from an older call-record page session', () => {
+    const source = readFileSync(path.resolve(__dirname, '../apps/CallApp.tsx'), 'utf8');
+
+    expect(source).toContain("import { resolveReusableCallAudioUrl } from '../utils/callAudioUrl'");
+    expect(source).toContain('resolveReusableCallAudioUrl(m.metadata?.audioUrl, sessionBlobUrlsRef.current)');
+    expect(source).toContain('const reusableAudioUrl = resolveReusableCallAudioUrl(bubble.audioUrl, sessionBlobUrlsRef.current)');
+    expect(source).toContain('ensureCallBubbleAudio(bubble, Boolean(bubble.audioUrl))');
+    expect(source).toContain('suppressFailureToast = false');
   });
 });

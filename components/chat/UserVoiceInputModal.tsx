@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Microphone, PaperPlaneTilt, Stop, TextT } from '@phosphor-icons/react';
 import type { APIConfig } from '../../types';
 import Modal from '../os/Modal';
-import { isSttSupported, releaseSiliconFlowMicrophone, startStt, type SttSession } from '../../utils/speechToText';
+import { isSttSupported, prepareSiliconFlowAudioCapture, releaseSiliconFlowMicrophone, startStt, type SttSession } from '../../utils/speechToText';
 
 interface UserVoiceInputModalProps {
     isOpen: boolean;
@@ -21,6 +21,7 @@ const UserVoiceInputModal: React.FC<UserVoiceInputModalProps> = ({ isOpen, apiCo
     const [audio, setAudio] = useState<Blob | null>(null);
     const [duration, setDuration] = useState(0);
     const sessionRef = useRef<SttSession | null>(null);
+    const startTokenRef = useRef(0);
     const runIdRef = useRef(0);
 
     const provider = apiConfig.speechRecognitionProvider || 'system';
@@ -31,6 +32,7 @@ const UserVoiceInputModal: React.FC<UserVoiceInputModalProps> = ({ isOpen, apiCo
     useEffect(() => {
         if (!isOpen) {
             runIdRef.current += 1;
+            startTokenRef.current += 1;
             sessionRef.current?.stop();
             sessionRef.current = null;
             releaseSiliconFlowMicrophone();
@@ -48,6 +50,7 @@ const UserVoiceInputModal: React.FC<UserVoiceInputModalProps> = ({ isOpen, apiCo
     }, [isOpen]);
 
     const stopRecording = () => {
+        startTokenRef.current += 1;
         sessionRef.current?.stop();
         sessionRef.current = null;
     };
@@ -71,13 +74,18 @@ const UserVoiceInputModal: React.FC<UserVoiceInputModalProps> = ({ isOpen, apiCo
         }
 
         const runId = ++runIdRef.current;
+        const startToken = ++startTokenRef.current;
         setText('');
         setAudio(null);
         setDuration(0);
         setIsRecording(true);
         setIsProcessing(false);
         try {
-            sessionRef.current = await startStt('zh-CN', {
+            // Keep the category change in the same user-gesture turn. This is
+            // required on iOS when a previous TTS playback left the session in
+            // an output-only category.
+            if (provider !== 'system') prepareSiliconFlowAudioCapture();
+            const session = await startStt('zh-CN', {
                 onPartial: value => { if (runIdRef.current === runId) setText(value); },
                 onFinal: value => { if (runIdRef.current === runId) setText(value); },
                 onAudio: (blob, seconds) => {
@@ -107,8 +115,13 @@ const UserVoiceInputModal: React.FC<UserVoiceInputModalProps> = ({ isOpen, apiCo
                 stripEmoji: apiConfig.speechRecognitionStripEmoji !== false,
                 fallbackToSenseVoice: true,
             });
+            if (startTokenRef.current !== startToken || runIdRef.current !== runId) {
+                session.stop();
+                return;
+            }
+            sessionRef.current = session;
         } catch (error: any) {
-            if (runIdRef.current === runId) {
+            if (runIdRef.current === runId && startTokenRef.current === startToken) {
                 setIsRecording(false);
                 setIsProcessing(false);
                 addToast(error?.message || '无法开始语音识别', 'error');
