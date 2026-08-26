@@ -64,7 +64,7 @@ import { emitMessagePreview } from '../utils/messagePreview';
 import { resolveCharTimeZone } from '../utils/timezone';
 import { ActiveMsgStore, exportAmsg2GlobalConfig } from '../utils/activeMsgStore';
 import { charMayHaveCloudState, purgeCharCloudState } from '../utils/amsg2CharCleanup';
-import { markAmsgStateDirty, markAmsgStateDirtyForAll, resumePendingAmsgStateSync, syncAmsgToolConfigAndPrompts } from '../utils/amsgStateSync';
+import { markAmsgStateDirty, markAmsgStateDirtyForAll, resumePendingAmsgStateSync, syncAmsgLlmCredentials, syncAmsgToolConfigAndPrompts } from '../utils/amsgStateSync';
 import { loadMusicPlaybackSnapshot } from './MusicContext';
 import { setCharNameRegistry } from '../utils/charNameRegistry';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
@@ -300,6 +300,8 @@ interface OSContextType {
   virtualTime: VirtualTime;
   apiConfig: APIConfig;
   updateApiConfig: (updates: Partial<APIConfig>) => void;
+  /** 主 API 的完整提交出口：本地配置与已排程主动消息凭据一起更新。 */
+  commitApiConfig: (updates: Partial<APIConfig>) => void;
   isLocked: boolean;
   unlock: () => void;
   isDataLoaded: boolean;
@@ -3562,6 +3564,31 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       else await DB.deleteAsset(`icon_${appId}`);
   };
   const addToast = (message: string, type: Toast['type'] = 'info') => { const id = Date.now().toString(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => { setToasts(prev => prev.filter(t => t.id !== id)); }, 3000); };
+  /**
+   * 主 API 的唯一完整提交出口。
+   *
+   * 设置页保存、API 预设切换和聊天里的快捷切换都必须走这里：除了更新本机配置，
+   * 还要同步支持凭据表的 Worker，并尽力刷新已排程主动消息里冻结的旧凭据。
+   */
+  const commitApiConfig = (patch: Partial<APIConfig>) => {
+      const nextConfig = normalizeApiConfig({ ...apiConfig, ...patch });
+      updateApiConfig(patch);
+      // 支持凭据表的 Worker 上，任务只带引用，换 Key 只要覆盖云端那几行；
+      // 老 Worker 上这句是 no-op，凭据靠下面逐条补刷的老路续命。
+      syncAmsgLlmCredentials(nextConfig);
+      // 已排程的主动消息 2.0 AI 任务里冻结的是排程那一刻的凭据。换 Key / 模型后
+      // 不重传的话，到点会继续拿旧凭据打请求；这里不阻塞当前保存或切换动作。
+      void ActiveMsgClient.refreshApiCredentialsForPendingTasks(nextConfig)
+          .then((result) => {
+              if (result.status === 'partial') {
+                  addToast(`API 已保存，但有 ${result.failed} 条已排程的主动消息没换上新凭据，稍后再保存一次可重试。`, 'error');
+              }
+          })
+          .catch((error) => {
+              console.warn('[OSContext] 刷新已排程任务的 API 凭据失败', error);
+              addToast('API 已保存，但已排程的主动消息凭据刷新失败，稍后再保存一次可重试。', 'error');
+          });
+  };
   const showError = (title: string, details: string) => {
       setErrorDialog({ title, details });
       // showError 是分发型入口，title 由调用方传。这里写显式白名单：
@@ -5147,6 +5174,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     virtualTime,
     apiConfig,
     updateApiConfig,
+    commitApiConfig,
     isLocked,
     unlock,
     isDataLoaded,

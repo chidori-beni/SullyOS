@@ -15,6 +15,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const settings = readFileSync(fileURLToPath(new URL('../apps/Settings.tsx', import.meta.url)), 'utf8');
+const osContext = readFileSync(fileURLToPath(new URL('../context/OSContext.tsx', import.meta.url)), 'utf8');
+const chatModals = readFileSync(fileURLToPath(new URL('../components/chat/ChatModals.tsx', import.meta.url)), 'utf8');
 
 /** 截出某个顶层箭头函数的函数体（这些函数在文件里都是两空格缩进 + `};` 收尾）。 */
 const bodyOf = (name: string): string => {
@@ -79,9 +81,22 @@ describe('保存配置不反写预设', () => {
 
 describe('换 API 一定连着换云端凭据', () => {
   it('commitApiConfig 里三件事齐全', () => {
-    const commitApiConfig = bodyOf('commitApiConfig');
+    const start = osContext.indexOf('const commitApiConfig = ');
+    const end = osContext.indexOf('\n  const showError', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const commitApiConfig = osContext.slice(start, end);
     expect(commitApiConfig).toMatch(/updateApiConfig\(patch\)/);
-    expect(commitApiConfig).toMatch(/syncAmsgLlmCredentials\(\{ \.\.\.apiConfig, \.\.\.patch \}\)/);
-    expect(commitApiConfig).toMatch(/refreshApiCredentialsForPendingTasks\(\{ \.\.\.apiConfig, \.\.\.patch \}\)/);
+    expect(commitApiConfig).toMatch(/syncAmsgLlmCredentials\(nextConfig\)/);
+    expect(commitApiConfig).toMatch(/refreshApiCredentialsForPendingTasks\(nextConfig\)/);
+  });
+});
+
+describe('聊天设置内的主 API 快速切换', () => {
+  it('按当前 apiConfig 反查高亮，不把主 API 混进情绪副 API 面板', () => {
+    expect(chatModals).toContain('findActivePresetId(apiPresets, apiConfig)');
+    expect(chatModals).toContain('onApplyMainApiPreset');
+    expect(chatModals).toContain('主 API');
+    expect(chatModals).toContain('情绪副 API');
   });
 });

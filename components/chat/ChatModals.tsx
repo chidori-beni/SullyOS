@@ -9,6 +9,7 @@ import type { ContextRangeMode, ContextRangeSnapshot } from '../../utils/chatCon
 import { trackEvent } from '../../utils/analytics';
 import MessageReactionBar from './MessageReactionBar';
 import { getMessageReactions } from '../../utils/messageReactions';
+import { findActivePresetId } from '../../utils/apiPresetSwitch';
 
 interface ChatModalsProps {
     modalType: string;
@@ -26,6 +27,9 @@ interface ChatModalsProps {
     setSettingsContextRangeMode: (v: ContextRangeMode) => void;
     settingsHideSysLogs: boolean;
     setSettingsHideSysLogs: (v: boolean) => void;
+    // Main API quick switch (global; independent from the schedule/emotion secondary API)
+    apiConfig?: APIConfig;
+    onApplyMainApiPreset?: (preset: ApiPreset) => void;
     contextSuiteAnyEnabled: boolean;
     contextSuiteAllEnabled: boolean;
     onToggleContextSuite: () => void;
@@ -255,6 +259,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     settingsContextLimit, setSettingsContextLimit,
     settingsContextRangeMode, setSettingsContextRangeMode,
     settingsHideSysLogs, setSettingsHideSysLogs,
+    apiConfig, onApplyMainApiPreset,
     contextSuiteAnyEnabled, contextSuiteAllEnabled, onToggleContextSuite,
     preserveContext, setPreserveContext,
     editContent, setEditContent,
@@ -295,6 +300,9 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     const HISTORY_PAGE_SIZE = 50;
     const HISTORY_SEARCH_MAX = 200;
     const LONG_PRESS_MS = 450;
+    const activeMainPresetId = apiConfig && apiPresets
+        ? findActivePresetId(apiPresets, apiConfig)
+        : null;
 
     const startHistoryLongPress = (msgId: number) => {
         longPressTriggeredRef.current = false;
@@ -419,6 +427,54 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                 footer={<button onClick={onSaveSettings} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">保存设置</button>}
             >
                 <div className="space-y-6">
+                     {apiConfig && apiPresets && onApplyMainApiPreset && (
+                         <div className="rounded-2xl border border-sky-200 bg-sky-50 p-3.5">
+                             <div className="flex items-start justify-between gap-3">
+                                 <div className="min-w-0">
+                                     <div className="flex items-center gap-2">
+                                         <div className="text-xs font-bold text-sky-800">主 API</div>
+                                         <span className="rounded-full bg-white/80 px-2 py-0.5 text-[9px] font-bold text-sky-600">全局</span>
+                                     </div>
+                                     <p className="mt-1 text-[10px] leading-relaxed text-sky-700/80">
+                                         当前：{apiPresets.find(preset => preset.id === activeMainPresetId)?.name || '手动配置'}
+                                         {apiConfig.model ? ` · ${apiConfig.model}` : ' · 尚未填写模型'}
+                                     </p>
+                                 </div>
+                             </div>
+                             {apiPresets.length > 0 ? (
+                                 <div className="mt-3 flex flex-wrap gap-2">
+                                     {apiPresets.map(preset => {
+                                         const isActive = preset.id === activeMainPresetId;
+                                         return (
+                                             <button
+                                                 key={preset.id}
+                                                 type="button"
+                                                 onClick={() => onApplyMainApiPreset(preset)}
+                                                 className={`max-w-full rounded-xl border px-3 py-2 text-left transition-all active:scale-95 ${isActive
+                                                     ? 'border-sky-400 bg-white text-sky-700 shadow-sm'
+                                                     : 'border-sky-100 bg-white/60 text-slate-600 hover:border-sky-300'}`}
+                                             >
+                                                 <span className="block max-w-[15rem] truncate text-[11px] font-bold">
+                                                     {isActive && <span className="mr-1">✓</span>}{preset.name}
+                                                 </span>
+                                                 <span className="mt-0.5 block max-w-[15rem] truncate text-[9px] text-slate-400">
+                                                     {preset.config.model || '未填写模型'}
+                                                 </span>
+                                             </button>
+                                         );
+                                     })}
+                                 </div>
+                             ) : (
+                                 <p className="mt-3 rounded-xl border border-dashed border-sky-200 bg-white/50 px-3 py-2 text-[10px] leading-relaxed text-sky-700/70">
+                                     还没有主 API 预设，请到主设置页的「API 配置」中创建。
+                                 </p>
+                             )}
+                             <p className="mt-3 text-[10px] leading-relaxed text-sky-700/70">
+                                 点击预设会立即切换，和下方的“保存设置”无关。已单独配置的情绪副 API 不会被覆盖；未配置副 API 时，情绪评估会跟随主 API。
+                             </p>
+                         </div>
+                     )}
+
                      <div className="rounded-2xl border border-violet-200 bg-violet-50 p-3.5">
                          <div className="flex items-center gap-3">
                              <div className="min-w-0 flex-1">
