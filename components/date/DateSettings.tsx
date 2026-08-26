@@ -18,8 +18,8 @@ interface DateSettingsProps {
 
 /** 可折叠分区卡片：标题常驻，内容默认收起，点标题展开。用原生 <details> 省状态。 */
 const Section: React.FC<{ title: string; defaultOpen?: boolean; children: React.ReactNode }> = ({ title, defaultOpen, children }) => (
-    <details open={defaultOpen} className="group bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-        <summary className="list-none cursor-pointer select-none flex items-center justify-between gap-2 px-4 py-3.5 active:bg-slate-50 [&::-webkit-details-marker]:hidden">
+    <details open={defaultOpen} className="group bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden pointer-events-auto">
+        <summary className="list-none cursor-pointer select-none flex items-center justify-between gap-2 px-4 py-3.5 active:bg-slate-50 [&::-webkit-details-marker]:hidden touch-manipulation">
             <h3 className="text-xs font-bold text-slate-400 uppercase">{title}</h3>
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-slate-300 transition-transform group-open:rotate-180 shrink-0"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.938a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z" clipRule="evenodd" /></svg>
         </summary>
@@ -247,9 +247,9 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
     };
 
     return (
-        <div className="h-full w-full bg-slate-50 flex flex-col">
-            <div className="h-16 flex items-center justify-between px-4 border-b border-slate-200 bg-white shrink-0 z-20">
-                <button onClick={onBack} className="p-2 -ml-2 text-slate-600 active:scale-95 transition-transform">
+        <div className="date-settings-shell relative z-[210] h-full min-h-0 w-full overflow-hidden bg-slate-50 flex flex-col pointer-events-auto" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+            <div className="relative z-20 flex h-16 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
+                <button type="button" onClick={onBack} aria-label="返回见面" className="p-2 -ml-2 text-slate-600 active:scale-95 transition-transform touch-manipulation">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                 </button>
                 <span className="font-bold text-slate-700">场景布置</span>
@@ -271,7 +271,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                     <div className="absolute top-2 left-2 bg-black/50 text-white text-[10px] px-2 py-1 rounded backdrop-blur-sm">预览 (Preview)</div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-5 space-y-8 pb-20">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 space-y-8 pb-20" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 5rem)' }}>
                 <Section title="立绘位置调整">
                     <div className="space-y-6">
                         <div>
@@ -650,8 +650,8 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                 </div>
             )}
 
-            <div className="p-4 border-t border-slate-200 bg-white/90 backdrop-blur-sm sticky bottom-0 z-20">
-                <button onClick={handleSaveSettings} className="w-full py-3 bg-primary text-white font-bold rounded-2xl shadow-lg active:scale-95 transition-transform">
+            <div className="relative z-20 shrink-0 border-t border-slate-200 bg-white/90 p-4 backdrop-blur-sm" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1rem)' }}>
+                <button type="button" onClick={handleSaveSettings} className="w-full py-3 bg-primary text-white font-bold rounded-2xl shadow-lg active:scale-95 transition-transform touch-manipulation">
                     保存当前布置
                 </button>
             </div>

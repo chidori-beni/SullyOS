@@ -1066,12 +1066,60 @@ const DateSession: React.FC<DateSessionProps> = ({
 
             {/* Novel Mode View */}
             {isNovelMode && (
-                <div id="this-moment-screen" className="tm-screen absolute inset-0 z-20 overflow-hidden no-scrollbar mask-image-gradient overscroll-contain" onClick={(e) => { e.stopPropagation(); if (showMenu) { setShowMenu(false); setShowVoiceLangPicker(false); return; } if (!(e.target as HTMLElement).closest('button, input, textarea, .tm-header, .tm-compose')) setShowInputBox(true); }}>
+                <div id="this-moment-screen" className="tm-screen absolute inset-0 z-20 flex min-h-0 flex-col overflow-hidden no-scrollbar mask-image-gradient overscroll-contain" onClick={(e) => { e.stopPropagation(); if (showMenu) { setShowMenu(false); setShowVoiceLangPicker(false); return; } if (!(e.target as HTMLElement).closest('button, input, textarea, .tm-header, .tm-compose')) setShowInputBox(true); }}>
                     {char.dateReadingCustomCss && <style>{char.dateReadingCustomCss.replace(/<\/style/gi, '<\\/style')}</style>}
+                    {/*
+                     * 用户主题 CSS 只负责视觉表现。阅读页的滚动和触控层必须由宿主保底，
+                     * 否则一个 `min-height: 100%` 或伪元素就会把正文撑出视口、盖住顶栏。
+                     */}
+                    <style>{`
+                        #this-moment-screen {
+                            display: flex !important;
+                            flex-direction: column !important;
+                            min-height: 0 !important;
+                            isolation: isolate;
+                        }
+                        #this-moment-screen > .tm-bg-image,
+                        #this-moment-screen > .tm-bg-overlay {
+                            z-index: 0 !important;
+                            pointer-events: none !important;
+                        }
+                        #this-moment-screen > .tm-header {
+                            position: relative !important;
+                            z-index: 120 !important;
+                            flex: 0 0 auto !important;
+                            pointer-events: auto !important;
+                        }
+                        #this-moment-screen .tm-header-actions,
+                        #this-moment-screen .tm-header-actions button,
+                        #this-moment-screen .tm-reading-menu,
+                        #this-moment-screen .tm-reading-menu button {
+                            pointer-events: auto !important;
+                            touch-action: manipulation;
+                        }
+                        #this-moment-screen > .tm-story {
+                            position: relative !important;
+                            z-index: 10 !important;
+                            flex: 1 1 auto !important;
+                            min-height: 0 !important;
+                            height: auto !important;
+                            scroll-padding-bottom: max(8rem, calc(env(safe-area-inset-bottom, 0px) + 8rem));
+                        }
+                        #this-moment-screen > .tm-compose-layer {
+                            z-index: 130 !important;
+                            pointer-events: none !important;
+                        }
+                        #this-moment-screen > .tm-compose-layer .tm-compose,
+                        #this-moment-screen > .tm-compose-layer button,
+                        #this-moment-screen > .tm-compose-layer textarea {
+                            pointer-events: auto !important;
+                            touch-action: manipulation;
+                        }
+                    `}</style>
                     <div className="tm-bg-image absolute inset-0 bg-cover bg-center" style={{ backgroundImage: bgImage ? `url(${bgImage})` : 'none' }} aria-hidden="true" />
                     <div className="tm-bg-overlay absolute inset-0 pointer-events-none" aria-hidden="true" />
 
-                    <header className="tm-header relative z-30 flex min-h-14 flex-col px-4 py-2" onClick={(e) => e.stopPropagation()}>
+                    <header className="tm-header relative z-30 flex min-h-14 shrink-0 flex-col px-4 py-2" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.5rem)' }} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
                         <div className="tm-header-main flex min-h-10 items-center gap-3">
                             <ReadingAvatar
                                 src={char.avatar}
@@ -1108,7 +1156,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                         )}
                     </header>
 
-                    <div ref={novelScrollRef} className="tm-story min-h-full overflow-y-auto overflow-x-clip">
+                    <div ref={novelScrollRef} className="tm-story min-h-0 flex-1 overflow-y-auto overflow-x-clip" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 8rem)' }}>
                         <div className="tm-story-inner mx-auto w-full min-h-full animate-fade-in">
                             {isBatchSelectMode && (
                                 <div className="tm-batch-toolbar sticky top-0 z-20 flex items-center justify-between rounded-xl px-3 py-2 text-xs">
@@ -1368,7 +1416,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             )}
 
             {/* Input Layer */}
-            <div className={`absolute inset-x-0 bottom-0 z-40 flex justify-center pointer-events-none transition-all duration-300 ${isTyping || showInputBox ? 'opacity-100' : 'opacity-0'}`}>
+            <div className={`tm-compose-layer absolute inset-x-0 bottom-0 z-40 flex justify-center pointer-events-none transition-all duration-300 ${isTyping || showInputBox ? 'opacity-100' : 'opacity-0'}`} style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
                 {isTyping && (
                     <div className="absolute bottom-1/2 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-auto">
                         <div className="bg-black/80 backdrop-blur-md px-6 py-3 rounded-full border border-white/20 shadow-2xl animate-pulse flex items-center gap-3">
