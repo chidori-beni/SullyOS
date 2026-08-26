@@ -13,6 +13,9 @@ export interface DateHistoryGroup {
     encounterCount: number;
     /** 旧记录可能没有 isOpening，UI 用它提示这是兼容分组。 */
     hasOpeningAnchor: boolean;
+    completed: boolean;
+    durationText?: string;
+    summary?: string;
 }
 
 const pad2 = (value: number) => String(value).padStart(2, '0');
@@ -54,6 +57,7 @@ export function splitDateEncounters(messages: Message[]): DateHistoryGroup[] {
         if (current.length === 0) return;
         const first = current[0];
         const last = current[current.length - 1];
+        const ending = [...current].reverse().find(message => message.metadata?.isDateEnding === true);
         groups.push({
             id: currentHasOpening ? `encounter-${first.id}` : `legacy-${getLocalDateKey(first.timestamp)}-${first.id}`,
             dateKey: getLocalDateKey(first.timestamp),
@@ -62,6 +66,9 @@ export function splitDateEncounters(messages: Message[]): DateHistoryGroup[] {
             messages: current,
             encounterCount: currentHasOpening ? 1 : 0,
             hasOpeningAnchor: currentHasOpening,
+            completed: !!ending,
+            durationText: ending?.metadata?.dateEncounterDurationText,
+            summary: ending?.metadata?.dateEncounterSummary,
         });
         current = [];
         currentHasOpening = false;
@@ -110,6 +117,9 @@ export function groupDateMessagesByDate(messages: Message[]): DateHistoryGroup[]
         messages: bucket,
         encounterCount: bucket.filter(message => message.metadata?.isOpening === true).length,
         hasOpeningAnchor: bucket.some(message => message.metadata?.isOpening === true),
+        completed: bucket.some(message => message.metadata?.isDateEnding === true),
+        durationText: undefined,
+        summary: undefined,
     }));
 }
 

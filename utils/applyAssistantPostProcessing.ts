@@ -250,6 +250,7 @@ export type PostProcessDirective =
     // 我们拼回原标签塞进正文, 由本文件末尾的 Step 7 统一响铃。跟本地路径同一份代码,
     // 不为 push 路径另写一个来电触发器。
     | { type: 'call_invite'; mode: 'voice' | 'video'; opening: string }
+    | { type: 'meeting_invite'; invitation: string }
     | { type: 'schedule_message'; time: string; text: string }
     // song 是主动消息 2.0 的定时路径后补的「角色说的是哪首歌」（见 chatParser 的
     // FrozenMusicSong）；标签里只有歌单名带不动它，所以单独走 directive 字段。
@@ -309,6 +310,9 @@ function reconstructDirectiveTags(directives: PostProcessDirective[] | undefined
                 break;
             case 'call_invite':
                 parts.push(formatCallInviteTag({ mode: d.mode, opening: d.opening }));
+                break;
+            case 'meeting_invite':
+                parts.push(`[[MEET_INVITE: ${d.invitation}]]`);
                 break;
             case 'schedule_message':
                 parts.push(`[schedule_message | ${d.time} | fixed | ${d.text}]`);
@@ -2242,6 +2246,10 @@ export async function applyAssistantPostProcessing(
     if (callInviteParsed.malformedCount > 0) {
         console.warn('[IncomingCall] 认出了来电标签但内容是废的，已丢弃:', callInviteParsed.malformedCount);
     }
+    // 角色主动提出线下见面。卡片在正文全部落库后再出现，避免“邀请先到、台词后到”。
+    const meetingInviteMatch = aiContent.match(/\[\[MEET_INVITE:\s*([^\]]{1,240})\]\]/i);
+    const meetingInviteText = meetingInviteMatch?.[1]?.trim() || '';
+    aiContent = aiContent.replace(/\[\[MEET_INVITE:\s*[^\]]*\]\]/gi, '').trim();
 
     // ─── Step 3: ChatParser.parseAndExecuteActions ───
     // mcdInheritMeta 一起传下去：戳一戳 / 转账卡 / 音乐卡 / 新闻卡 / 日程系统提示 / 生活记录卡
@@ -2366,5 +2374,20 @@ export async function applyAssistantPostProcessing(
             );
             await refreshMessageList();
         }
+    }
+    if (meetingInviteText) {
+        await persistMessage({
+            charId: char.id,
+            role: 'system',
+            type: 'system',
+            content: `${char.name}邀请你见面`,
+            metadata: {
+                source: 'date-meeting-invite',
+                invitation: meetingInviteText,
+                charName: char.name,
+                charAvatar: char.avatar,
+            },
+        } as any);
+        await refreshMessageList();
     }
 }

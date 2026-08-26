@@ -1554,6 +1554,8 @@ interface MessageItemProps {
     onResolveScheduleInvite?: (m: Message, selectedIds: string[]) => void;
     /** 点击已完成的通话卡，直达 CallApp 里的这一通详情。 */
     onOpenCallRecord?: (charId: string, sessionId: string) => void;
+    /** 接受角色主动发出的线下见面邀请。 */
+    onAcceptMeetingInvite?: (charId: string) => void;
     /**
      * 点图片气泡 → 打开大图页（看大图 / 存到手机 / 重画）。
      * 不传就退回原来的行为：图片只是一张点不动的 img。
@@ -1611,6 +1613,7 @@ const MessageItem = React.memo(({
     onResolveLifeRecord,
     onResolveScheduleInvite,
     onOpenCallRecord,
+    onAcceptMeetingInvite,
     onOpenImage,
     thinkingChainOptions,
 }: MessageItemProps) => {
@@ -1797,6 +1800,48 @@ const MessageItem = React.memo(({
     if (isSystem) {
         const isCallSummary = m.metadata?.source === 'call-end-popup';
         const isMissedCall = m.metadata?.source === 'incoming-call-missed';
+
+        if (m.metadata?.source === 'date-end-popup') {
+            const startedAt = Number(m.metadata?.startedAt || m.timestamp);
+            const endedAt = Number(m.metadata?.endedAt || m.timestamp);
+            const dateText = new Date(startedAt).toLocaleString(undefined, { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            return (
+                <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+                    <div className="w-full px-4 my-3" {...interactionProps}>
+                        <div className="mx-auto w-72 overflow-hidden rounded-[24px] border border-rose-200/70 bg-gradient-to-br from-rose-50 via-white to-amber-50 shadow-lg">
+                            <div className="flex items-center gap-3 border-b border-rose-100 px-4 py-3">
+                                {m.metadata?.charAvatar ? <img src={m.metadata.charAvatar} className="h-10 w-10 rounded-full object-cover ring-2 ring-white shadow" alt="" /> : <div className="h-10 w-10 rounded-full bg-rose-300 text-white flex items-center justify-center font-bold">{String(m.metadata?.charName || '?').slice(0, 1)}</div>}
+                                <div className="min-w-0 flex-1">
+                                    <div className="text-[10px] font-bold tracking-[0.18em] text-rose-400">此时此刻 · 见面完结</div>
+                                    <div className="truncate text-sm font-bold text-slate-700">和 {m.metadata?.charName || 'TA'} 的见面</div>
+                                </div>
+                            </div>
+                            <div className="space-y-2 px-4 py-3">
+                                <div className="flex justify-between text-[10px] text-slate-400"><span>{dateText}</span><span>{m.metadata?.durationText || ''}</span></div>
+                                <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-slate-600">{m.metadata?.summary || '这次见面已经结束。'}</p>
+                                <div className="text-[9px] text-slate-300">{new Date(startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} — {new Date(endedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+        if (m.metadata?.source === 'date-meeting-invite') {
+            return (
+                <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative`}>
+                    <div className="w-full px-4 my-3" {...interactionProps}>
+                        <div className="mx-auto w-72 rounded-[24px] border border-sky-200 bg-gradient-to-br from-sky-50 via-white to-violet-50 p-4 shadow-lg">
+                            <div className="flex items-center gap-3">
+                                {m.metadata?.charAvatar && <img src={m.metadata.charAvatar} className="h-11 w-11 rounded-full object-cover ring-2 ring-white shadow" alt="" />}
+                                <div className="min-w-0 flex-1"><div className="text-[10px] font-bold tracking-[0.18em] text-sky-500">见面邀请</div><div className="truncate text-sm font-bold text-slate-700">{m.metadata?.charName || charName} 想来见你</div></div>
+                            </div>
+                            <p className="my-3 whitespace-pre-wrap text-[12px] leading-relaxed text-slate-600">{m.metadata?.invitation}</p>
+                            <button type="button" onClick={(e) => { e.stopPropagation(); onAcceptMeetingInvite?.(m.charId); }} className="w-full rounded-full bg-slate-900 py-2.5 text-xs font-bold text-white active:scale-[.98]">接受并进入见面</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
 
         // Guidebook end card — rendered as pretty card, not ugly system pill
         if (m.type === 'score_card') {

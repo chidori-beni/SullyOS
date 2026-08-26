@@ -61,6 +61,16 @@ describe('splitDateEncounters', () => {
 });
 
 describe('date history views', () => {
+    it('正式结束标记会让按次记录显示已完结、时长与摘要', () => {
+        const opening = message(1, at(9, 9), { opening: true });
+        const ending = message(2, at(9, 10), { role: 'system', content: '见面结束' });
+        ending.metadata = { source: 'date', isDateEnding: true, dateEncounterDurationText: '1 小时', dateEncounterSummary: '一起吃了早餐。' };
+        const [group] = splitDateEncounters([opening, ending]);
+        expect(group.completed).toBe(true);
+        expect(group.durationText).toBe('1 小时');
+        expect(group.summary).toBe('一起吃了早餐。');
+    });
+
     it('按日期会合并同一天的多次见面并统计开场数', () => {
         const groups = groupDateMessagesByDate([
             message(1, at(9, 9), { opening: true }),

@@ -2086,6 +2086,10 @@ export interface DateObserveConfig {
 }
 
 export interface DateState {
+    /** 一次正式见面的稳定身份；暂停/恢复后保持不变。 */
+    encounterId?: string;
+    /** 这次见面真正开始的时间，用于现实时间推进与结束卡片。 */
+    encounterStartedAt?: number;
     dialogueQueue: DialogueItem[];
     dialogueBatch: DialogueItem[];
     currentText: string;
@@ -2862,6 +2866,9 @@ export interface CharacterProfile {
   customDateSprites?: string[]; // User-added custom emotion names for date mode (per-character)
   dateLightReading?: boolean;   // Light reading mode for novel/text view in date
   dateReadingShowAvatars?: boolean; // Show both participants' avatars beside messages in date reading mode
+  /** 糯叽机「此时此刻」同名 .tm-* 选择器兼容的阅读模式自定义 CSS。 */
+  dateReadingCustomCss?: string;
+  dateReadingCssThemeName?: string;
   dateSkinSets?: SkinSet[];     // Multiple skin sets for portrait mode
   activeSkinSetId?: string;     // Currently active skin set ID
   dateStyleConfig?: DateStyleConfig; // 见面模式文风（写作风格 / 叙事人称 / 自定义补充）

@@ -113,9 +113,27 @@ const DateApp: React.FC = () => {
     
     // Resume Logic State
     const [pendingSessionChar, setPendingSessionChar] = useState<CharacterProfile | null>(null);
+    const activeEncounterRef = useRef<{ id: string; startedAt: number } | null>(null);
+
+    const newEncounter = () => ({
+        id: `date_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        startedAt: Date.now(),
+    });
+
+    const ensureEncounter = () => {
+        if (!activeEncounterRef.current) {
+            const saved = char?.savedDateState;
+            activeEncounterRef.current = {
+                id: saved?.encounterId || newEncounter().id,
+                startedAt: saved?.encounterStartedAt || saved?.timestamp || Date.now(),
+            };
+        }
+        return activeEncounterRef.current;
+    };
 
     // --- NEW: Editing State lifted to here for DB sync ---
     const [dateMessages, setDateMessages] = useState<Message[]>([]);
+    const [endSuggestedReason, setEndSuggestedReason] = useState('');
     // 阅读模式「加载更早」用：当前查询 limit 与「库里已经没有更早的了」。
     const [dateLoadLimit, setDateLoadLimit] = useState(DATE_SESSION_MESSAGE_LIMIT);
     const [dateHistoryReachedEnd, setDateHistoryReachedEnd] = useState(false);
@@ -266,6 +284,10 @@ const DateApp: React.FC = () => {
         // 恢复尝试开始前先武装崩溃哨兵：若这份重快照在 iOS 上把内容进程撑崩，
         // 哨兵会残留到下次进见面被检出并清理（见挂载时的自愈 effect）。
         armDateResumeAttempt(pendingSessionChar.id);
+        activeEncounterRef.current = {
+            id: pendingSessionChar.savedDateState?.encounterId || newEncounter().id,
+            startedAt: pendingSessionChar.savedDateState?.encounterStartedAt || pendingSessionChar.savedDateState?.timestamp || Date.now(),
+        };
         setActiveCharacterId(pendingSessionChar.id);
         setMode('session');
         setPendingSessionChar(null);
@@ -278,6 +300,7 @@ const DateApp: React.FC = () => {
         if (!pendingSessionChar) return;
         // 新会话没有恢复快照可重放，撤销任何残留哨兵。
         clearDateResumeAttempt();
+        activeEncounterRef.current = newEncounter();
         updateCharacter(pendingSessionChar.id, { savedDateState: undefined });
         trackEvent('选择见面存档处理方式', { choice: 'new' });
         trackEvent('见面存档选重新开始');
@@ -288,6 +311,7 @@ const DateApp: React.FC = () => {
     // --- 关键修复: 进入 Session 时立即归档开场白 ---
     const handleEnterSession = async () => {
         if (!char) return;
+        const encounter = ensureEncounter();
 
         // 1. 如果有开场白且未保存，立即保存到数据库
         // 这确保了 user 发送第一句话时，AI 能在历史记录里读到这个开场
@@ -299,7 +323,7 @@ const DateApp: React.FC = () => {
                     role: 'assistant',
                     type: 'text',
                     content: peekStatus,
-                    metadata: { source: 'date', isOpening: true } // Added Flag
+                    metadata: { source: 'date', isOpening: true, dateEncounterId: encounter.id, dateEncounterStartedAt: encounter.startedAt }
                 });
                 setHasSavedOpening(true);
             } catch (e) {
@@ -318,6 +342,7 @@ const DateApp: React.FC = () => {
 
     // --- Peek (Generation) Logic ---
     const startPeek = async (c: CharacterProfile) => {
+        activeEncounterRef.current = newEncounter();
         setActiveCharacterId(c.id);
         setMode('peek');
         setPeekLoading(true);
@@ -403,6 +428,7 @@ const DateApp: React.FC = () => {
     // --- Session API Logic ---
     const handleSendMessage = async (text: string): Promise<string> => {
         if (!char) throw new Error("No char");
+        const encounter = ensureEncounter();
 
         // 重发场景：如果 DB 里最后一条已经是这条 user 消息（上一轮发送后 API 失败 / 网络抖动等），
         // 就跳过重复落库，直接走 API。与 chat app 行为对齐，让用户按发送键即可重新触发 LLM。
@@ -414,7 +440,7 @@ const DateApp: React.FC = () => {
 
         if (!isRetry) {
             // 1. Save User Msg
-            await DB.saveMessage({ charId: char.id, role: 'user', type: 'text', content: text, metadata: { source: 'date' } });
+            await DB.saveMessage({ charId: char.id, role: 'user', type: 'text', content: text, metadata: { source: 'date', dateEncounterId: encounter.id } });
             markDateTurnDirty(char);
         }
 
@@ -437,10 +463,13 @@ const DateApp: React.FC = () => {
             variant: 'send',
             useVisionDescriptions: apiConfig.visionApi?.enabled === true,
         });
-        const content = await callLLM(messages, apiConfig.temperature ?? 0.85);
+        const rawContent = await callLLM(messages, apiConfig.temperature ?? 0.85);
+        const endMatch = rawContent.match(/\[\[END_MEETING:\s*([^\]]{1,200})\]\]/i);
+        const content = rawContent.replace(/\[\[END_MEETING:\s*[^\]]*\]\]/gi, '').trim();
+        if (endMatch?.[1]?.trim()) setEndSuggestedReason(endMatch[1].trim());
 
         // 3. Save AI Response
-        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: { source: 'date' } });
+        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: { source: 'date', dateEncounterId: encounter.id } });
         markDateTurnDirty(char);
 
         // Refresh local state
@@ -480,7 +509,8 @@ const DateApp: React.FC = () => {
             const content = await callLLM(messages, Math.max(apiConfig.temperature ?? 0.85, 0.9));
             // 生成成功后才动库：先删旧开场、再带 isOpening 落新开场，请求失败时原剧情不丢
             await DB.deleteMessage(lastMsg.id);
-            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content, metadata: { source: 'date', isOpening: true } });
+            const encounter = ensureEncounter();
+            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content, metadata: { source: 'date', isOpening: true, dateEncounterId: encounter.id, dateEncounterStartedAt: encounter.startedAt } });
             markDateTurnDirty(char);
             trackEvent('重掷见面回复', { 目标: '开场白' });
             // 阅读模式空会话时顶部渲染的开场 & 退出快照里的 peekStatus 同步成新开场
@@ -509,11 +539,15 @@ const DateApp: React.FC = () => {
             useVisionDescriptions: apiConfig.visionApi?.enabled === true,
         });
         // Reroll 略调高温度求多样性，但绝不低于用户配置的基线。
-        const content = await callLLM(messages, Math.max(apiConfig.temperature ?? 0.85, 0.9));
+        const rawContent = await callLLM(messages, Math.max(apiConfig.temperature ?? 0.85, 0.9));
+        const endMatch = rawContent.match(/\[\[END_MEETING:\s*([^\]]{1,200})\]\]/i);
+        const content = rawContent.replace(/\[\[END_MEETING:\s*[^\]]*\]\]/gi, '').trim();
+        setEndSuggestedReason(endMatch?.[1]?.trim() || '');
 
         // 生成成功后才删旧回复：以前先删后调 API，请求一失败上一条剧情就永久消失
         await DB.deleteMessage(lastMsg.id);
-        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: { source: 'date' } });
+        const encounter = ensureEncounter();
+        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: { source: 'date', dateEncounterId: encounter.id } });
         markDateTurnDirty(char);
         trackEvent('重掷见面回复', { 目标: '回复' });
 
@@ -604,7 +638,8 @@ const DateApp: React.FC = () => {
         // 用户主动保存并退出 = 干净退出，撤销恢复哨兵。
         clearDateResumeAttempt();
         if (char) {
-            updateCharacter(char.id, { savedDateState: finalState });
+            const encounter = ensureEncounter();
+            updateCharacter(char.id, { savedDateState: { ...finalState, encounterId: encounter.id, encounterStartedAt: encounter.startedAt } });
             addToast('进度已保存', 'success');
         }
         // 来自聊天：退出见面回聊天
@@ -612,6 +647,76 @@ const DateApp: React.FC = () => {
         setMode('select');
         setPeekStatus('');
         setHasSavedOpening(false);
+    };
+
+    const formatDuration = (durationMs: number) => {
+        const minutes = Math.max(1, Math.round(durationMs / 60000));
+        if (minutes < 60) return `${minutes} 分钟`;
+        const hours = Math.floor(minutes / 60);
+        const rest = minutes % 60;
+        return rest ? `${hours} 小时 ${rest} 分钟` : `${hours} 小时`;
+    };
+
+    const finishEncounter = async (finalState: DateState) => {
+        if (!char) return;
+        const encounter = ensureEncounter();
+        const endedAt = Date.now();
+        const allDate = await DB.getRecentMessagesByCharIdAndSource(char.id, 'date', 500);
+        const current = allDate.filter(m => m.metadata?.dateEncounterId === encounter.id);
+        const transcript = current.slice(-30).map(m => `${m.role === 'user' ? userProfile.name || '用户' : char.name}：${m.content}`).join('\n');
+        let summary = '';
+        try {
+            summary = await callLLM([
+                { role: 'system', content: '你是见面记录整理器。用一段简洁、温柔、忠于原文的中文，概括这次线下见面的地点、共同活动、重要情绪与结束方式。不要虚构，不要加标题，80字以内。' },
+                { role: 'user', content: transcript || '这次见面没有留下更多对话。' },
+            ], 0.3);
+        } catch (error) {
+            console.warn('[DateApp] 见面总结生成失败，使用本地摘要', error);
+            summary = current.length > 0
+                ? `你和${char.name}结束了这次见面，共留下 ${current.length} 条现场记录。`
+                : `你和${char.name}结束了这次见面。`;
+        }
+        const durationMs = Math.max(0, endedAt - encounter.startedAt);
+        await DB.saveMessage({
+            charId: char.id,
+            role: 'system',
+            type: 'system',
+            content: `见面结束 · ${char.name}`,
+            metadata: {
+                source: 'date',
+                isDateEnding: true,
+                dateEncounterId: encounter.id,
+                dateEncounterStartedAt: encounter.startedAt,
+                dateEncounterEndedAt: endedAt,
+                dateEncounterDurationMs: durationMs,
+                dateEncounterDurationText: formatDuration(durationMs),
+                dateEncounterSummary: summary.trim(),
+            },
+        });
+        await DB.saveMessage({
+            charId: char.id,
+            role: 'system',
+            type: 'system',
+            content: `见面结束 · ${char.name}`,
+            metadata: {
+                source: 'date-end-popup',
+                dateEncounterId: encounter.id,
+                startedAt: encounter.startedAt,
+                endedAt,
+                durationText: formatDuration(durationMs),
+                summary: summary.trim(),
+                charName: char.name,
+                charAvatar: char.avatar,
+            },
+        });
+        clearDateResumeAttempt();
+        updateCharacter(char.id, { savedDateState: undefined });
+        activeEncounterRef.current = null;
+        setEndSuggestedReason('');
+        markDateTurnDirty(char);
+        addToast('这次见面已完结，并同步到聊天', 'success');
+        trackEvent('正式结束一次见面');
+        returnToChat();
     };
 
     // 从选择页直接进设置（不用先进见面再点菜单），改完立绘/观测等即时生效
@@ -906,7 +1011,9 @@ const DateApp: React.FC = () => {
                                             ? (group.hasOpeningAnchor ? '一次完整见面' : '旧记录 · 按日期兼容整理')
                                             : (group.encounterCount > 0 ? `${group.encounterCount} 次开场` : '旧记录')}
                                         {' · '}{group.messages.length} 句
+                                        {historyView === 'encounter' && <span className={group.completed ? 'text-emerald-500' : 'text-amber-500'}>{' · '}{group.completed ? `已完结${group.durationText ? ` · ${group.durationText}` : ''}` : '进行中/旧存档'}</span>}
                                     </div>
+                                    {historyView === 'encounter' && group.summary && <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-slate-500">{group.summary}</p>}
                                 </div>
                                 <button
                                     onClick={(event) => {
@@ -1047,6 +1154,8 @@ const DateApp: React.FC = () => {
                     onSendMessage={handleSendMessage}
                     onReroll={handleReroll}
                     onExit={onExitSession}
+                    onEnd={finishEncounter}
+                    endSuggestedReason={endSuggestedReason}
                     onEditMessage={(msg) => { setEditTargetMsg(msg); setEditContent(msg.content); setIsEditModalOpen(true); }}
                     onDeleteMessage={handleDeleteMessage}
                     onDeleteMessages={handleDeleteMessages}

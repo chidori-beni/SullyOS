@@ -104,6 +104,21 @@ describe('DatePrompts.buildSessionPayload', () => {
         const lastReroll = reroll.messages[reroll.messages.length - 1];
         expect(lastReroll.content).toContain('Reroll');
     });
+
+    it('注入现实时间连续性，明确短时间不能让持续活动瞬间结束', async () => {
+        const startedAt = Date.now() - 35 * 60_000;
+        const input = baseInput(makeChar());
+        input.allMsgs = [
+            makeMsg({ role: 'assistant', content: '[normal] 开始吃饭', timestamp: startedAt, metadata: { source: 'date', isOpening: true, dateEncounterStartedAt: startedAt } }),
+            makeMsg({ content: '这个好吃', timestamp: Date.now() - 3 * 60_000, metadata: { source: 'date' } }),
+        ];
+        const { messages } = await DatePrompts.buildSessionPayload(input);
+        const sys = sysOf(messages);
+        expect(sys).toContain('现实时间连续性');
+        expect(sys).toContain('已持续约 35 分钟');
+        expect(sys).toContain('仅过几分钟时，绝不能');
+        expect(sys).toContain('不要因为用户没有重复提醒');
+    });
 });
 
 describe('OBSERVE 观测协议', () => {

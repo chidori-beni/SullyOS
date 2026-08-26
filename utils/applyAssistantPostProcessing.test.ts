@@ -46,6 +46,20 @@ const quotedUserMsg = {
     timestamp: Date.now() - 1000,
 };
 
+describe('角色主动见面邀请', () => {
+    it('剥离控制标签，在正文后落一张可进入见面模式的系统卡', async () => {
+        const charId = `c-meet-invite-${Date.now()}`;
+        await applyAssistantPostProcessing('我到楼下了。\n[[MEET_INVITE: 下来吧，我在门口等你。]]', makeCtx(charId, []));
+        const msgs = await DB.getRecentMessagesByCharId(charId, 20);
+        const body = msgs.find(m => m.role === 'assistant');
+        const card = msgs.find(m => m.metadata?.source === 'date-meeting-invite');
+        expect(body?.content).toBe('我到楼下了。');
+        expect(body?.content).not.toContain('MEET_INVITE');
+        expect(card?.role).toBe('system');
+        expect(card?.metadata?.invitation).toBe('下来吧，我在门口等你。');
+    });
+});
+
 describe('renderAndPersist 引用解析', () => {
     it('[[QUOTE:]] 单独成行 (后跟 SEND_EMOJI + 正文) 时引用顺延到第一条文字气泡', async () => {
         const charId = `c-quote-${Date.now()}`;

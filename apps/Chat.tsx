@@ -3227,7 +3227,9 @@ const Chat: React.FC = () => {
                 if (char?.hideSystemLogs
                     && m.role === 'system'
                     && m.type !== 'score_card'
-                    && m.metadata?.source !== 'call-end-popup') return false;
+                    && m.metadata?.source !== 'call-end-popup'
+                    && m.metadata?.source !== 'date-end-popup'
+                    && m.metadata?.source !== 'date-meeting-invite') return false;
                 return true;
             });
         if (windowedFocusMsgId !== null) {
@@ -3986,6 +3988,7 @@ const Chat: React.FC = () => {
                             onResolveLifeRecord={handleResolveLifeRecord}
                             onResolveScheduleInvite={handleResolveScheduleInvite}
                             onOpenCallRecord={handleOpenCallRecord}
+                            onAcceptMeetingInvite={openDateWithChar}
                             onOpenImage={handleOpenImage}
                             thinkingChainOptions={thinkingChainOptions}
                         />

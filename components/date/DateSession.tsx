@@ -110,6 +110,8 @@ interface DateSessionProps {
     onSendMessage: (text: string) => Promise<string>; // Returns AI content
     onReroll: () => Promise<string>;
     onExit: (currentState: DateState) => void;
+    onEnd: (currentState: DateState) => Promise<void>;
+    endSuggestedReason?: string;
     onEditMessage: (msg: Message) => void;
     onDeleteMessage: (msg: Message) => void;
     onDeleteMessages: (ids: number[]) => Promise<void>;
@@ -146,7 +148,7 @@ const ReadingAvatar: React.FC<{ src?: string; name: string; light: boolean }> = 
     const canShowImage = !!src && !isBlobRef(src) && !imageFailed;
     return (
         <div
-            className={`mt-1 h-9 w-9 shrink-0 overflow-hidden rounded-full ring-1 shadow-sm ${
+            className={`tm-avatar mt-1 h-9 w-9 shrink-0 overflow-hidden rounded-full ring-1 shadow-sm ${
                 light ? 'bg-stone-200 text-stone-500 ring-stone-300/70' : 'bg-white/10 text-white/70 ring-white/15'
             }`}
             aria-hidden="true"
@@ -182,6 +184,8 @@ const DateSession: React.FC<DateSessionProps> = ({
     onSendMessage, 
     onReroll, 
     onExit,
+    onEnd,
+    endSuggestedReason,
     onEditMessage,
     onDeleteMessage,
     onDeleteMessages,
@@ -213,6 +217,14 @@ const DateSession: React.FC<DateSessionProps> = ({
     const [isTyping, setIsTyping] = useState(false); // Waiting for API
     const [isShowingOpening, setIsShowingOpening] = useState(!initialState); // True until first user interaction
     const [showExitModal, setShowExitModal] = useState(false);
+    const [endingEncounter, setEndingEncounter] = useState(false);
+    const handledEndSuggestionRef = useRef('');
+    useEffect(() => {
+        if (!endSuggestedReason || isTyping || isTextAnimating || dialogueQueue.length > 0) return;
+        if (handledEndSuggestionRef.current === endSuggestedReason) return;
+        handledEndSuggestionRef.current = endSuggestedReason;
+        setShowExitModal(true);
+    }, [endSuggestedReason, isTyping, isTextAnimating, dialogueQueue.length]);
     // API 失败时本地记住本轮输入，不依赖父组件的 DB 刷新是否已经完成；用户可直接点重试。
     const [pendingRetryText, setPendingRetryText] = useState('');
 
@@ -792,6 +804,8 @@ const DateSession: React.FC<DateSessionProps> = ({
     };
 
     const buildCurrentState = (): DateState => ({
+        encounterId: initialState?.encounterId,
+        encounterStartedAt: initialState?.encounterStartedAt,
         dialogueQueue,
         dialogueBatch,
         currentText,
@@ -808,6 +822,16 @@ const DateSession: React.FC<DateSessionProps> = ({
 
     const handleExitClick = () => {
         onExit(buildCurrentState());
+    };
+
+    const handleEndClick = async () => {
+        if (endingEncounter) return;
+        setEndingEncounter(true);
+        try {
+            await onEnd(buildCurrentState());
+        } finally {
+            setEndingEncounter(false);
+        }
     };
 
     // Auto-save: persist date state so refresh/close doesn't lose progress
@@ -1042,9 +1066,10 @@ const DateSession: React.FC<DateSessionProps> = ({
 
             {/* Novel Mode View */}
             {isNovelMode && (
-                <div ref={novelScrollRef} className={`absolute inset-0 z-20 overflow-y-auto no-scrollbar pt-24 pb-32 px-8 mask-image-gradient overscroll-contain ${char.dateLightReading ? 'bg-[#faf8f5]' : 'bg-black/90 backdrop-blur-sm'}`} onClick={(e) => { e.stopPropagation(); if (showMenu) { setShowMenu(false); setShowVoiceLangPicker(false); return; } setShowInputBox(true); }}>
-                    <div className="min-h-full flex flex-col justify-end">
-                        <div className="max-w-2xl mx-auto animate-fade-in space-y-6">
+                <div id="this-moment-screen" ref={novelScrollRef} className={`tm-screen absolute inset-0 z-20 overflow-y-auto no-scrollbar mask-image-gradient overscroll-contain ${char.dateLightReading ? 'tm-theme-light bg-[#faf8f5]' : 'tm-theme-dark bg-black/90 backdrop-blur-sm'}`} onClick={(e) => { e.stopPropagation(); if (showMenu) { setShowMenu(false); setShowVoiceLangPicker(false); return; } setShowInputBox(true); }}>
+                    {char.dateReadingCustomCss && <style>{char.dateReadingCustomCss.replace(/<\/style/gi, '<\\/style')}</style>}
+                    <div className="tm-story min-h-full flex flex-col justify-end pt-24 pb-32 px-8">
+                        <div className="tm-story-inner max-w-2xl mx-auto animate-fade-in space-y-6">
                             {isBatchSelectMode && (
                                 <div className="sticky top-0 z-20 flex items-center justify-between bg-white/90 border border-stone-200 rounded-xl px-3 py-2 text-xs text-stone-700">
                                     <span>已选 {selectedMsgIds.size} 条</span>
@@ -1105,7 +1130,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                             {visibleSessionMessages.map((msg) => (
                                 <div
                                     key={msg.id}
-                                    className={`group relative rounded-xl transition-colors -mx-4 px-4 py-2 ${isBatchSelectMode ? 'pl-10' : ''} ${char.dateLightReading ? 'active:bg-stone-100' : 'active:bg-white/5'}`}
+                                    className={`tm-para ${msg.role === 'user' ? 'tm-para-user' : 'tm-para-char'} group relative rounded-xl transition-colors -mx-4 px-4 py-2 ${isBatchSelectMode ? 'pl-10' : ''} ${char.dateLightReading ? 'active:bg-stone-100' : 'active:bg-white/5'}`}
                                     onClick={(e) => {
                                         if (!isBatchSelectMode) return;
                                         e.stopPropagation();
@@ -1126,8 +1151,8 @@ const DateSession: React.FC<DateSessionProps> = ({
                                         </div>
                                     )}
                                     {msg.role === 'user' ? (
-                                        <div className="flex min-w-0 items-start justify-end gap-3">
-                                            <p className={`min-w-0 flex-1 whitespace-pre-wrap font-serif text-[16px] text-right leading-loose tracking-wide italic pr-4 ${char.dateLightReading ? 'text-stone-400 border-r-2 border-stone-300/50' : 'text-slate-400 border-r-2 border-slate-600/50'}`}>{cleanTextForDisplay(msg.content)} <span className="text-[10px] uppercase font-sans not-italic ml-2 opacity-50">{userProfile.name}</span></p>
+                                        <div className="tm-body tm-body-user flex min-w-0 items-start justify-end gap-3">
+                                            <p className={`tm-para-block min-w-0 flex-1 whitespace-pre-wrap font-serif text-[16px] text-right leading-loose tracking-wide italic pr-4 ${char.dateLightReading ? 'text-stone-400 border-r-2 border-stone-300/50' : 'text-slate-400 border-r-2 border-slate-600/50'}`}>{cleanTextForDisplay(msg.content)} <span className="tm-name tm-name-user text-[10px] uppercase font-sans not-italic ml-2 opacity-50">{userProfile.name}</span></p>
                                             {char.dateReadingShowAvatars && (
                                                 <ReadingAvatar
                                                     src={userProfile.perCharAvatars?.[char.id] || userProfile.avatar}
@@ -1140,7 +1165,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                         // 观测协议：从这条回复里剥出观测块，正文上方渲染独立卡片，正文本身不显示块文本
                                         const { observation: msgObs, rest: msgBody } = extractObservation(msg.content || '', { lenient: observeEnabled, custom: char.dateObserve?.custom });
                                         return (
-                                        <div className="flex min-w-0 items-start gap-3">
+                                        <div className="tm-body tm-body-char flex min-w-0 items-start gap-3">
                                             {char.dateReadingShowAvatars && (
                                                 <ReadingAvatar src={char.avatar} name={char.name} light={!!char.dateLightReading} />
                                             )}
@@ -1177,7 +1202,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                                         onMouseDown={voiceEnabled && lineIsDialogue && !isOpeningMsg ? (e) => e.stopPropagation() : undefined}
                                                         onContextMenu={voiceEnabled && lineIsDialogue && !isOpeningMsg ? (e) => { e.preventDefault(); e.stopPropagation(); void openDateVoiceFavorite(voiceTarget); } : undefined}
                                                     >
-                                                        <p className={`flex-1 whitespace-pre-wrap font-serif text-[18px] text-justify leading-loose tracking-wide pl-4 ${char.dateLightReading ? 'text-stone-700 border-l-2 border-stone-200' : 'text-slate-200 drop-shadow-md border-l-2 border-white/10'}`}>{cleanLine}</p>
+                                                        <p className={`tm-para-block flex-1 whitespace-pre-wrap font-serif text-[18px] text-justify leading-loose tracking-wide pl-4 ${char.dateLightReading ? 'text-stone-700 border-l-2 border-stone-200' : 'text-slate-200 drop-shadow-md border-l-2 border-white/10'}`}>{cleanLine}</p>
                                                         {/* Voice button: only for dialogue lines, not opening */}
                                                         {voiceEnabled && lineIsDialogue && !isOpeningMsg && (
                                                             <button
@@ -1281,8 +1306,8 @@ const DateSession: React.FC<DateSessionProps> = ({
                     </div>
                 )}
                 {showInputBox && (
-                    <div className={`w-[90%] min-w-0 max-w-lg backdrop-blur-xl rounded-2xl p-2 flex gap-2 shadow-2xl animate-fade-in mb-8 pointer-events-auto ${char.dateLightReading ? 'bg-stone-100 border border-stone-300' : 'bg-white/10 border border-white/20'}`} onClick={(e) => e.stopPropagation()}>
-                        <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder={isTyping ? "等待回应..." : "输入对话..."} disabled={isTyping} className={`min-w-0 flex-1 bg-transparent px-3 sm:px-4 py-3 outline-none font-light resize-none h-14 no-scrollbar leading-tight ${char.dateLightReading ? 'text-stone-800 placeholder:text-stone-400' : 'text-white placeholder:text-white/30'}`} autoFocus />
+                    <div className={`tm-compose w-[90%] min-w-0 max-w-lg backdrop-blur-xl rounded-2xl p-2 flex gap-2 shadow-2xl animate-fade-in mb-8 pointer-events-auto ${char.dateLightReading ? 'bg-stone-100 border border-stone-300' : 'bg-white/10 border border-white/20'}`} onClick={(e) => e.stopPropagation()}>
+                        <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder={isTyping ? "等待回应..." : "输入对话..."} disabled={isTyping} className={`tm-input min-w-0 flex-1 bg-transparent px-3 sm:px-4 py-3 outline-none font-light resize-none h-14 no-scrollbar leading-tight ${char.dateLightReading ? 'text-stone-800 placeholder:text-stone-400' : 'text-white placeholder:text-white/30'}`} autoFocus />
                         {(() => {
                             const retryText = pendingRetryText || getPendingReplyText(messages);
                             const canRetry = !input.trim() && !isTyping && !!retryText;
@@ -1290,7 +1315,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                 <button
                                     onClick={handleSend}
                                     disabled={(!input.trim() && !canRetry) || isTyping}
-                                    className="shrink-0 px-4 sm:px-6 bg-white text-black rounded-xl font-bold text-sm hover:bg-slate-200 disabled:opacity-50 transition-colors h-14 flex items-center justify-center"
+                                    className="tm-send shrink-0 px-4 sm:px-6 bg-white text-black rounded-xl font-bold text-sm hover:bg-slate-200 disabled:opacity-50 transition-colors h-14 flex items-center justify-center"
                                 >
                                     {canRetry ? '重试' : '发送'}
                                 </button>
@@ -1318,8 +1343,8 @@ const DateSession: React.FC<DateSessionProps> = ({
             />
 
             {/* Exit Modal */}
-            <Modal isOpen={showExitModal} title="暂时离开?" onClose={() => setShowExitModal(false)} footer={<div className="flex gap-3 w-full"><button onClick={() => setShowExitModal(false)} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">留在这里</button><button onClick={handleExitClick} className="flex-1 py-3 bg-slate-800 text-white rounded-2xl font-bold">保存并退出</button></div>}>
-                <div className="text-center text-slate-500 text-sm py-2 leading-relaxed">选择“保存并退出”将保留当前对话进度。<br/>下次见面时，你可以选择继续话题。</div>
+            <Modal isOpen={showExitModal} title="离开还是结束见面？" onClose={() => setShowExitModal(false)} footer={<div className="flex flex-col gap-2 w-full"><div className="flex gap-2"><button onClick={() => setShowExitModal(false)} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">继续见面</button><button onClick={handleExitClick} className="flex-1 py-3 bg-slate-800 text-white rounded-2xl font-bold">暂存离开</button></div><button disabled={endingEncounter} onClick={handleEndClick} className="w-full py-3 bg-rose-500 disabled:opacity-50 text-white rounded-2xl font-bold">{endingEncounter ? '正在整理这次见面…' : '结束本次见面'}</button></div>}>
+                <div className="text-center text-slate-500 text-sm py-2 leading-relaxed">{endSuggestedReason && <><span className="mb-2 block text-rose-500">现场变化：{endSuggestedReason}</span></>}“暂存离开”会保留现场，下次继续同一段见面。<br/>“结束本次见面”会生成完结卡片，并回到线上聊天。</div>
             </Modal>
 
             {/* Message Options Modal */}

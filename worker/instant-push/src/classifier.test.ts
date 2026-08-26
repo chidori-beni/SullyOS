@@ -490,3 +490,14 @@ describe('call_invite', () => {
     expect(r.directives.filter(d => d.type === 'call_invite')).toHaveLength(1);
   });
 });
+
+describe('meeting_invite', () => {
+  it('邀请标签进入 directive，通知与正文都不泄漏控制标记', () => {
+    const r = classifyLLMOutput('我到楼下了\n[[MEET_INVITE: 下来吧，我在门口等你。]]');
+    expect(r.kind).toBe('finish');
+    if (r.kind !== 'finish') return;
+    expect(r.cleanedText).toBe('我到楼下了');
+    expect(r.sanitizedBody).not.toContain('MEET_INVITE');
+    expect(r.directives).toContainEqual({ type: 'meeting_invite', invitation: '下来吧，我在门口等你。' });
+  });
+});

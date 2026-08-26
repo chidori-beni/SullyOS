@@ -30,6 +30,34 @@ const Section: React.FC<{ title: string; defaultOpen?: boolean; children: React.
 const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
     const { updateCharacter, addToast, userProfile } = useOS();
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const cssFileInputRef = useRef<HTMLInputElement>(null);
+    const [readingCssDraft, setReadingCssDraft] = useState(char.dateReadingCustomCss || '');
+    useEffect(() => { setReadingCssDraft(char.dateReadingCustomCss || ''); }, [char.id]);
+
+    const saveReadingCss = () => {
+        updateCharacter(char.id, { dateReadingCustomCss: readingCssDraft || undefined });
+        addToast(readingCssDraft.trim() ? '阅读美化 CSS 已保存' : '阅读美化 CSS 已清空', 'success');
+    };
+
+    const importReadingCss = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const css = await file.text();
+        setReadingCssDraft(css);
+        updateCharacter(char.id, { dateReadingCustomCss: css, dateReadingCssThemeName: file.name.replace(/\.(css|txt)$/i, '') });
+        addToast(`已导入 ${file.name}`, 'success');
+        e.target.value = '';
+    };
+
+    const exportReadingCss = () => {
+        const blob = new Blob([readingCssDraft], { type: 'text/css;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${char.name}_此时此刻阅读主题.css`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
 
     // 文风与叙事（即时生效：system prompt 每次请求重建，存上就影响下一条回复）
     const styleConfig = char.dateStyleConfig || {};
@@ -295,6 +323,24 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                         </button>
                     </div>
                 </section>
+
+                <Section title="阅读美化 CSS · 糯叽机兼容">
+                    <p className="mb-3 text-[11px] leading-relaxed text-slate-400">可直接粘贴或导入糯叽机“此时此刻”的 CSS。Sully 阅读页提供同名的 #this-moment-screen、.tm-story、.tm-para、.tm-para-char、.tm-para-user、.tm-body、.tm-body-char、.tm-body-user、.tm-para-block 等选择器。</p>
+                    <textarea
+                        value={readingCssDraft}
+                        onChange={e => setReadingCssDraft(e.target.value)}
+                        spellCheck={false}
+                        placeholder={'.tm-para-char { ... }\n.tm-para-user { ... }'}
+                        className="h-56 w-full resize-y rounded-xl border border-slate-200 bg-slate-950 p-3 font-mono text-[11px] leading-relaxed text-emerald-200 outline-none focus:border-primary"
+                    />
+                    <input ref={cssFileInputRef} type="file" accept=".css,.txt,text/css,text/plain" className="hidden" onChange={importReadingCss} />
+                    <div className="mt-3 grid grid-cols-3 gap-2">
+                        <button type="button" onClick={() => cssFileInputRef.current?.click()} className="rounded-xl bg-slate-100 py-2.5 text-xs font-bold text-slate-600">导入 CSS</button>
+                        <button type="button" onClick={exportReadingCss} disabled={!readingCssDraft} className="rounded-xl bg-slate-100 py-2.5 text-xs font-bold text-slate-600 disabled:opacity-40">导出 CSS</button>
+                        <button type="button" onClick={saveReadingCss} className="rounded-xl bg-primary py-2.5 text-xs font-bold text-white">保存应用</button>
+                    </div>
+                    <button type="button" onClick={() => { setReadingCssDraft(''); updateCharacter(char.id, { dateReadingCustomCss: undefined, dateReadingCssThemeName: undefined }); addToast('已恢复默认阅读样式', 'success'); }} className="mt-2 w-full py-2 text-[11px] font-bold text-rose-400">清空并恢复默认</button>
+                </Section>
 
                 <ObserveSettings char={char} />
 

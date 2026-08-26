@@ -67,6 +67,7 @@ export type Directive =
   // 连 raw 一起剥掉——8/23 第一批上线后实测就是这样：角色说完「行，接好了」，
   // 电话在云端被吃掉，手机上一点动静都没有。
   | { type: 'call_invite'; mode: 'voice' | 'video'; opening: string }
+  | { type: 'meeting_invite'; invitation: string }
   | { type: 'schedule_message'; time: string; text: string }
   // song 是可选的后补字段（见 MusicActionSong），只有主动消息 2.0 的定时路径会填。
   | { type: 'music_action'; verb: string; args: string[]; song?: MusicActionSong }
@@ -187,6 +188,14 @@ interface SideEffectSpec {
 }
 
 const SIDE_EFFECT_TAGS: SideEffectSpec[] = [
+  // [[MEET_INVITE: 邀请内容]] — 客户端落可点击的见面邀请卡。
+  {
+    re: /\[\[MEET_INVITE:\s*([^\]]{1,240})\]\]/gi,
+    toDirective: (m) => {
+      const invitation = m[1].trim();
+      return invitation ? { type: 'meeting_invite', invitation } : null;
+    },
+  },
   // [[REACT: ❤️ | 用户原话短片段]]；target 可省略，客户端回落到最近一条 user 消息。
   {
     re: /\[\[\s*REACT\s*[:：]\s*([^|｜\]\r\n]+?)(?:\s*[|｜]\s*([^\]\r\n]{0,120}?))?\s*\]\]/giu,

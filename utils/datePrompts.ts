@@ -721,6 +721,26 @@ ${extraBlock ? `\n${extraBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlo
         useVisionDescriptions?: boolean;
     }): Promise<{ messages: ApiMessage[] }> => {
         const { char, userProfile, allMsgs, emojis, userText, variant } = input;
+        const now = Date.now();
+        const dateMsgs = allMsgs.filter(m => m.metadata?.source === 'date');
+        const latestOpeningIndex = (() => {
+            for (let i = dateMsgs.length - 1; i >= 0; i -= 1) if (dateMsgs[i].metadata?.isOpening) return i;
+            return 0;
+        })();
+        const encounterMsgs = dateMsgs.slice(latestOpeningIndex);
+        const encounterStartedAt = Number(encounterMsgs[0]?.metadata?.dateEncounterStartedAt || encounterMsgs[0]?.timestamp || now);
+        const previousTurnAt = Number(encounterMsgs[encounterMsgs.length - 2]?.timestamp || encounterStartedAt);
+        const elapsedMinutes = Math.max(0, Math.floor((now - encounterStartedAt) / 60000));
+        const sincePreviousMinutes = Math.max(0, Math.floor((now - previousTurnAt) / 60000));
+        const continuityBlock = `
+### 线下见面的现实时间连续性（最高优先级）
+这次面对面见面已持续约 ${elapsedMinutes} 分钟；距离上一轮现场互动约 ${sincePreviousMinutes} 分钟。时间按现实世界流逝，不按消息条数跳跃。
+- 默认延续上一轮仍在进行的地点、姿势、物品和活动，除非用户明确改变，或现实经过时间足以自然完成。
+- 吃饭、通勤、洗澡、看电影、工作、上课、亲密互动等都有符合常识的持续时间。仅过几分钟时，绝不能为了“推进剧情”擅自宣布完成或瞬移到下一场景。
+- 活动持续期间可以推进对话、台词、表情、感官细节、心理、回忆与合理的叠加行为，但必须保持空间、身体状态和因果连续。
+- 同城、同住也不等于全天相伴；只有双方此刻确实在同一地点才属于见面。有人离开且不再面对面互动时，应自然写出告别，不要继续假装仍在现场。
+- 当且仅当其中一人已经实际离开、双方不再面对面互动时，在自然的最后台词/描写之后单独输出 \`[[END_MEETING: 简短结束原因]]\`。这会在最后一段显示完后请求结束见面；只是准备走、短暂去洗手间、去隔壁房间或仍能当面互动时绝不能输出。
+- 不要因为用户没有重复提醒“还在做某事”就把该动作判定结束。`;
 
         const historyMsgs = buildDateHistory(
             allMsgs,
@@ -733,7 +753,8 @@ ${extraBlock ? `\n${extraBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlo
         // 向量召回挂到 char.memoryPalaceInjection，buildCoreContext 会读取
         await injectMemoryPalace(char, allMsgs, undefined, userProfile?.name);
         const systemPrompt = ContextBuilder.buildCoreContext(char, userProfile, true, undefined, undefined, { skipTimeAwareness: !isDateTimeAwarenessOn(char), conversational: true })
-            + buildVNModeBlock(char, userProfile?.name || '');
+            + buildVNModeBlock(char, userProfile?.name || '')
+            + continuityBlock;
 
         // 每轮轮换的聚焦线索：把注意力推向不同的具体方向，相邻回复天然有差异
         const focusLine = isDigDeeperOn(char.dateStyleConfig) ? ` 本轮线索：${pickFocusHint()}。` : '';

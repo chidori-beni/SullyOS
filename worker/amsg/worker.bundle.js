@@ -12689,6 +12689,14 @@ var DATA_TAGS = [
   }
 ];
 var SIDE_EFFECT_TAGS = [
+  // [[MEET_INVITE: 邀请内容]] — 客户端落可点击的见面邀请卡。
+  {
+    re: /\[\[MEET_INVITE:\s*([^\]]{1,240})\]\]/gi,
+    toDirective: (m) => {
+      const invitation = m[1].trim();
+      return invitation ? { type: "meeting_invite", invitation } : null;
+    }
+  },
   // [[REACT: ❤️ | 用户原话短片段]]；target 可省略，客户端回落到最近一条 user 消息。
   {
     re: /\[\[\s*REACT\s*[:：]\s*([^|｜\]\r\n]+?)(?:\s*[|｜]\s*([^\]\r\n]{0,120}?))?\s*\]\]/giu,
