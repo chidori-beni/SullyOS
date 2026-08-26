@@ -17,6 +17,7 @@ import { getPendingReplyText } from '../../utils/pendingReply';
 import { fetchBlobForShare } from '../../utils/shareExport';
 import VoiceFavoriteActionSheet from '../voice/VoiceFavoriteActionSheet';
 import { getVoiceFavorite, makeVoiceFavoriteId, removeVoiceFavorite, saveVoiceFavorite } from '../../utils/voiceFavorites';
+import { ArrowLeft } from '@phosphor-icons/react';
 
 // 语音情绪标记 [v:xxx]：跟立绘情绪 [emotion] 分开的独立通道。立绘的 happy 是
 // 夸张的表情、语音的 happy 是音色情绪，两者强度/语义差异大，不能一概而论。
@@ -969,6 +970,7 @@ const DateSession: React.FC<DateSessionProps> = ({
 
     // Determine if we can reroll (last message is assistant)
     const canReroll = messages.length > 0 && messages[messages.length - 1].role === 'assistant';
+    const hasReadingTheme = Boolean(char.dateReadingCustomCss?.trim());
 
     return (
         <div className="h-full w-full relative bg-black overflow-hidden font-sans select-none" onClick={handleScreenClick}>
@@ -1088,7 +1090,7 @@ const DateSession: React.FC<DateSessionProps> = ({
 
             {/* Novel Mode View */}
             {isNovelMode && (
-                <div id="this-moment-screen" className="tm-screen absolute inset-0 z-20 flex min-h-0 flex-col overflow-hidden no-scrollbar mask-image-gradient overscroll-contain" style={{ ['--sully-date-font-size' as string]: `${dateFontSize}px` }} onClick={(e) => { e.stopPropagation(); if (showMenu) { setShowMenu(false); setShowVoiceLangPicker(false); return; } if (!(e.target as HTMLElement).closest('button, input, textarea, .tm-header, .tm-compose')) setShowInputBox(true); }}>
+                <div id="this-moment-screen" className={`tm-screen absolute inset-0 z-20 flex min-h-0 flex-col overflow-hidden no-scrollbar mask-image-gradient overscroll-contain ${hasReadingTheme ? '' : 'text-white'}`} style={{ ['--sully-date-font-size' as string]: `${dateFontSize}px` }} onClick={(e) => { e.stopPropagation(); if (showMenu) { setShowMenu(false); setShowVoiceLangPicker(false); return; } if (!(e.target as HTMLElement).closest('button, input, textarea, .tm-header, .tm-compose')) setShowInputBox(true); }}>
                     {char.dateReadingCustomCss && <style>{char.dateReadingCustomCss.replace(/<\/style/gi, '<\\/style')}</style>}
                     {/*
                      * 用户主题 CSS 只负责视觉表现。阅读页的滚动和触控层必须由宿主保底，
@@ -1137,25 +1139,10 @@ const DateSession: React.FC<DateSessionProps> = ({
                             pointer-events: auto !important;
                             touch-action: manipulation;
                         }
-                        /* 阅读主题的稳定语义接口：叙述不再被宿主强行加竖线，
-                           引号台词仍交给 .tm-quote-block 做独立样式。 */
-                        #this-moment-screen .tm-body.tm-body-char,
-                        #this-moment-screen .tm-body.tm-body-user {
-                            color: #fff !important;
-                            font-size: var(--sully-date-font-size) !important;
-                        }
+                        /* 阅读主题的稳定字号接口。颜色、阴影、背景和台词装饰全部交给用户 CSS；
+                           有主题时宿主不再用白色覆盖主题自己的文字颜色。 */
                         #this-moment-screen .tm-para-block {
-                            color: inherit !important;
                             font-size: var(--sully-date-font-size) !important;
-                            text-shadow: none;
-                        }
-                        #this-moment-screen .tm-para-block.tm-narration {
-                            border-left: 0 !important;
-                            padding-left: 0 !important;
-                            background: transparent !important;
-                        }
-                        #this-moment-screen .tm-para-block.tm-dialogue {
-                            color: #fff !important;
                         }
                         #this-moment-screen .tm-batch-selected {
                             outline: 2px solid rgba(244, 63, 94, 0.95) !important;
@@ -1466,7 +1453,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                 </div>
                                 <p style={{ fontSize: `${dateFontSize}px` }} className="text-white/90 leading-relaxed font-light drop-shadow-md mt-2">{displayedText}{isTextAnimating && <span className="inline-block w-2 h-4 bg-white/70 ml-1 animate-pulse align-middle"></span>}</p>
                                 {!isTextAnimating && dialogueQueue.length > 0 && <div className="absolute bottom-3 right-4 animate-bounce opacity-70"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-white"><path fillRule="evenodd" d="M12.53 16.28a.75.75 0 0 1-1.06 0l-7.5-7.5a.75.75 0 0 1 1.06-1.06L12 14.69l6.97-6.97a.75.75 0 1 1 1.06 1.06l-7.5 7.5Z" clipRule="evenodd" /></svg></div>}
-                                {!isTextAnimating && currentDialogueIndex > 0 && <button type="button" onClick={(e) => { e.stopPropagation(); handlePreviousDialogue(); }} className="absolute bottom-2 left-4 rounded-full border border-white/20 bg-black/30 px-3 py-1.5 text-xs text-white/85 shadow-lg backdrop-blur-md transition-all active:scale-95" aria-label="上一条">← 上一条</button>}
+                                {!isTextAnimating && currentDialogueIndex > 0 && <button type="button" onClick={(e) => { e.stopPropagation(); handlePreviousDialogue(); }} className="absolute bottom-2 left-3 flex h-8 w-8 items-center justify-center rounded-full border border-white/20 bg-black/30 text-white/85 shadow-lg backdrop-blur-md transition-all active:scale-90" aria-label="上一条" title="上一条"><ArrowLeft size={16} weight="regular" /></button>}
                                 {!isTextAnimating && dialogueQueue.length === 0 && dialogueBatch.length > 0 && <span className="absolute bottom-3 right-4 text-[10px] text-white/55">本轮已读完</span>}
                             </div>
                         </div>
