@@ -3437,7 +3437,7 @@ const CompanionHome: React.FC = () => {
           <div className="relative z-10 grid h-full grid-cols-5 items-center gap-1 px-2">
             {[
               { id: AppID.Chat, icon: Icons.Chat, label: '聊天' },
-              { id: AppID.Schedule, icon: Icons.Schedule, label: '日程' },
+              { id: AppID.Schedule, icon: Icons.Schedule, label: '日历' },
             ].map(item => (
               <button key={item.id} onClick={() => launchCompanionApp(item.id)} className="companion-dock-item flex h-full flex-col items-center justify-center gap-1 text-white/90 active:scale-[.97]">
                 <span className="companion-dock-shape flex h-10 w-10 rotate-45 items-center justify-center rounded-[0.7rem] border bg-black/15 sm:h-12 sm:w-12" style={{ borderColor: `${uiTint}72` }}>

@@ -1,605 +1,226 @@
-
-
-
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { Task, Anniversary, CharacterProfile } from '../types';
+import { Anniversary, DailySchedule, RoomTodo, Task } from '../types';
 import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
 import { safeResponseJson } from '../utils/safeApi';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
-import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
-import { getCalendarDayDifference, getLocalDateKey } from '../utils/localDate';
-import { useLocalDateKey } from '../hooks/useLocalDateKey';
+import { getLocalDateKey } from '../utils/localDate';
+import { eventsForDate, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, tasksForDate } from '../utils/calendarIntegration';
 import { trackEvent } from '../utils/analytics';
 
-const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
-const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
-
-type ThemeMode = 'cyber' | 'soft' | 'minimal';
-
-// Theme Configuration Definitions
-const THEMES: Record<ThemeMode, any> = {
-    cyber: {
-        id: 'cyber',
-        bg: 'bg-[#0f172a]',
-        text: 'text-slate-200',
-        textSub: 'text-slate-500',
-        accent: 'text-cyan-400',
-        border: 'border-cyan-900/30',
-        card: 'bg-slate-900/50 backdrop-blur-md border border-slate-700/50',
-        buttonPrimary: 'bg-cyan-600 hover:bg-cyan-500 text-white rounded-none skew-x-[-10deg]',
-        font: 'font-mono',
-        iconDone: 'text-green-500',
-        decoLine: 'bg-slate-800',
-        modalBg: 'bg-[#0f172a] border border-cyan-500',
-        input: 'bg-slate-800 text-white border-none rounded-none',
-        label: 'QUEST LOG',
-        eventLabel: 'SERVER EVENTS'
-    },
-    soft: {
-        id: 'soft',
-        bg: 'bg-[#fff0f5]', // Lavender Blush
-        text: 'text-slate-700',
-        textSub: 'text-slate-400',
-        accent: 'text-pink-500',
-        border: 'border-pink-100',
-        card: 'bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-sm border border-white',
-        buttonPrimary: 'bg-pink-400 hover:bg-pink-500 text-white rounded-2xl shadow-lg shadow-pink-200',
-        font: 'font-sans',
-        iconDone: 'text-pink-400',
-        decoLine: 'bg-pink-200',
-        modalBg: 'bg-white/90 rounded-[2.5rem]',
-        input: 'bg-pink-50 text-slate-700 border border-pink-100 rounded-xl',
-        label: '心愿单',
-        eventLabel: '纪念日'
-    },
-    minimal: {
-        id: 'minimal',
-        bg: 'bg-[#eef2f6]', // Classic Neumorphism base
-        text: 'text-slate-600',
-        textSub: 'text-slate-400',
-        accent: 'text-indigo-500',
-        border: 'border-transparent',
-        // Neumorphism Outer Shadow
-        card: 'bg-[#eef2f6] rounded-2xl shadow-[6px_6px_12px_#d1d9e6,-6px_-6px_12px_#ffffff]',
-        // Neumorphism Pressed State simulation for buttons usually, but here flat prompt
-        buttonPrimary: 'bg-[#eef2f6] text-slate-600 font-bold rounded-xl shadow-[6px_6px_12px_#d1d9e6,-6px_-6px_12px_#ffffff] active:shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]',
-        font: 'font-sans',
-        iconDone: 'text-slate-400',
-        decoLine: 'bg-slate-300',
-        modalBg: 'bg-[#eef2f6] rounded-2xl shadow-2xl',
-        input: 'bg-[#eef2f6] text-slate-700 rounded-xl shadow-[inset_2px_2px_5px_#d1d9e6,inset_-2px_-2px_5px_#ffffff]',
-        label: 'Focus',
-        eventLabel: 'Timeline'
-    }
+type CalendarTab = 'month' | 'mine' | 'theirs';
+const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
+const INPUT = 'w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none focus:border-violet-300 focus:bg-white';
+const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const parseDateKey = (value: string) => {
+    const [year, month, day] = value.split('-').map(Number);
+    return new Date(year, month - 1, day);
 };
 
 const ScheduleApp: React.FC = () => {
-    const { closeApp, characters, activeCharacterId, apiConfig, addToast, userProfile, characterGroups } = useOS();
-    const localDateKey = useLocalDateKey();
+    const { closeApp, characters, activeCharacterId, apiConfig, addToast, userProfile } = useOS();
+    const today = getLocalDateKey();
+    const initialCharId = activeCharacterId || characters[0]?.id || '';
+    const [tab, setTab] = useState<CalendarTab>('month');
+    const [cursor, setCursor] = useState(() => parseDateKey(today));
+    const [selectedDate, setSelectedDate] = useState(today);
+    const [selectedCharId, setSelectedCharId] = useState(initialCharId);
     const [tasks, setTasks] = useState<Task[]>([]);
-    const [anniversaries, setAnniversaries] = useState<Anniversary[]>([]);
-    const [activeTab, setActiveTab] = useState<'quest' | 'server_events'>('quest');
-    
-    // Processing State for feedback
-    const [processingTaskIds, setProcessingTaskIds] = useState<Set<string>>(new Set());
+    const [events, setEvents] = useState<Anniversary[]>([]);
+    const [charSchedule, setCharSchedule] = useState<DailySchedule | null>(null);
+    const [charTodo, setCharTodo] = useState<RoomTodo | null>(null);
+    const [processing, setProcessing] = useState<Set<string>>(new Set());
+    const [showTask, setShowTask] = useState(false);
+    const [showEvent, setShowEvent] = useState(false);
 
-    // Theme State
-    const [currentThemeMode, setCurrentThemeMode] = useState<ThemeMode>('cyber');
-    const theme = THEMES[currentThemeMode];
+    const [taskTitle, setTaskTitle] = useState('');
+    const [taskNote, setTaskNote] = useState('');
+    const [taskDate, setTaskDate] = useState(today);
+    const [taskTime, setTaskTime] = useState('');
+    const [taskSupervisor, setTaskSupervisor] = useState(initialCharId);
+    const [taskReminder, setTaskReminder] = useState(true);
+    const [eventTitle, setEventTitle] = useState('');
+    const [eventDate, setEventDate] = useState(today);
+    const [eventKind, setEventKind] = useState<'event' | 'anniversary'>('event');
+    const [eventStart, setEventStart] = useState('');
+    const [eventEnd, setEventEnd] = useState('');
+    const [eventLocation, setEventLocation] = useState('');
+    const [eventNote, setEventNote] = useState('');
+    const [eventChar, setEventChar] = useState(initialCharId);
 
-    // Add Modal States
-    const [showTaskModal, setShowTaskModal] = useState(false);
-    const [showAnniModal, setShowAnniModal] = useState(false);
-
-    // Forms
-    const [newTaskTitle, setNewTaskTitle] = useState('');
-    const [newTaskSupervisor, setNewTaskSupervisor] = useState<string>(activeCharacterId || '');
-    const [supervisorGroupId, setSupervisorGroupId] = useState<string>(GROUP_FILTER_ALL); // 选监督人的分组筛选
-
-    const [newAnniTitle, setNewAnniTitle] = useState('');
-    const [newAnniDate, setNewAnniDate] = useState('');
-    const [newAnniChar, setNewAnniChar] = useState<string>(activeCharacterId || '');
-    const [anniCharGroupId, setAnniCharGroupId] = useState<string>(GROUP_FILTER_ALL); // 纪念日关联对象的分组筛选
-
-    useEffect(() => {
-        loadData();
-        // Load theme from local storage if needed, defaulting to cyber
-        const saved = localStorage.getItem('schedule_app_theme');
-        if (saved && THEMES[saved as ThemeMode]) {
-            setCurrentThemeMode(saved as ThemeMode);
-        }
+    const loadUserData = useCallback(async () => {
+        const [storedTasks, storedEvents] = await Promise.all([DB.getAllTasks(), DB.getAllAnniversaries()]);
+        setTasks(sortTasksForCalendar(storedTasks));
+        setEvents([...storedEvents].sort((a, b) => a.date.localeCompare(b.date) || (a.startTime || '').localeCompare(b.startTime || '')));
     }, []);
+    useEffect(() => { loadUserData().catch(error => console.error('Calendar load failed', error)); }, [loadUserData]);
+    useEffect(() => {
+        if (!selectedCharId) { setCharSchedule(null); setCharTodo(null); return; }
+        Promise.all([DB.getDailySchedule(selectedCharId, selectedDate), DB.getRoomTodo(selectedCharId, selectedDate)])
+            .then(([schedule, todo]) => { setCharSchedule(schedule); setCharTodo(todo); })
+            .catch(error => console.error('Character calendar load failed', error));
+    }, [selectedCharId, selectedDate]);
 
-    const toggleTheme = () => {
-        const modes: ThemeMode[] = ['cyber', 'soft', 'minimal'];
-        const nextIndex = (modes.indexOf(currentThemeMode) + 1) % modes.length;
-        const nextMode = modes[nextIndex];
-        setCurrentThemeMode(nextMode);
-        localStorage.setItem('schedule_app_theme', nextMode);
-        trackEvent('切换日程界面主题', { theme: nextMode });
-    };
-
-    const loadData = async () => {
-        const [t, a] = await Promise.all([DB.getAllTasks(), DB.getAllAnniversaries()]);
-        setTasks(t.sort((a, b) => b.createdAt - a.createdAt));
-        setAnniversaries(a.sort((a, b) => a.date.localeCompare(b.date)));
-    };
-
-    // --- AI Logic ---
-
-    const generateTaskReward = async (task: Task) => {
-        const supervisor = characters.find(c => c.id === task.supervisorId);
-        if (!supervisor || !apiConfig.apiKey) {
-            addToast('任务已完成', 'success');
-            return;
-        }
-
-        // FEEDBACK: Show loading state immediately
-        // Note: The caller handles setting processingTaskIds, but we can also add a toast
-        addToast(`${supervisor.name} 正在确认你的成果...`, 'info');
-
-        try {
-            // 1. Build Persona Context
-            // RESTORED: Full context
-            await injectMemoryPalace(supervisor, undefined, task.title);
-            const baseContext = ContextBuilder.buildCoreContext(supervisor, userProfile);
-
-            const userPrompt = `
-### 场景：任务完成 (Task Completed)
-用户 (${userProfile.name}) 刚刚在现实生活中完成了一个任务/契约： "${task.title}"。
-你是监督人。
-
-### 任务
-请根据你的人设，对用户完成任务这一行为做出反应。
-- 如果你是严厉的：勉强认可，或者催促下一个。
-- 如果你是温柔的：给予温暖的夸奖。
-- 如果你是傲娇的：别扭地表示一下。
-- **关键**：不要问我用什么语气，**你自己**根据你的人设决定。
-
-**输出要求**:
-- 仅输出一句话（类似气泡通知）。
-- **必须使用用户常用语言**。
-- 不要有引号。`;
-
-            // 2. Separate System and User roles
-            const messages = [
-                { role: "system", content: baseContext },
-                { role: "user", content: userPrompt }
-            ];
-
-            const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-                body: JSON.stringify({
-                    model: apiConfig.model,
-                    messages: messages,
-                    temperature: 0.9, 
-                    max_tokens: 8000 
-                })
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`API Error ${response.status}: ${errorText.slice(0, 100)}`);
-            }
-
-            const data = await safeResponseJson(response);
-            
-            // Extract content, handling potential reasoning_content or empty standard content
-            let text = data.choices?.[0]?.message?.content?.trim();
-            if (!text && data.choices?.[0]?.message?.reasoning_content) {
-                // If standard content is empty but model "thought" about it, try to use thought or fallback
-                console.warn("AI returned empty content but has reasoning.");
-            }
-            
-            if (text) {
-                text = text.replace(/^["']|["']$/g, '');
-                addToast(`${supervisor.name}: ${text}`, 'success');
-                // Inject into Chat Memory (Localized & Personalized)
-                await DB.saveMessage({
-                    charId: supervisor.id,
-                    role: 'system',
-                    type: 'text',
-                    content: `[系统: ${userProfile.name} 完成了任务 "${task.title}"。${supervisor.name} 评价道: "${text}"]`
-                });
-            } else {
-                console.warn("AI returned empty content", data);
-                addToast('任务完成 (AI 未返回评价)', 'success');
-            }
-
-        } catch (e: any) {
-            console.error("Task Reward Error:", e);
-            addToast(`评价生成失败: ${e.message}`, 'error');
-        }
-    };
-
-    const generateAnniversaryThought = async (anni: Anniversary) => {
-        const char = characters.find(c => c.id === anni.charId);
-        if (!char || !apiConfig.apiKey) return;
-
-        // Check cache (24h)
-        if (anni.aiThought && anni.lastThoughtGeneratedAt && (Date.now() - anni.lastThoughtGeneratedAt < 24 * 60 * 60 * 1000)) {
-            return;
-        }
-
-        // FEEDBACK: Show loading state if explicit call
-        if (Date.now() - (anni.lastThoughtGeneratedAt || 0) > 10000) {
-             addToast(`${char.name} 正在查阅日历...`, 'info');
-        }
-
-        const daysDiff = getCalendarDayDifference(getLocalDateKey(), anni.date) ?? 0;
-        const dayText = daysDiff > 0 ? `还有 ${daysDiff} 天` : (daysDiff === 0 ? '就是今天!' : `已经过去 ${Math.abs(daysDiff)} 天了`);
-
-        // RESTORED: Full context
-        await injectMemoryPalace(char, undefined, anni.title);
-        const baseContext = ContextBuilder.buildCoreContext(char, userProfile);
-
-        const userPrompt = `
-### 场景：纪念日提醒
-事件: "${anni.title}"
-时间状态: ${dayText}
-
-### 任务
-请根据你的人设，针对这个日期发表一句简短的感想。
-**输出要求**:
-- 仅输出一句话。
-- **必须使用用户常用语言**。`;
-
-        const messages = [
-            { role: "system", content: baseContext },
-            { role: "user", content: userPrompt }
+    const selectedTasks = useMemo(() => tasksForDate(tasks, selectedDate), [tasks, selectedDate]);
+    const selectedEvents = useMemo(() => eventsForDate(events, selectedDate), [events, selectedDate]);
+    const activeTasks = useMemo(() => sortTasksForCalendar(tasks.filter(task => !task.isCompleted)), [tasks]);
+    const completedTasks = useMemo(() => tasks.filter(task => task.isCompleted).sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0)), [tasks]);
+    const selectedChar = characters.find(char => char.id === selectedCharId);
+    const calendarCells = useMemo(() => {
+        const year = cursor.getFullYear(), month = cursor.getMonth();
+        return [
+            ...Array.from({ length: new Date(year, month, 1).getDay() }, () => null),
+            ...Array.from({ length: new Date(year, month + 1, 0).getDate() }, (_, index) => dateKey(new Date(year, month, index + 1))),
         ];
+    }, [cursor]);
 
+    const openTaskComposer = (date = selectedDate) => {
+        setTaskDate(date); setTaskSupervisor(selectedCharId || characters[0]?.id || ''); setShowTask(true);
+        trackEvent('打开日历新建待办');
+    };
+    const openEventComposer = (date = selectedDate) => {
+        setEventDate(date); setEventChar(selectedCharId || characters[0]?.id || ''); setShowEvent(true);
+        trackEvent('打开日历新建事件');
+    };
+    const generateTaskReward = async (task: Task) => {
+        const supervisor = characters.find(char => char.id === task.supervisorId);
+        if (!supervisor || !apiConfig.apiKey) { addToast('待办已完成', 'success'); return; }
+        addToast(`${supervisor.name} 正在确认你的成果...`, 'info');
         try {
+            await injectMemoryPalace(supervisor, undefined, task.title);
             const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
                 body: JSON.stringify({
-                    model: apiConfig.model,
-                    messages: messages,
-                    temperature: 0.8,
-                    max_tokens: 8000
-                })
+                    model: apiConfig.model, temperature: 0.9, max_tokens: 8000,
+                    messages: [
+                        { role: 'system', content: ContextBuilder.buildCoreContext(supervisor, userProfile) },
+                        { role: 'user', content: `用户 ${userProfile.name} 刚完成待办「${task.title}」。请完全按照你的人设，用用户常用语言给一句自然、简短的评价。不要解释，不要加引号。` },
+                    ],
+                }),
             });
-
-            if (!response.ok) {
-                 const errorText = await response.text();
-                 throw new Error(`API Error ${response.status}: ${errorText.slice(0, 50)}`);
-            }
-
+            if (!response.ok) throw new Error(`API Error ${response.status}`);
             const data = await safeResponseJson(response);
             const text = data.choices?.[0]?.message?.content?.trim().replace(/^["']|["']$/g, '');
-            
-            if (text) {
-                const updatedAnni = { ...anni, aiThought: text, lastThoughtGeneratedAt: Date.now() };
-                await DB.saveAnniversary(updatedAnni);
-                setAnniversaries(prev => prev.map(a => a.id === anni.id ? updatedAnni : a));
-            } else {
-                console.warn("AI returned empty thought", data);
-            }
-        } catch (e: any) { 
-            console.error("Anniversary Thought Error:", e);
-            // No toast for background update failure to avoid annoyance
+            if (!text) { addToast('待办已完成（角色没有留下评价）', 'success'); return; }
+            addToast(`${supervisor.name}: ${text}`, 'success');
+            await DB.saveMessage({ charId: supervisor.id, role: 'system', type: 'text', content: `[系统: ${userProfile.name} 完成了待办「${task.title}」。${supervisor.name} 评价道：「${text}」]` });
+        } catch (error: any) {
+            console.error('Task reward failed', error);
+            addToast(`待办已完成，评价生成失败：${error.message}`, 'error');
         }
     };
-
-    // --- Actions ---
-
-    const handleAddTask = async () => {
-        if (!newTaskTitle.trim()) return;
+    const addTask = async () => {
+        if (!taskTitle.trim() || !taskDate) return;
         const task: Task = {
-            id: `task-${Date.now()}`,
-            title: newTaskTitle,
-            supervisorId: newTaskSupervisor || characters[0]?.id,
-            tone: 'gentle', // Deprecated but kept for type compatibility
-            isCompleted: false,
-            createdAt: Date.now()
+            id: `task-${Date.now()}`, title: taskTitle.trim(), note: taskNote.trim() || undefined,
+            deadline: taskDate, dueTime: taskTime || undefined, supervisorId: taskSupervisor || characters[0]?.id || '',
+            naturalReminder: taskReminder, tone: 'gentle', isCompleted: false, createdAt: Date.now(),
         };
         await DB.saveTask(task);
-        setTasks(prev => [task, ...prev]);
-        setShowTaskModal(false);
-        setNewTaskTitle('');
+        setTasks(current => sortTasksForCalendar([...current, task]));
+        notifyCalendarDataUpdated();
+        setSelectedDate(taskDate); setCursor(parseDateKey(taskDate));
+        setTaskTitle(''); setTaskNote(''); setTaskTime(''); setShowTask(false);
+        addToast('待办已加入日历', 'success');
     };
-
-    const handleToggleTask = async (task: Task) => {
-        const updated = { ...task, isCompleted: !task.isCompleted, completedAt: !task.isCompleted ? Date.now() : undefined };
+    const toggleTask = async (task: Task) => {
+        const updated = { ...task, isCompleted: !task.isCompleted, completedAt: task.isCompleted ? undefined : Date.now() };
         await DB.saveTask(updated);
-        setTasks(prev => prev.map(t => t.id === task.id ? updated : t));
-        
+        setTasks(current => current.map(item => item.id === task.id ? updated : item));
+        notifyCalendarDataUpdated();
         if (updated.isCompleted) {
-            // Start Visual Loading State on the Item
-            setProcessingTaskIds(prev => new Set(prev).add(task.id));
-            try {
-                await generateTaskReward(updated);
-            } finally {
-                // End Visual Loading State
-                setProcessingTaskIds(prev => {
-                    const next = new Set(prev);
-                    next.delete(task.id);
-                    return next;
-                });
-            }
+            setProcessing(current => new Set(current).add(task.id));
+            try { await generateTaskReward(updated); }
+            finally { setProcessing(current => { const next = new Set(current); next.delete(task.id); return next; }); }
         }
     };
-
-    const handleDeleteTask = async (id: string) => {
-        await DB.deleteTask(id);
-        setTasks(prev => prev.filter(t => t.id !== id));
+    const deleteTask = async (id: string) => {
+        await DB.deleteTask(id); setTasks(current => current.filter(task => task.id !== id)); notifyCalendarDataUpdated();
     };
-
-    const handleAddAnni = async () => {
-        if (!newAnniTitle.trim() || !newAnniDate) return;
-        const anni: Anniversary = {
-            id: `anni-${Date.now()}`,
-            title: newAnniTitle,
-            date: newAnniDate,
-            charId: newAnniChar || characters[0]?.id
+    const addEvent = async () => {
+        if (!eventTitle.trim() || !eventDate) return;
+        const event: Anniversary = {
+            id: `calendar-${Date.now()}`, title: eventTitle.trim(), date: eventDate, kind: eventKind,
+            startTime: eventStart || undefined, endTime: eventEnd || undefined, location: eventLocation.trim() || undefined,
+            note: eventNote.trim() || undefined, charId: eventChar || characters[0]?.id || '',
         };
-        await DB.saveAnniversary(anni);
-        setAnniversaries(prev => [...prev, anni].sort((a, b) => a.date.localeCompare(b.date)));
-        setShowAnniModal(false);
-        setNewAnniTitle('');
-        setNewAnniDate('');
-        
-        // Remove immediate trigger to avoid double calls (useEffect will handle if it's upcoming)
+        await DB.saveAnniversary(event);
+        setEvents(current => [...current, event].sort((a, b) => a.date.localeCompare(b.date) || (a.startTime || '').localeCompare(b.startTime || '')));
+        notifyCalendarDataUpdated();
+        setSelectedDate(eventDate); setCursor(parseDateKey(eventDate));
+        setEventTitle(''); setEventStart(''); setEventEnd(''); setEventLocation(''); setEventNote(''); setShowEvent(false);
+        addToast(eventKind === 'anniversary' ? '纪念日已保存' : '日程已保存', 'success');
+    };
+    const deleteEvent = async (id: string) => {
+        await DB.deleteAnniversary(id); setEvents(current => current.filter(event => event.id !== id)); notifyCalendarDataUpdated();
+    };
+    const toggleCharTodo = async (index: number) => {
+        if (!charTodo) return;
+        const updated = { ...charTodo, items: charTodo.items.map((item, itemIndex) => itemIndex === index ? { ...item, done: !item.done } : item) };
+        await DB.saveRoomTodo(updated); setCharTodo(updated);
+        addToast(`已同步到${selectedChar?.name || '角色'}的房间待办`, 'success');
     };
 
-    const handleDeleteAnni = async (id: string) => {
-        await DB.deleteAnniversary(id);
-        setAnniversaries(prev => prev.filter(a => a.id !== id));
+    const renderTask = (task: Task, compact = false) => {
+        const supervisor = characters.find(char => char.id === task.supervisorId);
+        return <div key={task.id} className="group flex items-start gap-3 rounded-2xl border border-white/70 bg-white/80 p-3 shadow-sm">
+            <button onClick={() => toggleTask(task)} disabled={processing.has(task.id)} className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition ${task.isCompleted ? 'border-emerald-400 bg-emerald-400 text-white' : 'border-violet-300 bg-white'}`} aria-label={task.isCompleted ? '恢复待办' : '完成待办'}>{processing.has(task.id) ? '…' : task.isCompleted ? '✓' : ''}</button>
+            <div className="min-w-0 flex-1"><div className={`text-sm font-semibold text-slate-700 ${task.isCompleted ? 'line-through opacity-45' : ''}`}>{task.title}</div>
+                {!compact && task.note && <div className="mt-1 text-xs leading-relaxed text-slate-400">{task.note}</div>}
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-slate-400"><span>{taskDateKey(task)}{task.dueTime ? ` · ${task.dueTime}` : ''}</span>{supervisor && <span>由 {supervisor.name} 陪你</span>}{task.naturalReminder !== false && <span className="rounded-full bg-violet-50 px-2 py-0.5 text-violet-500">可自然提醒</span>}</div>
+            </div><button onClick={() => deleteTask(task.id)} className="px-1 text-slate-300 opacity-0 transition hover:text-rose-400 group-hover:opacity-100">×</button>
+        </div>;
     };
 
-    // --- Render Helpers ---
-
-    const getDaysUntil = (dateStr: string) => {
-        return getCalendarDayDifference(localDateKey, dateStr) ?? Number.POSITIVE_INFINITY;
-    };
-
-    const upcomingAnni = useMemo(() => {
-        return anniversaries.filter(a => getDaysUntil(a.date) >= 0).sort((a, b) => a.date.localeCompare(b.date))[0];
-    }, [anniversaries, localDateKey]);
-
-    // Trigger thoughts for upcoming anniversary on load
-    useEffect(() => {
-        if (upcomingAnni) {
-            generateAnniversaryThought(upcomingAnni);
-        }
-    }, [upcomingAnni]);
-
-    return (
-        <div className={`h-full w-full flex flex-col ${theme.font} ${theme.bg} ${theme.text} relative overflow-hidden transition-colors duration-500`}>
-             
-             {/* Tech Background Grid (Only for Cyber) */}
-             {currentThemeMode === 'cyber' && (
-                 <div className="absolute inset-0 pointer-events-none opacity-20" 
-                      style={{ 
-                          backgroundImage: 'linear-gradient(rgba(56, 189, 248, 0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(56, 189, 248, 0.1) 1px, transparent 1px)', 
-                          backgroundSize: '40px 40px' 
-                      }}>
-                 </div>
-             )}
-             
-             {/* Soft Background Pattern (Only for Soft) */}
-             {currentThemeMode === 'soft' && (
-                 <div className="absolute inset-0 pointer-events-none opacity-30" 
-                      style={{ 
-                          backgroundImage: 'radial-gradient(#fbcfe8 2px, transparent 2px)', 
-                          backgroundSize: '20px 20px' 
-                      }}>
-                 </div>
-             )}
-
-             {/* Header */}
-             <div className={`border-b ${theme.border} backdrop-blur-sm sticky top-0 z-20 shrink-0 relative transition-colors duration-300`} style={{ paddingTop: 'var(--safe-top)' }}>
-                <div className="pt-12 pb-4 px-6 flex items-center justify-between h-24 box-border">
-                <button onClick={closeApp} className={`p-2 -ml-2 rounded-full active:scale-90 transition-transform ${currentThemeMode === 'minimal' ? 'bg-[#eef2f6] shadow-[4px_4px_8px_#d1d9e6,-4px_-4px_8px_#ffffff]' : 'hover:bg-black/5'}`}>
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className={`w-6 h-6 ${theme.accent}`}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
-                </button>
-
-                {/* Tabs */}
-                <div className={`flex gap-1 p-1 rounded-lg ${currentThemeMode === 'cyber' ? 'bg-black/40 border border-cyan-900/50' : (currentThemeMode === 'minimal' ? 'bg-[#eef2f6] shadow-[inset_2px_2px_5px_#d1d9e6,inset_-2px_-2px_5px_#ffffff]' : 'bg-white/50')}`}>
-                    <button onClick={() => { setActiveTab('quest'); trackEvent('切换日程标签页', { tab: 'quest' }); }} className={`px-4 py-1.5 rounded text-xs font-bold transition-all ${activeTab === 'quest' ? `${theme.accent} ${currentThemeMode === 'cyber' ? 'bg-cyan-900/50 shadow-sm' : (currentThemeMode === 'minimal' ? 'shadow-[2px_2px_5px_#d1d9e6,-2px_-2px_5px_#ffffff] bg-[#eef2f6]' : 'bg-white shadow-sm')}` : `${theme.textSub}`}`}>{theme.label}</button>
-                    <button onClick={() => { setActiveTab('server_events'); trackEvent('切换日程标签页', { tab: 'server_events' }); }} className={`px-4 py-1.5 rounded text-xs font-bold transition-all ${activeTab === 'server_events' ? `${theme.accent} ${currentThemeMode === 'cyber' ? 'bg-cyan-900/50 shadow-sm' : (currentThemeMode === 'minimal' ? 'shadow-[2px_2px_5px_#d1d9e6,-2px_-2px_5px_#ffffff] bg-[#eef2f6]' : 'bg-white shadow-sm')}` : `${theme.textSub}`}`}>{theme.eventLabel}</button>
-                </div>
-
-                {/* Right Actions */}
-                <div className="flex gap-2">
-                    {/* Theme Switcher */}
-                    <button onClick={toggleTheme} className={`p-2 rounded-full active:scale-90 transition-transform ${currentThemeMode === 'minimal' ? 'shadow-[4px_4px_8px_#d1d9e6,-4px_-4px_8px_#ffffff]' : 'bg-white/10 hover:bg-white/20'}`}>
-                        {currentThemeMode === 'cyber' && <img src={twemojiUrl('1f47e')} alt="alien" className="w-5 h-5" />}
-                        {currentThemeMode === 'soft' && <img src={twemojiUrl('1f338')} alt="blossom" className="w-5 h-5" />}
-                        {currentThemeMode === 'minimal' && <img src={twemojiUrl('26aa')} alt="circle" className="w-5 h-5" />}
-                    </button>
-
-                    {/* Add Button */}
-                    <button onClick={() => { activeTab === 'quest' ? setShowTaskModal(true) : setShowAnniModal(true); trackEvent('打开新建条目弹窗', { kind: activeTab }); }} className={`p-2 rounded-full active:scale-90 transition-transform ${theme.accent} ${currentThemeMode === 'minimal' ? 'shadow-[4px_4px_8px_#d1d9e6,-4px_-4px_8px_#ffffff]' : 'hover:bg-white/10'}`}>
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
-                    </button>
-                </div>
-                </div>
-
-                {/* Decoration Line */}
-                {currentThemeMode === 'cyber' && <div className="absolute bottom-0 left-0 h-[1px] w-full bg-gradient-to-r from-transparent via-cyan-500/50 to-transparent"></div>}
-            </div>
-
-            <div className="flex-1 overflow-y-auto no-scrollbar p-6 space-y-8 z-10">
-                
-                {/* Hero Anniversary Card */}
-                {upcomingAnni && (
-                    <div className={`w-full rounded-2xl p-5 relative overflow-hidden group transition-all duration-300 ${currentThemeMode === 'minimal' ? 'bg-[#eef2f6] shadow-[inset_5px_5px_10px_#d1d9e6,inset_-5px_-5px_10px_#ffffff]' : (currentThemeMode === 'soft' ? 'bg-gradient-to-r from-pink-300 to-purple-300 text-white shadow-lg shadow-pink-200' : 'bg-gradient-to-r from-slate-900 to-slate-800 border border-purple-500/30')}`}>
-                        <div className="relative z-10">
-                            <div className="flex justify-between items-start mb-2">
-                                <div className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded ${currentThemeMode === 'minimal' ? 'text-slate-400' : 'text-white/80 bg-white/20'}`}>即将到来</div>
-                                <div className="text-3xl font-bold tracking-tighter">{getDaysUntil(upcomingAnni.date)} <span className="text-xs opacity-60 font-normal">天后</span></div>
-                            </div>
-                            <div className="text-xl font-bold mb-4">{upcomingAnni.title}</div>
-                            
-                            {/* AI Thought Bubble */}
-                            <div className={`flex items-start gap-3 p-3 rounded-xl ${currentThemeMode === 'minimal' ? 'bg-[#eef2f6] shadow-[5px_5px_10px_#d1d9e6,-5px_-5px_10px_#ffffff]' : 'bg-white/20 backdrop-blur-md'}`}>
-                                <img src={characters.find(c => c.id === upcomingAnni.charId)?.avatar} className="w-8 h-8 rounded-full object-cover" />
-                                <div className={`text-xs font-medium leading-relaxed italic ${currentThemeMode === 'minimal' ? 'text-slate-500' : 'text-white/90'}`}>
-                                    "{upcomingAnni.aiThought || "加载中..."}"
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {activeTab === 'quest' && (
-                    <div className="space-y-4">
-                        <div className="flex items-center gap-2 mb-2 px-1">
-                            <div className={`w-2 h-2 rounded-full animate-pulse ${currentThemeMode === 'cyber' ? 'bg-cyan-500' : (currentThemeMode === 'soft' ? 'bg-pink-400' : 'bg-slate-400')}`}></div>
-                            <h3 className={`text-xs font-bold uppercase tracking-[0.2em] ${theme.accent}`}>进行中任务</h3>
-                        </div>
-                        
-                        {tasks.filter(t => !t.isCompleted).length === 0 && (
-                            <div className={`text-center py-12 border-2 border-dashed rounded-xl ${currentThemeMode === 'cyber' ? 'border-slate-800' : 'border-slate-200'}`}>
-                                <div className={theme.textSub}>暂无任务</div>
-                            </div>
-                        )}
-
-                        {tasks.filter(t => !t.isCompleted).map(task => {
-                            const supervisor = characters.find(c => c.id === task.supervisorId);
-                            const isProcessing = processingTaskIds.has(task.id);
-                            
-                            return (
-                                <div key={task.id} className={`${theme.card} p-4 flex items-center gap-4 group relative overflow-hidden transition-all duration-300`}>
-                                    {/* Supervisor Icon */}
-                                    <div className="w-12 h-12 rounded-full overflow-hidden shrink-0 relative border border-white/10">
-                                        {supervisor ? <img src={supervisor.avatar} className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" /> : <span className="text-xs">?</span>}
-                                        <div className={`absolute -bottom-0 -right-0 w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${currentThemeMode === 'soft' ? 'bg-white text-pink-500' : 'bg-black text-cyan-500'}`}>!</div>
-                                    </div>
-                                    
-                                    <div className="flex-1">
-                                        <div className={`${theme.text} font-bold text-sm tracking-wide`}>{task.title}</div>
-                                        <div className={`text-[10px] ${theme.textSub} mt-1 font-mono uppercase`}>
-                                            监督人: {supervisor?.name || 'Unknown'}
-                                        </div>
-                                    </div>
-
-                                    {/* Action Button Area */}
-                                    {isProcessing ? (
-                                        <div className="flex items-center gap-2 px-2 py-2">
-                                            <div className={`w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin ${theme.accent}`}></div>
-                                            <span className={`text-[10px] font-bold animate-pulse ${theme.accent}`}>验收中...</span>
-                                        </div>
-                                    ) : (
-                                        <button 
-                                            onClick={() => handleToggleTask(task)}
-                                            className={`px-4 py-2 text-[10px] font-bold uppercase tracking-wider rounded transition-all active:scale-95 ${currentThemeMode === 'minimal' ? 'shadow-[4px_4px_8px_#d1d9e6,-4px_-4px_8px_#ffffff] text-slate-500 active:shadow-[inset_2px_2px_5px_#d1d9e6,inset_-2px_-2px_5px_#ffffff]' : (currentThemeMode === 'soft' ? 'bg-pink-100 text-pink-500' : 'bg-cyan-900/30 text-cyan-400 border border-cyan-800')}`}
-                                        >
-                                            完成
-                                        </button>
-                                    )}
-                                    
-                                    <button onClick={() => handleDeleteTask(task.id)} className="absolute top-2 right-2 text-slate-400 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1">×</button>
-                                </div>
-                            );
-                        })}
-
-                        {tasks.filter(t => t.isCompleted).length > 0 && (
-                            <div className="pt-8 opacity-50">
-                                <h3 className={`text-xs font-bold uppercase tracking-[0.2em] px-1 mb-4 ${theme.textSub}`}>已完成</h3>
-                                {tasks.filter(t => t.isCompleted).map(task => (
-                                    <div key={task.id} className={`flex items-center gap-3 py-2 px-2 border-b ${currentThemeMode === 'cyber' ? 'border-slate-800/50' : 'border-slate-100'}`}>
-                                        <div className={`${theme.iconDone} text-xs font-mono`}>[DONE]</div>
-                                        <span className={`text-sm line-through ${theme.textSub}`}>{task.title}</span>
-                                        <button onClick={() => handleDeleteTask(task.id)} className="ml-auto text-slate-400 hover:text-red-500 text-xs">DEL</button>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                )}
-
-                {activeTab === 'server_events' && (
-                    <div className={`relative pl-6 space-y-8 before:absolute before:left-2 before:top-2 before:bottom-0 before:w-[1px] ${theme.decoLine}`}>
-                        {/* Anniversaries List */}
-                        <div>
-                             <h3 className={`text-xs font-bold uppercase tracking-widest mb-6 -ml-6 pl-6 ${theme.textSub}`}>时间线事件</h3>
-                             <div className="space-y-4">
-                                 {anniversaries.map(a => (
-                                     <div key={a.id} className="relative group">
-                                         <div className={`absolute -left-[20px] top-4 w-2 h-2 rounded-full z-10 ${currentThemeMode === 'cyber' ? 'bg-black border border-purple-500' : 'bg-pink-400'}`}></div>
-                                         <div className={`${theme.card} p-4 flex justify-between items-center transition-colors`}>
-                                             <div>
-                                                 <div className={`text-sm font-bold ${theme.text}`}>{a.title}</div>
-                                                 <div className={`text-[10px] ${theme.textSub} font-mono mt-1`}>{a.date} · {characters.find(c => c.id === a.charId)?.name}</div>
-                                             </div>
-                                             <button onClick={() => handleDeleteAnni(a.id)} className="text-slate-400 hover:text-red-400 p-2 opacity-0 group-hover:opacity-100 transition-opacity">×</button>
-                                         </div>
-                                     </div>
-                                 ))}
-                             </div>
-                        </div>
-
-                        {/* Completed Tasks History Log */}
-                         <div>
-                             <h3 className={`text-xs font-bold uppercase tracking-widest mb-6 -ml-6 pl-6 pt-4 ${theme.textSub}`}>完成履历</h3>
-                             <div className="space-y-4">
-                                 {tasks.filter(t => t.isCompleted).sort((a,b) => (b.completedAt || 0) - (a.completedAt || 0)).map(t => (
-                                     <div key={t.id} className="relative">
-                                         <div className={`absolute -left-[20px] top-2 w-2 h-2 rounded-full z-10 ${currentThemeMode === 'cyber' ? 'bg-black border border-green-600' : 'bg-slate-300'}`}></div>
-                                         <div className={`text-xs ${theme.textSub} font-mono`}>[{new Date(t.completedAt || 0).toLocaleDateString()}] 任务完成</div>
-                                         <div className={`text-sm ${theme.text} font-bold mt-1 pl-1 border-l-2 ${theme.decoLine}`}>{t.title}</div>
-                                     </div>
-                                 ))}
-                             </div>
-                         </div>
-                    </div>
-                )}
-
-            </div>
-
-            {/* Task Modal */}
-            <Modal isOpen={showTaskModal} title={currentThemeMode === 'cyber' ? "INITIALIZE QUEST" : "新建任务"} onClose={() => setShowTaskModal(false)} footer={<button onClick={handleAddTask} className={`w-full py-3 font-bold transition-all ${theme.buttonPrimary}`}>确认添加</button>}>
-                <div className={`space-y-6 ${currentThemeMode === 'minimal' ? 'p-2' : ''}`}>
-                    <input autoFocus value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} placeholder="任务目标 (例如: 背单词)" className={`w-full px-4 py-3 text-sm focus:outline-none ${theme.input}`} />
-                    
-                    <div>
-                        <label className="text-[10px] font-bold text-slate-400 uppercase mb-2 block tracking-widest">选择监督人</label>
-                        {/* 分组筛选（没建分组时不渲染）。Modal 恒为白底，走浅色配色 */}
-                        <CharacterGroupFilterBar characters={characters} groups={characterGroups}
-                            value={supervisorGroupId} onChange={setSupervisorGroupId} className="mb-2" />
-                        <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">
-                            {filterCharactersByGroup(characters, characterGroups, supervisorGroupId).map(c => (
-                                <button key={c.id} onClick={() => setNewTaskSupervisor(c.id)} className={`flex flex-col items-center gap-2 p-2 rounded-lg border transition-all min-w-[60px] ${newTaskSupervisor === c.id ? `${currentThemeMode === 'minimal' ? 'shadow-[inset_2px_2px_5px_#d1d9e6,inset_-2px_-2px_5px_#ffffff]' : 'border-current'}` : 'border-transparent opacity-50'}`}>
-                                    <img src={c.avatar} className="w-10 h-10 rounded-md object-cover" />
-                                    <span className={`text-[10px] font-bold whitespace-nowrap ${theme.text}`}>{c.name}</span>
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            </Modal>
-
-            {/* Anniversary Modal */}
-            <Modal isOpen={showAnniModal} title={currentThemeMode === 'cyber' ? "REGISTER EVENT" : "添加纪念日"} onClose={() => setShowAnniModal(false)} footer={<button onClick={handleAddAnni} className={`w-full py-3 font-bold transition-all ${theme.buttonPrimary}`}>保存记录</button>}>
-                <div className={`space-y-4 ${currentThemeMode === 'minimal' ? 'p-2' : ''}`}>
-                    <input value={newAnniTitle} onChange={e => setNewAnniTitle(e.target.value)} placeholder="事件名称 (例如: 第一次见面)" className={`w-full px-4 py-3 text-sm focus:outline-none ${theme.input}`} />
-                    <input type="date" value={newAnniDate} onChange={e => setNewAnniDate(e.target.value)} className={`w-full px-4 py-3 text-sm focus:outline-none ${theme.input}`} />
-                    
-                    <div>
-                        <label className="text-[10px] font-bold text-slate-400 uppercase mb-2 block tracking-widest">关联对象</label>
-                        {/* 分组筛选（没建分组时不渲染）。Modal 恒为白底，走浅色配色 */}
-                        <CharacterGroupFilterBar characters={characters} groups={characterGroups}
-                            value={anniCharGroupId} onChange={setAnniCharGroupId} className="mb-2" />
-                        <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">
-                            {filterCharactersByGroup(characters, characterGroups, anniCharGroupId).map(c => (
-                                <button key={c.id} onClick={() => setNewAnniChar(c.id)} className={`flex flex-col items-center gap-2 p-2 rounded-lg border transition-all min-w-[60px] ${newAnniChar === c.id ? `${currentThemeMode === 'minimal' ? 'shadow-[inset_2px_2px_5px_#d1d9e6,inset_-2px_-2px_5px_#ffffff]' : 'border-current'}` : 'border-transparent opacity-50'}`}>
-                                    <img src={c.avatar} className="w-10 h-10 rounded-md object-cover" />
-                                    <span className={`text-[10px] font-bold whitespace-nowrap ${theme.text}`}>{c.name}</span>
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            </Modal>
-        </div>
-    );
+    return <div className="relative flex h-full w-full flex-col overflow-hidden bg-[#f4f1fb] text-slate-700">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(167,139,250,0.22),transparent_42%),radial-gradient(circle_at_90%_25%,rgba(125,211,252,0.16),transparent_35%)]" />
+        <header className="relative z-20 shrink-0 border-b border-white/70 bg-white/65 px-5 pb-3 backdrop-blur-xl" style={{ paddingTop: 'calc(var(--safe-top) + 12px)' }}>
+            <div className="flex items-center justify-between"><button onClick={closeApp} className="flex h-9 w-9 items-center justify-center rounded-full bg-white/80 text-2xl text-slate-500 shadow-sm" aria-label="返回">‹</button><div className="text-center"><div className="text-[10px] font-bold tracking-[0.28em] text-violet-400">SULLY CALENDAR</div><h1 className="text-lg font-bold">日历</h1></div><button onClick={() => openTaskComposer()} className="flex h-9 w-9 items-center justify-center rounded-full bg-violet-500 text-xl text-white shadow-lg shadow-violet-200" aria-label="新建待办">＋</button></div>
+            <nav className="mt-3 grid grid-cols-3 rounded-2xl bg-slate-100/80 p-1 text-xs font-bold">{([['month', '月历'], ['mine', '我的'], ['theirs', 'TA 的']] as const).map(([id, label]) => <button key={id} onClick={() => setTab(id)} className={`rounded-xl py-2 transition ${tab === id ? 'bg-white text-violet-600 shadow-sm' : 'text-slate-400'}`}>{label}</button>)}</nav>
+        </header>
+        <main className="relative z-10 flex-1 overflow-y-auto px-5 pb-28 pt-5 no-scrollbar">
+            {tab === 'month' && <div className="space-y-5">
+                <section className="rounded-[2rem] border border-white bg-white/75 p-5 shadow-[0_18px_50px_rgba(85,73,125,0.09)] backdrop-blur-xl">
+                    <div className="mb-5 flex items-center justify-between"><button onClick={() => setCursor(current => new Date(current.getFullYear(), current.getMonth() - 1, 1))} className="h-8 w-8 rounded-full bg-slate-100">‹</button><button onClick={() => { setCursor(parseDateKey(today)); setSelectedDate(today); }} className="font-bold">{cursor.getFullYear()} 年 {cursor.getMonth() + 1} 月</button><button onClick={() => setCursor(current => new Date(current.getFullYear(), current.getMonth() + 1, 1))} className="h-8 w-8 rounded-full bg-slate-100">›</button></div>
+                    <div className="grid grid-cols-7 text-center text-[10px] font-bold text-slate-300">{WEEKDAYS.map(day => <div key={day} className="pb-2">{day}</div>)}</div>
+                    <div className="grid grid-cols-7 gap-y-2 text-center">{calendarCells.map((cell, index) => {
+                        if (!cell) return <div key={`empty-${index}`} className="h-11" />;
+                        const hasTasks = tasksForDate(tasks, cell).length > 0, hasEvents = eventsForDate(events, cell).length > 0;
+                        return <button key={cell} onClick={() => setSelectedDate(cell)} className="relative flex h-11 flex-col items-center justify-center"><span className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${cell === selectedDate ? 'bg-violet-500 text-white shadow-md shadow-violet-200' : cell === today ? 'bg-violet-100 text-violet-600' : ''}`}>{Number(cell.slice(-2))}</span><span className="absolute bottom-0 flex gap-0.5">{hasTasks && <i className="h-1 w-1 rounded-full bg-sky-400" />}{hasEvents && <i className="h-1 w-1 rounded-full bg-rose-400" />}</span></button>;
+                    })}</div>
+                    <div className="mt-4 flex justify-center gap-4 text-[10px] text-slate-400"><span className="text-sky-400">● 待办</span><span className="text-rose-400">● 日程 / 纪念日</span></div>
+                </section>
+                <section className="space-y-3">
+                    <div className="flex items-center justify-between px-1"><div><h2 className="font-bold">{selectedDate === today ? '今天' : selectedDate}</h2><p className="text-[11px] text-slate-400">你的安排与 {selectedChar?.name || '角色'} 的生活放在一起看</p></div><div className="flex gap-2"><button onClick={() => openEventComposer()} className="rounded-full bg-white px-3 py-1.5 text-xs font-bold text-rose-500 shadow-sm">＋日程</button><button onClick={() => openTaskComposer()} className="rounded-full bg-white px-3 py-1.5 text-xs font-bold text-sky-500 shadow-sm">＋待办</button></div></div>
+                    {selectedEvents.map(event => <div key={event.id} className="group rounded-2xl border border-rose-100 bg-white/85 p-4 shadow-sm"><div className="flex gap-3"><span className="h-9 w-1 rounded-full bg-rose-300" /><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><b className="text-sm">{event.title}</b><span className="rounded-full bg-rose-50 px-2 py-0.5 text-[9px] text-rose-500">{event.kind === 'event' ? '日程' : '纪念日'}</span></div><div className="mt-1 text-[11px] text-slate-400">{event.startTime || '全天'}{event.endTime ? `–${event.endTime}` : ''}{event.location ? ` · ${event.location}` : ''}</div>{event.note && <p className="mt-2 text-xs text-slate-500">{event.note}</p>}</div><button onClick={() => deleteEvent(event.id)} className="text-slate-300 opacity-0 group-hover:opacity-100">×</button></div></div>)}
+                    {selectedTasks.map(task => renderTask(task))}
+                    {charSchedule?.slots.map((slot, index) => <div key={`${slot.startTime}-${index}`} className="rounded-2xl border border-violet-100 bg-violet-50/80 p-4"><div className="flex gap-3"><span className="text-xl">{slot.emoji || '◌'}</span><div><div className="text-xs font-bold text-violet-500">{selectedChar?.name} · {slot.startTime}{slot.endTime ? `–${slot.endTime}` : ''}</div><div className="mt-1 text-sm font-semibold">{slot.activity}</div>{(slot.description || slot.location) && <div className="mt-1 text-xs text-slate-400">{slot.description}{slot.location ? ` · ${slot.location}` : ''}</div>}</div></div></div>)}
+                    {selectedEvents.length + selectedTasks.length + (charSchedule?.slots.length || 0) === 0 && <div className="rounded-3xl border-2 border-dashed border-white bg-white/35 py-10 text-center text-xs text-slate-400">这一天还很空，留一点期待给它。</div>}
+                </section>
+            </div>}
+            {tab === 'mine' && <div className="space-y-6">
+                <div className="rounded-[2rem] bg-gradient-to-br from-sky-400 to-violet-500 p-5 text-white shadow-xl shadow-violet-200/60"><div className="text-[10px] font-bold tracking-[0.24em] opacity-70">MY PLAN</div><div className="mt-2 text-2xl font-bold">{activeTasks.length} 件待完成</div><p className="mt-1 text-xs opacity-75">监督角色只会在语境合适时自然提起，不会机械催促。</p></div>
+                <section className="space-y-3"><div className="flex items-center justify-between"><h2 className="text-sm font-bold">我的待办</h2><button onClick={() => openTaskComposer(today)} className="text-xs font-bold text-violet-500">＋添加</button></div>{activeTasks.map(task => renderTask(task))}{activeTasks.length === 0 && <div className="py-8 text-center text-xs text-slate-400">没有未完成待办</div>}</section>
+                <section className="space-y-3"><div className="flex items-center justify-between"><h2 className="text-sm font-bold">日程与纪念日</h2><button onClick={() => openEventComposer(today)} className="text-xs font-bold text-rose-500">＋添加</button></div>{events.map(event => <button key={event.id} onClick={() => { setSelectedDate(event.date); setCursor(parseDateKey(event.date)); setTab('month'); }} className="flex w-full items-center gap-3 rounded-2xl bg-white/75 p-3 text-left shadow-sm"><div className="rounded-xl bg-rose-50 px-3 py-2 text-center"><div className="text-[9px] text-rose-400">{event.date.slice(5, 7)}月</div><b className="text-sm text-rose-500">{event.date.slice(8)}</b></div><div className="min-w-0"><div className="truncate text-sm font-semibold">{event.title}</div><div className="text-[10px] text-slate-400">{event.kind === 'event' ? '日程' : '纪念日'}{event.startTime ? ` · ${event.startTime}` : ''}</div></div></button>)}</section>
+                {completedTasks.length > 0 && <section className="space-y-2 opacity-60"><h2 className="text-sm font-bold">已经完成</h2>{completedTasks.map(task => renderTask(task, true))}</section>}
+            </div>}
+            {tab === 'theirs' && <div className="space-y-5">
+                <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">{characters.map(char => <button key={char.id} onClick={() => setSelectedCharId(char.id)} className={`flex shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold ${selectedCharId === char.id ? 'border-violet-300 bg-violet-500 text-white' : 'border-white bg-white/70 text-slate-500'}`}><img src={char.avatar} className="h-7 w-7 rounded-full object-cover" />{char.name}</button>)}</div>
+                <div className="rounded-[2rem] bg-white/75 p-5 shadow-sm"><div className="flex items-center justify-between"><div><div className="text-[10px] font-bold tracking-[0.2em] text-violet-400">CHARACTER DAY</div><h2 className="mt-1 text-lg font-bold">{selectedDate}</h2></div><input type="date" value={selectedDate} onChange={event => setSelectedDate(event.target.value)} className="rounded-xl bg-slate-100 px-3 py-2 text-xs text-slate-500" /></div></div>
+                <section className="space-y-3"><h3 className="px-1 text-sm font-bold">日程</h3>{charSchedule?.slots.map((slot, index) => <div key={`${slot.startTime}-${index}`} className="rounded-2xl border border-violet-100 bg-white/80 p-4"><div className="flex gap-3"><span className="text-xl">{slot.emoji || '◌'}</span><div><div className="text-xs font-bold text-violet-500">{slot.startTime}{slot.endTime ? `–${slot.endTime}` : ''} · {slot.busyLevel === 'sleep' ? '休息中' : slot.busyLevel === 'busy' ? '比较忙' : slot.busyLevel === 'light' ? '稍忙' : '较空闲'}</div><div className="mt-1 font-semibold">{slot.activity}</div>{slot.description && <p className="mt-1 text-xs text-slate-400">{slot.description}</p>}</div></div></div>)}{!charSchedule && <div className="rounded-2xl border-2 border-dashed border-white py-8 text-center text-xs text-slate-400">这一天还没有生成角色日程</div>}</section>
+                <section className="space-y-3"><div className="flex items-center justify-between px-1"><h3 className="text-sm font-bold">TA 的待办</h3><span className="text-[10px] text-slate-400">与房间同步</span></div>{charTodo?.items.map((item, index) => <button key={`${item.text}-${index}`} onClick={() => toggleCharTodo(index)} className="flex w-full items-center gap-3 rounded-2xl bg-white/80 p-3 text-left shadow-sm"><span className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${item.done ? 'border-emerald-400 bg-emerald-400 text-white' : 'border-violet-200'}`}>{item.done ? '✓' : ''}</span><span className={`text-sm ${item.done ? 'line-through opacity-40' : ''}`}>{item.text}</span></button>)}{!charTodo?.items.length && <div className="py-6 text-center text-xs text-slate-400">TA 今天还没有写待办</div>}</section>
+            </div>}
+        </main>
+        <Modal isOpen={showTask} title="添加我的待办" onClose={() => setShowTask(false)} footer={<button onClick={addTask} className="w-full rounded-2xl bg-violet-500 py-3 font-bold text-white shadow-lg shadow-violet-200">加入日历</button>}>
+            <div className="space-y-4"><input autoFocus value={taskTitle} onChange={event => setTaskTitle(event.target.value)} placeholder="要完成什么？" className={INPUT} /><textarea value={taskNote} onChange={event => setTaskNote(event.target.value)} placeholder="备注（可选）" rows={2} className={INPUT} /><div className="grid grid-cols-2 gap-3"><input type="date" value={taskDate} onChange={event => setTaskDate(event.target.value)} className={INPUT} /><input type="time" value={taskTime} onChange={event => setTaskTime(event.target.value)} className={INPUT} /></div><label className="block text-[10px] font-bold tracking-widest text-slate-400">监督 / 陪伴角色</label><div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">{characters.map(char => <button key={char.id} onClick={() => setTaskSupervisor(char.id)} className={`shrink-0 rounded-full px-3 py-2 text-xs font-bold ${taskSupervisor === char.id ? 'bg-violet-500 text-white' : 'bg-slate-100 text-slate-500'}`}>{char.name}</button>)}</div><label className="flex items-center justify-between rounded-2xl bg-violet-50 p-3 text-xs text-slate-600"><span><b className="block">允许自然提醒</b><span className="text-[10px] text-slate-400">角色只在聊天语境合适时提起</span></span><input type="checkbox" checked={taskReminder} onChange={event => setTaskReminder(event.target.checked)} className="h-5 w-5 accent-violet-500" /></label></div>
+        </Modal>
+        <Modal isOpen={showEvent} title="添加日程 / 纪念日" onClose={() => setShowEvent(false)} footer={<button onClick={addEvent} className="w-full rounded-2xl bg-rose-400 py-3 font-bold text-white shadow-lg shadow-rose-200">保存</button>}>
+            <div className="space-y-4"><div className="grid grid-cols-2 rounded-2xl bg-slate-100 p-1 text-xs font-bold"><button onClick={() => setEventKind('event')} className={`rounded-xl py-2 ${eventKind === 'event' ? 'bg-white text-rose-500 shadow-sm' : 'text-slate-400'}`}>日程</button><button onClick={() => setEventKind('anniversary')} className={`rounded-xl py-2 ${eventKind === 'anniversary' ? 'bg-white text-rose-500 shadow-sm' : 'text-slate-400'}`}>纪念日</button></div><input autoFocus value={eventTitle} onChange={event => setEventTitle(event.target.value)} placeholder={eventKind === 'event' ? '日程名称' : '纪念日名称'} className={INPUT} /><input type="date" value={eventDate} onChange={event => setEventDate(event.target.value)} className={INPUT} />{eventKind === 'event' && <><div className="grid grid-cols-2 gap-3"><input type="time" value={eventStart} onChange={event => setEventStart(event.target.value)} className={INPUT} /><input type="time" value={eventEnd} onChange={event => setEventEnd(event.target.value)} className={INPUT} /></div><input value={eventLocation} onChange={event => setEventLocation(event.target.value)} placeholder="地点（可选）" className={INPUT} /></>}<textarea value={eventNote} onChange={event => setEventNote(event.target.value)} placeholder="备注（可选）" rows={2} className={INPUT} /><label className="block text-[10px] font-bold tracking-widest text-slate-400">关联角色</label><div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">{characters.map(char => <button key={char.id} onClick={() => setEventChar(char.id)} className={`shrink-0 rounded-full px-3 py-2 text-xs font-bold ${eventChar === char.id ? 'bg-rose-400 text-white' : 'bg-slate-100 text-slate-500'}`}>{char.name}</button>)}</div></div>
+        </Modal>
+    </div>;
 };
 
 export default ScheduleApp;

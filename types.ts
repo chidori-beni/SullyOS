@@ -3674,7 +3674,14 @@ export interface Task {
     title: string;
     supervisorId: string;
     tone: 'gentle' | 'strict' | 'tsundere';
+    /** 用户自己的待办说明；旧数据没有时按空字符串处理。 */
+    note?: string;
+    /** 用户本地日期 YYYY-MM-DD；deadline 继续保留以兼容旧版。 */
     deadline?: string;
+    /** 可选的本地时间 HH:mm，用于日历排序与聊天中的自然提醒。 */
+    dueTime?: string;
+    /** 是否允许监督角色在聊天里自然提起；旧数据默认允许。 */
+    naturalReminder?: boolean;
     isCompleted: boolean;
     completedAt?: number;
     createdAt: number;
@@ -3685,6 +3692,12 @@ export interface Anniversary {
     title: string;
     date: string;
     charId: string;
+    /** 缺省为 anniversary，兼容旧纪念日记录。 */
+    kind?: 'anniversary' | 'event';
+    startTime?: string;
+    endTime?: string;
+    location?: string;
+    note?: string;
     aiThought?: string;
     lastThoughtGeneratedAt?: number;
 }

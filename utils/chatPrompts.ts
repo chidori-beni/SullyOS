@@ -28,6 +28,7 @@ import { formatRelativeAge } from './groupChat/relativeTime';
 import { formatMessageReactionContext, stripMessageReactionTags } from './messageReactions';
 import { stripFaceToFacePhoneSourceTags } from './sanitize';
 import { buildAutoReplyCatchUpPrompt, buildBusyReplyPrompt, decideBusyReply } from './busyAutoReply';
+import { buildUserCalendarContext } from './calendarIntegration';
 
 // 语音格式指导按当前 TTS 服务商二选一：用 MiniMax 才注入 MiniMax 那套（含 <#秒#> 停顿标记），
 // 用鱼声则注入鱼声版（去掉 MiniMax 专属标记，改用标点 / 省略号控制停顿）。
@@ -494,7 +495,25 @@ ${groupLogStr}\n`;
                 return '';
             });
 
-        const [realtimeText, schedule, groupContextText, notionDiaryText, feishuDiaryText, notionNotesText, lifeRecordText] =
+        // 8. 用户日历：只在这一轮即时构建，不能烤进未来主动消息的 fire pack。
+        // 待办完成/日程改动后旧快照会误催，故后台到点生成不复用这段；正常聊天与即时云端
+        // 回复都读取此刻的 IndexedDB。仅把当前角色担任监督人的到期待办给 ta 看。
+        const userCalendarPromise: Promise<string> = forFirePack
+            ? Promise.resolve('')
+            : Promise.all([DB.getAllTasks(), DB.getAllAnniversaries()])
+                .then(([tasks, events]) => buildUserCalendarContext({
+                    tasks,
+                    events,
+                    supervisorId: char.id,
+                    userName: userProfile.name,
+                    today: getLocalDateKey(new Date()),
+                }))
+                .catch(e => {
+                    console.error('Failed to inject user calendar:', e);
+                    return '';
+                });
+
+        const [realtimeText, schedule, groupContextText, notionDiaryText, feishuDiaryText, notionNotesText, lifeRecordText, userCalendarText] =
             await Promise.all([
                 timed('realtime', realtimePromise),
                 timed('schedule', schedulePromise),
@@ -503,10 +522,12 @@ ${groupLogStr}\n`;
                 timed('feishuDiary', feishuDiaryPromise),
                 timed('notionNotes', notionNotesPromise),
                 timed('lifeRecord', lifeRecordPromise),
+                timed('userCalendar', userCalendarPromise),
             ]);
 
         // ── 拼接：易变的进 volatileState，稳定的进 baseSystemPrompt ──
         volatileState += realtimeText;
+        volatileState += userCalendarText;
 
         // 2a. 日程注入（完整今日日程 + 当前时段 + 意识流独白，每轮都可能变）
         //     fire_pack 不烤：改由 worker 到点用 AMSG_SLOT_SCENE 现挑时段（见 amsgFireScene）。
