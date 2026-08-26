@@ -487,6 +487,11 @@ export const useChatAI = ({
     const music = useMusic();
 
     const [isTyping, setIsTyping] = useState(false);
+    // isTyping 是 React state，在同一事件循环内不会同步更新。自动发送和手动
+    // ⚡ 触发可能因此同时通过 isTyping 检查，尤其是忙碌自动回复这条本地快速路径
+    // 根本不会先 setIsTyping(true)。用 ref 做真正同步的入口锁，保证一轮发送只
+    // 能有一个 triggerAI；否则两次调用会各落一条自动回复，甚至一条继续走普通模型。
+    const triggerInFlightRef = useRef(false);
     // 流式预览气泡：stream 开启时，已完成行与安全尾句随增量以临时气泡上屏。
     // 流结束后由 applyAssistantPostProcessing 正常落库渲染，预览随即清空 —— 只影响体感，不改持久化。
     const [streamingBubbles, setStreamingBubbles] = useState<string[]>([]);
@@ -724,6 +729,12 @@ export const useChatAI = ({
         // 早退路径也要熄「发送准备中」灯: caller (Chat.tsx) 是先 setInstantSendingActive(true)
         // 再调 triggerAI 的, 这里 return 掉而不通知的话指示灯会永远亮着。
         if (isTyping || !char) { onInstantPosted?.(); return; }
+        // React state 的 isTyping 在当前 tick 里还是旧值时，也必须挡住第二个入口。
+        // 这是同一轮的重复入口，不要调用它自己的 onInstantPosted：那个回调会
+        // 熄灭共享的“发送中”指示，而真正的第一轮还在生成。第一轮结束/受理时
+        // 会负责正常收尾。
+        if (triggerInFlightRef.current) return;
+        triggerInFlightRef.current = true;
         // 即时对话（amsg2）路径：POST 202 受理之后 isTyping 立刻回 false（生成挪去云端跑，
         // 本机不再挂着这个请求），但那一轮的回复可能还要几十秒到几分钟才真正落库。这段
         // 空窗期里单靠 isTyping 挡不住重复触发——sendInstantChatTurn 虽然会把上一条
@@ -734,19 +745,26 @@ export const useChatAI = ({
         // 该角色还欠着一条云端回复时不再重新起一轮生成。
         if (getInstantChatPending(char.id)) {
             addToast('角色还在回复上一条消息，等这条回来再发下一条', 'info');
+            triggerInFlightRef.current = false;
             onInstantPosted?.();
             return;
         }
 
+        // Chat.tsx 在保存用户消息后会立刻调用这里，但传入的 messages 仍可能是
+        // 保存前的 React 快照。忙碌判断必须从 DB 取刚落盘的最新历史；同一份最新
+        // 列表也要传给后续 system prompt，否则 brief/free 分支仍可能依据旧快照
+        // 漏掉忙碌状态约束。
+        let recentMessagesForPrompt = currentMsgs;
         // 忙碌自动回复必须在 API 配置检查、typing 状态和任何模型请求之前完成。
         // 这样普通本地对话与即时云端对话共用同一入口，而且真正的自动回复不会消耗模型调用。
         if (char.busyAutoReplyEnabled === true && isScheduleFeatureOn(char)) {
             try {
+                recentMessagesForPrompt = await DB.getRecentMessagesByCharId(char.id, 200);
                 const schedule = await getDailyScheduleForChar(char);
                 const busyDecision = decideBusyReply({
                     char,
                     schedule,
-                    messages: currentMsgs,
+                    messages: recentMessagesForPrompt,
                     now: getScheduleWallClock(char),
                 });
                 if (busyDecision.mode === 'auto-reply') {
@@ -765,8 +783,21 @@ export const useChatAI = ({
                             },
                         },
                     });
-                    setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
-                    onInstantPosted?.();
+                    // 自动回复已经成功落盘后，即使 UI 刷新读取失败，也必须结束本轮；
+                    // 不能因为刷新异常再掉进普通模型路径，重新制造“自动回复 + 正常回复”。
+                    try {
+                        setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                    } catch (refreshError) {
+                        console.warn('[BusyAutoReply] saved auto reply but failed to refresh chat UI', refreshError);
+                    }
+                    triggerInFlightRef.current = false;
+                    try {
+                        onInstantPosted?.();
+                    } catch (callbackError) {
+                        // 回调只是 UI 指示灯收尾；即使调用方回调异常，也不能让
+                        // 已落盘的自动回复重新落入普通模型路径。
+                        console.warn('[BusyAutoReply] auto reply posted but UI callback failed', callbackError);
+                    }
                     return;
                 }
             } catch (error) {
@@ -775,7 +806,12 @@ export const useChatAI = ({
             }
         }
         const effectiveApi = overrideApiConfig || apiConfig;
-        if (!effectiveApi.baseUrl) { alert("请先在设置中配置 API URL"); onInstantPosted?.(); return; }
+        if (!effectiveApi.baseUrl) {
+            triggerInFlightRef.current = false;
+            alert("请先在设置中配置 API URL");
+            onInstantPosted?.();
+            return;
+        }
 
         // 重 roll（回溯重生）时不带入上一轮的情绪余波：清掉 buff 注入（buffInjection/activeBuffs）和
         // 意识流（innerState/evolvedNarrative），让主回复与情绪评估两边都从干净状态独立重新生成——
@@ -795,9 +831,6 @@ export const useChatAI = ({
         // 一起销毁，但这个异步闭包会继续跑完并落库——横幅靠 window 事件与组件生命周期
         // 解耦，用户切走 Chat 也能看到生成还活着。finally 里派发 end（两条路径都经过）。
         announceChatGen(CHAT_GEN_EVENTS.replyStart, { charId: char.id, charName: char.name });
-
-        // Keep the Service Worker alive while we make potentially long AI calls
-        await KeepAlive.start();
 
         // 本轮的 amsg2 工具会话：角色一轮里可能连着排/取消多个任务，任务清单要在这一轮内
         // 累加，所以由 session 兜住最新 config，别从 char 快照上读写（char 是生成开始的
@@ -830,6 +863,10 @@ export const useChatAI = ({
         };
 
         try {
+            // Keep the Service Worker alive while we make potentially long AI calls.
+            // 放在受 triggerAI finally 保护的 try 内，启动异常也能释放入口锁，避免
+            // 这次异常后后续所有消息都被误判为“仍在生成”。
+            await KeepAlive.start();
             const baseUrl = effectiveApi.baseUrl.replace(/\/+$/, '');
             const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${effectiveApi.apiKey || 'sk-none'}` };
 
@@ -988,7 +1025,7 @@ export const useChatAI = ({
             const payload = await stageT('payload', buildChatRequestPayload({
                 char: charForGen, userProfile, groups, emojis, categories,
                 historyMsgs: contextMsgs,
-                recentMsgsHint: currentMsgs,
+                recentMsgsHint: recentMessagesForPrompt,
                 contextLimit: limit,
                 realtimeConfig,
                 innerState: skipEmotionInjection ? undefined : (evolvedNarrative || undefined),
@@ -2099,6 +2136,7 @@ export const useChatAI = ({
             }
             setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
         } finally {
+            triggerInFlightRef.current = false;
             KeepAlive.stop();
             setIsTyping(false);
             // 本轮生成结束（成功/失败/中断都经过）→ 停止本地续租；远端靠 45s TTL 自然失效。
