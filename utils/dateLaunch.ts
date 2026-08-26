@@ -1,5 +1,10 @@
 export interface DateLaunchIntent {
     surface: 'companion' | 'story';
+    /** Optional direct target used by cards in the information screen. */
+    charId?: string;
+    /** Open the historical encounter containing this id instead of the character picker. */
+    encounterId?: string;
+    openHistory?: boolean;
 }
 
 type DateLaunchListener = (intent: DateLaunchIntent) => void;

@@ -99,6 +99,7 @@ import {
     type ContextRangeMode,
 } from '../utils/chatContextRange';
 import { callLaunch } from '../utils/callLaunch';
+import { dateLaunch } from '../utils/dateLaunch';
 import {
     loadReactionShortcuts,
     saveReactionShortcuts,
@@ -145,6 +146,12 @@ const Chat: React.FC = () => {
         callLaunch.request({ charId, sessionId });
         openApp(AppID.Call);
         trackEvent('从聊天卡片打开通话记录');
+    }, [openApp, setActiveCharacterId]);
+    const handleOpenDateEncounter = useCallback((charId: string, encounterId: string) => {
+        setActiveCharacterId(charId);
+        dateLaunch.request({ surface: 'companion', charId, encounterId, openHistory: true });
+        openApp(AppID.Date);
+        trackEvent('从见面完结卡片打开见面记录');
     }, [openApp, setActiveCharacterId]);
     // 角色切换/进入时的缓入开关：先 false（透明），下一帧转 true，靠 CSS transition 平滑淡入。
     // 初值 false 让首次打开也是淡入、且不会有"先显示再变透明"的闪烁。
@@ -3989,6 +3996,7 @@ const Chat: React.FC = () => {
                             onResolveScheduleInvite={handleResolveScheduleInvite}
                             onOpenCallRecord={handleOpenCallRecord}
                             onAcceptMeetingInvite={openDateWithChar}
+                            onOpenDateEncounter={handleOpenDateEncounter}
                             onOpenImage={handleOpenImage}
                             thinkingChainOptions={thinkingChainOptions}
                         />

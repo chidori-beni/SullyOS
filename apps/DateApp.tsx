@@ -62,10 +62,14 @@ const DateApp: React.FC = () => {
     // 全局更新弹窗等入口可直接落到「剧情」。peek 让首次渲染就显示目标页，
     // subscribe 则覆盖 DateApp 已经打开的情况；应用后立即消费，绝不污染下次普通打开。
     useEffect(() => {
-        const applyLaunchIntent = (intent: { surface: 'companion' | 'story' }) => {
+        const applyLaunchIntent = (intent: { surface: 'companion' | 'story'; charId?: string; encounterId?: string; openHistory?: boolean }) => {
             setCameFromChat(false);
-            setMode('select');
             setMeetSurface(intent.surface);
+            if (intent.openHistory && intent.charId && intent.encounterId) {
+                setPendingHistoryOpen({ charId: intent.charId, encounterId: intent.encounterId });
+            } else {
+                setMode('select');
+            }
             dateLaunch.consume();
         };
 
@@ -103,6 +107,10 @@ const DateApp: React.FC = () => {
     const [historyLoadLimit, setHistoryLoadLimit] = useState(DATE_HISTORY_MESSAGE_LIMIT);
     const [historyReachedEnd, setHistoryReachedEnd] = useState(false);
     const [historyBusy, setHistoryBusy] = useState(false);
+    const [historyFocusEncounterId, setHistoryFocusEncounterId] = useState<string | null>(null);
+    const [pendingHistoryOpen, setPendingHistoryOpen] = useState<{ charId: string; encounterId: string } | null>(null);
+    const [historySelectedGroupId, setHistorySelectedGroupId] = useState<string | null>(null);
+    const [historyQuery, setHistoryQuery] = useState('');
     // History long-press context menu
     const [historyMenuMsg, setHistoryMenuMsg] = useState<Message | null>(null);
     const [historyMenuPos, setHistoryMenuPos] = useState<{x: number, y: number}>({x: 0, y: 0});
@@ -148,6 +156,22 @@ const DateApp: React.FC = () => {
     const historyGroups = useMemo(
         () => buildDateHistoryGroups(historyMessages, historyView, historySortOrder),
         [historyMessages, historyView, historySortOrder],
+    );
+    const historyListGroups = useMemo(() => {
+        const query = historyQuery.trim().toLocaleLowerCase();
+        if (!query) return historyGroups;
+        return historyGroups.filter(group => {
+            const haystack = [
+                group.dateKey,
+                group.summary || '',
+                ...group.messages.map(message => message.content || ''),
+            ].join('\n').toLocaleLowerCase();
+            return haystack.includes(query);
+        });
+    }, [historyGroups, historyQuery]);
+    const selectedHistoryGroup = useMemo(
+        () => historySelectedGroupId ? historyGroups.find(group => group.id === historySelectedGroupId) || null : null,
+        [historyGroups, historySelectedGroupId],
     );
 
     // 见面消息和普通聊天共用同一份历史，也就是主动消息 2.0 云端快照（fire_pack）的素材。
@@ -221,7 +245,8 @@ const DateApp: React.FC = () => {
             setMode('select');
             setPeekStatus('');
         } else if (mode === 'history') {
-            setMode('select');
+            if (historySelectedGroupId) setHistorySelectedGroupId(null);
+            else setMode('select');
         } else closeApp();
     };
 
@@ -727,8 +752,11 @@ const DateApp: React.FC = () => {
         trackEvent('打开见面设置面板', { from: 'select' });
     };
 
-    const openHistory = async (c: CharacterProfile) => {
+    const openHistory = async (c: CharacterProfile, focusEncounterId?: string) => {
         setActiveCharacterId(c.id);
+        setHistoryFocusEncounterId(focusEncounterId || null);
+        setHistorySelectedGroupId(null);
+        setHistoryQuery('');
         // 见面历史按 source=date 独立读取，不受聊天侧记忆宫殿高水位影响。
         const msgs = await DB.getRecentMessagesByCharIdAndSource(c.id, 'date', DATE_HISTORY_MESSAGE_LIMIT);
         setHistoryMessages(msgs);
@@ -739,6 +767,27 @@ const DateApp: React.FC = () => {
         setMode('history');
         trackEvent('打开见面记录');
     };
+
+    // 完结卡片携带的 encounterId 由 DateApp 挂载后的下一帧接管，
+    // 直接打开对应角色的见面记录，而不是再落到角色选择页。
+    useEffect(() => {
+        if (!pendingHistoryOpen) return;
+        const target = characters.find(c => c.id === pendingHistoryOpen.charId);
+        if (!target) return;
+        const request = pendingHistoryOpen;
+        setPendingHistoryOpen(null);
+        void openHistory(target, request.encounterId);
+        // openHistory 只负责本次导航，不需要作为稳定依赖；DateApp 挂载后才执行。
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pendingHistoryOpen, characters]);
+
+    useEffect(() => {
+        if (mode !== 'history' || !historyFocusEncounterId) return;
+        const group = historyGroups.find(candidate => candidate.messages.some(message => message.metadata?.dateEncounterId === historyFocusEncounterId));
+        if (!group) return;
+        setHistorySelectedGroupId(group.id);
+        setHistoryFocusEncounterId(null);
+    }, [mode, historyFocusEncounterId, historyGroups]);
 
     const handleLoadMoreHistory = async () => {
         if (!char || historyBusy || historyReachedEnd) return;
@@ -967,7 +1016,7 @@ const DateApp: React.FC = () => {
                     <div className="h-16 flex items-center justify-between px-4">
                         <button onClick={handleBack} className="p-2 -ml-2 rounded-full hover:bg-slate-100"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg></button>
                         <div className="text-center min-w-0">
-                            <div className="font-bold text-slate-700">见面记录</div>
+                            <div className="font-bold text-slate-700">{selectedHistoryGroup ? '见面对话' : '见面列表'}</div>
                             <div className="text-[10px] text-slate-400 truncate max-w-36">{char.name}</div>
                         </div>
                         <button
@@ -978,7 +1027,7 @@ const DateApp: React.FC = () => {
                             导出全部
                         </button>
                     </div>
-                    <div className="px-4 pb-3 flex items-center gap-2">
+                    {!selectedHistoryGroup && <div className="px-4 pb-3 flex items-center gap-2">
                         <div className="flex-1 p-1 rounded-xl bg-slate-100 flex">
                             <button
                                 onClick={() => setHistoryView('encounter')}
@@ -996,69 +1045,55 @@ const DateApp: React.FC = () => {
                         >
                             {historySortOrder === 'newest' ? '新 → 旧' : '旧 → 新'}
                         </button>
-                    </div>
+                    </div>}
                 </div>
-                <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-20">
-                    {historyGroups.length === 0 ? <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-2"><BookOpen size={48} className="opacity-50" /><span className="text-xs">暂无见面记录</span></div> : historyGroups.map((group) => (
-                        <div key={group.id} className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+                {selectedHistoryGroup ? (
+                    <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-20">
+                        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
                             <div className="bg-slate-50 px-4 py-3 border-b border-slate-100 flex gap-3 justify-between items-center">
                                 <div className="min-w-0">
-                                    <div className="text-xs font-bold text-slate-600 tracking-wide truncate">
-                                        {historyView === 'encounter' ? formatDateHistoryTime(group.startAt, true) : formatDateHistoryDate(group.startAt)}
-                                    </div>
-                                    <div className="text-[10px] text-slate-400 mt-1">
-                                        {historyView === 'encounter'
-                                            ? (group.hasOpeningAnchor ? '一次完整见面' : '旧记录 · 按日期兼容整理')
-                                            : (group.encounterCount > 0 ? `${group.encounterCount} 次开场` : '旧记录')}
-                                        {' · '}{group.messages.length} 句
-                                        {historyView === 'encounter' && <span className={group.completed ? 'text-emerald-500' : 'text-amber-500'}>{' · '}{group.completed ? `已完结${group.durationText ? ` · ${group.durationText}` : ''}` : '进行中/旧存档'}</span>}
-                                    </div>
-                                    {historyView === 'encounter' && group.summary && <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-slate-500">{group.summary}</p>}
+                                    <div className="text-xs font-bold text-slate-600 tracking-wide truncate">{historyView === 'encounter' ? formatDateHistoryTime(selectedHistoryGroup.startAt, true) : formatDateHistoryDate(selectedHistoryGroup.startAt)}</div>
+                                    <div className="text-[10px] text-slate-400 mt-1">{selectedHistoryGroup.messages.length} 句 · {selectedHistoryGroup.completed ? `已完结${selectedHistoryGroup.durationText ? ` · ${selectedHistoryGroup.durationText}` : ''}` : '进行中/旧存档'}</div>
+                                    {selectedHistoryGroup.summary && <p className="mt-1 text-[11px] leading-relaxed text-slate-500">{selectedHistoryGroup.summary}</p>}
                                 </div>
-                                <button
-                                    onClick={(event) => {
-                                        event.stopPropagation();
-                                        exportHistoryGroups([group], `${historyView === 'encounter' ? '本次' : '当天'}_${group.dateKey}`);
-                                    }}
-                                    disabled={historyBusy}
-                                    className="shrink-0 text-[11px] font-bold text-blue-500 bg-blue-50 px-3 py-1.5 rounded-full disabled:opacity-40"
-                                >导出{historyView === 'encounter' ? '本次' : '当天'}</button>
+                                <button type="button" onClick={(event) => { event.stopPropagation(); exportHistoryGroups([selectedHistoryGroup], `${historyView === 'encounter' ? '本次' : '当天'}_${selectedHistoryGroup.dateKey}`); }} disabled={historyBusy} className="shrink-0 text-[11px] font-bold text-blue-500 bg-blue-50 px-3 py-1.5 rounded-full disabled:opacity-40">导出</button>
                             </div>
                             <div className="p-4 space-y-4">
-                                {group.messages.map(m => {
+                                {selectedHistoryGroup.messages.map(m => {
                                     const text = (m.content || '').replace(/\[.*?\]/g, '').trim();
                                     return (
-                                        <div
-                                            key={m.id}
-                                            className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'} select-none`}
-                                            onTouchStart={(e) => handleHistoryLongPressStart(m, e)}
-                                            onTouchEnd={handleHistoryLongPressEnd}
-                                            onTouchMove={handleHistoryLongPressEnd}
-                                            onMouseDown={(e) => handleHistoryLongPressStart(m, e)}
-                                            onMouseUp={handleHistoryLongPressEnd}
-                                            onMouseLeave={handleHistoryLongPressEnd}
-                                            onContextMenu={(e) => { e.preventDefault(); setHistoryMenuMsg(m); setHistoryMenuPos({ x: e.clientX, y: e.clientY }); }}
-                                        >
-                                            <div className={`max-w-[90%] text-sm leading-relaxed whitespace-pre-wrap ${m.role === 'user' ? 'text-slate-500 text-right italic' : 'text-slate-800'}`}>
-                                                {m.role === 'user' ? <span className="bg-slate-100 px-3 py-2 rounded-xl rounded-tr-none inline-block">{text}</span> : <span>{text || '(无内容)'}</span>}
-                                            </div>
+                                        <div key={m.id} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'} select-none`} onTouchStart={(e) => handleHistoryLongPressStart(m, e)} onTouchEnd={handleHistoryLongPressEnd} onTouchMove={handleHistoryLongPressEnd} onMouseDown={(e) => handleHistoryLongPressStart(m, e)} onMouseUp={handleHistoryLongPressEnd} onMouseLeave={handleHistoryLongPressEnd} onContextMenu={(e) => { e.preventDefault(); setHistoryMenuMsg(m); setHistoryMenuPos({ x: e.clientX, y: e.clientY }); }}>
+                                            <div className={`max-w-[90%] text-sm leading-relaxed whitespace-pre-wrap ${m.role === 'user' ? 'text-slate-500 text-right italic' : 'text-slate-800'}`}>{m.role === 'user' ? <span className="bg-slate-100 px-3 py-2 rounded-xl rounded-tr-none inline-block">{text}</span> : <span>{text || '(无内容)'}</span>}</div>
                                             <div className="text-[9px] text-slate-300 mt-1 px-1">{formatDateHistoryTime(m.timestamp)}</div>
                                         </div>
                                     );
                                 })}
                             </div>
                         </div>
-                    ))}
-                    {!historyReachedEnd && historyMessages.length > 0 && (
-                        <button
-                            onClick={handleLoadMoreHistory}
-                            disabled={historyBusy}
-                            className="w-full py-3 rounded-2xl border border-slate-200 bg-white text-xs font-bold text-slate-500 disabled:opacity-50"
-                        >
-                            {historyBusy ? '正在加载…' : '加载更早的见面记录'}
-                        </button>
-                    )}
-                </div>
+                        {!historyReachedEnd && historyMessages.length > 0 && <button type="button" onClick={handleLoadMoreHistory} disabled={historyBusy} className="w-full py-3 rounded-2xl border border-slate-200 bg-white text-xs font-bold text-slate-500 disabled:opacity-50">{historyBusy ? '正在加载…' : '加载更早的见面记录'}</button>}
+                    </div>
+                ) : (
+                    <div className="flex-1 overflow-y-auto p-4 pb-20">
+                        <label className="mb-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-400 shadow-sm">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-4 w-4"><path strokeLinecap="round" strokeLinejoin="round" d="m21 21-4.35-4.35m0 0A7.5 7.5 0 1 0 6.04 6.04a7.5 7.5 0 0 0 10.61 10.61Z" /></svg>
+                            <input value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} placeholder="搜索见面日期、摘要或内容…" className="min-w-0 flex-1 bg-transparent text-xs text-slate-700 outline-none placeholder:text-slate-300" />
+                            {historyQuery && <button type="button" onClick={() => setHistoryQuery('')} className="text-slate-300">×</button>}
+                        </label>
+                        {historyListGroups.length === 0 ? <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-2"><BookOpen size={48} className="opacity-50" /><span className="text-xs">{historyQuery ? '没有匹配的见面' : '暂无见面记录'}</span></div> : <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                            {historyListGroups.map((group, index) => {
+                                const preview = (group.summary || group.messages.filter(message => message.role !== 'system').map(message => message.content || '').join(' ') || '这次见面没有摘要。').replace(/\[.*?\]/g, '').replace(/\s+/g, ' ').trim();
+                                const originalIndex = historyGroups.findIndex(candidate => candidate.id === group.id);
+                                const encounterNumber = originalIndex < 0 ? historyListGroups.length - index : (historySortOrder === 'newest' ? historyGroups.length - originalIndex : originalIndex + 1);
+                                return <button type="button" key={group.id} onClick={() => setHistorySelectedGroupId(group.id)} className="flex w-full items-center gap-3 border-b border-slate-100 px-3 py-3 text-left transition-colors last:border-b-0 hover:bg-slate-50 active:bg-slate-100">
+                                    {char.avatar ? <img src={char.avatar} alt="" className="h-11 w-11 shrink-0 rounded-xl object-cover" /> : <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-rose-100 text-sm font-bold text-rose-400">{char.name.slice(0, 1)}</div>}
+                                    <span className="min-w-0 flex-1"><span className="flex items-center justify-between gap-2"><span className="truncate text-xs font-bold text-slate-700">{historyView === 'encounter' ? `第 ${encounterNumber} 次见面` : formatDateHistoryDate(group.startAt)}</span><span className="shrink-0 text-[10px] text-slate-400">{formatDateHistoryTime(group.startAt, true)}</span></span><span className="mt-1 block line-clamp-2 text-[11px] leading-relaxed text-slate-500">{preview}</span><span className="mt-1 block text-[10px] text-slate-400">{group.messages.length} 句 · {group.completed ? `已完结${group.durationText ? ` · ${group.durationText}` : ''}` : '进行中/旧存档'}</span></span>
+                                    <span className="text-slate-300">›</span>
+                                </button>;
+                            })}
+                        </div>}
+                        {!historyReachedEnd && historyMessages.length > 0 && <button type="button" onClick={handleLoadMoreHistory} disabled={historyBusy} className="mt-4 w-full py-3 rounded-2xl border border-slate-200 bg-white text-xs font-bold text-slate-500 disabled:opacity-50">{historyBusy ? '正在加载…' : '加载更早的见面记录'}</button>}
+                    </div>
+                )}
 
                 {/* Long-press context menu */}
                 {historyMenuMsg && (

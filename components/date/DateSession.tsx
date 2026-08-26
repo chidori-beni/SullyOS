@@ -141,7 +141,7 @@ type DateVoiceFavoriteTarget = {
     voiceEmotion?: string;
 };
 
-const ReadingAvatar: React.FC<{ src?: string; name: string; light: boolean }> = ({ src, name, light }) => {
+const ReadingAvatar: React.FC<{ src?: string; name: string; light: boolean; className?: string; imageClassName?: string }> = ({ src, name, light, className = '', imageClassName = '' }) => {
     const [imageFailed, setImageFailed] = useState(false);
     useEffect(() => setImageFailed(false), [src]);
 
@@ -150,14 +150,14 @@ const ReadingAvatar: React.FC<{ src?: string; name: string; light: boolean }> = 
         <div
             className={`tm-avatar mt-1 h-9 w-9 shrink-0 overflow-hidden rounded-full ring-1 shadow-sm ${
                 light ? 'bg-stone-200 text-stone-500 ring-stone-300/70' : 'bg-white/10 text-white/70 ring-white/15'
-            }`}
+            } ${className}`}
             aria-hidden="true"
         >
             {canShowImage ? (
                 <img
                     src={src}
                     alt=""
-                    className="h-full w-full object-cover"
+                    className={`h-full w-full object-cover ${imageClassName}`}
                     loading="lazy"
                     decoding="async"
                     referrerPolicy="no-referrer"
@@ -958,7 +958,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             ></div>
 
             {/* Menu Layer — 常驻只留「输入」+「菜单」两钮，其余操作收进带文字标签的下拉菜单 */}
-            <div className="absolute top-0 right-0 p-4 pt-12 z-[100] flex flex-col items-end gap-2 pointer-events-auto">
+            <div className={`absolute top-0 right-0 p-4 pt-12 z-[100] flex flex-col items-end gap-2 pointer-events-auto ${isNovelMode ? 'hidden' : ''}`}>
                 <div className="flex gap-3">
                     <button onClick={(e) => { e.stopPropagation(); setShowInputBox(!showInputBox); setShowMenu(false); setShowVoiceLangPicker(false); }} className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all shadow-lg active:scale-95 ${showInputBox ? 'bg-primary border-primary text-white' : 'bg-black/30 backdrop-blur-md border-white/20 text-white hover:bg-white/20'}`}>
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" /></svg>
@@ -1066,12 +1066,52 @@ const DateSession: React.FC<DateSessionProps> = ({
 
             {/* Novel Mode View */}
             {isNovelMode && (
-                <div id="this-moment-screen" ref={novelScrollRef} className={`tm-screen absolute inset-0 z-20 overflow-y-auto no-scrollbar mask-image-gradient overscroll-contain ${char.dateLightReading ? 'tm-theme-light bg-[#faf8f5]' : 'tm-theme-dark bg-black/90 backdrop-blur-sm'}`} onClick={(e) => { e.stopPropagation(); if (showMenu) { setShowMenu(false); setShowVoiceLangPicker(false); return; } setShowInputBox(true); }}>
+                <div id="this-moment-screen" className="tm-screen absolute inset-0 z-20 overflow-hidden no-scrollbar mask-image-gradient overscroll-contain" onClick={(e) => { e.stopPropagation(); if (showMenu) { setShowMenu(false); setShowVoiceLangPicker(false); return; } if (!(e.target as HTMLElement).closest('button, input, textarea, .tm-header, .tm-compose')) setShowInputBox(true); }}>
                     {char.dateReadingCustomCss && <style>{char.dateReadingCustomCss.replace(/<\/style/gi, '<\\/style')}</style>}
-                    <div className="tm-story min-h-full flex flex-col justify-end pt-24 pb-32 px-8">
-                        <div className="tm-story-inner max-w-2xl mx-auto animate-fade-in space-y-6">
+                    <div className="tm-bg-image absolute inset-0 bg-cover bg-center" style={{ backgroundImage: bgImage ? `url(${bgImage})` : 'none' }} aria-hidden="true" />
+                    <div className="tm-bg-overlay absolute inset-0 pointer-events-none" aria-hidden="true" />
+
+                    <header className="tm-header relative z-30 flex min-h-14 flex-col px-4 py-2" onClick={(e) => e.stopPropagation()}>
+                        <div className="tm-header-main flex min-h-10 items-center gap-3">
+                            <ReadingAvatar
+                                src={char.avatar}
+                                name={char.name}
+                                light={!!char.dateLightReading}
+                                className="tm-header-avatar"
+                                imageClassName="tm-header-avatar-img"
+                            />
+                            <div className="min-w-0 flex-1">
+                                <div className="tm-header-name truncate text-sm font-semibold">{char.name}</div>
+                                <div className="tm-top-vs text-[10px] opacity-70">此时此刻 · 线下见面</div>
+                            </div>
+                            <div className="tm-header-actions flex items-center gap-1">
+                                <button type="button" className="tm-btn-icon h-9 w-9 rounded-full" aria-label="打开输入框" onClick={() => setShowInputBox(value => !value)}>
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="mx-auto h-4 w-4"><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" /></svg>
+                                </button>
+                                <button type="button" className="tm-btn-icon h-9 w-9 rounded-full" aria-label="切换立绘模式" onClick={() => { setIsNovelMode(false); exitBatchMode(); setShowMenu(false); setShowVoiceLangPicker(false); }}>
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="mx-auto h-4 w-4"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 1 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" /></svg>
+                                </button>
+                                <button type="button" className="tm-btn-icon h-9 w-9 rounded-full" aria-label="打开见面菜单" onClick={() => { setShowMenu(value => !value); setShowVoiceLangPicker(false); }}>
+                                    {showMenu ? '×' : '⋯'}
+                                </button>
+                            </div>
+                        </div>
+                        {showMenu && (
+                            <div className="tm-reading-menu mt-2 flex flex-wrap justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                {!isTyping && canReroll && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { setShowMenu(false); void handleRerollClick(); }}>重新生成</button>}
+                                <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { setShowSettings(true); setShowMenu(false); }}>布置场景</button>
+                                <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { setShowExitModal(true); setShowMenu(false); }}>离开 / 结束</button>
+                                <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { const next = !observeEnabled; updateCharacter(char.id, { dateObserve: { ...char.dateObserve, enabled: next } }); setShowMenu(false); addToast(next ? '观测已开启 · 下条回复生效' : '观测已关闭', 'info'); }}>观测{observeEnabled ? ' · 开' : ' · 关'}</button>
+                                <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { updateCharacter(char.id, { dateVoiceEnabled: !voiceEnabled }); setShowMenu(false); setShowVoiceLangPicker(false); addToast(voiceEnabled ? '语音已关闭' : '语音已开启', 'info'); }}>语音{voiceEnabled ? ' · 开' : ' · 关'}</button>
+                                {isNovelMode && char.dateLightReading && !isBatchSelectMode && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { setIsBatchSelectMode(true); setShowMenu(false); }}>多选删除</button>}
+                            </div>
+                        )}
+                    </header>
+
+                    <div ref={novelScrollRef} className="tm-story min-h-full overflow-y-auto overflow-x-clip">
+                        <div className="tm-story-inner mx-auto w-full min-h-full animate-fade-in">
                             {isBatchSelectMode && (
-                                <div className="sticky top-0 z-20 flex items-center justify-between bg-white/90 border border-stone-200 rounded-xl px-3 py-2 text-xs text-stone-700">
+                                <div className="tm-batch-toolbar sticky top-0 z-20 flex items-center justify-between rounded-xl px-3 py-2 text-xs">
                                     <span>已选 {selectedMsgIds.size} 条</span>
                                     <div className="flex gap-2">
                                         <button
@@ -1089,14 +1129,20 @@ const DateSession: React.FC<DateSessionProps> = ({
                             {sessionMessages.length === 0 && peekStatus && (() => {
                                 const { observation: peekObs, rest: peekBody } = extractObservation(peekStatus, { lenient: observeEnabled, custom: char.dateObserve?.custom });
                                 return (
-                                    <>
-                                        {observeEnabled && hasObservation(peekObs) && (
-                                            <div className="max-w-md mx-auto mb-6"><ObserveHUD observation={peekObs} variant="card" charName={char.name} config={char.dateObserve} /></div>
-                                        )}
-                                        <div className={`italic text-center text-sm mb-8 px-4 ${char.dateLightReading ? 'text-stone-400' : 'text-slate-200/50'}`}>
-                                            {cleanTextForDisplay(peekBody).split('\n').map((line, idx) => line.trim() && <p key={idx} className="whitespace-pre-wrap leading-relaxed tracking-wide my-2">{line}</p>)}
+                                    <article className="tm-para tm-para-char">
+                                        <div className="tc-header">
+                                            <div className="tc-header-deco-top" aria-hidden="true" />
+                                            <div className="tc-header-main">
+                                                <div className="tc-meta-area"><div className="tc-meta-title">{char.name}</div></div>
+                                                <div className="tc-avatar-area"><ReadingAvatar src={char.avatar} name={char.name} light={!!char.dateLightReading} className="tc-avatar-frame" imageClassName="tc-avatar-img" /></div>
+                                            </div>
+                                            <div className="tc-header-deco-bottom" aria-hidden="true" />
                                         </div>
-                                    </>
+                                        <div className="tm-body tm-body-char">
+                                            {observeEnabled && hasObservation(peekObs) && <ObserveHUD observation={peekObs} variant="card" charName={char.name} config={char.dateObserve} />}
+                                            {(cleanTextForDisplay(peekBody) || '（见面已经开始）').split('\n').map((line, idx) => line.trim() && <p key={idx} className="tm-para-block tm-quote-block whitespace-pre-wrap">{line}</p>)}
+                                        </div>
+                                    </article>
                                 );
                             })()}
                             {(hiddenNovelMessageCount > 0 || !historyReachedEnd) && (
@@ -1128,9 +1174,9 @@ const DateSession: React.FC<DateSessionProps> = ({
                                 </div>
                             )}
                             {visibleSessionMessages.map((msg) => (
-                                <div
+                                <article
                                     key={msg.id}
-                                    className={`tm-para ${msg.role === 'user' ? 'tm-para-user' : 'tm-para-char'} group relative rounded-xl transition-colors -mx-4 px-4 py-2 ${isBatchSelectMode ? 'pl-10' : ''} ${char.dateLightReading ? 'active:bg-stone-100' : 'active:bg-white/5'}`}
+                                    className={`tm-para ${msg.role === 'user' ? 'tm-para-user' : 'tm-para-char'} group relative ${isBatchSelectMode ? 'pl-10' : ''}`}
                                     onClick={(e) => {
                                         if (!isBatchSelectMode) return;
                                         e.stopPropagation();
@@ -1151,25 +1197,51 @@ const DateSession: React.FC<DateSessionProps> = ({
                                         </div>
                                     )}
                                     {msg.role === 'user' ? (
-                                        <div className="tm-body tm-body-user flex min-w-0 items-start justify-end gap-3">
-                                            <p className={`tm-para-block min-w-0 flex-1 whitespace-pre-wrap font-serif text-[16px] text-right leading-loose tracking-wide italic pr-4 ${char.dateLightReading ? 'text-stone-400 border-r-2 border-stone-300/50' : 'text-slate-400 border-r-2 border-slate-600/50'}`}>{cleanTextForDisplay(msg.content)} <span className="tm-name tm-name-user text-[10px] uppercase font-sans not-italic ml-2 opacity-50">{userProfile.name}</span></p>
-                                            {char.dateReadingShowAvatars && (
+                                        <>
+                                            <div className="tc-header-user">
                                                 <ReadingAvatar
                                                     src={userProfile.perCharAvatars?.[char.id] || userProfile.avatar}
                                                     name={userProfile.name}
                                                     light={!!char.dateLightReading}
+                                                    className="tc-avatar-frame-user"
+                                                    imageClassName="tc-avatar-img"
                                                 />
-                                            )}
-                                        </div>
+                                                <span className="tc-avatar-badge-user">{userProfile.name}</span>
+                                            </div>
+                                            <div className="tm-body tm-body-user">
+                                                <p className="tm-para-block whitespace-pre-wrap">{cleanTextForDisplay(msg.content)}</p>
+                                            </div>
+                                        </>
                                     ) : (() => {
                                         // 观测协议：从这条回复里剥出观测块，正文上方渲染独立卡片，正文本身不显示块文本
                                         const { observation: msgObs, rest: msgBody } = extractObservation(msg.content || '', { lenient: observeEnabled, custom: char.dateObserve?.custom });
                                         return (
-                                        <div className="tm-body tm-body-char flex min-w-0 items-start gap-3">
-                                            {char.dateReadingShowAvatars && (
-                                                <ReadingAvatar src={char.avatar} name={char.name} light={!!char.dateLightReading} />
+                                        <>
+                                            <div className="tc-header">
+                                                <div className="tc-header-deco-top" aria-hidden="true" />
+                                                <div className="tc-header-main">
+                                                    <div className="tc-meta-area">
+                                                        <div className="tc-meta-title">{char.name}</div>
+                                                        <div className="tc-meta-stats">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                                                        <div className="tc-meta-subtitle">线下见面</div>
+                                                        <div className="tc-meta-extra-1">此时此刻</div>
+                                                        <div className="tc-meta-extra-2">{char.name}</div>
+                                                        <div className="tc-divider" />
+                                                    </div>
+                                                    <div className="tc-avatar-area">
+                                                        <ReadingAvatar src={char.avatar} name={char.name} light={!!char.dateLightReading} className="tc-avatar-frame" imageClassName="tc-avatar-img" />
+                                                        <span className="tc-avatar-badge">现场</span>
+                                                    </div>
+                                                </div>
+                                                <div className="tc-header-deco-bottom" aria-hidden="true" />
+                                            </div>
+                                            {typeof msg.metadata?.thinkingChain === 'string' && msg.metadata.thinkingChain.trim() && (
+                                                <details className="tm-thinking-toggle">
+                                                    <summary>思考过程</summary>
+                                                    <div className="whitespace-pre-wrap">{msg.metadata.thinkingChain.trim()}</div>
+                                                </details>
                                             )}
-                                            <div className="min-w-0 flex-1">
+                                            <div className="tm-body tm-body-char">
                                                 {observeEnabled && hasObservation(msgObs) && (
                                                     <ObserveHUD observation={msgObs} variant="card" charName={char.name} config={char.dateObserve} />
                                                 )}
@@ -1235,9 +1307,9 @@ const DateSession: React.FC<DateSessionProps> = ({
                                                 );
                                                 })}
                                             </div>
-                                        </div>
+                                        </>
                                         ); })()}
-                                </div>
+                                </article>
                             ))}
                         </div>
                     </div>
@@ -1306,21 +1378,28 @@ const DateSession: React.FC<DateSessionProps> = ({
                     </div>
                 )}
                 {showInputBox && (
-                    <div className={`tm-compose w-[90%] min-w-0 max-w-lg backdrop-blur-xl rounded-2xl p-2 flex gap-2 shadow-2xl animate-fade-in mb-8 pointer-events-auto ${char.dateLightReading ? 'bg-stone-100 border border-stone-300' : 'bg-white/10 border border-white/20'}`} onClick={(e) => e.stopPropagation()}>
-                        <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder={isTyping ? "等待回应..." : "输入对话..."} disabled={isTyping} className={`tm-input min-w-0 flex-1 bg-transparent px-3 sm:px-4 py-3 outline-none font-light resize-none h-14 no-scrollbar leading-tight ${char.dateLightReading ? 'text-stone-800 placeholder:text-stone-400' : 'text-white placeholder:text-white/30'}`} autoFocus />
-                        {(() => {
-                            const retryText = pendingRetryText || getPendingReplyText(messages);
-                            const canRetry = !input.trim() && !isTyping && !!retryText;
-                            return (
-                                <button
-                                    onClick={handleSend}
-                                    disabled={(!input.trim() && !canRetry) || isTyping}
-                                    className="tm-send shrink-0 px-4 sm:px-6 bg-white text-black rounded-xl font-bold text-sm hover:bg-slate-200 disabled:opacity-50 transition-colors h-14 flex items-center justify-center"
-                                >
-                                    {canRetry ? '重试' : '发送'}
-                                </button>
-                            );
-                        })()}
+                    <div className={`tm-compose w-[90%] min-w-0 max-w-lg backdrop-blur-xl rounded-2xl p-2 shadow-2xl animate-fade-in mb-8 pointer-events-auto ${char.dateLightReading ? 'bg-stone-100 border border-stone-300' : 'bg-white/10 border border-white/20'}`} onClick={(e) => e.stopPropagation()}>
+                        <div className="tm-compose-toolbar flex items-center justify-between gap-2">
+                            <span className="tm-compose-status text-[10px] opacity-60">{isTyping ? '正在延续此刻…' : '此时此刻'}</span>
+                            <button type="button" onClick={() => { setShowInputBox(false); void handleRerollClick(); }} disabled={!canReroll || isTyping} className="tm-regen-btn rounded-full px-2 py-1 text-[10px] disabled:opacity-30">重新生成</button>
+                        </div>
+                        <div className="tm-compose-row flex items-end gap-2">
+                            <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder={isTyping ? "等待回应..." : "输入对话..."} disabled={isTyping} className={`min-w-0 flex-1 tm-input bg-transparent px-3 sm:px-4 py-3 outline-none font-light resize-none h-14 no-scrollbar leading-tight ${char.dateLightReading ? 'text-stone-800 placeholder:text-stone-400' : 'text-white placeholder:text-white/30'}`} autoFocus />
+                            {(() => {
+                                const retryText = pendingRetryText || getPendingReplyText(messages);
+                                const canRetry = !input.trim() && !isTyping && !!retryText;
+                                return (
+                                    <button
+                                        type="button"
+                                        onClick={handleSend}
+                                        disabled={(!input.trim() && !canRetry) || isTyping}
+                                        className="shrink-0 px-4 sm:px-6 tm-send-btn tm-send bg-white text-black rounded-xl font-bold text-sm hover:bg-slate-200 disabled:opacity-50 transition-colors h-14 flex items-center justify-center"
+                                    >
+                                        {canRetry ? '重试' : '发送'}
+                                    </button>
+                                );
+                            })()}
+                        </div>
                     </div>
                 )}
             </div>

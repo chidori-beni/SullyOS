@@ -325,7 +325,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                 </section>
 
                 <Section title="阅读美化 CSS · 糯叽机兼容">
-                    <p className="mb-3 text-[11px] leading-relaxed text-slate-400">可直接粘贴或导入糯叽机“此时此刻”的 CSS。Sully 阅读页提供同名的 #this-moment-screen、.tm-story、.tm-para、.tm-para-char、.tm-para-user、.tm-body、.tm-body-char、.tm-body-user、.tm-para-block 等选择器。</p>
+                    <p className="mb-3 text-[11px] leading-relaxed text-slate-400">可直接粘贴或导入糯叽机“此时此刻”的 CSS。Sully 阅读页按同一套 DOM 合同提供背景层、.tm-story、.tm-para、.tm-para-char、.tm-para-user、.tc-header、.tc-meta-*、.tc-avatar-*、.tc-header-user、.tm-body、.tm-thinking-toggle、.tm-header、.tm-compose、.tm-input、.tm-send-btn 等选择器；字体、布局和伪元素美化可以原样迁移。</p>
                     <textarea
                         value={readingCssDraft}
                         onChange={e => setReadingCssDraft(e.target.value)}

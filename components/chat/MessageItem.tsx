@@ -431,7 +431,7 @@ export const ThinkingChainBlock: React.FC<{
     const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const pointerIdRef = useRef<number | null>(null);
-    const pointerTypeRef = useRef<React.PointerEvent<HTMLDivElement>['pointerType']>('');
+    const pointerTypeRef = useRef<React.PointerEvent<HTMLDivElement>['pointerType'] | ''>('');
     const pointerStartRef = useRef({ x: 0, y: 0 });
     const longPressReadyRef = useRef(false);
     const suppressNextClickRef = useRef(false);
@@ -1556,6 +1556,8 @@ interface MessageItemProps {
     onOpenCallRecord?: (charId: string, sessionId: string) => void;
     /** 接受角色主动发出的线下见面邀请。 */
     onAcceptMeetingInvite?: (charId: string) => void;
+    /** 点击见面完结卡片，直达这一次见面的历史对话。 */
+    onOpenDateEncounter?: (charId: string, encounterId: string) => void;
     /**
      * 点图片气泡 → 打开大图页（看大图 / 存到手机 / 重画）。
      * 不传就退回原来的行为：图片只是一张点不动的 img。
@@ -1614,6 +1616,7 @@ const MessageItem = React.memo(({
     onResolveScheduleInvite,
     onOpenCallRecord,
     onAcceptMeetingInvite,
+    onOpenDateEncounter,
     onOpenImage,
     thinkingChainOptions,
 }: MessageItemProps) => {
@@ -1808,7 +1811,16 @@ const MessageItem = React.memo(({
             return (
                 <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
                     <div className="w-full px-4 my-3" {...interactionProps}>
-                        <div className="mx-auto w-72 overflow-hidden rounded-[24px] border border-rose-200/70 bg-gradient-to-br from-rose-50 via-white to-amber-50 shadow-lg">
+                            <button
+                                type="button"
+                                className="mx-auto block w-72 overflow-hidden rounded-[24px] border border-rose-200/70 bg-gradient-to-br from-rose-50 via-white to-amber-50 text-left shadow-lg transition-transform hover:-translate-y-0.5 active:scale-[.98]"
+                                aria-label="打开这次见面的对话记录"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    const encounterId = m.metadata?.dateEncounterId;
+                                    if (typeof encounterId === 'string' && encounterId) onOpenDateEncounter?.(m.charId, encounterId);
+                                }}
+                            >
                             <div className="flex items-center gap-3 border-b border-rose-100 px-4 py-3">
                                 {m.metadata?.charAvatar ? <img src={m.metadata.charAvatar} className="h-10 w-10 rounded-full object-cover ring-2 ring-white shadow" alt="" /> : <div className="h-10 w-10 rounded-full bg-rose-300 text-white flex items-center justify-center font-bold">{String(m.metadata?.charName || '?').slice(0, 1)}</div>}
                                 <div className="min-w-0 flex-1">
@@ -1821,9 +1833,9 @@ const MessageItem = React.memo(({
                                 <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-slate-600">{m.metadata?.summary || '这次见面已经结束。'}</p>
                                 <div className="text-[9px] text-slate-300">{new Date(startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} — {new Date(endedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                             </div>
+                            </button>
                         </div>
                     </div>
-                </div>
             );
         }
         if (m.metadata?.source === 'date-meeting-invite') {
