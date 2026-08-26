@@ -109,6 +109,16 @@ function modelSupportsDimensions(model: string): boolean {
 // 通常几百毫秒到几秒就能回来的接口已经很宽松，卡住 30 秒基本可以断定是连接被吞，
 // 提前失败能让下面 retryable 逻辑（status===undefined 时可重试）尽快重试一次，
 // 而不是让用户对着卡住的界面等 5 分钟才看到一条读不懂的错误。
+//
+// 用 AbortSignal.timeout() 而不是手搓 `new AbortController() + setTimeout(() =>
+// controller.abort(reason))`：手搓版本第一次上线后，网络诊断面板（全局 fetch 拦截器）
+// 把超时错误显示成「请求被主动取消（页面/组件卸载了）」——完全是误导。原因是 Safari
+// 的 fetch() 在 abort 时不会把 controller.abort(reason) 传入的自定义 reason 带到
+// promise 的 rejection 里，无论 reason 是什么，抛出来的都是浏览器自己那句通用的
+// `AbortError: Fetch is aborted`，跟「组件卸载主动取消」长得一模一样，诊断面板的
+// classifyFetchFailure() 只能按名字误判成"主动取消"。AbortSignal.timeout() 是
+// 专门为这个场景做的标准 API：到点后浏览器统一抛 `TimeoutError`（不是 `AbortError`），
+// 诊断面板本来就认这个名字、会给出正确的"请求超时"结论，不用我们自己再猜。
 const EMBEDDING_TIMEOUT_MS = 30_000;
 
 /**
@@ -132,12 +142,6 @@ async function callEmbeddingAPI(
         body.dimensions = config.dimensions;
     }
 
-    const timeoutController = new AbortController();
-    const timeoutHandle = setTimeout(
-        () => timeoutController.abort(new Error(`timeout ${EMBEDDING_TIMEOUT_MS}ms`)),
-        EMBEDDING_TIMEOUT_MS,
-    );
-
     try {
         const response = await fetch(url, {
             method: 'POST',
@@ -146,7 +150,7 @@ async function callEmbeddingAPI(
                 'Authorization': `Bearer ${config.apiKey}`,
             },
             body: JSON.stringify(body),
-            signal: timeoutController.signal,
+            signal: AbortSignal.timeout(EMBEDDING_TIMEOUT_MS),
         });
 
         if (!response.ok) {
@@ -174,9 +178,9 @@ async function callEmbeddingAPI(
         return sorted.map((item: any) => item.embedding as number[]);
 
     } catch (err: any) {
-        // 超时中断（AbortError）没有 status，走跟网络错误一样的可重试分支；
-        // 把浏览器抛的那句难懂的 AbortError/TypeError 换成一眼能看出"卡住了"的说法。
-        if (err?.name === 'AbortError') {
+        // AbortSignal.timeout() 到点后抛的是 TimeoutError，没有 status，走跟网络错误
+        // 一样的可重试分支；把这句翻译成一眼能看出"卡住了"的说法。
+        if (err?.name === 'TimeoutError') {
             err = new Error(`Embedding API 请求超时（${EMBEDDING_TIMEOUT_MS / 1000} 秒未响应，连接可能被代理/网关吞掉）`);
         }
         const status: number | undefined = err?.status;
@@ -213,8 +217,6 @@ async function callEmbeddingAPI(
             return results;
         }
         throw err;
-    } finally {
-        clearTimeout(timeoutHandle);
     }
 }
 

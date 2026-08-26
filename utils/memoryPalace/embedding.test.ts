@@ -176,43 +176,51 @@ describe('getEmbeddings 批量 400 自动降级为逐条', () => {
             .rejects.toThrow(/第 1\/2 条.*正常文本/s);
     });
 
-    it('请求挂住不返回（连接被吞）→ 超时后按可重试错误处理，重试成功', async () => {
-        vi.useFakeTimers();
-        try {
-            let calls = 0;
-            global.fetch = vi.fn((_url: any, init: any) => {
-                calls++;
-                if (calls === 1) {
-                    // 模拟连接被吞：fetch 挂住不 resolve，直到调用方的 AbortController 触发
-                    return new Promise((_resolve, reject) => {
-                        const signal = init.signal as AbortSignal;
-                        signal.addEventListener('abort', () => {
-                            const err = new Error('signal timed out');
-                            err.name = 'AbortError';
-                            reject(err);
-                        });
-                    });
-                }
-                const input: string[] = JSON.parse(init.body as string).input;
-                return Promise.resolve({
-                    ok: true,
-                    status: 200,
-                    json: async () => ({
-                        data: input.map((text, localIdx) => ({ index: localIdx, embedding: [parseFloat(text)] })),
-                    }),
-                } as any);
-            }) as any;
+    it('AbortSignal.timeout() 到点（连接被吞）→ 按可重试错误处理，重试成功', async () => {
+        // 不用假时钟推进真实的 30 秒等待：AbortSignal.timeout() 是原生平台计时器，
+        // 不保证受 vi.useFakeTimers() 影响。这里直接让第一次请求模拟浏览器到点后
+        // 抛出的真实错误形态（TimeoutError，无 status），验证的是 callEmbeddingAPI
+        // catch 分支「按可重试错误处理并重试一次」这段逻辑本身，不依赖计时器实现。
+        let calls = 0;
+        global.fetch = vi.fn((_url: any, init: any) => {
+            calls++;
+            if (calls === 1) {
+                const err = new Error('The operation timed out.');
+                err.name = 'TimeoutError';
+                return Promise.reject(err);
+            }
+            const input: string[] = JSON.parse(init.body as string).input;
+            return Promise.resolve({
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    data: input.map((text, localIdx) => ({ index: localIdx, embedding: [parseFloat(text)] })),
+                }),
+            } as any);
+        }) as any;
 
-            const promise = getEmbeddings(['9'], config);
-            // 推进到超时阈值，触发第一次尝试的 abort；随后 1s 重试等待也一并推进
-            await vi.advanceTimersByTimeAsync(30_000);
-            await vi.advanceTimersByTimeAsync(1_000);
-            const out = await promise;
-            expect(out[0][0]).toBe(9);
-            expect(calls).toBe(2);
-        } finally {
-            vi.useRealTimers();
-        }
+        const out = await getEmbeddings(['9'], config);
+        expect(out[0][0]).toBe(9);
+        expect(calls).toBe(2);
+    });
+
+    it('每次请求都带 30 秒 AbortSignal.timeout()，不再依赖手搓 AbortController', async () => {
+        let capturedSignal: AbortSignal | undefined;
+        global.fetch = vi.fn((_url: any, init: any) => {
+            capturedSignal = init.signal;
+            const input: string[] = JSON.parse(init.body as string).input;
+            return Promise.resolve({
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    data: input.map((text, localIdx) => ({ index: localIdx, embedding: [parseFloat(text)] })),
+                }),
+            } as any);
+        }) as any;
+
+        await getEmbeddings(['1'], config);
+        expect(capturedSignal).toBeInstanceOf(AbortSignal);
+        expect(capturedSignal!.aborted).toBe(false);
     });
 
     it('5xx 仍然重试一次后成功', async () => {
