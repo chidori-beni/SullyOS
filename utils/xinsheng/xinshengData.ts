@@ -63,12 +63,20 @@ export const normalizeXinsheng = (obj: Record<string, any>): XinshengEntry => {
 };
 
 /**
- * 解析单行心声 JSON。合法就直接 parse；坏了走两级修复。
+ * 解析一份候选心声 JSON（可能是一整行，也可能是从 extractXinsheng 切出来的
+ * 跨多行的原始片段——只要以 `{"t":"xinsheng"` 开头即可）。合法就直接 parse；坏了走两级修复。
  *
  * 修复链和糯叽机同源，但多了最后一步「通用键值扫描」：原版的正则兜底只捞
  * innerVoice / statusText 等 9 个内置字段，一旦模型在某个自定义字段里漏了逗号，
  * 论坛美化那 27 个字段会**全部**丢光、卡片整张空白。这里在捞完内置字段之后
  * 再扫一遍剩下的 `"键":"值"` / `"键":数字`，能救多少救多少。
+ *
+ * 名字仍叫 *Line 是历史遗留（早期版本假设心声必然是单行）——有些预设的提示词会写
+ * 「结尾另起一行」之类的措辞，模型偶尔会理解成真按一次回车，而不是转义的 `\n` 两个字符，
+ * 于是字符串值内部混进裸换行。这份实现对此完全免疫：所有正则字段捕获组用的都是
+ * `[^"\\]`（不是 `.`），裸换行落在这个字符类里，天然被当作普通字符处理；下面「修复 1」
+ * 也会先把裸换行/回车转义掉再重新 parse，覆盖大多数「整体仍是合法 JSON、只是换行没转义」
+ * 的情形。调用方（extractXinsheng）负责先把完整的花括号配对范围切出来再传进来。
  */
 export const parseXinshengLine = (line: string): XinshengEntry | null => {
     const t = (line || '').trim();
@@ -123,38 +131,86 @@ export const parseXinshengLine = (line: string): XinshengEntry | null => {
 };
 
 export interface XinshengExtraction {
-    /** 摘掉心声行之后的正文。 */
+    /** 摘掉心声 JSON 之后的正文。 */
     cleaned: string;
-    /** 本轮解析出的心声（模型多吐了几行就取最后一行，那是「最新的自己」）。 */
+    /** 本轮解析出的心声（模型多吐了几个就取最后一个，那是「最新的自己」）。 */
     entry: XinshengEntry | null;
 }
 
 /**
- * 从一整段 AI 回复里摘出心声行。
+ * 从 `s[start]`（必须是 `{`）找到与之配对的 `}`，正确跳过字符串内部的引号/转义/花括号。
+ * 找不到配对（JSON 被截断，比如模型没写完就断流了）返回 -1。
  *
- * 先做两步换行修复再逐行扫：模型经常把心声 JSON 直接黏在最后一句话屁股后面
- * （`……晚安。{"t":"xinsheng",...}`），或者把两个 JSON 挤在同一行。不先断开的话
- * 整行都不匹配 `^{`，心声既没摘出来又原样漏进气泡 —— 这是最刺眼的掉格式。
+ * 这是能正确处理「JSON 字符串值内部混进裸换行」的关键——花括号计数只在**字符串外**
+ * 生效，一段 `"innerVoice":"第一行\n第二行"` 无论中间那个换行是真按了回车还是转义的
+ * `\n` 两个字符，都不影响配对，因为它整个在引号里面。
+ */
+const findMatchingBrace = (s: string, start: number): number => {
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    for (let i = start; i < s.length; i++) {
+        const ch = s[i];
+        if (inStr) {
+            if (esc) { esc = false; continue; }
+            if (ch === '\\') { esc = true; continue; }
+            if (ch === '"') inStr = false;
+            continue;
+        }
+        if (ch === '"') { inStr = true; continue; }
+        if (ch === '{') depth++;
+        else if (ch === '}') { depth--; if (depth === 0) return i; }
+    }
+    return -1;
+};
+
+/**
+ * 从一整段 AI 回复里摘出心声 JSON（可能不止一个）。
+ *
+ * ⚠️ 不能简单按 `\n` 切行再逐行找 —— 有些预设的提示词写着「结尾另起一行写……」这类
+ * 措辞，模型会理解成真的按一次回车（裸换行），而不是转义的 `\n` 两个字符。这种情况下
+ * 心声 JSON 本身就跨了好几行；按行切割会在裸换行处把 JSON 从中间截断，前半段解析不出
+ * 完整对象（丢弃），后半段（`"talk1":"温晚` 这类残片）当成普通聊天正文原样漏了出去——
+ * 这是本功能上线后第一个被用户实测到的真实故障。
+ *
+ * 改成显式定位「花括号配对范围」：先用正则找到 `{"t":"xinsheng"` 出现的位置，再用
+ * findMatchingBrace 找到它配对的收尾 `}`，把这一整个范围（不管中间有几个裸换行）当
+ * 一份完整候选体切出来，原样交给 parseXinshengLine 解析。协议要求这一定是回复的
+ * 最后内容，所以配不到收尾时就吃到字符串末尾（多半是被截断的半截 JSON）。
+ *
+ * 模型偶尔会重复吐好几个心声对象；循环会全部找到、全部从正文摘除，只保留**最后一个**
+ * 解析成功的当作本轮的心声（那是模型"最新的自己"）。
  */
 export const extractXinsheng = (content: string): XinshengExtraction => {
     if (!content || typeof content !== 'string') return { cleaned: content || '', entry: null };
-    if (!/"t"\s*:\s*"xinsheng"/i.test(content)) return { cleaned: content, entry: null };
 
-    const prepared = content
-        .replace(/\}\s*,?\s*\{"t":/g, '}\n{"t":')
-        .replace(/([^\n{])\s*(\{"t"\s*:\s*"xinsheng")/gi, '$1\n$2');
-
-    const kept: string[] = [];
+    const MARKER_RE = /\{"t"\s*:\s*"xinsheng"/gi;
+    const spans: Array<[number, number]> = [];
     let entry: XinshengEntry | null = null;
-    for (const line of prepared.split('\n')) {
-        if (XINSHENG_LINE_RE.test(line)) {
-            const parsed = parseXinshengLine(line);
-            // 解析不出来也不要把这行放回正文 —— 用户宁可少一张卡，也不要看到一坨 JSON
-            if (parsed) entry = parsed;
-            continue;
-        }
-        kept.push(line);
+    let m: RegExpExecArray | null;
+
+    while ((m = MARKER_RE.exec(content)) !== null) {
+        const start = m.index;
+        const end = findMatchingBrace(content, start);
+        const stop = end === -1 ? content.length : end + 1;
+        spans.push([start, stop]);
+        const parsed = parseXinshengLine(content.slice(start, stop));
+        // 解析不出来也不要把这段放回正文 —— 用户宁可少一张卡，也不要看到一坨 JSON
+        if (parsed) entry = parsed;
+        if (end === -1) break; // 到字符串末尾了，后面不会再有更多内容
+        MARKER_RE.lastIndex = stop;
     }
 
-    return { cleaned: kept.join('\n').trim(), entry };
+    if (spans.length === 0) return { cleaned: content, entry: null };
+
+    // 按顺序把没被摘掉的部分拼回去，全程只用下标切片，不受中间摘掉内容长度变化影响
+    let cleaned = '';
+    let cursor = 0;
+    for (const [s, e] of spans) {
+        cleaned += content.slice(cursor, s);
+        cursor = e;
+    }
+    cleaned += content.slice(cursor);
+
+    return { cleaned: cleaned.trim(), entry };
 };

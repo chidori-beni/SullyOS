@@ -35,9 +35,62 @@ const stripLiteralBackslashN = (t: string): string => t.replace(/\\n/g, '\n');
 /** 心声行的硬锚点. 与 utils/xinsheng/xinshengData.ts 的 XINSHENG_LINE_RE 同源 —— 那边是解析侧, 这边是清洗侧, 故意各留一份, 避免把 xinsheng 模块拖进 worker bundle. */
 const XINSHENG_LINE_RE = /^\s*\{\s*"t"\s*:\s*"xinsheng"/i;
 
+/**
+ * 从 s[start]（必须是 '{'）找到与之配对的 '}', 跳过字符串内部的引号/转义/花括号.
+ * 找不到配对返回 -1. 与 utils/xinsheng/xinshengData.ts 的 findMatchingBrace 同源,
+ * 同样的理由各留一份 (不拖 xinsheng 模块进 worker bundle).
+ */
+const findXinshengBraceEnd = (s: string, start: number): number => {
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (esc) { esc = false; continue; }
+      if (ch === '\\') { esc = true; continue; }
+      if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === '{') depth++;
+    else if (ch === '}') { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+};
+
+/**
+ * 心声 JSON 字段值里可能混进裸换行 —— 某些预设的提示词写着「结尾另起一行写……」这类
+ * 措辞, 模型会理解成真按一次回车, 而不是转义的 \n 两个字符. 下面 chunkText 按 \n
+ * 切分会把这一整块 JSON 从中间撕开, 前半段解析不出完整对象被丢弃, 后半段 (talk1 等
+ * 残片) 当普通正文原样漏进推送/气泡 —— 用户在客户端实测到的真实故障, worker 这条
+ * 推送路径有一模一样的风险, 一并修.
+ *
+ * 用花括号配对而不是简单 "找到下一个 }" 是因为字段值本身可能含 }, 且配对天然不受
+ * 字符串内部裸换行影响 (深度计数只在引号外生效). 找到范围后, 只把这个范围**内部**的
+ * 裸换行/回车转义成字面 \n / \r 两个字符 —— 对 chunkText 来说它就是一整行了, 而
+ * JSON.parse 看到转义序列会正确还原成原来的换行字符, 字段内容一个字节都不丢.
+ */
+const escapeNewlinesInXinshengBlobs = (t: string): string => {
+  const MARKER_RE = /\{"t"\s*:\s*"xinsheng"/gi;
+  let out = '';
+  let cursor = 0;
+  let m: RegExpExecArray | null;
+  while ((m = MARKER_RE.exec(t)) !== null) {
+    const start = m.index;
+    const end = findXinshengBraceEnd(t, start);
+    const stop = end === -1 ? t.length : end + 1;
+    out += t.slice(cursor, start) + t.slice(start, stop).replace(/\r\n|\r|\n/g, '\\n');
+    cursor = stop;
+    if (end === -1) break;
+    MARKER_RE.lastIndex = stop;
+  }
+  out += t.slice(cursor);
+  return out;
+};
+
 /** 把黏在正文尾巴上/挤在一行里的心声 JSON 顶成独立一行. */
 const isolateXinshengLines = (t: string): string =>
-  t.replace(/\}\s*,?\s*\{"t":/g, '}\n{"t":')
+  escapeNewlinesInXinshengBlobs(t)
+   .replace(/\}\s*,?\s*\{"t":/g, '}\n{"t":')
    .replace(/([^\n{])\s*(\{"t"\s*:\s*"xinsheng")/gi, '$1\n$2');
 
 /** 整行删掉心声 JSON. 终态输出 (banner / 气泡) 用. */

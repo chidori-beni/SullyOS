@@ -679,4 +679,41 @@ describe('sanitize · 心声', () => {
     const segs = sanitizeIntoSegments('你好\n{"t":"thinking","c":"嗯"}');
     expect(segs.map(s => s.raw).join('\n')).toContain('"t":"thinking"');
   });
+
+  // ── 真实故障复现：字段值内部混进裸换行 ──────────────────────────────────
+  //
+  // 某预设的提示词写着「结尾另起一行写……」，模型理解成真按一次回车而非转义的 \n，
+  // 心声 JSON 横跨好几行。旧实现的 chunkText 按 \n 切分会把它从中间撕开，前半段
+  // 解析失败、后半段 (talk1 等残片) 当正文漏出去——这是客户端实测到的真实故障，
+  // worker 这条推送路径 (chunkText 同算法) 有一模一样的风险。
+  const MULTILINE = [
+    '{"t":"xinsheng",',
+    '"innerVoice":"其实还挺开心的",',
+    '"talk1":"温晚',
+    '在吗",',
+    '"talk2":"萧逸',
+    '嗯，在的",',
+    '"emotionLevel":75}',
+  ].join('\n');
+
+  it('横幅：多行 JSON 整体删掉，一个残片都不漏', () => {
+    const banner = sanitizeForNotification(`看到你打出那几句话。\n${MULTILINE}`);
+    expect(banner).toBe('看到你打出那几句话。');
+    expect(banner).not.toContain('talk1');
+    expect(banner).not.toContain('温晚');
+  });
+
+  it('气泡预处理：多行 JSON 同样整体删掉', () => {
+    const bubble = sanitizeForBubble(`看到你打出那几句话。\n${MULTILINE}`);
+    expect(bubble).toBe('看到你打出那几句话。');
+  });
+
+  it('分段：多行 JSON 不会被撕成好几条推送/气泡，整体挂到上一段', () => {
+    const segs = sanitizeIntoSegments(`看到你打出那几句话。\n${MULTILINE}`);
+    expect(segs).toHaveLength(1);
+    expect(segs[0].sanitized).toBe('看到你打出那几句话。');
+    expect(segs[0].raw).toContain('"t":"xinsheng"');
+    expect(segs[0].raw).toContain('talk1');
+    expect(segs[0].raw).toContain('talk2');
+  });
 });

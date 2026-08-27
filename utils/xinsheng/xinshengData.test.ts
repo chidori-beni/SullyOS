@@ -96,4 +96,41 @@ describe('extractXinsheng', () => {
         const raw = '晚安。\n\n明天见';
         expect(extractXinsheng(raw)).toEqual({ cleaned: raw, entry: null });
     });
+
+    // ── 真实故障复现：字段值内部混进裸换行（用户实测「浅浅蓝」预设时触发）──
+    //
+    // 该预设的提示词写着「结尾另起一行写「—— 」」，模型把它理解成真按一次回车，
+    // 而不是转义的 \n 两个字符——于是心声 JSON 本身横跨好几行。旧实现按 \n 切行导致
+    // JSON 从中间断开，前半段解析失败被丢弃，后半段（talk1/talk2 等残片）原样漏进
+    // 聊天气泡，用户截图里看到的正是这个。
+    it('字段值里混进裸换行（真按了回车，不是转义的 \\n）依然能完整摘出', () => {
+        const multiline = [
+            '{"t":"xinsheng",',
+            '"innerVoice":"其实还挺开心的",',
+            '"letterConfession":"見字如面：最近一直在想你。',
+            '—— 萧逸",',
+            '"talk1":"温晚',
+            '在吗",',
+            '"talk2":"萧逸',
+            '嗯，在的",',
+            '"emotionLevel":75}',
+        ].join('\n');
+        const r = extractXinsheng(`看到你打出那几句话，我心里猛地一沉。\n${multiline}`);
+        // 正文只留人话，JSON 的每一个残片都不该漏出来
+        expect(r.cleaned).toBe('看到你打出那几句话，我心里猛地一沉。');
+        expect(r.cleaned).not.toContain('talk1');
+        expect(r.cleaned).not.toContain('温晚');
+        expect(r.entry).not.toBeNull();
+        expect(r.entry!.innerVoice).toBe('其实还挺开心的');
+        // 字段内部的换行是内容的一部分（名字和消息本来就要分两行），原样保留，不能被吞掉
+        expect(r.entry!.talk1).toBe('温晚\n在吗');
+        expect(r.entry!.talk2).toBe('萧逸\n嗯，在的');
+        expect(r.entry!.letterConfession).toBe('見字如面：最近一直在想你。\n—— 萧逸');
+    });
+
+    it('裸换行版本被截断（模型没写完就断流）时，摘掉能摘到的部分，不留半截 JSON', () => {
+        const truncated = '晚安。\n{"t":"xinsheng","talk1":"温晚\n在吗","talk2":"萧逸\n嗯';
+        const r = extractXinsheng(truncated);
+        expect(r.cleaned).toBe('晚安。');
+    });
 });

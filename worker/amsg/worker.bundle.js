@@ -12147,7 +12147,52 @@ var SSE_DONE_BYTES = SSE_ENCODER.encode("event: done\ndata: {}\n\n");
 // utils/sanitize.ts
 var stripLiteralBackslashN = (t) => t.replace(/\\n/g, "\n");
 var XINSHENG_LINE_RE = /^\s*\{\s*"t"\s*:\s*"xinsheng"/i;
-var isolateXinshengLines = (t) => t.replace(/\}\s*,?\s*\{"t":/g, '}\n{"t":').replace(/([^\n{])\s*(\{"t"\s*:\s*"xinsheng")/gi, "$1\n$2");
+var findXinshengBraceEnd = (s, start) => {
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (esc) {
+        esc = false;
+        continue;
+      }
+      if (ch === "\\") {
+        esc = true;
+        continue;
+      }
+      if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') {
+      inStr = true;
+      continue;
+    }
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+};
+var escapeNewlinesInXinshengBlobs = (t) => {
+  const MARKER_RE = /\{"t"\s*:\s*"xinsheng"/gi;
+  let out = "";
+  let cursor = 0;
+  let m;
+  while ((m = MARKER_RE.exec(t)) !== null) {
+    const start = m.index;
+    const end = findXinshengBraceEnd(t, start);
+    const stop = end === -1 ? t.length : end + 1;
+    out += t.slice(cursor, start) + t.slice(start, stop).replace(/\r\n|\r|\n/g, "\\n");
+    cursor = stop;
+    if (end === -1) break;
+    MARKER_RE.lastIndex = stop;
+  }
+  out += t.slice(cursor);
+  return out;
+};
+var isolateXinshengLines = (t) => escapeNewlinesInXinshengBlobs(t).replace(/\}\s*,?\s*\{"t":/g, '}\n{"t":').replace(/([^\n{])\s*(\{"t"\s*:\s*"xinsheng")/gi, "$1\n$2");
 var stripXinshengLines = (t) => isolateXinshengLines(t).split("\n").filter((line) => !XINSHENG_LINE_RE.test(line)).join("\n");
 var stripSourceTags = (t) => t.replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, "\n");
 var stripFaceToFacePhoneSourceTags = (t) => t.replace(/\s*[`'“”]*\s*(?:\[\s*面对面手机消息\s*\]|【\s*面对面手机消息\s*】|⟦\s*SRC\s*:\s*FACE[_ -]?PHONE\s*⟧|<\s*SOURCE\s*:\s*FACE[_ -]?TO[_ -]?FACE[_ -]?PHONE\s*>|<\s*FACE[_ -]?TO[_ -]?FACE[_ -]?PHONE\s*>)[`'“”]*\s*/giu, "\n").replace(/\s*面对面期间的手机消息（只读来源）\s*/gu, "\n");
