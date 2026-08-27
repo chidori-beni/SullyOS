@@ -26,6 +26,22 @@ const generations = new Map<string, number>();
 // a CallApp remount during suspend/resume.
 const sessionWriteQueues = new Map<string, Promise<void>>();
 
+// A call can be ended while the user has not spoken in the final turn (for
+// example by tapping Hang up immediately after the character finishes).  The
+// chat boundary needs to tell the next normal-message generation whether this
+// was an ordinary goodbye or an unexpected disappearance.  Keep this helper
+// deliberately conservative: only an explicit farewell counts as a graceful
+// ending; an empty transcript is therefore abrupt by definition.
+const CALL_FAREWELL_RE = /(?:再见|拜拜|拜了|晚安|先这样(?:吧)?|那就这样(?:吧)?|先挂(?:了)?|挂了|挂电话|回头聊|回头见|下次聊|下次见|明天聊|待会儿聊|我先走|我先忙|不聊了|走了|bye|goodbye)/iu;
+
+export type CallTranscriptItem = { role?: string; content?: unknown };
+
+export const didCallEndAbruptly = (transcript: readonly CallTranscriptItem[]): boolean => {
+  const lastUser = [...transcript].reverse().find(item => item.role === 'user');
+  const text = typeof lastUser?.content === 'string' ? lastUser.content.trim() : '';
+  return !text || !CALL_FAREWELL_RE.test(text);
+};
+
 const bumpGeneration = (charId: string): number => {
   const next = (generations.get(charId) || 0) + 1;
   generations.set(charId, next);

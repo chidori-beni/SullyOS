@@ -123,6 +123,7 @@ import { getPendingReplyText } from '../utils/pendingReply';
 import { findExpiredCallSnapshots } from '../utils/callSnapshotRetention';
 import { getCallAudioElement, getCallAudioResumeIntent, resetCallAudioElement, setCallAudioResumeIntent } from '../utils/callAudioPlayer';
 import { registerCallAudioBlobUrl, resolveReusableCallAudioUrl, revokeCallAudioBlobUrl } from '../utils/callAudioUrl';
+import { didCallEndAbruptly } from '../utils/callSessionLifecycle';
 import {
   companionAvatarSource,
   companionExpressionKey,
@@ -1640,9 +1641,12 @@ const CallApp: React.FC = () => {
         // replay works now and the real hang-up can revoke every URL exactly
         // once. The registry also makes resolveReusableCallAudioUrl accept it
         // while the call is suspended in another in-phone app.
-        suspendedCall.bubbles.forEach((bubble: CallBubble) => trackBlobUrl(bubble.audioUrl));
-        setBubbles(suspendedCall.bubbles);
-        const lastPerformance = [...suspendedCall.bubbles].reverse().find((bubble: CallBubble) => bubble.performance)?.performance;
+        const restoredBubbles = suspendedCall.bubbles.map((bubble: CallBubble) => bubble.role === 'assistant'
+          ? { ...bubble, text: sanitizeAssistantOutput(bubble.text) }
+          : bubble);
+        restoredBubbles.forEach((bubble: CallBubble) => trackBlobUrl(bubble.audioUrl));
+        setBubbles(restoredBubbles);
+        const lastPerformance = [...restoredBubbles].reverse().find((bubble: CallBubble) => bubble.performance)?.performance;
         if (lastPerformance) {
           setAvatarPerformance(lastPerformance);
           setAvatarEmotion(lastPerformance.emotion);
@@ -1893,7 +1897,7 @@ const CallApp: React.FC = () => {
           id: `db-${m.id}`,
           dbId: m.id,
           role: m.role as 'user' | 'assistant',
-          text: m.content,
+          text: m.role === 'assistant' ? sanitizeAssistantOutput(String(m.content || '')) : String(m.content || ''),
           // IndexedDB may contain a blob URL created by an earlier CallApp
           // instance. Blob URLs are document-scoped; the favorite flow already
           // regenerates these, so the record page must do the same instead of
@@ -2104,6 +2108,7 @@ const CallApp: React.FC = () => {
           ? savedTranscript.map(message => ({ role: message.role, content: message.content } as Pick<Message, 'role' | 'content'>))
           : bubbles.map(bubble => ({ role: bubble.role, content: bubble.text } as Pick<Message, 'role' | 'content'>));
         const userTurns = transcript.filter(item => item.role === 'user').length;
+        const callEndedAbruptly = didCallEndAbruptly(transcript);
         const keepsakeLine = summarizeCallKeepsake(
           transcript,
           selectedChar.name,
@@ -2132,6 +2137,7 @@ const CallApp: React.FC = () => {
           keepsakeLine,
           callMode,
           endedAt,
+          callEndedAbruptly,
           ...(hadSleep ? {
             sleepCompanion: true,
             sleepDreamCount: dreamCount,
@@ -3325,7 +3331,9 @@ ${sentencePlan}`;
               id: `db-${existingBackground.id}`,
               dbId: existingBackground.id,
               role: 'assistant',
-              text: existingBackground.content,
+              text: existingBackground.role === 'assistant'
+                ? sanitizeAssistantOutput(String(existingBackground.content || ''))
+                : String(existingBackground.content || ''),
               time: formatTimeByTs(existingBackground.timestamp),
               timestamp: existingBackground.timestamp,
               sleepPhase: existingBackground.metadata?.sleepPhase === 'dream' ? 'dream' : undefined,

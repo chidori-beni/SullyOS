@@ -60,6 +60,21 @@ describe('detectChatModeTransition', () => {
         ])).toBeNull();
     });
 
+    it('突然挂断后直接点生成回复时仍提醒角色承接一次', () => {
+        expect(detectChatModeTransition([
+            message(1, 'assistant', 'call'),
+            message(2, 'system', 'call-end-popup', { callEndedAbruptly: true }),
+        ])).toBe('call');
+    });
+
+    it('结束卡后的迟到通话气泡也不能遮掉突然挂断提醒', () => {
+        expect(detectChatModeTransition([
+            message(1, 'assistant', 'call'),
+            message(2, 'system', 'call-end-popup', { callEndedAbruptly: true }),
+            message(3, 'assistant', 'call'),
+        ])).toBe('call');
+    });
+
     it('通话结束卡片后的迟到通话气泡不能遮掉已挂断边界', () => {
         expect(detectChatModeTransition([
             message(1, 'assistant', 'call'),
@@ -78,6 +93,19 @@ describe('detectChatModeTransition', () => {
         const history = [message(4, 'user')];
         const recovered = appendRecentCallEndBoundary(history, [boundary], now);
         expect(recovered.map(item => item.id)).toEqual([2, 4]);
+        expect(detectChatModeTransition(recovered)).toBe('call');
+    });
+
+    it('直接生成回复且窗口末尾是通话气泡时也能补回结束卡', () => {
+        const now = Date.now();
+        const boundary = message(2, 'system', 'call-end-popup', {
+            callEnded: true,
+            callEndedAbruptly: true,
+            endedAt: now - 1_000,
+        });
+        const history = [message(3, 'assistant', 'call')];
+        const recovered = appendRecentCallEndBoundary(history, [boundary], now);
+        expect(recovered.map(item => item.id)).toEqual([2, 3]);
         expect(detectChatModeTransition(recovered)).toBe('call');
     });
 });
@@ -115,6 +143,34 @@ describe('buildChatRequestPayload 模式切换接线', () => {
         expect(joined).toContain('如果 ChatApp 当前开启了语音消息，仍可遵守它自己的语音消息格式');
         expect(joined).toContain('当前没有一条仍然接通的语音线路');
         expect(joined).toContain('这通视频通话已经明确挂断');
+    });
+
+    it('没有新用户文字、直接生成回复时提示突然挂断的承接方式', async () => {
+        const historyMsgs = [
+            message(1, 'assistant', 'call'),
+            message(2, 'system', 'call-end-popup', { callEndedAbruptly: true, callEnded: true }),
+        ];
+        const payload = await buildChatRequestPayload({
+            char: {
+                id: 'char-return',
+                name: '阿一',
+                timeAwarenessEnabled: false,
+                scheduleFeatureEnabled: false,
+            } as any,
+            userProfile: { name: '小明' } as any,
+            groups: [],
+            emojis: [],
+            categories: [],
+            historyMsgs,
+            recentMsgsHint: historyMsgs,
+            contextLimit: 20,
+            recallEntryPoint: 'chat_app',
+            realtimeConfig: { weatherEnabled: false, newsEnabled: false } as any,
+        });
+
+        const joined = payload.fullMessages.map(item => String(item.content || '')).join('\n');
+        expect(joined).toContain('没有检测到用户明确告别');
+        expect(joined).toContain('自然问一句刚才是否出了什么事');
     });
 
     it('进行中的见面里发手机消息时不注入“刚结束见面”，并保留一次面对面手机来源标记', async () => {

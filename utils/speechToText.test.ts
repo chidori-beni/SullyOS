@@ -80,7 +80,9 @@ describe('SiliconFlow transcription request', () => {
 
     prepareSiliconFlowAudioCapture();
 
-    expect(audioSessionType).toBe('play-and-record');
+    // WebKit's stable route sequence starts a speaker capture from `auto`;
+    // the resolved stream enters `play-and-record` only after getUserMedia.
+    expect(audioSessionType).toBe('auto');
   });
 
   it('reuses one microphone stream across recordings until the call is released', async () => {
@@ -99,7 +101,7 @@ describe('SiliconFlow transcription request', () => {
     const getUserMedia = vi.fn(async () => {
       // Regression guard: after a TTS turn leaves the session in playback,
       // the category must be changed before WebKit evaluates getUserMedia().
-      expect(audioSessionType).toBe('play-and-record');
+      expect(audioSessionType).toBe('auto');
       return stream;
     });
     const audioSession = {
@@ -143,16 +145,18 @@ describe('SiliconFlow transcription request', () => {
     await runRecording();
     expect(track.enabled).toBe(false);
     expect(audioSessionTypes).toContain('play-and-record');
-    // The recorder track is disabled between turns, so the speaker route can
-    // request output-only playback instead of falling back to the receiver.
-    expect(audioSessionTypes.at(-1)).toBe('playback');
+    // The recorder track is disabled between turns. WebKit needs the forced
+    // playback -> auto pair to kick the route back to the speaker; setting
+    // playback alone is the regression that made every later TTS turn quiet.
+    expect(audioSessionTypes.slice(-2)).toEqual(['playback', 'auto']);
     const routeChangesAfterFirstRecording = audioSessionTypes.length;
     await runRecording();
 
     expect(getUserMedia).toHaveBeenCalledOnce();
-    // The cached stream is reused and `auto` is capture-compatible, avoiding a
-    // second category transition that can flash iOS's volume HUD.
-    expect(audioSessionTypes.slice(routeChangesAfterFirstRecording)).toEqual(['auto', 'playback']);
+    // The cached stream is reused and `auto` is capture-compatible. Stopping
+    // the second turn repeats the same route kick, without another permission
+    // request or a stale play-and-record category.
+    expect(audioSessionTypes.slice(routeChangesAfterFirstRecording)).toEqual(['playback', 'auto']);
     expect(track.stop).not.toHaveBeenCalled();
     releaseSiliconFlowMicrophone();
     expect(track.stop).toHaveBeenCalledOnce();

@@ -202,7 +202,7 @@ const getWebAudioSessionType = (): WebAudioSessionType | undefined => {
  * stream for permission reuse, but explicitly switch the system session at the
  * record/playback boundary whenever WebKit exposes the control.
  */
-const setWebAudioSessionType = (type: WebAudioSessionType): boolean => {
+const setWebAudioSessionType = (type: WebAudioSessionType, force = false): boolean => {
   try {
     const audioSession = (navigator as Navigator & {
       audioSession?: { type: WebAudioSessionType };
@@ -210,8 +210,9 @@ const setWebAudioSessionType = (type: WebAudioSessionType): boolean => {
     if (!audioSession) return false;
     // Assigning the same category is not a no-op in WebKit: it can re-run the
     // route picker and briefly surface the system volume HUD. Avoid that churn
-    // at every TTS/recording boundary.
-    if (audioSession.type === type) return true;
+    // at every TTS/recording boundary unless the caller is deliberately using
+    // the WebKit route-reset workaround below.
+    if (!force && audioSession.type === type) return true;
     audioSession.type = type;
     return audioSession.type === type;
   } catch {
@@ -250,16 +251,19 @@ export const prepareSiliconFlowAudioPlayback = (): void => {
 
 /**
  * Reassert a capture-compatible category in the originating mic-button turn.
- * If a live cached stream exists, `auto` is enough for MediaRecorder and avoids
- * an unnecessary `playback` → `play-and-record` transition (the transition is
- * what can flash the volume HUD on iOS). A first stream, or a receiver route,
- * still enters `play-and-record` before WebKit evaluates the recorder.
+ * The speaker route deliberately starts from `auto`, matching WebKit's route
+ * reset workaround; the first resolved stream is moved to `play-and-record`
+ * only while it is actually recording. A receiver route stays in
+ * `play-and-record` for the whole capture boundary.
  */
 export const prepareSiliconFlowAudioCapture = (): void => {
   setWebAudioSessionType(
-    siliconFlowAudioRoute === 'speaker' && hasLiveMicrophoneTrack(siliconFlowMicrophone)
-      ? 'auto'
-      : 'play-and-record',
+    // WebKit's own workaround for the iPhone receiver-volume bug starts a
+    // microphone request from `auto`; the first returned stream then enters
+    // `play-and-record` in prepareSiliconFlowMicrophone(). Starting directly
+    // in play-and-record is what makes the next playback inherit the handset
+    // receiver route on affected iOS versions.
+    siliconFlowAudioRoute === 'speaker' ? 'auto' : 'play-and-record',
   );
 };
 
@@ -291,9 +295,23 @@ const pauseSiliconFlowMicrophone = (stream: MediaStream) => {
     if (track.readyState === 'live') track.enabled = false;
   });
   // Restore the user's selected route for the role's next generated voice turn.
-  // The track is disabled above, so a speaker choice can request `playback`
-  // without repeatedly assigning the same category while recording.
-  prepareSiliconFlowAudioPlayback();
+  //
+  // Important WebKit quirk: on iPhone, assigning only `playback` after a mic
+  // turn often leaves the native AVAudioSession on the phone receiver. The
+  // documented workaround is an *immediate* `playback → auto` pair, which
+  // kicks WebKit into recomputing the output route. Force both assignments:
+  // the session is commonly already `playback`, and a normal same-value guard
+  // would otherwise skip the first half of the workaround. The next TTS
+  // boundary sets `playback` again, while the user's speaker/receiver choice
+  // remains in siliconFlowAudioRoute for the whole call.
+  if (siliconFlowAudioRoute === 'speaker') {
+    setWebAudioSessionType('playback', true);
+    setWebAudioSessionType('auto', true);
+  } else {
+    // Receiver is the native default for play-and-record. Do not run the
+    // speaker reset for a user who explicitly selected the receiver.
+    setWebAudioSessionType('play-and-record');
+  }
 };
 
 const getSiliconFlowMicrophone = async (): Promise<MediaStream> => {
@@ -311,9 +329,10 @@ const getSiliconFlowMicrophone = async (): Promise<MediaStream> => {
   // role audio stays on the speaker. WebKit rejects getUserMedia while that
   // category is active, and the rejection happens before the returned
   // promise's `then()` can restore it. Switch to a recording-compatible
-  // category before requesting the first stream; cached streams already take
-  // this path in prepareSiliconFlowMicrophone().
-  setWebAudioSessionType('play-and-record');
+  // category before requesting the first stream. For the speaker route this
+  // is `auto`, matching WebKit bug 282939's workaround; the resolved stream
+  // then enters `play-and-record` in prepareSiliconFlowMicrophone().
+  setWebAudioSessionType(siliconFlowAudioRoute === 'speaker' ? 'auto' : 'play-and-record');
   request = navigator.mediaDevices.getUserMedia({
     audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
   }).then(stream => {

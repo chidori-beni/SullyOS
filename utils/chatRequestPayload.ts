@@ -174,8 +174,9 @@ const TRACK_CHANGE_FRESH_MS = 10 * 60 * 1000;
 /**
  * 自适应记忆上下文会按高水位线裁掉已经整理过的原文。通话结束卡本身可能因此不在
  * 本轮 history 里，导致 ChatApp 看不到“电话已经挂断”的模式边界，角色又把普通消息
- * 当成电话续接。只在真正的 ChatApp 用户回合、且结束卡仍很新时从完整消息库补回一张；
- * 主动消息/定时 fire 不走这条路，避免把几小时前的电话边界烤进未来的主动模板。
+ * 当成电话续接。只在真正的 ChatApp 用户回合，或“直接生成回复”且窗口末尾仍是通话
+ * transcript、并且结束卡仍很新时从完整消息库补回一张；主动消息/定时 fire 不走这条路，
+ * 避免把几小时前的电话边界烤进未来的主动模板。
  */
 const CALL_BOUNDARY_RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -184,7 +185,14 @@ export const appendRecentCallEndBoundary = (
     candidates: Message[],
     now = Date.now(),
 ): Message[] => {
-    if (!historyMsgs.length || historyMsgs[historyMsgs.length - 1]?.role !== 'user') return historyMsgs;
+    if (!historyMsgs.length) return historyMsgs;
+    const lastHistoryMessage = historyMsgs[historyMsgs.length - 1];
+    // Normal ChatApp turns end in a user message.  The manual “generate reply”
+    // action is also allowed to run immediately after a call, with no new user
+    // text; in that case the adaptive window can end on a call transcript.  Let
+    // the recent call card be recovered for that one narrow boundary as well.
+    const isDirectGenerateAfterCall = lastHistoryMessage?.metadata?.source === 'call';
+    if (lastHistoryMessage?.role !== 'user' && !isDirectGenerateAfterCall) return historyMsgs;
     if (historyMsgs.some(message => message.metadata?.source === 'call-end-popup')) return historyMsgs;
 
     const boundary = candidates
@@ -283,7 +291,8 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     if (input.recallEntryPoint === 'chat_app'
         && char.contextRangeMode === 'adaptive'
         && (char.autoArchiveEnabled || char.contextFollowsMemoryPalaceHwm)
-        && historyMsgsForPrompt[historyMsgsForPrompt.length - 1]?.role === 'user'
+        && (historyMsgsForPrompt[historyMsgsForPrompt.length - 1]?.role === 'user'
+            || historyMsgsForPrompt[historyMsgsForPrompt.length - 1]?.metadata?.source === 'call')
         && !historyMsgsForPrompt.some(message => message.metadata?.source === 'call-end-popup')) {
         try {
             const recentWithProcessed = await DB.getRecentMessagesByCharId(char.id, 120, true);
@@ -355,6 +364,9 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     // 但主 API 的 historyMsgsForPrompt 来自完整 DB，仍然会看到它们。模式切换必须以 API
     // 真正要发送的历史为准，否则模型会收到特殊模式正文，却收不到「切回聊天格式」的提示。
     const returningFromMode = detectChatModeTransition(historyMsgsForPrompt);
+    const abruptCallEnd = (returningFromMode === 'call' || returningFromMode === 'video')
+        && historyMsgsForPrompt.some(message => message.metadata?.source === 'call-end-popup'
+            && message.metadata?.callEndedAbruptly === true);
     const activeDateEncounter = char.activeDateEncounter?.status === 'active'
         ? char.activeDateEncounter
         : undefined;
@@ -368,6 +380,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         (input.timelyByWorker || returningFromMode || activeDateEncounter) ? {
             timelyByWorker: input.timelyByWorker === true,
             returningFromMode: activeDateEncounter ? undefined : (returningFromMode || undefined),
+            abruptCallEnd: activeDateEncounter ? false : abruptCallEnd,
             activeDateEncounter,
         } : undefined,
     );

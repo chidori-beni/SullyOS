@@ -84,6 +84,15 @@ describe('call background result bridge', () => {
     expect(dbMock.saveMessage).not.toHaveBeenCalled();
   });
 
+  it('Worker 回显的 [通话] 标记不会进入历史气泡', async () => {
+    dbMock.getMessagesByCharId.mockResolvedValue([
+      { id: 10, charId: 'char-1', role: 'user', type: 'text', content: '你在吗？', timestamp: 1_000, metadata: { source: 'call', callSessionId: 'session-1' } },
+    ]);
+
+    await expect(applyCallBackgroundResult(reply({ text: '[通话] 我还在。' }))).resolves.toBe(true);
+    expect(dbMock.saveMessage).toHaveBeenCalledWith(expect.objectContaining({ content: '我还在。' }));
+  });
+
   it('结束墓碑先于结束卡片写入时也拦住迟到结果', async () => {
     startCallSession('char-1', 'session-1');
     endCallSession('char-1', 'session-1');

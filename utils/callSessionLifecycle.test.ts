@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   endCallSession,
+  didCallEndAbruptly,
   getActiveCallSessionId,
   getCallLifecycleGeneration,
   getCallSessionWindowForChar,
@@ -14,6 +15,12 @@ import {
 afterEach(() => resetCallLifecycleForTests());
 
 describe('call session lifecycle sentinel', () => {
+  it('把没有最后一句告别的挂断标记为突然结束', () => {
+    expect(didCallEndAbruptly([])).toBe(true);
+    expect(didCallEndAbruptly([{ role: 'user', content: '好' }])).toBe(true);
+    expect(didCallEndAbruptly([{ role: 'user', content: '那明天聊' }])).toBe(false);
+  });
+
   it('starts an active session and advances its generation', () => {
     expect(isCallActiveForChar('char-1')).toBe(false);
     startCallSession('char-1', 'call-1', 100);

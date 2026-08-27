@@ -17,6 +17,10 @@ export const stripCallTextFormatting = (raw: string): string => (raw || '')
   .replace(/^(?:\s{0,3}#{1,6}\s+|\s{0,3}>\s?|\s*[-+*]\s+)/gm, '')
   .replace(/(\*\*|__)([\s\S]*?)\1/g, '$2')
   .replace(/([*_~`])([^\n]*?)\1/g, '$2')
+  // `[通话]` / `[聊天]` / `[约会]` are prompt-only source markers.  A model
+  // can echo them at the start, after a timestamp, or between paragraphs;
+  // none of those variants belongs in a call bubble or in TTS input.
+  .replace(/\s*(?:\[\s*(?:聊天|通话|约会)\s*\]|【\s*(?:聊天|通话|约会)\s*】)\s*/g, '\n')
   .replace(/[\t ]+\n/g, '\n')
   .replace(/\n{3,}/g, '\n\n')
   .trim();

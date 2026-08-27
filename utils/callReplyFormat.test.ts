@@ -37,6 +37,11 @@ describe('视频通话回复分流', () => {
       .toBe('别怕\n我在。\n<语音 emotion="calm">I am here.</语音>');
   });
 
+  it('不让模型回显通话来源标签到气泡或 TTS', () => {
+    expect(stripCallTextFormatting('[通话] 先听我说。\n[ 通话 ] 然后回答。\n【 通话 】最后补一句。'))
+      .toBe('先听我说。\n然后回答。\n最后补一句。');
+  });
+
   it('模型漏演出标签时可从台词做本地动作兜底', () => {
     expect(inferAvatarPerformanceFromText('喂，你终于来啦。')).toMatchObject({ emotion: 'happy', gesture: 'wave' });
     expect(inferAvatarPerformanceFromText('啊？你说真的？')).toMatchObject({ emotion: 'surprised', gesture: 'tilt', camera: 'push-in' });
