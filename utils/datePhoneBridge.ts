@@ -54,14 +54,18 @@ export const makeDatePhoneBridgeMessage = (
 export const mergeDatePhoneMessages = (
     dateMessages: Message[],
     allMessages: Message[],
-    encounterId: string | undefined,
+    encounterId: string | readonly string[] | undefined,
     userProfileName: string,
     charName: string,
 ): Message[] => {
-    if (!encounterId) return dateMessages;
+    const encounterIds = new Set(
+        (Array.isArray(encounterId) ? encounterId : encounterId ? [encounterId] : [])
+            .filter((id): id is string => typeof id === 'string' && id.length > 0),
+    );
+    if (encounterIds.size === 0) return dateMessages;
     const linked = allMessages
         .filter(message => isDatePhoneMessage(message)
-            && message.metadata?.dateEncounterId === encounterId)
+            && encounterIds.has(String(message.metadata?.dateEncounterId || '')))
         .map(message => makeDatePhoneBridgeMessage(message, userProfileName, charName));
     if (linked.length === 0) return dateMessages;
     const byId = new Map<number, Message>();

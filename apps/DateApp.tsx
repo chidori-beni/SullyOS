@@ -911,12 +911,18 @@ const DateApp: React.FC = () => {
             const allGroups = buildDateHistoryGroups(allDateMessages, historyView, historySortOrder);
             const fullGroup = allGroups.find(candidate => candidate.id === group.id) || group;
             const replayDateMessages = fullGroup.messages.filter(message => message.metadata?.isDateEnding !== true);
-            const encounterId = replayDateMessages.find(message => typeof message.metadata?.dateEncounterId === 'string')?.metadata?.dateEncounterId;
-            const allCharMessages = encounterId ? await DB.getMessagesByCharId(char.id, true) : [];
+            // 按日期的一个分组可能包含多次见面；必须把当天所有 encounterId
+            // 一次性交给显示桥接，否则中间场次的线上手机消息会在回顾里消失。
+            const encounterIds = Array.from(new Set(
+                fullGroup.messages
+                    .map(message => message.metadata?.dateEncounterId)
+                    .filter((id): id is string => typeof id === 'string' && id.length > 0),
+            ));
+            const allCharMessages = encounterIds.length ? await DB.getMessagesByCharId(char.id, true) : [];
             const replayMessages = mergeDatePhoneMessages(
                 replayDateMessages,
                 allCharMessages,
-                encounterId,
+                encounterIds,
                 userProfile.name || '用户',
                 char.name,
             );
@@ -1239,6 +1245,7 @@ const DateApp: React.FC = () => {
                 </div>
                 {selectedHistoryGroup ? (
                     <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-20">
+                        {!historyReachedEnd && historyMessages.length > 0 && <div className="sticky top-0 z-20 flex justify-center -mx-1 px-1 py-1 pointer-events-none"><button type="button" onClick={handleLoadMoreHistory} disabled={historyBusy} className="pointer-events-auto w-full max-w-sm py-2.5 rounded-2xl border border-slate-200 bg-white/95 shadow-sm text-xs font-bold text-slate-500 disabled:opacity-50">{historyBusy ? '正在加载…' : '加载更早的见面记录'}</button></div>}
                         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
                             <div className="bg-slate-50 px-4 py-3 border-b border-slate-100 flex gap-3 justify-between items-center">
                                 <div className="min-w-0">
@@ -1265,10 +1272,10 @@ const DateApp: React.FC = () => {
                                 })}
                             </div>
                         </div>
-                        {!historyReachedEnd && historyMessages.length > 0 && <button type="button" onClick={handleLoadMoreHistory} disabled={historyBusy} className="w-full py-3 rounded-2xl border border-slate-200 bg-white text-xs font-bold text-slate-500 disabled:opacity-50">{historyBusy ? '正在加载…' : '加载更早的见面记录'}</button>}
                     </div>
                 ) : (
                     <div className="flex-1 overflow-y-auto p-4 pb-20">
+                        {!historyReachedEnd && historyMessages.length > 0 && <div className="sticky top-0 z-20 flex justify-center -mx-1 px-1 py-1 mb-2 pointer-events-none"><button type="button" onClick={handleLoadMoreHistory} disabled={historyBusy} className="pointer-events-auto w-full max-w-sm py-2.5 rounded-2xl border border-slate-200 bg-white/95 shadow-sm text-xs font-bold text-slate-500 disabled:opacity-50">{historyBusy ? '正在加载…' : '加载更早的见面记录'}</button></div>}
                         <label className="mb-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-400 shadow-sm">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-4 w-4"><path strokeLinecap="round" strokeLinejoin="round" d="m21 21-4.35-4.35m0 0A7.5 7.5 0 1 0 6.04 6.04a7.5 7.5 0 0 0 10.61 10.61Z" /></svg>
                             <input value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} placeholder="搜索见面日期、摘要或内容…" className="min-w-0 flex-1 bg-transparent text-xs text-slate-700 outline-none placeholder:text-slate-300" />
@@ -1307,7 +1314,6 @@ const DateApp: React.FC = () => {
                                 );
                             })}
                         </div>}
-                        {!historyReachedEnd && historyMessages.length > 0 && <button type="button" onClick={handleLoadMoreHistory} disabled={historyBusy} className="mt-4 w-full py-3 rounded-2xl border border-slate-200 bg-white text-xs font-bold text-slate-500 disabled:opacity-50">{historyBusy ? '正在加载…' : '加载更早的见面记录'}</button>}
                     </div>
                 )}
 

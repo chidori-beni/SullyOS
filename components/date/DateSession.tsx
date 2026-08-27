@@ -267,7 +267,9 @@ const DateSession: React.FC<DateSessionProps> = ({
     const [novelVoiceLoading, setNovelVoiceLoading] = useState<Set<string>>(new Set());
     const [novelPlayingId, setNovelPlayingId] = useState<string | null>(null);
     const [novelVisibleCount, setNovelVisibleCount] = useState(NOVEL_MESSAGE_WINDOW_SIZE);
+    const [novelHistoryLoading, setNovelHistoryLoading] = useState(false);
     const dateAudioRef = useRef<HTMLAudioElement | null>(null);
+    const scrollToNovelHistoryTopRef = useRef(false);
     const voiceEnabled = !!char.dateVoiceEnabled;
     const voiceLang = char.dateVoiceLang || '';
     // Bridges the current line's VOICE emotion ([v:xxx], 跟立绘情绪分开) to the GAL
@@ -600,13 +602,16 @@ const DateSession: React.FC<DateSessionProps> = ({
     // Filter messages for Novel Mode: Show only current session
     // Logic: Find the LAST message with `isOpening: true`. Show all messages from there onwards.
     const sessionMessages = React.useMemo(() => {
+        // 回顾页的 messages 已经是用户点开的整次/整日分页，不应再按“最后一个
+        // 开场锚点”裁成最后一场；否则按日期回顾会悄悄丢掉当天前面的见面。
+        if (historyReplay) return messages;
         const openingIndex = messages.map(m => m.metadata?.isOpening).lastIndexOf(true);
         if (openingIndex !== -1) {
             return messages.slice(openingIndex);
         }
         // Fallback: If no opening found (legacy data), show all
         return messages;
-    }, [messages]);
+    }, [historyReplay, messages]);
 
     const visibleSessionMessages = React.useMemo(() => {
         return sessionMessages.slice(-novelVisibleCount);
@@ -694,7 +699,15 @@ const DateSession: React.FC<DateSessionProps> = ({
     // Novel Mode Scroll
     useEffect(() => {
         if (isNovelMode && novelScrollRef.current) {
-            novelScrollRef.current.scrollTop = novelScrollRef.current.scrollHeight;
+            const el = novelScrollRef.current;
+            if (scrollToNovelHistoryTopRef.current) {
+                // 新内容是插在当前窗口之前；回到顶部让用户立刻看到刚加载的
+                // 最早一批，并可连续点击按钮继续向前翻，不会被送回文末。
+                scrollToNovelHistoryTopRef.current = false;
+                el.scrollTop = 0;
+            } else {
+                el.scrollTop = el.scrollHeight;
+            }
         }
     }, [visibleSessionMessages.length, isNovelMode, showInputBox]);
 
@@ -820,6 +833,37 @@ const DateSession: React.FC<DateSessionProps> = ({
             dialogueBatch.slice(previousIndex + 1),
             previousIndex,
         );
+    };
+
+    /**
+     * 阅读/回顾页统一从顶部加载更早内容。
+     *
+     * 回顾页的整次/整日记录已经完整读入，但为了避免 iOS WebKit 一次挂载过多
+     * DOM，仍按窗口展示。点击顶部按钮时只扩大本地窗口；活动会话窗口用尽后，
+     * 再让父层回库取下一批。加载后回到正文顶部，方便继续向前翻，不会突然弹回文末。
+     */
+    const loadEarlierNovelMessages = async () => {
+        if (novelHistoryLoading) return;
+        const plan = planNovelLoadMore({
+            loadedCount: sessionMessages.length,
+            visibleCount: novelVisibleCount,
+            windowStep: NOVEL_MESSAGE_LOAD_STEP,
+            loadLimit: historyLoadLimit,
+            loadStep: NOVEL_HISTORY_FETCH_STEP,
+            reachedDbEnd: historyReachedEnd,
+        });
+        if (plan.nextVisibleCount === novelVisibleCount && plan.nextLoadLimit === null) return;
+
+        scrollToNovelHistoryTopRef.current = true;
+        setNovelVisibleCount(plan.nextVisibleCount);
+
+        if (plan.nextLoadLimit === null || !onLoadMoreHistory) return;
+        setNovelHistoryLoading(true);
+        try {
+            await onLoadMoreHistory(plan.nextLoadLimit);
+        } finally {
+            setNovelHistoryLoading(false);
+        }
     };
 
     const handleSend = async () => {
@@ -1328,31 +1372,20 @@ const DateSession: React.FC<DateSessionProps> = ({
                                     </article>
                                 );
                             })()}
-                            {!historyReplay && (hiddenNovelMessageCount > 0 || !historyReachedEnd) && (
-                                <div className="flex justify-center">
+                            {(hiddenNovelMessageCount > 0 || !historyReachedEnd) && (
+                                <div className="tm-history-load-more sticky top-0 z-20 flex justify-center px-3 py-2 pointer-events-none">
                                     <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            // 本地还有没显示的就只开窗；已经铺满则回库里取更早的一批，
-                                            // 否则初始窗口以外的见面记录在阅读模式里永远够不着。
-                                            const plan = planNovelLoadMore({
-                                                loadedCount: sessionMessages.length,
-                                                visibleCount: novelVisibleCount,
-                                                windowStep: NOVEL_MESSAGE_LOAD_STEP,
-                                                loadLimit: historyLoadLimit,
-                                                loadStep: NOVEL_HISTORY_FETCH_STEP,
-                                                reachedDbEnd: historyReachedEnd,
-                                            });
-                                            setNovelVisibleCount(plan.nextVisibleCount);
-                                            if (plan.nextLoadLimit !== null) void onLoadMoreHistory?.(plan.nextLoadLimit);
-                                        }}
-                                        className={`px-4 py-2 rounded-full text-xs font-bold border active:scale-95 transition-transform ${
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); void loadEarlierNovelMessages(); }}
+                                        disabled={novelHistoryLoading}
+                                        aria-label="加载更早的见面记录"
+                                        className={`pointer-events-auto px-4 py-2 rounded-full text-xs font-bold border shadow-sm active:scale-95 transition-transform disabled:opacity-60 ${
                                             char.dateLightReading
                                                 ? 'bg-stone-100 text-stone-500 border-stone-200'
-                                                : 'bg-white/10 text-white/60 border-white/10'
+                                                : 'bg-black/30 text-white/80 border-white/20 backdrop-blur-md'
                                         }`}
                                     >
-                                        加载更早见面记录{hiddenNovelMessageCount > 0 ? ` (${hiddenNovelMessageCount})` : ''}
+                                        {novelHistoryLoading ? '正在加载…' : `加载更早见面记录${hiddenNovelMessageCount > 0 ? ` (${hiddenNovelMessageCount})` : ''}`}
                                     </button>
                                 </div>
                             )}

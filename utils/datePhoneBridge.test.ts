@@ -46,5 +46,17 @@ describe('date phone display bridge', () => {
         expect(isDatePhoneBridge(timeline[1])).toBe(false);
         expect(phone.metadata?.datePhoneBridge).not.toBe(true);
     });
+
+    it('按日期回顾可以一次桥接同一天多个见面的手机消息', () => {
+        const dates = [
+            dateMessage(1, 30, '第一场线下回复'),
+            { ...dateMessage(2, 50, '第二场线下回复'), metadata: { source: 'date', dateEncounterId: 'enc-2' } },
+        ];
+        const firstPhone = phoneMessage(7, 20, 'user', '第一场面对面时发的消息', 'enc-1');
+        const secondPhone = phoneMessage(8, 40, 'assistant', '第二场面对面时发的消息', 'enc-2');
+        const timeline = mergeDatePhoneMessages(dates, [firstPhone, secondPhone], ['enc-1', 'enc-2'], '栖迟', 'Sully');
+        expect(timeline.map(message => message.id)).toEqual([7, 1, 8, 2]);
+        expect(timeline.filter(isDatePhoneBridge)).toHaveLength(2);
+    });
 });
 
