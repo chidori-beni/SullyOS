@@ -1,0 +1,272 @@
+// 心声卡弹层：点消息头像打开的那个。
+//
+// 一张卡 = 一轮回复。左右可以翻整段历史（最多 100 条），能收藏、删除、清空，
+// 也是进「自定义心声」的入口。和糯叽机的交互一致。
+
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { CharacterProfile, UserProfile } from '../../../types';
+import type { XinshengEntry } from '../../../utils/xinsheng/xinshengData';
+import {
+    clearXinshengHistory,
+    deleteXinshengEntry,
+    readXinshengHistory,
+    sortRoundIds,
+    toggleXinshengFavorite,
+    type XinshengHistory,
+} from '../../../utils/xinsheng/xinshengStore';
+import { buildXinshengSystemData, type XinshengSystemData } from '../../../utils/xinsheng/xinshengSystemData';
+import { XINSHENG_UPDATED_EVENT, type XinshengUpdatedDetail } from '../../../utils/xinsheng/xinshengEvents';
+import XinshengLayoutRenderer from './XinshengLayoutRenderer';
+import XinshengCard from './XinshengCard';
+
+interface Props {
+    isOpen: boolean;
+    onClose: () => void;
+    char: CharacterProfile;
+    userProfile: UserProfile;
+    /** 点了哪一条气泡的头像就先翻到哪一轮；没有就落在最新一条。 */
+    targetRoundId?: string | null;
+    onOpenSettings: () => void;
+}
+
+/** 只在「已收藏」筛选下用。 */
+type FilterKey = 'all' | 'favorited';
+
+const relativeTime = (at?: number): string => {
+    if (!at) return '';
+    const min = Math.max(0, Math.round((Date.now() - at) / 60000));
+    if (min < 1) return '刚刚';
+    if (min < 60) return `${min} 分钟前`;
+    if (min < 1440) return `${Math.round(min / 60)} 小时前`;
+    return `${Math.round(min / 1440)} 天前`;
+};
+
+export const XinshengCardModal: React.FC<Props> = ({
+    isOpen, onClose, char, userProfile, targetRoundId, onOpenSettings,
+}) => {
+    const [history, setHistory] = useState<XinshengHistory>({});
+    const [index, setIndex] = useState(0);
+    const [filter, setFilter] = useState<FilterKey>('all');
+    const [showList, setShowList] = useState(false);
+    const [confirmClear, setConfirmClear] = useState(false);
+    const [systemData, setSystemData] = useState<XinshengSystemData | null>(null);
+    const touchStartX = useRef<number | null>(null);
+
+    const ids = useMemo(() => {
+        const all = sortRoundIds(Object.keys(history)).filter(id => !!history[id]);
+        return filter === 'favorited' ? all.filter(id => history[id]?._favorited) : all;
+    }, [history, filter]);
+
+    const current: XinshengEntry | null = ids.length > 0 ? history[ids[Math.min(index, ids.length - 1)]] : null;
+    const currentId = ids.length > 0 ? ids[Math.min(index, ids.length - 1)] : null;
+
+    // 打开时读一次历史；targetRoundId 决定落在哪一页（点头像进来就是那一轮）
+    useEffect(() => {
+        if (!isOpen || !char?.id) return;
+        let alive = true;
+        (async () => {
+            const h = await readXinshengHistory(char.id);
+            if (!alive) return;
+            setHistory(h);
+            const all = sortRoundIds(Object.keys(h));
+            const at = targetRoundId ? all.indexOf(targetRoundId) : -1;
+            setIndex(at >= 0 ? at : Math.max(0, all.length - 1));
+        })();
+        return () => { alive = false; };
+    }, [isOpen, char?.id, targetRoundId]);
+
+    // 系统变量（日期/待办/纪念日/消息数）打开时算一次，不进聊天热路径
+    useEffect(() => {
+        if (!isOpen || !char?.id) return;
+        let alive = true;
+        buildXinshengSystemData(char.id).then(d => { if (alive) setSystemData(d); }).catch(() => {});
+        return () => { alive = false; };
+    }, [isOpen, char?.id]);
+
+    // 卡开着的时候角色又回了一轮 —— 把新的那条接上，但不抢走用户正在看的那一页
+    useEffect(() => {
+        if (!isOpen) return;
+        const onUpdated = (e: Event) => {
+            const detail = (e as CustomEvent<XinshengUpdatedDetail>).detail;
+            if (!detail || detail.charId !== char?.id) return;
+            readXinshengHistory(char.id).then(setHistory).catch(() => {});
+        };
+        window.addEventListener(XINSHENG_UPDATED_EVENT, onUpdated);
+        return () => window.removeEventListener(XINSHENG_UPDATED_EVENT, onUpdated);
+    }, [isOpen, char?.id]);
+
+    useEffect(() => { if (!isOpen) { setShowList(false); setConfirmClear(false); setFilter('all'); } }, [isOpen]);
+    // 切筛选后旧的 index 可能越界
+    useEffect(() => { setIndex(i => Math.min(i, Math.max(0, ids.length - 1))); }, [ids.length]);
+
+    const go = useCallback((delta: number) => {
+        setIndex(i => Math.max(0, Math.min(ids.length - 1, i + delta)));
+    }, [ids.length]);
+
+    const onTouchStart = (e: React.TouchEvent) => { touchStartX.current = e.touches[0]?.clientX ?? null; };
+    const onTouchEnd = (e: React.TouchEvent) => {
+        const start = touchStartX.current;
+        touchStartX.current = null;
+        if (start == null) return;
+        const dx = (e.changedTouches[0]?.clientX ?? start) - start;
+        // 40px 门槛：卡片本身可以纵向滚动，横向手势要够明确才算翻页
+        if (Math.abs(dx) < 40) return;
+        go(dx > 0 ? -1 : 1);
+    };
+
+    if (!isOpen) return null;
+
+    // 这条记录生成时抽中过随机预设 → 用它自带的样式渲染，让旧卡保持当时的样子；
+    // 否则用角色当前的设置。
+    const entryPreset = (current as any)?._preset as
+        { displayMode?: 'planner' | 'layout'; layout?: string; customCss?: string } | undefined;
+    const displayMode = entryPreset?.displayMode ?? char.xinshengDisplayMode;
+    const layoutSrc = entryPreset ? (entryPreset.layout || '') : (char.xinshengLayout || '');
+    const cssSrc = entryPreset ? (entryPreset.customCss || '') : (char.xinshengCustomCss || '');
+    const isLayout = displayMode === 'layout' && !!layoutSrc.trim();
+
+    return (
+        <div className="fixed inset-0 z-[110] flex flex-col animate-fade-in">
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+
+            {/* 顶栏 */}
+            <div className="relative flex items-center gap-2 px-4 pt-[calc(env(safe-area-inset-top)+12px)] pb-3 text-white">
+                <div className="flex-1 min-w-0">
+                    <div className="text-[15px] font-bold truncate">心声</div>
+                    <div className="text-[11px] text-white/60">
+                        {ids.length > 0 ? `第 ${Math.min(index, ids.length - 1) + 1} / ${ids.length} 条 · ${relativeTime(current?._at)}` : '暂无心声记录'}
+                    </div>
+                </div>
+                <button
+                    onClick={() => setShowList(v => !v)}
+                    className="px-3 py-1.5 rounded-full bg-white/15 text-[12px] active:scale-95 transition-transform"
+                >历史</button>
+                <button
+                    onClick={onOpenSettings}
+                    className="px-3 py-1.5 rounded-full bg-white/15 text-[12px] active:scale-95 transition-transform"
+                >自定义</button>
+                <button
+                    onClick={onClose}
+                    className="w-8 h-8 rounded-full bg-white/15 text-[16px] leading-none active:scale-95 transition-transform"
+                    aria-label="关闭"
+                >×</button>
+            </div>
+
+            {/* 卡片区 */}
+            <div
+                className="relative flex-1 overflow-y-auto no-scrollbar px-4 pb-[calc(env(safe-area-inset-bottom)+16px)]"
+                onTouchStart={onTouchStart}
+                onTouchEnd={onTouchEnd}
+            >
+                <div className="mx-auto w-full max-w-[400px]">
+                    {!current ? (
+                        <div className="mt-24 text-center text-white/60 text-[13px] leading-relaxed">
+                            {filter === 'favorited' ? '还没有收藏的心声' : '暂无心声记录'}
+                            <div className="mt-2 text-[11px] text-white/40">
+                                {char.xinshengEnabled ? '等 TA 回复一次就会有了' : '心声功能还没开启，点右上角「自定义」打开'}
+                            </div>
+                        </div>
+                    ) : isLayout ? (
+                        <XinshengLayoutRenderer
+                            layout={layoutSrc}
+                            data={current}
+                            character={{ name: char.name, image: char.avatar }}
+                            customCss={cssSrc}
+                            userInfo={{ name: userProfile?.name, avatar: userProfile?.avatar }}
+                            systemData={systemData}
+                        />
+                    ) : (
+                        <XinshengCard entry={current} charName={char.name} charAvatar={char.avatar} />
+                    )}
+
+                    {/* 翻页 + 收藏 + 删除 */}
+                    {current && (
+                        <div className="mt-4 flex items-center justify-center gap-3">
+                            <button
+                                onClick={() => go(-1)}
+                                disabled={index <= 0}
+                                className="w-10 h-10 rounded-full bg-white/15 text-white text-[18px] leading-none disabled:opacity-25 active:scale-95 transition-transform"
+                                aria-label="上一条"
+                            >‹</button>
+                            <button
+                                onClick={async () => { if (currentId) setHistory(await toggleXinshengFavorite(char.id, currentId)); }}
+                                className={`px-4 h-10 rounded-full text-[12px] active:scale-95 transition-transform ${current._favorited ? 'bg-amber-400 text-white' : 'bg-white/15 text-white'}`}
+                            >{current._favorited ? '★ 已收藏' : '☆ 收藏'}</button>
+                            <button
+                                onClick={async () => {
+                                    if (!currentId) return;
+                                    setHistory(await deleteXinshengEntry(char.id, currentId));
+                                    setIndex(i => Math.max(0, i - 1));
+                                }}
+                                className="px-4 h-10 rounded-full bg-white/15 text-rose-200 text-[12px] active:scale-95 transition-transform"
+                            >删除</button>
+                            <button
+                                onClick={() => go(1)}
+                                disabled={index >= ids.length - 1}
+                                className="w-10 h-10 rounded-full bg-white/15 text-white text-[18px] leading-none disabled:opacity-25 active:scale-95 transition-transform"
+                                aria-label="下一条"
+                            >›</button>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* 历史列表：底部抽屉 */}
+            {showList && (
+                <div className="relative bg-white rounded-t-[2rem] shadow-2xl max-h-[58vh] flex flex-col">
+                    <div className="px-5 pt-4 pb-2 flex items-center gap-2">
+                        <div className="text-[14px] font-bold text-slate-800 flex-1">心声历史</div>
+                        {(['all', 'favorited'] as FilterKey[]).map(k => (
+                            <button
+                                key={k}
+                                onClick={() => { setFilter(k); setIndex(0); }}
+                                className={`px-3 py-1 rounded-full text-[11px] ${filter === k ? 'bg-indigo-500 text-white' : 'bg-slate-100 text-slate-500'}`}
+                            >{k === 'all' ? '全部' : '已收藏'}</button>
+                        ))}
+                        <button
+                            onClick={async () => {
+                                if (!confirmClear) { setConfirmClear(true); return; }
+                                setHistory(await clearXinshengHistory(char.id));
+                                setConfirmClear(false);
+                                setIndex(0);
+                            }}
+                            className={`px-3 py-1 rounded-full text-[11px] ${confirmClear ? 'bg-rose-500 text-white' : 'bg-slate-100 text-rose-400'}`}
+                        >{confirmClear ? '确认清空' : '清空'}</button>
+                    </div>
+                    {/* 「清空」保留收藏 —— 按钮旁写清楚，否则用户以为收藏也没了 */}
+                    <div className="px-5 pb-2 text-[10px] text-slate-400">清空会保留已收藏的条目</div>
+                    <div className="flex-1 overflow-y-auto px-5 pb-[calc(env(safe-area-inset-bottom)+16px)] space-y-1.5">
+                        {ids.length === 0 && (
+                            <div className="py-8 text-center text-[12px] text-slate-400">
+                                {filter === 'favorited' ? '还没有收藏的心声' : '暂无心声记录'}
+                            </div>
+                        )}
+                        {[...ids].reverse().map(id => {
+                            const e = history[id];
+                            const at = ids.indexOf(id);
+                            const active = at === Math.min(index, ids.length - 1);
+                            return (
+                                <button
+                                    key={id}
+                                    onClick={() => { setIndex(at); setShowList(false); }}
+                                    className={`w-full text-left px-3.5 py-2.5 rounded-2xl transition-colors ${active ? 'bg-indigo-50 border border-indigo-200' : 'bg-slate-50 border border-transparent'}`}
+                                >
+                                    <div className="flex items-center gap-2">
+                                        {e?._favorited && <span className="text-amber-400 text-[11px]">★</span>}
+                                        <span className="text-[10px] text-slate-400">{relativeTime(e?._at)}</span>
+                                        {active && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-500 text-white">当前</span>}
+                                    </div>
+                                    <div className="mt-1 text-[12px] text-slate-600 line-clamp-2">
+                                        {e?.innerVoice || e?.statusText || '(无正文字段)'}
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+export default XinshengCardModal;

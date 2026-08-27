@@ -12146,7 +12146,11 @@ var SSE_DONE_BYTES = SSE_ENCODER.encode("event: done\ndata: {}\n\n");
 
 // utils/sanitize.ts
 var stripLiteralBackslashN = (t) => t.replace(/\\n/g, "\n");
+var XINSHENG_LINE_RE = /^\s*\{\s*"t"\s*:\s*"xinsheng"/i;
+var isolateXinshengLines = (t) => t.replace(/\}\s*,?\s*\{"t":/g, '}\n{"t":').replace(/([^\n{])\s*(\{"t"\s*:\s*"xinsheng")/gi, "$1\n$2");
+var stripXinshengLines = (t) => isolateXinshengLines(t).split("\n").filter((line) => !XINSHENG_LINE_RE.test(line)).join("\n");
 var stripSourceTags = (t) => t.replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, "\n");
+var stripFaceToFacePhoneSourceTags = (t) => t.replace(/\s*[`'“”]*\s*(?:\[\s*面对面手机消息\s*\]|【\s*面对面手机消息\s*】|⟦\s*SRC\s*:\s*FACE[_ -]?PHONE\s*⟧|<\s*SOURCE\s*:\s*FACE[_ -]?TO[_ -]?FACE[_ -]?PHONE\s*>|<\s*FACE[_ -]?TO[_ -]?FACE[_ -]?PHONE\s*>)[`'“”]*\s*/giu, "\n").replace(/\s*面对面期间的手机消息（只读来源）\s*/gu, "\n");
 var stripTimestamps = (t) => t.replace(/\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\]\s*/g, "").replace(/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s*/gm, "").replace(/（[上下]午\d{1,2}[：:]\d{2}）/g, "").replace(/\(\d{1,2}:\d{2}\s*[AP]M\)/gi, "");
 var stripChineseDate = (t) => t.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, "");
 var stripRoleNamePrefix = (t) => t.replace(/^[\w一-龥]+:\s*/, "");
@@ -12275,6 +12279,7 @@ function sanitizeForNotification(text) {
   let result = text;
   result = stripLiteralBackslashN(result);
   result = stripThinkBlocks(result);
+  result = stripXinshengLines(result);
   result = replaceHtmlBlocks(result);
   result = replaceEmojiReverseTag(result);
   result = replaceSendEmoji(result);
@@ -12285,6 +12290,7 @@ function sanitizeForNotification(text) {
   result = stripRoleNamePrefix(result);
   result = stripSystemLogLeak(result);
   result = stripSourceTags(result);
+  result = stripFaceToFacePhoneSourceTags(result);
   result = stripInnerState(result);
   result = stripBusinessTagsForNotification(result);
   result = stripQuotes2(result);
@@ -12342,8 +12348,10 @@ ${ATOM_MARKER}B${idx}${ATOM_MARKER}
   cleaned = stripChineseDate(cleaned);
   cleaned = stripRoleNamePrefix(cleaned);
   cleaned = stripSourceTags(cleaned);
+  cleaned = stripFaceToFacePhoneSourceTags(cleaned);
   cleaned = stripLegacyTrans(cleaned);
   cleaned = stripMarkdownDividers(cleaned);
+  cleaned = isolateXinshengLines(cleaned);
   const rawChunks = chunkText(cleaned);
   const SOLO_RE = new RegExp(`^${ATOM_MARKER}B(\\d+)${ATOM_MARKER}$`);
   const GLOBAL_RE = new RegExp(`${ATOM_MARKER}B(\\d+)${ATOM_MARKER}`, "g");
@@ -12371,6 +12379,13 @@ ${ATOM_MARKER}B${idx}${ATOM_MARKER}
       );
       rawText = rawText.trim();
       if (!rawText) continue;
+      if (XINSHENG_LINE_RE.test(rawText) && rawText.endsWith("}")) {
+        if (segments.length > 0) segments[segments.length - 1].raw += `
+${rawText}`;
+        else pendingQuoteRaw += `${rawText}
+`;
+        continue;
+      }
       const sanitized = sanitizeTextForBanner(rawText).trim();
       if (!sanitized) {
         if (!stripQuotes2(rawText).trim()) pendingQuoteRaw += `${rawText}
@@ -12697,13 +12712,15 @@ var SIDE_EFFECT_TAGS = [
       return invitation ? { type: "meeting_invite", invitation } : null;
     }
   },
-  // [[REACT: ❤️ | 用户原话短片段]]；target 可省略，客户端回落到最近一条 user 消息。
+  // [[REACT: ❤️ | 用户原话短片段]] / [REACT: ❤️ | 用户原话短片段]
+  // target 可省略，客户端回落到最近一条 user 消息。两种括号都必须消费，
+  // 否则主动消息会把控制标签原样推到聊天气泡里。
   {
-    re: /\[\[\s*REACT\s*[:：]\s*([^|｜\]\r\n]+?)(?:\s*[|｜]\s*([^\]\r\n]{0,120}?))?\s*\]\]/giu,
+    re: /(?:\[\[\s*REACT\s*[:：]\s*([^|｜\]\r\n]+?)(?:\s*[|｜]\s*([^\]\r\n]{0,120}?))?\s*\]\]|\[\s*REACT\s*[:：]\s*([^|｜\]\r\n]+?)(?:\s*[|｜]\s*([^\]\r\n]{0,120}?))?\s*\])/giu,
     toDirective: (m) => {
-      const emoji = m[1].trim();
+      const emoji = (m[1] ?? m[3] ?? "").trim();
       if (!emoji || emoji.length > 24) return null;
-      const target = m[2]?.trim().slice(0, 80);
+      const target = (m[1] !== void 0 ? m[2] : m[4])?.trim().slice(0, 80);
       return { type: "message_reaction", emoji, ...target ? { target } : {} };
     }
   },

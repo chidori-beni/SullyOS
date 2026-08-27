@@ -625,3 +625,58 @@ describe('发图指令不能在 worker 里被丢掉', () => {
     expect(segs.map(s => s.raw).join('\n')).not.toContain('TOTALLY_MADE_UP');
   });
 });
+
+// ─── 心声（xinsheng）───────────────────────────────────────────────────────
+//
+// 心声是回复末尾那一行 {"t":"xinsheng", ...}。要求：
+//   · 绝不出现在推送横幅里（终态，没有补救余地）
+//   · 绝不变成气泡
+//   · 但**必须到得了客户端** —— 只有客户端有心声库可写
+// 所以 segments 路径上它挂到上一段的 raw 尾巴，跟发图指令同一套路。
+describe('sanitize · 心声', () => {
+  const LINE = '{"t":"xinsheng","innerVoice":"想再多待一会儿","emotionLevel":82}';
+
+  it('横幅：整行删掉', () => {
+    expect(sanitizeForNotification(`那我等你。\n${LINE}`)).toBe('那我等你。');
+  });
+
+  it('横幅：黏在正文屁股后面也删干净', () => {
+    expect(sanitizeForNotification(`那我等你。${LINE}`)).toBe('那我等你。');
+  });
+
+  it('气泡预处理：安全网，老 Worker 把它当正文推过来时也不会渲染出 JSON', () => {
+    expect(sanitizeForBubble(`那我等你。\n${LINE}`)).toBe('那我等你。');
+  });
+
+  it('分段：不自成一段，挂到上一段的 raw 上带给客户端', () => {
+    const segs = sanitizeIntoSegments(`真的吗？\n那我等你。\n${LINE}`);
+    expect(segs).toHaveLength(2);
+    expect(segs.map(s => s.sanitized)).toEqual(['真的吗？', '那我等你。']);
+    expect(segs[1].raw).toContain('"t":"xinsheng"');
+    // 每一段的 banner 都必须非空 —— 空 banner 的 push 在 iOS 上会被吊销订阅
+    expect(segs.every(s => s.sanitized.trim().length > 0)).toBe(true);
+  });
+
+  it('分段：黏在最后一句后面时，先顶成独立一行再挂走，横幅里不带 JSON', () => {
+    const segs = sanitizeIntoSegments(`真的吗？\n那我等你。${LINE}`);
+    expect(segs.map(s => s.sanitized)).toEqual(['真的吗？', '那我等你。']);
+    expect(segs[1].raw).toContain('"t":"xinsheng"');
+  });
+
+  it('分段：出现在最前面时顺延给下一段，不丢', () => {
+    const segs = sanitizeIntoSegments(`${LINE}\n那我等你。`);
+    expect(segs).toHaveLength(1);
+    expect(segs[0].sanitized).toBe('那我等你。');
+    expect(segs[0].raw).toContain('"t":"xinsheng"');
+  });
+
+  it('分段：JSON 后面还续了一句话时不整块挂走，宁可露出来也不吞正文', () => {
+    const segs = sanitizeIntoSegments(`${LINE} 还有一句`);
+    expect(segs.map(s => s.sanitized).join('')).toContain('还有一句');
+  });
+
+  it('别的 {"t":...} JSON 不受影响（只认 xinsheng）', () => {
+    const segs = sanitizeIntoSegments('你好\n{"t":"thinking","c":"嗯"}');
+    expect(segs.map(s => s.raw).join('\n')).toContain('"t":"thinking"');
+  });
+});

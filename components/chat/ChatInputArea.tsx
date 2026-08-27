@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, PencilSimple, BellSimpleRinging, Alarm, Sparkle, FadersHorizontal, LinkSimple, Waveform, CornersOut, CornersIn } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Plus, Smiley, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, Heartbeat, PencilSimple, BellSimpleRinging, Alarm, Sparkle, FadersHorizontal, LinkSimple, Waveform, CornersOut, CornersIn } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { AcnhActionTile } from '../os/acnhIcons';
@@ -54,6 +54,8 @@ interface ChatInputAreaProps {
     htmlModeEnabled?: boolean;
     // 思考过程展示（会话级）
     showThinkingChain?: boolean;
+    /** 心声（per-character）。开着时按钮上打个点，跟「思考已开」一个观感。 */
+    xinshengEnabled?: boolean;
     // Input style
     inputStyle?: 'default' | 'rounded' | 'flat' | 'wechat' | 'ios' | 'telegram' | 'discord' | 'pixel';
     /** 兼容旧调用方；消息栏现在统一由回车发送，不再渲染发送按钮。 */
@@ -80,6 +82,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     luckinActivated = false,
     htmlModeEnabled = false,
     showThinkingChain = false,
+    xinshengEnabled = false,
     inputStyle = 'default',
     chromeStyle = 'soft',
     acnh = false,
@@ -820,6 +823,22 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                   {showThinkingChain && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-indigo-400 border-slate-900' : 'bg-indigo-500 border-white'}`} />}
                               </div>)}
                               <span className="text-xs font-bold">{showThinkingChain ? '思考已开' : '展示思考'}</span>
+                            </button>
+
+                            {/* 「心声」按钮：打开自定义面板（含总开关）。卡片本身从消息头像点进去。 */}
+                            <button
+                              onClick={() => onPanelAction('xinsheng-settings')}
+                              className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
+                            >
+                              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border relative ${
+                                  xinshengEnabled
+                                    ? (isDiscordStyle ? 'bg-rose-500/20 text-rose-300 border-rose-400/40' : 'bg-rose-100 text-rose-500 border-rose-200')
+                                    : (isDiscordStyle ? 'bg-slate-800 text-rose-300 border-rose-400/20' : 'bg-rose-50 text-rose-400 border-rose-100')
+                              }`}>
+                                  <Heartbeat className="w-6 h-6" weight="bold" />
+                                  {xinshengEnabled && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-rose-400 border-slate-900' : 'bg-rose-500 border-white'}`} />}
+                              </div>
+                              <span className="text-xs font-bold">{xinshengEnabled ? '心声已开' : '心声'}</span>
                             </button>
 
                             {/* 聊天装扮：打开该角色专属的「聊天细节微调」弹窗（跟随全局 / 单独定制，不用写 CSS） */}

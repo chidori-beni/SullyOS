@@ -30,6 +30,11 @@ import { DB } from './db';
 import { buildSelfiePrompt, getImageGenConfig, isImageGenReady, runImageGeneration } from './novelaiImage';
 import { ChatParser, type FrozenMusicSong } from './chatParser';
 import { stripFaceToFacePhoneSourceTags } from './sanitize';
+import { extractXinsheng } from './xinsheng/xinshengData';
+import { appendXinshengEntry } from './xinsheng/xinshengStore';
+import { newXinshengRoundId, XINSHENG_ROUND_META_KEY } from './xinsheng/xinshengRound';
+import { dispatchXinshengUpdated } from './xinsheng/xinshengEvents';
+import { peekXinshengRoundPreset, toEntryPreset } from './xinsheng/xinshengRandomPreset';
 import { resolveCharTimeZone } from './timezone';
 import { NotionManager, FeishuManager, XhsNote } from './realtimeContext';
 import { enqueuePendingDiary, removePendingDiary } from './pendingDiary';
@@ -585,8 +590,17 @@ export async function applyAssistantPostProcessing(
     // 统一落库入口：ctx.messageTimestamp（若有）盖到每条消息上，保证同一轮拆出的
     // 正文 / 表情 / 卡片 / 系统提示时间戳一致；没传则维持 DB.saveMessage 默认（写库当刻）。
     // 全函数落库一律走这里，别直接调 DB.saveMessage——漏一处就会出现气泡时间戳互相打架。
-    const persistMessage: typeof DB.saveMessage = (msg) =>
-        DB.saveMessage(messageTimestamp != null ? { ...msg, timestamp: messageTimestamp } : msg);
+    // 本轮的心声 roundId。Step 1 摘到心声时才赋值，之后本轮落库的每条 assistant 消息
+    // 都带上它 —— 点任意一条气泡的头像都能打开同一张卡（见 utils/xinsheng/xinshengRound.ts）。
+    let xinshengRoundId: string | null = null;
+    const persistMessage: typeof DB.saveMessage = (msg) => {
+        const withTs = messageTimestamp != null ? { ...msg, timestamp: messageTimestamp } : msg;
+        if (!xinshengRoundId || (msg as any).role !== 'assistant') return DB.saveMessage(withTs);
+        return DB.saveMessage({
+            ...withTs,
+            metadata: { ...((withTs as any).metadata || {}), [XINSHENG_ROUND_META_KEY]: xinshengRoundId },
+        } as any);
+    };
     const {
         setMessages,
         reloadMessages,
@@ -726,6 +740,34 @@ export async function applyAssistantPostProcessing(
     // ─── Step 1: 初次粗洗 ───
     let aiContent = replayedTagPrefix ? `${replayedTagPrefix}${rawAiContent}` : rawAiContent;
     aiContent = normalizeAiContent(aiContent);
+
+    // ── 心声：最先摘，最先落 ──
+    //
+    // 必须排在所有 sanitize / 分段 / 二轮 LLM 之前：那一行 JSON 只要漏过这里，
+    // 后面任何一条路径都可能把它当正文渲染成气泡。摘完立刻落库，因为二轮 LLM
+    // 可能整段替换正文，晚了就找不到这一轮的心声了。
+    //
+    // 开关关着时**完全不介入**（连正则都不跑）：没开心声的角色不该因为模型某次
+    // 幻觉出一行 xinsheng JSON 就凭空多出一张卡。
+    if (char.xinshengEnabled) {
+        const picked = extractXinsheng(aiContent);
+        aiContent = picked.cleaned;
+        if (picked.entry) {
+            xinshengRoundId = newXinshengRoundId(messageTimestamp ?? Date.now());
+            const roundId = xinshengRoundId;
+            // 「随机套预设」这一轮抽中的样式跟着记录一起存，让这条心声永远保持它
+            // 生成时的样子（见 xinshengRandomPreset.ts 里为什么不写回角色档案）
+            const roundPreset = peekXinshengRoundPreset(char.id);
+            // 不 await：落库慢一点无所谓，但绝不能因为它把整轮回复的上屏卡住。
+            appendXinshengEntry(char.id, roundId, {
+                ...picked.entry,
+                _at: messageTimestamp ?? Date.now(),
+                ...(roundPreset ? { _preset: toEntryPreset(roundPreset) } : {}),
+            })
+                .then(() => dispatchXinshengUpdated({ charId: char.id, roundId }))
+                .catch(e => console.warn('[xinsheng] 落库失败:', e));
+        }
+    }
     // 先于 lead-in / 二轮渲染消费：否则控制标签会作为普通气泡短暂闪给用户看。
     aiContent = await consumeScheduleChanges(aiContent, utteranceAt);
     // 在任何 lead-in/二轮渲染之前先剥掉仿卡片文本，防止它被 chunkText 拆成灰色普通气泡。

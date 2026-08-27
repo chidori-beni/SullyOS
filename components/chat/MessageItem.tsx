@@ -1537,6 +1537,11 @@ interface MessageItemProps {
     moduleAlign?: 'anchor' | 'center';
     /** 流式预览无缝接棒时，正式消息首帧已经可见，不应再次从透明态淡入。 */
     suppressEntranceAnimation?: boolean;
+    /**
+     * 点角色头像 → 打开这一轮的心声卡。不传（或这条消息没有 xinshengRoundId）时
+     * 头像保持原来的样子，不可点。
+     */
+    onAvatarClick?: (roundId: string) => void;
     /** Instant Push 准备中：在用户气泡左侧渲染 dot pulse */
     isPending?: boolean;
     /** 是否开启 dot pulse 指示。关掉则 pending 期间不显示任何视觉 */
@@ -1606,6 +1611,7 @@ const MessageItem = React.memo(({
     showTimestamp = 'always',
     moduleAlign = 'center',
     suppressEntranceAnimation = false,
+    onAvatarClick,
     isPending = false,
     pendingIndicator = true,
     onMcdSendCart,
@@ -1770,8 +1776,17 @@ const MessageItem = React.memo(({
         options?: { visible?: boolean; className?: string },
     ) => {
         const visible = options?.visible ?? shouldShowAvatar;
+        // 心声：这一轮存过心声（metadata 上有 roundId）才让头像可点，
+        // 没存过就保持原样 —— 点了弹一张空卡比点不动更让人困惑。
+        const xinshengRoundId = typeof m.metadata?.xinshengRoundId === 'string' ? m.metadata.xinshengRoundId : '';
+        const avatarClickable = !isUser && !!xinshengRoundId && !!onAvatarClick;
         return (
-            <div className={`relative ${avatarSizeClass} z-0 ${options?.className || ''}`}>
+            <div
+                className={`relative ${avatarSizeClass} z-0 ${options?.className || ''}${avatarClickable ? ' cursor-pointer active:scale-95 transition-transform' : ''}`}
+                onClick={avatarClickable ? (e) => { e.stopPropagation(); onAvatarClick!(xinshengRoundId); } : undefined}
+                role={avatarClickable ? 'button' : undefined}
+                aria-label={avatarClickable ? '查看这一轮的心声' : undefined}
+            >
                 {visible && (
                     <>
                         <img

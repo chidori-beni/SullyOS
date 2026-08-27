@@ -29,6 +29,9 @@ import { formatMessageReactionContext, stripMessageReactionTags } from './messag
 import { stripFaceToFacePhoneSourceTags } from './sanitize';
 import { buildAutoReplyCatchUpPrompt, buildBusyReplyPrompt, decideBusyReply } from './busyAutoReply';
 import { buildUserCalendarContext } from './calendarIntegration';
+import { buildXinshengContinuityBlock, buildXinshengInstruction, selectXinshengContinuity } from './xinsheng/xinshengPrompt';
+import { readXinshengHistory } from './xinsheng/xinshengStore';
+import { prepareXinshengRoundPreset } from './xinsheng/xinshengRandomPreset';
 
 // 语音格式指导按当前 TTS 服务商二选一：用 MiniMax 才注入 MiniMax 那套（含 <#秒#> 停顿标记），
 // 用鱼声则注入鱼声版（去掉 MiniMax 专属标记，改用标点 / 省略号控制停顿）。
@@ -1140,6 +1143,35 @@ ${voiceActingGuide()}`;
         } else {
             // Voice is disabled — explicitly prohibit voice tags to prevent inertia from call/date history
             baseSystemPrompt += `\n\n[系统提示: 语音消息功能当前未开启。严禁使用 <语音>...</语音> 和 <字幕>...</字幕> 标签。所有回复必须是纯文字消息。]`;
+        }
+
+        // ── 心声 ──
+        //
+        // 生成指令进 stable：内容只跟角色设置有关，一轮轮不变，放稳定段不打断 prefix 缓存。
+        // [INNER-CONTINUITY]（最近几轮心声的回灌）每轮都变，进 volatileState。
+        //
+        // 主动消息模板（forFirePack）照样注入：定时消息也是角色说的话，它那一刻的内心戏
+        // 该被记下来。指令本身不带时效读数，烤进模板不会过期。
+        if (char.xinshengEnabled) {
+            // 「随机套预设」开着时，这一轮用抽中那个预设的提示词（见 xinshengRandomPreset.ts）
+            const roundPreset = await prepareXinshengRoundPreset(char);
+            const instruction = buildXinshengInstruction({
+                enabled: true,
+                customPrompt: roundPreset?.customPrompt || char.xinshengCustomPrompt,
+            });
+            if (instruction) baseSystemPrompt += instruction;
+
+            try {
+                const history = await readXinshengHistory(char.id);
+                const rounds = selectXinshengContinuity(
+                    history,
+                    char.xinshengAiVisibleFields ?? 'innerVoice',
+                );
+                volatileState += buildXinshengContinuityBlock(rounds);
+            } catch (e) {
+                // 读不到历史只是少一段连续性，不该让整份 prompt 构建失败
+                console.warn('[xinsheng] 读连续性失败:', e);
+            }
         }
 
         // 总纲：放在整段上下文最末尾，借 recency 抢最强注意力——这是模型生成下一轮前

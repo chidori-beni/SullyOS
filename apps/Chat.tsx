@@ -49,6 +49,8 @@ import Modal from '../components/os/Modal';
 import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import ActiveMsg2SettingsModal from '../components/chat/ActiveMsg2SettingsModal';
 import ThinkingChainSettingsModal from '../components/chat/ThinkingChainSettingsModal';
+import XinshengCardModal from '../components/chat/xinsheng/XinshengCardModal';
+import XinshengSettingsModal from '../components/chat/xinsheng/XinshengSettingsModal';
 import ScheduleChangeNotice from '../components/chat/ScheduleChangeNotice';
 import { useChatAI } from '../hooks/useChatAI';
 import { cleanTextForTts, parseVoiceOutput } from '../utils/minimaxTts';
@@ -246,6 +248,16 @@ const Chat: React.FC = () => {
     const [showProactiveModal, setShowProactiveModal] = useState(false);
     const [showActiveMsg2Modal, setShowActiveMsg2Modal] = useState(false);
     const [showThinkingChainModal, setShowThinkingChainModal] = useState(false);
+    // 心声：卡片弹层 + 自定义面板。targetRound = 点了哪一条气泡的头像。
+    const [xinshengCardOpen, setXinshengCardOpen] = useState(false);
+    const [xinshengSettingsOpen, setXinshengSettingsOpen] = useState(false);
+    const [xinshengTargetRound, setXinshengTargetRound] = useState<string | null>(null);
+    // 传给每一条 MessageItem，必须稳定 —— MessageItem 用的是自定义 memo 比较器，
+    // 每帧新建的闭包会让所有气泡跟着重渲染。
+    const openXinshengCard = useCallback((roundId: string) => {
+        setXinshengTargetRound(roundId);
+        setXinshengCardOpen(true);
+    }, []);
 
     // Archive Prompts State
     const [archivePrompts, setArchivePrompts] = useState<{id: string, name: string, content: string}[]>(DEFAULT_ARCHIVE_PROMPTS);
@@ -1830,7 +1842,7 @@ const Chat: React.FC = () => {
         if ([
             'transfer', 'archive', 'settings', 'chrome-css', 'chrome-sound', 'fine-tune',
             'meetup', 'proactive', 'active-msg-2', 'schedule', 'mcd-request', 'luckin-request',
-            'html-mode-toggle', 'html-mode-settings', 'thinking-settings',
+            'html-mode-toggle', 'html-mode-settings', 'thinking-settings', 'xinsheng-settings',
             // 独立小功能：点一下就是用了一次，跟「打开某个面板」同一性质。
             // send-emoji / select-category 这些是「挑哪一个」，不进名单。
             'poke', 'emoji-import', 'add-category', 'mcd-end', 'luckin-end',
@@ -1899,6 +1911,14 @@ const Chat: React.FC = () => {
                 // 「展示思考」按钮 → 打开思考链设置 modal（开关 / 卡片风格 / 配色 / 追加提示词）
                 if (!char) break;
                 setShowThinkingChainModal(true);
+                break;
+            }
+            case 'xinsheng-settings': {
+                // 「心声」按钮 → 自定义面板（总开关 / 布局 / CSS / 提示词 / 字段 / 预设库）。
+                // 卡片本身不从这里进 —— 那是点消息头像的事。
+                if (!char) break;
+                setShowPanel('none');
+                setXinshengSettingsOpen(true);
                 break;
             }
         }
@@ -3987,6 +4007,7 @@ const Chat: React.FC = () => {
                             messageSpacing={osTheme.chatMessageSpacing}
                             showTimestamp={osTheme.chatShowTimestamp}
                             suppressEntranceAnimation={suppressEntranceAnimation}
+                            onAvatarClick={openXinshengCard}
                             isPending={false}
                             pendingIndicator={osTheme.chatPendingIndicator !== false}
                             onMcdSendCart={handleMcdSendCart}
@@ -4219,6 +4240,7 @@ const Chat: React.FC = () => {
                     luckinActivated={luckinActivated}
                     htmlModeEnabled={!!(char as any).htmlModeEnabled}
                     showThinkingChain={!!(char as any).showThinkingChain}
+                    xinshengEnabled={!!(char as any).xinshengEnabled}
                     inputStyle={osTheme.chatInputStyle}
                     sendButtonStyle={osTheme.chatSendButtonStyle}
                     chromeStyle={osTheme.chatChromeStyle}
@@ -4373,6 +4395,38 @@ const Chat: React.FC = () => {
                         if (next.customPrompt !== undefined) patch.thinkingChainCustomPrompt = next.customPrompt;
                         if (next.customCss !== undefined) patch.thinkingChainCustomCss = next.customCss;
                         if (Object.keys(patch).length) updateCharacter(char.id, patch as any);
+                    }}
+                />
+            )}
+
+            {/* 心声卡 —— 入口：点角色头像（那条消息存过心声才可点）。 */}
+            {char && (
+                <XinshengCardModal
+                    isOpen={xinshengCardOpen}
+                    onClose={() => setXinshengCardOpen(false)}
+                    char={char}
+                    userProfile={userProfile}
+                    targetRoundId={xinshengTargetRound}
+                    onOpenSettings={() => { setXinshengCardOpen(false); setXinshengSettingsOpen(true); }}
+                />
+            )}
+
+            {/* 自定义心声 —— 入口：心声卡右上角「自定义」，或加号面板。 */}
+            {char && (
+                <XinshengSettingsModal
+                    isOpen={xinshengSettingsOpen}
+                    onClose={() => setXinshengSettingsOpen(false)}
+                    char={char}
+                    addToast={addToast}
+                    onSave={(v) => {
+                        updateCharacter(char.id, {
+                            xinshengEnabled: v.enabled,
+                            xinshengDisplayMode: v.displayMode,
+                            xinshengLayout: v.layout,
+                            xinshengCustomCss: v.customCss,
+                            xinshengCustomPrompt: v.customPrompt,
+                            xinshengAiVisibleFields: v.aiVisibleFields,
+                        } as any);
                     }}
                 />
             )}

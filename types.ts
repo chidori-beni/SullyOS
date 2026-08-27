@@ -3138,6 +3138,33 @@ export interface CharacterProfile {
    *   UI 自然不会显示，符合"打开后才看"的预期。
    */
   showThinkingChain?: boolean;
+
+  // ─── 心声（per-character）───
+  //
+  // 移植自糯叽机 4.64。开启后模型会在每条回复末尾追加一行 {"t":"xinsheng", ...}，
+  // 前端摘走、落进心声库，点消息头像即可查看这一轮的「内心戏卡片」。
+  // 默认关：开启会给每轮 system prompt 加一段指令，并改变模型的输出形状。
+
+  /** 心声总开关。关 = prompt 一个字都不加，解析器也不介入。 */
+  xinshengEnabled?: boolean;
+  /**
+   * 卡片显示模式。
+   * - 'planner'（默认）：Sully 风格的默认心声卡，字段固定
+   * - 'layout'：用 @指令布局模板 + 自定义 CSS 渲染，糯叽机论坛美化走这条
+   */
+  xinshengDisplayMode?: 'planner' | 'layout';
+  /** @指令布局模板（仅 'layout' 模式生效）。语法见 utils/xinsheng/xinshengLayout.ts。 */
+  xinshengLayout?: string;
+  /** 自定义 CSS，注入在默认 CSS 之后，作用域是 .xt-root。 */
+  xinshengCustomCss?: string;
+  /** 完全替换心声生成指令。留空 = 用内置指令。必须让模型输出 {"t":"xinsheng" 开头的单行 JSON。 */
+  xinshengCustomPrompt?: string;
+  /**
+   * 逗号分隔的字段名：这些字段最近几轮的值会作为 [INNER-CONTINUITY] 回灌给模型。
+   * 留空 = 模型完全看不到自己的心声（每轮内心戏互不影响）。默认 'innerVoice'。
+   */
+  xinshengAiVisibleFields?: string;
+
   /**
    * 思考链卡片视觉风格（per-character）。
    * - 'echo' (default)：暗紫底 + 暖金描边「回响」二次元卡牌

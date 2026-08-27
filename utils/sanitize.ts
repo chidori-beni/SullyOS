@@ -22,6 +22,31 @@ import { segmentTextWithProtectedBlocks } from '@rei-standard/amsg-instant';
 /** `\\n` 字面 → 真实换行. 必须先跑, 否则后续 ^ 行锚定失效. */
 const stripLiteralBackslashN = (t: string): string => t.replace(/\\n/g, '\n');
 
+// ─── 心声 (xinsheng) ────────────────────────────────────────────────────────
+//
+// 心声协议要求模型在回复**最末尾**追加一行 `{"t":"xinsheng", ...}`。这一行是给
+// 心声卡片用的数据, 绝不能变成气泡, 也绝不能出现在推送横幅里。
+//
+// 模型常见的两种走样都在这里兜:
+//   1. 直接黏在最后一句话屁股后面 (`……晚安。{"t":"xinsheng",...}`)
+//   2. 和别的 JSON 挤在同一行 (`}{"t":"xinsheng"`)
+// 不先顶到独立一行, chunkText 按 \n 切不开, 整块 JSON 会跟着正文一起进 banner。
+
+/** 心声行的硬锚点. 与 utils/xinsheng/xinshengData.ts 的 XINSHENG_LINE_RE 同源 —— 那边是解析侧, 这边是清洗侧, 故意各留一份, 避免把 xinsheng 模块拖进 worker bundle. */
+const XINSHENG_LINE_RE = /^\s*\{\s*"t"\s*:\s*"xinsheng"/i;
+
+/** 把黏在正文尾巴上/挤在一行里的心声 JSON 顶成独立一行. */
+const isolateXinshengLines = (t: string): string =>
+  t.replace(/\}\s*,?\s*\{"t":/g, '}\n{"t":')
+   .replace(/([^\n{])\s*(\{"t"\s*:\s*"xinsheng")/gi, '$1\n$2');
+
+/** 整行删掉心声 JSON. 终态输出 (banner / 气泡) 用. */
+const stripXinshengLines = (t: string): string =>
+  isolateXinshengLines(t)
+    .split('\n')
+    .filter(line => !XINSHENG_LINE_RE.test(line))
+    .join('\n');
+
 /** 源标签 `[聊天]/[通话]/[约会]` → 换行 (保留分隔语义) */
 const stripSourceTags = (t: string): string => t.replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, '\n');
 
@@ -384,6 +409,8 @@ export function sanitizeForNotification(text: string): string {
   result = stripLiteralBackslashN(result);
   // 2. think 块最早剥 — 里面可能含其他 tag 影响后续匹配
   result = stripThinkBlocks(result);
+  // 2.5. 心声行整行删 — 横幅是终态, 一坨 JSON 出现在锁屏上没有任何补救余地
+  result = stripXinshengLines(result);
   // 3. HTML 块替换 — 内部 markdown/tag 不应被处理
   result = replaceHtmlBlocks(result);
   // 4. 反向 emoji tag 先于正向 SEND_EMOJI (反向可能也走 SEND_EMOJI 重写, 但这里直接转最终展示)
@@ -438,6 +465,11 @@ export function sanitizeForBubble(
   //      applyAssistantPostProcessing Step 8 双语拆泡都靠严格配对正则)
   result = normalizeVoiceTags(result);
   result = normalizeTranslationTags(result);
+  // 1.8. 心声行整行删 —— 安全网。正常路径上 applyAssistantPostProcessing Step 1 已经
+  //      先摘走了它 (要拿去落卡片)，走到这里还剩心声行只有一种可能：这条内容来自
+  //      **没更新的线上 Worker**，它把心声 JSON 当普通正文推了过来。宁可少一张卡，
+  //      也不能让用户在气泡里看到一坨 JSON。
+  result = stripXinshengLines(result);
   // 2. 源标签 / 时间戳 / 系统日志 leak / 业务标签
   result = stripSourceTags(result);
   result = stripFaceToFacePhoneSourceTags(result);
@@ -571,6 +603,9 @@ export function sanitizeIntoSegments(text: string): Segment[] {
   // 这里保留是为了让还没被认领的形态到得了客户端。banner 侧在 sanitizeTextForBanner 剥干净。
   cleaned = stripLegacyTrans(cleaned);
   cleaned = stripMarkdownDividers(cleaned);
+  // 心声 JSON 顶成独立一行 —— 只 isolate 不 strip: 它必须**到得了客户端**
+  // (客户端才有心声库可写)，只是不能自己成为一段。下面 Phase 3 会把它挂到上一段尾巴上。
+  cleaned = isolateXinshengLines(cleaned);
 
   // Phase 2: chunk 跟客户端 chatParser.chunkText 同算法 (内联避免 import chatParser
   // 把 DB / React / Capacitor 依赖拖进 worker bundle)
@@ -609,6 +644,18 @@ export function sanitizeIntoSegments(text: string): Segment[] {
       );
       rawText = rawText.trim();
       if (!rawText) continue;
+      // 心声行：跟发图指令同一个套路（见下方 MEDIA_TAG_RE 那段的长注释）。
+      // 它必须原样到客户端（那边要落进心声库），但绝不能自己成为一段 —— 那样这条
+      // 推送的 banner 就是一坨 JSON。挂到**上一段的 raw 尾巴**上：推送数不变、
+      // banner 照旧是正文，客户端 Step 1 会把它摘走。
+      // 出现在最前面（模型把 JSON 写到了开头）就顺延给下一段。
+      // 收尾的 `}` 是要求的一部分：模型偶尔会在 JSON 后面又续一句话，那一整段整块
+      // 挂走会把那句话从 banner 里吞掉。宁可那种畸形形态露出来，也不要静默吞正文。
+      if (XINSHENG_LINE_RE.test(rawText) && rawText.endsWith('}')) {
+        if (segments.length > 0) segments[segments.length - 1].raw += `\n${rawText}`;
+        else pendingQuoteRaw += `${rawText}\n`;
+        continue;
+      }
       const sanitized = sanitizeTextForBanner(rawText).trim();
       if (!sanitized) {
         // 只有剥掉引用就空了的段才留着顺延；别的剥空成因（纯系统日志 leak 之类）照旧丢。
