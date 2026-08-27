@@ -333,6 +333,7 @@ describe('CallApp runtime references', () => {
     const callSource = readFileSync(path.resolve(__dirname, '../apps/CallApp.tsx'), 'utf8');
     const chatSource = readFileSync(path.resolve(__dirname, '../apps/Chat.tsx'), 'utf8');
 
+    expect(callSource).toContain("import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'");
     expect(chatSource).toContain("returnTo: 'chat'");
     expect(callSource).toContain("returnTo === 'chat'");
     expect(callSource).toContain('const returnFromCallRecords');

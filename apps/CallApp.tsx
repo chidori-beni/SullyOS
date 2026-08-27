@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Microphone, SpeakerHigh, PhoneDisconnect, Translate, Gear, Clock, CaretLeft, CaretRight, Phone, VideoCamera, VideoCameraSlash, Cube, FolderOpen, FileZip, Moon, Sun, Check } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { extractContent, safeFetchJson } from '../utils/safeApi';
