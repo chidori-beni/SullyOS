@@ -51,6 +51,9 @@ import ActiveMsg2SettingsModal from '../components/chat/ActiveMsg2SettingsModal'
 import ThinkingChainSettingsModal from '../components/chat/ThinkingChainSettingsModal';
 import XinshengCardModal from '../components/chat/xinsheng/XinshengCardModal';
 import XinshengSettingsModal from '../components/chat/xinsheng/XinshengSettingsModal';
+import { findOrphanedXinshengRoundIds } from '../utils/xinsheng/xinshengRound';
+import { deleteOrphanedXinshengEntries } from '../utils/xinsheng/xinshengStore';
+import { dispatchXinshengUpdated } from '../utils/xinsheng/xinshengEvents';
 import ScheduleChangeNotice from '../components/chat/ScheduleChangeNotice';
 import { useChatAI } from '../hooks/useChatAI';
 import { cleanTextForTts, parseVoiceOutput } from '../utils/minimaxTts';
@@ -511,6 +514,27 @@ const Chat: React.FC = () => {
         for (const id of idList) {
             DB.deleteAsset(voiceAssetKey(id)).catch(() => { /* ignore */ });
         }
+    };
+
+    /**
+     * 心声孤儿清理：消息删掉了，检查这批消息带的 roundId 是不是彻底没气泡引用了，
+     * 没有就把对应的心声记录也删掉（收藏过的会被跳过，见 deleteOrphanedXinshengEntries）。
+     *
+     * 不然「历史」翻页能翻到一条早就找不到原文的记录——用户实测反馈的真实问题。
+     * `deletedMsgs` 是即将/刚刚被删掉的消息对象（要带 metadata 才能读到 roundId），
+     * `remainingMsgs` 是删除后代表"最终剩余状态"的消息数组（各个删除入口自己算好的
+     * `messages`/`toKeep`/`remaining`，不用另外查库）。best-effort，失败不影响删除本身。
+     */
+    const cleanupOrphanedXinsheng = (
+        deletedMsgs: ReadonlyArray<{ metadata?: any }>,
+        remainingMsgs: ReadonlyArray<{ metadata?: any }>,
+    ) => {
+        if (!char?.xinshengEnabled) return; // 没开心声的角色不会有任何 roundId，省一次遍历
+        const orphaned = findOrphanedXinshengRoundIds(deletedMsgs, remainingMsgs);
+        if (orphaned.length === 0) return;
+        deleteOrphanedXinshengEntries(char.id, orphaned)
+            .then(() => dispatchXinshengUpdated({ charId: char.id, roundId: orphaned[0] }))
+            .catch(e => console.warn('[xinsheng] 清理孤儿记录失败:', e));
     };
 
     const handlePlayVoice = (msgId: number) => {
@@ -1804,9 +1828,11 @@ const Chat: React.FC = () => {
         if (lastMsg.role !== 'assistant') return;
 
         const toDeleteIds: number[] = [];
+        const toDeleteMsgs: Message[] = [];
         let index = messages.length - 1;
         while (index >= 0 && messages[index].role === 'assistant') {
             toDeleteIds.push(messages[index].id);
+            toDeleteMsgs.push(messages[index]);
             index--;
         }
 
@@ -1814,10 +1840,13 @@ const Chat: React.FC = () => {
 
         await DB.deleteMessages(toDeleteIds);
         discardVoiceForMessages(toDeleteIds);
+        const newHistory = messages.slice(0, index + 1);
+        // 重 roll 删的正是刚生成的那一轮回复，心声大概率也是刚落库的——不清掉的话
+        // 「历史」翻页能翻到一条对应回复已经被 roll 掉的孤儿记录。
+        cleanupOrphanedXinsheng(toDeleteMsgs, newHistory);
         // 重 roll 也删了消息：正常路径下这轮生成结束会再打脏一次，这里先打是兜住
         // 「触发失败没走到生成收尾」的路径，云端 fire_pack 不能停在删除前。
         markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
-        const newHistory = messages.slice(0, index + 1);
         setMessages(newHistory);
         addToast('回溯对话中...', 'info');
         trackEvent('重新生成回复');
@@ -2568,9 +2597,10 @@ const Chat: React.FC = () => {
                 const processedIds = processedMsgs.map(m => m.id);
                 await DB.deleteMessages(processedIds);
                 discardVoiceForMessages(processedIds);
+                const remaining = allMessages.filter(m => m.id > hwm);
+                cleanupOrphanedXinsheng(processedMsgs, remaining);
                 // 清历史同样动了云端 fire_pack 的对话快照来源，落库后打脏（下同）。
                 markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
-                const remaining = allMessages.filter(m => m.id > hwm);
                 setMessages(remaining.slice(-200));
                 setTotalMsgCount(remaining.length);
                 setVisibleCount(LOAD_BATCH_SIZE);
@@ -2595,6 +2625,7 @@ const Chat: React.FC = () => {
             const toDeleteIds = toDelete.map(m => m.id);
             await DB.deleteMessages(toDeleteIds);
             discardVoiceForMessages(toDeleteIds);
+            cleanupOrphanedXinsheng(toDelete, toKeep);
             setMessages(toKeep);
             setTotalMsgCount(toKeep.length);
             setVisibleCount(LOAD_BATCH_SIZE);
@@ -2957,6 +2988,7 @@ const Chat: React.FC = () => {
         const deletedId = selectedMessage.id;
         await DB.deleteMessage(deletedId);
         discardVoiceForMessages([deletedId]);
+        cleanupOrphanedXinsheng([selectedMessage], messages.filter(m => m.id !== deletedId));
         // 满血主动消息：云端 fire_pack 里带最近对话原文，删了消息不打脏的话，角色到点
         // 还会提起这条已经不存在的消息（快照的消息在 flush 时从 DB 重读，这里只管打脏）。
         markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
@@ -3150,6 +3182,10 @@ const Chat: React.FC = () => {
         if (ids.length > 0) {
             await DB.deleteMessages(ids);
             discardVoiceForMessages(ids);
+            cleanupOrphanedXinsheng(
+                messages.filter(m => msgIdsToDelete.has(m.id)),
+                messages.filter(m => !msgIdsToDelete.has(m.id)),
+            );
         }
 
         const migMap = new Map(migrations.map(m => [m.targetId, m.chain]));

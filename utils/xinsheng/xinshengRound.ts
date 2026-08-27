@@ -21,6 +21,37 @@ export const readRoundId = (msg: { metadata?: any } | null | undefined): string 
 };
 
 /**
+ * 消息被删除后，算出这批删除让哪些 roundId **彻底没有消息引用了**——可以安全清掉
+ * 对应的心声记录了（否则「历史」里会一直躺着一条对应消息早就删掉的孤儿记录，翻
+ * 上一条/下一条还能翻到它，但已经找不到是哪句话生成的）。
+ *
+ * 一轮心声可能对应好几条气泡（一次回复拆成多条），只删其中一条不该连累整条心声记录
+ * 消失——所以要拿"删除后还剩下的消息"核对一遍，只有这批 roundId 里**一条引用都不剩**
+ * 的才会被判定为孤儿。`remainingMessages` 通常就是 Chat.tsx 删除后重新算出的
+ * `messages`/`toKeep`/`remaining` 数组，不需要额外查库。
+ *
+ * 纯函数，不碰任何存储——真正的删除交给 `xinshengStore.ts` 的
+ * `deleteOrphanedXinshengEntries`（它还会跳过用户收藏过的记录）。
+ */
+export const findOrphanedXinshengRoundIds = (
+    deletedMessages: ReadonlyArray<{ metadata?: any }>,
+    remainingMessages: ReadonlyArray<{ metadata?: any }>,
+): string[] => {
+    const deletedRoundIds = new Set<string>();
+    for (const m of deletedMessages) {
+        const rid = m?.metadata?.[XINSHENG_ROUND_META_KEY];
+        if (typeof rid === 'string' && rid) deletedRoundIds.add(rid);
+    }
+    if (deletedRoundIds.size === 0) return [];
+    const stillReferenced = new Set<string>();
+    for (const m of remainingMessages) {
+        const rid = m?.metadata?.[XINSHENG_ROUND_META_KEY];
+        if (typeof rid === 'string' && rid) stillReferenced.add(rid);
+    }
+    return [...deletedRoundIds].filter(rid => !stillReferenced.has(rid));
+};
+
+/**
  * 云端推送路径专用：把同一个 push session 里、已经落库但还没打上 roundId 的**早前**气泡
  * 回填成同一个 roundId。
  *

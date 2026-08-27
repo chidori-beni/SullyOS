@@ -101,8 +101,7 @@ const getChatModeTransition = (message: Message): ChatModeTransition | null => {
  * 判断当前是不是「从特殊互动模式回到 ChatApp 后，尚未产生普通聊天回复」的第一轮。
  *
  * 用户可能连续发送多个气泡再点生成，所以普通 user 消息不会截断搜索；一旦已经出现
- * 普通 assistant 回复，就说明格式切换已经完成，不应在后续每一轮重复提醒。通话助手气泡
- * 是特殊模式的历史台词，即使因为旧竞态落在结束卡片后面，也不能把明确的「通话结束」边界遮掉。
+ * 普通 assistant 回复，就说明格式切换已经完成，不应在后续每一轮重复提醒。
  * 普通 system 日志也不参与判断，避免挂断卡片与其他后台提示把真正的来源隔开。
  */
 export const detectChatModeTransition = (messages: readonly Message[]): ChatModeTransition | null => {
@@ -113,13 +112,7 @@ export const detectChatModeTransition = (messages: readonly Message[]): ChatMode
         const mode = getChatModeTransition(message);
         if (mode) return hasPendingChatInput ? mode : null;
 
-        if (message.role === 'assistant') {
-            // 通话 transcript 是特殊模式的历史气泡，不是 ChatApp 已经完成的普通回复。
-            // 允许继续向前找到同一段之后的 call-end-popup，给第一条真正的聊天消息注入
-            // 「电话已经挂断」边界；旧版本竞态遗留的迟到台词也不能把角色骗回通话态。
-            if (message.metadata?.source === 'call') continue;
-            return null;
-        }
+        if (message.role === 'assistant') return null;
         if (message.role === 'user') hasPendingChatInput = true;
     }
 
@@ -1050,7 +1043,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                 date: '线下见面',
                 story: '剧情模式',
             };
-            volatileState += `\n\n[系统提示｜模式切换（最高优先级）: 你刚刚结束了${modeLabel[returningFromMode]}，现在已经回到 ChatApp 的文字聊天界面。电话/视频已经挂断，当前没有一条仍然接通的语音线路；“我不挂”“手机开着放旁边”“我就在这儿听着”“随时出个声”这类实时通话状态不再成立，除非用户之后重新发起一通电话。之前模式中的台词、旁白、动作、场景或转录格式只代表已经发生的历史，绝不是当前回复的格式范例。从这一条开始，只按 ChatApp 当前启用的输出规则回复：使用自然的 IM 短句/气泡，不沿用通话口吻、连续口语转录、动作描写、小说旁白、场景标题或说话人标签；如果 ChatApp 当前开启了语音消息，仍可遵守它自己的语音消息格式。你可以自然承接刚才发生的事，但必须以正在聊天界面发消息的方式表达。]`;
+            volatileState += `\n\n[系统提示｜模式切换（最高优先级）: 你刚刚结束了${modeLabel[returningFromMode]}，现在已经回到 ChatApp 的文字聊天界面。之前模式中的台词、旁白、动作、场景或转录格式只代表已经发生的历史，绝不是当前回复的格式范例。从这一条开始，只按 ChatApp 当前启用的输出规则回复：使用自然的 IM 短句/气泡，不沿用通话口吻、连续口语转录、动作描写、小说旁白、场景标题或说话人标签；如果 ChatApp 当前开启了语音消息，仍可遵守它自己的语音消息格式。你可以自然承接刚才发生的事，但必须以正在聊天界面发消息的方式表达。]`;
         }
 
         // 语音用量反馈：跑偏了才注入，正常时返回空串。
@@ -1287,7 +1280,6 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                 const sourceTag = (() => {
                     const source = m.metadata?.source;
                     if (source === 'call') return '[通话]';
-                    if (source === 'call-end-popup') return '[通话结束]';
                     if (source === 'date') return '[约会]';
                     // This is internal prompt metadata, not a label the character should quote.
                     // Keep it terse and machine-like; the output sanitizer also accepts the old label.
@@ -1564,15 +1556,6 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     // TRPG 跑团片段 / 笔友会小说章节：从对应 app 多选转发进来的内容。
                     // 复用 normalizeMessageContent 翻成完整文本，让角色"记得"一起玩过/写过什么。
                     content = `${timeStr} ${normalizeMessageContent(m, char?.name || '你', userProfile?.name || '用户')}`;
-                }
-                else if (m.metadata?.source === 'call-end-popup') {
-                    // 结束卡片同时是给模型看的会话边界：不要把它当普通聊天气泡，
-                    // 也不要让“手机开着、我在这儿听着”等通话承诺延续到挂断之后。
-                    const duration = Number(m.metadata?.durationSec);
-                    const durationText = Number.isFinite(duration) && duration > 0
-                        ? `（持续${Math.floor(duration)}秒）`
-                        : '';
-                    content = `${timeStr} [通话结束] 系统记录：这通${m.metadata?.callMode === 'video' ? '视频通话' : '电话'}已经明确挂断${durationText}。通话中的实时陪伴、手机保持接通和“我在旁边听着”等状态到此结束；之后的消息不是通话中的继续。`;
                 }
                 else content = `${timeStr} ${sourceTag} ${content}`;
 

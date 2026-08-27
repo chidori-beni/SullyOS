@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { backfillXinshengRoundIdForSession, newXinshengRoundId, readRoundId, XINSHENG_ROUND_META_KEY } from './xinshengRound';
+import {
+    backfillXinshengRoundIdForSession,
+    findOrphanedXinshengRoundIds,
+    newXinshengRoundId,
+    readRoundId,
+    XINSHENG_ROUND_META_KEY,
+} from './xinshengRound';
 
 beforeEach(() => { vi.spyOn(console, 'warn').mockImplementation(() => {}); });
 afterEach(() => { vi.restoreAllMocks(); });
@@ -103,5 +109,48 @@ describe('backfillXinshengRoundIdForSession', () => {
             updateMessageMetadata: async () => {},
         };
         await expect(backfillXinshengRoundIdForSession('char1', SESSION, 'xs_final', db)).resolves.toBe(0);
+    });
+});
+
+// ─── 消息被删除后，心声库留下孤儿记录 ────────────────────────────────────────
+//
+// 用户实测反馈：把聊天里生成的回复删掉，点开心声「上一条/下一条」翻页时那条记录
+// 还在——对应的消息已经不存在了，翻到的是一条找不到出处的孤儿记录。
+describe('findOrphanedXinshengRoundIds', () => {
+    const withRound = (rid: string) => ({ metadata: { [XINSHENG_ROUND_META_KEY]: rid } });
+
+    it('删除的消息里没有心声标记，返回空数组', () => {
+        expect(findOrphanedXinshengRoundIds([{ metadata: {} }], [])).toEqual([]);
+    });
+
+    it('一轮只有一条气泡：删掉它，roundId 判定为孤儿', () => {
+        const deleted = [withRound('xs_1')];
+        const remaining = [withRound('xs_2')]; // 别的轮次，不相关
+        expect(findOrphanedXinshengRoundIds(deleted, remaining)).toEqual(['xs_1']);
+    });
+
+    it('一轮有好几条气泡：只删其中一条，剩下的还在引用，不该判定为孤儿', () => {
+        const deleted = [withRound('xs_1')];
+        const remaining = [withRound('xs_1'), withRound('xs_1')]; // 同一轮的另外两条气泡还在
+        expect(findOrphanedXinshengRoundIds(deleted, remaining)).toEqual([]);
+    });
+
+    it('一轮的最后一条气泡也删了，这才判定为孤儿', () => {
+        const deleted = [withRound('xs_1'), withRound('xs_1'), withRound('xs_1')]; // 一次性删了整轮
+        const remaining: any[] = [];
+        expect(findOrphanedXinshengRoundIds(deleted, remaining)).toEqual(['xs_1']);
+    });
+
+    it('一次删除涉及好几个不同轮次，各自独立判定', () => {
+        const deleted = [withRound('xs_1'), withRound('xs_2'), withRound('xs_3')];
+        const remaining = [withRound('xs_2')]; // 只有 xs_2 还有气泡剩着
+        expect(findOrphanedXinshengRoundIds(deleted, remaining).sort()).toEqual(['xs_1', 'xs_3']);
+    });
+
+    it('没有 metadata 的消息（老数据 / 用户消息）不会报错', () => {
+        expect(findOrphanedXinshengRoundIds(
+            [withRound('xs_1'), { metadata: undefined }, {} as any],
+            [{ metadata: undefined }],
+        )).toEqual(['xs_1']);
     });
 });

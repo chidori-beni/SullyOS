@@ -10,8 +10,8 @@ vi.mock('../db', () => ({
 }));
 
 const {
-    appendXinshengEntry, clearXinshengHistory, deleteXinshengEntry, readXinshengHistory,
-    toggleXinshengFavorite, XINSHENG_HISTORY_CAP,
+    appendXinshengEntry, clearXinshengHistory, deleteXinshengEntry, deleteOrphanedXinshengEntries,
+    readXinshengHistory, toggleXinshengFavorite, XINSHENG_HISTORY_CAP,
     listXinshengPresets, saveXinshengPreset, updateXinshengPreset, deleteXinshengPreset,
     importXinshengPresets, buildPresetExportFile, parsePresetImportFile, normalizePreset,
     isPresetRandomEnabled, setPresetRandomEnabled, pickRandomPreset,
@@ -71,6 +71,47 @@ describe('心声历史', () => {
         await appendXinshengEntry('c2', 'xs_1', entry('b'));
         expect((await readXinshengHistory('c1')).xs_1.innerVoice).toBe('a');
         expect((await readXinshengHistory('c2')).xs_1.innerVoice).toBe('b');
+    });
+});
+
+// ─── 孤儿记录清理：对应消息被删了，心声记录也该跟着走 ────────────────────────
+//
+// 用户实测反馈：把聊天里的回复删掉，心声历史翻页时那条记录还在，翻上一条/下一条能
+// 翻到一条已经没有对应消息的孤儿记录。
+describe('deleteOrphanedXinshengEntries', () => {
+    it('删掉指定的 roundId', async () => {
+        await appendXinshengEntry('c1', 'xs_1', entry('a'));
+        await appendXinshengEntry('c1', 'xs_2', entry('b'));
+        const h = await deleteOrphanedXinshengEntries('c1', ['xs_1']);
+        expect(Object.keys(h)).toEqual(['xs_2']);
+    });
+
+    it('收藏过的跳过不删——收藏是用户的显式挽留，删原文不代表也要删心声', async () => {
+        await appendXinshengEntry('c1', 'xs_1', entry('a'));
+        await toggleXinshengFavorite('c1', 'xs_1');
+        const h = await deleteOrphanedXinshengEntries('c1', ['xs_1']);
+        expect(Object.keys(h)).toEqual(['xs_1']);
+        expect(h.xs_1._favorited).toBe(true);
+    });
+
+    it('roundId 列表里混着不存在的 id，不报错、按存在的处理', async () => {
+        await appendXinshengEntry('c1', 'xs_1', entry('a'));
+        const h = await deleteOrphanedXinshengEntries('c1', ['xs_1', 'xs_不存在']);
+        expect(Object.keys(h)).toEqual([]);
+    });
+
+    it('空数组不碰历史，也不做一次多余的写入', async () => {
+        await appendXinshengEntry('c1', 'xs_1', entry('a'));
+        const h = await deleteOrphanedXinshengEntries('c1', []);
+        expect(Object.keys(h)).toEqual(['xs_1']);
+    });
+
+    it('不同角色互不干扰', async () => {
+        await appendXinshengEntry('c1', 'xs_1', entry('a'));
+        await appendXinshengEntry('c2', 'xs_1', entry('b'));
+        await deleteOrphanedXinshengEntries('c1', ['xs_1']);
+        expect(Object.keys(await readXinshengHistory('c1'))).toEqual([]);
+        expect(Object.keys(await readXinshengHistory('c2'))).toEqual(['xs_1']);
     });
 });
 

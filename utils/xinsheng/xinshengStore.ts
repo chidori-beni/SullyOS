@@ -79,6 +79,32 @@ export const deleteXinshengEntry = async (charId: string, roundId: string): Prom
     return history;
 };
 
+/**
+ * 批量删「孤儿」心声记录——对应的消息已经被用户从聊天里删掉了，但心声库里没人跟着清，
+ * 翻上一条/下一条时还能翻到一条早就没有原文的记录。调用方（Chat.tsx 的各个删除入口）
+ * 负责判定"这批 roundId 是不是真的没有消息引用了"（见
+ * `utils/xinsheng/xinshengRound.ts` 的 `findOrphanedXinshengRoundIds`），这里只管删。
+ *
+ * 收藏过的跳过不删——收藏是用户对这条心声的显式挽留，删原文不代表也要一并吃掉它。
+ * 想删收藏的记录，走心声卡自己的删除按钮（那里会先问一遍）。
+ */
+export const deleteOrphanedXinshengEntries = async (
+    charId: string,
+    roundIds: readonly string[],
+): Promise<XinshengHistory> => {
+    if (roundIds.length === 0) return readXinshengHistory(charId);
+    const history = await readXinshengHistory(charId);
+    let changed = false;
+    for (const roundId of roundIds) {
+        const entry = history[roundId];
+        if (!entry || entry._favorited) continue;
+        delete history[roundId];
+        changed = true;
+    }
+    if (changed) await writeXinshengHistory(charId, history);
+    return history;
+};
+
 /** 清空：保留收藏（和糯叽机的「清空全部」一致，收藏是用户的显式挽留）。 */
 export const clearXinshengHistory = async (charId: string): Promise<XinshengHistory> => {
     const history = await readXinshengHistory(charId);
