@@ -455,6 +455,11 @@ const AppLoadingFallback: React.FC<{ onReturn?: () => void; animationEnabled?: b
 
 /** 「该备份啦」弹窗的一次性标记：sessionStorage 作用域 = 这一次打开 App。 */
 const BACKUP_POPUP_SESSION_KEY = 'sullyos_backup_popup_shown_this_session';
+// Launcher is unmounted while the lock screen is shown. Keep an explicit
+// startup marker so a recreated React tree cannot restore the previous page-5
+// module state when the user unlocks a freshly opened PWA.
+const LAUNCHER_HOME_RESET_EVENT = 'sullyos-launcher-home-reset';
+const LAUNCHER_HOME_RESET_PENDING_KEY = 'sullyos_launcher_home_reset_pending_v1';
 
 const PhoneShell: React.FC = () => {
   const { theme, isLocked, unlock, activeApp, closeApp, openApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, handleBack, suspendedCall, resumeCall, activeCharacterId, errorDialog, dismissError } = useOS();
@@ -471,6 +476,11 @@ const PhoneShell: React.FC = () => {
   // 冷启动「世界入场」是否已结束。结束前由 BootSequence 接管整屏（同时取代旧的黑屏 spinner）。
   const [bootDone, setBootDone] = useState(false);
   const bootAnimationEnabled = theme.bootAnimationEnabled !== false;
+  useEffect(() => {
+    if (!isLocked || typeof window === 'undefined') return;
+    try { window.sessionStorage.setItem(LAUNCHER_HOME_RESET_PENDING_KEY, '1'); } catch { /* ignore */ }
+    window.dispatchEvent(new Event(LAUNCHER_HOME_RESET_EVENT));
+  }, [isLocked]);
   useEffect(() => {
     // 本次启动一旦选择跳过，就记为已经完成；用户稍后重新打开开关时不在桌面中途补播。
     if (!bootAnimationEnabled) setBootDone(true);

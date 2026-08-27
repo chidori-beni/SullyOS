@@ -449,6 +449,8 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, tasks, o
 
 // --- Persist scroll page across remounts (e.g. returning from apps) ---
 let _lastPageIndex = 0;
+const LAUNCHER_HOME_RESET_EVENT = 'sullyos-launcher-home-reset';
+const LAUNCHER_HOME_RESET_PENDING_KEY = 'sullyos_launcher_home_reset_pending_v1';
 // A PWA can keep this module alive while it is backgrounded. Do not restore the
 // last in-app page after that kind of relaunch/resume: the user should land on
 // the actual home page, not whichever page happened to be visible before iOS
@@ -459,14 +461,26 @@ let _launcherLifecycleTrackingAttached = false;
 const ensureLauncherLifecycleTracking = () => {
   if (_launcherLifecycleTrackingAttached || typeof document === 'undefined' || typeof window === 'undefined') return;
   _launcherLifecycleTrackingAttached = true;
+  const markHomeResetPending = () => { _pageNeedsHomeAfterBackground = true; };
   const markBackgrounded = () => {
     if (document.visibilityState === 'hidden') _pageNeedsHomeAfterBackground = true;
   };
   // The effect can run while the document is already hidden (for example when
   // iOS restores a suspended PWA), so do not wait for a second visibility event.
   markBackgrounded();
+  window.addEventListener(LAUNCHER_HOME_RESET_EVENT, markHomeResetPending);
   document.addEventListener('visibilitychange', markBackgrounded);
   window.addEventListener('pagehide', () => { _pageNeedsHomeAfterBackground = true; });
+};
+
+const hasPendingLauncherHomeReset = () => {
+  if (typeof window === 'undefined') return false;
+  try { return window.sessionStorage.getItem(LAUNCHER_HOME_RESET_PENDING_KEY) === '1'; } catch { return false; }
+};
+
+const clearPendingLauncherHomeReset = () => {
+  if (typeof window === 'undefined') return;
+  try { window.sessionStorage.removeItem(LAUNCHER_HOME_RESET_PENDING_KEY); } catch { /* ignore */ }
 };
 
 // --- Main Launcher ---
@@ -510,6 +524,10 @@ const Launcher: React.FC = () => {
   // physical page and must not turn a fresh home launch into the calendar.
   const mountPageIndexRef = useRef(_lastPageIndex);
   const carouselInitializedRef = useRef(false);
+  const carouselReadyRef = useRef(false);
+  // PhoneShell marks the lock-screen phase before Launcher mounts. This covers
+  // iOS recreating the React tree while retaining the JavaScript module/global.
+  const homeResetAtMountRef = useRef(hasPendingLauncherHomeReset());
   const [activePageIndex, setActivePageIndex] = useState(mountPageIndexRef.current);
   const activePageIndexRef = useRef(mountPageIndexRef.current);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -709,6 +727,7 @@ const Launcher: React.FC = () => {
       const el = scrollContainerRef.current;
       if (!el || totalPages <= 0) return;
       let frame = 0;
+      let settleFrame = 0;
       const restore = () => {
           if (scrollContainerRef.current !== el || totalPages <= 0) return;
           if (el.clientWidth <= 0) {
@@ -721,19 +740,46 @@ const Launcher: React.FC = () => {
           const rememberedIndex = carouselInitializedRef.current
               ? _lastPageIndex
               : mountPageIndexRef.current;
-          const logicalIndex = _pageNeedsHomeAfterBackground
+          const logicalIndex = homeResetAtMountRef.current || _pageNeedsHomeAfterBackground
               ? 0
               : Math.max(0, Math.min(totalPages - 1, rememberedIndex));
-          carouselInitializedRef.current = true;
-          _pageNeedsHomeAfterBackground = false;
           const physicalIndex = carouselPhysicalIndex(logicalIndex, totalPages);
           activePageIndexRef.current = logicalIndex;
           setActivePageIndex(logicalIndex);
           _lastPageIndex = logicalIndex;
+          carouselReadyRef.current = false;
           jumpCarouselInstant(el, el.clientWidth * physicalIndex);
+
+          // A direct scroll can still be clamped to 0 if the browser has not
+          // laid out all flex children yet. Keep initialization locked until
+          // the requested real page is actually reachable; otherwise the
+          // leading calendar clone can win the first onScroll event.
+          const settle = () => {
+              if (scrollContainerRef.current !== el || totalPages <= 0) return;
+              const width = el.clientWidth;
+              if (width <= 0) {
+                  settleFrame = requestAnimationFrame(settle);
+                  return;
+              }
+              const expectedLeft = width * carouselPhysicalIndex(logicalIndex, totalPages);
+              if (Math.abs(el.scrollLeft - expectedLeft) > 2) {
+                  jumpCarouselInstant(el, expectedLeft);
+                  settleFrame = requestAnimationFrame(settle);
+                  return;
+              }
+              carouselInitializedRef.current = true;
+              homeResetAtMountRef.current = false;
+              _pageNeedsHomeAfterBackground = false;
+              clearPendingLauncherHomeReset();
+              carouselReadyRef.current = true;
+          };
+          settleFrame = requestAnimationFrame(settle);
       };
       restore();
-      return () => cancelAnimationFrame(frame);
+      return () => {
+          cancelAnimationFrame(frame);
+          cancelAnimationFrame(settleFrame);
+      };
   }, [jumpCarouselInstant, totalPages]);
 
   // If iOS resumes the same mounted Launcher instead of remounting it, apply
@@ -753,7 +799,11 @@ const Launcher: React.FC = () => {
               activePageIndexRef.current = 0;
               setActivePageIndex(0);
               _lastPageIndex = 0;
+              carouselReadyRef.current = false;
               jumpCarouselInstant(scroller, scroller.clientWidth * carouselPhysicalIndex(0, totalPages));
+              requestAnimationFrame(() => {
+                  if (scrollContainerRef.current === scroller) carouselReadyRef.current = true;
+              });
           };
           restore();
       };
@@ -768,7 +818,7 @@ const Launcher: React.FC = () => {
 
   const normalizeCarouselPosition = useCallback(() => {
       const scroller = scrollContainerRef.current;
-      if (!scroller || totalPages <= 0 || scroller.clientWidth <= 0) return;
+      if (!scroller || totalPages <= 0 || scroller.clientWidth <= 0 || !carouselReadyRef.current) return;
       // Never move the edge clone while a pointer/finger is still holding it.
       // This keeps a long press at the edge from jumping underneath the finger.
       if (touchActive.current || isDragging.current) return;
@@ -811,7 +861,10 @@ const Launcher: React.FC = () => {
 
   const handleScroll = () => {
       const scroller = scrollContainerRef.current;
-      if (!scroller || totalPages <= 0 || scroller.clientWidth <= 0) return;
+      // Ignore browser initialization scrolls until the real starting page has
+      // been verified. Processing the leading clone here would immediately
+      // persist the calendar as the next launch page.
+      if (!scroller || totalPages <= 0 || scroller.clientWidth <= 0 || !carouselReadyRef.current) return;
 
       const physicalIndex = Math.round(scroller.scrollLeft / scroller.clientWidth);
       const logicalIndex = carouselLogicalIndex(physicalIndex, totalPages);
