@@ -449,11 +449,33 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, tasks, o
 
 // --- Persist scroll page across remounts (e.g. returning from apps) ---
 let _lastPageIndex = 0;
+// A PWA can keep this module alive while it is backgrounded. Do not restore the
+// last in-app page after that kind of relaunch/resume: the user should land on
+// the actual home page, not whichever page happened to be visible before iOS
+// suspended the document. Internal App -> Launcher remounts stay unaffected.
+let _pageNeedsHomeAfterBackground = false;
+let _launcherLifecycleTrackingAttached = false;
+
+const ensureLauncherLifecycleTracking = () => {
+  if (_launcherLifecycleTrackingAttached || typeof document === 'undefined' || typeof window === 'undefined') return;
+  _launcherLifecycleTrackingAttached = true;
+  const markBackgrounded = () => {
+    if (document.visibilityState === 'hidden') _pageNeedsHomeAfterBackground = true;
+  };
+  // The effect can run while the document is already hidden (for example when
+  // iOS restores a suspended PWA), so do not wait for a second visibility event.
+  markBackgrounded();
+  document.addEventListener('visibilitychange', markBackgrounded);
+  window.addEventListener('pagehide', () => { _pageNeedsHomeAfterBackground = true; });
+};
 
 // --- Main Launcher ---
 
 const Launcher: React.FC = () => {
   const { openApp, characters, activeCharacterId, theme, updateTheme, lastMsgTimestamp, isDataLoaded, unreadMessages } = useOS();
+  useEffect(() => {
+    ensureLauncherLifecycleTracking();
+  }, []);
 
   // Local state for widget data to prevent context trashing
   const [widgetChar, setWidgetChar] = useState<CharacterProfile | null>(null);
@@ -483,8 +505,13 @@ const Launcher: React.FC = () => {
   const layoutPageTurnTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const layoutPageTurnDirection = useRef<-1 | 0 | 1>(0);
 
-  const [activePageIndex, setActivePageIndex] = useState(_lastPageIndex);
-  const activePageIndexRef = useRef(_lastPageIndex);
+  // Capture the page at this Launcher mount before the browser can emit an
+  // initial scroll event for the leading clone. That event reports the last
+  // physical page and must not turn a fresh home launch into the calendar.
+  const mountPageIndexRef = useRef(_lastPageIndex);
+  const carouselInitializedRef = useRef(false);
+  const [activePageIndex, setActivePageIndex] = useState(mountPageIndexRef.current);
+  const activePageIndexRef = useRef(mountPageIndexRef.current);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Mouse Drag Logic refs
@@ -661,23 +688,78 @@ const Launcher: React.FC = () => {
       getDailyScheduleForChar(scheduleChar).then(s => setScheduleData(s)).catch(() => {});
   }, [scheduleChar, isDataLoaded, scheduleDateKey]);
 
-  // Restore scroll position BEFORE paint to avoid visible flash/slide
+  const jumpCarouselInstant = useCallback((scroller: HTMLDivElement, left: number) => {
+      // `behavior: 'auto'` still follows CSS scroll-behavior on Safari. Clear
+      // the inline smooth style and assign scrollLeft directly so clone
+      // normalisation cannot animate through every middle page a second time.
+      const previousBehavior = scroller.style.scrollBehavior;
+      scroller.style.scrollBehavior = 'auto';
+      scroller.scrollLeft = left;
+      requestAnimationFrame(() => {
+          if (scrollContainerRef.current === scroller) {
+              scroller.style.scrollBehavior = previousBehavior || 'smooth';
+          }
+      });
+  }, []);
+
+  // Restore scroll position BEFORE paint to avoid visible flash/slide.
+  // Retry until the container has a width; iOS can finish the boot/safe-area
+  // handoff one frame after Launcher itself mounts.
   useLayoutEffect(() => {
       const el = scrollContainerRef.current;
       if (!el || totalPages <= 0) return;
+      let frame = 0;
+      const restore = () => {
+          if (scrollContainerRef.current !== el || totalPages <= 0) return;
+          if (el.clientWidth <= 0) {
+              frame = requestAnimationFrame(restore);
+              return;
+          }
 
-      // The first and last physical children are edge clones. Start on the
-      // matching real page in the middle of those clones so the first gesture
-      // can travel continuously across the boundary.
-      const logicalIndex = Math.max(0, Math.min(totalPages - 1, _lastPageIndex));
-      const physicalIndex = carouselPhysicalIndex(logicalIndex, totalPages);
-      activePageIndexRef.current = logicalIndex;
-      setActivePageIndex(logicalIndex);
-      _lastPageIndex = logicalIndex;
-      el.style.scrollBehavior = 'auto';
-      el.scrollLeft = el.clientWidth * physicalIndex;
-      requestAnimationFrame(() => { el.style.scrollBehavior = 'smooth'; });
-  }, [totalPages]);
+          // A background/resume is a new home launch. Returning from an App
+          // while the document stayed visible still restores the last page.
+          const rememberedIndex = carouselInitializedRef.current
+              ? _lastPageIndex
+              : mountPageIndexRef.current;
+          const logicalIndex = _pageNeedsHomeAfterBackground
+              ? 0
+              : Math.max(0, Math.min(totalPages - 1, rememberedIndex));
+          carouselInitializedRef.current = true;
+          _pageNeedsHomeAfterBackground = false;
+          const physicalIndex = carouselPhysicalIndex(logicalIndex, totalPages);
+          activePageIndexRef.current = logicalIndex;
+          setActivePageIndex(logicalIndex);
+          _lastPageIndex = logicalIndex;
+          jumpCarouselInstant(el, el.clientWidth * physicalIndex);
+      };
+      restore();
+      return () => cancelAnimationFrame(frame);
+  }, [jumpCarouselInstant, totalPages]);
+
+  // If iOS resumes the same mounted Launcher instead of remounting it, apply
+  // the same fresh-home rule as soon as the document becomes visible again.
+  useEffect(() => {
+      const handleVisibilityResume = () => {
+          if (document.visibilityState !== 'visible' || !_pageNeedsHomeAfterBackground) return;
+          const scroller = scrollContainerRef.current;
+          if (!scroller || totalPages <= 0) return;
+          const restore = () => {
+              if (scrollContainerRef.current !== scroller || !_pageNeedsHomeAfterBackground) return;
+              if (scroller.clientWidth <= 0) {
+                  requestAnimationFrame(restore);
+                  return;
+              }
+              _pageNeedsHomeAfterBackground = false;
+              activePageIndexRef.current = 0;
+              setActivePageIndex(0);
+              _lastPageIndex = 0;
+              jumpCarouselInstant(scroller, scroller.clientWidth * carouselPhysicalIndex(0, totalPages));
+          };
+          restore();
+      };
+      document.addEventListener('visibilitychange', handleVisibilityResume);
+      return () => document.removeEventListener('visibilitychange', handleVisibilityResume);
+  }, [jumpCarouselInstant, totalPages]);
 
   const cancelCarouselNormalization = useCallback(() => {
       if (scrollEndTimer.current) clearTimeout(scrollEndTimer.current);
@@ -713,8 +795,8 @@ const Launcher: React.FC = () => {
           return;
       }
 
-      scroller.scrollTo({ left: width * resetIndex, behavior: 'auto' });
-  }, [totalPages]);
+      jumpCarouselInstant(scroller, width * resetIndex);
+  }, [jumpCarouselInstant, totalPages]);
 
   const scheduleCarouselNormalization = useCallback(() => {
       cancelCarouselNormalization();
