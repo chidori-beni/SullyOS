@@ -717,6 +717,12 @@ const processInboxMessageWithPostProcessing = async (
       activeMsg2: {
         messageId: message.messageId,
         taskId: message.taskId,
+        // 一整条回复常被 worker 拆成好几条独立 push，每条各自单独跑一遍
+        // applyAssistantPostProcessing、互不知道彼此（见 processInboxMessageWithPostProcessing）。
+        // sessionId 是这一整条回复共享的身份——心声功能靠它把散在好几条推送里的气泡
+        // 认成"同一轮"，回填 roundId 到还没轮到处理心声那条推送就已经落库的早前气泡上
+        // （见 applyAssistantPostProcessing.ts Step 1 附近的 backfillXinshengRoundIdForSession）。
+        sessionId,
         messageType: message.messageType,
         messageSubtype: message.messageSubtype,
         avatarUrl: message.avatarUrl,
@@ -2193,52 +2199,6 @@ export const catchUpMissedPushes = async (
 };
 
 /**
- * 前台收件兜底的轮询间隔。
- *
- * 只靠 visibilitychange 仍有一个真实的丢消息窗口：PWA 可以从早到晚保持在前台，
- * 中途 Service Worker 收到 push、写完 inbox，但发给 window 的 postMessage 被 iOS
- * 丢掉。此时没有下一次「回到前台」事件，消息会一直卡在本地 inbox；如果 push 本身
- * 也没到 SW，则会一直留在云端 outbox。定时主动消息没有本地 pending 状态，不能沿用
- * 即时对话那条「有 pending 才轮询」的条件。
- *
- * 30 秒只是唤醒频率；真正的云端 outbox 请求仍受 OUTBOX_CATCH_UP_MIN_INTERVAL_MS
- * 的 60 秒节流保护。每次唤醒先冲刷本地 inbox，再尝试拉云端账本，因此两条丢失路径
- * 都能被兜住，同时不在后台运行。
- */
-export const FOREGROUND_ACTIVE_MSG_CATCH_UP_INTERVAL_MS = 30_000;
-let foregroundActiveMsgCatchUpTimer: ReturnType<typeof setTimeout> | null = null;
-
-const stopForegroundActiveMsgCatchUp = (): void => {
-  if (foregroundActiveMsgCatchUpTimer == null) return;
-  clearTimeout(foregroundActiveMsgCatchUpTimer);
-  foregroundActiveMsgCatchUpTimer = null;
-};
-
-const scheduleForegroundActiveMsgCatchUp = (): void => {
-  stopForegroundActiveMsgCatchUp();
-  if (typeof document === 'undefined' || document.visibilityState !== 'visible') return;
-
-  foregroundActiveMsgCatchUpTimer = setTimeout(() => {
-    foregroundActiveMsgCatchUpTimer = null;
-    if (typeof document === 'undefined' || document.visibilityState !== 'visible') return;
-
-    void (async () => {
-      // SW 可能已经把消息写进本地 inbox，只是唤醒页面的 postMessage 丢了；先走本地
-      // 消费，再拉云端账本，避免把同一条消息在两条路径里同时处理。
-      await flushInboxToChat();
-      await catchUpMissedPushes('foreground');
-    })()
-      .catch((error) => {
-        log.warn('前台主动消息定时补收失败（下一轮继续）', { error });
-      })
-      .finally(() => {
-        // 回调期间可能已经退到后台；schedule 会重新检查 visibility，后台不留定时器。
-        scheduleForegroundActiveMsgCatchUp();
-      });
-  }, FOREGROUND_ACTIVE_MSG_CATCH_UP_INTERVAL_MS);
-};
-
-/**
  * 用户在设置面板上手动点的那次补收：「我这两天有消息没收到，去账本上找找」。
  *
  * 跟自动那条路的两处不同，都因为「用户自己知道自己丢了消息」这一点：
@@ -2718,13 +2678,7 @@ export const ActiveMsgRuntime = {
     // 回前台 fetch 可靠时补打) + pending tool calls.
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState !== 'visible') {
-          stopForegroundActiveMsgCatchUp();
-          return;
-        }
-        // 不只在这次回前台瞬间补一次：PWA 可能一直保持可见，而后续某次 SW→window
-        // 唤醒仍会丢。定时器只在 visible 期间存在，退后台立即清掉。
-        scheduleForegroundActiveMsgCatchUp();
+        if (document.visibilityState !== 'visible') return;
         // 先 await flush 落库 round-1 旁白, 再跑 runner 触发 round-2, 避免 "B+A".
         void (async () => {
           await flushInboxToChat();
@@ -2766,9 +2720,6 @@ export const ActiveMsgRuntime = {
     // 丢了之后，本地不会留下任何「有条消息没到」的痕迹，账本是唯一的线索来源
     // （见 catchUpMissedPushes）。没配 Worker 的用户在里面就返回了，不打网络。
     void catchUpMissedPushes('startup');
-    // 启动后如果 PWA 一直保持在前台，不能等下一次 visibilitychange 才再补收；自然主动
-    // 没有本地 pending 记录，必须保留这条独立的前台兜底轮询。
-    scheduleForegroundActiveMsgCatchUp();
     // 上次会话发出去、回来前进程就没了的那一轮：指示灯靠 localStorage 记录挂回来，
     // 内容靠云端点名那一步补回来（它自带补收，还顺手把 60s 的点名周期排上）。
     if (listInstantChatPendings().length > 0) {

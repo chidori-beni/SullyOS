@@ -32,7 +32,7 @@ import { ChatParser, type FrozenMusicSong } from './chatParser';
 import { stripFaceToFacePhoneSourceTags } from './sanitize';
 import { extractXinsheng } from './xinsheng/xinshengData';
 import { appendXinshengEntry } from './xinsheng/xinshengStore';
-import { newXinshengRoundId, XINSHENG_ROUND_META_KEY } from './xinsheng/xinshengRound';
+import { newXinshengRoundId, XINSHENG_ROUND_META_KEY, backfillXinshengRoundIdForSession } from './xinsheng/xinshengRound';
 import { dispatchXinshengUpdated } from './xinsheng/xinshengEvents';
 import { peekXinshengRoundPreset, toEntryPreset } from './xinsheng/xinshengRandomPreset';
 import { resolveCharTimeZone } from './timezone';
@@ -779,6 +779,19 @@ export async function applyAssistantPostProcessing(
             })
                 .then(() => dispatchXinshengUpdated({ charId: char.id, roundId }))
                 .catch(e => console.warn('[xinsheng] 落库失败:', e));
+
+            // 云端推送路径：一条回复常被 worker 拆成好几条独立 push，每条各自单独跑一遍
+            // applyAssistantPostProcessing、互不知道彼此（见 activeMsgRuntime.ts 的
+            // processInboxMessageWithPostProcessing）。协议要求心声 JSON 只挂在最后一条
+            // 推送上，所以只有处理最后一条的这次调用摸得到 JSON——前面几条推送早就
+            // 各自落库完了，metadata 里根本没有 roundId，头像点了毫无反应（不是事件被吞，
+            // 是真的没有 onClick）。这里反向回填：同一个 sessionId 下还没打上 roundId 的
+            // 早前气泡，统一补成这同一个 roundId。本地生成没有 sessionId，不会走这条。
+            const pushSessionId = (mcdInheritMeta as any)?.activeMsg2?.sessionId;
+            if (pushSessionId) {
+                backfillXinshengRoundIdForSession(char.id, pushSessionId, roundId, DB)
+                    .catch(e => console.warn('[xinsheng] 回填同 session 早前气泡失败:', e));
+            }
         }
     }
     // 先于 lead-in / 二轮渲染消费：否则控制标签会作为普通气泡短暂闪给用户看。
