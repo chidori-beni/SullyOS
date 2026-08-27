@@ -4145,6 +4145,10 @@ const MessageItem = React.memo(({
            prev.msg.metadata?.reviewStatus === next.msg.metadata?.reviewStatus &&
            prev.msg.metadata?.status === next.msg.metadata?.status &&
            prev.msg.metadata?.receipt === next.msg.metadata?.receipt &&
+           // 心声 roundId 落库可能晚于这条消息的首次渲染（比如推送补收路径先画出一版
+           // 没有 metadata 的气泡，DB 写完 roundId 后才重新 setMessages）——漏看这个字段
+           // 会导致头像已经"能点"了，界面却因为判等为真而不重渲染，点击一直没反应。
+           prev.msg.metadata?.xinshengRoundId === next.msg.metadata?.xinshengRoundId &&
            reactionSignature(prev.msg) === reactionSignature(next.msg) &&
            prev.isFirstInGroup === next.isFirstInGroup &&
            prev.isLastInGroup === next.isLastInGroup &&
