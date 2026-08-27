@@ -63,6 +63,34 @@ const previewText = (entry: XinshengEntry | undefined): string => {
     return '(无正文字段)';
 };
 
+/**
+ * 「查看全文」用：把一条心声的全部字段摊平成 `字段名: 值` 列表。
+ *
+ * 不认布局模板、不套 CSS——布局模板的样式是为了好看，字段一多、字数一长（论坛美化
+ * 动辄 27 个字段，长信件字段常有 150~200 字）反而看不全；这里就是纯文字，一次性看完。
+ * innerVoice / statusText 排最前面（最常用），其余按写入顺序，内部簿记字段
+ * （`_favorited` / `_at` / `_preset` 这类下划线开头的）和 `raw`（原始 JSON 备份，
+ * 给排障用，不是给人读的）都不列进来。
+ */
+const FULL_TEXT_SKIP = new Set(['raw']);
+const flattenEntryFields = (entry: XinshengEntry | null): Array<{ key: string; value: string }> => {
+    if (!entry) return [];
+    const out: Array<{ key: string; value: string }> = [];
+    const pushIfPresent = (key: string) => {
+        const v = (entry as any)[key];
+        if (v != null && String(v).trim()) out.push({ key, value: String(v) });
+    };
+    pushIfPresent('innerVoice');
+    pushIfPresent('statusText');
+    for (const [k, v] of Object.entries(entry)) {
+        if (k === 'innerVoice' || k === 'statusText') continue;
+        if (isInternalKey(k) || FULL_TEXT_SKIP.has(k)) continue;
+        if (v == null || v === '') continue;
+        out.push({ key: k, value: typeof v === 'object' ? JSON.stringify(v) : String(v) });
+    }
+    return out;
+};
+
 export const XinshengCardModal: React.FC<Props> = ({
     isOpen, onClose, char, userProfile, targetRoundId, onOpenSettings,
 }) => {
@@ -71,6 +99,7 @@ export const XinshengCardModal: React.FC<Props> = ({
     const [filter, setFilter] = useState<FilterKey>('all');
     const [showList, setShowList] = useState(false);
     const [confirmClear, setConfirmClear] = useState(false);
+    const [showFullText, setShowFullText] = useState(false);
     const [systemData, setSystemData] = useState<XinshengSystemData | null>(null);
     const touchStartX = useRef<number | null>(null);
 
@@ -117,7 +146,7 @@ export const XinshengCardModal: React.FC<Props> = ({
         return () => window.removeEventListener(XINSHENG_UPDATED_EVENT, onUpdated);
     }, [isOpen, char?.id]);
 
-    useEffect(() => { if (!isOpen) { setShowList(false); setConfirmClear(false); setFilter('all'); } }, [isOpen]);
+    useEffect(() => { if (!isOpen) { setShowList(false); setConfirmClear(false); setFilter('all'); setShowFullText(false); } }, [isOpen]);
     // 切筛选后旧的 index 可能越界
     useEffect(() => { setIndex(i => Math.min(i, Math.max(0, ids.length - 1))); }, [ids.length]);
 
@@ -203,7 +232,7 @@ export const XinshengCardModal: React.FC<Props> = ({
 
                     {/* 翻页 + 收藏 + 删除 */}
                     {current && (
-                        <div className="mt-4 flex items-center justify-center gap-3">
+                        <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5">
                             <button
                                 onClick={() => go(-1)}
                                 disabled={index <= 0}
@@ -222,6 +251,10 @@ export const XinshengCardModal: React.FC<Props> = ({
                                 }}
                                 className="px-4 h-10 rounded-full bg-white/15 text-rose-200 text-[12px] active:scale-95 transition-transform"
                             >删除</button>
+                            <button
+                                onClick={() => setShowFullText(true)}
+                                className="px-4 h-10 rounded-full bg-white/15 text-white text-[12px] active:scale-95 transition-transform"
+                            >全文</button>
                             <button
                                 onClick={() => go(1)}
                                 disabled={index >= ids.length - 1}
@@ -268,22 +301,77 @@ export const XinshengCardModal: React.FC<Props> = ({
                             const at = ids.indexOf(id);
                             const active = at === Math.min(index, ids.length - 1);
                             return (
-                                <button
+                                <div
                                     key={id}
-                                    onClick={() => { setIndex(at); setShowList(false); }}
-                                    className={`w-full text-left px-3.5 py-2.5 rounded-2xl transition-colors ${active ? 'bg-indigo-50 border border-indigo-200' : 'bg-slate-50 border border-transparent'}`}
+                                    className={`w-full flex items-center gap-2 px-3.5 py-2.5 rounded-2xl transition-colors ${active ? 'bg-indigo-50 border border-indigo-200' : 'bg-slate-50 border border-transparent'}`}
                                 >
-                                    <div className="flex items-center gap-2">
-                                        {e?._favorited && <span className="text-amber-400 text-[11px]">★</span>}
-                                        <span className="text-[10px] text-slate-400">{relativeTime(e?._at)}</span>
-                                        {active && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-500 text-white">当前</span>}
-                                    </div>
-                                    <div className="mt-1 text-[12px] text-slate-600 line-clamp-2">
-                                        {previewText(e)}
-                                    </div>
-                                </button>
+                                    <button
+                                        onClick={() => { setIndex(at); setShowList(false); }}
+                                        className="flex-1 min-w-0 text-left"
+                                    >
+                                        <div className="flex items-center gap-2">
+                                            {e?._favorited && <span className="text-amber-400 text-[11px]">★</span>}
+                                            <span className="text-[10px] text-slate-400">{relativeTime(e?._at)}</span>
+                                            {active && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-500 text-white">当前</span>}
+                                        </div>
+                                        <div className="mt-1 text-[12px] text-slate-600 line-clamp-2">
+                                            {previewText(e)}
+                                        </div>
+                                    </button>
+                                    {/* 直达全文：字数长的预设在这个两行摘要里根本看不全，不用先跳回卡片再点 */}
+                                    <button
+                                        onClick={() => { setIndex(at); setShowList(false); setShowFullText(true); }}
+                                        className="shrink-0 px-2.5 py-1.5 rounded-full bg-white text-slate-500 text-[10px] border border-slate-200 active:scale-95 transition-transform"
+                                    >全文</button>
+                                </div>
                             );
                         })}
+                    </div>
+                </div>
+            )}
+
+            {/* 全文页：纯文字，不套任何布局模板的样式——字段多、字数长的预设（论坛美化常见）
+                在花哨的卡片布局里会被截断或挤变形，这里就是让人一次性看完、看得清楚。
+                自带翻页，不用退出去外面再点头像重进；文字可选中复制。 */}
+            {showFullText && current && (
+                <div className="fixed inset-0 z-[130] flex flex-col bg-slate-900">
+                    <div className="flex items-center gap-2 px-4 pt-[calc(env(safe-area-inset-top)+12px)] pb-3">
+                        <div className="flex-1 min-w-0">
+                            <div className="text-[15px] font-bold text-white">心声全文</div>
+                            <div className="text-[11px] text-white/50">
+                                第 {Math.min(index, ids.length - 1) + 1} / {ids.length} 条 · {relativeTime(current._at)}
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => go(-1)}
+                            disabled={index <= 0}
+                            className="w-9 h-9 rounded-full bg-white/10 text-white text-[18px] leading-none disabled:opacity-25 active:scale-95 transition-transform"
+                            aria-label="上一条"
+                        >‹</button>
+                        <button
+                            onClick={() => go(1)}
+                            disabled={index >= ids.length - 1}
+                            className="w-9 h-9 rounded-full bg-white/10 text-white text-[18px] leading-none disabled:opacity-25 active:scale-95 transition-transform"
+                            aria-label="下一条"
+                        >›</button>
+                        <button
+                            onClick={() => setShowFullText(false)}
+                            className="w-9 h-9 rounded-full bg-white/10 text-white text-[16px] leading-none active:scale-95 transition-transform"
+                            aria-label="关闭全文"
+                        >×</button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto px-5 pb-[calc(env(safe-area-inset-bottom)+24px)] space-y-5">
+                        {flattenEntryFields(current).map(({ key, value }) => (
+                            <div key={key}>
+                                <div className="text-[10px] font-mono tracking-wide text-white/40 mb-1.5">{key}</div>
+                                <div className="text-[15px] leading-[1.9] text-white whitespace-pre-wrap break-words select-text">
+                                    {value}
+                                </div>
+                            </div>
+                        ))}
+                        {flattenEntryFields(current).length === 0 && (
+                            <div className="mt-16 text-center text-[13px] text-white/40">这条记录没有可显示的文字字段</div>
+                        )}
                     </div>
                 </div>
             )}

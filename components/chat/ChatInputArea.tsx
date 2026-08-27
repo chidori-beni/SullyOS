@@ -852,20 +852,12 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                               <span className="text-xs font-bold">聊天装扮</span>
                             </button>
 
-                            {/* 白框：打开该角色专属的「白框自定义 CSS」弹窗 */}
-                            <button
-                              onClick={() => onPanelAction('chrome-css')}
-                              className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
-                            >
-                              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${acnh ? 'bg-white/70 border-[#e6dab4] text-[#b77dee]' : isDiscordStyle ? 'bg-slate-800 text-pink-300 border-pink-400/20' : 'bg-pink-50 text-pink-500 border-pink-100'}`}>
-                                  <PencilSimple className="w-6 h-6" weight="bold" />
-                              </div>
-                              <span className="text-xs font-bold">白框</span>
-                            </button>
-
                           </div>
 
-                          {/* Page 2: 更多 */}
+                          {/* Page 2: 更多
+                              「白框」挪到这一页，是为了让上一页（Page 1）保持每页 4×2=8 个的整齐布局——
+                              加了「心声」入口后上一页多出第 9 个，会把最后一项挤到单独一行第三行。
+                              白框和这一页的提示音本来就是同一组「聊天装扮」相关工具，挪过来正合适。 */}
                           <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 2 ? '' : 'hidden'}`}>
                             {/* 提示音：打开该角色专属的「白框提示音」弹窗（挨着白框，独立于白框可绑定/解绑） */}
                             <button
@@ -897,6 +889,17 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <Waveform className="w-6 h-6" weight="bold" />
                               </span>
                               <span className="text-xs font-bold">语音收藏</span>
+                            </button>
+
+                            {/* 白框：打开该角色专属的「白框自定义 CSS」弹窗（从 Page 1 挪过来，见上方注释） */}
+                            <button
+                              onClick={() => onPanelAction('chrome-css')}
+                              className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
+                            >
+                              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${acnh ? 'bg-white/70 border-[#e6dab4] text-[#b77dee]' : isDiscordStyle ? 'bg-slate-800 text-pink-300 border-pink-400/20' : 'bg-pink-50 text-pink-500 border-pink-100'}`}>
+                                  <PencilSimple className="w-6 h-6" weight="bold" />
+                              </div>
+                              <span className="text-xs font-bold">白框</span>
                             </button>
                           </div>
 
