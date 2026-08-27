@@ -605,9 +605,13 @@ ${getVoicePromptOverride(getTtsProvider()) ?? (getTtsProvider() === 'fishaudio' 
   return [coreContext, timeContext, callPrompt, voiceLangPrompt].filter(Boolean).join('\n\n');
 };
 const CallApp: React.FC = () => {
-  const { closeApp, openApp, characters, activeCharacterId, addToast, apiConfig, userProfile, customThemes, suspendCall, suspendedCall, clearSuspendedCall, updateCharacter, characterGroups, groups, realtimeConfig, memoryPalaceConfig } = useOS();
+  const { closeApp, openApp, characters, activeCharacterId, addToast, apiConfig, userProfile, customThemes, suspendCall, suspendedCall, clearSuspendedCall, updateCharacter, characterGroups, groups, realtimeConfig, memoryPalaceConfig, registerBackHandler } = useOS();
 
   const initialCallLaunchIntentRef = useRef(callLaunch.peek());
+  // A chat call-card deep link opens directly into record detail. Keep the
+  // origin outside React state so the launch intent can be consumed without
+  // losing where the user expects the next Back action to land.
+  const returnToChatRef = useRef(initialCallLaunchIntentRef.current?.returnTo === 'chat');
   const [viewMode, setViewMode] = useState<ViewMode>('role-select');
   const [selectedCharId, setSelectedCharId] = useState<string>(initialCallLaunchIntentRef.current?.charId || activeCharacterId || characters[0]?.id || '');
   const ROLES_PER_PAGE = 6;
@@ -3437,6 +3441,25 @@ ${sentencePlan}`;
     callLaunch.consume();
     initialCallLaunchIntentRef.current = null;
   }, [callRecords, callRecordsLoadedFor]);
+  const returnFromCallRecords = useCallback(() => {
+    if (returnToChatRef.current) {
+      returnToChatRef.current = false;
+      trackEvent('从通话记录返回信息界面');
+      openApp(AppID.Chat);
+      return;
+    }
+    setViewMode('history');
+  }, [openApp]);
+  // Hardware/browser back should follow the same origin-aware path as the
+  // visible record buttons. Other CallApp screens still fall through to the
+  // shell's normal close-app behavior.
+  useEffect(() => registerBackHandler(() => {
+    if (viewMode === 'record-detail' || (viewMode === 'history' && returnToChatRef.current)) {
+      returnFromCallRecords();
+      return true;
+    }
+    return false;
+  }), [registerBackHandler, returnFromCallRecords, viewMode]);
   const handleDeleteRecord = async (record: CallRecord) => {
     setDeleteConfirmRecord(record);
   };
@@ -4365,9 +4388,9 @@ ${sentencePlan}`;
       <div className={`h-full w-full bg-gradient-to-b text-white px-5 pb-6 flex flex-col ${lightTheme ? 'sully-call-light from-[#f5f2fd] via-[#eef0f8] to-[#eef0f8]' : 'from-[#140d28] via-[#0a0613] to-[#0a0613]'}`} style={{ paddingTop: 'max(2.5rem, var(--safe-top))' }}>
         {lightTheme && <style>{CALL_LIGHT_THEME_CSS}</style>}
         <div className="flex items-center justify-between">
-          <button onClick={() => setViewMode('role-select')} className="text-sm text-white/45">← 返回</button>
+          <button onClick={() => { returnToChatRef.current = false; setViewMode('role-select'); }} className="text-sm text-white/45">← 返回</button>
           <h1 className="text-lg font-medium">通话记录</h1>
-          <button onClick={() => setViewMode('role-select')} className="text-sm font-medium" style={{ color: accentColor }}>新通话</button>
+          <button onClick={() => { returnToChatRef.current = false; setViewMode('role-select'); }} className="text-sm font-medium" style={{ color: accentColor }}>新通话</button>
         </div>
         <div className="mt-4 flex-1 overflow-y-auto space-y-3">
           {!callRecords.length && (
@@ -4421,7 +4444,7 @@ ${sentencePlan}`;
       <div className={`h-full w-full bg-gradient-to-b text-white px-5 pb-6 flex flex-col ${lightTheme ? 'sully-call-light from-[#f5f2fd] via-[#eef0f8] to-[#eef0f8]' : 'from-[#140d28] via-[#0a0613] to-[#0a0613]'}`} style={{ paddingTop: 'max(2.5rem, var(--safe-top))' }}>
         {lightTheme && <style>{CALL_LIGHT_THEME_CSS}</style>}
         <div className="flex items-center justify-between">
-          <button onClick={() => setViewMode('history')} className="text-sm text-white/45">← 返回</button>
+          <button onClick={returnFromCallRecords} className="text-sm text-white/45">← 返回</button>
           <div className="text-sm text-white/80 font-medium">{recordDetail.characterName}</div>
           <div className="text-xs text-white/35">{recordDetail.mode === 'video' ? '视频 · ' : recordDetail.mode === 'voice' ? '语音 · ' : ''}{formatDuration(recordDetail.durationSec)}</div>
         </div>

@@ -328,4 +328,15 @@ describe('CallApp runtime references', () => {
     expect(urlSource).toContain('const activeCallBlobUrls = new Set<string>()');
     expect(urlSource).toContain('registerCallAudioBlobUrl');
   });
+
+  it('returns chat-origin call-card records directly to Chat', () => {
+    const callSource = readFileSync(path.resolve(__dirname, '../apps/CallApp.tsx'), 'utf8');
+    const chatSource = readFileSync(path.resolve(__dirname, '../apps/Chat.tsx'), 'utf8');
+
+    expect(chatSource).toContain("returnTo: 'chat'");
+    expect(callSource).toContain("returnTo === 'chat'");
+    expect(callSource).toContain('const returnFromCallRecords');
+    expect(callSource).toContain('openApp(AppID.Chat)');
+    expect(callSource).toContain('registerBackHandler');
+  });
 });

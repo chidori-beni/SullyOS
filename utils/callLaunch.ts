@@ -9,6 +9,8 @@
 export interface CallLaunchIntent {
   charId: string;
   sessionId: string;
+  /** 从某个 App 深链进来时，记录关闭记录页后的返回目标。 */
+  returnTo?: 'chat';
 }
 
 let pending: CallLaunchIntent | null = null;
