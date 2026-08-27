@@ -41,6 +41,28 @@ const relativeTime = (at?: number): string => {
     return `${Math.round(min / 1440)} 天前`;
 };
 
+/** 历史列表预览里不该出现的内部字段（下划线开头的都是我们自己挂的簿记字段）。 */
+const isInternalKey = (k: string): boolean => k.startsWith('_');
+
+/**
+ * 历史列表一行的预览文字。
+ *
+ * 默认卡（planner）的字段固定是 innerVoice/statusText，优先取它们；但换成自定义
+ * 布局预设（比如「浅浅蓝」用的是 talk1~talk6、letterConfession 这类完全不同的字段名）
+ * 就一个都取不到——不该直接显示"(无正文字段)"吓用户一跳，那条心声明明是有内容的，
+ * 只是字段名不认识。取不到就退而求其次：挑这条记录里**第一个**有值的字符串字段。
+ */
+const previewText = (entry: XinshengEntry | undefined): string => {
+    if (!entry) return '';
+    if (entry.innerVoice) return entry.innerVoice;
+    if (entry.statusText) return entry.statusText;
+    for (const [k, v] of Object.entries(entry)) {
+        if (isInternalKey(k)) continue;
+        if (typeof v === 'string' && v.trim()) return v;
+    }
+    return '(无正文字段)';
+};
+
 export const XinshengCardModal: React.FC<Props> = ({
     isOpen, onClose, char, userProfile, targetRoundId, onOpenSettings,
 }) => {
@@ -257,7 +279,7 @@ export const XinshengCardModal: React.FC<Props> = ({
                                         {active && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-500 text-white">当前</span>}
                                     </div>
                                     <div className="mt-1 text-[12px] text-slate-600 line-clamp-2">
-                                        {e?.innerVoice || e?.statusText || '(无正文字段)'}
+                                        {previewText(e)}
                                     </div>
                                 </button>
                             );

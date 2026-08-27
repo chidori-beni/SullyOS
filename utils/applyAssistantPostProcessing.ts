@@ -755,14 +755,27 @@ export async function applyAssistantPostProcessing(
         if (picked.entry) {
             xinshengRoundId = newXinshengRoundId(messageTimestamp ?? Date.now());
             const roundId = xinshengRoundId;
-            // 「随机套预设」这一轮抽中的样式跟着记录一起存，让这条心声永远保持它
-            // 生成时的样子（见 xinshengRandomPreset.ts 里为什么不写回角色档案）
+            // 「随机套预设」这一轮抽中的样式优先；没抽中（用户手动切换预设的常规情况）
+            // 就把**此刻角色档案上实际生效的**布局/CSS/显示模式原样快照下来。
+            //
+            // 两种情况都要存，不能只存随机命中的那种——用户经常手动换预设，不快照的话
+            // 历史卡片全都跟着"角色现在的设置"变皮：上周那条心声点开，显示的却是这周
+            // 刚换的美化，完全对不上当时的样子。见 xinshengRandomPreset.ts 里为什么不
+            // 把随机命中的那份写回角色档案（同一个道理，这里补上手动切换的那一半）。
             const roundPreset = peekXinshengRoundPreset(char.id);
+            const presetSnapshot = roundPreset
+                ? toEntryPreset(roundPreset)
+                : {
+                    name: '',
+                    displayMode: (char.xinshengDisplayMode === 'layout' ? 'layout' : 'planner') as 'planner' | 'layout',
+                    layout: char.xinshengLayout || '',
+                    customCss: char.xinshengCustomCss || '',
+                };
             // 不 await：落库慢一点无所谓，但绝不能因为它把整轮回复的上屏卡住。
             appendXinshengEntry(char.id, roundId, {
                 ...picked.entry,
                 _at: messageTimestamp ?? Date.now(),
-                ...(roundPreset ? { _preset: toEntryPreset(roundPreset) } : {}),
+                _preset: presetSnapshot,
             })
                 .then(() => dispatchXinshengUpdated({ charId: char.id, roundId }))
                 .catch(e => console.warn('[xinsheng] 落库失败:', e));
