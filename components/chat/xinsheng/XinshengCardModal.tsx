@@ -101,7 +101,7 @@ export const XinshengCardModal: React.FC<Props> = ({
     const [confirmClear, setConfirmClear] = useState(false);
     const [showFullText, setShowFullText] = useState(false);
     const [systemData, setSystemData] = useState<XinshengSystemData | null>(null);
-    const touchStartX = useRef<number | null>(null);
+    const touchStart = useRef<{ x: number; y: number } | null>(null);
 
     const ids = useMemo(() => {
         const all = sortRoundIds(Object.keys(history)).filter(id => !!history[id]);
@@ -154,14 +154,22 @@ export const XinshengCardModal: React.FC<Props> = ({
         setIndex(i => Math.max(0, Math.min(ids.length - 1, i + delta)));
     }, [ids.length]);
 
-    const onTouchStart = (e: React.TouchEvent) => { touchStartX.current = e.touches[0]?.clientX ?? null; };
+    const onTouchStart = (e: React.TouchEvent) => {
+        const t = e.touches[0];
+        touchStart.current = t ? { x: t.clientX, y: t.clientY } : null;
+    };
     const onTouchEnd = (e: React.TouchEvent) => {
-        const start = touchStartX.current;
-        touchStartX.current = null;
-        if (start == null) return;
-        const dx = (e.changedTouches[0]?.clientX ?? start) - start;
-        // 40px 门槛：卡片本身可以纵向滚动，横向手势要够明确才算翻页
-        if (Math.abs(dx) < 40) return;
+        const start = touchStart.current;
+        touchStart.current = null;
+        if (!start) return;
+        const end = e.changedTouches[0];
+        const dx = (end?.clientX ?? start.x) - start.x;
+        const dy = (end?.clientY ?? start.y) - start.y;
+        // 卡片区域本身要能纵向滚动（长布局模板划到底），一次「划到底」的长距离拖动
+        // 免不了带一点横向漂移——只看 |dx| 门槛会把这点漂移误判成翻页手势，划到底突然
+        // 跳到上一条/下一条。改成同时看纵向位移：横向必须明显压过纵向（1.5 倍）才算数，
+        // 真正的横滑翻页 dy 很小，一眼就能分辨；纵向滚动 dy 本身就大，天然被这个比例挡住。
+        if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
         go(dx > 0 ? -1 : 1);
     };
 
@@ -205,11 +213,11 @@ export const XinshengCardModal: React.FC<Props> = ({
 
             {/* 卡片区 */}
             <div
-                className="relative flex-1 overflow-y-auto no-scrollbar px-4 pb-[calc(env(safe-area-inset-bottom)+16px)]"
+                className="relative flex-1 overflow-y-auto no-scrollbar px-4"
                 onTouchStart={onTouchStart}
                 onTouchEnd={onTouchEnd}
             >
-                <div className="mx-auto w-full max-w-[400px]">
+                <div className="mx-auto w-full max-w-[400px] pb-4">
                     {!current ? (
                         <div className="mt-24 text-center text-white/60 text-[13px] leading-relaxed">
                             {filter === 'favorited' ? '还没有收藏的心声' : '暂无心声记录'}
@@ -229,42 +237,45 @@ export const XinshengCardModal: React.FC<Props> = ({
                     ) : (
                         <XinshengCard entry={current} charName={char.name} charAvatar={char.avatar} />
                     )}
-
-                    {/* 翻页 + 收藏 + 删除 */}
-                    {current && (
-                        <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5">
-                            <button
-                                onClick={() => go(-1)}
-                                disabled={index <= 0}
-                                className="w-10 h-10 rounded-full bg-white/15 text-white text-[18px] leading-none disabled:opacity-25 active:scale-95 transition-transform"
-                                aria-label="上一条"
-                            >‹</button>
-                            <button
-                                onClick={async () => { if (currentId) setHistory(await toggleXinshengFavorite(char.id, currentId)); }}
-                                className={`px-4 h-10 rounded-full text-[12px] active:scale-95 transition-transform ${current._favorited ? 'bg-amber-400 text-white' : 'bg-white/15 text-white'}`}
-                            >{current._favorited ? '★ 已收藏' : '☆ 收藏'}</button>
-                            <button
-                                onClick={async () => {
-                                    if (!currentId) return;
-                                    setHistory(await deleteXinshengEntry(char.id, currentId));
-                                    setIndex(i => Math.max(0, i - 1));
-                                }}
-                                className="px-4 h-10 rounded-full bg-white/15 text-rose-200 text-[12px] active:scale-95 transition-transform"
-                            >删除</button>
-                            <button
-                                onClick={() => setShowFullText(true)}
-                                className="px-4 h-10 rounded-full bg-white/15 text-white text-[12px] active:scale-95 transition-transform"
-                            >全文</button>
-                            <button
-                                onClick={() => go(1)}
-                                disabled={index >= ids.length - 1}
-                                className="w-10 h-10 rounded-full bg-white/15 text-white text-[18px] leading-none disabled:opacity-25 active:scale-95 transition-transform"
-                                aria-label="下一条"
-                            >›</button>
-                        </div>
-                    )}
                 </div>
             </div>
+
+            {/* 翻页 + 收藏 + 删除：拉到滚动区域**外面**，固定在屏幕底部。
+                之前跟卡片内容一起滚动，论坛美化的长布局模板（一屏放不下）要划到底才能看到
+                这一排按钮；现在滚多长的模板都不影响，按钮永远在原地。
+                历史抽屉打开时让位，两个「底部条」不用叠在一起。 */}
+            {current && !showList && (
+                <div className="shrink-0 flex flex-wrap items-center justify-center gap-2.5 px-4 pb-[calc(env(safe-area-inset-bottom)+16px)] pt-2">
+                    <button
+                        onClick={() => go(-1)}
+                        disabled={index <= 0}
+                        className="w-10 h-10 rounded-full bg-white/15 text-white text-[18px] leading-none disabled:opacity-25 active:scale-95 transition-transform"
+                        aria-label="上一条"
+                    >‹</button>
+                    <button
+                        onClick={async () => { if (currentId) setHistory(await toggleXinshengFavorite(char.id, currentId)); }}
+                        className={`px-4 h-10 rounded-full text-[12px] active:scale-95 transition-transform ${current._favorited ? 'bg-amber-400 text-white' : 'bg-white/15 text-white'}`}
+                    >{current._favorited ? '★ 已收藏' : '☆ 收藏'}</button>
+                    <button
+                        onClick={async () => {
+                            if (!currentId) return;
+                            setHistory(await deleteXinshengEntry(char.id, currentId));
+                            setIndex(i => Math.max(0, i - 1));
+                        }}
+                        className="px-4 h-10 rounded-full bg-white/15 text-rose-200 text-[12px] active:scale-95 transition-transform"
+                    >删除</button>
+                    <button
+                        onClick={() => setShowFullText(true)}
+                        className="px-4 h-10 rounded-full bg-white/15 text-white text-[12px] active:scale-95 transition-transform"
+                    >全文</button>
+                    <button
+                        onClick={() => go(1)}
+                        disabled={index >= ids.length - 1}
+                        className="w-10 h-10 rounded-full bg-white/15 text-white text-[18px] leading-none disabled:opacity-25 active:scale-95 transition-transform"
+                        aria-label="下一条"
+                    >›</button>
+                </div>
+            )}
 
             {/* 历史列表：底部抽屉 */}
             {showList && (
