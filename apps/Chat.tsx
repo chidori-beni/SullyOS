@@ -3944,6 +3944,25 @@ const Chat: React.FC = () => {
                         !prevMessage ||
                         prevMessage.role !== m.role ||
                         Math.abs(m.timestamp - prevMessage.timestamp) > messageGroupGapMs;
+                    // 心声：「头像在组顶部、连续气泡共用一次」的显示方式下，那个头像绑的是
+                    // 组内第一条消息**自己的** metadata——但分组只按"同角色 + 30 分钟内"判定，
+                    // 跟是不是同一轮回复无关。一个组完全可能横跨好几轮回复（主动消息隔几分钟
+                    // 又追一句也不破组），组里第一条甚至可能是开启心声之前发的、根本没有
+                    // roundId。顶部头像代表的是"这一串消息"，点击该打开组内**最新**一轮的
+                    // 心声，而不是死盯着第一条自己的 metadata——否则点了没反应。
+                    // 只在组首（isFirstInGroup）才需要算，往后扫到组尾为止。
+                    const groupXinshengRoundId = breaksWithPrevious
+                        ? (() => {
+                            let latest: string | undefined;
+                            for (let j = i; j < displayMessages.length; j++) {
+                                const cand = displayMessages[j];
+                                if (j > i && (cand.role !== m.role || Math.abs(cand.timestamp - displayMessages[j - 1].timestamp) > messageGroupGapMs)) break;
+                                const rid = (cand as any).metadata?.xinshengRoundId;
+                                if (typeof rid === 'string' && rid) latest = rid;
+                            }
+                            return latest;
+                        })()
+                        : undefined;
                     const breaksWithNext =
                         !nextMessage ||
                         nextMessage.role !== m.role ||
@@ -3977,6 +3996,7 @@ const Chat: React.FC = () => {
                             msg={m}
                             isFirstInGroup={breaksWithPrevious}
                             isLastInGroup={breaksWithNext}
+                            groupXinshengRoundId={groupXinshengRoundId}
                             activeTheme={activeTheme}
                             charAvatar={char.avatar}
                             charName={char.name}

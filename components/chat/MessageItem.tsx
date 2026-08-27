@@ -1542,6 +1542,13 @@ interface MessageItemProps {
      * 头像保持原来的样子，不可点。
      */
     onAvatarClick?: (roundId: string) => void;
+    /**
+     * 「头像在组顶部、连续气泡共用一次」模式下，组首头像该打开的 roundId ——
+     * 由调用方（Chat.tsx）往前扫整个视觉分组算出的**最新**一轮，而不是这条
+     * （组首）消息自己的 metadata（分组只按角色+时间间隔判定，组内第一条消息
+     * 完全可能属于更早、甚至开启心声之前的一轮）。只有 isFirstInGroup 时才有意义。
+     */
+    groupXinshengRoundId?: string;
     /** Instant Push 准备中：在用户气泡左侧渲染 dot pulse */
     isPending?: boolean;
     /** 是否开启 dot pulse 指示。关掉则 pending 期间不显示任何视觉 */
@@ -1612,6 +1619,7 @@ const MessageItem = React.memo(({
     moduleAlign = 'center',
     suppressEntranceAnimation = false,
     onAvatarClick,
+    groupXinshengRoundId,
     isPending = false,
     pendingIndicator = true,
     onMcdSendCart,
@@ -1773,12 +1781,16 @@ const MessageItem = React.memo(({
     // Removed mb-5 from here, handled via absolute positioning in parent
     const renderAvatar = (
         src: string,
-        options?: { visible?: boolean; className?: string },
+        options?: { visible?: boolean; className?: string; xinshengRoundIdOverride?: string },
     ) => {
         const visible = options?.visible ?? shouldShowAvatar;
         // 心声：这一轮存过心声（metadata 上有 roundId）才让头像可点，
         // 没存过就保持原样 —— 点了弹一张空卡比点不动更让人困惑。
-        const xinshengRoundId = typeof m.metadata?.xinshengRoundId === 'string' ? m.metadata.xinshengRoundId : '';
+        // 组顶部头像（options.xinshengRoundIdOverride）用调用方算好的"组内最新一轮"，
+        // 不看这条消息自己的 metadata（分组只按角色+时间间隔判定，组首消息可能
+        // 属于更早、甚至开启心声之前的一轮，见 groupXinshengRoundId 的注释）。
+        const ownRoundId = typeof m.metadata?.xinshengRoundId === 'string' ? m.metadata.xinshengRoundId : '';
+        const xinshengRoundId = options?.xinshengRoundIdOverride ?? ownRoundId;
         const avatarClickable = !isUser && !!xinshengRoundId && !!onAvatarClick;
         return (
             <div
@@ -2240,6 +2252,8 @@ const MessageItem = React.memo(({
                         {renderAvatar(isUser ? userAvatar : charAvatar, {
                             visible: true,
                             className: 'sully-chat-turn-avatar',
+                            // 用户头像没有心声可看，不传覆盖值（拿自己的空 metadata 兜底即可）
+                            ...(isUser ? {} : { xinshengRoundIdOverride: groupXinshengRoundId || '' }),
                         })}
                     </div>
                 )}
@@ -4149,6 +4163,7 @@ const MessageItem = React.memo(({
            // 没有 metadata 的气泡，DB 写完 roundId 后才重新 setMessages）——漏看这个字段
            // 会导致头像已经"能点"了，界面却因为判等为真而不重渲染，点击一直没反应。
            prev.msg.metadata?.xinshengRoundId === next.msg.metadata?.xinshengRoundId &&
+           prev.groupXinshengRoundId === next.groupXinshengRoundId &&
            reactionSignature(prev.msg) === reactionSignature(next.msg) &&
            prev.isFirstInGroup === next.isFirstInGroup &&
            prev.isLastInGroup === next.isLastInGroup &&
