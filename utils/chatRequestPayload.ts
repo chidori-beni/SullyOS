@@ -37,6 +37,7 @@ import { normalizeTranslationLangLabel } from './translationLang';
 import { cleanApiMessages, flattenImageContentParts } from './promptMessageCleanup';
 import { materializeVisionDescriptions } from './visionApi';
 import type { RecallEntryPoint, RecallTrace } from './memoryPalace/trace';
+import { DB } from './db';
 
 export { cleanApiMessages, flattenImageContentParts } from './promptMessageCleanup';
 
@@ -171,6 +172,42 @@ function deriveListeningFromSnapshot(
 const TRACK_CHANGE_FRESH_MS = 10 * 60 * 1000;
 
 /**
+ * 自适应记忆上下文会按高水位线裁掉已经整理过的原文。通话结束卡本身可能因此不在
+ * 本轮 history 里，导致 ChatApp 看不到“电话已经挂断”的模式边界，角色又把普通消息
+ * 当成电话续接。只在真正的 ChatApp 用户回合、且结束卡仍很新时从完整消息库补回一张；
+ * 主动消息/定时 fire 不走这条路，避免把几小时前的电话边界烤进未来的主动模板。
+ */
+const CALL_BOUNDARY_RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+export const appendRecentCallEndBoundary = (
+    historyMsgs: Message[],
+    candidates: Message[],
+    now = Date.now(),
+): Message[] => {
+    if (!historyMsgs.length || historyMsgs[historyMsgs.length - 1]?.role !== 'user') return historyMsgs;
+    if (historyMsgs.some(message => message.metadata?.source === 'call-end-popup')) return historyMsgs;
+
+    const boundary = candidates
+        .filter(message => message.metadata?.source === 'call-end-popup')
+        .sort((a, b) => b.id - a.id)
+        .find(message => {
+            const endedAt = Number(message.metadata?.endedAt) || message.timestamp;
+            return Number.isFinite(endedAt)
+                && endedAt <= now + 5 * 60 * 1000
+                && now - endedAt <= CALL_BOUNDARY_RECOVERY_WINDOW_MS;
+        });
+    if (!boundary) return historyMsgs;
+
+    const boundaryId = boundary.id;
+    const hasNormalAssistantAfter = historyMsgs.some(message => message.id > boundaryId
+        && message.role === 'assistant'
+        && message.metadata?.source !== 'call');
+    if (hasNormalAssistantAfter) return historyMsgs;
+
+    return [...historyMsgs, boundary].sort((a, b) => a.id - b.id);
+};
+
+/**
  * 把原始换歌记录折算成"该 char 这一轮是否需要察觉换歌"。
  * 命中条件：char 换歌那刻在一起听名单里、还没重新加入、且换歌发生在刚才。
  * 导出仅为单测。
@@ -238,6 +275,22 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         const preparedById = new Map(prepared.map(message => [message.id, message]));
         historyMsgsForPrompt = historyMsgs.map(message => preparedById.get(message.id) || message);
         recentMsgsHint = rawRecentMsgsHint.map(message => preparedById.get(message.id) || message);
+    }
+
+    // 记忆宫殿的 adaptive 水位线可能已经把刚结束电话的正文和结束卡一起裁掉；
+    // ChatApp 仍需要这张最新卡片来告诉模型“这一轮已经回到 IM”。只补一张 24 小时内
+    // 的边界，而且只发生在 ChatApp 的用户回合，主动消息模板不会携带这条易变状态。
+    if (input.recallEntryPoint === 'chat_app'
+        && char.contextRangeMode === 'adaptive'
+        && (char.autoArchiveEnabled || char.contextFollowsMemoryPalaceHwm)
+        && historyMsgsForPrompt[historyMsgsForPrompt.length - 1]?.role === 'user'
+        && !historyMsgsForPrompt.some(message => message.metadata?.source === 'call-end-popup')) {
+        try {
+            const recentWithProcessed = await DB.getRecentMessagesByCharId(char.id, 120, true);
+            historyMsgsForPrompt = appendRecentCallEndBoundary(historyMsgsForPrompt, recentWithProcessed);
+        } catch {
+            // 补边界只是上下文增强；IndexedDB 短暂不可读时照常走原请求。
+        }
     }
 
     if (isPromptBuildSkipped()) {

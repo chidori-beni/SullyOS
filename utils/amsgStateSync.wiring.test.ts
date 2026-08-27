@@ -51,8 +51,10 @@ describe('打脏入口接线（保存后调 markAmsgStateDirty）', () => {
 describe('LLM 凭据行的重传接线', () => {
   it('设置页换聊天 API：重传凭据行 + 存量内联任务照旧补刷（两条并存）', () => {
     const src = read('../apps/Settings.tsx');
-    // 保存按钮和点预设切换汇到 commitApiConfig 这一个出口，凭据接线挂在它身上。
-    const fn = sliceBetween(src, 'const commitApiConfig', 'const applyPreset');
+    const contextSrc = read('../context/OSContext.tsx');
+    // 设置页保存按钮和点预设切换汇到 OSContext.commitApiConfig 这一个出口，
+    // 凭据接线挂在这个共享提交函数身上。
+    const fn = sliceBetween(contextSrc, 'const commitApiConfig', 'const showError');
     expect(fn).toContain('syncAmsgLlmCredentials(');
     expect(fn, '存量内联任务还靠它续命，不能顺手退役')
       .toContain('ActiveMsgClient.refreshApiCredentialsForPendingTasks(');

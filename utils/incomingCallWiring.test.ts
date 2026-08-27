@@ -92,7 +92,7 @@ describe('预解锁绝不能碰真铃声（幽灵铃声根因）', () => {
     // 否则刚好这时到达的真来电会被 Overlay 判成「已经在响」而直接 return：
     // 界面亮着、没有声音、也没有看门狗，那通电话会永远挂在那儿。
     expect(ringtone).toContain('let priming = false;');
-    expect(ringtone).toContain('!priming && !!audio && !audio.paused');
+    expect(ringtone).toContain('!priming && (ringActive || (!!audio && !audio.paused))');
   });
 
   it('预解锁的迟到 promise 不许 pause 已经开始响的真来电', () => {

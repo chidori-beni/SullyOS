@@ -94,6 +94,7 @@ import { cancelAllPendingCallBackgroundJobs } from '../utils/callBackgroundJobs'
 import { callLaunch } from '../utils/callLaunch';
 import { runCallMemoryPalacePostFlow } from '../utils/memoryPalace/callPostFlow';
 import { getActiveDatePresence } from '../utils/datePresence';
+import { getCallLifecycleGeneration, isCallActiveForChar } from '../utils/callSessionLifecycle';
 
 interface ProactiveQueueEntry {
   charId: string;
@@ -2258,6 +2259,18 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               return;
           }
 
+          // A proactive request can already be in flight when the user answers a
+          // call. Capture the lifecycle generation now and re-check it before any
+          // hidden hint / assistant message is committed; otherwise the late
+          // result can sound as if the call is still connected after hang-up.
+          const callGenerationAtStart = getCallLifecycleGeneration(charId);
+          const callLifecycleChanged = () => isCallActiveForChar(charId)
+              || getCallLifecycleGeneration(charId) !== callGenerationAtStart;
+          if (callLifecycleChanged()) {
+              drainQueuedProactive();
+              return;
+          }
+
           if (char.proactiveConfig && !char.proactiveConfig.enabled) {
               drainQueuedProactive();
               console.log(`🔕 [Proactive/Global] Skipped for ${char.name}: disabled`);
@@ -2341,13 +2354,23 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       ? `[系统提示（非${userName}发言）: 现在是 ${timeStr}。你和${userName}刚刚在线下见过面（如果上下文里有标着 [约会] 的内容，那就是你们见面时发生的事），现在你们暂时分开了，你拿起手机想给${userName}发条消息。请基于刚才的见面来发——可以回味见面里的某个细节、补一句当时没说出口的话、关心${userName}到家了没，或者就是刚分开就有点想念。绝对不要表现得好像很久没联系，更不要对刚才的见面毫不知情。一两句话就好。]`
                       : `[系统提示（非${userName}发言）: 现在是 ${timeStr}。${timeSinceUser ? `${userName}已经 ${timeSinceUser} 没有找你说话了。` : ''}这是系统给你的一次主动发消息机会——${userName}并没有在跟你说话，是你想主动找${userName}。像真人一样随意地发条消息吧，比如：随手拍了张照片想分享、刚看到个有趣的事想说、突然想到个冷知识、吐槽今天的天气/食物/见闻、或者就是单纯想找${userName}聊几句。不要刻意，不要像在"汇报近况"，就像你真的拿起手机随手发了条消息。一两句话就好。${timeSinceUser && parseInt(timeSinceUser) > 2 ? `（${userName}挺久没找你了，你也可以表达想念、好奇${userName}在干嘛、或者小小地抱怨一下。）` : ''}]`;
 
-              await DB.saveMessage({
+              if (callLifecycleChanged()) return;
+              const proactiveHintId = await DB.saveMessage({
                   charId,
                   role: 'user',
                   type: 'text',
                   content: hintContent,
                   metadata: { proactiveHint: true, hidden: true }
               });
+
+              const abortForCall = async (): Promise<boolean> => {
+                  if (!callLifecycleChanged()) return false;
+                  // The hidden hint is an implementation detail. Remove it when
+                  // the call wins the race so it cannot become stale chat context.
+                  try { await DB.deleteMessage(proactiveHintId); } catch { /* best effort */ }
+                  return true;
+              };
+              if (await abortForCall()) return;
 
               // 3. Build prompt & message history — 走和 useChatAI / emotion eval 同一个 helper，
               //    保证三家拿到的"材料"完全一致；区别只在前面追加的"现在主动找用户"那条 hint。
@@ -2386,6 +2409,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   thinkingChain: { enabled: !!(char as any).showThinkingChain, customPrompt: (char as any).thinkingChainCustomPrompt },
                   visionApiConfig: currentApiConfig.visionApi,
               });
+              if (await abortForCall()) return;
               const systemPrompt = payload.systemPrompt;
               const apiMessages = payload.cleanedApiMessages;
               const fullMessages = payload.fullMessages;
@@ -2428,6 +2452,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   method: 'POST', headers,
                   body: JSON.stringify(reqBody)
               }, 2, 0, { appName: '消息', charId, charName: char.name, purpose: '主动消息' });
+
+              if (await abortForCall()) return;
 
               // 5. Process & save response
               let aiContent = data.choices?.[0]?.message?.content || '';
@@ -2515,6 +2541,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               aiContent = ChatParser.sanitize(aiContent);
 
               if (aiContent) {
+                  if (await abortForCall()) return;
                   // 双语翻译:沿用 useChatAI 的 <翻译><原文>..</原文><译文>..</译文></翻译> 协议,
                   // 把每对原文/译文落成一条 text 消息,内容用 `\n%%BILINGUAL%%\n` 串联供渲染端识别。
                   const hasTranslationTags = /<翻译>\s*<原文>[\s\S]*?<\/原文>\s*<译文>[\s\S]*?<\/译文>\s*<\/翻译>/.test(aiContent);
@@ -2695,6 +2722,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   }
               }
 
+              if (await abortForCall()) return;
               if (offset > 0) {
                   const previewSource = savedPreviewChunks.join(' ').trim();
                   const preview = previewSource.replace(/\s+/g, ' ').trim().slice(0, 120)

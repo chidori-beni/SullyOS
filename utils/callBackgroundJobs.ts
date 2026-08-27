@@ -26,6 +26,7 @@ import {
 } from './amsgCallJob';
 import { parseCallAssistantMessage, stripCallTextFormatting } from './callReplyFormat';
 import { loadSleepCompanionSession, updateSleepCompanionSession } from './sleepCompanionSession';
+import { enqueueCallSessionWrite, isCallSessionEnded } from './callSessionLifecycle';
 
 const PENDING_KEY = 'sully-call-background-jobs-v1';
 const MAX_PENDING = 12;
@@ -259,6 +260,13 @@ export const applyCallBackgroundResult = async (payload: unknown): Promise<boole
     console.warn(`${HEADER} 结果形状不对，销账丢弃`, payload);
     return true;
   }
+  // finishCall 先写内存里的结束墓碑，再异步取消 Worker / 保存结束卡片。
+  // 结果 push 可能正好夹在这两个 await 之间；不要等 DB 结束卡片出现后才拦，
+  // 否则迟到的台词会先落库，下一次普通聊天就会误把它当成仍在通话中。
+  if (isCallSessionEnded(result.sessionId)) {
+    removePendingCallBackgroundJob(result.jobId);
+    return true;
+  }
   const all = await DB.getMessagesByCharId(result.charId, true);
   const duplicate = all.find(message => message.metadata?.backgroundJobId === result.jobId);
   if (duplicate) {
@@ -288,7 +296,7 @@ export const applyCallBackgroundResult = async (payload: unknown): Promise<boole
     removePendingCallBackgroundJob(result.jobId);
     return true;
   }
-  await DB.saveMessage({
+  const savedId = await enqueueCallSessionWrite(result.sessionId, () => DB.saveMessage({
     charId: result.charId,
     role: 'assistant',
     type: 'text',
@@ -306,7 +314,11 @@ export const applyCallBackgroundResult = async (payload: unknown): Promise<boole
       ...(parsed.performanceCues ? { avatarPerformanceCues: parsed.performanceCues } : {}),
       generatedAt: result.generatedAt,
     },
-  });
+  }));
+  if (savedId == null) {
+    removePendingCallBackgroundJob(result.jobId);
+    return true;
+  }
   // 恢复卡片可能先于 outbox 到达；把梦话数量/轮次同步到卡片元数据，聊天页与通话记录
   // 两边都能看见这条迟到的结果。正常挂断卡片不会走到这里（上面的闸已拦住）。
   await updateEndCardForBackgroundResult(endCard, all, result);

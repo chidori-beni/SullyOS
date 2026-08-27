@@ -26,6 +26,7 @@ import {
   cancelLateEmotionPoll,
   describeMultipartFailure,
   handleInstantErrorPushMessage,
+  isStaleNaturalMessageFromCall,
   startLateEmotionPoll,
 } from './activeMsgRuntime';
 import { MULTIPART_FAILURE_REASON } from '@rei-standard/amsg-shared';
@@ -44,6 +45,57 @@ import { ActiveMsgStore } from './activeMsgStore';
 import { AMSG_SELF_LOG_KEY, amsgStateNamespace } from './amsgFirePack';
 import { CHAT_GEN_EVENTS } from './chatGenEvents';
 import { DB } from './db';
+import { endCallSession, resetCallLifecycleForTests, startCallSession } from './callSessionLifecycle';
+
+describe('isStaleNaturalMessageFromCall', () => {
+  afterEach(() => resetCallLifecycleForTests());
+
+  it('识别通话时间窗内生成的自然主动消息并丢弃', () => {
+    const now = Date.now();
+    startCallSession('char-call', 'session-call', now - 5_000);
+
+    expect(isStaleNaturalMessageFromCall({
+      charId: 'char-call',
+      source: 'scheduled',
+      metadata: { amsgNaturalProactive: true },
+      sentAt: now - 1_000,
+    })).toBe(true);
+
+    endCallSession('char-call', 'session-call', now);
+
+    expect(isStaleNaturalMessageFromCall({
+      charId: 'char-call',
+      source: 'scheduled',
+      metadata: { amsgNaturalProactive: true },
+      sentAt: now + 5_000,
+    })).toBe(false);
+  });
+
+  it('不吞掉普通定时消息、即时消息或缺少自然主动标记的消息', () => {
+    const now = Date.now();
+    startCallSession('char-call', 'session-call', now - 5_000);
+    endCallSession('char-call', 'session-call', now);
+
+    expect(isStaleNaturalMessageFromCall({
+      charId: 'char-call',
+      source: 'scheduled',
+      metadata: { amsgNaturalProactive: false },
+      sentAt: now - 1_000,
+    })).toBe(false);
+    expect(isStaleNaturalMessageFromCall({
+      charId: 'char-call',
+      source: 'instant_chat',
+      metadata: { amsgNaturalProactive: true },
+      sentAt: now - 1_000,
+    })).toBe(false);
+    expect(isStaleNaturalMessageFromCall({
+      charId: 'other-char',
+      source: 'scheduled',
+      metadata: { amsgNaturalProactive: true },
+      sentAt: now - 1_000,
+    })).toBe(false);
+  });
+});
 
 // resolveFireExpireDecision 是从「防穿帮闸·客户端兜底」吞没闸抽出来的 get-or-compute
 // helper（带 TTL 清扫），单测把闸的关键不变量钉住，防回归：

@@ -838,3 +838,35 @@ export const stopAmsgChatPresence = (charId: string) => {
     chatPresenceLeases.delete(charId);
   }
 };
+
+/**
+ * 通话明确挂断时的同步下线。
+ *
+ * 普通 stop 仍只停本地心跳，让远端 TTL 自然失效；挂断则需要马上把 activeAt 写成 0，
+ * 否则 Worker 在这几十秒窗口内还可能把一条已经结束通话前排好的主动消息当成「用户
+ * 仍在前台」或继续沿用旧的交互状态。先等待旧 PUT（若有）再写离线哨兵，避免网络
+ * 重排时旧的 activeAt 反过来覆盖新状态。这个函数不阻塞挂断 UI，调用方可 `void`。
+ */
+export const endAmsgChatPresence = async (charId: string): Promise<void> => {
+  const lease = chatPresenceLeases.get(charId);
+  if (lease) {
+    if (lease.timer !== null) clearInterval(lease.timer);
+    chatPresenceLeases.delete(charId);
+    try {
+      await lease.writeInFlight;
+    } catch {
+      // runChatPresenceWrite 自身已经吞掉失败；这里仅防测试替身直接 reject。
+    }
+  }
+  try {
+    await ActiveMsgClient.syncChatPresence(charId, {
+      v: 1,
+      charId,
+      activeAt: 0,
+      lastUserMessageAt: lease?.lastUserMessageAt ?? null,
+    });
+  } catch (error) {
+    // 远端 TTL 仍是兜底；本地生命周期哨兵已经先行结束，不让网络失败阻塞挂断。
+    console.warn(`${HEADER} 通话挂断下线哨兵写入失败（远端 TTL 兜底）`, error);
+  }
+};

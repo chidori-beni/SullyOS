@@ -17,11 +17,13 @@ vi.mock('./activeMsgClient', () => ({
 vi.mock('./amsgLlmCredentials', () => ({ buildCharInstantCredRow: vi.fn(() => null) }));
 
 import { applyCallBackgroundResult } from './callBackgroundJobs';
+import { endCallSession, resetCallLifecycleForTests, startCallSession } from './callSessionLifecycle';
 
 describe('call background result bridge', () => {
   const values = new Map<string, string>();
 
   beforeEach(() => {
+    resetCallLifecycleForTests();
     values.clear();
     dbMock.getMessagesByCharId.mockReset();
     dbMock.saveMessage.mockReset();
@@ -79,6 +81,16 @@ describe('call background result bridge', () => {
     ]);
 
     await expect(applyCallBackgroundResult(reply())).resolves.toBe(true);
+    expect(dbMock.saveMessage).not.toHaveBeenCalled();
+  });
+
+  it('结束墓碑先于结束卡片写入时也拦住迟到结果', async () => {
+    startCallSession('char-1', 'session-1');
+    endCallSession('char-1', 'session-1');
+    dbMock.getMessagesByCharId.mockResolvedValue([]);
+
+    await expect(applyCallBackgroundResult(reply())).resolves.toBe(true);
+    expect(dbMock.getMessagesByCharId).not.toHaveBeenCalled();
     expect(dbMock.saveMessage).not.toHaveBeenCalled();
   });
 

@@ -64,7 +64,9 @@ describe('SiliconFlow transcription request', () => {
     expect(audioSessionType).toBe('play-and-record');
     setSiliconFlowAudioRoute('speaker');
     expect(audioSessionType).toBe('playback');
-    expect(audioSessionTypes).toEqual(['play-and-record', 'play-and-record', 'playback']);
+    // Reassigning the same category is observable on WebKit and can make the
+    // system briefly re-pick the route / show the volume HUD.
+    expect(audioSessionTypes).toEqual(['play-and-record', 'playback']);
   });
 
   it('moves to a capture-compatible category before a microphone request', () => {
@@ -141,18 +143,16 @@ describe('SiliconFlow transcription request', () => {
     await runRecording();
     expect(track.enabled).toBe(false);
     expect(audioSessionTypes).toContain('play-and-record');
-    // The cached track is still live. `auto` preserves the selected speaker
-    // route without WebKit ending the capture track (which would prompt again
-    // on the next tap).
-    expect(audioSessionTypes.at(-1)).toBe('auto');
+    // The recorder track is disabled between turns, so the speaker route can
+    // request output-only playback instead of falling back to the receiver.
+    expect(audioSessionTypes.at(-1)).toBe('playback');
     const routeChangesAfterFirstRecording = audioSessionTypes.length;
     await runRecording();
 
     expect(getUserMedia).toHaveBeenCalledOnce();
-    // A cached stream must not toggle back to play-and-record for every new
-    // tap; that transition is what makes iOS flash the volume HUD and can
-    // disturb the user's speaker route.
-    expect(audioSessionTypes.slice(routeChangesAfterFirstRecording)).not.toContain('play-and-record');
+    // The cached stream is reused and `auto` is capture-compatible, avoiding a
+    // second category transition that can flash iOS's volume HUD.
+    expect(audioSessionTypes.slice(routeChangesAfterFirstRecording)).toEqual(['auto', 'playback']);
     expect(track.stop).not.toHaveBeenCalled();
     releaseSiliconFlowMicrophone();
     expect(track.stop).toHaveBeenCalledOnce();

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Message } from '../types';
-import { buildChatRequestPayload } from './chatRequestPayload';
+import { appendRecentCallEndBoundary, buildChatRequestPayload } from './chatRequestPayload';
 import { detectChatModeTransition } from './chatPrompts';
 
 const message = (
@@ -59,6 +59,27 @@ describe('detectChatModeTransition', () => {
             message(3, 'system', 'call-end-popup'),
         ])).toBeNull();
     });
+
+    it('通话结束卡片后的迟到通话气泡不能遮掉已挂断边界', () => {
+        expect(detectChatModeTransition([
+            message(1, 'assistant', 'call'),
+            message(2, 'system', 'call-end-popup'),
+            message(3, 'assistant', 'call'),
+            message(4, 'user'),
+        ])).toBe('call');
+    });
+
+    it('自适应水位线裁掉结束卡时，把最近的边界补回当前聊天历史', () => {
+        const now = Date.now();
+        const boundary = message(2, 'system', 'call-end-popup', {
+            callEnded: true,
+            endedAt: now - 1_000,
+        });
+        const history = [message(4, 'user')];
+        const recovered = appendRecentCallEndBoundary(history, [boundary], now);
+        expect(recovered.map(item => item.id)).toEqual([2, 4]);
+        expect(detectChatModeTransition(recovered)).toBe('call');
+    });
 });
 
 describe('buildChatRequestPayload 模式切换接线', () => {
@@ -92,6 +113,8 @@ describe('buildChatRequestPayload 模式切换接线', () => {
         expect(joined).toContain('刚刚结束了视频通话');
         expect(joined).toContain('现在已经回到 ChatApp 的文字聊天界面');
         expect(joined).toContain('如果 ChatApp 当前开启了语音消息，仍可遵守它自己的语音消息格式');
+        expect(joined).toContain('当前没有一条仍然接通的语音线路');
+        expect(joined).toContain('这通视频通话已经明确挂断');
     });
 
     it('进行中的见面里发手机消息时不注入“刚结束见面”，并保留一次面对面手机来源标记', async () => {

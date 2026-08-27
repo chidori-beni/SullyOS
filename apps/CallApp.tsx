@@ -116,11 +116,13 @@ import {
   isVisionInputUnsupportedError,
   USER_CAMERA_SNAPSHOT_SYSTEM_NOTE,
 } from '../utils/userCameraSnapshot';
-import { markAmsgStateDirty, startAmsgChatPresence, stopAmsgChatPresence } from '../utils/amsgStateSync';
+import { endAmsgChatPresence, markAmsgStateDirty, startAmsgChatPresence, stopAmsgChatPresence } from '../utils/amsgStateSync';
 import { trackEvent } from '../utils/analytics';
 import { fetchBlobForShare, shareOrDownloadBlob } from '../utils/shareExport';
 import { getPendingReplyText } from '../utils/pendingReply';
 import { findExpiredCallSnapshots } from '../utils/callSnapshotRetention';
+import { getCallAudioElement, getCallAudioResumeIntent, resetCallAudioElement, setCallAudioResumeIntent } from '../utils/callAudioPlayer';
+import { registerCallAudioBlobUrl, resolveReusableCallAudioUrl, revokeCallAudioBlobUrl } from '../utils/callAudioUrl';
 import {
   companionAvatarSource,
   companionExpressionKey,
@@ -134,7 +136,6 @@ import { addCompanionModelOutfit, addUploadedCompanionOutfit } from '../utils/co
 import VoiceFavoriteActionSheet from '../components/voice/VoiceFavoriteActionSheet';
 import { getVoiceFavorite, removeVoiceFavorite, saveVoiceFavorite } from '../utils/voiceFavorites';
 import { callLaunch } from '../utils/callLaunch';
-import { resolveReusableCallAudioUrl } from '../utils/callAudioUrl';
 import {
   clearSleepCompanionSession,
   loadSleepCompanionSession,
@@ -158,6 +159,7 @@ import {
 } from '../utils/callSessionRecovery';
 import { flattenContentPartsToText } from '../utils/promptMessageCleanup';
 import { injectWorldbookDepthEntries, resolveWorldbookEntries } from '../utils/worldbook';
+import { endCallSession, enqueueCallSessionWrite, isCallSessionEnded, startCallSession } from '../utils/callSessionLifecycle';
 type CallState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'ended' | 'error';
 type CallMode = 'voice' | 'video';
 /** 这通电话是谁打的。'incoming' = 角色打给用户、用户接了起来。 */
@@ -650,6 +652,12 @@ const CallApp: React.FC = () => {
   const [callRecords, setCallRecords] = useState<CallRecord[]>([]);
   const [callRecordsLoadedFor, setCallRecordsLoadedFor] = useState('');
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => `call-${Date.now()}`);
+  // 挂断先写这份同步哨兵，再做任何 await。正在飞的回复 / TTS / Worker handoff
+  // 看到旧 session 已结束后必须静默退出，不能在结束卡片后继续追加电话内容。
+  const endedCallSessionsRef = useRef<Set<string>>(new Set());
+  const callFinishInFlightRef = useRef<string | null>(null);
+  const isLiveCallSession = (sessionId: string): boolean => !endedCallSessionsRef.current.has(sessionId)
+    && !isCallSessionEnded(sessionId);
   const [draftInput, setDraftInput] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [isSttProcessing, setIsSttProcessing] = useState(false);
@@ -659,16 +667,17 @@ const CallApp: React.FC = () => {
   // creating another recorder (and another apparent permission request).
   const sttStartTokenRef = useRef(0);
   const sttStartPendingRef = useRef(false);
+  const suspendingCallRef = useRef(false);
   const speechProvider = apiConfig.speechRecognitionProvider || 'system';
   const sttSupported = useMemo(() => isSttSupported(speechProvider), [speechProvider]);
-  const stopCallStt = () => {
+  const stopCallStt = (restoreAudioSession = true) => {
     sttStartTokenRef.current += 1;
     sttStartPendingRef.current = false;
     sttSessionRef.current?.stop();
     sttSessionRef.current = null;
     setIsListening(false);
     setIsSttProcessing(false);
-    releaseSiliconFlowMicrophone();
+    releaseSiliconFlowMicrophone(restoreAudioSession);
   };
   const [audioUrl, setAudioUrl] = useState<string>('');
   const [traceId, setTraceId] = useState<string>('');
@@ -722,14 +731,13 @@ const CallApp: React.FC = () => {
   const [videoCallLayout, setVideoCallLayout] = useState<VideoCallLayout>(loadVideoCallLayout);
   const [userCameraPreviewSize, setUserCameraPreviewSize] = useState<UserCameraPreviewSize>(loadUserCameraPreviewSize);
   const [videoTranscriptExpanded, setVideoTranscriptExpanded] = useState(false);
-  // Keep one audio element alive across role picker / history / active call views.
-  // iOS media permission can be element-scoped, so remounting a JSX audio node after
-  // the user taps “接通” would throw away the element that was just unlocked.
+  // Keep one audio element alive across role picker / history / active call views
+  // and across an in-phone app switch while a call is suspended. iOS media
+  // permission can be element-scoped, so remounting a JSX audio node after the
+  // user taps “接通” would throw away the element that was just unlocked.
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  if (!audioRef.current && typeof Audio !== 'undefined') {
-    audioRef.current = new Audio();
-    audioRef.current.preload = 'auto';
-  }
+  if (!audioRef.current) audioRef.current = getCallAudioElement();
+  const audioWasPlayingBeforeHiddenRef = useRef(false);
   const audioPrimingRef = useRef(false);
   const nativeCallAudioOnly = useMemo(() => shouldKeepNativeCallAudio(), []);
   const applyAudioOutputRoute = (route: SiliconFlowAudioRoute) => {
@@ -750,9 +758,22 @@ const CallApp: React.FC = () => {
   useEffect(() => {
     if (viewMode !== 'in-call') return;
     const reassertVisibleCallRoute = () => {
-      if (document.visibilityState !== 'visible') return;
+      const audio = audioRef.current;
+      if (document.visibilityState !== 'visible') {
+        // iOS may pause a media element while the PWA is backgrounded. Remember
+        // whether this was an active turn so returning to the app can request
+        // the same playback again instead of leaving a silent call.
+        audioWasPlayingBeforeHiddenRef.current = Boolean(audio && !audio.paused && !audio.ended);
+        return;
+      }
       setSiliconFlowAudioRoute(audioOutputRouteRef.current);
-      if (audioRef.current && !audioRef.current.paused) prepareSiliconFlowAudioPlayback();
+      if (audio && (!audio.paused || audioWasPlayingBeforeHiddenRef.current || getCallAudioResumeIntent())) {
+        prepareSiliconFlowAudioPlayback();
+        if (audio.paused && audio.src && !audio.ended) {
+          void startCallAudioElement(audio).catch(() => { /* user can still tap replay */ });
+        }
+      }
+      audioWasPlayingBeforeHiddenRef.current = false;
     };
     const audioSession = (navigator as Navigator & { audioSession?: EventTarget }).audioSession;
     document.addEventListener('visibilitychange', reassertVisibleCallRoute);
@@ -976,9 +997,12 @@ const CallApp: React.FC = () => {
   // All blob: URLs created this call session. Kept alive so 重播/下载 work on every
   // bubble; revoked together only when leaving/resetting the call (not per-turn).
   const sessionBlobUrlsRef = useRef<Set<string>>(new Set());
-  const trackBlobUrl = (url?: string) => { if (url && url.startsWith('blob:')) sessionBlobUrlsRef.current.add(url); };
+  const trackBlobUrl = (url?: string) => {
+    const normalized = registerCallAudioBlobUrl(url);
+    if (normalized?.startsWith('blob:')) sessionBlobUrlsRef.current.add(normalized);
+  };
   const revokeSessionBlobs = () => {
-    sessionBlobUrlsRef.current.forEach(u => { try { URL.revokeObjectURL(u); } catch { /* ignore */ } });
+    sessionBlobUrlsRef.current.forEach(u => revokeCallAudioBlobUrl(u));
     sessionBlobUrlsRef.current.clear();
   };
   const longPressTimerRef = useRef<number | null>(null);
@@ -1612,6 +1636,11 @@ const CallApp: React.FC = () => {
       setSelectedCharId(suspendedCall.charId);
       setCallStartedAt(suspendedCall.startedAt);
       if (suspendedCall.bubbles?.length) {
+        // Carry document-scoped blob ownership into the remounted CallApp so
+        // replay works now and the real hang-up can revoke every URL exactly
+        // once. The registry also makes resolveReusableCallAudioUrl accept it
+        // while the call is suspended in another in-phone app.
+        suspendedCall.bubbles.forEach((bubble: CallBubble) => trackBlobUrl(bubble.audioUrl));
         setBubbles(suspendedCall.bubbles);
         const lastPerformance = [...suspendedCall.bubbles].reverse().find((bubble: CallBubble) => bubble.performance)?.performance;
         if (lastPerformance) {
@@ -1619,7 +1648,10 @@ const CallApp: React.FC = () => {
           setAvatarEmotion(lastPerformance.emotion);
         }
       }
-      if (suspendedCall.sessionId) setCurrentSessionId(suspendedCall.sessionId);
+      const restoredSessionId = suspendedCall.sessionId || `call-${Date.now()}`;
+      endedCallSessionsRef.current.delete(restoredSessionId);
+      setCurrentSessionId(restoredSessionId);
+      startCallSession(suspendedCall.charId, restoredSessionId, suspendedCall.startedAt);
       if (typeof suspendedCall.elapsedSeconds === 'number') setElapsedSeconds(suspendedCall.elapsedSeconds);
       if (suspendedCall.voiceLang) setVoiceLang(suspendedCall.voiceLang);
       const restoredTouches = suspendedCall.pendingAvatarTouches?.slice(-20) || [];
@@ -1645,7 +1677,8 @@ const CallApp: React.FC = () => {
     setCallMode(incoming.mode);
     setCallDirection('incoming');
     setIncomingOpening(incoming.opening);
-    resetCurrentCall();
+    const sessionId = resetCurrentCall();
+    startCallSession(target.id, sessionId);
     primeCallAudioFromGesture();
     setViewMode('in-call');
     setCallStartedAt(Date.now());
@@ -1676,8 +1709,11 @@ const CallApp: React.FC = () => {
     return () => stopAmsgChatPresence(selectedChar.id);
   }, [viewMode, selectedChar?.id]);
   useEffect(() => () => {
-    revokeSessionBlobs();
-    stopCallStt();
+    // Switching to another in-phone app is also how “先忙别的” suspends a
+    // call. Release the microphone for privacy, but do not restore AudioSession
+    // to `auto` in that path: the persistent player may still be finishing the
+    // role's current reply. A normal close/reset keeps the old cleanup.
+    stopCallStt(!suspendingCallRef.current);
   }, []);
   // Voice input: toggle speech-to-text into the draft input box.
   const toggleStt = async () => {
@@ -1801,6 +1837,7 @@ const CallApp: React.FC = () => {
   const stopPlayback = () => {
     clearSilentSpeechTimer();
     clearPerformanceCueTimers();
+    setCallAudioResumeIntent(false);
     if (!audioRef.current) return;
     audioRef.current.pause();
     audioRef.current.currentTime = 0;
@@ -1901,12 +1938,13 @@ const CallApp: React.FC = () => {
     )));
     markCallTurnDirty();
   };
-  const resetCurrentCall = () => {
+  const resetCurrentCall = (): string => {
     // A new call starts a fresh permission/session boundary. Within one call,
     // SiliconFlow STT reuses its microphone stream between turns.
     stopCallStt();
     revokeSessionBlobs();
     stopPlayback();
+    resetCallAudioElement();
     pendingAvatarTouchesRef.current = [];
     setPendingAvatarTouchCount(0);
     setAvatarTouchEffects([]);
@@ -1924,7 +1962,10 @@ const CallApp: React.FC = () => {
     setCallStartedAt(null);
     setElapsedSeconds(0);
     setShowInputPanel(true);
-    setCurrentSessionId(`call-${Date.now()}`);
+    const nextSessionId = `call-${Date.now()}`;
+    endedCallSessionsRef.current.delete(nextSessionId);
+    setCurrentSessionId(nextSessionId);
+    return nextSessionId;
   };
   const closeCallSetupGuide = () => {
     callSetupGuideOpenRef.current = false;
@@ -1988,7 +2029,8 @@ const CallApp: React.FC = () => {
     closeCallSetupGuide();
     setCallDirection('outgoing');
     setIncomingOpening('');
-    resetCurrentCall();
+    const sessionId = resetCurrentCall();
+    if (selectedCharId) startCallSession(selectedCharId, sessionId);
     primeCallAudioFromGesture();
     setViewMode('in-call');
     setCallStartedAt(Date.now());
@@ -2021,68 +2063,92 @@ const CallApp: React.FC = () => {
     beginSelectedCall(setupCameraMode);
   };
   const finishCall = async () => {
+    const sessionId = currentSessionId;
+    // 挂断是一个不可逆的会话边界。先落内存哨兵/停续租，再做 DB 和网络收尾；
+    // 这样正在飞的 handleTurn、开场白或主动消息请求即使稍后返回，也不会把台词
+    // 接在结束卡片后面。重复点击/自动挂断只允许第一条收尾继续。
+    if (!sessionId || callFinishInFlightRef.current === sessionId || isLiveCallSession(sessionId) === false) return;
+    callFinishInFlightRef.current = sessionId;
+    endedCallSessionsRef.current.add(sessionId);
+    // selectedChar 可能正好在切换/删除角色的 React 渲染间隙变成 null；
+    // 生命周期哨兵仍必须先落下，不能让旧请求因为缺少对象而继续穿过挂断边界。
+    const endingCharId = selectedChar?.id || selectedCharId;
+    if (endingCharId) {
+      endCallSession(endingCharId, sessionId);
+      void endAmsgChatPresence(endingCharId);
+      stopAmsgChatPresence(endingCharId);
+    }
     stopCallStt();
-    await cancelAllPendingCallBackgroundJobs(currentSessionId);
+    // 远端取消可能被网络 / iOS 后台挂起拖住，但结束卡不能跟着等：内存墓碑已经
+    // 先挡住迟到结果，落库后的 call-end-popup 也会在恢复路径再次拦截它们。让取消
+    // 在后台清理 pending，挂断 UI 和模型边界先完成。
+    void cancelAllPendingCallBackgroundJobs(sessionId).catch(error => {
+      console.warn('[call] 后台任务取消收尾失败（结束卡已先保存）', error);
+    });
     const persistedSleep = loadSleepCompanionSession();
-    const sleepSession = persistedSleep?.sessionId === currentSessionId ? persistedSleep : null;
+    const sleepSession = persistedSleep?.sessionId === sessionId ? persistedSleep : null;
     // 挂断（手动或陪睡定时挂断）时把陪睡计时器一起收掉，别让它们在通话结束后还傻等一小时。
     exitSleepMode(true);
     if (selectedChar?.id) {
       // 后台恢复事件可能持有较早一帧的 React 闭包；以 IndexedDB 里已经落盘的
       // 本 session 内容作为收尾真相，避免卡片少算轮数/梦话或丢失陪睡标记。
-      const allMessages = await DB.getMessagesByCharId(selectedChar.id, true);
-      const savedTranscript = allMessages
-        .filter(message => message.metadata?.source === 'call'
-          && String(message.metadata?.callSessionId || '') === currentSessionId)
-        .sort((a, b) => a.timestamp - b.timestamp);
-      const transcript = savedTranscript.length
-        ? savedTranscript.map(message => ({ role: message.role, content: message.content } as Pick<Message, 'role' | 'content'>))
-        : bubbles.map(bubble => ({ role: bubble.role, content: bubble.text } as Pick<Message, 'role' | 'content'>));
-      const userTurns = transcript.filter(item => item.role === 'user').length;
-      const keepsakeLine = summarizeCallKeepsake(
-        transcript,
-        selectedChar.name,
-      );
-      const savedDreamCount = savedTranscript.filter(message => message.metadata?.sleepPhase === 'dream').length;
-      const hadSleep = Boolean(
-        sleepSession
-        || savedTranscript.some(message => message.metadata?.sleepPhase === 'lullaby' || message.metadata?.sleepPhase === 'dream')
-        || bubbles.some(bubble => bubble.sleepPhase === 'lullaby' || bubble.sleepPhase === 'dream'),
-      );
-      const dreamCount = savedTranscript.length
-        ? savedDreamCount
-        : sleepSession?.dreamCount ?? sleepDreamCountRef.current;
-      const endedAt = sleepSession?.autoHangupAt && sleepSession.autoHangupAt <= Date.now()
-        ? sleepSession.autoHangupAt
-        : Date.now();
-      const durationSec = sleepSession
-        ? Math.max(1, Math.floor((endedAt - sleepSession.startedAt) / 1000))
-        : callStartedAt ? Math.max(1, Math.floor((endedAt - callStartedAt) / 1000)) : elapsedSeconds;
-      const payload = {
-        characterId: selectedChar.id,
-        characterName: selectedChar.name,
-        characterAvatar: selectedChar.avatar,
-        durationSec,
-        turnCount: userTurns,
-        keepsakeLine,
-        callMode,
-        endedAt,
-        ...(hadSleep ? {
-          sleepCompanion: true,
-          sleepDreamCount: dreamCount,
-          sleepEndReason: 'normal',
-        } : {}),
-      };
-      await DB.saveMessage({
-        charId: selectedChar.id,
-        role: 'system',
-        type: 'system',
-        content: hadSleep
-          ? `陪睡通话已结束 · ${selectedChar.name}｜${formatDuration(durationSec)}｜梦话${dreamCount}句`
-          : `通话结束 · ${selectedChar.name}｜${formatDuration(durationSec)}｜${userTurns}轮对话`,
-        metadata: { source: 'call-end-popup', callSessionId: currentSessionId, ...payload },
-      });
-      if (sleepSession) clearSleepCompanionSession(currentSessionId);
+      // 结束卡也走 session 写入队列：已开始的通话写入先完成，挂断后的旧写入则在
+      // 队列里看到墓碑后直接丢弃，避免出现“结束卡后又冒出通话气泡”。
+      await enqueueCallSessionWrite(sessionId, async () => {
+        const allMessages = await DB.getMessagesByCharId(selectedChar.id, true);
+        const savedTranscript = allMessages
+          .filter(message => message.metadata?.source === 'call'
+            && String(message.metadata?.callSessionId || '') === sessionId)
+          .sort((a, b) => a.timestamp - b.timestamp);
+        const transcript = savedTranscript.length
+          ? savedTranscript.map(message => ({ role: message.role, content: message.content } as Pick<Message, 'role' | 'content'>))
+          : bubbles.map(bubble => ({ role: bubble.role, content: bubble.text } as Pick<Message, 'role' | 'content'>));
+        const userTurns = transcript.filter(item => item.role === 'user').length;
+        const keepsakeLine = summarizeCallKeepsake(
+          transcript,
+          selectedChar.name,
+        );
+        const savedDreamCount = savedTranscript.filter(message => message.metadata?.sleepPhase === 'dream').length;
+        const hadSleep = Boolean(
+          sleepSession
+          || savedTranscript.some(message => message.metadata?.sleepPhase === 'lullaby' || message.metadata?.sleepPhase === 'dream')
+          || bubbles.some(bubble => bubble.sleepPhase === 'lullaby' || bubble.sleepPhase === 'dream'),
+        );
+        const dreamCount = savedTranscript.length
+          ? savedDreamCount
+          : sleepSession?.dreamCount ?? sleepDreamCountRef.current;
+        const endedAt = sleepSession?.autoHangupAt && sleepSession.autoHangupAt <= Date.now()
+          ? sleepSession.autoHangupAt
+          : Date.now();
+        const durationSec = sleepSession
+          ? Math.max(1, Math.floor((endedAt - sleepSession.startedAt) / 1000))
+          : callStartedAt ? Math.max(1, Math.floor((endedAt - callStartedAt) / 1000)) : elapsedSeconds;
+        const payload = {
+          characterId: selectedChar.id,
+          characterName: selectedChar.name,
+          characterAvatar: selectedChar.avatar,
+          durationSec,
+          turnCount: userTurns,
+          keepsakeLine,
+          callMode,
+          endedAt,
+          ...(hadSleep ? {
+            sleepCompanion: true,
+            sleepDreamCount: dreamCount,
+            sleepEndReason: 'normal',
+          } : {}),
+        };
+        await DB.saveMessage({
+          charId: selectedChar.id,
+          role: 'system',
+          type: 'system',
+          content: hadSleep
+            ? `陪睡通话已结束 · ${selectedChar.name}｜${formatDuration(durationSec)}｜梦话${dreamCount}句`
+            : `通话结束 · ${selectedChar.name}｜${formatDuration(durationSec)}｜${userTurns}轮对话`,
+          metadata: { source: 'call-end-popup', callSessionId: sessionId, callEnded: true, ...payload },
+        });
+      }, { allowEnded: true });
+      if (sleepSession) clearSleepCompanionSession(sessionId);
       await loadCallRecords(selectedChar.id);
       trackEvent('结束一通通话', { 模式: callMode === 'video' ? '视频' : '语音' });
       // 挂断这一下最要紧：用户多半接着就把 App 关了，得把这最后一条也打脏——
@@ -2090,7 +2156,7 @@ const CallApp: React.FC = () => {
       markCallTurnDirty();
       runCallMemoryPalaceHook(selectedChar);
     }
-    clearPersistedCallSession(currentSessionId);
+    clearPersistedCallSession(sessionId);
     clearSuspendedCall();
     resetCurrentCall();
     setViewMode('history');
@@ -2577,8 +2643,9 @@ ${sentencePlan}`;
         : pending.fallbackMs;
       schedulePerformanceCues(pending.cues, durationMs);
     };
-    const handleStop = () => {
+    const handleStop = (event?: Event) => {
       if (audioPrimingRef.current) return;
+      if (event?.type === 'ended') setCallAudioResumeIntent(false);
       setIsAudioPlaying(false);
       clearPerformanceCueTimers();
       setCallState(previous => (previous === 'speaking' ? 'listening' : previous));
@@ -2586,13 +2653,20 @@ ${sentencePlan}`;
     audio.addEventListener('play', handlePlay);
     audio.addEventListener('pause', handleStop);
     audio.addEventListener('ended', handleStop);
+    // The player can have kept playing while CallApp was unmounted for a
+    // suspended-call app switch. Reflect that state immediately instead of
+    // waiting for a future `play` event that already happened.
+    if (!audio.paused && !audio.ended) {
+      setIsAudioPlaying(true);
+      setCallState('speaking');
+    }
     return () => {
       audio.removeEventListener('play', handlePlay);
       audio.removeEventListener('pause', handleStop);
       audio.removeEventListener('ended', handleStop);
-      audio.pause();
-      audio.removeAttribute('src');
-      audio.load();
+      // Do not pause/clear here. CallApp is unmounted when the user taps
+      // “先忙别的（挂起通话）”; clearing the shared element is what used to cut
+      // the sentence and leave its replay URL unusable on resume.
     };
   }, []);
 
@@ -2603,6 +2677,7 @@ ${sentencePlan}`;
     // selection itself must never be implemented by muting the element.
     setSiliconFlowAudioRoute(audioOutputRouteRef.current);
     prepareSiliconFlowAudioPlayback();
+    setCallAudioResumeIntent(true);
     audio.muted = false;
     const feed = callMode === 'video' && !nativeCallAudioOnly ? getAudioFeed() : null;
     // Both calls are made immediately in the originating click stack. The graph
@@ -2654,6 +2729,7 @@ ${sentencePlan}`;
       return startCallAudioElement(audio, forceAudible)
         .then(() => true)
         .catch(() => {
+          setCallAudioResumeIntent(false);
           pendingCueScheduleRef.current = null;
           if (callMode === 'video') playSilentAvatarSpeech('', cues, estimatedDurationMs);
           else setCallState('listening');
@@ -2663,6 +2739,7 @@ ${sentencePlan}`;
           return false;
         });
     } catch {
+      setCallAudioResumeIntent(false);
       pendingCueScheduleRef.current = null;
       if (callMode === 'video') playSilentAvatarSpeech('', cues, estimatedDurationMs);
       else setCallState('listening');
@@ -2799,6 +2876,7 @@ ${sentencePlan}`;
   };
   const pauseAudio = () => {
     if (!audioRef.current) return;
+    setCallAudioResumeIntent(false);
     audioRef.current.pause();
     setCallState('listening');
   };
@@ -2823,14 +2901,17 @@ ${sentencePlan}`;
   useEffect(() => {
     if (!callPreferences.characterInitiative || viewMode !== 'in-call' || bubbles.length > 0) return;
     if (!selectedChar?.id || greetingFiredRef.current === currentSessionId) return;
-    greetingFiredRef.current = currentSessionId;
+    const greetingSessionId = currentSessionId;
+    greetingFiredRef.current = greetingSessionId;
     void (async () => {
       try {
+        if (!isLiveCallSession(greetingSessionId)) return;
         setCallState('connecting');
         const greetingReply = prepareCallAssistantReply(
           await requestAssistantReply('（电话刚接通。你先开口——像平时接到这个人电话一样自然地说第一句话。不要解释规则，就是最自然的那个“喂”“诶”或者符合你性格的开场。）'),
           callMode === 'video' && selectedChar?.videoCallPerformanceQuality !== 'high',
         );
+        if (!isLiveCallSession(greetingSessionId)) return;
         const greetingText = greetingReply.text;
         setAvatarEmotion(greetingReply.performance.emotion);
         setAvatarPerformance(greetingReply.performance);
@@ -2847,19 +2928,21 @@ ${sentencePlan}`;
         };
         setCallState('speaking');
         setBubbles([greetingBubble]);
-        const dbId = await DB.saveMessage({
+        const dbId = await enqueueCallSessionWrite(greetingSessionId, () => DB.saveMessage({
           charId: selectedChar.id,
           role: 'assistant',
           type: 'text',
           content: greetingText,
           metadata: {
             source: 'call',
-            callSessionId: currentSessionId,
+            callSessionId: greetingSessionId,
             ...(greetingReply.thinkingChain ? { thinkingChain: greetingReply.thinkingChain } : {}),
             avatarPerformance: greetingReply.performance,
             avatarPerformanceCues: greetingReply.performanceCues,
           },
-        });
+        }));
+        if (dbId == null) return;
+        if (!isLiveCallSession(greetingSessionId)) return;
         setBubbles(previous => previous.map(bubble => bubble.id === greetingBubble.id ? { ...bubble, dbId } : bubble));
         markCallTurnDirty();
 
@@ -2867,6 +2950,7 @@ ${sentencePlan}`;
         if (callPreferences.voiceAutoPlay && canSpeakVoice()) {
           try {
             const { url } = await takeOrSynthesizeCallAudio(greetingText, greetingReply.speechEmotion);
+            if (!isLiveCallSession(greetingSessionId)) return;
             if (url) {
               trackBlobUrl(url);
               setAudioUrl(url);
@@ -2886,6 +2970,7 @@ ${sentencePlan}`;
           }
         }
       } catch (error: any) {
+        if (!isLiveCallSession(greetingSessionId)) return;
         setCallState('error');
         setErrorMessage(error?.message || '开场白生成失败');
       }
@@ -2996,6 +3081,10 @@ ${sentencePlan}`;
     avatarTouchEffectTimersRef.current = [];
   }, []);
   const handleTurn = async () => {
+    const turnSessionId = currentSessionId;
+    // 挂断可能发生在文本接口或 TTS await 期间；旧 session 一旦被标记结束，
+    // 这轮迟到结果只能丢弃，不能接在结束卡片后面。
+    if (viewMode !== 'in-call' || !isLiveCallSession(turnSessionId)) return;
     if (isListening) { sttSessionRef.current?.stop(); setIsListening(false); }
     const typedInput = draftInput.trim();
     const retryInput = getPendingReplyText(bubbles);
@@ -3021,6 +3110,10 @@ ${sentencePlan}`;
     if (userCameraSnapshotForTurn) {
       try {
         newSnapshotRef = await putImageBlob(dataUrlToBlob(userCameraSnapshotForTurn));
+        if (!isLiveCallSession(turnSessionId)) {
+          if (newSnapshotRef) await deleteBlobRef(newSnapshotRef);
+          return;
+        }
         trackEvent('保存视频通话单帧快照');
       } catch (error) {
         console.warn('[camera-snapshot] failed to save the local call-record frame:', error);
@@ -3039,6 +3132,10 @@ ${sentencePlan}`;
           timestamp: nowTs,
           ...(newSnapshotRef ? { cameraSnapshotRef: newSnapshotRef } : {}),
         };
+    if (!isLiveCallSession(turnSessionId)) {
+      if (newSnapshotRef) await deleteBlobRef(newSnapshotRef);
+      return;
+    }
     if (isRetry && newSnapshotRef) {
       setBubbles(previous => previous.map(bubble => bubble.id === userBubble.id ? userBubble : bubble));
     } else if (!isRetry) {
@@ -3049,14 +3146,14 @@ ${sentencePlan}`;
     let userDbId: number | undefined = isRetry ? userBubble.dbId : undefined;
     if (selectedChar?.id) {
       if (!userDbId) {
-        userDbId = await DB.saveMessage({
+        const savedUserDbId = await enqueueCallSessionWrite(turnSessionId, () => DB.saveMessage({
           charId: selectedChar.id,
           role: 'user',
           type: 'text',
           content: input,
           metadata: {
             source: 'call',
-            callSessionId: currentSessionId,
+            callSessionId: turnSessionId,
             callMode,
             ...(newSnapshotRef ? { cameraSnapshotRef: newSnapshotRef } : {}),
             ...(pendingTouchesForTurn.length ? {
@@ -3068,7 +3165,13 @@ ${sentencePlan}`;
               })),
             } : {}),
           },
-        });
+        }));
+        if (savedUserDbId == null) {
+          if (newSnapshotRef) await deleteBlobRef(newSnapshotRef);
+          return;
+        }
+        userDbId = savedUserDbId;
+        if (!isLiveCallSession(turnSessionId)) return;
         setBubbles(prev => prev.map(b => (b.id === userBubble.id ? { ...b, dbId: userDbId } : b)));
         markCallTurnDirty();
       } else if (newSnapshotRef) {
@@ -3077,7 +3180,7 @@ ${sentencePlan}`;
           await DB.updateMessageMetadata(userDbId, (previous: any) => ({
             ...(previous || {}),
             source: 'call',
-            callSessionId: currentSessionId,
+            callSessionId: turnSessionId,
             callMode,
             cameraSnapshotRef: newSnapshotRef,
             cameraSnapshotExpired: false,
@@ -3095,7 +3198,8 @@ ${sentencePlan}`;
           console.warn('[camera-snapshot] failed to update the retried call turn:', error);
         }
       }
-      await pruneCallSnapshots(selectedChar.id, currentSessionId);
+      await pruneCallSnapshots(selectedChar.id, turnSessionId);
+      if (!isLiveCallSession(turnSessionId)) return;
     }
     if (!callStartedAt) setCallStartedAt(Date.now());
     setCallState('connecting');
@@ -3107,7 +3211,7 @@ ${sentencePlan}`;
     let turnPerformance = DEFAULT_AVATAR_PERFORMANCE;
     let turnPerformanceCues: AvatarPerformanceCue[] = [];
     const backgroundJobId = selectedChar?.id
-      ? makeCallBackgroundJobId(currentSessionId, userDbId, userDbId ? '' : userBubble.id)
+      ? makeCallBackgroundJobId(turnSessionId, userDbId, userDbId ? '' : userBubble.id)
       : '';
     try {
       setCallState('thinking');
@@ -3119,13 +3223,13 @@ ${sentencePlan}`;
           true,
           userCameraSnapshotForTurn,
           prepared => {
-            if (!selectedChar?.id || !backgroundJobId) return;
+            if (!selectedChar?.id || !backgroundJobId || !isLiveCallSession(turnSessionId)) return;
             savePendingCallBackgroundJob({
               jobId: backgroundJobId,
               input: buildCallBackgroundInput({
                 charId: selectedChar.id,
                 charName: selectedChar.name,
-                sessionId: currentSessionId,
+                sessionId: turnSessionId,
                 callMode,
                 phase: 'reply',
                 systemPrompt: prepared.systemPrompt,
@@ -3139,7 +3243,7 @@ ${sentencePlan}`;
             window.setTimeout(() => {
               // Slow foreground generation is still authoritative. Handoff is
               // only for a page that iOS has actually hidden/frozen.
-              if (document.visibilityState === 'visible') return;
+              if (document.visibilityState === 'visible' || !isLiveCallSession(turnSessionId)) return;
               const char = selectedChar;
               if (!char) return;
               void schedulePendingCallBackgroundJob({
@@ -3152,6 +3256,10 @@ ${sentencePlan}`;
         ),
         callMode === 'video' && selectedChar?.videoCallPerformanceQuality !== 'high',
       );
+      if (!isLiveCallSession(turnSessionId)) {
+        if (backgroundJobId) void cancelPendingCallBackgroundJob(backgroundJobId);
+        return;
+      }
       if (pendingTouchesForTurn.length) {
         const remainingTouches = consumePendingAvatarTouches(
           pendingAvatarTouchesRef.current,
@@ -3168,6 +3276,10 @@ ${sentencePlan}`;
       setAvatarEmotion(reply.performance.emotion);
       setAvatarPerformance(reply.performance);
     } catch (err: any) {
+      if (!isLiveCallSession(turnSessionId)) {
+        if (backgroundJobId) void cancelPendingCallBackgroundJob(backgroundJobId);
+        return;
+      }
       setErrorMessage(err?.message || '文本回复失败');
       setCallState('error');
       if (backgroundJobId && selectedChar) {
@@ -3176,6 +3288,10 @@ ${sentencePlan}`;
         void schedulePendingCallBackgroundJob({ jobId: backgroundJobId, char: selectedChar, api: apiConfig });
       }
       return addToast(`文本回复失败：${err?.message || '未知错误'}`, 'error');
+    }
+    if (!isLiveCallSession(turnSessionId)) {
+      if (backgroundJobId) void cancelPendingCallBackgroundJob(backgroundJobId);
+      return;
     }
     const assistantBubbleId = `${Date.now()}-a`;
     const assistantBubble: CallBubble = {
@@ -3197,6 +3313,10 @@ ${sentencePlan}`;
       if (backgroundJobId) {
         const existingBackground = (await DB.getMessagesByCharId(selectedChar.id, true))
           .find(message => message.metadata?.backgroundJobId === backgroundJobId);
+        if (!isLiveCallSession(turnSessionId)) {
+          void cancelPendingCallBackgroundJob(backgroundJobId);
+          return;
+        }
         if (existingBackground) {
           await cancelPendingCallBackgroundJob(backgroundJobId);
           setBubbles(previous => [
@@ -3215,14 +3335,14 @@ ${sentencePlan}`;
           return;
         }
       }
-      assistantDbId = await DB.saveMessage({
+      assistantDbId = await enqueueCallSessionWrite(turnSessionId, () => DB.saveMessage({
         charId: selectedChar.id,
         role: 'assistant',
         type: 'text',
         content: assistantText,
         metadata: {
           source: 'call',
-          callSessionId: currentSessionId,
+          callSessionId: turnSessionId,
           callMode,
           ...(backgroundJobId ? {
             backgroundJobId,
@@ -3232,7 +3352,15 @@ ${sentencePlan}`;
           avatarPerformance: turnPerformance,
           avatarPerformanceCues: turnPerformanceCues,
         },
-      });
+      }));
+      if (assistantDbId == null) {
+        if (backgroundJobId) void cancelPendingCallBackgroundJob(backgroundJobId);
+        return;
+      }
+      if (!isLiveCallSession(turnSessionId)) {
+        if (backgroundJobId) void cancelPendingCallBackgroundJob(backgroundJobId);
+        return;
+      }
       setBubbles(prev => prev.map(b => {
         if (b.id === assistantBubbleId) return { ...b, dbId: assistantDbId };
         return b;
@@ -3241,6 +3369,7 @@ ${sentencePlan}`;
       runCallMemoryPalaceHook(selectedChar);
       if (backgroundJobId) await cancelPendingCallBackgroundJob(backgroundJobId);
     }
+    if (!isLiveCallSession(turnSessionId)) return;
     if (!callPreferences.voiceAutoPlay) {
       setCallState('listening');
       return;
@@ -3256,6 +3385,7 @@ ${sentencePlan}`;
     }
     try {
       const { url: finalUrl, traceIds } = await takeOrSynthesizeCallAudio(assistantText, turnSpeechEmotion);
+      if (!isLiveCallSession(turnSessionId)) return;
       if (!finalUrl) throw new Error('未获得可播放音频');
       trackBlobUrl(finalUrl);
       setAudioUrl(finalUrl);
@@ -3266,6 +3396,7 @@ ${sentencePlan}`;
         const target = bubbles.find(b => b.id === assistantBubbleId);
         await DB.updateMessage(assistantDbId, target?.text || assistantText);
       }
+      if (!isLiveCallSession(turnSessionId)) return;
       setCallState('listening');
     } catch (e: any) {
       setErrorMessage(e?.message || '语音生成失败');
@@ -3360,6 +3491,8 @@ ${sentencePlan}`;
   };
   const handleRerollAssistant = async (bubble: CallBubble) => {
     if (!selectedChar || bubble.role !== 'assistant') return;
+    const rerollSessionId = currentSessionId;
+    if (viewMode !== 'in-call' || !isLiveCallSession(rerollSessionId)) return;
     const idx = bubbles.findIndex(b => b.id === bubble.id);
     if (idx <= 0) return;
     const prevUser = bubbles[idx - 1];
@@ -3372,6 +3505,7 @@ ${sentencePlan}`;
         await requestAssistantReply(prevUser.text, bubble.dbId),
         callMode === 'video' && selectedChar?.videoCallPerformanceQuality !== 'high',
       );
+      if (!isLiveCallSession(rerollSessionId)) return;
       const rerolled = rerollReply.text;
       setAvatarEmotion(rerollReply.performance.emotion);
       setAvatarPerformance(rerollReply.performance);
@@ -3385,6 +3519,7 @@ ${sentencePlan}`;
       } : b));
       if (bubble.dbId) {
         await DB.updateMessage(bubble.dbId, rerolled);
+        if (!isLiveCallSession(rerollSessionId)) return;
         await DB.updateMessageMetadata(bubble.dbId, (previous: any) => {
           const next = {
             ...(previous || {}),
@@ -3405,6 +3540,7 @@ ${sentencePlan}`;
         try {
           setCallState('speaking');
           const { url: rerollAudioUrl } = await takeOrSynthesizeCallAudio(rerolled, rerollReply.speechEmotion);
+          if (!isLiveCallSession(rerollSessionId)) return;
           if (rerollAudioUrl) {
             trackBlobUrl(rerollAudioUrl);
             setAudioUrl(rerollAudioUrl);
@@ -3423,6 +3559,7 @@ ${sentencePlan}`;
         setCallState('listening');
       }
     } catch (e: any) {
+      if (!isLiveCallSession(rerollSessionId)) return;
       setCallState('error');
       addToast(`重 roll 失败：${e?.message || '未知错误'}`, 'error');
     } finally {
@@ -3436,6 +3573,8 @@ ${sentencePlan}`;
   const fireIdleNudge = async () => {
     if (!callPreferences.idleNudgeEnabled || idleNudgeBusyRef.current || !selectedChar?.id) return;
     if (document.visibilityState === 'hidden') return;
+    const nudgeSessionId = currentSessionId;
+    if (viewMode !== 'in-call' || !isLiveCallSession(nudgeSessionId)) return;
     idleNudgeBusyRef.current = true;
     try {
       setCallState('thinking');
@@ -3445,6 +3584,7 @@ ${sentencePlan}`;
         ),
         callMode === 'video' && selectedChar?.videoCallPerformanceQuality !== 'high',
       );
+      if (!isLiveCallSession(nudgeSessionId)) return;
       const nudgeTs = Date.now();
       const nudgeBubble: CallBubble = {
         id: `${nudgeTs}-nudge`,
@@ -3460,19 +3600,21 @@ ${sentencePlan}`;
       setAvatarPerformance(reply.performance);
       setBubbles(previous => [...previous, nudgeBubble]);
       idleNudgeCountRef.current += 1;
-      const dbId = await DB.saveMessage({
+      const dbId = await enqueueCallSessionWrite(nudgeSessionId, () => DB.saveMessage({
         charId: selectedChar.id,
         role: 'assistant',
         type: 'text',
         content: reply.text,
         metadata: {
           source: 'call',
-          callSessionId: currentSessionId,
+          callSessionId: nudgeSessionId,
           ...(reply.thinkingChain ? { thinkingChain: reply.thinkingChain } : {}),
           avatarPerformance: reply.performance,
           avatarPerformanceCues: reply.performanceCues,
         },
-      });
+      }));
+      if (dbId == null) return;
+      if (!isLiveCallSession(nudgeSessionId)) return;
       setBubbles(previous => previous.map(bubble => bubble.id === nudgeBubble.id ? { ...bubble, dbId } : bubble));
       markCallTurnDirty();
       runCallMemoryPalaceHook(selectedChar);
@@ -3481,6 +3623,7 @@ ${sentencePlan}`;
       if (callPreferences.voiceAutoPlay && canSpeakVoice()) {
         try {
           const { url } = await takeOrSynthesizeCallAudio(reply.text, reply.speechEmotion);
+          if (!isLiveCallSession(nudgeSessionId)) return;
           if (url) {
             trackBlobUrl(url);
             setAudioUrl(url);
@@ -3504,6 +3647,7 @@ ${sentencePlan}`;
         }
       }
     } catch {
+      if (!isLiveCallSession(nudgeSessionId)) return;
       setCallState(previous => previous === 'thinking' ? 'listening' : previous);
     } finally {
       idleNudgeBusyRef.current = false;
@@ -3538,6 +3682,8 @@ ${sentencePlan}`;
   const fireSleepLine = async (phase: 'lullaby' | 'dream'): Promise<boolean> => {
     if (sleepBusyRef.current || !selectedChar?.id) return false;
     if (document.visibilityState === 'hidden') return false; // 后台时先跳过，等下一次检查窗口再试
+    const sleepSessionId = currentSessionId;
+    if (viewMode !== 'in-call' || !isLiveCallSession(sleepSessionId)) return false;
     sleepBusyRef.current = true;
     try {
       setCallState('thinking');
@@ -3546,6 +3692,7 @@ ${sentencePlan}`;
         await requestAssistantReply(instruction),
         callMode === 'video' && selectedChar?.videoCallPerformanceQuality !== 'high',
       );
+      if (!isLiveCallSession(sleepSessionId)) return false;
       const ts = Date.now();
       const sleepBubble: CallBubble = {
         id: `${ts}-sleep-${phase}`,
@@ -3561,20 +3708,22 @@ ${sentencePlan}`;
       setAvatarEmotion(reply.performance.emotion);
       setAvatarPerformance(reply.performance);
       setBubbles(previous => [...previous, sleepBubble]);
-      const dbId = await DB.saveMessage({
+      const dbId = await enqueueCallSessionWrite(sleepSessionId, () => DB.saveMessage({
         charId: selectedChar.id,
         role: 'assistant',
         type: 'text',
         content: reply.text,
         metadata: {
           source: 'call',
-          callSessionId: currentSessionId,
+          callSessionId: sleepSessionId,
           sleepPhase: phase,
           ...(reply.thinkingChain ? { thinkingChain: reply.thinkingChain } : {}),
           avatarPerformance: reply.performance,
           avatarPerformanceCues: reply.performanceCues,
         },
-      });
+      }));
+      if (dbId == null) return false;
+      if (!isLiveCallSession(sleepSessionId)) return false;
       setBubbles(previous => previous.map(bubble => bubble.id === sleepBubble.id ? { ...bubble, dbId } : bubble));
       markCallTurnDirty();
       runCallMemoryPalaceHook(selectedChar);
@@ -3583,6 +3732,7 @@ ${sentencePlan}`;
       if (callPreferences.voiceAutoPlay && canSpeakVoice()) {
         try {
           const { url } = await takeOrSynthesizeCallAudio(reply.text, reply.speechEmotion);
+          if (!isLiveCallSession(sleepSessionId)) return false;
           if (url) {
             trackBlobUrl(url);
             setAudioUrl(url);
@@ -3603,6 +3753,7 @@ ${sentencePlan}`;
       }
       return true;
     } catch {
+      if (!isLiveCallSession(sleepSessionId)) return false;
       setCallState(previous => previous === 'thinking' ? 'listening' : previous);
       return false;
     } finally {
@@ -4335,7 +4486,10 @@ ${sentencePlan}`;
         <button
           onClick={() => {
             setSelectedCharId(recordDetail.characterId || selectedCharId);
-            resetCurrentCall();
+            const sessionId = resetCurrentCall();
+            if (recordDetail.characterId || selectedCharId) {
+              startCallSession(recordDetail.characterId || selectedCharId, sessionId);
+            }
             primeCallAudioFromGesture();
             setCallStartedAt(Date.now());
             setCallState('listening');
@@ -4940,7 +5094,8 @@ ${sentencePlan}`;
               <button onClick={() => {
                 setShowHangupConfirm(false);
                 if (selectedChar) {
-                  stopCallStt();
+                  suspendingCallRef.current = true;
+                  stopCallStt(false);
                   suspendCall({
                     charId: selectedChar.id,
                     charName: selectedChar.name,

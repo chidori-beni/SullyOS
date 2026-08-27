@@ -15,7 +15,7 @@ describe('CallApp runtime references', () => {
     const source = readFileSync(path.resolve(__dirname, '../apps/CallApp.tsx'), 'utf8');
 
     expect(source).toContain("import { getPendingReplyText } from '../utils/pendingReply'");
-    expect(source).toContain("import { markAmsgStateDirty, startAmsgChatPresence, stopAmsgChatPresence } from '../utils/amsgStateSync'");
+    expect(source).toContain("import { endAmsgChatPresence, markAmsgStateDirty, startAmsgChatPresence, stopAmsgChatPresence } from '../utils/amsgStateSync'");
     expect(source).toContain("const [memoryPalaceStatus, setMemoryPalaceStatus] = useState('')");
     expect(source).toContain('const retryBubble = latestBubble?.role === \'user\'');
     expect(source.match(/markCallTurnDirty\(\)/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
@@ -194,7 +194,7 @@ describe('CallApp runtime references', () => {
     expect(source).toContain('userCameraSnapshot ? 0 : 2');
     expect(source).toContain('isVisionInputUnsupportedError(error)');
     expect(source).toMatch(/await requestAssistantReply\(\s*input,\s*userDbId,\s*pendingTouchesForTurn,\s*true,\s*userCameraSnapshotForTurn/);
-    expect(source).toContain('await pruneCallSnapshots(selectedChar.id, currentSessionId)');
+    expect(source).toContain('await pruneCallSnapshots(selectedChar.id, turnSessionId)');
     expect(source).toContain('cameraSnapshotExpired: true');
     expect(source).toContain('<CallSnapshotImage imageRef={item.cameraSnapshotRef} expired={item.cameraSnapshotExpired} />');
     expect(source).toContain('for (const snapshotRef of snapshotRefs) await deleteBlobRef(snapshotRef)');
@@ -302,10 +302,30 @@ describe('CallApp runtime references', () => {
   it('does not replay a dead blob URL from an older call-record page session', () => {
     const source = readFileSync(path.resolve(__dirname, '../apps/CallApp.tsx'), 'utf8');
 
-    expect(source).toContain("import { resolveReusableCallAudioUrl } from '../utils/callAudioUrl'");
+    expect(source).toContain("resolveReusableCallAudioUrl");
     expect(source).toContain('resolveReusableCallAudioUrl(m.metadata?.audioUrl, sessionBlobUrlsRef.current)');
     expect(source).toContain('const reusableAudioUrl = resolveReusableCallAudioUrl(bubble.audioUrl, sessionBlobUrlsRef.current)');
     expect(source).toContain('ensureCallBubbleAudio(bubble, Boolean(bubble.audioUrl))');
     expect(source).toContain('suppressFailureToast = false');
+  });
+
+  it('keeps the shared call player and blob registry alive through suspend', () => {
+    const source = readFileSync(path.resolve(__dirname, '../apps/CallApp.tsx'), 'utf8');
+    const playerSource = readFileSync(path.resolve(__dirname, './callAudioPlayer.ts'), 'utf8');
+    const urlSource = readFileSync(path.resolve(__dirname, './callAudioUrl.ts'), 'utf8');
+
+    expect(source).toContain("getCallAudioElement, getCallAudioResumeIntent, resetCallAudioElement, setCallAudioResumeIntent");
+    expect(source).toContain('if (!audioRef.current) audioRef.current = getCallAudioElement()');
+    expect(source).toContain('suspendingCallRef.current = true;');
+    expect(source).toContain('stopCallStt(false);');
+    expect(source).toContain('stopCallStt(!suspendingCallRef.current);');
+    expect(source).toContain('resetCallAudioElement();');
+    expect(source).toContain('registerCallAudioBlobUrl');
+    expect(source).toContain('revokeCallAudioBlobUrl');
+    expect(source).not.toMatch(/audio\.removeEventListener\('ended', handleStop\);\s+audio\.pause\(\)/);
+    expect(playerSource).toContain('let sharedCallAudio');
+    expect(playerSource).toContain('CallApp unmount cleanup must not call this');
+    expect(urlSource).toContain('const activeCallBlobUrls = new Set<string>()');
+    expect(urlSource).toContain('registerCallAudioBlobUrl');
   });
 });

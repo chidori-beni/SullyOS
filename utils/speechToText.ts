@@ -185,6 +185,16 @@ let siliconFlowAudioRoute: SiliconFlowAudioRoute = 'speaker';
 const audioSessionTypeForRoute = (route: SiliconFlowAudioRoute): WebAudioSessionType =>
   route === 'speaker' ? 'playback' : 'play-and-record';
 
+const getWebAudioSessionType = (): WebAudioSessionType | undefined => {
+  try {
+    return (navigator as Navigator & {
+      audioSession?: { type?: WebAudioSessionType };
+    }).audioSession?.type;
+  } catch {
+    return undefined;
+  }
+};
+
 /**
  * Safari 16.4+ exposes a subset of the Audio Session API. Merely disabling a
  * live microphone track does not reliably leave the play-and-record category
@@ -198,6 +208,10 @@ const setWebAudioSessionType = (type: WebAudioSessionType): boolean => {
       audioSession?: { type: WebAudioSessionType };
     }).audioSession;
     if (!audioSession) return false;
+    // Assigning the same category is not a no-op in WebKit: it can re-run the
+    // route picker and briefly surface the system volume HUD. Avoid that churn
+    // at every TTS/recording boundary.
+    if (audioSession.type === type) return true;
     audioSession.type = type;
     return audioSession.type === type;
   } catch {
@@ -213,13 +227,11 @@ const setWebAudioSessionType = (type: WebAudioSessionType): boolean => {
  */
 export const setSiliconFlowAudioRoute = (route: SiliconFlowAudioRoute): void => {
   siliconFlowAudioRoute = route;
-  // WebKit ends a live MediaStreamTrack as soon as the page changes to the
-  // output-only `playback` category.  Once a call has acquired its reusable
-  // microphone stream, keep the session in `auto` for the speaker route so the
-  // permission/session survives the next turn.  `auto` preserves the current
-  // hardware output route instead of silently forcing the receiver.
+  // While the recorder is actually capturing, stay in `auto` so a route click
+  // cannot kill the live input. Once the track is disabled between turns,
+  // `playback` is the strongest web-level request for the selected speaker.
   setWebAudioSessionType(
-    route === 'speaker' && hasLiveMicrophoneTrack(siliconFlowMicrophone)
+    route === 'speaker' && hasCapturingMicrophoneTrack(siliconFlowMicrophone)
       ? 'auto'
       : audioSessionTypeForRoute(route),
   );
@@ -230,7 +242,7 @@ export const getSiliconFlowAudioRoute = (): SiliconFlowAudioRoute => siliconFlow
 /** Reassert the selected media route immediately before call TTS playback. */
 export const prepareSiliconFlowAudioPlayback = (): void => {
   setWebAudioSessionType(
-    siliconFlowAudioRoute === 'speaker' && hasLiveMicrophoneTrack(siliconFlowMicrophone)
+    siliconFlowAudioRoute === 'speaker' && hasCapturingMicrophoneTrack(siliconFlowMicrophone)
       ? 'auto'
       : audioSessionTypeForRoute(siliconFlowAudioRoute),
   );
@@ -238,10 +250,10 @@ export const prepareSiliconFlowAudioPlayback = (): void => {
 
 /**
  * Reassert a capture-compatible category in the originating mic-button turn.
- * Once a call already owns a live reusable stream, `auto` is enough for
- * MediaRecorder and avoids an unnecessary `auto` → `play-and-record` route
- * transition (iOS can show the volume HUD for that transition even though the
- * user did not press a volume key).
+ * If a live cached stream exists, `auto` is enough for MediaRecorder and avoids
+ * an unnecessary `playback` → `play-and-record` transition (the transition is
+ * what can flash the volume HUD on iOS). A first stream, or a receiver route,
+ * still enters `play-and-record` before WebKit evaluates the recorder.
  */
 export const prepareSiliconFlowAudioCapture = (): void => {
   setWebAudioSessionType(
@@ -256,12 +268,17 @@ function hasLiveMicrophoneTrack(stream: MediaStream | null): stream is MediaStre
   return stream.getAudioTracks().some(track => track.readyState !== 'ended');
 }
 
+const hasCapturingMicrophoneTrack = (stream: MediaStream | null): stream is MediaStream => {
+  if (!stream) return false;
+  return stream.getAudioTracks().some(track => track.readyState !== 'ended' && track.enabled !== false);
+};
+
 const prepareSiliconFlowMicrophone = (stream: MediaStream, preserveOutputRoute = false) => {
-  setWebAudioSessionType(
-    preserveOutputRoute && siliconFlowAudioRoute === 'speaker'
-      ? 'auto'
-      : 'play-and-record',
-  );
+  const keepCaptureCompatibleAuto = preserveOutputRoute
+    && siliconFlowAudioRoute === 'speaker'
+    && hasLiveMicrophoneTrack(stream)
+    && getWebAudioSessionType() === 'auto';
+  if (!keepCaptureCompatibleAuto) setWebAudioSessionType('play-and-record');
   stream.getAudioTracks().forEach(track => {
     if (track.readyState === 'live') track.enabled = true;
   });
@@ -274,16 +291,15 @@ const pauseSiliconFlowMicrophone = (stream: MediaStream) => {
     if (track.readyState === 'live') track.enabled = false;
   });
   // Restore the user's selected route for the role's next generated voice turn.
-  // When the cached stream is still live, the speaker route deliberately uses
-  // `auto`: WebKit's Audio Session spec ends capture tracks in `playback`, which
-  // would turn every following tap into a fresh permission request.
+  // The track is disabled above, so a speaker choice can request `playback`
+  // without repeatedly assigning the same category while recording.
   prepareSiliconFlowAudioPlayback();
 };
 
 const getSiliconFlowMicrophone = async (): Promise<MediaStream> => {
   if (hasLiveMicrophoneTrack(siliconFlowMicrophone)) {
-    // The stream already passed the permission boundary. Keep the speaker
-    // route in `auto` instead of toggling the Audio Session category again.
+    // The stream already passed the permission boundary. Re-enable it only
+    // after the caller has moved AudioSession to a capture-compatible category.
     prepareSiliconFlowMicrophone(siliconFlowMicrophone, true);
     return siliconFlowMicrophone;
   }
@@ -323,15 +339,17 @@ const getSiliconFlowMicrophone = async (): Promise<MediaStream> => {
 };
 
 /** Release the cached SiliconFlow microphone when the call/modal is really closed. */
-export const releaseSiliconFlowMicrophone = () => {
+export const releaseSiliconFlowMicrophone = (restoreAudioSession = true) => {
   siliconFlowMicrophoneGeneration += 1;
   const stream = siliconFlowMicrophone;
   siliconFlowMicrophone = null;
   siliconFlowMicrophoneRequest = null;
   stream?.getTracks().forEach(track => track.stop());
   // Leaving a call should not leave the whole PWA in a phone-call category.
-  // The next call re-applies the remembered route before it plays/records.
-  setWebAudioSessionType('auto');
+  // A suspended call is different: its shared player may still be speaking,
+  // so preserve the selected output route while releasing only the input.
+  if (restoreAudioSession) setWebAudioSessionType('auto');
+  else prepareSiliconFlowAudioPlayback();
 };
 
 const startSiliconFlow = async (
