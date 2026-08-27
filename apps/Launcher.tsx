@@ -14,7 +14,11 @@ import { useLocalDateKey } from '../hooks/useLocalDateKey';
 import { resolveCharTimeZone } from '../utils/timezone';
 import { trackEvent } from '../utils/analytics';
 import { CALENDAR_DATA_UPDATED_EVENT, eventOccursOnDate, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey } from '../utils/calendarIntegration';
-import { wrapPageIndex } from '../utils/circularPaging';
+import {
+    carouselCloneResetIndex,
+    carouselLogicalIndex,
+    carouselPhysicalIndex,
+} from '../utils/circularPaging';
 
 const CompanionHome = React.lazy(() => import('../components/os/CompanionHome'));
 
@@ -349,7 +353,7 @@ const CALENDAR_WEEKDAYS = [
 ] as const;
 
 // 4. Widget Page Component (Calendar + checkable user todos)
-const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, tasks, onToggleTask, acnh = false, paper = false }: any) => {
+const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, tasks, onToggleTask, acnh = false, paper = false, carouselClone = false }: any) => {
     // 动森：奶油卡片样式（替代暗色玻璃）
     const acCard = acnh ? { background: 'rgb(247,243,223)', border: '2px solid #e8e2d6', boxShadow: '0 6px 18px rgba(61,52,40,0.12)' } : undefined;
     const acDot = acnh ? '#6fba2c' : undefined;
@@ -374,7 +378,10 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, tasks, o
     );
 
     return (
-        <div className="w-full flex-shrink-0 snap-center snap-always flex flex-col px-6 pt-24 pb-8 space-y-6 h-full overflow-y-auto no-scrollbar">
+        <div
+            className="w-full flex-shrink-0 snap-center snap-always flex flex-col px-6 pt-24 pb-8 space-y-6 h-full overflow-y-auto no-scrollbar"
+            data-launcher-carousel-clone={carouselClone ? 'true' : undefined}
+        >
               <div className={`rounded-3xl p-6 ${acnh ? 'shadow-sm' : paper ? '' : 'bg-white/25 border border-white/25 shadow-xl'}`} style={paper ? { background: 'rgba(224,221,215,0.36)', border: '1px solid rgba(91,72,51,0.07)', boxShadow: '0 5px 16px rgba(91,72,51,0.05)' } : acCard}>
                   <div className="flex justify-between items-center mb-4" style={{ color: contentColor }}>
                       <h3 className="text-xl font-bold tracking-widest">{monthName} {currentYear}</h3>
@@ -485,7 +492,8 @@ const Launcher: React.FC = () => {
   const startX = useRef(0);
   const scrollLeftRef = useRef(0);
   const dragMoved = useRef(0);
-  const touchStartX = useRef<number | null>(null);
+  const touchActive = useRef(false);
+  const scrollEndTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Pagination Logic
   // 跟随 DevDebug 可用性：prod 用户在设置页连点 5 下解锁后，CharCreatorDev 立刻出现；
@@ -656,58 +664,107 @@ const Launcher: React.FC = () => {
   // Restore scroll position BEFORE paint to avoid visible flash/slide
   useLayoutEffect(() => {
       const el = scrollContainerRef.current;
-      if (el && _lastPageIndex > 0) {
-          // Temporarily disable smooth scroll so jump is instant
-          el.style.scrollBehavior = 'auto';
-          el.scrollLeft = el.clientWidth * _lastPageIndex;
-          // Re-enable on next frame
-          requestAnimationFrame(() => { el.style.scrollBehavior = 'smooth'; });
-      }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+      if (!el || totalPages <= 0) return;
 
-  const jumpToPage = useCallback((page: number) => {
-      const scroller = scrollContainerRef.current;
-      if (!scroller || totalPages <= 0) return;
-      const next = Math.max(0, Math.min(totalPages - 1, page));
-      activePageIndexRef.current = next;
-      setActivePageIndex(next);
-      _lastPageIndex = next;
-      // A wrap should feel like a direct carousel jump, not an animation through
-      // every intervening page (the exact convenience this edge gesture provides).
-      scroller.scrollTo({ left: scroller.clientWidth * next, behavior: 'auto' });
+      // The first and last physical children are edge clones. Start on the
+      // matching real page in the middle of those clones so the first gesture
+      // can travel continuously across the boundary.
+      const logicalIndex = Math.max(0, Math.min(totalPages - 1, _lastPageIndex));
+      const physicalIndex = carouselPhysicalIndex(logicalIndex, totalPages);
+      activePageIndexRef.current = logicalIndex;
+      setActivePageIndex(logicalIndex);
+      _lastPageIndex = logicalIndex;
+      el.style.scrollBehavior = 'auto';
+      el.scrollLeft = el.clientWidth * physicalIndex;
+      requestAnimationFrame(() => { el.style.scrollBehavior = 'smooth'; });
   }, [totalPages]);
 
+  const cancelCarouselNormalization = useCallback(() => {
+      if (scrollEndTimer.current) clearTimeout(scrollEndTimer.current);
+      scrollEndTimer.current = null;
+  }, []);
+
+  const normalizeCarouselPosition = useCallback(() => {
+      const scroller = scrollContainerRef.current;
+      if (!scroller || totalPages <= 0 || scroller.clientWidth <= 0) return;
+      // Never move the edge clone while a pointer/finger is still holding it.
+      // This keeps a long press at the edge from jumping underneath the finger.
+      if (touchActive.current || isDragging.current) return;
+
+      const width = scroller.clientWidth;
+      const physicalIndex = Math.round(scroller.scrollLeft / width);
+      const logicalIndex = carouselLogicalIndex(physicalIndex, totalPages);
+      activePageIndexRef.current = logicalIndex;
+      setActivePageIndex(logicalIndex);
+      _lastPageIndex = logicalIndex;
+
+      const resetIndex = carouselCloneResetIndex(physicalIndex, totalPages);
+      if (resetIndex == null) return;
+
+      // Wait until native snap has actually settled on the clone. The clone and
+      // its matching real page are identical, so this final auto reset is not
+      // visible to the user and does not animate through pages 2–4.
+      const snappedLeft = physicalIndex * width;
+      if (Math.abs(scroller.scrollLeft - snappedLeft) > 2) {
+          scrollEndTimer.current = setTimeout(() => {
+              scrollEndTimer.current = null;
+              normalizeCarouselPosition();
+          }, 80);
+          return;
+      }
+
+      scroller.scrollTo({ left: width * resetIndex, behavior: 'auto' });
+  }, [totalPages]);
+
+  const scheduleCarouselNormalization = useCallback(() => {
+      cancelCarouselNormalization();
+      if (totalPages <= 0) return;
+      scrollEndTimer.current = setTimeout(() => {
+          scrollEndTimer.current = null;
+          normalizeCarouselPosition();
+      }, 140);
+  }, [cancelCarouselNormalization, normalizeCarouselPosition, totalPages]);
+
+  useEffect(() => () => cancelCarouselNormalization(), [cancelCarouselNormalization]);
+
   const handleScroll = () => {
-      if (scrollContainerRef.current) {
-          const width = scrollContainerRef.current.clientWidth;
-          const scrollLeft = scrollContainerRef.current.scrollLeft;
-          const index = Math.round(scrollLeft / width);
-          setActivePageIndex(index);
-          activePageIndexRef.current = index;
-          _lastPageIndex = index; // Persist across remounts
+      const scroller = scrollContainerRef.current;
+      if (!scroller || totalPages <= 0 || scroller.clientWidth <= 0) return;
+
+      const physicalIndex = Math.round(scroller.scrollLeft / scroller.clientWidth);
+      const logicalIndex = carouselLogicalIndex(physicalIndex, totalPages);
+      if (logicalIndex !== activePageIndexRef.current) {
+          setActivePageIndex(logicalIndex);
+          activePageIndexRef.current = logicalIndex;
+      }
+      _lastPageIndex = logicalIndex; // Persist the logical page across remounts
+
+      if (carouselCloneResetIndex(physicalIndex, totalPages) != null && !touchActive.current && !isDragging.current) {
+          scheduleCarouselNormalization();
       }
   };
 
-  // Native horizontal scrolling is kept for the normal mobile feel. At either edge,
-  // a swipe in the outward direction moves directly to the opposite page.
-  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-      if (!layoutEditing) touchStartX.current = e.touches[0]?.clientX ?? null;
+  // Native scrolling now travels through edge clones. These handlers only keep
+  // the normalisation timer from firing while the user still holds the gesture;
+  // they intentionally do not call scrollTo at the boundary.
+  const handleTouchStart = () => {
+      if (layoutEditing) return;
+      touchActive.current = true;
+      cancelCarouselNormalization();
   };
-  const handleTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
-      const start = touchStartX.current;
-      touchStartX.current = null;
-      if (layoutEditing || start == null || totalPages < 2) return;
-      const end = e.changedTouches[0]?.clientX ?? start;
-      const delta = end - start;
-      if (Math.abs(delta) < 42) return;
-      const current = activePageIndexRef.current;
-      if (current === 0 && delta > 0) jumpToPage(wrapPageIndex(current, -1, totalPages));
-      else if (current === totalPages - 1 && delta < 0) jumpToPage(wrapPageIndex(current, 1, totalPages));
+  const handleTouchEnd = () => {
+      touchActive.current = false;
+      scheduleCarouselNormalization();
+  };
+  const handleTouchCancel = () => {
+      touchActive.current = false;
+      scheduleCarouselNormalization();
   };
 
   // --- Mouse Drag Handlers ---
   const handleMouseDown = (e: React.MouseEvent) => {
       if (!scrollContainerRef.current || layoutEditing) return;
+      cancelCarouselNormalization();
       isDragging.current = true;
       dragMoved.current = 0;
       startX.current = e.pageX - scrollContainerRef.current.offsetLeft;
@@ -737,6 +794,7 @@ const Launcher: React.FC = () => {
       scrollContainerRef.current.style.scrollBehavior = 'smooth';
       scrollContainerRef.current.style.scrollSnapType = 'x mandatory';
       scrollContainerRef.current.style.cursor = 'grab';
+      scheduleCarouselNormalization();
   };
 
   const handleMouseLeave = () => {
@@ -839,11 +897,14 @@ const Launcher: React.FC = () => {
           activePageIndexRef.current = nextPage;
           setActivePageIndex(nextPage);
           _lastPageIndex = nextPage;
-          scroller.scrollTo({ left: scroller.clientWidth * nextPage, behavior: 'smooth' });
+          scroller.scrollTo({
+              left: scroller.clientWidth * carouselPhysicalIndex(nextPage, totalPages),
+              behavior: 'smooth',
+          });
           layoutPageTurnTimer.current = setTimeout(turn, 760);
       };
       layoutPageTurnTimer.current = setTimeout(turn, 560);
-  }, [appPages.length, clearLayoutPageTurn]);
+  }, [appPages.length, clearLayoutPageTurn, totalPages]);
 
   useEffect(() => () => {
       clearLayoutPressTimer();
@@ -1033,6 +1094,7 @@ const Launcher: React.FC = () => {
          onMouseLeave={handleMouseLeave}
          onTouchStart={handleTouchStart}
          onTouchEnd={handleTouchEnd}
+         onTouchCancel={handleTouchCancel}
          onClickCapture={handleClickCapture}
         className="flex-1 flex overflow-x-auto snap-x snap-mandatory no-scrollbar cursor-grab active:cursor-grabbing"
         style={{
@@ -1046,12 +1108,43 @@ const Launcher: React.FC = () => {
             WebkitOverflowScrolling: 'touch',
         }}
       >
-          {/* Render App Pages */}
-          {appPages.map((pageApps, idx) => (
+          {/* Render a real page between a last-page clone and a first-page clone.
+              The clones make the two ends physically adjacent while the
+              logical page indicator remains 0..totalPages-1. */}
+          {[
+              { key: 'clone-last', idx: totalPages - 1, clone: true },
+              ...Array.from({ length: totalPages }, (_, idx) => ({ key: `page-${idx}`, idx, clone: false })),
+              { key: 'clone-first', idx: 0, clone: true },
+          ].map(({ key, idx, clone }) => {
+              const pageApps = appPages[idx] || [];
+              if (idx === totalPages - 1) {
+                  return (
+                      <WidgetsPage
+                          key={key}
+                          contentColor={contentColor}
+                          openApp={openApp}
+                          anniversaries={anniversaries}
+                          tasks={tasks}
+                          onToggleTask={handleWidgetTaskToggle}
+                          acnh={acnh}
+                          paper={paper}
+                          carouselClone={clone}
+                      />
+                  );
+              }
+              return (
               <div
-                key={idx}
+                key={key}
                 className="w-full flex-shrink-0 snap-center snap-always flex flex-col px-6 pt-12 pb-8 h-full"
-                style={{ contentVisibility: 'auto', contain: 'layout paint', transform: 'translateZ(0)' }}
+                data-launcher-carousel-clone={clone ? 'true' : undefined}
+                style={{
+                    // Edge clones must be painted before the first drag reaches them;
+                    // keeping real off-screen pages virtualised preserves the old cost.
+                    contentVisibility: clone ? 'visible' : 'auto',
+                    contain: 'layout paint',
+                    transform: 'translateZ(0)',
+                    pointerEvents: layoutEditing && clone ? 'none' : undefined,
+                }}
               >
                   {idx === 0 ? (
                       // Page 1 (original): Clock + Chat + 4x2 App Grid
@@ -1172,18 +1265,8 @@ const Launcher: React.FC = () => {
                       </div>
                   )}
               </div>
-          ))}
-
-          {/* Final Page: Widgets */}
-          <WidgetsPage
-            contentColor={contentColor}
-            openApp={openApp}
-            anniversaries={anniversaries}
-            tasks={tasks}
-            onToggleTask={handleWidgetTaskToggle}
-            acnh={acnh}
-            paper={paper}
-          />
+              );
+          })}
 
       </div>
 
