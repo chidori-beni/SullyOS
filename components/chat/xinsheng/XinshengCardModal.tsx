@@ -211,13 +211,16 @@ export const XinshengCardModal: React.FC<Props> = ({
                 >×</button>
             </div>
 
-            {/* 卡片区 */}
+            {/* 卡片区。翻页按钮跟卡片内容放在同一个滚动容器里，靠 CSS sticky 定位——
+                短卡片时按钮跟着内容走，紧贴在卡片下方，不会被拉到屏幕最底部那种「找不到」
+                的空档；长布局模板划到底之前，按钮会自己粘在屏幕底部，划多深都不挡。
+                两头的行为都对，不用在「跟着内容」和「固定在底部」之间二选一。 */}
             <div
                 className="relative flex-1 overflow-y-auto no-scrollbar px-4"
                 onTouchStart={onTouchStart}
                 onTouchEnd={onTouchEnd}
             >
-                <div className="mx-auto w-full max-w-[400px] pb-4">
+                <div className="mx-auto w-full max-w-[400px]">
                     {!current ? (
                         <div className="mt-24 text-center text-white/60 text-[13px] leading-relaxed">
                             {filter === 'favorited' ? '还没有收藏的心声' : '暂无心声记录'}
@@ -237,45 +240,45 @@ export const XinshengCardModal: React.FC<Props> = ({
                     ) : (
                         <XinshengCard entry={current} charName={char.name} charAvatar={char.avatar} />
                     )}
+
+                    {/* 翻页 + 收藏 + 删除。sticky bottom-0：卡片比屏幕短时，这一排就停在卡片
+                        正下方（自然文档流里的位置，不会被顶到屏幕最底）；卡片比屏幕长、
+                        划到这一排本该滚出屏幕的那一刻，它会自己粘住屏幕底边，不需要划到底。
+                        配一层自己的背景，不然卡片内容从底下滚过去时字会和按钮糊在一起。 */}
+                    {current && !showList && (
+                        <div className="sticky bottom-0 -mx-4 px-4 pt-3 mt-4 flex flex-wrap items-center justify-center gap-2.5 bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent pb-[calc(env(safe-area-inset-bottom)+12px)]">
+                            <button
+                                onClick={() => go(-1)}
+                                disabled={index <= 0}
+                                className="w-10 h-10 rounded-full bg-white/15 text-white text-[18px] leading-none disabled:opacity-25 active:scale-95 transition-transform"
+                                aria-label="上一条"
+                            >‹</button>
+                            <button
+                                onClick={async () => { if (currentId) setHistory(await toggleXinshengFavorite(char.id, currentId)); }}
+                                className={`px-4 h-10 rounded-full text-[12px] active:scale-95 transition-transform ${current._favorited ? 'bg-amber-400 text-white' : 'bg-white/15 text-white'}`}
+                            >{current._favorited ? '★ 已收藏' : '☆ 收藏'}</button>
+                            <button
+                                onClick={async () => {
+                                    if (!currentId) return;
+                                    setHistory(await deleteXinshengEntry(char.id, currentId));
+                                    setIndex(i => Math.max(0, i - 1));
+                                }}
+                                className="px-4 h-10 rounded-full bg-white/15 text-rose-200 text-[12px] active:scale-95 transition-transform"
+                            >删除</button>
+                            <button
+                                onClick={() => setShowFullText(true)}
+                                className="px-4 h-10 rounded-full bg-white/15 text-white text-[12px] active:scale-95 transition-transform"
+                            >全文</button>
+                            <button
+                                onClick={() => go(1)}
+                                disabled={index >= ids.length - 1}
+                                className="w-10 h-10 rounded-full bg-white/15 text-white text-[18px] leading-none disabled:opacity-25 active:scale-95 transition-transform"
+                                aria-label="下一条"
+                            >›</button>
+                        </div>
+                    )}
                 </div>
             </div>
-
-            {/* 翻页 + 收藏 + 删除：拉到滚动区域**外面**，固定在屏幕底部。
-                之前跟卡片内容一起滚动，论坛美化的长布局模板（一屏放不下）要划到底才能看到
-                这一排按钮；现在滚多长的模板都不影响，按钮永远在原地。
-                历史抽屉打开时让位，两个「底部条」不用叠在一起。 */}
-            {current && !showList && (
-                <div className="shrink-0 flex flex-wrap items-center justify-center gap-2.5 px-4 pb-[calc(env(safe-area-inset-bottom)+16px)] pt-2">
-                    <button
-                        onClick={() => go(-1)}
-                        disabled={index <= 0}
-                        className="w-10 h-10 rounded-full bg-white/15 text-white text-[18px] leading-none disabled:opacity-25 active:scale-95 transition-transform"
-                        aria-label="上一条"
-                    >‹</button>
-                    <button
-                        onClick={async () => { if (currentId) setHistory(await toggleXinshengFavorite(char.id, currentId)); }}
-                        className={`px-4 h-10 rounded-full text-[12px] active:scale-95 transition-transform ${current._favorited ? 'bg-amber-400 text-white' : 'bg-white/15 text-white'}`}
-                    >{current._favorited ? '★ 已收藏' : '☆ 收藏'}</button>
-                    <button
-                        onClick={async () => {
-                            if (!currentId) return;
-                            setHistory(await deleteXinshengEntry(char.id, currentId));
-                            setIndex(i => Math.max(0, i - 1));
-                        }}
-                        className="px-4 h-10 rounded-full bg-white/15 text-rose-200 text-[12px] active:scale-95 transition-transform"
-                    >删除</button>
-                    <button
-                        onClick={() => setShowFullText(true)}
-                        className="px-4 h-10 rounded-full bg-white/15 text-white text-[12px] active:scale-95 transition-transform"
-                    >全文</button>
-                    <button
-                        onClick={() => go(1)}
-                        disabled={index >= ids.length - 1}
-                        className="w-10 h-10 rounded-full bg-white/15 text-white text-[18px] leading-none disabled:opacity-25 active:scale-95 transition-transform"
-                        aria-label="下一条"
-                    >›</button>
-                </div>
-            )}
 
             {/* 历史列表：底部抽屉 */}
             {showList && (
