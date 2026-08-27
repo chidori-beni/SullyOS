@@ -244,9 +244,11 @@ export const XinshengCardModal: React.FC<Props> = ({
                     {/* 翻页 + 收藏 + 删除。sticky bottom-0：卡片比屏幕短时，这一排就停在卡片
                         正下方（自然文档流里的位置，不会被顶到屏幕最底）；卡片比屏幕长、
                         划到这一排本该滚出屏幕的那一刻，它会自己粘住屏幕底边，不需要划到底。
-                        配一层自己的背景，不然卡片内容从底下滚过去时字会和按钮糊在一起。 */}
+                        不垫背景色——卡片的美化预设五花八门、什么底色都有，一块固定的
+                        深色渐变糊在下面只会在浅色模板上显得很突兀（实测过）；每个按钮
+                        自己带的 bg-white/15 半透明底色已经够撑住文字可读性了。 */}
                     {current && !showList && (
-                        <div className="sticky bottom-0 -mx-4 px-4 pt-3 mt-4 flex flex-wrap items-center justify-center gap-2.5 bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent pb-[calc(env(safe-area-inset-bottom)+12px)]">
+                        <div className="sticky bottom-0 pt-3 mt-4 flex flex-wrap items-center justify-center gap-2.5 pb-[calc(env(safe-area-inset-bottom)+12px)]">
                             <button
                                 onClick={() => go(-1)}
                                 disabled={index <= 0}
