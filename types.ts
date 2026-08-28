@@ -3291,11 +3291,24 @@ export interface UserProfile {
      *  私聊里「你」的头像取 perCharAvatars[charId] || avatar（上面的整体头像作宏观默认）；
      *  群聊/其他场合仍用整体头像。删角色留下的孤儿键无害，读取端永远按当前 charId 取。 */
     perCharAvatars?: Record<string, string>;
+    /** 日历里由用户本人选择的每日心情：本地日期 YYYY-MM-DD → 心情 id。 */
+    calendarDailyMoods?: Record<string, CalendarMoodId>;
+    /** 月度回望中已生成的角色寄语：月份 YYYY-MM → 寄语。 */
+    calendarMonthlyMessages?: Record<string, CalendarMonthlyMessage>;
     /**
      * 用户本人接入「彼方」的状态：捏的 chibi、此刻所在房间、在干嘛。可随时改。
      * enabled=false（登出）时，聊天里给角色的"用户在彼方"提示词随之消失。
      */
     vrState?: UserVRState;
+}
+
+export type CalendarMoodId = 'happy' | 'excited' | 'relaxed' | 'calm' | 'tired' | 'anxious' | 'irritated' | 'sad' | 'angry';
+
+export interface CalendarMonthlyMessage {
+    text: string;
+    characterId: string;
+    characterName: string;
+    generatedAt: number;
 }
 
 export interface UserVRState {

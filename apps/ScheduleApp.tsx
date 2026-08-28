@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { Anniversary, DailySchedule, RoomTodo, Task } from '../types';
+import { Anniversary, CalendarMoodId, DailySchedule, RoomTodo, Task } from '../types';
 import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
 import { safeResponseJson } from '../utils/safeApi';
@@ -9,8 +9,9 @@ import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { getLocalDateKey } from '../utils/localDate';
 import { eventsForDate, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, tasksForDate } from '../utils/calendarIntegration';
 import { trackEvent } from '../utils/analytics';
+import { buildMonthlyReviewStats, buildSullyMonthlyReport, CALENDAR_MOODS, chooseMonthlyMessageCharacterId } from '../utils/calendarMonthlyReview';
 
-type CalendarTab = 'month' | 'mine' | 'theirs';
+type CalendarTab = 'month' | 'mine' | 'theirs' | 'review';
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
 const INPUT = 'w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none focus:border-violet-300 focus:bg-white';
 const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -18,13 +19,15 @@ const parseDateKey = (value: string) => {
     const [year, month, day] = value.split('-').map(Number);
     return new Date(year, month - 1, day);
 };
+const SULLY_WAITING_IMAGE = 'https://cdn.jsdelivr.net/gh/qegj567-cloud/SullyOS-assets@main/bgm/SULLY/wait.png';
 
 const ScheduleApp: React.FC = () => {
-    const { closeApp, characters, activeCharacterId, apiConfig, addToast, userProfile } = useOS();
+    const { closeApp, characters, activeCharacterId, apiConfig, addToast, userProfile, updateUserProfile } = useOS();
     const today = getLocalDateKey();
     const initialCharId = activeCharacterId || characters[0]?.id || '';
     const [tab, setTab] = useState<CalendarTab>('month');
     const [cursor, setCursor] = useState(() => parseDateKey(today));
+    const [reviewCursor, setReviewCursor] = useState(() => parseDateKey(today));
     const [selectedDate, setSelectedDate] = useState(today);
     const [selectedCharId, setSelectedCharId] = useState(initialCharId);
     const [tasks, setTasks] = useState<Task[]>([]);
@@ -35,6 +38,9 @@ const ScheduleApp: React.FC = () => {
     const [commenting, setCommenting] = useState<Set<string>>(new Set());
     const [showTask, setShowTask] = useState(false);
     const [showEvent, setShowEvent] = useState(false);
+    const [showMoodPicker, setShowMoodPicker] = useState(false);
+    const [generatingLetter, setGeneratingLetter] = useState(false);
+    const [openedLetters, setOpenedLetters] = useState<Set<string>>(new Set());
 
     const [taskTitle, setTaskTitle] = useState('');
     const [taskNote, setTaskNote] = useState('');
@@ -72,6 +78,17 @@ const ScheduleApp: React.FC = () => {
     const activeTasks = useMemo(() => sortTasksForCalendar(tasks.filter(task => !task.isCompleted)), [tasks]);
     const completedTasks = useMemo(() => tasks.filter(task => task.isCompleted).sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0)), [tasks]);
     const selectedChar = characters.find(char => char.id === selectedCharId);
+    const reviewMonthKey = `${reviewCursor.getFullYear()}-${String(reviewCursor.getMonth() + 1).padStart(2, '0')}`;
+    const currentMonthKey = today.slice(0, 7);
+    const selectedMood = CALENDAR_MOODS.find(mood => mood.id === userProfile.calendarDailyMoods?.[today]);
+    const monthlyStats = useMemo(() => buildMonthlyReviewStats({
+        monthKey: reviewMonthKey,
+        moods: userProfile.calendarDailyMoods,
+        tasks,
+        events,
+    }), [events, reviewMonthKey, tasks, userProfile.calendarDailyMoods]);
+    const monthlyMessage = userProfile.calendarMonthlyMessages?.[reviewMonthKey];
+    const monthlyMessageCharacter = monthlyMessage && characters.find(char => char.id === monthlyMessage.characterId);
     const calendarCells = useMemo(() => {
         const year = cursor.getFullYear(), month = cursor.getMonth();
         return [
@@ -87,6 +104,72 @@ const ScheduleApp: React.FC = () => {
     const openEventComposer = (date = selectedDate) => {
         setEventDate(date); setEventChar(''); setEventRepeats(false); setEventRepeatDays([1, 2, 3, 4, 5]); setEventRepeatUntil(''); setShowEvent(true);
         trackEvent('打开日历新建事件');
+    };
+    const chooseMood = (mood: CalendarMoodId) => {
+        updateUserProfile({ calendarDailyMoods: { ...(userProfile.calendarDailyMoods || {}), [today]: mood } });
+        setShowMoodPicker(false);
+        addToast('今天的心情已记下', 'success');
+        trackEvent('记录日历心情');
+    };
+    const generateMonthlyMessage = async () => {
+        if (reviewMonthKey >= currentMonthKey) {
+            addToast('本月结束后才会生成寄语', 'info');
+            return;
+        }
+        if (!apiConfig.apiKey) {
+            addToast('请先配置聊天 API', 'error');
+            return;
+        }
+        const writerId = chooseMonthlyMessageCharacterId({
+            characterIds: characters.map(char => char.id), activeCharacterId,
+            monthKey: reviewMonthKey, tasks, events,
+        });
+        const writer = characters.find(char => char.id === writerId);
+        if (!writer) {
+            addToast('还没有可以写寄语的角色', 'error');
+            return;
+        }
+        setGeneratingLetter(true);
+        try {
+            await injectMemoryPalace(writer, undefined, `${reviewMonthKey} 月度回望`);
+            const dominantMood = monthlyStats.topMoods[0] && CALENDAR_MOODS.find(mood => mood.id === monthlyStats.topMoods[0].id)?.label;
+            const details = [
+                `月份：${reviewMonthKey}`,
+                `记录心情：${monthlyStats.moodDays}天${dominantMood ? `，最常见是${dominantMood}` : ''}`,
+                `日程发生：${monthlyStats.eventCount}次${monthlyStats.mostFrequentEvent ? `，最常出现「${monthlyStats.mostFrequentEvent}」` : ''}`,
+                `待办：完成${monthlyStats.completedTaskCount}/${monthlyStats.taskCount}，完成率${monthlyStats.completionRate}%`,
+                monthlyStats.longestEvent ? `持续最久的日程：「${monthlyStats.longestEvent}」` : '',
+                monthlyStats.completedTaskTitles.length ? `完成过的待办：${monthlyStats.completedTaskTitles.join('、')}` : '',
+            ].filter(Boolean).join('\n');
+            const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
+                body: JSON.stringify({
+                    model: apiConfig.model, temperature: 0.85, max_tokens: 500,
+                    messages: [
+                        { role: 'system', content: ContextBuilder.buildCoreContext(writer, userProfile) },
+                        { role: 'user', content: `这是 ${userProfile.name} 的月度记录：\n${details}\n\n请完全按照你的人设，给 ${userProfile.name} 写一封100到150个中文字的月度寄语。自然提到1到2个具体细节，但不要逐项报数据、不要写标题、不要加引号。像真正陪伴过这个月的人一样说话，结尾留一句符合你性格的鼓励或陪伴。只输出寄语正文。` },
+                    ],
+                }),
+            });
+            if (!response.ok) throw new Error(`API Error ${response.status}`);
+            const data = await safeResponseJson(response);
+            const text = data.choices?.[0]?.message?.content?.trim().replace(/^['\"]|['\"]$/g, '');
+            if (!text) throw new Error('角色没有留下内容');
+            updateUserProfile({
+                calendarMonthlyMessages: {
+                    ...(userProfile.calendarMonthlyMessages || {}),
+                    [reviewMonthKey]: { text, characterId: writer.id, characterName: writer.name, generatedAt: Date.now() },
+                },
+            });
+            setOpenedLetters(current => { const next = new Set(current); next.delete(reviewMonthKey); return next; });
+            addToast(`${writer.name} 的寄语已经放进信封`, 'success');
+        } catch (error: any) {
+            console.error('Monthly calendar message failed', error);
+            addToast(`寄语生成失败：${error.message}`, 'error');
+        } finally {
+            setGeneratingLetter(false);
+        }
     };
     const generateTaskReward = async (task: Task) => {
         const supervisor = characters.find(char => char.id === task.supervisorId);
@@ -231,7 +314,7 @@ const ScheduleApp: React.FC = () => {
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(167,139,250,0.22),transparent_42%),radial-gradient(circle_at_90%_25%,rgba(125,211,252,0.16),transparent_35%)]" />
         <header className="relative z-20 shrink-0 border-b border-white/70 bg-white/65 px-5 pb-3 backdrop-blur-xl" style={{ paddingTop: 'calc(var(--safe-top) + 12px)' }}>
             <div className="flex items-center justify-between"><button onClick={closeApp} className="flex h-9 w-9 items-center justify-center rounded-full bg-white/80 text-2xl text-slate-500 shadow-sm" aria-label="返回">‹</button><div className="text-center"><div className="text-[10px] font-bold tracking-[0.28em] text-violet-400">SULLY CALENDAR</div><h1 className="text-lg font-bold">日历</h1></div><button onClick={() => openTaskComposer()} className="flex h-9 w-9 items-center justify-center rounded-full bg-violet-500 text-xl text-white shadow-lg shadow-violet-200" aria-label="新建待办">＋</button></div>
-            <nav className="mt-3 grid grid-cols-3 rounded-2xl bg-slate-100/80 p-1 text-xs font-bold">{([['month', '月历'], ['mine', '我的'], ['theirs', 'TA 的']] as const).map(([id, label]) => <button key={id} onClick={() => setTab(id)} className={`rounded-xl py-2 transition ${tab === id ? 'bg-white text-violet-600 shadow-sm' : 'text-slate-400'}`}>{label}</button>)}</nav>
+            <nav className="mt-3 grid grid-cols-4 rounded-2xl bg-slate-100/80 p-1 text-xs font-bold">{([['month', '月历'], ['mine', '我的'], ['theirs', 'TA 的'], ['review', '回望']] as const).map(([id, label]) => <button key={id} onClick={() => setTab(id)} className={`rounded-xl py-2 transition ${tab === id ? 'bg-white text-violet-600 shadow-sm' : 'text-slate-400'}`}>{label}</button>)}</nav>
         </header>
         <main className="relative z-10 flex-1 overflow-y-auto px-5 pb-28 pt-5 no-scrollbar">
             {tab === 'month' && <div className="space-y-5">
@@ -254,6 +337,13 @@ const ScheduleApp: React.FC = () => {
                 </section>
             </div>}
             {tab === 'mine' && <div className="space-y-6">
+                <section className="rounded-[2rem] border border-white bg-white/80 p-5 shadow-sm backdrop-blur-xl">
+                    <button onClick={() => setShowMoodPicker(current => !current)} className="flex w-full items-center justify-between text-left">
+                        <div><div className="text-[10px] font-bold tracking-[0.22em] text-violet-400">TODAY'S MOOD</div><h2 className="mt-1 text-base font-bold">今天心情怎么样？</h2><p className="mt-1 text-[11px] text-slate-400">只记录你的心情，不会替角色做判断。</p></div>
+                        <span className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-violet-50 to-sky-50 text-4xl shadow-inner">{selectedMood?.face || '＋'}</span>
+                    </button>
+                    {showMoodPicker && <div className="mt-4 grid grid-cols-3 gap-2 border-t border-slate-100 pt-4">{CALENDAR_MOODS.map(mood => <button key={mood.id} onClick={() => chooseMood(mood.id)} className={`rounded-2xl border p-3 text-center transition ${selectedMood?.id === mood.id ? 'border-violet-300 bg-violet-50 shadow-sm' : 'border-transparent bg-slate-50'}`}><span className="block text-3xl">{mood.face}</span><span className="mt-1 block text-[11px] font-bold text-slate-500">{mood.label}</span></button>)}</div>}
+                </section>
                 <div className="rounded-[2rem] bg-gradient-to-br from-sky-400 to-violet-500 p-5 text-white shadow-xl shadow-violet-200/60"><div className="text-[10px] font-bold tracking-[0.24em] opacity-70">MY PLAN</div><div className="mt-2 text-2xl font-bold">{activeTasks.length} 件待完成</div><p className="mt-1 text-xs opacity-75">监督角色只会在语境合适时自然提起，不会机械催促。</p></div>
                 <section className="space-y-3"><div className="flex items-center justify-between"><h2 className="text-sm font-bold">我的待办</h2><button onClick={() => openTaskComposer(today)} className="text-xs font-bold text-violet-500">＋添加</button></div>{activeTasks.map(task => renderTask(task))}{activeTasks.length === 0 && <div className="py-8 text-center text-xs text-slate-400">没有未完成待办</div>}</section>
                 <section className="space-y-3"><div className="flex items-center justify-between"><h2 className="text-sm font-bold">日程与纪念日</h2><button onClick={() => openEventComposer(today)} className="text-xs font-bold text-rose-500">＋添加</button></div>{events.map(event => <button key={event.id} onClick={() => { setSelectedDate(event.date); setCursor(parseDateKey(event.date)); setTab('month'); }} className="flex w-full items-center gap-3 rounded-2xl bg-white/75 p-3 text-left shadow-sm"><div className="rounded-xl bg-rose-50 px-3 py-2 text-center"><div className="text-[9px] text-rose-400">{event.date.slice(5, 7)}月</div><b className="text-sm text-rose-500">{event.date.slice(8)}</b></div><div className="min-w-0"><div className="truncate text-sm font-semibold">{event.title}</div><div className="text-[10px] text-slate-400">{event.kind === 'event' ? '日程' : '纪念日'}{event.startTime ? ` · ${event.startTime}` : ''}</div></div></button>)}</section>
@@ -264,6 +354,23 @@ const ScheduleApp: React.FC = () => {
                 <div className="rounded-[2rem] bg-white/75 p-5 shadow-sm"><div className="flex items-center justify-between"><div><div className="text-[10px] font-bold tracking-[0.2em] text-violet-400">CHARACTER DAY</div><h2 className="mt-1 text-lg font-bold">{selectedDate}</h2></div><input type="date" value={selectedDate} onChange={event => setSelectedDate(event.target.value)} className="rounded-xl bg-slate-100 px-3 py-2 text-xs text-slate-500" /></div></div>
                 <section className="space-y-3"><h3 className="px-1 text-sm font-bold">日程</h3>{charSchedule?.slots.map((slot, index) => <div key={`${slot.startTime}-${index}`} className="rounded-2xl border border-violet-100 bg-white/80 p-4"><div className="flex gap-3"><span className="text-xl">{slot.emoji || '◌'}</span><div><div className="text-xs font-bold text-violet-500">{slot.startTime}{slot.endTime ? `–${slot.endTime}` : ''} · {slot.busyLevel === 'sleep' ? '休息中' : slot.busyLevel === 'busy' ? '比较忙' : slot.busyLevel === 'light' ? '稍忙' : '较空闲'}</div><div className="mt-1 font-semibold">{slot.activity}</div>{slot.description && <p className="mt-1 text-xs text-slate-400">{slot.description}</p>}</div></div></div>)}{!charSchedule && <div className="rounded-2xl border-2 border-dashed border-white py-8 text-center text-xs text-slate-400">这一天还没有生成角色日程</div>}</section>
                 <section className="space-y-3"><div className="flex items-center justify-between px-1"><h3 className="text-sm font-bold">TA 的待办</h3><span className="text-[10px] text-slate-400">与房间同步</span></div>{charTodo?.items.map((item, index) => <button key={`${item.text}-${index}`} onClick={() => toggleCharTodo(index)} className="flex w-full items-center gap-3 rounded-2xl bg-white/80 p-3 text-left shadow-sm"><span className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${item.done ? 'border-emerald-400 bg-emerald-400 text-white' : 'border-violet-200'}`}>{item.done ? '✓' : ''}</span><span className={`text-sm ${item.done ? 'line-through opacity-40' : ''}`}>{item.text}</span></button>)}{!charTodo?.items.length && <div className="py-6 text-center text-xs text-slate-400">TA 今天还没有写待办</div>}</section>
+            </div>}
+            {tab === 'review' && <div className="space-y-5">
+                <section className="rounded-[2rem] border border-white bg-white/75 p-5 shadow-sm backdrop-blur-xl">
+                    <div className="flex items-center justify-between"><button onClick={() => setReviewCursor(current => new Date(current.getFullYear(), current.getMonth() - 1, 1))} className="h-9 w-9 rounded-full bg-slate-100 text-lg">‹</button><div className="text-center"><div className="text-[10px] font-bold tracking-[0.24em] text-violet-400">MONTHLY REWIND</div><h2 className="mt-1 text-lg font-bold">{reviewCursor.getFullYear()} 年 {reviewCursor.getMonth() + 1} 月</h2><p className="text-[10px] text-slate-400">月度回望</p></div><button disabled={reviewMonthKey >= currentMonthKey} onClick={() => setReviewCursor(current => new Date(current.getFullYear(), current.getMonth() + 1, 1))} className="h-9 w-9 rounded-full bg-slate-100 text-lg disabled:opacity-25">›</button></div>
+                </section>
+
+                <section className="relative overflow-hidden rounded-[2rem] bg-gradient-to-br from-[#2e2347] via-[#59427f] to-[#7c6ca8] p-5 text-white shadow-xl shadow-violet-300/40">
+                    <div className="pointer-events-none absolute -right-10 -top-10 h-36 w-36 rounded-full bg-white/10 blur-2xl" />
+                    <div className="relative flex items-start gap-4"><div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-[1.8rem] border border-white/20 bg-black/20"><img src={SULLY_WAITING_IMAGE} onError={event => { event.currentTarget.src = '/sully/head.png'; }} className="h-full w-full object-cover" alt="Sully等你消息" /></div><div className="min-w-0 flex-1"><div className="text-[10px] font-bold tracking-[0.22em] text-violet-200">MONTHLY SIGNAL</div><h2 className="mt-1 text-xl font-black">本月Sully报告</h2><div className="mt-3 flex flex-wrap gap-1.5">{monthlyStats.topMoods.length > 0 ? monthlyStats.topMoods.map(item => { const mood = CALENDAR_MOODS.find(option => option.id === item.id); return <span key={item.id} className="rounded-full bg-white/15 px-2.5 py-1 text-[10px] font-bold">{mood?.face} {mood?.label} {item.percent}%</span>; }) : <span className="rounded-full bg-white/10 px-2.5 py-1 text-[10px]">暂无心情信号</span>}</div></div></div>
+                    <p className="relative mt-4 rounded-2xl bg-black/15 p-4 text-xs leading-6 text-violet-50">{buildSullyMonthlyReport(monthlyStats)}</p>
+                    <div className="relative mt-3 grid grid-cols-3 gap-2 text-center"><div className="rounded-2xl bg-white/10 p-2"><b className="block text-lg">{monthlyStats.moodDays}</b><span className="text-[9px] text-violet-200">心情记录</span></div><div className="rounded-2xl bg-white/10 p-2"><b className="block text-lg">{monthlyStats.eventCount}</b><span className="text-[9px] text-violet-200">日程次数</span></div><div className="rounded-2xl bg-white/10 p-2"><b className="block text-lg">{monthlyStats.completedTaskCount}/{monthlyStats.taskCount}</b><span className="text-[9px] text-violet-200">完成待办</span></div></div>
+                </section>
+
+                <section className="rounded-[2rem] border border-white bg-white/80 p-5 shadow-sm backdrop-blur-xl">
+                    <div className="mb-4"><div className="text-[10px] font-bold tracking-[0.22em] text-rose-400">A LETTER FOR YOU</div><h2 className="mt-1 text-lg font-bold">他的寄语</h2></div>
+                    {reviewMonthKey >= currentMonthKey ? <div className="rounded-3xl border-2 border-dashed border-violet-100 bg-violet-50/50 px-5 py-8 text-center"><div className="text-4xl">✉️</div><b className="mt-3 block text-sm text-violet-600">本月结束后才会生成寄语哦</b><p className="mt-1 text-[11px] text-slate-400">下个月第一天记得来看。系统会装作没在等。</p></div> : monthlyMessage && !openedLetters.has(reviewMonthKey) ? <button onClick={() => setOpenedLetters(current => new Set(current).add(reviewMonthKey))} className="w-full rounded-3xl bg-gradient-to-br from-rose-50 to-violet-50 px-5 py-9 text-center shadow-inner"><div className="text-5xl">💌</div><b className="mt-3 block text-sm text-violet-600">{monthlyMessage.characterName} 留了一封信</b><span className="mt-1 block text-[11px] text-slate-400">轻点拆开</span></button> : monthlyMessage ? <div><div className="rounded-3xl bg-[#fffaf4] p-5 shadow-inner"><div className="mb-4 flex items-center gap-3"><img src={monthlyMessageCharacter?.avatar || '/sully/head.png'} className="h-11 w-11 rounded-full object-cover" /><div><b className="block text-sm">{monthlyMessage.characterName}</b><span className="text-[10px] text-slate-400">写给 {userProfile.name} · {reviewMonthKey}</span></div></div><p className="whitespace-pre-wrap text-sm leading-7 text-slate-600">{monthlyMessage.text}</p></div><button disabled={generatingLetter} onClick={generateMonthlyMessage} className="mt-3 w-full py-2 text-xs font-bold text-violet-500 disabled:opacity-40">{generatingLetter ? '正在重新写…' : '重新生成寄语'}</button></div> : <div className="rounded-3xl bg-gradient-to-br from-rose-50 to-violet-50 p-6 text-center"><div className="text-4xl">✉️</div><p className="mt-3 text-xs leading-5 text-slate-500">会由这个月与你的日程、待办关联最深的角色来写；没有关联时，交给当前角色。</p><button disabled={generatingLetter} onClick={generateMonthlyMessage} className="mt-4 rounded-full bg-violet-500 px-5 py-2.5 text-xs font-bold text-white shadow-lg shadow-violet-200 disabled:opacity-40">{generatingLetter ? 'TA 正在写…' : '生成他的寄语'}</button></div>}
+                </section>
             </div>}
         </main>
         <Modal isOpen={showTask} title="添加我的待办" onClose={() => setShowTask(false)} footer={<button onClick={addTask} className="w-full rounded-2xl bg-violet-500 py-3 font-bold text-white shadow-lg shadow-violet-200">加入日历</button>}>
