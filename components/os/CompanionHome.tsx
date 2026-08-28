@@ -3312,6 +3312,14 @@ const CompanionHome: React.FC = () => {
               <div className="mt-1 text-center text-[7px] leading-relaxed text-white/30">
                 一次 LLM 回复严格为每句话生成一个动作；失败不重试、不兜底。锁头只禁止头部转动，表情、手臂、身体与专属动作照常演出。
               </div>
+              {/* 逐拍编辑（含手动拆分）整块挂在动作包下面。没编排过时这里是空的，
+                  用户很容易以为功能没上线，所以把前置条件直接写出来。 */}
+              {!startupCuesMatchDraft && (
+                <div className="mt-1 text-center text-[7px] leading-relaxed" style={{ color: `${uiTint}b0` }}>
+                  先点上面这个按钮编排一次，才会出现「逐句动作」：那里可以逐拍调表情，也能按逗号把一拍手动拆成两拍。
+                  {startupPerformanceCues.length > 0 && '（台词改过了，旧的动作编排已作废，需要重新编排）'}
+                </div>
+              )}
 
               {startupCuesMatchDraft && (
                 <div className="mt-3" data-testid="companion-startup-cue-editor">
