@@ -836,6 +836,11 @@ export const requestAvatarTouchReactionPack = async (options: {
   reactionsPerZone?: number;
   voiceLanguage?: string;
   outputMode?: AvatarTouchPackOutputMode;
+  /**
+   * 允许部分成功。合并进当前反馈包时，只要有一个部位写出来了就是净收益，
+   * 没必要因为另一个部位少一句而把整次结果丢掉（另存为新预设仍保持全有或全无）。
+   */
+  allowPartial?: boolean;
 }): Promise<AvatarTouchReactionPack> => {
   const {
     character,
@@ -847,6 +852,7 @@ export const requestAvatarTouchReactionPack = async (options: {
     reactionsPerZone = 4,
     voiceLanguage = '',
     outputMode = 'full',
+    allowPartial = false,
   } = options;
   const selectedZones = [...new Set(zones)].filter(zone => AVATAR_TOUCH_ZONES.includes(zone));
   if (!selectedZones.length) throw new Error('请至少选择一个可触摸部位');
@@ -908,7 +914,10 @@ export const requestAvatarTouchReactionPack = async (options: {
         { role: 'user', content: eventText },
       ],
       temperature: 0.92,
-      max_tokens: 4800,
+      // 每条反馈 = 中文原文 + 译文 + TTS 语法 + 一整套 performance，实测 200~300 token。
+      // 固定 4800 在选满 5 个部位（20 条）时必被截断，解析出来的包永远缺项，
+      // 于是整次请求作废——这正是「必须一个部位一个部位生成」的根因。
+      max_tokens: Math.min(16_000, 1_200 + selectedZones.length * boundedReactionCount * 320),
       stream: false,
     }),
   // A complete pack can contain dozens of lines plus translations and
@@ -925,12 +934,20 @@ export const requestAvatarTouchReactionPack = async (options: {
   });
   const pack = parseAvatarTouchReactionPackPartial(data, selectedZones, modelActions, voiceLanguage);
   const incompleteZones = selectedZones.filter(zone => (pack[zone]?.length || 0) < boundedReactionCount);
+  const usableZones = selectedZones.filter(zone => (pack[zone]?.length || 0) > 0);
   if (incompleteZones.length) {
     const details = incompleteZones
       .map(zone => `${avatarTouchZoneLabel(zone)} ${(pack[zone]?.length || 0)}/${boundedReactionCount}`)
       .join('、');
-    throw new Error(`模型回复不完整：${details}。本次未保存，只请求了这一次`);
+    if (!allowPartial || !usableZones.length) {
+      throw new Error(
+        `模型回复不完整：${details}。本次未保存，只请求了这一次`
+        + (selectedZones.length > 2 ? '。部位选太多时模型容易写不完，可以分两三次生成并选「合并进当前反馈包」' : ''),
+      );
+    }
   }
-  selectedZones.forEach(zone => { pack[zone] = pack[zone]!.slice(0, boundedReactionCount); });
+  usableZones.forEach(zone => { pack[zone] = pack[zone]!.slice(0, boundedReactionCount); });
+  // 部分成功时只回传真正写出来的部位，调用方据此合并并提示还缺哪些。
+  selectedZones.forEach(zone => { if (!pack[zone]?.length) delete pack[zone]; });
   return pack;
 };

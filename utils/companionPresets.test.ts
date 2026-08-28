@@ -4,6 +4,7 @@ import {
   activateCompanionStartupPreset,
   activateCompanionTouchPreset,
   collectCompanionVoiceAssetIds,
+  mergeCompanionTouchReactions,
   saveCompanionStartupPreset,
   saveCompanionTouchPreset,
   updateCompanionTouchReaction,
@@ -84,5 +85,81 @@ describe('Live2D companion presets', () => {
     expect(updated.reactions.head?.[0].text).toBe('别闹。');
     expect(updated.reactions.head?.[0].ttsText).toContain('<#0.4#>');
     expect(updated.touchPresets?.[0].reactions.head?.[0].performance.gesture).toBe('wave');
+  });
+});
+
+describe('merging generated zones into the active touch pack', () => {
+  const reaction = (id: string) => ({ id, text: id, performance: performance('happy', 'wave') });
+
+  const packWithHead = () => saveCompanionTouchPreset(emptySettings(), {
+    enabledZones: ['head'],
+    reactions: { head: [reaction('head-1')] },
+    voiceLanguage: '',
+    voiceEnabled: false,
+    voiceGeneratedCount: 1,
+    generatedAt: 10,
+  }, '主包', { now: 10 });
+
+  it('adds a new zone without dropping zones generated earlier', () => {
+    const base = packWithHead();
+    const merged = mergeCompanionTouchReactions(base.settings, {
+      enabledZones: ['hand'],
+      reactions: { hand: [reaction('hand-1')] },
+      voiceLanguage: '',
+      voiceEnabled: false,
+      voiceGeneratedCount: 1,
+      generatedAt: 20,
+    }, { now: 20 });
+    expect(Object.keys(merged.settings.reactions).sort()).toEqual(['hand', 'head']);
+    expect(merged.settings.reactions.head?.[0].id).toBe('head-1');
+    expect(merged.settings.enabledZones.sort()).toEqual(['hand', 'head']);
+    // 语音条数累加，否则界面上的「语音 N 条」会随每次合并倒退。
+    expect(merged.settings.voiceGeneratedCount).toBe(2);
+  });
+
+  it('updates the active preset in place instead of creating another one', () => {
+    const base = packWithHead();
+    const merged = mergeCompanionTouchReactions(base.settings, {
+      enabledZones: ['hand'],
+      reactions: { hand: [reaction('hand-1')] },
+      voiceLanguage: '',
+      voiceEnabled: false,
+      voiceGeneratedCount: 0,
+      generatedAt: 20,
+    }, { now: 20 });
+    expect(merged.settings.touchPresets).toHaveLength(1);
+    expect(merged.preset?.id).toBe(base.preset.id);
+    expect(merged.settings.activeTouchPresetId).toBe(base.preset.id);
+    // 关键：切走再切回来，合并进去的部位必须还在。
+    const reactivated = activateCompanionTouchPreset(merged.settings, base.preset.id);
+    expect(Object.keys(reactivated.reactions).sort()).toEqual(['hand', 'head']);
+  });
+
+  it('replaces only the zones this run actually produced', () => {
+    const base = packWithHead();
+    const merged = mergeCompanionTouchReactions(base.settings, {
+      enabledZones: ['head', 'hand'],
+      // 本次只有 head 写出来了；hand 缺席不应清掉已有内容。
+      reactions: { head: [reaction('head-2')], hand: undefined },
+      voiceLanguage: '',
+      voiceEnabled: false,
+      voiceGeneratedCount: 0,
+      generatedAt: 20,
+    }, { now: 20 });
+    expect(merged.settings.reactions.head?.[0].id).toBe('head-2');
+    expect(merged.settings.reactions.hand).toBeUndefined();
+  });
+
+  it('still merges when no preset was ever saved', () => {
+    const merged = mergeCompanionTouchReactions(emptySettings(), {
+      enabledZones: ['face'],
+      reactions: { face: [reaction('face-1')] },
+      voiceLanguage: '',
+      voiceEnabled: false,
+      voiceGeneratedCount: 0,
+      generatedAt: 20,
+    }, { now: 20 });
+    expect(merged.preset).toBeUndefined();
+    expect(merged.settings.reactions.face?.[0].id).toBe('face-1');
   });
 });

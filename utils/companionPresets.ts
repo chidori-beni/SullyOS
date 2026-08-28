@@ -94,6 +94,60 @@ export function saveCompanionTouchPreset(
   };
 }
 
+/**
+ * 把新生成的部位并进「当前正在用的这一包」，而不是另存一套。
+ * 一次生成全部部位容易被模型截断，用户只能一个部位一个部位地生成；
+ * 若每次都新建预设，最后会得到 N 套各只有一个部位的包，而同一时刻只有一套生效。
+ *
+ * 只覆盖本次真正生成出来的部位，其余部位原样保留；同时就地更新当前激活的那一套预设，
+ * 让「下拉里选中的那一套」和「实际生效的内容」始终一致。
+ */
+export function mergeCompanionTouchReactions(
+  settings: CompanionTouchSettings,
+  snapshot: TouchSnapshot,
+  options: { now?: number } = {},
+): { settings: CompanionTouchSettings; preset?: CompanionTouchPreset } {
+  const now = options.now ?? Date.now();
+  const incoming = snapshot.reactions || {};
+  const mergedReactions: CompanionTouchSettings['reactions'] = cloneJson(settings.reactions || {});
+  for (const [zone, items] of Object.entries(incoming) as Array<[CompanionTouchZone, CompanionTouchReaction[] | undefined]>) {
+    if (!items?.length) continue;
+    mergedReactions[zone] = cloneJson(items);
+  }
+  const mergedZones = [...new Set([...(settings.enabledZones || []), ...snapshot.enabledZones])];
+  const voiceGeneratedCount = (settings.voiceGeneratedCount || 0) + (snapshot.voiceGeneratedCount || 0);
+  const merged: CompanionTouchSettings = {
+    ...settings,
+    enabledZones: mergedZones,
+    reactions: mergedReactions,
+    // 语言/语音开关跟随本次生成，避免同一包里混着两种语言的音频设定。
+    voiceLanguage: snapshot.voiceLanguage,
+    voiceEnabled: snapshot.voiceEnabled,
+    voiceGeneratedCount,
+    generatedAt: snapshot.generatedAt ?? settings.generatedAt,
+  };
+  const activeId = settings.activeTouchPresetId;
+  const active = activeId ? settings.touchPresets?.find(item => item.id === activeId) : undefined;
+  if (!active) return { settings: merged };
+  const preset: CompanionTouchPreset = {
+    ...active,
+    enabledZones: [...mergedZones],
+    reactions: cloneJson(mergedReactions),
+    voiceLanguage: merged.voiceLanguage,
+    voiceEnabled: merged.voiceEnabled,
+    voiceGeneratedCount,
+    generatedAt: merged.generatedAt,
+    updatedAt: now,
+  };
+  return {
+    preset,
+    settings: {
+      ...merged,
+      touchPresets: (settings.touchPresets || []).map(item => item.id === preset.id ? preset : item),
+    },
+  };
+}
+
 export function activateCompanionTouchPreset(
   settings: CompanionTouchSettings,
   presetId: string,

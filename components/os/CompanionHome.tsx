@@ -142,6 +142,7 @@ import {
   removeCompanionStartupPreset,
   removeCompanionTouchPreset,
   saveCompanionStartupPreset,
+  mergeCompanionTouchReactions,
   saveCompanionTouchPreset,
   updateCompanionTouchReaction,
 } from '../../utils/companionPresets';
@@ -489,6 +490,8 @@ const CompanionHome: React.FC = () => {
   const [startupAllDayGenerating, setStartupAllDayGenerating] = useState(false);
   // 机位推拉幅度（0..1）。角色忽远忽近时调小；0 = 完全锁死构图。
   const [cameraIntensity, setCameraIntensity] = useState(1);
+  // 生成落点：另存为新预设，还是并进当前这一包。分部位生成时后者才是想要的。
+  const [touchGenerateMode, setTouchGenerateMode] = useState<'new' | 'merge'>('new');
   // 「预演」必须收起设置面板才能看见立绘。记住这一次是从面板里点进来的，
   // 好让用户一键回到刚才那一句，而不是重开面板、重新展开、重新找到那一条。
   const [previewReturnPending, setPreviewReturnPending] = useState(false);
@@ -1933,6 +1936,7 @@ const CompanionHome: React.FC = () => {
     setMotionState('thinking');
     setLine(null);
     try {
+      const mergeIntoActivePack = touchGenerateMode === 'merge';
       let reactions = await requestAvatarTouchReactionPack({
         character,
         user: userProfile,
@@ -1943,6 +1947,7 @@ const CompanionHome: React.FC = () => {
         outputMode: activeCompanionSource === 'upload'
           ? 'text'
           : activeCompanionSource === 'date' ? 'expression' : 'full',
+        allowPartial: mergeIntoActivePack,
       });
       if (!mountedRef.current || requestToken !== requestTokenRef.current) return;
 
@@ -1971,18 +1976,23 @@ const CompanionHome: React.FC = () => {
       }
 
       const before = companionTouchSettingsBase();
-      const saved = saveCompanionTouchPreset(before, {
+      const snapshot = {
         enabledZones: touchDraftZones,
         reactions,
         voiceLanguage: touchVoiceLanguage,
         voiceEnabled: touchGenerateVoice,
         voiceGeneratedCount: voiceGenerated,
         generatedAt: Date.now(),
-      }, touchPresetName);
+      };
+      const saved = mergeIntoActivePack
+        ? mergeCompanionTouchReactions(before, snapshot)
+        : saveCompanionTouchPreset(before, snapshot, touchPresetName);
       updateCharacter(character.id, { companionTouchSettings: saved.settings });
       cleanupUnreferencedCompanionVoices(before, saved.settings);
-      setSelectedTouchPresetId(saved.preset.id);
-      setTouchPresetName(saved.preset.name);
+      if (saved.preset) {
+        setSelectedTouchPresetId(saved.preset.id);
+        setTouchPresetName(saved.preset.name);
+      }
       touchCursorRef.current = {};
       trackEvent('生成桌面触碰反馈', {
         形象: activeCompanionSource === 'upload'
@@ -1991,7 +2001,18 @@ const CompanionHome: React.FC = () => {
         语音: touchGenerateVoice,
       });
       const voiceSummary = touchGenerateVoice ? ` · 本地语音 ${voiceGenerated}/${voiceTotal}` : '';
-      addToast(`已保存新的触摸预设「${saved.preset.name}」${voiceSummary}`, 'success');
+      const producedZones = touchDraftZones.filter(zone => (reactions[zone]?.length || 0) > 0);
+      const missedZones = touchDraftZones.filter(zone => !(reactions[zone]?.length));
+      if (mergeIntoActivePack) {
+        const target = saved.preset ? `「${saved.preset.name}」` : '当前反馈包';
+        addToast(
+          `已把${producedZones.map(avatarTouchZoneLabel).join('、')}并进${target}${voiceSummary}`
+          + (missedZones.length ? `；${missedZones.map(avatarTouchZoneLabel).join('、')}没写出来，可以单独再生成一次` : ''),
+          missedZones.length ? 'info' : 'success',
+        );
+      } else {
+        addToast(`已保存新的触摸预设「${saved.preset!.name}」${voiceSummary}`, 'success');
+      }
       if (voiceFailures) {
         addToast(`${voiceFailures} 条语音未能保存，触摸时只演动作与台词，不会临时调用 TTS`, 'info');
       }
@@ -3746,8 +3767,16 @@ const CompanionHome: React.FC = () => {
                 aria-label="选择触摸预设"
                 className="min-w-0 border border-white/12 bg-[#151021] px-3 py-2 text-[10px] text-white/82 outline-none disabled:opacity-45"
               >
-                <option value="">{touchPresets.length ? `选择已保存预设（${touchPresets.length}）` : '还没有触摸预设'}</option>
-                {touchPresets.map(preset => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
+                <option value="">{touchPresets.length ? `选择已保存预设（共 ${touchPresets.length} 套，同时只有 1 套生效）` : '还没有触摸预设'}</option>
+                {touchPresets.map(preset => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.name}
+                    {`（${(Object.entries(preset.reactions || {}) as Array<[AvatarTouchZone, CompanionTouchReaction[] | undefined]>)
+                      .filter(([, items]) => items?.length)
+                      .map(([zone]) => avatarTouchZoneLabel(zone))
+                      .join('') || '空'}）`}
+                  </option>
+                ))}
               </select>
               <button
                 type="button"
@@ -3862,7 +3891,45 @@ const CompanionHome: React.FC = () => {
               className="mt-1 w-full border border-white/12 bg-black/15 px-3 py-2 text-[10px] text-white outline-none placeholder:text-white/24 disabled:opacity-45"
             />
             <div className="mt-1 text-[7px] leading-relaxed text-white/30">
-              每次生成都会保存为新预设；旧反馈包和它引用的本地语音不会被覆盖。
+              新预设名称只在「另存为新预设」时用得上；旧反馈包和它引用的本地语音永远不会被覆盖。
+            </div>
+
+            {/* 一次生成 5 个部位常被模型截断，用户只能分批生成；若每批都新建预设，
+                最后会得到几套各只有一个部位的包，而同一时刻只有一套生效。 */}
+            <div className="mt-3" data-testid="companion-touch-generate-mode">
+              <div className="text-[8px] tracking-[0.12em] text-white/48">这次生成保存到哪里</div>
+              <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+                {([
+                  { value: 'new' as const, label: '另存为新预设', hint: '整套重做，全有或全无' },
+                  { value: 'merge' as const, label: '合并进当前反馈包', hint: '只替换这次生成的部位' },
+                ]).map(option => {
+                  const selected = touchGenerateMode === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      aria-pressed={selected}
+                      disabled={settingsGenerating}
+                      onClick={() => setTouchGenerateMode(option.value)}
+                      className="border px-2 py-1.5 text-left transition disabled:opacity-45"
+                      style={{
+                        borderColor: selected ? `${uiTint}aa` : 'rgba(255,255,255,.12)',
+                        background: selected ? `${uiTint}1e` : 'rgba(255,255,255,.025)',
+                      }}
+                    >
+                      <span className="block text-[9px] font-semibold" style={{ color: selected ? uiTint : 'rgba(255,255,255,.62)' }}>
+                        {option.label}
+                      </span>
+                      <span className="mt-0.5 block text-[7px] leading-relaxed text-white/32">{option.hint}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mt-1.5 text-[7px] leading-relaxed text-white/34">
+                {touchGenerateMode === 'merge'
+                  ? '部位多了模型容易写不完。分两三次生成、每次选几个部位并合并进同一包，比一次选满更容易成功；写出来多少就并进去多少，其余部位原样保留。'
+                  : '一次把选中的部位全部重做。只要有一个部位没写完整，整次作废、什么都不保存。'}
+              </div>
             </div>
 
             <button
@@ -3877,7 +3944,7 @@ const CompanionHome: React.FC = () => {
                 ? touchVoiceProgress
                   ? `正在合成本地语音 ${touchVoiceProgress.completed}/${touchVoiceProgress.total}…`
                   : `正在生成${touchPackContentLabel}…`
-                : '生成并保存新预设'}
+                : touchGenerateMode === 'merge' ? '生成并合并进当前反馈包' : '生成并保存新预设'}
             </button>
             <div className="mt-2 text-center text-[8px] tracking-wide text-white/30">
               {savedTouchSettings?.generatedAt
