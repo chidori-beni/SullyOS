@@ -352,6 +352,9 @@ const companionPerformanceCueText = (line: string, translation = '') => (
   `${line.trim()}\u0000${translation.trim()}`
 );
 
+/** 手动拆分后一句可以对应多拍，上限和句子表一样是 12 的两倍。 */
+const COMPANION_MAX_PERFORMANCE_CUES = 24;
+
 const companionPerformanceCuePackMatches = (
   line: string,
   translation: string,
@@ -359,9 +362,14 @@ const companionPerformanceCuePackMatches = (
   cues: readonly AvatarPerformanceCue[] | undefined,
 ): boolean => {
   const expected = splitCompanionPerformanceSentences(translation.trim() || line.trim()).length;
+  // cueText 已经完整编码了台词与译文，台词一改就整包作废——这才是防陈旧的那道锁。
+  // 拍数不再要求严格等于句数：用户可以把一句手动拆成两拍，也可以并回去。
+  // “一句一拍”是动作导演**生成时**的约束（见 companionPerformanceDirector），
+  // 在这里复用会让手动拆分出来的包被静默丢掉。
   return expected > 0
     && cueText === companionPerformanceCueText(line, translation)
-    && cues?.length === expected;
+    && Boolean(cues?.length)
+    && cues!.length <= COMPANION_MAX_PERFORMANCE_CUES;
 };
 
 const companionLineFallbackDuration = (textLength: number) => (
@@ -2249,7 +2257,102 @@ const CompanionHome: React.FC = () => {
       ? selectedStartupCue.endDirection || DEFAULT_AVATAR_PERFORMANCE
       : selectedStartupCue.direction
     : startupPerformance;
-  const startupCueSentences = splitCompanionPerformanceSentences(startupSpokenDraft);
+  // cue.at 是动作导演按「译文 || 中文原文」算出来的（见 companionPerformanceDirector），
+  // 不是按 TTS 语法文本。切片和找拆分点都必须用同一个基准串，否则带 (chuckle)
+  // 这类前缀时每一拍的文字都会整体偏移。
+  const startupCueBaseText = normalizeCompanionDialogue(startupTranslation, character.name).trim()
+    || normalizeCompanionDialogue(startupLine, character.name).trim();
+  const startupCueSentences = splitCompanionPerformanceSentences(startupCueBaseText);
+  // 拍的文字从 at 区间反切，而不是按下标查句子表：手动拆分后拍数会多于句数，
+  // 按下标取会让第 2 拍之后的标签全部错位。
+  const startupCueTextAt = (index: number): string => {
+    const total = Math.max(1, startupCueBaseText.length);
+    const from = Math.round((startupPerformanceCues[index]?.at ?? 0) * total);
+    const to = Math.round((startupPerformanceCues[index + 1]?.at ?? 1) * total);
+    return startupCueBaseText.slice(from, Math.max(from, to)).trim();
+  };
+  const selectedStartupCueText = selectedStartupCue ? startupCueTextAt(selectedStartupCueIndex) : '';
+  // 可拆分点：这一拍内部的停顿标点。用户想在逗号那里分开，就给他逗号。
+  const selectedStartupCueSplitPoints = (() => {
+    if (!selectedStartupCue || selectedStartupCueText.length < 4) return [] as Array<{ at: number; before: string; after: string }>;
+    const total = Math.max(1, startupCueBaseText.length);
+    const cueStart = Math.round((selectedStartupCue.at ?? 0) * total);
+    const nextAt = startupPerformanceCues[selectedStartupCueIndex + 1]?.at ?? 1;
+    const points: Array<{ at: number; before: string; after: string }> = [];
+    const seen = new Set<number>();
+    for (let offset = 0; offset < selectedStartupCueText.length - 1; offset += 1) {
+      if (!/[，,、…—]/.test(selectedStartupCueText[offset])) continue;
+      // 连续标点（……、——）整体跳过，切点落在它们后面。
+      let end = offset + 1;
+      while (end < selectedStartupCueText.length && /[，,、…—\s]/.test(selectedStartupCueText[end])) end += 1;
+      if (end >= selectedStartupCueText.length) break;
+      const before = selectedStartupCueText.slice(0, end).trim();
+      const after = selectedStartupCueText.slice(end).trim();
+      if (!before || !after) continue;
+      const at = Math.min(0.98, Math.max(0, (cueStart + end) / total));
+      // 切点必须落在本拍内部，且不能和相邻拍重合到几乎同一时刻。
+      if (at <= (selectedStartupCue.at ?? 0) + 0.002 || at >= nextAt - 0.002) continue;
+      const key = Math.round(at * 1000);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      points.push({ at, before, after });
+      offset = end - 1;
+    }
+    return points.slice(0, 4);
+  })();
+  const canSplitSelectedStartupCue = startupPerformanceCues.length < COMPANION_MAX_PERFORMANCE_CUES;
+
+  /** 在 at 处把当前这一拍切成两拍：后半拍继承前半拍的收尾姿势，画面不跳。 */
+  const splitStartupCueAt = (at: number) => {
+    if (!canSplitSelectedStartupCue) return;
+    setSelectedStartupPresetId('');
+    setStartupPerformanceCues(cues => {
+      const source = cues[selectedStartupCueIndex];
+      if (!source) return cues;
+      const nextAt = cues[selectedStartupCueIndex + 1]?.at ?? 1;
+      if (!(at > (source.at ?? 0)) || !(at < nextAt)) return cues;
+      const carried = source.endDirection || source.direction;
+      const half = Math.max(120, Math.round(((source.holdMs ?? 900)) / 2));
+      const head: AvatarPerformanceCue = { ...source, holdMs: half };
+      const tail: AvatarPerformanceCue = {
+        at,
+        direction: JSON.parse(JSON.stringify(carried)),
+        endDirection: JSON.parse(JSON.stringify(source.endDirection || carried)),
+        holdMs: half,
+      };
+      return [
+        ...cues.slice(0, selectedStartupCueIndex),
+        head,
+        tail,
+        ...cues.slice(selectedStartupCueIndex + 1),
+      ];
+    });
+    setStartupPerformanceCueIndex(selectedStartupCueIndex + 1);
+    setStartupPerformanceCuePhase('start');
+  };
+
+  /** 把当前这一拍并回上一拍：保留上一拍的起始姿势和本拍的收尾姿势。 */
+  const mergeStartupCueIntoPrevious = () => {
+    if (selectedStartupCueIndex <= 0) return;
+    setSelectedStartupPresetId('');
+    setStartupPerformanceCues(cues => {
+      const previous = cues[selectedStartupCueIndex - 1];
+      const current = cues[selectedStartupCueIndex];
+      if (!previous || !current) return cues;
+      const merged: AvatarPerformanceCue = {
+        ...previous,
+        endDirection: current.endDirection || previous.endDirection,
+        holdMs: Math.min(5_000, (previous.holdMs ?? 900) + (current.holdMs ?? 900)),
+      };
+      return [
+        ...cues.slice(0, selectedStartupCueIndex - 1),
+        merged,
+        ...cues.slice(selectedStartupCueIndex + 1),
+      ];
+    });
+    setStartupPerformanceCueIndex(Math.max(0, selectedStartupCueIndex - 1));
+    setStartupPerformanceCuePhase('start');
+  };
   // 语音存在就用真实时长，否则退回和播放端同一条文字长度估算公式，
   // 这样滑块上写的毫秒数和实际调度用的是同一把尺子。
   const startupTimelineDurationMs = (startupVoiceMatchesDraft && startupVoiceDurationMs)
@@ -3212,11 +3315,14 @@ const CompanionHome: React.FC = () => {
 
               {startupCuesMatchDraft && (
                 <div className="mt-3" data-testid="companion-startup-cue-editor">
-                  <div className="mb-1.5 text-[8px] tracking-[0.1em] text-white/46">逐句动作</div>
+                  <div className="mb-1.5 flex items-baseline justify-between gap-2 text-[8px] tracking-[0.1em] text-white/46">
+                    <span>逐句动作</span>
+                    <span className="tracking-normal text-white/28">{startupPerformanceCues.length} 拍 / {startupCueSentences.length} 句</span>
+                  </div>
                   <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar">
                     {startupPerformanceCues.map((cue, index) => {
                       const selected = index === selectedStartupCueIndex;
-                      const sentence = startupCueSentences[index]?.text || `动作 ${index + 1}`;
+                      const sentence = startupCueTextAt(index) || `动作 ${index + 1}`;
                       return (
                         <button
                           key={`${cue.at}-${index}`}
@@ -3232,7 +3338,7 @@ const CompanionHome: React.FC = () => {
                             color: selected ? uiTint : 'rgba(255,255,255,.58)',
                           }}
                         >
-                          <span className="block text-[8px] font-semibold">第 {index + 1} 句 · {Math.round(cue.at * 100)}%</span>
+                          <span className="block text-[8px] font-semibold">第 {index + 1} 拍 · {Math.round(cue.at * 100)}%</span>
                           <span className="mt-0.5 block truncate text-[7px] opacity-70">{sentence}</span>
                           <span className="mt-1 block text-[7px] opacity-55">起始 → {cue.holdMs || 900}ms → {cue.endDirection ? '收尾' : '未设收尾'}</span>
                         </button>
@@ -3298,6 +3404,46 @@ const CompanionHome: React.FC = () => {
                       >按本句自动 {recommendedStartupHoldMs || '—'}ms</button>
                     </div>
                   )}
+
+                  {/* 一句话里想给前后半句不同表情时，句号级的自动断句是不够的。 */}
+                  <div className="mt-2 border-t border-white/10 pt-2" data-testid="companion-startup-cue-split">
+                    <div className="text-[8px] text-white/46">拆分这一拍</div>
+                    {selectedStartupCueSplitPoints.length ? (
+                      <div className="mt-1.5 space-y-1">
+                        {selectedStartupCueSplitPoints.map(point => (
+                          <button
+                            key={point.at}
+                            type="button"
+                            disabled={settingsGenerating || !canSplitSelectedStartupCue}
+                            onClick={() => splitStartupCueAt(point.at)}
+                            className="flex w-full items-center gap-1.5 border border-white/12 bg-white/[0.025] px-2 py-1.5 text-left text-[7px] leading-relaxed text-white/58 transition active:scale-[.99] disabled:opacity-35"
+                          >
+                            <span className="min-w-0 flex-1 truncate">{point.before}</span>
+                            <span className="shrink-0 font-semibold" style={{ color: uiTint }}>✂</span>
+                            <span className="min-w-0 flex-1 truncate">{point.after}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mt-1 text-[7px] leading-relaxed text-white/30">
+                        这一拍里没有逗号、顿号一类的停顿标点，没法再切。想拆就在「中文原文」里那个位置加一个逗号，或者直接改成句号让它自成一句。
+                      </div>
+                    )}
+                    <div className="mt-1.5 flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        disabled={settingsGenerating || selectedStartupCueIndex <= 0}
+                        data-testid="companion-startup-cue-merge"
+                        onClick={mergeStartupCueIntoPrevious}
+                        className="border border-white/12 px-2 py-1 text-[7px] text-white/58 disabled:opacity-30"
+                      >并回上一拍</button>
+                      <span className="min-w-0 flex-1 text-[7px] leading-relaxed text-white/28">
+                        {canSplitSelectedStartupCue
+                          ? '拆出来的后半拍先继承前半拍的收尾姿势，再单独调；台词一个字都不用改。'
+                          : `已到 ${COMPANION_MAX_PERFORMANCE_CUES} 拍上限，先并回几拍再拆。`}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               )}
 
