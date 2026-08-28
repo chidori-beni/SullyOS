@@ -179,21 +179,41 @@ const ScheduleApp: React.FC = () => {
         addToast(`${supervisor.name} 正在确认你的成果...`, 'info');
         try {
             await injectMemoryPalace(supervisor, undefined, task.title);
-            const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
-                body: JSON.stringify({
-                    model: apiConfig.model, temperature: 0.9, max_tokens: 8000,
-                    messages: [
-                        { role: 'system', content: ContextBuilder.buildCoreContext(supervisor, userProfile) },
-                        { role: 'user', content: `用户 ${userProfile.name} 刚完成待办「${task.title}」。请完全按照你的人设，用用户常用语言给一句自然、简短的评价。不要解释，不要加引号。` },
-                    ],
-                }),
-            });
-            if (!response.ok) throw new Error(`API Error ${response.status}`);
-            const data = await safeResponseJson(response);
-            const text = data.choices?.[0]?.message?.content?.trim().replace(/^["']|["']$/g, '');
-            if (!text) { addToast('待办已完成（角色没有留下评价）', 'success'); return; }
+            const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '') + '/chat/completions';
+            const systemPrompt = `${ContextBuilder.buildCoreContext(supervisor, userProfile)}\n\n[当前调用：待办完成评价]\n这是一个独立的待办完成评价调用。无论角色卡、世界书或历史示例要求什么格式，本次只返回一句给用户看的自然台词正文；绝不返回字段名、模式名、JSON、标题或解释。`;
+            const firstPrompt = `用户 ${userProfile.name} 刚完成待办「${task.title}」。请完全按照你的人设，用用户常用语言写一句自然、简短的完成评价（5-30字）。只输出评价正文，不要输出“平时用语”“日常用语”“评价”等字段名、模式名、标题或 JSON，不要解释、不要加引号。`;
+            const correctionPrompt = `上一条没有返回完成评价正文，而是返回了字段名或模式名。请重新写一句真正对用户说的话（5-30字），要和已完成待办「${task.title}」有关；不能出现“平时用语”“日常用语”“评价”“留学生 in Tokyo”等标签，不能输出 JSON、标题或解释。`;
+            const requestReward = async (prompt: string) => {
+                const response = await fetch(baseUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
+                    body: JSON.stringify({
+                        model: apiConfig.model, temperature: 0.9, max_tokens: 120,
+                        messages: [
+                            { role: 'system', content: systemPrompt },
+                            { role: 'user', content: prompt },
+                        ],
+                    }),
+                });
+                if (!response.ok) throw new Error(`API Error ${response.status}`);
+                const data = await safeResponseJson(response);
+                return extractTaskComment(data.choices?.[0]?.message?.content);
+            };
+            let text = await requestReward(firstPrompt);
+            if (!text) text = await requestReward(correctionPrompt);
+            if (!text) { addToast('待办已完成（角色没有留下可用评价）', 'success'); return; }
+            // Merge into the latest row so the sentence survives reloads and is
+            // not written to a deleted or subsequently uncompleted task.
+            const latest = (await DB.getAllTasks()).find(item => item.id === task.id);
+            if (!latest || !latest.isCompleted) return;
+            const updated: Task = {
+                ...latest,
+                completedSupervisorComment: text,
+                completedSupervisorCommentGeneratedAt: Date.now(),
+            };
+            await DB.saveTask(updated);
+            setTasks(current => current.map(item => item.id === task.id ? updated : item));
+            notifyCalendarDataUpdated();
             addToast(`${supervisor.name}: ${text}`, 'success');
             await DB.saveMessage({ charId: supervisor.id, role: 'system', type: 'text', content: `[系统: ${userProfile.name} 完成了待办「${task.title}」。${supervisor.name} 评价道：「${text}」]` });
         } catch (error: any) {
@@ -212,8 +232,8 @@ const ScheduleApp: React.FC = () => {
             // contain their own output-format labels; the task-comment call must
             // explicitly override those labels and ask for one display sentence.
             const systemPrompt = `${ContextBuilder.buildCoreContext(supervisor, userProfile)}\n\n[当前调用：待办陪伴小字]\n这是一个独立的小字生成调用，不是普通聊天，也不是结构化字段填充。无论角色卡、世界书或历史示例要求什么格式，本次只返回一句给用户看的自然台词正文；绝不返回字段名、模式名、JSON、标题或解释。`;
-            const firstPrompt = `【待办小字输出协议】\n用户刚添加了待办「${task.title}」。请以你的角色口吻写一句放在待办下方的小字，像一句轻声的陪伴或期待。使用用户常用语言，5-20字。\n只输出台词正文，不要输出“平时用语”“日常用语”“评价”等字段名、模式名、标题或 JSON，不要解释、不要引号、不要命令或催促。`;
-            const correctionPrompt = `上一条没有返回台词正文，而是返回了字段名或模式名。请重新写：只输出一句真正对用户说的话（5-20字），内容要和待办「${task.title}」有关，不能出现“平时用语”“日常用语”“评价”等标签，不能输出 JSON、标题或解释。`;
+            const firstPrompt = `【待办小字输出协议】\n用户刚添加了待办「${task.title}」。请以你的角色口吻写一句放在待办下方的小字，像一句轻声的陪伴或期待。使用用户常用语言，5-20字。\n只输出台词正文，不要输出“平时用语”“日常用语”“评价”“留学生 in Tokyo”等字段名、模式名、标题或 JSON，不要解释、不要引号、不要命令或催促。`;
+            const correctionPrompt = `上一条没有返回台词正文，而是返回了字段名或模式名。请重新写：只输出一句真正对用户说的话（5-20字），内容要和待办「${task.title}」有关，不能出现“平时用语”“日常用语”“评价”“留学生 in Tokyo”等标签，不能输出 JSON、标题或解释。`;
             const requestComment = async (prompt: string) => {
                 const response = await fetch(baseUrl, {
                     method: 'POST',
@@ -276,7 +296,9 @@ const ScheduleApp: React.FC = () => {
         addToast('待办已加入日历', 'success');
     };
     const toggleTask = async (task: Task) => {
-        const updated = { ...task, isCompleted: !task.isCompleted, completedAt: task.isCompleted ? undefined : Date.now() };
+        const updated: Task = task.isCompleted
+            ? { ...task, isCompleted: false, completedAt: undefined, completedSupervisorComment: undefined, completedSupervisorCommentGeneratedAt: undefined }
+            : { ...task, isCompleted: true, completedAt: Date.now() };
         await DB.saveTask(updated);
         setTasks(current => current.map(item => item.id === task.id ? updated : item));
         notifyCalendarDataUpdated();
@@ -321,10 +343,13 @@ const ScheduleApp: React.FC = () => {
 
     const renderTask = (task: Task, compact = false) => {
         const supervisor = characters.find(char => char.id === task.supervisorId);
+        const displayedComment = task.isCompleted
+            ? extractTaskComment(task.completedSupervisorComment) || extractTaskComment(task.supervisorComment)
+            : extractTaskComment(task.supervisorComment);
         return <div key={task.id} className="group flex items-start gap-3 rounded-2xl border border-white/70 bg-white/80 p-3 shadow-sm">
             <button onClick={() => toggleTask(task)} disabled={processing.has(task.id)} className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition ${task.isCompleted ? 'border-emerald-400 bg-emerald-400 text-white' : 'border-violet-300 bg-white'}`} aria-label={task.isCompleted ? '恢复待办' : '完成待办'}>{processing.has(task.id) ? '…' : task.isCompleted ? '✓' : ''}</button>
             <div className="min-w-0 flex-1"><div className={`text-sm font-semibold text-slate-700 ${task.isCompleted ? 'line-through opacity-45' : ''}`}>{task.title}</div>
-                {(isTaskCommentUsable(task.supervisorComment) || commenting.has(task.id)) && <div className="mt-1 truncate text-[11px] italic text-violet-400">{extractTaskComment(task.supervisorComment) || 'TA 正在想一句话…'}</div>}
+                {(displayedComment || commenting.has(task.id)) && <div className="mt-1 truncate text-[11px] italic text-violet-400">{displayedComment || 'TA 正在想一句话…'}</div>}
                 {!compact && task.note && <div className="mt-1 text-xs leading-relaxed text-slate-400">{task.note}</div>}
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-slate-400"><span>{taskDateKey(task)}{task.dueTime ? ` · ${task.dueTime}` : ''}</span>{supervisor && <span>由 {supervisor.name} 陪你</span>}{task.naturalReminder !== false && <span className="rounded-full bg-violet-50 px-2 py-0.5 text-violet-500">可自然提醒</span>}</div>
             </div><button onClick={() => deleteTask(task.id)} className="px-1 text-slate-300 opacity-0 transition hover:text-rose-400 group-hover:opacity-100">×</button>

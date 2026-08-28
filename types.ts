@@ -3725,6 +3725,9 @@ export interface Task {
     /** 添加待办后由监督角色生成、持久显示在待办卡片下方的一句话。 */
     supervisorComment?: string;
     supervisorCommentGeneratedAt?: number;
+    /** 待办完成后由监督角色生成、替换未完成时小字的持久评价。 */
+    completedSupervisorComment?: string;
+    completedSupervisorCommentGeneratedAt?: number;
     isCompleted: boolean;
     completedAt?: number;
     createdAt: number;

@@ -5,6 +5,9 @@ describe('task comment response cleanup', () => {
     it('rejects a mode name instead of showing it as a comment', () => {
         expect(extractTaskComment('平时用语')).toBeNull();
         expect(extractTaskComment('【平时用语】')).toBeNull();
+        expect(extractTaskComment(',留学生 in Tokyo')).toBeNull();
+        expect(extractTaskComment('【留学生intokyo】')).toBeNull();
+        expect(extractTaskComment('留学生 in Tokyo：便利店')).toBeNull();
         expect(isTaskCommentUsable('平时用语')).toBe(false);
     });
 

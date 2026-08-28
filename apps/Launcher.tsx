@@ -14,6 +14,7 @@ import { useLocalDateKey } from '../hooks/useLocalDateKey';
 import { resolveCharTimeZone } from '../utils/timezone';
 import { trackEvent } from '../utils/analytics';
 import { CALENDAR_DATA_UPDATED_EVENT, eventOccursOnDate, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey } from '../utils/calendarIntegration';
+import { extractTaskComment } from '../utils/taskComment';
 import {
     carouselCloneResetIndex,
     carouselLogicalIndex,
@@ -434,7 +435,7 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, tasks, o
                               <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 ${paper ? 'border-[#788369]/50' : 'border-white/50'}`} style={{ color: contentColor }} />
                                   <span className="min-w-0 flex-1">
                                       <span className="block truncate text-sm font-bold" style={{ color: contentColor }}>{task.title}</span>
-                                      {task.supervisorComment && <span className="block truncate text-[10px] italic opacity-65" style={{ color: contentColor }}>{task.supervisorComment}</span>}
+                                      {extractTaskComment(task.supervisorComment) && <span className="block truncate text-[10px] italic opacity-65" style={{ color: contentColor }}>{extractTaskComment(task.supervisorComment)}</span>}
                                       <span className="block truncate text-[10px] opacity-50" style={{ color: contentColor }}>
                                       {taskDateKey(task) < todayStr ? '已到期' : taskDateKey(task) === todayStr ? '今天' : taskDateKey(task)}{task.dueTime ? ` · ${task.dueTime}` : ''}
                                   </span>

@@ -9,6 +9,9 @@
 const META_LABELS = new Set([
     '平时用语', '日常用语', '评价', '评论', '角色评价', '待办评价', '台词',
     'comment', 'task comment', 'text', 'content', 'response', 'output',
+    // A character-card profile tag that has appeared in generated output. It is
+    // not a sentence for the task and must not be persisted below the card.
+    '留学生 in tokyo', '留学生intokyo',
 ]);
 
 const isMetaLabel = (value: string): boolean => {
@@ -16,7 +19,11 @@ const isMetaLabel = (value: string): boolean => {
         .replace(/^[【\[（(「『]+|[】\]）)」』]+$/g, '')
         .trim()
         .toLocaleLowerCase();
-    return META_LABELS.has(normalized);
+    if (META_LABELS.has(normalized)) return true;
+    // Some responses prefix the profile tag with punctuation, e.g.
+    // `,留学生 in Tokyo`. Compare a compact form as well.
+    const compact = normalized.replace(/[,，\s:：_\-–—]+/g, '');
+    return compact === '留学生intokyo' || compact.startsWith('留学生intokyo');
 };
 
 const stripWrapping = (value: string): string => value
