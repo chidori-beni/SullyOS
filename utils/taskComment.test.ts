@@ -12,6 +12,8 @@ describe('task comment response cleanup', () => {
         expect(extractTaskComment('还算')).toBeNull();
         expect(extractTaskComment('Due date:')).toBeNull();
         expect(extractTaskComment('Due date: 2026-08-28')).toBeNull();
+        expect(extractTaskComment('Must end with proper terminal punctuation (. ! ? ......')).toBeNull();
+        expect(extractTaskComment('请只输出一句完整台词正文，必须以句末标点结束。')).toBeNull();
         expect(extractTaskComment('Deadline')).toBeNull();
         expect(extractTaskComment('萧逸 (Xiao Yi)’s')).toBeNull();
         expect(extractTaskComment('萧逸 (Xiao Yi)’s:')).toBeNull();

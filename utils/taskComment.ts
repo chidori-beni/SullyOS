@@ -42,6 +42,18 @@ const isMetaLabel = (value: string): boolean => {
     return compact === '留学生intokyo' || compact.startsWith('留学生intokyo');
 };
 
+// A model can copy the output protocol from the system prompt instead of
+// speaking as the character. These are not user-facing comments even when
+// they happen to end in punctuation (the exact regression was
+// `Must end with proper terminal punctuation (. ! ? ......`).
+const isPromptProtocolLeak = (value: string): boolean => {
+    const normalized = value.replace(/\s+/g, ' ').trim().toLocaleLowerCase();
+    return /(?:must|should)\s+(?:end|finish|output|return|write)\b/.test(normalized)
+        || /proper\s+terminal\s+punctuation|terminal\s+punctuation/.test(normalized)
+        || /(?:only\s+output|do\s+not\s+(?:output|include|write)|without\s+(?:json|title|quotes?|prefix))\b/.test(normalized)
+        || /(?:只输出|不要输出|必须以).*(?:台词|正文|标点|角色名|引号|句末)/.test(value);
+};
+
 // Some character cards expose a field such as `萧逸 (Xiao Yi)’s` when the
 // model fills an English schema. It is an identity/possessive fragment, not a
 // sentence. Keep this pattern narrow so a normal in-character sentence with a
@@ -122,7 +134,7 @@ export const extractTaskComment = (raw: unknown): string | null => {
     // part of the stored sentence. Removing them here also repairs old rows
     // where only the opening quote was stripped and a lone `”` was persisted.
     text = stripWrapping(text).replace(/[「」『』“”"]/g, '').replace(/\s+/g, ' ').trim();
-    if (!text || isMetaLabel(text) || isIdentityPossessiveFragment(text)) return null;
+    if (!text || isMetaLabel(text) || isIdentityPossessiveFragment(text) || isPromptProtocolLeak(text)) return null;
     if ([...text].filter(character => !/\s/.test(character)).length < MIN_EXTRACTED_TASK_COMMENT_LENGTH) return null;
     return text;
 };
