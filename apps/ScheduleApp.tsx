@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { Anniversary, CalendarMoodId, CharacterProfile, DailySchedule, RoomTodo, Task } from '../types';
+import { Anniversary, CalendarMoodId, CharacterProfile, DailySchedule, RoomTodo, Task, UserProfile } from '../types';
 import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
+import { buildChatRequestPayload } from '../utils/chatRequestPayload';
+import { loadCharacterContextRange } from '../utils/chatContextRange';
 import { safeResponseJson } from '../utils/safeApi';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { getLocalDateKey } from '../utils/localDate';
@@ -22,28 +24,88 @@ const parseDateKey = (value: string) => {
 };
 const SULLY_WAITING_IMAGE = 'https://cdn.jsdelivr.net/gh/qegj567-cloud/SullyOS-assets@main/bgm/SULLY/wait.png';
 const buildTaskPromptContext = (task: Task) => [
-    `待办内容：「${task.title}」`,
-    task.note?.trim() ? `用户备注：「${task.note.trim()}」` : '',
+    `待办内容：${task.title}`,
+    task.note?.trim() ? `用户备注：${task.note.trim()}` : '',
     task.deadline ? `截止日期：${task.deadline}` : '',
     task.dueTime ? `时间：${task.dueTime}` : '',
 ].filter(Boolean).join('\n');
 
-const buildRecentDialogueContext = async (charId: string) => {
-    try {
-        const messages = await DB.getRecentMessagesByCharId(charId, 12, true);
-        return messages
-            .filter(message => (message.role === 'user' || message.role === 'assistant') && message.type === 'text' && message.content?.trim())
-            .slice(-8)
-            .map(message => `${message.role === 'assistant' ? '角色' : '用户'}：${message.content.trim().replace(/\s+/g, ' ').slice(0, 300)}`)
-            .join('\n');
-    } catch {
-        return '';
-    }
-};
-
 const buildTaskCharacterVoiceContext = (character: CharacterProfile) => character.writerPersona?.trim()
     ? `\n\n### 角色写作人格（待办台词必须遵循）\n${character.writerPersona.trim()}\n`
     : '';
+
+const buildRecentTaskVoiceCue = (history: Array<{ role?: string; type?: string; content?: unknown }>) => {
+    const lines = history
+        .filter(message => message.role === 'assistant' && message.type === 'text' && typeof message.content === 'string')
+        .map(message => (message.content as string)
+            .replace(/\[\[[\s\S]*?\]\]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim())
+        .filter(Boolean)
+        .slice(-4)
+        .map(line => line.slice(0, 240));
+    return lines.length > 0
+        ? `\n### 近期聊天中的说话节奏（只参考，不要复述）\n${lines.map(line => `- ${line}`).join('\n')}\n`
+        : '';
+};
+
+/**
+ * Reuse the same system/history payload as ChatApp for this tiny side-channel.
+ * A hand-written `system + task` request looks neat but drops the chat route's
+ * recency tail, worldbook depth entries, message formatting and active memory
+ * window—the exact pieces that make a character sound like themselves.
+ */
+const buildTaskChatMessages = async (
+    character: CharacterProfile,
+    userProfile: UserProfile,
+    task: Task,
+    completed: boolean,
+) => {
+    // Use the same adaptive/manual context window as a real ChatApp turn. A
+    // fixed "last 120" slice can skip the character's current memory-palace
+    // boundary or ignore the user's configured context range, which makes this
+    // side-channel drift away from the voice the user hears in chat.
+    const history = (await loadCharacterContextRange(character).catch(() => ({ messages: [] }))).messages;
+    const [groups, emojis, categories, recentMessagesHint] = await Promise.all([
+        DB.getGroups().catch(() => []),
+        DB.getEmojis().catch(() => []),
+        DB.getEmojiCategories().catch(() => []),
+        // ChatApp deliberately keeps a separate recent-200 hint even when the
+        // prompt history is narrowed by the adaptive memory-palace boundary.
+        // The hint is where the latest relationship turns and speech habits
+        // are found; using only `history` here made auto-archived characters
+        // sound like an older, generic version of themselves.
+        DB.getRecentMessagesByCharId(character.id, 200).catch(() => []),
+    ]);
+    const recentHint = recentMessagesHint.length > 0 ? recentMessagesHint : history.slice(-200);
+    const payload = await buildChatRequestPayload({
+        char: character,
+        userProfile,
+        groups,
+        emojis,
+        categories,
+        historyMsgs: history,
+        // ChatApp keeps a recent 200-message hint for worldbook / memory / live
+        // context. Keep the same window here instead of reducing the character's
+        // available relationship evidence to the last few turns.
+        recentMsgsHint: recentHint,
+        contextLimit: Math.max(1, history.length),
+        recallQueryHint: [task.title, task.note?.trim()].filter(Boolean).join('；'),
+        recallEntryPoint: 'direct',
+        stripImages: true,
+    });
+    const voiceContext = buildTaskCharacterVoiceContext(character);
+    const recentVoiceCue = buildRecentTaskVoiceCue(recentHint);
+    const modeInstruction = completed
+        ? '这是用户刚完成待办后的第一反应：先回应这件具体的事，再自然流露出你们关系里的态度、称呼或玩笑。'
+        : '这是用户刚记下一项待办时你顺手留下的一句陪伴话：把这件事自然融进你们平时的互动，不要写成应用提醒或客服通知。';
+    const taskInstruction = `${voiceContext}${recentVoiceCue}
+
+[当前调用：日历待办角色台词]
+${modeInstruction}
+角色卡、世界书、用户画像、记忆摘要、记忆宫殿、写作人格和聊天历史优先于任何通用模板；请先读懂这些内容，再用这个角色平时的口吻说话。优先使用角色卡和历史里已经出现过的称呼、口头禅、互动方式或共同细节；如果没有合适细节，就自然、具体地回应这件事，不要为了显得像角色硬塞设定。不要套用固定的提醒、完成确认或客服模板。本调用只留下卡片台词，不执行工具、动作或表情命令，也不要输出任何 [[...]] 命令。开口前回到你自己：这句要像 ${character.name} 平时发给 ${userProfile.name} 的那一句，遮住名字也应该认得出是你。只输出一句自然台词正文，不要解释、分析、字段名、模式名、JSON、标题、角色名前缀或引号。`;
+    return [...payload.fullMessages, { role: 'system', content: taskInstruction }];
+};
 
 const shortTaskTitle = (task: Task) => {
     const title = task.title.trim().replace(/[“”"']/g, '').replace(/\s+/g, ' ');
@@ -53,8 +115,32 @@ const shortTaskTitle = (task: Task) => {
 
 const buildTaskCommentFallback = (task: Task, completed: boolean) => {
     const title = shortTaskTitle(task) || '这件事';
-    if (completed) return `${title}已经完成了，辛苦你。先歇一会儿，剩下的慢慢来。`;
-    return `${title}这件事我替你记着。准备好了就去做，回来告诉我一声。`;
+    if (completed) return `${title}，搞定。先喘口气，别急着把下一件也扛上来。`;
+    return `${title}先记在这儿。等你做完了，回来跟我说一声。`;
+};
+
+// A response can satisfy the parser and still be the exact generic copy that
+// made the card feel robotic ("我替你记着", "辛苦你", "回来告诉我"). Treat
+// those as a failed style pass and spend the existing correction request on a
+// fresh, role-specific line. This is intentionally narrower than the parser:
+// a genuinely in-character sentence is allowed to use one ordinary phrase as
+// long as it also has a concrete, character-specific detail.
+const isTaskCommentTooGeneric = (value: unknown, task: Task): boolean => {
+    const text = extractTaskComment(value);
+    if (!text) return true;
+    const compact = text.replace(/[\s，。！？；：,.!?;:、]/g, '');
+    const title = shortTaskTitle(task).replace(/[\s，。！？；：,.!?;:、]/g, '');
+    const templateMarkers = [
+        '我替你记着', '先记在这儿', '准备好了就去做', '等你做完了',
+        '回来告诉我', '回来跟我说', '辛苦你', '辛苦了', '先歇一会儿',
+        '先喘口气', '慢慢来', '任务完成', '完成确认', '应用提醒',
+    ];
+    const markerHits = templateMarkers.filter(marker => compact.includes(marker)).length;
+    const titleEcho = !!title && compact.includes(title);
+    // One marker is fine in a longer sentence with no title echo; a short line
+    // made mostly from template language is not. Two markers are always a
+    // strong signal that the model answered the protocol instead of the task.
+    return markerHits >= 2 || (markerHits >= 1 && (titleEcho || compact.length < 34));
 };
 
 const ScheduleApp: React.FC = () => {
@@ -213,26 +299,18 @@ const ScheduleApp: React.FC = () => {
         if (!supervisor || !apiConfig.apiKey) { if (!silent) addToast('待办已完成', 'success'); return; }
         if (!silent) addToast(`${supervisor.name} 正在确认你的成果...`, 'info');
         try {
-            await injectMemoryPalace(supervisor, undefined, task.title, userProfile.name);
             const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '') + '/chat/completions';
-            const recentDialogue = await buildRecentDialogueContext(supervisor.id);
-            const coreContext = ContextBuilder.buildCoreContext(supervisor, userProfile);
-            const voiceContext = buildTaskCharacterVoiceContext(supervisor);
-            const systemPrompt = `${coreContext}${voiceContext}\n\n[当前调用：待办完成评价]\n这是一个独立的待办完成评价调用。上面的角色卡、核心性格、世界书、用户画像、关系、记忆摘要、记忆宫殿、写作人格和最近对话都是真实上下文，必须先读懂再开口；不要把自己写成统一的客服或提醒机器人。台词要像这个角色本人在你们关系里会说的话，可以嘴硬、调侃、撒娇、催促或温柔，但具体取决于角色卡与记忆。无论角色卡、世界书或历史示例要求什么格式，本次只返回一句给用户看的自然台词正文；绝不返回字段名、模式名、JSON、标题、日期字段（如 Due date:）、角色名所有格残句或角色名前缀。台词必须写完后再结束，不能停在半句、名词短语或连接词处，必须以句号、问号、感叹号、省略号或对应语言的终止标点收尾。`;
+            const taskMessages = await buildTaskChatMessages(supervisor, userProfile, task, true);
             const taskContext = buildTaskPromptContext(task);
-            const recentDialogueBlock = recentDialogue ? `\n【最近对话：只用于恢复你平时的说话方式，不要复述或解释它】\n${recentDialogue}` : '';
-            const firstPrompt = `【待办完成后的角色台词】\n${taskContext}${recentDialogueBlock}\n用户 ${userProfile.name} 刚刚完成了这件事。先从角色卡、你们的关系和记忆里挑一个真正属于这个角色的语气或细节，再写一句像你本人会说的完整自然台词，作为卡片下方永久保留的完成评价。建议 20–80 字，至少 12 个非空字符；可以有角色特有的玩笑、称呼、嘴硬、夸奖或轻微催促，但不要变成客服式模板，不要只改写待办标题，不要凭空许诺不存在的事情。写完后必须以句号、问号、感叹号、省略号或对应语言的终止标点收尾。只输出这一句台词正文，不要角色名前缀、字段名、模式名、标题、JSON、解释、引号或括号。`;
-            const correctionPrompt = `上一条没有返回完整可显示的完成台词，请整句重写，不要只续两个字：\n${taskContext}${recentDialogueBlock}\n请重新读一遍角色卡、关系、记忆和最近对话，直接对 ${userProfile.name} 说一句只有这个角色才会说的、与这项已完成待办具体相关的话（建议 20–80 字，至少 12 个非空字符）。允许调侃、夸奖、嘴硬或催促，但不要写成统一的“我替你记着 / 慢慢来”模板；不能只输出短语、关键词、待办标题、字段标签、所有格残句、JSON、标题、解释、引号或角色名前缀，必须以终止标点收尾。`;
+            const firstPrompt = `${taskContext}\n用户 ${userProfile.name} 刚刚完成了这件事。像你在平时聊天里看到这件事后的第一反应一样说话：先回应具体成果，再自然露出你们关系里的态度、称呼、玩笑或关心。台词要短而有画面感，像熟人随口说的一句，不要写成评价报告、应用通知或任务状态确认。建议 20–80 字，必须是完整句子并以终止标点收尾。只输出台词正文，不要任务标题引号、角色名前缀、字段名、JSON、解释。`;
+            const correctionPrompt = `上一句虽然可能格式完整，但像通用客服/任务模板，或没有说完；请整句重写，不要只续两个字。${taskContext}\n请再次阅读角色卡、写作人格、你们的关系、记忆和聊天历史，直接说一句只有这个角色才会说的自然反应：像熟人看到这件具体成果后的第一反应，带一个真实的态度、称呼、玩笑或关心，不要空泛地说“辛苦了”“慢慢来”。不要复述待办标题，不要写报告或系统提示。只输出 20–80 字的一句完整台词正文，以终止标点收尾，不要前缀、字段名、JSON、解释或引号。`;
             const requestReward = async (prompt: string) => {
                 const response = await fetch(baseUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
                     body: JSON.stringify({
-                        model: apiConfig.model, temperature: 0.78, max_tokens: 260,
-                        messages: [
-                            { role: 'system', content: systemPrompt },
-                            { role: 'user', content: prompt },
-                        ],
+                        model: apiConfig.model, temperature: 0.85, max_tokens: 320,
+                        messages: [...taskMessages, { role: 'user', content: prompt }],
                     }),
                 });
                 if (!response.ok) throw new Error(`API Error ${response.status}`);
@@ -240,7 +318,7 @@ const ScheduleApp: React.FC = () => {
                 return extractTaskComment(data.choices?.[0]?.message?.content);
             };
             let text = await requestReward(firstPrompt);
-            if (!isTaskCommentUsable(text)) text = await requestReward(correctionPrompt);
+            if (!isTaskCommentUsable(text) || isTaskCommentTooGeneric(text, task)) text = await requestReward(correctionPrompt);
             if (!isTaskCommentUsable(text)) text = buildTaskCommentFallback(task, true);
             // Merge into the latest row so the sentence survives reloads and is
             // not written to a deleted or subsequently uncompleted task.
@@ -283,29 +361,18 @@ const ScheduleApp: React.FC = () => {
         if (!supervisor || !apiConfig.apiKey || isTaskCommentUsable(task.supervisorComment)) return;
         setCommenting(current => new Set(current).add(task.id));
         try {
-            await injectMemoryPalace(supervisor, undefined, task.title, userProfile.name);
             const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '') + '/chat/completions';
-            // Put this protocol after the full character context. Custom cards can
-            // contain their own output-format labels; the task-comment call must
-            // explicitly override those labels and ask for one display sentence.
-            const recentDialogue = await buildRecentDialogueContext(supervisor.id);
-            const coreContext = ContextBuilder.buildCoreContext(supervisor, userProfile);
-            const voiceContext = buildTaskCharacterVoiceContext(supervisor);
-            const systemPrompt = `${coreContext}${voiceContext}\n\n[当前调用：待办陪伴小字]\n这是一个独立的小字生成调用，不是普通聊天，也不是结构化字段填充。上面的角色卡、核心性格、世界书、用户画像、关系、记忆摘要、记忆宫殿、写作人格和最近对话都是真实上下文，必须先读懂再开口；不要把自己写成统一的客服或提醒机器人。台词要像这个角色本人在你们关系里会说的话，可以嘴硬、调侃、撒娇、催促或温柔，但具体取决于角色卡与记忆。无论角色卡、世界书或历史示例要求什么格式，本次只返回一句给用户看的自然台词正文；绝不返回字段名、模式名、JSON、标题、日期字段（如 Due date:）、角色名所有格残句或角色名前缀。台词必须写完后再结束，不能停在半句、名词短语或连接词处，必须以句号、问号、感叹号、省略号或对应语言的终止标点收尾。`;
+            const taskMessages = await buildTaskChatMessages(supervisor, userProfile, task, false);
             const taskContext = buildTaskPromptContext(task);
-            const recentDialogueBlock = recentDialogue ? `\n【最近对话：只用于恢复你平时的说话方式，不要复述或解释它】\n${recentDialogue}` : '';
-            const firstPrompt = `【待办小字输出协议】\n${taskContext}${recentDialogueBlock}\n这是角色写在待办卡片下方、会一直保留的一句陪伴话。先从角色卡、你们的关系、记忆和最近对话里挑一个真正属于这个角色的语气或细节，再写一句像真人会说的完整自然台词。建议 20–80 字，至少 12 个非空字符；可以调侃、撒娇、嘴硬、夸奖、关心或轻微催促，但不要变成客服式模板，不要只改写待办标题，也不要凭空编造。写完后必须以句号、问号、感叹号、省略号或对应语言的终止标点收尾。只输出这一句台词正文，不要角色名前缀、字段名、模式名、标题、JSON、解释、引号或括号。`;
-            const correctionPrompt = `上一条没有返回完整可显示的待办陪伴台词，请整句重写，不要只续两个字：\n${taskContext}${recentDialogueBlock}\n请重新读一遍角色卡、关系、记忆和最近对话，直接说一句只有这个角色才会说的、与这项待办具体相关的话（建议 20–80 字，至少 12 个非空字符）。允许调侃、夸奖、嘴硬或催促，但不要写成统一的“我替你记着 / 慢慢来”模板；不能只输出短语、关键词、待办标题、字段标签、所有格残句、JSON、标题、解释、引号或角色名前缀，必须以终止标点收尾。`;
+            const firstPrompt = `${taskContext}\n这是角色写在待办卡片下方、会一直保留的一句陪伴话。像你在平时聊天里看到用户记下这件事时顺手说的一句，不要写成应用提醒、任务说明或评价报告。把待办自然融进你们的关系和语气里：可以调侃、撒娇、嘴硬、关心或轻微催促，但必须由角色卡和聊天历史决定。建议 20–80 字，完整收尾。只输出台词正文，不要任务标题引号、角色名前缀、字段名、JSON、解释。`;
+            const correctionPrompt = `上一句虽然可能格式完整，但像通用客服/提醒模板，或没有说完；请整句重写，不要只续两个字。${taskContext}\n请再次阅读角色卡、写作人格、你们的关系、记忆和聊天历史，直接说一句只有这个角色才会说的自然反应：像熟人看到这项待办时顺手说的一句，带一个真实的态度、称呼、玩笑或关心，不要空泛地说“我替你记着”“回来告诉我”。不要复述待办标题，不要写报告或系统提示，不要套用固定的提醒话术。只输出 20–80 字的一句完整台词正文，以终止标点收尾，不要前缀、字段名、JSON、解释或引号。`;
             const requestComment = async (prompt: string) => {
                 const response = await fetch(baseUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiConfig.apiKey },
                     body: JSON.stringify({
-                        model: apiConfig.model, temperature: 0.78, max_tokens: 220,
-                        messages: [
-                            { role: 'system', content: systemPrompt },
-                            { role: 'user', content: prompt },
-                        ],
+                        model: apiConfig.model, temperature: 0.85, max_tokens: 280,
+                        messages: [...taskMessages, { role: 'user', content: prompt }],
                     }),
                 });
                 if (!response.ok) throw new Error('API Error ' + response.status);
@@ -313,7 +380,7 @@ const ScheduleApp: React.FC = () => {
                 return extractTaskComment(data.choices?.[0]?.message?.content);
             };
             let text = await requestComment(firstPrompt);
-            if (!isTaskCommentUsable(text)) text = await requestComment(correctionPrompt);
+            if (!isTaskCommentUsable(text) || isTaskCommentTooGeneric(text, task)) text = await requestComment(correctionPrompt);
             if (!isTaskCommentUsable(text)) text = buildTaskCommentFallback(task, false);
             // The user can complete the task while this request is in flight; merge into the
             // latest IndexedDB row instead of resurrecting an old isCompleted value.
@@ -347,7 +414,8 @@ const ScheduleApp: React.FC = () => {
         // a legacy task can be read before its supervisor exists in `characters`
         // and never get another chance to repair its bad metadata comment.
         if (!apiConfig.apiKey || characters.length === 0 || tasks.length === 0) return;
-        tasks.filter(task => task.supervisorComment && !isTaskCommentUsable(task.supervisorComment)).slice(0, 4).forEach(task => {
+        tasks.filter(task => task.supervisorComment
+            && (!isTaskCommentUsable(task.supervisorComment) || isTaskCommentTooGeneric(task.supervisorComment, task))).slice(0, 4).forEach(task => {
             if (repairAttemptedTaskIds.current.has(task.id)) return;
             repairAttemptedTaskIds.current.add(task.id);
             void generateTaskComment(task);
@@ -358,7 +426,8 @@ const ScheduleApp: React.FC = () => {
         // name-only fragment. Hide it through the parser and silently regenerate
         // the completion sentence so the existing card is repaired as well.
         if (!apiConfig.apiKey || characters.length === 0 || tasks.length === 0) return;
-        tasks.filter(task => task.isCompleted && task.completedSupervisorComment && !isTaskCommentUsable(task.completedSupervisorComment)).slice(0, 4).forEach(task => {
+        tasks.filter(task => task.isCompleted && task.completedSupervisorComment
+            && (!isTaskCommentUsable(task.completedSupervisorComment) || isTaskCommentTooGeneric(task.completedSupervisorComment, task))).slice(0, 4).forEach(task => {
             const key = `completed:${task.id}`;
             if (repairAttemptedTaskIds.current.has(key)) return;
             repairAttemptedTaskIds.current.add(key);
