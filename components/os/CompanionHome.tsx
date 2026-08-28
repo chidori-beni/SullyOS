@@ -4208,39 +4208,6 @@ const CompanionHome: React.FC = () => {
                                         </select>
                                       </label>
                                     )}
-                                    <CompanionTouchCueEditor
-                                      testId={`companion-touch-cues-${reaction.id}`}
-                                      cues={(companionPerformanceCuePackMatches(
-                                        normalizeCompanionDialogue(reaction.text, character.name),
-                                        normalizeCompanionDialogue(reaction.translation || '', character.name),
-                                        reaction.performanceCueText,
-                                        reaction.performanceCues as AvatarPerformanceCue[] | undefined,
-                                      ) ? reaction.performanceCues as AvatarPerformanceCue[] : [])}
-                                      baseText={normalizeCompanionDialogue(reaction.translation || '', character.name).trim()
-                                        || normalizeCompanionDialogue(reaction.text, character.name).trim()}
-                                      durationMs={companionLineFallbackDuration(reaction.text.length)}
-                                      fallbackDirection={reaction.performance}
-                                      modelActions={modelActions}
-                                      emotionLabels={STARTUP_EMOTION_LABELS}
-                                      gestureLabels={STARTUP_GESTURE_LABELS}
-                                      cameraLabels={STARTUP_CAMERA_LABELS}
-                                      faceLabels={STARTUP_FACE_LABELS}
-                                      live2dActive={live2dCompanionActive}
-                                      disabled={settingsGenerating}
-                                      generating={touchCueGeneratingId === reaction.id}
-                                      accentColor={uiTint}
-                                      position={touchCuePosition}
-                                      onPositionChange={setTouchCuePosition}
-                                      onChange={cues => patchSavedTouchReaction(zone, reaction.id, {
-                                        performanceCues: cues as CompanionTouchReaction['performanceCues'],
-                                        performanceCueText: companionPerformanceCueText(
-                                          normalizeCompanionDialogue(reaction.text, character.name),
-                                          normalizeCompanionDialogue(reaction.translation || '', character.name),
-                                        ),
-                                      })}
-                                      onGenerate={() => { void generateTouchReactionCues(zone, reaction); }}
-                                      onPreview={() => { void previewSavedTouchReaction(reaction); }}
-                                    />
 
                                     {alsoRunsModelAction && (
                                       <div className="mt-1 text-[7px] leading-relaxed text-white/34">
@@ -4250,6 +4217,43 @@ const CompanionHome: React.FC = () => {
                                   </>
                                 );
                               })()}
+
+                              {/* 逐拍编辑器必须在上面那个 IIFE 之外：IIFE 在有编排时会提前
+                                  return 一行说明，放在里面会被一起短路掉。 */}
+                                <CompanionTouchCueEditor
+                                  testId={`companion-touch-cues-${reaction.id}`}
+                                  cues={(companionPerformanceCuePackMatches(
+                                    normalizeCompanionDialogue(reaction.text, character.name),
+                                    normalizeCompanionDialogue(reaction.translation || '', character.name),
+                                    reaction.performanceCueText,
+                                    reaction.performanceCues as AvatarPerformanceCue[] | undefined,
+                                  ) ? reaction.performanceCues as AvatarPerformanceCue[] : [])}
+                                  baseText={normalizeCompanionDialogue(reaction.translation || '', character.name).trim()
+                                    || normalizeCompanionDialogue(reaction.text, character.name).trim()}
+                                  durationMs={companionLineFallbackDuration(reaction.text.length)}
+                                  fallbackDirection={reaction.performance}
+                                  modelActions={modelActions}
+                                  emotionLabels={STARTUP_EMOTION_LABELS}
+                                  gestureLabels={STARTUP_GESTURE_LABELS}
+                                  cameraLabels={STARTUP_CAMERA_LABELS}
+                                  faceLabels={STARTUP_FACE_LABELS}
+                                  live2dActive={live2dCompanionActive}
+                                  disabled={settingsGenerating}
+                                  generating={touchCueGeneratingId === reaction.id}
+                                  accentColor={uiTint}
+                                  position={touchCuePosition}
+                                  onPositionChange={setTouchCuePosition}
+                                  onChange={cues => patchSavedTouchReaction(zone, reaction.id, {
+                                    performanceCues: cues as CompanionTouchReaction['performanceCues'],
+                                    performanceCueText: companionPerformanceCueText(
+                                      normalizeCompanionDialogue(reaction.text, character.name),
+                                      normalizeCompanionDialogue(reaction.translation || '', character.name),
+                                    ),
+                                  })}
+                                  onGenerate={() => { void generateTouchReactionCues(zone, reaction); }}
+                                  onPreview={() => { void previewSavedTouchReaction(reaction); }}
+                                />
+
                               <div className="mt-2 grid grid-cols-2 gap-2">
                                 <button
                                   type="button"
