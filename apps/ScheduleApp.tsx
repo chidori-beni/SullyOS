@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { Anniversary, CalendarMoodId, DailySchedule, RoomTodo, Task } from '../types';
+import { Anniversary, CalendarMoodId, CharacterProfile, DailySchedule, RoomTodo, Task } from '../types';
 import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
 import { safeResponseJson } from '../utils/safeApi';
@@ -28,6 +28,23 @@ const buildTaskPromptContext = (task: Task) => [
     task.dueTime ? `时间：${task.dueTime}` : '',
 ].filter(Boolean).join('\n');
 
+const buildRecentDialogueContext = async (charId: string) => {
+    try {
+        const messages = await DB.getRecentMessagesByCharId(charId, 12, true);
+        return messages
+            .filter(message => (message.role === 'user' || message.role === 'assistant') && message.type === 'text' && message.content?.trim())
+            .slice(-8)
+            .map(message => `${message.role === 'assistant' ? '角色' : '用户'}：${message.content.trim().replace(/\s+/g, ' ').slice(0, 300)}`)
+            .join('\n');
+    } catch {
+        return '';
+    }
+};
+
+const buildTaskCharacterVoiceContext = (character: CharacterProfile) => character.writerPersona?.trim()
+    ? `\n\n### 角色写作人格（待办台词必须遵循）\n${character.writerPersona.trim()}\n`
+    : '';
+
 const shortTaskTitle = (task: Task) => {
     const title = task.title.trim().replace(/[“”"']/g, '').replace(/\s+/g, ' ');
     const characters = [...title];
@@ -36,8 +53,8 @@ const shortTaskTitle = (task: Task) => {
 
 const buildTaskCommentFallback = (task: Task, completed: boolean) => {
     const title = shortTaskTitle(task) || '这件事';
-    if (completed) return `“${title}”已经完成了，我替你记下了。先歇一会儿，剩下的慢慢来。`;
-    return `“${title}”我替你记着。准备好了就去做，回来再告诉我结果吧。`;
+    if (completed) return `${title}已经完成了，辛苦你。先歇一会儿，剩下的慢慢来。`;
+    return `${title}这件事我替你记着。准备好了就去做，回来告诉我一声。`;
 };
 
 const ScheduleApp: React.FC = () => {
@@ -196,12 +213,16 @@ const ScheduleApp: React.FC = () => {
         if (!supervisor || !apiConfig.apiKey) { if (!silent) addToast('待办已完成', 'success'); return; }
         if (!silent) addToast(`${supervisor.name} 正在确认你的成果...`, 'info');
         try {
-            await injectMemoryPalace(supervisor, undefined, task.title);
+            await injectMemoryPalace(supervisor, undefined, task.title, userProfile.name);
             const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '') + '/chat/completions';
-            const systemPrompt = `${ContextBuilder.buildCoreContext(supervisor, userProfile)}\n\n[当前调用：待办完成评价]\n这是一个独立的待办完成评价调用。上面的角色人设、用户档案、关系和已注入的记忆宫殿都必须生效。无论角色卡、世界书或历史示例要求什么格式，本次只返回一句给用户看的自然台词正文；绝不返回字段名、模式名、JSON、标题、日期字段（如 Due date:）、角色名所有格残句或角色名前缀。台词必须写完后再结束，不能停在半句、名词短语或连接词处，必须以句号、问号、感叹号、省略号或对应语言的终止标点收尾。`;
+            const recentDialogue = await buildRecentDialogueContext(supervisor.id);
+            const coreContext = ContextBuilder.buildCoreContext(supervisor, userProfile);
+            const voiceContext = buildTaskCharacterVoiceContext(supervisor);
+            const systemPrompt = `${coreContext}${voiceContext}\n\n[当前调用：待办完成评价]\n这是一个独立的待办完成评价调用。上面的角色卡、核心性格、世界书、用户画像、关系、记忆摘要、记忆宫殿、写作人格和最近对话都是真实上下文，必须先读懂再开口；不要把自己写成统一的客服或提醒机器人。台词要像这个角色本人在你们关系里会说的话，可以嘴硬、调侃、撒娇、催促或温柔，但具体取决于角色卡与记忆。无论角色卡、世界书或历史示例要求什么格式，本次只返回一句给用户看的自然台词正文；绝不返回字段名、模式名、JSON、标题、日期字段（如 Due date:）、角色名所有格残句或角色名前缀。台词必须写完后再结束，不能停在半句、名词短语或连接词处，必须以句号、问号、感叹号、省略号或对应语言的终止标点收尾。`;
             const taskContext = buildTaskPromptContext(task);
-            const firstPrompt = `【待办完成后的角色台词】\n${taskContext}\n用户 ${userProfile.name} 刚刚完成了这件事。请先结合你的核心性格、你和用户的关系、已注入的记忆宫殿以及待办的具体内容，写一句像你本人会说的完整自然台词，作为卡片下方永久保留的完成评价。建议 25–70 字，至少 12 个非空字符；必须是完整句子，包含具体回应、动作、评价或关心，不能只改写待办标题，不能在半句或名词短语处停止。写完后必须以句号、问号、感叹号、省略号或对应语言的终止标点收尾。可以有轻微玩笑或符合人设的口吻，但不要命令、催促、泛泛鼓励或凭空编造细节。只输出这一句台词正文，不要角色名前缀、字段名、模式名、标题、JSON、解释或引号。`;
-            const correctionPrompt = `上一条没有返回完整可显示的完成台词，请整句重写，不要只续两个字：\n${taskContext}\n请按照你的性格和记忆，直接对 ${userProfile.name} 说一句完整、自然、与这项已完成待办具体相关的话（建议 25–70 字，至少 12 个非空字符）。不能只输出“还算”、单个词、关键词、待办标题、Due date:、Deadline、日期字段或“角色名 (英文名)’s”这类所有格残句；不能在半句、名词短语或连接词处结束，必须以终止标点收尾；不能出现“平时用语”“日常用语”“评价”“留学生 in Tokyo”等标签，不能输出角色名前缀、JSON、标题、解释或引号，只输出台词正文。`;
+            const recentDialogueBlock = recentDialogue ? `\n【最近对话：只用于恢复你平时的说话方式，不要复述或解释它】\n${recentDialogue}` : '';
+            const firstPrompt = `【待办完成后的角色台词】\n${taskContext}${recentDialogueBlock}\n用户 ${userProfile.name} 刚刚完成了这件事。先从角色卡、你们的关系和记忆里挑一个真正属于这个角色的语气或细节，再写一句像你本人会说的完整自然台词，作为卡片下方永久保留的完成评价。建议 20–80 字，至少 12 个非空字符；可以有角色特有的玩笑、称呼、嘴硬、夸奖或轻微催促，但不要变成客服式模板，不要只改写待办标题，不要凭空许诺不存在的事情。写完后必须以句号、问号、感叹号、省略号或对应语言的终止标点收尾。只输出这一句台词正文，不要角色名前缀、字段名、模式名、标题、JSON、解释、引号或括号。`;
+            const correctionPrompt = `上一条没有返回完整可显示的完成台词，请整句重写，不要只续两个字：\n${taskContext}${recentDialogueBlock}\n请重新读一遍角色卡、关系、记忆和最近对话，直接对 ${userProfile.name} 说一句只有这个角色才会说的、与这项已完成待办具体相关的话（建议 20–80 字，至少 12 个非空字符）。允许调侃、夸奖、嘴硬或催促，但不要写成统一的“我替你记着 / 慢慢来”模板；不能只输出短语、关键词、待办标题、字段标签、所有格残句、JSON、标题、解释、引号或角色名前缀，必须以终止标点收尾。`;
             const requestReward = async (prompt: string) => {
                 const response = await fetch(baseUrl, {
                     method: 'POST',
@@ -262,15 +283,19 @@ const ScheduleApp: React.FC = () => {
         if (!supervisor || !apiConfig.apiKey || isTaskCommentUsable(task.supervisorComment)) return;
         setCommenting(current => new Set(current).add(task.id));
         try {
-            await injectMemoryPalace(supervisor, undefined, task.title);
+            await injectMemoryPalace(supervisor, undefined, task.title, userProfile.name);
             const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '') + '/chat/completions';
             // Put this protocol after the full character context. Custom cards can
             // contain their own output-format labels; the task-comment call must
             // explicitly override those labels and ask for one display sentence.
-            const systemPrompt = `${ContextBuilder.buildCoreContext(supervisor, userProfile)}\n\n[当前调用：待办陪伴小字]\n这是一个独立的小字生成调用，不是普通聊天，也不是结构化字段填充。上面的角色人设、用户档案、关系和已注入的记忆宫殿都必须生效。无论角色卡、世界书或历史示例要求什么格式，本次只返回一句给用户看的自然台词正文；绝不返回字段名、模式名、JSON、标题、日期字段（如 Due date:）、角色名所有格残句或角色名前缀。台词必须写完后再结束，不能停在半句、名词短语或连接词处，必须以句号、问号、感叹号、省略号或对应语言的终止标点收尾。`;
+            const recentDialogue = await buildRecentDialogueContext(supervisor.id);
+            const coreContext = ContextBuilder.buildCoreContext(supervisor, userProfile);
+            const voiceContext = buildTaskCharacterVoiceContext(supervisor);
+            const systemPrompt = `${coreContext}${voiceContext}\n\n[当前调用：待办陪伴小字]\n这是一个独立的小字生成调用，不是普通聊天，也不是结构化字段填充。上面的角色卡、核心性格、世界书、用户画像、关系、记忆摘要、记忆宫殿、写作人格和最近对话都是真实上下文，必须先读懂再开口；不要把自己写成统一的客服或提醒机器人。台词要像这个角色本人在你们关系里会说的话，可以嘴硬、调侃、撒娇、催促或温柔，但具体取决于角色卡与记忆。无论角色卡、世界书或历史示例要求什么格式，本次只返回一句给用户看的自然台词正文；绝不返回字段名、模式名、JSON、标题、日期字段（如 Due date:）、角色名所有格残句或角色名前缀。台词必须写完后再结束，不能停在半句、名词短语或连接词处，必须以句号、问号、感叹号、省略号或对应语言的终止标点收尾。`;
             const taskContext = buildTaskPromptContext(task);
-            const firstPrompt = `【待办小字输出协议】\n${taskContext}\n这是角色写在待办卡片下方、会一直保留的一句陪伴话。请先结合你的核心性格、你和用户的关系、已注入的记忆宫殿以及待办的具体内容，写一句像真人会说的完整自然台词。建议 25–70 字，至少 12 个非空字符；必须有完整语义，至少包含一个具体动作、期待、评价或关心，不要只改写待办标题、只写“想吃”这类短语、单个词、标签或半句。写完后必须以句号、问号、感叹号、省略号或对应语言的终止标点收尾。可以提及待办的具体细节或记忆中的相关细节，但不要凭空编造。保持轻声陪伴或期待，不要命令、催促或说泛泛的万能鼓励。只输出这一句台词正文，不要角色名前缀、字段名、模式名、标题、JSON、解释或引号。`;
-            const correctionPrompt = `上一条没有返回完整可显示的待办陪伴台词，请整句重写，不要只续两个字：\n${taskContext}\n请按照你的性格和记忆，直接对 ${userProfile.name} 说一句完整、自然、与这项待办具体相关的话（建议 25–70 字，至少 12 个非空字符）。不能只输出“想吃”、单个词、关键词、待办标题、Due date:、Deadline、日期字段或“角色名 (英文名)’s”这类所有格残句；不能在半句、名词短语或连接词处结束，必须以终止标点收尾；不能出现“平时用语”“日常用语”“评价”“留学生 in Tokyo”等标签，不能输出角色名前缀、JSON、标题、解释或引号，只输出台词正文。`;
+            const recentDialogueBlock = recentDialogue ? `\n【最近对话：只用于恢复你平时的说话方式，不要复述或解释它】\n${recentDialogue}` : '';
+            const firstPrompt = `【待办小字输出协议】\n${taskContext}${recentDialogueBlock}\n这是角色写在待办卡片下方、会一直保留的一句陪伴话。先从角色卡、你们的关系、记忆和最近对话里挑一个真正属于这个角色的语气或细节，再写一句像真人会说的完整自然台词。建议 20–80 字，至少 12 个非空字符；可以调侃、撒娇、嘴硬、夸奖、关心或轻微催促，但不要变成客服式模板，不要只改写待办标题，也不要凭空编造。写完后必须以句号、问号、感叹号、省略号或对应语言的终止标点收尾。只输出这一句台词正文，不要角色名前缀、字段名、模式名、标题、JSON、解释、引号或括号。`;
+            const correctionPrompt = `上一条没有返回完整可显示的待办陪伴台词，请整句重写，不要只续两个字：\n${taskContext}${recentDialogueBlock}\n请重新读一遍角色卡、关系、记忆和最近对话，直接说一句只有这个角色才会说的、与这项待办具体相关的话（建议 20–80 字，至少 12 个非空字符）。允许调侃、夸奖、嘴硬或催促，但不要写成统一的“我替你记着 / 慢慢来”模板；不能只输出短语、关键词、待办标题、字段标签、所有格残句、JSON、标题、解释、引号或角色名前缀，必须以终止标点收尾。`;
             const requestComment = async (prompt: string) => {
                 const response = await fetch(baseUrl, {
                     method: 'POST',

@@ -31,12 +31,19 @@ describe('task comment response cleanup', () => {
 
     it('preserves a normal sentence and strips presentation wrappers', () => {
         expect(extractTaskComment('「去买东西的时候，顺手给自己带点喜欢的。」')).toBe('去买东西的时候，顺手给自己带点喜欢的。');
+        // Regression: the previous one-sided wrapper regex produced
+        // `便利店采购”已经...` by removing only the opening quote.
+        expect(extractTaskComment('“便利店采购”已经完成了，辛苦你。')).toBe('便利店采购已经完成了，辛苦你。');
+        expect(extractTaskComment('便利店采购”已经完成了，辛苦你。')).toBe('便利店采购已经完成了，辛苦你。');
+        expect(extractTaskComment('"便利店采购"已经完成了，辛苦你。')).toBe('便利店采购已经完成了，辛苦你。');
+        expect(extractTaskComment('便利店采购已经完成了，辛苦你。')).toBe('便利店采购已经完成了，辛苦你。');
         expect(extractTaskComment('')).toBeNull();
     });
 
     it('keeps a natural longer sentence instead of truncating it at forty characters', () => {
         const sentence = '今天把这件事完成得很漂亮，先去便利店补充一点喜欢的东西，再回来好好休息吧。';
         expect(extractTaskComment(sentence)).toBe(sentence);
+        expect(isTaskCommentUsable(`${sentence}记得给自己留一点开心的时间。`)).toBe(true);
     });
 
     it('requires a complete sentence and adds the speaker name once', () => {

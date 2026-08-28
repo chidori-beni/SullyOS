@@ -21,7 +21,10 @@ const META_LABELS = new Set([
 // whole card line disappear before the retry has a chance to replace it.
 const MIN_EXTRACTED_TASK_COMMENT_LENGTH = 6;
 const MIN_COMPLETE_TASK_COMMENT_LENGTH = 12;
-const MAX_COMPLETE_TASK_COMMENT_LENGTH = 80;
+// Keep this high enough for a natural Chinese sentence plus a short second
+// clause. The old 80-character ceiling rejected otherwise good in-character
+// replies and silently replaced them with the generic fallback.
+const MAX_COMPLETE_TASK_COMMENT_LENGTH = 160;
 
 const isMetaLabel = (value: string): boolean => {
     const normalized = value.trim()
@@ -58,13 +61,26 @@ const isLikelyCompleteSentence = (value: string): boolean => {
     return /[。！？!?…\.]+$/.test(withoutClosing);
 };
 
-const stripWrapping = (value: string): string => value
-    .trim()
-    .replace(/^```(?:text|txt|纯文本)?\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim()
-    .replace(/^[「『“"'`]|[」』”"'`]$/g, '')
-    .trim();
+const stripWrapping = (value: string): string => {
+    let text = value
+        .trim()
+        .replace(/^```(?:text|txt|纯文本)?\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+    // Only remove a pair when it actually wraps the whole response. The old
+    // one-sided regex removed the opening quote from `“标题”已经...` first,
+    // leaving the closing quote stranded in the middle of the sentence.
+    const pairs: Array<[string, string]> = [
+        ['「', '」'], ['『', '』'], ['“', '”'], ['"', '"'], ['`', '`'],
+    ];
+    for (const [opening, closing] of pairs) {
+        if (text.startsWith(opening) && text.endsWith(closing) && text.length >= opening.length + closing.length) {
+            text = text.slice(opening.length, text.length - closing.length).trim();
+            break;
+        }
+    }
+    return text;
+};
 
 const extractFromObject = (value: Record<string, unknown>): string => {
     const preferred = ['平时用语', '日常用语', '评价', '评论', 'comment', 'text', 'content', 'response'];
@@ -102,7 +118,10 @@ export const extractTaskComment = (raw: unknown): string | null => {
     while (lines.length > 1 && isMetaLabel(lines[0].replace(/[：:]$/, ''))) lines.shift();
     text = lines.join(' ');
     text = text.replace(/^(?:平时用语|日常用语|评价|评论|角色评价|待办评价|comment|task\s*comment|text|content|response|output)\s*[:：\-]\s*/i, '').trim();
-    text = stripWrapping(text).replace(/\s+/g, ' ').trim();
+    // Task cards already show the speaker name, so presentation quotes are not
+    // part of the stored sentence. Removing them here also repairs old rows
+    // where only the opening quote was stripped and a lone `”` was persisted.
+    text = stripWrapping(text).replace(/[「」『』“”"]/g, '').replace(/\s+/g, ' ').trim();
     if (!text || isMetaLabel(text) || isIdentityPossessiveFragment(text)) return null;
     if ([...text].filter(character => !/\s/.test(character)).length < MIN_EXTRACTED_TASK_COMMENT_LENGTH) return null;
     return text;
