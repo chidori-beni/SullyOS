@@ -185,8 +185,44 @@ type Live2DModelLike = {
     loop?: boolean;
   }>) => Promise<boolean[]>;
   internalModel?: {
-    motionManager?: { expressionManager?: { resetExpression?: () => void } };
+    motionManager?: {
+      expressionManager?: { resetExpression?: () => void };
+      loadMotion?: (group: string, index: number) => Promise<Live2DMotionLike | undefined>;
+    };
   };
+};
+
+type Live2DMotionLike = {
+  getFadeInTime?: () => number;
+  setFadeInTime?: (seconds: number) => void;
+  getFadeOutTime?: () => number;
+  setFadeOutTime?: (seconds: number) => void;
+};
+
+/**
+ * 手游导出的 motion3.json 经常把 FadeInTime/FadeOutTime 写成 0，播放时整套
+ * 姿势会在一帧内硬切。Cubism 的淡入时长挂在已加载的 motion 实例上（不是
+ * 播放参数），所以在真正播放前把 0 补成一个看得见的过渡值。
+ */
+export const LIVE2D_FALLBACK_MOTION_FADE_S = 0.3;
+
+const ensureMotionFade = async (model: Live2DModelLike, group?: string, index?: number): Promise<void> => {
+  if (!group || index === undefined) return;
+  const manager = model.internalModel?.motionManager;
+  if (typeof manager?.loadMotion !== 'function') return;
+  try {
+    const motion = await manager.loadMotion(group, index);
+    if (!motion) return;
+    // 作者显式写了淡入就尊重原设定；只补 0 / 未设置（-1）的情况。
+    if (typeof motion.setFadeInTime === 'function' && !((motion.getFadeInTime?.() ?? 0) > 0)) {
+      motion.setFadeInTime(LIVE2D_FALLBACK_MOTION_FADE_S);
+    }
+    if (typeof motion.setFadeOutTime === 'function' && !((motion.getFadeOutTime?.() ?? 0) > 0)) {
+      motion.setFadeOutTime(LIVE2D_FALLBACK_MOTION_FADE_S);
+    }
+  } catch {
+    // 拿不到 motion 实例就按原样播放：淡入是体感优化，不该阻断动作本身。
+  }
 };
 
 const playAction = async (model: Live2DModelLike, action: Live2DAction): Promise<void> => {
@@ -199,6 +235,7 @@ const playAction = async (model: Live2DModelLike, action: Live2DAction): Promise
     return;
   }
   if (!action.group || action.index === undefined) return;
+  await ensureMotionFade(model, action.group, action.index);
   await model.motion(action.group, action.index, 3, { loop: false });
 };
 
@@ -699,6 +736,9 @@ const Live2DAvatarCanvas: React.FC<Live2DAvatarCanvasProps> = ({
           ])],
         }));
       let started = false;
+      // 淡入补正必须在 parallelMotion 之前完成：管理器一旦入队就按实例上的
+      // 淡入时长跑，之后再改这一拍已经硬切过去了。
+      await Promise.all(motionItems.map(item => ensureMotionFade(model, item.group, item.index)));
       if (motionItems.length && typeof model.parallelMotion === 'function') {
         try {
           const results = await model.parallelMotion(motionItems);

@@ -915,6 +915,9 @@ const CompanionHome: React.FC = () => {
     }
     return vrmExpressions.map(name => ({ id: name, name: `自定义表情：${name}` }));
   }, [character?.videoAvatar, staticCompanionActive, vrmExpressions]);
+  // Live2D 与 VRM 的演出通道不同：VRM 用 emotion 驱动 BlendShape 预设，
+  // Live2D 舞台只读 faces / gesture，emotion 在那条路径上没有映射。
+  const live2dCompanionActive = !staticCompanionActive && character?.videoAvatar?.format === 'live2d';
   const wardrobeActions = useMemo(
     () => !staticCompanionActive && character?.videoAvatar?.format === 'live2d' ? getLive2DWardrobeActions(character.videoAvatar) : [],
     [character?.videoAvatar, staticCompanionActive],
@@ -3161,7 +3164,7 @@ const CompanionHome: React.FC = () => {
                 </summary>
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <label className="text-[8px] text-white/46">
-                    情绪
+                    情绪{live2dCompanionActive ? '（Live2D 不改表情）' : ''}
                     <select
                       value={startupEditorPerformance.emotion}
                       disabled={settingsGenerating}
@@ -3172,7 +3175,7 @@ const CompanionHome: React.FC = () => {
                     </select>
                   </label>
                   <label className="text-[8px] text-white/46">
-                    主动作
+                    主动作{live2dCompanionActive ? '（头 / 身体）' : ''}
                     <select
                       value={startupEditorPerformance.gesture}
                       disabled={settingsGenerating}
@@ -3185,8 +3188,13 @@ const CompanionHome: React.FC = () => {
                 </div>
 
                 <div className="mt-3">
-                  <div className="text-[8px] text-white/46">微表情（最多 4 个）</div>
-                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  <div className="text-[8px] text-white/46">
+                    微表情（最多 4 个{live2dCompanionActive ? '；Live2D 唯一改脸的一层' : ''}）
+                  </div>
+                  <div
+                    className="mt-1.5 flex flex-wrap gap-1.5"
+                    style={{ opacity: live2dCompanionActive && startupEditorPerformance.modelAction ? 0.4 : 1 }}
+                  >
                     {AVATAR_FACES.map(face => {
                       const selected = startupEditorPerformance.faces?.includes(face) || false;
                       return (
@@ -3194,7 +3202,7 @@ const CompanionHome: React.FC = () => {
                           key={face}
                           type="button"
                           aria-pressed={selected}
-                          disabled={settingsGenerating}
+                          disabled={settingsGenerating || Boolean(live2dCompanionActive && startupEditorPerformance.modelAction)}
                           onClick={() => patchStartupPerformance({
                             faces: selected
                               ? (startupEditorPerformance.faces || []).filter(item => item !== face)
@@ -3230,6 +3238,11 @@ const CompanionHome: React.FC = () => {
                       {modelActions.map(action => <option key={action.id} value={action.id}>{action.name}</option>)}
                     </select>
                   </label>
+                )}
+                {live2dCompanionActive && startupEditorPerformance.modelAction && (
+                  <div className="mt-1 text-[7px] leading-relaxed text-white/34">
+                    模型专属动作是一整套录好的表演，播放期间脸和上半身由它接管，上面的微表情不会叠加上去。想自己捏表情就把这里改回「不指定」。
+                  </div>
                 )}
 
                 <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3">
@@ -3511,50 +3524,101 @@ const CompanionHome: React.FC = () => {
                                   className="mt-1 min-h-[56px] w-full resize-y border border-white/12 bg-black/20 px-2.5 py-2 font-mono text-[9px] leading-relaxed text-white outline-none disabled:opacity-45"
                                 />
                               </label>
-                              <div className="mt-2 grid grid-cols-2 gap-2">
-                                <label className="text-[8px] text-white/48">
-                                  情绪
-                                  <select
-                                    value={reaction.performance.emotion}
-                                    disabled={settingsGenerating}
-                                    onChange={event => patchSavedTouchReaction(zone, reaction.id, { performance: { ...reaction.performance, emotion: event.target.value as CompanionTouchReaction['performance']['emotion'] } })}
-                                    className="mt-1 w-full border border-white/12 bg-[#151021] px-2 py-2 text-[9px] text-white/82"
-                                  >
-                                    {AVATAR_EMOTIONS.map(emotion => <option key={emotion} value={emotion}>{STARTUP_EMOTION_LABELS[emotion]}</option>)}
-                                  </select>
-                                </label>
-                                <label className="text-[8px] text-white/48">
-                                  主动作
-                                  <select
-                                    value={reaction.performance.gesture}
-                                    disabled={settingsGenerating}
-                                    onChange={event => patchSavedTouchReaction(zone, reaction.id, { performance: { ...reaction.performance, gesture: event.target.value as CompanionTouchReaction['performance']['gesture'] } })}
-                                    className="mt-1 w-full border border-white/12 bg-[#151021] px-2 py-2 text-[9px] text-white/82"
-                                  >
-                                    {AVATAR_GESTURES.map(gesture => <option key={gesture} value={gesture}>{STARTUP_GESTURE_LABELS[gesture]}</option>)}
-                                  </select>
-                                </label>
-                              </div>
-                              {modelActions.length > 0 && (
-                                <label className="mt-2 block text-[8px] text-white/48">
-                                  Live2D 模型专属动作
-                                  <select
-                                    value={reaction.performance.modelAction || ''}
-                                    disabled={settingsGenerating}
-                                    onChange={event => patchSavedTouchReaction(zone, reaction.id, {
-                                      performance: {
-                                        ...reaction.performance,
-                                        modelAction: event.target.value || undefined,
-                                        modelActions: event.target.value ? [event.target.value] : [],
-                                      },
-                                    })}
-                                    className="mt-1 w-full border border-white/12 bg-[#151021] px-2 py-2 text-[9px] text-white/82"
-                                  >
-                                    <option value="">不指定</option>
-                                    {modelActions.map(action => <option key={action.id} value={action.id}>{action.name}</option>)}
-                                  </select>
-                                </label>
-                              )}
+                              {(() => {
+                                // 选了模型专属动作时，motion 文件会逐帧覆写整张脸和上半身，
+                                // 微表情叠加层在它之上肉眼不可见——与其让人白调，不如说清楚谁在接管。
+                                const takenOverByModelAction = live2dCompanionActive && Boolean(reaction.performance.modelAction);
+                                const selectedFaces = reaction.performance.faces || [];
+                                return (
+                                  <>
+                                    <div className="mt-2 grid grid-cols-2 gap-2">
+                                      <label className="text-[8px] text-white/48">
+                                        情绪{live2dCompanionActive ? '（Live2D 不改表情）' : ''}
+                                        <select
+                                          value={reaction.performance.emotion}
+                                          disabled={settingsGenerating}
+                                          onChange={event => patchSavedTouchReaction(zone, reaction.id, { performance: { ...reaction.performance, emotion: event.target.value as CompanionTouchReaction['performance']['emotion'] } })}
+                                          className="mt-1 w-full border border-white/12 bg-[#151021] px-2 py-2 text-[9px] text-white/82"
+                                        >
+                                          {AVATAR_EMOTIONS.map(emotion => <option key={emotion} value={emotion}>{STARTUP_EMOTION_LABELS[emotion]}</option>)}
+                                        </select>
+                                      </label>
+                                      <label className="text-[8px] text-white/48">
+                                        主动作{live2dCompanionActive ? '（头 / 身体）' : ''}
+                                        <select
+                                          value={reaction.performance.gesture}
+                                          disabled={settingsGenerating}
+                                          onChange={event => patchSavedTouchReaction(zone, reaction.id, { performance: { ...reaction.performance, gesture: event.target.value as CompanionTouchReaction['performance']['gesture'] } })}
+                                          className="mt-1 w-full border border-white/12 bg-[#151021] px-2 py-2 text-[9px] text-white/82"
+                                        >
+                                          {AVATAR_GESTURES.map(gesture => <option key={gesture} value={gesture}>{STARTUP_GESTURE_LABELS[gesture]}</option>)}
+                                        </select>
+                                      </label>
+                                    </div>
+
+                                    <div className="mt-2" data-testid={`companion-touch-faces-${reaction.id}`}>
+                                      <div className="text-[8px] text-white/48">
+                                        微表情（最多 4 个{live2dCompanionActive ? '；Live2D 唯一改脸的一层' : ''}）
+                                      </div>
+                                      <div className="mt-1.5 flex flex-wrap gap-1.5" style={{ opacity: takenOverByModelAction ? 0.4 : 1 }}>
+                                        {AVATAR_FACES.map(face => {
+                                          const selected = selectedFaces.includes(face);
+                                          return (
+                                            <button
+                                              key={face}
+                                              type="button"
+                                              aria-pressed={selected}
+                                              disabled={settingsGenerating || takenOverByModelAction}
+                                              onClick={() => patchSavedTouchReaction(zone, reaction.id, {
+                                                performance: {
+                                                  ...reaction.performance,
+                                                  faces: selected
+                                                    ? selectedFaces.filter(item => item !== face)
+                                                    : [...selectedFaces, face].slice(0, 4),
+                                                },
+                                              })}
+                                              className="border px-2 py-1 text-[8px] transition disabled:cursor-not-allowed"
+                                              style={{
+                                                borderColor: selected ? `${uiTint}aa` : 'rgba(255,255,255,.12)',
+                                                background: selected ? `${uiTint}1e` : 'rgba(255,255,255,.025)',
+                                                color: selected ? uiTint : 'rgba(255,255,255,.54)',
+                                              }}
+                                            >
+                                              {STARTUP_FACE_LABELS[face]}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+
+                                    {modelActions.length > 0 && (
+                                      <label className="mt-2 block text-[8px] text-white/48">
+                                        {live2dCompanionActive ? 'Live2D 模型专属动作' : '自定义表情'}
+                                        <select
+                                          value={reaction.performance.modelAction || ''}
+                                          disabled={settingsGenerating}
+                                          onChange={event => patchSavedTouchReaction(zone, reaction.id, {
+                                            performance: {
+                                              ...reaction.performance,
+                                              modelAction: event.target.value || undefined,
+                                              modelActions: event.target.value ? [event.target.value] : [],
+                                            },
+                                          })}
+                                          className="mt-1 w-full border border-white/12 bg-[#151021] px-2 py-2 text-[9px] text-white/82"
+                                        >
+                                          <option value="">不指定</option>
+                                          {modelActions.map(action => <option key={action.id} value={action.id}>{action.name}</option>)}
+                                        </select>
+                                      </label>
+                                    )}
+                                    {takenOverByModelAction && (
+                                      <div className="mt-1 text-[7px] leading-relaxed text-white/34">
+                                        模型专属动作是一整套录好的表演，播放期间脸和上半身由它接管，上面的微表情不会叠加上去。想自己捏表情就把这里改回「不指定」。
+                                      </div>
+                                    )}
+                                  </>
+                                );
+                              })()}
                               <div className="mt-2 grid grid-cols-2 gap-2">
                                 <button
                                   type="button"
