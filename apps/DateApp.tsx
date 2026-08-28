@@ -95,8 +95,14 @@ const DateApp: React.FC = () => {
     const SELECT_PAGE_SIZE = 6;
     const DATE_SESSION_MESSAGE_LIMIT = 220;
     const DATE_HISTORY_MESSAGE_LIMIT = 500;
+    /**
+     * 结束见面时那段模型总结的最长等待。到点就退回本地摘要，不再拖住整个收尾流程。
+     * 20 秒足够任何正常渠道写完 80 字，又不至于让用户以为 App 卡死了。
+     */
+    const FINISH_SUMMARY_TIMEOUT_MS = 20_000;
     const pagerRef = useRef<HTMLDivElement>(null);
     const [selectPage, setSelectPage] = useState(0);
+    const [discardBusy, setDiscardBusy] = useState(false);
     const [selectGroupId, setSelectGroupId] = useState(GROUP_FILTER_ALL); // 选择页的分组筛选
     const onPagerScroll = () => {
         const el = pagerRef.current;
@@ -404,6 +410,48 @@ const DateApp: React.FC = () => {
         trackEvent('见面存档选重新开始');
         startPeek(pendingSessionChar);
         setPendingSessionChar(null);
+    };
+
+    /**
+     * 丢弃这次没收尾的见面：只想测一下功能、测完就想删掉时走这里。
+     *
+     * 和「新的见面」的区别是它不接着开新一轮，而且会把这次见面留下的正文与结束卡一并
+     * 删掉——否则用户只是把状态清了，历史里仍旧堆着一堆测试记录。删不掉也照样清状态：
+     * activeDateEncounter 挂着不放才是真正会闷掉自然主动的那一半。
+     */
+    const handleDiscardSession = async () => {
+        const target = pendingSessionChar;
+        if (!target || discardBusy) return;
+        setDiscardBusy(true);
+        const encounterId = target.savedDateState?.encounterId
+            || target.activeDateEncounter?.encounterId;
+        try {
+            if (encounterId) {
+                const [dateMsgs, popupMsgs] = await Promise.all([
+                    DB.getRecentMessagesByCharIdAndSource(target.id, 'date', Number.MAX_SAFE_INTEGER),
+                    DB.getRecentMessagesByCharIdAndSource(target.id, 'date-end-popup', Number.MAX_SAFE_INTEGER),
+                ]);
+                const ids = [...dateMsgs, ...popupMsgs]
+                    .filter(message => message.metadata?.dateEncounterId === encounterId)
+                    .map(message => message.id);
+                if (ids.length) await DB.deleteMessages(ids);
+            }
+        } catch (error) {
+            console.error('[DateApp] 丢弃见面时清理记录失败，仍继续清状态', error);
+            addToast('记录没能全部删掉，但这次见面已经作废', 'info');
+        } finally {
+            clearDateResumeAttempt();
+            clearDateEncounter(target.id, encounterId);
+            updateCharacter(target.id, { savedDateState: undefined, activeDateEncounter: undefined });
+            activeEncounterRef.current = null;
+            // 让下一次 fire_pack 同步立刻带上「已经没有见面了」，别等下一轮聊天。
+            markDateTurnDirty({ ...target, activeDateEncounter: undefined, savedDateState: undefined });
+            setPendingSessionChar(null);
+            setDiscardBusy(false);
+            addToast('这次见面已丢弃', 'success');
+            trackEvent('选择见面存档处理方式', { choice: 'discard' });
+            if (cameFromChat) returnToChat();
+        }
     };
 
     // --- 关键修复: 进入 Session 时立即归档开场白 ---
@@ -820,31 +868,60 @@ const DateApp: React.FC = () => {
         return rest ? `${hours} 小时 ${rest} 分钟` : `${hours} 小时`;
     };
 
+    /**
+     * 结束见面。
+     *
+     * 这里的顺序是有代价换来的：以前是「读历史 → 等模型写总结 → 存结束卡 → 清状态」，
+     * 一条直线全程 await，而 callLLM 既没有超时也没有 AbortSignal。渠道一慢（或者 iOS
+     * 把 PWA 挂起），整条链就停在总结那一步——**结束卡没写、见面状态也没清**。用户看到的
+     * 就是「我明明结束了，信息界面没有卡片，再点见面还说有未结束的见面」；而云端那边
+     * activeDateEncounter 一直是 active，自然主动会被永久闷掉。
+     *
+     * 现在：读历史和总结都不再是必经关卡，总结另加 20 秒上限，超时/失败一律退回本地
+     * 摘要。总结只是锦上添花，不该决定这次见面能不能收尾。
+     */
     const finishEncounter = async (finalState: DateState) => {
         if (!char) return;
         const encounter = ensureEncounter();
         const endedAt = Date.now();
-        const allDate = await DB.getRecentMessagesByCharIdAndSource(char.id, 'date', 500);
-        const current = allDate.filter(m => m.metadata?.dateEncounterId === encounter.id);
+        let current: Message[] = [];
+        try {
+            const allDate = await DB.getRecentMessagesByCharIdAndSource(char.id, 'date', 500);
+            current = allDate.filter(m => m.metadata?.dateEncounterId === encounter.id);
+        } catch (error) {
+            // 读历史失败也不能卡住收尾：大不了这次的总结简略一点。
+            console.warn('[DateApp] 读取见面正文失败，改用简略摘要收尾', error);
+        }
         const transcript = current.slice(-30).map(m => {
             const clean = typeof m.content === 'string'
                 ? stripFaceToFacePhoneSourceTags(stripMessageReactionTags(m.content))
                 : m.content;
             return `${m.role === 'user' ? userProfile.name || '用户' : char.name}：${clean}`;
         }).join('\n');
+        const localSummary = current.length > 0
+            ? `你和${char.name}结束了这次见面，共留下 ${current.length} 条现场记录。`
+            : `你和${char.name}结束了这次见面。`;
         let summary = '';
         try {
-            summary = await callLLM([
-                { role: 'system', content: '你是见面记录整理器。用一段简洁、温柔、忠于原文的中文，概括这次线下见面的地点、共同活动、重要情绪与结束方式。不要虚构，不要加标题，80字以内。' },
-                { role: 'user', content: transcript || '这次见面没有留下更多对话。' },
-            ], 0.3);
+            // callLLM 自己没有超时，慢渠道会无限期挂着。这一层 race 是收尾流程的保命绳。
+            summary = await Promise.race([
+                callLLM([
+                    { role: 'system', content: '你是见面记录整理器。用一段简洁、温柔、忠于原文的中文，概括这次线下见面的地点、共同活动、重要情绪与结束方式。不要虚构，不要加标题，80字以内。' },
+                    { role: 'user', content: transcript || '这次见面没有留下更多对话。' },
+                ], 0.3),
+                new Promise<string>((_, reject) => setTimeout(
+                    () => reject(new Error('见面总结超时')), FINISH_SUMMARY_TIMEOUT_MS,
+                )),
+            ]);
         } catch (error) {
-            console.warn('[DateApp] 见面总结生成失败，使用本地摘要', error);
-            summary = current.length > 0
-                ? `你和${char.name}结束了这次见面，共留下 ${current.length} 条现场记录。`
-                : `你和${char.name}结束了这次见面。`;
+            console.warn('[DateApp] 见面总结生成失败或超时，使用本地摘要', error);
+            summary = localSummary;
         }
+        if (!summary.trim()) summary = localSummary;
         const durationMs = Math.max(0, endedAt - encounter.startedAt);
+        // 两条结束卡都用 try 包住：写失败最多是少一张卡片，而下面的状态清理必须照走，
+        // 否则用户会永远卡在「有未结束的见面」，云端的自然主动也跟着被闷掉。
+        try {
         await DB.saveMessage({
             charId: char.id,
             role: 'system',
@@ -877,6 +954,10 @@ const DateApp: React.FC = () => {
                 charAvatar: char.avatar,
             },
         });
+        } catch (error) {
+            console.error('[DateApp] 见面结束卡写入失败，仍继续收尾', error);
+            addToast('结束卡片没能保存，但这次见面已经正常结束', 'info');
+        }
         clearDateResumeAttempt();
         clearDateEncounter(char.id, encounter.id);
         activeEncounterRef.current = null;
@@ -1198,8 +1279,8 @@ const DateApp: React.FC = () => {
                     </div>
                 )}
 
-                <Modal isOpen={!!pendingSessionChar} title="发现进度" onClose={() => { setPendingSessionChar(null); if (cameFromChat) returnToChat(); }} footer={<div className="flex gap-3 w-full"><button onClick={handleStartNewSession} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">新的见面</button><button onClick={handleResumeSession} className="flex-1 py-3 bg-green-500 text-white rounded-2xl font-bold shadow-lg shadow-green-200">继续上次</button></div>}>
-                    <div className="text-center text-slate-500 text-sm py-4">检测到 {pendingSessionChar?.name} 有未结束的见面。<br/><span className="text-xs text-slate-400 mt-2 block">(存档时间: {pendingSessionChar?.savedDateState?.timestamp ? new Date(pendingSessionChar.savedDateState.timestamp).toLocaleString() : 'Unknown'})</span></div>
+                <Modal isOpen={!!pendingSessionChar} title="发现进度" onClose={() => { setPendingSessionChar(null); if (cameFromChat) returnToChat(); }} footer={<div className="flex flex-col gap-2 w-full"><div className="flex gap-3 w-full"><button disabled={discardBusy} onClick={handleStartNewSession} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold disabled:opacity-50">新的见面</button><button disabled={discardBusy} onClick={handleResumeSession} className="flex-1 py-3 bg-green-500 text-white rounded-2xl font-bold shadow-lg shadow-green-200 disabled:opacity-50">继续上次</button></div><button disabled={discardBusy} onClick={() => void handleDiscardSession()} className="w-full py-2.5 rounded-2xl text-red-500 text-sm font-bold bg-red-50 disabled:opacity-50">{discardBusy ? '正在丢弃…' : '丢弃这次见面'}</button></div>}>
+                    <div className="text-center text-slate-500 text-sm py-4">检测到 {pendingSessionChar?.name} 有未结束的见面。<br/><span className="text-xs text-slate-400 mt-2 block">(存档时间: {pendingSessionChar?.savedDateState?.timestamp ? new Date(pendingSessionChar.savedDateState.timestamp).toLocaleString() : 'Unknown'})</span><span className="text-[11px] text-slate-400 mt-3 block leading-relaxed">只是想测试一下的话，选「丢弃这次见面」：这次的现场记录和结束卡片会一并删掉，角色也会立刻恢复正常的主动联系。</span></div>
                 </Modal>
             </div>
         );

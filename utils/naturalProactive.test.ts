@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildFallbackNaturalProfile, decideNaturalProactive, enrichNaturalProfileForCharacter, naturalCheckWindowMinutes, naturalUnansweredHardCap, NATURAL_BATCH_HARD_CAP, NATURAL_UNANSWERED_HARD_CAP, nextNaturalCheckAt } from './naturalProactive';
+import { buildFallbackNaturalProfile, decideNaturalProactive, enrichNaturalProfileForCharacter, naturalCheckWindowMinutes, naturalSilenceIntensity, naturalUnansweredHardCap, NATURAL_BATCH_HARD_CAP, NATURAL_UNANSWERED_HARD_CAP, NATURAL_UNANSWERED_PENALTY_CAP, nextNaturalCheckAt } from './naturalProactive';
 import type { CharacterProfile, NaturalProactiveProfile } from '../types';
 
 const profile: NaturalProactiveProfile = {
@@ -62,6 +62,43 @@ describe('自然主动决策', () => {
     expect(decide({ intensity: 'low', unansweredCount: 20 }).shouldSend).toBe(false);
     expect(decide({ intensity: 'normal', unansweredCount: 20 }).shouldSend).toBe(false);
     expect(decide({ intensity: 'high', unansweredCount: 20 }).shouldSend).toBe(false);
+  });
+
+  it('沉默超过饱和点后仍继续加分，不再停在 1', () => {
+    // 早期版本饱和于 1：沉默 3 倍饱和时长和 1 倍完全同分，于是任何固定扣分一旦压过
+    // 阈值就永远翻不回来。这里锁住「越久越高、但涨得越来越慢」。
+    expect(naturalSilenceIntensity(4, 4)).toBe(1);
+    expect(naturalSilenceIntensity(8, 4)).toBeCloseTo(1.5, 5);
+    expect(naturalSilenceIntensity(16, 4)).toBeCloseTo(2, 5);
+    // 上限封在 2，再久也不会无限膨胀成催命连发。
+    expect(naturalSilenceIntensity(4000, 4)).toBe(2);
+    expect(naturalSilenceIntensity(2, 4)).toBeCloseTo(0.5, 5);
+    expect(naturalSilenceIntensity(0, 4)).toBe(0);
+  });
+
+  it('未回复扣分收敛但不掐死：再沉默久一点仍能重新开口', () => {
+    const nowMs = Date.parse('2026-08-23T12:00:00Z');
+    // 3 条未回复已经吃满扣分上限，短沉默时确实压得住。
+    const shortSilence = decide({
+      nowMs,
+      lastUserMessageAt: nowMs - 2 * 3_600_000,
+      unansweredCount: 3,
+    });
+    expect(shortSilence.shouldSend).toBe(false);
+    // 同样 3 条未回复，沉默拉长之后必须能翻回来——这正是「隔一阵又想起你」。
+    const longSilence = decide({
+      nowMs,
+      lastUserMessageAt: nowMs - 20 * 3_600_000,
+      unansweredCount: 3,
+    });
+    expect(longSilence.shouldSend).toBe(true);
+    // 扣分吃满之后不再随条数继续加深，唯一的终止条件是 20 条硬上限。
+    expect(NATURAL_UNANSWERED_PENALTY_CAP).toBe(0.24);
+    const many = decide({ nowMs, lastUserMessageAt: nowMs - 20 * 3_600_000, unansweredCount: 19 });
+    expect(many.score).toBeCloseTo(longSilence.score, 5);
+    expect(many.shouldSend).toBe(true);
+    expect(decide({ nowMs, lastUserMessageAt: nowMs - 20 * 3_600_000, unansweredCount: 20 }).shouldSend)
+      .toBe(false);
   });
 
   it('安静时段压低联系冲动', () => {

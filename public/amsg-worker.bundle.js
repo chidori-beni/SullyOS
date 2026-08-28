@@ -617,7 +617,7 @@ var init_mcpFireCore = __esm({
 // worker/amsg/src/index.ts
 import { DurableObject } from "cloudflare:workers";
 
-// node_modules/.pnpm/@rei-standard+amsg-server@2_c57770165a8a2256e4acaa4bae2ba803/node_modules/@rei-standard/amsg-server/dist/chunk-GN44PST5.mjs
+// node_modules/@rei-standard/amsg-server/dist/chunk-GN44PST5.mjs
 var UPDATABLE_COLUMNS = /* @__PURE__ */ new Set([
   "user_id",
   "uuid",
@@ -636,7 +636,7 @@ var UPDATABLE_COLUMNS = /* @__PURE__ */ new Set([
 var TASK_DELIVERY_COLUMNS = "id, user_id, uuid, encrypted_payload, message_type, next_send_at, retry_after, status, retry_count";
 var TASK_DETAIL_COLUMNS = "id, user_id, uuid, encrypted_payload, message_type, next_send_at, status, retry_count, last_error, created_at, updated_at";
 
-// node_modules/.pnpm/@rei-standard+amsg-shared@0.4.0-next.8/node_modules/@rei-standard/amsg-shared/dist/index.mjs
+// node_modules/@rei-standard/amsg-shared/dist/index.mjs
 var TEXT_ENCODER = new TextEncoder();
 var TEXT_DECODER = new TextDecoder("utf-8", { fatal: false });
 function toUint8(buf) {
@@ -1735,7 +1735,7 @@ function stringifyDecisionForError(value) {
   }
 }
 
-// node_modules/.pnpm/@rei-standard+amsg-server@2_c57770165a8a2256e4acaa4bae2ba803/node_modules/@rei-standard/amsg-server/dist/chunk-3JEWYDM4.mjs
+// node_modules/@rei-standard/amsg-server/dist/chunk-3JEWYDM4.mjs
 var DAY_MS = 24 * 60 * 60 * 1e3;
 var MAX_LISTED_SKIPPED_OCCURRENCES = 32;
 var MAX_ADJUST_STEPS = 32;
@@ -7384,7 +7384,7 @@ function createSingleUserCloudflareWorker(buildConfig, options = {}) {
 }
 
 // utils/amsgBundleVersion.ts
-var AMSG_BUNDLE_VERSION = "2026-08-25.2";
+var AMSG_BUNDLE_VERSION = "2026-08-28.1";
 
 // utils/amsgTaskKinds.ts
 var AMSG_TASK_KIND_KEY = "amsgKind";
@@ -7896,7 +7896,16 @@ var unpackStateValue = async (value) => {
   const raw = await streamThrough(gz, new DecompressionStream("gzip"));
   return new TextDecoder().decode(raw);
 };
+var DATE_ENCOUNTER_MAX_AGE_MS = 12 * 60 * 6e4;
+var isDateEncounterOngoing = (encounter, nowMs) => {
+  if (!encounter || encounter.status !== "active") return false;
+  const updatedAt = typeof encounter.updatedAt === "number" && Number.isFinite(encounter.updatedAt) ? encounter.updatedAt : encounter.startedAt;
+  if (typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) return false;
+  if (updatedAt > nowMs + 6e4) return false;
+  return nowMs - updatedAt <= DATE_ENCOUNTER_MAX_AGE_MS;
+};
 var AMSG_LAST_SKIP_KEY = "last_skip";
+var AMSG_NATURAL_LAST_CHECK_KEY = "natural_last_check";
 var AMSG_SLOT_CURRENT_TIME = "{{AMSG_CURRENT_TIME}}";
 var AMSG_SLOT_TIME_SINCE_USER = "{{AMSG_TIME_SINCE_USER}}";
 var AMSG_SLOT_AWAY_HINT = "{{AMSG_AWAY_HINT}}";
@@ -8455,7 +8464,7 @@ var extractAvatarPerformanceTimeline = (raw) => {
 };
 
 // utils/callReplyFormat.ts
-var stripCallTextFormatting = (raw) => (raw || "").replace(/```(?:[a-z0-9_-]+)?\s*/gi, "").replace(/```/g, "").replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\[([^\]]+)\]\((?:https?:\/\/|\/)[^)]*\)/g, "$1").replace(/^(?:\s{0,3}#{1,6}\s+|\s{0,3}>\s?|\s*[-+*]\s+)/gm, "").replace(/(\*\*|__)([\s\S]*?)\1/g, "$2").replace(/([*_~`])([^\n]*?)\1/g, "$2").replace(/[\t ]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+var stripCallTextFormatting = (raw) => (raw || "").replace(/```(?:[a-z0-9_-]+)?\s*/gi, "").replace(/```/g, "").replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\[([^\]]+)\]\((?:https?:\/\/|\/)[^)]*\)/g, "$1").replace(/^(?:\s{0,3}#{1,6}\s+|\s{0,3}>\s?|\s*[-+*]\s+)/gm, "").replace(/(\*\*|__)([\s\S]*?)\1/g, "$2").replace(/([*_~`])([^\n]*?)\1/g, "$2").replace(/\s*(?:\[\s*(?:聊天|通话|约会)\s*\]|【\s*(?:聊天|通话|约会)\s*】)\s*/g, "\n").replace(/[\t ]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 var readContent = (content) => {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -8903,6 +8912,13 @@ var log = makeDebugLogger("api", "SafeAPI");
 // utils/naturalProactive.ts
 var NATURAL_UNANSWERED_HARD_CAP = 20;
 var naturalUnansweredHardCap = (_intensity) => NATURAL_UNANSWERED_HARD_CAP;
+var NATURAL_UNANSWERED_PENALTY_PER_MSG = 0.08;
+var NATURAL_UNANSWERED_PENALTY_CAP = 0.24;
+var naturalSilenceIntensity = (hoursSilent, saturationHours) => {
+  const ratio = Math.max(0, hoursSilent) / Math.max(0.5, saturationHours);
+  if (ratio <= 1) return clamp(ratio, 0, 1);
+  return 1 + clamp(Math.log2(ratio) * 0.5, 0, 1);
+};
 var NATURAL_BATCH_HARD_CAP = 20;
 var naturalCheckWindowMinutes = (intensity, random01) => {
   const safeRandom = clamp(random01, 0, 0.999999);
@@ -8920,7 +8936,7 @@ var isQuietHour = (hour, [start, end]) => start === end ? false : start < end ? 
 var decideNaturalProactive = (input) => {
   const { profile } = input;
   const hoursSilent = input.lastUserMessageAt == null ? profile.silenceSaturationHours : Math.max(0, input.nowMs - input.lastUserMessageAt) / 36e5;
-  const silence = clamp(hoursSilent / profile.silenceSaturationHours, 0, 1);
+  const silence = naturalSilenceIntensity(hoursSilent, profile.silenceSaturationHours);
   const hour = hourInZone(input.nowMs, input.tzId);
   const quiet = isQuietHour(hour, profile.quietHours);
   const recentSendMinutes = input.recentSelfSendAts.length ? (input.nowMs - Math.max(...input.recentSelfSendAts)) / 6e4 : Infinity;
@@ -8943,7 +8959,10 @@ var decideNaturalProactive = (input) => {
     reasons.push("\u8FD1\u671F\u4E3B\u52A8\u8054\u7CFB\u8FC7");
   }
   if (input.unansweredCount > 0) {
-    score -= Math.min(0.45, input.unansweredCount * 0.16);
+    score -= Math.min(
+      NATURAL_UNANSWERED_PENALTY_CAP,
+      input.unansweredCount * NATURAL_UNANSWERED_PENALTY_PER_MSG
+    );
     reasons.push(`\u5DF2\u6709 ${input.unansweredCount} \u6761\u672A\u83B7\u56DE\u590D`);
   }
   const intensityShift = input.intensity === "low" ? 0.12 : input.intensity === "high" ? -0.1 : 0;
@@ -12063,7 +12082,7 @@ var buildDuplicateToolMessage = (name) => [
 // worker/amsg/src/index.ts
 init_proxyWorker();
 
-// node_modules/.pnpm/@rei-standard+amsg-instant@0.11.0-next.6/node_modules/@rei-standard/amsg-instant/dist/index.mjs
+// node_modules/@rei-standard/amsg-instant/dist/index.mjs
 var PUSH_PAYLOAD_BYTE_ENCODER = new TextEncoder();
 function segmentTextWithProtectedBlocks(text, options) {
   if (!text) return [];
@@ -13556,6 +13575,16 @@ var writeLastSkip = async (writeState, charId, skip) => {
     console.warn("[amsg:skip] \u8DF3\u8FC7\u539F\u56E0\u5199\u5165\u5931\u8D25\uFF08\u8DF3\u8FC7\u672C\u8EAB\u7167\u5E38\u751F\u6548\uFF0C\u53EA\u662F\u9762\u677F\u5C11\u4E00\u53E5\u8BF4\u660E\uFF09", error);
   }
 };
+var writeNaturalLastCheck = async (writeState, charId, check) => {
+  if (typeof writeState !== "function") return;
+  try {
+    await writeState(amsgStateNamespace(charId), [
+      { key: AMSG_NATURAL_LAST_CHECK_KEY, value: JSON.stringify(check) }
+    ]);
+  } catch (error) {
+    console.warn("[amsg:natural] \u672C\u6B21\u8003\u8651\u7ED3\u679C\u5199\u5165\u5931\u8D25\uFF08\u51B3\u5B9A\u7167\u5E38\u751F\u6548\uFF0C\u53EA\u662F\u9762\u677F\u5C11\u4E00\u53E5\u8BF4\u660E\uFF09", error);
+  }
+};
 var recordSkip = async (ctx, charId, reason, occurrenceMs) => writeLastSkip(ctx.writeState, charId, {
   v: 1,
   taskUuid: typeof ctx.task.uuid === "string" ? ctx.task.uuid : null,
@@ -14189,15 +14218,34 @@ var amsgHooks = {
           amsgTaskInstruction: "\u8FD9\u662F\u89D2\u8272\u81EA\u7136\u4EA7\u751F\u7684\u8054\u7CFB\u51B2\u52A8\uFF0C\u4E0D\u662F\u7528\u6237\u9881\u5E03\u7684\u4EFB\u52A1\u3002\u7ED3\u5408\u4EBA\u8BBE\u3001\u5173\u7CFB\u3001\u6700\u8FD1\u4E0A\u4E0B\u6587\u548C\u6B64\u523B\u751F\u6D3B\u72B6\u6001\uFF0C\u50CF\u771F\u4EBA\u4E00\u6837\u53D1\u4E00\u5230\u4E09\u53E5\u771F\u6B63\u6B64\u523B\u60F3\u8BF4\u7684\u8BDD\uFF1B\u53EF\u4EE5\u5F88\u8F7B\u3001\u5F88\u77ED\uFF0C\u4E0D\u8981\u89E3\u91CA\u7CFB\u7EDF\u5224\u65AD\uFF0C\u4E5F\u4E0D\u8981\u8BF4\u81EA\u5DF1\u88AB\u5B9A\u65F6\u5524\u9192\u3002"
         }
       });
-      if (pack.activeDateEncounter?.status === "active") {
+      const noteCheck = (sent, skipReason) => writeNaturalLastCheck(ctx.writeState, charId, {
+        v: 1,
+        checkedAt: ctx.now.getTime(),
+        score: decision.score,
+        threshold: decision.threshold,
+        sent,
+        skipReason,
+        reasons: decision.reasons,
+        nextCheckAt: nextAt
+      });
+      if (isDateEncounterOngoing(pack.activeDateEncounter, ctx.now.getTime())) {
         console.log("[amsg:natural-skip]", {
           taskId: ctx.task.id,
           charId,
           reason: "active-date-presence",
-          encounterId: pack.activeDateEncounter.encounterId
+          encounterId: pack.activeDateEncounter?.encounterId
         });
         await recordSkip(ctx, charId, "active-date-presence", occurrenceMs);
+        await noteCheck(false, "active-date-presence");
         return { skip: true };
+      }
+      if (pack.activeDateEncounter?.status === "active") {
+        console.warn("[amsg:natural-stale-date]", {
+          taskId: ctx.task.id,
+          charId,
+          encounterId: pack.activeDateEncounter.encounterId,
+          updatedAt: pack.activeDateEncounter.updatedAt
+        });
       }
       console.log("[amsg:natural-decision]", {
         taskId: ctx.task.id,
@@ -14217,13 +14265,19 @@ var amsgHooks = {
           limit: naturalHardCap
         });
         await recordSkip(ctx, charId, "unanswered-limit", occurrenceMs);
+        await noteCheck(false, "unanswered-limit");
         return { skip: true };
       }
       if (isFreshChatPresence(presence, charId, ctx.now.getTime())) {
         console.log("[amsg:natural-skip]", { taskId: ctx.task.id, charId, reason: "active-chat-presence" });
+        await noteCheck(false, "active-chat-presence");
         return { skip: true };
       }
-      if (!decision.shouldSend) return { skip: true };
+      if (!decision.shouldSend) {
+        await noteCheck(false, "low-score");
+        return { skip: true };
+      }
+      await noteCheck(true, null);
     }
     const maxUnansweredSends = resolveMaxUnansweredSends(pack.maxUnansweredSends);
     if (!instant && taskMeta.amsgSelfScheduled === true && countUnansweredSends(selfLog) >= maxUnansweredSends) {

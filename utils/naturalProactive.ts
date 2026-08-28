@@ -51,6 +51,38 @@ export const NATURAL_UNANSWERED_HARD_CAP = 20;
 export const naturalUnansweredHardCap = (_intensity: NaturalProactiveIntensity): number =>
   NATURAL_UNANSWERED_HARD_CAP;
 
+/**
+ * 未回复扣分的每条系数与上限。
+ *
+ * 这两个数必须**远小于**沉默能贡献的分数，否则上面那道 20 条的保险丝根本够不着：
+ * 早期版本按每条 0.16、上限 0.45 扣，而加分项总共也就 0.5～0.65，于是连着两三条
+ * 没被回复之后扣分永久盖过所有加分，角色再也开不了口——面板上写着「最多 20 条」，
+ * 实际上限却是 2～3 条，而且是**永久**的，用户只会觉得角色忽然变冷淡了。
+ *
+ * 现在的口径是「收敛，但不掐死」：连发几条没人理会明显压低冲动，可只要再沉默久一点，
+ * naturalSilenceIntensity 的增长就能把它抬回阈值之上。真正的终止条件只有一个，
+ * 就是 NATURAL_UNANSWERED_HARD_CAP。
+ */
+export const NATURAL_UNANSWERED_PENALTY_PER_MSG = 0.08;
+export const NATURAL_UNANSWERED_PENALTY_CAP = 0.24;
+
+/**
+ * 沉默强度：饱和点之前线性，之后按对数继续缓慢增长，最多再加一个身位（上限 2）。
+ *
+ * 为什么不能像早期版本那样停在 1：饱和之后「沉默 3 小时」和「沉默 30 小时」得分完全
+ * 一样，于是任何一个固定扣分（未回复、安静时段）只要压过阈值，就**再没有任何变量**
+ * 能把分数拉回来，角色永久闭嘴。让「很久没联系」始终能继续加分，「隔一阵又想起你」
+ * 这件事才成立；同时对数增长保证它涨得越来越慢，不会变成催命式连发。
+ */
+export const naturalSilenceIntensity = (
+  hoursSilent: number,
+  saturationHours: number,
+): number => {
+  const ratio = Math.max(0, hoursSilent) / Math.max(0.5, saturationHours);
+  if (ratio <= 1) return clamp(ratio, 0, 1);
+  return 1 + clamp(Math.log2(ratio) * 0.5, 0, 1);
+};
+
 /** 单次自然主动投递最多落成多少个聊天气泡；防止模型一次返回很长的分段列表。 */
 export const NATURAL_BATCH_HARD_CAP = 20;
 
@@ -252,7 +284,7 @@ export const decideNaturalProactive = (input: NaturalProactiveDecisionInput): Na
   const hoursSilent = input.lastUserMessageAt == null
     ? profile.silenceSaturationHours
     : Math.max(0, input.nowMs - input.lastUserMessageAt) / 3_600_000;
-  const silence = clamp(hoursSilent / profile.silenceSaturationHours, 0, 1);
+  const silence = naturalSilenceIntensity(hoursSilent, profile.silenceSaturationHours);
   const hour = hourInZone(input.nowMs, input.tzId);
   const quiet = isQuietHour(hour, profile.quietHours);
   const recentSendMinutes = input.recentSelfSendAts.length
@@ -274,7 +306,10 @@ export const decideNaturalProactive = (input: NaturalProactiveDecisionInput): Na
   if (recentSendMinutes < 30) { score -= 0.42; reasons.push('刚主动联系过'); }
   else if (recentSendMinutes < 90) { score -= 0.22; reasons.push('近期主动联系过'); }
   if (input.unansweredCount > 0) {
-    score -= Math.min(0.45, input.unansweredCount * 0.16);
+    score -= Math.min(
+      NATURAL_UNANSWERED_PENALTY_CAP,
+      input.unansweredCount * NATURAL_UNANSWERED_PENALTY_PER_MSG,
+    );
     reasons.push(`已有 ${input.unansweredCount} 条未获回复`);
   }
   const intensityShift = input.intensity === 'low' ? 0.12 : input.intensity === 'high' ? -0.1 : 0;

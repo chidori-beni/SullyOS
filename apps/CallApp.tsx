@@ -1713,6 +1713,8 @@ const CallApp: React.FC = () => {
   // the PWA, so genuine background notifications remain available.
   useEffect(() => {
     if (viewMode !== 'in-call' || !selectedChar?.id) return;
+    // 进场时手里没有「用户最后一次开口」，传 null。startAmsgChatPresence 取较新的一份，
+    // 所以这个 null 不会把本轮通话里 handleTurn 刚记下的真实时刻抹掉。
     void startAmsgChatPresence(selectedChar.id, null);
     return () => stopAmsgChatPresence(selectedChar.id);
   }, [viewMode, selectedChar?.id]);
@@ -3184,6 +3186,11 @@ ${sentencePlan}`;
         if (!isLiveCallSession(turnSessionId)) return;
         setBubbles(prev => prev.map(b => (b.id === userBubble.id ? { ...b, dbId: userDbId } : b)));
         markCallTurnDirty();
+        // 通话里说的话也是「用户开口了」。markCallTurnDirty 会重传 fire_pack，但那是几十 KB
+        // 的整包、还带去抖和重试；租约行只有几十字节，先到一步。worker 取两者里较新的那个
+        // 当锚点，锚点一往前走，未回复计数就清零——否则用户在电话里聊了一小时，云端仍然
+        // 以为「他一直没理我」，自然主动会被一直压着。
+        void startAmsgChatPresence(selectedChar.id, nowTs);
       } else if (newSnapshotRef) {
         const previousSnapshotRef = retryBubble?.cameraSnapshotRef;
         try {

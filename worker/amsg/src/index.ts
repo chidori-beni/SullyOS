@@ -49,10 +49,12 @@ import {
   AMSG_CHAT_FAIL_KEY,
   AMSG_FIRE_PACK_KEY,
   AMSG_LAST_SKIP_KEY,
+  AMSG_NATURAL_LAST_CHECK_KEY,
   AMSG_SELF_LOG_KEY,
   AMSG2_INSTANT_STUB_TEMPLATE,
   type AmsgChatFailRecord,
   type AmsgLastSkip,
+  type AmsgNaturalLastCheck,
   type AmsgSelfLog,
   type AmsgTzRef,
   amsgStateNamespace,
@@ -61,6 +63,7 @@ import {
   appendSelfLogTask,
   countUnansweredSends,
   describeFirePackVersion,
+  isDateEncounterOngoing,
   parseFirePack,
   parseSelfLog,
   reconcileSelfLogWithPack,
@@ -689,6 +692,28 @@ const writeLastSkip = async (
     ]);
   } catch (error) {
     console.warn('[amsg:skip] 跳过原因写入失败（跳过本身照常生效，只是面板少一句说明）', error);
+  }
+};
+
+/**
+ * 自然主动每一次「要不要联系」的结果（发了也写，没发也写）。
+ *
+ * 和 writeLastSkip 同为 best-effort：这是一句给用户看的解释，写不进去不能连累这次决定
+ * 本身。但它比 last_skip 更要紧的地方在于——自然主动绝大多数静默根本不经过任何闸，
+ * 不主动留下这一行，用户就永远分不清「他不想说」和「云端坏了」，只能干等。
+ */
+const writeNaturalLastCheck = async (
+  writeState: WriteState | undefined,
+  charId: string,
+  check: AmsgNaturalLastCheck,
+): Promise<void> => {
+  if (typeof writeState !== 'function') return;
+  try {
+    await writeState(amsgStateNamespace(charId), [
+      { key: AMSG_NATURAL_LAST_CHECK_KEY, value: JSON.stringify(check) },
+    ]);
+  } catch (error) {
+    console.warn('[amsg:natural] 本次考虑结果写入失败（决定照常生效，只是面板少一句说明）', error);
   }
 };
 
@@ -1818,18 +1843,50 @@ export const amsgHooks = {
           amsgTaskInstruction: '这是角色自然产生的联系冲动，不是用户颁布的任务。结合人设、关系、最近上下文和此刻生活状态，像真人一样发一到三句真正此刻想说的话；可以很轻、很短，不要解释系统判断，也不要说自己被定时唤醒。',
         },
       });
+      // 这一次考虑的记账底稿：下面每条出口都补上自己的结果再写。发没发都要留一行，
+      // 否则用户从面板里看，「他这会儿不想说话」和「云端整个坏了」长得一模一样。
+      const noteCheck = (
+        sent: boolean,
+        skipReason: AmsgNaturalLastCheck['skipReason'],
+      ): Promise<void> => writeNaturalLastCheck(ctx.writeState, charId, {
+        v: 1,
+        checkedAt: ctx.now.getTime(),
+        score: decision.score,
+        threshold: decision.threshold,
+        sent,
+        skipReason,
+        reasons: decision.reasons,
+        nextCheckAt: nextAt,
+      });
+
       // 见面期间角色和用户就在同一地点。自然主动即使已经排到，也必须静默，
       // 否则会出现“人还在眼前却隔空发来无关消息”的割裂感。续排已在上面完成，
       // 结束见面后下一次 fire_pack 更新即可恢复自然主动。
-      if (pack.activeDateEncounter?.status === 'active') {
+      //
+      // 只看 status 是不够的：这个状态没有自动过期，只能由客户端清除，而清除它的那条
+      // 路（DateApp 的 finishEncounter）中途可能死在网络里。真出现过一次没清掉，角色就
+      // **永久**不再主动联系，界面上还处处正常。isDateEncounterOngoing 另外看一眼
+      // updatedAt，超过 12 小时没更新的一律当作早就散场了。
+      if (isDateEncounterOngoing(pack.activeDateEncounter, ctx.now.getTime())) {
         console.log('[amsg:natural-skip]', {
           taskId: ctx.task.id,
           charId,
           reason: 'active-date-presence',
-          encounterId: pack.activeDateEncounter.encounterId,
+          encounterId: pack.activeDateEncounter?.encounterId,
         });
         await recordSkip(ctx, charId, 'active-date-presence', occurrenceMs);
+        await noteCheck(false, 'active-date-presence');
         return { skip: true } as const;
+      }
+      if (pack.activeDateEncounter?.status === 'active') {
+        // 状态还挂着但已经过期：这基本可以断定是一次没能收尾的见面。照常放行，
+        // 同时留一行日志——用户来问「为什么不说话」时，这就是那条线索。
+        console.warn('[amsg:natural-stale-date]', {
+          taskId: ctx.task.id,
+          charId,
+          encounterId: pack.activeDateEncounter.encounterId,
+          updatedAt: pack.activeDateEncounter.updatedAt,
+        });
       }
       console.log('[amsg:natural-decision]', {
         taskId: ctx.task.id,
@@ -1850,13 +1907,21 @@ export const amsgHooks = {
           limit: naturalHardCap,
         });
         await recordSkip(ctx, charId, 'unanswered-limit', occurrenceMs);
+        await noteCheck(false, 'unanswered-limit');
         return { skip: true } as const;
       }
       if (isFreshChatPresence(presence, charId, ctx.now.getTime())) {
         console.log('[amsg:natural-skip]', { taskId: ctx.task.id, charId, reason: 'active-chat-presence' });
+        await noteCheck(false, 'active-chat-presence');
         return { skip: true } as const;
       }
-      if (!decision.shouldSend) return { skip: true } as const;
+      // 分数不够是最常见、也最正常的一条路：安静地排下一次，不调用 LLM。它以前什么都
+      // 不留，正是「角色忽然不说话了却查不出原因」的观察盲区——现在照实记一行。
+      if (!decision.shouldSend) {
+        await noteCheck(false, 'low-score');
+        return { skip: true } as const;
+      }
+      await noteCheck(true, null);
     }
 
     // 连发上限·到点兜底闸（用户主权）：用户未回复期间，角色自己排的任务最多响这么多次。

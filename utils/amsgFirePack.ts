@@ -190,7 +190,126 @@ export const unpackStateValue = async (value: string): Promise<string> => {
  * 所以让 worker 在跳过时留一句话，客户端读回来照实说明。只留最近一次：这是给人看的
  * 「刚才为什么没响」，不是审计流水，攒着只会越积越多。
  */
+/**
+ * 线下见面「还算不算正在进行」的有效期。
+ *
+ * activeDateEncounter 是一个**没有自动过期**的静音开关：worker 看到 status==='active'
+ * 就直接跳过自然主动（人就在眼前，不该隔空发消息）。可这个状态只能由客户端清除，而
+ * 清除它的 finishEncounter 中途可能死在网络里（见 DateApp）——一旦没清掉，角色就**永久**
+ * 不再主动联系，界面上还处处正常，隔着屏幕根本查不出来。
+ *
+ * 所以云端这边自带一把尺：超过这个时长没有再更新过的见面，一律当作早就散场了。
+ * 12 小时足够覆盖任何一次真实见面，又不至于让一次卡住的测试把角色闷上好几天。
+ */
+export const DATE_ENCOUNTER_MAX_AGE_MS = 12 * 60 * 60_000;
+
+/**
+ * 这次见面此刻是否真的还在进行。status 之外再看一眼 updatedAt，理由见上面那个常量。
+ * 时间戳缺失或明显来自未来（设备改过时钟）时按「不在进行」处理：宁可多发一条消息，
+ * 也不要让角色因为一个永远清不掉的旧状态而彻底失声。
+ */
+export const isDateEncounterOngoing = (
+  encounter: DateEncounterPresence | null | undefined,
+  nowMs: number,
+): boolean => {
+  if (!encounter || encounter.status !== 'active') return false;
+  const updatedAt = typeof encounter.updatedAt === 'number' && Number.isFinite(encounter.updatedAt)
+    ? encounter.updatedAt
+    : encounter.startedAt;
+  if (typeof updatedAt !== 'number' || !Number.isFinite(updatedAt)) return false;
+  if (updatedAt > nowMs + 60_000) return false;
+  return nowMs - updatedAt <= DATE_ENCOUNTER_MAX_AGE_MS;
+};
+
 export const AMSG_LAST_SKIP_KEY = 'last_skip';
+
+// ─── 自然主动的「上一次考虑」（每次到点都写，发没发都写）───
+//
+// last_skip 那套是给主动消息 2.0 的**闸**用的：只有闸拦下一次触发时才留记录。自然主动
+// 的绝大多数静默根本不经过任何闸——它只是算了个分、没到阈值、安静地排下一次。那条路上
+// 一个字都不留，于是从 App 里看，「他这会儿不想说话」和「云端整个坏了」长得一模一样，
+// 用户唯一能做的就是干等。这个 key 就是补上那句话：每次考虑完都写一份，分数、阈值、
+// 都算了哪些因素、下次什么时候再想——面板照实显示，用户自己就能分辨。
+//
+// 单独一个 key 而不复用 last_skip：两者节奏完全不同（这个每十几分钟一条，last_skip
+// 只在异常时出现），混在一起会让 2.0 面板天天显示「这次分数不够」，反而看不见真正的闸。
+
+export const AMSG_NATURAL_LAST_CHECK_KEY = 'natural_last_check';
+
+/** 自然主动没发出去时的直白原因；发了则为 null。 */
+const NATURAL_SKIP_REASONS = [
+  'low-score',
+  'unanswered-limit',
+  'active-chat-presence',
+  'active-date-presence',
+] as const;
+
+export interface AmsgNaturalLastCheck {
+  v: 1;
+  /** 这次「要不要联系」是什么时候考虑的。 */
+  checkedAt: number;
+  /** 算出来的分数与当时的阈值（含热络程度与用户滑杆的修正）。 */
+  score: number;
+  threshold: number;
+  /** 这次到底发没发。 */
+  sent: boolean;
+  /**
+   * low-score            算完分不够，安静地排下一次（最常见，完全正常）
+   * unanswered-limit     连续未回复已到 20 条最终保险
+   * active-chat-presence 到点时用户正在跟这个角色聊天/通话，让路
+   * active-date-presence 到点时你们仍在进行线下见面
+   */
+  skipReason: (typeof NATURAL_SKIP_REASONS)[number] | null;
+  /** 参与算分的因素（人话），例如「沉默 6.3 小时」「已有 3 条未获回复」。 */
+  reasons: string[];
+  /** 下一次重新考虑的时刻。 */
+  nextCheckAt: number;
+}
+
+export const parseNaturalLastCheck = (value: string): AmsgNaturalLastCheck | null => {
+  try {
+    const parsed = JSON.parse(value);
+    if (
+      parsed && typeof parsed === 'object' && parsed.v === 1
+      && typeof parsed.checkedAt === 'number'
+      && typeof parsed.score === 'number'
+      && typeof parsed.threshold === 'number'
+      && typeof parsed.sent === 'boolean'
+      && (parsed.skipReason === null
+        || (NATURAL_SKIP_REASONS as readonly string[]).includes(parsed.skipReason))
+    ) {
+      return {
+        ...parsed,
+        reasons: Array.isArray(parsed.reasons)
+          ? parsed.reasons.filter((item: unknown): item is string => typeof item === 'string')
+          : [],
+        nextCheckAt: typeof parsed.nextCheckAt === 'number' ? parsed.nextCheckAt : 0,
+      } as AmsgNaturalLastCheck;
+    }
+  } catch { /* 非 JSON → null */ }
+  return null;
+};
+
+/** 给人看的一句话：他上一次考虑的结果。 */
+export const describeNaturalLastCheck = (
+  check: AmsgNaturalLastCheck,
+  formatTime: (ms: number) => string,
+): string => {
+  const when = formatTime(check.checkedAt);
+  const next = check.nextCheckAt ? `，下次 ${formatTime(check.nextCheckAt)} 再想一次` : '';
+  if (check.sent) return `${when} ta 想联系你，消息已经发出${next}。`;
+  switch (check.skipReason) {
+    case 'active-chat-presence':
+      return `${when} 那次让路了——当时你正在和 ta 说话${next}。`;
+    case 'active-date-presence':
+      return `${when} 没有发——你们当时还在线下见面${next}。`;
+    case 'unanswered-limit':
+      return `${when} 收住了——连续 20 条没有收到你的回复，已到最终保险，回一句就会恢复。`;
+    default:
+      return `${when} ta 想了想，这次还不太想打扰你${next}。`;
+  }
+};
+
 
 /** last_skip 的原因枚举（新增值时 describeLastSkip 的人话文案要一起补）。 */
 const LAST_SKIP_REASONS = [

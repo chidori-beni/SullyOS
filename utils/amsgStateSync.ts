@@ -764,15 +764,30 @@ const writeChatPresence = (charId: string, lastUserMessageAt: number | null) => 
   return runChatPresenceWrite(charId, lease, presence);
 };
 
+/**
+ * 「用户最后一次开口」只会往前走，绝不后退。
+ *
+ * 同一个租约会被多个入口刷新，而其中有些入口手里根本没有这个时刻——通话页进场时写的
+ * 就是 null。直接赋值的话，后来的 null 会把前面刚记下的真实时刻抹掉，worker 那边就
+ * 永远收不到「用户其实刚说过话」这件事：未回复计数一直挂着，自然主动跟着一起哑掉。
+ */
+const laterUserMessageAt = (a: number | null, b: number | null): number | null => {
+  if (a == null) return b;
+  if (b == null) return a;
+  return Math.max(a, b);
+};
+
 /** 一轮真实用户消息进入生成流程时启动租约：立即写一次，之后每 15s 续租。 */
 export const startAmsgChatPresence = (charId: string, lastUserMessageAt: number | null) => {
   const existing = chatPresenceLeases.get(charId);
   if (existing) {
     // 已有 timer：只刷新本轮最新的 lastUserMessageAt，复用同一个心跳。
-    existing.lastUserMessageAt = lastUserMessageAt;
+    // 取较新的一份——见 laterUserMessageAt：进场时传的 null 不能抹掉已知时刻。
+    const merged = laterUserMessageAt(existing.lastUserMessageAt, lastUserMessageAt);
+    existing.lastUserMessageAt = merged;
     existing.backgrounded = false;
     ensureChatPresenceTimer(charId, existing);
-    return writeChatPresence(charId, lastUserMessageAt);
+    return writeChatPresence(charId, merged);
   }
 
   const lease: ChatPresenceLease = {

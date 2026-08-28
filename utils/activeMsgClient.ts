@@ -59,13 +59,17 @@ import {
   AMSG_SLOT_SELF_LOG,
   AMSG_SLOT_TASK_LIST,
   AMSG_SLOT_TIME_SINCE_USER,
+  AMSG_NATURAL_LAST_CHECK_KEY,
   AMSG_SLOT_USER_CLOCK,
   AmsgFirePack,
   type AmsgFirePackChatContent,
   type AmsgLastSkip,
+  type AmsgNaturalLastCheck,
   amsgStateNamespace,
+  isDateEncounterOngoing,
   packStateValue,
   parseLastSkip,
+  parseNaturalLastCheck,
 } from './amsgFirePack';
 import {
   AMSG_BACKGROUND_JOB_SUBTYPE,
@@ -747,7 +751,9 @@ export const buildFirePack = async (
       forFirePack: true,
       // 当前仍在面对面时，主动消息由 worker 硬闸拦截；保留 presence 也让
       // 新版包在诊断/恢复时能明确知道为什么没有发出自然主动。
-      activeDateEncounter: char.activeDateEncounter?.status === 'active'
+      // status 之外还要看一眼 updatedAt：这个状态没有自动过期，一次没能收尾的见面
+      // 会让角色永久不再主动联系（见 isDateEncounterOngoing）。
+      activeDateEncounter: isDateEncounterOngoing(char.activeDateEncounter, Date.now())
         ? char.activeDateEncounter
         : undefined,
     },
@@ -859,7 +865,8 @@ export const buildFirePack = async (
     selfScheduleEnabled: isAmsg2EnabledForChar(char),
     ...(naturalProactive ? { naturalProactive } : {}),
     ...(naturalProactive ? { naturalSignals: { pendingTopic, emotion } } : {}),
-    ...(char.activeDateEncounter?.status === 'active'
+    // 同上：过期的见面状态不再随包上云，避免一次没收尾的测试把角色闷住。
+    ...(isDateEncounterOngoing(char.activeDateEncounter, Date.now())
       ? { activeDateEncounter: char.activeDateEncounter }
       : {}),
     // 到点时角色要知道自己还挂着什么，才不会把同一件事再排一遍。这里带原始记录，
@@ -3267,6 +3274,23 @@ export const ActiveMsgClient = {
     try {
       const value = await this.readClientStateValue(amsgStateNamespace(charId), AMSG_LAST_SKIP_KEY);
       return value ? parseLastSkip(value) : null;
+    } catch {
+      return null;
+    }
+  },
+
+  /**
+   * 自然主动上一次「要不要联系」的结果（发了也有，没发也有）。
+   *
+   * 自然主动的静默绝大多数不经过任何闸，云端不主动记一行的话，用户从面板里根本分不清
+   * 「他这会儿不想说话」和「云端坏了」。读失败按「还没有记录」处理，不该让面板打不开。
+   */
+  async readNaturalLastCheck(charId: string): Promise<AmsgNaturalLastCheck | null> {
+    try {
+      const value = await this.readClientStateValue(
+        amsgStateNamespace(charId), AMSG_NATURAL_LAST_CHECK_KEY,
+      );
+      return value ? parseNaturalLastCheck(value) : null;
     } catch {
       return null;
     }
