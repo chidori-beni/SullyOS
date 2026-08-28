@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { Anniversary, CalendarMoodId, DailySchedule, RoomTodo, Task } from '../types';
@@ -9,6 +9,7 @@ import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { getLocalDateKey } from '../utils/localDate';
 import { eventsForDate, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, tasksForDate } from '../utils/calendarIntegration';
 import { trackEvent } from '../utils/analytics';
+import { extractTaskComment, isTaskCommentUsable } from '../utils/taskComment';
 import { buildMonthlyReviewStats, buildSullyMonthlyReport, CALENDAR_MOODS, chooseMonthlyMessageCharacterId } from '../utils/calendarMonthlyReview';
 
 type CalendarTab = 'month' | 'mine' | 'theirs' | 'review';
@@ -41,6 +42,7 @@ const ScheduleApp: React.FC = () => {
     const [showMoodPicker, setShowMoodPicker] = useState(false);
     const [generatingLetter, setGeneratingLetter] = useState(false);
     const [openedLetters, setOpenedLetters] = useState<Set<string>>(new Set());
+    const repairAttemptedTaskIds = useRef<Set<string>>(new Set());
 
     const [taskTitle, setTaskTitle] = useState('');
     const [taskNote, setTaskNote] = useState('');
@@ -201,27 +203,35 @@ const ScheduleApp: React.FC = () => {
     };
     const generateTaskComment = async (task: Task) => {
         const supervisor = characters.find(char => char.id === task.supervisorId);
-        if (!supervisor || !apiConfig.apiKey || task.supervisorComment) return;
+        if (!supervisor || !apiConfig.apiKey || isTaskCommentUsable(task.supervisorComment)) return;
         setCommenting(current => new Set(current).add(task.id));
         try {
             await injectMemoryPalace(supervisor, undefined, task.title);
-            const response = await fetch(apiConfig.baseUrl.replace(/\/+$/, '') + '/chat/completions', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiConfig.apiKey },
-                body: JSON.stringify({
-                    model: apiConfig.model, temperature: 0.8, max_tokens: 80,
-                    messages: [
-                        { role: 'system', content: ContextBuilder.buildCoreContext(supervisor, userProfile) },
-                        { role: 'user', content: '用户刚添加了一个待办：「' + task.title + '」。请以你的角色口吻写一句放在待办下方的小字，像一句轻声的陪伴或期待。使用用户常用语言，5-20字，只输出这一句，不要引号，不要命令或催促。' },
-                    ],
-                }),
-            });
-            if (!response.ok) throw new Error('API Error ' + response.status);
-            const data = await safeResponseJson(response);
-            const text = data.choices?.[0]?.message?.content?.trim()
-                .replace(/^["']|["']$/g, '')
-                .replace(/\s+/g, ' ')
-                .slice(0, 40);
+            const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '') + '/chat/completions';
+            // Put this protocol after the full character context. Custom cards can
+            // contain their own output-format labels; the task-comment call must
+            // explicitly override those labels and ask for one display sentence.
+            const systemPrompt = `${ContextBuilder.buildCoreContext(supervisor, userProfile)}\n\n[当前调用：待办陪伴小字]\n这是一个独立的小字生成调用，不是普通聊天，也不是结构化字段填充。无论角色卡、世界书或历史示例要求什么格式，本次只返回一句给用户看的自然台词正文；绝不返回字段名、模式名、JSON、标题或解释。`;
+            const firstPrompt = `【待办小字输出协议】\n用户刚添加了待办「${task.title}」。请以你的角色口吻写一句放在待办下方的小字，像一句轻声的陪伴或期待。使用用户常用语言，5-20字。\n只输出台词正文，不要输出“平时用语”“日常用语”“评价”等字段名、模式名、标题或 JSON，不要解释、不要引号、不要命令或催促。`;
+            const correctionPrompt = `上一条没有返回台词正文，而是返回了字段名或模式名。请重新写：只输出一句真正对用户说的话（5-20字），内容要和待办「${task.title}」有关，不能出现“平时用语”“日常用语”“评价”等标签，不能输出 JSON、标题或解释。`;
+            const requestComment = async (prompt: string) => {
+                const response = await fetch(baseUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiConfig.apiKey },
+                    body: JSON.stringify({
+                        model: apiConfig.model, temperature: 0.8, max_tokens: 120,
+                        messages: [
+                            { role: 'system', content: systemPrompt },
+                            { role: 'user', content: prompt },
+                        ],
+                    }),
+                });
+                if (!response.ok) throw new Error('API Error ' + response.status);
+                const data = await safeResponseJson(response);
+                return extractTaskComment(data.choices?.[0]?.message?.content);
+            };
+            let text = await requestComment(firstPrompt);
+            if (!text) text = await requestComment(correctionPrompt);
             if (!text) return;
             // The user can complete the task while this request is in flight; merge into the
             // latest IndexedDB row instead of resurrecting an old isCompleted value.
@@ -239,6 +249,17 @@ const ScheduleApp: React.FC = () => {
             setCommenting(current => { const next = new Set(current); next.delete(task.id); return next; });
         }
     };
+    useEffect(() => {
+        // Wait until OSContext has finished loading custom characters. Otherwise
+        // a legacy task can be read before its supervisor exists in `characters`
+        // and never get another chance to repair its bad metadata comment.
+        if (!apiConfig.apiKey || characters.length === 0 || tasks.length === 0) return;
+        tasks.filter(task => task.supervisorComment && !isTaskCommentUsable(task.supervisorComment)).slice(0, 4).forEach(task => {
+            if (repairAttemptedTaskIds.current.has(task.id)) return;
+            repairAttemptedTaskIds.current.add(task.id);
+            void generateTaskComment(task);
+        });
+    }, [apiConfig.apiKey, characters, tasks]);
     const addTask = async () => {
         if (!taskTitle.trim() || !taskDate) return;
         const task: Task = {
@@ -303,7 +324,7 @@ const ScheduleApp: React.FC = () => {
         return <div key={task.id} className="group flex items-start gap-3 rounded-2xl border border-white/70 bg-white/80 p-3 shadow-sm">
             <button onClick={() => toggleTask(task)} disabled={processing.has(task.id)} className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition ${task.isCompleted ? 'border-emerald-400 bg-emerald-400 text-white' : 'border-violet-300 bg-white'}`} aria-label={task.isCompleted ? '恢复待办' : '完成待办'}>{processing.has(task.id) ? '…' : task.isCompleted ? '✓' : ''}</button>
             <div className="min-w-0 flex-1"><div className={`text-sm font-semibold text-slate-700 ${task.isCompleted ? 'line-through opacity-45' : ''}`}>{task.title}</div>
-                {(task.supervisorComment || commenting.has(task.id)) && <div className="mt-1 truncate text-[11px] italic text-violet-400">{task.supervisorComment || 'TA 正在想一句话…'}</div>}
+                {(isTaskCommentUsable(task.supervisorComment) || commenting.has(task.id)) && <div className="mt-1 truncate text-[11px] italic text-violet-400">{extractTaskComment(task.supervisorComment) || 'TA 正在想一句话…'}</div>}
                 {!compact && task.note && <div className="mt-1 text-xs leading-relaxed text-slate-400">{task.note}</div>}
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-slate-400"><span>{taskDateKey(task)}{task.dueTime ? ` · ${task.dueTime}` : ''}</span>{supervisor && <span>由 {supervisor.name} 陪你</span>}{task.naturalReminder !== false && <span className="rounded-full bg-violet-50 px-2 py-0.5 text-violet-500">可自然提醒</span>}</div>
             </div><button onClick={() => deleteTask(task.id)} className="px-1 text-slate-300 opacity-0 transition hover:text-rose-400 group-hover:opacity-100">×</button>
