@@ -16,8 +16,10 @@ describe('task comment response cleanup', () => {
         expect(extractTaskComment('萧逸 (Xiao Yi)’s')).toBeNull();
         expect(extractTaskComment('萧逸 (Xiao Yi)’s:')).toBeNull();
         expect(extractTaskComment('萧逸（Xiao Yi）的')).toBeNull();
-        expect(extractTaskComment('反派大Boss采购完述')).toBeNull();
-        expect(extractTaskComment('挑好想吃的热便当')).toBeNull();
+        expect(extractTaskComment('反派大Boss采购完述')).toBe('反派大Boss采购完述');
+        expect(extractTaskComment('挑好想吃的热便当')).toBe('挑好想吃的热便当');
+        expect(isTaskCommentUsable('反派大Boss采购完述')).toBe(false);
+        expect(isTaskCommentUsable('挑好想吃的热便当')).toBe(false);
         expect(isTaskCommentUsable('平时用语')).toBe(false);
     });
 
@@ -39,8 +41,11 @@ describe('task comment response cleanup', () => {
 
     it('requires a complete sentence and adds the speaker name once', () => {
         expect(extractTaskComment('今天也辛苦了，买完东西就早点回家休息。')).toBe('今天也辛苦了，买完东西就早点回家休息。');
-        expect(extractTaskComment('今天也辛苦了，买完东西就早点回家休息')).toBeNull();
+        expect(extractTaskComment('今天也辛苦了，买完东西就早点回家休息')).toBe('今天也辛苦了，买完东西就早点回家休息');
+        expect(isTaskCommentUsable('今天也辛苦了，买完东西就早点回家休息')).toBe(false);
+        expect(isTaskCommentUsable('今天也辛苦了，买完东西就早点回家休息。')).toBe(true);
         expect(formatTaskComment('萧逸', '今天也辛苦了，买完东西就早点回家休息。')).toBe('萧逸：今天也辛苦了，买完东西就早点回家休息。');
         expect(formatTaskComment('萧逸', '萧逸：今天也辛苦了，买完东西就早点回家休息。')).toBe('萧逸：今天也辛苦了，买完东西就早点回家休息。');
+        expect(formatTaskComment('萧逸', '挑好想吃的热便当')).toBe('萧逸：挑好想吃的热便当');
     });
 });

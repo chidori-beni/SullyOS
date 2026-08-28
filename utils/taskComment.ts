@@ -15,14 +15,13 @@ const META_LABELS = new Set([
     '留学生 in tokyo', '留学生intokyo',
 ]);
 
-// A short fragment or a line that stops without sentence punctuation is almost
-// always an unfinished model response (for example “想吃” / “还算” /
-// “挑好想吃的热便当”), not the sentence that belongs under a task card.
-// Requiring a little substance here is intentional: a failed generation should
-// leave the placeholder and retry, rather than persist something that reads as
-// a half-finished thought.
-const MIN_TASK_COMMENT_LENGTH = 12;
-const MAX_TASK_COMMENT_LENGTH = 80;
+// Keep extraction deliberately lenient enough to preserve a non-empty model
+// response while a repair request is running. Completeness is checked
+// separately by `isTaskCommentUsable`; otherwise a rejected response makes the
+// whole card line disappear before the retry has a chance to replace it.
+const MIN_EXTRACTED_TASK_COMMENT_LENGTH = 6;
+const MIN_COMPLETE_TASK_COMMENT_LENGTH = 12;
+const MAX_COMPLETE_TASK_COMMENT_LENGTH = 80;
 
 const isMetaLabel = (value: string): boolean => {
     const normalized = value.trim()
@@ -105,12 +104,18 @@ export const extractTaskComment = (raw: unknown): string | null => {
     text = text.replace(/^(?:平时用语|日常用语|评价|评论|角色评价|待办评价|comment|task\s*comment|text|content|response|output)\s*[:：\-]\s*/i, '').trim();
     text = stripWrapping(text).replace(/\s+/g, ' ').trim();
     if (!text || isMetaLabel(text) || isIdentityPossessiveFragment(text)) return null;
-    if ([...text].filter(character => !/\s/.test(character)).length < MIN_TASK_COMMENT_LENGTH) return null;
-    if (text.length > MAX_TASK_COMMENT_LENGTH || !isLikelyCompleteSentence(text)) return null;
+    if ([...text].filter(character => !/\s/.test(character)).length < MIN_EXTRACTED_TASK_COMMENT_LENGTH) return null;
     return text;
 };
 
-export const isTaskCommentUsable = (value: unknown): value is string => Boolean(extractTaskComment(value));
+export const isTaskCommentUsable = (value: unknown): value is string => {
+    const text = extractTaskComment(value);
+    if (!text) return false;
+    const effectiveLength = [...text].filter(character => !/\s/.test(character)).length;
+    return effectiveLength >= MIN_COMPLETE_TASK_COMMENT_LENGTH
+        && text.length <= MAX_COMPLETE_TASK_COMMENT_LENGTH
+        && isLikelyCompleteSentence(text);
+};
 
 /**
  * Put the speaker in front of a persisted task sentence without duplicating a

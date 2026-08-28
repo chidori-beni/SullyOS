@@ -28,6 +28,18 @@ const buildTaskPromptContext = (task: Task) => [
     task.dueTime ? `时间：${task.dueTime}` : '',
 ].filter(Boolean).join('\n');
 
+const shortTaskTitle = (task: Task) => {
+    const title = task.title.trim().replace(/[“”"']/g, '').replace(/\s+/g, ' ');
+    const characters = [...title];
+    return characters.length > 18 ? `${characters.slice(0, 18).join('')}…` : title;
+};
+
+const buildTaskCommentFallback = (task: Task, completed: boolean) => {
+    const title = shortTaskTitle(task) || '这件事';
+    if (completed) return `“${title}”已经完成了，我替你记下了。先歇一会儿，剩下的慢慢来。`;
+    return `“${title}”我替你记着。准备好了就去做，回来再告诉我结果吧。`;
+};
+
 const ScheduleApp: React.FC = () => {
     const { closeApp, characters, activeCharacterId, apiConfig, addToast, userProfile, updateUserProfile } = useOS();
     const today = getLocalDateKey();
@@ -207,8 +219,8 @@ const ScheduleApp: React.FC = () => {
                 return extractTaskComment(data.choices?.[0]?.message?.content);
             };
             let text = await requestReward(firstPrompt);
-            if (!text) text = await requestReward(correctionPrompt);
-            if (!text) { if (!silent) addToast('待办已完成（角色没有留下可用评价）', 'success'); return; }
+            if (!isTaskCommentUsable(text)) text = await requestReward(correctionPrompt);
+            if (!isTaskCommentUsable(text)) text = buildTaskCommentFallback(task, true);
             // Merge into the latest row so the sentence survives reloads and is
             // not written to a deleted or subsequently uncompleted task.
             const latest = (await DB.getAllTasks()).find(item => item.id === task.id);
@@ -227,7 +239,22 @@ const ScheduleApp: React.FC = () => {
             }
         } catch (error: any) {
             console.error('Task reward failed', error);
-            if (!silent) addToast(`待办已完成，评价生成失败：${error.message}`, 'error');
+            // A network/provider failure must not make the permanent line vanish.
+            // Keep a complete contextual sentence on the card; a later successful
+            // generation can still replace it.
+            const latest = (await DB.getAllTasks()).find(item => item.id === task.id);
+            if (latest?.isCompleted) {
+                const text = buildTaskCommentFallback(task, true);
+                const updated: Task = {
+                    ...latest,
+                    completedSupervisorComment: text,
+                    completedSupervisorCommentGeneratedAt: Date.now(),
+                };
+                await DB.saveTask(updated);
+                setTasks(current => current.map(item => item.id === task.id ? updated : item));
+                notifyCalendarDataUpdated();
+            }
+            if (!silent) addToast('待办已完成，角色台词暂时使用了本地完整版本', 'success');
         }
     };
     const generateTaskComment = async (task: Task) => {
@@ -261,8 +288,8 @@ const ScheduleApp: React.FC = () => {
                 return extractTaskComment(data.choices?.[0]?.message?.content);
             };
             let text = await requestComment(firstPrompt);
-            if (!text) text = await requestComment(correctionPrompt);
-            if (!text) return;
+            if (!isTaskCommentUsable(text)) text = await requestComment(correctionPrompt);
+            if (!isTaskCommentUsable(text)) text = buildTaskCommentFallback(task, false);
             // The user can complete the task while this request is in flight; merge into the
             // latest IndexedDB row instead of resurrecting an old isCompleted value.
             const latest = (await DB.getAllTasks()).find(item => item.id === task.id);
@@ -275,6 +302,17 @@ const ScheduleApp: React.FC = () => {
             notifyCalendarDataUpdated();
         } catch (error) {
             console.error('Task comment failed', error);
+            const latest = (await DB.getAllTasks()).find(item => item.id === task.id);
+            if (latest) {
+                const updated = {
+                    ...latest,
+                    supervisorComment: buildTaskCommentFallback(task, false),
+                    supervisorCommentGeneratedAt: Date.now(),
+                };
+                await DB.saveTask(updated);
+                setTasks(current => current.map(item => item.id === task.id ? updated : item));
+                notifyCalendarDataUpdated();
+            }
         } finally {
             setCommenting(current => { const next = new Set(current); next.delete(task.id); return next; });
         }
