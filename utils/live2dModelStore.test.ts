@@ -346,6 +346,47 @@ describe('Live2D 模型导入解析', () => {
     expect(inferLive2DActionTags('B麦克风')).toContain('explain');
   });
 
+  // 国产手游（光与夜之恋等）导出的动作组名是纯拼音，既非英文也非中文。
+  it('动作名称支持拼音标签推断', () => {
+    expect(inferLive2DActionTags('X_haixiu', 'motions/X_haixiu.motion3.json')).toContain('shy');
+    expect(inferLive2DActionTags('X_fennu')).toContain('angry');
+    expect(inferLive2DActionTags('X_chijing')).toContain('surprised');
+    expect(inferLive2DActionTags('X_zhoumei_idle')).toContain('tilt');
+    expect(inferLive2DActionTags('X_beishang_idle')).toContain('sad');
+    expect(inferLive2DActionTags('X_huishou')).toContain('wave');
+    expect(inferLive2DActionTags('Q_diantou')).toContain('nod');
+    expect(inferLive2DActionTags('Q_yaotou')).toContain('shake');
+  });
+
+  // xiao 结尾的复合词要命中，但不能误伤角色名 xiaoyi（萧逸）。
+  it('拼音 xiao 只在词尾生效，不误伤 xiaoyi 这类角色名', () => {
+    expect(inferLive2DActionTags('X_weixiao_idle')).toContain('happy');
+    expect(inferLive2DActionTags('X_huaixiao2')).toContain('happy');
+    expect(inferLive2DActionTags('X_tiaoxiao')).toContain('happy');
+    expect(inferLive2DActionTags('X_huaixiaio')).toContain('happy');
+    expect(inferLive2DActionTags('X_wangtiansikaoxiao')).toContain('happy');
+    expect(inferLive2DActionTags('xiaoyi_003', 'xiaoyi_003/xiaoyi.model3.json')).not.toContain('happy');
+  });
+
+  // 这些 tag 是 AVATAR_EMOTIONS / AVATAR_GESTURES 里本来就有、词表原先漏掉的取值。
+  it('补齐 AI 枚举里原本没有词表的 tag', () => {
+    expect(inferLive2DActionTags('X_wenrou_idle')).toContain('relaxed');
+    expect(inferLive2DActionTags('normal_idle')).toContain('neutral');
+    expect(inferLive2DActionTags('calm_breath')).toContain('calm');
+    expect(inferLive2DActionTags('X_fzzhoumeixianqi')).toContain('disgusted');
+    expect(inferLive2DActionTags('talking_loop')).toContain('talk');
+    expect(inferLive2DActionTags('lean-in')).toContain('lean-in');
+    expect(inferLive2DActionTags('lean-back')).toContain('lean-back');
+  });
+
+  // 带 _idle 后缀的拼音动作原先只命中 idle，会被判成待机而降级为「仅手动」。
+  it('拼音动作带 _idle 后缀时不再被判成纯待机', () => {
+    const tags = inferLive2DActionTags('X_haixiu_idle', 'motions/X_haixiu_idle.motion3.json');
+    expect(tags).toContain('shy');
+    expect(tags).toContain('idle');
+    expect(tags.every(tag => tag === 'idle')).toBe(false);
+  });
+
   it('贴图魔数嗅探：扩展名不可靠时按文件头识别 PNG/JPEG/WebP', async () => {
     const png = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0, 0, 0, 0])]);
     const jpeg = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])]);

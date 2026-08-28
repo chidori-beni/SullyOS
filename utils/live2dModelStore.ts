@@ -624,19 +624,42 @@ const resolveModelReference = (modelPath: string, reference: string): string => 
   return normalizePath(base.join('/'));
 };
 
+// 动作名 -> tag。tag 取值必须落在 utils/avatarPerformance.ts 的
+// AVATAR_EMOTIONS / AVATAR_GESTURES 里，否则 findLive2DActionsForPerformance
+// 拿 AI 给的 emotion/gesture 去求交集时永远命不中。
+//
+// 词表含三套写法：英文、中文、**拼音**。
+// 拼音是给国产手游模型用的 —— 光与夜之恋这类游戏导出的动作组名是纯拼音
+// （X_haixiu / X_weixiao / Q_chijing），既不是英文也不是中文，只有英中两套词表时
+// 一个都匹配不上，整个模型的动作 AI 全都调不动。
+//
+// `xiao` 单独一个词有歧义（会命中角色名 xiaoyi=萧逸 之类），所以用
+// `xiao(?![a-z])` 卡住右边界：weixiao / daxiao / huaixiao / tiaoxiao 这些以 xiao
+// 收尾的复合词照样命中，xiaoyi 则不会。用「后面不是字母」而不是后行断言，
+// 是为了兼容不支持 lookbehind 的旧 WebView。
 const actionTagRules: Array<[string, RegExp]> = [
-  ['happy', /happy|smile|joy|laugh|grin|star|tail|开心|高兴|微笑|笑|星星|尾巴/i],
-  ['sad', /sad|cry|gloom|tear|upset|伤心|难过|哭|失落|脸黑/i],
-  ['angry', /angry|anger|mad|rage|生气|愤怒|气恼/i],
-  ['surprised', /surpris|shock|wow|sweat|惊讶|震惊|吃惊|汗/i],
-  ['shy', /shy|blush|bashful|love|heart|cat.?ear|害羞|脸红|爱心|猫耳/i],
-  ['wave', /wave|hello|greet|hand|挥手|招呼|你好/i],
-  ['nod', /nod|agree|yes|点头|同意/i],
-  ['shake', /shake|disagree|no|摇头|拒绝/i],
-  ['tilt', /tilt|question|confus|歪头|疑问|困惑/i],
-  ['explain', /explain|present|talk|speak|chat|microphone|介绍|解释|说话|麦克风/i],
-  ['idle', /idle|standby|breath|待机|呼吸/i],
-  ['idle', /循环|loop/i],
+  ['happy', /happy|smile|joy|laugh|grin|star|tail|开心|高兴|微笑|笑|星星|尾巴|xiao(?![a-z])|huaixiaio|kaixin|gaoxing|deyi|tiaokan/i],
+  ['sad', /sad|cry|gloom|tear|upset|伤心|难过|哭|失落|脸黑|nanguo|shangxin|beishang|aishang|kuqi|liulei|shiluo|weiqu/i],
+  ['angry', /angry|anger|mad|rage|生气|愤怒|气恼|shengqi|fennu|naohuo|qinao|aojiao|juezui|buman/i],
+  ['surprised', /surpris|shock|wow|sweat|惊讶|震惊|吃惊|汗|chijing|jingya|zhenjing|dajing|jingxia|ganga/i],
+  ['shy', /shy|blush|bashful|love|heart|cat.?ear|害羞|脸红|爱心|猫耳|haixiu|xiuse|lianhong/i],
+  ['wave', /wave|hello|greet|hand|挥手|招呼|你好|huishou|zhaoshou|zhaohu|nihao/i],
+  ['nod', /nod|agree|yes|点头|同意|diantou|tongyi/i],
+  ['shake', /shake|disagree|no|摇头|拒绝|yaotou|jujue/i],
+  ['tilt', /tilt|question|confus|歪头|疑问|困惑|waitou|yiwen|yihuo|kunhuo|sikao|wuyu|zhoumei/i],
+  ['explain', /explain|present|talk|speak|chat|microphone|介绍|解释|说话|麦克风|shuohua|jianghua|jieshi|jieshao|jiangjie/i],
+  ['idle', /idle|standby|breath|待机|呼吸|daiji|huxi|jingzhi/i],
+  ['idle', /循环|loop|xunhuan/i],
+  // 下面几条补的是 AI 侧枚举里本来就有、词表却一直没覆盖的取值。
+  // 缺了它们，模型输出 emotion=calm / gesture=talk 时必然空转。
+  ['talk', /talking|speaking|说话|讲话|shuohua|jianghua/i],
+  ['neutral', /neutral|normal|default|平静|自然|默认|pingjing|ziran|moren/i],
+  ['calm', /calm|平静|淡定|pingjing|danding/i],
+  ['relaxed', /relax|放松|轻松|温柔|fangsong|qingsong|wenrou/i],
+  ['fearful', /fear|scared|afraid|panic|害怕|恐惧|惊恐|haipa|kongju|jingkong/i],
+  ['disgusted', /disgust|嫌弃|厌恶|反感|xianqi|yanwu|fangan/i],
+  ['lean-in', /lean.?in|前倾|凑近|qianqing|coujin/i],
+  ['lean-back', /lean.?back|后仰|靠回|houyang|kaohui/i],
 ];
 
 export const inferLive2DActionTags = (...parts: Array<string | undefined>): string[] => {
