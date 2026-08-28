@@ -2567,7 +2567,7 @@ export interface CompanionTouchReaction {
     camera: 'close' | 'medium' | 'wide' | 'push-in' | 'pull-out';
     gaze: 'viewer' | 'left' | 'right' | 'down';
     intensity: number;
-    faces?: Array<'wink' | 'grin' | 'pout' | 'blush' | 'eyes-closed' | 'smile-eyes' | 'brow-up' | 'brow-sad' | 'brow-angry'>;
+    faces?: Array<'wink' | 'grin' | 'pout' | 'blush' | 'eyes-closed' | 'smile-eyes' | 'brow-up' | 'brow-sad' | 'brow-angry' | 'teeth' | 'bite-lip' | 'fluster' | 'pupils-wide' | 'pupils-small'>;
     modelAction?: string;
     modelActions?: string[];
     precision?: CompanionPerformancePrecision;

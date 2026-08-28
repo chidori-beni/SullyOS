@@ -184,7 +184,7 @@ ${compact(reply, 8_000)}
 ## 可用字段
 - emotion: neutral / happy / sad / angry / fearful / disgusted / surprised / calm / relaxed
 - gesture: idle / talk / nod / shake / tilt / explain / wave / shy / lean-in / lean-back
-- face: 可多选 wink / grin / pout / blush / eyes-closed / smile-eyes / brow-up / brow-sad / brow-angry
+- face: 可多选 wink / grin / pout / blush / eyes-closed / smile-eyes / brow-up / brow-sad / brow-angry / teeth（露齿）/ bite-lip（咬唇）/ fluster（羞赧）/ pupils-wide（瞳孔放大）/ pupils-small（瞳孔紧缩）
 - camera: close / medium / wide / push-in / pull-out
 - gaze: viewer / left / right / down
 - intensity: 0.2 到 1

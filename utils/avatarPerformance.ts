@@ -6,6 +6,9 @@ export const AVATAR_GAZES = ['viewer', 'left', 'right', 'down'] as const;
 export const AVATAR_FACES = [
   'wink', 'grin', 'pout', 'blush', 'eyes-closed',
   'smile-eyes', 'brow-up', 'brow-sad', 'brow-angry',
+  // 下面五个走 Cubism 的可选脸部参数。模型没有对应参数时写入会被引擎忽略，
+  // 不会报错也不会串到别的部件上，所以对不支持的模型是安全的空操作。
+  'teeth', 'bite-lip', 'fluster', 'pupils-wide', 'pupils-small',
 ] as const;
 
 export type AvatarEmotion = typeof AVATAR_EMOTIONS[number];
@@ -133,6 +136,11 @@ const FACE_ALIASES: Record<string, AvatarFace> = {
   'raise-brow': 'brow-up', 'raised-brow': 'brow-up', browup: 'brow-up',
   'sad-brow': 'brow-sad', worried: 'brow-sad', 'worried-brow': 'brow-sad',
   frown: 'brow-angry', 'angry-brow': 'brow-angry', glare: 'brow-angry',
+  'open-mouth-smile': 'teeth', toothy: 'teeth', 'show-teeth': 'teeth',
+  bitelip: 'bite-lip', 'lip-bite': 'bite-lip', biting: 'bite-lip',
+  flustered: 'fluster', bashful: 'fluster', 'deep-blush': 'fluster',
+  'pupil-wide': 'pupils-wide', 'wide-pupils': 'pupils-wide', sparkle: 'pupils-wide',
+  'pupil-small': 'pupils-small', 'small-pupils': 'pupils-small', shocked: 'pupils-small',
 };
 const CAMERA_ALIASES: Record<string, AvatarCamera> = {
   closeup: 'close', 'close-up': 'close', portrait: 'close',
@@ -456,7 +464,7 @@ export const buildAvatarPerformancePrompt = (modelActions: Array<{ id: string; n
 字段取值（只能从这些里选）：
 - emotion: neutral / happy / sad / angry / fearful / disgusted / surprised / calm / relaxed
 - gesture: idle / talk / nod / shake / tilt / explain / wave / shy / lean-in（前倾凑近）/ lean-back（后仰靠回去）
-- face: 可选的微表情叠加层，逗号分隔可多选：wink / grin（咧嘴）/ pout（撅嘴）/ blush（脸红）/ eyes-closed / smile-eyes（眯眯笑眼）/ brow-up（挑眉）/ brow-sad（八字眉委屈）/ brow-angry（皱眉瞪）
+- face: 可选的微表情叠加层，逗号分隔可多选：wink / grin（咧嘴）/ pout（撅嘴）/ blush（脸红）/ eyes-closed / smile-eyes（眯眯笑眼）/ brow-up（挑眉）/ brow-sad（八字眉委屈）/ brow-angry（皱眉瞪）/ teeth（露齿）/ bite-lip（咬唇）/ fluster（羞赧，比 blush 更强）/ pupils-wide（瞳孔放大，心动惊喜）/ pupils-small（瞳孔紧缩，受惊或冷下来）
 - camera: close / medium / wide / push-in / pull-out
 - gaze: viewer / left / right / down
 - intensity: 0.2 到 1（同时控制情绪浓度和动作幅度：0.9 的 nod 是大幅度点头，0.4 只是轻轻颔首）
@@ -464,7 +472,9 @@ ${modelActions.length ? `- model_action: 可选；这个模型有一些专属动
 
 **这些字段是用来自由搭配的，不是单选题**——真人的脸和身体从来不是一次只做一件事：
 - 气到想笑：emotion=angry; face=grin —— 咧着嘴的生气比板着脸生动十倍
-- 得意地眨眼：emotion=happy; face=wink,grin; gesture=lean-in; intensity=0.85
+- 得意地眨眼：emotion=happy; face=wink,grin,teeth; gesture=lean-in; intensity=0.85
+- 被戳中心事：emotion=surprised; face=pupils-small,brow-sad; gesture=lean-back
+- 心动到说不出话：emotion=happy; face=fluster,pupils-wide,bite-lip; gaze=down
 - 被夸到不好意思：emotion=happy; face=blush; gesture=shy; gaze=down
 - 用力否认：emotion=angry; gesture=shake; intensity=0.95 —— 大幅度摇头
 - 恍然大悟往前凑：emotion=surprised; gesture=lean-in; camera=push-in

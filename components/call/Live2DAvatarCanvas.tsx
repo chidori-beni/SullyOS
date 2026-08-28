@@ -1332,7 +1332,17 @@ const Live2DAvatarCanvas: React.FC<Live2DAvatarCanvasProps> = ({
             // vowel value here would erase the model's smile or pout.
             smooth(id, combinedMouthForm, mouthFormSpeed, true);
           }
-          smooth('ParamCheek', faceW('blush'), 0.18, true);
+          // fluster 是比 blush 更重的一层：走模型自带的 ParamShy（羞赧红晕/斜线），
+          // 同时给脸颊补一点，这样没有 ParamShy 的模型至少还能红起来。
+          const fluster = faceW('fluster');
+          smooth('ParamCheek', clamp(faceW('blush') + fluster * 0.65, 0, 1), 0.18, true);
+          smooth('ParamShy', fluster, 0.2, true);
+          // 露齿跟着咧嘴一起给一点，纯 grin 也会比原来生动；咬唇是独立一层。
+          smooth('ParamMouthTeeth', clamp(faceW('teeth') + faceW('grin') * 0.35, 0, 1), 0.22, true);
+          smooth('ParamMouthBite', faceW('bite-lip'), 0.22, true);
+          // 瞳孔缩放：正 = 放大（心动/惊喜），负 = 缩紧（受惊/冷下来）。
+          // 幅度按该模型实测区间取（+0.4 / −0.9），两个都选时相互抵消。
+          smooth('ParamEyeballZoom', faceW('pupils-wide') * 0.4 - faceW('pupils-small') * 0.9, 0.24, true);
           // 眉眼系：眯眯笑眼走标准笑眼参数；眉毛用高度/形状/角度组合近似
           // 挑眉、八字眉、皱眉（各模型绑法不同，追求"方向对"而非像素级精确）。
           const smileEyes = faceW('smile-eyes');

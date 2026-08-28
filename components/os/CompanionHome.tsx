@@ -236,6 +236,8 @@ const STARTUP_CAMERA_LABELS: Record<string, string> = {
 const STARTUP_FACE_LABELS: Record<string, string> = {
   wink: '眨眼', grin: '咧嘴', pout: '撅嘴', blush: '脸红', 'eyes-closed': '闭眼',
   'smile-eyes': '笑眼', 'brow-up': '挑眉', 'brow-sad': '忧眉', 'brow-angry': '压眉',
+  teeth: '露齿', 'bite-lip': '咬唇', fluster: '羞赧',
+  'pupils-wide': '瞳孔放大', 'pupils-small': '瞳孔紧缩',
 };
 // ── 背景预设：华丽渐变场景（companionBackground = `preset:<id>`）──
 interface CompanionBgPreset {
@@ -3603,10 +3605,7 @@ const CompanionHome: React.FC = () => {
                   <div className="text-[8px] text-white/46">
                     微表情（最多 4 个{live2dCompanionActive ? '；Live2D 唯一改脸的一层' : ''}）
                   </div>
-                  <div
-                    className="mt-1.5 flex flex-wrap gap-1.5"
-                    style={{ opacity: live2dCompanionActive && startupEditorPerformance.modelAction ? 0.4 : 1 }}
-                  >
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
                     {AVATAR_FACES.map(face => {
                       const selected = startupEditorPerformance.faces?.includes(face) || false;
                       return (
@@ -3614,7 +3613,7 @@ const CompanionHome: React.FC = () => {
                           key={face}
                           type="button"
                           aria-pressed={selected}
-                          disabled={settingsGenerating || Boolean(live2dCompanionActive && startupEditorPerformance.modelAction)}
+                          disabled={settingsGenerating}
                           onClick={() => patchStartupPerformance({
                             faces: selected
                               ? (startupEditorPerformance.faces || []).filter(item => item !== face)
@@ -3653,7 +3652,7 @@ const CompanionHome: React.FC = () => {
                 )}
                 {live2dCompanionActive && startupEditorPerformance.modelAction && (
                   <div className="mt-1 text-[7px] leading-relaxed text-white/34">
-                    模型专属动作是一整套录好的表演，播放期间脸和上半身由它接管，上面的微表情不会叠加上去。想自己捏表情就把这里改回「不指定」。
+                    模型专属动作是一整套录好的表演，播放期间脸也由它驱动，上面的微表情多半会被盖住看不出来（不是不生效）。想让微表情说了算，把这里改回「不指定」。
                   </div>
                 )}
 
@@ -3937,9 +3936,10 @@ const CompanionHome: React.FC = () => {
                                 />
                               </label>
                               {(() => {
-                                // 选了模型专属动作时，motion 文件会逐帧覆写整张脸和上半身，
-                                // 微表情叠加层在它之上肉眼不可见——与其让人白调，不如说清楚谁在接管。
-                                const takenOverByModelAction = live2dCompanionActive && Boolean(reaction.performance.modelAction);
+                                // motion 文件会逐帧覆写整张脸，微表情叠加在它之上大多看不出来。
+                                // 但这只是"多半看不见"，不是"不生效"——禁用输入框既拦不住动作导演
+                                // 塞进来的 faces，又逼用户先取消动作才能改表情。所以只提示，不禁用。
+                                const alsoRunsModelAction = live2dCompanionActive && Boolean(reaction.performance.modelAction);
                                 const selectedFaces = reaction.performance.faces || [];
                                 return (
                                   <>
@@ -3984,7 +3984,7 @@ const CompanionHome: React.FC = () => {
                                       <div className="text-[8px] text-white/48">
                                         微表情（最多 4 个{live2dCompanionActive ? '；Live2D 唯一改脸的一层' : ''}）
                                       </div>
-                                      <div className="mt-1.5 flex flex-wrap gap-1.5" style={{ opacity: takenOverByModelAction ? 0.4 : 1 }}>
+                                      <div className="mt-1.5 flex flex-wrap gap-1.5">
                                         {AVATAR_FACES.map(face => {
                                           const selected = selectedFaces.includes(face);
                                           return (
@@ -3992,7 +3992,7 @@ const CompanionHome: React.FC = () => {
                                               key={face}
                                               type="button"
                                               aria-pressed={selected}
-                                              disabled={settingsGenerating || takenOverByModelAction}
+                                              disabled={settingsGenerating}
                                               onClick={() => patchSavedTouchReaction(zone, reaction.id, {
                                                 performance: {
                                                   ...reaction.performance,
@@ -4035,9 +4035,9 @@ const CompanionHome: React.FC = () => {
                                         </select>
                                       </label>
                                     )}
-                                    {takenOverByModelAction && (
+                                    {alsoRunsModelAction && (
                                       <div className="mt-1 text-[7px] leading-relaxed text-white/34">
-                                        模型专属动作是一整套录好的表演，播放期间脸和上半身由它接管，上面的微表情不会叠加上去。想自己捏表情就把这里改回「不指定」。
+                                        模型专属动作是一整套录好的表演，播放期间脸也由它驱动，上面的微表情多半会被盖住看不出来（不是不生效）。想让微表情说了算，把这里改回「不指定」。
                                       </div>
                                     )}
                                   </>
