@@ -34,7 +34,7 @@ import { extractXinsheng } from './xinsheng/xinshengData';
 import { appendXinshengEntry } from './xinsheng/xinshengStore';
 import { newXinshengRoundId, XINSHENG_ROUND_META_KEY, backfillXinshengRoundIdForSession } from './xinsheng/xinshengRound';
 import { dispatchXinshengUpdated } from './xinsheng/xinshengEvents';
-import { peekXinshengRoundPreset, toEntryPreset } from './xinsheng/xinshengRandomPreset';
+import { takeXinshengRoundPreset, toEntryPreset } from './xinsheng/xinshengRandomPreset';
 import { resolveCharTimeZone } from './timezone';
 import { NotionManager, FeishuManager, XhsNote } from './realtimeContext';
 import { enqueuePendingDiary, removePendingDiary } from './pendingDiary';
@@ -762,7 +762,7 @@ export async function applyAssistantPostProcessing(
             // 历史卡片全都跟着"角色现在的设置"变皮：上周那条心声点开，显示的却是这周
             // 刚换的美化，完全对不上当时的样子。见 xinshengRandomPreset.ts 里为什么不
             // 把随机命中的那份写回角色档案（同一个道理，这里补上手动切换的那一半）。
-            const roundPreset = peekXinshengRoundPreset(char.id);
+            const roundPreset = takeXinshengRoundPreset(char.id);
             const presetSnapshot = roundPreset
                 ? toEntryPreset(roundPreset)
                 : {
