@@ -2,6 +2,7 @@ import type {
   APIConfig,
   CharacterProfile,
   CompanionStartupSettings,
+  CompanionStartupPeriod,
   UserProfile,
 } from '../types';
 import { ContextBuilder } from './context';
@@ -14,11 +15,50 @@ import {
   type AvatarTouchModelAction,
 } from './avatarTouch';
 import type { AvatarPerformanceDirection, AvatarPerformancePrecision } from './avatarPerformance';
+import { getScheduleWallClock } from './scheduleTime';
 
 export interface CompanionStartupDraft {
   line: string;
   performance: AvatarPerformanceDirection;
 }
+
+export const COMPANION_STARTUP_PERIODS: Array<{ value: CompanionStartupPeriod; label: string; hours: string }> = [
+  { value: 'morning', label: '早上', hours: '05:00–10:59' },
+  { value: 'noon', label: '中午', hours: '11:00–12:59' },
+  { value: 'afternoon', label: '下午', hours: '13:00–16:59' },
+  { value: 'dusk', label: '傍晚', hours: '17:00–18:59' },
+  { value: 'evening', label: '晚上', hours: '19:00–23:59' },
+  { value: 'late-night', label: '深夜 / 凌晨', hours: '00:00–04:59' },
+];
+
+export const companionStartupPeriodForHour = (hour: number): CompanionStartupPeriod => {
+  if (hour < 5) return 'late-night';
+  if (hour < 11) return 'morning';
+  if (hour < 13) return 'noon';
+  if (hour < 17) return 'afternoon';
+  if (hour < 19) return 'dusk';
+  return 'evening';
+};
+
+export const companionStartupPeriodLabel = (period?: CompanionStartupPeriod): string => (
+  COMPANION_STARTUP_PERIODS.find(item => item.value === period)?.label || '不限时段'
+);
+
+export const resolveCompanionStartupForTime = (
+  character: CharacterProfile,
+  at = new Date(),
+): CompanionStartupSettings | undefined => {
+  const settings = character.companionTouchSettings;
+  const hour = getScheduleWallClock(character, at).getHours();
+  const period = companionStartupPeriodForHour(hour);
+  if (settings?.startup?.timePeriod === period && !settings.activeStartupPresetId) return settings.startup;
+  const matches = (settings?.startupPresets || []).filter(item => item.startup.timePeriod === period);
+  if (!matches.length) return settings?.startup;
+  // Stable within a character-local calendar day, while allowing several satisfying variants per period.
+  const wallClock = getScheduleWallClock(character, at);
+  const daySeed = wallClock.getFullYear() * 372 + (wallClock.getMonth() + 1) * 31 + wallClock.getDate();
+  return matches[Math.abs(daySeed) % matches.length].startup;
+};
 
 export const DEFAULT_COMPANION_STARTUP_PERFORMANCE: AvatarPerformanceDirection = {
   emotion: 'calm',
@@ -254,6 +294,7 @@ export const requestCompanionStartupDraft = async (options: {
   apiConfig: APIConfig;
   modelActions?: AvatarTouchModelAction[];
   hint?: string;
+  timePeriod?: CompanionStartupPeriod;
   recentMessageLimit?: number;
 }): Promise<CompanionStartupDraft> => {
   const {
@@ -262,6 +303,7 @@ export const requestCompanionStartupDraft = async (options: {
     apiConfig,
     modelActions = [],
     hint = '',
+    timePeriod,
     recentMessageLimit = 28,
   } = options;
   const baseUrl = apiConfig.baseUrl?.replace(/\/+$/, '');
@@ -274,7 +316,8 @@ export const requestCompanionStartupDraft = async (options: {
   const recentMessages = allMessages
     .filter(message => message.role === 'user' || message.role === 'assistant')
     .slice(-Math.max(8, Math.min(60, recentMessageLimit)));
-  const eventText = `[陪伴桌面开机演出设置] ${user.name || '用户'}希望你为每次回到陪伴主界面准备一句符合本人性格的短开场。`;
+  const periodText = companionStartupPeriodLabel(timePeriod);
+  const eventText = `[陪伴桌面开机演出设置] ${user.name || '用户'}希望你为${periodText}回到陪伴主界面准备一句符合本人性格的短开场。`;
   const coreContext = ContextBuilder.buildCoreContext(
     character,
     user,
@@ -305,7 +348,7 @@ export const requestCompanionStartupDraft = async (options: {
     body: JSON.stringify({
       model: apiConfig.model,
       messages: [
-        { role: 'system', content: buildCompanionStartupPrompt(coreContext, character.name, user.name || '用户', modelActions, hint) },
+        { role: 'system', content: buildCompanionStartupPrompt(coreContext, character.name, user.name || '用户', modelActions, `${periodText}时段。${hint}`) },
         ...apiMessages,
         { role: 'user', content: eventText },
       ],

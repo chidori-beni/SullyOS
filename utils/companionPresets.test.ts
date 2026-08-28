@@ -6,6 +6,7 @@ import {
   collectCompanionVoiceAssetIds,
   saveCompanionStartupPreset,
   saveCompanionTouchPreset,
+  updateCompanionTouchReaction,
 } from './companionPresets';
 
 const emptySettings = (): CompanionTouchSettings => ({ enabledZones: ['head'], reactions: {} });
@@ -67,5 +68,21 @@ describe('Live2D companion presets', () => {
       'companion-touch-voice:first',
       'companion-touch-voice:second',
     ]);
+  });
+
+  it('edits the active touch reaction and its saved preset without leaking TTS markup into text', () => {
+    const saved = saveCompanionTouchPreset(emptySettings(), {
+      enabledZones: ['head'],
+      reactions: { head: [{ id: 'a', text: '别闹。', performance: performance('neutral', 'idle') }] },
+      voiceEnabled: true,
+    }, '摸头', { now: 10, id: 'touch-a' });
+    const updated = updateCompanionTouchReaction(saved.settings, 'head', 'a', {
+      ttsText: '别闹。<#0.4#>(chuckle)',
+      performance: performance('happy', 'wave'),
+    });
+
+    expect(updated.reactions.head?.[0].text).toBe('别闹。');
+    expect(updated.reactions.head?.[0].ttsText).toContain('<#0.4#>');
+    expect(updated.touchPresets?.[0].reactions.head?.[0].performance.gesture).toBe('wave');
   });
 });

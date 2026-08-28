@@ -18,7 +18,7 @@ import {
   UploadSimple,
 } from '@phosphor-icons/react';
 import { useOS } from '../../context/OSContext';
-import { AppID, type AvatarTouchRegion, type CompanionStartupSettings, type CompanionTouchReaction, type CompanionTouchSettings, type DailySchedule } from '../../types';
+import { AppID, type AvatarTouchRegion, type CompanionStartupPeriod, type CompanionStartupSettings, type CompanionTouchReaction, type CompanionTouchSettings, type DailySchedule } from '../../types';
 import { Icons, INSTALLED_APPS } from '../../constants';
 import VRMVideoCallStage from '../call/VRMVideoCallStage';
 import { ScheduleFullscreenViewer } from '../schedule/ScheduleHomeWidget';
@@ -55,6 +55,7 @@ import {
 import { deleteBlobRef, deleteBlobRefIfUnreferenced, isBlobRef, putImageBlob, useBlobRefUrl } from '../../utils/blobRef';
 import { hslToHex, hueFromGradient, hueFromImage, normalizeHue } from '../../utils/dominantHue';
 import { characterHasVoice } from '../../utils/ttsRouter';
+import { resolveTtsProvider } from '../../utils/ttsProvider';
 import { CallAudioFeed } from '../../utils/callAudioFeed';
 import { VOICE_LANGUAGE_OPTIONS, voiceLanguageLabel } from '../../utils/voiceLanguage';
 import {
@@ -106,8 +107,12 @@ import {
   storeCompanionModelOutfit,
 } from '../../utils/companionWardrobe';
 import {
+  COMPANION_STARTUP_PERIODS,
   DEFAULT_COMPANION_STARTUP_PERFORMANCE,
+  companionStartupPeriodLabel,
   normalizeCompanionStartupPerformance,
+  requestCompanionStartupDraft,
+  resolveCompanionStartupForTime,
 } from '../../utils/companionStartup';
 import {
   requestCompanionPerformanceCues,
@@ -135,6 +140,7 @@ import {
   removeCompanionTouchPreset,
   saveCompanionStartupPreset,
   saveCompanionTouchPreset,
+  updateCompanionTouchReaction,
 } from '../../utils/companionPresets';
 import { deleteCompanionVoiceBlob } from '../../utils/companionVoiceAssets';
 
@@ -415,6 +421,7 @@ const CompanionHome: React.FC = () => {
     () => characters.find(item => item.id === activeCharacterId) || characters[0] || null,
     [characters, activeCharacterId],
   );
+  const miniMaxTtsActive = resolveTtsProvider(apiConfig) === 'minimax';
   const activeCompanionSource = companionAvatarSource(character);
   const staticCompanionActive = activeCompanionSource === 'upload' || activeCompanionSource === 'date';
   const [motionState, setMotionState] = useState<AvatarMotionState>('idle');
@@ -454,6 +461,9 @@ const CompanionHome: React.FC = () => {
   const [startupPerformanceCuePhase, setStartupPerformanceCuePhase] = useState<'start' | 'end'>('start');
   const [startupActionGenerating, setStartupActionGenerating] = useState(false);
   const [startupVoiceGenerating, setStartupVoiceGenerating] = useState(false);
+  const [startupLineGenerating, setStartupLineGenerating] = useState(false);
+  const [startupPeriod, setStartupPeriod] = useState<CompanionStartupPeriod>('morning');
+  const [startupTtsText, setStartupTtsText] = useState('');
   const [startupPresetName, setStartupPresetName] = useState('');
   const [touchPresetName, setTouchPresetName] = useState('');
   const [selectedStartupPresetId, setSelectedStartupPresetId] = useState('');
@@ -463,7 +473,8 @@ const CompanionHome: React.FC = () => {
     !staticCompanionActive && character?.videoAvatar ? 'covered' : 'hidden'
   ));
   const [touchVoiceProgress, setTouchVoiceProgress] = useState<{ completed: number; total: number } | null>(null);
-  const settingsGenerating = startupActionGenerating || startupVoiceGenerating || touchGenerating;
+  const [reactionVoiceGeneratingId, setReactionVoiceGeneratingId] = useState('');
+  const settingsGenerating = startupLineGenerating || startupActionGenerating || startupVoiceGenerating || touchGenerating || Boolean(reactionVoiceGeneratingId);
   const [touchDraftZones, setTouchDraftZones] = useState<AvatarTouchZone[]>(DEFAULT_COMPANION_TOUCH_ZONES);
   const [vrmExpressions, setVrmExpressions] = useState<string[]>([]);
   const [editing, setEditing] = useState(false);
@@ -758,6 +769,8 @@ const CompanionHome: React.FC = () => {
     setStartupEnabled(Boolean(startup?.enabled));
     setStartupLine(startup?.line || '');
     setStartupTranslation(startup?.translation || '');
+    setStartupTtsText(startup?.ttsText || '');
+    setStartupPeriod(startup?.timePeriod || 'morning');
     setStartupVoiceLanguage(startup?.voiceLanguage || '');
     setStartupPerformance(normalizeCompanionStartupPerformance(startup?.performance));
     setStartupPerformanceCues((startup?.performanceCues || []) as AvatarPerformanceCue[]);
@@ -765,6 +778,8 @@ const CompanionHome: React.FC = () => {
     setStartupPerformanceCueIndex(0);
     setStartupActionGenerating(false);
     setStartupVoiceGenerating(false);
+    setStartupLineGenerating(false);
+    setReactionVoiceGeneratingId('');
     const shouldPrepareStartup = Boolean(character && !companionStartupPlayedThisSession.has(character.id));
     setStartupHeadLocked(shouldPrepareStartup);
     setTouchDraftZones((character?.companionTouchSettings?.enabledZones as AvatarTouchZone[] | undefined) || DEFAULT_COMPANION_TOUCH_ZONES);
@@ -846,12 +861,12 @@ const CompanionHome: React.FC = () => {
       return;
     }
     companionStartupPlayedThisSession.add(character.id);
-    const startup = character?.companionTouchSettings?.startup;
+    const startup = character ? resolveCompanionStartupForTime(character) : undefined;
     const text = normalizeCompanionDialogue(startup?.line || '', character?.name || '');
     const translation = normalizeCompanionDialogue(startup?.translation || '', character?.name || '');
-    const spokenText = translation || text;
+    const spokenText = (miniMaxTtsActive ? normalizeCompanionDialogue(startup?.ttsText || '', character.name) : '') || translation || text;
     const cues = companionPerformanceCuePackMatches(text, translation, startup?.performanceCueText, startup?.performanceCues as AvatarPerformanceCue[] | undefined)
-      ? startup.performanceCues as AvatarPerformanceCue[] | undefined
+      ? startup?.performanceCues as AvatarPerformanceCue[] | undefined
       : undefined;
     const timer = window.setTimeout(() => {
       if (!mountedRef.current || busyRef.current || editingRef.current) return;
@@ -1331,6 +1346,8 @@ const CompanionHome: React.FC = () => {
     setStartupEnabled(Boolean(startup?.enabled));
     setStartupLine(startup?.line || '');
     setStartupTranslation(startup?.translation || '');
+    setStartupTtsText(startup?.ttsText || '');
+    setStartupPeriod(startup?.timePeriod || 'morning');
     setStartupVoiceLanguage(startup?.voiceLanguage || '');
     setStartupPerformance(normalizeCompanionStartupPerformance(startup?.performance));
     setStartupPerformanceCues((startup?.performanceCues || []) as AvatarPerformanceCue[]);
@@ -1482,10 +1499,17 @@ const CompanionHome: React.FC = () => {
       startupPerformanceCueText,
       startupPerformanceCues,
     );
+    const previousStartup = character?.companionTouchSettings?.startup;
+    const spokenText = (miniMaxTtsActive ? startupTtsText.trim() : '') || translation || line;
+    const previousVoiceMatches = Boolean(previousStartup?.voiceAssetId)
+      && normalizeCompanionDialogue(previousStartup?.voiceText || '', character?.name || '') === spokenText
+      && (previousStartup?.voiceGeneratedLanguage || '') === startupVoiceLanguage;
     return {
       enabled: startupEnabled,
       line,
       translation,
+      ttsText: startupTtsText.trim(),
+      timePeriod: startupPeriod,
       voiceLanguage: startupVoiceLanguage,
       performance: normalizeCompanionStartupPerformance(
         cuesMatch ? startupPerformanceCues[0].direction : startupPerformance,
@@ -1493,12 +1517,12 @@ const CompanionHome: React.FC = () => {
       performanceCues: cuesMatch ? startupPerformanceCues : undefined,
       performanceCueText: cuesMatch ? cueText : undefined,
       performanceGeneratedAt: cuesMatch ? Date.now() : undefined,
-      generatedAt: character?.companionTouchSettings?.startup?.generatedAt,
-      voiceAssetId: character?.companionTouchSettings?.startup?.voiceAssetId,
-      voiceMimeType: character?.companionTouchSettings?.startup?.voiceMimeType,
-      voiceText: character?.companionTouchSettings?.startup?.voiceText,
-      voiceGeneratedLanguage: character?.companionTouchSettings?.startup?.voiceGeneratedLanguage,
-      voiceGeneratedAt: character?.companionTouchSettings?.startup?.voiceGeneratedAt,
+      generatedAt: previousStartup?.generatedAt,
+      voiceAssetId: previousVoiceMatches ? previousStartup?.voiceAssetId : undefined,
+      voiceMimeType: previousVoiceMatches ? previousStartup?.voiceMimeType : undefined,
+      voiceText: previousVoiceMatches ? previousStartup?.voiceText : undefined,
+      voiceGeneratedLanguage: previousVoiceMatches ? previousStartup?.voiceGeneratedLanguage : undefined,
+      voiceGeneratedAt: previousVoiceMatches ? previousStartup?.voiceGeneratedAt : undefined,
       updatedAt: Date.now(),
     };
   };
@@ -1532,7 +1556,7 @@ const CompanionHome: React.FC = () => {
     if (!character) return;
     const text = normalizeCompanionDialogue(startupLine, character.name);
     const translation = normalizeCompanionDialogue(startupTranslation, character.name);
-    const spokenText = translation || text;
+    const spokenText = (miniMaxTtsActive ? startupTtsText.trim() : '') || translation || text;
     if (!text) {
       addToast('请先填写中文原文', 'error');
       return;
@@ -1561,6 +1585,39 @@ const CompanionHome: React.FC = () => {
       const nonce = Date.now();
       touchVoiceNonceRef.current = nonce;
       void playPersistedCompanionVoice(startup, nonce, 'startup', cues);
+    }
+  };
+
+  const generateStartupLine = async () => {
+    if (!character || settingsGenerating) return;
+    const requestToken = ++requestTokenRef.current;
+    busyRef.current = true;
+    setStartupLineGenerating(true);
+    try {
+      const draft = await requestCompanionStartupDraft({
+        character,
+        user: userProfile,
+        apiConfig,
+        modelActions,
+        timePeriod: startupPeriod,
+      });
+      if (!mountedRef.current || requestToken !== requestTokenRef.current) return;
+      setStartupLine(draft.line);
+      setStartupTtsText('');
+      setStartupPerformance(draft.performance);
+      setStartupPerformanceCues([]);
+      setStartupPerformanceCueText('');
+      setSelectedStartupPresetId('');
+      if (!startupPresetName.trim()) setStartupPresetName(`${companionStartupPeriodLabel(startupPeriod)}开机`);
+      addToast(`已按${companionStartupPeriodLabel(startupPeriod)}写好台词和初始动作；可继续修改、配音并保存`, 'success');
+    } catch (error: any) {
+      if (!mountedRef.current || requestToken !== requestTokenRef.current) return;
+      addToast(error?.message || 'AI 没有生成可用的开机台词', 'error');
+    } finally {
+      if (requestToken === requestTokenRef.current) {
+        busyRef.current = false;
+        setStartupLineGenerating(false);
+      }
     }
   };
 
@@ -1627,7 +1684,7 @@ const CompanionHome: React.FC = () => {
       addToast(`请填写 ${voiceLanguageLabel(startupVoiceLanguage)} 语音译文`, 'error');
       return;
     }
-    const spokenText = translation || originalText;
+    const spokenText = (miniMaxTtsActive ? startupTtsText.trim() : '') || translation || originalText;
     if (!characterHasVoice(character, apiConfig)) {
       addToast('这个角色还没有配置可用音色，请先去语音设置配置', 'error');
       return;
@@ -1652,12 +1709,16 @@ const CompanionHome: React.FC = () => {
         performance,
         character,
         apiConfig,
+        forceRegenerate: true,
+        speedJitter: (Date.now() % 2 ? 1 : -1) * 0.02,
       });
       if (!mountedRef.current || requestToken !== requestTokenRef.current) return;
       const startup: CompanionStartupSettings = {
         ...makeStartupSettings(),
         line: originalText,
         translation,
+        ttsText: startupTtsText.trim(),
+        timePeriod: startupPeriod,
         voiceLanguage: startupVoiceLanguage,
         performance,
         ...voice,
@@ -1674,6 +1735,16 @@ const CompanionHome: React.FC = () => {
       setStartupLine(originalText);
       setStartupTranslation(translation);
       setSelectedStartupPresetId('');
+      const nonce = Date.now();
+      touchVoiceNonceRef.current = nonce;
+      void playPersistedCompanionVoice(
+        startup,
+        nonce,
+        'startup',
+        companionPerformanceCuePackMatches(originalText, translation, startupPerformanceCueText, startupPerformanceCues)
+          ? startupPerformanceCues
+          : [],
+      );
       addToast('开机语音包已生成并永久保存在本地；保存为预设后可随时切换', 'success');
     } catch (error: any) {
       if (!mountedRef.current || requestToken !== requestTokenRef.current) return;
@@ -1778,6 +1849,66 @@ const CompanionHome: React.FC = () => {
         setMotionState('idle');
         setPerformance(DEFAULT_AVATAR_PERFORMANCE);
       }
+    }
+  };
+
+  const patchSavedTouchReaction = (
+    zone: AvatarTouchZone,
+    reactionId: string,
+    patch: Partial<CompanionTouchReaction>,
+  ) => {
+    if (!character) return;
+    const before = companionTouchSettingsBase();
+    const after = updateCompanionTouchReaction(before, zone, reactionId, patch);
+    updateCharacter(character.id, { companionTouchSettings: after });
+  };
+
+  const previewSavedTouchReaction = async (reaction: CompanionTouchReaction) => {
+    if (!character) return;
+    setTouchSettingsOpen(false);
+    setLine({ text: reaction.text, translation: reaction.translation, label: '触摸预演', kind: 'touch' });
+    setPerformance(reaction.performance);
+    setMotionState('speaking');
+    settleAfter(reaction.text.length);
+    if (!reaction.voiceAssetId) return;
+    const nonce = Date.now();
+    touchVoiceNonceRef.current = nonce;
+    await playPersistedCompanionVoice(reaction, nonce, 'touch');
+  };
+
+  const rerollSavedTouchReactionVoice = async (
+    zone: AvatarTouchZone,
+    reaction: CompanionTouchReaction,
+  ) => {
+    if (!character || settingsGenerating) return;
+    if (!characterHasVoice(character, apiConfig)) {
+      addToast('这个角色还没有配置可用音色', 'error');
+      return;
+    }
+    setReactionVoiceGeneratingId(reaction.id);
+    try {
+      const result = await generateAvatarTouchVoicePack({
+        reactions: { [zone]: [{ ...reaction }] },
+        character,
+        apiConfig,
+        voiceLanguage: savedTouchSettings?.voiceLanguage || '',
+        forceRegenerate: true,
+        speedJitter: (Date.now() % 2 ? 1 : -1) * 0.02,
+      });
+      const rolled = result.reactions[zone]?.[0];
+      if (!rolled?.voiceAssetId) throw new Error(result.failures[0]?.message || '语音服务没有返回可保存音频');
+      const before = companionTouchSettingsBase();
+      const after = updateCompanionTouchReaction(before, zone, reaction.id, rolled);
+      updateCharacter(character.id, { companionTouchSettings: after });
+      cleanupUnreferencedCompanionVoices(before, after);
+      const nonce = Date.now();
+      touchVoiceNonceRef.current = nonce;
+      void playPersistedCompanionVoice(rolled, nonce, 'touch');
+      addToast('这一句的新语音已替换并永久保存在本地；首页触摸会直接使用它', 'success');
+    } catch (error: any) {
+      addToast(error?.message || '这一句语音重 Roll 失败', 'error');
+    } finally {
+      setReactionVoiceGeneratingId('');
     }
   };
 
@@ -1892,7 +2023,7 @@ const CompanionHome: React.FC = () => {
     touchCursorRef.current[hit.zone] = (cursor + 1) % reactions.length;
     const text = normalizeCompanionDialogue(reaction.text, character.name);
     const translation = normalizeCompanionDialogue(reaction.translation || '', character.name);
-    const spokenText = translation || text;
+    const spokenText = (miniMaxTtsActive ? normalizeCompanionDialogue(reaction.ttsText || '', character.name) : '') || translation || text;
     if (!text) {
       settleAfter(18);
       addToast('这条缓存台词为空，请在触摸设置中补生成反馈包', 'error');
@@ -1960,7 +2091,8 @@ const CompanionHome: React.FC = () => {
     .reduce((total, reactions) => total + (reactions?.filter(item => item.voiceAssetId).length || 0), 0);
   const touchVoiceAvailable = characterHasVoice(character, apiConfig);
   const savedStartup = savedTouchSettings?.startup;
-  const startupSpokenDraft = normalizeCompanionDialogue(startupTranslation, character.name)
+  const startupSpokenDraft = (miniMaxTtsActive ? normalizeCompanionDialogue(startupTtsText, character.name) : '')
+    || normalizeCompanionDialogue(startupTranslation, character.name)
     || normalizeCompanionDialogue(startupLine, character.name);
   const startupVoiceMatchesDraft = Boolean(savedStartup?.voiceAssetId)
     && normalizeCompanionDialogue(savedStartup?.voiceText || '', character.name)
@@ -2778,7 +2910,7 @@ const CompanionHome: React.FC = () => {
                   className="min-w-0 border border-white/12 bg-[#151021] px-3 py-2 text-[10px] text-white/82 outline-none disabled:opacity-45"
                 >
                   <option value="">{startupPresets.length ? `选择已保存预设（${startupPresets.length}）` : '还没有开机预设'}</option>
-                  {startupPresets.map(preset => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
+                  {startupPresets.map(preset => <option key={preset.id} value={preset.id}>{companionStartupPeriodLabel(preset.startup.timePeriod)} · {preset.name}</option>)}
                 </select>
                 <button
                   type="button"
@@ -2790,8 +2922,37 @@ const CompanionHome: React.FC = () => {
                 ><Trash size={14} /></button>
               </div>
               <p className="mt-3 text-[9px] leading-relaxed text-white/48">
-                中文原文、语音译文和动作都由你手动填写。每次刷新或重启后演一次；从 App 返回桌面不会重复播放。演出期间暂停随机转头。
+                可让 AI 按角色所在地时段写台词，也可逐字修改。每次刷新或重启后自动选中当前时段的一套演出；从 App 返回桌面不会重复播放。
               </p>
+              <label className="mt-3 block text-[8px] tracking-[0.12em] text-white/48" htmlFor="companion-startup-period">
+                自动启用时段（按角色时区）
+              </label>
+              <select
+                id="companion-startup-period"
+                data-testid="companion-startup-period"
+                value={startupPeriod}
+                disabled={settingsGenerating}
+                onChange={event => {
+                  setSelectedStartupPresetId('');
+                  setStartupPeriod(event.target.value as CompanionStartupPeriod);
+                }}
+                className="mt-1 w-full border border-white/12 bg-[#151021] px-3 py-2 text-[10px] text-white/82 outline-none disabled:opacity-45"
+              >
+                {COMPANION_STARTUP_PERIODS.map(period => (
+                  <option key={period.value} value={period.value}>{period.label} · {period.hours}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                data-testid="companion-generate-startup-line"
+                disabled={settingsGenerating}
+                onClick={() => { void generateStartupLine(); }}
+                className="mt-2 flex w-full items-center justify-center gap-1.5 border py-2.5 text-[10px] font-semibold transition active:scale-[.98] disabled:opacity-35"
+                style={{ borderColor: `${uiTint}88`, background: `${uiTint}16`, color: uiTint }}
+              >
+                <Sparkle size={13} weight="fill" />
+                {startupLineGenerating ? `AI 正在写${companionStartupPeriodLabel(startupPeriod)}台词…` : `让 AI 写${companionStartupPeriodLabel(startupPeriod)}台词与动作`}
+              </button>
               <label className="mt-3 block text-[8px] tracking-[0.12em] text-white/48" htmlFor="companion-startup-line">
                 中文原文（界面显示）
               </label>
@@ -2807,6 +2968,23 @@ const CompanionHome: React.FC = () => {
                 }}
                 placeholder="手动填写一句只有这个角色会说的话。"
                 className="mt-1 min-h-[72px] w-full resize-y border border-white/12 bg-black/15 px-3 py-2 text-[11px] leading-relaxed text-white outline-none placeholder:text-white/24 focus:border-white/30 disabled:opacity-45"
+              />
+
+              <label className="mt-3 block text-[8px] tracking-[0.12em] text-white/48" htmlFor="companion-startup-tts-text">
+                MiniMax TTS 语法（只影响语音，不在首页显示）
+              </label>
+              <textarea
+                id="companion-startup-tts-text"
+                data-testid="companion-startup-tts-text"
+                value={startupTtsText}
+                maxLength={360}
+                disabled={settingsGenerating}
+                onChange={event => {
+                  setSelectedStartupPresetId('');
+                  setStartupTtsText(event.target.value);
+                }}
+                placeholder="留空则朗读译文/原文；可写 <#0.4#>、(chuckle) 等 MiniMax 语法。"
+                className="mt-1 min-h-[64px] w-full resize-y border border-white/12 bg-black/15 px-3 py-2 font-mono text-[10px] leading-relaxed text-white outline-none placeholder:text-white/24 focus:border-white/30 disabled:opacity-45"
               />
               <label className="mt-3 block text-[8px] tracking-[0.12em] text-white/48" htmlFor="companion-startup-voice-language">
                 语音语言
@@ -2965,7 +3143,7 @@ const CompanionHome: React.FC = () => {
                 <SpeakerHigh size={12} style={{ color: uiTint }} />
                 {startupVoiceGenerating
                   ? '正在生成并永久保存语音包…'
-                  : startupVoiceMatchesDraft ? '重新生成开机语音包' : '生成并永久保存开机语音包'}
+                  : startupVoiceMatchesDraft ? '重 Roll、试听并替换开机语音' : '生成、试听并永久保存开机语音'}
               </button>
               <div className="mt-1 text-center text-[7px] leading-relaxed text-white/30">
                 {!touchVoiceAvailable
@@ -3282,6 +3460,125 @@ const CompanionHome: React.FC = () => {
                 ? `上次生成 ${new Date(savedTouchSettings.generatedAt).toLocaleString()} · 台词 ${preparedReactionCount} 条 · 语音 ${preparedVoiceCount} 条`
                 : `${touchPackContentLabel}正常只请求一次；语音仅在勾选时批量预生成`}
             </div>
+
+            {preparedReactionCount > 0 && (
+              <details className="mt-4 border-t border-white/10 pt-3" data-testid="companion-touch-reaction-editor">
+                <summary className="cursor-pointer select-none text-[10px] font-semibold tracking-wide text-white/72">
+                  浏览 / 编辑每句台词、TTS 与 Live2D 动作
+                </summary>
+                <div className="mt-2 text-[8px] leading-relaxed text-white/38">
+                  修改会立即写回当前反馈包。TTS 语法只送给语音服务，首页台词始终显示“中文原文”。重 Roll 成功后会替换本句的本地音频。
+                </div>
+                <div className="mt-3 space-y-4">
+                  {(Object.entries(savedTouchSettings?.reactions || {}) as Array<[AvatarTouchZone, CompanionTouchReaction[] | undefined]>).map(([zone, reactions]) => (
+                    reactions?.length ? (
+                      <div key={zone} className="border border-white/10 bg-black/10 p-2.5">
+                        <div className="mb-2 text-[9px] font-semibold" style={{ color: uiTint }}>{avatarTouchZoneLabel(zone)} · {reactions.length} 句</div>
+                        <div className="space-y-3">
+                          {reactions.map((reaction, index) => (
+                            <div key={reaction.id} className="border border-white/10 bg-white/[0.025] p-2.5" data-testid={`companion-touch-reaction-${reaction.id}`}>
+                              <div className="mb-1 text-[8px] text-white/42">第 {index + 1} 句 · {reaction.voiceAssetId ? '已有满意语音' : '尚无本地语音'}</div>
+                              <label className="block text-[8px] text-white/48">
+                                中文原文（首页显示）
+                                <textarea
+                                  value={reaction.text}
+                                  maxLength={220}
+                                  disabled={settingsGenerating}
+                                  onChange={event => patchSavedTouchReaction(zone, reaction.id, { text: event.target.value })}
+                                  className="mt-1 min-h-[58px] w-full resize-y border border-white/12 bg-black/20 px-2.5 py-2 text-[10px] leading-relaxed text-white outline-none disabled:opacity-45"
+                                />
+                              </label>
+                              {touchVoiceLanguage && (
+                                <label className="mt-2 block text-[8px] text-white/48">
+                                  语音译文
+                                  <textarea
+                                    value={reaction.translation || ''}
+                                    maxLength={260}
+                                    disabled={settingsGenerating}
+                                    onChange={event => patchSavedTouchReaction(zone, reaction.id, { translation: event.target.value })}
+                                    className="mt-1 min-h-[52px] w-full resize-y border border-white/12 bg-black/20 px-2.5 py-2 text-[10px] leading-relaxed text-white outline-none disabled:opacity-45"
+                                  />
+                                </label>
+                              )}
+                              <label className="mt-2 block text-[8px] text-white/48">
+                                MiniMax TTS 语法（首页不显示）
+                                <textarea
+                                  value={reaction.ttsText ?? reaction.translation ?? reaction.text}
+                                  maxLength={420}
+                                  disabled={settingsGenerating}
+                                  onChange={event => patchSavedTouchReaction(zone, reaction.id, { ttsText: event.target.value })}
+                                  placeholder="可写 <#0.4#>、(chuckle) 等；只影响下一次生成的语音"
+                                  className="mt-1 min-h-[56px] w-full resize-y border border-white/12 bg-black/20 px-2.5 py-2 font-mono text-[9px] leading-relaxed text-white outline-none disabled:opacity-45"
+                                />
+                              </label>
+                              <div className="mt-2 grid grid-cols-2 gap-2">
+                                <label className="text-[8px] text-white/48">
+                                  情绪
+                                  <select
+                                    value={reaction.performance.emotion}
+                                    disabled={settingsGenerating}
+                                    onChange={event => patchSavedTouchReaction(zone, reaction.id, { performance: { ...reaction.performance, emotion: event.target.value as CompanionTouchReaction['performance']['emotion'] } })}
+                                    className="mt-1 w-full border border-white/12 bg-[#151021] px-2 py-2 text-[9px] text-white/82"
+                                  >
+                                    {AVATAR_EMOTIONS.map(emotion => <option key={emotion} value={emotion}>{STARTUP_EMOTION_LABELS[emotion]}</option>)}
+                                  </select>
+                                </label>
+                                <label className="text-[8px] text-white/48">
+                                  主动作
+                                  <select
+                                    value={reaction.performance.gesture}
+                                    disabled={settingsGenerating}
+                                    onChange={event => patchSavedTouchReaction(zone, reaction.id, { performance: { ...reaction.performance, gesture: event.target.value as CompanionTouchReaction['performance']['gesture'] } })}
+                                    className="mt-1 w-full border border-white/12 bg-[#151021] px-2 py-2 text-[9px] text-white/82"
+                                  >
+                                    {AVATAR_GESTURES.map(gesture => <option key={gesture} value={gesture}>{STARTUP_GESTURE_LABELS[gesture]}</option>)}
+                                  </select>
+                                </label>
+                              </div>
+                              {modelActions.length > 0 && (
+                                <label className="mt-2 block text-[8px] text-white/48">
+                                  Live2D 模型专属动作
+                                  <select
+                                    value={reaction.performance.modelAction || ''}
+                                    disabled={settingsGenerating}
+                                    onChange={event => patchSavedTouchReaction(zone, reaction.id, {
+                                      performance: {
+                                        ...reaction.performance,
+                                        modelAction: event.target.value || undefined,
+                                        modelActions: event.target.value ? [event.target.value] : [],
+                                      },
+                                    })}
+                                    className="mt-1 w-full border border-white/12 bg-[#151021] px-2 py-2 text-[9px] text-white/82"
+                                  >
+                                    <option value="">不指定</option>
+                                    {modelActions.map(action => <option key={action.id} value={action.id}>{action.name}</option>)}
+                                  </select>
+                                </label>
+                              )}
+                              <div className="mt-2 grid grid-cols-2 gap-2">
+                                <button
+                                  type="button"
+                                  disabled={settingsGenerating}
+                                  onClick={() => { void previewSavedTouchReaction(reaction); }}
+                                  className="border border-white/14 bg-white/[0.035] py-2 text-[9px] text-white/74 disabled:opacity-40"
+                                >预演台词与动作</button>
+                                <button
+                                  type="button"
+                                  disabled={settingsGenerating || !touchVoiceAvailable}
+                                  onClick={() => { void rerollSavedTouchReactionVoice(zone, reaction); }}
+                                  className="border py-2 text-[9px] font-semibold disabled:opacity-40"
+                                  style={{ borderColor: `${uiTint}88`, color: uiTint }}
+                                >{reactionVoiceGeneratingId === reaction.id ? '正在重 Roll…' : '重 Roll、试听并保存'}</button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null
+                  ))}
+                </div>
+              </details>
+            )}
           </section>
         </div>
       )}

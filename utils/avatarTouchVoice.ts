@@ -6,6 +6,7 @@ import type {
 } from '../types';
 import { synthesizeSpeechDetailed } from './ttsRouter';
 import { resolveSpeechEmotion } from './voiceEmotionPolicy';
+import { resolveTtsProvider } from './ttsProvider';
 import type { AvatarTouchReactionPack, AvatarTouchZone } from './avatarTouch';
 import {
   deleteCompanionVoiceBlob,
@@ -29,6 +30,8 @@ export const generateCompanionStartupVoice = async (options: {
   performance: CompanionStartupSettings['performance'];
   character: CharacterProfile;
   apiConfig: APIConfig;
+  forceRegenerate?: boolean;
+  speedJitter?: number;
 }): Promise<Pick<CompanionStartupSettings, 'voiceAssetId' | 'voiceMimeType' | 'voiceText' | 'voiceGeneratedAt' | 'voiceGeneratedLanguage'>> => {
   let playableUrl = '';
   try {
@@ -37,7 +40,12 @@ export const generateCompanionStartupVoice = async (options: {
       options.character,
       options.apiConfig,
       // performance.emotion 是立绘表情，不是语音情绪——不能直接当 TTS emotion（见 voiceEmotionPolicy）。
-      { emotion: resolveSpeechEmotion(), languageBoost: options.voiceLanguage || undefined },
+      {
+        emotion: resolveSpeechEmotion(),
+        languageBoost: options.voiceLanguage || undefined,
+        forceRegenerate: options.forceRegenerate,
+        speedJitter: options.speedJitter,
+      },
     );
     playableUrl = result.url;
     if (!result.blob) throw new Error('语音服务未返回可持久保存的音频');
@@ -84,6 +92,8 @@ export const generateAvatarTouchVoicePack = async (options: {
   apiConfig: APIConfig;
   voiceLanguage?: string;
   onProgress?: (completed: number, total: number) => void;
+  forceRegenerate?: boolean;
+  speedJitter?: number;
 }): Promise<AvatarTouchVoiceGenerationResult> => {
   const cloned: AvatarTouchReactionPack = {};
   const packAssetId = makeCompanionVoiceAssetId('touch', options.character.id);
@@ -112,13 +122,20 @@ export const generateAvatarTouchVoicePack = async (options: {
       const task = tasks[cursor++];
       let playableUrl = '';
       try {
-        const spokenText = task.reaction.translation || task.reaction.text;
+        const spokenText = (resolveTtsProvider(options.apiConfig) === 'minimax' ? task.reaction.ttsText : '')
+          || task.reaction.translation
+          || task.reaction.text;
         const result = await synthesizeSpeechDetailed(
           spokenText,
           options.character,
           options.apiConfig,
           // 同上：摸头反应的立绘表情不参与语音合成。
-          { emotion: resolveSpeechEmotion(), languageBoost: options.voiceLanguage || undefined },
+          {
+            emotion: resolveSpeechEmotion(),
+            languageBoost: options.voiceLanguage || undefined,
+            forceRegenerate: options.forceRegenerate,
+            speedJitter: options.speedJitter,
+          },
         );
         playableUrl = result.url;
         if (!result.blob) throw new Error('语音服务未返回可持久保存的音频');

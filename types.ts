@@ -2554,6 +2554,8 @@ export interface CompanionTouchReaction {
   text: string;
   /** Spoken translation kept separate from the displayed source line. */
   translation?: string;
+  /** User-authored MiniMax speech markup. It is never shown in the home dialogue. */
+  ttsText?: string;
   /** Persisted local audio generated together with this reaction. */
   voiceAssetId?: string;
   voiceMimeType?: string;
@@ -2572,12 +2574,18 @@ export interface CompanionTouchReaction {
   };
 }
 
+export type CompanionStartupPeriod = 'morning' | 'noon' | 'afternoon' | 'dusk' | 'evening' | 'late-night';
+
 export interface CompanionStartupSettings {
   enabled: boolean;
   /** User-authored or character-generated line; never supplied by a desktop theme. */
   line: string;
   /** User-authored spoken translation. Empty means speak the source line. */
   translation?: string;
+  /** Optional MiniMax-only speech markup; kept separate from the displayed line. */
+  ttsText?: string;
+  /** Character-local wall-clock period in which this preset is selected automatically. */
+  timePeriod?: CompanionStartupPeriod;
   /** Empty means the source/default language; otherwise a TTS language_boost code. */
   voiceLanguage?: string;
   performance: CompanionTouchReaction['performance'];

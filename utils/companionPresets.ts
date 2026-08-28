@@ -112,6 +112,30 @@ export function activateCompanionTouchPreset(
   };
 }
 
+export function updateCompanionTouchReaction(
+  settings: CompanionTouchSettings,
+  zone: CompanionTouchZone,
+  reactionId: string,
+  patch: Partial<CompanionTouchReaction>,
+): CompanionTouchSettings {
+  const patchList = (source?: CompanionTouchReaction[]) => source?.map(item => (
+    item.id === reactionId ? { ...item, ...cloneJson(patch) } : item
+  ));
+  const reactions = {
+    ...settings.reactions,
+    [zone]: patchList(settings.reactions?.[zone]),
+  };
+  return {
+    ...settings,
+    reactions,
+    touchPresets: settings.touchPresets?.map(preset => (
+      preset.id === settings.activeTouchPresetId
+        ? { ...preset, reactions: { ...preset.reactions, [zone]: patchList(preset.reactions?.[zone]) }, updatedAt: Date.now() }
+        : preset
+    )),
+  };
+}
+
 export const removeCompanionStartupPreset = (
   settings: CompanionTouchSettings,
   presetId: string,
