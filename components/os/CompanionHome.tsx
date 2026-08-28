@@ -109,8 +109,10 @@ import {
 import {
   COMPANION_STARTUP_PERIODS,
   DEFAULT_COMPANION_STARTUP_PERFORMANCE,
+  companionStartupPeriodForHour,
   companionStartupPeriodLabel,
   normalizeCompanionStartupPerformance,
+  requestCompanionStartupAllDayDrafts,
   requestCompanionStartupDraft,
   resolveCompanionStartupForTime,
 } from '../../utils/companionStartup';
@@ -462,6 +464,13 @@ const CompanionHome: React.FC = () => {
   const [startupActionGenerating, setStartupActionGenerating] = useState(false);
   const [startupVoiceGenerating, setStartupVoiceGenerating] = useState(false);
   const [startupLineGenerating, setStartupLineGenerating] = useState(false);
+  const [startupAllDayGenerating, setStartupAllDayGenerating] = useState(false);
+  // 「预演」必须收起设置面板才能看见立绘。记住这一次是从面板里点进来的，
+  // 好让用户一键回到刚才那一句，而不是重开面板、重新展开、重新找到那一条。
+  const [previewReturnPending, setPreviewReturnPending] = useState(false);
+  // 已保存开机语音的真实时长（毫秒）。中段保持时长是按整句语音长度切出来的，
+  // 没有这个数字用户只能盲拉滑块。
+  const [startupVoiceDurationMs, setStartupVoiceDurationMs] = useState<number | null>(null);
   const [startupPeriod, setStartupPeriod] = useState<CompanionStartupPeriod>('morning');
   const [startupTtsText, setStartupTtsText] = useState('');
   const [startupPresetName, setStartupPresetName] = useState('');
@@ -474,7 +483,7 @@ const CompanionHome: React.FC = () => {
   ));
   const [touchVoiceProgress, setTouchVoiceProgress] = useState<{ completed: number; total: number } | null>(null);
   const [reactionVoiceGeneratingId, setReactionVoiceGeneratingId] = useState('');
-  const settingsGenerating = startupLineGenerating || startupActionGenerating || startupVoiceGenerating || touchGenerating || Boolean(reactionVoiceGeneratingId);
+  const settingsGenerating = startupLineGenerating || startupAllDayGenerating || startupActionGenerating || startupVoiceGenerating || touchGenerating || Boolean(reactionVoiceGeneratingId);
   const [touchDraftZones, setTouchDraftZones] = useState<AvatarTouchZone[]>(DEFAULT_COMPANION_TOUCH_ZONES);
   const [vrmExpressions, setVrmExpressions] = useState<string[]>([]);
   const [editing, setEditing] = useState(false);
@@ -594,6 +603,42 @@ const CompanionHome: React.FC = () => {
     const elapsedMinutes = wallClock.getHours() * 60 + wallClock.getMinutes();
     return Math.max(0, Math.min(100, Math.round((elapsedMinutes / (24 * 60)) * 100)));
   }, [character, virtualTime.hours, virtualTime.minutes]);
+
+  // 只在设置面板开着时量一次已保存的开机语音时长，供「中段保持时长」显示可用窗口。
+  // 用独立的 Audio 元素读 metadata，不碰正在播放的那一个。
+  const startupVoiceAssetId = character?.companionTouchSettings?.startup?.voiceAssetId;
+  useEffect(() => {
+    if (!touchSettingsOpen || !startupVoiceAssetId) {
+      setStartupVoiceDurationMs(null);
+      return;
+    }
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    const probe = new Audio();
+    void (async () => {
+      objectUrl = await createAvatarTouchVoiceUrl({ voiceAssetId: startupVoiceAssetId });
+      if (cancelled || !objectUrl) {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        return;
+      }
+      probe.preload = 'metadata';
+      probe.onloadedmetadata = () => {
+        if (cancelled) return;
+        setStartupVoiceDurationMs(
+          Number.isFinite(probe.duration) && probe.duration > 0 ? Math.round(probe.duration * 1000) : null,
+        );
+      };
+      probe.onerror = () => { if (!cancelled) setStartupVoiceDurationMs(null); };
+      probe.src = objectUrl;
+    })();
+    return () => {
+      cancelled = true;
+      probe.onloadedmetadata = null;
+      probe.onerror = null;
+      probe.src = '';
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [touchSettingsOpen, startupVoiceAssetId]);
 
   const stopTouchVoice = () => {
     companionAudioFeedRef.current?.setActive(false);
@@ -747,6 +792,7 @@ const CompanionHome: React.FC = () => {
     setTouchBanner(null);
     setTouchSettingsOpen(false);
     setStartupSettingsExpanded(false);
+    setPreviewReturnPending(false);
     setAppStarOpen(false);
     if (touchDialogueTimerRef.current !== null) window.clearTimeout(touchDialogueTimerRef.current);
     performanceCueTimersRef.current.forEach(timer => window.clearTimeout(timer));
@@ -1286,7 +1332,9 @@ const CompanionHome: React.FC = () => {
 
   const openTouchSettings = () => {
     setAppStarOpen(false);
-    setStartupSettingsExpanded(false);
+    setPreviewReturnPending(false);
+    // 开机自启已经开着就直接展开那一段，省掉每次进来都要先点一下标题。
+    setStartupSettingsExpanded(Boolean(character?.companionTouchSettings?.startup?.enabled));
     setTouchDraftZones(
       (character?.companionTouchSettings?.enabledZones as AvatarTouchZone[] | undefined)
       || DEFAULT_COMPANION_TOUCH_ZONES,
@@ -1569,6 +1617,7 @@ const CompanionHome: React.FC = () => {
       return;
     }
     setTouchSettingsOpen(false);
+    setPreviewReturnPending(true);
     setStartupHeadLocked(true);
     setLine({ text, translation: translation || undefined, label: '开机预演', kind: 'startup' });
     const cues = companionPerformanceCuePackMatches(
@@ -1620,6 +1669,86 @@ const CompanionHome: React.FC = () => {
       if (requestToken === requestTokenRef.current) {
         busyRef.current = false;
         setStartupLineGenerating(false);
+      }
+    }
+  };
+
+  /**
+   * 一次 API 覆盖全天六个时段：逐段各存一套预设，并把当前时段那套载入编辑器。
+   * 台词/动作可以之后逐段再改；语音仍然按段单独生成（TTS 是另一条计费）。
+   */
+  const generateStartupLinesForAllPeriods = async () => {
+    if (!character || settingsGenerating) return;
+    const requestToken = ++requestTokenRef.current;
+    busyRef.current = true;
+    setStartupAllDayGenerating(true);
+    try {
+      const drafts = await requestCompanionStartupAllDayDrafts({
+        character,
+        user: userProfile,
+        apiConfig,
+        modelActions,
+      });
+      if (!mountedRef.current || requestToken !== requestTokenRef.current) return;
+      const now = Date.now();
+      let settings = companionTouchSettingsBase();
+      const savedPeriods: CompanionStartupPeriod[] = [];
+      let currentPeriodPresetId = '';
+      const currentPeriod = companionStartupPeriodForHour(getScheduleWallClock(character).getHours());
+      for (const period of COMPANION_STARTUP_PERIODS) {
+        const draft = drafts[period.value];
+        if (!draft?.line) continue;
+        const saved = saveCompanionStartupPreset(
+          settings,
+          {
+            enabled: true,
+            line: draft.line,
+            timePeriod: period.value,
+            voiceLanguage: startupVoiceLanguage,
+            performance: normalizeCompanionStartupPerformance(draft.performance),
+            generatedAt: now,
+            updatedAt: now,
+          },
+          `${period.label}开机`,
+          { now },
+        );
+        settings = saved.settings;
+        savedPeriods.push(period.value);
+        if (period.value === currentPeriod) currentPeriodPresetId = saved.preset.id;
+      }
+      if (!savedPeriods.length) {
+        addToast('AI 这次没写出任何可用时段，请再试一次', 'error');
+        return;
+      }
+      // 六段都存好后，把编辑器停在“现在这个时段”那套上，而不是循环里最后写入的深夜。
+      const landingPresetId = currentPeriodPresetId
+        || settings.startupPresets?.[(settings.startupPresets.length || 1) - 1]?.id
+        || '';
+      const landing = settings.startupPresets?.find(item => item.id === landingPresetId);
+      if (landing) {
+        settings = activateCompanionStartupPreset(settings, landing.id);
+        loadStartupDraft(landing.startup);
+        setSelectedStartupPresetId(landing.id);
+        setStartupPresetName(landing.name);
+      }
+      updateCharacter(character.id, { companionTouchSettings: settings });
+      setStartupTtsText('');
+      setStartupPerformanceCues([]);
+      setStartupPerformanceCueText('');
+      const missing = COMPANION_STARTUP_PERIODS.filter(period => !savedPeriods.includes(period.value));
+      addToast(
+        missing.length
+          ? `已保存 ${savedPeriods.length} 个时段预设；${missing.map(item => item.label).join('、')}没写出来，可单独补生成`
+          : `已一次写好全天 6 个时段并各存为预设；当前停在「${companionStartupPeriodLabel(currentPeriod)}」`,
+        missing.length ? 'info' : 'success',
+      );
+    } catch (error: any) {
+      if (!mountedRef.current || requestToken !== requestTokenRef.current) return;
+      addToast(error?.message || 'AI 没有生成可用的全天开机台词', 'error');
+    } finally {
+      if (requestToken === requestTokenRef.current) {
+        busyRef.current = false;
+        setStartupAllDayGenerating(false);
       }
     }
   };
@@ -1869,6 +1998,7 @@ const CompanionHome: React.FC = () => {
   const previewSavedTouchReaction = async (reaction: CompanionTouchReaction) => {
     if (!character) return;
     setTouchSettingsOpen(false);
+    setPreviewReturnPending(true);
     setLine({ text: reaction.text, translation: reaction.translation, label: '触摸预演', kind: 'touch' });
     setPerformance(reaction.performance);
     setMotionState('speaking');
@@ -2120,6 +2250,20 @@ const CompanionHome: React.FC = () => {
       : selectedStartupCue.direction
     : startupPerformance;
   const startupCueSentences = splitCompanionPerformanceSentences(startupSpokenDraft);
+  // 语音存在就用真实时长，否则退回和播放端同一条文字长度估算公式，
+  // 这样滑块上写的毫秒数和实际调度用的是同一把尺子。
+  const startupTimelineDurationMs = (startupVoiceMatchesDraft && startupVoiceDurationMs)
+    || companionLineFallbackDuration(startupSpokenDraft.length);
+  // 本句可用窗口 =（下一句起点 − 本句起点）× 总时长；最后一句吃到结尾。
+  const selectedStartupCueWindowMs = selectedStartupCue
+    ? Math.max(0, Math.round((
+      (startupPerformanceCues[selectedStartupCueIndex + 1]?.at ?? 1) - (selectedStartupCue.at ?? 0)
+    ) * startupTimelineDurationMs))
+    : 0;
+  // 收尾姿势至少要留 60ms 才看得出来，这是 expandAvatarPerformanceCueBeats 的硬下限。
+  const recommendedStartupHoldMs = selectedStartupCueWindowMs >= 140
+    ? Math.max(120, Math.min(5_000, Math.round(selectedStartupCueWindowMs * 0.7)))
+    : 0;
 
   const launchCompanionApp = (id: AppID) => {
     setAppStarOpen(false);
@@ -2956,6 +3100,19 @@ const CompanionHome: React.FC = () => {
                 <Sparkle size={13} weight="fill" />
                 {startupLineGenerating ? `AI 正在写${companionStartupPeriodLabel(startupPeriod)}台词…` : `让 AI 写${companionStartupPeriodLabel(startupPeriod)}台词与动作`}
               </button>
+              <button
+                type="button"
+                data-testid="companion-generate-startup-all-day"
+                disabled={settingsGenerating}
+                onClick={() => { void generateStartupLinesForAllPeriods(); }}
+                className="mt-2 flex w-full items-center justify-center gap-1.5 border border-white/14 bg-white/[0.035] py-2 text-[9px] font-medium text-white/78 transition active:scale-[.98] disabled:opacity-35"
+              >
+                <Sparkle size={12} style={{ color: uiTint }} />
+                {startupAllDayGenerating ? 'AI 正在一次写全天 6 段…' : '一次写全天 6 个时段（只调用 1 次 API）'}
+              </button>
+              <div className="mt-1 text-center text-[7px] leading-relaxed text-white/30">
+                六段各自存成一套预设，写完停在当前时段那套上；语音仍按段单独生成。
+              </div>
               <label className="mt-3 block text-[8px] tracking-[0.12em] text-white/48" htmlFor="companion-startup-line">
                 中文原文（界面显示）
               </label>
@@ -3116,6 +3273,31 @@ const CompanionHome: React.FC = () => {
                       style={{ accentColor: uiTint }}
                     />
                   </label>
+                  {/* 拉滑块的人看不到这句话有多长，就只能盲调。把可用窗口和推荐值直接写出来。 */}
+                  {selectedStartupCueWindowMs > 0 && (
+                    <div className="mt-1 flex items-center justify-between gap-2" data-testid="companion-startup-cue-hold-hint">
+                      <span className="min-w-0 text-[7px] leading-relaxed text-white/34">
+                        本句约 <span className="font-mono text-white/60">{selectedStartupCueWindowMs}ms</span>
+                        （{startupVoiceMatchesDraft && startupVoiceDurationMs ? '按已保存语音实测' : '按字数估算，配好语音后以实际音频为准'}）
+                        {(selectedStartupCue?.holdMs || 900) > selectedStartupCueWindowMs - 60 && (
+                          <span style={{ color: uiTint }}> · 当前值超出窗口，播放时会被截到句尾</span>
+                        )}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={settingsGenerating || !recommendedStartupHoldMs}
+                        data-testid="companion-startup-cue-hold-auto"
+                        onClick={() => {
+                          setSelectedStartupPresetId('');
+                          setStartupPerformanceCues(cues => cues.map((cue, index) => (
+                            index === selectedStartupCueIndex ? { ...cue, holdMs: recommendedStartupHoldMs } : cue
+                          )));
+                        }}
+                        className="shrink-0 border px-2 py-1 text-[7px] disabled:opacity-35"
+                        style={{ borderColor: `${uiTint}88`, color: uiTint }}
+                      >按本句自动 {recommendedStartupHoldMs || '—'}ms</button>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -3645,6 +3827,35 @@ const CompanionHome: React.FC = () => {
             )}
           </section>
         </div>
+      )}
+      {/* 预演进行中的返回入口：不改动草稿状态，只重新打开面板，编辑内容原样还在。 */}
+      {previewReturnPending && !touchSettingsOpen && !editing && !appStarOpen && !wardrobeOpen && (
+        <button
+          type="button"
+          data-testid="companion-preview-return"
+          onClick={() => {
+            stopTouchVoice();
+            clearCompanionPerformanceCues();
+            if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
+            setMotionState('idle');
+            setPerformance(DEFAULT_AVATAR_PERFORMANCE);
+            setStartupHeadLocked(false);
+            setLine(null);
+            setPreviewReturnPending(false);
+            setTouchSettingsOpen(true);
+          }}
+          className="absolute left-1/2 z-50 flex -translate-x-1/2 items-center gap-1.5 border px-3.5 py-2 text-[10px] font-semibold shadow-lg backdrop-blur-sm transition active:scale-[.97]"
+          style={{
+            top: 'max(3.25rem, calc(var(--safe-top, 0px) + 2.75rem))',
+            borderColor: `${uiTint}aa`,
+            background: `${palette.panelTop}e8`,
+            color: uiTint,
+            clipPath: 'polygon(0 8px, 8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%)',
+          }}
+        >
+          <CaretLeft size={12} weight="bold" />
+          返回编辑
+        </button>
       )}
       {/* ── galgame 对话框：亮色台词板，不再像聊天消息卡。 ── */}
       {dialogVisible && (

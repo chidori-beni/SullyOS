@@ -288,6 +288,176 @@ ${actionList}
 }`;
 };
 
+/** 一次请求覆盖全天六个时段，避免为同一套人设重复付六次 API。 */
+export type CompanionStartupAllDayDrafts = Partial<Record<CompanionStartupPeriod, CompanionStartupDraft>>;
+
+export const parseCompanionStartupAllDayResponse = (
+  raw: unknown,
+  modelActions: AvatarTouchModelAction[] = [],
+): CompanionStartupAllDayDrafts => {
+  const content = typeof raw === 'string' ? raw : extractContent(raw as any);
+  const fenced = [...content.matchAll(/```(?:json|javascript|js)?\s*([\s\S]*?)```/gi)].map(match => match[1]);
+  const candidates = [content.trim(), ...fenced, ...balancedJsonCandidates(content)]
+    .filter(Boolean)
+    .flatMap(candidate => [candidate, candidate.replace(/,\s*([}\]])/g, '$1')]);
+  const validPeriods = new Set(COMPANION_STARTUP_PERIODS.map(item => item.value));
+  for (const candidate of candidates) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(candidate);
+    } catch {
+      continue;
+    }
+    // 两种形状都接受：{"morning": {...}} 或 {"periods": [{"period": "morning", ...}]}。
+    // 模型在长输出里经常改用数组，为此重试整轮请求不值得。
+    const entries: Array<[string, unknown]> = [];
+    const root = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : undefined;
+    if (!root) continue;
+    const list = Array.isArray(root) ? root : Array.isArray(root.periods) ? root.periods : undefined;
+    if (list) {
+      for (const item of list) {
+        if (!item || typeof item !== 'object') continue;
+        const record = item as Record<string, unknown>;
+        const period = record.period || record.timePeriod || record.time_period;
+        if (typeof period === 'string') entries.push([period, record]);
+      }
+    } else {
+      for (const [key, value] of Object.entries(root)) entries.push([key, value]);
+    }
+    const drafts: CompanionStartupAllDayDrafts = {};
+    for (const [key, value] of entries) {
+      const period = key.trim().toLowerCase().replace(/_/g, '-') as CompanionStartupPeriod;
+      if (!validPeriods.has(period) || drafts[period]) continue;
+      const draft = parseStructuredStartup(value, modelActions);
+      if (draft) drafts[period] = draft;
+    }
+    if (Object.keys(drafts).length) return drafts;
+  }
+  return {};
+};
+
+export const buildCompanionStartupAllDayPrompt = (
+  coreContext: string,
+  characterName: string,
+  userName: string,
+  modelActions: AvatarTouchModelAction[] = [],
+  hint = '',
+): string => {
+  const actionList = modelActions.length
+    ? modelActions.slice(0, 60).map(action => `- ${action.id}: ${action.name}`).join('\n')
+    : '（当前没有模型专属动作）';
+  const periodList = COMPANION_STARTUP_PERIODS
+    .map(period => `- "${period.value}"：${period.label}（${period.hours}）`)
+    .join('\n');
+  return `${coreContext}
+
+### 陪伴桌面 · 全天开机自启演出
+${userName}正在为${characterName}设置“每次回到陪伴主界面时”的短开场。它像二次元手游首页的角色入场，但必须完全属于${characterName}本人。
+这一次请**一次性写出全天六个时段各一套**，不要只写一个时段。
+${hint.trim() ? `用户给的写作提示：${hint.trim()}` : '用户没有限定台词，请从完整人设、关系、近期对话和记忆出发自行决定如何开口。'}
+
+时段（键名必须严格用引号里的英文值）：
+${periodList}
+
+要求：
+- 每个时段只写角色真正会说的一至两句短台词；六句之间必须彼此不同，能读出时间感（刚醒 / 饭点 / 午后 / 天快黑 / 夜里 / 该睡了）。
+- 不要套用通用欢迎、早安、主人、系统上线或自我介绍模板，也不要在台词里报时间点。
+- 不要替桌面主题说话，不要解释模型、API、动作参数或提示词。
+- 每个时段各自给一套 performance：眼睛默认看镜头；为头部 X/Y/Z、眼睛 X/Y、身体 X/Y/Z 给出克制的细微目标；动作先略微超过目标，再轻轻回正。
+- 每个时段可选择一个主 gesture、最多四个微表情，以及最多一个白名单模型专属动作；禁止编造动作 ID。不同时段应当挑不同的动作，别六个时段全用同一个。
+- 只输出一个合法 JSON 对象，不要代码围栏或额外说明。
+
+模型专属动作白名单：
+${actionList}
+
+严格结构（六个键都要出现）：
+{
+  "morning":     { "line": "角色台词", "performance": { "emotion": "calm", "gesture": "tilt", "camera": "medium", "gaze": "viewer", "intensity": 0.66, "faces": ["smile-eyes"], "modelAction": "可选的白名单ID", "precision": { "headX": 0.06, "headY": 0.04, "headZ": -0.14, "eyeX": 0, "eyeY": 0, "bodyX": 0.02, "bodyY": 0, "bodyZ": -0.02, "overshoot": 0.08, "settleMs": 920 } } },
+  "noon":        { "line": "…", "performance": { … } },
+  "afternoon":   { "line": "…", "performance": { … } },
+  "dusk":        { "line": "…", "performance": { … } },
+  "evening":     { "line": "…", "performance": { … } },
+  "late-night":  { "line": "…", "performance": { … } }
+}`;
+};
+
+export const requestCompanionStartupAllDayDrafts = async (options: {
+  character: CharacterProfile;
+  user: UserProfile;
+  apiConfig: APIConfig;
+  modelActions?: AvatarTouchModelAction[];
+  hint?: string;
+  recentMessageLimit?: number;
+}): Promise<CompanionStartupAllDayDrafts> => {
+  const {
+    character,
+    user,
+    apiConfig,
+    modelActions = [],
+    hint = '',
+    recentMessageLimit = 28,
+  } = options;
+  const baseUrl = apiConfig.baseUrl?.replace(/\/+$/, '');
+  if (!baseUrl) throw new Error('请先在设置中配置主聊天 API');
+
+  const [allMessages, emojis] = await Promise.all([
+    DB.getMessagesByCharId(character.id, true),
+    DB.getEmojis().catch(() => []),
+  ]);
+  const recentMessages = allMessages
+    .filter(message => message.role === 'user' || message.role === 'assistant')
+    .slice(-Math.max(8, Math.min(60, recentMessageLimit)));
+  const eventText = `[陪伴桌面开机演出设置] ${user.name || '用户'}希望你一次写好全天六个时段各一句、符合本人性格的短开场。`;
+  const coreContext = ContextBuilder.buildCoreContext(
+    character,
+    user,
+    true,
+    undefined,
+    undefined,
+    {
+      lastInteractionTs: recentMessages[recentMessages.length - 1]?.timestamp,
+      worldbookMessages: [
+        ...recentMessages.map(message => ({ role: message.role, content: message.content })),
+        { role: 'user', content: eventText },
+      ],
+    },
+  );
+  const { apiMessages } = ChatPrompts.buildMessageHistory(
+    recentMessages,
+    recentMessages.length,
+    character,
+    user,
+    emojis,
+  );
+  const data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiConfig.apiKey || 'sk-none'}`,
+    },
+    body: JSON.stringify({
+      model: apiConfig.model,
+      messages: [
+        { role: 'system', content: buildCompanionStartupAllDayPrompt(coreContext, character.name, user.name || '用户', modelActions, hint) },
+        ...apiMessages,
+        { role: 'user', content: eventText },
+      ],
+      temperature: 0.86,
+      // 六段台词加六套 performance，单段的 1400 会被截断成半个 JSON。
+      max_tokens: 6_000,
+      stream: false,
+    }),
+  }, 1, 120_000, {
+    appName: '触感陪伴',
+    charId: character.id,
+    charName: character.name,
+    purpose: '一次生成全天开机自启台词与演出',
+  });
+  const drafts = parseCompanionStartupAllDayResponse(data, modelActions);
+  if (!Object.keys(drafts).length) throw new Error('主模型没有返回可用的全天开机台词；可以改短提示后再试一次');
+  return drafts;
+};
+
 export const requestCompanionStartupDraft = async (options: {
   character: CharacterProfile;
   user: UserProfile;
