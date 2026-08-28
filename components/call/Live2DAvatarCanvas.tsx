@@ -62,6 +62,11 @@ interface Live2DAvatarCanvasProps {
   framing?: AvatarStageFraming;
   /** 用户锚定的脸部特写构图；close/push-in 时镜头直接落到这里。 */
   faceFraming?: AvatarStageFraming;
+  /**
+   * 演出机位推拉的幅度，0..1，缺省 1 = 原有表现。角色离屏幕忽远忽近时调小；
+   * 0 表示 close / wide / 脸部锚点都不再改变构图，只保留用户自己校准的那一套。
+   */
+  cameraIntensity?: number;
   performance?: AvatarPerformanceDirection;
   /** 高质量模式才启用保守的多层动作混合；基础/手动播放路径保持原样。 */
   performanceQuality?: 'basic' | 'high';
@@ -347,6 +352,7 @@ const Live2DAvatarCanvas: React.FC<Live2DAvatarCanvasProps> = ({
   ambientAutonomyDisabled = false,
   framing,
   faceFraming,
+  cameraIntensity = 1,
   performance,
   performanceQuality = 'basic',
   manualAction,
@@ -390,6 +396,7 @@ const Live2DAvatarCanvas: React.FC<Live2DAvatarCanvasProps> = ({
   const directedHeadMotionLeaseRef = useRef<DirectedHeadMotionLease | null>(null);
   const directedHeadPoseRef = useRef<{ headX: number; headY: number; headZ: number } | null>(null);
   const framingRef = useRef(framing || config.framing || { scale: 1, offsetX: 0, offsetY: 0 });
+  const cameraIntensityRef = useRef(cameraIntensity);
   const faceFramingRef = useRef<AvatarStageFraming | undefined>(faceFraming || config.faceFraming);
   const [touchRegionBounds, setTouchRegionBounds] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const touchRegionBoundsRef = useRef<typeof touchRegionBounds>(null);
@@ -463,6 +470,7 @@ const Live2DAvatarCanvas: React.FC<Live2DAvatarCanvasProps> = ({
   useEffect(() => { parameterPreviewRef.current = parameterPreview; }, [parameterPreview]);
   useEffect(() => {
     framingRef.current = framing || config.framing || { scale: 1, offsetX: 0, offsetY: 0 };
+    cameraIntensityRef.current = Math.max(0, Math.min(1, Number.isFinite(cameraIntensity) ? cameraIntensity : 1));
     if (hostRef.current) hostRef.current.dataset.live2dFraming = JSON.stringify(framingRef.current);
   }, [framing, config.framing]);
   useEffect(() => {
@@ -1477,8 +1485,18 @@ const Live2DAvatarCanvas: React.FC<Live2DAvatarCanvasProps> = ({
           }
           const closeShot = direction?.camera === 'close' || direction?.camera === 'push-in';
           // 用户锚定过脸部时，特写镜头直接落到锚点构图，不再用启发式偏移猜脸的位置。
-          const anchored = closeShot && faceFramingRef.current ? faceFramingRef.current : null;
-          const framing = anchored || framingRef.current;
+          const anchoredTarget = closeShot && faceFramingRef.current ? faceFramingRef.current : null;
+          const cameraGain = cameraIntensityRef.current;
+          const anchored = anchoredTarget && cameraGain > 0 ? anchoredTarget : null;
+          const baseFraming = framingRef.current;
+          // 幅度 <1 时脸部锚点只走过去一部分，而不是整套构图直接跳过去。
+          const framing = anchored
+            ? (cameraGain >= 1 ? anchored : {
+              scale: baseFraming.scale + (anchored.scale - baseFraming.scale) * cameraGain,
+              offsetX: baseFraming.offsetX + (anchored.offsetX - baseFraming.offsetX) * cameraGain,
+              offsetY: baseFraming.offsetY + (anchored.offsetY - baseFraming.offsetY) * cameraGain,
+            })
+            : baseFraming;
           // On the always-on desktop, a generic full-body heuristic is more
           // dangerous than useful: one face tap used to enlarge the model and
           // push it down by 10% of the screen, which can move tall imports
@@ -1490,14 +1508,18 @@ const Live2DAvatarCanvas: React.FC<Live2DAvatarCanvasProps> = ({
             && !configRef.current.builtIn;
           // 导演机位只在用户构图基础上做温和加减：medium 必须是 1.0，
           // 否则用户校准好的构图会被默认镜头永久放大。锚定后特写倍率交给锚点本身。
-          const cameraScale = anchored
+          const rawCameraScale = anchored
             ? 1
             : suppressUnanchoredCloseShot
               ? 1
             : closeShot
               ? 1.22
               : direction?.camera === 'wide' || direction?.camera === 'pull-out' ? 0.88 : 1;
-          const cameraYOffset = anchored || suppressUnanchoredCloseShot ? 0 : closeShot ? 0.1 : 0;
+          const rawCameraYOffset = anchored || suppressUnanchoredCloseShot ? 0 : closeShot ? 0.1 : 0;
+          // 幅度只缩放「偏离中景多少」，中景本身永远是 1.0，
+          // 所以调小它不会让用户校准好的构图整体变大或变小。
+          const cameraScale = 1 + (rawCameraScale - 1) * cameraGain;
+          const cameraYOffset = rawCameraYOffset * cameraGain;
           const cameraX = base.x + app.screen.width * framing.offsetX;
           const cameraY = base.y + app.screen.height * (framing.offsetY + cameraYOffset);
           const frame = autonomy.frame;

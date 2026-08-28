@@ -2645,6 +2645,11 @@ export interface CompanionTouchSettings {
   /** 多套触摸反馈独立保存；顶层 reactions 等字段仍是当前实际启用包。 */
   touchPresets?: CompanionTouchPreset[];
   activeTouchPresetId?: string;
+  /**
+   * 演出机位推拉的幅度，0..1，缺省视作 1（保持原有表现）。
+   * 0 = 完全锁死，close/wide 都不再改变角色离屏幕的远近。
+   */
+  cameraIntensity?: number;
 }
 
 export type MemoryPalaceWaterlinePreset = 'online' | 'balanced' | 'offline' | 'custom';

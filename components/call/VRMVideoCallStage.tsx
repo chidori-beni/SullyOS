@@ -61,6 +61,8 @@ interface VRMVideoCallStageProps {
   externalManualAction?: Live2DActionTrigger | null;
   /** Minimal chrome for the always-on launcher companion. */
   companionMode?: boolean;
+  /** 演出机位推拉幅度 0..1；缺省 1。目前只有 Live2D 舞台会用。 */
+  cameraIntensity?: number;
   /** 基准构图覆盖：陪伴桌面传 companionFraming，优先于 model.framing 作为静息构图。 */
   baseFraming?: AvatarStageFraming;
   /** 布置模式：companionMode 下重新启用拖拽/捏合/滚轮调构图（默认 = !companionMode）。 */
@@ -119,6 +121,7 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
   touchImpulseNonce,
   externalManualAction,
   companionMode = false,
+  cameraIntensity,
   baseFraming,
   framingEditable,
   stageCrop = DEFAULT_STAGE_CROP,
@@ -470,6 +473,7 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
               ambientAutonomyDisabled={companionMode}
               framing={framing}
               faceFraming={calibratingFace ? undefined : model.faceFraming}
+              cameraIntensity={cameraIntensity}
               performance={performance}
               performanceQuality={performanceQuality}
               manualAction={externalManualAction || manualAction}

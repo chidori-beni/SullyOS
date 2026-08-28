@@ -39,6 +39,7 @@ import {
 } from '../../utils/avatarTouch';
 import {
   AVATAR_EMOTIONS,
+  AVATAR_CAMERAS,
   AVATAR_FACES,
   AVATAR_GESTURES,
   clampStageCrop,
@@ -227,6 +228,11 @@ const STARTUP_GESTURE_LABELS: Record<string, string> = {
   explain: '解释', wave: '挥手', shy: '害羞', 'lean-in': '靠近', 'lean-back': '后退',
 };
 
+const STARTUP_CAMERA_LABELS: Record<string, string> = {
+  close: '特写（更近）', medium: '中景（不推拉）', wide: '远景（更远）',
+  'push-in': '推近', 'pull-out': '拉远',
+};
+
 const STARTUP_FACE_LABELS: Record<string, string> = {
   wink: '眨眼', grin: '咧嘴', pout: '撅嘴', blush: '脸红', 'eyes-closed': '闭眼',
   'smile-eyes': '笑眼', 'brow-up': '挑眉', 'brow-sad': '忧眉', 'brow-angry': '压眉',
@@ -372,6 +378,12 @@ const companionPerformanceCuePackMatches = (
     && cues!.length <= COMPANION_MAX_PERFORMANCE_CUES;
 };
 
+/** 缺省视作 1，保持老角色的原有表现；只接受 0..1。 */
+const resolveCompanionCameraIntensity = (value: unknown): number => {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : 1;
+};
+
 const companionLineFallbackDuration = (textLength: number) => (
   Math.max(2_400, Math.min(12_000, textLength * 115))
 );
@@ -473,6 +485,8 @@ const CompanionHome: React.FC = () => {
   const [startupVoiceGenerating, setStartupVoiceGenerating] = useState(false);
   const [startupLineGenerating, setStartupLineGenerating] = useState(false);
   const [startupAllDayGenerating, setStartupAllDayGenerating] = useState(false);
+  // 机位推拉幅度（0..1）。角色忽远忽近时调小；0 = 完全锁死构图。
+  const [cameraIntensity, setCameraIntensity] = useState(1);
   // 「预演」必须收起设置面板才能看见立绘。记住这一次是从面板里点进来的，
   // 好让用户一键回到刚才那一句，而不是重开面板、重新展开、重新找到那一条。
   const [previewReturnPending, setPreviewReturnPending] = useState(false);
@@ -809,6 +823,7 @@ const CompanionHome: React.FC = () => {
     setTouchVoiceProgress(null);
     setTouchGenerateVoice(Boolean(character?.companionTouchSettings?.voiceEnabled));
     setTouchVoiceLanguage(character?.companionTouchSettings?.voiceLanguage || '');
+    setCameraIntensity(resolveCompanionCameraIntensity(character?.companionTouchSettings?.cameraIntensity));
     const activeStartupPreset = character?.companionTouchSettings?.startupPresets?.find(
       preset => preset.id === character.companionTouchSettings?.activeStartupPresetId,
     );
@@ -1349,6 +1364,7 @@ const CompanionHome: React.FC = () => {
     );
     setTouchGenerateVoice(Boolean(character?.companionTouchSettings?.voiceEnabled));
     setTouchVoiceLanguage(character?.companionTouchSettings?.voiceLanguage || '');
+    setCameraIntensity(resolveCompanionCameraIntensity(character?.companionTouchSettings?.cameraIntensity));
     const activeStartupPreset = character?.companionTouchSettings?.startupPresets?.find(
       preset => preset.id === character.companionTouchSettings?.activeStartupPresetId,
     );
@@ -1990,6 +2006,16 @@ const CompanionHome: React.FC = () => {
         setPerformance(DEFAULT_AVATAR_PERFORMANCE);
       }
     }
+  };
+
+  /** 机位幅度是整台舞台的设置，不属于任何一套预设，改完立刻落库。 */
+  const applyCameraIntensity = (value: number) => {
+    const next = resolveCompanionCameraIntensity(value);
+    setCameraIntensity(next);
+    if (!character) return;
+    updateCharacter(character.id, {
+      companionTouchSettings: { ...companionTouchSettingsBase(), cameraIntensity: next },
+    });
   };
 
   const patchSavedTouchReaction = (
@@ -2761,6 +2787,7 @@ const CompanionHome: React.FC = () => {
             touchImpulseNonce={lastHit?.nonce}
             externalManualAction={wardrobeTrigger}
             companionMode
+            cameraIntensity={cameraIntensity}
             maxFps={30}
           />
         )}
@@ -3096,6 +3123,39 @@ const CompanionHome: React.FC = () => {
                 aria-label="关闭触摸设置"
               ><Check size={15} /></button>
             </div>
+
+            {live2dCompanionActive && (
+              <div
+                className="mt-4 border border-white/14 bg-white/[0.035] p-3"
+                style={{ clipPath: 'polygon(0 9px, 9px 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%)' }}
+                data-testid="companion-camera-intensity"
+              >
+                <label className="block text-[8px] tracking-[0.12em] text-white/48">
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-semibold tracking-wide text-white">镜头推拉幅度</span>
+                    <span className="font-mono text-[10px]" style={{ color: uiTint }}>
+                      {cameraIntensity <= 0 ? '关闭' : `${Math.round(cameraIntensity * 100)}%`}
+                    </span>
+                  </span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={5}
+                    value={Math.round(cameraIntensity * 100)}
+                    disabled={settingsGenerating}
+                    data-testid="companion-camera-intensity-slider"
+                    onChange={event => applyCameraIntensity(Number(event.target.value) / 100)}
+                    className="mt-2 h-1 w-full cursor-pointer"
+                    style={{ accentColor: uiTint }}
+                  />
+                </label>
+                <div className="mt-1.5 text-[7px] leading-relaxed text-white/34">
+                  演出里「特写 / 推近」会把角色放大到 1.22 倍，「远景 / 拉远」缩到 0.88 倍——一句话里前后两拍机位不同，看起来就是忽然凑近又退开。
+                  这里统一缩放这个幅度：<span style={{ color: uiTint }}>0% 完全锁死</span>，角色始终保持你自己校准的构图；100% 是原来的表现。改动立即保存并生效，不影响任何预设。
+                </div>
+              </div>
+            )}
 
             <div
               className="mt-4 border border-white/14 bg-white/[0.035] p-3"
@@ -3523,6 +3583,22 @@ const CompanionHome: React.FC = () => {
                   </label>
                 </div>
 
+                <label className="mt-2 block text-[8px] text-white/46">
+                  镜头（角色离屏幕的远近）
+                  <select
+                    value={startupEditorPerformance.camera}
+                    disabled={settingsGenerating}
+                    data-testid="companion-startup-camera"
+                    onChange={event => patchStartupPerformance({ camera: event.target.value as AvatarPerformanceDirection['camera'] })}
+                    className="mt-1 w-full border border-white/12 bg-[#151021] px-2 py-2 text-[9px] text-white/82 outline-none"
+                  >
+                    {AVATAR_CAMERAS.map(camera => <option key={camera} value={camera}>{STARTUP_CAMERA_LABELS[camera]}</option>)}
+                  </select>
+                </label>
+                <div className="mt-1 text-[7px] leading-relaxed text-white/30">
+                  相邻两拍选了不同的镜头，角色就会在这两拍之间推近或拉远。想完全不动，把每一拍都设成「中景」。
+                </div>
+
                 <div className="mt-3">
                   <div className="text-[8px] text-white/46">
                     微表情（最多 4 个{live2dCompanionActive ? '；Live2D 唯一改脸的一层' : ''}）
@@ -3891,6 +3967,18 @@ const CompanionHome: React.FC = () => {
                                         </select>
                                       </label>
                                     </div>
+
+                                    <label className="mt-2 block text-[8px] text-white/48">
+                                      镜头（角色离屏幕的远近）
+                                      <select
+                                        value={reaction.performance.camera}
+                                        disabled={settingsGenerating}
+                                        onChange={event => patchSavedTouchReaction(zone, reaction.id, { performance: { ...reaction.performance, camera: event.target.value as CompanionTouchReaction['performance']['camera'] } })}
+                                        className="mt-1 w-full border border-white/12 bg-[#151021] px-2 py-2 text-[9px] text-white/82"
+                                      >
+                                        {AVATAR_CAMERAS.map(camera => <option key={camera} value={camera}>{STARTUP_CAMERA_LABELS[camera]}</option>)}
+                                      </select>
+                                    </label>
 
                                     <div className="mt-2" data-testid={`companion-touch-faces-${reaction.id}`}>
                                       <div className="text-[8px] text-white/48">
