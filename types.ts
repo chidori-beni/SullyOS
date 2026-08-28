@@ -2572,6 +2572,18 @@ export interface CompanionTouchReaction {
     modelActions?: string[];
     precision?: CompanionPerformancePrecision;
   };
+  /**
+   * 逐拍动作编排，和开机台词同构：按语音实际时长调度。
+   * 没有它时整条台词只用一个静止姿势（老数据即如此）。
+   */
+  performanceCues?: Array<{
+    at: number;
+    direction: CompanionTouchReaction['performance'];
+    endDirection?: CompanionTouchReaction['performance'];
+    holdMs?: number;
+  }>;
+  /** 台词 + 译文的签名，用来在台词被改动后作废旧编排。 */
+  performanceCueText?: string;
 }
 
 export type CompanionStartupPeriod = 'morning' | 'noon' | 'afternoon' | 'dusk' | 'evening' | 'late-night';

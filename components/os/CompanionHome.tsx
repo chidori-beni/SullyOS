@@ -85,6 +85,17 @@ import MagazineCompanionChrome from './MagazineCompanionChrome';
 import CardbookCompanionChrome from './CardbookCompanionChrome';
 import IdolCompanionChrome from './IdolCompanionChrome';
 import CompanionWardrobeDrawer from './CompanionWardrobeDrawer';
+import CompanionTouchCueEditor from './CompanionTouchCueEditor';
+import {
+  MAX_PERFORMANCE_CUES,
+  canSplitPerformanceCues,
+  cueSplitPoints,
+  cueTextAt,
+  cueWindowMs,
+  mergePerformanceCueIntoPrevious,
+  recommendedHoldMs,
+  splitPerformanceCueAt,
+} from '../../utils/companionPerformanceCueEdit';
 import CompanionStageLoadingCurtain, { type CompanionStageCurtainPhase } from './CompanionStageLoadingCurtain';
 import StaticCompanionPortrait from './StaticCompanionPortrait';
 import Live2DActionSettings from '../call/Live2DActionSettings';
@@ -361,9 +372,6 @@ const companionPerformanceCueText = (line: string, translation = '') => (
   `${line.trim()}\u0000${translation.trim()}`
 );
 
-/** 手动拆分后一句可以对应多拍，上限和句子表一样是 12 的两倍。 */
-const COMPANION_MAX_PERFORMANCE_CUES = 24;
-
 const companionPerformanceCuePackMatches = (
   line: string,
   translation: string,
@@ -378,7 +386,7 @@ const companionPerformanceCuePackMatches = (
   return expected > 0
     && cueText === companionPerformanceCueText(line, translation)
     && Boolean(cues?.length)
-    && cues!.length <= COMPANION_MAX_PERFORMANCE_CUES;
+    && cues!.length <= MAX_PERFORMANCE_CUES;
 };
 
 /** 缺省视作 1，保持老角色的原有表现；只接受 0..1。 */
@@ -492,6 +500,8 @@ const CompanionHome: React.FC = () => {
   const [cameraIntensity, setCameraIntensity] = useState(1);
   // 生成落点：另存为新预设，还是并进当前这一包。分部位生成时后者才是想要的。
   const [touchGenerateMode, setTouchGenerateMode] = useState<'new' | 'merge'>('new');
+  // 正在为哪一条触摸台词编排逐拍动作（空 = 没在编排）。
+  const [touchCueGeneratingId, setTouchCueGeneratingId] = useState('');
   // 「预演」必须收起设置面板才能看见立绘。记住这一次是从面板里点进来的，
   // 好让用户一键回到刚才那一句，而不是重开面板、重新展开、重新找到那一条。
   const [previewReturnPending, setPreviewReturnPending] = useState(false);
@@ -510,7 +520,7 @@ const CompanionHome: React.FC = () => {
   ));
   const [touchVoiceProgress, setTouchVoiceProgress] = useState<{ completed: number; total: number } | null>(null);
   const [reactionVoiceGeneratingId, setReactionVoiceGeneratingId] = useState('');
-  const settingsGenerating = startupLineGenerating || startupAllDayGenerating || startupActionGenerating || startupVoiceGenerating || touchGenerating || Boolean(reactionVoiceGeneratingId);
+  const settingsGenerating = startupLineGenerating || startupAllDayGenerating || startupActionGenerating || Boolean(touchCueGeneratingId) || startupVoiceGenerating || touchGenerating || Boolean(reactionVoiceGeneratingId);
   const [touchDraftZones, setTouchDraftZones] = useState<AvatarTouchZone[]>(DEFAULT_COMPANION_TOUCH_ZONES);
   const [vrmExpressions, setVrmExpressions] = useState<string[]>([]);
   const [editing, setEditing] = useState(false);
@@ -898,11 +908,14 @@ const CompanionHome: React.FC = () => {
   const scheduleCompanionPerformanceCues = (
     cues: AvatarPerformanceCue[] | undefined,
     durationMs: number,
+    // 开机演出要锁头看镜头，触摸不能——它有自己的力度/特写处理。
+    // 所以每一拍怎么落地由调用方决定，默认仍是开机那套。
+    transform: (direction: AvatarPerformanceDirection) => AvatarPerformanceDirection = normalizeCompanionStartupPerformance,
   ) => {
     clearCompanionPerformanceCues();
     if (!cues?.length) return;
     expandAvatarPerformanceCueBeats(cues, durationMs).forEach(beat => {
-      const direction = normalizeCompanionStartupPerformance(beat.direction);
+      const direction = transform(beat.direction);
       if (beat.delayMs <= 40) {
         setPerformance(direction);
         return;
@@ -2031,6 +2044,38 @@ const CompanionHome: React.FC = () => {
     }
   };
 
+  /** 给一条触摸台词编排逐拍动作。与开机台词共用同一个动作导演。 */
+  const generateTouchReactionCues = async (zone: AvatarTouchZone, reaction: CompanionTouchReaction) => {
+    if (!character || settingsGenerating) return;
+    const text = normalizeCompanionDialogue(reaction.text, character.name);
+    const translation = normalizeCompanionDialogue(reaction.translation || '', character.name);
+    if (!text) {
+      addToast('这条台词是空的，先填中文原文', 'error');
+      return;
+    }
+    setTouchCueGeneratingId(reaction.id);
+    try {
+      const directed = await requestCompanionPerformanceCues({
+        character,
+        apiConfig,
+        line: text,
+        translation,
+        modelActions,
+      });
+      if (!mountedRef.current) return;
+      patchSavedTouchReaction(zone, reaction.id, {
+        performanceCues: directed as CompanionTouchReaction['performanceCues'],
+        performanceCueText: companionPerformanceCueText(text, translation),
+      });
+      addToast(`已为这句编排 ${directed.length} 拍动作`, 'success');
+    } catch (error: any) {
+      if (!mountedRef.current) return;
+      addToast(error?.message || '动作导演没有返回可用的编排', 'error');
+    } finally {
+      setTouchCueGeneratingId('');
+    }
+  };
+
   /** 机位幅度是整台舞台的设置，不属于任何一套预设，改完立刻落库。 */
   const applyCameraIntensity = (value: number) => {
     const next = resolveCompanionCameraIntensity(value);
@@ -2057,13 +2102,20 @@ const CompanionHome: React.FC = () => {
     setTouchSettingsOpen(false);
     setPreviewReturnPending(true);
     setLine({ text: reaction.text, translation: reaction.translation, label: '触摸预演', kind: 'touch' });
-    setPerformance(reaction.performance);
+    const cues = companionPerformanceCuePackMatches(
+      normalizeCompanionDialogue(reaction.text, character.name),
+      normalizeCompanionDialogue(reaction.translation || '', character.name),
+      reaction.performanceCueText,
+      reaction.performanceCues as AvatarPerformanceCue[] | undefined,
+    ) ? reaction.performanceCues as AvatarPerformanceCue[] : [];
+    setPerformance(cues[0]?.direction || reaction.performance);
     setMotionState('speaking');
+    scheduleCompanionPerformanceCues(cues, companionLineFallbackDuration(reaction.text.length), value => value);
     settleAfter(reaction.text.length);
     if (!reaction.voiceAssetId) return;
     const nonce = Date.now();
     touchVoiceNonceRef.current = nonce;
-    await playPersistedCompanionVoice(reaction, nonce, 'touch');
+    await playPersistedCompanionVoice(reaction, nonce, 'touch', cues, value => value);
   };
 
   const rerollSavedTouchReactionVoice = async (
@@ -2107,6 +2159,7 @@ const CompanionHome: React.FC = () => {
     nonce: number,
     kind: 'startup' | 'touch',
     performanceCues: AvatarPerformanceCue[] = [],
+    cueTransform?: (direction: AvatarPerformanceDirection) => AvatarPerformanceDirection,
   ) => {
     if (!voice.voiceAssetId) return;
     const url = await createAvatarTouchVoiceUrl(voice);
@@ -2131,9 +2184,9 @@ const CompanionHome: React.FC = () => {
       }
     };
     const scheduleAgainstAudio = () => {
-      if (kind !== 'startup' || !performanceCues.length) return;
+      if (!performanceCues.length) return;
       if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
-      scheduleCompanionPerformanceCues(performanceCues, audio.duration * 1000);
+      scheduleCompanionPerformanceCues(performanceCues, audio.duration * 1000, cueTransform);
     };
     audio.onloadedmetadata = scheduleAgainstAudio;
     audio.onplay = () => {
@@ -2225,16 +2278,29 @@ const CompanionHome: React.FC = () => {
     touchDialogueTimerRef.current = window.setTimeout(() => {
       if (!mountedRef.current) return;
       setLine({ text, translation: translation || undefined, label: `触摸 · ${avatarTouchZoneLabel(hit.zone)}`, kind: 'touch' });
-      setPerformance(applyAvatarTouchForce(
-        keepBuiltinSullyHeadClose(reaction.performance || buildImmediateTouchPerformance(hit.zone)),
+      // 逐拍编排里的每一拍都要过同一条触摸落地管线（力度 + 内置 Sully 特写），
+      // 否则手动编排的那几拍会失去按压力度、和没编排的台词表现不一致。
+      const landTouchDirection = (value: AvatarPerformanceDirection) => applyAvatarTouchForce(
+        keepBuiltinSullyHeadClose(value),
         hit,
+      );
+      const cues = companionPerformanceCuePackMatches(
+        text,
+        translation,
+        reaction.performanceCueText,
+        reaction.performanceCues as AvatarPerformanceCue[] | undefined,
+      ) ? reaction.performanceCues as AvatarPerformanceCue[] : [];
+      setPerformance(landTouchDirection(
+        cues[0]?.direction || reaction.performance || buildImmediateTouchPerformance(hit.zone),
       ));
       setMotionState('speaking');
+      // 有语音时下面会按真实音频时长重排；这里是没语音/语音被拦时的兜底。
+      scheduleCompanionPerformanceCues(cues, companionLineFallbackDuration(text.length), landTouchDirection);
       const voiceTextMatches = !reaction.voiceText
         || normalizeCompanionDialogue(reaction.voiceText, character.name) === spokenText;
       const voiceLanguageMatches = (reaction.voiceLanguage || '') === (settings?.voiceLanguage || '');
       if (settings?.voiceEnabled && reaction.voiceAssetId && voiceTextMatches && voiceLanguageMatches) {
-        void playPersistedCompanionVoice(reaction, hit.nonce, 'touch');
+        void playPersistedCompanionVoice(reaction, hit.nonce, 'touch', cues, landTouchDirection);
       }
       settleAfter(text.length);
     }, 420);
@@ -2312,111 +2378,33 @@ const CompanionHome: React.FC = () => {
   const startupCueBaseText = normalizeCompanionDialogue(startupTranslation, character.name).trim()
     || normalizeCompanionDialogue(startupLine, character.name).trim();
   const startupCueSentences = splitCompanionPerformanceSentences(startupCueBaseText);
-  // 拍的文字从 at 区间反切，而不是按下标查句子表：手动拆分后拍数会多于句数，
-  // 按下标取会让第 2 拍之后的标签全部错位。
-  const startupCueTextAt = (index: number): string => {
-    const total = Math.max(1, startupCueBaseText.length);
-    const from = Math.round((startupPerformanceCues[index]?.at ?? 0) * total);
-    const to = Math.round((startupPerformanceCues[index + 1]?.at ?? 1) * total);
-    return startupCueBaseText.slice(from, Math.max(from, to)).trim();
-  };
-  const selectedStartupCueText = selectedStartupCue ? startupCueTextAt(selectedStartupCueIndex) : '';
-  // 可拆分点：这一拍内部的停顿标点。用户想在逗号那里分开，就给他逗号。
-  const selectedStartupCueSplitPoints = (() => {
-    if (!selectedStartupCue || selectedStartupCueText.length < 4) return [] as Array<{ at: number; before: string; after: string }>;
-    const total = Math.max(1, startupCueBaseText.length);
-    const cueStart = Math.round((selectedStartupCue.at ?? 0) * total);
-    const nextAt = startupPerformanceCues[selectedStartupCueIndex + 1]?.at ?? 1;
-    const points: Array<{ at: number; before: string; after: string }> = [];
-    const seen = new Set<number>();
-    for (let offset = 0; offset < selectedStartupCueText.length - 1; offset += 1) {
-      if (!/[，,、…—]/.test(selectedStartupCueText[offset])) continue;
-      // 连续标点（……、——）整体跳过，切点落在它们后面。
-      let end = offset + 1;
-      while (end < selectedStartupCueText.length && /[，,、…—\s]/.test(selectedStartupCueText[end])) end += 1;
-      if (end >= selectedStartupCueText.length) break;
-      const before = selectedStartupCueText.slice(0, end).trim();
-      const after = selectedStartupCueText.slice(end).trim();
-      if (!before || !after) continue;
-      const at = Math.min(0.98, Math.max(0, (cueStart + end) / total));
-      // 切点必须落在本拍内部，且不能和相邻拍重合到几乎同一时刻。
-      if (at <= (selectedStartupCue.at ?? 0) + 0.002 || at >= nextAt - 0.002) continue;
-      const key = Math.round(at * 1000);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      points.push({ at, before, after });
-      offset = end - 1;
-    }
-    return points.slice(0, 4);
-  })();
-  const canSplitSelectedStartupCue = startupPerformanceCues.length < COMPANION_MAX_PERFORMANCE_CUES;
-
-  /** 在 at 处把当前这一拍切成两拍：后半拍继承前半拍的收尾姿势，画面不跳。 */
-  const splitStartupCueAt = (at: number) => {
-    if (!canSplitSelectedStartupCue) return;
-    setSelectedStartupPresetId('');
-    setStartupPerformanceCues(cues => {
-      const source = cues[selectedStartupCueIndex];
-      if (!source) return cues;
-      const nextAt = cues[selectedStartupCueIndex + 1]?.at ?? 1;
-      if (!(at > (source.at ?? 0)) || !(at < nextAt)) return cues;
-      const carried = source.endDirection || source.direction;
-      const half = Math.max(120, Math.round(((source.holdMs ?? 900)) / 2));
-      const head: AvatarPerformanceCue = { ...source, holdMs: half };
-      const tail: AvatarPerformanceCue = {
-        at,
-        direction: JSON.parse(JSON.stringify(carried)),
-        endDirection: JSON.parse(JSON.stringify(source.endDirection || carried)),
-        holdMs: half,
-      };
-      return [
-        ...cues.slice(0, selectedStartupCueIndex),
-        head,
-        tail,
-        ...cues.slice(selectedStartupCueIndex + 1),
-      ];
-    });
-    setStartupPerformanceCueIndex(selectedStartupCueIndex + 1);
-    setStartupPerformanceCuePhase('start');
-  };
-
-  /** 把当前这一拍并回上一拍：保留上一拍的起始姿势和本拍的收尾姿势。 */
-  const mergeStartupCueIntoPrevious = () => {
-    if (selectedStartupCueIndex <= 0) return;
-    setSelectedStartupPresetId('');
-    setStartupPerformanceCues(cues => {
-      const previous = cues[selectedStartupCueIndex - 1];
-      const current = cues[selectedStartupCueIndex];
-      if (!previous || !current) return cues;
-      const merged: AvatarPerformanceCue = {
-        ...previous,
-        endDirection: current.endDirection || previous.endDirection,
-        holdMs: Math.min(5_000, (previous.holdMs ?? 900) + (current.holdMs ?? 900)),
-      };
-      return [
-        ...cues.slice(0, selectedStartupCueIndex - 1),
-        merged,
-        ...cues.slice(selectedStartupCueIndex + 1),
-      ];
-    });
-    setStartupPerformanceCueIndex(Math.max(0, selectedStartupCueIndex - 1));
-    setStartupPerformanceCuePhase('start');
-  };
   // 语音存在就用真实时长，否则退回和播放端同一条文字长度估算公式，
   // 这样滑块上写的毫秒数和实际调度用的是同一把尺子。
   const startupTimelineDurationMs = (startupVoiceMatchesDraft && startupVoiceDurationMs)
     || companionLineFallbackDuration(startupSpokenDraft.length);
-  // 本句可用窗口 =（下一句起点 − 本句起点）× 总时长；最后一句吃到结尾。
-  const selectedStartupCueWindowMs = selectedStartupCue
-    ? Math.max(0, Math.round((
-      (startupPerformanceCues[selectedStartupCueIndex + 1]?.at ?? 1) - (selectedStartupCue.at ?? 0)
-    ) * startupTimelineDurationMs))
-    : 0;
-  // 收尾姿势至少要留 60ms 才看得出来，这是 expandAvatarPerformanceCueBeats 的硬下限。
-  const recommendedStartupHoldMs = selectedStartupCueWindowMs >= 140
-    ? Math.max(120, Math.min(5_000, Math.round(selectedStartupCueWindowMs * 0.7)))
-    : 0;
+  // 逐拍编辑的纯逻辑集中在 utils/companionPerformanceCueEdit，和触摸台词共用同一套。
+  const startupCueTextAt = (index: number): string => cueTextAt(startupCueBaseText, startupPerformanceCues, index);
+  const selectedStartupCueWindowMs = cueWindowMs(startupPerformanceCues, selectedStartupCueIndex, startupTimelineDurationMs);
+  const recommendedStartupHoldMs = recommendedHoldMs(selectedStartupCueWindowMs);
+  const selectedStartupCueSplitPoints = selectedStartupCue
+    ? cueSplitPoints(startupCueBaseText, startupPerformanceCues, selectedStartupCueIndex)
+    : [];
+  const canSplitSelectedStartupCue = canSplitPerformanceCues(startupPerformanceCues);
 
+  const splitStartupCueAt = (at: number) => {
+    setSelectedStartupPresetId('');
+    setStartupPerformanceCues(cues => splitPerformanceCueAt(cues, selectedStartupCueIndex, at));
+    setStartupPerformanceCueIndex(selectedStartupCueIndex + 1);
+    setStartupPerformanceCuePhase('start');
+  };
+
+  const mergeStartupCueIntoPrevious = () => {
+    if (selectedStartupCueIndex <= 0) return;
+    setSelectedStartupPresetId('');
+    setStartupPerformanceCues(cues => mergePerformanceCueIntoPrevious(cues, selectedStartupCueIndex));
+    setStartupPerformanceCueIndex(Math.max(0, selectedStartupCueIndex - 1));
+    setStartupPerformanceCuePhase('start');
+  };
   const launchCompanionApp = (id: AppID) => {
     setAppStarOpen(false);
     openApp(id);
@@ -3531,7 +3519,7 @@ const CompanionHome: React.FC = () => {
                       <span className="min-w-0 flex-1 text-[7px] leading-relaxed text-white/28">
                         {canSplitSelectedStartupCue
                           ? '拆出来的后半拍先继承前半拍的收尾姿势，再单独调；台词一个字都不用改。'
-                          : `已到 ${COMPANION_MAX_PERFORMANCE_CUES} 拍上限，先并回几拍再拆。`}
+                          : `已到 ${MAX_PERFORMANCE_CUES} 拍上限，先并回几拍再拆。`}
                       </span>
                     </div>
                   </div>
@@ -4102,6 +4090,38 @@ const CompanionHome: React.FC = () => {
                                         </select>
                                       </label>
                                     )}
+                                    <CompanionTouchCueEditor
+                                      testId={`companion-touch-cues-${reaction.id}`}
+                                      cues={(companionPerformanceCuePackMatches(
+                                        normalizeCompanionDialogue(reaction.text, character.name),
+                                        normalizeCompanionDialogue(reaction.translation || '', character.name),
+                                        reaction.performanceCueText,
+                                        reaction.performanceCues as AvatarPerformanceCue[] | undefined,
+                                      ) ? reaction.performanceCues as AvatarPerformanceCue[] : [])}
+                                      baseText={normalizeCompanionDialogue(reaction.translation || '', character.name).trim()
+                                        || normalizeCompanionDialogue(reaction.text, character.name).trim()}
+                                      durationMs={companionLineFallbackDuration(reaction.text.length)}
+                                      fallbackDirection={reaction.performance}
+                                      modelActions={modelActions}
+                                      emotionLabels={STARTUP_EMOTION_LABELS}
+                                      gestureLabels={STARTUP_GESTURE_LABELS}
+                                      cameraLabels={STARTUP_CAMERA_LABELS}
+                                      faceLabels={STARTUP_FACE_LABELS}
+                                      live2dActive={live2dCompanionActive}
+                                      disabled={settingsGenerating}
+                                      generating={touchCueGeneratingId === reaction.id}
+                                      accentColor={uiTint}
+                                      onChange={cues => patchSavedTouchReaction(zone, reaction.id, {
+                                        performanceCues: cues as CompanionTouchReaction['performanceCues'],
+                                        performanceCueText: companionPerformanceCueText(
+                                          normalizeCompanionDialogue(reaction.text, character.name),
+                                          normalizeCompanionDialogue(reaction.translation || '', character.name),
+                                        ),
+                                      })}
+                                      onGenerate={() => { void generateTouchReactionCues(zone, reaction); }}
+                                      onPreview={() => { void previewSavedTouchReaction(reaction); }}
+                                    />
+
                                     {alsoRunsModelAction && (
                                       <div className="mt-1 text-[7px] leading-relaxed text-white/34">
                                         模型专属动作是一整套录好的表演，播放期间脸也由它驱动，上面的微表情多半会被盖住看不出来（不是不生效）。想让微表情说了算，把这里改回「不指定」。
