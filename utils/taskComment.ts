@@ -14,6 +14,13 @@ const META_LABELS = new Set([
     '留学生 in tokyo', '留学生intokyo',
 ]);
 
+// A two- or three-character fragment is almost always a leaked keyword or an
+// unfinished model response (for example “想吃” / “还算”), not the sentence
+// that belongs under a task card. Keep this deliberately small so short but
+// natural replies in other languages are still allowed.
+const MIN_TASK_COMMENT_LENGTH = 6;
+const MAX_TASK_COMMENT_LENGTH = 80;
+
 const isMetaLabel = (value: string): boolean => {
     const normalized = value.trim()
         .replace(/^[【\[（(「『]+|[】\]）)」』]+$/g, '')
@@ -72,7 +79,8 @@ export const extractTaskComment = (raw: unknown): string | null => {
     text = text.replace(/^(?:平时用语|日常用语|评价|评论|角色评价|待办评价|comment|task\s*comment|text|content|response|output)\s*[:：\-]\s*/i, '').trim();
     text = stripWrapping(text).replace(/\s+/g, ' ').trim();
     if (!text || isMetaLabel(text)) return null;
-    return text.slice(0, 40);
+    if ([...text].filter(character => !/\s/.test(character)).length < MIN_TASK_COMMENT_LENGTH) return null;
+    return text.slice(0, MAX_TASK_COMMENT_LENGTH);
 };
 
 export const isTaskCommentUsable = (value: unknown): value is string => Boolean(extractTaskComment(value));

@@ -8,6 +8,8 @@ describe('task comment response cleanup', () => {
         expect(extractTaskComment(',留学生 in Tokyo')).toBeNull();
         expect(extractTaskComment('【留学生intokyo】')).toBeNull();
         expect(extractTaskComment('留学生 in Tokyo：便利店')).toBeNull();
+        expect(extractTaskComment('想吃')).toBeNull();
+        expect(extractTaskComment('还算')).toBeNull();
         expect(isTaskCommentUsable('平时用语')).toBe(false);
     });
 
@@ -20,5 +22,10 @@ describe('task comment response cleanup', () => {
     it('preserves a normal sentence and strips presentation wrappers', () => {
         expect(extractTaskComment('「去买东西的时候，顺手给自己带点喜欢的。」')).toBe('去买东西的时候，顺手给自己带点喜欢的。');
         expect(extractTaskComment('')).toBeNull();
+    });
+
+    it('keeps a natural longer sentence instead of truncating it at forty characters', () => {
+        const sentence = '今天把这件事完成得很漂亮，先去便利店补充一点喜欢的东西，再回来好好休息吧。';
+        expect(extractTaskComment(sentence)).toBe(sentence);
     });
 });
