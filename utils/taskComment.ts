@@ -15,11 +15,13 @@ const META_LABELS = new Set([
     '留学生 in tokyo', '留学生intokyo',
 ]);
 
-// A two- or three-character fragment is almost always a leaked keyword or an
-// unfinished model response (for example “想吃” / “还算”), not the sentence
-// that belongs under a task card. Keep this deliberately small so short but
-// natural replies in other languages are still allowed.
-const MIN_TASK_COMMENT_LENGTH = 6;
+// A short fragment or a line that stops without sentence punctuation is almost
+// always an unfinished model response (for example “想吃” / “还算” /
+// “挑好想吃的热便当”), not the sentence that belongs under a task card.
+// Requiring a little substance here is intentional: a failed generation should
+// leave the placeholder and retry, rather than persist something that reads as
+// a half-finished thought.
+const MIN_TASK_COMMENT_LENGTH = 12;
 const MAX_TASK_COMMENT_LENGTH = 80;
 
 const isMetaLabel = (value: string): boolean => {
@@ -47,6 +49,14 @@ const isIdentityPossessiveFragment = (value: string): boolean => {
     if (!/[()（）]/.test(candidate) || !/(?:['’]s|的)\s*$/i.test(candidate)) return false;
     if (/[。！？!?，,；;]/.test(candidate)) return false;
     return /[\p{L}\p{N}\p{Script=Han}]/u.test(candidate);
+};
+
+const isLikelyCompleteSentence = (value: string): boolean => {
+    // Allow a closing quote / bracket after the actual terminator. The normal
+    // wrapper cleanup removes most of these already, but keeping this check
+    // tolerant avoids rejecting a provider's harmless presentation wrapper.
+    const withoutClosing = value.replace(/[」』”"'`）)\]】]+$/g, '').trim();
+    return /[。！？!?…\.]+$/.test(withoutClosing);
 };
 
 const stripWrapping = (value: string): string => value
@@ -96,7 +106,25 @@ export const extractTaskComment = (raw: unknown): string | null => {
     text = stripWrapping(text).replace(/\s+/g, ' ').trim();
     if (!text || isMetaLabel(text) || isIdentityPossessiveFragment(text)) return null;
     if ([...text].filter(character => !/\s/.test(character)).length < MIN_TASK_COMMENT_LENGTH) return null;
-    return text.slice(0, MAX_TASK_COMMENT_LENGTH);
+    if (text.length > MAX_TASK_COMMENT_LENGTH || !isLikelyCompleteSentence(text)) return null;
+    return text;
 };
 
 export const isTaskCommentUsable = (value: unknown): value is string => Boolean(extractTaskComment(value));
+
+/**
+ * Put the speaker in front of a persisted task sentence without duplicating a
+ * prefix if an older provider response already included the role name.
+ */
+export const formatTaskComment = (speakerName: string | undefined, value: unknown): string | null => {
+    const text = extractTaskComment(value);
+    if (!text) return null;
+    const name = speakerName?.trim() || '角色';
+    const rest = text.slice(0, name.length).toLocaleLowerCase() === name.toLocaleLowerCase()
+        ? text.slice(name.length)
+        : '';
+    if (rest && /^\s*[:：-]/.test(rest)) {
+        return `${name}：${rest.replace(/^\s*[:：-]\s*/, '')}`;
+    }
+    return `${name}：${text}`;
+};

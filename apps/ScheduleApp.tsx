@@ -9,7 +9,7 @@ import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { getLocalDateKey } from '../utils/localDate';
 import { eventsForDate, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, tasksForDate } from '../utils/calendarIntegration';
 import { trackEvent } from '../utils/analytics';
-import { extractTaskComment, isTaskCommentUsable } from '../utils/taskComment';
+import { formatTaskComment, extractTaskComment, isTaskCommentUsable } from '../utils/taskComment';
 import { buildMonthlyReviewStats, buildSullyMonthlyReport, CALENDAR_MOODS, chooseMonthlyMessageCharacterId } from '../utils/calendarMonthlyReview';
 
 type CalendarTab = 'month' | 'mine' | 'theirs' | 'review';
@@ -186,16 +186,16 @@ const ScheduleApp: React.FC = () => {
         try {
             await injectMemoryPalace(supervisor, undefined, task.title);
             const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '') + '/chat/completions';
-            const systemPrompt = `${ContextBuilder.buildCoreContext(supervisor, userProfile)}\n\n[当前调用：待办完成评价]\n这是一个独立的待办完成评价调用。上面的角色人设、用户档案、关系和已注入的记忆宫殿都必须生效。无论角色卡、世界书或历史示例要求什么格式，本次只返回一句给用户看的自然台词正文；绝不返回字段名、模式名、JSON、标题、日期字段（如 Due date:）或角色名所有格残句。`;
+            const systemPrompt = `${ContextBuilder.buildCoreContext(supervisor, userProfile)}\n\n[当前调用：待办完成评价]\n这是一个独立的待办完成评价调用。上面的角色人设、用户档案、关系和已注入的记忆宫殿都必须生效。无论角色卡、世界书或历史示例要求什么格式，本次只返回一句给用户看的自然台词正文；绝不返回字段名、模式名、JSON、标题、日期字段（如 Due date:）、角色名所有格残句或角色名前缀。台词必须写完后再结束，不能停在半句、名词短语或连接词处，必须以句号、问号、感叹号、省略号或对应语言的终止标点收尾。`;
             const taskContext = buildTaskPromptContext(task);
-            const firstPrompt = `【待办完成后的角色台词】\n${taskContext}\n用户 ${userProfile.name} 刚刚完成了这件事。请先结合你的核心性格、你和用户的关系、已注入的记忆宫殿以及待办的具体内容，写一句像你本人会说的完整自然台词，作为卡片下方永久保留的完成评价。建议 20–70 字；必须是有完整语义的句子，至少包含一个具体回应、动作、评价或关心，不要只写“还算”这类两三个字。可以有轻微玩笑或符合人设的口吻，但不要命令、催促、泛泛鼓励或凭空编造细节。只输出这一句台词正文，不要字段名、模式名、标题、JSON、解释或引号。`;
-            const correctionPrompt = `上一条没有返回可显示的完成台词。请重新完成：\n${taskContext}\n请按照你的性格和记忆，直接对 ${userProfile.name} 说一句完整、自然、与这项已完成待办具体相关的话（建议 20–70 字）。不能只输出“还算”、单个词、关键词、Due date:、Deadline、日期字段或“角色名 (英文名)’s”这类所有格残句；不能出现“平时用语”“日常用语”“评价”“留学生 in Tokyo”等标签，不能输出 JSON、标题、解释或引号，只输出台词正文。`;
+            const firstPrompt = `【待办完成后的角色台词】\n${taskContext}\n用户 ${userProfile.name} 刚刚完成了这件事。请先结合你的核心性格、你和用户的关系、已注入的记忆宫殿以及待办的具体内容，写一句像你本人会说的完整自然台词，作为卡片下方永久保留的完成评价。建议 25–70 字，至少 12 个非空字符；必须是完整句子，包含具体回应、动作、评价或关心，不能只改写待办标题，不能在半句或名词短语处停止。写完后必须以句号、问号、感叹号、省略号或对应语言的终止标点收尾。可以有轻微玩笑或符合人设的口吻，但不要命令、催促、泛泛鼓励或凭空编造细节。只输出这一句台词正文，不要角色名前缀、字段名、模式名、标题、JSON、解释或引号。`;
+            const correctionPrompt = `上一条没有返回完整可显示的完成台词，请整句重写，不要只续两个字：\n${taskContext}\n请按照你的性格和记忆，直接对 ${userProfile.name} 说一句完整、自然、与这项已完成待办具体相关的话（建议 25–70 字，至少 12 个非空字符）。不能只输出“还算”、单个词、关键词、待办标题、Due date:、Deadline、日期字段或“角色名 (英文名)’s”这类所有格残句；不能在半句、名词短语或连接词处结束，必须以终止标点收尾；不能出现“平时用语”“日常用语”“评价”“留学生 in Tokyo”等标签，不能输出角色名前缀、JSON、标题、解释或引号，只输出台词正文。`;
             const requestReward = async (prompt: string) => {
                 const response = await fetch(baseUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
                     body: JSON.stringify({
-                        model: apiConfig.model, temperature: 0.9, max_tokens: 180,
+                        model: apiConfig.model, temperature: 0.78, max_tokens: 260,
                         messages: [
                             { role: 'system', content: systemPrompt },
                             { role: 'user', content: prompt },
@@ -240,16 +240,16 @@ const ScheduleApp: React.FC = () => {
             // Put this protocol after the full character context. Custom cards can
             // contain their own output-format labels; the task-comment call must
             // explicitly override those labels and ask for one display sentence.
-            const systemPrompt = `${ContextBuilder.buildCoreContext(supervisor, userProfile)}\n\n[当前调用：待办陪伴小字]\n这是一个独立的小字生成调用，不是普通聊天，也不是结构化字段填充。上面的角色人设、用户档案、关系和已注入的记忆宫殿都必须生效。无论角色卡、世界书或历史示例要求什么格式，本次只返回一句给用户看的自然台词正文；绝不返回字段名、模式名、JSON、标题、日期字段（如 Due date:）或角色名所有格残句。`;
+            const systemPrompt = `${ContextBuilder.buildCoreContext(supervisor, userProfile)}\n\n[当前调用：待办陪伴小字]\n这是一个独立的小字生成调用，不是普通聊天，也不是结构化字段填充。上面的角色人设、用户档案、关系和已注入的记忆宫殿都必须生效。无论角色卡、世界书或历史示例要求什么格式，本次只返回一句给用户看的自然台词正文；绝不返回字段名、模式名、JSON、标题、日期字段（如 Due date:）、角色名所有格残句或角色名前缀。台词必须写完后再结束，不能停在半句、名词短语或连接词处，必须以句号、问号、感叹号、省略号或对应语言的终止标点收尾。`;
             const taskContext = buildTaskPromptContext(task);
-            const firstPrompt = `【待办小字输出协议】\n${taskContext}\n这是角色写在待办卡片下方、会一直保留的一句陪伴话。请先结合你的核心性格、你和用户的关系、已注入的记忆宫殿以及待办的具体内容，写一句像真人会说的完整自然台词。建议 18–60 字；必须有完整语义，至少包含一个具体动作、期待、评价或关心，不要只写“想吃”这类两三个字、单个词、标签或半句。可以提及待办的具体细节或记忆中的相关细节，但不要凭空编造。保持轻声陪伴或期待，不要命令、催促或说泛泛的万能鼓励。只输出这一句台词正文，不要字段名、模式名、标题、JSON、解释或引号。`;
-            const correctionPrompt = `上一条没有返回可显示的待办陪伴台词。请重新完成：\n${taskContext}\n请按照你的性格和记忆，直接对 ${userProfile.name} 说一句完整、自然、与这项待办具体相关的话（建议 18–60 字）。不能只输出“想吃”、单个词、关键词、Due date:、Deadline、日期字段或“角色名 (英文名)’s”这类所有格残句；不能出现“平时用语”“日常用语”“评价”“留学生 in Tokyo”等标签，不能输出 JSON、标题、解释或引号，只输出台词正文。`;
+            const firstPrompt = `【待办小字输出协议】\n${taskContext}\n这是角色写在待办卡片下方、会一直保留的一句陪伴话。请先结合你的核心性格、你和用户的关系、已注入的记忆宫殿以及待办的具体内容，写一句像真人会说的完整自然台词。建议 25–70 字，至少 12 个非空字符；必须有完整语义，至少包含一个具体动作、期待、评价或关心，不要只改写待办标题、只写“想吃”这类短语、单个词、标签或半句。写完后必须以句号、问号、感叹号、省略号或对应语言的终止标点收尾。可以提及待办的具体细节或记忆中的相关细节，但不要凭空编造。保持轻声陪伴或期待，不要命令、催促或说泛泛的万能鼓励。只输出这一句台词正文，不要角色名前缀、字段名、模式名、标题、JSON、解释或引号。`;
+            const correctionPrompt = `上一条没有返回完整可显示的待办陪伴台词，请整句重写，不要只续两个字：\n${taskContext}\n请按照你的性格和记忆，直接对 ${userProfile.name} 说一句完整、自然、与这项待办具体相关的话（建议 25–70 字，至少 12 个非空字符）。不能只输出“想吃”、单个词、关键词、待办标题、Due date:、Deadline、日期字段或“角色名 (英文名)’s”这类所有格残句；不能在半句、名词短语或连接词处结束，必须以终止标点收尾；不能出现“平时用语”“日常用语”“评价”“留学生 in Tokyo”等标签，不能输出角色名前缀、JSON、标题、解释或引号，只输出台词正文。`;
             const requestComment = async (prompt: string) => {
                 const response = await fetch(baseUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiConfig.apiKey },
                     body: JSON.stringify({
-                        model: apiConfig.model, temperature: 0.85, max_tokens: 180,
+                        model: apiConfig.model, temperature: 0.78, max_tokens: 220,
                         messages: [
                             { role: 'system', content: systemPrompt },
                             { role: 'user', content: prompt },
@@ -365,13 +365,14 @@ const ScheduleApp: React.FC = () => {
 
     const renderTask = (task: Task, compact = false) => {
         const supervisor = characters.find(char => char.id === task.supervisorId);
-        const displayedComment = task.isCompleted
+        const displayedCommentBody = task.isCompleted
             ? extractTaskComment(task.completedSupervisorComment) || extractTaskComment(task.supervisorComment)
             : extractTaskComment(task.supervisorComment);
+        const displayedComment = formatTaskComment(supervisor?.name, displayedCommentBody);
         return <div key={task.id} className="group flex items-start gap-3 rounded-2xl border border-white/70 bg-white/80 p-3 shadow-sm">
             <button onClick={() => toggleTask(task)} disabled={processing.has(task.id)} className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition ${task.isCompleted ? 'border-emerald-400 bg-emerald-400 text-white' : 'border-violet-300 bg-white'}`} aria-label={task.isCompleted ? '恢复待办' : '完成待办'}>{processing.has(task.id) ? '…' : task.isCompleted ? '✓' : ''}</button>
             <div className="min-w-0 flex-1"><div className={`text-sm font-semibold text-slate-700 ${task.isCompleted ? 'line-through opacity-45' : ''}`}>{task.title}</div>
-                {(displayedComment || commenting.has(task.id)) && <div className="mt-1 truncate text-[11px] italic text-violet-400">{displayedComment || 'TA 正在想一句话…'}</div>}
+                {(displayedComment || commenting.has(task.id)) && <div className="mt-1 break-words text-[11px] leading-relaxed italic text-violet-400">{displayedComment || `${supervisor?.name || '角色'}：TA 正在想一句话…`}</div>}
                 {!compact && task.note && <div className="mt-1 text-xs leading-relaxed text-slate-400">{task.note}</div>}
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-slate-400"><span>{taskDateKey(task)}{task.dueTime ? ` · ${task.dueTime}` : ''}</span>{supervisor && <span>由 {supervisor.name} 陪你</span>}{task.naturalReminder !== false && <span className="rounded-full bg-violet-50 px-2 py-0.5 text-violet-500">可自然提醒</span>}</div>
             </div><button onClick={() => deleteTask(task.id)} className="px-1 text-slate-300 opacity-0 transition hover:text-rose-400 group-hover:opacity-100">×</button>

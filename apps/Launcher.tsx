@@ -14,7 +14,7 @@ import { useLocalDateKey } from '../hooks/useLocalDateKey';
 import { resolveCharTimeZone } from '../utils/timezone';
 import { trackEvent } from '../utils/analytics';
 import { CALENDAR_DATA_UPDATED_EVENT, eventOccursOnDate, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey } from '../utils/calendarIntegration';
-import { extractTaskComment } from '../utils/taskComment';
+import { formatTaskComment } from '../utils/taskComment';
 import {
     carouselCloneResetIndex,
     carouselLogicalIndex,
@@ -354,7 +354,7 @@ const CALENDAR_WEEKDAYS = [
 ] as const;
 
 // 4. Widget Page Component (Calendar + checkable user todos)
-const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, tasks, onToggleTask, acnh = false, paper = false, carouselClone = false }: any) => {
+const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, tasks, characters, onToggleTask, acnh = false, paper = false, carouselClone = false }: any) => {
     // 动森：奶油卡片样式（替代暗色玻璃）
     const acCard = acnh ? { background: 'rgb(247,243,223)', border: '2px solid #e8e2d6', boxShadow: '0 6px 18px rgba(61,52,40,0.12)' } : undefined;
     const acDot = acnh ? '#6fba2c' : undefined;
@@ -435,7 +435,7 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, tasks, o
                               <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 ${paper ? 'border-[#788369]/50' : 'border-white/50'}`} style={{ color: contentColor }} />
                                   <span className="min-w-0 flex-1">
                                       <span className="block truncate text-sm font-bold" style={{ color: contentColor }}>{task.title}</span>
-                                      {extractTaskComment(task.supervisorComment) && <span className="block truncate text-[10px] italic opacity-65" style={{ color: contentColor }}>{extractTaskComment(task.supervisorComment)}</span>}
+                                      {formatTaskComment(characters?.find((character: CharacterProfile) => character.id === task.supervisorId)?.name, task.supervisorComment) && <span className="block break-words text-[10px] leading-relaxed italic opacity-65" style={{ color: contentColor }}>{formatTaskComment(characters?.find((character: CharacterProfile) => character.id === task.supervisorId)?.name, task.supervisorComment)}</span>}
                                       <span className="block truncate text-[10px] opacity-50" style={{ color: contentColor }}>
                                       {taskDateKey(task) < todayStr ? '已到期' : taskDateKey(task) === todayStr ? '今天' : taskDateKey(task)}{task.dueTime ? ` · ${task.dueTime}` : ''}
                                   </span>
@@ -1261,6 +1261,7 @@ const Launcher: React.FC = () => {
                           openApp={openApp}
                           anniversaries={anniversaries}
                           tasks={tasks}
+                          characters={characters}
                           onToggleTask={handleWidgetTaskToggle}
                           acnh={acnh}
                           paper={paper}

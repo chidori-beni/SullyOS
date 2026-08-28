@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractTaskComment, isTaskCommentUsable } from './taskComment';
+import { extractTaskComment, formatTaskComment, isTaskCommentUsable } from './taskComment';
 
 describe('task comment response cleanup', () => {
     it('rejects a mode name instead of showing it as a comment', () => {
@@ -16,6 +16,8 @@ describe('task comment response cleanup', () => {
         expect(extractTaskComment('萧逸 (Xiao Yi)’s')).toBeNull();
         expect(extractTaskComment('萧逸 (Xiao Yi)’s:')).toBeNull();
         expect(extractTaskComment('萧逸（Xiao Yi）的')).toBeNull();
+        expect(extractTaskComment('反派大Boss采购完述')).toBeNull();
+        expect(extractTaskComment('挑好想吃的热便当')).toBeNull();
         expect(isTaskCommentUsable('平时用语')).toBe(false);
     });
 
@@ -33,5 +35,12 @@ describe('task comment response cleanup', () => {
     it('keeps a natural longer sentence instead of truncating it at forty characters', () => {
         const sentence = '今天把这件事完成得很漂亮，先去便利店补充一点喜欢的东西，再回来好好休息吧。';
         expect(extractTaskComment(sentence)).toBe(sentence);
+    });
+
+    it('requires a complete sentence and adds the speaker name once', () => {
+        expect(extractTaskComment('今天也辛苦了，买完东西就早点回家休息。')).toBe('今天也辛苦了，买完东西就早点回家休息。');
+        expect(extractTaskComment('今天也辛苦了，买完东西就早点回家休息')).toBeNull();
+        expect(formatTaskComment('萧逸', '今天也辛苦了，买完东西就早点回家休息。')).toBe('萧逸：今天也辛苦了，买完东西就早点回家休息。');
+        expect(formatTaskComment('萧逸', '萧逸：今天也辛苦了，买完东西就早点回家休息。')).toBe('萧逸：今天也辛苦了，买完东西就早点回家休息。');
     });
 });
