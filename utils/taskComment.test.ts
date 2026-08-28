@@ -10,6 +10,12 @@ describe('task comment response cleanup', () => {
         expect(extractTaskComment('留学生 in Tokyo：便利店')).toBeNull();
         expect(extractTaskComment('想吃')).toBeNull();
         expect(extractTaskComment('还算')).toBeNull();
+        expect(extractTaskComment('Due date:')).toBeNull();
+        expect(extractTaskComment('Due date: 2026-08-28')).toBeNull();
+        expect(extractTaskComment('Deadline')).toBeNull();
+        expect(extractTaskComment('萧逸 (Xiao Yi)’s')).toBeNull();
+        expect(extractTaskComment('萧逸 (Xiao Yi)’s:')).toBeNull();
+        expect(extractTaskComment('萧逸（Xiao Yi）的')).toBeNull();
         expect(isTaskCommentUsable('平时用语')).toBe(false);
     });
 

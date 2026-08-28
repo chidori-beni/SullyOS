@@ -179,17 +179,17 @@ const ScheduleApp: React.FC = () => {
             setGeneratingLetter(false);
         }
     };
-    const generateTaskReward = async (task: Task) => {
+    const generateTaskReward = async (task: Task, silent = false) => {
         const supervisor = characters.find(char => char.id === task.supervisorId);
-        if (!supervisor || !apiConfig.apiKey) { addToast('待办已完成', 'success'); return; }
-        addToast(`${supervisor.name} 正在确认你的成果...`, 'info');
+        if (!supervisor || !apiConfig.apiKey) { if (!silent) addToast('待办已完成', 'success'); return; }
+        if (!silent) addToast(`${supervisor.name} 正在确认你的成果...`, 'info');
         try {
             await injectMemoryPalace(supervisor, undefined, task.title);
             const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '') + '/chat/completions';
-            const systemPrompt = `${ContextBuilder.buildCoreContext(supervisor, userProfile)}\n\n[当前调用：待办完成评价]\n这是一个独立的待办完成评价调用。上面的角色人设、用户档案、关系和已注入的记忆宫殿都必须生效。无论角色卡、世界书或历史示例要求什么格式，本次只返回一句给用户看的自然台词正文；绝不返回字段名、模式名、JSON、标题或解释。`;
+            const systemPrompt = `${ContextBuilder.buildCoreContext(supervisor, userProfile)}\n\n[当前调用：待办完成评价]\n这是一个独立的待办完成评价调用。上面的角色人设、用户档案、关系和已注入的记忆宫殿都必须生效。无论角色卡、世界书或历史示例要求什么格式，本次只返回一句给用户看的自然台词正文；绝不返回字段名、模式名、JSON、标题、日期字段（如 Due date:）或角色名所有格残句。`;
             const taskContext = buildTaskPromptContext(task);
             const firstPrompt = `【待办完成后的角色台词】\n${taskContext}\n用户 ${userProfile.name} 刚刚完成了这件事。请先结合你的核心性格、你和用户的关系、已注入的记忆宫殿以及待办的具体内容，写一句像你本人会说的完整自然台词，作为卡片下方永久保留的完成评价。建议 20–70 字；必须是有完整语义的句子，至少包含一个具体回应、动作、评价或关心，不要只写“还算”这类两三个字。可以有轻微玩笑或符合人设的口吻，但不要命令、催促、泛泛鼓励或凭空编造细节。只输出这一句台词正文，不要字段名、模式名、标题、JSON、解释或引号。`;
-            const correctionPrompt = `上一条没有返回可显示的完成台词。请重新完成：\n${taskContext}\n请按照你的性格和记忆，直接对 ${userProfile.name} 说一句完整、自然、与这项已完成待办具体相关的话（建议 20–70 字）。不能只输出“还算”、单个词、关键词或待办标题；不能出现“平时用语”“日常用语”“评价”“留学生 in Tokyo”等标签，不能输出 JSON、标题、解释或引号，只输出台词正文。`;
+            const correctionPrompt = `上一条没有返回可显示的完成台词。请重新完成：\n${taskContext}\n请按照你的性格和记忆，直接对 ${userProfile.name} 说一句完整、自然、与这项已完成待办具体相关的话（建议 20–70 字）。不能只输出“还算”、单个词、关键词、Due date:、Deadline、日期字段或“角色名 (英文名)’s”这类所有格残句；不能出现“平时用语”“日常用语”“评价”“留学生 in Tokyo”等标签，不能输出 JSON、标题、解释或引号，只输出台词正文。`;
             const requestReward = async (prompt: string) => {
                 const response = await fetch(baseUrl, {
                     method: 'POST',
@@ -208,7 +208,7 @@ const ScheduleApp: React.FC = () => {
             };
             let text = await requestReward(firstPrompt);
             if (!text) text = await requestReward(correctionPrompt);
-            if (!text) { addToast('待办已完成（角色没有留下可用评价）', 'success'); return; }
+            if (!text) { if (!silent) addToast('待办已完成（角色没有留下可用评价）', 'success'); return; }
             // Merge into the latest row so the sentence survives reloads and is
             // not written to a deleted or subsequently uncompleted task.
             const latest = (await DB.getAllTasks()).find(item => item.id === task.id);
@@ -221,11 +221,13 @@ const ScheduleApp: React.FC = () => {
             await DB.saveTask(updated);
             setTasks(current => current.map(item => item.id === task.id ? updated : item));
             notifyCalendarDataUpdated();
-            addToast(`${supervisor.name}: ${text}`, 'success');
-            await DB.saveMessage({ charId: supervisor.id, role: 'system', type: 'text', content: `[系统: ${userProfile.name} 完成了待办「${task.title}」。${supervisor.name} 评价道：「${text}」]` });
+            if (!silent) {
+                addToast(`${supervisor.name}: ${text}`, 'success');
+                await DB.saveMessage({ charId: supervisor.id, role: 'system', type: 'text', content: `[系统: ${userProfile.name} 完成了待办「${task.title}」。${supervisor.name} 评价道：「${text}」]` });
+            }
         } catch (error: any) {
             console.error('Task reward failed', error);
-            addToast(`待办已完成，评价生成失败：${error.message}`, 'error');
+            if (!silent) addToast(`待办已完成，评价生成失败：${error.message}`, 'error');
         }
     };
     const generateTaskComment = async (task: Task) => {
@@ -238,10 +240,10 @@ const ScheduleApp: React.FC = () => {
             // Put this protocol after the full character context. Custom cards can
             // contain their own output-format labels; the task-comment call must
             // explicitly override those labels and ask for one display sentence.
-            const systemPrompt = `${ContextBuilder.buildCoreContext(supervisor, userProfile)}\n\n[当前调用：待办陪伴小字]\n这是一个独立的小字生成调用，不是普通聊天，也不是结构化字段填充。上面的角色人设、用户档案、关系和已注入的记忆宫殿都必须生效。无论角色卡、世界书或历史示例要求什么格式，本次只返回一句给用户看的自然台词正文；绝不返回字段名、模式名、JSON、标题或解释。`;
+            const systemPrompt = `${ContextBuilder.buildCoreContext(supervisor, userProfile)}\n\n[当前调用：待办陪伴小字]\n这是一个独立的小字生成调用，不是普通聊天，也不是结构化字段填充。上面的角色人设、用户档案、关系和已注入的记忆宫殿都必须生效。无论角色卡、世界书或历史示例要求什么格式，本次只返回一句给用户看的自然台词正文；绝不返回字段名、模式名、JSON、标题、日期字段（如 Due date:）或角色名所有格残句。`;
             const taskContext = buildTaskPromptContext(task);
             const firstPrompt = `【待办小字输出协议】\n${taskContext}\n这是角色写在待办卡片下方、会一直保留的一句陪伴话。请先结合你的核心性格、你和用户的关系、已注入的记忆宫殿以及待办的具体内容，写一句像真人会说的完整自然台词。建议 18–60 字；必须有完整语义，至少包含一个具体动作、期待、评价或关心，不要只写“想吃”这类两三个字、单个词、标签或半句。可以提及待办的具体细节或记忆中的相关细节，但不要凭空编造。保持轻声陪伴或期待，不要命令、催促或说泛泛的万能鼓励。只输出这一句台词正文，不要字段名、模式名、标题、JSON、解释或引号。`;
-            const correctionPrompt = `上一条没有返回可显示的待办陪伴台词。请重新完成：\n${taskContext}\n请按照你的性格和记忆，直接对 ${userProfile.name} 说一句完整、自然、与这项待办具体相关的话（建议 18–60 字）。不能只输出“想吃”、单个词、关键词或待办标题；不能出现“平时用语”“日常用语”“评价”“留学生 in Tokyo”等标签，不能输出 JSON、标题、解释或引号，只输出台词正文。`;
+            const correctionPrompt = `上一条没有返回可显示的待办陪伴台词。请重新完成：\n${taskContext}\n请按照你的性格和记忆，直接对 ${userProfile.name} 说一句完整、自然、与这项待办具体相关的话（建议 18–60 字）。不能只输出“想吃”、单个词、关键词、Due date:、Deadline、日期字段或“角色名 (英文名)’s”这类所有格残句；不能出现“平时用语”“日常用语”“评价”“留学生 in Tokyo”等标签，不能输出 JSON、标题、解释或引号，只输出台词正文。`;
             const requestComment = async (prompt: string) => {
                 const response = await fetch(baseUrl, {
                     method: 'POST',
@@ -286,6 +288,18 @@ const ScheduleApp: React.FC = () => {
             if (repairAttemptedTaskIds.current.has(task.id)) return;
             repairAttemptedTaskIds.current.add(task.id);
             void generateTaskComment(task);
+        });
+    }, [apiConfig.apiKey, characters, tasks]);
+    useEffect(() => {
+        // Older completed tasks can already contain a leaked field label or a
+        // name-only fragment. Hide it through the parser and silently regenerate
+        // the completion sentence so the existing card is repaired as well.
+        if (!apiConfig.apiKey || characters.length === 0 || tasks.length === 0) return;
+        tasks.filter(task => task.isCompleted && task.completedSupervisorComment && !isTaskCommentUsable(task.completedSupervisorComment)).slice(0, 4).forEach(task => {
+            const key = `completed:${task.id}`;
+            if (repairAttemptedTaskIds.current.has(key)) return;
+            repairAttemptedTaskIds.current.add(key);
+            void generateTaskReward(task, true);
         });
     }, [apiConfig.apiKey, characters, tasks]);
     const addTask = async () => {
