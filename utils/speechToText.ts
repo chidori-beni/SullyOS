@@ -13,6 +13,13 @@
  * language is zh-CN regardless of the character's TTS output language.
  */
 import { Capacitor } from '@capacitor/core';
+import {
+  getAudioSessionType,
+  noteAudioCaptureStarting,
+  restoreSpeakerAudioOutput,
+  setAudioSessionType,
+  type WebAudioSessionType,
+} from './audioOutputRoute';
 
 export type SttProvider = 'system' | 'siliconflow-sensevoice' | 'siliconflow-telespeech';
 
@@ -168,8 +175,6 @@ let siliconFlowMicrophone: MediaStream | null = null;
 let siliconFlowMicrophoneRequest: Promise<MediaStream> | null = null;
 let siliconFlowMicrophoneGeneration = 0;
 
-type WebAudioSessionType = 'auto' | 'playback' | 'play-and-record';
-
 /**
  * The route the user selected for role audio during a call.
  *
@@ -185,15 +190,7 @@ let siliconFlowAudioRoute: SiliconFlowAudioRoute = 'speaker';
 const audioSessionTypeForRoute = (route: SiliconFlowAudioRoute): WebAudioSessionType =>
   route === 'speaker' ? 'playback' : 'play-and-record';
 
-const getWebAudioSessionType = (): WebAudioSessionType | undefined => {
-  try {
-    return (navigator as Navigator & {
-      audioSession?: { type?: WebAudioSessionType };
-    }).audioSession?.type;
-  } catch {
-    return undefined;
-  }
-};
+const getWebAudioSessionType = getAudioSessionType;
 
 /**
  * Safari 16.4+ exposes a subset of the Audio Session API. Merely disabling a
@@ -202,23 +199,7 @@ const getWebAudioSessionType = (): WebAudioSessionType | undefined => {
  * stream for permission reuse, but explicitly switch the system session at the
  * record/playback boundary whenever WebKit exposes the control.
  */
-const setWebAudioSessionType = (type: WebAudioSessionType, force = false): boolean => {
-  try {
-    const audioSession = (navigator as Navigator & {
-      audioSession?: { type: WebAudioSessionType };
-    }).audioSession;
-    if (!audioSession) return false;
-    // Assigning the same category is not a no-op in WebKit: it can re-run the
-    // route picker and briefly surface the system volume HUD. Avoid that churn
-    // at every TTS/recording boundary unless the caller is deliberately using
-    // the WebKit route-reset workaround below.
-    if (!force && audioSession.type === type) return true;
-    audioSession.type = type;
-    return audioSession.type === type;
-  } catch {
-    return false;
-  }
-};
+const setWebAudioSessionType = setAudioSessionType;
 
 /**
  * Remember the user's route choice and apply it when WebKit exposes its
@@ -257,6 +238,8 @@ export const prepareSiliconFlowAudioPlayback = (): void => {
  * `play-and-record` for the whole capture boundary.
  */
 export const prepareSiliconFlowAudioCapture = (): void => {
+  // 停掉可能还在跑的静音兜底播放，别让它和 getUserMedia 抢音频会话。
+  noteAudioCaptureStarting();
   setWebAudioSessionType(
     // WebKit's own workaround for the iPhone receiver-volume bug starts a
     // microphone request from `auto`; the first returned stream then enters
@@ -297,16 +280,15 @@ const pauseSiliconFlowMicrophone = (stream: MediaStream) => {
   // Restore the user's selected route for the role's next generated voice turn.
   //
   // Important WebKit quirk: on iPhone, assigning only `playback` after a mic
-  // turn often leaves the native AVAudioSession on the phone receiver. The
-  // documented workaround is an *immediate* `playback → auto` pair, which
-  // kicks WebKit into recomputing the output route. Force both assignments:
-  // the session is commonly already `playback`, and a normal same-value guard
-  // would otherwise skip the first half of the workaround. The next TTS
-  // boundary sets `playback` again, while the user's speaker/receiver choice
-  // remains in siliconFlowAudioRoute for the whole call.
+  // turn leaves the native AVAudioSession on the phone receiver, and the
+  // previous `playback → auto` pair used here was worse — it ended on `auto`,
+  // i.e. handed the decision back to a WebKit session that still remembers
+  // play-and-record. restoreSpeakerAudioOutput() does `auto → playback` and
+  // then actually re-activates the session with a fresh silent output-only
+  // element, which is the code equivalent of the manual 「上滑再滑回来」.
+  // The user's speaker/receiver choice stays in siliconFlowAudioRoute.
   if (siliconFlowAudioRoute === 'speaker') {
-    setWebAudioSessionType('playback', true);
-    setWebAudioSessionType('auto', true);
+    restoreSpeakerAudioOutput();
   } else {
     // Receiver is the native default for play-and-record. Do not run the
     // speaker reset for a user who explicitly selected the receiver.
@@ -332,6 +314,7 @@ const getSiliconFlowMicrophone = async (): Promise<MediaStream> => {
   // category before requesting the first stream. For the speaker route this
   // is `auto`, matching WebKit bug 282939's workaround; the resolved stream
   // then enters `play-and-record` in prepareSiliconFlowMicrophone().
+  noteAudioCaptureStarting();
   setWebAudioSessionType(siliconFlowAudioRoute === 'speaker' ? 'auto' : 'play-and-record');
   request = navigator.mediaDevices.getUserMedia({
     audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
@@ -365,10 +348,14 @@ export const releaseSiliconFlowMicrophone = (restoreAudioSession = true) => {
   siliconFlowMicrophoneRequest = null;
   stream?.getTracks().forEach(track => track.stop());
   // Leaving a call should not leave the whole PWA in a phone-call category.
+  // Just writing `auto` is not enough on iPhone: WebKit keeps the session on
+  // play-and-record (= receiver) after a capture, which is exactly why the
+  // next chat voice message played back quietly until the app was swiped.
   // A suspended call is different: its shared player may still be speaking,
   // so preserve the selected output route while releasing only the input.
-  if (restoreAudioSession) setWebAudioSessionType('auto');
-  else prepareSiliconFlowAudioPlayback();
+  if (!restoreAudioSession) prepareSiliconFlowAudioPlayback();
+  else if (siliconFlowAudioRoute === 'speaker') restoreSpeakerAudioOutput();
+  else setWebAudioSessionType('auto');
 };
 
 const startSiliconFlow = async (
@@ -445,6 +432,13 @@ const startWeb = (lang: string, cb: SttCallbacks): SttSession => {
   const clearWatchdog = () => { if (watchdog) { clearTimeout(watchdog); watchdog = null; } };
   const markAlive = () => { gotSignal = true; clearWatchdog(); };
 
+  // 系统 SpeechRecognition 同样会让 iOS 进入 play-and-record，识别完必须和
+  // SiliconFlow 那条路一样把输出路由踢回扬声器，否则角色语音照样走听筒。
+  const restoreOutputRoute = () => {
+    if (getSiliconFlowAudioRoute() === 'speaker') restoreSpeakerAudioOutput();
+  };
+  noteAudioCaptureStarting();
+
   rec.onaudiostart = markAlive;
   rec.onspeechstart = markAlive;
   rec.onresult = (e: any) => {
@@ -465,6 +459,7 @@ const startWeb = (lang: string, cb: SttCallbacks): SttSession => {
     if (ended) return;
     ended = true;
     clearWatchdog();
+    restoreOutputRoute();
     cb.onRecordingEnd?.();
     const f = finalText.trim();
     if (f) cb.onFinal?.(f);

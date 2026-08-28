@@ -12,6 +12,7 @@ import { normalizeVoiceTags } from '../utils/sanitize';
 import { FISH_VOICE_ACTING_GUIDE, synthesizeSpeechFishDetailed, resolveFishAudioApiKey, cleanTextForTtsFish, stripFishMarkupForDisplay } from '../utils/fishAudioTts';
 import { resolveTtsProvider, getTtsProvider, getVoicePromptOverride } from '../utils/ttsProvider';
 import { VOICE_LANGUAGE_OPTIONS } from '../utils/voiceLanguage';
+import { notePlaybackStarted } from '../utils/audioOutputRoute';
 import { startStt, isSttSupported, prepareSiliconFlowAudioCapture, prepareSiliconFlowAudioPlayback, setSiliconFlowAudioRoute, releaseSiliconFlowMicrophone, type SiliconFlowAudioRoute, type SttSession } from '../utils/speechToText';
 import { ContextBuilder } from '../utils/context';
 import { resolveCharTimeZone } from '../utils/timezone';
@@ -2699,6 +2700,9 @@ ${sentencePlan}`;
     const playbackAttempt = audio.play();
     if (playbackAttempt) {
       void playbackAttempt.then(() => {
+        // 真正的角色语音已经在响了，采集后用来重新激活输出路由的静音兜底元素
+        // 可以停掉，别和通话音频一起占着音频会话。
+        notePlaybackStarted();
         // WebKit may recompute its category when the element actually starts.
         // Reassert once in the resolved play turn and once after the route
         // change has crossed the native event loop.

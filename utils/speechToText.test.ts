@@ -145,21 +145,27 @@ describe('SiliconFlow transcription request', () => {
     await runRecording();
     expect(track.enabled).toBe(false);
     expect(audioSessionTypes).toContain('play-and-record');
-    // The recorder track is disabled between turns. WebKit needs the forced
-    // playback -> auto pair to kick the route back to the speaker; setting
-    // playback alone is the regression that made every later TTS turn quiet.
-    expect(audioSessionTypes.slice(-2)).toEqual(['playback', 'auto']);
+    // The recorder track is disabled between turns. WebKit needs a forced
+    // category change to recompute the output route, and it must END on
+    // `playback`: the old `playback -> auto` pair handed the decision back to a
+    // session that still remembered play-and-record, which is what made every
+    // later chat/call voice turn come out of the receiver until the user
+    // manually swiped the PWA away and back.
+    expect(audioSessionTypes.slice(-2)).toEqual(['auto', 'playback']);
     const routeChangesAfterFirstRecording = audioSessionTypes.length;
     await runRecording();
 
     expect(getUserMedia).toHaveBeenCalledOnce();
-    // The cached stream is reused and `auto` is capture-compatible. Stopping
-    // the second turn repeats the same route kick, without another permission
-    // request or a stale play-and-record category.
-    expect(audioSessionTypes.slice(routeChangesAfterFirstRecording)).toEqual(['playback', 'auto']);
+    // The cached stream is reused and `auto` is capture-compatible: the mic
+    // button moves the session off `playback` first, then stopping the turn
+    // repeats the forced `auto -> playback` kick. No second permission request
+    // and no stale play-and-record category left behind.
+    expect(audioSessionTypes.slice(routeChangesAfterFirstRecording)).toEqual(['auto', 'auto', 'playback']);
     expect(track.stop).not.toHaveBeenCalled();
     releaseSiliconFlowMicrophone();
     expect(track.stop).toHaveBeenCalledOnce();
-    expect(audioSessionTypes.at(-1)).toBe('auto');
+    // Releasing the microphone must leave the speaker route asserted, not
+    // `auto` — `auto` after a capture is exactly the receiver regression.
+    expect(audioSessionTypes.at(-1)).toBe('playback');
   });
 });

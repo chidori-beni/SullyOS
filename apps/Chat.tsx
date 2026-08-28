@@ -100,6 +100,7 @@ import {
     resolveContextRangeMode,
     type ContextRangeMode,
 } from '../utils/chatContextRange';
+import { acquirePlaybackAudio, notePlaybackStarted, prepareSpeakerPlayback } from '../utils/audioOutputRoute';
 import { callLaunch } from '../utils/callLaunch';
 import { dateLaunch } from '../utils/dateLaunch';
 import {
@@ -454,6 +455,31 @@ const Chat: React.FC = () => {
     const [voiceLoading, setVoiceLoading] = useState<Set<number>>(new Set());
     const [playingMsgId, setPlayingMsgId] = useState<number | null>(null);
     const chatAudioRef = useRef<HTMLAudioElement | null>(null);
+    /**
+     * 语音条播放统一走这里。
+     *
+     * iPhone 上只要用过一次语音转文字，音频会话就留在 play-and-record（听筒），
+     * 角色语音听起来会突然变得很小；旧代码只是复用同一个 `new Audio()` 直接 play，
+     * 没有任何机会把输出路由踢回扬声器，所以每生成一条新语音都要手动把 PWA
+     * 上滑再滑回来。`audioOutputRoute` 负责在采集结束后完成那次重置，这里只要：
+     * 拿一个「重置之后创建」的元素、播放前确认类别是 playback、开始播了就把
+     * 静音兜底元素停掉。
+     */
+    const playChatVoice = (url: string, msgId: number) => {
+        prepareSpeakerPlayback();
+        const audio = acquirePlaybackAudio(chatAudioRef.current);
+        chatAudioRef.current = audio;
+        if (!audio) return;
+        audio.src = url;
+        audio.onended = () => setPlayingMsgId(null);
+        const attempt = audio.play();
+        if (attempt && typeof attempt.then === 'function') {
+            void attempt.then(() => notePlaybackStarted()).catch(() => { /* 用户可以再点一次 */ });
+        } else {
+            notePlaybackStarted();
+        }
+        setPlayingMsgId(msgId);
+    };
     const prevIsTypingRef = useRef(false);
     // 即时对话那条路的自动合成扫描窗（用法见下面那个 auto-TTS 的 effect）：
     // 「正在输入」灯灭的那一下开窗，窗口内每次消息变化都补扫一遍；角色不对就整个作废。
@@ -524,17 +550,12 @@ const Chat: React.FC = () => {
             if (msg) handleManualTts(msg, false);
             return;
         }
-        if (!chatAudioRef.current) chatAudioRef.current = new Audio();
-        const audio = chatAudioRef.current;
         if (playingMsgId === msgId) {
-            audio.pause();
+            try { chatAudioRef.current?.pause(); } catch { /* ignore */ }
             setPlayingMsgId(null);
             return;
         }
-        audio.src = data.url;
-        audio.onended = () => setPlayingMsgId(null);
-        audio.play().catch(() => {});
-        setPlayingMsgId(msgId);
+        playChatVoice(data.url, msgId);
     };
 
     // 稳定的播放回调：用 ref 持有最新闭包，引用永不变 —— 避免每条消息每次渲染都新建箭头函数，
@@ -708,11 +729,7 @@ const Chat: React.FC = () => {
             // 合成完是否立刻播（规则和来由见 shouldAutoPlayGeneratedVoice）：
             // AI 自动发来的默认不响、等用户点；用户自己点着要的一定响。
             if (shouldAutoPlayGeneratedVoice({ autoTriggered, autoPlayEnabled: char.chatVoiceAutoPlay })) {
-                if (!chatAudioRef.current) chatAudioRef.current = new Audio();
-                chatAudioRef.current.src = blobUrl;
-                chatAudioRef.current.onended = () => setPlayingMsgId(null);
-                chatAudioRef.current.play().catch(() => {});
-                setPlayingMsgId(msg.id);
+                playChatVoice(blobUrl, msg.id);
             }
             return { url: blobUrl, originalText, spokenText: storedSpokenText, lang: storedLang, blob };
         } catch (err: any) {
