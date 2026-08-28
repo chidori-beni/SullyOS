@@ -34,6 +34,7 @@ import {
     getExternalMemoryLengthInfo,
     getExternalMemoryOverLimitMessage,
 } from '../utils/memoryPalace/externalMemory';
+import { mergeCharacterVoiceProfile } from '../utils/voiceProfile';
 
 // ── 神经链接 · 列表页视觉件（淡紫留白风）────────────────────
 // 之前的「星点 + 玻璃饰带 + 华丽头像框」看久了眼花、低端机也重绘卡。
@@ -206,14 +207,14 @@ const Character: React.FC = () => {
 
   const applyVoiceToCharacter = (voice: MiniMaxVoiceItem, source: 'system' | 'voice_cloning' | 'voice_generation') => {
       if (!formData) return;
-      handleChange('voiceProfile', {
+      handleChange('voiceProfile', mergeCharacterVoiceProfile(formData.voiceProfile, {
           provider: 'minimax',
           voiceId: voice.voice_id,
           voiceName: voice.voice_name || '',
           source,
           model: formData.voiceProfile?.model || 'speech-2.8-hd',
           notes: formData.voiceProfile?.notes || '',
-      });
+      }));
       addToast(`已应用音色：${voice.voice_name || voice.voice_id}`, 'success');
       trackEvent('应用音色到角色', { source });
   };
@@ -1523,27 +1524,27 @@ ${isInitialGeneration ? `
                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                    <input
                                        value={formData.voiceProfile?.voiceId || ''}
-                                       onChange={(e) => handleChange('voiceProfile', {
+                                       onChange={(e) => handleChange('voiceProfile', mergeCharacterVoiceProfile(formData.voiceProfile, {
                                            provider: 'minimax',
                                            voiceId: e.target.value,
                                            voiceName: formData.voiceProfile?.voiceName || '',
                                            source: formData.voiceProfile?.source || 'custom',
                                            model: formData.voiceProfile?.model || 'speech-2.8-hd',
                                            notes: formData.voiceProfile?.notes || '',
-                                       })}
+                                       }))}
                                        className="w-full bg-slate-50 rounded-2xl px-3 py-2 text-xs border border-slate-200"
                                        placeholder="voice_id（可直接贴）"
                                    />
                                    <input
                                        value={formData.voiceProfile?.model || 'speech-2.8-hd'}
-                                       onChange={(e) => handleChange('voiceProfile', {
+                                       onChange={(e) => handleChange('voiceProfile', mergeCharacterVoiceProfile(formData.voiceProfile, {
                                            provider: 'minimax',
                                            voiceId: formData.voiceProfile?.voiceId || '',
                                            voiceName: formData.voiceProfile?.voiceName || '',
                                            source: formData.voiceProfile?.source || 'custom',
                                            model: e.target.value,
                                            notes: formData.voiceProfile?.notes || '',
-                                       })}
+                                       }))}
                                        className="w-full bg-slate-50 rounded-2xl px-3 py-2 text-xs border border-slate-200"
                                        placeholder="TTS 模型（默认 speech-2.8-hd）"
                                    />

@@ -36,11 +36,49 @@ import { prepareXinshengRoundPreset } from './xinsheng/xinshengRandomPreset';
 // 语音格式指导按当前 TTS 服务商二选一：用 MiniMax 才注入 MiniMax 那套（含 <#秒#> 停顿标记），
 // 用鱼声则注入鱼声版（去掉 MiniMax 专属标记，改用标点 / 省略号控制停顿）。
 // 用户在「设置 → 其他 API → 语音提示词」里自定义过该服务商的指南时，优先用用户那份；留空则回退内置默认。
-const voiceActingGuide = (): string => {
+// 但无论是否自定义，运行时协议都必须追加：自定义文案曾经会把内置的语气词 / 节奏要求整段覆盖掉。
+const formatVoiceSpeed = (
+  provider: ReturnType<typeof getTtsProvider>,
+  configuredSpeed?: number,
+): string => {
+  const fallback = provider === 'fishaudio' ? 0.9 : 1;
+  const raw = typeof configuredSpeed === 'number' && Number.isFinite(configuredSpeed)
+    ? configuredSpeed
+    : fallback;
+  const min = provider === 'fishaudio' ? 0.5 : 0.75;
+  const max = provider === 'fishaudio' ? 2 : 1.4;
+  return Math.max(min, Math.min(max, raw)).toFixed(2);
+};
+
+const buildVoiceRuntimeContract = (
+  provider: ReturnType<typeof getTtsProvider>,
+  configuredSpeed?: number,
+): string => {
+  const speed = formatVoiceSpeed(provider, configuredSpeed);
+  if (provider === 'fishaudio') {
+    return `### 语音输出运行协议（固定规则）
+
+这段运行协议不能被上面的自定义语音指南省略或覆盖。
+- 只要决定发语音，台词就不要退化成平直的书面句。除非只是「嗯」「好」「喂」这类极短确认，遇到情绪、犹豫、转折或需要换气的地方，至少保留一个该语种自然的口头语 / 填充词，或一个合适的鱼声 cue；不要把所有语音都写成干净的书面句。
+- 鱼声 cue 只使用官方支持的方括号标签，例如 [chuckling]、[sighing]、[soft]、[pause]，放在真正发生情绪或停顿的位置。不要写 MiniMax 的 <#秒#> 标记、圆括号 sound tag 或 emotion 属性。
+- 通过短长句、标点、省略号和少量 [pause] 表现快慢与呼吸。当前角色的基础合成速度是 ${speed}×；速度属于 Fish Audio 的 prosody.speed 配置，不是要写进 <语音> 的字段，不要自行另写 speed / 语速 / 速度 数字。`;
+  }
+  return `### 语音输出运行协议（固定规则）
+
+这段运行协议不能被上面的自定义语音指南省略或覆盖。
+- 只要决定发语音，台词就不要退化成平直的书面句。除非只是「嗯」「好」「喂」这类极短确认，遇到情绪、犹豫、转折或需要换气的地方，至少保留一个自然的口头语 / 填充词，或一个合适的官方英文语气声；不要把所有语音都写成干净的书面句。
+- MiniMax 的语气声只使用官方英文标签，例如 (chuckle)、(sighs)、(exhale)、(clear-throat)，每条少量即可；中文（轻笑）（叹气）这类舞台指示不要写。
+- 通过短长句、标点、省略号和少量 <#0.2#> / <#0.3#> 表现快慢与呼吸。当前角色的基础合成速度是 ${speed}×；速度属于 TTS 的 voice_setting.speed 配置，不是要写进 <语音> 的字段，不要自行另写 speed / 语速 / 速度 数字。
+- 不写 <语音 emotion="…">，也不要写 [happy] 等整句情绪标签；情绪放进用词、口头语和节奏里。`;
+};
+
+export const buildVoiceActingGuide = (
+  char: Pick<CharacterProfile, 'voiceProfile'>,
+): string => {
   const provider = getTtsProvider();
   const custom = getVoicePromptOverride(provider);
-  if (custom) return custom;
-  return provider === 'fishaudio' ? FISH_VOICE_ACTING_GUIDE : VOICE_ACTING_GUIDE;
+  const guide = custom || (provider === 'fishaudio' ? FISH_VOICE_ACTING_GUIDE : VOICE_ACTING_GUIDE);
+  return `${guide}\n\n${buildVoiceRuntimeContract(provider, char.voiceProfile?.speed)}`;
 };
 
 // 群活动注入专用：把一条群消息压成"适合塞进别人私聊背景"的短文本。
@@ -1108,7 +1146,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
 - 应该打字的场景（多数）：发链接、正经讨论、交代事情、很短的回复如"嗯""好"、
   以及**任何你只是习惯性想发语音的时候"
 
-${voiceActingGuide()}`;
+${buildVoiceActingGuide(char)}`;
             } else {
                 baseSystemPrompt += `\n\n### 🎤 语音消息功能
 
@@ -1138,7 +1176,7 @@ ${voiceActingGuide()}`;
 - 标签外的文字会正常显示为文本消息
 - **【重要】语音和文字是两种不同的表达方式，不要复读！** 如果你同时发了文字和语音，语音的内容不能是文字的重复或复述。要么单独发语音（不带文字），要么文字和语音表达不同的内容（比如文字聊正事，语音补一句吐槽/撒娇；或者文字发完一段话后，语音单独补充一个新的想法）。你不会打完字又发一条语音把同样的话再说一遍的——那很奇怪。
 
-${voiceActingGuide()}`;
+${buildVoiceActingGuide(char)}`;
             }
         } else {
             // Voice is disabled — explicitly prohibit voice tags to prevent inertia from call/date history
