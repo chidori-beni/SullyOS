@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Sparkle } from '@phosphor-icons/react';
 import {
   AVATAR_CAMERAS,
@@ -46,6 +46,9 @@ interface CompanionTouchCueEditorProps {
   generating?: boolean;
   accentColor: string;
   testId?: string;
+  /** 选中位置由父层持有：预演会卸载抽屉，内部 state 会连同 DOM 一起丢掉。 */
+  position: { index: number; phase: 'start' | 'end' };
+  onPositionChange: (position: { index: number; phase: 'start' | 'end' }) => void;
   onChange: (cues: AvatarPerformanceCue[]) => void;
   onGenerate: () => void;
   onPreview: () => void;
@@ -66,14 +69,17 @@ const CompanionTouchCueEditor: React.FC<CompanionTouchCueEditorProps> = ({
   generating = false,
   accentColor,
   testId,
+  position,
+  onPositionChange,
   onChange,
   onGenerate,
   onPreview,
 }) => {
-  const [index, setIndex] = useState(0);
-  const [phase, setPhase] = useState<'start' | 'end'>('start');
+  const phase = position.phase;
+  const setIndex = (value: number) => onPositionChange({ index: value, phase });
+  const setPhase = (value: 'start' | 'end') => onPositionChange({ index: position.index, phase: value });
 
-  const selectedIndex = Math.min(index, Math.max(0, cues.length - 1));
+  const selectedIndex = Math.min(position.index, Math.max(0, cues.length - 1));
   const selected = cues[selectedIndex];
   const editing = cueDirectionForPhase(selected, phase, fallbackDirection);
   const windowMs = cueWindowMs(cues, selectedIndex, durationMs);

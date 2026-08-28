@@ -502,6 +502,17 @@ const CompanionHome: React.FC = () => {
   const [touchGenerateMode, setTouchGenerateMode] = useState<'new' | 'merge'>('new');
   // 正在为哪一条触摸台词编排逐拍动作（空 = 没在编排）。
   const [touchCueGeneratingId, setTouchCueGeneratingId] = useState('');
+  // 设置抽屉分三段显示。开机自启那段很长，和触摸台词挤在一条滚动里会让
+  // 「调一句 → 预演 → 回来再调」每轮都要重新翻很远。
+  const [touchSettingsTab, setTouchSettingsTab] = useState<'camera' | 'startup' | 'touch'>('touch');
+  // 触摸台词一次只展开一个部位、一条台词，其余折叠成一行。
+  const [touchEditorZone, setTouchEditorZone] = useState<AvatarTouchZone | ''>('');
+  const [expandedTouchReactionId, setExpandedTouchReactionId] = useState('');
+  // 逐拍编辑器的选中位置提升到这里，抽屉关掉再打开也不会跳回第 1 拍。
+  const [touchCuePosition, setTouchCuePosition] = useState<{ index: number; phase: 'start' | 'end' }>({ index: 0, phase: 'start' });
+  // 预演会收起抽屉；记住滚动位置，回来时落回原处而不是回到顶部。
+  const touchSheetScrollRef = useRef<HTMLElement | null>(null);
+  const touchSheetScrollTopRef = useRef(0);
   // 「预演」必须收起设置面板才能看见立绘。记住这一次是从面板里点进来的，
   // 好让用户一键回到刚才那一句，而不是重开面板、重新展开、重新找到那一条。
   const [previewReturnPending, setPreviewReturnPending] = useState(false);
@@ -1374,6 +1385,8 @@ const CompanionHome: React.FC = () => {
   const openTouchSettings = () => {
     setAppStarOpen(false);
     setPreviewReturnPending(false);
+    touchSheetScrollTopRef.current = 0;
+    setTouchSettingsTab('touch');
     // 开机自启已经开着就直接展开那一段，省掉每次进来都要先点一下标题。
     setStartupSettingsExpanded(Boolean(character?.companionTouchSettings?.startup?.enabled));
     setTouchDraftZones(
@@ -1658,6 +1671,7 @@ const CompanionHome: React.FC = () => {
       addToast(`请填写 ${voiceLanguageLabel(startupVoiceLanguage)} 语音译文`, 'error');
       return;
     }
+    touchSheetScrollTopRef.current = touchSheetScrollRef.current?.scrollTop ?? 0;
     setTouchSettingsOpen(false);
     setPreviewReturnPending(true);
     setStartupHeadLocked(true);
@@ -2099,6 +2113,7 @@ const CompanionHome: React.FC = () => {
 
   const previewSavedTouchReaction = async (reaction: CompanionTouchReaction) => {
     if (!character) return;
+    touchSheetScrollTopRef.current = touchSheetScrollRef.current?.scrollTop ?? 0;
     setTouchSettingsOpen(false);
     setPreviewReturnPending(true);
     setLine({ text: reaction.text, translation: reaction.translation, label: '触摸预演', kind: 'touch' });
@@ -2346,6 +2361,12 @@ const CompanionHome: React.FC = () => {
   const preparedVoiceCount = Object.values(savedTouchSettings?.reactions || {})
     .reduce((total, reactions) => total + (reactions?.filter(item => item.voiceAssetId).length || 0), 0);
   const touchVoiceAvailable = characterHasVoice(character, apiConfig);
+  // 触摸逐句编辑一次只显示一个部位：20 句全铺开时，越靠后的越难够到。
+  const touchEditorZoneEntries = (Object.entries(savedTouchSettings?.reactions || {}) as Array<[AvatarTouchZone, CompanionTouchReaction[] | undefined]>)
+    .filter((entry): entry is [AvatarTouchZone, CompanionTouchReaction[]] => Boolean(entry[1]?.length));
+  const touchEditorActiveZone: AvatarTouchZone | undefined = touchEditorZoneEntries
+    .find(([zone]) => zone === touchEditorZone)?.[0] ?? touchEditorZoneEntries[0]?.[0];
+  const touchEditorReactions = touchEditorZoneEntries.find(([zone]) => zone === touchEditorActiveZone)?.[1] || [];
   const savedStartup = savedTouchSettings?.startup;
   const startupSpokenDraft = (miniMaxTtsActive ? normalizeCompanionDialogue(startupTtsText, character.name) : '')
     || normalizeCompanionDialogue(startupTranslation, character.name)
@@ -3112,6 +3133,11 @@ const CompanionHome: React.FC = () => {
           data-testid="companion-touch-settings"
         >
           <section
+            ref={node => {
+              touchSheetScrollRef.current = node;
+              // 从预演返回时落回原来的位置，而不是每轮都从顶部重新翻。
+              if (node && touchSheetScrollTopRef.current > 0) node.scrollTop = touchSheetScrollTopRef.current;
+            }}
             className="max-h-[88vh] w-full overflow-y-auto rounded-t-[2rem] border-t border-white/20 px-4 pb-5 pt-3 text-white shadow-[0_-24px_60px_rgba(0,0,0,.5)] backdrop-blur-2xl"
             style={{ background: `linear-gradient(165deg, ${palette.panelTop}f7, ${palette.panelBottom}fc)`, animation: 'companion-drawer-up 260ms ease-out both', paddingBottom: 'max(1.25rem, calc(var(--safe-bottom, 0px) + 1rem))' }}
             onClick={event => event.stopPropagation()}
@@ -3135,7 +3161,39 @@ const CompanionHome: React.FC = () => {
               ><Check size={15} /></button>
             </div>
 
-            {live2dCompanionActive && (
+            {/* 三段分开显示：一次只滚一段，不用为了改一句台词翻过整个开机面板。 */}
+            <div
+              className="sticky top-0 z-10 -mx-4 mt-3 grid grid-cols-3 gap-1 px-4 pb-2 pt-1 backdrop-blur-xl"
+              style={{ background: `linear-gradient(180deg, ${palette.panelTop}fa, ${palette.panelTop}d8)` }}
+              data-testid="companion-touch-settings-tabs"
+            >
+              {([
+                { value: 'touch' as const, label: '触摸反馈', badge: preparedReactionCount ? `${preparedReactionCount} 句` : '' },
+                { value: 'startup' as const, label: '开机自启', badge: startupEnabled ? '已开' : '' },
+                ...(live2dCompanionActive ? [{ value: 'camera' as const, label: '镜头', badge: cameraIntensity < 1 ? `${Math.round(cameraIntensity * 100)}%` : '' }] : []),
+              ]).map(tab => {
+                const active = touchSettingsTab === tab.value;
+                return (
+                  <button
+                    key={tab.value}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setTouchSettingsTab(tab.value)}
+                    className="border px-2 py-1.5 text-[9px] font-semibold transition active:scale-[.98]"
+                    style={{
+                      borderColor: active ? `${uiTint}aa` : 'rgba(255,255,255,.12)',
+                      background: active ? `${uiTint}1e` : 'rgba(255,255,255,.025)',
+                      color: active ? uiTint : 'rgba(255,255,255,.55)',
+                    }}
+                  >
+                    {tab.label}
+                    {tab.badge && <span className="ml-1 font-normal opacity-60">{tab.badge}</span>}
+                  </button>
+                );
+              })}
+            </div>
+
+            {touchSettingsTab === 'camera' && live2dCompanionActive && (
               <div
                 className="mt-4 border border-white/14 bg-white/[0.035] p-3"
                 style={{ clipPath: 'polygon(0 9px, 9px 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%)' }}
@@ -3168,6 +3226,7 @@ const CompanionHome: React.FC = () => {
               </div>
             )}
 
+            {touchSettingsTab === 'startup' && (
             <div
               className="mt-4 border border-white/14 bg-white/[0.035] p-3"
               style={{ clipPath: 'polygon(0 9px, 9px 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%)' }}
@@ -3741,6 +3800,10 @@ const CompanionHome: React.FC = () => {
               )}
             </div>
 
+            )}
+
+            {touchSettingsTab === 'touch' && (
+            <>
             <div className="mb-2 mt-5 flex items-center gap-2 text-[8px] tracking-[0.16em] text-white/42">
               <span className="h-px flex-1 bg-white/10" />
               触摸反馈包
@@ -3941,22 +4004,67 @@ const CompanionHome: React.FC = () => {
             </div>
 
             {preparedReactionCount > 0 && (
-              <details className="mt-4 border-t border-white/10 pt-3" data-testid="companion-touch-reaction-editor">
-                <summary className="cursor-pointer select-none text-[10px] font-semibold tracking-wide text-white/72">
-                  浏览 / 编辑每句台词、TTS 与 Live2D 动作
-                </summary>
-                <div className="mt-2 text-[8px] leading-relaxed text-white/38">
-                  修改会立即写回当前反馈包。TTS 语法只送给语音服务，首页台词始终显示“中文原文”。重 Roll 成功后会替换本句的本地音频。
+              <div className="mt-4 border-t border-white/10 pt-3" data-testid="companion-touch-reaction-editor">
+                <div className="text-[10px] font-semibold tracking-wide text-white/72">逐句编辑台词、TTS 与动作</div>
+                <div className="mt-1 text-[8px] leading-relaxed text-white/38">
+                  修改会立即写回当前反馈包。TTS 语法只送给语音服务，首页台词始终显示“中文原文”。
                 </div>
-                <div className="mt-3 space-y-4">
-                  {(Object.entries(savedTouchSettings?.reactions || {}) as Array<[AvatarTouchZone, CompanionTouchReaction[] | undefined]>).map(([zone, reactions]) => (
-                    reactions?.length ? (
-                      <div key={zone} className="border border-white/10 bg-black/10 p-2.5">
-                        <div className="mb-2 text-[9px] font-semibold" style={{ color: uiTint }}>{avatarTouchZoneLabel(zone)} · {reactions.length} 句</div>
-                        <div className="space-y-3">
-                          {reactions.map((reaction, index) => (
-                            <div key={reaction.id} className="border border-white/10 bg-white/[0.025] p-2.5" data-testid={`companion-touch-reaction-${reaction.id}`}>
-                              <div className="mb-1 text-[8px] text-white/42">第 {index + 1} 句 · {reaction.voiceAssetId ? '已有满意语音' : '尚无本地语音'}</div>
+                {/* 部位分页 + 单句展开：20 句全铺开时越靠后越难够到，改一句要翻很久。 */}
+                <div className="mt-2 flex flex-wrap gap-1.5" data-testid="companion-touch-zone-tabs">
+                  {touchEditorZoneEntries.map(([zone, items]) => {
+                    const active = zone === touchEditorActiveZone;
+                    return (
+                      <button
+                        key={zone}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => { setTouchEditorZone(zone); setExpandedTouchReactionId(''); }}
+                        className="border px-2.5 py-1.5 text-[9px] font-semibold transition active:scale-[.98]"
+                        style={{
+                          borderColor: active ? `${uiTint}aa` : 'rgba(255,255,255,.12)',
+                          background: active ? `${uiTint}1e` : 'rgba(255,255,255,.025)',
+                          color: active ? uiTint : 'rgba(255,255,255,.55)',
+                        }}
+                      >
+                        {avatarTouchZoneLabel(zone)}
+                        <span className="ml-1 font-normal opacity-60">{items.length}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="mt-3 space-y-2">
+                  {touchEditorReactions.map((reaction, index) => {
+                    const zone = touchEditorActiveZone!;
+                    const expanded = expandedTouchReactionId === reaction.id;
+                    const hasCues = companionPerformanceCuePackMatches(
+                      normalizeCompanionDialogue(reaction.text, character.name),
+                      normalizeCompanionDialogue(reaction.translation || '', character.name),
+                      reaction.performanceCueText,
+                      reaction.performanceCues as AvatarPerformanceCue[] | undefined,
+                    );
+                    return (
+                            <div key={reaction.id} className="border border-white/10 bg-white/[0.025]" data-testid={`companion-touch-reaction-${reaction.id}`}>
+                              <button
+                                type="button"
+                                aria-expanded={expanded}
+                                onClick={() => {
+                                  setExpandedTouchReactionId(expanded ? '' : reaction.id);
+                                  if (!expanded) setTouchCuePosition({ index: 0, phase: 'start' });
+                                }}
+                                className="flex w-full items-center gap-2 px-2.5 py-2 text-left"
+                              >
+                                <span className="shrink-0 text-[8px] font-semibold" style={{ color: expanded ? uiTint : 'rgba(255,255,255,.42)' }}>
+                                  第 {index + 1} 句
+                                </span>
+                                <span className="min-w-0 flex-1 truncate text-[9px] text-white/70">{reaction.text || '（空）'}</span>
+                                <span className="shrink-0 text-[7px] text-white/30">
+                                  {reaction.voiceAssetId ? '♪' : ''}{hasCues ? ` ${(reaction.performanceCues || []).length}拍` : ''}
+                                </span>
+                                <CaretDown size={11} className={`shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} style={{ color: 'rgba(255,255,255,.34)' }} aria-hidden />
+                              </button>
+                              {expanded && (
+                              <div className="border-t border-white/10 p-2.5">
+                              <div className="mb-1 text-[8px] text-white/42">{reaction.voiceAssetId ? '已有满意语音' : '尚无本地语音'}</div>
                               <label className="block text-[8px] text-white/48">
                                 中文原文（首页显示）
                                 <textarea
@@ -3996,6 +4104,16 @@ const CompanionHome: React.FC = () => {
                                 // 塞进来的 faces，又逼用户先取消动作才能改表情。所以只提示，不禁用。
                                 const alsoRunsModelAction = live2dCompanionActive && Boolean(reaction.performance.modelAction);
                                 const selectedFaces = reaction.performance.faces || [];
+                                // 有逐拍编排时，播放走的是 cues[0].direction，这一整组「整句姿势」
+                                // 控件对画面**完全没有作用**，只会和下面的逐拍控件看起来重复一遍。
+                                if (hasCues) {
+                                  return (
+                                    <div className="mt-2 border border-white/10 bg-black/15 px-2.5 py-2 text-[7px] leading-relaxed text-white/34">
+                                      整句姿势已交给下面的「逐拍动作」，这里不再重复一组控件。
+                                      把逐拍编排全部并回成 1 拍再删掉，才会退回单一姿势模式。
+                                    </div>
+                                  );
+                                }
                                 return (
                                   <>
                                     <div className="mt-2 grid grid-cols-2 gap-2">
@@ -4111,6 +4229,8 @@ const CompanionHome: React.FC = () => {
                                       disabled={settingsGenerating}
                                       generating={touchCueGeneratingId === reaction.id}
                                       accentColor={uiTint}
+                                      position={touchCuePosition}
+                                      onPositionChange={setTouchCuePosition}
                                       onChange={cues => patchSavedTouchReaction(zone, reaction.id, {
                                         performanceCues: cues as CompanionTouchReaction['performanceCues'],
                                         performanceCueText: companionPerformanceCueText(
@@ -4145,14 +4265,15 @@ const CompanionHome: React.FC = () => {
                                   style={{ borderColor: `${uiTint}88`, color: uiTint }}
                                 >{reactionVoiceGeneratingId === reaction.id ? '正在重 Roll…' : '重 Roll、试听并保存'}</button>
                               </div>
+                              </div>
+                              )}
                             </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null
-                  ))}
+                    );
+                  })}
                 </div>
-              </details>
+              </div>
+            )}
+            </>
             )}
           </section>
         </div>
