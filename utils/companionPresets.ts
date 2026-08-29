@@ -50,6 +50,42 @@ export function saveCompanionStartupPreset(
   };
 }
 
+/**
+ * 就地更新一套已有的开机预设。
+ *
+ * `saveCompanionStartupPreset` 永远是新增，微调一次就多一套；而
+ * `resolveCompanionStartupForTime()` 会在**同一时段的所有预设里按日期轮换**，
+ * 于是那些中间产物会隔天冒出来播。改一句台词就该覆盖原来那套，而不是堆一套新的。
+ *
+ * 找不到该预设时返回 null，由调用方决定要不要退回「另存为新预设」。
+ */
+export function updateCompanionStartupPreset(
+  settings: CompanionTouchSettings,
+  presetId: string,
+  startup: CompanionStartupSettings,
+  name: string,
+  options: { now?: number } = {},
+): { settings: CompanionTouchSettings; preset: CompanionStartupPreset } | null {
+  const presets = settings.startupPresets || [];
+  const existing = presets.find(item => item.id === presetId);
+  if (!existing) return null;
+  const preset: CompanionStartupPreset = {
+    ...existing,
+    name: presetName(name, existing.name),
+    startup: cloneJson(startup),
+    updatedAt: options.now ?? Date.now(),
+  };
+  return {
+    preset,
+    settings: {
+      ...settings,
+      startup: cloneJson(startup),
+      startupPresets: presets.map(item => (item.id === presetId ? preset : item)),
+      activeStartupPresetId: preset.id,
+    },
+  };
+}
+
 export function activateCompanionStartupPreset(
   settings: CompanionTouchSettings,
   presetId: string,

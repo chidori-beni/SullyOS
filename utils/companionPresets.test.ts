@@ -6,6 +6,7 @@ import {
   collectCompanionVoiceAssetIds,
   mergeCompanionTouchReactions,
   saveCompanionStartupPreset,
+  updateCompanionStartupPreset,
   saveCompanionTouchPreset,
   updateCompanionTouchReaction,
 } from './companionPresets';
@@ -161,5 +162,45 @@ describe('merging generated zones into the active touch pack', () => {
     }, { now: 20 });
     expect(merged.preset).toBeUndefined();
     expect(merged.settings.reactions.face?.[0].id).toBe('face-1');
+  });
+});
+
+describe('updating a startup preset in place', () => {
+  const startup = (line: string): CompanionStartupSettings => ({
+    enabled: true,
+    line,
+    timePeriod: 'morning',
+    performance: { emotion: 'calm', gesture: 'idle', camera: 'medium', gaze: 'viewer', intensity: 0.6 },
+  });
+
+  it('overwrites instead of piling up another preset for the same period', () => {
+    // 同一时段的多套预设会按日期轮换，微调产生的中间版本留在里面会隔天冒出来播。
+    const first = saveCompanionStartupPreset(emptySettings(), startup('早。'), '早上开机', { now: 1 });
+    const updated = updateCompanionStartupPreset(first.settings, first.preset.id, startup('早啊。'), '早上开机', { now: 2 });
+    expect(updated).not.toBeNull();
+    expect(updated!.settings.startupPresets ?? []).toHaveLength(1);
+    expect(updated!.preset.id).toBe(first.preset.id);
+    expect(updated!.settings.startupPresets?.[0].startup.line).toBe('早啊。');
+    expect(updated!.settings.startup?.line).toBe('早啊。');
+    expect(updated!.preset.createdAt).toBe(first.preset.createdAt);
+    expect(updated!.preset.updatedAt).toBe(2);
+  });
+
+  it('keeps the updated preset active and reactivating it returns the new content', () => {
+    const first = saveCompanionStartupPreset(emptySettings(), startup('早。'), '早上开机', { now: 1 });
+    const updated = updateCompanionStartupPreset(first.settings, first.preset.id, startup('早啊。'), '早上开机', { now: 2 })!;
+    expect(updated.settings.activeStartupPresetId).toBe(first.preset.id);
+    expect(activateCompanionStartupPreset(updated.settings, first.preset.id).startup?.line).toBe('早啊。');
+  });
+
+  it('returns null for an unknown preset so the caller can fall back to saving a new one', () => {
+    const first = saveCompanionStartupPreset(emptySettings(), startup('早。'), '早上开机', { now: 1 });
+    expect(updateCompanionStartupPreset(first.settings, 'nope', startup('x'), '', { now: 2 })).toBeNull();
+  });
+
+  it('keeps the old name when the new one is blank', () => {
+    const first = saveCompanionStartupPreset(emptySettings(), startup('早。'), '早上开机', { now: 1 });
+    const updated = updateCompanionStartupPreset(first.settings, first.preset.id, startup('早啊。'), '   ', { now: 2 })!;
+    expect(updated.preset.name).toBe('早上开机');
   });
 });

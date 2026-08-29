@@ -154,6 +154,7 @@ import {
   removeCompanionStartupPreset,
   removeCompanionTouchPreset,
   saveCompanionStartupPreset,
+  updateCompanionStartupPreset,
   mergeCompanionTouchReactions,
   saveCompanionTouchPreset,
   updateCompanionTouchReaction,
@@ -1681,7 +1682,7 @@ const CompanionHome: React.FC = () => {
     };
   };
 
-  const saveStartupSettings = () => {
+  const saveStartupSettings = (mode: 'new' | 'update' = 'new') => {
     if (!character || settingsGenerating) return;
     const startup = makeStartupSettings();
     if (startup.enabled && !startup.line) {
@@ -1692,18 +1693,23 @@ const CompanionHome: React.FC = () => {
       addToast(`已选择 ${voiceLanguageLabel(startup.voiceLanguage)}，请填写对应的语音译文`, 'error');
       return;
     }
-    const saved = saveCompanionStartupPreset(
-      companionTouchSettingsBase(),
-      startup,
-      startupPresetName,
-    );
+    const base = companionTouchSettingsBase();
+    // 覆盖当前这套，而不是又堆一套：同一时段的多套预设会按日期轮换，
+    // 微调产生的中间版本留在里面会隔天冒出来播。
+    const updated = mode === 'update' && selectedStartupPresetId
+      ? updateCompanionStartupPreset(base, selectedStartupPresetId, startup, startupPresetName)
+      : null;
+    const saved = updated || saveCompanionStartupPreset(base, startup, startupPresetName);
     updateCharacter(character.id, { companionTouchSettings: saved.settings });
     setStartupLine(startup.line);
     setStartupTranslation(startup.translation || '');
     setStartupPerformance(normalizeCompanionStartupPerformance(startup.performance));
     setSelectedStartupPresetId(saved.preset.id);
     setStartupPresetName(saved.preset.name);
-    addToast(`已保存新的开机预设「${saved.preset.name}」`, 'success');
+    addToast(
+      updated ? `已更新开机预设「${saved.preset.name}」` : `已保存新的开机预设「${saved.preset.name}」`,
+      'success',
+    );
   };
 
   const previewStartup = () => {
@@ -3847,16 +3853,46 @@ const CompanionHome: React.FC = () => {
                 </div>
               </details>
 
-              <button
-                type="button"
-                data-testid="companion-save-startup"
-                disabled={settingsGenerating}
-                onClick={saveStartupSettings}
-                className="mt-3 w-full border py-2.5 text-[10px] font-semibold tracking-wide transition active:scale-[.99] disabled:opacity-45"
-                style={{ borderColor: `${uiTint}9c`, background: `${uiTint}18`, color: uiTint }}
-              >
-                保存为新预设
-              </button>
+              {selectedStartupPresetId ? (
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    data-testid="companion-save-startup"
+                    disabled={settingsGenerating}
+                    onClick={() => saveStartupSettings('update')}
+                    className="w-full border py-2.5 text-[10px] font-semibold tracking-wide transition active:scale-[.99] disabled:opacity-45"
+                    style={{ borderColor: `${uiTint}9c`, background: `${uiTint}18`, color: uiTint }}
+                  >
+                    更新这套预设
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="companion-save-startup-as-new"
+                    disabled={settingsGenerating}
+                    onClick={() => saveStartupSettings('new')}
+                    className="w-full border border-white/14 bg-white/[0.035] py-2.5 text-[10px] font-medium tracking-wide text-white/72 transition active:scale-[.99] disabled:opacity-45"
+                  >
+                    另存为新预设
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  data-testid="companion-save-startup"
+                  disabled={settingsGenerating}
+                  onClick={() => saveStartupSettings('new')}
+                  className="mt-3 w-full border py-2.5 text-[10px] font-semibold tracking-wide transition active:scale-[.99] disabled:opacity-45"
+                  style={{ borderColor: `${uiTint}9c`, background: `${uiTint}18`, color: uiTint }}
+                >
+                  保存为新预设
+                </button>
+              )}
+              <div className="mt-1 text-[7px] leading-relaxed text-white/30">
+                同一时段存了多套时，开机会按角色当地日期在它们之间轮换。所以微调请用「更新这套预设」，
+                只有想要「这个时段有好几种开场轮着来」时才另存新的。
+                <span style={{ color: `${uiTint}c0` }}>不需要为每套衣服各存一份</span>
+                ——台词、语音、逐拍编排本来就通用，模型动作会在播放时按当前这套衣服自动换算。
+              </div>
               </div>
               )}
             </div>

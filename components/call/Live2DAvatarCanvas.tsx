@@ -815,7 +815,10 @@ const Live2DAvatarCanvas: React.FC<Live2DAvatarCanvasProps> = ({
       stopPerformanceMotions();
       return;
     }
-    void triggerPerformance(performance).catch(() => { /* invalid optional actions stay non-fatal */ });
+    // 必须先把动作换算到当前这套模型再播：ID 是位置序号，换套衣服直接用会播成别的动作。
+    // 用 configRef 而不是把 config 加进依赖，否则保存构图之类的更新会重放上一条动作。
+    const resolved = resolveDirectionModelActions(performance, configRef.current) || performance;
+    void triggerPerformance(resolved).catch(() => { /* invalid optional actions stay non-fatal */ });
   }, [performance, performanceQuality, headMotionLocked, ambientAutonomyDisabled, motionState]);
 
   useEffect(() => {
