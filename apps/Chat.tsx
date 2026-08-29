@@ -4209,8 +4209,12 @@ const Chat: React.FC = () => {
                         </div>
                         {/* 停止生成：紧挨着「正在输入」气泡，用户眼睛正好在这儿。主动消息
                             自己在写（isProactiveComposing）那条不给按钮——它不是用户这一轮。
-                            配色刻意不用实心深色：聊天背景是用户自选的壁纸/主题，实心色块必然在某些主题上突兀。
-                            半透明白底会透出一点壁纸色调，跟着主题走；文字对比度靠 /75 的不透明度和描边保证。
+                            配色是「深色薄纱」而不是「白底」：聊天页所有内置背景都是浅色（默认 #f1f5f9，还有
+                            #eef2ff / #efe1cf / #f8fafc / #f9f7f2 / #F6F0D8 / 纯白），白色半透明叠在浅色上
+                            等于没叠——看着就是白底黑字。透明度只有在「叠加色」和「背景色」不同时才看得出来，
+                            所以这里改用极淡的黑纱 bg-black/5：浅色背景上它是一层能看出底色的灰雾，
+                            壁纸的颜色和纹理直接透上来，换主题时它跟着变。也不加 shadow —— 投影会把
+                            它重新推成一个「浮起来的实体块」，那正是你觉得突兀的来源。
                             这里**不用** backdrop-blur：按钮紧挨着三个 animate-bounce 圆点，生成期间那块区域
                             每帧都在重绘，backdrop-filter 会跟着每帧重新截取并模糊背景，正好在手机最忙的时候
                             持续吃 GPU、发烫。半透明纯色只是一次普通合成，几乎零成本。 */}
@@ -4219,9 +4223,9 @@ const Chat: React.FC = () => {
                                 onClick={handleStopGeneration}
                                 title="停止本轮生成"
                                 aria-label="停止本轮生成"
-                                className="shrink-0 mb-0.5 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-white/75 border border-slate-200/80 text-slate-600 text-[11px] font-bold shadow-sm transition-colors hover:bg-white active:scale-95"
+                                className="shrink-0 mb-0.5 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-black/5 border border-black/10 text-slate-700 text-[11px] font-bold transition-colors hover:bg-black/10 active:scale-95"
                             >
-                                <span className="w-2 h-2 rounded-[2px] bg-slate-500"></span>
+                                <span className="w-2 h-2 rounded-[2px] bg-slate-600"></span>
                                 停止
                             </button>
                         )}
