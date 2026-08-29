@@ -3442,6 +3442,18 @@ const Chat: React.FC = () => {
     const chatAvatarSizeClass = osTheme.chatAvatarSize === 'small' ? 'w-7 h-7' : osTheme.chatAvatarSize === 'large' ? 'w-12 h-12' : 'w-9 h-9';
     const chatAvatarRadiusClass = osTheme.chatAvatarShape === 'square' ? 'rounded-sm' : osTheme.chatAvatarShape === 'rounded' ? 'rounded-xl' : 'rounded-full';
     const chatPendingAvatarClass = `${chatAvatarSizeClass} ${chatAvatarRadiusClass} object-cover`;
+    // 「停止」按钮的墨色：从外观主题的 hue/saturation 直接算，换主题时 osTheme 变、这里跟着变，
+    // 所以按钮永远不是一块写死的黑，而是当前主题色的深色版。
+    // 亮度不直接用 theme.lightness：外观里那根亮度滑杆范围是 10~95，拉到高位时主题色接近白，
+    // 字会糊在浅色聊天背景上。减 22 之后再夹进 32~46，任何主题下都落在「能读」的区间，
+    // 色相和饱和度则原样保留。算法与 CompanionHome 里 accentLightness 的做法同源。
+    // 方块图标用 bg-current 跟着同一个颜色走，底色/描边用 bg-primary/10 + border-primary/20。
+    // 注意：这里在上面 `if (!char) return` 之后，**不能用 useMemo**——提前返回会跳过它，
+    // hook 数量在两次渲染间对不上，React 会直接崩。就三次算术，每帧现算的成本可以忽略。
+    const stopBtnInkLightness = Math.min(46, Math.max(32, (osTheme.lightness ?? 65) - 22));
+    const stopBtnInkStyle: React.CSSProperties = {
+        color: `hsl(${osTheme.hue ?? 245}, ${osTheme.saturation ?? 25}%, ${stopBtnInkLightness}%)`,
+    };
 
     return (
         <div
@@ -4209,12 +4221,12 @@ const Chat: React.FC = () => {
                         </div>
                         {/* 停止生成：紧挨着「正在输入」气泡，用户眼睛正好在这儿。主动消息
                             自己在写（isProactiveComposing）那条不给按钮——它不是用户这一轮。
-                            配色是「深色薄纱」而不是「白底」：聊天页所有内置背景都是浅色（默认 #f1f5f9，还有
-                            #eef2ff / #efe1cf / #f8fafc / #f9f7f2 / #F6F0D8 / 纯白），白色半透明叠在浅色上
-                            等于没叠——看着就是白底黑字。透明度只有在「叠加色」和「背景色」不同时才看得出来，
-                            所以这里改用极淡的黑纱 bg-black/5：浅色背景上它是一层能看出底色的灰雾，
-                            壁纸的颜色和纹理直接透上来，换主题时它跟着变。也不加 shadow —— 投影会把
-                            它重新推成一个「浮起来的实体块」，那正是你觉得突兀的来源。
+                            配色整颗都挂在主题色上（bg-primary/10 + border-primary/20 + 主题墨色文字，
+                            见上面 stopBtnInkStyle）：primary 由 --primary-* 驱动、墨色由 osTheme 现算，
+                            用户在外观里换主题时，按钮的底色、描边、文字、方块图标四样一起跟着换色 ——
+                            不用为每套背景单独调，也永远不会出现写死的黑色。
+                            /10 的薄纱仍然透得出壁纸纹理；不加 shadow —— 投影会把它重新推成一个
+                            「浮起来的实体块」，那正是突兀感的来源。
                             这里**不用** backdrop-blur：按钮紧挨着三个 animate-bounce 圆点，生成期间那块区域
                             每帧都在重绘，backdrop-filter 会跟着每帧重新截取并模糊背景，正好在手机最忙的时候
                             持续吃 GPU、发烫。半透明纯色只是一次普通合成，几乎零成本。 */}
@@ -4223,9 +4235,10 @@ const Chat: React.FC = () => {
                                 onClick={handleStopGeneration}
                                 title="停止本轮生成"
                                 aria-label="停止本轮生成"
-                                className="shrink-0 mb-0.5 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-black/5 border border-black/10 text-slate-700 text-[11px] font-bold transition-colors hover:bg-black/10 active:scale-95"
+                                style={stopBtnInkStyle}
+                                className="shrink-0 mb-0.5 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-[11px] font-bold transition-colors hover:bg-primary/20 active:scale-95"
                             >
-                                <span className="w-2 h-2 rounded-[2px] bg-slate-600"></span>
+                                <span className="w-2 h-2 rounded-[2px] bg-current"></span>
                                 停止
                             </button>
                         )}
