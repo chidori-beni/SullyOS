@@ -3448,11 +3448,13 @@ const Chat: React.FC = () => {
     // 字会糊在浅色聊天背景上。减 22 之后再夹进 32~46，任何主题下都落在「能读」的区间，
     // 色相和饱和度则原样保留。算法与 CompanionHome 里 accentLightness 的做法同源。
     // 方块图标用 bg-current 跟着同一个颜色走，底色/描边用 bg-primary/10 + border-primary/20。
+    // 末尾的 0.78 alpha：满不透明的主题色方块在浅色薄纱上还是偏重，压一点让它退回「配角」。
+    // currentColor 会连 alpha 一起带走，所以 bg-current 的方块自动跟着淡下来，只需在这里调一处。
     // 注意：这里在上面 `if (!char) return` 之后，**不能用 useMemo**——提前返回会跳过它，
     // hook 数量在两次渲染间对不上，React 会直接崩。就三次算术，每帧现算的成本可以忽略。
     const stopBtnInkLightness = Math.min(46, Math.max(32, (osTheme.lightness ?? 65) - 22));
     const stopBtnInkStyle: React.CSSProperties = {
-        color: `hsl(${osTheme.hue ?? 245}, ${osTheme.saturation ?? 25}%, ${stopBtnInkLightness}%)`,
+        color: `hsla(${osTheme.hue ?? 245}, ${osTheme.saturation ?? 25}%, ${stopBtnInkLightness}%, 0.78)`,
     };
 
     return (
@@ -4221,25 +4223,27 @@ const Chat: React.FC = () => {
                         </div>
                         {/* 停止生成：紧挨着「正在输入」气泡，用户眼睛正好在这儿。主动消息
                             自己在写（isProactiveComposing）那条不给按钮——它不是用户这一轮。
-                            配色整颗都挂在主题色上（bg-primary/10 + border-primary/20 + 主题墨色文字，
+                            配色整颗都挂在主题色上（bg-primary/10 + border-primary/20 + 主题墨色，
                             见上面 stopBtnInkStyle）：primary 由 --primary-* 驱动、墨色由 osTheme 现算，
-                            用户在外观里换主题时，按钮的底色、描边、文字、方块图标四样一起跟着换色 ——
-                            不用为每套背景单独调，也永远不会出现写死的黑色。
-                            /10 的薄纱仍然透得出壁纸纹理；不加 shadow —— 投影会把它重新推成一个
-                            「浮起来的实体块」，那正是突兀感的来源。
-                            这里**不用** backdrop-blur：按钮紧挨着三个 animate-bounce 圆点，生成期间那块区域
-                            每帧都在重绘，backdrop-filter 会跟着每帧重新截取并模糊背景，正好在手机最忙的时候
-                            持续吃 GPU、发烫。半透明纯色只是一次普通合成，几乎零成本。 */}
+                            用户在外观里换主题时，底色、描边、方块图标一起跟着换色 —— 不用为每套背景
+                            单独调，也永远不会出现写死的黑色。/10 的薄纱仍然透得出壁纸纹理；不加 shadow
+                            —— 投影会把它重新推成一个「浮起来的实体块」，那正是突兀感的来源。
+                            这里**不用** backdrop-blur：按钮紧挨着三个 animate-bounce 圆点，生成期间那块
+                            区域每帧都在重绘，backdrop-filter 会跟着每帧重新截取并模糊背景，正好在手机最忙
+                            的时候持续吃 GPU、发烫。半透明纯色只是一次普通合成，几乎零成本。
+                            只留一个方块、不写「停止」二字：方块=停止是播放器沿用几十年的通用符号，又只在
+                            生成中出现、就贴着「正在输入」气泡，语境已经说清楚了。但可访问性不能跟着字一起
+                            没掉 —— title / aria-label 保留，读屏和长按提示仍念得出「停止本轮生成」。
+                            尺寸给到 h-8 w-8（32px）而不是贴着方块收边，是为了留够手指点的面积。 */}
                         {(isTyping || instantChatPending) && (
                             <button
                                 onClick={handleStopGeneration}
                                 title="停止本轮生成"
                                 aria-label="停止本轮生成"
                                 style={stopBtnInkStyle}
-                                className="shrink-0 mb-0.5 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-[11px] font-bold transition-colors hover:bg-primary/20 active:scale-95"
+                                className="shrink-0 mb-0.5 flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 border border-primary/20 transition-colors hover:bg-primary/20 active:scale-95"
                             >
-                                <span className="w-2 h-2 rounded-[2px] bg-current"></span>
-                                停止
+                                <span className="w-2.5 h-2.5 rounded-[2px] bg-current"></span>
                             </button>
                         )}
                     </div>
