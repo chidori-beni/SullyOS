@@ -4,6 +4,8 @@ import {
   live2dActionEmotionKey,
   live2dActionMatchKey,
   live2dActionRenamed,
+  live2dActionSetName,
+  groupLive2DActionsBySet,
   parseLive2DActionName,
   resolveLive2DActionByKey,
 } from './live2dActionNaming';
@@ -134,5 +136,41 @@ describe('cross-outfit action matching', () => {
   it('treats a missing key as unresolved rather than guessing', () => {
     expect(resolveLive2DActionByKey(undefined, 私服).tier).toBe('none');
     expect(resolveLive2DActionByKey('', 私服).id).toBe('');
+  });
+});
+
+describe('scene / pose set markers', () => {
+  it('extracts the leading set marker from both naming schemes', () => {
+    // 私服是剧情编号，衬衫是 fanshu 套系；两者都表示「这条出自哪套姿势」。
+    expect(live2dActionSetName('X_11024_06_idle_温柔')).toBe('11024_06');
+    expect(live2dActionSetName('X_fanshu01_huaixiao3_idle')).toBe('fanshu01');
+    expect(live2dActionSetName('X_02_haixiu_idle')).toBe('02');
+    expect(live2dActionSetName('X_fanshu011_wenrou_idle')).toBe('fanshu011');
+  });
+
+  it('does not mistake a variant number for a set marker', () => {
+    // huaixiao3 的 3 是变体号，不是套系；套系只认名字开头。
+    expect(live2dActionSetName('X_huaixiao3_idle')).toBe('');
+    expect(live2dActionSetName('X_weixiao2_idle_微笑')).toBe('');
+    expect(live2dActionSetName('X_idle')).toBe('');
+  });
+
+  it('groups actions by set with the generic bucket first', () => {
+    const groups = groupLive2DActionsBySet([
+      { name: '坏笑 3（持续）', rawName: 'X_fanshu01_huaixiao3_idle' },
+      { name: '温柔（持续）', rawName: 'X_03_wenrou_idle' },
+      { name: '调笑', rawName: 'X_tiaoxiao' },
+      { name: '微笑（持续）', rawName: 'X_fanshu01_weixiao2_idle' },
+    ]);
+    expect(groups.map(group => group.set)).toEqual(['', '03', 'fanshu01']);
+    expect(groups[0].label).toBe('通用（1）');
+    expect(groups[2].label).toBe('fanshu01（2）');
+  });
+
+  it('keeps the match key set-agnostic so outfits can still match', () => {
+    // 两套衣服的套系名完全不同（11024_06 vs fanshu01），若把它算进键，
+    // 跨衣橱就一条都对不上了。套系只用于界面分组。
+    expect(live2dActionMatchKey('X_fanshu01_huaixiao3_idle'))
+      .toBe(live2dActionMatchKey('X_huaixiao3_idle_微笑'));
   });
 });

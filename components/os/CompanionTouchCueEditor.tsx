@@ -19,6 +19,7 @@ import {
   recommendedHoldMs,
   splitPerformanceCueAt,
 } from '../../utils/companionPerformanceCueEdit';
+import { groupLive2DActionsBySet } from '../../utils/live2dActionNaming';
 import type { AvatarTouchModelAction } from '../../utils/avatarTouch';
 
 /**
@@ -285,8 +286,12 @@ const CompanionTouchCueEditor: React.FC<CompanionTouchCueEditorProps> = ({
             className="mt-1 w-full border border-white/12 bg-[#151021] px-2 py-2 text-[9px] text-white/82"
           >
             <option value="">不指定</option>
-            {modelActions.map(action => (
-              <option key={action.id} value={action.id} title={action.rawName || action.name}>{action.name}</option>
+            {groupLive2DActionsBySet(modelActions).map(group => (
+              <optgroup key={group.set || 'generic'} label={group.label}>
+                {group.actions.map(action => (
+                  <option key={action.id} value={action.id} title={action.rawName || action.name}>{action.name}</option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </label>

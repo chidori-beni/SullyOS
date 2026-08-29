@@ -85,7 +85,7 @@ import MagazineCompanionChrome from './MagazineCompanionChrome';
 import CardbookCompanionChrome from './CardbookCompanionChrome';
 import IdolCompanionChrome from './IdolCompanionChrome';
 import CompanionWardrobeDrawer from './CompanionWardrobeDrawer';
-import { live2dActionDisplayName, live2dActionMatchKey, resolveLive2DActionByKey } from '../../utils/live2dActionNaming';
+import { groupLive2DActionsBySet, live2dActionDisplayName, live2dActionMatchKey, live2dActionSetName, resolveLive2DActionByKey } from '../../utils/live2dActionNaming';
 import CompanionTouchCueEditor from './CompanionTouchCueEditor';
 import {
   MAX_PERFORMANCE_CUES,
@@ -1011,6 +1011,9 @@ const CompanionHome: React.FC = () => {
           // 显示名以拼音为准，原名保留在 rawName 里，方便和素材文件对照。
           name: live2dActionDisplayName(action.name),
           rawName: action.name,
+          // 套系标识（11024_06 / fanshu01…）：同一套里的动作身体基准一致，
+          // 想让一句话的几拍连贯就得挑同一套的，所以下拉要按它分组。
+          setName: live2dActionSetName(action.name),
           kind: action.kind,
           tags: action.tags,
         }));
@@ -3759,7 +3762,13 @@ const CompanionHome: React.FC = () => {
                       className="mt-1 w-full border border-white/12 bg-[#151021] px-2 py-2 text-[9px] text-white/82 outline-none"
                     >
                       <option value="">不指定</option>
-                      {modelActions.map(action => <option key={action.id} value={action.id} title={action.rawName || action.name}>{action.name}</option>)}
+                      {groupLive2DActionsBySet(modelActions).map(group => (
+                        <optgroup key={group.set || 'generic'} label={group.label}>
+                          {group.actions.map(action => (
+                            <option key={action.id} value={action.id} title={action.rawName || action.name}>{action.name}</option>
+                          ))}
+                        </optgroup>
+                      ))}
                     </select>
                   </label>
                 )}
@@ -4252,7 +4261,13 @@ const CompanionHome: React.FC = () => {
                                           className="mt-1 w-full border border-white/12 bg-[#151021] px-2 py-2 text-[9px] text-white/82"
                                         >
                                           <option value="">不指定</option>
-                                          {modelActions.map(action => <option key={action.id} value={action.id} title={action.rawName || action.name}>{action.name}</option>)}
+                                          {groupLive2DActionsBySet(modelActions).map(group => (
+                                            <optgroup key={group.set || 'generic'} label={group.label}>
+                                              {group.actions.map(action => (
+                                                <option key={action.id} value={action.id} title={action.rawName || action.name}>{action.name}</option>
+                                              ))}
+                                            </optgroup>
+                                          ))}
                                         </select>
                                       </label>
                                     )}

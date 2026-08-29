@@ -44,8 +44,55 @@ const EMOTION_WORDS = new Set([
   '困惑', '思考', '悲伤', '哀伤', '难过', '平静', '淡定', '闭眼',
 ]);
 
-/** 场景 / 编号前缀，对用户没有意义。 */
+/**
+ * 名字开头的场景 / 套系标识（`11024_06`、`fanshu01`、`02`…）。
+ *
+ * 它**不是噪音**：同一标识下的动作出自同一套姿势/同一个镜头段，身体基准一致。
+ * 想让一句话的几拍看起来连贯，就得从同一套里挑。所以解析时不当情绪用，
+ * 但要单独提取出来给界面分组。
+ */
+const SET_SEGMENT = /^(fanshu\d*|\d+)$/i;
+
+/** 解析情绪时要跳过的段（含套系标识本身）。 */
 const NOISE_SEGMENTS = /^(x|fanshu\d*|copy|idle|move|\d+)$/i;
+
+/**
+ * 取出套系标识。只认名字**开头**连续的编号/fanshu 段——中间的数字属于
+ * 变体号（huaixiao3），不是套系。没有则返回空串。
+ */
+export const live2dActionSetName = (rawName: string): string => {
+  const segments = (rawName || '').trim().split(/[_\s]+/).filter(Boolean);
+  const start = segments[0] && /^x$/i.test(segments[0]) ? 1 : 0;
+  const marks: string[] = [];
+  for (let index = start; index < segments.length; index += 1) {
+    if (!SET_SEGMENT.test(segments[index])) break;
+    marks.push(segments[index]);
+  }
+  return marks.join('_');
+};
+
+/**
+ * 按套系把动作分组，供下拉用 `<optgroup>` 呈现。
+ * 没有套系标识的归到「通用」，并始终排在最前。
+ */
+export const groupLive2DActionsBySet = <T extends { name: string; rawName?: string }>(
+  actions: readonly T[],
+): Array<{ set: string; label: string; actions: T[] }> => {
+  const groups = new Map<string, T[]>();
+  for (const action of actions) {
+    const set = live2dActionSetName(action.rawName || action.name);
+    const bucket = groups.get(set);
+    if (bucket) bucket.push(action);
+    else groups.set(set, [action]);
+  }
+  return [...groups.entries()]
+    .sort(([a], [b]) => (a ? 1 : 0) - (b ? 1 : 0) || a.localeCompare(b))
+    .map(([set, items]) => ({
+      set,
+      label: `${set || '通用'}（${items.length}）`,
+      actions: items,
+    }));
+};
 
 const PINYIN_STEMS = Object.keys(PINYIN_LABELS).sort((a, b) => b.length - a.length);
 

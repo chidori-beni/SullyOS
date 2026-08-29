@@ -67,6 +67,8 @@ export interface AvatarTouchModelAction {
   name: string;
   /** 素材里的原始组名，用来和模型文件对照；没改过名时可省略。 */
   rawName?: string;
+  /** 套系 / 场景标识（11024_06、fanshu01…），用于按套分组挑动作。 */
+  setName?: string;
   kind?: 'motion' | 'expression' | 'params';
   tags?: string[];
 }
