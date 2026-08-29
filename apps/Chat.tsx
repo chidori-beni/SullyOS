@@ -4208,15 +4208,20 @@ const Chat: React.FC = () => {
                             )}
                         </div>
                         {/* 停止生成：紧挨着「正在输入」气泡，用户眼睛正好在这儿。主动消息
-                            自己在写（isProactiveComposing）那条不给按钮——它不是用户这一轮。 */}
+                            自己在写（isProactiveComposing）那条不给按钮——它不是用户这一轮。
+                            配色刻意不用实心深色：聊天背景是用户自选的壁纸/主题，实心色块必然在某些主题上突兀。
+                            半透明白底会透出一点壁纸色调，跟着主题走；文字对比度靠 /75 的不透明度和描边保证。
+                            这里**不用** backdrop-blur：按钮紧挨着三个 animate-bounce 圆点，生成期间那块区域
+                            每帧都在重绘，backdrop-filter 会跟着每帧重新截取并模糊背景，正好在手机最忙的时候
+                            持续吃 GPU、发烫。半透明纯色只是一次普通合成，几乎零成本。 */}
                         {(isTyping || instantChatPending) && (
                             <button
                                 onClick={handleStopGeneration}
                                 title="停止本轮生成"
                                 aria-label="停止本轮生成"
-                                className="shrink-0 mb-0.5 flex items-center gap-1 px-2.5 py-1.5 bg-slate-800/85 text-white rounded-full text-[11px] font-bold shadow-sm active:scale-95"
+                                className="shrink-0 mb-0.5 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-white/75 border border-slate-200/80 text-slate-600 text-[11px] font-bold shadow-sm transition-colors hover:bg-white active:scale-95"
                             >
-                                <span className="w-2 h-2 bg-white rounded-[2px]"></span>
+                                <span className="w-2 h-2 rounded-[2px] bg-slate-500"></span>
                                 停止
                             </button>
                         )}
