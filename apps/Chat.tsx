@@ -414,7 +414,7 @@ const Chat: React.FC = () => {
     }, [activeCharacterId]);
 
     // --- Initialize Hook ---
-    const { isTyping, streamingBubbles, streamingThinking, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, stopProactiveChat, isProactiveActive } = useChatAI({
+    const { isTyping, streamingBubbles, streamingThinking, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, cancelGeneration, stopProactiveChat, isProactiveActive } = useChatAI({
         char,
         userProfile,
         apiConfig,
@@ -877,6 +877,18 @@ const Chat: React.FC = () => {
             handleManualTts(msg, true);
         }
     }, [isTyping, instantChatPending, messages]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // 「停止」按钮：两种情况都要能救——
+    //   · 手滑点了发送 / 模型半天不吐字 → 掐断本机这一轮的所有模型请求；
+    //   · 即时对话已交给云端、推送却因为网络问题一直不回来 → 清掉本机那条 pending 记录，
+    //     否则再点发送永远被「角色还在回复上一条消息」挡住，这个会话就彻底说不了话了。
+    //     云端那一轮如果还活着，回复到了照样会落库，这里不是"取消云端任务"。
+    const handleStopGeneration = () => {
+        const stopped = cancelGeneration();
+        setInstantSendingActive(false);
+        setInstantChatPending(!!activeCharacterId && !!getInstantChatPending(activeCharacterId));
+        addToast(stopped ? '已停止这一轮生成' : '当前没有正在生成的回复', 'info');
+    };
 
     const canReroll = !isTyping && messages.length > 0 && messages[messages.length - 1].role === 'assistant';
 
@@ -4195,6 +4207,19 @@ const Chat: React.FC = () => {
                                 <div className="flex gap-1"><div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce"></div><div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce delay-75"></div><div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce delay-150"></div></div>
                             )}
                         </div>
+                        {/* 停止生成：紧挨着「正在输入」气泡，用户眼睛正好在这儿。主动消息
+                            自己在写（isProactiveComposing）那条不给按钮——它不是用户这一轮。 */}
+                        {(isTyping || instantChatPending) && (
+                            <button
+                                onClick={handleStopGeneration}
+                                title="停止本轮生成"
+                                aria-label="停止本轮生成"
+                                className="shrink-0 mb-0.5 flex items-center gap-1 px-2.5 py-1.5 bg-slate-800/85 text-white rounded-full text-[11px] font-bold shadow-sm active:scale-95"
+                            >
+                                <span className="w-2 h-2 bg-white rounded-[2px]"></span>
+                                停止
+                            </button>
+                        )}
                     </div>
                 )}
             </div>

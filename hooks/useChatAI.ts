@@ -48,7 +48,7 @@ import { getLastRealUserMessageAt } from '../utils/amsg2ExpireGuard';
 import { getPendingTasks, hasActiveAiTask, isAmsg2EnabledForChar } from '../utils/amsg2Tasks';
 import { buildAmsg2NoticesText, buildAmsg2TaskContextText, collectAmsg2TaskContext } from '../utils/amsg2TaskContext';
 import { resolveCharTimeZone } from '../utils/timezone';
-import { announceInstantChatRoute, getInstantChatPending, resolveInstantChatReadiness, sendInstantChatTurn, stageInstantChatExpiredNotices } from '../utils/amsgInstantChat';
+import { announceInstantChatRoute, clearInstantChatPending, getInstantChatPending, resolveInstantChatReadiness, sendInstantChatTurn, stageInstantChatExpiredNotices } from '../utils/amsgInstantChat';
 // worker 模块的常量叶子（零运行时依赖，前端引它不带进 worker 环境）：
 // 云端 fire 的总时长上限，安全网超时从它推导，worker 调预算时前端自动跟上。
 import { INSTANT_TOTAL_TIMEOUT_MS } from '../worker/amsg/src/instantChat';
@@ -492,6 +492,12 @@ export const useChatAI = ({
     // 根本不会先 setIsTyping(true)。用 ref 做真正同步的入口锁，保证一轮发送只
     // 能有一个 triggerAI；否则两次调用会各落一条自动回复，甚至一条继续走普通模型。
     const triggerInFlightRef = useRef(false);
+    // 「停止生成」用：本轮所有模型请求（主请求 / 兼容重试 / 各工具循环）共用一个
+    // AbortController，用户点停止时一次性掐断，fetch 立刻 reject 走 catch/finally，
+    // isTyping、横幅、入口锁一起收干净。cancelledRef 让 catch 分得清「用户主动停」
+    // 和「真报错」——前者不写 [回复处理失败] 系统消息、也不弹错。
+    const abortRef = useRef<AbortController | null>(null);
+    const cancelledRef = useRef(false);
     // 流式预览气泡：stream 开启时，已完成行与安全尾句随增量以临时气泡上屏。
     // 流结束后由 applyAssistantPostProcessing 正常落库渲染，预览随即清空 —— 只影响体感，不改持久化。
     const [streamingBubbles, setStreamingBubbles] = useState<string[]>([]);
@@ -822,6 +828,12 @@ export const useChatAI = ({
         const charForGen: CharacterProfile = skipEmotionInjection
             ? { ...char, buffInjection: '', activeBuffs: [] }
             : char;
+
+        // 本轮的中止句柄：必须在 setIsTyping(true) 之前挂上，否则「正在输入」已经亮起、
+        // 停止按钮却还拿不到 controller，用户点了没反应。
+        cancelledRef.current = false;
+        const abortController = new AbortController();
+        abortRef.current = abortController;
 
         setIsTyping(true);
         setStreamingBubbles([]);
@@ -1562,7 +1574,7 @@ export const useChatAI = ({
             let data: any;
             try {
                 data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                    method: 'POST', headers,
+                    method: 'POST', headers, signal: abortController.signal,
                     body: JSON.stringify({ ...baseReqBody, messages: withAmsg2TaskContext(baseReqBody.messages) })
                 }, 2, 0, { appName: '消息', charId: char.id, charName: char.name, purpose: '聊天回复' }, streamHooks);
             } catch (e) {
@@ -1580,7 +1592,7 @@ export const useChatAI = ({
                     console.warn('🧩 [Claude compat] 中转拒绝 thinking + tools 组合，使用兼容请求体重试一次');
                     try {
                         data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                            method: 'POST', headers,
+                            method: 'POST', headers, signal: abortController.signal,
                             body: JSON.stringify(buildClaudeProxyCompatibilityBody(attemptedBody)),
                         }, 0, 0, { appName: '消息', charId: char.id, charName: char.name, purpose: 'Claude 中转兼容重试' }, streamHooks);
                         requestError = null;
@@ -1606,7 +1618,7 @@ export const useChatAI = ({
                     messages: withAmsg2TaskContext(baseReqBody.messages),
                 });
                 data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                    method: 'POST', headers,
+                    method: 'POST', headers, signal: abortController.signal,
                     body: JSON.stringify(fallbackBody)
                 }, 0, 0, { appName: '消息', charId: char.id, charName: char.name, purpose: 'MCP tools 兼容重试' });
                 }
@@ -1740,7 +1752,7 @@ export const useChatAI = ({
                     delete followBody.tools;
                     delete followBody.tool_choice;
                     data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                        method: 'POST', headers,
+                        method: 'POST', headers, signal: abortController.signal,
                         body: JSON.stringify(followBody)
                     });
                     updateTokenUsage(data, historyMsgCount, `mcd-propose-${it + 1}`);
@@ -1843,7 +1855,7 @@ export const useChatAI = ({
                     delete followBody.tools;
                     delete followBody.tool_choice;
                     data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                        method: 'POST', headers,
+                        method: 'POST', headers, signal: abortController.signal,
                         body: JSON.stringify(followBody)
                     });
                     updateTokenUsage(data, historyMsgCount, `luckin-propose-${it + 1}`);
@@ -1956,7 +1968,7 @@ export const useChatAI = ({
                     // 看到的是自己名下真实的排程，不会对着排程前的空清单再排一条。
                     const followBody = { ...baseReqBody, messages: withAmsg2TaskContext(loopMessages) };
                     data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                        method: 'POST', headers,
+                        method: 'POST', headers, signal: abortController.signal,
                         body: JSON.stringify(followBody)
                     });
                     updateTokenUsage(data, historyMsgCount, `${payload.flags.luckinChatActive ? 'luckin-chat' : 'mcp-chat'}-${it + 1}`);
@@ -2001,7 +2013,7 @@ export const useChatAI = ({
                     setSearchStatus('正在整理 MCP 工具结果...');
                     const followBody = buildMcpTextFallbackBody(baseReqBody, textLoopMessages);
                     data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                        method: 'POST', headers,
+                        method: 'POST', headers, signal: abortController.signal,
                         body: JSON.stringify(followBody)
                     });
                     updateTokenUsage(data, historyMsgCount, `mcp-text-${it + 1}`);
@@ -2124,6 +2136,13 @@ export const useChatAI = ({
             // 注意: 这个 catch 兜的是「拿到 API 响应之后」的整条后处理管线 (applyAssistantPostProcessing,
             // 13 步)。这里抛错多半不是网络问题, 而是解析/正则/落库异常。别再叫"连接中断"误导排查。
             const errMsg = e?.message || String(e);
+            // 用户点了「停止生成」：这不是故障，别往聊天里塞 [回复处理失败] 的红字，
+            // 也别弹错误框。abort 在不同浏览器里措辞不一（AbortError / aborted / cancelled），
+            // 统一以 cancelledRef 这面我们自己竖的旗子为准。
+            if (cancelledRef.current || abortController.signal.aborted) {
+                console.log('⏹ [Chat] 本轮生成已被用户停止');
+                return;
+            }
             // 瑞一杯模式下报错: 大概率是聊天模型/中转不支持 function calling(tools) → 带 tools 一发就 400。
             // 在 APK 里看不到控制台, 这里把完整原因 + 解法存成可读消息, 方便排查。
             if (luckinChatRef?.current?.active && /\b400\b|tool|function[_\s-]?call/i.test(errMsg)) {
@@ -2136,6 +2155,7 @@ export const useChatAI = ({
             }
             setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
         } finally {
+            if (abortRef.current === abortController) abortRef.current = null;
             triggerInFlightRef.current = false;
             KeepAlive.stop();
             setIsTyping(false);
@@ -2248,6 +2268,55 @@ export const useChatAI = ({
 
 
 
+    /**
+     * 停止这一轮生成（聊天界面的「停止」按钮）。
+     *
+     * 覆盖两种卡死：
+     *   1. 本机生成还挂在 fetch 上（手滑点了发送 / 模型半天不吐字）→ abort 掉本轮所有
+     *      请求，catch/finally 正常收尾。
+     *   2. 即时对话（amsg2 云端生成）那一轮 POST 已经 202 受理，但推送迟迟不回来（网络
+     *      抖动、worker 那边没跑起来）。这时本机 isTyping 早就是 false 了，挡住下一轮的是
+     *      localStorage 里那条 pending 记录——不清掉的话再点发送永远提示「角色还在回复上
+     *      一条消息」，这个会话就此锁死。这里把它销账。
+     *      注意：销账只解开本机这道闸；云端那一轮如果还活着，回复到了照样会落库，
+     *      这不等于"取消了云端任务"。
+     *
+     * 返回 true 表示确实停下了点什么，false 表示当时本来就没有在跑的轮次。
+     */
+    const cancelGeneration = (): boolean => {
+        const controller = abortRef.current;
+        const cloudPending = char ? getInstantChatPending(char.id) : null;
+        const somethingRunning = !!controller || triggerInFlightRef.current || isTyping || !!cloudPending;
+        if (!somethingRunning) return false;
+
+        cancelledRef.current = true;
+        if (controller) {
+            try { controller.abort(); } catch { /* 已经 abort 过 */ }
+        }
+        abortRef.current = null;
+        triggerInFlightRef.current = false;
+
+        if (char) {
+            if (cloudPending) {
+                try { clearInstantChatPending(char.id); } catch (e) { console.warn('[CancelGen] clear instant pending failed', e); }
+            }
+            try { stopAmsgChatPresence(char.id); } catch (e) { console.warn('[CancelGen] stop presence failed', e); }
+        }
+
+        KeepAlive.stop();
+        setIsTyping(false);
+        setStreamingBubbles([]);
+        setStreamingThinking('');
+        setRecallStatus('');
+        setSearchStatus('');
+        setDiaryStatus('');
+        setXhsStatus('');
+        // 全局横幅「xx 正在回应…」立刻熄灭。本机 fetch 那条路的 finally 还会再派发一次，
+        // 这个事件幂等；卡死的云端那条路根本走不到 finally，只能靠这里。
+        if (char) announceChatGen(CHAT_GEN_EVENTS.replyEnd, { charId: char.id, charName: char.name });
+        return true;
+    };
+
     // ─── Proactive Messaging Controls ───
     // NOTE: The actual proactive trigger handler is registered globally in OSContext
     // so it works even when Chat is not open. These are just start/stop helpers.
@@ -2282,6 +2351,7 @@ export const useChatAI = ({
         tokenBreakdown,
         setLastTokenUsage, // Allow manual reset if needed
         triggerAI,
+        cancelGeneration,
         startProactiveChat,
         stopProactiveChat,
         isProactiveActive,
