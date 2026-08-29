@@ -13,6 +13,12 @@ type Props = {
     onResetAllChrome?: () => void;
     /** 「进阶装扮」区块的跳转（如一键去气泡工坊）。 */
     onOpenApp?: (appId: AppID) => void;
+    /**
+     * 嵌入模式：这套编辑器现在长在聊天里的「装扮」抽屉「所有聊天」页签下。
+     * 抽屉后面就是真聊天 —— 所以嵌入时去掉那个假的迷你预览、也不用悬浮圆气泡
+     * 把面板浮起来（抽屉本身已经只占下半屏），控件直接平铺进抽屉里。
+     */
+    embedded?: boolean;
 };
 
 // 聊天细节微调的默认值快照。切预设时先铺这层再叠预设配置：否则从「沉浸剧场」切回
@@ -394,7 +400,7 @@ const ChoiceGroup: React.FC<{
     </div>
 );
 
-export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onResetAllChrome, onOpenApp }) => {
+export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onResetAllChrome, onOpenApp, embedded = false }) => {
     const avatarShape = theme.chatAvatarShape || defaults.chatAvatarShape;
     const avatarSize = theme.chatAvatarSize || defaults.chatAvatarSize;
     const avatarMode = theme.chatAvatarMode || defaults.chatAvatarMode;
@@ -489,7 +495,9 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
 
     return (
         <div className="space-y-5">
-            {/* 实时预览：聊天壳设置在悬浮面板里（下方圆气泡），预览保持原尺寸、始终可见。 */}
+            {/* 实时预览：聊天壳设置在悬浮面板里（下方圆气泡），预览保持原尺寸、始终可见。
+                嵌入聊天「装扮」抽屉时整块省掉——抽屉后面就是真聊天，比任何迷你预览都准。 */}
+            {!embedded && (
             <section className="rounded-3xl border border-slate-100 bg-white p-3 shadow-sm">
                 <div className="mb-2 flex items-baseline justify-between px-1">
                     <h2 className="text-[11px] font-bold uppercase tracking-widest text-slate-400">实时预览</h2>
@@ -598,9 +606,12 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                     </div>
                 </div>
             </section>
+            )}
 
             {/* 聊天壳设置：同私聊「聊天装扮」的悬浮形态——面板 fixed 贴底、无遮罩，不占文档流，
-                预览保持完整尺寸也能边看边调。圆气泡点按 = 收起/展开面板，按住可拖到不挡手的位置。 */}
+                预览保持完整尺寸也能边看边调。圆气泡点按 = 收起/展开面板，按住可拖到不挡手的位置。
+                嵌入抽屉时这两件都不需要：抽屉自己就只占下半屏，控件平铺即可。 */}
+            {!embedded && (<>
             <div className="rounded-2xl border border-dashed border-slate-200 bg-white/70 px-4 py-2.5 text-[10px] leading-relaxed text-slate-400">
                 聊天壳设置在悬浮小面板里 · 点右侧圆钮收起/展开，按住圆钮可拖到不挡预览的位置
             </div>
@@ -619,11 +630,14 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
             >
                 <FadersHorizontal className="h-6 w-6" weight="bold" />
             </button>
+            </>)}
 
-            {panelOpen && (
+            {(embedded || panelOpen) && (
             <section
-                className="fixed left-1/2 z-[105] w-[94%] max-w-md -translate-x-1/2 overflow-y-auto rounded-3xl border border-white/60 bg-white/95 p-4 shadow-[0_12px_40px_rgba(15,23,42,0.22)] backdrop-blur-xl [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                style={{ bottom: 'calc(16px + var(--safe-bottom, 0px))', maxHeight: '46vh' }}
+                className={embedded
+                    ? groupClass
+                    : 'fixed left-1/2 z-[105] w-[94%] max-w-md -translate-x-1/2 overflow-y-auto rounded-3xl border border-white/60 bg-white/95 p-4 shadow-[0_12px_40px_rgba(15,23,42,0.22)] backdrop-blur-xl [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'}
+                style={embedded ? undefined : { bottom: 'calc(16px + var(--safe-bottom, 0px))', maxHeight: '46vh' }}
             >
                 <div className="mb-4 flex items-center gap-1.5">
                     <button
@@ -861,11 +875,19 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                     </div>
                     <div className="rounded-2xl bg-slate-50 px-3 py-2.5">
                         <div className="text-[11px] font-bold text-slate-700">想给某个角色单独一套微调</div>
-                        <div className="mt-0.5 text-[10px] text-slate-400">进 ta 的聊天 → 「＋」→「装扮」→「微调」，可以只覆盖字号、头像这些细节，其余跟随全局。</div>
+                        <div className="mt-0.5 text-[10px] text-slate-400">
+                            {embedded
+                                ? '切到上面的「这个角色」→「微调」，可以只覆盖字号、头像这些细节，其余跟随全局。'
+                                : '进 ta 的聊天 → 「＋」→「装扮」→「微调」，可以只覆盖字号、头像这些细节，其余跟随全局。'}
+                        </div>
                     </div>
                     <div className="rounded-2xl bg-slate-50 px-3 py-2.5">
                         <div className="text-[11px] font-bold text-slate-700">想手写 CSS 深度魔改</div>
-                        <div className="mt-0.5 text-[10px] text-slate-400">进角色聊天 → 「＋」→「装扮」→「白框」，那里能边写边预览、还能存预设分享。</div>
+                        <div className="mt-0.5 text-[10px] text-slate-400">
+                            {embedded
+                                ? '切到上面的「这个角色」→「白框」，那里能边写边看真聊天、还能存预设分享。'
+                                : '进角色聊天 → 「＋」→「装扮」→「白框」，那里能边写边预览、还能存预设分享。'}
+                        </div>
                     </div>
                 </div>
             </section>

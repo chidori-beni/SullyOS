@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallba
 import { createPortal } from 'react-dom';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot, AppID } from '../types';
+import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot, AppID, OSTheme } from '../types';
 import type { ActiveMsg2TaskRecord } from '../types';
 import { configFromPreset } from '../utils/apiPresetSwitch';
 import { processImage } from '../utils/file';
@@ -119,7 +119,7 @@ type InstantToolUiStatus = {
 };
 
 const Chat: React.FC = () => {
-    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, commitApiConfig, apiPresets, addApiPreset, closeApp, openApp, customThemes, removeCustomTheme, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, openDateWithChar } = useOS();
+    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, commitApiConfig, apiPresets, addApiPreset, closeApp, openApp, customThemes, removeCustomTheme, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: osTheme, updateTheme, proactiveComposingChars, openDateWithChar } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
     const localDateKey = useLocalDateKey();
 
@@ -1839,6 +1839,20 @@ const Chat: React.FC = () => {
         } catch (err: any) {
             addToast(err.message || '图片处理失败', 'error');
         }
+    };
+
+    // 「所有聊天」页签里那个救援键：清掉全局白框 CSS、消息横幅 CSS，以及每个角色
+    // 各自的白框 CSS。原来长在外观 App 里，跟着聊天装扮一起搬进抽屉。
+    const resetAllChromeCss = () => {
+        let n = 0;
+        const themePatch: Partial<OSTheme> = {};
+        if (osTheme.chatChromeCustomCss) { themePatch.chatChromeCustomCss = ''; n++; }
+        if (osTheme.messageBannerCustomCss) { themePatch.messageBannerCustomCss = ''; n++; }
+        if (Object.keys(themePatch).length > 0) void updateTheme(themePatch);
+        (characters || []).forEach((c: any) => {
+            if (c?.chromeCustomCss) { updateCharacter(c.id, { chromeCustomCss: '' } as any); n++; }
+        });
+        addToast(n ? `已还原 ${n} 处聊天白框美化` : '没有需要还原的白框美化', n ? 'success' : 'info');
     };
 
     const handlePanelAction = (type: string, payload?: any) => {
@@ -4583,6 +4597,11 @@ const Chat: React.FC = () => {
                                 updateCharacter(char.id, { chatSound: s || undefined } as any);
                             }
                         }}
+                        theme={osTheme}
+                        onUpdateTheme={(updates) => { void updateTheme(updates); }}
+                        onResetAllChrome={resetAllChromeCss}
+                        onOpenApp={openApp}
+
                         onChangeSoundBound={(b) => {
                             if (b) {
                                 // 绑定：把当前提示音写进白框 CSS 指令，清掉独立字段。

@@ -1,7 +1,8 @@
 import React, { useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { ChatFineTuneFields } from '../../types';
+import { AppID, ChatFineTuneFields, OSTheme } from '../../types';
 import { WhiteboxSound } from '../../utils/whiteboxSound';
+import { ChatAppearanceEditor } from '../appearance/ChatAppearanceEditor';
 import ChatFineTunePanel from './ChatFineTunePanel';
 import ChromeCssEditor from './ChromeCssEditor';
 import WhiteboxSoundEditor from './WhiteboxSoundEditor';
@@ -19,13 +20,20 @@ import WhiteboxSoundEditor from './WhiteboxSoundEditor';
  *  - 白框：char.chromeCustomCss（含坏 CSS 救援键）
  *  - 提示音：char.chatSound / 绑定进白框 CSS 指令
  *
+ * 顶部还有一层作用域切换：「这个角色」= 上面这五项；「所有聊天」= 原「外观 App →
+ * 聊天装扮」整页（聊天壳 / 头部 / 气泡与头像 / 全局微调 / 输入栏 / 全局提示音 /
+ * 横幅 CSS / 白框还原），以 embedded 模式嵌进来。搬过来的理由就一个：聊天装扮的
+ * 预览对象是聊天本身，放在外观 App 里只能对着一个假的迷你聊天调；放在这里，抽屉
+ * 后面就是真聊天，改一下立刻看到真效果。外观 App 从此只管主页。
+ *
  * 抽屉刻意只占下半屏（max-h 68vh，无遮罩色块），上方真聊天保持可见 —— 白框和微调
  * 本来就靠「上面就是实时预览」来调，遮死了反而没法用。
  */
 
-export type ChatDecorTab = 'fine-tune' | 'background' | 'bubble' | 'chrome' | 'sound';
+/** 'global' 不是角色页签，是「所有聊天」作用域本身（内容由 ChatAppearanceEditor 自己分页）。 */
+export type ChatDecorTab = 'fine-tune' | 'background' | 'bubble' | 'chrome' | 'sound' | 'global';
 
-const TABS: ReadonlyArray<{ id: ChatDecorTab; label: string }> = [
+const CHAR_TABS: ReadonlyArray<{ id: ChatDecorTab; label: string }> = [
     { id: 'fine-tune', label: '微调' },
     { id: 'background', label: '背景' },
     { id: 'bubble', label: '气泡' },
@@ -67,14 +75,21 @@ type Props = {
     soundBound: boolean;
     onChangeSound: (sound: WhiteboxSound | null) => void;
     onChangeSoundBound: (bound: boolean) => void;
+
+    /** 「所有聊天」作用域：原外观 App 那一页，整套全局聊天装扮 */
+    theme: OSTheme;
+    onUpdateTheme: (updates: Partial<OSTheme>) => void;
+    onResetAllChrome: () => void;
+    onOpenApp: (appId: AppID) => void;
 };
 
 const TAB_HINTS: Record<ChatDecorTab, string> = {
-    'fine-tune': '头像、字号、间距这些细节。不改就跟随「外观 → 聊天装扮」的全局设置。',
+    'fine-tune': '头像、字号、间距这些细节。不改就跟随「所有聊天」里的全局设置。',
     background: '这个角色聊天页的背景图，只对 ta 生效。',
     bubble: '气泡的颜色、圆角、贴图在「气泡工坊」里做，做好后回来给 ta 穿上。',
     chrome: '手写 CSS 深度魔改顶栏 / 输入栏 / 任意零件。↑ 上方聊天界面即实时预览。',
     sound: 'ta 新发的消息成为最新一条时响一次。不设则用全局默认提示音。',
+    global: '这里改的是全部私聊的打底样式，↑ 上方就是真效果。单个角色的定制在「这个角色」里。',
 };
 
 const ChatDecorSheet: React.FC<Props> = ({
@@ -100,27 +115,54 @@ const ChatDecorSheet: React.FC<Props> = ({
     soundBound,
     onChangeSound,
     onChangeSoundBound,
+    theme,
+    onUpdateTheme,
+    onResetAllChrome,
+    onOpenApp,
 }) => {
     const bgInputRef = useRef<HTMLInputElement>(null);
+    const globalScope = tab === 'global';
 
     return (
         <div className="fixed inset-0 z-[110] flex items-end justify-center bg-black/5" onClick={onClose}>
             <div
-                className="w-full max-h-[68vh] overflow-y-auto rounded-t-3xl border-t border-white/60 bg-white/95 p-5 shadow-[0_-12px_40px_rgba(15,23,42,0.18)] backdrop-blur-xl [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                className={`w-full ${globalScope ? 'max-h-[78vh]' : 'max-h-[68vh]'} overflow-y-auto rounded-t-3xl border-t border-white/60 bg-white/95 p-5 shadow-[0_-12px_40px_rgba(15,23,42,0.18)] backdrop-blur-xl [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}
                 style={{ paddingBottom: 'calc(1.25rem + var(--safe-bottom))' }}
                 onClick={(e) => e.stopPropagation()}
             >
                 <div className="mb-3 flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                        <div className="text-sm font-bold text-slate-800">装扮 · {charName}</div>
+                        <div className="text-sm font-bold text-slate-800">装扮 · {globalScope ? '所有聊天' : charName}</div>
                         <div className="mt-0.5 text-[10px] leading-relaxed text-slate-400">{TAB_HINTS[tab]}</div>
                     </div>
                     <button onClick={onClose} className="shrink-0 px-2 text-xl leading-none text-slate-400 hover:text-slate-600">{'×'}</button>
                 </div>
 
-                {/* 页签：五件事一条横栏，不用再翻加号面板找 */}
+                {/* 作用域：先分清「只动这个角色」还是「动所有私聊的打底」——这是聊天装扮里
+                    最容易搞混的一层，以前它靠「一个在聊天里、一个在外观 App 里」来区分，
+                    现在两边都在这个抽屉，就得把它明写成一个开关。 */}
+                <div className="mb-3 flex gap-1 rounded-2xl bg-slate-100 p-1">
+                    {([['char', '这个角色'], ['global', '所有聊天']] as const).map(([scope, label]) => {
+                        const active = scope === 'global' ? globalScope : !globalScope;
+                        return (
+                            <button
+                                key={scope}
+                                onClick={() => onChangeTab(scope === 'global' ? 'global' : 'fine-tune')}
+                                aria-pressed={active}
+                                className={`flex-1 rounded-xl py-1.5 text-[11px] font-bold transition-all active:scale-[0.98] ${
+                                    active ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400'
+                                }`}
+                            >
+                                {label}
+                            </button>
+                        );
+                    })}
+                </div>
+
+                {/* 角色作用域的五个页签。「所有聊天」那边不用这排——它自己内部就有分页。 */}
+                {!globalScope && (
                 <div className="-mx-1 mb-4 flex gap-1.5 overflow-x-auto px-1 no-scrollbar">
-                    {TABS.map((item) => (
+                    {CHAR_TABS.map((item) => (
                         <button
                             key={item.id}
                             onClick={() => onChangeTab(item.id)}
@@ -132,6 +174,17 @@ const ChatDecorSheet: React.FC<Props> = ({
                         </button>
                     ))}
                 </div>
+                )}
+
+                {globalScope && (
+                    <ChatAppearanceEditor
+                        embedded
+                        theme={theme}
+                        updateTheme={onUpdateTheme}
+                        onResetAllChrome={onResetAllChrome}
+                        onOpenApp={onOpenApp}
+                    />
+                )}
 
                 {tab === 'fine-tune' && (
                     <>
@@ -140,8 +193,8 @@ const ChatDecorSheet: React.FC<Props> = ({
                                 <div className="text-[11px] font-bold text-slate-700">{fineTuneCustomized ? '为 TA 单独定制中' : '跟随全局设置（默认）'}</div>
                                 <div className="mt-0.5 text-[10px] leading-relaxed text-slate-400">
                                     {fineTuneCustomized
-                                        ? '只有你改过的项目覆盖全局，其余仍跟随「外观 → 聊天装扮」。关掉开关回到跟随全局，定制内容保留。'
-                                        : '当前用的是「外观 → 聊天装扮」的全局设置。打开开关即可为这个角色单独定制。'}
+                                        ? '只有你改过的项目覆盖全局，其余仍跟随「所有聊天」里的全局设置。关掉开关回到跟随全局，定制内容保留。'
+                                        : '当前用的是「所有聊天」里的全局设置。打开开关即可为这个角色单独定制。'}
                                 </div>
                             </div>
                             <button
@@ -189,7 +242,7 @@ const ChatDecorSheet: React.FC<Props> = ({
                             <button onClick={onRemoveBackground} className="mt-2 text-[10px] font-bold text-red-400">移除背景</button>
                         )}
                         <p className="mt-3 text-[10px] leading-relaxed text-slate-400">
-                            背景图原来在「设置」弹窗里，现在归到装扮这边。想改所有聊天共用的底纹 / 网格 / 渐变，去「外观 → 聊天装扮 → 聊天壳」。
+                            背景图原来在「设置」弹窗里，现在归到装扮这边。想改所有聊天共用的底纹 / 网格 / 渐变，切到上面的「所有聊天」→「聊天壳」。
                         </p>
                     </>
                 )}
@@ -230,7 +283,7 @@ const ChatDecorSheet: React.FC<Props> = ({
                         bound={soundBound}
                         onChangeSound={onChangeSound}
                         onChangeBound={onChangeSoundBound}
-                        hint={<>🔔 只在 <b>ta 新发的消息成为最新一条</b> 时响一次。这里是<b>该角色专属</b>；不设则用「外观 → 聊天装扮」里的全局默认提示音。</>}
+                        hint={<>🔔 只在 <b>ta 新发的消息成为最新一条</b> 时响一次。这里是<b>该角色专属</b>；不设则用「所有聊天」里的全局默认提示音。</>}
                     />
                 )}
             </div>

@@ -17,7 +17,6 @@ import { resolveStatusBarMode, type StatusBarMode } from '../utils/iosStandalone
 import { confirmExportSafety } from '../utils/exportGuard';
 import { trackEvent } from '../utils/analytics';
 import { Check, ImageSquare, Sparkle, Trash, UploadSimple } from '@phosphor-icons/react';
-import { ChatAppearanceEditor as ModularChatAppearanceEditor } from '../components/appearance/ChatAppearanceEditor';
 import AppIconEditor from '../components/appearance/AppIconEditor';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
@@ -549,18 +548,7 @@ const Appearance: React.FC = () => {
   const { theme, updateTheme, closeApp, openApp, setCustomIcon, customIcons, addToast, appearancePresets, saveAppearancePreset, applyAppearancePreset, deleteAppearancePreset, renameAppearancePreset, exportAppearancePreset, importAppearancePreset, resetAppearance, characters, activeCharacterId, updateCharacter } = useOS();
   // 一键还原全部「聊天白框自定义 CSS」：清掉全局 + 每个角色自带的。
   // 兼作救援：单角色的坏 CSS 把聊天界面整崩、进不去该角色设置时，从这里一键全清即可恢复。
-  const resetAllChromeCss = () => {
-    let n = 0;
-    const themePatch: Partial<OSTheme> = {};
-    if (theme.chatChromeCustomCss) { themePatch.chatChromeCustomCss = ''; n++; }
-    if (theme.messageBannerCustomCss) { themePatch.messageBannerCustomCss = ''; n++; }
-    if (Object.keys(themePatch).length > 0) void updateTheme(themePatch);
-    (characters || []).forEach((c: any) => {
-      if (c?.chromeCustomCss) { updateCharacter(c.id, { chromeCustomCss: '' } as any); n++; }
-    });
-    addToast(n ? `已还原 ${n} 处聊天白框美化` : '没有需要还原的白框美化', n ? 'success' : 'info');
-  };
-  const [activeTab, setActiveTab] = useState<'theme' | 'icons' | 'presets' | 'chat'>('theme');
+  const [activeTab, setActiveTab] = useState<'theme' | 'icons' | 'presets'>('theme');
   // 主页装扮的四个分组：默认只展开「整机风格」，其余收起——这一页项目太多，
   // 全摊开就是原来那条滚不完的长列表。展开状态只活在本次进入 App 期间。
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ style: true, wallpaper: false, widgets: false, motion: false });
@@ -950,7 +938,6 @@ const Appearance: React.FC = () => {
           <button onClick={() => { setActiveTab('theme'); trackEvent('切换外观定制标签页', { tab: 'theme' }); }} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'theme' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>主页装扮</button>
           <button onClick={() => { setActiveTab('icons'); trackEvent('切换外观定制标签页', { tab: 'icons' }); }} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'icons' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>应用图标</button>
           <button onClick={() => { setActiveTab('presets'); trackEvent('切换外观定制标签页', { tab: 'presets' }); }} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'presets' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>外观预设</button>
-          <button onClick={() => { setActiveTab('chat'); trackEvent('切换外观定制标签页', { tab: 'chat' }); }} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'chat' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>聊天装扮</button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-5 space-y-6 no-scrollbar">
@@ -1769,6 +1756,13 @@ const Appearance: React.FC = () => {
                     </div>
                 </section>
                 </AppearanceGroup>
+
+                {/* 聊天装扮已经搬进聊天里的「装扮」抽屉——它要调的东西就是聊天本身，
+                    放在这里只能对着一个假的迷你预览调。这一页从此只管主页，留个路标即可。 */}
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-white/70 px-4 py-3 text-[10px] leading-relaxed text-slate-400">
+                    找<b className="text-slate-500">聊天装扮</b>？已经搬到聊天里了：进任意角色聊天 →「＋」→「装扮」。
+                    单个角色的定制在「这个角色」，全部私聊的打底在「所有聊天」——抽屉后面就是真聊天，改一下立刻看到真效果。
+                </div>
             </>
         ) : activeTab === 'icons' ? (
             <div className="space-y-5">
@@ -1833,8 +1827,6 @@ const Appearance: React.FC = () => {
                 addToast={addToast}
                 currentTheme={theme}
             />
-        ) : activeTab === 'chat' ? (
-            <ModularChatAppearanceEditor theme={theme} updateTheme={updateTheme} onResetAllChrome={resetAllChromeCss} onOpenApp={openApp} />
         ) : null}
       </div>
     </div>
