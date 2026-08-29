@@ -70,8 +70,8 @@ interface ChatModalsProps {
     onTransfer: () => void;
     onImportEmoji: () => void;
     onSaveSettings: () => void;
-    onBgUpload: (file: File) => void;
-    onRemoveBg: () => void;
+    /** 打开「装扮」抽屉（可指定页签）。聊天背景已从这份设置里搬到那边，这里只留跳转。 */
+    onOpenDecor: (tab?: string) => void;
     onClearHistory: () => void;
     onArchive: () => void;
     onCreatePrompt: () => void;
@@ -271,7 +271,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     allHistoryMessages = [],
     contextRangeSnapshot,
     onTransfer, onImportEmoji, onSaveSettings,
-    onBgUpload, onRemoveBg, onClearHistory,
+    onOpenDecor, onClearHistory,
     onArchive, onCreatePrompt, onEditPrompt, onSavePrompt, onDeletePrompt,
     onSetHistoryStart, onRestoreAdaptiveContext, onJumpToMessageInChat, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onCopyMessage,
     reactionShortcuts, onMessageReaction, onChangeReactionShortcuts,
@@ -291,7 +291,6 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     retainRecentForVectorize, setRetainRecentForVectorize, vectorizeResult, onForceVectorize,
     apiPresets, onAddApiPreset, onSaveEmotion, onClearBuffs,
 }) => {
-    const bgInputRef = useRef<HTMLInputElement>(null);
     const [visibilitySelection, setVisibilitySelection] = useState<Set<string>>(new Set());
     const [historyPage, setHistoryPage] = useState(0);
     const [historySearch, setHistorySearch] = useState('');
@@ -503,14 +502,24 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                          </div>
                      </div>
 
+                     {/* 聊天背景图原来就摆在这儿，夹在 API 配置和上下文条数中间——它是纯美化项，
+                         和这份「功能设置」不是一回事。现已搬进「＋ → 装扮 → 背景」，和微调 /
+                         气泡 / 白框 / 提示音放在一起；这里只留一个跳转，免得老用户找不到。 */}
                      <div>
-                         <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">聊天背景</label>
-                         <div onClick={() => bgInputRef.current?.click()} className="h-24 bg-slate-100 rounded-xl border-2 border-dashed border-slate-200 flex items-center justify-center cursor-pointer hover:border-primary/50 overflow-hidden relative">
-                             {activeCharacter.chatBackground ? <img src={activeCharacter.chatBackground} className="w-full h-full object-cover opacity-60" /> : <span className="text-xs text-slate-400">点击上传图片 (原画质)</span>}
-                             {activeCharacter.chatBackground && <span className="absolute z-10 text-xs bg-white/80 px-2 py-1 rounded">更换</span>}
-                         </div>
-                         <input type="file" ref={bgInputRef} className="hidden" accept="image/*" onChange={(e) => e.target.files?.[0] && onBgUpload(e.target.files[0])} />
-                         {activeCharacter.chatBackground && <button onClick={onRemoveBg} className="text-[10px] text-red-400 mt-1">移除背景</button>}
+                         <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">装扮</label>
+                         <button
+                             type="button"
+                             onClick={() => onOpenDecor('background')}
+                             className="w-full flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left transition-all active:scale-[0.99] hover:bg-slate-100"
+                         >
+                             <span className="min-w-0">
+                                 <span className="block text-[11px] font-bold text-slate-700">聊天背景、气泡、白框、提示音</span>
+                                 <span className="mt-0.5 block text-[10px] text-slate-400">
+                                     {activeCharacter.chatBackground ? '这个角色已设过背景图 · 点此修改' : '这个角色的所有美化都在这里'}
+                                 </span>
+                             </span>
+                             <span className="shrink-0 text-[11px] font-bold text-primary">去装扮 →</span>
+                         </button>
                      </div>
                      <div>
                          {(activeCharacter.autoArchiveEnabled || activeCharacter.contextFollowsMemoryPalaceHwm) && settingsContextRangeMode === 'adaptive' ? (

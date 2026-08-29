@@ -2396,7 +2396,7 @@ ${memberTimeline || '(暂无互动记录)'}
                                 bound={isBound}
                                 onChangeSound={changeSound}
                                 onChangeBound={changeBound}
-                                hint={<>🔔 只在 <b>成员新发的消息成为最新一条</b> 时响一次。这里是<b>本群专属</b>；不设则用「外观 → 聊天界面」里的全局默认提示音。</>}
+                                hint={<>🔔 只在 <b>成员新发的消息成为最新一条</b> 时响一次。这里是<b>本群专属</b>；不设则用「外观 → 聊天装扮」里的全局默认提示音。</>}
                             />
                         </div>
                     </div>

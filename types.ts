@@ -2888,7 +2888,7 @@ export interface CharacterProfile {
   impression?: UserImpression;
 
   bubbleStyle?: string;
-  /** 聊天细节微调的角色级覆盖（聊天内「＋」→「聊天装扮」）。
+  /** 聊天细节微调的角色级覆盖（聊天内「＋」→「装扮」→「微调」）。
    *  enabled=true 时已定义的字段逐个覆盖全局 OSTheme 同名设置，未定义的字段继续跟随全局；
    *  enabled 为 false/undefined 或整个字段缺省 = 完全跟随全局（现状零变化）。
    *  属美化类本地偏好：随完整备份走，但角色卡分享时剥离（见 utils/characterCard.ts）。 */

@@ -118,6 +118,34 @@ const MOBILEGAME_WALLPAPER = 'radial-gradient(95% 55% at 85% 0%, #fdeef7 0%, tra
 const TAMAGOTCHI_WALLPAPER = 'radial-gradient(85% 50% at 80% 0%, #e6dcf8 0%, transparent 55%), radial-gradient(75% 45% at 12% 10%, #f4edfb 0%, transparent 55%), linear-gradient(180deg, #ded4f4 0%, #d6cbf0 55%, #cfc3ec 100%)';
 const COMPANION_WALLPAPER = 'radial-gradient(90% 65% at 50% 5%, #6c5a91 0%, transparent 62%), radial-gradient(75% 55% at 100% 50%, #382e5b 0%, transparent 72%), linear-gradient(180deg, #211a36 0%, #100d1c 62%, #080711 100%)';
 
+// 「主页装扮」分组外壳。原来这一页是 12 个 section 平铺，从「动画与过场」一路滚到
+// 「桌面装饰 DIY」，想改哪项全靠翻。现按「整机风格 / 壁纸与背景 / 桌面元件与装饰 /
+// 动画与过场」折成四组——设置项一个没删也没改行为，只是收进可折叠的抽屉里。
+const AppearanceGroup: React.FC<{
+  groupKey: string;
+  title: string;
+  desc: string;
+  open: boolean;
+  onToggle: () => void;
+  children?: React.ReactNode;
+}> = ({ groupKey, title, desc, open, onToggle, children }) => (
+  <div className="space-y-4" data-testid={`appearance-group-${groupKey}`}>
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={open}
+      className="flex w-full items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white/80 px-4 py-3 text-left shadow-sm transition-all active:scale-[0.995]"
+    >
+      <span className="min-w-0">
+        <span className="block text-sm font-bold uppercase tracking-widest text-slate-500">{title}</span>
+        <span className="mt-0.5 block text-[10px] text-slate-400">{desc}</span>
+      </span>
+      <span className={`shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden>⌄</span>
+    </button>
+    {open && <div className="space-y-6">{children}</div>}
+  </div>
+);
+
 type DesktopSkinOption = { id: string; name: string; desc: string; swatch: string; config: Partial<OSTheme> };
 
 const DESKTOP_SKINS: DesktopSkinOption[] = [
@@ -533,6 +561,10 @@ const Appearance: React.FC = () => {
     addToast(n ? `已还原 ${n} 处聊天白框美化` : '没有需要还原的白框美化', n ? 'success' : 'info');
   };
   const [activeTab, setActiveTab] = useState<'theme' | 'icons' | 'presets' | 'chat'>('theme');
+  // 主页装扮的四个分组：默认只展开「整机风格」，其余收起——这一页项目太多，
+  // 全摊开就是原来那条滚不完的长列表。展开状态只活在本次进入 App 期间。
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ style: true, wallpaper: false, widgets: false, motion: false });
+  const toggleGroup = (key: string) => setOpenGroups(prev => ({ ...prev, [key]: !prev[key] }));
   const wallpaperInputRef = useRef<HTMLInputElement>(null);
   const [wallpaperUrl, setWallpaperUrl] = useState('');
   const lockWallpaperInputRef = useRef<HTMLInputElement>(null);
@@ -915,62 +947,16 @@ const Appearance: React.FC = () => {
       </div>
 
       <div className="flex border-b border-slate-200 bg-white sticky top-0 z-20">
-          <button onClick={() => { setActiveTab('theme'); trackEvent('切换外观定制标签页', { tab: 'theme' }); }} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'theme' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>系统主题</button>
+          <button onClick={() => { setActiveTab('theme'); trackEvent('切换外观定制标签页', { tab: 'theme' }); }} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'theme' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>主页装扮</button>
           <button onClick={() => { setActiveTab('icons'); trackEvent('切换外观定制标签页', { tab: 'icons' }); }} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'icons' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>应用图标</button>
           <button onClick={() => { setActiveTab('presets'); trackEvent('切换外观定制标签页', { tab: 'presets' }); }} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'presets' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>外观预设</button>
-          <button onClick={() => { setActiveTab('chat'); trackEvent('切换外观定制标签页', { tab: 'chat' }); }} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'chat' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>聊天界面</button>
+          <button onClick={() => { setActiveTab('chat'); trackEvent('切换外观定制标签页', { tab: 'chat' }); }} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'chat' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>聊天装扮</button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-5 space-y-6 no-scrollbar">
         {activeTab === 'theme' ? (
             <>
-                <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
-                    <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-1">动画与过场</h2>
-                    <p className="text-[10px] text-slate-400 mb-2">三项都默认开启，可以分别关闭；关闭加载动画后，超过 15 秒的卡死恢复提示仍会保留。</p>
-                    <div className="divide-y divide-slate-100">
-                        {([
-                            {
-                                key: 'bootAnimationEnabled' as const,
-                                title: '开机动画',
-                                description: '启动 SullyOS 时的整机入场过场。',
-                            },
-                            {
-                                key: 'chatCharacterSwitchAnimationEnabled' as const,
-                                title: '聊天切换角色动画',
-                                description: '进入聊天或换角色时的头像登场过场。',
-                            },
-                            {
-                                key: 'appLoadingAnimationEnabled' as const,
-                                title: '进入 App 加载动画',
-                                description: 'App 首次加载较慢时显示的柔光等待画面。',
-                            },
-                        ]).map(option => {
-                            const enabled = theme[option.key] !== false;
-                            return (
-                                <div key={option.key} className="flex items-center gap-3 py-3">
-                                    <div className="min-w-0 flex-1">
-                                        <div className="text-xs font-bold text-slate-700">{option.title}</div>
-                                        <div className="mt-0.5 text-[10px] leading-relaxed text-slate-400">{option.description}</div>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        role="switch"
-                                        aria-checked={enabled}
-                                        aria-label={option.title}
-                                        onClick={() => {
-                                            updateTheme({ [option.key]: !enabled });
-                                            trackEvent('设置外观动画', { animation: option.key, enabled: !enabled });
-                                        }}
-                                        className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${enabled ? 'bg-primary' : 'bg-slate-300'}`}
-                                    >
-                                        <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-5' : 'translate-x-0'}`} style={{ left: 2 }} />
-                                    </button>
-                                </div>
-                            );
-                        })}
-                    </div>
-                </section>
-
+                <AppearanceGroup groupKey="style" title="整机风格" desc="桌面皮肤、陪伴形象、配色、字体、状态栏" open={!!openGroups.style} onToggle={() => toggleGroup('style')}>
                 <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                     <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-1">桌面风格</h2>
                     <p className="text-[10px] text-slate-400 mb-4">一键切换整机主题：壁纸、配色与图标外观联动；触感陪伴不会改动全局聊天装扮。</p>
@@ -1274,24 +1260,9 @@ const Appearance: React.FC = () => {
                         有刘海或灵动岛优先用“紧凑显示”：时间、电量进入顶部安全区，按钮仍从遮挡区下方开始；若系统已显示时间，可选“隐藏时间”。
                     </p>
                 </section>
+                </AppearanceGroup>
 
-                {/* Desktop Music Widget Style */}
-                <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
-                    <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">桌面组件</h2>
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <div className="text-sm font-medium text-slate-700">音乐卡片浅色系</div>
-                            <div className="text-[10px] text-slate-400 mt-0.5">桌面第二页「正在播放」卡片改用浅色样式。仅默认皮肤生效。</div>
-                        </div>
-                        <button
-                            onClick={() => updateTheme({ nowPlayingWidgetLight: !theme.nowPlayingWidgetLight })}
-                            className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ml-3 ${theme.nowPlayingWidgetLight ? 'bg-primary' : 'bg-slate-200'}`}
-                        >
-                            <div className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${theme.nowPlayingWidgetLight ? 'translate-x-6' : 'translate-x-1'}`} />
-                        </button>
-                    </div>
-                </section>
-
+                <AppearanceGroup groupKey="wallpaper" title="壁纸与背景" desc="主屏壁纸、锁屏壁纸、首页方形图片" open={!!openGroups.wallpaper} onToggle={() => toggleGroup('wallpaper')}>
                 {/* Wallpaper Section */}
                 <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                     <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Wallpaper</h2>
@@ -1447,6 +1418,25 @@ const Appearance: React.FC = () => {
                                 </LongPressArea>
                             );
                         })()}
+                    </div>
+                </section>
+                </AppearanceGroup>
+
+                <AppearanceGroup groupKey="widgets" title="桌面元件与装饰" desc="音乐组件、桌面小组件、装饰 DIY 贴纸" open={!!openGroups.widgets} onToggle={() => toggleGroup('widgets')}>
+                {/* Desktop Music Widget Style */}
+                <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                    <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">桌面组件</h2>
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <div className="text-sm font-medium text-slate-700">音乐卡片浅色系</div>
+                            <div className="text-[10px] text-slate-400 mt-0.5">桌面第二页「正在播放」卡片改用浅色样式。仅默认皮肤生效。</div>
+                        </div>
+                        <button
+                            onClick={() => updateTheme({ nowPlayingWidgetLight: !theme.nowPlayingWidgetLight })}
+                            className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ml-3 ${theme.nowPlayingWidgetLight ? 'bg-primary' : 'bg-slate-200'}`}
+                        >
+                            <div className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${theme.nowPlayingWidgetLight ? 'translate-x-6' : 'translate-x-1'}`} />
+                        </button>
                     </div>
                 </section>
 
@@ -1729,6 +1719,56 @@ const Appearance: React.FC = () => {
                     )}
                     <div className="text-[10px] text-slate-400 mt-3 px-1">提示: 装饰会叠加显示在桌面第二页上，可自由调节每个装饰的位置、大小、旋转和透明度。支持上传自定义图片或使用预设贴纸。</div>
                 </section>
+                </AppearanceGroup>
+
+                <AppearanceGroup groupKey="motion" title="动画与过场" desc="开机、切换 App、加载动画的开关" open={!!openGroups.motion} onToggle={() => toggleGroup('motion')}>
+                <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                    <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-1">动画与过场</h2>
+                    <p className="text-[10px] text-slate-400 mb-2">三项都默认开启，可以分别关闭；关闭加载动画后，超过 15 秒的卡死恢复提示仍会保留。</p>
+                    <div className="divide-y divide-slate-100">
+                        {([
+                            {
+                                key: 'bootAnimationEnabled' as const,
+                                title: '开机动画',
+                                description: '启动 SullyOS 时的整机入场过场。',
+                            },
+                            {
+                                key: 'chatCharacterSwitchAnimationEnabled' as const,
+                                title: '聊天切换角色动画',
+                                description: '进入聊天或换角色时的头像登场过场。',
+                            },
+                            {
+                                key: 'appLoadingAnimationEnabled' as const,
+                                title: '进入 App 加载动画',
+                                description: 'App 首次加载较慢时显示的柔光等待画面。',
+                            },
+                        ]).map(option => {
+                            const enabled = theme[option.key] !== false;
+                            return (
+                                <div key={option.key} className="flex items-center gap-3 py-3">
+                                    <div className="min-w-0 flex-1">
+                                        <div className="text-xs font-bold text-slate-700">{option.title}</div>
+                                        <div className="mt-0.5 text-[10px] leading-relaxed text-slate-400">{option.description}</div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        role="switch"
+                                        aria-checked={enabled}
+                                        aria-label={option.title}
+                                        onClick={() => {
+                                            updateTheme({ [option.key]: !enabled });
+                                            trackEvent('设置外观动画', { animation: option.key, enabled: !enabled });
+                                        }}
+                                        className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${enabled ? 'bg-primary' : 'bg-slate-300'}`}
+                                    >
+                                        <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-5' : 'translate-x-0'}`} style={{ left: 2 }} />
+                                    </button>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </section>
+                </AppearanceGroup>
             </>
         ) : activeTab === 'icons' ? (
             <div className="space-y-5">

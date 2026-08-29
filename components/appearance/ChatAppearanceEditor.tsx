@@ -756,7 +756,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                         微调全部回默认（一键清残留）
                     </button>
                     <p className="mt-2 text-[10px] text-slate-400">
-                        这里设置的是全局打底。想给某个角色单独一套？进 ta 的聊天 → 「＋」菜单 → 「聊天装扮」。
+                        这里设置的是全局打底。想给某个角色单独一套？进 ta 的聊天 → 「＋」→「装扮」→「微调」。
                     </p>
                 </>)}
 
@@ -778,7 +778,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                 <div className="mb-3">
                     <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400">全局默认提示音</h2>
                     <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-                        某角色没单独设提示音时，收到 ta 的新消息就用这里的默认音。角色自己在「＋」菜单「提示音」里设的会盖过全局。
+                        某角色没单独设提示音时，收到 ta 的新消息就用这里的默认音。角色自己在「＋」→「装扮」→「提示音」里设的会盖过全局。
                     </p>
                 </div>
                 <WhiteboxSoundEditor
@@ -808,7 +808,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                     <div>
                         <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400">进阶装扮 · 去哪儿改什么</h2>
                         <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-                            这一页管「整体壳子」和细节微调；气泡长相、深度魔改各有专门的地方。不知道谁生效？点右边「?」。
+                            这一页管<b>全局</b>的整体壳子和细节微调；某个角色的单独装扮全在 ta 聊天里的「＋」→「装扮」。不知道谁生效？点右边「?」。
                         </p>
                     </div>
                     <button
@@ -822,7 +822,11 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                 {showStyleHelp && (
                     <div className="mb-3 rounded-2xl bg-amber-50/70 border border-amber-200/60 px-4 py-3 text-[11px] text-slate-600 leading-relaxed space-y-2">
                         <p className="font-bold text-amber-700">「我在三个地方都改了，到底谁生效？」</p>
-                        <p>三个装扮入口各管一摊，平时互不打架：</p>
+                        <p>
+                            角色那一侧的装扮已经全部并进 <span className="font-semibold">聊天「＋」→「装扮」</span> 这一个抽屉
+                            （微调 / 背景 / 气泡 / 白框 / 提示音 五个页签），不用再翻加号面板两页和设置弹窗。
+                            剩下的分工是这样，平时互不打架：
+                        </p>
                         <p>
                             <span className="font-semibold">🎛️ 这一页（可视化设置）</span>：聊天壳、头像、间距、细节微调。改整体布局用它，不用写一行代码。
                         </p>
@@ -830,7 +834,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                             <span className="font-semibold">🎨 气泡工坊</span>：气泡本身的长相——颜色、圆角、贴图、装饰。做好的气泡按角色穿戴。
                         </p>
                         <p>
-                            <span className="font-semibold">✍️ 白框自定义 CSS</span>：手写代码深度魔改（头部、输入栏、任何零件）。入口在每个角色聊天的「＋」→「白框」。
+                            <span className="font-semibold">✍️ 白框自定义 CSS</span>：手写代码深度魔改（头部、输入栏、任何零件）。入口在每个角色聊天的「＋」→「装扮」→「白框」。
                         </p>
                         <p className="font-semibold">改了同一个东西撞车时，谁说了算：</p>
                         <p>
@@ -839,7 +843,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                             所以老用户手里的美化代码永远不会被这页的开关弄坏。
                         </p>
                         <p>
-                            某个角色看起来「设置不生效」时，按这个顺序排查：先看 ta 有没有专属白框 CSS（聊天「＋」→「白框」），再看 ta 穿着哪套气泡（聊天顶栏会话面板 → 气泡样式），最后才是这一页。
+                            某个角色看起来「设置不生效」时，按这个顺序排查：先看 ta 有没有专属白框 CSS（聊天「＋」→「装扮」→「白框」），再看 ta 穿着哪套气泡（同一个抽屉的「气泡」页签），最后才是这一页。
                         </p>
                     </div>
                 )}
@@ -857,11 +861,11 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                     </div>
                     <div className="rounded-2xl bg-slate-50 px-3 py-2.5">
                         <div className="text-[11px] font-bold text-slate-700">想给某个角色单独一套微调</div>
-                        <div className="mt-0.5 text-[10px] text-slate-400">进 ta 的聊天 → 「＋」菜单 → 「聊天装扮」，可以只覆盖字号、头像这些细节，其余跟随全局。</div>
+                        <div className="mt-0.5 text-[10px] text-slate-400">进 ta 的聊天 → 「＋」→「装扮」→「微调」，可以只覆盖字号、头像这些细节，其余跟随全局。</div>
                     </div>
                     <div className="rounded-2xl bg-slate-50 px-3 py-2.5">
                         <div className="text-[11px] font-bold text-slate-700">想手写 CSS 深度魔改</div>
-                        <div className="mt-0.5 text-[10px] text-slate-400">进角色聊天 → 「＋」菜单 → 「白框」，那里能边写边预览、还能存预设分享。</div>
+                        <div className="mt-0.5 text-[10px] text-slate-400">进角色聊天 → 「＋」→「装扮」→「白框」，那里能边写边预览、还能存预设分享。</div>
                     </div>
                 </div>
             </section>
@@ -870,7 +874,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                 <div className="mb-3">
                     <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400">白框自定义 (CSS)</h2>
                     <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-                        聊天白框美化现在按「单个角色」管理：进该角色聊天 →「＋」菜单 →「白框」里设置、预览、存预设。
+                        聊天白框美化现在按「单个角色」管理：进该角色聊天 →「＋」→「装扮」→「白框」里设置、预览、存预设。
                         如果某个角色的 CSS 写坏了导致聊天界面异常、连设置都打不开，点下面一键还原全部即可恢复。
                     </p>
                 </div>

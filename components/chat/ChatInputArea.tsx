@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, Heartbeat, PencilSimple, BellSimpleRinging, Alarm, Sparkle, FadersHorizontal, LinkSimple, Waveform, CornersOut, CornersIn } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Plus, Smiley, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, Heartbeat, PencilSimple, Alarm, Sparkle, FadersHorizontal, LinkSimple, Waveform, CornersOut, CornersIn } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { AcnhActionTile } from '../os/acnhIcons';
@@ -841,36 +841,27 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                               <span className="text-xs font-bold">{xinshengEnabled ? '心声已开' : '心声'}</span>
                             </button>
 
-                            {/* 聊天装扮：打开该角色专属的「聊天细节微调」弹窗（跟随全局 / 单独定制，不用写 CSS） */}
+                            {/* 装扮：该角色所有美化的统一入口 —— 微调 / 背景 / 气泡 / 白框 / 提示音
+                                五个页签在一个抽屉里。以前这几项分散在本页、下一页和「设置」弹窗里，
+                                找一个要翻三处；现在这一个格子全包，旧入口不再单列。 */}
                             <button
-                              onClick={() => onPanelAction('fine-tune')}
+                              onClick={() => onPanelAction('decor')}
                               className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
                             >
                               <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${acnh ? 'bg-white/70 border-[#e6dab4] text-[#5fae6e]' : isDiscordStyle ? 'bg-slate-800 text-teal-300 border-teal-400/20' : 'bg-teal-50 text-teal-500 border-teal-100'}`}>
                                   <FadersHorizontal className="w-6 h-6" weight="bold" />
                               </div>
-                              <span className="text-xs font-bold">聊天装扮</span>
+                              <span className="text-xs font-bold">装扮</span>
                             </button>
 
                           </div>
 
                           {/* Page 2: 更多
-                              「白框」挪到这一页，是为了让上一页（Page 1）保持每页 4×2=8 个的整齐布局——
-                              加了「心声」入口后上一页多出第 9 个，会把最后一项挤到单独一行第三行。
-                              白框和这一页的提示音本来就是同一组「聊天装扮」相关工具，挪过来正合适。 */}
+                              以前这页还挂着「提示音」「白框」两个格子——它们和上一页的「聊天装扮」
+                              本来就是同一件事（把这个聊天打扮好看），却被分在两页里。现在统一并进
+                              上一页的「装扮」抽屉，这页只留纯工具入口。 */}
                           <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 2 ? '' : 'hidden'}`}>
-                            {/* 提示音：打开该角色专属的「白框提示音」弹窗（挨着白框，独立于白框可绑定/解绑） */}
-                            <button
-                              onClick={() => onPanelAction('chrome-sound')}
-                              className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
-                            >
-                              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${acnh ? 'bg-white/70 border-[#e6dab4] text-[#e0994a]' : isDiscordStyle ? 'bg-slate-800 text-amber-300 border-amber-400/20' : 'bg-amber-50 text-amber-500 border-amber-100'}`}>
-                                  <BellSimpleRinging className="w-6 h-6" weight="bold" />
-                              </div>
-                              <span className="text-xs font-bold">提示音</span>
-                            </button>
-
-                            {/* 记忆链接与提示音同级：都是聊天工具入口，不单独占一整块。 */}
+                            {/* 记忆链接：聊天工具入口，不单独占一整块。 */}
                             <button
                               onClick={() => onPanelAction('memory-link')}
                               className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
@@ -889,17 +880,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <Waveform className="w-6 h-6" weight="bold" />
                               </span>
                               <span className="text-xs font-bold">语音收藏</span>
-                            </button>
-
-                            {/* 白框：打开该角色专属的「白框自定义 CSS」弹窗（从 Page 1 挪过来，见上方注释） */}
-                            <button
-                              onClick={() => onPanelAction('chrome-css')}
-                              className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
-                            >
-                              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${acnh ? 'bg-white/70 border-[#e6dab4] text-[#b77dee]' : isDiscordStyle ? 'bg-slate-800 text-pink-300 border-pink-400/20' : 'bg-pink-50 text-pink-500 border-pink-100'}`}>
-                                  <PencilSimple className="w-6 h-6" weight="bold" />
-                              </div>
-                              <span className="text-xs font-bold">白框</span>
                             </button>
                           </div>
 

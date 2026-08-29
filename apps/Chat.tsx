@@ -37,7 +37,7 @@ import { PRESET_THEMES, DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatC
 import { resolveChatTheme } from '../utils/groupChat/theme';
 import ChatHeader from '../components/chat/ChatHeaderShell';
 import CharacterEntryTransition from '../components/chat/CharacterEntryTransition';
-import ChromeCssEditor from '../components/chat/ChromeCssEditor';
+import ChatDecorSheet, { ChatDecorTab } from '../components/chat/ChatDecorSheet';
 import ChatInputArea from '../components/chat/ChatInputArea';
 import UserVoiceInputModal from '../components/chat/UserVoiceInputModal';
 import InstantChatRouteNotice from '../components/chat/InstantChatRouteNotice';
@@ -64,7 +64,6 @@ import { resolveFishAudioApiKey, stripFishMarkupForDisplay, cleanTextForTtsFish 
 import { resolveTtsProvider } from '../utils/ttsProvider';
 import { isInstantConfigReady, loadInstantConfig } from '../utils/instantPushClient';
 import { resolveActiveSound, playWhiteboxSound, unlockWhiteboxAudio, parseWhiteboxSound, upsertWhiteboxSound, stripWhiteboxSoundDirective, WhiteboxSound } from '../utils/whiteboxSound';
-import WhiteboxSoundEditor from '../components/chat/WhiteboxSoundEditor';
 import { normalizeTranslationLangLabel, isTranslationLangPreset } from '../utils/translationLang';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
 import { trackEvent, noteMessageSent } from '../utils/analytics';
@@ -100,7 +99,6 @@ import {
     resolveContextRangeMode,
     type ContextRangeMode,
 } from '../utils/chatContextRange';
-import { acquirePlaybackAudio, notePlaybackStarted, prepareSpeakerPlayback } from '../utils/audioOutputRoute';
 import { callLaunch } from '../utils/callLaunch';
 import { dateLaunch } from '../utils/dateLaunch';
 import {
@@ -203,12 +201,15 @@ const Chat: React.FC = () => {
     // Reply Logic
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
 
-    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'emoji-options' | 'rename-emoji' | 'schedule' | 'chrome-css' | 'chrome-sound' | 'memory-vectorize-confirm' | 'memory-vectorize-result'>('none');
+    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'emoji-options' | 'rename-emoji' | 'schedule' | 'memory-vectorize-confirm' | 'memory-vectorize-result'>('none');
     // 「聊天装扮」悬浮态：不走全屏 modal——圆气泡挂在聊天上，点开小面板边看真聊天边调。
     const [fineTuneOpen, setFineTuneOpen] = useState(false);          // 圆气泡在场
     const [fineTunePanelOpen, setFineTunePanelOpen] = useState(false); // 小面板展开/收起
-    // 切换角色时收掉装扮气泡：定制是 per-character 的，避免误改到下一个角色
-    useEffect(() => { setFineTuneOpen(false); setFineTunePanelOpen(false); }, [activeCharacterId]);
+    // 「装扮」总抽屉：微调 / 背景 / 气泡 / 白框 / 提示音 五件事的统一入口（null = 收起）。
+    // 整合前这五项散在加号面板两页 + 设置弹窗里，现在只留「＋ → 装扮」一个入口。
+    const [decorTab, setDecorTab] = useState<ChatDecorTab | null>(null);
+    // 切换角色时收掉装扮气泡与抽屉：定制是 per-character 的，避免误改到下一个角色
+    useEffect(() => { setFineTuneOpen(false); setFineTunePanelOpen(false); setDecorTab(null); }, [activeCharacterId]);
     const [scheduleData, setScheduleData] = useState<DailySchedule | null>(null);
     const [scheduleInviteEnabled, setScheduleInviteEnabledState] = useState<boolean>(() => isScheduleInviteEnabled());
     const [scheduleChangeNotice, setScheduleChangeNotice] = useState<ScheduleChangeEventDetail | null>(null);
@@ -455,31 +456,6 @@ const Chat: React.FC = () => {
     const [voiceLoading, setVoiceLoading] = useState<Set<number>>(new Set());
     const [playingMsgId, setPlayingMsgId] = useState<number | null>(null);
     const chatAudioRef = useRef<HTMLAudioElement | null>(null);
-    /**
-     * 语音条播放统一走这里。
-     *
-     * iPhone 上只要用过一次语音转文字，音频会话就留在 play-and-record（听筒），
-     * 角色语音听起来会突然变得很小；旧代码只是复用同一个 `new Audio()` 直接 play，
-     * 没有任何机会把输出路由踢回扬声器，所以每生成一条新语音都要手动把 PWA
-     * 上滑再滑回来。`audioOutputRoute` 负责在采集结束后完成那次重置，这里只要：
-     * 拿一个「重置之后创建」的元素、播放前确认类别是 playback、开始播了就把
-     * 静音兜底元素停掉。
-     */
-    const playChatVoice = (url: string, msgId: number) => {
-        prepareSpeakerPlayback();
-        const audio = acquirePlaybackAudio(chatAudioRef.current);
-        chatAudioRef.current = audio;
-        if (!audio) return;
-        audio.src = url;
-        audio.onended = () => setPlayingMsgId(null);
-        const attempt = audio.play();
-        if (attempt && typeof attempt.then === 'function') {
-            void attempt.then(() => notePlaybackStarted()).catch(() => { /* 用户可以再点一次 */ });
-        } else {
-            notePlaybackStarted();
-        }
-        setPlayingMsgId(msgId);
-    };
     const prevIsTypingRef = useRef(false);
     // 即时对话那条路的自动合成扫描窗（用法见下面那个 auto-TTS 的 effect）：
     // 「正在输入」灯灭的那一下开窗，窗口内每次消息变化都补扫一遍；角色不对就整个作废。
@@ -550,12 +526,17 @@ const Chat: React.FC = () => {
             if (msg) handleManualTts(msg, false);
             return;
         }
+        if (!chatAudioRef.current) chatAudioRef.current = new Audio();
+        const audio = chatAudioRef.current;
         if (playingMsgId === msgId) {
-            try { chatAudioRef.current?.pause(); } catch { /* ignore */ }
+            audio.pause();
             setPlayingMsgId(null);
             return;
         }
-        playChatVoice(data.url, msgId);
+        audio.src = data.url;
+        audio.onended = () => setPlayingMsgId(null);
+        audio.play().catch(() => {});
+        setPlayingMsgId(msgId);
     };
 
     // 稳定的播放回调：用 ref 持有最新闭包，引用永不变 —— 避免每条消息每次渲染都新建箭头函数，
@@ -729,7 +710,11 @@ const Chat: React.FC = () => {
             // 合成完是否立刻播（规则和来由见 shouldAutoPlayGeneratedVoice）：
             // AI 自动发来的默认不响、等用户点；用户自己点着要的一定响。
             if (shouldAutoPlayGeneratedVoice({ autoTriggered, autoPlayEnabled: char.chatVoiceAutoPlay })) {
-                playChatVoice(blobUrl, msg.id);
+                if (!chatAudioRef.current) chatAudioRef.current = new Audio();
+                chatAudioRef.current.src = blobUrl;
+                chatAudioRef.current.onended = () => setPlayingMsgId(null);
+                chatAudioRef.current.play().catch(() => {});
+                setPlayingMsgId(msg.id);
             }
             return { url: blobUrl, originalText, spokenText: storedSpokenText, lang: storedLang, blob };
         } catch (err: any) {
@@ -1860,7 +1845,7 @@ const Chat: React.FC = () => {
         // 只统计「打开某个面板 / 开关某个能力」这几个固定入口，名单写死在这里；
         // 选表情、选分类之类的动作不上报。
         if ([
-            'transfer', 'archive', 'settings', 'chrome-css', 'chrome-sound', 'fine-tune',
+            'transfer', 'archive', 'settings', 'decor', 'chrome-css', 'chrome-sound', 'fine-tune',
             'meetup', 'proactive', 'active-msg-2', 'schedule', 'mcd-request', 'luckin-request',
             'html-mode-toggle', 'html-mode-settings', 'thinking-settings', 'xinsheng-settings',
             // 独立小功能：点一下就是用了一次，跟「打开某个面板」同一性质。
@@ -1876,9 +1861,13 @@ const Chat: React.FC = () => {
             case 'poke': handleSendText('[戳一戳]', 'interaction'); break;
             case 'archive': setModalType('archive-settings'); break;
             case 'settings': setModalType('chat-settings'); break;
-            case 'chrome-css': setModalType('chrome-css'); break;
-            case 'chrome-sound': setModalType('chrome-sound'); break;
-            case 'fine-tune': setShowPanel('none'); setFineTuneOpen(true); setFineTunePanelOpen(true); break;
+            // 装扮总入口：payload 指定落在哪个页签（不传就回微调）。旧的 chrome-css /
+            // chrome-sound / fine-tune 三个动作名保留，各自直达对应页签——外部调用方
+            // （设置弹窗跳转、历史入口）不用跟着改。
+            case 'decor': setShowPanel('none'); setModalType('none'); setDecorTab((payload as ChatDecorTab) || 'fine-tune'); break;
+            case 'chrome-css': setShowPanel('none'); setModalType('none'); setDecorTab('chrome'); break;
+            case 'chrome-sound': setShowPanel('none'); setModalType('none'); setDecorTab('sound'); break;
+            case 'fine-tune': setShowPanel('none'); setModalType('none'); setDecorTab('fine-tune'); break;
             case 'emoji-import': setModalType('emoji-import'); break;
             case 'send-emoji': if (payload) handleSendText(payload.url, 'emoji'); break;
             case 'delete-emoji-req': setSelectedEmoji(payload); setModalType('delete-emoji'); break;
@@ -3471,7 +3460,7 @@ const Chat: React.FC = () => {
              {/* 守护样式（注在所有用户 CSS —— 白框全局/角色、气泡主题 customCss、心象卡片 CSS —— 之后）：
                  保证返回键和输入栏永远可见可点。坏 CSS（常随备份/分享导入）把它们隐藏/变透明/
                  pointer-events:none 时，用户会遇到「点输入框没反应、键盘唤不起来」或退不出聊天，
-                 且重启、重新导入备份都无解。有了兜底，至少能退出去「外观→聊天界面→还原白框」清掉坏 CSS。
+                 且重启、重新导入备份都无解。有了兜底，至少能退出去「外观→聊天装扮→还原白框」清掉坏 CSS。
                  不锁位置与配色，正常美化不受影响。 */}
              {(osTheme.chatChromeCustomCss || char.chromeCustomCss || activeTheme.customCss || (char as any).thinkingChainCustomCss) && (
                <style>{`
@@ -3676,7 +3665,7 @@ const Chat: React.FC = () => {
 
                 onTransfer={() => { if(transferAmt) handleSendText(`[转账]`, 'transfer', { amount: transferAmt, note: transferNote.trim() || undefined, status: 'pending' }); setTransferNote(''); setModalType('none'); }}
                 onImportEmoji={handleImportEmoji}
-                onSaveSettings={saveSettings} onBgUpload={handleBgUpload} onRemoveBg={() => updateCharacter(char.id, { chatBackground: undefined })}
+                onSaveSettings={saveSettings} onOpenDecor={(tab) => handlePanelAction('decor', tab)}
                 onClearHistory={handleClearHistory} onArchive={handleFullArchive}
                 onCreatePrompt={createNewPrompt} onEditPrompt={editSelectedPrompt} onSavePrompt={handleSavePrompt} onDeletePrompt={handleDeletePrompt}
                 onSetHistoryStart={handleSetHistoryStart} onRestoreAdaptiveContext={restoreAdaptiveContext} onJumpToMessageInChat={handleJumpToMessageInChat} onEnterSelectionMode={handleEnterSelectionMode}
@@ -4471,7 +4460,7 @@ const Chat: React.FC = () => {
                 />
             )}
 
-            {/* 角色专属「聊天装扮」悬浮气泡 + 小面板 —— 从加号面板「聊天装扮」进入。
+            {/* 角色专属「聊天装扮」悬浮气泡 + 小面板 —— 从「装扮」抽屉的「微调」页签切过来（也可从加号面板长驱直入）。
                 不是全屏 modal：没有遮罩，聊天内容一直可见、就是实时预览。点圆气泡收起/展开面板
                 （收起后能看清整个聊天再继续调），点「完成」气泡消失、调试结束。
                 全局打底，开了「为 TA 单独定制」后已改动的字段逐个覆盖全局（写到 char.chatFineTune）。 */}
@@ -4513,8 +4502,8 @@ const Chat: React.FC = () => {
                                         <div className="text-[11px] font-bold text-slate-700">{customized ? '为 TA 单独定制中' : '跟随全局设置（默认）'}</div>
                                         <div className="mt-0.5 text-[10px] text-slate-400">
                                             {customized
-                                                ? '只有你改过的项目覆盖全局，其余仍跟随「外观 → 聊天界面」。关掉开关回到跟随全局，定制内容保留。'
-                                                : '当前用的是「外观 → 聊天界面」的全局设置。打开开关即可为这个角色单独定制。'}
+                                                ? '只有你改过的项目覆盖全局，其余仍跟随「外观 → 聊天装扮」。关掉开关回到跟随全局，定制内容保留。'
+                                                : '当前用的是「外观 → 聊天装扮」的全局设置。打开开关即可为这个角色单独定制。'}
                                         </div>
                                     </div>
                                     <button
@@ -4547,94 +4536,65 @@ const Chat: React.FC = () => {
                 );
             })()}
 
-            {/* 角色专属「白框自定义」Modal —— 从加号面板「白框」进入；写到 char.chromeCustomCss，叠加在全局之上 */}
-            {char && modalType === 'chrome-css' && (
-                <div className="fixed inset-0 z-[110] flex items-end justify-center bg-black/5" onClick={() => setModalType('none')}>
-                    <div
-                        className="w-full max-h-[68vh] overflow-y-auto rounded-t-3xl border-t border-white/60 bg-white/95 p-5 shadow-[0_-12px_40px_rgba(15,23,42,0.18)] backdrop-blur-xl [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                        style={{ paddingBottom: 'calc(1.25rem + var(--safe-bottom))' }}
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div className="mb-2 flex items-start justify-between">
-                            <div>
-                                <div className="text-sm font-bold text-slate-800">白框自定义 · {char.name}</div>
-                                <div className="mt-0.5 text-[10px] text-slate-400">↑ 上方聊天界面即实时预览；仅对该角色生效，叠加在全局设置之上。</div>
-                            </div>
-                            <button onClick={() => setModalType('none')} className="px-2 text-xl leading-none text-slate-400 hover:text-slate-600">{'×'}</button>
-                        </div>
-                        <ChromeCssEditor value={char.chromeCustomCss || ''} onChange={(css) => updateCharacter(char.id, { chromeCustomCss: css } as any)} />
-                    </div>
-                    {/* 脱离 CSS 控制的救援键：只在「白框」自定义弹窗开着时出现（平时不显示，不丑）。portal 到 body
-                        在聊天 DOM 之外 + id 守护(#sully-safe-reset 特异性高于 *)，连 *{display:none!important} 也盖不掉，
-                        保证你刚粘进坏 CSS 当场崩掉时，这个还原键一定点得到。 */}
-                    {createPortal(
-                        <>
-                            <style>{`#sully-safe-reset{position:fixed!important;top:calc(var(--safe-top) + 6px)!important;left:50%!important;transform:translateX(-50%)!important;visibility:visible!important;opacity:1!important;pointer-events:auto!important;display:flex!important;z-index:2147483647!important;}`}</style>
-                            <button
-                                id="sully-safe-reset"
-                                onClick={() => { updateCharacter(char.id, { chromeCustomCss: '' } as any); addToast('已还原该角色白框', 'success'); }}
-                                style={{
-                                    position: 'fixed', top: 'calc(var(--safe-top) + 6px)', left: '50%', transform: 'translateX(-50%)',
-                                    zIndex: 2147483647, display: 'flex', alignItems: 'center', gap: '4px',
-                                    padding: '5px 12px', borderRadius: '999px',
-                                    background: 'rgba(15,23,42,0.62)', color: '#fff', fontSize: '11px', fontWeight: 700,
-                                    border: '1px solid rgba(255,255,255,0.3)', cursor: 'pointer', boxShadow: '0 2px 10px rgba(0,0,0,0.35)',
-                                }}
-                            >⟲ 还原此角色白框</button>
-                        </>,
-                        document.body,
-                    )}
-                </div>
-            )}
-
-            {/* 白框「提示音」Modal —— 从加号面板「提示音」进入。默认独立存于 char.chatSound；
-                打开「绑定到白框」则改存进 char.chromeCustomCss 的 @sully-sound 指令、随白框分享一起走。 */}
-            {char && modalType === 'chrome-sound' && (() => {
+            {/* 「装扮」总抽屉 —— 从加号面板唯一的「装扮」入口进入（旧的「聊天装扮 / 白框 /
+                提示音」三个格子和「设置」弹窗里的聊天背景，全部并到这里的五个页签）。
+                只占下半屏、不铺遮罩色块：上方真聊天保持可见，白框和微调靠它当实时预览。 */}
+            {char && decorTab && (() => {
+                const override = char.chatFineTune;
+                const customized = override?.enabled === true;
+                // 控件展示合并后的生效值：未覆盖的字段显示全局当前值，改哪个才覆盖哪个
+                const effective = mergeChatFineTune(osTheme, override);
+                // 提示音：默认独立存于 char.chatSound；打开「绑定到白框」则改存进
+                // char.chromeCustomCss 的 @sully-sound 指令、随白框分享一起走。
                 const boundSound = parseWhiteboxSound(char.chromeCustomCss);
                 const isBound = !!char.chatSoundBound || !!boundSound;
                 const curSound: WhiteboxSound | null = isBound ? boundSound : (char.chatSound || null);
-                const changeSound = (s: WhiteboxSound | null) => {
-                    if (isBound) {
-                        updateCharacter(char.id, { chromeCustomCss: upsertWhiteboxSound(char.chromeCustomCss || '', s), chatSound: undefined } as any);
-                    } else {
-                        updateCharacter(char.id, { chatSound: s || undefined } as any);
-                    }
-                };
-                const changeBound = (b: boolean) => {
-                    if (b) {
-                        // 绑定：把当前提示音写进白框 CSS 指令，清掉独立字段。
-                        updateCharacter(char.id, { chromeCustomCss: upsertWhiteboxSound(char.chromeCustomCss || '', curSound), chatSound: undefined, chatSoundBound: true } as any);
-                    } else {
-                        // 解绑：从白框 CSS 指令里取出提示音，落回独立字段。
-                        updateCharacter(char.id, { chromeCustomCss: stripWhiteboxSoundDirective(char.chromeCustomCss || ''), chatSound: curSound || undefined, chatSoundBound: false } as any);
-                    }
-                };
                 return (
-                    <div className="fixed inset-0 z-[110] flex items-end justify-center bg-black/5" onClick={() => setModalType('none')}>
-                        <div
-                            className="w-full max-h-[68vh] overflow-y-auto rounded-t-3xl border-t border-white/60 bg-white/95 p-5 shadow-[0_-12px_40px_rgba(15,23,42,0.18)] backdrop-blur-xl [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                            style={{ paddingBottom: 'calc(1.25rem + var(--safe-bottom))' }}
-                            onClick={(e) => e.stopPropagation()}
-                        >
-                            <div className="mb-3 flex items-start justify-between">
-                                <div>
-                                    <div className="text-sm font-bold text-slate-800">提示音 · {char.name}</div>
-                                    <div className="mt-0.5 text-[10px] text-slate-400">ta 新发的消息成为最新一条时响一次。默认独立于白框，可选绑定一起分享。</div>
-                                </div>
-                                <button onClick={() => setModalType('none')} className="px-2 text-xl leading-none text-slate-400 hover:text-slate-600">{'×'}</button>
-                            </div>
-                            <WhiteboxSoundEditor
-                                sound={curSound}
-                                bound={isBound}
-                                onChangeSound={changeSound}
-                                onChangeBound={changeBound}
-                                hint={<>🔔 只在 <b>ta 新发的消息成为最新一条</b> 时响一次。这里是<b>该角色专属</b>；不设则用「外观 → 聊天界面」里的全局默认提示音。</>}
-                            />
-                        </div>
-                    </div>
+                    <ChatDecorSheet
+                        charName={char.name}
+                        tab={decorTab}
+                        onChangeTab={setDecorTab}
+                        onClose={() => setDecorTab(null)}
+
+                        fineTuneValue={effective}
+                        fineTuneCustomized={customized}
+                        onToggleFineTuneCustomized={(next) => updateCharacter(char.id, { chatFineTune: { ...override, enabled: next } } as any)}
+                        onChangeFineTune={(patch) => updateCharacter(char.id, { chatFineTune: { ...override, enabled: true, ...patch } } as any)}
+                        onClearFineTune={() => { updateCharacter(char.id, { chatFineTune: undefined } as any); addToast('已清除该角色的聊天装扮，回到跟随全局', 'success'); }}
+                        onOpenFloatingFineTune={() => { setDecorTab(null); setFineTuneOpen(true); setFineTunePanelOpen(true); }}
+
+                        chatBackground={char.chatBackground}
+                        onUploadBackground={handleBgUpload}
+                        onRemoveBackground={() => updateCharacter(char.id, { chatBackground: undefined })}
+
+                        onOpenBubblePicker={() => { setDecorTab(null); setShowPanel('chars'); }}
+                        onOpenThemeMaker={() => { setDecorTab(null); openApp(AppID.ThemeMaker); }}
+
+                        chromeCss={char.chromeCustomCss || ''}
+                        onChangeChromeCss={(css) => updateCharacter(char.id, { chromeCustomCss: css } as any)}
+                        onResetChromeCss={() => { updateCharacter(char.id, { chromeCustomCss: '' } as any); addToast('已还原该角色白框', 'success'); }}
+
+                        sound={curSound}
+                        soundBound={isBound}
+                        onChangeSound={(s) => {
+                            if (isBound) {
+                                updateCharacter(char.id, { chromeCustomCss: upsertWhiteboxSound(char.chromeCustomCss || '', s), chatSound: undefined } as any);
+                            } else {
+                                updateCharacter(char.id, { chatSound: s || undefined } as any);
+                            }
+                        }}
+                        onChangeSoundBound={(b) => {
+                            if (b) {
+                                // 绑定：把当前提示音写进白框 CSS 指令，清掉独立字段。
+                                updateCharacter(char.id, { chromeCustomCss: upsertWhiteboxSound(char.chromeCustomCss || '', curSound), chatSound: undefined, chatSoundBound: true } as any);
+                            } else {
+                                // 解绑：从白框 CSS 指令里取出提示音，落回独立字段。
+                                updateCharacter(char.id, { chromeCustomCss: stripWhiteboxSoundDirective(char.chromeCustomCss || ''), chatSound: curSound || undefined, chatSoundBound: false } as any);
+                            }
+                        }}
+                    />
                 );
             })()}
-
             {/* 情绪设置已嵌入日程 Modal（与日程强制同步开/关），不再单独渲染 */}
 
             {/* 🍔 麦当劳小程序 - MCP 数据流按钮驱动, 协同聊天走主 pipeline (完整人设/记忆/日程) */}
