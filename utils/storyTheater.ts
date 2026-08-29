@@ -1010,7 +1010,7 @@ export const buildTheaterWorldbookSlots = (
     userName: string,
     characterNames: string[] = [],
 ): { worldBefore: string; worldAfter: string } => {
-    const resolved = splitWorldbookSections(resolveWorldbookEntries(books, scanMessages, characterNames.join('、'), userName));
+    const resolved = splitWorldbookSections(resolveWorldbookEntries(books, scanMessages, characterNames.join('、'), userName, 'offline'));
     return {
         worldBefore: formatWorldbookSection(resolved.beforeCharacter, '剧情沙盒世界书 · 角色设定前'),
         worldAfter: [

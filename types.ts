@@ -1110,8 +1110,11 @@ export interface DreamLog {
 export type WorldbookPosition = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 export type WorldbookDepthRole = 0 | 1 | 2;
 export type WorldbookSelectiveLogic = 0 | 1 | 2 | 3;
+export type WorldbookMode = 'all' | 'online' | 'offline';
 
 export interface WorldbookEntryConfig {
+    /** all = all scenes; online = phone/chat contexts; offline = face-to-face Date contexts. */
+    mode?: WorldbookMode;
     /** Primary activation keywords. Empty for constant entries. */
     key?: string[];
     /** Optional secondary activation keywords. */
@@ -1131,6 +1134,8 @@ export interface WorldbookEntryConfig {
     caseSensitive?: boolean | null;
     matchWholeWords?: boolean | null;
     sourceUid?: number;
+    /** Editor-only display order. It does not change prompt injection priority. */
+    displayOrder?: number;
 }
 
 export interface MountedWorldbook extends WorldbookEntryConfig {

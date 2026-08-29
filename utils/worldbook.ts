@@ -2,11 +2,13 @@ import type {
     MountedWorldbook,
     Worldbook,
     WorldbookDepthRole,
+    WorldbookMode,
     WorldbookPosition,
     WorldbookSelectiveLogic,
 } from '../types';
 
 export type WorldbookLike = Worldbook | MountedWorldbook;
+export type WorldbookScene = Exclude<WorldbookMode, 'all'>;
 
 export interface WorldbookScanMessage {
     role?: string;
@@ -75,6 +77,7 @@ export const toMountedWorldbook = (book: Worldbook): MountedWorldbook => ({
     title: book.title,
     content: book.content,
     category: book.category,
+    mode: book.mode,
     key: book.key ? [...book.key] : undefined,
     keysecondary: book.keysecondary ? [...book.keysecondary] : undefined,
     constant: book.constant,
@@ -91,7 +94,31 @@ export const toMountedWorldbook = (book: Worldbook): MountedWorldbook => ({
     caseSensitive: book.caseSensitive,
     matchWholeWords: book.matchWholeWords,
     sourceUid: book.sourceUid,
+    displayOrder: book.displayOrder,
 });
+
+export const normalizeWorldbookMode = (value: unknown): WorldbookMode => (
+    value === 'online' || value === 'offline' ? value : 'all'
+);
+
+export const WORLDBOOK_MODE_LABELS: Record<WorldbookMode, string> = {
+    all: '线上 + 线下',
+    online: '仅线上聊天',
+    offline: '仅线下见面',
+};
+
+export const sortWorldbooksForDisplay = <T extends Worldbook>(books: T[]): T[] => (
+    books
+        .map((book, index) => ({ book, index }))
+        .sort((left, right) => {
+            const leftOrder = Number.isFinite(left.book.displayOrder) ? Number(left.book.displayOrder) : Number.MAX_SAFE_INTEGER;
+            const rightOrder = Number.isFinite(right.book.displayOrder) ? Number(right.book.displayOrder) : Number.MAX_SAFE_INTEGER;
+            return leftOrder - rightOrder
+                || left.book.createdAt - right.book.createdAt
+                || left.index - right.index;
+        })
+        .map(({ book }) => book)
+);
 
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -149,8 +176,11 @@ const secondaryConditionPasses = (
 export const isWorldbookEntryActive = (
     book: WorldbookLike,
     messages: WorldbookScanMessage[] = [],
+    scene: WorldbookScene = 'online',
 ): boolean => {
     if (book.disable) return false;
+    const mode = normalizeWorldbookMode(book.mode);
+    if (mode !== 'all' && mode !== scene) return false;
 
     const primary = book.key || [];
     const isConstant = book.constant ?? primary.length === 0;
@@ -185,8 +215,9 @@ export const resolveWorldbookEntries = (
     messages: WorldbookScanMessage[] = [],
     charName = '',
     userName = '',
+    scene: WorldbookScene = 'online',
 ): ResolvedWorldbookEntry[] => books
-    .filter(book => isWorldbookEntryActive(book, messages))
+    .filter(book => isWorldbookEntryActive(book, messages, scene))
     .map(book => ({
         book,
         content: expandWorldbookMacros(book.content || '', charName, userName),
@@ -287,6 +318,7 @@ export const serializeStandardWorldbook = (books: WorldbookLike[]): string => {
             caseSensitive: book.caseSensitive ?? null,
             matchWholeWords: book.matchWholeWords ?? null,
             displayIndex: index,
+            sullyMode: normalizeWorldbookMode(book.mode),
         };
     });
 
@@ -316,6 +348,7 @@ export const parseStandardWorldbook = (
             title: String(value.comment || value.name || `条目 ${uid + 1}`),
             content: value.content,
             category,
+            mode: normalizeWorldbookMode(value.sullyMode ?? parsed.sullyMode ?? parsed.mode ?? parsed.originalData?.mode),
             createdAt: now,
             updatedAt: now,
             key: asStringArray(value.key),
@@ -334,6 +367,7 @@ export const parseStandardWorldbook = (
             caseSensitive: value.caseSensitive == null ? null : value.caseSensitive === true,
             matchWholeWords: value.matchWholeWords == null ? null : value.matchWholeWords === true,
             sourceUid: uid,
+            displayOrder: Number.isFinite(Number(value.displayIndex)) ? Number(value.displayIndex) : index,
         }];
     });
 

@@ -332,6 +332,7 @@ interface OSContextType {
   addWorldbook: (wb: Worldbook) => void;
   updateWorldbook: (id: string, updates: Partial<Worldbook>) => Promise<void>;
   deleteWorldbook: (id: string) => void;
+  reorderWorldbooks: (category: string, orderedIds: string[]) => Promise<void>;
 
   // Novels (NEW)
   novels: NovelBook[];
@@ -3555,6 +3556,20 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       addToast('世界书已删除 (同步移除角色挂载)', 'success');
   };
 
+  const reorderWorldbooks = async (category: string, orderedIds: string[]) => {
+      const orderById = new Map(orderedIds.map((id, index) => [id, index]));
+      const changed = worldbooks.flatMap((book): Worldbook[] => {
+          const bookCategory = book.category || '未分类设定 (General)';
+          const nextOrder = orderById.get(book.id);
+          if (bookCategory !== category || nextOrder === undefined || book.displayOrder === nextOrder) return [];
+          return [{ ...book, displayOrder: nextOrder }];
+      });
+      if (changed.length === 0) return;
+      const changedById = new Map(changed.map(book => [book.id, book]));
+      setWorldbooks(prev => prev.map(book => changedById.get(book.id) || book));
+      await Promise.all(changed.map(book => DB.saveWorldbook(book)));
+  };
+
   // Novel Methods (New)
   const addNovel = async (novel: NovelBook) => {
       setNovels(prev => [novel, ...prev]);
@@ -5248,6 +5263,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     addWorldbook,
     updateWorldbook,
     deleteWorldbook,
+    reorderWorldbooks,
     novels,
     addNovel,
     updateNovel,

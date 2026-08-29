@@ -1,12 +1,15 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { useOS } from '../context/OSContext';
-import { Worldbook, WorldbookDepthRole, WorldbookPosition, WorldbookSelectiveLogic } from '../types';
+import { Worldbook, WorldbookDepthRole, WorldbookMode, WorldbookPosition, WorldbookSelectiveLogic } from '../types';
 import Modal from '../components/os/Modal';
 import { Check, DiamondsFour, BookOpen, DownloadSimple, Trash, UploadSimple, WarningCircle, X } from '@phosphor-icons/react';
 import {
     parseStandardWorldbook,
     serializeStandardWorldbook,
+    sortWorldbooksForDisplay,
     splitWorldbookKeywords,
+    normalizeWorldbookMode,
+    WORLDBOOK_MODE_LABELS,
     WORLDBOOK_POSITION_DESCRIPTIONS,
     WORLDBOOK_POSITION_LABELS,
     WORLDBOOK_ROLE_LABELS,
@@ -16,7 +19,7 @@ import { shareOrDownloadFile } from '../utils/shareExport';
 import { trackEvent } from '../utils/analytics';
 
 const WorldbookApp: React.FC = () => {
-    const { closeApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, addToast } = useOS();
+    const { closeApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, reorderWorldbooks, addToast } = useOS();
     
     // View State
     const [isEditing, setIsEditing] = useState(false);
@@ -27,6 +30,11 @@ const WorldbookApp: React.FC = () => {
     const [isSelecting, setIsSelecting] = useState(false);
     const [selectedBookIds, setSelectedBookIds] = useState<Set<string>>(new Set());
     const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+    const [draggingBookId, setDraggingBookId] = useState<string | null>(null);
+    const [dragOverBookId, setDragOverBookId] = useState<string | null>(null);
+    const listScrollRef = useRef<HTMLDivElement>(null);
+    const dragCategoryRef = useRef<string | null>(null);
+    const dragOverBookIdRef = useRef<string | null>(null);
 
     const PAGE_SIZE = 12;
 
@@ -39,6 +47,7 @@ const WorldbookApp: React.FC = () => {
     const [showImportConfirm, setShowImportConfirm] = useState(false);
     const importRef = useRef<HTMLInputElement>(null);
     const [tempEnabled, setTempEnabled] = useState(true);
+    const [tempMode, setTempMode] = useState<WorldbookMode>('all');
     const [tempConstant, setTempConstant] = useState(true);
     const [tempKeywords, setTempKeywords] = useState('');
     const [tempSecondaryKeywords, setTempSecondaryKeywords] = useState('');
@@ -64,6 +73,8 @@ const WorldbookApp: React.FC = () => {
             groups[cat].push(wb);
         });
 
+        Object.values(groups).forEach(group => group.splice(0, group.length, ...sortWorldbooksForDisplay(group)));
+
         // Auto-expand the first category if none selected and groups exist
         if (!expandedCategory && Object.keys(groups).length > 0) {
             // setExpandedCategory(Object.keys(groups)[0]); // Optional: Auto open first
@@ -82,12 +93,19 @@ const WorldbookApp: React.FC = () => {
         return categoryNames.filter(cat => cat.toLowerCase().includes(query));
     }, [categoryNames, tempCategory]);
 
+    const nextDisplayOrderForCategory = (category: string): number => {
+        const books = worldbooks.filter(book => (book.category || '未分类设定 (General)') === category);
+        const highestExplicitOrder = Math.max(-1, ...books.map(book => Number.isFinite(book.displayOrder) ? Number(book.displayOrder) : -1));
+        return Math.max(books.length, highestExplicitOrder + 1);
+    };
+
     const handleCreate = () => {
         setEditingBook(null); 
         setTempTitle('');
         setTempContent('');
         setTempCategory(''); // Default empty
         setTempEnabled(true);
+        setTempMode('all');
         setTempConstant(true);
         setTempKeywords('');
         setTempSecondaryKeywords('');
@@ -112,6 +130,7 @@ const WorldbookApp: React.FC = () => {
         setTempContent(book.content);
         setTempCategory(book.category || '');
         setTempEnabled(!book.disable);
+        setTempMode(normalizeWorldbookMode(book.mode));
         setTempConstant(book.constant ?? !(book.key && book.key.length > 0));
         setTempKeywords((book.key || []).join(', '));
         setTempSecondaryKeywords((book.keysecondary || []).join(', '));
@@ -145,6 +164,7 @@ const WorldbookApp: React.FC = () => {
         }
         const entryConfig = {
             disable: !tempEnabled,
+            mode: tempMode,
             constant: tempConstant,
             key: tempConstant ? [] : primaryKeywords,
             keysecondary: tempConstant ? [] : secondaryKeywords,
@@ -162,10 +182,15 @@ const WorldbookApp: React.FC = () => {
         };
 
         if (editingBook) {
+            const movedCategory = (editingBook.category || '未分类设定 (General)') !== category;
+            const nextDisplayOrder = movedCategory
+                ? nextDisplayOrderForCategory(category)
+                : editingBook.displayOrder;
             await updateWorldbook(editingBook.id, {
                 title: tempTitle,
                 content: tempContent,
                 category: category,
+                displayOrder: nextDisplayOrder,
                 ...entryConfig,
             });
             addToast('已保存 (同步至相关角色)', 'success');
@@ -175,6 +200,7 @@ const WorldbookApp: React.FC = () => {
                 title: tempTitle,
                 content: tempContent,
                 category: category,
+                displayOrder: nextDisplayOrderForCategory(category),
                 ...entryConfig,
                 createdAt: Date.now(),
                 updatedAt: Date.now()
@@ -282,6 +308,41 @@ const WorldbookApp: React.FC = () => {
         setPreviewBookId(previewBookId === id ? null : id);
     };
 
+    const finishDrag = async (bookId: string, category: string) => {
+        const targetId = dragOverBookIdRef.current;
+        setDraggingBookId(null);
+        setDragOverBookId(null);
+        dragCategoryRef.current = null;
+        dragOverBookIdRef.current = null;
+        if (!targetId || targetId === bookId) return;
+        const books = groupedBooks[category] || [];
+        const orderedIds = books.map(book => book.id);
+        const fromIndex = orderedIds.indexOf(bookId);
+        const toIndex = orderedIds.indexOf(targetId);
+        if (fromIndex < 0 || toIndex < 0) return;
+        const [movedId] = orderedIds.splice(fromIndex, 1);
+        orderedIds.splice(toIndex, 0, movedId);
+        await reorderWorldbooks(category, orderedIds);
+        addToast('世界书顺序已保存', 'success');
+        trackEvent('拖拽排序世界书条目');
+    };
+
+    const handleDragPointerMove = (event: React.PointerEvent<HTMLButtonElement>) => {
+        if (!dragCategoryRef.current) return;
+        event.preventDefault();
+        const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-worldbook-id]');
+        if (target?.dataset.worldbookCategory === dragCategoryRef.current && target.dataset.worldbookId) {
+            dragOverBookIdRef.current = target.dataset.worldbookId;
+            setDragOverBookId(target.dataset.worldbookId);
+        }
+        const scroll = listScrollRef.current;
+        if (scroll) {
+            const rect = scroll.getBoundingClientRect();
+            if (event.clientY < rect.top + 72) scroll.scrollTop -= 18;
+            else if (event.clientY > rect.bottom - 72) scroll.scrollTop += 18;
+        }
+    };
+
     // --- Render ---
 
     // EDIT MODAL (Full Screen Overlay Style)
@@ -373,6 +434,25 @@ const WorldbookApp: React.FC = () => {
                                 >
                                     <span className={`block w-5 h-5 rounded-full bg-white shadow-sm ring-1 ring-black/5 transition-transform duration-200 ${tempEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
                                 </button>
+                            </div>
+
+                            <div className="border-t border-slate-100 pt-4">
+                                <label className="text-[11px] font-bold text-slate-400 uppercase mb-2 block tracking-[0.12em]">生效场景</label>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {(['all', 'online', 'offline'] as WorldbookMode[]).map(mode => (
+                                        <button
+                                            key={mode}
+                                            type="button"
+                                            onClick={() => setTempMode(mode)}
+                                            className={`rounded-xl border px-2 py-2.5 text-[11px] font-bold transition-all active:scale-95 ${tempMode === mode ? 'border-indigo-500 bg-indigo-50 text-indigo-600 ring-2 ring-indigo-100' : 'border-slate-200 bg-slate-50 text-slate-500'}`}
+                                        >
+                                            {mode === 'all' ? '线上 + 线下' : mode === 'online' ? '仅线上' : '仅线下'}
+                                        </button>
+                                    ))}
+                                </div>
+                                <p className="mt-2 px-1 text-[10px] leading-relaxed text-slate-400">
+                                    线上用于聊天、群聊和通话；线下用于“见面”和见面剧情。旧条目默认两边都生效。
+                                </p>
                             </div>
 
                             <div className="border-t border-slate-100 pt-4">
@@ -627,7 +707,7 @@ const WorldbookApp: React.FC = () => {
             )}
 
             {/* Content List */}
-            <div className="flex-1 overflow-y-auto p-5 pb-24 space-y-4 no-scrollbar relative z-0">
+            <div ref={listScrollRef} className="flex-1 overflow-y-auto p-5 pb-24 space-y-4 no-scrollbar relative z-0">
                 <div className="rounded-2xl border border-indigo-100/80 bg-white/75 backdrop-blur-md p-4 shadow-sm text-slate-600">
                     <div className="flex items-center gap-2 text-xs font-bold text-indigo-600">
                         <BookOpen size={16} weight="bold" /> 世界书是做什么的？
@@ -637,6 +717,9 @@ const WorldbookApp: React.FC = () => {
                     </p>
                     <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">
                         创建或导入后，还要在角色编辑页的“扩展设定”中挂载；聊天生成回复时，已启用并满足常驻或关键词条件（以及可选的概率判定）的条目才会注入提示词。
+                    </p>
+                    <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">
+                        每条可单独设为线上、线下或两边生效；展开分组后按住条目右侧拖拽柄即可整理顺序，整理顺序不会改动提示词注入优先级。
                     </p>
                     <p className="mt-2 rounded-xl bg-indigo-50 px-3 py-2 text-[10px] leading-relaxed text-indigo-700">
                         注意：“启用随机概率”未点亮 = 不使用随机抽取，条件满足时按 100% 通过；并不是“未激活”。
@@ -678,7 +761,12 @@ const WorldbookApp: React.FC = () => {
                         {/* Group Items */}
                         <div className={`space-y-3 pl-2 transition-all duration-300 ${expandedCategory === category ? 'opacity-100 mt-2' : 'max-h-0 opacity-0 overflow-hidden'}`}>
                             {pagedBooks.map(book => (
-                                <div key={book.id} className="bg-white/60 backdrop-blur-md rounded-2xl border border-white/60 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
+                                <div
+                                    key={book.id}
+                                    data-worldbook-id={book.id}
+                                    data-worldbook-category={category}
+                                    className={`bg-white/60 backdrop-blur-md rounded-2xl border shadow-sm hover:shadow-md transition-all group relative overflow-hidden ${draggingBookId === book.id ? 'border-indigo-400 opacity-70 scale-[0.98]' : dragOverBookId === book.id ? 'border-indigo-300 ring-2 ring-indigo-100' : 'border-white/60'}`}
+                                >
                                     {/* Item Header */}
                                     <div 
                                         onClick={() => isSelecting ? toggleBookSelection(book.id) : togglePreview(book.id)}
@@ -704,10 +792,43 @@ const WorldbookApp: React.FC = () => {
                                                 <span className="text-[9px] px-2 py-0.5 rounded-full bg-white/70 text-slate-400">
                                                     {WORLDBOOK_POSITION_LABELS[book.position ?? 1]}
                                                 </span>
+                                                <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold ${normalizeWorldbookMode(book.mode) === 'online' ? 'bg-sky-50 text-sky-600' : normalizeWorldbookMode(book.mode) === 'offline' ? 'bg-rose-50 text-rose-600' : 'bg-violet-50 text-violet-600'}`}>
+                                                    {WORLDBOOK_MODE_LABELS[normalizeWorldbookMode(book.mode)]}
+                                                </span>
                                             </div>
                                         </div>
                                         
-                                        {!isSelecting && <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        {!isSelecting && <div className="flex items-center gap-1">
+                                            <button
+                                                type="button"
+                                                aria-label={`拖拽排序：${book.title}`}
+                                                title="按住拖拽排序"
+                                                onClick={event => event.stopPropagation()}
+                                                onPointerDown={event => {
+                                                    event.preventDefault();
+                                                    event.stopPropagation();
+                                                    event.currentTarget.setPointerCapture(event.pointerId);
+                                                    dragCategoryRef.current = category;
+                                                    dragOverBookIdRef.current = book.id;
+                                                    setDraggingBookId(book.id);
+                                                    setDragOverBookId(book.id);
+                                                }}
+                                                onPointerMove={handleDragPointerMove}
+                                                onPointerUp={event => {
+                                                    event.preventDefault();
+                                                    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+                                                    void finishDrag(book.id, category);
+                                                }}
+                                                onPointerCancel={() => {
+                                                    setDraggingBookId(null);
+                                                    setDragOverBookId(null);
+                                                    dragCategoryRef.current = null;
+                                                    dragOverBookIdRef.current = null;
+                                                }}
+                                                className="p-2 rounded-full text-slate-300 hover:bg-white hover:text-indigo-500 active:text-indigo-600 touch-none cursor-grab active:cursor-grabbing"
+                                            >
+                                                <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4" aria-hidden="true"><circle cx="8" cy="6" r="1.5"/><circle cx="16" cy="6" r="1.5"/><circle cx="8" cy="12" r="1.5"/><circle cx="16" cy="12" r="1.5"/><circle cx="8" cy="18" r="1.5"/><circle cx="16" cy="18" r="1.5"/></svg>
+                                            </button>
                                             <button 
                                                 onClick={(e) => { e.stopPropagation(); handleEdit(book); }} 
                                                 className="p-2 rounded-full hover:bg-white text-slate-400 hover:text-indigo-600 transition-colors"

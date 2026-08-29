@@ -6,6 +6,7 @@ import {
     parseStandardWorldbook,
     resolveWorldbookEntries,
     serializeStandardWorldbook,
+    sortWorldbooksForDisplay,
     splitWorldbookSections,
     toMountedWorldbook,
 } from './worldbook';
@@ -43,6 +44,29 @@ describe('worldbook activation', () => {
         expect(isWorldbookEntryActive(selectiveBook, [{ content: '学校里的老师和同学' }])).toBe(true);
         expect(isWorldbookEntryActive(selectiveBook, [{ content: '学校里的老师' }])).toBe(false);
         expect(isWorldbookEntryActive({ ...selectiveBook, disable: true }, [{ content: '学校里的老师和同学' }])).toBe(false);
+    });
+
+    it('separates online and offline entries while legacy entries remain available in both', () => {
+        const online = book({ id: 'online', mode: 'online' });
+        const offline = book({ id: 'offline', mode: 'offline' });
+        const legacy = book({ id: 'legacy' });
+
+        expect(resolveWorldbookEntries([online, offline, legacy], [], '', '', 'online').map(entry => entry.book.id))
+            .toEqual(['online', 'legacy']);
+        expect(resolveWorldbookEntries([online, offline, legacy], [], '', '', 'offline').map(entry => entry.book.id))
+            .toEqual(['offline', 'legacy']);
+    });
+});
+
+describe('worldbook display order', () => {
+    it('sorts explicit drag order first without changing prompt order', () => {
+        const books = [
+            { ...book({ id: 'a', order: 500, displayOrder: 2 }), category: '测试', createdAt: 1, updatedAt: 1 },
+            { ...book({ id: 'b', order: 100, displayOrder: 0 }), category: '测试', createdAt: 2, updatedAt: 2 },
+            { ...book({ id: 'legacy', order: 1 }), category: '测试', createdAt: 3, updatedAt: 3 },
+        ];
+        expect(sortWorldbooksForDisplay(books).map(entry => entry.id)).toEqual(['b', 'a', 'legacy']);
+        expect(resolveWorldbookEntries(books).map(entry => entry.book.id)).toEqual(['legacy', 'b', 'a']);
     });
 });
 
@@ -114,6 +138,8 @@ describe('standard worldbook import', () => {
                 position: 4,
                 depth: 3,
                 role: 2,
+                mode: 'online',
+                displayOrder: 7,
             }),
             category: '导出组',
             createdAt: 1,
@@ -128,6 +154,8 @@ describe('standard worldbook import', () => {
             position: 4,
             depth: 3,
             role: 2,
+            sullyMode: 'online',
+            displayIndex: 0,
         });
 
         const imported = parseStandardWorldbook(json, '重新导入', 2);
@@ -138,6 +166,8 @@ describe('standard worldbook import', () => {
             position: 4,
             depth: 3,
             role: 2,
+            mode: 'online',
+            displayOrder: 0,
         });
     });
 });
@@ -159,6 +189,8 @@ describe('mounted worldbook synchronization', () => {
                 scanDepth: 6,
                 useProbability: true,
                 probability: 75,
+                mode: 'offline',
+                displayOrder: 3,
             }),
             category: '同步测试',
             createdAt: 1,
@@ -178,6 +210,8 @@ describe('mounted worldbook synchronization', () => {
             scanDepth: 6,
             useProbability: true,
             probability: 75,
+            mode: 'offline',
+            displayOrder: 3,
         });
         expect(mounted).not.toHaveProperty('createdAt');
         expect(mounted).not.toHaveProperty('updatedAt');

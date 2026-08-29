@@ -1,5 +1,6 @@
 
 import { CharacterProfile, UserProfile, DailySchedule } from '../types';
+import type { WorldbookMode } from '../types';
 import { normalizeUserImpression } from './impression';
 import { isScheduleFeatureOn } from './scheduleFeature';
 import { buildScheduleInjection as buildScheduleInjectionText } from './scheduleInjection';
@@ -124,6 +125,8 @@ export const ContextBuilder = {
             conversational?: boolean;
             /** Recent messages used to activate keyword-based worldbook entries. */
             worldbookMessages?: WorldbookScanMessage[];
+            /** Phone/chat by default; Date and other face-to-face callers pass offline. */
+            worldbookMode?: Exclude<WorldbookMode, 'all'>;
         },
         layout?: {
             /**
@@ -142,6 +145,7 @@ export const ContextBuilder = {
             timeOptions?.worldbookMessages || [],
             char.name,
             user.name,
+            timeOptions?.worldbookMode ?? 'online',
         ));
 
         let context = formatWorldbookSection(worldbookSections.beforeCharacter, '世界书 · 角色设定前');
