@@ -63,7 +63,10 @@ export interface AvatarTouchReply {
 
 export interface AvatarTouchModelAction {
   id: string;
+  /** 展示用名字；素材是拼音时已翻成中文（见 live2dActionNaming）。 */
   name: string;
+  /** 素材里的原始组名，用来和模型文件对照；没改过名时可省略。 */
+  rawName?: string;
   kind?: 'motion' | 'expression' | 'params';
   tags?: string[];
 }

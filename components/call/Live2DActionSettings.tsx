@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, FadersHorizontal, HandTap, PencilSimple, Play, Plus, Prohibit, Robot, Trash, TShirt, X } from '@phosphor-icons/react';
 import { inferLive2DActionTags, type Live2DAction, type Live2DActionPermission, type Live2DAvatarConfig } from '../../utils/live2dModelStore';
+import { live2dActionDisplayName, live2dActionRenamed } from '../../utils/live2dActionNaming';
 import {
   describeLive2DParameter,
   groupLive2DParameters,
@@ -444,7 +445,10 @@ const Live2DActionSettings: React.FC<Live2DActionSettingsProps> = ({
                     <Play size={13} weight="fill" />
                   </button>
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm text-white/85">{action.name}</div>
+                    <div className="truncate text-sm text-white/85">{live2dActionDisplayName(action.name)}</div>
+                    {live2dActionRenamed(action.name) && (
+                      <div className="truncate font-mono text-[10px] text-white/32" title={action.name}>{action.name}</div>
+                    )}
                     <div className="mt-0.5 truncate text-[9px] text-white/30">
                       {action.kind === 'motion'
                         ? `动作 · ${action.group || 'Motion'} #${(action.index ?? 0) + 1}`

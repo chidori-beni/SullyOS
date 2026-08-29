@@ -85,6 +85,7 @@ import MagazineCompanionChrome from './MagazineCompanionChrome';
 import CardbookCompanionChrome from './CardbookCompanionChrome';
 import IdolCompanionChrome from './IdolCompanionChrome';
 import CompanionWardrobeDrawer from './CompanionWardrobeDrawer';
+import { live2dActionDisplayName, live2dActionMatchKey, resolveLive2DActionByKey } from '../../utils/live2dActionNaming';
 import CompanionTouchCueEditor from './CompanionTouchCueEditor';
 import {
   MAX_PERFORMANCE_CUES,
@@ -1006,7 +1007,10 @@ const CompanionHome: React.FC = () => {
       return getLive2DAIActions(character.videoAvatar)
         .map(action => ({
           id: action.id,
-          name: action.name,
+          // 素材包的组名是拼音，还常被人手工补错中文后缀（坏笑/调笑/调侃全标成「微笑」）。
+          // 显示名以拼音为准，原名保留在 rawName 里，方便和素材文件对照。
+          name: live2dActionDisplayName(action.name),
+          rawName: action.name,
           kind: action.kind,
           tags: action.tags,
         }));
@@ -1016,6 +1020,48 @@ const CompanionHome: React.FC = () => {
   // Live2D 与 VRM 的演出通道不同：VRM 用 emotion 驱动 BlendShape 预设，
   // Live2D 舞台只读 faces / gesture，emotion 在那条路径上没有映射。
   const live2dCompanionActive = !staticCompanionActive && character?.videoAvatar?.format === 'live2d';
+  // 动作 ID 是 `motion-N` 位置序号，不是名字。两套衣服的 motion 数量和顺序都不同，
+  // 同一个 ID 换套衣服就指向另一个动作——不是不播，是静默播错。衣橱里不止一套时要提醒。
+  const multipleLive2DOutfits = live2dCompanionActive
+    && (character?.videoAvatarWardrobe || []).filter(item => item.format === 'live2d').length > 0;
+  const outfitActionCandidates = modelActions.map(action => ({ id: action.id, rawName: action.rawName || action.name }));
+  /** 选中某个动作时要写回的字段：ID 给当前这套用，语义键给换衣服后重新解析用。 */
+  const modelActionPatch = (actionId: string) => {
+    if (!actionId) return { modelAction: undefined, modelActionKey: undefined, modelActions: [] };
+    const picked = outfitActionCandidates.find(item => item.id === actionId);
+    return {
+      modelAction: actionId,
+      modelActionKey: picked ? live2dActionMatchKey(picked.rawName) : undefined,
+      modelActions: [actionId],
+    };
+  };
+  /** 这条保存下来的动作，在当前这套衣服里还找不找得到。 */
+  const modelActionStatus = (direction: { modelAction?: string; modelActionKey?: string }) => {
+    if (!live2dCompanionActive || !direction.modelAction) return null;
+    if (!direction.modelActionKey) {
+      return outfitActionCandidates.some(item => item.id === direction.modelAction)
+        ? null
+        : { tier: 'none' as const, text: '这条动作是旧数据（没有记录动作名），换过衣服的话可能对不上，建议重新选一次。' };
+    }
+    const match = resolveLive2DActionByKey(direction.modelActionKey, outfitActionCandidates);
+    if (match.tier === 'exact') return null;
+    if (match.tier === 'similar') {
+      return { tier: 'similar' as const, text: `这套衣服里没有完全一样的，已自动改用最接近的「${live2dActionDisplayName(match.rawName)}」。想换别的就在上面重选。` };
+    }
+    return { tier: 'none' as const, text: '这套衣服里没有这个动作，播放时会跳过（只演通用手势）。请在上面重新选一个——纯手动，不会调用 API。' };
+  };
+  /**
+   * 动作导演 / 反馈包生成器返回的是白名单里的 ID。补上语义键，
+   * 这样 AI 编排出来的动作换套衣服也能自动接上，而不是只有手选的才行。
+   */
+  const withModelActionKey = <T extends { modelAction?: string; modelActionKey?: string }>(direction: T): T => {
+    if (!direction?.modelAction || direction.modelActionKey) return direction;
+    const picked = outfitActionCandidates.find(item => item.id === direction.modelAction);
+    return picked ? { ...direction, modelActionKey: live2dActionMatchKey(picked.rawName) } : direction;
+  };
+  const modelActionOutfitWarning = multipleLive2DOutfits
+    ? '这个角色的衣橱里不止一套模型。模型专属动作按位置编号保存，换一套衣服后同一条会指向那套里的另一个动作——每套衣服的专属动作需要各自重选。台词、微表情、镜头、逐拍编排都是通用的。'
+    : '';
   const wardrobeActions = useMemo(
     () => !staticCompanionActive && character?.videoAvatar?.format === 'live2d' ? getLive2DWardrobeActions(character.videoAvatar) : [],
     [character?.videoAvatar, staticCompanionActive],
@@ -1710,7 +1756,7 @@ const CompanionHome: React.FC = () => {
       if (!mountedRef.current || requestToken !== requestTokenRef.current) return;
       setStartupLine(draft.line);
       setStartupTtsText('');
-      setStartupPerformance(draft.performance);
+      setStartupPerformance(withModelActionKey(draft.performance));
       setStartupPerformanceCues([]);
       setStartupPerformanceCueText('');
       setSelectedStartupPresetId('');
@@ -1759,7 +1805,7 @@ const CompanionHome: React.FC = () => {
             line: draft.line,
             timePeriod: period.value,
             voiceLanguage: startupVoiceLanguage,
-            performance: normalizeCompanionStartupPerformance(draft.performance),
+            performance: withModelActionKey(normalizeCompanionStartupPerformance(draft.performance)),
             generatedAt: now,
             updatedAt: now,
           },
@@ -1833,9 +1879,9 @@ const CompanionHome: React.FC = () => {
       if (!mountedRef.current || requestToken !== requestTokenRef.current) return;
       const cues = directed.map(cue => ({
         at: cue.at,
-        direction: normalizeCompanionStartupPerformance(cue.direction),
+        direction: withModelActionKey(normalizeCompanionStartupPerformance(cue.direction)),
         endDirection: cue.endDirection
-          ? normalizeCompanionStartupPerformance(cue.endDirection)
+          ? withModelActionKey(normalizeCompanionStartupPerformance(cue.endDirection))
           : undefined,
         holdMs: cue.holdMs,
       }));
@@ -2000,6 +2046,11 @@ const CompanionHome: React.FC = () => {
         voiceFailures = voiceResult.failures.length;
       }
 
+      // 生成出来的每条反馈也补上语义键，之后换衣服才能自动接上。
+      for (const items of Object.values(reactions)) {
+        if (!items) continue;
+        for (const item of items) item.performance = withModelActionKey(item.performance);
+      }
       const before = companionTouchSettingsBase();
       const snapshot = {
         enabledZones: touchDraftZones,
@@ -2075,8 +2126,13 @@ const CompanionHome: React.FC = () => {
         modelActions,
       });
       if (!mountedRef.current) return;
+      const keyed = directed.map(cue => ({
+        ...cue,
+        direction: withModelActionKey(cue.direction),
+        endDirection: cue.endDirection ? withModelActionKey(cue.endDirection) : undefined,
+      }));
       patchSavedTouchReaction(zone, reaction.id, {
-        performanceCues: directed as CompanionTouchReaction['performanceCues'],
+        performanceCues: keyed as CompanionTouchReaction['performanceCues'],
         performanceCueText: companionPerformanceCueText(text, translation),
       });
       addToast(`已为这句编排 ${directed.length} 拍动作`, 'success');
@@ -3699,17 +3755,21 @@ const CompanionHome: React.FC = () => {
                     <select
                       value={startupEditorPerformance.modelAction || ''}
                       disabled={settingsGenerating}
-                      onChange={event => patchStartupPerformance({
-                        modelAction: event.target.value || undefined,
-                        modelActions: event.target.value ? [event.target.value] : [],
-                      })}
+                      onChange={event => patchStartupPerformance(modelActionPatch(event.target.value))}
                       className="mt-1 w-full border border-white/12 bg-[#151021] px-2 py-2 text-[9px] text-white/82 outline-none"
                     >
                       <option value="">不指定</option>
-                      {modelActions.map(action => <option key={action.id} value={action.id}>{action.name}</option>)}
+                      {modelActions.map(action => <option key={action.id} value={action.id} title={action.rawName || action.name}>{action.name}</option>)}
                     </select>
                   </label>
                 )}
+                {(() => {
+                  const status = modelActionStatus(startupEditorPerformance);
+                  if (status) return <div className="mt-1 text-[7px] leading-relaxed" style={{ color: `${uiTint}c8` }}>{status.text}</div>;
+                  return modelActions.length > 0 && modelActionOutfitWarning
+                    ? <div className="mt-1 text-[7px] leading-relaxed text-white/34">{modelActionOutfitWarning}</div>
+                    : null;
+                })()}
                 {live2dCompanionActive && startupEditorPerformance.modelAction && (
                   <div className="mt-1 text-[7px] leading-relaxed text-white/34">
                     模型专属动作是一整套录好的表演，播放期间脸也由它驱动，上面的微表情多半会被盖住看不出来（不是不生效）。想让微表情说了算，把这里改回「不指定」。
@@ -4187,19 +4247,22 @@ const CompanionHome: React.FC = () => {
                                           value={reaction.performance.modelAction || ''}
                                           disabled={settingsGenerating}
                                           onChange={event => patchSavedTouchReaction(zone, reaction.id, {
-                                            performance: {
-                                              ...reaction.performance,
-                                              modelAction: event.target.value || undefined,
-                                              modelActions: event.target.value ? [event.target.value] : [],
-                                            },
+                                            performance: { ...reaction.performance, ...modelActionPatch(event.target.value) },
                                           })}
                                           className="mt-1 w-full border border-white/12 bg-[#151021] px-2 py-2 text-[9px] text-white/82"
                                         >
                                           <option value="">不指定</option>
-                                          {modelActions.map(action => <option key={action.id} value={action.id}>{action.name}</option>)}
+                                          {modelActions.map(action => <option key={action.id} value={action.id} title={action.rawName || action.name}>{action.name}</option>)}
                                         </select>
                                       </label>
                                     )}
+                                    {(() => {
+                                      const status = modelActionStatus(reaction.performance);
+                                      if (status) return <div className="mt-1 text-[7px] leading-relaxed" style={{ color: `${uiTint}c8` }}>{status.text}</div>;
+                                      return modelActions.length > 0 && modelActionOutfitWarning
+                                        ? <div className="mt-1 text-[7px] leading-relaxed text-white/34">{modelActionOutfitWarning}</div>
+                                        : null;
+                                    })()}
 
                                     {alsoRunsModelAction && (
                                       <div className="mt-1 text-[7px] leading-relaxed text-white/34">
@@ -4233,6 +4296,9 @@ const CompanionHome: React.FC = () => {
                                   disabled={settingsGenerating}
                                   generating={touchCueGeneratingId === reaction.id}
                                   accentColor={uiTint}
+                                  outfitWarning={modelActionOutfitWarning}
+                                  modelActionPatch={modelActionPatch}
+                                  modelActionStatus={modelActionStatus}
                                   position={touchCuePosition}
                                   onPositionChange={setTouchCuePosition}
                                   onChange={cues => patchSavedTouchReaction(zone, reaction.id, {

@@ -42,6 +42,12 @@ interface CompanionTouchCueEditorProps {
   cameraLabels: Record<string, string>;
   faceLabels: Record<string, string>;
   live2dActive: boolean;
+  /** 衣橱里不止一套模型时的错位提醒；为空则不显示。 */
+  outfitWarning?: string;
+  /** 选中动作时要写回的字段（含跨衣橱用的语义键）。 */
+  modelActionPatch: (actionId: string) => Partial<AvatarPerformanceDirection>;
+  /** 这条动作在当前这套衣服里对不对得上；对得上返回 null。 */
+  modelActionStatus: (direction: { modelAction?: string; modelActionKey?: string }) => { tier: 'similar' | 'none'; text: string } | null;
   disabled?: boolean;
   generating?: boolean;
   accentColor: string;
@@ -65,6 +71,9 @@ const CompanionTouchCueEditor: React.FC<CompanionTouchCueEditorProps> = ({
   cameraLabels,
   faceLabels,
   live2dActive,
+  outfitWarning = '',
+  modelActionPatch,
+  modelActionStatus,
   disabled = false,
   generating = false,
   accentColor,
@@ -272,17 +281,23 @@ const CompanionTouchCueEditor: React.FC<CompanionTouchCueEditorProps> = ({
           <select
             value={editing.modelAction || ''}
             disabled={disabled}
-            onChange={event => patch({
-              modelAction: event.target.value || undefined,
-              modelActions: event.target.value ? [event.target.value] : [],
-            })}
+            onChange={event => patch(modelActionPatch(event.target.value))}
             className="mt-1 w-full border border-white/12 bg-[#151021] px-2 py-2 text-[9px] text-white/82"
           >
             <option value="">不指定</option>
-            {modelActions.map(action => <option key={action.id} value={action.id}>{action.name}</option>)}
+            {modelActions.map(action => (
+              <option key={action.id} value={action.id} title={action.rawName || action.name}>{action.name}</option>
+            ))}
           </select>
         </label>
       )}
+      {(() => {
+        const status = modelActionStatus(editing);
+        if (status) return <div className="mt-1 text-[7px] leading-relaxed" style={{ color: `${accentColor}c8` }}>{status.text}</div>;
+        return modelActions.length > 0 && outfitWarning
+          ? <div className="mt-1 text-[7px] leading-relaxed text-white/34">{outfitWarning}</div>
+          : null;
+      })()}
 
       <div className="mt-2 border-t border-white/10 pt-2">
         <div className="text-[8px] text-white/46">拆分这一拍</div>

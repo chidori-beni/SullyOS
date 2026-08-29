@@ -43,6 +43,11 @@ export interface AvatarPerformanceDirection {
   /** Live2D 模型专属动作 ID；舞台仍会再次检查角色的 AI 白名单。 */
   modelAction?: string;
   /**
+   * 该动作的语义键（情绪+变体+待机）。ID 是位置序号、换套衣服就会指向别的动作，
+   * 所以真正的身份存在这里，播放时按它在当前模型里重新解析。
+   */
+  modelActionKey?: string;
+  /**
    * 高质量导演可同时选择的模型专属动作层。首项也会写入 modelAction，
    * 兼容只支持单个自定义表情的 VRM 和旧版演出记录。
    */

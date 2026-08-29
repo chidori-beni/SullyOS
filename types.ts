@@ -2569,6 +2569,8 @@ export interface CompanionTouchReaction {
     intensity: number;
     faces?: Array<'wink' | 'grin' | 'pout' | 'blush' | 'eyes-closed' | 'smile-eyes' | 'brow-up' | 'brow-sad' | 'brow-angry' | 'teeth' | 'bite-lip' | 'fluster' | 'pupils-wide' | 'pupils-small'>;
     modelAction?: string;
+    /** 跨衣橱重新解析用的语义键，见 utils/live2dActionNaming。 */
+    modelActionKey?: string;
     modelActions?: string[];
     precision?: CompanionPerformancePrecision;
   };
