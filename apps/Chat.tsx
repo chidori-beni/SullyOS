@@ -42,7 +42,7 @@ import ChatInputArea from '../components/chat/ChatInputArea';
 import UserVoiceInputModal from '../components/chat/UserVoiceInputModal';
 import InstantChatRouteNotice from '../components/chat/InstantChatRouteNotice';
 import MemoryRepairPortal from '../components/chat/MemoryRepairPortal';
-import VoiceFavoritesPortal from '../components/chat/VoiceFavoritesPortal';
+import FavoritesPortal from '../components/chat/FavoritesPortal';
 import ImageViewer from '../components/chat/ImageViewer';
 import ChatModals from '../components/chat/ChatModals';
 import Modal from '../components/os/Modal';
@@ -79,6 +79,15 @@ import {
     removeVoiceFavorite,
     saveVoiceFavorite,
 } from '../utils/voiceFavorites';
+import {
+    TEXT_FAVORITES_CHANGED_EVENT,
+    cleanTextForFavorite,
+    getTextFavorite,
+    listTextFavorites,
+    makeTextFavoriteSourceKey,
+    removeTextFavorite,
+    saveTextFavorite,
+} from '../utils/textFavorites';
 import { SCHEDULE_CHANGE_EVENT, type ScheduleChangeEventDetail } from '../utils/scheduleChange';
 import {
     applyScheduleInviteToSchedule,
@@ -165,7 +174,7 @@ const Chat: React.FC = () => {
     const [input, setInput] = useState('');
     const [showPanel, setShowPanel] = useState<'none' | 'actions' | 'emojis' | 'chars'>('none');
     const [memoryRepairOpen, setMemoryRepairOpen] = useState(false);
-    const [voiceFavoritesOpen, setVoiceFavoritesOpen] = useState(false);
+    const [favoritesOpen, setFavoritesOpen] = useState(false);
     const [userVoiceInputOpen, setUserVoiceInputOpen] = useState(false);
     
     // Emoji State
@@ -451,8 +460,10 @@ const Chat: React.FC = () => {
     type GeneratedVoiceData = VoiceData & { blob: Blob | null };
     const voiceAssetKey = (msgId: number) => `voice_msg_${msgId}`;
     const chatFavoriteSourceKey = (msg: Pick<Message, 'charId' | 'id'>) => `${msg.charId}:${msg.id}`;
+    const chatTextFavoriteSourceKey = (msg: Pick<Message, 'charId' | 'id'>) => makeTextFavoriteSourceKey(msg.charId, msg.id);
     const [voiceDataMap, setVoiceDataMap] = useState<Record<number, VoiceData>>({});
     const [chatFavoriteKeys, setChatFavoriteKeys] = useState<Set<string>>(new Set());
+    const [chatTextFavoriteKeys, setChatTextFavoriteKeys] = useState<Set<string>>(new Set());
     const [voiceLoading, setVoiceLoading] = useState<Set<number>>(new Set());
     const [playingMsgId, setPlayingMsgId] = useState<number | null>(null);
     const chatAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -814,10 +825,51 @@ const Chat: React.FC = () => {
             });
             setChatFavoriteKeys(prev => new Set(prev).add(sourceKey));
             setVoiceDataMap(prev => ({ ...prev, [msg.id]: { ...prev[msg.id], favorite: true } }));
-            addToast('已收藏语音，可在聊天加号里查看', 'success');
+            addToast('已收藏语音，可在聊天加号里的“收藏”查看', 'success');
             trackEvent('收藏语音条');
         } catch (e) {
             console.warn('[Chat] favorite voice failed', e);
+            addToast('收藏失败，请检查浏览器存储空间', 'error');
+        }
+    };
+
+    const handleToggleTextFavorite = async (msg: Message) => {
+        if (!msg?.id || msg.type !== 'text' || msg.role === 'system') return;
+        const sourceKey = chatTextFavoriteSourceKey(msg);
+        try {
+            const existing = await getTextFavorite('chat', sourceKey);
+            if (existing) {
+                await removeTextFavorite('chat', sourceKey);
+                setChatTextFavoriteKeys(prev => {
+                    const next = new Set(prev);
+                    next.delete(sourceKey);
+                    return next;
+                });
+                addToast('已取消收藏文字', 'info');
+                trackEvent('取消收藏文字');
+                return;
+            }
+
+            const content = cleanTextForFavorite(msg.content);
+            if (!content) {
+                addToast('这条消息没有可收藏的文字', 'info');
+                return;
+            }
+            await saveTextFavorite({
+                source: 'chat',
+                sourceKey,
+                messageId: msg.id,
+                charId: msg.charId,
+                charName: msg.role === 'user' ? '我' : (char?.name || '未知角色'),
+                role: msg.role,
+                sourceTimestamp: msg.timestamp,
+                content,
+            });
+            setChatTextFavoriteKeys(prev => new Set(prev).add(sourceKey));
+            addToast('已收藏文字，可在聊天加号里的“收藏”查看', 'success');
+            trackEvent('收藏文字');
+        } catch (error) {
+            console.warn('[Chat] favorite text failed', error);
             addToast('收藏失败，请检查浏览器存储空间', 'error');
         }
     };
@@ -925,8 +977,9 @@ const Chat: React.FC = () => {
         let cancelled = false;
         (async () => {
             const updates: Record<number, VoiceData> = {};
+            const voiceFavorites = await listVoiceFavorites().catch(() => []);
             const favoriteKeys = new Set(
-                (await listVoiceFavorites().catch(() => []))
+                voiceFavorites
                     .filter(item => item.source === 'chat')
                     .map(item => item.sourceKey),
             );
@@ -980,16 +1033,34 @@ const Chat: React.FC = () => {
         return () => { cancelled = true; };
     }, [messages]);
 
+    // Text favorites do not depend on voice assets. Hydrate them separately so a
+    // conversation with no generated audio still shows the correct long-press label.
+    useEffect(() => {
+        let cancelled = false;
+        void listTextFavorites()
+            .then(items => {
+                if (!cancelled) setChatTextFavoriteKeys(new Set(items.map(item => item.sourceKey)));
+            })
+            .catch(() => undefined);
+        return () => { cancelled = true; };
+    }, [messages]);
+
     // The archive can remove an item while this chat stays mounted. Keep the
     // long-press menu's 收藏/取消收藏 label in sync without touching audio data.
     useEffect(() => {
         const syncFavoriteFlags = async () => {
+            const [voiceFavorites, textFavorites] = await Promise.all([
+                listVoiceFavorites().catch(() => []),
+                listTextFavorites().catch(() => []),
+            ]);
             const keys = new Set(
-                (await listVoiceFavorites().catch(() => []))
+                voiceFavorites
                     .filter(item => item.source === 'chat')
                     .map(item => item.sourceKey),
             );
+            const textKeys = new Set(textFavorites.map(item => item.sourceKey));
             setChatFavoriteKeys(keys);
+            setChatTextFavoriteKeys(textKeys);
             setVoiceDataMap(prev => {
                 let changed = false;
                 const next = { ...prev };
@@ -1006,7 +1077,11 @@ const Chat: React.FC = () => {
             });
         };
         window.addEventListener(VOICE_FAVORITES_CHANGED_EVENT, syncFavoriteFlags);
-        return () => window.removeEventListener(VOICE_FAVORITES_CHANGED_EVENT, syncFavoriteFlags);
+        window.addEventListener(TEXT_FAVORITES_CHANGED_EVENT, syncFavoriteFlags);
+        return () => {
+            window.removeEventListener(VOICE_FAVORITES_CHANGED_EVENT, syncFavoriteFlags);
+            window.removeEventListener(TEXT_FAVORITES_CHANGED_EVENT, syncFavoriteFlags);
+        };
     }, [messages]);
 
     // 角色生图是后台跑的（先落一条 pending 气泡，画完再回填），落库那一刻只有一个
@@ -1873,7 +1948,7 @@ const Chat: React.FC = () => {
         if ([
             'transfer', 'archive', 'settings', 'decor', 'chrome-css', 'chrome-sound', 'fine-tune',
             'meetup', 'proactive', 'active-msg-2', 'schedule', 'mcd-request', 'luckin-request',
-            'html-mode-toggle', 'html-mode-settings', 'thinking-settings', 'xinsheng-settings',
+            'html-mode-toggle', 'html-mode-settings', 'thinking-settings', 'xinsheng-settings', 'favorites',
             // 独立小功能：点一下就是用了一次，跟「打开某个面板」同一性质。
             // send-emoji / select-category 这些是「挑哪一个」，不进名单。
             'poke', 'emoji-import', 'add-category', 'mcd-end', 'luckin-end',
@@ -1882,7 +1957,11 @@ const Chat: React.FC = () => {
         }
         switch (type) {
             case 'memory-link': setShowPanel('none'); setMemoryRepairOpen(true); break;
-            case 'voice-favorites': setShowPanel('none'); setVoiceFavoritesOpen(true); break;
+            case 'favorites':
+            case 'voice-favorites': // 兼容旧入口：现在这个页面同时收纳文字和语音
+                setShowPanel('none');
+                setFavoritesOpen(true);
+                break;
             case 'transfer': setModalType('transfer'); break;
             case 'poke': handleSendText('[戳一戳]', 'interaction'); break;
             case 'archive': setModalType('archive-settings'); break;
@@ -3751,6 +3830,8 @@ const Chat: React.FC = () => {
                 onDownloadVoice={selectedMessage ? () => handleDownloadVoice(selectedMessage) : undefined}
                 voiceFavorited={!!(selectedMessage?.id && chatFavoriteKeys.has(chatFavoriteSourceKey(selectedMessage)))}
                 onToggleVoiceFavorite={selectedMessage ? () => handleToggleVoiceFavorite(selectedMessage) : undefined}
+                textFavorited={!!(selectedMessage?.id && chatTextFavoriteKeys.has(chatTextFavoriteSourceKey(selectedMessage)))}
+                onToggleTextFavorite={selectedMessage ? () => handleToggleTextFavorite(selectedMessage) : undefined}
                 scheduleData={scheduleData}
                 isScheduleGenerating={isScheduleGenerating}
                 onScheduleEdit={handleScheduleEdit}
@@ -4690,8 +4771,8 @@ const Chat: React.FC = () => {
                 />
             )}
 
-            {voiceFavoritesOpen && (
-                <VoiceFavoritesPortal onClose={() => setVoiceFavoritesOpen(false)} />
+            {favoritesOpen && (
+                <FavoritesPortal onClose={() => setFavoritesOpen(false)} />
             )}
 
             {viewingImageMsg && (
