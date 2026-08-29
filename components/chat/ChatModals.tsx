@@ -305,6 +305,19 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     const activeMainPresetId = apiConfig && apiPresets
         ? findActivePresetId(apiPresets, apiConfig)
         : null;
+    // The long-press menu exposes one 收藏 action. Prefer a real/generated voice
+    // on assistant messages; ordinary user/assistant text falls back to text.
+    const favoriteMode = selectedMessage?.role === 'assistant'
+        && (voiceCollectable || voiceFavorited)
+        && onToggleVoiceFavorite
+        ? 'voice'
+        : selectedMessage?.type === 'text'
+            && selectedMessage.role !== 'system'
+            && onToggleTextFavorite
+            ? 'text'
+            : null;
+    const toggleFavorite = favoriteMode === 'voice' ? onToggleVoiceFavorite : onToggleTextFavorite;
+    const favoriteIsActive = favoriteMode === 'voice' ? voiceFavorited : textFavorited;
 
     const startHistoryLongPress = (msgId: number) => {
         longPressTriggeredRef.current = false;
@@ -1085,10 +1098,10 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                             复制文字
                         </button>
                     )}
-                    {selectedMessage?.type === 'text' && selectedMessage.role !== 'system' && onToggleTextFavorite && (
-                        <button onClick={() => { onToggleTextFavorite(); setModalType('none'); }} className={`w-full py-3 font-medium rounded-2xl transition-colors flex items-center justify-center gap-2 ${textFavorited ? 'bg-amber-100 text-amber-700 active:bg-amber-200' : 'bg-amber-50 text-amber-600 active:bg-amber-100'}`}>
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill={textFavorited ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={1.5} className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="m11.48 3.499-2.13 4.316-4.763.692c-.963.14-1.348 1.323-.651 2.002l3.447 3.36-.814 4.744c-.165.96.842 1.691 1.703 1.238L12.532 17.6l4.26 2.24c.862.453 1.869-.278 1.704-1.238l-.814-4.744 3.447-3.36c.697-.679.312-1.862-.651-2.002l-4.763-.692-2.13-4.316c-.43-.873-1.675-.873-2.105.011Z" /></svg>
-                            {textFavorited ? '取消收藏文字' : '收藏文字'}
+                    {favoriteMode && toggleFavorite && (
+                        <button onClick={() => { toggleFavorite(); setModalType('none'); }} className={`w-full py-3 font-medium rounded-2xl transition-colors flex items-center justify-center gap-2 ${favoriteIsActive ? 'bg-amber-100 text-amber-700 active:bg-amber-200' : 'bg-amber-50 text-amber-600 active:bg-amber-100'}`} aria-label={favoriteMode === 'voice' ? '收藏语音' : '收藏文字'}>
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill={favoriteIsActive ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={1.5} className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="m11.48 3.499-2.13 4.316-4.763.692c-.963.14-1.348 1.323-.651 2.002l3.447 3.36-.814 4.744c-.165.96.842 1.691 1.703 1.238L12.532 17.6l4.26 2.24c.862.453 1.869-.278 1.704-1.238l-.814-4.744 3.447-3.36c.697-.679.312-1.862-.651-2.002l-4.763-.692-2.13-4.316c-.43-.873-1.675-.873-2.105.011Z" /></svg>
+                            {favoriteIsActive ? '取消收藏' : '收藏'}
                         </button>
                     )}
                     {voiceAvailable && selectedMessage?.role === 'assistant' && selectedMessage?.type === 'text' && onGenerateVoice && (
@@ -1101,12 +1114,6 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                         <button onClick={() => { onDownloadVoice(); setModalType('none'); }} className="w-full py-3 bg-sky-50 text-sky-600 font-medium rounded-2xl active:bg-sky-100 transition-colors flex items-center justify-center gap-2">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
                             下载语音
-                        </button>
-                    )}
-                    {voiceCollectable && selectedMessage?.role === 'assistant' && onToggleVoiceFavorite && (
-                        <button onClick={() => { onToggleVoiceFavorite(); setModalType('none'); }} className={`w-full py-3 font-medium rounded-2xl transition-colors flex items-center justify-center gap-2 ${voiceFavorited ? 'bg-amber-100 text-amber-700 active:bg-amber-200' : 'bg-amber-50 text-amber-600 active:bg-amber-100'}`}>
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill={voiceFavorited ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={1.5} className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="m11.48 3.499-2.13 4.316-4.763.692c-.963.14-1.348 1.323-.651 2.002l3.447 3.36-.814 4.744c-.165.96.842 1.691 1.703 1.238L12.532 17.6l4.26 2.24c.862.453 1.869-.278 1.704-1.238l-.814-4.744 3.447-3.36c.697-.679.312-1.862-.651-2.002l-4.763-.692-2.13-4.316c-.43-.873-1.675-.873-2.105.011Z" /></svg>
-                            {voiceFavorited ? '取消收藏语音' : '收藏语音'}
                         </button>
                     )}
                     <button onClick={onDeleteMessage} className="w-full py-3 bg-red-50 text-red-500 font-medium rounded-2xl active:bg-red-100 transition-colors flex items-center justify-center gap-2">
