@@ -2129,6 +2129,17 @@ const backfillReasoningSafely = async (sessionId?: string, charId?: string): Pro
  */
 export const OUTBOX_CATCH_UP_MIN_INTERVAL_MS = 60_000;
 
+/**
+ * App 连续停在前台时检查云端账本的间隔。
+ *
+ * Web Push / SW -> window 唤醒都不是可靠送达通道，尤其 iOS 独立 PWA 可能在页面可见时
+ * 丢掉其中一拍。定时主动消息和约定来电又没有「本地正在等回复」标记，不能复用即时对话
+ * 的 1s 轮询；如果只在启动/回前台时补收，用户一直留在 App 里反而会无限等下去。
+ * 5s 只在 document.visible 时运行，足以把一次丢唤醒收敛到几秒，也不会像 1s 即时轮询
+ * 那样长期打网络。
+ */
+export const FOREGROUND_OUTBOX_CHECK_INTERVAL_MS = 5_000;
+
 /** 上一趟账本拉取的时刻（不分入口，点名那几条也记在这儿）。0 = 这个会话还没拉过。 */
 let lastOutboxDrainAt = 0;
 
@@ -2141,22 +2152,74 @@ export const resetOutboxCatchUpThrottleForTesting = (): void => { lastOutboxDrai
  * 返回这一趟读到的全部条目；**读失败返回 null**。两者不能混：「没读成」不构成任何
  * 结论，调用方要拿它下「回复取不回」的判决时只能认前者（docs/instant-push-dual-channel.md）。
  */
-const drainOutboxAndFlush = async (): Promise<AmsgOutboxEntry[] | null> => {
-  lastOutboxDrainAt = Date.now();
-  try {
-    const { written, ackNow, entries } = await drainOutbox();
-    // 不打算走聊天流的那些当场销账，免得每趟都把它们捞回来。纯收尾，不 await。
-    if (ackNow.length > 0) {
-      void ActiveMsgClient.ackOutboxMessages(ackNow).catch((e) => {
-        log.warn('账本上跳过的条目销账失败（下次会再捞一遍）', { count: ackNow.length, error: e });
-      });
+let outboxDrainInFlight: Promise<AmsgOutboxEntry[] | null> | null = null;
+
+const drainOutboxAndFlush = (): Promise<AmsgOutboxEntry[] | null> => {
+  // 启动补收、前台定时器、即时回复 1s 轮询可能在同一刻撞上。它们读的是同一份用户账本，
+  // 并发 GET 没有额外信息，只会重复写 inbox/销账；共用在途 promise 即可。
+  if (outboxDrainInFlight) return outboxDrainInFlight;
+
+  let run!: Promise<AmsgOutboxEntry[] | null>;
+  run = (async () => {
+    lastOutboxDrainAt = Date.now();
+    try {
+      const { written, ackNow, entries } = await drainOutbox();
+      // 不打算走聊天流的那些当场销账，免得每趟都把它们捞回来。纯收尾，不 await。
+      if (ackNow.length > 0) {
+        void ActiveMsgClient.ackOutboxMessages(ackNow).catch((e) => {
+          log.warn('账本上跳过的条目销账失败（下次会再捞一遍）', { count: ackNow.length, error: e });
+        });
+      }
+      if (written > 0) await flushInboxToChat();
+      return entries;
+    } catch (e) {
+      log.warn('补收失败（等下一次时机再试）', { error: e });
+      return null;
+    } finally {
+      if (outboxDrainInFlight === run) outboxDrainInFlight = null;
     }
-    if (written > 0) await flushInboxToChat();
-    return entries;
+  })();
+  outboxDrainInFlight = run;
+  return run;
+};
+
+/**
+ * 可见前台的持续补收单跳。与 catchUpMissedPushes 不共用 60s 节流：后者挡的是短时间
+ * 内重复的生命周期事件，而这里正是为了覆盖「生命周期事件一个都没有」的长驻前台。
+ */
+export const runForegroundOutboxCheck = async (): Promise<
+  'drained' | 'hidden' | 'worker-unset' | 'failed'
+> => {
+  if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return 'hidden';
+
+  try {
+    const config = await ActiveMsgStore.getGlobalConfig();
+    if (!config?.workerUrl?.trim()) return 'worker-unset';
   } catch (e) {
-    log.warn('补收失败（等下一次时机再试）', { error: e });
-    return null;
+    log.warn('前台补收读不到主动消息配置，这一跳先跳过', { error: e });
+    return 'failed';
   }
+
+  const entries = await drainOutboxAndFlush();
+  return entries === null ? 'failed' : 'drained';
+};
+
+let foregroundOutboxCheckTimer: ReturnType<typeof setTimeout> | null = null;
+
+const stopForegroundOutboxCheck = () => {
+  if (foregroundOutboxCheckTimer == null) return;
+  clearTimeout(foregroundOutboxCheckTimer);
+  foregroundOutboxCheckTimer = null;
+};
+
+/** 串行重排：上一趟完成后才等下一次，网络卡住时不会堆出并发 GET。 */
+const scheduleForegroundOutboxCheck = () => {
+  stopForegroundOutboxCheck();
+  if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+  foregroundOutboxCheckTimer = setTimeout(() => {
+    foregroundOutboxCheckTimer = null;
+    void runForegroundOutboxCheck().finally(() => scheduleForegroundOutboxCheck());
+  }, FOREGROUND_OUTBOX_CHECK_INTERVAL_MS);
 };
 
 /**
@@ -2678,7 +2741,11 @@ export const ActiveMsgRuntime = {
     // 回前台 fetch 可靠时补打) + pending tool calls.
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState !== 'visible') return;
+        if (document.visibilityState !== 'visible') {
+          stopForegroundOutboxCheck();
+          return;
+        }
+        scheduleForegroundOutboxCheck();
         // 先 await flush 落库 round-1 旁白, 再跑 runner 触发 round-2, 避免 "B+A".
         void (async () => {
           await flushInboxToChat();
@@ -2720,6 +2787,9 @@ export const ActiveMsgRuntime = {
     // 丢了之后，本地不会留下任何「有条消息没到」的痕迹，账本是唯一的线索来源
     // （见 catchUpMissedPushes）。没配 Worker 的用户在里面就返回了，不打网络。
     void catchUpMissedPushes('startup');
+    // 生命周期补收只覆盖「刚启动/刚回前台」；用户连续停在 App 内时也要持续看账本，
+    // 否则一次丢掉的 Web Push 会把到点消息和来电一直扣到下一次页面切换。
+    scheduleForegroundOutboxCheck();
     // 上次会话发出去、回来前进程就没了的那一轮：指示灯靠 localStorage 记录挂回来，
     // 内容靠云端点名那一步补回来（它自带补收，还顺手把 60s 的点名周期排上）。
     if (listInstantChatPendings().length > 0) {

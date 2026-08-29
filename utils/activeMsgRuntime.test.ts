@@ -9,6 +9,7 @@ import {
   PUSH_SUBSCRIPTION_CHANGED_KV_ID,
   buildSelfLogEntryId,
   catchUpMissedPushes,
+  runForegroundOutboxCheck,
   resetOutboxCatchUpThrottleForTesting,
   findInboxArtifacts,
   findMissingChunkIndexes,
@@ -2620,6 +2621,38 @@ describe('上线补收不看有没有在等回复（走真库）', () => {
 
     expect(listInstantChatPendings()).toHaveLength(0);
     await expect(catchUpMissedPushes('foreground')).resolves.toBe('drained');
+    expect(list).toHaveBeenCalledTimes(1);
+  }, 20000);
+
+  it('一直停在可见前台也会主动查账本，不依赖页面切换或即时对话 pending', async () => {
+    const charId = 'char-foreground-scheduled';
+    const messageId = 'msg_task_foreground_hook_0';
+    await DB.saveCharacter({ id: charId, name: '定时角色' } as any);
+    const list = vi.spyOn(ActiveMsgClient, 'listOutboxEntries')
+      .mockResolvedValue([scheduledEntry(charId, messageId)] as any);
+
+    expect(listInstantChatPendings()).toHaveLength(0);
+    await expect(runForegroundOutboxCheck()).resolves.toBe('drained');
+    expect(list).toHaveBeenCalledTimes(1);
+
+    const msgs = await DB.getRecentMessagesByCharId(charId, 10);
+    expect(msgs.some((m: any) => String(m.content ?? '').includes('到点啦，该睡觉了'))).toBe(true);
+  }, 20000);
+
+  it('前台补收和其它触发点撞在一起时共用同一趟账本读取', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const list = vi.spyOn(ActiveMsgClient, 'listOutboxEntries').mockImplementation(async () => {
+      await gate;
+      return [];
+    });
+
+    const first = runForegroundOutboxCheck();
+    const second = runForegroundOutboxCheck();
+    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+    release();
+
+    await expect(Promise.all([first, second])).resolves.toEqual(['drained', 'drained']);
     expect(list).toHaveBeenCalledTimes(1);
   }, 20000);
 

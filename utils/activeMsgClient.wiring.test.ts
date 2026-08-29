@@ -99,3 +99,13 @@ describe('④ 多设备说明文案', () => {
     expect(src).toContain('重新保存一次');
   });
 });
+
+describe('⑤ 长驻前台账本补收接线', () => {
+  it('启动与重新回到前台都会排持续补收，切后台会停表', () => {
+    const src = read('./activeMsgRuntime.ts');
+    const init = sliceBetween(src, 'export const ActiveMsgRuntime', 'handleDeepLink();');
+    expect(init).toContain('scheduleForegroundOutboxCheck()');
+    expect(init).toContain('stopForegroundOutboxCheck()');
+    expect(src).toContain('void runForegroundOutboxCheck().finally(() => scheduleForegroundOutboxCheck())');
+  });
+});
