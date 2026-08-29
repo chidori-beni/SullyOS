@@ -3448,13 +3448,16 @@ const Chat: React.FC = () => {
     // 字会糊在浅色聊天背景上。减 22 之后再夹进 32~46，任何主题下都落在「能读」的区间，
     // 色相和饱和度则原样保留。算法与 CompanionHome 里 accentLightness 的做法同源。
     // 方块图标用 bg-current 跟着同一个颜色走，底色/描边用 bg-primary/10 + border-primary/20。
-    // 末尾的 0.78 alpha：满不透明的主题色方块在浅色薄纱上还是偏重，压一点让它退回「配角」。
-    // currentColor 会连 alpha 一起带走，所以 bg-current 的方块自动跟着淡下来，只需在这里调一处。
+    // 末尾的 alpha：满不透明的主题色方块在浅色薄纱上偏重，压下来让它退回「配角」。
+    // currentColor 会连 alpha 一起带走，所以 bg-current 的方块自动跟着淡，只需在这里调一处。
+    // 定这个数时要连方块面积一起算：视觉重量 ≈ 面积 × alpha。之前把方块从 8px 放大到 10px
+    // （面积 +56%）又只把 alpha 压到 0.78（-22%），一乘反而比原来更重，所以「看着没变淡」。
+    // 现在方块收到 9px、alpha 压到 0.55，81×0.55≈45，对比最初的 64×1.0=64 才是真的轻下来。
     // 注意：这里在上面 `if (!char) return` 之后，**不能用 useMemo**——提前返回会跳过它，
     // hook 数量在两次渲染间对不上，React 会直接崩。就三次算术，每帧现算的成本可以忽略。
     const stopBtnInkLightness = Math.min(46, Math.max(32, (osTheme.lightness ?? 65) - 22));
     const stopBtnInkStyle: React.CSSProperties = {
-        color: `hsla(${osTheme.hue ?? 245}, ${osTheme.saturation ?? 25}%, ${stopBtnInkLightness}%, 0.78)`,
+        color: `hsla(${osTheme.hue ?? 245}, ${osTheme.saturation ?? 25}%, ${stopBtnInkLightness}%, 0.55)`,
     };
 
     return (
@@ -4243,7 +4246,7 @@ const Chat: React.FC = () => {
                                 style={stopBtnInkStyle}
                                 className="shrink-0 mb-0.5 flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 border border-primary/20 transition-colors hover:bg-primary/20 active:scale-95"
                             >
-                                <span className="w-2.5 h-2.5 rounded-[2px] bg-current"></span>
+                                <span className="w-[9px] h-[9px] rounded-[2px] bg-current"></span>
                             </button>
                         )}
                     </div>
