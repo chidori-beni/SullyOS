@@ -76,8 +76,10 @@ const CompanionTouchCueEditor: React.FC<CompanionTouchCueEditorProps> = ({
   onPreview,
 }) => {
   const phase = position.phase;
-  const setIndex = (value: number) => onPositionChange({ index: value, phase });
-  const setPhase = (value: 'start' | 'end') => onPositionChange({ index: position.index, phase: value });
+  // position 是「下标 + 相」的一个整体。以前拆成 setIndex/setPhase 两个助手，
+  // 同一个事件里连着调两次时，第二次读到的还是本次渲染的旧 position，
+  // 会把第一次刚写进去的下标覆盖回去——表现为点哪一拍都弹回原来那拍。
+  // 所以每次交互只允许写一次完整的 position。
 
   const selectedIndex = Math.min(position.index, Math.max(0, cues.length - 1));
   const selected = cues[selectedIndex];
@@ -127,7 +129,7 @@ const CompanionTouchCueEditor: React.FC<CompanionTouchCueEditorProps> = ({
               type="button"
               aria-pressed={active}
               disabled={disabled}
-              onClick={() => { setIndex(cueIndex); setPhase('start'); }}
+              onClick={() => onPositionChange({ index: cueIndex, phase: 'start' })}
               className="max-w-[132px] shrink-0 border px-2 py-1.5 text-left transition disabled:opacity-45"
               style={{
                 borderColor: active ? `${accentColor}aa` : 'rgba(255,255,255,.12)',
@@ -151,7 +153,7 @@ const CompanionTouchCueEditor: React.FC<CompanionTouchCueEditorProps> = ({
             type="button"
             aria-pressed={phase === value}
             disabled={disabled}
-            onClick={() => setPhase(value)}
+            onClick={() => onPositionChange({ index: selectedIndex, phase: value })}
             className="border px-2 py-1.5 text-[8px]"
             style={{
               borderColor: phase === value ? `${accentColor}aa` : 'rgba(255,255,255,.12)',
@@ -293,8 +295,7 @@ const CompanionTouchCueEditor: React.FC<CompanionTouchCueEditorProps> = ({
                 disabled={disabled || !canSplit}
                 onClick={() => {
                   onChange(splitPerformanceCueAt(cues, selectedIndex, point.at));
-                  setIndex(selectedIndex + 1);
-                  setPhase('start');
+                  onPositionChange({ index: selectedIndex + 1, phase: 'start' });
                 }}
                 className="flex w-full items-center gap-1.5 border border-white/12 bg-white/[0.025] px-2 py-1.5 text-left text-[7px] leading-relaxed text-white/58 transition active:scale-[.99] disabled:opacity-35"
               >
@@ -315,8 +316,7 @@ const CompanionTouchCueEditor: React.FC<CompanionTouchCueEditorProps> = ({
             disabled={disabled || selectedIndex <= 0}
             onClick={() => {
               onChange(mergePerformanceCueIntoPrevious(cues, selectedIndex));
-              setIndex(Math.max(0, selectedIndex - 1));
-              setPhase('start');
+              onPositionChange({ index: Math.max(0, selectedIndex - 1), phase: 'start' });
             }}
             className="border border-white/12 px-2 py-1 text-[7px] text-white/58 disabled:opacity-30"
           >并回上一拍</button>

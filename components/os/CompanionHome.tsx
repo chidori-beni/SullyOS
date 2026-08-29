@@ -510,9 +510,9 @@ const CompanionHome: React.FC = () => {
   const [expandedTouchReactionId, setExpandedTouchReactionId] = useState('');
   // 逐拍编辑器的选中位置提升到这里，抽屉关掉再打开也不会跳回第 1 拍。
   const [touchCuePosition, setTouchCuePosition] = useState<{ index: number; phase: 'start' | 'end' }>({ index: 0, phase: 'start' });
-  // 预演会收起抽屉；记住滚动位置，回来时落回原处而不是回到顶部。
-  const touchSheetScrollRef = useRef<HTMLElement | null>(null);
-  const touchSheetScrollTopRef = useRef(0);
+  // 这里曾经记录并恢复抽屉的 scrollTop。内联 ref 回调每次渲染都会重新挂载，
+  // 于是每次交互都把滚动拽回记录点，用户根本划不动。分页 + 单句折叠之后
+  // 内容已经足够短，位置由「停在哪个分页/哪一条/哪一拍」保证就够了。
   // 「预演」必须收起设置面板才能看见立绘。记住这一次是从面板里点进来的，
   // 好让用户一键回到刚才那一句，而不是重开面板、重新展开、重新找到那一条。
   const [previewReturnPending, setPreviewReturnPending] = useState(false);
@@ -1385,7 +1385,6 @@ const CompanionHome: React.FC = () => {
   const openTouchSettings = () => {
     setAppStarOpen(false);
     setPreviewReturnPending(false);
-    touchSheetScrollTopRef.current = 0;
     setTouchSettingsTab('touch');
     // 开机自启已经开着就直接展开那一段，省掉每次进来都要先点一下标题。
     setStartupSettingsExpanded(Boolean(character?.companionTouchSettings?.startup?.enabled));
@@ -1671,7 +1670,6 @@ const CompanionHome: React.FC = () => {
       addToast(`请填写 ${voiceLanguageLabel(startupVoiceLanguage)} 语音译文`, 'error');
       return;
     }
-    touchSheetScrollTopRef.current = touchSheetScrollRef.current?.scrollTop ?? 0;
     setTouchSettingsOpen(false);
     setPreviewReturnPending(true);
     setStartupHeadLocked(true);
@@ -2113,7 +2111,6 @@ const CompanionHome: React.FC = () => {
 
   const previewSavedTouchReaction = async (reaction: CompanionTouchReaction) => {
     if (!character) return;
-    touchSheetScrollTopRef.current = touchSheetScrollRef.current?.scrollTop ?? 0;
     setTouchSettingsOpen(false);
     setPreviewReturnPending(true);
     setLine({ text: reaction.text, translation: reaction.translation, label: '触摸预演', kind: 'touch' });
@@ -3133,11 +3130,6 @@ const CompanionHome: React.FC = () => {
           data-testid="companion-touch-settings"
         >
           <section
-            ref={node => {
-              touchSheetScrollRef.current = node;
-              // 从预演返回时落回原来的位置，而不是每轮都从顶部重新翻。
-              if (node && touchSheetScrollTopRef.current > 0) node.scrollTop = touchSheetScrollTopRef.current;
-            }}
             className="max-h-[88vh] w-full overflow-y-auto rounded-t-[2rem] border-t border-white/20 px-4 pb-5 pt-3 text-white shadow-[0_-24px_60px_rgba(0,0,0,.5)] backdrop-blur-2xl"
             style={{ background: `linear-gradient(165deg, ${palette.panelTop}f7, ${palette.panelBottom}fc)`, animation: 'companion-drawer-up 260ms ease-out both', paddingBottom: 'max(1.25rem, calc(var(--safe-bottom, 0px) + 1rem))' }}
             onClick={event => event.stopPropagation()}
