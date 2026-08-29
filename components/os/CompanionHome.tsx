@@ -498,6 +498,14 @@ const CompanionHome: React.FC = () => {
   const [startupVoiceGenerating, setStartupVoiceGenerating] = useState(false);
   const [startupLineGenerating, setStartupLineGenerating] = useState(false);
   const [startupAllDayGenerating, setStartupAllDayGenerating] = useState(false);
+  /**
+   * 这份草稿是从哪一套预设改出来的。
+   *
+   * `selectedStartupPresetId` 一改动就会被清空（表示「草稿已偏离下拉里选中的那套」），
+   * 所以它不能用来判断「能不能覆盖」——那样「更新这套预设」会在你刚动手时就消失。
+   * 这个值只在切换 / 保存 / 删除预设时变，编辑不动它。
+   */
+  const [startupPresetOrigin, setStartupPresetOrigin] = useState('');
   // 机位推拉幅度（0..1）。角色忽远忽近时调小；0 = 完全锁死构图。
   const [cameraIntensity, setCameraIntensity] = useState(1);
   // 生成落点：另存为新预设，还是并进当前这一包。分部位生成时后者才是想要的。
@@ -859,6 +867,7 @@ const CompanionHome: React.FC = () => {
       preset => preset.id === character.companionTouchSettings?.activeTouchPresetId,
     );
     setSelectedStartupPresetId(activeStartupPreset?.id || '');
+    setStartupPresetOrigin(activeStartupPreset?.id || '');
     setStartupPresetName(activeStartupPreset?.name || '');
     setSelectedTouchPresetId(activeTouchPreset?.id || '');
     setTouchPresetName(activeTouchPreset?.name || '');
@@ -1452,6 +1461,7 @@ const CompanionHome: React.FC = () => {
       preset => preset.id === character.companionTouchSettings?.activeTouchPresetId,
     );
     setSelectedStartupPresetId(activeStartupPreset?.id || '');
+    setStartupPresetOrigin(activeStartupPreset?.id || '');
     setStartupPresetName(activeStartupPreset?.name || '');
     setSelectedTouchPresetId(activeTouchPreset?.id || '');
     setTouchPresetName(activeTouchPreset?.name || '');
@@ -1515,6 +1525,7 @@ const CompanionHome: React.FC = () => {
     if (!character || settingsGenerating) return;
     if (!presetId) {
       setSelectedStartupPresetId('');
+      setStartupPresetOrigin('');
       setStartupPresetName('');
       return;
     }
@@ -1526,6 +1537,7 @@ const CompanionHome: React.FC = () => {
     cleanupUnreferencedCompanionVoices(before, settings);
     loadStartupDraft(preset.startup);
     setSelectedStartupPresetId(preset.id);
+    setStartupPresetOrigin(preset.id);
     setStartupPresetName(preset.name);
     addToast(`已切换开机预设「${preset.name}」`, 'success');
   };
@@ -1561,6 +1573,7 @@ const CompanionHome: React.FC = () => {
     updateCharacter(character.id, { companionTouchSettings: after });
     cleanupUnreferencedCompanionVoices(before, after);
     setSelectedStartupPresetId('');
+    setStartupPresetOrigin('');
     setStartupPresetName('');
     addToast('开机预设已删除；当前草稿仍保留', 'success');
   };
@@ -1696,8 +1709,8 @@ const CompanionHome: React.FC = () => {
     const base = companionTouchSettingsBase();
     // 覆盖当前这套，而不是又堆一套：同一时段的多套预设会按日期轮换，
     // 微调产生的中间版本留在里面会隔天冒出来播。
-    const updated = mode === 'update' && selectedStartupPresetId
-      ? updateCompanionStartupPreset(base, selectedStartupPresetId, startup, startupPresetName)
+    const updated = mode === 'update' && startupPresetOrigin
+      ? updateCompanionStartupPreset(base, startupPresetOrigin, startup, startupPresetName)
       : null;
     const saved = updated || saveCompanionStartupPreset(base, startup, startupPresetName);
     updateCharacter(character.id, { companionTouchSettings: saved.settings });
@@ -1705,6 +1718,7 @@ const CompanionHome: React.FC = () => {
     setStartupTranslation(startup.translation || '');
     setStartupPerformance(normalizeCompanionStartupPerformance(startup.performance));
     setSelectedStartupPresetId(saved.preset.id);
+    setStartupPresetOrigin(saved.preset.id);
     setStartupPresetName(saved.preset.name);
     addToast(
       updated ? `已更新开机预设「${saved.preset.name}」` : `已保存新的开机预设「${saved.preset.name}」`,
@@ -2433,6 +2447,26 @@ const CompanionHome: React.FC = () => {
   const startupSpokenDraft = (miniMaxTtsActive ? normalizeCompanionDialogue(startupTtsText, character.name) : '')
     || normalizeCompanionDialogue(startupTranslation, character.name)
     || normalizeCompanionDialogue(startupLine, character.name);
+  // 草稿是从哪套预设改出来的（预设可能已被删掉，所以要回查一次）。
+  const startupOriginPreset = startupPresetOrigin
+    ? startupPresets.find(preset => preset.id === startupPresetOrigin)
+    : undefined;
+  /**
+   * 草稿和它的来源预设是否已经不一致。开机时读的是已保存的预设，
+   * 草稿不落库就不会在开机时播——这一点界面必须说出来，否则用户只能猜。
+   */
+  const startupDraftDirty = (() => {
+    const origin = startupOriginPreset?.startup;
+    if (!origin) return Boolean(startupLine.trim());
+    return origin.line !== startupLine
+      || (origin.translation || '') !== startupTranslation
+      || (origin.ttsText || '') !== startupTtsText
+      || (origin.timePeriod || 'morning') !== startupPeriod
+      || (origin.voiceLanguage || '') !== startupVoiceLanguage
+      || Boolean(origin.enabled) !== startupEnabled
+      || JSON.stringify(origin.performance || {}) !== JSON.stringify(startupPerformance)
+      || JSON.stringify(origin.performanceCues || []) !== JSON.stringify(startupPerformanceCues);
+  })();
   const startupVoiceMatchesDraft = Boolean(savedStartup?.voiceAssetId)
     && normalizeCompanionDialogue(savedStartup?.voiceText || '', character.name)
       === startupSpokenDraft
@@ -3853,7 +3887,18 @@ const CompanionHome: React.FC = () => {
                 </div>
               </details>
 
-              {selectedStartupPresetId ? (
+              {startupDraftDirty && (
+                <div
+                  className="mt-3 border px-2.5 py-2 text-[8px] leading-relaxed"
+                  data-testid="companion-startup-dirty"
+                  style={{ borderColor: `${uiTint}66`, background: `${uiTint}12`, color: `${uiTint}e0` }}
+                >
+                  当前改动还没保存。开机时播的是已保存的预设，不是这里的草稿——
+                  {startupOriginPreset ? `点下面「更新「${startupOriginPreset.name}」」才会生效。` : '点下面「保存为新预设」才会生效。'}
+                  （触摸台词不用管这个，那边改完立即生效。）
+                </div>
+              )}
+              {startupOriginPreset ? (
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <button
                     type="button"
@@ -3863,7 +3908,7 @@ const CompanionHome: React.FC = () => {
                     className="w-full border py-2.5 text-[10px] font-semibold tracking-wide transition active:scale-[.99] disabled:opacity-45"
                     style={{ borderColor: `${uiTint}9c`, background: `${uiTint}18`, color: uiTint }}
                   >
-                    更新这套预设
+                    更新「{startupOriginPreset.name}」
                   </button>
                   <button
                     type="button"
@@ -3888,7 +3933,7 @@ const CompanionHome: React.FC = () => {
                 </button>
               )}
               <div className="mt-1 text-[7px] leading-relaxed text-white/30">
-                同一时段存了多套时，开机会按角色当地日期在它们之间轮换。所以微调请用「更新这套预设」，
+                同一时段存了多套时，开机会按角色当地日期在它们之间轮换。所以微调请用「更新」，
                 只有想要「这个时段有好几种开场轮着来」时才另存新的。
                 <span style={{ color: `${uiTint}c0` }}>不需要为每套衣服各存一份</span>
                 ——台词、语音、逐拍编排本来就通用，模型动作会在播放时按当前这套衣服自动换算。

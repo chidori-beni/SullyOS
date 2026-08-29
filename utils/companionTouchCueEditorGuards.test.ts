@@ -66,3 +66,36 @@ describe('touch cue editor position handling', () => {
     expect(source).not.toContain('touchSheetScrollTopRef');
   });
 });
+
+describe('startup preset save controls', () => {
+  const source = () => readFileSync(
+    path.resolve(__dirname, '../components/os/CompanionHome.tsx'),
+    'utf8',
+  );
+
+  it('gates the overwrite button on the draft origin, not the dropdown selection', () => {
+    const text = source();
+    // selectedStartupPresetId 会被 17 处编辑操作清空（表示「草稿已偏离选中的那套」），
+    // 用它当「更新这套预设」的显示条件，按钮会在用户刚动手时就消失——
+    // 正好是最需要它的时刻。必须用只在切换/保存/删除时才变的 origin。
+    expect(text).toContain('startupPresetOrigin');
+    expect(text).toContain('{startupOriginPreset ? (');
+    expect(text).not.toContain('{selectedStartupPresetId ? (');
+    // 覆盖动作本身也必须走 origin。
+    expect(text).toMatch(/updateCompanionStartupPreset\(base, startupPresetOrigin,/);
+  });
+
+  it('keeps the origin out of the edit handlers that clear the selection', () => {
+    const text = source();
+    // 编辑清的是 selectedStartupPresetId；一旦有人顺手也清 origin，覆盖按钮就又会消失。
+    const clearsOrigin = text.match(/setStartupPresetOrigin\(''\)/g) || [];
+    // 只有「下拉选空」和「删除预设」两处允许清空。
+    expect(clearsOrigin.length).toBe(2);
+  });
+
+  it('tells the user an unsaved startup draft will not play at boot', () => {
+    const text = source();
+    expect(text).toContain('data-testid="companion-startup-dirty"');
+    expect(text).toContain('startupDraftDirty');
+  });
+});
