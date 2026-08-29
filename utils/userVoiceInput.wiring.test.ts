@@ -36,8 +36,26 @@ describe('user voice message wiring', () => {
   it('uses the same auto-growing textarea in the chat composer', () => {
     const chatInput = read('components/chat/ChatInputArea.tsx');
     expect(chatInput).toContain('textarea.style.height =');
-    expect(chatInput).toContain('Math.min(textarea.scrollHeight, 144)');
+    // 聊天消息栏的测量走 syncTextareaHeight（带脏值防呆 + 一行兜底），上限仍是 144。
+    expect(chatInput).toContain('const MAX_INPUT_HEIGHT = 144;');
+    expect(chatInput).toContain('Math.min(contentHeight, MAX_INPUT_HEIGHT)');
     expect(chatInput).toContain('max-h-36');
+  });
+
+  it('re-measures the chat composer when layout changes instead of only on input', () => {
+    const chatInput = read('components/chat/ChatInputArea.tsx');
+    // 键盘弹起/收起、旋转、字体晚加载、宽度变化都要重量，否则高度会被钉死在脏值上。
+    expect(chatInput).toContain('new ResizeObserver');
+    expect(chatInput).toContain("window.visualViewport?.addEventListener('resize'");
+    expect(chatInput).toContain('document.fonts?.ready');
+    // 元素还没排版时不能写高度。
+    expect(chatInput).toContain('textarea.offsetParent === null');
+  });
+
+  it('lets a scrollable composer pan while the soft keyboard is open', () => {
+    const standalone = read('utils/iosStandalone.ts');
+    expect(standalone).toContain('isScrollableTextEntry');
+    expect(standalone).toContain('if (isScrollableTextEntry(target)) return;');
   });
 
   it('keeps the chat composer compact and offers scroll/fullscreen controls for long text', () => {

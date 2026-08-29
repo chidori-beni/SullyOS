@@ -87,6 +87,16 @@ export const isStatusBarHidden = (
     platformDefaultHidden: boolean = isIOSStandaloneWebApp(),
 ): boolean => hideStatusBar ?? platformDefaultHidden;
 
+// 可滚动的编辑区（多行输入框 / contenteditable）：内容高度超过可视高度才算。
+const isScrollableTextEntry = (target: EventTarget | null): boolean => {
+    if (!(target instanceof HTMLElement)) return false;
+    const el = target instanceof HTMLTextAreaElement || target.isContentEditable
+        ? target
+        : target.closest('textarea, [contenteditable="true"]') as HTMLElement | null;
+    if (!el) return false;
+    return el.scrollHeight - el.clientHeight > 1;
+};
+
 const isTextEntryElement = (target: EventTarget | null): target is HTMLElement => {
     if (!(target instanceof HTMLElement)) return false;
     if (target.isContentEditable) return true;
@@ -220,6 +230,10 @@ export const installIOSStandaloneWorkaround = () => {
         if (!document.body.classList.contains('ios-keyboard-open')) return;
         const target = event.target as Element | null;
         if (target?.closest('.overflow-y-auto')) return;
+        // 正在编辑、且内容已经超出可视高度的输入框要放行：消息栏的 overflow-y 是 JS 命令式设的
+        // （没有 .overflow-y-auto 这个 class），被一起拦掉的话，键盘开着时长文本根本拖不动，
+        // 必须先收键盘才能上下看——这里只放行「自己确实能滚」的输入框，不能滚的仍然拦，页面照样不会被顶飞。
+        if (isScrollableTextEntry(target)) return;
         event.preventDefault();
     };
 

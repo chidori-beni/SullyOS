@@ -143,3 +143,63 @@ describe('iOS 全屏 PWA 键盘态', () => {
         expect(appHeight()).toBe(`${SCREEN_H + SAFE_BOTTOM}px`);
     });
 });
+
+// 键盘弹起时全局 touchmove 被拦掉（不拦的话 iOS 会把整页顶飞），但拦得太狠会连
+// 「在输入框里上下拖正在写的长文本」一起吃掉——用户只能先收键盘才能翻自己的草稿。
+describe('键盘态下的 touchmove 放行', () => {
+    beforeEach(() => {
+        document.body.className = '';
+        document.body.innerHTML = '';
+        document.documentElement.removeAttribute('style');
+        setupIOSStandalone();
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    /** jsdom 不做排版，滚动尺寸只能手动钉上去。 */
+    const setScrollMetrics = (el: HTMLElement, scrollHeight: number, clientHeight: number) => {
+        Object.defineProperty(el, 'scrollHeight', { value: scrollHeight, configurable: true });
+        Object.defineProperty(el, 'clientHeight', { value: clientHeight, configurable: true });
+    };
+
+    const touchMoveOn = (el: Element) => {
+        const event = new Event('touchmove', { bubbles: true, cancelable: true });
+        el.dispatchEvent(event);
+        return event.defaultPrevented;
+    };
+
+    const enterKeyboardMode = async () => {
+        await install();
+        focusTextarea().remove();
+        emitViewportResize(SCREEN_H - KEYBOARD_H);
+        expect(inKeyboardMode()).toBe(true);
+    };
+
+    it('普通区域仍然拦截，页面不会被手势顶飞', async () => {
+        await enterKeyboardMode();
+        const div = document.createElement('div');
+        document.body.appendChild(div);
+
+        expect(touchMoveOn(div)).toBe(true);
+    });
+
+    it('内容超出的输入框放行，键盘开着也能上下拖文字', async () => {
+        await enterKeyboardMode();
+        const textarea = document.createElement('textarea');
+        document.body.appendChild(textarea);
+        setScrollMetrics(textarea, 320, 144);
+
+        expect(touchMoveOn(textarea)).toBe(false);
+    });
+
+    it('内容没超出的输入框照旧拦截', async () => {
+        await enterKeyboardMode();
+        const textarea = document.createElement('textarea');
+        document.body.appendChild(textarea);
+        setScrollMetrics(textarea, 46, 46);
+
+        expect(touchMoveOn(textarea)).toBe(true);
+    });
+});

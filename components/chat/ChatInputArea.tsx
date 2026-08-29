@@ -7,6 +7,8 @@ import { isIOSStandaloneWebApp } from '../../utils/iosStandalone';
 import { trackEvent } from '../../utils/analytics';
 
 const EMOJI_PAGE_SIZE = 40;
+// 消息栏最多长到六行（144px），再多就在框内滚动。和 max-h-36 保持一致。
+const MAX_INPUT_HEIGHT = 144;
 
 interface ChatInputAreaProps {
     input: string;
@@ -291,15 +293,82 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
 
     // Keep long messages visible while they are being composed, matching the
     // call composer: grow with the content up to six lines, then scroll inside.
+    // 测量必须防呆：元素还没进入布局（切 App、面板动画、键盘回流中）时 scrollHeight 会量出
+    // 一个偏小/偏大的脏值，直接写成 inline height 就会把输入框钉死在错的高度——表现就是
+    // placeholder「Message…」被裁掉半行，或者输入框莫名撑很大，只有退出聊天重进（重新挂载）才恢复。
+    const syncTextareaHeight = React.useCallback(() => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        // offsetParent 为 null / 宽度为 0 ⇒ 当前不可见或还没排版，这一轮量到的都是脏值，直接跳过。
+        if (!textarea.isConnected || textarea.offsetParent === null || textarea.clientWidth === 0) return;
+
+        const computed = window.getComputedStyle(textarea);
+        const fontSize = parseFloat(computed.fontSize) || 15;
+        const lineHeight = parseFloat(computed.lineHeight) || Math.round(fontSize * 1.5);
+        const paddingY = (parseFloat(computed.paddingTop) || 0) + (parseFloat(computed.paddingBottom) || 0);
+        // 一行文字的合法高度。字体还没加载完时 scrollHeight 可能小于这个值，
+        // 写下去内容区就会变成 0，文字从 padding 位置溢出被裁——用它兜底。
+        const singleRowHeight = Math.ceil(lineHeight + paddingY);
+
+        const previousHeight = textarea.style.height;
+        textarea.style.height = 'auto';
+        const measured = textarea.scrollHeight;
+        // 量到 0（未排版）或小于一行都当作不可信，回滚到上一次的高度，等下一次事件再量。
+        if (!measured) {
+            textarea.style.height = previousHeight;
+            return;
+        }
+        const contentHeight = Math.max(measured, singleRowHeight);
+        const isOverflowing = contentHeight > MAX_INPUT_HEIGHT;
+        textarea.style.height = `${Math.min(contentHeight, MAX_INPUT_HEIGHT)}px`;
+        textarea.style.overflowY = isOverflowing ? 'auto' : 'hidden';
+        // 溢出时让浏览器把纵向拖动判定成「在输入框里滚动」，而不是页面滚动或手势。
+        textarea.style.touchAction = isOverflowing ? 'pan-y' : '';
+        setIsInputOverflowing(previous => previous === isOverflowing ? previous : isOverflowing);
+    }, []);
+
+    // isInputOverflowing 会在输入框右侧插/删「放大编辑」按钮，textarea 可用宽度随之变化，
+    // 换行结果也就变了，必须跟着再量一次，否则高度会停在旧宽度算出来的值。
+    React.useEffect(() => {
+        syncTextareaHeight();
+    }, [syncTextareaHeight, input, selectionMode, isInputOverflowing]);
+
+    // 键盘弹起/收起、旋转、字体晚加载、外壳宽度变化都会让上一轮的高度失效。
+    // 只在「宽度真的变了」时重量，避免 ResizeObserver 因为我们自己改高度而自激。
     React.useEffect(() => {
         const textarea = textareaRef.current;
         if (!textarea) return;
-        textarea.style.height = 'auto';
-        const isOverflowing = textarea.scrollHeight > 144;
-        textarea.style.height = `${Math.min(textarea.scrollHeight, 144)}px`;
-        textarea.style.overflowY = isOverflowing ? 'auto' : 'hidden';
-        setIsInputOverflowing(previous => previous === isOverflowing ? previous : isOverflowing);
-    }, [input, selectionMode]);
+        const handle = () => syncTextareaHeight();
+
+        window.addEventListener('resize', handle);
+        window.addEventListener('orientationchange', handle);
+        window.visualViewport?.addEventListener('resize', handle);
+
+        let observer: ResizeObserver | undefined;
+        if (typeof ResizeObserver !== 'undefined') {
+            let lastWidth = textarea.clientWidth;
+            observer = new ResizeObserver(entries => {
+                const width = entries[0]?.contentRect.width ?? 0;
+                if (Math.abs(width - lastWidth) < 0.5) return;
+                lastWidth = width;
+                syncTextareaHeight();
+            });
+            observer.observe(textarea);
+        }
+
+        // 自定义字体是异步加载的，首帧按 fallback 字体量出的行高会偏小，加载完再校一次。
+        document.fonts?.ready.then(handle).catch(() => {});
+        // 挂载后再补一帧，覆盖「首帧还在做进场动画 / 还没排版」的情况。
+        const raf = window.requestAnimationFrame(handle);
+
+        return () => {
+            window.removeEventListener('resize', handle);
+            window.removeEventListener('orientationchange', handle);
+            window.visualViewport?.removeEventListener('resize', handle);
+            observer?.disconnect();
+            window.cancelAnimationFrame(raf);
+        };
+    }, [syncTextareaHeight]);
 
     React.useEffect(() => {
         if (!isFullscreenEditor) return;
@@ -475,7 +544,10 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 autoCapitalize="sentences"
                                 className={`flex-1 min-w-0 bg-transparent px-3 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-36 overscroll-contain ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`}
                                 placeholder="Message..."
-                                style={{ height: 'auto' }}
+                                /* 高度完全交给 syncTextareaHeight 命令式管理。这里再写 inline height
+                                   会和它打架（React 重渲染时把量好的高度冲回 auto，出现半行/撑高的抽风）。
+                                   只保留一个最小高度兜底，保证字体没量准时 placeholder 也不会被裁。 */
+                                style={{ minHeight: '2.75rem' }}
                             />
                             {isInputOverflowing && (
                                 <button type="button" onClick={openFullscreenEditor} className={actionButtonClass} title="放大编辑" aria-label="放大编辑">
