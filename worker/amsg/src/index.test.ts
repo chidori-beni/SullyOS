@@ -4045,6 +4045,35 @@ describe('即时对话的接线', () => {
   });
 });
 
+describe('Cron 的轻量起跳', () => {
+  const fullEnv = {
+    AMSG_MASTER_KEY: 'a'.repeat(64),
+    VAPID_EMAIL: 'mailto:a@b.c',
+    VAPID_PUBLIC_KEY: 'pub',
+    VAPID_PRIVATE_KEY: 'priv',
+    DB: { prepare: () => {} },
+  } as any;
+
+  it('有 INSTANT_TICK 时只叫醒固定 singleton，不在 10ms Cron invocation 里扫库', async () => {
+    const kicked: Array<{ scheduledTime: number; cron: string }> = [];
+    const env = {
+      ...fullEnv,
+      INSTANT_TICK: {
+        idFromName: (name: string) => name,
+        get: () => ({
+          kickScheduled: async (event: { scheduledTime: number; cron: string }) => {
+            kicked.push(event);
+          },
+        }),
+      },
+    };
+
+    await (worker as any).scheduled({ scheduledTime: 1788086374, cron: '* * * * *' }, env);
+
+    expect(kicked).toEqual([{ scheduledTime: 1788086374, cron: '* * * * *' }]);
+  });
+});
+
 // 即时对话终态失败的直发通知：判死那一刻推一条 messageKind:'error'，前台当场收尾、
 // 后台弹横幅，不用干等 60s 点名。红线是「还会重试的失败绝不发」——报错完回复又到
 // 是双通道老教训里最伤的误报。回归守卫：没有直发通道时这些场合一条 push 都不会有。

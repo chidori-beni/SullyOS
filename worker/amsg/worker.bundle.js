@@ -7384,7 +7384,7 @@ function createSingleUserCloudflareWorker(buildConfig, options = {}) {
 }
 
 // utils/amsgBundleVersion.ts
-var AMSG_BUNDLE_VERSION = "2026-08-25.2";
+var AMSG_BUNDLE_VERSION = "2026-08-30.1";
 
 // utils/amsgTaskKinds.ts
 var AMSG_TASK_KIND_KEY = "amsgKind";
@@ -7896,7 +7896,16 @@ var unpackStateValue = async (value) => {
   const raw = await streamThrough(gz, new DecompressionStream("gzip"));
   return new TextDecoder().decode(raw);
 };
+var DATE_ENCOUNTER_MAX_AGE_MS = 12 * 60 * 6e4;
+var isDateEncounterOngoing = (encounter, nowMs) => {
+  if (!encounter || encounter.status !== "active") return false;
+  const updatedAt = typeof encounter.updatedAt === "number" && Number.isFinite(encounter.updatedAt) ? encounter.updatedAt : encounter.startedAt;
+  if (typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) return false;
+  if (updatedAt > nowMs + 6e4) return false;
+  return nowMs - updatedAt <= DATE_ENCOUNTER_MAX_AGE_MS;
+};
 var AMSG_LAST_SKIP_KEY = "last_skip";
+var AMSG_NATURAL_LAST_CHECK_KEY = "natural_last_check";
 var AMSG_SLOT_CURRENT_TIME = "{{AMSG_CURRENT_TIME}}";
 var AMSG_SLOT_TIME_SINCE_USER = "{{AMSG_TIME_SINCE_USER}}";
 var AMSG_SLOT_AWAY_HINT = "{{AMSG_AWAY_HINT}}";
@@ -8296,7 +8305,14 @@ var AVATAR_FACES = [
   "smile-eyes",
   "brow-up",
   "brow-sad",
-  "brow-angry"
+  "brow-angry",
+  // 下面五个走 Cubism 的可选脸部参数。模型没有对应参数时写入会被引擎忽略，
+  // 不会报错也不会串到别的部件上，所以对不支持的模型是安全的空操作。
+  "teeth",
+  "bite-lip",
+  "fluster",
+  "pupils-wide",
+  "pupils-small"
 ];
 var DEFAULT_AVATAR_PERFORMANCE = {
   emotion: "calm",
@@ -8367,7 +8383,22 @@ var FACE_ALIASES = {
   "worried-brow": "brow-sad",
   frown: "brow-angry",
   "angry-brow": "brow-angry",
-  glare: "brow-angry"
+  glare: "brow-angry",
+  "open-mouth-smile": "teeth",
+  toothy: "teeth",
+  "show-teeth": "teeth",
+  bitelip: "bite-lip",
+  "lip-bite": "bite-lip",
+  biting: "bite-lip",
+  flustered: "fluster",
+  bashful: "fluster",
+  "deep-blush": "fluster",
+  "pupil-wide": "pupils-wide",
+  "wide-pupils": "pupils-wide",
+  sparkle: "pupils-wide",
+  "pupil-small": "pupils-small",
+  "small-pupils": "pupils-small",
+  shocked: "pupils-small"
 };
 var CAMERA_ALIASES = {
   closeup: "close",
@@ -8455,7 +8486,7 @@ var extractAvatarPerformanceTimeline = (raw) => {
 };
 
 // utils/callReplyFormat.ts
-var stripCallTextFormatting = (raw) => (raw || "").replace(/```(?:[a-z0-9_-]+)?\s*/gi, "").replace(/```/g, "").replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\[([^\]]+)\]\((?:https?:\/\/|\/)[^)]*\)/g, "$1").replace(/^(?:\s{0,3}#{1,6}\s+|\s{0,3}>\s?|\s*[-+*]\s+)/gm, "").replace(/(\*\*|__)([\s\S]*?)\1/g, "$2").replace(/([*_~`])([^\n]*?)\1/g, "$2").replace(/[\t ]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+var stripCallTextFormatting = (raw) => (raw || "").replace(/```(?:[a-z0-9_-]+)?\s*/gi, "").replace(/```/g, "").replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\[([^\]]+)\]\((?:https?:\/\/|\/)[^)]*\)/g, "$1").replace(/^(?:\s{0,3}#{1,6}\s+|\s{0,3}>\s?|\s*[-+*]\s+)/gm, "").replace(/(\*\*|__)([\s\S]*?)\1/g, "$2").replace(/([*_~`])([^\n]*?)\1/g, "$2").replace(/\s*(?:\[\s*(?:聊天|通话|约会)\s*\]|【\s*(?:聊天|通话|约会)\s*】)\s*/g, "\n").replace(/[\t ]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 var readContent = (content) => {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -8903,6 +8934,13 @@ var log = makeDebugLogger("api", "SafeAPI");
 // utils/naturalProactive.ts
 var NATURAL_UNANSWERED_HARD_CAP = 20;
 var naturalUnansweredHardCap = (_intensity) => NATURAL_UNANSWERED_HARD_CAP;
+var NATURAL_UNANSWERED_PENALTY_PER_MSG = 0.08;
+var NATURAL_UNANSWERED_PENALTY_CAP = 0.24;
+var naturalSilenceIntensity = (hoursSilent, saturationHours) => {
+  const ratio = Math.max(0, hoursSilent) / Math.max(0.5, saturationHours);
+  if (ratio <= 1) return clamp(ratio, 0, 1);
+  return 1 + clamp(Math.log2(ratio) * 0.5, 0, 1);
+};
 var NATURAL_BATCH_HARD_CAP = 20;
 var naturalCheckWindowMinutes = (intensity, random01) => {
   const safeRandom = clamp(random01, 0, 0.999999);
@@ -8920,7 +8958,7 @@ var isQuietHour = (hour, [start, end]) => start === end ? false : start < end ? 
 var decideNaturalProactive = (input) => {
   const { profile } = input;
   const hoursSilent = input.lastUserMessageAt == null ? profile.silenceSaturationHours : Math.max(0, input.nowMs - input.lastUserMessageAt) / 36e5;
-  const silence = clamp(hoursSilent / profile.silenceSaturationHours, 0, 1);
+  const silence = naturalSilenceIntensity(hoursSilent, profile.silenceSaturationHours);
   const hour = hourInZone(input.nowMs, input.tzId);
   const quiet = isQuietHour(hour, profile.quietHours);
   const recentSendMinutes = input.recentSelfSendAts.length ? (input.nowMs - Math.max(...input.recentSelfSendAts)) / 6e4 : Infinity;
@@ -8943,7 +8981,10 @@ var decideNaturalProactive = (input) => {
     reasons.push("\u8FD1\u671F\u4E3B\u52A8\u8054\u7CFB\u8FC7");
   }
   if (input.unansweredCount > 0) {
-    score -= Math.min(0.45, input.unansweredCount * 0.16);
+    score -= Math.min(
+      NATURAL_UNANSWERED_PENALTY_CAP,
+      input.unansweredCount * NATURAL_UNANSWERED_PENALTY_PER_MSG
+    );
     reasons.push(`\u5DF2\u6709 ${input.unansweredCount} \u6761\u672A\u83B7\u56DE\u590D`);
   }
   const intensityShift = input.intensity === "low" ? 0.12 : input.intensity === "high" ? -0.1 : 0;
@@ -13556,6 +13597,16 @@ var writeLastSkip = async (writeState, charId, skip) => {
     console.warn("[amsg:skip] \u8DF3\u8FC7\u539F\u56E0\u5199\u5165\u5931\u8D25\uFF08\u8DF3\u8FC7\u672C\u8EAB\u7167\u5E38\u751F\u6548\uFF0C\u53EA\u662F\u9762\u677F\u5C11\u4E00\u53E5\u8BF4\u660E\uFF09", error);
   }
 };
+var writeNaturalLastCheck = async (writeState, charId, check) => {
+  if (typeof writeState !== "function") return;
+  try {
+    await writeState(amsgStateNamespace(charId), [
+      { key: AMSG_NATURAL_LAST_CHECK_KEY, value: JSON.stringify(check) }
+    ]);
+  } catch (error) {
+    console.warn("[amsg:natural] \u672C\u6B21\u8003\u8651\u7ED3\u679C\u5199\u5165\u5931\u8D25\uFF08\u51B3\u5B9A\u7167\u5E38\u751F\u6548\uFF0C\u53EA\u662F\u9762\u677F\u5C11\u4E00\u53E5\u8BF4\u660E\uFF09", error);
+  }
+};
 var recordSkip = async (ctx, charId, reason, occurrenceMs) => writeLastSkip(ctx.writeState, charId, {
   v: 1,
   taskUuid: typeof ctx.task.uuid === "string" ? ctx.task.uuid : null,
@@ -14189,15 +14240,34 @@ var amsgHooks = {
           amsgTaskInstruction: "\u8FD9\u662F\u89D2\u8272\u81EA\u7136\u4EA7\u751F\u7684\u8054\u7CFB\u51B2\u52A8\uFF0C\u4E0D\u662F\u7528\u6237\u9881\u5E03\u7684\u4EFB\u52A1\u3002\u7ED3\u5408\u4EBA\u8BBE\u3001\u5173\u7CFB\u3001\u6700\u8FD1\u4E0A\u4E0B\u6587\u548C\u6B64\u523B\u751F\u6D3B\u72B6\u6001\uFF0C\u50CF\u771F\u4EBA\u4E00\u6837\u53D1\u4E00\u5230\u4E09\u53E5\u771F\u6B63\u6B64\u523B\u60F3\u8BF4\u7684\u8BDD\uFF1B\u53EF\u4EE5\u5F88\u8F7B\u3001\u5F88\u77ED\uFF0C\u4E0D\u8981\u89E3\u91CA\u7CFB\u7EDF\u5224\u65AD\uFF0C\u4E5F\u4E0D\u8981\u8BF4\u81EA\u5DF1\u88AB\u5B9A\u65F6\u5524\u9192\u3002"
         }
       });
-      if (pack.activeDateEncounter?.status === "active") {
+      const noteCheck = (sent, skipReason) => writeNaturalLastCheck(ctx.writeState, charId, {
+        v: 1,
+        checkedAt: ctx.now.getTime(),
+        score: decision.score,
+        threshold: decision.threshold,
+        sent,
+        skipReason,
+        reasons: decision.reasons,
+        nextCheckAt: nextAt
+      });
+      if (isDateEncounterOngoing(pack.activeDateEncounter, ctx.now.getTime())) {
         console.log("[amsg:natural-skip]", {
           taskId: ctx.task.id,
           charId,
           reason: "active-date-presence",
-          encounterId: pack.activeDateEncounter.encounterId
+          encounterId: pack.activeDateEncounter?.encounterId
         });
         await recordSkip(ctx, charId, "active-date-presence", occurrenceMs);
+        await noteCheck(false, "active-date-presence");
         return { skip: true };
+      }
+      if (pack.activeDateEncounter?.status === "active") {
+        console.warn("[amsg:natural-stale-date]", {
+          taskId: ctx.task.id,
+          charId,
+          encounterId: pack.activeDateEncounter.encounterId,
+          updatedAt: pack.activeDateEncounter.updatedAt
+        });
       }
       console.log("[amsg:natural-decision]", {
         taskId: ctx.task.id,
@@ -14217,13 +14287,19 @@ var amsgHooks = {
           limit: naturalHardCap
         });
         await recordSkip(ctx, charId, "unanswered-limit", occurrenceMs);
+        await noteCheck(false, "unanswered-limit");
         return { skip: true };
       }
       if (isFreshChatPresence(presence, charId, ctx.now.getTime())) {
         console.log("[amsg:natural-skip]", { taskId: ctx.task.id, charId, reason: "active-chat-presence" });
+        await noteCheck(false, "active-chat-presence");
         return { skip: true };
       }
-      if (!decision.shouldSend) return { skip: true };
+      if (!decision.shouldSend) {
+        await noteCheck(false, "low-score");
+        return { skip: true };
+      }
+      await noteCheck(true, null);
     }
     const maxUnansweredSends = resolveMaxUnansweredSends(pack.maxUnansweredSends);
     if (!instant && taskMeta.amsgSelfScheduled === true && countUnansweredSends(selfLog) >= maxUnansweredSends) {
@@ -14872,6 +14948,8 @@ var judgeTick = (storage) => {
   return "stalled";
 };
 var INSTANT_TICK_UUID_KEY = "taskUuid";
+var SCHEDULED_TICK_KEY = "scheduledTick";
+var SCHEDULED_TICK_INSTANCE_NAME = "__amsg-cron__";
 var upstream = createSingleUserCloudflareWorker(buildWorkerConfig, {
   /**
    * cron 那条路上没有调用方能看到错误响应——上游把异常 catch 掉之后，整轮就这么无声
@@ -14906,10 +14984,25 @@ var InstantTickDO = class extends DurableObject {
     if (await this.ctx.storage.getAlarm() !== null) return;
     await this.ctx.storage.setAlarm(Date.now());
   }
+  /**
+   * Cron 的轻量起跳。scheduled() 自己只做一次 DO RPC，避免在 Cloudflare Free 计划的
+   * 10ms Cron CPU 限额里执行 buildWorkerConfig / D1 扫描 / Web Crypto。事件只有两个
+   * 原始字段，安全地落在 DO storage 里；下一分钟若上一跳被杀掉，Cron 会再次覆盖并
+   * 叫醒这个 singleton，因而不会丢任务。
+   */
+  async kickScheduled(event) {
+    await this.ctx.storage.put(SCHEDULED_TICK_KEY, {
+      scheduledTime: event.scheduledTime,
+      cron: event.cron
+    });
+    if (await this.ctx.storage.getAlarm() !== null) return;
+    await this.ctx.storage.setAlarm(Date.now());
+  }
   /** 独立 invocation，15 分钟墙钟。跑挂了不重设 alarm——下一分钟的 cron 会接着捡。 */
   async alarm() {
     const uuid = await this.ctx.storage.get(INSTANT_TICK_UUID_KEY);
-    if (!uuid) {
+    const scheduled = await this.ctx.storage.get(SCHEDULED_TICK_KEY);
+    if (!uuid && !scheduled) {
       console.error("[amsg:instant-tick] alarm \u9192\u4E86\u5374\u4E0D\u77E5\u9053\u8981\u8DD1\u54EA\u6761\uFF0C\u8DF3\u8FC7\uFF08\u7B49 cron \u515C\u5E95\uFF09");
       return;
     }
@@ -14918,6 +15011,14 @@ var InstantTickDO = class extends DurableObject {
       console.error(`[amsg:instant-tick] \u6574\u8F6E\u8DF3\u8FC7\uFF1A${report.message}`);
       return;
     }
+    if (scheduled) {
+      await this.ctx.storage.delete(SCHEDULED_TICK_KEY);
+      const result2 = await upstream.scheduled(scheduled, this.env);
+      if (result2 && typeof result2 === "object" && "ok" in result2 && !result2.ok) {
+        console.warn("[amsg:instant-tick] cron tick \u8FD4\u56DE\u5931\u8D25\uFF0C\u7B49\u4E0B\u4E00\u5206\u949F\u91CD\u8BD5");
+      }
+    }
+    if (!uuid) return;
     const result = await upstream.runTask(uuid, this.env);
     await this.ctx.storage.delete(INSTANT_TICK_UUID_KEY);
     if (!result.ran) {
@@ -15040,6 +15141,17 @@ var src_default = {
     if (!report.ok) {
       console.error(`[amsg] \u5B9A\u65F6\u4EFB\u52A1\u6574\u8F6E\u8DF3\u8FC7\uFF1A${report.message}`);
       return;
+    }
+    const namespace = env.INSTANT_TICK;
+    const stub = namespace && typeof namespace.idFromName === "function" && typeof namespace.get === "function" ? namespace.get(namespace.idFromName(SCHEDULED_TICK_INSTANCE_NAME)) : null;
+    if (stub && typeof stub.kickScheduled === "function") {
+      try {
+        await stub.kickScheduled(event);
+        return;
+      } catch (error) {
+        console.error("[amsg] \u5B9A\u65F6\u4EFB\u52A1\u8D77\u8DF3 DO \u5931\u8D25\uFF0C\u4E0B\u4E00\u5206\u949F\u91CD\u8BD5\uFF1A", error && error.message);
+        return;
+      }
     }
     await upstream.scheduled(event, env);
   }

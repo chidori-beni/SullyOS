@@ -617,7 +617,7 @@ var init_mcpFireCore = __esm({
 // worker/amsg/src/index.ts
 import { DurableObject } from "cloudflare:workers";
 
-// node_modules/@rei-standard/amsg-server/dist/chunk-GN44PST5.mjs
+// node_modules/.pnpm/@rei-standard+amsg-server@2_c57770165a8a2256e4acaa4bae2ba803/node_modules/@rei-standard/amsg-server/dist/chunk-GN44PST5.mjs
 var UPDATABLE_COLUMNS = /* @__PURE__ */ new Set([
   "user_id",
   "uuid",
@@ -636,7 +636,7 @@ var UPDATABLE_COLUMNS = /* @__PURE__ */ new Set([
 var TASK_DELIVERY_COLUMNS = "id, user_id, uuid, encrypted_payload, message_type, next_send_at, retry_after, status, retry_count";
 var TASK_DETAIL_COLUMNS = "id, user_id, uuid, encrypted_payload, message_type, next_send_at, status, retry_count, last_error, created_at, updated_at";
 
-// node_modules/@rei-standard/amsg-shared/dist/index.mjs
+// node_modules/.pnpm/@rei-standard+amsg-shared@0.4.0-next.8/node_modules/@rei-standard/amsg-shared/dist/index.mjs
 var TEXT_ENCODER = new TextEncoder();
 var TEXT_DECODER = new TextDecoder("utf-8", { fatal: false });
 function toUint8(buf) {
@@ -1735,7 +1735,7 @@ function stringifyDecisionForError(value) {
   }
 }
 
-// node_modules/@rei-standard/amsg-server/dist/chunk-3JEWYDM4.mjs
+// node_modules/.pnpm/@rei-standard+amsg-server@2_c57770165a8a2256e4acaa4bae2ba803/node_modules/@rei-standard/amsg-server/dist/chunk-3JEWYDM4.mjs
 var DAY_MS = 24 * 60 * 60 * 1e3;
 var MAX_LISTED_SKIPPED_OCCURRENCES = 32;
 var MAX_ADJUST_STEPS = 32;
@@ -7384,7 +7384,7 @@ function createSingleUserCloudflareWorker(buildConfig, options = {}) {
 }
 
 // utils/amsgBundleVersion.ts
-var AMSG_BUNDLE_VERSION = "2026-08-28.1";
+var AMSG_BUNDLE_VERSION = "2026-08-30.1";
 
 // utils/amsgTaskKinds.ts
 var AMSG_TASK_KIND_KEY = "amsgKind";
@@ -8305,7 +8305,14 @@ var AVATAR_FACES = [
   "smile-eyes",
   "brow-up",
   "brow-sad",
-  "brow-angry"
+  "brow-angry",
+  // 下面五个走 Cubism 的可选脸部参数。模型没有对应参数时写入会被引擎忽略，
+  // 不会报错也不会串到别的部件上，所以对不支持的模型是安全的空操作。
+  "teeth",
+  "bite-lip",
+  "fluster",
+  "pupils-wide",
+  "pupils-small"
 ];
 var DEFAULT_AVATAR_PERFORMANCE = {
   emotion: "calm",
@@ -8376,7 +8383,22 @@ var FACE_ALIASES = {
   "worried-brow": "brow-sad",
   frown: "brow-angry",
   "angry-brow": "brow-angry",
-  glare: "brow-angry"
+  glare: "brow-angry",
+  "open-mouth-smile": "teeth",
+  toothy: "teeth",
+  "show-teeth": "teeth",
+  bitelip: "bite-lip",
+  "lip-bite": "bite-lip",
+  biting: "bite-lip",
+  flustered: "fluster",
+  bashful: "fluster",
+  "deep-blush": "fluster",
+  "pupil-wide": "pupils-wide",
+  "wide-pupils": "pupils-wide",
+  sparkle: "pupils-wide",
+  "pupil-small": "pupils-small",
+  "small-pupils": "pupils-small",
+  shocked: "pupils-small"
 };
 var CAMERA_ALIASES = {
   closeup: "close",
@@ -12082,7 +12104,7 @@ var buildDuplicateToolMessage = (name) => [
 // worker/amsg/src/index.ts
 init_proxyWorker();
 
-// node_modules/@rei-standard/amsg-instant/dist/index.mjs
+// node_modules/.pnpm/@rei-standard+amsg-instant@0.11.0-next.6/node_modules/@rei-standard/amsg-instant/dist/index.mjs
 var PUSH_PAYLOAD_BYTE_ENCODER = new TextEncoder();
 function segmentTextWithProtectedBlocks(text, options) {
   if (!text) return [];
@@ -14926,6 +14948,8 @@ var judgeTick = (storage) => {
   return "stalled";
 };
 var INSTANT_TICK_UUID_KEY = "taskUuid";
+var SCHEDULED_TICK_KEY = "scheduledTick";
+var SCHEDULED_TICK_INSTANCE_NAME = "__amsg-cron__";
 var upstream = createSingleUserCloudflareWorker(buildWorkerConfig, {
   /**
    * cron 那条路上没有调用方能看到错误响应——上游把异常 catch 掉之后，整轮就这么无声
@@ -14960,10 +14984,25 @@ var InstantTickDO = class extends DurableObject {
     if (await this.ctx.storage.getAlarm() !== null) return;
     await this.ctx.storage.setAlarm(Date.now());
   }
+  /**
+   * Cron 的轻量起跳。scheduled() 自己只做一次 DO RPC，避免在 Cloudflare Free 计划的
+   * 10ms Cron CPU 限额里执行 buildWorkerConfig / D1 扫描 / Web Crypto。事件只有两个
+   * 原始字段，安全地落在 DO storage 里；下一分钟若上一跳被杀掉，Cron 会再次覆盖并
+   * 叫醒这个 singleton，因而不会丢任务。
+   */
+  async kickScheduled(event) {
+    await this.ctx.storage.put(SCHEDULED_TICK_KEY, {
+      scheduledTime: event.scheduledTime,
+      cron: event.cron
+    });
+    if (await this.ctx.storage.getAlarm() !== null) return;
+    await this.ctx.storage.setAlarm(Date.now());
+  }
   /** 独立 invocation，15 分钟墙钟。跑挂了不重设 alarm——下一分钟的 cron 会接着捡。 */
   async alarm() {
     const uuid = await this.ctx.storage.get(INSTANT_TICK_UUID_KEY);
-    if (!uuid) {
+    const scheduled = await this.ctx.storage.get(SCHEDULED_TICK_KEY);
+    if (!uuid && !scheduled) {
       console.error("[amsg:instant-tick] alarm \u9192\u4E86\u5374\u4E0D\u77E5\u9053\u8981\u8DD1\u54EA\u6761\uFF0C\u8DF3\u8FC7\uFF08\u7B49 cron \u515C\u5E95\uFF09");
       return;
     }
@@ -14972,6 +15011,14 @@ var InstantTickDO = class extends DurableObject {
       console.error(`[amsg:instant-tick] \u6574\u8F6E\u8DF3\u8FC7\uFF1A${report.message}`);
       return;
     }
+    if (scheduled) {
+      await this.ctx.storage.delete(SCHEDULED_TICK_KEY);
+      const result2 = await upstream.scheduled(scheduled, this.env);
+      if (result2 && typeof result2 === "object" && "ok" in result2 && !result2.ok) {
+        console.warn("[amsg:instant-tick] cron tick \u8FD4\u56DE\u5931\u8D25\uFF0C\u7B49\u4E0B\u4E00\u5206\u949F\u91CD\u8BD5");
+      }
+    }
+    if (!uuid) return;
     const result = await upstream.runTask(uuid, this.env);
     await this.ctx.storage.delete(INSTANT_TICK_UUID_KEY);
     if (!result.ran) {
@@ -15094,6 +15141,17 @@ var src_default = {
     if (!report.ok) {
       console.error(`[amsg] \u5B9A\u65F6\u4EFB\u52A1\u6574\u8F6E\u8DF3\u8FC7\uFF1A${report.message}`);
       return;
+    }
+    const namespace = env.INSTANT_TICK;
+    const stub = namespace && typeof namespace.idFromName === "function" && typeof namespace.get === "function" ? namespace.get(namespace.idFromName(SCHEDULED_TICK_INSTANCE_NAME)) : null;
+    if (stub && typeof stub.kickScheduled === "function") {
+      try {
+        await stub.kickScheduled(event);
+        return;
+      } catch (error) {
+        console.error("[amsg] \u5B9A\u65F6\u4EFB\u52A1\u8D77\u8DF3 DO \u5931\u8D25\uFF0C\u4E0B\u4E00\u5206\u949F\u91CD\u8BD5\uFF1A", error && error.message);
+        return;
+      }
     }
     await upstream.scheduled(event, env);
   }

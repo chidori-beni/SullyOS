@@ -221,11 +221,19 @@ export interface InstantChatUpstream {
 /**
  * 起跳用的 Durable Object namespace binding（`INSTANT_TICK`）。
  *
- * 只声明这里真正会调的两个方法：包装层不需要完整的 DO 类型，单测也就能拿个字面量当替身。
+ * 只声明这里真正会调的两个起跳方法：包装层不需要完整的 DO 类型，单测也就能拿个字面量当替身。
  */
 export interface InstantTickNamespace {
   idFromName(name: string): unknown;
-  get(id: unknown): { kick(uuid: string): Promise<unknown> };
+  get(id: unknown): {
+    kick(uuid: string): Promise<unknown>;
+    /**
+     * Cron 入口的轻量起跳：只把定时事件交给同一个 DO 的 alarm，真正的整轮
+     * runScheduledTick 在 alarm invocation 里执行，避免 Free 计划 Cron 的 10ms
+     * CPU 上限直接把每一跳杀掉。老 Worker 没这个方法时由入口回退到原路径。
+     */
+    kickScheduled?(event: { scheduledTime: number; cron: string }): Promise<unknown>;
+  };
 }
 
 interface InstantChatEnv {

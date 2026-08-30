@@ -1,8 +1,8 @@
 /**
  * SullyOS 主动消息 2.0（amsg2）— 单用户 Cloudflare Worker 入口。
  *
- * 定时任务存 D1（binding 名固定 `DB`），到点投递由 Cron Trigger 触发
- * scheduled()，没有 send-notifications 这类 HTTP 投递端点。
+ * 定时任务存 D1（binding 名固定 `DB`），到点由 Cron Trigger 轻量叫醒
+ * Durable Object，再在 alarm invocation 里投递；没有 send-notifications 这类 HTTP 投递端点。
  *
  * 部署走「Dashboard 粘贴」：`pnpm build:workers` 把这份入口打成
  * worker/amsg/worker.bundle.js（+ public/amsg-worker.bundle.js 供设置页
@@ -3031,8 +3031,16 @@ const judgeTick = (storage: Awaited<ReturnType<typeof inspectStorage>>) => {
   return 'stalled';
 };
 
-/** DO 存「这个实例负责哪条任务」用的 storage 键。 */
+/** DO 存「这个实例负责哪条即时任务」用的 storage 键。 */
 const INSTANT_TICK_UUID_KEY = 'taskUuid';
+
+/**
+ * Cron 不再在 10ms 的 scheduled invocation 里直接扫 D1/解密/推送，而是把这一跳
+ * 交给同一个已存在的 Durable Object namespace。固定名字对应一个专门的 singleton
+ * 实例；即时对话仍按任务 uuid 分实例，所以两条路互不排队。
+ */
+const SCHEDULED_TICK_KEY = 'scheduledTick';
+const SCHEDULED_TICK_INSTANCE_NAME = '__amsg-cron__';
 
 const upstream = createSingleUserCloudflareWorker(buildWorkerConfig, {
   /**
@@ -3080,10 +3088,11 @@ const inspectSchema = async (env: Env): Promise<{ schema: SchemaProbe; error: Am
  * Cron Trigger、Queue consumer、DO alarm，都是 15 分钟。这里选 DO 是因为它不用预建
  * 任何资源（namespace 随 Worker 上传自动创建），一键部署那条路一个额外 API 调用都不用加。
  *
- * **一条任务一个实例**（实例名 = 任务 uuid），所以几条聊天同时在跑互不排队。
+ * **一条即时任务一个实例**（实例名 = 任务 uuid），所以几条聊天同时在跑互不排队。
  * 每个实例只碰自己那一条（`upstream.runTask(uuid)`），不会去扫别人的任务。
  *
- * cron 仍然留着：它是所有定时任务的正常投递通道，同时也是这一跳万一没跑成时的兜底。
+ * Cron 也复用这个类的固定 singleton 实例：它只负责叫醒，真正的整轮扫描在 alarm
+ * 里执行；这样定时任务不再撞上 Free 计划 Cron 的 10ms CPU 上限。
  */
 export class InstantTickDO extends DurableObject<Env> {
   /**
@@ -3098,10 +3107,26 @@ export class InstantTickDO extends DurableObject<Env> {
     await this.ctx.storage.setAlarm(Date.now());
   }
 
+  /**
+   * Cron 的轻量起跳。scheduled() 自己只做一次 DO RPC，避免在 Cloudflare Free 计划的
+   * 10ms Cron CPU 限额里执行 buildWorkerConfig / D1 扫描 / Web Crypto。事件只有两个
+   * 原始字段，安全地落在 DO storage 里；下一分钟若上一跳被杀掉，Cron 会再次覆盖并
+   * 叫醒这个 singleton，因而不会丢任务。
+   */
+  async kickScheduled(event: CfScheduledEvent): Promise<void> {
+    await this.ctx.storage.put(SCHEDULED_TICK_KEY, {
+      scheduledTime: event.scheduledTime,
+      cron: event.cron,
+    });
+    if ((await this.ctx.storage.getAlarm()) !== null) return;
+    await this.ctx.storage.setAlarm(Date.now());
+  }
+
   /** 独立 invocation，15 分钟墙钟。跑挂了不重设 alarm——下一分钟的 cron 会接着捡。 */
   async alarm(): Promise<void> {
     const uuid = await this.ctx.storage.get<string>(INSTANT_TICK_UUID_KEY);
-    if (!uuid) {
+    const scheduled = await this.ctx.storage.get<CfScheduledEvent>(SCHEDULED_TICK_KEY);
+    if (!uuid && !scheduled) {
       console.error('[amsg:instant-tick] alarm 醒了却不知道要跑哪条，跳过（等 cron 兜底）');
       return;
     }
@@ -3110,6 +3135,18 @@ export class InstantTickDO extends DurableObject<Env> {
       console.error(`[amsg:instant-tick] 整轮跳过：${report.message}`);
       return;
     }
+
+    if (scheduled) {
+      // 先摘掉这次标记：如果整轮中途被平台回收，下一分钟的 Cron 会重新写入并重试；
+      // 不在同一 alarm invocation 里重复跑同一轮。
+      await this.ctx.storage.delete(SCHEDULED_TICK_KEY);
+      const result = await upstream.scheduled(scheduled, this.env);
+      if (result && typeof result === 'object' && 'ok' in result && !(result as { ok?: unknown }).ok) {
+        console.warn('[amsg:instant-tick] cron tick 返回失败，等下一分钟重试');
+      }
+    }
+
+    if (!uuid) return;
     // 跑完就把 uuid 清掉：这个实例的活儿到此为止，留着只会让下一次 kick 分不清新旧。
     // 放在 runTask 之前清是不行的——中途被回收就查不出这条到底跑没跑。
     const result = await upstream.runTask(uuid, this.env);
@@ -3151,8 +3188,8 @@ const readServerVersion = async (request: Request, env: Env) => {
  *   其它请求            配置不全时直接 503 + 说明缺什么，不进上游
  */
 // 两个 handler 都只收 (request/event, env)：CF 还会给第三个参数 ctx，但这里用不上——
-// /instant-chat 回完 202 之后的那一跳跑在 InstantTickDO 的 alarm 里，不占这个请求的
-// 生命周期（waitUntil 只有 30 秒，见 InstantTickDO 的注释）。
+// /instant-chat 回完 202 之后的那一跳，以及 Cron 的整轮扫描，都跑在 InstantTickDO 的
+// alarm 里，不占这个请求的生命周期（waitUntil 只有 30 秒，见 InstantTickDO 的注释）。
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const pathname = new URL(request.url).pathname.replace(/\/+$/, '') || '/';
@@ -3283,15 +3320,33 @@ export default {
   },
 
   async scheduled(event: CfScheduledEvent, env: Env): Promise<void> {
-    // 定时任务这条路没人看得见，配置不全时上游只会抛一个堆栈。写明白点，
-    // wrangler tail 里一眼能看出是配置问题还是任务本身挂了。
+    // scheduled invocation 在 Free 计划只有 10ms CPU；这里只做轻量自检 + 一次 DO RPC，
+    // 不再直接进上游的 D1 扫描 / 解密 / 推送整轮。真正的工作见 InstantTickDO.alarm。
+    // 配置不全时仍在这里明说，避免把坏配置写进 DO 以后只看到下一跳失败。
     const report = inspectWorkerEnv(env);
     if (!report.ok) {
       console.error(`[amsg] 定时任务整轮跳过：${report.message}`);
       return;
     }
-    // 整轮出错时上游把原因放在返回值里（同一份也会经 onError 记一行）。这里不再重复
-    // 打印，但要把它咽掉——CF 不看 scheduled 的返回值，往外抛只会变成一条没上下文的堆栈。
+
+    const namespace = env.INSTANT_TICK;
+    const stub = namespace && typeof namespace.idFromName === 'function' && typeof namespace.get === 'function'
+      ? namespace.get(namespace.idFromName(SCHEDULED_TICK_INSTANCE_NAME))
+      : null;
+    if (stub && typeof stub.kickScheduled === 'function') {
+      try {
+        await stub.kickScheduled(event);
+        return;
+      } catch (error) {
+        // 不在 10ms 的 Cron invocation 里回退执行整轮：那会再次触发 exceededCpu。
+        // 下一分钟会重新叫醒 singleton；把本次 RPC 失败留在日志里即可。
+        console.error('[amsg] 定时任务起跳 DO 失败，下一分钟重试：', error && (error as Error).message);
+        return;
+      }
+    }
+
+    // 兼容尚未建 INSTANT_TICK 的旧部署。新部署一定走上面的轻量路径；旧部署只能
+    // 继续原地执行，用户更新 Worker 后就会自动切到 DO。
     await upstream.scheduled(event, env);
   },
 };
