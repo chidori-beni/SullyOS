@@ -524,7 +524,9 @@ const Messaging: React.FC = () => {
     };
 
     const openMomentNotifications = () => {
-        const viewedAt = Date.now();
+        // Mark everything currently shown as read. Interaction timestamps can be
+        // a few milliseconds ahead of Date.now() when a batch is being applied.
+        const viewedAt = Math.max(Date.now(), ...momentNotifications.map(item => item.timestamp));
         setMomentLastViewedAt(viewedAt);
         setMomentNotificationsOpen(true);
         DB.saveAsset('messaging_moments_notif_viewed_at', String(viewedAt)).catch(() => undefined);
@@ -1027,9 +1029,9 @@ const Messaging: React.FC = () => {
             <div className="nj-moments-header-sticky" data-scrolled="false"><div className="nj-moments-header-title">朋友圈</div></div>
             <div className="nj-moments-decor-top" aria-hidden="true" />
             <div className="nj-moments-cover-wrap"><div className="nj-moments-cover" style={profile.cover ? { backgroundImage: `url(${JSON.stringify(profile.cover)})` } : undefined}><div className="nj-moments-cover-gradient" /></div><div className="nj-moments-cover-userinfo"><div className="nj-moments-cover-username">{profile.name || '我'}</div><div className="nj-moments-cover-avatar"><img src={profile.avatar || userProfile.avatar} alt="" /></div></div></div>
-            {!!momentNotifications.length && <div className="nj-moments-notif-entry" role="button" tabIndex={0} onClick={openMomentNotifications} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') openMomentNotifications(); }}>
-                <div className="nj-moments-notif-avatar"><img src={momentNotifications[0].avatar || characters.find(char => char.id === momentNotifications[0].charId)?.avatar || userProfile.avatar} alt="" />{unseenMomentNotifications.length > 0 && <span>{unseenMomentNotifications.length > 99 ? '99+' : unseenMomentNotifications.length}</span>}</div>
-                <div className="nj-moments-notif-summary">{unseenMomentNotifications.length > 0 ? `${unseenMomentNotifications.length} 条新消息` : '查看朋友圈消息'}</div>
+            {!!unseenMomentNotifications.length && <div className="nj-moments-notif-entry" role="button" tabIndex={0} onClick={openMomentNotifications} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') openMomentNotifications(); }}>
+                <div className="nj-moments-notif-avatar"><img src={unseenMomentNotifications[0].avatar || characters.find(char => char.id === unseenMomentNotifications[0].charId)?.avatar || userProfile.avatar} alt="" /><span>{unseenMomentNotifications.length > 99 ? '99+' : unseenMomentNotifications.length}</span></div>
+                <div className="nj-moments-notif-summary">{`${unseenMomentNotifications.length} 条新消息`}</div>
                 <CaretLeft className="nj-moments-notif-caret" />
             </div>}
             <div className="nj-moments-decor-mid" aria-hidden="true" />
