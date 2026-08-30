@@ -635,7 +635,8 @@
 .nj-profile-info-bar { margin-top:18px; display:grid; grid-template-columns:repeat(auto-fit,minmax(95px,1fr)); gap:1px; overflow:hidden; border:1px solid rgba(15,23,42,.06); border-radius:15px; background:rgba(255,255,255,.8); }
 .nj-profile-info-item { min-width:0; display:flex; align-items:center; gap:8px; padding:11px; }
 .nj-profile-info-icon { width:28px; height:28px; flex:none; display:grid; place-items:center; border-radius:50%; background:#fff; }
-.nj-profile-info-label,.nj-profile-info-value { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.nj-profile-info-label { display:block; white-space:nowrap; }
+.nj-profile-info-value { display:block; overflow-wrap:anywhere; }
 .nj-profile-info-label { color:#a0a1a6; font-size:9px; }
 .nj-profile-info-value { margin-top:2px; font-size:11px; font-weight:650; }
 .nj-profile-about,.nj-profile-gallery { display:block; margin-top:22px; }
@@ -862,6 +863,9 @@
 .nj-chat-tab-list { min-height: auto; overflow: visible; padding-bottom: 80px; }
 
 .nj-moments-header {
+  /* 不能沿用共享规则的 grid：朋友圈 header 只有一个子节点，
+     会掉进 48px 的第一列，三个按钮会从左侧溢出屏幕。 */
+  display: block;
   position: absolute;
   z-index: 20;
   top: 0;
@@ -955,8 +959,8 @@
 .nj-profile-identity { margin-top: 0; display: flex; flex-direction: column; gap: 6px; }
 .nj-profile-name { font-size: 13px; font-weight: 600; }
 .nj-profile-signature { margin-top: 4px; font-size: 13px; line-height: 1.4; }
-.nj-profile-info-bar { display: flex; align-items: center; justify-content: space-between; gap: 0; margin: 0 16px 24px; padding: 16px 20px; border-radius: 16px; }
-.nj-profile-info-item { flex: 1; gap: 12px; padding: 0; }
+.nj-profile-info-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 0; margin: 0 16px 24px; padding: 16px 20px; border-radius: 16px; }
+.nj-profile-info-item { min-width: 0; flex: 0 1 auto; gap: 12px; padding: 0; }
 .nj-profile-info-location { justify-content: flex-end; }
 .nj-profile-info-location .nj-profile-info-text { text-align: right; }
 .nj-profile-info-icon { width: 32px; height: 32px; }
