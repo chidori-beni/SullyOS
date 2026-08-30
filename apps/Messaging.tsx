@@ -51,7 +51,7 @@ import { ContextBuilder } from '../utils/context';
 import { processImage } from '../utils/file';
 import { buildSelfiePrompt, generateImageDataUrl, getImageGenConfig, isImageGenReady } from '../utils/novelaiImage';
 import { safeResponseJson } from '../utils/safeApi';
-import { isMomentsPost, withSocialPostScope } from '../utils/socialPostScope';
+import { getSocialPostScope, isMomentsPost, withSocialPostScope } from '../utils/socialPostScope';
 import {
     appendMomentComment,
     applyMomentAiInteractions,
@@ -85,6 +85,17 @@ interface MomentImageViewerState {
     initialIndex: number;
 }
 
+interface MomentImageTransform {
+    scale: number;
+    x: number;
+    y: number;
+}
+
+interface MomentImagePoint {
+    x: number;
+    y: number;
+}
+
 type MomentGenerateMode = 'random' | 'select';
 
 const isImageSource = (value: string): boolean => /^(?:data:image\/|https?:\/\/|blob:|blobref:)/i.test(String(value || '').trim());
@@ -106,6 +117,48 @@ const FALLBACK_GROUP_ID = '__ungrouped__';
 // GalleryImage 旧模型用 charId 做索引；使用保留值即可在不改 IndexedDB
 // 结构、不迁移/删除旧角色照片的情况下隔离两类图片。
 const USER_GALLERY_CHAR_ID = '__profile_gallery__';
+const CHARACTER_MOMENT_GALLERY_SYNC_ASSET = 'messaging_character_moment_gallery_sync_v1';
+const DEFAULT_MOMENT_IMAGE_TRANSFORM: MomentImageTransform = { scale: 1, x: 0, y: 0 };
+
+const characterMomentGalleryImageId = (postId: string, sourceImageIndex: number): string => `moment-gallery-${postId}-${sourceImageIndex}`;
+
+const getCharacterMomentGalleryImages = (posts: SocialPost[]): GalleryImage[] => posts.flatMap(post => {
+    if (post.authorType !== 'character' || !post.authorCharId || getSocialPostScope(post) !== 'moments') return [];
+    const timestamp = Number.isFinite(Number(post.timestamp)) ? Number(post.timestamp) : Date.now();
+    const date = new Date(timestamp);
+    const savedDate = Number.isNaN(date.getTime()) ? undefined : date.toISOString().slice(0, 10);
+    return (post.images || []).flatMap((value, sourceImageIndex) => {
+        const url = String(value || '').trim();
+        if (!isImageSource(url)) return [];
+        return [{
+            id: characterMomentGalleryImageId(String(post.id), sourceImageIndex),
+            charId: String(post.authorCharId),
+            url,
+            timestamp,
+            savedDate,
+            chatContext: post.content ? [`朋友圈：${post.content}`] : undefined,
+        }];
+    });
+});
+
+const galleryImageKey = (image: Pick<GalleryImage, 'charId' | 'url'>): string => `${image.charId}\u0000${image.url}`;
+
+const syncExistingCharacterMomentGallery = async (posts: SocialPost[]): Promise<void> => {
+    const candidates = getCharacterMomentGalleryImages(posts);
+    if (!candidates.length) return;
+    const marker = await DB.getAsset(CHARACTER_MOMENT_GALLERY_SYNC_ASSET);
+    if (marker === 'done') return;
+    const existing = await DB.getGalleryImages();
+    const known = new Set(existing.map(galleryImageKey));
+    const missing = candidates.filter(image => {
+        const key = galleryImageKey(image);
+        if (known.has(key)) return false;
+        known.add(key);
+        return true;
+    });
+    await Promise.all(missing.map(image => DB.saveGalleryImage(image)));
+    await DB.saveAsset(CHARACTER_MOMENT_GALLERY_SYNC_ASSET, 'done');
+};
 
 const messageTypeLabel: Partial<Record<Message['type'], string>> = {
     image: '[图片]',
@@ -231,6 +284,8 @@ const Messaging: React.FC = () => {
     const [momentLikeAnimatedId, setMomentLikeAnimatedId] = useState<string | null>(null);
     const [momentImageViewer, setMomentImageViewer] = useState<MomentImageViewerState | null>(null);
     const [momentImageViewerIndex, setMomentImageViewerIndex] = useState(0);
+    const [momentImageTransform, setMomentImageTransform] = useState<MomentImageTransform>(DEFAULT_MOMENT_IMAGE_TRANSFORM);
+    const [profileGalleryDeletingId, setProfileGalleryDeletingId] = useState<string | null>(null);
     const [profileAboutExpanded, setProfileAboutExpanded] = useState(false);
     const [tabAnim, setTabAnim] = useState<'idle' | 'enter'>('idle');
     const [groupMenuOpen, setGroupMenuOpen] = useState(false);
@@ -242,6 +297,9 @@ const Messaging: React.FC = () => {
     const appRef = useRef<HTMLDivElement>(null);
     const postsRef = useRef<SocialPost[]>([]);
     const momentImageViewerRef = useRef<HTMLDivElement>(null);
+    const momentImageTransformRef = useRef<MomentImageTransform>(DEFAULT_MOMENT_IMAGE_TRANSFORM);
+    const momentImagePointersRef = useRef<Map<number, MomentImagePoint>>(new Map());
+    const momentImageGestureRef = useRef<{ lastDistance: number; lastCenter: MomentImagePoint | null; lastPoint: MomentImagePoint | null }>({ lastDistance: 0, lastCenter: null, lastPoint: null });
     const momentImageInputRef = useRef<HTMLInputElement>(null);
     const profileAvatarInputRef = useRef<HTMLInputElement>(null);
     const profileCoverInputRef = useRef<HTMLInputElement>(null);
@@ -250,6 +308,115 @@ const Messaging: React.FC = () => {
     const momentLikeTimer = useRef<number | null>(null);
     const momentCommentLongPressTimer = useRef<number | null>(null);
     const momentCommentLongPressed = useRef(false);
+
+    const normalizeMomentImageTransform = (value: MomentImageTransform): MomentImageTransform => {
+        const scale = Math.min(4, Math.max(1, Number(value.scale) || 1));
+        if (scale <= 1) return DEFAULT_MOMENT_IMAGE_TRANSFORM;
+        const viewportWidth = momentImageViewerRef.current?.clientWidth || window.innerWidth;
+        const viewportHeight = momentImageViewerRef.current?.clientHeight || window.innerHeight;
+        const maxX = viewportWidth * (scale - 1) * .78;
+        const maxY = viewportHeight * (scale - 1) * .78;
+        return {
+            scale,
+            x: Math.max(-maxX, Math.min(maxX, Number(value.x) || 0)),
+            y: Math.max(-maxY, Math.min(maxY, Number(value.y) || 0)),
+        };
+    };
+
+    const updateMomentImageTransform = (updater: (current: MomentImageTransform) => MomentImageTransform) => {
+        const next = normalizeMomentImageTransform(updater(momentImageTransformRef.current));
+        momentImageTransformRef.current = next;
+        setMomentImageTransform(next);
+    };
+
+    const resetMomentImageTransform = () => {
+        momentImageTransformRef.current = DEFAULT_MOMENT_IMAGE_TRANSFORM;
+        setMomentImageTransform(DEFAULT_MOMENT_IMAGE_TRANSFORM);
+        momentImagePointersRef.current.clear();
+        momentImageGestureRef.current = { lastDistance: 0, lastCenter: null, lastPoint: null };
+    };
+
+    const viewerPointerDistance = (points: MomentImagePoint[]): number => points.length < 2 ? 0 : Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+    const viewerPointerCenter = (points: MomentImagePoint[]): MomentImagePoint => ({
+        x: points.reduce((sum, point) => sum + point.x, 0) / Math.max(1, points.length),
+        y: points.reduce((sum, point) => sum + point.y, 0) / Math.max(1, points.length),
+    });
+
+    const handleMomentViewerPointerDown = (event: React.PointerEvent<HTMLImageElement>) => {
+        event.stopPropagation();
+        const pointers = momentImagePointersRef.current;
+        pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* pointer capture is optional */ }
+        const points = Array.from(pointers.values());
+        if (points.length >= 2) {
+            momentImageGestureRef.current.lastDistance = viewerPointerDistance(points);
+            momentImageGestureRef.current.lastCenter = viewerPointerCenter(points);
+            momentImageGestureRef.current.lastPoint = null;
+        } else if (momentImageTransformRef.current.scale > 1) {
+            momentImageGestureRef.current.lastPoint = { x: event.clientX, y: event.clientY };
+        }
+    };
+
+    const handleMomentViewerPointerMove = (event: React.PointerEvent<HTMLImageElement>) => {
+        const pointers = momentImagePointersRef.current;
+        if (!pointers.has(event.pointerId)) return;
+        pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        const points = Array.from(pointers.values());
+        const gesture = momentImageGestureRef.current;
+        if (points.length >= 2) {
+            event.preventDefault();
+            const distance = viewerPointerDistance(points);
+            const center = viewerPointerCenter(points);
+            const previousCenter = gesture.lastCenter || center;
+            const previousDistance = gesture.lastDistance || distance;
+            updateMomentImageTransform(current => ({
+                scale: current.scale * (distance > 0 && previousDistance > 0 ? distance / previousDistance : 1),
+                x: current.x + center.x - previousCenter.x,
+                y: current.y + center.y - previousCenter.y,
+            }));
+            gesture.lastDistance = distance;
+            gesture.lastCenter = center;
+            return;
+        }
+        if (momentImageTransformRef.current.scale <= 1 || !gesture.lastPoint) return;
+        event.preventDefault();
+        const dx = event.clientX - gesture.lastPoint.x;
+        const dy = event.clientY - gesture.lastPoint.y;
+        updateMomentImageTransform(current => ({ ...current, x: current.x + dx, y: current.y + dy }));
+        gesture.lastPoint = { x: event.clientX, y: event.clientY };
+    };
+
+    const handleMomentViewerPointerUp = (event: React.PointerEvent<HTMLImageElement>) => {
+        const pointers = momentImagePointersRef.current;
+        pointers.delete(event.pointerId);
+        try { event.currentTarget.releasePointerCapture(event.pointerId); } catch { /* pointer capture is optional */ }
+        const points = Array.from(pointers.values());
+        const gesture = momentImageGestureRef.current;
+        if (points.length >= 2) {
+            gesture.lastDistance = viewerPointerDistance(points);
+            gesture.lastCenter = viewerPointerCenter(points);
+        } else if (points.length === 1 && momentImageTransformRef.current.scale > 1) {
+            gesture.lastDistance = 0;
+            gesture.lastCenter = null;
+            gesture.lastPoint = points[0];
+        } else {
+            gesture.lastDistance = 0;
+            gesture.lastCenter = null;
+            gesture.lastPoint = null;
+        }
+    };
+
+    const handleMomentViewerDoubleClick = (event: React.MouseEvent<HTMLImageElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        updateMomentImageTransform(current => current.scale > 1 ? DEFAULT_MOMENT_IMAGE_TRANSFORM : { scale: 2.4, x: 0, y: 0 });
+    };
+
+    const handleMomentViewerWheel = (event: React.WheelEvent<HTMLImageElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        updateMomentImageTransform(current => ({ ...current, scale: current.scale + (event.deltaY < 0 ? .25 : -.25) }));
+    };
 
     useEffect(() => {
         let alive = true;
@@ -301,12 +468,14 @@ const Messaging: React.FC = () => {
             listTextFavorites().catch(() => []),
             listVoiceFavorites().catch(() => []),
         ]).then(([nextPosts, images, nextText, nextVoice]) => {
-            if (!alive) return;
             const friendIds = new Set(characters.map(char => String(char.id)));
-            setPosts(nextPosts.filter(post => isMomentsPost(post, friendIds)).sort((a, b) => b.timestamp - a.timestamp));
+            const nextMomentPosts = nextPosts.filter(post => isMomentsPost(post, friendIds)).sort((a, b) => b.timestamp - a.timestamp);
+            if (!alive) return;
+            setPosts(nextMomentPosts);
             setProfileGalleryImages(images.sort((a, b) => b.timestamp - a.timestamp));
             setTextFavorites(nextText);
             setVoiceFavorites(nextVoice);
+            void syncExistingCharacterMomentGallery(nextMomentPosts).catch(error => console.warn('[朋友圈] 角色图片补录到相册失败', error));
         });
         return () => { alive = false; };
     }, [characters, tab, lastMsgTimestamp]);
@@ -323,6 +492,7 @@ const Messaging: React.FC = () => {
 
     useEffect(() => {
         if (!momentImageViewer) return;
+        resetMomentImageTransform();
         const initialIndex = Math.max(0, Math.min(momentImageViewer.initialIndex, momentImageViewer.images.length - 1));
         setMomentImageViewerIndex(initialIndex);
         const frame = window.requestAnimationFrame(() => {
@@ -338,6 +508,10 @@ const Messaging: React.FC = () => {
             window.removeEventListener('keydown', closeOnEscape);
         };
     }, [momentImageViewer]);
+
+    useEffect(() => {
+        if (momentImageViewer) resetMomentImageTransform();
+    }, [momentImageViewerIndex]);
 
     const unreadTotal = useMemo(() => Object.values(unreadMessages).reduce((sum, value) => sum + (Number(value) || 0), 0), [unreadMessages]);
     const momentNotifications = useMemo(() => deriveMomentNotifications(posts), [posts]);
@@ -464,6 +638,11 @@ const Messaging: React.FC = () => {
     const prependMomentPosts = async (newPosts: SocialPost[]) => {
         const scopedPosts = newPosts.map(post => withSocialPostScope(post, 'moments'));
         await Promise.all(scopedPosts.map(post => DB.saveSocialPost(post)));
+        const characterPosts = scopedPosts.filter(post => post.authorType === 'character');
+        if (characterPosts.length) {
+            await Promise.all(getCharacterMomentGalleryImages(characterPosts).map(image => DB.saveGalleryImage(image)))
+                .catch(error => console.warn('[朋友圈] 角色图片写入相册失败', error));
+        }
         setPosts(current => [...scopedPosts, ...current.filter(item => !scopedPosts.some(post => post.id === item.id))]
             .sort((a, b) => b.timestamp - a.timestamp));
     };
@@ -772,6 +951,10 @@ const Messaging: React.FC = () => {
                 socialScope: 'moments',
             };
             await DB.saveSocialPost(updated);
+            if (updated.authorType === 'character') {
+                await Promise.all(getCharacterMomentGalleryImages([updated]).map(image => DB.saveGalleryImage(image)))
+                    .catch(error => console.warn('[朋友圈] 重新生成的角色图片写入相册失败', error));
+            }
             setPosts(current => current.map(item => item.id === updated.id ? updated : item));
             setMomentReroll(null);
             addToast('朋友圈图片已重新生成', 'success');
@@ -855,6 +1038,21 @@ const Messaging: React.FC = () => {
             addToast(error?.message || '保存图床图片失败', 'error');
         } finally {
             setProfileGalleryUrlBusy(false);
+        }
+    };
+
+    const deleteProfileGalleryImage = async (image: GalleryImage) => {
+        if (profileGalleryDeletingId) return;
+        if (!window.confirm('确定从我的相册中删除这张图片吗？')) return;
+        setProfileGalleryDeletingId(image.id);
+        try {
+            await DB.deleteGalleryImage(image.id);
+            setProfileGalleryImages(current => current.filter(item => item.id !== image.id));
+            addToast('图片已从相册删除', 'success');
+        } catch (error: any) {
+            addToast(error?.message || '删除图片失败', 'error');
+        } finally {
+            setProfileGalleryDeletingId(null);
         }
     };
 
@@ -1190,7 +1388,10 @@ const Messaging: React.FC = () => {
                             </div>
                         </div>
                         <input ref={profileGalleryImageInputRef} type="file" accept="image/*" multiple hidden onChange={event => { void handleProfileGalleryImages(event.target.files); event.target.value = ''; }} />
-                        {profileGalleryImages.length ? <div className="nj-profile-gallery-grid">{profileGalleryImages.map((image, index) => <button type="button" className="nj-profile-gallery-cell" key={image.id} aria-label={`查看相册图片 ${index + 1}`} onClick={() => setMomentImageViewer({ images: profileGalleryImages.map(item => item.url), initialIndex: index })}><img src={image.url} alt="" loading="lazy" /></button>)}</div> : <div className="nj-empty-state">相册里还没有照片<br /><small>上传图片或粘贴图床链接，把喜欢的图放进展示柜</small></div>}
+                        {profileGalleryImages.length ? <div className="nj-profile-gallery-grid">{profileGalleryImages.map((image, index) => <div className="nj-profile-gallery-cell" key={image.id}>
+                            <button type="button" className="nj-profile-gallery-open" aria-label={`查看相册图片 ${index + 1}`} onClick={() => setMomentImageViewer({ images: profileGalleryImages.map(item => item.url), initialIndex: index })}><img src={image.url} alt="" loading="lazy" /></button>
+                            <button type="button" className="nj-profile-gallery-delete" aria-label={`删除相册图片 ${index + 1}`} title="删除图片" disabled={profileGalleryDeletingId === image.id} onClick={event => { event.stopPropagation(); void deleteProfileGalleryImage(image); }}><Trash /></button>
+                        </div>)}</div> : <div className="nj-empty-state">相册里还没有照片<br /><small>上传图片或粘贴图床链接，把喜欢的图放进展示柜</small></div>}
                     </div>
                 </div></div>
                 <div className="nj-profile-decor-bottom" aria-hidden="true" />
@@ -1284,11 +1485,15 @@ const Messaging: React.FC = () => {
             {momentImageViewer && <div className="sully-msg-moment-viewer" role="dialog" aria-modal="true" aria-label="朋友圈图片预览" onClick={() => setMomentImageViewer(null)}>
                 <div ref={momentImageViewerRef} className="sully-msg-moment-viewer-track" onClick={event => event.stopPropagation()} onScroll={event => {
                     const track = event.currentTarget;
-                    if (track.clientWidth > 0) setMomentImageViewerIndex(Math.round(track.scrollLeft / track.clientWidth));
+                    if (track.clientWidth > 0) {
+                        const nextIndex = Math.round(track.scrollLeft / track.clientWidth);
+                        setMomentImageViewerIndex(current => current === nextIndex ? current : nextIndex);
+                    }
                 }}>
-                    {momentImageViewer.images.map((url, index) => <div className="sully-msg-moment-viewer-slide" key={`${url}-${index}`}><img src={url} alt="" draggable={false} /></div>)}
+                    {momentImageViewer.images.map((url, index) => <div className="sully-msg-moment-viewer-slide" key={`${url}-${index}`} data-zoomed={String(index === momentImageViewerIndex && momentImageTransform.scale > 1)}><img src={url} alt="" draggable={false} style={index === momentImageViewerIndex ? { transform: `translate3d(${momentImageTransform.x}px, ${momentImageTransform.y}px, 0) scale(${momentImageTransform.scale})`, touchAction: momentImageTransform.scale > 1 ? 'none' : 'pan-x' } : undefined} onPointerDown={handleMomentViewerPointerDown} onPointerMove={handleMomentViewerPointerMove} onPointerUp={handleMomentViewerPointerUp} onPointerCancel={handleMomentViewerPointerUp} onDoubleClick={handleMomentViewerDoubleClick} onWheel={handleMomentViewerWheel} /></div>)}
                 </div>
                 <button type="button" className="sully-msg-moment-viewer-close" aria-label="关闭大图" onClick={() => setMomentImageViewer(null)}><X /></button>
+                <div className="sully-msg-moment-viewer-hint" aria-hidden="true">双指捏合或双击放大 · 放大后拖动查看</div>
                 {momentImageViewer.images.length > 1 && <div className="sully-msg-moment-viewer-dots" aria-label={`${momentImageViewerIndex + 1} / ${momentImageViewer.images.length}`} onClick={event => event.stopPropagation()}>{momentImageViewer.images.map((_, index) => <i className={index === momentImageViewerIndex ? 'active' : ''} key={index} />)}</div>}
             </div>}
         </div>
