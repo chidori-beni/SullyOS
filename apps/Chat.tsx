@@ -127,7 +127,12 @@ type InstantToolUiStatus = {
     updatedAt?: number;
 };
 
-const Chat: React.FC = () => {
+interface ChatProps {
+    /** Message 好友列表嵌套聊天时返回列表；独立打开时仍关闭 App。 */
+    onBack?: () => void;
+}
+
+const Chat: React.FC<ChatProps> = ({ onBack }) => {
     const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, commitApiConfig, apiPresets, addApiPreset, closeApp, openApp, customThemes, removeCustomTheme, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: osTheme, updateTheme, proactiveComposingChars, openDateWithChar } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
     const localDateKey = useLocalDateKey();
@@ -3911,7 +3916,7 @@ const Chat: React.FC = () => {
                 memoryPalaceStatusText={memoryPalaceStatus}
                 lastTokenUsage={lastTokenUsage}
                 tokenBreakdown={tokenBreakdown}
-                onClose={closeApp}
+                onClose={onBack || closeApp}
                 onTriggerAI={handleManualTrigger}
                 onShowCharsPanel={() => setShowPanel('chars')}
                 onDeleteBuff={(buffId) => {

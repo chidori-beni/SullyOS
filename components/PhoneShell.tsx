@@ -22,7 +22,7 @@ const lazyApp = createPreloadableLazy;
 
 const Settings = lazyApp(() => import('../apps/Settings'));
 const Character = lazyApp(() => import('../apps/Character'));
-const Chat = lazyApp(() => import('../apps/Chat'));
+const Messaging = lazyApp(() => import('../apps/Messaging'));
 const GroupChat = lazyApp(() => import('../apps/GroupChat'));
 const ThemeMaker = lazyApp(() => import('../apps/ThemeMaker'));
 const Appearance = lazyApp(() => import('../apps/Appearance'));
@@ -61,7 +61,7 @@ const SpecialMomentsApp = lazyApp(() => import('./ValentineEvent').then(m => ({ 
 // 仅供「桌面稳定后的空闲串行预热」。严格 await 前一个再取下一个，且任何用户操作都会停止队列。
 // 高频 App 在前；低端设备/省流量/2G 由 shouldUseIdleAppPreload 整体跳过。
 const APP_IDLE_PRELOAD_ORDER: PreloadableLazy[] = [
-  Chat, Character, Settings, Appearance, GroupChat, RoomApp, CheckPhone,
+  Messaging, Character, Settings, Appearance, GroupChat, RoomApp, CheckPhone,
   JournalApp, ScheduleApp, SocialApp, MusicApp, CallApp, Gallery, DateApp, UserApp,
   StudyApp, GameApp, NovelApp, BankApp, WorldbookApp, MemoryPalaceApp, HandbookApp,
   VRWorldApp, WorldHomeApp, LifeSimApp, SongwritingApp, GuidebookApp, FAQApp, HotNewsApp,
@@ -76,7 +76,7 @@ let idlePreloadCursor = 0;
 // AppID → 懒加载组件，供「按下即预取」复用同一个模块 Promise。
 // AppID 由下方 import 引入，ES 模块提升后全模块可用。
 const APP_BY_ID: Partial<Record<AppID, PreloadableLazy>> = {
-  [AppID.Settings]: Settings, [AppID.Character]: Character, [AppID.Chat]: Chat,
+  [AppID.Settings]: Settings, [AppID.Character]: Character, [AppID.Chat]: Messaging,
   [AppID.GroupChat]: GroupChat, [AppID.ThemeMaker]: ThemeMaker, [AppID.Appearance]: Appearance,
   [AppID.Gallery]: Gallery, [AppID.Date]: DateApp, [AppID.User]: UserApp,
   [AppID.Journal]: JournalApp, [AppID.Schedule]: ScheduleApp, [AppID.Room]: RoomApp,
@@ -1010,7 +1010,7 @@ const PhoneShell: React.FC = () => {
     switch (activeApp) {
       case AppID.Settings: return <Settings />;
       case AppID.Character: return <Character />;
-      case AppID.Chat: return <Chat />;
+      case AppID.Chat: return <Messaging />;
       case AppID.GroupChat: return <GroupChat />; 
       case AppID.ThemeMaker: return <ThemeMaker />;
       case AppID.Appearance: return <Appearance />;
