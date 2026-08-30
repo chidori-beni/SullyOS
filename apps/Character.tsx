@@ -28,6 +28,8 @@ import { stripSensitiveCardFields } from '../utils/characterCard';
 import { confirmExportSafety } from '../utils/exportGuard';
 import { trackEvent } from '../utils/analytics';
 import { sortCharacterGroups, GROUP_FILTER_UNGROUPED } from '../components/character/CharacterGroupFilter';
+import CharacterLookWardrobe from '../components/settings/CharacterLookWardrobe';
+import { getImageGenConfig, setImageGenConfig, type ImageGenConfig } from '../utils/novelaiImage';
 import {
     EXTERNAL_MEMORY_MAX_CHARS,
     extractExternalMemoryText,
@@ -116,6 +118,7 @@ const Character: React.FC = () => {
   const [showChibiStudio, setShowChibiStudio] = useState(() => !!launchIntent?.openChibiStudio);
   const [editingId, setEditingId] = useState<string | null>(() => launchIntent?.charId || null);
   const [formData, setFormData] = useState<CharacterProfile | null>(null);
+  const [imageGenCfg, setImageGenCfg] = useState<ImageGenConfig>(() => getImageGenConfig());
   const [isCompressing, setIsCompressing] = useState(false);
   // 头像 URL 输入的 draft, 不逐字 commit 到 formData.avatar —— 否则每输入一个字符,
   // 所有引用 char.avatar 的 <img> 都会拿到不完整字符串当相对路径请求根目录,
@@ -180,6 +183,10 @@ const Character: React.FC = () => {
       voice_cloning: [],
       voice_generation: [],
   });
+
+  const patchImageGenConfig = (patch: Partial<ImageGenConfig>) => {
+      setImageGenCfg(previous => setImageGenConfig({ ...previous, ...patch }));
+  };
 
   const handleLoadMiniMaxVoices = async () => {
       const minimaxApiKey = resolveMiniMaxApiKey(apiConfig);
@@ -1375,17 +1382,25 @@ ${isInitialGeneration ? `
                                <textarea value={formData.systemPrompt} onChange={(e) => handleChange('systemPrompt', e.target.value)} className="w-full h-40 bg-white rounded-3xl p-5 text-sm shadow-sm resize-none focus:ring-1 focus:ring-primary/20 transition-all vr-reader-scroll" placeholder="设定..." />
                            </div>
 
-                           <div>
-                               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block">世界观 / 设定补充 (Worldview & Lore)</label>
+                            <div>
+                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block">世界观 / 设定补充 (Worldview & Lore)</label>
                                <textarea
                                     value={formData.worldview || ''}
                                     onChange={(e) => handleChange('worldview', e.target.value)}
                                     className="w-full h-24 bg-white rounded-3xl p-5 text-sm shadow-sm resize-none focus:ring-1 focus:ring-primary/20 transition-all vr-reader-scroll"
                                     placeholder="在这个世界里，魔法是存在的..."
                                 />
-                           </div>
+                            </div>
 
-                           {/* 时间感知 & 时区：三个独立开关，可任意组合（聊天时间感知 / 自定义时区 / 线下时间感知） */}
+                            <CharacterLookWardrobe
+                                charId={formData.id}
+                                charName={formData.name}
+                                cfg={imageGenCfg}
+                                onChange={patchImageGenConfig}
+                                addToast={addToast}
+                            />
+
+                            {/* 时间感知 & 时区：三个独立开关，可任意组合（聊天时间感知 / 自定义时区 / 线下时间感知） */}
                            <div className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 space-y-4">
                                <div>
                                    <label className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest block">时间感知 & 时区</label>

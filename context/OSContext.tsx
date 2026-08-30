@@ -53,7 +53,7 @@ import { buildChatRequestPayload } from '../utils/chatRequestPayload';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { extractHtmlBlocks } from '../utils/htmlPrompt';
 import { mergePalaceFragmentsIntoMemories } from '../utils/memoryPalace/pipeline';
-import { buildSelfiePrompt, getImageGenConfig, isImageGenReady, runImageGeneration } from '../utils/novelaiImage';
+import { buildSelfiePrompt, getCharacterAppearanceLooks, getImageGenConfig, isImageGenReady, runImageGeneration, runSelfieImageGeneration } from '../utils/novelaiImage';
 import {
   MEMORY_AUTO_ARCHIVE_SYNC_EVENT,
   repairMissingAutoArchiveMemories,
@@ -2557,10 +2557,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                    * 只补了本地那条的话，**开着「即时对话」的用户永远看不到图**——
                    * 回复是在云 Worker 里生成的，落库走的是这里，指令会被当成普通文字
                    * 在 sanitize 那步整段丢掉，表现为「他说照片发了，但没有图」。
-                   */
+                  */
                   const saveGeneratedImageBubble = async (rawPrompt: string, isSelfie: boolean): Promise<void> => {
                       const cfgNow = getImageGenConfig();
-                      const prompt = (isSelfie ? buildSelfiePrompt(charId, rawPrompt || '', cfgNow) : (rawPrompt || '')).trim();
+                      const scenePrompt = (rawPrompt || '').trim();
+                      const prompt = (isSelfie
+                          ? (buildSelfiePrompt(charId, scenePrompt, cfgNow)
+                              || getCharacterAppearanceLooks(cfgNow, charId).find(look => look.prompt.trim())?.prompt
+                              || '')
+                          : scenePrompt).trim();
                       if (!prompt) return;
 
                       if (!isImageGenReady(cfgNow)) {
@@ -2577,7 +2582,13 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                           timestamp: baseTimestamp + offset,
                           metadata: { imageGen: { status: 'pending', prompt } },
                       });
-                      void runImageGeneration(messageId, prompt, charId);
+                      if (isSelfie) {
+                          void runSelfieImageGeneration(messageId, charId, scenePrompt, cfgNow, api, {
+                              timeZone: resolveCharTimeZone(char),
+                          });
+                      } else {
+                          void runImageGeneration(messageId, prompt, charId);
+                      }
                   };
 
                   if (hasTranslationTags) {

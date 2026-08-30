@@ -1,13 +1,19 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { ChatParser } from './chatParser';
 import {
     buildNovelAiBody,
     isImageGenReady,
     readImageGenMeta,
     buildSelfiePrompt,
+    buildSelfiePromptForGeneration,
+    getAppearanceTagLibrary,
+    getCharacterAppearanceLooks,
+    withCharacterAppearanceLooks,
     DEFAULT_IMAGE_GEN_CONFIG,
     type ImageGenConfig,
 } from './novelaiImage';
+
+afterEach(() => vi.unstubAllGlobals());
 
 const cfg = (over: Partial<ImageGenConfig> = {}): ImageGenConfig => ({
     ...DEFAULT_IMAGE_GEN_CONFIG,
@@ -163,6 +169,76 @@ describe('buildSelfiePrompt', () => {
 
     it('场景为空 → 只剩外观（他只想发张脸也行）', () => {
         expect(buildSelfiePrompt('c1', '', base)).toBe('1boy, silver hair, red eyes, skull necklace');
+    });
+});
+
+describe('角色多造型衣橱', () => {
+    it('旧版单提示词会无损变成默认造型', () => {
+        const legacy = cfg({ characterAppearance: { c1: '1boy, silver hair, black jacket' } });
+        expect(getCharacterAppearanceLooks(legacy, 'c1')).toEqual([{
+            id: 'legacy_default',
+            name: '默认造型',
+            prompt: '1boy, silver hair, black jacket',
+            tags: [],
+        }]);
+    });
+
+    it('一套可保存多个标签，标签库会跨角色汇总且去重', () => {
+        const base = cfg({ appearanceTagLibrary: ['日常'] });
+        const patch = withCharacterAppearanceLooks(base, 'c1', [{
+            id: 'date', name: '约会装', prompt: 'red dress, curled hair', tags: ['约会', '外出', '约会'],
+        }]);
+        const next = cfg({ ...patch });
+        expect(getCharacterAppearanceLooks(next, 'c1')[0].tags).toEqual(['约会', '外出']);
+        expect(getAppearanceTagLibrary(next)).toEqual(['日常', '约会', '外出']);
+        expect(next.characterAppearance.c1).toBe('red dress, curled hair');
+    });
+
+    it('每次自拍只把选项编号和 tags 发给文字 API，再在本机拼完整提示词', async () => {
+        let sentBody: any;
+        vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+            sentBody = JSON.parse(String(init.body));
+            return new Response(JSON.stringify({ choices: [{ message: { content: '2' } }] }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        }));
+        const wardrobe = cfg({
+            characterAppearanceLooks: {
+                c1: [
+                    { id: 'home', name: '秘密家居服', prompt: 'oversized shirt, messy hair', tags: ['家居服', '夜晚'] },
+                    { id: 'work', name: '秘密工作装', prompt: 'navy suit, tied hair', tags: ['工作', '白天'] },
+                ],
+            },
+        });
+        const prompt = await buildSelfiePromptForGeneration(
+            'c1',
+            'at the office desk',
+            wardrobe,
+            { baseUrl: 'https://api.example/v1', apiKey: 'sk-test', model: 'tiny-model' },
+            { now: new Date('2026-08-30T03:00:00.000Z'), timeZone: 'Asia/Tokyo' },
+        );
+
+        expect(prompt).toBe('navy suit, tied hair, at the office desk');
+        expect(sentBody.messages[1].content).toContain('工作');
+        expect(sentBody.messages[1].content).not.toContain('navy suit');
+        expect(JSON.stringify(sentBody)).not.toContain('秘密工作装');
+        expect(sentBody.max_tokens).toBe(12);
+    });
+
+    it('文字 API 失败时退回第一套，不让 NovelAI 生图链路跟着失败', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline'); }));
+        const wardrobe = cfg({
+            characterAppearanceLooks: {
+                c1: [
+                    { id: 'daily', name: '日常', prompt: 'hoodie, short hair', tags: ['日常'] },
+                    { id: 'date', name: '约会', prompt: 'black dress, curled hair', tags: ['约会'] },
+                ],
+            },
+        });
+        await expect(buildSelfiePromptForGeneration('c1', 'outside', wardrobe, {
+            baseUrl: 'https://api.example/v1', apiKey: '', model: 'tiny-model',
+        })).resolves.toBe('hoodie, short hair, outside');
     });
 });
 

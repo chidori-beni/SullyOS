@@ -27,7 +27,7 @@
 
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, RealtimeConfig, GroupProfile } from '../types';
 import { DB } from './db';
-import { buildSelfiePrompt, getImageGenConfig, isImageGenReady, runImageGeneration } from './novelaiImage';
+import { buildSelfiePrompt, getCharacterAppearanceLooks, getImageGenConfig, isImageGenReady, runImageGeneration, runSelfieImageGeneration } from './novelaiImage';
 import { ChatParser, type FrozenMusicSong } from './chatParser';
 import { stripFaceToFacePhoneSourceTags } from './sanitize';
 import { extractXinsheng } from './xinsheng/xinshengData';
@@ -877,8 +877,13 @@ export async function applyAssistantPostProcessing(
          */
         const sendImageBubble = async (prompt: string, isSelfie = false): Promise<void> => {
             const cfgNow = getImageGenConfig();
-            // 自拍：把这个角色的外观提示词拼在最前面，别让主模型每次自己回忆长什么样。
-            const cleanPrompt = (isSelfie ? buildSelfiePrompt(char.id, prompt || '', cfgNow) : (prompt || '')).trim();
+            const scenePrompt = (prompt || '').trim();
+            // pending 气泡先用第一套作占位；真正选衣服在后台跑，不能为了轻量选择 API 卡住后续台词。
+            const cleanPrompt = (isSelfie
+                ? (buildSelfiePrompt(char.id, scenePrompt, cfgNow)
+                    || getCharacterAppearanceLooks(cfgNow, char.id).find(look => look.prompt.trim())?.prompt
+                    || '')
+                : scenePrompt).trim();
             if (!cleanPrompt) return;
 
             if (!isImageGenReady(getImageGenConfig())) {
@@ -895,9 +900,15 @@ export async function applyAssistantPostProcessing(
             } as any);
             await refreshMessageList();
 
-            // 后台跑。runImageGeneration 自己吞掉所有异常并把结果写回库 + 广播，
+            // 后台跑。生成函数自己吞掉所有异常并把结果写回库 + 广播，
             // 这里不 await，也不需要 catch。
-            void runImageGeneration(messageId, cleanPrompt, char.id);
+            if (isSelfie) {
+                void runSelfieImageGeneration(messageId, char.id, scenePrompt, cfgNow, effectiveApi, {
+                    timeZone: resolveCharTimeZone(char),
+                });
+            } else {
+                void runImageGeneration(messageId, cleanPrompt, char.id);
+            }
         };
 
         // 把 [[QUOTE: ...]] / [回复 "..."] 的引用文本解析成"被回复的那条用户消息"。

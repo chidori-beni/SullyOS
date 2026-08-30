@@ -11,7 +11,7 @@ import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } fr
 import { House, User, Package, Warning } from '@phosphor-icons/react';
 import { mergeSocialComments, prependUniqueSocialPosts, updateSocialPost } from '../utils/socialFeedMerge';
 import { trackEvent } from '../utils/analytics';
-import { buildSelfiePrompt, generateImageDataUrl, getImageGenConfig, isImageGenReady } from '../utils/novelaiImage';
+import { buildSelfiePromptForGeneration, generateImageDataUrl, getImageGenConfig, isImageGenReady } from '../utils/novelaiImage';
 import { isSparkPost } from '../utils/socialPostScope';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
@@ -565,8 +565,13 @@ ${charContexts}
                 const post = draftPosts[index];
                 if (canDraw && post.imagePrompt) {
                     try {
+                        const promptCharacter = post.authorCharId
+                            ? characters.find(char => char.id === post.authorCharId)
+                            : undefined;
                         const prompt = post.authorCharId
-                            ? buildSelfiePrompt(post.authorCharId, post.imagePrompt, imageConfig)
+                            ? await buildSelfiePromptForGeneration(post.authorCharId, post.imagePrompt, imageConfig, apiConfig, {
+                                timeZone: promptCharacter?.customTimezoneEnabled ? promptCharacter.customTimezone : undefined,
+                            })
                             : post.imagePrompt;
                         post.images = [await generateImageDataUrl(prompt, imageConfig)];
                     } catch (error: any) {

@@ -19,6 +19,7 @@
 import { DB } from './db';
 import { processImage } from './file';
 import { saveImageToGallery } from './imageSave';
+import { safeResponseJson } from './safeApi';
 import { VISION_DESCRIPTION_METADATA_KEY } from './visionApi';
 
 const LS_KEY = 'sullyos_imagegen_config_v1';
@@ -77,6 +78,24 @@ export interface ImageGenPreset {
     officialQualityTags: boolean;
 }
 
+/**
+ * 一套角色生图造型。提示词只在本机保存、最后直接交给 NovelAI；文字 API 只会看到 tags。
+ */
+export interface CharacterAppearanceLook {
+    id: string;
+    /** 只用于用户自己区分页面，不发给文字 API。 */
+    name: string;
+    prompt: string;
+    /** 一套造型可挂多个用户自定义标签，例如「日常」「外出」「约会」。 */
+    tags: string[];
+}
+
+export interface AppearanceSelectionApi {
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+}
+
 /** 预设里真正会被套用的那些字段。 */
 export const PRESET_FIELDS = [
     'qualityTags', 'negativePrompt', 'size', 'steps', 'scale',
@@ -115,6 +134,10 @@ export interface ImageGenConfig {
     storeQuality: number;
     /** 每个角色自己的外观提示词：画「他自己」时自动拼在最前面。key = charId */
     characterAppearance: Record<string, string>;
+    /** 每个角色的多套生图造型；旧 characterAppearance 会在读取时无损迁移成第一套。 */
+    characterAppearanceLooks: Record<string, CharacterAppearanceLook[]>;
+    /** 用户输入过的造型标签。之后编辑任意角色时都可以直接点选复用。 */
+    appearanceTagLibrary: string[];
     /** 存好的画风预设 */
     presets: ImageGenPreset[];
     /** 当前套用的是哪一套；手改过任何一个预设字段就清空，界面据此显示「已改动」。 */
@@ -141,23 +164,102 @@ export const DEFAULT_IMAGE_GEN_CONFIG: ImageGenConfig = {
     storeMaxWidth: 0,
     storeQuality: 0.9,
     characterAppearance: {},
+    characterAppearanceLooks: {},
+    appearanceTagLibrary: [],
     presets: [],
     activePresetId: '',
     extraParams: '',
 };
 
+const cleanTag = (value: unknown): string => String(value ?? '')
+    .trim()
+    .replace(/^#+/, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, 24);
+
+export function normalizeAppearanceTags(values: unknown): string[] {
+    if (!Array.isArray(values)) return [];
+    const result: string[] = [];
+    for (const value of values) {
+        const tag = cleanTag(value);
+        if (tag && !result.some(item => item.toLocaleLowerCase() === tag.toLocaleLowerCase())) result.push(tag);
+    }
+    return result.slice(0, 100);
+}
+
+const normalizeLook = (raw: any, index: number): CharacterAppearanceLook => ({
+    id: String(raw?.id || `look_${index + 1}`),
+    name: String(raw?.name || `造型 ${index + 1}`).trim().slice(0, 40) || `造型 ${index + 1}`,
+    prompt: String(raw?.prompt || ''),
+    tags: normalizeAppearanceTags(raw?.tags),
+});
+
+/** 读取某角色的造型，并兼容旧版每角色单提示词。 */
+export function getCharacterAppearanceLooks(cfg: ImageGenConfig, charId: string): CharacterAppearanceLook[] {
+    const stored = cfg.characterAppearanceLooks?.[charId];
+    if (Array.isArray(stored) && stored.length) return stored.map(normalizeLook);
+    const legacy = String(cfg.characterAppearance?.[charId] || '').trim();
+    return legacy ? [{ id: 'legacy_default', name: '默认造型', prompt: legacy, tags: [] }] : [];
+}
+
+/** 汇总显式标签库和所有衣橱里实际在用的标签，修复旧数据里漏存标签库的情况。 */
+export function getAppearanceTagLibrary(cfg: ImageGenConfig): string[] {
+    const fromLooks = Object.values(cfg.characterAppearanceLooks || {}).flatMap(looks => (
+        Array.isArray(looks) ? looks.flatMap(look => look?.tags || []) : []
+    ));
+    return normalizeAppearanceTags([...(cfg.appearanceTagLibrary || []), ...fromLooks]);
+}
+
+/**
+ * 写回一名角色的衣橱，同时维护旧字段作为降级兼容：旧版本仍会拿第一套提示词生图。
+ */
+export function withCharacterAppearanceLooks(
+    cfg: ImageGenConfig,
+    charId: string,
+    looks: CharacterAppearanceLook[],
+): Partial<ImageGenConfig> {
+    const normalized = looks.map(normalizeLook);
+    const nextLooks = { ...(cfg.characterAppearanceLooks || {}) };
+    const nextLegacy = { ...(cfg.characterAppearance || {}) };
+    if (normalized.length) {
+        nextLooks[charId] = normalized;
+        nextLegacy[charId] = normalized[0].prompt;
+    } else {
+        delete nextLooks[charId];
+        delete nextLegacy[charId];
+    }
+    return {
+        characterAppearanceLooks: nextLooks,
+        characterAppearance: nextLegacy,
+        appearanceTagLibrary: normalizeAppearanceTags([
+            ...getAppearanceTagLibrary(cfg),
+            ...normalized.flatMap(look => look.tags),
+        ]),
+    };
+}
+
+function normalizeImageGenConfig(raw: Partial<ImageGenConfig> | undefined | null): ImageGenConfig {
+    const merged = { ...DEFAULT_IMAGE_GEN_CONFIG, ...(raw || {}) } as ImageGenConfig;
+    merged.characterAppearance = merged.characterAppearance && typeof merged.characterAppearance === 'object'
+        ? merged.characterAppearance : {};
+    merged.characterAppearanceLooks = merged.characterAppearanceLooks && typeof merged.characterAppearanceLooks === 'object'
+        ? merged.characterAppearanceLooks : {};
+    merged.appearanceTagLibrary = getAppearanceTagLibrary(merged);
+    return merged;
+}
+
 export function getImageGenConfig(): ImageGenConfig {
     try {
         const raw = localStorage.getItem(LS_KEY);
-        if (!raw) return { ...DEFAULT_IMAGE_GEN_CONFIG };
-        return { ...DEFAULT_IMAGE_GEN_CONFIG, ...(JSON.parse(raw) as Partial<ImageGenConfig>) };
+        if (!raw) return normalizeImageGenConfig(undefined);
+        return normalizeImageGenConfig(JSON.parse(raw) as Partial<ImageGenConfig>);
     } catch {
-        return { ...DEFAULT_IMAGE_GEN_CONFIG };
+        return normalizeImageGenConfig(undefined);
     }
 }
 
 export function setImageGenConfig(next: Partial<ImageGenConfig>): ImageGenConfig {
-    const merged = { ...getImageGenConfig(), ...next };
+    const merged = normalizeImageGenConfig({ ...getImageGenConfig(), ...next });
     try { localStorage.setItem(LS_KEY, JSON.stringify(merged)); } catch { /* 隐私模式：存不了就这一次会话有效 */ }
     return merged;
 }
@@ -239,8 +341,104 @@ export function buildNovelAiBody(prompt: string, cfg: ImageGenConfig, opts?: Gen
  * 角色卡里的外观特征每次都让主模型自己写一遍，写出来必然飘——固定在这里最稳。
  */
 export function buildSelfiePrompt(charId: string, scene: string, cfg: ImageGenConfig): string {
-    const look = (cfg.characterAppearance?.[charId] || '').trim();
+    const look = (getCharacterAppearanceLooks(cfg, charId)[0]?.prompt || cfg.characterAppearance?.[charId] || '').trim();
     return [look, scene.trim()].filter(Boolean).join(', ');
+}
+
+/**
+ * 只把「第几套 + tags」交给文字 API 选择。造型名称和完整提示词不会离开本机。
+ * 没有 API、只有一套、响应异常时都稳定退回第一套，绝不拖垮真正的生图请求。
+ */
+export async function selectCharacterAppearanceLook(
+    charId: string,
+    scene: string,
+    cfg: ImageGenConfig,
+    api?: AppearanceSelectionApi | null,
+    options?: { now?: Date; timeZone?: string },
+): Promise<CharacterAppearanceLook | null> {
+    const looks = getCharacterAppearanceLooks(cfg, charId).filter(look => look.prompt.trim());
+    if (!looks.length) return null;
+    if (looks.length === 1 || !api?.baseUrl?.trim() || !api?.model?.trim()) return looks[0];
+
+    const now = options?.now || new Date();
+    let localTime = now.toLocaleString('zh-CN', { hour12: false });
+    if (options?.timeZone) {
+        try { localTime = now.toLocaleString('zh-CN', { hour12: false, timeZone: options.timeZone }); } catch { /* 非法时区退回本机 */ }
+    }
+    const choices = looks.map((look, index) => ({ option: index + 1, tags: look.tags }));
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeoutId = controller ? setTimeout(() => controller.abort(), 15_000) : null;
+    try {
+        const response = await fetch(`${api.baseUrl.trim().replace(/\/+$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(api.apiKey ? { Authorization: `Bearer ${api.apiKey}` } : {}),
+            },
+            body: JSON.stringify({
+                model: api.model,
+                messages: [
+                    {
+                        role: 'system',
+                        content: '你只负责从造型标签中选择此刻最合适的一套。结合当前时间和场景判断，只回复选项数字，不要解释。不得索要或猜测完整提示词。',
+                    },
+                    {
+                        role: 'user',
+                        content: JSON.stringify({ currentTime: localTime, scene: scene.trim().slice(0, 500), choices }),
+                    },
+                ],
+                temperature: 0.1,
+                max_tokens: 12,
+                stream: false,
+            }),
+            ...(controller ? { signal: controller.signal } : {}),
+            __sullyMeta: { appId: 'character', appName: '神经链接', purpose: '选择角色生图造型' },
+        } as RequestInit);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await safeResponseJson(response);
+        const content = String(data?.choices?.[0]?.message?.content || '');
+        const picked = [...content.matchAll(/\d+/g)]
+            .map(match => Number(match[0]))
+            .find(value => value >= 1 && value <= looks.length);
+        return picked ? (looks[picked - 1] || looks[0]) : looks[0];
+    } catch (error) {
+        console.warn('[生图衣橱] 造型选择失败，已使用第一套', error);
+        return looks[0];
+    } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+    }
+}
+
+/** 生图运行时入口：先轻量选造型，再只在本机拼接完整提示词。 */
+export async function buildSelfiePromptForGeneration(
+    charId: string,
+    scene: string,
+    cfg: ImageGenConfig,
+    api?: AppearanceSelectionApi | null,
+    options?: { now?: Date; timeZone?: string },
+): Promise<string> {
+    const look = await selectCharacterAppearanceLook(charId, scene, cfg, api, options);
+    return [look?.prompt.trim(), scene.trim()].filter(Boolean).join(', ');
+}
+
+/**
+ * 聊天气泡专用：pending 先上屏，造型选择在后台完成，避免为了一个轻量选择请求卡住后续台词。
+ */
+export async function runSelfieImageGeneration(
+    messageId: number,
+    charId: string,
+    scene: string,
+    cfg: ImageGenConfig,
+    api?: AppearanceSelectionApi | null,
+    options?: { now?: Date; timeZone?: string },
+): Promise<void> {
+    const prompt = await buildSelfiePromptForGeneration(charId, scene, cfg, api, options);
+    if (!prompt.trim()) return;
+    await DB.updateMessageMetadata(messageId, (previous: any) => ({
+        ...(previous || {}),
+        imageGen: { status: 'pending', prompt } as ImageGenMeta,
+    })).catch(() => undefined);
+    await runImageGeneration(messageId, prompt, charId);
 }
 
 /**

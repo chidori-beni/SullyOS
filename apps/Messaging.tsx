@@ -49,7 +49,7 @@ import MessagingThemeSettings from '../components/messaging/MessagingThemeSettin
 import Chat from './Chat';
 import { ContextBuilder } from '../utils/context';
 import { processImage } from '../utils/file';
-import { buildSelfiePrompt, generateImageDataUrl, getImageGenConfig, isImageGenReady } from '../utils/novelaiImage';
+import { buildSelfiePromptForGeneration, generateImageDataUrl, getImageGenConfig, isImageGenReady } from '../utils/novelaiImage';
 import { safeResponseJson } from '../utils/safeApi';
 import { getSocialPostScope, isMomentsPost, withSocialPostScope } from '../utils/socialPostScope';
 import {
@@ -825,7 +825,10 @@ const Messaging: React.FC = () => {
                 if (imagePrompt && canDraw) {
                     setMomentProgress(`正在为 ${char.name} 生成图片（${nextPosts.length + 1}/${requestedCount}）…`);
                     try {
-                        images.push(await generateImageDataUrl(buildSelfiePrompt(char.id, imagePrompt, imageConfig), imageConfig));
+                        const resolvedPrompt = await buildSelfiePromptForGeneration(char.id, imagePrompt, imageConfig, apiConfig, {
+                            timeZone: char.customTimezoneEnabled ? char.customTimezone : undefined,
+                        });
+                        images.push(await generateImageDataUrl(resolvedPrompt, imageConfig));
                     } catch (error: any) {
                         imageFailures += 1;
                         imageGenerationError = error?.message || String(error);
@@ -933,8 +936,13 @@ const Messaging: React.FC = () => {
         if (!post) return setMomentReroll(null);
         setMomentRerollBusy(true);
         try {
+            const promptCharacter = post.authorType === 'character' && post.authorCharId
+                ? characters.find(char => char.id === post.authorCharId)
+                : undefined;
             const resolvedPrompt = post.authorType === 'character' && post.authorCharId
-                ? buildSelfiePrompt(post.authorCharId, prompt, config)
+                ? await buildSelfiePromptForGeneration(post.authorCharId, prompt, config, apiConfig, {
+                    timeZone: promptCharacter?.customTimezoneEnabled ? promptCharacter.customTimezone : undefined,
+                })
                 : prompt;
             const image = await generateImageDataUrl(resolvedPrompt, config);
             const images = [...(post.images || [])];

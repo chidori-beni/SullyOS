@@ -22,10 +22,12 @@ import {
     SAMPLER_PRESETS,
     NOISE_SCHEDULES,
     PRESET_FIELDS,
+    getCharacterAppearanceLooks,
     type ImageGenConfig,
     type ImageGenPreset,
 } from '../../utils/novelaiImage';
 import type { CharacterProfile } from '../../types';
+import CharacterLookWardrobe from './CharacterLookWardrobe';
 
 const field = 'w-full px-3 py-2 rounded-xl border border-slate-200 text-sm outline-none focus:border-violet-400 bg-white';
 const label = 'text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1';
@@ -80,7 +82,7 @@ export const ImageGenSettings: React.FC<Props> = ({ addToast, characters }) => {
         }
         setBusy('draw'); setResult(null); setPreview('');
         try {
-            const look = (merged.characterAppearance[charId] || '').trim();
+            const look = (getCharacterAppearanceLooks(merged, charId)[0]?.prompt || '').trim();
             // 有外观提示词就拿它试——顺便验证「画他自己像不像」，比画个陌生人有用。
             const prompt = look || '1girl, silver hair, red eyes, upper body, looking at viewer';
             const url = await generateImageDataUrl(prompt, { ...merged, enabled: true });
@@ -157,27 +159,21 @@ export const ImageGenSettings: React.FC<Props> = ({ addToast, characters }) => {
                 <p className={hint}>NovelAI 网站 → Account → Get Persistent API Token。只存在这台设备上。</p>
             </div>
 
-            {/* ── 角色外观 ── */}
-            <div className="bg-violet-50/60 border border-violet-100 rounded-2xl p-3 space-y-2">
-                <div className="text-[11px] font-bold text-violet-700">这个角色长什么样</div>
-                <p className="text-[10px] text-slate-500 leading-relaxed">
-                    他用 <code className="font-mono">[[SEND_SELFIE]]</code> 画自己时，这段会自动拼在最前面。
-                    <b>让主模型每次自己回忆长相，画出来一定飘</b>——固定写死在这里最稳。
-                </p>
+            {/* ── 角色外观衣橱 ── */}
+            <div className="space-y-2">
                 <select className={field} value={charId} onChange={e => setCharId(e.target.value)}>
                     {characters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
-                <textarea
-                    className={`${field} min-h-[4.5rem] resize-y font-mono text-[11px]`}
-                    placeholder="1boy, silver hair, red eyes, mole under eye, skull necklace, black jacket"
-                    value={cfg.characterAppearance[charId] || ''}
-                    onChange={e => patch({
-                        characterAppearance: { ...cfg.characterAppearance, [charId]: e.target.value },
-                    })}
-                />
-                <p className="text-[10px] text-slate-400 leading-relaxed">
-                    只写<b>长相和标志性穿着</b>（发色瞳色发型痣配饰）。动作、场景、表情让他自己写。
-                </p>
+                {charId && (
+                    <CharacterLookWardrobe
+                        charId={charId}
+                        charName={characters.find(c => c.id === charId)?.name}
+                        cfg={cfg}
+                        onChange={patch}
+                        defaultOpen
+                        addToast={addToast}
+                    />
+                )}
             </div>
 
             {/* ── 画风预设 ── */}
