@@ -609,7 +609,7 @@ const Messaging: React.FC = () => {
     const chatHeader = () => (
         <div className="ig-header glass-header nj-chat-tab-header">
             <div className="nj-chat-tab-header-back" role="button" tabIndex={0} aria-label="返回桌面" onClick={closeApp} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') closeApp(); }}><CaretLeft weight="bold" /></div>
-            <div className="nj-chat-tab-header-title-wrap"><button className="ios-fix nj-chat-tab-header-title-btn" type="button"><span>消息</span></button></div>
+            <div className="nj-chat-tab-header-title-wrap"><button className="ios-fix nj-chat-tab-header-title-btn" type="button">{/* 糯叽机有账号时显示 @id + 小箭头，没有才显示「消息」。 主题（仿 ins）把标题绝对定位到 left:33px，是按 @id 这种窄内容排的； 一直显示两个汉字就会压到返回箭头上。 */}{profile.handle ? <><span className="header-id-text">@{profile.handle}</span><CaretDown /></> : <span>消息</span>}</button></div>
             <div className="nj-chat-tab-header-edit" role="button" tabIndex={0} aria-label="编辑角色" onClick={() => openApp(AppID.Character)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') openApp(AppID.Character); }}><NotePencil /></div>
         </div>
     );
@@ -626,6 +626,21 @@ const Messaging: React.FC = () => {
             <div className="nj-chat-tab-decor-top" aria-hidden="true" />
             {!!characters.length && !search && (
                 <div className="details-scroll nj-chat-tab-note-row nj-chat-tab-notes">
+                    {/* 糯叽机 4.71 的第一格固定是「我」自己，不是好友。
+                        主题（例如仿 ins）会把这一格渲染成大头像个人卡，
+                        少了它就会拿角色头像顶上去。 */}
+                    <button className="nj-chat-tab-note-item nj-chat-tab-note-mine" onClick={openProfileEditor}>
+                        <span className="glass-bubble nj-chat-tab-note-bubble">
+                            <span className="nj-chat-tab-note-bubble-text">{profile.signature || 'Mind?'}</span>
+                            <span className="nj-chat-tab-note-bubble-tail1" aria-hidden="true" />
+                            <span className="nj-chat-tab-note-bubble-tail2" aria-hidden="true" />
+                        </span>
+                        <span className="nj-chat-tab-note-avatar">
+                            <img src={profile.avatar || userProfile.avatar} alt="" />
+                            {!profile.signature && <span className="nj-chat-tab-note-plus" aria-hidden="true">+</span>}
+                        </span>
+                        <span className="nj-chat-tab-note-name">You</span>
+                    </button>
                     {orderedSummaries.slice(0, 6).map(({ char, last }) => (
                         <button key={char.id} className="nj-chat-tab-note-item nj-chat-tab-note-friend" onClick={() => openChat(char.id)}>
                             <span className="glass-bubble nj-chat-tab-note-bubble">
