@@ -3796,6 +3796,24 @@ export interface SocialComment {
     isCharacter?: boolean;
     authorType?: 'user' | 'character' | 'stranger';
     authorCharId?: string;
+    /** 朋友圈评论时间；旧记录缺省时仍按原平铺评论显示。 */
+    timestamp?: number;
+    /** 糯叽机式回复目标；可选以兼容旧版没有回复关系的评论。 */
+    replyTo?: {
+        id: string;
+        name: string;
+        authorType?: 'user' | 'character' | 'stranger';
+        authorCharId?: string;
+    };
+}
+
+export interface SocialReactionUser {
+    id: string;
+    name: string;
+    avatar?: string;
+    actorType: 'user' | 'character';
+    charId?: string;
+    timestamp: number;
 }
 
 export interface SocialPost {
@@ -3806,6 +3824,8 @@ export interface SocialPost {
     content: string;
     images: string[];
     likes: number;
+    /** 点赞者明细；likes 继续保留总数，兼容只有历史数字的旧动态。 */
+    likeUsers?: SocialReactionUser[];
     isCollected: boolean;
     isLiked: boolean;
     comments: SocialComment[];

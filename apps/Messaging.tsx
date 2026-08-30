@@ -7,6 +7,7 @@ import {
     CaretLeft,
     ChatCircleDots,
     Check,
+    Heart,
     MapPin,
     MagnifyingGlass,
     NotePencil,
@@ -22,7 +23,7 @@ import {
     X,
 } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
-import { AppID, CharacterProfile, Message, SocialPost } from '../types';
+import { AppID, CharacterProfile, Message, SocialComment, SocialPost } from '../types';
 import { DB } from '../utils/db';
 import { listTextFavorites, TextFavorite } from '../utils/textFavorites';
 import { getVoiceFavoriteBlob, listVoiceFavorites, VoiceFavorite } from '../utils/voiceFavorites';
@@ -50,6 +51,14 @@ import { processImage } from '../utils/file';
 import { buildSelfiePrompt, generateImageDataUrl, getImageGenConfig, isImageGenReady } from '../utils/novelaiImage';
 import { safeResponseJson } from '../utils/safeApi';
 import { isMomentsPost, withSocialPostScope } from '../utils/socialPostScope';
+import {
+    appendMomentComment,
+    applyMomentAiInteractions,
+    deriveMomentNotifications,
+    MomentActor,
+    removeMomentComment,
+    toggleMomentLike,
+} from '../utils/momentsInteractions';
 import '../components/messaging/MessagingApp.css';
 
 type MessagingTab = 'chat' | 'moments' | 'favorites' | 'profile';
@@ -68,6 +77,11 @@ interface ContextMenuState {
 interface MomentRerollState {
     postId: string;
     sourceImageIndex: number;
+}
+
+interface MomentImageViewerState {
+    images: string[];
+    initialIndex: number;
 }
 
 type MomentGenerateMode = 'random' | 'select';
@@ -124,6 +138,14 @@ const formatListTime = (timestamp?: number): string => {
     if (date.toDateString() === yesterday.toDateString()) return '昨天';
     if (now.getTime() - date.getTime() < 6 * 86400000) return '周' + '日一二三四五六'[date.getDay()];
     return `${date.getMonth() + 1}/${date.getDate()}`;
+};
+
+const formatMomentNotificationTime = (timestamp: number): string => {
+    const elapsed = Math.max(0, Date.now() - timestamp);
+    if (elapsed < 60000) return '刚刚';
+    if (elapsed < 3600000) return `${Math.floor(elapsed / 60000)} 分钟前`;
+    if (elapsed < 86400000) return `${Math.floor(elapsed / 3600000)} 小时前`;
+    return `${Math.floor(elapsed / 86400000)} 天前`;
 };
 
 const contextAttrs = (tab: MessagingTab, unreadTotal: number, searching: boolean) => {
@@ -191,6 +213,16 @@ const Messaging: React.FC = () => {
     const [momentReroll, setMomentReroll] = useState<MomentRerollState | null>(null);
     const [momentRerollPrompt, setMomentRerollPrompt] = useState('');
     const [momentRerollBusy, setMomentRerollBusy] = useState(false);
+    const [momentActionsPostId, setMomentActionsPostId] = useState<string | null>(null);
+    const [momentCommentPostId, setMomentCommentPostId] = useState<string | null>(null);
+    const [momentCommentText, setMomentCommentText] = useState('');
+    const [momentReplyTarget, setMomentReplyTarget] = useState<SocialComment | null>(null);
+    const [momentRepliesPostId, setMomentRepliesPostId] = useState<string | null>(null);
+    const [momentNotificationsOpen, setMomentNotificationsOpen] = useState(false);
+    const [momentLastViewedAt, setMomentLastViewedAt] = useState(0);
+    const [momentLikeAnimatedId, setMomentLikeAnimatedId] = useState<string | null>(null);
+    const [momentImageViewer, setMomentImageViewer] = useState<MomentImageViewerState | null>(null);
+    const [momentImageViewerIndex, setMomentImageViewerIndex] = useState(0);
     const [profileAboutExpanded, setProfileAboutExpanded] = useState(false);
     const [tabAnim, setTabAnim] = useState<'idle' | 'enter'>('idle');
     const [groupMenuOpen, setGroupMenuOpen] = useState(false);
@@ -200,10 +232,15 @@ const Messaging: React.FC = () => {
     const itemLongPressTimer = useRef<number | null>(null);
     const itemLongPressed = useRef(false);
     const appRef = useRef<HTMLDivElement>(null);
+    const postsRef = useRef<SocialPost[]>([]);
+    const momentImageViewerRef = useRef<HTMLDivElement>(null);
     const momentImageInputRef = useRef<HTMLInputElement>(null);
     const profileAvatarInputRef = useRef<HTMLInputElement>(null);
     const profileCoverInputRef = useRef<HTMLInputElement>(null);
     const tabAnimTimer = useRef<number | null>(null);
+    const momentLikeTimer = useRef<number | null>(null);
+    const momentCommentLongPressTimer = useRef<number | null>(null);
+    const momentCommentLongPressed = useRef(false);
 
     useEffect(() => {
         let alive = true;
@@ -223,6 +260,14 @@ const Messaging: React.FC = () => {
             setProfile(next);
             setProfileDraft(next);
         });
+        return () => { alive = false; };
+    }, []);
+
+    useEffect(() => {
+        let alive = true;
+        DB.getAsset('messaging_moments_notif_viewed_at').then(value => {
+            if (alive) setMomentLastViewedAt(Number(value) || 0);
+        }).catch(() => undefined);
         return () => { alive = false; };
     }, []);
 
@@ -256,11 +301,37 @@ const Messaging: React.FC = () => {
         return () => { alive = false; };
     }, [characters, tab, lastMsgTimestamp]);
 
+    useEffect(() => {
+        postsRef.current = posts;
+    }, [posts]);
+
     useEffect(() => () => {
         if (tabAnimTimer.current) window.clearTimeout(tabAnimTimer.current);
+        if (momentLikeTimer.current) window.clearTimeout(momentLikeTimer.current);
+        if (momentCommentLongPressTimer.current) window.clearTimeout(momentCommentLongPressTimer.current);
     }, []);
 
+    useEffect(() => {
+        if (!momentImageViewer) return;
+        const initialIndex = Math.max(0, Math.min(momentImageViewer.initialIndex, momentImageViewer.images.length - 1));
+        setMomentImageViewerIndex(initialIndex);
+        const frame = window.requestAnimationFrame(() => {
+            const viewer = momentImageViewerRef.current;
+            if (viewer) viewer.scrollLeft = viewer.clientWidth * initialIndex;
+        });
+        const closeOnEscape = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') setMomentImageViewer(null);
+        };
+        window.addEventListener('keydown', closeOnEscape);
+        return () => {
+            window.cancelAnimationFrame(frame);
+            window.removeEventListener('keydown', closeOnEscape);
+        };
+    }, [momentImageViewer]);
+
     const unreadTotal = useMemo(() => Object.values(unreadMessages).reduce((sum, value) => sum + (Number(value) || 0), 0), [unreadMessages]);
+    const momentNotifications = useMemo(() => deriveMomentNotifications(posts), [posts]);
+    const unseenMomentNotifications = useMemo(() => momentNotifications.filter(item => item.timestamp > momentLastViewedAt), [momentLastViewedAt, momentNotifications]);
     const scopedCss = useMemo(() => {
         try { return scopeMessagingCss(previewCss); }
         catch { return ''; }
@@ -385,6 +456,135 @@ const Messaging: React.FC = () => {
         await Promise.all(scopedPosts.map(post => DB.saveSocialPost(post)));
         setPosts(current => [...scopedPosts, ...current.filter(item => !scopedPosts.some(post => post.id === item.id))]
             .sort((a, b) => b.timestamp - a.timestamp));
+    };
+
+    const persistMomentPost = async (nextPost: SocialPost) => {
+        postsRef.current = postsRef.current.map(item => item.id === nextPost.id ? nextPost : item);
+        setPosts(current => current.map(item => item.id === nextPost.id ? nextPost : item));
+        await DB.saveSocialPost(nextPost);
+    };
+
+    const userMomentActor = (): MomentActor => ({
+        id: 'me',
+        name: profile.name || userProfile.name || '我',
+        avatar: profile.avatar || userProfile.avatar,
+        actorType: 'user',
+    });
+
+    const toggleUserMomentLike = async (postId: string) => {
+        const post = postsRef.current.find(item => item.id === postId);
+        if (!post) return;
+        const next = toggleMomentLike(post, userMomentActor());
+        await persistMomentPost(next);
+        setMomentActionsPostId(null);
+        if (next.isLiked) {
+            setMomentLikeAnimatedId(postId);
+            if (momentLikeTimer.current) window.clearTimeout(momentLikeTimer.current);
+            momentLikeTimer.current = window.setTimeout(() => setMomentLikeAnimatedId(null), 1000);
+        }
+    };
+
+    const openMomentComment = (postId: string, replyTo: SocialComment | null = null) => {
+        setMomentCommentPostId(postId);
+        setMomentReplyTarget(replyTo);
+        setMomentCommentText('');
+        setMomentActionsPostId(null);
+        window.setTimeout(() => document.getElementById(`comment-input-${postId}`)?.focus(), 50);
+    };
+
+    const sendMomentComment = async () => {
+        if (!momentCommentPostId || !momentCommentText.trim()) return;
+        const post = postsRef.current.find(item => item.id === momentCommentPostId);
+        if (!post) return;
+        await persistMomentPost(appendMomentComment(post, userMomentActor(), momentCommentText, momentReplyTarget));
+        setMomentCommentText('');
+        setMomentCommentPostId(null);
+        setMomentReplyTarget(null);
+    };
+
+    const deleteMomentComment = async (postId: string, commentId: string) => {
+        if (!window.confirm('删除这条评论？')) return;
+        const post = postsRef.current.find(item => item.id === postId);
+        if (!post) return;
+        await persistMomentPost(removeMomentComment(post, commentId));
+    };
+
+    const startMomentCommentLongPress = (postId: string, commentId: string) => {
+        momentCommentLongPressed.current = false;
+        if (momentCommentLongPressTimer.current) window.clearTimeout(momentCommentLongPressTimer.current);
+        momentCommentLongPressTimer.current = window.setTimeout(() => {
+            momentCommentLongPressed.current = true;
+            void deleteMomentComment(postId, commentId);
+        }, 800);
+    };
+
+    const cancelMomentCommentLongPress = () => {
+        if (momentCommentLongPressTimer.current) window.clearTimeout(momentCommentLongPressTimer.current);
+        momentCommentLongPressTimer.current = null;
+    };
+
+    const openMomentNotifications = () => {
+        const viewedAt = Date.now();
+        setMomentLastViewedAt(viewedAt);
+        setMomentNotificationsOpen(true);
+        DB.saveAsset('messaging_moments_notif_viewed_at', String(viewedAt)).catch(() => undefined);
+    };
+
+    const generateMomentInteractions = async (postId: string) => {
+        if (momentRepliesPostId) return;
+        if (!apiConfig.apiKey || !apiConfig.baseUrl || !apiConfig.model) return addToast('请先配置文字 API', 'error');
+        const sourcePost = postsRef.current.find(item => item.id === postId);
+        if (!sourcePost) return;
+        const poster = sourcePost.authorType === 'character'
+            ? characters.find(char => String(char.id) === String(sourcePost.authorCharId))
+            : undefined;
+        const eligibleCharacters = sourcePost.authorType === 'character'
+            ? characters.filter(char => String(char.id) === String(poster?.id) || (!!poster?.groupId && char.groupId === poster.groupId))
+            : characters;
+        if (!eligibleCharacters.length) return addToast('没有可参与互动的好友角色', 'info');
+        setMomentRepliesPostId(postId);
+        setMomentActionsPostId(null);
+        try {
+            const userName = profile.name || userProfile.name || '用户';
+            const actors: MomentActor[] = eligibleCharacters.map(char => ({
+                id: char.id, charId: char.id, name: char.name, avatar: char.avatar, actorType: 'character',
+            }));
+            const blocks = await Promise.all(eligibleCharacters.map(async char => {
+                const recent = await DB.getRecentMessagesByCharId(char.id, 12, true).catch(() => [] as Message[]);
+                const tail = recent.map(message => `${message.role === 'user' ? userName : char.name}: ${String(message.content || '').replace(/\s+/g, ' ').slice(0, 240)}`).join('\n');
+                const alreadyLiked = (sourcePost.likeUsers || []).some(item => String(item.charId || item.id) === String(char.id));
+                const alreadyCommented = (sourcePost.comments || []).some(item => item.authorType === 'character' && String(item.authorCharId) === String(char.id) && !item.replyTo);
+                return `--- ${char.name} ---\n[CHARACTER]\n${ContextBuilder.buildCoreContext(char, userProfile, false)}\n[RECENT CHAT TAIL]\n${tail || '无'}\n[INTERACTION STATUS] ${alreadyLiked ? 'already liked' : 'not liked'}; ${alreadyCommented ? 'already commented, may only reply' : 'may comment'}`;
+            }));
+            const currentComments = (sourcePost.comments || []).map((comment, index) => comment.replyTo
+                ? `c${index + 1}. ${comment.authorName}→${comment.replyTo.name}: ${comment.content}`
+                : `c${index + 1}. ${comment.authorName}: ${comment.content}`).join('\n');
+            const userHasCommented = (sourcePost.comments || []).some(comment => comment.authorType === 'user');
+            const prompt = `Simulate a realistic social-media comment section in Simplified Chinese.\n\nPOST by ${sourcePost.authorName}: "${sourcePost.content || sourcePost.title}"\n${sourcePost.images?.length ? `Images: ${sourcePost.imagePrompt || '有配图，请结合正文自然理解'}\n` : ''}${currentComments ? `Comments:\n${currentComments}\n` : ''}\n${blocks.join('\n\n')}\n\n# RULES\n- Every comment/reply must be unmistakably in that character's own voice and grounded in CHARACTER and RECENT CHAT TAIL.\n- Not everyone must interact; realistic silence is allowed. Some only like.\n- No duplicate likes or top-level comments.\n- A reply target must be the exact name of somebody who already commented above. Never invent a comment or target.\n${userHasCommented ? `- Characters may reply to ${userName}'s real comment. The poster especially should respond when natural.\n` : `- ${userName} has not commented. Do not pretend ${userName} said anything and do not reply to ${userName}.\n`}- Return JSON array only. Omit characters who do nothing.\n\nOUTPUT\n[{"name":"character name","like":true,"comment":"top-level comment or null","reply":{"targetName":"existing commenter name","content":"reply text"} or null}]`;
+            const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
+                body: JSON.stringify({
+                    model: apiConfig.model,
+                    messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Generate all characters interactions. JSON array only.' }],
+                    temperature: .88,
+                    max_tokens: 4000,
+                }),
+                __sullyMeta: { appId: 'messaging', appName: '消息', purpose: '生成朋友圈互动' },
+            } as RequestInit);
+            if (!response.ok) throw new Error(`文字 API HTTP ${response.status}: ${(await response.text().catch(() => '')).slice(0, 180)}`);
+            const data = await safeResponseJson(response);
+            const interactions = parseJsonArray(data?.choices?.[0]?.message?.content || '');
+            if (!interactions.length) throw new Error('模型没有返回可用的互动数组');
+            const latestPost = postsRef.current.find(item => item.id === postId) || sourcePost;
+            const result = applyMomentAiInteractions(latestPost, actors, interactions);
+            await persistMomentPost(result.post);
+            addToast(result.matched ? `已生成 ${result.matched} 位角色的朋友圈互动` : '模型返回的角色无法匹配当前好友', result.matched ? 'success' : 'info');
+        } catch (error: any) {
+            addToast(`生成互动失败：${error?.message || error}`, 'error');
+        } finally {
+            setMomentRepliesPostId(null);
+        }
     };
 
     const callMomentWriter = async (selected: CharacterProfile[], count: number): Promise<any[]> => {
@@ -747,6 +947,76 @@ const Messaging: React.FC = () => {
         </section>
     );
 
+    const renderMomentActions = (post: SocialPost, images: Array<{ url: string; sourceImageIndex: number }>, userLiked: boolean) => (
+        <div className="nj-moments-post-actions-wrap">
+            <button className="nj-moments-post-actions-trigger" aria-label="动态操作" onClick={event => {
+                event.stopPropagation();
+                setMomentActionsPostId(current => current === post.id ? null : post.id);
+            }}>••</button>
+            {momentActionsPostId === post.id && <div className="nj-moments-post-actions-menu" onClick={event => event.stopPropagation()}>
+                <button type="button" title={userLiked ? '取消点赞' : '点赞'} onClick={() => void toggleUserMomentLike(post.id)}><Heart weight={userLiked ? 'fill' : 'regular'} /></button>
+                <button type="button" title="评论" onClick={() => openMomentComment(post.id)}><ChatCircleDots /></button>
+                <button type="button" title="生成角色互动" disabled={!!momentRepliesPostId} onClick={() => void generateMomentInteractions(post.id)}><Sparkle /></button>
+                {(!!post.imagePrompt || !!images.length) && <button type="button" title="重新生成图片" onClick={() => {
+                    setMomentActionsPostId(null);
+                    openMomentReroll(post, images[0]?.sourceImageIndex ?? -1);
+                }}><ArrowsClockwise /></button>}
+            </div>}
+        </div>
+    );
+
+    const renderMomentEngagement = (post: SocialPost) => {
+        if (!(post.likes > 0 || post.comments?.length)) return null;
+        const knownLikers = post.likeUsers || [];
+        return <div className="nj-moments-engagement">
+            <div className="nj-moments-engagement-arrow" />
+            {post.likes > 0 && <div className="nj-moments-likes">
+                <Heart className={momentLikeAnimatedId === post.id ? 'like-animate' : ''} />
+                {knownLikers.length > 0 ? <>
+                    {knownLikers.map((reaction, reactionIndex) => <span className="nj-moments-like-name" key={`${reaction.id}-${reaction.timestamp}`}>{reaction.name}{reactionIndex < knownLikers.length - 1 ? ', ' : ''}</span>)}
+                    {post.likes > knownLikers.length && <span className="nj-moments-like-name">等 {post.likes} 人</span>}
+                </> : <span className="nj-moments-like-name">{post.likes}</span>}
+            </div>}
+            {post.comments?.map(comment => <div
+                className={`nj-moments-comment ${comment.replyTo ? 'nj-moments-comment-reply' : ''}`}
+                key={comment.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => {
+                    if (momentCommentLongPressed.current) { momentCommentLongPressed.current = false; return; }
+                    openMomentComment(post.id, comment);
+                }}
+                onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') openMomentComment(post.id, comment); }}
+                onPointerDown={() => startMomentCommentLongPress(post.id, comment.id)}
+                onPointerUp={cancelMomentCommentLongPress}
+                onPointerCancel={cancelMomentCommentLongPress}
+                onPointerLeave={cancelMomentCommentLongPress}
+                onContextMenu={event => { event.preventDefault(); void deleteMomentComment(post.id, comment.id); }}
+            >
+                {comment.replyTo ? <>
+                    <span className="nj-moments-comment-author">{comment.authorName}</span>
+                    <span className="nj-moments-comment-reply-word"> 回复 </span>
+                    <span className="nj-moments-comment-target">{comment.replyTo.name}</span>
+                    <span className="nj-moments-comment-content">：{comment.content}</span>
+                </> : <>
+                    <span className="nj-moments-comment-author">{comment.authorName}</span>
+                    <span className="nj-moments-comment-content">：{comment.content}</span>
+                </>}
+            </div>)}
+        </div>;
+    };
+
+    const renderMomentCommentComposer = (postId: string) => {
+        if (momentCommentPostId !== postId) return null;
+        return <div className="nj-moments-comment-compose">
+            {momentReplyTarget && <div className="nj-moments-comment-banner"><span>回复 <b>{momentReplyTarget.authorName}</b></span><button type="button" aria-label="取消回复" onClick={() => setMomentReplyTarget(null)}>×</button></div>}
+            <div className="nj-moments-comment-compose-row">
+                <input id={`comment-input-${postId}`} name="moment-comment" autoComplete="off" autoFocus value={momentCommentText} onChange={event => setMomentCommentText(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void sendMomentComment(); }} placeholder={momentReplyTarget ? `回复 ${momentReplyTarget.authorName}` : '评论'} className="comment-input" />
+                <button type="button" onClick={() => void sendMomentComment()} disabled={!momentCommentText.trim()}>发送</button>
+            </div>
+        </div>;
+    };
+
     const renderMomentsTab = () => (
         <section id="messaging-moments-tab" className="moments-view nj-moments-tab" data-post-count={String(posts.length)} data-empty={String(posts.length === 0)}>
             <div className="nj-moments-header"><div className="nj-moments-header-btns">
@@ -757,24 +1027,35 @@ const Messaging: React.FC = () => {
             <div className="nj-moments-header-sticky" data-scrolled="false"><div className="nj-moments-header-title">朋友圈</div></div>
             <div className="nj-moments-decor-top" aria-hidden="true" />
             <div className="nj-moments-cover-wrap"><div className="nj-moments-cover" style={profile.cover ? { backgroundImage: `url(${JSON.stringify(profile.cover)})` } : undefined}><div className="nj-moments-cover-gradient" /></div><div className="nj-moments-cover-userinfo"><div className="nj-moments-cover-username">{profile.name || '我'}</div><div className="nj-moments-cover-avatar"><img src={profile.avatar || userProfile.avatar} alt="" /></div></div></div>
-            <div className="nj-moments-notif-entry" aria-hidden="true" />
+            {!!momentNotifications.length && <div className="nj-moments-notif-entry" role="button" tabIndex={0} onClick={openMomentNotifications} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') openMomentNotifications(); }}>
+                <div className="nj-moments-notif-avatar"><img src={momentNotifications[0].avatar || characters.find(char => char.id === momentNotifications[0].charId)?.avatar || userProfile.avatar} alt="" />{unseenMomentNotifications.length > 0 && <span>{unseenMomentNotifications.length > 99 ? '99+' : unseenMomentNotifications.length}</span>}</div>
+                <div className="nj-moments-notif-summary">{unseenMomentNotifications.length > 0 ? `${unseenMomentNotifications.length} 条新消息` : '查看朋友圈消息'}</div>
+                <CaretLeft className="nj-moments-notif-caret" />
+            </div>}
             <div className="nj-moments-decor-mid" aria-hidden="true" />
             <div className="nj-moments-feed">
                 {posts.slice(0, 30).map((post, index) => {
                     const images = (post.images || []).map((url, sourceImageIndex) => ({ url, sourceImageIndex })).filter(item => isImageSource(item.url)).slice(0, 9);
                     const stickers = (post.images || []).filter(value => !isImageSource(value) && !value.startsWith('txt:'));
                     const hour = new Date(post.timestamp).getHours();
+                    const userLiked = post.isLiked || (post.likeUsers || []).some(reaction => reaction.actorType === 'user');
                     const style = { '--nj-item-index': String(index), '--nj-post-img-count': String(images.length), '--nj-post-like-count': String(post.likes || 0), '--nj-post-comment-count': String(post.comments?.length || 0), '--nj-item-avatar-url': `url(${JSON.stringify(post.authorAvatar)})` } as CSSProperties;
-                    return <article className={`nj-moments-post ${post.authorType === 'character' ? 'nj-moments-post-char' : 'nj-moments-post-user'}`} key={post.id} style={style} data-post-kind={post.authorType === 'character' ? 'char' : 'user'} data-index={String(index)} data-img-count={String(images.length)} data-has-img={String(images.length > 0)} data-liked={String(post.isLiked)} data-like-count={String(post.likes || 0)} data-comment-count={String(post.comments?.length || 0)} data-has-comment={String(!!post.comments?.length)} data-length={messagingLengthBucket(post.content || post.title || '')} data-time-slot={messagingTimeSlot(hour)} data-hour={String(hour)} data-has-location={post.location ? 'true' : undefined}>
+                    return <article className={`nj-moments-post ${post.authorType === 'character' ? 'nj-moments-post-char' : 'nj-moments-post-user'}`} key={post.id} style={style} data-post-kind={post.authorType === 'character' ? 'char' : 'user'} data-index={String(index)} data-img-count={String(images.length)} data-has-img={String(images.length > 0)} data-liked={String(userLiked)} data-like-count={String(post.likes || 0)} data-comment-count={String(post.comments?.length || 0)} data-has-comment={String(!!post.comments?.length)} data-length={messagingLengthBucket(post.content || post.title || '')} data-time-slot={messagingTimeSlot(hour)} data-hour={String(hour)} data-has-location={post.location ? 'true' : undefined}>
                         <div className="nj-moments-post-avatar"><img src={post.authorAvatar} alt="" /></div>
                         <div className="nj-moments-post-body">
                             <div className="nj-moments-post-name">{post.authorName}</div>
                             <div className="nj-moments-post-text">{post.content || post.title}</div>
                             {!!stickers.length && <div className="nj-moments-post-sticker" aria-label="心情贴纸">{stickers[0]}</div>}
-                            {!!images.length && <div className={`nj-moments-post-imgs nj-moments-post-imgs-${images.length}`}>{images.map(({ url, sourceImageIndex }, imageIndex) => <div className="nj-moments-post-img-cell" key={`${post.id}-${imageIndex}`}><img src={url} alt="" /><button type="button" className="sully-msg-moment-reroll" aria-label="重新生成这张图片" onClick={event => { event.stopPropagation(); openMomentReroll(post, sourceImageIndex); }}><ArrowsClockwise /></button></div>)}</div>}
+                            {!!images.length && <div className={`nj-moments-post-imgs nj-moments-post-imgs-${images.length}`}>{images.map(({ url, sourceImageIndex }, imageIndex) => <div className="nj-moments-post-img-cell" key={`${post.id}-${imageIndex}`}><img src={url} alt="" role="button" tabIndex={0} onClick={event => { event.stopPropagation(); setMomentImageViewer({ images: images.map(item => item.url), initialIndex: imageIndex }); }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setMomentImageViewer({ images: images.map(item => item.url), initialIndex: imageIndex }); } }} /><button type="button" className="sully-msg-moment-reroll" aria-label="重新生成这张图片" onClick={event => { event.stopPropagation(); openMomentReroll(post, sourceImageIndex); }}><ArrowsClockwise /></button></div>)}</div>}
                             {!images.length && (!!post.imagePrompt || !!post.imageGenerationError) && <button type="button" className="sully-msg-moment-retry" onClick={() => openMomentReroll(post)}><ArrowsClockwise />{post.imageGenerationError ? '图片生成失败，重新生成' : '生成朋友圈图片'}</button>}
-                            <div className="nj-moments-post-meta"><span className="nj-moments-post-time">{formatListTime(post.timestamp)}</span>{post.location && <span className="nj-moments-post-location">{post.location}</span>}<div className="nj-moments-post-actions-wrap"><button className="nj-moments-post-actions-trigger" aria-label="动态操作" onClick={() => openMomentReroll(post, images[0]?.sourceImageIndex ?? -1)}>••</button></div></div>
-                            {(post.likes > 0 || !!post.comments?.length) && <div className="nj-moments-engagement">{post.likes > 0 && <div className="nj-moments-likes"><span>♡</span><span className="nj-moments-like-name">{post.likes}</span></div>}{post.comments?.map(comment => <div className="nj-moments-comment" key={comment.id}><span className="nj-moments-comment-author">{comment.authorName}：</span><span className="nj-moments-comment-content">{comment.content}</span></div>)}</div>}
+                            <div className="nj-moments-post-meta">
+                                <span className="nj-moments-post-time">{formatListTime(post.timestamp)}</span>
+                                {post.location && <span className="nj-moments-post-location">{post.location}</span>}
+                                {momentRepliesPostId === post.id && <span className="nj-moments-generating">⏳ 生成回复…</span>}
+                                {renderMomentActions(post, images, userLiked)}
+                            </div>
+                            {renderMomentEngagement(post)}
+                            {renderMomentCommentComposer(post.id)}
                         </div>
                         <div className="nj-item-deco nj-item-deco-1 heavy-anim" aria-hidden="true" /><div className="nj-item-deco nj-item-deco-2 heavy-anim" aria-hidden="true" />
                     </article>;
@@ -839,7 +1120,7 @@ const Messaging: React.FC = () => {
     };
 
     return (
-        <div ref={appRef} className="sully-messaging-app" onClick={() => contextMenu && setContextMenu(null)}>
+        <div ref={appRef} className="sully-messaging-app" onClick={() => { if (contextMenu) setContextMenu(null); if (momentActionsPostId) setMomentActionsPostId(null); }}>
             {!!scopedCss && <style data-sully-messaging-theme>{scopedCss}</style>}
             <div id="chat-list-screen" className="screen active sully-messaging-screen" {...attrs} data-prev-tab={previousTab} data-tab-anim={tabAnim}>
                 <div className="content-area sully-messaging-content">
@@ -850,7 +1131,7 @@ const Messaging: React.FC = () => {
                 </div>
                 <div id="messaging-bottom-bar" className="glass-tab-bar nj-tab-bottom-bar" role="navigation" aria-label="消息应用标签栏">
                     <div className={`tab-item nj-tab-bottom-item nj-tab-bottom-item-chat ${tab === 'chat' ? 'active nj-tab-bottom-item-active' : ''}`} role="button" tabIndex={0} aria-label="消息" onClick={() => selectTab('chat')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') selectTab('chat'); }} onPointerDown={startThemeLongPress} onPointerUp={cancelThemeLongPress} onPointerCancel={cancelThemeLongPress} onPointerLeave={cancelThemeLongPress} onContextMenu={event => { event.preventDefault(); openThemeSettings(); }}><div className="glass-icon nj-tab-bottom-icon"><ChatCircleDots weight={tab === 'chat' ? 'fill' : 'regular'} />{unreadTotal > 0 && <span className="nj-tab-bottom-total-unread">{unreadTotal > 99 ? '99+' : unreadTotal}</span>}</div></div>
-                    <div className={`tab-item nj-tab-bottom-item nj-tab-bottom-item-moments ${tab === 'moments' ? 'active nj-tab-bottom-item-active' : ''}`} role="button" tabIndex={0} aria-label="朋友圈" onClick={() => selectTab('moments')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') selectTab('moments'); }}><div className="glass-icon nj-tab-bottom-icon"><Planet weight={tab === 'moments' ? 'fill' : 'regular'} />{!!posts.length && <i className="nj-tab-bottom-moments-dot" />}</div></div>
+                    <div className={`tab-item nj-tab-bottom-item nj-tab-bottom-item-moments ${tab === 'moments' ? 'active nj-tab-bottom-item-active' : ''}`} role="button" tabIndex={0} aria-label="朋友圈" onClick={() => selectTab('moments')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') selectTab('moments'); }}><div className="glass-icon nj-tab-bottom-icon"><Planet weight={tab === 'moments' ? 'fill' : 'regular'} />{!!unseenMomentNotifications.length && <i className="nj-tab-bottom-moments-dot" />}</div></div>
                     <div className={`tab-item nj-tab-bottom-item nj-tab-bottom-item-favorites ${tab === 'favorites' ? 'active nj-tab-bottom-item-active' : ''}`} role="button" tabIndex={0} aria-label="收藏" onClick={() => selectTab('favorites')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') selectTab('favorites'); }}><div className="glass-icon nj-tab-bottom-icon"><Star weight={tab === 'favorites' ? 'fill' : 'regular'} /></div></div>
                     <div className={`tab-item nj-tab-bottom-item nj-tab-bottom-item-profile ${tab === 'profile' ? 'active nj-tab-bottom-item-active' : ''}`} role="button" tabIndex={0} aria-label="我的" onClick={() => selectTab('profile')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') selectTab('profile'); }}><div className="glass-icon nj-tab-bottom-icon"><UserCircle weight={tab === 'profile' ? 'fill' : 'regular'} /></div></div>
                 </div>
@@ -906,6 +1187,24 @@ const Messaging: React.FC = () => {
                 onClose={() => { setThemeOpen(false); setPreviewCss(themeState.css); }}
                 notify={addToast}
             />}
+            {momentNotificationsOpen && <div className="sully-msg-moment-notifications" role="dialog" aria-modal="true" aria-label="朋友圈消息">
+                <div className="sully-msg-moment-notifications-head"><button type="button" aria-label="返回朋友圈" onClick={() => setMomentNotificationsOpen(false)}><CaretLeft /></button><div>朋友圈消息</div><i /></div>
+                <div className="sully-msg-moment-notifications-list">{momentNotifications.length > 0 && <div className="sully-msg-moment-notifications-card">{momentNotifications.map(notification => <div className="sully-msg-moment-notification" key={notification.id}>
+                    <div className="sully-msg-moment-notification-avatar"><img src={notification.avatar || characters.find(char => char.id === notification.charId)?.avatar || userProfile.avatar} alt="" /></div>
+                    <div className="sully-msg-moment-notification-body"><div className="sully-msg-moment-notification-name">{notification.name}</div><div className="sully-msg-moment-notification-content">{notification.type === 'like' ? <><Heart weight="fill" /> 赞了你的动态</> : notification.content || (notification.type === 'reply' ? '回复了你的评论' : '评论了你的动态')}</div><div className="sully-msg-moment-notification-time">{formatMomentNotificationTime(notification.timestamp)}</div></div>
+                    <div className="sully-msg-moment-notification-post">{notification.postImage ? <img src={notification.postImage} alt="" /> : <span>{notification.postText.slice(0, 16)}</span>}</div>
+                </div>)}</div>}<div className="sully-msg-moment-notifications-end">以上是全部消息</div></div>
+            </div>}
+            {momentImageViewer && <div className="sully-msg-moment-viewer" role="dialog" aria-modal="true" aria-label="朋友圈图片预览" onClick={() => setMomentImageViewer(null)}>
+                <div ref={momentImageViewerRef} className="sully-msg-moment-viewer-track" onClick={event => event.stopPropagation()} onScroll={event => {
+                    const track = event.currentTarget;
+                    if (track.clientWidth > 0) setMomentImageViewerIndex(Math.round(track.scrollLeft / track.clientWidth));
+                }}>
+                    {momentImageViewer.images.map((url, index) => <div className="sully-msg-moment-viewer-slide" key={`${url}-${index}`}><img src={url} alt="" draggable={false} /></div>)}
+                </div>
+                <button type="button" className="sully-msg-moment-viewer-close" aria-label="关闭大图" onClick={() => setMomentImageViewer(null)}><X /></button>
+                {momentImageViewer.images.length > 1 && <div className="sully-msg-moment-viewer-dots" aria-label={`${momentImageViewerIndex + 1} / ${momentImageViewer.images.length}`} onClick={event => event.stopPropagation()}>{momentImageViewer.images.map((_, index) => <i className={index === momentImageViewerIndex ? 'active' : ''} key={index} />)}</div>}
+            </div>}
         </div>
     );
 };
