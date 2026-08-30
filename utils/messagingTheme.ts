@@ -2,6 +2,7 @@ import { DB } from './db';
 
 export const MESSAGING_THEME_STATE_ASSET_ID = 'messaging_theme_state_v1';
 export const MESSAGING_LIST_PREFS_ASSET_ID = 'messaging_list_prefs_v1';
+export const MESSAGING_PROFILE_ASSET_ID = 'messaging_profile_v1';
 
 export interface MessagingThemePreset {
     id: string;
@@ -25,6 +26,36 @@ export interface MessagingListPrefs {
     groupButtonHidden: boolean;
     collapsedGroupIds: string[];
 }
+
+export interface MessagingProfile {
+    version: 1;
+    name: string;
+    avatar: string;
+    cover: string;
+    handle: string;
+    signature: string;
+    birthday: string;
+    gender: string;
+    virtualLocation: string;
+    realLocation: string;
+    hobbies: string[];
+    about: string;
+}
+
+export const makeDefaultMessagingProfile = (source?: Partial<MessagingProfile> & { bio?: string }): MessagingProfile => ({
+    version: 1,
+    name: String(source?.name || '我'),
+    avatar: String(source?.avatar || ''),
+    cover: String(source?.cover || ''),
+    handle: String(source?.handle || ''),
+    signature: String(source?.signature || ''),
+    birthday: String(source?.birthday || ''),
+    gender: String(source?.gender || ''),
+    virtualLocation: String(source?.virtualLocation || ''),
+    realLocation: String(source?.realLocation || ''),
+    hobbies: Array.isArray(source?.hobbies) ? source!.hobbies!.map(String).filter(Boolean).slice(0, 24) : [],
+    about: String(source?.about || source?.bio || ''),
+});
 
 export const EMPTY_MESSAGING_THEME_STATE: MessagingThemeState = {
     version: 1,
@@ -106,136 +137,97 @@ const ROOT_SELECTORS = [
     '#messaging-bottom-bar',
 ];
 
-const CONTEXT_PREFIX = /^\s*((?:\[data-(?:time-of-day|color-scheme|active-tab|prev-tab|tab-anim|view-mode|time-slot|hour|scrolled|unread-total|searching|post-count|empty)(?:[~|^$*]?=(?:"[^"]*"|'[^']*'|[^\]]*))?\]\s*)+)/i;
+const OUTER_CONTEXT_RE = /^\s*(\[data-(?:time-of-day|color-scheme|active-tab|prev-tab|tab-anim|view-mode|time-slot|hour)(?:[~|^$*]?=(?:"[^"]*"|'[^']*'|[^\]]*))?\])\s*/;
+const ROOT_CONTEXT_RE = /^\s*(\[data-(?:scrolled|unread-total|searching|post-count|empty)(?:[~|^$*]?=(?:"[^"]*"|'[^']*'|[^\]]*))?\])\s*/;
 
-const splitSelectors = (selectorText: string): string[] => {
-    const selectors: string[] = [];
-    let current = '';
-    let square = 0;
-    let round = 0;
-    let quote = '';
-    for (let index = 0; index < selectorText.length; index += 1) {
-        const char = selectorText[index];
-        if (quote) {
-            current += char;
-            if (char === quote && selectorText[index - 1] !== '\\') quote = '';
-            continue;
-        }
-        if (char === '"' || char === "'") quote = char;
-        else if (char === '[') square += 1;
-        else if (char === ']') square = Math.max(0, square - 1);
-        else if (char === '(') round += 1;
-        else if (char === ')') round = Math.max(0, round - 1);
-        if (char === ',' && square === 0 && round === 0) {
-            if (current.trim()) selectors.push(current.trim());
-            current = '';
-        } else {
-            current += char;
-        }
-    }
-    if (current.trim()) selectors.push(current.trim());
-    return selectors;
-};
-
-const firstCombinatorIndex = (selector: string): number => {
-    let square = 0;
-    let round = 0;
-    let quote = '';
-    for (let index = 0; index < selector.length; index += 1) {
-        const char = selector[index];
-        if (quote) {
-            if (char === quote && selector[index - 1] !== '\\') quote = '';
-            continue;
-        }
-        if (char === '"' || char === "'") quote = char;
-        else if (char === '[') square += 1;
-        else if (char === ']') square = Math.max(0, square - 1);
-        else if (char === '(') round += 1;
-        else if (char === ')') round = Math.max(0, round - 1);
-        else if (square === 0 && round === 0 && /[\s>+~]/.test(char)) return index;
-    }
-    return -1;
-};
-
-const scopeOneSelector = (rawSelector: string): string[] => {
-    let selector = rawSelector.trim();
-    if (!selector) return [];
-    if (ROOT_SELECTORS.some(root => selector.includes(root)) || selector.includes('.nj-tab-bottom-bar')) {
-        return [selector];
-    }
-
-    const contextMatch = selector.match(CONTEXT_PREFIX);
-    const context = contextMatch?.[1]?.trim() || '';
-    if (contextMatch) selector = selector.slice(contextMatch[0].length).trim();
-    if (/^(?:html|body)(?:\b|\s|>)/i.test(selector)) {
-        selector = selector.replace(/^(?:html|body)\s*/i, '').trim();
-    }
-    if (!selector || selector === ':root') {
-        return ROOT_SELECTORS.map(root => `${context ? `${context} ` : ''}${root}`);
-    }
-
-    const combinator = firstCombinatorIndex(selector);
-    const first = combinator >= 0 ? selector.slice(0, combinator).trim() : selector;
-    const rest = combinator >= 0 ? selector.slice(combinator) : '';
-    const results: string[] = [];
-    for (const root of ROOT_SELECTORS) {
-        const prefix = context ? `${context} ` : '';
-        if (/^[.#[:]/.test(first)) results.push(`${prefix}:is(${root}${first})${rest}`);
-        results.push(`${prefix}${root} ${selector}`);
-    }
-    return results;
-};
-
-const findMatchingBrace = (css: string, openIndex: number): number => {
-    let depth = 0;
-    let quote = '';
-    let inComment = false;
-    for (let index = openIndex; index < css.length; index += 1) {
-        const char = css[index];
-        const next = css[index + 1];
-        if (inComment) {
-            if (char === '*' && next === '/') { inComment = false; index += 1; }
-            continue;
-        }
-        if (!quote && char === '/' && next === '*') { inComment = true; index += 1; continue; }
-        if (quote) {
-            if (char === quote && css[index - 1] !== '\\') quote = '';
-            continue;
-        }
-        if (char === '"' || char === "'") { quote = char; continue; }
-        if (char === '{') depth += 1;
-        if (char === '}') {
-            depth -= 1;
-            if (depth === 0) return index;
-        }
-    }
-    return -1;
-};
-
-const scopeCssBlock = (css: string): string => {
-    let output = '';
+/**
+ * 糯叽机 4.71 messagingCssScope 的同版实现。
+ * 这里刻意保留它对逗号、伪元素、媒体查询和语境属性的处理顺序；CSS 兼容的关键不只是类名。
+ */
+const scopeCssLikeNuojiji471 = (input: string): string => {
+    if (!input) return '';
+    const atRules: Array<{ raw: string; mediaLike: boolean; braceStart: number }> = [];
+    let plain = '';
     let cursor = 0;
-    while (cursor < css.length) {
-        const open = css.indexOf('{', cursor);
-        if (open < 0) { output += css.slice(cursor); break; }
-        const close = findMatchingBrace(css, open);
-        if (close < 0) { output += css.slice(cursor); break; }
-        const header = css.slice(cursor, open);
-        const body = css.slice(open + 1, close);
-        const leadingMatch = header.match(/^[\s\S]*?(?=\S)/);
-        const leading = leadingMatch?.[0] || '';
-        const trimmedHeader = header.slice(leading.length).trim();
-
-        if (trimmedHeader.startsWith('@')) {
-            const recurse = /^@(?:media|supports|container|layer)\b/i.test(trimmedHeader);
-            output += `${leading}${trimmedHeader}{${recurse ? scopeCssBlock(body) : body}}`;
-        } else {
-            const scoped = splitSelectors(trimmedHeader).flatMap(scopeOneSelector).join(',\n');
-            output += `${leading}${scoped}{${body}}`;
-        }
-        cursor = close + 1;
+    const atRuleRe = /@(?:-webkit-)?(?:keyframes|media|supports)\b/;
+    while (cursor < input.length) {
+        const rest = input.slice(cursor);
+        const match = rest.match(atRuleRe);
+        if (!match) { plain += rest; break; }
+        plain += rest.slice(0, match.index);
+        const start = cursor + (match.index || 0);
+        const mediaLike = /^@(?:-webkit-)?(?:media|supports)\b/.test(input.slice(start));
+        const brace = input.indexOf('{', start);
+        if (brace < 0) { plain += input.slice(start); break; }
+        let depth = 0;
+        let end = brace;
+        do {
+            if (input[end] === '{') depth += 1;
+            else if (input[end] === '}') depth -= 1;
+            end += 1;
+        } while (depth > 0 && end < input.length);
+        atRules.push({ raw: input.slice(start, end), mediaLike, braceStart: brace - start });
+        plain += `\n.__nuo_at_${atRules.length - 1}__{}\n`;
+        cursor = end;
     }
-    return output;
+
+    plain = plain.replace(/\/\*[\s\S]*?\*\//g, '');
+    plain = plain.replace(/(^|\})\s*([^@{}][^{]*)\{/g, (whole, boundary: string, selectorText: string) => {
+        if (/\.__nuo_at_\d+__/.test(selectorText)) return whole;
+        const scoped = selectorText.split(',').map(item => item.trim()).filter(Boolean).flatMap(raw => {
+            const outer: string[] = [];
+            let selector = raw.trim();
+            let match: RegExpMatchArray | null;
+            while ((match = selector.match(OUTER_CONTEXT_RE))) {
+                outer.push(match[1]);
+                selector = selector.slice(match[0].length).trim();
+            }
+            const prefix = outer.length ? `${outer.join('')} ` : '';
+            const rootContext: string[] = [];
+            while ((match = selector.match(ROOT_CONTEXT_RE))) {
+                rootContext.push(match[1]);
+                selector = selector.slice(match[0].length).trim();
+            }
+            const context = rootContext.join('');
+            if (selector === ':root' || ((outer.length || rootContext.length) && selector === '')) {
+                return ROOT_SELECTORS.map(root => `${prefix}${root}${context}`);
+            }
+            if (ROOT_SELECTORS.some(root => selector.includes(root))) return [`${prefix}${selector}`];
+            let pseudoElement = '';
+            const withoutPseudo = selector.replace(/(?:::[\w-]+(?:\([^)]*\))?|:(?:before|after|first-line|first-letter))$/, value => {
+                pseudoElement = value;
+                return '';
+            });
+            if (!withoutPseudo) {
+                return ROOT_SELECTORS.flatMap(root => [`${prefix}${root}${context}${pseudoElement}`, `${prefix}${root}${context} *${pseudoElement}`]);
+            }
+            let splitAt = -1;
+            let square = 0;
+            let round = 0;
+            for (let index = 0; index < withoutPseudo.length; index += 1) {
+                const char = withoutPseudo[index];
+                if (char === '[') square += 1;
+                else if (char === ']') square -= 1;
+                else if (char === '(') round += 1;
+                else if (char === ')') round -= 1;
+                else if (square === 0 && round === 0 && /[\s>+~]/.test(char)) { splitAt = index; break; }
+            }
+            const first = splitAt > 0 ? withoutPseudo.slice(0, splitAt) : withoutPseudo;
+            const tail = splitAt > 0 ? withoutPseudo.slice(splitAt) : '';
+            return ROOT_SELECTORS.flatMap(root => [
+                `${prefix}:is(${root}${context}${first})${tail}${pseudoElement}`,
+                `${prefix}${root}${context} ${withoutPseudo}${pseudoElement}`,
+            ]);
+        }).join(', ');
+        return scoped ? `${boundary} ${scoped} {` : whole;
+    });
+
+    return plain.replace(/\.__nuo_at_(\d+)__\{\}/g, (_whole, indexText: string) => {
+        const rule = atRules[Number(indexText)];
+        if (!rule) return '';
+        if (!rule.mediaLike) return rule.raw;
+        return `${rule.raw.slice(0, rule.braceStart + 1)}\n${scopeCssLikeNuojiji471(rule.raw.slice(rule.braceStart + 1, -1))}\n}`;
+    });
 };
 
 export const validateMessagingCss = (css: string): { valid: true } | { valid: false; error: string } => {
@@ -251,19 +243,10 @@ export const validateMessagingCss = (css: string): { valid: true } | { valid: fa
     return { valid: true };
 };
 
-const addWebkitBackdropFilter = (css: string): string => css.replace(
-    /(^|[;{]\s*)(backdrop-filter\s*:\s*[^;{}]+)(;?)/gim,
-    (match, prefix, declaration, suffix) => {
-        if (/-webkit-backdrop-filter\s*:/i.test(match)) return match;
-        const value = String(declaration).replace(/^backdrop-filter\s*:\s*/i, '');
-        return `${prefix}-webkit-backdrop-filter: ${value}; ${declaration}${suffix}`;
-    },
-);
-
 export const scopeMessagingCss = (css: string): string => {
     const validation = validateMessagingCss(css);
     if (!validation.valid) throw new Error(validation.error);
-    return scopeCssBlock(addWebkitBackdropFilter(css));
+    return scopeCssLikeNuojiji471(css);
 };
 
 const normalizePreset = (value: unknown): MessagingThemePreset | null => {
@@ -312,6 +295,15 @@ export const loadMessagingListPrefs = async (): Promise<MessagingListPrefs> => {
 
 export const saveMessagingListPrefs = async (prefs: MessagingListPrefs): Promise<void> => {
     await DB.saveAssetRaw(MESSAGING_LIST_PREFS_ASSET_ID, prefs);
+};
+
+export const loadMessagingProfile = async (fallback: Partial<MessagingProfile> & { bio?: string }): Promise<MessagingProfile> => {
+    const raw = await DB.getAssetRaw(MESSAGING_PROFILE_ASSET_ID).catch(() => null) as Partial<MessagingProfile> | null;
+    return makeDefaultMessagingProfile(raw?.version === 1 ? { ...fallback, ...raw } : fallback);
+};
+
+export const saveMessagingProfile = async (profile: MessagingProfile): Promise<void> => {
+    await DB.saveAssetRaw(MESSAGING_PROFILE_ASSET_ID, makeDefaultMessagingProfile(profile));
 };
 
 export const makeMessagingPresetId = (): string => `msg_theme_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;

@@ -11,6 +11,7 @@ import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } fr
 import { House, User, Package, Warning } from '@phosphor-icons/react';
 import { mergeSocialComments, prependUniqueSocialPosts, updateSocialPost } from '../utils/socialFeedMerge';
 import { trackEvent } from '../utils/analytics';
+import { buildSelfiePrompt, generateImageDataUrl, getImageGenConfig, isImageGenReady } from '../utils/novelaiImage';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
@@ -43,6 +44,15 @@ const codepointToEmoji = (code: string): string => {
     } catch {
         return '✨';
     }
+};
+
+const isImageSource = (value: string | undefined): boolean => /^(?:data:image\/|https?:\/\/|blob:|blobref:)/i.test(String(value || '').trim());
+
+const renderPostVisual = (post: SocialPost, className: string) => {
+    const visual = post.images?.[0] || '✨';
+    return isImageSource(visual)
+        ? <img src={visual} alt="" className={`${className} w-full h-full object-cover`} />
+        : <div className={`${className} relative z-10 text-6xl drop-shadow-xl filter saturate-150`}>{codepointToEmoji(visual)}</div>;
 };
 
 const STICKER_OPTIONS = [
@@ -165,6 +175,9 @@ const SocialApp: React.FC = () => {
     const [newPostTitle, setNewPostTitle] = useState('');
     const [newPostContent, setNewPostContent] = useState('');
     const [newPostEmoji, setNewPostEmoji] = useState('2728');
+    const [newPostImagePrompt, setNewPostImagePrompt] = useState('');
+    const [newPostGeneratedImage, setNewPostGeneratedImage] = useState('');
+    const [newPostImageBusy, setNewPostImageBusy] = useState(false);
 
     // Comment Input State
     const [commentInput, setCommentInput] = useState('');
@@ -480,7 +493,7 @@ ${charContexts}
     "authorName": "必须填身份表中定义的【网名】",
     "title": "简短吸睛的标题",
     "content": "正文内容...",
-    "emojis": ["🎈", "✨"],
+    "imagePrompt": "与正文一致、可直接用于生图 API 的英文画面提示词；不适合配图时留空",
     "likes": 随机数 (0 - 10000)
   },
   ...
@@ -498,7 +511,7 @@ ${charContexts}
             const json = safeParseJSON(data.choices[0].message.content);
             if (!Array.isArray(json)) throw new Error('Parsed data is not an array');
             
-            const newPosts: SocialPost[] = json
+            const draftPosts: SocialPost[] = json
                 .filter((item: any) => {
                     // Defense in depth: drop any AI-generated post that tries to impersonate the user.
                     const name = (item?.authorName || '').toString().trim();
@@ -521,16 +534,14 @@ ${charContexts}
                     const seeds = ['micah', 'avataaars', 'bottts', 'notionists'];
                     avatar = `https://api.dicebear.com/7.x/${seeds[Math.floor(Math.random() * seeds.length)]}/svg?seed=${item.authorName + Math.random()}`;
                 }
-                // Normalize emoji content. AI usually returns real emoji chars; fall back to a ✨ char (not codepoint) for safety.
-                const rawEmojis = Array.isArray(item.emojis) && item.emojis.length > 0 ? item.emojis : ['✨'];
-                const images = rawEmojis.map((e: any) => codepointToEmoji(String(e ?? '✨')));
+                const imagePrompt = String(item.imagePrompt || item.scene || '').trim();
                 return {
                     id: `post-${Date.now()}-${Math.random()}`,
                     authorName: item.authorName || 'Unknown',
                     authorAvatar: avatar,
                     title: item.title || '无标题',
                     content: item.content || '...',
-                    images,
+                    images: [],
                     likes: item.likes || 0,
                     isCollected: false,
                     isLiked: false,
@@ -540,10 +551,31 @@ ${charContexts}
                     bgStyle: getRandomStyle().bg,
                     authorType: isCharacterPost ? 'character' : 'stranger',
                     authorCharId: matchedChar?.id,
+                    imagePrompt,
                 };
             });
+            const imageConfig = getImageGenConfig();
+            const canDraw = isImageGenReady(imageConfig);
+            let imageFailures = 0;
+            const newPosts: SocialPost[] = [];
+            for (let index = 0; index < draftPosts.length; index += 1) {
+                const post = draftPosts[index];
+                if (canDraw && post.imagePrompt) {
+                    try {
+                        const prompt = post.authorCharId
+                            ? buildSelfiePrompt(post.authorCharId, post.imagePrompt, imageConfig)
+                            : post.imagePrompt;
+                        post.images = [await generateImageDataUrl(prompt, imageConfig)];
+                    } catch (error: any) {
+                        imageFailures += 1;
+                        post.imageGenerationError = error?.message || String(error);
+                    }
+                }
+                if (!post.images.length) post.images = ['✨'];
+                newPosts.push(post);
+            }
             prependPostsToFeed(newPosts);
-            addToast('首页已刷新: 冲浪模式开启', 'success');
+            addToast(imageFailures ? `首页已刷新；${imageFailures} 张配图生成失败` : '首页已刷新: 冲浪模式开启', imageFailures ? 'info' : 'success');
         } catch (e: any) {
             if (e?.name !== 'AbortError') addToast('刷新失败: ' + e.message, 'error');
         } finally {
@@ -790,6 +822,22 @@ ${identityMap}
         } catch (e) { addToast('分享失败', 'error'); }
     };
 
+    const drawNewSocialPostImage = async () => {
+        const prompt = newPostImagePrompt.trim();
+        if (!prompt) return addToast('先填写配图描述', 'error');
+        const config = getImageGenConfig();
+        if (!isImageGenReady(config)) return addToast('生图 API 还没配置完整', 'error');
+        setNewPostImageBusy(true);
+        try {
+            setNewPostGeneratedImage(await generateImageDataUrl(prompt, config));
+            addToast('小红书配图已生成', 'success');
+        } catch (error: any) {
+            addToast(error?.message || '生图失败', 'error');
+        } finally {
+            setNewPostImageBusy(false);
+        }
+    };
+
     const handleCreatePost = () => {
         if (!newPostContent.trim()) return;
         const post: SocialPost = {
@@ -800,7 +848,7 @@ ${identityMap}
             content: newPostContent,
             // Sticker selector stores twemoji codepoints (eg "2728"); convert to the real emoji char
             // so that the feed/detail views render an emoji instead of the raw codepoint text.
-            images: [codepointToEmoji(newPostEmoji)],
+            images: [newPostGeneratedImage || codepointToEmoji(newPostEmoji)],
             likes: 0,
             isCollected: false,
             isLiked: false,
@@ -809,9 +857,10 @@ ${identityMap}
             tags: ['User'],
             bgStyle: getRandomStyle().bg,
             authorType: 'user',
+            imagePrompt: newPostImagePrompt.trim(),
         };
         prependPostsToFeed([post]);
-        setNewPostContent(''); setNewPostTitle(''); 
+        setNewPostContent(''); setNewPostTitle(''); setNewPostImagePrompt(''); setNewPostGeneratedImage('');
         setIsCreateOpen(false); // Close Modal
         setActiveTab('home'); 
         addToast('发布成功', 'success');
@@ -891,7 +940,7 @@ ${identityMap}
             <div className="aspect-[4/5] w-full flex items-center justify-center relative overflow-hidden" style={{ background: post.bgStyle }}>
                 {/* Decorative Overlay for "Premium" look */}
                 <div className="absolute inset-0 bg-white/5 backdrop-blur-[1px]"></div>
-                <div className="relative z-10 text-6xl drop-shadow-xl filter saturate-150 transform transition-transform group-hover:scale-110 duration-500">{codepointToEmoji(post.images[0])}</div>
+                {renderPostVisual(post, 'transform transition-transform group-hover:scale-110 duration-500')}
                 {post.title && (
                     <div className="absolute bottom-0 left-0 w-full p-4 bg-gradient-to-t from-black/50 via-black/20 to-transparent">
                         <h3 className="text-white font-bold text-sm line-clamp-2 drop-shadow-md leading-tight">{post.title}</h3>
@@ -946,7 +995,7 @@ ${identityMap}
                         <div className="w-full aspect-square flex items-center justify-center text-[8rem] relative overflow-hidden" style={{ background: selectedPost.bgStyle }}>
                             <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/10"></div>
                             {/* Removed animate-bounce-slow to prevent reflow jitter */}
-                            <div className="relative z-10 drop-shadow-2xl filter saturate-125">{codepointToEmoji(selectedPost.images[0])}</div>
+                            {renderPostVisual(selectedPost, 'drop-shadow-2xl filter saturate-125')}
                         </div>
 
                         <div className="p-6 space-y-4">
@@ -1130,7 +1179,13 @@ ${identityMap}
                             placeholder="分享你此刻的想法..." 
                             className="w-full h-auto min-h-[200px] resize-none outline-none text-base leading-relaxed placeholder:text-slate-300 font-medium" 
                         />
-                        
+                        <div className="mt-4 pt-4 border-t border-slate-50 space-y-2">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase">生图 API 配图（可选）</p>
+                            {newPostGeneratedImage && <div className="relative aspect-square rounded-2xl overflow-hidden bg-slate-100"><img src={newPostGeneratedImage} alt="" className="w-full h-full object-cover" /><button onClick={() => setNewPostGeneratedImage('')} className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/55 text-white">×</button></div>}
+                            <textarea value={newPostImagePrompt} onChange={e => setNewPostImagePrompt(e.target.value)} placeholder="例如：a cozy cafe table by the window, afternoon light" className="w-full min-h-[76px] resize-y outline-none rounded-xl border border-slate-100 bg-slate-50 p-3 text-sm" />
+                            <button type="button" onClick={() => void drawNewSocialPostImage()} disabled={newPostImageBusy} className="w-full py-3 rounded-xl bg-violet-100 text-violet-700 text-xs font-bold disabled:opacity-50">{newPostImageBusy ? '正在生成图片…' : '使用生图 API 生成配图'}</button>
+                        </div>
+
                         {/* Sticker Selector - Flowing after text */}
                         <div className="mt-4 pt-4 border-t border-slate-50">
                             <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">添加心情贴纸 (Sticker)</p>
@@ -1278,7 +1333,7 @@ ${identityMap}
                                 <div className="columns-2 gap-2 space-y-2">
                                     {feed.filter(p => profileTab === 'notes' ? (p.authorType === 'user' || (!p.authorType && p.authorName === socialProfile.name)) : p.isCollected).map(post => (
                                         <div key={post.id} onClick={() => handleOpenPost(post)} className="break-inside-avoid bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100 cursor-pointer">
-                                            <div className="aspect-[4/5] flex items-center justify-center text-4xl" style={{ background: post.bgStyle }}>{codepointToEmoji(post.images[0])}</div>
+                                            <div className="aspect-[4/5] flex items-center justify-center text-4xl overflow-hidden" style={{ background: post.bgStyle }}>{renderPostVisual(post, '')}</div>
                                             <div className="p-3">
                                                 <h4 className="text-xs font-bold text-slate-800 line-clamp-2 leading-tight">{post.title}</h4>
                                                 <div className="flex justify-between items-center mt-2">

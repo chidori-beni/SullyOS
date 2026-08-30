@@ -3814,6 +3814,12 @@ export interface SocialPost {
     bgStyle?: string;
     authorType?: 'user' | 'character' | 'stranger';
     authorCharId?: string;
+    /** 朋友圈 / Spark 生图时使用的原始画面描述，支持失败后重试。 */
+    imagePrompt?: string;
+    /** 可选位置；消息 App 的朋友圈主题会通过 data-has-location 暴露给 CSS。 */
+    location?: string;
+    /** 生图失败原文。保留错误而不是用破图 URL 冒充成功。 */
+    imageGenerationError?: string;
 }
 
 export interface SubAccount {

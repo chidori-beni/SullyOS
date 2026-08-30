@@ -1,6 +1,7 @@
 import React, { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     BellSlash,
+    Camera,
     CaretDown,
     CaretLeft,
     ChatCircleDots,
@@ -12,8 +13,11 @@ import {
     Planet,
     PushPin,
     Rows,
+    Sparkle,
     Star,
+    Trash,
     UserCircle,
+    X,
 } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { AppID, CharacterProfile, Message, SocialPost } from '../types';
@@ -24,18 +28,25 @@ import {
     DEFAULT_MESSAGING_LIST_PREFS,
     EMPTY_MESSAGING_THEME_STATE,
     loadMessagingListPrefs,
+    loadMessagingProfile,
     loadMessagingThemeState,
     messagingLengthBucket,
     messagingTimeSlot,
     messagingUnreadBucket,
     MessagingListPrefs,
+    MessagingProfile,
     MessagingThemeState,
     saveMessagingListPrefs,
+    saveMessagingProfile,
     saveMessagingThemeState,
     scopeMessagingCss,
 } from '../utils/messagingTheme';
 import MessagingThemeSettings from '../components/messaging/MessagingThemeSettings';
 import Chat from './Chat';
+import { ContextBuilder } from '../utils/context';
+import { processImage } from '../utils/file';
+import { buildSelfiePrompt, generateImageDataUrl, getImageGenConfig, isImageGenReady } from '../utils/novelaiImage';
+import { safeResponseJson } from '../utils/safeApi';
 import '../components/messaging/MessagingApp.css';
 
 type MessagingTab = 'chat' | 'moments' | 'favorites' | 'profile';
@@ -50,6 +61,22 @@ interface ContextMenuState {
     x: number;
     y: number;
 }
+
+type MomentGenerateMode = 'random' | 'select';
+
+const isImageSource = (value: string): boolean => /^(?:data:image\/|https?:\/\/|blob:|blobref:)/i.test(String(value || '').trim());
+
+const parseJsonArray = (value: string): any[] => {
+    const clean = String(value || '').replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+    try {
+        const parsed = JSON.parse(clean);
+        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed?.posts)) return parsed.posts;
+    } catch { /* try the outermost array below */ }
+    const match = clean.match(/\[[\s\S]*\]/);
+    if (!match) return [];
+    try { return JSON.parse(match[0]); } catch { return []; }
+};
 
 const FALLBACK_GROUP_ID = '__ungrouped__';
 
@@ -108,6 +135,7 @@ const contextAttrs = (tab: MessagingTab, unreadTotal: number, searching: boolean
 const Messaging: React.FC = () => {
     const {
         addToast,
+        apiConfig,
         characterGroups,
         characters,
         clearUnread,
@@ -117,6 +145,7 @@ const Messaging: React.FC = () => {
         proactiveComposingChars,
         setActiveCharacterId,
         unreadMessages,
+        updateUserProfile,
         userProfile,
     } = useOS();
     const [view, setView] = useState<'list' | 'detail'>('list');
@@ -133,12 +162,33 @@ const Messaging: React.FC = () => {
     const [previewCss, setPreviewCss] = useState('');
     const [themeOpen, setThemeOpen] = useState(false);
     const [prefs, setPrefs] = useState<MessagingListPrefs>({ ...DEFAULT_MESSAGING_LIST_PREFS });
+    const [profile, setProfile] = useState<MessagingProfile>(() => ({
+        version: 1, name: userProfile.name || '我', avatar: userProfile.avatar || '', cover: '', handle: '',
+        signature: '', birthday: '', gender: '', virtualLocation: '', realLocation: '', hobbies: [], about: userProfile.bio || '',
+    }));
+    const [profileDraft, setProfileDraft] = useState<MessagingProfile>(profile);
+    const [profileEditOpen, setProfileEditOpen] = useState(false);
+    const [momentGenerateOpen, setMomentGenerateOpen] = useState(false);
+    const [momentPostOpen, setMomentPostOpen] = useState(false);
+    const [momentGenerateMode, setMomentGenerateMode] = useState<MomentGenerateMode>('random');
+    const [momentSelectedIds, setMomentSelectedIds] = useState<string[]>([]);
+    const [momentGenerateCount, setMomentGenerateCount] = useState(3);
+    const [momentGenerating, setMomentGenerating] = useState(false);
+    const [momentProgress, setMomentProgress] = useState('');
+    const [newMomentText, setNewMomentText] = useState('');
+    const [newMomentLocation, setNewMomentLocation] = useState('');
+    const [newMomentImagePrompt, setNewMomentImagePrompt] = useState('');
+    const [newMomentImages, setNewMomentImages] = useState<string[]>([]);
+    const [newMomentImageBusy, setNewMomentImageBusy] = useState(false);
     const [groupMenuOpen, setGroupMenuOpen] = useState(false);
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
     const themeLongPressTimer = useRef<number | null>(null);
     const themeLongPressed = useRef(false);
     const itemLongPressTimer = useRef<number | null>(null);
     const itemLongPressed = useRef(false);
+    const momentImageInputRef = useRef<HTMLInputElement>(null);
+    const profileAvatarInputRef = useRef<HTMLInputElement>(null);
+    const profileCoverInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
         let alive = true;
@@ -147,6 +197,16 @@ const Messaging: React.FC = () => {
             setThemeState(loadedTheme);
             setPreviewCss(loadedTheme.css);
             setPrefs(loadedPrefs);
+        });
+        return () => { alive = false; };
+    }, []);
+
+    useEffect(() => {
+        let alive = true;
+        loadMessagingProfile(userProfile).then(next => {
+            if (!alive) return;
+            setProfile(next);
+            setProfileDraft(next);
         });
         return () => { alive = false; };
     }, []);
@@ -288,57 +348,230 @@ const Messaging: React.FC = () => {
         await audio.play().catch(() => addToast('语音播放失败', 'error'));
     };
 
+    const prependMomentPosts = async (newPosts: SocialPost[]) => {
+        await Promise.all(newPosts.map(post => DB.saveSocialPost(post)));
+        setPosts(current => [...newPosts, ...current.filter(item => !newPosts.some(post => post.id === item.id))]
+            .sort((a, b) => b.timestamp - a.timestamp));
+    };
+
+    const callMomentWriter = async (selected: CharacterProfile[], count: number): Promise<any[]> => {
+        const roster = selected.map(char => `ID: ${char.id}\n姓名: ${char.name}\n${ContextBuilder.buildCoreContext(char, userProfile, false)}`).join('\n\n---\n\n');
+        const prompt = `你正在为一个拟真的朋友圈生成角色动态。只能使用下面角色，不得代替用户发言。\n\n${roster}\n\n请生成 ${count} 条动态，返回严格 JSON 数组。每项必须包含 charId、text、imagePrompt、location。text 是角色自愿公开发布的自然朋友圈文案；imagePrompt 是与正文一致、适合生图 API 的英文画面提示词，如果这条动态不适合配图则填空字符串；location 可为空。不要 Markdown，不要解释。`;
+        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
+            body: JSON.stringify({
+                model: apiConfig.model,
+                messages: [{ role: 'user', content: prompt }],
+                temperature: 0.92,
+                max_tokens: 5000,
+            }),
+            __sullyMeta: { appId: 'messaging', appName: '消息', purpose: '生成角色朋友圈' },
+        } as RequestInit);
+        if (!response.ok) throw new Error(`文字 API HTTP ${response.status}: ${(await response.text().catch(() => '')).slice(0, 180)}`);
+        const data = await safeResponseJson(response);
+        return parseJsonArray(data?.choices?.[0]?.message?.content || '');
+    };
+
+    const generateCharacterMoments = async () => {
+        if (momentGenerating) return;
+        if (!apiConfig.apiKey || !apiConfig.baseUrl || !apiConfig.model) return addToast('请先配置文字 API', 'error');
+        const candidates = momentGenerateMode === 'select'
+            ? characters.filter(char => momentSelectedIds.includes(char.id))
+            : [...characters].sort(() => Math.random() - .5);
+        if (!candidates.length) return addToast(momentGenerateMode === 'select' ? '请至少选择一个角色' : '还没有可生成动态的角色', 'error');
+        setMomentGenerating(true);
+        setMomentProgress('角色正在想发什么…');
+        try {
+            const requestedCount = Math.max(1, Math.min(6, momentGenerateCount));
+            const raw = await callMomentWriter(candidates, requestedCount);
+            if (!raw.length) throw new Error('文字 API 没有返回有效的动态数组');
+            const imageConfig = getImageGenConfig();
+            const canDraw = isImageGenReady(imageConfig);
+            let imageFailures = 0;
+            const nextPosts: SocialPost[] = [];
+            for (let index = 0; index < raw.length && nextPosts.length < requestedCount; index += 1) {
+                const item = raw[index];
+                const char = candidates.find(candidate => String(candidate.id) === String(item?.charId)) || candidates[index % candidates.length];
+                const content = String(item?.text || item?.content || '').trim();
+                if (!char || !content) continue;
+                const imagePrompt = String(item?.imagePrompt || item?.scene || '').trim();
+                const images: string[] = [];
+                let imageGenerationError = '';
+                if (imagePrompt && canDraw) {
+                    setMomentProgress(`正在为 ${char.name} 生成图片（${nextPosts.length + 1}/${requestedCount}）…`);
+                    try {
+                        images.push(await generateImageDataUrl(buildSelfiePrompt(char.id, imagePrompt, imageConfig), imageConfig));
+                    } catch (error: any) {
+                        imageFailures += 1;
+                        imageGenerationError = error?.message || String(error);
+                    }
+                }
+                nextPosts.push({
+                    id: `moment-char-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
+                    authorName: char.name,
+                    authorAvatar: char.avatar,
+                    title: '',
+                    content,
+                    images,
+                    likes: 0,
+                    isCollected: false,
+                    isLiked: false,
+                    comments: [],
+                    timestamp: Date.now() - nextPosts.length * 1000,
+                    tags: [],
+                    authorType: 'character',
+                    authorCharId: char.id,
+                    imagePrompt,
+                    location: String(item?.location || '').trim(),
+                    ...(imageGenerationError ? { imageGenerationError } : {}),
+                });
+            }
+            if (!nextPosts.length) throw new Error('没有得到可保存的角色动态');
+            await prependMomentPosts(nextPosts);
+            setMomentProgress(`完成，已生成 ${nextPosts.length} 条动态`);
+            addToast(imageFailures ? `动态已生成；${imageFailures} 张图失败，可检查生图 API 后重试` : `已生成 ${nextPosts.length} 条角色动态`, imageFailures ? 'info' : 'success');
+            window.setTimeout(() => { setMomentGenerateOpen(false); setMomentProgress(''); }, 700);
+        } catch (error: any) {
+            setMomentProgress('');
+            addToast(`生成失败：${error?.message || error}`, 'error');
+        } finally {
+            setMomentGenerating(false);
+        }
+    };
+
+    const handleMomentImages = async (files: FileList | null) => {
+        if (!files?.length) return;
+        try {
+            const remaining = Math.max(0, 9 - newMomentImages.length);
+            const converted = await Promise.all(Array.from(files).slice(0, remaining).map(file => processImage(file, { maxWidth: 1600, quality: .9 })));
+            setNewMomentImages(current => [...current, ...converted].slice(0, 9));
+        } catch (error: any) {
+            addToast(error?.message || '图片处理失败', 'error');
+        }
+    };
+
+    const drawNewMomentImage = async () => {
+        const prompt = newMomentImagePrompt.trim();
+        if (!prompt) return addToast('先写一段配图描述', 'error');
+        const config = getImageGenConfig();
+        if (!isImageGenReady(config)) return addToast('生图 API 还没配置完整', 'error');
+        setNewMomentImageBusy(true);
+        try {
+            const image = await generateImageDataUrl(prompt, config);
+            setNewMomentImages(current => [...current, image].slice(0, 9));
+            addToast('配图已生成', 'success');
+        } catch (error: any) {
+            addToast(error?.message || '生图失败', 'error');
+        } finally {
+            setNewMomentImageBusy(false);
+        }
+    };
+
+    const publishUserMoment = async () => {
+        const content = newMomentText.trim();
+        if (!content) return addToast('先写点内容', 'error');
+        const post: SocialPost = {
+            id: `moment-user-${Date.now()}`,
+            authorName: profile.name || userProfile.name || '我',
+            authorAvatar: profile.avatar || userProfile.avatar,
+            title: '', content, images: newMomentImages,
+            likes: 0, isCollected: false, isLiked: false, comments: [], timestamp: Date.now(), tags: [],
+            authorType: 'user', imagePrompt: newMomentImagePrompt.trim(), location: newMomentLocation.trim(),
+        };
+        await prependMomentPosts([post]);
+        setNewMomentText(''); setNewMomentLocation(''); setNewMomentImagePrompt(''); setNewMomentImages([]);
+        setMomentPostOpen(false);
+        addToast('朋友圈已发布', 'success');
+    };
+
+    const openProfileEditor = () => {
+        setProfileDraft(profile);
+        setProfileEditOpen(true);
+    };
+
+    const handleProfileImage = async (files: FileList | null, field: 'avatar' | 'cover') => {
+        const file = files?.[0];
+        if (!file) return;
+        try {
+            const image = await processImage(file, field === 'cover' ? { maxWidth: 1800, quality: .9 } : { maxWidth: 800, quality: .9 });
+            setProfileDraft(current => ({ ...current, [field]: image }));
+        } catch (error: any) {
+            addToast(error?.message || '图片处理失败', 'error');
+        }
+    };
+
+    const persistProfile = async () => {
+        const next: MessagingProfile = {
+            ...profileDraft,
+            version: 1,
+            name: profileDraft.name.trim() || '我',
+            handle: profileDraft.handle.trim().replace(/^@/, ''),
+            hobbies: profileDraft.hobbies.map(item => item.trim()).filter(Boolean).slice(0, 24),
+        };
+        await saveMessagingProfile(next);
+        updateUserProfile({ name: next.name, avatar: next.avatar || userProfile.avatar, bio: next.about });
+        const sparkRaw = await DB.getAsset('spark_social_profile').catch(() => null);
+        let spark: Record<string, any> = {};
+        if (typeof sparkRaw === 'string') try { spark = JSON.parse(sparkRaw); } catch { /* replace malformed legacy value */ }
+        await DB.saveAsset('spark_social_profile', JSON.stringify({ ...spark, name: next.name, avatar: next.avatar || userProfile.avatar, bio: next.signature || next.about }));
+        setProfile(next);
+        setProfileEditOpen(false);
+        addToast('个人资料已保存', 'success');
+    };
+
     if (view === 'detail') return <Chat onBack={() => setView('list')} />;
 
     const attrs = contextAttrs(tab, unreadTotal, !!search.trim());
 
     const header = (title: string, action?: React.ReactNode, extraClass = '') => (
-        <header className={`nj-chat-tab-header ${extraClass}`}>
+        <header className={`ig-header glass-header nj-chat-tab-header ${extraClass}`}>
             <button className="nj-chat-tab-header-back nj-chat-tab-header-back-btn" aria-label="返回桌面" onClick={closeApp}><CaretLeft weight="bold" /></button>
-            <div className="nj-chat-tab-header-title nj-chat-tab-header-title-container nj-chat-tab-header-title-wrap"><span className="nj-chat-tab-header-title-btn">{title}</span></div>
-            {action || <span />}
+            <div className="nj-chat-tab-header-title-wrap"><button className="ios-fix nj-chat-tab-header-title-btn" type="button">{title}</button></div>
+            {action || <div />}
         </header>
     );
 
     const renderChatTab = () => (
-        <section id="messaging-chat-tab" className="nj-chat-tab" data-empty={String(orderedSummaries.length === 0)}>
-            <div className="nj-chat-tab-decor-top" /><div className="nj-chat-tab-decor-mid" /><div className="nj-chat-tab-decor-bottom" />
+        <section id="messaging-chat-tab" className="chat-view nj-chat-tab" data-empty={String(orderedSummaries.length === 0)} data-unread-total={String(unreadTotal)} data-searching={String(!!search.trim())}>
             {header('消息', <button className="nj-chat-tab-header-action nj-chat-tab-header-action-btn nj-chat-tab-header-edit" aria-label="编辑角色" onClick={() => openApp(AppID.Character)}><NotePencil /></button>)}
             <div className="nj-chat-tab-search-wrap">
-                <label className="nj-chat-tab-search">
+                <label className="glass-search nj-chat-tab-search">
                     <MagnifyingGlass size={16} />
                     <input className="nj-chat-tab-search-input" value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索" aria-label="搜索好友和消息" />
                 </label>
             </div>
+            <div className="nj-chat-tab-decor-top" aria-hidden="true" />
             {!!characters.length && !search && (
-                <div className="nj-chat-tab-note-row nj-chat-tab-notes">
+                <div className="details-scroll nj-chat-tab-note-row nj-chat-tab-notes">
                     {orderedSummaries.slice(0, 6).map(({ char, last }) => (
                         <button key={char.id} className="nj-chat-tab-note-item nj-chat-tab-note-friend" onClick={() => openChat(char.id)}>
-                            <span className="nj-chat-tab-note-bubble">{cleanPreview(last, !!proactiveComposingChars[char.id]).slice(0, 14)}</span>
-                            <img className="nj-chat-tab-note-avatar" src={char.avatar} alt="" />
+                            <span className="glass-bubble nj-chat-tab-note-bubble">{cleanPreview(last, !!proactiveComposingChars[char.id]).slice(0, 14)}</span>
+                            <span className="nj-chat-tab-note-avatar"><img src={char.avatar} alt="" /></span>
                             <span className="nj-chat-tab-note-name">{char.name}</span>
                         </button>
                     ))}
                 </div>
             )}
-            <div className="nj-chat-tab-section-header">
-                <div className="nj-chat-tab-section-title">消息</div>
-                {!prefs.groupButtonHidden && <span className="nj-chat-tab-group-toggle-wrap"><button className={`nj-chat-tab-group-toggle ${groupMenuOpen ? 'active' : ''}`} aria-label="好友分组设置" onClick={() => setGroupMenuOpen(value => !value)}><Rows className="nj-chat-tab-group-toggle-icon" /></button></span>}
+            <div className="nj-chat-tab-section-title" data-grouping={prefs.groupingEnabled ? 'on' : 'off'}>
+                <span>消息</span>
+                {!prefs.groupButtonHidden && <span className="nj-chat-tab-group-toggle-wrap"><button className={`nj-chat-tab-group-toggle ${groupMenuOpen ? 'active' : ''}`} data-on={String(prefs.groupingEnabled)} aria-label="好友分组设置" onClick={() => setGroupMenuOpen(value => !value)}><Rows className="nj-chat-tab-group-toggle-icon" /></button></span>}
                 {groupMenuOpen && <>
                     <button className="nj-group-menu-mask" aria-label="关闭分组菜单" onClick={() => setGroupMenuOpen(false)} />
-                    <div className="nj-group-menu nj-chat-group-toggle-menu">
-                        <button className="nj-group-menu-item nj-chat-group-toggle-menu-item" onClick={() => { void persistPrefs({ ...prefs, groupingEnabled: !prefs.groupingEnabled }); setGroupMenuOpen(false); }}><Check opacity={prefs.groupingEnabled ? 1 : 0} />按角色分组显示</button>
-                        <button className="nj-group-menu-item nj-chat-group-toggle-menu-item" onClick={() => { void persistPrefs({ ...prefs, collapsedGroupIds: [] }); setGroupMenuOpen(false); }}><Rows />展开全部分组</button>
-                        <button className="nj-group-menu-item nj-chat-group-toggle-menu-item" onClick={() => { void persistPrefs({ ...prefs, collapsedGroupIds: groupedSummaries.map(group => group.id) }); setGroupMenuOpen(false); }}><CaretDown />收起全部分组</button>
-                    </div>
+                    <span className="nj-group-menu nj-chat-group-toggle-menu">
+                        <button className="nj-group-menu-item nj-chat-group-toggle-menu-item" data-action="manage" onClick={() => { void persistPrefs({ ...prefs, groupingEnabled: !prefs.groupingEnabled }); setGroupMenuOpen(false); }}><Check opacity={prefs.groupingEnabled ? 1 : 0} />按角色分组显示</button>
+                        <button className="nj-group-menu-item nj-chat-group-toggle-menu-item" data-action="expand" onClick={() => { void persistPrefs({ ...prefs, collapsedGroupIds: [] }); setGroupMenuOpen(false); }}><Rows />展开全部分组</button>
+                        <button className="nj-group-menu-item nj-chat-group-toggle-menu-item" data-action="collapse" onClick={() => { void persistPrefs({ ...prefs, collapsedGroupIds: groupedSummaries.map(group => group.id) }); setGroupMenuOpen(false); }}><CaretDown />收起全部分组</button>
+                    </span>
                 </>}
             </div>
-            <div className="nj-chat-tab-list">
-                {groupedSummaries.map(group => {
+            <div className="nj-chat-tab-decor-mid" aria-hidden="true" />
+            <div className="message-list nj-chat-tab-list">
+                {groupedSummaries.map((group, groupIndex) => {
                     const collapsed = prefs.collapsedGroupIds.includes(group.id);
                     return (
-                        <div className="nj-chat-tab-group" key={group.id} data-group-id={group.id} data-collapsed={String(collapsed)}>
-                            {prefs.groupingEnabled && <div className="nj-chat-tab-group-header nj-chat-group-header"><button onClick={() => void persistPrefs({ ...prefs, collapsedGroupIds: collapsed ? prefs.collapsedGroupIds.filter(id => id !== group.id) : [...prefs.collapsedGroupIds, group.id] })}><span className="nj-chat-group-caret">{collapsed ? '›' : '⌄'}</span> <span className="nj-chat-group-label">{group.name}</span> · <span className="nj-chat-group-count">{group.items.length}</span></button></div>}
+                        <React.Fragment key={group.id}>
+                            {prefs.groupingEnabled && <button className={`nj-chat-group-header ${collapsed ? 'is-collapsed' : ''}`} data-group-key={group.name} data-collapsed={String(collapsed)} data-count={String(group.items.length)} data-first={String(groupIndex === 0)} style={{ '--nj-group-index': String(groupIndex) } as CSSProperties} onClick={() => void persistPrefs({ ...prefs, collapsedGroupIds: collapsed ? prefs.collapsedGroupIds.filter(id => id !== group.id) : [...prefs.collapsedGroupIds, group.id] })}><span className="nj-chat-group-caret" aria-hidden="true">▾</span><span className="nj-chat-group-label">{group.name}</span><span className="nj-chat-group-unread">{group.items.reduce((sum, item) => sum + (unreadMessages[item.char.id] || 0), 0) || ''}</span><span className="nj-chat-group-count">{group.items.length}</span></button>}
                             {!collapsed && group.items.map(({ char, last }, index) => {
                                 const unread = unreadMessages[char.id] || 0;
                                 const preview = cleanPreview(last, !!proactiveComposingChars[char.id]);
@@ -352,14 +585,13 @@ const Messaging: React.FC = () => {
                                 return (
                                     <div
                                         key={char.id}
-                                        className={`nj-chat-tab-item nj-chat-item ${pinned ? 'nj-chat-item-pinned' : ''}`}
+                                        className={`nj-chat-item nj-chat-item-char ${pinned ? 'nj-chat-item-pinned' : ''} ${unread ? 'nj-chat-item-unread' : ''}`}
                                         role="button"
                                         tabIndex={0}
                                         style={style}
-                                        data-kind="friend"
+                                        data-kind="char"
                                         data-index={String(index)}
-                                        data-alt={index % 2 ? 'odd' : 'even'}
-                                        data-unread={String(unread > 0)}
+                                        data-unread={messagingUnreadBucket(unread)}
                                         data-unread-count={messagingUnreadBucket(unread)}
                                         data-pinned={String(pinned)}
                                         data-muted="false"
@@ -376,54 +608,68 @@ const Messaging: React.FC = () => {
                                         onPointerLeave={cancelItemLongPress}
                                         onContextMenu={event => { event.preventDefault(); openItemMenu(event, char.id); }}
                                     >
-                                        <div className="nj-item-deco nj-item-deco-1 heavy-anim" />
-                                        <div className="nj-item-deco nj-item-deco-2 heavy-anim" />
-                                        <div className="nj-chat-tab-item-avatar-wrap">
-                                            <img className="nj-chat-tab-item-avatar nj-chat-item-avatar nj-avatar" src={char.avatar} alt="" />
-                                            {unread > 0 && <span className="nj-chat-tab-item-unread nj-chat-item-badge nj-chat-item-unread-badge">{unread > 99 ? '99+' : unread}</span>}
-                                            {!!proactiveComposingChars[char.id] && <span className="nj-chat-tab-item-generating" />}
+                                        <div className="nj-chat-item-avatar nj-chat-item-avatar-char">
+                                            <img src={char.avatar} alt="" />
+                                            {unread > 0 && <span className="nj-chat-item-unread-badge">{unread > 99 ? '99+' : unread}</span>}
                                         </div>
-                                        <div className="nj-chat-tab-item-main nj-chat-item-body">
-                                            <div className="nj-chat-tab-item-line nj-chat-item-row1">
-                                                <span className="nj-chat-tab-item-name nj-chat-item-name"><span className="nj-chat-item-char">{char.name}</span>{pinned && <PushPin className="nj-chat-item-pin-mark" size={10} weight="fill" />}</span>
-                                                <time className="nj-chat-tab-item-time nj-chat-item-time">{formatListTime(last?.timestamp)}</time>
+                                        <div className="nj-chat-item-body">
+                                            <div className="nj-chat-item-row1">
+                                                <div className="nj-chat-item-name">{char.name}</div>
+                                                <div className="nj-chat-item-time">{formatListTime(last?.timestamp)}{pinned && <span className="nj-chat-item-pin-mark"><PushPin size={10} weight="fill" /></span>}</div>
                                             </div>
-                                            <div className="nj-chat-tab-item-preview nj-chat-item-preview">{preview}<BellSlash className="nj-chat-tab-item-muted sully-messaging-hidden" /></div>
-                                            <span className="nj-chat-item-alt-mark" aria-hidden="true" />
+                                            <div className="nj-chat-item-preview">{preview}<BellSlash className="sully-messaging-hidden" /></div>
                                         </div>
+                                        <div className="nj-item-deco nj-item-deco-1 heavy-anim" aria-hidden="true" />
+                                        <div className="nj-item-deco nj-item-deco-2 heavy-anim" aria-hidden="true" />
                                     </div>
                                 );
                             })}
-                        </div>
+                        </React.Fragment>
                     );
                 })}
                 {!orderedSummaries.length && <div className="nj-empty-state"><div className="nj-empty-state-symbol">☁︎</div>{search ? '没有找到匹配的好友或消息' : '还没有好友，先去神经链接创建角色吧'}</div>}
             </div>
+            <div className="nj-chat-tab-decor-bottom" aria-hidden="true" />
         </section>
     );
 
     const renderMomentsTab = () => (
-        <section id="messaging-moments-tab" className="nj-moments-tab" data-post-count={String(posts.length)}>
-            <div className="nj-moments-decor-top" /><div className="nj-moments-decor-mid" /><div className="nj-moments-decor-bottom" />
-            {header('动态', <button className="nj-chat-tab-header-action nj-chat-tab-header-action-btn nj-moments-header-btn nj-moments-header-btn-gen nj-moments-header-btn-post nj-moments-header-btn-clear" aria-label="打开 Spark" onClick={() => openApp(AppID.Social)}><Planet /></button>, 'nj-moments-header nj-moments-header-sticky')}
-            <div className="nj-moments-cover-wrap"><div className="nj-moments-cover">{userProfile.avatar && <img className="nj-moments-cover-avatar" src={userProfile.avatar} alt="" />}<div className="nj-moments-cover-gradient" /><div className="nj-moments-cover-userinfo"><span className="nj-moments-cover-username">{userProfile.name || '我'}</span></div></div></div>
+        <section id="messaging-moments-tab" className="moments-view nj-moments-tab" data-post-count={String(posts.length)} data-empty={String(posts.length === 0)}>
+            <div className="nj-moments-header"><div className="nj-moments-header-btns"><button className="nj-moments-header-btn nj-moments-header-btn-clear" aria-label="清空动态" onClick={() => { if (window.confirm('确定清空全部朋友圈动态吗？')) { void DB.clearSocialPosts(); setPosts([]); } }}><Trash /></button><button className="nj-moments-header-btn nj-moments-header-btn-gen" aria-label="生成角色动态" onClick={() => setMomentGenerateOpen(true)}><Sparkle /></button><button className="nj-moments-header-btn nj-moments-header-btn-post" aria-label="发布朋友圈" onClick={() => setMomentPostOpen(true)}><Camera /></button></div></div>
+            <div className="nj-moments-header-sticky" data-scrolled="false"><div className="nj-moments-header-title">朋友圈</div></div>
+            <div className="nj-moments-decor-top" aria-hidden="true" />
+            <div className="nj-moments-cover-wrap">{profile.cover ? <img className="nj-moments-cover" src={profile.cover} alt="" /> : <div className="nj-moments-cover" />}<div className="nj-moments-cover-gradient" /><div className="nj-moments-cover-userinfo"><div className="nj-moments-cover-username">{profile.name || '我'}</div><div className="nj-moments-cover-avatar"><img src={profile.avatar || userProfile.avatar} alt="" /></div></div></div>
             <div className="nj-moments-notif-entry" aria-hidden="true" />
-            <div className="nj-moments-list nj-moments-feed">
-                {posts.slice(0, 30).map(post => <article className="nj-moments-item nj-moments-post" key={post.id} data-author-type={post.authorType || 'unknown'} data-liked={String(post.isLiked)}>
-                    <div className="nj-moments-item-head nj-moments-post-body"><img className="nj-moments-item-avatar nj-moments-post-avatar" src={post.authorAvatar} alt="" /><div><div className="nj-moments-item-author nj-moments-post-name">{post.authorName}</div><div className="nj-moments-item-time nj-moments-post-time">{formatListTime(post.timestamp)}</div></div></div>
-                    <div className="nj-moments-item-content nj-moments-post-text">{post.content || post.title}</div>
-                    {!!post.images?.length && <div className={`nj-moments-item-images nj-moments-post-imgs nj-moments-post-imgs-${Math.min(3, post.images.length)}`}>{post.images.slice(0, 9).map((url, index) => <img className="nj-moments-item-image nj-moments-post-img-cell" src={url} alt="" key={`${url}-${index}`} />)}</div>}
-                    <div className="nj-moments-engagement"><span className="nj-moments-likes">{post.likes ? `♡ ${post.likes}` : ''}</span></div>
-                </article>)}
+            <div className="nj-moments-decor-mid" aria-hidden="true" />
+            <div className="nj-moments-feed">
+                {posts.slice(0, 30).map((post, index) => {
+                    const images = (post.images || []).filter(isImageSource).slice(0, 9);
+                    const stickers = (post.images || []).filter(value => !isImageSource(value) && !value.startsWith('txt:'));
+                    const hour = new Date(post.timestamp).getHours();
+                    const style = { '--nj-item-index': String(index), '--nj-post-img-count': String(images.length), '--nj-post-like-count': String(post.likes || 0), '--nj-post-comment-count': String(post.comments?.length || 0), '--nj-item-avatar-url': `url(${JSON.stringify(post.authorAvatar)})` } as CSSProperties;
+                    return <article className={`nj-moments-post ${post.authorType === 'character' ? 'nj-moments-post-char' : 'nj-moments-post-user'}`} key={post.id} style={style} data-post-kind={post.authorType === 'character' ? 'char' : 'user'} data-index={String(index)} data-img-count={String(images.length)} data-has-img={String(images.length > 0)} data-liked={String(post.isLiked)} data-like-count={String(post.likes || 0)} data-comment-count={String(post.comments?.length || 0)} data-has-comment={String(!!post.comments?.length)} data-length={messagingLengthBucket(post.content || post.title || '')} data-time-slot={messagingTimeSlot(hour)} data-hour={String(hour)} data-has-location={post.location ? 'true' : undefined}>
+                        <div className="nj-moments-post-avatar"><img src={post.authorAvatar} alt="" /></div>
+                        <div className="nj-moments-post-body">
+                            <div className="nj-moments-post-name">{post.authorName}</div>
+                            <div className="nj-moments-post-text">{post.content || post.title}</div>
+                            {!!stickers.length && <div className="nj-moments-post-sticker" aria-label="心情贴纸">{stickers[0]}</div>}
+                            {!!images.length && <div className={`nj-moments-post-imgs nj-moments-post-imgs-${images.length}`}>{images.map((url, imageIndex) => <div className="nj-moments-post-img-cell" key={`${post.id}-${imageIndex}`}><img src={url} alt="" /></div>)}</div>}
+                            <div className="nj-moments-post-meta"><span className="nj-moments-post-time">{formatListTime(post.timestamp)}</span>{post.location && <span className="nj-moments-post-location">{post.location}</span>}<div className="nj-moments-post-actions-wrap"><button className="nj-moments-post-actions-trigger" aria-label="动态操作">••</button></div></div>
+                            {(post.likes > 0 || !!post.comments?.length) && <div className="nj-moments-engagement">{post.likes > 0 && <div className="nj-moments-likes"><span>♡</span><span className="nj-moments-like-name">{post.likes}</span></div>}{post.comments?.map(comment => <div className="nj-moments-comment" key={comment.id}><span className="nj-moments-comment-author">{comment.authorName}：</span><span className="nj-moments-comment-content">{comment.content}</span></div>)}</div>}
+                        </div>
+                        <div className="nj-item-deco nj-item-deco-1 heavy-anim" aria-hidden="true" /><div className="nj-item-deco nj-item-deco-2 heavy-anim" aria-hidden="true" />
+                    </article>;
+                })}
                 {!posts.length && <div className="nj-empty-state"><div className="nj-empty-state-symbol">◌</div>暂时还没有动态</div>}
             </div>
+            <div className="nj-moments-decor-bottom" aria-hidden="true" />
         </section>
     );
 
     const renderFavoritesTab = () => (
         <section id="messaging-favorites-tab" className="nj-favorites-tab" data-empty={String(!(textFavorites.length || voiceFavorites.length))}>
-            <div className="nj-fav-decor-top" /><div className="nj-fav-decor-bottom" />
             {header('收藏', undefined, 'nj-favorites-tab-header')}
+            <div className="nj-fav-decor-top" />
             <div className="nj-favorites-tabs">
                 <button className={`nj-favorites-tab-button ${favoriteKind === 'text' ? 'active' : ''}`} onClick={() => setFavoriteKind('text')}>文字 {textFavorites.length}</button>
                 <button className={`nj-favorites-tab-button ${favoriteKind === 'voice' ? 'active' : ''}`} onClick={() => setFavoriteKind('voice')}>语音 {voiceFavorites.length}</button>
@@ -433,20 +679,25 @@ const Messaging: React.FC = () => {
                 {favoriteKind === 'text' && !textFavorites.length && <div className="nj-empty-state">聊天里收藏的文字会出现在这里</div>}
                 {favoriteKind === 'voice' && !voiceFavorites.length && <div className="nj-empty-state">收藏的语音会出现在这里</div>}
             </div>
+            <div className="nj-fav-decor-bottom" />
         </section>
     );
 
     const renderProfileTab = () => (
-        <section id="messaging-profile-tab" className="nj-profile-tab">
-            <div className="nj-profile-decor-top" /><div className="nj-profile-decor-mid" /><div className="nj-profile-decor-bottom" />
-            {header('我的', undefined, 'nj-profile-tab-header')}
-            <div className="nj-profile-cover">{userProfile.avatar && <img className="nj-profile-cover-image" src={userProfile.avatar} alt="" />}</div>
-            <div className="nj-profile-card nj-profile-view nj-profile-content">
-                <div className="nj-profile-top"><div className="nj-profile-avatar-wrap"><img className="nj-profile-avatar" src={userProfile.avatar} alt="" /></div></div>
-                <div className="nj-profile-info nj-profile-identity"><div className="nj-profile-name-row"><div className="nj-profile-name">{userProfile.name || '我'}</div></div><div className="nj-profile-bio nj-profile-signature">{userProfile.bio || '在 Sully 的小世界里，认真生活。'}</div></div>
-                <div className="nj-profile-stats"><div className="nj-profile-stat nj-profile-stat-item"><div className="nj-profile-stat-value nj-profile-stat-count">{characters.length}</div><div className="nj-profile-stat-label">好友</div></div><div className="nj-profile-stat nj-profile-stat-item"><div className="nj-profile-stat-value nj-profile-stat-count">{posts.length}</div><div className="nj-profile-stat-label">动态</div></div><div className="nj-profile-stat nj-profile-stat-item"><div className="nj-profile-stat-value nj-profile-stat-count">{textFavorites.length + voiceFavorites.length}</div><div className="nj-profile-stat-label">收藏</div></div></div>
-            </div>
-            <div className="nj-profile-section"><div className="nj-profile-section-title">最近照片</div>{galleryUrls.length ? <div className="nj-profile-gallery nj-profile-gallery-grid">{galleryUrls.map((url, index) => <span className="nj-profile-gallery-cell" key={`${url}-${index}`}><img className="nj-profile-gallery-image" src={url} alt="" /></span>)}</div> : <div className="nj-empty-state">相册里还没有照片</div>}</div>
+        <section id="messaging-profile-tab" className="profile-view nj-profile-tab">
+            <div className="glass-header nj-profile-tab-header"><div><button aria-label="返回桌面" onClick={closeApp}><CaretLeft /></button></div><div className="nj-profile-tab-title">我的</div><div><button className="nj-profile-edit-btn" aria-label="编辑资料" onClick={openProfileEditor}><PencilSimple /></button></div></div>
+            <div className="nj-profile-decor-top" aria-hidden="true" />
+            <div className="nj-profile-content"><div className="nj-profile-view">
+                <div className="nj-profile-top">
+                    <div className="nj-profile-top-row"><div className="nj-profile-avatar-wrap"><div className="nj-profile-avatar"><img src={profile.avatar || userProfile.avatar} alt="" /></div></div><div className="nj-profile-stats"><div className="nj-profile-stat-item"><span className="nj-profile-stat-count">{posts.filter(post => post.authorType === 'user').length}</span><span className="nj-profile-stat-label">动态</span></div><div className="nj-profile-stat-item"><span className="nj-profile-stat-count">{characters.length}</span><span className="nj-profile-stat-label">好友</span></div><div className="nj-profile-stat-item"><span className="nj-profile-stat-count">{textFavorites.length + voiceFavorites.length}</span><span className="nj-profile-stat-label">收藏</span></div></div></div>
+                    <div className="nj-profile-identity"><div className="nj-profile-name-row"><p className="nj-profile-name">{profile.name || '我'}</p>{profile.handle && <p className="nj-profile-handle">@{profile.handle}</p>}</div><p className="nj-profile-signature">{profile.signature || '在 Sully 的小世界里，认真生活。'}</p>{!!profile.hobbies.length && <div className="nj-profile-hobbies">{profile.hobbies.map(hobby => <span className="nj-profile-hobby-chip" key={hobby}>{hobby}</span>)}</div>}</div>
+                </div>
+                <div className="nj-profile-decor-mid" aria-hidden="true" />
+                {(profile.birthday || profile.gender || profile.virtualLocation || profile.realLocation) && <div className="nj-profile-info-bar">{profile.birthday && <div className="nj-profile-info-item"><span className="nj-profile-info-icon">◫</span><span><span className="nj-profile-info-label">生日</span><span className="nj-profile-info-value">{profile.birthday}</span></span></div>}{profile.gender && <div className="nj-profile-info-item"><span className="nj-profile-info-icon">○</span><span><span className="nj-profile-info-label">性别</span><span className="nj-profile-info-value">{profile.gender}</span></span></div>}{(profile.virtualLocation || profile.realLocation) && <div className="nj-profile-info-item"><span className="nj-profile-info-icon">⌖</span><span><span className="nj-profile-info-label">所在地</span><span className="nj-profile-info-value">{profile.virtualLocation || profile.realLocation}</span></span></div>}</div>}
+                <div className="nj-profile-about"><div className="nj-profile-section-title">关于我</div><div className="nj-profile-about-text">{profile.about || '还没有填写个人介绍。'}</div></div>
+                <div className="nj-profile-gallery"><div className="nj-profile-section-title">相册</div>{galleryUrls.length ? <div className="nj-profile-gallery-grid">{galleryUrls.map((url, index) => <div className="nj-profile-gallery-cell" key={`${url}-${index}`}><img src={url} alt="" /></div>)}</div> : <div className="nj-empty-state">相册里还没有照片</div>}</div>
+            </div></div>
+            <div className="nj-profile-decor-bottom" aria-hidden="true" />
         </section>
     );
 
@@ -461,12 +712,44 @@ const Messaging: React.FC = () => {
                     {tab === 'profile' && renderProfileTab()}
                 </div>
                 <nav id="messaging-bottom-bar" className="nj-tab-bottom-bar" aria-label="消息应用标签栏">
-                    <button className={`nj-tab-bottom-item nj-tab-bottom-item-chat ${tab === 'chat' ? 'active nj-tab-bottom-item-active' : ''}`} onClick={() => selectTab('chat')} onPointerDown={startThemeLongPress} onPointerUp={cancelThemeLongPress} onPointerCancel={cancelThemeLongPress} onPointerLeave={cancelThemeLongPress} onContextMenu={event => { event.preventDefault(); openThemeSettings(); }}><span className="nj-tab-bottom-icon"><ChatCircleDots weight={tab === 'chat' ? 'fill' : 'regular'} />{unreadTotal > 0 && <span className="nj-tab-bottom-badge nj-tab-bottom-total-unread">{unreadTotal > 99 ? '99+' : unreadTotal}</span>}</span><span className="nj-tab-bottom-label nj-tab-bottom-text">消息</span></button>
-                    <button className={`nj-tab-bottom-item nj-tab-bottom-item-moments ${tab === 'moments' ? 'active nj-tab-bottom-item-active' : ''}`} onClick={() => selectTab('moments')}><span className="nj-tab-bottom-icon"><Planet weight={tab === 'moments' ? 'fill' : 'regular'} />{!!posts.length && <i className="nj-tab-bottom-moments-dot" />}</span><span className="nj-tab-bottom-label nj-tab-bottom-text">动态</span></button>
-                    <button className={`nj-tab-bottom-item nj-tab-bottom-item-favorites ${tab === 'favorites' ? 'active nj-tab-bottom-item-active' : ''}`} onClick={() => selectTab('favorites')}><span className="nj-tab-bottom-icon"><Star weight={tab === 'favorites' ? 'fill' : 'regular'} /></span><span className="nj-tab-bottom-label nj-tab-bottom-text">收藏</span></button>
-                    <button className={`nj-tab-bottom-item nj-tab-bottom-item-profile ${tab === 'profile' ? 'active nj-tab-bottom-item-active' : ''}`} onClick={() => selectTab('profile')}><span className="nj-tab-bottom-icon"><UserCircle weight={tab === 'profile' ? 'fill' : 'regular'} /></span><span className="nj-tab-bottom-label nj-tab-bottom-text">我的</span></button>
+                    <button className={`nj-tab-bottom-item nj-tab-bottom-item-chat ${tab === 'chat' ? 'active nj-tab-bottom-item-active' : ''}`} aria-label="消息" onClick={() => selectTab('chat')} onPointerDown={startThemeLongPress} onPointerUp={cancelThemeLongPress} onPointerCancel={cancelThemeLongPress} onPointerLeave={cancelThemeLongPress} onContextMenu={event => { event.preventDefault(); openThemeSettings(); }}><span className="glass-icon nj-tab-bottom-icon"><ChatCircleDots weight={tab === 'chat' ? 'fill' : 'regular'} />{unreadTotal > 0 && <span className="nj-tab-bottom-total-unread">{unreadTotal > 99 ? '99+' : unreadTotal}</span>}</span></button>
+                    <button className={`nj-tab-bottom-item nj-tab-bottom-item-moments ${tab === 'moments' ? 'active nj-tab-bottom-item-active' : ''}`} aria-label="朋友圈" onClick={() => selectTab('moments')}><span className="glass-icon nj-tab-bottom-icon"><Planet weight={tab === 'moments' ? 'fill' : 'regular'} />{!!posts.length && <i className="nj-tab-bottom-moments-dot" />}</span></button>
+                    <button className={`nj-tab-bottom-item nj-tab-bottom-item-favorites ${tab === 'favorites' ? 'active nj-tab-bottom-item-active' : ''}`} aria-label="收藏" onClick={() => selectTab('favorites')}><span className="glass-icon nj-tab-bottom-icon"><Star weight={tab === 'favorites' ? 'fill' : 'regular'} /></span></button>
+                    <button className={`nj-tab-bottom-item nj-tab-bottom-item-profile ${tab === 'profile' ? 'active nj-tab-bottom-item-active' : ''}`} aria-label="我的" onClick={() => selectTab('profile')}><span className="glass-icon nj-tab-bottom-icon"><UserCircle weight={tab === 'profile' ? 'fill' : 'regular'} /></span></button>
                 </nav>
             </main>
+            {momentGenerateOpen && <div className="sully-msg-modal-layer" onClick={() => !momentGenerating && setMomentGenerateOpen(false)}><div className="sully-msg-modal-card" onClick={event => event.stopPropagation()}>
+                <div className="sully-msg-modal-title">生成角色动态</div>
+                <label className="sully-msg-field-label">角色选择</label>
+                <div className="sully-msg-segmented"><button className={momentGenerateMode === 'random' ? 'active' : ''} onClick={() => setMomentGenerateMode('random')} disabled={momentGenerating}>随机角色</button><button className={momentGenerateMode === 'select' ? 'active' : ''} onClick={() => setMomentGenerateMode('select')} disabled={momentGenerating}>指定角色</button></div>
+                {momentGenerateMode === 'select' && <div className="sully-msg-character-picker">{characters.map(char => <button key={char.id} className={momentSelectedIds.includes(char.id) ? 'selected' : ''} onClick={() => setMomentSelectedIds(current => current.includes(char.id) ? current.filter(id => id !== char.id) : [...current, char.id])} disabled={momentGenerating}><img src={char.avatar} alt="" /><span>{char.name}</span><i>{momentSelectedIds.includes(char.id) ? '✓' : ''}</i></button>)}</div>}
+                <label className="sully-msg-field-label">生成数量 <b>{momentGenerateCount}</b></label>
+                <input className="sully-msg-range" type="range" min="1" max="6" value={momentGenerateCount} onChange={event => setMomentGenerateCount(Number(event.target.value))} disabled={momentGenerating} />
+                {momentProgress && <div className="sully-msg-progress">{momentProgress}</div>}
+                <div className="sully-msg-modal-actions"><button onClick={() => setMomentGenerateOpen(false)} disabled={momentGenerating}>取消</button><button className="primary" onClick={() => void generateCharacterMoments()} disabled={momentGenerating || (momentGenerateMode === 'select' && !momentSelectedIds.length)}>{momentGenerating ? '生成中…' : '开始生成'}</button></div>
+            </div></div>}
+            {momentPostOpen && <div className="sully-msg-modal-layer" onClick={() => setMomentPostOpen(false)}><div className="sully-msg-modal-card sully-msg-modal-card-tall" onClick={event => event.stopPropagation()}>
+                <div className="sully-msg-modal-head"><button onClick={() => setMomentPostOpen(false)}><X /></button><div className="sully-msg-modal-title">发布朋友圈</div><button className="sully-msg-save" onClick={() => void publishUserMoment()}>发布</button></div>
+                <textarea className="sully-msg-post-text" value={newMomentText} onChange={event => setNewMomentText(event.target.value)} placeholder="这一刻的想法…" />
+                {!!newMomentImages.length && <div className="sully-msg-image-grid">{newMomentImages.map((image, index) => <div key={index}><img src={image} alt="" /><button onClick={() => setNewMomentImages(current => current.filter((_, itemIndex) => itemIndex !== index))}><X /></button></div>)}</div>}
+                <input ref={momentImageInputRef} type="file" accept="image/*" multiple hidden onChange={event => { void handleMomentImages(event.target.files); event.target.value = ''; }} />
+                <button className="sully-msg-upload-btn" onClick={() => momentImageInputRef.current?.click()}><Camera />从相册添加图片</button>
+                <label className="sully-msg-field-label">生图描述（可选）</label><textarea className="sully-msg-small-textarea" value={newMomentImagePrompt} onChange={event => setNewMomentImagePrompt(event.target.value)} placeholder="例如：a rainy Tokyo street at night, cinematic photo" />
+                <button className="sully-msg-upload-btn" onClick={() => void drawNewMomentImage()} disabled={newMomentImageBusy || newMomentImages.length >= 9}><Sparkle />{newMomentImageBusy ? '正在生成图片…' : '使用生图 API 配图'}</button>
+                <label className="sully-msg-field-label">位置（可选）</label><input className="sully-msg-input" value={newMomentLocation} onChange={event => setNewMomentLocation(event.target.value)} placeholder="所在位置" />
+            </div></div>}
+            {profileEditOpen && <div className="sully-msg-modal-layer sully-msg-profile-editor" onClick={() => setProfileEditOpen(false)}><div className="sully-msg-modal-card sully-msg-modal-card-tall" onClick={event => event.stopPropagation()}>
+                <div className="sully-msg-modal-head"><button onClick={() => setProfileEditOpen(false)}><X /></button><div className="sully-msg-modal-title">编辑资料</div><button className="sully-msg-save" onClick={() => void persistProfile()}>保存</button></div>
+                <div className="sully-msg-profile-images"><button onClick={() => profileAvatarInputRef.current?.click()}><img src={profileDraft.avatar || userProfile.avatar} alt="" /><span>更换头像</span></button><button onClick={() => profileCoverInputRef.current?.click()}>{profileDraft.cover ? <img src={profileDraft.cover} alt="" /> : <span className="sully-msg-cover-placeholder">添加封面</span>}<span>更换封面</span></button></div>
+                <input ref={profileAvatarInputRef} type="file" accept="image/*" hidden onChange={event => { void handleProfileImage(event.target.files, 'avatar'); event.target.value = ''; }} /><input ref={profileCoverInputRef} type="file" accept="image/*" hidden onChange={event => { void handleProfileImage(event.target.files, 'cover'); event.target.value = ''; }} />
+                <label className="sully-msg-field-label">昵称</label><input className="sully-msg-input" value={profileDraft.name} onChange={event => setProfileDraft(current => ({ ...current, name: event.target.value }))} />
+                <label className="sully-msg-field-label">账号 ID</label><input className="sully-msg-input" value={profileDraft.handle} onChange={event => setProfileDraft(current => ({ ...current, handle: event.target.value }))} placeholder="不需要输入 @" />
+                <label className="sully-msg-field-label">个性签名</label><textarea className="sully-msg-small-textarea" value={profileDraft.signature} onChange={event => setProfileDraft(current => ({ ...current, signature: event.target.value }))} placeholder="写点什么…" />
+                <div className="sully-msg-two-columns"><label><span className="sully-msg-field-label">生日</span><input className="sully-msg-input" value={profileDraft.birthday} onChange={event => setProfileDraft(current => ({ ...current, birthday: event.target.value }))} placeholder="2001年6月28日" /></label><label><span className="sully-msg-field-label">性别</span><input className="sully-msg-input" value={profileDraft.gender} onChange={event => setProfileDraft(current => ({ ...current, gender: event.target.value }))} placeholder="自定义" /></label></div>
+                <div className="sully-msg-two-columns"><label><span className="sully-msg-field-label">虚拟地点</span><input className="sully-msg-input" value={profileDraft.virtualLocation} onChange={event => setProfileDraft(current => ({ ...current, virtualLocation: event.target.value }))} /></label><label><span className="sully-msg-field-label">现实映射</span><input className="sully-msg-input" value={profileDraft.realLocation} onChange={event => setProfileDraft(current => ({ ...current, realLocation: event.target.value }))} /></label></div>
+                <label className="sully-msg-field-label">兴趣爱好（逗号或换行分隔）</label><textarea className="sully-msg-small-textarea" value={profileDraft.hobbies.join('，')} onChange={event => setProfileDraft(current => ({ ...current, hobbies: event.target.value.split(/[,，\n]+/) }))} />
+                <label className="sully-msg-field-label">关于我（支持换行）</label><textarea className="sully-msg-about-textarea" value={profileDraft.about} onChange={event => setProfileDraft(current => ({ ...current, about: event.target.value }))} placeholder={'角色档案：\n基本信息：\n…'} />
+            </div></div>}
             {contextMenu && <div className="nj-chat-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={event => event.stopPropagation()}>
                 <button onClick={() => void togglePinned(contextMenu.charId)}>{prefs.pinnedCharacterIds.includes(contextMenu.charId) ? '取消置顶' : '置顶好友'}</button>
                 <button onClick={() => { clearUnread(contextMenu.charId); setContextMenu(null); }}>标为已读</button>

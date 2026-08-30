@@ -36,9 +36,16 @@ describe('messaging theme CSS compatibility', () => {
         expect(css).toContain('[data-time-slot="night"] #messaging-chat-tab .nj-chat-item');
     });
 
-    it('adds the iOS backdrop-filter alias', () => {
+    it('preserves declarations exactly like the 4.71 scoper', () => {
         const css = scopeMessagingCss('.nj-tab-bottom-bar { backdrop-filter: blur(12px); }');
-        expect(css).toContain('-webkit-backdrop-filter: blur(12px)');
+        expect(css).toContain('backdrop-filter: blur(12px)');
+        expect(css).not.toContain('-webkit-backdrop-filter');
+    });
+
+    it('keeps pseudo elements on the same hook instead of moving them below the root', () => {
+        const css = scopeMessagingCss('.nj-chat-tab-decor-top::before { content: "x"; }');
+        expect(css).toContain(':is(#messaging-chat-tab.nj-chat-tab-decor-top)::before');
+        expect(css).toContain('#messaging-chat-tab .nj-chat-tab-decor-top::before');
     });
 
     it.each([
