@@ -288,6 +288,10 @@ const Messaging: React.FC = () => {
             .sort((a, b) => (a.order || a.createdAt || 0) - (b.order || b.createdAt || 0))
             .map(group => ({ id: group.id, name: group.name, items: groupMap.get(group.id)! }));
         if (groupMap.has(FALLBACK_GROUP_ID)) named.push({ id: FALLBACK_GROUP_ID, name: '未分组', items: groupMap.get(FALLBACK_GROUP_ID)! });
+        // 没有任何自建分组时，糯叽机是直接平铺，不会单独给「未分组」再出一个标题。
+        // 多出来的标题节点会打断主题的 `.nj-chat-item-pinned + .nj-chat-item`
+        // 和 `:nth-child(n)`，导致 contact / message 标签、分割线、书签装饰全部失效。
+        if (named.length === 1 && named[0].id === FALLBACK_GROUP_ID) return [{ id: 'all', name: '', items: orderedSummaries }];
         return named;
     }, [characterGroups, orderedSummaries, prefs.groupingEnabled]);
 

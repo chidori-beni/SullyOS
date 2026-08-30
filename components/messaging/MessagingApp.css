@@ -5,7 +5,7 @@
   --nj-muted: #8e8e93;
   --nj-line: rgba(15, 23, 42, .075);
   --nj-card: rgba(255, 255, 255, .92);
-  --nj-bg: #f7f7f8;
+  --nj-bg: #ffffff;
   --nj-avatar-size: 56px;
   position: relative;
   width: 100%;
@@ -121,7 +121,7 @@
   gap: 8px;
   padding: 0 12px;
   color: #8e8e93;
-  background: var(--nj-msg-chat-search-bg, rgba(118, 118, 128, .105));
+  background: var(--nj-msg-chat-search-bg, #f5f6f8);
   border-radius: var(--nj-msg-chat-search-radius, 11px);
   font-size: 14px;
 }
@@ -609,7 +609,9 @@
 .nj-chat-item:active { transform: var(--nj-msg-card-active-transform, scale(.988)); background: rgba(0,0,0,.045); }
 /* 4.71 原生外层只有 flexShrink: 0，不能写 flex-basis：主题只改 width 时会被 basis 顶掉。 */
 .nj-chat-item-avatar { position: relative; z-index: 2; flex-shrink: 0; width: var(--nj-avatar-size); height: var(--nj-avatar-size); border-radius: var(--nj-msg-avatar-radius, 50%); }
-.nj-chat-item-avatar-img { width: 100%; height: 100%; overflow: hidden; border-radius: inherit; background: #fafafa; box-shadow: var(--nj-msg-avatar-shadow, 0 2px 8px rgba(15,23,42,.1)); }
+/* 原生内包裹层写的是 var(--nj-msg-avatar-radius, 50%)，不是 inherit。
+   用 inherit 会让主题改外层圆角时连内层一起变，仿 Reeden 的圆头像会被变成方的。 */
+.nj-chat-item-avatar-img { width: 100%; height: 100%; overflow: hidden; border-radius: var(--nj-msg-avatar-radius, 50%); background: #fafafa; box-shadow: var(--nj-msg-avatar-shadow, 0 2px 8px rgba(15,23,42,.1)); }
 .nj-chat-item-avatar > img,
 .nj-chat-item-avatar-img > img { display:block; width:100%; height:100%; object-fit:cover; }
 .nj-chat-item-unread-badge { position:absolute; top:-1px; right:-1px; min-width:19px; height:19px; padding:0 5px; display:flex; align-items:center; justify-content:center; color:var(--nj-msg-unread-color,#fff); background:var(--nj-msg-unread-bg,#ff3b30); border:2px solid var(--nj-bg); border-radius:999px; font-size:10px; font-weight:700; }
@@ -905,7 +907,20 @@
   padding: 15px 20px;
   padding-top: calc(15px + var(--nuo-safe-top));
 }
-.nj-chat-tab-header-back { padding-right: 10px; cursor: pointer; }
+/* 原生这两个只是裸 div + 24px 图标，不是 40×40 按钮。
+   不重置的话顶栏会比糯叽机高 16px，整个页面跟着下移。 */
+.nj-chat-tab-header-back {
+  width: auto;
+  height: auto;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 0;
+  font-size: inherit;
+  padding-right: 10px;
+  cursor: pointer;
+}
+.nj-chat-tab-header-back > svg,
+.nj-chat-tab-header-edit > svg { width: 24px; height: 24px; }
 .nj-chat-tab-header-title-wrap { display: flex; align-items: center; justify-content: center; gap: 4px; font-size: 18px; font-weight: 700; }
 .nj-chat-tab-header-title-btn { display: flex; align-items: center; gap: 4px; border: 0; padding: 0; color: var(--nj-msg-text, var(--text-primary)); background: transparent; font: inherit; }
 .nj-chat-tab-header-edit { position: relative; display: flex; align-items: center; justify-content: flex-end; padding-right: 10px; cursor: pointer; }
