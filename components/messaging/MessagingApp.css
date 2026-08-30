@@ -998,17 +998,22 @@
   box-shadow: 0 4px 12px rgba(0,0,0,.05);
   opacity: .95;
 }
-.nj-moments-cover-userinfo { right: 24px; bottom: -35px; align-items: flex-end; gap: 14px; }
-.nj-moments-cover-username { margin-bottom: 46px; font-size: 22px; font-weight: 800; text-align: right; }
+.nj-moments-cover-userinfo { right: 16px; bottom: -26px; align-items: flex-end; gap: 12px; }
+/* 糯叽机 4.71 的用户名是 flex 中的单行文本；Sully 不能让较短的中文名
+   因为 flex 收缩变成两行，否则会把头像和封面底部一起推偏。 */
+.nj-moments-cover-username {
+  padding-bottom: 34px;
+  margin-bottom: 0;
+  font-size: 16px;
+  font-weight: 700;
+  white-space: nowrap;
+}
 .nj-moments-cover-avatar {
-  position: relative;
-  right: auto;
-  bottom: auto;
-  width: 88px;
-  height: 88px;
-  flex: 0 0 88px;
-  border-width: 4px;
-  border-radius: 28px;
+  position: static;
+  width: 66px;
+  height: 66px;
+  border-width: 3px;
+  border-radius: 8px;
 }
 .nj-moments-notif-entry { min-height: 0; display:flex; align-items:center; gap:12px; padding:12px 16px; cursor:pointer; border-bottom:1px solid var(--nj-sheet-border,#f0f0f0); background:var(--nj-msg-moments-notif-bg,#fff); }
 .nj-moments-notif-avatar { position:relative; width:48px; height:48px; flex:0 0 48px; overflow:hidden; border-radius:8px; background:#f5f5f5; }
@@ -1022,6 +1027,12 @@
 .nj-moments-post-name { margin-bottom: 6px; font-size: 16px; font-weight: 700; }
 .nj-moments-post-text { margin-top: 0; font-size: 15px; line-height: 1.6; }
 .nj-moments-post-imgs { width: 100%; max-width: 280px; margin: 10px 0; }
+/* 原生图片网格与正文之间固定保留 10px。提高结构选择器的特异度，
+   让外部主题的负 margin 不会把图片压进正文线盒；其它主题属性（列数、
+   间距、宽度、内边距）仍由主题接管。 */
+#messaging-moments-tab .nj-moments-post-body > .nj-moments-post-imgs {
+  margin-top: 10px !important;
+}
 .nj-moments-post-imgs-1 { width: 70%; grid-template-columns: 1fr; }
 .nj-moments-post-imgs-2 { width: 80%; grid-template-columns: repeat(2,1fr); }
 .nj-moments-post-img-cell { position: relative; border-radius: 8px; }
