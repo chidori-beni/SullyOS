@@ -687,7 +687,9 @@ const Messaging: React.FC = () => {
                                         onContextMenu={event => { event.preventDefault(); openItemMenu(event, char.id); }}
                                     >
                                         <div className="nj-chat-item-avatar nj-chat-item-avatar-char">
-                                            <img src={char.avatar} alt="" />
+                                            {/* 糯叽机 4.71 把圆角和 overflow 放在这层内包裹上，外层只负责定位与角标。
+                                                主题会对外层写 overflow: visible（置顶缺口），少了这层头像会变成方图。 */}
+                                            <div className="nj-chat-item-avatar-img"><img src={char.avatar} alt="" /></div>
                                             {unread > 0 && <span className="nj-chat-item-unread-badge">{unread > 99 ? '99+' : unread}</span>}
                                         </div>
                                         <div className="nj-chat-item-body">
@@ -750,7 +752,7 @@ const Messaging: React.FC = () => {
     );
 
     const renderFavoritesTab = () => (
-        <section id="messaging-favorites-tab" className="nj-favorites-tab" data-empty={String(!(textFavorites.length || voiceFavorites.length))}>
+        <section id="messaging-favorites-tab" className="journal-background nj-favorites-tab" data-empty={String(!(textFavorites.length || voiceFavorites.length))}>
             <div className="ig-header glass-header nj-favorites-tab-header">
                 <div className="nj-favorites-tab-title">收藏</div>
                 <div className="nj-fav-decor-top" aria-hidden="true" />

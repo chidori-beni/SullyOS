@@ -545,8 +545,7 @@
 .nj-chat-item {
   --nj-item-deco-opacity: 0;
   position: relative;
-  display: grid;
-  grid-template-columns: var(--nj-avatar-size) minmax(0,1fr);
+  display: flex;
   gap: var(--nj-msg-card-gap, 12px);
   min-height: 76px;
   align-items: center;
@@ -565,10 +564,13 @@
 .nj-chat-item::after { content:""; position:absolute; right:16px; bottom:0; left:calc(16px + var(--nj-avatar-size) + 12px); height:1px; background:var(--nj-line); }
 .nj-chat-item[data-pinned="true"] { background-color: var(--nj-msg-card-bg-pinned, rgba(255,255,255,.7)); }
 .nj-chat-item:active { transform: var(--nj-msg-card-active-transform, scale(.988)); background: rgba(0,0,0,.045); }
-.nj-chat-item-avatar { position: relative; z-index: 2; width: var(--nj-avatar-size); height: var(--nj-avatar-size); overflow: hidden; border-radius: var(--nj-msg-avatar-radius, 50%); box-shadow: var(--nj-msg-avatar-shadow, 0 2px 8px rgba(15,23,42,.1)); }
-.nj-chat-item-avatar > img { display:block; width:100%; height:100%; object-fit:cover; }
+/* 4.71 原生外层只有 flexShrink: 0，不能写 flex-basis：主题只改 width 时会被 basis 顶掉。 */
+.nj-chat-item-avatar { position: relative; z-index: 2; flex-shrink: 0; width: var(--nj-avatar-size); height: var(--nj-avatar-size); border-radius: var(--nj-msg-avatar-radius, 50%); }
+.nj-chat-item-avatar-img { width: 100%; height: 100%; overflow: hidden; border-radius: inherit; background: #fafafa; box-shadow: var(--nj-msg-avatar-shadow, 0 2px 8px rgba(15,23,42,.1)); }
+.nj-chat-item-avatar > img,
+.nj-chat-item-avatar-img > img { display:block; width:100%; height:100%; object-fit:cover; }
 .nj-chat-item-unread-badge { position:absolute; top:-1px; right:-1px; min-width:19px; height:19px; padding:0 5px; display:flex; align-items:center; justify-content:center; color:var(--nj-msg-unread-color,#fff); background:var(--nj-msg-unread-bg,#ff3b30); border:2px solid var(--nj-bg); border-radius:999px; font-size:10px; font-weight:700; }
-.nj-chat-item-body { position:relative; z-index:2; min-width:0; }
+.nj-chat-item-body { position:relative; z-index:2; min-width:0; flex:1; }
 .nj-chat-item-row1 { display:flex; align-items:baseline; gap:8px; min-width:0; }
 .nj-chat-item-name { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:15.5px; font-weight:630; }
 .nj-chat-item-time { flex:none; display:flex; align-items:center; gap:3px; color:var(--nj-msg-text-time,#aaaab0); font-size:10px; }
@@ -839,6 +841,7 @@
 
 #chat-list-screen .nj-chat-tab,
 #chat-list-screen .nj-moments-tab { display: block; }
+#chat-list-screen .nj-favorites-tab { display: flex; flex-direction: column; }
 
 .nj-chat-tab-header {
   box-sizing: border-box;
@@ -907,6 +910,31 @@
 .nj-moments-post-img-cell { position: relative; border-radius: 8px; }
 .nj-moments-post-imgs-1 .nj-moments-post-img-cell { aspect-ratio: 1; max-height: none; }
 .nj-moments-post-meta { font-size: 12px; }
+
+/* 收藏页 header：对齐糯叽机 4.71 的 #messaging-favorites-tab 内联基线。
+   4.71 原生在 header 上写死 sticky + calc(15px + var(--nuo-safe-top))，
+   标题写死 text-align: center / width: 100%。缺了这两条，
+   只改颜色的第三方主题（赦免系列）就会让「收藏」压到状态栏并左对齐。 */
+.nj-favorites-tab-header {
+  box-sizing: border-box;
+  position: sticky;
+  z-index: 100;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 15px 16px 10px;
+  padding-top: calc(15px + var(--nuo-safe-top));
+}
+.nj-favorites-tab-title {
+  width: 100%;
+  color: var(--nj-msg-text, inherit);
+  font-size: 18px;
+  font-weight: bold;
+  text-align: center;
+}
+.nj-favorites-tabs { gap: 8px; overflow-x: auto; padding: 0 0 4px; scrollbar-width: none; }
+.nj-favorites-tabs::-webkit-scrollbar { display: none; }
 
 .nj-profile-tab-header {
   box-sizing: border-box;
