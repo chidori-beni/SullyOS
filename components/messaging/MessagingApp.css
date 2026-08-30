@@ -1183,27 +1183,6 @@
 }
 .nj-profile-gallery-open img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .nj-profile-gallery-open:focus-visible { outline: 2px solid var(--nj-msg-text, #4d5057); outline-offset: -2px; }
-.nj-profile-gallery-delete {
-  position: absolute;
-  z-index: 1;
-  top: 6px;
-  right: 6px;
-  display: grid;
-  width: 26px;
-  height: 26px;
-  place-items: center;
-  border: 0;
-  border-radius: 50%;
-  padding: 0;
-  color: #fff;
-  background: rgba(25, 25, 30, .58);
-  -webkit-backdrop-filter: blur(5px);
-  backdrop-filter: blur(5px);
-  cursor: pointer;
-}
-.nj-profile-gallery-delete:active { transform: scale(.92); }
-.nj-profile-gallery-delete:disabled { opacity: .55; cursor: wait; }
-.nj-profile-gallery-delete svg { width: 14px; height: 14px; }
 .nj-profile-gallery .nj-empty-state small { font-size: 10px; line-height: 1.5; }
 
 .nj-tab-bottom-bar {
@@ -1258,6 +1237,10 @@
 .sully-msg-moment-viewer-hint { position:absolute; z-index:10000; bottom:calc(76px + env(safe-area-inset-bottom,0px)); left:50%; transform:translateX(-50%); max-width:calc(100% - 40px); padding:7px 12px; border-radius:999px; color:rgba(255,255,255,.82); background:rgba(0,0,0,.35); font-size:11px; white-space:nowrap; pointer-events:none; }
 .sully-msg-moment-viewer-close { position:absolute; z-index:10001; top:calc(env(safe-area-inset-top,20px) + 12px); left:20px; width:40px; height:40px; display:grid; place-items:center; border:0; border-radius:50%; color:#fff; background:rgba(255,255,255,.2); -webkit-backdrop-filter:blur(5px); backdrop-filter:blur(5px); }
 .sully-msg-moment-viewer-close svg { width:22px; height:22px; }
+.sully-msg-moment-viewer-delete { position:absolute; z-index:10001; top:calc(env(safe-area-inset-top,20px) + 12px); right:20px; width:40px; height:40px; display:grid; place-items:center; border:0; border-radius:50%; color:#fff; background:rgba(210,65,75,.72); -webkit-backdrop-filter:blur(5px); backdrop-filter:blur(5px); }
+.sully-msg-moment-viewer-delete:active { transform:scale(.94); }
+.sully-msg-moment-viewer-delete:disabled { opacity:.55; cursor:wait; }
+.sully-msg-moment-viewer-delete svg { width:20px; height:20px; }
 .sully-msg-moment-viewer-dots { position:absolute; z-index:10000; bottom:calc(40px + env(safe-area-inset-bottom,0px)); display:flex; gap:8px; padding:10px; }
 .sully-msg-moment-viewer-dots i { width:8px; height:8px; display:block; border-radius:50%; background:rgba(255,255,255,.3); transition:background .2s; }
 .sully-msg-moment-viewer-dots i.active { background:#fff; }
