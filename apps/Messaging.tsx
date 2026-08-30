@@ -626,31 +626,33 @@ const Messaging: React.FC = () => {
             <div className="nj-chat-tab-decor-top" aria-hidden="true" />
             {!!characters.length && !search && (
                 <div className="details-scroll nj-chat-tab-note-row nj-chat-tab-notes">
-                    {/* 糯叽机 4.71 的第一格固定是「我」自己，不是好友。
-                        主题（例如仿 ins）会把这一格渲染成大头像个人卡，
-                        少了它就会拿角色头像顶上去。 */}
-                    <button className="nj-chat-tab-note-item nj-chat-tab-note-mine" onClick={openProfileEditor}>
-                        <span className="glass-bubble nj-chat-tab-note-bubble">
-                            <span className="nj-chat-tab-note-bubble-text">{profile.signature || 'Mind?'}</span>
-                            <span className="nj-chat-tab-note-bubble-tail1" aria-hidden="true" />
-                            <span className="nj-chat-tab-note-bubble-tail2" aria-hidden="true" />
-                        </span>
-                        <span className="nj-chat-tab-note-avatar">
+                    {/* 标签名必须和糯叽机一致：原生这一整块内部全是 <div>。
+                        主题会写 `.nj-chat-tab-note-item span { display:none }`
+                        这类按标签的选择器，用 <span> 会被整块隐藏。 */}
+                    <div className="nj-chat-tab-note-item nj-chat-tab-note-mine" role="button" tabIndex={0} onClick={openProfileEditor} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') openProfileEditor(); }}>
+                        <div className="glass-bubble nj-chat-tab-note-bubble">
+                            <div className="nj-chat-tab-note-bubble-text">{profile.signature || 'Mind?'}</div>
+                            <div className="nj-chat-tab-note-bubble-tail1" aria-hidden="true" />
+                            <div className="nj-chat-tab-note-bubble-tail2" aria-hidden="true" />
+                        </div>
+                        {/* 「我」这格原生是 <img> 直接子元素，没有内包裹层；
+                            主题的 `.nj-chat-tab-note-avatar > *:not(img)` 靠这一点保住图片。 */}
+                        <div className="nj-chat-tab-note-avatar">
                             <img src={profile.avatar || userProfile.avatar} alt="" />
-                            {!profile.signature && <span className="nj-chat-tab-note-plus" aria-hidden="true">+</span>}
-                        </span>
-                        <span className="nj-chat-tab-note-name">You</span>
-                    </button>
+                            {!profile.signature && <div className="nj-chat-tab-note-plus" aria-hidden="true">+</div>}
+                        </div>
+                        <div className="nj-chat-tab-note-name">You</div>
+                    </div>
                     {orderedSummaries.slice(0, 6).map(({ char, last }) => (
-                        <button key={char.id} className="nj-chat-tab-note-item nj-chat-tab-note-friend" onClick={() => openChat(char.id)}>
-                            <span className="glass-bubble nj-chat-tab-note-bubble">
-                                <span className="nj-chat-tab-note-bubble-text">{cleanPreview(last, !!proactiveComposingChars[char.id]).slice(0, 14)}</span>
-                                <span className="nj-chat-tab-note-bubble-tail1" aria-hidden="true" />
-                                <span className="nj-chat-tab-note-bubble-tail2" aria-hidden="true" />
-                            </span>
-                            <span className="nj-chat-tab-note-avatar"><span className="nj-chat-tab-note-avatar-img"><img src={char.avatar} alt="" /></span></span>
-                            <span className="nj-chat-tab-note-name">{char.name}</span>
-                        </button>
+                        <div key={char.id} className="nj-chat-tab-note-item nj-chat-tab-note-friend" role="button" tabIndex={0} onClick={() => openChat(char.id)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') openChat(char.id); }}>
+                            <div className="glass-bubble nj-chat-tab-note-bubble">
+                                <div className="nj-chat-tab-note-bubble-text">{cleanPreview(last, !!proactiveComposingChars[char.id]).slice(0, 14)}</div>
+                                <div className="nj-chat-tab-note-bubble-tail1" aria-hidden="true" />
+                                <div className="nj-chat-tab-note-bubble-tail2" aria-hidden="true" />
+                            </div>
+                            <div className="nj-chat-tab-note-avatar"><div className="nj-chat-tab-note-avatar-img"><img src={char.avatar} alt="" /></div></div>
+                            <div className="nj-chat-tab-note-name">{char.name}</div>
+                        </div>
                     ))}
                 </div>
             )}
