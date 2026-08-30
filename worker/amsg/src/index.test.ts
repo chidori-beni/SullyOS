@@ -4068,7 +4068,12 @@ describe('Cron 的轻量起跳', () => {
       },
     };
 
-    await (worker as any).scheduled({ scheduledTime: 1788086374, cron: '* * * * *' }, env);
+    await (worker as any).scheduled({
+      scheduledTime: 1788086374,
+      cron: '* * * * *',
+      // 真实的 CronEvent 还会带 ScheduledController；它不能进 DO RPC，入口必须剥掉。
+      controller: { waitUntil: () => {} },
+    }, env);
 
     expect(kicked).toEqual([{ scheduledTime: 1788086374, cron: '* * * * *' }]);
   });

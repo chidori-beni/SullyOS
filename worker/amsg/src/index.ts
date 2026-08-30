@@ -3335,7 +3335,9 @@ export default {
       : null;
     if (stub && typeof stub.kickScheduled === 'function') {
       try {
-        await stub.kickScheduled(event);
+        // CronEvent 里带着 Cloudflare 专用的 ScheduledController。它不能跨 Durable
+        // Object RPC 序列化；这里只传上游真正需要的两个普通字段。
+        await stub.kickScheduled({ scheduledTime: event.scheduledTime, cron: event.cron });
         return;
       } catch (error) {
         // 不在 10ms 的 Cron invocation 里回退执行整轮：那会再次触发 exceededCpu。

@@ -7384,7 +7384,7 @@ function createSingleUserCloudflareWorker(buildConfig, options = {}) {
 }
 
 // utils/amsgBundleVersion.ts
-var AMSG_BUNDLE_VERSION = "2026-08-30.1";
+var AMSG_BUNDLE_VERSION = "2026-08-30.2";
 
 // utils/amsgTaskKinds.ts
 var AMSG_TASK_KIND_KEY = "amsgKind";
@@ -15146,7 +15146,7 @@ var src_default = {
     const stub = namespace && typeof namespace.idFromName === "function" && typeof namespace.get === "function" ? namespace.get(namespace.idFromName(SCHEDULED_TICK_INSTANCE_NAME)) : null;
     if (stub && typeof stub.kickScheduled === "function") {
       try {
-        await stub.kickScheduled(event);
+        await stub.kickScheduled({ scheduledTime: event.scheduledTime, cron: event.cron });
         return;
       } catch (error) {
         console.error("[amsg] \u5B9A\u65F6\u4EFB\u52A1\u8D77\u8DF3 DO \u5931\u8D25\uFF0C\u4E0B\u4E00\u5206\u949F\u91CD\u8BD5\uFF1A", error && error.message);
