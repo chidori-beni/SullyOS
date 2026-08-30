@@ -5,7 +5,7 @@ import { ContextBuilder } from './context';
 import { DB } from './db';
 import { formatLifeSimResetCardForContext } from './lifeSimChatCard';
 import { formatQixiEventCardForContext, tryParseQixiEventChatCard } from './qixiChatCard';
-import { normalizeMessageContent, stickerNameFromUrl, theaterWhenPhrase } from './messageFormat';
+import { normalizeMessageContent, stickerPromptLabelFromUrl, theaterWhenPhrase } from './messageFormat';
 import { formatTransferRecord } from './transferFormat';
 import { computeCurrentListening, getCurrentSlot } from './charMusicSchedule';
 import { getCharLyricSnippet } from './charLyricCache';
@@ -254,7 +254,10 @@ export const ChatPrompts = {
         emojis.forEach(e => {
             const cid = e.categoryId || 'default';
             if (!grouped[cid]) grouped[cid] = [];
-            grouped[cid].push(e.name);
+            const description = typeof e.visionDescription === 'string'
+                ? e.visionDescription.replace(/\s+/g, ' ').trim().slice(0, 160)
+                : '';
+            grouped[cid].push(description ? `${e.name}（画面：${description}）` : e.name);
         });
         
         return Object.entries(grouped).map(([cid, names]) => {
@@ -1541,8 +1544,8 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     }
                 }
                 else if (m.type === 'emoji') {
-                     const stickerName = stickerNameFromUrl(emojis, m.content);
-                     content = `${timeStr} [${m.role === 'user' ? '用户' : '你'} 发送了表情包: ${stickerName}]`;
+                     const stickerLabel = stickerPromptLabelFromUrl(emojis, m.content);
+                     content = `${timeStr} [${m.role === 'user' ? '用户' : '你'} 发送了表情包: ${stickerLabel}]`;
                 }
                 else if ((m.type as string) === 'chat_forward') {
                     try {

@@ -35,7 +35,7 @@ import WhiteboxSoundEditor from '../components/chat/WhiteboxSoundEditor';
 import HtmlCard from '../components/chat/HtmlCard';
 import { WhiteboxSound, parseWhiteboxSound, upsertWhiteboxSound, stripWhiteboxSoundDirective, resolveActiveSound, playWhiteboxSound, unlockWhiteboxAudio } from '../utils/whiteboxSound';
 import { buildHtmlPrompt } from '../utils/htmlPrompt';
-import { materializeVisionDescriptions } from '../utils/visionApi';
+import { materializeStickerVisionDescriptions, materializeVisionDescriptions } from '../utils/visionApi';
 import {
     buildGroupTopicContext,
     buildGroupTopicPrompt,
@@ -1352,16 +1352,17 @@ ${memberTimeline || '(暂无互动记录)'}
             // 3. Group History + 导演任务指令（模板原文照搬进 utils/groupChat/prompts.ts）
             const liveHistoryMsgs = currentMsgs.filter(m => m.id > (activeGroup.archivedThroughMessageId || 0));
             const historyWindow = liveHistoryMsgs.slice(-contextLimit);
+            const preparedEmojis = await materializeStickerVisionDescriptions(historyWindow, emojis, apiConfig.visionApi);
             const preparedHistory = await materializeVisionDescriptions(historyWindow, apiConfig.visionApi);
             const history = buildGroupHistoryBlock(
                 preparedHistory,
                 characters,
-                emojis,
+                preparedEmojis,
                 userProfile.name,
                 3,
                 { useVisionDescriptions: apiConfig.visionApi?.enabled === true },
             );
-            const emojiContextStr = buildEmojiContextStr(emojis, categories, activeGroup.members);
+            const emojiContextStr = buildEmojiContextStr(preparedEmojis, categories, activeGroup.members);
             // HTML 模块模式：群开关开启时追加提示词。导演模式输出的是 JSON 数组，
             // 额外强调 [html] 块写在角色 content 字符串内部且 HTML 属性用单引号，避免破坏外层 JSON
             const htmlPromptExt = activeGroup.htmlModeEnabled
@@ -1457,6 +1458,7 @@ ${memberTimeline || '(暂无互动记录)'}
         try {
             const groupMembers = characters.filter(c => activeGroup.members.includes(c.id));
             let roundMsgs = [...currentMsgs];
+            let roundEmojis = emojis;
 
             for (const member of groupMembers) {
                 if (abort.signal.aborted) break;
@@ -1466,6 +1468,7 @@ ${memberTimeline || '(暂无互动记录)'}
                     const memberBlock = await buildMemberBlock(member, roundMsgs, sharedScene);
                     const liveRoundMsgs = roundMsgs.filter(m => m.id > (activeGroup.archivedThroughMessageId || 0));
                     const historyWindow = liveRoundMsgs.slice(-contextLimit);
+                    roundEmojis = await materializeStickerVisionDescriptions(historyWindow, roundEmojis, apiConfig.visionApi);
                     const preparedHistory = await materializeVisionDescriptions(historyWindow, apiConfig.visionApi);
                     const preparedById = new Map(preparedHistory.map(message => [message.id, message]));
                     // 轮询模式后续成员继续复用本轮刚写回的描述，不能每位成员各识图一次。
@@ -1473,12 +1476,12 @@ ${memberTimeline || '(暂无互动记录)'}
                     const history = buildGroupHistoryBlock(
                         preparedHistory,
                         characters,
-                        emojis,
+                        roundEmojis,
                         userProfile.name,
                         3,
                         { useVisionDescriptions: apiConfig.visionApi?.enabled === true },
                     );
-                    const emojiContextStr = buildEmojiContextStr(emojis, categories, activeGroup.members);
+                    const emojiContextStr = buildEmojiContextStr(roundEmojis, categories, activeGroup.members);
                     const htmlPromptExt = activeGroup.htmlModeEnabled
                         ? `\n\n${buildHtmlPrompt(activeGroup.htmlModeCustomPrompt)}`
                         : '';

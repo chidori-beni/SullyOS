@@ -35,7 +35,7 @@ import { mergeSystemMessages } from './systemMessageMerge';
 import { injectWorldbookDepthEntries, resolveWorldbookEntries } from './worldbook';
 import { normalizeTranslationLangLabel } from './translationLang';
 import { cleanApiMessages, flattenImageContentParts } from './promptMessageCleanup';
-import { materializeVisionDescriptions } from './visionApi';
+import { materializeStickerVisionDescriptions, materializeVisionDescriptions } from './visionApi';
 import type { RecallEntryPoint, RecallTrace } from './memoryPalace/trace';
 import { DB } from './db';
 
@@ -260,11 +260,13 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     // 彼方/小小窝等调用方各自维护筛选很容易漏掉一条路径；一旦把全量表情传进来，
     // 模型既会看到其他角色的专属表情，历史里的同名表情也可能反查到错误 URL。
     // 即使调用方已经过滤过，重复过滤仍是幂等的。
-    const { emojis, categories } = ChatPrompts.filterVisibleEmojis(
+    const visibleEmojiLibrary = ChatPrompts.filterVisibleEmojis(
         input.emojis,
         input.categories,
         char.id,
     );
+    let emojis = visibleEmojiLibrary.emojis;
+    const categories = visibleEmojiLibrary.categories;
     const rawRecentMsgsHint = input.recentMsgsHint ?? historyMsgs;
     const useVisionDescriptions = input.visionApiConfig?.enabled === true;
     let historyMsgsForPrompt = historyMsgs;
@@ -276,10 +278,15 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         const uniqueMessages = new Map<number, Message>();
         for (const message of rawRecentMsgsHint) uniqueMessages.set(message.id, message);
         for (const message of historyMsgs) uniqueMessages.set(message.id, message);
-        const prepared = await materializeVisionDescriptions(
-            [...uniqueMessages.values()],
+        const uniqueMessageList = [...uniqueMessages.values()];
+        // 糯叽机 4.71 同款策略：只识别本轮出现的表情，并把结果写回表情库永久复用。
+        // 先补表情库，再构建 system prompt/history，这一轮主模型就能看到画面。
+        emojis = await materializeStickerVisionDescriptions(
+            uniqueMessageList,
+            emojis,
             input.visionApiConfig,
         );
+        const prepared = await materializeVisionDescriptions(uniqueMessageList, input.visionApiConfig);
         const preparedById = new Map(prepared.map(message => [message.id, message]));
         historyMsgsForPrompt = historyMsgs.map(message => preparedById.get(message.id) || message);
         recentMsgsHint = rawRecentMsgsHint.map(message => preparedById.get(message.id) || message);

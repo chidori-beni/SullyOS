@@ -4003,7 +4003,13 @@ export interface EmojiCategory {
 export interface Emoji {
     name: string;
     url: string;
-    categoryId?: string; 
+    categoryId?: string;
+    /** 用户最近一次手动「移至最前」的时间；越新越靠前。 */
+    movedToFrontAt?: number;
+    /** 识图 API 对这张表情包的客观画面描述，按表情记录永久复用。 */
+    visionDescription?: string;
+    visionRecognizedAt?: number;
+    visionModel?: string;
 }
 
 export interface FullBackupData {

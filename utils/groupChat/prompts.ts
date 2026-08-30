@@ -1,11 +1,11 @@
 // 群聊提示词构建 —— 从 GroupChat.tsx 抽出的纯函数，导演模式模板"搬家不改字"，
 // 供导演模式与轮询模式（每成员一次调用）共用。
-import { Message, CharacterProfile, EmojiCategory } from '../../types';
-import { stickerNameFromUrl } from '../messageFormat';
+import { Message, CharacterProfile, Emoji, EmojiCategory } from '../../types';
+import { stickerPromptLabelFromUrl } from '../messageFormat';
 import { packetHistoryLine } from './redpacket';
 import { formatRelativeAge } from './relativeTime';
 
-interface EmojiItem { name: string; url: string; categoryId?: string }
+type EmojiItem = Emoji;
 
 /**
  * 按分类拼可用表情清单（按群成员可见性过滤）。
@@ -33,7 +33,10 @@ export function buildEmojiContextStr(
     visibleEmojis.forEach(e => {
         const cid = e.categoryId || 'default';
         if (!grouped[cid]) grouped[cid] = [];
-        grouped[cid].push(e.name);
+        const description = typeof e.visionDescription === 'string'
+            ? e.visionDescription.replace(/\s+/g, ' ').trim().slice(0, 160)
+            : '';
+        grouped[cid].push(description ? `${e.name}（画面：${description}）` : e.name);
     });
 
     return Object.entries(grouped).map(([cid, names]) => {
@@ -126,7 +129,7 @@ export function buildGroupHistoryBlock(
                 content = '[图片]';
             }
         } else if (m.type === 'emoji') {
-            content = `[表情包: ${stickerNameFromUrl(emojis, rawText.trim())}]`;
+            content = `[表情包: ${stickerPromptLabelFromUrl(emojis, rawText.trim())}]`;
         } else if (m.type === 'transfer') {
             // 回执行自带完整句子（[系统: X 领取了 Y 的红包]），不加名字前缀
             if (m.metadata?.packetReceipt) { lines.push(`${timePrefix}${packetHistoryLine(m, nameOf, now)}`); return; }

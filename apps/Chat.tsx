@@ -18,6 +18,7 @@ import { resolveCharTimeZone, wallClockToTimestamp } from '../utils/timezone';
 import { generateSlotTheater } from '../utils/theaterGenerator';
 import TheaterPlayer from '../components/schedule/TheaterPlayer';
 import { formatMessageWithTime, normalizeMessageContent } from '../utils/messageFormat';
+import { sortEmojisForDisplay } from '../utils/emojiLibrary';
 import { getRoomLabel } from '../utils/memoryPalace/types';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeXhsLiteDetail } from '../utils/xhsMcpClient';
 import { extractWebpageContent, detectFirstUrl, detectXhsShortUrl, extractXhsShareTitle, isXhsUrl, extractXhsNoteId, expandShortUrl, type ExtractedWebpage } from '../utils/webpageExtractor';
@@ -3162,6 +3163,20 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         }
     };
 
+    const handleMoveEmojiToFront = async () => {
+        if (!selectedEmoji || Array.isArray(selectedEmoji)) return;
+        try {
+            await DB.moveEmojiToFront(selectedEmoji.name);
+            await loadEmojiData();
+            setModalType('none');
+            setSelectedEmoji(null);
+            addToast('已移至当前分组最前', 'success');
+        } catch (err) {
+            console.error('Failed to move emoji to front:', err);
+            addToast('移动表情包失败', 'error');
+        }
+    };
+
     // --- Batch Selection ---
     const handleEnterSelectionMode = () => {
         if (selectedMessage) {
@@ -3444,12 +3459,12 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     }, [categories, visibleCategories]);
 
     // Memoize filtered emojis for ChatInputArea
-    const filteredEmojis = useMemo(() => emojis.filter(e => {
+    const filteredEmojis = useMemo(() => sortEmojisForDisplay(emojis.filter(e => {
         // Exclude emojis from hidden categories
         if (e.categoryId && hiddenCategoryIds.has(e.categoryId)) return false;
         if (activeCategory === 'default') return !e.categoryId || e.categoryId === 'default';
         return e.categoryId === activeCategory;
-    }), [emojis, activeCategory, hiddenCategoryIds]);
+    })), [emojis, activeCategory, hiddenCategoryIds]);
 
     // Memoize ChatInputArea callbacks
     const handleSendCallback = useCallback(() => handleSendText(), [char, input, replyTarget]);
@@ -3800,7 +3815,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 onSetHistoryStart={handleSetHistoryStart} onRestoreAdaptiveContext={restoreAdaptiveContext} onJumpToMessageInChat={handleJumpToMessageInChat} onEnterSelectionMode={handleEnterSelectionMode}
                 onReplyMessage={handleReplyMessage} onEditMessageStart={() => { if (selectedMessage) { setEditContent(selectedMessage.content); setModalType('edit-message'); } }}
                 reactionShortcuts={reactionShortcuts} onMessageReaction={handleUserMessageReaction} onChangeReactionShortcuts={handleChangeReactionShortcuts}
-                onConfirmEditMessage={confirmEditMessage} onDeleteMessage={handleDeleteMessage} onCopyMessage={handleCopyMessage} onDeleteEmoji={handleDeleteEmoji} onDeleteCategory={handleDeleteCategory}
+                onConfirmEditMessage={confirmEditMessage} onDeleteMessage={handleDeleteMessage} onCopyMessage={handleCopyMessage} onDeleteEmoji={handleDeleteEmoji} onMoveEmojiToFront={handleMoveEmojiToFront} onDeleteCategory={handleDeleteCategory}
                 allCharacters={characters} onSaveCategoryVisibility={handleSaveCategoryVisibility}
                 translationEnabled={translationEnabled}
                 onToggleTranslation={() => { const next = !translationEnabled; setTranslationEnabled(next); localStorage.setItem(`chat_translate_enabled_${activeCharacterId}`, JSON.stringify(next)); if (next) { trackEvent('开启聊天翻译', { targetLang: isTranslationLangPreset(translateTargetLang) ? translateTargetLang : 'custom' }); } if (!next) { setShowingTargetIds(new Set()); } }}

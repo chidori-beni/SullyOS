@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
     buildDirectorInstruction,
+    buildEmojiContextStr,
     buildGroupHistoryBlock,
     buildRoundRobinInstruction,
     GROUP_HISTORY_GAP_THRESHOLD_MS,
 } from './prompts';
-import type { Message, CharacterProfile } from '../../types';
+import type { Message, CharacterProfile, Emoji } from '../../types';
 
 const char = (id: string, name: string): CharacterProfile => ({ id, name } as CharacterProfile);
 
@@ -67,6 +68,26 @@ describe('buildGroupHistoryBlock 识图 API', () => {
         expect(history.attachedImages).toEqual([]);
         expect(history.attachedImagesNote).toBe('');
         expect(history.text).not.toContain('data:image');
+    });
+});
+
+describe('群聊表情包识图上下文', () => {
+    const stickerUrl = 'https://img.example.com/roll.png';
+    const emojis: Emoji[] = [{
+        name: '滚来滚去',
+        url: stickerUrl,
+        visionDescription: '一只胖猫躺在地上来回打滚，表情得意',
+    }];
+
+    it('可用表情库告诉角色名称与画面，便于按图选表情', () => {
+        expect(buildEmojiContextStr(emojis, [], ['c1']))
+            .toContain('滚来滚去（画面：一只胖猫躺在地上来回打滚，表情得意）');
+    });
+
+    it('历史里的表情同时带出画面描述', () => {
+        const sticker = { ...msg(11, 'user', stickerUrl, Date.now()), type: 'emoji' as const };
+        expect(buildGroupHistoryBlock([sticker], [char('c1', '小夏')], emojis, '用户').text)
+            .toContain('画面：一只胖猫躺在地上来回打滚，表情得意');
     });
 });
 

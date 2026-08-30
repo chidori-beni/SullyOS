@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stickerNameFromUrl } from './messageFormat';
+import { stickerNameFromUrl, stickerPromptLabelFromUrl } from './messageFormat';
 import { ChatPrompts } from './chatPrompts';
 import type { Emoji } from '../types';
 
@@ -24,6 +24,21 @@ describe('stickerNameFromUrl 表情名反查', () => {
     it('URL 查不到时兜底为 未知表情, 不抛错', () => {
         expect(stickerNameFromUrl(emojis, 'https://img.example/none.png')).toBe('未知表情');
         expect(stickerNameFromUrl([], DOGE_URL)).toBe('未知表情');
+    });
+});
+
+describe('stickerPromptLabelFromUrl 表情画面上下文', () => {
+    it('识别过的表情同时告诉模型名称和真实画面', () => {
+        const described = [{
+            ...emojis[0],
+            visionDescription: '一只柴犬张开前爪抱住对方，旁边有小爱心',
+        }];
+        expect(stickerPromptLabelFromUrl(described, DOGE_URL))
+            .toBe('柴犬贴贴；画面：一只柴犬张开前爪抱住对方，旁边有小爱心');
+    });
+
+    it('没识别过时仍只用原名，不影响旧数据', () => {
+        expect(stickerPromptLabelFromUrl(emojis, DOGE_URL)).toBe('柴犬贴贴');
     });
 });
 

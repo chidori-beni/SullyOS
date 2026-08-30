@@ -27,6 +27,19 @@ export function stickerNameFromUrl(emojis: Emoji[], url: string): string {
 }
 
 /**
+ * 给模型的表情标签：有识图缓存时同时带出真实画面，没有时与旧版完全一致。
+ * 与 stickerNameFromUrl 分开，避免 UI/指令匹配把「画面：…」误当成表情名。
+ */
+export function stickerPromptLabelFromUrl(emojis: Emoji[], url: string): string {
+    const emoji = emojis.find(item => item.url === url);
+    if (!emoji) return '未知表情';
+    const description = typeof emoji.visionDescription === 'string'
+        ? emoji.visionDescription.replace(/\s+/g, ' ').trim().slice(0, 160)
+        : '';
+    return description ? `${emoji.name}；画面：${description}` : emoji.name;
+}
+
+/**
  * 语音消息的音频资源与转写文本可能分别落在 content / metadata 中。
  * 记忆链路只取可理解的文字，绝不把 blob、data URI 或纯音频 URL 当成上下文。
  */

@@ -1,4 +1,4 @@
-import type { ApiPreset, Message, VisionApiConfig } from '../types';
+import type { ApiPreset, Emoji, Message, VisionApiConfig } from '../types';
 import { DB } from './db';
 import { processImage } from './file';
 import { extractContent, safeFetchJson } from './safeApi';
@@ -11,6 +11,9 @@ export const VISION_API_TEST_IMAGE_DATA_URL = 'data:image/png;base64,iVBORw0KGgo
 
 const VISION_PROMPT = `请准确、具体地描述图片中实际可见的内容，供另一个无法看图的对话模型理解。
 请覆盖主体、动作、场景、重要物品、画面中的文字或界面信息；不要猜测画面外的信息，不要寒暄，只输出描述正文。`;
+
+const STICKER_VISION_PROMPT = `你是表情包图片标注工具。客观描述画面中谁或什么、动作、表情、画面文字和整体情绪，供无法看图的对话模型理解。
+最多 80 个中文字符；不要猜测画面外的故事，不要角色扮演、寒暄或解释，只输出描述正文。`;
 
 const inFlightDescriptions = new Map<string, Promise<string>>();
 
@@ -69,9 +72,11 @@ const cleanDescription = (value: string): string => value
   .slice(0, 4000);
 
 /** 调用 OpenAI 兼容视觉端点，把一张图片变成可交给纯文本模型的描述。 */
-export async function describeImageWithVisionApi(
+async function requestVisionDescription(
   imageUrl: string,
   config: VisionApiConfig,
+  prompt: string,
+  maxTokens: number,
 ): Promise<string> {
   if (!isVisionApiReady(config)) {
     throw new Error('识图 API 已开启，但 URL、Key 或 Model 尚未填写完整');
@@ -80,7 +85,8 @@ export async function describeImageWithVisionApi(
     throw new Error('图片数据不可用，无法调用识图 API');
   }
 
-  const existing = inFlightDescriptions.get(imageUrl);
+  const requestKey = `${prompt === STICKER_VISION_PROMPT ? 'sticker' : 'image'}:${imageUrl}`;
+  const existing = inFlightDescriptions.get(requestKey);
   if (existing) return existing;
 
   const request = (async () => {
@@ -96,12 +102,12 @@ export async function describeImageWithVisionApi(
         messages: [{
           role: 'user',
           content: [
-            { type: 'text', text: VISION_PROMPT },
+            { type: 'text', text: prompt },
             { type: 'image_url', image_url: { url: imageUrl } },
           ],
         }],
         temperature: 0,
-        max_tokens: 1200,
+        max_tokens: maxTokens,
         stream: false,
       }),
     }, 1, 60_000, { appName: '消息', purpose: '识图' });
@@ -111,12 +117,106 @@ export async function describeImageWithVisionApi(
     return description;
   })();
 
-  inFlightDescriptions.set(imageUrl, request);
+  inFlightDescriptions.set(requestKey, request);
   try {
     return await request;
   } finally {
-    inFlightDescriptions.delete(imageUrl);
+    inFlightDescriptions.delete(requestKey);
   }
+}
+
+/** 调用 OpenAI 兼容视觉端点，把一张普通图片变成可交给纯文本模型的描述。 */
+export async function describeImageWithVisionApi(
+  imageUrl: string,
+  config: VisionApiConfig,
+): Promise<string> {
+  return requestVisionDescription(imageUrl, config, VISION_PROMPT, 1200);
+}
+
+/** 表情包使用更短、聚焦动作/表情/文字的标注指令。 */
+export async function describeStickerWithVisionApi(
+  imageUrl: string,
+  config: VisionApiConfig,
+): Promise<string> {
+  const description = await requestVisionDescription(imageUrl, config, STICKER_VISION_PROMPT, 240);
+  return description.slice(0, 160);
+}
+
+export const readEmojiVisionDescription = (emoji?: Emoji | null): string => {
+  const value = emoji?.visionDescription;
+  return typeof value === 'string' ? value.trim() : '';
+};
+
+/**
+ * 只预识别本轮历史里真正出现过的表情包，不会一次性扫整个图库。
+ * 描述写回 emojis store，所以换角色、重 roll、重启 App 都会直接复用；同 URL 也只调一次 API。
+ * 失败不缓存，也不阻断聊天，下次仍可用新模型重试。
+ */
+export async function materializeStickerVisionDescriptions(
+  messages: Message[],
+  emojis: Emoji[],
+  config?: VisionApiConfig | null,
+): Promise<Emoji[]> {
+  if (config?.enabled !== true) return emojis;
+  if (!isVisionApiReady(config)) {
+    throw new Error('识图 API 已开启，但 URL、Key 或 Model 尚未填写完整');
+  }
+
+  const usedUrls = [...new Set(messages
+    .filter(message => message.type === 'emoji' && typeof message.content === 'string')
+    .map(message => message.content.trim())
+    .filter(url => /^(data:image\/|https?:\/\/)/i.test(url)))];
+  if (usedUrls.length === 0) return emojis;
+
+  const prepared = emojis.map(emoji => ({ ...emoji }));
+  const cachedByUrl = new Map<string, string>();
+  // React 中的 emojis 快照可能还没重载；每次先查真正的 store，避免重启前的第二轮又扣一次识图额度。
+  const persistedEmojis = await DB.getEmojis().catch(() => [] as Emoji[]);
+  for (const emoji of persistedEmojis) {
+    const cached = readEmojiVisionDescription(emoji);
+    if (cached && !cachedByUrl.has(emoji.url)) cachedByUrl.set(emoji.url, cached);
+  }
+  for (let index = 0; index < prepared.length; index++) {
+    if (readEmojiVisionDescription(prepared[index])) continue;
+    const persisted = persistedEmojis.find(emoji => emoji.name === prepared[index].name && emoji.url === prepared[index].url);
+    if (readEmojiVisionDescription(persisted)) prepared[index] = { ...prepared[index], ...persisted };
+  }
+  for (const emoji of prepared) {
+    const cached = readEmojiVisionDescription(emoji);
+    if (cached && !cachedByUrl.has(emoji.url)) cachedByUrl.set(emoji.url, cached);
+  }
+
+  for (const url of usedUrls) {
+    const matchingIndexes = prepared
+      .map((emoji, index) => emoji.url === url ? index : -1)
+      .filter(index => index >= 0);
+    if (matchingIndexes.length === 0) continue;
+
+    let description = cachedByUrl.get(url) || '';
+    if (!description) {
+      try {
+        description = await describeStickerWithVisionApi(await shrinkForVision(url), config);
+        cachedByUrl.set(url, description);
+      } catch (error) {
+        console.error('[表情包识图] 这次没认出来，仍使用表情名继续聊天：', error);
+        continue;
+      }
+    }
+
+    for (const index of matchingIndexes) {
+      if (readEmojiVisionDescription(prepared[index])) continue;
+      const patch: Partial<Emoji> = {
+        visionDescription: description,
+        visionRecognizedAt: Date.now(),
+        visionModel: config.model.trim(),
+      };
+      prepared[index] = { ...prepared[index], ...patch };
+      await DB.updateEmoji(prepared[index].name, patch)
+        .catch(error => console.warn('[表情包识图] 描述写回失败，本轮仍使用已识别结果：', error));
+    }
+  }
+
+  return prepared;
 }
 
 /**

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { CharacterProfile, Message, UserProfile, VisionApiConfig } from '../types';
+import type { CharacterProfile, Emoji, Message, UserProfile, VisionApiConfig } from '../types';
 import { ChatPrompts } from './chatPrompts';
 import { DB } from './db';
-import { materializeVisionDescriptions, visionApiConfigFromPreset } from './visionApi';
+import { materializeStickerVisionDescriptions, materializeVisionDescriptions, visionApiConfigFromPreset } from './visionApi';
 
 const config: VisionApiConfig = {
   enabled: true,
@@ -99,5 +99,46 @@ describe('independent vision API', () => {
     expect(Array.isArray(apiMessages[0].content)).toBe(true);
     expect(JSON.stringify(apiMessages)).toContain('image_url');
     expect(JSON.stringify(apiMessages)).toContain(image);
+  });
+
+  it('表情包只识别一次并把描述永久写回表情记录', async () => {
+    const stickerUrl = 'https://img.example.com/hug.png';
+    const stickerMessage = {
+      ...message(5),
+      type: 'emoji',
+      content: stickerUrl,
+    } as Message;
+    const emojis: Emoji[] = [{ name: '抱抱', url: stickerUrl }];
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: '一只白色小熊张开双手要抱抱，头顶有粉色爱心' } }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(DB, 'getEmojis').mockResolvedValue([]);
+    const updateSpy = vi.spyOn(DB, 'updateEmoji').mockResolvedValue(undefined);
+
+    const prepared = await materializeStickerVisionDescriptions([stickerMessage], emojis, config);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(updateSpy).toHaveBeenCalledWith('抱抱', expect.objectContaining({
+      visionDescription: '一只白色小熊张开双手要抱抱，头顶有粉色爱心',
+      visionModel: 'vision-model',
+    }));
+
+    await materializeStickerVisionDescriptions([stickerMessage], prepared, config);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('表情包识图失败不阻断聊天，也不把失败结果当永久缓存', async () => {
+    const stickerUrl = 'https://img.example.com/broken.png';
+    const stickerMessage = { ...message(6), type: 'emoji', content: stickerUrl } as Message;
+    const emojis: Emoji[] = [{ name: '模糊表情', url: stickerUrl }];
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
+    vi.spyOn(DB, 'getEmojis').mockResolvedValue([]);
+    const updateSpy = vi.spyOn(DB, 'updateEmoji').mockResolvedValue(undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(materializeStickerVisionDescriptions([stickerMessage], emojis, config))
+      .resolves.toEqual(emojis);
+    expect(updateSpy).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,7 @@
 
 import React, { useRef, useState } from 'react';
 import Modal from '../os/Modal';
-import { CharacterProfile, Message, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
+import { CharacterProfile, Message, Emoji, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
 import ScheduleCard from '../schedule/ScheduleCard';
 import EmotionSettingsPanel from './EmotionSettingsPanel';
 import { isTranslationLangPreset, normalizeTranslationLangLabel, TRANSLATION_LANG_MAX_LENGTH, TRANSLATION_LANG_PRESETS } from '../../utils/translationLang';
@@ -59,7 +59,7 @@ interface ChatModalsProps {
 
     // Selection Props
     selectedMessage: Message | null;
-    selectedEmoji: {name: string, url: string} | null;
+    selectedEmoji: Emoji | Emoji[] | null;
     selectedCategory: EmojiCategory | null;
     activeCharacter: CharacterProfile;
     messages: Message[];
@@ -91,6 +91,7 @@ interface ChatModalsProps {
     onMessageReaction: (emoji: string) => void;
     onChangeReactionShortcuts: (emojis: string[]) => void;
     onDeleteEmoji: () => void;
+    onMoveEmojiToFront: () => void;
     onDeleteCategory: () => void;
     // Category Visibility
     allCharacters?: CharacterProfile[];
@@ -277,7 +278,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     onArchive, onCreatePrompt, onEditPrompt, onSavePrompt, onDeletePrompt,
     onSetHistoryStart, onRestoreAdaptiveContext, onJumpToMessageInChat, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onCopyMessage,
     reactionShortcuts, onMessageReaction, onChangeReactionShortcuts,
-    onDeleteEmoji, onDeleteCategory,
+    onDeleteEmoji, onMoveEmojiToFront, onDeleteCategory,
     allCharacters = [], onSaveCategoryVisibility,
     translationEnabled, onToggleTranslation, translationExpanded, onToggleTranslationExpanded, translateSourceLang, translateTargetLang, onSetTranslateSourceLang, onSetTranslateLang,
     xhsEnabled, onToggleXhs,
@@ -1152,6 +1153,15 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                         </div>
                     )}
                     <div className="w-full space-y-3">
+                        <button
+                            onClick={onMoveEmojiToFront}
+                            className="w-full py-3 bg-primary/10 text-primary font-medium rounded-2xl active:bg-primary/20 transition-colors flex items-center justify-center gap-2"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 19.5V4.5m0 0-5.25 5.25M12 4.5l5.25 5.25M4.5 3h15" />
+                            </svg>
+                            移至最前
+                        </button>
                         <button
                             onClick={() => { if (selectedEmoji && !Array.isArray(selectedEmoji)) setNewEmojiName(selectedEmoji.name); setModalType('rename-emoji'); }}
                             className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2"

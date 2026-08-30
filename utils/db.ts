@@ -1044,8 +1044,50 @@ export const DB = {
 
   saveEmoji: async (name: string, url: string, categoryId?: string): Promise<void> => {
     const db = await openDB();
-    const transaction = db.transaction(STORE_EMOJIS, 'readwrite');
-    transaction.objectStore(STORE_EMOJIS).put({ name, url, categoryId });
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_EMOJIS, 'readwrite');
+      const store = transaction.objectStore(STORE_EMOJIS);
+      const request = store.get(name);
+      request.onsuccess = () => {
+        const current = request.result as Emoji | undefined;
+        // 同名同图只是换分组/补存储：保留排序和识图缓存。
+        // 同名却换了图：保留用户排序，但必须丢掉旧图的描述，下次重新识别。
+        store.put(current?.url === url
+          ? { ...current, name, url, categoryId }
+          : { name, url, categoryId, movedToFrontAt: current?.movedToFrontAt });
+      };
+      request.onerror = () => reject(request.error);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  },
+
+  updateEmoji: async (name: string, patch: Partial<Emoji>): Promise<void> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_EMOJIS, 'readwrite');
+      const store = tx.objectStore(STORE_EMOJIS);
+      const request = store.get(name);
+      request.onsuccess = () => {
+        const current = request.result as Emoji | undefined;
+        if (!current) {
+          tx.abort();
+          reject(new Error('未找到要更新的表情包'));
+          return;
+        }
+        // name 是 objectStore 主键，改名必须继续走 renameEmoji，不允许 patch 暗中换键。
+        store.put({ ...current, ...patch, name: current.name });
+      };
+      request.onerror = () => reject(request.error);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error('表情包更新已取消'));
+    });
+  },
+
+  moveEmojiToFront: async (name: string): Promise<void> => {
+    await DB.updateEmoji(name, { movedToFrontAt: Date.now() });
   },
 
   deleteEmoji: async (name: string): Promise<void> => {
