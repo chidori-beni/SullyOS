@@ -592,8 +592,10 @@
   min-height: 76px;
   align-items: center;
   padding: var(--nj-msg-card-padding, 14px 20px);
-  overflow: hidden;
-  isolation: isolate;
+  /* 原生既没有 overflow: hidden 也没有 isolation。
+     主题的装饰几乎全挂在卡片外面（contact 标签 bottom:-48px、
+     书签 top:-5px、爱心分割线等），裁了就全没了；
+     isolation 会新建层叠上下文，主题用 z-index 叠到相邻卡片之上也会失效。 */
   color: var(--nj-msg-text, inherit);
   background-color: var(--nj-msg-card-bg, transparent);
   background-image: var(--nj-msg-card-bg-image, none);
