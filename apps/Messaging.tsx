@@ -624,8 +624,12 @@ const Messaging: React.FC = () => {
                 <div className="details-scroll nj-chat-tab-note-row nj-chat-tab-notes">
                     {orderedSummaries.slice(0, 6).map(({ char, last }) => (
                         <button key={char.id} className="nj-chat-tab-note-item nj-chat-tab-note-friend" onClick={() => openChat(char.id)}>
-                            <span className="glass-bubble nj-chat-tab-note-bubble">{cleanPreview(last, !!proactiveComposingChars[char.id]).slice(0, 14)}</span>
-                            <span className="nj-chat-tab-note-avatar"><img src={char.avatar} alt="" /></span>
+                            <span className="glass-bubble nj-chat-tab-note-bubble">
+                                <span className="nj-chat-tab-note-bubble-text">{cleanPreview(last, !!proactiveComposingChars[char.id]).slice(0, 14)}</span>
+                                <span className="nj-chat-tab-note-bubble-tail1" aria-hidden="true" />
+                                <span className="nj-chat-tab-note-bubble-tail2" aria-hidden="true" />
+                            </span>
+                            <span className="nj-chat-tab-note-avatar"><span className="nj-chat-tab-note-avatar-img"><img src={char.avatar} alt="" /></span></span>
                             <span className="nj-chat-tab-note-name">{char.name}</span>
                         </button>
                     ))}

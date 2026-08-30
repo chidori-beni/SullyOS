@@ -98,25 +98,6 @@ export const BUILT_IN_MESSAGING_THEMES: Array<Pick<MessagingThemePreset, 'id' | 
 .nj-chat-tab-search { border: 1px solid rgba(126,88,62,.10); }`,
     },
     {
-        id: 'builtin-night',
-        name: '深夜玻璃',
-        css: `:root {
-  --nj-msg-bg: linear-gradient(160deg,#171827,#25233d);
-  --nj-msg-text: #f8f7ff;
-  --nj-msg-text-muted: rgba(235,232,255,.62);
-  --nj-msg-text-time: rgba(235,232,255,.45);
-  --nj-msg-card-bg: rgba(255,255,255,.06);
-  --nj-msg-card-bg-pinned: rgba(134,118,255,.13);
-  --nj-msg-card-radius: 18px;
-  --nj-msg-card-border: 1px solid rgba(255,255,255,.08);
-  --nj-msg-tabbar-bg: rgba(24,24,40,.76);
-  --nj-msg-tabbar-active: #c4b8ff;
-  --nj-msg-tabbar-inactive: rgba(255,255,255,.42);
-}
-.nj-chat-item { margin: 8px 14px; backdrop-filter: blur(14px); }
-.nj-chat-tab-search { border: 1px solid rgba(255,255,255,.08); }`,
-    },
-    {
         id: 'builtin-minimal',
         name: '极简白',
         css: `:root {

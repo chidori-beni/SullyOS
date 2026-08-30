@@ -6,7 +6,7 @@
   --nj-line: rgba(15, 23, 42, .075);
   --nj-card: rgba(255, 255, 255, .92);
   --nj-bg: #f7f7f8;
-  --nj-avatar-size: 54px;
+  --nj-avatar-size: 56px;
   position: relative;
   width: 100%;
   height: 100%;
@@ -145,33 +145,60 @@
   scrollbar-width: none;
 }
 .nj-chat-tab-note-row::-webkit-scrollbar { display: none; }
+/* 气泡行：逐条对齐糯叽机 4.71 的内联样式。
+   原生是「64px 头像 + 悬浮在上方 25px 的胶囊气泡 + 两个尾巴圆点」，
+   不是 Sully 之前自创的 58px 列 + 尖角气泡。 */
 .nj-chat-tab-note-item {
-  width: 58px;
-  flex: 0 0 58px;
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   border: 0;
   padding: 0;
   background: transparent;
   color: inherit;
-  text-align: center;
 }
 .nj-chat-tab-note-bubble {
-  position: relative;
-  width: 57px;
-  height: 42px;
-  margin-bottom: -9px;
+  position: absolute;
+  z-index: 2;
+  top: -25px;
+  max-width: 94px;
   display: flex;
-  align-items: center;
   justify-content: center;
-  padding: 5px 7px 9px;
-  overflow: hidden;
+  overflow: visible;
+  padding: 6px 12px;
+  border-radius: 16px;
   color: var(--nj-msg-chat-note-bubble-color, #74747a);
-  background: var(--nj-msg-chat-note-bubble-bg, #fff);
+  background: var(--nj-msg-chat-note-bubble-bg, rgba(255,255,255,.72));
   border: 1px solid rgba(0,0,0,.06);
-  border-radius: 17px 17px 17px 5px;
   box-shadow: 0 5px 15px rgba(15,23,42,.07);
-  font-size: 9px;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  font-size: 11px;
   line-height: 1.2;
+  white-space: nowrap;
 }
+.nj-chat-tab-note-bubble-text {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nj-chat-tab-note-bubble-tail1,
+.nj-chat-tab-note-bubble-tail2 {
+  position: absolute;
+  left: 50%;
+  background: inherit;
+  border: 1px solid rgba(255,255,255,.3);
+  border-radius: 50%;
+  -webkit-backdrop-filter: inherit;
+  backdrop-filter: inherit;
+}
+.nj-chat-tab-note-bubble-tail1 { bottom: -6px; margin-left: -10px; width: 8px; height: 8px; }
+.nj-chat-tab-note-bubble-tail2 { bottom: -12px; margin-left: -4px; width: 5px; height: 5px; }
 .nj-chat-tab-note-avatar,
 .nj-avatar {
   display: block;
@@ -179,16 +206,32 @@
   background: #e6e7ea;
 }
 .nj-chat-tab-note-avatar {
+  box-sizing: border-box;
   position: relative;
-  width: 37px;
-  height: 37px;
-  margin: 0 auto 4px;
-  border: 2px solid #fff;
+  width: 64px;
+  height: 64px;
+  flex: none;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: 2px solid #e1e8ed;
   border-radius: 50%;
-  box-shadow: 0 2px 8px rgba(15,23,42,.12);
+  background: transparent;
+  box-shadow: 0 4px 12px rgba(0,0,0,.06);
+}
+.nj-chat-tab-note-avatar-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 50%;
+  background: #fafafa;
 }
 .nj-chat-tab-note-name {
   display: block;
+  max-width: 72px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -534,10 +577,9 @@
 .nj-moments-tab .nj-moments-decor-top,.nj-moments-tab .nj-moments-decor-mid,.nj-moments-tab .nj-moments-decor-bottom,
 .nj-profile-tab .nj-profile-decor-top,.nj-profile-tab .nj-profile-decor-mid,.nj-profile-tab .nj-profile-decor-bottom { z-index: 0; }
 
-.nj-chat-tab-note-avatar { overflow: hidden; }
-.nj-chat-tab-note-avatar > img { display: block; width: 100%; height: 100%; object-fit: cover; }
-.nj-chat-tab-section-title { position: relative; display: flex; align-items: center; justify-content: space-between; min-height: 42px; padding: 5px 16px 3px; }
-.nj-chat-tab-section-title > span:first-child { font-size: 17px; font-weight: 720; }
+.nj-chat-tab-note-avatar-img > img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.nj-chat-tab-section-title { position: relative; display: flex; align-items: center; justify-content: space-between; min-height: 0; padding: 10px 16px; }
+.nj-chat-tab-section-title > span:first-child { font-size: 16px; font-weight: bold; }
 .nj-chat-tab-list { min-height: 0; flex: 1; overflow-y: auto; padding-bottom: 16px; -webkit-overflow-scrolling: touch; }
 .nj-chat-group-header { position: relative; width: 100%; min-height: 28px; display: flex; align-items: center; gap: 5px; text-align: left; }
 .nj-chat-group-unread { margin-left: auto; }
@@ -546,10 +588,10 @@
   --nj-item-deco-opacity: 0;
   position: relative;
   display: flex;
-  gap: var(--nj-msg-card-gap, 12px);
+  gap: var(--nj-msg-card-gap, 14px);
   min-height: 76px;
   align-items: center;
-  padding: var(--nj-msg-card-padding, 8px 16px);
+  padding: var(--nj-msg-card-padding, 14px 20px);
   overflow: hidden;
   isolation: isolate;
   color: var(--nj-msg-text, inherit);
@@ -557,11 +599,12 @@
   background-image: var(--nj-msg-card-bg-image, none);
   background-size: cover;
   background-position: center;
-  border: var(--nj-msg-card-border, 0 solid transparent);
+  /* 原生把分隔线做成 border-bottom，主题写 --nj-msg-card-border: none 就能关掉。 */
+  border: 0 solid transparent;
+  border-bottom: var(--nj-msg-card-border, 1px solid rgba(0,0,0,.03));
   border-radius: var(--nj-msg-card-radius, 0);
   transition: var(--nj-msg-card-transition, background .16s ease, transform .16s ease);
 }
-.nj-chat-item::after { content:""; position:absolute; right:16px; bottom:0; left:calc(16px + var(--nj-avatar-size) + 12px); height:1px; background:var(--nj-line); }
 .nj-chat-item[data-pinned="true"] { background-color: var(--nj-msg-card-bg-pinned, rgba(255,255,255,.7)); }
 .nj-chat-item:active { transform: var(--nj-msg-card-active-transform, scale(.988)); background: rgba(0,0,0,.045); }
 /* 4.71 原生外层只有 flexShrink: 0，不能写 flex-basis：主题只改 width 时会被 basis 顶掉。 */
@@ -571,10 +614,10 @@
 .nj-chat-item-avatar-img > img { display:block; width:100%; height:100%; object-fit:cover; }
 .nj-chat-item-unread-badge { position:absolute; top:-1px; right:-1px; min-width:19px; height:19px; padding:0 5px; display:flex; align-items:center; justify-content:center; color:var(--nj-msg-unread-color,#fff); background:var(--nj-msg-unread-bg,#ff3b30); border:2px solid var(--nj-bg); border-radius:999px; font-size:10px; font-weight:700; }
 .nj-chat-item-body { position:relative; z-index:2; min-width:0; flex:1; }
-.nj-chat-item-row1 { display:flex; align-items:baseline; gap:8px; min-width:0; }
-.nj-chat-item-name { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:15.5px; font-weight:630; }
-.nj-chat-item-time { flex:none; display:flex; align-items:center; gap:3px; color:var(--nj-msg-text-time,#aaaab0); font-size:10px; }
-.nj-chat-item-preview { margin-top:5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--nj-msg-text-muted,#898b91); font-size:12.5px; line-height:1.35; }
+.nj-chat-item-row1 { display:flex; align-items:center; justify-content:space-between; gap:8px; min-width:0; }
+.nj-chat-item-name { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:15px; font-weight:600; }
+.nj-chat-item-time { flex:none; display:flex; align-items:center; gap:3px; color:var(--nj-msg-text-time,#aaaab0); font-size:12px; }
+.nj-chat-item-preview { margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--nj-msg-text-muted,#898b91); font-size:13px; line-height:1.35; }
 
 .nj-moments-header { flex:none; min-height:calc(48px + var(--nuo-safe-top)); padding-top:var(--nuo-safe-top); background:var(--nj-msg-header-bg,rgba(247,247,248,.88)); }
 .nj-moments-header-btns { height:48px; display:flex; align-items:center; gap:8px; padding:0 14px; }
@@ -844,8 +887,17 @@
 #chat-list-screen .nj-moments-tab { display: block; }
 #chat-list-screen .nj-favorites-tab { display: flex; flex-direction: column; }
 
+/* 原生顶栏是完全透明的：没有背景色、没有 backdrop-filter、没有底边框。
+   共享规则里那三样会在页面顶部压出一条灰带，糯叽机没有。 */
 .nj-chat-tab-header {
   box-sizing: border-box;
+  position: sticky;
+  z-index: 10;
+  top: 0;
+  background: var(--nj-msg-header-bg, transparent);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-bottom: 0;
   display: grid;
   grid-template-columns: min-content 1fr min-content;
   align-items: center;
