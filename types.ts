@@ -3814,6 +3814,8 @@ export interface SocialPost {
     bgStyle?: string;
     authorType?: 'user' | 'character' | 'stranger';
     authorCharId?: string;
+    /** 朋友圈与 Spark（小红书）共用存储表，但必须按产品入口隔离展示。 */
+    socialScope?: 'moments' | 'spark';
     /** 朋友圈 / Spark 生图时使用的原始画面描述，支持失败后重试。 */
     imagePrompt?: string;
     /** 可选位置；消息 App 的朋友圈主题会通过 data-has-location 暴露给 CSS。 */

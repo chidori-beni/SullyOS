@@ -28,7 +28,7 @@ export interface MessagingListPrefs {
 }
 
 export interface MessagingProfile {
-    version: 1;
+    version: 2;
     name: string;
     avatar: string;
     cover: string;
@@ -36,14 +36,20 @@ export interface MessagingProfile {
     signature: string;
     birthday: string;
     gender: string;
-    virtualLocation: string;
-    realLocation: string;
+    location: string;
     hobbies: string[];
     about: string;
 }
 
-export const makeDefaultMessagingProfile = (source?: Partial<MessagingProfile> & { bio?: string }): MessagingProfile => ({
-    version: 1,
+type MessagingProfileSource = Partial<Omit<MessagingProfile, 'version'>> & {
+    version?: number;
+    bio?: string;
+    virtualLocation?: string;
+    realLocation?: string;
+};
+
+export const makeDefaultMessagingProfile = (source?: MessagingProfileSource): MessagingProfile => ({
+    version: 2,
     name: String(source?.name || '我'),
     avatar: String(source?.avatar || ''),
     cover: String(source?.cover || ''),
@@ -51,8 +57,8 @@ export const makeDefaultMessagingProfile = (source?: Partial<MessagingProfile> &
     signature: String(source?.signature || ''),
     birthday: String(source?.birthday || ''),
     gender: String(source?.gender || ''),
-    virtualLocation: String(source?.virtualLocation || ''),
-    realLocation: String(source?.realLocation || ''),
+    // v1 曾分成「虚拟地点 / 现实映射」。升级时只迁移为用户可见的一个地点。
+    location: String(source?.location || source?.virtualLocation || source?.realLocation || ''),
     hobbies: Array.isArray(source?.hobbies) ? source!.hobbies!.map(String).filter(Boolean).slice(0, 24) : [],
     about: String(source?.about || source?.bio || ''),
 });
@@ -297,9 +303,9 @@ export const saveMessagingListPrefs = async (prefs: MessagingListPrefs): Promise
     await DB.saveAssetRaw(MESSAGING_LIST_PREFS_ASSET_ID, prefs);
 };
 
-export const loadMessagingProfile = async (fallback: Partial<MessagingProfile> & { bio?: string }): Promise<MessagingProfile> => {
-    const raw = await DB.getAssetRaw(MESSAGING_PROFILE_ASSET_ID).catch(() => null) as Partial<MessagingProfile> | null;
-    return makeDefaultMessagingProfile(raw?.version === 1 ? { ...fallback, ...raw } : fallback);
+export const loadMessagingProfile = async (fallback: MessagingProfileSource): Promise<MessagingProfile> => {
+    const raw = await DB.getAssetRaw(MESSAGING_PROFILE_ASSET_ID).catch(() => null) as MessagingProfileSource | null;
+    return makeDefaultMessagingProfile(raw && (raw.version === 1 || raw.version === 2) ? { ...fallback, ...raw } : fallback);
 };
 
 export const saveMessagingProfile = async (profile: MessagingProfile): Promise<void> => {

@@ -1,18 +1,20 @@
 import React, { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     BellSlash,
+    CalendarBlank,
     Camera,
     CaretDown,
     CaretLeft,
     ChatCircleDots,
     Check,
-    DownloadSimple,
+    MapPin,
     MagnifyingGlass,
     NotePencil,
     PencilSimple,
     Planet,
     PushPin,
     Rows,
+    ArrowsClockwise,
     Sparkle,
     Star,
     Trash,
@@ -47,6 +49,7 @@ import { ContextBuilder } from '../utils/context';
 import { processImage } from '../utils/file';
 import { buildSelfiePrompt, generateImageDataUrl, getImageGenConfig, isImageGenReady } from '../utils/novelaiImage';
 import { safeResponseJson } from '../utils/safeApi';
+import { isMomentsPost, withSocialPostScope } from '../utils/socialPostScope';
 import '../components/messaging/MessagingApp.css';
 
 type MessagingTab = 'chat' | 'moments' | 'favorites' | 'profile';
@@ -60,6 +63,11 @@ interface ContextMenuState {
     charId: string;
     x: number;
     y: number;
+}
+
+interface MomentRerollState {
+    postId: string;
+    sourceImageIndex: number;
 }
 
 type MomentGenerateMode = 'random' | 'select';
@@ -163,8 +171,8 @@ const Messaging: React.FC = () => {
     const [themeOpen, setThemeOpen] = useState(false);
     const [prefs, setPrefs] = useState<MessagingListPrefs>({ ...DEFAULT_MESSAGING_LIST_PREFS });
     const [profile, setProfile] = useState<MessagingProfile>(() => ({
-        version: 1, name: userProfile.name || '我', avatar: userProfile.avatar || '', cover: '', handle: '',
-        signature: '', birthday: '', gender: '', virtualLocation: '', realLocation: '', hobbies: [], about: userProfile.bio || '',
+        version: 2, name: userProfile.name || '我', avatar: userProfile.avatar || '', cover: '', handle: '',
+        signature: '', birthday: '', gender: '', location: '', hobbies: [], about: userProfile.bio || '',
     }));
     const [profileDraft, setProfileDraft] = useState<MessagingProfile>(profile);
     const [profileEditOpen, setProfileEditOpen] = useState(false);
@@ -180,6 +188,11 @@ const Messaging: React.FC = () => {
     const [newMomentImagePrompt, setNewMomentImagePrompt] = useState('');
     const [newMomentImages, setNewMomentImages] = useState<string[]>([]);
     const [newMomentImageBusy, setNewMomentImageBusy] = useState(false);
+    const [momentReroll, setMomentReroll] = useState<MomentRerollState | null>(null);
+    const [momentRerollPrompt, setMomentRerollPrompt] = useState('');
+    const [momentRerollBusy, setMomentRerollBusy] = useState(false);
+    const [profileAboutExpanded, setProfileAboutExpanded] = useState(false);
+    const [tabAnim, setTabAnim] = useState<'idle' | 'enter'>('idle');
     const [groupMenuOpen, setGroupMenuOpen] = useState(false);
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
     const themeLongPressTimer = useRef<number | null>(null);
@@ -189,6 +202,7 @@ const Messaging: React.FC = () => {
     const momentImageInputRef = useRef<HTMLInputElement>(null);
     const profileAvatarInputRef = useRef<HTMLInputElement>(null);
     const profileCoverInputRef = useRef<HTMLInputElement>(null);
+    const tabAnimTimer = useRef<number | null>(null);
 
     useEffect(() => {
         let alive = true;
@@ -232,13 +246,18 @@ const Messaging: React.FC = () => {
             listVoiceFavorites().catch(() => []),
         ]).then(([nextPosts, images, nextText, nextVoice]) => {
             if (!alive) return;
-            setPosts(nextPosts.sort((a, b) => b.timestamp - a.timestamp));
+            const friendIds = new Set(characters.map(char => String(char.id)));
+            setPosts(nextPosts.filter(post => isMomentsPost(post, friendIds)).sort((a, b) => b.timestamp - a.timestamp));
             setGalleryUrls(images.sort((a, b) => b.timestamp - a.timestamp).slice(0, 12).map(item => item.url));
             setTextFavorites(nextText);
             setVoiceFavorites(nextVoice);
         });
         return () => { alive = false; };
-    }, [tab, lastMsgTimestamp]);
+    }, [characters, tab, lastMsgTimestamp]);
+
+    useEffect(() => () => {
+        if (tabAnimTimer.current) window.clearTimeout(tabAnimTimer.current);
+    }, []);
 
     const unreadTotal = useMemo(() => Object.values(unreadMessages).reduce((sum, value) => sum + (Number(value) || 0), 0), [unreadMessages]);
     const scopedCss = useMemo(() => {
@@ -281,6 +300,9 @@ const Messaging: React.FC = () => {
         if (themeLongPressed.current) { themeLongPressed.current = false; return; }
         setPreviousTab(tab);
         setTab(next);
+        setTabAnim('enter');
+        if (tabAnimTimer.current) window.clearTimeout(tabAnimTimer.current);
+        tabAnimTimer.current = window.setTimeout(() => setTabAnim('idle'), 360);
         setContextMenu(null);
     };
 
@@ -349,8 +371,9 @@ const Messaging: React.FC = () => {
     };
 
     const prependMomentPosts = async (newPosts: SocialPost[]) => {
-        await Promise.all(newPosts.map(post => DB.saveSocialPost(post)));
-        setPosts(current => [...newPosts, ...current.filter(item => !newPosts.some(post => post.id === item.id))]
+        const scopedPosts = newPosts.map(post => withSocialPostScope(post, 'moments'));
+        await Promise.all(scopedPosts.map(post => DB.saveSocialPost(post)));
+        setPosts(current => [...scopedPosts, ...current.filter(item => !scopedPosts.some(post => post.id === item.id))]
             .sort((a, b) => b.timestamp - a.timestamp));
     };
 
@@ -422,6 +445,7 @@ const Messaging: React.FC = () => {
                     tags: [],
                     authorType: 'character',
                     authorCharId: char.id,
+                    socialScope: 'moments',
                     imagePrompt,
                     location: String(item?.location || '').trim(),
                     ...(imageGenerationError ? { imageGenerationError } : {}),
@@ -478,11 +502,65 @@ const Messaging: React.FC = () => {
             title: '', content, images: newMomentImages,
             likes: 0, isCollected: false, isLiked: false, comments: [], timestamp: Date.now(), tags: [],
             authorType: 'user', imagePrompt: newMomentImagePrompt.trim(), location: newMomentLocation.trim(),
+            socialScope: 'moments',
         };
         await prependMomentPosts([post]);
         setNewMomentText(''); setNewMomentLocation(''); setNewMomentImagePrompt(''); setNewMomentImages([]);
         setMomentPostOpen(false);
         addToast('朋友圈已发布', 'success');
+    };
+
+    const clearMomentFeed = async () => {
+        if (!window.confirm('确定清空全部朋友圈动态吗？')) return;
+        await Promise.all(posts.map(post => DB.deleteSocialPost(post.id)));
+        setPosts([]);
+        addToast('朋友圈已清空；Spark 推荐流未受影响', 'success');
+    };
+
+    const openMomentReroll = (post: SocialPost, sourceImageIndex = -1) => {
+        setMomentReroll({ postId: post.id, sourceImageIndex });
+        setMomentRerollPrompt(post.imagePrompt || post.content || post.title || '');
+    };
+
+    const rerollMomentImage = async () => {
+        if (!momentReroll || momentRerollBusy) return;
+        const prompt = momentRerollPrompt.trim();
+        if (!prompt) return addToast('请先填写生图描述', 'error');
+        const config = getImageGenConfig();
+        if (!isImageGenReady(config)) return addToast('生图 API 还没配置完整', 'error');
+        const post = posts.find(item => item.id === momentReroll.postId);
+        if (!post) return setMomentReroll(null);
+        setMomentRerollBusy(true);
+        try {
+            const resolvedPrompt = post.authorType === 'character' && post.authorCharId
+                ? buildSelfiePrompt(post.authorCharId, prompt, config)
+                : prompt;
+            const image = await generateImageDataUrl(resolvedPrompt, config);
+            const images = [...(post.images || [])];
+            if (momentReroll.sourceImageIndex >= 0 && momentReroll.sourceImageIndex < images.length) {
+                images[momentReroll.sourceImageIndex] = image;
+            } else {
+                images.push(image);
+            }
+            const updated: SocialPost = {
+                ...post,
+                images,
+                imagePrompt: prompt,
+                imageGenerationError: undefined,
+                socialScope: 'moments',
+            };
+            await DB.saveSocialPost(updated);
+            setPosts(current => current.map(item => item.id === updated.id ? updated : item));
+            setMomentReroll(null);
+            addToast('朋友圈图片已重新生成', 'success');
+        } catch (error: any) {
+            const updated: SocialPost = { ...post, imagePrompt: prompt, imageGenerationError: error?.message || String(error), socialScope: 'moments' };
+            await DB.saveSocialPost(updated).catch(() => undefined);
+            setPosts(current => current.map(item => item.id === updated.id ? updated : item));
+            addToast(`重新生成失败：${updated.imageGenerationError}`, 'error');
+        } finally {
+            setMomentRerollBusy(false);
+        }
     };
 
     const openProfileEditor = () => {
@@ -504,7 +582,7 @@ const Messaging: React.FC = () => {
     const persistProfile = async () => {
         const next: MessagingProfile = {
             ...profileDraft,
-            version: 1,
+            version: 2,
             name: profileDraft.name.trim() || '我',
             handle: profileDraft.handle.trim().replace(/^@/, ''),
             hobbies: profileDraft.hobbies.map(item => item.trim()).filter(Boolean).slice(0, 24),
@@ -524,17 +602,17 @@ const Messaging: React.FC = () => {
 
     const attrs = contextAttrs(tab, unreadTotal, !!search.trim());
 
-    const header = (title: string, action?: React.ReactNode, extraClass = '') => (
-        <header className={`ig-header glass-header nj-chat-tab-header ${extraClass}`}>
-            <button className="nj-chat-tab-header-back nj-chat-tab-header-back-btn" aria-label="返回桌面" onClick={closeApp}><CaretLeft weight="bold" /></button>
-            <div className="nj-chat-tab-header-title-wrap"><button className="ios-fix nj-chat-tab-header-title-btn" type="button">{title}</button></div>
-            {action || <div />}
-        </header>
+    const chatHeader = () => (
+        <div className="ig-header glass-header nj-chat-tab-header">
+            <div className="nj-chat-tab-header-back" role="button" tabIndex={0} aria-label="返回桌面" onClick={closeApp} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') closeApp(); }}><CaretLeft weight="bold" /></div>
+            <div className="nj-chat-tab-header-title-wrap"><button className="ios-fix nj-chat-tab-header-title-btn" type="button"><span>消息</span></button></div>
+            <div className="nj-chat-tab-header-edit" role="button" tabIndex={0} aria-label="编辑角色" onClick={() => openApp(AppID.Character)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') openApp(AppID.Character); }}><NotePencil /></div>
+        </div>
     );
 
     const renderChatTab = () => (
         <section id="messaging-chat-tab" className="chat-view nj-chat-tab" data-empty={String(orderedSummaries.length === 0)} data-unread-total={String(unreadTotal)} data-searching={String(!!search.trim())}>
-            {header('消息', <button className="nj-chat-tab-header-action nj-chat-tab-header-action-btn nj-chat-tab-header-edit" aria-label="编辑角色" onClick={() => openApp(AppID.Character)}><NotePencil /></button>)}
+            {chatHeader()}
             <div className="nj-chat-tab-search-wrap">
                 <label className="glass-search nj-chat-tab-search">
                     <MagnifyingGlass size={16} />
@@ -635,15 +713,19 @@ const Messaging: React.FC = () => {
 
     const renderMomentsTab = () => (
         <section id="messaging-moments-tab" className="moments-view nj-moments-tab" data-post-count={String(posts.length)} data-empty={String(posts.length === 0)}>
-            <div className="nj-moments-header"><div className="nj-moments-header-btns"><button className="nj-moments-header-btn nj-moments-header-btn-clear" aria-label="清空动态" onClick={() => { if (window.confirm('确定清空全部朋友圈动态吗？')) { void DB.clearSocialPosts(); setPosts([]); } }}><Trash /></button><button className="nj-moments-header-btn nj-moments-header-btn-gen" aria-label="生成角色动态" onClick={() => setMomentGenerateOpen(true)}><Sparkle /></button><button className="nj-moments-header-btn nj-moments-header-btn-post" aria-label="发布朋友圈" onClick={() => setMomentPostOpen(true)}><Camera /></button></div></div>
+            <div className="nj-moments-header"><div className="nj-moments-header-btns">
+                <div className="nj-moments-header-btn nj-moments-header-btn-clear" role="button" tabIndex={0} aria-label="清空动态" onClick={() => void clearMomentFeed()}><Trash /></div>
+                <div className="nj-moments-header-btn nj-moments-header-btn-gen" role="button" tabIndex={0} aria-label="生成角色动态" onClick={() => setMomentGenerateOpen(true)}><Sparkle /></div>
+                <div className="nj-moments-header-btn nj-moments-header-btn-post" role="button" tabIndex={0} aria-label="发布朋友圈" onClick={() => setMomentPostOpen(true)}><Camera /></div>
+            </div></div>
             <div className="nj-moments-header-sticky" data-scrolled="false"><div className="nj-moments-header-title">朋友圈</div></div>
             <div className="nj-moments-decor-top" aria-hidden="true" />
-            <div className="nj-moments-cover-wrap">{profile.cover ? <img className="nj-moments-cover" src={profile.cover} alt="" /> : <div className="nj-moments-cover" />}<div className="nj-moments-cover-gradient" /><div className="nj-moments-cover-userinfo"><div className="nj-moments-cover-username">{profile.name || '我'}</div><div className="nj-moments-cover-avatar"><img src={profile.avatar || userProfile.avatar} alt="" /></div></div></div>
+            <div className="nj-moments-cover-wrap"><div className="nj-moments-cover" style={profile.cover ? { backgroundImage: `url(${JSON.stringify(profile.cover)})` } : undefined}><div className="nj-moments-cover-gradient" /></div><div className="nj-moments-cover-userinfo"><div className="nj-moments-cover-username">{profile.name || '我'}</div><div className="nj-moments-cover-avatar"><img src={profile.avatar || userProfile.avatar} alt="" /></div></div></div>
             <div className="nj-moments-notif-entry" aria-hidden="true" />
             <div className="nj-moments-decor-mid" aria-hidden="true" />
             <div className="nj-moments-feed">
                 {posts.slice(0, 30).map((post, index) => {
-                    const images = (post.images || []).filter(isImageSource).slice(0, 9);
+                    const images = (post.images || []).map((url, sourceImageIndex) => ({ url, sourceImageIndex })).filter(item => isImageSource(item.url)).slice(0, 9);
                     const stickers = (post.images || []).filter(value => !isImageSource(value) && !value.startsWith('txt:'));
                     const hour = new Date(post.timestamp).getHours();
                     const style = { '--nj-item-index': String(index), '--nj-post-img-count': String(images.length), '--nj-post-like-count': String(post.likes || 0), '--nj-post-comment-count': String(post.comments?.length || 0), '--nj-item-avatar-url': `url(${JSON.stringify(post.authorAvatar)})` } as CSSProperties;
@@ -653,8 +735,9 @@ const Messaging: React.FC = () => {
                             <div className="nj-moments-post-name">{post.authorName}</div>
                             <div className="nj-moments-post-text">{post.content || post.title}</div>
                             {!!stickers.length && <div className="nj-moments-post-sticker" aria-label="心情贴纸">{stickers[0]}</div>}
-                            {!!images.length && <div className={`nj-moments-post-imgs nj-moments-post-imgs-${images.length}`}>{images.map((url, imageIndex) => <div className="nj-moments-post-img-cell" key={`${post.id}-${imageIndex}`}><img src={url} alt="" /></div>)}</div>}
-                            <div className="nj-moments-post-meta"><span className="nj-moments-post-time">{formatListTime(post.timestamp)}</span>{post.location && <span className="nj-moments-post-location">{post.location}</span>}<div className="nj-moments-post-actions-wrap"><button className="nj-moments-post-actions-trigger" aria-label="动态操作">••</button></div></div>
+                            {!!images.length && <div className={`nj-moments-post-imgs nj-moments-post-imgs-${images.length}`}>{images.map(({ url, sourceImageIndex }, imageIndex) => <div className="nj-moments-post-img-cell" key={`${post.id}-${imageIndex}`}><img src={url} alt="" /><button type="button" className="sully-msg-moment-reroll" aria-label="重新生成这张图片" onClick={event => { event.stopPropagation(); openMomentReroll(post, sourceImageIndex); }}><ArrowsClockwise /></button></div>)}</div>}
+                            {!images.length && (!!post.imagePrompt || !!post.imageGenerationError) && <button type="button" className="sully-msg-moment-retry" onClick={() => openMomentReroll(post)}><ArrowsClockwise />{post.imageGenerationError ? '图片生成失败，重新生成' : '生成朋友圈图片'}</button>}
+                            <div className="nj-moments-post-meta"><span className="nj-moments-post-time">{formatListTime(post.timestamp)}</span>{post.location && <span className="nj-moments-post-location">{post.location}</span>}<div className="nj-moments-post-actions-wrap"><button className="nj-moments-post-actions-trigger" aria-label="动态操作" onClick={() => openMomentReroll(post, images[0]?.sourceImageIndex ?? -1)}>••</button></div></div>
                             {(post.likes > 0 || !!post.comments?.length) && <div className="nj-moments-engagement">{post.likes > 0 && <div className="nj-moments-likes"><span>♡</span><span className="nj-moments-like-name">{post.likes}</span></div>}{post.comments?.map(comment => <div className="nj-moments-comment" key={comment.id}><span className="nj-moments-comment-author">{comment.authorName}：</span><span className="nj-moments-comment-content">{comment.content}</span></div>)}</div>}
                         </div>
                         <div className="nj-item-deco nj-item-deco-1 heavy-anim" aria-hidden="true" /><div className="nj-item-deco nj-item-deco-2 heavy-anim" aria-hidden="true" />
@@ -668,11 +751,13 @@ const Messaging: React.FC = () => {
 
     const renderFavoritesTab = () => (
         <section id="messaging-favorites-tab" className="nj-favorites-tab" data-empty={String(!(textFavorites.length || voiceFavorites.length))}>
-            {header('收藏', undefined, 'nj-favorites-tab-header')}
-            <div className="nj-fav-decor-top" />
-            <div className="nj-favorites-tabs">
-                <button className={`nj-favorites-tab-button ${favoriteKind === 'text' ? 'active' : ''}`} onClick={() => setFavoriteKind('text')}>文字 {textFavorites.length}</button>
-                <button className={`nj-favorites-tab-button ${favoriteKind === 'voice' ? 'active' : ''}`} onClick={() => setFavoriteKind('voice')}>语音 {voiceFavorites.length}</button>
+            <div className="ig-header glass-header nj-favorites-tab-header">
+                <div className="nj-favorites-tab-title">收藏</div>
+                <div className="nj-fav-decor-top" aria-hidden="true" />
+                <div className="nj-favorites-tabs details-scroll">
+                    <button className={`nj-favorites-tab-button ${favoriteKind === 'text' ? 'active' : ''}`} onClick={() => setFavoriteKind('text')}>文字 {textFavorites.length}</button>
+                    <button className={`nj-favorites-tab-button ${favoriteKind === 'voice' ? 'active' : ''}`} onClick={() => setFavoriteKind('voice')}>语音 {voiceFavorites.length}</button>
+                </div>
             </div>
             <div className="nj-favorites-list nj-fav-list">
                 {favoriteKind === 'text' ? textFavorites.map(item => <article className="nj-favorites-item nj-fav-card" key={item.id} data-kind="text" onClick={() => openChat(item.charId)}><div className="nj-favorites-item-author">{item.charName} · {formatListTime(item.sourceTimestamp)}</div><div className="nj-favorites-item-content">{item.content}</div></article>) : voiceFavorites.map(item => <article className="nj-favorites-item nj-fav-card" key={item.id} data-kind="voice"><div className="nj-favorites-item-author">{item.charName} · {formatListTime(item.sourceTimestamp)}</div><div className="nj-favorites-item-voice"><button className="nj-favorites-item-play" onClick={() => void playVoiceFavorite(item)}>▶</button><div className="nj-favorites-item-content">{item.spokenText || item.originalText || '语音收藏'}</div></div></article>)}
@@ -683,41 +768,57 @@ const Messaging: React.FC = () => {
         </section>
     );
 
-    const renderProfileTab = () => (
-        <section id="messaging-profile-tab" className="profile-view nj-profile-tab">
-            <div className="glass-header nj-profile-tab-header"><div><button aria-label="返回桌面" onClick={closeApp}><CaretLeft /></button></div><div className="nj-profile-tab-title">我的</div><div><button className="nj-profile-edit-btn" aria-label="编辑资料" onClick={openProfileEditor}><PencilSimple /></button></div></div>
-            <div className="nj-profile-decor-top" aria-hidden="true" />
-            <div className="nj-profile-content"><div className="nj-profile-view">
-                <div className="nj-profile-top">
-                    <div className="nj-profile-top-row"><div className="nj-profile-avatar-wrap"><div className="nj-profile-avatar"><img src={profile.avatar || userProfile.avatar} alt="" /></div></div><div className="nj-profile-stats"><div className="nj-profile-stat-item"><span className="nj-profile-stat-count">{posts.filter(post => post.authorType === 'user').length}</span><span className="nj-profile-stat-label">动态</span></div><div className="nj-profile-stat-item"><span className="nj-profile-stat-count">{characters.length}</span><span className="nj-profile-stat-label">好友</span></div><div className="nj-profile-stat-item"><span className="nj-profile-stat-count">{textFavorites.length + voiceFavorites.length}</span><span className="nj-profile-stat-label">收藏</span></div></div></div>
-                    <div className="nj-profile-identity"><div className="nj-profile-name-row"><p className="nj-profile-name">{profile.name || '我'}</p>{profile.handle && <p className="nj-profile-handle">@{profile.handle}</p>}</div><p className="nj-profile-signature">{profile.signature || '在 Sully 的小世界里，认真生活。'}</p>{!!profile.hobbies.length && <div className="nj-profile-hobbies">{profile.hobbies.map(hobby => <span className="nj-profile-hobby-chip" key={hobby}>{hobby}</span>)}</div>}</div>
+    const renderProfileTab = () => {
+        const about = profile.about || '还没有填写个人介绍。';
+        const aboutIsLong = about.length > 150;
+        const infoItems: Array<{ key: string; className: string; icon: React.ReactNode; label: string; value: string }> = [];
+        if (profile.birthday) infoItems.push({ key: 'birthday', className: 'nj-profile-info-born', icon: <CalendarBlank />, label: '生日', value: profile.birthday });
+        if (profile.gender) infoItems.push({ key: 'gender', className: 'nj-profile-info-gender', icon: <span>○</span>, label: '性别', value: profile.gender });
+        if (profile.location) infoItems.push({ key: 'location', className: 'nj-profile-info-location', icon: <MapPin />, label: '所在地', value: profile.location });
+        return (
+            <section id="messaging-profile-tab" className="profile-view nj-profile-tab">
+                <div className="glass-header nj-profile-tab-header">
+                    <div />
+                    <div><button className="ios-fix nj-profile-tab-title" type="button">我的</button></div>
+                    <div><div className="nj-profile-edit-btn" role="button" tabIndex={0} aria-label="编辑资料" onClick={openProfileEditor} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') openProfileEditor(); }}><PencilSimple /></div></div>
                 </div>
-                <div className="nj-profile-decor-mid" aria-hidden="true" />
-                {(profile.birthday || profile.gender || profile.virtualLocation || profile.realLocation) && <div className="nj-profile-info-bar">{profile.birthday && <div className="nj-profile-info-item"><span className="nj-profile-info-icon">◫</span><span><span className="nj-profile-info-label">生日</span><span className="nj-profile-info-value">{profile.birthday}</span></span></div>}{profile.gender && <div className="nj-profile-info-item"><span className="nj-profile-info-icon">○</span><span><span className="nj-profile-info-label">性别</span><span className="nj-profile-info-value">{profile.gender}</span></span></div>}{(profile.virtualLocation || profile.realLocation) && <div className="nj-profile-info-item"><span className="nj-profile-info-icon">⌖</span><span><span className="nj-profile-info-label">所在地</span><span className="nj-profile-info-value">{profile.virtualLocation || profile.realLocation}</span></span></div>}</div>}
-                <div className="nj-profile-about"><div className="nj-profile-section-title">关于我</div><div className="nj-profile-about-text">{profile.about || '还没有填写个人介绍。'}</div></div>
-                <div className="nj-profile-gallery"><div className="nj-profile-section-title">相册</div>{galleryUrls.length ? <div className="nj-profile-gallery-grid">{galleryUrls.map((url, index) => <div className="nj-profile-gallery-cell" key={`${url}-${index}`}><img src={url} alt="" /></div>)}</div> : <div className="nj-empty-state">相册里还没有照片</div>}</div>
-            </div></div>
-            <div className="nj-profile-decor-bottom" aria-hidden="true" />
-        </section>
-    );
+                <div className="nj-profile-decor-top" aria-hidden="true" />
+                <div className="nj-profile-content"><div className="nj-profile-view">
+                    <div className="nj-profile-top">
+                        <div className="nj-profile-top-row"><div className="nj-profile-avatar-wrap"><div className="nj-profile-avatar"><img src={profile.avatar || userProfile.avatar} alt="" /></div></div><div className="nj-profile-stats"><div className="nj-profile-stat-item"><span className="nj-profile-stat-count">{posts.filter(post => post.authorType === 'user').length}</span><span className="nj-profile-stat-label">动态</span></div><div className="nj-profile-stat-item"><span className="nj-profile-stat-count">{characters.length}</span><span className="nj-profile-stat-label">好友</span></div><div className="nj-profile-stat-item"><span className="nj-profile-stat-count">{textFavorites.length + voiceFavorites.length}</span><span className="nj-profile-stat-label">收藏</span></div></div></div>
+                        <div className="nj-profile-identity"><div className="nj-profile-name-row"><p className="nj-profile-name">{profile.name || '我'}</p>{profile.handle && <p className="nj-profile-handle">@{profile.handle}</p>}</div><p className="nj-profile-signature">{profile.signature || '在 Sully 的小世界里，认真生活。'}</p>{!!profile.hobbies.length && <div className="nj-profile-hobbies">{profile.hobbies.map(hobby => <span className="nj-profile-hobby-chip" key={hobby}>{hobby}</span>)}</div>}</div>
+                    </div>
+                    {!!infoItems.length && <div className="nj-profile-info-bar">{infoItems.map((item, index) => <React.Fragment key={item.key}>{index > 0 && <div className="nj-profile-info-divider" />}<div className={`nj-profile-info-item ${item.className}`}><div className="nj-profile-info-icon">{item.icon}</div><div className="nj-profile-info-text"><p className="nj-profile-info-label">{item.label}</p><p className="nj-profile-info-value">{item.value}</p></div></div></React.Fragment>)}</div>}
+                    <div className="nj-profile-decor-mid" aria-hidden="true" />
+                    <div className="nj-profile-about">
+                        <h4 className="nj-profile-section-title nj-profile-about-title">关于我 <span /></h4>
+                        <div className="nj-profile-about-body"><p className="nj-profile-about-text" style={profileAboutExpanded || !aboutIsLong ? undefined : { maxHeight: '151.2px', overflow: 'hidden' }}>{about}</p>{aboutIsLong && !profileAboutExpanded && <div className="nj-profile-about-fade" />}</div>
+                        {aboutIsLong && <button className="nj-profile-about-toggle" type="button" onClick={() => setProfileAboutExpanded(value => !value)}>{profileAboutExpanded ? '收起' : '展开更多'}<CaretDown style={{ transform: profileAboutExpanded ? 'rotate(180deg)' : 'none' }} /></button>}
+                    </div>
+                    <div className="nj-profile-gallery"><div className="nj-profile-gallery-head"><h4 className="nj-profile-section-title nj-profile-gallery-title">相册 <span className="nj-profile-gallery-count">{galleryUrls.length}</span></h4></div>{galleryUrls.length ? <div className="nj-profile-gallery-grid">{galleryUrls.map((url, index) => <div className="nj-profile-gallery-cell" key={`${url}-${index}`}><img src={url} alt="" /></div>)}</div> : <div className="nj-empty-state">相册里还没有照片</div>}</div>
+                </div></div>
+                <div className="nj-profile-decor-bottom" aria-hidden="true" />
+            </section>
+        );
+    };
 
     return (
-        <div className="sully-messaging-app" {...attrs} data-prev-tab={previousTab} onClick={() => contextMenu && setContextMenu(null)}>
+        <div className="sully-messaging-app" onClick={() => contextMenu && setContextMenu(null)}>
             {!!scopedCss && <style data-sully-messaging-theme>{scopedCss}</style>}
-            <main id="sully-messaging-screen" className="sully-messaging-screen">
-                <div className="sully-messaging-content">
+            <div id="chat-list-screen" className="screen active sully-messaging-screen" {...attrs} data-prev-tab={previousTab} data-tab-anim={tabAnim}>
+                <div className="content-area sully-messaging-content">
                     {tab === 'chat' && renderChatTab()}
                     {tab === 'moments' && renderMomentsTab()}
                     {tab === 'favorites' && renderFavoritesTab()}
                     {tab === 'profile' && renderProfileTab()}
                 </div>
-                <nav id="messaging-bottom-bar" className="nj-tab-bottom-bar" aria-label="消息应用标签栏">
-                    <button className={`nj-tab-bottom-item nj-tab-bottom-item-chat ${tab === 'chat' ? 'active nj-tab-bottom-item-active' : ''}`} aria-label="消息" onClick={() => selectTab('chat')} onPointerDown={startThemeLongPress} onPointerUp={cancelThemeLongPress} onPointerCancel={cancelThemeLongPress} onPointerLeave={cancelThemeLongPress} onContextMenu={event => { event.preventDefault(); openThemeSettings(); }}><span className="glass-icon nj-tab-bottom-icon"><ChatCircleDots weight={tab === 'chat' ? 'fill' : 'regular'} />{unreadTotal > 0 && <span className="nj-tab-bottom-total-unread">{unreadTotal > 99 ? '99+' : unreadTotal}</span>}</span></button>
-                    <button className={`nj-tab-bottom-item nj-tab-bottom-item-moments ${tab === 'moments' ? 'active nj-tab-bottom-item-active' : ''}`} aria-label="朋友圈" onClick={() => selectTab('moments')}><span className="glass-icon nj-tab-bottom-icon"><Planet weight={tab === 'moments' ? 'fill' : 'regular'} />{!!posts.length && <i className="nj-tab-bottom-moments-dot" />}</span></button>
-                    <button className={`nj-tab-bottom-item nj-tab-bottom-item-favorites ${tab === 'favorites' ? 'active nj-tab-bottom-item-active' : ''}`} aria-label="收藏" onClick={() => selectTab('favorites')}><span className="glass-icon nj-tab-bottom-icon"><Star weight={tab === 'favorites' ? 'fill' : 'regular'} /></span></button>
-                    <button className={`nj-tab-bottom-item nj-tab-bottom-item-profile ${tab === 'profile' ? 'active nj-tab-bottom-item-active' : ''}`} aria-label="我的" onClick={() => selectTab('profile')}><span className="glass-icon nj-tab-bottom-icon"><UserCircle weight={tab === 'profile' ? 'fill' : 'regular'} /></span></button>
-                </nav>
-            </main>
+                <div id="messaging-bottom-bar" className="glass-tab-bar nj-tab-bottom-bar" role="navigation" aria-label="消息应用标签栏">
+                    <div className={`tab-item nj-tab-bottom-item nj-tab-bottom-item-chat ${tab === 'chat' ? 'active nj-tab-bottom-item-active' : ''}`} role="button" tabIndex={0} aria-label="消息" onClick={() => selectTab('chat')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') selectTab('chat'); }} onPointerDown={startThemeLongPress} onPointerUp={cancelThemeLongPress} onPointerCancel={cancelThemeLongPress} onPointerLeave={cancelThemeLongPress} onContextMenu={event => { event.preventDefault(); openThemeSettings(); }}><div className="glass-icon nj-tab-bottom-icon"><ChatCircleDots weight={tab === 'chat' ? 'fill' : 'regular'} />{unreadTotal > 0 && <span className="nj-tab-bottom-total-unread">{unreadTotal > 99 ? '99+' : unreadTotal}</span>}</div></div>
+                    <div className={`tab-item nj-tab-bottom-item nj-tab-bottom-item-moments ${tab === 'moments' ? 'active nj-tab-bottom-item-active' : ''}`} role="button" tabIndex={0} aria-label="朋友圈" onClick={() => selectTab('moments')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') selectTab('moments'); }}><div className="glass-icon nj-tab-bottom-icon"><Planet weight={tab === 'moments' ? 'fill' : 'regular'} />{!!posts.length && <i className="nj-tab-bottom-moments-dot" />}</div></div>
+                    <div className={`tab-item nj-tab-bottom-item nj-tab-bottom-item-favorites ${tab === 'favorites' ? 'active nj-tab-bottom-item-active' : ''}`} role="button" tabIndex={0} aria-label="收藏" onClick={() => selectTab('favorites')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') selectTab('favorites'); }}><div className="glass-icon nj-tab-bottom-icon"><Star weight={tab === 'favorites' ? 'fill' : 'regular'} /></div></div>
+                    <div className={`tab-item nj-tab-bottom-item nj-tab-bottom-item-profile ${tab === 'profile' ? 'active nj-tab-bottom-item-active' : ''}`} role="button" tabIndex={0} aria-label="我的" onClick={() => selectTab('profile')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') selectTab('profile'); }}><div className="glass-icon nj-tab-bottom-icon"><UserCircle weight={tab === 'profile' ? 'fill' : 'regular'} /></div></div>
+                </div>
+            </div>
             {momentGenerateOpen && <div className="sully-msg-modal-layer" onClick={() => !momentGenerating && setMomentGenerateOpen(false)}><div className="sully-msg-modal-card" onClick={event => event.stopPropagation()}>
                 <div className="sully-msg-modal-title">生成角色动态</div>
                 <label className="sully-msg-field-label">角色选择</label>
@@ -738,6 +839,14 @@ const Messaging: React.FC = () => {
                 <button className="sully-msg-upload-btn" onClick={() => void drawNewMomentImage()} disabled={newMomentImageBusy || newMomentImages.length >= 9}><Sparkle />{newMomentImageBusy ? '正在生成图片…' : '使用生图 API 配图'}</button>
                 <label className="sully-msg-field-label">位置（可选）</label><input className="sully-msg-input" value={newMomentLocation} onChange={event => setNewMomentLocation(event.target.value)} placeholder="所在位置" />
             </div></div>}
+            {momentReroll && <div className="sully-msg-modal-layer" onClick={() => !momentRerollBusy && setMomentReroll(null)}><div className="sully-msg-modal-card" onClick={event => event.stopPropagation()}>
+                <div className="sully-msg-modal-title">重新生成朋友圈图片</div>
+                <p className="sully-msg-reroll-author">{posts.find(post => post.id === momentReroll.postId)?.authorName || '这条动态'}</p>
+                <label className="sully-msg-field-label">生图描述</label>
+                <textarea className="sully-msg-small-textarea" value={momentRerollPrompt} onChange={event => setMomentRerollPrompt(event.target.value)} placeholder="描述要重新生成的画面…" disabled={momentRerollBusy} />
+                {!!posts.find(post => post.id === momentReroll.postId)?.imageGenerationError && <div className="sully-msg-reroll-error">上次失败：{posts.find(post => post.id === momentReroll.postId)?.imageGenerationError}</div>}
+                <div className="sully-msg-modal-actions"><button onClick={() => setMomentReroll(null)} disabled={momentRerollBusy}>取消</button><button className="primary" onClick={() => void rerollMomentImage()} disabled={momentRerollBusy || !momentRerollPrompt.trim()}>{momentRerollBusy ? '重新生成中…' : '重新生成'}</button></div>
+            </div></div>}
             {profileEditOpen && <div className="sully-msg-modal-layer sully-msg-profile-editor" onClick={() => setProfileEditOpen(false)}><div className="sully-msg-modal-card sully-msg-modal-card-tall" onClick={event => event.stopPropagation()}>
                 <div className="sully-msg-modal-head"><button onClick={() => setProfileEditOpen(false)}><X /></button><div className="sully-msg-modal-title">编辑资料</div><button className="sully-msg-save" onClick={() => void persistProfile()}>保存</button></div>
                 <div className="sully-msg-profile-images"><button onClick={() => profileAvatarInputRef.current?.click()}><img src={profileDraft.avatar || userProfile.avatar} alt="" /><span>更换头像</span></button><button onClick={() => profileCoverInputRef.current?.click()}>{profileDraft.cover ? <img src={profileDraft.cover} alt="" /> : <span className="sully-msg-cover-placeholder">添加封面</span>}<span>更换封面</span></button></div>
@@ -746,7 +855,7 @@ const Messaging: React.FC = () => {
                 <label className="sully-msg-field-label">账号 ID</label><input className="sully-msg-input" value={profileDraft.handle} onChange={event => setProfileDraft(current => ({ ...current, handle: event.target.value }))} placeholder="不需要输入 @" />
                 <label className="sully-msg-field-label">个性签名</label><textarea className="sully-msg-small-textarea" value={profileDraft.signature} onChange={event => setProfileDraft(current => ({ ...current, signature: event.target.value }))} placeholder="写点什么…" />
                 <div className="sully-msg-two-columns"><label><span className="sully-msg-field-label">生日</span><input className="sully-msg-input" value={profileDraft.birthday} onChange={event => setProfileDraft(current => ({ ...current, birthday: event.target.value }))} placeholder="2001年6月28日" /></label><label><span className="sully-msg-field-label">性别</span><input className="sully-msg-input" value={profileDraft.gender} onChange={event => setProfileDraft(current => ({ ...current, gender: event.target.value }))} placeholder="自定义" /></label></div>
-                <div className="sully-msg-two-columns"><label><span className="sully-msg-field-label">虚拟地点</span><input className="sully-msg-input" value={profileDraft.virtualLocation} onChange={event => setProfileDraft(current => ({ ...current, virtualLocation: event.target.value }))} /></label><label><span className="sully-msg-field-label">现实映射</span><input className="sully-msg-input" value={profileDraft.realLocation} onChange={event => setProfileDraft(current => ({ ...current, realLocation: event.target.value }))} /></label></div>
+                <label className="sully-msg-field-label">地点</label><input className="sully-msg-input" value={profileDraft.location} onChange={event => setProfileDraft(current => ({ ...current, location: event.target.value }))} placeholder="例如：Tokyo" />
                 <label className="sully-msg-field-label">兴趣爱好（逗号或换行分隔）</label><textarea className="sully-msg-small-textarea" value={profileDraft.hobbies.join('，')} onChange={event => setProfileDraft(current => ({ ...current, hobbies: event.target.value.split(/[,，\n]+/) }))} />
                 <label className="sully-msg-field-label">关于我（支持换行）</label><textarea className="sully-msg-about-textarea" value={profileDraft.about} onChange={event => setProfileDraft(current => ({ ...current, about: event.target.value }))} placeholder={'角色档案：\n基本信息：\n…'} />
             </div></div>}

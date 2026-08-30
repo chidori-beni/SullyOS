@@ -3,6 +3,7 @@ import {
     messagingLengthBucket,
     messagingTimeSlot,
     messagingUnreadBucket,
+    makeDefaultMessagingProfile,
     scopeMessagingCss,
     validateMessagingCss,
 } from './messagingTheme';
@@ -66,5 +67,13 @@ describe('messaging theme CSS compatibility', () => {
         expect(messagingUnreadBucket(9)).toBe('few');
         expect(messagingUnreadBucket(12)).toBe('many');
         expect(messagingLengthBucket('a'.repeat(41))).toBe('long');
+    });
+
+    it('migrates the two legacy location fields into one visible location', () => {
+        const profile = makeDefaultMessagingProfile({ version: 1, virtualLocation: 'Tokyo', realLocation: 'Japan' });
+        expect(profile.version).toBe(2);
+        expect(profile.location).toBe('Tokyo');
+        expect(profile).not.toHaveProperty('virtualLocation');
+        expect(profile).not.toHaveProperty('realLocation');
     });
 });

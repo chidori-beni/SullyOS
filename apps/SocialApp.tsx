@@ -12,6 +12,7 @@ import { House, User, Package, Warning } from '@phosphor-icons/react';
 import { mergeSocialComments, prependUniqueSocialPosts, updateSocialPost } from '../utils/socialFeedMerge';
 import { trackEvent } from '../utils/analytics';
 import { buildSelfiePrompt, generateImageDataUrl, getImageGenConfig, isImageGenReady } from '../utils/novelaiImage';
+import { isSparkPost } from '../utils/socialPostScope';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
@@ -233,6 +234,7 @@ const SocialApp: React.FC = () => {
 
     useEffect(() => {
         DB.getSocialPosts().then(posts => {
+            posts = posts.filter(isSparkPost);
             if (posts.length > 0) {
                 const sorted = posts.sort((a,b) => b.timestamp - a.timestamp);
                 // IndexedDB can be slow on mobile. If the user already created
@@ -551,6 +553,7 @@ ${charContexts}
                     bgStyle: getRandomStyle().bg,
                     authorType: isCharacterPost ? 'character' : 'stranger',
                     authorCharId: matchedChar?.id,
+                    socialScope: 'spark',
                     imagePrompt,
                 };
             });
@@ -857,6 +860,7 @@ ${identityMap}
             tags: ['User'],
             bgStyle: getRandomStyle().bg,
             authorType: 'user',
+            socialScope: 'spark',
             imagePrompt: newPostImagePrompt.trim(),
         };
         prependPostsToFeed([post]);
@@ -913,7 +917,7 @@ ${identityMap}
         setSelectedPost(null);
     };
 
-    const handleClearFeed = () => {
+    const handleClearFeed = async () => {
         refreshRequestRef.current?.abort();
         commentRequestRef.current?.controller.abort();
         replyRequestRef.current?.controller.abort();
@@ -923,10 +927,11 @@ ${identityMap}
         setIsRefreshing(false);
         setLoadingComments(false);
         setIsReplyingToUser(false);
+        const ids = feedRef.current.filter(isSparkPost).map(post => post.id);
         feedRef.current = [];
         setFeed([]);
         setSelectedPost(null);
-        DB.clearSocialPosts();
+        await Promise.all(ids.map(id => DB.deleteSocialPost(id)));
         setShowSettings(false);
         addToast('推荐流已清空', 'success');
         trackEvent('清空 Spark 推荐流');
