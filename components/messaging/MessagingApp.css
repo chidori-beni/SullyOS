@@ -770,7 +770,7 @@
 .sully-msg-profile-images { display:grid; grid-template-columns:1fr 1.65fr; gap:10px; }
 .sully-msg-profile-images button { position:relative; min-height:112px; overflow:hidden; border:1px solid #e7e7ea; border-radius:13px; padding:0; background:#f6f6f7; }
 .sully-msg-profile-images img { width:100%; height:112px; object-fit:cover; }
-.sully-msg-profile-images button:first-child img { width:82px; height:82px; margin:auto; border-radius:50%; }
+.sully-msg-profile-images button:first-child img.sully-msg-profile-avatar-preview { width:82px; height:82px; margin:auto; border-radius:0; object-fit:contain; }
 .sully-msg-profile-images button > span:last-child { position:absolute; right:0; bottom:0; left:0; padding:5px; color:#fff; background:rgba(0,0,0,.45); font-size:10px; }
 .sully-msg-cover-placeholder { display:grid; place-items:center; min-height:112px; color:#aaa; }
 .sully-msg-two-columns { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
@@ -1109,6 +1109,15 @@
 .nj-profile-top { padding: 20px 16px 24px; }
 .nj-profile-top-row { gap: 20px; margin-bottom: 20px; }
 .nj-profile-avatar { width: var(--nj-msg-profile-avatar-size, 84px); height: var(--nj-msg-profile-avatar-size, 84px); padding: 3px; border: 1px solid rgba(0,0,0,.06); }
+.nj-profile-avatar-square {
+  box-sizing: border-box;
+  overflow: hidden !important;
+  border-radius: 0 !important;
+}
+.nj-profile-avatar-square > img {
+  object-fit: contain;
+  border-radius: 0 !important;
+}
 .nj-profile-identity { margin-top: 0; display: flex; flex-direction: column; gap: 6px; }
 .nj-profile-name { font-size: 13px; font-weight: 600; }
 .nj-profile-signature { margin-top: 4px; font-size: 13px; line-height: 1.4; }
