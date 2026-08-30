@@ -775,6 +775,7 @@
 .sully-msg-cover-placeholder { display:grid; place-items:center; min-height:112px; color:#aaa; }
 .sully-msg-two-columns { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
 .sully-msg-two-columns .sully-msg-field-label { float:none; }
+.sully-msg-gallery-url-hint { margin:0 2px 2px; color:#858991; font-size:11px; line-height:1.6; }
 
 /* 编辑器实际 DOM。类名独立于可导入主题作用域，避免主题把编辑器本身改坏。 */
 .sully-msg-theme-layer { position: absolute; z-index: 110; inset: 0; }
@@ -1139,10 +1140,36 @@
 .nj-profile-about-toggle { display: flex; align-items: center; gap: 4px; border: 0; padding: 8px 0 0; color: var(--nj-msg-text, #111); background: none; font-size: 13px; font-weight: 600; }
 .nj-profile-about-toggle svg { width: 12px; height: 12px; transition: transform .2s; }
 .nj-profile-gallery { margin-top: 0; padding-top: 8px; }
-.nj-profile-gallery-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; padding: 0 16px; }
+.nj-profile-gallery-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 16px; padding: 0 16px; }
 .nj-profile-gallery-title { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 10px; text-transform: uppercase; letter-spacing: .2em; }
 .nj-profile-gallery-count { padding: 2px 6px; border-radius: 4px; background: rgba(0,0,0,.05); font-size: 9px; letter-spacing: 0; }
+.nj-profile-gallery-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.nj-profile-gallery-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  border: 1px solid rgba(0,0,0,.08);
+  border-radius: 9px;
+  padding: 0 8px;
+  color: var(--nj-msg-text, #4d5057);
+  background: rgba(0,0,0,.035);
+  font-size: 10px;
+  font-weight: 600;
+}
+.nj-profile-gallery-actions button:active { transform: scale(.96); }
+.nj-profile-gallery-actions button svg { width: 14px; height: 14px; }
 .nj-profile-gallery-grid { padding: 0 16px; }
+.nj-profile-gallery-cell {
+  width: 100%;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.nj-profile-gallery-cell:focus-visible { outline: 2px solid var(--nj-msg-text, #4d5057); outline-offset: 2px; }
+.nj-profile-gallery .nj-empty-state small { font-size: 10px; line-height: 1.5; }
 
 .nj-tab-bottom-bar {
   box-sizing: border-box;

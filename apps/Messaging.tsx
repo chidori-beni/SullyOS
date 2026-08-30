@@ -11,6 +11,7 @@ import {
     MapPin,
     MagnifyingGlass,
     NotePencil,
+    LinkSimple,
     PencilSimple,
     Planet,
     PushPin,
@@ -23,7 +24,7 @@ import {
     X,
 } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
-import { AppID, CharacterProfile, Message, SocialComment, SocialPost } from '../types';
+import { AppID, CharacterProfile, GalleryImage, Message, SocialComment, SocialPost } from '../types';
 import { DB } from '../utils/db';
 import { listTextFavorites, TextFavorite } from '../utils/textFavorites';
 import { getVoiceFavoriteBlob, listVoiceFavorites, VoiceFavorite } from '../utils/voiceFavorites';
@@ -101,6 +102,10 @@ const parseJsonArray = (value: string): any[] => {
 };
 
 const FALLBACK_GROUP_ID = '__ungrouped__';
+// 消息 App 的「我的 → 相册」是用户自己的展示柜，不与角色相册共用归属。
+// GalleryImage 旧模型用 charId 做索引；使用保留值即可在不改 IndexedDB
+// 结构、不迁移/删除旧角色照片的情况下隔离两类图片。
+const USER_GALLERY_CHAR_ID = '__profile_gallery__';
 
 const messageTypeLabel: Partial<Record<Message['type'], string>> = {
     image: '[图片]',
@@ -184,7 +189,10 @@ const Messaging: React.FC = () => {
     const [search, setSearch] = useState('');
     const [summaries, setSummaries] = useState<ChatSummary[]>([]);
     const [posts, setPosts] = useState<SocialPost[]>([]);
-    const [galleryUrls, setGalleryUrls] = useState<string[]>([]);
+    const [profileGalleryImages, setProfileGalleryImages] = useState<GalleryImage[]>([]);
+    const [profileGalleryUrlOpen, setProfileGalleryUrlOpen] = useState(false);
+    const [profileGalleryUrl, setProfileGalleryUrl] = useState('');
+    const [profileGalleryUrlBusy, setProfileGalleryUrlBusy] = useState(false);
     const [textFavorites, setTextFavorites] = useState<TextFavorite[]>([]);
     const [voiceFavorites, setVoiceFavorites] = useState<VoiceFavorite[]>([]);
     const [favoriteKind, setFavoriteKind] = useState<'text' | 'voice'>('text');
@@ -237,6 +245,7 @@ const Messaging: React.FC = () => {
     const momentImageInputRef = useRef<HTMLInputElement>(null);
     const profileAvatarInputRef = useRef<HTMLInputElement>(null);
     const profileCoverInputRef = useRef<HTMLInputElement>(null);
+    const profileGalleryImageInputRef = useRef<HTMLInputElement>(null);
     const tabAnimTimer = useRef<number | null>(null);
     const momentLikeTimer = useRef<number | null>(null);
     const momentCommentLongPressTimer = useRef<number | null>(null);
@@ -287,14 +296,15 @@ const Messaging: React.FC = () => {
         let alive = true;
         Promise.all([
             DB.getSocialPosts().catch(() => [] as SocialPost[]),
-            DB.getGalleryImages().catch(() => []),
+            // 个人资料的相册是独立的用户展示柜；角色图片仍留在「相册」App。
+            DB.getGalleryImages(USER_GALLERY_CHAR_ID).catch(() => [] as GalleryImage[]),
             listTextFavorites().catch(() => []),
             listVoiceFavorites().catch(() => []),
         ]).then(([nextPosts, images, nextText, nextVoice]) => {
             if (!alive) return;
             const friendIds = new Set(characters.map(char => String(char.id)));
             setPosts(nextPosts.filter(post => isMomentsPost(post, friendIds)).sort((a, b) => b.timestamp - a.timestamp));
-            setGalleryUrls(images.sort((a, b) => b.timestamp - a.timestamp).slice(0, 12).map(item => item.url));
+            setProfileGalleryImages(images.sort((a, b) => b.timestamp - a.timestamp));
             setTextFavorites(nextText);
             setVoiceFavorites(nextVoice);
         });
@@ -791,6 +801,63 @@ const Messaging: React.FC = () => {
         }
     };
 
+    const createProfileGalleryImage = (url: string, offset = 0): GalleryImage => ({
+        id: `profile-gallery-${Date.now()}-${offset}-${Math.random().toString(36).slice(2, 8)}`,
+        charId: USER_GALLERY_CHAR_ID,
+        url,
+        timestamp: Date.now() - offset,
+    });
+
+    const handleProfileGalleryImages = async (files: FileList | null) => {
+        if (!files?.length) return;
+        const nextImages: GalleryImage[] = [];
+        let failed = 0;
+        // 逐张处理，避免一次性把多张原图同时展开到内存里。
+        for (const [index, file] of Array.from(files).slice(0, 12).entries()) {
+            try {
+                const url = await processImage(file, { maxWidth: 1600, quality: .88 });
+                const image = createProfileGalleryImage(url, index);
+                await DB.saveGalleryImage(image);
+                nextImages.push(image);
+            } catch {
+                failed += 1;
+            }
+        }
+        if (nextImages.length) {
+            setProfileGalleryImages(current => [...nextImages, ...current].sort((a, b) => b.timestamp - a.timestamp));
+            addToast(`${nextImages.length} 张图片已加入相册${failed ? `，${failed} 张失败` : ''}`, failed ? 'info' : 'success');
+        } else if (failed) {
+            addToast('图片处理失败，请换一张图片再试', 'error');
+        }
+    };
+
+    const addProfileGalleryUrl = async () => {
+        const value = profileGalleryUrl.trim();
+        if (!value) return addToast('请先粘贴图床图片直链', 'error');
+        let normalizedUrl = '';
+        try {
+            const parsed = new URL(value);
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('只支持 http/https 图片直链');
+            normalizedUrl = parsed.toString();
+        } catch (error: any) {
+            return addToast(error?.message || '图床链接格式不正确', 'error');
+        }
+        if (profileGalleryUrlBusy) return;
+        setProfileGalleryUrlBusy(true);
+        try {
+            const image = createProfileGalleryImage(normalizedUrl);
+            await DB.saveGalleryImage(image);
+            setProfileGalleryImages(current => [image, ...current]);
+            setProfileGalleryUrl('');
+            setProfileGalleryUrlOpen(false);
+            addToast('图床图片已加入相册', 'success');
+        } catch (error: any) {
+            addToast(error?.message || '保存图床图片失败', 'error');
+        } finally {
+            setProfileGalleryUrlBusy(false);
+        }
+    };
+
     const persistProfile = async () => {
         const next: MessagingProfile = {
             ...profileDraft,
@@ -1114,7 +1181,17 @@ const Messaging: React.FC = () => {
                         <div className="nj-profile-about-body"><p className="nj-profile-about-text" style={profileAboutExpanded || !aboutIsLong ? undefined : { maxHeight: '151.2px', overflow: 'hidden' }}>{about}</p>{aboutIsLong && !profileAboutExpanded && <div className="nj-profile-about-fade" />}</div>
                         {aboutIsLong && <button className="nj-profile-about-toggle" type="button" onClick={() => setProfileAboutExpanded(value => !value)}>{profileAboutExpanded ? '收起' : '展开更多'}<CaretDown style={{ transform: profileAboutExpanded ? 'rotate(180deg)' : 'none' }} /></button>}
                     </div>
-                    <div className="nj-profile-gallery"><div className="nj-profile-gallery-head"><h4 className="nj-profile-section-title nj-profile-gallery-title">相册 <span className="nj-profile-gallery-count">{galleryUrls.length}</span></h4></div>{galleryUrls.length ? <div className="nj-profile-gallery-grid">{galleryUrls.map((url, index) => <div className="nj-profile-gallery-cell" key={`${url}-${index}`}><img src={url} alt="" /></div>)}</div> : <div className="nj-empty-state">相册里还没有照片</div>}</div>
+                    <div className="nj-profile-gallery">
+                        <div className="nj-profile-gallery-head">
+                            <h4 className="nj-profile-section-title nj-profile-gallery-title">相册 <span className="nj-profile-gallery-count">{profileGalleryImages.length}</span></h4>
+                            <div className="nj-profile-gallery-actions">
+                                <button type="button" aria-label="从手机相册添加图片" title="从手机相册添加图片" onClick={() => profileGalleryImageInputRef.current?.click()}><Camera /><span>上传</span></button>
+                                <button type="button" aria-label="添加图床图片" title="添加图床图片" onClick={() => setProfileGalleryUrlOpen(true)}><LinkSimple /><span>链接</span></button>
+                            </div>
+                        </div>
+                        <input ref={profileGalleryImageInputRef} type="file" accept="image/*" multiple hidden onChange={event => { void handleProfileGalleryImages(event.target.files); event.target.value = ''; }} />
+                        {profileGalleryImages.length ? <div className="nj-profile-gallery-grid">{profileGalleryImages.map((image, index) => <button type="button" className="nj-profile-gallery-cell" key={image.id} aria-label={`查看相册图片 ${index + 1}`} onClick={() => setMomentImageViewer({ images: profileGalleryImages.map(item => item.url), initialIndex: index })}><img src={image.url} alt="" loading="lazy" /></button>)}</div> : <div className="nj-empty-state">相册里还没有照片<br /><small>上传图片或粘贴图床链接，把喜欢的图放进展示柜</small></div>}
+                    </div>
                 </div></div>
                 <div className="nj-profile-decor-bottom" aria-hidden="true" />
             </section>
@@ -1165,6 +1242,13 @@ const Messaging: React.FC = () => {
                 <textarea className="sully-msg-small-textarea" value={momentRerollPrompt} onChange={event => setMomentRerollPrompt(event.target.value)} placeholder="描述要重新生成的画面…" disabled={momentRerollBusy} />
                 {!!posts.find(post => post.id === momentReroll.postId)?.imageGenerationError && <div className="sully-msg-reroll-error">上次失败：{posts.find(post => post.id === momentReroll.postId)?.imageGenerationError}</div>}
                 <div className="sully-msg-modal-actions"><button onClick={() => setMomentReroll(null)} disabled={momentRerollBusy}>取消</button><button className="primary" onClick={() => void rerollMomentImage()} disabled={momentRerollBusy || !momentRerollPrompt.trim()}>{momentRerollBusy ? '重新生成中…' : '重新生成'}</button></div>
+            </div></div>}
+            {profileGalleryUrlOpen && <div className="sully-msg-modal-layer" onClick={() => !profileGalleryUrlBusy && setProfileGalleryUrlOpen(false)}><div className="sully-msg-modal-card" onClick={event => event.stopPropagation()}>
+                <div className="sully-msg-modal-head"><button type="button" onClick={() => setProfileGalleryUrlOpen(false)} disabled={profileGalleryUrlBusy}><X /></button><div className="sully-msg-modal-title">添加图床图片</div><button type="button" className="sully-msg-save" onClick={() => void addProfileGalleryUrl()} disabled={profileGalleryUrlBusy || !profileGalleryUrl.trim()}>{profileGalleryUrlBusy ? '保存中' : '添加'}</button></div>
+                <p className="sully-msg-gallery-url-hint">粘贴公开可访问的图片直链。图片会直接从图床加载，不会把原图复制进手机。</p>
+                <label className="sully-msg-field-label" htmlFor="profile-gallery-url">图片链接</label>
+                <input id="profile-gallery-url" className="sully-msg-input" type="url" inputMode="url" autoFocus value={profileGalleryUrl} onChange={event => setProfileGalleryUrl(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && profileGalleryUrl.trim()) void addProfileGalleryUrl(); }} placeholder="https://example.com/image.jpg" disabled={profileGalleryUrlBusy} />
+                <div className="sully-msg-modal-actions"><button type="button" onClick={() => setProfileGalleryUrlOpen(false)} disabled={profileGalleryUrlBusy}>取消</button><button type="button" className="primary" onClick={() => void addProfileGalleryUrl()} disabled={profileGalleryUrlBusy || !profileGalleryUrl.trim()}>{profileGalleryUrlBusy ? '保存中…' : '加入相册'}</button></div>
             </div></div>}
             {profileEditOpen && <div className="sully-msg-modal-layer sully-msg-profile-editor" onClick={() => setProfileEditOpen(false)}><div className="sully-msg-modal-card sully-msg-modal-card-tall" onClick={event => event.stopPropagation()}>
                 <div className="sully-msg-modal-head"><button onClick={() => setProfileEditOpen(false)}><X /></button><div className="sully-msg-modal-title">编辑资料</div><button className="sully-msg-save" onClick={() => void persistProfile()}>保存</button></div>
