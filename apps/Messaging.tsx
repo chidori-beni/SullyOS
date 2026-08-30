@@ -199,6 +199,7 @@ const Messaging: React.FC = () => {
     const themeLongPressed = useRef(false);
     const itemLongPressTimer = useRef<number | null>(null);
     const itemLongPressed = useRef(false);
+    const appRef = useRef<HTMLDivElement>(null);
     const momentImageInputRef = useRef<HTMLInputElement>(null);
     const profileAvatarInputRef = useRef<HTMLInputElement>(null);
     const profileCoverInputRef = useRef<HTMLInputElement>(null);
@@ -336,8 +337,13 @@ const Messaging: React.FC = () => {
     };
 
     const openItemMenu = (event: React.PointerEvent | React.MouseEvent, charId: string) => {
-        const x = Math.min(event.clientX, window.innerWidth - 184);
-        const y = Math.min(event.clientY, window.innerHeight - 150);
+        const appRect = appRef.current?.getBoundingClientRect();
+        const originX = appRect?.left ?? 0;
+        const originY = appRect?.top ?? 0;
+        const appWidth = appRect?.width ?? window.innerWidth;
+        const appHeight = appRect?.height ?? window.innerHeight;
+        const x = Math.min(event.clientX - originX, appWidth - 184);
+        const y = Math.min(event.clientY - originY, appHeight - 150);
         setContextMenu({ charId, x: Math.max(8, x), y: Math.max(8, y) });
     };
 
@@ -833,7 +839,7 @@ const Messaging: React.FC = () => {
     };
 
     return (
-        <div className="sully-messaging-app" onClick={() => contextMenu && setContextMenu(null)}>
+        <div ref={appRef} className="sully-messaging-app" onClick={() => contextMenu && setContextMenu(null)}>
             {!!scopedCss && <style data-sully-messaging-theme>{scopedCss}</style>}
             <div id="chat-list-screen" className="screen active sully-messaging-screen" {...attrs} data-prev-tab={previousTab} data-tab-anim={tabAnim}>
                 <div className="content-area sully-messaging-content">
