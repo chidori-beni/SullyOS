@@ -47,16 +47,20 @@
   min-height: 100%;
   position: relative;
   color: var(--nj-msg-text, #16181d);
-  background: var(--nj-msg-bg, var(--nj-bg));
-  background-image: var(--nj-msg-bg-image, none);
-  background-size: cover;
-  background-position: center;
+  background: var(--nj-msg-bg, #ffffff);
 }
-.nj-chat-tab::before,.nj-moments-tab::before,.nj-favorites-tab::before,.nj-profile-tab::before { content: ""; position: absolute; z-index: 0; inset: 0; pointer-events: none; background: var(--nj-msg-bg-overlay, transparent); }
-.nj-chat-tab { background-color: var(--nj-msg-chat-bg, var(--nj-msg-bg, var(--nj-bg))); background-image: var(--nj-msg-chat-bg-image, var(--nj-msg-bg-image, none)); }
-.nj-moments-tab { background-color: var(--nj-msg-moments-bg, var(--nj-msg-bg, var(--nj-bg))); background-image: var(--nj-msg-moments-bg-image, var(--nj-msg-bg-image, none)); }
-.nj-favorites-tab { background-color: var(--nj-msg-fav-bg, var(--nj-msg-bg, var(--nj-bg))); background-image: var(--nj-msg-fav-bg-image, var(--nj-msg-bg-image, none)); }
-.nj-profile-tab { background-color: var(--nj-msg-profile-bg, var(--nj-msg-bg, var(--nj-bg))); background-image: var(--nj-msg-profile-bg-image, var(--nj-msg-bg-image, none)); }
+/* 只消费糯叽机 4.71 真实存在的变量。
+   --nj-msg-chat-bg / --nj-msg-moments-bg / --nj-msg-profile-bg /
+   --nj-msg-bg-overlay / --nj-msg-*-bg-image 都是 Sully 自创的，
+   糯叽机不读它们。主题顺手设了值（例如 --nj-msg-chat-bg: #ededed），
+   在糯叽机被忽略、在 Sully 却生效，页面就变灰了。
+   原生：#messaging-chat-tab 用 var(--nj-msg-bg, #ffffff)，
+        #messaging-favorites-tab 用 var(--nj-msg-fav-bg, var(--nj-msg-bg))。
+   ::before 那层遮罩原生完全没有，一并去掉。 */
+.nj-chat-tab,
+.nj-moments-tab,
+.nj-profile-tab { background-color: var(--nj-msg-bg, #ffffff); }
+.nj-favorites-tab { background-color: var(--nj-msg-fav-bg, var(--nj-msg-bg, #ffffff)); }
 
 .nj-chat-tab-header,
 .nj-moments-header,
@@ -610,14 +614,17 @@
 .nj-chat-item[data-pinned="true"] { background-color: var(--nj-msg-card-bg-pinned, rgba(255,255,255,.7)); }
 .nj-chat-item:active { transform: var(--nj-msg-card-active-transform, scale(.988)); background: rgba(0,0,0,.045); }
 /* 4.71 原生外层只有 flexShrink: 0，不能写 flex-basis：主题只改 width 时会被 basis 顶掉。 */
-.nj-chat-item-avatar { position: relative; z-index: 2; flex-shrink: 0; width: var(--nj-avatar-size); height: var(--nj-avatar-size); border-radius: var(--nj-msg-avatar-radius, 50%); }
+.nj-chat-item-avatar { position: relative; flex-shrink: 0; width: var(--nj-avatar-size); height: var(--nj-avatar-size); border-radius: var(--nj-msg-avatar-radius, 50%); }
 /* 原生内包裹层写的是 var(--nj-msg-avatar-radius, 50%)，不是 inherit。
    用 inherit 会让主题改外层圆角时连内层一起变，仿 Reeden 的圆头像会被变成方的。 */
 .nj-chat-item-avatar-img { width: 100%; height: 100%; overflow: hidden; border-radius: var(--nj-msg-avatar-radius, 50%); background: #fafafa; box-shadow: var(--nj-msg-avatar-shadow, 0 2px 8px rgba(15,23,42,.1)); }
 .nj-chat-item-avatar > img,
 .nj-chat-item-avatar-img > img { display:block; width:100%; height:100%; object-fit:cover; }
 .nj-chat-item-unread-badge { position:absolute; top:-1px; right:-1px; min-width:19px; height:19px; padding:0 5px; display:flex; align-items:center; justify-content:center; color:var(--nj-msg-unread-color,#fff); background:var(--nj-msg-unread-bg,#ff3b30); border:2px solid var(--nj-bg); border-radius:999px; font-size:10px; font-weight:700; }
-.nj-chat-item-body { position:relative; z-index:2; min-width:0; flex:1; }
+/* 原生只有 flex:1 + min-width:0，没有 position。
+   加了 relative 会把主题的绝对定位装饰（书签 top:-5px/right:10px、
+   ♡ left:53px/top:51.5px）的参照系从卡片换成正文区，装饰全部错位。 */
+.nj-chat-item-body { min-width:0; flex:1; }
 .nj-chat-item-row1 { display:flex; align-items:center; justify-content:space-between; gap:8px; min-width:0; }
 .nj-chat-item-name { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:15px; font-weight:600; }
 .nj-chat-item-time { flex:none; display:flex; align-items:center; gap:3px; color:var(--nj-msg-text-time,#aaaab0); font-size:12px; }
@@ -898,7 +905,7 @@
   position: sticky;
   z-index: 10;
   top: 0;
-  background: var(--nj-msg-header-bg, transparent);
+  background: transparent;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   border-bottom: 0;
