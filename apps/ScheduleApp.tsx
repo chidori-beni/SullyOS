@@ -6,10 +6,10 @@ import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
 import { buildChatRequestPayload } from '../utils/chatRequestPayload';
 import { loadCharacterContextRange } from '../utils/chatContextRange';
-import { safeResponseJson } from '../utils/safeApi';
+import { extractContent, safeResponseJson } from '../utils/safeApi';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { getLocalDateKey } from '../utils/localDate';
-import { eventsForDate, groupEventsByCalendarDate, groupTasksByCalendarDate, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, tasksForDate } from '../utils/calendarIntegration';
+import { eventsForDate, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, tasksForDate } from '../utils/calendarIntegration';
 import { trackEvent } from '../utils/analytics';
 import { extractTaskComment, formatTaskComment, isTaskCommentDisplayable } from '../utils/taskComment';
 import { buildMonthlyReviewStats, buildSullyMonthlyReport, CALENDAR_MOODS, chooseMonthlyMessageCharacterId } from '../utils/calendarMonthlyReview';
@@ -115,6 +115,34 @@ ${modeInstruction}
     return [...payload.fullMessages, { role: 'system', content: taskInstruction }];
 };
 
+/** Read the text slot used by OpenAI-compatible chat providers without
+ * discarding alternate legacy completion shapes. `extractTaskComment` then
+ * handles string, block-array and nested-object content uniformly. */
+const extractTaskGenerationResponse = (data: any): string | null => {
+    const choice = data?.choices?.[0];
+    const messageContent = choice?.message?.content;
+    const raw = typeof messageContent === 'string' && !messageContent.trim()
+        ? (choice?.text ?? data?.output_text)
+        : (messageContent ?? choice?.text ?? data?.output_text);
+    const direct = extractTaskComment(raw);
+    if (direct) return direct;
+    // Thinking-model gateways sometimes put the user-facing answer in
+    // reasoning_content when message.content is empty. Reuse the app-wide
+    // extractor, which strips <think> blocks and handles that fallback, but
+    // never replace a non-empty direct response with private reasoning.
+    const hasDirectRaw = typeof raw === 'string'
+        ? Boolean(raw.trim())
+        : Array.isArray(raw)
+            ? raw.length > 0
+            : !!raw && typeof raw === 'object'
+                ? Object.keys(raw).length > 0
+                : Boolean(raw);
+    if (!hasDirectRaw) {
+        return extractTaskComment(extractContent(data));
+    }
+    return null;
+};
+
 const ScheduleApp: React.FC = () => {
     const { closeApp, characters, activeCharacterId, apiConfig, addToast, userProfile, updateUserProfile } = useOS();
     const today = getLocalDateKey();
@@ -200,8 +228,17 @@ const ScheduleApp: React.FC = () => {
 
     const selectedTasks = useMemo(() => tasksForDate(tasks, selectedDate), [tasks, selectedDate]);
     const selectedEvents = useMemo(() => eventsForDate(events, selectedDate), [events, selectedDate]);
-    const personalScheduleGroups = useMemo(() => groupEventsByCalendarDate(events), [events]);
-    const personalTaskGroups = useMemo(() => groupTasksByCalendarDate(tasks), [tasks]);
+    // The personal page is a day view, like Nuoji's calendar: future tasks do
+    // not occupy today's page forever, while selecting an older date reveals
+    // its completed row and any saved role sentence again.
+    const personalScheduleGroups = useMemo(() => {
+        const items = eventsForDate(events, selectedDate);
+        return items.length > 0 ? [{ date: selectedDate, items }] : [];
+    }, [events, selectedDate]);
+    const personalTaskGroups = useMemo(() => {
+        const items = tasksForDate(tasks, selectedDate);
+        return items.length > 0 ? [{ date: selectedDate, items }] : [];
+    }, [selectedDate, tasks]);
     const selectedChar = characters.find(char => char.id === selectedCharId);
     const reviewMonthKey = `${reviewCursor.getFullYear()}-${String(reviewCursor.getMonth() + 1).padStart(2, '0')}`;
     const currentMonthKey = today.slice(0, 7);
@@ -229,6 +266,16 @@ const ScheduleApp: React.FC = () => {
     const openEventComposer = (date = selectedDate) => {
         setEventDate(date); setEventChar(''); setEventRepeats(false); setEventRepeatDays([1, 2, 3, 4, 5]); setEventRepeatUntil(''); setShowEvent(true);
         trackEvent('打开日历新建事件');
+    };
+    const selectCalendarDate = (value: string) => {
+        if (!value) return;
+        setSelectedDate(value);
+        setCursor(parseDateKey(value));
+    };
+    const shiftSelectedDate = (offset: number) => {
+        const next = parseDateKey(selectedDate);
+        next.setDate(next.getDate() + offset);
+        selectCalendarDate(dateKey(next));
     };
     const chooseMood = (mood: CalendarMoodId) => {
         updateUserProfile({ calendarDailyMoods: { ...(userProfile.calendarDailyMoods || {}), [today]: mood } });
@@ -322,7 +369,7 @@ const ScheduleApp: React.FC = () => {
                 });
                 if (!response.ok) throw new Error(`API Error ${response.status}`);
                 const data = await safeResponseJson(response);
-                return extractTaskComment(data.choices?.[0]?.message?.content);
+                return extractTaskGenerationResponse(data);
             };
             let text = await requestReward(firstPrompt);
             if (!isTaskCommentDisplayable(text, task.title)) text = await requestReward(correctionPrompt);
@@ -376,7 +423,7 @@ const ScheduleApp: React.FC = () => {
                 });
                 if (!response.ok) throw new Error('API Error ' + response.status);
                 const data = await safeResponseJson(response);
-                return extractTaskComment(data.choices?.[0]?.message?.content);
+                return extractTaskGenerationResponse(data);
             };
             let text = await requestComment(firstPrompt);
             if (!isTaskCommentDisplayable(text, task.title)) text = await requestComment(correctionPrompt);
@@ -438,7 +485,6 @@ const ScheduleApp: React.FC = () => {
         setTasks(current => sortTasksForCalendar([...current, task]));
         notifyCalendarDataUpdated();
         void generateTaskComment(task);
-        setSelectedDate(taskDate); setCursor(parseDateKey(taskDate));
         setTaskTitle(''); setTaskNote(''); setTaskTime(''); setShowTask(false);
         addToast('待办已加入日历', 'success');
     };
@@ -556,13 +602,18 @@ const ScheduleApp: React.FC = () => {
                 </section>
 
                 <section className="space-y-4">
-                    <div className="flex items-center justify-between"><div><h2 className="text-base font-bold">日程</h2><p className="mt-1 text-[11px] text-slate-400">按日期排成一条时间线，日程和纪念日都在这里。</p></div><button onClick={() => openEventComposer(today)} className="text-xs font-bold text-rose-500">＋添加</button></div>
+                    <div className="flex items-center justify-between"><div><h2 className="text-base font-bold">日程</h2><p className="mt-1 text-[11px] text-slate-400">像 TA 一样按天看一条时间线；点日期也能回看过去。</p></div><button onClick={() => openEventComposer(selectedDate)} className="text-xs font-bold text-rose-500">＋添加</button></div>
+                    <div className="flex items-center justify-between rounded-2xl border border-white/80 bg-white/60 px-2 py-2 shadow-sm">
+                        <button aria-label="前一天" onClick={() => shiftSelectedDate(-1)} className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-lg text-slate-400">‹</button>
+                        <label className="flex min-w-0 flex-1 items-center justify-center gap-2 text-xs font-bold text-slate-600"><span>{formatTimelineDate(selectedDate, today)}</span><input aria-label="选择日程日期" type="date" value={selectedDate} onChange={event => selectCalendarDate(event.target.value)} className="max-w-[8.5rem] rounded-xl bg-slate-100 px-2 py-1.5 text-[11px] font-medium text-slate-500" /></label>
+                        <button aria-label="后一天" onClick={() => shiftSelectedDate(1)} className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-lg text-slate-400">›</button>
+                    </div>
                     {personalScheduleGroups.length > 0 ? personalScheduleGroups.map(group => <div key={group.date} className="relative pl-3">
                         <div className="mb-2 flex items-center gap-2 text-xs font-bold text-rose-500"><span className="h-2 w-2 rounded-full bg-rose-400 shadow-sm" />{formatTimelineDate(group.date, today)}</div>
                         <div className="relative ml-1 space-y-3 border-l-2 border-rose-200 pl-5">
                             {group.items.map(event => <div key={event.id} className="group relative rounded-2xl border border-rose-100 bg-white/85 p-3 shadow-sm">
                                 <span className="absolute -left-[1.6rem] top-5 h-3 w-3 rounded-full border-2 border-white bg-rose-400" />
-                                <button onClick={() => { setSelectedDate(event.date); setCursor(parseDateKey(event.date)); setTab('month'); }} className="block w-full pr-5 text-left"><div className="flex flex-wrap items-center gap-2"><b className="text-sm">{event.title}</b><span className="rounded-full bg-rose-50 px-2 py-0.5 text-[9px] text-rose-500">{event.kind === 'event' ? '日程' : '纪念日'}</span>{event.repeat && <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[9px] text-sky-500">每周重复</span>}</div><div className="mt-1 text-[11px] text-slate-400">{event.startTime || '全天'}{event.endTime ? `–${event.endTime}` : ''}{event.location ? ` · ${event.location}` : ''}</div>{event.note && <p className="mt-2 text-xs leading-relaxed text-slate-500">{event.note}</p>}</button>
+                                <button onClick={() => { selectCalendarDate(group.date); setTab('month'); }} className="block w-full pr-5 text-left"><div className="flex flex-wrap items-center gap-2"><b className="text-sm">{event.title}</b><span className="rounded-full bg-rose-50 px-2 py-0.5 text-[9px] text-rose-500">{event.kind === 'event' ? '日程' : '纪念日'}</span>{event.repeat && <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[9px] text-sky-500">每周重复</span>}</div><div className="mt-1 text-[11px] text-slate-400">{event.startTime || '全天'}{event.endTime ? `–${event.endTime}` : ''}{event.location ? ` · ${event.location}` : ''}</div>{event.note && <p className="mt-2 text-xs leading-relaxed text-slate-500">{event.note}</p>}</button>
                                 <button aria-label={`删除日程：${event.title}`} onClick={() => deleteEvent(event.id)} className="absolute right-2 top-2 px-1 text-slate-300 transition hover:text-rose-400">×</button>
                             </div>)}
                         </div>
@@ -570,7 +621,7 @@ const ScheduleApp: React.FC = () => {
                 </section>
 
                 <section className="space-y-4">
-                    <div className="flex items-center justify-between"><div><h2 className="text-base font-bold">待办</h2><p className="mt-1 text-[11px] text-slate-400">每件事都绑定截止日期，完成后仍留在原来的日期里。</p></div><button onClick={() => openTaskComposer(today)} className="text-xs font-bold text-violet-500">＋添加</button></div>
+                    <div className="flex items-center justify-between"><div><h2 className="text-base font-bold">待办</h2><p className="mt-1 text-[11px] text-slate-400">只显示这一天生效的待办；回看过去日期仍保留完成记录和角色台词。</p></div><button onClick={() => openTaskComposer(selectedDate)} className="text-xs font-bold text-violet-500">＋添加</button></div>
                     {personalTaskGroups.length > 0 ? personalTaskGroups.map(group => <div key={group.date} className="space-y-2"><div className="px-1 text-xs font-bold text-sky-500">截止 · {formatTimelineDate(group.date, today)}</div>{group.items.map(task => renderTask(task))}</div>) : <div className="rounded-3xl border-2 border-dashed border-white bg-white/35 py-8 text-center text-xs text-slate-400">还没有待办，给自己安排一件小事吧。</div>}
                 </section>
             </div>}

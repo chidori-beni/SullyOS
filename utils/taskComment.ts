@@ -15,11 +15,11 @@ const META_LABELS = new Set([
     '留学生 in tokyo', '留学生intokyo',
 ]);
 
-// Keep extraction deliberately lenient enough to preserve a non-empty model
-// response while a repair request is running. Completeness is checked
+// Keep extraction deliberately lenient enough to preserve a short, natural
+// model response while a repair request is running. Completeness is checked
 // separately by `isTaskCommentUsable`; otherwise a rejected response makes the
 // whole card line disappear before the retry has a chance to replace it.
-const MIN_EXTRACTED_TASK_COMMENT_LENGTH = 6;
+const MIN_EXTRACTED_TASK_COMMENT_LENGTH = 3;
 const MIN_COMPLETE_TASK_COMMENT_LENGTH = 12;
 // Keep this high enough for a natural Chinese sentence plus a short second
 // clause. The old 80-character ceiling rejected otherwise good in-character
@@ -94,6 +94,23 @@ const stripWrapping = (value: string): string => {
     return text;
 };
 
+/**
+ * OpenAI-compatible providers do not all serialize message content the same
+ * way. Text may be a string, an Anthropic-style block array, or an object with
+ * a nested `text`/`content` field. Ignore thinking blocks: a task card should
+ * never expose a model's private reasoning as the character's voice.
+ */
+const flattenTaskCommentContent = (value: unknown): string => {
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) {
+        return value.map(item => flattenTaskCommentContent(item)).filter(Boolean).join('');
+    }
+    if (!value || typeof value !== 'object') return '';
+    const record = value as Record<string, unknown>;
+    if (record.type === 'thinking' || record.type === 'reasoning' || record.type === 'redacted_thinking') return '';
+    return flattenTaskCommentContent(record.text ?? record.content ?? record.value);
+};
+
 const extractFromObject = (value: Record<string, unknown>): string => {
     const preferred = ['平时用语', '日常用语', '评价', '评论', 'comment', 'text', 'content', 'response'];
     for (const key of preferred) {
@@ -105,8 +122,7 @@ const extractFromObject = (value: Record<string, unknown>): string => {
 
 /** Returns null for an empty response or a field/mode name without a sentence. */
 export const extractTaskComment = (raw: unknown): string | null => {
-    if (typeof raw !== 'string') return null;
-    let text = raw.trim();
+    let text = flattenTaskCommentContent(raw).trim();
     if (!text) return null;
 
     // Some OpenAI-compatible providers ignore the requested plain-text format
@@ -158,8 +174,9 @@ const shortTitleForTemplateCheck = (value: string): string => {
 
 /**
  * Reject the old canned task copy even when it passes the sentence parser.
- * One ordinary phrase is allowed in a longer, concrete line; combinations of
- * template phrases or a short line echoing the task title are not.
+ * A single ordinary phrase is not enough to reject a real character voice:
+ * `慢慢来，别急。` can be perfectly in character. Combinations of template
+ * phrases or a line that echoes the task title are still not useful.
  */
 export const isTaskCommentTooGeneric = (value: unknown, taskTitle = ''): boolean => {
     const text = extractTaskComment(value);
@@ -173,12 +190,24 @@ export const isTaskCommentTooGeneric = (value: unknown, taskTitle = ''): boolean
     ];
     const markerHits = templateMarkers.filter(marker => compact.includes(marker)).length;
     const titleEcho = !!title && compact.includes(title);
-    return markerHits >= 2 || (markerHits >= 1 && (titleEcho || compact.length < 34));
+    return markerHits >= 2 || (markerHits >= 1 && titleEcho);
 };
 
-/** A task comment is safe to show only after both format and style checks pass. */
-export const isTaskCommentDisplayable = (value: unknown, taskTitle = ''): value is string =>
-    isTaskCommentUsable(value) && !isTaskCommentTooGeneric(value, taskTitle);
+/**
+ * A task comment is safe to show after content/schema cleanup and the
+ * anti-template check. Do not require punctuation or twelve characters here:
+ * both are useful generation hints, but natural character speech can be short
+ * (`去吧。`) or intentionally omit a final full stop. The strict helper above
+ * remains available for callers that specifically need a complete sentence.
+ */
+export const isTaskCommentDisplayable = (value: unknown, taskTitle = ''): value is string => {
+    const text = extractTaskComment(value);
+    if (!text) return false;
+    const effectiveLength = [...text].filter(character => !/\s/.test(character)).length;
+    return effectiveLength >= 3
+        && text.length <= MAX_COMPLETE_TASK_COMMENT_LENGTH
+        && !isTaskCommentTooGeneric(text, taskTitle);
+};
 
 /**
  * Put the speaker in front of a persisted task sentence without duplicating a

@@ -374,8 +374,8 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, tasks, c
 
     const todayStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const visibleTasks = useMemo(
-        () => sortTasksForCalendar((tasks as Task[]).filter(task => !task.isCompleted)).slice(0, 5),
-        [tasks]
+        () => sortTasksForCalendar((tasks as Task[]).filter(task => !task.isCompleted && taskDateKey(task) === todayStr)).slice(0, 5),
+        [tasks, todayStr]
     );
 
     return (
