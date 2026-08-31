@@ -769,6 +769,35 @@ export interface ScheduleSlot {
     theater?: SlotTheater; // 该时段的小剧场（窥视演出），按需生成并缓存
 }
 
+export type ScheduleVariationClass =
+    | 'routine'
+    | 'small-surprise'
+    | 'social-pulse'
+    | 'errand-detour'
+    | 'hobby-detour'
+    | 'recovery-pause'
+    | 'unfinished-thread'
+    | 'thought-shift'
+    | 'memory-echo'
+    | 'curiosity'
+    | 'quiet-pause';
+
+export type ScheduleCareerFocus = 'none' | 'core' | 'secondary' | 'balanced';
+
+/** 日程生成的轻量规划痕迹。可选以兼容所有历史日程，不进入主动消息 fire-pack。 */
+export interface SchedulePlanningMeta {
+    schemaVersion: 1;
+    seed: number;
+    generationId: string;
+    rerollIndex: number;
+    variationClass: ScheduleVariationClass;
+    careerFocus: ScheduleCareerFocus;
+    commercialActivityRequested?: boolean;
+    eventFingerprint?: string;
+    /** 仅保存来源条目 id，不保存世界书正文或聊天内容。 */
+    sourceWorldbookIds?: string[];
+}
+
 export interface DailySchedule {
     id: string;           // `${charId}_${date}`
     charId: string;
@@ -782,6 +811,8 @@ export interface DailySchedule {
      * 注入时根据当前时间找到最近的 key，直接使用整段文本，不做拼接。
      */
     flowNarrative?: Record<string, string>;
+    /** 新版日程规划元数据；老记录没有此字段也应继续正常显示和注入。 */
+    planningMeta?: SchedulePlanningMeta;
 }
 
 export interface RoomGeneratedState {

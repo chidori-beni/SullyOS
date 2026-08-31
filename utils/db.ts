@@ -1764,6 +1764,27 @@ export const DB = {
       transaction.objectStore(STORE_DAILY_SCHEDULE).put(schedule);
   },
 
+  /** 日程规划只需要最近几张表来避开重复；不把完整历史塞进 LLM prompt。 */
+  getRecentDailySchedulesByCharId: async (charId: string, limit: number = 14): Promise<DailySchedule[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_DAILY_SCHEDULE)) return [];
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_DAILY_SCHEDULE, 'readonly');
+          const request = transaction.objectStore(STORE_DAILY_SCHEDULE).getAll();
+          request.onsuccess = () => {
+              const safeLimit = Math.max(0, Math.floor(limit));
+              const schedules = (request.result || [])
+                  .filter((item: DailySchedule) => item?.charId === charId)
+                  .sort((a: DailySchedule, b: DailySchedule) => (
+                      b.date.localeCompare(a.date) || b.generatedAt - a.generatedAt
+                  ))
+                  .slice(0, safeLimit);
+              resolve(schedules);
+          };
+          request.onerror = () => reject(request.error);
+      });
+  },
+
   deleteDailySchedule: async (charId: string, date: string): Promise<void> => {
       const db = await openDB();
       if (!db.objectStoreNames.contains(STORE_DAILY_SCHEDULE)) return;

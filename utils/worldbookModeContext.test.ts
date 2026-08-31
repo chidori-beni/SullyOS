@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ContextBuilder } from './context';
+import { resolveWorldbookEntries } from './worldbook';
 
 const character = {
     id: 'char-1',
@@ -33,5 +34,33 @@ describe('worldbook mode in shared context builder', () => {
         expect(offline).toContain('两边都能看见。');
         expect(offline).toContain('线下保留自然标点。');
         expect(offline).not.toContain('线上不要使用标点。');
+    });
+
+    it('日程可把位置4的提醒作为参考块读取，深度0不会让它消失', () => {
+        const mounted = [{
+            id: 'depth-zero',
+            title: '临时提醒',
+            content: '今天记得留意一个小小的变化。',
+            mode: 'online',
+            constant: true,
+            position: 4,
+            depth: 0,
+        }] as any;
+        const resolved = resolveWorldbookEntries(mounted, [], '阿澈', '小雨', 'online');
+        const scheduleContext = ContextBuilder.buildCoreContext(
+            { ...character, mountedWorldbooks: [] },
+            user,
+            true,
+            undefined,
+            undefined,
+            {
+                skipTimeAwareness: true,
+                worldbookMode: 'online',
+                resolvedWorldbookEntries: resolved,
+                includeAtDepthWorldbooks: true,
+            },
+        );
+        expect(scheduleContext).toContain('今天记得留意一个小小的变化。');
+        expect(scheduleContext).toContain('指定深度提醒');
     });
 });

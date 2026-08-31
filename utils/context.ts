@@ -10,6 +10,7 @@ import {
     formatWorldbookSection,
     resolveWorldbookEntries,
     splitWorldbookSections,
+    type ResolvedWorldbookEntry,
     type WorldbookScanMessage,
 } from './worldbook';
 
@@ -131,6 +132,10 @@ export const ContextBuilder = {
             worldbookMessages?: WorldbookScanMessage[];
             /** Phone/chat by default; Date and other face-to-face callers pass offline. */
             worldbookMode?: Exclude<WorldbookMode, 'all'>;
+            /** 由调用方预先解析，避免带概率的世界书在同一请求内被重复投骰。 */
+            resolvedWorldbookEntries?: ResolvedWorldbookEntry[];
+            /** 日程是单条 prompt，没有普通聊天的消息数组；按参考块读取位置 4。 */
+            includeAtDepthWorldbooks?: boolean;
         },
         layout?: {
             /**
@@ -144,13 +149,18 @@ export const ContextBuilder = {
     ): string => {
         const skipBookIds = groupOptions?.skipWorldbookIds;
         const filteredBooks = (char.mountedWorldbooks || []).filter(wb => !skipBookIds || !skipBookIds.has(wb.id));
-        const worldbookSections = splitWorldbookSections(resolveWorldbookEntries(
-            filteredBooks,
-            timeOptions?.worldbookMessages || [],
-            char.name,
-            user.name,
-            timeOptions?.worldbookMode ?? 'online',
-        ));
+        const resolvedWorldbookEntries = timeOptions?.resolvedWorldbookEntries
+            ? timeOptions.resolvedWorldbookEntries.filter(entry => (
+                !skipBookIds || !skipBookIds.has(entry.book.id)
+            ))
+            : resolveWorldbookEntries(
+                  filteredBooks,
+                  timeOptions?.worldbookMessages || [],
+                  char.name,
+                  user.name,
+                  timeOptions?.worldbookMode ?? 'online',
+              );
+        const worldbookSections = splitWorldbookSections(resolvedWorldbookEntries);
 
         let context = formatWorldbookSection(worldbookSections.beforeCharacter, '世界书 · 角色设定前');
         context += `${groupOptions?.headerOverride ?? '[System: Roleplay Configuration]'}\n\n`;
@@ -190,6 +200,12 @@ export const ContextBuilder = {
         context += formatWorldbookSection(worldbookSections.afterCharacter, '扩展设定集 (Worldbooks)');
         context += formatWorldbookSection(worldbookSections.beforeExamples, '世界书 · 示例消息前');
         context += formatWorldbookSection(worldbookSections.afterExamples, '世界书 · 示例消息后');
+        if (timeOptions?.includeAtDepthWorldbooks) {
+            context += formatWorldbookSection(
+                worldbookSections.atDepth,
+                '世界书 · 指定深度提醒（本次日程参考）',
+            );
+        }
 
         // 3. 用户画像 (User Profile)
         // 群聊场景下：用户画像已在共享场景块顶部，这里跳过避免重复
@@ -347,7 +363,7 @@ export const ContextBuilder = {
              * 这次注入是不是「正有人在跟角色说话」（私聊、见面这类实时对话）。
              * 只有这时才补那句语境框定，见下方注释。默认 false：日程 / 歌单 / 攻略 /
              * 手册 / 小剧场这些生成器同样走 buildCoreContext，但那边并没有人在对话。
-             */
+            */
             conversational?: boolean;
             /** 本轮已经捕获的角色墙钟；传入后不再在这里重新读取当前时间。 */
             wallClockNow?: Date;

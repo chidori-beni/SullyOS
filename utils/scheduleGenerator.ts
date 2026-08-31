@@ -10,6 +10,12 @@ import { loadCharacterContextRange } from './chatContextRange';
 import { ChatPrompts } from './chatPrompts';
 import { cleanApiMessages, flattenImageContentParts } from './promptMessageCleanup';
 import { getFlowNarrativeKey, isScheduleFeatureOn } from './scheduleFeature';
+import { resolveWorldbookEntries } from './worldbook';
+import {
+    buildScheduleFingerprint,
+    buildSchedulePlan,
+    formatSchedulePlanPrompt,
+} from './schedulePlanner';
 
 export { getFlowNarrativeKey, isScheduleFeatureOn } from './scheduleFeature';
 
@@ -72,9 +78,11 @@ function buildLifestylePrompt(
     today: string,
     dayOfWeek: string,
     chatHistoryBlock: string,
+    schedulePlanBlock: string,
 ): string {
     return `${baseContext}
 ${chatHistoryBlock}
+${schedulePlanBlock}
 ## Task: 生成角色的今日日程 + 意识流独白
 
 今天是 ${today} (星期${dayOfWeek})。用户名字是「${user.name}」。
@@ -180,9 +188,11 @@ function buildMindfulPrompt(
     today: string,
     dayOfWeek: string,
     chatHistoryBlock: string,
+    schedulePlanBlock: string,
 ): string {
     return `${baseContext}
 ${chatHistoryBlock}
+${schedulePlanBlock}
 ## Task: 生成角色的今日思绪 + 意识流独白
 
 今天是 ${today} (星期${dayOfWeek})。用户名字是「${user.name}」。
@@ -259,11 +269,14 @@ export async function generateDailyScheduleForChar(
     const now = getScheduleWallClock(char, baseNow);
     const today = getScheduleDateKey(char, baseNow);
 
-    // Check if already exists
-    if (!forceRegenerate) {
-        const existing = await getDailyScheduleForChar(char, baseNow);
-        if (existing) return existing;
-    }
+    // 同一天默认复用事实；重抽时读取旧表，只递增 rerollIndex 让本地骰子真正换面。
+    const existing = await getDailyScheduleForChar(char, baseNow);
+    if (!forceRegenerate && existing) return existing;
+    const previousRerollIndex = existing?.planningMeta?.rerollIndex;
+    const previousReroll = Number.isFinite(previousRerollIndex) ? Number(previousRerollIndex) : 0;
+    const rerollIndex = existing
+        ? Math.max(0, Math.floor(previousReroll)) + 1
+        : 0;
 
     // Preserve cover image from previous schedules
     let coverImage: string | undefined;
@@ -290,14 +303,45 @@ export async function generateDailyScheduleForChar(
         console.warn('[Schedule] memory palace inject failed (non-fatal):', e);
     }
 
+    // 世界书只解析一次：概率条目、关键词条目和普通聊天 / 日程看到的激活结果必须一致。
+    const resolvedWorldbookEntries = resolveWorldbookEntries(
+        char.mountedWorldbooks || [],
+        historyMessages,
+        char.name,
+        userProfile.name,
+        'online',
+    );
+    const recentSchedules = await DB.getRecentDailySchedulesByCharId(char.id, 14).catch((error) => {
+        console.warn('[Schedule] load recent schedules failed; continuing without dedupe hints:', error);
+        return [] as DailySchedule[];
+    });
+    const schedulePlan = buildSchedulePlan({
+        char,
+        today,
+        rerollIndex,
+        recentSchedules,
+        worldbookEntries: resolvedWorldbookEntries.map(entry => ({
+            id: entry.book.id,
+            content: entry.content,
+        })),
+    });
+    const schedulePlanBlock = formatSchedulePlanPrompt(schedulePlan, char.scheduleStyle || 'lifestyle');
+
     // 含详细记忆，并让关键词世界书使用与私聊相同的消息窗口激活。
+    // 日程没有普通聊天的消息数组，所以位置 4 以“指定深度提醒”参考块加入；
+    // 不修改普通聊天的 at-depth 注入，也不把深度数值误当成激活条件。
     const baseContext = ContextBuilder.buildCoreContext(
         char,
         userProfile,
         true,
         undefined,
         undefined,
-        { worldbookMessages: historyMessages },
+        {
+            worldbookMessages: historyMessages,
+            worldbookMode: 'online',
+            resolvedWorldbookEntries,
+            includeAtDepthWorldbooks: true,
+        },
     );
 
     const chatHistoryBlock = formatChatHistoryForSchedule(historyMessages, char, userProfile, emojis);
@@ -306,8 +350,8 @@ export async function generateDailyScheduleForChar(
 
     const style = char.scheduleStyle || 'lifestyle';
     const prompt = style === 'mindful'
-        ? buildMindfulPrompt(baseContext, char, userProfile, today, dayOfWeek, chatHistoryBlock)
-        : buildLifestylePrompt(baseContext, char, userProfile, today, dayOfWeek, chatHistoryBlock);
+        ? buildMindfulPrompt(baseContext, char, userProfile, today, dayOfWeek, chatHistoryBlock, schedulePlanBlock)
+        : buildLifestylePrompt(baseContext, char, userProfile, today, dayOfWeek, chatHistoryBlock, schedulePlanBlock);
 
     try {
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -377,6 +421,19 @@ export async function generateDailyScheduleForChar(
             generatedAt: Date.now(),
             coverImage,
             flowNarrative,
+            planningMeta: {
+                schemaVersion: 1,
+                seed: schedulePlan.seed,
+                generationId: `schedule-${char.id}-${today}-${schedulePlan.rerollIndex}-${Date.now().toString(36)}`,
+                rerollIndex: schedulePlan.rerollIndex,
+                variationClass: schedulePlan.variationClass,
+                careerFocus: schedulePlan.careerFocus,
+                commercialActivityRequested: schedulePlan.commercialActivityRequested,
+                eventFingerprint: buildScheduleFingerprint(slots),
+                ...(schedulePlan.sourceWorldbookIds.length > 0
+                    ? { sourceWorldbookIds: schedulePlan.sourceWorldbookIds }
+                    : {}),
+            },
         };
 
         await DB.saveDailySchedule(schedule);
