@@ -148,6 +148,38 @@ export const isTaskCommentUsable = (value: unknown): value is string => {
         && isLikelyCompleteSentence(text);
 };
 
+const normalizeCommentForTemplateCheck = (value: string): string =>
+    value.replace(/[\s，。！？；：,.!?;:、]/g, '');
+
+const shortTitleForTemplateCheck = (value: string): string => {
+    const title = value.trim().replace(/[“”"']/g, '').replace(/\s+/g, ' ');
+    return [...title].slice(0, 18).join('');
+};
+
+/**
+ * Reject the old canned task copy even when it passes the sentence parser.
+ * One ordinary phrase is allowed in a longer, concrete line; combinations of
+ * template phrases or a short line echoing the task title are not.
+ */
+export const isTaskCommentTooGeneric = (value: unknown, taskTitle = ''): boolean => {
+    const text = extractTaskComment(value);
+    if (!text) return true;
+    const compact = normalizeCommentForTemplateCheck(text);
+    const title = normalizeCommentForTemplateCheck(shortTitleForTemplateCheck(taskTitle));
+    const templateMarkers = [
+        '我替你记着', '先记在这儿', '准备好了就去做', '等你做完了',
+        '回来告诉我', '回来跟我说', '辛苦你', '辛苦了', '先歇一会儿',
+        '先喘口气', '慢慢来', '任务完成', '完成确认', '应用提醒',
+    ];
+    const markerHits = templateMarkers.filter(marker => compact.includes(marker)).length;
+    const titleEcho = !!title && compact.includes(title);
+    return markerHits >= 2 || (markerHits >= 1 && (titleEcho || compact.length < 34));
+};
+
+/** A task comment is safe to show only after both format and style checks pass. */
+export const isTaskCommentDisplayable = (value: unknown, taskTitle = ''): value is string =>
+    isTaskCommentUsable(value) && !isTaskCommentTooGeneric(value, taskTitle);
+
 /**
  * Put the speaker in front of a persisted task sentence without duplicating a
  * prefix if an older provider response already included the role name.

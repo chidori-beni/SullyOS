@@ -13,6 +13,48 @@ export const taskDateKey = (task: Pick<Task, 'deadline' | 'createdAt'>): string 
     return `${year}-${month}-${day}`;
 };
 
+export interface CalendarDateGroup<T> {
+    date: string;
+    items: T[];
+}
+
+/**
+ * Keep the personal calendar's linear view deterministic: the date is the
+ * primary grouping key, while the existing task sorter decides the order
+ * inside each day. Completed tasks intentionally remain in their deadline
+ * group so checking one off does not make it jump to a separate archive.
+ */
+export const groupTasksByCalendarDate = (tasks: Task[]): CalendarDateGroup<Task>[] => {
+    const groups = new Map<string, Task[]>();
+    for (const task of tasks) {
+        const date = taskDateKey(task);
+        const items = groups.get(date) || [];
+        items.push(task);
+        groups.set(date, items);
+    }
+    return [...groups.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([date, items]) => ({ date, items: sortTasksForCalendar(items) }));
+};
+
+/** Group saved personal schedule records by their recorded date. */
+export const groupEventsByCalendarDate = (events: Anniversary[]): CalendarDateGroup<Anniversary>[] => {
+    const groups = new Map<string, Anniversary[]>();
+    for (const event of events) {
+        const items = groups.get(event.date) || [];
+        items.push(event);
+        groups.set(event.date, items);
+    }
+    return [...groups.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([date, items]) => ({
+            date,
+            items: [...items].sort((left, right) =>
+                (left.startTime || '23:59').localeCompare(right.startTime || '23:59')
+                || left.title.localeCompare(right.title)),
+        }));
+};
+
 export const sortTasksForCalendar = (tasks: Task[]): Task[] => [...tasks].sort((a, b) => {
     if (a.isCompleted !== b.isCompleted) return a.isCompleted ? 1 : -1;
     const dateOrder = taskDateKey(a).localeCompare(taskDateKey(b));
