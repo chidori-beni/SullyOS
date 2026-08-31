@@ -20,6 +20,7 @@ import {
   splitPerformanceCueAt,
 } from '../../utils/companionPerformanceCueEdit';
 import { groupLive2DActionsBySet } from '../../utils/live2dActionNaming';
+import { LIVE2D_AUTO_ACTION } from '../../utils/live2dPerformanceBinding';
 import type { AvatarTouchModelAction } from '../../utils/avatarTouch';
 
 /**
@@ -45,10 +46,12 @@ interface CompanionTouchCueEditorProps {
   live2dActive: boolean;
   /** 衣橱里不止一套模型时的错位提醒；为空则不显示。 */
   outfitWarning?: string;
-  /** 选中动作时要写回的字段（含跨衣橱用的语义键）。 */
-  modelActionPatch: (actionId: string) => Partial<AvatarPerformanceDirection>;
+  /** 当前衣橱的动作选择值；没有专属覆盖时可返回自动匹配标记。 */
+  modelActionSelection: (direction: AvatarPerformanceDirection) => string;
+  /** 选中动作时要写回的字段（含当前衣橱独立绑定）。 */
+  modelActionPatch: (actionId: string, direction: AvatarPerformanceDirection) => Partial<AvatarPerformanceDirection>;
   /** 这条动作在当前这套衣服里对不对得上；对得上返回 null。 */
-  modelActionStatus: (direction: { modelAction?: string; modelActionKey?: string }) => { tier: 'similar' | 'none'; text: string } | null;
+  modelActionStatus: (direction: AvatarPerformanceDirection) => { tier: 'similar' | 'none'; text: string } | null;
   disabled?: boolean;
   generating?: boolean;
   accentColor: string;
@@ -73,6 +76,7 @@ const CompanionTouchCueEditor: React.FC<CompanionTouchCueEditorProps> = ({
   faceLabels,
   live2dActive,
   outfitWarning = '',
+  modelActionSelection,
   modelActionPatch,
   modelActionStatus,
   disabled = false,
@@ -280,12 +284,13 @@ const CompanionTouchCueEditor: React.FC<CompanionTouchCueEditorProps> = ({
         <label className="mt-2 block text-[8px] text-white/48">
           {live2dActive ? 'Live2D 模型专属动作' : '自定义表情'}
           <select
-            value={editing.modelAction || ''}
+            value={modelActionSelection(editing)}
             disabled={disabled}
-            onChange={event => patch(modelActionPatch(event.target.value))}
+            onChange={event => patch(modelActionPatch(event.target.value, editing))}
             className="mt-1 w-full border border-white/12 bg-[#151021] px-2 py-2 text-[9px] text-white/82"
           >
-            <option value="">不指定</option>
+            <option value="">{live2dActive ? '本衣橱不播放' : '不指定'}</option>
+            {live2dActive && <option value={LIVE2D_AUTO_ACTION}>自动匹配当前衣橱</option>}
             {groupLive2DActionsBySet(modelActions).map(group => (
               <optgroup key={group.set || 'generic'} label={group.label}>
                 {group.actions.map(action => (

@@ -87,6 +87,30 @@ describe('Live2D companion presets', () => {
     expect(updated.reactions.head?.[0].ttsText).toContain('<#0.4#>');
     expect(updated.touchPresets?.[0].reactions.head?.[0].performance.gesture).toBe('wave');
   });
+
+  it('deep-clones per-outfit action bindings when saving a touch reaction', () => {
+    const saved = saveCompanionTouchPreset(emptySettings(), {
+      enabledZones: ['head'],
+      reactions: { head: [{ id: 'a', text: '别闹。', performance: performance('neutral', 'idle') }] },
+      voiceEnabled: false,
+    }, '摸头', { now: 10, id: 'touch-a' });
+    const bindings = {
+      'outfit-a': { modelAction: 'motion-9', modelActionKey: '坏笑#3#idle' },
+      'outfit-b': null,
+    };
+    const updated = updateCompanionTouchReaction(saved.settings, 'head', 'a', {
+      performance: {
+        ...performance('neutral', 'idle'),
+        modelActionByAvatarAssetId: bindings,
+      },
+    });
+
+    bindings['outfit-a'].modelAction = 'mutated-after-save';
+    expect(updated.reactions.head?.[0].performance.modelActionByAvatarAssetId?.['outfit-a'])
+      .toEqual({ modelAction: 'motion-9', modelActionKey: '坏笑#3#idle' });
+    expect(updated.touchPresets?.[0].reactions.head?.[0].performance.modelActionByAvatarAssetId?.['outfit-b'])
+      .toBeNull();
+  });
 });
 
 describe('merging generated zones into the active touch pack', () => {

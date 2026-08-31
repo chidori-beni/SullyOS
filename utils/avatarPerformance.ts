@@ -1,3 +1,5 @@
+import type { AvatarModelActionBinding } from '../types';
+
 export const AVATAR_EMOTIONS = ['neutral', 'happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised', 'calm', 'relaxed'] as const;
 export const AVATAR_GESTURES = ['idle', 'talk', 'nod', 'shake', 'tilt', 'explain', 'wave', 'shy', 'lean-in', 'lean-back'] as const;
 export const AVATAR_CAMERAS = ['close', 'medium', 'wide', 'push-in', 'pull-out'] as const;
@@ -52,6 +54,8 @@ export interface AvatarPerformanceDirection {
    * 兼容只支持单个自定义表情的 VRM 和旧版演出记录。
    */
   modelActions?: string[];
+  /** Manual action choices can be isolated per whole-model wardrobe asset. */
+  modelActionByAvatarAssetId?: Record<string, AvatarModelActionBinding | null>;
   /** Authored startup pose that temporarily replaces ambient autonomy. */
   precision?: AvatarPerformancePrecision;
 }

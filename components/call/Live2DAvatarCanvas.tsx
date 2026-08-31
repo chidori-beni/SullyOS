@@ -20,13 +20,14 @@ import {
 import {
   buildLive2DPerformanceMix,
   findLive2DActionsForPerformance,
+  getLive2DAIActions,
   getActiveLive2DWardrobeParameters,
   loadLive2DModelSource,
   type Live2DAction,
   type Live2DActionParameterValue,
   type Live2DAvatarConfig,
 } from '../../utils/live2dModelStore';
-import { resolveLive2DActionByKey } from '../../utils/live2dActionNaming';
+import { resolveLive2DPerformanceDirection } from '../../utils/live2dPerformanceBinding';
 import type { AvatarMotionState } from './VRMAvatarCanvas';
 import {
   avatarTouchZoneToastLabel,
@@ -234,29 +235,15 @@ const ensureMotionFade = async (model: Live2DModelLike, group?: string, index?: 
 /**
  * 把演出指令里的模型动作换算到「当前这套模型」。
  *
- * 动作 ID 是 `motion-N` 位置序号：同一角色换一套衣服，motion 数量和顺序都不同，
- * 沿用旧 ID 会静默播成另一个动作。所以保存时会带上语义键（情绪+变体+待机），
- * 这里按键在当前模型里重新找一条。
- *
- * 找不到就**清掉这个动作**——宁可只演通用手势，也不要演错一个动作而用户毫不知情。
- * 旧数据没有语义键时保持原样（编辑器会提示需要手动重选）。
+ * 解析优先读取按 `assetId` 保存的衣橱专属绑定；缺少专属绑定时才兼容旧的全局语义键
+ * / 位置 ID。找不到动作就清掉模型动作，宁可只演通用手势，也不要静默播错。
  */
 const resolveDirectionModelActions = (
   direction: AvatarPerformanceDirection | undefined,
   config: Live2DAvatarConfig,
 ): AvatarPerformanceDirection | undefined => {
-  if (!direction?.modelActionKey) return direction;
-  const candidates = config.actions.map(action => ({ id: action.id, rawName: action.name }));
-  const match = resolveLive2DActionByKey(direction.modelActionKey, candidates);
-  if (!match.id) {
-    if (!direction.modelAction && !direction.modelActions?.length) return direction;
-    const cleaned = { ...direction };
-    delete cleaned.modelAction;
-    delete cleaned.modelActions;
-    return cleaned;
-  }
-  if (direction.modelAction === match.id) return direction;
-  return { ...direction, modelAction: match.id, modelActions: [match.id] };
+  const candidates = getLive2DAIActions(config).map(action => ({ id: action.id, rawName: action.name }));
+  return resolveLive2DPerformanceDirection(direction, config.assetId, candidates)?.direction;
 };
 
 const playAction = async (model: Live2DModelLike, action: Live2DAction): Promise<void> => {

@@ -85,7 +85,13 @@ import MagazineCompanionChrome from './MagazineCompanionChrome';
 import CardbookCompanionChrome from './CardbookCompanionChrome';
 import IdolCompanionChrome from './IdolCompanionChrome';
 import CompanionWardrobeDrawer from './CompanionWardrobeDrawer';
-import { groupLive2DActionsBySet, live2dActionDisplayName, live2dActionMatchKey, live2dActionSetName, resolveLive2DActionByKey } from '../../utils/live2dActionNaming';
+import { groupLive2DActionsBySet, live2dActionDisplayName, live2dActionMatchKey, live2dActionSetName } from '../../utils/live2dActionNaming';
+import {
+  LIVE2D_AUTO_ACTION,
+  patchLive2DPerformanceAction,
+  resolveLive2DPerformanceDirection,
+  selectLive2DPerformanceAction,
+} from '../../utils/live2dPerformanceBinding';
 import CompanionTouchCueEditor from './CompanionTouchCueEditor';
 import {
   MAX_PERFORMANCE_CUES,
@@ -1034,34 +1040,48 @@ const CompanionHome: React.FC = () => {
   // Live2D 舞台只读 faces / gesture，emotion 在那条路径上没有映射。
   const live2dCompanionActive = !staticCompanionActive && character?.videoAvatar?.format === 'live2d';
   // 动作 ID 是 `motion-N` 位置序号，不是名字。两套衣服的 motion 数量和顺序都不同，
-  // 同一个 ID 换套衣服就指向另一个动作——不是不播，是静默播错。衣橱里不止一套时要提醒。
+  // 因此真正保存时要走下面的 assetId 绑定；衣橱里不止一套时把自动/手动边界说清楚。
   const multipleLive2DOutfits = live2dCompanionActive
     && (character?.videoAvatarWardrobe || []).filter(item => item.format === 'live2d').length > 0;
   const outfitActionCandidates = modelActions.map(action => ({ id: action.id, rawName: action.rawName || action.name }));
-  /** 选中某个动作时要写回的字段：ID 给当前这套用，语义键给换衣服后重新解析用。 */
-  const modelActionPatch = (actionId: string) => {
-    if (!actionId) return { modelAction: undefined, modelActionKey: undefined, modelActions: [] };
-    const picked = outfitActionCandidates.find(item => item.id === actionId);
-    return {
-      modelAction: actionId,
-      modelActionKey: picked ? live2dActionMatchKey(picked.rawName) : undefined,
-      modelActions: [actionId],
-    };
-  };
+  const currentLive2DAssetId = live2dCompanionActive ? character?.videoAvatar?.assetId : undefined;
+  /** 当前下拉框显示的是当前衣橱的独立绑定；缺少绑定时显示旧字段的自动匹配。 */
+  const modelActionSelection = (direction: AvatarPerformanceDirection): string => (
+    selectLive2DPerformanceAction(direction, currentLive2DAssetId, outfitActionCandidates)
+  );
+  /** 选中动作只写当前整套模型的 assetId，不覆盖其它衣橱或旧的全局回退值。 */
+  const modelActionPatch = (
+    actionId: string,
+    direction: AvatarPerformanceDirection = DEFAULT_AVATAR_PERFORMANCE,
+  ): Partial<AvatarPerformanceDirection> => patchLive2DPerformanceAction(
+    direction,
+    currentLive2DAssetId,
+    actionId,
+    outfitActionCandidates,
+  );
   /** 这条保存下来的动作，在当前这套衣服里还找不找得到。 */
-  const modelActionStatus = (direction: { modelAction?: string; modelActionKey?: string }) => {
-    if (!live2dCompanionActive || !direction.modelAction) return null;
-    if (!direction.modelActionKey) {
-      return outfitActionCandidates.some(item => item.id === direction.modelAction)
-        ? null
-        : { tier: 'none' as const, text: '这条动作是旧数据（没有记录动作名），换过衣服的话可能对不上，建议重新选一次。' };
+  const modelActionStatus = (direction: AvatarPerformanceDirection) => {
+    if (!live2dCompanionActive) return null;
+    const resolution = resolveLive2DPerformanceDirection(
+      direction,
+      currentLive2DAssetId,
+      outfitActionCandidates,
+    );
+    if (!resolution) return null;
+    if (resolution.source === 'avatar-binding-none') {
+      return { tier: 'none' as const, text: '当前衣橱保存过专属动作，但这套模型里找不到它，播放时会跳过（只演通用手势）。请在上面重新选一个。' };
     }
-    const match = resolveLive2DActionByKey(direction.modelActionKey, outfitActionCandidates);
-    if (match.tier === 'exact') return null;
-    if (match.tier === 'similar') {
-      return { tier: 'similar' as const, text: `这套衣服里没有完全一样的，已自动改用最接近的「${live2dActionDisplayName(match.rawName)}」。想换别的就在上面重选。` };
+    if (resolution.source === 'avatar-key-similar' || resolution.source === 'legacy-key-similar') {
+      const name = resolution.matchedRawName ? `「${live2dActionDisplayName(resolution.matchedRawName)}」` : '最接近的动作';
+      return { tier: 'similar' as const, text: `这套衣服里没有完全一样的，已自动改用${name}。想换别的就在上面重选。` };
     }
-    return { tier: 'none' as const, text: '这套衣服里没有这个动作，播放时会跳过（只演通用手势）。请在上面重新选一个——纯手动，不会调用 API。' };
+    if (resolution.source === 'legacy-key-none') {
+      return { tier: 'none' as const, text: '这套衣服里没有旧记录对应的动作，播放时会跳过（只演通用手势）。请为当前衣橱重新选一个。' };
+    }
+    if (resolution.source === 'legacy-id' && multipleLive2DOutfits) {
+      return { tier: 'none' as const, text: '这条是旧数据，只保存了位置 ID，暂时无法确认是不是当前衣橱的同一个动作。请重新选一次，之后会只绑定当前衣橱。' };
+    }
+    return null;
   };
   /**
    * 动作导演 / 反馈包生成器返回的是白名单里的 ID。补上语义键，
@@ -1073,7 +1093,7 @@ const CompanionHome: React.FC = () => {
     return picked ? { ...direction, modelActionKey: live2dActionMatchKey(picked.rawName) } : direction;
   };
   const modelActionOutfitWarning = multipleLive2DOutfits
-    ? '这个角色的衣橱里不止一套模型。模型专属动作按位置编号保存，换一套衣服后同一条会指向那套里的另一个动作——每套衣服的专属动作需要各自重选。台词、微表情、镜头、逐拍编排都是通用的。'
+    ? '这个角色有多套 Live2D 模型。你在这里选的专属动作会按当前衣橱单独保存；没有单独指定的衣橱会按动作语义自动匹配，找不到时跳过。'
     : '';
   const wardrobeActions = useMemo(
     () => !staticCompanionActive && character?.videoAvatar?.format === 'live2d' ? getLive2DWardrobeActions(character.videoAvatar) : [],
@@ -1135,6 +1155,19 @@ const CompanionHome: React.FC = () => {
     if (!character) return;
     const patch = selectCompanionModelOutfit(character, assetId);
     if (!patch) return;
+    // The Live2D canvas is remounted for a new asset. Do not let a pending cue/audio
+    // from the previous outfit arrive after that switch and briefly play stale motion.
+    clearCompanionPerformanceCues();
+    if (settleTimerRef.current !== null) {
+      window.clearTimeout(settleTimerRef.current);
+      settleTimerRef.current = null;
+    }
+    touchVoiceNonceRef.current = Date.now();
+    stopTouchVoice();
+    setLine(null);
+    setPerformance(DEFAULT_AVATAR_PERFORMANCE);
+    setMotionState('idle');
+    setStartupHeadLocked(false);
     closeWardrobe();
     setWardrobeTrigger(null);
     updateCharacter(character.id, {
@@ -3796,12 +3829,13 @@ const CompanionHome: React.FC = () => {
                   <label className="mt-3 block text-[8px] text-white/46">
                     模型专属动作（可选）
                     <select
-                      value={startupEditorPerformance.modelAction || ''}
+                      value={modelActionSelection(startupEditorPerformance)}
                       disabled={settingsGenerating}
-                      onChange={event => patchStartupPerformance(modelActionPatch(event.target.value))}
+                      onChange={event => patchStartupPerformance(modelActionPatch(event.target.value, startupEditorPerformance))}
                       className="mt-1 w-full border border-white/12 bg-[#151021] px-2 py-2 text-[9px] text-white/82 outline-none"
                     >
-                      <option value="">不指定</option>
+                      <option value="">{live2dCompanionActive ? '本衣橱不播放' : '不指定'}</option>
+                      {live2dCompanionActive && <option value={LIVE2D_AUTO_ACTION}>自动匹配当前衣橱</option>}
                       {groupLive2DActionsBySet(modelActions).map(group => (
                         <optgroup key={group.set || 'generic'} label={group.label}>
                           {group.actions.map(action => (
@@ -3819,9 +3853,11 @@ const CompanionHome: React.FC = () => {
                     ? <div className="mt-1 text-[7px] leading-relaxed text-white/34">{modelActionOutfitWarning}</div>
                     : null;
                 })()}
-                {live2dCompanionActive && startupEditorPerformance.modelAction && (
+                {live2dCompanionActive
+                  && modelActionSelection(startupEditorPerformance) !== ''
+                  && modelActionSelection(startupEditorPerformance) !== LIVE2D_AUTO_ACTION && (
                   <div className="mt-1 text-[7px] leading-relaxed text-white/34">
-                    模型专属动作是一整套录好的表演，播放期间脸也由它驱动，上面的微表情多半会被盖住看不出来（不是不生效）。想让微表情说了算，把这里改回「不指定」。
+                    模型专属动作是一整套录好的表演，播放期间脸也由它驱动，上面的微表情多半会被盖住看不出来（不是不生效）。想让微表情说了算，把这里改回「本衣橱不播放」。
                   </div>
                 )}
 
@@ -4244,7 +4280,10 @@ const CompanionHome: React.FC = () => {
                                 // motion 文件会逐帧覆写整张脸，微表情叠加在它之上大多看不出来。
                                 // 但这只是"多半看不见"，不是"不生效"——禁用输入框既拦不住动作导演
                                 // 塞进来的 faces，又逼用户先取消动作才能改表情。所以只提示，不禁用。
-                                const alsoRunsModelAction = live2dCompanionActive && Boolean(reaction.performance.modelAction);
+                                const selectedModelAction = modelActionSelection(reaction.performance);
+                                const alsoRunsModelAction = live2dCompanionActive
+                                  && selectedModelAction !== ''
+                                  && selectedModelAction !== LIVE2D_AUTO_ACTION;
                                 const selectedFaces = reaction.performance.faces || [];
                                 // 有逐拍编排时，播放走的是 cues[0].direction，这一整组「整句姿势」
                                 // 控件对画面**完全没有作用**，只会和下面的逐拍控件看起来重复一遍。
@@ -4334,14 +4373,15 @@ const CompanionHome: React.FC = () => {
                                       <label className="mt-2 block text-[8px] text-white/48">
                                         {live2dCompanionActive ? 'Live2D 模型专属动作' : '自定义表情'}
                                         <select
-                                          value={reaction.performance.modelAction || ''}
+                                          value={selectedModelAction}
                                           disabled={settingsGenerating}
                                           onChange={event => patchSavedTouchReaction(zone, reaction.id, {
-                                            performance: { ...reaction.performance, ...modelActionPatch(event.target.value) },
+                                            performance: { ...reaction.performance, ...modelActionPatch(event.target.value, reaction.performance) },
                                           })}
                                           className="mt-1 w-full border border-white/12 bg-[#151021] px-2 py-2 text-[9px] text-white/82"
                                         >
-                                          <option value="">不指定</option>
+                                          <option value="">{live2dCompanionActive ? '本衣橱不播放' : '不指定'}</option>
+                                          {live2dCompanionActive && <option value={LIVE2D_AUTO_ACTION}>自动匹配当前衣橱</option>}
                                           {groupLive2DActionsBySet(modelActions).map(group => (
                                             <optgroup key={group.set || 'generic'} label={group.label}>
                                               {group.actions.map(action => (
@@ -4393,6 +4433,7 @@ const CompanionHome: React.FC = () => {
                                   generating={touchCueGeneratingId === reaction.id}
                                   accentColor={uiTint}
                                   outfitWarning={modelActionOutfitWarning}
+                                  modelActionSelection={modelActionSelection}
                                   modelActionPatch={modelActionPatch}
                                   modelActionStatus={modelActionStatus}
                                   position={touchCuePosition}

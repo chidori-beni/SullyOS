@@ -2584,6 +2584,16 @@ export interface CompanionPerformancePrecision {
   settleMs?: number;
 }
 
+/** A model-specific Live2D/VRM action choice saved for one wardrobe asset. */
+export interface AvatarModelActionBinding {
+  /** Current-model action id; valid only inside the asset identified by the map key. */
+  modelAction?: string;
+  /** Semantic fallback for an imported/reordered action list. */
+  modelActionKey?: string;
+  /** Optional high-quality action layers; the first entry is the primary action. */
+  modelActions?: string[];
+}
+
 export interface CompanionTouchReaction {
   id: string;
   /** Displayed source line. Newly generated companion packs keep this in Simplified Chinese. */
@@ -2608,6 +2618,8 @@ export interface CompanionTouchReaction {
     /** 跨衣橱重新解析用的语义键，见 utils/live2dActionNaming。 */
     modelActionKey?: string;
     modelActions?: string[];
+    /** 按整套模型的 assetId 独立保存专属动作；缺省表示沿用通用/旧字段。 */
+    modelActionByAvatarAssetId?: Record<string, AvatarModelActionBinding | null>;
     precision?: CompanionPerformancePrecision;
   };
   /**
