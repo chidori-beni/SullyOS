@@ -123,6 +123,10 @@ export const ContextBuilder = {
             skipTimeAwareness?: boolean;
             /** 正有人在跟角色实时对话（私聊 / 见面）。见 buildTimeAwarenessBlock 同名字段。 */
             conversational?: boolean;
+            /** 本轮已经捕获的角色墙钟；传入后不再在这里重新读取当前时间。 */
+            wallClockNow?: Date;
+            /** 与 wallClockNow 配套的真实绝对时间，用于时长提示。 */
+            nowTimestamp?: number;
             /** Recent messages used to activate keyword-based worldbook entries. */
             worldbookMessages?: WorldbookScanMessage[];
             /** Phone/chat by default; Date and other face-to-face callers pass offline. */
@@ -345,6 +349,10 @@ export const ContextBuilder = {
              * 手册 / 小剧场这些生成器同样走 buildCoreContext，但那边并没有人在对话。
              */
             conversational?: boolean;
+            /** 本轮已经捕获的角色墙钟；传入后不再在这里重新读取当前时间。 */
+            wallClockNow?: Date;
+            /** 与 wallClockNow 配套的真实绝对时间，用于时长提示。 */
+            nowTimestamp?: number;
         },
     ): string => {
         // skipTimeAwareness：见面纯架空时由调用方传入，彻底抑制时间注入（修「线下时间感知」关掉后仍漏时间）。
@@ -352,7 +360,7 @@ export const ContextBuilder = {
         // 自定义时区（异国恋等）：开启后这里的"当前时间"按角色所在时区折算，并附时差提示，
         // 让查手机/人际关系/通话等所有直连 buildCoreContext 的路径都拿到正确的本地时间。
         const charTz = resolveCharTimeZone(char);
-        const now = nowInTimeZone(charTz);
+        const now = timeOptions?.wallClockNow ?? nowInTimeZone(charTz);
         const h = now.getHours();
         const dayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
         const timeOfDay =
@@ -372,7 +380,7 @@ export const ContextBuilder = {
         if (tzNote) context += `${tzNote.trim()}\n`;
         // 距离上次联系多久（统一口径）：传了 lastInteractionTs 才注入。
         // 让查手机/人际关系等无内联消息流的路径，也像聊天一样知道「用户多久没联系我了」。
-        const gapNote = interactionGapNote(timeOptions?.lastInteractionTs);
+        const gapNote = interactionGapNote(timeOptions?.lastInteractionTs, timeOptions?.nowTimestamp);
         if (gapNote) context += gapNote;
         context += `\n`;
         return context;
@@ -388,7 +396,13 @@ export const ContextBuilder = {
         options?: {
             includeDetailedMemories?: boolean;
             memoryPalaceContext?: string;
-            timeOptions?: { lastInteractionTs?: number; skipTimeAwareness?: boolean; conversational?: boolean };
+            timeOptions?: {
+                lastInteractionTs?: number;
+                skipTimeAwareness?: boolean;
+                conversational?: boolean;
+                wallClockNow?: Date;
+                nowTimestamp?: number;
+            };
         },
     ): string => {
         let context = ContextBuilder.buildTimeAwarenessBlock(char, options?.timeOptions);

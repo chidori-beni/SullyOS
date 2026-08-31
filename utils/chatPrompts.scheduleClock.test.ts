@@ -19,6 +19,7 @@ vi.mock('./dailySchedule', () => ({
 }));
 
 import { ChatPrompts } from './chatPrompts';
+import { createScheduleContextSnapshot } from './scheduleContext';
 
 const userProfile = { name: '小明' } as any;
 
@@ -55,5 +56,39 @@ describe('日程块的钟点跟着「时间感知」开关走', () => {
     it('关掉后也不教改日程——那条指令拿时段当定位符', async () => {
         const volatile = await buildVolatile(false);
         expect(volatile).not.toContain('CHANGE_SCHEDULE');
+    });
+
+    it('主入口传入快照时，时间块和日程块使用同一个角色墙钟', async () => {
+        const char = {
+            id: 'char-clock-snapshot',
+            name: '萧逸',
+            scheduleFeatureEnabled: true,
+            customTimezoneEnabled: true,
+            customTimezone: 'Asia/Shanghai',
+        } as any;
+        const schedule = {
+            id: 'char-clock-snapshot_2026-08-31',
+            charId: char.id,
+            date: '2026-08-31',
+            generatedAt: Date.now(),
+            slots: [
+                { startTime: '04:30', endTime: '09:00', activity: '补觉休息', busyLevel: 'sleep' },
+                { startTime: '09:00', endTime: '11:30', activity: '晨间抗G加练', busyLevel: 'busy' },
+            ],
+        } as any;
+        const scheduleContext = createScheduleContextSnapshot(
+            char,
+            schedule,
+            new Date('2026-08-31T00:15:00.000Z'),
+        );
+        const parts = await ChatPrompts.buildSystemPromptParts(
+            char, userProfile, [], [], [], [],
+            undefined, undefined, undefined, undefined, undefined, undefined,
+            { scheduleContext },
+        );
+
+        expect(parts.volatileState).toContain('现在是 2026年8月31日 周一 早晨 08:15');
+        expect(parts.volatileState).toContain('当前时段：04:30 你正在补觉休息');
+        expect(parts.volatileState).toContain('之后安排：09:00 晨间抗G加练');
     });
 });

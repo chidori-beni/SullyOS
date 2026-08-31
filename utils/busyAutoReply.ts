@@ -1,5 +1,6 @@
 import type { CharacterProfile, DailySchedule, Message, ScheduleSlot } from '../types';
 import { resolveScheduleSlots } from './scheduleInjection';
+import { createScheduleContextSnapshot, type ScheduleContextSnapshot } from './scheduleContext';
 
 export type ScheduleBusyLevel = 'free' | 'light' | 'busy' | 'sleep';
 
@@ -106,16 +107,24 @@ export const buildAutoReplyText = (
 
 export const decideBusyReply = (params: {
     char: CharacterProfile;
-    schedule: DailySchedule | null;
+    schedule?: DailySchedule | null;
     messages: readonly Message[];
-    now: Date;
+    now?: Date;
+    /** 同一轮已经解析好的角色时间/日程；传入后不再二次取时间或解析日程。 */
+    scheduleContext?: ScheduleContextSnapshot;
     roll?: number;
 }): BusyReplyDecision => {
-    const { char, schedule, messages, now } = params;
+    const { char, messages } = params;
+    const scheduleContext = params.scheduleContext
+        || (params.schedule
+            ? createScheduleContextSnapshot(char, params.schedule, params.now ?? new Date())
+            : undefined);
+    const schedule = scheduleContext?.schedule ?? params.schedule ?? null;
     if (char.busyAutoReplyEnabled !== true || !schedule) {
         return { mode: 'off', level: 'free', slot: null };
     }
-    const { current } = resolveScheduleSlots(schedule, now);
+    const current = scheduleContext?.current
+        ?? resolveScheduleSlots(schedule, params.now ?? new Date()).current;
     const level = normalizeBusyLevel(current);
     if (!current || level === 'free') return { mode: 'free', level: 'free', slot: current };
     if (level === 'light') return { mode: 'multitask', level, slot: current };
@@ -127,7 +136,11 @@ export const decideBusyReply = (params: {
 
     const signals = collectBusyReplySignals(messages);
     const chance = busyReplyChance(level, signals);
-    const roll = params.roll ?? stableChanceRoll(now, char.id, signals);
+    const roll = params.roll ?? stableChanceRoll(
+        scheduleContext?.instant ?? params.now ?? new Date(),
+        char.id,
+        signals,
+    );
     if (roll < chance) return { mode: 'brief-reply', level, slot: current, chance };
     return {
         mode: 'auto-reply',
@@ -140,13 +153,13 @@ export const decideBusyReply = (params: {
 
 export const buildBusyReplyPrompt = (decision: BusyReplyDecision): string => {
     if (decision.mode === 'multitask') {
-        return `\n[忙碌程度：可分心回复]\n你正在“${decision.slot.activity}”。你能看到手机并正常回应，但注意力并不完全在聊天上：继续回应对方刚才的话，不要另开需要长时间投入的新话题；可以自然带出身边的一点动静，但不要刻意缩短本来需要认真回应的内容。\n`;
+        return `\n[忙碌程度：可分心回复]\n本轮当前日程事实是：你正在“${decision.slot.activity}”。此前聊天里提到的起床、冲凉、健身或其他活动只代表当时；如果和这条当前日程冲突，不要把旧活动继续说成正在发生或刚刚结束。你能看到手机并正常回应，但注意力并不完全在聊天上：继续回应对方刚才的话，不要另开需要长时间投入的新话题；可以自然带出身边的一点动静，但不要刻意缩短本来需要认真回应的内容。\n`;
     }
     if (decision.mode === 'brief-reply') {
         const sleeping = decision.level === 'sleep';
         return sleeping
-            ? `\n[被消息叫醒]\n你本来正在“${decision.slot.activity}”，但这次还是迷迷糊糊看了手机。只回几个字到一句话，带着半梦半醒的断续感；只回应眼前这句话，不展开新话题，之后仍会继续休息。\n`
-            : `\n[忙里偷看一眼]\n你正在“${decision.slot.activity}”，本来没法看手机，但这次抽空扫了一眼。只发一条很短的回复（不超过一两句），像还得立刻回去继续手头的事；回应对方最要紧的内容，不展开新话题。\n`;
+            ? `\n[被消息叫醒]\n本轮当前日程事实是：你正在“${decision.slot.activity}”（睡眠）。历史里出现的“起床了、冲完凉了、刚健身完”等话只代表当时，不能覆盖当前时段；除非你在本轮明确改了日程，否则不要声称自己刚从与当前日程冲突的活动回来。你本来正在休息，但这次还是迷迷糊糊看了手机。只回几个字到一句话，带着半梦半醒的断续感；只回应眼前这句话，不展开新话题，之后仍会继续休息。\n`
+            : `\n[忙里偷看一眼]\n本轮当前日程事实是：你正在“${decision.slot.activity}”。历史中的活动只代表当时，不能覆盖当前时段；不要把已经结束的健身、冲凉或其他旧活动说成此刻仍在进行，也不要凭空声称刚从与当前日程冲突的活动回来。你本来没法看手机，但这次抽空扫了一眼。只发一条很短的回复（不超过一两句），像还得立刻回去继续手头的事；回应对方最要紧的内容，不展开新话题。\n`;
     }
     return '';
 };

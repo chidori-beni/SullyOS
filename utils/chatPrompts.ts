@@ -24,10 +24,11 @@ import { isAmsg2EnabledForChar } from './amsg2Tasks';
 import { getCharNameById } from './charNameRegistry';
 import { getLocalDateKey } from './localDate';
 import { getDailyScheduleForChar } from './dailySchedule';
+import { createScheduleContextSnapshot, type ScheduleContextSnapshot } from './scheduleContext';
 import { formatRelativeAge } from './groupChat/relativeTime';
 import { formatMessageReactionContext, stripMessageReactionTags } from './messageReactions';
 import { stripFaceToFacePhoneSourceTags } from './sanitize';
-import { buildAutoReplyCatchUpPrompt, buildBusyReplyPrompt, decideBusyReply } from './busyAutoReply';
+import { buildAutoReplyCatchUpPrompt, buildBusyReplyPrompt, decideBusyReply, type BusyReplyDecision } from './busyAutoReply';
 import { buildUserCalendarContext } from './calendarIntegration';
 import { buildXinshengContinuityBlock, buildXinshengInstruction, selectXinshengContinuity } from './xinsheng/xinshengPrompt';
 import { readXinshengHistory } from './xinsheng/xinshengStore';
@@ -191,6 +192,13 @@ export interface PromptBuildOptions {
     timelyByWorker?: boolean;
     /** 用户和角色仍在同一次线下见面中，但此刻通过手机互发消息。 */
     activeDateEncounter?: DateEncounterPresence;
+    /**
+     * 本轮已经捕获的角色时间/日程快照。主聊天入口传入后，提示词、忙碌判定和音乐
+     * 背景都消费同一份状态；其他调用方不传时仍由本函数用一次基准时刻构建。
+     */
+    scheduleContext?: ScheduleContextSnapshot;
+    /** 主聊天入口已完成的本轮 busy gate 结果；传入后不重复计算概率。 */
+    busyReplyDecision?: BusyReplyDecision;
 }
 
 export const ChatPrompts = {
@@ -338,6 +346,14 @@ export const ChatPrompts = {
         // 本地私有的易变段照常烤进去（worker 拿不到，而这一刻它们是新鲜的）。
         const timelyByWorker = promptOptions?.timelyByWorker === true;
         const activeMeeting = promptOptions?.activeDateEncounter?.status === 'active';
+        // 同一轮只捕获一次绝对时刻。若主聊天入口已经在 busy gate 前构造了快照，
+        // 这里直接复用，避免日程、时间块和音乐背景各自看到不同分钟。
+        const providedScheduleContext = promptOptions?.scheduleContext;
+        const scheduleInstant = providedScheduleContext?.instant ?? new Date();
+        const charTz = resolveCharTimeZone(char);
+        const charNow = providedScheduleContext?.wallClock
+            ?? nowInTimeZone(charTz, scheduleInstant);
+        const today = providedScheduleContext?.localDateKey ?? getLocalDateKey(charNow);
         // ── 分段计时（定位瓶颈用）──
         const perfT0 = performance.now();
         const timings: Record<string, number> = {};
@@ -369,17 +385,18 @@ export const ChatPrompts = {
             includeDetailedMemories: true,
             // conversational：私聊是真的有人在这个点跟角色说话，时间块才补那句语境框定
             // （见 ContextBuilder.buildTimeAwarenessBlock）。生成器类调用不给，默认就没有。
-            timeOptions: { skipTimeAwareness: forFirePack || timelyByWorker, conversational: true },
+            timeOptions: {
+                skipTimeAwareness: forFirePack || timelyByWorker,
+                conversational: true,
+                wallClockNow: charNow,
+                nowTimestamp: scheduleInstant.getTime(),
+            },
         });
 
         // ── 并发发起所有独立的异步取数（网络 + IndexedDB），下面按原顺序拼接 ──
         // 原来是 7 段串行 await，总耗时 = 各段之和；现在取 max。
         const config = realtimeConfig || defaultRealtimeConfig;
         // 自定义时区：日历日、当前日程与实时上下文全部按角色所在地折算。
-        const charTz = resolveCharTimeZone(char);
-        const charNow = nowInTimeZone(charTz);
-        const today = getLocalDateKey(charNow);
-
         // 1. 实时世界信息（天气/新闻/时间）
         //
         // fire_pack 整块不要：这一段里从时间、节日、天气到热搜全是打包那一刻的读数，
@@ -403,12 +420,13 @@ export const ChatPrompts = {
                     // 「当前真实时间」，那是这个开关本来要挡住的东西。
                     const realtimeContext = await RealtimeContextManager.buildFullContext(config, charTz, {
                         includeTime: char.timeAwarenessEnabled !== false,
+                        nowMs: scheduleInstant.getTime(),
                     });
                     return `\n${realtimeContext}\n`;
                 }
                 // 基础当前时间 + 时差提示已由 ContextBuilder.buildCoreContext 统一注入（受 timeAwarenessEnabled
                 // 控制，按角色自定义时区折算）；这里只在关闭天气/新闻时补一条"今日特殊节日"，不再重复注入时间/时差，避免双份。
-                const specialDates = RealtimeContextManager.checkSpecialDates(charTz);
+                const specialDates = RealtimeContextManager.checkSpecialDates(charTz, scheduleInstant.getTime());
                 if (specialDates.length > 0 && char.timeAwarenessEnabled !== false) {
                     return `\n### 【今日特殊】\n${specialDates.join('、')}\n`;
                 }
@@ -423,7 +441,9 @@ export const ChatPrompts = {
         //    总开关关闭时跳过查询与注入，确保不额外调用任何 LLM 依赖链
         const scheduleFeatureOn = isScheduleFeatureOn(char);
         const schedulePromise: Promise<DailySchedule | null> = scheduleFeatureOn
-            ? getDailyScheduleForChar(char).catch(e => {
+            ? (providedScheduleContext
+                ? Promise.resolve(providedScheduleContext.schedule)
+                : getDailyScheduleForChar(char, scheduleInstant)).catch(e => {
                 console.error('Failed to load daily schedule:', e);
                 return null;
             })
@@ -568,6 +588,10 @@ ${groupLogStr}\n`;
                 timed('lifeRecord', lifeRecordPromise),
                 timed('userCalendar', userCalendarPromise),
             ]);
+        const turnScheduleContext: ScheduleContextSnapshot | undefined = scheduleFeatureOn
+            ? (providedScheduleContext
+                ?? createScheduleContextSnapshot(char, schedule, scheduleInstant))
+            : undefined;
 
         // ── 拼接：易变的进 volatileState，稳定的进 baseSystemPrompt ──
         volatileState += realtimeText;
@@ -580,7 +604,7 @@ ${groupLogStr}\n`;
         //     日程本身照给——它有自己的总开关。
         if (schedule && !forFirePack) {
             try {
-                const scheduleContext = ContextBuilder.buildScheduleInjection(
+                const scheduleText = ContextBuilder.buildScheduleInjection(
                     schedule,
                     evolvedNarrative,
                     charNow,
@@ -588,14 +612,18 @@ ${groupLogStr}\n`;
                         includeFullDay: true,
                         includeChangeInstruction: true,
                         includeClock: char.timeAwarenessEnabled !== false,
+                        resolvedSlots: turnScheduleContext
+                            ? { current: turnScheduleContext.current, next: turnScheduleContext.next }
+                            : undefined,
                     },
                 );
-                if (scheduleContext) volatileState += `\n${scheduleContext}\n`;
-                const busyDecision = decideBusyReply({
+                if (scheduleText) volatileState += `\n${scheduleText}\n`;
+                const busyDecision = promptOptions?.busyReplyDecision ?? decideBusyReply({
                     char,
                     schedule,
                     messages: currentMsgs,
-                    now: charNow,
+                    now: scheduleInstant,
+                    scheduleContext: turnScheduleContext,
                 });
                 volatileState += buildBusyReplyPrompt(busyDecision);
                 if (busyDecision.mode === 'free' || busyDecision.mode === 'off') {
@@ -617,7 +645,9 @@ ${groupLogStr}\n`;
                 songId?: number; songName: string; artists: string; vibe?: string; lyricSnippet?: string[];
             } | null = null;
             try {
-                const cur = computeCurrentListening(char, schedule);
+                // computeCurrentListening 接收真实绝对时刻；不能把角色墙钟 pseudo-Date
+                // 再传进去，否则自定义时区会被重复折算一遍。
+                const cur = computeCurrentListening(char, schedule, scheduleInstant);
                 if (cur) {
                     charListening = { songId: cur.songId, songName: cur.songName, artists: cur.artists, vibe: cur.vibe };
                     // 拉歌词。优先用调用方传进来的 cfg；没传就从 localStorage 取

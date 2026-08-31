@@ -16,8 +16,8 @@ import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } f
 // import { evolveFlowNarrative } from '../utils/scheduleGenerator';
 import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import { getDailyScheduleForChar } from '../utils/dailySchedule';
-import { getScheduleWallClock } from '../utils/scheduleTime';
-import { decideBusyReply } from '../utils/busyAutoReply';
+import { createScheduleContextSnapshot, type ScheduleContextSnapshot } from '../utils/scheduleContext';
+import { decideBusyReply, type BusyReplyDecision } from '../utils/busyAutoReply';
 import type { DigestResult } from '../utils/memoryPalace';
 // 麦当劳: useChatAI 现在只读 McdMiniApp 当前快照注入 system prompt + 给 LLM 一个
 // UI 钩子工具 propose_cart_items。MCP 实际调用都在 McdMiniApp 组件内做, useChatAI
@@ -763,22 +763,32 @@ export const useChatAI = ({
         let recentMessagesForPrompt = currentMsgs;
         // 忙碌自动回复必须在 API 配置检查、typing 状态和任何模型请求之前完成。
         // 这样普通本地对话与即时云端对话共用同一入口，而且真正的自动回复不会消耗模型调用。
+        let scheduleContextForTurn: ScheduleContextSnapshot | undefined;
+        let busyDecisionForTurn: BusyReplyDecision | undefined;
         if (char.busyAutoReplyEnabled === true && isScheduleFeatureOn(char)) {
             try {
                 recentMessagesForPrompt = await DB.getRecentMessagesByCharId(char.id, 200);
-                const schedule = await getDailyScheduleForChar(char);
+                // 先捕获真实绝对时刻，再用它同时读取角色当地日程和解析当前 slot。
+                // 后续 prompt 继续使用这份快照，避免等待 DB/网络期间跨分钟后各链路分叉。
+                const scheduleInstant = new Date();
+                const schedule = await getDailyScheduleForChar(char, scheduleInstant);
+                const turnScheduleContext = createScheduleContextSnapshot(char, schedule, scheduleInstant);
+                scheduleContextForTurn = turnScheduleContext;
                 const busyDecision = decideBusyReply({
                     char,
                     schedule,
                     messages: recentMessagesForPrompt,
-                    now: getScheduleWallClock(char),
+                    now: scheduleInstant,
+                    scheduleContext: turnScheduleContext,
                 });
+                busyDecisionForTurn = busyDecision;
                 if (busyDecision.mode === 'auto-reply') {
                     await DB.saveMessage({
                         charId: char.id,
                         role: 'assistant',
                         type: 'text',
                         content: busyDecision.text,
+                        timestamp: turnScheduleContext.instant.getTime(),
                         metadata: {
                             busyAutoReply: {
                                 level: busyDecision.level,
@@ -786,6 +796,10 @@ export const useChatAI = ({
                                 startTime: busyDecision.slot.startTime,
                                 endTime: busyDecision.slot.endTime,
                                 chance: busyDecision.chance,
+                                observedAtMs: turnScheduleContext.instant.getTime(),
+                                timeZone: turnScheduleContext.timeZone,
+                                scheduleDateKey: turnScheduleContext.localDateKey,
+                                slotIndex: turnScheduleContext.currentSlotIndex,
                             },
                         },
                     });
@@ -1038,6 +1052,8 @@ export const useChatAI = ({
                 char: charForGen, userProfile, groups, emojis, categories,
                 historyMsgs: contextMsgs,
                 recentMsgsHint: recentMessagesForPrompt,
+                scheduleContext: scheduleContextForTurn,
+                busyReplyDecision: busyDecisionForTurn,
                 contextLimit: limit,
                 realtimeConfig,
                 innerState: skipEmotionInjection ? undefined : (evolvedNarrative || undefined),

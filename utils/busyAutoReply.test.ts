@@ -3,6 +3,7 @@ import type { CharacterProfile, DailySchedule, Message } from '../types';
 import {
     buildAutoReplyCatchUpPrompt,
     buildAutoReplyText,
+    buildBusyReplyPrompt,
     busyReplyChance,
     collectBusyReplySignals,
     decideBusyReply,
@@ -56,5 +57,21 @@ describe('忙碌时自动回复', () => {
         const auto = { ...user('x'), role: 'assistant' as const, metadata: { busyAutoReply: { level: 'busy' } } };
         expect(buildAutoReplyCatchUpPrompt([auto, user('你忙完了吗')])).toContain('并没有真正回答');
         expect(buildAutoReplyCatchUpPrompt([user('x')])).toBe('');
+    });
+
+    it('忙碌/睡眠偷看时把当前时段置于历史活动之前', () => {
+        const now = new Date('2026-08-25T10:30:00');
+        const decision = decideBusyReply({
+            char: char(),
+            schedule: schedule('sleep'),
+            messages: [user('起床了吗')],
+            now,
+            roll: 0,
+        });
+        expect(decision.mode).toBe('brief-reply');
+        const prompt = buildBusyReplyPrompt(decision);
+        expect(prompt).toContain('当前日程事实');
+        expect(prompt).toContain('历史里出现的“起床了、冲完凉了、刚健身完”等话只代表当时');
+        expect(prompt).toContain('之后仍会继续休息');
     });
 });

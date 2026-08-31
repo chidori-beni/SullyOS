@@ -350,8 +350,8 @@ export const RealtimeContextManager = {
     /**
      * 获取时间上下文
      */
-    getTimeContext: (tz?: string) => {
-        const now = nowInTimeZone(tz);
+    getTimeContext: (tz?: string, nowMs?: number) => {
+        const now = nowInTimeZone(tz, nowMs == null ? undefined : new Date(nowMs));
         const hour = now.getHours();
         const dayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
         const dayOfWeek = dayNames[now.getDay()];
@@ -399,7 +399,7 @@ export const RealtimeContextManager = {
      * tz 非空时按角色所在时区判「今天几号」——否则角色会跟着用户的日历过节：
      * 用户这边 2/14 早上，角色在纽约还是 13 号晚上，却被告知今天是情人节。
      */
-    checkSpecialDates: (tz?: string): string[] => checkSpecialDatesCore(tz),
+    checkSpecialDates: (tz?: string, nowMs?: number): string[] => checkSpecialDatesCore(tz, nowMs),
 
     /**
      * 生成天气建议
@@ -417,16 +417,16 @@ export const RealtimeContextManager = {
         tz: string | undefined,
         // includeTime=false：角色关掉了「时间感知」。天气/新闻还要，但当前时间和今日节日
         // 属于时间感知的范畴，这个开关关着就不该从这一段里漏出去。
-        opts: { includeTime: boolean },
+        opts: { includeTime: boolean; nowMs?: number },
     ): Promise<string> => {
         const includeTime = opts.includeTime;
 
         // 1. 时间与节日。tz 非空时按角色所在时区折算，两者同一个时区，否则同一段里
         //    日期和节日会打架。时差提示（tzAwarenessNote）统一由 ContextBuilder.buildCoreContext
         //    注入，这里不再追加，避免双份。
-        const time = includeTime ? RealtimeContextManager.getTimeContext(tz) : null;
+        const time = includeTime ? RealtimeContextManager.getTimeContext(tz, opts.nowMs) : null;
         const timeLine = time ? `${time.dateStr} ${time.dayOfWeek} ${time.timeOfDay} ${time.timeStr}` : undefined;
-        const specialDates = includeTime ? RealtimeContextManager.checkSpecialDates(tz) : [];
+        const specialDates = includeTime ? RealtimeContextManager.checkSpecialDates(tz, opts.nowMs) : [];
 
         // 2. 天气（有没有 OWM key 都能取：无 key 走 Open-Meteo）
         const weather = config.weatherEnabled ? await RealtimeContextManager.fetchWeather(config) : null;

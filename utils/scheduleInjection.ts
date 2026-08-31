@@ -37,6 +37,11 @@ export interface ScheduleInjectionOptions {
      * 关掉钟点时也不教改日程：那条指令拿时段当定位符，角色看不到时刻就写不出来。
      */
     includeClock?: boolean;
+    /**
+     * 调用方已经用本轮时间快照算好的当前/下一条，避免同一轮再次解析出另一份状态。
+     * 不传时保持原有的纯函数行为，由 `now` 现场解析。
+     */
+    resolvedSlots?: ResolvedScheduleSlots;
 }
 
 /** 意识流独白按一天三档取：早 / 午 / 晚。 */
@@ -50,10 +55,15 @@ export function getFlowNarrativeKey(hour: number): 'morning' | 'afternoon' | 'ev
 const PRE_DAWN_END_HOUR = 5;
 
 /** 当前时刻落在哪一条日程上，以及紧接着的下一条。都可能为 null（表还没开始 / 表是空的）。 */
+export interface ResolvedScheduleSlots {
+    current: ScheduleSlot | null;
+    next: ScheduleSlot | null;
+}
+
 export const resolveScheduleSlots = (
     schedule: RenderableSchedule | null,
     now: Date,
-): { current: ScheduleSlot | null; next: ScheduleSlot | null } => {
+): ResolvedScheduleSlots => {
     if (!schedule?.slots?.length) return { current: null, next: null };
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
     const toMinutes = (value?: string): number | null => {
@@ -94,7 +104,8 @@ export const buildScheduleInjection = (
     options: ScheduleInjectionOptions = {},
 ): string => {
     if (!schedule || !schedule.slots || schedule.slots.length === 0) return '';
-    const { current: currentSlot, next: nextSlot } = resolveScheduleSlots(schedule, now);
+    const { current: currentSlot, next: nextSlot } = options.resolvedSlots
+        ?? resolveScheduleSlots(schedule, now);
     const withClock = options.includeClock !== false;
     /** 报钟点时写「活动（07:00）」，不报时只留活动本身。 */
     const withTime = (text: string, startTime: string) => (withClock ? `${text}（${startTime}）` : text);
@@ -156,6 +167,10 @@ export const buildScheduleInjection = (
         out += `你今天的完整日程：\n${rows.join('\n')}\n`;
     }
     out += slotHeader;
+    if (currentSlot) {
+        out += '本轮现实状态以当前时段为准：历史聊天里的活动只代表当时；如果历史叙事与当前时段冲突，'
+            + '不要把旧活动继续说成正在发生或刚刚结束。实际安排发生变化时，先按真实情况改日程再继续承接。\n';
+    }
     if (narrative) {
         out += preamble + narrative + footnote;
     }

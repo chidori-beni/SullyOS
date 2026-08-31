@@ -18,9 +18,13 @@ describe('忙碌自动回复的聊天入口接线', () => {
 
         const branch = source.slice(decisionAt, apiCheckAt);
         expect(branch).toContain('await DB.getRecentMessagesByCharId(char.id, 200)');
+        expect(branch).toContain('const scheduleInstant = new Date();');
+        expect(branch).toContain('getDailyScheduleForChar(char, scheduleInstant)');
+        expect(branch).toContain('scheduleContextForTurn = turnScheduleContext;');
         expect(branch).toContain('messages: recentMessagesForPrompt');
         expect(branch).toContain("busyDecision.mode === 'auto-reply'");
         expect(branch).toContain('await DB.saveMessage({');
+        expect(branch).toContain('timestamp: turnScheduleContext.instant.getTime(),');
         expect(branch).toContain('busyAutoReply: {');
         expect(branch).toContain('saved auto reply but failed to refresh chat UI');
         expect(branch).toContain('auto reply posted but UI callback failed');
@@ -38,5 +42,7 @@ describe('忙碌自动回复的聊天入口接线', () => {
 
     it('把同一份最新消息提示传给普通模型，避免忙碌状态因旧快照丢失', () => {
         expect(source).toContain('recentMsgsHint: recentMessagesForPrompt');
+        expect(source).toContain('scheduleContext: scheduleContextForTurn');
+        expect(source).toContain('busyReplyDecision: busyDecisionForTurn');
     });
 });

@@ -38,6 +38,8 @@ import { cleanApiMessages, flattenImageContentParts } from './promptMessageClean
 import { materializeStickerVisionDescriptions, materializeVisionDescriptions } from './visionApi';
 import type { RecallEntryPoint, RecallTrace } from './memoryPalace/trace';
 import { DB } from './db';
+import type { ScheduleContextSnapshot } from './scheduleContext';
+import type { BusyReplyDecision } from './busyAutoReply';
 
 export { cleanApiMessages, flattenImageContentParts } from './promptMessageCleanup';
 
@@ -108,6 +110,10 @@ export interface BuildChatPayloadInput {
      * 出现两个钟、两份热搜、两套工具名。
      */
     timelyByWorker?: boolean;
+    /** 主聊天入口在 busy gate 前捕获的本轮角色时间/日程快照。 */
+    scheduleContext?: ScheduleContextSnapshot;
+    /** 主聊天入口的本轮 busy gate 结果，避免提示词层重复进行概率判定。 */
+    busyReplyDecision?: BusyReplyDecision;
 }
 
 export interface BuildChatPayloadResult {
@@ -384,11 +390,13 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         !!isListeningTogether,
         musicCfg,
         recentTrackSwitch,
-        (input.timelyByWorker || returningFromMode || activeDateEncounter) ? {
+        (input.timelyByWorker || returningFromMode || activeDateEncounter || input.scheduleContext || input.busyReplyDecision) ? {
             timelyByWorker: input.timelyByWorker === true,
             returningFromMode: activeDateEncounter ? undefined : (returningFromMode || undefined),
             abruptCallEnd: activeDateEncounter ? false : abruptCallEnd,
             activeDateEncounter,
+            scheduleContext: input.scheduleContext,
+            busyReplyDecision: input.busyReplyDecision,
         } : undefined,
     );
     let systemPrompt = parts.stable;
