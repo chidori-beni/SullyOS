@@ -495,6 +495,51 @@ describe('SEND_EMOJI 名字对不上', () => {
         expect(bubbles[0].content).toBe('blob:emoji-hug-shape');
     }, 20000);
 
+    it('兼容分号连接的画面描述，恢复为真实表情气泡', async () => {
+        const charId = `c-emoji-semicolon-vision-${Date.now()}`;
+        const ctx = makeCtx(charId, [], [{ name: '眨眼坏笑', url: 'blob:emoji-wink-smirk' }]);
+        ctx.instantRender = true;
+
+        await applyAssistantPostProcessing(
+            '[表情：眨眼坏笑；画面：灰黑短发动漫男生〇]',
+            ctx,
+        );
+
+        const bubbles = (await DB.getRecentMessagesByCharId(charId, 50)).filter(m => m.role === 'assistant');
+        expect(bubbles).toHaveLength(1);
+        expect(bubbles[0].type).toBe('emoji');
+        expect(bubbles[0].content).toBe('blob:emoji-wink-smirk');
+    }, 20000);
+
+    it('兼容 ASCII 分号和冒号连接的画面描述', async () => {
+        const charId = `c-emoji-ascii-semicolon-vision-${Date.now()}`;
+        const ctx = makeCtx(charId, [], [{ name: '眨眼坏笑', url: 'blob:emoji-wink-smirk-ascii' }]);
+        ctx.instantRender = true;
+
+        await applyAssistantPostProcessing(
+            '[表情: 眨眼坏笑; 画面: 灰黑短发动漫男生]',
+            ctx,
+        );
+
+        const bubbles = (await DB.getRecentMessagesByCharId(charId, 50)).filter(m => m.role === 'assistant');
+        expect(bubbles).toHaveLength(1);
+        expect(bubbles[0].type).toBe('emoji');
+        expect(bubbles[0].content).toBe('blob:emoji-wink-smirk-ascii');
+    }, 20000);
+
+    it('分号后不是识图字段时不把普通补充误吞成表情描述', async () => {
+        const charId = `c-emoji-semicolon-plain-text-${Date.now()}`;
+        const ctx = makeCtx(charId, [], [{ name: '眨眼坏笑', url: 'blob:emoji-wink-smirk-plain' }]);
+        ctx.instantRender = true;
+
+        await applyAssistantPostProcessing('[[SEND_EMOJI: 眨眼坏笑；今晚见]]', ctx);
+
+        const bubbles = (await DB.getRecentMessagesByCharId(charId, 50)).filter(m => m.role === 'assistant');
+        expect(bubbles).toHaveLength(1);
+        expect(bubbles[0].type).toBe('text');
+        expect(bubbles[0].content).toBe('[表情：眨眼坏笑；今晚见]');
+    }, 20000);
+
     it('完整表情名精确匹配优先，不截掉真实括号', async () => {
         const charId = `c-emoji-exact-parentheses-${Date.now()}`;
 

@@ -107,7 +107,7 @@ const resolveEmojiForSend = (
         const rest = suffix.trim();
         if (!rest) return false;
         if (/^[（(]\s*(?:画面|图片|图像|描述|内容|视觉)\s*[:：]\s*.+/u.test(rest)) return true;
-        if (/^[，,]\s*(?:画面|图片|图像|描述|内容|视觉|表情)\s*[:：]?\s*.+/u.test(rest)) return true;
+        if (/^[，,；;]\s*(?:画面|图片|图像|描述|内容|视觉|表情)\s*[:：]?\s*.+/u.test(rest)) return true;
         if (/^[，,]\s*.+(?:画面|图片|图像|描述|视觉|男孩|女孩|人物|表情包|形象).+/u.test(rest)) return true;
         // 兼容用户截图所述的近似形态：`名称（表情），……男孩的形象）`。
         if (/^[（(]\s*表情\s*[）)]\s*(?:[，,：:；;]\s*)?.+/u.test(rest)) return true;
