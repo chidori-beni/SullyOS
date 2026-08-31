@@ -17,8 +17,15 @@ const normalizeExerciseSummary = (raw: string): string => {
     return `[[LIFE:EXERCISE|${cleanArg(match[1])}|${cleanArg(match[2])}]]`;
 };
 
-/** 幂等：已经是 [[...]] 的规范标签不会再次包裹。 */
-export const normalizeAssistantActionFormatting = (raw: string): string => {
+/**
+ * 只规范化表情命令。
+ *
+ * Worker 的分段器也要用这一小段：如果等到客户端才把单括号表情修回
+ * `[[SEND_EMOJI: …]]`，Worker 生成的 push 数量和通知预览就会先与最终聊天界面
+ * 分叉。单独抽出而不是让 Worker 提前执行全部 action formatter，是为了不改变
+ * 其它副作用标签在 classifier 之前的既有处理顺序。
+ */
+export const normalizeAssistantEmojiFormatting = (raw: string): string => {
     let content = raw || '';
 
     // 表情：既修单括号机器语法，也修 UI / 通知里的人类可读摘要。
@@ -30,6 +37,13 @@ export const normalizeAssistantActionFormatting = (raw: string): string => {
         /(^|[^\[])\[\s*(?:表情|表情包)\s*[:：]\s*([^\]\r\n]+?)\s*\](?!\])/gm,
         (_all, prefix: string, name: string) => `${prefix}[[SEND_EMOJI: ${name.trim()}]]`,
     );
+
+    return content;
+};
+
+/** 幂等：已经是 [[...]] 的规范标签不会再次包裹。 */
+export const normalizeAssistantActionFormatting = (raw: string): string => {
+    let content = normalizeAssistantEmojiFormatting(raw);
 
     // 转账：只修明确的 ACTION token；口语版 [转账 520] 仍由 transferFormat 的
     // 容错解析器负责，方向和金额安全校验也仍在那里完成。

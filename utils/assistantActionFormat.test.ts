@@ -8,6 +8,11 @@ describe('normalizeAssistantActionFormatting', () => {
         expect(normalize('[[SEND_EMOJI: 开心]]')).toBe('[[SEND_EMOJI: 开心]]');
     });
 
+    it('保留表情清单误带进来的画面描述，交给表情库解析器处理', () => {
+        expect(normalize('[表情: 开心（画面：一个男孩在笑）]'))
+            .toBe('[[SEND_EMOJI: 开心（画面：一个男孩在笑）]]');
+    });
+
     it('修复转账 ACTION 的单括号，不碰普通转账叙述', () => {
         expect(normalize('[ACTION:TRANSFER|to=user|amount=520]'))
             .toBe('[[ACTION:TRANSFER|to=user|amount=520]]');

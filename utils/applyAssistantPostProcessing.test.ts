@@ -467,6 +467,82 @@ describe('SEND_EMOJI 名字对不上', () => {
         expect(bubbles[0].content).toBe('blob:emoji-lol');
     }, 20000);
 
+    it('表情名后误带识图描述时仍恢复为真实表情气泡', async () => {
+        const charId = `c-emoji-vision-suffix-${Date.now()}`;
+
+        await applyAssistantPostProcessing(
+            '[[SEND_EMOJI: 抱抱（画面：一个男孩张开双手）]]',
+            makeCtx(charId, [], [{ name: '抱抱', url: 'blob:emoji-hug' }]),
+        );
+
+        const bubbles = (await DB.getRecentMessagesByCharId(charId, 50)).filter(m => m.role === 'assistant');
+        expect(bubbles).toHaveLength(1);
+        expect(bubbles[0].type).toBe('emoji');
+        expect(bubbles[0].content).toBe('blob:emoji-hug');
+    }, 20000);
+
+    it('兼容单括号表情 + 表情说明的掉格式输出', async () => {
+        const charId = `c-emoji-description-shape-${Date.now()}`;
+
+        await applyAssistantPostProcessing(
+            '[表情: 抱抱（表情），一个男孩张开双手的形象）]',
+            makeCtx(charId, [], [{ name: '抱抱', url: 'blob:emoji-hug-shape' }]),
+        );
+
+        const bubbles = (await DB.getRecentMessagesByCharId(charId, 50)).filter(m => m.role === 'assistant');
+        expect(bubbles).toHaveLength(1);
+        expect(bubbles[0].type).toBe('emoji');
+        expect(bubbles[0].content).toBe('blob:emoji-hug-shape');
+    }, 20000);
+
+    it('完整表情名精确匹配优先，不截掉真实括号', async () => {
+        const charId = `c-emoji-exact-parentheses-${Date.now()}`;
+
+        await applyAssistantPostProcessing(
+            '[[SEND_EMOJI: 抱抱（表情）]]',
+            makeCtx(charId, [], [
+                { name: '抱抱（表情）', url: 'blob:emoji-exact-parentheses' },
+                { name: '抱抱', url: 'blob:emoji-shorter' },
+            ]),
+        );
+
+        const bubbles = (await DB.getRecentMessagesByCharId(charId, 50)).filter(m => m.role === 'assistant');
+        expect(bubbles).toHaveLength(1);
+        expect(bubbles[0].type).toBe('emoji');
+        expect(bubbles[0].content).toBe('blob:emoji-exact-parentheses');
+    }, 20000);
+
+    it('真实表情名带括号且后面又跟画面描述时，优先最长名称', async () => {
+        const charId = `c-emoji-longest-description-${Date.now()}`;
+
+        await applyAssistantPostProcessing(
+            '[[SEND_EMOJI: 抱抱（表情），一个男孩张开双手的形象）]]',
+            makeCtx(charId, [], [
+                { name: '抱抱（表情）', url: 'blob:emoji-longest-parentheses' },
+                { name: '抱抱', url: 'blob:emoji-shorter' },
+            ]),
+        );
+
+        const bubbles = (await DB.getRecentMessagesByCharId(charId, 50)).filter(m => m.role === 'assistant');
+        expect(bubbles).toHaveLength(1);
+        expect(bubbles[0].type).toBe('emoji');
+        expect(bubbles[0].content).toBe('blob:emoji-longest-parentheses');
+    }, 20000);
+
+    it('required reply wrapper 不会落成可见协议气泡', async () => {
+        const charId = `c-required-reply-wrapper-${Date.now()}`;
+
+        await applyAssistantPostProcessing(
+            '--- BEGIN REQUIRED REPLY PREFIX ---\n'
+            + '[自动回复]晨间抗G加练中，稍后回复\n'
+            + '--- END REQUIRED REPLY PREFIX ---',
+            makeCtx(charId, []),
+        );
+
+        const bubbles = (await DB.getRecentMessagesByCharId(charId, 50)).filter(m => m.role === 'assistant');
+        expect(bubbles.map(m => m.content)).toEqual(['[自动回复]晨间抗G加练中，稍后回复']);
+    }, 20000);
+
     it('模型误写“分类名: 表情名”时恢复为当前可见分类里的真实表情', async () => {
         const charId = `c-emoji-category-prefix-${Date.now()}`;
         const ctx = makeCtx(charId, [], [{

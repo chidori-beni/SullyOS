@@ -9,6 +9,7 @@ import {
   type PostProcessDirective,
   type XhsCaches,
 } from './applyAssistantPostProcessing';
+import { stripInternalAssistantProtocolMarkers } from './sanitize';
 import { noteCallBannerOpened } from './incomingCall';
 import { callLaunch } from './callLaunch';
 import { runPendingToolCalls } from './instantToolRunner';
@@ -1665,6 +1666,17 @@ const flushInboxToChatImpl = async () => {
       // 'active-msg-received' 事件里的 sentAt 维持原口径（发送时刻优先）：
       // 它只喂 toast / 未读预览，不进聊天记录，别跟落库口径搅在一起。
       const eventSentAt = message.sentAt || message.receivedAt || Date.now();
+      const cleanedBody = stripInternalAssistantProtocolMarkers(
+        typeof message.body === 'string' ? message.body : '',
+      );
+      const cleanedPreviewBody = stripInternalAssistantProtocolMarkers(
+        typeof message.previewBody === 'string' ? message.previewBody : '',
+      );
+      // 兼容旧 Worker / 已经排队的旧 inbox：协议标记不能因为后处理异常而从 raw
+      // fallback 绕过清洗直接落进聊天记录，也不能继续作为通知预览泄漏。
+      const processableMessage = cleanedBody === message.body
+        ? message
+        : { ...message, body: cleanedBody };
       activeMsgTrace('runtime-inbox-message', {
         sessionId: (message as any).sessionId || (message.metadata as any)?.sessionId,
         messageId: message.messageId,
@@ -1823,8 +1835,8 @@ const flushInboxToChatImpl = async () => {
 
       if (looksLikeAssistantText) {
         try {
-          await logInstantPushLlmExchange(message);
-          await processInboxMessageWithPostProcessing(message, persistTimestamp);
+          await logInstantPushLlmExchange(processableMessage);
+          await processInboxMessageWithPostProcessing(processableMessage, persistTimestamp);
           routed = true;
         } catch (postErr) {
           const attempts = (message.processAttempts ?? 0) + 1;
@@ -1865,7 +1877,7 @@ const flushInboxToChatImpl = async () => {
             charId: message.charId,
             role: 'assistant',
             type: 'text',
-            content: message.body,
+            content: cleanedBody,
             timestamp: persistTimestamp,
             metadata: {
               source: 'active_msg_2',
@@ -1948,7 +1960,7 @@ const flushInboxToChatImpl = async () => {
           sessionId: (message as any).sessionId || (message.metadata as any)?.sessionId,
           charId: message.charId,
           charName: message.charName,
-          body: message.previewBody || message.body,
+          body: cleanedPreviewBody || cleanedBody,
           avatarUrl: message.avatarUrl,
           sentAt: eventSentAt,
         },

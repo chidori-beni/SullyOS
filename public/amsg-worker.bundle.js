@@ -617,7 +617,7 @@ var init_mcpFireCore = __esm({
 // worker/amsg/src/index.ts
 import { DurableObject } from "cloudflare:workers";
 
-// node_modules/.pnpm/@rei-standard+amsg-server@2_c57770165a8a2256e4acaa4bae2ba803/node_modules/@rei-standard/amsg-server/dist/chunk-GN44PST5.mjs
+// ../../SullyOS/node_modules/.pnpm/@rei-standard+amsg-server@2_c57770165a8a2256e4acaa4bae2ba803/node_modules/@rei-standard/amsg-server/dist/chunk-GN44PST5.mjs
 var UPDATABLE_COLUMNS = /* @__PURE__ */ new Set([
   "user_id",
   "uuid",
@@ -636,7 +636,7 @@ var UPDATABLE_COLUMNS = /* @__PURE__ */ new Set([
 var TASK_DELIVERY_COLUMNS = "id, user_id, uuid, encrypted_payload, message_type, next_send_at, retry_after, status, retry_count";
 var TASK_DETAIL_COLUMNS = "id, user_id, uuid, encrypted_payload, message_type, next_send_at, status, retry_count, last_error, created_at, updated_at";
 
-// node_modules/.pnpm/@rei-standard+amsg-shared@0.4.0-next.8/node_modules/@rei-standard/amsg-shared/dist/index.mjs
+// ../../SullyOS/node_modules/.pnpm/@rei-standard+amsg-shared@0.4.0-next.8/node_modules/@rei-standard/amsg-shared/dist/index.mjs
 var TEXT_ENCODER = new TextEncoder();
 var TEXT_DECODER = new TextDecoder("utf-8", { fatal: false });
 function toUint8(buf) {
@@ -1735,7 +1735,7 @@ function stringifyDecisionForError(value) {
   }
 }
 
-// node_modules/.pnpm/@rei-standard+amsg-server@2_c57770165a8a2256e4acaa4bae2ba803/node_modules/@rei-standard/amsg-server/dist/chunk-3JEWYDM4.mjs
+// ../../SullyOS/node_modules/.pnpm/@rei-standard+amsg-server@2_c57770165a8a2256e4acaa4bae2ba803/node_modules/@rei-standard/amsg-server/dist/chunk-3JEWYDM4.mjs
 var DAY_MS = 24 * 60 * 60 * 1e3;
 var MAX_LISTED_SKIPPED_OCCURRENCES = 32;
 var MAX_ADJUST_STEPS = 32;
@@ -7731,7 +7731,7 @@ var resolveScheduleSlots = (schedule, now) => {
 };
 var buildScheduleInjection = (schedule, evolvedNarrative, now = /* @__PURE__ */ new Date(), options = {}) => {
   if (!schedule || !schedule.slots || schedule.slots.length === 0) return "";
-  const { current: currentSlot, next: nextSlot } = resolveScheduleSlots(schedule, now);
+  const { current: currentSlot, next: nextSlot } = options.resolvedSlots ?? resolveScheduleSlots(schedule, now);
   const withClock = options.includeClock !== false;
   const withTime = (text, startTime) => withClock ? `${text}\uFF08${startTime}\uFF09` : text;
   const isPreDawnCarryOver = !currentSlot && now.getHours() < PRE_DAWN_END_HOUR;
@@ -7777,6 +7777,9 @@ ${rows.join("\n")}
 `;
   }
   out += slotHeader;
+  if (currentSlot) {
+    out += "\u672C\u8F6E\u73B0\u5B9E\u72B6\u6001\u4EE5\u5F53\u524D\u65F6\u6BB5\u4E3A\u51C6\uFF1A\u5386\u53F2\u804A\u5929\u91CC\u7684\u6D3B\u52A8\u53EA\u4EE3\u8868\u5F53\u65F6\uFF1B\u5982\u679C\u5386\u53F2\u53D9\u4E8B\u4E0E\u5F53\u524D\u65F6\u6BB5\u51B2\u7A81\uFF0C\u4E0D\u8981\u628A\u65E7\u6D3B\u52A8\u7EE7\u7EED\u8BF4\u6210\u6B63\u5728\u53D1\u751F\u6216\u521A\u521A\u7ED3\u675F\u3002\u5B9E\u9645\u5B89\u6392\u53D1\u751F\u53D8\u5316\u65F6\uFF0C\u5148\u6309\u771F\u5B9E\u60C5\u51B5\u6539\u65E5\u7A0B\u518D\u7EE7\u7EED\u627F\u63A5\u3002\n";
+  }
   if (narrative) {
     out += preamble + narrative + footnote;
   }
@@ -12104,7 +12107,7 @@ var buildDuplicateToolMessage = (name) => [
 // worker/amsg/src/index.ts
 init_proxyWorker();
 
-// node_modules/.pnpm/@rei-standard+amsg-instant@0.11.0-next.6/node_modules/@rei-standard/amsg-instant/dist/index.mjs
+// ../../SullyOS/node_modules/.pnpm/@rei-standard+amsg-instant@0.11.0-next.6/node_modules/@rei-standard/amsg-instant/dist/index.mjs
 var PUSH_PAYLOAD_BYTE_ENCODER = new TextEncoder();
 function segmentTextWithProtectedBlocks(text, options) {
   if (!text) return [];
@@ -12185,8 +12188,31 @@ var SSE_ENCODER = new TextEncoder();
 var SSE_KEEPALIVE_BYTES = SSE_ENCODER.encode(": keepalive\n\n");
 var SSE_DONE_BYTES = SSE_ENCODER.encode("event: done\ndata: {}\n\n");
 
+// utils/assistantActionFormat.ts
+var normalizeAssistantEmojiFormatting = (raw) => {
+  let content = raw || "";
+  content = content.replace(
+    /(^|[^\[])\[\s*SEND_EMOJI\s*[:：]\s*([^\]\r\n]+?)\s*\](?!\])/gim,
+    (_all, prefix, name) => `${prefix}[[SEND_EMOJI: ${name.trim()}]]`
+  );
+  content = content.replace(
+    /(^|[^\[])\[\s*(?:表情|表情包)\s*[:：]\s*([^\]\r\n]+?)\s*\](?!\])/gm,
+    (_all, prefix, name) => `${prefix}[[SEND_EMOJI: ${name.trim()}]]`
+  );
+  return content;
+};
+
 // utils/sanitize.ts
 var stripLiteralBackslashN = (t) => t.replace(/\\n/g, "\n");
+var INTERNAL_ASSISTANT_PROTOCOL_MARKER_RE = /^[ \t]*---[ \t]*(?:BEGIN|END)[ \t]+REQUIRED[ \t]+REPLY[ \t]+PREFIX[ \t]*---[ \t]*\r?$/gim;
+var stripInternalAssistantProtocolMarkers = (text) => {
+  let matched = false;
+  const cleaned = text.replace(INTERNAL_ASSISTANT_PROTOCOL_MARKER_RE, () => {
+    matched = true;
+    return "";
+  });
+  return matched ? cleaned.trim() : cleaned;
+};
 var XINSHENG_LINE_RE = /^\s*\{\s*"t"\s*:\s*"xinsheng"/i;
 var findXinshengBraceEnd = (s, start) => {
   let depth = 0, inStr = false, esc = false;
@@ -12362,8 +12388,9 @@ var extractTranslationOriginal = (t) => {
   return result;
 };
 function sanitizeForNotification(text) {
-  let result = text;
-  result = stripLiteralBackslashN(result);
+  let result = stripLiteralBackslashN(text);
+  result = stripInternalAssistantProtocolMarkers(result);
+  result = normalizeAssistantEmojiFormatting(result);
   result = stripThinkBlocks(result);
   result = stripXinshengLines(result);
   result = replaceHtmlBlocks(result);
@@ -12391,6 +12418,8 @@ function sanitizeForNotification(text) {
 }
 function sanitizeIntoSegments(text) {
   let cleaned = stripLiteralBackslashN(text);
+  cleaned = stripInternalAssistantProtocolMarkers(cleaned);
+  cleaned = normalizeAssistantEmojiFormatting(cleaned);
   cleaned = stripThinkBlocks(cleaned);
   cleaned = normalizeVoiceTags(cleaned);
   cleaned = normalizeTranslationTags(cleaned);

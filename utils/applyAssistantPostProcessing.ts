@@ -29,7 +29,7 @@ import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, RealtimeC
 import { DB } from './db';
 import { buildSelfiePrompt, getCharacterAppearanceLooks, getImageGenConfig, isImageGenReady, runImageGeneration, runSelfieImageGeneration } from './novelaiImage';
 import { ChatParser, type FrozenMusicSong } from './chatParser';
-import { stripFaceToFacePhoneSourceTags } from './sanitize';
+import { stripFaceToFacePhoneSourceTags, stripInternalAssistantProtocolMarkers } from './sanitize';
 import { extractXinsheng } from './xinsheng/xinshengData';
 import { appendXinshengEntry } from './xinsheng/xinshengStore';
 import { newXinshengRoundId, XINSHENG_ROUND_META_KEY, backfillXinshengRoundIdForSession } from './xinsheng/xinshengRound';
@@ -67,7 +67,8 @@ import { persistMissedCall } from '../components/call/IncomingCallOverlay';
 
 /** 第一遍粗洗 — 剥 <think> / 时间戳 / 历史里漏出的 [聊天]/[通话]/[约会] / 表情包反向 tag */
 const normalizeAiContent = (raw: string): string => {
-    let cleaned = normalizeAssistantActionFormatting(raw || '');
+    let cleaned = stripInternalAssistantProtocolMarkers(raw || '');
+    cleaned = normalizeAssistantActionFormatting(cleaned);
     // Strip hidden chain-of-thought blocks: <think> / <thinking> / <thought>
     cleaned = cleaned.replace(/<(think|thinking|thought)>[\s\S]*?<\/\1>/gi, '');
     cleaned = cleaned.replace(/<(?:think|thinking|thought)>[\s\S]*$/gi, '');
@@ -95,7 +96,51 @@ const resolveEmojiForSend = (
     categories: EmojiCategory[] = [],
 ): Emoji | undefined => {
     const name = rawName.trim();
-    const exact = emojis.find(emoji => emoji.name === name);
+
+    /**
+     * buildEmojiContext 为了帮助识图，会把条目写成
+     * `名称（画面：描述）`；模型偶尔把这段人类可读说明一起塞回发送命令。
+     * 只在表情库里已有候选名称、且剩余部分明显是描述后缀时容错，避免任意
+     * startsWith 或编辑距离把相似名称误发成另一张图。
+     */
+    const isDescriptionSuffix = (suffix: string): boolean => {
+        const rest = suffix.trim();
+        if (!rest) return false;
+        if (/^[（(]\s*(?:画面|图片|图像|描述|内容|视觉)\s*[:：]\s*.+/u.test(rest)) return true;
+        if (/^[，,]\s*(?:画面|图片|图像|描述|内容|视觉|表情)\s*[:：]?\s*.+/u.test(rest)) return true;
+        if (/^[，,]\s*.+(?:画面|图片|图像|描述|视觉|男孩|女孩|人物|表情包|形象).+/u.test(rest)) return true;
+        // 兼容用户截图所述的近似形态：`名称（表情），……男孩的形象）`。
+        if (/^[（(]\s*表情\s*[）)]\s*(?:[，,：:；;]\s*)?.+/u.test(rest)) return true;
+        if (/^[（(][^）)]{2,}(?:画面|图片|图像|描述|视觉|男孩|女孩|人物|表情包)[^）)]*[）)]/u.test(rest)) return true;
+        return false;
+    };
+
+    const resolveFromCandidates = (
+        candidateName: string,
+        candidates: Emoji[],
+        requireUniqueExact = false,
+    ): Emoji | undefined => {
+        const exact = candidates.filter(emoji => emoji.name === candidateName);
+        if (exact.length > 0) {
+            if (!requireUniqueExact) return exact[0];
+            const uniqueExact = exact.filter((candidate, index) => exact.indexOf(candidate) === index);
+            return uniqueExact.length === 1 ? uniqueExact[0] : undefined;
+        }
+
+        const prefixed = candidates.filter(emoji => (
+            !!emoji.name
+            && candidateName.startsWith(emoji.name)
+            && isDescriptionSuffix(candidateName.slice(emoji.name.length))
+        ));
+        if (prefixed.length === 0) return undefined;
+
+        const longestLength = Math.max(...prefixed.map(emoji => emoji.name.length));
+        const longest = prefixed.filter(emoji => emoji.name.length === longestLength);
+        const unique = longest.filter((candidate, index) => longest.indexOf(candidate) === index);
+        return unique.length === 1 ? unique[0] : undefined;
+    };
+
+    const exact = resolveFromCandidates(name, emojis);
     if (exact) return exact;
 
     const separator = name.match(/^(.+?)\s*[:：]\s*(.+)$/u);
@@ -108,21 +153,20 @@ const resolveEmojiForSend = (
     const candidates: Emoji[] = [];
     for (const category of categories) {
         if (category.name !== categoryName) continue;
-        candidates.push(...emojis.filter(emoji => (
-            emoji.categoryId === category.id && emoji.name === emojiName
-        )));
+        candidates.push(...emojis.filter(emoji => emoji.categoryId === category.id));
     }
     // buildEmojiContext 给无分类表情使用“通用”，给找不到分类定义的残留使用“其他”。
     if (categoryName === '通用') {
-        candidates.push(...emojis.filter(emoji => !emoji.categoryId && emoji.name === emojiName));
+        candidates.push(...emojis.filter(emoji => !emoji.categoryId));
     } else if (categoryName === '其他') {
         candidates.push(...emojis.filter(emoji => (
-            !!emoji.categoryId && !categoryIds.has(emoji.categoryId) && emoji.name === emojiName
+            !!emoji.categoryId && !categoryIds.has(emoji.categoryId)
         )));
     }
 
-    const unique = candidates.filter((candidate, index) => candidates.indexOf(candidate) === index);
-    return unique.length === 1 ? unique[0] : undefined;
+    // Keep the historical safety rule for category-qualified names: if the
+    // same category/name maps to more than one image, do not guess.
+    return resolveFromCandidates(emojiName, candidates, true);
 };
 
 interface MimickedXhsShareBlock {

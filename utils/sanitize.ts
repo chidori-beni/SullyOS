@@ -16,11 +16,32 @@
  */
 
 import { segmentTextWithProtectedBlocks } from '@rei-standard/amsg-instant';
+import { normalizeAssistantEmojiFormatting } from './assistantActionFormat';
 
 // ─── 底层 helper (共享, 无歧义清理) ─────────────────────────────────────────
 
 /** `\\n` 字面 → 真实换行. 必须先跑, 否则后续 ^ 行锚定失效. */
 const stripLiteralBackslashN = (t: string): string => t.replace(/\\n/g, '\n');
+
+/**
+ * 上游偶尔会把“必须带上的回复前缀”协议边界原样写进 assistant content。
+ * 它们不是角色台词：只认完整独立行，避免误删正文中提到同名短语的内容；
+ * BEGIN/END 之间的实际回复（例如 `[自动回复]…`）必须保留。
+ */
+const INTERNAL_ASSISTANT_PROTOCOL_MARKER_RE =
+  /^[ \t]*---[ \t]*(?:BEGIN|END)[ \t]+REQUIRED[ \t]+REPLY[ \t]+PREFIX[ \t]*---[ \t]*\r?$/gim;
+
+export const stripInternalAssistantProtocolMarkers = (text: string): string => {
+  let matched = false;
+  const cleaned = text.replace(INTERNAL_ASSISTANT_PROTOCOL_MARKER_RE, () => {
+    matched = true;
+    return '';
+  });
+  // Protocol wrappers are often the whole payload. Converge the blank lines
+  // they leave behind, while preserving whitespace byte-for-byte when there
+  // was no marker to remove.
+  return matched ? cleaned.trim() : cleaned;
+};
 
 // ─── 心声 (xinsheng) ────────────────────────────────────────────────────────
 //
@@ -457,9 +478,12 @@ const extractTranslationOriginal = (t: string): string => {
  * 顺序很重要 — 见处理顺序注释.
  */
 export function sanitizeForNotification(text: string): string {
-  let result = text;
   // 1. 字面 \n 还原 — 否则后续 ^ 锚定失效
-  result = stripLiteralBackslashN(result);
+  let result = stripLiteralBackslashN(text);
+  // 上游 required-reply wrapper 是协议边界，不是可见台词。
+  result = stripInternalAssistantProtocolMarkers(result);
+  // 与 Worker 的 push 分段保持一致：单括号表情也先恢复成 canonical command。
+  result = normalizeAssistantEmojiFormatting(result);
   // 2. think 块最早剥 — 里面可能含其他 tag 影响后续匹配
   result = stripThinkBlocks(result);
   // 2.5. 心声行整行删 — 横幅是终态, 一坨 JSON 出现在锁屏上没有任何补救余地
@@ -511,9 +535,10 @@ export function sanitizeForBubble(
   text: string,
   options?: { keepCitations?: boolean },
 ): string {
-  let result = text;
+  let result = stripLiteralBackslashN(text);
+  result = stripInternalAssistantProtocolMarkers(result);
+  result = normalizeAssistantEmojiFormatting(result);
   // 1. 字面 \n 还原
-  result = stripLiteralBackslashN(result);
   // 1.5. 语音/翻译标签自愈 — 必须在 chunkText 之前 (下游原子块保护 /
   //      applyAssistantPostProcessing Step 8 双语拆泡都靠严格配对正则)
   result = normalizeVoiceTags(result);
@@ -598,6 +623,10 @@ interface ProtectedAtomSegment {
 export function sanitizeIntoSegments(text: string): Segment[] {
   // Phase 1: 全文 suppress
   let cleaned = stripLiteralBackslashN(text);
+  cleaned = stripInternalAssistantProtocolMarkers(cleaned);
+  // Worker 也要先把模型掉格式的单括号表情恢复成 canonical command，
+  // 否则 banner / push 分段会和客户端最终渲染的 emoji 气泡不一致。
+  cleaned = normalizeAssistantEmojiFormatting(cleaned);
   cleaned = stripThinkBlocks(cleaned);
   cleaned = normalizeVoiceTags(cleaned); // 语音标签自愈 — Phase 1.5 的配对保护靠它兜底
   cleaned = normalizeTranslationTags(cleaned); // 翻译标签自愈 — 同上, Phase 1.5 的 <翻译> 原子保护靠它命中

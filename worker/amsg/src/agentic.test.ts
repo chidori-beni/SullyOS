@@ -93,6 +93,39 @@ describe('processLLMRound — 纯文本 finish', () => {
     expect((decision.pushPayloads[1].notification as any).body).toBe('[表情：抱抱]');
   });
 
+  it('required reply wrapper 不进入 push，并保留其中的自动回复正文', () => {
+    const decision = processLLMRound(
+      createFireSessionState(),
+      '--- BEGIN REQUIRED REPLY PREFIX ---\n'
+        + '[自动回复]晨间抗G加练中，稍后回复\n'
+        + '--- END REQUIRED REPLY PREFIX ---',
+      build,
+    );
+    expect(decision.decision).toBe('finish');
+    if (decision.decision !== 'finish') return;
+    expect(decision.pushPayloads.map((payload) => payload.message)).toEqual([
+      '[自动回复]晨间抗G加练中，稍后回复',
+    ]);
+    expect((decision.pushPayloads[0].notification as any).body)
+      .toBe('[自动回复]晨间抗G加练中，稍后回复');
+  });
+
+  it('单括号表情误带画面描述时，Worker 仍保留 canonical 指令给客户端渲染', () => {
+    const decision = processLLMRound(
+      createFireSessionState(),
+      '我刚运动完。\n[表情: 抱抱（表情），一个男孩张开双手的形象）]',
+      build,
+    );
+    expect(decision.decision).toBe('finish');
+    if (decision.decision !== 'finish') return;
+    expect(decision.pushPayloads.map((payload) => payload.message)).toEqual([
+      '我刚运动完。',
+      '[[SEND_EMOJI: 抱抱（表情），一个男孩张开双手的形象）]]',
+    ]);
+    expect((decision.pushPayloads[1].notification as any).body)
+      .toBe('[表情：抱抱（表情），一个男孩张开双手的形象）]');
+  });
+
   it('空输出且无累积 → skip-push', () => {
     const decision = processLLMRound(createFireSessionState(), '', build);
     expect(decision.decision).toBe('skip-push');

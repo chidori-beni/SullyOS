@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeForBubble, sanitizeForNotification, sanitizeIntoSegments } from './sanitize';
+import {
+  sanitizeForBubble,
+  sanitizeForNotification,
+  sanitizeIntoSegments,
+  stripInternalAssistantProtocolMarkers,
+} from './sanitize';
 
 // ─── Oracle: 原版 chatParser.sanitize (来自 commit e97f9ed) ─────────────────
 // 用来跟 sanitizeForBubble 字节对齐校验. refactor 后改 sanitize.ts 就立刻能
@@ -93,6 +98,23 @@ describe('sanitizeForNotification', () => {
   it('A10 SEND_EMOJI 正向 + 反向 emoji tag', () => {
     expect(sanitizeForNotification('[Sully 发送了表情包: 笑] 然后 [[SEND_EMOJI: 哭]]'))
       .toBe('[表情：笑] 然后 [表情：哭]');
+  });
+
+  it('required reply wrapper 只剥边界行，保留自动回复正文', () => {
+    const input = '--- BEGIN REQUIRED REPLY PREFIX ---\n[自动回复]晨间抗G加练中，稍后回复\n--- END REQUIRED REPLY PREFIX ---';
+    expect(stripInternalAssistantProtocolMarkers(input)).toBe('[自动回复]晨间抗G加练中，稍后回复');
+    expect(sanitizeForNotification(input)).toBe('[自动回复]晨间抗G加练中，稍后回复');
+  });
+
+  it('required reply wrapper 兼容 CRLF 换行', () => {
+    const input = '--- BEGIN REQUIRED REPLY PREFIX ---\r\n正文\r\n--- END REQUIRED REPLY PREFIX ---';
+    expect(stripInternalAssistantProtocolMarkers(input)).toBe('正文');
+    expect(sanitizeForNotification(input)).toBe('正文');
+  });
+
+  it('正文中提到同名协议短语时不误删', () => {
+    const input = '我看到了 --- BEGIN REQUIRED REPLY PREFIX --- 这行说明。';
+    expect(stripInternalAssistantProtocolMarkers(input)).toBe(input);
   });
 
   it('A11 [html] 块屏蔽内部 markdown', () => {
@@ -317,6 +339,19 @@ describe('sanitizeIntoSegments', () => {
       { raw: '你看', sanitized: '你看' },
       { raw: '[[SEND_EMOJI: 笑]]', sanitized: '[表情：笑]' },
       { raw: '我没事的', sanitized: '我没事的' },
+    ]);
+  });
+
+  it('required reply wrapper 不产生额外 segment，单括号表情先恢复为 canonical', () => {
+    const segs = sanitizeIntoSegments(
+      '--- BEGIN REQUIRED REPLY PREFIX ---\n'
+      + '[自动回复]晨间抗G加练中，稍后回复\n'
+      + '[表情: 抱抱（画面：一个男孩张开双手）]\n'
+      + '--- END REQUIRED REPLY PREFIX ---',
+    );
+    expect(segs).toEqual([
+      { raw: '[自动回复]晨间抗G加练中，稍后回复', sanitized: '[自动回复]晨间抗G加练中，稍后回复' },
+      { raw: '[[SEND_EMOJI: 抱抱（画面：一个男孩张开双手）]]', sanitized: '[表情：抱抱（画面：一个男孩张开双手）]' },
     ]);
   });
 
