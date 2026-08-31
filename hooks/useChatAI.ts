@@ -43,7 +43,7 @@ import {
     findNewStreamPreviewHandoverIds,
 } from '../utils/streamPreview';
 import { ActiveMsgStore } from '../utils/activeMsgStore';
-import { markAmsgStateDirty, startAmsgChatPresence, stopAmsgChatPresence } from '../utils/amsgStateSync';
+import { flushAmsgState, markAmsgStateDirty, startAmsgChatPresence, stopAmsgChatPresence } from '../utils/amsgStateSync';
 import { getLastRealUserMessageAt } from '../utils/amsg2ExpireGuard';
 import { getPendingTasks, hasActiveAiTask, isAmsg2EnabledForChar } from '../utils/amsg2Tasks';
 import { buildAmsg2NoticesText, buildAmsg2TaskContextText, collectAmsg2TaskContext } from '../utils/amsg2TaskContext';
@@ -810,6 +810,11 @@ export const useChatAI = ({
                     } catch (refreshError) {
                         console.warn('[BusyAutoReply] saved auto reply but failed to refresh chat UI', refreshError);
                     }
+                    // 忙碌自动回复在普通 triggerAI 的 try/finally 之前就结束；如果这里只落本地
+                    // 消息而不主动同步，开启自然主动且未继续生成普通回复时，云端仍会停在旧上下文。
+                    // 这里已经完成用户消息 + 自动回复的最终落库，复用同一队列立即冲刷。
+                    markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+                    void flushAmsgState('busy-auto-reply');
                     triggerInFlightRef.current = false;
                     try {
                         onInstantPosted?.();

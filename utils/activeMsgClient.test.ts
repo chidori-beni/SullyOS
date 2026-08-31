@@ -1144,6 +1144,13 @@ describe('buildFirePack 的时区参照系与模板（①）', () => {
     expect(out.template).toContain('以下方「当前时刻补充」为准');
   });
 
+  it('主动消息必须阅读并承接最新上下文，但不退化成机械即时回复', async () => {
+    const out = await pack(baseChar());
+    expect(out.template).toContain('尤其不能忽略用户最新一条消息');
+    expect(out.template).toContain('不要机械复述');
+    expect(out.template).toContain('不要无依据地跳回已经结束的旧话题');
+  });
+
   // 回归守卫：历史消息 content 是数组时（视觉模型的 [{type:'text'},{type:'image_url'}] 格式），
   // 转写进【最近对话上下文】的那一行不能把整段 data:image/...;base64,... 塞进模板——真机一张图
   // 轻松几百 KB base64，排程任务的载荷直接被撑成体积炸弹，模型也用不着读 base64 才知道有图。

@@ -68,7 +68,7 @@ import { resolveActiveSound, playWhiteboxSound, unlockWhiteboxAudio, parseWhiteb
 import { normalizeTranslationLangLabel, isTranslationLangPreset } from '../utils/translationLang';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
 import { trackEvent, noteMessageSent } from '../utils/analytics';
-import { markAmsgStateDirty, markAmsgStateDirtyForAll } from '../utils/amsgStateSync';
+import { flushAmsgState, markAmsgStateDirty, markAmsgStateDirtyForAll } from '../utils/amsgStateSync';
 import { ActiveMsgClient } from '../utils/activeMsgClient';
 import { deriveNaturalProfile } from '../utils/naturalProactive';
 import { AMSG_INSTANT_CHAT_PENDING_EVENT, AMSG_INSTANT_CHAT_PENDING_LS_KEY, getInstantChatPending } from '../utils/amsgInstantChat';
@@ -450,6 +450,14 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         luckinChatRef,
         updateCharacter,
     });
+
+    // 这些入口只把用户事件落进本地消息库，不会经过 triggerAI 的收尾同步。
+    // 统一从这里把最终本地状态送进自然主动的 fire_pack；targetChar 允许转发卡同步到目标角色。
+    const syncAmsgAfterUserMessage = useCallback((targetChar = char) => {
+        if (!targetChar) return;
+        markAmsgStateDirty({ char: targetChar, userProfile, groups, realtimeConfig });
+        void flushAmsgState('user-message');
+    }, [char, userProfile, groups, realtimeConfig]);
 
     // --- Voice TTS for chat messages ---
     interface VoiceData { url: string; originalText: string; spokenText?: string; lang?: string; favorite?: boolean; }
@@ -1702,6 +1710,22 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             }
         }
 
+        // 用户消息已经写入本地 DB；自然主动的 fire_pack 不能只等普通 AI 回合收尾才更新。
+        // 特别是表情 / 图片，以及没有开启发送后自动回复的文字，后面可能根本没有 triggerAI
+        // 来替它打脏。卡片替换和原消息删除也已经在上面完成，故这里上传的是最终形态。
+        // 有发送后自动触发时，正常即时对话会由 sendInstantChatTurn 上传带 chat 段的权威包；
+        // 忙碌自动回复 / 本地降级路径分别在自己的收尾处同步，避免普通包与即时包乱序覆盖。
+        const instantCfg = loadInstantConfig();
+        const autoTriggerOnSend = type === 'text'
+            && isInstantConfigReady(instantCfg)
+            && instantCfg.autoTriggerOnSend;
+        const instantReplyPending = !!getInstantChatPending(char.id);
+        if (!autoTriggerOnSend || isTyping || instantReplyPending) {
+            syncAmsgAfterUserMessage();
+            // 消息提交后立即启动已有队列的冲刷；队列内部仍保留即时对话欠账保护、失败退避和
+            // localStorage 底账。这样切后台 / 关闭前至少已经开始提交，强杀时还能下次补传。
+        }
+
         await reloadMessages(visibleCountRef.current);
         setShowPanel('none');
 
@@ -1711,8 +1735,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         // 仅文本消息触发；image / xhs_card 等卡片消息不触发，与本地手动行为对齐。
         // autoTriggerOnSend gate：instant ready 也只在用户显式开启"发送后自动触发"时才自动回复，
         // 否则保留手动 ⚡（避免"启用 instant = 自动回复"的反直觉强绑定）。
-        const instantCfg = loadInstantConfig();
-        if (type === 'text' && isInstantConfigReady(instantCfg) && instantCfg.autoTriggerOnSend) {
+        if (autoTriggerOnSend) {
             // 上一轮还在跑时直接跳过：triggerAI 内部会因 isTyping=true 静默 reject，
             // 提前 guard 避免点亮"准备中"指示灯后没人来清，UI 灯被卡住。
             if (isTyping) return;
@@ -1737,8 +1760,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             content: action === 'accepted' ? '[已收款]' : '[已退回]',
             metadata: { receipt: action, amount: msg.metadata?.amount, ref: msg.id },
         });
+        syncAmsgAfterUserMessage();
         await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    }, [char, reloadMessages, syncAmsgAfterUserMessage]);
 
     // 用户点「生活记录」代记卡选择确认 / 否决：
     // 否决 → 记录标记 rejected（不再计入注入摘要）+ 回滚银行流水（expense）+
@@ -1862,6 +1886,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             });
         }
 
+        // 不论接受还是婉拒，邀约状态和用户回执都应成为下一次自然主动的最新上下文。
+        syncAmsgAfterUserMessage();
+
         const results = await Promise.all(acceptedEvents.map(scheduleAcceptedInviteCall));
         const scheduledCalls = results.filter(result => result === 'scheduled').length;
         const failedCalls = results.filter(result => result === 'failed').length;
@@ -1875,7 +1902,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             addToast(`已答应 ${acceptedEvents.length} 项邀约，并登记到日程`, 'success');
         }
         await reloadMessages(visibleCountRef.current);
-    }, [char, userProfile, groups, realtimeConfig, scheduleAcceptedInviteCall, addToast, reloadMessages]);
+    }, [char, userProfile, groups, realtimeConfig, scheduleAcceptedInviteCall, addToast, reloadMessages, syncAmsgAfterUserMessage]);
 
     // 顶栏 ⚡ 手动触发。instant 模式下给"上一条 assistant 之后的所有 user 消息"打上"准备中"
     // 三个点（从写入 DB 到 SSE POST 入队之间），由 onInstantPosted 清除 ——
@@ -2102,8 +2129,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             content,
             metadata: { mcdCardKind: 'cart', mcdCartItems: items },
         } as any);
+        syncAmsgAfterUserMessage();
         await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    }, [char, reloadMessages, syncAmsgAfterUserMessage]);
 
     // 用户在菜单卡某条单品上点 💭 → 立即把这条扔给角色让 ta 评价 (候选状态, 不进购物车)
     const handleMcdCandidate = useCallback(async (item: import('../components/chat/McdCard').McdCartItem) => {
@@ -2117,8 +2145,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             content,
             metadata: { mcdCardKind: 'candidate', mcdCandidate: item },
         } as any);
+        syncAmsgAfterUserMessage();
         await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    }, [char, reloadMessages, syncAmsgAfterUserMessage]);
 
     // 小程序内输入 → 直接保存 user 消息 + 立即触发 AI (主聊天 handleSendText 不自动触发,
     // 那是设计上的"手动 ⚡ 触发"流程, 但小程序里用户预期发完就有回复, 跳过那个步骤)。
@@ -2178,8 +2207,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 mcdOrderContext: ctx,
             },
         } as any);
+        syncAmsgAfterUserMessage();
         await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    }, [char, reloadMessages, syncAmsgAfterUserMessage]);
 
     // ─── 瑞幸 handlers (与麦当劳同构) ───
     const handleLuckinSendCart = useCallback(async (items: import('../components/chat/LuckinCard').LuckinCartItem[]) => {
@@ -2198,8 +2228,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             content,
             metadata: { luckinCardKind: 'cart', luckinCartItems: items },
         } as any);
+        syncAmsgAfterUserMessage();
         await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    }, [char, reloadMessages, syncAmsgAfterUserMessage]);
 
     const handleLuckinCandidate = useCallback(async (item: import('../components/chat/LuckinCard').LuckinCartItem) => {
         if (!char || !item) return;
@@ -2212,8 +2243,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             content,
             metadata: { luckinCardKind: 'candidate', luckinCandidate: item },
         } as any);
+        syncAmsgAfterUserMessage();
         await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    }, [char, reloadMessages, syncAmsgAfterUserMessage]);
 
     const handleLuckinMiniAppSend = useCallback(async (text: string) => {
         if (!char || !text.trim() || isTyping) return;
@@ -2265,8 +2297,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 luckinOrderContext: ctx,
             },
         } as any);
+        syncAmsgAfterUserMessage();
         await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    }, [char, reloadMessages, syncAmsgAfterUserMessage]);
 
     // --- Schedule Handlers ---
     const loadSchedule = async () => {
@@ -2364,6 +2397,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 exposed,
             },
         });
+        syncAmsgAfterUserMessage();
         // 关掉播放器 + 日程 modal，回到聊天看到卡片（但不强行触发回复）
         setTheaterSlotIdx(null);
         setModalType('none');
@@ -3350,6 +3384,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             }))
         };
 
+        const targetChar = characters.find(c => c.id === targetCharId);
         // Save forward card to target character's chat
         await DB.saveMessage({
             charId: targetCharId,
@@ -3357,9 +3392,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             type: 'chat_forward' as MessageType,
             content: JSON.stringify(forwardData),
         });
+        syncAmsgAfterUserMessage(targetChar);
 
         // Also save a copy in the current chat so the user can see what they forwarded
-        const targetChar = characters.find(c => c.id === targetCharId);
         if (char.id !== targetCharId) {
             await DB.saveMessage({
                 charId: char.id,
