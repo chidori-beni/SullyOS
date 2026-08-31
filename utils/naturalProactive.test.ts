@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildFallbackNaturalProfile, decideNaturalProactive, enrichNaturalProfileForCharacter, naturalCheckWindowMinutes, naturalSilenceIntensity, naturalUnansweredHardCap, NATURAL_BATCH_HARD_CAP, NATURAL_UNANSWERED_HARD_CAP, NATURAL_UNANSWERED_PENALTY_CAP, nextNaturalCheckAt } from './naturalProactive';
+import { buildFallbackNaturalProfile, buildNaturalReplyGuidance, decideNaturalProactive, enrichNaturalProfileForCharacter, naturalCheckWindowMinutes, naturalSilenceIntensity, naturalUnansweredHardCap, NATURAL_BATCH_HARD_CAP, NATURAL_PROACTIVE_TASK_INSTRUCTION, NATURAL_UNANSWERED_HARD_CAP, NATURAL_UNANSWERED_PENALTY_CAP, nextNaturalCheckAt } from './naturalProactive';
 import type { CharacterProfile, NaturalProactiveProfile } from '../types';
 
 const profile: NaturalProactiveProfile = {
@@ -30,6 +30,37 @@ const decide = (overrides: Partial<Parameters<typeof decideNaturalProactive>[0]>
   });
 
 describe('自然主动决策', () => {
+  it('自然回复预算不再固定两句，普通内容和积压内容按不同范围随机变化', () => {
+    const short = [0, 0.5, 0.999999].map((random01) =>
+      buildNaturalReplyGuidance(0, random01).softBubbleBudget);
+    expect(short).toEqual([1, 3, 4]);
+    expect(new Set(short).size).toBeGreaterThan(1);
+    expect(buildNaturalReplyGuidance(3, 0.999999).softBubbleBudget).toBe(6);
+    expect(buildNaturalReplyGuidance(3, 0.999999).prompt).toContain('3 条用户消息');
+    expect(buildNaturalReplyGuidance(3, 0.999999).prompt).toContain('优先回应重要/最新的问题');
+    expect(buildNaturalReplyGuidance(0, 0.5).prompt).not.toContain('优先 1 到 2 句');
+    expect(buildNaturalReplyGuidance(0, 0.5).prompt).not.toContain('一到三句');
+    expect(NATURAL_PROACTIVE_TASK_INSTRUCTION).toContain('回复长度由眼前真正需要说的内容决定');
+  });
+
+  it('积压较多时允许 15 到 18 个气泡，但预算是软参考且永不超过 20', () => {
+    const budgets = [0, 0.2, 0.4, 0.6, 0.8, 0.999999]
+      .map((random01) => buildNaturalReplyGuidance(15, random01).softBubbleBudget);
+    expect(budgets.every((value) => value >= 14 && value <= 18)).toBe(true);
+    expect(new Set(budgets).size).toBeGreaterThan(1);
+    const capped = buildNaturalReplyGuidance(25, 0.999999);
+    expect(capped.pendingUserMessageCount).toBe(20);
+    expect(capped.softBubbleBudget).toBe(20);
+    expect(capped.prompt).toContain('不是必须达到的数量');
+  });
+
+  it('自动回复后的积压会明确要求补回重点，并继续以当前日程为准', () => {
+    const prompt = buildNaturalReplyGuidance(4, 0.5, true).prompt;
+    expect(prompt).toContain('忙碌自动回复');
+    expect(prompt).toContain('尽量补回重点');
+    expect(prompt).toContain('当前日程仍以当前时刻补充为准');
+  });
+
   it('不同热络程度共用 20 条最终保险，但检查频率不同', () => {
     expect(naturalUnansweredHardCap('low')).toBe(NATURAL_UNANSWERED_HARD_CAP);
     expect(naturalUnansweredHardCap('normal')).toBe(NATURAL_UNANSWERED_HARD_CAP);

@@ -99,7 +99,12 @@ import { DB } from './db';
 import { copyWorkerBundleToClipboard } from './instantPushClient';
 import { collectMcpFireServers, getMcpUseNativeTools } from './mcpClient';
 import { safeResponseJson } from './safeApi';
-import { enrichNaturalProfileForCharacter, NATURAL_PROACTIVE_SUBTYPE } from './naturalProactive';
+import { getPendingUserMessageState } from './busyAutoReply';
+import {
+  enrichNaturalProfileForCharacter,
+  NATURAL_PROACTIVE_SUBTYPE,
+  NATURAL_PROACTIVE_TASK_INSTRUCTION,
+} from './naturalProactive';
 import { ActiveMsgStore } from './activeMsgStore';
 import { KeepAlive } from './keepAlive';
 import {
@@ -615,6 +620,7 @@ const buildTimeGapHint = async (charId: string) => {
     // 满血链路会把它放进 fire_pack，worker 到点用「fire 时刻」重算，不吃排程时的陈旧值。
     // 「真实用户消息」判定与防穿帮闸共用同一叶子 helper（见 amsg2ExpireGuard）。
     lastUserMessageAt: getLastRealUserMessageAt(recentMessages),
+    pendingUserMessageState: getPendingUserMessageState(recentMessages),
     recentMessages,
   };
 };
@@ -634,7 +640,7 @@ const buildLegacyStyleProactiveHint = (targetName: string, includeTime: boolean)
     `${target} 不在的这段时间，你自己的日子也在往前过：刚发生的小事、注意到的细节、对之前聊过的话冒出来的后续想法，都比干巴巴的问候更像你。`,
     '不要写成汇报近况，不要像在完成任务，也不要解释自己为什么会发这条消息。',
     `关心别变成查岗：不催问 ${target} 在干嘛、怎么还不回；喝水、早睡这类叮嘱偶尔一句是心意，回回都发就成了说教。`,
-    `正文尽量短，通常 1 到 2 句就够；如果 ${target} 很久没来找你，可以轻轻带一点想念、好奇或者小小抱怨。`,
+    `正文由真正想说的内容决定：简单时短一些，有多个自然相关的重点时再展开；如果 ${target} 很久没来找你，可以轻轻带一点想念、好奇或者小小抱怨。`,
   ].join('\n');
 };
 
@@ -670,7 +676,7 @@ export const buildFirePack = async (
   },
 ): Promise<AmsgFirePack> => {
   const templateStub = opts?.templateStub === true;
-  const [{ recentMessages, lastUserMessageAt }, library, schedule] = await Promise.all([
+  const [{ recentMessages, lastUserMessageAt, pendingUserMessageState }, library, schedule] = await Promise.all([
     buildTimeGapHint(char.id),
     // 表情库只喂系统提示词/近史渲染：占位模板路径整库都不用读（表情记录带图片数据，
     // 全表 getAll 不便宜）。
@@ -784,14 +790,14 @@ export const buildFirePack = async (
     : null;
 
   const template = templateStub ? AMSG2_INSTANT_STUB_TEMPLATE : [
-    '你将代表下面这个角色，生成一条“主动发给用户”的私聊消息。',
+    '你将代表下面这个角色，生成一组“主动发给用户”的私聊消息；简单时可以只有一条，有多个自然相关重点时可以由多条连续聊天气泡组成。',
     '',
     '【重要规则】',
     '- 这是角色主动发起的新消息，不要求逐字回复用户上一句；但必须先阅读并参考下方的最近对话上下文，尤其不能忽略用户最新一条消息。',
     '- 可以顺着用户刚表达的情绪、动作或话题自然回应、延伸或换个相关角度开口；不要机械复述、不要假装成紧接上一句的普通即时回复，也不要无依据地跳回已经结束的旧话题。',
     '- 输出只能是最终要发送的消息正文，不要解释，不要写分析，不要加引号。',
-    '- 像真实聊天一样简短自然，优先 1 到 2 句，最多 3 句。',
-    '- 可以用换行拆成多个聊天气泡，但不要写时间戳、名字前缀、系统提示。',
+    '- 像真实聊天一样简短自然，但不要把每次主动消息固定成同样的句数；简单内容就短，确有多个重点再自然展开。',
+    '- 如果需要回应多条用户消息，可以用换行拆成多个聊天气泡，优先覆盖重要内容；不要为了凑数量补话。',
     '- 不要出现“作为AI”“系统提示”等元话语。',
     '- 语气更像真人突然想起对方时发来的私聊，不要像在完成任务。',
     '- 角色设定里描述的查记忆、读日记、联网搜索、逛小红书等能力照常可用：需要时正常输出对应标签，系统会取回结果后让你继续写。',
@@ -847,6 +853,8 @@ export const buildFirePack = async (
     v: FIRE_PACK_VERSION,
     template,
     lastUserMessageAt,
+    pendingUserMessageCount: pendingUserMessageState.count,
+    pendingAfterBusyAutoReply: pendingUserMessageState.afterBusyAutoReply,
     // 角色的时间参照系（见上面的 tzId / userTzId）：前者是角色自己的钟，后者是用户那边的，
     // worker 渲染时两者各管各的一行，绝不混用。
     tzId,
@@ -2292,7 +2300,7 @@ export const ActiveMsgClient = {
       const activeApi = resolveApiConfig(char, config, apiConfig);
       // 「本次任务」指令随任务 metadata 走，worker 到点拿它填 fire_pack 的指令槽。
       payload.metadata.amsgTaskInstruction = task.internalNatural
-        ? '这是角色自然产生的联系冲动，不是用户颁布的任务。结合人设、关系、最近上下文和此刻生活状态，像真人一样发一到三句真正此刻想说的话；可以很轻、很短，不要解释系统判断，也不要说自己被定时唤醒。'
+        ? NATURAL_PROACTIVE_TASK_INSTRUCTION
         : buildTaskInstruction(task.mode, task.promptHint);
       // 服务端要求「completePrompt 或 messages」二选一，且 messages 必须非空、
       // content 必须非空字符串，所以这里给一条占位。到点真正发给 LLM 的 messages 由

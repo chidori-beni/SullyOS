@@ -481,6 +481,13 @@ export interface AmsgFirePack {
   /** 用户上次真实主动发消息的时间（epoch ms）；没有聊天记录时为 null。 */
   lastUserMessageAt: number | null;
   /**
+   * 打包时上一条真正角色内容之后积压的用户消息数；这是自然主动的回复覆盖提示，
+   * 不是「最多连续主动发送几条」的设置。缺省兼容旧 fire_pack。
+   */
+  pendingUserMessageCount?: number;
+  /** 最近积压内容中间是否出现过忙碌自动回复；自动回复不算真正回答。 */
+  pendingAfterBusyAutoReply?: boolean;
+  /**
    * 角色的 IANA 时区 id（角色开了自定义时区用角色的，没开用打包设备的）。
    * worker 渲染一切给角色看的时间都以它为参照系（Intl 处理夏令时）。必填：
    * 缺了整包按格式不对打回（parseFirePack → null，worker 抛 fire-state 错）。
@@ -723,7 +730,7 @@ export interface AmsgSelfLog {
  * 这个上限**只管 prompt 上下文**：连发条数记在 unansweredSends 上，不受它压。
  */
 export const SELF_LOG_MAX_ENTRIES = 8;
-/** 单条正文留多长。主动消息本来就一两句，超出的部分基本是标签和长引用。 */
+/** 单条正文留多长；超出的部分基本是标签和长引用，不代表主动消息必须固定成某种句数。 */
 export const SELF_LOG_TEXT_MAX = 200;
 
 export const createSelfLog = (basePackAt: number, anchorUserMsgAt: number | null = null): AmsgSelfLog => ({
@@ -1016,6 +1023,12 @@ export const parseFirePack = (value: string): AmsgFirePack | null => {
       chatFieldOk(parsed.chat) &&
       typeof parsed.template === 'string' && parsed.template.length > 0 &&
       (parsed.lastUserMessageAt === null || typeof parsed.lastUserMessageAt === 'number') &&
+      (parsed.pendingUserMessageCount === undefined
+        || (typeof parsed.pendingUserMessageCount === 'number'
+          && Number.isFinite(parsed.pendingUserMessageCount)
+          && parsed.pendingUserMessageCount >= 0)) &&
+      (parsed.pendingAfterBusyAutoReply === undefined
+        || typeof parsed.pendingAfterBusyAutoReply === 'boolean') &&
       typeof parsed.tzId === 'string' && parsed.tzId.length > 0 &&
       typeof parsed.userTzId === 'string' && parsed.userTzId.length > 0 &&
       typeof parsed.targetName === 'string' &&

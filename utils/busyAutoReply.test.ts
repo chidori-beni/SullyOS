@@ -7,6 +7,7 @@ import {
     busyReplyChance,
     collectBusyReplySignals,
     decideBusyReply,
+    getPendingUserMessageState,
 } from './busyAutoReply';
 
 const char = (extra: Partial<CharacterProfile> = {}) => ({
@@ -57,6 +58,23 @@ describe('忙碌时自动回复', () => {
         const auto = { ...user('x'), role: 'assistant' as const, metadata: { busyAutoReply: { level: 'busy' } } };
         expect(buildAutoReplyCatchUpPrompt([auto, user('你忙完了吗')])).toContain('并没有真正回答');
         expect(buildAutoReplyCatchUpPrompt([user('x')])).toBe('');
+    });
+
+    it('统计真正角色内容之后的用户积压消息，不把忙碌自动回复当成回答', () => {
+        const assistant = { ...user('上一条正常回复'), role: 'assistant' as const };
+        const auto = { ...user('正在忙'), role: 'assistant' as const, metadata: { busyAutoReply: { level: 'busy' } } };
+        const state = getPendingUserMessageState([
+            assistant,
+            user('第一件事'),
+            auto,
+            user('第二件事'),
+            { ...user('内部提示'), metadata: { proactiveHint: true } },
+        ]);
+        expect(state).toEqual({ count: 2, afterBusyAutoReply: true });
+        expect(getPendingUserMessageState([assistant, user('已回复后又来的一条')])).toEqual({
+            count: 1,
+            afterBusyAutoReply: false,
+        });
     });
 
     it('忙碌/睡眠偷看时把当前时段置于历史活动之前', () => {

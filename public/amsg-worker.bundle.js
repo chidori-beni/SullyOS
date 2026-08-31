@@ -8129,7 +8129,7 @@ var chatFieldOk = (chat) => {
 var parseFirePack = (value) => {
   try {
     const parsed = JSON.parse(value);
-    if (parsed && typeof parsed === "object" && parsed.v === FIRE_PACK_VERSION && chatFieldOk(parsed.chat) && typeof parsed.template === "string" && parsed.template.length > 0 && (parsed.lastUserMessageAt === null || typeof parsed.lastUserMessageAt === "number") && typeof parsed.tzId === "string" && parsed.tzId.length > 0 && typeof parsed.userTzId === "string" && parsed.userTzId.length > 0 && typeof parsed.targetName === "string" && typeof parsed.builtAt === "number" && Array.isArray(parsed.pendingTasks) && (parsed.scene === null || typeof parsed.scene === "object") && (parsed.maxUnansweredSends === void 0 || typeof parsed.maxUnansweredSends === "number" && Number.isFinite(parsed.maxUnansweredSends) && parsed.maxUnansweredSends >= 0) && typeof parsed.selfScheduleEnabled === "boolean") {
+    if (parsed && typeof parsed === "object" && parsed.v === FIRE_PACK_VERSION && chatFieldOk(parsed.chat) && typeof parsed.template === "string" && parsed.template.length > 0 && (parsed.lastUserMessageAt === null || typeof parsed.lastUserMessageAt === "number") && (parsed.pendingUserMessageCount === void 0 || typeof parsed.pendingUserMessageCount === "number" && Number.isFinite(parsed.pendingUserMessageCount) && parsed.pendingUserMessageCount >= 0) && (parsed.pendingAfterBusyAutoReply === void 0 || typeof parsed.pendingAfterBusyAutoReply === "boolean") && typeof parsed.tzId === "string" && parsed.tzId.length > 0 && typeof parsed.userTzId === "string" && parsed.userTzId.length > 0 && typeof parsed.targetName === "string" && typeof parsed.builtAt === "number" && Array.isArray(parsed.pendingTasks) && (parsed.scene === null || typeof parsed.scene === "object") && (parsed.maxUnansweredSends === void 0 || typeof parsed.maxUnansweredSends === "number" && Number.isFinite(parsed.maxUnansweredSends) && parsed.maxUnansweredSends >= 0) && typeof parsed.selfScheduleEnabled === "boolean") {
       return parsed;
     }
   } catch {
@@ -8935,6 +8935,36 @@ try {
 var log = makeDebugLogger("api", "SafeAPI");
 
 // utils/naturalProactive.ts
+var NATURAL_PROACTIVE_TASK_INSTRUCTION = "\u8FD9\u662F\u89D2\u8272\u81EA\u7136\u4EA7\u751F\u7684\u8054\u7CFB\u51B2\u52A8\uFF0C\u4E0D\u662F\u7528\u6237\u9881\u5E03\u7684\u4EFB\u52A1\u3002\u7ED3\u5408\u4EBA\u8BBE\u3001\u5173\u7CFB\u3001\u6700\u8FD1\u4E0A\u4E0B\u6587\u548C\u6B64\u523B\u751F\u6D3B\u72B6\u6001\uFF0C\u50CF\u771F\u4EBA\u4E00\u6837\u81EA\u7136\u5730\u8054\u7CFB\u5BF9\u65B9\uFF1B\u56DE\u590D\u957F\u5EA6\u7531\u773C\u524D\u771F\u6B63\u9700\u8981\u8BF4\u7684\u5185\u5BB9\u51B3\u5B9A\uFF0C\u7B80\u5355\u65F6\u77ED\u4E00\u4E9B\uFF0C\u6709\u591A\u4E2A\u91CD\u8981\u5185\u5BB9\u65F6\u53EF\u4EE5\u5C55\u5F00\u5E76\u6362\u884C\u5206\u6210\u591A\u6761\u3002\u4E0D\u8981\u4E3A\u4E86\u51D1\u6570\u91CF\u8865\u8BDD\uFF0C\u4E5F\u4E0D\u8981\u89E3\u91CA\u7CFB\u7EDF\u5224\u65AD\u6216\u8BF4\u81EA\u5DF1\u88AB\u5B9A\u65F6\u5524\u9192\u3002";
+var safeNaturalPendingCount = (value) => Math.min(20, Math.max(0, Number.isFinite(value) ? Math.floor(value) : 0));
+var pickNaturalBudget = (values, random01) => {
+  const safeRandom = clamp(random01, 0, 0.999999);
+  return values[Math.floor(safeRandom * values.length)] ?? values[0];
+};
+var buildNaturalReplyGuidance = (pendingUserMessageCount, random01, afterBusyAutoReply = false) => {
+  const pending = safeNaturalPendingCount(pendingUserMessageCount);
+  const budget = pending <= 1 ? pickNaturalBudget([1, 2, 3, 4], random01) : pending <= 4 ? pickNaturalBudget([3, 4, 5, 6], random01) : pending <= 9 ? pickNaturalBudget([5, 6, 7, 8, 9], random01) : Math.min(20, pending + pickNaturalBudget([-1, 0, 1, 2, 3], random01));
+  const lines = [
+    "[\u672C\u8F6E\u81EA\u7136\u56DE\u590D\u8282\u594F]",
+    "\u4E0D\u8981\u628A\u6BCF\u6B21\u4E3B\u52A8\u6D88\u606F\u5199\u6210\u76F8\u540C\u7684\u53E5\u6570\uFF1B\u7B80\u5355\u5FF5\u5934\u8BF4\u5B8C\u5C31\u505C\uFF0C\u53EA\u6709\u81EA\u7136\u4EA7\u751F\u540E\u7EED\u624D\u6362\u884C\u5206\u6210\u591A\u6761\u3002\u5185\u5BB9\u51B3\u5B9A\u957F\u5EA6\uFF0C\u4E0D\u8981\u4E3A\u4E86\u8FBE\u5230\u67D0\u4E2A\u6570\u91CF\u8865\u8BDD\u3002",
+    `\u672C\u8F6E\u6700\u591A\u5148\u8003\u8651 ${budget} \u4E2A\u804A\u5929\u6C14\u6CE1\uFF0C\u8FD9\u662F\u8F6F\u53C2\u8003\uFF0C\u4E0D\u662F\u5FC5\u987B\u8FBE\u5230\u7684\u6570\u91CF\uFF1B\u7CFB\u7EDF\u6700\u7EC8 20 \u4E2A\u6C14\u6CE1\u53EA\u662F\u5B89\u5168\u4E0A\u9650\uFF0C\u4E0D\u662F\u56DE\u590D\u76EE\u6807\u3002`
+  ];
+  if (pending > 1) {
+    lines.push(
+      `\u6700\u8FD1\u8FDE\u7EED\u6709 ${pending} \u6761\u7528\u6237\u6D88\u606F\u8FD8\u6CA1\u6709\u88AB\u89D2\u8272\u7684\u6B63\u5E38\u5185\u5BB9\u8986\u76D6\u3002\u8BF7\u5148\u8BFB\u5B8C\u5168\u90E8\u4E0A\u4E0B\u6587\uFF0C\u4F18\u5148\u56DE\u5E94\u91CD\u8981/\u6700\u65B0\u7684\u95EE\u9898\u3001\u60C5\u7EEA\u3001\u660E\u786E\u9080\u8BF7\u548C\u7EA6\u5B9A\uFF1B\u76F8\u5173\u5185\u5BB9\u53EF\u4EE5\u5408\u5E76\uFF0C\u4E0D\u8981\u673A\u68B0\u9010\u6761\u590D\u8FF0\u3002\u82E5\u786E\u6709\u591A\u4E2A\u72EC\u7ACB\u5185\u5BB9\uFF0C\u5141\u8BB8\u81EA\u7136\u5206\u6210\u591A\u6761\u8FDE\u7EED\u6C14\u6CE1\uFF0C\u91CD\u8981\u5185\u5BB9\u4F18\u5148\u3002`
+    );
+  }
+  if (afterBusyAutoReply) {
+    lines.push(
+      "\u4E0A\u4E00\u6761\u89D2\u8272\u6D88\u606F\u662F\u5FD9\u788C\u81EA\u52A8\u56DE\u590D\uFF0C\u5B83\u53EA\u662F\u5360\u4F4D\u901A\u77E5\uFF0C\u4E0D\u7B97\u771F\u6B63\u56DE\u7B54\uFF1B\u8BF7\u628A\u8FD9\u6BB5\u65F6\u95F4\u7528\u6237\u53D1\u6765\u7684\u5185\u5BB9\u770B\u5B8C\u5E76\u5C3D\u91CF\u8865\u56DE\u91CD\u70B9\uFF0C\u4E0D\u8981\u53EA\u91CD\u590D\u201C\u7A0D\u540E\u56DE\u590D\u201D\u3002\u5F53\u524D\u65E5\u7A0B\u4ECD\u4EE5\u5F53\u524D\u65F6\u523B\u8865\u5145\u4E3A\u51C6\uFF0C\u4E0D\u8981\u5047\u88C5\u5DF2\u7ECF\u7ED3\u675F\u4ECD\u5728\u8FDB\u884C\u7684\u6D3B\u52A8\u3002"
+    );
+  }
+  return {
+    pendingUserMessageCount: pending,
+    softBubbleBudget: budget,
+    prompt: lines.join("\n")
+  };
+};
 var NATURAL_UNANSWERED_HARD_CAP = 20;
 var naturalUnansweredHardCap = (_intensity) => NATURAL_UNANSWERED_HARD_CAP;
 var NATURAL_UNANSWERED_PENALTY_PER_MSG = 0.08;
@@ -14221,6 +14251,7 @@ var amsgHooks = {
     const mcpNative = toolConfig.mcpUseNativeTools !== false;
     const storedSelfLog = parseSelfLog(charRows.find((r) => r.key === AMSG_SELF_LOG_KEY)?.value ?? "");
     const selfLog = reconcileSelfLogWithPack(storedSelfLog, pack, expireInput.lastUserMessageAt);
+    let naturalPromptRandom01 = 0.5;
     if (!instant && taskMeta.amsgNaturalProactive === true) {
       const natural = pack.naturalProactive;
       if (!natural?.enabled || !natural.profile) {
@@ -14237,6 +14268,7 @@ var amsgHooks = {
         seed = Math.imul(seed, 16777619);
       }
       const random01 = (seed >>> 0) / 4294967295;
+      naturalPromptRandom01 = random01;
       const naturalUnansweredCount = countUnansweredSends(selfLog);
       const decision = decideNaturalProactive({
         nowMs: ctx.now.getTime(),
@@ -14266,7 +14298,7 @@ var amsgHooks = {
           amsgMode: "auto",
           amsgClientTaskId: `natural:${charId}`,
           amsgNaturalProactive: true,
-          amsgTaskInstruction: "\u8FD9\u662F\u89D2\u8272\u81EA\u7136\u4EA7\u751F\u7684\u8054\u7CFB\u51B2\u52A8\uFF0C\u4E0D\u662F\u7528\u6237\u9881\u5E03\u7684\u4EFB\u52A1\u3002\u7ED3\u5408\u4EBA\u8BBE\u3001\u5173\u7CFB\u3001\u6700\u8FD1\u4E0A\u4E0B\u6587\u548C\u6B64\u523B\u751F\u6D3B\u72B6\u6001\uFF0C\u50CF\u771F\u4EBA\u4E00\u6837\u53D1\u4E00\u5230\u4E09\u53E5\u771F\u6B63\u6B64\u523B\u60F3\u8BF4\u7684\u8BDD\uFF1B\u53EF\u4EE5\u5F88\u8F7B\u3001\u5F88\u77ED\uFF0C\u4E0D\u8981\u89E3\u91CA\u7CFB\u7EDF\u5224\u65AD\uFF0C\u4E5F\u4E0D\u8981\u8BF4\u81EA\u5DF1\u88AB\u5B9A\u65F6\u5524\u9192\u3002"
+          amsgTaskInstruction: NATURAL_PROACTIVE_TASK_INSTRUCTION
         }
       });
       const noteCheck = (sent, skipReason) => writeNaturalLastCheck(ctx.writeState, charId, {
@@ -14477,7 +14509,13 @@ var amsgHooks = {
         totalTimeoutMs: INSTANT_TOTAL_TIMEOUT_MS
       };
     }
-    const prompt = renderFirePack(pack, ctx.now.getTime(), taskMeta.amsgTaskInstruction, {
+    const taskInstruction = taskMeta.amsgNaturalProactive === true ? `${NATURAL_PROACTIVE_TASK_INSTRUCTION}
+${buildNaturalReplyGuidance(
+      pack.pendingUserMessageCount ?? 0,
+      naturalPromptRandom01,
+      pack.pendingAfterBusyAutoReply === true
+    ).prompt}` : taskMeta.amsgTaskInstruction;
+    const prompt = renderFirePack(pack, ctx.now.getTime(), taskInstruction, {
       selfLog,
       taskListBlock,
       realtimeWorldBlock,

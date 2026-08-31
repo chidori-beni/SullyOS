@@ -11,6 +11,67 @@ import { safeFetchJson } from './safeApi';
 export const NATURAL_PROACTIVE_SUBTYPE = 'natural-proactive';
 export const NATURAL_PROACTIVE_PROFILE_VERSION = 1 as const;
 
+/** 自然主动的共同任务基线；前端排新任务和 Worker 续排都必须使用同一份口径。 */
+export const NATURAL_PROACTIVE_TASK_INSTRUCTION =
+  '这是角色自然产生的联系冲动，不是用户颁布的任务。结合人设、关系、最近上下文和此刻生活状态，像真人一样自然地联系对方；回复长度由眼前真正需要说的内容决定，简单时短一些，有多个重要内容时可以展开并换行分成多条。不要为了凑数量补话，也不要解释系统判断或说自己被定时唤醒。';
+
+export interface NaturalReplyGuidance {
+  pendingUserMessageCount: number;
+  softBubbleBudget: number;
+  prompt: string;
+}
+
+const safeNaturalPendingCount = (value: number): number =>
+  Math.min(20, Math.max(0, Number.isFinite(value) ? Math.floor(value) : 0));
+
+const pickNaturalBudget = (values: number[], random01: number): number => {
+  const safeRandom = clamp(random01, 0, 0.999999);
+  return values[Math.floor(safeRandom * values.length)] ?? values[0];
+};
+
+/**
+ * 把「积压了多少条用户消息」变成给模型看的软回复预算。
+ *
+ * 预算只负责把模型从固定两句拉开，并提醒它别漏掉重要内容；它不是要求模型填满的
+ * 目标。真正落地时仍由 agentic 分段，Worker 最后保留 20 个气泡的安全上限。
+ */
+export const buildNaturalReplyGuidance = (
+  pendingUserMessageCount: number,
+  random01: number,
+  afterBusyAutoReply = false,
+): NaturalReplyGuidance => {
+  const pending = safeNaturalPendingCount(pendingUserMessageCount);
+  const budget = pending <= 1
+    ? pickNaturalBudget([1, 2, 3, 4], random01)
+    : pending <= 4
+      ? pickNaturalBudget([3, 4, 5, 6], random01)
+      : pending <= 9
+        ? pickNaturalBudget([5, 6, 7, 8, 9], random01)
+        : Math.min(20, pending + pickNaturalBudget([-1, 0, 1, 2, 3], random01));
+
+  const lines = [
+    '[本轮自然回复节奏]',
+    '不要把每次主动消息写成相同的句数；简单念头说完就停，只有自然产生后续才换行分成多条。内容决定长度，不要为了达到某个数量补话。',
+    `本轮最多先考虑 ${budget} 个聊天气泡，这是软参考，不是必须达到的数量；系统最终 20 个气泡只是安全上限，不是回复目标。`,
+  ];
+  if (pending > 1) {
+    lines.push(
+      `最近连续有 ${pending} 条用户消息还没有被角色的正常内容覆盖。请先读完全部上下文，优先回应重要/最新的问题、情绪、明确邀请和约定；相关内容可以合并，不要机械逐条复述。若确有多个独立内容，允许自然分成多条连续气泡，重要内容优先。`,
+    );
+  }
+  if (afterBusyAutoReply) {
+    lines.push(
+      '上一条角色消息是忙碌自动回复，它只是占位通知，不算真正回答；请把这段时间用户发来的内容看完并尽量补回重点，不要只重复“稍后回复”。当前日程仍以当前时刻补充为准，不要假装已经结束仍在进行的活动。',
+    );
+  }
+
+  return {
+    pendingUserMessageCount: pending,
+    softBubbleBudget: budget,
+    prompt: lines.join('\n'),
+  };
+};
+
 export type {
   NaturalProactiveConfig,
   NaturalProactiveIntensity,

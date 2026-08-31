@@ -10,6 +10,53 @@ export type BusyReplyDecision =
     | { mode: 'brief-reply'; level: 'busy' | 'sleep'; slot: ScheduleSlot; chance: number }
     | { mode: 'auto-reply'; level: 'busy' | 'sleep'; slot: ScheduleSlot; chance: number; text: string };
 
+export interface PendingUserMessageState {
+    /** 上一条真正角色内容之后，用户连续发来的、还没有被正常内容覆盖的消息数。 */
+    count: number;
+    /** 这段积压内容中间是否有过忙碌自动回复；自动回复只是占位通知，不算回答。 */
+    afterBusyAutoReply: boolean;
+}
+
+const isRealPendingUserMessage = (message: Message): boolean =>
+    message.role === 'user' && !message.metadata?.proactiveHint;
+
+const isBusyAutoReplyMessage = (message: Message): boolean =>
+    message.role === 'assistant' && !!message.metadata?.busyAutoReply;
+
+/**
+ * 找出最后一条真正角色内容之后的用户积压消息。
+ *
+ * 忙碌自动回复不是回答边界：它只告诉用户「稍后回」，所以它后面新来的消息要和
+ * 自动回复前的消息一起交给下一轮自然主动处理。自然主动产生的隐藏 hint 用户消息
+ * 也不算用户真正发言，避免把内部提示当成积压内容。
+ */
+export const getPendingUserMessageState = (
+    messages: readonly Message[],
+): PendingUserMessageState => {
+    let count = 0;
+    let afterBusyAutoReply = false;
+
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+        const message = messages[i];
+        if (!message || message.role === 'system') continue;
+        if (message.role === 'user') {
+            if (isRealPendingUserMessage(message)) count += 1;
+            continue;
+        }
+        if (isBusyAutoReplyMessage(message)) {
+            afterBusyAutoReply = true;
+            continue;
+        }
+        // 普通角色消息是真正的回答，积压窗口到此为止。
+        break;
+    }
+
+    return {
+        count,
+        afterBusyAutoReply: afterBusyAutoReply && count > 0,
+    };
+};
+
 const URGENT_RE = /(在吗|在嗎|急|紧急|緊急|快|sos|救命|出事|危险|危險|醒醒|起床|wake up|emergency|urgent|help|hello\?|hey\?\?+|！！+|!!+|？？+|\?\?+)/i;
 const CALL_RE = /(打电话|打電話|来电|來電|通话|通話|连麦|連麥|call me|phone me|video call)/i;
 

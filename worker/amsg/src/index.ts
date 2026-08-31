@@ -76,8 +76,10 @@ import { resolveFireSceneSong } from '../../../utils/amsgFireScene';
 import { shouldExpireFire } from '../../../utils/amsg2ExpireGuard';
 import { buildFireTaskListBlock, isPendingTask, MAX_ACTIVE_TASKS_PER_CHAR, shortTaskId } from '../../../utils/amsg2Tasks';
 import {
+  buildNaturalReplyGuidance,
   decideNaturalProactive,
   NATURAL_BATCH_HARD_CAP,
+  NATURAL_PROACTIVE_TASK_INSTRUCTION,
   naturalUnansweredHardCap,
   nextNaturalCheckAt,
 } from '../../../utils/naturalProactive';
@@ -1793,6 +1795,7 @@ export const amsgHooks = {
 
     // 自然主动不是一条固定间隔任务：这一行只是一次「要不要联系」的机会。
     // 每次都先根据画像决定下次何时再想起这件事；分数不够就静默结束，不调用 LLM。
+    let naturalPromptRandom01 = 0.5;
     if (!instant && taskMeta.amsgNaturalProactive === true) {
       const natural = pack.naturalProactive;
       if (!natural?.enabled || !natural.profile) {
@@ -1810,6 +1813,7 @@ export const amsgHooks = {
         seed = Math.imul(seed, 0x01000193);
       }
       const random01 = (seed >>> 0) / 0xffffffff;
+      naturalPromptRandom01 = random01;
       const naturalUnansweredCount = countUnansweredSends(selfLog);
       const decision = decideNaturalProactive({
         nowMs: ctx.now.getTime(),
@@ -1840,7 +1844,7 @@ export const amsgHooks = {
           amsgMode: 'auto',
           amsgClientTaskId: `natural:${charId}`,
           amsgNaturalProactive: true,
-          amsgTaskInstruction: '这是角色自然产生的联系冲动，不是用户颁布的任务。结合人设、关系、最近上下文和此刻生活状态，像真人一样发一到三句真正此刻想说的话；可以很轻、很短，不要解释系统判断，也不要说自己被定时唤醒。',
+          amsgTaskInstruction: NATURAL_PROACTIVE_TASK_INSTRUCTION,
         },
       });
       // 这一次考虑的记账底稿：下面每条出口都补上自己的结果再写。发没发都要留一行，
@@ -2165,7 +2169,14 @@ export const amsgHooks = {
 
     // fire_pack v3：「本次任务」指令随任务 metadata 走，这里填槽。
     // MCP 块拼在渲染好的 prompt 之后（同一条 user 消息）。
-    const prompt = renderFirePack(pack, ctx.now.getTime(), taskMeta.amsgTaskInstruction as string, {
+    const taskInstruction = taskMeta.amsgNaturalProactive === true
+      ? `${NATURAL_PROACTIVE_TASK_INSTRUCTION}\n${buildNaturalReplyGuidance(
+        pack.pendingUserMessageCount ?? 0,
+        naturalPromptRandom01,
+        pack.pendingAfterBusyAutoReply === true,
+      ).prompt}`
+      : taskMeta.amsgTaskInstruction as string;
+    const prompt = renderFirePack(pack, ctx.now.getTime(), taskInstruction, {
       selfLog,
       taskListBlock,
       realtimeWorldBlock,
@@ -2372,7 +2383,7 @@ export const amsgHooks = {
     }
 
     if (decision.decision === 'finish') {
-      // 自然主动一轮最多落 20 个气泡；正常 prompt 是一到三句，这里只做最后保险。
+      // 自然主动的 prompt 会按积压量给软预算；这里的 20 只做最终保险，不把回复硬截成两句。
       const pushPayloads = stash.naturalProactive
         ? decision.pushPayloads.slice(0, NATURAL_BATCH_HARD_CAP)
         : decision.pushPayloads;

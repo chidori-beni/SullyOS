@@ -235,6 +235,18 @@ describe('parseFirePack', () => {
     expect(parseFirePack(JSON.stringify({ ...valid, maxUnansweredSends: -1 }))).toBeNull();
   });
 
+  it('自然主动积压信号可选：旧包兼容，坏值整包打回', () => {
+    const parsed = parseFirePack(JSON.stringify({
+      ...valid,
+      pendingUserMessageCount: 3,
+      pendingAfterBusyAutoReply: true,
+    }));
+    expect(parsed).toMatchObject({ pendingUserMessageCount: 3, pendingAfterBusyAutoReply: true });
+    expect(parseFirePack(JSON.stringify({ ...valid, pendingUserMessageCount: '3' }))).toBeNull();
+    expect(parseFirePack(JSON.stringify({ ...valid, pendingUserMessageCount: -1 }))).toBeNull();
+    expect(parseFirePack(JSON.stringify({ ...valid, pendingAfterBusyAutoReply: 'true' }))).toBeNull();
+  });
+
   it('tzId 必填：缺失 / 空串 / 非字符串整包打回（渲染时间没有第二套算法可退）', () => {
     expect(parseFirePack(JSON.stringify({ ...valid, tzId: 'Asia/Tokyo' }))?.tzId).toBe('Asia/Tokyo');
     const { tzId: _tz, ...noTzId } = valid;

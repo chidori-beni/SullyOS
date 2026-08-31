@@ -1149,6 +1149,39 @@ describe('buildFirePack 的时区参照系与模板（①）', () => {
     expect(out.template).toContain('尤其不能忽略用户最新一条消息');
     expect(out.template).toContain('不要机械复述');
     expect(out.template).toContain('不要无依据地跳回已经结束的旧话题');
+    expect(out.template).not.toContain('优先 1 到 2 句');
+    expect(out.template).not.toContain('通常 1 到 2 句就够');
+  });
+
+  it('fire_pack 带上未覆盖消息数，且忙碌自动回复不切断积压窗口', async () => {
+    const userMessage = (id: number, content: string) => ({
+      id,
+      charId: 'char-1',
+      role: 'user' as const,
+      type: 'text' as const,
+      content,
+      timestamp: id,
+    });
+    const autoReply = {
+      id: 10,
+      charId: 'char-1',
+      role: 'assistant' as const,
+      type: 'text' as const,
+      content: '[自动回复]正在忙，稍后回复',
+      timestamp: 10,
+      metadata: { busyAutoReply: { level: 'busy' } },
+    };
+    vi.spyOn(DB, 'getRecentMessagesByCharId').mockResolvedValue([
+      { ...userMessage(1, '之前已被正常回复的消息'), role: 'assistant' as const },
+      userMessage(2, '第一件待回复的事'),
+      autoReply,
+      userMessage(11, '第二件待回复的事'),
+      userMessage(12, '第三件待回复的事'),
+    ] as any);
+
+    const out = await pack(baseChar());
+    expect(out.pendingUserMessageCount).toBe(3);
+    expect(out.pendingAfterBusyAutoReply).toBe(true);
   });
 
   // 回归守卫：历史消息 content 是数组时（视觉模型的 [{type:'text'},{type:'image_url'}] 格式），
