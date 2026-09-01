@@ -561,7 +561,8 @@ ${groupLogStr}\n`;
 
         // 8. 用户日历：只在这一轮即时构建，不能烤进未来主动消息的 fire pack。
         // 待办完成/日程改动后旧快照会误催，故后台到点生成不复用这段；正常聊天与即时云端
-        // 回复都读取此刻的 IndexedDB。仅把当前角色担任监督人的到期待办给 ta 看。
+        // 回复都读取此刻的 IndexedDB。所有角色都可以看到有界的用户日程背景，但监督关系
+        // 只影响待办能否被自然提醒，不决定角色是否能理解用户此刻的安排。
         const userCalendarPromise: Promise<string> = forFirePack
             ? Promise.resolve('')
             : Promise.all([DB.getAllTasks(), DB.getAllAnniversaries()])
@@ -570,7 +571,8 @@ ${groupLogStr}\n`;
                     events,
                     supervisorId: char.id,
                     userName: userProfile.name,
-                    today: getLocalDateKey(new Date()),
+                    today: getLocalDateKey(scheduleInstant),
+                    now: scheduleInstant,
                 }))
                 .catch(e => {
                     console.error('Failed to inject user calendar:', e);
