@@ -6,12 +6,12 @@ import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
 import { buildChatRequestPayload } from '../utils/chatRequestPayload';
 import { loadCharacterContextRange } from '../utils/chatContextRange';
-import { extractContent, safeResponseJson } from '../utils/safeApi';
+import { safeResponseJson } from '../utils/safeApi';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { getLocalDateKey } from '../utils/localDate';
 import { eventsForDate, mergeCalendarDayTimeline, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, tasksForDate, type CalendarTimelineItem } from '../utils/calendarIntegration';
 import { trackEvent } from '../utils/analytics';
-import { extractTaskComment, formatTaskComment, isTaskCommentDisplayable } from '../utils/taskComment';
+import { extractTaskComment, extractTaskCommentResponse, formatTaskComment, isTaskCommentDisplayable, isTaskCommentGenerationAcceptable, shouldRepairTaskComment } from '../utils/taskComment';
 import { buildMonthlyReviewStats, buildSullyMonthlyReport, CALENDAR_MOODS, chooseMonthlyMessageCharacterId } from '../utils/calendarMonthlyReview';
 
 type CalendarTab = 'month' | 'mine' | 'theirs' | 'review';
@@ -45,11 +45,17 @@ const buildTaskCharacterVoiceContext = (character: CharacterProfile) => characte
 const buildRecentTaskVoiceCue = (history: Array<{ role?: string; type?: string; content?: unknown }>) => {
     const lines = history
         .filter(message => message.role === 'assistant' && message.type === 'text' && typeof message.content === 'string')
-        .map(message => (message.content as string)
-            .replace(/\[\[[\s\S]*?\]\]/g, '')
-            .replace(/\s+/g, ' ')
-            .trim())
-        .filter(Boolean)
+        .map(message => {
+            const cleaned = (message.content as string)
+                .replace(/\[\[[\s\S]*?\]\]/g, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+            // Reuse the task response scrubber for this small voice sample so
+            // an old protocol/reasoning fragment cannot become a fresh style
+            // example. The complete chat history is still passed unchanged.
+            return extractTaskComment(cleaned);
+        })
+        .filter((line): line is string => Boolean(line))
         .slice(-4)
         .map(line => line.slice(0, 240));
     return lines.length > 0
@@ -100,6 +106,10 @@ const buildTaskChatMessages = async (
         contextLimit: Math.max(1, history.length),
         recallQueryHint: [task.title, task.note?.trim()].filter(Boolean).join('；'),
         recallEntryPoint: 'direct',
+        // This side-channel needs the character's context, not the chat UI's
+        // thinking-chain instructions. Provider reasoning remains private and
+        // is never an allowed task-comment fallback.
+        thinkingChain: { enabled: false },
         stripImages: true,
     });
     const voiceContext = buildTaskCharacterVoiceContext(character);
@@ -111,36 +121,8 @@ const buildTaskChatMessages = async (
 
 [当前调用：日历待办角色台词]
 ${modeInstruction}
-角色卡、世界书、用户画像、记忆摘要、记忆宫殿、写作人格和聊天历史优先于任何通用模板；请先读懂这些内容，再用这个角色平时的口吻说话。优先使用角色卡和历史里已经出现过的称呼、口头禅、互动方式或共同细节；如果没有合适细节，就自然、具体地回应这件事，不要为了显得像角色硬塞设定。不要套用固定的提醒、完成确认或客服模板。本调用只留下卡片台词，不执行工具、动作或表情命令，也不要输出任何 [[...]] 命令。开口前回到你自己：这句要像 ${character.name} 平时发给 ${userProfile.name} 的那一句，遮住名字也应该认得出是你。只输出一句自然台词正文，不要解释、分析、字段名、模式名、JSON、标题、角色名前缀或引号。`;
+角色卡、世界书、用户画像、记忆摘要、记忆宫殿、写作人格和聊天历史优先于任何通用模板；请先读懂这些内容，再用这个角色平时的口吻说话。优先使用角色卡和历史里已经出现过的称呼、口头禅、互动方式或共同细节；如果没有合适细节，就自然、具体地回应这件事，不要为了显得像角色硬塞设定。上下文里的说明文字、格式协议和内部资料只用于理解，不能被复述或续写；不要套用固定的提醒、完成确认或客服模板。本调用只留下卡片台词，不执行工具、动作或表情命令，也不要输出任何 [[...]] 命令。开口前回到你自己：这句要像 ${character.name} 平时发给 ${userProfile.name} 的那一句，遮住名字也应该认得出是你。只输出一句自然台词正文，不要解释、分析、字段名、模式名、JSON、标题、角色名前缀或引号。`;
     return [...payload.fullMessages, { role: 'system', content: taskInstruction }];
-};
-
-/** Read the text slot used by OpenAI-compatible chat providers without
- * discarding alternate legacy completion shapes. `extractTaskComment` then
- * handles string, block-array and nested-object content uniformly. */
-const extractTaskGenerationResponse = (data: any): string | null => {
-    const choice = data?.choices?.[0];
-    const messageContent = choice?.message?.content;
-    const raw = typeof messageContent === 'string' && !messageContent.trim()
-        ? (choice?.text ?? data?.output_text)
-        : (messageContent ?? choice?.text ?? data?.output_text);
-    const direct = extractTaskComment(raw);
-    if (direct) return direct;
-    // Thinking-model gateways sometimes put the user-facing answer in
-    // reasoning_content when message.content is empty. Reuse the app-wide
-    // extractor, which strips <think> blocks and handles that fallback, but
-    // never replace a non-empty direct response with private reasoning.
-    const hasDirectRaw = typeof raw === 'string'
-        ? Boolean(raw.trim())
-        : Array.isArray(raw)
-            ? raw.length > 0
-            : !!raw && typeof raw === 'object'
-                ? Object.keys(raw).length > 0
-                : Boolean(raw);
-    if (!hasDirectRaw) {
-        return extractTaskComment(extractContent(data));
-    }
-    return null;
 };
 
 const ScheduleApp: React.FC = () => {
@@ -389,11 +371,11 @@ const ScheduleApp: React.FC = () => {
                 });
                 if (!response.ok) throw new Error(`API Error ${response.status}`);
                 const data = await safeResponseJson(response);
-                return extractTaskGenerationResponse(data);
+                return extractTaskCommentResponse(data);
             };
             let text = await requestReward(firstPrompt);
-            if (!isTaskCommentDisplayable(text, task.title)) text = await requestReward(correctionPrompt);
-            if (!isTaskCommentDisplayable(text, task.title)) throw new Error('角色没有说出可展示的自然台词');
+            if (!isTaskCommentGenerationAcceptable(text, task.title)) text = await requestReward(correctionPrompt);
+            if (!isTaskCommentGenerationAcceptable(text, task.title)) throw new Error('角色没有说出可展示的完整台词');
             if (!isCurrentTaskGeneration(task.id, 'completed', generationVersion)) return;
             // Merge into the latest row so the sentence survives reloads and is
             // not written to a deleted or subsequently uncompleted task.
@@ -422,7 +404,7 @@ const ScheduleApp: React.FC = () => {
     };
     const generateTaskComment = async (task: Task, force = false) => {
         const supervisor = characters.find(char => char.id === task.supervisorId);
-        if (!supervisor || !apiConfig.apiKey || (!force && isTaskCommentDisplayable(task.supervisorComment, task.title))) return;
+        if (!supervisor || !apiConfig.apiKey || (!force && task.supervisorComment && !shouldRepairTaskComment(task.supervisorComment, task.title))) return;
         const generationVersion = beginTaskGeneration(task.id, 'comment');
         clearTaskVoiceError(task.id, 'comment');
         setCommenting(current => new Set(current).add(task.id));
@@ -443,11 +425,11 @@ const ScheduleApp: React.FC = () => {
                 });
                 if (!response.ok) throw new Error('API Error ' + response.status);
                 const data = await safeResponseJson(response);
-                return extractTaskGenerationResponse(data);
+                return extractTaskCommentResponse(data);
             };
             let text = await requestComment(firstPrompt);
-            if (!isTaskCommentDisplayable(text, task.title)) text = await requestComment(correctionPrompt);
-            if (!isTaskCommentDisplayable(text, task.title)) throw new Error('角色没有说出可展示的自然台词');
+            if (!isTaskCommentGenerationAcceptable(text, task.title)) text = await requestComment(correctionPrompt);
+            if (!isTaskCommentGenerationAcceptable(text, task.title)) throw new Error('角色没有说出可展示的完整台词');
             if (!isCurrentTaskGeneration(task.id, 'comment', generationVersion)) return;
             // Merge into the latest IndexedDB row instead of resurrecting an old
             // completion state or bringing back a deleted task.
@@ -475,7 +457,7 @@ const ScheduleApp: React.FC = () => {
         // a legacy task can be read before its supervisor exists in `characters`
         // and never get another chance to repair its bad metadata comment.
         if (!apiConfig.apiKey || characters.length === 0 || tasks.length === 0) return;
-        tasks.filter(task => task.supervisorComment && !isTaskCommentDisplayable(task.supervisorComment, task.title)).slice(0, 4).forEach(task => {
+        tasks.filter(task => shouldRepairTaskComment(task.supervisorComment, task.title)).slice(0, 4).forEach(task => {
             if (repairAttemptedTaskIds.current.has(task.id)) return;
             repairAttemptedTaskIds.current.add(task.id);
             void generateTaskComment(task);
@@ -486,8 +468,7 @@ const ScheduleApp: React.FC = () => {
         // name-only fragment. Hide it through the parser and silently regenerate
         // the completion sentence so the existing card is repaired as well.
         if (!apiConfig.apiKey || characters.length === 0 || tasks.length === 0) return;
-        tasks.filter(task => task.isCompleted && task.completedSupervisorComment
-            && !isTaskCommentDisplayable(task.completedSupervisorComment, task.title)).slice(0, 4).forEach(task => {
+        tasks.filter(task => task.isCompleted && shouldRepairTaskComment(task.completedSupervisorComment, task.title)).slice(0, 4).forEach(task => {
             const key = `completed:${task.id}`;
             if (repairAttemptedTaskIds.current.has(key)) return;
             repairAttemptedTaskIds.current.add(key);

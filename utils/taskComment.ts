@@ -15,16 +15,26 @@ const META_LABELS = new Set([
     '留学生 in tokyo', '留学生intokyo',
 ]);
 
-// Keep extraction deliberately lenient enough to preserve a short, natural
-// model response while a repair request is running. Completeness is checked
-// separately by `isTaskCommentUsable`; otherwise a rejected response makes the
-// whole card line disappear before the retry has a chance to replace it.
+// Extraction is deliberately separate from the strict generation gate below:
+// old, already-saved short speech can remain readable while a new response is
+// retried and checked before it is written back to IndexedDB.
 const MIN_EXTRACTED_TASK_COMMENT_LENGTH = 3;
 const MIN_COMPLETE_TASK_COMMENT_LENGTH = 12;
 // Keep this high enough for a natural Chinese sentence plus a short second
 // clause. The old 80-character ceiling rejected otherwise good in-character
 // replies and silently replaced them with the generic fallback.
 const MAX_COMPLETE_TASK_COMMENT_LENGTH = 160;
+
+const THINKING_BLOCK_TYPES = new Set([
+    'thinking', 'reasoning', 'analysis', 'thought',
+    'redacted_thinking', 'redacted_reasoning', 'redacted_analysis',
+]);
+const VISIBLE_TEXT_BLOCK_TYPES = new Set(['text', 'output_text']);
+const RESPONSE_CONTAINER_TYPES = new Set(['message', 'content', 'output', 'response']);
+
+const stripThinkingBlocks = (value: string): string => value
+    .replace(/<(think|thinking|thought|analysis|reasoning)>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<(think|thinking|thought|analysis|reasoning)>[\s\S]*$/gi, '');
 
 const isMetaLabel = (value: string): boolean => {
     const normalized = value.trim()
@@ -48,10 +58,23 @@ const isMetaLabel = (value: string): boolean => {
 // `Must end with proper terminal punctuation (. ! ? ......`).
 const isPromptProtocolLeak = (value: string): boolean => {
     const normalized = value.replace(/\s+/g, ' ').trim().toLocaleLowerCase();
+    const hasProtocolToken = /(?:reasoning[_ ]?content|chain\s+of\s+thought|system\s+prompt|developer\s+(?:message|instruction)|output\s+protocol|思维链|思考过程|推理过程|系统提示|开发者消息|\b(?:json|xml|yaml|schema|nsfw)\b)/i.test(normalized);
+    const hasMetaRelation = /(?:规则|字段|格式|协议|提示词|提到|提及|要求|规定|输出|返回|生成|调用|上下文|分析|推理|according\s+to|based\s+on|mention|output|return)/i.test(normalized);
+    const startsAsReasoning = /(?:^|\s)(?:analysis|reasoning|thinking|thought|assistant|system|developer|user|final|思考|分析|推理|结论)\s*[:：]/i.test(normalized);
+    const echoesPromptContext = /(?:角色卡|世界书|用户画像|写作人格|聊天历史|系统消息|字段名|输出协议|根据上述|基于上下文)/i.test(value);
+    const hasStructuredProtocolKey = /[{}]|```|["'](?:analysis|reasoning|thinking|content|role)["']\s*:/i.test(value);
+    const narratesGenerationProcess = /(?:我(?:需要|先|应该|得)|接下来|首先|然后|最后|让我(?:先)?)(?:.{0,24})(?:分析|思考|推理|组织语言|生成|输出|任务|上下文|人设)/i.test(value);
+    const englishGenerationProcess = /(?:\b(?:i|we)\s+(?:need|should|must|will)\b|\bthe\s+user\b)(?:.{0,80})\b(?:analy[sz]e|reason|generate|output|respond|task|character)\b/i.test(value);
     return /(?:must|should)\s+(?:end|finish|output|return|write)\b/.test(normalized)
         || /proper\s+terminal\s+punctuation|terminal\s+punctuation/.test(normalized)
         || /(?:only\s+output|do\s+not\s+(?:output|include|write)|without\s+(?:json|title|quotes?|prefix))\b/.test(normalized)
-        || /(?:只输出|不要输出|必须以).*(?:台词|正文|标点|角色名|引号|句末)/.test(value);
+        || /(?:只输出|不要输出|必须以).*(?:台词|正文|标点|角色名|引号|句末)/.test(value)
+        || startsAsReasoning
+        || echoesPromptContext
+        || hasStructuredProtocolKey
+        || narratesGenerationProcess
+        || englishGenerationProcess
+        || (hasProtocolToken && hasMetaRelation);
 };
 
 // Some character cards expose a field such as `萧逸 (Xiao Yi)’s` when the
@@ -101,24 +124,34 @@ const stripWrapping = (value: string): string => {
  * never expose a model's private reasoning as the character's voice.
  */
 const flattenTaskCommentContent = (value: unknown): string => {
-    if (typeof value === 'string') return value;
+    if (typeof value === 'string') return stripThinkingBlocks(value);
     if (Array.isArray(value)) {
         return value.map(item => flattenTaskCommentContent(item)).filter(Boolean).join('');
     }
     if (!value || typeof value !== 'object') return '';
     const record = value as Record<string, unknown>;
-    if (record.type === 'thinking' || record.type === 'reasoning' || record.type === 'redacted_thinking') return '';
-    return flattenTaskCommentContent(record.text ?? record.content ?? record.value);
+    const type = typeof record.type === 'string' ? record.type.toLocaleLowerCase() : '';
+    if (THINKING_BLOCK_TYPES.has(type)) return '';
+    if (type && !VISIBLE_TEXT_BLOCK_TYPES.has(type) && !RESPONSE_CONTAINER_TYPES.has(type)) return '';
+    if (VISIBLE_TEXT_BLOCK_TYPES.has(type)) return flattenTaskCommentContent(record.text ?? record.content ?? record.value);
+    if ('text' in record) return flattenTaskCommentContent(record.text);
+    if ('content' in record) return flattenTaskCommentContent(record.content);
+    if ('value' in record) return flattenTaskCommentContent(record.value);
+    return '';
 };
 
 const extractFromObject = (value: Record<string, unknown>): string => {
-    const preferred = ['平时用语', '日常用语', '评价', '评论', 'comment', 'text', 'content', 'response'];
+    const preferred = ['平时用语', '日常用语', '评价', '评论', 'comment', 'text', 'content', 'response', 'output_text', 'value'];
     for (const key of preferred) {
-        if (typeof value[key] === 'string') return value[key] as string;
+        if (!(key in value)) continue;
+        const candidate = flattenTaskCommentContent(value[key]);
+        if (candidate.trim()) return candidate;
     }
-    const stringValue = Object.values(value).find(item => typeof item === 'string');
-    return typeof stringValue === 'string' ? stringValue : '';
+    return '';
 };
+
+const hasPrivateResponseField = (value: Record<string, unknown>): boolean => Object.keys(value)
+    .some(key => /^(?:analysis|reasoning|reasoning_content|thinking|thought|chain_of_thought|hidden_reasoning)$/i.test(key));
 
 /** Returns null for an empty response or a field/mode name without a sentence. */
 export const extractTaskComment = (raw: unknown): string | null => {
@@ -132,14 +165,18 @@ export const extractTaskComment = (raw: unknown): string | null => {
         try {
             const parsed: unknown = JSON.parse(candidate);
             if (Array.isArray(parsed)) text = parsed.find(item => typeof item === 'string') as string || '';
-            else if (parsed && typeof parsed === 'object') text = extractFromObject(parsed as Record<string, unknown>);
+            else if (parsed && typeof parsed === 'object') {
+                const record = parsed as Record<string, unknown>;
+                if (hasPrivateResponseField(record)) return null;
+                text = extractFromObject(record);
+            }
         } catch {
             // Keep treating it as plain text below; the response may contain
             // harmless braces from a role's custom speech style.
         }
     }
 
-    text = stripWrapping(text);
+    text = stripThinkingBlocks(stripWrapping(text));
     const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
     // A mode name on its own line is a wrapper, while a real following line is
     // the content we want. This handles `平时用语\n记得带伞`.
@@ -153,6 +190,39 @@ export const extractTaskComment = (raw: unknown): string | null => {
     if (!text || isMetaLabel(text) || isIdentityPossessiveFragment(text) || isPromptProtocolLeak(text)) return null;
     if ([...text].filter(character => !/\s/.test(character)).length < MIN_EXTRACTED_TASK_COMMENT_LENGTH) return null;
     return text;
+};
+
+/**
+ * Extract only a provider's explicit visible-output slot for a task voice.
+ * In particular, do not fall back to reasoning_content/reasoning/thinking:
+ * those fields are useful to the chat thinking-chain UI but can never become
+ * a sentence persisted below a task.
+ */
+export const extractTaskCommentResponse = (data: unknown): string | null => {
+    if (!data || typeof data !== 'object') return null;
+    const root = data as Record<string, unknown>;
+    const choices = Array.isArray(root.choices) ? root.choices : [];
+    const choice = choices[0] && typeof choices[0] === 'object'
+        ? choices[0] as Record<string, unknown>
+        : undefined;
+    const message = choice?.message && typeof choice.message === 'object'
+        ? choice.message as Record<string, unknown>
+        : undefined;
+    const candidates: unknown[] = [
+        message?.content,
+        choice?.text,
+        root.output_text,
+        // Responses-style payloads are accepted only through their explicit
+        // output container; unknown debug fields are never searched.
+        root.output,
+    ];
+    for (const candidate of candidates) {
+        const visible = flattenTaskCommentContent(candidate);
+        if (!visible.trim()) continue;
+        const text = extractTaskComment(visible);
+        if (text) return text;
+    }
+    return null;
 };
 
 export const isTaskCommentUsable = (value: unknown): value is string => {
@@ -170,6 +240,30 @@ const normalizeCommentForTemplateCheck = (value: string): string =>
 const shortTitleForTemplateCheck = (value: string): string => {
     const title = value.trim().replace(/[“”"']/g, '').replace(/\s+/g, ' ');
     return [...title].slice(0, 18).join('');
+};
+
+const hasMeaningfulTitleOverlap = (text: string, title: string): boolean => {
+    if (!title || title.length < 2) return false;
+    const compactText = normalizeCommentForTemplateCheck(text);
+    const compactTitle = normalizeCommentForTemplateCheck(title);
+    if (compactText.includes(compactTitle)) return true;
+    let longest = 0;
+    for (let start = 0; start < compactTitle.length; start += 1) {
+        for (let end = start + 2; end <= compactTitle.length; end += 1) {
+            const part = compactTitle.slice(start, end);
+            if ([...part].every(character => /[\p{Script=Han}\p{L}\p{N}]/u.test(character)) && compactText.includes(part)) {
+                longest = Math.max(longest, part.length);
+            }
+        }
+    }
+    return longest >= 2;
+};
+
+const isLikelyTaskEcho = (value: string, taskTitle: string): boolean => {
+    const title = shortTitleForTemplateCheck(taskTitle);
+    if (!hasMeaningfulTitleOverlap(value, title)) return false;
+    return /(?:又打算|打算去|准备去|要去|进货|采购|搞定|完成|任务|待办|提醒|提到|输出|生成)/i.test(value)
+        && [...value].filter(character => !/\s/.test(character)).length <= title.length + 12;
 };
 
 /**
@@ -194,6 +288,22 @@ export const isTaskCommentTooGeneric = (value: unknown, taskTitle = ''): boolean
 };
 
 /**
+ * Strict gate for anything newly generated or used to repair an old row.
+ * It deliberately allows short complete speech such as `去吧。`, while
+ * refusing unfinished task echoes and protocol/reasoning fragments.
+ */
+export const isTaskCommentGenerationAcceptable = (value: unknown, taskTitle = ''): value is string => {
+    const text = extractTaskComment(value);
+    if (!text) return false;
+    const effectiveLength = [...text].filter(character => !/\s/.test(character)).length;
+    return effectiveLength >= MIN_EXTRACTED_TASK_COMMENT_LENGTH
+        && text.length <= MAX_COMPLETE_TASK_COMMENT_LENGTH
+        && isLikelyCompleteSentence(text)
+        && !isTaskCommentTooGeneric(text, taskTitle)
+        && !isLikelyTaskEcho(text, taskTitle);
+};
+
+/**
  * A task comment is safe to show after content/schema cleanup and the
  * anti-template check. Do not require punctuation or twelve characters here:
  * both are useful generation hints, but natural character speech can be short
@@ -206,7 +316,16 @@ export const isTaskCommentDisplayable = (value: unknown, taskTitle = ''): value 
     const effectiveLength = [...text].filter(character => !/\s/.test(character)).length;
     return effectiveLength >= 3
         && text.length <= MAX_COMPLETE_TASK_COMMENT_LENGTH
-        && !isTaskCommentTooGeneric(text, taskTitle);
+        && !isTaskCommentTooGeneric(text, taskTitle)
+        && !isLikelyTaskEcho(text, taskTitle);
+};
+
+/** True when a stored value should be replaced by one fresh, strict reply. */
+export const shouldRepairTaskComment = (value: unknown, taskTitle = ''): boolean => {
+    const hasStoredValue = typeof value === 'string'
+        ? value.trim().length > 0
+        : value !== null && value !== undefined;
+    return hasStoredValue && !isTaskCommentGenerationAcceptable(value, taskTitle);
 };
 
 /**
