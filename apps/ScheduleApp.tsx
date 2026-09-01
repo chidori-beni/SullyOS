@@ -197,7 +197,8 @@ const ScheduleApp: React.FC = () => {
             if (errorMessage.startsWith('主模型没有返回完整寄语')) {
                 // 这是内容完整性保护，不是页面崩溃；旧寄语也不能被失败结果覆盖。
                 console.warn('Monthly calendar message was not saved', { reason: errorMessage });
-                addToast('这次寄语没有写完整，未保存，请稍后再试', 'error');
+                const reason = errorMessage.match(/^主模型没有返回完整寄语（([^）]+)）/)?.[1];
+                addToast(reason ? `这次寄语没有写完整（${reason}），未保存，请稍后再试` : '这次寄语没有写完整，未保存，请稍后再试', 'error');
             } else {
                 console.error('Monthly calendar message failed', error);
                 addToast(`寄语生成失败：${errorMessage}`, 'error');
