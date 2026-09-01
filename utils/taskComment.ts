@@ -32,6 +32,11 @@ const THINKING_BLOCK_TYPES = new Set([
 const VISIBLE_TEXT_BLOCK_TYPES = new Set(['text', 'output_text']);
 const RESPONSE_CONTAINER_TYPES = new Set(['message', 'content', 'output', 'response']);
 
+export interface TaskCommentPolicyContext {
+    /** The character's writing profile, used only for source-aware leak checks. */
+    writerPersona?: string;
+}
+
 const stripThinkingBlocks = (value: string): string => value
     .replace(/<(think|thinking|thought|analysis|reasoning)>[\s\S]*?<\/\1>/gi, '')
     .replace(/<(think|thinking|thought|analysis|reasoning)>[\s\S]*$/gi, '');
@@ -50,6 +55,66 @@ const isMetaLabel = (value: string): boolean => {
     // `,留学生 in Tokyo`. Compare a compact form as well.
     const compact = normalized.replace(/[,，\s:：_\-–—]+/g, '');
     return compact === '留学生intokyo' || compact.startsWith('留学生intokyo');
+};
+
+/**
+ * A provider may copy the speaker prefix before leaking a style instruction,
+ * for example `萧逸：. Uses casual, succinct language.`. Remove that prefix
+ * only for policy matching; the original text is never rewritten from this
+ * normalized value.
+ */
+const stripLikelySpeakerPrefixForPolicy = (value: string): string => value
+    .normalize('NFKC')
+    .replace(/^\s*([\p{Script=Han}\p{L}\p{N}][\p{Script=Han}\p{L}\p{N}\s·._'’-]{0,31})\s*[：:]\s*/u, (match, prefix: string) => {
+        const normalizedPrefix = prefix.trim();
+        const isStyleLabel = /^(?:writing|speaking|communication)\s+(?:style|tone|voice)$/i.test(normalizedPrefix)
+            || /^(?:写作|说话|表达|沟通)(?:风格|语气|方式|口吻|措辞)$/.test(normalizedPrefix);
+        return isStyleLabel ? match : '';
+    })
+    .replace(/^[\s.。,:：;；!！?？、—–-]+/u, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const isHighConfidenceWriterPersonaMetaLine = (value: string): boolean => {
+    const normalized = stripLikelySpeakerPrefixForPolicy(value);
+    if (!normalized) return false;
+
+    // Keep this intentionally structural. A normal line such as
+    // `I use that café all the time.` must not be rejected merely because it
+    // contains `use`; the leak has a style noun and an instruction-like shape.
+    const englishMeta = /^(?:(?:uses?|speaks?|writes?|responds?|answers?|communicates?)\s+(?:a\s+)?[^.!?\n]{0,100}\b(?:language|tone|style|voice|manner|wording)\b|(?:writing|speaking|communication)\s+(?:style|tone|voice)\s*[:\-]\s*[^.!?\n]{1,100}|(?:use|write|speak|respond|answer)\s+(?:in\s+)?(?:a\s+)?[^.!?\n]{0,100}\b(?:language|tone|style|voice|manner|wording)\b|(?:he|she|they|the\s+character|character)\s+(?:uses?|speaks?|writes?|responds?|answers?)\s+[^.!?\n]{0,100}\b(?:language|tone|style|voice|manner|wording)\b)[.!?]*$/i.test(normalized);
+    if (englishMeta) return true;
+
+    const chineseMeta = /^(?:(?:写作|说话|表达|沟通)(?:风格|语气|方式|口吻|措辞)\s*[:：\-]\s*[^。！？.!?\n]{1,80}|(?:使用|采用|保持|以|用)[^。！？.!?\n]{0,80}(?:语言|语气|口吻|风格|措辞)|(?:回复|回答|说话|表达)(?:时)?(?:要|应|需)?(?:保持|使用|采用)[^。！？.!?\n]{0,80}(?:语言|语气|口吻|风格|措辞))[。！？.!?]*$/u.test(normalized);
+    return chineseMeta;
+};
+
+const splitPolicySegments = (value: string): string[] => value
+    .split(/\r?\n|(?<=[。！？!?])\s+/u)
+    .map(segment => segment.trim())
+    .filter(Boolean);
+
+/** True when a visible candidate is an instruction/profile fragment. */
+const isWriterPersonaMetaLeak = (value: string, writerPersona?: string): boolean => {
+    if (splitPolicySegments(value).some(isHighConfidenceWriterPersonaMetaLine)) return true;
+    if (!writerPersona?.trim()) return false;
+
+    // A generated writer profile can contain a longer, role-specific style
+    // sentence. Compare only profile fragments that already look like
+    // metadata; matching the entire persona would wrongly reject an example
+    // line that the character naturally reuses.
+    const candidate = stripLikelySpeakerPrefixForPolicy(value)
+        .toLocaleLowerCase()
+        .replace(/[\s，。！？；：,.!?;:、'"“”‘’`()[\]{}]+/g, '');
+    if (candidate.length < 12) return false;
+    return splitPolicySegments(writerPersona).some(fragment => {
+        if (!isHighConfidenceWriterPersonaMetaLine(fragment)) return false;
+        const profile = stripLikelySpeakerPrefixForPolicy(fragment)
+            .toLocaleLowerCase()
+            .replace(/[\s，。！？；：,.!?;:、'"“”‘’`()[\]{}]+/g, '');
+        if (profile.length < 12) return false;
+        return candidate === profile || candidate.includes(profile) || profile.includes(candidate);
+    });
 };
 
 // A model can copy the output protocol from the system prompt instead of
@@ -74,7 +139,8 @@ const isPromptProtocolLeak = (value: string): boolean => {
         || hasStructuredProtocolKey
         || narratesGenerationProcess
         || englishGenerationProcess
-        || (hasProtocolToken && hasMetaRelation);
+        || (hasProtocolToken && hasMetaRelation)
+        || isWriterPersonaMetaLeak(value);
 };
 
 // Some character cards expose a field such as `萧逸 (Xiao Yi)’s` when the
@@ -292,13 +358,18 @@ export const isTaskCommentTooGeneric = (value: unknown, taskTitle = ''): boolean
  * It deliberately allows short complete speech such as `去吧。`, while
  * refusing unfinished task echoes and protocol/reasoning fragments.
  */
-export const isTaskCommentGenerationAcceptable = (value: unknown, taskTitle = ''): value is string => {
+export const isTaskCommentGenerationAcceptable = (
+    value: unknown,
+    taskTitle = '',
+    policy: TaskCommentPolicyContext = {},
+): value is string => {
     const text = extractTaskComment(value);
     if (!text) return false;
     const effectiveLength = [...text].filter(character => !/\s/.test(character)).length;
     return effectiveLength >= MIN_EXTRACTED_TASK_COMMENT_LENGTH
         && text.length <= MAX_COMPLETE_TASK_COMMENT_LENGTH
         && isLikelyCompleteSentence(text)
+        && !isWriterPersonaMetaLeak(text, policy.writerPersona)
         && !isTaskCommentTooGeneric(text, taskTitle)
         && !isLikelyTaskEcho(text, taskTitle);
 };
@@ -310,22 +381,31 @@ export const isTaskCommentGenerationAcceptable = (value: unknown, taskTitle = ''
  * (`去吧。`) or intentionally omit a final full stop. The strict helper above
  * remains available for callers that specifically need a complete sentence.
  */
-export const isTaskCommentDisplayable = (value: unknown, taskTitle = ''): value is string => {
+export const isTaskCommentDisplayable = (
+    value: unknown,
+    taskTitle = '',
+    policy: TaskCommentPolicyContext = {},
+): value is string => {
     const text = extractTaskComment(value);
     if (!text) return false;
     const effectiveLength = [...text].filter(character => !/\s/.test(character)).length;
     return effectiveLength >= 3
         && text.length <= MAX_COMPLETE_TASK_COMMENT_LENGTH
+        && !isWriterPersonaMetaLeak(text, policy.writerPersona)
         && !isTaskCommentTooGeneric(text, taskTitle)
         && !isLikelyTaskEcho(text, taskTitle);
 };
 
 /** True when a stored value should be replaced by one fresh, strict reply. */
-export const shouldRepairTaskComment = (value: unknown, taskTitle = ''): boolean => {
+export const shouldRepairTaskComment = (
+    value: unknown,
+    taskTitle = '',
+    policy: TaskCommentPolicyContext = {},
+): boolean => {
     const hasStoredValue = typeof value === 'string'
         ? value.trim().length > 0
         : value !== null && value !== undefined;
-    return hasStoredValue && !isTaskCommentGenerationAcceptable(value, taskTitle);
+    return hasStoredValue && !isTaskCommentGenerationAcceptable(value, taskTitle, policy);
 };
 
 /**

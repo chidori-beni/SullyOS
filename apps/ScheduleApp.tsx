@@ -12,11 +12,13 @@ import { getLocalDateKey } from '../utils/localDate';
 import { eventsForDate, mergeCalendarDayTimeline, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, tasksForDate, type CalendarTimelineItem } from '../utils/calendarIntegration';
 import { trackEvent } from '../utils/analytics';
 import { extractTaskComment, extractTaskCommentResponse, formatTaskComment, isTaskCommentDisplayable, isTaskCommentGenerationAcceptable, shouldRepairTaskComment } from '../utils/taskComment';
+import { getTaskVoiceRetryAfterMs, isTaskVoiceRateLimitError, parseRetryAfterMs, TaskVoiceApiError, TASK_VOICE_DEFAULT_COOLDOWN_MS, TASK_VOICE_MAX_COOLDOWN_MS } from '../utils/taskVoiceRequest';
 import { buildMonthlyReviewStats, buildSullyMonthlyReport, CALENDAR_MOODS, chooseMonthlyMessageCharacterId } from '../utils/calendarMonthlyReview';
 
 type CalendarTab = 'month' | 'mine' | 'theirs' | 'review';
 type TaskVoiceKind = 'comment' | 'completed';
-type TaskVoiceError = { kind: TaskVoiceKind; message: string };
+type TaskVoiceError = { kind: TaskVoiceKind; message: string; rateLimited?: boolean; retryAt?: number };
+type TaskVoiceApiConfig = { baseUrl: string; model: string };
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
 const INPUT = 'w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none focus:border-violet-300 focus:bg-white';
 const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -24,6 +26,94 @@ const parseDateKey = (value: string) => {
     const [year, month, day] = value.split('-').map(Number);
     return new Date(year, month - 1, day);
 };
+
+const getTaskVoiceStorage = (): Storage | null => {
+    try {
+        return typeof window !== 'undefined' ? window.localStorage : null;
+    } catch {
+        return null;
+    }
+};
+
+const taskVoiceScopeKey = (apiConfig: TaskVoiceApiConfig): string =>
+    encodeURIComponent(`${apiConfig.baseUrl.replace(/\/+$/, '')}|${apiConfig.model}`);
+
+const taskVoiceCooldownStorageKey = (apiConfig: TaskVoiceApiConfig): string =>
+    `sully:task-voice-cooldown:v1:${taskVoiceScopeKey(apiConfig)}`;
+
+const taskRepairStorageKey = (
+    apiConfig: TaskVoiceApiConfig,
+    taskId: string,
+    kind: TaskVoiceKind,
+    title: string,
+    value: unknown,
+): string => {
+    // Do not put the original task text or role line into persistent storage.
+    const input = `${taskId}|${kind}|${title}|${typeof value === 'string' ? value : JSON.stringify(value) || ''}`;
+    let hash = 2166136261;
+    for (const character of input) {
+        hash ^= character.codePointAt(0) || 0;
+        hash = Math.imul(hash, 16777619);
+    }
+    return `sully:task-voice-repair:v1:${taskVoiceScopeKey(apiConfig)}:${(hash >>> 0).toString(16)}`;
+};
+
+const readStoredTaskVoiceCooldown = (apiConfig: TaskVoiceApiConfig): number => {
+    const storage = getTaskVoiceStorage();
+    if (!storage) return 0;
+    try {
+        const value = Number(storage.getItem(taskVoiceCooldownStorageKey(apiConfig)) || 0);
+        return Number.isFinite(value) && value > Date.now() ? value : 0;
+    } catch {
+        return 0;
+    }
+};
+
+const writeStoredTaskVoiceCooldown = (apiConfig: TaskVoiceApiConfig, retryAt: number): void => {
+    try {
+        getTaskVoiceStorage()?.setItem(taskVoiceCooldownStorageKey(apiConfig), String(retryAt));
+    } catch {
+        // Private browsing / blocked storage should not stop the request path.
+    }
+};
+
+const readTaskVoiceErrorMessage = (data: any): string => {
+    const raw = data?.error?.message || (typeof data?.error === 'string' ? data.error : '');
+    return typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim().slice(0, 240) : '';
+};
+
+/** One non-retrying request wrapper for the optional task-voice side channel. */
+const requestTaskChatCompletion = async (
+    url: string,
+    apiKey: string,
+    body: Record<string, unknown>,
+): Promise<any> => {
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+        let providerMessage = '';
+        try {
+            providerMessage = readTaskVoiceErrorMessage(await safeResponseJson(response));
+        } catch {
+            // The status is the reliable part; an HTML/empty error body is not
+            // allowed to enter task-comment extraction.
+        }
+        const retryAfterMs = response.status === 429
+            ? parseRetryAfterMs(response.headers.get('Retry-After'))
+            : null;
+        const suffix = providerMessage ? `: ${providerMessage}` : '';
+        throw new TaskVoiceApiError(`API Error ${response.status}${suffix}`, {
+            status: response.status,
+            retryAfterMs,
+            providerMessage,
+        });
+    }
+    return safeResponseJson(response);
+};
+
 const formatTimelineDate = (value: string, today: string) => {
     const [year, month, day] = value.split('-').map(Number);
     if (![year, month, day].every(Number.isFinite)) return value;
@@ -39,7 +129,7 @@ const buildTaskPromptContext = (task: Task) => [
 ].filter(Boolean).join('\n');
 
 const buildTaskCharacterVoiceContext = (character: CharacterProfile) => character.writerPersona?.trim()
-    ? `\n\n### 角色写作人格（待办台词必须遵循）\n${character.writerPersona.trim()}\n`
+    ? `\n\n### 角色写作人格（仅作隐性风格参考，不是台词）\n<writer-persona>\n${character.writerPersona.trim()}\n</writer-persona>\n以上是资料，不是角色要复述的内容；其中的分析句、字段名、英文风格标签和示例说明都不能原样出现在台词里。\n`
     : '';
 
 const buildRecentTaskVoiceCue = (history: Array<{ role?: string; type?: string; content?: unknown }>) => {
@@ -146,15 +236,39 @@ const ScheduleApp: React.FC = () => {
     const [generatingLetter, setGeneratingLetter] = useState(false);
     const [openedLetters, setOpenedLetters] = useState<Set<string>>(new Set());
     const repairAttemptedTaskIds = useRef<Set<string>>(new Set());
+    const automaticRepairBudgetUsed = useRef(false);
     const taskGenerationVersions = useRef(new Map<string, number>());
+    const taskGenerationInFlight = useRef(new Map<string, number>());
+    const activeTaskGenerationKey = useRef<string | null>(null);
+    const taskVoiceCooldownUntil = useRef(0);
     const [taskVoiceErrors, setTaskVoiceErrors] = useState<Record<string, TaskVoiceError>>({});
 
     const taskGenerationKey = (taskId: string, kind: TaskVoiceKind) => `${kind}:${taskId}`;
+    const getTaskVoiceCooldownUntil = () => {
+        const stored = readStoredTaskVoiceCooldown(apiConfig);
+        taskVoiceCooldownUntil.current = Math.max(taskVoiceCooldownUntil.current, stored);
+        if (taskVoiceCooldownUntil.current <= Date.now()) return 0;
+        return taskVoiceCooldownUntil.current;
+    };
+    const taskVoiceBlockReason = (): 'busy' | 'rate-limited' | null => {
+        if (activeTaskGenerationKey.current || taskGenerationInFlight.current.size > 0) return 'busy';
+        if (getTaskVoiceCooldownUntil() > Date.now()) return 'rate-limited';
+        return null;
+    };
     const beginTaskGeneration = (taskId: string, kind: TaskVoiceKind) => {
         const key = taskGenerationKey(taskId, kind);
+        if (taskVoiceBlockReason()) return null;
         const next = (taskGenerationVersions.current.get(key) || 0) + 1;
         taskGenerationVersions.current.set(key, next);
+        taskGenerationInFlight.current.set(key, next);
+        activeTaskGenerationKey.current = key;
         return next;
+    };
+    const finishTaskGeneration = (taskId: string, kind: TaskVoiceKind, version: number) => {
+        const key = taskGenerationKey(taskId, kind);
+        if (taskGenerationInFlight.current.get(key) !== version) return;
+        taskGenerationInFlight.current.delete(key);
+        if (activeTaskGenerationKey.current === key) activeTaskGenerationKey.current = null;
     };
     const isCurrentTaskGeneration = (taskId: string, kind: TaskVoiceKind, version: number) =>
         taskGenerationVersions.current.get(taskGenerationKey(taskId, kind)) === version;
@@ -172,9 +286,27 @@ const ScheduleApp: React.FC = () => {
             return next;
         });
     };
-    const setTaskVoiceError = (taskId: string, kind: TaskVoiceKind, error: unknown) => {
-        const message = error instanceof Error && error.message ? error.message : '角色暂时没有回应';
-        setTaskVoiceErrors(current => ({ ...current, [taskId]: { kind, message } }));
+    const recordTaskVoiceRateLimit = (error: unknown): number | undefined => {
+        if (!isTaskVoiceRateLimitError(error)) return undefined;
+        const requestedDelay = getTaskVoiceRetryAfterMs(error) ?? TASK_VOICE_DEFAULT_COOLDOWN_MS;
+        const delay = Math.min(
+            TASK_VOICE_MAX_COOLDOWN_MS,
+            Math.max(1_000, requestedDelay),
+        );
+        const retryAt = Math.max(getTaskVoiceCooldownUntil(), Date.now() + delay);
+        taskVoiceCooldownUntil.current = retryAt;
+        writeStoredTaskVoiceCooldown(apiConfig, retryAt);
+        return retryAt;
+    };
+    const setTaskVoiceError = (taskId: string, kind: TaskVoiceKind, error: unknown, retryAt?: number) => {
+        const rateLimited = isTaskVoiceRateLimitError(error);
+        const message = rateLimited
+            ? '接口请求频率受限'
+            : error instanceof Error && error.message ? error.message : '角色暂时没有回应';
+        setTaskVoiceErrors(current => ({
+            ...current,
+            [taskId]: { kind, message, rateLimited, retryAt },
+        }));
     };
 
     const [taskTitle, setTaskTitle] = useState('');
@@ -352,6 +484,18 @@ const ScheduleApp: React.FC = () => {
             return;
         }
         const generationVersion = beginTaskGeneration(task.id, 'completed');
+        if (generationVersion === null) {
+            const blockReason = taskVoiceBlockReason();
+            if (blockReason === 'rate-limited') {
+                const retryAt = getTaskVoiceCooldownUntil();
+                setTaskVoiceError(task.id, 'completed', new TaskVoiceApiError('API Error 429: 接口请求频率受限', { status: 429 }), retryAt);
+                if (!silent) addToast('接口正在限流，请稍后再问一次', 'info');
+            } else if (!silent) {
+                setTaskVoiceError(task.id, 'completed', new Error('另一个待办正在生成角色台词'));
+                addToast('另一个待办正在生成角色台词，请稍候再试', 'info');
+            }
+            return;
+        }
         clearTaskVoiceError(task.id, 'completed');
         if (!silent) addToast(`${supervisor.name} 正在回应这件事...`, 'info');
         try {
@@ -361,21 +505,16 @@ const ScheduleApp: React.FC = () => {
             const firstPrompt = `${taskContext}\n用户 ${userProfile.name} 刚刚完成了这件事。像你在平时聊天里看到这件事后的第一反应一样说话：先回应具体成果，再自然露出你们关系里的态度、称呼、玩笑或关心。台词要短而有画面感，像熟人随口说的一句，不要写成评价报告、应用通知或任务状态确认。建议 20–80 字，必须是完整句子并以终止标点收尾。只输出台词正文，不要任务标题引号、角色名前缀、字段名、JSON、解释。`;
             const correctionPrompt = `上一句虽然可能格式完整，但像通用客服/任务模板，或没有说完；请整句重写，不要只续两个字。${taskContext}\n请再次阅读角色卡、写作人格、你们的关系、记忆和聊天历史，直接说一句只有这个角色才会说的自然反应：像熟人看到这件具体成果后的第一反应，带一个真实的态度、称呼、玩笑或关心，不要空泛地说“辛苦了”“慢慢来”。不要复述待办标题，不要写报告或系统提示。只输出 20–80 字的一句完整台词正文，以终止标点收尾，不要前缀、字段名、JSON、解释或引号。`;
             const requestReward = async (prompt: string) => {
-                const response = await fetch(baseUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
-                    body: JSON.stringify({
-                        model: apiConfig.model, temperature: 0.85, max_tokens: 320,
-                        messages: [...taskMessages, { role: 'user', content: prompt }],
-                    }),
+                const data = await requestTaskChatCompletion(baseUrl, apiConfig.apiKey, {
+                    model: apiConfig.model, temperature: 0.85, max_tokens: 320, stream: false,
+                    messages: [...taskMessages, { role: 'user', content: prompt }],
                 });
-                if (!response.ok) throw new Error(`API Error ${response.status}`);
-                const data = await safeResponseJson(response);
                 return extractTaskCommentResponse(data);
             };
             let text = await requestReward(firstPrompt);
-            if (!isTaskCommentGenerationAcceptable(text, task.title)) text = await requestReward(correctionPrompt);
-            if (!isTaskCommentGenerationAcceptable(text, task.title)) throw new Error('角色没有说出可展示的完整台词');
+            const policy = { writerPersona: supervisor.writerPersona };
+            if (!isTaskCommentGenerationAcceptable(text, task.title, policy)) text = await requestReward(correctionPrompt);
+            if (!isTaskCommentGenerationAcceptable(text, task.title, policy)) throw new Error('角色没有说出可展示的完整台词');
             if (!isCurrentTaskGeneration(task.id, 'completed', generationVersion)) return;
             // Merge into the latest row so the sentence survives reloads and is
             // not written to a deleted or subsequently uncompleted task.
@@ -397,15 +536,32 @@ const ScheduleApp: React.FC = () => {
         } catch (error: any) {
             console.error('Task reward failed', error);
             if (!isCurrentTaskGeneration(task.id, 'completed', generationVersion)) return;
+            const retryAt = recordTaskVoiceRateLimit(error);
             const latest = (await DB.getAllTasks()).find(item => item.id === task.id);
-            if (latest?.isCompleted) setTaskVoiceError(task.id, 'completed', error);
-            if (!silent) addToast('待办已完成，但角色暂时没有回应；可以稍后重试', 'info');
+            if (latest?.isCompleted) setTaskVoiceError(task.id, 'completed', error, retryAt);
+            if (!silent) addToast(
+                retryAt ? '待办已完成，但接口正在限流；请稍后再问一次' : '待办已完成，但角色暂时没有回应；可以稍后重试',
+                'info',
+            );
+        } finally {
+            finishTaskGeneration(task.id, 'completed', generationVersion);
         }
     };
     const generateTaskComment = async (task: Task, force = false) => {
         const supervisor = characters.find(char => char.id === task.supervisorId);
-        if (!supervisor || !apiConfig.apiKey || (!force && task.supervisorComment && !shouldRepairTaskComment(task.supervisorComment, task.title))) return;
+        const policy = { writerPersona: supervisor?.writerPersona };
+        if (!supervisor || !apiConfig.apiKey || (!force && task.supervisorComment && !shouldRepairTaskComment(task.supervisorComment, task.title, policy))) return;
         const generationVersion = beginTaskGeneration(task.id, 'comment');
+        if (generationVersion === null) {
+            const blockReason = taskVoiceBlockReason();
+            if (blockReason === 'rate-limited') {
+                const retryAt = getTaskVoiceCooldownUntil();
+                setTaskVoiceError(task.id, 'comment', new TaskVoiceApiError('API Error 429: 接口请求频率受限', { status: 429 }), retryAt);
+            } else {
+                setTaskVoiceError(task.id, 'comment', new Error('另一个待办正在生成角色台词'));
+            }
+            return;
+        }
         clearTaskVoiceError(task.id, 'comment');
         setCommenting(current => new Set(current).add(task.id));
         try {
@@ -415,21 +571,15 @@ const ScheduleApp: React.FC = () => {
             const firstPrompt = `${taskContext}\n这是角色写在待办卡片下方、会一直保留的一句陪伴话。像你在平时聊天里看到用户记下这件事时顺手说的一句，不要写成应用提醒、任务说明或评价报告。把待办自然融进你们的关系和语气里：可以调侃、撒娇、嘴硬、关心或轻微催促，但必须由角色卡和聊天历史决定。建议 20–80 字，完整收尾。只输出台词正文，不要任务标题引号、角色名前缀、字段名、JSON、解释。`;
             const correctionPrompt = `上一句虽然可能格式完整，但像通用客服/提醒模板，或没有说完；请整句重写，不要只续两个字。${taskContext}\n请再次阅读角色卡、写作人格、你们的关系、记忆和聊天历史，直接说一句只有这个角色才会说的自然反应：像熟人看到这项待办时顺手说的一句，带一个真实的态度、称呼、玩笑或关心，不要空泛地说“我替你记着”“回来告诉我”。不要复述待办标题，不要写报告或系统提示，不要套用固定的提醒话术。只输出 20–80 字的一句完整台词正文，以终止标点收尾，不要前缀、字段名、JSON、解释或引号。`;
             const requestComment = async (prompt: string) => {
-                const response = await fetch(baseUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiConfig.apiKey },
-                    body: JSON.stringify({
-                        model: apiConfig.model, temperature: 0.85, max_tokens: 280,
-                        messages: [...taskMessages, { role: 'user', content: prompt }],
-                    }),
+                const data = await requestTaskChatCompletion(baseUrl, apiConfig.apiKey, {
+                    model: apiConfig.model, temperature: 0.85, max_tokens: 280, stream: false,
+                    messages: [...taskMessages, { role: 'user', content: prompt }],
                 });
-                if (!response.ok) throw new Error('API Error ' + response.status);
-                const data = await safeResponseJson(response);
                 return extractTaskCommentResponse(data);
             };
             let text = await requestComment(firstPrompt);
-            if (!isTaskCommentGenerationAcceptable(text, task.title)) text = await requestComment(correctionPrompt);
-            if (!isTaskCommentGenerationAcceptable(text, task.title)) throw new Error('角色没有说出可展示的完整台词');
+            if (!isTaskCommentGenerationAcceptable(text, task.title, policy)) text = await requestComment(correctionPrompt);
+            if (!isTaskCommentGenerationAcceptable(text, task.title, policy)) throw new Error('角色没有说出可展示的完整台词');
             if (!isCurrentTaskGeneration(task.id, 'comment', generationVersion)) return;
             // Merge into the latest IndexedDB row instead of resurrecting an old
             // completion state or bringing back a deleted task.
@@ -443,38 +593,60 @@ const ScheduleApp: React.FC = () => {
         } catch (error) {
             console.error('Task comment failed', error);
             if (isCurrentTaskGeneration(task.id, 'comment', generationVersion)) {
+                const retryAt = recordTaskVoiceRateLimit(error);
                 const latest = (await DB.getAllTasks()).find(item => item.id === task.id);
-                if (latest) setTaskVoiceError(task.id, 'comment', error);
+                if (latest) setTaskVoiceError(task.id, 'comment', error, retryAt);
             }
         } finally {
+            finishTaskGeneration(task.id, 'comment', generationVersion);
             if (isCurrentTaskGeneration(task.id, 'comment', generationVersion)) {
                 setCommenting(current => { const next = new Set(current); next.delete(task.id); return next; });
             }
         }
     };
+    const hasAutomaticRepairAttempt = (task: Task, kind: TaskVoiceKind, value: unknown): boolean => {
+        const key = taskRepairStorageKey(apiConfig, task.id, kind, task.title, value);
+        if (repairAttemptedTaskIds.current.has(key)) return true;
+        try {
+            if (getTaskVoiceStorage()?.getItem(key) === '1') {
+                repairAttemptedTaskIds.current.add(key);
+                return true;
+            }
+        } catch {
+            // Storage is only a cross-mount guard; the in-memory guard remains.
+        }
+        return false;
+    };
+    const markAutomaticRepairAttempt = (task: Task, kind: TaskVoiceKind, value: unknown): void => {
+        const key = taskRepairStorageKey(apiConfig, task.id, kind, task.title, value);
+        repairAttemptedTaskIds.current.add(key);
+        try {
+            getTaskVoiceStorage()?.setItem(key, '1');
+        } catch {
+            // Private browsing / blocked storage should not stop the repair.
+        }
+    };
     useEffect(() => {
-        // Wait until OSContext has finished loading custom characters. Otherwise
-        // a legacy task can be read before its supervisor exists in `characters`
-        // and never get another chance to repair its bad metadata comment.
-        if (!apiConfig.apiKey || characters.length === 0 || tasks.length === 0) return;
-        tasks.filter(task => shouldRepairTaskComment(task.supervisorComment, task.title)).slice(0, 4).forEach(task => {
-            if (repairAttemptedTaskIds.current.has(task.id)) return;
-            repairAttemptedTaskIds.current.add(task.id);
-            void generateTaskComment(task);
-        });
-    }, [apiConfig.apiKey, characters, tasks]);
-    useEffect(() => {
-        // Older completed tasks can already contain a leaked field label or a
-        // name-only fragment. Hide it through the parser and silently regenerate
-        // the completion sentence so the existing card is repaired as well.
-        if (!apiConfig.apiKey || characters.length === 0 || tasks.length === 0) return;
-        tasks.filter(task => task.isCompleted && shouldRepairTaskComment(task.completedSupervisorComment, task.title)).slice(0, 4).forEach(task => {
-            const key = `completed:${task.id}`;
-            if (repairAttemptedTaskIds.current.has(key)) return;
-            repairAttemptedTaskIds.current.add(key);
-            void generateTaskReward(task, true);
-        });
-    }, [apiConfig.apiKey, characters, tasks]);
+        // A bad legacy value is hidden by renderTask immediately. Repair at
+        // most one such value per mount, in sequence, instead of firing up to
+        // eight HTTP calls (four tasks × first/correction) at once. The
+        // persistent fingerprint lets a reload show a manual retry without
+        // automatically hammering a provider that already returned 429.
+        if (!apiConfig.apiKey || characters.length === 0 || tasks.length === 0 || automaticRepairBudgetUsed.current) return;
+        const candidate = tasks.map(task => {
+            const kind: TaskVoiceKind = task.isCompleted ? 'completed' : 'comment';
+            const value = kind === 'completed' ? task.completedSupervisorComment : task.supervisorComment;
+            const supervisor = characters.find(char => char.id === task.supervisorId);
+            return { task, kind, value, supervisor };
+        }).find(({ task, kind, value, supervisor }) => supervisor
+            && shouldRepairTaskComment(value, task.title, { writerPersona: supervisor.writerPersona })
+            && !hasAutomaticRepairAttempt(task, kind, value));
+        if (!candidate || taskVoiceBlockReason()) return;
+        automaticRepairBudgetUsed.current = true;
+        markAutomaticRepairAttempt(candidate.task, candidate.kind, candidate.value);
+        if (candidate.kind === 'completed') void generateTaskReward(candidate.task, true);
+        else void generateTaskComment(candidate.task);
+    }, [apiConfig.apiKey, apiConfig.baseUrl, apiConfig.model, characters, tasks]);
     const addTask = async () => {
         if (!taskTitle.trim() || !taskDate) return;
         const task: Task = {
@@ -541,12 +713,27 @@ const ScheduleApp: React.FC = () => {
         addToast(`已同步到${selectedChar?.name || '角色'}的房间待办`, 'success');
     };
 
+    const retryTaskVoice = (task: Task) => {
+        const retryAt = getTaskVoiceCooldownUntil();
+        if (retryAt > Date.now()) {
+            addToast('接口正在限流，请稍后再问一次', 'info');
+            return;
+        }
+        if (task.isCompleted) {
+            setProcessing(current => new Set(current).add(task.id));
+            void generateTaskReward(task).finally(() => {
+                setProcessing(current => { const next = new Set(current); next.delete(task.id); return next; });
+            });
+        } else void generateTaskComment(task, true);
+    };
+
     const renderTask = (task: Task, showTimelineOwner = false) => {
         const supervisor = characters.find(char => char.id === task.supervisorId);
-        const completedComment = isTaskCommentDisplayable(task.completedSupervisorComment, task.title)
+        const policy = { writerPersona: supervisor?.writerPersona };
+        const completedComment = isTaskCommentDisplayable(task.completedSupervisorComment, task.title, policy)
             ? task.completedSupervisorComment
             : null;
-        const pendingComment = isTaskCommentDisplayable(task.supervisorComment, task.title)
+        const pendingComment = isTaskCommentDisplayable(task.supervisorComment, task.title, policy)
             ? task.supervisorComment
             : null;
         const displayedCommentBody = task.isCompleted
@@ -555,6 +742,11 @@ const ScheduleApp: React.FC = () => {
         const displayedComment = formatTaskComment(supervisor?.name, displayedCommentBody);
         const voiceError = taskVoiceErrors[task.id];
         const currentVoiceError = voiceError?.kind === (task.isCompleted ? 'completed' : 'comment') ? voiceError : undefined;
+        const storedVoiceNeedsRepair = task.isCompleted
+            ? shouldRepairTaskComment(task.completedSupervisorComment, task.title, policy)
+            : shouldRepairTaskComment(task.supervisorComment, task.title, policy);
+        const showVoiceRetry = Boolean(currentVoiceError) || (Boolean(apiConfig.apiKey) && storedVoiceNeedsRepair);
+        const globallyRateLimited = getTaskVoiceCooldownUntil() > Date.now();
         const generatingVoice = commenting.has(task.id) || (task.isCompleted && processing.has(task.id));
         return <div key={task.id} className={`group relative flex items-start gap-3 rounded-[1.45rem] border p-4 shadow-sm transition ${task.isCompleted ? 'border-white/70 bg-white/65' : 'border-violet-100 bg-white/90'}`}>
             <button onClick={() => toggleTask(task)} disabled={processing.has(task.id)} className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 transition ${task.isCompleted ? 'border-emerald-400 bg-emerald-400 text-white' : 'border-violet-300 bg-white'}`} aria-label={task.isCompleted ? '恢复待办' : '完成待办'}>{processing.has(task.id) ? '…' : task.isCompleted ? '✓' : ''}</button>
@@ -562,7 +754,7 @@ const ScheduleApp: React.FC = () => {
                 {showTimelineOwner && <div className="mb-2 flex items-center gap-2 text-[10px] font-bold"><span className="rounded-full bg-sky-50 px-2 py-0.5 text-sky-500">你</span><span className="text-slate-400">待办</span></div>}
                 <div className={`text-sm font-semibold text-slate-700 ${task.isCompleted ? 'line-through opacity-50' : ''}`}>{task.title}</div>
                 {(displayedComment || generatingVoice) && <div className="mt-2 rounded-2xl bg-violet-50/80 px-3 py-2 break-words text-[11px] leading-relaxed italic text-violet-500">{displayedComment || `${supervisor?.name || '角色'}：TA 正在想怎么回应你…`}</div>}
-                {currentVoiceError && <div className="mt-2 flex items-center gap-2 text-[10px] text-slate-400"><span>TA 暂时没有回应</span><button onClick={() => task.isCompleted ? void generateTaskReward(task) : void generateTaskComment(task, true)} className="rounded-full bg-violet-50 px-2.5 py-1 font-bold text-violet-500">再问一次</button></div>}
+                {showVoiceRetry && <div className="mt-2 flex items-center gap-2 text-[10px] text-slate-400"><span>{(currentVoiceError?.rateLimited || (!currentVoiceError && globallyRateLimited)) ? '接口请求频率受限，请稍后再试' : currentVoiceError ? 'TA 暂时没有回应' : '角色台词没有成功生成'}</span><button onClick={() => retryTaskVoice(task)} className="rounded-full bg-violet-50 px-2.5 py-1 font-bold text-violet-500">再问一次</button></div>}
                 {task.note && <div className="mt-2 text-xs leading-relaxed text-slate-400">{task.note}</div>}
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-400"><span className="rounded-full bg-sky-50 px-2 py-0.5 text-sky-500">截止 {taskDateKey(task)}{task.dueTime ? ` · ${task.dueTime}` : ''}</span>{supervisor && <span className="inline-flex items-center gap-1"><img src={supervisor.avatar || '/sully/head.png'} className="h-4 w-4 rounded-full object-cover" alt="" />{supervisor.name} 陪你</span>}{task.naturalReminder !== false && <span className="rounded-full bg-violet-50 px-2 py-0.5 text-violet-500">可自然提醒</span>}</div>
             </div><button aria-label={`删除待办：${task.title}`} onClick={() => deleteTask(task.id)} className="px-1 text-slate-300 transition hover:text-rose-400">×</button>
