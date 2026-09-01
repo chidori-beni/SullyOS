@@ -10,7 +10,10 @@ import { buildTaskSupervisorMessages } from './taskSupervisorPrompt';
  * make a rate-limit incident worse.
  */
 export const TASK_SUPERVISOR_VOICE_TIMEOUT_MS = 60_000;
-export const TASK_SUPERVISOR_VOICE_MAX_TOKENS = 512;
+// Keep enough room for gateways that count hidden deliberation against the
+// completion budget. The prompt still asks for one 5–30 character line, so
+// this does not invite a longer visible response.
+export const TASK_SUPERVISOR_VOICE_MAX_TOKENS = 1024;
 
 export interface TaskSupervisorVoiceRequestOptions {
     character: CharacterProfile;
@@ -107,6 +110,19 @@ export const extractTaskSupervisorVoiceResponse = (data: unknown): TaskSuperviso
 const buildSafeTaskVoiceError = (): Error => new Error('角色没有说出可展示的自然台词');
 
 /**
+ * The display gate intentionally accepts old, hand-written, or already
+ * persisted speech without terminal punctuation. A fresh model response is
+ * different: a dangling fragment such as `……在路` must never be saved as the
+ * character's line. Keep the complete-sentence rule local to this side
+ * channel so the historical task-comment reader remains backwards-compatible.
+ */
+const isCompleteTaskSupervisorVoice = (value: unknown, taskTitle: string): value is string => {
+    const text = extractTaskComment(value);
+    if (!text || !isTaskCommentGenerationAcceptable(text, taskTitle)) return false;
+    return /[。！？!?….]+$/.test(text.trim());
+};
+
+/**
  * One short request, one strict visible-content gate, and no hidden fallback.
  * The task has already been saved before this function is called, so every
  * error here is allowed to leave the task untouched.
@@ -148,7 +164,7 @@ export const requestTaskSupervisorVoice = async (
     if (response.finishReason === 'blocked' || response.finishReason === 'length') {
         throw buildSafeTaskVoiceError();
     }
-    if (!response.text || !isTaskCommentGenerationAcceptable(response.text, options.task.title)) {
+    if (!isCompleteTaskSupervisorVoice(response.text, options.task.title)) {
         throw buildSafeTaskVoiceError();
     }
     return response.text;
