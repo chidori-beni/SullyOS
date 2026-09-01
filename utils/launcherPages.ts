@@ -10,6 +10,7 @@ export const LAUNCHER_HOME_PAGE_ID = 'launcher-home';
 export const LAUNCHER_PINWHEEL_PAGE_ID = 'launcher-pinwheel';
 export const LAUNCHER_MEDIA_PAGE_ID = 'launcher-media';
 export const LAUNCHER_WIDGETS_PAGE_ID = 'launcher-widgets';
+export const LAUNCHER_DOCK_CAPACITY = 4;
 
 export type LauncherPageMutation =
     | { ok: true; layout: LauncherPageLayout }
@@ -31,12 +32,25 @@ const uniqueAvailableIds = (ids: readonly unknown[], available: readonly string[
     return result;
 };
 
-const normalizeLegacyOrder = (legacyOrder: readonly string[] | undefined, available: readonly string[]): string[] => {
+const normalizeLegacyOrder = (
+    legacyOrder: readonly string[] | undefined,
+    available: readonly string[],
+    excludedIds: ReadonlySet<string> = new Set(),
+): string[] => {
     return uniqueAvailableIds([
         ...(Array.isArray(legacyOrder) ? legacyOrder : []),
         ...available,
-    ], available);
+    ], available).filter(id => !excludedIds.has(id));
 };
+
+const normalizeDockOrder = (
+    dockOrder: readonly string[] | undefined,
+    available: readonly string[],
+    defaultDockIds: readonly string[] = [],
+): string[] => uniqueAvailableIds(
+    Array.isArray(dockOrder) ? dockOrder : defaultDockIds,
+    available,
+).slice(0, LAUNCHER_DOCK_CAPACITY);
 
 const makeUniquePageId = (rawId: unknown, fallback: string, used: Set<string>): string => {
     const base = typeof rawId === 'string' && rawId.trim() ? rawId.trim() : fallback;
@@ -66,9 +80,11 @@ export const flattenLauncherPageApps = (pages: readonly LauncherPage[]): string[
     pages.flatMap(page => page.appIds)
 );
 
-const withLegacySnapshot = (pages: LauncherPage[]): LauncherPageLayout => ({
+const withLegacySnapshot = (pages: LauncherPage[], dockAppIds: readonly string[] = []): LauncherPageLayout => ({
     version: 1,
     pages,
+    dockAppIds: [...dockAppIds],
+    legacyDockOrder: [...dockAppIds],
     legacyAppOrder: flattenLauncherPageApps(pages),
 });
 
@@ -86,9 +102,14 @@ const createAppPage = (id: string, appIds: string[] = [], showMedia = false): La
 export const createLauncherPageLayout = (
     availableAppIds: readonly string[],
     legacyOrder?: readonly string[],
-    options: { showMediaPage?: boolean } = {},
+    options: {
+        showMediaPage?: boolean;
+        legacyDockOrder?: readonly string[];
+        defaultDockIds?: readonly string[];
+    } = {},
 ): LauncherPageLayout => {
-    const ordered = normalizeLegacyOrder(legacyOrder, availableAppIds);
+    const dockAppIds = normalizeDockOrder(options.legacyDockOrder, availableAppIds, options.defaultDockIds);
+    const ordered = normalizeLegacyOrder(legacyOrder, availableAppIds, new Set(dockAppIds));
     const groups = paginateLauncherApps(ordered, options.showMediaPage ? 3 : 2);
     const pages: LauncherPage[] = [
         { id: LAUNCHER_HOME_PAGE_ID, kind: 'home', appIds: groups[0] || [] },
@@ -101,7 +122,7 @@ export const createLauncherPageLayout = (
             options.showMediaPage && index === 0,
         ));
     });
-    return withLegacySnapshot(pages);
+    return withLegacySnapshot(pages, dockAppIds);
 };
 
 const clonePages = (pages: readonly LauncherPage[]): LauncherPage[] => pages.map(page => ({
@@ -181,14 +202,36 @@ export const normalizeLauncherPageLayout = (
     saved: LauncherPageLayout | undefined,
     availableAppIds: readonly string[],
     legacyOrder?: readonly string[],
-    options: { showMediaPage?: boolean } = {},
+    options: {
+        showMediaPage?: boolean;
+        legacyDockOrder?: readonly string[];
+        defaultDockIds?: readonly string[];
+    } = {},
 ): LauncherPageLayout => {
     if (!hasValidSavedLayout(saved)) {
         return createLauncherPageLayout(availableAppIds, legacyOrder, options);
     }
 
+    // A saved dockAppIds array, including [], is authoritative. If a legacy
+    // client changed launcherDockOrder after this layout was saved, the
+    // snapshot lets that older edit win once, just like legacyAppOrder below.
+    const savedDockSnapshot = Array.isArray(saved.legacyDockOrder)
+        ? normalizeDockOrder(saved.legacyDockOrder, availableAppIds)
+        : undefined;
+    const currentLegacyDock = Array.isArray(options.legacyDockOrder)
+        ? normalizeDockOrder(options.legacyDockOrder, availableAppIds)
+        : undefined;
+    const dockWasEditedByOlderClient = !!savedDockSnapshot
+        && !!currentLegacyDock
+        && savedDockSnapshot.join('\u0000') !== currentLegacyDock.join('\u0000');
+    const savedDockOrder = dockWasEditedByOlderClient
+        ? currentLegacyDock
+        : Array.isArray(saved.dockAppIds)
+            ? saved.dockAppIds
+            : options.legacyDockOrder;
+    const dockAppIds = normalizeDockOrder(savedDockOrder, availableAppIds, options.defaultDockIds);
     const usedPageIds = new Set<string>();
-    const claimedApps = new Set<string>();
+    const claimedApps = new Set<string>(dockAppIds);
     let home: LauncherPage | undefined;
     let pinwheel: LauncherPage | undefined;
     const rest: LauncherPage[] = [];
@@ -239,9 +282,10 @@ export const normalizeLauncherPageLayout = (
     pages.splice(Math.min(desiredPinwheelPosition, pages.length), 0, pinwheel);
 
     const pageAppIds = flattenLauncherPageApps(pages);
-    const currentLegacy = normalizeLegacyOrder(legacyOrder, availableAppIds);
+    const dockIds = new Set(dockAppIds);
+    const currentLegacy = normalizeLegacyOrder(legacyOrder, availableAppIds, dockIds);
     const savedLegacy = Array.isArray(saved.legacyAppOrder)
-        ? normalizeLegacyOrder(saved.legacyAppOrder, availableAppIds)
+        ? normalizeLegacyOrder(saved.legacyAppOrder, availableAppIds, dockIds)
         : undefined;
     const legacyWasEditedByOlderClient = !!savedLegacy
         && Array.isArray(legacyOrder)
@@ -264,12 +308,109 @@ export const normalizeLauncherPageLayout = (
         else nextPages.push(createAppPage(LAUNCHER_MEDIA_PAGE_ID, [], true));
     }
 
-    return withLegacySnapshot(nextPages);
+    return withLegacySnapshot(nextPages, dockAppIds);
 };
 
-export const projectLauncherLayoutToLegacy = (layout: LauncherPageLayout): { appOrder: string[] } => ({
+export const projectLauncherLayoutToLegacy = (layout: LauncherPageLayout): { appOrder: string[]; dockOrder: string[] } => ({
     appOrder: flattenLauncherPageApps(layout.pages),
+    dockOrder: [...(layout.dockAppIds || [])],
 });
+
+const launcherDockIds = (layout: LauncherPageLayout): string[] => [...(layout.dockAppIds || [])];
+
+/** Moves a Dock App to a page, swapping with a page App when that page is full. */
+export const moveLauncherDockAppToPage = (
+    layout: LauncherPageLayout,
+    dockAppId: string,
+    targetPageId: string,
+    targetAppId?: string,
+): LauncherPageMutation => {
+    const next = clonePages(layout.pages);
+    const dockAppIds = launcherDockIds(layout);
+    const target = next.find(page => page.id === targetPageId);
+    const dockIndex = dockAppIds.indexOf(dockAppId);
+    if (!target || !launcherPageAcceptsApps(target) || dockIndex < 0) {
+        return { ok: false, layout, reason: '这个位置不能放置 App' };
+    }
+    if (target.appIds.includes(dockAppId)) {
+        return { ok: false, layout, reason: '这个 App 已经在目标页面' };
+    }
+    if (targetAppId && !target.appIds.includes(targetAppId)) {
+        return { ok: false, layout, reason: '目标 App 已经离开当前页面' };
+    }
+
+    const capacity = getLauncherPageCapacity(target);
+    const targetIndex = targetAppId ? target.appIds.indexOf(targetAppId) : target.appIds.length;
+    if (target.appIds.length >= capacity && !targetAppId) {
+        return { ok: false, layout, reason: '目标页面已满，请拖到具体 App 上交换' };
+    }
+
+    dockAppIds.splice(dockIndex, 1);
+    if (target.appIds.length < capacity) {
+        target.appIds.splice(targetIndex, 0, dockAppId);
+    } else {
+        const displacedAppId = target.appIds[targetIndex];
+        target.appIds[targetIndex] = dockAppId;
+        dockAppIds.splice(dockIndex, 0, displacedAppId);
+    }
+    return { ok: true, layout: withLegacySnapshot(next, dockAppIds) };
+};
+
+/** Moves a page App into Dock, or swaps with a specific Dock App when full. */
+export const moveLauncherPageAppToDock = (
+    layout: LauncherPageLayout,
+    sourcePageId: string,
+    appId: string,
+    targetDockAppId?: string,
+): LauncherPageMutation => {
+    const next = clonePages(layout.pages);
+    const dockAppIds = launcherDockIds(layout);
+    const source = next.find(page => page.id === sourcePageId);
+    const sourceIndex = source?.appIds.indexOf(appId) ?? -1;
+    if (!source || !launcherPageAcceptsApps(source) || sourceIndex < 0) {
+        return { ok: false, layout, reason: '没有找到要移动的 App' };
+    }
+    if (dockAppIds.includes(appId)) {
+        return { ok: false, layout, reason: '这个 App 已经在 Dock' };
+    }
+
+    const dockIndex = targetDockAppId ? dockAppIds.indexOf(targetDockAppId) : -1;
+    if (targetDockAppId && dockIndex < 0) {
+        return { ok: false, layout, reason: '目标 Dock App 已经离开当前 Dock' };
+    }
+    if (!targetDockAppId && dockAppIds.length >= LAUNCHER_DOCK_CAPACITY) {
+        return { ok: false, layout, reason: 'Dock 已满，请拖到具体 Dock App 上交换' };
+    }
+
+    source.appIds.splice(sourceIndex, 1);
+    if (targetDockAppId) {
+        const displacedAppId = dockAppIds[dockIndex];
+        dockAppIds[dockIndex] = appId;
+        source.appIds.splice(Math.min(sourceIndex, source.appIds.length), 0, displacedAppId);
+    } else {
+        dockAppIds.push(appId);
+    }
+    return { ok: true, layout: withLegacySnapshot(next, dockAppIds) };
+};
+
+/** Reorders two concrete Dock slots while keeping the page layout authoritative. */
+export const reorderLauncherDockApps = (
+    layout: LauncherPageLayout,
+    sourceDockAppId: string,
+    targetDockAppId: string,
+): LauncherPageMutation => {
+    if (sourceDockAppId === targetDockAppId) return { ok: true, layout };
+    const dockAppIds = launcherDockIds(layout);
+    const sourceIndex = dockAppIds.indexOf(sourceDockAppId);
+    const targetIndex = dockAppIds.indexOf(targetDockAppId);
+    if (sourceIndex < 0 || targetIndex < 0) {
+        return { ok: false, layout, reason: 'Dock App 不存在' };
+    }
+    const nextDockAppIds = [...dockAppIds];
+    const [moved] = nextDockAppIds.splice(sourceIndex, 1);
+    nextDockAppIds.splice(targetIndex, 0, moved);
+    return { ok: true, layout: withLegacySnapshot(clonePages(layout.pages), nextDockAppIds) };
+};
 
 /**
  * Moves an App before another App or to the end of a page. When the target is
@@ -303,7 +444,7 @@ export const moveLauncherApp = (
     const resultPages = targetOverCapacity
         ? reflowLauncherPageApps(next, flattenLauncherPageApps(next))
         : next;
-    return { ok: true, layout: withLegacySnapshot(resultPages) };
+    return { ok: true, layout: withLegacySnapshot(resultPages, layout.dockAppIds) };
 };
 
 export const reorderLauncherPages = (
@@ -322,7 +463,7 @@ export const reorderLauncherPages = (
     // useful, visible end-drop target while remaining fixed in the last slot.
     if (targetPageId === LAUNCHER_WIDGETS_PAGE_ID) {
         next.push(moved);
-        return { ok: true, layout: withLegacySnapshot(next) };
+        return { ok: true, layout: withLegacySnapshot(next, layout.dockAppIds) };
     }
 
     const targetIndex = next.findIndex(page => page.id === targetPageId);
@@ -332,7 +473,7 @@ export const reorderLauncherPages = (
         ? 1
         : Math.max(1, adjustedTargetIndex);
     next.splice(Math.min(insertIndex, next.length), 0, moved);
-    return { ok: true, layout: withLegacySnapshot(next) };
+    return { ok: true, layout: withLegacySnapshot(next, layout.dockAppIds) };
 };
 
 export const addLauncherAppPage = (
@@ -343,7 +484,7 @@ export const addLauncherAppPage = (
     const next = clonePages(layout.pages);
     if (next.some(page => page.id === pageId)) return { ok: false, layout, reason: '页面身份重复' };
     next.push(createAppPage(pageId));
-    return { ok: true, layout: withLegacySnapshot(next) };
+    return { ok: true, layout: withLegacySnapshot(next, layout.dockAppIds) };
 };
 
 export const canDeleteLauncherAppPage = (
@@ -375,5 +516,5 @@ export const deleteLauncherAppPage = (
     if (!check.ok) return { ok: false, layout, reason: check.reason || '页面不能删除', neededSlots: check.neededSlots };
     const next = layout.pages.filter(page => page.id !== pageId);
     const reflowed = reflowLauncherPageApps(next, flattenLauncherPageApps(next));
-    return { ok: true, layout: withLegacySnapshot(reflowed) };
+    return { ok: true, layout: withLegacySnapshot(reflowed, layout.dockAppIds) };
 };

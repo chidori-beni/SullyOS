@@ -27,10 +27,12 @@ import {
     addLauncherAppPage,
     canDeleteLauncherAppPage,
     deleteLauncherAppPage,
-    flattenLauncherPageApps,
     moveLauncherApp,
+    moveLauncherDockAppToPage,
+    moveLauncherPageAppToDock,
     normalizeLauncherPageLayout,
     projectLauncherLayoutToLegacy,
+    reorderLauncherDockApps,
     reorderLauncherPages,
 } from '../utils/launcherPages';
 const CompanionHome = React.lazy(() => import('../components/os/CompanionHome'));
@@ -712,6 +714,7 @@ const Launcher: React.FC = () => {
       grabOffsetX?: number;
       grabOffsetY?: number;
       lastTarget?: {
+          kind: string;
           pageId?: string;
           key: string;
       };
@@ -763,16 +766,10 @@ const Launcher: React.FC = () => {
   useEffect(() => subscribeDevDebugAvailability(setDevDebugVisible), []);
   const availableGridApps = useMemo(() => {
     return INSTALLED_APPS.filter(app =>
-      !DOCK_APPS.includes(app.id)
       // 「捏脸·开发」仅在开发模式（右下角开发徽标可见或手动解锁时）显示
-      && (app.id !== AppID.CharCreatorDev || devDebugVisible)
+      app.id !== AppID.CharCreatorDev || devDebugVisible
     );
   }, [devDebugVisible]);
-
-  const normalizeOrder = useCallback((saved: string[] | undefined, available: string[]) => {
-      const valid = new Set(available);
-      return [...(saved || []).filter((id, index, all) => valid.has(id) && all.indexOf(id) === index), ...available.filter(id => !(saved || []).includes(id))];
-  }, []);
 
   const availableGridIds = useMemo(() => availableGridApps.map(app => app.id), [availableGridApps]);
 
@@ -786,9 +783,13 @@ const Launcher: React.FC = () => {
       theme.launcherPageLayout,
       availableGridIds,
       theme.launcherAppOrder,
-      { showMediaPage: hasLauncherMediaPage },
+      {
+          showMediaPage: hasLauncherMediaPage,
+          legacyDockOrder: theme.launcherDockOrder,
+          defaultDockIds: DOCK_APPS,
+      },
   ));
-  const [launcherDockOrder, setLauncherDockOrder] = useState<string[]>(() => normalizeOrder(theme.launcherDockOrder, DOCK_APPS));
+  const [launcherDockOrder, setLauncherDockOrder] = useState<string[]>(() => [...(launcherPageLayout.dockAppIds || [])]);
   const [pinwheelOrder, setPinwheelOrder] = useState<Array<'music' | 'appsA' | 'appsB' | 'image'>>(() => {
       const available = ['music', 'appsA', 'appsB', 'image'] as const;
       const saved = theme.launcherPinwheelOrder || [];
@@ -805,20 +806,21 @@ const Launcher: React.FC = () => {
           theme.launcherPageLayout,
           availableGridIds,
           theme.launcherAppOrder,
-          { showMediaPage: hasLauncherMediaPage },
+          {
+              showMediaPage: hasLauncherMediaPage,
+              legacyDockOrder: theme.launcherDockOrder,
+              defaultDockIds: DOCK_APPS,
+          },
       );
       launcherPageLayoutRef.current = next;
       setLauncherPageLayout(next);
-  }, [availableGridIds, hasLauncherMediaPage, layoutEditing, theme.launcherAppOrder, theme.launcherPageLayout]);
+      const nextDock = [...(next.dockAppIds || [])];
+      launcherDockOrderRef.current = nextDock;
+      setLauncherDockOrder(nextDock);
+  }, [availableGridIds, hasLauncherMediaPage, layoutEditing, theme.launcherAppOrder, theme.launcherDockOrder, theme.launcherPageLayout]);
   useEffect(() => { launcherPageLayoutRef.current = launcherPageLayout; }, [launcherPageLayout]);
   useEffect(() => { launcherDockOrderRef.current = launcherDockOrder; }, [launcherDockOrder]);
   useEffect(() => { pinwheelOrderRef.current = pinwheelOrder; }, [pinwheelOrder]);
-  useEffect(() => {
-      if (layoutEditing) return;
-      const next = normalizeOrder(theme.launcherDockOrder, DOCK_APPS);
-      launcherDockOrderRef.current = next;
-      setLauncherDockOrder(next);
-  }, [layoutEditing, normalizeOrder, theme.launcherDockOrder]);
   useEffect(() => {
       if (layoutEditing) return;
       const available = ['music', 'appsA', 'appsB', 'image'] as const;
@@ -1179,6 +1181,9 @@ const Launcher: React.FC = () => {
   const setLauncherPageLayoutDraft = useCallback((next: LauncherPageLayout, preferredPageId = visiblePageIdRef.current) => {
       launcherPageLayoutRef.current = next;
       setLauncherPageLayout(next);
+      const nextDock = [...(next.dockAppIds || [])];
+      launcherDockOrderRef.current = nextDock;
+      setLauncherDockOrder(nextDock);
       pendingCarouselPageIdRef.current = preferredPageId;
       const nextIndex = launcherPageIndexById(next, preferredPageId);
       activePageIndexRef.current = nextIndex;
@@ -1191,13 +1196,18 @@ const Launcher: React.FC = () => {
       void updateTheme({
           launcherPageLayout: launcherPageLayoutRef.current,
           launcherAppOrder: projection.appOrder,
-          launcherDockOrder: launcherDockOrderRef.current,
+          launcherDockOrder: projection.dockOrder,
           launcherPinwheelOrder: pinwheelOrderRef.current,
       });
   }, [updateTheme]);
 
   const reorderByTarget = useCallback((kind: string, source: string, target: string) => {
       if (source === target) return;
+      if (kind === 'dock') {
+          const result = reorderLauncherDockApps(launcherPageLayoutRef.current, source, target);
+          if (result.ok) setLauncherPageLayoutDraft(result.layout);
+          return;
+      }
       const reorder = <T extends string>(items: T[]) => {
           const from = items.indexOf(source as T);
           const to = items.indexOf(target as T);
@@ -1207,16 +1217,12 @@ const Launcher: React.FC = () => {
           next.splice(to, 0, moved);
           return next;
       };
-      if (kind === 'dock') {
-          const next = reorder(launcherDockOrderRef.current);
-          launcherDockOrderRef.current = next;
-          setLauncherDockOrder(next);
-      } else if (kind === 'widget') {
+      if (kind === 'widget') {
           const next = reorder(pinwheelOrderRef.current) as Array<'music' | 'appsA' | 'appsB' | 'image'>;
           pinwheelOrderRef.current = next;
           setPinwheelOrder(next);
       }
-  }, []);
+  }, [setLauncherPageLayoutDraft]);
 
   const moveAppByTarget = useCallback((sourcePageId: string, sourceAppId: string, targetPageId: string, targetAppId?: string) => {
       const result = moveLauncherApp(
@@ -1231,6 +1237,34 @@ const Launcher: React.FC = () => {
           return;
       }
       setLauncherPageLayoutDraft(result.layout, targetPageId);
+  }, [addToast, setLauncherPageLayoutDraft]);
+
+  const moveDockAppByTarget = useCallback((dockAppId: string, targetPageId: string, targetAppId?: string) => {
+      const result = moveLauncherDockAppToPage(
+          launcherPageLayoutRef.current,
+          dockAppId,
+          targetPageId,
+          targetAppId,
+      );
+      if (!result.ok) {
+          addToast(result.reason, 'error');
+          return;
+      }
+      setLauncherPageLayoutDraft(result.layout, targetPageId);
+  }, [addToast, setLauncherPageLayoutDraft]);
+
+  const movePageAppToDockByTarget = useCallback((sourcePageId: string, sourceAppId: string, targetDockAppId?: string) => {
+      const result = moveLauncherPageAppToDock(
+          launcherPageLayoutRef.current,
+          sourcePageId,
+          sourceAppId,
+          targetDockAppId,
+      );
+      if (!result.ok) {
+          addToast(result.reason, 'error');
+          return;
+      }
+      setLauncherPageLayoutDraft(result.layout, sourcePageId);
   }, [addToast, setLauncherPageLayoutDraft]);
 
   const makeNewLauncherPageId = useCallback(() => {
@@ -1339,7 +1373,8 @@ const Launcher: React.FC = () => {
       const turn = () => {
           const pointer = layoutPointer.current;
           const scroller = scrollContainerRef.current;
-          if (!pointer?.active || pointer.kind !== 'app' || !scroller || layoutPageTurnDirection.current !== direction) {
+          const isAppOrDockPointer = pointer?.kind === 'app' || pointer?.kind === 'dock';
+          if (!pointer?.active || !isAppOrDockPointer || !scroller || layoutPageTurnDirection.current !== direction) {
               clearLayoutPageTurn();
               return;
           }
@@ -1426,8 +1461,9 @@ const Launcher: React.FC = () => {
           pointer.ghost.style.top = `${e.clientY - (pointer.grabOffsetY || 0)}px`;
       }
       const rootRect = e.currentTarget.getBoundingClientRect();
-      if (pointer.kind === 'app' && e.clientX <= rootRect.left + 72) queueLayoutPageTurn(-1);
-      else if (pointer.kind === 'app' && e.clientX >= rootRect.right - 72) queueLayoutPageTurn(1);
+      const isAppOrDockPointer = pointer.kind === 'app' || pointer.kind === 'dock';
+      if (isAppOrDockPointer && e.clientX <= rootRect.left + 72) queueLayoutPageTurn(-1);
+      else if (isAppOrDockPointer && e.clientX >= rootRect.right - 72) queueLayoutPageTurn(1);
       else clearLayoutPageTurn();
       const pointTarget = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
       const target = pointTarget?.closest<HTMLElement>('[data-launcher-item]');
@@ -1435,11 +1471,13 @@ const Launcher: React.FC = () => {
       const targetKey = target?.dataset.launcherItem;
       const targetKind = target?.dataset.launcherKind;
       const targetPageId = target?.dataset.launcherPageId;
+      const crossAppDockTarget = (pointer.kind === 'app' && targetKind === 'dock')
+          || (pointer.kind === 'dock' && targetKind === 'app');
       const validItemTarget = !targetIsClone
           && !!targetKey
-          && targetKind === pointer.kind
+          && (targetKind === pointer.kind || crossAppDockTarget)
           && targetKey !== pointer.key
-          && (pointer.kind !== 'app' || !!targetPageId);
+          && (targetKind !== 'app' || !!targetPageId);
 
       // If the pointer is over an App icon, keep the precise before-target
       // semantics. Dropping on one's own icon is a no-op, not an append.
@@ -1456,7 +1494,8 @@ const Launcher: React.FC = () => {
           target.classList.add('launcher-drop-target');
           pointer.targetElement = target;
           pointer.lastTarget = {
-              pageId: pointer.kind === 'app' ? targetPageId : undefined,
+              kind: targetKind || pointer.kind,
+              pageId: targetKind === 'app' ? targetPageId : undefined,
               key: targetKey,
           };
           return;
@@ -1467,12 +1506,22 @@ const Launcher: React.FC = () => {
       const pageDrop = pointTarget?.closest<HTMLElement>('[data-launcher-page-drop]');
       const pageDropIsClone = !!pageDrop?.closest('[data-launcher-carousel-clone="true"]');
       const pageDropId = pageDrop?.dataset.launcherPageDrop;
-      if (pointer.kind === 'app' && pageDrop && !pageDropIsClone && pageDropId) {
+      if ((pointer.kind === 'app' || pointer.kind === 'dock') && pageDrop && !pageDropIsClone && pageDropId) {
           if (pageDrop === pointer.targetElement) return;
           pointer.targetElement?.classList.remove('launcher-drop-target');
           pageDrop.classList.add('launcher-drop-target');
           pointer.targetElement = pageDrop;
-          pointer.lastTarget = { pageId: pageDropId, key: '' };
+          pointer.lastTarget = { kind: 'app', pageId: pageDropId, key: '' };
+          return;
+      }
+
+      const dockDrop = pointTarget?.closest<HTMLElement>('[data-launcher-dock-drop]');
+      if (pointer.kind === 'app' && dockDrop) {
+          if (dockDrop === pointer.targetElement) return;
+          pointer.targetElement?.classList.remove('launcher-drop-target');
+          dockDrop.classList.add('launcher-drop-target');
+          pointer.targetElement = dockDrop;
+          pointer.lastTarget = { kind: 'dock', key: '' };
           return;
       }
 
@@ -1493,10 +1542,15 @@ const Launcher: React.FC = () => {
           pointer.ghost?.remove();
           pointer.targetElement?.classList.remove('launcher-drop-target');
           if (pointer.lastTarget) {
-              if (pointer.kind === 'app' && pointer.pageId && pointer.lastTarget.pageId) {
-                  moveAppByTarget(pointer.pageId, pointer.key, pointer.lastTarget.pageId, pointer.lastTarget.key || undefined);
-              } else if (pointer.lastTarget.key) {
-                  reorderByTarget(pointer.kind, pointer.key, pointer.lastTarget.key);
+              const target = pointer.lastTarget;
+              if (pointer.kind === 'app' && pointer.pageId && target.kind === 'app' && target.pageId) {
+                  moveAppByTarget(pointer.pageId, pointer.key, target.pageId, target.key || undefined);
+              } else if (pointer.kind === 'app' && pointer.pageId && target.kind === 'dock') {
+                  movePageAppToDockByTarget(pointer.pageId, pointer.key, target.key || undefined);
+              } else if (pointer.kind === 'dock' && target.kind === 'app' && target.pageId) {
+                  moveDockAppByTarget(pointer.key, target.pageId, target.key || undefined);
+              } else if (target.kind === pointer.kind && target.key) {
+                  reorderByTarget(pointer.kind, pointer.key, target.key);
               }
           }
           persistLauncherLayout();
@@ -1932,14 +1986,15 @@ const Launcher: React.FC = () => {
       >
            <div
              className={`rounded-[1.75rem] px-4 py-3 flex gap-3 sm:gap-6 items-center mx-auto max-w-full justify-between overflow-x-auto no-scrollbar transform-gpu ${acnh || paper ? '' : 'bg-white/30 border border-white/25 shadow-[0_8px_40px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.08)]'}`}
+             data-launcher-dock-drop="true"
              style={acnh ? { background: 'transparent' } : paper ? {
                background: 'rgba(224,221,215,0.42)',
                border: '1px solid rgba(91,72,51,0.07)',
                boxShadow: '0 6px 18px rgba(91,72,51,0.065)',
              } : undefined}
            >
-               {dockAppsConfig.map(app => (
-                   <div key={app.id} data-launcher-item={app.id} data-launcher-kind="dock" className={`relative ${layoutEditing ? 'launcher-edit-item' : ''}`}>
+              {dockAppsConfig.map((app, index) => (
+                  <div key={app.id} data-launcher-item={app.id} data-launcher-kind="dock" data-launcher-dock-index={index} className={`relative ${layoutEditing ? 'launcher-edit-item' : ''}`}>
                         <AppIcon app={app} onClick={() => { if (!layoutEditing) openApp(app.id); }} variant="dock" size="md" />
                         {app.id === 'chat' && totalUnread > 0 && (
                             <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-white text-[9px] flex items-center justify-center border-2 border-white/20 shadow-sm font-bold pointer-events-none animate-pop-in">

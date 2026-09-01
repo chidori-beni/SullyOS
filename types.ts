@@ -790,6 +790,10 @@ export interface LauncherPageLayout {
   version: 1;
   /** home 永远在第一位；pinwheel 与普通 app 页可在其后排序。 */
   pages: LauncherPage[];
+  /** 当前版本的 Dock 唯一归属；缺省时由旧 launcherDockOrder / 默认值迁移。 */
+  dockAppIds?: string[];
+  /** 最近一次投影回旧 launcherDockOrder 的快照，用于识别旧客户端降级编辑。 */
+  legacyDockOrder?: string[];
   /** 最近一次投影回旧 launcherAppOrder 的快照，用于识别旧客户端降级编辑。 */
   legacyAppOrder?: string[];
 }
