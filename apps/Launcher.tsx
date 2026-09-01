@@ -20,6 +20,7 @@ import {
     carouselLogicalIndex,
     carouselPhysicalIndex,
 } from '../utils/circularPaging';
+import { paginateLauncherApps } from '../utils/launcherPagination';
 
 const CompanionHome = React.lazy(() => import('../components/os/CompanionHome'));
 
@@ -254,16 +255,14 @@ const CharacterWidget = React.memo(({
 const AppGridPage = React.memo(({
     apps,
     openApp,
-    acnh = false,
     editing = false,
 }: {
     apps: typeof INSTALLED_APPS,
     openApp: (id: AppID) => void,
-    acnh?: boolean,
     editing?: boolean,
 }) => {
     return (
-        <div className={`grid place-items-center animate-fade-in relative ${acnh ? 'grid-cols-4 gap-y-6 gap-x-2' : 'grid-cols-4 gap-y-6 gap-x-2'}`}>
+        <div className="grid grid-cols-4 content-start place-items-center gap-y-5 gap-x-2 pb-8 animate-fade-in relative">
              {apps.map(app => (
                  <div
                     key={app.id}
@@ -607,18 +606,21 @@ const Launcher: React.FC = () => {
       return launcherDockOrder.map(id => byId.get(id as AppID)).filter(Boolean) as typeof INSTALLED_APPS;
   }, [launcherDockOrder]);
 
-  // Split apps into pages of 8 (4 cols x 2 rows fit comfortably below widget)
-  // Pages: 0 = clock+chat+music+grid (original), 1 = pinwheel, 2 = widget images + grid,
-  //        3+ = plain grid. Pad to at least 3 slots so the pinwheel/widget pages always exist.
-  const APPS_PER_PAGE = 8;
-  const appPages = useMemo(() => {
-      const pages: typeof INSTALLED_APPS[] = [];
-      for (let i = 0; i < gridApps.length; i += APPS_PER_PAGE) {
-          pages.push(gridApps.slice(i, i + APPS_PER_PAGE));
-      }
-      while (pages.length < 3) pages.push([]);
-      return pages;
-  }, [gridApps]);
+  // The first page also carries the clock and character card, so keep it to
+  // 4x5. The special pinwheel page carries two 2x2 app groups; later pages
+  // use the same four-column grid with a larger capacity. Only keep the
+  // optional image/decorations page when it has something to show, so a short
+  // app list does not leave an unexplained blank page in the carousel.
+  const hasLauncherMediaPage = Boolean(
+      theme.launcherWidgets?.['tl']
+      || theme.launcherWidgets?.['tr']
+      || theme.launcherWidgets?.['wide']
+      || theme.desktopDecorations?.length
+  );
+  const appPages = useMemo(
+      () => paginateLauncherApps(gridApps, hasLauncherMediaPage ? 3 : 2),
+      [gridApps, hasLauncherMediaPage]
+  );
 
   // Page 2 (pinwheel) uses appPages[1]: split into two 2x2 quads
   const page2Apps = appPages[1] || [];
@@ -1284,7 +1286,7 @@ const Launcher: React.FC = () => {
                 }}
               >
                   {idx === 0 ? (
-                      // Page 1 (original): Clock + Chat + 4x2 App Grid
+                      // Page 1 (original): Clock + Chat + 4x5 App Grid
                       <>
                         <DesktopClock />
                         <CharacterWidget
@@ -1295,8 +1297,8 @@ const Launcher: React.FC = () => {
                             contentColor={contentColor}
                             paper={paper}
                         />
-                        <div className="flex-1">
-                            <AppGridPage apps={pageApps} openApp={openApp} acnh={acnh} editing={layoutEditing} />
+                        <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain no-scrollbar">
+                            <AppGridPage apps={pageApps} openApp={openApp} editing={layoutEditing} />
                         </div>
                       </>
                   ) : idx === 1 ? (
@@ -1340,7 +1342,7 @@ const Launcher: React.FC = () => {
                       </div>
                   ) : (
                       // Page 3+: Widget Images (idx===2 only) + Free Decorations + Apps
-                      <div className="pt-10 flex-1 flex flex-col relative">
+                      <div className="pt-10 flex-1 min-h-0 flex flex-col relative">
                           {idx === 2 && (() => {
                             const raw = theme.launcherWidgets || {};
                             const w = { ...raw };
@@ -1392,13 +1394,13 @@ const Launcher: React.FC = () => {
                             );
                           })()}
 
-                          <AppGridPage
-                                apps={pageApps}
-                                openApp={openApp}
-                                acnh={acnh}
-                                editing={layoutEditing}
-                          />
-                          <div className="flex-1"></div>
+                          <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain no-scrollbar">
+                              <AppGridPage
+                                    apps={pageApps}
+                                    openApp={openApp}
+                                    editing={layoutEditing}
+                              />
+                          </div>
                       </div>
                   )}
               </div>
