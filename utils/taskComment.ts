@@ -40,6 +40,107 @@ export interface TaskCommentPolicyContext {
     writerPersona?: string;
 }
 
+/**
+ * Stored task voices are versioned separately from the task schema.  This lets
+ * the UI hide sentences written by an older, over-broad prompt without
+ * deleting the user's task or silently reusing a possibly private line.
+ */
+export const TASK_COMMENT_SAFETY_VERSION = 2;
+
+export interface TaskCommentSafetyContext {
+    /** Current task title/note and explicitly user-entered calendar text. */
+    taskTexts?: string[];
+    /** Private local-only source text; this is never serialized into the API request. */
+    forbiddenEchoTexts?: string[];
+    stage?: 'pending' | 'completed';
+    safetyVersion?: number;
+}
+
+const normalizeSafetyText = (value: string): string => value
+    .normalize('NFKC')
+    .toLocaleLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/[，。！？；：、,.!?;:/／＼|｜'"“”‘’`()[\]{}<>《》【】]/g, '');
+
+/** A response ending in these tokens is almost always a truncated/protocol line. */
+const hasIncompleteTaskCommentEnding = (value: string): boolean => {
+    const text = value.trim();
+    return /[\/\\／＼|｜，、：；:;([{]$/.test(text)
+        || /(?:因为|如果|但是|然后|以及|并且|为了)$/.test(text);
+};
+
+const TASK_COMMENT_URL_RE = /(?:https?:\/\/|www\.)\S+/i;
+const TASK_COMMENT_EMAIL_RE = /[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/;
+const TASK_COMMENT_PHONE_RE = /(?<!\d)(?:\+?\d[\d -]{7,}\d)(?!\d)/;
+const TASK_COMMENT_PRIVATE_LABEL_RE = /(?:电话|手机号|手机号码|邮箱|电子邮件|微信|QQ|LINE|Telegram|地址|身份证|护照|银行卡|密码|验证码)/i;
+const TASK_COMMENT_PROFILE_PATTERNS: RegExp[] = [
+    /(?:在|于|来自|住在|居住在|就读于|工作于|留学于)[\p{Script=Han}\p{L}\p{N}·\s]{0,24}(?:留学|留学生|就读|上学|大学|学院|学校|公司|工作|居住|住在)/u,
+    /(?:日本|东京|大阪|京都)[\p{Script=Han}\p{L}\p{N}·\s]{0,12}(?:留学|留学生|就读|上学|大学|学院|学校|公司|工作|居住|住在)/u,
+    /(?:我|用户|本人|你|对方).{0,12}(?:在|于|来自|住在|就读于|工作于|留学于).{0,20}(?:日本|东京|大阪|京都|学校|大学|公司|留学|留学生|居住|工作)/iu,
+    /(?:留学生|留学)\s*(?:in|at|from)\s*(?:tokyo|japan|osaka|kyoto)/i,
+];
+
+const taskTextCoversPrivatePhrase = (candidate: string, taskTexts: string[]): boolean => {
+    const candidateText = normalizeSafetyText(candidate)
+        .replace(/^(?:我|你|他|她|用户|本人|对方|在|于|从|去|就|是)+/u, '')
+        .replace(/(?:吧|呢|啊|呀|了|哦|嘛)+$/u, '');
+    if (candidateText.length < 4) return false;
+    return taskTexts.some(task => normalizeSafetyText(task).includes(candidateText));
+};
+
+/** High-confidence personal-data patterns that must never become a card line. */
+const hasHighConfidencePrivateProfileLeak = (value: string, taskTexts: string[]): boolean => {
+    if (TASK_COMMENT_URL_RE.test(value)
+        || TASK_COMMENT_EMAIL_RE.test(value)
+        || TASK_COMMENT_PHONE_RE.test(value)
+        || TASK_COMMENT_PRIVATE_LABEL_RE.test(value)) return true;
+    return TASK_COMMENT_PROFILE_PATTERNS.some(pattern => {
+        const match = value.match(pattern)?.[0];
+        if (!match) return false;
+        return !taskTextCoversPrivatePhrase(match, taskTexts);
+    });
+};
+
+/**
+ * Catch a model copying a salient private phrase from a local memory/profile
+ * source.  The source strings are deliberately accepted as an argument only
+ * for an in-memory comparison; callers must never put this context in JSON.
+ */
+const containsForbiddenEcho = (
+    candidate: string,
+    forbiddenSources: string[],
+    taskTexts: string[],
+): boolean => {
+    const normalizedCandidate = normalizeSafetyText(candidate);
+    const candidateCharacters = Array.from(normalizedCandidate);
+    const minimumLength = /[\p{Script=Han}]/u.test(candidate) ? 6 : 12;
+    if (candidateCharacters.length < minimumLength) return false;
+    const normalizedTasks = taskTexts
+        .map(normalizeSafetyText)
+        .filter(text => text.length >= minimumLength);
+
+    for (const source of forbiddenSources) {
+        const normalizedSource = normalizeSafetyText(source).slice(0, 4_000);
+        if (normalizedSource.length < minimumLength) continue;
+        for (let start = 0; start <= candidateCharacters.length - minimumLength; start += 1) {
+            const maxLength = Math.min(candidateCharacters.length - start, 32);
+            for (let length = minimumLength; length <= maxLength; length += 1) {
+                const fragment = candidateCharacters.slice(start, start + length).join('');
+                if (!fragment || normalizedTasks.some(task => task.includes(fragment))) continue;
+                if (normalizedSource.includes(fragment)) return true;
+            }
+        }
+    }
+    return false;
+};
+
+const isTaskCommentSafetyAcceptable = (
+    value: string,
+    safety: TaskCommentSafetyContext = {},
+): boolean => !hasIncompleteTaskCommentEnding(value)
+    && !hasHighConfidencePrivateProfileLeak(value, safety.taskTexts || [])
+    && !containsForbiddenEcho(value, safety.forbiddenEchoTexts || [], safety.taskTexts || []);
+
 const stripThinkingBlocks = (value: string): string => value
     .replace(/<(think|thinking|thought|analysis|reasoning)>[\s\S]*?<\/\1>/gi, '')
     .replace(/<(think|thinking|thought|analysis|reasoning)>[\s\S]*$/gi, '');
@@ -259,7 +360,12 @@ export const extractTaskComment = (raw: unknown): string | null => {
     // part of the stored sentence. Removing them here also repairs old rows
     // where only the opening quote was stripped and a lone `”` was persisted.
     text = stripWrapping(text).replace(/[「」『』“”"]/g, '').replace(/\s+/g, ' ').trim();
-    if (!text || !hasVisibleSpeechCharacter(text) || isMetaLabel(text) || isIdentityPossessiveFragment(text) || isPromptProtocolLeak(text)) return null;
+    if (!text
+        || !hasVisibleSpeechCharacter(text)
+        || isMetaLabel(text)
+        || isIdentityPossessiveFragment(text)
+        || isPromptProtocolLeak(text)
+        || hasIncompleteTaskCommentEnding(text)) return null;
     if ([...text].filter(character => !/\s/.test(character)).length < MIN_EXTRACTED_TASK_COMMENT_LENGTH) return null;
     return text;
 };
@@ -368,16 +474,22 @@ export const isTaskCommentGenerationAcceptable = (
     value: unknown,
     taskTitle = '',
     policy: TaskCommentPolicyContext = {},
+    safety: TaskCommentSafetyContext = {},
 ): value is string => {
     const text = extractTaskComment(value);
     if (!text) return false;
     const effectiveLength = [...text].filter(character => !/\s/.test(character)).length;
+    const effectiveSafety: TaskCommentSafetyContext = {
+        ...safety,
+        taskTexts: [taskTitle, ...(safety.taskTexts || [])].filter(Boolean),
+    };
     return effectiveLength >= MIN_EXTRACTED_TASK_COMMENT_LENGTH
         && text.length <= MAX_COMPLETE_TASK_COMMENT_LENGTH
         && hasVisibleSpeechCharacter(text)
         && !isWriterPersonaMetaLeak(text, policy.writerPersona)
         && !isTaskCommentTooGeneric(text, taskTitle)
-        && !isLikelyTaskEcho(text, taskTitle);
+        && !isLikelyTaskEcho(text, taskTitle)
+        && isTaskCommentSafetyAcceptable(text, effectiveSafety);
 };
 
 /**
@@ -391,16 +503,22 @@ export const isTaskCommentDisplayable = (
     value: unknown,
     taskTitle = '',
     policy: TaskCommentPolicyContext = {},
+    safety: TaskCommentSafetyContext = {},
 ): value is string => {
     const text = extractTaskComment(value);
     if (!text) return false;
     const effectiveLength = [...text].filter(character => !/\s/.test(character)).length;
+    const effectiveSafety: TaskCommentSafetyContext = {
+        ...safety,
+        taskTexts: [taskTitle, ...(safety.taskTexts || [])].filter(Boolean),
+    };
     return effectiveLength >= MIN_EXTRACTED_TASK_COMMENT_LENGTH
         && text.length <= MAX_COMPLETE_TASK_COMMENT_LENGTH
         && hasVisibleSpeechCharacter(text)
         && !isWriterPersonaMetaLeak(text, policy.writerPersona)
         && !isTaskCommentTooGeneric(text, taskTitle)
-        && !isLikelyTaskEcho(text, taskTitle);
+        && !isLikelyTaskEcho(text, taskTitle)
+        && isTaskCommentSafetyAcceptable(text, effectiveSafety);
 };
 
 /** True when a stored value should be replaced by one fresh, strict reply. */
@@ -408,11 +526,12 @@ export const shouldRepairTaskComment = (
     value: unknown,
     taskTitle = '',
     policy: TaskCommentPolicyContext = {},
+    safety: TaskCommentSafetyContext = {},
 ): boolean => {
     const hasStoredValue = typeof value === 'string'
         ? value.trim().length > 0
         : value !== null && value !== undefined;
-    return hasStoredValue && !isTaskCommentGenerationAcceptable(value, taskTitle, policy);
+    return hasStoredValue && !isTaskCommentGenerationAcceptable(value, taskTitle, policy, safety);
 };
 
 /**

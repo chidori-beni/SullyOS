@@ -9,9 +9,8 @@ import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { getLocalDateKey } from '../utils/localDate';
 import { buildUserCalendarContext, eventsForDate, mergeCalendarDayTimeline, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, tasksForDate, type CalendarTimelineItem } from '../utils/calendarIntegration';
 import { trackEvent } from '../utils/analytics';
-import { extractTaskCommentResponse, formatTaskComment, isTaskCommentDisplayable, isTaskCommentGenerationAcceptable } from '../utils/taskComment';
+import { extractTaskCommentResponse, formatTaskComment, isTaskCommentDisplayable, isTaskCommentGenerationAcceptable, TASK_COMMENT_SAFETY_VERSION, type TaskCommentSafetyContext } from '../utils/taskComment';
 import { getTaskVoiceRetryAfterMs, isTaskVoiceRateLimitError, parseRetryAfterMs, TaskVoiceApiError, TASK_VOICE_DEFAULT_COOLDOWN_MS, TASK_VOICE_MAX_COOLDOWN_MS } from '../utils/taskVoiceRequest';
-import { resolveWorldbookEntries } from '../utils/worldbook';
 import { buildTaskSupervisorMessages, compactTaskVoiceData } from '../utils/taskSupervisorPrompt';
 import { buildMonthlyReviewStats, buildSullyMonthlyReport, CALENDAR_MOODS, chooseMonthlyMessageCharacterId } from '../utils/calendarMonthlyReview';
 
@@ -19,6 +18,7 @@ type CalendarTab = 'month' | 'mine' | 'theirs' | 'review';
 type TaskVoiceKind = 'comment' | 'completed';
 type TaskVoiceError = { kind: TaskVoiceKind; message: string; rateLimited?: boolean; retryAt?: number };
 type TaskVoiceApiConfig = { baseUrl: string; model: string };
+type TaskWithVoiceSafety = Task & { taskVoiceSafetyVersion?: number };
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
 const INPUT = 'w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none focus:border-violet-300 focus:bg-white';
 const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -104,123 +104,57 @@ const formatTimelineDate = (value: string, today: string) => {
     return value === today ? `今天 · 周${weekday}` : `${month}月${day}日 · 周${weekday}`;
 };
 const SULLY_WAITING_IMAGE = 'https://cdn.jsdelivr.net/gh/qegj567-cloud/SullyOS-assets@main/bgm/SULLY/wait.png';
-const taskContextText = (value: unknown, maxChars: number): string =>
-    compactTaskVoiceData(value, maxChars);
-
-const textFromTaskContext = (value: unknown): string => {
+const textFromTaskContext = (value: unknown, depth = 0): string => {
+    if (depth > 5) return '';
     if (typeof value === 'string') return value;
-    if (Array.isArray(value)) return value.map(textFromTaskContext).filter(Boolean).join('');
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (Array.isArray(value)) return value.map(item => textFromTaskContext(item, depth + 1)).filter(Boolean).join(' ');
     if (!value || typeof value !== 'object') return '';
     const record = value as Record<string, unknown>;
-    for (const key of ['text', 'content', 'summary', 'description', 'value']) {
-        if (key in record) {
-            const text = textFromTaskContext(record[key]);
-            if (text) return text;
-        }
-    }
-    return '';
-};
-
-const buildTaskRelationshipContext = (character: CharacterProfile): string => {
-    const impression = character.impression;
-    if (!impression) return '';
-    const sections = [
-        ['对用户的长期观察', impression.personality_core?.summary],
-        ['用户的互动方式', impression.personality_core?.interaction_style],
-        ['用户被观察到的特征', impression.personality_core?.observed_traits?.join('、')],
-        ['用户偏好的相处语气', impression.behavior_profile?.tone_style],
-        ['用户的情绪概况', impression.behavior_profile?.emotion_summary],
-        ['让用户舒服的方式', impression.emotion_schema?.comfort_zone],
-        ['用户喜欢的事物', impression.value_map?.likes?.join('、')],
-        ['用户珍视的价值', impression.value_map?.core_values],
-    ];
-    return taskContextText(
-        sections
-            .filter(([, value]) => typeof value === 'string' && value.trim())
-            .map(([label, value]) => label + '：' + value)
-            .join('\n'),
-        2_000,
-    );
-};
-
-const buildTaskMemoryContext = (character: CharacterProfile): string => {
-    const lines: string[] = [];
-    Object.entries(character.refinedMemories || {})
-        .sort(([left], [right]) => left.localeCompare(right))
-        .slice(-4)
-        .forEach(([date, summary]) => {
-            if (summary?.trim()) lines.push(date + '：' + summary);
-        });
-    (character.memories || []).slice(-4).forEach(memory => {
-        const summary = [memory.date, memory.mood, memory.summary].filter(Boolean).join('｜');
-        if (summary) lines.push(summary);
-    });
-    if (character.roomPlatesInjection?.trim()) lines.push('房间门牌：' + character.roomPlatesInjection);
-    if (character.memoryPalaceInjection?.trim()) lines.push('最近记忆宫殿摘要：' + character.memoryPalaceInjection);
-    if (character.selfInsights?.length) lines.push('角色自我领悟：' + character.selfInsights.slice(-3).join('；'));
-    return taskContextText(lines.join('\n'), 2_400);
-};
-
-const buildTaskRecentConversation = (
-    history: Array<{ role?: string; type?: string; content?: unknown }>,
-    character: CharacterProfile,
-    userProfile: UserProfile,
-): string => {
-    const lines = history
-        .filter(message => (message.role === 'user' || message.role === 'assistant')
-            && (!message.type || message.type === 'text'))
-        .map(message => {
-            const content = textFromTaskContext(message.content)
-                .replace(/\[\[[\s\S]*?\]\]/g, '')
-                .replace(/\s+/g, ' ')
-                .trim();
-            if (!content) return '';
-            const speaker = message.role === 'assistant' ? character.name : userProfile.name;
-            return speaker + '：' + content;
-        })
+    return Object.entries(record)
+        .filter(([key]) => !['id', 'avatar', 'assetId', 'fileName', 'createdAt', 'updatedAt'].includes(key))
+        .map(([, item]) => textFromTaskContext(item, depth + 1))
         .filter(Boolean)
-        .slice(-8);
-    return taskContextText(lines.join('\n'), 1_800);
+        .join(' ');
 };
 
-const buildTaskWorldbookContext = (
+/**
+ * These strings stay in memory for the post-response privacy gate. They are
+ * intentionally not included in `buildTaskSupervisorMessages` or the request
+ * body, so a private memory cannot be echoed by the provider in the first
+ * place.
+ */
+const buildTaskForbiddenEchoSources = (
     character: CharacterProfile,
-    task: Task,
-    history: Array<{ role?: string; type?: string; content?: unknown }>,
     userProfile: UserProfile,
-): string => {
-    const scanMessages = [
-        {
-            role: 'user',
-            content: [
-                task.title,
-                task.note,
-                task.deadline,
-                task.dueTime,
-            ].filter(Boolean).join('；'),
-        },
-        ...history
-            .slice(-24)
-            .map(message => ({
-                role: message.role,
-                content: textFromTaskContext(message.content),
-            }))
-            .filter(message => message.content),
+    recentMessages: Array<{ role?: string; type?: string; content?: unknown }>,
+): string[] => {
+    const values: unknown[] = [
+        userProfile.bio,
+        character.impression,
+        character.refinedMemories,
+        character.memories,
+        character.roomPlatesInjection,
+        character.memoryPalaceInjection,
+        character.selfInsights,
+        character.mountedWorldbooks,
+        ...recentMessages
+            .filter(message => message.role === 'user' && (!message.type || message.type === 'text'))
+            .map(message => message.content),
     ];
-    const entries = resolveWorldbookEntries(
-        character.mountedWorldbooks || [],
-        scanMessages,
-        character.name,
-        userProfile.name,
-        'online',
-    );
-    return taskContextText(
-        entries
-            .slice(0, 8)
-            .map(entry => '【' + entry.book.title + '】\n' + entry.content)
-            .join('\n\n'),
-        1_800,
-    );
+    return values
+        .map(value => compactTaskVoiceData(textFromTaskContext(value), 4_000))
+        .filter(text => Array.from(text).length >= 6);
+};
+
+const buildTaskAllowedCalendarTexts = (tasks: Task[], events: Anniversary[]): string[] => [
+    ...tasks.flatMap(item => [item.title, item.note, item.deadline, item.dueTime]),
+    ...events.flatMap(item => [item.title, item.note, item.location, item.date, item.startTime, item.endTime]),
+].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+
+type TaskVoiceRequest = {
+    messages: ReturnType<typeof buildTaskSupervisorMessages>;
+    safetyContext: TaskCommentSafetyContext;
 };
 
 const buildTaskChatMessages = async (
@@ -236,26 +170,34 @@ const buildTaskChatMessages = async (
         DB.getRecentMessagesByCharId(character.id, 24, true).catch(() => []),
     ]);
     const today = getLocalDateKey(now);
-    const recentConversation = buildTaskRecentConversation(recentMessages, character, userProfile);
     const calendarContext = buildUserCalendarContext({
         tasks: storedTasks,
         events: storedEvents,
         supervisorId: character.id,
-        userName: userProfile.name,
+        // The character needs the user's explicit calendar entries to avoid
+        // mistimed remarks, but the user's profile name is not needed here.
+        userName: '用户',
         today,
         now,
     });
-    return buildTaskSupervisorMessages({
-        character,
-        userProfile,
-        task,
-        completed,
-        relationshipContext: buildTaskRelationshipContext(character),
-        worldbookContext: buildTaskWorldbookContext(character, task, recentMessages, userProfile),
-        memoryContext: buildTaskMemoryContext(character),
-        calendarContext,
-        recentConversation,
-    });
+    const taskTexts = buildTaskAllowedCalendarTexts(storedTasks, storedEvents);
+    if (!taskTexts.includes(task.title)) taskTexts.push(task.title);
+    if (task.note?.trim() && !taskTexts.includes(task.note)) taskTexts.push(task.note);
+    return {
+        messages: buildTaskSupervisorMessages({
+            character,
+            task,
+            completed,
+            calendarContext,
+            privateRedactions: [userProfile.name, userProfile.bio],
+        }),
+        safetyContext: {
+            taskTexts,
+            forbiddenEchoTexts: buildTaskForbiddenEchoSources(character, userProfile, recentMessages),
+            stage: completed ? 'completed' : 'pending',
+            safetyVersion: TASK_COMMENT_SAFETY_VERSION,
+        },
+    } satisfies TaskVoiceRequest;
 };
 const ScheduleApp: React.FC = () => {
     const { closeApp, characters, activeCharacterId, apiConfig, addToast, userProfile, updateUserProfile } = useOS();
@@ -520,6 +462,16 @@ const ScheduleApp: React.FC = () => {
     const readStoredTask = async (taskId: string): Promise<Task | undefined> =>
         (await DB.getAllTasks().catch(() => [])).find(item => item.id === taskId);
 
+    const hasCurrentTaskVoice = (
+        task: Task | undefined,
+        value: unknown,
+        policy: { writerPersona?: string },
+    ): value is string => Boolean(
+        task
+        && (task as TaskWithVoiceSafety).taskVoiceSafetyVersion === TASK_COMMENT_SAFETY_VERSION
+        && isTaskCommentDisplayable(value, task.title, policy),
+    );
+
     const generateTaskReward = async (task: Task, silent = false) => {
         const supervisor = characters.find(char => char.id === task.supervisorId);
         const policy = { writerPersona: supervisor?.writerPersona };
@@ -527,7 +479,7 @@ const ScheduleApp: React.FC = () => {
         const existingComment = storedTask?.supervisorComment || task.supervisorComment;
         // Nuoji keeps the supervisor's creation-time sentence when the task is
         // completed. This also prevents a second, less natural reward sentence.
-        if (isTaskCommentDisplayable(existingComment, task.title, policy)) {
+        if (hasCurrentTaskVoice(storedTask || task, existingComment, policy)) {
             clearTaskVoiceError(task.id, 'completed');
             return;
         }
@@ -556,16 +508,16 @@ const ScheduleApp: React.FC = () => {
         if (!silent) addToast(supervisor.name + ' 正在回应这件事...', 'info');
         try {
             const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '') + '/chat/completions';
-            const taskMessages = await buildTaskChatMessages(supervisor, userProfile, task, true);
+            const taskRequest = await buildTaskChatMessages(supervisor, userProfile, task, true);
             const data = await requestTaskChatCompletion(baseUrl, apiConfig.apiKey, {
                 model: apiConfig.model,
                 temperature: 0.85,
                 max_tokens: 96,
                 stream: false,
-                messages: taskMessages,
+                messages: taskRequest.messages,
             });
             const text = extractTaskCommentResponse(data);
-            if (!isTaskCommentGenerationAcceptable(text, task.title, policy)) {
+            if (!isTaskCommentGenerationAcceptable(text, task.title, policy, taskRequest.safetyContext)) {
                 throw new Error('角色没有说出可展示的自然台词');
             }
             if (!isCurrentTaskGeneration(task.id, 'completed', generationVersion)) return;
@@ -575,15 +527,16 @@ const ScheduleApp: React.FC = () => {
             // If a creation request won a race and already wrote the main
             // supervisor sentence, preserve it instead of generating a second
             // sentence just because the user checked the box quickly.
-            if (isTaskCommentDisplayable(latest.supervisorComment, latest.title, policy)) {
+            if (hasCurrentTaskVoice(latest, latest.supervisorComment, policy)) {
                 setTasks(current => current.map(item => item.id === task.id ? latest : item));
                 clearTaskVoiceError(task.id, 'completed');
                 return;
             }
-            const updated: Task = {
+            const updated: TaskWithVoiceSafety = {
                 ...latest,
                 completedSupervisorComment: text,
                 completedSupervisorCommentGeneratedAt: Date.now(),
+                taskVoiceSafetyVersion: TASK_COMMENT_SAFETY_VERSION,
             };
             await DB.saveTask(updated);
             setTasks(current => current.map(item => item.id === task.id ? updated : item));
@@ -607,8 +560,8 @@ const ScheduleApp: React.FC = () => {
                 latest
                 && latest.isCompleted
                 && (
-                    isTaskCommentDisplayable(latest.completedSupervisorComment, latest.title, policy)
-                    || isTaskCommentDisplayable(latest.supervisorComment, latest.title, policy)
+                    hasCurrentTaskVoice(latest, latest.completedSupervisorComment, policy)
+                    || hasCurrentTaskVoice(latest, latest.supervisorComment, policy)
                 ),
             );
             if (hasVisibleResponse) clearTaskVoiceError(task.id, 'completed');
@@ -626,7 +579,7 @@ const ScheduleApp: React.FC = () => {
         const supervisor = characters.find(char => char.id === task.supervisorId);
         const policy = { writerPersona: supervisor?.writerPersona };
         if (!supervisor || !apiConfig.apiKey) return;
-        if (!force && isTaskCommentDisplayable(task.supervisorComment, task.title, policy)) return;
+        if (!force && hasCurrentTaskVoice(task, task.supervisorComment, policy)) return;
 
         const generationVersion = beginTaskGeneration(task.id, 'comment');
         if (generationVersion === null) {
@@ -644,16 +597,16 @@ const ScheduleApp: React.FC = () => {
         setCommenting(current => new Set(current).add(task.id));
         try {
             const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '') + '/chat/completions';
-            const taskMessages = await buildTaskChatMessages(supervisor, userProfile, task, false);
+            const taskRequest = await buildTaskChatMessages(supervisor, userProfile, task, false);
             const data = await requestTaskChatCompletion(baseUrl, apiConfig.apiKey, {
                 model: apiConfig.model,
                 temperature: 0.85,
                 max_tokens: 96,
                 stream: false,
-                messages: taskMessages,
+                messages: taskRequest.messages,
             });
             const text = extractTaskCommentResponse(data);
-            if (!isTaskCommentGenerationAcceptable(text, task.title, policy)) {
+            if (!isTaskCommentGenerationAcceptable(text, task.title, policy, taskRequest.safetyContext)) {
                 throw new Error('角色没有说出可展示的自然台词');
             }
             if (!isCurrentTaskGeneration(task.id, 'comment', generationVersion)) return;
@@ -664,6 +617,7 @@ const ScheduleApp: React.FC = () => {
                 ...latest,
                 supervisorComment: text,
                 supervisorCommentGeneratedAt: Date.now(),
+                taskVoiceSafetyVersion: TASK_COMMENT_SAFETY_VERSION,
             };
             await DB.saveTask(updated);
             setTasks(current => current.map(item => item.id === task.id ? updated : item));
@@ -674,7 +628,7 @@ const ScheduleApp: React.FC = () => {
             if (isCurrentTaskGeneration(task.id, 'comment', generationVersion)) {
                 const retryAt = recordTaskVoiceRateLimit(error);
                 const latest = await readStoredTask(task.id);
-                if (latest && isTaskCommentDisplayable(latest.supervisorComment, latest.title, policy)) {
+                if (latest && hasCurrentTaskVoice(latest, latest.supervisorComment, policy)) {
                     clearTaskVoiceError(task.id, 'comment');
                 } else if (latest) {
                     setTaskVoiceError(task.id, 'comment', error, retryAt);
@@ -771,10 +725,10 @@ const ScheduleApp: React.FC = () => {
     const renderTask = (task: Task, showTimelineOwner = false) => {
         const supervisor = characters.find(char => char.id === task.supervisorId);
         const policy = { writerPersona: supervisor?.writerPersona };
-        const completedComment = isTaskCommentDisplayable(task.completedSupervisorComment, task.title, policy)
+        const completedComment = hasCurrentTaskVoice(task, task.completedSupervisorComment, policy)
             ? task.completedSupervisorComment
             : null;
-        const pendingComment = isTaskCommentDisplayable(task.supervisorComment, task.title, policy)
+        const pendingComment = hasCurrentTaskVoice(task, task.supervisorComment, policy)
             ? task.supervisorComment
             : null;
         const displayedCommentBody = task.isCompleted
