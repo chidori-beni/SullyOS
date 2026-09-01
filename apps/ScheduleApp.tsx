@@ -1,17 +1,16 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { Anniversary, CalendarMoodId, DailySchedule, RoomTodo, Task } from '../types';
 import Modal from '../components/os/Modal';
-import { ContextBuilder } from '../utils/context';
-import { safeResponseJson } from '../utils/safeApi';
-import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { getLocalDateKey } from '../utils/localDate';
 import { eventsForDate, mergeCalendarDayTimeline, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, tasksForDate, type CalendarTimelineItem } from '../utils/calendarIntegration';
 import { trackEvent } from '../utils/analytics';
 import { buildMonthlyReviewStats, buildSullyMonthlyReport, CALENDAR_MOODS, chooseMonthlyMessageCharacterId } from '../utils/calendarMonthlyReview';
+import { requestMonthlyLetter } from '../utils/monthlyLetter';
 
 type CalendarTab = 'month' | 'mine' | 'theirs' | 'review';
+type ComposerMode = 'event' | 'task';
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
 const INPUT = 'w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none focus:border-violet-300 focus:bg-white';
 const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -40,11 +39,12 @@ const ScheduleApp: React.FC = () => {
     const [events, setEvents] = useState<Anniversary[]>([]);
     const [charSchedule, setCharSchedule] = useState<DailySchedule | null>(null);
     const [charTodo, setCharTodo] = useState<RoomTodo | null>(null);
-    const [showTask, setShowTask] = useState(false);
-    const [showEvent, setShowEvent] = useState(false);
+    const [composerMode, setComposerMode] = useState<ComposerMode>('event');
+    const [showComposer, setShowComposer] = useState(false);
     const [showMoodPicker, setShowMoodPicker] = useState(false);
     const [generatingLetter, setGeneratingLetter] = useState(false);
     const [openedLetters, setOpenedLetters] = useState<Set<string>>(new Set());
+    const monthlyGenerationId = useRef(0);
 
     const [taskTitle, setTaskTitle] = useState('');
     const [taskNote, setTaskNote] = useState('');
@@ -131,11 +131,11 @@ const ScheduleApp: React.FC = () => {
     }, [cursor]);
 
     const openTaskComposer = (date = selectedDate) => {
-        setTaskDate(date); setTaskSupervisor(selectedCharId || characters[0]?.id || ''); setShowTask(true);
+        setTaskDate(date); setTaskSupervisor(selectedCharId || characters[0]?.id || ''); setComposerMode('task'); setShowComposer(true);
         trackEvent('打开日历新建待办');
     };
     const openEventComposer = (date = selectedDate) => {
-        setEventDate(date); setEventChar(''); setEventRepeats(false); setEventRepeatDays([1, 2, 3, 4, 5]); setEventRepeatUntil(''); setShowEvent(true);
+        setEventDate(date); setEventChar(''); setEventRepeats(false); setEventRepeatDays([1, 2, 3, 4, 5]); setEventRepeatUntil(''); setComposerMode('event'); setShowComposer(true);
         trackEvent('打开日历新建事件');
     };
     const selectCalendarDate = (value: string) => {
@@ -172,33 +172,18 @@ const ScheduleApp: React.FC = () => {
             addToast('还没有可以写寄语的角色', 'error');
             return;
         }
+        const generationId = monthlyGenerationId.current + 1;
+        monthlyGenerationId.current = generationId;
         setGeneratingLetter(true);
         try {
-            await injectMemoryPalace(writer, undefined, `${reviewMonthKey} 月度回望`);
-            const dominantMood = monthlyStats.topMoods[0] && CALENDAR_MOODS.find(mood => mood.id === monthlyStats.topMoods[0].id)?.label;
-            const details = [
-                `月份：${reviewMonthKey}`,
-                `记录心情：${monthlyStats.moodDays}天${dominantMood ? `，最常见是${dominantMood}` : ''}`,
-                `日程发生：${monthlyStats.eventCount}次${monthlyStats.mostFrequentEvent ? `，最常出现「${monthlyStats.mostFrequentEvent}」` : ''}`,
-                `待办：完成${monthlyStats.completedTaskCount}/${monthlyStats.taskCount}，完成率${monthlyStats.completionRate}%`,
-                monthlyStats.longestEvent ? `持续最久的日程：「${monthlyStats.longestEvent}」` : '',
-                monthlyStats.completedTaskTitles.length ? `完成过的待办：${monthlyStats.completedTaskTitles.join('、')}` : '',
-            ].filter(Boolean).join('\n');
-            const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
-                body: JSON.stringify({
-                    model: apiConfig.model, temperature: 0.85, max_tokens: 500,
-                    messages: [
-                        { role: 'system', content: ContextBuilder.buildCoreContext(writer, userProfile) },
-                        { role: 'user', content: `这是 ${userProfile.name} 的月度记录：\n${details}\n\n请完全按照你的人设，给 ${userProfile.name} 写一封100到150个中文字的月度寄语。自然提到1到2个具体细节，但不要逐项报数据、不要写标题、不要加引号。像真正陪伴过这个月的人一样说话，结尾留一句符合你性格的鼓励或陪伴。只输出寄语正文。` },
-                    ],
-                }),
+            const text = await requestMonthlyLetter({
+                character: writer,
+                user: userProfile,
+                apiConfig,
+                monthKey: reviewMonthKey,
+                stats: monthlyStats,
             });
-            if (!response.ok) throw new Error(`API Error ${response.status}`);
-            const data = await safeResponseJson(response);
-            const text = data.choices?.[0]?.message?.content?.trim().replace(/^['\"]|['\"]$/g, '');
-            if (!text) throw new Error('角色没有留下内容');
+            if (monthlyGenerationId.current !== generationId) return;
             updateUserProfile({
                 calendarMonthlyMessages: {
                     ...(userProfile.calendarMonthlyMessages || {}),
@@ -211,7 +196,7 @@ const ScheduleApp: React.FC = () => {
             console.error('Monthly calendar message failed', error);
             addToast(`寄语生成失败：${error.message}`, 'error');
         } finally {
-            setGeneratingLetter(false);
+            if (monthlyGenerationId.current === generationId) setGeneratingLetter(false);
         }
     };
     const addTask = async () => {
@@ -224,7 +209,7 @@ const ScheduleApp: React.FC = () => {
         await DB.saveTask(task);
         setTasks(current => sortTasksForCalendar([...current, task]));
         notifyCalendarDataUpdated();
-        setTaskTitle(''); setTaskNote(''); setTaskTime(''); setShowTask(false);
+        setTaskTitle(''); setTaskNote(''); setTaskTime(''); setShowComposer(false);
         addToast('待办已加入共享日历，聊天时可由角色自然提起', 'success');
     };
     const toggleTask = async (task: Task) => {
@@ -255,7 +240,7 @@ const ScheduleApp: React.FC = () => {
         setEvents(current => [...current, event].sort((a, b) => a.date.localeCompare(b.date) || (a.startTime || '').localeCompare(b.startTime || '')));
         notifyCalendarDataUpdated();
         setSelectedDate(eventDate); setCursor(parseDateKey(eventDate));
-        setEventTitle(''); setEventStart(''); setEventEnd(''); setEventLocation(''); setEventNote(''); setEventRepeats(false); setEventRepeatDays([1, 2, 3, 4, 5]); setEventRepeatUntil(''); setShowEvent(false);
+        setEventTitle(''); setEventStart(''); setEventEnd(''); setEventLocation(''); setEventNote(''); setEventRepeats(false); setEventRepeatDays([1, 2, 3, 4, 5]); setEventRepeatUntil(''); setShowComposer(false);
         addToast(eventKind === 'anniversary' ? '纪念日已保存' : '日程已保存', 'success');
     };
     const deleteEvent = async (id: string) => {
@@ -314,7 +299,7 @@ const ScheduleApp: React.FC = () => {
     return <div className="relative flex h-full w-full flex-col overflow-hidden bg-[#f4f1fb] text-slate-700">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(167,139,250,0.22),transparent_42%),radial-gradient(circle_at_90%_25%,rgba(125,211,252,0.16),transparent_35%)]" />
         <header className="relative z-20 shrink-0 border-b border-white/70 bg-white/65 px-5 pb-3 backdrop-blur-xl" style={{ paddingTop: 'calc(var(--safe-top) + 12px)' }}>
-            <div className="flex items-center justify-between"><button onClick={closeApp} className="flex h-9 w-9 items-center justify-center rounded-full bg-white/80 text-2xl text-slate-500 shadow-sm" aria-label="返回">‹</button><div className="text-center"><div className="text-[10px] font-bold tracking-[0.28em] text-violet-400">SULLY CALENDAR</div><h1 className="text-lg font-bold">日历</h1></div><button onClick={() => openTaskComposer()} className="flex h-9 w-9 items-center justify-center rounded-full bg-violet-500 text-xl text-white shadow-lg shadow-violet-200" aria-label="新建待办">＋</button></div>
+            <div className="flex items-center justify-between"><button onClick={closeApp} className="flex h-9 w-9 items-center justify-center rounded-full bg-white/80 text-2xl text-slate-500 shadow-sm" aria-label="返回">‹</button><div className="text-center"><div className="text-[10px] font-bold tracking-[0.28em] text-violet-400">SULLY CALENDAR</div><h1 className="text-lg font-bold">日历</h1></div><button onClick={() => openEventComposer()} className="flex h-9 w-9 items-center justify-center rounded-full bg-violet-500 text-xl text-white shadow-lg shadow-violet-200" aria-label="新建日程或待办">＋</button></div>
             <nav className="mt-3 grid grid-cols-4 rounded-2xl bg-slate-100/80 p-1 text-xs font-bold">{([['month', '月历'], ['mine', '我的'], ['theirs', 'TA 的'], ['review', '回望']] as const).map(([id, label]) => <button key={id} onClick={() => setTab(id)} className={`rounded-xl py-2 transition ${tab === id ? 'bg-white text-violet-600 shadow-sm' : 'text-slate-400'}`}>{label}</button>)}</nav>
         </header>
         <main className="relative z-10 flex-1 overflow-y-auto px-5 pb-28 pt-5 no-scrollbar">
@@ -330,13 +315,12 @@ const ScheduleApp: React.FC = () => {
                     <div className="mt-4 flex justify-center gap-4 text-[10px] text-slate-400"><span className="text-sky-400">● 待办</span><span className="text-rose-400">● 日程 / 纪念日</span></div>
                 </section>
                 <section className="space-y-3">
-                    <div className="flex items-center justify-between px-1"><div><h2 className="font-bold">{selectedDate === today ? '今天' : selectedDate}</h2><p className="text-[11px] text-slate-400">你与 {selectedChar?.name || '角色'} 的安排按同一条时间轴排列，同一时刻会紧挨着显示</p></div><div className="flex gap-2"><button onClick={() => openEventComposer()} className="rounded-full bg-white px-3 py-1.5 text-xs font-bold text-rose-500 shadow-sm">＋日程</button><button onClick={() => openTaskComposer()} className="rounded-full bg-white px-3 py-1.5 text-xs font-bold text-sky-500 shadow-sm">＋待办</button></div></div>
+                    <div className="px-1"><h2 className="font-bold">{selectedDate === today ? '今天' : selectedDate}</h2><p className="text-[11px] text-slate-400">你与 {selectedChar?.name || '角色'} 的安排按同一条时间轴排列，同一时刻会紧挨着显示</p></div>
                     <div className="flex flex-wrap items-center gap-3 px-1 text-[10px] font-bold"><span className="text-sky-500">● 你</span><span className="text-violet-500">● {selectedChar?.name || '角色'}</span><span className="font-normal text-slate-400">左侧时间为开始 / 截止时间</span></div>
-                    {selectedDayTimeline.length > 0 ? <div className="relative space-y-3 rounded-3xl border border-white/80 bg-white/35 p-3">
-                        <div className="pointer-events-none absolute bottom-5 left-[4.5rem] top-5 w-px bg-gradient-to-b from-sky-200 via-violet-200 to-violet-100" />
-                        {selectedDayTimeline.map(item => <div key={item.id} className="relative grid grid-cols-[3.5rem_1rem_minmax(0,1fr)] items-start gap-2">
+                    {selectedDayTimeline.length > 0 ? <div className="relative space-y-3 overflow-hidden rounded-3xl border border-white/80 bg-white/35 p-2 sm:p-3">
+                        {selectedDayTimeline.map(item => <div key={item.id} className="relative grid grid-cols-[2.75rem_0.9rem_minmax(0,1fr)] items-stretch gap-1 sm:grid-cols-[3rem_1rem_minmax(0,1fr)] sm:gap-1.5">
                             <div className="pt-3 text-right text-[10px] font-bold tabular-nums text-slate-400">{item.startTime || '全天'}</div>
-                            <div className="relative z-10 flex justify-center pt-4"><span className={`h-2.5 w-2.5 rounded-full border-2 border-white shadow-sm ${item.owner === 'user' ? 'bg-sky-400' : 'bg-violet-400'}`} /></div>
+                            <div className="relative z-10 flex justify-center"><span className="pointer-events-none absolute -inset-y-3 left-1/2 w-px -translate-x-1/2 bg-gradient-to-b from-sky-200 via-violet-200 to-violet-100" /><span className={`relative mt-4 h-2.5 w-2.5 shrink-0 rounded-full border-2 border-white shadow-sm ${item.owner === 'user' ? 'bg-sky-400' : 'bg-violet-400'}`} /></div>
                             <div className="min-w-0">{renderCalendarTimelineItem(item)}</div>
                         </div>)}
                     </div> : <div className="rounded-3xl border-2 border-dashed border-white bg-white/35 py-10 text-center text-xs text-slate-400">这一天还很空，留一点期待给它。</div>}
@@ -399,24 +383,34 @@ const ScheduleApp: React.FC = () => {
                 </section>
             </div>}
         </main>
-        <Modal isOpen={showTask} title="添加我的待办" onClose={() => setShowTask(false)} footer={<button onClick={addTask} className="w-full rounded-2xl bg-violet-500 py-3 font-bold text-white shadow-lg shadow-violet-200">加入日历</button>}>
-            <div className="space-y-4"><input autoFocus value={taskTitle} onChange={event => setTaskTitle(event.target.value)} placeholder="要完成什么？" className={INPUT} /><textarea value={taskNote} onChange={event => setTaskNote(event.target.value)} placeholder="备注（可选）" rows={2} className={INPUT} /><div className="grid grid-cols-2 gap-3"><label className="block text-[10px] font-bold text-slate-400">截止日期<input type="date" value={taskDate} onChange={event => setTaskDate(event.target.value)} className={`mt-1 ${INPUT}`} required /></label><label className="block text-[10px] font-bold text-slate-400">截止 / 提醒时间（可选）<input type="time" value={taskTime} onChange={event => setTaskTime(event.target.value)} className={`mt-1 ${INPUT}`} /></label></div><div className="rounded-2xl bg-violet-50 p-3 text-[10px] leading-relaxed text-slate-500">保存后，这件事会进入你和角色共用的日历。角色会在正常聊天中看到它；是否提起由当时的语境决定，不会在这里直接生成台词。</div><label className="block text-[10px] font-bold tracking-widest text-slate-400">关联角色（共享并允许提醒）</label><div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">{characters.map(char => <button key={char.id} onClick={() => setTaskSupervisor(char.id)} className={`shrink-0 rounded-full px-3 py-2 text-xs font-bold ${taskSupervisor === char.id ? 'bg-violet-500 text-white' : 'bg-slate-100 text-slate-500'}`}>{char.name}</button>)}</div><label className="flex items-center justify-between rounded-2xl bg-violet-50 p-3 text-xs text-slate-600"><span><b className="block">允许 TA 在聊天中自然提起</b><span className="text-[10px] text-slate-400">只给上面选中的角色提醒权限；关闭后仍会共享这条记录</span></span><input type="checkbox" checked={taskReminder} onChange={event => setTaskReminder(event.target.checked)} className="h-5 w-5 accent-violet-500" /></label></div>
-        </Modal>
-        <Modal isOpen={showEvent} title="添加日程 / 纪念日" onClose={() => setShowEvent(false)} footer={<button onClick={addEvent} className="w-full rounded-2xl bg-rose-400 py-3 font-bold text-white shadow-lg shadow-rose-200">保存</button>}>
+        <Modal isOpen={showComposer} title={composerMode === 'event' ? '添加日程 / 纪念日' : '添加我的待办'} onClose={() => setShowComposer(false)} footer={composerMode === 'event' ? <><button type="button" onClick={() => setShowComposer(false)} className="flex-1 rounded-2xl bg-slate-100 py-3 font-bold text-slate-500">取消</button><button type="button" onClick={addEvent} className="flex-[1.5] rounded-2xl bg-rose-400 py-3 font-bold text-white shadow-lg shadow-rose-200">保存</button></> : <><button type="button" onClick={() => setShowComposer(false)} className="flex-1 rounded-2xl bg-slate-100 py-3 font-bold text-slate-500">取消</button><button type="button" onClick={addTask} className="flex-[1.5] rounded-2xl bg-violet-500 py-3 font-bold text-white shadow-lg shadow-violet-200">加入日历</button></>}>
             <div className="space-y-4">
-                <div className="grid grid-cols-2 rounded-2xl bg-slate-100 p-1 text-xs font-bold">
-                    <button onClick={() => setEventKind('event')} className={`rounded-xl py-2 ${eventKind === 'event' ? 'bg-white text-rose-500 shadow-sm' : 'text-slate-400'}`}>日程</button>
-                    <button onClick={() => setEventKind('anniversary')} className={`rounded-xl py-2 ${eventKind === 'anniversary' ? 'bg-white text-rose-500 shadow-sm' : 'text-slate-400'}`}>纪念日</button>
+                <div role="tablist" aria-label="新建内容类型" className="grid grid-cols-2 rounded-2xl bg-slate-100 p-1 text-xs font-bold">
+                    <button type="button" role="tab" aria-selected={composerMode === 'event'} onClick={() => setComposerMode('event')} className={`rounded-xl py-2.5 transition ${composerMode === 'event' ? 'bg-white text-rose-500 shadow-sm' : 'text-slate-400'}`}>日程</button>
+                    <button type="button" role="tab" aria-selected={composerMode === 'task'} onClick={() => setComposerMode('task')} className={`rounded-xl py-2.5 transition ${composerMode === 'task' ? 'bg-white text-violet-500 shadow-sm' : 'text-slate-400'}`}>待办</button>
                 </div>
-                <input autoFocus value={eventTitle} onChange={event => setEventTitle(event.target.value)} placeholder={eventKind === 'event' ? '日程名称' : '纪念日名称'} className={INPUT} />
-                <input type="date" value={eventDate} onChange={event => { const nextDate = event.target.value; setEventDate(nextDate); if (eventRepeatUntil && eventRepeatUntil < nextDate) setEventRepeatUntil(''); }} className={INPUT} />
-                {eventKind === 'event' && <><div className="grid grid-cols-2 gap-3"><input type="time" value={eventStart} onChange={event => setEventStart(event.target.value)} className={INPUT} /><input type="time" value={eventEnd} onChange={event => setEventEnd(event.target.value)} className={INPUT} /></div><input value={eventLocation} onChange={event => setEventLocation(event.target.value)} placeholder="地点（可选）" className={INPUT} /></>}
-                <textarea value={eventNote} onChange={event => setEventNote(event.target.value)} placeholder="备注（可选）" rows={2} className={INPUT} />
-                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
-                    <div className="flex items-center justify-between"><div><b className="block text-xs text-slate-600">重复日程</b><span className="text-[10px] text-slate-400">按每周选择重复的星期</span></div><input type="checkbox" checked={eventRepeats} onChange={event => setEventRepeats(event.target.checked)} className="h-5 w-5 accent-rose-400" /></div>
-                    {eventRepeats && <div className="mt-3 space-y-3"><div className="grid grid-cols-7 gap-1">{WEEKDAYS.map((day, index) => <button key={day + index} onClick={() => setEventRepeatDays(current => current.includes(index) ? current.filter(value => value !== index) : [...current, index].sort())} className={`rounded-xl py-2 text-[10px] font-bold ${eventRepeatDays.includes(index) ? 'bg-rose-400 text-white' : 'bg-white text-slate-400'}`}>{day}</button>)}</div><label className="block text-[10px] text-slate-400">重复至（可选）<input type="date" value={eventRepeatUntil} min={eventDate} onChange={event => setEventRepeatUntil(event.target.value)} className={`mt-1 ${INPUT}`} /></label>{eventRepeatDays.length === 0 && <p className="text-[10px] text-rose-400">至少选择一天</p>}</div>}
-                </div>
-                <div><label className="mb-2 block text-[10px] font-bold tracking-widest text-slate-400">关联角色（可选）</label><div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar"><button onClick={() => setEventChar('')} className={`shrink-0 rounded-full px-3 py-2 text-xs font-bold ${!eventChar ? 'bg-rose-400 text-white' : 'bg-slate-100 text-slate-500'}`}>仅自己</button>{characters.map(char => <button key={char.id} onClick={() => setEventChar(char.id)} className={`shrink-0 rounded-full px-3 py-2 text-xs font-bold ${eventChar === char.id ? 'bg-rose-400 text-white' : 'bg-slate-100 text-slate-500'}`}>{char.name}</button>)}</div><p className="mt-2 text-[10px] text-slate-400">不关联角色也可以保存为自己的独立安排。</p></div>
+                {composerMode === 'event' ? <div className="space-y-4">
+                    <div className="grid grid-cols-2 rounded-2xl bg-slate-100 p-1 text-xs font-bold">
+                        <button type="button" onClick={() => setEventKind('event')} className={`rounded-xl py-2 ${eventKind === 'event' ? 'bg-white text-rose-500 shadow-sm' : 'text-slate-400'}`}>日程</button>
+                        <button type="button" onClick={() => setEventKind('anniversary')} className={`rounded-xl py-2 ${eventKind === 'anniversary' ? 'bg-white text-rose-500 shadow-sm' : 'text-slate-400'}`}>纪念日</button>
+                    </div>
+                    <input autoFocus value={eventTitle} onChange={event => setEventTitle(event.target.value)} placeholder={eventKind === 'event' ? '日程名称' : '纪念日名称'} className={INPUT} />
+                    <input type="date" value={eventDate} onChange={event => { const nextDate = event.target.value; setEventDate(nextDate); if (eventRepeatUntil && eventRepeatUntil < nextDate) setEventRepeatUntil(''); }} className={INPUT} />
+                    {eventKind === 'event' && <><div className="grid grid-cols-2 gap-3"><input type="time" value={eventStart} onChange={event => setEventStart(event.target.value)} className={INPUT} /><input type="time" value={eventEnd} onChange={event => setEventEnd(event.target.value)} className={INPUT} /></div><input value={eventLocation} onChange={event => setEventLocation(event.target.value)} placeholder="地点（可选）" className={INPUT} /></>}
+                    <textarea value={eventNote} onChange={event => setEventNote(event.target.value)} placeholder="备注（可选）" rows={2} className={INPUT} />
+                    <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                        <div className="flex items-center justify-between"><div><b className="block text-xs text-slate-600">重复日程</b><span className="text-[10px] text-slate-400">按每周选择重复的星期</span></div><input type="checkbox" checked={eventRepeats} onChange={event => setEventRepeats(event.target.checked)} className="h-5 w-5 accent-rose-400" /></div>
+                        {eventRepeats && <div className="mt-3 space-y-3"><div className="grid grid-cols-7 gap-1">{WEEKDAYS.map((day, index) => <button type="button" key={day + index} onClick={() => setEventRepeatDays(current => current.includes(index) ? current.filter(value => value !== index) : [...current, index].sort())} className={`rounded-xl py-2 text-[10px] font-bold ${eventRepeatDays.includes(index) ? 'bg-rose-400 text-white' : 'bg-white text-slate-400'}`}>{day}</button>)}</div><label className="block text-[10px] text-slate-400">重复至（可选）<input type="date" value={eventRepeatUntil} min={eventDate} onChange={event => setEventRepeatUntil(event.target.value)} className={`mt-1 ${INPUT}`} /></label>{eventRepeatDays.length === 0 && <p className="text-[10px] text-rose-400">至少选择一天</p>}</div>}
+                    </div>
+                    <div><label className="mb-2 block text-[10px] font-bold tracking-widest text-slate-400">关联角色（可选）</label><div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar"><button type="button" onClick={() => setEventChar('')} className={`shrink-0 rounded-full px-3 py-2 text-xs font-bold ${!eventChar ? 'bg-rose-400 text-white' : 'bg-slate-100 text-slate-500'}`}>仅自己</button>{characters.map(char => <button type="button" key={char.id} onClick={() => setEventChar(char.id)} className={`shrink-0 rounded-full px-3 py-2 text-xs font-bold ${eventChar === char.id ? 'bg-rose-400 text-white' : 'bg-slate-100 text-slate-500'}`}>{char.name}</button>)}</div><p className="mt-2 text-[10px] text-slate-400">不关联角色也可以保存为自己的独立安排。</p></div>
+                </div> : <div className="space-y-4">
+                    <input autoFocus value={taskTitle} onChange={event => setTaskTitle(event.target.value)} placeholder="要完成什么？" className={INPUT} />
+                    <textarea value={taskNote} onChange={event => setTaskNote(event.target.value)} placeholder="备注（可选）" rows={2} className={INPUT} />
+                    <div className="grid grid-cols-2 gap-3"><label className="block text-[10px] font-bold text-slate-400">截止日期<input type="date" value={taskDate} onChange={event => setTaskDate(event.target.value)} className={`mt-1 ${INPUT}`} required /></label><label className="block text-[10px] font-bold text-slate-400">截止 / 提醒时间（可选）<input type="time" value={taskTime} onChange={event => setTaskTime(event.target.value)} className={`mt-1 ${INPUT}`} /></label></div>
+                    <div className="rounded-2xl bg-violet-50 p-3 text-[10px] leading-relaxed text-slate-500">保存后，这件事会进入你和角色共用的日历。角色会在正常聊天中看到它；是否提起由当时的语境决定，不会在这里直接生成台词。</div>
+                    <label className="block text-[10px] font-bold tracking-widest text-slate-400">关联角色（共享并允许提醒）</label><div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">{characters.map(char => <button type="button" key={char.id} onClick={() => setTaskSupervisor(char.id)} className={`shrink-0 rounded-full px-3 py-2 text-xs font-bold ${taskSupervisor === char.id ? 'bg-violet-500 text-white' : 'bg-slate-100 text-slate-500'}`}>{char.name}</button>)}</div>
+                    <label className="flex items-center justify-between rounded-2xl bg-violet-50 p-3 text-xs text-slate-600"><span><b className="block">允许 TA 在聊天中自然提起</b><span className="text-[10px] text-slate-400">只给上面选中的角色提醒权限；关闭后仍会共享这条记录</span></span><input type="checkbox" checked={taskReminder} onChange={event => setTaskReminder(event.target.checked)} className="h-5 w-5 accent-violet-500" /></label>
+                </div>}
             </div>
         </Modal>
     </div>;
