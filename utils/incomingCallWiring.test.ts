@@ -298,6 +298,44 @@ describe('Overlay 重挂载时不能让过期来电重新响铃', () => {
   });
 });
 
+describe('未接来电必须留下消息 App 线索', () => {
+  const overlay = read('../components/call/IncomingCallOverlay.tsx');
+  const osContext = read('../context/OSContext.tsx');
+  const messaging = read('../apps/Messaging.tsx');
+
+  it('成功落库后另发独立的未接来电事件，不污染通用 progress 语义', () => {
+    const saveAt = overlay.indexOf('await DB.saveMessage({');
+    const progressAt = overlay.indexOf("new CustomEvent('active-msg-progress'");
+    const missedAt = overlay.indexOf('new CustomEvent(INCOMING_CALL_MISSED_EVENT');
+    expect(saveAt).toBeGreaterThan(-1);
+    expect(progressAt).toBeGreaterThan(saveAt);
+    expect(missedAt).toBeGreaterThan(progressAt);
+    expect(overlay).toContain('INCOMING_CALL_MISSED_EVENT');
+  });
+
+  it('OSContext 只在未查看该角色聊天时增加未读并发消息横幅，且正确清理监听', () => {
+    const handlerAt = osContext.indexOf('const missedCallHandler =');
+    const listenerAt = osContext.indexOf('window.addEventListener(INCOMING_CALL_MISSED_EVENT, missedCallHandler)');
+    expect(handlerAt).toBeGreaterThan(-1);
+    expect(listenerAt).toBeGreaterThan(handlerAt);
+    const handler = osContext.slice(handlerAt, listenerAt);
+    expect(handler).toContain('getChatViewSnapshot()');
+    expect(handler).toContain('chatView.chatOpen && chatView.charId === charId');
+    expect(handler).toContain('setUnreadMessages');
+    expect(handler).toContain('emitMessagePreview');
+    expect(osContext).toContain('window.removeEventListener(INCOMING_CALL_MISSED_EVENT, missedCallHandler)');
+  });
+
+  it('消息列表状态不会把保留的 activeCharacterId 当成仍在查看详情', () => {
+    expect(messaging).toContain('setChatViewSnapshot(view === \'detail\', view === \'detail\' ? activeCharacterId ?? null : null)');
+  });
+
+  it('列表预览按精确来源显示未接来电，旧记录也能读出来', () => {
+    expect(messaging).toContain("message.metadata?.source === 'incoming-call-missed'");
+    expect(messaging).toContain("return '未接来电'");
+  });
+});
+
 describe('这条链上最容易被别的上传悄悄覆盖掉的两处', () => {
   it('chatPrompts 里还教着 [[ACTION:CALL]]', () => {
     const src = readFileSync(path.resolve(__dirname, './chatPrompts.ts'), 'utf8');

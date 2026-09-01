@@ -7,6 +7,7 @@ import { useBlobRefUrl } from '../../utils/blobRef';
 import { isRinging, primeRingtone, startRingtone, stopRingtone } from '../../utils/callRingtone';
 import {
   INCOMING_CALL_EVENT,
+  INCOMING_CALL_MISSED_EVENT,
   clearPendingIncomingCall,
   getIncomingCallPresentedAt,
   getPendingIncomingCall,
@@ -246,6 +247,16 @@ export const persistMissedCall = async (
     } as any);
     // 聊天页靠这个事件重读消息列表（推送落库走的是同一条路，见 activeMsgRuntime）。
     window.dispatchEvent(new CustomEvent('active-msg-progress', { detail: { charId: target.charId } }));
+    // 消息 App 还需要一个独立语义的提醒：active-msg-progress 会被普通推送分段高频复用，
+    // 不能让它承担未读计数，否则同一轮消息会被重复计数。
+    window.dispatchEvent(new CustomEvent(INCOMING_CALL_MISSED_EVENT, {
+      detail: {
+        charId: target.charId,
+        charName: target.charName,
+        reason,
+        ringAt: target.ringAt,
+      },
+    }));
   } catch (e) {
     console.error('[IncomingCall] 未接来电落库失败', e);
   }

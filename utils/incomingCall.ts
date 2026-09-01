@@ -18,6 +18,9 @@ import { appendDevDebugLog } from './devDebug';
 /** 来电界面/铃声的触发事件（window 级）。detail 是 PendingIncomingCall。 */
 export const INCOMING_CALL_EVENT = 'sully-incoming-call';
 
+/** 未接/拒接来电已落库后的提醒事件（window 级）。 */
+export const INCOMING_CALL_MISSED_EVENT = 'sully-incoming-call-missed';
+
 /**
  * 同一个角色两通电话之间的最短间隔。
  *

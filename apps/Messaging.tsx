@@ -52,6 +52,7 @@ import { processImage } from '../utils/file';
 import { buildSelfiePrompt, generateImageDataUrl, getImageGenConfig, isImageGenReady } from '../utils/novelaiImage';
 import { safeResponseJson } from '../utils/safeApi';
 import { getSocialPostScope, isMomentsPost, withSocialPostScope } from '../utils/socialPostScope';
+import { setChatViewSnapshot } from '../utils/chatGenEvents';
 import {
     appendMomentComment,
     applyMomentAiInteractions,
@@ -179,6 +180,7 @@ const messageTypeLabel: Partial<Record<Message['type'], string>> = {
 const cleanPreview = (message: Message | null, composing: boolean): string => {
     if (composing) return '正在送达消息…';
     if (!message) return '还没有消息，来打个招呼吧';
+    if (message.metadata?.source === 'incoming-call-missed') return '未接来电';
     if (message.type !== 'text') return messageTypeLabel[message.type] || '[消息]';
     return message.content
         .replace(/<[^>]+>/g, ' ')
@@ -229,6 +231,7 @@ const Messaging: React.FC = () => {
         characters,
         clearUnread,
         closeApp,
+        activeCharacterId,
         lastMsgTimestamp,
         openApp,
         proactiveComposingChars,
@@ -259,6 +262,14 @@ const Messaging: React.FC = () => {
         signature: '', birthday: '', gender: '', location: '', hobbies: [], about: userProfile.bio || '',
     }));
     const [profileDraft, setProfileDraft] = useState<MessagingProfile>(profile);
+
+    // AppID.Chat 同时承载好友列表和单聊详情；activeCharacterId 在返回列表后仍可能保留，
+    // 因此不能单靠 OSContext 的 activeApp + activeCharacterId 判断“用户正在看这段聊天”。
+    // 这里把真正的详情页状态同步给全局横幅和未接来电提醒。
+    useEffect(() => {
+        setChatViewSnapshot(view === 'detail', view === 'detail' ? activeCharacterId ?? null : null);
+    }, [activeCharacterId, view]);
+
     const [profileEditOpen, setProfileEditOpen] = useState(false);
     const [momentGenerateOpen, setMomentGenerateOpen] = useState(false);
     const [momentPostOpen, setMomentPostOpen] = useState(false);
