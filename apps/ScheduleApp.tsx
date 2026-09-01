@@ -9,7 +9,7 @@ import { loadCharacterContextRange } from '../utils/chatContextRange';
 import { extractContent, safeResponseJson } from '../utils/safeApi';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { getLocalDateKey } from '../utils/localDate';
-import { eventsForDate, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, tasksForDate } from '../utils/calendarIntegration';
+import { eventsForDate, mergeCalendarDayTimeline, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, tasksForDate, type CalendarTimelineItem } from '../utils/calendarIntegration';
 import { trackEvent } from '../utils/analytics';
 import { extractTaskComment, formatTaskComment, isTaskCommentDisplayable } from '../utils/taskComment';
 import { buildMonthlyReviewStats, buildSullyMonthlyReport, CALENDAR_MOODS, chooseMonthlyMessageCharacterId } from '../utils/calendarMonthlyReview';
@@ -220,14 +220,34 @@ const ScheduleApp: React.FC = () => {
     }, []);
     useEffect(() => { loadUserData().catch(error => console.error('Calendar load failed', error)); }, [loadUserData]);
     useEffect(() => {
-        if (!selectedCharId) { setCharSchedule(null); setCharTodo(null); return; }
+        let active = true;
+        if (!selectedCharId) {
+            setCharSchedule(null);
+            setCharTodo(null);
+            return () => { active = false; };
+        }
+        // Do not leave the previous date's character rows visible while the
+        // newly selected day's records are loading.
+        setCharSchedule(null);
+        setCharTodo(null);
         Promise.all([DB.getDailySchedule(selectedCharId, selectedDate), DB.getRoomTodo(selectedCharId, selectedDate)])
-            .then(([schedule, todo]) => { setCharSchedule(schedule); setCharTodo(todo); })
-            .catch(error => console.error('Character calendar load failed', error));
+            .then(([schedule, todo]) => {
+                if (!active) return;
+                setCharSchedule(schedule);
+                setCharTodo(todo);
+            })
+            .catch(error => {
+                if (active) console.error('Character calendar load failed', error);
+            });
+        return () => { active = false; };
     }, [selectedCharId, selectedDate]);
 
     const selectedTasks = useMemo(() => tasksForDate(tasks, selectedDate), [tasks, selectedDate]);
     const selectedEvents = useMemo(() => eventsForDate(events, selectedDate), [events, selectedDate]);
+    const selectedDayTimeline = useMemo(
+        () => mergeCalendarDayTimeline(selectedEvents, selectedTasks, charSchedule?.slots || []),
+        [charSchedule, selectedEvents, selectedTasks],
+    );
     // The personal page is a day view, like Nuoji's calendar: future tasks do
     // not occupy today's page forever, while selecting an older date reveals
     // its completed row and any saved role sentence again.
@@ -540,7 +560,7 @@ const ScheduleApp: React.FC = () => {
         addToast(`已同步到${selectedChar?.name || '角色'}的房间待办`, 'success');
     };
 
-    const renderTask = (task: Task) => {
+    const renderTask = (task: Task, showTimelineOwner = false) => {
         const supervisor = characters.find(char => char.id === task.supervisorId);
         const completedComment = isTaskCommentDisplayable(task.completedSupervisorComment, task.title)
             ? task.completedSupervisorComment
@@ -557,12 +577,44 @@ const ScheduleApp: React.FC = () => {
         const generatingVoice = commenting.has(task.id) || (task.isCompleted && processing.has(task.id));
         return <div key={task.id} className={`group relative flex items-start gap-3 rounded-[1.45rem] border p-4 shadow-sm transition ${task.isCompleted ? 'border-white/70 bg-white/65' : 'border-violet-100 bg-white/90'}`}>
             <button onClick={() => toggleTask(task)} disabled={processing.has(task.id)} className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 transition ${task.isCompleted ? 'border-emerald-400 bg-emerald-400 text-white' : 'border-violet-300 bg-white'}`} aria-label={task.isCompleted ? '恢复待办' : '完成待办'}>{processing.has(task.id) ? '…' : task.isCompleted ? '✓' : ''}</button>
-            <div className="min-w-0 flex-1"><div className={`text-sm font-semibold text-slate-700 ${task.isCompleted ? 'line-through opacity-50' : ''}`}>{task.title}</div>
+            <div className="min-w-0 flex-1">
+                {showTimelineOwner && <div className="mb-2 flex items-center gap-2 text-[10px] font-bold"><span className="rounded-full bg-sky-50 px-2 py-0.5 text-sky-500">你</span><span className="text-slate-400">待办</span></div>}
+                <div className={`text-sm font-semibold text-slate-700 ${task.isCompleted ? 'line-through opacity-50' : ''}`}>{task.title}</div>
                 {(displayedComment || generatingVoice) && <div className="mt-2 rounded-2xl bg-violet-50/80 px-3 py-2 break-words text-[11px] leading-relaxed italic text-violet-500">{displayedComment || `${supervisor?.name || '角色'}：TA 正在想怎么回应你…`}</div>}
                 {currentVoiceError && <div className="mt-2 flex items-center gap-2 text-[10px] text-slate-400"><span>TA 暂时没有回应</span><button onClick={() => task.isCompleted ? void generateTaskReward(task) : void generateTaskComment(task, true)} className="rounded-full bg-violet-50 px-2.5 py-1 font-bold text-violet-500">再问一次</button></div>}
                 {task.note && <div className="mt-2 text-xs leading-relaxed text-slate-400">{task.note}</div>}
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-400"><span className="rounded-full bg-sky-50 px-2 py-0.5 text-sky-500">截止 {taskDateKey(task)}{task.dueTime ? ` · ${task.dueTime}` : ''}</span>{supervisor && <span className="inline-flex items-center gap-1"><img src={supervisor.avatar || '/sully/head.png'} className="h-4 w-4 rounded-full object-cover" alt="" />{supervisor.name} 陪你</span>}{task.naturalReminder !== false && <span className="rounded-full bg-violet-50 px-2 py-0.5 text-violet-500">可自然提醒</span>}</div>
             </div><button aria-label={`删除待办：${task.title}`} onClick={() => deleteTask(task.id)} className="px-1 text-slate-300 transition hover:text-rose-400">×</button>
+        </div>;
+    };
+
+    const renderCalendarTimelineItem = (item: CalendarTimelineItem) => {
+        if (item.kind === 'task') return renderTask(item.task, true);
+        if (item.kind === 'event') {
+            const event = item.event;
+            return <div className="group rounded-2xl border border-rose-100 bg-white/85 p-3 shadow-sm">
+                <div className="flex gap-3">
+                    <span className="mt-1 h-8 w-1 shrink-0 rounded-full bg-rose-300" />
+                    <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-rose-50 px-2 py-0.5 text-[9px] font-bold text-rose-500">你</span><b className="text-sm">{event.title}</b><span className="rounded-full bg-rose-50 px-2 py-0.5 text-[9px] text-rose-500">{event.kind === 'event' ? '日程' : '纪念日'}</span>{event.repeat && <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[9px] text-sky-500">每周重复</span>}</div>
+                        <div className="mt-1 text-[11px] text-slate-400">{item.startTime ? (item.endTime ? `至 ${item.endTime}` : '单点') : '全天'}{event.location ? ` · ${event.location}` : ''}</div>
+                        {event.note && <p className="mt-2 text-xs leading-relaxed text-slate-500">{event.note}</p>}
+                    </div>
+                    <button aria-label={`删除日程：${event.title}`} onClick={() => deleteEvent(event.id)} className="text-slate-300 opacity-0 transition hover:text-rose-400 group-hover:opacity-100">×</button>
+                </div>
+            </div>;
+        }
+        const slot = item.slot;
+        return <div className="rounded-2xl border border-violet-100 bg-violet-50/80 p-3 shadow-sm">
+            <div className="flex gap-3">
+                <span className="text-xl">{slot.emoji || '◌'}</span>
+                <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-violet-100 px-2 py-0.5 text-[9px] font-bold text-violet-600">{selectedChar?.name || 'TA'}</span><span className="text-[9px] text-violet-400">角色日程</span></div>
+                    <div className="mt-1 text-sm font-semibold">{slot.activity}</div>
+                    <div className="mt-1 text-[11px] text-slate-400">{item.endTime ? `至 ${item.endTime}` : '单点'}{slot.location ? ` · ${slot.location}` : ''}</div>
+                    {slot.description && <div className="mt-1 text-xs leading-relaxed text-slate-400">{slot.description}</div>}
+                </div>
+            </div>
         </div>;
     };
 
@@ -585,11 +637,16 @@ const ScheduleApp: React.FC = () => {
                     <div className="mt-4 flex justify-center gap-4 text-[10px] text-slate-400"><span className="text-sky-400">● 待办</span><span className="text-rose-400">● 日程 / 纪念日</span></div>
                 </section>
                 <section className="space-y-3">
-                    <div className="flex items-center justify-between px-1"><div><h2 className="font-bold">{selectedDate === today ? '今天' : selectedDate}</h2><p className="text-[11px] text-slate-400">你的安排与 {selectedChar?.name || '角色'} 的生活放在一起看</p></div><div className="flex gap-2"><button onClick={() => openEventComposer()} className="rounded-full bg-white px-3 py-1.5 text-xs font-bold text-rose-500 shadow-sm">＋日程</button><button onClick={() => openTaskComposer()} className="rounded-full bg-white px-3 py-1.5 text-xs font-bold text-sky-500 shadow-sm">＋待办</button></div></div>
-                    {selectedEvents.map(event => <div key={event.id} className="group rounded-2xl border border-rose-100 bg-white/85 p-4 shadow-sm"><div className="flex gap-3"><span className="h-9 w-1 rounded-full bg-rose-300" /><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><b className="text-sm">{event.title}</b><span className="rounded-full bg-rose-50 px-2 py-0.5 text-[9px] text-rose-500">{event.kind === 'event' ? '日程' : '纪念日'}</span>{event.repeat && <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[9px] text-sky-500">每周重复</span>}</div><div className="mt-1 text-[11px] text-slate-400">{event.startTime || '全天'}{event.endTime ? `–${event.endTime}` : ''}{event.location ? ` · ${event.location}` : ''}</div>{event.note && <p className="mt-2 text-xs text-slate-500">{event.note}</p>}</div><button onClick={() => deleteEvent(event.id)} className="text-slate-300 opacity-0 group-hover:opacity-100">×</button></div></div>)}
-                    {selectedTasks.map(task => renderTask(task))}
-                    {charSchedule?.slots.map((slot, index) => <div key={`${slot.startTime}-${index}`} className="rounded-2xl border border-violet-100 bg-violet-50/80 p-4"><div className="flex gap-3"><span className="text-xl">{slot.emoji || '◌'}</span><div><div className="text-xs font-bold text-violet-500">{selectedChar?.name} · {slot.startTime}{slot.endTime ? `–${slot.endTime}` : ''}</div><div className="mt-1 text-sm font-semibold">{slot.activity}</div>{(slot.description || slot.location) && <div className="mt-1 text-xs text-slate-400">{slot.description}{slot.location ? ` · ${slot.location}` : ''}</div>}</div></div></div>)}
-                    {selectedEvents.length + selectedTasks.length + (charSchedule?.slots.length || 0) === 0 && <div className="rounded-3xl border-2 border-dashed border-white bg-white/35 py-10 text-center text-xs text-slate-400">这一天还很空，留一点期待给它。</div>}
+                    <div className="flex items-center justify-between px-1"><div><h2 className="font-bold">{selectedDate === today ? '今天' : selectedDate}</h2><p className="text-[11px] text-slate-400">你与 {selectedChar?.name || '角色'} 的安排按同一条时间轴排列，同一时刻会紧挨着显示</p></div><div className="flex gap-2"><button onClick={() => openEventComposer()} className="rounded-full bg-white px-3 py-1.5 text-xs font-bold text-rose-500 shadow-sm">＋日程</button><button onClick={() => openTaskComposer()} className="rounded-full bg-white px-3 py-1.5 text-xs font-bold text-sky-500 shadow-sm">＋待办</button></div></div>
+                    <div className="flex flex-wrap items-center gap-3 px-1 text-[10px] font-bold"><span className="text-sky-500">● 你</span><span className="text-violet-500">● {selectedChar?.name || '角色'}</span><span className="font-normal text-slate-400">左侧时间为开始 / 截止时间</span></div>
+                    {selectedDayTimeline.length > 0 ? <div className="relative space-y-3 rounded-3xl border border-white/80 bg-white/35 p-3">
+                        <div className="pointer-events-none absolute bottom-5 left-[4.5rem] top-5 w-px bg-gradient-to-b from-sky-200 via-violet-200 to-violet-100" />
+                        {selectedDayTimeline.map(item => <div key={item.id} className="relative grid grid-cols-[3.5rem_1rem_minmax(0,1fr)] items-start gap-2">
+                            <div className="pt-3 text-right text-[10px] font-bold tabular-nums text-slate-400">{item.startTime || '全天'}</div>
+                            <div className="relative z-10 flex justify-center pt-4"><span className={`h-2.5 w-2.5 rounded-full border-2 border-white shadow-sm ${item.owner === 'user' ? 'bg-sky-400' : 'bg-violet-400'}`} /></div>
+                            <div className="min-w-0">{renderCalendarTimelineItem(item)}</div>
+                        </div>)}
+                    </div> : <div className="rounded-3xl border-2 border-dashed border-white bg-white/35 py-10 text-center text-xs text-slate-400">这一天还很空，留一点期待给它。</div>}
                 </section>
             </div>}
             {tab === 'mine' && <div className="space-y-6">

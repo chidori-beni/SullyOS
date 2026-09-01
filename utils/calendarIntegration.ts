@@ -1,4 +1,4 @@
-import type { Anniversary, Task } from '../types';
+import type { Anniversary, ScheduleSlot, Task } from '../types';
 
 export const CALENDAR_DATA_UPDATED_EVENT = 'sully-calendar-data-updated';
 
@@ -17,6 +17,107 @@ export interface CalendarDateGroup<T> {
     date: string;
     items: T[];
 }
+
+export type CalendarTimelineItem =
+    | {
+        id: string;
+        owner: 'user';
+        kind: 'event';
+        startTime?: string;
+        endTime?: string;
+        event: Anniversary;
+    }
+    | {
+        id: string;
+        owner: 'user';
+        kind: 'task';
+        startTime?: string;
+        task: Task;
+    }
+    | {
+        id: string;
+        owner: 'character';
+        kind: 'character';
+        startTime?: string;
+        endTime?: string;
+        slot: ScheduleSlot;
+    };
+
+const timelineTimeValue = (value?: string): number => {
+    if (!value) return -1;
+    const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+    if (!match) return Number.POSITIVE_INFINITY;
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+    if (hour > 23 || minute > 59) return Number.POSITIVE_INFINITY;
+    return hour * 60 + minute;
+};
+
+/**
+ * Combine one selected day's user records and character slots into the same
+ * chronological lane. The caller supplies already date-filtered events and
+ * tasks; this helper only decides the display order and keeps source records
+ * attached so the UI can retain their existing actions.
+ */
+export const mergeCalendarDayTimeline = (
+    events: Anniversary[],
+    tasks: Task[],
+    slots: ScheduleSlot[] = [],
+): CalendarTimelineItem[] => {
+    const rows: Array<{
+        item: CalendarTimelineItem;
+        time: number;
+        owner: number;
+        kind: number;
+        index: number;
+    }> = [];
+
+    events.forEach((event, index) => rows.push({
+        item: {
+            id: `user-event:${event.id}`,
+            owner: 'user',
+            kind: 'event',
+            startTime: event.startTime,
+            endTime: event.endTime,
+            event,
+        },
+        time: timelineTimeValue(event.startTime),
+        owner: 0,
+        kind: 0,
+        index,
+    }));
+    tasks.forEach((task, index) => rows.push({
+        item: {
+            id: `user-task:${task.id}`,
+            owner: 'user',
+            kind: 'task',
+            startTime: task.dueTime,
+            task,
+        },
+        time: timelineTimeValue(task.dueTime),
+        owner: 0,
+        kind: 1,
+        index: events.length + index,
+    }));
+    slots.forEach((slot, index) => rows.push({
+        item: {
+            id: `character-slot:${index}:${slot.startTime}:${slot.activity}`,
+            owner: 'character',
+            kind: 'character',
+            startTime: slot.startTime,
+            endTime: slot.endTime,
+            slot,
+        },
+        time: timelineTimeValue(slot.startTime),
+        owner: 1,
+        kind: 2,
+        index: events.length + tasks.length + index,
+    }));
+
+    return rows
+        .sort((left, right) => left.time - right.time || left.owner - right.owner || left.kind - right.kind || left.index - right.index)
+        .map(row => row.item);
+};
 
 /**
  * Keep the personal calendar's linear view deterministic: the date is the
