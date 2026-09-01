@@ -3813,6 +3813,15 @@ export interface HandbookEntry {
     updatedAt: number;
 }
 
+export interface TaskSupervisorSpeech {
+    /** 当前第一版只生成完成待办后的回应；未来扩展其它动作时保持事件隔离。 */
+    action: 'completed';
+    /** 由 task id 与本次完成时间组成；同一件事重新完成会得到新的事件。 */
+    eventId: string;
+    text: string;
+    generatedAt: number;
+}
+
 export interface Task {
     id: string;
     title: string;
@@ -3826,6 +3835,8 @@ export interface Task {
     dueTime?: string;
     /** 是否允许监督角色在聊天里自然提起；旧数据默认允许。 */
     naturalReminder?: boolean;
+    /** 新版监督员旁路生成的、仅通过严格正文校验的完成回应。 */
+    supervisorSpeech?: TaskSupervisorSpeech;
     /**
      * @deprecated 旧版待办台词兼容字段。共享日历不再生成、写入或显示它。
      */

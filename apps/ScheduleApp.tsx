@@ -4,10 +4,12 @@ import { DB } from '../utils/db';
 import { Anniversary, CalendarMoodId, DailySchedule, RoomTodo, Task } from '../types';
 import Modal from '../components/os/Modal';
 import { getLocalDateKey } from '../utils/localDate';
-import { eventsForDate, mergeCalendarDayTimeline, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, tasksForDate, type CalendarTimelineItem } from '../utils/calendarIntegration';
+import { buildTaskSupervisorCalendarContext, eventsForDate, mergeCalendarDayTimeline, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, tasksForDate, type CalendarTimelineItem } from '../utils/calendarIntegration';
 import { trackEvent } from '../utils/analytics';
 import { buildMonthlyReviewStats, buildSullyMonthlyReport, CALENDAR_MOODS, chooseMonthlyMessageCharacterId } from '../utils/calendarMonthlyReview';
 import { requestMonthlyLetter } from '../utils/monthlyLetter';
+import { formatTaskComment, isTaskCommentDisplayable } from '../utils/taskComment';
+import { requestTaskSupervisorVoice, runTaskSupervisorVoiceOnce } from '../utils/taskSupervisorVoice';
 
 type CalendarTab = 'month' | 'mine' | 'theirs' | 'review';
 type ComposerMode = 'event' | 'task';
@@ -45,6 +47,9 @@ const ScheduleApp: React.FC = () => {
     const [generatingLetter, setGeneratingLetter] = useState(false);
     const [openedLetters, setOpenedLetters] = useState<Set<string>>(new Set());
     const monthlyGenerationId = useRef(0);
+    const [taskVoicePending, setTaskVoicePending] = useState<Set<string>>(new Set());
+    const [taskVoiceFailed, setTaskVoiceFailed] = useState<Set<string>>(new Set());
+    const taskVoiceEventRef = useRef<Map<string, string>>(new Map());
 
     const [taskTitle, setTaskTitle] = useState('');
     const [taskNote, setTaskNote] = useState('');
@@ -207,6 +212,100 @@ const ScheduleApp: React.FC = () => {
             if (monthlyGenerationId.current === generationId) setGeneratingLetter(false);
         }
     };
+    const readStoredTask = async (taskId: string): Promise<Task | undefined> =>
+        (await DB.getAllTasks().catch(() => [])).find(item => item.id === taskId);
+
+    const completedTaskEventId = (task: Task): string =>
+        `completed:${task.id}:${task.completedAt ?? task.createdAt}`;
+
+    const isCurrentTaskVoiceEvent = (task: Task, eventId: string): boolean =>
+        taskVoiceEventRef.current.get(task.id) === eventId;
+
+    /**
+     * Save the task first and let this optional side-channel run afterwards.
+     * A stale response can never resurrect a deleted/uncompleted task or
+     * overwrite a newer completion event.
+     */
+    const generateCompletedTaskSpeech = async (task: Task): Promise<void> => {
+        if (!task.isCompleted || task.naturalReminder === false) return;
+        const supervisor = characters.find(char => char.id === task.supervisorId);
+        if (!supervisor || !apiConfig.apiKey || !apiConfig.baseUrl) return;
+
+        const eventId = completedTaskEventId(task);
+        const storedAtStart = await readStoredTask(task.id);
+        if (!storedAtStart || !storedAtStart.isCompleted
+            || (storedAtStart.completedAt ?? storedAtStart.createdAt) !== (task.completedAt ?? task.createdAt)) return;
+        if (storedAtStart.supervisorSpeech?.eventId === eventId
+            && isTaskCommentDisplayable(storedAtStart.supervisorSpeech.text, storedAtStart.title)) return;
+
+        taskVoiceEventRef.current.set(task.id, eventId);
+        setTaskVoiceFailed(current => { const next = new Set(current); next.delete(task.id); return next; });
+        setTaskVoicePending(current => new Set(current).add(task.id));
+
+        const job = async (): Promise<void> => {
+            const [freshTasks, freshEvents] = await Promise.all([
+                DB.getAllTasks().catch(() => [] as Task[]),
+                DB.getAllAnniversaries().catch(() => [] as Anniversary[]),
+            ]);
+            const freshTask = freshTasks.find(item => item.id === task.id);
+            if (!freshTask || !freshTask.isCompleted
+                || (freshTask.completedAt ?? freshTask.createdAt) !== (task.completedAt ?? task.createdAt)
+                || !isCurrentTaskVoiceEvent(task, eventId)) return;
+
+            const calendarContext = buildTaskSupervisorCalendarContext({
+                tasks: freshTasks,
+                events: freshEvents,
+                today: getLocalDateKey(),
+                now: new Date(),
+                excludeTaskId: task.id,
+            });
+            const text = await requestTaskSupervisorVoice({
+                character: supervisor,
+                task: freshTask,
+                apiConfig,
+                userName: userProfile.name,
+                calendarContext,
+            });
+            if (!isCurrentTaskVoiceEvent(task, eventId)) return;
+
+            const latest = await readStoredTask(task.id);
+            if (!latest || !latest.isCompleted
+                || (latest.completedAt ?? latest.createdAt) !== (task.completedAt ?? task.createdAt)) return;
+            const updated: Task = {
+                ...latest,
+                supervisorSpeech: {
+                    action: 'completed',
+                    eventId,
+                    text,
+                    generatedAt: Date.now(),
+                },
+            };
+            await DB.saveTask(updated);
+            setTasks(current => current.map(item => item.id === task.id ? updated : item));
+            setTaskVoiceFailed(current => { const next = new Set(current); next.delete(task.id); return next; });
+            notifyCalendarDataUpdated();
+        };
+
+        try {
+            const ran = await runTaskSupervisorVoiceOnce(eventId, job);
+            if (!ran) await loadUserData().catch(() => undefined);
+        } catch (error) {
+            // Keep the failure actionable without putting provider details or
+            // an invalid model response into the task card/toast.
+            if (isCurrentTaskVoiceEvent(task, eventId)) {
+                setTaskVoiceFailed(current => new Set(current).add(task.id));
+                console.warn('Task supervisor speech was not saved', { taskId: task.id, eventId });
+            }
+        } finally {
+            setTaskVoicePending(current => { const next = new Set(current); next.delete(task.id); return next; });
+        }
+    };
+
+    const retryCompletedTaskSpeech = (task: Task): void => {
+        if (!task.isCompleted || task.naturalReminder === false) return;
+        void generateCompletedTaskSpeech(task);
+    };
+
     const addTask = async () => {
         if (!taskTitle.trim() || !taskDate) return;
         const task: Task = {
@@ -221,14 +320,24 @@ const ScheduleApp: React.FC = () => {
         addToast('待办已加入共享日历，聊天时可由角色自然提起', 'success');
     };
     const toggleTask = async (task: Task) => {
+        if (task.isCompleted) {
+            taskVoiceEventRef.current.delete(task.id);
+            setTaskVoicePending(current => { const next = new Set(current); next.delete(task.id); return next; });
+            setTaskVoiceFailed(current => { const next = new Set(current); next.delete(task.id); return next; });
+        }
+        const completedAt = Math.max(Date.now(), (task.completedAt || 0) + 1);
         const updated: Task = task.isCompleted
-            ? { ...task, isCompleted: false, completedAt: undefined }
-            : { ...task, isCompleted: true, completedAt: Date.now() };
+            ? { ...task, isCompleted: false, completedAt: undefined, supervisorSpeech: undefined }
+            : { ...task, isCompleted: true, completedAt, supervisorSpeech: undefined };
         await DB.saveTask(updated);
         setTasks(current => current.map(item => item.id === task.id ? updated : item));
         notifyCalendarDataUpdated();
+        if (updated.isCompleted) void generateCompletedTaskSpeech(updated);
     };
     const deleteTask = async (id: string) => {
+        taskVoiceEventRef.current.delete(id);
+        setTaskVoicePending(current => { const next = new Set(current); next.delete(id); return next; });
+        setTaskVoiceFailed(current => { const next = new Set(current); next.delete(id); return next; });
         await DB.deleteTask(id); setTasks(current => current.filter(task => task.id !== id)); notifyCalendarDataUpdated();
     };
     const addEvent = async () => {
@@ -263,11 +372,24 @@ const ScheduleApp: React.FC = () => {
 
     const renderTask = (task: Task, showTimelineOwner = false) => {
         const supervisor = characters.find(char => char.id === task.supervisorId);
+        const supervisorSpeech = task.isCompleted && isTaskCommentDisplayable(task.supervisorSpeech?.text, task.title)
+            ? task.supervisorSpeech.text
+            : null;
+        const displayedSpeech = formatTaskComment(supervisor?.name, supervisorSpeech);
+        const voicePending = taskVoicePending.has(task.id);
+        const voiceCanRetry = task.isCompleted
+            && !supervisorSpeech
+            && !voicePending
+            && task.naturalReminder !== false
+            && Boolean(apiConfig.apiKey && apiConfig.baseUrl);
         return <div key={task.id} className={`group relative flex items-start gap-3 rounded-[1.45rem] border p-4 shadow-sm transition ${task.isCompleted ? 'border-white/70 bg-white/65' : 'border-violet-100 bg-white/90'}`}>
             <button onClick={() => toggleTask(task)} className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 transition ${task.isCompleted ? 'border-emerald-400 bg-emerald-400 text-white' : 'border-violet-300 bg-white'}`} aria-label={task.isCompleted ? '恢复待办' : '完成待办'}>{task.isCompleted ? '✓' : ''}</button>
             <div className="min-w-0 flex-1">
                 {showTimelineOwner && <div className="mb-2 flex items-center gap-2 text-[10px] font-bold"><span className="rounded-full bg-sky-50 px-2 py-0.5 text-sky-500">你</span><span className="text-slate-400">待办</span></div>}
                 <div className={`text-sm font-semibold text-slate-700 ${task.isCompleted ? 'line-through opacity-50' : ''}`}>{task.title}</div>
+                {displayedSpeech && <div className="mt-2 break-words rounded-2xl bg-violet-50/80 px-3 py-2 text-[11px] leading-relaxed italic text-violet-500">{displayedSpeech}</div>}
+                {voicePending && <div className="mt-2 rounded-2xl bg-violet-50/80 px-3 py-2 text-[11px] leading-relaxed italic text-violet-400">{supervisor?.name || '角色'}正在看这件事……</div>}
+                {voiceCanRetry && <div className="mt-2 flex items-center gap-2 text-[10px] text-slate-400"><span>{taskVoiceFailed.has(task.id) ? 'TA这次还没接上话' : '完成记录已保存，可以让TA留一句话'}</span><button onClick={() => retryCompletedTaskSpeech(task)} className="rounded-full bg-violet-50 px-2.5 py-1 font-bold text-violet-500">{taskVoiceFailed.has(task.id) ? '再问一次' : '让TA说一句'}</button></div>}
                 {task.note && <div className="mt-2 text-xs leading-relaxed text-slate-400">{task.note}</div>}
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-400"><span className="rounded-full bg-sky-50 px-2 py-0.5 text-sky-500">截止 {taskDateKey(task)}{task.dueTime ? ` · ${task.dueTime}` : ''}</span>{supervisor && <span className="inline-flex items-center gap-1"><img src={supervisor.avatar || '/sully/head.png'} className="h-4 w-4 rounded-full object-cover" alt="" />{supervisor.name} 共享</span>}<span className={`rounded-full px-2 py-0.5 ${supervisor && task.naturalReminder !== false ? 'bg-violet-50 text-violet-500' : 'bg-slate-100 text-slate-400'}`}>{supervisor && task.naturalReminder !== false ? '聊天中可自然提起' : '仅共享记录'}</span></div>
             </div><button aria-label={`删除待办：${task.title}`} onClick={() => deleteTask(task.id)} className="px-1 text-slate-300 transition hover:text-rose-400">×</button>

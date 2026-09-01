@@ -14,6 +14,7 @@ export const TASK_SUPERVISOR_PROMPT_BUDGETS = {
     calendar: 560,
     taskTitle: 220,
     taskNote: 220,
+    userName: 48,
 } as const;
 
 export interface TaskSupervisorPromptInput {
@@ -21,6 +22,7 @@ export interface TaskSupervisorPromptInput {
     task: Task;
     completed: boolean;
     calendarContext?: string;
+    userName?: string;
 }
 
 export interface TaskSupervisorPromptMessage {
@@ -107,6 +109,9 @@ export const buildTaskSupervisorMessages = (
 
     const userContent = [
         completedAction,
+        input.userName?.trim()
+            ? '用户称呼（只用于自然称呼，不要解释或复述用户资料）：' + dataOrNone(input.userName, TASK_SUPERVISOR_PROMPT_BUDGETS.userName)
+            : '',
         '【这项待办】\n' + taskBlock(input),
         '【用户当前日程】\n' + dataOrNone(input.calendarContext, TASK_SUPERVISOR_PROMPT_BUDGETS.calendar),
         input.completed
