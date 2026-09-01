@@ -3208,7 +3208,7 @@ export interface CharacterProfile {
   scheduleStyle?: 'lifestyle' | 'mindful';
 
   /**
-   * 日程睡眠策略：缺省按普通人安排 7-9 小时睡眠。
+   * 日程睡眠策略：缺省按普通人安排 5-9 小时睡眠。
    * 只有明确设为 no-sleep 的非生理角色才不强制睡眠，赛车手/运动员不会自动豁免。
    */
   scheduleSleepMode?: ScheduleSleepMode;
@@ -3884,6 +3884,15 @@ export interface Anniversary {
         weekdays: number[];
         until?: string;
     };
+    /** 可选来源：由角色行程邀约接受后自动写入的共享日历事件。 */
+    source?: 'schedule_invite';
+    /** 来源事件稳定 id；不参与旧手工日历记录的显示逻辑。 */
+    sourceId?: string;
+    /** 自动写入事件的角色当地时间与时区，方便解释跨时区后的本地时间。 */
+    sourceTimeZone?: string;
+    sourceDate?: string;
+    sourceStartTime?: string;
+    sourceEndTime?: string;
     aiThought?: string;
     lastThoughtGeneratedAt?: number;
 }

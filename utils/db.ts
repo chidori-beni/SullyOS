@@ -1691,7 +1691,13 @@ export const DB = {
   saveAnniversary: async (anniversary: Anniversary): Promise<void> => {
       const db = await openDB();
       const transaction = db.transaction(STORE_ANNIVERSARIES, 'readwrite');
-      transaction.objectStore(STORE_ANNIVERSARIES).put(anniversary);
+      return new Promise((resolve, reject) => {
+          const request = transaction.objectStore(STORE_ANNIVERSARIES).put(anniversary);
+          request.onerror = () => reject(request.error || transaction.error || new Error('保存日历事件失败'));
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error || new Error('保存日历事件失败'));
+          transaction.onabort = () => reject(transaction.error || new Error('保存日历事件已取消'));
+      });
   },
 
   deleteAnniversary: async (id: string): Promise<void> => {

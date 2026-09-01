@@ -13,9 +13,10 @@ export interface ScheduleSleepPolicy {
 
 /** 普通人（包括运动员）不能因为职业忙就默认只睡三四个小时。 */
 export const DEFAULT_SCHEDULE_SLEEP_POLICY: ScheduleSleepPolicy = {
-    minTotalMinutes: 7 * 60,
+    minTotalMinutes: 5 * 60,
     maxTotalMinutes: 9 * 60,
-    minContinuousMinutes: 6 * 60 + 30,
+    // 允许“主要睡眠 + 午睡”补足总量；不能大于总量下限，否则 5 小时的合法边界会被自己否掉。
+    minContinuousMinutes: 4 * 60,
 };
 
 export interface ScheduleValidationOptions {

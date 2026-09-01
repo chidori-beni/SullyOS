@@ -90,6 +90,7 @@ import {
     saveTextFavorite,
 } from '../utils/textFavorites';
 import { SCHEDULE_CHANGE_EVENT, type ScheduleChangeEventDetail } from '../utils/scheduleChange';
+import { notifyCalendarDataUpdated, scheduleInviteEventToAnniversary } from '../utils/calendarIntegration';
 import {
     applyScheduleInviteToSchedule,
     buildScheduleInviteReplyData,
@@ -227,6 +228,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     useEffect(() => { setFineTuneOpen(false); setFineTunePanelOpen(false); setDecorTab(null); }, [activeCharacterId]);
     const [scheduleData, setScheduleData] = useState<DailySchedule | null>(null);
     const [scheduleInviteEnabled, setScheduleInviteEnabledState] = useState<boolean>(() => isScheduleInviteEnabled());
+    const scheduleInviteResolvingRef = useRef<Set<number>>(new Set());
     const [scheduleChangeNotice, setScheduleChangeNotice] = useState<ScheduleChangeEventDetail | null>(null);
     const dismissScheduleChangeNotice = useCallback(() => setScheduleChangeNotice(null), []);
     // 小剧场（窥视演出）：正在播放的时段索引（null = 未打开），以及生成中标志
@@ -1311,7 +1313,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         if (!targetChar || !isScheduleInviteEnabled()) return schedule;
         try {
             const result = await ensureScheduleInviteMessage({ char: targetChar, schedule });
-            if (result.created) await reloadMessages(visibleCountRef.current);
+            if (result.created || result.updated) await reloadMessages(visibleCountRef.current);
             return result.schedule;
         } catch (error) {
             console.warn('[ScheduleInvite] create invite failed:', error);
@@ -1848,60 +1850,109 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     }, [char, userProfile, groups, realtimeConfig, apiConfig, updateCharacter]);
 
     const handleResolveScheduleInvite = useCallback(async (msg: Message, selectedIds: string[]) => {
-        if (!char) return;
-        const data = getScheduleInviteData(msg);
-        if (!data || data.status !== 'pending') return;
-        const eventIds = new Set(data.events.map(event => event.id));
-        const acceptedIds = data.events.filter(event => selectedIds.includes(event.id) && eventIds.has(event.id)).map(event => event.id);
-        const acceptedEvents = data.events.filter(event => acceptedIds.includes(event.id));
-        const declinedIds = data.events.filter(event => !acceptedIds.includes(event.id)).map(event => event.id);
+        if (!char || scheduleInviteResolvingRef.current.has(msg.id)) return;
+        // 先占住这个消息 id，再做任何 await；否则双击会在第一次读库前启动两条并发处理。
+        scheduleInviteResolvingRef.current.add(msg.id);
+        try {
+            // 卡片可能是在日程重抽前渲染的，处理时重新读一次最新卡片，避免接受已经失效的旧事件。
+            const recentInvites = await DB.getRecentMessagesByCharIdAndSource(char.id, 'schedule_invite', 30).catch(() => [] as Message[]);
+            const freshMessage = recentInvites.find(candidate => candidate.id === msg.id) || msg;
+            const data = getScheduleInviteData(freshMessage);
+            if (!data || data.charId !== char.id) return;
 
-        await DB.updateMessageMetadata(msg.id, (previous) => ({
-            ...(previous || {}),
-            scheduleInviteData: {
-                ...data,
-                status: 'responded',
-                acceptedIds,
-                declinedIds,
-                responseAt: Date.now(),
-            },
-        }));
+            // 处理中的卡片以用户刚选中的 id 为准；历史卡片不再信任组件里的旧选择，
+            // 只按已落库的 acceptedIds 重放，避免重复点击把未接受的时段补进日历。
+            const acceptedIdSet = new Set(data.status === 'pending' ? selectedIds : (data.acceptedIds || []));
+            const acceptedIds = data.events
+                .filter(event => acceptedIdSet.has(event.id))
+                .map(event => event.id);
+            const acceptedEvents = data.events.filter(event => acceptedIdSet.has(event.id));
+            const declinedIds = data.events.filter(event => !acceptedIdSet.has(event.id)).map(event => event.id);
 
-        const storedSchedule = await getDailyScheduleForChar(char).catch(() => null);
-        if (storedSchedule && storedSchedule.date === data.date) {
-            const updatedSchedule = applyScheduleInviteToSchedule(storedSchedule, data.events, acceptedIds);
-            await DB.saveDailySchedule(updatedSchedule);
-            setScheduleData(updatedSchedule);
-            markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+            // 已响应卡不可再次安排电话或生成回执；只补齐可能在上次写入中断时缺失的日历事件。
+            if (data.status !== 'pending') {
+                if (data.status === 'responded' && acceptedEvents.length > 0) {
+                    await Promise.all(acceptedEvents.map(event => DB.saveAnniversary(scheduleInviteEventToAnniversary({
+                        batchId: data.batchId,
+                        event,
+                        characterId: char.id,
+                        characterName: char.name,
+                        sourceTimeZone: data.sourceTimeZone || resolveCharTimeZone(char),
+                    }))));
+                    notifyCalendarDataUpdated();
+                }
+                return;
+            }
+
+            // 先写入用户 Calendar，再把邀约标成已处理。若写入失败，卡片仍保持 pending，用户可以重试。
+            if (acceptedEvents.length > 0) {
+                await Promise.all(acceptedEvents.map(event => DB.saveAnniversary(scheduleInviteEventToAnniversary({
+                    batchId: data.batchId,
+                    event,
+                    characterId: char.id,
+                    characterName: char.name,
+                    sourceTimeZone: data.sourceTimeZone || resolveCharTimeZone(char),
+                }))));
+                notifyCalendarDataUpdated();
+            }
+
+            const storedSchedule = await getDailyScheduleForChar(char).catch(() => null);
+            if (storedSchedule && storedSchedule.date === data.date) {
+                const updatedSchedule = applyScheduleInviteToSchedule(storedSchedule, data.events, acceptedIds);
+                await DB.saveDailySchedule(updatedSchedule);
+                setScheduleData(updatedSchedule);
+                markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+            }
+
+            if (acceptedEvents.length > 0) {
+                // 回执也按 batchId 去重；网络成功但页面在下一步中断时，重试不会再造一张回执卡。
+                const previousReplies = await DB.getRecentMessagesByCharIdAndSource(char.id, 'schedule_invite_reply', 30).catch(() => [] as Message[]);
+                const alreadyReplied = previousReplies.some(reply => reply.metadata?.scheduleInviteReplyData?.batchId === data.batchId);
+                if (!alreadyReplied) {
+                    const replyData = buildScheduleInviteReplyData(char.name, acceptedEvents, data.batchId);
+                    await DB.saveMessage({
+                        charId: char.id,
+                        role: 'user',
+                        type: 'schedule_invite_reply',
+                        content: `💌 答应了邀约（${char.name}）：${acceptedEvents.map(event => event.activity).join('、')}`,
+                        metadata: { source: 'schedule_invite_reply', scheduleInviteReplyData: replyData },
+                    });
+                }
+            }
+
+            await DB.updateMessageMetadata(freshMessage.id, previous => ({
+                ...(previous || {}),
+                scheduleInviteData: {
+                    ...data,
+                    status: 'responded',
+                    acceptedIds,
+                    declinedIds,
+                    responseAt: Date.now(),
+                },
+            }));
+
+            // 不论接受还是婉拒，邀约状态和用户回执都应成为下一次自然主动的最新上下文。
+            syncAmsgAfterUserMessage();
+
+            const results = await Promise.all(acceptedEvents.map(scheduleAcceptedInviteCall));
+            const scheduledCalls = results.filter(result => result === 'scheduled').length;
+            const failedCalls = results.filter(result => result === 'failed').length;
+            if (acceptedEvents.length === 0) {
+                addToast('已婉拒这次行程邀约', 'info');
+            } else if (failedCalls > 0) {
+                addToast(`已登记 ${acceptedEvents.length} 项邀约到日历，但 ${failedCalls} 项自动连麦未排上，请检查主动消息 2.0`, 'error');
+            } else if (scheduledCalls > 0) {
+                addToast(`已答应 ${acceptedEvents.length} 项邀约并登记到日历，${scheduledCalls} 项已安排到点连麦`, 'success');
+            } else {
+                addToast(`已答应 ${acceptedEvents.length} 项邀约，并登记到日历`, 'success');
+            }
+            await reloadMessages(visibleCountRef.current);
+        } catch (error) {
+            console.error('[ScheduleInvite] resolve failed:', error);
+            addToast('邀约处理没有完成，请稍后重试；已登记的日历事件会自动复用', 'error');
+        } finally {
+            scheduleInviteResolvingRef.current.delete(msg.id);
         }
-
-        if (acceptedEvents.length > 0) {
-            const replyData = buildScheduleInviteReplyData(char.name, acceptedEvents);
-            await DB.saveMessage({
-                charId: char.id,
-                role: 'user',
-                type: 'schedule_invite_reply',
-                content: `💌 答应了邀约（${char.name}）：${acceptedEvents.map(event => event.activity).join('、')}`,
-                metadata: { source: 'schedule_invite_reply', scheduleInviteReplyData: replyData },
-            });
-        }
-
-        // 不论接受还是婉拒，邀约状态和用户回执都应成为下一次自然主动的最新上下文。
-        syncAmsgAfterUserMessage();
-
-        const results = await Promise.all(acceptedEvents.map(scheduleAcceptedInviteCall));
-        const scheduledCalls = results.filter(result => result === 'scheduled').length;
-        const failedCalls = results.filter(result => result === 'failed').length;
-        if (acceptedEvents.length === 0) {
-            addToast('已婉拒这次行程邀约', 'info');
-        } else if (failedCalls > 0) {
-            addToast(`已登记 ${acceptedEvents.length} 项邀约，但 ${failedCalls} 项自动连麦未排上，请检查主动消息 2.0`, 'error');
-        } else if (scheduledCalls > 0) {
-            addToast(`已答应 ${acceptedEvents.length} 项邀约，${scheduledCalls} 项已安排到点连麦`, 'success');
-        } else {
-            addToast(`已答应 ${acceptedEvents.length} 项邀约，并登记到日程`, 'success');
-        }
-        await reloadMessages(visibleCountRef.current);
     }, [char, userProfile, groups, realtimeConfig, scheduleAcceptedInviteCall, addToast, reloadMessages, syncAmsgAfterUserMessage]);
 
     // 顶栏 ⚡ 手动触发。instant 模式下给"上一条 assistant 之后的所有 user 消息"打上"准备中"

@@ -112,7 +112,9 @@ describe('日程本地规划器', () => {
         expect(plan.sleepMode).toBe('normal');
         expect(formatSchedulePlanPrompt(plan)).toContain('角色当地的周末');
         expect(formatSchedulePlanPrompt(plan)).toContain('当前时间是 04:07');
-        expect(formatSchedulePlanPrompt(plan)).toContain('7-9 小时');
+        expect(formatSchedulePlanPrompt(plan)).toContain('5-9 小时');
+        expect(formatSchedulePlanPrompt(plan)).toContain('连续睡眠不少于 4 小时');
+        expect(formatSchedulePlanPrompt(plan)).not.toContain('7-9 小时');
     });
 
     it('只有显式 no-sleep 配置才会关闭睡眠约束，普通职业设定不会自动豁免', () => {
@@ -124,6 +126,16 @@ describe('日程本地规划器', () => {
 
         expect(plan.sleepMode).toBe('no-sleep');
         expect(formatSchedulePlanPrompt(plan)).toContain('明确配置为 no-sleep');
+    });
+
+    it('意识系风格本身不再隐式关闭默认睡眠', () => {
+        const plan = buildSchedulePlan({
+            char: { ...racer, scheduleStyle: 'mindful' },
+            today: '2026-09-02',
+        });
+
+        expect(plan.sleepMode).toBe('normal');
+        expect(formatSchedulePlanPrompt(plan)).toContain('5-9 小时');
     });
 
     it('一次性重抽要求会限长并只出现在提示词，不进入计划对象', () => {

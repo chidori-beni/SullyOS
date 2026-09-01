@@ -1,5 +1,6 @@
 import type { Anniversary, RoomTodo, ScheduleSlot, Task } from '../types';
 import { addLocalDays, getCalendarDayDifference } from './localDate';
+import { nowInTimeZone, tzLabel, wallClockToTimestamp } from './timezone';
 
 export const CALENDAR_DATA_UPDATED_EVENT = 'sully-calendar-data-updated';
 
@@ -181,6 +182,123 @@ export const eventsForDate = (events: Anniversary[], date: string): Anniversary[
     events
         .filter(event => eventOccursOnDate(event, date))
         .sort((a, b) => (a.startTime || '23:59').localeCompare(b.startTime || '23:59'));
+
+export interface ScheduleInviteCalendarEvent {
+    id: string;
+    date: string;
+    startTime: string;
+    endTime?: string;
+    activity: string;
+    description?: string;
+    location?: string;
+    kind?: string;
+}
+
+export interface ScheduleInviteCalendarEventParams {
+    batchId: string;
+    event: ScheduleInviteCalendarEvent;
+    characterId: string;
+    characterName: string;
+    /** 角色日程使用的 IANA 时区；缺省表示跟随设备。 */
+    sourceTimeZone?: string;
+    /** 用户 Calendar 显示墙钟的 IANA 时区；缺省读取当前设备。 */
+    calendarTimeZone?: string;
+}
+
+const calendarDateKey = (date: Date): string =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+const calendarClockToMinutes = (value?: string): number | null => {
+    if (typeof value !== 'string') return null;
+    const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+    if (!match) return null;
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+    if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour > 23 || minute > 59) return null;
+    return hour * 60 + minute;
+};
+
+const readDeviceTimeZone = (): string | undefined => {
+    try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+    } catch {
+        return undefined;
+    }
+};
+
+const validTimeZoneOr = (candidate: string | undefined, fallback: string | undefined): string | undefined => {
+    if (!candidate) return fallback;
+    try {
+        new Intl.DateTimeFormat('en-US', { timeZone: candidate }).format();
+        return candidate;
+    } catch {
+        return fallback;
+    }
+};
+
+const formatWallClockAt = (timestamp: number, timeZone?: string): { date: string; time: string } | null => {
+    if (!Number.isFinite(timestamp)) return null;
+    const wall = nowInTimeZone(timeZone, new Date(timestamp));
+    return {
+        date: calendarDateKey(wall),
+        time: `${String(wall.getHours()).padStart(2, '0')}:${String(wall.getMinutes()).padStart(2, '0')}`,
+    };
+};
+
+/**
+ * 把角色当地墙钟的邀约快照写成用户 Calendar 的本地事件。
+ *
+ * 角色日程 / 邀约卡仍显示角色自己的时间；“我的日程”保存的是同一绝对时刻
+ * 在用户设备时区的墙钟。稳定主键让重复接受或失败后重试只会 upsert，不会堆出重复事件。
+ */
+export const scheduleInviteEventToAnniversary = (
+    params: ScheduleInviteCalendarEventParams,
+): Anniversary => {
+    const deviceTimeZone = readDeviceTimeZone();
+    const calendarTimeZone = validTimeZoneOr(params.calendarTimeZone, deviceTimeZone);
+    const sourceTimeZone = validTimeZoneOr(params.sourceTimeZone, calendarTimeZone);
+    const sourceStartMinutes = calendarClockToMinutes(params.event.startTime);
+    const sourceEndMinutes = calendarClockToMinutes(params.event.endTime);
+    const sourceEndDate = sourceEndMinutes !== null
+        && sourceStartMinutes !== null
+        && sourceEndMinutes <= sourceStartMinutes
+        ? (addLocalDays(params.event.date, 1) || params.event.date)
+        : params.event.date;
+    const sourceStartTimestamp = sourceStartMinutes === null
+        ? NaN
+        : wallClockToTimestamp(`${params.event.date} ${params.event.startTime}:00`, sourceTimeZone);
+    const sourceEndTimestamp = sourceEndMinutes === null
+        ? NaN
+        : wallClockToTimestamp(`${sourceEndDate} ${params.event.endTime}:00`, sourceTimeZone);
+    const localStart = formatWallClockAt(sourceStartTimestamp, calendarTimeZone);
+    const localEnd = formatWallClockAt(sourceEndTimestamp, calendarTimeZone);
+    const originalTime = `${params.event.date} ${params.event.startTime}${params.event.endTime ? `–${params.event.endTime}` : ''}`;
+    const sourceZoneLabel = sourceTimeZone ? tzLabel(sourceTimeZone) : '设备时区';
+    const noteParts = [
+        typeof params.event.description === 'string' ? params.event.description.trim() : '',
+        `${params.characterName} 的行程邀约（角色当地时间：${originalTime}；${sourceZoneLabel}）`,
+    ].filter(Boolean);
+    const title = params.event.activity.trim() || '线上安排';
+
+    return {
+        id: `schedule-invite:${params.batchId}:${params.event.id}`,
+        title,
+        // Calendar 的我的日程页按 date/startTime 展示用户本地墙钟；角色关系留在 charId。
+        date: localStart?.date || params.event.date,
+        charId: params.characterId,
+        kind: 'event',
+        startTime: localStart?.time || params.event.startTime,
+        endTime: localEnd?.time,
+        location: params.event.location?.trim() || undefined,
+        note: noteParts.join('\n'),
+        source: 'schedule_invite',
+        sourceId: params.event.id,
+        sourceTimeZone,
+        sourceDate: params.event.date,
+        sourceStartTime: params.event.startTime,
+        sourceEndTime: params.event.endTime,
+    };
+};
 
 /**
  * A deliberately small, prose-only calendar slice for the task supervisor

@@ -4,7 +4,7 @@ import { DB } from '../utils/db';
 import { Anniversary, CalendarMoodId, DailySchedule, RoomTodo, Task } from '../types';
 import Modal from '../components/os/Modal';
 import { getLocalDateKey } from '../utils/localDate';
-import { buildTaskSupervisorCalendarContext, eventsForDate, mergeCalendarDayTimeline, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, tasksForDate, type CalendarTimelineItem } from '../utils/calendarIntegration';
+import { buildTaskSupervisorCalendarContext, CALENDAR_DATA_UPDATED_EVENT, eventsForDate, mergeCalendarDayTimeline, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, tasksForDate, type CalendarTimelineItem } from '../utils/calendarIntegration';
 import { trackEvent } from '../utils/analytics';
 import { buildMonthlyReviewStats, buildSullyMonthlyReport, CALENDAR_MOODS, chooseMonthlyMessageCharacterId } from '../utils/calendarMonthlyReview';
 import { requestMonthlyLetter } from '../utils/monthlyLetter';
@@ -75,6 +75,11 @@ const ScheduleApp: React.FC = () => {
         setEvents([...storedEvents].sort((a, b) => a.date.localeCompare(b.date) || (a.startTime || '').localeCompare(b.startTime || '')));
     }, []);
     useEffect(() => { loadUserData().catch(error => console.error('Calendar load failed', error)); }, [loadUserData]);
+    useEffect(() => {
+        const reload = () => { loadUserData().catch(error => console.error('Calendar reload failed', error)); };
+        window.addEventListener(CALENDAR_DATA_UPDATED_EVENT, reload);
+        return () => window.removeEventListener(CALENDAR_DATA_UPDATED_EVENT, reload);
+    }, [loadUserData]);
     useEffect(() => {
         let active = true;
         if (!selectedCharId) {

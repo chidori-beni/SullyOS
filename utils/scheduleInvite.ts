@@ -1,5 +1,6 @@
 import { CharacterProfile, DailySchedule, Message, ScheduleSlot } from '../types';
 import { DB } from './db';
+import { buildScheduleFingerprint, hashScheduleSeed } from './schedulePlanner';
 import { resolveCharTimeZone, wallClockToTimestamp } from './timezone';
 
 /** 与糯叽机保持同语义：开关关闭时日程仍生成，但不往聊天发送邀约。 */
@@ -26,15 +27,22 @@ export interface ScheduleInviteData {
     charId: string;
     charName: string;
     date: string;
-    status: 'pending' | 'responded';
+    status: 'pending' | 'responded' | 'expired';
     acceptedIds: string[];
     declinedIds?: string[];
     events: ScheduleInviteEvent[];
+    /** 来源日程版本；pending 卡重抽时可更新，已响应卡不改写。 */
+    sourceScheduleFingerprint?: string;
+    /** 只针对共同活动的指纹，避免无关 slot 变化触发卡片重写。 */
+    inviteEventsFingerprint?: string;
+    sourceGenerationId?: string;
+    sourceTimeZone?: string;
     responseAt?: number;
 }
 
 export interface ScheduleInviteReplyData {
     kind: 'schedule_invite_reply';
+    batchId?: string;
     charName: string;
     items: Array<Pick<ScheduleInviteEvent, 'id' | 'activity' | 'emoji' | 'date' | 'startTime' | 'endTime'>>;
 }
@@ -65,6 +73,33 @@ const normalizeKind = (slot: ScheduleSlot): ScheduleInviteKind => {
 const safeActivityKey = (activity: string): string =>
     activity.trim().replace(/\s+/g, '').slice(0, 24) || 'event';
 
+const inviteEventId = (schedule: DailySchedule, slot: ScheduleSlot): string =>
+    slot.inviteId || `sinv_${schedule.charId}_${schedule.date}_${slot.startTime.replace(':', '')}_${safeActivityKey(slot.activity)}`;
+
+const effectiveSourceTimeZone = (char: Pick<CharacterProfile, 'customTimezoneEnabled' | 'customTimezone'>): string | undefined =>
+    resolveCharTimeZone(char) || Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+
+/**
+ * 规范化后的共同活动指纹。顺序不参与指纹，避免模型只是调整了无关 slot 顺序
+ * 就重写一张仍然指向同一时间的 pending 邀约卡。
+ */
+export const getScheduleInviteEventsFingerprint = (events: ScheduleInviteEvent[]): string => {
+    const normalized = events
+        .map(event => ({
+            id: event.id,
+            date: event.date,
+            startTime: event.startTime,
+            endTime: event.endTime || '',
+            activity: event.activity.trim(),
+            description: event.description?.trim() || '',
+            emoji: event.emoji || '',
+            location: event.location?.trim() || '',
+            kind: event.kind,
+        }))
+        .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+    return hashScheduleSeed(JSON.stringify(normalized)).toString(16).padStart(8, '0');
+};
+
 /**
  * 为共同活动补稳定 id。id 不依赖 generatedAt，这样重新打开同一天的日程时，
  * 邀约响应仍能准确落回对应时段。
@@ -73,7 +108,7 @@ export const normalizeScheduleInviteIds = (schedule: DailySchedule): DailySchedu
     let changed = false;
     const slots = schedule.slots.map((slot) => {
         if (!slot.withUser || slot.inviteStatus === 'declined' || slot.inviteStatus === 'accepted') return slot;
-        const inviteId = slot.inviteId || `sinv_${schedule.charId}_${schedule.date}_${slot.startTime.replace(':', '')}_${safeActivityKey(slot.activity)}`;
+        const inviteId = inviteEventId(schedule, slot);
         if (slot.inviteId === inviteId) return slot;
         changed = true;
         return { ...slot, inviteId };
@@ -111,7 +146,7 @@ export const getScheduleInviteEvents = (
         const startMs = wallClockToTimestamp(`${schedule.date} ${slot.startTime}:00`, resolveCharTimeZone(char));
         if (Number.isFinite(startMs) && startMs < nowMs - 5 * 60_000) return null;
         return {
-            id: slot.inviteId || `sinv_${schedule.charId}_${schedule.date}_${slot.startTime.replace(':', '')}_${safeActivityKey(slot.activity)}`,
+            id: inviteEventId(schedule, slot),
             date: schedule.date,
             startTime: slot.startTime,
             endTime: slot.endTime,
@@ -141,19 +176,72 @@ export const getScheduleInviteData = (message: Message | null | undefined): Sche
 export async function ensureScheduleInviteMessage(params: {
     char: Pick<CharacterProfile, 'id' | 'name' | 'customTimezoneEnabled' | 'customTimezone'>;
     schedule: DailySchedule;
-}): Promise<{ schedule: DailySchedule; created: boolean; messageId?: number }> {
+}): Promise<{ schedule: DailySchedule; created: boolean; updated?: boolean; messageId?: number }> {
     const { char } = params;
     if (!isScheduleInviteEnabled()) return { schedule: params.schedule, created: false };
 
     const normalized = normalizeScheduleInviteIds(params.schedule);
     if (normalized !== params.schedule) await DB.saveDailySchedule(normalized);
     const events = getScheduleInviteEvents(normalized, char);
-    if (events.length === 0) return { schedule: normalized, created: false };
-
     const batchId = getScheduleInviteBatchId(char.id, normalized.date);
     const previous = await DB.getRecentMessagesByCharIdAndSource(char.id, 'schedule_invite', 30).catch(() => [] as Message[]);
-    const alreadySent = previous.some((message) => getScheduleInviteData(message)?.batchId === batchId);
-    if (alreadySent) return { schedule: normalized, created: false };
+    const existingMessage = previous.find((message) => getScheduleInviteData(message)?.batchId === batchId);
+    const existingData = existingMessage ? getScheduleInviteData(existingMessage) : null;
+    const inviteEventsFingerprint = getScheduleInviteEventsFingerprint(events);
+    const sourceScheduleFingerprint = normalized.planningMeta?.eventFingerprint
+        || buildScheduleFingerprint(normalized.slots);
+    const sourceGenerationId = normalized.planningMeta?.generationId;
+    const sourceTimeZone = effectiveSourceTimeZone(char);
+
+    if (existingMessage && existingData) {
+        // pending 卡代表“当前还可以选择的邀约”，日程重抽后必须和新 slot 同步；
+        // responded/expired 卡则是历史事实，绝不让今天的新日程反向改写它。
+        if (existingData.status !== 'pending') return { schedule: normalized, created: false, messageId: existingMessage.id };
+
+        if (events.length === 0) {
+            await DB.updateMessageMetadata(existingMessage.id, previousMetadata => {
+                const current = previousMetadata?.scheduleInviteData as ScheduleInviteData | undefined;
+                if (!current || current.batchId !== batchId || current.status !== 'pending') return previousMetadata;
+                return {
+                    ...(previousMetadata || {}),
+                    scheduleInviteData: {
+                        ...current,
+                        status: 'expired',
+                        acceptedIds: [],
+                        declinedIds: current.events.map(event => event.id),
+                        responseAt: Date.now(),
+                    },
+                };
+            });
+            return { schedule: normalized, created: false, updated: true, messageId: existingMessage.id };
+        }
+
+        const unchanged = existingData.inviteEventsFingerprint === inviteEventsFingerprint
+            && existingData.sourceScheduleFingerprint === sourceScheduleFingerprint
+            && existingData.sourceGenerationId === sourceGenerationId
+            && existingData.sourceTimeZone === sourceTimeZone;
+        if (unchanged) return { schedule: normalized, created: false, messageId: existingMessage.id };
+
+        await DB.updateMessageMetadata(existingMessage.id, previousMetadata => {
+            const current = previousMetadata?.scheduleInviteData as ScheduleInviteData | undefined;
+            if (!current || current.batchId !== batchId || current.status !== 'pending') return previousMetadata;
+            return {
+                ...(previousMetadata || {}),
+                scheduleInviteData: {
+                    ...current,
+                    date: normalized.date,
+                    events,
+                    sourceScheduleFingerprint,
+                    inviteEventsFingerprint,
+                    sourceGenerationId,
+                    sourceTimeZone,
+                },
+            };
+        });
+        return { schedule: normalized, created: false, updated: true, messageId: existingMessage.id };
+    }
+
+    if (events.length === 0) return { schedule: normalized, created: false };
 
     const data: ScheduleInviteData = {
         kind: 'schedule_invite',
@@ -164,6 +252,10 @@ export async function ensureScheduleInviteMessage(params: {
         status: 'pending',
         acceptedIds: [],
         events,
+        sourceScheduleFingerprint,
+        inviteEventsFingerprint,
+        sourceGenerationId,
+        sourceTimeZone,
     };
     const messageId = await DB.saveMessage({
         charId: char.id,
@@ -178,8 +270,10 @@ export async function ensureScheduleInviteMessage(params: {
 export const buildScheduleInviteReplyData = (
     charName: string,
     events: ScheduleInviteEvent[],
+    batchId?: string,
 ): ScheduleInviteReplyData => ({
     kind: 'schedule_invite_reply',
+    ...(batchId ? { batchId } : {}),
     charName,
     items: events.map(({ id, activity, emoji, date, startTime, endTime }) => ({
         id, activity, emoji, date, startTime, endTime,
