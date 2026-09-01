@@ -559,20 +559,25 @@ ${groupLogStr}\n`;
                 return '';
             });
 
-        // 8. 用户日历：只在这一轮即时构建，不能烤进未来主动消息的 fire pack。
+        // 8. 共享日历：只在这一轮即时构建，不能烤进未来主动消息的 fire pack。
         // 待办完成/日程改动后旧快照会误催，故后台到点生成不复用这段；正常聊天与即时云端
-        // 回复都读取此刻的 IndexedDB。所有角色都可以看到有界的用户日程背景，但监督关系
-        // 只影响待办能否被自然提醒，不决定角色是否能理解用户此刻的安排。
+        // 回复都读取此刻的 IndexedDB。用户待办是共享事实，只有关联角色且开启提醒时
+        // 才拥有自然提及权限；当前角色的房间待办也一并带入，但不重复烘焙完整角色日程。
         const userCalendarPromise: Promise<string> = forFirePack
             ? Promise.resolve('')
-            : Promise.all([DB.getAllTasks(), DB.getAllAnniversaries()])
-                .then(([tasks, events]) => buildUserCalendarContext({
+            : Promise.all([
+                DB.getAllTasks(),
+                DB.getAllAnniversaries(),
+                DB.getRoomTodo(char.id, today).catch(() => null),
+            ])
+                .then(([tasks, events, characterTodo]) => buildUserCalendarContext({
                     tasks,
                     events,
                     supervisorId: char.id,
                     userName: userProfile.name,
                     today: getLocalDateKey(scheduleInstant),
                     now: scheduleInstant,
+                    characterTodo,
                 }))
                 .catch(e => {
                     console.error('Failed to inject user calendar:', e);

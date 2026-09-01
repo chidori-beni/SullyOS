@@ -1,99 +1,23 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { Anniversary, CalendarMoodId, CharacterProfile, DailySchedule, RoomTodo, Task, UserProfile } from '../types';
+import { Anniversary, CalendarMoodId, DailySchedule, RoomTodo, Task } from '../types';
 import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
 import { safeResponseJson } from '../utils/safeApi';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { getLocalDateKey } from '../utils/localDate';
-import { buildUserCalendarContext, eventsForDate, mergeCalendarDayTimeline, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, tasksForDate, type CalendarTimelineItem } from '../utils/calendarIntegration';
+import { eventsForDate, mergeCalendarDayTimeline, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, tasksForDate, type CalendarTimelineItem } from '../utils/calendarIntegration';
 import { trackEvent } from '../utils/analytics';
-import { extractTaskCommentResponse, formatTaskComment, isTaskCommentDisplayable, isTaskCommentGenerationAcceptable, type TaskCommentSafetyContext } from '../utils/taskComment';
-import { getTaskVoiceRetryAfterMs, isTaskVoiceRateLimitError, parseRetryAfterMs, TaskVoiceApiError, TASK_VOICE_DEFAULT_COOLDOWN_MS, TASK_VOICE_MAX_COOLDOWN_MS } from '../utils/taskVoiceRequest';
-import { buildTaskSupervisorMessages } from '../utils/taskSupervisorPrompt';
 import { buildMonthlyReviewStats, buildSullyMonthlyReport, CALENDAR_MOODS, chooseMonthlyMessageCharacterId } from '../utils/calendarMonthlyReview';
 
 type CalendarTab = 'month' | 'mine' | 'theirs' | 'review';
-type TaskVoiceKind = 'comment' | 'completed';
-type TaskVoiceError = { kind: TaskVoiceKind; message: string; rateLimited?: boolean; retryAt?: number };
-type TaskVoiceApiConfig = { baseUrl: string; model: string };
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
 const INPUT = 'w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none focus:border-violet-300 focus:bg-white';
 const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const parseDateKey = (value: string) => {
     const [year, month, day] = value.split('-').map(Number);
     return new Date(year, month - 1, day);
-};
-
-const getTaskVoiceStorage = (): Storage | null => {
-    try {
-        return typeof window !== 'undefined' ? window.localStorage : null;
-    } catch {
-        return null;
-    }
-};
-
-const taskVoiceScopeKey = (apiConfig: TaskVoiceApiConfig): string =>
-    encodeURIComponent(`${apiConfig.baseUrl.replace(/\/+$/, '')}|${apiConfig.model}`);
-
-const taskVoiceCooldownStorageKey = (apiConfig: TaskVoiceApiConfig): string =>
-    `sully:task-voice-cooldown:v1:${taskVoiceScopeKey(apiConfig)}`;
-
-const readStoredTaskVoiceCooldown = (apiConfig: TaskVoiceApiConfig): number => {
-    const storage = getTaskVoiceStorage();
-    if (!storage) return 0;
-    try {
-        const value = Number(storage.getItem(taskVoiceCooldownStorageKey(apiConfig)) || 0);
-        return Number.isFinite(value) && value > Date.now() ? value : 0;
-    } catch {
-        return 0;
-    }
-};
-
-const writeStoredTaskVoiceCooldown = (apiConfig: TaskVoiceApiConfig, retryAt: number): void => {
-    try {
-        getTaskVoiceStorage()?.setItem(taskVoiceCooldownStorageKey(apiConfig), String(retryAt));
-    } catch {
-        // Private browsing / blocked storage should not stop the request path.
-    }
-};
-
-const readTaskVoiceErrorMessage = (data: any): string => {
-    const raw = data?.error?.message || (typeof data?.error === 'string' ? data.error : '');
-    return typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim().slice(0, 240) : '';
-};
-
-/** One non-retrying request wrapper for the optional task-voice side channel. */
-const requestTaskChatCompletion = async (
-    url: string,
-    apiKey: string,
-    body: Record<string, unknown>,
-): Promise<any> => {
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify(body),
-    });
-    if (!response.ok) {
-        let providerMessage = '';
-        try {
-            providerMessage = readTaskVoiceErrorMessage(await safeResponseJson(response));
-        } catch {
-            // The status is the reliable part; an HTML/empty error body is not
-            // allowed to enter task-comment extraction.
-        }
-        const retryAfterMs = response.status === 429
-            ? parseRetryAfterMs(response.headers.get('Retry-After'))
-            : null;
-        const suffix = providerMessage ? `: ${providerMessage}` : '';
-        throw new TaskVoiceApiError(`API Error ${response.status}${suffix}`, {
-            status: response.status,
-            retryAfterMs,
-            providerMessage,
-        });
-    }
-    return safeResponseJson(response);
 };
 
 const formatTimelineDate = (value: string, today: string) => {
@@ -103,50 +27,6 @@ const formatTimelineDate = (value: string, today: string) => {
     return value === today ? `今天 · 周${weekday}` : `${month}月${day}日 · 周${weekday}`;
 };
 const SULLY_WAITING_IMAGE = 'https://cdn.jsdelivr.net/gh/qegj567-cloud/SullyOS-assets@main/bgm/SULLY/wait.png';
-type TaskVoiceRequest = {
-    messages: ReturnType<typeof buildTaskSupervisorMessages>;
-    safetyContext: TaskCommentSafetyContext;
-};
-
-const buildTaskChatMessages = async (
-    character: CharacterProfile,
-    task: Task,
-    completed: boolean,
-) => {
-    const now = new Date();
-    const [storedTasks, storedEvents] = await Promise.all([
-        DB.getAllTasks().catch(() => []),
-        DB.getAllAnniversaries().catch(() => []),
-    ]);
-    const today = getLocalDateKey(now);
-    const calendarContext = buildUserCalendarContext({
-        tasks: storedTasks,
-        events: storedEvents,
-        supervisorId: character.id,
-        // The character needs the user's explicit calendar entries to avoid
-        // mistimed remarks, but the user's profile name is not needed here.
-        userName: '用户',
-        today,
-        now,
-    });
-    const messages = buildTaskSupervisorMessages({
-        character,
-        task,
-        completed,
-        calendarContext,
-    });
-    return {
-        messages,
-        safetyContext: {
-            // Only the actual system prompt is an unapproved echo source. The
-            // task and calendar remain valid facts the character may mention.
-            promptEchoTexts: messages
-                .filter(message => message.role === 'system')
-                .map(message => message.content),
-            stage: completed ? 'completed' : 'pending',
-        },
-    } satisfies TaskVoiceRequest;
-};
 const ScheduleApp: React.FC = () => {
     const { closeApp, characters, activeCharacterId, apiConfig, addToast, userProfile, updateUserProfile } = useOS();
     const today = getLocalDateKey();
@@ -160,84 +40,11 @@ const ScheduleApp: React.FC = () => {
     const [events, setEvents] = useState<Anniversary[]>([]);
     const [charSchedule, setCharSchedule] = useState<DailySchedule | null>(null);
     const [charTodo, setCharTodo] = useState<RoomTodo | null>(null);
-    const [processing, setProcessing] = useState<Set<string>>(new Set());
-    const [commenting, setCommenting] = useState<Set<string>>(new Set());
     const [showTask, setShowTask] = useState(false);
     const [showEvent, setShowEvent] = useState(false);
     const [showMoodPicker, setShowMoodPicker] = useState(false);
     const [generatingLetter, setGeneratingLetter] = useState(false);
     const [openedLetters, setOpenedLetters] = useState<Set<string>>(new Set());
-    const taskGenerationVersions = useRef(new Map<string, number>());
-    const taskGenerationInFlight = useRef(new Map<string, number>());
-    const activeTaskGenerationKey = useRef<string | null>(null);
-    const taskVoiceCooldownUntil = useRef(0);
-    const [taskVoiceErrors, setTaskVoiceErrors] = useState<Record<string, TaskVoiceError>>({});
-
-    const taskGenerationKey = (taskId: string, kind: TaskVoiceKind) => `${kind}:${taskId}`;
-    const getTaskVoiceCooldownUntil = () => {
-        const stored = readStoredTaskVoiceCooldown(apiConfig);
-        taskVoiceCooldownUntil.current = Math.max(taskVoiceCooldownUntil.current, stored);
-        if (taskVoiceCooldownUntil.current <= Date.now()) return 0;
-        return taskVoiceCooldownUntil.current;
-    };
-    const taskVoiceBlockReason = (): 'busy' | 'rate-limited' | null => {
-        if (activeTaskGenerationKey.current || taskGenerationInFlight.current.size > 0) return 'busy';
-        if (getTaskVoiceCooldownUntil() > Date.now()) return 'rate-limited';
-        return null;
-    };
-    const beginTaskGeneration = (taskId: string, kind: TaskVoiceKind) => {
-        const key = taskGenerationKey(taskId, kind);
-        if (taskVoiceBlockReason()) return null;
-        const next = (taskGenerationVersions.current.get(key) || 0) + 1;
-        taskGenerationVersions.current.set(key, next);
-        taskGenerationInFlight.current.set(key, next);
-        activeTaskGenerationKey.current = key;
-        return next;
-    };
-    const finishTaskGeneration = (taskId: string, kind: TaskVoiceKind, version: number) => {
-        const key = taskGenerationKey(taskId, kind);
-        if (taskGenerationInFlight.current.get(key) !== version) return;
-        taskGenerationInFlight.current.delete(key);
-        if (activeTaskGenerationKey.current === key) activeTaskGenerationKey.current = null;
-    };
-    const isCurrentTaskGeneration = (taskId: string, kind: TaskVoiceKind, version: number) =>
-        taskGenerationVersions.current.get(taskGenerationKey(taskId, kind)) === version;
-    const invalidateTaskGeneration = (taskId: string, kind?: TaskVoiceKind) => {
-        const kinds: TaskVoiceKind[] = kind ? [kind] : ['comment', 'completed'];
-        kinds.forEach(currentKind => {
-            const key = taskGenerationKey(taskId, currentKind);
-            taskGenerationVersions.current.set(key, (taskGenerationVersions.current.get(key) || 0) + 1);
-        });
-    };
-    const clearTaskVoiceError = (taskId: string, kind?: TaskVoiceKind) => {
-        setTaskVoiceErrors(current => {
-            const next = { ...current };
-            if (!kind || next[taskId]?.kind === kind) delete next[taskId];
-            return next;
-        });
-    };
-    const recordTaskVoiceRateLimit = (error: unknown): number | undefined => {
-        if (!isTaskVoiceRateLimitError(error)) return undefined;
-        const requestedDelay = getTaskVoiceRetryAfterMs(error) ?? TASK_VOICE_DEFAULT_COOLDOWN_MS;
-        const delay = Math.min(
-            TASK_VOICE_MAX_COOLDOWN_MS,
-            Math.max(1_000, requestedDelay),
-        );
-        const retryAt = Math.max(getTaskVoiceCooldownUntil(), Date.now() + delay);
-        taskVoiceCooldownUntil.current = retryAt;
-        writeStoredTaskVoiceCooldown(apiConfig, retryAt);
-        return retryAt;
-    };
-    const setTaskVoiceError = (taskId: string, kind: TaskVoiceKind, error: unknown, retryAt?: number) => {
-        const rateLimited = isTaskVoiceRateLimitError(error);
-        const message = rateLimited
-            ? '接口请求频率受限'
-            : error instanceof Error && error.message ? error.message : '角色暂时没有回应';
-        setTaskVoiceErrors(current => ({
-            ...current,
-            [taskId]: { kind, message, rateLimited, retryAt },
-        }));
-    };
 
     const [taskTitle, setTaskTitle] = useState('');
     const [taskNote, setTaskNote] = useState('');
@@ -292,9 +99,9 @@ const ScheduleApp: React.FC = () => {
         () => mergeCalendarDayTimeline(selectedEvents, selectedTasks, charSchedule?.slots || []),
         [charSchedule, selectedEvents, selectedTasks],
     );
-    // The personal page is a day view, like Nuoji's calendar: future tasks do
-    // not occupy today's page forever, while selecting an older date reveals
-    // its completed row and any saved role sentence again.
+    // The personal page is a day view, like Nuoji's calendar: a task is visible
+    // on its effective/deadline date, while selecting an older date reveals its
+    // completed row again.
     const personalScheduleGroups = useMemo(() => {
         const items = eventsForDate(events, selectedDate);
         return items.length > 0 ? [{ date: selectedDate, items }] : [];
@@ -407,186 +214,6 @@ const ScheduleApp: React.FC = () => {
             setGeneratingLetter(false);
         }
     };
-    const readStoredTask = async (taskId: string): Promise<Task | undefined> =>
-        (await DB.getAllTasks().catch(() => [])).find(item => item.id === taskId);
-
-    const hasCurrentTaskVoice = (
-        task: Task | undefined,
-        value: unknown,
-        policy: { writerPersona?: string },
-    ): value is string => Boolean(
-        task
-        && isTaskCommentDisplayable(value, task.title, policy),
-    );
-
-    const generateTaskReward = async (task: Task, silent = false) => {
-        const supervisor = characters.find(char => char.id === task.supervisorId);
-        const policy = { writerPersona: supervisor?.writerPersona };
-        const storedTask = await readStoredTask(task.id);
-        const existingComment = storedTask?.supervisorComment || task.supervisorComment;
-        // Nuoji keeps the supervisor's creation-time sentence when the task is
-        // completed. This also prevents a second, less natural reward sentence.
-        if (hasCurrentTaskVoice(storedTask || task, existingComment, policy)) {
-            clearTaskVoiceError(task.id, 'completed');
-            return;
-        }
-        if (!supervisor || !apiConfig.apiKey) {
-            if (!silent) addToast('待办已完成；配置聊天 API 后，角色才能留下回应', 'success');
-            return;
-        }
-
-        const generationVersion = beginTaskGeneration(task.id, 'completed');
-        if (generationVersion === null) {
-            const blockReason = taskVoiceBlockReason();
-            if (blockReason === 'rate-limited') {
-                const retryAt = getTaskVoiceCooldownUntil();
-                setTaskVoiceError(task.id, 'completed', new TaskVoiceApiError('API Error 429: 接口请求频率受限', { status: 429 }), retryAt);
-                if (!silent) addToast('接口正在限流，请稍后再问一次', 'info');
-            } else if (activeTaskGenerationKey.current !== taskGenerationKey(task.id, 'comment')) {
-                if (!silent) {
-                    setTaskVoiceError(task.id, 'completed', new Error('另一个待办正在生成角色台词'));
-                    addToast('另一个待办正在生成角色台词，请稍候再试', 'info');
-                }
-            }
-            return;
-        }
-
-        clearTaskVoiceError(task.id, 'completed');
-        if (!silent) addToast(supervisor.name + ' 正在回应这件事...', 'info');
-        try {
-            const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '') + '/chat/completions';
-            const taskRequest = await buildTaskChatMessages(supervisor, task, true);
-            const data = await requestTaskChatCompletion(baseUrl, apiConfig.apiKey, {
-                model: apiConfig.model,
-                temperature: 0.85,
-                max_tokens: 96,
-                stream: false,
-                messages: taskRequest.messages,
-            });
-            const text = extractTaskCommentResponse(data);
-            if (!isTaskCommentGenerationAcceptable(text, task.title, policy, taskRequest.safetyContext)) {
-                throw new Error('角色没有说出可展示的自然台词');
-            }
-            if (!isCurrentTaskGeneration(task.id, 'completed', generationVersion)) return;
-
-            const latest = await readStoredTask(task.id);
-            if (!latest || !latest.isCompleted) return;
-            // If a creation request won a race and already wrote the main
-            // supervisor sentence, preserve it instead of generating a second
-            // sentence just because the user checked the box quickly.
-            if (hasCurrentTaskVoice(latest, latest.supervisorComment, policy)) {
-                setTasks(current => current.map(item => item.id === task.id ? latest : item));
-                clearTaskVoiceError(task.id, 'completed');
-                return;
-            }
-            const updated: Task = {
-                ...latest,
-                completedSupervisorComment: text,
-                completedSupervisorCommentGeneratedAt: Date.now(),
-            };
-            await DB.saveTask(updated);
-            setTasks(current => current.map(item => item.id === task.id ? updated : item));
-            clearTaskVoiceError(task.id, 'completed');
-            notifyCalendarDataUpdated();
-            if (!silent) {
-                addToast(supervisor.name + '：' + text, 'success');
-                await DB.saveMessage({
-                    charId: supervisor.id,
-                    role: 'system',
-                    type: 'text',
-                    content: '[系统: ' + userProfile.name + ' 完成了待办「' + task.title + '」。' + supervisor.name + ' 评价道：「' + text + '」]',
-                });
-            }
-        } catch (error: any) {
-            console.error('Task reward failed', error);
-            if (!isCurrentTaskGeneration(task.id, 'completed', generationVersion)) return;
-            const retryAt = recordTaskVoiceRateLimit(error);
-            const latest = await readStoredTask(task.id);
-            const hasVisibleResponse = Boolean(
-                latest
-                && latest.isCompleted
-                && (
-                    hasCurrentTaskVoice(latest, latest.completedSupervisorComment, policy)
-                    || hasCurrentTaskVoice(latest, latest.supervisorComment, policy)
-                ),
-            );
-            if (hasVisibleResponse) clearTaskVoiceError(task.id, 'completed');
-            else if (latest?.isCompleted) setTaskVoiceError(task.id, 'completed', error, retryAt);
-            if (!silent && !hasVisibleResponse) addToast(
-                retryAt ? '待办已完成，但接口正在限流；请稍后再问一次' : '待办已完成，但角色暂时没有回应；可以稍后重试',
-                'info',
-            );
-        } finally {
-            finishTaskGeneration(task.id, 'completed', generationVersion);
-        }
-    };
-
-    const generateTaskComment = async (task: Task, force = false) => {
-        const supervisor = characters.find(char => char.id === task.supervisorId);
-        const policy = { writerPersona: supervisor?.writerPersona };
-        if (!supervisor || !apiConfig.apiKey) return;
-        if (!force && hasCurrentTaskVoice(task, task.supervisorComment, policy)) return;
-
-        const generationVersion = beginTaskGeneration(task.id, 'comment');
-        if (generationVersion === null) {
-            const blockReason = taskVoiceBlockReason();
-            if (blockReason === 'rate-limited') {
-                const retryAt = getTaskVoiceCooldownUntil();
-                setTaskVoiceError(task.id, 'comment', new TaskVoiceApiError('API Error 429: 接口请求频率受限', { status: 429 }), retryAt);
-            } else {
-                setTaskVoiceError(task.id, 'comment', new Error('另一个待办正在生成角色台词'));
-            }
-            return;
-        }
-
-        clearTaskVoiceError(task.id, 'comment');
-        setCommenting(current => new Set(current).add(task.id));
-        try {
-            const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '') + '/chat/completions';
-            const taskRequest = await buildTaskChatMessages(supervisor, task, false);
-            const data = await requestTaskChatCompletion(baseUrl, apiConfig.apiKey, {
-                model: apiConfig.model,
-                temperature: 0.85,
-                max_tokens: 96,
-                stream: false,
-                messages: taskRequest.messages,
-            });
-            const text = extractTaskCommentResponse(data);
-            if (!isTaskCommentGenerationAcceptable(text, task.title, policy, taskRequest.safetyContext)) {
-                throw new Error('角色没有说出可展示的自然台词');
-            }
-            if (!isCurrentTaskGeneration(task.id, 'comment', generationVersion)) return;
-
-            const latest = await readStoredTask(task.id);
-            if (!latest) return;
-            const updated = {
-                ...latest,
-                supervisorComment: text,
-                supervisorCommentGeneratedAt: Date.now(),
-            };
-            await DB.saveTask(updated);
-            setTasks(current => current.map(item => item.id === task.id ? updated : item));
-            clearTaskVoiceError(task.id, 'comment');
-            notifyCalendarDataUpdated();
-        } catch (error) {
-            console.error('Task comment failed', error);
-            if (isCurrentTaskGeneration(task.id, 'comment', generationVersion)) {
-                const retryAt = recordTaskVoiceRateLimit(error);
-                const latest = await readStoredTask(task.id);
-                if (latest && hasCurrentTaskVoice(latest, latest.supervisorComment, policy)) {
-                    clearTaskVoiceError(task.id, 'comment');
-                } else if (latest) {
-                    setTaskVoiceError(task.id, 'comment', error, retryAt);
-                }
-            }
-        } finally {
-            finishTaskGeneration(task.id, 'comment', generationVersion);
-            if (isCurrentTaskGeneration(task.id, 'comment', generationVersion)) {
-                setCommenting(current => { const next = new Set(current); next.delete(task.id); return next; });
-            }
-        }
-    };
-
     const addTask = async () => {
         if (!taskTitle.trim() || !taskDate) return;
         const task: Task = {
@@ -597,30 +224,18 @@ const ScheduleApp: React.FC = () => {
         await DB.saveTask(task);
         setTasks(current => sortTasksForCalendar([...current, task]));
         notifyCalendarDataUpdated();
-        void generateTaskComment(task);
         setTaskTitle(''); setTaskNote(''); setTaskTime(''); setShowTask(false);
-        addToast('待办已加入日历', 'success');
+        addToast('待办已加入共享日历，聊天时可由角色自然提起', 'success');
     };
     const toggleTask = async (task: Task) => {
-        invalidateTaskGeneration(task.id, 'completed');
-        clearTaskVoiceError(task.id, 'completed');
         const updated: Task = task.isCompleted
-            ? { ...task, isCompleted: false, completedAt: undefined, completedSupervisorComment: undefined, completedSupervisorCommentGeneratedAt: undefined }
+            ? { ...task, isCompleted: false, completedAt: undefined }
             : { ...task, isCompleted: true, completedAt: Date.now() };
         await DB.saveTask(updated);
         setTasks(current => current.map(item => item.id === task.id ? updated : item));
         notifyCalendarDataUpdated();
-        if (updated.isCompleted) {
-            setProcessing(current => new Set(current).add(task.id));
-            try { await generateTaskReward(updated); }
-            finally { setProcessing(current => { const next = new Set(current); next.delete(task.id); return next; }); }
-        }
     };
     const deleteTask = async (id: string) => {
-        invalidateTaskGeneration(id);
-        clearTaskVoiceError(id);
-        setCommenting(current => { const next = new Set(current); next.delete(id); return next; });
-        setProcessing(current => { const next = new Set(current); next.delete(id); return next; });
         await DB.deleteTask(id); setTasks(current => current.filter(task => task.id !== id)); notifyCalendarDataUpdated();
     };
     const addEvent = async () => {
@@ -653,53 +268,15 @@ const ScheduleApp: React.FC = () => {
         addToast(`已同步到${selectedChar?.name || '角色'}的房间待办`, 'success');
     };
 
-    const retryTaskVoice = (task: Task) => {
-        const retryAt = getTaskVoiceCooldownUntil();
-        if (retryAt > Date.now()) {
-            addToast('接口正在限流，请稍后再问一次', 'info');
-            return;
-        }
-        if (task.isCompleted) {
-            setProcessing(current => new Set(current).add(task.id));
-            void generateTaskReward(task).finally(() => {
-                setProcessing(current => { const next = new Set(current); next.delete(task.id); return next; });
-            });
-        } else void generateTaskComment(task, true);
-    };
-
     const renderTask = (task: Task, showTimelineOwner = false) => {
         const supervisor = characters.find(char => char.id === task.supervisorId);
-        const policy = { writerPersona: supervisor?.writerPersona };
-        const completedComment = hasCurrentTaskVoice(task, task.completedSupervisorComment, policy)
-            ? task.completedSupervisorComment
-            : null;
-        const pendingComment = hasCurrentTaskVoice(task, task.supervisorComment, policy)
-            ? task.supervisorComment
-            : null;
-        const displayedCommentBody = task.isCompleted
-            ? (completedComment || pendingComment)
-            : pendingComment;
-        const displayedComment = formatTaskComment(supervisor?.name, displayedCommentBody);
-        const voiceError = taskVoiceErrors[task.id];
-        const currentVoiceError = voiceError?.kind === (task.isCompleted ? 'completed' : 'comment') ? voiceError : undefined;
-        // A task can be completed while its creation-time supervisor request
-        // is still the one that failed. Keep that error actionable until the
-        // user retries; a valid sentence above always takes precedence.
-        const voiceErrorForDisplay = currentVoiceError || voiceError;
-        const globallyRateLimited = getTaskVoiceCooldownUntil() > Date.now();
-        const generatingVoice = commenting.has(task.id) || (task.isCompleted && processing.has(task.id));
-        const showVoiceRetry = !displayedCommentBody
-            && !generatingVoice
-            && (Boolean(voiceErrorForDisplay) || Boolean(apiConfig.apiKey));
         return <div key={task.id} className={`group relative flex items-start gap-3 rounded-[1.45rem] border p-4 shadow-sm transition ${task.isCompleted ? 'border-white/70 bg-white/65' : 'border-violet-100 bg-white/90'}`}>
-            <button onClick={() => toggleTask(task)} disabled={processing.has(task.id)} className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 transition ${task.isCompleted ? 'border-emerald-400 bg-emerald-400 text-white' : 'border-violet-300 bg-white'}`} aria-label={task.isCompleted ? '恢复待办' : '完成待办'}>{processing.has(task.id) ? '…' : task.isCompleted ? '✓' : ''}</button>
+            <button onClick={() => toggleTask(task)} className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 transition ${task.isCompleted ? 'border-emerald-400 bg-emerald-400 text-white' : 'border-violet-300 bg-white'}`} aria-label={task.isCompleted ? '恢复待办' : '完成待办'}>{task.isCompleted ? '✓' : ''}</button>
             <div className="min-w-0 flex-1">
                 {showTimelineOwner && <div className="mb-2 flex items-center gap-2 text-[10px] font-bold"><span className="rounded-full bg-sky-50 px-2 py-0.5 text-sky-500">你</span><span className="text-slate-400">待办</span></div>}
                 <div className={`text-sm font-semibold text-slate-700 ${task.isCompleted ? 'line-through opacity-50' : ''}`}>{task.title}</div>
-                {(displayedComment || generatingVoice) && <div className="mt-2 rounded-2xl bg-violet-50/80 px-3 py-2 break-words text-[11px] leading-relaxed italic text-violet-500">{displayedComment || `${supervisor?.name || '角色'}：TA 正在想怎么回应你…`}</div>}
-                {showVoiceRetry && <div className="mt-2 flex items-center gap-2 text-[10px] text-slate-400"><span>{(voiceErrorForDisplay?.rateLimited || (!voiceErrorForDisplay && globallyRateLimited)) ? '接口请求频率受限，请稍后再试' : voiceErrorForDisplay ? 'TA 暂时没有回应' : '角色台词没有成功生成'}</span><button onClick={() => retryTaskVoice(task)} className="rounded-full bg-violet-50 px-2.5 py-1 font-bold text-violet-500">再问一次</button></div>}
                 {task.note && <div className="mt-2 text-xs leading-relaxed text-slate-400">{task.note}</div>}
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-400"><span className="rounded-full bg-sky-50 px-2 py-0.5 text-sky-500">截止 {taskDateKey(task)}{task.dueTime ? ` · ${task.dueTime}` : ''}</span>{supervisor && <span className="inline-flex items-center gap-1"><img src={supervisor.avatar || '/sully/head.png'} className="h-4 w-4 rounded-full object-cover" alt="" />{supervisor.name} 陪你</span>}{task.naturalReminder !== false && <span className="rounded-full bg-violet-50 px-2 py-0.5 text-violet-500">可自然提醒</span>}</div>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-400"><span className="rounded-full bg-sky-50 px-2 py-0.5 text-sky-500">截止 {taskDateKey(task)}{task.dueTime ? ` · ${task.dueTime}` : ''}</span>{supervisor && <span className="inline-flex items-center gap-1"><img src={supervisor.avatar || '/sully/head.png'} className="h-4 w-4 rounded-full object-cover" alt="" />{supervisor.name} 共享</span>}<span className={`rounded-full px-2 py-0.5 ${supervisor && task.naturalReminder !== false ? 'bg-violet-50 text-violet-500' : 'bg-slate-100 text-slate-400'}`}>{supervisor && task.naturalReminder !== false ? '聊天中可自然提起' : '仅共享记录'}</span></div>
             </div><button aria-label={`删除待办：${task.title}`} onClick={() => deleteTask(task.id)} className="px-1 text-slate-300 transition hover:text-rose-400">×</button>
         </div>;
     };
@@ -794,7 +371,7 @@ const ScheduleApp: React.FC = () => {
                 </section>
 
                 <section className="space-y-4">
-                    <div className="flex items-center justify-between"><div><h2 className="text-base font-bold">待办</h2><p className="mt-1 text-[11px] text-slate-400">只显示这一天生效的待办；回看过去日期仍保留完成记录和角色台词。</p></div><button onClick={() => openTaskComposer(selectedDate)} className="text-xs font-bold text-violet-500">＋添加</button></div>
+                    <div className="flex items-center justify-between"><div><h2 className="text-base font-bold">待办</h2><p className="mt-1 text-[11px] text-slate-400">只显示这一天生效的待办；回看过去日期仍保留完成记录。</p></div><button onClick={() => openTaskComposer(selectedDate)} className="text-xs font-bold text-violet-500">＋添加</button></div>
                     {personalTaskGroups.length > 0 ? personalTaskGroups.map(group => <div key={group.date} className="space-y-2"><div className="px-1 text-xs font-bold text-sky-500">截止 · {formatTimelineDate(group.date, today)}</div>{group.items.map(task => renderTask(task))}</div>) : <div className="rounded-3xl border-2 border-dashed border-white bg-white/35 py-8 text-center text-xs text-slate-400">还没有待办，给自己安排一件小事吧。</div>}
                 </section>
             </div>}
@@ -823,7 +400,7 @@ const ScheduleApp: React.FC = () => {
             </div>}
         </main>
         <Modal isOpen={showTask} title="添加我的待办" onClose={() => setShowTask(false)} footer={<button onClick={addTask} className="w-full rounded-2xl bg-violet-500 py-3 font-bold text-white shadow-lg shadow-violet-200">加入日历</button>}>
-            <div className="space-y-4"><input autoFocus value={taskTitle} onChange={event => setTaskTitle(event.target.value)} placeholder="要完成什么？" className={INPUT} /><textarea value={taskNote} onChange={event => setTaskNote(event.target.value)} placeholder="备注（可选）" rows={2} className={INPUT} /><div className="grid grid-cols-2 gap-3"><label className="block text-[10px] font-bold text-slate-400">截止日期<input type="date" value={taskDate} onChange={event => setTaskDate(event.target.value)} className={`mt-1 ${INPUT}`} required /></label><label className="block text-[10px] font-bold text-slate-400">提醒时间（可选）<input type="time" value={taskTime} onChange={event => setTaskTime(event.target.value)} className={`mt-1 ${INPUT}`} /></label></div><label className="block text-[10px] font-bold tracking-widest text-slate-400">监督 / 陪伴角色</label><div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">{characters.map(char => <button key={char.id} onClick={() => setTaskSupervisor(char.id)} className={`shrink-0 rounded-full px-3 py-2 text-xs font-bold ${taskSupervisor === char.id ? 'bg-violet-500 text-white' : 'bg-slate-100 text-slate-500'}`}>{char.name}</button>)}</div><label className="flex items-center justify-between rounded-2xl bg-violet-50 p-3 text-xs text-slate-600"><span><b className="block">允许自然提醒</b><span className="text-[10px] text-slate-400">角色只在聊天语境合适时提起</span></span><input type="checkbox" checked={taskReminder} onChange={event => setTaskReminder(event.target.checked)} className="h-5 w-5 accent-violet-500" /></label></div>
+            <div className="space-y-4"><input autoFocus value={taskTitle} onChange={event => setTaskTitle(event.target.value)} placeholder="要完成什么？" className={INPUT} /><textarea value={taskNote} onChange={event => setTaskNote(event.target.value)} placeholder="备注（可选）" rows={2} className={INPUT} /><div className="grid grid-cols-2 gap-3"><label className="block text-[10px] font-bold text-slate-400">截止日期<input type="date" value={taskDate} onChange={event => setTaskDate(event.target.value)} className={`mt-1 ${INPUT}`} required /></label><label className="block text-[10px] font-bold text-slate-400">截止 / 提醒时间（可选）<input type="time" value={taskTime} onChange={event => setTaskTime(event.target.value)} className={`mt-1 ${INPUT}`} /></label></div><div className="rounded-2xl bg-violet-50 p-3 text-[10px] leading-relaxed text-slate-500">保存后，这件事会进入你和角色共用的日历。角色会在正常聊天中看到它；是否提起由当时的语境决定，不会在这里直接生成台词。</div><label className="block text-[10px] font-bold tracking-widest text-slate-400">关联角色（共享并允许提醒）</label><div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">{characters.map(char => <button key={char.id} onClick={() => setTaskSupervisor(char.id)} className={`shrink-0 rounded-full px-3 py-2 text-xs font-bold ${taskSupervisor === char.id ? 'bg-violet-500 text-white' : 'bg-slate-100 text-slate-500'}`}>{char.name}</button>)}</div><label className="flex items-center justify-between rounded-2xl bg-violet-50 p-3 text-xs text-slate-600"><span><b className="block">允许 TA 在聊天中自然提起</b><span className="text-[10px] text-slate-400">只给上面选中的角色提醒权限；关闭后仍会共享这条记录</span></span><input type="checkbox" checked={taskReminder} onChange={event => setTaskReminder(event.target.checked)} className="h-5 w-5 accent-violet-500" /></label></div>
         </Modal>
         <Modal isOpen={showEvent} title="添加日程 / 纪念日" onClose={() => setShowEvent(false)} footer={<button onClick={addEvent} className="w-full rounded-2xl bg-rose-400 py-3 font-bold text-white shadow-lg shadow-rose-200">保存</button>}>
             <div className="space-y-4">

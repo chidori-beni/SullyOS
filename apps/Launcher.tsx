@@ -14,7 +14,6 @@ import { useLocalDateKey } from '../hooks/useLocalDateKey';
 import { resolveCharTimeZone } from '../utils/timezone';
 import { trackEvent } from '../utils/analytics';
 import { CALENDAR_DATA_UPDATED_EVENT, eventOccursOnDate, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey } from '../utils/calendarIntegration';
-import { formatTaskComment, isTaskCommentDisplayable } from '../utils/taskComment';
 import {
     carouselCloneResetIndex,
     carouselLogicalIndex,
@@ -35,9 +34,6 @@ import {
     reorderLauncherDockApps,
     reorderLauncherPages,
 } from '../utils/launcherPages';
-
-const hasCurrentTaskVoice = (task: Task): boolean =>
-    isTaskCommentDisplayable(task.supervisorComment, task.title);
 
 const CompanionHome = React.lazy(() => import('../components/os/CompanionHome'));
 
@@ -637,7 +633,6 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, tasks, c
                               <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 ${paper ? 'border-[#788369]/50' : 'border-white/50'}`} style={{ color: contentColor }} />
                                   <span className="min-w-0 flex-1">
                                       <span className="block truncate text-sm font-bold" style={{ color: contentColor }}>{task.title}</span>
-                                      {hasCurrentTaskVoice(task) && <span className="block break-words text-[10px] leading-relaxed italic opacity-65" style={{ color: contentColor }}>{formatTaskComment(characters?.find((character: CharacterProfile) => character.id === task.supervisorId)?.name, task.supervisorComment)}</span>}
                                       <span className="block truncate text-[10px] opacity-50" style={{ color: contentColor }}>
                                       {taskDateKey(task) < todayStr ? '已到期' : taskDateKey(task) === todayStr ? '今天' : taskDateKey(task)}{task.dueTime ? ` · ${task.dueTime}` : ''}
                                   </span>

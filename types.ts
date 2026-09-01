@@ -3826,10 +3826,14 @@ export interface Task {
     dueTime?: string;
     /** 是否允许监督角色在聊天里自然提起；旧数据默认允许。 */
     naturalReminder?: boolean;
-    /** 添加待办后由监督角色生成、持久显示在待办卡片下方的一句话。 */
+    /**
+     * @deprecated 旧版待办台词兼容字段。共享日历不再生成、写入或显示它。
+     */
     supervisorComment?: string;
     supervisorCommentGeneratedAt?: number;
-    /** 待办完成后由监督角色生成、替换未完成时小字的持久评价。 */
+    /**
+     * @deprecated 旧版完成评价兼容字段。共享日历不再生成、写入或显示它。
+     */
     completedSupervisorComment?: string;
     completedSupervisorCommentGeneratedAt?: number;
     isCompleted: boolean;
