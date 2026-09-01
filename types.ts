@@ -118,6 +118,11 @@ export interface OSTheme {
   launcherAppOrder?: string[];
   launcherDockOrder?: string[];
   launcherPinwheelOrder?: Array<'music' | 'appsA' | 'appsB' | 'image'>;
+  /**
+   * 桌面页面布局（v1）。旧版仍使用 launcherAppOrder；新桌面编辑器会
+   * 同时维护旧字段，保证降级到旧版本时至少不会丢 App。
+   */
+  launcherPageLayout?: LauncherPageLayout;
   /** 自定义透明图标是否保留原始轮廓并移除系统圆角底框。默认 false。 */
   preserveCustomIconOutlines?: boolean;
   /** 默认皮肤桌面「正在播放」音乐卡片改用浅色系样式（新安装默认 true）。 */
@@ -767,6 +772,26 @@ export interface ScheduleSlot {
     inviteStatus?: 'pending' | 'accepted' | 'declined';
     innerThought?: string; // 该时段的内心独白，生成时由AI写好，运行时直接注入
     theater?: SlotTheater; // 该时段的小剧场（窥视演出），按需生成并缓存
+}
+
+export type LauncherPageKind = 'home' | 'pinwheel' | 'app';
+
+export interface LauncherPage {
+  /** 页面身份不能依赖当前轮播下标，新增页后也必须保持稳定。 */
+  id: string;
+  kind: LauncherPageKind;
+  /** 仅保存 App id；Widgets、Dock 和风车里的非 App 单元不在此列。 */
+  appIds: string[];
+  /** 第一张普通 App 页可承载桌面图片/自由装饰；普通新增页没有此标记。 */
+  showMedia?: boolean;
+}
+
+export interface LauncherPageLayout {
+  version: 1;
+  /** home 永远在第一位；pinwheel 与普通 app 页可在其后排序。 */
+  pages: LauncherPage[];
+  /** 最近一次投影回旧 launcherAppOrder 的快照，用于识别旧客户端降级编辑。 */
+  legacyAppOrder?: string[];
 }
 
 export type ScheduleVariationClass =
