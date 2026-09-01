@@ -11,11 +11,14 @@ import { safeFetchJson } from './safeApi';
  * 避免把 system / reasoning / API 错误误当成用户看到的寄语。
  */
 
-export const MONTHLY_LETTER_MIN_CHARS = 140;
+/** 提示里的写作目标，和“最低可展示”门槛分开，避免误杀自然的短寄语。 */
+export const MONTHLY_LETTER_TARGET_MIN_CHARS = 100;
+export const MONTHLY_LETTER_TARGET_MAX_CHARS = 180;
+export const MONTHLY_LETTER_MIN_CHARS = 80;
 export const MONTHLY_LETTER_MAX_CHARS = 420;
-export const MONTHLY_LETTER_MIN_SENTENCES = 3;
-export const MONTHLY_LETTER_HISTORY_LIMIT = 40;
-export const MONTHLY_LETTER_HISTORY_MAX_CHARS = 12_000;
+export const MONTHLY_LETTER_MIN_SENTENCES = 2;
+export const MONTHLY_LETTER_HISTORY_LIMIT = 20;
+export const MONTHLY_LETTER_HISTORY_MAX_CHARS = 6_000;
 
 export interface MonthlyLetterValidation {
     valid: boolean;
@@ -24,6 +27,7 @@ export interface MonthlyLetterValidation {
         | 'empty'
         | 'reasoning-only'
         | 'truncated'
+        | 'blocked'
         | 'too-short'
         | 'too-long'
         | 'not-enough-chinese'
@@ -139,6 +143,7 @@ const safeContentText = (value: unknown): string => {
     if (typeof value === 'string') return value;
     if (Array.isArray(value)) {
         return value.map(part => {
+            if (typeof part === 'string') return part;
             if (!part || typeof part !== 'object') return '';
             const record = part as Record<string, unknown>;
             const type = typeof record.type === 'string' ? record.type : '';
@@ -155,6 +160,20 @@ const safeContentText = (value: unknown): string => {
     return '';
 };
 
+/** 将不同 OpenAI-compatible 代理的结束原因归一化到本功能自己的安全分类。 */
+export const normalizeMonthlyLetterFinishReason = (value: unknown): string | undefined => {
+    if (typeof value !== 'string' || !value.trim()) return undefined;
+    const normalized = value.trim().toLowerCase().replace(/[\s_-]+/g, '');
+    if (['length', 'maxtokens', 'maxoutputtokens', 'maxcompletiontokens', 'tokenlimit', 'outputlimit'].includes(normalized)) {
+        return 'length';
+    }
+    if (['contentfilter', 'safety', 'blocked', 'recitation', 'refusal'].includes(normalized)) {
+        return 'blocked';
+    }
+    if (['stop', 'endturn', 'end'].includes(normalized)) return 'stop';
+    return value.trim();
+};
+
 /**
  * 严格白名单读取 message.content。刻意不读取 reasoning / analysis / thinking，
  * 因为 safeApi.extractContent 为兼容思考模型会把 reasoning_content 当兜底，
@@ -165,7 +184,7 @@ export const extractMonthlyLetterResponse = (data: unknown): MonthlyLetterRespon
     const message = choice?.message;
     return {
         rawText: safeContentText(message?.content),
-        finishReason: typeof choice?.finish_reason === 'string' ? choice.finish_reason : undefined,
+        finishReason: normalizeMonthlyLetterFinishReason(choice?.finish_reason),
     };
 };
 
@@ -208,18 +227,20 @@ export const validateMonthlyLetter = (
 ): MonthlyLetterValidation => {
     const text = normalizeMonthlyLetterText(raw);
     if (!text) return { valid: false, text: '', reason: 'empty' };
-    if (options.finishReason === 'length') return { valid: false, text, reason: 'truncated' };
+    const finishReason = normalizeMonthlyLetterFinishReason(options.finishReason);
+    if (finishReason === 'length') return { valid: false, text, reason: 'truncated' };
+    if (finishReason === 'blocked') return { valid: false, text: '', reason: 'blocked' };
     if (hasPromptLeak(text, options.characterName)) return { valid: false, text: '', reason: 'prompt-leak' };
 
     const visible = text.replace(/\s/g, '');
     const chineseCount = (visible.match(/[\u3400-\u9fff]/g) || []).length;
-    if (text.length < MONTHLY_LETTER_MIN_CHARS) return { valid: false, text, reason: 'too-short' };
-    if (text.length > MONTHLY_LETTER_MAX_CHARS) return { valid: false, text, reason: 'too-long' };
+    if (visible.length < MONTHLY_LETTER_MIN_CHARS) return { valid: false, text, reason: 'too-short' };
+    if (visible.length > MONTHLY_LETTER_MAX_CHARS) return { valid: false, text, reason: 'too-long' };
     if (visible.length === 0 || chineseCount / visible.length < 0.55) return { valid: false, text, reason: 'not-enough-chinese' };
-    if ((text.match(/[。！？!?]/g) || []).length < MONTHLY_LETTER_MIN_SENTENCES) {
+    if ((text.match(/[。！？!?…]+/g) || []).length < MONTHLY_LETTER_MIN_SENTENCES) {
         return { valid: false, text, reason: 'not-enough-sentences' };
     }
-    if (!/[。！？!?](?:[」』”’"'])?$/.test(text)) return { valid: false, text, reason: 'unfinished' };
+    if (!/[。！？!?…](?:[」』”’"'])?$/.test(text)) return { valid: false, text, reason: 'unfinished' };
     return { valid: true, text };
 };
 
@@ -227,6 +248,7 @@ const validationReasonLabel: Record<NonNullable<MonthlyLetterValidation['reason'
     empty: '空内容',
     'reasoning-only': '只有思考内容',
     truncated: '内容被截断',
+    blocked: '模型拒绝了正文',
     'too-short': '内容过短',
     'too-long': '内容过长',
     'not-enough-chinese': '中文正文不足',
@@ -252,7 +274,7 @@ ${facts}
 </MONTHLY_FACTS>
 
 写作要求：
-- 写一封约 180—260 个中文字符的完整寄语，写成一个自然的短段落，至少 4 句，有起承转合和最后的落点。
+- 写一封目标约 ${MONTHLY_LETTER_TARGET_MIN_CHARS}—${MONTHLY_LETTER_TARGET_MAX_CHARS} 个中文字符的完整寄语，写成一个自然的短段落，至少 2 句，不要刻意压缩成一句话；要有起承转合和最后的落点。
 - 像一个真正陪这个人走过这个月的人说话：从具体生活痕迹里生出你的态度、关心、吐槽或陪伴。自然提到 1—2 个事实即可，不要把统计数据逐条念出来。
 - 只使用你本来会有的语气、节奏和关系感；不要为了“像寄语”写成模板、口号或泛泛的鸡汤。
 - 最后一句必须完整收束，可以是符合你性格的关心、邀请、承诺或一句不太郑重的陪伴。
@@ -300,31 +322,34 @@ export const requestMonthlyLetter = async (options: RequestMonthlyLetterOptions)
         ).apiMessages
         : [];
     const eventText = `[日历月度回望] ${options.user.name || '用户'}正在回看 ${options.monthKey} 的生活记录。`;
-    const coreContext = ContextBuilder.buildCoreContext(
-        options.character,
-        options.user,
-        true,
-        undefined,
-        undefined,
-        {
-            lastInteractionTs: recentMessages[recentMessages.length - 1]?.timestamp,
-            worldbookMessages: [
-                ...recentMessages.map(message => ({ role: message.role, content: message.content })),
-                { role: 'user', content: eventText },
-            ],
-        },
-    );
     const facts = buildMonthlyLetterFacts(options.stats);
-    const systemPrompt = buildMonthlyLetterSystemPrompt(
-        coreContext,
-        options.character.name,
-        options.user.name || '用户',
-        options.monthKey,
-        facts,
-    );
 
     let retryReason: string | undefined;
     for (let attempt = 0; attempt < 2; attempt += 1) {
+        // 首轮用少量真实聊天帮助角色找回关系语气；语义失败后的重写不再带聊天历史，
+        // 避免长上下文继续把输出带成报告、提示词或一句敷衍总结。
+        const includeConversation = attempt === 0;
+        const coreContext = ContextBuilder.buildCoreContext(
+            options.character,
+            options.user,
+            true,
+            undefined,
+            undefined,
+            {
+                lastInteractionTs: includeConversation ? recentMessages[recentMessages.length - 1]?.timestamp : undefined,
+                worldbookMessages: [
+                    ...(includeConversation ? recentMessages.map(message => ({ role: message.role, content: message.content })) : []),
+                    { role: 'user', content: eventText },
+                ],
+            },
+        );
+        const systemPrompt = buildMonthlyLetterSystemPrompt(
+            coreContext,
+            options.character.name,
+            options.user.name || '用户',
+            options.monthKey,
+            facts,
+        );
         const data = await safeFetchJson(`${baseUrl}/chat/completions`, {
             method: 'POST',
             headers: {
@@ -335,11 +360,11 @@ export const requestMonthlyLetter = async (options: RequestMonthlyLetterOptions)
                 model: options.apiConfig.model,
                 messages: [
                     { role: 'system', content: systemPrompt },
-                    ...history,
+                    ...(includeConversation ? history : []),
                     { role: 'user', content: buildMonthlyLetterUserPrompt(options.character.name, options.user.name || '用户', options.monthKey, retryReason) },
                 ],
-                temperature: attempt === 0 ? 0.8 : 0.68,
-                max_tokens: 1_000,
+                temperature: attempt === 0 ? 0.82 : 0.7,
+                max_tokens: 1_536,
                 stream: false,
             }),
         }, 0, 120_000, {
@@ -355,6 +380,9 @@ export const requestMonthlyLetter = async (options: RequestMonthlyLetterOptions)
             characterName: options.character.name,
         });
         if (validation.valid) return validation.text;
+        if (validation.reason === 'blocked') {
+            throw new Error('主模型拒绝生成寄语，请稍后重试');
+        }
         retryReason = validation.reason ? validationReasonLabel[validation.reason] : '正文不可用';
     }
 
