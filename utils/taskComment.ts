@@ -18,7 +18,10 @@ const META_LABELS = new Set([
 // Extraction is deliberately separate from the strict generation gate below:
 // old, already-saved short speech can remain readable while a new response is
 // retried and checked before it is written back to IndexedDB.
-const MIN_EXTRACTED_TASK_COMMENT_LENGTH = 3;
+// Nuoji's supervisor can naturally answer with very short speech such as
+// “嗯” or “去吧”. Length is not a reliable proxy for whether a response is
+// visible speech; protocol/meta detection below does that job.
+const MIN_EXTRACTED_TASK_COMMENT_LENGTH = 1;
 const MIN_COMPLETE_TASK_COMMENT_LENGTH = 12;
 // Keep this high enough for a natural Chinese sentence plus a short second
 // clause. The old 80-character ceiling rejected otherwise good in-character
@@ -162,6 +165,9 @@ const isLikelyCompleteSentence = (value: string): boolean => {
     return /[。！？!?…\.]+$/.test(withoutClosing);
 };
 
+const hasVisibleSpeechCharacter = (value: string): boolean =>
+    /[\p{L}\p{N}\p{Extended_Pictographic}]/u.test(value);
+
 const stripWrapping = (value: string): string => {
     let text = value
         .trim()
@@ -253,7 +259,7 @@ export const extractTaskComment = (raw: unknown): string | null => {
     // part of the stored sentence. Removing them here also repairs old rows
     // where only the opening quote was stripped and a lone `”` was persisted.
     text = stripWrapping(text).replace(/[「」『』“”"]/g, '').replace(/\s+/g, ' ').trim();
-    if (!text || isMetaLabel(text) || isIdentityPossessiveFragment(text) || isPromptProtocolLeak(text)) return null;
+    if (!text || !hasVisibleSpeechCharacter(text) || isMetaLabel(text) || isIdentityPossessiveFragment(text) || isPromptProtocolLeak(text)) return null;
     if ([...text].filter(character => !/\s/.test(character)).length < MIN_EXTRACTED_TASK_COMMENT_LENGTH) return null;
     return text;
 };
@@ -368,7 +374,7 @@ export const isTaskCommentGenerationAcceptable = (
     const effectiveLength = [...text].filter(character => !/\s/.test(character)).length;
     return effectiveLength >= MIN_EXTRACTED_TASK_COMMENT_LENGTH
         && text.length <= MAX_COMPLETE_TASK_COMMENT_LENGTH
-        && isLikelyCompleteSentence(text)
+        && hasVisibleSpeechCharacter(text)
         && !isWriterPersonaMetaLeak(text, policy.writerPersona)
         && !isTaskCommentTooGeneric(text, taskTitle)
         && !isLikelyTaskEcho(text, taskTitle);
@@ -389,8 +395,9 @@ export const isTaskCommentDisplayable = (
     const text = extractTaskComment(value);
     if (!text) return false;
     const effectiveLength = [...text].filter(character => !/\s/.test(character)).length;
-    return effectiveLength >= 3
+    return effectiveLength >= MIN_EXTRACTED_TASK_COMMENT_LENGTH
         && text.length <= MAX_COMPLETE_TASK_COMMENT_LENGTH
+        && hasVisibleSpeechCharacter(text)
         && !isWriterPersonaMetaLeak(text, policy.writerPersona)
         && !isTaskCommentTooGeneric(text, taskTitle)
         && !isLikelyTaskEcho(text, taskTitle);
