@@ -1,5 +1,5 @@
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Modal from '../os/Modal';
 import { CharacterProfile, Message, Emoji, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
 import ScheduleCard from '../schedule/ScheduleCard';
@@ -10,6 +10,7 @@ import { trackEvent } from '../../utils/analytics';
 import MessageReactionBar from './MessageReactionBar';
 import { getMessageReactions } from '../../utils/messageReactions';
 import { findActivePresetId } from '../../utils/apiPresetSwitch';
+import { normalizeScheduleRequirement, SCHEDULE_REROLL_REQUIREMENT_MAX_LENGTH } from '../../utils/schedulePlanner';
 
 interface ChatModalsProps {
     modalType: string;
@@ -135,7 +136,7 @@ interface ChatModalsProps {
     isScheduleGenerating?: boolean;
     onScheduleEdit?: (index: number, slot: ScheduleSlot) => void;
     onScheduleDelete?: (index: number) => void;
-    onScheduleReroll?: () => void;
+    onScheduleReroll?: (requirement?: string) => void | Promise<void>;
     onScheduleCoverChange?: (dataUrl: string) => void;
     onScheduleStyleChange?: (style: 'lifestyle' | 'mindful') => void;
     onPlayTheater?: (index: number) => void;
@@ -298,6 +299,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     const [visibilitySelection, setVisibilitySelection] = useState<Set<string>>(new Set());
     const [historyPage, setHistoryPage] = useState(0);
     const [historySearch, setHistorySearch] = useState('');
+    const [scheduleRerollPromptOpen, setScheduleRerollPromptOpen] = useState(false);
+    const [scheduleRerollRequirement, setScheduleRerollRequirement] = useState('');
     const longPressTimerRef = useRef<number | null>(null);
     const longPressTriggeredRef = useRef(false);
     const HISTORY_PAGE_SIZE = 50;
@@ -319,6 +322,17 @@ const ChatModals: React.FC<ChatModalsProps> = ({
             : null;
     const toggleFavorite = favoriteMode === 'voice' ? onToggleVoiceFavorite : onToggleTextFavorite;
     const favoriteIsActive = favoriteMode === 'voice' ? voiceFavorited : textFavorited;
+
+    const closeScheduleRerollPrompt = () => {
+        setScheduleRerollPromptOpen(false);
+        setScheduleRerollRequirement('');
+    };
+
+    // 临时要求不能从上一个角色带到下一个角色，也不能在关闭日程面板后残留。
+    useEffect(() => {
+        setScheduleRerollPromptOpen(false);
+        setScheduleRerollRequirement('');
+    }, [activeCharacter?.id, modalType]);
 
     const startHistoryLongPress = (msgId: number) => {
         longPressTriggeredRef.current = false;
@@ -1278,7 +1292,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
 
             {/* Schedule Modal */}
             <Modal
-                isOpen={modalType === 'schedule'} title={`${activeCharacter?.name || '角色'}の日程/情绪`} onClose={() => setModalType('none')}
+                isOpen={modalType === 'schedule'} title={`${activeCharacter?.name || '角色'}の日程/情绪`} onClose={() => { closeScheduleRerollPrompt(); setModalType('none'); }}
             >
                 <div className="max-h-[70vh] overflow-y-auto -mx-2 px-2">
                     {/* 总开关：关闭时不调副 API、不生成日程、不注入情绪 buff */}
@@ -1434,7 +1448,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                 compact={false}
                                 onEdit={onScheduleEdit}
                                 onDelete={onScheduleDelete}
-                                onReroll={onScheduleReroll}
+                                onReroll={onScheduleReroll ? () => setScheduleRerollPromptOpen(true) : undefined}
                                 onCoverImageChange={onScheduleCoverChange}
                                 onPlayTheater={onPlayTheater}
                                 isGenerating={isScheduleGenerating}
@@ -1456,6 +1470,50 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                         </>
                     )}
                 </div>
+            </Modal>
+
+            <Modal
+                isOpen={modalType === 'schedule' && scheduleRerollPromptOpen}
+                title="重新生成今日日程"
+                onClose={closeScheduleRerollPrompt}
+                footer={
+                    <>
+                        <button
+                            type="button"
+                            onClick={closeScheduleRerollPrompt}
+                            className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 transition-transform"
+                        >
+                            取消
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                const requirement = normalizeScheduleRequirement(scheduleRerollRequirement);
+                                closeScheduleRerollPrompt();
+                                onScheduleReroll?.(requirement);
+                            }}
+                            disabled={isScheduleGenerating}
+                            className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-40"
+                        >
+                            {isScheduleGenerating ? '生成中...' : '确认重抽'}
+                        </button>
+                    </>
+                }
+            >
+                <p className="text-xs text-slate-500 leading-relaxed mb-3">
+                    可以写这次想调整的方向，也可以留空让系统自由重抽。这个要求只影响本次日程，不会改角色设定。
+                </p>
+                <textarea
+                    autoFocus
+                    value={scheduleRerollRequirement}
+                    onChange={event => setScheduleRerollRequirement(event.target.value)}
+                    maxLength={SCHEDULE_REROLL_REQUIREMENT_MAX_LENGTH}
+                    placeholder="例如：希望今天正常睡够 8 小时；今天是周末，少安排正式工作；别忘了安排一次商业活动"
+                    className="w-full h-32 bg-slate-100 rounded-2xl p-4 resize-none text-sm leading-relaxed outline-none focus:ring-1 focus:ring-primary/20"
+                />
+                <p className="text-[10px] text-slate-400 text-right mt-1">
+                    {scheduleRerollRequirement.length}/{SCHEDULE_REROLL_REQUIREMENT_MAX_LENGTH}
+                </p>
             </Modal>
         </>
     );

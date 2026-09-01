@@ -813,6 +813,9 @@ export type ScheduleVariationClass =
 
 export type ScheduleCareerFocus = 'none' | 'core' | 'secondary' | 'balanced';
 
+/** 日程对生理睡眠的明确例外；缺省永远按普通人作息，不因“赛车手/精力好”自动豁免。 */
+export type ScheduleSleepMode = 'normal' | 'no-sleep';
+
 /** 日程生成的轻量规划痕迹。可选以兼容所有历史日程，不进入主动消息 fire-pack。 */
 export interface SchedulePlanningMeta {
     schemaVersion: 1;
@@ -825,6 +828,11 @@ export interface SchedulePlanningMeta {
     eventFingerprint?: string;
     /** 仅保存来源条目 id，不保存世界书正文或聊天内容。 */
     sourceWorldbookIds?: string[];
+    /** 生成时采用的本地日历/睡眠策略；只作调试痕迹，不进入主动消息 fire-pack。 */
+    calendarMode?: 'weekday' | 'weekend';
+    sleepMode?: ScheduleSleepMode;
+    /** 只记是否用过一次性要求，不保存要求正文。 */
+    userRequirementApplied?: boolean;
 }
 
 export interface DailySchedule {
@@ -3198,6 +3206,12 @@ export interface CharacterProfile {
    * - 'mindful'（意识系）：角色诚实面对自身存在，内心活动基于真实能力（回忆对话、整理想法、等待用户……），不虚构物理行为
    */
   scheduleStyle?: 'lifestyle' | 'mindful';
+
+  /**
+   * 日程睡眠策略：缺省按普通人安排 7-9 小时睡眠。
+   * 只有明确设为 no-sleep 的非生理角色才不强制睡眠，赛车手/运动员不会自动豁免。
+   */
+  scheduleSleepMode?: ScheduleSleepMode;
 
   /**
    * 日程 / 情绪 Buff 总开关。

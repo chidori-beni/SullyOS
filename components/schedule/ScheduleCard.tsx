@@ -1,7 +1,8 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { DailySchedule, ScheduleSlot, CharacterProfile } from '../../types';
-import { getCurrentScheduleSlotIndex, getScheduleWallClock } from '../../utils/scheduleTime';
+import { getScheduleWallClock } from '../../utils/scheduleTime';
+import { getScheduleSlotTemporalState } from '../../utils/scheduleClock';
 import { resolveCharTimeZone, tzShortLabel } from '../../utils/timezone';
 import { useOS } from '../../context/OSContext';
 import { resolveScheduleCardPalette } from '../../utils/scheduleAppearance';
@@ -97,7 +98,6 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
 
     const tickingNow = useTickingNow();
     const wallClock = getScheduleWallClock(character, tickingNow);
-    const currentIdx = schedule ? getCurrentScheduleSlotIndex(schedule.slots, character, tickingNow) : -1;
     // 角色设了自己的时区时，上面那个钟走的是 ta 那边的时间——标出地名，
     // 免得用户拿它当自己的手机时间读。
     const charTzName = (() => {
@@ -278,9 +278,14 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
                         </div>
                     ) : schedule && schedule.slots.length > 0 ? (
                         schedule.slots.map((slot, idx) => {
-                            const isCurrent = idx === currentIdx;
-                            const isPast = currentIdx >= 0 && idx < currentIdx;
-                            const isFuture = !isPast && !isCurrent; // 还没到的时段：按钮灰着，点了给提示
+                            const temporalState = getScheduleSlotTemporalState(
+                                schedule.slots,
+                                idx,
+                                wallClock.getHours() * 60 + wallClock.getMinutes(),
+                            );
+                            const isCurrent = temporalState === 'current';
+                            const isPast = temporalState === 'past';
+                            const isFuture = temporalState === 'upcoming'; // 还没到的时段：按钮灰着，点了给提示
                             const isEditing = editingIdx === idx;
 
                             if (isEditing && !compact) {

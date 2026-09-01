@@ -4,6 +4,7 @@ import {
     buildScheduleFingerprint,
     buildSchedulePlan,
     formatSchedulePlanPrompt,
+    normalizeScheduleRequirement,
 } from './schedulePlanner';
 
 const racer = {
@@ -96,5 +97,45 @@ describe('日程本地规划器', () => {
         ])).not.toBe(buildScheduleFingerprint([
             { startTime: '08:00', activity: '品牌拍摄' },
         ]));
+    });
+
+    it('按角色当地星期和当前墙钟生成周末/时间约束，普通赛车手默认仍需睡眠', () => {
+        const plan = buildSchedulePlan({
+            char: racer,
+            today: '2026-09-05',
+            localWeekday: 6,
+            wallClockMinutes: 4 * 60 + 7,
+        });
+
+        expect(plan.calendarMode).toBe('weekend');
+        expect(plan.currentLocalTime).toBe('04:07');
+        expect(plan.sleepMode).toBe('normal');
+        expect(formatSchedulePlanPrompt(plan)).toContain('角色当地的周末');
+        expect(formatSchedulePlanPrompt(plan)).toContain('当前时间是 04:07');
+        expect(formatSchedulePlanPrompt(plan)).toContain('7-9 小时');
+    });
+
+    it('只有显式 no-sleep 配置才会关闭睡眠约束，普通职业设定不会自动豁免', () => {
+        const plan = buildSchedulePlan({
+            char: { ...racer, scheduleSleepMode: 'no-sleep' },
+            today: '2026-09-02',
+            localWeekday: 3,
+        });
+
+        expect(plan.sleepMode).toBe('no-sleep');
+        expect(formatSchedulePlanPrompt(plan)).toContain('明确配置为 no-sleep');
+    });
+
+    it('一次性重抽要求会限长并只出现在提示词，不进入计划对象', () => {
+        const plan = buildSchedulePlan({ char: racer, today: '2026-09-02' });
+        const requirement = `  希望正常睡觉\n${'额外要求'.repeat(300)}  `;
+        const normalized = normalizeScheduleRequirement(requirement);
+        const prompt = formatSchedulePlanPrompt(plan, 'lifestyle', { rerollRequirement: requirement });
+
+        expect(normalized).toBeTruthy();
+        expect(normalized!.length).toBeLessThanOrEqual(500);
+        expect(prompt).toContain('<schedule_user_request>');
+        expect(prompt).toContain(normalized!);
+        expect((plan as any).rerollRequirement).toBeUndefined();
     });
 });

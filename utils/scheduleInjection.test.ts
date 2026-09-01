@@ -4,7 +4,7 @@
 // 常态：日程第一条在 07:00，凌晨一点触发时按「今天刚要开始」写，角色就会顶着清晨的心境
 // 说话。凌晨 0-5 点算前一夜的尾巴，独白取「晚」档、措辞也得是夜里的说法。
 import { describe, expect, it } from 'vitest';
-import { buildScheduleInjection, getFlowNarrativeKey, type RenderableSchedule } from './scheduleInjection';
+import { buildScheduleInjection, getFlowNarrativeKey, resolveScheduleSlots, type RenderableSchedule } from './scheduleInjection';
 
 const schedule: RenderableSchedule = {
     slots: [
@@ -63,6 +63,31 @@ describe('凌晨 0-5 点算前一夜的延续', () => {
         expect(out).toContain('- 22:00 看剧');
         expect(out).toContain('[[ACTION:CHANGE_SCHEDULE | 22:00 | 去超市]]');
         expect(out).toContain('正在进行的这一条和它之后的都能改，已经过去的不能');
+    });
+});
+
+describe('当前活动的时间进度', () => {
+    it('活动刚开始时明确是进行中，不能把整段长距离训练说成已完成', () => {
+        const out = buildScheduleInjection({
+            slots: [{ startTime: '04:00', endTime: '05:00', activity: '晨跑与核心训练' }],
+        }, undefined, at(4, 7));
+
+        expect(out).toContain('当前时段：04:00 你正在晨跑与核心训练');
+        expect(out).toContain('进行中');
+        expect(out).toContain('尚未完成整段活动');
+        expect(out).toContain('不要声称整段活动已经做完');
+    });
+
+    it('跨午夜睡眠在凌晨仍是当前时段，之后的早晨活动不会被误选', () => {
+        const overnight: RenderableSchedule = {
+            slots: [
+                { startTime: '08:00', endTime: '09:00', activity: '晨间训练' },
+                { startTime: '23:00', endTime: '07:00', activity: '睡眠', busyLevel: 'sleep' },
+            ],
+        };
+        const resolved = resolveScheduleSlots(overnight, at(4, 7));
+        expect(resolved.current?.activity).toBe('睡眠');
+        expect(buildScheduleInjection(overnight, undefined, at(4, 7))).toContain('正在睡眠');
     });
 });
 

@@ -617,7 +617,7 @@ var init_mcpFireCore = __esm({
 // worker/amsg/src/index.ts
 import { DurableObject } from "cloudflare:workers";
 
-// ../../SullyOS/node_modules/.pnpm/@rei-standard+amsg-server@2_c57770165a8a2256e4acaa4bae2ba803/node_modules/@rei-standard/amsg-server/dist/chunk-GN44PST5.mjs
+// node_modules/.pnpm/@rei-standard+amsg-server@2_c57770165a8a2256e4acaa4bae2ba803/node_modules/@rei-standard/amsg-server/dist/chunk-GN44PST5.mjs
 var UPDATABLE_COLUMNS = /* @__PURE__ */ new Set([
   "user_id",
   "uuid",
@@ -636,7 +636,7 @@ var UPDATABLE_COLUMNS = /* @__PURE__ */ new Set([
 var TASK_DELIVERY_COLUMNS = "id, user_id, uuid, encrypted_payload, message_type, next_send_at, retry_after, status, retry_count";
 var TASK_DETAIL_COLUMNS = "id, user_id, uuid, encrypted_payload, message_type, next_send_at, status, retry_count, last_error, created_at, updated_at";
 
-// ../../SullyOS/node_modules/.pnpm/@rei-standard+amsg-shared@0.4.0-next.8/node_modules/@rei-standard/amsg-shared/dist/index.mjs
+// node_modules/.pnpm/@rei-standard+amsg-shared@0.4.0-next.8/node_modules/@rei-standard/amsg-shared/dist/index.mjs
 var TEXT_ENCODER = new TextEncoder();
 var TEXT_DECODER = new TextDecoder("utf-8", { fatal: false });
 function toUint8(buf) {
@@ -1735,7 +1735,7 @@ function stringifyDecisionForError(value) {
   }
 }
 
-// ../../SullyOS/node_modules/.pnpm/@rei-standard+amsg-server@2_c57770165a8a2256e4acaa4bae2ba803/node_modules/@rei-standard/amsg-server/dist/chunk-3JEWYDM4.mjs
+// node_modules/.pnpm/@rei-standard+amsg-server@2_c57770165a8a2256e4acaa4bae2ba803/node_modules/@rei-standard/amsg-server/dist/chunk-3JEWYDM4.mjs
 var DAY_MS = 24 * 60 * 60 * 1e3;
 var MAX_LISTED_SKIPPED_OCCURRENCES = 32;
 var MAX_ADJUST_STEPS = 32;
@@ -7700,6 +7700,40 @@ var wallClockToTimestamp = (wallClockText, tz) => {
   return t;
 };
 
+// utils/scheduleClock.ts
+var parseScheduleClockTime = (value, allowEndOfDay = false) => {
+  if (typeof value !== "string") return null;
+  const match = /^(\d{1,2}):([0-5]\d)$/.exec(value.trim());
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (allowEndOfDay && hour === 24 && minute === 0) return 24 * 60;
+  if (hour < 0 || hour > 23) return null;
+  return hour * 60 + minute;
+};
+var getScheduleSlotInterval = (slot, fallbackEndTime) => {
+  const start = parseScheduleClockTime(slot.startTime);
+  if (start == null) return null;
+  let end;
+  if (slot.endTime !== void 0) {
+    end = parseScheduleClockTime(slot.endTime, true);
+  } else if (fallbackEndTime !== void 0) {
+    end = parseScheduleClockTime(fallbackEndTime, true);
+  } else {
+    end = 24 * 60;
+  }
+  if (end == null) return null;
+  if (end === 0 && start > 0) end = 24 * 60;
+  else if (end < start) end += 24 * 60;
+  if (end <= start || end - start > 24 * 60) return null;
+  return { start, end };
+};
+var isScheduleMinuteInInterval = (minuteOfDay, interval) => {
+  const minute = Math.max(0, Math.min(24 * 60 - 1, Math.floor(minuteOfDay)));
+  if (interval.end <= 24 * 60) return minute >= interval.start && minute < interval.end;
+  return minute >= interval.start || minute < interval.end - 24 * 60;
+};
+
 // utils/scheduleInjection.ts
 function getFlowNarrativeKey(hour) {
   if (hour < 12) return "morning";
@@ -7710,35 +7744,44 @@ var PRE_DAWN_END_HOUR = 5;
 var resolveScheduleSlots = (schedule, now) => {
   if (!schedule?.slots?.length) return { current: null, next: null };
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
-  const toMinutes = (value) => {
-    if (!value) return null;
-    const [h, m] = value.split(":").map(Number);
-    return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null;
-  };
+  let next = null;
   for (let i = 0; i < schedule.slots.length; i++) {
     const slot = schedule.slots[i];
-    const start = toMinutes(slot.startTime);
+    const start = parseScheduleClockTime(slot.startTime);
     if (start == null) continue;
-    if (currentMinutes < start) return { current: null, next: slot };
-    const explicitEnd = toMinutes(slot.endTime);
-    const nextStart = i < schedule.slots.length - 1 ? toMinutes(schedule.slots[i + 1].startTime) : null;
-    const end = explicitEnd ?? nextStart ?? 24 * 60;
-    if (end > start && currentMinutes < end) {
+    const nextStart = i < schedule.slots.length - 1 ? schedule.slots[i + 1].startTime : void 0;
+    const interval = getScheduleSlotInterval(slot, nextStart);
+    if (interval && isScheduleMinuteInInterval(currentMinutes, interval)) {
       return { current: slot, next: i < schedule.slots.length - 1 ? schedule.slots[i + 1] : null };
     }
+    if (!next && currentMinutes < start) next = slot;
   }
-  return { current: null, next: null };
+  return { current: null, next };
 };
 var buildScheduleInjection = (schedule, evolvedNarrative, now = /* @__PURE__ */ new Date(), options = {}) => {
   if (!schedule || !schedule.slots || schedule.slots.length === 0) return "";
   const { current: currentSlot, next: nextSlot } = options.resolvedSlots ?? resolveScheduleSlots(schedule, now);
   const withClock = options.includeClock !== false;
   const withTime = (text, startTime) => withClock ? `${text}\uFF08${startTime}\uFF09` : text;
-  const isPreDawnCarryOver = !currentSlot && now.getHours() < PRE_DAWN_END_HOUR;
+  const isPreDawnCarryOver = now.getHours() < PRE_DAWN_END_HOUR && (!currentSlot || currentSlot.busyLevel === "sleep");
   let slotHeader = "";
   if (currentSlot) {
-    slotHeader = withClock ? `\u5F53\u524D\u65F6\u6BB5\uFF1A${currentSlot.startTime} \u4F60\u6B63\u5728${currentSlot.activity}` : `\u5F53\u524D\u65F6\u6BB5\uFF1A\u4F60\u6B63\u5728${currentSlot.activity}`;
-    if (currentSlot.location) slotHeader += `\uFF08${currentSlot.location}\uFF09`;
+    const currentIndex = schedule.slots.indexOf(currentSlot);
+    const nextStart = currentIndex >= 0 && currentIndex < schedule.slots.length - 1 ? schedule.slots[currentIndex + 1].startTime : void 0;
+    const interval = getScheduleSlotInterval(currentSlot, nextStart);
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    let progress = "";
+    if (interval && isScheduleMinuteInInterval(currentMinutes, interval)) {
+      const elapsed = interval.end > 24 * 60 && currentMinutes < interval.end - 24 * 60 ? currentMinutes + 24 * 60 - interval.start : currentMinutes - interval.start;
+      const remaining = Math.max(0, interval.end - interval.start - elapsed);
+      if (withClock) {
+        progress = currentSlot.busyLevel === "sleep" ? `\uFF08\u6B63\u5728\u7761\u7720\uFF0C\u5DF2\u6301\u7EED\u7EA6${elapsed}\u5206\u949F\uFF09` : `\uFF08\u8FDB\u884C\u4E2D\uFF0C\u5DF2\u5F00\u59CB\u7EA6${elapsed}\u5206\u949F\uFF0C\u9884\u8BA1\u8FD8\u9700\u7EA6${remaining}\u5206\u949F\uFF1B\u5C1A\u672A\u5B8C\u6210\u6574\u6BB5\u6D3B\u52A8\uFF09`;
+      } else {
+        progress = currentSlot.busyLevel === "sleep" ? "\uFF08\u6B63\u5728\u7761\u7720\uFF09" : "\uFF08\u8FDB\u884C\u4E2D\uFF0C\u5C1A\u672A\u5B8C\u6210\u6574\u6BB5\u6D3B\u52A8\uFF09";
+      }
+    }
+    const activityLabel = currentSlot.location ? `${currentSlot.activity}\uFF08${currentSlot.location}\uFF09` : currentSlot.activity;
+    slotHeader = withClock ? `\u5F53\u524D\u65F6\u6BB5\uFF1A${currentSlot.startTime} \u4F60\u6B63\u5728${activityLabel}${progress}` : `\u5F53\u524D\u65F6\u6BB5\uFF1A\u4F60\u6B63\u5728${activityLabel}${progress}`;
     if (nextSlot) {
       slotHeader += withClock ? `
 \u4E4B\u540E\u5B89\u6392\uFF1A${nextSlot.startTime} ${nextSlot.activity}` : `
@@ -7779,6 +7822,7 @@ ${rows.join("\n")}
   out += slotHeader;
   if (currentSlot) {
     out += "\u672C\u8F6E\u73B0\u5B9E\u72B6\u6001\u4EE5\u5F53\u524D\u65F6\u6BB5\u4E3A\u51C6\uFF1A\u5386\u53F2\u804A\u5929\u91CC\u7684\u6D3B\u52A8\u53EA\u4EE3\u8868\u5F53\u65F6\uFF1B\u5982\u679C\u5386\u53F2\u53D9\u4E8B\u4E0E\u5F53\u524D\u65F6\u6BB5\u51B2\u7A81\uFF0C\u4E0D\u8981\u628A\u65E7\u6D3B\u52A8\u7EE7\u7EED\u8BF4\u6210\u6B63\u5728\u53D1\u751F\u6216\u521A\u521A\u7ED3\u675F\u3002\u5B9E\u9645\u5B89\u6392\u53D1\u751F\u53D8\u5316\u65F6\uFF0C\u5148\u6309\u771F\u5B9E\u60C5\u51B5\u6539\u65E5\u7A0B\u518D\u7EE7\u7EED\u627F\u63A5\u3002\n";
+    out += "\u5F53\u524D\u65F6\u6BB5\u7684\u63CF\u8FF0\u662F\u8BA1\u5212\u4E0E\u76EE\u6807\uFF0C\u4E0D\u662F\u5DF2\u7ECF\u5B8C\u6210\u7684\u7ED3\u679C\uFF1B\u6D3B\u52A8\u5904\u4E8E\u201C\u8FDB\u884C\u4E2D\u201D\u65F6\uFF0C\u9664\u975E\u804A\u5929\u4E2D\u6709\u660E\u786E\u4E8B\u5B9E\u8BC1\u660E\u63D0\u524D\u7ED3\u675F\uFF0C\u4E0D\u8981\u58F0\u79F0\u6574\u6BB5\u6D3B\u52A8\u5DF2\u7ECF\u505A\u5B8C\uFF0C\u4E5F\u4E0D\u8981\u628A\u521A\u5F00\u59CB\u51E0\u5206\u949F\u5199\u6210\u5B8C\u6210\u4E86\u957F\u8DDD\u79BB\u8BAD\u7EC3\u3002\n";
   }
   if (narrative) {
     out += preamble + narrative + footnote;
@@ -12137,7 +12181,7 @@ var buildDuplicateToolMessage = (name) => [
 // worker/amsg/src/index.ts
 init_proxyWorker();
 
-// ../../SullyOS/node_modules/.pnpm/@rei-standard+amsg-instant@0.11.0-next.6/node_modules/@rei-standard/amsg-instant/dist/index.mjs
+// node_modules/.pnpm/@rei-standard+amsg-instant@0.11.0-next.6/node_modules/@rei-standard/amsg-instant/dist/index.mjs
 var PUSH_PAYLOAD_BYTE_ENCODER = new TextEncoder();
 function segmentTextWithProtectedBlocks(text, options) {
   if (!text) return [];

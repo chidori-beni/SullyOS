@@ -2405,11 +2405,21 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         addToast(exposed ? '已让 TA 发现你在看 👀' : '已悄悄记下 · TA 不知道你看了 🙈', 'info');
     };
 
-    const generateDailySchedule = async (targetChar: typeof char, forceRegenerate: boolean = false) => {
+    const generateDailySchedule = async (
+        targetChar: typeof char,
+        forceRegenerate: boolean = false,
+        rerollRequirement?: string,
+    ) => {
         if (!targetChar || isScheduleGenerating) return;
         setIsScheduleGenerating(true);
         try {
-            const result = await generateDailyScheduleForChar(targetChar, userProfile, apiConfig, forceRegenerate);
+            const result = await generateDailyScheduleForChar(
+                targetChar,
+                userProfile,
+                apiConfig,
+                forceRegenerate,
+                rerollRequirement ? { rerollRequirement } : undefined,
+            );
             if (result) {
                 const scheduleWithInvite = await ensureScheduleInvite(targetChar, result);
                 setScheduleData(scheduleWithInvite);
@@ -3891,7 +3901,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 isScheduleGenerating={isScheduleGenerating}
                 onScheduleEdit={handleScheduleEdit}
                 onScheduleDelete={handleScheduleDelete}
-                onScheduleReroll={() => generateDailySchedule(char, true)}
+                onScheduleReroll={(requirement) => generateDailySchedule(char, true, requirement)}
                 onScheduleCoverChange={handleScheduleCoverChange}
                 onScheduleStyleChange={handleScheduleStyleChange}
                 onPlayTheater={handlePlayTheater}

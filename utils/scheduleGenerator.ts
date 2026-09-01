@@ -15,7 +15,9 @@ import {
     buildScheduleFingerprint,
     buildSchedulePlan,
     formatSchedulePlanPrompt,
+    normalizeScheduleRequirement,
 } from './schedulePlanner';
+import { fillMissingScheduleEndTimes, validateGeneratedSchedule } from './scheduleValidation';
 
 export { getFlowNarrativeKey, isScheduleFeatureOn } from './scheduleFeature';
 
@@ -260,7 +262,8 @@ export async function generateDailyScheduleForChar(
     char: CharacterProfile,
     userProfile: UserProfile,
     apiConfig: ApiConfig,
-    forceRegenerate: boolean = false
+    forceRegenerate: boolean = false,
+    options?: { rerollRequirement?: string },
 ): Promise<DailySchedule | null> {
     // 总开关关闭时直接短路，避免副 API / 兜底调用
     if (!isScheduleFeatureOn(char)) return null;
@@ -268,6 +271,7 @@ export async function generateDailyScheduleForChar(
     const baseNow = new Date();
     const now = getScheduleWallClock(char, baseNow);
     const today = getScheduleDateKey(char, baseNow);
+    const rerollRequirement = normalizeScheduleRequirement(options?.rerollRequirement);
 
     // 同一天默认复用事实；重抽时读取旧表，只递增 rerollIndex 让本地骰子真正换面。
     const existing = await getDailyScheduleForChar(char, baseNow);
@@ -318,6 +322,10 @@ export async function generateDailyScheduleForChar(
     const schedulePlan = buildSchedulePlan({
         char,
         today,
+        localWeekday: now.getDay(),
+        isWeekend: now.getDay() === 0 || now.getDay() === 6,
+        wallClockMinutes: now.getHours() * 60 + now.getMinutes(),
+        sleepMode: char.scheduleSleepMode,
         rerollIndex,
         recentSchedules,
         worldbookEntries: resolvedWorldbookEntries.map(entry => ({
@@ -325,7 +333,9 @@ export async function generateDailyScheduleForChar(
             content: entry.content,
         })),
     });
-    const schedulePlanBlock = formatSchedulePlanPrompt(schedulePlan, char.scheduleStyle || 'lifestyle');
+    const schedulePlanBlock = formatSchedulePlanPrompt(schedulePlan, char.scheduleStyle || 'lifestyle', {
+        rerollRequirement,
+    });
 
     // 含详细记忆，并让关键词世界书使用与私聊相同的消息窗口激活。
     // 日程没有普通聊天的消息数组，所以位置 4 以“指定深度提醒”参考块加入；
@@ -341,6 +351,8 @@ export async function generateDailyScheduleForChar(
             worldbookMode: 'online',
             resolvedWorldbookEntries,
             includeAtDepthWorldbooks: true,
+            wallClockNow: now,
+            nowTimestamp: baseNow.getTime(),
         },
     );
 
@@ -353,15 +365,18 @@ export async function generateDailyScheduleForChar(
         ? buildMindfulPrompt(baseContext, char, userProfile, today, dayOfWeek, chatHistoryBlock, schedulePlanBlock)
         : buildLifestylePrompt(baseContext, char, userProfile, today, dayOfWeek, chatHistoryBlock, schedulePlanBlock);
 
-    try {
+    const requestSchedule = async (requestPrompt: string): Promise<{
+        slots: ScheduleSlot[];
+        flowNarrative?: Record<string, string>;
+    } | null> => {
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
             body: JSON.stringify({
                 model: apiConfig.model,
-                messages: [{ role: 'user', content: prompt }],
+                messages: [{ role: 'user', content: requestPrompt }],
                 temperature: 0.85,
-                max_tokens: 8000
+                max_tokens: 8000,
             }),
             // API 调用记录标签（全局 fetch 拦截器读取）；不传会兜底成「用户当时打开的 App」，
             // 后台任务被标成 Message/群聊 之类，用户看记录一头雾水。
@@ -376,17 +391,16 @@ export async function generateDailyScheduleForChar(
         const data = await safeResponseJson(response);
         // 与主链路对齐：extractContent 会剥掉思维链模型(<think>...)并回落 reasoning_content，
         // extractJson 负责去围栏 / 从 prose 里抽 {...} / 修截断 + 尾逗号等多重兜底。
-        // 之前这里手搓 JSON.parse，碰到推理模型的 <think> 前缀会在 "line 1 column 1" 直接炸。
         const content = extractContent(data);
         const parsed = extractJson(content);
         if (!parsed) {
             console.error('[Schedule] Generation failed: 无法从模型输出解析出JSON:', content.slice(0, 200));
             return null;
         }
-        const slots: ScheduleSlot[] = (parsed.slots || []).map((s: any) => ({
-            startTime: s.startTime || '00:00',
+        const slots: ScheduleSlot[] = (Array.isArray(parsed.slots) ? parsed.slots : []).map((s: any) => ({
+            startTime: typeof s.startTime === 'string' ? s.startTime : '00:00',
             endTime: typeof s.endTime === 'string' ? s.endTime : undefined,
-            activity: s.activity || '',
+            activity: typeof s.activity === 'string' ? s.activity.trim() : '',
             description: s.description,
             emoji: s.emoji,
             location: s.location,
@@ -397,11 +411,8 @@ export async function generateDailyScheduleForChar(
         })).filter((s: ScheduleSlot) => s.activity);
 
         if (slots.length === 0) return null;
-
-        // Sort by time
         slots.sort((a, b) => a.startTime.localeCompare(b.startTime));
 
-        // Extract flowNarrative
         let flowNarrative: Record<string, string> | undefined;
         if (parsed.flowNarrative && typeof parsed.flowNarrative === 'object') {
             flowNarrative = {};
@@ -412,6 +423,32 @@ export async function generateDailyScheduleForChar(
             }
             if (Object.keys(flowNarrative).length === 0) flowNarrative = undefined;
         }
+        return { slots, flowNarrative };
+    };
+
+    try {
+        let generated = await requestSchedule(prompt);
+        if (!generated) return null;
+
+        let slots = fillMissingScheduleEndTimes(generated.slots);
+        let validation = validateGeneratedSchedule(slots, { sleepMode: schedulePlan.sleepMode });
+        if (!validation.valid) {
+            // 只对可验证的结构错误做一次受限重试，避免把“现实感”变成大量关键词误杀；
+            // 未通过前不覆盖当天已有的有效日程。
+            console.warn('[Schedule] Generated schedule failed validation; requesting one repair:', validation.errors);
+            generated = await requestSchedule(`${prompt}
+
+【上一版输出的结构校验结果】
+${validation.errors.join('；')}
+请重新输出一份完整 JSON。修正所有时间重叠、非法时间和睡眠时长问题；不要解释过程，不要省略 endTime。`);
+            if (!generated) return null;
+            slots = fillMissingScheduleEndTimes(generated.slots);
+            validation = validateGeneratedSchedule(slots, { sleepMode: schedulePlan.sleepMode });
+            if (!validation.valid) {
+                console.error('[Schedule] Repaired schedule still failed validation:', validation.errors);
+                return null;
+            }
+        }
 
         const schedule: DailySchedule = {
             id: `${char.id}_${today}`,
@@ -420,7 +457,7 @@ export async function generateDailyScheduleForChar(
             slots,
             generatedAt: Date.now(),
             coverImage,
-            flowNarrative,
+            flowNarrative: generated.flowNarrative,
             planningMeta: {
                 schemaVersion: 1,
                 seed: schedulePlan.seed,
@@ -430,6 +467,9 @@ export async function generateDailyScheduleForChar(
                 careerFocus: schedulePlan.careerFocus,
                 commercialActivityRequested: schedulePlan.commercialActivityRequested,
                 eventFingerprint: buildScheduleFingerprint(slots),
+                calendarMode: schedulePlan.calendarMode,
+                sleepMode: schedulePlan.sleepMode,
+                userRequirementApplied: Boolean(rerollRequirement),
                 ...(schedulePlan.sourceWorldbookIds.length > 0
                     ? { sourceWorldbookIds: schedulePlan.sourceWorldbookIds }
                     : {}),

@@ -10,6 +10,7 @@
  */
 
 import type { DailySchedule, ScheduleSlot } from '../types';
+import { getScheduleSlotInterval, isScheduleMinuteInInterval, parseScheduleClockTime } from './scheduleClock';
 
 /**
  * 渲染真正会读到的那部分日程。
@@ -66,28 +67,21 @@ export const resolveScheduleSlots = (
 ): ResolvedScheduleSlots => {
     if (!schedule?.slots?.length) return { current: null, next: null };
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
-    const toMinutes = (value?: string): number | null => {
-        if (!value) return null;
-        const [h, m] = value.split(':').map(Number);
-        return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null;
-    };
+    let next: ScheduleSlot | null = null;
     for (let i = 0; i < schedule.slots.length; i++) {
         const slot = schedule.slots[i];
-        const start = toMinutes(slot.startTime);
+        const start = parseScheduleClockTime(slot.startTime);
         if (start == null) continue;
-        if (currentMinutes < start) return { current: null, next: slot };
-        const explicitEnd = toMinutes(slot.endTime);
         const nextStart = i < schedule.slots.length - 1
-            ? toMinutes(schedule.slots[i + 1].startTime)
-            : null;
-        // 新日程有 endTime：结束后是真实空档，不把“开会”无限拖到下一格。
-        // 老数据没有 endTime 时仍沿用“持续到下一格 / 当日结束”的旧语义。
-        const end = explicitEnd ?? nextStart ?? 24 * 60;
-        if (end > start && currentMinutes < end) {
+            ? schedule.slots[i + 1].startTime
+            : undefined;
+        const interval = getScheduleSlotInterval(slot, nextStart);
+        if (interval && isScheduleMinuteInInterval(currentMinutes, interval)) {
             return { current: slot, next: i < schedule.slots.length - 1 ? schedule.slots[i + 1] : null };
         }
+        if (!next && currentMinutes < start) next = slot;
     }
-    return { current: null, next: null };
+    return { current: null, next };
 };
 
 /**
@@ -112,15 +106,40 @@ export const buildScheduleInjection = (
 
     // 凌晨还没轮到今天第一条日程时，人其实还在昨晚里没睡。主动消息经常在这个点触发，
     // 按「今天刚要开始」写，半夜一点的角色就会顶着清晨的心境说话。
-    const isPreDawnCarryOver = !currentSlot && now.getHours() < PRE_DAWN_END_HOUR;
+    const isPreDawnCarryOver = now.getHours() < PRE_DAWN_END_HOUR
+        && (!currentSlot || currentSlot.busyLevel === 'sleep');
 
     // 1. 当前时段硬事实（每轮独立注入）
     let slotHeader = '';
     if (currentSlot) {
+        const currentIndex = schedule.slots.indexOf(currentSlot);
+        const nextStart = currentIndex >= 0 && currentIndex < schedule.slots.length - 1
+            ? schedule.slots[currentIndex + 1].startTime
+            : undefined;
+        const interval = getScheduleSlotInterval(currentSlot, nextStart);
+        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+        let progress = '';
+        if (interval && isScheduleMinuteInInterval(currentMinutes, interval)) {
+            const elapsed = interval.end > 24 * 60 && currentMinutes < interval.end - 24 * 60
+                ? currentMinutes + 24 * 60 - interval.start
+                : currentMinutes - interval.start;
+            const remaining = Math.max(0, interval.end - interval.start - elapsed);
+            if (withClock) {
+                progress = currentSlot.busyLevel === 'sleep'
+                    ? `（正在睡眠，已持续约${elapsed}分钟）`
+                    : `（进行中，已开始约${elapsed}分钟，预计还需约${remaining}分钟；尚未完成整段活动）`;
+            } else {
+                progress = currentSlot.busyLevel === 'sleep'
+                    ? '（正在睡眠）'
+                    : '（进行中，尚未完成整段活动）';
+            }
+        }
+        const activityLabel = currentSlot.location
+            ? `${currentSlot.activity}（${currentSlot.location}）`
+            : currentSlot.activity;
         slotHeader = withClock
-            ? `当前时段：${currentSlot.startTime} 你正在${currentSlot.activity}`
-            : `当前时段：你正在${currentSlot.activity}`;
-        if (currentSlot.location) slotHeader += `（${currentSlot.location}）`;
+            ? `当前时段：${currentSlot.startTime} 你正在${activityLabel}${progress}`
+            : `当前时段：你正在${activityLabel}${progress}`;
         if (nextSlot) {
             slotHeader += withClock
                 ? `\n之后安排：${nextSlot.startTime} ${nextSlot.activity}`
@@ -170,6 +189,8 @@ export const buildScheduleInjection = (
     if (currentSlot) {
         out += '本轮现实状态以当前时段为准：历史聊天里的活动只代表当时；如果历史叙事与当前时段冲突，'
             + '不要把旧活动继续说成正在发生或刚刚结束。实际安排发生变化时，先按真实情况改日程再继续承接。\n';
+        out += '当前时段的描述是计划与目标，不是已经完成的结果；活动处于“进行中”时，除非聊天中有明确事实证明提前结束，'
+            + '不要声称整段活动已经做完，也不要把刚开始几分钟写成完成了长距离训练。\n';
     }
     if (narrative) {
         out += preamble + narrative + footnote;
