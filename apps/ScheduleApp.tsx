@@ -9,16 +9,15 @@ import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { getLocalDateKey } from '../utils/localDate';
 import { buildUserCalendarContext, eventsForDate, mergeCalendarDayTimeline, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, tasksForDate, type CalendarTimelineItem } from '../utils/calendarIntegration';
 import { trackEvent } from '../utils/analytics';
-import { extractTaskCommentResponse, formatTaskComment, isTaskCommentDisplayable, isTaskCommentGenerationAcceptable, TASK_COMMENT_SAFETY_VERSION, type TaskCommentSafetyContext } from '../utils/taskComment';
+import { extractTaskCommentResponse, formatTaskComment, isTaskCommentDisplayable, isTaskCommentGenerationAcceptable, type TaskCommentSafetyContext } from '../utils/taskComment';
 import { getTaskVoiceRetryAfterMs, isTaskVoiceRateLimitError, parseRetryAfterMs, TaskVoiceApiError, TASK_VOICE_DEFAULT_COOLDOWN_MS, TASK_VOICE_MAX_COOLDOWN_MS } from '../utils/taskVoiceRequest';
-import { buildTaskSupervisorMessages, compactTaskVoiceData } from '../utils/taskSupervisorPrompt';
+import { buildTaskSupervisorMessages } from '../utils/taskSupervisorPrompt';
 import { buildMonthlyReviewStats, buildSullyMonthlyReport, CALENDAR_MOODS, chooseMonthlyMessageCharacterId } from '../utils/calendarMonthlyReview';
 
 type CalendarTab = 'month' | 'mine' | 'theirs' | 'review';
 type TaskVoiceKind = 'comment' | 'completed';
 type TaskVoiceError = { kind: TaskVoiceKind; message: string; rateLimited?: boolean; retryAt?: number };
 type TaskVoiceApiConfig = { baseUrl: string; model: string };
-type TaskWithVoiceSafety = Task & { taskVoiceSafetyVersion?: number };
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
 const INPUT = 'w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none focus:border-violet-300 focus:bg-white';
 const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -104,54 +103,6 @@ const formatTimelineDate = (value: string, today: string) => {
     return value === today ? `今天 · 周${weekday}` : `${month}月${day}日 · 周${weekday}`;
 };
 const SULLY_WAITING_IMAGE = 'https://cdn.jsdelivr.net/gh/qegj567-cloud/SullyOS-assets@main/bgm/SULLY/wait.png';
-const textFromTaskContext = (value: unknown, depth = 0): string => {
-    if (depth > 5) return '';
-    if (typeof value === 'string') return value;
-    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-    if (Array.isArray(value)) return value.map(item => textFromTaskContext(item, depth + 1)).filter(Boolean).join(' ');
-    if (!value || typeof value !== 'object') return '';
-    const record = value as Record<string, unknown>;
-    return Object.entries(record)
-        .filter(([key]) => !['id', 'avatar', 'assetId', 'fileName', 'createdAt', 'updatedAt'].includes(key))
-        .map(([, item]) => textFromTaskContext(item, depth + 1))
-        .filter(Boolean)
-        .join(' ');
-};
-
-/**
- * These strings stay in memory for the post-response privacy gate. They are
- * intentionally not included in `buildTaskSupervisorMessages` or the request
- * body, so a private memory cannot be echoed by the provider in the first
- * place.
- */
-const buildTaskForbiddenEchoSources = (
-    character: CharacterProfile,
-    userProfile: UserProfile,
-    recentMessages: Array<{ role?: string; type?: string; content?: unknown }>,
-): string[] => {
-    const values: unknown[] = [
-        userProfile.bio,
-        character.impression,
-        character.refinedMemories,
-        character.memories,
-        character.roomPlatesInjection,
-        character.memoryPalaceInjection,
-        character.selfInsights,
-        character.mountedWorldbooks,
-        ...recentMessages
-            .filter(message => message.role === 'user' && (!message.type || message.type === 'text'))
-            .map(message => message.content),
-    ];
-    return values
-        .map(value => compactTaskVoiceData(textFromTaskContext(value), 4_000))
-        .filter(text => Array.from(text).length >= 6);
-};
-
-const buildTaskAllowedCalendarTexts = (tasks: Task[], events: Anniversary[]): string[] => [
-    ...tasks.flatMap(item => [item.title, item.note, item.deadline, item.dueTime]),
-    ...events.flatMap(item => [item.title, item.note, item.location, item.date, item.startTime, item.endTime]),
-].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
-
 type TaskVoiceRequest = {
     messages: ReturnType<typeof buildTaskSupervisorMessages>;
     safetyContext: TaskCommentSafetyContext;
@@ -159,15 +110,13 @@ type TaskVoiceRequest = {
 
 const buildTaskChatMessages = async (
     character: CharacterProfile,
-    userProfile: UserProfile,
     task: Task,
     completed: boolean,
 ) => {
     const now = new Date();
-    const [storedTasks, storedEvents, recentMessages] = await Promise.all([
+    const [storedTasks, storedEvents] = await Promise.all([
         DB.getAllTasks().catch(() => []),
         DB.getAllAnniversaries().catch(() => []),
-        DB.getRecentMessagesByCharId(character.id, 24, true).catch(() => []),
     ]);
     const today = getLocalDateKey(now);
     const calendarContext = buildUserCalendarContext({
@@ -180,22 +129,21 @@ const buildTaskChatMessages = async (
         today,
         now,
     });
-    const taskTexts = buildTaskAllowedCalendarTexts(storedTasks, storedEvents);
-    if (!taskTexts.includes(task.title)) taskTexts.push(task.title);
-    if (task.note?.trim() && !taskTexts.includes(task.note)) taskTexts.push(task.note);
+    const messages = buildTaskSupervisorMessages({
+        character,
+        task,
+        completed,
+        calendarContext,
+    });
     return {
-        messages: buildTaskSupervisorMessages({
-            character,
-            task,
-            completed,
-            calendarContext,
-            privateRedactions: [userProfile.name, userProfile.bio],
-        }),
+        messages,
         safetyContext: {
-            taskTexts,
-            forbiddenEchoTexts: buildTaskForbiddenEchoSources(character, userProfile, recentMessages),
+            // Only the actual system prompt is an unapproved echo source. The
+            // task and calendar remain valid facts the character may mention.
+            promptEchoTexts: messages
+                .filter(message => message.role === 'system')
+                .map(message => message.content),
             stage: completed ? 'completed' : 'pending',
-            safetyVersion: TASK_COMMENT_SAFETY_VERSION,
         },
     } satisfies TaskVoiceRequest;
 };
@@ -468,7 +416,6 @@ const ScheduleApp: React.FC = () => {
         policy: { writerPersona?: string },
     ): value is string => Boolean(
         task
-        && (task as TaskWithVoiceSafety).taskVoiceSafetyVersion === TASK_COMMENT_SAFETY_VERSION
         && isTaskCommentDisplayable(value, task.title, policy),
     );
 
@@ -508,7 +455,7 @@ const ScheduleApp: React.FC = () => {
         if (!silent) addToast(supervisor.name + ' 正在回应这件事...', 'info');
         try {
             const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '') + '/chat/completions';
-            const taskRequest = await buildTaskChatMessages(supervisor, userProfile, task, true);
+            const taskRequest = await buildTaskChatMessages(supervisor, task, true);
             const data = await requestTaskChatCompletion(baseUrl, apiConfig.apiKey, {
                 model: apiConfig.model,
                 temperature: 0.85,
@@ -532,11 +479,10 @@ const ScheduleApp: React.FC = () => {
                 clearTaskVoiceError(task.id, 'completed');
                 return;
             }
-            const updated: TaskWithVoiceSafety = {
+            const updated: Task = {
                 ...latest,
                 completedSupervisorComment: text,
                 completedSupervisorCommentGeneratedAt: Date.now(),
-                taskVoiceSafetyVersion: TASK_COMMENT_SAFETY_VERSION,
             };
             await DB.saveTask(updated);
             setTasks(current => current.map(item => item.id === task.id ? updated : item));
@@ -597,7 +543,7 @@ const ScheduleApp: React.FC = () => {
         setCommenting(current => new Set(current).add(task.id));
         try {
             const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '') + '/chat/completions';
-            const taskRequest = await buildTaskChatMessages(supervisor, userProfile, task, false);
+            const taskRequest = await buildTaskChatMessages(supervisor, task, false);
             const data = await requestTaskChatCompletion(baseUrl, apiConfig.apiKey, {
                 model: apiConfig.model,
                 temperature: 0.85,
@@ -617,7 +563,6 @@ const ScheduleApp: React.FC = () => {
                 ...latest,
                 supervisorComment: text,
                 supervisorCommentGeneratedAt: Date.now(),
-                taskVoiceSafetyVersion: TASK_COMMENT_SAFETY_VERSION,
             };
             await DB.saveTask(updated);
             setTasks(current => current.map(item => item.id === task.id ? updated : item));

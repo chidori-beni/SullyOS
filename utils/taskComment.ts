@@ -15,9 +15,9 @@ const META_LABELS = new Set([
     '留学生 in tokyo', '留学生intokyo',
 ]);
 
-// Extraction is deliberately separate from the strict generation gate below:
-// old, already-saved short speech can remain readable while a new response is
-// retried and checked before it is written back to IndexedDB.
+// Extraction is deliberately separate from the generation gate below: old,
+// already-saved speech can remain readable while a new response is checked
+// before it is written back to IndexedDB.
 // Nuoji's supervisor can naturally answer with very short speech such as
 // “嗯” or “去吧”. Length is not a reliable proxy for whether a response is
 // visible speech; protocol/meta detection below does that job.
@@ -36,24 +36,14 @@ const VISIBLE_TEXT_BLOCK_TYPES = new Set(['text', 'output_text']);
 const RESPONSE_CONTAINER_TYPES = new Set(['message', 'content', 'output', 'response']);
 
 export interface TaskCommentPolicyContext {
-    /** The character's writing profile, used only for source-aware leak checks. */
+    /** The character's writing profile, used only for style-metadata checks. */
     writerPersona?: string;
 }
 
-/**
- * Stored task voices are versioned separately from the task schema.  This lets
- * the UI hide sentences written by an older, over-broad prompt without
- * deleting the user's task or silently reusing a possibly private line.
- */
-export const TASK_COMMENT_SAFETY_VERSION = 2;
-
 export interface TaskCommentSafetyContext {
-    /** Current task title/note and explicitly user-entered calendar text. */
-    taskTexts?: string[];
-    /** Private local-only source text; this is never serialized into the API request. */
-    forbiddenEchoTexts?: string[];
+    /** Prompt text actually sent to the model that must not become the reply. */
+    promptEchoTexts?: string[];
     stage?: 'pending' | 'completed';
-    safetyVersion?: number;
 }
 
 const normalizeSafetyText = (value: string): string => value
@@ -69,67 +59,27 @@ const hasIncompleteTaskCommentEnding = (value: string): boolean => {
         || /(?:因为|如果|但是|然后|以及|并且|为了)$/.test(text);
 };
 
-const TASK_COMMENT_URL_RE = /(?:https?:\/\/|www\.)\S+/i;
-const TASK_COMMENT_EMAIL_RE = /[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/;
-const TASK_COMMENT_PHONE_RE = /(?<!\d)(?:\+?\d[\d -]{7,}\d)(?!\d)/;
-const TASK_COMMENT_PRIVATE_LABEL_RE = /(?:电话|手机号|手机号码|邮箱|电子邮件|微信|QQ|LINE|Telegram|地址|身份证|护照|银行卡|密码|验证码)/i;
-const TASK_COMMENT_PROFILE_PATTERNS: RegExp[] = [
-    /(?:在|于|来自|住在|居住在|就读于|工作于|留学于)[\p{Script=Han}\p{L}\p{N}·\s]{0,24}(?:留学|留学生|就读|上学|大学|学院|学校|公司|工作|居住|住在)/u,
-    /(?:日本|东京|大阪|京都)[\p{Script=Han}\p{L}\p{N}·\s]{0,12}(?:留学|留学生|就读|上学|大学|学院|学校|公司|工作|居住|住在)/u,
-    /(?:我|用户|本人|你|对方).{0,12}(?:在|于|来自|住在|就读于|工作于|留学于).{0,20}(?:日本|东京|大阪|京都|学校|大学|公司|留学|留学生|居住|工作)/iu,
-    /(?:留学生|留学)\s*(?:in|at|from)\s*(?:tokyo|japan|osaka|kyoto)/i,
-];
-
-const taskTextCoversPrivatePhrase = (candidate: string, taskTexts: string[]): boolean => {
-    const candidateText = normalizeSafetyText(candidate)
-        .replace(/^(?:我|你|他|她|用户|本人|对方|在|于|从|去|就|是)+/u, '')
-        .replace(/(?:吧|呢|啊|呀|了|哦|嘛)+$/u, '');
-    if (candidateText.length < 4) return false;
-    return taskTexts.some(task => normalizeSafetyText(task).includes(candidateText));
-};
-
-/** High-confidence personal-data patterns that must never become a card line. */
-const hasHighConfidencePrivateProfileLeak = (value: string, taskTexts: string[]): boolean => {
-    if (TASK_COMMENT_URL_RE.test(value)
-        || TASK_COMMENT_EMAIL_RE.test(value)
-        || TASK_COMMENT_PHONE_RE.test(value)
-        || TASK_COMMENT_PRIVATE_LABEL_RE.test(value)) return true;
-    return TASK_COMMENT_PROFILE_PATTERNS.some(pattern => {
-        const match = value.match(pattern)?.[0];
-        if (!match) return false;
-        return !taskTextCoversPrivatePhrase(match, taskTexts);
-    });
-};
-
 /**
- * Catch a model copying a salient private phrase from a local memory/profile
- * source.  The source strings are deliberately accepted as an argument only
- * for an in-memory comparison; callers must never put this context in JSON.
+ * Catch a model copying a substantial fragment of the prompt into the reply.
+ * The sources must be the prompt sent for this request, not local memories,
+ * user profile data, or recent chat that never crossed the request boundary.
  */
-const containsForbiddenEcho = (
+const containsPromptEcho = (
     candidate: string,
-    forbiddenSources: string[],
-    taskTexts: string[],
+    promptSources: string[],
 ): boolean => {
     const normalizedCandidate = normalizeSafetyText(candidate);
-    const candidateCharacters = Array.from(normalizedCandidate);
+    if (!normalizedCandidate) return false;
     const minimumLength = /[\p{Script=Han}]/u.test(candidate) ? 6 : 12;
-    if (candidateCharacters.length < minimumLength) return false;
-    const normalizedTasks = taskTexts
-        .map(normalizeSafetyText)
-        .filter(text => text.length >= minimumLength);
+    if (Array.from(normalizedCandidate).length < minimumLength) return false;
 
-    for (const source of forbiddenSources) {
+    for (const source of promptSources) {
         const normalizedSource = normalizeSafetyText(source).slice(0, 4_000);
         if (normalizedSource.length < minimumLength) continue;
-        for (let start = 0; start <= candidateCharacters.length - minimumLength; start += 1) {
-            const maxLength = Math.min(candidateCharacters.length - start, 32);
-            for (let length = minimumLength; length <= maxLength; length += 1) {
-                const fragment = candidateCharacters.slice(start, start + length).join('');
-                if (!fragment || normalizedTasks.some(task => task.includes(fragment))) continue;
-                if (normalizedSource.includes(fragment)) return true;
-            }
-        }
+        // Exact or fully-contained copies are strong evidence of prompt echo.
+        // Do not reject every short overlapping phrase: normal character speech
+        // often shares words with a role card or an instruction.
+        if (normalizedSource === normalizedCandidate || normalizedSource.includes(normalizedCandidate)) return true;
     }
     return false;
 };
@@ -138,8 +88,7 @@ const isTaskCommentSafetyAcceptable = (
     value: string,
     safety: TaskCommentSafetyContext = {},
 ): boolean => !hasIncompleteTaskCommentEnding(value)
-    && !hasHighConfidencePrivateProfileLeak(value, safety.taskTexts || [])
-    && !containsForbiddenEcho(value, safety.forbiddenEchoTexts || [], safety.taskTexts || []);
+    && !containsPromptEcho(value, safety.promptEchoTexts || []);
 
 const stripThinkingBlocks = (value: string): string => value
     .replace(/<(think|thinking|thought|analysis|reasoning)>[\s\S]*?<\/\1>/gi, '')
@@ -323,9 +272,6 @@ const extractFromObject = (value: Record<string, unknown>): string => {
     return '';
 };
 
-const hasPrivateResponseField = (value: Record<string, unknown>): boolean => Object.keys(value)
-    .some(key => /^(?:analysis|reasoning|reasoning_content|thinking|thought|chain_of_thought|hidden_reasoning)$/i.test(key));
-
 /** Returns null for an empty response or a field/mode name without a sentence. */
 export const extractTaskComment = (raw: unknown): string | null => {
     let text = flattenTaskCommentContent(raw).trim();
@@ -339,9 +285,11 @@ export const extractTaskComment = (raw: unknown): string | null => {
             const parsed: unknown = JSON.parse(candidate);
             if (Array.isArray(parsed)) text = parsed.find(item => typeof item === 'string') as string || '';
             else if (parsed && typeof parsed === 'object') {
-                const record = parsed as Record<string, unknown>;
-                if (hasPrivateResponseField(record)) return null;
-                text = extractFromObject(record);
+                // If a provider serializes both a visible content field and a
+                // reasoning field, keep the visible field. A reasoning key is
+                // ignored by extractFromObject; only a reasoning-only object
+                // becomes empty and is rejected below.
+                text = extractFromObject(parsed as Record<string, unknown>);
             }
         } catch {
             // Keep treating it as plain text below; the response may contain
@@ -479,17 +427,13 @@ export const isTaskCommentGenerationAcceptable = (
     const text = extractTaskComment(value);
     if (!text) return false;
     const effectiveLength = [...text].filter(character => !/\s/.test(character)).length;
-    const effectiveSafety: TaskCommentSafetyContext = {
-        ...safety,
-        taskTexts: [taskTitle, ...(safety.taskTexts || [])].filter(Boolean),
-    };
     return effectiveLength >= MIN_EXTRACTED_TASK_COMMENT_LENGTH
         && text.length <= MAX_COMPLETE_TASK_COMMENT_LENGTH
         && hasVisibleSpeechCharacter(text)
         && !isWriterPersonaMetaLeak(text, policy.writerPersona)
         && !isTaskCommentTooGeneric(text, taskTitle)
         && !isLikelyTaskEcho(text, taskTitle)
-        && isTaskCommentSafetyAcceptable(text, effectiveSafety);
+        && isTaskCommentSafetyAcceptable(text, safety);
 };
 
 /**
@@ -508,17 +452,13 @@ export const isTaskCommentDisplayable = (
     const text = extractTaskComment(value);
     if (!text) return false;
     const effectiveLength = [...text].filter(character => !/\s/.test(character)).length;
-    const effectiveSafety: TaskCommentSafetyContext = {
-        ...safety,
-        taskTexts: [taskTitle, ...(safety.taskTexts || [])].filter(Boolean),
-    };
     return effectiveLength >= MIN_EXTRACTED_TASK_COMMENT_LENGTH
         && text.length <= MAX_COMPLETE_TASK_COMMENT_LENGTH
         && hasVisibleSpeechCharacter(text)
         && !isWriterPersonaMetaLeak(text, policy.writerPersona)
         && !isTaskCommentTooGeneric(text, taskTitle)
         && !isLikelyTaskEcho(text, taskTitle)
-        && isTaskCommentSafetyAcceptable(text, effectiveSafety);
+        && isTaskCommentSafetyAcceptable(text, safety);
 };
 
 /** True when a stored value should be replaced by one fresh, strict reply. */

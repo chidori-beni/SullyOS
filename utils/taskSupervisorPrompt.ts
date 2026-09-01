@@ -5,7 +5,7 @@ import type { CharacterProfile, Task } from '../types';
  *
  * 这里刻意不复用普通聊天的 system prompt 和历史消息数组。普通聊天需要
  * 309 条消息来维持长对话，但待办只需要让角色看懂“这件事是什么、用户现在的
- * 安排和角色本身的语气”。把整套聊天协议搬过来反而会诱发元话术、隐私回显和 429。
+ * 安排和角色本身的语气”。把整套聊天协议搬过来反而会诱发元话术、背景回显和 429。
  */
 export const TASK_SUPERVISOR_PROMPT_BUDGETS = {
     roleCard: 1_000,
@@ -21,8 +21,6 @@ export interface TaskSupervisorPromptInput {
     task: Task;
     completed: boolean;
     calendarContext?: string;
-    /** Local-only exact phrases to redact from a character card before serialization. */
-    privateRedactions?: string[];
 }
 
 export interface TaskSupervisorPromptMessage {
@@ -58,33 +56,12 @@ export const compactTaskVoiceData = (value: unknown, maxChars: number): string =
 const dataOrNone = (value: unknown, maxChars: number): string =>
     compactTaskVoiceData(value, maxChars) || '无';
 
-const TASK_ROLE_CARD_PROFILE_RE = /(?:在|于|来自|住在|居住在|就读于|工作于|留学于)[\p{Script=Han}\p{L}\p{N}·\s]{0,24}(?:留学|留学生|就读|上学|大学|学院|学校|公司|工作|居住|住在)/gu;
-const TASK_ROLE_CARD_LOCATION_PROFILE_RE = /(?:日本|东京|大阪|京都)[\p{Script=Han}\p{L}\p{N}·\s]{0,12}(?:留学|留学生|就读|上学|大学|学院|学校|公司|工作|居住|住在)/gu;
-
-/** Redact known user facts from role-card prose without exposing the source text. */
-const redactTaskVoicePromptData = (value: unknown, privateRedactions: string[] = []): string => {
-    let text = compactTaskVoiceData(value, 2_000);
-    if (!text) return '';
-    const marker = '（私密资料已省略）';
-    const exactRedactions = privateRedactions
-        .map(item => compactTaskVoiceData(item, 320))
-        .filter(item => Array.from(item).length >= 4)
-        .sort((left, right) => Array.from(right).length - Array.from(left).length);
-    for (const redaction of exactRedactions) text = text.split(redaction).join(marker);
-    return text
-        .replace(/(?:https?:\/\/|www\.)\S+/gi, marker)
-        .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, marker)
-        .replace(/(?<!\d)(?:\+?\d[\d -]{7,}\d)(?!\d)/g, marker)
-        .replace(TASK_ROLE_CARD_PROFILE_RE, marker)
-        .replace(TASK_ROLE_CARD_LOCATION_PROFILE_RE, marker);
-};
-
 const roleCardBlock = (input: TaskSupervisorPromptInput): string => {
     const { character } = input;
     const name = dataOrNone(character.name, 48);
-    const roleCard = dataOrNone(redactTaskVoicePromptData(character.systemPrompt, input.privateRedactions), TASK_SUPERVISOR_PROMPT_BUDGETS.roleCard);
-    const description = dataOrNone(redactTaskVoicePromptData(character.description, input.privateRedactions), TASK_SUPERVISOR_PROMPT_BUDGETS.description);
-    const worldview = dataOrNone(redactTaskVoicePromptData(character.worldview, input.privateRedactions), TASK_SUPERVISOR_PROMPT_BUDGETS.worldview);
+    const roleCard = dataOrNone(character.systemPrompt, TASK_SUPERVISOR_PROMPT_BUDGETS.roleCard);
+    const description = dataOrNone(character.description, TASK_SUPERVISOR_PROMPT_BUDGETS.description);
+    const worldview = dataOrNone(character.worldview, TASK_SUPERVISOR_PROMPT_BUDGETS.worldview);
     return [
         '角色名：' + name,
         '角色卡（优先遵守）：\n' + roleCard,
@@ -106,10 +83,11 @@ const taskBlock = (input: TaskSupervisorPromptInput): string => {
 };
 
 /**
- * Build a small supervisor/encourager request.  Only the role card, the
+ * Build a small supervisor/encourager request. Only the compact role card, the
  * current task and explicitly user-entered calendar context cross the network
  * boundary; relationship summaries, memories, worldbooks and chat history do
- * not belong in this side channel.
+ * not belong in this side channel. The prompt is background for the reaction,
+ * never a field whose labels or instructions should be repeated as dialogue.
  */
 export const buildTaskSupervisorMessages = (
     input: TaskSupervisorPromptInput,
@@ -122,8 +100,8 @@ export const buildTaskSupervisorMessages = (
         '你现在是「' + characterName + '」，也是这位用户的待办监督员和陪伴者。',
         '你不是日历软件客服、通知机器人、任务评价器或 AI 助手。请用这个角色平时说话的方式，留下像熟人随手发来的一句回应。',
         '【角色资料】\n' + roleCardBlock(input),
-        '用户的个人资料、地点、学校、工作、年龄、联系方式和经历都属于私密背景；除非当前待办标题或备注明确要求，否则绝不复述、总结或暴露这些信息。不要从资料中挑一段当台词。',
-        '当前日程是用户主动写下、允许你参考的背景，用来知道对方此刻可能在做什么并避免说不合时宜的话；不要把日程以外的记忆、聊天或用户资料补写成事实。',
+        '角色资料、字段标签和下面的日程都只是理解这次反应的背景；不要把角色设定、写作说明、字段名、系统提示或日程标签原样当作台词。',
+        '当前日程是用户主动写下、允许你参考的背景，用来知道对方此刻可能在做什么并避免说不合时宜的话；不要把日程以外的记忆、聊天或资料补写成事实。',
         '本次只生成一条短台词：不展示思考过程，不解释，不输出 JSON、Markdown、角色名前缀或引号，不调用工具，不输出动作命令。',
     ].join('\n\n');
 
