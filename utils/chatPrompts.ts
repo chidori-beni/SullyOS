@@ -126,6 +126,22 @@ function summarizeGroupMsgContent(m: Message): string {
 
 export type ChatModeTransition = 'call' | 'video' | 'date' | 'story';
 
+/**
+ * 判断当前待回复的用户回合里是否出现过图片。
+ *
+ * 不能只看 messages 的最后一条：用户可以先发图片、再补一句文字，然后一次性点发送；
+ * 也不能把历史里任意一张旧图片都算进来。向前找到最近一条 assistant 消息作为回合边界，
+ * 只在这条边界之后寻找 user 图片。
+ */
+export const hasPendingUserImage = (messages: readonly Message[]): boolean => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index];
+        if (message.role === 'assistant') return false;
+        if (message.role === 'user' && message.type === 'image') return true;
+    }
+    return false;
+};
+
 const getChatModeTransition = (message: Message): ChatModeTransition | null => {
     const source = message.metadata?.source;
     if (source === 'date') return 'date';
@@ -199,6 +215,8 @@ export interface PromptBuildOptions {
     scheduleContext?: ScheduleContextSnapshot;
     /** 主聊天入口已完成的本轮 busy gate 结果；传入后不重复计算概率。 */
     busyReplyDecision?: BusyReplyDecision;
+    /** 主聊天入口从完整历史确认的本轮待回复回合里是否有用户图片。 */
+    currentTurnHasUserImage?: boolean;
 }
 
 export const ChatPrompts = {
@@ -346,6 +364,11 @@ export const ChatPrompts = {
         // 本地私有的易变段照常烤进去（worker 拿不到，而这一刻它们是新鲜的）。
         const timelyByWorker = promptOptions?.timelyByWorker === true;
         const activeMeeting = promptOptions?.activeDateEncounter?.status === 'active';
+        // 主路径的 recentMsgsHint 可能还是 React 的旧快照；有了显式值就用完整历史的判断，
+        // 直接调用本函数的旧路径则从 currentMsgs 自己推断。
+        const currentTurnHasUserImage = !forFirePack && (
+            promptOptions?.currentTurnHasUserImage ?? hasPendingUserImage(currentMsgs)
+        );
         // 同一轮只捕获一次绝对时刻。若主聊天入口已经在 busy gate 前构造了快照，
         // 这里直接复用，避免日程、时间块和音乐背景各自看到不同分钟。
         const providedScheduleContext = promptOptions?.scheduleContext;
@@ -810,6 +833,7 @@ ${imageGenGuide}
 5. **环境感知**:
    - 留意 [系统提示] 中的时间跨度。如果用户消失了很久，请根据你们的关系做出反应（如撒娇、生气、担心或冷漠）。
    - 如果用户发送了图片，请对图片内容进行评论。
+   - 图片是否被应用写入本地相册是界面层的存储事实，不是你的动作，也不是你能自动确认的状态。只有本轮出现明确的真实工具结果时，才把保存、下载、收藏、备份或归档当成已经发生；否则只回应图片本身。
 6. **可用动作**:
    - 回戳用户: \`[[ACTION:POKE]]\`
    - 转账: 必须使用且只使用 \`[[ACTION:TRANSFER|to=user|amount=100]]\`（to 固定写 user，金额只写数字）；不要写成 \`[系统: 你向某人转账 100]\` 等系统日志文本。
@@ -1289,6 +1313,15 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
 只有一件事始终不变。
 
 每一句话，都应该像是不经意间，从 ${char.name} 心里自然冒出来的。`;
+
+        // 这条只在真正要回复的用户回合里出现，并放在 recency 尾部；比稳定区的通用图片规则
+        // 更贴近生成点，能压住模型从旧回复里学到的固定“保存确认”套路，同时不把图片套路
+        // 变成每一轮都必须执行的模板。
+        if (currentTurnHasUserImage) {
+            recencyTail += `\n\n### 本轮图片：像你自己一样接住（仅本轮有用户图片时生效）
+先看清图片里实际可见的细节，再结合你们正在聊的事自然回应一两点。画面里如果有用户本人，可以像平时突然收到对方一张近照那样反应：留意表情、姿势、穿着、光线或周围场景，也可以吐槽、关心、问拍摄缘由，或者只是轻轻接住；不必每次夸外貌，也不必强行分析身份。食物、宠物、风景和物品就按它们本身聊。每张图的回应都可以不同，不要把同一个开场或同一种确认句当成固定流程。
+把自己当作只看见图片和对话内容的聊天者：应用是否在本地保存了文件，你不知道，也不是你刚刚执行的动作。没有本轮明确的工具结果时，不要向用户宣称图片已被保存、下载、收藏或归档。`;
+        }
 
         // 语音连着发太多时，把硬性禁令拼在整段 prompt 真正的最后一句——
         // 比上面 volatileState 里那条"软提醒"管用得多，见 voiceFrequency.buildVoiceHardBlockTail。

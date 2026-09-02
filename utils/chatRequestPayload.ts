@@ -13,7 +13,7 @@
  */
 
 import type { CharacterProfile, UserProfile, GroupProfile, Emoji, EmojiCategory, Message, RealtimeConfig, TranslationConfig, VisionApiConfig } from '../types';
-import { ChatPrompts, detectChatModeTransition } from './chatPrompts';
+import { ChatPrompts, detectChatModeTransition, hasPendingUserImage } from './chatPrompts';
 import { injectMemoryPalace } from './memoryPalace/pipeline';
 import { renderLocalContextGuidance } from './memoryPalace/recallRouter';
 import { renderInteractionAdaptationGuidance } from './memoryPalace/interactionAdaptation';
@@ -377,6 +377,9 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     // 但主 API 的 historyMsgsForPrompt 来自完整 DB，仍然会看到它们。模式切换必须以 API
     // 真正要发送的历史为准，否则模型会收到特殊模式正文，却收不到「切回聊天格式」的提示。
     const returningFromMode = detectChatModeTransition(historyMsgsForPrompt);
+    // recentMsgsHint 可能仍是 Chat.tsx 的旧 React 快照；图片边界必须按这次真正送入模型的
+    // 完整历史判断，否则刚发完图片时，针对图片的 recency 规则可能漏掉。
+    const currentTurnHasUserImage = hasPendingUserImage(historyMsgsForPrompt);
     const abruptCallEnd = (returningFromMode === 'call' || returningFromMode === 'video')
         && historyMsgsForPrompt.some(message => message.metadata?.source === 'call-end-popup'
             && message.metadata?.callEndedAbruptly === true);
@@ -390,13 +393,14 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         !!isListeningTogether,
         musicCfg,
         recentTrackSwitch,
-        (input.timelyByWorker || returningFromMode || activeDateEncounter || input.scheduleContext || input.busyReplyDecision) ? {
+        (input.timelyByWorker || returningFromMode || activeDateEncounter || input.scheduleContext || input.busyReplyDecision || currentTurnHasUserImage) ? {
             timelyByWorker: input.timelyByWorker === true,
             returningFromMode: activeDateEncounter ? undefined : (returningFromMode || undefined),
             abruptCallEnd: activeDateEncounter ? false : abruptCallEnd,
             activeDateEncounter,
             scheduleContext: input.scheduleContext,
             busyReplyDecision: input.busyReplyDecision,
+            currentTurnHasUserImage,
         } : undefined,
     );
     let systemPrompt = parts.stable;
