@@ -11,6 +11,7 @@ import { prepareNuojiSpeechText } from '../utils/nuojiSpeechText';
 import { normalizeVoiceTags } from '../utils/sanitize';
 import { FISH_VOICE_ACTING_GUIDE, synthesizeSpeechFishDetailed, resolveFishAudioApiKey, cleanTextForTtsFish, stripFishMarkupForDisplay } from '../utils/fishAudioTts';
 import { resolveTtsProvider, getTtsProvider, getVoicePromptOverride } from '../utils/ttsProvider';
+import { chatDetailLaunch } from '../utils/chatDetailLaunch';
 import { VOICE_LANGUAGE_OPTIONS } from '../utils/voiceLanguage';
 import { notePlaybackStarted } from '../utils/audioOutputRoute';
 import { startStt, isSttSupported, prepareSiliconFlowAudioCapture, prepareSiliconFlowAudioPlayback, setSiliconFlowAudioRoute, releaseSiliconFlowMicrophone, type SiliconFlowAudioRoute, type SttSession } from '../utils/speechToText';
@@ -3456,11 +3457,14 @@ ${sentencePlan}`;
     if (returnToChatRef.current) {
       returnToChatRef.current = false;
       trackEvent('从通话记录返回信息界面');
+      // 光是 openApp 会停在好友列表：用户是从这段对话里的通话卡片进来的，
+      // 返回就该回到同一段对话。
+      chatDetailLaunch.request({ charId: selectedCharId });
       openApp(AppID.Chat);
       return;
     }
     setViewMode('history');
-  }, [openApp]);
+  }, [openApp, selectedCharId]);
   // Hardware/browser back should follow the same origin-aware path as the
   // visible record buttons. Other CallApp screens still fall through to the
   // shell's normal close-app behavior.

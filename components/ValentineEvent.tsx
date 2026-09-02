@@ -13,6 +13,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
+import { chatDetailLaunch } from '../utils/chatDetailLaunch';
 import { ContextBuilder } from '../utils/context';
 import { safeResponseJson } from '../utils/safeApi';
 import { AppID, CharacterProfile, SpecialMomentRecord } from '../types';
@@ -1474,6 +1475,8 @@ export const SpecialMomentsApp: React.FC = () => {
             setShowQixiSession(false);
             setQixiCharId('');
             setQixiReplaySnapshot(null);
+            // 刚把这段回忆写进对话里，落点就该是那段对话而不是好友列表。
+            chatDetailLaunch.request({ charId: qixiCharId, clearUnread: true });
             openApp(AppID.Chat);
         } catch (error) {
             console.error('[Qixi] return to chat failed:', error);

@@ -20,6 +20,7 @@ import { trackEvent } from '../utils/analytics';
 import { markAmsgStateDirty } from '../utils/amsgStateSync';
 import StoryTheater from '../components/date/story/StoryTheater';
 import { dateLaunch } from '../utils/dateLaunch';
+import { chatDetailLaunch } from '../utils/chatDetailLaunch';
 import { materializeVisionDescriptions } from '../utils/visionApi';
 import { shareOrDownloadFile } from '../utils/shareExport';
 import { clearActiveDatePresence, getActiveDatePresence, makeDateEncounterPresence, setActiveDatePresence } from '../utils/datePresence';
@@ -75,8 +76,8 @@ const DateApp: React.FC = () => {
     // 全局更新弹窗等入口可直接落到「剧情」。peek 让首次渲染就显示目标页，
     // subscribe 则覆盖 DateApp 已经打开的情况；应用后立即消费，绝不污染下次普通打开。
     useEffect(() => {
-        const applyLaunchIntent = (intent: { surface: 'companion' | 'story'; charId?: string; encounterId?: string; openHistory?: boolean }) => {
-            setCameFromChat(false);
+        const applyLaunchIntent = (intent: { surface: 'companion' | 'story'; charId?: string; encounterId?: string; openHistory?: boolean; returnTo?: 'chat' }) => {
+            setCameFromChat(intent.returnTo === 'chat');
             setMeetSurface(intent.surface);
             if (intent.openHistory && intent.charId && intent.encounterId) {
                 setPendingHistoryOpen({ charId: intent.charId, encounterId: intent.encounterId });
@@ -308,6 +309,8 @@ const DateApp: React.FC = () => {
             setPeekStatus('');
         } else if (mode === 'history') {
             if (historySelectedGroupId) setHistorySelectedGroupId(null);
+            // 从聊天的见面完结卡片进来的记录页，返回同样要回那段对话。
+            else if (cameFromChat) returnToChat();
             else setMode('select');
         } else closeApp();
     };
@@ -378,6 +381,9 @@ const DateApp: React.FC = () => {
     // 退出见面流程：来自聊天则回聊天，否则回见面选择页/桌面（由调用方决定）
     const returnToChat = () => {
         setCameFromChat(false);
+        // 只 openApp 会停在好友列表；用户是从某段对话里进来的，返回要回同一段对话。
+        const backToCharId = char?.id || activeCharacterId;
+        if (backToCharId) chatDetailLaunch.request({ charId: backToCharId });
         openApp(AppID.Chat);
     };
 
@@ -839,6 +845,9 @@ const DateApp: React.FC = () => {
             setEndSuggestedReason('');
             setMode('history');
             trackEvent('退出见面回顾');
+            // 从聊天的见面完结卡片直接进来的回顾，退出时一步回到那段对话，
+            // 跟通话记录卡片的返回行为保持一致，而不是先落到见面记录列表。
+            if (cameFromChat) returnToChat();
             return;
         }
         // 用户主动保存并退出 = 干净退出，撤销恢复哨兵。

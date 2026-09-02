@@ -5,6 +5,8 @@ export interface DateLaunchIntent {
     /** Open the historical encounter containing this id instead of the character picker. */
     encounterId?: string;
     openHistory?: boolean;
+    /** 从某个 App 深链进来时，记录退出见面后的返回目标（与 callLaunch.returnTo 同义）。 */
+    returnTo?: 'chat';
 }
 
 type DateLaunchListener = (intent: DateLaunchIntent) => void;

@@ -169,7 +169,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     }, [openApp, setActiveCharacterId]);
     const handleOpenDateEncounter = useCallback((charId: string, encounterId: string) => {
         setActiveCharacterId(charId);
-        dateLaunch.request({ surface: 'companion', charId, encounterId, openHistory: true });
+        dateLaunch.request({ surface: 'companion', charId, encounterId, openHistory: true, returnTo: 'chat' });
         openApp(AppID.Date);
         trackEvent('从见面完结卡片打开见面记录');
     }, [openApp, setActiveCharacterId]);

@@ -13,6 +13,7 @@ import { getDailyScheduleForChar } from '../utils/dailySchedule';
 import { useLocalDateKey } from '../hooks/useLocalDateKey';
 import { resolveCharTimeZone } from '../utils/timezone';
 import { trackEvent } from '../utils/analytics';
+import { chatDetailLaunch } from '../utils/chatDetailLaunch';
 import { CALENDAR_DATA_UPDATED_EVENT, eventOccursOnDate, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey } from '../utils/calendarIntegration';
 import {
     carouselCloneResetIndex,
@@ -1843,7 +1844,12 @@ const Launcher: React.FC = () => {
                             char={widgetChar}
                             unreadCount={widgetUnread}
                             lastMessage={lastMessage}
-                            onClick={() => openApp(AppID.Chat)}
+                            onClick={() => {
+                                // 预览卡展示的就是某个角色的最新消息，点它要落到那段对话，
+                                // 而不是好友列表（没有角色时才回落到列表）。
+                                if (widgetChar) chatDetailLaunch.request({ charId: widgetChar.id, clearUnread: true });
+                                openApp(AppID.Chat);
+                            }}
                             contentColor={contentColor}
                             paper={paper}
                         />

@@ -53,6 +53,7 @@ import { buildSelfiePromptForGeneration, generateImageDataUrl, getImageGenConfig
 import { safeResponseJson } from '../utils/safeApi';
 import { getSocialPostScope, isMomentsPost, withSocialPostScope } from '../utils/socialPostScope';
 import { setChatViewSnapshot } from '../utils/chatGenEvents';
+import { chatDetailLaunch } from '../utils/chatDetailLaunch';
 import {
     appendMomentComment,
     applyMomentAiInteractions,
@@ -269,6 +270,27 @@ const Messaging: React.FC = () => {
     useEffect(() => {
         setChatViewSnapshot(view === 'detail', view === 'detail' ? activeCharacterId ?? null : null);
     }, [activeCharacterId, view]);
+
+    // 「点进去应该就是这段对话」的入口（桌面消息预览卡、推送横幅、通话/见面卡片返回…）
+    // 统一走 chatDetailLaunch：它们只能 openApp(AppID.Chat)，而本组件每次挂载都从
+    // 好友列表起步，于是用户点消息预览却落在了列表上。peek 覆盖「Messaging 还没挂载」，
+    // subscribe 覆盖「消息 App 已经开着」。应用后立即消费，绝不污染下一次从桌面正常
+    // 点开消息 App（那时就该停在好友列表）。
+    useEffect(() => {
+        const applyLaunchIntent = (intent: { charId: string; clearUnread?: boolean }) => {
+            if (!intent?.charId) return;
+            setActiveCharacterId(intent.charId);
+            if (intent.clearUnread) clearUnread(intent.charId);
+            setTab('chat');
+            setView('detail');
+            chatDetailLaunch.consume();
+        };
+
+        const initialIntent = chatDetailLaunch.peek();
+        if (initialIntent) applyLaunchIntent(initialIntent);
+        return chatDetailLaunch.subscribe(applyLaunchIntent);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const [profileEditOpen, setProfileEditOpen] = useState(false);
     const [momentGenerateOpen, setMomentGenerateOpen] = useState(false);

@@ -107,7 +107,10 @@ describe('CompanionHome touch request boundaries', () => {
     const source = readFileSync(path.resolve(__dirname, '../components/os/CompanionHome.tsx'), 'utf8');
 
     expect(source).toContain('onClick={() => openApp(AppID.CheckPhone)} className="min-w-0 border-r');
-    expect(source).toContain('onClick={() => openApp(AppID.Chat)} className="min-w-0 border-r');
+    // 「最近聊天」这一格展示的是这个伙伴的最后一条消息，点它要直达那段对话，
+    // 只 openApp 会停在好友列表（见 utils/chatDetailLaunch.test.ts）。
+    expect(source).toContain('chatDetailLaunch.request({ charId: character.id, clearUnread: true })');
+    expect(source).toContain('data-testid="companion-hud-chat"');
     expect(source).toContain('data-testid="companion-hud-schedule"');
   });
 
