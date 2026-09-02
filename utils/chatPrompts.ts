@@ -5,7 +5,7 @@ import { ContextBuilder } from './context';
 import { DB } from './db';
 import { formatLifeSimResetCardForContext } from './lifeSimChatCard';
 import { formatQixiEventCardForContext, tryParseQixiEventChatCard } from './qixiChatCard';
-import { normalizeMessageContent, stickerNameFromUrl, theaterWhenPhrase } from './messageFormat';
+import { normalizeMessageContent, stickerPromptLabelFromUrl, theaterWhenPhrase } from './messageFormat';
 import { formatTransferRecord } from './transferFormat';
 import { computeCurrentListening, getCurrentSlot } from './charMusicSchedule';
 import { getCharLyricSnippet } from './charLyricCache';
@@ -24,10 +24,11 @@ import { isAmsg2EnabledForChar } from './amsg2Tasks';
 import { getCharNameById } from './charNameRegistry';
 import { getLocalDateKey } from './localDate';
 import { getDailyScheduleForChar } from './dailySchedule';
+import { createScheduleContextSnapshot, type ScheduleContextSnapshot } from './scheduleContext';
 import { formatRelativeAge } from './groupChat/relativeTime';
 import { formatMessageReactionContext, stripMessageReactionTags } from './messageReactions';
 import { stripFaceToFacePhoneSourceTags } from './sanitize';
-import { buildAutoReplyCatchUpPrompt, buildBusyReplyPrompt, decideBusyReply } from './busyAutoReply';
+import { buildAutoReplyCatchUpPrompt, buildBusyReplyPrompt, decideBusyReply, type BusyReplyDecision } from './busyAutoReply';
 import { buildUserCalendarContext } from './calendarIntegration';
 import { buildXinshengContinuityBlock, buildXinshengInstruction, selectXinshengContinuity } from './xinsheng/xinshengPrompt';
 import { readXinshengHistory } from './xinsheng/xinshengStore';
@@ -125,6 +126,22 @@ function summarizeGroupMsgContent(m: Message): string {
 
 export type ChatModeTransition = 'call' | 'video' | 'date' | 'story';
 
+/**
+ * 判断当前待回复的用户回合里是否出现过图片。
+ *
+ * 不能只看 messages 的最后一条：用户可以先发图片、再补一句文字，然后一次性点发送；
+ * 也不能把历史里任意一张旧图片都算进来。向前找到最近一条 assistant 消息作为回合边界，
+ * 只在这条边界之后寻找 user 图片。
+ */
+export const hasPendingUserImage = (messages: readonly Message[]): boolean => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index];
+        if (message.role === 'assistant') return false;
+        if (message.role === 'user' && message.type === 'image') return true;
+    }
+    return false;
+};
+
 const getChatModeTransition = (message: Message): ChatModeTransition | null => {
     const source = message.metadata?.source;
     if (source === 'date') return 'date';
@@ -191,6 +208,15 @@ export interface PromptBuildOptions {
     timelyByWorker?: boolean;
     /** 用户和角色仍在同一次线下见面中，但此刻通过手机互发消息。 */
     activeDateEncounter?: DateEncounterPresence;
+    /**
+     * 本轮已经捕获的角色时间/日程快照。主聊天入口传入后，提示词、忙碌判定和音乐
+     * 背景都消费同一份状态；其他调用方不传时仍由本函数用一次基准时刻构建。
+     */
+    scheduleContext?: ScheduleContextSnapshot;
+    /** 主聊天入口已完成的本轮 busy gate 结果；传入后不重复计算概率。 */
+    busyReplyDecision?: BusyReplyDecision;
+    /** 主聊天入口从完整历史确认的本轮待回复回合里是否有用户图片。 */
+    currentTurnHasUserImage?: boolean;
 }
 
 export const ChatPrompts = {
@@ -254,7 +280,10 @@ export const ChatPrompts = {
         emojis.forEach(e => {
             const cid = e.categoryId || 'default';
             if (!grouped[cid]) grouped[cid] = [];
-            grouped[cid].push(e.name);
+            const description = typeof e.visionDescription === 'string'
+                ? e.visionDescription.replace(/\s+/g, ' ').trim().slice(0, 160)
+                : '';
+            grouped[cid].push(description ? `${e.name}（画面：${description}）` : e.name);
         });
         
         return Object.entries(grouped).map(([cid, names]) => {
@@ -335,6 +364,19 @@ export const ChatPrompts = {
         // 本地私有的易变段照常烤进去（worker 拿不到，而这一刻它们是新鲜的）。
         const timelyByWorker = promptOptions?.timelyByWorker === true;
         const activeMeeting = promptOptions?.activeDateEncounter?.status === 'active';
+        // 主路径的 recentMsgsHint 可能还是 React 的旧快照；有了显式值就用完整历史的判断，
+        // 直接调用本函数的旧路径则从 currentMsgs 自己推断。
+        const currentTurnHasUserImage = !forFirePack && (
+            promptOptions?.currentTurnHasUserImage ?? hasPendingUserImage(currentMsgs)
+        );
+        // 同一轮只捕获一次绝对时刻。若主聊天入口已经在 busy gate 前构造了快照，
+        // 这里直接复用，避免日程、时间块和音乐背景各自看到不同分钟。
+        const providedScheduleContext = promptOptions?.scheduleContext;
+        const scheduleInstant = providedScheduleContext?.instant ?? new Date();
+        const charTz = resolveCharTimeZone(char);
+        const charNow = providedScheduleContext?.wallClock
+            ?? nowInTimeZone(charTz, scheduleInstant);
+        const today = providedScheduleContext?.localDateKey ?? getLocalDateKey(charNow);
         // ── 分段计时（定位瓶颈用）──
         const perfT0 = performance.now();
         const timings: Record<string, number> = {};
@@ -366,17 +408,18 @@ export const ChatPrompts = {
             includeDetailedMemories: true,
             // conversational：私聊是真的有人在这个点跟角色说话，时间块才补那句语境框定
             // （见 ContextBuilder.buildTimeAwarenessBlock）。生成器类调用不给，默认就没有。
-            timeOptions: { skipTimeAwareness: forFirePack || timelyByWorker, conversational: true },
+            timeOptions: {
+                skipTimeAwareness: forFirePack || timelyByWorker,
+                conversational: true,
+                wallClockNow: charNow,
+                nowTimestamp: scheduleInstant.getTime(),
+            },
         });
 
         // ── 并发发起所有独立的异步取数（网络 + IndexedDB），下面按原顺序拼接 ──
         // 原来是 7 段串行 await，总耗时 = 各段之和；现在取 max。
         const config = realtimeConfig || defaultRealtimeConfig;
         // 自定义时区：日历日、当前日程与实时上下文全部按角色所在地折算。
-        const charTz = resolveCharTimeZone(char);
-        const charNow = nowInTimeZone(charTz);
-        const today = getLocalDateKey(charNow);
-
         // 1. 实时世界信息（天气/新闻/时间）
         //
         // fire_pack 整块不要：这一段里从时间、节日、天气到热搜全是打包那一刻的读数，
@@ -400,12 +443,13 @@ export const ChatPrompts = {
                     // 「当前真实时间」，那是这个开关本来要挡住的东西。
                     const realtimeContext = await RealtimeContextManager.buildFullContext(config, charTz, {
                         includeTime: char.timeAwarenessEnabled !== false,
+                        nowMs: scheduleInstant.getTime(),
                     });
                     return `\n${realtimeContext}\n`;
                 }
                 // 基础当前时间 + 时差提示已由 ContextBuilder.buildCoreContext 统一注入（受 timeAwarenessEnabled
                 // 控制，按角色自定义时区折算）；这里只在关闭天气/新闻时补一条"今日特殊节日"，不再重复注入时间/时差，避免双份。
-                const specialDates = RealtimeContextManager.checkSpecialDates(charTz);
+                const specialDates = RealtimeContextManager.checkSpecialDates(charTz, scheduleInstant.getTime());
                 if (specialDates.length > 0 && char.timeAwarenessEnabled !== false) {
                     return `\n### 【今日特殊】\n${specialDates.join('、')}\n`;
                 }
@@ -420,7 +464,9 @@ export const ChatPrompts = {
         //    总开关关闭时跳过查询与注入，确保不额外调用任何 LLM 依赖链
         const scheduleFeatureOn = isScheduleFeatureOn(char);
         const schedulePromise: Promise<DailySchedule | null> = scheduleFeatureOn
-            ? getDailyScheduleForChar(char).catch(e => {
+            ? (providedScheduleContext
+                ? Promise.resolve(providedScheduleContext.schedule)
+                : getDailyScheduleForChar(char, scheduleInstant)).catch(e => {
                 console.error('Failed to load daily schedule:', e);
                 return null;
             })
@@ -536,18 +582,25 @@ ${groupLogStr}\n`;
                 return '';
             });
 
-        // 8. 用户日历：只在这一轮即时构建，不能烤进未来主动消息的 fire pack。
+        // 8. 共享日历：只在这一轮即时构建，不能烤进未来主动消息的 fire pack。
         // 待办完成/日程改动后旧快照会误催，故后台到点生成不复用这段；正常聊天与即时云端
-        // 回复都读取此刻的 IndexedDB。仅把当前角色担任监督人的到期待办给 ta 看。
+        // 回复都读取此刻的 IndexedDB。用户待办是共享事实，只有关联角色且开启提醒时
+        // 才拥有自然提及权限；当前角色的房间待办也一并带入，但不重复烘焙完整角色日程。
         const userCalendarPromise: Promise<string> = forFirePack
             ? Promise.resolve('')
-            : Promise.all([DB.getAllTasks(), DB.getAllAnniversaries()])
-                .then(([tasks, events]) => buildUserCalendarContext({
+            : Promise.all([
+                DB.getAllTasks(),
+                DB.getAllAnniversaries(),
+                DB.getRoomTodo(char.id, today).catch(() => null),
+            ])
+                .then(([tasks, events, characterTodo]) => buildUserCalendarContext({
                     tasks,
                     events,
                     supervisorId: char.id,
                     userName: userProfile.name,
-                    today: getLocalDateKey(new Date()),
+                    today: getLocalDateKey(scheduleInstant),
+                    now: scheduleInstant,
+                    characterTodo,
                 }))
                 .catch(e => {
                     console.error('Failed to inject user calendar:', e);
@@ -565,6 +618,10 @@ ${groupLogStr}\n`;
                 timed('lifeRecord', lifeRecordPromise),
                 timed('userCalendar', userCalendarPromise),
             ]);
+        const turnScheduleContext: ScheduleContextSnapshot | undefined = scheduleFeatureOn
+            ? (providedScheduleContext
+                ?? createScheduleContextSnapshot(char, schedule, scheduleInstant))
+            : undefined;
 
         // ── 拼接：易变的进 volatileState，稳定的进 baseSystemPrompt ──
         volatileState += realtimeText;
@@ -577,7 +634,7 @@ ${groupLogStr}\n`;
         //     日程本身照给——它有自己的总开关。
         if (schedule && !forFirePack) {
             try {
-                const scheduleContext = ContextBuilder.buildScheduleInjection(
+                const scheduleText = ContextBuilder.buildScheduleInjection(
                     schedule,
                     evolvedNarrative,
                     charNow,
@@ -585,14 +642,18 @@ ${groupLogStr}\n`;
                         includeFullDay: true,
                         includeChangeInstruction: true,
                         includeClock: char.timeAwarenessEnabled !== false,
+                        resolvedSlots: turnScheduleContext
+                            ? { current: turnScheduleContext.current, next: turnScheduleContext.next }
+                            : undefined,
                     },
                 );
-                if (scheduleContext) volatileState += `\n${scheduleContext}\n`;
-                const busyDecision = decideBusyReply({
+                if (scheduleText) volatileState += `\n${scheduleText}\n`;
+                const busyDecision = promptOptions?.busyReplyDecision ?? decideBusyReply({
                     char,
                     schedule,
                     messages: currentMsgs,
-                    now: charNow,
+                    now: scheduleInstant,
+                    scheduleContext: turnScheduleContext,
                 });
                 volatileState += buildBusyReplyPrompt(busyDecision);
                 if (busyDecision.mode === 'free' || busyDecision.mode === 'off') {
@@ -614,7 +675,9 @@ ${groupLogStr}\n`;
                 songId?: number; songName: string; artists: string; vibe?: string; lyricSnippet?: string[];
             } | null = null;
             try {
-                const cur = computeCurrentListening(char, schedule);
+                // computeCurrentListening 接收真实绝对时刻；不能把角色墙钟 pseudo-Date
+                // 再传进去，否则自定义时区会被重复折算一遍。
+                const cur = computeCurrentListening(char, schedule, scheduleInstant);
                 if (cur) {
                     charListening = { songId: cur.songId, songName: cur.songName, artists: cur.artists, vibe: cur.vibe };
                     // 拉歌词。优先用调用方传进来的 cfg；没传就从 localStorage 取
@@ -752,6 +815,7 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
    - **【严禁】模仿历史记录中的系统日志格式（如"[你 发送了...]"）。**
    - 历史中可能出现内部来源标记 \`⟦SRC:FACE_PHONE⟧\`（旧数据中的面对面手机来源标记）。它们只用于区分面对面期间的手机消息，**绝不能原样输出、复述或写进台词/描写**。
    - **发送表情包**: 必须且只能使用命令: \`[[SEND_EMOJI: 表情名称]]\`。命令里只写下面方括号内的表情名称，不要带分类名。
+     清单中的“（画面：…）”只是帮助你识图的参考描述，不属于表情名称；不要把括号、画面描述或逗号后的说明复制进命令参数。
    - **可用表情库 (按分类)**:
      ${emojiContextStr}
 ${imageGenGuide}
@@ -770,6 +834,7 @@ ${imageGenGuide}
 5. **环境感知**:
    - 留意 [系统提示] 中的时间跨度。如果用户消失了很久，请根据你们的关系做出反应（如撒娇、生气、担心或冷漠）。
    - 如果用户发送了图片，请对图片内容进行评论。
+   - 图片是否被应用写入本地相册是界面层的存储事实，不是你的动作，也不是你能自动确认的状态。只有本轮出现明确的真实工具结果时，才把保存、下载、收藏、备份或归档当成已经发生；否则只回应图片本身。
 6. **可用动作**:
    - 回戳用户: \`[[ACTION:POKE]]\`
    - 转账: 必须使用且只使用 \`[[ACTION:TRANSFER|to=user|amount=100]]\`（to 固定写 user，金额只写数字）；不要写成 \`[系统: 你向某人转账 100]\` 等系统日志文本。
@@ -1250,6 +1315,15 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
 
 每一句话，都应该像是不经意间，从 ${char.name} 心里自然冒出来的。`;
 
+        // 这条只在真正要回复的用户回合里出现，并放在 recency 尾部；比稳定区的通用图片规则
+        // 更贴近生成点，能压住模型从旧回复里学到的固定“保存确认”套路，同时不把图片套路
+        // 变成每一轮都必须执行的模板。
+        if (currentTurnHasUserImage) {
+            recencyTail += `\n\n### 本轮图片：像你自己一样接住（仅本轮有用户图片时生效）
+先看清图片里实际可见的细节，再结合你们正在聊的事自然回应一两点。画面里如果有用户本人，可以像平时突然收到对方一张近照那样反应：留意表情、姿势、穿着、光线或周围场景，也可以吐槽、关心、问拍摄缘由，或者只是轻轻接住；不必每次夸外貌，也不必强行分析身份。食物、宠物、风景和物品就按它们本身聊。每张图的回应都可以不同，不要把同一个开场或同一种确认句当成固定流程。
+把自己当作只看见图片和对话内容的聊天者：应用是否在本地保存了文件，你不知道，也不是你刚刚执行的动作。没有本轮明确的工具结果时，不要向用户宣称图片已被保存、下载、收藏或归档。`;
+        }
+
         // 语音连着发太多时，把硬性禁令拼在整段 prompt 真正的最后一句——
         // 比上面 volatileState 里那条"软提醒"管用得多，见 voiceFrequency.buildVoiceHardBlockTail。
         if (voiceUsageStats) {
@@ -1542,8 +1616,8 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     }
                 }
                 else if (m.type === 'emoji') {
-                     const stickerName = stickerNameFromUrl(emojis, m.content);
-                     content = `${timeStr} [${m.role === 'user' ? '用户' : '你'} 发送了表情包: ${stickerName}]`;
+                     const stickerLabel = stickerPromptLabelFromUrl(emojis, m.content);
+                     content = `${timeStr} [${m.role === 'user' ? '用户' : '你'} 发送了表情包: ${stickerLabel}]`;
                 }
                 else if ((m.type as string) === 'chat_forward') {
                     try {

@@ -18,6 +18,7 @@ import { resolveCharTimeZone, wallClockToTimestamp } from '../utils/timezone';
 import { generateSlotTheater } from '../utils/theaterGenerator';
 import TheaterPlayer from '../components/schedule/TheaterPlayer';
 import { formatMessageWithTime, normalizeMessageContent } from '../utils/messageFormat';
+import { sortEmojisForDisplay } from '../utils/emojiLibrary';
 import { getRoomLabel } from '../utils/memoryPalace/types';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeXhsLiteDetail } from '../utils/xhsMcpClient';
 import { extractWebpageContent, detectFirstUrl, detectXhsShortUrl, extractXhsShareTitle, isXhsUrl, extractXhsNoteId, expandShortUrl, type ExtractedWebpage } from '../utils/webpageExtractor';
@@ -67,7 +68,7 @@ import { resolveActiveSound, playWhiteboxSound, unlockWhiteboxAudio, parseWhiteb
 import { normalizeTranslationLangLabel, isTranslationLangPreset } from '../utils/translationLang';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
 import { trackEvent, noteMessageSent } from '../utils/analytics';
-import { markAmsgStateDirty, markAmsgStateDirtyForAll } from '../utils/amsgStateSync';
+import { flushAmsgState, markAmsgStateDirty, markAmsgStateDirtyForAll } from '../utils/amsgStateSync';
 import { ActiveMsgClient } from '../utils/activeMsgClient';
 import { deriveNaturalProfile } from '../utils/naturalProactive';
 import { AMSG_INSTANT_CHAT_PENDING_EVENT, AMSG_INSTANT_CHAT_PENDING_LS_KEY, getInstantChatPending } from '../utils/amsgInstantChat';
@@ -89,6 +90,7 @@ import {
     saveTextFavorite,
 } from '../utils/textFavorites';
 import { SCHEDULE_CHANGE_EVENT, type ScheduleChangeEventDetail } from '../utils/scheduleChange';
+import { notifyCalendarDataUpdated, scheduleInviteEventToAnniversary } from '../utils/calendarIntegration';
 import {
     applyScheduleInviteToSchedule,
     buildScheduleInviteReplyData,
@@ -226,6 +228,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     useEffect(() => { setFineTuneOpen(false); setFineTunePanelOpen(false); setDecorTab(null); }, [activeCharacterId]);
     const [scheduleData, setScheduleData] = useState<DailySchedule | null>(null);
     const [scheduleInviteEnabled, setScheduleInviteEnabledState] = useState<boolean>(() => isScheduleInviteEnabled());
+    const scheduleInviteResolvingRef = useRef<Set<number>>(new Set());
     const [scheduleChangeNotice, setScheduleChangeNotice] = useState<ScheduleChangeEventDetail | null>(null);
     const dismissScheduleChangeNotice = useCallback(() => setScheduleChangeNotice(null), []);
     // 小剧场（窥视演出）：正在播放的时段索引（null = 未打开），以及生成中标志
@@ -449,6 +452,14 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         luckinChatRef,
         updateCharacter,
     });
+
+    // 这些入口只把用户事件落进本地消息库，不会经过 triggerAI 的收尾同步。
+    // 统一从这里把最终本地状态送进自然主动的 fire_pack；targetChar 允许转发卡同步到目标角色。
+    const syncAmsgAfterUserMessage = useCallback((targetChar = char) => {
+        if (!targetChar) return;
+        markAmsgStateDirty({ char: targetChar, userProfile, groups, realtimeConfig });
+        void flushAmsgState('user-message');
+    }, [char, userProfile, groups, realtimeConfig]);
 
     // --- Voice TTS for chat messages ---
     interface VoiceData { url: string; originalText: string; spokenText?: string; lang?: string; favorite?: boolean; }
@@ -1302,7 +1313,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         if (!targetChar || !isScheduleInviteEnabled()) return schedule;
         try {
             const result = await ensureScheduleInviteMessage({ char: targetChar, schedule });
-            if (result.created) await reloadMessages(visibleCountRef.current);
+            if (result.created || result.updated) await reloadMessages(visibleCountRef.current);
             return result.schedule;
         } catch (error) {
             console.warn('[ScheduleInvite] create invite failed:', error);
@@ -1701,6 +1712,22 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             }
         }
 
+        // 用户消息已经写入本地 DB；自然主动的 fire_pack 不能只等普通 AI 回合收尾才更新。
+        // 特别是表情 / 图片，以及没有开启发送后自动回复的文字，后面可能根本没有 triggerAI
+        // 来替它打脏。卡片替换和原消息删除也已经在上面完成，故这里上传的是最终形态。
+        // 有发送后自动触发时，正常即时对话会由 sendInstantChatTurn 上传带 chat 段的权威包；
+        // 忙碌自动回复 / 本地降级路径分别在自己的收尾处同步，避免普通包与即时包乱序覆盖。
+        const instantCfg = loadInstantConfig();
+        const autoTriggerOnSend = type === 'text'
+            && isInstantConfigReady(instantCfg)
+            && instantCfg.autoTriggerOnSend;
+        const instantReplyPending = !!getInstantChatPending(char.id);
+        if (!autoTriggerOnSend || isTyping || instantReplyPending) {
+            syncAmsgAfterUserMessage();
+            // 消息提交后立即启动已有队列的冲刷；队列内部仍保留即时对话欠账保护、失败退避和
+            // localStorage 底账。这样切后台 / 关闭前至少已经开始提交，强杀时还能下次补传。
+        }
+
         await reloadMessages(visibleCountRef.current);
         setShowPanel('none');
 
@@ -1710,8 +1737,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         // 仅文本消息触发；image / xhs_card 等卡片消息不触发，与本地手动行为对齐。
         // autoTriggerOnSend gate：instant ready 也只在用户显式开启"发送后自动触发"时才自动回复，
         // 否则保留手动 ⚡（避免"启用 instant = 自动回复"的反直觉强绑定）。
-        const instantCfg = loadInstantConfig();
-        if (type === 'text' && isInstantConfigReady(instantCfg) && instantCfg.autoTriggerOnSend) {
+        if (autoTriggerOnSend) {
             // 上一轮还在跑时直接跳过：triggerAI 内部会因 isTyping=true 静默 reject，
             // 提前 guard 避免点亮"准备中"指示灯后没人来清，UI 灯被卡住。
             if (isTyping) return;
@@ -1736,8 +1762,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             content: action === 'accepted' ? '[已收款]' : '[已退回]',
             metadata: { receipt: action, amount: msg.metadata?.amount, ref: msg.id },
         });
+        syncAmsgAfterUserMessage();
         await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    }, [char, reloadMessages, syncAmsgAfterUserMessage]);
 
     // 用户点「生活记录」代记卡选择确认 / 否决：
     // 否决 → 记录标记 rejected（不再计入注入摘要）+ 回滚银行流水（expense）+
@@ -1823,58 +1850,110 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     }, [char, userProfile, groups, realtimeConfig, apiConfig, updateCharacter]);
 
     const handleResolveScheduleInvite = useCallback(async (msg: Message, selectedIds: string[]) => {
-        if (!char) return;
-        const data = getScheduleInviteData(msg);
-        if (!data || data.status !== 'pending') return;
-        const eventIds = new Set(data.events.map(event => event.id));
-        const acceptedIds = data.events.filter(event => selectedIds.includes(event.id) && eventIds.has(event.id)).map(event => event.id);
-        const acceptedEvents = data.events.filter(event => acceptedIds.includes(event.id));
-        const declinedIds = data.events.filter(event => !acceptedIds.includes(event.id)).map(event => event.id);
+        if (!char || scheduleInviteResolvingRef.current.has(msg.id)) return;
+        // 先占住这个消息 id，再做任何 await；否则双击会在第一次读库前启动两条并发处理。
+        scheduleInviteResolvingRef.current.add(msg.id);
+        try {
+            // 卡片可能是在日程重抽前渲染的，处理时重新读一次最新卡片，避免接受已经失效的旧事件。
+            const recentInvites = await DB.getRecentMessagesByCharIdAndSource(char.id, 'schedule_invite', 30).catch(() => [] as Message[]);
+            const freshMessage = recentInvites.find(candidate => candidate.id === msg.id) || msg;
+            const data = getScheduleInviteData(freshMessage);
+            if (!data || data.charId !== char.id) return;
 
-        await DB.updateMessageMetadata(msg.id, (previous) => ({
-            ...(previous || {}),
-            scheduleInviteData: {
-                ...data,
-                status: 'responded',
-                acceptedIds,
-                declinedIds,
-                responseAt: Date.now(),
-            },
-        }));
+            // 处理中的卡片以用户刚选中的 id 为准；历史卡片不再信任组件里的旧选择，
+            // 只按已落库的 acceptedIds 重放，避免重复点击把未接受的时段补进日历。
+            const acceptedIdSet = new Set(data.status === 'pending' ? selectedIds : (data.acceptedIds || []));
+            const acceptedIds = data.events
+                .filter(event => acceptedIdSet.has(event.id))
+                .map(event => event.id);
+            const acceptedEvents = data.events.filter(event => acceptedIdSet.has(event.id));
+            const declinedIds = data.events.filter(event => !acceptedIdSet.has(event.id)).map(event => event.id);
 
-        const storedSchedule = await getDailyScheduleForChar(char).catch(() => null);
-        if (storedSchedule && storedSchedule.date === data.date) {
-            const updatedSchedule = applyScheduleInviteToSchedule(storedSchedule, data.events, acceptedIds);
-            await DB.saveDailySchedule(updatedSchedule);
-            setScheduleData(updatedSchedule);
-            markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+            // 已响应卡不可再次安排电话或生成回执；只补齐可能在上次写入中断时缺失的日历事件。
+            if (data.status !== 'pending') {
+                if (data.status === 'responded' && acceptedEvents.length > 0) {
+                    await Promise.all(acceptedEvents.map(event => DB.saveAnniversary(scheduleInviteEventToAnniversary({
+                        batchId: data.batchId,
+                        event,
+                        characterId: char.id,
+                        characterName: char.name,
+                        sourceTimeZone: data.sourceTimeZone || resolveCharTimeZone(char),
+                    }))));
+                    notifyCalendarDataUpdated();
+                }
+                return;
+            }
+
+            // 先写入用户 Calendar，再把邀约标成已处理。若写入失败，卡片仍保持 pending，用户可以重试。
+            if (acceptedEvents.length > 0) {
+                await Promise.all(acceptedEvents.map(event => DB.saveAnniversary(scheduleInviteEventToAnniversary({
+                    batchId: data.batchId,
+                    event,
+                    characterId: char.id,
+                    characterName: char.name,
+                    sourceTimeZone: data.sourceTimeZone || resolveCharTimeZone(char),
+                }))));
+                notifyCalendarDataUpdated();
+            }
+
+            const storedSchedule = await getDailyScheduleForChar(char).catch(() => null);
+            if (storedSchedule && storedSchedule.date === data.date) {
+                const updatedSchedule = applyScheduleInviteToSchedule(storedSchedule, data.events, acceptedIds);
+                await DB.saveDailySchedule(updatedSchedule);
+                setScheduleData(updatedSchedule);
+                markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+            }
+
+            if (acceptedEvents.length > 0) {
+                // 回执也按 batchId 去重；网络成功但页面在下一步中断时，重试不会再造一张回执卡。
+                const previousReplies = await DB.getRecentMessagesByCharIdAndSource(char.id, 'schedule_invite_reply', 30).catch(() => [] as Message[]);
+                const alreadyReplied = previousReplies.some(reply => reply.metadata?.scheduleInviteReplyData?.batchId === data.batchId);
+                if (!alreadyReplied) {
+                    const replyData = buildScheduleInviteReplyData(char.name, acceptedEvents, data.batchId);
+                    await DB.saveMessage({
+                        charId: char.id,
+                        role: 'user',
+                        type: 'schedule_invite_reply',
+                        content: `💌 答应了邀约（${char.name}）：${acceptedEvents.map(event => event.activity).join('、')}`,
+                        metadata: { source: 'schedule_invite_reply', scheduleInviteReplyData: replyData },
+                    });
+                }
+            }
+
+            await DB.updateMessageMetadata(freshMessage.id, previous => ({
+                ...(previous || {}),
+                scheduleInviteData: {
+                    ...data,
+                    status: 'responded',
+                    acceptedIds,
+                    declinedIds,
+                    responseAt: Date.now(),
+                },
+            }));
+
+            // 不论接受还是婉拒，邀约状态和用户回执都应成为下一次自然主动的最新上下文。
+            syncAmsgAfterUserMessage();
+
+            const results = await Promise.all(acceptedEvents.map(scheduleAcceptedInviteCall));
+            const scheduledCalls = results.filter(result => result === 'scheduled').length;
+            const failedCalls = results.filter(result => result === 'failed').length;
+            if (acceptedEvents.length === 0) {
+                addToast('已婉拒这次行程邀约', 'info');
+            } else if (failedCalls > 0) {
+                addToast(`已登记 ${acceptedEvents.length} 项邀约到日历，但 ${failedCalls} 项自动连麦未排上，请检查主动消息 2.0`, 'error');
+            } else if (scheduledCalls > 0) {
+                addToast(`已答应 ${acceptedEvents.length} 项邀约并登记到日历，${scheduledCalls} 项已安排到点连麦`, 'success');
+            } else {
+                addToast(`已答应 ${acceptedEvents.length} 项邀约，并登记到日历`, 'success');
+            }
+            await reloadMessages(visibleCountRef.current);
+        } catch (error) {
+            console.error('[ScheduleInvite] resolve failed:', error);
+            addToast('邀约处理没有完成，请稍后重试；已登记的日历事件会自动复用', 'error');
+        } finally {
+            scheduleInviteResolvingRef.current.delete(msg.id);
         }
-
-        if (acceptedEvents.length > 0) {
-            const replyData = buildScheduleInviteReplyData(char.name, acceptedEvents);
-            await DB.saveMessage({
-                charId: char.id,
-                role: 'user',
-                type: 'schedule_invite_reply',
-                content: `💌 答应了邀约（${char.name}）：${acceptedEvents.map(event => event.activity).join('、')}`,
-                metadata: { source: 'schedule_invite_reply', scheduleInviteReplyData: replyData },
-            });
-        }
-
-        const results = await Promise.all(acceptedEvents.map(scheduleAcceptedInviteCall));
-        const scheduledCalls = results.filter(result => result === 'scheduled').length;
-        const failedCalls = results.filter(result => result === 'failed').length;
-        if (acceptedEvents.length === 0) {
-            addToast('已婉拒这次行程邀约', 'info');
-        } else if (failedCalls > 0) {
-            addToast(`已登记 ${acceptedEvents.length} 项邀约，但 ${failedCalls} 项自动连麦未排上，请检查主动消息 2.0`, 'error');
-        } else if (scheduledCalls > 0) {
-            addToast(`已答应 ${acceptedEvents.length} 项邀约，${scheduledCalls} 项已安排到点连麦`, 'success');
-        } else {
-            addToast(`已答应 ${acceptedEvents.length} 项邀约，并登记到日程`, 'success');
-        }
-        await reloadMessages(visibleCountRef.current);
-    }, [char, userProfile, groups, realtimeConfig, scheduleAcceptedInviteCall, addToast, reloadMessages]);
+    }, [char, userProfile, groups, realtimeConfig, scheduleAcceptedInviteCall, addToast, reloadMessages, syncAmsgAfterUserMessage]);
 
     // 顶栏 ⚡ 手动触发。instant 模式下给"上一条 assistant 之后的所有 user 消息"打上"准备中"
     // 三个点（从写入 DB 到 SSE POST 入队之间），由 onInstantPosted 清除 ——
@@ -2101,8 +2180,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             content,
             metadata: { mcdCardKind: 'cart', mcdCartItems: items },
         } as any);
+        syncAmsgAfterUserMessage();
         await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    }, [char, reloadMessages, syncAmsgAfterUserMessage]);
 
     // 用户在菜单卡某条单品上点 💭 → 立即把这条扔给角色让 ta 评价 (候选状态, 不进购物车)
     const handleMcdCandidate = useCallback(async (item: import('../components/chat/McdCard').McdCartItem) => {
@@ -2116,8 +2196,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             content,
             metadata: { mcdCardKind: 'candidate', mcdCandidate: item },
         } as any);
+        syncAmsgAfterUserMessage();
         await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    }, [char, reloadMessages, syncAmsgAfterUserMessage]);
 
     // 小程序内输入 → 直接保存 user 消息 + 立即触发 AI (主聊天 handleSendText 不自动触发,
     // 那是设计上的"手动 ⚡ 触发"流程, 但小程序里用户预期发完就有回复, 跳过那个步骤)。
@@ -2177,8 +2258,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 mcdOrderContext: ctx,
             },
         } as any);
+        syncAmsgAfterUserMessage();
         await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    }, [char, reloadMessages, syncAmsgAfterUserMessage]);
 
     // ─── 瑞幸 handlers (与麦当劳同构) ───
     const handleLuckinSendCart = useCallback(async (items: import('../components/chat/LuckinCard').LuckinCartItem[]) => {
@@ -2197,8 +2279,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             content,
             metadata: { luckinCardKind: 'cart', luckinCartItems: items },
         } as any);
+        syncAmsgAfterUserMessage();
         await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    }, [char, reloadMessages, syncAmsgAfterUserMessage]);
 
     const handleLuckinCandidate = useCallback(async (item: import('../components/chat/LuckinCard').LuckinCartItem) => {
         if (!char || !item) return;
@@ -2211,8 +2294,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             content,
             metadata: { luckinCardKind: 'candidate', luckinCandidate: item },
         } as any);
+        syncAmsgAfterUserMessage();
         await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    }, [char, reloadMessages, syncAmsgAfterUserMessage]);
 
     const handleLuckinMiniAppSend = useCallback(async (text: string) => {
         if (!char || !text.trim() || isTyping) return;
@@ -2264,8 +2348,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 luckinOrderContext: ctx,
             },
         } as any);
+        syncAmsgAfterUserMessage();
         await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    }, [char, reloadMessages, syncAmsgAfterUserMessage]);
 
     // --- Schedule Handlers ---
     const loadSchedule = async () => {
@@ -2363,6 +2448,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 exposed,
             },
         });
+        syncAmsgAfterUserMessage();
         // 关掉播放器 + 日程 modal，回到聊天看到卡片（但不强行触发回复）
         setTheaterSlotIdx(null);
         setModalType('none');
@@ -2370,11 +2456,21 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         addToast(exposed ? '已让 TA 发现你在看 👀' : '已悄悄记下 · TA 不知道你看了 🙈', 'info');
     };
 
-    const generateDailySchedule = async (targetChar: typeof char, forceRegenerate: boolean = false) => {
+    const generateDailySchedule = async (
+        targetChar: typeof char,
+        forceRegenerate: boolean = false,
+        rerollRequirement?: string,
+    ) => {
         if (!targetChar || isScheduleGenerating) return;
         setIsScheduleGenerating(true);
         try {
-            const result = await generateDailyScheduleForChar(targetChar, userProfile, apiConfig, forceRegenerate);
+            const result = await generateDailyScheduleForChar(
+                targetChar,
+                userProfile,
+                apiConfig,
+                forceRegenerate,
+                rerollRequirement ? { rerollRequirement } : undefined,
+            );
             if (result) {
                 const scheduleWithInvite = await ensureScheduleInvite(targetChar, result);
                 setScheduleData(scheduleWithInvite);
@@ -3162,6 +3258,20 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         }
     };
 
+    const handleMoveEmojiToFront = async () => {
+        if (!selectedEmoji || Array.isArray(selectedEmoji)) return;
+        try {
+            await DB.moveEmojiToFront(selectedEmoji.name);
+            await loadEmojiData();
+            setModalType('none');
+            setSelectedEmoji(null);
+            addToast('已移至当前分组最前', 'success');
+        } catch (err) {
+            console.error('Failed to move emoji to front:', err);
+            addToast('移动表情包失败', 'error');
+        }
+    };
+
     // --- Batch Selection ---
     const handleEnterSelectionMode = () => {
         if (selectedMessage) {
@@ -3335,6 +3445,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             }))
         };
 
+        const targetChar = characters.find(c => c.id === targetCharId);
         // Save forward card to target character's chat
         await DB.saveMessage({
             charId: targetCharId,
@@ -3342,9 +3453,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             type: 'chat_forward' as MessageType,
             content: JSON.stringify(forwardData),
         });
+        syncAmsgAfterUserMessage(targetChar);
 
         // Also save a copy in the current chat so the user can see what they forwarded
-        const targetChar = characters.find(c => c.id === targetCharId);
         if (char.id !== targetCharId) {
             await DB.saveMessage({
                 charId: char.id,
@@ -3444,12 +3555,12 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     }, [categories, visibleCategories]);
 
     // Memoize filtered emojis for ChatInputArea
-    const filteredEmojis = useMemo(() => emojis.filter(e => {
+    const filteredEmojis = useMemo(() => sortEmojisForDisplay(emojis.filter(e => {
         // Exclude emojis from hidden categories
         if (e.categoryId && hiddenCategoryIds.has(e.categoryId)) return false;
         if (activeCategory === 'default') return !e.categoryId || e.categoryId === 'default';
         return e.categoryId === activeCategory;
-    }), [emojis, activeCategory, hiddenCategoryIds]);
+    })), [emojis, activeCategory, hiddenCategoryIds]);
 
     // Memoize ChatInputArea callbacks
     const handleSendCallback = useCallback(() => handleSendText(), [char, input, replyTarget]);
@@ -3800,7 +3911,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 onSetHistoryStart={handleSetHistoryStart} onRestoreAdaptiveContext={restoreAdaptiveContext} onJumpToMessageInChat={handleJumpToMessageInChat} onEnterSelectionMode={handleEnterSelectionMode}
                 onReplyMessage={handleReplyMessage} onEditMessageStart={() => { if (selectedMessage) { setEditContent(selectedMessage.content); setModalType('edit-message'); } }}
                 reactionShortcuts={reactionShortcuts} onMessageReaction={handleUserMessageReaction} onChangeReactionShortcuts={handleChangeReactionShortcuts}
-                onConfirmEditMessage={confirmEditMessage} onDeleteMessage={handleDeleteMessage} onCopyMessage={handleCopyMessage} onDeleteEmoji={handleDeleteEmoji} onDeleteCategory={handleDeleteCategory}
+                onConfirmEditMessage={confirmEditMessage} onDeleteMessage={handleDeleteMessage} onCopyMessage={handleCopyMessage} onDeleteEmoji={handleDeleteEmoji} onMoveEmojiToFront={handleMoveEmojiToFront} onDeleteCategory={handleDeleteCategory}
                 allCharacters={characters} onSaveCategoryVisibility={handleSaveCategoryVisibility}
                 translationEnabled={translationEnabled}
                 onToggleTranslation={() => { const next = !translationEnabled; setTranslationEnabled(next); localStorage.setItem(`chat_translate_enabled_${activeCharacterId}`, JSON.stringify(next)); if (next) { trackEvent('开启聊天翻译', { targetLang: isTranslationLangPreset(translateTargetLang) ? translateTargetLang : 'custom' }); } if (!next) { setShowingTargetIds(new Set()); } }}
@@ -3841,7 +3952,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 isScheduleGenerating={isScheduleGenerating}
                 onScheduleEdit={handleScheduleEdit}
                 onScheduleDelete={handleScheduleDelete}
-                onScheduleReroll={() => generateDailySchedule(char, true)}
+                onScheduleReroll={(requirement) => generateDailySchedule(char, true, requirement)}
                 onScheduleCoverChange={handleScheduleCoverChange}
                 onScheduleStyleChange={handleScheduleStyleChange}
                 onPlayTheater={handlePlayTheater}

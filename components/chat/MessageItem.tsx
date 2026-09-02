@@ -942,7 +942,11 @@ const ScheduleInviteCard: React.FC<{
                     </div>
                 </div>
                 <div className="mt-2 text-[10px] leading-relaxed" style={{ color: '#a2757c' }}>
-                    {pending ? '挑选你想参加的时段，同意后会登记到你们的日程。' : '这张邀约已经处理过了。'}
+                    {pending
+                        ? '挑选你想参加的时段，同意后会登记到你的日历。'
+                        : data.status === 'expired'
+                            ? '日程已经更新，这张邀约不再生效。'
+                            : '这张邀约已经处理过了。'}
                 </div>
             </div>
 
@@ -989,7 +993,11 @@ const ScheduleInviteCard: React.FC<{
                 </div>
             ) : (
                 <div className="px-4 pb-3.5 pt-1 text-[10px] font-semibold" style={{ color: data.acceptedIds?.length ? '#65a083' : '#a9999b' }}>
-                    {data.acceptedIds?.length ? `已答应 ${data.acceptedIds.length} 项，其他时段以后再约` : '这次先不约了'}
+                    {data.status === 'expired'
+                        ? '原日程已重抽，这张邀约已失效'
+                        : data.acceptedIds?.length
+                            ? `已答应 ${data.acceptedIds.length} 项，其他时段以后再约`
+                            : '这次先不约了'}
                 </div>
             )}
         </div>
@@ -1019,7 +1027,7 @@ const ScheduleInviteReplyCard: React.FC<{
                 </div>
             ))}
         </div>
-        <div className="px-4 py-2 text-[9px] text-[#9ab6a3] border-t border-emerald-100/60">已登记到今日日程</div>
+        <div className="px-4 py-2 text-[9px] text-[#9ab6a3] border-t border-emerald-100/60">已登记到你的日历</div>
     </div>
 );
 

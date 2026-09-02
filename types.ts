@@ -118,6 +118,11 @@ export interface OSTheme {
   launcherAppOrder?: string[];
   launcherDockOrder?: string[];
   launcherPinwheelOrder?: Array<'music' | 'appsA' | 'appsB' | 'image'>;
+  /**
+   * 桌面页面布局（v1）。旧版仍使用 launcherAppOrder；新桌面编辑器会
+   * 同时维护旧字段，保证降级到旧版本时至少不会丢 App。
+   */
+  launcherPageLayout?: LauncherPageLayout;
   /** 自定义透明图标是否保留原始轮廓并移除系统圆角底框。默认 false。 */
   preserveCustomIconOutlines?: boolean;
   /** 默认皮肤桌面「正在播放」音乐卡片改用浅色系样式（新安装默认 true）。 */
@@ -769,6 +774,67 @@ export interface ScheduleSlot {
     theater?: SlotTheater; // 该时段的小剧场（窥视演出），按需生成并缓存
 }
 
+export type LauncherPageKind = 'home' | 'pinwheel' | 'app';
+
+export interface LauncherPage {
+  /** 页面身份不能依赖当前轮播下标，新增页后也必须保持稳定。 */
+  id: string;
+  kind: LauncherPageKind;
+  /** 仅保存 App id；Widgets、Dock 和风车里的非 App 单元不在此列。 */
+  appIds: string[];
+  /** 第一张普通 App 页可承载桌面图片/自由装饰；普通新增页没有此标记。 */
+  showMedia?: boolean;
+}
+
+export interface LauncherPageLayout {
+  version: 1;
+  /** home 永远在第一位；pinwheel 与普通 app 页可在其后排序。 */
+  pages: LauncherPage[];
+  /** 当前版本的 Dock 唯一归属；缺省时由旧 launcherDockOrder / 默认值迁移。 */
+  dockAppIds?: string[];
+  /** 最近一次投影回旧 launcherDockOrder 的快照，用于识别旧客户端降级编辑。 */
+  legacyDockOrder?: string[];
+  /** 最近一次投影回旧 launcherAppOrder 的快照，用于识别旧客户端降级编辑。 */
+  legacyAppOrder?: string[];
+}
+
+export type ScheduleVariationClass =
+    | 'routine'
+    | 'small-surprise'
+    | 'social-pulse'
+    | 'errand-detour'
+    | 'hobby-detour'
+    | 'recovery-pause'
+    | 'unfinished-thread'
+    | 'thought-shift'
+    | 'memory-echo'
+    | 'curiosity'
+    | 'quiet-pause';
+
+export type ScheduleCareerFocus = 'none' | 'core' | 'secondary' | 'balanced';
+
+/** 日程对生理睡眠的明确例外；缺省永远按普通人作息，不因“赛车手/精力好”自动豁免。 */
+export type ScheduleSleepMode = 'normal' | 'no-sleep';
+
+/** 日程生成的轻量规划痕迹。可选以兼容所有历史日程，不进入主动消息 fire-pack。 */
+export interface SchedulePlanningMeta {
+    schemaVersion: 1;
+    seed: number;
+    generationId: string;
+    rerollIndex: number;
+    variationClass: ScheduleVariationClass;
+    careerFocus: ScheduleCareerFocus;
+    commercialActivityRequested?: boolean;
+    eventFingerprint?: string;
+    /** 仅保存来源条目 id，不保存世界书正文或聊天内容。 */
+    sourceWorldbookIds?: string[];
+    /** 生成时采用的本地日历/睡眠策略；只作调试痕迹，不进入主动消息 fire-pack。 */
+    calendarMode?: 'weekday' | 'weekend';
+    sleepMode?: ScheduleSleepMode;
+    /** 只记是否用过一次性要求，不保存要求正文。 */
+    userRequirementApplied?: boolean;
+}
+
 export interface DailySchedule {
     id: string;           // `${charId}_${date}`
     charId: string;
@@ -782,6 +848,8 @@ export interface DailySchedule {
      * 注入时根据当前时间找到最近的 key，直接使用整段文本，不做拼接。
      */
     flowNarrative?: Record<string, string>;
+    /** 新版日程规划元数据；老记录没有此字段也应继续正常显示和注入。 */
+    planningMeta?: SchedulePlanningMeta;
 }
 
 export interface RoomGeneratedState {
@@ -2553,6 +2621,16 @@ export interface CompanionPerformancePrecision {
   settleMs?: number;
 }
 
+/** A model-specific Live2D/VRM action choice saved for one wardrobe asset. */
+export interface AvatarModelActionBinding {
+  /** Current-model action id; valid only inside the asset identified by the map key. */
+  modelAction?: string;
+  /** Semantic fallback for an imported/reordered action list. */
+  modelActionKey?: string;
+  /** Optional high-quality action layers; the first entry is the primary action. */
+  modelActions?: string[];
+}
+
 export interface CompanionTouchReaction {
   id: string;
   /** Displayed source line. Newly generated companion packs keep this in Simplified Chinese. */
@@ -2577,6 +2655,8 @@ export interface CompanionTouchReaction {
     /** 跨衣橱重新解析用的语义键，见 utils/live2dActionNaming。 */
     modelActionKey?: string;
     modelActions?: string[];
+    /** 按整套模型的 assetId 独立保存专属动作；缺省表示沿用通用/旧字段。 */
+    modelActionByAvatarAssetId?: Record<string, AvatarModelActionBinding | null>;
     precision?: CompanionPerformancePrecision;
   };
   /**
@@ -3126,6 +3206,12 @@ export interface CharacterProfile {
    * - 'mindful'（意识系）：角色诚实面对自身存在，内心活动基于真实能力（回忆对话、整理想法、等待用户……），不虚构物理行为
    */
   scheduleStyle?: 'lifestyle' | 'mindful';
+
+  /**
+   * 日程睡眠策略：缺省按普通人安排 5-9 小时睡眠。
+   * 只有明确设为 no-sleep 的非生理角色才不强制睡眠，赛车手/运动员不会自动豁免。
+   */
+  scheduleSleepMode?: ScheduleSleepMode;
 
   /**
    * 日程 / 情绪 Buff 总开关。
@@ -3741,6 +3827,15 @@ export interface HandbookEntry {
     updatedAt: number;
 }
 
+export interface TaskSupervisorSpeech {
+    /** 当前第一版只生成完成待办后的回应；未来扩展其它动作时保持事件隔离。 */
+    action: 'completed';
+    /** 由 task id 与本次完成时间组成；同一件事重新完成会得到新的事件。 */
+    eventId: string;
+    text: string;
+    generatedAt: number;
+}
+
 export interface Task {
     id: string;
     title: string;
@@ -3754,10 +3849,16 @@ export interface Task {
     dueTime?: string;
     /** 是否允许监督角色在聊天里自然提起；旧数据默认允许。 */
     naturalReminder?: boolean;
-    /** 添加待办后由监督角色生成、持久显示在待办卡片下方的一句话。 */
+    /** 新版监督员旁路生成的、仅通过严格正文校验的完成回应。 */
+    supervisorSpeech?: TaskSupervisorSpeech;
+    /**
+     * @deprecated 旧版待办台词兼容字段。共享日历不再生成、写入或显示它。
+     */
     supervisorComment?: string;
     supervisorCommentGeneratedAt?: number;
-    /** 待办完成后由监督角色生成、替换未完成时小字的持久评价。 */
+    /**
+     * @deprecated 旧版完成评价兼容字段。共享日历不再生成、写入或显示它。
+     */
     completedSupervisorComment?: string;
     completedSupervisorCommentGeneratedAt?: number;
     isCompleted: boolean;
@@ -3783,6 +3884,15 @@ export interface Anniversary {
         weekdays: number[];
         until?: string;
     };
+    /** 可选来源：由角色行程邀约接受后自动写入的共享日历事件。 */
+    source?: 'schedule_invite';
+    /** 来源事件稳定 id；不参与旧手工日历记录的显示逻辑。 */
+    sourceId?: string;
+    /** 自动写入事件的角色当地时间与时区，方便解释跨时区后的本地时间。 */
+    sourceTimeZone?: string;
+    sourceDate?: string;
+    sourceStartTime?: string;
+    sourceEndTime?: string;
     aiThought?: string;
     lastThoughtGeneratedAt?: number;
 }
@@ -4005,7 +4115,13 @@ export interface EmojiCategory {
 export interface Emoji {
     name: string;
     url: string;
-    categoryId?: string; 
+    categoryId?: string;
+    /** 用户最近一次手动「移至最前」的时间；越新越靠前。 */
+    movedToFrontAt?: number;
+    /** 识图 API 对这张表情包的客观画面描述，按表情记录永久复用。 */
+    visionDescription?: string;
+    visionRecognizedAt?: number;
+    visionModel?: string;
 }
 
 export interface FullBackupData {
