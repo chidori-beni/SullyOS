@@ -67,6 +67,50 @@ describe('Launcher 接线', () => {
     });
 });
 
+describe('翻页手势不会卡在平移态', () => {
+    it('有一个统一的归位函数，把 snap / isDragging / touchActive 一起收回来', () => {
+        expect(launcher).toContain('resetCarouselGestureState');
+        expect(launcher).toContain('touchActive.current = false;');
+    });
+
+    it('长按进整理模式那条路会调它，而不是只清 isDragging', () => {
+        // 这是「进整理模式后翻页变横向平移、退出也不恢复」的根因：
+        // mousedown 先关了 snap，长按定时器只清 isDragging，handleMouseUp 于是直接返回。
+        expect(launcher).toContain('长按之前那次 mousedown 已经把 snap 关掉了');
+    });
+
+    it('整理模式进出各兜一次底', () => {
+        expect(launcher).toContain('}, [layoutEditing, resetCarouselGestureState]);');
+    });
+});
+
+describe('自带风车组件可移除', () => {
+    it('隐藏的格子不再渲染', () => {
+        expect(launcher).toContain('pinwheelOrder.filter(cell => !hiddenBuiltinWidgets.includes');
+    });
+
+    it('轻点自带格子会打开移除面板', () => {
+        expect(launcher).toContain('setBuiltinWidgetSheet(pointer.key)');
+        expect(launcher).toContain('<LauncherBuiltinWidgetSheet');
+    });
+
+    it('移除后能在「＋ 组件」面板里恢复', () => {
+        expect(launcher).toContain('onRestoreBuiltin={handleRestoreBuiltinWidget}');
+        expect(widgetSheet).toContain('已移除的自带组件');
+    });
+
+    it('隐藏结果会落到 theme 里，不是只活在内存', () => {
+        expect(launcher).toContain('launcherHiddenBuiltinWidgets');
+    });
+});
+
+describe('整理模式下够得着别的页', () => {
+    it('页码点在整理模式下是可点的跳页按钮（此时 touch-action 是 none，划不动）', () => {
+        expect(launcher).toContain('goToLauncherPage');
+        expect(launcher).toContain("layoutEditing ? '' : 'pointer-events-none'");
+    });
+});
+
 describe('组件本体与面板', () => {
     it('组件图经 useBlobRefUrl 解析，令牌和图床直链都能显示', () => {
         expect(widgetView).toContain('useBlobRefUrl');

@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import type { LauncherUserWidget, LauncherWidgetSize } from '../../types';
+import type { LauncherBuiltinWidgetId, LauncherUserWidget, LauncherWidgetSize } from '../../types';
 import { useBlobRefUrl } from '../../utils/blobRef';
 import {
+    LAUNCHER_BUILTIN_WIDGET_HINTS,
+    LAUNCHER_BUILTIN_WIDGET_LABELS,
     LAUNCHER_WIDGET_SIZES,
     LAUNCHER_WIDGET_SIZE_LABELS,
     launcherWidgetSpan,
@@ -54,6 +56,9 @@ export interface LauncherWidgetSheetProps {
     widget?: LauncherUserWidget;
     paper?: boolean;
     busy?: boolean;
+    /** 已被移除的自带组件；添加面板里给一条恢复入口。 */
+    hiddenBuiltins?: readonly LauncherBuiltinWidgetId[];
+    onRestoreBuiltin?: (id: LauncherBuiltinWidgetId) => void;
     onCreate: (size: LauncherWidgetSize) => void;
     onChangeSize: (size: LauncherWidgetSize) => void;
     onPickFile: (file: File) => void;
@@ -73,6 +78,8 @@ const LauncherWidgetSheet: React.FC<LauncherWidgetSheetProps> = ({
     widget,
     paper = false,
     busy = false,
+    hiddenBuiltins = [],
+    onRestoreBuiltin,
     onCreate,
     onChangeSize,
     onPickFile,
@@ -277,6 +284,38 @@ const LauncherWidgetSheet: React.FC<LauncherWidgetSheetProps> = ({
                     </>
                 )}
 
+                {mode === 'add' && hiddenBuiltins.length > 0 && onRestoreBuiltin && (
+                    <div className="mb-4">
+                        <div className="text-[10px] font-bold uppercase tracking-[0.16em] mb-2" style={{ color: subtle }}>
+                            已移除的自带组件
+                        </div>
+                        <div className="space-y-2">
+                            {hiddenBuiltins.map(id => (
+                                <div
+                                    key={id}
+                                    className="flex items-center justify-between gap-3 rounded-2xl px-3 py-2.5"
+                                    style={{ background: chip }}
+                                >
+                                    <div className="min-w-0">
+                                        <div className="text-xs font-bold truncate">{LAUNCHER_BUILTIN_WIDGET_LABELS[id]}</div>
+                                        <div className="text-[10px] mt-0.5 truncate" style={{ color: subtle }}>
+                                            {LAUNCHER_BUILTIN_WIDGET_HINTS[id]}
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => onRestoreBuiltin(id)}
+                                        className="px-3 py-1.5 rounded-full text-[11px] font-bold shrink-0 active:scale-95 transition-transform"
+                                        style={{ background: chipActive, color: text }}
+                                    >
+                                        恢复
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
                 {mode === 'add' && (
                     <button
                         type="button"
@@ -287,6 +326,66 @@ const LauncherWidgetSheet: React.FC<LauncherWidgetSheetProps> = ({
                         取消
                     </button>
                 )}
+            </div>
+        </div>
+    );
+};
+
+/**
+ * 自带风车组件（音乐卡片 / 方形图片）的移除面板。
+ * 这两格没有图片可换，只需要一个「移除」，所以不跟上面那个面板混在一起。
+ */
+export const LauncherBuiltinWidgetSheet: React.FC<{
+    id: LauncherBuiltinWidgetId;
+    paper?: boolean;
+    onRemove: () => void;
+    onClose: () => void;
+}> = ({ id, paper = false, onRemove, onClose }) => {
+    const surface = paper ? '#fbf8f2' : '#1e1b26';
+    const text = paper ? '#5b4d42' : '#f6f3ee';
+    const subtle = paper ? 'rgba(91,77,66,0.55)' : 'rgba(246,243,238,0.55)';
+    const chip = paper ? 'rgba(120,131,105,0.12)' : 'rgba(255,255,255,0.08)';
+
+    return (
+        <div
+            className="absolute inset-0 z-[70] flex flex-col justify-end"
+            onPointerDown={(e) => e.stopPropagation()}
+            onPointerMove={(e) => e.stopPropagation()}
+            onPointerUp={(e) => e.stopPropagation()}
+        >
+            <div className="absolute inset-0" style={{ background: 'rgba(20,17,14,0.42)' }} onClick={onClose} />
+            <div
+                className="relative rounded-t-[1.75rem] px-5 pt-4"
+                style={{
+                    background: surface,
+                    color: text,
+                    paddingBottom: 'calc(1.25rem + var(--safe-bottom, 0px))',
+                    boxShadow: '0 -12px 40px rgba(30,24,18,0.28)',
+                }}
+            >
+                <div className="w-9 h-1 rounded-full mx-auto mb-3" style={{ background: subtle, opacity: 0.4 }} />
+                <div className="text-[15px] font-bold">{LAUNCHER_BUILTIN_WIDGET_LABELS[id]}</div>
+                <div className="text-[10px] mt-1 leading-relaxed" style={{ color: subtle }}>
+                    {LAUNCHER_BUILTIN_WIDGET_HINTS[id]}。移除后随时可以在「＋ 组件」面板里恢复。
+                </div>
+                <div className="mt-5 flex gap-2">
+                    <button
+                        type="button"
+                        onClick={onRemove}
+                        className="flex-1 py-3 rounded-2xl text-xs font-bold active:scale-95 transition-transform"
+                        style={{ background: '#e4634f', color: '#fff' }}
+                    >
+                        移除这个组件
+                    </button>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="flex-1 py-3 rounded-2xl text-xs font-bold active:scale-95 transition-transform"
+                        style={{ background: chip, color: text }}
+                    >
+                        取消
+                    </button>
+                </div>
             </div>
         </div>
     );

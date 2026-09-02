@@ -4,9 +4,9 @@ import { INSTALLED_APPS, DOCK_APPS } from '../constants';
 import { isDevDebugAvailable, subscribeDevDebugAvailability } from '../utils/devDebug';
 import AppIcon from '../components/os/AppIcon';
 import { DB } from '../utils/db';
-import { CharacterProfile, Anniversary, AppID, DailySchedule, LauncherPage, LauncherPageLayout, LauncherUserWidget, LauncherWidgetSize, Task } from '../types';
+import { CharacterProfile, Anniversary, AppID, DailySchedule, LauncherBuiltinWidgetId, LauncherPage, LauncherPageLayout, LauncherUserWidget, LauncherWidgetSize, Task } from '../types';
 import LauncherUserWidgetView from '../components/os/LauncherUserWidgetView';
-import LauncherWidgetSheet from '../components/os/LauncherWidgetSheet';
+import LauncherWidgetSheet, { LauncherBuiltinWidgetSheet } from '../components/os/LauncherWidgetSheet';
 import { processImageToBlob } from '../utils/file';
 import { putImageBlob } from '../utils/blobRef';
 import { ScheduleHomeWidget, ScheduleFullscreenViewer } from '../components/schedule/ScheduleHomeWidget';
@@ -42,6 +42,10 @@ import {
 import {
     addLauncherUserWidget,
     appTargetAfterWidget,
+    hideLauncherBuiltinWidget,
+    isLauncherBuiltinWidgetId,
+    normalizeHiddenBuiltinWidgets,
+    restoreLauncherBuiltinWidget,
     buildLauncherPageSlots,
     launcherWidgetIdFromItemKey,
     launcherWidgetSpan,
@@ -870,6 +874,12 @@ const Launcher: React.FC = () => {
   const userWidgetsRef = useRef(userWidgets);
   useEffect(() => { userWidgetsRef.current = userWidgets; }, [userWidgets]);
   const [widgetSheet, setWidgetSheet] = useState<{ mode: 'add' } | { mode: 'edit'; id: string } | null>(null);
+  const [builtinWidgetSheet, setBuiltinWidgetSheet] = useState<LauncherBuiltinWidgetId | null>(null);
+  const [hiddenBuiltinWidgets, setHiddenBuiltinWidgets] = useState<LauncherBuiltinWidgetId[]>(
+      () => normalizeHiddenBuiltinWidgets(theme.launcherHiddenBuiltinWidgets),
+  );
+  const hiddenBuiltinWidgetsRef = useRef(hiddenBuiltinWidgets);
+  useEffect(() => { hiddenBuiltinWidgetsRef.current = hiddenBuiltinWidgets; }, [hiddenBuiltinWidgets]);
   const [widgetBusy, setWidgetBusy] = useState(false);
   const legacyWidgetMigrationRef = useRef(false);
 
@@ -919,6 +929,12 @@ const Launcher: React.FC = () => {
       setUserWidgets(prev => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
   }, [layoutEditing, theme.launcherUserWidgets, widgetCapablePageIds]);
 
+  useEffect(() => {
+      if (layoutEditing) return;
+      const next = normalizeHiddenBuiltinWidgets(theme.launcherHiddenBuiltinWidgets);
+      setHiddenBuiltinWidgets(prev => (prev.join(' ') === next.join(' ') ? prev : next));
+  }, [layoutEditing, theme.launcherHiddenBuiltinWidgets]);
+
   // 一次性迁移：外观定制里那三个固定槽位（tl / tr / wide）搬成可拖动的组件。
   // 必须把剩余槽位显式写回去（哪怕是空对象），否则 updateTheme 不会去删 widget_* 资产，
   // 下次启动加载资产时旧图会被合并回 theme.launcherWidgets 复活。
@@ -929,13 +945,16 @@ const Launcher: React.FC = () => {
           || pages.find(page => page.kind === 'app')
           || pages[0];
       if (!target) return;
-      legacyWidgetMigrationRef.current = true;
+      // 不能一进来就把闸拉上：theme 里的旧槽位是启动时从 IndexedDB 资产补进来的，
+      // 第一次跑这个 effect 时可能还没到。migrate 本身幂等（没得搬就返回 null），
+      // 所以闸只在真的搬完之后才拉。
       const migration = migrateLegacyLauncherWidgets(
           theme.launcherWidgets,
           normalizeLauncherUserWidgets(theme.launcherUserWidgets),
           target.id,
       );
       if (!migration) return;
+      legacyWidgetMigrationRef.current = true;
       setUserWidgets(migration.widgets);
       userWidgetsRef.current = migration.widgets;
       void updateTheme({
@@ -1232,17 +1251,44 @@ const Launcher: React.FC = () => {
   // Native scrolling now travels through edge clones. These handlers only keep
   // the normalisation timer from firing while the user still holds the gesture;
   // they intentionally do not call scrollTo at the boundary.
+  /**
+   * 把轮播的手势状态和被 handleMouseDown 改掉的行内样式收回到「能翻页」的初始态。
+   *
+   * 这是「进整理模式后翻页变成横向平移、退出也不恢复、重启才好」的根治点：
+   * 长按进整理模式之前浏览器已经派过一次 mousedown，那时 handleMouseDown 把
+   * scrollSnapType 关成了 none 并置 isDragging=true；随后长按定时器只把 isDragging
+   * 清成 false，样式没人还原，而 handleMouseUp 又因为 isDragging 已是 false 直接返回，
+   * 于是 snap 永久停在 none。touchActive 同理会被 pointercancel 卡在 true，
+   * 让 handleScroll 再也不去做首尾克隆页的归位。
+   */
+  const resetCarouselGestureState = useCallback(() => {
+      isDragging.current = false;
+      touchActive.current = false;
+      const scroller = scrollContainerRef.current;
+      if (!scroller) return;
+      scroller.style.scrollBehavior = 'smooth';
+      scroller.style.scrollSnapType = 'x mandatory';
+      scroller.style.cursor = 'grab';
+  }, []);
+
+  // 整理模式每次进出都强制归位一次，任何漏掉的收尾路径都在这里兜住。
+  useEffect(() => {
+      resetCarouselGestureState();
+  }, [layoutEditing, resetCarouselGestureState]);
+
   const handleTouchStart = () => {
       if (layoutEditing) return;
       touchActive.current = true;
       cancelCarouselNormalization();
   };
+  // 每次手指离开都顺手归位一次：即使某条路径漏了收尾，下一次划屏就自愈，
+  // 不用像以前那样重启 App 才能把翻页找回来。
   const handleTouchEnd = () => {
-      touchActive.current = false;
+      resetCarouselGestureState();
       scheduleCarouselNormalization();
   };
   const handleTouchCancel = () => {
-      touchActive.current = false;
+      resetCarouselGestureState();
       scheduleCarouselNormalization();
   };
 
@@ -1273,12 +1319,7 @@ const Launcher: React.FC = () => {
 
   const handleMouseUp = () => {
       if (!isDragging.current || !scrollContainerRef.current) return;
-      isDragging.current = false;
-      
-      // Restore styles
-      scrollContainerRef.current.style.scrollBehavior = 'smooth';
-      scrollContainerRef.current.style.scrollSnapType = 'x mandatory';
-      scrollContainerRef.current.style.cursor = 'grab';
+      resetCarouselGestureState();
       scheduleCarouselNormalization();
   };
 
@@ -1381,6 +1422,24 @@ const Launcher: React.FC = () => {
       patchEditingWidget({ image: url });
       addToast('组件图片已更新', 'success');
   }, [addToast, patchEditingWidget]);
+
+  const persistHiddenBuiltinWidgets = useCallback((next: LauncherBuiltinWidgetId[]) => {
+      hiddenBuiltinWidgetsRef.current = next;
+      setHiddenBuiltinWidgets(next);
+      void updateTheme({ launcherHiddenBuiltinWidgets: next.length > 0 ? next : undefined });
+  }, [updateTheme]);
+
+  const handleRemoveBuiltinWidget = useCallback((id: LauncherBuiltinWidgetId) => {
+      persistHiddenBuiltinWidgets(hideLauncherBuiltinWidget(hiddenBuiltinWidgetsRef.current, id));
+      setBuiltinWidgetSheet(null);
+      addToast('已移除，可在「＋ 组件」里恢复', 'success');
+      trackEvent('移除桌面自带组件', { cell: id });
+  }, [addToast, persistHiddenBuiltinWidgets]);
+
+  const handleRestoreBuiltinWidget = useCallback((id: LauncherBuiltinWidgetId) => {
+      persistHiddenBuiltinWidgets(restoreLauncherBuiltinWidget(hiddenBuiltinWidgetsRef.current, id));
+      addToast('已恢复到桌面第二页', 'success');
+  }, [addToast, persistHiddenBuiltinWidgets]);
 
   const handleUserWidgetRemove = useCallback(() => {
       if (widgetSheet?.mode !== 'edit') return;
@@ -1564,6 +1623,21 @@ const Launcher: React.FC = () => {
       pointer.element.style.pointerEvents = 'none';
   }, []);
 
+  // 整理模式下点页码直接跳页（手指划不动，见页码那块的注释）。
+  const goToLauncherPage = useCallback((index: number) => {
+      const scroller = scrollContainerRef.current;
+      if (!scroller || totalPages <= 0) return;
+      const next = Math.max(0, Math.min(totalPages - 1, index));
+      activePageIndexRef.current = next;
+      setActivePageIndex(next);
+      _lastPageIndex = next;
+      visiblePageIdRef.current = launcherPageIdAtIndex(launcherPageLayout, next);
+      scroller.scrollTo({
+          left: scroller.clientWidth * carouselPhysicalIndex(next, totalPages),
+          behavior: 'smooth',
+      });
+  }, [launcherPageLayout, totalPages]);
+
   const queueLayoutPageTurn = useCallback((direction: -1 | 1) => {
       if (layoutPageTurnDirection.current === direction && layoutPageTurnTimer.current) return;
       clearLayoutPageTurn();
@@ -1650,7 +1724,8 @@ const Launcher: React.FC = () => {
           layoutPointer.current.active = true;
           activateLayoutDrag(layoutPointer.current);
           launcherRoot.setPointerCapture(e.pointerId);
-          isDragging.current = false;
+          // 长按之前那次 mousedown 已经把 snap 关掉了，这里必须整套还原，不能只清 isDragging。
+          resetCarouselGestureState();
           suppressLayoutClickUntil.current = Date.now() + 700;
           setLayoutEditing(true);
           trackEvent('进入桌面整理模式');
@@ -1767,6 +1842,9 @@ const Launcher: React.FC = () => {
           if (draggedWidgetId && !pointer.moved) {
               // 长按 / 编辑态下原地松手 = 打开这个组件的编辑面板，不动位置。
               setWidgetSheet({ mode: 'edit', id: draggedWidgetId });
+          } else if (pointer.kind === 'widget' && !pointer.moved && isLauncherBuiltinWidgetId(pointer.key)) {
+              // 风车页自带的音乐卡片 / 方图：原地松手给一个移除入口（以前根本删不掉）。
+              setBuiltinWidgetSheet(pointer.key);
           } else if (draggedWidgetId) {
               // 组件拖放：目标可以是 App、别的组件，或整页空白区（落到页尾）。
               const target = pointer.lastTarget;
@@ -1816,6 +1894,7 @@ const Launcher: React.FC = () => {
       clearPagePointer();
       setPageManagerOpen(false);
       setWidgetSheet(null);
+      setBuiltinWidgetSheet(null);
       setLayoutEditing(false);
   };
 
@@ -2009,7 +2088,7 @@ const Launcher: React.FC = () => {
                   </svg>
                   组件
               </button>
-              <span className="ml-2 flex-1 min-w-0 truncate text-[9.5px] font-semibold tracking-wide opacity-80">拖动 App / 组件换位；轻点组件可编辑</span>
+              <span className="ml-2 flex-1 min-w-0 truncate text-[9.5px] font-semibold tracking-wide opacity-80">拖动换位 · 轻点组件编辑 · 点页码跳页</span>
               <div className="ml-2 flex items-center gap-1.5 shrink-0">
                   <button
                       type="button"
@@ -2144,13 +2223,34 @@ const Launcher: React.FC = () => {
                               />
                           )}
                           <div className="grid grid-cols-2 gap-x-3 gap-y-5 w-full">
-                              {pinwheelOrder.map(cell => (
+                              {pinwheelOrder.filter(cell => !hiddenBuiltinWidgets.includes(cell as LauncherBuiltinWidgetId)).map(cell => (
                                   <div
                                       key={cell}
                                       data-launcher-item={cell}
                                       data-launcher-kind="widget"
-                                      className={`aspect-square min-w-0 ${layoutEditing ? 'launcher-edit-item' : ''}`}
+                                      className={`relative aspect-square min-w-0 ${layoutEditing ? 'launcher-edit-item' : ''}`}
                                   >
+                                      {/* 自带的音乐卡片 / 方图在整理模式下给一个可移除的提示；
+                                          真正的移除走「原地松手打开面板」，见 finishLayoutPointer。 */}
+                                      {layoutEditing && isLauncherBuiltinWidgetId(cell) && (
+                                          <>
+                                              <div
+                                                  className="absolute left-1.5 top-1.5 z-10 w-5 h-5 rounded-full flex items-center justify-center pointer-events-none"
+                                                  style={{ background: 'rgba(30,26,22,0.72)', color: '#fffdf8' }}
+                                                  aria-hidden="true"
+                                              >
+                                                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.8} stroke="currentColor" className="w-3 h-3">
+                                                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14" />
+                                                  </svg>
+                                              </div>
+                                              <div
+                                                  className="absolute bottom-1.5 left-1/2 -translate-x-1/2 z-10 px-2 py-[2px] rounded-full text-[8px] font-bold whitespace-nowrap pointer-events-none"
+                                                  style={{ background: 'rgba(30,26,22,0.66)', color: '#fffdf8' }}
+                                              >
+                                                  轻点可移除
+                                              </div>
+                                          </>
+                                      )}
                                       {cell === 'music' ? (
                                           <NowPlayingSquareWidget contentColor={contentColor} />
                                       ) : cell === 'appsA' ? (
@@ -2217,21 +2317,39 @@ const Launcher: React.FC = () => {
 
       </div>
 
-      {/* Page Indicators */}
+      {/* Page Indicators
+          整理模式下 touch-action 是 none，手指划不动页——不给个入口的话，
+          「加组件」和「删自带组件」这些要落到特定页上的操作就够不着了。
+          所以编辑时把页码点变成可点的跳页按钮，平时仍是纯装饰。 */}
       <div
-          className="absolute left-0 w-full flex justify-center gap-1 pointer-events-none z-20"
+          className={`absolute left-0 w-full flex justify-center gap-1 z-20 ${layoutEditing ? '' : 'pointer-events-none'}`}
           style={{ bottom: `calc(${launcherBottomInset} + 5.5rem)` }}
-          aria-hidden="true"
+          aria-hidden={layoutEditing ? undefined : true}
       >
           {Array.from({ length: totalPages }).map((_, i) => (
               // 每个页码占固定 16px 槽位，只动画内部圆点。旧版直接动画 flex child 的宽度，
               // 快速划过多页时 WebKit 会一边改宽一边重算整行居中，几个过渡态就会挤成方块串。
-              <div key={i} className="flex h-1.5 w-4 shrink-0 items-center justify-center">
-                  <div
-                    className={`h-1.5 rounded-full transform-gpu transition-[width,opacity] duration-300 ${activePageIndex === i ? 'w-4 opacity-100' : 'w-1.5 opacity-40'}`}
-                    style={{ backgroundColor: contentColor }}
-                  />
-              </div>
+              layoutEditing ? (
+                  <button
+                      key={i}
+                      type="button"
+                      onClick={() => goToLauncherPage(i)}
+                      aria-label={`跳到第 ${i + 1} 页`}
+                      className="flex h-6 w-5 shrink-0 items-center justify-center active:scale-90 transition-transform"
+                  >
+                      <span
+                        className={`h-1.5 rounded-full transform-gpu transition-[width,opacity] duration-300 ${activePageIndex === i ? 'w-4 opacity-100' : 'w-2 opacity-55'}`}
+                        style={{ backgroundColor: contentColor }}
+                      />
+                  </button>
+              ) : (
+                  <div key={i} className="flex h-1.5 w-4 shrink-0 items-center justify-center">
+                      <div
+                        className={`h-1.5 rounded-full transform-gpu transition-[width,opacity] duration-300 ${activePageIndex === i ? 'w-4 opacity-100' : 'w-1.5 opacity-40'}`}
+                        style={{ backgroundColor: contentColor }}
+                      />
+                  </div>
+              )
           ))}
       </div>
 
@@ -2262,12 +2380,23 @@ const Launcher: React.FC = () => {
            </div>
       </div>
 
+      {builtinWidgetSheet && (
+          <LauncherBuiltinWidgetSheet
+              id={builtinWidgetSheet}
+              paper={paper}
+              onRemove={() => handleRemoveBuiltinWidget(builtinWidgetSheet)}
+              onClose={() => setBuiltinWidgetSheet(null)}
+          />
+      )}
+
       {widgetSheet && (widgetSheet.mode === 'add' || editingUserWidget) && (
           <LauncherWidgetSheet
               mode={widgetSheet.mode}
               widget={editingUserWidget}
               paper={paper}
               busy={widgetBusy}
+              hiddenBuiltins={hiddenBuiltinWidgets}
+              onRestoreBuiltin={handleRestoreBuiltinWidget}
               onCreate={handleAddUserWidget}
               onChangeSize={(size) => patchEditingWidget({ size })}
               onPickFile={(file) => { void handleUserWidgetFile(file); }}

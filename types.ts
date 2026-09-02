@@ -119,6 +119,8 @@ export interface OSTheme {
    * 旧的 tl / tr / wide 固定槽位首次加载时会被迁移成这里的条目。
    */
   launcherUserWidgets?: LauncherUserWidget[];
+  /** 被用户移除的自带风车组件（音乐卡片 / 方形图片）。移除只是隐藏，随时能恢复。 */
+  launcherHiddenBuiltinWidgets?: LauncherBuiltinWidgetId[];
   /** 默认桌面长按编辑后的 App / Dock / 第二页风车组件顺序。 */
   launcherAppOrder?: string[];
   launcherDockOrder?: string[];
@@ -790,6 +792,12 @@ export interface LauncherPage {
   /** 第一张普通 App 页可承载桌面图片/自由装饰；普通新增页没有此标记。 */
   showMedia?: boolean;
 }
+
+/**
+ * 桌面第二页风车里自带的非 App 单元。用户可以移除，也可以在「＋ 组件」面板里恢复。
+ * appsA / appsB 装的是真 App，不在可移除之列。
+ */
+export type LauncherBuiltinWidgetId = 'music' | 'image';
 
 /**
  * 用户自己在桌面上添加的图片小组件尺寸，写法是「列 x 行」，基于桌面 4 列 App 网格。

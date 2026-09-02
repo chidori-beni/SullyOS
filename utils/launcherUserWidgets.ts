@@ -10,7 +10,7 @@
  *   直接塞 data URL 会撑爆配额。
  */
 
-import type { LauncherPage, LauncherUserWidget, LauncherWidgetSize } from '../types';
+import type { LauncherBuiltinWidgetId, LauncherPage, LauncherUserWidget, LauncherWidgetSize } from '../types';
 
 export const LAUNCHER_WIDGET_GRID_COLUMNS = 4;
 
@@ -291,3 +291,49 @@ export const migrateLegacyLauncherWidgets = (
     }
     return { widgets, legacyWidgets };
 };
+
+// ── 自带风车组件（音乐卡片 / 方形图片）的移除与恢复 ──────────────────────
+//
+// 这两格是写死在风车页布局里的，以前没有任何入口能去掉。移除做成「隐藏 + 可恢复」
+// 而不是从 launcherPinwheelOrder 里删掉：顺序还留着，恢复时能回到原来的位置。
+
+export const LAUNCHER_BUILTIN_WIDGET_IDS: readonly LauncherBuiltinWidgetId[] = ['music', 'image'];
+
+export const LAUNCHER_BUILTIN_WIDGET_LABELS: Record<LauncherBuiltinWidgetId, string> = {
+    music: '音乐卡片',
+    image: '方形图片',
+};
+
+export const LAUNCHER_BUILTIN_WIDGET_HINTS: Record<LauncherBuiltinWidgetId, string> = {
+    music: '桌面第二页的「正在播放」卡片',
+    image: '桌面第二页风车右下角那张方图',
+};
+
+export const isLauncherBuiltinWidgetId = (value: unknown): value is LauncherBuiltinWidgetId => (
+    typeof value === 'string' && (LAUNCHER_BUILTIN_WIDGET_IDS as readonly string[]).includes(value)
+);
+
+export const normalizeHiddenBuiltinWidgets = (raw: unknown): LauncherBuiltinWidgetId[] => {
+    if (!Array.isArray(raw)) return [];
+    const seen = new Set<LauncherBuiltinWidgetId>();
+    for (const value of raw) {
+        if (isLauncherBuiltinWidgetId(value)) seen.add(value);
+    }
+    // 固定按 LAUNCHER_BUILTIN_WIDGET_IDS 的顺序输出，免得存档顺序不同就被当成「变了」。
+    return LAUNCHER_BUILTIN_WIDGET_IDS.filter(id => seen.has(id));
+};
+
+export const hideLauncherBuiltinWidget = (
+    hidden: readonly LauncherBuiltinWidgetId[],
+    id: LauncherBuiltinWidgetId,
+): LauncherBuiltinWidgetId[] => normalizeHiddenBuiltinWidgets([...hidden, id]);
+
+export const restoreLauncherBuiltinWidget = (
+    hidden: readonly LauncherBuiltinWidgetId[],
+    id: LauncherBuiltinWidgetId,
+): LauncherBuiltinWidgetId[] => normalizeHiddenBuiltinWidgets(hidden.filter(item => item !== id));
+
+export const isLauncherBuiltinWidgetHidden = (
+    hidden: readonly LauncherBuiltinWidgetId[],
+    id: string,
+): boolean => isLauncherBuiltinWidgetId(id) && hidden.includes(id);

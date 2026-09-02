@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LauncherUserWidget } from '../types';
 import {
+    LAUNCHER_BUILTIN_WIDGET_IDS,
     LAUNCHER_WIDGET_PAGE_LIMIT,
     LAUNCHER_WIDGET_SIZES,
     addLauncherUserWidget,
@@ -10,8 +11,13 @@ import {
     launcherWidgetItemKey,
     launcherWidgetSpan,
     launcherWidgetsForPage,
+    hideLauncherBuiltinWidget,
+    isLauncherBuiltinWidgetHidden,
+    isLauncherBuiltinWidgetId,
     migrateLegacyLauncherWidgets,
     moveLauncherUserWidget,
+    normalizeHiddenBuiltinWidgets,
+    restoreLauncherBuiltinWidget,
     normalizeLauncherUserWidgets,
     removeLauncherUserWidget,
     updateLauncherUserWidget,
@@ -265,5 +271,43 @@ describe('migrateLegacyLauncherWidgets', () => {
     it('没有旧槽位可搬时返回 null', () => {
         expect(migrateLegacyLauncherWidgets({ dsq: 'd' }, [], 'p1')).toBeNull();
         expect(migrateLegacyLauncherWidgets(undefined, [], 'p1')).toBeNull();
+    });
+});
+
+describe('自带风车组件的移除与恢复', () => {
+    it('只认音乐卡片和方图这两格，装 App 的两格不能被移除', () => {
+        expect(LAUNCHER_BUILTIN_WIDGET_IDS).toEqual(['music', 'image']);
+        expect(isLauncherBuiltinWidgetId('music')).toBe(true);
+        expect(isLauncherBuiltinWidgetId('appsA')).toBe(false);
+        expect(isLauncherBuiltinWidgetId(undefined)).toBe(false);
+    });
+
+    it('移除是幂等的，不会存出重复项', () => {
+        let hidden = hideLauncherBuiltinWidget([], 'music');
+        hidden = hideLauncherBuiltinWidget(hidden, 'music');
+        expect(hidden).toEqual(['music']);
+    });
+
+    it('恢复只影响指定的那一格', () => {
+        const hidden = hideLauncherBuiltinWidget(hideLauncherBuiltinWidget([], 'music'), 'image');
+        expect(restoreLauncherBuiltinWidget(hidden, 'music')).toEqual(['image']);
+    });
+
+    it('输出顺序固定，存档顺序不同不会被当成「变了」', () => {
+        expect(normalizeHiddenBuiltinWidgets(['image', 'music'])).toEqual(['music', 'image']);
+        expect(normalizeHiddenBuiltinWidgets(['music', 'image'])).toEqual(['music', 'image']);
+    });
+
+    it('脏数据一律洗掉', () => {
+        expect(normalizeHiddenBuiltinWidgets(['appsA', 'music', null, 7])).toEqual(['music']);
+        expect(normalizeHiddenBuiltinWidgets('music')).toEqual([]);
+        expect(normalizeHiddenBuiltinWidgets(undefined)).toEqual([]);
+    });
+
+    it('隐藏判定认得字符串格位，也不会误判 App 格', () => {
+        const hidden = hideLauncherBuiltinWidget([], 'image');
+        expect(isLauncherBuiltinWidgetHidden(hidden, 'image')).toBe(true);
+        expect(isLauncherBuiltinWidgetHidden(hidden, 'music')).toBe(false);
+        expect(isLauncherBuiltinWidgetHidden(hidden, 'appsB')).toBe(false);
     });
 });
