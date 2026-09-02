@@ -142,6 +142,74 @@ export const hasPendingUserImage = (messages: readonly Message[]): boolean => {
     return false;
 };
 
+/**
+ * 「原图已经自动保存了」这类模板句：图片名词 + 存储动词 + 完成态收尾。
+ *
+ * 三段都命中才算，且完成态必须落在句尾——「你这张图拍得真好」「照片里的猫好可爱」
+ * 都不会被误伤，只有真正在向用户宣告"文件已经存好了"的句子才会被摘掉。
+ */
+const IMAGE_SAVE_CLAIM_SUBJECT = /(原图|图片|照片|截图|这张|这两张|这几张|那张|图)/;
+const IMAGE_SAVE_CLAIM_VERB = /(自动保存|保存|存下|存好|存起|存进|收下|收好|收着|收藏|下载|备份|归档|入库)/;
+const IMAGE_SAVE_CLAIM_DONE = /(了|啦|完毕|完成|成功|收下|收好|存好|保存)$/;
+
+/**
+ * 从"紧跟用户图片的角色回复"里摘掉模板化的存图确认句——**只改送给模型的那一份副本**，
+ * 用户看到的历史气泡一个字都不动。
+ *
+ * 为什么必须这么做：系统提示里写十条「不要宣称已保存」，也打不过历史里十条角色自己
+ * 说过的「原图已经自动保存了」。后者是模型眼里的 few-shot 示范，前者只是约束；示范一旦
+ * 累积起来就会自我强化——模型抄一次，抄出来的又变成下一轮的示范。同一个套路
+ * （stripFaceToFacePhoneSourceTags / stripMessageReactionTags）已经在 buildMessageHistory
+ * 开头用过：清理渲染气泡的同时也要清理 prompt 副本，否则下一轮照抄历史里的泄漏。
+ *
+ * 整条回复只剩这句时返回空串，调用方据此把这条 assistant 消息整个排除出 prompt。
+ */
+export const stripImageSaveClaimSentences = (text: string): string => {
+    if (!text) return text;
+    const pieces = text.split(/([，,。！？!?~～…；;、\s]+)/);
+    let changed = false;
+    let kept = '';
+    for (let index = 0; index < pieces.length; index += 2) {
+        const segment = pieces[index] || '';
+        const separator = pieces[index + 1] || '';
+        if (segment
+            && IMAGE_SAVE_CLAIM_SUBJECT.test(segment)
+            && IMAGE_SAVE_CLAIM_VERB.test(segment)
+            && IMAGE_SAVE_CLAIM_DONE.test(segment)) {
+            changed = true;
+            continue;
+        }
+        kept += segment + separator;
+    }
+    if (!changed) return text;
+    return kept.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+};
+
+/** map 内部的丢弃哨兵：整条回复只剩存图确认句时，这条 assistant 消息不进 prompt。 */
+const IMAGE_SAVE_CLAIM_ONLY_MESSAGE = { role: 'assistant' as const, content: '' };
+
+/**
+ * 哪些 assistant 消息属于"用户发完图之后的那一轮回复"。
+ *
+ * 一轮里用户可能先发图再补文字，角色也可能连发好几条气泡，所以边界是：
+ * 用户图片打开窗口，直到下一个**不含图片的新用户回合**才关上。
+ */
+const collectAssistantRepliesToUserImage = (messages: readonly Message[]): Set<number> => {
+    const ids = new Set<number>();
+    let pendingImage = false;
+    let lastRole: Message['role'] | null = null;
+    for (const message of messages) {
+        if (message.role === 'user') {
+            if (message.type === 'image') pendingImage = true;
+            else if (lastRole === 'assistant') pendingImage = false;
+        } else if (message.role === 'assistant' && pendingImage) {
+            ids.add(message.id);
+        }
+        if (message.role === 'user' || message.role === 'assistant') lastRole = message.role;
+    }
+    return ids;
+};
+
 const getChatModeTransition = (message: Message): ChatModeTransition | null => {
     const source = message.metadata?.source;
     if (source === 'date') return 'date';
@@ -970,7 +1038,7 @@ ${notionEnabled ? `8. **📔 日记系统（你的私人 Notion 日记本）**:
    *其实我还想继续聊的...但TA说困了*
    *算了，明天还能聊*
 
-   [!秘密] 我把TA发的那张猫猫照片存下来了 嘿嘿
+   [!秘密] 那句「跟你一样」我在心里回放了好几遍 嘿嘿
    [[DIARY_END]]
    \`\`\`` : ''}
 ${feishuEnabled ? `${notionEnabled ? '9' : '8'}. **📒 日记系统（你的飞书日记本）**:
@@ -1362,6 +1430,9 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
             effectiveHistory = effectiveHistory.filter(m => !processedExcludeIds.has(m.id));
         }
         const historySlice = effectiveHistory.slice(-limit);
+        // 紧跟用户图片的角色回复：prompt 副本里要摘掉模板化的存图确认句，
+        // 否则这些旧回复会一直充当"收到图片就先报一句已保存"的示范。
+        const assistantRepliesToUserImage = collectAssistantRepliesToUserImage(historySlice);
         const charTz = resolveCharTimeZone(char);
 
         let timeGapHint = "";
@@ -1388,6 +1459,15 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                 let content: any = typeof m.content === 'string'
                     ? stripFaceToFacePhoneSourceTags(stripMessageReactionTags(m.content))
                     : m.content;
+                // 同一条防线的图片版：清理渲染气泡之外，也清理 prompt 副本里的存图确认句。
+                if (typeof content === 'string'
+                    && m.role === 'assistant'
+                    && assistantRepliesToUserImage.has(m.id)) {
+                    const cleaned = stripImageSaveClaimSentences(content);
+                    // 整条回复只有这句时让它整个消失——留一句空气泡反而像在示范"可以只回一句确认"。
+                    if (!cleaned.trim()) return IMAGE_SAVE_CLAIM_ONLY_MESSAGE;
+                    content = cleaned;
+                }
                 const timeStr = `[${ChatPrompts.formatDate(m.timestamp, charTz)}]`;
                 const reactionContext = formatMessageReactionContext(m, char.name || '你', userProfile?.name || '用户');
                 const sourceTag = (() => {
@@ -1674,7 +1754,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
 
                 if (reactionContext) content = `${content}${reactionContext}`;
                 return { role: m.role, content };
-            }),
+            }).filter(entry => entry !== IMAGE_SAVE_CLAIM_ONLY_MESSAGE),
             historySlice // Return original slice for Quote lookup
         };
     }
