@@ -221,6 +221,8 @@ const defaults = {
     chatHeaderDensity: 'default',
     chatStatusStyle: 'subtle',
     chatSendButtonStyle: 'circle',
+    chatShowSendButton: false,
+    chatShowVoiceButton: true,
 } as const;
 
 const groupClass = 'rounded-3xl border border-slate-100 bg-white p-5 shadow-sm';
@@ -255,6 +257,10 @@ const choices = {
         { value: 'shadow', label: '立体' },
         { value: 'wechat', label: '微信感' },
         { value: 'ios', label: 'iOS' },
+    ],
+    visibility: [
+        { value: 'show', label: '显示' },
+        { value: 'hide', label: '隐藏' },
     ],
     input: [
         { value: 'default', label: '默认' },
@@ -416,6 +422,9 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
     const headerDensity = theme.chatHeaderDensity || defaults.chatHeaderDensity;
     const statusStyle = theme.chatStatusStyle || defaults.chatStatusStyle;
     const sendButtonStyle = theme.chatSendButtonStyle || defaults.chatSendButtonStyle;
+    // 两个开关都是「没设过就用默认」：发送按钮默认收起（本 fork 的消息栏习惯），语音按钮默认留在栏上。
+    const showSendButton = theme.chatShowSendButton ?? defaults.chatShowSendButton;
+    const showVoiceButton = theme.chatShowVoiceButton ?? defaults.chatShowVoiceButton;
     const pendingIndicator = theme.chatPendingIndicator !== false;
     const showHeaderBuffs = theme.chatHideHeaderBuffs !== true;
     const [showStyleHelp, setShowStyleHelp] = useState(false);
@@ -599,9 +608,14 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                             <div className={`flex min-h-10 flex-1 items-center px-4 text-[11px] ${inputStyle === 'flat' ? 'rounded-none border-b border-slate-200 bg-transparent' : inputStyle === 'wechat' ? 'rounded-full border border-slate-200 bg-white' : inputStyle === 'ios' ? 'rounded-[26px] border border-white/80 bg-white/80 shadow-inner' : inputStyle === 'telegram' ? 'rounded-2xl border border-sky-100 bg-white' : inputStyle === 'discord' ? 'rounded-2xl border border-white/10 bg-slate-800 text-white' : inputStyle === 'pixel' ? 'rounded-[4px] border-2 border-[#8f674a] bg-[#f8f0e0]' : inputStyle === 'rounded' ? 'rounded-full bg-slate-100' : 'rounded-[22px] bg-slate-100'}`}>
                                 输入消息...
                             </div>
+                            {showVoiceButton && (
+                            <button className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-transparent ${chromeStyle === 'pixel' ? 'text-[#8f674a]' : headerStyle === 'discord' ? 'text-slate-300' : 'text-slate-500'}`}>◍</button>
+                            )}
+                            {showSendButton && (
                             <button className={`shrink-0 ${sendButtonStyle === 'pill' ? (chromeStyle === 'pixel' ? 'h-10 min-w-[68px] rounded-[4px] border-2 border-[#8f674a] bg-[#c99872] px-4 text-[11px] font-bold text-[#fff7ed]' : 'h-10 min-w-[68px] rounded-full bg-primary px-4 text-[11px] font-bold text-white') : sendButtonStyle === 'minimal' ? (chromeStyle === 'pixel' ? 'flex h-10 w-10 items-center justify-center rounded-[4px] border-2 border-[#8f674a] bg-[#c99872] text-[#fff7ed]' : 'flex h-10 w-10 items-center justify-center rounded-full bg-transparent text-primary') : (chromeStyle === 'pixel' ? 'flex h-10 w-10 items-center justify-center rounded-[4px] border-2 border-[#8f674a] bg-[#c99872] text-[#fff7ed]' : 'flex h-10 w-10 items-center justify-center rounded-full bg-primary text-white shadow-lg')}`}>
                                 {sendButtonStyle === 'pill' ? '发送' : '➤'}
                             </button>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -781,7 +795,16 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                         <ChoiceGroup title="输入栏风格" items={choices.input} value={inputStyle} onPick={(value) => updateTheme({ chatInputStyle: value as OSTheme['chatInputStyle'] })} />
                     </div>
                     <div className="mt-4">
+                        <ChoiceGroup title="显示发送按钮" items={choices.visibility} value={showSendButton ? 'show' : 'hide'} onPick={(value) => updateTheme({ chatShowSendButton: value === 'show' })} />
+                        <p className="mt-2 text-[10px] text-slate-400">默认隐藏，消息栏由回车发送。社区美化里针对发送键写的样式，只有打开它才看得到效果。</p>
+                    </div>
+                    <div className="mt-4">
                         <ChoiceGroup title="发送按钮" items={choices.send} value={sendButtonStyle} onPick={(value) => updateTheme({ chatSendButtonStyle: value as OSTheme['chatSendButtonStyle'] })} />
+                        <p className="mt-2 text-[10px] text-slate-400">发送按钮显示时的样式；隐藏时这一项不起作用。</p>
+                    </div>
+                    <div className="mt-4">
+                        <ChoiceGroup title="消息栏语音按钮" items={choices.visibility} value={showVoiceButton ? 'show' : 'hide'} onPick={(value) => updateTheme({ chatShowVoiceButton: value === 'show' })} />
+                        <p className="mt-2 text-[10px] text-slate-400">关掉只是把按钮从消息栏收起来，语音功能不会消失 —— 加号菜单第 3 页始终留着一份入口。</p>
                     </div>
                 </>)}
                 </div>

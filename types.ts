@@ -181,6 +181,12 @@ export interface OSTheme {
   chatHeaderDensity?: 'compact' | 'default' | 'airy';
   chatStatusStyle?: 'subtle' | 'pill' | 'dot';
   chatSendButtonStyle?: 'circle' | 'pill' | 'minimal';
+  /** 消息栏是否显示发送按钮。默认 false —— 本 fork 的消息栏统一由回车发送，
+   *  想要按钮的（或想让社区美化里那套发送键样式生效的）在外观里打开。 */
+  chatShowSendButton?: boolean;
+  /** 消息栏是否显示语音按钮（录一段自己的语音发出去）。默认 true。
+   *  关掉之后功能不会消失，加号菜单里始终留着一份入口。 */
+  chatShowVoiceButton?: boolean;
   /** Instant Push 用户气泡左侧的"准备中"圆点动画。默认开启。 */
   chatPendingIndicator?: boolean;
   /** 聊天「白框」自定义 CSS：作用于 .sully-chat-root 下的顶栏、输入栏与消息布局钩子。

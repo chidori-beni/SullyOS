@@ -1888,6 +1888,8 @@ ${memberTimeline || '(暂无互动记录)'}
                 canReroll={canReroll}
                 inputStyle={osTheme.chatInputStyle}
                 sendButtonStyle={osTheme.chatSendButtonStyle}
+                showSendButton={osTheme.chatShowSendButton ?? false}
+                showVoiceButton={osTheme.chatShowVoiceButton ?? true}
                 chromeStyle={osTheme.chatChromeStyle}
                 acnh={acnh}
                 actionsContent={

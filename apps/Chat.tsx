@@ -4541,6 +4541,8 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                     xinshengEnabled={!!(char as any).xinshengEnabled}
                     inputStyle={osTheme.chatInputStyle}
                     sendButtonStyle={osTheme.chatSendButtonStyle}
+                    showSendButton={osTheme.chatShowSendButton ?? false}
+                    showVoiceButton={osTheme.chatShowVoiceButton ?? true}
                     chromeStyle={osTheme.chatChromeStyle}
                     acnh={acnh}
                 />

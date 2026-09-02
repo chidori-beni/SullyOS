@@ -58,30 +58,50 @@ describe('user voice message wiring', () => {
     expect(standalone).toContain('if (isScrollableTextEntry(target)) return;');
   });
 
-  it('keeps the chat composer compact and scrolls long text inside the box', () => {
+  it('keeps the chat composer compact and offers scroll/fullscreen controls for long text', () => {
     const chatInput = read('components/chat/ChatInputArea.tsx');
     expect(chatInput).toContain("textarea.style.overflowY = isOverflowing ? 'auto' : 'hidden'");
     expect(chatInput).toContain('overscroll-contain');
+    expect(chatInput).toContain('CornersOut');
+    expect(chatInput).toContain('setIsFullscreenEditor(true)');
   });
 
-  // 消息栏排版必须和上游一致，社区流通的聊天美化 CSS 是按上游 DOM 写的：
-  // 发送按钮回来了、加号/表情按钮回到 w-11/w-6，输入框外层不再套自定义裁剪层。
-  it('keeps the composer row identical to upstream so community CSS still matches', () => {
+  // 发送按钮和消息栏语音按钮都做成了可开关：默认「不显示发送键 / 显示语音键」＝ 这个 fork 一直以来的手感，
+  // 想要发送键（或想让社区美化里那套发送键样式有落点）的人在外观里打开即可。
+  it('keeps the send and voice buttons optional instead of hard-coding either one', () => {
     const chatInput = read('components/chat/ChatInputArea.tsx');
+    expect(chatInput).toContain('showSendButton = false');
+    expect(chatInput).toContain('showVoiceButton = true');
+    expect(chatInput).toContain('{showSendButton && (');
+    expect(chatInput).toContain('{onOpenVoiceInput && showVoiceButton && (');
     expect(chatInput).toContain('const sendButtonClass');
     expect(chatInput).toContain('PaperPlaneTilt');
-    expect(chatInput).toContain('p-3 px-4 flex gap-3 items-end relative');
-    expect(chatInput).toContain("${useIOSStandaloneInputFix ? 'overflow-visible' : 'overflow-hidden'}");
-    expect(chatInput).not.toContain('sully-chat-input-clip');
+
+    const types = read('types.ts');
+    expect(types).toContain('chatShowSendButton?: boolean;');
+    expect(types).toContain('chatShowVoiceButton?: boolean;');
+
+    for (const screen of ['apps/Chat.tsx', 'apps/GroupChat.tsx']) {
+      const source = read(screen);
+      expect(source).toContain('showSendButton={osTheme.chatShowSendButton ?? false}');
+      expect(source).toContain('showVoiceButton={osTheme.chatShowVoiceButton ?? true}');
+    }
+
+    const editor = read('components/appearance/ChatAppearanceEditor.tsx');
+    expect(editor).toContain('chatShowSendButton: value === 'show'');
+    expect(editor).toContain('chatShowVoiceButton: value === 'show'');
   });
 
-  // 上游没有的两个功能一个都不能少，只是从消息栏挪进了加号菜单。
-  it('moves the extra composer features into the plus panel', () => {
+  // 语音在消息栏可以被关掉，所以加号菜单里必须永远留一份，功能不能因为一个开关就消失。
+  it('always keeps a voice entry in the plus panel', () => {
     const chatInput = read('components/chat/ChatInputArea.tsx');
     expect(chatInput).toContain('<span className="text-xs font-bold">语音</span>');
-    expect(chatInput).toContain('<span className="text-xs font-bold">放大编辑</span>');
-    expect(chatInput).toContain('onClick={openFullscreenEditor}');
-    expect(chatInput).toContain('setIsFullscreenEditor(true)');
-    expect(chatInput).toContain('CornersOut');
+  });
+
+  it('clips composer content to the theme frame without assuming a rounded shape', () => {
+    const chatInput = read('components/chat/ChatInputArea.tsx');
+    expect(chatInput).toContain('sully-chat-input-clip');
+    expect(chatInput).toContain("style={{ overflow: 'hidden', borderRadius: 'inherit' }}");
+    expect(chatInput).toContain('px-1 overflow-hidden transition-all');
   });
 });
