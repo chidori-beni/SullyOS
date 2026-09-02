@@ -18,7 +18,7 @@ import { buildNovelAsync, groupAnnotationsBySeg, getBookmark } from '../utils/vr
 import { decodeBytes } from '../utils/vrWorld/decodeText';
 import { extractPdfText, isPdfFile } from '../utils/pdfText';
 import { stripLeakedAttrs } from '../utils/vrWorld/prompts';
-import { PostOffice, MAX_LETTER_CHARS, exportIdentity, importIdentity, getAdminToken, setAdminToken, type RemoteReply, type RemoteLetterStat, type RemoteAdminLetter } from '../utils/vrWorld/postOffice';
+import { PostOffice, MAX_LETTER_CHARS, exportIdentity, importIdentity, getAdminToken, setAdminToken, getPostOfficeBase, setPostOfficeBase, DEFAULT_POST_OFFICE_BASE, probePostOfficeBase, assertCompleteLetterReceipt, PostOfficeError, describePostOfficeError, type PostOfficeProbeResult, type RemoteReply, type RemoteLetterStat, type RemoteAdminLetter } from '../utils/vrWorld/postOffice';
 import { Signal, getMyAuthorship, setSignalWhisper, hasSignalNoticeAck, ackSignalNotice, type SignalState } from '../utils/vrWorld/signal';
 import type { SignalPoem, SignalBooklet } from '../types';
 import { getVRApi, setVRApi, getVRApiLog, clearVRApiLog, type VRApiCall } from '../utils/vrWorld/vrApi';
@@ -768,6 +768,60 @@ const IdentityModal: React.FC<{ onImport: (code: string) => void; onClose: () =>
     );
 };
 
+// 邮局后端设置：当前默认域名可能被网络安全策略拦截，允许用户换成自己部署且信任的 HTTPS 地址。
+// 只有 /health 确认是 SullyOS 邮局后才保存，避免误把信件发给陌生服务。
+const PostOfficeSettingsModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+    const [draft, setDraft] = useState(() => getPostOfficeBase());
+    const [testing, setTesting] = useState(false);
+    const [probe, setProbe] = useState<PostOfficeProbeResult | null>(null);
+    const current = getPostOfficeBase();
+
+    const runProbe = async (saveOnSuccess: boolean) => {
+        setTesting(true);
+        setProbe(null);
+        try {
+            const result = await probePostOfficeBase(draft);
+            setProbe(result);
+            if (saveOnSuccess && result.status === 'reachable' && result.base) {
+                setPostOfficeBase(result.base);
+                setDraft(result.base);
+            }
+        } finally {
+            setTesting(false);
+        }
+    };
+
+    const fillDefault = () => {
+        setDraft(DEFAULT_POST_OFFICE_BASE);
+        setProbe(null);
+    };
+
+    return (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center px-6 bg-black/55 backdrop-blur-sm" onClick={onClose}>
+            <div className="w-full max-w-[370px] rounded-2xl p-4" onClick={e => e.stopPropagation()} style={{ background: 'linear-gradient(180deg,#221b12,#15100a)', border: '1px solid rgba(220,190,120,.28)', boxShadow: '0 16px 50px rgba(0,0,0,.6)' }}>
+                <div className="flex items-center gap-2 mb-1">
+                    <div className="text-[13px] font-semibold text-amber-100" style={{ fontFamily: `'Noto Serif SC',serif` }}>邮局连接设置</div>
+                    <button onClick={onClose} className="ml-auto p-1 text-white/45 active:text-white/80"><X size={16} /></button>
+                </div>
+                <p className="text-[10px] text-white/45 leading-snug mb-3">
+                    当前地址在部分网络可能被域名策略拦截。这里只接受 HTTPS；自定义后端会收到匿名设备码和邮件正文，请只填写你信任的 SullyOS 邮局 Worker。切换地址不会迁移旧后端的远端信件。
+                </p>
+                <label className="text-[10px] text-amber-200/60">邮局后端地址</label>
+                <input value={draft} onChange={e => { setDraft(e.target.value); setProbe(null); }} spellCheck={false}
+                    placeholder="https://你的邮局地址/po" className="w-full mt-1 rounded-lg bg-black/25 px-3 py-2 text-[11.5px] text-amber-50 placeholder-white/25 outline-none" style={{ border: '1px solid rgba(220,190,120,.2)' }} />
+                <div className="mt-1.5 text-[9.5px] text-white/30 break-all">当前生效：{current}</div>
+                {probe && <div className={`mt-2 rounded-lg px-2.5 py-2 text-[10.5px] leading-snug ${probe.status === 'reachable' ? 'text-emerald-300' : 'text-red-300/90'}`} style={{ background: 'rgba(0,0,0,.25)' }}>{probe.message}</div>}
+                <div className="flex gap-1.5 mt-3">
+                    <button onClick={fillDefault} disabled={testing} className="flex-1 rounded-full py-2 text-[10.5px] text-white/65 disabled:opacity-40" style={{ border: '1px solid rgba(255,255,255,.14)' }}>填入默认</button>
+                    <button onClick={() => void runProbe(false)} disabled={testing} className="flex-1 rounded-full py-2 text-[10.5px] text-amber-100/85 disabled:opacity-40" style={{ border: '1px solid rgba(220,190,120,.3)' }}>{testing ? '测试中…' : '测试地址'}</button>
+                    <button onClick={() => void runProbe(true)} disabled={testing} className="flex-1 rounded-full py-2 text-[10.5px] font-semibold text-black disabled:opacity-40" style={{ background: 'linear-gradient(120deg,#f3d08a,#e8b75e)' }}>测试并保存</button>
+                </div>
+                <button onClick={onClose} className="w-full mt-2 rounded-full py-2 text-[11.5px] text-white/60" style={{ border: '1px solid rgba(255,255,255,.12)' }}>关闭</button>
+            </div>
+        </div>
+    );
+};
+
 // 后台：用 ADMIN_TOKEN 看后端「所有人」的信、按需删（点踩多的排在前）。token 仅存本机。
 const AdminModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     const [token, setToken] = useState(getAdminToken());
@@ -1241,6 +1295,7 @@ const PostOfficePanel: React.FC<{ addToast?: (m: string, t?: any) => void; chara
     const [editReplyFor, setEditReplyFor] = useState<VRLetter | null>(null); // 编辑待发送回信
     const [confirmReport, setConfirmReport] = useState<VRLetter | null>(null); // 点踩=举报二次确认
     const [identityOpen, setIdentityOpen] = useState(false);            // 身份导出/导入弹窗
+    const [settingsOpen, setSettingsOpen] = useState(false);            // 后端地址与连接测试
     const [adminOpen, setAdminOpen] = useState(false);                  // 后台（看后端全部信件）弹窗
     const [composeNew, setComposeNew] = useState<VRLetter | null>(null); // 用户自己写新信的草稿
     const [myStats, setMyStats] = useState<Record<string, RemoteLetterStat>>({}); // 我寄出的信热度（按 remoteId）
@@ -1282,21 +1337,29 @@ const PostOfficePanel: React.FC<{ addToast?: (m: string, t?: any) => void; chara
         const remaining = Math.max(0, PO_SEND_QUOTA.limit - q.count);
         if (remaining <= 0) { addToast?.(`寄信暂时到上限（${PO_SEND_QUOTA.limit} 封/${PO_SEND_QUOTA.windowMs / 3600_000} 小时），约 ${quotaResetHours(q.windowStart, PO_SEND_QUOTA.windowMs)} 小时后恢复`, 'info'); return; }
         const batch = outQueued.slice(0, remaining);
+        const empty = batch.filter(l => !l.content.trim());
+        if (empty.length) { addToast?.(`有 ${empty.length} 封信没有正文，请长按编辑或删除后再寄`, 'error'); return; }
         const heldBack = outQueued.length - batch.length;
         setBusy('send');
         try {
-            const ids = await PostOffice.uploadLetters(batch.map(l => ({ pen: l.pen, content: l.content })));
+            const ids = assertCompleteLetterReceipt(
+                await PostOffice.uploadLetters(batch.map(l => ({ pen: l.pen, content: l.content }))),
+                batch.length,
+            );
             await DB.saveVRLetters(batch.map((l, i) => ({ ...l, status: 'sent', remoteId: ids[i], sentAt: Date.now() })));
-            bumpQuota(PO_SEND_QUOTA, batch.length);
+            bumpQuota(PO_SEND_QUOTA, ids.length);
             await load();
             trackEvent('一键寄出漂流信');
             addToast?.(heldBack > 0
                 ? `已寄出 ${ids.length} 封，额度用完，还剩 ${heldBack} 封约 ${quotaResetHours(readQuota(PO_SEND_QUOTA).windowStart, PO_SEND_QUOTA.windowMs)} 小时后再寄`
                 : `已寄出 ${ids.length} 封漂流信`, 'success');
         } catch (e: any) {
-            const msg = /429|rate limit/i.test(e?.message || '')
+            const detail = describePostOfficeError(e);
+            const msg = /429|rate limit/i.test(detail)
                 ? '后端每 5 小时限 5 封，刚寄太猛被挡了，待会儿再寄剩下的（信都还在队列）'
-                : '寄出失败：' + (e?.message || '检查网络');
+                : e instanceof PostOfficeError && e.kind === 'protocol'
+                    ? `寄出失败：${detail}。信件仍保留在待寄箱，请先检查后端，不要连续重试`
+                    : '寄出失败：' + detail;
             addToast?.(msg, 'error');
         } finally { setBusy(null); }
     };
@@ -1457,6 +1520,7 @@ const PostOfficePanel: React.FC<{ addToast?: (m: string, t?: any) => void; chara
                 <button onClick={refreshInbox} disabled={!!busy} className="text-[10.5px] px-2.5 py-1 rounded-full bg-white/8 text-amber-100/90 disabled:opacity-40">{busy === 'inbox' ? '…' : '刷新收件箱'}</button>
                 <button onClick={collectReplies} disabled={!!busy} className="text-[10.5px] px-2.5 py-1 rounded-full bg-white/8 text-amber-100/90 disabled:opacity-40">{busy === 'collect' ? '…' : '收取回复'}</button>
                 <button onClick={() => setIdentityOpen(true)} title="邮局身份导出/导入" className="text-[10.5px] px-2.5 py-1 rounded-full bg-white/8 text-amber-100/90">身份</button>
+                <button onClick={() => setSettingsOpen(true)} title="邮局后端连接设置" aria-label="邮局后端连接设置" className="shrink-0 h-6 w-6 rounded-full flex items-center justify-center bg-white/8 text-amber-100/75 active:text-amber-100"><Gear size={12} weight="bold" /></button>
                 {/* 后台入口只在本地开发（vite dev）下出现；部署到网页后普通用户看不到。仍需 ADMIN_TOKEN 才能拉数据。 */}
                 {import.meta.env.DEV && <button onClick={() => setAdminOpen(true)} title="后台：看后端全部信件（需 ADMIN_TOKEN，仅本地可见）" className="text-[10.5px] px-2.5 py-1 rounded-full bg-white/8 text-amber-100/90">后台</button>}
             </div>
@@ -1655,6 +1719,8 @@ const PostOfficePanel: React.FC<{ addToast?: (m: string, t?: any) => void; chara
             {composeNew && <LetterEditModal letter={composeNew} title="写一封新漂流信" onSave={saveNewLetter} onCancel={() => setComposeNew(null)} />}
             {/* 身份导出/导入 */}
             {identityOpen && <IdentityModal onImport={doImport} onClose={() => setIdentityOpen(false)} />}
+            {/* 后端地址与连通性测试 */}
+            {settingsOpen && <PostOfficeSettingsModal onClose={() => setSettingsOpen(false)} />}
             {/* 后台：看后端全部信件 */}
             {adminOpen && <AdminModal onClose={() => setAdminOpen(false)} />}
         </div>
