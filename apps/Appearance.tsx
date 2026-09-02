@@ -1373,7 +1373,9 @@ const Appearance: React.FC = () => {
                 {/* Page 1 Desktop Square Image */}
                 <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                     <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-2">首页方形图片</h2>
-                    <p className="text-[10px] text-slate-400 mb-4">桌面首页右下角的方形图片槽位，长按移除</p>
+                    <p className="text-[10px] text-slate-400 mb-4">桌面第二页风车右下角的方形图片槽位，长按移除</p>
+                    {/* 原来这个 input 挂在下面「桌面小组件」那一节里；那节搬到桌面后，输入框跟着挪到这里。 */}
+                    <input type="file" ref={widgetInputRef} className="hidden" accept="image/*" onChange={(e) => { if (e.target.files?.[0]) handleWidgetUpload(e.target.files[0]); e.target.value = ''; }} />
                     <div className="flex justify-center bg-slate-50 p-3 rounded-2xl border border-slate-100">
                         {(() => {
                             const slot = 'dsq';
@@ -1427,75 +1429,23 @@ const Appearance: React.FC = () => {
                     </div>
                 </section>
 
-                {/* Page 2 Widget Images */}
+                {/* 桌面小组件已经搬到主界面本体：长按桌面 → 左上角「＋ 组件」。
+                    这里只留一条指路，避免用户还来外观定制里找。 */}
                 <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                     <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-2">桌面小组件</h2>
-                    <p className="text-[10px] text-slate-400 mb-4">上传小组件图片（如时钟截图、推图等），长按移除</p>
-                    <input type="file" ref={widgetInputRef} className="hidden" accept="image/*" onChange={(e) => e.target.files?.[0] && handleWidgetUpload(e.target.files[0])} />
-                    <div className="space-y-2 bg-slate-50 p-3 rounded-2xl border border-slate-100">
-                        <div className="flex gap-2">
-                            {['tl', 'tr'].map(slot => {
-                                const img = (theme.launcherWidgets || {})[slot];
-                                return (
-                                    <LongPressArea
-                                        key={slot}
-                                        className={`flex-1 aspect-square rounded-xl overflow-hidden relative cursor-pointer transition-transform active:scale-95 ${img ? 'shadow-sm' : 'border-2 border-dashed border-slate-200 bg-white flex items-center justify-center'}`}
-                                        onClick={() => { setActiveWidgetSlot(slot); widgetInputRef.current?.click(); }}
-                                        onLongPress={() => {
-                                            if (img) {
-                                                removeWidget(slot);
-                                                addToast('已移除小组件', 'success');
-                                            }
-                                        }}
-                                    >
-                                        {img ? (
-                                            <>
-                                                <img src={img} className="w-full h-full object-cover" />
-                                                <div className="absolute inset-0 bg-black/0 hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 hover:opacity-100">
-                                                    <span className="text-white text-[10px] font-bold bg-black/40 px-2 py-0.5 rounded-full">更换</span>
-                                                </div>
-                                            </>
-                                        ) : (
-                                            <div className="text-slate-300 text-center">
-                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 mx-auto mb-1"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
-                                                <span className="text-[9px]">图片</span>
-                                            </div>
-                                        )}
-                                    </LongPressArea>
-                                );
-                            })}
-                        </div>
-                        {(() => {
-                            const slot = 'wide';
-                            const img = (theme.launcherWidgets || {})[slot];
-                            return (
-                                <LongPressArea
-                                    className={`w-full h-20 rounded-xl overflow-hidden relative cursor-pointer transition-transform active:scale-[0.98] ${img ? 'shadow-sm' : 'border-2 border-dashed border-slate-200 bg-white flex items-center justify-center'}`}
-                                    onClick={() => { setActiveWidgetSlot(slot); widgetInputRef.current?.click(); }}
-                                    onLongPress={() => {
-                                        if (img) {
-                                            removeWidget(slot);
-                                            addToast('已移除横幅', 'success');
-                                        }
-                                    }}
-                                >
-                                    {img ? (
-                                        <>
-                                            <img src={img} className="w-full h-full object-cover" />
-                                            <div className="absolute inset-0 bg-black/0 hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 hover:opacity-100">
-                                                <span className="text-white text-[10px] font-bold bg-black/40 px-2 py-0.5 rounded-full">更换</span>
-                                            </div>
-                                        </>
-                                    ) : (
-                                        <div className="text-slate-300 text-center">
-                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 mx-auto mb-0.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
-                                            <span className="text-[9px]">横幅</span>
-                                        </div>
-                                    )}
-                                </LongPressArea>
-                            );
-                        })()}
-                    </div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                        小组件已经搬到桌面上直接编辑了：<br />
+                        <span className="text-slate-700 font-medium">长按桌面空白处或任意图标</span> 进入整理模式 →
+                        点左上角 <span className="text-slate-700 font-medium">「＋ 组件」</span> 选尺寸
+                        （1×1 / 2×1 / 1×2 / 2×2 / 4×1 横幅 / 4×2 中型 / 4×4 大型）→
+                        轻点组件即可上传相册图片或粘贴图床链接，长按拖动换位置。
+                    </p>
+                    <button
+                        onClick={() => { closeApp(); }}
+                        className="mt-3 w-full py-2.5 bg-slate-50 text-slate-600 font-bold text-xs rounded-xl border border-slate-200 active:scale-95 transition-transform"
+                    >
+                        回桌面去编辑
+                    </button>
                 </section>
 
                 {/* Desktop Decoration DIY Section */}
@@ -1511,26 +1461,6 @@ const Appearance: React.FC = () => {
                     <div className="relative w-full aspect-[9/16] bg-slate-100 rounded-2xl overflow-hidden mb-4 border border-slate-200 shadow-inner"
                          style={{ background: theme.wallpaper ? `url(${theme.wallpaper}) center/cover` : `linear-gradient(135deg, hsl(${theme.hue}, ${theme.saturation}%, ${theme.lightness}%), hsl(${theme.hue + 30}, ${theme.saturation}%, ${Math.max(theme.lightness - 15, 10)}%))` }}>
                         <div className="absolute inset-0 bg-black/10"></div>
-                        {/* Render widget previews */}
-                        <div className="absolute top-[12%] left-4 right-4 space-y-1.5 pointer-events-none">
-                            {(() => {
-                                const w = theme.launcherWidgets || {};
-                                return (
-                                    <>
-                                        {(w['tl'] || w['tr']) && (
-                                            <div className="flex gap-1.5">
-                                                {['tl', 'tr'].map(k => w[k] ? (
-                                                    <div key={k} className="flex-1 aspect-square rounded-lg overflow-hidden opacity-70"><img src={w[k]} className="w-full h-full object-cover" /></div>
-                                                ) : <div key={k} className="flex-1" />)}
-                                            </div>
-                                        )}
-                                        {w['wide'] && (
-                                            <div className="w-full h-8 rounded-lg overflow-hidden opacity-70"><img src={w['wide']} className="w-full h-full object-cover" /></div>
-                                        )}
-                                    </>
-                                );
-                            })()}
-                        </div>
                         {/* Render decorations in preview */}
                         {decorations.map(deco => (
                             <div key={deco.id}

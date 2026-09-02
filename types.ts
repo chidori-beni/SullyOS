@@ -114,6 +114,11 @@ export interface OSTheme {
   acnhChatSync?: boolean;
   launcherWidgetImage?: string; // DEPRECATED: always stripped on load — never renders.
   launcherWidgets?: Record<string, string>; // slots: 'tl' | 'tr' | 'wide' | 'dsq' (legacy 'bl' / 'br' are banned)
+  /**
+   * 用户在桌面上自己添加的图片小组件（长按桌面 → 左上角「＋ 组件」）。
+   * 旧的 tl / tr / wide 固定槽位首次加载时会被迁移成这里的条目。
+   */
+  launcherUserWidgets?: LauncherUserWidget[];
   /** 默认桌面长按编辑后的 App / Dock / 第二页风车组件顺序。 */
   launcherAppOrder?: string[];
   launcherDockOrder?: string[];
@@ -784,6 +789,29 @@ export interface LauncherPage {
   appIds: string[];
   /** 第一张普通 App 页可承载桌面图片/自由装饰；普通新增页没有此标记。 */
   showMedia?: boolean;
+}
+
+/**
+ * 用户自己在桌面上添加的图片小组件尺寸，写法是「列 x 行」，基于桌面 4 列 App 网格。
+ * 一格 = 一个 App 图标位。4x1 就是旧版横幅那种整行条，4x4 是 iOS 那种大型正方形。
+ */
+export type LauncherWidgetSize = '1x1' | '2x1' | '1x2' | '2x2' | '4x1' | '4x2' | '4x4';
+
+/** 桌面自定义图片小组件。位置跟 App 图标混排在同一个网格里。 */
+export interface LauncherUserWidget {
+  id: string;
+  /** 所属桌面页（launcherPageLayout.pages[].id）。页被删掉时归一化会把它挪回主页。 */
+  pageId: string;
+  size: LauncherWidgetSize;
+  /** 图片来源：blobref 令牌（相册上传）或 http(s) 图床直链。留空显示占位框。 */
+  image?: string;
+  /** 图片填充方式，默认 cover（铺满裁切）。 */
+  fit?: 'cover' | 'contain';
+  /**
+   * 页内排序键，与该页 appIds 的下标处于同一条数轴上：
+   * App 第 i 个的键就是 i，组件用小数插到两个 App 中间。
+   */
+  pos: number;
 }
 
 export interface LauncherPageLayout {

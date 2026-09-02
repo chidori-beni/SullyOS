@@ -4,7 +4,11 @@ import { INSTALLED_APPS, DOCK_APPS } from '../constants';
 import { isDevDebugAvailable, subscribeDevDebugAvailability } from '../utils/devDebug';
 import AppIcon from '../components/os/AppIcon';
 import { DB } from '../utils/db';
-import { CharacterProfile, Anniversary, AppID, DailySchedule, LauncherPage, LauncherPageLayout, Task } from '../types';
+import { CharacterProfile, Anniversary, AppID, DailySchedule, LauncherPage, LauncherPageLayout, LauncherUserWidget, LauncherWidgetSize, Task } from '../types';
+import LauncherUserWidgetView from '../components/os/LauncherUserWidgetView';
+import LauncherWidgetSheet from '../components/os/LauncherWidgetSheet';
+import { processImageToBlob } from '../utils/file';
+import { putImageBlob } from '../utils/blobRef';
 import { ScheduleHomeWidget, ScheduleFullscreenViewer } from '../components/schedule/ScheduleHomeWidget';
 import NowPlayingSquareWidget from '../components/os/NowPlayingSquareWidget';
 import MobileGameHome from '../components/os/MobileGameHome';
@@ -35,6 +39,18 @@ import {
     reorderLauncherDockApps,
     reorderLauncherPages,
 } from '../utils/launcherPages';
+import {
+    addLauncherUserWidget,
+    appTargetAfterWidget,
+    buildLauncherPageSlots,
+    launcherWidgetIdFromItemKey,
+    launcherWidgetSpan,
+    migrateLegacyLauncherWidgets,
+    moveLauncherUserWidget,
+    normalizeLauncherUserWidgets,
+    removeLauncherUserWidget,
+    updateLauncherUserWidget,
+} from '../utils/launcherUserWidgets';
 
 const CompanionHome = React.lazy(() => import('../components/os/CompanionHome'));
 
@@ -276,38 +292,81 @@ const CharacterWidget = React.memo(({
 });
 
 // 3. Grid Page Component
+// App 图标和用户自己加的图片组件混排在同一个 4 列网格里：组件用 grid span 占格，
+// 顺序由 buildLauncherPageSlots 按同一条排序轴算出来（见 utils/launcherUserWidgets.ts）。
 const AppGridPage = React.memo(({
     apps,
     pageId,
     openApp,
     editing = false,
+    userWidgets = [],
+    paper = false,
+    acnh = false,
+    contentColor = '#ffffff',
 }: {
     apps: typeof INSTALLED_APPS,
     pageId: string,
     openApp: (id: AppID) => void,
     editing?: boolean,
+    userWidgets?: readonly LauncherUserWidget[],
+    paper?: boolean,
+    acnh?: boolean,
+    contentColor?: string,
 }) => {
+    const appById = useMemo(() => new Map(apps.map(app => [String(app.id), app])), [apps]);
+    const slots = useMemo(
+        () => buildLauncherPageSlots({ id: pageId, appIds: apps.map(app => String(app.id)) }, userWidgets),
+        [apps, pageId, userWidgets],
+    );
     return (
         <div
             data-launcher-page-drop={pageId}
             data-launcher-page-kind="app"
             className="grid grid-cols-4 content-start place-items-center gap-y-5 gap-x-2 pb-8 animate-fade-in relative min-h-[5rem]"
+            // 组件靠 grid-row: span N 撑高度，所以行高必须统一；minmax 保证图标那行
+            // 仍能按自身内容长高（字体放大 / 长 App 名不会被裁）。
+            style={{ gridAutoRows: 'minmax(4.75rem, auto)' }}
         >
-             {apps.map(app => (
-                 <div
-                    key={app.id}
-                    data-launcher-item={app.id}
-                    data-launcher-kind="app"
-                    data-launcher-page-id={pageId}
-                    className={`relative transition-transform duration-200 active:scale-95 ${editing ? 'launcher-edit-item' : ''}`}
-                 >
-                     <AppIcon
-                        app={app}
-                        onClick={() => { if (!editing) openApp(app.id); }}
-                        size="md"
-                     />
-                 </div>
-             ))}
+             {slots.map(slot => {
+                 if (slot.kind === 'widget') {
+                     const span = launcherWidgetSpan(slot.widget.size);
+                     return (
+                         <div
+                            key={slot.key}
+                            data-launcher-item={slot.key}
+                            data-launcher-kind="uwidget"
+                            data-launcher-page-id={pageId}
+                            className={`relative min-w-0 place-self-stretch ${editing ? 'launcher-edit-item' : ''}`}
+                            style={{ gridColumn: `span ${span.cols}`, gridRow: `span ${span.rows}` }}
+                         >
+                             <LauncherUserWidgetView
+                                widget={slot.widget}
+                                editing={editing}
+                                paper={paper}
+                                acnh={acnh}
+                                contentColor={contentColor}
+                             />
+                         </div>
+                     );
+                 }
+                 const app = appById.get(slot.appId);
+                 if (!app) return null;
+                 return (
+                     <div
+                        key={app.id}
+                        data-launcher-item={app.id}
+                        data-launcher-kind="app"
+                        data-launcher-page-id={pageId}
+                        className={`relative transition-transform duration-200 active:scale-95 ${editing ? 'launcher-edit-item' : ''}`}
+                     >
+                         <AppIcon
+                            app={app}
+                            onClick={() => { if (!editing) openApp(app.id); }}
+                            size="md"
+                         />
+                     </div>
+                 );
+             })}
         </div>
     );
 });
@@ -713,6 +772,8 @@ const Launcher: React.FC = () => {
       ghost?: HTMLElement;
       grabOffsetX?: number;
       grabOffsetY?: number;
+      /** 是否真的挪动过——组件「长按不动就松手」等于要求打开编辑面板。 */
+      moved?: boolean;
       lastTarget?: {
           kind: string;
           pageId?: string;
@@ -800,6 +861,18 @@ const Launcher: React.FC = () => {
   const pinwheelOrderRef = useRef(pinwheelOrder);
   const pendingCarouselPageIdRef = useRef<string | null>(null);
 
+  // ── 用户自己加的桌面图片组件 ───────────────────────────────────────────
+  // theme.launcherUserWidgets 是真相；编辑期间用本地草稿，松手后 persist 回 theme
+  // （和 App 顺序 / Dock 完全一样的两段式，避免每次拖动都写 localStorage）。
+  const [userWidgets, setUserWidgets] = useState<LauncherUserWidget[]>(
+      () => normalizeLauncherUserWidgets(theme.launcherUserWidgets),
+  );
+  const userWidgetsRef = useRef(userWidgets);
+  useEffect(() => { userWidgetsRef.current = userWidgets; }, [userWidgets]);
+  const [widgetSheet, setWidgetSheet] = useState<{ mode: 'add' } | { mode: 'edit'; id: string } | null>(null);
+  const [widgetBusy, setWidgetBusy] = useState(false);
+  const legacyWidgetMigrationRef = useRef(false);
+
   useEffect(() => {
       if (layoutEditing) return;
       const next = normalizeLauncherPageLayout(
@@ -829,6 +902,48 @@ const Launcher: React.FC = () => {
       pinwheelOrderRef.current = next;
       setPinwheelOrder(next);
   }, [layoutEditing, theme.launcherPinwheelOrder]);
+
+  // 组件只能落在主页和普通 App 页；风车页有自己的固定布局，Widgets 页是合成页。
+  const widgetCapablePageIds = useMemo(
+      () => launcherPageLayout.pages.filter(page => page.kind !== 'pinwheel').map(page => page.id),
+      [launcherPageLayout],
+  );
+
+  useEffect(() => {
+      if (layoutEditing) return;
+      const next = normalizeLauncherUserWidgets(
+          theme.launcherUserWidgets,
+          widgetCapablePageIds,
+          widgetCapablePageIds[0] || LAUNCHER_HOME_PAGE_ID,
+      );
+      setUserWidgets(prev => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+  }, [layoutEditing, theme.launcherUserWidgets, widgetCapablePageIds]);
+
+  // 一次性迁移：外观定制里那三个固定槽位（tl / tr / wide）搬成可拖动的组件。
+  // 必须把剩余槽位显式写回去（哪怕是空对象），否则 updateTheme 不会去删 widget_* 资产，
+  // 下次启动加载资产时旧图会被合并回 theme.launcherWidgets 复活。
+  useEffect(() => {
+      if (legacyWidgetMigrationRef.current || !isDataLoaded) return;
+      const pages = launcherPageLayoutRef.current.pages;
+      const target = pages.find(page => page.kind === 'app' && page.showMedia)
+          || pages.find(page => page.kind === 'app')
+          || pages[0];
+      if (!target) return;
+      legacyWidgetMigrationRef.current = true;
+      const migration = migrateLegacyLauncherWidgets(
+          theme.launcherWidgets,
+          normalizeLauncherUserWidgets(theme.launcherUserWidgets),
+          target.id,
+      );
+      if (!migration) return;
+      setUserWidgets(migration.widgets);
+      userWidgetsRef.current = migration.widgets;
+      void updateTheme({
+          launcherUserWidgets: migration.widgets,
+          launcherWidgets: migration.legacyWidgets,
+      });
+      addToast('旧的桌面小组件已搬到主界面，长按桌面即可编辑', 'success');
+  }, [addToast, isDataLoaded, theme.launcherUserWidgets, theme.launcherWidgets, updateTheme]);
 
   const appById = useMemo(() => new Map(availableGridApps.map(app => [app.id, app])), [availableGridApps]);
 
@@ -1201,6 +1316,79 @@ const Launcher: React.FC = () => {
       });
   }, [updateTheme]);
 
+  // 组件改动都是「立刻落库」：加/删/换图不像拖 20 个图标那样连发，没必要攒批。
+  const persistUserWidgets = useCallback((next: LauncherUserWidget[]) => {
+      userWidgetsRef.current = next;
+      setUserWidgets(next);
+      void updateTheme({ launcherUserWidgets: next.length > 0 ? next : undefined });
+  }, [updateTheme]);
+
+  const widgetPageById = useCallback((pageId: string | undefined): LauncherPage | undefined => {
+      if (!pageId) return undefined;
+      const page = launcherPageLayoutRef.current.pages.find(item => item.id === pageId);
+      return page && page.kind !== 'pinwheel' ? page : undefined;
+  }, []);
+
+  const handleAddUserWidget = useCallback((size: LauncherWidgetSize) => {
+      const page = widgetPageById(visiblePageIdRef.current);
+      if (!page) {
+          addToast('这一页放不了组件，先滑到主页或普通 App 页', 'error');
+          return;
+      }
+      const result = addLauncherUserWidget(userWidgetsRef.current, page, size);
+      if (!result.ok) {
+          addToast(result.reason, 'error');
+          return;
+      }
+      persistUserWidgets(result.widgets);
+      // 加完直接进编辑态，用户下一步本来就是传图。
+      setWidgetSheet({ mode: 'edit', id: result.widget.id });
+      trackEvent('桌面添加自定义组件', { size });
+  }, [addToast, persistUserWidgets, widgetPageById]);
+
+  const editingUserWidget = useMemo(
+      () => (widgetSheet?.mode === 'edit' ? userWidgets.find(widget => widget.id === widgetSheet.id) : undefined),
+      [userWidgets, widgetSheet],
+  );
+
+  const patchEditingWidget = useCallback((patch: Parameters<typeof updateLauncherUserWidget>[2]) => {
+      if (widgetSheet?.mode !== 'edit') return;
+      persistUserWidgets(updateLauncherUserWidget(userWidgetsRef.current, widgetSheet.id, patch));
+  }, [persistUserWidgets, widgetSheet]);
+
+  const handleUserWidgetFile = useCallback(async (file: File) => {
+      if (widgetSheet?.mode !== 'edit') return;
+      const id = widgetSheet.id;
+      setWidgetBusy(true);
+      try {
+          // theme 整体要写进 localStorage，所以字段里只能放短令牌；二进制进 blob_assets。
+          const blob = await processImageToBlob(file, { maxWidth: 1200, quality: 0.9 });
+          const ref = await putImageBlob(blob);
+          persistUserWidgets(updateLauncherUserWidget(userWidgetsRef.current, id, { image: ref }));
+          addToast('组件图片已更新', 'success');
+      } catch (e: any) {
+          addToast(e?.message || '图片处理失败', 'error');
+      } finally {
+          setWidgetBusy(false);
+      }
+  }, [addToast, persistUserWidgets, widgetSheet]);
+
+  const handleUserWidgetUrl = useCallback((url: string) => {
+      if (!/^https?:\/\//i.test(url)) {
+          addToast('请填写以 http(s):// 开头的图片地址', 'error');
+          return;
+      }
+      patchEditingWidget({ image: url });
+      addToast('组件图片已更新', 'success');
+  }, [addToast, patchEditingWidget]);
+
+  const handleUserWidgetRemove = useCallback(() => {
+      if (widgetSheet?.mode !== 'edit') return;
+      persistUserWidgets(removeLauncherUserWidget(userWidgetsRef.current, widgetSheet.id));
+      setWidgetSheet(null);
+      addToast('组件已移除', 'success');
+  }, [addToast, persistUserWidgets, widgetSheet]);
+
   const reorderByTarget = useCallback((kind: string, source: string, target: string) => {
       if (source === target) return;
       if (kind === 'dock') {
@@ -1326,6 +1514,16 @@ const Launcher: React.FC = () => {
       persistLauncherLayout();
   }, [addToast, persistLauncherLayout, setLauncherPageLayoutDraft]);
 
+  // 空白桌面长按也要能进整理模式（iOS / 糯叽机的手感），但它不能建拖拽 ghost，
+  // 也绝不能 setPointerCapture —— 那会把横向翻页的原生滚动一起吃掉。
+  const emptyPress = useRef<{ pointerId: number; x: number; y: number } | null>(null);
+  const emptyPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearEmptyPress = useCallback(() => {
+      if (emptyPressTimer.current) clearTimeout(emptyPressTimer.current);
+      emptyPressTimer.current = null;
+      emptyPress.current = null;
+  }, []);
+
   const clearLayoutPressTimer = useCallback(() => {
       if (layoutPressTimer.current) clearTimeout(layoutPressTimer.current);
       layoutPressTimer.current = null;
@@ -1373,8 +1571,8 @@ const Launcher: React.FC = () => {
       const turn = () => {
           const pointer = layoutPointer.current;
           const scroller = scrollContainerRef.current;
-          const isAppOrDockPointer = pointer?.kind === 'app' || pointer?.kind === 'dock';
-          if (!pointer?.active || !isAppOrDockPointer || !scroller || layoutPageTurnDirection.current !== direction) {
+          const isPageItemPointer = pointer?.kind === 'app' || pointer?.kind === 'dock' || pointer?.kind === 'uwidget';
+          if (!pointer?.active || !isPageItemPointer || !scroller || layoutPageTurnDirection.current !== direction) {
               clearLayoutPageTurn();
               return;
           }
@@ -1403,16 +1601,30 @@ const Launcher: React.FC = () => {
   }, [clearLayoutPageTurn, launcherPageLayout, totalPages]);
 
   useEffect(() => () => {
+      clearEmptyPress();
       clearLayoutPressTimer();
       clearLayoutPageTurn();
       layoutPointer.current?.ghost?.remove();
-  }, [clearLayoutPageTurn, clearLayoutPressTimer]);
+  }, [clearEmptyPress, clearLayoutPageTurn, clearLayoutPressTimer]);
 
   const handleLayoutPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       const launcherRoot = e.currentTarget;
       const item = (e.target as HTMLElement).closest<HTMLElement>('[data-launcher-item]');
-      if (!item) return;
+      if (!item) {
+          if (layoutEditing) return;
+          if (!(e.target as HTMLElement).closest('[data-launcher-page-drop]')) return;
+          clearEmptyPress();
+          emptyPress.current = { pointerId: e.pointerId, x: e.clientX, y: e.clientY };
+          emptyPressTimer.current = setTimeout(() => {
+              if (emptyPress.current?.pointerId !== e.pointerId) return;
+              clearEmptyPress();
+              suppressLayoutClickUntil.current = Date.now() + 700;
+              setLayoutEditing(true);
+              trackEvent('进入桌面整理模式');
+          }, 560);
+          return;
+      }
       const key = item.dataset.launcherItem;
       const kind = item.dataset.launcherKind;
       if (!key || !kind) return;
@@ -1446,6 +1658,10 @@ const Launcher: React.FC = () => {
   };
 
   const handleLayoutPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+      const empty = emptyPress.current;
+      if (empty && empty.pointerId === e.pointerId && Math.hypot(e.clientX - empty.x, e.clientY - empty.y) > 9) {
+          clearEmptyPress();
+      }
       const pointer = layoutPointer.current;
       if (!pointer || pointer.pointerId !== e.pointerId) return;
       if (!pointer.active) {
@@ -1456,14 +1672,15 @@ const Launcher: React.FC = () => {
           return;
       }
       e.preventDefault();
+      if (Math.hypot(e.clientX - pointer.x, e.clientY - pointer.y) > 9) pointer.moved = true;
       if (pointer.ghost) {
           pointer.ghost.style.left = `${e.clientX - (pointer.grabOffsetX || 0)}px`;
           pointer.ghost.style.top = `${e.clientY - (pointer.grabOffsetY || 0)}px`;
       }
       const rootRect = e.currentTarget.getBoundingClientRect();
-      const isAppOrDockPointer = pointer.kind === 'app' || pointer.kind === 'dock';
-      if (isAppOrDockPointer && e.clientX <= rootRect.left + 72) queueLayoutPageTurn(-1);
-      else if (isAppOrDockPointer && e.clientX >= rootRect.right - 72) queueLayoutPageTurn(1);
+      const isPageItemPointer = pointer.kind === 'app' || pointer.kind === 'dock' || pointer.kind === 'uwidget';
+      if (isPageItemPointer && e.clientX <= rootRect.left + 72) queueLayoutPageTurn(-1);
+      else if (isPageItemPointer && e.clientX >= rootRect.right - 72) queueLayoutPageTurn(1);
       else clearLayoutPageTurn();
       const pointTarget = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
       const target = pointTarget?.closest<HTMLElement>('[data-launcher-item]');
@@ -1473,11 +1690,15 @@ const Launcher: React.FC = () => {
       const targetPageId = target?.dataset.launcherPageId;
       const crossAppDockTarget = (pointer.kind === 'app' && targetKind === 'dock')
           || (pointer.kind === 'dock' && targetKind === 'app');
+      // 组件可以落在 App 或别的组件上；App / Dock 图标也可以落在组件上（插到它后面）。
+      const targetIsPageSlot = targetKind === 'app' || targetKind === 'uwidget';
+      const crossWidgetTarget = (pointer.kind === 'uwidget' && targetIsPageSlot)
+          || ((pointer.kind === 'app' || pointer.kind === 'dock') && targetKind === 'uwidget');
       const validItemTarget = !targetIsClone
           && !!targetKey
-          && (targetKind === pointer.kind || crossAppDockTarget)
+          && (targetKind === pointer.kind || crossAppDockTarget || crossWidgetTarget)
           && targetKey !== pointer.key
-          && (targetKind !== 'app' || !!targetPageId);
+          && (!targetIsPageSlot || !!targetPageId);
 
       // If the pointer is over an App icon, keep the precise before-target
       // semantics. Dropping on one's own icon is a no-op, not an append.
@@ -1495,7 +1716,7 @@ const Launcher: React.FC = () => {
           pointer.targetElement = target;
           pointer.lastTarget = {
               kind: targetKind || pointer.kind,
-              pageId: targetKind === 'app' ? targetPageId : undefined,
+              pageId: targetIsPageSlot ? targetPageId : undefined,
               key: targetKey,
           };
           return;
@@ -1506,7 +1727,7 @@ const Launcher: React.FC = () => {
       const pageDrop = pointTarget?.closest<HTMLElement>('[data-launcher-page-drop]');
       const pageDropIsClone = !!pageDrop?.closest('[data-launcher-carousel-clone="true"]');
       const pageDropId = pageDrop?.dataset.launcherPageDrop;
-      if ((pointer.kind === 'app' || pointer.kind === 'dock') && pageDrop && !pageDropIsClone && pageDropId) {
+      if (isPageItemPointer && pageDrop && !pageDropIsClone && pageDropId) {
           if (pageDrop === pointer.targetElement) return;
           pointer.targetElement?.classList.remove('launcher-drop-target');
           pageDrop.classList.add('launcher-drop-target');
@@ -1533,6 +1754,7 @@ const Launcher: React.FC = () => {
   const finishLayoutPointer = (e?: React.PointerEvent<HTMLDivElement>) => {
       const pointer = layoutPointer.current;
       if (e && pointer && pointer.pointerId !== e.pointerId) return;
+      clearEmptyPress();
       clearLayoutPressTimer();
       clearLayoutPageTurn();
       if (pointer?.active) {
@@ -1541,9 +1763,40 @@ const Launcher: React.FC = () => {
           pointer.element.classList.remove('launcher-dragging');
           pointer.ghost?.remove();
           pointer.targetElement?.classList.remove('launcher-drop-target');
-          if (pointer.lastTarget) {
+          const draggedWidgetId = launcherWidgetIdFromItemKey(pointer.key);
+          if (draggedWidgetId && !pointer.moved) {
+              // 长按 / 编辑态下原地松手 = 打开这个组件的编辑面板，不动位置。
+              setWidgetSheet({ mode: 'edit', id: draggedWidgetId });
+          } else if (draggedWidgetId) {
+              // 组件拖放：目标可以是 App、别的组件，或整页空白区（落到页尾）。
               const target = pointer.lastTarget;
-              if (pointer.kind === 'app' && pointer.pageId && target.kind === 'app' && target.pageId) {
+              // 没落在任何页 / 任何格子上 = 放弃这次拖动，原样留在原处。
+              const page = target ? widgetPageById(target.pageId || pointer.pageId) : undefined;
+              if (page) {
+                  const result = moveLauncherUserWidget(
+                      userWidgetsRef.current,
+                      draggedWidgetId,
+                      page,
+                      target?.key || undefined,
+                  );
+                  if (result.ok) persistUserWidgets(result.widgets);
+                  else addToast(result.reason, 'error');
+              } else if (target?.pageId) {
+                  addToast('这一页放不了组件', 'error');
+              }
+          } else if (pointer.lastTarget) {
+              const target = pointer.lastTarget;
+              // App / Dock 图标落在组件上：转译成「插到该组件后面那个 App 前面」。
+              const targetWidgetId = target.kind === 'uwidget' ? launcherWidgetIdFromItemKey(target.key) : null;
+              const targetWidgetPage = targetWidgetId ? widgetPageById(target.pageId) : undefined;
+              const widgetAppTarget = targetWidgetPage && targetWidgetId
+                  ? appTargetAfterWidget(targetWidgetPage, userWidgetsRef.current, targetWidgetId)
+                  : undefined;
+              if (targetWidgetPage && pointer.kind === 'app' && pointer.pageId) {
+                  moveAppByTarget(pointer.pageId, pointer.key, targetWidgetPage.id, widgetAppTarget);
+              } else if (targetWidgetPage && pointer.kind === 'dock') {
+                  moveDockAppByTarget(pointer.key, targetWidgetPage.id, widgetAppTarget);
+              } else if (pointer.kind === 'app' && pointer.pageId && target.kind === 'app' && target.pageId) {
                   moveAppByTarget(pointer.pageId, pointer.key, target.pageId, target.key || undefined);
               } else if (pointer.kind === 'app' && pointer.pageId && target.kind === 'dock') {
                   movePageAppToDockByTarget(pointer.pageId, pointer.key, target.key || undefined);
@@ -1553,7 +1806,7 @@ const Launcher: React.FC = () => {
                   reorderByTarget(pointer.kind, pointer.key, target.key);
               }
           }
-          persistLauncherLayout();
+          if (!draggedWidgetId) persistLauncherLayout();
       }
       layoutPointer.current = null;
   };
@@ -1562,6 +1815,7 @@ const Launcher: React.FC = () => {
       finishLayoutPointer();
       clearPagePointer();
       setPageManagerOpen(false);
+      setWidgetSheet(null);
       setLayoutEditing(false);
   };
 
@@ -1745,8 +1999,18 @@ const Launcher: React.FC = () => {
       {layoutEditing && (
           <div className="absolute top-[calc(var(--safe-top)+0.65rem)] left-4 right-4 z-50 flex items-center justify-between rounded-full px-3 py-2"
               style={{ background: 'rgba(75,65,54,0.88)', color: '#fffdf8', boxShadow: '0 8px 24px rgba(75,65,54,0.20)' }}>
-              <span className="text-[10px] font-semibold tracking-wide">按住拖动 App；可跨页移动</span>
-              <div className="ml-3 flex items-center gap-1.5">
+              <button
+                  type="button"
+                  onClick={() => setWidgetSheet({ mode: 'add' })}
+                  className="shrink-0 flex items-center gap-1 pl-1.5 pr-2.5 py-1 rounded-full text-[10px] font-bold bg-white/18 active:scale-95"
+              >
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.6} stroke="currentColor" className="w-3.5 h-3.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                  </svg>
+                  组件
+              </button>
+              <span className="ml-2 flex-1 min-w-0 truncate text-[9.5px] font-semibold tracking-wide opacity-80">拖动 App / 组件换位；轻点组件可编辑</span>
+              <div className="ml-2 flex items-center gap-1.5 shrink-0">
                   <button
                       type="button"
                       onClick={() => setPageManagerOpen(true)}
@@ -1854,7 +2118,16 @@ const Launcher: React.FC = () => {
                             paper={paper}
                         />
                         <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain no-scrollbar">
-                            <AppGridPage pageId={page.id} apps={pageApps} openApp={openApp} editing={layoutEditing} />
+                            <AppGridPage
+                                pageId={page.id}
+                                apps={pageApps}
+                                openApp={openApp}
+                                editing={layoutEditing}
+                                userWidgets={userWidgets}
+                                paper={paper}
+                                acnh={acnh}
+                                contentColor={contentColor}
+                            />
                         </div>
                       </>
                   ) : page?.kind === 'pinwheel' ? (
@@ -1899,56 +2172,30 @@ const Launcher: React.FC = () => {
                   ) : (
                       // Regular App page: optional image/decorations + four-column grid
                       <div className="pt-10 flex-1 min-h-0 flex flex-col relative">
-                          {page?.showMedia && (() => {
-                            const raw = theme.launcherWidgets || {};
-                            const w = { ...raw };
-                            const hasAny = w['tl'] || w['tr'] || w['wide'];
-                            const hasTopRow = w['tl'] || w['tr'];
-                            return (
-                              <>
-                                {hasAny && (
-                                  <div className="mb-3 space-y-2 relative z-10">
-                                    {hasTopRow && (
-                                      <div className="flex gap-2">
-                                        {['tl', 'tr'].map(key => w[key] ? (
-                                          <div key={key} className="flex-1 aspect-square rounded-2xl overflow-hidden shadow-md border border-white/20">
-                                            <img src={w[key]} className="w-full h-full object-cover" alt="" loading="lazy" />
-                                          </div>
-                                        ) : <div key={key} className="flex-1"></div>)}
-                                      </div>
-                                    )}
-                                    {w['wide'] && (
-                                      <div className="w-full h-32 rounded-2xl overflow-hidden shadow-md border border-white/20">
-                                        <img src={w['wide']} className="w-full h-full object-cover" alt="" loading="lazy" />
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                                {/* Free-positioned Desktop Decorations (z-20 to float above widgets z-10) */}
-                                {theme.desktopDecorations && theme.desktopDecorations.length > 0 && (
-                                  <div className="absolute inset-0 pointer-events-none overflow-hidden z-20">
-                                    {theme.desktopDecorations.map(deco => (
-                                      <img
-                                        key={deco.id}
-                                        src={deco.content}
-                                        alt=""
-                                        loading="lazy"
-                                        className="absolute w-16 h-16 object-contain select-none"
-                                        style={{
-                                          left: `${deco.x}%`,
-                                          top: `${deco.y}%`,
-                                          transform: `translate(-50%, -50%) scale(${deco.scale}) rotate(${deco.rotation}deg)${deco.flip ? ' scaleX(-1)' : ''}`,
-                                          opacity: deco.opacity,
-                                          zIndex: deco.zIndex,
-                                          filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.15))',
-                                        }}
-                                      />
-                                    ))}
-                                  </div>
-                                )}
-                              </>
-                            );
-                          })()}
+                          {/* 旧的 tl / tr / wide 固定图片槽位已迁移成可拖动的桌面组件
+                              （见 utils/launcherUserWidgets.ts 的 migrateLegacyLauncherWidgets），
+                              这里只剩自由摆放的装饰贴纸。 */}
+                          {page?.showMedia && theme.desktopDecorations && theme.desktopDecorations.length > 0 && (
+                            <div className="absolute inset-0 pointer-events-none overflow-hidden z-20">
+                              {theme.desktopDecorations.map(deco => (
+                                <img
+                                  key={deco.id}
+                                  src={deco.content}
+                                  alt=""
+                                  loading="lazy"
+                                  className="absolute w-16 h-16 object-contain select-none"
+                                  style={{
+                                    left: `${deco.x}%`,
+                                    top: `${deco.y}%`,
+                                    transform: `translate(-50%, -50%) scale(${deco.scale}) rotate(${deco.rotation}deg)${deco.flip ? ' scaleX(-1)' : ''}`,
+                                    opacity: deco.opacity,
+                                    zIndex: deco.zIndex,
+                                    filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.15))',
+                                  }}
+                                />
+                              ))}
+                            </div>
+                          )}
 
                           <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain no-scrollbar">
                               <AppGridPage
@@ -1956,6 +2203,10 @@ const Launcher: React.FC = () => {
                                     apps={pageApps}
                                     openApp={openApp}
                                     editing={layoutEditing}
+                                    userWidgets={userWidgets}
+                                    paper={paper}
+                                    acnh={acnh}
+                                    contentColor={contentColor}
                               />
                           </div>
                       </div>
@@ -2010,6 +2261,22 @@ const Launcher: React.FC = () => {
                ))}
            </div>
       </div>
+
+      {widgetSheet && (widgetSheet.mode === 'add' || editingUserWidget) && (
+          <LauncherWidgetSheet
+              mode={widgetSheet.mode}
+              widget={editingUserWidget}
+              paper={paper}
+              busy={widgetBusy}
+              onCreate={handleAddUserWidget}
+              onChangeSize={(size) => patchEditingWidget({ size })}
+              onPickFile={(file) => { void handleUserWidgetFile(file); }}
+              onApplyUrl={handleUserWidgetUrl}
+              onToggleFit={() => patchEditingWidget({ fit: editingUserWidget?.fit === 'contain' ? 'cover' : 'contain' })}
+              onRemove={handleUserWidgetRemove}
+              onClose={() => setWidgetSheet(null)}
+          />
+      )}
 
       {layoutEditing && pageManagerOpen && (
           <LauncherPageManager
