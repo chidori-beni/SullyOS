@@ -17,6 +17,7 @@
 
 import type { ActiveMsg2TaskRecord, DateEncounterPresence, NaturalProactiveConfig } from '../types';
 import { renderFireSceneBlock, type AmsgFireScene } from './amsgFireScene';
+import { renderUserCalendarBlock, type AmsgUserCalendar } from './amsgUserCalendar';
 
 export const AMSG_STATE_NAMESPACE_PREFIX = 'amsg:char:';
 export const amsgStateNamespace = (charId: string) => `${AMSG_STATE_NAMESPACE_PREFIX}${charId}`;
@@ -435,6 +436,17 @@ export const AMSG_SLOT_TASK_LIST = '{{AMSG_TASK_LIST}}';
  */
 export const AMSG_SLOT_SCENE = '{{AMSG_SCENE}}';
 /**
+ * 「对方此刻的安排」的落点：用户共享日历里当天正在进行 / 接下来 / 已结束的日程。
+ *
+ * 前台聊天每轮都现读这一段（chatPrompts 的 userCalendarPromise），主动消息这条路
+ * 以前整块跳过——worker 够不着手机的 IndexedDB。于是角色在聊天里知道对方下午在上课，
+ * 到点主动开口却让人「赶紧回家躺着」。改成随包带原始事件表，worker 到点按用户时区
+ * 现算当前时段（见 amsgUserCalendar）。
+ *
+ * 只带日程不带待办：待办是会被勾掉的状态，拿旧快照到点催办正是原先跳过整段的理由。
+ */
+export const AMSG_SLOT_USER_CALENDAR = '{{AMSG_USER_CALENDAR}}';
+/**
  * 「外面的世界此刻什么样」的落点：今日节日 + 实时天气 + 热搜。
  *
  * 这一段前台每轮都有（见 realtimeWorldCore 的 renderRealtimeWorldBlock），到点生成
@@ -522,6 +534,12 @@ export interface AmsgFirePack {
    * AMSG_SLOT_SCENE。没日程的角色为 null，那个槽位被抹平。
    */
   scene: AmsgFireScene | null;
+  /**
+   * 「对方此刻的安排」的原始素材（用户共享日历里今天到未来 7 天的事件），worker 到点
+   * 按 userTzId 渲染进 AMSG_SLOT_USER_CALENDAR。窗口内没有日程的用户为 null／缺省，
+   * 那个槽位被抹平。缺省容错方向是「这段消失」，不是漏一个未填的槽位到 prompt 里。
+   */
+  userCalendar?: AmsgUserCalendar | null;
   /**
    * 即时对话用的对话消息（见 AmsgFirePackChat）。只有开了即时对话的角色才带，
    * 定时任务那条路不读它。标了 `amsgInstantChat` 的任务缺这一份 = 按失败处理，
@@ -943,6 +961,9 @@ export const renderFirePack = (
   out = fillSlot(out, AMSG_SLOT_SCENE, renderFireSceneBlock(pack.scene, nowMs, tz, {
     includeClock: extras?.includeClock !== false,
   }));
+  // 对方那边的日程。按 pack.userCalendar.userTzId 渲染，不走 tz —— 日历里的 "12:00"
+  // 说的是用户那边的十二点，拿角色时区读会整段错位（异国恋角色差得最狠）。
+  out = fillSlot(out, AMSG_SLOT_USER_CALENDAR, renderUserCalendarBlock(pack.userCalendar, nowMs));
   // 实时世界那一段是独立的一整块，前导空行在这里补：拉到东西才隔开成段，
   // 没拉到（或功能没开）填空串，输出跟没有这个槽位时一模一样。
   const realtimeWorld = extras?.realtimeWorldBlock?.trim();
@@ -957,7 +978,7 @@ export const renderFirePack = (
  * 唯一的例外是「说清楚为什么」：见 describeFirePackVersion，worker 拿它拼失败原因，
  * 面板的 lastError 才能直接告诉用户该重贴 bundle 还是该刷新前端。
  */
-export const FIRE_PACK_VERSION = 8;
+export const FIRE_PACK_VERSION = 9;
 
 /**
  * 即时对话任务行的 messageSubtype 标签。上游只当自由文本原样透传；客户端两处都认它：

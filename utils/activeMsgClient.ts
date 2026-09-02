@@ -6,6 +6,7 @@ import {
   ActiveMsg2Mode,
   ActiveMsg2Recurrence,
   ActiveMsg2TaskRecord,
+  Anniversary,
   APIConfig,
   CharacterProfile,
   Emoji,
@@ -60,6 +61,7 @@ import {
   AMSG_SLOT_TASK_LIST,
   AMSG_SLOT_TIME_SINCE_USER,
   AMSG_NATURAL_LAST_CHECK_KEY,
+  AMSG_SLOT_USER_CALENDAR,
   AMSG_SLOT_USER_CLOCK,
   AmsgFirePack,
   type AmsgFirePackChatContent,
@@ -78,6 +80,7 @@ import {
   AMSG_TASK_KIND_KEY,
 } from './amsgTaskKinds';
 import type { AmsgFireScene } from './amsgFireScene';
+import { buildAmsgUserCalendar } from './amsgUserCalendar';
 import { buildSongPool } from './charMusicSchedule';
 import { getDailyScheduleForChar } from './dailySchedule';
 import { getLocalDateKey } from './localDate';
@@ -676,7 +679,7 @@ export const buildFirePack = async (
   },
 ): Promise<AmsgFirePack> => {
   const templateStub = opts?.templateStub === true;
-  const [{ recentMessages, lastUserMessageAt, pendingUserMessageState }, library, schedule] = await Promise.all([
+  const [{ recentMessages, lastUserMessageAt, pendingUserMessageState }, library, schedule, userEvents] = await Promise.all([
     buildTimeGapHint(char.id),
     // 表情库只喂系统提示词/近史渲染：占位模板路径整库都不用读（表情记录带图片数据，
     // 全表 getAll 不便宜）。
@@ -690,6 +693,13 @@ export const buildFirePack = async (
           return null;
         })
       : Promise.resolve(null),
+    // 用户共享日历随包带原始事件表（同上，不是渲染好的文字），worker 到点按用户时区
+    // 挑当前时段。前台聊天每轮都现读这一份，主动消息以前整块跳过——角色因此在聊天里
+    // 知道对方下午在上课，到点主动开口却让人「赶紧回家躺着」。见 amsgUserCalendar。
+    DB.getAllAnniversaries().catch((e) => {
+      console.warn('[ActiveMsg2] 共享日历读取失败，这次不带对方日程', char.id, e);
+      return [] as Anniversary[];
+    }),
   ]);
   // 角色的时间参照系：开了自定义时区用角色的，没开用设备的。worker 渲染一切给角色看的
   // 时间（当前时间、日程日期、排程清单）都按它来。
@@ -726,6 +736,15 @@ export const buildFirePack = async (
         songPool: buildSongPool(char).map((s) => ({ id: s.id, name: s.name, artists: s.artists })),
       }
     : null;
+  // 「对方此刻的安排」的原始素材。按**用户**的钟取今天（userTzId 就是这台设备的时区），
+  // 不能用 tzId —— 日历里的 "12:00" 说的是用户那边的十二点。窗口里一条都没有时为 null，
+  // 那个槽位被抹平。
+  const userCalendar = buildAmsgUserCalendar({
+    events: userEvents,
+    userTzId,
+    userName: userProfile.name || '对方',
+    todayKey: getLocalDateKey(),
+  });
   const legacyHint = buildLegacyStyleProactiveHint(userProfile.name || '对方', timeAware);
   // 前台每轮都注入的时差说明（「你身处 X 时区……对方可能在不同时区」）。它是静态文案、
   // 不随时间变，所以打包时就烤进模板；到点由 AMSG_SLOT_USER_CLOCK 补上「对方那边现在
@@ -819,10 +838,10 @@ export const buildFirePack = async (
     ...(timeAware
       ? [
           '【当前时刻补充】',
-          `当前本地时间（你所在地）：${AMSG_SLOT_CURRENT_TIME}${tzNote ? `\n${tzNote}` : ''}${AMSG_SLOT_USER_CLOCK}${AMSG_SLOT_SCENE}`,
+          `当前本地时间（你所在地）：${AMSG_SLOT_CURRENT_TIME}${tzNote ? `\n${tzNote}` : ''}${AMSG_SLOT_USER_CLOCK}${AMSG_SLOT_SCENE}${AMSG_SLOT_USER_CALENDAR}`,
         ]
       // 关了时间感知的架空角色：整段只剩「你在做什么 / 外面什么样」，一个钟都不给。
-      : [`【当前时刻补充】${AMSG_SLOT_SCENE}`]),
+      : [`【当前时刻补充】${AMSG_SLOT_SCENE}${AMSG_SLOT_USER_CALENDAR}`]),
     // 排程清单跟在时间后面：它整段都在讲「几点会发生什么」，挨着当前时刻读才对得上。
     // 没有待触发任务时 worker 填空串，这一行连带消失。
     // 最后是「外面的世界此刻什么样」（节日 / 天气 / 热搜）：跟时间同属「此刻的读数」，
@@ -884,6 +903,8 @@ export const buildFirePack = async (
     // 「此刻在做什么」也带原始素材：整天的作息表 + 歌单抽样池，worker 到点按 tzId
     // 挑当前时段。烤成文字的话，凌晨三点触发时角色会说「我在健身房呢」。
     scene,
+    // 「对方此刻的安排」同理，只是钟按 userTzId 走。没有可带的日程时不带这个字段。
+    ...(userCalendar ? { userCalendar } : {}),
   };
 };
 
