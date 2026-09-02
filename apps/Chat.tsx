@@ -24,6 +24,7 @@ import { XhsMcpClient, extractNotesFromMcpData, normalizeXhsLiteDetail } from '.
 import { extractWebpageContent, detectFirstUrl, detectXhsShortUrl, extractXhsShareTitle, isXhsUrl, extractXhsNoteId, expandShortUrl, type ExtractedWebpage } from '../utils/webpageExtractor';
 import { isVideoShareUrl, parseVideoShareUrl } from '../utils/videoParser';
 import { isDevDebugAvailable } from '../utils/devDebug';
+import { isHiddenSystemLog } from '../utils/chatSystemCards';
 import { resolveLifeRecordCard } from '../utils/lifeRecords';
 import { isMcdConfigured } from '../utils/mcdMcpClient';
 import { isMcdActivatedInMessages, MCD_ACTIVATE_TRIGGER, MCD_DEACTIVATE_TRIGGER } from '../utils/mcdToolBridge';
@@ -1153,10 +1154,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             // 上下文截断仅作用于发给 LLM 的 prompt（在 chatPrompts.ts 里处理）。
             const chatScopeMsgs = recent
                 .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'story_theater_memory')
-                .filter(m => !(currentChar?.hideSystemLogs
-                    && m.role === 'system'
-                    && m.type !== 'score_card'
-                    && m.metadata?.source !== 'call-end-popup'));
+                // 卡片类 system 消息（未接来电 / 通话小结 / 见面 / 评分卡）不能在读库这一步
+                // 就被「隐藏系统日志」吃掉，否则消息列表显示「未接来电」、点进去却空空如也。
+                .filter(m => !isHiddenSystemLog(m, currentChar?.hideSystemLogs));
             // totalCount 走 charId 索引全量计数，包含群聊消息（以及上面被过滤的约会/通话
             // 消息）——它们永远不会出现在单聊列表里。直接拿它算「加载历史消息」会出现
             // 有计数、点击却加载不出任何东西的幽灵按钮。倒序游标没取满 fetchLimit 条
@@ -3488,15 +3488,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         const base = messages
             .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'story_theater_memory')
             .filter(m => !m.metadata?.proactiveHint)
-            .filter(m => {
-                if (char?.hideSystemLogs
-                    && m.role === 'system'
-                    && m.type !== 'score_card'
-                    && m.metadata?.source !== 'call-end-popup'
-                    && m.metadata?.source !== 'date-end-popup'
-                    && m.metadata?.source !== 'date-meeting-invite') return false;
-                return true;
-            });
+            .filter(m => !isHiddenSystemLog(m, char?.hideSystemLogs));
         if (windowedFocusMsgId !== null) {
             const idx = base.findIndex(m => m.id === windowedFocusMsgId);
             if (idx >= 0) {
