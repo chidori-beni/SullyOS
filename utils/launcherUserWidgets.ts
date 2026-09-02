@@ -343,3 +343,70 @@ export const isLauncherBuiltinWidgetHidden = (
     hidden: readonly LauncherBuiltinWidgetId[],
     id: string,
 ): boolean => isLauncherBuiltinWidgetId(id) && hidden.includes(id);
+
+// ── 组件的「锚点」：App 顺序变了之后，把组件钉回原来的邻居旁边 ──────────────
+//
+// 组件的 pos 是画在 appIds 下标这条轴上的小数，所以**只要 App 顺序一变，
+// 组件的相对位置就会漂**。表现出来就是：一整行宽的组件把某一行挤成半行之后，
+// 想把被挤下去的图标拖回那半行——图标是插到组件后面去了，看上去「纹丝不动」。
+//
+// 解法：移动 App 之前先记下每个组件「跟在哪个 App 后面」，移完再按这个锚点重算 pos。
+
+/** widgetId → 它前面那个 App 的 id；null 表示它排在这一页最前面。 */
+export type LauncherWidgetAnchors = Record<string, string | null>;
+
+export const captureLauncherWidgetAnchors = (
+    page: Pick<LauncherPage, 'id' | 'appIds'>,
+    widgets: readonly LauncherUserWidget[],
+): LauncherWidgetAnchors => {
+    const anchors: LauncherWidgetAnchors = {};
+    let lastAppId: string | null = null;
+    for (const slot of buildLauncherPageSlots(page, widgets)) {
+        if (slot.kind === 'app') lastAppId = slot.appId;
+        else anchors[slot.widget.id] = lastAppId;
+    }
+    return anchors;
+};
+
+/**
+ * 按锚点把这一页的组件 pos 重算一遍。
+ * 锚点 App 已经不在这一页（被拖走了）时，组件留在原地不动，免得凭空跳到别处。
+ */
+export const applyLauncherWidgetAnchors = (
+    page: Pick<LauncherPage, 'id' | 'appIds'>,
+    widgets: readonly LauncherUserWidget[],
+    anchors: LauncherWidgetAnchors,
+): LauncherUserWidget[] => {
+    const pageWidgets = launcherWidgetsForPage(widgets, page.id);
+    // 同一个锚点后面可能挂着好几个组件，按它们原来的先后均分到 (base, base+1) 之间。
+    const groups = new Map<number, LauncherUserWidget[]>();
+    const untouched = new Set<string>();
+    for (const widget of pageWidgets) {
+        if (!(widget.id in anchors)) { untouched.add(widget.id); continue; }
+        const anchor = anchors[widget.id];
+        if (anchor === null) {
+            const list = groups.get(-1) || [];
+            list.push(widget);
+            groups.set(-1, list);
+            continue;
+        }
+        const index = page.appIds.indexOf(anchor);
+        if (index < 0) { untouched.add(widget.id); continue; }
+        const list = groups.get(index) || [];
+        list.push(widget);
+        groups.set(index, list);
+    }
+
+    const nextPos = new Map<string, number>();
+    for (const [base, list] of groups) {
+        list.forEach((widget, index) => {
+            nextPos.set(widget.id, base + (index + 1) / (list.length + 1));
+        });
+    }
+
+    return widgets.map(widget => {
+        if (untouched.has(widget.id)) return widget;
+        const pos = nextPos.get(widget.id);
+        return pos === undefined ? widget : { ...widget, pos };
+    });
+};

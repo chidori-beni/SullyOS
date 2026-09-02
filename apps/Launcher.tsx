@@ -42,6 +42,8 @@ import {
 import {
     addLauncherUserWidget,
     appTargetAfterWidget,
+    applyLauncherWidgetAnchors,
+    captureLauncherWidgetAnchors,
     hideLauncherBuiltinWidget,
     isLauncherBuiltinWidgetId,
     normalizeHiddenBuiltinWidgets,
@@ -797,6 +799,7 @@ const Launcher: React.FC = () => {
           scrollLeft: number;
           items: LauncherDropCandidate[];
           elements: Map<string, HTMLElement>;
+          kinds: Map<string, string>;
       };
       lastTarget?: {
           kind: string;
@@ -1385,6 +1388,24 @@ const Launcher: React.FC = () => {
       void updateTheme({ launcherUserWidgets: next.length > 0 ? next : undefined });
   }, [updateTheme]);
 
+  const visiblePinwheelCells = useMemo(
+      () => pinwheelOrder.filter(cell => !hiddenBuiltinWidgets.includes(cell as LauncherBuiltinWidgetId)),
+      [hiddenBuiltinWidgets, pinwheelOrder],
+  );
+
+  /**
+   * 组件排序用的「页」。
+   * 风车页里排在一起的不是 App 图标而是那四个自带格，所以把 appIds 换成可见的格位列表；
+   * `buildLauncherPageSlots` / `moveLauncherUserWidget` 只拿它当排序轴，换掉即可复用。
+   */
+  const widgetDropPage = useCallback((page: LauncherPage | undefined): LauncherPage | undefined => {
+      if (!page) return undefined;
+      if (page.kind !== 'pinwheel') return page;
+      const cells = pinwheelOrderRef.current
+          .filter(cell => !hiddenBuiltinWidgetsRef.current.includes(cell as LauncherBuiltinWidgetId));
+      return { ...page, appIds: cells };
+  }, []);
+
   const widgetPageById = useCallback((pageId: string | undefined): LauncherPage | undefined => {
       if (!pageId) return undefined;
       return launcherPageLayoutRef.current.pages.find(item => item.id === pageId);
@@ -1396,7 +1417,7 @@ const Launcher: React.FC = () => {
           addToast('日历页放不了组件，点下方页码换一页', 'error');
           return;
       }
-      const result = addLauncherUserWidget(userWidgetsRef.current, page, size);
+      const result = addLauncherUserWidget(userWidgetsRef.current, widgetDropPage(page)!, size);
       if (!result.ok) {
           addToast(result.reason, 'error');
           return;
@@ -1405,26 +1426,7 @@ const Launcher: React.FC = () => {
       // 加完直接进编辑态，用户下一步本来就是传图。
       setWidgetSheet({ mode: 'edit', id: result.widget.id });
       trackEvent('桌面添加自定义组件', { size });
-  }, [addToast, persistUserWidgets, widgetPageById]);
-
-  const launcherPageUserWidgets = useCallback(
-      (pageId: string) => userWidgets.filter(widget => widget.pageId === pageId),
-      [userWidgets],
-  );
-
-  /**
-   * 风车页的组件分成「风车格上方」和「下方」两组。
-   * 那页的布局是写死的（日程卡 + 2 列风车格），组件只能另起网格；
-   * 只放一个在最下面的话，往上拖多远都看不出变化——pos 变了、位置没变。
-   * 用 pos < 0 表示「排在这页所有 App 之前」，正好对应拖到风车格上方那一下。
-   */
-  const pinwheelWidgetGroups = useCallback((pageId: string) => {
-      const all = launcherPageUserWidgets(pageId);
-      return {
-          above: all.filter(widget => widget.pos < 0),
-          below: all.filter(widget => widget.pos >= 0),
-      };
-  }, [launcherPageUserWidgets]);
+  }, [addToast, persistUserWidgets, widgetDropPage, widgetPageById]);
 
   const editingUserWidget = useMemo(
       () => (widgetSheet?.mode === 'edit' ? userWidgets.find(widget => widget.id === widgetSheet.id) : undefined),
@@ -1479,6 +1481,45 @@ const Launcher: React.FC = () => {
       persistHiddenBuiltinWidgets(restoreLauncherBuiltinWidget(hiddenBuiltinWidgetsRef.current, id));
       addToast('已恢复到桌面第二页', 'success');
   }, [addToast, persistHiddenBuiltinWidgets]);
+
+  /**
+   * 跑一次 App 移动，并保证这一页上的组件仍然待在原来的邻居旁边。
+   *
+   * 组件的 pos 画在 appIds 下标那条轴上，App 一动，组件的相对位置就漂。
+   * 用户遇到的正是这个：整行宽的组件把第二行挤成半行后，想把被挤下去的图标拖回那两个空位，
+   * 图标是插进去了，可组件的 pos 没变，仍然卡在它前面，看上去「怎么拖都没反应」。
+   *
+   * @param anchorOverride 明确指定某个组件要跟到哪个 App 后面（「把图标放到组件前面」就是这个意思）。
+   */
+  const runAppMoveKeepingWidgets = useCallback((
+      pageIds: readonly (string | undefined)[],
+      move: () => void,
+      anchorOverride?: { widgetId: string; afterAppId: string },
+  ) => {
+      const touched = Array.from(new Set(pageIds.filter((id): id is string => !!id)));
+      const before = touched.map(pageId => {
+          const page = launcherPageLayoutRef.current.pages.find(item => item.id === pageId);
+          return page
+              ? { pageId, anchors: captureLauncherWidgetAnchors(page, userWidgetsRef.current) }
+              : null;
+      }).filter(Boolean) as Array<{ pageId: string; anchors: ReturnType<typeof captureLauncherWidgetAnchors> }>;
+
+      move();
+
+      let next = userWidgetsRef.current;
+      let changed = false;
+      for (const { pageId, anchors } of before) {
+          const page = launcherPageLayoutRef.current.pages.find(item => item.id === pageId);
+          if (!page) continue;
+          const merged = anchorOverride && anchorOverride.widgetId in anchors
+              ? { ...anchors, [anchorOverride.widgetId]: anchorOverride.afterAppId }
+              : anchors;
+          const applied = applyLauncherWidgetAnchors(page, next, merged);
+          if (applied.some((widget, index) => widget !== next[index])) changed = true;
+          next = applied;
+      }
+      if (changed) persistUserWidgets(next);
+  }, [persistUserWidgets]);
 
   const handleUserWidgetRemove = useCallback(() => {
       if (widgetSheet?.mode !== 'edit') return;
@@ -1792,9 +1833,11 @@ const Launcher: React.FC = () => {
           pointer.ghost.style.top = `${e.clientY - (pointer.grabOffsetY || 0)}px`;
       }
       const rootRect = e.currentTarget.getBoundingClientRect();
-      const isPageItemPointer = pointer.kind === 'app' || pointer.kind === 'dock' || pointer.kind === 'uwidget';
-      if (isPageItemPointer && e.clientX <= rootRect.left + 72) queueLayoutPageTurn(-1);
-      else if (isPageItemPointer && e.clientX >= rootRect.right - 72) queueLayoutPageTurn(1);
+      // 风车页的自带格只能在本页内换位，所以它不参与「拖到边缘翻页」，但要参与落点判定。
+      const canCrossPages = pointer.kind === 'app' || pointer.kind === 'dock' || pointer.kind === 'uwidget';
+      const isPageItemPointer = canCrossPages || pointer.kind === 'widget';
+      if (canCrossPages && e.clientX <= rootRect.left + 72) queueLayoutPageTurn(-1);
+      else if (canCrossPages && e.clientX >= rootRect.right - 72) queueLayoutPageTurn(1);
       else clearLayoutPageTurn();
       const pointTarget = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
       const target = pointTarget?.closest<HTMLElement>('[data-launcher-item]');
@@ -1808,11 +1851,8 @@ const Launcher: React.FC = () => {
       const validItemTarget = !targetIsClone
           && !!targetKey
           && targetKey !== pointer.key
-          && (
-              targetKind === 'dock'
-              || (targetKind === 'widget' && pointer.kind === 'widget')
-          )
-          && (pointer.kind === 'app' || pointer.kind === 'dock' || pointer.kind === 'widget');
+          && targetKind === 'dock'
+          && (pointer.kind === 'app' || pointer.kind === 'dock');
 
       // If the pointer is over an App icon, keep the precise before-target
       // semantics. Dropping on one's own icon is a no-op, not an append.
@@ -1846,6 +1886,7 @@ const Launcher: React.FC = () => {
           if (pointer.dropCache?.pageId !== pageDropId || pointer.dropCache.scrollLeft !== scrollLeft) {
               const items: LauncherDropCandidate[] = [];
               const elements = new Map<string, HTMLElement>();
+              const kinds = new Map<string, string>();
               const nodes = document.querySelectorAll<HTMLElement>(
                   `[data-launcher-item][data-launcher-page-id="${cssEscape(pageDropId)}"]`,
               );
@@ -1856,8 +1897,9 @@ const Launcher: React.FC = () => {
                   const rect = node.getBoundingClientRect();
                   items.push({ key, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom });
                   elements.set(key, node);
+                  kinds.set(key, node.dataset.launcherKind || 'app');
               });
-              pointer.dropCache = { pageId: pageDropId, scrollLeft, items, elements };
+              pointer.dropCache = { pageId: pageDropId, scrollLeft, items, elements, kinds };
           }
           const dropKey = resolveLauncherDropKey(pointer.dropCache.items, e.clientX, e.clientY, pointer.key);
           const dropElement = dropKey ? pointer.dropCache.elements.get(dropKey) : null;
@@ -1869,7 +1911,8 @@ const Launcher: React.FC = () => {
               pointer.targetElement = highlight;
           }
           pointer.lastTarget = {
-              kind: dropKey && launcherWidgetIdFromItemKey(dropKey) ? 'uwidget' : 'app',
+              // 落点自己是什么就报什么：App 图标 / 用户组件 / 风车页自带格。
+              kind: dropKey ? (pointer.dropCache.kinds.get(dropKey) || 'app') : 'app',
               pageId: pageDropId,
               key: dropKey || '',
           };
@@ -1914,7 +1957,7 @@ const Launcher: React.FC = () => {
               // 组件拖放：目标可以是 App、别的组件，或整页空白区（落到页尾）。
               const target = pointer.lastTarget;
               // 没落在任何页 / 任何格子上 = 放弃这次拖动，原样留在原处。
-              const page = target ? widgetPageById(target.pageId || pointer.pageId) : undefined;
+              const page = target ? widgetDropPage(widgetPageById(target.pageId || pointer.pageId)) : undefined;
               if (page) {
                   const result = moveLauncherUserWidget(
                       userWidgetsRef.current,
@@ -1929,22 +1972,55 @@ const Launcher: React.FC = () => {
               }
           } else if (pointer.lastTarget) {
               const target = pointer.lastTarget;
+              // 风车页自带格之间的换位（音乐卡片 / 方图 / 两组图标）。
+              const pinwheelSwap = pointer.kind === 'widget' && target.kind === 'widget' && target.key;
               // App / Dock 图标落在组件上：转译成「插到该组件后面那个 App 前面」。
               const targetWidgetId = target.kind === 'uwidget' ? launcherWidgetIdFromItemKey(target.key) : null;
               const targetWidgetPage = targetWidgetId ? widgetPageById(target.pageId) : undefined;
               const widgetAppTarget = targetWidgetPage && targetWidgetId
                   ? appTargetAfterWidget(targetWidgetPage, userWidgetsRef.current, targetWidgetId)
                   : undefined;
-              if (targetWidgetPage && pointer.kind === 'app' && pointer.pageId) {
-                  moveAppByTarget(pointer.pageId, pointer.key, targetWidgetPage.id, widgetAppTarget);
+              if (pinwheelSwap) {
+                  reorderByTarget('widget', pointer.key, target.key);
+              } else if (target.kind === 'widget' && target.pageId && pointer.kind === 'app' && pointer.pageId) {
+                  // App 落在风车页自带格上：那几格里排的不是 App，没法精确插队，落到该页末尾。
+                  const src = pointer.pageId;
+                  runAppMoveKeepingWidgets([src, target.pageId], () => {
+                      moveAppByTarget(src, pointer.key, target.pageId!, undefined);
+                  });
+              } else if (target.kind === 'widget' && target.pageId && pointer.kind === 'dock') {
+                  runAppMoveKeepingWidgets([target.pageId], () => {
+                      moveDockAppByTarget(pointer.key, target.pageId!, undefined);
+                  });
+              } else if (targetWidgetPage && pointer.kind === 'app' && pointer.pageId) {
+                  // 「把图标放到这个组件前面」：光挪 App 是不够的——组件的 pos 没变，
+                  // 仍然卡在图标前面，看上去完全没动。所以顺手把组件重新钉到这个图标后面。
+                  const src = pointer.pageId;
+                  runAppMoveKeepingWidgets(
+                      [src, targetWidgetPage.id],
+                      () => { moveAppByTarget(src, pointer.key, targetWidgetPage.id, widgetAppTarget); },
+                      targetWidgetId ? { widgetId: targetWidgetId, afterAppId: pointer.key } : undefined,
+                  );
               } else if (targetWidgetPage && pointer.kind === 'dock') {
-                  moveDockAppByTarget(pointer.key, targetWidgetPage.id, widgetAppTarget);
+                  runAppMoveKeepingWidgets(
+                      [targetWidgetPage.id],
+                      () => { moveDockAppByTarget(pointer.key, targetWidgetPage.id, widgetAppTarget); },
+                      targetWidgetId ? { widgetId: targetWidgetId, afterAppId: pointer.key } : undefined,
+                  );
               } else if (pointer.kind === 'app' && pointer.pageId && target.kind === 'app' && target.pageId) {
-                  moveAppByTarget(pointer.pageId, pointer.key, target.pageId, target.key || undefined);
+                  const src = pointer.pageId;
+                  runAppMoveKeepingWidgets([src, target.pageId], () => {
+                      moveAppByTarget(src, pointer.key, target.pageId!, target.key || undefined);
+                  });
               } else if (pointer.kind === 'app' && pointer.pageId && target.kind === 'dock') {
-                  movePageAppToDockByTarget(pointer.pageId, pointer.key, target.key || undefined);
+                  const src = pointer.pageId;
+                  runAppMoveKeepingWidgets([src], () => {
+                      movePageAppToDockByTarget(src, pointer.key, target.key || undefined);
+                  });
               } else if (pointer.kind === 'dock' && target.kind === 'app' && target.pageId) {
-                  moveDockAppByTarget(pointer.key, target.pageId, target.key || undefined);
+                  runAppMoveKeepingWidgets([target.pageId], () => {
+                      moveDockAppByTarget(pointer.key, target.pageId!, target.key || undefined);
+                  });
               } else if (target.kind === pointer.kind && target.key) {
                   reorderByTarget(pointer.kind, pointer.key, target.key);
               }
@@ -2213,7 +2289,11 @@ const Launcher: React.FC = () => {
               const pageApps = page
                   ? page.appIds.map(id => appById.get(id as AppID)).filter(Boolean) as typeof INSTALLED_APPS
                   : [];
-              const pinwheelGroups = page ? pinwheelWidgetGroups(page.id) : { above: [], below: [] };
+              // 风车页把「自带四格」和「用户组件」排进同一条顺序：自带格的排序键就是
+              // 它在 pinwheelOrder 里的下标，组件用自己的 pos 插进去（和普通页一个套路）。
+              const pinwheelSlots = page?.kind === 'pinwheel'
+                  ? buildLauncherPageSlots({ id: page.id, appIds: visiblePinwheelCells }, userWidgets)
+                  : [];
               if (idx === totalPages - 1) {
                   return (
                       <WidgetsPage
@@ -2281,18 +2361,6 @@ const Launcher: React.FC = () => {
                       // 下面的网格变矮，日程卡就被重新居中压到了页面中段。改成从顶部排，
                       // 日程卡的位置就不再受下面有几格影响了。
                       <div className="flex-1 min-h-0 w-full flex flex-col gap-5 justify-start overflow-y-auto overscroll-y-contain no-scrollbar">
-                          {pinwheelGroups.above.length > 0 && (
-                              <AppGridPage
-                                    pageId={page.id}
-                                    apps={[]}
-                                    openApp={openApp}
-                                    editing={layoutEditing}
-                                    userWidgets={pinwheelGroups.above}
-                                    paper={paper}
-                                    acnh={acnh}
-                                    contentColor={contentColor}
-                              />
-                          )}
                           {scheduleChar && (
                               <ScheduleHomeWidget
                                   schedule={scheduleData}
@@ -2303,13 +2371,45 @@ const Launcher: React.FC = () => {
                                   paper={paper}
                               />
                           )}
-                          <div className="grid grid-cols-2 gap-x-3 gap-y-5 w-full">
-                              {pinwheelOrder.filter(cell => !hiddenBuiltinWidgets.includes(cell as LauncherBuiltinWidgetId)).map(cell => (
+                          {/* 风车格和用户组件排在同一个 4 列网格里：自带那四格各占 2 列 x 2 行，
+                              尺寸和原来的 2 列布局一样。合成一个网格才能把组件真的挪到
+                              「某一格旁边」；分成上下两块的话，往上拖多远都只会整块地跳。 */}
+                          <div
+                              data-launcher-page-drop={page.id}
+                              className="grid grid-cols-4 gap-x-2 gap-y-5 w-full content-start"
+                              style={{ gridAutoRows: 'minmax(4.85rem, auto)' }}
+                          >
+                              {pinwheelSlots.map(slot => {
+                                  if (slot.kind === 'widget') {
+                                      const span = launcherWidgetSpan(slot.widget.size);
+                                      return (
+                                          <div
+                                              key={slot.key}
+                                              data-launcher-item={slot.key}
+                                              data-launcher-kind="uwidget"
+                                              data-launcher-page-id={page.id}
+                                              className={`relative min-w-0 place-self-stretch ${layoutEditing ? 'launcher-edit-item' : ''}`}
+                                              style={{ gridColumn: `span ${span.cols}`, gridRow: `span ${span.rows}` }}
+                                          >
+                                              <LauncherUserWidgetView
+                                                  widget={slot.widget}
+                                                  editing={layoutEditing}
+                                                  paper={paper}
+                                                  acnh={acnh}
+                                                  contentColor={contentColor}
+                                              />
+                                          </div>
+                                      );
+                                  }
+                                  const cell = slot.appId as 'music' | 'appsA' | 'appsB' | 'image';
+                                  return (
                                   <div
                                       key={cell}
                                       data-launcher-item={cell}
                                       data-launcher-kind="widget"
-                                      className={`relative aspect-square min-w-0 ${layoutEditing ? 'launcher-edit-item' : ''}`}
+                                      data-launcher-page-id={page.id}
+                                      className={`relative min-w-0 place-self-stretch ${layoutEditing ? 'launcher-edit-item' : ''}`}
+                                      style={{ gridColumn: 'span 2', gridRow: 'span 2' }}
                                   >
                                       {/* 自带的音乐卡片 / 方图在整理模式下给一个可移除的提示；
                                           真正的移除走「原地松手打开面板」，见 finishLayoutPointer。 */}
@@ -2347,23 +2447,9 @@ const Launcher: React.FC = () => {
                                           />
                                       )}
                                   </div>
-                              ))}
+                                  );
+                              })}
                           </div>
-                          {/* 风车页也能放自定义组件：按 4 列网格排，和别的页一套尺寸。
-                              分上下两组是为了让「往上拖」真的看得出变化，见 pinwheelWidgetGroups。
-                              没有组件时不渲染，免得白占一块高度把日程卡顶上去。 */}
-                          {pinwheelGroups.below.length > 0 && (
-                              <AppGridPage
-                                    pageId={page.id}
-                                    apps={[]}
-                                    openApp={openApp}
-                                    editing={layoutEditing}
-                                    userWidgets={pinwheelGroups.below}
-                                    paper={paper}
-                                    acnh={acnh}
-                                    contentColor={contentColor}
-                              />
-                          )}
                       </div>
                   ) : (
                       // Regular App page: optional image/decorations + four-column grid

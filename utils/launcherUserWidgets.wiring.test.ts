@@ -115,8 +115,8 @@ describe('落点判定：不能一落到空隙就掉页尾', () => {
         expect(launcher).toContain("targetKind === 'dock'");
     });
 
-    it('算出来的落点是组件时，落点类型要跟着变成 uwidget', () => {
-        expect(launcher).toContain("launcherWidgetIdFromItemKey(dropKey) ? 'uwidget' : 'app'");
+    it('落点报的类型来自落点自己（App / 组件 / 风车格），不是一律当 App', () => {
+        expect(launcher).toContain('pointer.dropCache.kinds.get(dropKey)');
     });
 });
 
@@ -127,11 +127,33 @@ describe('拖动性能', () => {
     });
 });
 
-describe('风车页的组件要能真的上下移动', () => {
-    it('按 pos 正负拆成风车格上方 / 下方两组渲染', () => {
-        expect(launcher).toContain('pinwheelWidgetGroups');
-        expect(launcher).toContain('pinwheelGroups.above.length > 0');
-        expect(launcher).toContain('pinwheelGroups.below.length > 0');
+describe('风车页：自带格和组件排在同一个网格里', () => {
+    it('风车页也用 4 列网格，自带格各占 2 列 x 2 行', () => {
+        expect(launcher).toContain('pinwheelSlots');
+        expect(launcher).toContain("gridColumn: 'span 2', gridRow: 'span 2'");
+        expect(launcher).not.toContain('grid grid-cols-2 gap-x-3 gap-y-5 w-full');
+    });
+
+    it('排序轴换成可见的风车格位，组件才能插到某一格旁边', () => {
+        expect(launcher).toContain('widgetDropPage');
+        expect(launcher).toContain('visiblePinwheelCells');
+    });
+
+    it('自带格也带 page-id，能进落点判定', () => {
+        expect(launcher).toContain('pinwheelSwap');
+    });
+});
+
+describe('App 挪动之后组件要待在原来的邻居旁边', () => {
+    it('每条 App 移动路径都过 runAppMoveKeepingWidgets', () => {
+        // 组件 pos 画在 appIds 下标轴上，App 一动就漂——正是「图标拖回空位却纹丝不动」的原因。
+        // 落点分支有 6 条 App 移动路径，每条都必须裹在 runAppMoveKeepingWidgets 里。
+        const wrapped = launcher.match(/runAppMoveKeepingWidgets\(/g) || [];
+        expect(wrapped.length).toBeGreaterThanOrEqual(7); // 6 处调用 + 1 处定义
+    });
+
+    it('「把图标放到组件前面」会把组件重新钉到这个图标后面', () => {
+        expect(launcher).toContain('afterAppId: pointer.key');
     });
 });
 
@@ -149,7 +171,7 @@ describe('透明图片不该被套上底框', () => {
 describe('风车页也能放组件', () => {
     it('可放组件的页不再排除风车页', () => {
         expect(launcher).not.toContain("page.kind !== 'pinwheel' ? page : undefined");
-        expect(launcher).toContain('pinwheelWidgetGroups');
+        expect(launcher).toContain('pinwheelSlots');
     });
 
     it('风车页不再垂直居中——那正是移除自带格子后日程卡下沉的原因', () => {

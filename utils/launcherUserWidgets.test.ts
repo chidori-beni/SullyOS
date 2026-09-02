@@ -11,6 +11,8 @@ import {
     launcherWidgetItemKey,
     launcherWidgetSpan,
     launcherWidgetsForPage,
+    applyLauncherWidgetAnchors,
+    captureLauncherWidgetAnchors,
     hideLauncherBuiltinWidget,
     isLauncherBuiltinWidgetHidden,
     isLauncherBuiltinWidgetId,
@@ -325,5 +327,63 @@ describe('自带风车组件的移除与恢复', () => {
         expect(isLauncherBuiltinWidgetHidden(hidden, 'image')).toBe(true);
         expect(isLauncherBuiltinWidgetHidden(hidden, 'music')).toBe(false);
         expect(isLauncherBuiltinWidgetHidden(hidden, 'appsB')).toBe(false);
+    });
+});
+
+describe('组件锚点：App 顺序变了也要待在原来的邻居旁边', () => {
+    // 复刻用户遇到的场景：12 个图标 4x3，中间插了一个整行宽的组件，
+    // 于是第二行被挤成 2 个 + 2 空位，被挤下去的图标想拖回那两个空位。
+    const twelve = { id: 'p1', appIds: Array.from({ length: 12 }, (_, i) => `a${i}`) };
+
+    it('记下每个组件跟在哪个 App 后面', () => {
+        const widgets = [widget({ id: 'w1', pos: 5.5 })];
+        expect(captureLauncherWidgetAnchors(twelve, widgets)).toEqual({ w1: 'a5' });
+    });
+
+    it('排在最前面的组件锚点是 null', () => {
+        const widgets = [widget({ id: 'w1', pos: -1 })];
+        expect(captureLauncherWidgetAnchors(twelve, widgets)).toEqual({ w1: null });
+    });
+
+    it('把图标插到组件前面之后，组件仍然跟在原来那个 App 后面', () => {
+        // 初始：a0..a5 | 组件 | a6..a11
+        let widgets = [widget({ id: 'w1', pos: 5.5 })];
+        const anchors = captureLauncherWidgetAnchors(twelve, widgets);
+        // 用户把 a10 拖到组件前面 → App 顺序变成 a0..a5, a10, a6..
+        const moved = { id: 'p1', appIds: ['a0', 'a1', 'a2', 'a3', 'a4', 'a5', 'a10', 'a6', 'a7', 'a8', 'a9', 'a11'] };
+        // 不重锚的话组件 pos 还是 5.5，会卡在 a5 和 a10 之间——图标看起来没动
+        expect(buildLauncherPageSlots(moved, widgets)[6].key).toBe(launcherWidgetItemKey('w1'));
+        // 重锚之后组件回到 a5 后面，但 a10 已经排在它前面了
+        widgets = applyLauncherWidgetAnchors(moved, widgets, { ...anchors, w1: 'a10' });
+        const order = buildLauncherPageSlots(moved, widgets).map(s => (s.kind === 'app' ? s.appId : s.widget.id));
+        expect(order.slice(5, 8)).toEqual(['a5', 'a10', 'w1']);
+    });
+
+    it('锚点 App 被拖到别页去了，组件原地不动', () => {
+        const widgets = [widget({ id: 'w1', pos: 5.5 })];
+        const gone = { id: 'p1', appIds: ['a0', 'a1'] };
+        expect(applyLauncherWidgetAnchors(gone, widgets, { w1: 'a5' })[0].pos).toBe(5.5);
+    });
+
+    it('好几个组件挂同一个锚点时保持它们原来的先后，且各占一个位置', () => {
+        const widgets = [
+            widget({ id: 'w1', pos: 5.2 }),
+            widget({ id: 'w2', pos: 5.8 }),
+        ];
+        const next = applyLauncherWidgetAnchors(twelve, widgets, { w1: 'a5', w2: 'a5' });
+        const positions = next.map(w => w.pos);
+        expect(positions[0]).toBeLessThan(positions[1]);
+        expect(positions.every(pos => pos > 5 && pos < 6)).toBe(true);
+        expect(new Set(positions).size).toBe(2);
+    });
+
+    it('别的页的组件不受影响', () => {
+        const widgets = [widget({ id: 'other', pageId: 'p2', pos: 3 })];
+        expect(applyLauncherWidgetAnchors(twelve, widgets, { other: 'a1' })[0].pos).toBe(3);
+    });
+
+    it('anchors 里没提到的组件保持原样', () => {
+        const widgets = [widget({ id: 'w1', pos: 5.5 })];
+        expect(applyLauncherWidgetAnchors(twelve, widgets, {})[0].pos).toBe(5.5);
     });
 });
