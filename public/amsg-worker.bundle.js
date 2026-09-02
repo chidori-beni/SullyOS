@@ -13588,6 +13588,15 @@ function processLLMRound(state, llmOutputText, build, mcp, schedule, iteration) 
         pushPayloads: [buildScheduledPush("", build, finishMeta, "", callOnly)]
       };
     }
+    const meetingInviteOnly = directives.find(
+      (d) => d.type === "meeting_invite"
+    );
+    if (meetingInviteOnly) {
+      return {
+        decision: "finish",
+        pushPayloads: [buildScheduledPush("", build, finishMeta, "\u{1F91D} \u89C1\u9762\u9080\u8BF7\uFF1A\u70B9\u51FB\u67E5\u770B")]
+      };
+    }
     const reactionOnly = directives.find(
       (d) => d.type === "message_reaction"
     );

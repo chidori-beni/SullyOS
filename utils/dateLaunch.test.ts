@@ -31,4 +31,22 @@ describe('dateLaunch', () => {
             openHistory: true,
         });
     });
+
+    it('keeps the accepted-invite entry and source card id together', () => {
+        dateLaunch.request({
+            surface: 'companion',
+            charId: 'char-1',
+            autoStart: true,
+            meetingInviteMessageId: 18,
+            returnTo: 'chat',
+        });
+
+        expect(dateLaunch.consume()).toEqual({
+            surface: 'companion',
+            charId: 'char-1',
+            autoStart: true,
+            meetingInviteMessageId: 18,
+            returnTo: 'chat',
+        });
+    });
 });

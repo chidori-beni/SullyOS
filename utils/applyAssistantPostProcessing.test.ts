@@ -58,6 +58,21 @@ describe('角色主动见面邀请', () => {
         expect(card?.role).toBe('system');
         expect(card?.metadata?.invitation).toBe('下来吧，我在门口等你。');
     });
+
+    it('AMSG 只有 directive、没有正文时，重放仍能落见面邀约卡', async () => {
+        const charId = `c-meet-invite-directive-only-${Date.now()}`;
+        const ctx = makeCtx(charId, []);
+        ctx.skipSecondPassLLM = true;
+        ctx.directives = [{ type: 'meeting_invite', invitation: '我已经到门口了。' }];
+
+        await applyAssistantPostProcessing('', ctx);
+
+        const msgs = await DB.getRecentMessagesByCharId(charId, 20);
+        const card = msgs.find(m => m.metadata?.source === 'date-meeting-invite');
+        expect(card?.role).toBe('system');
+        expect(card?.metadata?.invitation).toBe('我已经到门口了。');
+        expect(msgs.some(m => m.role === 'assistant' && m.content.trim())).toBe(false);
+    });
 });
 
 describe('renderAndPersist 引用解析', () => {

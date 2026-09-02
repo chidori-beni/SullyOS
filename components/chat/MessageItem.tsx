@@ -1576,7 +1576,7 @@ interface MessageItemProps {
     /** 点击已完成的通话卡，直达 CallApp 里的这一通详情。 */
     onOpenCallRecord?: (charId: string, sessionId: string) => void;
     /** 接受角色主动发出的线下见面邀请。 */
-    onAcceptMeetingInvite?: (charId: string) => void;
+    onAcceptMeetingInvite?: (charId: string, meetingInviteMessageId?: number) => void;
     /** 点击见面完结卡片，直达这一次见面的历史对话。 */
     onOpenDateEncounter?: (charId: string, encounterId: string) => void;
     /**
@@ -1650,6 +1650,16 @@ const MessageItem = React.memo(({
 }: MessageItemProps) => {
     const isUser = m.role === 'user';
     const isSystem = m.role === 'system';
+    const [meetingInviteAccepting, setMeetingInviteAccepting] = useState(false);
+    const meetingInviteAccepted = m.metadata?.meetingInviteStatus === 'accepted';
+    const handleMeetingInviteAccept = (event: React.MouseEvent<HTMLButtonElement>) => {
+        event.stopPropagation();
+        if (!onAcceptMeetingInvite || meetingInviteAccepting || meetingInviteAccepted) return;
+        // 卡片可能因一次点击触发 App 切换而短暂保留在 DOM 中，先锁住按钮，
+        // 避免重复创建两个见面入口。
+        setMeetingInviteAccepting(true);
+        onAcceptMeetingInvite(m.charId, m.id);
+    };
     const spacingClass = messageSpacing === 'compact' ? (isLastInGroup ? 'mb-3' : 'mb-0.5') : messageSpacing === 'spacious' ? (isLastInGroup ? 'mb-8' : 'mb-2.5') : (isLastInGroup ? 'mb-6' : 'mb-1.5');
     const marginBottom = spacingClass;
     const avatarSizeClass = avatarSize === 'small' ? 'w-7 h-7' : avatarSize === 'large' ? 'w-12 h-12' : 'w-9 h-9';
@@ -1889,7 +1899,7 @@ const MessageItem = React.memo(({
                                 <div className="min-w-0 flex-1"><div className="text-[10px] font-bold tracking-[0.18em] text-sky-500">见面邀请</div><div className="truncate text-sm font-bold text-slate-700">{m.metadata?.charName || charName} 想来见你</div></div>
                             </div>
                             <p className="my-3 whitespace-pre-wrap text-[12px] leading-relaxed text-slate-600">{m.metadata?.invitation}</p>
-                            <button type="button" onClick={(e) => { e.stopPropagation(); onAcceptMeetingInvite?.(m.charId); }} className="w-full rounded-full bg-slate-900 py-2.5 text-xs font-bold text-white active:scale-[.98]">接受并进入见面</button>
+                            <button type="button" onClick={handleMeetingInviteAccept} disabled={!onAcceptMeetingInvite || meetingInviteAccepting || meetingInviteAccepted} className="w-full rounded-full bg-slate-900 py-2.5 text-xs font-bold text-white active:scale-[.98] disabled:cursor-wait disabled:opacity-60">{meetingInviteAccepted ? '已接受这次见面' : meetingInviteAccepting ? '正在进入见面…' : '接受并进入见面'}</button>
                         </div>
                     </div>
                 </div>

@@ -5,6 +5,10 @@ export interface DateLaunchIntent {
     /** Open the historical encounter containing this id instead of the character picker. */
     encounterId?: string;
     openHistory?: boolean;
+    /** 接受角色邀约后，生成开场并直接创建本次见面，不停在感知页。 */
+    autoStart?: boolean;
+    /** 发起这次直达的邀约卡 id，用于成功进入 session 后把卡标为已接受。 */
+    meetingInviteMessageId?: number;
     /** 从某个 App 深链进来时，记录退出见面后的返回目标（与 callLaunch.returnTo 同义）。 */
     returnTo?: 'chat';
 }

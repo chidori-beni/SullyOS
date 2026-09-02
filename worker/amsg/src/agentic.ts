@@ -433,7 +433,7 @@ export function processLLMRound(
   const segments = sanitizeIntoSegments(cleanedText);
 
   if (segments.length === 0) {
-    // 没有正文就整条不发，这轮有没有副作用都一样。
+    // 普通副作用没有正文时整条不发；下方列出必须让用户看见的动作例外。
     //
     // 空正文 push 的 banner body 也是空的：用户锁屏收到一条只有标题、正文空白的横幅，
     // 未读 +1，点进去 0 气泡。而订阅是按 userVisibleOnly:true 建的，用
@@ -444,11 +444,11 @@ export function processLLMRound(
     // 用户看到的是「ta 什么都没说但做了事」，本身就穿帮。后台产生的副作用该等客户端
     // 上线时主动拉，不塞进一条没内容的推送里（amsg-sw README 里也是这个结论）。
     //
-    // 日程改动是这条规矩里唯一的例外，单拎出来交给调用方走 emitResult。它不是做给用户
+    // 日程改动是这条规矩里的业务状态类例外，单拎出来交给调用方走 emitResult。它不是做给用户
     // 看的动作，是角色在纠正自己的表：一起丢掉的话，下一次 fire 读到的还是那条旧安排，
     // 角色会反复想改又反复改不掉，用户那边则永远看到表和角色说的话对不上。emitResult
     // 落的是服务端收件箱，不占聊天正文，也不用为它硬发一条空推送。
-    // 主动来电是第二个例外，而且理由跟日程正相反：它**必须**有一条推送。
+    // 主动来电是一个可见动作例外，而且理由跟日程正相反：它**必须**有一条推送。
     // 「电话响了」这件事本身就是要给用户看的内容，横幅正文写的是「来电…点击接听」
     // ——那不是一条空白横幅，是这通电话的全部意义。角色一个字没说就直接打过来，
     // 现实里也天天发生，不算穿帮。
@@ -459,6 +459,19 @@ export function processLLMRound(
       return {
         decision: 'finish',
         pushPayloads: [buildScheduledPush('', build, finishMeta, '', callOnly)],
+      };
+    }
+
+    // 角色主动发出的见面邀请本身就是用户可见事件：即使模型只输出
+    // `[[MEET_INVITE: ...]]`，也必须送一条带 directives 的 push，客户端才能
+    // 落库并渲染邀约卡片。普通副作用仍遵守上面的「无正文不推」规则。
+    const meetingInviteOnly = directives.find(
+      (d): d is Extract<Directive, { type: 'meeting_invite' }> => d.type === 'meeting_invite',
+    );
+    if (meetingInviteOnly) {
+      return {
+        decision: 'finish',
+        pushPayloads: [buildScheduledPush('', build, finishMeta, '🤝 见面邀请：点击查看')],
       };
     }
 

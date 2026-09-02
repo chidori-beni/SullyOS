@@ -238,6 +238,22 @@ describe('processLLMRound — 无正文边界', () => {
     expect((decision.pushPayloads[0].notification as any).body).toBe('对你的消息做了 😮 反应');
   });
 
+  it('只有见面邀约：仍发一条可见 push，把邀约 directive 交给客户端落卡', () => {
+    const decision = processLLMRound(
+      createFireSessionState(),
+      '[[MEET_INVITE: 我已经到你楼下了，下来见我。]]',
+      build,
+    );
+    expect(decision.decision).toBe('finish');
+    if (decision.decision !== 'finish') return;
+    expect(decision.pushPayloads).toHaveLength(1);
+    expect(decision.pushPayloads[0].message).toBe('');
+    expect((decision.pushPayloads[0].metadata as any).directives).toEqual([
+      { type: 'meeting_invite', invitation: '我已经到你楼下了，下来见我。' },
+    ]);
+    expect((decision.pushPayloads[0].notification as any).body).toBe('🤝 见面邀请：点击查看');
+  });
+
   // 空正文的 push 连 banner body 都是空的：用户锁屏收到一条只有标题的空横幅、未读 +1、
   // 点进去 0 气泡。所以没正文就整条不发，副作用一起放弃，两种成因分开记进 last_skip。
   it('全程只有副作用标签、没有正文：整条不发，记 side-effects-only', () => {

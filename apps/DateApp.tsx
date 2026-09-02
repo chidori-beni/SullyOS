@@ -19,7 +19,7 @@ import { trimHistoryThrough } from '../utils/dateSessionHistory';
 import { trackEvent } from '../utils/analytics';
 import { markAmsgStateDirty } from '../utils/amsgStateSync';
 import StoryTheater from '../components/date/story/StoryTheater';
-import { dateLaunch } from '../utils/dateLaunch';
+import { dateLaunch, type DateLaunchIntent } from '../utils/dateLaunch';
 import { chatDetailLaunch } from '../utils/chatDetailLaunch';
 import { materializeVisionDescriptions } from '../utils/visionApi';
 import { shareOrDownloadFile } from '../utils/shareExport';
@@ -76,10 +76,13 @@ const DateApp: React.FC = () => {
     // 全局更新弹窗等入口可直接落到「剧情」。peek 让首次渲染就显示目标页，
     // subscribe 则覆盖 DateApp 已经打开的情况；应用后立即消费，绝不污染下次普通打开。
     useEffect(() => {
-        const applyLaunchIntent = (intent: { surface: 'companion' | 'story'; charId?: string; encounterId?: string; openHistory?: boolean; returnTo?: 'chat' }) => {
+        const applyLaunchIntent = (intent: DateLaunchIntent) => {
             setCameFromChat(intent.returnTo === 'chat');
             setMeetSurface(intent.surface);
-            if (intent.openHistory && intent.charId && intent.encounterId) {
+            if (intent.autoStart && intent.charId) {
+                setMode('select');
+                setAcceptedInviteLaunch({ charId: intent.charId, meetingInviteMessageId: intent.meetingInviteMessageId });
+            } else if (intent.openHistory && intent.charId && intent.encounterId) {
                 setPendingHistoryOpen({ charId: intent.charId, encounterId: intent.encounterId });
             } else {
                 setMode('select');
@@ -145,6 +148,8 @@ const DateApp: React.FC = () => {
     
     // Resume Logic State
     const [pendingSessionChar, setPendingSessionChar] = useState<CharacterProfile | null>(null);
+    const [pendingMeetingInviteMessageId, setPendingMeetingInviteMessageId] = useState<number | undefined>(undefined);
+    const [acceptedInviteLaunch, setAcceptedInviteLaunch] = useState<{ charId: string; meetingInviteMessageId?: number } | null>(null);
     const activeEncounterRef = useRef<{ id: string; startedAt: number } | null>(null);
 
     const newEncounter = () => ({
@@ -188,6 +193,18 @@ const DateApp: React.FC = () => {
         if (encounterId && current?.encounterId && current.encounterId !== encounterId) return;
         clearActiveDatePresence(charId, encounterId);
         updateCharacter(charId, { activeDateEncounter: undefined });
+    };
+    const markMeetingInviteAccepted = (messageId: number | undefined, encounterId: string) => {
+        if (typeof messageId !== 'number') return;
+        void DB.updateMessageMetadata(messageId, (previous: any) => ({
+            ...(previous || {}),
+            meetingInviteStatus: 'accepted',
+            meetingInviteAcceptedAt: Date.now(),
+            meetingInviteEncounterId: encounterId,
+        })).catch(error => {
+            // 见面已经成功进入；卡片状态同步失败不应把用户踢出线下会话。
+            console.error('[DateApp] 更新见面邀约状态失败', error);
+        });
     };
     const historyGroups = useMemo(
         () => buildDateHistoryGroups(historyMessages, historyView, historySortOrder),
@@ -344,10 +361,12 @@ const DateApp: React.FC = () => {
     };
 
     // --- Resume / Start Logic ---
-    const handleCharClick = (c: CharacterProfile) => {
+    const handleCharClick = (c: CharacterProfile, options: { autoStart?: boolean; meetingInviteMessageId?: number } = {}) => {
         if (c.savedDateState) {
             setPendingSessionChar(c);
+            setPendingMeetingInviteMessageId(options.meetingInviteMessageId);
         } else if (c.activeDateEncounter?.status === 'active') {
+            setPendingMeetingInviteMessageId(undefined);
             // DateApp can be unmounted when the user briefly switches to ChatApp.
             // The presence is enough to resume the same encounter identity even
             // when no explicit “退出并保存” snapshot was created yet.
@@ -356,13 +375,15 @@ const DateApp: React.FC = () => {
                 startedAt: c.activeDateEncounter.startedAt,
             };
             activateDateEncounter(c.id, activeEncounterRef.current);
+            markMeetingInviteAccepted(options.meetingInviteMessageId, activeEncounterRef.current.id);
             setActiveCharacterId(c.id);
             setPeekStatus('');
             setHasSavedOpening(true);
             setMode('session');
             trackEvent('恢复进行中的见面');
         } else {
-            startPeek(c);
+            setPendingMeetingInviteMessageId(undefined);
+            void startPeek(c, options);
         }
     };
 
@@ -389,6 +410,7 @@ const DateApp: React.FC = () => {
 
     const handleResumeSession = () => {
         if (!pendingSessionChar) return;
+        const meetingInviteMessageId = pendingMeetingInviteMessageId;
         // 恢复尝试开始前先武装崩溃哨兵：若这份重快照在 iOS 上把内容进程撑崩，
         // 哨兵会残留到下次进见面被检出并清理（见挂载时的自愈 effect）。
         armDateResumeAttempt(pendingSessionChar.id);
@@ -397,9 +419,11 @@ const DateApp: React.FC = () => {
             startedAt: pendingSessionChar.savedDateState?.encounterStartedAt || pendingSessionChar.savedDateState?.timestamp || Date.now(),
         };
         activateDateEncounter(pendingSessionChar.id, activeEncounterRef.current);
+        markMeetingInviteAccepted(meetingInviteMessageId, activeEncounterRef.current.id);
         setActiveCharacterId(pendingSessionChar.id);
         setMode('session');
         setPendingSessionChar(null);
+        setPendingMeetingInviteMessageId(undefined);
         addToast('已恢复上次进度', 'success');
         trackEvent('选择见面存档处理方式', { choice: 'resume' });
         trackEvent('恢复上次见面进度');
@@ -407,6 +431,7 @@ const DateApp: React.FC = () => {
 
     const handleStartNewSession = () => {
         if (!pendingSessionChar) return;
+        const meetingInviteMessageId = pendingMeetingInviteMessageId;
         // 新会话没有恢复快照可重放，撤销任何残留哨兵。
         clearDateResumeAttempt();
         clearDateEncounter(pendingSessionChar.id, pendingSessionChar.savedDateState?.encounterId);
@@ -414,8 +439,14 @@ const DateApp: React.FC = () => {
         updateCharacter(pendingSessionChar.id, { savedDateState: undefined });
         trackEvent('选择见面存档处理方式', { choice: 'new' });
         trackEvent('见面存档选重新开始');
-        startPeek(pendingSessionChar);
+        void startPeek(
+            pendingSessionChar,
+            meetingInviteMessageId === undefined
+                ? {}
+                : { autoStart: true, meetingInviteMessageId },
+        );
         setPendingSessionChar(null);
+        setPendingMeetingInviteMessageId(undefined);
     };
 
     /**
@@ -453,6 +484,7 @@ const DateApp: React.FC = () => {
             // 让下一次 fire_pack 同步立刻带上「已经没有见面了」，别等下一轮聊天。
             markDateTurnDirty({ ...target, activeDateEncounter: undefined, savedDateState: undefined });
             setPendingSessionChar(null);
+            setPendingMeetingInviteMessageId(undefined);
             setDiscardBusy(false);
             addToast('这次见面已丢弃', 'success');
             trackEvent('选择见面存档处理方式', { choice: 'discard' });
@@ -493,9 +525,65 @@ const DateApp: React.FC = () => {
         await loadDateMessages(DATE_SESSION_MESSAGE_LIMIT);
     };
 
+    /**
+     * 接受角色邀约后的原子入口：开场白落库成功后才建立 active presence，
+     * 然后切入 session。这样用户接受卡片后不会再停在「走过去」，也不会在
+     * 开场落库失败时留下一个看似正在进行的空 encounter。
+     */
+    const startSessionFromMeetingInvite = async (
+        c: CharacterProfile,
+        opening: string,
+        encounter: { id: string; startedAt: number },
+        meetingInviteMessageId?: number,
+    ): Promise<boolean> => {
+        if (activeEncounterRef.current?.id !== encounter.id) return false;
+        const cleanOpening = opening.trim();
+        if (!cleanOpening) return false;
+
+        let openingMessageId: number;
+        try {
+            openingMessageId = await DB.saveMessage({
+                charId: c.id,
+                role: 'assistant',
+                type: 'text',
+                content: cleanOpening,
+                metadata: {
+                    source: 'date',
+                    isOpening: true,
+                    dateEncounterId: encounter.id,
+                    dateEncounterStartedAt: encounter.startedAt,
+                },
+            });
+        } catch (error) {
+            console.error('[DateApp] 接受见面邀约时保存开场失败', error);
+            addToast('见面开场保存失败，请稍后再试', 'error');
+            return false;
+        }
+
+        // 用户可能在模型返回前离开或重新感知；过期请求不能重新把页面拽回 session。
+        if (activeEncounterRef.current?.id !== encounter.id) {
+            // 开场已经写入但本次入口已过期，尽量撤销这条孤立的 date 记录。
+            await DB.deleteMessage(openingMessageId).catch(error => {
+                console.error('[DateApp] 清理过期见面开场失败', error);
+            });
+            return false;
+        }
+        const presence = activateDateEncounter(c.id, encounter);
+        markMeetingInviteAccepted(meetingInviteMessageId, encounter.id);
+        markDateTurnDirty({ ...c, activeDateEncounter: presence });
+        setPeekStatus(cleanOpening);
+        setHasSavedOpening(true);
+        setMode('session');
+        trackEvent('接受角色见面邀请并直接进入会话');
+        // DateApp 的 session effect 会在 activeCharacterId / mode 更新后的渲染中
+        // 读取当前角色的最新消息，不在这里用旧闭包重复加载。
+        return true;
+    };
+
     // --- Peek (Generation) Logic ---
-    const startPeek = async (c: CharacterProfile) => {
-        activeEncounterRef.current = newEncounter();
+    const startPeek = async (c: CharacterProfile, options: { autoStart?: boolean; meetingInviteMessageId?: number } = {}) => {
+        const encounter = newEncounter();
+        activeEncounterRef.current = encounter;
         setActiveCharacterId(c.id);
         setMode('peek');
         setPeekLoading(true);
@@ -515,14 +603,41 @@ const DateApp: React.FC = () => {
                 useVisionDescriptions: apiConfig.visionApi?.enabled === true,
             });
             const content = await callLLM(messages, apiConfig.temperature ?? 0.85);
+            // 过期的感知请求不能覆盖用户已经开始的另一场见面。
+            if (activeEncounterRef.current?.id !== encounter.id) return;
             setPeekStatus(content);
+            if (options.autoStart) {
+                await startSessionFromMeetingInvite(c, content, encounter, options.meetingInviteMessageId);
+            }
 
         } catch (e: any) {
-            setPeekStatus(`(无法感知状态: ${e.message})`);
+            if (activeEncounterRef.current?.id === encounter.id) {
+                setPeekStatus(`(无法感知状态: ${e.message})`);
+            }
         } finally {
-            setPeekLoading(false);
+            if (activeEncounterRef.current?.id === encounter.id) {
+                setPeekLoading(false);
+            }
         }
     };
+
+    // 接受卡片后使用与选择页相同的存档/进行中判断；没有旧状态时才自动生成
+    // 开场并直接进入 session。characters 尚未加载时保留意图，下一次渲染再处理。
+    useEffect(() => {
+        if (!acceptedInviteLaunch) return;
+        const target = characters.find(c => c.id === acceptedInviteLaunch.charId);
+        if (!target) return;
+        setAcceptedInviteLaunch(null);
+        setCameFromChat(true);
+        setMeetSurface('companion');
+        handleCharClick(target, {
+            autoStart: true,
+            meetingInviteMessageId: acceptedInviteLaunch.meetingInviteMessageId,
+        });
+        // handleCharClick / startPeek 是本组件内随渲染重建的命令函数；意图本身才是
+        // 这个 effect 的稳定触发源，避免每次输入消息都重新开始感知。
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [acceptedInviteLaunch, characters]);
 
     // 与聊天侧 useChatAI 完全一致的 Memory Palace 后台流程：
     // 触发缓冲区处理 + 自动归档（如开启） + 50 轮认知消化。
@@ -1288,7 +1403,7 @@ const DateApp: React.FC = () => {
                     </div>
                 )}
 
-                <Modal isOpen={!!pendingSessionChar} title="发现进度" onClose={() => { setPendingSessionChar(null); if (cameFromChat) returnToChat(); }} footer={<div className="flex flex-col gap-2 w-full"><div className="flex gap-3 w-full"><button disabled={discardBusy} onClick={handleStartNewSession} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold disabled:opacity-50">新的见面</button><button disabled={discardBusy} onClick={handleResumeSession} className="flex-1 py-3 bg-green-500 text-white rounded-2xl font-bold shadow-lg shadow-green-200 disabled:opacity-50">继续上次</button></div><button disabled={discardBusy} onClick={() => void handleDiscardSession()} className="w-full py-2.5 rounded-2xl text-red-500 text-sm font-bold bg-red-50 disabled:opacity-50">{discardBusy ? '正在丢弃…' : '丢弃这次见面'}</button></div>}>
+                <Modal isOpen={!!pendingSessionChar} title="发现进度" onClose={() => { setPendingSessionChar(null); setPendingMeetingInviteMessageId(undefined); if (cameFromChat) returnToChat(); }} footer={<div className="flex flex-col gap-2 w-full"><div className="flex gap-3 w-full"><button disabled={discardBusy} onClick={handleStartNewSession} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold disabled:opacity-50">新的见面</button><button disabled={discardBusy} onClick={handleResumeSession} className="flex-1 py-3 bg-green-500 text-white rounded-2xl font-bold shadow-lg shadow-green-200 disabled:opacity-50">继续上次</button></div><button disabled={discardBusy} onClick={() => void handleDiscardSession()} className="w-full py-2.5 rounded-2xl text-red-500 text-sm font-bold bg-red-50 disabled:opacity-50">{discardBusy ? '正在丢弃…' : '丢弃这次见面'}</button></div>}>
                     <div className="text-center text-slate-500 text-sm py-4">检测到 {pendingSessionChar?.name} 有未结束的见面。<br/><span className="text-xs text-slate-400 mt-2 block">(存档时间: {pendingSessionChar?.savedDateState?.timestamp ? new Date(pendingSessionChar.savedDateState.timestamp).toLocaleString() : 'Unknown'})</span><span className="text-[11px] text-slate-400 mt-3 block leading-relaxed">只是想测试一下的话，选「丢弃这次见面」：这次的现场记录和结束卡片会一并删掉，角色也会立刻恢复正常的主动联系。</span></div>
                 </Modal>
             </div>

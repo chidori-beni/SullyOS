@@ -173,6 +173,14 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         openApp(AppID.Date);
         trackEvent('从见面完结卡片打开见面记录');
     }, [openApp, setActiveCharacterId]);
+    const handleAcceptMeetingInvite = useCallback((charId: string, meetingInviteMessageId?: number) => {
+        setActiveCharacterId(charId);
+        // 邀约卡是一次「确认后直接进入」的专用入口；普通聊天里的「见面」
+        // 仍由 openDateWithChar 保持原有的感知页流程。
+        dateLaunch.request({ surface: 'companion', charId, autoStart: true, meetingInviteMessageId, returnTo: 'chat' });
+        openApp(AppID.Date);
+        trackEvent('接受角色见面邀请');
+    }, [openApp, setActiveCharacterId]);
     // 角色切换/进入时的缓入开关：先 false（透明），下一帧转 true，靠 CSS transition 平滑淡入。
     // 初值 false 让首次打开也是淡入、且不会有"先显示再变透明"的闪烁。
     // 角色切换「登场」过场是否显示。切换/进入角色时由 useLayoutEffect 在绘制前置真，覆盖住加载、避免闪到新聊天。
@@ -4287,7 +4295,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                             onResolveLifeRecord={handleResolveLifeRecord}
                             onResolveScheduleInvite={handleResolveScheduleInvite}
                             onOpenCallRecord={handleOpenCallRecord}
-                            onAcceptMeetingInvite={openDateWithChar}
+                            onAcceptMeetingInvite={handleAcceptMeetingInvite}
                             onOpenDateEncounter={handleOpenDateEncounter}
                             onOpenImage={handleOpenImage}
                             imageSelectionApi={apiConfig}
