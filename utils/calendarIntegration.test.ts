@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import type { Anniversary, ScheduleSlot, Task } from '../types';
+import type { Anniversary, DailySchedule, ScheduleSlot, Task } from '../types';
 import {
     buildTaskSupervisorCalendarContext,
     buildUserCalendarContext,
     eventOccursOnDate,
     eventsForDate,
+    getCalendarSourceDates,
     groupEventsByCalendarDate,
     groupTasksByCalendarDate,
     mergeCalendarDayTimeline,
     pendingTasksForSupervisor,
+    projectCharacterSchedulesForCalendarDay,
     scheduleInviteEventToAnniversary,
     taskDateKey,
     tasksForDate,
@@ -262,6 +264,85 @@ describe('calendarIntegration', () => {
         ]);
         expect(rows[2].kind === 'task' && rows[2].task.id).toBe('task-09');
         expect(rows[3].kind === 'character' && rows[3].slot.activity).toBe('角色开会');
+    });
+
+    it('projects role-local schedule times onto the device timezone without mutating the source slot', () => {
+        const sourceSlot: ScheduleSlot = {
+            startTime: '04:00', endTime: '05:30', activity: '晨跑', emoji: '🏃',
+        };
+        const schedule: DailySchedule = {
+            id: 'char-a_2026-09-02', charId: 'char-a', date: '2026-09-02',
+            slots: [sourceSlot], generatedAt: 1,
+        };
+        const projected = projectCharacterSchedulesForCalendarDay({
+            schedules: [schedule],
+            selectedDate: '2026-09-02',
+            sourceTimeZone: 'Asia/Shanghai',
+            deviceTimeZone: 'Asia/Tokyo',
+        });
+
+        expect(projected).toHaveLength(1);
+        expect(projected[0]).toMatchObject({
+            sourceDate: '2026-09-02',
+            displayDate: '2026-09-02',
+            displayStartTime: '05:00',
+            displayEndTime: '06:30',
+        });
+        expect(projected[0].slot).toBe(sourceSlot);
+        expect(sourceSlot.startTime).toBe('04:00');
+        expect(sourceSlot.endTime).toBe('05:30');
+    });
+
+    it('loads the adjacent role-local date when a large timezone difference moves its start into the selected device day', () => {
+        expect(getCalendarSourceDates('2026-09-01', 'America/Los_Angeles', 'Asia/Tokyo')).toEqual([
+            '2026-09-01', '2026-09-02',
+        ]);
+
+        const projected = projectCharacterSchedulesForCalendarDay({
+            schedules: [{
+                id: 'char-a_2026-09-02', charId: 'char-a', date: '2026-09-02', generatedAt: 1,
+                slots: [{ startTime: '01:00', activity: '早起准备' }],
+            }],
+            selectedDate: '2026-09-01',
+            sourceTimeZone: 'Asia/Tokyo',
+            deviceTimeZone: 'America/Los_Angeles',
+        });
+        expect(projected[0]).toMatchObject({ displayDate: '2026-09-01', displayStartTime: '09:00' });
+    });
+
+    it('preserves a converted role end date when the role slot crosses device midnight', () => {
+        const projected = projectCharacterSchedulesForCalendarDay({
+            schedules: [{
+                id: 'char-a_2026-09-02', charId: 'char-a', date: '2026-09-02', generatedAt: 1,
+                slots: [{ startTime: '22:30', endTime: '01:30', activity: '夜间连麦' }],
+            }],
+            selectedDate: '2026-09-02',
+            sourceTimeZone: 'Asia/Shanghai',
+            deviceTimeZone: 'Asia/Tokyo',
+        });
+        expect(projected[0]).toMatchObject({
+            displayStartTime: '23:30', displayEndTime: '02:30', displayEndDate: '2026-09-03',
+        });
+    });
+
+    it('changes only character rows when the projected timeline is merged', () => {
+        const projected = projectCharacterSchedulesForCalendarDay({
+            schedules: [{
+                id: 'char-a_2026-09-02', charId: 'char-a', date: '2026-09-02', generatedAt: 1,
+                slots: [{ startTime: '04:00', activity: '晨跑' }],
+            }],
+            selectedDate: '2026-09-02',
+            sourceTimeZone: 'Asia/Shanghai',
+            deviceTimeZone: 'Asia/Tokyo',
+        });
+        const rows = mergeCalendarDayTimeline(
+            [{ id: 'user-event', title: '我的安排', date: '2026-09-02', charId: '', startTime: '04:30' }],
+            [],
+            projected,
+        );
+        expect(rows.map(row => row.startTime)).toEqual(['04:30', '05:00']);
+        expect(rows[0].kind === 'event' && rows[0].event.startTime).toBe('04:30');
+        expect(rows[1].kind === 'character' && rows[1].slot.startTime).toBe('04:00');
     });
 
     it('expands a weekly event only on selected weekdays and stops at until', () => {

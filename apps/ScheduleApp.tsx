@@ -4,12 +4,13 @@ import { DB } from '../utils/db';
 import { Anniversary, CalendarMoodId, DailySchedule, RoomTodo, Task } from '../types';
 import Modal from '../components/os/Modal';
 import { getLocalDateKey } from '../utils/localDate';
-import { buildTaskSupervisorCalendarContext, CALENDAR_DATA_UPDATED_EVENT, eventsForDate, mergeCalendarDayTimeline, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, tasksForDate, type CalendarTimelineItem } from '../utils/calendarIntegration';
+import { buildTaskSupervisorCalendarContext, CALENDAR_DATA_UPDATED_EVENT, eventsForDate, getCalendarDeviceTimeZone, getCalendarSourceDates, mergeCalendarDayTimeline, notifyCalendarDataUpdated, projectCharacterSchedulesForCalendarDay, sortTasksForCalendar, taskDateKey, tasksForDate, type CalendarTimelineItem } from '../utils/calendarIntegration';
 import { trackEvent } from '../utils/analytics';
 import { buildMonthlyReviewStats, buildSullyMonthlyReport, CALENDAR_MOODS, chooseMonthlyMessageCharacterId } from '../utils/calendarMonthlyReview';
 import { requestMonthlyLetter } from '../utils/monthlyLetter';
 import { formatTaskComment, isTaskCommentDisplayable } from '../utils/taskComment';
 import { requestTaskSupervisorVoice, runTaskSupervisorVoiceOnce } from '../utils/taskSupervisorVoice';
+import { resolveCharTimeZone } from '../utils/timezone';
 
 type CalendarTab = 'month' | 'mine' | 'theirs' | 'review';
 type ComposerMode = 'event' | 'task';
@@ -40,6 +41,7 @@ const ScheduleApp: React.FC = () => {
     const [tasks, setTasks] = useState<Task[]>([]);
     const [events, setEvents] = useState<Anniversary[]>([]);
     const [charSchedule, setCharSchedule] = useState<DailySchedule | null>(null);
+    const [calendarCharSchedules, setCalendarCharSchedules] = useState<DailySchedule[]>([]);
     const [charTodo, setCharTodo] = useState<RoomTodo | null>(null);
     const [composerMode, setComposerMode] = useState<ComposerMode>('event');
     const [showComposer, setShowComposer] = useState(false);
@@ -68,6 +70,7 @@ const ScheduleApp: React.FC = () => {
     const [eventRepeats, setEventRepeats] = useState(false);
     const [eventRepeatDays, setEventRepeatDays] = useState<number[]>([1, 2, 3, 4, 5]);
     const [eventRepeatUntil, setEventRepeatUntil] = useState('');
+    const selectedChar = characters.find(char => char.id === selectedCharId);
 
     const loadUserData = useCallback(async () => {
         const [storedTasks, storedEvents] = await Promise.all([DB.getAllTasks(), DB.getAllAnniversaries()]);
@@ -84,30 +87,48 @@ const ScheduleApp: React.FC = () => {
         let active = true;
         if (!selectedCharId) {
             setCharSchedule(null);
+            setCalendarCharSchedules([]);
             setCharTodo(null);
             return () => { active = false; };
         }
         // Do not leave the previous date's character rows visible while the
         // newly selected day's records are loading.
         setCharSchedule(null);
+        setCalendarCharSchedules([]);
         setCharTodo(null);
-        Promise.all([DB.getDailySchedule(selectedCharId, selectedDate), DB.getRoomTodo(selectedCharId, selectedDate)])
-            .then(([schedule, todo]) => {
+        const deviceTimeZone = getCalendarDeviceTimeZone();
+        const sourceTimeZone = resolveCharTimeZone(selectedChar) || deviceTimeZone;
+        const sourceDates = getCalendarSourceDates(selectedDate, deviceTimeZone, sourceTimeZone);
+        const calendarSourceDates = sourceDates.length > 0 ? sourceDates : [selectedDate];
+        Promise.all([
+            DB.getDailySchedule(selectedCharId, selectedDate),
+            DB.getRoomTodo(selectedCharId, selectedDate),
+            Promise.all(calendarSourceDates.map(date => DB.getDailySchedule(selectedCharId, date))),
+        ])
+            .then(([schedule, todo, schedules]) => {
                 if (!active) return;
                 setCharSchedule(schedule);
+                setCalendarCharSchedules(schedules.filter((value): value is DailySchedule => Boolean(value)));
                 setCharTodo(todo);
             })
             .catch(error => {
                 if (active) console.error('Character calendar load failed', error);
             });
         return () => { active = false; };
-    }, [selectedCharId, selectedDate]);
+    }, [selectedChar?.customTimezone, selectedChar?.customTimezoneEnabled, selectedCharId, selectedDate]);
 
     const selectedTasks = useMemo(() => tasksForDate(tasks, selectedDate), [tasks, selectedDate]);
     const selectedEvents = useMemo(() => eventsForDate(events, selectedDate), [events, selectedDate]);
+    const calendarDeviceTimeZone = getCalendarDeviceTimeZone();
+    const calendarCharacterSlots = useMemo(() => projectCharacterSchedulesForCalendarDay({
+        schedules: calendarCharSchedules,
+        selectedDate,
+        sourceTimeZone: resolveCharTimeZone(selectedChar) || calendarDeviceTimeZone,
+        deviceTimeZone: calendarDeviceTimeZone,
+    }), [calendarCharSchedules, calendarDeviceTimeZone, selectedChar?.customTimezone, selectedChar?.customTimezoneEnabled, selectedDate]);
     const selectedDayTimeline = useMemo(
-        () => mergeCalendarDayTimeline(selectedEvents, selectedTasks, charSchedule?.slots || []),
-        [charSchedule, selectedEvents, selectedTasks],
+        () => mergeCalendarDayTimeline(selectedEvents, selectedTasks, calendarCharacterSlots),
+        [calendarCharacterSlots, selectedEvents, selectedTasks],
     );
     // The personal page is a day view, like Nuoji's calendar: a task is visible
     // on its effective/deadline date, while selecting an older date reveals its
@@ -120,7 +141,6 @@ const ScheduleApp: React.FC = () => {
         const items = tasksForDate(tasks, selectedDate);
         return items.length > 0 ? [{ date: selectedDate, items }] : [];
     }, [selectedDate, tasks]);
-    const selectedChar = characters.find(char => char.id === selectedCharId);
     const reviewMonthKey = `${reviewCursor.getFullYear()}-${String(reviewCursor.getMonth() + 1).padStart(2, '0')}`;
     const currentMonthKey = today.slice(0, 7);
     const selectedMood = CALENDAR_MOODS.find(mood => mood.id === userProfile.calendarDailyMoods?.[today]);
@@ -418,13 +438,20 @@ const ScheduleApp: React.FC = () => {
             </div>;
         }
         const slot = item.slot;
+        const endLabel = item.endTimeInvalid
+            ? '结束时间无效'
+            : item.endTime
+                ? (item.displayEndDate && item.displayEndDate !== item.displayDate
+                    ? `至 ${item.displayEndDate} ${item.endTime}`
+                    : `至 ${item.endTime}`)
+                : '单点';
         return <div className="rounded-2xl border border-violet-100 bg-violet-50/80 p-3 shadow-sm">
             <div className="flex gap-3">
                 <span className="text-xl">{slot.emoji || '◌'}</span>
                 <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-violet-100 px-2 py-0.5 text-[9px] font-bold text-violet-600">{selectedChar?.name || 'TA'}</span><span className="text-[9px] text-violet-400">角色日程</span></div>
                     <div className="mt-1 text-sm font-semibold">{slot.activity}</div>
-                    <div className="mt-1 text-[11px] text-slate-400">{item.endTime ? `至 ${item.endTime}` : '单点'}{slot.location ? ` · ${slot.location}` : ''}</div>
+                    <div className="mt-1 text-[11px] text-slate-400">{endLabel}{slot.location ? ` · ${slot.location}` : ''}</div>
                     {slot.description && <div className="mt-1 text-xs leading-relaxed text-slate-400">{slot.description}</div>}
                 </div>
             </div>
@@ -450,8 +477,8 @@ const ScheduleApp: React.FC = () => {
                     <div className="mt-4 flex justify-center gap-4 text-[10px] text-slate-400"><span className="text-sky-400">● 待办</span><span className="text-rose-400">● 日程 / 纪念日</span></div>
                 </section>
                 <section className="space-y-3">
-                    <div className="px-1"><h2 className="font-bold">{selectedDate === today ? '今天' : selectedDate}</h2><p className="text-[11px] text-slate-400">你与 {selectedChar?.name || '角色'} 的安排按同一条时间轴排列，同一时刻会紧挨着显示</p></div>
-                    <div className="flex flex-wrap items-center gap-3 px-1 text-[10px] font-bold"><span className="text-sky-500">● 你</span><span className="text-violet-500">● {selectedChar?.name || '角色'}</span><span className="font-normal text-slate-400">左侧时间为开始 / 截止时间</span></div>
+                    <div className="px-1"><h2 className="font-bold">{selectedDate === today ? '今天' : selectedDate}</h2><p className="text-[11px] text-slate-400">你与 {selectedChar?.name || '角色'} 的安排都按你的本地时间排列；角色原始时间可在“TA 的”查看</p></div>
+                    <div className="flex flex-wrap items-center gap-3 px-1 text-[10px] font-bold"><span className="text-sky-500">● 你</span><span className="text-violet-500">● {selectedChar?.name || '角色'}</span><span className="font-normal text-slate-400">左侧时间为你的设备时间（角色日程已换算）</span></div>
                     {selectedDayTimeline.length > 0 ? <div className="relative space-y-3 overflow-hidden rounded-3xl border border-white/80 bg-white/35 p-2 sm:p-3">
                         {selectedDayTimeline.map(item => <div key={item.id} className="relative grid grid-cols-[2.75rem_0.9rem_minmax(0,1fr)] items-stretch gap-1 sm:grid-cols-[3rem_1rem_minmax(0,1fr)] sm:gap-1.5">
                             <div className="pt-3 text-right text-[10px] font-bold tabular-nums text-slate-400">{item.startTime || '全天'}</div>

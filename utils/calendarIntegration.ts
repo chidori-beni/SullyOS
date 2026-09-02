@@ -1,4 +1,4 @@
-import type { Anniversary, RoomTodo, ScheduleSlot, Task } from '../types';
+import type { Anniversary, DailySchedule, RoomTodo, ScheduleSlot, Task } from '../types';
 import { addLocalDays, getCalendarDayDifference } from './localDate';
 import { nowInTimeZone, tzLabel, wallClockToTimestamp } from './timezone';
 
@@ -43,7 +43,31 @@ export type CalendarTimelineItem =
         startTime?: string;
         endTime?: string;
         slot: ScheduleSlot;
+        /** 月历专用：角色当地日期投影到用户设备日期后的来源信息。 */
+        sourceDate?: string;
+        displayDate?: string;
+        displayEndDate?: string;
+        endTimeInvalid?: boolean;
+        startTimestamp?: number;
     };
+
+export interface CalendarCharacterScheduleItem {
+    /** Discriminator keeps this display projection separate from persisted ScheduleSlot. */
+    type: 'calendar-character-slot';
+    id: string;
+    sourceScheduleId: string;
+    sourceDate: string;
+    slotIndex: number;
+    slot: ScheduleSlot;
+    /** The selected device-local calendar date this row belongs to. */
+    displayDate: string;
+    displayStartTime: string;
+    displayEndTime?: string;
+    displayEndDate?: string;
+    startTimestamp: number;
+    endTimestamp?: number;
+    endTimeInvalid?: boolean;
+}
 
 const timelineTimeValue = (value?: string): number => {
     if (!value) return -1;
@@ -64,7 +88,7 @@ const timelineTimeValue = (value?: string): number => {
 export const mergeCalendarDayTimeline = (
     events: Anniversary[],
     tasks: Task[],
-    slots: ScheduleSlot[] = [],
+    slots: Array<ScheduleSlot | CalendarCharacterScheduleItem> = [],
 ): CalendarTimelineItem[] => {
     const rows: Array<{
         item: CalendarTimelineItem;
@@ -101,25 +125,43 @@ export const mergeCalendarDayTimeline = (
         kind: 1,
         index: events.length + index,
     }));
-    slots.forEach((slot, index) => rows.push({
-        item: {
-            id: `character-slot:${index}:${slot.startTime}:${slot.activity}`,
-            owner: 'character',
-            kind: 'character',
-            startTime: slot.startTime,
-            endTime: slot.endTime,
-            slot,
-        },
-        time: timelineTimeValue(slot.startTime),
-        owner: 1,
-        kind: 2,
-        index: events.length + tasks.length + index,
-    }));
+    slots.forEach((slot, index) => {
+        const projected = isCalendarCharacterScheduleItem(slot) ? slot : undefined;
+        const sourceSlot: ScheduleSlot = isCalendarCharacterScheduleItem(slot) ? slot.slot : slot;
+        const displayStartTime = projected ? projected.displayStartTime : sourceSlot.startTime;
+        const displayEndTime = projected ? projected.displayEndTime : sourceSlot.endTime;
+        rows.push({
+            item: {
+                id: projected?.id || `character-slot:${index}:${sourceSlot.startTime}:${sourceSlot.activity}`,
+                owner: 'character',
+                kind: 'character',
+                startTime: displayStartTime,
+                endTime: displayEndTime,
+                slot: sourceSlot,
+                ...(projected ? {
+                    sourceDate: projected.sourceDate,
+                    displayDate: projected.displayDate,
+                    displayEndDate: projected.displayEndDate,
+                    endTimeInvalid: projected.endTimeInvalid,
+                    startTimestamp: projected.startTimestamp,
+                } : {}),
+            },
+            time: timelineTimeValue(displayStartTime),
+            owner: 1,
+            kind: 2,
+            index: events.length + tasks.length + index,
+        });
+    });
 
     return rows
         .sort((left, right) => left.time - right.time || left.owner - right.owner || left.kind - right.kind || left.index - right.index)
         .map(row => row.item);
 };
+
+const isCalendarCharacterScheduleItem = (
+    value: ScheduleSlot | CalendarCharacterScheduleItem,
+): value is CalendarCharacterScheduleItem =>
+    (value as CalendarCharacterScheduleItem).type === 'calendar-character-slot';
 
 /**
  * Keep the personal calendar's linear view deterministic: the date is the
@@ -208,13 +250,15 @@ export interface ScheduleInviteCalendarEventParams {
 const calendarDateKey = (date: Date): string =>
     `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
-const calendarClockToMinutes = (value?: string): number | null => {
+const calendarClockToMinutes = (value?: string, allowEndOfDay = false): number | null => {
     if (typeof value !== 'string') return null;
     const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
     if (!match) return null;
     const hour = Number(match[1]);
     const minute = Number(match[2]);
-    if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour > 23 || minute > 59) return null;
+    if (!Number.isInteger(hour) || !Number.isInteger(minute) || minute > 59) return null;
+    if (allowEndOfDay && hour === 24 && minute === 0) return 24 * 60;
+    if (hour > 23) return null;
     return hour * 60 + minute;
 };
 
@@ -236,6 +280,41 @@ const validTimeZoneOr = (candidate: string | undefined, fallback: string | undef
     }
 };
 
+export const getCalendarDeviceTimeZone = (): string | undefined => readDeviceTimeZone();
+
+export interface CalendarDeviceDayWindow {
+    startTimestamp: number;
+    endTimestampExclusive: number;
+}
+
+/**
+ * Return the real-time interval represented by one device-local calendar day.
+ * It deliberately resolves both midnights instead of assuming every local day
+ * is exactly 24 hours, which keeps DST transitions correct.
+ */
+export const getCalendarDeviceDayWindow = (
+    selectedDate: string,
+    deviceTimeZone: string | undefined = readDeviceTimeZone(),
+): CalendarDeviceDayWindow | null => {
+    const nextDate = addLocalDays(selectedDate, 1);
+    const selectedDateIsValid = getCalendarDayDifference(selectedDate, selectedDate) !== null;
+    if (!nextDate || !selectedDateIsValid) return null;
+    const safeTimeZone = validTimeZoneOr(deviceTimeZone, readDeviceTimeZone());
+    const startTimestamp = wallClockToTimestamp(`${selectedDate} 00:00:00`, safeTimeZone);
+    const endTimestampExclusive = wallClockToTimestamp(`${nextDate} 00:00:00`, safeTimeZone);
+    if (!Number.isFinite(startTimestamp) || !Number.isFinite(endTimestampExclusive)
+        || endTimestampExclusive <= startTimestamp) return null;
+    return { startTimestamp, endTimestampExclusive };
+};
+
+/** Enumerate inclusive ISO calendar dates without relying on a fixed 24-hour duration. */
+export const enumerateCalendarDates = (startDate: string, endDate: string): string[] => {
+    const distance = getCalendarDayDifference(startDate, endDate);
+    if (distance === null || distance < 0) return [];
+    return Array.from({ length: distance + 1 }, (_, offset) => addLocalDays(startDate, offset))
+        .filter((date): date is string => Boolean(date));
+};
+
 const formatWallClockAt = (timestamp: number, timeZone?: string): { date: string; time: string } | null => {
     if (!Number.isFinite(timestamp)) return null;
     const wall = nowInTimeZone(timeZone, new Date(timestamp));
@@ -243,6 +322,124 @@ const formatWallClockAt = (timestamp: number, timeZone?: string): { date: string
         date: calendarDateKey(wall),
         time: `${String(wall.getHours()).padStart(2, '0')}:${String(wall.getMinutes()).padStart(2, '0')}`,
     };
+};
+
+/**
+ * Find the role-local dates which can contribute a row to one device-local day.
+ * This is derived from the two absolute day boundaries rather than a hard-coded
+ * +/- one-day guess, so unusual timezone differences remain correct.
+ */
+export const getCalendarSourceDates = (
+    selectedDate: string,
+    deviceTimeZone: string | undefined = readDeviceTimeZone(),
+    sourceTimeZone: string | undefined = deviceTimeZone,
+): string[] => {
+    const window = getCalendarDeviceDayWindow(selectedDate, deviceTimeZone);
+    if (!window) return [];
+    const safeDeviceTimeZone = validTimeZoneOr(deviceTimeZone, readDeviceTimeZone());
+    const safeSourceTimeZone = validTimeZoneOr(sourceTimeZone, safeDeviceTimeZone);
+    const first = formatWallClockAt(window.startTimestamp, safeSourceTimeZone);
+    const last = formatWallClockAt(window.endTimestampExclusive - 1, safeSourceTimeZone);
+    if (!first || !last) return [];
+    return enumerateCalendarDates(first.date, last.date);
+};
+
+const scheduleWallClockToTimestamp = (
+    date: string,
+    time: string,
+    minutes: number,
+    timeZone: string | undefined,
+): number => {
+    if (minutes === 24 * 60) {
+        const nextDate = addLocalDays(date, 1);
+        return nextDate ? wallClockToTimestamp(`${nextDate} 00:00:00`, timeZone) : NaN;
+    }
+    return wallClockToTimestamp(`${date} ${time}:00`, timeZone);
+};
+
+export interface ProjectCharacterSchedulesForCalendarDayParams {
+    schedules: DailySchedule[];
+    selectedDate: string;
+    /** Character-local IANA timezone; omitted means the device timezone. */
+    sourceTimeZone?: string;
+    /** User calendar display timezone; omitted means the current device timezone. */
+    deviceTimeZone?: string;
+}
+
+/**
+ * Project character-local schedule slots onto the selected device-local day.
+ * The returned objects are display-only: the original DailySchedule/ScheduleSlot
+ * instances and their persisted role-local wall-clock fields are never changed.
+ */
+export const projectCharacterSchedulesForCalendarDay = (
+    params: ProjectCharacterSchedulesForCalendarDayParams,
+): CalendarCharacterScheduleItem[] => {
+    const deviceTimeZone = validTimeZoneOr(params.deviceTimeZone, readDeviceTimeZone());
+    const sourceTimeZone = validTimeZoneOr(params.sourceTimeZone, deviceTimeZone);
+    const window = getCalendarDeviceDayWindow(params.selectedDate, deviceTimeZone);
+    if (!window) return [];
+
+    const rows: CalendarCharacterScheduleItem[] = [];
+    params.schedules.forEach(schedule => {
+        if (!schedule || getCalendarDayDifference(schedule.date, schedule.date) === null) return;
+        const slots = Array.isArray(schedule.slots) ? schedule.slots : [];
+        slots.forEach((slot, slotIndex) => {
+            if (!slot || typeof slot !== 'object') return;
+            const startMinutes = calendarClockToMinutes(slot.startTime);
+            if (startMinutes === null) return;
+            const startTimestamp = scheduleWallClockToTimestamp(schedule.date, slot.startTime, startMinutes, sourceTimeZone);
+            if (!Number.isFinite(startTimestamp)
+                || startTimestamp < window.startTimestamp
+                || startTimestamp >= window.endTimestampExclusive) return;
+
+            const localStart = formatWallClockAt(startTimestamp, deviceTimeZone);
+            if (!localStart) return;
+
+            const hasEndTime = typeof slot.endTime === 'string' && slot.endTime.trim().length > 0;
+            const endMinutes = hasEndTime ? calendarClockToMinutes(slot.endTime, true) : null;
+            let endTimeInvalid = hasEndTime && endMinutes === null;
+            let endTimestamp: number | undefined;
+            let localEnd: { date: string; time: string } | null = null;
+
+            if (endMinutes !== null) {
+                const endDate = endMinutes === 24 * 60
+                    ? schedule.date
+                    : endMinutes < startMinutes
+                        ? addLocalDays(schedule.date, 1)
+                        : schedule.date;
+                const endTimestampCandidate = scheduleWallClockToTimestamp(
+                    endDate || schedule.date,
+                    slot.endTime || '00:00',
+                    endMinutes,
+                    sourceTimeZone,
+                );
+                if (Number.isFinite(endTimestampCandidate) && endTimestampCandidate >= startTimestamp) {
+                    endTimestamp = endTimestampCandidate;
+                    localEnd = formatWallClockAt(endTimestampCandidate, deviceTimeZone);
+                } else {
+                    endTimeInvalid = true;
+                }
+            }
+
+            const scheduleId = schedule.id || `${schedule.charId}_${schedule.date}`;
+            rows.push({
+                type: 'calendar-character-slot',
+                id: `character-slot:${scheduleId}:${slotIndex}:${slot.startTime}:${slot.activity}`,
+                sourceScheduleId: scheduleId,
+                sourceDate: schedule.date,
+                slotIndex,
+                slot,
+                displayDate: localStart.date,
+                displayStartTime: localStart.time,
+                displayEndTime: localEnd?.time,
+                displayEndDate: localEnd && localEnd.date !== localStart.date ? localEnd.date : undefined,
+                startTimestamp,
+                endTimestamp,
+                endTimeInvalid,
+            });
+        });
+    });
+    return rows.sort((left, right) => left.startTimestamp - right.startTimestamp || left.id.localeCompare(right.id));
 };
 
 /**
