@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, Heartbeat, PencilSimple, Alarm, Sparkle, FadersHorizontal, LinkSimple, Star, Waveform, CornersOut, CornersIn } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, Heartbeat, PencilSimple, Alarm, Sparkle, FadersHorizontal, LinkSimple, Star, Waveform, CornersOut, CornersIn } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { AcnhActionTile } from '../os/acnhIcons';
@@ -60,7 +60,6 @@ interface ChatInputAreaProps {
     xinshengEnabled?: boolean;
     // Input style
     inputStyle?: 'default' | 'rounded' | 'flat' | 'wechat' | 'ios' | 'telegram' | 'discord' | 'pixel';
-    /** 兼容旧调用方；消息栏现在统一由回车发送，不再渲染发送按钮。 */
     sendButtonStyle?: 'circle' | 'pill' | 'minimal';
     chromeStyle?: 'soft' | 'flat' | 'floating' | 'pixel';
     /** 动森彩蛋模式：输入栏换成木质草绿圆角。 */
@@ -86,6 +85,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     showThinkingChain = false,
     xinshengEnabled = false,
     inputStyle = 'default',
+    sendButtonStyle = 'circle',
     chromeStyle = 'soft',
     acnh = false,
 }) => {
@@ -93,7 +93,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fullscreenTextareaRef = useRef<HTMLTextAreaElement>(null);
     const [isFullscreenEditor, setIsFullscreenEditor] = useState(false);
-    const [isInputOverflowing, setIsInputOverflowing] = useState(false);
     const [actionsPage, setActionsPage] = useState<0 | 1 | 2>(0);
     // 气泡样式面板：搜索 + 两步确认删除（防止 hover 小 × 误删）
     const [bubbleSearch, setBubbleSearch] = useState('');
@@ -324,14 +323,12 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         textarea.style.overflowY = isOverflowing ? 'auto' : 'hidden';
         // 溢出时让浏览器把纵向拖动判定成「在输入框里滚动」，而不是页面滚动或手势。
         textarea.style.touchAction = isOverflowing ? 'pan-y' : '';
-        setIsInputOverflowing(previous => previous === isOverflowing ? previous : isOverflowing);
     }, []);
 
-    // isInputOverflowing 会在输入框右侧插/删「放大编辑」按钮，textarea 可用宽度随之变化，
-    // 换行结果也就变了，必须跟着再量一次，否则高度会停在旧宽度算出来的值。
+    // 内容和「选择模式↔输入模式」切换都会让上一轮量出的高度失效。
     React.useEffect(() => {
         syncTextareaHeight();
-    }, [syncTextareaHeight, input, selectionMode, isInputOverflowing]);
+    }, [syncTextareaHeight, input, selectionMode]);
 
     // 键盘弹起/收起、旋转、字体晚加载、外壳宽度变化都会让上一轮的高度失效。
     // 只在「宽度真的变了」时重量，避免 ResizeObserver 因为我们自己改高度而自激。
@@ -414,12 +411,12 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             ? 'bg-white/80 backdrop-blur-2xl border-t border-white/60 shadow-[0_-12px_30px_rgba(148,163,184,0.18)]'
             : 'bg-white/90 backdrop-blur-2xl border-t border-slate-200/50 shadow-[0_-5px_15px_rgba(0,0,0,0.02)]';
     const actionButtonClass = acnh
-        ? 'w-9 h-9 shrink-0 rounded-xl bg-transparent flex items-center justify-center text-[#367d68] hover:bg-[#d8f0df] active:scale-95 transition-all'
+        ? 'w-11 h-11 shrink-0 rounded-full bg-[#4cb89e] flex items-center justify-center text-white hover:bg-[#43ad93] transition-colors shadow-sm'
         : isPixelStyle
-        ? 'w-9 h-9 shrink-0 rounded-[4px] bg-transparent flex items-center justify-center text-[#8f674a] hover:bg-[#fff7ed] active:scale-95 transition-all'
+        ? 'w-11 h-11 shrink-0 rounded-[4px] border-2 border-[#8f674a] bg-[#f8f0e0] flex items-center justify-center text-[#8f674a] hover:bg-[#fff7ed] transition-colors'
         : isDiscordStyle
-          ? 'w-9 h-9 shrink-0 rounded-xl bg-transparent flex items-center justify-center text-slate-300 hover:bg-slate-800 active:scale-95 transition-all'
-          : 'w-9 h-9 shrink-0 rounded-xl bg-transparent flex items-center justify-center text-slate-500 hover:bg-slate-100 active:scale-95 transition-all';
+          ? 'w-11 h-11 shrink-0 rounded-full bg-slate-800 flex items-center justify-center text-slate-200 hover:bg-slate-700 transition-colors'
+          : 'w-11 h-11 shrink-0 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-colors';
     const inputWrapClass =
         acnh
             ? 'bg-[#fbf4de] border-2 border-[#e6dab4] rounded-full'
@@ -439,6 +436,22 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                       : inputStyle === 'pixel'
                         ? 'bg-[#f8f0e0] border-2 border-[#8f674a] rounded-[4px]'
                         : 'bg-slate-100 rounded-[24px]';
+    const sendButtonClass = acnh
+        ? 'w-11 h-11 shrink-0 rounded-full bg-[#f3d06a] text-[#6b5a3e] flex items-center justify-center shadow-md'
+        :
+        sendButtonStyle === 'pill'
+            ? isPixelStyle
+                ? 'h-11 min-w-[72px] shrink-0 rounded-[4px] border-2 border-[#8f674a] bg-[#c99872] px-4 text-[11px] font-bold text-[#fff7ed]'
+                : 'h-11 min-w-[72px] shrink-0 rounded-full bg-primary px-4 text-[11px] font-bold text-white shadow-lg'
+            : sendButtonStyle === 'minimal'
+              ? isPixelStyle
+                ? 'w-11 h-11 shrink-0 rounded-[4px] border-2 border-[#8f674a] bg-[#c99872] text-[#fff7ed] flex items-center justify-center'
+                : isDiscordStyle
+                  ? 'w-11 h-11 shrink-0 rounded-full bg-transparent text-sky-300 flex items-center justify-center'
+                  : 'w-11 h-11 shrink-0 rounded-full bg-transparent text-primary flex items-center justify-center'
+              : isPixelStyle
+                ? 'w-11 h-11 shrink-0 rounded-[4px] border-2 border-[#8f674a] bg-[#c99872] text-[#fff7ed] flex items-center justify-center'
+                : 'w-11 h-11 shrink-0 rounded-full bg-primary text-white flex items-center justify-center transition-all shadow-lg';
     const panelClass = acnh
         ? 'bg-[#f3ecdc] border-t-[3px] border-[#e0d6c0]'
         : isPixelStyle
@@ -519,46 +532,40 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     </button>
                 </div>
             ) : (
-                <div className="p-3 px-4 flex gap-2 items-end relative">
-                    <button type="button" onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className={actionButtonClass} aria-label="更多功能">
-                        <Plus className="w-5 h-5" weight="bold" />
+                <div className="p-3 px-4 flex gap-3 items-end relative">
+                    <button onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className={actionButtonClass}>
+                        <Plus className="w-6 h-6" weight="bold" />
                     </button>
-                    {onOpenVoiceInput && (
-                        <button type="button" onClick={onOpenVoiceInput} className={actionButtonClass} title="发送语音" aria-label="发送语音">
-                            <Waveform className="w-5 h-5" weight="bold" />
+                    <div className={`flex-1 min-w-0 flex items-center px-1 transition-all ${useIOSStandaloneInputFix ? 'overflow-visible' : 'overflow-hidden'} ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
+                        <textarea 
+                            ref={textareaRef}
+                            rows={1} 
+                            value={input} 
+                            onChange={(e) => setInput(e.target.value)} 
+                            onKeyDown={handleKeyDown} 
+                            onFocus={handleInputFocus}
+                            inputMode="text"
+                            enterKeyHint="send"
+                            autoCorrect="on"
+                            autoCapitalize="sentences"
+                            className={`flex-1 min-w-0 bg-transparent px-4 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-36 no-scrollbar overscroll-contain ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`} 
+                            placeholder="Message..." 
+                            /* 高度交给 syncTextareaHeight 命令式管理（最多六行，再多框内滚动）。
+                               这里不能再写 inline height，否则 React 重渲染会把量好的高度冲回 auto。
+                               只留一个最小高度兜底，字体没量准时 placeholder 也不会被裁。 */
+                            style={{ minHeight: '2.75rem' }} 
+                        />
+                        <button onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={`p-2 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}>
+                            <Smiley className="w-6 h-6" weight="regular" />
                         </button>
-                    )}
-                    {/* 主题可以把外框做成直角、圆角或胶囊；内容层始终沿用外框的圆角并裁剪，避免文字从弧形边缘漏出。 */}
-                    <div className={`flex-1 min-w-0 flex items-center px-1 overflow-hidden transition-all ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
-                        <div className="sully-chat-input-clip flex min-w-0 flex-1 items-center" style={{ overflow: 'hidden', borderRadius: 'inherit' }}>
-                            <textarea
-                                ref={textareaRef}
-                                rows={1}
-                                value={input}
-                                onChange={(e) => setInput(e.target.value)}
-                                onKeyDown={handleKeyDown}
-                                onFocus={handleInputFocus}
-                                inputMode="text"
-                                enterKeyHint="send"
-                                autoCorrect="on"
-                                autoCapitalize="sentences"
-                                className={`flex-1 min-w-0 bg-transparent px-3 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-36 overscroll-contain ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`}
-                                placeholder="Message..."
-                                /* 高度完全交给 syncTextareaHeight 命令式管理。这里再写 inline height
-                                   会和它打架（React 重渲染时把量好的高度冲回 auto，出现半行/撑高的抽风）。
-                                   只保留一个最小高度兜底，保证字体没量准时 placeholder 也不会被裁。 */
-                                style={{ minHeight: '2.75rem' }}
-                            />
-                            {isInputOverflowing && (
-                                <button type="button" onClick={openFullscreenEditor} className={actionButtonClass} title="放大编辑" aria-label="放大编辑">
-                                    <CornersOut className="w-5 h-5" weight="bold" />
-                                </button>
-                            )}
-                            <button type="button" onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={actionButtonClass} title="表情包" aria-label="表情包">
-                                <Smiley className="w-5 h-5" weight="bold" />
-                            </button>
-                        </div>
                     </div>
+                    <button 
+                        onClick={sendFromComposer} 
+                        disabled={!input.trim()} 
+                        className={`${sendButtonClass} ${input.trim() ? '' : 'opacity-45 shadow-none'}`}
+                    >
+                        {sendButtonStyle === 'pill' ? <span>发送</span> : <PaperPlaneTilt className="w-5 h-5" weight="fill" />}
+                    </button>
 
                     {emojiSelectionMode && (
                         <div className={`absolute inset-0 z-10 ${isPixelStyle ? 'bg-[#eadfce]/70 backdrop-blur-[2px]' : isDiscordStyle ? 'bg-slate-950/70 backdrop-blur-[2px]' : 'bg-white/60 backdrop-blur-[2px]'}`} />
@@ -933,6 +940,32 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                               本来就是同一件事（把这个聊天打扮好看），却被分在两页里。现在统一并进
                               上一页的「装扮」抽屉，这页只留纯工具入口。 */}
                           <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 2 ? '' : 'hidden'}`}>
+                            {/* 语音：录一段自己的语音发给角色。原先挂在输入栏上，为了让消息栏回到
+                                原版排版（社区美化按原版 DOM 写的），挪进加号菜单，不改行为。 */}
+                            {onOpenVoiceInput && (
+                            <button
+                              onClick={onOpenVoiceInput}
+                              className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
+                            >
+                              <span className={`w-14 h-14 rounded-2xl grid place-items-center shadow-sm border ${acnh ? 'bg-white/70 border-[#e6dab4] text-[#3f8f7a]' : isDiscordStyle ? 'bg-slate-800 text-emerald-300 border-emerald-400/20' : 'bg-emerald-50 text-emerald-500 border-emerald-100'}`}>
+                                <Waveform className="w-6 h-6" weight="bold" />
+                              </span>
+                              <span className="text-xs font-bold">语音</span>
+                            </button>
+                            )}
+
+                            {/* 放大编辑：全屏写长消息。原先是输入框溢出时才冒出来的小按钮，
+                                同样挪进加号菜单，随时可用，不再往消息栏里塞东西。 */}
+                            <button
+                              onClick={openFullscreenEditor}
+                              className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
+                            >
+                              <span className={`w-14 h-14 rounded-2xl grid place-items-center shadow-sm border ${acnh ? 'bg-white/70 border-[#e6dab4] text-[#6b7fd7]' : isDiscordStyle ? 'bg-slate-800 text-sky-300 border-sky-400/20' : 'bg-sky-50 text-sky-500 border-sky-100'}`}>
+                                <CornersOut className="w-6 h-6" weight="bold" />
+                              </span>
+                              <span className="text-xs font-bold">放大编辑</span>
+                            </button>
+
                             {/* 记忆链接：聊天工具入口，不单独占一整块。 */}
                             <button
                               onClick={() => onPanelAction('memory-link')}
@@ -1111,7 +1144,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                         <CornersIn className="w-5 h-5" weight="bold" />
                     </button>
                     <div className="flex-1 text-center text-sm font-semibold">编辑消息</div>
-                    <div className="w-9 shrink-0" aria-hidden="true" />
+                    <div className="w-11 shrink-0" aria-hidden="true" />
                 </div>
                 <div className="flex-1 min-h-0 p-4">
                     <textarea
