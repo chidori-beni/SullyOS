@@ -55,8 +55,17 @@ import {
     removeLauncherUserWidget,
     updateLauncherUserWidget,
 } from '../utils/launcherUserWidgets';
+import { resolveLauncherDropKey, type LauncherDropCandidate } from '../utils/launcherDropTarget';
 
 const CompanionHome = React.lazy(() => import('../components/os/CompanionHome'));
+
+// 页面 id 和组件 key 都是我们自己生成的安全字符（字母数字和 _ . : -）。
+// CSS.escape 在 Safari 10+ 都有；万一没有，就把不安全字符剔掉当兜底。
+const cssEscape = (value: string): string => (
+    typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+        ? CSS.escape(value)
+        : value.replace(/[^A-Za-z0-9_.:-]/g, '')
+);
 
 const launcherPageIdAtIndex = (layout: LauncherPageLayout, index: number): string => (
     layout.pages[index]?.id || LAUNCHER_WIDGETS_PAGE_ID
@@ -778,6 +787,17 @@ const Launcher: React.FC = () => {
       grabOffsetY?: number;
       /** 是否真的挪动过——组件「长按不动就松手」等于要求打开编辑面板。 */
       moved?: boolean;
+      /**
+       * 落点格子的量好的矩形，按页缓存。
+       * 拖动期间页面不重排（ghost 是 fixed，源格子留在原位），所以一次量完就够；
+       * 每个 pointermove 都去读 20 个 getBoundingClientRect 会强制重排，手机上会卡。
+       */
+      dropCache?: {
+          pageId: string;
+          scrollLeft: number;
+          items: LauncherDropCandidate[];
+          elements: Map<string, HTMLElement>;
+      };
       lastTarget?: {
           kind: string;
           pageId?: string;
@@ -1392,6 +1412,20 @@ const Launcher: React.FC = () => {
       [userWidgets],
   );
 
+  /**
+   * 风车页的组件分成「风车格上方」和「下方」两组。
+   * 那页的布局是写死的（日程卡 + 2 列风车格），组件只能另起网格；
+   * 只放一个在最下面的话，往上拖多远都看不出变化——pos 变了、位置没变。
+   * 用 pos < 0 表示「排在这页所有 App 之前」，正好对应拖到风车格上方那一下。
+   */
+  const pinwheelWidgetGroups = useCallback((pageId: string) => {
+      const all = launcherPageUserWidgets(pageId);
+      return {
+          above: all.filter(widget => widget.pos < 0),
+          below: all.filter(widget => widget.pos >= 0),
+      };
+  }, [launcherPageUserWidgets]);
+
   const editingUserWidget = useMemo(
       () => (widgetSheet?.mode === 'edit' ? userWidgets.find(widget => widget.id === widgetSheet.id) : undefined),
       [userWidgets, widgetSheet],
@@ -1768,17 +1802,17 @@ const Launcher: React.FC = () => {
       const targetKey = target?.dataset.launcherItem;
       const targetKind = target?.dataset.launcherKind;
       const targetPageId = target?.dataset.launcherPageId;
-      const crossAppDockTarget = (pointer.kind === 'app' && targetKind === 'dock')
-          || (pointer.kind === 'dock' && targetKind === 'app');
-      // 组件可以落在 App 或别的组件上；App / Dock 图标也可以落在组件上（插到它后面）。
-      const targetIsPageSlot = targetKind === 'app' || targetKind === 'uwidget';
-      const crossWidgetTarget = (pointer.kind === 'uwidget' && targetIsPageSlot)
-          || ((pointer.kind === 'app' || pointer.kind === 'dock') && targetKind === 'uwidget');
+      // 页面内的落点（App 图标 / 用户组件）一律交给下面的「最近格子」判定，
+      // 因为直接命中只覆盖图标那 56px 的方块，格与格之间全是空隙，落空就会被
+      // 当成「整页」→ 追加到页尾。这里只保留 Dock 和风车格这两种直接命中语义。
       const validItemTarget = !targetIsClone
           && !!targetKey
-          && (targetKind === pointer.kind || crossAppDockTarget || crossWidgetTarget)
           && targetKey !== pointer.key
-          && (!targetIsPageSlot || !!targetPageId);
+          && (
+              targetKind === 'dock'
+              || (targetKind === 'widget' && pointer.kind === 'widget')
+          )
+          && (pointer.kind === 'app' || pointer.kind === 'dock' || pointer.kind === 'widget');
 
       // If the pointer is over an App icon, keep the precise before-target
       // semantics. Dropping on one's own icon is a no-op, not an append.
@@ -1796,7 +1830,6 @@ const Launcher: React.FC = () => {
           pointer.targetElement = target;
           pointer.lastTarget = {
               kind: targetKind || pointer.kind,
-              pageId: targetIsPageSlot ? targetPageId : undefined,
               key: targetKey,
           };
           return;
@@ -1808,11 +1841,38 @@ const Launcher: React.FC = () => {
       const pageDropIsClone = !!pageDrop?.closest('[data-launcher-carousel-clone="true"]');
       const pageDropId = pageDrop?.dataset.launcherPageDrop;
       if (isPageItemPointer && pageDrop && !pageDropIsClone && pageDropId) {
-          if (pageDrop === pointer.targetElement) return;
-          pointer.targetElement?.classList.remove('launcher-drop-target');
-          pageDrop.classList.add('launcher-drop-target');
-          pointer.targetElement = pageDrop;
-          pointer.lastTarget = { kind: 'app', pageId: pageDropId, key: '' };
+          // 按「离手指最近的格子」定插入点，而不是只认正下方那个元素。
+          const scrollLeft = Math.round(scrollContainerRef.current?.scrollLeft || 0);
+          if (pointer.dropCache?.pageId !== pageDropId || pointer.dropCache.scrollLeft !== scrollLeft) {
+              const items: LauncherDropCandidate[] = [];
+              const elements = new Map<string, HTMLElement>();
+              const nodes = document.querySelectorAll<HTMLElement>(
+                  `[data-launcher-item][data-launcher-page-id="${cssEscape(pageDropId)}"]`,
+              );
+              nodes.forEach(node => {
+                  const key = node.dataset.launcherItem;
+                  // 轮播首尾的克隆页不能当落点，否则会把改动写到一个看不见的副本上。
+                  if (!key || node.closest('[data-launcher-carousel-clone="true"]')) return;
+                  const rect = node.getBoundingClientRect();
+                  items.push({ key, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom });
+                  elements.set(key, node);
+              });
+              pointer.dropCache = { pageId: pageDropId, scrollLeft, items, elements };
+          }
+          const dropKey = resolveLauncherDropKey(pointer.dropCache.items, e.clientX, e.clientY, pointer.key);
+          const dropElement = dropKey ? pointer.dropCache.elements.get(dropKey) : null;
+          // 没算出目标就是「追加到页尾」，这时高亮整页，让用户知道会掉到最后。
+          const highlight: HTMLElement = dropElement || pageDrop;
+          if (highlight !== pointer.targetElement) {
+              pointer.targetElement?.classList.remove('launcher-drop-target');
+              highlight.classList.add('launcher-drop-target');
+              pointer.targetElement = highlight;
+          }
+          pointer.lastTarget = {
+              kind: dropKey && launcherWidgetIdFromItemKey(dropKey) ? 'uwidget' : 'app',
+              pageId: pageDropId,
+              key: dropKey || '',
+          };
           return;
       }
 
@@ -2153,6 +2213,7 @@ const Launcher: React.FC = () => {
               const pageApps = page
                   ? page.appIds.map(id => appById.get(id as AppID)).filter(Boolean) as typeof INSTALLED_APPS
                   : [];
+              const pinwheelGroups = page ? pinwheelWidgetGroups(page.id) : { above: [], below: [] };
               if (idx === totalPages - 1) {
                   return (
                       <WidgetsPage
@@ -2220,6 +2281,18 @@ const Launcher: React.FC = () => {
                       // 下面的网格变矮，日程卡就被重新居中压到了页面中段。改成从顶部排，
                       // 日程卡的位置就不再受下面有几格影响了。
                       <div className="flex-1 min-h-0 w-full flex flex-col gap-5 justify-start overflow-y-auto overscroll-y-contain no-scrollbar">
+                          {pinwheelGroups.above.length > 0 && (
+                              <AppGridPage
+                                    pageId={page.id}
+                                    apps={[]}
+                                    openApp={openApp}
+                                    editing={layoutEditing}
+                                    userWidgets={pinwheelGroups.above}
+                                    paper={paper}
+                                    acnh={acnh}
+                                    contentColor={contentColor}
+                              />
+                          )}
                           {scheduleChar && (
                               <ScheduleHomeWidget
                                   schedule={scheduleData}
@@ -2276,15 +2349,16 @@ const Launcher: React.FC = () => {
                                   </div>
                               ))}
                           </div>
-                          {/* 风车页也能放自定义组件：这些按 4 列网格排，和别的页一套尺寸。
+                          {/* 风车页也能放自定义组件：按 4 列网格排，和别的页一套尺寸。
+                              分上下两组是为了让「往上拖」真的看得出变化，见 pinwheelWidgetGroups。
                               没有组件时不渲染，免得白占一块高度把日程卡顶上去。 */}
-                          {launcherPageUserWidgets(page.id).length > 0 && (
+                          {pinwheelGroups.below.length > 0 && (
                               <AppGridPage
                                     pageId={page.id}
                                     apps={[]}
                                     openApp={openApp}
                                     editing={layoutEditing}
-                                    userWidgets={userWidgets}
+                                    userWidgets={pinwheelGroups.below}
                                     paper={paper}
                                     acnh={acnh}
                                     contentColor={contentColor}
