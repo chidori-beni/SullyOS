@@ -154,6 +154,22 @@ describe('updateLauncherUserWidget', () => {
         expect('fit' in next[0]).toBe(false);
     });
 
+    it('底框默认不存字段，只有显式打开才写 true', () => {
+        const on = updateLauncherUserWidget([widget({ id: 'w1' })], 'w1', { frame: true });
+        expect(on[0].frame).toBe(true);
+        const off = updateLauncherUserWidget(on, 'w1', { frame: false });
+        expect('frame' in off[0]).toBe(false);
+    });
+
+    it('存档里的 frame 只认 true，别的值一律当没开', () => {
+        const result = normalizeLauncherUserWidgets([
+            { id: 'a', pageId: 'p1', size: '1x1', frame: true },
+            { id: 'b', pageId: 'p1', size: '1x1', frame: 'yes' },
+            { id: 'c', pageId: 'p1', size: '1x1' },
+        ], ['p1']);
+        expect(result.map(w => w.frame)).toEqual([true, undefined, undefined]);
+    });
+
     it('不认识的尺寸不会写进去', () => {
         const next = updateLauncherUserWidget([widget({ id: 'w1' })], 'w1', { size: '7x7' as any });
         expect(next[0].size).toBe('2x2');

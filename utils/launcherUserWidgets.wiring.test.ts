@@ -26,9 +26,9 @@ describe('Launcher 接线', () => {
         expect(launcher).toContain('gridRow: `span ');
     });
 
-    it('两处 AppGridPage 都拿到了组件列表，不然某一页会看不见组件', () => {
+    it('三处 AppGridPage（主页 / 普通页 / 风车页）都拿到了组件列表', () => {
         const passes = launcher.match(/userWidgets=\{userWidgets\}/g) || [];
-        expect(passes.length).toBe(2);
+        expect(passes.length).toBe(3);
     });
 
     it('拖拽状态机认得组件：可拖动、可跨页、能落到别的格子上', () => {
@@ -101,6 +101,29 @@ describe('自带风车组件可移除', () => {
 
     it('隐藏结果会落到 theme 里，不是只活在内存', () => {
         expect(launcher).toContain('launcherHiddenBuiltinWidgets');
+    });
+});
+
+describe('透明图片不该被套上底框', () => {
+    it('有图时默认不画背景 / 描边 / 投影', () => {
+        expect(widgetView).toContain('const framed = !url || widget.frame === true;');
+    });
+
+    it('底框是可选项，面板里有开关', () => {
+        expect(widgetSheet).toContain('加一层底框');
+        expect(launcher).toContain('onToggleFrame=');
+    });
+});
+
+describe('风车页也能放组件', () => {
+    it('可放组件的页不再排除风车页', () => {
+        expect(launcher).not.toContain("page.kind !== 'pinwheel' ? page : undefined");
+        expect(launcher).toContain('launcherPageUserWidgets(page.id).length > 0');
+    });
+
+    it('风车页不再垂直居中——那正是移除自带格子后日程卡下沉的原因', () => {
+        expect(launcher).not.toContain('flex flex-col gap-5 justify-center');
+        expect(launcher).toContain('flex flex-col gap-5 justify-start');
     });
 });
 

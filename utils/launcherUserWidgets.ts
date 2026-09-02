@@ -92,6 +92,7 @@ export const normalizeLauncherUserWidgets = (
             pos: isFiniteNumber(candidate.pos) ? candidate.pos : result.length,
             ...(typeof candidate.image === 'string' && candidate.image ? { image: candidate.image } : {}),
             ...(candidate.fit === 'contain' ? { fit: 'contain' as const } : {}),
+            ...(candidate.frame === true ? { frame: true as const } : {}),
         });
     }
     return result;
@@ -160,7 +161,7 @@ export const addLauncherUserWidget = (
     widgets: readonly LauncherUserWidget[],
     page: Pick<LauncherPage, 'id' | 'appIds'>,
     size: LauncherWidgetSize,
-    options: { id?: string; image?: string; fit?: 'cover' | 'contain' } = {},
+    options: { id?: string; image?: string; fit?: 'cover' | 'contain'; frame?: boolean } = {},
 ): LauncherWidgetMutation => {
     if (!isLauncherWidgetSize(size)) return { ok: false, reason: '不认识的组件尺寸' };
     if (launcherWidgetsForPage(widgets, page.id).length >= LAUNCHER_WIDGET_PAGE_LIMIT) {
@@ -173,6 +174,7 @@ export const addLauncherUserWidget = (
         pos: appendPos(page, widgets),
         ...(options.image ? { image: options.image } : {}),
         ...(options.fit === 'contain' ? { fit: 'contain' as const } : {}),
+        ...(options.frame === true ? { frame: true as const } : {}),
     };
     return { ok: true, widgets: [...widgets, widget], widget };
 };
@@ -185,7 +187,7 @@ export const removeLauncherUserWidget = (
 export const updateLauncherUserWidget = (
     widgets: readonly LauncherUserWidget[],
     id: string,
-    patch: Partial<Pick<LauncherUserWidget, 'size' | 'image' | 'fit'>>,
+    patch: Partial<Pick<LauncherUserWidget, 'size' | 'image' | 'fit' | 'frame'>>,
 ): LauncherUserWidget[] => widgets.map(widget => {
     if (widget.id !== id) return widget;
     const next: LauncherUserWidget = { ...widget };
@@ -197,6 +199,10 @@ export const updateLauncherUserWidget = (
     if ('fit' in patch) {
         if (patch.fit === 'contain') next.fit = 'contain';
         else delete next.fit;
+    }
+    if ('frame' in patch) {
+        if (patch.frame === true) next.frame = true;
+        else delete next.frame;
     }
     return next;
 });

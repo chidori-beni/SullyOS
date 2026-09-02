@@ -36,8 +36,10 @@ const WidgetPreview: React.FC<{ widget: LauncherUserWidget }> = ({ widget }) => 
             style={{
                 width: `${cols * 22}px`,
                 height: `${rows * 22}px`,
-                background: 'rgba(120,110,95,0.14)',
-                border: '1px solid rgba(120,110,95,0.18)',
+                // 预览也照 LauncherUserWidgetView 的规矩来：有图且没开底框时不画格子，
+                // 否则用户在这里看到的和桌面上的不是一回事。
+                background: url && !widget.frame ? 'transparent' : 'rgba(120,110,95,0.14)',
+                border: url && !widget.frame ? '1px solid transparent' : '1px solid rgba(120,110,95,0.18)',
             }}
         >
             {url && (
@@ -64,6 +66,7 @@ export interface LauncherWidgetSheetProps {
     onPickFile: (file: File) => void;
     onApplyUrl: (url: string) => void;
     onToggleFit: () => void;
+    onToggleFrame: () => void;
     onRemove: () => void;
     onClose: () => void;
 }
@@ -85,6 +88,7 @@ const LauncherWidgetSheet: React.FC<LauncherWidgetSheetProps> = ({
     onPickFile,
     onApplyUrl,
     onToggleFit,
+    onToggleFrame,
     onRemove,
     onClose,
 }) => {
@@ -236,6 +240,26 @@ const LauncherWidgetSheet: React.FC<LauncherWidgetSheetProps> = ({
                                 <div
                                     className="absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-transform"
                                     style={{ transform: `translateX(${widget.fit === 'contain' ? '1.5rem' : '0.25rem'})` }}
+                                />
+                            </button>
+                        </div>
+
+                        <div className="mt-4 flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                                <div className="text-xs font-bold">加一层底框</div>
+                                <div className="text-[10px] mt-0.5" style={{ color: subtle }}>
+                                    默认不加，透明背景的图片会直接融进壁纸。打开则套一张带描边和投影的卡片
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={onToggleFrame}
+                                className="w-12 h-7 rounded-full transition-colors relative shrink-0"
+                                style={{ background: widget.frame ? accent : chip }}
+                            >
+                                <div
+                                    className="absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-transform"
+                                    style={{ transform: `translateX(${widget.frame ? '1.5rem' : '0.25rem'})` }}
                                 />
                             </button>
                         </div>

@@ -26,7 +26,15 @@ const LauncherUserWidgetView = React.memo(({
     // 一格宽的竖条用小圆角，否则圆角比组件本身还抢眼。
     const radius = cols <= 1 ? '1.1rem' : '1.6rem';
 
-    const frameStyle: React.CSSProperties = paper ? {
+    // 有图就默认「裸奔」：不画背景、描边和投影。
+    // 用户传透明 PNG 的用意就是让它融进壁纸，底框和投影会把它重新框成一张卡；
+    // 想要卡片观感的可以在编辑面板里把「底框」打开。空占位永远画框，否则看不见。
+    const framed = !url || widget.frame === true;
+
+    const frameStyle: React.CSSProperties = !framed ? {
+        // 圆角仍然保留：cover 的照片需要它，透明 PNG 的四角本来就是透明的，切不到东西。
+        color: paper ? '#6b5b47' : contentColor,
+    } : paper ? {
         background: url ? 'rgba(224,221,215,0.26)' : 'rgba(224,221,215,0.38)',
         border: '1px solid rgba(91,72,51,0.07)',
         boxShadow: '0 5px 16px rgba(91,72,51,0.055)',

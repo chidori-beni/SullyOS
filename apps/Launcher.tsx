@@ -913,9 +913,10 @@ const Launcher: React.FC = () => {
       setPinwheelOrder(next);
   }, [layoutEditing, theme.launcherPinwheelOrder]);
 
-  // 组件只能落在主页和普通 App 页；风车页有自己的固定布局，Widgets 页是合成页。
+  // 组件可以落在任意一张真实页上（含风车页——那页移除自带格子后正好空出地方）；
+  // 只有最后那张合成的 Widgets 日历页不在列。
   const widgetCapablePageIds = useMemo(
-      () => launcherPageLayout.pages.filter(page => page.kind !== 'pinwheel').map(page => page.id),
+      () => launcherPageLayout.pages.map(page => page.id),
       [launcherPageLayout],
   );
 
@@ -1366,14 +1367,13 @@ const Launcher: React.FC = () => {
 
   const widgetPageById = useCallback((pageId: string | undefined): LauncherPage | undefined => {
       if (!pageId) return undefined;
-      const page = launcherPageLayoutRef.current.pages.find(item => item.id === pageId);
-      return page && page.kind !== 'pinwheel' ? page : undefined;
+      return launcherPageLayoutRef.current.pages.find(item => item.id === pageId);
   }, []);
 
   const handleAddUserWidget = useCallback((size: LauncherWidgetSize) => {
       const page = widgetPageById(visiblePageIdRef.current);
       if (!page) {
-          addToast('这一页放不了组件，先滑到主页或普通 App 页', 'error');
+          addToast('日历页放不了组件，点下方页码换一页', 'error');
           return;
       }
       const result = addLauncherUserWidget(userWidgetsRef.current, page, size);
@@ -1386,6 +1386,11 @@ const Launcher: React.FC = () => {
       setWidgetSheet({ mode: 'edit', id: result.widget.id });
       trackEvent('桌面添加自定义组件', { size });
   }, [addToast, persistUserWidgets, widgetPageById]);
+
+  const launcherPageUserWidgets = useCallback(
+      (pageId: string) => userWidgets.filter(widget => widget.pageId === pageId),
+      [userWidgets],
+  );
 
   const editingUserWidget = useMemo(
       () => (widgetSheet?.mode === 'edit' ? userWidgets.find(widget => widget.id === widgetSheet.id) : undefined),
@@ -2211,7 +2216,10 @@ const Launcher: React.FC = () => {
                       </>
                   ) : page?.kind === 'pinwheel' ? (
                       // Shortcut page: Schedule widget on top + Pinwheel (Music / 2x2 icons / 2x2 icons / Image) below
-                      <div className="flex-1 min-h-0 w-full flex flex-col gap-5 justify-center">
+                      // justify-center 会让整列内容随高度变化上下漂：移掉音乐卡片 / 方图后
+                      // 下面的网格变矮，日程卡就被重新居中压到了页面中段。改成从顶部排，
+                      // 日程卡的位置就不再受下面有几格影响了。
+                      <div className="flex-1 min-h-0 w-full flex flex-col gap-5 justify-start overflow-y-auto overscroll-y-contain no-scrollbar">
                           {scheduleChar && (
                               <ScheduleHomeWidget
                                   schedule={scheduleData}
@@ -2268,6 +2276,20 @@ const Launcher: React.FC = () => {
                                   </div>
                               ))}
                           </div>
+                          {/* 风车页也能放自定义组件：这些按 4 列网格排，和别的页一套尺寸。
+                              没有组件时不渲染，免得白占一块高度把日程卡顶上去。 */}
+                          {launcherPageUserWidgets(page.id).length > 0 && (
+                              <AppGridPage
+                                    pageId={page.id}
+                                    apps={[]}
+                                    openApp={openApp}
+                                    editing={layoutEditing}
+                                    userWidgets={userWidgets}
+                                    paper={paper}
+                                    acnh={acnh}
+                                    contentColor={contentColor}
+                              />
+                          )}
                       </div>
                   ) : (
                       // Regular App page: optional image/decorations + four-column grid
@@ -2402,6 +2424,7 @@ const Launcher: React.FC = () => {
               onPickFile={(file) => { void handleUserWidgetFile(file); }}
               onApplyUrl={handleUserWidgetUrl}
               onToggleFit={() => patchEditingWidget({ fit: editingUserWidget?.fit === 'contain' ? 'cover' : 'contain' })}
+              onToggleFrame={() => patchEditingWidget({ frame: !editingUserWidget?.frame })}
               onRemove={handleUserWidgetRemove}
               onClose={() => setWidgetSheet(null)}
           />
