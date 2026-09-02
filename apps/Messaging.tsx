@@ -49,10 +49,9 @@ import MessagingThemeSettings from '../components/messaging/MessagingThemeSettin
 import Chat from './Chat';
 import { ContextBuilder } from '../utils/context';
 import { processImage } from '../utils/file';
-import { buildSelfiePrompt, generateImageDataUrl, getImageGenConfig, isImageGenReady } from '../utils/novelaiImage';
+import { buildSelfiePromptForGeneration, generateImageDataUrl, getImageGenConfig, isImageGenReady, normalizeImageIntent } from '../utils/novelaiImage';
 import { safeResponseJson } from '../utils/safeApi';
 import { getSocialPostScope, isMomentsPost, withSocialPostScope } from '../utils/socialPostScope';
-import { setChatViewSnapshot } from '../utils/chatGenEvents';
 import {
     appendMomentComment,
     applyMomentAiInteractions,
@@ -84,7 +83,6 @@ interface MomentRerollState {
 interface MomentImageViewerState {
     images: string[];
     initialIndex: number;
-    profileGalleryImageIds?: string[];
 }
 
 interface MomentImageTransform {
@@ -180,7 +178,6 @@ const messageTypeLabel: Partial<Record<Message['type'], string>> = {
 const cleanPreview = (message: Message | null, composing: boolean): string => {
     if (composing) return '正在送达消息…';
     if (!message) return '还没有消息，来打个招呼吧';
-    if (message.metadata?.source === 'incoming-call-missed') return '未接来电';
     if (message.type !== 'text') return messageTypeLabel[message.type] || '[消息]';
     return message.content
         .replace(/<[^>]+>/g, ' ')
@@ -231,7 +228,6 @@ const Messaging: React.FC = () => {
         characters,
         clearUnread,
         closeApp,
-        activeCharacterId,
         lastMsgTimestamp,
         openApp,
         proactiveComposingChars,
@@ -262,14 +258,6 @@ const Messaging: React.FC = () => {
         signature: '', birthday: '', gender: '', location: '', hobbies: [], about: userProfile.bio || '',
     }));
     const [profileDraft, setProfileDraft] = useState<MessagingProfile>(profile);
-
-    // AppID.Chat 同时承载好友列表和单聊详情；activeCharacterId 在返回列表后仍可能保留，
-    // 因此不能单靠 OSContext 的 activeApp + activeCharacterId 判断“用户正在看这段聊天”。
-    // 这里把真正的详情页状态同步给全局横幅和未接来电提醒。
-    useEffect(() => {
-        setChatViewSnapshot(view === 'detail', view === 'detail' ? activeCharacterId ?? null : null);
-    }, [activeCharacterId, view]);
-
     const [profileEditOpen, setProfileEditOpen] = useState(false);
     const [momentGenerateOpen, setMomentGenerateOpen] = useState(false);
     const [momentPostOpen, setMomentPostOpen] = useState(false);
@@ -792,7 +780,7 @@ const Messaging: React.FC = () => {
 
     const callMomentWriter = async (selected: CharacterProfile[], count: number): Promise<any[]> => {
         const roster = selected.map(char => `ID: ${char.id}\n姓名: ${char.name}\n${ContextBuilder.buildCoreContext(char, userProfile, false)}`).join('\n\n---\n\n');
-        const prompt = `你正在为一个拟真的朋友圈生成角色动态。只能使用下面角色，不得代替用户发言。\n\n${roster}\n\n请生成 ${count} 条动态，返回严格 JSON 数组。每项必须包含 charId、text、imagePrompt、location。text 是角色自愿公开发布的自然朋友圈文案；imagePrompt 是与正文一致、适合生图 API 的英文画面提示词，如果这条动态不适合配图则填空字符串；location 可为空。不要 Markdown，不要解释。`;
+        const prompt = `你正在为一个拟真的朋友圈生成角色动态。只能使用下面角色，不得代替用户发言。\n\n${roster}\n\n请生成 ${count} 条动态，返回严格 JSON 数组。每项必须包含 charId、text、imagePrompt、imageIntent、location。text 是角色自愿公开发布的自然朋友圈文案；imagePrompt 是与正文一致、适合生图 API 的英文画面提示词，如果这条动态不适合配图则填空字符串；imageIntent 只能是 "selfie" 或 "image"：只有角色本人出镜、自拍或被拍时填 "selfie"，食物、景物、物品、陌生人或不出镜的内容填 "image"；location 可为空。不要 Markdown，不要解释。`;
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
@@ -832,12 +820,18 @@ const Messaging: React.FC = () => {
                 const content = String(item?.text || item?.content || '').trim();
                 if (!char || !content) continue;
                 const imagePrompt = String(item?.imagePrompt || item?.scene || '').trim();
+                const imageIntent = normalizeImageIntent(item?.imageIntent);
                 const images: string[] = [];
                 let imageGenerationError = '';
                 if (imagePrompt && canDraw) {
                     setMomentProgress(`正在为 ${char.name} 生成图片（${nextPosts.length + 1}/${requestedCount}）…`);
                     try {
-                        images.push(await generateImageDataUrl(buildSelfiePrompt(char.id, imagePrompt, imageConfig), imageConfig));
+                        const resolvedPrompt = imageIntent === 'selfie'
+                            ? await buildSelfiePromptForGeneration(char.id, imagePrompt, imageConfig, apiConfig, {
+                                timeZone: char.customTimezoneEnabled ? char.customTimezone : undefined,
+                            })
+                            : imagePrompt;
+                        images.push(await generateImageDataUrl(resolvedPrompt, imageConfig));
                     } catch (error: any) {
                         imageFailures += 1;
                         imageGenerationError = error?.message || String(error);
@@ -860,6 +854,7 @@ const Messaging: React.FC = () => {
                     authorCharId: char.id,
                     socialScope: 'moments',
                     imagePrompt,
+                    ...(imageIntent ? { imageIntent } : {}),
                     location: String(item?.location || '').trim(),
                     ...(imageGenerationError ? { imageGenerationError } : {}),
                 });
@@ -945,8 +940,13 @@ const Messaging: React.FC = () => {
         if (!post) return setMomentReroll(null);
         setMomentRerollBusy(true);
         try {
-            const resolvedPrompt = post.authorType === 'character' && post.authorCharId
-                ? buildSelfiePrompt(post.authorCharId, prompt, config)
+            const promptCharacter = post.authorType === 'character' && post.authorCharId
+                ? characters.find(char => char.id === post.authorCharId)
+                : undefined;
+            const resolvedPrompt = post.imageIntent === 'selfie' && post.authorType === 'character' && post.authorCharId
+                ? await buildSelfiePromptForGeneration(post.authorCharId, prompt, config, apiConfig, {
+                    timeZone: promptCharacter?.customTimezoneEnabled ? promptCharacter.customTimezone : undefined,
+                })
                 : prompt;
             const image = await generateImageDataUrl(resolvedPrompt, config);
             const images = [...(post.images || [])];
@@ -1060,19 +1060,6 @@ const Messaging: React.FC = () => {
         try {
             await DB.deleteGalleryImage(image.id);
             setProfileGalleryImages(current => current.filter(item => item.id !== image.id));
-            setMomentImageViewer(current => {
-                if (!current?.profileGalleryImageIds) return current;
-                const deletedIndex = current.profileGalleryImageIds.indexOf(image.id);
-                if (deletedIndex < 0) return current;
-                const nextImages = current.images.filter((_, index) => index !== deletedIndex);
-                const nextIds = current.profileGalleryImageIds.filter((_, index) => index !== deletedIndex);
-                if (!nextImages.length) return null;
-                const nextIndex = Math.max(0, Math.min(
-                    momentImageViewerIndex > deletedIndex ? momentImageViewerIndex - 1 : momentImageViewerIndex,
-                    nextImages.length - 1,
-                ));
-                return { ...current, images: nextImages, initialIndex: nextIndex, profileGalleryImageIds: nextIds };
-            });
             addToast('图片已从相册删除', 'success');
         } catch (error: any) {
             addToast(error?.message || '删除图片失败', 'error');
@@ -1414,7 +1401,8 @@ const Messaging: React.FC = () => {
                         </div>
                         <input ref={profileGalleryImageInputRef} type="file" accept="image/*" multiple hidden onChange={event => { void handleProfileGalleryImages(event.target.files); event.target.value = ''; }} />
                         {profileGalleryImages.length ? <div className="nj-profile-gallery-grid">{profileGalleryImages.map((image, index) => <div className="nj-profile-gallery-cell" key={image.id}>
-                            <button type="button" className="nj-profile-gallery-open" aria-label={`查看相册图片 ${index + 1}`} onClick={() => setMomentImageViewer({ images: profileGalleryImages.map(item => item.url), initialIndex: index, profileGalleryImageIds: profileGalleryImages.map(item => item.id) })}><img src={image.url} alt="" loading="lazy" /></button>
+                            <button type="button" className="nj-profile-gallery-open" aria-label={`查看相册图片 ${index + 1}`} onClick={() => setMomentImageViewer({ images: profileGalleryImages.map(item => item.url), initialIndex: index })}><img src={image.url} alt="" loading="lazy" /></button>
+                            <button type="button" className="nj-profile-gallery-delete" aria-label={`删除相册图片 ${index + 1}`} title="删除图片" disabled={profileGalleryDeletingId === image.id} onClick={event => { event.stopPropagation(); void deleteProfileGalleryImage(image); }}><Trash /></button>
                         </div>)}</div> : <div className="nj-empty-state">相册里还没有照片<br /><small>上传图片或粘贴图床链接，把喜欢的图放进展示柜</small></div>}
                     </div>
                 </div></div>
@@ -1517,12 +1505,6 @@ const Messaging: React.FC = () => {
                     {momentImageViewer.images.map((url, index) => <div className="sully-msg-moment-viewer-slide" key={`${url}-${index}`} data-zoomed={String(index === momentImageViewerIndex && momentImageTransform.scale > 1)}><img src={url} alt="" draggable={false} style={index === momentImageViewerIndex ? { transform: `translate3d(${momentImageTransform.x}px, ${momentImageTransform.y}px, 0) scale(${momentImageTransform.scale})`, touchAction: momentImageTransform.scale > 1 ? 'none' : 'pan-x' } : undefined} onPointerDown={handleMomentViewerPointerDown} onPointerMove={handleMomentViewerPointerMove} onPointerUp={handleMomentViewerPointerUp} onPointerCancel={handleMomentViewerPointerUp} onDoubleClick={handleMomentViewerDoubleClick} onWheel={handleMomentViewerWheel} /></div>)}
                 </div>
                 <button type="button" className="sully-msg-moment-viewer-close" aria-label="关闭大图" onClick={() => setMomentImageViewer(null)}><X /></button>
-                {!!momentImageViewer.profileGalleryImageIds?.length && <button type="button" className="sully-msg-moment-viewer-delete" aria-label="删除这张展示柜图片" title="删除这张展示柜图片" disabled={!!profileGalleryDeletingId} onClick={event => {
-                    event.stopPropagation();
-                    const imageId = momentImageViewer.profileGalleryImageIds?.[momentImageViewerIndex];
-                    const image = imageId ? profileGalleryImages.find(item => item.id === imageId) : undefined;
-                    if (image) void deleteProfileGalleryImage(image);
-                }}><Trash /></button>}
                 <div className="sully-msg-moment-viewer-hint" aria-hidden="true">双指捏合或双击放大 · 放大后拖动查看</div>
                 {momentImageViewer.images.length > 1 && <div className="sully-msg-moment-viewer-dots" aria-label={`${momentImageViewerIndex + 1} / ${momentImageViewer.images.length}`} onClick={event => event.stopPropagation()}>{momentImageViewer.images.map((_, index) => <i className={index === momentImageViewerIndex ? 'active' : ''} key={index} />)}</div>}
             </div>}

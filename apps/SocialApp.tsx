@@ -11,7 +11,7 @@ import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } fr
 import { House, User, Package, Warning } from '@phosphor-icons/react';
 import { mergeSocialComments, prependUniqueSocialPosts, updateSocialPost } from '../utils/socialFeedMerge';
 import { trackEvent } from '../utils/analytics';
-import { buildSelfiePromptForGeneration, generateImageDataUrl, getImageGenConfig, isImageGenReady } from '../utils/novelaiImage';
+import { buildSelfiePromptForGeneration, generateImageDataUrl, getImageGenConfig, isImageGenReady, normalizeImageIntent } from '../utils/novelaiImage';
 import { isSparkPost } from '../utils/socialPostScope';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
@@ -491,11 +491,12 @@ ${charContexts}
 [
   {
     "isCharacter": true/false,
-    "charId": "如果是角色填ID, 否则null", 
+    "charId": "如果是角色填ID, 否则null",
     "authorName": "必须填身份表中定义的【网名】",
     "title": "简短吸睛的标题",
     "content": "正文内容...",
     "imagePrompt": "与正文一致、可直接用于生图 API 的英文画面提示词；不适合配图时留空",
+    "imageIntent": "selfie 或 image；只有角色本人出镜才填 selfie，食物/景物/物品/陌生人填 image",
     "likes": 随机数 (0 - 10000)
   },
   ...
@@ -537,6 +538,7 @@ ${charContexts}
                     avatar = `https://api.dicebear.com/7.x/${seeds[Math.floor(Math.random() * seeds.length)]}/svg?seed=${item.authorName + Math.random()}`;
                 }
                 const imagePrompt = String(item.imagePrompt || item.scene || '').trim();
+                const imageIntent = normalizeImageIntent(item.imageIntent);
                 return {
                     id: `post-${Date.now()}-${Math.random()}`,
                     authorName: item.authorName || 'Unknown',
@@ -555,6 +557,7 @@ ${charContexts}
                     authorCharId: matchedChar?.id,
                     socialScope: 'spark',
                     imagePrompt,
+                    ...(imageIntent ? { imageIntent } : {}),
                 };
             });
             const imageConfig = getImageGenConfig();
@@ -568,7 +571,7 @@ ${charContexts}
                         const promptCharacter = post.authorCharId
                             ? characters.find(char => char.id === post.authorCharId)
                             : undefined;
-                        const prompt = post.authorCharId
+                        const prompt = post.imageIntent === 'selfie' && post.authorCharId
                             ? await buildSelfiePromptForGeneration(post.authorCharId, post.imagePrompt, imageConfig, apiConfig, {
                                 timeZone: promptCharacter?.customTimezoneEnabled ? promptCharacter.customTimezone : undefined,
                             })

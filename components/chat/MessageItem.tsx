@@ -1,7 +1,7 @@
 
 
 
-import { readImageGenMeta, retryImageGeneration } from '../../utils/novelaiImage';
+import { readImageGenMeta, retryImageGeneration, type AppearanceSelectionApi } from '../../utils/novelaiImage';
 import React, { useEffect, useRef, useState } from 'react';
 import { Message, ChatTheme } from '../../types';
 import type { ScheduleInviteData, ScheduleInviteEvent, ScheduleInviteReplyData } from '../../utils/scheduleInvite';
@@ -942,11 +942,7 @@ const ScheduleInviteCard: React.FC<{
                     </div>
                 </div>
                 <div className="mt-2 text-[10px] leading-relaxed" style={{ color: '#a2757c' }}>
-                    {pending
-                        ? '挑选你想参加的时段，同意后会登记到你的日历。'
-                        : data.status === 'expired'
-                            ? '日程已经更新，这张邀约不再生效。'
-                            : '这张邀约已经处理过了。'}
+                    {pending ? '挑选你想参加的时段，同意后会登记到你们的日程。' : '这张邀约已经处理过了。'}
                 </div>
             </div>
 
@@ -993,11 +989,7 @@ const ScheduleInviteCard: React.FC<{
                 </div>
             ) : (
                 <div className="px-4 pb-3.5 pt-1 text-[10px] font-semibold" style={{ color: data.acceptedIds?.length ? '#65a083' : '#a9999b' }}>
-                    {data.status === 'expired'
-                        ? '原日程已重抽，这张邀约已失效'
-                        : data.acceptedIds?.length
-                            ? `已答应 ${data.acceptedIds.length} 项，其他时段以后再约`
-                            : '这次先不约了'}
+                    {data.acceptedIds?.length ? `已答应 ${data.acceptedIds.length} 项，其他时段以后再约` : '这次先不约了'}
                 </div>
             )}
         </div>
@@ -1027,7 +1019,7 @@ const ScheduleInviteReplyCard: React.FC<{
                 </div>
             ))}
         </div>
-        <div className="px-4 py-2 text-[9px] text-[#9ab6a3] border-t border-emerald-100/60">已登记到你的日历</div>
+        <div className="px-4 py-2 text-[9px] text-[#9ab6a3] border-t border-emerald-100/60">已登记到今日日程</div>
     </div>
 );
 
@@ -1584,6 +1576,9 @@ interface MessageItemProps {
      * 不传就退回原来的行为：图片只是一张点不动的 img。
      */
     onOpenImage?: (m: Message) => void;
+    /** 自拍重试/重画时使用当前文字 API 重新选择角色衣橱。 */
+    imageSelectionApi?: AppearanceSelectionApi | null;
+    imageSelectionTimeZone?: string;
     /** 思考链卡片视觉与交互 */
     thinkingChainOptions?: {
         styleId?: ThinkingChainStyleId;
@@ -1641,6 +1636,8 @@ const MessageItem = React.memo(({
     onAcceptMeetingInvite,
     onOpenDateEncounter,
     onOpenImage,
+    imageSelectionApi,
+    imageSelectionTimeZone,
     thinkingChainOptions,
 }: MessageItemProps) => {
     const isUser = m.role === 'user';
@@ -3663,7 +3660,14 @@ const MessageItem = React.memo(({
                         )}
                         <button
                             type="button"
-                            onClick={() => { void retryImageGeneration(m.id, imageGenMeta.prompt, m.charId); }}
+                            onClick={() => {
+                                void retryImageGeneration(m.id, imageGenMeta.prompt, m.charId, {
+                                    imageIntent: imageGenMeta.imageIntent,
+                                    selfieScene: imageGenMeta.selfieScene,
+                                    api: imageSelectionApi,
+                                    timeZone: imageSelectionTimeZone,
+                                });
+                            }}
                             className="text-[10px] font-bold text-violet-500 active:scale-95 transition-transform"
                         >
                             {imageGenMeta.status === 'pending' ? '卡住了？重画一张' : '重画一张'}

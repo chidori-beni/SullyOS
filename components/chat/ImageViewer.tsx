@@ -33,6 +33,7 @@ import {
     notifyImageGenUpdated,
     readImageGenMeta,
     rerollImageOnce,
+    type AppearanceSelectionApi,
     type ImageGenMeta,
 } from '../../utils/novelaiImage';
 
@@ -49,9 +50,19 @@ export interface ImageViewerProps {
     /** 图片真的被换掉之后调用，聊天页据此重读一次库。 */
     onApplied?: () => void;
     addToast: (message: string, type?: 'success' | 'error' | 'info') => void;
+    /** 角色自拍重画时，重新按当前场景选择衣橱。 */
+    imageSelectionApi?: AppearanceSelectionApi | null;
+    imageSelectionTimeZone?: string;
 }
 
-const ImageViewer: React.FC<ImageViewerProps> = ({ message, onClose, onApplied, addToast }) => {
+const ImageViewer: React.FC<ImageViewerProps> = ({
+    message,
+    onClose,
+    onApplied,
+    addToast,
+    imageSelectionApi,
+    imageSelectionTimeZone,
+}) => {
     const meta: ImageGenMeta | null = readImageGenMeta(message.metadata);
     const basePrompt = (meta?.prompt || '').trim();
 
@@ -93,9 +104,16 @@ const ImageViewer: React.FC<ImageViewerProps> = ({ message, onClose, onApplied, 
         setBusy(true);
         setError('');
         try {
-            const url = await rerollImageOnce(clean);
+            const reroll = await rerollImageOnce(clean, {
+                charId: message.charId,
+                imageIntent: meta?.imageIntent,
+                selfieScene: meta?.selfieScene,
+                api: imageSelectionApi,
+                timeZone: imageSelectionTimeZone,
+                reselectWardrobe: !editing,
+            });
             setVariants(prev => {
-                const next = [...prev, { url, prompt: clean, original: false }];
+                const next = [...prev, { url: reroll.url, prompt: reroll.prompt, original: false }];
                 setIndex(next.length - 1);
                 return next;
             });
@@ -108,7 +126,7 @@ const ImageViewer: React.FC<ImageViewerProps> = ({ message, onClose, onApplied, 
             busyRef.current = false;
             setBusy(false);
         }
-    }, []);
+    }, [editing, imageSelectionApi, imageSelectionTimeZone, message.charId, meta?.imageIntent, meta?.selfieScene]);
 
     const applyCurrent = useCallback(async () => {
         if (!current || current.original || busyRef.current) return;

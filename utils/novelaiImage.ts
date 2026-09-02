@@ -96,6 +96,27 @@ export interface AppearanceSelectionApi {
     model: string;
 }
 
+export type ImageIntent = 'selfie' | 'image';
+
+/** 社交动态来自模型，未知值按 undefined 处理，由调用方安全地走普通配图。 */
+export function normalizeImageIntent(value: unknown): ImageIntent | undefined {
+    return value === 'selfie' || value === 'image' ? value : undefined;
+}
+
+export interface ImageGenRetryOptions {
+    imageIntent?: ImageIntent;
+    /** 未注入衣橱前的原始自拍场景；不能用最终 prompt 反推。 */
+    selfieScene?: string;
+    api?: AppearanceSelectionApi | null;
+    timeZone?: string;
+}
+
+export interface ImageRerollOptions extends ImageGenRetryOptions {
+    charId?: string;
+    /** 编辑完整提示词时关闭；同提示词重画时才重新选择衣橱。 */
+    reselectWardrobe?: boolean;
+}
+
 /** 预设里真正会被套用的那些字段。 */
 export const PRESET_FIELDS = [
     'qualityTags', 'negativePrompt', 'size', 'steps', 'scale',
@@ -421,6 +442,26 @@ export async function buildSelfiePromptForGeneration(
     return [look?.prompt.trim(), scene.trim()].filter(Boolean).join(', ');
 }
 
+const activeSelfieAttempts = new Map<number, string>();
+
+function createSelfieAttemptId(messageId: number): string {
+    return `${Date.now()}-${messageId}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function isCurrentSelfieAttempt(messageId: number, attemptId: string): boolean {
+    return activeSelfieAttempts.get(messageId) === attemptId;
+}
+
+function preserveImageGenContext(raw: any): Pick<ImageGenMeta, 'imageIntent' | 'selfieScene' | 'generationAttemptId'> {
+    const context: Pick<ImageGenMeta, 'imageIntent' | 'selfieScene' | 'generationAttemptId'> = {};
+    if (raw?.imageIntent === 'selfie' || raw?.imageIntent === 'image') context.imageIntent = raw.imageIntent;
+    if (typeof raw?.selfieScene === 'string' && raw.selfieScene.trim()) context.selfieScene = raw.selfieScene;
+    if (typeof raw?.generationAttemptId === 'string' && raw.generationAttemptId.trim()) {
+        context.generationAttemptId = raw.generationAttemptId;
+    }
+    return context;
+}
+
 /**
  * 聊天气泡专用：pending 先上屏，造型选择在后台完成，避免为了一个轻量选择请求卡住后续台词。
  */
@@ -432,13 +473,47 @@ export async function runSelfieImageGeneration(
     api?: AppearanceSelectionApi | null,
     options?: { now?: Date; timeZone?: string },
 ): Promise<void> {
-    const prompt = await buildSelfiePromptForGeneration(charId, scene, cfg, api, options);
-    if (!prompt.trim()) return;
-    await DB.updateMessageMetadata(messageId, (previous: any) => ({
-        ...(previous || {}),
-        imageGen: { status: 'pending', prompt } as ImageGenMeta,
-    })).catch(() => undefined);
-    await runImageGeneration(messageId, prompt, charId);
+    const scenePrompt = (scene || '').trim();
+    const attemptId = createSelfieAttemptId(messageId);
+    activeSelfieAttempts.set(messageId, attemptId);
+    const fallbackPrompt = buildSelfiePrompt(charId, scenePrompt, cfg).trim();
+    try {
+        // 选择器可能需要几秒；先把“这是自拍”写进 metadata，重试按钮不会把它当普通图片。
+        await DB.updateMessageMetadata(messageId, (previous: any) => {
+            if (!isCurrentSelfieAttempt(messageId, attemptId)) return previous;
+            return {
+                ...(previous || {}),
+                imageGen: {
+                    ...preserveImageGenContext(previous?.imageGen),
+                    status: 'pending',
+                    prompt: fallbackPrompt || scenePrompt,
+                    imageIntent: 'selfie',
+                    selfieScene: scenePrompt,
+                    generationAttemptId: attemptId,
+                } as ImageGenMeta,
+            };
+        }).catch(() => undefined);
+
+        const prompt = await buildSelfiePromptForGeneration(charId, scenePrompt, cfg, api, options);
+        if (!prompt.trim() || !isCurrentSelfieAttempt(messageId, attemptId)) return;
+        await DB.updateMessageMetadata(messageId, (previous: any) => {
+            if (!isCurrentSelfieAttempt(messageId, attemptId)) return previous;
+            return {
+                ...(previous || {}),
+                imageGen: {
+                    ...preserveImageGenContext(previous?.imageGen),
+                    status: 'pending',
+                    prompt,
+                    imageIntent: 'selfie',
+                    selfieScene: scenePrompt,
+                    generationAttemptId: attemptId,
+                } as ImageGenMeta,
+            };
+        }).catch(() => undefined);
+        await runImageGeneration(messageId, prompt, charId, attemptId);
+    } finally {
+        if (isCurrentSelfieAttempt(messageId, attemptId)) activeSelfieAttempts.delete(messageId);
+    }
 }
 
 /**
@@ -574,6 +649,12 @@ export interface ImageGenMeta {
     status: ImageGenStatus;
     /** 当初那句提示词。重试和重画全靠它，别丢。 */
     prompt: string;
+    /** 明确标记这张图是否表现角色本人；旧消息缺省，不猜测。 */
+    imageIntent?: ImageIntent;
+    /** 未注入衣橱的原始自拍场景，供重试时重新选择造型。 */
+    selfieScene?: string;
+    /** 防止首次选择较慢时，旧的异步结果覆盖用户后发起的新重试。 */
+    generationAttemptId?: string;
     error?: string;
     /**
      * 这张图在「相册」App 里那条记录的 id。
@@ -602,20 +683,25 @@ export function readImageGenMeta(metadata: any): ImageGenMeta | null {
  * 真正去画，然后把结果回填到那条已经落库的图片消息上。
  * **不抛异常**——失败也是一种要写回库、要让用户看见的结果，不是调用方需要接的错。
  */
-export async function runImageGeneration(messageId: number, prompt: string, charId?: string): Promise<void> {
+export async function runImageGeneration(messageId: number, prompt: string, charId?: string, attemptId?: string): Promise<void> {
     const cfg = getImageGenConfig();
+    const isCurrent = () => !attemptId || isCurrentSelfieAttempt(messageId, attemptId);
+    if (!isCurrent()) return;
     try {
         const dataUrl = await generateImageDataUrl(prompt, cfg);
-        await applyGeneratedImage(messageId, dataUrl, prompt, charId);
+        if (!isCurrent()) return;
+        await applyGeneratedImage(messageId, dataUrl, prompt, charId, attemptId);
     } catch (e: any) {
+        if (!isCurrent()) return;
         const error = e?.message || String(e);
         console.error('[生图] 失败', e);
         await DB.updateMessageMetadata(messageId, (prev: any) => ({
             ...(prev || {}),
-            imageGen: { status: 'failed', prompt, error } as ImageGenMeta,
+            imageGen: { ...preserveImageGenContext(prev?.imageGen), status: 'failed', prompt, error } as ImageGenMeta,
         })).catch(() => { /* 库都写不进去就只能算了，至少别再抛一层 */ });
     }
-    announceImageGenUpdated();
+    if (isCurrent()) announceImageGenUpdated();
+    if (attemptId && isCurrentSelfieAttempt(messageId, attemptId)) activeSelfieAttempts.delete(messageId);
 }
 
 /**
@@ -632,26 +718,35 @@ export async function applyGeneratedImage(
     dataUrl: string,
     prompt: string,
     charId?: string,
+    attemptId?: string,
 ): Promise<void> {
+    const isCurrent = () => !attemptId || isCurrentSelfieAttempt(messageId, attemptId);
+    if (!isCurrent()) return;
     await DB.updateMessage(messageId, dataUrl);
+    if (!isCurrent()) return;
     const galleryImageId = await saveToGallery(charId, dataUrl, prompt);
-    await DB.updateMessageMetadata(messageId, (prev: any) => ({
-        ...(prev || {}),
-        imageGen: {
-            status: 'generated',
-            prompt,
-            ...(galleryImageId ? { galleryImageId } : {}),
-        } as ImageGenMeta,
-        // 顺手把「这张图画的是什么」写进识图缓存。
-        //
-        // 不然下一轮 materializeVisionDescriptions 会把这张图发给识图 API 去认——
-        // 又慢、又花钱、还可能因为图太大直接失败（表现为「识图 API 没有返回图片描述」，
-        // 整轮回复跟着挂掉）。而这张图本来就是我们按提示词画的，**我们比任何识图模型都更
-        // 清楚它画了什么**，没有任何理由再去问一遍。
-        [VISION_DESCRIPTION_METADATA_KEY]: `（这是一张刚生成的图，画面内容：${prompt}）`,
-        visionRecognizedAt: Date.now(),
-        visionModel: 'novelai-prompt',
-    }));
+    if (!isCurrent()) return;
+    await DB.updateMessageMetadata(messageId, (prev: any) => {
+        if (!isCurrent()) return prev;
+        return {
+            ...(prev || {}),
+            imageGen: {
+                ...preserveImageGenContext(prev?.imageGen),
+                status: 'generated',
+                prompt,
+                ...(galleryImageId ? { galleryImageId } : {}),
+            } as ImageGenMeta,
+            // 顺手把「这张图画的是什么」写进识图缓存。
+            //
+            // 不然下一轮 materializeVisionDescriptions 会把这张图发给识图 API 去认——
+            // 又慢、又花钱、还可能因为图太大直接失败（表现为「识图 API 没有返回图片描述」，
+            // 整轮回复跟着挂掉）。而这张图本来就是我们按提示词画的，**我们比任何识图模型都更
+            // 清楚它画了什么**，没有任何理由再去问一遍。
+            [VISION_DESCRIPTION_METADATA_KEY]: `（这是一张刚生成的图，画面内容：${prompt}）`,
+            visionRecognizedAt: Date.now(),
+            visionModel: 'novelai-prompt',
+        };
+    });
 }
 
 /**
@@ -664,10 +759,32 @@ export async function applyGeneratedImage(
  *
  * `forceReseed` 恒为 true —— 见 `GenerateOptions.forceReseed` 的注释。
  */
-export async function rerollImageOnce(prompt: string): Promise<string> {
-    const clean = (prompt || '').trim();
+export interface ImageRerollResult {
+    url: string;
+    /** 实际送给 NovelAI 的最终 prompt；自拍重画时可能不同于调用方传入的旧 prompt。 */
+    prompt: string;
+}
+
+export async function rerollImageOnce(prompt: string, options?: ImageRerollOptions): Promise<ImageRerollResult> {
+    let clean = (prompt || '').trim();
     if (!clean) throw new Error('没有提示词，画不了');
-    return generateImageDataUrl(clean, getImageGenConfig(), { forceReseed: true });
+    const cfg = getImageGenConfig();
+    if (options?.reselectWardrobe
+        && options.imageIntent === 'selfie'
+        && options.charId
+        && options.selfieScene?.trim()) {
+        clean = await buildSelfiePromptForGeneration(
+            options.charId,
+            options.selfieScene,
+            cfg,
+            options.api,
+            { timeZone: options.timeZone },
+        );
+    }
+    return {
+        url: await generateImageDataUrl(clean, cfg, { forceReseed: true }),
+        prompt: clean,
+    };
 }
 
 /** 图片消息被改动后，让聊天页重读一次库。给 ImageViewer 这类库外调用方用。 */
@@ -681,13 +798,42 @@ export function notifyImageGenUpdated(): void {
  * 提示词由调用方（气泡）从 metadata 里读出来传进来——渲染层本来就拿着整条消息，
  * 为此在 db.ts 里加一个「按 id 取单条」反而是多一处要维护的读路径。
  */
-export async function retryImageGeneration(messageId: number, prompt: string, charId?: string): Promise<void> {
+export async function retryImageGeneration(
+    messageId: number,
+    prompt: string,
+    charId?: string,
+    options?: ImageGenRetryOptions,
+): Promise<void> {
     const clean = (prompt || '').trim();
     if (!clean) return;
 
+    const isSelfie = options?.imageIntent === 'selfie' && !!charId && !!options.selfieScene?.trim();
+    if (isSelfie) {
+        await DB.updateMessageMetadata(messageId, (prev: any) => ({
+            ...(prev || {}),
+            imageGen: {
+                ...preserveImageGenContext(prev?.imageGen),
+                status: 'pending',
+                prompt: clean,
+                imageIntent: 'selfie',
+                selfieScene: options?.selfieScene?.trim(),
+            } as ImageGenMeta,
+        }));
+        announceImageGenUpdated();
+        await runSelfieImageGeneration(
+            messageId,
+            charId as string,
+            options?.selfieScene as string,
+            getImageGenConfig(),
+            options?.api,
+            { timeZone: options?.timeZone },
+        );
+        return;
+    }
+
     await DB.updateMessageMetadata(messageId, (prev: any) => ({
         ...(prev || {}),
-        imageGen: { status: 'pending', prompt: clean } as ImageGenMeta,
+        imageGen: { ...preserveImageGenContext(prev?.imageGen), status: 'pending', prompt: clean } as ImageGenMeta,
     }));
     announceImageGenUpdated();
     await runImageGeneration(messageId, clean, charId);

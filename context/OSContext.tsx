@@ -48,7 +48,7 @@ import {
 } from '../utils/chatContextRange';
 import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import { evaluateEmotionBackground } from '../hooks/useChatAI';
-import { CHAT_GEN_EVENTS, getChatViewSnapshot, setChatViewSnapshot } from '../utils/chatGenEvents';
+import { CHAT_GEN_EVENTS, setChatViewSnapshot } from '../utils/chatGenEvents';
 import { buildChatRequestPayload } from '../utils/chatRequestPayload';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { extractHtmlBlocks } from '../utils/htmlPrompt';
@@ -62,7 +62,6 @@ import {
 import { ActiveMsgClient } from '../utils/activeMsgClient';
 import { formatAmsgPreviewBody } from '../utils/amsgToastPreview';
 import { emitMessagePreview } from '../utils/messagePreview';
-import { INCOMING_CALL_MISSED_EVENT } from '../utils/incomingCall';
 import { resolveCharTimeZone } from '../utils/timezone';
 import { ActiveMsgStore, exportAmsg2GlobalConfig } from '../utils/activeMsgStore';
 import { charMayHaveCloudState, purgeCharCloudState } from '../utils/amsg2CharCleanup';
@@ -1791,12 +1790,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   activeAppRef.current = activeApp;
   activeCharIdScheduleRef.current = activeCharacterId;
 
-  // 当前聊天视图快照 → 模块级 slot（utils/chatGenEvents）。详情页由 Messaging 自己写入，
-  // 这里仅在整个 Chat App 被切走时清空；否则好友列表里残留的 activeCharacterId 会被
-  // 误当成“用户正看着这段会话”。
+  // 当前聊天视图快照 → 模块级 slot（utils/chatGenEvents）。根级 ChatBroadcast 挂在
+  // OSProvider 之外拿不到这两个 state，靠快照判断"用户正看着的会话不弹全局横幅"。
   useEffect(() => {
-      if (activeApp !== AppID.Chat) setChatViewSnapshot(false, null);
-  }, [activeApp]);
+      setChatViewSnapshot(activeApp === AppID.Chat, activeCharacterId ?? null);
+  }, [activeApp, activeCharacterId]);
   // 通话状态（含挂起到后台的通话）——主动消息流程读它来判断"是否正在通话"
   const suspendedCallRef = useRef(suspendedCall);
   suspendedCallRef.current = suspendedCall;
@@ -2039,35 +2037,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           }).catch(error => console.warn('[call-recovery] background memory hook failed:', error));
       };
 
-      // 未接来电不是普通 active-msg-progress：后者会被同一轮推送的每个气泡复用，
-      // 这里只负责刷新消息列表，不能顺手增加未读。persistMissedCall 在成功落库后
-      // 另发这个低频事件，消息 App 才能在用户没看到系统通知时留下明确线索。
-      const missedCallHandler = (event: Event) => {
-          const detail = ((event as CustomEvent).detail || {}) as {
-              charId?: string;
-              charName?: string;
-              ringAt?: number;
-          };
-          const charId = typeof detail.charId === 'string' ? detail.charId : '';
-          if (!charId) return;
-          const char = charactersRef.current.find(item => item.id === charId);
-          const charName = char?.name || detail.charName || '角色';
-          const chatView = getChatViewSnapshot();
-          const isChattingWithThisChar = chatView.chatOpen && chatView.charId === charId;
-          if (isChattingWithThisChar) return;
-
-          setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
-          if (document.visibilityState === 'visible') {
-              emitMessagePreview({
-                  charId,
-                  charName,
-                  avatarUrl: char?.avatar,
-                  body: '未接来电',
-                  timestamp: Number(detail.ringAt) > 0 ? Number(detail.ringAt) : Date.now(),
-              });
-          }
-      };
-
       // 情绪 buff 落地后同步进内存 characters —— 必须是 App 级、不限当前打开的角色:
       // instant 模式下 worker 推回 emotion_update 时用户常不在该角色聊天页 (在别的角色 /
       // 列表 / 后台 / 还没点进去). 之前只有 Chat.tsx 里那个 `charId === activeCharacterId`
@@ -2190,7 +2159,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       window.addEventListener('active-msg-received', handler);
       window.addEventListener('active-msg-process-failed', inboxFailHandler);
       window.addEventListener('active-msg-progress', progressHandler);
-      window.addEventListener(INCOMING_CALL_MISSED_EVENT, missedCallHandler);
       window.addEventListener('active-msg-open', openHandler);
       window.addEventListener('emotion-updated', buffSyncHandler);
       window.addEventListener(CHAT_GEN_EVENTS.replyArrived, chatReplyArrivedHandler);
@@ -2211,7 +2179,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           window.removeEventListener('active-msg-received', handler);
           window.removeEventListener('active-msg-process-failed', inboxFailHandler);
           window.removeEventListener('active-msg-progress', progressHandler);
-          window.removeEventListener(INCOMING_CALL_MISSED_EVENT, missedCallHandler);
           window.removeEventListener('active-msg-open', openHandler);
           window.removeEventListener('emotion-updated', buffSyncHandler);
           window.removeEventListener(CHAT_GEN_EVENTS.replyArrived, chatReplyArrivedHandler);
@@ -2613,7 +2580,13 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       const messageId = await DB.saveMessage({
                           charId, role: 'assistant', type: 'image', content: '',
                           timestamp: baseTimestamp + offset,
-                          metadata: { imageGen: { status: 'pending', prompt } },
+                          metadata: {
+                              imageGen: {
+                                  status: 'pending',
+                                  prompt,
+                                  ...(isSelfie ? { imageIntent: 'selfie', selfieScene: scenePrompt } : {}),
+                              },
+                          },
                       });
                       if (isSelfie) {
                           void runSelfieImageGeneration(messageId, charId, scenePrompt, cfgNow, api, {

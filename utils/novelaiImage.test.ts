@@ -9,6 +9,7 @@ import {
     getAppearanceTagLibrary,
     getCharacterAppearanceLooks,
     withCharacterAppearanceLooks,
+    normalizeImageIntent,
     DEFAULT_IMAGE_GEN_CONFIG,
     type ImageGenConfig,
 } from './novelaiImage';
@@ -33,6 +34,15 @@ describe('isImageGenReady', () => {
     });
     it('齐了才就绪', () => {
         expect(isImageGenReady(cfg())).toBe(true);
+    });
+});
+
+describe('normalizeImageIntent', () => {
+    it('只接受明确的自拍或普通配图意图', () => {
+        expect(normalizeImageIntent('selfie')).toBe('selfie');
+        expect(normalizeImageIntent('image')).toBe('image');
+        expect(normalizeImageIntent('character')).toBeUndefined();
+        expect(normalizeImageIntent(undefined)).toBeUndefined();
     });
 });
 
@@ -151,7 +161,17 @@ describe('readImageGenMeta', () => {
         expect(failed?.error).toBe('HTTP 401');
         expect(failed?.prompt).toBe('cat');   // 失败也要留住提示词，否则没法重画
 
-        expect(readImageGenMeta({ imageGen: { status: 'generated', prompt: 'x' } })?.status).toBe('generated');
+        const selfie = readImageGenMeta({
+            imageGen: {
+                status: 'generated',
+                prompt: 'dress, outside',
+                imageIntent: 'selfie',
+                selfieScene: 'outside',
+            },
+        });
+        expect(selfie?.status).toBe('generated');
+        expect(selfie?.imageIntent).toBe('selfie');
+        expect(selfie?.selfieScene).toBe('outside');
     });
 });
 

@@ -2410,7 +2410,7 @@ const Settings: React.FC = () => {
                 </div>
             }
         >
-            <ImageGenSettings addToast={addToast} characters={characters} />
+            <ImageGenSettings addToast={addToast} characters={characters} apiConfig={apiConfig} />
         </SettingsSection>
 
         {/* 独立识图 API：给不支持 image_url 的主模型补视觉能力；可手动从通用模型预设载入。 */}
@@ -2456,9 +2456,9 @@ const Settings: React.FC = () => {
                 </div>
 
                 <p className="text-[10px] text-slate-400 leading-relaxed px-1">
-                    开启后，聊天图片和实际发送过的表情包都只会交给视觉模型识别一次，并把结果写成
+                    开启后，每张聊天图片只会先交给这里的视觉模型识别一次，并把结果写成
                     <span className="font-semibold text-violet-600"> [图片：模型看到的内容] </span>
-                    再发给主 API；表情包的画面描述会记在表情库里，换角色、重 roll 或重启后仍直接复用，不会重复识图扣费。
+                    再发给主 API；之后聊天和重 roll 都直接复用，不会重复识图扣费。关闭时完全沿用原来的图片发送逻辑。
                 </p>
 
                 <div className="rounded-2xl border border-violet-100 bg-white/70 p-3">

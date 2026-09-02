@@ -15,6 +15,7 @@ import {
     isImageGenReady,
     pingRelay,
     generateImageDataUrl,
+    buildSelfiePromptForGeneration,
     calcSkipCfgAboveSigma,
     parseSize,
     SIZE_PRESETS,
@@ -23,6 +24,7 @@ import {
     NOISE_SCHEDULES,
     PRESET_FIELDS,
     getCharacterAppearanceLooks,
+    type AppearanceSelectionApi,
     type ImageGenConfig,
     type ImageGenPreset,
 } from '../../utils/novelaiImage';
@@ -36,9 +38,10 @@ const hint = 'text-[10px] text-slate-400 mt-1 pl-1 leading-relaxed';
 interface Props {
     addToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
     characters: CharacterProfile[];
+    apiConfig: AppearanceSelectionApi;
 }
 
-export const ImageGenSettings: React.FC<Props> = ({ addToast, characters }) => {
+export const ImageGenSettings: React.FC<Props> = ({ addToast, characters, apiConfig }) => {
     const [cfg, setCfg] = useState<ImageGenConfig>(() => getImageGenConfig());
     const [busy, setBusy] = useState<'' | 'ping' | 'draw'>('');
     const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -82,12 +85,13 @@ export const ImageGenSettings: React.FC<Props> = ({ addToast, characters }) => {
         }
         setBusy('draw'); setResult(null); setPreview('');
         try {
-            const look = (getCharacterAppearanceLooks(merged, charId)[0]?.prompt || '').trim();
-            // 有外观提示词就拿它试——顺便验证「画他自己像不像」，比画个陌生人有用。
-            const prompt = look || '1girl, silver hair, red eyes, upper body, looking at viewer';
+            const looks = getCharacterAppearanceLooks(merged, charId).filter(look => look.prompt.trim());
+            const prompt = looks.length
+                ? await buildSelfiePromptForGeneration(charId, 'upper body, looking at viewer', merged, apiConfig)
+                : '1girl, silver hair, red eyes, upper body, looking at viewer';
             const url = await generateImageDataUrl(prompt, { ...merged, enabled: true });
             setPreview(url);
-            setResult({ ok: true, msg: look ? '成功！这就是他现在会被画成的样子。' : '成功！这条路整条都是通的。' });
+            setResult({ ok: true, msg: looks.length > 1 ? '成功！这次已通过智能衣橱选择造型。' : looks.length ? '成功！这就是他现在会被画成的样子。' : '成功！这条路整条都是通的。' });
         } catch (e: any) {
             // NovelAI 的原话原样显示——改写成「生成失败」等于把唯一的线索扔了。
             setResult({ ok: false, msg: e?.message || String(e) });
