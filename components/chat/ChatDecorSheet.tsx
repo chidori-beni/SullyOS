@@ -129,7 +129,7 @@ const ChatDecorSheet: React.FC<Props> = ({
     return (
         <div className="sully-ui-overlay fixed inset-0 z-[110] flex items-end justify-center bg-black/5" onClick={onClose}>
             <div
-                className={`sully-ui-sheet w-full ${globalScope ? 'max-h-[78vh]' : 'max-h-[68vh]'} overflow-y-auto rounded-t-3xl border-t border-white/60 bg-white/95 p-5 shadow-[0_-12px_40px_rgba(15,23,42,0.18)] backdrop-blur-xl [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}
+                className={`sully-ui-sheet sully-ui-plain w-full ${globalScope ? 'max-h-[78vh]' : 'max-h-[68vh]'} overflow-y-auto rounded-t-3xl border-t border-white/60 bg-white/95 p-5 shadow-[0_-12px_40px_rgba(15,23,42,0.18)] backdrop-blur-xl [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}
                 style={{ paddingBottom: 'calc(1.25rem + var(--safe-bottom))' }}
                 onClick={(e) => e.stopPropagation()}
             >

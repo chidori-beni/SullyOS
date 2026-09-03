@@ -44,6 +44,8 @@ export const UI_HOOK_CATALOG: ReadonlyArray<UiHookEntry> = [
   { hook: 'sully-ui-label', label: '分组小标题（大写字母那种）', wave: 1 },
   { hook: 'sully-ui-btn', label: '主按钮', wave: 1 },
   { hook: 'sully-ui-btn-ghost', label: '次按钮 / 取消', wave: 1 },
+  { hook: 'sully-ui-btn-danger', label: '危险按钮（停止 / 清空 / 删除）', wave: 1 },
+  { hook: 'sully-ui-plain', label: '壳里没有独立内容区时加在壳上：整壳按内容区上妆', wave: 1 },
   { hook: 'sully-ui-tab', label: '页签 / 分段控件的每一项', wave: 1 },
   { hook: 'sully-ui-tab-on', label: '页签当前选中项（和上一条同时存在）', wave: 1 },
   // ── 常驻浮层 ──
@@ -101,6 +103,7 @@ export const COCOA_DOTS_UI_CSS = `/* 可可点点 · 弹窗与设置框 —— �
   background:rgba(48,44,41,.34)!important;
   backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
 }
+/* 外框：炭黑 + 白波点。内容区（head / body / foot）自己垫奶油。 */
 .sully-ui-sheet,.sully-ui-modal{
   background-color:#302C29!important;
   background-image:radial-gradient(rgba(255,255,255,.30) 1px,transparent 1.1px)!important;
@@ -112,25 +115,39 @@ export const COCOA_DOTS_UI_CSS = `/* 可可点点 · 弹窗与设置框 —— �
 }
 .sully-ui-sheet{border-radius:22px 22px 0 0!important;}
 .sully-ui-modal{border-radius:22px!important;}
-/* 兜底：还没挂 .sully-ui-body 的弹窗（第二/三波没做到的那些），
-   直接把壳本身垫成奶油，否则内容会直接压在炭黑波点上看不清。
-   挂了 body 的走上面那套「黑框 + 奶油内胆」。 */
-.sully-ui-sheet:not(:has(.sully-ui-body)),
-.sully-ui-modal:not(:has(.sully-ui-body)){
+
+/* 壳里没有独立内容区的（装扮抽屉、心象设置这种）：整壳直接按内容区上妆，
+   否则文字会压在炭黑波点上看不清。padding 不动，用组件自己的。 */
+.sully-ui-sheet.sully-ui-plain,.sully-ui-modal.sully-ui-plain{
   background-color:#FCFBF9!important;
   background-image:radial-gradient(rgba(167,156,147,.26) 1px,transparent 1.1px)!important;
   background-size:8px 8px!important;
   border:5px solid #302C29!important;
-  padding:13px!important;
+  padding:9px!important;
 }
-/* 奶油内胆：整块内容坐在上面 */
-.sully-ui-head,.sully-ui-body{
+/* 兜底：还没挂钩子的弹窗也不会变成深底浅字（第二/三波的安全网） */
+.sully-ui-sheet:not(:has(.sully-ui-body)):not(.sully-ui-plain),
+.sully-ui-modal:not(:has(.sully-ui-body)):not(.sully-ui-plain){
   background-color:#FCFBF9!important;
   background-image:radial-gradient(rgba(167,156,147,.26) 1px,transparent 1.1px)!important;
   background-size:8px 8px!important;
+  border:5px solid #302C29!important;
 }
-.sully-ui-head{border-radius:15px 15px 0 0!important;padding:13px 15px 10px!important;}
-.sully-ui-body{padding:13px 15px!important;}
+
+/* 奶油内胆。三段共用同一张底纹，接缝处看不出分界 —— 
+   之前 foot 用纯色、body 带波点，交界就成了一条线。 */
+.sully-ui-head,.sully-ui-body,.sully-ui-foot{
+  background-color:#FCFBF9!important;
+  background-image:radial-gradient(rgba(167,156,147,.26) 1px,transparent 1.1px)!important;
+  background-size:8px 8px!important;
+  border-top:0!important;border-bottom:0!important;
+  box-shadow:none!important;
+}
+.sully-ui-head{border-radius:15px 15px 0 0!important;}
+.sully-ui-foot{border-radius:0 0 15px 15px!important;padding-top:16px!important;}
+/* body 的 padding 不覆盖：组件自己的宽度是按它算的，
+   动了会把里面的横排卡片挤成竖排。 */
+
 .sully-ui-title{color:#4A3B31!important;font-weight:700!important;letter-spacing:.04em!important;}
 .sully-ui-hint{color:#8E837A!important;}
 .sully-ui-label{color:#A79C93!important;letter-spacing:.16em!important;}
@@ -141,28 +158,35 @@ export const COCOA_DOTS_UI_CSS = `/* 可可点点 · 弹窗与设置框 —— �
 .sully-ui-card{
   background:#FFFFFF!important;
   border:1.5px dotted #A79C93!important;
-  border-radius:16px!important;
+  border-radius:16px!important;box-shadow:none!important;
+}
+
+/* ── 按钮 ──
+   底部按钮区里的**每一个** button 都收编，包括各弹窗自带的红色 / 紫色 / 主题色，
+   不用逐个去源码里挂钩子。最后一个默认当主按钮。 */
+.sully-ui-foot button{
+  background-color:#F7F5F2!important;background-image:none!important;
+  color:#6E6259!important;
+  border:1.5px dotted #A79C93!important;border-radius:99px!important;
   box-shadow:none!important;
 }
-/* 按钮区：和内容区无缝接上。
-   padding-top 给足，按钮才在「分隔线和外框之间」居中，不会紧贴上面那条线；
-   顺手清掉组件自带的 border-top（那条细线就是它）。 */
-.sully-ui-foot{
-  background-color:#FCFBF9!important;
-  border-top:0!important;
-  border-radius:0 0 15px 15px!important;
-  padding:14px 15px 15px!important;
-}
-/* 内容区和按钮区之间的接缝：body 自己的下边框也一并去掉 */
-.sully-ui-body{border-bottom:0!important;}
+.sully-ui-foot button:last-child,
 .sully-ui-btn{
-  background:#A9866A!important;color:#fff!important;
-  border:0!important;border-radius:99px!important;box-shadow:none!important;
+  background-color:#A9866A!important;background-image:none!important;
+  color:#FFFFFF!important;
+  border:1.5px solid #A9866A!important;border-radius:99px!important;box-shadow:none!important;
 }
 .sully-ui-btn-ghost{
-  background:#F7F5F2!important;color:#6E6259!important;
+  background-color:#F7F5F2!important;background-image:none!important;color:#6E6259!important;
   border:1.5px dotted #A79C93!important;border-radius:99px!important;box-shadow:none!important;
 }
+/* 危险按钮：保留警示，但换成本主题的藕粉描边，不要那块正红 */
+.sully-ui-btn-danger,.sully-ui-foot .sully-ui-btn-danger{
+  background-color:#FBF1EF!important;background-image:none!important;
+  color:#A85D4C!important;
+  border:1.5px solid #DCB6AC!important;border-radius:99px!important;box-shadow:none!important;
+}
+
 .sully-ui-tab{
   background:transparent!important;color:#8E837A!important;
   border-radius:99px!important;box-shadow:none!important;
@@ -180,6 +204,7 @@ export const COCOA_DOTS_UI_CSS = `/* 可可点点 · 弹窗与设置框 —— �
   box-shadow:0 4px 14px rgba(48,44,41,.18)!important;
   backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
 }`;
+
 
 export interface GlobalCssBuiltinPreset {
   name: string;

@@ -16,6 +16,7 @@ const HOOK_FILES = [
   'components/PhoneShell.tsx',
   'components/chat/ChatDecorSheet.tsx',
   'components/appearance/ChatAppearanceEditor.tsx',
+  'components/chat/ProactiveSettingsModal.tsx',
   'components/chat/ThinkingChainSettingsModal.tsx',
   'components/chat/xinsheng/XinshengCardModal.tsx',
   'components/chat/xinsheng/XinshengSettingsModal.tsx',

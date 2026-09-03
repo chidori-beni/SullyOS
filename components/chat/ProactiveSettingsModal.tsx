@@ -61,7 +61,7 @@ const ProactiveSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, isNatu
   const profile = char.naturalProactiveConfig?.profile;
   return <Modal isOpen={isOpen} title="自然主动" onClose={onClose} footer={<>
     <button disabled={busy} onClick={onClose} className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl disabled:opacity-50">取消</button>
-    {isNaturalActive && <button disabled={busy} onClick={() => void stop()} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl disabled:opacity-50">停止</button>}
+    {isNaturalActive && <button disabled={busy} onClick={() => void stop()} className="sully-ui-btn-danger flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl disabled:opacity-50">停止</button>}
     <button disabled={busy} onClick={() => void save(false)} className="flex-1 py-3 bg-violet-500 text-white font-bold rounded-2xl shadow-lg disabled:opacity-50">{busy ? '准备中…' : enabled ? '开启' : '保存'}</button>
   </>}>
     <div className="space-y-5">
