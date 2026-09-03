@@ -21,12 +21,24 @@ import {
  * 保存 / 重命名 / 删除的判定在 utils/chatCardCss.ts，和日程卡皮肤预设同一套规矩。
  */
 
+/**
+ * ⚠️ 只能有**一次** onPatch —— OSContext 的 updateTheme 是
+ * `{ ...theme, ...updates }` 从闭包里那份 theme 合的，不是函数式更新。
+ * 同一个事件里连调两次，第二次会拿着旧 theme 把第一次的改动抹掉。
+ * （实机症状：粘完 CSS 一保存就没了、点内置预设没反应、导入后编辑框空白。）
+ * 所以下面每个动作都把 css / presets / presetId 三样一起交出去，只提交一次。
+ */
+export interface ChatCardCssPatch {
+    css: string;
+    presets: ChatCardCssPreset[];
+    presetId?: string;
+}
+
 type Props = {
     value: string;
-    onChange: (css: string) => void;
     presets: ChatCardCssPreset[];
     activePresetId?: string;
-    onChangePresets: (presets: ChatCardCssPreset[], activePresetId?: string) => void;
+    onPatch: (patch: ChatCardCssPatch) => void;
     /** 失败提示走宿主的 toast（外观 App / 装扮抽屉各有一份）。 */
     onNotify?: (message: string, kind: 'success' | 'error') => void;
 };
@@ -42,7 +54,7 @@ const copyText = async (text: string): Promise<boolean> => {
 };
 
 const ChatCardCssEditor: React.FC<Props> = ({
-    value, onChange, presets, activePresetId, onChangePresets, onNotify,
+    value, presets, activePresetId, onPatch, onNotify,
 }) => {
     const [copied, setCopied] = useState(false);
     const [catalogOpen, setCatalogOpen] = useState(false);
@@ -56,8 +68,7 @@ const ChatCardCssEditor: React.FC<Props> = ({
     };
 
     const applyPreset = (preset: { name: string; css: string; id?: string }) => {
-        onChange(preset.css);
-        onChangePresets(presets, preset.id);
+        onPatch({ css: preset.css, presets, presetId: preset.id });
         notify(`已套用「${preset.name}」`, 'success');
     };
 
@@ -66,14 +77,14 @@ const ChatCardCssEditor: React.FC<Props> = ({
         if (name === null) return;
         const result = upsertChatCardCssPreset(presets, name, value);
         if ('error' in result) { notify(result.error, 'error'); return; }
-        onChangePresets(result.presets, result.preset.id);
+        onPatch({ css: value, presets: result.presets, presetId: result.preset.id });
         notify(`已保存「${result.preset.name}」`, 'success');
     };
 
     const commitRename = (id: string) => {
         const result = renameChatCardCssPreset(presets, id, renameDraft);
         if ('error' in result) { notify(result.error, 'error'); return; }
-        onChangePresets(result.presets, activePresetId);
+        onPatch({ css: value, presets: result.presets, presetId: activePresetId });
         setRenamingId(null);
         setRenameDraft('');
         notify('预设已重命名', 'success');
@@ -81,10 +92,11 @@ const ChatCardCssEditor: React.FC<Props> = ({
 
     const handleDelete = (preset: ChatCardCssPreset) => {
         if (!window.confirm(`删除「${preset.name}」这套卡片样式？`)) return;
-        onChangePresets(
-            removeChatCardCssPreset(presets, preset.id),
-            activePresetId === preset.id ? undefined : activePresetId,
-        );
+        onPatch({
+            css: value,
+            presets: removeChatCardCssPreset(presets, preset.id),
+            presetId: activePresetId === preset.id ? undefined : activePresetId,
+        });
         notify('预设已删除', 'success');
     };
 
@@ -104,8 +116,7 @@ const ChatCardCssEditor: React.FC<Props> = ({
             // 去掉某些编辑器保存 CSS 时带上的 BOM，否则第一条规则会被当成非法字符丢掉
             const css = (await file.text()).replace(/^﻿/, '');
             if (!css.trim()) { notify('文件内容是空的。', 'error'); return; }
-            onChange(css);
-            onChangePresets(presets, undefined);
+            onPatch({ css, presets, presetId: undefined });
         } catch {
             notify('导入失败，请确认文件可以正常读取。', 'error');
         } finally {
@@ -257,7 +268,7 @@ const ChatCardCssEditor: React.FC<Props> = ({
                         <button onClick={handleExport} disabled={!value.trim()} className={`rounded-lg px-2 py-1 text-[10px] font-semibold ${value.trim() ? 'text-indigo-500 hover:bg-indigo-50' : 'text-slate-300'}`}>导出</button>
                         {value && (
                             <button
-                                onClick={() => { onChange(''); onChangePresets(presets, undefined); }}
+                                onClick={() => onPatch({ css: '', presets, presetId: undefined })}
                                 className="rounded-lg px-2 py-1 text-[10px] font-semibold text-rose-400 hover:bg-rose-50 hover:text-rose-500"
                             >
                                 清空
@@ -269,7 +280,7 @@ const ChatCardCssEditor: React.FC<Props> = ({
                     value={value}
                     // 手改之后就不再属于任何预设：留着高亮会让人以为「还在用浅色卡片那套」，
                     // 下次点回同一套时又发现内容对不上。
-                    onChange={(e) => { onChange(e.target.value); onChangePresets(presets, undefined); }}
+                    onChange={(e) => onPatch({ css: e.target.value, presets, presetId: undefined })}
                     placeholder={'/* 点上面任一套，或在这里直接写 / 粘贴 CSS */\n.sully-chat-card[data-card="vr_card"] div[class*="overflow-hidden"][class*="rounded-"]{\n  background: #f6f3ff !important;\n}'}
                     spellCheck={false}
                     rows={8}

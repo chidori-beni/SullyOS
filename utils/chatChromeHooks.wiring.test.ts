@@ -85,6 +85,9 @@ describe('聊天页里的钩子（不经 MessageItem 的那几个）', () => {
         'sully-typing-dot ',
         'sully-pending-dots',
         'sully-pending-dot ',
+        'sully-chat-date-divider',
+        'sully-chat-date-divider-line',
+        'sully-chat-date-divider-text',
     ])('%s 在 Chat.tsx 里挂上了', (hook) => {
         expect(chatSrc).toContain(hook);
     });

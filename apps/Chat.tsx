@@ -74,6 +74,7 @@ import { ActiveMsgClient } from '../utils/activeMsgClient';
 import { deriveNaturalProfile } from '../utils/naturalProactive';
 import { AMSG_INSTANT_CHAT_PENDING_EVENT, AMSG_INSTANT_CHAT_PENDING_LS_KEY, getInstantChatPending } from '../utils/amsgInstantChat';
 import { formatAmsgToolTrace } from '../utils/amsgToolTrace';
+import { formatDateDividerLabel, shouldShowDateDivider } from '../utils/chatDateDivider';
 import {
     VOICE_FAVORITES_CHANGED_EVENT,
     getVoiceFavorite,
@@ -4233,9 +4234,21 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                     const pushMessageId = (m.metadata as any)?.activeMsg2?.messageId;
                     const showToolTrace = !!toolTraceText
                         && !(pushMessageId && (nextMessage?.metadata as any)?.activeMsg2?.messageId === pushMessageId);
+                    // 日期分隔线：跨天的第一条消息上方插一条。算的是 displayMessages 的
+                    // 前一条（不是原始 messages），所以「隐藏系统日志」把某天滤空时，
+                    // 不会剩下一条孤零零的分隔线。时间走设备本地时区，见 utils/chatDateDivider.ts。
+                    const showDateDivider = shouldShowDateDivider(m.timestamp, prevMessage?.timestamp ?? null);
+                    const dateDividerLabel = showDateDivider ? formatDateDividerLabel(m.timestamp) : '';
                     return (
+                        <React.Fragment key={m.id || i}>
+                        {showDateDivider && dateDividerLabel && (
+                            <div className="sully-chat-date-divider flex items-center gap-2.5 px-8 my-4 select-none" role="separator" aria-label={dateDividerLabel}>
+                                <span className="sully-chat-date-divider-line flex-1 h-px bg-slate-300/50" />
+                                <span className="sully-chat-date-divider-text text-[10px] font-bold tracking-[0.12em] text-slate-400 whitespace-nowrap">{dateDividerLabel}</span>
+                                <span className="sully-chat-date-divider-line flex-1 h-px bg-slate-300/50" />
+                            </div>
+                        )}
                         <div
-                            key={m.id || i}
                             id={`chat-msg-${m.id}`}
                             className={[
                                 flashMsgId === m.id ? 'ring-2 ring-yellow-300 bg-yellow-50/40 rounded-2xl mx-2' : '',
@@ -4306,6 +4319,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                             </div>
                         )}
                         </div>
+                        </React.Fragment>
                     );
                 })}
                 

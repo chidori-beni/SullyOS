@@ -855,12 +855,14 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                 </div>
                 <ChatCardCssEditor
                     value={theme.chatCardCustomCss || ''}
-                    onChange={(css) => updateTheme({ chatCardCustomCss: css })}
                     presets={theme.chatCardCssPresets || []}
                     activePresetId={theme.chatCardCssPresetId}
-                    onChangePresets={(presets, activePresetId) => updateTheme({
+                    /* 一次提交三个字段。分两次 updateTheme 会被后一次用旧 theme 抹掉，
+                       见 ChatCardCssEditor 顶部注释。 */
+                    onPatch={({ css, presets, presetId }) => updateTheme({
+                        chatCardCustomCss: css,
                         chatCardCssPresets: presets,
-                        chatCardCssPresetId: activePresetId,
+                        chatCardCssPresetId: presetId,
                     })}
                     onNotify={onNotify}
                 />

@@ -73,7 +73,6 @@ export type ScheduleCardPresetId =
   | 'original'
   | 'cream'
   | 'plush'
-  | 'mono'
   | 'sakura'
   | 'mint'
   | 'twilight'

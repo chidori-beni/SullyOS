@@ -34,6 +34,8 @@ const AI_PROMPT = `你是一个 CSS 设计师。我在用一个叫 SullyOS 的�
 - .sully-chat-turn-avatar      上述头像槽里的头像容器；图片是 .sully-chat-message-avatar-img
 - .sully-bubble-ai / .sully-bubble-user 角色 / 用户气泡
 - .sully-message-time          气泡下方的时间戳
+- .sully-chat-date-divider     跨天的日期分隔线整行（今天 / 昨天 / 9月1日 · 星期二）
+                               里面是 -line 两侧的横线、-text 中间的日期文字
 - .sully-message-reactions     气泡下方的表情反应条；每颗是 .sully-message-reactions span
 - .sully-reply-quote           气泡顶部的引用/回复块；里面是 -name（谁）和 -text（引的话）
 - .sully-emoji-msg             表情包消息本体（尺寸另受「外观 → 表情包大小」控制，改尺寸就写这个类）
