@@ -205,7 +205,7 @@ export const PLUSH_BEAR_SCHEDULE_CSS = `/* 轻松熊奶油 · 日程卡（无毛
 /**
  * 「黑白波点」桌面挂件风：白底灰点 + 炭灰粗描边（描边上再压一层白点）+ 胶囊标签。
  * 粗边框和边框上的白点用 background-clip 的 padding-box / border-box 两层实现，
- * 不额外加节点，也不用 blur / 动画。封面和头像的 grayscale 是一次性静态滤镜。
+ * 不额外加节点，也不用 blur / 动画。单色只作用在边框和 UI 上，角色头像 / 看板图保持彩色。
  */
 export const MONO_DOT_SCHEDULE_CSS = `/* 黑白波点 · 日程卡（白底灰点 + 炭灰粗边） */
 .sully-schedule-root{
@@ -232,7 +232,7 @@ export const MONO_DOT_SCHEDULE_CSS = `/* 黑白波点 · 日程卡（白底灰�
 .sully-schedule-root div[class*="-top-12"],
 .sully-schedule-root div[class*="-top-10"],
 .sully-schedule-root div[class*="w-[3px]"]{display:none!important;}
-.sully-schedule-widget > img[class*="inset-0"]{opacity:.12!important;filter:grayscale(1)!important;}
+.sully-schedule-widget > img[class*="inset-0"]{opacity:.12!important;}
 /* 头部：两枚胶囊标签 + 虚线 */
 .sully-schedule-header{opacity:1!important;}
 .sully-schedule-header span{
@@ -259,7 +259,6 @@ export const MONO_DOT_SCHEDULE_CSS = `/* 黑白波点 · 日程卡（白底灰�
   background:#f1efed!important;border:3px solid #d9d5d1!important;border-radius:50%!important;
   box-shadow:none!important;
 }
-.sully-schedule-widget div[class*="rounded-2xl"] img{filter:grayscale(1)!important;}
 /* 右下展开按钮 */
 .sully-schedule-widget div[class*="w-8"],.sully-schedule-widget div[class*="w-6"]{
   background:#fff!important;border:2px solid #3c3a38!important;color:#3c3a38!important;opacity:1!important;
@@ -269,7 +268,7 @@ export const MONO_DOT_SCHEDULE_CSS = `/* 黑白波点 · 日程卡（白底灰�
 .sully-schedule-timeline span{color:#8a8480!important;font-weight:700!important;}
 /* 完整日程卡 */
 .sully-schedule-card{box-shadow:0 8px 26px rgba(40,38,36,.16)!important;}
-.sully-schedule-cover img{opacity:.8!important;filter:grayscale(1)!important;}
+.sully-schedule-cover img{opacity:.85!important;}
 .sully-schedule-item{
   background:#f5f4f2!important;border:1px solid #e4e1de!important;border-radius:14px!important;
 }

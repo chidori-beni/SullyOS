@@ -2401,7 +2401,9 @@ const Launcher: React.FC = () => {
                       // justify-center 会让整列内容随高度变化上下漂：移掉音乐卡片 / 方图后
                       // 下面的网格变矮，日程卡就被重新居中压到了页面中段。改成从顶部排，
                       // 日程卡的位置就不再受下面有几格影响了。
-                      <div className="flex-1 min-h-0 w-full flex flex-col gap-5 justify-start overflow-y-auto overscroll-y-contain no-scrollbar">
+                      // pt-10 是对齐普通 App 页：那边内容外面还包了一层 pt-10（见下面的 Regular App page），
+                      // 风车页原本直接贴着外层 pt-12，日程卡就比别的页的首行高出 40px。
+                      <div className="pt-10 flex-1 min-h-0 w-full flex flex-col gap-5 justify-start overflow-y-auto overscroll-y-contain no-scrollbar">
                           {scheduleChar && (
                               <ScheduleHomeWidget
                                   schedule={scheduleData}

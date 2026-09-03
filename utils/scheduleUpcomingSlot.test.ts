@@ -60,3 +60,18 @@ describe('日程卡接线', () => {
         expect(widget).not.toContain('slots[currentIdx + 1]');
     });
 });
+
+/**
+ * 风车页（放日程卡那一页）的顶部留白必须和普通 App 页一致。
+ * 普通页在内容外面又包了一层 pt-10，风车页原本没有，日程卡就比别的页首行高 40px。
+ */
+describe('风车页顶部留白', () => {
+    const launcher = fs.readFileSync(
+        path.resolve(__dirname, '..', 'apps/Launcher.tsx'),
+        'utf8',
+    );
+
+    it('日程卡所在那一列带 pt-10', () => {
+        expect(launcher).toContain('pt-10 flex-1 min-h-0 w-full flex flex-col gap-5');
+    });
+});

@@ -41,6 +41,10 @@ describe.each([
         expect(css).not.toMatch(/blur\(/);
         expect(css).toContain('backdrop-filter:none');
     });
+
+    it('不把角色头像 / 看板图变灰', () => {
+        expect(css).not.toMatch(/grayscale/);
+    });
 });
 
 describe('日程皮肤预设', () => {
