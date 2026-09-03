@@ -240,6 +240,26 @@ export function upsertScheduleSkinPreset(
     };
 }
 
+/** 重命名一条预设。空名字或撞上别的预设名都会被拦下，交给调用方 toast。 */
+export function renameScheduleSkinPreset(
+    presets: ScheduleCardSkinPreset[] | undefined,
+    id: string,
+    name: string,
+): { presets: ScheduleCardSkinPreset[] } | { error: string } {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return { error: '预设名字不能是空的。' };
+    const list = presets || [];
+    const target = list.find(item => item.id === id);
+    if (!target) return { error: '这套预设已经不在了。' };
+    if (list.some(item => item.id !== id && item.name === trimmed)) {
+        return { error: `已经有一套叫「${trimmed}」了，换个名字。` };
+    }
+    return {
+        presets: list.map(item =>
+            item.id === id ? { ...item, name: trimmed, updatedAt: Date.now() } : item),
+    };
+}
+
 export function removeScheduleSkinPreset(
     presets: ScheduleCardSkinPreset[] | undefined,
     id: string,

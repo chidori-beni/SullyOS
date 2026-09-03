@@ -1,7 +1,10 @@
 import type { CharacterProfile, ScheduleSlot } from '../types';
 import { getLocalDateKey } from './localDate';
 import { nowInTimeZone, resolveCharTimeZone } from './timezone';
-import { getCurrentScheduleSlotIndexForMinutes } from './scheduleClock';
+import {
+    getCurrentScheduleSlotIndexForMinutes,
+    getUpcomingScheduleSlotIndexForMinutes,
+} from './scheduleClock';
 
 type ScheduleCharacter = Pick<CharacterProfile, 'customTimezoneEnabled' | 'customTimezone'>;
 
@@ -16,6 +19,19 @@ export const getScheduleDateKey = (
     char?: ScheduleCharacter | null,
     base: Date = new Date(),
 ): string => getLocalDateKey(getScheduleWallClock(char, base));
+
+/** 按角色所在地的当前时间，找到还没开始的第一条日程；空档期也能给出「接下来」。 */
+export const getUpcomingScheduleSlotIndex = (
+    slots: ScheduleSlot[],
+    char?: ScheduleCharacter | null,
+    base: Date = new Date(),
+): number => {
+    const now = getScheduleWallClock(char, base);
+    return getUpcomingScheduleSlotIndexForMinutes(
+        slots,
+        now.getHours() * 60 + now.getMinutes(),
+    );
+};
 
 /** 按角色所在地的当前时间，找到已经开始的最后一条日程。 */
 export const getCurrentScheduleSlotIndex = (

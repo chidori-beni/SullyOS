@@ -8,6 +8,7 @@ import {
     SCHEDULE_SKIN_PRESET_LIMIT,
     applyScheduleSkinPreset,
     removeScheduleSkinPreset,
+    renameScheduleSkinPreset,
     upsertScheduleSkinPreset,
 } from './scheduleAppearance';
 
@@ -108,5 +109,32 @@ describe('日程皮肤预设', () => {
 
         expect(left).toHaveLength(1);
         expect(left[0].name).toBe('午夜');
+    });
+});
+
+describe('重命名预设', () => {
+    it('改名保留 id、CSS 和配色', () => {
+        const { presets, preset } = okOrThrow(upsertScheduleSkinPreset([], '奶油熊', draft));
+
+        const result = renameScheduleSkinPreset(presets, preset.id, '  秋天的奶油熊 ');
+        if ('error' in result) throw new Error(result.error);
+
+        expect(result.presets[0]).toMatchObject({
+            id: preset.id,
+            name: '秋天的奶油熊',
+            css: draft.customCss,
+            accentColor: '#a9866a',
+        });
+    });
+
+    it('空名字、重名和不存在的 id 都会被拦下', () => {
+        const first = okOrThrow(upsertScheduleSkinPreset([], '奶油熊', draft));
+        const second = okOrThrow(upsertScheduleSkinPreset(first.presets, '午夜', draft));
+
+        expect(renameScheduleSkinPreset(second.presets, first.preset.id, '   ')).toHaveProperty('error');
+        expect(renameScheduleSkinPreset(second.presets, first.preset.id, '午夜')).toHaveProperty('error');
+        expect(renameScheduleSkinPreset(second.presets, 'nope', '随便')).toHaveProperty('error');
+        // 改成自己原来的名字不算重名
+        expect(renameScheduleSkinPreset(second.presets, first.preset.id, '奶油熊')).not.toHaveProperty('error');
     });
 });

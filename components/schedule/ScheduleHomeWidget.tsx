@@ -1,7 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { CharacterProfile, DailySchedule, ScheduleSlot } from '../../types';
 import ScheduleCard from './ScheduleCard';
-import { getCurrentScheduleSlotIndex, getScheduleWallClock } from '../../utils/scheduleTime';
+import {
+    getCurrentScheduleSlotIndex,
+    getScheduleWallClock,
+    getUpcomingScheduleSlotIndex,
+} from '../../utils/scheduleTime';
 import { useOS } from '../../context/OSContext';
 import { resolveScheduleCardPalette } from '../../utils/scheduleAppearance';
 import ScheduleAppearanceButton, { ScheduleCustomCssStyle } from './ScheduleAppearanceButton';
@@ -22,9 +26,10 @@ export const ScheduleSquareWidget: React.FC<ScheduleSquareWidgetProps> = ({
     const { theme } = useOS();
     const currentIdx = schedule ? getCurrentScheduleSlotIndex(schedule.slots, character) : -1;
     const currentSlot = currentIdx >= 0 ? schedule!.slots[currentIdx] : null;
-    const nextSlot = schedule && currentIdx < schedule.slots.length - 1
-        ? schedule.slots[currentIdx + 1]
-        : null;
+    // 空档期（上一条写了 endTime、下一条还没到）没有当前时段，这时按下标 +1 会指回
+    // 今天最早那条早就过去的日程，卡片上就成了「休息中 → 04:00 晨跑」。改成按时间找。
+    const nextIdx = schedule ? getUpcomingScheduleSlotIndex(schedule.slots, character) : -1;
+    const nextSlot = nextIdx >= 0 ? schedule!.slots[nextIdx] : null;
 
     const palette = resolveScheduleCardPalette(
         theme.scheduleCardAppearance,
@@ -172,9 +177,10 @@ export const ScheduleHomeWidget: React.FC<ScheduleHomeWidgetProps> = ({
     const { theme } = useOS();
     const currentIdx = schedule ? getCurrentScheduleSlotIndex(schedule.slots, character) : -1;
     const currentSlot = currentIdx >= 0 ? schedule!.slots[currentIdx] : null;
-    const nextSlot = schedule && currentIdx < schedule.slots.length - 1
-        ? schedule.slots[currentIdx + 1]
-        : null;
+    // 空档期（上一条写了 endTime、下一条还没到）没有当前时段，这时按下标 +1 会指回
+    // 今天最早那条早就过去的日程，卡片上就成了「休息中 → 04:00 晨跑」。改成按时间找。
+    const nextIdx = schedule ? getUpcomingScheduleSlotIndex(schedule.slots, character) : -1;
+    const nextSlot = nextIdx >= 0 ? schedule!.slots[nextIdx] : null;
 
     const palette = resolveScheduleCardPalette(
         theme.scheduleCardAppearance,

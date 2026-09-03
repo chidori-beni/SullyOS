@@ -84,6 +84,24 @@ export const getScheduleSlotTemporalState = (
     return minuteOfDay < interval.start ? 'upcoming' : 'past';
 };
 
+/**
+ * 找到还没开始的第一条日程。
+ *
+ * 日程之间可以有空档（一条写了 endTime，下一条还没到），这时没有「当前时段」，
+ * 但「接下来」依然存在。按下标 +1 取下一条会在空档里指回今天最早那条已经过去的日程。
+ */
+export const getUpcomingScheduleSlotIndexForMinutes = (
+    slots: ScheduleSlot[],
+    minuteOfDay: number,
+): number => {
+    for (let index = 0; index < slots.length; index += 1) {
+        const start = parseScheduleClockTime(slots[index]?.startTime);
+        if (start == null) continue;
+        if (minuteOfDay < start) return index;
+    }
+    return -1;
+};
+
 /** 找到当前墙钟落入的日程；调用方已负责把绝对时刻折成角色当地分钟。 */
 export const getCurrentScheduleSlotIndexForMinutes = (
     slots: ScheduleSlot[],

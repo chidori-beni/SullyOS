@@ -16,6 +16,7 @@ import {
     SCHEDULE_CSS_SCOPE_REGEX,
     applyScheduleSkinPreset,
     removeScheduleSkinPreset,
+    renameScheduleSkinPreset,
     resolveScheduleCardPalette,
     upsertScheduleSkinPreset,
 } from '../../utils/scheduleAppearance';
@@ -115,6 +116,8 @@ const ScheduleAppearanceButton: React.FC<{ compact?: boolean }> = ({ compact = f
     );
     const [copied, setCopied] = useState(false);
     const [presetName, setPresetName] = useState('');
+    const [renamingId, setRenamingId] = useState<string | null>(null);
+    const [renameDraft, setRenameDraft] = useState('');
 
     useEffect(() => {
         if (!open) return;
@@ -209,6 +212,26 @@ const ScheduleAppearanceButton: React.FC<{ compact?: boolean }> = ({ compact = f
         addToast(`已切换到「${preset.name}」`, 'success');
     };
 
+    const startRename = (preset: ScheduleCardSkinPreset) => {
+        setRenamingId(preset.id);
+        setRenameDraft(preset.name);
+    };
+
+    const commitRename = async () => {
+        if (!renamingId) return;
+        const result = renameScheduleSkinPreset(draft.skinPresets, renamingId, renameDraft);
+        if ('error' in result) {
+            addToast(result.error, 'error');
+            return;
+        }
+        const next: ScheduleCardAppearance = { ...draft, skinPresets: result.presets };
+        setDraft(next);
+        setRenamingId(null);
+        setRenameDraft('');
+        await updateTheme({ scheduleCardAppearance: next });
+        addToast('预设已重命名', 'success');
+    };
+
     const deletePreset = async (preset: ScheduleCardSkinPreset) => {
         const next: ScheduleCardAppearance = {
             ...draft,
@@ -216,6 +239,7 @@ const ScheduleAppearanceButton: React.FC<{ compact?: boolean }> = ({ compact = f
             skinPresetId: draft.skinPresetId === preset.id ? undefined : draft.skinPresetId,
         };
         setDraft(next);
+        if (renamingId === preset.id) setRenamingId(null);
         await updateTheme({ scheduleCardAppearance: next });
         addToast(`已删除预设「${preset.name}」`, 'success');
     };
@@ -427,26 +451,65 @@ const ScheduleAppearanceButton: React.FC<{ compact?: boolean }> = ({ compact = f
                                                 className="h-6 w-6 shrink-0 rounded-lg border border-black/10"
                                                 style={{ background: swatch.background }}
                                             />
-                                            <button
-                                                type="button"
-                                                onClick={() => void applyPreset(preset)}
-                                                className={`min-w-0 flex-1 truncate text-left text-xs font-bold ${
-                                                    active ? 'text-violet-600' : 'text-slate-600'
-                                                }`}
-                                            >
-                                                {active ? '✓ ' : ''}{preset.name}
-                                                <span className="ml-1.5 font-normal text-[10px] text-slate-400">
-                                                    {preset.css.trim() ? '配色 + CSS' : '仅配色'}
-                                                </span>
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => void deletePreset(preset)}
-                                                aria-label={`删除预设 ${preset.name}`}
-                                                className="shrink-0 px-1 text-sm text-slate-300"
-                                            >
-                                                ×
-                                            </button>
+                                            {renamingId === preset.id ? (
+                                                <>
+                                                    <input
+                                                        autoFocus
+                                                        value={renameDraft}
+                                                        onChange={event => setRenameDraft(event.target.value)}
+                                                        onKeyDown={event => {
+                                                            if (event.key === 'Enter') void commitRename();
+                                                            if (event.key === 'Escape') setRenamingId(null);
+                                                        }}
+                                                        className="min-w-0 flex-1 rounded-lg border border-violet-300 bg-white px-2 py-1 text-xs outline-none"
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void commitRename()}
+                                                        className="shrink-0 rounded-lg bg-slate-900 px-2 py-1 text-[10px] font-bold text-white"
+                                                    >
+                                                        完成
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setRenamingId(null)}
+                                                        className="shrink-0 px-1 text-[10px] font-bold text-slate-400"
+                                                    >
+                                                        取消
+                                                    </button>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void applyPreset(preset)}
+                                                        className={`min-w-0 flex-1 truncate text-left text-xs font-bold ${
+                                                            active ? 'text-violet-600' : 'text-slate-600'
+                                                        }`}
+                                                    >
+                                                        {active ? '✓ ' : ''}{preset.name}
+                                                        <span className="ml-1.5 font-normal text-[10px] text-slate-400">
+                                                            {preset.css.trim() ? '配色 + CSS' : '仅配色'}
+                                                        </span>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => startRename(preset)}
+                                                        aria-label={`重命名预设 ${preset.name}`}
+                                                        className="shrink-0 rounded-lg px-2 py-1 text-[10px] font-bold text-slate-400"
+                                                    >
+                                                        重命名
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void deletePreset(preset)}
+                                                        aria-label={`删除预设 ${preset.name}`}
+                                                        className="shrink-0 rounded-lg px-2 py-1 text-[10px] font-bold text-rose-400"
+                                                    >
+                                                        删除
+                                                    </button>
+                                                </>
+                                            )}
                                         </div>
                                     );
                                 })}
