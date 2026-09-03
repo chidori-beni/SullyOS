@@ -904,6 +904,8 @@ const Launcher: React.FC = () => {
   const hiddenBuiltinWidgetsRef = useRef(hiddenBuiltinWidgets);
   useEffect(() => { hiddenBuiltinWidgetsRef.current = hiddenBuiltinWidgets; }, [hiddenBuiltinWidgets]);
   const [widgetBusy, setWidgetBusy] = useState(false);
+  /** 正在拖动某个格子。拖动期间顶部工具条要让开，别挡住落点也别被误点到「完成」。 */
+  const [layoutDragActive, setLayoutDragActive] = useState(false);
   const legacyWidgetMigrationRef = useRef(false);
 
   useEffect(() => {
@@ -1701,6 +1703,7 @@ const Launcher: React.FC = () => {
       pointer.grabOffsetY = pointer.y - rect.top;
       pointer.element.classList.add('launcher-dragging');
       pointer.element.style.pointerEvents = 'none';
+      setLayoutDragActive(true);
   }, []);
 
   // 整理模式下点页码直接跳页（手指划不动，见页码那块的注释）。
@@ -1880,7 +1883,7 @@ const Launcher: React.FC = () => {
       const pageDrop = pointTarget?.closest<HTMLElement>('[data-launcher-page-drop]');
       const pageDropIsClone = !!pageDrop?.closest('[data-launcher-carousel-clone="true"]');
       const pageDropId = pageDrop?.dataset.launcherPageDrop;
-      if (isPageItemPointer && pageDrop && !pageDropIsClone && pageDropId) {
+      const applyPageDrop = (pageDropId: string, fallbackHighlight: HTMLElement) => {
           // 按「离手指最近的格子」定插入点，而不是只认正下方那个元素。
           const scrollLeft = Math.round(scrollContainerRef.current?.scrollLeft || 0);
           if (pointer.dropCache?.pageId !== pageDropId || pointer.dropCache.scrollLeft !== scrollLeft) {
@@ -1904,7 +1907,7 @@ const Launcher: React.FC = () => {
           const dropKey = resolveLauncherDropKey(pointer.dropCache.items, e.clientX, e.clientY, pointer.key);
           const dropElement = dropKey ? pointer.dropCache.elements.get(dropKey) : null;
           // 没算出目标就是「追加到页尾」，这时高亮整页，让用户知道会掉到最后。
-          const highlight: HTMLElement = dropElement || pageDrop;
+          const highlight: HTMLElement = dropElement || fallbackHighlight;
           if (highlight !== pointer.targetElement) {
               pointer.targetElement?.classList.remove('launcher-drop-target');
               highlight.classList.add('launcher-drop-target');
@@ -1916,6 +1919,10 @@ const Launcher: React.FC = () => {
               pageId: pageDropId,
               key: dropKey || '',
           };
+      };
+
+      if (isPageItemPointer && pageDrop && !pageDropIsClone && pageDropId) {
+          applyPageDrop(pageDropId, pageDrop);
           return;
       }
 
@@ -1929,6 +1936,33 @@ const Launcher: React.FC = () => {
           return;
       }
 
+      // 兜底：手指还在启动器里，但正压着一层不属于任何一页的浮层
+      // （整理模式顶部的工具条、页码条、Dock 之间的缝……）。
+      // 这些浮层视觉上就盖在当前这一页上，用户的意图明显是「放到这一页」。
+      // 不兜的话最要命的是顶部工具条：它正好压在第一行图标上方那一带，
+      // 于是「把组件 / 图标挪到这一页最顶上」根本做不到——手指一进那条带子落点就判空了。
+      // 只在手指还在启动器矩形内时兜底，「拖出屏幕外松手 = 放弃这次拖动」的行为保持不变。
+      const insideLauncher = e.clientX >= rootRect.left && e.clientX <= rootRect.right
+          && e.clientY >= rootRect.top && e.clientY <= rootRect.bottom;
+      if (isPageItemPointer && insideLauncher && !dockDrop) {
+          // 必须按「手指几何上落在哪一页」找，不能图省事用 visiblePageIdRef ——
+          // 那个 ref 靠 onScroll 维护，轮播还没归位、或滚动事件没跟上时就是旧值，
+          // 会把东西悄悄搬到另一页去（实测把组件从第三页搬到了主页）。
+          const geometricPage = [...document.querySelectorAll<HTMLElement>('[data-launcher-page-drop]')]
+              .find(el => {
+                  if (el.closest('[data-launcher-carousel-clone="true"]')) return false;
+                  const rect = el.getBoundingClientRect();
+                  return e.clientX >= rect.left && e.clientX <= rect.right
+                      && e.clientY >= rect.top && e.clientY <= rect.bottom;
+              });
+          const geometricPageId = geometricPage?.dataset.launcherPageDrop;
+          if (geometricPage && geometricPageId
+              && launcherPageLayoutRef.current.pages.some(page => page.id === geometricPageId)) {
+              applyPageDrop(geometricPageId, geometricPage);
+              return;
+          }
+      }
+
       pointer.targetElement?.classList.remove('launcher-drop-target');
       pointer.targetElement = undefined;
       pointer.lastTarget = undefined;
@@ -1940,6 +1974,7 @@ const Launcher: React.FC = () => {
       clearEmptyPress();
       clearLayoutPressTimer();
       clearLayoutPageTurn();
+      setLayoutDragActive(false);
       if (pointer?.active) {
           suppressLayoutClickUntil.current = Date.now() + 500;
           pointer.element.style.pointerEvents = '';
@@ -2218,7 +2253,13 @@ const Launcher: React.FC = () => {
       `}</style>
       {layoutEditing && (
           <div className="absolute top-[calc(var(--safe-top)+0.65rem)] left-4 right-4 z-50 flex items-center justify-between rounded-full px-3 py-2"
-              style={{ background: 'rgba(75,65,54,0.88)', color: '#fffdf8', boxShadow: '0 8px 24px rgba(75,65,54,0.20)' }}>
+              style={{
+                  background: 'rgba(75,65,54,0.88)', color: '#fffdf8', boxShadow: '0 8px 24px rgba(75,65,54,0.20)',
+                  // 拖动时整条让开：它压在第一行上方那一带，挡着就没法把东西挪到页面最顶上。
+                  pointerEvents: layoutDragActive ? 'none' : undefined,
+                  opacity: layoutDragActive ? 0.45 : 1,
+                  transition: 'opacity 160ms ease',
+              }}>
               <button
                   type="button"
                   onClick={() => setWidgetSheet({ mode: 'add' })}
@@ -2377,7 +2418,9 @@ const Launcher: React.FC = () => {
                           <div
                               data-launcher-page-drop={page.id}
                               className="grid grid-cols-4 gap-x-2 gap-y-5 w-full content-start"
-                              style={{ gridAutoRows: 'minmax(4.85rem, auto)' }}
+                              // 行高比普通页矮一点：自带四格各占 2 列 x 2 行，
+                              // 2*4.6rem + 1.25rem 间距 ≈ 2 列的宽度，这四格才保持原来的正方形。
+                              style={{ gridAutoRows: 'minmax(4.6rem, auto)' }}
                           >
                               {pinwheelSlots.map(slot => {
                                   if (slot.kind === 'widget') {

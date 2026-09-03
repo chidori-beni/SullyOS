@@ -120,6 +120,23 @@ describe('落点判定：不能一落到空隙就掉页尾', () => {
     });
 });
 
+describe('压在浮层上也要能落下（顶部工具条盖住了第一行上方那一带）', () => {
+    it('有兜底：手指在启动器里但没命中任何一页时，按几何位置找页', () => {
+        expect(launcher).toContain('geometricPage');
+        expect(launcher).toContain('insideLauncher');
+    });
+
+    it('兜底绝不能用 visiblePageIdRef —— 它是旧值时会把东西搬到别的页', () => {
+        // 实测踩过：用 ref 兜底时，第三页的组件被搬到了主页。
+        expect(launcher).not.toContain('applyPageDrop(visiblePageId');
+    });
+
+    it('拖动期间顶部工具条让开，不挡落点也不会被误点', () => {
+        expect(launcher).toContain('layoutDragActive');
+        expect(launcher).toContain("pointerEvents: layoutDragActive ? 'none' : undefined");
+    });
+});
+
 describe('拖动性能', () => {
     it('落点矩形按页缓存，不是每个 pointermove 都去量 20 个 rect', () => {
         expect(launcher).toContain('dropCache');
@@ -160,6 +177,12 @@ describe('App 挪动之后组件要待在原来的邻居旁边', () => {
 describe('透明图片不该被套上底框', () => {
     it('有图时默认不画背景 / 描边 / 投影', () => {
         expect(widgetView).toContain('const framed = !url || widget.frame === true;');
+    });
+
+    it('图片脱离文档流，组件高度只由 grid span 决定', () => {
+        // 行是 minmax(min, auto)：图片留在流里的话，它自己的长宽比会把行撑开——
+        // 一张 1:1 的图能把 4x2 组件顶成正方形（实机跑出来 327px 而不是 172px）。
+        expect(widgetView).toContain('absolute inset-0 w-full h-full');
     });
 
     it('底框是可选项，面板里有开关', () => {

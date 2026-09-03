@@ -57,12 +57,15 @@ const LauncherUserWidgetView = React.memo(({
             style={{ ...frameStyle, borderRadius: radius }}
         >
             {url ? (
+                // 绝对定位是必须的：网格行是 minmax(min, auto)，图片如果留在文档流里，
+                // 它自己的长宽比会把行撑开——一张 1:1 的图能把 4x2 的组件顶成正方形。
+                // 脱流之后组件高度只由 grid span 决定，换什么图都一样高。
                 <img
                     src={url}
                     alt=""
                     loading="lazy"
                     draggable={false}
-                    className={`w-full h-full ${widget.fit === 'contain' ? 'object-contain' : 'object-cover'}`}
+                    className={`absolute inset-0 w-full h-full ${widget.fit === 'contain' ? 'object-contain' : 'object-cover'}`}
                 />
             ) : (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 px-2 text-center">
