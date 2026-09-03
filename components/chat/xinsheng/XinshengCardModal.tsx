@@ -185,7 +185,7 @@ export const XinshengCardModal: React.FC<Props> = ({
     const isLayout = displayMode === 'layout' && !!layoutSrc.trim();
 
     return (
-        <div className="sully-ui-overlay fixed inset-0 z-[110] flex flex-col animate-fade-in">
+        <div className="sully-ui-layer sully-ui-overlay fixed inset-0 z-[110] flex flex-col animate-fade-in">
             <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
 
             {/* 顶栏 */}
@@ -216,7 +216,7 @@ export const XinshengCardModal: React.FC<Props> = ({
                 的空档；长布局模板划到底之前，按钮会自己粘在屏幕底部，划多深都不挡。
                 两头的行为都对，不用在「跟着内容」和「固定在底部」之间二选一。 */}
             <div
-                className="relative flex-1 overflow-y-auto no-scrollbar px-4"
+                className="sully-ui-body relative flex-1 overflow-y-auto no-scrollbar px-4"
                 onTouchStart={onTouchStart}
                 onTouchEnd={onTouchEnd}
             >

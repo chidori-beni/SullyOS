@@ -112,6 +112,17 @@ export const COCOA_DOTS_UI_CSS = `/* 可可点点 · 弹窗与设置框 —— �
 }
 .sully-ui-sheet{border-radius:22px 22px 0 0!important;}
 .sully-ui-modal{border-radius:22px!important;}
+/* 兜底：还没挂 .sully-ui-body 的弹窗（第二/三波没做到的那些），
+   直接把壳本身垫成奶油，否则内容会直接压在炭黑波点上看不清。
+   挂了 body 的走上面那套「黑框 + 奶油内胆」。 */
+.sully-ui-sheet:not(:has(.sully-ui-body)),
+.sully-ui-modal:not(:has(.sully-ui-body)){
+  background-color:#FCFBF9!important;
+  background-image:radial-gradient(rgba(167,156,147,.26) 1px,transparent 1.1px)!important;
+  background-size:8px 8px!important;
+  border:5px solid #302C29!important;
+  padding:13px!important;
+}
 /* 奶油内胆：整块内容坐在上面 */
 .sully-ui-head,.sully-ui-body{
   background-color:#FCFBF9!important;
@@ -133,10 +144,17 @@ export const COCOA_DOTS_UI_CSS = `/* 可可点点 · 弹窗与设置框 —— �
   border-radius:16px!important;
   box-shadow:none!important;
 }
+/* 按钮区：和内容区无缝接上。
+   padding-top 给足，按钮才在「分隔线和外框之间」居中，不会紧贴上面那条线；
+   顺手清掉组件自带的 border-top（那条细线就是它）。 */
 .sully-ui-foot{
   background-color:#FCFBF9!important;
-  border-radius:0 0 15px 15px!important;padding:0 15px 15px!important;
+  border-top:0!important;
+  border-radius:0 0 15px 15px!important;
+  padding:14px 15px 15px!important;
 }
+/* 内容区和按钮区之间的接缝：body 自己的下边框也一并去掉 */
+.sully-ui-body{border-bottom:0!important;}
 .sully-ui-btn{
   background:#A9866A!important;color:#fff!important;
   border:0!important;border-radius:99px!important;box-shadow:none!important;

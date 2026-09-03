@@ -160,14 +160,14 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
     if (!isOpen) return null;
 
     return (
-        <div className="sully-ui-overlay fixed inset-0 z-[120] flex flex-col animate-fade-in">
-            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+        <div className="sully-ui-layer fixed inset-0 z-[120] flex flex-col animate-fade-in">
+            <div className="sully-ui-overlay absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
 
-            <div className="relative mt-auto bg-white rounded-t-[2rem] shadow-2xl flex flex-col max-h-[88vh]">
-                <div className="px-5 pt-4 pb-2 flex items-center gap-2">
-                    <div className="text-[15px] font-bold text-slate-800 flex-1">自定义心声</div>
-                    <button onClick={handleSave} className="px-4 py-1.5 rounded-full bg-indigo-500 text-white text-[12px] font-semibold active:scale-95 transition-transform">保存</button>
-                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-slate-100 text-slate-400 text-[16px] leading-none active:scale-95 transition-transform" aria-label="关闭">×</button>
+            <div className="sully-ui-sheet relative mt-auto bg-white rounded-t-[2rem] shadow-2xl flex flex-col max-h-[88vh]">
+                <div className="sully-ui-head px-5 pt-4 pb-2 flex items-center gap-2">
+                    <div className="sully-ui-title text-[15px] font-bold text-slate-800 flex-1">自定义心声</div>
+                    <button onClick={handleSave} className="sully-ui-btn px-4 py-1.5 rounded-full bg-indigo-500 text-white text-[12px] font-semibold active:scale-95 transition-transform">保存</button>
+                    <button onClick={onClose} className="sully-ui-close w-8 h-8 rounded-full bg-slate-100 text-slate-400 text-[16px] leading-none active:scale-95 transition-transform" aria-label="关闭">×</button>
                 </div>
 
                 <div className="px-5 pb-2 flex gap-1.5 overflow-x-auto no-scrollbar">
@@ -175,12 +175,12 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
                         <button
                             key={t.key}
                             onClick={() => setTab(t.key)}
-                            className={`px-3 py-1.5 rounded-full text-[12px] whitespace-nowrap ${tab === t.key ? 'bg-indigo-500 text-white' : 'bg-slate-100 text-slate-500'}`}
+                            className={`sully-ui-tab px-3 py-1.5 rounded-full text-[12px] whitespace-nowrap ${tab === t.key ? 'sully-ui-tab-on bg-indigo-500 text-white' : 'bg-slate-100 text-slate-500'}`}
                         >{t.label}</button>
                     ))}
                 </div>
 
-                <div className="flex-1 overflow-y-auto px-5 pt-2 pb-[calc(env(safe-area-inset-bottom)+20px)]">
+                <div className="sully-ui-body flex-1 overflow-y-auto px-5 pt-2 pb-[calc(env(safe-area-inset-bottom)+20px)]">
                     {tab === 'general' && (
                         <>
                             <label className="flex items-center gap-3 mb-4 px-3.5 py-3 rounded-2xl bg-slate-50">

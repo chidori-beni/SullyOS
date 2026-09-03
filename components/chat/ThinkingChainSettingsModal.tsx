@@ -151,19 +151,19 @@ const ThinkingChainSettingsModal: React.FC<Props> = ({ isOpen, onClose, value, o
 
     return (
         <div
-            className="sully-ui-overlay fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-[1px]"
+            className="sully-ui-layer sully-ui-overlay fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-[1px]"
             style={{ paddingBottom: 'var(--safe-bottom)' }}
             onClick={onClose}
         >
             <div
-                className="w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl max-h-[85vh] overflow-y-auto no-scrollbar shadow-2xl"
+                className="sully-ui-sheet w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl max-h-[85vh] overflow-y-auto no-scrollbar shadow-2xl"
                 onClick={e => e.stopPropagation()}
             >
-                <div className="sticky top-0 z-10 bg-white px-5 pt-5 pb-3 border-b border-slate-100">
+                <div className="sully-ui-head sticky top-0 z-10 bg-white px-5 pt-5 pb-3 border-b border-slate-100">
                     <div className="flex items-center justify-between">
                         <div>
-                            <h2 className="text-base font-bold text-slate-800">心象 · 设置</h2>
-                            <p className="text-[11px] text-slate-400 mt-0.5">关于「心象」卡片的所有调教都在这里</p>
+                            <h2 className="sully-ui-title text-base font-bold text-slate-800">心象 · 设置</h2>
+                            <p className="sully-ui-hint text-[11px] text-slate-400 mt-0.5">关于「心象」卡片的所有调教都在这里</p>
                         </div>
                         <button
                             onClick={() => { commitPrompt(); commitCss(); onClose(); }}
