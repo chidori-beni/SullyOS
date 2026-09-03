@@ -54,6 +54,15 @@ export const SCHEDULE_CARD_PRESETS: ScheduleCardPreset[] = [
         accent: '#a9866a',
     },
     {
+        id: 'mono',
+        name: '黑白波点',
+        description: '白底炭灰与灰点阵',
+        background: '#ffffff',
+        base: '#ffffff',
+        text: '#3c3a38',
+        accent: '#57524e',
+    },
+    {
         id: 'sakura',
         name: '樱桃牛乳',
         description: '浅粉与莓果红',
@@ -191,6 +200,85 @@ export const PLUSH_BEAR_SCHEDULE_CSS = `/* 轻松熊奶油 · 日程卡（无毛
 .sully-schedule-item-current{background:#fbf6f0!important;border-radius:14px!important;box-shadow:inset 0 0 0 1px rgba(169,134,106,.26)!important;}
 /* 设置齿轮 */
 .sully-schedule-settings{background:#fff!important;color:#a9866a!important;border-color:rgba(107,86,71,.12)!important;}`;
+
+
+/**
+ * 「黑白波点」桌面挂件风：白底灰点 + 炭灰粗描边（描边上再压一层白点）+ 胶囊标签。
+ * 粗边框和边框上的白点用 background-clip 的 padding-box / border-box 两层实现，
+ * 不额外加节点，也不用 blur / 动画。封面和头像的 grayscale 是一次性静态滤镜。
+ */
+export const MONO_DOT_SCHEDULE_CSS = `/* 黑白波点 · 日程卡（白底灰点 + 炭灰粗边） */
+.sully-schedule-root{
+  --schedule-bg:#ffffff!important;
+  --schedule-base:#ffffff!important;
+  --schedule-text:#3c3a38!important;
+  --schedule-accent:#57524e!important;
+  --schedule-accent-soft:rgba(60,58,56,.10)!important;
+  --schedule-line:rgba(60,58,56,.16)!important;
+  background:
+    radial-gradient(circle at 1px 1px,rgba(88,84,80,.22) 1.1px,transparent 1.7px) 0 0/12px 12px padding-box,
+    linear-gradient(#fff,#fff) padding-box,
+    radial-gradient(circle at 3px 3px,rgba(255,255,255,.9) 1.5px,transparent 2.1px) 0 0/9px 9px border-box,
+    linear-gradient(#3c3a38,#3c3a38) border-box!important;
+  color:#3c3a38!important;
+  border:6px solid transparent!important;
+  border-radius:30px!important;
+  box-shadow:0 6px 18px rgba(40,38,36,.14)!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+}
+/* 暗色版遗留的光晕、竖条、大面积模糊底图一律去掉 */
+.sully-schedule-root div[class*="opacity-25"],
+.sully-schedule-root div[class*="-top-12"],
+.sully-schedule-root div[class*="-top-10"],
+.sully-schedule-root div[class*="w-[3px]"]{display:none!important;}
+.sully-schedule-widget > img[class*="inset-0"]{opacity:.12!important;filter:grayscale(1)!important;}
+/* 头部：两枚胶囊标签 + 虚线 */
+.sully-schedule-header{opacity:1!important;}
+.sully-schedule-header span{
+  background:#fff!important;color:#3c3a38!important;
+  border:2px solid #3c3a38!important;border-radius:999px!important;
+  padding:2px 10px!important;letter-spacing:.14em!important;opacity:1!important;
+}
+.sully-schedule-header div[class*="h-px"]{
+  background:transparent!important;opacity:1!important;height:0!important;
+  border-top:2px dotted rgba(60,58,56,.28)!important;
+}
+.sully-schedule-time{color:#3c3a38!important;opacity:1!important;filter:none!important;}
+/* 正在进行的事 */
+.sully-schedule-activity{color:#2f2d2b!important;font-weight:800!important;text-shadow:none!important;filter:none!important;}
+.sully-schedule-description{color:#8a8480!important;opacity:1!important;}
+/* NOW 徽标：深色实心，对应参考图里选中的那枚标签 */
+.sully-schedule-widget span[class*="rounded-full"]{
+  background:#3c3a38!important;color:#fff!important;border:2px solid #3c3a38!important;
+}
+/* 右上角角色名 */
+.sully-schedule-widget span[class*="max-w-"]{color:#9a938e!important;opacity:1!important;}
+/* 角色头像：圆形 + 浅灰环 */
+.sully-schedule-widget div[class*="rounded-2xl"]{
+  background:#f1efed!important;border:3px solid #d9d5d1!important;border-radius:50%!important;
+  box-shadow:none!important;
+}
+.sully-schedule-widget div[class*="rounded-2xl"] img{filter:grayscale(1)!important;}
+/* 右下展开按钮 */
+.sully-schedule-widget div[class*="w-8"],.sully-schedule-widget div[class*="w-6"]{
+  background:#fff!important;border:2px solid #3c3a38!important;color:#3c3a38!important;opacity:1!important;
+}
+/* 底部时间线 */
+.sully-schedule-timeline div{border-radius:999px!important;box-shadow:none!important;}
+.sully-schedule-timeline span{color:#8a8480!important;font-weight:700!important;}
+/* 完整日程卡 */
+.sully-schedule-card{box-shadow:0 8px 26px rgba(40,38,36,.16)!important;}
+.sully-schedule-cover img{opacity:.8!important;filter:grayscale(1)!important;}
+.sully-schedule-item{
+  background:#f5f4f2!important;border:1px solid #e4e1de!important;border-radius:14px!important;
+}
+.sully-schedule-item-current{
+  background:#fff!important;border-radius:14px!important;
+  box-shadow:inset 0 0 0 2px #3c3a38!important;
+}
+/* 设置齿轮 */
+.sully-schedule-settings{background:#fff!important;color:#3c3a38!important;border:2px solid #3c3a38!important;}`;
 
 /** 皮肤预设最多存这么多条，避免主题记录无限膨胀。 */
 export const SCHEDULE_SKIN_PRESET_LIMIT = 24;

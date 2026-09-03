@@ -10,6 +10,7 @@ import {
 import type { ScheduleCardAppearance, ScheduleCardSkinPreset } from '../../types';
 import { useOS } from '../../context/OSContext';
 import {
+    MONO_DOT_SCHEDULE_CSS,
     PLUSH_BEAR_SCHEDULE_CSS,
     SCHEDULE_CARD_PRESETS,
     SCHEDULE_CSS_SCOPE_HINT,
@@ -29,6 +30,10 @@ const CSS_TEMPLATES = [
     {
         name: '轻松熊奶油',
         code: PLUSH_BEAR_SCHEDULE_CSS,
+    },
+    {
+        name: '黑白波点',
+        code: MONO_DOT_SCHEDULE_CSS,
     },
     {
         name: '柔光玻璃',

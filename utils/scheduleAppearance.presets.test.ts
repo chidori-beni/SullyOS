@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ScheduleCardAppearance, ScheduleCardSkinPreset } from '../types';
 import { validateScopedCss } from './scopedCss';
 import {
+    MONO_DOT_SCHEDULE_CSS,
     PLUSH_BEAR_SCHEDULE_CSS,
     SCHEDULE_CSS_SCOPE_HINT,
     SCHEDULE_CSS_SCOPE_REGEX,
@@ -25,21 +26,20 @@ const okOrThrow = (result: ReturnType<typeof upsertScheduleSkinPreset>) => {
     return result;
 };
 
-describe('轻松熊奶油 CSS', () => {
+describe.each([
+    ['轻松熊奶油', PLUSH_BEAR_SCHEDULE_CSS],
+    ['黑白波点', MONO_DOT_SCHEDULE_CSS],
+])('内置皮肤 CSS · %s', (_name, css) => {
     it('只用日程作用域的选择器，能通过白框校验', () => {
-        const validation = validateScopedCss(
-            PLUSH_BEAR_SCHEDULE_CSS,
-            SCHEDULE_CSS_SCOPE_REGEX,
-            SCHEDULE_CSS_SCOPE_HINT,
-        );
+        const validation = validateScopedCss(css, SCHEDULE_CSS_SCOPE_REGEX, SCHEDULE_CSS_SCOPE_HINT);
 
         expect(validation.errors).toEqual([]);
         expect(validation.isValid).toBe(true);
     });
 
     it('不带毛玻璃 / 模糊这类耗电效果', () => {
-        expect(PLUSH_BEAR_SCHEDULE_CSS).not.toMatch(/blur\(/);
-        expect(PLUSH_BEAR_SCHEDULE_CSS).toContain('backdrop-filter:none');
+        expect(css).not.toMatch(/blur\(/);
+        expect(css).toContain('backdrop-filter:none');
     });
 });
 
