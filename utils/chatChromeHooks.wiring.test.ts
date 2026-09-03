@@ -85,6 +85,8 @@ describe('聊天页里的钩子（不经 MessageItem 的那几个）', () => {
         'sully-typing-dot ',
         'sully-pending-dots',
         'sully-pending-dot ',
+        'sully-chat-scroll',
+        'sully-chat-history-more',
         'sully-chat-date-divider',
         'sully-chat-date-divider-line',
         'sully-chat-date-divider-text',

@@ -4172,7 +4172,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 );
             })()}
 
-            <div ref={scrollRef} onScroll={handleChatScroll} className="flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
+            <div ref={scrollRef} onScroll={handleChatScroll} className="sully-chat-scroll flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
                 {windowedFocusMsgId !== null && (
                     <div className="sticky top-0 z-20 flex justify-center pb-2 pointer-events-none">
                         <button onClick={handleBackToCurrent} className="pointer-events-auto px-4 py-2 bg-primary text-white rounded-full text-xs font-bold shadow-lg active:scale-95 transition-transform flex items-center gap-1.5">
@@ -4188,7 +4188,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                             visibleCountRef.current = nextVisibleCount;
                             setVisibleCount(nextVisibleCount);
                             await reloadMessages(nextVisibleCount);
-                        }} className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">加载历史消息 ({collapsedCount})</button>
+                        }} className="sully-chat-history-more px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">加载历史消息 ({collapsedCount})</button>
                     </div>
                 )}
 
