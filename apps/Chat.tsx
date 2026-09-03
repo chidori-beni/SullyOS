@@ -3669,6 +3669,10 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                  守护样式统一放在气泡主题 customCss 之后（见下），保证对所有用户 CSS 都能兜底。 */}
              {osTheme.chatChromeCustomCss && <style>{osTheme.chatChromeCustomCss}</style>}
              {char.chromeCustomCss && <style>{char.chromeCustomCss}</style>}
+             {/* 卡片自定义 CSS：作用于 .sully-chat-card[data-card=...]（彼方 / 通话 / 日程邀约……）。
+                 只有全局一份——卡片是「哪个功能发来的」，跟角色无关，所以不做 per-character 覆盖。
+                 排在白框之后：白框 CSS 里若也写了卡片选择器，同 !important 时以这里为准。 */}
+             {osTheme.chatCardCustomCss && <style>{osTheme.chatCardCustomCss}</style>}
              {scheduleChangeNotice && (
                <ScheduleChangeNotice
                  key={scheduleChangeNotice.eventId}
@@ -3702,7 +3706,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                  pointer-events:none 时，用户会遇到「点输入框没反应、键盘唤不起来」或退不出聊天，
                  且重启、重新导入备份都无解。有了兜底，至少能退出去「外观→聊天装扮→还原白框」清掉坏 CSS。
                  不锁位置与配色，正常美化不受影响。 */}
-             {(osTheme.chatChromeCustomCss || char.chromeCustomCss || activeTheme.customCss || (char as any).thinkingChainCustomCss) && (
+             {(osTheme.chatChromeCustomCss || char.chromeCustomCss || osTheme.chatCardCustomCss || activeTheme.customCss || (char as any).thinkingChainCustomCss) && (
                <style>{`
                  .sully-chat-back{visibility:visible!important;opacity:1!important;pointer-events:auto!important;}
                  .sully-chat-inputbar{visibility:visible!important;opacity:1!important;pointer-events:auto!important;}
@@ -4833,6 +4837,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                         onChangeFineTune={(patch) => updateCharacter(char.id, { chatFineTune: { ...override, enabled: true, ...patch } } as any)}
                         onClearFineTune={() => { updateCharacter(char.id, { chatFineTune: undefined } as any); addToast('已清除该角色的聊天装扮，回到跟随全局', 'success'); }}
                         onOpenFloatingFineTune={() => { setDecorTab(null); setFineTuneOpen(true); setFineTunePanelOpen(true); }}
+                        onNotify={(message, kind) => addToast(message, kind)}
 
                         chatBackground={char.chatBackground}
                         onUploadBackground={handleBgUpload}

@@ -4,6 +4,7 @@ import WhiteboxSoundEditor from '../chat/WhiteboxSoundEditor';
 import { WhiteboxSound } from '../../utils/whiteboxSound';
 import ChatFineTunePanel from '../chat/ChatFineTunePanel';
 import MessageBannerCssEditor from './MessageBannerCssEditor';
+import ChatCardCssEditor from './ChatCardCssEditor';
 import { FadersHorizontal } from '@phosphor-icons/react';
 
 type Props = {
@@ -19,6 +20,8 @@ type Props = {
      * 把面板浮起来（抽屉本身已经只占下半屏），控件直接平铺进抽屉里。
      */
     embedded?: boolean;
+    /** 卡片 CSS 编辑器的成功/失败提示走宿主的 toast（外观 App 与装扮抽屉各有一份）。 */
+    onNotify?: (message: string, kind: 'success' | 'error') => void;
 };
 
 // 聊天细节微调的默认值快照。切预设时先铺这层再叠预设配置：否则从「沉浸剧场」切回
@@ -406,7 +409,7 @@ const ChoiceGroup: React.FC<{
     </div>
 );
 
-export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onResetAllChrome, onOpenApp, embedded = false }) => {
+export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onResetAllChrome, onOpenApp, embedded = false, onNotify }) => {
     const avatarShape = theme.chatAvatarShape || defaults.chatAvatarShape;
     const avatarSize = theme.chatAvatarSize || defaults.chatAvatarSize;
     const avatarMode = theme.chatAvatarMode || defaults.chatAvatarMode;
@@ -836,6 +839,30 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                 <MessageBannerCssEditor
                     value={theme.messageBannerCustomCss || ''}
                     onChange={(css) => updateTheme({ messageBannerCustomCss: css })}
+                />
+            </section>
+
+            {/* 卡片 CSS：聊天里三十多种卡片（彼方 / 通话 / 日程邀约 / 音乐……）以前没有任何
+                钩子，深色卡丢进浅色聊天只能干瞪眼。现在统一一段 CSS 管全部，靠 data-card 分辨。 */}
+            <section className={groupClass}>
+                <div className="mb-3">
+                    <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400">卡片 · CSS</h2>
+                    <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
+                        聊天里各种卡片的美化：彼方动态、通话小结、未接来电、日程邀约、音乐、小红书、日记……
+                        一段 CSS 管全部，靠 <code className="rounded bg-slate-100 px-1 text-slate-500">data-card</code> 分辨是哪张。
+                        全局一份，私聊和群聊通用。
+                    </p>
+                </div>
+                <ChatCardCssEditor
+                    value={theme.chatCardCustomCss || ''}
+                    onChange={(css) => updateTheme({ chatCardCustomCss: css })}
+                    presets={theme.chatCardCssPresets || []}
+                    activePresetId={theme.chatCardCssPresetId}
+                    onChangePresets={(presets, activePresetId) => updateTheme({
+                        chatCardCssPresets: presets,
+                        chatCardCssPresetId: activePresetId,
+                    })}
+                    onNotify={onNotify}
                 />
             </section>
 

@@ -20,6 +20,7 @@ import LuckinCheckoutCard from './LuckinCheckoutCard';
 import QixiEventCardView from './QixiEventCard';
 import { getMessageReactions, reactionSignature, stripMessageReactionTags } from '../../utils/messageReactions';
 import { stripFaceToFacePhoneSourceTags } from '../../utils/sanitize';
+import { cardHookProps } from '../../utils/chatCardHooks';
 
 // 思考链卡片支持的 12 种风格预设 — 同时被 MessageItem 与 ThinkingChainSettingsModal 复用
 export type ThinkingChainStyleId = 'echo' | 'whisper' | 'minimal' | 'ink' | 'neon' | 'terminal' | 'stellar' | 'tama' | 'pixel' | 'muji' | 'ins' | 'custom';
@@ -1650,6 +1651,11 @@ const MessageItem = React.memo(({
 }: MessageItemProps) => {
     const isUser = m.role === 'user';
     const isSystem = m.role === 'system';
+    // 卡片美化钩子（utils/chatCardHooks.ts）：卡片分支的最外层 div 都要挂上
+    // `sully-chat-card` 类和这组 data-card / data-card-sub 属性，
+    // 「装扮 → 所有聊天 → 卡片 · CSS」才选得中它们。普通气泡这两样都是空的。
+    const cardHook = cardHookProps(m);
+    const cardShellClass = cardHook['data-card'] ? 'sully-chat-card' : '';
     const [meetingInviteAccepting, setMeetingInviteAccepting] = useState(false);
     const meetingInviteAccepted = m.metadata?.meetingInviteStatus === 'accepted';
     const handleMeetingInviteAccept = (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -1860,7 +1866,7 @@ const MessageItem = React.memo(({
             const endedAt = Number(m.metadata?.endedAt || m.timestamp);
             const dateText = new Date(startedAt).toLocaleString(undefined, { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
             return (
-                <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+                <div className={`${cardShellClass} flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`} {...cardHook}>
                     <div className="w-full px-4 my-3" {...interactionProps}>
                             <button
                                 type="button"
@@ -1891,7 +1897,7 @@ const MessageItem = React.memo(({
         }
         if (m.metadata?.source === 'date-meeting-invite') {
             return (
-                <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative`}>
+                <div className={`${cardShellClass} flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative`} {...cardHook}>
                     <div className="w-full px-4 my-3" {...interactionProps}>
                         <div className="mx-auto w-72 rounded-[24px] border border-sky-200 bg-gradient-to-br from-sky-50 via-white to-violet-50 p-4 shadow-lg">
                             <div className="flex items-center gap-3">
@@ -1912,7 +1918,7 @@ const MessageItem = React.memo(({
             try { scoreData = m.metadata?.scoreCard || JSON.parse(m.content); } catch {}
             if (scoreData?.type === 'lifesim_reset_card') {
                 return (
-                    <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+                    <div className={`${cardShellClass} flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`} {...cardHook}>
                         {selectionMode && (
                             <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
                                 <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
@@ -1936,7 +1942,7 @@ const MessageItem = React.memo(({
                 const charText = (scoreData.charText || '').trim();
                 const truncate = (s: string, n: number) => (s.length > n ? s.slice(0, n) + '…' : s);
                 return (
-                    <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+                    <div className={`${cardShellClass} flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`} {...cardHook}>
                         {selectionMode && (
                             <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
                                 <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
@@ -2003,7 +2009,7 @@ const MessageItem = React.memo(({
                 const diff = (scoreData.finalAffinity ?? 0) - (scoreData.initialAffinity ?? 0);
                 const isPositive = diff > 0;
                 return (
-                    <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+                    <div className={`${cardShellClass} flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`} {...cardHook}>
                         {selectionMode && (
                             <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
                                 <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
@@ -2071,7 +2077,7 @@ const MessageItem = React.memo(({
             const declined = m.metadata?.reason === 'declined';
             const missedAt = formatChatTimestamp(m.timestamp);
             return (
-                <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+                <div className={`${cardShellClass} flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`} {...cardHook}>
                     {selectionMode && (
                         <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
                             <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
@@ -2116,7 +2122,7 @@ const MessageItem = React.memo(({
             const callCharId = String(m.metadata?.characterId || m.charId || '');
 
             return (
-                <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+                <div className={`${cardShellClass} flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`} {...cardHook}>
                     {selectionMode && (
                         <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
                             <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
@@ -2158,7 +2164,7 @@ const MessageItem = React.memo(({
         }
 
         return (
-            <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+            <div className={`${cardShellClass} flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`} {...cardHook}>
                 {selectionMode && (
                     <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
                         <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
@@ -2181,7 +2187,7 @@ const MessageItem = React.memo(({
 
     if (m.type === 'interaction') {
         return (
-            <div className={`flex flex-col items-center ${marginBottom} w-full animate-fade-in relative transition-[padding] duration-300 ${selectionMode ? 'pl-8' : ''}`}>
+            <div className={`${cardShellClass} flex flex-col items-center ${marginBottom} w-full animate-fade-in relative transition-[padding] duration-300 ${selectionMode ? 'pl-8' : ''}`} {...cardHook}>
                 {selectionMode && (
                     <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
                         <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
@@ -2249,8 +2255,9 @@ const MessageItem = React.memo(({
                     <div className="w-[72%] max-w-[72%]">{thinkingChainNode}</div>
                 </div>
             )}
-            <div className={[
+            <div {...cardHook} className={[
                 'sully-chat-message',
+                cardShellClass,
                 isUser
                     ? 'sully-chat-message-user justify-end'
                     : `sully-chat-message-ai ${isModuleCard && centerModules ? 'justify-center' : 'justify-start'}`,

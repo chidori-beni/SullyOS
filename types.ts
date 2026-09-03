@@ -107,6 +107,14 @@ export interface ScheduleCardAppearance {
   skinPresets?: ScheduleCardSkinPreset[];
 }
 
+/** 一套聊天卡片 CSS 预设：存在 OSTheme 里，跟着备份导出一起走。 */
+export interface ChatCardCssPreset {
+  id: string;
+  name: string;
+  css: string;
+  updatedAt: number;
+}
+
 export interface OSTheme {
   hue: number;
   saturation: number;
@@ -199,6 +207,12 @@ export interface OSTheme {
   chatHeaderDensity?: 'compact' | 'default' | 'airy';
   chatStatusStyle?: 'subtle' | 'pill' | 'dot';
   chatSendButtonStyle?: 'circle' | 'pill' | 'minimal';
+  /** 消息栏是否显示发送按钮。默认 false —— 本 fork 的消息栏统一由回车发送，
+   *  想要按钮的（或想让社区美化里那套发送键样式生效的）在外观里打开。 */
+  chatShowSendButton?: boolean;
+  /** 消息栏是否显示语音按钮（录一段自己的语音发出去）。默认 true。
+   *  关掉之后功能不会消失，加号菜单里始终留着一份入口。 */
+  chatShowVoiceButton?: boolean;
   /** Instant Push 用户气泡左侧的"准备中"圆点动画。默认开启。 */
   chatPendingIndicator?: boolean;
   /** 聊天「白框」自定义 CSS：作用于 .sully-chat-root 下的顶栏、输入栏与消息布局钩子。
@@ -206,6 +220,13 @@ export interface OSTheme {
   chatChromeCustomCss?: string;
   /** 内部消息横幅自定义 CSS；兼容糯叽机 .ios-notification-* / .banner-* 选择器与 --nuo-notif-* 变量。 */
   messageBannerCustomCss?: string;
+  /** 聊天卡片自定义 CSS：作用于 .sully-chat-card[data-card=...] 各种卡片（彼方 / 通话 / 日程邀约……）。
+   *  全局一份，私聊与群聊共用；卡片名录与选择器说明见 utils/chatCardCss.ts。 */
+  chatCardCustomCss?: string;
+  /** 卡片 CSS 预设（可保存 / 重命名 / 删除 / 切换），跟着主题一起备份导出。 */
+  chatCardCssPresets?: ChatCardCssPreset[];
+  /** 当前套用的卡片 CSS 预设 id；手改 CSS 后即失效（置空），避免「显示某预设、内容却已被改过」。 */
+  chatCardCssPresetId?: string;
   /** 全局默认「白框提示音」：某角色未单独设提示音时回落到这里。src 同角色版（内置 key / 音频直链 / data:audio）。 */
   chatSound?: { src: string; volume?: number };
   /** 隐藏顶栏的情绪 buff 栏。 */

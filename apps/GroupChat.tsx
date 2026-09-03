@@ -45,6 +45,7 @@ import {
     makeGroupTopicBox,
     planGroupTopicBatch,
 } from '../utils/groupChat/topicBoxes';
+import { cardHookProps } from '../utils/chatCardHooks';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
@@ -396,9 +397,15 @@ const GroupMessageItem = React.memo(({
         }
     };
 
+    // 卡片美化钩子：和私聊 MessageItem 用同一套 .sully-chat-card / data-card 标记，
+    // 于是「装扮 → 所有聊天 → 卡片 · CSS」那一份 CSS 私聊群聊通吃。
+    const cardHook = cardHookProps(msg);
+    const cardShellClass = cardHook['data-card'] ? 'sully-chat-card' : '';
+
     return (
         <div
-            className={`${themeScopeClass} sully-chat-message ${isUser ? 'sully-chat-message-user justify-end' : 'sully-chat-message-ai justify-start'} ${isFirstInGroup ? 'sully-chat-message-group-first' : ''} ${isLastInGroup ? 'sully-chat-message-group-last' : ''} flex items-end ${spacingClass} px-3 w-full group relative transition-[padding] duration-300 ${selectionMode ? 'pl-12' : ''}`}
+            {...cardHook}
+            className={`${themeScopeClass} sully-chat-message ${cardShellClass} ${isUser ? 'sully-chat-message-user justify-end' : 'sully-chat-message-ai justify-start'} ${isFirstInGroup ? 'sully-chat-message-group-first' : ''} ${isLastInGroup ? 'sully-chat-message-group-last' : ''} flex items-end ${spacingClass} px-3 w-full group relative transition-[padding] duration-300 ${selectionMode ? 'pl-12' : ''}`}
             style={{ '--sully-chat-message-avatar-size': `${avatarSizePx}px` } as React.CSSProperties}
         >
             {selectionMode && (
@@ -1706,6 +1713,8 @@ ${memberTimeline || '(暂无互动记录)'}
             {/* 白框自定义 CSS：全局默认在前、群专属在后（后者叠加覆盖）。作用于 .sully-chat-* 各零件。 */}
             {osTheme.chatChromeCustomCss && <style>{osTheme.chatChromeCustomCss}</style>}
             {activeGroup?.chromeCustomCss && <style>{activeGroup.chromeCustomCss}</style>}
+            {/* 卡片自定义 CSS：与私聊共用同一份全局设置（装扮 → 所有聊天 → 卡片 · CSS）。 */}
+            {osTheme.chatCardCustomCss && <style>{osTheme.chatCardCustomCss}</style>}
             {/* 气泡工坊 CSS 排在白框之后，与私聊优先级一致；每套成员主题都限定在自己的消息上。 */}
             {groupBubbleCustomCss && <style>{groupBubbleCustomCss}</style>}
             <style>{`
@@ -1713,7 +1722,7 @@ ${memberTimeline || '(暂无互动记录)'}
                 .sully-bubble-tail-hidden::after { content: none !important; display: none !important; }
             `}</style>
             {/* 守护样式（注在用户 CSS 之后）：保证返回键与输入区永远可见可点。 */}
-            {(osTheme.chatChromeCustomCss || activeGroup?.chromeCustomCss || groupBubbleCustomCss) && (
+            {(osTheme.chatChromeCustomCss || activeGroup?.chromeCustomCss || osTheme.chatCardCustomCss || groupBubbleCustomCss) && (
                 <style>{`
                     .sully-chat-back{visibility:visible!important;opacity:1!important;pointer-events:auto!important;}
                     .sully-chat-inputbar{visibility:visible!important;opacity:1!important;pointer-events:auto!important;}

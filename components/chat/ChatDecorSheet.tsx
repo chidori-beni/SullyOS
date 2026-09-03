@@ -81,6 +81,8 @@ type Props = {
     onUpdateTheme: (updates: Partial<OSTheme>) => void;
     onResetAllChrome: () => void;
     onOpenApp: (appId: AppID) => void;
+    /** 卡片 CSS 的保存 / 重命名 / 删除结果走聊天页的 toast。 */
+    onNotify?: (message: string, kind: 'success' | 'error') => void;
 };
 
 const TAB_HINTS: Record<ChatDecorTab, string> = {
@@ -119,6 +121,7 @@ const ChatDecorSheet: React.FC<Props> = ({
     onUpdateTheme,
     onResetAllChrome,
     onOpenApp,
+    onNotify,
 }) => {
     const bgInputRef = useRef<HTMLInputElement>(null);
     const globalScope = tab === 'global';
@@ -183,6 +186,7 @@ const ChatDecorSheet: React.FC<Props> = ({
                         updateTheme={onUpdateTheme}
                         onResetAllChrome={onResetAllChrome}
                         onOpenApp={onOpenApp}
+                        onNotify={onNotify}
                     />
                 )}
 
