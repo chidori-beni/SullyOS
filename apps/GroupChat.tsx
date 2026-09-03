@@ -386,9 +386,9 @@ const GroupMessageItem = React.memo(({
                             />
                         )}
                         {msg.replyTo && (
-                            <div className="relative z-10 mb-1 text-[10px] bg-black/5 p-1.5 rounded-md border-l-2 border-current opacity-60 flex flex-col gap-0.5 max-w-full overflow-hidden">
-                                <span className="font-bold opacity-90 truncate">{msg.replyTo.name}</span>
-                                <span className="truncate italic">"{msg.replyTo.content.length > 10 ? msg.replyTo.content.slice(0, 10) + '...' : msg.replyTo.content}"</span>
+                            <div className="sully-reply-quote relative z-10 mb-1 text-[10px] bg-black/5 p-1.5 rounded-md border-l-2 border-current opacity-60 flex flex-col gap-0.5 max-w-full overflow-hidden">
+                                <span className="sully-reply-quote-name font-bold opacity-90 truncate">{msg.replyTo.name}</span>
+                                <span className="sully-reply-quote-text truncate italic">"{msg.replyTo.content.length > 10 ? msg.replyTo.content.slice(0, 10) + '...' : msg.replyTo.content}"</span>
                             </div>
                         )}
                         <div className="relative z-10 select-text" style={{ color: styleConfig.textColor }}>{msg.content}</div>
@@ -462,7 +462,7 @@ const GroupMessageItem = React.memo(({
                         {renderContent()}
                     </div>
                     {isLastInGroup && showTimestamp !== 'never' && (
-                        <span className={`absolute top-full ${isUser ? 'right-0' : 'left-0'} mt-0.5 px-1 text-[9px] text-slate-400/80 font-medium whitespace-nowrap pointer-events-none ${showTimestamp === 'hover' ? 'opacity-0 group-hover:opacity-100 transition-opacity' : ''}`}>{timeStr}</span>
+                        <span className={`sully-message-time absolute top-full ${isUser ? 'right-0' : 'left-0'} mt-0.5 px-1 text-[9px] text-slate-400/80 font-medium whitespace-nowrap pointer-events-none ${showTimestamp === 'hover' ? 'opacity-0 group-hover:opacity-100 transition-opacity' : ''}`}>{timeStr}</span>
                     )}
                 </div>
             </div>

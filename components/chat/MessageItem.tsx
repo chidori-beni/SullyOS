@@ -2297,13 +2297,13 @@ const MessageItem = React.memo(({
 
                 {showPendingDots && (
                     <span
-                        className="inline-flex items-center gap-[3px] mb-2 mr-0.5 select-none pointer-events-none"
+                        className="sully-pending-dots inline-flex items-center gap-[3px] mb-2 mr-0.5 select-none pointer-events-none"
                         aria-label="发送准备中"
                         role="status"
                     >
-                        <span className="w-1 h-1 rounded-full bg-slate-400/70 animate-dot-pulse" />
-                        <span className="w-1 h-1 rounded-full bg-slate-400/70 animate-dot-pulse" style={{ animationDelay: '0.15s' }} />
-                        <span className="w-1 h-1 rounded-full bg-slate-400/70 animate-dot-pulse" style={{ animationDelay: '0.3s' }} />
+                        <span className="sully-pending-dot w-1 h-1 rounded-full bg-slate-400/70 animate-dot-pulse" />
+                        <span className="sully-pending-dot w-1 h-1 rounded-full bg-slate-400/70 animate-dot-pulse" style={{ animationDelay: '0.15s' }} />
+                        <span className="sully-pending-dot w-1 h-1 rounded-full bg-slate-400/70 animate-dot-pulse" style={{ animationDelay: '0.3s' }} />
                     </span>
                 )}
 
@@ -2357,7 +2357,7 @@ const MessageItem = React.memo(({
                         </div>
                     )}
                     {isLastInGroup && showTimestamp !== 'never' && (
-                        <div className={`absolute top-full ${isUser ? 'right-0' : 'left-0'} mt-0.5 px-1 text-[9px] text-slate-400/80 font-medium whitespace-nowrap pointer-events-none ${showTimestamp === 'hover' ? 'opacity-0 group-hover:opacity-100 transition-opacity' : ''}`}>{formatTime(m.timestamp)}</div>
+                        <div className={`sully-message-time absolute top-full ${isUser ? 'right-0' : 'left-0'} mt-0.5 px-1 text-[9px] text-slate-400/80 font-medium whitespace-nowrap pointer-events-none ${showTimestamp === 'hover' ? 'opacity-0 group-hover:opacity-100 transition-opacity' : ''}`}>{formatTime(m.timestamp)}</div>
                     )}
                     </div>
                 </div>
@@ -3936,9 +3936,9 @@ const MessageItem = React.memo(({
 
             {/* Layer 3: Reply/Quote Block */}
             {m.replyTo && (
-                <div className="relative z-10 mb-1 text-[10px] bg-black/5 p-1.5 rounded-md border-l-2 border-current opacity-60 flex flex-col gap-0.5 max-w-full overflow-hidden">
-                    <span className="font-bold opacity-90 truncate">{m.replyTo.name}</span>
-                    <span className="truncate italic">"{replyPreview.length > 10 ? replyPreview.slice(0, 10) + '...' : replyPreview}"</span>
+                <div className="sully-reply-quote relative z-10 mb-1 text-[10px] bg-black/5 p-1.5 rounded-md border-l-2 border-current opacity-60 flex flex-col gap-0.5 max-w-full overflow-hidden">
+                    <span className="sully-reply-quote-name font-bold opacity-90 truncate">{m.replyTo.name}</span>
+                    <span className="sully-reply-quote-text truncate italic">"{replyPreview.length > 10 ? replyPreview.slice(0, 10) + '...' : replyPreview}"</span>
                 </div>
             )}
 

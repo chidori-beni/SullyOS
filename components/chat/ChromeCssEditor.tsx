@@ -33,6 +33,16 @@ const AI_PROMPT = `你是一个 CSS 设计师。我在用一个叫 SullyOS 的�
 - .sully-chat-turn-avatar-slot 每组首条的头像槽（默认 display:none，内部已有正确的双方头像）
 - .sully-chat-turn-avatar      上述头像槽里的头像容器；图片是 .sully-chat-message-avatar-img
 - .sully-bubble-ai / .sully-bubble-user 角色 / 用户气泡
+- .sully-message-time          气泡下方的时间戳
+- .sully-message-reactions     气泡下方的表情反应条；每颗是 .sully-message-reactions span
+- .sully-reply-quote           气泡顶部的引用/回复块；里面是 -name（谁）和 -text（引的话）
+- .sully-emoji-msg             表情包消息本体（尺寸另受「外观 → 表情包大小」控制，改尺寸就写这个类）
+- .sully-voice-bar-shell       语音条外层；.sully-voice-bar 是可点的那条本体
+- .sully-typing-indicator      角色「正在输入」整行；-avatar 头像、-bubble 白气泡、
+                               -dots 三点容器、-dot 每一颗
+- .sully-pending-dots          用户侧「发送准备中」的小圆点；每颗是 .sully-pending-dot
+- .sully-chat-message-sender   群聊里气泡上方的发言人名字
+- .sully-psyche                心象卡片（思考链）整块；-card / -title / -preview / -body
 - .sully-schedule-change      角色修改未来日程后浮出的整张回执
 - .sully-schedule-change-head / -mark / -kicker  回执标题行 / 勾选标记 / 标题文字
 - .sully-schedule-change-list / -row             修改列表 / 单条修改
@@ -41,7 +51,12 @@ const AI_PROMPT = `你是一个 CSS 设计师。我在用一个叫 SullyOS 的�
 
 【必须遵守的规范】
 1. 覆盖默认样式必须加 !important（尤其 .sully-chat-buffs button 带内联样式，不加 !important 盖不掉）。
-2. 只允许使用上面的 .sully-chat-* / .sully-bubble-* / .sully-schedule-change* 选择器及其后代/伪元素，禁止写 body、*、div、html 这类全局选择器（会污染其它界面）。
+2. 只允许使用上面列出的这些类（.sully-chat-* / .sully-bubble-* / .sully-message-* /
+   .sully-reply-quote* / .sully-voice-bar* / .sully-typing-* / .sully-pending-* /
+   .sully-emoji-msg / .sully-psyche* / .sully-schedule-change*）及其后代/伪元素，
+   禁止写 body、*、div、html 这类全局选择器（会污染其它界面）。
+   卡片（彼方动态、通话小结、日程邀约……）不在这里改，它们有单独一份
+   「装扮 → 所有聊天 → 卡片 · CSS」，选择器是 .sully-chat-card[data-card="..."]。
 3. 这是移动端窄屏（宽约 390px），尺寸请克制、用相对单位或小数值。
 4. 顶栏顶部已自动留出状态栏安全区。装饰若要贴最顶部，用 top: calc(var(--safe-top) + 数值)。
 5. 不要 display:none 掉 .sully-chat-back（否则用户无法返回），除非我明确要求。

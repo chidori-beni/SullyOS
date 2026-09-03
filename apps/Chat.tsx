@@ -4317,10 +4317,10 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 {instantSendingActive && !selectionMode && (
                     <div className="flex justify-end px-3 -mt-1 -mb-4">
                         <style>{`@keyframes chatPendingDot{0%,80%,100%{opacity:.35;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}`}</style>
-                        <span className="inline-flex items-center gap-[3px] mr-12 select-none pointer-events-none" role="status" aria-label="发送准备中">
-                            <span className="w-1 h-1 rounded-full bg-slate-400" style={{ animation: 'chatPendingDot 1.2s ease-in-out infinite' }} />
-                            <span className="w-1 h-1 rounded-full bg-slate-400" style={{ animation: 'chatPendingDot 1.2s ease-in-out infinite', animationDelay: '0.2s' }} />
-                            <span className="w-1 h-1 rounded-full bg-slate-400" style={{ animation: 'chatPendingDot 1.2s ease-in-out infinite', animationDelay: '0.4s' }} />
+                        <span className="sully-pending-dots inline-flex items-center gap-[3px] mr-12 select-none pointer-events-none" role="status" aria-label="发送准备中">
+                            <span className="sully-pending-dot w-1 h-1 rounded-full bg-slate-400" style={{ animation: 'chatPendingDot 1.2s ease-in-out infinite' }} />
+                            <span className="sully-pending-dot w-1 h-1 rounded-full bg-slate-400" style={{ animation: 'chatPendingDot 1.2s ease-in-out infinite', animationDelay: '0.2s' }} />
+                            <span className="sully-pending-dot w-1 h-1 rounded-full bg-slate-400" style={{ animation: 'chatPendingDot 1.2s ease-in-out infinite', animationDelay: '0.4s' }} />
                         </span>
                     </div>
                 )}
@@ -4402,9 +4402,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 )}
                 {/* instantChatPending：这一轮在云端跑，本机可以关页面，指示灯靠落盘记录活着。 */}
                 {(isTyping || instantChatPending || recallStatus || searchStatus || diaryStatus || isProactiveComposing) && !selectionMode && (
-                    <div className="flex items-end gap-3 px-3 mb-6 animate-fade-in">
-                        <img src={char.avatar} className={chatPendingAvatarClass} />
-                        <div className="bg-white px-4 py-3 rounded-2xl shadow-sm">
+                    <div className="sully-typing-indicator flex items-end gap-3 px-3 mb-6 animate-fade-in">
+                        <img src={char.avatar} className={`sully-typing-avatar ${chatPendingAvatarClass}`} />
+                        <div className="sully-typing-bubble bg-white px-4 py-3 rounded-2xl shadow-sm">
                             {isProactiveComposing && !isTyping && !recallStatus && !searchStatus && !diaryStatus ? (
                                 <div className="flex items-center gap-2 text-xs text-teal-600 font-medium">
                                     <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
@@ -4426,7 +4426,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                                     📖 {diaryStatus}
                                 </div>
                             ) : (
-                                <div className="flex gap-1"><div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce"></div><div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce delay-75"></div><div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce delay-150"></div></div>
+                                <div className="sully-typing-dots flex gap-1"><div className="sully-typing-dot w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce"></div><div className="sully-typing-dot w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce delay-75"></div><div className="sully-typing-dot w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce delay-150"></div></div>
                             )}
                         </div>
                         {/* 停止生成：紧挨着「正在输入」气泡，用户眼睛正好在这儿。主动消息
