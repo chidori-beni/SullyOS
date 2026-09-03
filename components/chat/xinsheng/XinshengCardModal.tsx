@@ -185,7 +185,7 @@ export const XinshengCardModal: React.FC<Props> = ({
     const isLayout = displayMode === 'layout' && !!layoutSrc.trim();
 
     return (
-        <div className="fixed inset-0 z-[110] flex flex-col animate-fade-in">
+        <div className="sully-ui-overlay fixed inset-0 z-[110] flex flex-col animate-fade-in">
             <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
 
             {/* 顶栏 */}

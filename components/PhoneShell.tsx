@@ -1143,10 +1143,15 @@ const PhoneShell: React.FC = () => {
               </div>
           )}
 
+           {/* 全局自定义 CSS：整机的弹窗 / 抽屉 / 设置框（.sully-ui-* 钩子）。
+               注在这里而不是各 App 里 —— PhoneShell 常驻，离开聊天页也不会卸载。
+               排在最前，用户 CSS 里的 !important 仍然压得住各组件自己的 Tailwind。 */}
+           {theme.globalCustomCss && <style>{theme.globalCustomCss}</style>}
+
            {/* Overlays: Toasts (Top) */}
            <div className="absolute top-12 left-0 w-full flex flex-col items-center gap-2 pointer-events-none z-[60]">
               {toasts.map(toast => (
-                 <div key={toast.id} className="animate-fade-in bg-white/95 backdrop-blur-xl px-4 py-3 rounded-2xl shadow-xl border border-black/5 flex items-start gap-3 max-w-[85%] ring-1 ring-white/20">
+                 <div key={toast.id} className="sully-ui-toast animate-fade-in bg-white/95 backdrop-blur-xl px-4 py-3 rounded-2xl shadow-xl border border-black/5 flex items-start gap-3 max-w-[85%] ring-1 ring-white/20">
                      {toast.type === 'success' && <div className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0"></div>}
                      {toast.type === 'error' && <div className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0"></div>}
                      {toast.type === 'info' && <div className="w-2.5 h-2.5 rounded-full bg-primary shrink-0"></div>}

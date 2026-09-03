@@ -127,18 +127,18 @@ const ChatDecorSheet: React.FC<Props> = ({
     const globalScope = tab === 'global';
 
     return (
-        <div className="fixed inset-0 z-[110] flex items-end justify-center bg-black/5" onClick={onClose}>
+        <div className="sully-ui-overlay fixed inset-0 z-[110] flex items-end justify-center bg-black/5" onClick={onClose}>
             <div
-                className={`w-full ${globalScope ? 'max-h-[78vh]' : 'max-h-[68vh]'} overflow-y-auto rounded-t-3xl border-t border-white/60 bg-white/95 p-5 shadow-[0_-12px_40px_rgba(15,23,42,0.18)] backdrop-blur-xl [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}
+                className={`sully-ui-sheet w-full ${globalScope ? 'max-h-[78vh]' : 'max-h-[68vh]'} overflow-y-auto rounded-t-3xl border-t border-white/60 bg-white/95 p-5 shadow-[0_-12px_40px_rgba(15,23,42,0.18)] backdrop-blur-xl [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}
                 style={{ paddingBottom: 'calc(1.25rem + var(--safe-bottom))' }}
                 onClick={(e) => e.stopPropagation()}
             >
-                <div className="mb-3 flex items-start justify-between gap-2">
+                <div className="sully-ui-head mb-3 flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                        <div className="text-sm font-bold text-slate-800">装扮 · {globalScope ? '所有聊天' : charName}</div>
-                        <div className="mt-0.5 text-[10px] leading-relaxed text-slate-400">{TAB_HINTS[tab]}</div>
+                        <div className="sully-ui-title text-sm font-bold text-slate-800">装扮 · {globalScope ? '所有聊天' : charName}</div>
+                        <div className="sully-ui-hint mt-0.5 text-[10px] leading-relaxed text-slate-400">{TAB_HINTS[tab]}</div>
                     </div>
-                    <button onClick={onClose} className="shrink-0 px-2 text-xl leading-none text-slate-400 hover:text-slate-600">{'×'}</button>
+                    <button onClick={onClose} className="sully-ui-close shrink-0 px-2 text-xl leading-none text-slate-400 hover:text-slate-600">{'×'}</button>
                 </div>
 
                 {/* 作用域：先分清「只动这个角色」还是「动所有私聊的打底」——这是聊天装扮里
@@ -152,8 +152,8 @@ const ChatDecorSheet: React.FC<Props> = ({
                                 key={scope}
                                 onClick={() => onChangeTab(scope === 'global' ? 'global' : 'fine-tune')}
                                 aria-pressed={active}
-                                className={`flex-1 rounded-xl py-1.5 text-[11px] font-bold transition-all active:scale-[0.98] ${
-                                    active ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400'
+                                className={`sully-ui-tab flex-1 rounded-xl py-1.5 text-[11px] font-bold transition-all active:scale-[0.98] ${
+                                    active ? 'sully-ui-tab-on bg-white text-slate-800 shadow-sm' : 'text-slate-400'
                                 }`}
                             >
                                 {label}

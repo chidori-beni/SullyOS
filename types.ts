@@ -73,6 +73,7 @@ export type ScheduleCardPresetId =
   | 'original'
   | 'cream'
   | 'plush'
+  | 'mono'
   | 'sakura'
   | 'mint'
   | 'twilight'
@@ -225,6 +226,11 @@ export interface OSTheme {
   chatCardCustomCss?: string;
   /** 卡片 CSS 预设（可保存 / 重命名 / 删除 / 切换），跟着主题一起备份导出。 */
   chatCardCssPresets?: ChatCardCssPreset[];
+  /** 全局自定义 CSS：整机的弹窗 / 抽屉 / 设置框，作用于 .sully-ui-* 钩子。
+   *  注入点在 PhoneShell（常驻），所以离开聊天页也生效。名录见 utils/globalCss.ts。 */
+  globalCustomCss?: string;
+  globalCustomCssPresets?: ChatCardCssPreset[];
+  globalCustomCssPresetId?: string;
   /** 当前套用的卡片 CSS 预设 id；手改 CSS 后即失效（置空），避免「显示某预设、内容却已被改过」。 */
   chatCardCssPresetId?: string;
   /** 全局默认「白框提示音」：某角色未单独设提示音时回落到这里。src 同角色版（内置 key / 音频直链 / data:audio）。 */

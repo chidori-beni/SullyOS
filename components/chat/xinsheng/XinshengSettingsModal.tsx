@@ -160,7 +160,7 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 z-[120] flex flex-col animate-fade-in">
+        <div className="sully-ui-overlay fixed inset-0 z-[120] flex flex-col animate-fade-in">
             <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
 
             <div className="relative mt-auto bg-white rounded-t-[2rem] shadow-2xl flex flex-col max-h-[88vh]">

@@ -228,7 +228,7 @@ const defaults = {
     chatShowVoiceButton: true,
 } as const;
 
-const groupClass = 'rounded-3xl border border-slate-100 bg-white p-5 shadow-sm';
+const groupClass = 'sully-ui-card rounded-3xl border border-slate-100 bg-white p-5 shadow-sm';
 
 
 const choices = {
@@ -816,7 +816,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
 
             <section className={groupClass}>
                 <div className="mb-3">
-                    <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400">全局默认提示音</h2>
+                    <h2 className="sully-ui-label text-sm font-bold uppercase tracking-widest text-slate-400">全局默认提示音</h2>
                     <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
                         某角色没单独设提示音时，收到 ta 的新消息就用这里的默认音。角色自己在「＋」→「装扮」→「提示音」里设的会盖过全局。
                     </p>
@@ -831,7 +831,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
 
             <section className={groupClass}>
                 <div className="mb-3">
-                    <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400">内部消息横幅 · CSS</h2>
+                    <h2 className="sully-ui-label text-sm font-bold uppercase tracking-widest text-slate-400">内部消息横幅 · CSS</h2>
                     <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
                         只有 APP 在前台、但当前不在聊天页时使用。可以直接导入糯叽机的通知栏 CSS，保存后实时生效；前台聊天页不显示横幅，后台系统通知也不受这里影响。
                     </p>
@@ -846,7 +846,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                 钩子，深色卡丢进浅色聊天只能干瞪眼。现在统一一段 CSS 管全部，靠 data-card 分辨。 */}
             <section className={groupClass}>
                 <div className="mb-3">
-                    <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400">卡片 · CSS</h2>
+                    <h2 className="sully-ui-label text-sm font-bold uppercase tracking-widest text-slate-400">卡片 · CSS</h2>
                     <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
                         聊天里各种卡片的美化：彼方动态、通话小结、未接来电、日程邀约、音乐、小红书、日记……
                         一段 CSS 管全部，靠 <code className="rounded bg-slate-100 px-1 text-slate-500">data-card</code> 分辨是哪张。
@@ -872,7 +872,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
             <section className={groupClass}>
                 <div className="mb-3 flex items-start justify-between gap-2">
                     <div>
-                        <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400">进阶装扮 · 去哪儿改什么</h2>
+                        <h2 className="sully-ui-label text-sm font-bold uppercase tracking-widest text-slate-400">进阶装扮 · 去哪儿改什么</h2>
                         <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
                             这一页管<b>全局</b>的整体壳子和细节微调；某个角色的单独装扮全在 ta 聊天里的「＋」→「装扮」。不知道谁生效？点右边「?」。
                         </p>
@@ -946,7 +946,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
 
             <section className={groupClass}>
                 <div className="mb-3">
-                    <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400">白框自定义 (CSS)</h2>
+                    <h2 className="sully-ui-label text-sm font-bold uppercase tracking-widest text-slate-400">白框自定义 (CSS)</h2>
                     <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
                         聊天白框美化现在按「单个角色」管理：进该角色聊天 →「＋」→「装扮」→「白框」里设置、预览、存预设。
                         如果某个角色的 CSS 写坏了导致聊天界面异常、连设置都打不开，点下面一键还原全部即可恢复。

@@ -21,6 +21,7 @@ import AppIconEditor from '../components/appearance/AppIconEditor';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
+import GlobalCssEditor from '../components/appearance/GlobalCssEditor';
 
 const CustomIconImage: React.FC<{ value: string; alt: string; preserveOutline?: boolean }> = ({ value, alt, preserveOutline = false }) => {
     const url = useBlobRefUrl(value);
@@ -1686,6 +1687,29 @@ const Appearance: React.FC = () => {
                     </div>
                 </section>
                 </AppearanceGroup>
+
+                {/* 全局弹窗 CSS：整机的弹窗 / 抽屉 / 设置框。注入点在 PhoneShell，
+                    所以它跟聊天白框那份不一样——离开聊天页也生效。 */}
+                <section className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100">
+                    <div className="mb-3">
+                        <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400">全局弹窗 · CSS</h2>
+                        <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
+                            整机的弹窗、抽屉、设置框、顶部提示统一上妆，作用于 <code>.sully-ui-*</code> 钩子。
+                            和聊天白框那份分开：这份离开聊天页也生效。
+                        </p>
+                    </div>
+                    <GlobalCssEditor
+                        value={theme.globalCustomCss || ''}
+                        presets={theme.globalCustomCssPresets || []}
+                        activePresetId={theme.globalCustomCssPresetId}
+                        onPatch={({ css, presets, presetId }) => updateTheme({
+                            globalCustomCss: css,
+                            globalCustomCssPresets: presets,
+                            globalCustomCssPresetId: presetId,
+                        })}
+                        onNotify={(message, kind) => addToast(message, kind)}
+                    />
+                </section>
 
                 {/* 聊天装扮已经搬进聊天里的「装扮」抽屉——它要调的东西就是聊天本身，
                     放在这里只能对着一个假的迷你预览调。这一页从此只管主页，留个路标即可。 */}
