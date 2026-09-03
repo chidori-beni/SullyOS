@@ -62,28 +62,50 @@ const CSS_TEMPLATES = [
     },
 ];
 
-const AI_PROMPT = `你是 CSS 设计师，请为 SullyOS 的日程卡片写一段自定义 CSS。
-只能使用以 .sully-schedule-* 开头的选择器；覆盖内联样式时使用 !important。
+// 这份提示词是「不用再让 AI 读一遍仓库」的入口：结构、钩子、坑和硬性约束都写在里面，
+// 复制出去配一张桌面截图就能让任何 AI 直接产出可用的 CSS。改动卡片结构时记得同步这里。
+const AI_PROMPT = `你是 CSS 设计师，请为 SullyOS（一个手机 OS 风格的 React 应用）的「日程卡片」写一段自定义 CSS。
+我会把你输出的 CSS 原样粘进应用里的输入框，所以必须严格守下面的规则。
 
-可用钩子：
-- .sully-schedule-root：所有日程卡根节点
-- .sully-schedule-card：完整日程卡
-- .sully-schedule-widget：桌面日程卡
-- .sully-schedule-header：卡片头部
-- .sully-schedule-cover：角色看板图
-- .sully-schedule-list：日程列表
-- .sully-schedule-item：单条日程
-- .sully-schedule-item-current：当前日程
-- .sully-schedule-time：时间
-- .sully-schedule-activity：活动标题
-- .sully-schedule-description：活动描述
-- .sully-schedule-timeline：底部时间线
-- .sully-schedule-settings：右上角设置按钮
+【卡片长什么样】
+同一套 CSS 会同时作用在三种卡上：
+1. 桌面宽卡（.sully-schedule-widget）：一行小标题 DAILY SCHEDULE + 时间，中间是 72px 角色头像、
+   NOW/IDLE 徽标、当前活动标题和一行描述，底部是一排时间点组成的时间线。
+2. 桌面方图卡（同样是 .sully-schedule-widget，正方形）：角色图铺满做底，文字压在下方。
+3. 完整日程卡（.sully-schedule-card）：头部大标题 Schedule + 日期，中间一张角色看板图，
+   下面是一整天的日程列表，每条一格。
 
-可以使用这些变量：
---schedule-bg、--schedule-text、--schedule-accent、--schedule-accent-soft、--schedule-base、--schedule-line。
+【硬性规则】
+1. 每一条选择器都必须以 .sully-schedule- 开头，否则应用会判定越界并拒绝保存。
+   写子元素要用后代选择器，例如 .sully-schedule-header span{...}，不能写 .sully-schedule-root ~ div 之外的裸选择器。
+2. 卡片大量颜色是 JS 内联算出来的，普通规则盖不住，凡是改颜色/背景/边框都要加 !important。
+3. 不要用 backdrop-filter、blur()、大面积 filter、无限 animation。手机上会持续重绘、机身发烫。
+   要质感请用静态渐变、点阵背景（repeating/radial-gradient）、细边框和淡阴影。
+4. 直接输出完整 CSS，不要 markdown 代码围栏，不要解释文字。
 
-请直接输出完整 CSS，不要写解释。我想要的风格是：______`;
+【可用钩子】
+.sully-schedule-root 所有日程卡根节点 / .sully-schedule-card 完整卡 / .sully-schedule-widget 桌面卡 /
+.sully-schedule-header 头部 / .sully-schedule-cover 看板图 / .sully-schedule-list 列表 /
+.sully-schedule-item 单条日程 / .sully-schedule-item-current 当前那条 / .sully-schedule-time 时间 /
+.sully-schedule-activity 活动标题 / .sully-schedule-description 描述 / .sully-schedule-timeline 底部时间线 /
+.sully-schedule-settings 右上角齿轮。
+
+【可用变量】（在 .sully-schedule-root 上重新定义，能顺带影响一部分子元素）
+--schedule-bg 背景、--schedule-base 纯色底、--schedule-text 文字、--schedule-accent 强调色、
+--schedule-accent-soft 强调色淡版、--schedule-line 描边。
+
+【没有专用钩子的元素怎么定位】
+这些节点没给 class 钩子，但带 Tailwind 类名，可以用「作用域类 + 属性选择器」抓：
+- 角色头像框：.sully-schedule-widget div[class*="rounded-2xl"]
+- NOW / IDLE 徽标：.sully-schedule-widget span[class*="rounded-full"]
+- 右侧展开按钮：.sully-schedule-widget div[class*="w-8"]
+- 头部那条分隔线：.sully-schedule-header div[class*="h-px"]
+- 角落光晕 / 左侧竖条 / 模糊底图（想去掉就 display:none）：
+  .sully-schedule-root div[class*="-top-12"]、div[class*="w-[3px]"]、div[class*="opacity-25"]
+
+【我要的风格】
+（用几句话描述，或者直接附一张桌面截图，例如：奶白色底、暖棕色字、圆角、细描边、
+小圆点纹理、日系毛绒玩具风，克制不花哨）：______`;
 
 function defaultDraft(current?: ScheduleCardAppearance): ScheduleCardAppearance {
     return {
@@ -407,7 +429,7 @@ const ScheduleAppearanceButton: React.FC<{ compact?: boolean }> = ({ compact = f
                     <section>
                         <div className="mb-3">
                             <h3 className="text-sm font-bold">我的预设</h3>
-                            <p className="text-[11px] text-slate-400 mt-1">配色和 CSS 一起存成一套，点一下即可切换。</p>
+                            <p className="text-[11px] text-slate-400 mt-1">配色和 CSS 一起存成一套；存好后点名字切换，右侧可重命名 / 删除。</p>
                         </div>
                         <div className="flex gap-2">
                             <input
@@ -516,7 +538,8 @@ const ScheduleAppearanceButton: React.FC<{ compact?: boolean }> = ({ compact = f
                             </div>
                         ) : (
                             <p className="mt-3 text-[11px] text-slate-400">
-                                还没有预设。调好一套样子后取个名字存下来，以后换季 / 换主题就能一键切回。
+                                还没有预设。调好一套样子后在上面取个名字点「保存为预设」，
+                                这里就会出现一行，点名字一键切换，右侧可以重命名或删除。
                             </p>
                         )}
                     </section>
