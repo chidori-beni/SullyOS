@@ -28,6 +28,7 @@ import { getLocalDateKey } from './localDate';
 import { nowInTimeZone } from './timezone';
 import { buildScheduleInjection, resolveScheduleSlots, type RenderableSchedule } from './scheduleInjection';
 import { pickSongFromPool, slotIsListening } from './charMusicSchedule';
+import { resolveScheduleSleepState, type ScheduleSleepState } from './scheduleSleep';
 import type { AmsgTzRef } from './amsgFirePack';
 
 /** 随 fire_pack 带给 worker 的原始素材。到点渲染成 AMSG_SLOT_SCENE 那一段。 */
@@ -89,6 +90,24 @@ export const resolveFireSceneSong = (
     getLocalDateKey(wallNow),
     scene.charId,
   );
+};
+
+/**
+ * 这次触发时角色是不是正睡在日程里的一觉中（不在睡 / 没日程 / 跨天作废 → null）。
+ *
+ * 给自然主动当闸用：它以前完全看不见日程，白天补觉的角色照样每十几分钟被问一次
+ * 要不要联系，于是睡两个小时就爬起来发消息。日期门槛和时区折算跟
+ * renderFireSceneBlock 共用同一套口径——一份表只管一天，跨天的整段不算数。
+ */
+export const resolveFireSceneSleep = (
+  scene: AmsgFireScene | null,
+  nowMs: number,
+  tz: AmsgTzRef,
+): ScheduleSleepState | null => {
+  if (!scene?.schedule?.slots?.length) return null;
+  const wallNow = nowInTimeZone(tz.tzId, new Date(nowMs));
+  if (getLocalDateKey(wallNow) !== scene.dateKey) return null;
+  return resolveScheduleSleepState(scene.schedule.slots, wallNow);
 };
 
 /**

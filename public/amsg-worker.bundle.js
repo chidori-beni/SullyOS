@@ -7762,6 +7762,30 @@ var isScheduleMinuteInInterval = (minuteOfDay, interval) => {
   return minute >= interval.start || minute < interval.end - 24 * 60;
 };
 
+// utils/scheduleSleep.ts
+var SLEEP_BUSY_LEVEL = "sleep";
+var isSleepSlot = (slot) => slot?.busyLevel === SLEEP_BUSY_LEVEL;
+var resolveScheduleSleepState = (slots, now) => {
+  if (!slots?.length) return null;
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  for (let index = 0; index < slots.length; index += 1) {
+    const slot = slots[index];
+    const nextStart = index < slots.length - 1 ? slots[index + 1]?.startTime : void 0;
+    const interval = getScheduleSlotInterval(slot, nextStart);
+    if (!interval || !isScheduleMinuteInInterval(currentMinutes, interval)) continue;
+    if (!isSleepSlot(slot)) return null;
+    const minutes = interval.end > 24 * 60 && currentMinutes < interval.end - 24 * 60 ? currentMinutes + 24 * 60 : currentMinutes;
+    const total = interval.end - interval.start;
+    const slept = Math.max(0, Math.min(total, minutes - interval.start));
+    return {
+      sleptMinutes: slept,
+      remainingMinutes: Math.max(0, total - slept),
+      totalMinutes: total
+    };
+  }
+  return null;
+};
+
 // utils/scheduleInjection.ts
 function getFlowNarrativeKey(hour) {
   if (hour < 12) return "morning";
@@ -7848,6 +7872,16 @@ ${rows.join("\n")}
 `;
   }
   out += slotHeader;
+  const asleep = isSleepSlot(currentSlot);
+  if (asleep) {
+    const sleepState = resolveScheduleSleepState(schedule.slots, now);
+    out += "\u4F60\u73B0\u5728\u786E\u5B9E\u7761\u7740\u4E86\u3002\u9664\u975E\u6709\u628A\u4EBA\u5F04\u9192\u7684\u5177\u4F53\u539F\u56E0\uFF08\u5BF9\u65B9\u521A\u53D1\u6765\u6D88\u606F\u6216\u6765\u7535\u3001\u95F9\u949F\u3001\u5669\u68A6\u3001\u8EAB\u4F53\u4E0D\u9002\u3001\u5916\u9762\u7684\u52A8\u9759\u7B49\uFF09\uFF0C\u4E0D\u8981\u51ED\u7A7A\u5199\u6210\u81EA\u5DF1\u5DF2\u7ECF\u9192\u4E86\uFF0C\u4E5F\u4E0D\u8981\u628A\u8FD9\u4E00\u89C9\u8BF4\u6210\u5DF2\u7ECF\u7761\u9971\u3002\n";
+    if (withClock && sleepState) {
+      out += `\u8FD9\u4E00\u89C9\u5230\u73B0\u5728\u53EA\u7761\u4E86\u7EA6 ${Math.round(sleepState.sleptMinutes)} \u5206\u949F\uFF0C\u6309\u8BA1\u5212\u8FD8\u8981\u7761\u7EA6 ${Math.round(sleepState.remainingMinutes)} \u5206\u949F\uFF1B\u6210\u5E74\u4EBA\u8865\u89C9\u4E00\u6B21\u901A\u5E38\u8981\u51E0\u4E2A\u5C0F\u65F6\uFF0C\u7761\u4E00\u4E24\u4E2A\u5C0F\u65F6\u5C31\u81EA\u5DF1\u722C\u8D77\u6765\u4E0D\u662F\u6B63\u5E38\u4F5C\u606F\u3002
+`;
+    }
+    out += "\u771F\u88AB\u5435\u9192\u4E86\u5C31\u7167\u5B9E\u5199\u6E05\u662F\u88AB\u4EC0\u4E48\u5435\u9192\u7684\uFF0C\u5E26\u7740\u521A\u9192\u7684\u8FF7\u7CCA\u548C\u56F0\u610F\u8BF4\u8BDD\uFF0C\u5E76\u4E14\u591A\u534A\u5F88\u5FEB\u53C8\u7761\u56DE\u53BB\u3002\n";
+  }
   if (currentSlot) {
     out += "\u672C\u8F6E\u73B0\u5B9E\u72B6\u6001\u4EE5\u5F53\u524D\u65F6\u6BB5\u4E3A\u51C6\uFF1A\u5386\u53F2\u804A\u5929\u91CC\u7684\u6D3B\u52A8\u53EA\u4EE3\u8868\u5F53\u65F6\uFF1B\u5982\u679C\u5386\u53F2\u53D9\u4E8B\u4E0E\u5F53\u524D\u65F6\u6BB5\u51B2\u7A81\uFF0C\u4E0D\u8981\u628A\u65E7\u6D3B\u52A8\u7EE7\u7EED\u8BF4\u6210\u6B63\u5728\u53D1\u751F\u6216\u521A\u521A\u7ED3\u675F\u3002\u5B9E\u9645\u5B89\u6392\u53D1\u751F\u53D8\u5316\u65F6\uFF0C\u5148\u6309\u771F\u5B9E\u60C5\u51B5\u6539\u65E5\u7A0B\u518D\u7EE7\u7EED\u627F\u63A5\u3002\n";
     out += "\u5F53\u524D\u65F6\u6BB5\u7684\u63CF\u8FF0\u662F\u8BA1\u5212\u4E0E\u76EE\u6807\uFF0C\u4E0D\u662F\u5DF2\u7ECF\u5B8C\u6210\u7684\u7ED3\u679C\uFF1B\u6D3B\u52A8\u5904\u4E8E\u201C\u8FDB\u884C\u4E2D\u201D\u65F6\uFF0C\u9664\u975E\u804A\u5929\u4E2D\u6709\u660E\u786E\u4E8B\u5B9E\u8BC1\u660E\u63D0\u524D\u7ED3\u675F\uFF0C\u4E0D\u8981\u58F0\u79F0\u6574\u6BB5\u6D3B\u52A8\u5DF2\u7ECF\u505A\u5B8C\uFF0C\u4E5F\u4E0D\u8981\u628A\u521A\u5F00\u59CB\u51E0\u5206\u949F\u5199\u6210\u5B8C\u6210\u4E86\u957F\u8DDD\u79BB\u8BAD\u7EC3\u3002\n";
@@ -7857,8 +7891,9 @@ ${rows.join("\n")}
   }
   const changeTarget = nextSlot ?? currentSlot;
   if (options.includeChangeInstruction && withClock && changeTarget) {
+    const changeExample = asleep ? "\uFF08\u6BD4\u5982\u4E34\u65F6\u88AB\u53EB\u53BB\u5904\u7406\u522B\u7684\u4E8B\u3001\u8BA1\u5212\u91CC\u7684\u6D3B\u52A8\u53D6\u6D88\u4E86\uFF09" : "\uFF08\u6BD4\u5982\u8FD9\u4F1A\u513F\u8868\u4E0A\u5199\u7740\u7761\u89C9\u3001\u4F60\u5374\u9192\u7740\u5728\u8DDF\u5BF9\u65B9\u8BF4\u8BDD\uFF09";
     out += `
-\u65E5\u7A0B\u662F\u4F60\u65E9\u4E0A\u7ED9\u81EA\u5DF1\u6392\u7684\u8BA1\u5212\uFF0C\u4E0D\u662F\u5FC5\u987B\u5C65\u884C\u7684\u547D\u4EE4\u3002\u771F\u5B9E\u53D1\u751F\u7684\u4E8B\u8DDF\u5B83\u5BF9\u4E0D\u4E0A\u65F6\uFF08\u6BD4\u5982\u8FD9\u4F1A\u513F\u8868\u4E0A\u5199\u7740\u7761\u89C9\u3001\u4F60\u5374\u9192\u7740\u5728\u8DDF\u5BF9\u65B9\u8BF4\u8BDD\uFF09\uFF0C\u628A\u5B83\u6539\u6210\u4F60\u5B9E\u9645\u5728\u505A\u7684\u4E8B\u5C31\u597D\u3002
+\u65E5\u7A0B\u662F\u4F60\u65E9\u4E0A\u7ED9\u81EA\u5DF1\u6392\u7684\u8BA1\u5212\uFF0C\u4E0D\u662F\u5FC5\u987B\u5C65\u884C\u7684\u547D\u4EE4\u3002\u771F\u5B9E\u53D1\u751F\u7684\u4E8B\u8DDF\u5B83\u5BF9\u4E0D\u4E0A\u65F6${changeExample}\uFF0C\u628A\u5B83\u6539\u6210\u4F60\u5B9E\u9645\u5728\u505A\u7684\u4E8B\u5C31\u597D\u3002
 \u9700\u8981\u65F6\u5728\u56DE\u590D\u672B\u5C3E\u5355\u72EC\u8F93\u51FA\uFF1A[[ACTION:CHANGE_SCHEDULE | ${changeTarget.startTime} | \u53BB\u8D85\u5E02]]\uFF08\u65F6\u6BB5\u8981\u539F\u6837\u6284\u4E0A\u9762\u51FA\u73B0\u8FC7\u7684\u90A3\u51E0\u4E2A\uFF1B\u6B63\u5728\u8FDB\u884C\u7684\u8FD9\u4E00\u6761\u548C\u5B83\u4E4B\u540E\u7684\u90FD\u80FD\u6539\uFF0C\u5DF2\u7ECF\u8FC7\u53BB\u7684\u4E0D\u80FD\uFF09\u3002`;
   }
   out += "\n";
@@ -7919,6 +7954,12 @@ var resolveFireSceneSong = (scene, nowMs, tz) => {
     getLocalDateKey(wallNow),
     scene.charId
   );
+};
+var resolveFireSceneSleep = (scene, nowMs, tz) => {
+  if (!scene?.schedule?.slots?.length) return null;
+  const wallNow = nowInTimeZone(tz.tzId, new Date(nowMs));
+  if (getLocalDateKey(wallNow) !== scene.dateKey) return null;
+  return resolveScheduleSleepState(scene.schedule.slots, wallNow);
 };
 var renderFireSceneBlock = (scene, nowMs, tz, options) => {
   if (!scene?.schedule?.slots?.length) return "";
@@ -9349,6 +9390,14 @@ var buildNaturalReplyGuidance = (pendingUserMessageCount, random01, afterBusyAut
     prompt: lines.join("\n")
   };
 };
+var NATURAL_SLEEP_WAKE_SOON_MINUTES = 20;
+var NATURAL_SLEEP_MAX_DEFER_MINUTES = 240;
+var naturalSleepDeferMinutes = (remainingMinutes, random01) => {
+  const safeRandom = clamp(random01, 0, 0.999999);
+  const wakeAt = Math.max(0, remainingMinutes) - NATURAL_SLEEP_WAKE_SOON_MINUTES;
+  const jitter = 1 + Math.floor(safeRandom * 10);
+  return clamp(Math.round(wakeAt) + jitter, 1, NATURAL_SLEEP_MAX_DEFER_MINUTES);
+};
 var NATURAL_UNANSWERED_HARD_CAP = 20;
 var naturalUnansweredHardCap = (_intensity) => NATURAL_UNANSWERED_HARD_CAP;
 var NATURAL_UNANSWERED_PENALTY_PER_MSG = 0.08;
@@ -9384,6 +9433,19 @@ var decideNaturalProactive = (input) => {
   const distanceBoost = profile.longDistance ? 0.06 : 0;
   let score = silence * profile.weights.silence + (quiet ? 0 : 0.65) * profile.weights.timeOfDay + clamp(input.emotion ?? 0.25, 0, 1) * profile.weights.emotion + clamp(input.pendingTopic ?? 0.15, 0, 1) * profile.weights.pendingTopic + spontaneous * profile.weights.spontaneousThought + relationshipBoost + distanceBoost;
   const reasons = [`\u6C89\u9ED8 ${hoursSilent.toFixed(1)} \u5C0F\u65F6`];
+  if (input.sleep && input.sleep.remainingMinutes > NATURAL_SLEEP_WAKE_SOON_MINUTES) {
+    const sleptH = (input.sleep.sleptMinutes / 60).toFixed(1);
+    const leftH = (input.sleep.remainingMinutes / 60).toFixed(1);
+    reasons.push(`\u65E5\u7A0B\u91CC\u6B63\u5728\u7761\u89C9\uFF08\u5DF2\u7761\u7EA6 ${sleptH} \u5C0F\u65F6\uFF0C\u8FD8\u5269\u7EA6 ${leftH} \u5C0F\u65F6\uFF09`);
+    return {
+      shouldSend: false,
+      asleep: true,
+      score: 0,
+      threshold: clamp(profile.threshold, 0.25, 0.9),
+      nextCheckMinutes: naturalSleepDeferMinutes(input.sleep.remainingMinutes, input.random01),
+      reasons
+    };
+  }
   if (relationshipBoost > 0) reasons.push(profile.relationship === "romantic" ? "\u4EB2\u5BC6\u5173\u7CFB\u52A0\u6743" : "\u4EB2\u8FD1\u5173\u7CFB\u52A0\u6743");
   if (distanceBoost > 0) reasons.push("\u5F02\u5730/\u624B\u673A\u8054\u7CFB\u52A0\u6743");
   if (quiet) {
@@ -9413,7 +9475,8 @@ var decideNaturalProactive = (input) => {
     score,
     threshold,
     nextCheckMinutes: naturalCheckWindowMinutes(input.intensity, input.random01),
-    reasons
+    reasons,
+    asleep: false
   };
 };
 
@@ -14674,7 +14737,11 @@ var amsgHooks = {
         bias: natural.bias ?? 0,
         tzId: pack.tzId,
         pendingTopic: pack.naturalSignals?.pendingTopic,
-        emotion: pack.naturalSignals?.emotion
+        emotion: pack.naturalSignals?.emotion,
+        // 日程里此刻是不是正睡着。自然主动以前完全看不见这件事：表上写着白天补觉，
+        // 它照旧每十几分钟考虑一次要不要联系，角色睡两个小时就爬起来发消息。
+        // 睡着时不发，并把下一次考虑直接排到快醒的时候（见 decideNaturalProactive）。
+        sleep: resolveFireSceneSleep(pack.scene, ctx.now.getTime(), { tzId: pack.tzId })
       });
       const nextAt = nextNaturalCheckAt(occurrenceMs, ctx.now.getTime(), decision.nextCheckMinutes);
       const nextUuid = `natural-${(seed >>> 0).toString(16).padStart(8, "0")}-${charId}-${nextAt}`;
@@ -14750,7 +14817,7 @@ var amsgHooks = {
         return { skip: true };
       }
       if (!decision.shouldSend) {
-        await noteCheck(false, "low-score");
+        await noteCheck(false, decision.asleep ? "asleep" : "low-score");
         return { skip: true };
       }
       await noteCheck(true, null);

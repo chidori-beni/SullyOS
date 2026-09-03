@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { renderFireSceneBlock, resolveFireSceneSong, type AmsgFireScene } from './amsgFireScene';
+import { renderFireSceneBlock, resolveFireSceneSleep, resolveFireSceneSong, type AmsgFireScene } from './amsgFireScene';
 import type { RenderableSchedule } from './scheduleInjection';
 
 // 回归守卫：角色的「当前时段」和由它推出来的「此刻在听的歌」以前是跟着角色设定一起
@@ -224,3 +224,37 @@ describe('renderFireSceneBlock — 主动消息也教改日程', () => {
     });
 });
 
+
+describe('resolveFireSceneSleep — 到点算「他这会儿是不是在睡」', () => {
+    // 自然主动以前只看画像里猜出来的 quietHours，看不见角色今天真正的作息表。
+    // 白天补觉的角色照旧每十几分钟被问一次要不要联系，睡两个小时就爬起来发消息。
+    const napSchedule: RenderableSchedule = {
+        slots: [
+            { startTime: '04:00', endTime: '06:00', activity: '晨跑', busyLevel: 'busy' },
+            { startTime: '06:00', endTime: '13:30', activity: '强行补觉', busyLevel: 'sleep' },
+            { startTime: '13:30', activity: '赛道长测', busyLevel: 'busy' },
+        ],
+    };
+    const napScene: AmsgFireScene = { ...scene, schedule: napSchedule };
+
+    it('落在睡眠时段里 → 算出已睡与剩余', () => {
+        expect(resolveFireSceneSleep(napScene, shanghaiAt(8, 4), { tzId: 'Asia/Shanghai' }))
+            .toEqual({ sleptMinutes: 124, remainingMinutes: 326, totalMinutes: 450 });
+    });
+
+    it('醒着的时段、没有日程都返回 null', () => {
+        expect(resolveFireSceneSleep(napScene, shanghaiAt(14), { tzId: 'Asia/Shanghai' })).toBeNull();
+        expect(resolveFireSceneSleep(null, shanghaiAt(8), { tzId: 'Asia/Shanghai' })).toBeNull();
+    });
+
+    it('跨天的包整段作废，跟「此刻在听」同一道日期门槛', () => {
+        expect(resolveFireSceneSleep(napScene, shanghaiAt(8) + 86_400_000, { tzId: 'Asia/Shanghai' })).toBeNull();
+    });
+
+    it('按角色时区判定：同一时刻在东京已经不算这一觉了', () => {
+        // 上海 05:30（还没开始睡）= 东京 06:30（已经睡了半小时）。
+        expect(resolveFireSceneSleep(napScene, shanghaiAt(5, 30), { tzId: 'Asia/Shanghai' })).toBeNull();
+        expect(resolveFireSceneSleep(napScene, shanghaiAt(5, 30), { tzId: 'Asia/Tokyo' }))
+            .toEqual({ sleptMinutes: 30, remainingMinutes: 420, totalMinutes: 450 });
+    });
+});

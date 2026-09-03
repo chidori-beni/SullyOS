@@ -153,3 +153,42 @@ describe('意识流档位', () => {
         expect(getFlowNarrativeKey(21)).toBe('evening');
     });
 });
+
+describe('睡眠时段不许凭空醒来', () => {
+    // 主动消息到点触发时，「日程可以改」那句话原本拿睡觉当例句，等于直接教角色
+    // 把补觉改成醒着；用户实测里角色 06:00 补觉、08:04 就爬起来发消息。
+    const napDay: RenderableSchedule = {
+        slots: [
+            { startTime: '04:00', endTime: '06:00', activity: '晨跑', busyLevel: 'busy' },
+            { startTime: '06:00', endTime: '13:30', activity: '强行补觉', busyLevel: 'sleep' },
+            { startTime: '13:30', activity: '赛道长测', busyLevel: 'busy' },
+        ],
+    };
+    const nap = (hour: number, minute = 0) => new Date(2026, 8, 3, hour, minute);
+
+    it('正睡着时给出硬事实：睡了多久、还要睡多久、别凭空说自己醒了', () => {
+        const out = buildScheduleInjection(napDay, undefined, nap(8, 4), { includeChangeInstruction: true });
+        expect(out).toContain('你现在确实睡着了');
+        expect(out).toContain('124 分钟');
+        expect(out).toContain('326 分钟');
+        expect(out).toContain('不是正常作息');
+    });
+
+    it('睡着时改日程的例句不再拿「表上写着睡觉、你却醒着」当范例', () => {
+        const out = buildScheduleInjection(napDay, undefined, nap(8, 4), { includeChangeInstruction: true });
+        expect(out).toContain('CHANGE_SCHEDULE');
+        expect(out).not.toContain('你却醒着在跟对方说话');
+    });
+
+    it('醒着的时段完全不受影响，例句照旧', () => {
+        const out = buildScheduleInjection(napDay, undefined, nap(14), { includeChangeInstruction: true });
+        expect(out).not.toContain('你现在确实睡着了');
+        expect(out).toContain('你却醒着在跟对方说话');
+    });
+
+    it('关掉时间感知时不报具体分钟，但「别凭空醒来」这句照给', () => {
+        const out = buildScheduleInjection(napDay, undefined, nap(8, 4), { includeClock: false });
+        expect(out).toContain('你现在确实睡着了');
+        expect(out).not.toContain('124 分钟');
+    });
+});

@@ -20,11 +20,13 @@ import {
   createSelfLog,
   DEFAULT_MAX_UNANSWERED_SENDS,
   describeLastSkip,
+  describeNaturalLastCheck,
   formatFireTimeFull,
   formatFireTimeShort,
   formatTimeSinceUser,
   parseFirePack,
   parseLastSkip,
+  parseNaturalLastCheck,
   parseSelfLog,
   packStateValue,
   reconcileSelfLogWithPack,
@@ -741,7 +743,7 @@ describe('fire_pack 版本对不上时说清该做什么', () => {
 // 开发期规矩：版本对不上整包打回，不做任何形状兼容。v6 的包被放行的话，标了即时对话
 // 的任务会拿不到 chat 段——而那时 worker 已经走过版本门，只能一路跑到「用主动消息模板
 // 答用户刚说的话」，出来的东西驴唇不对马嘴且没有报错。
-describe('fire_pack v8 的 chat 段与线下 presence', () => {
+describe('fire_pack v9 的 chat 段与线下 presence', () => {
   const base: AmsgFirePack = {
     v: FIRE_PACK_VERSION, template: 'x', lastUserMessageAt: null,
     tzId: 'Asia/Shanghai', userTzId: 'Asia/Shanghai', targetName: '小明',
@@ -749,8 +751,8 @@ describe('fire_pack v8 的 chat 段与线下 presence', () => {
   };
   const chat = { messages: [{ role: 'user', content: '在吗' }], builtAt: 1_700_000_000_000 };
 
-  it('当前版本号是 7（升版要前端和 worker 一起动）', () => {
-    expect(FIRE_PACK_VERSION).toBe(8);
+  it('当前版本号是 9（升版要前端和 worker 一起动）', () => {
+    expect(FIRE_PACK_VERSION).toBe(9);
   });
 
   it('v6 的包直接拒（不做旧格式兼容）', () => {
@@ -860,5 +862,37 @@ describe('renderFirePack — 把 includeClock 透传给场景块', () => {
     const out = renderFirePack(scenePack, at, '指令', { includeClock: false });
     expect(out).toContain('你正在睡觉');
     expect(out).not.toContain('22:00');
+  });
+});
+
+describe('自然主动记账 · 睡觉是独立的一档', () => {
+  // 「他这会儿在睡觉」和「他想了想不太想打扰你」在面板上必须分得开：
+  // 前者说明系统正常工作、只是人在睡；后者才是分数不够。混成一句的话，
+  // 用户看到的永远是「这次不太想打扰」，根本看不出角色的作息被尊重了没有。
+  const at = (ms: number) => new Date(ms).toISOString();
+  const base = {
+    v: 1 as const,
+    checkedAt: 1_700_000_000_000,
+    score: 0,
+    threshold: 0.5,
+    sent: false,
+    reasons: ['沉默 2.0 小时', '日程里正在睡觉（已睡约 2.0 小时，还剩约 5.4 小时）'],
+    nextCheckAt: 1_700_000_000_000 + 240 * 60_000,
+  };
+
+  it('asleep 能被解析回来（旧版 worker 写的其它原因不受影响）', () => {
+    expect(parseNaturalLastCheck(JSON.stringify({ ...base, skipReason: 'asleep' }))?.skipReason)
+      .toBe('asleep');
+    expect(parseNaturalLastCheck(JSON.stringify({ ...base, skipReason: 'low-score' }))?.skipReason)
+      .toBe('low-score');
+    expect(parseNaturalLastCheck(JSON.stringify({ ...base, skipReason: '瞎写的' }))).toBeNull();
+  });
+
+  it('面板文案单独说「在睡觉」，不跟「分数不够」共用一句', () => {
+    const asleep = describeNaturalLastCheck({ ...base, skipReason: 'asleep' }, at);
+    expect(asleep).toContain('在睡觉');
+    expect(asleep).toContain('下次');
+    const lowScore = describeNaturalLastCheck({ ...base, skipReason: 'low-score' }, at);
+    expect(lowScore).not.toContain('在睡觉');
   });
 });

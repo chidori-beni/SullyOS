@@ -72,7 +72,7 @@ import {
   resolveMaxUnansweredSends,
   unpackStateValue,
 } from '../../../utils/amsgFirePack';
-import { resolveFireSceneSong } from '../../../utils/amsgFireScene';
+import { resolveFireSceneSleep, resolveFireSceneSong } from '../../../utils/amsgFireScene';
 import { shouldExpireFire } from '../../../utils/amsg2ExpireGuard';
 import { buildFireTaskListBlock, isPendingTask, MAX_ACTIVE_TASKS_PER_CHAR, shortTaskId } from '../../../utils/amsg2Tasks';
 import {
@@ -1827,6 +1827,10 @@ export const amsgHooks = {
         tzId: pack.tzId,
         pendingTopic: pack.naturalSignals?.pendingTopic,
         emotion: pack.naturalSignals?.emotion,
+        // 日程里此刻是不是正睡着。自然主动以前完全看不见这件事：表上写着白天补觉，
+        // 它照旧每十几分钟考虑一次要不要联系，角色睡两个小时就爬起来发消息。
+        // 睡着时不发，并把下一次考虑直接排到快醒的时候（见 decideNaturalProactive）。
+        sleep: resolveFireSceneSleep(pack.scene, ctx.now.getTime(), { tzId: pack.tzId }),
       });
       // Worker / cron 停摆后，不追赶已经错过的整条时间线；从真实当前时刻续排下一次。
       const nextAt = nextNaturalCheckAt(occurrenceMs, ctx.now.getTime(), decision.nextCheckMinutes);
@@ -1922,7 +1926,7 @@ export const amsgHooks = {
       // 分数不够是最常见、也最正常的一条路：安静地排下一次，不调用 LLM。它以前什么都
       // 不留，正是「角色忽然不说话了却查不出原因」的观察盲区——现在照实记一行。
       if (!decision.shouldSend) {
-        await noteCheck(false, 'low-score');
+        await noteCheck(false, decision.asleep ? 'asleep' : 'low-score');
         return { skip: true } as const;
       }
       await noteCheck(true, null);

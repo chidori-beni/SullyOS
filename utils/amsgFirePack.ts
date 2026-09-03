@@ -243,6 +243,7 @@ const NATURAL_SKIP_REASONS = [
   'unanswered-limit',
   'active-chat-presence',
   'active-date-presence',
+  'asleep',
 ] as const;
 
 export interface AmsgNaturalLastCheck {
@@ -259,6 +260,7 @@ export interface AmsgNaturalLastCheck {
    * unanswered-limit     连续未回复已到 20 条最终保险
    * active-chat-presence 到点时用户正在跟这个角色聊天/通话，让路
    * active-date-presence 到点时你们仍在进行线下见面
+   * asleep               到点时角色正睡在自己日程里的一觉中，下一次直接排到快醒时
    */
   skipReason: (typeof NATURAL_SKIP_REASONS)[number] | null;
   /** 参与算分的因素（人话），例如「沉默 6.3 小时」「已有 3 条未获回复」。 */
@@ -304,6 +306,8 @@ export const describeNaturalLastCheck = (
       return `${when} 那次让路了——当时你正在和 ta 说话${next}。`;
     case 'active-date-presence':
       return `${when} 没有发——你们当时还在线下见面${next}。`;
+    case 'asleep':
+      return `${when} 没有发——ta 当时在睡觉${next}。`;
     case 'unanswered-limit':
       return `${when} 收住了——连续 20 条没有收到你的回复，已到最终保险，回一句就会恢复。`;
     default:

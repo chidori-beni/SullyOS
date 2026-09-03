@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildFallbackNaturalProfile, buildNaturalReplyGuidance, decideNaturalProactive, enrichNaturalProfileForCharacter, naturalCheckWindowMinutes, naturalSilenceIntensity, naturalUnansweredHardCap, NATURAL_BATCH_HARD_CAP, NATURAL_PROACTIVE_TASK_INSTRUCTION, NATURAL_UNANSWERED_HARD_CAP, NATURAL_UNANSWERED_PENALTY_CAP, nextNaturalCheckAt } from './naturalProactive';
+import { buildFallbackNaturalProfile, buildNaturalReplyGuidance, decideNaturalProactive, enrichNaturalProfileForCharacter, naturalCheckWindowMinutes, naturalSilenceIntensity, naturalUnansweredHardCap, NATURAL_BATCH_HARD_CAP, NATURAL_PROACTIVE_TASK_INSTRUCTION, NATURAL_UNANSWERED_HARD_CAP, NATURAL_UNANSWERED_PENALTY_CAP, nextNaturalCheckAt, naturalSleepDeferMinutes, NATURAL_SLEEP_MAX_DEFER_MINUTES } from './naturalProactive';
 import type { CharacterProfile, NaturalProactiveProfile } from '../types';
 
 const profile: NaturalProactiveProfile = {
@@ -165,5 +165,45 @@ describe('自然主动决策', () => {
     expect(decide({ profile }).score + 0.15).toBeLessThanOrEqual(
       decide({ profile: enriched }).score,
     );
+  });
+});
+
+describe('自然主动 · 日程里正在睡觉', () => {
+  // 病根：决策只看画像里那段猜出来的 quietHours，完全看不见角色今天的作息表。
+  // 表上写着 06:00 补觉到 13:30，它照旧每十几分钟考虑一次，于是角色睡两个小时
+  // 就爬起来发消息（用户实测截图：06:00 补觉，08:04 和 09:12 连着说话）。
+  const sleeping = { sleptMinutes: 120, remainingMinutes: 330, totalMinutes: 450 };
+
+  it('睡着且离醒还远时一律不发，理由里写清睡了多久', () => {
+    // 沉默 8 小时、亲密画像，分数本来足够高。
+    const awake = decide();
+    expect(awake.shouldSend).toBe(true);
+
+    const asleep = decide({ sleep: sleeping });
+    expect(asleep.shouldSend).toBe(false);
+    expect(asleep.asleep).toBe(true);
+    expect(asleep.reasons.join('')).toContain('正在睡觉');
+    expect(asleep.reasons.join('')).toContain('2.0 小时');
+  });
+
+  it('下一次考虑直接排到快醒的时候，而不是十几分钟后再问一遍', () => {
+    const asleep = decide({ sleep: sleeping });
+    // 还剩 330 分钟 → 排到「快醒」那一刻附近（330-20 前后带一点抖动）。
+    expect(asleep.nextCheckMinutes).toBeGreaterThan(NATURAL_SLEEP_MAX_DEFER_MINUTES - 60);
+    expect(asleep.nextCheckMinutes).toBeLessThanOrEqual(NATURAL_SLEEP_MAX_DEFER_MINUTES);
+    // 日程可能已经过期或被改掉，所以再远也要在 4 小时内回来重新看一眼。
+    expect(naturalSleepDeferMinutes(24 * 60, 0.99)).toBe(NATURAL_SLEEP_MAX_DEFER_MINUTES);
+    expect(naturalSleepDeferMinutes(120, 0)).toBe(101);
+  });
+
+  it('快醒了就照常算分，「醒来第一件事就是找对方」不该被压住', () => {
+    const nearly = decide({ sleep: { sleptMinutes: 435, remainingMinutes: 15, totalMinutes: 450 } });
+    expect(nearly.asleep).toBe(false);
+    expect(nearly.shouldSend).toBe(true);
+  });
+
+  it('没有日程（不传 sleep）时行为跟以前完全一样', () => {
+    expect(decide({ sleep: null }).shouldSend).toBe(decide().shouldSend);
+    expect(decide().asleep).toBe(false);
   });
 });

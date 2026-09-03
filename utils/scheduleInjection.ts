@@ -11,6 +11,7 @@
 
 import type { DailySchedule, ScheduleSlot } from '../types';
 import { getScheduleSlotInterval, isScheduleMinuteInInterval, parseScheduleClockTime } from './scheduleClock';
+import { isSleepSlot, resolveScheduleSleepState } from './scheduleSleep';
 
 /**
  * 渲染真正会读到的那部分日程。
@@ -186,6 +187,22 @@ export const buildScheduleInjection = (
         out += `你今天的完整日程：\n${rows.join('\n')}\n`;
     }
     out += slotHeader;
+    const asleep = isSleepSlot(currentSlot);
+    if (asleep) {
+        // 睡着时最容易穿帮的不是「说错在做什么」，而是**凭空醒来**：主动消息到点触发，
+        // 角色顺着下面「日程可以改」那句话把补觉改成醒着，睡两个小时就爬起来发消息。
+        // 所以睡眠时段单独给一句硬事实：醒要有醒的理由，而且要说得出是被什么弄醒的。
+        const sleepState = resolveScheduleSleepState(schedule.slots, now);
+        out += '你现在确实睡着了。除非有把人弄醒的具体原因（对方刚发来消息或来电、闹钟、噩梦、'
+            + '身体不适、外面的动静等），不要凭空写成自己已经醒了，也不要把这一觉说成已经睡饱。\n';
+        if (withClock && sleepState) {
+            out += `这一觉到现在只睡了约 ${Math.round(sleepState.sleptMinutes)} 分钟，`
+                + `按计划还要睡约 ${Math.round(sleepState.remainingMinutes)} 分钟；`
+                + '成年人补觉一次通常要几个小时，睡一两个小时就自己爬起来不是正常作息。\n';
+        }
+        out += '真被吵醒了就照实写清是被什么吵醒的，带着刚醒的迷糊和困意说话，'
+            + '并且多半很快又睡回去。\n';
+    }
     if (currentSlot) {
         out += '本轮现实状态以当前时段为准：历史聊天里的活动只代表当时；如果历史叙事与当前时段冲突，'
             + '不要把旧活动继续说成正在发生或刚刚结束。实际安排发生变化时，先按真实情况改日程再继续承接。\n';
@@ -200,8 +217,13 @@ export const buildScheduleInjection = (
     // 最需要「我今晚不睡了」这个出口的时候。
     const changeTarget = nextSlot ?? currentSlot;
     if (options.includeChangeInstruction && withClock && changeTarget) {
+        // 例句要跟当前状态错开：正睡着的时候拿「表上写着睡觉、你却醒着」当例子，
+        // 等于直接教角色把这一觉改掉——那正是要防的事。
+        const changeExample = asleep
+            ? '（比如临时被叫去处理别的事、计划里的活动取消了）'
+            : '（比如这会儿表上写着睡觉、你却醒着在跟对方说话）';
         out += '\n日程是你早上给自己排的计划，不是必须履行的命令。真实发生的事跟它对不上时'
-            + '（比如这会儿表上写着睡觉、你却醒着在跟对方说话），把它改成你实际在做的事就好。\n'
+            + `${changeExample}，把它改成你实际在做的事就好。\n`
             + '需要时在回复末尾单独输出：'
             + `[[ACTION:CHANGE_SCHEDULE | ${changeTarget.startTime} | 去超市]]`
             + '（时段要原样抄上面出现过的那几个；正在进行的这一条和它之后的都能改，已经过去的不能）。';

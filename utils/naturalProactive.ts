@@ -7,6 +7,7 @@ import type {
   NaturalProactiveRelationship,
 } from '../types';
 import { safeFetchJson } from './safeApi';
+import type { ScheduleSleepState } from './scheduleSleep';
 
 export const NATURAL_PROACTIVE_SUBTYPE = 'natural-proactive';
 export const NATURAL_PROACTIVE_PROFILE_VERSION = 1 as const;
@@ -91,6 +92,13 @@ export interface NaturalProactiveDecisionInput {
   tzId: string;
   pendingTopic?: number;
   emotion?: number;
+  /**
+   * 角色此刻是不是正睡在日程里的一觉中（`resolveScheduleSleepState` 的结果）。
+   *
+   * 不传 = 没有日程、日程跨天作废、或者这条路根本读不到日程；那时行为跟以前完全一样，
+   * 只由画像里的 quietHours 兜着。
+   */
+  sleep?: ScheduleSleepState | null;
 }
 
 export interface NaturalProactiveDecision {
@@ -99,7 +107,37 @@ export interface NaturalProactiveDecision {
   threshold: number;
   nextCheckMinutes: number;
   reasons: string[];
+  /** 这次是因为「角色正睡着」被挡下的（面板要跟「分数不够」分开说）。 */
+  asleep: boolean;
 }
+
+/**
+ * 快醒了就不再压着：离这条睡眠日程结束还剩这么多分钟以内，照常算分。
+ *
+ * 留这个口子是因为「醒来第一件事就是找对方」本身很自然，而日程只精确到分钟级的计划，
+ * 差一刻钟醒不算穿帮。压着不放的话，角色永远只能在整点之后才开口。
+ */
+export const NATURAL_SLEEP_WAKE_SOON_MINUTES = 20;
+
+/**
+ * 睡着期间把下一次「要不要联系」直接排到快醒的时候，而不是照常十几分钟想一次。
+ *
+ * 上限 240 分钟是保险：这份日程可能已经过期、被用户改掉，或者角色中途真的被吵醒；
+ * 排太远的话，一份写错的睡眠时段能让角色整整半天不吭声，而且中间没有任何纠正机会。
+ */
+export const NATURAL_SLEEP_MAX_DEFER_MINUTES = 240;
+
+/** 睡着期间下一次重新考虑的间隔：默认排到快醒那一刻，最多不超过 4 小时。 */
+export const naturalSleepDeferMinutes = (
+  remainingMinutes: number,
+  random01: number,
+): number => {
+  const safeRandom = clamp(random01, 0, 0.999999);
+  const wakeAt = Math.max(0, remainingMinutes) - NATURAL_SLEEP_WAKE_SOON_MINUTES;
+  // 抖动只是避免同一批角色整点齐刷刷醒来一起发消息。
+  const jitter = 1 + Math.floor(safeRandom * 10);
+  return clamp(Math.round(wakeAt) + jitter, 1, NATURAL_SLEEP_MAX_DEFER_MINUTES);
+};
 
 /**
  * 自然主动在用户未回复期间的最终安全上限；不受 2.0 约定任务设置影响。
@@ -361,6 +399,28 @@ export const decideNaturalProactive = (input: NaturalProactiveDecisionInput): Na
     + relationshipBoost
     + distanceBoost;
   const reasons = [`沉默 ${hoursSilent.toFixed(1)} 小时`];
+  // 日程里正睡着：直接不发，并把下一次考虑排到快醒的时候。
+  //
+  // 这一道闸在算分之前就结束整个判断，不是再扣几分——扣分挡不住「沉默够久」，
+  // 而沉默恰恰是睡觉时一定会持续增长的那一项：表上写着 06:00 补觉到 13:30，
+  // 角色照旧每十几分钟被问一次要不要联系，睡两小时就爬起来发消息，
+  // 还会顺手把日程改成自己醒着（fire 提示词本来就教它改），一晚上只睡两小时。
+  //
+  // 画像里的 quietHours 兜不住这件事：那是从人设文本猜的固定小时区间（默认 0–8），
+  // 跟角色今天真正的作息无关，白天补觉、夜班、跨时区一律漏。
+  if (input.sleep && input.sleep.remainingMinutes > NATURAL_SLEEP_WAKE_SOON_MINUTES) {
+    const sleptH = (input.sleep.sleptMinutes / 60).toFixed(1);
+    const leftH = (input.sleep.remainingMinutes / 60).toFixed(1);
+    reasons.push(`日程里正在睡觉（已睡约 ${sleptH} 小时，还剩约 ${leftH} 小时）`);
+    return {
+      shouldSend: false,
+      asleep: true,
+      score: 0,
+      threshold: clamp(profile.threshold, 0.25, 0.9),
+      nextCheckMinutes: naturalSleepDeferMinutes(input.sleep.remainingMinutes, input.random01),
+      reasons,
+    };
+  }
   if (relationshipBoost > 0) reasons.push(profile.relationship === 'romantic' ? '亲密关系加权' : '亲近关系加权');
   if (distanceBoost > 0) reasons.push('异地/手机联系加权');
   if (quiet) { score -= 0.28; reasons.push('安静时段'); }
@@ -384,5 +444,6 @@ export const decideNaturalProactive = (input: NaturalProactiveDecisionInput): Na
     threshold,
     nextCheckMinutes: naturalCheckWindowMinutes(input.intensity, input.random01),
     reasons,
+    asleep: false,
   };
 };
