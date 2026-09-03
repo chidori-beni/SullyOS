@@ -1,6 +1,7 @@
 import type {
     ScheduleCardAppearance,
     ScheduleCardPresetId,
+    ScheduleCardSkinPreset,
 } from '../types';
 
 export interface ScheduleCardPreset {
@@ -42,6 +43,15 @@ export const SCHEDULE_CARD_PRESETS: ScheduleCardPreset[] = [
         base: '#f0dfc9',
         text: '#584337',
         accent: '#b96f4b',
+    },
+    {
+        id: 'plush',
+        name: '轻松熊奶油',
+        description: '奶白与可可棕',
+        background: 'linear-gradient(168deg, #fffdfb, #efe8e0)',
+        base: '#f4efe8',
+        text: '#6b5647',
+        accent: '#a9866a',
     },
     {
         id: 'sakura',
@@ -124,6 +134,133 @@ export function resolveScheduleCardPalette(
         accentSoft: hexToRgba(accent, 0.18),
         line: hexToRgba(text, 0.16),
         isOriginal: false,
+    };
+}
+
+
+/**
+ * 「轻松熊奶油」桌面主题配套 CSS。
+ * 只用静态渐变 / 点阵背景和细边框，刻意不用 backdrop-filter、blur、大面积 filter，
+ * 这类效果在手机上会让合成层持续重绘、机身发烫。
+ */
+export const PLUSH_BEAR_SCHEDULE_CSS = `/* 轻松熊奶油 · 日程卡（无毛玻璃，纯静态渲染） */
+.sully-schedule-root{
+  --schedule-bg:linear-gradient(168deg,#fffdfb,#efe8e0)!important;
+  --schedule-base:#f4efe8!important;
+  --schedule-text:#6b5647!important;
+  --schedule-accent:#a9866a!important;
+  --schedule-accent-soft:rgba(169,134,106,.15)!important;
+  --schedule-line:rgba(107,86,71,.13)!important;
+  background:radial-gradient(circle at 1px 1px,rgba(150,124,101,.11) 1px,transparent 1.7px) 0 0/11px 11px,linear-gradient(168deg,#fffdfb,#f5f0ea 58%,#efe8e0)!important;
+  color:#6b5647!important;
+  border:1px solid rgba(107,86,71,.12)!important;
+  border-radius:24px!important;
+  box-shadow:0 5px 16px rgba(124,99,78,.10),inset 0 1px 0 #fff!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+}
+/* 关掉暗色版遗留的角落光晕、左侧竖条和整块模糊底图（同时省电） */
+.sully-schedule-root div[class*="opacity-25"],
+.sully-schedule-root div[class*="-top-12"],
+.sully-schedule-root div[class*="-top-10"],
+.sully-schedule-root div[class*="w-[3px]"]{display:none!important;}
+.sully-schedule-widget > img[class*="inset-0"]{opacity:.13!important;filter:saturate(.5)!important;}
+/* 头部：奶茶色小标题 + 细虚线 */
+.sully-schedule-header{opacity:1!important;}
+.sully-schedule-header div[class*="h-px"]{background:transparent!important;opacity:1!important;height:0!important;border-top:1px dashed rgba(107,86,71,.26)!important;}
+.sully-schedule-header span{letter-spacing:.2em!important;}
+.sully-schedule-time{color:#a08a76!important;opacity:1!important;filter:none!important;}
+/* 正在进行的事 */
+.sully-schedule-activity{color:#5c4839!important;font-weight:800!important;text-shadow:none!important;filter:none!important;}
+.sully-schedule-description{color:#9c8674!important;opacity:1!important;}
+/* NOW 徽标 */
+.sully-schedule-widget span[class*="rounded-full"]{background:#efe4d8!important;color:#8a6a52!important;border:1px solid rgba(107,86,71,.10)!important;}
+/* 右上角角色名：原本淡到看不清，提到和描述同一档 */
+.sully-schedule-widget span[class*="max-w-"]{color:#b3a291!important;opacity:1!important;}
+/* 角色头像：白描边圆角方块，和桌面图标同一套语言 */
+.sully-schedule-widget div[class*="rounded-2xl"]{background:#efe8e0!important;border:2px solid #fff!important;border-radius:26%!important;box-shadow:0 3px 9px rgba(124,99,78,.16)!important;}
+/* 右下展开按钮 */
+.sully-schedule-widget div[class*="w-8"],.sully-schedule-widget div[class*="w-6"]{background:#fff!important;border:1px solid rgba(107,86,71,.10)!important;color:#a9866a!important;opacity:1!important;box-shadow:0 2px 6px rgba(124,99,78,.10)!important;}
+/* 底部时间线：去掉发光，改成奶油小条 */
+.sully-schedule-timeline div{border-radius:99px!important;box-shadow:none!important;}
+.sully-schedule-timeline span{color:#a3907e!important;font-weight:700!important;}
+/* 完整日程卡 */
+.sully-schedule-card{box-shadow:0 8px 26px rgba(124,99,78,.13)!important;}
+.sully-schedule-cover img{opacity:.55!important;}
+.sully-schedule-item{border-color:rgba(107,86,71,.10)!important;}
+.sully-schedule-item-current{background:#fbf6f0!important;border-radius:14px!important;box-shadow:inset 0 0 0 1px rgba(169,134,106,.26)!important;}
+/* 设置齿轮 */
+.sully-schedule-settings{background:#fff!important;color:#a9866a!important;border-color:rgba(107,86,71,.12)!important;}`;
+
+/** 皮肤预设最多存这么多条，避免主题记录无限膨胀。 */
+export const SCHEDULE_SKIN_PRESET_LIMIT = 24;
+
+export function makeScheduleSkinPresetId(): string {
+    return `sched_skin_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** 从当前外观草稿生成一条预设（配色 + CSS 一起存）。 */
+export function buildScheduleSkinPreset(
+    name: string,
+    appearance: ScheduleCardAppearance | undefined,
+    existing?: ScheduleCardSkinPreset,
+): ScheduleCardSkinPreset {
+    return {
+        id: existing?.id || makeScheduleSkinPresetId(),
+        name: name.trim(),
+        css: appearance?.customCss || '',
+        preset: appearance?.preset || 'original',
+        background: appearance?.background,
+        textColor: appearance?.textColor,
+        accentColor: appearance?.accentColor,
+        updatedAt: Date.now(),
+    };
+}
+
+/**
+ * 保存 / 覆盖一条预设。同名视为覆盖，避免列表里堆出一排「奶油熊」。
+ * 名称为空或超出上限时返回 error，由调用方 toast。
+ */
+export function upsertScheduleSkinPreset(
+    presets: ScheduleCardSkinPreset[] | undefined,
+    name: string,
+    appearance: ScheduleCardAppearance | undefined,
+): { presets: ScheduleCardSkinPreset[]; preset: ScheduleCardSkinPreset } | { error: string } {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return { error: '先给这套皮肤起个名字。' };
+    const list = presets || [];
+    const existing = list.find(item => item.name === trimmed);
+    if (!existing && list.length >= SCHEDULE_SKIN_PRESET_LIMIT) {
+        return { error: `预设最多保存 ${SCHEDULE_SKIN_PRESET_LIMIT} 套，先删掉几套再存。` };
+    }
+    const preset = buildScheduleSkinPreset(trimmed, appearance, existing);
+    return {
+        presets: existing ? list.map(item => (item.id === existing.id ? preset : item)) : [...list, preset],
+        preset,
+    };
+}
+
+export function removeScheduleSkinPreset(
+    presets: ScheduleCardSkinPreset[] | undefined,
+    id: string,
+): ScheduleCardSkinPreset[] {
+    return (presets || []).filter(item => item.id !== id);
+}
+
+/** 套用预设：配色和 CSS 一起换，预设列表本身保持不动。 */
+export function applyScheduleSkinPreset(
+    appearance: ScheduleCardAppearance | undefined,
+    preset: ScheduleCardSkinPreset,
+): ScheduleCardAppearance {
+    return {
+        ...appearance,
+        preset: preset.preset || 'original',
+        background: preset.background,
+        textColor: preset.textColor,
+        accentColor: preset.accentColor,
+        customCss: preset.css,
+        skinPresetId: preset.id,
+        skinPresets: appearance?.skinPresets,
     };
 }
 

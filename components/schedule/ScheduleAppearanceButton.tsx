@@ -7,13 +7,17 @@ import {
     GearSix,
     X,
 } from '@phosphor-icons/react';
-import type { ScheduleCardAppearance } from '../../types';
+import type { ScheduleCardAppearance, ScheduleCardSkinPreset } from '../../types';
 import { useOS } from '../../context/OSContext';
 import {
+    PLUSH_BEAR_SCHEDULE_CSS,
     SCHEDULE_CARD_PRESETS,
     SCHEDULE_CSS_SCOPE_HINT,
     SCHEDULE_CSS_SCOPE_REGEX,
+    applyScheduleSkinPreset,
+    removeScheduleSkinPreset,
     resolveScheduleCardPalette,
+    upsertScheduleSkinPreset,
 } from '../../utils/scheduleAppearance';
 import {
     runCssRenderabilityCheck,
@@ -21,6 +25,10 @@ import {
 } from '../../utils/scopedCss';
 
 const CSS_TEMPLATES = [
+    {
+        name: '轻松熊奶油',
+        code: PLUSH_BEAR_SCHEDULE_CSS,
+    },
     {
         name: '柔光玻璃',
         code: `.sully-schedule-root{
@@ -83,6 +91,8 @@ function defaultDraft(current?: ScheduleCardAppearance): ScheduleCardAppearance 
         textColor: current?.textColor || '#f8f3ff',
         accentColor: current?.accentColor || '#c9a7ff',
         customCss: current?.customCss || '',
+        skinPresetId: current?.skinPresetId,
+        skinPresets: current?.skinPresets || [],
     };
 }
 
@@ -104,6 +114,7 @@ const ScheduleAppearanceButton: React.FC<{ compact?: boolean }> = ({ compact = f
         defaultDraft(theme.scheduleCardAppearance)
     );
     const [copied, setCopied] = useState(false);
+    const [presetName, setPresetName] = useState('');
 
     useEffect(() => {
         if (!open) return;
@@ -116,6 +127,10 @@ const ScheduleAppearanceButton: React.FC<{ compact?: boolean }> = ({ compact = f
         document.body.style.overflow = 'hidden';
         return () => { document.body.style.overflow = previous; };
     }, [open]);
+
+    /** 手动改配色或 CSS 后就不再算「正在用某个预设」，避免列表上的对勾骗人。 */
+    const editDraft = (patch: Partial<ScheduleCardAppearance>) =>
+        setDraft(current => ({ ...current, ...patch, skinPresetId: undefined }));
 
     const validation = useMemo(
         () => validateScopedCss(
@@ -144,7 +159,13 @@ const ScheduleAppearanceButton: React.FC<{ compact?: boolean }> = ({ compact = f
     };
 
     const reset = async () => {
-        await updateTheme({ scheduleCardAppearance: undefined });
+        // 只还原当前皮肤，保存过的预设留着，否则一次「还原」就把用户攒的皮肤全清了。
+        const keptPresets = draft.skinPresets || [];
+        await updateTheme({
+            scheduleCardAppearance: keptPresets.length
+                ? { preset: 'original', customCss: '', skinPresets: keptPresets }
+                : undefined,
+        });
         addToast('已还原原版日程卡片', 'success');
         setOpen(false);
     };
@@ -157,6 +178,46 @@ const ScheduleAppearanceButton: React.FC<{ compact?: boolean }> = ({ compact = f
         } catch {
             addToast('复制失败，请手动选择文本', 'error');
         }
+    };
+
+    const savePreset = async () => {
+        const renderability = runCssRenderabilityCheck(draft.customCss || '', validation);
+        if (!renderability.ok) {
+            addToast(renderability.message, 'error');
+            return;
+        }
+        const result = upsertScheduleSkinPreset(draft.skinPresets, presetName, draft);
+        if ('error' in result) {
+            addToast(result.error, 'error');
+            return;
+        }
+        const next: ScheduleCardAppearance = {
+            ...draft,
+            skinPresets: result.presets,
+            skinPresetId: result.preset.id,
+        };
+        setDraft(next);
+        setPresetName('');
+        await updateTheme({ scheduleCardAppearance: next });
+        addToast(`已保存预设「${result.preset.name}」`, 'success');
+    };
+
+    const applyPreset = async (preset: ScheduleCardSkinPreset) => {
+        const next = applyScheduleSkinPreset(draft, preset);
+        setDraft(next);
+        await updateTheme({ scheduleCardAppearance: next });
+        addToast(`已切换到「${preset.name}」`, 'success');
+    };
+
+    const deletePreset = async (preset: ScheduleCardSkinPreset) => {
+        const next: ScheduleCardAppearance = {
+            ...draft,
+            skinPresets: removeScheduleSkinPreset(draft.skinPresets, preset.id),
+            skinPresetId: draft.skinPresetId === preset.id ? undefined : draft.skinPresetId,
+        };
+        setDraft(next);
+        await updateTheme({ scheduleCardAppearance: next });
+        addToast(`已删除预设「${preset.name}」`, 'success');
     };
 
     const panel = open ? createPortal(
@@ -207,7 +268,7 @@ const ScheduleAppearanceButton: React.FC<{ compact?: boolean }> = ({ compact = f
                                             selected ? 'ring-2 ring-violet-400 ring-offset-2' : ''
                                         }`}
                                         style={{ background: palette.background, color: palette.text }}
-                                        onClick={() => setDraft(current => ({ ...current, preset: preset.id }))}
+                                        onClick={() => editDraft({ preset: preset.id })}
                                     >
                                         <span className="block text-sm font-black" style={{ color: palette.accent }}>{preset.name}</span>
                                         <span className="block text-[10px] mt-1 opacity-60">{preset.description}</span>
@@ -225,7 +286,7 @@ const ScheduleAppearanceButton: React.FC<{ compact?: boolean }> = ({ compact = f
                                         ? 'border-violet-400 bg-violet-50'
                                         : 'border-slate-200 bg-white'
                                 }`}
-                                onClick={() => setDraft(current => ({ ...current, preset: 'custom' }))}
+                                onClick={() => editDraft({ preset: 'custom' })}
                             >
                                 <span className="block text-sm font-black text-slate-700">自定义配色</span>
                                 <span className="block text-[10px] text-slate-400 mt-1">背景 · 文字 · 强调色</span>
@@ -254,10 +315,7 @@ const ScheduleAppearanceButton: React.FC<{ compact?: boolean }> = ({ compact = f
                                             <input
                                                 type="color"
                                                 value={value}
-                                                onChange={event => setDraft(current => ({
-                                                    ...current,
-                                                    [key]: event.target.value,
-                                                }))}
+                                                onChange={event => editDraft({ [key]: event.target.value })}
                                                 className="w-7 h-7 rounded border-0 bg-transparent p-0"
                                             />
                                             <span className="font-mono text-[9px]">{value}</span>
@@ -287,21 +345,21 @@ const ScheduleAppearanceButton: React.FC<{ compact?: boolean }> = ({ compact = f
                                 <button
                                     key={template.name}
                                     className="shrink-0 px-3 py-2 rounded-xl border border-slate-200 bg-white text-[11px] font-bold text-slate-600"
-                                    onClick={() => setDraft(current => ({ ...current, customCss: template.code }))}
+                                    onClick={() => editDraft({ customCss: template.code })}
                                 >
                                     {template.name}
                                 </button>
                             ))}
                             <button
                                 className="shrink-0 px-3 py-2 rounded-xl border border-slate-200 bg-white text-[11px] font-bold text-slate-400"
-                                onClick={() => setDraft(current => ({ ...current, customCss: '' }))}
+                                onClick={() => editDraft({ customCss: '' })}
                             >
                                 清空 CSS
                             </button>
                         </div>
                         <textarea
                             value={draft.customCss || ''}
-                            onChange={event => setDraft(current => ({ ...current, customCss: event.target.value }))}
+                            onChange={event => editDraft({ customCss: event.target.value })}
                             rows={11}
                             spellCheck={false}
                             className="w-full resize-y rounded-2xl border border-slate-200 bg-[#17141d] p-4 font-mono text-[11px] leading-5 text-violet-100 outline-none focus:border-violet-400"
@@ -320,6 +378,84 @@ const ScheduleAppearanceButton: React.FC<{ compact?: boolean }> = ({ compact = f
                                 内联颜色需要用 <code>!important</code> 覆盖。
                             </p>
                         </details>
+                    </section>
+
+                    <section>
+                        <div className="mb-3">
+                            <h3 className="text-sm font-bold">我的预设</h3>
+                            <p className="text-[11px] text-slate-400 mt-1">配色和 CSS 一起存成一套，点一下即可切换。</p>
+                        </div>
+                        <div className="flex gap-2">
+                            <input
+                                value={presetName}
+                                onChange={event => setPresetName(event.target.value)}
+                                onKeyDown={event => { if (event.key === 'Enter') void savePreset(); }}
+                                placeholder="例：轻松熊奶油"
+                                className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-violet-400"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => void savePreset()}
+                                className="shrink-0 rounded-xl bg-slate-900 px-3 py-2 text-[11px] font-bold text-white disabled:opacity-40"
+                                disabled={!validation.isValid}
+                            >
+                                保存为预设
+                            </button>
+                        </div>
+                        {(draft.skinPresets?.length || 0) > 0 ? (
+                            <div className="mt-3 space-y-2">
+                                {(draft.skinPresets || []).map(preset => {
+                                    const active = draft.skinPresetId === preset.id;
+                                    const swatch = resolveScheduleCardPalette(
+                                        {
+                                            preset: preset.preset,
+                                            background: preset.background,
+                                            textColor: preset.textColor,
+                                            accentColor: preset.accentColor,
+                                        },
+                                        theme.hue,
+                                        theme.contentColor || '#ffffff',
+                                    );
+                                    return (
+                                        <div
+                                            key={preset.id}
+                                            className={`flex items-center gap-2 rounded-xl border px-3 py-2 ${
+                                                active ? 'border-violet-300 bg-violet-50' : 'border-slate-100 bg-slate-50'
+                                            }`}
+                                        >
+                                            <span
+                                                className="h-6 w-6 shrink-0 rounded-lg border border-black/10"
+                                                style={{ background: swatch.background }}
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => void applyPreset(preset)}
+                                                className={`min-w-0 flex-1 truncate text-left text-xs font-bold ${
+                                                    active ? 'text-violet-600' : 'text-slate-600'
+                                                }`}
+                                            >
+                                                {active ? '✓ ' : ''}{preset.name}
+                                                <span className="ml-1.5 font-normal text-[10px] text-slate-400">
+                                                    {preset.css.trim() ? '配色 + CSS' : '仅配色'}
+                                                </span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => void deletePreset(preset)}
+                                                aria-label={`删除预设 ${preset.name}`}
+                                                className="shrink-0 px-1 text-sm text-slate-300"
+                                            >
+                                                ×
+                                            </button>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <p className="mt-3 text-[11px] text-slate-400">
+                                还没有预设。调好一套样子后取个名字存下来，以后换季 / 换主题就能一键切回。
+                            </p>
+                        )}
                     </section>
                 </div>
 
