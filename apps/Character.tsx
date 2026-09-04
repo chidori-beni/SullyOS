@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
-import { AppID, CharacterProfile, CharacterExportData, UserImpression, MemoryFragment } from '../types';
+import { AppID, CharacterProfile, CharacterExportData, UserImpression, MemoryFragment, MountedWorldbook } from '../types';
 import { SlidersHorizontal, SpeakerHigh, Books, BookOpen } from '@phosphor-icons/react';
 import Modal from '../components/os/Modal';
 import { processImage } from '../utils/file';
@@ -25,6 +25,14 @@ import { normalizeUserImpression } from '../utils/impression';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { COMMON_TIMEZONES } from '../utils/timezone';
 import { toMountedWorldbook } from '../utils/worldbook';
+import {
+    convertSillyTavernCard,
+    extractCardTextFromPng,
+    looksLikeSillyTavernCard,
+    normalizeSillyTavernCard,
+    parseSillyTavernCardText,
+    type StCardConversion,
+} from '../utils/stCharacterCard';
 import { stripSensitiveCardFields } from '../utils/characterCard';
 import { confirmExportSafety } from '../utils/exportGuard';
 import { trackEvent } from '../utils/analytics';
@@ -1065,75 +1073,183 @@ ${isInitialGeneration ? `
           addToast('角色卡已生成并下载', 'success');
   };
 
+  const newCharacterId = () => `char-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+  /** 把角色卡带来的世界书条目同步进世界书 App，返回真正落库的条数。 */
+  const syncImportedWorldbooks = async (
+      books: MountedWorldbook[],
+      fallbackCategory: string,
+  ): Promise<number> => {
+      let imported = 0;
+      for (const wb of books) {
+          if (!wb.id || worldbooks.some(existing => existing.id === wb.id)) continue;
+          const category = wb.category && wb.category.trim() ? wb.category : fallbackCategory;
+          wb.category = category;
+          await addWorldbook({
+              ...wb,
+              id: wb.id,
+              title: wb.title || '未命名设定',
+              content: wb.content || '',
+              category,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+          });
+          imported++;
+      }
+      return imported;
+  };
+
+  /**
+   * 落库 + 刷新。不要调用 addCharacter()——它不是"刷新"，而是真的新建一个空白
+   * "New Character" 并写进 DB，reload 后就会多出一张空白卡。
+   * 导入的角色已经存进了 DB，reload 时 OSContext 会从 DB 重新读全部角色。
+   */
+  const finishCardImport = async (
+      newChar: CharacterProfile,
+      toast: string,
+      afterSave?: () => Promise<void>,
+  ) => {
+      await DB.saveCharacter(newChar);
+      // 开场白这类附带内容要等角色真的落库之后再写，否则消息挂在一个还不存在的 charId 上。
+      if (afterSave) await afterSave();
+      trackEvent('导入角色卡');
+      setTimeout(() => window.location.reload(), 500);
+      addToast(toast, 'success');
+  };
+
+  const importSullyCard = async (data: CharacterExportData) => {
+      // 导入侧同样剥离凭据 / 美化 / 语言 / 运行时状态：即便对方给的是旧版
+      // 角色卡（把 API 密钥等私密字段一起打包了），也不会被写进本地角色，
+      // 不会用发卡人的 key / 主题 / 语言偏好覆盖你自己的。清单见 utils/characterCard.ts。
+      const safeData = stripSensitiveCardFields(data);
+
+      // Sync mounted worldbooks into the global worldbook app so they
+      // appear under their original category (or the character's name
+      // as a sensible fallback when the card has no category set).
+      const incomingMounted = (data.mountedWorldbooks || []).map(wb => ({ ...wb }));
+      const importedWbCount = await syncImportedWorldbooks(
+          incomingMounted,
+          `${data.name || '导入角色'} 的世界书`,
+      );
+
+      const newChar: CharacterProfile = {
+          ...safeData,
+          id: newCharacterId(),
+          memories: [],
+          refinedMemories: {},
+          activeMemoryMonths: [],
+          mountedWorldbooks: incomingMounted,
+      } as CharacterProfile;
+
+      const wbToastSuffix = importedWbCount > 0 ? `，并同步 ${importedWbCount} 本世界书` : '';
+      await finishCardImport(newChar, `角色 ${newChar.name} 导入成功${wbToastSuffix}`);
+  };
+
+  /**
+   * ST 酒馆角色卡。设定 / 世界观 / 世界书按 utils/stCharacterCard.ts 的映射铺开，
+   * 开场白（first_mes）作为第一条角色消息直接写进聊天记录——SullyOS 没有单独的
+   * 开场白字段，塞进提示词只会让角色反复念它。
+   */
+  const importSillyTavernCard = async (conversion: StCardConversion, avatar: string) => {
+      const charId = newCharacterId();
+      const mounted = conversion.worldbooks.map(toMountedWorldbook);
+      await syncImportedWorldbooks(mounted, `${conversion.profile.name} 的世界书`);
+
+      const newChar: CharacterProfile = {
+          id: charId,
+          name: conversion.profile.name,
+          avatar,
+          description: conversion.profile.description,
+          systemPrompt: conversion.profile.systemPrompt,
+          worldview: conversion.profile.worldview,
+          memories: [],
+          refinedMemories: {},
+          activeMemoryMonths: [],
+          mountedWorldbooks: mounted,
+      };
+
+      const detail = [
+          conversion.greeting ? '开场白已写进聊天' : '',
+          ...conversion.notes,
+      ].filter(Boolean).join('；');
+      await finishCardImport(
+          newChar,
+          `ST 角色卡 ${newChar.name} 导入成功${detail ? `（${detail}）` : ''}`,
+          conversion.greeting
+              ? () => DB.saveMessage({
+                  charId,
+                  role: 'assistant',
+                  type: 'text',
+                  content: conversion.greeting,
+              }).then(() => undefined)
+              : undefined,
+      );
+  };
+
+  /** 从 .charx（v3 的 zip 包）里取出卡片正文和头像。 */
+  const readCharxCard = async (file: File): Promise<{ text: string; avatar: string }> => {
+      const JSZip = (await import('jszip')).default;
+      const zip = await JSZip.loadAsync(await file.arrayBuffer());
+      const cardFile = zip.file(/^card\.json$/i)[0];
+      if (!cardFile) throw new Error('.charx 包里没有 card.json');
+      // v3 规定主头像放在 assets/icon/ 下，但文件名和扩展名各家不一，按前缀捞第一张。
+      const iconFile = zip.file(/^assets\/icon\/.+\.(png|jpe?g|webp)$/i)[0];
+      let avatar = '';
+      if (iconFile) {
+          const ext = iconFile.name.split('.').pop()?.toLowerCase() === 'png' ? 'png' : 'jpeg';
+          avatar = `data:image/${ext};base64,${await iconFile.async('base64')}`;
+      }
+      return { text: await cardFile.async('string'), avatar };
+  };
+
   const handleImportCard = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
 
-      const reader = new FileReader();
-      reader.onload = async (ev) => {
-          try {
-              const json = ev.target?.result as string;
-              const data: CharacterExportData = JSON.parse(json);
-              
-              if (data.type !== 'sully_character_card') {
-                  throw new Error('无效的角色卡文件');
-              }
+      const run = async () => {
+          const lower = file.name.toLowerCase();
+          const stOptions = { userName: userProfile?.name || '' };
 
-              // 导入侧同样剥离凭据 / 美化 / 语言 / 运行时状态：即便对方给的是旧版
-              // 角色卡（把 API 密钥等私密字段一起打包了），也不会被写进本地角色，
-              // 不会用发卡人的 key / 主题 / 语言偏好覆盖你自己的。清单见 utils/characterCard.ts。
-              const safeData = stripSensitiveCardFields(data);
-
-              // Sync mounted worldbooks into the global worldbook app so they
-              // appear under their original category (or the character's name
-              // as a sensible fallback when the card has no category set).
-              const incomingMounted = (data.mountedWorldbooks || []).map(wb => ({ ...wb }));
-              const fallbackCategory = `${data.name || '导入角色'} 的世界书`;
-              let importedWbCount = 0;
-              for (const wb of incomingMounted) {
-                  if (!wb.id || worldbooks.some(existing => existing.id === wb.id)) continue;
-                  const category = wb.category && wb.category.trim() ? wb.category : fallbackCategory;
-                  wb.category = category;
-                  await addWorldbook({
-                      ...wb,
-                      id: wb.id,
-                      title: wb.title || '未命名设定',
-                      content: wb.content || '',
-                      category,
-                      createdAt: Date.now(),
-                      updatedAt: Date.now(),
-                  });
-                  importedWbCount++;
-              }
-
-              const newChar: CharacterProfile = {
-                  ...safeData,
-                  id: `char-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                  memories: [],
-                  refinedMemories: {},
-                  activeMemoryMonths: [],
-                  mountedWorldbooks: incomingMounted,
-              } as CharacterProfile;
-
-              await DB.saveCharacter(newChar);
-              trackEvent('导入角色卡');
-              // 不要调用 addCharacter()——它不是"刷新"，而是真的新建一个空白
-              // "New Character" 并写进 DB，reload 后就会多出一张空白卡。
-              // 导入的角色已经存进了 DB（上一行），reload 时 OSContext 会从
-              // DB 重新读全部角色，导入的角色自然会出现，无需手动刷新 state。
-              setTimeout(() => window.location.reload(), 500);
-
-              const wbToastSuffix = importedWbCount > 0 ? `，并同步 ${importedWbCount} 本世界书` : '';
-              addToast(`角色 ${newChar.name} 导入成功${wbToastSuffix}`, 'success');
-
-          } catch (err: any) {
-              console.error(err);
-              addToast(err.message || '导入失败', 'error');
-          } finally {
-              if (cardImportRef.current) cardImportRef.current.value = '';
+          if (lower.endsWith('.png') || file.type === 'image/png') {
+              // 角色卡图片本身就是头像，顺手压一张进来。
+              const [text, avatar] = await Promise.all([
+                  file.arrayBuffer().then(buf => extractCardTextFromPng(new Uint8Array(buf))),
+                  processImage(file).catch(() => ''),
+              ]);
+              await importSillyTavernCard(parseSillyTavernCardText(text, stOptions), avatar);
+              return;
           }
+
+          if (lower.endsWith('.charx')) {
+              const { text, avatar } = await readCharxCard(file);
+              await importSillyTavernCard(parseSillyTavernCardText(text, stOptions), avatar);
+              return;
+          }
+
+          const data = JSON.parse(await file.text());
+          if (data?.type === 'sully_character_card') {
+              await importSullyCard(data as CharacterExportData);
+              return;
+          }
+          if (looksLikeSillyTavernCard(data)) {
+              // 裸 JSON 的 ST 卡没有图，头像留空，用户自己换一张。
+              await importSillyTavernCard(
+                  convertSillyTavernCard(normalizeSillyTavernCard(data), stOptions),
+                  '',
+              );
+              return;
+          }
+          throw new Error('无效的角色卡文件');
       };
-      reader.readAsText(file);
+
+      run()
+          .catch((err: any) => {
+              console.error(err);
+              addToast(err?.message || '导入失败', 'error');
+          })
+          .finally(() => {
+              if (cardImportRef.current) cardImportRef.current.value = '';
+          });
   };
 
   return (
@@ -1155,7 +1271,7 @@ ${isInitialGeneration ? `
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" />
                             </svg>
                         </ToolButton>
-                        <ToolButton label="导入" title="导入角色卡" onClick={() => cardImportRef.current?.click()}>
+                        <ToolButton label="导入" title="导入角色卡（SullyOS .json / ST 酒馆 .png .json .charx）" onClick={() => cardImportRef.current?.click()}>
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-5 h-5">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
                             </svg>
@@ -1163,7 +1279,7 @@ ${isInitialGeneration ? `
                         <ToolButton label="关闭" title="关闭" onClick={closeApp}>
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
                         </ToolButton>
-                        <input type="file" ref={cardImportRef} className="hidden" accept=".json" onChange={handleImportCard} />
+                        <input type="file" ref={cardImportRef} className="hidden" accept=".json,.png,.charx" onChange={handleImportCard} />
                    </div>
                </div>
                <div className="flex-1 overflow-y-auto px-5 pb-20 no-scrollbar flex flex-col gap-3">
