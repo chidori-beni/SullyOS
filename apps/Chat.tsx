@@ -113,6 +113,7 @@ import {
     type ContextRangeMode,
 } from '../utils/chatContextRange';
 import { callLaunch } from '../utils/callLaunch';
+import { resolveCssSlot } from '../utils/cssSlotFallback';
 import { dateLaunch } from '../utils/dateLaunch';
 import {
     loadReactionShortcuts,
@@ -3674,9 +3675,13 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                  注在这里而不是 PhoneShell —— 它只在聊天页挂载，退出聊天就卸载，
                  于是外观 App、设置页里的同款弹窗不会被顺带改掉。
                  globalCustomCss 是 2026-09-04 拆槽前的旧字段，只做一次性回填。 */}
-             {(osTheme.chatDialogCustomCss || osTheme.globalCustomCss) && (
-               <style>{osTheme.chatDialogCustomCss || osTheme.globalCustomCss}</style>
-             )}
+             {(() => {
+               // 只有「从来没设置过」才回填旧字段；清空（空串）就是空。
+               // 用 || 的话空串会被当假，一点「清空」就回退去跑旧 CSS，
+               // 表现为「代码全清空了、美化还在」。见 utils/cssSlotFallback.ts。
+               const css = resolveCssSlot(osTheme.chatDialogCustomCss, osTheme.globalCustomCss);
+               return css ? <style>{css}</style> : null;
+             })()}
 
              {/* 卡片自定义 CSS：作用于 .sully-chat-card[data-card=...]（彼方 / 通话 / 日程邀约……）。
                  只有全局一份——卡片是「哪个功能发来的」，跟角色无关，所以不做 per-character 覆盖。

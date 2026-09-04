@@ -880,6 +880,10 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                         chatDialogCustomCss: css,
                         chatDialogCssPresets: presets,
                         chatDialogCssPresetId: presetId,
+                        // 用户第一次动这个槽，旧字段就退休 —— 之后「清空」才是真的清空。
+                        globalCustomCss: undefined,
+                        globalCustomCssPresets: undefined,
+                        globalCustomCssPresetId: undefined,
                     })}
                     onNotify={onNotify}
                 />

@@ -1145,9 +1145,7 @@ const PhoneShell: React.FC = () => {
            {/* 顶部通知条 CSS（.sully-ui-toast）。通知不属于任何一个 App，所以注在常驻的外壳里。
                聊天里那些设置框是另一份，注在 apps/Chat.tsx —— 那份只在聊天页生效，
                免得把外观 App、设置页里的同款弹窗也一起改了。 */}
-           {(theme.notifyCustomCss || theme.globalCustomCss) && (
-             <style>{theme.notifyCustomCss || ''}</style>
-           )}
+           {theme.notifyCustomCss && <style>{theme.notifyCustomCss}</style>}
 
            {/* Overlays: Toasts (Top) */}
            <div className="absolute top-12 left-0 w-full flex flex-col items-center gap-2 pointer-events-none z-[60]">
