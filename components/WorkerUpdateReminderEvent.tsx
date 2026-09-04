@@ -136,7 +136,7 @@ export const WorkerUpdateReminderPopup: React.FC<WorkerUpdateReminderPopupProps>
         : '复制最新代码';
 
   return (
-    <div className="fixed inset-0 z-[9998] flex items-center justify-center p-5 animate-fade-in">
+    <div className="sully-ui-event fixed inset-0 z-[9998] flex items-center justify-center p-5 animate-fade-in">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-md" />
       <div className="relative w-full max-w-sm bg-white/95 backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden animate-slide-up">
         <div className="pt-7 pb-3 px-6 text-center">

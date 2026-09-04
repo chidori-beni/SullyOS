@@ -50,7 +50,7 @@ const VRBroadcast: React.FC = () => {
             <style>{`@keyframes vrbcin{from{opacity:0;transform:translateY(-14px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
                      @keyframes vrbcshimmer{0%{background-position:-120% 0}100%{background-position:220% 0}}
                      @keyframes vrbctwinkle{0%,100%{opacity:.35;transform:scale(.85)}50%{opacity:1;transform:scale(1.1)}}`}</style>
-            <div className="relative flex items-center gap-2.5 pl-3 pr-3.5 py-1.5 rounded-full overflow-hidden backdrop-blur-xl"
+            <div className="sully-ui-broadcast relative flex items-center gap-2.5 pl-3 pr-3.5 py-1.5 rounded-full overflow-hidden backdrop-blur-xl"
                 style={{
                     animation: 'vrbcin .45s cubic-bezier(.2,.9,.3,1.2)',
                     background: 'linear-gradient(100deg, rgba(22,28,46,.82), rgba(14,18,30,.82))',

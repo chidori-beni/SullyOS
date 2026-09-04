@@ -50,7 +50,11 @@ export const UI_HOOK_CATALOG: ReadonlyArray<UiHookEntry> = [
   { hook: 'sully-ui-tab-on', label: '页签当前选中项（和上一条同时存在）', wave: 1 },
   // ── 常驻浮层（属于「通知栏」那一份，不在弹窗这份里）──
   { hook: 'sully-ui-toast', label: '顶部的一句话提示（Toast）', wave: 1 },
-  { hook: 'sully-ui-broadcast', label: '「xx 正在回应 / 正在感受」那条胶囊', wave: 1 },
+  { hook: 'sully-ui-broadcast', label: '顶部的胶囊通知（正在回应 / 正在感受、世界与彼方广播、人格模拟、梦境、该备份啦）', wave: 1 },
+  { hook: 'sully-ui-broadcast-warn', label: '上面那类里的提醒款（「该备份啦」），和 -broadcast 同时存在', wave: 1 },
+  { hook: 'sully-ui-callbar', label: '通话挂起时顶部那条返回通话的横幅', wave: 1 },
+  { hook: 'sully-ui-miniplayer', label: '后台放歌时的悬浮小圆播放器', wave: 1 },
+  { hook: 'sully-ui-event', label: '整机级的事件弹窗（版本更新 / 该备份了 / Worker 更新 / 报错详情）', wave: 1 },
   { hook: 'sully-ui-layer', label: '弹窗最外层定位容器（一般不用改）', wave: 1 },
 ];
 
@@ -70,7 +74,10 @@ export const uiHooksOfWave = (wave: 1 | 2 | 3): UiHookEntry[] =>
  * 之前是一份 globalCustomCss 注在 PhoneShell，整机生效 ——
  * 结果外观 App 里的设置框也被顺带美化了，不是想要的。
  */
-const NOTIFY_ONLY = new Set(['sully-ui-toast', 'sully-ui-broadcast']);
+const NOTIFY_ONLY = new Set([
+  'sully-ui-toast', 'sully-ui-broadcast', 'sully-ui-broadcast-warn',
+  'sully-ui-callbar', 'sully-ui-miniplayer', 'sully-ui-event',
+]);
 export const DIALOG_HOOKS: ReadonlyArray<UiHookEntry> =
   UI_HOOK_CATALOG.filter(e => !NOTIFY_ONLY.has(e.hook));
 export const NOTIFY_HOOKS: ReadonlyArray<UiHookEntry> =
@@ -237,6 +244,28 @@ export const COCOA_DOTS_NOTIFY_CSS = `/* 可可点点 · 顶部通知条 */
   backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
 }
 .sully-ui-broadcast *{color:#4A3B31!important;}
+/* 提醒款（该备份啦）：留一点警示，换成本主题的奶茶棕 */
+.sully-ui-broadcast-warn{
+  border-color:#A9866A!important;background-color:#FBF5EC!important;
+}
+.sully-ui-broadcast-warn *{color:#8A6B4A!important;}
+/* 通话挂起横幅：绿条太跳，换成炭黑底奶油字，并停掉它的常驻脉冲动画（省电） */
+.sully-ui-callbar{
+  background-color:#302C29!important;background-image:none!important;
+  color:#FCFBF9!important;
+  animation:none!important;
+  border-bottom:2px solid #A9866A!important;
+}
+.sully-ui-callbar *{color:#FCFBF9!important;}
+/* 后台放歌的小圆播放器 */
+.sully-ui-miniplayer{
+  box-shadow:0 0 0 2.5px #302C29,0 3px 10px rgba(48,44,41,.28)!important;
+}
+/* 整机事件弹窗：只收编遮罩底色，卡片本体各有各的插画/排版，不硬套 */
+.sully-ui-event{
+  background-color:rgba(48,44,41,.42)!important;
+  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+}
 .sully-ui-toast{
   background-color:#FCFBF9!important;
   background-image:radial-gradient(rgba(167,156,147,.26) 1px,transparent 1.1px)!important;

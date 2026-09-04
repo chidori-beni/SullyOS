@@ -109,7 +109,7 @@ const Live2DUpdatePopup: React.FC<UpdatePopupProps> = ({ onDone, onExit }) => {
 
     return (
         <div
-            className="live2d-update-overlay fixed inset-0 z-[9998] flex items-start justify-center overflow-y-auto bg-[#070b14]/80 px-4 backdrop-blur-md"
+            className="sully-ui-event live2d-update-overlay fixed inset-0 z-[9998] flex items-start justify-center overflow-y-auto bg-[#070b14]/80 px-4 backdrop-blur-md"
             style={{
                 paddingTop: 'max(1rem, env(safe-area-inset-top))',
                 paddingBottom: 'max(1rem, env(safe-area-inset-bottom))',

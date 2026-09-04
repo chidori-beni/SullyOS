@@ -21,7 +21,7 @@ const DreamSimIndicator: React.FC = () => {
         // 放在 PersonaSim 指示条下方一点，避免叠在一起（top-12 vs top-24）
         <div className="absolute top-24 left-0 w-full flex justify-center px-4 z-[65] pointer-events-none">
             <button onClick={onTap}
-                className={`pointer-events-auto flex items-center gap-2.5 rounded-full active:scale-95 transition shadow-[0_8px_30px_rgba(0,0,0,0.5)] border ${ready ? 'animate-notif-pop px-5 py-3' : 'animate-fade-in px-4 py-2.5'}`}
+                className={`sully-ui-broadcast pointer-events-auto flex items-center gap-2.5 rounded-full active:scale-95 transition shadow-[0_8px_30px_rgba(0,0,0,0.5)] border ${ready ? 'animate-notif-pop px-5 py-3' : 'animate-fade-in px-4 py-2.5'}`}
                 style={ready
                     ? { background: 'linear-gradient(120deg, rgba(205,214,255,0.97), rgba(150,160,235,0.94))', borderColor: 'rgba(205,214,255,0.5)' }
                     : { background: 'rgba(22,24,46,0.94)', borderColor: 'rgba(205,214,255,0.3)' }}>

@@ -305,7 +305,7 @@ const GlobalMiniPlayer: React.FC = () => {
           onPointerUp={endDrag}
           onPointerCancel={endDrag}
           onContextMenu={(e) => e.preventDefault()}
-          className="pointer-events-auto relative w-10 h-10 rounded-full overflow-hidden active:scale-95 transition-transform touch-none select-none"
+          className="sully-ui-miniplayer pointer-events-auto relative w-10 h-10 rounded-full overflow-hidden active:scale-95 transition-transform touch-none select-none"
           style={{
             boxShadow: '0 6px 18px rgba(0,0,0,0.35)',
             border: '1px solid rgba(255,255,255,0.25)',

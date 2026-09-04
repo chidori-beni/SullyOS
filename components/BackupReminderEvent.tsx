@@ -29,7 +29,7 @@ export const BackupReminderPopup: React.FC<BackupReminderPopupProps> = ({ onDism
         : `距离上次备份已经过去 ${days} 天`;
 
     return (
-        <div className="fixed inset-0 z-[9998] flex items-center justify-center p-5 animate-fade-in">
+        <div className="sully-ui-event fixed inset-0 z-[9998] flex items-center justify-center p-5 animate-fade-in">
             <div className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={onDismiss} />
             <div className="relative w-full max-w-sm bg-white/95 backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden animate-slide-up">
                 {/* 顶部渐变头图 + 盾牌图标 */}

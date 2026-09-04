@@ -1130,7 +1130,7 @@ const PhoneShell: React.FC = () => {
               <div className="absolute top-12 left-0 w-full flex justify-center z-[55] pointer-events-none">
                   <button
                       onClick={() => { openApp(AppID.Settings); trackEvent('点立即备份'); }}
-                      className="pointer-events-auto animate-fade-in flex items-center gap-2 pl-3 pr-3.5 py-1.5 rounded-full bg-amber-50/95 backdrop-blur-xl border border-amber-200/80 shadow-lg shadow-amber-100/50 active:scale-95 transition-transform"
+                      className="sully-ui-broadcast sully-ui-broadcast-warn pointer-events-auto animate-fade-in flex items-center gap-2 pl-3 pr-3.5 py-1.5 rounded-full bg-amber-50/95 backdrop-blur-xl border border-amber-200/80 shadow-lg shadow-amber-100/50 active:scale-95 transition-transform"
                   >
                       <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
                       <span className="text-[11px] font-bold text-amber-900 whitespace-nowrap">

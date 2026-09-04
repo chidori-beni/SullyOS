@@ -28,7 +28,7 @@ const SuspendedCallBar: React.FC<SuspendedCallBarProps> = ({ charName, onResume 
         onClick={handleClick}
         data-testid="suspended-call-return"
         aria-label={`返回与${charName}的通话`}
-        className="pointer-events-auto flex w-full items-center justify-center gap-2 bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white shadow-md cursor-pointer animate-pulse transition-colors active:bg-emerald-600"
+        className="sully-ui-callbar pointer-events-auto flex w-full items-center justify-center gap-2 bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white shadow-md cursor-pointer animate-pulse transition-colors active:bg-emerald-600"
         style={{ touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent' }}
       >
         <span className="h-2 w-2 rounded-full bg-white animate-ping" aria-hidden="true" />
