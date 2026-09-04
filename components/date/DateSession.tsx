@@ -8,10 +8,18 @@ import ObserveHUD from './ObserveHUD';
 import { DatePrompts, extractObservation, hasObservation } from '../../utils/datePrompts';
 import { isBlobRef } from '../../utils/blobRef';
 import { clearDateResumeAttempt } from '../../utils/dateSessionRecovery';
-import { cleanTextForTts, VALID_EMOTIONS } from '../../utils/minimaxTts';
+import { cleanTextForTts, cleanVoiceMarkupForDisplay } from '../../utils/minimaxTts';
 import { synthesizeSpeech, characterHasVoice } from '../../utils/ttsRouter';
 import { resolveTtsProvider } from '../../utils/ttsProvider';
 import { cleanTextForTtsFish, stripFishMarkupForDisplay } from '../../utils/fishAudioTts';
+import {
+    cleanDateTextForDisplay as cleanTextForDisplay,
+    extractDateDialogueText as extractDialogueText,
+    extractDateDialogueSpeechText as extractDialogueSpeechText,
+    isDateDialogueLine as isDialogueLine,
+    parseDateDialogue as parseDialogue,
+    protectMiniMaxInterjectionsForTranslation,
+} from '../../utils/dateVoiceMarkup';
 import { planNovelLoadMore } from '../../utils/dateSessionHistory';
 import { getPendingReplyText } from '../../utils/pendingReply';
 import { fetchBlobForShare } from '../../utils/shareExport';
@@ -21,89 +29,6 @@ import { getDatePhoneSpeaker, isDatePhoneBridge, formatDatePhoneMarkdown } from 
 import { stripMessageReactionTags } from '../../utils/messageReactions';
 import { stripFaceToFacePhoneSourceTags } from '../../utils/sanitize';
 import { ArrowLeft, CornersIn, CornersOut } from '@phosphor-icons/react';
-
-// 语音情绪标记 [v:xxx]：跟立绘情绪 [emotion] 分开的独立通道。立绘的 happy 是
-// 夸张的表情、语音的 happy 是音色情绪，两者强度/语义差异大，不能一概而论。
-// 所以语音情绪由 LLM 用 [v:xxx] 单独标，没标就不传（让 MiniMax 自然朗读）。
-// 从一行里抽出 [v:xxx]，返回 { voiceEmotion, rest（已剥掉该标记的文本）}。
-const VOICE_EMOTION_TAG_RE = /\[v:\s*([a-zA-Z]+)\s*\]/i;
-const extractVoiceEmotionTag = (line: string): { voiceEmotion?: string; rest: string } => {
-    let voiceEmotion: string | undefined;
-    const rest = line.replace(VOICE_EMOTION_TAG_RE, (_m, e: string) => {
-        const k = (e || '').toLowerCase();
-        if (VALID_EMOTIONS.has(k)) voiceEmotion = k;
-        return '';
-    });
-    return { voiceEmotion, rest };
-};
-
-// Helper: Parse dialogue with simple state machine
-const isContextNoise = (line: string) => {
-    const l = line.trim().toLowerCase();
-    if (l.startsWith('(') && l.endsWith(')')) {
-        if (l.includes('in person') || l.includes('face-to-face') || l.includes('location') || l.includes('time')) return true;
-    }
-    if (l.startsWith('[system') || l.startsWith('(system')) return true;
-    return false;
-};
-
-// Helper: Strip emotion tags like [shy], [happy] for pure text display
-const cleanTextForDisplay = (text: string) => {
-    // Remove content inside brackets [] and trim extra spaces
-    // Also remove typical system prompts if any leak through
-    return stripFaceToFacePhoneSourceTags(stripMessageReactionTags(text.replace(/\[.*?\]/g, ''))).trim();
-};
-
-// Helper: Check if a line is dialogue (starts with quoted speech "...")
-// A dialogue line must BEGIN with a quote character (after trimming).
-// Lines that merely contain incidental quotes (e.g. 把"项圈草图"塞进...) are narration.
-const isDialogueLine = (text: string) => {
-    const clean = cleanTextForDisplay(text);
-    return /^[""\u201C\u300C]/.test(clean);
-};
-
-// Helper: Extract only the dialogue text from a line for TTS
-const extractDialogueText = (text: string): string => {
-    const clean = cleanTextForDisplay(text);
-    const matches = clean.match(/["\u201C]([^"\u201D]*)["\u201D]/g)
-        || clean.match(/[\u300C]([^\u300D]*)[\u300D]/g);
-    if (matches) {
-        return matches.map(m => m.replace(/["\u201C\u201D\u300C\u300D]/g, '')).join(' ');
-    }
-    return clean;
-};
-
-const parseDialogue = (fullText: string, initialEmotion: string = 'normal'): DialogueItem[] => {
-    if (!fullText) return [];
-    const lines = fullText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-    const results: DialogueItem[] = [];
-    let currentEmotion = initialEmotion;
-
-    for (const rawLine of lines) {
-        if (isContextNoise(rawLine)) continue;
-        // 先把独立的语音情绪标记 [v:xxx] 抽出来（跟立绘情绪互不影响），再解析立绘标签
-        const { voiceEmotion, rest } = extractVoiceEmotionTag(rawLine);
-        const line = rest.trim();
-        if (!line) continue;
-        const tagMatch = line.match(/^\[([a-zA-Z0-9_\-]+)\]\s*(.*)/);
-        let content = line;
-
-        if (tagMatch) {
-            currentEmotion = tagMatch[1].toLowerCase();
-            content = tagMatch[2];
-        } else {
-            const standaloneTag = line.match(/^\[([a-zA-Z0-9_\-]+)\]$/);
-            if (standaloneTag) {
-                currentEmotion = standaloneTag[1].toLowerCase();
-                continue;
-            }
-        }
-        if (content) {
-            results.push({ text: content, emotion: currentEmotion, voiceEmotion });
-        }
-    }
-    return results;
-};
 
 interface DateSessionProps {
     char: CharacterProfile;
@@ -154,6 +79,8 @@ type DateSpeechResult = { url: string; spokenText: string };
 type DateVoiceFavoriteTarget = {
     sourceKey: string;
     originalText: string;
+    /** 朗读原文，保留 MiniMax inline 语气词；旧记录缺省时回退到 originalText。 */
+    speechText?: string;
     sourceTimestamp: number;
     voiceEmotion?: string;
 };
@@ -308,6 +235,9 @@ const DateSession: React.FC<DateSessionProps> = ({
     // voice effect (which keys off currentText only). undefined = 不传情绪，自然朗读。
     // A ref so it doesn't churn the effect's deps.
     const currentLineEmotionRef = useRef<string | undefined>(undefined);
+    // currentText is intentionally display-safe; keep its TTS counterpart beside it
+    // so GAL mode does not have to reconstruct (chuckle)/(breath) from rendered text.
+    const currentLineSpeechTextRef = useRef<string | undefined>(undefined);
     const [voiceFavoriteTarget, setVoiceFavoriteTarget] = useState<DateVoiceFavoriteTarget | null>(null);
     const [voiceFavoriteSaved, setVoiceFavoriteSaved] = useState(false);
     const [voiceFavoriteBusy, setVoiceFavoriteBusy] = useState(false);
@@ -407,23 +337,42 @@ const DateSession: React.FC<DateSessionProps> = ({
         if (!characterHasVoice(char, apiConfig)) return null;
         try {
             // 鱼声保留 inline cue，用 Fish 专属清洗；MiniMax 走原来的清洗。
-            let ttsText = resolveTtsProvider(apiConfig) === 'fishaudio' ? cleanTextForTtsFish(text) : cleanTextForTts(text);
+            const provider = resolveTtsProvider(apiConfig);
+            const sourceTtsText = provider === 'fishaudio' ? cleanTextForTtsFish(text) : cleanTextForTts(text);
+            let ttsText = sourceTtsText;
             if (!ttsText || ttsText.length < 2) return null;
             if (voiceLang) {
                 const langLabel = VOICE_LANG_LABELS[voiceLang] || voiceLang;
                 try {
+                    // 翻译模型不认识 MiniMax 的 inline 标签。先用不可翻译的占位符
+                    // 保护它们，翻译后逐一校验并还原；失败就回退原文，宁可不翻也不
+                    // 让一次翻译静默吃掉 chuckle/breath。
+                    const protectedInterjections = provider === 'minimax'
+                        ? protectMiniMaxInterjectionsForTranslation(ttsText)
+                        : null;
+                    const translationInput = protectedInterjections?.text || ttsText;
                     const transRes = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
                         body: JSON.stringify({
                             model: apiConfig.model,
-                            messages: [{ role: 'system', content: `Translate the following text to ${langLabel}. Output ONLY the translation, nothing else.` }, { role: 'user', content: ttsText }],
+                            messages: [{ role: 'system', content: `Translate the following text to ${langLabel}. Output ONLY the translation, nothing else. Preserve every SULLYMMVOICECUE...END placeholder exactly once.` }, { role: 'user', content: translationInput }],
                             temperature: 0.3,
                         }),
                     });
                     const transData = await transRes.json();
                     const translated = transData?.choices?.[0]?.message?.content?.trim();
-                    if (translated) ttsText = translated;
+                    if (translated) {
+                        const restored = protectedInterjections
+                            ? protectedInterjections.restore(translated)
+                            : translated;
+                        if (restored !== null) {
+                            ttsText = restored;
+                        } else {
+                            console.warn('Date TTS translation changed MiniMax interjection placeholders; using source text.');
+                            ttsText = sourceTtsText;
+                        }
+                    }
                 } catch { /* use original */ }
             }
             const url = await synthesizeSpeech(ttsText, char, apiConfig, {
@@ -433,9 +382,9 @@ const DateSession: React.FC<DateSessionProps> = ({
             });
             return {
                 url,
-                spokenText: resolveTtsProvider(apiConfig) === 'fishaudio'
+                spokenText: provider === 'fishaudio'
                     ? stripFishMarkupForDisplay(ttsText)
-                    : ttsText,
+                    : cleanVoiceMarkupForDisplay(ttsText),
             };
         } catch (err: any) {
             console.warn('Date TTS failed:', err?.message);
@@ -458,14 +407,14 @@ const DateSession: React.FC<DateSessionProps> = ({
         if (isShowingOpening) return;
         if (!isDialogueLine(currentText)) return;
         let cancelled = false;
-        const dialogueText = extractDialogueText(currentText);
-        const cacheKey = dialogueText;
+        const speechText = currentLineSpeechTextRef.current || extractDialogueText(currentText);
+        const cacheKey = speechText;
         const play = async () => {
             // Check cache first
             let speech: DateSpeechResult | undefined = voiceCacheRef.current[cacheKey];
             if (!speech) {
                 setGalVoiceLoading(true);
-                speech = await translateAndSpeak(dialogueText, currentLineEmotionRef.current) || undefined;
+                speech = await translateAndSpeak(speechText, currentLineEmotionRef.current) || undefined;
                 if (cancelled) return;
                 setGalVoiceLoading(false);
                 if (!speech) return;
@@ -491,12 +440,12 @@ const DateSession: React.FC<DateSessionProps> = ({
             setDateVoicePlaying(false);
             return;
         }
-        const dialogueText = extractDialogueText(currentText);
-        const cacheKey = dialogueText;
+        const speechText = currentLineSpeechTextRef.current || extractDialogueText(currentText);
+        const cacheKey = speechText;
         let speech: DateSpeechResult | undefined = voiceCacheRef.current[cacheKey];
         if (!speech) {
             setGalVoiceLoading(true);
-            speech = await translateAndSpeak(dialogueText, currentLineEmotionRef.current) || undefined;
+            speech = await translateAndSpeak(speechText, currentLineEmotionRef.current) || undefined;
             setGalVoiceLoading(false);
             if (!speech) { addToast('语音合成失败，请稍后重试', 'error'); return; }
             voiceCacheRef.current[cacheKey] = speech;
@@ -512,8 +461,9 @@ const DateSession: React.FC<DateSessionProps> = ({
     // voiceEmotion（[v:xxx]）跟立绘模式保持一致地传给 TTS：这样两种模式合成的音频完全相同，
     // 且命中同一条持久缓存（ttsCache/IndexedDB）——退出见面再进来点旧台词也能从本地缓存秒取，
     // 不必按不同的 key 重新联网合成。
-    const handleNovelLinePlay = async (lineKey: string, dialogueText: string, voiceEmotion?: string) => {
-        const cached = voiceCacheRef.current[dialogueText];
+    const handleNovelLinePlay = async (lineKey: string, displayText: string, speechText: string, voiceEmotion?: string) => {
+        const sourceText = speechText || displayText;
+        const cached = voiceCacheRef.current[sourceText];
         if (cached) {
             // Already have URL (from GAL or previous novel play), just play/pause
             if (!dateAudioRef.current) dateAudioRef.current = new Audio();
@@ -529,10 +479,10 @@ const DateSession: React.FC<DateSessionProps> = ({
             return;
         }
         setNovelVoiceLoading(prev => new Set(prev).add(lineKey));
-        const speech = await translateAndSpeak(dialogueText, voiceEmotion);
+        const speech = await translateAndSpeak(sourceText, voiceEmotion);
         setNovelVoiceLoading(prev => { const n = new Set(prev); n.delete(lineKey); return n; });
         if (!speech) { addToast('语音合成失败，请稍后重试', 'error'); return; }
-        voiceCacheRef.current[dialogueText] = speech;
+        voiceCacheRef.current[sourceText] = speech;
         if (!dateAudioRef.current) dateAudioRef.current = new Audio();
         dateAudioRef.current.src = speech.url;
         dateAudioRef.current.onended = () => setNovelPlayingId(null);
@@ -543,18 +493,20 @@ const DateSession: React.FC<DateSessionProps> = ({
     const resolveCurrentDateVoiceTarget = (): DateVoiceFavoriteTarget | null => {
         if (!currentText || !isDialogueLine(currentText)) return null;
         const originalText = extractDialogueText(currentText);
+        const currentSpeechText = currentLineSpeechTextRef.current || originalText;
         for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex--) {
             const message = messages[messageIndex];
             if (message.role !== 'assistant' || isDatePhoneBridge(message)) continue;
             const { rest: body } = extractObservation(message.content || '', { lenient: observeEnabled, custom: char.dateObserve?.custom });
             const lines = body.split('\n');
             for (let lineIndex = lines.length - 1; lineIndex >= 0; lineIndex--) {
-                const parsed = extractVoiceEmotionTag(lines[lineIndex]);
-                if (isDialogueLine(parsed.rest) && extractDialogueText(parsed.rest) === originalText) {
+                const parsed = parseDialogue(lines[lineIndex], 'normal')[0];
+                if (parsed && isDialogueLine(parsed.text) && extractDialogueText(parsed.text) === originalText) {
                     return {
                         sourceKey: `${char.id}:${message.id}-${lineIndex}`,
                         originalText,
                         sourceTimestamp: message.timestamp,
+                        speechText: parsed.speechText || currentSpeechText,
                         voiceEmotion: parsed.voiceEmotion || currentLineEmotionRef.current,
                     };
                 }
@@ -563,6 +515,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         return {
             sourceKey: `${char.id}:live:${makeVoiceFavoriteId('date', originalText)}`,
             originalText,
+            speechText: currentSpeechText,
             sourceTimestamp: Date.now(),
             voiceEmotion: currentLineEmotionRef.current,
         };
@@ -603,10 +556,11 @@ const DateSession: React.FC<DateSessionProps> = ({
                 addToast('已取消收藏语音', 'info');
                 return;
             }
-            let speech: DateSpeechResult | undefined = voiceCacheRef.current[target.originalText];
+            const sourceText = target.speechText || target.originalText;
+            let speech: DateSpeechResult | undefined = voiceCacheRef.current[sourceText];
             if (!speech) {
-                speech = await translateAndSpeak(target.originalText, target.voiceEmotion) || undefined;
-                if (speech) voiceCacheRef.current[target.originalText] = speech;
+                speech = await translateAndSpeak(sourceText, target.voiceEmotion) || undefined;
+                if (speech) voiceCacheRef.current[sourceText] = speech;
             }
             if (!speech) throw new Error('语音合成失败，请稍后重试');
             const blob = await fetchBlobForShare(speech.url, 'audio/mpeg');
@@ -767,10 +721,13 @@ const DateSession: React.FC<DateSessionProps> = ({
                 setCurrentText(first.text);
                 setDisplayedText(first.text);
                 currentLineEmotionRef.current = first.voiceEmotion;
+                currentLineSpeechTextRef.current = first.speechText;
                 setCurrentDialogueIndex(0);
             } else {
                 setCurrentText('');
                 setDisplayedText('');
+                currentLineEmotionRef.current = undefined;
+                currentLineSpeechTextRef.current = undefined;
                 setCurrentDialogueIndex(-1);
             }
         } else if (initialState) {
@@ -779,8 +736,9 @@ const DateSession: React.FC<DateSessionProps> = ({
             setBgImage(char.dateBackground || initialState.bgImage || '');
             setCurrentSprite(isBlobRef(restoredSprite.src) ? (char.avatar || '') : restoredSprite.src);
             setCurrentSpriteKey(restoredSprite.key);
-            setCurrentText(initialState.currentText || '');
-            setDisplayedText(initialState.currentText || '');
+            const restoredCurrentText = cleanTextForDisplay(initialState.currentText || '');
+            setCurrentText(restoredCurrentText);
+            setDisplayedText(restoredCurrentText);
             const restoredQueue = Array.isArray(initialState.dialogueQueue) ? initialState.dialogueQueue : [];
             const restoredBatch = Array.isArray(initialState.dialogueBatch) ? initialState.dialogueBatch : [];
             const restoredIndex = typeof initialState.dialogueIndex === 'number'
@@ -789,6 +747,10 @@ const DateSession: React.FC<DateSessionProps> = ({
             setDialogueQueue(restoredQueue);
             setDialogueBatch(restoredBatch);
             setCurrentDialogueIndex(restoredIndex);
+            currentLineEmotionRef.current = restoredIndex >= 0 ? restoredBatch[restoredIndex]?.voiceEmotion : undefined;
+            currentLineSpeechTextRef.current = restoredIndex >= 0
+                ? (restoredBatch[restoredIndex]?.speechText || extractDialogueSpeechText(initialState.currentText || '') || undefined)
+                : undefined;
             setIsNovelMode(!!initialState.isNovelMode);
         } else {
             // New Session - pick initial sprite from active skin set or default sprites
@@ -809,6 +771,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                 const first = items[0];
                 setCurrentText(first.text);
                 currentLineEmotionRef.current = first.voiceEmotion;
+                currentLineSpeechTextRef.current = first.speechText;
                 setCurrentDialogueIndex(0);
                 // Note: Not setting sprite here because useEffect below will handle emotion->sprite mapping if needed,
                 // or we rely on default.
@@ -866,6 +829,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     const processNextDialogue = (item: DialogueItem, remaining: DialogueItem[], index: number) => {
         setCurrentText(item.text);
         currentLineEmotionRef.current = item.voiceEmotion;
+        currentLineSpeechTextRef.current = item.speechText;
         setCurrentDialogueIndex(index);
         if (item.emotion && activeSprites) {
             const emotionKey = item.emotion.toLowerCase();
@@ -925,6 +889,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         setCurrentText(nextIndex >= 0 ? items[nextIndex].text : '');
         setDisplayedText(nextIndex >= 0 ? items[nextIndex].text : '');
         currentLineEmotionRef.current = nextIndex >= 0 ? items[nextIndex].voiceEmotion : undefined;
+        currentLineSpeechTextRef.current = nextIndex >= 0 ? items[nextIndex].speechText : undefined;
     }, [historyReplay, replayDialogueItems]);
 
     const handleScreenClick = (e: React.MouseEvent) => {
@@ -1701,18 +1666,22 @@ const DateSession: React.FC<DateSessionProps> = ({
                                                     <ObserveHUD observation={msgObs} variant="card" charName={char.name} config={char.dateObserve} />
                                                 )}
                                                 {(msgBody || '').split('\n').map((line, idx) => {
-                                                const cleanLine = cleanTextForDisplay(line);
+                                                // 与立绘模式共用同一个解析器：正文显示用 text，
+                                                // 播放/收藏用 speechText（其中保留 MiniMax 语气词）。
+                                                const lineItem = parseDialogue(line, 'normal')[0];
+                                                const cleanLine = lineItem?.text || '';
                                                 if (!cleanLine) return null;
-                                                const lineIsDialogue = isDialogueLine(line);
+                                                const lineIsDialogue = !!lineItem?.speechText && isDialogueLine(cleanLine);
                                                 const lineKey = `${msg.id}-${idx}`;
                                                 const isOpeningMsg = msg.metadata?.isOpening === true;
-                                                const parsedVoiceLine = extractVoiceEmotionTag(line);
-                                                const dialogueText = extractDialogueText(parsedVoiceLine.rest);
+                                                const dialogueText = extractDialogueText(lineItem.text);
+                                                const speechText = lineItem.speechText || dialogueText;
                                                 const voiceTarget: DateVoiceFavoriteTarget = {
                                                     sourceKey: `${char.id}:${lineKey}`,
                                                     originalText: dialogueText,
+                                                    speechText,
                                                     sourceTimestamp: msg.timestamp,
-                                                    voiceEmotion: parsedVoiceLine.voiceEmotion,
+                                                    voiceEmotion: lineItem.voiceEmotion,
                                                 };
                                                 return (
                                                     <div
@@ -1736,7 +1705,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                                                 onClick={(e) => {
                                                                     e.stopPropagation();
                                                                     if (voiceFavoriteLongPressTriggered.current) { voiceFavoriteLongPressTriggered.current = false; return; }
-                                                                    handleNovelLinePlay(lineKey, dialogueText, parsedVoiceLine.voiceEmotion);
+                                                                    handleNovelLinePlay(lineKey, dialogueText, speechText, lineItem.voiceEmotion);
                                                                 }}
                                                                 onTouchStart={(e) => startDateVoiceLongPress(e, voiceTarget)}
                                                                 onTouchMove={endDateVoiceLongPress}

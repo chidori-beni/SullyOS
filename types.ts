@@ -2191,6 +2191,8 @@ export interface SongSheet {
 // --- DATE APP TYPES ---
 export interface DialogueItem {
     text: string;
+    /** TTS 专用原文：保留 MiniMax (chuckle)/(breath) 等语气词；旧快照缺省时回退到 text。 */
+    speechText?: string;
     /** 立绘情绪 key（[happy]/[sad]/…）—— 只驱动立绘表情，不再直接当语音情绪。 */
     emotion?: string;
     /** 语音情绪，来自独立标记 [v:xxx]，跟立绘分开。仅取合法 MiniMax emotion，否则 undefined。 */
