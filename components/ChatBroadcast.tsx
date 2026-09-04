@@ -128,7 +128,7 @@ const ChatBroadcast: React.FC = () => {
             <style>{`@keyframes chatbcin{from{opacity:0;transform:translateY(-14px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
                      @keyframes chatbcdot{0%,60%,100%{opacity:.35;transform:translateY(0)}30%{opacity:1;transform:translateY(-2px)}}`}</style>
             <button type="button" onClick={jump}
-                className="relative flex items-center gap-2.5 pl-3 pr-3.5 py-1.5 rounded-full overflow-hidden backdrop-blur-xl cursor-pointer"
+                className="sully-ui-broadcast relative flex items-center gap-2.5 pl-3 pr-3.5 py-1.5 rounded-full overflow-hidden backdrop-blur-xl cursor-pointer"
                 style={{
                     animation: 'chatbcin .45s cubic-bezier(.2,.9,.3,1.2)',
                     background: 'linear-gradient(100deg, rgba(20,36,32,.85), rgba(12,22,20,.85))',

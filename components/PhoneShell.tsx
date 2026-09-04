@@ -4,7 +4,6 @@
 import React, { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import { IMPORT_IN_PROGRESS_KEY, useOS } from '../context/OSContext';
 import StatusBar from './os/StatusBar';
-import MessagePreviewBanner from './MessagePreviewBanner';
 import Launcher from '../apps/Launcher';
 import CompanionLockChrome from './os/CompanionLockChrome';
 import { loadCompanionFrameStyle } from './os/companionFrameStyles';
@@ -1143,10 +1142,12 @@ const PhoneShell: React.FC = () => {
               </div>
           )}
 
-           {/* 全局自定义 CSS：整机的弹窗 / 抽屉 / 设置框（.sully-ui-* 钩子）。
-               注在这里而不是各 App 里 —— PhoneShell 常驻，离开聊天页也不会卸载。
-               排在最前，用户 CSS 里的 !important 仍然压得住各组件自己的 Tailwind。 */}
-           {theme.globalCustomCss && <style>{theme.globalCustomCss}</style>}
+           {/* 顶部通知条 CSS（.sully-ui-toast）。通知不属于任何一个 App，所以注在常驻的外壳里。
+               聊天里那些设置框是另一份，注在 apps/Chat.tsx —— 那份只在聊天页生效，
+               免得把外观 App、设置页里的同款弹窗也一起改了。 */}
+           {(theme.notifyCustomCss || theme.globalCustomCss) && (
+             <style>{theme.notifyCustomCss || ''}</style>
+           )}
 
            {/* Overlays: Toasts (Top) */}
            <div className="absolute top-12 left-0 w-full flex flex-col items-center gap-2 pointer-events-none z-[60]">
@@ -1160,9 +1161,9 @@ const PhoneShell: React.FC = () => {
               ))}
             </div>
 
-           {/* Overlays: 主动消息单卡横幅（前台内部）。卡片本身固定，只更新消息内容；
-               后台/彻底退出时仍由原有系统通知链路负责，不从这里重复弹。 */}
-           <MessagePreviewBanner />
+           {/* 内部消息横幅已下线（2026-09-04）：用户改用系统自带通知栏。
+               注意副作用 —— 前台收到主动消息、但人不在那个聊天里时，界面上不再有提示。
+               发射端 utils/messagePreview.ts 还在，没有监听者，想恢复把 <MessagePreviewBanner /> 挂回来即可。 */}
         </div>
 
        {/* Global error dialog (长报错走它, 替代单行 toast) */}

@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { GLOBAL_CSS_AI_PROMPT, UI_HOOK_CATALOG, uiHooksOfWave, COCOA_DOTS_UI_CSS } from './globalCss';
+import {
+  DIALOG_CSS_AI_PROMPT, NOTIFY_CSS_AI_PROMPT,
+  UI_HOOK_CATALOG, DIALOG_HOOKS, NOTIFY_HOOKS, uiHooksOfWave,
+  COCOA_DOTS_DIALOG_CSS, COCOA_DOTS_NOTIFY_CSS,
+} from './globalCss';
 
 /**
  * 守卫：名录里登记的每个 .sully-ui-* 类，必须真的挂在某个组件上。
@@ -14,6 +18,7 @@ import { GLOBAL_CSS_AI_PROMPT, UI_HOOK_CATALOG, uiHooksOfWave, COCOA_DOTS_UI_CSS
 const HOOK_FILES = [
   'components/os/Modal.tsx',
   'components/PhoneShell.tsx',
+  'components/ChatBroadcast.tsx',
   'components/chat/ChatDecorSheet.tsx',
   'components/appearance/ChatAppearanceEditor.tsx',
   'components/chat/ProactiveSettingsModal.tsx',
@@ -40,33 +45,54 @@ describe('全局 UI 钩子名录', () => {
   });
 });
 
+describe('两个槽的分工', () => {
+  it('每个钩子只属于一个槽，加起来是完整名录', () => {
+    expect(DIALOG_HOOKS.length + NOTIFY_HOOKS.length).toBe(UI_HOOK_CATALOG.length);
+    const overlap = DIALOG_HOOKS.filter(d => NOTIFY_HOOKS.some(n => n.hook === d.hook));
+    expect(overlap).toEqual([]);
+  });
+
+  it('Toast 归通知槽，弹窗结构归弹窗槽', () => {
+    expect(NOTIFY_HOOKS.map(e => e.hook)).toContain('sully-ui-toast');
+    expect(DIALOG_HOOKS.map(e => e.hook)).toContain('sully-ui-sheet');
+    expect(DIALOG_HOOKS.map(e => e.hook)).not.toContain('sully-ui-toast');
+  });
+});
+
 describe('AI 提示词', () => {
-  it('带上了全部类名', () => {
-    for (const entry of UI_HOOK_CATALOG) expect(GLOBAL_CSS_AI_PROMPT).toContain(`.${entry.hook}`);
+  it('各自只列自己槽里的类名', () => {
+    for (const entry of DIALOG_HOOKS) expect(DIALOG_CSS_AI_PROMPT).toContain(`.${entry.hook}`);
+    for (const entry of NOTIFY_HOOKS) expect(NOTIFY_CSS_AI_PROMPT).toContain(`.${entry.hook}`);
+    expect(NOTIFY_CSS_AI_PROMPT).not.toContain('.sully-ui-sheet');
   });
 
-  it('写明了禁止毛玻璃和无限动画（这两条是发烫的主因）', () => {
-    expect(GLOBAL_CSS_AI_PROMPT).toContain('backdrop-filter');
-    expect(GLOBAL_CSS_AI_PROMPT).toContain('无限循环');
+  it('两份都写明了禁止毛玻璃和无限动画（发烫的主因）', () => {
+    for (const prompt of [DIALOG_CSS_AI_PROMPT, NOTIFY_CSS_AI_PROMPT]) {
+      expect(prompt).toContain('backdrop-filter');
+      expect(prompt).toContain('无限循环');
+    }
   });
 
-  it('警告了这段 CSS 是整机生效的', () => {
-    expect(GLOBAL_CSS_AI_PROMPT).toContain('整机');
+  it('各自写清了生效范围', () => {
+    expect(DIALOG_CSS_AI_PROMPT).toContain('只作用于聊天页');
+    expect(NOTIFY_CSS_AI_PROMPT).toContain('整机生效');
   });
 });
 
 describe('内置「可可点点」预设', () => {
   it('只用 .sully-ui-* 选择器，不会污染别的界面', () => {
-    const selectors = COCOA_DOTS_UI_CSS
+    const selectors = (COCOA_DOTS_DIALOG_CSS + String.fromCharCode(10) + COCOA_DOTS_NOTIFY_CSS)
       .split('\n')
-      .filter(line => line.trim().endsWith('{') || line.trim().endsWith(','))
-      .filter(line => !line.trim().startsWith('/*'));
+      .filter((line: string) => line.trim().endsWith('{') || line.trim().endsWith(','))
+      .filter((line: string) => !line.trim().startsWith('/*'));
     expect(selectors.length).toBeGreaterThan(5);
     for (const line of selectors) expect(line.trim().startsWith('.sully-ui-')).toBe(true);
   });
 
   it('自己不用毛玻璃，还主动把组件自带的关掉', () => {
-    expect(COCOA_DOTS_UI_CSS).toContain('backdrop-filter:none');
-    expect(COCOA_DOTS_UI_CSS).not.toMatch(/backdrop-filter:\s*blur/);
+    for (const css of [COCOA_DOTS_DIALOG_CSS, COCOA_DOTS_NOTIFY_CSS]) {
+      expect(css).toContain('backdrop-filter:none');
+      expect(css).not.toMatch(/backdrop-filter:\s*blur/);
+    }
   });
 });

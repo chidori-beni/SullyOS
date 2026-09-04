@@ -219,15 +219,24 @@ export interface OSTheme {
   /** 聊天「白框」自定义 CSS：作用于 .sully-chat-root 下的顶栏、输入栏与消息布局钩子。
    *  可换色 / 贴图 / 改外形 / 挪位；稳定选择器清单见 ChromeCssEditor。 */
   chatChromeCustomCss?: string;
-  /** 内部消息横幅自定义 CSS；兼容糯叽机 .ios-notification-* / .banner-* 选择器与 --nuo-notif-* 变量。 */
+  /** @deprecated 2026-09-04 内部消息横幅已下线（用户改用系统通知）。字段保留只为兼容旧备份。 */
   messageBannerCustomCss?: string;
   /** 聊天卡片自定义 CSS：作用于 .sully-chat-card[data-card=...] 各种卡片（彼方 / 通话 / 日程邀约……）。
    *  全局一份，私聊与群聊共用；卡片名录与选择器说明见 utils/chatCardCss.ts。 */
   chatCardCustomCss?: string;
   /** 卡片 CSS 预设（可保存 / 重命名 / 删除 / 切换），跟着主题一起备份导出。 */
   chatCardCssPresets?: ChatCardCssPreset[];
-  /** 全局自定义 CSS：整机的弹窗 / 抽屉 / 设置框，作用于 .sully-ui-* 钩子。
-   *  注入点在 PhoneShell（常驻），所以离开聊天页也生效。名录见 utils/globalCss.ts。 */
+  /** 聊天弹窗 CSS：「＋」菜单点开的那些设置框 / 抽屉，作用于 .sully-ui-* 钩子。
+   *  注入点在 apps/Chat.tsx —— **只在聊天页挂载**，离开聊天页就卸载，
+   *  所以外观 App、设置页里的同款弹窗不受影响。入口在「装扮」里。 */
+  chatDialogCustomCss?: string;
+  chatDialogCssPresets?: ChatCardCssPreset[];
+  chatDialogCssPresetId?: string;
+  /** 顶部通知条 CSS（.sully-ui-toast）。注入点在 PhoneShell，整机常驻。入口在「外观」里。 */
+  notifyCustomCss?: string;
+  notifyCssPresets?: ChatCardCssPreset[];
+  notifyCssPresetId?: string;
+  /** @deprecated 2026-09-04 拆成上面两个槽。只留着做一次性回填，不再写入。 */
   globalCustomCss?: string;
   globalCustomCssPresets?: ChatCardCssPreset[];
   globalCustomCssPresetId?: string;

@@ -3,8 +3,9 @@ import { AppID, OSTheme, ChatFineTuneFields } from '../../types';
 import WhiteboxSoundEditor from '../chat/WhiteboxSoundEditor';
 import { WhiteboxSound } from '../../utils/whiteboxSound';
 import ChatFineTunePanel from '../chat/ChatFineTunePanel';
-import MessageBannerCssEditor from './MessageBannerCssEditor';
 import ChatCardCssEditor from './ChatCardCssEditor';
+import CssSlotEditor from './CssSlotEditor';
+import { BUILTIN_DIALOG_CSS_PRESETS, DIALOG_CSS_AI_PROMPT, DIALOG_HOOKS } from '../../utils/globalCss';
 import { FadersHorizontal } from '@phosphor-icons/react';
 
 type Props = {
@@ -829,16 +830,32 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                 />
             </section>
 
+            {/* 聊天弹窗 CSS：「＋」菜单点开的那些设置框 / 抽屉。
+                注入点在 Chat.tsx，只在聊天页生效 —— 外观 App 里的同款弹窗不受影响。 */}
             <section className={groupClass}>
                 <div className="mb-3">
-                    <h2 className="sully-ui-label text-sm font-bold uppercase tracking-widest text-slate-400">内部消息横幅 · CSS</h2>
+                    <h2 className="sully-ui-label text-sm font-bold uppercase tracking-widest text-slate-400">聊天弹窗 · CSS</h2>
                     <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-                        只有 APP 在前台、但当前不在聊天页时使用。可以直接导入糯叽机的通知栏 CSS，保存后实时生效；前台聊天页不显示横幅，后台系统通知也不受这里影响。
+                        「＋」菜单里点开的设置框、抽屉全归这里，作用于 <code>.sully-ui-*</code> 钩子。
+                        <b>只在聊天页生效</b>：外观、设置那些页面里的同款弹窗不会被改到。
                     </p>
                 </div>
-                <MessageBannerCssEditor
-                    value={theme.messageBannerCustomCss || ''}
-                    onChange={(css) => updateTheme({ messageBannerCustomCss: css })}
+                <CssSlotEditor
+                    slotLabel="聊天弹窗"
+                    hooks={DIALOG_HOOKS}
+                    aiPrompt={DIALOG_CSS_AI_PROMPT}
+                    builtins={BUILTIN_DIALOG_CSS_PRESETS}
+                    exportName="sullyos-chat-dialogs.css"
+                    scopeHint="这段 CSS 只在聊天页生效。"
+                    value={theme.chatDialogCustomCss ?? theme.globalCustomCss ?? ''}
+                    presets={theme.chatDialogCssPresets || []}
+                    activePresetId={theme.chatDialogCssPresetId}
+                    onPatch={({ css, presets, presetId }) => updateTheme({
+                        chatDialogCustomCss: css,
+                        chatDialogCssPresets: presets,
+                        chatDialogCssPresetId: presetId,
+                    })}
+                    onNotify={onNotify}
                 />
             </section>
 

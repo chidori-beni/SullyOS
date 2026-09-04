@@ -3670,6 +3670,14 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                  守护样式统一放在气泡主题 customCss 之后（见下），保证对所有用户 CSS 都能兜底。 */}
              {osTheme.chatChromeCustomCss && <style>{osTheme.chatChromeCustomCss}</style>}
              {char.chromeCustomCss && <style>{char.chromeCustomCss}</style>}
+             {/* 聊天弹窗 CSS：「＋」菜单点开的那些设置框 / 抽屉（.sully-ui-* 钩子）。
+                 注在这里而不是 PhoneShell —— 它只在聊天页挂载，退出聊天就卸载，
+                 于是外观 App、设置页里的同款弹窗不会被顺带改掉。
+                 globalCustomCss 是 2026-09-04 拆槽前的旧字段，只做一次性回填。 */}
+             {(osTheme.chatDialogCustomCss || osTheme.globalCustomCss) && (
+               <style>{osTheme.chatDialogCustomCss || osTheme.globalCustomCss}</style>
+             )}
+
              {/* 卡片自定义 CSS：作用于 .sully-chat-card[data-card=...]（彼方 / 通话 / 日程邀约……）。
                  只有全局一份——卡片是「哪个功能发来的」，跟角色无关，所以不做 per-character 覆盖。
                  排在白框之后：白框 CSS 里若也写了卡片选择器，同 !important 时以这里为准。 */}

@@ -21,7 +21,8 @@ import AppIconEditor from '../components/appearance/AppIconEditor';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
-import GlobalCssEditor from '../components/appearance/GlobalCssEditor';
+import CssSlotEditor from '../components/appearance/CssSlotEditor';
+import { BUILTIN_NOTIFY_CSS_PRESETS, NOTIFY_CSS_AI_PROMPT, NOTIFY_HOOKS } from '../utils/globalCss';
 
 const CustomIconImage: React.FC<{ value: string; alt: string; preserveOutline?: boolean }> = ({ value, alt, preserveOutline = false }) => {
     const url = useBlobRefUrl(value);
@@ -1688,24 +1689,30 @@ const Appearance: React.FC = () => {
                 </section>
                 </AppearanceGroup>
 
-                {/* 全局弹窗 CSS：整机的弹窗 / 抽屉 / 设置框。注入点在 PhoneShell，
-                    所以它跟聊天白框那份不一样——离开聊天页也生效。 */}
+                {/* 顶部通知条 CSS：Toast 这类浮层不属于任何一个 App，所以入口放在外观里，
+                    注入点在 PhoneShell（整机常驻）。聊天里那些设置框是另一份，在「装扮」里。 */}
                 <section className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100">
                     <div className="mb-3">
-                        <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400">全局弹窗 · CSS</h2>
+                        <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400">通知条 · CSS</h2>
                         <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-                            整机的弹窗、抽屉、设置框、顶部提示统一上妆，作用于 <code>.sully-ui-*</code> 钩子。
-                            和聊天白框那份分开：这份离开聊天页也生效。
+                            顶部弹出的那条提示，整机生效。聊天里「＋」菜单的设置框是另一份，
+                            在<b>任意聊天 →「＋」→ 装扮 →「所有聊天」</b>里。
                         </p>
                     </div>
-                    <GlobalCssEditor
-                        value={theme.globalCustomCss || ''}
-                        presets={theme.globalCustomCssPresets || []}
-                        activePresetId={theme.globalCustomCssPresetId}
+                    <CssSlotEditor
+                        slotLabel="通知条"
+                        hooks={NOTIFY_HOOKS}
+                        aiPrompt={NOTIFY_CSS_AI_PROMPT}
+                        builtins={BUILTIN_NOTIFY_CSS_PRESETS}
+                        exportName="sullyos-notify.css"
+                        scopeHint="这段 CSS 整机生效。"
+                        value={theme.notifyCustomCss || ''}
+                        presets={theme.notifyCssPresets || []}
+                        activePresetId={theme.notifyCssPresetId}
                         onPatch={({ css, presets, presetId }) => updateTheme({
-                            globalCustomCss: css,
-                            globalCustomCssPresets: presets,
-                            globalCustomCssPresetId: presetId,
+                            notifyCustomCss: css,
+                            notifyCssPresets: presets,
+                            notifyCssPresetId: presetId,
                         })}
                         onNotify={(message, kind) => addToast(message, kind)}
                     />
