@@ -5,7 +5,7 @@ import { useOS } from '../../context/OSContext';
 import { DB } from '../../utils/db';
 import DateSettings from './DateSettings';
 import ObserveHUD from './ObserveHUD';
-import { extractObservation, hasObservation } from '../../utils/datePrompts';
+import { DatePrompts, extractObservation, hasObservation } from '../../utils/datePrompts';
 import { isBlobRef } from '../../utils/blobRef';
 import { clearDateResumeAttempt } from '../../utils/dateSessionRecovery';
 import { cleanTextForTts, VALID_EMOTIONS } from '../../utils/minimaxTts';
@@ -20,7 +20,7 @@ import { getVoiceFavorite, makeVoiceFavoriteId, removeVoiceFavorite, saveVoiceFa
 import { getDatePhoneSpeaker, isDatePhoneBridge, formatDatePhoneMarkdown } from '../../utils/datePhoneBridge';
 import { stripMessageReactionTags } from '../../utils/messageReactions';
 import { stripFaceToFacePhoneSourceTags } from '../../utils/sanitize';
-import { ArrowLeft } from '@phosphor-icons/react';
+import { ArrowLeft, CornersIn, CornersOut } from '@phosphor-icons/react';
 
 // 语音情绪标记 [v:xxx]：跟立绘情绪 [emotion] 分开的独立通道。立绘的 happy 是
 // 夸张的表情、语音的 happy 是音色情绪，两者强度/语义差异大，不能一概而论。
@@ -113,8 +113,19 @@ interface DateSessionProps {
     initialState?: DateState; // Resume state
     /** 完结见面回顾：直接浏览既有内容，不生成新回复、不创建恢复存档。 */
     historyReplay?: boolean;
+    /** 当前见面的剧情时钟快照；回顾页缺省时从消息检查点推导。 */
+    encounterId?: string;
+    encounterStartedAt?: number;
+    sceneClockAt?: number;
+    sceneClockAdvancedMs?: number;
+    sceneClockRevision?: number;
+    sceneClockUpdatedAt?: number;
+    sceneClockTimeZone?: string;
+    dateTimeAwarenessEnabled?: boolean;
     onSendMessage: (text: string) => Promise<string>; // Returns AI content
     onReroll: () => Promise<string>;
+    onInterlude?: (description: string, targetAt?: number) => Promise<string>;
+    onSetSceneClock?: (timestamp: number) => Promise<void>;
     onExit: (currentState: DateState) => void;
     onEnd: (currentState: DateState) => Promise<void>;
     endSuggestedReason?: string;
@@ -188,8 +199,18 @@ const DateSession: React.FC<DateSessionProps> = ({
     peekStatus,
     initialState,
     historyReplay = false,
-    onSendMessage, 
-    onReroll, 
+    encounterId,
+    encounterStartedAt,
+    sceneClockAt,
+    sceneClockAdvancedMs,
+    sceneClockRevision,
+    sceneClockUpdatedAt,
+    sceneClockTimeZone,
+    dateTimeAwarenessEnabled = true,
+    onSendMessage,
+    onReroll,
+    onInterlude,
+    onSetSceneClock,
     onExit,
     onEnd,
     endSuggestedReason,
@@ -230,6 +251,17 @@ const DateSession: React.FC<DateSessionProps> = ({
     const [isShowingOpening, setIsShowingOpening] = useState(!historyReplay && !initialState); // True until first user interaction
     const [showExitModal, setShowExitModal] = useState(false);
     const [endingEncounter, setEndingEncounter] = useState(false);
+    const [showInterludeEditor, setShowInterludeEditor] = useState(false);
+    const [interludeDescription, setInterludeDescription] = useState('');
+    const [showClockEditor, setShowClockEditor] = useState(false);
+    const [clockInput, setClockInput] = useState('');
+    const [clockBusy, setClockBusy] = useState(false);
+    const [isFullscreenEditor, setIsFullscreenEditor] = useState(false);
+    const [isInputOverflowing, setIsInputOverflowing] = useState(false);
+    const [realNow, setRealNow] = useState(() => Date.now());
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const fullscreenTextareaRef = useRef<HTMLTextAreaElement>(null);
+    const MAX_DATE_INPUT_HEIGHT = 144;
     const handledEndSuggestionRef = useRef('');
     useEffect(() => {
         if (!endSuggestedReason || isTyping || isTextAnimating || dialogueQueue.length > 0) return;
@@ -284,6 +316,92 @@ const DateSession: React.FC<DateSessionProps> = ({
 
     const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
     const VOICE_LANG_OPTIONS = [{v:'',l:'默认'},{v:'en',l:'EN'},{v:'ja',l:'JP'},{v:'ko',l:'KR'},{v:'fr',l:'FR'},{v:'es',l:'ES'}];
+
+    const latestSceneClockMessage = React.useMemo(() => {
+        for (let index = messages.length - 1; index >= 0; index -= 1) {
+            const message = messages[index];
+            if (message.metadata?.source === 'date' && typeof message.metadata?.sceneClockAt === 'number' && Number.isFinite(message.metadata.sceneClockAt)) {
+                return message;
+            }
+        }
+        return undefined;
+    }, [messages]);
+    const effectiveSceneClockAt = typeof sceneClockAt === 'number' && Number.isFinite(sceneClockAt)
+        ? sceneClockAt
+        : typeof initialState?.sceneClockAt === 'number' && Number.isFinite(initialState.sceneClockAt)
+            ? initialState.sceneClockAt
+            : latestSceneClockMessage?.metadata?.sceneClockAt ?? messages.find(message => message.metadata?.source === 'date')?.timestamp;
+    const effectiveSceneClockAdvancedMs = typeof sceneClockAdvancedMs === 'number' && Number.isFinite(sceneClockAdvancedMs)
+        ? sceneClockAdvancedMs
+        : initialState?.sceneClockAdvancedMs ?? latestSceneClockMessage?.metadata?.sceneClockAdvancedMs ?? 0;
+    const effectiveSceneClockRevision = typeof sceneClockRevision === 'number' && Number.isFinite(sceneClockRevision)
+        ? sceneClockRevision
+        : initialState?.sceneClockRevision ?? latestSceneClockMessage?.metadata?.sceneClockRevision ?? 0;
+    const effectiveSceneClockTimeZone = sceneClockTimeZone
+        || initialState?.sceneClockTimeZone
+        || latestSceneClockMessage?.metadata?.sceneClockTimeZone;
+    const formatHeaderClock = (timestamp?: number) => {
+        if (!Number.isFinite(timestamp)) return '';
+        const formatted = DatePrompts.formatSceneClock(timestamp as number, effectiveSceneClockTimeZone);
+        const match = formatted.match(/^\S+\s+(\d{2}:\d{2})\s+(\S+)$/);
+        return match ? `${match[2]} ${match[1]}` : formatted;
+    };
+
+    useEffect(() => {
+        const timer = window.setInterval(() => setRealNow(Date.now()), 30000);
+        return () => window.clearInterval(timer);
+    }, []);
+
+    // 面对面输入框沿用聊天栏的防抖测高策略：最多六行，超过后在框内滚动，
+    // 并提供全屏编辑兜底，不让长段动作描写把场景顶出屏幕。
+    const syncDateTextareaHeight = React.useCallback(() => {
+        const textarea = textareaRef.current;
+        if (!textarea || !textarea.isConnected || textarea.offsetParent === null || textarea.clientWidth === 0) return;
+        const computed = window.getComputedStyle(textarea);
+        const fontSize = parseFloat(computed.fontSize) || 15;
+        const lineHeight = parseFloat(computed.lineHeight) || Math.round(fontSize * 1.5);
+        const paddingY = (parseFloat(computed.paddingTop) || 0) + (parseFloat(computed.paddingBottom) || 0);
+        const singleRowHeight = Math.ceil(lineHeight + paddingY);
+        const previousHeight = textarea.style.height;
+        textarea.style.height = 'auto';
+        const measured = textarea.scrollHeight;
+        if (!measured) {
+            textarea.style.height = previousHeight;
+            return;
+        }
+        const contentHeight = Math.max(measured, singleRowHeight);
+        const overflowing = contentHeight > MAX_DATE_INPUT_HEIGHT;
+        textarea.style.height = `${Math.min(contentHeight, MAX_DATE_INPUT_HEIGHT)}px`;
+        textarea.style.overflowY = overflowing ? 'auto' : 'hidden';
+        textarea.style.touchAction = overflowing ? 'pan-y' : '';
+        setIsInputOverflowing(previous => previous === overflowing ? previous : overflowing);
+    }, []);
+
+    useEffect(() => {
+        syncDateTextareaHeight();
+    }, [syncDateTextareaHeight, input, isInputOverflowing, showInputBox]);
+
+    useEffect(() => {
+        const handleResize = () => syncDateTextareaHeight();
+        window.addEventListener('resize', handleResize);
+        window.addEventListener('orientationchange', handleResize);
+        window.visualViewport?.addEventListener('resize', handleResize);
+        const raf = window.requestAnimationFrame(handleResize);
+        return () => {
+            window.removeEventListener('resize', handleResize);
+            window.removeEventListener('orientationchange', handleResize);
+            window.visualViewport?.removeEventListener('resize', handleResize);
+            window.cancelAnimationFrame(raf);
+        };
+    }, [syncDateTextareaHeight]);
+
+    useEffect(() => {
+        if (!isFullscreenEditor) return;
+        const textarea = fullscreenTextareaRef.current;
+        if (!textarea) return;
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    }, [isFullscreenEditor]);
 
     const translateAndSpeak = async (text: string, emotion?: string): Promise<DateSpeechResult | null> => {
         if (!characterHasVoice(char, apiConfig)) return null;
@@ -519,8 +637,20 @@ const DateSession: React.FC<DateSessionProps> = ({
                 if (!voiceFavoriteBusy) setVoiceFavoriteTarget(null);
                 return true;
             }
+            if (isFullscreenEditor) {
+                setIsFullscreenEditor(false);
+                return true;
+            }
             if (showSettings) {
                 setShowSettings(false);
+                return true;
+            }
+            if (showInterludeEditor) {
+                if (!isTyping) setShowInterludeEditor(false);
+                return true;
+            }
+            if (showClockEditor) {
+                if (!clockBusy) setShowClockEditor(false);
                 return true;
             }
             if (showMenu) {
@@ -536,7 +666,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             return true;
         });
         return unregister;
-    }, [voiceFavoriteTarget, voiceFavoriteBusy, showSettings, showMenu, showExitModal, registerBackHandler]);
+    }, [voiceFavoriteTarget, voiceFavoriteBusy, isFullscreenEditor, showSettings, showInterludeEditor, showClockEditor, clockBusy, isTyping, showMenu, showExitModal, registerBackHandler]);
 
     const dateEmotionKeys = [...REQUIRED_EMOTIONS_SET, ...(char.customDateSprites || [])];
 
@@ -922,9 +1052,68 @@ const DateSession: React.FC<DateSessionProps> = ({
         }
     };
 
+    const handleComposerKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            void handleSend();
+        }
+    };
+
+    const handleInterludeSubmit = async (catchUpToNow = false) => {
+        if (historyReplay || isTyping || !onInterlude) return;
+        const targetAt = catchUpToNow ? realNow : undefined;
+        setShowInterludeEditor(false);
+        setIsTyping(true);
+        setIsShowingOpening(false);
+        try {
+            const aiContent = await onInterlude(interludeDescription.trim(), targetAt);
+            const { observation: obs, rest } = extractObservation(aiContent, { lenient: observeEnabled, custom: char.dateObserve?.custom });
+            if (hasObservation(obs)) setObservation(obs);
+            const items = parseDialogue(rest, 'normal');
+            setDialogueBatch(items);
+            setDialogueQueue(items.slice(1));
+            if (items.length > 0) processNextDialogue(items[0], items.slice(1), 0);
+            setInterludeDescription('');
+        } catch (error: any) {
+            addToast(`过场生成失败: ${error?.message || '未知错误'}`, 'error');
+        } finally {
+            setIsTyping(false);
+        }
+    };
+
+    const openClockEditor = () => {
+        if (!Number.isFinite(effectiveSceneClockAt)) return;
+        setClockInput(DatePrompts.formatSceneClockInputValue(effectiveSceneClockAt as number, effectiveSceneClockTimeZone));
+        setShowClockEditor(true);
+        setShowMenu(false);
+    };
+
+    const handleClockSave = async () => {
+        if (!onSetSceneClock || !clockInput.trim()) return;
+        const timestamp = DatePrompts.parseSceneClockInput(clockInput, effectiveSceneClockTimeZone);
+        if (timestamp === null) {
+            addToast('时间格式或日期无效，请检查后再保存', 'error');
+            return;
+        }
+        setClockBusy(true);
+        try {
+            await onSetSceneClock(timestamp);
+            setShowClockEditor(false);
+        } catch (error: any) {
+            addToast(error?.message || '剧情时间保存失败', 'error');
+        } finally {
+            setClockBusy(false);
+        }
+    };
+
     const buildCurrentState = (): DateState => ({
-        encounterId: initialState?.encounterId,
-        encounterStartedAt: initialState?.encounterStartedAt,
+        encounterId: encounterId ?? initialState?.encounterId,
+        encounterStartedAt: encounterStartedAt ?? initialState?.encounterStartedAt,
+        sceneClockAt: effectiveSceneClockAt,
+        sceneClockAdvancedMs: effectiveSceneClockAdvancedMs,
+        sceneClockRevision: effectiveSceneClockRevision,
+        sceneClockUpdatedAt: sceneClockUpdatedAt ?? initialState?.sceneClockUpdatedAt,
+        sceneClockTimeZone: effectiveSceneClockTimeZone,
         dialogueQueue,
         dialogueBatch,
         dialogueIndex: currentDialogueIndex,
@@ -1120,6 +1309,16 @@ const DateSession: React.FC<DateSessionProps> = ({
                             </button>
                         )}
 
+                        {!historyReplay && onInterlude && <button onClick={() => { setShowInterludeEditor(true); setShowMenu(false); setShowVoiceLangPicker(false); }} disabled={isTyping} className="h-9 px-3.5 rounded-full flex items-center gap-2 text-xs font-bold border shadow-lg active:scale-95 transition-all bg-indigo-500/70 backdrop-blur-md border-indigo-200/30 text-white hover:bg-indigo-500 disabled:opacity-40">
+                            <span aria-hidden="true">⏭</span>
+                            过场
+                        </button>}
+
+                        {!historyReplay && onSetSceneClock && <button onClick={openClockEditor} disabled={isTyping} className="h-9 px-3.5 rounded-full flex items-center gap-2 text-xs font-bold border shadow-lg active:scale-95 transition-all bg-black/40 backdrop-blur-md border-white/15 text-white hover:bg-white/20 disabled:opacity-40">
+                            <span aria-hidden="true">◷</span>
+                            编辑剧情时间
+                        </button>}
+
                         {/* 语音：未开启时点击直接开启并展开语种；开启时点击展开/收起语种选择（含关闭项） */}
                         <button onClick={() => {
                                 if (voiceEnabled) {
@@ -1309,7 +1508,11 @@ const DateSession: React.FC<DateSessionProps> = ({
                             />
                             <div className="min-w-0 flex-1">
                                 <div className="tm-header-name truncate text-sm font-semibold">{char.name}</div>
-                                <div className="tm-top-vs text-[10px] opacity-70">{historyReplay ? '见面回顾 · 只读' : '此时此刻 · 线下见面'}</div>
+                                <div className="tm-top-vs text-[10px] opacity-70">
+                                    {historyReplay
+                                        ? `见面回顾 · ${formatHeaderClock(effectiveSceneClockAt) || '剧情时间'}`
+                                        : `此时此刻 · ${formatHeaderClock(effectiveSceneClockAt) || '剧情时间'}${dateTimeAwarenessEnabled ? ` · 现实 ${formatHeaderClock(realNow)}` : ''}`}
+                                </div>
                             </div>
                             <div className="tm-header-actions flex items-center gap-1">
                                 {!historyReplay && <button type="button" className="tm-btn-icon h-9 w-9 rounded-full" aria-label="打开输入框" onClick={() => setShowInputBox(value => !value)}>
@@ -1326,6 +1529,8 @@ const DateSession: React.FC<DateSessionProps> = ({
                         {showMenu && (
                             <div className="tm-reading-menu mt-2 flex flex-wrap justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
                                 {!historyReplay && !isTyping && canReroll && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { setShowMenu(false); void handleRerollClick(); }}>重新生成</button>}
+                                {!historyReplay && onInterlude && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" disabled={isTyping} onClick={() => { setShowInterludeEditor(true); setShowMenu(false); }}>⏭ 过场</button>}
+                                {!historyReplay && onSetSceneClock && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" disabled={isTyping} onClick={openClockEditor}>◷ 编辑剧情时间</button>}
                                 {!historyReplay && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { setShowSettings(true); setShowMenu(false); }}>布置场景</button>}
                                 <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { setShowExitModal(true); setShowMenu(false); }}>{historyReplay ? '退出回顾' : '离开 / 结束'}</button>
                                 {!historyReplay && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { const next = !observeEnabled; updateCharacter(char.id, { dateObserve: { ...char.dateObserve, enabled: next } }); setShowMenu(false); addToast(next ? '观测已开启 · 下条回复生效' : '观测已关闭', 'info'); }}>观测{observeEnabled ? ' · 开' : ' · 关'}</button>}
@@ -1462,6 +1667,9 @@ const DateSession: React.FC<DateSessionProps> = ({
                                     ) : (() => {
                                         // 观测协议：从这条回复里剥出观测块，正文上方渲染独立卡片，正文本身不显示块文本
                                         const { observation: msgObs, rest: msgBody } = extractObservation(msg.content || '', { lenient: observeEnabled, custom: char.dateObserve?.custom });
+                                        const messageSceneClockAt = typeof msg.metadata?.sceneClockAt === 'number' && Number.isFinite(msg.metadata.sceneClockAt)
+                                            ? msg.metadata.sceneClockAt
+                                            : effectiveSceneClockAt;
                                         return (
                                         <>
                                             <div className="tc-header">
@@ -1469,7 +1677,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                                 <div className="tc-header-main">
                                                     <div className="tc-meta-area">
                                                         <div className="tc-meta-title">{char.name}</div>
-                                                        <div className="tc-meta-stats">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                                                        <div className="tc-meta-stats">{formatHeaderClock(messageSceneClockAt) || new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                                                         <div className="tc-meta-subtitle">线下见面</div>
                                                         <div className="tc-meta-extra-1">此时此刻</div>
                                                         <div className="tc-meta-extra-2">{char.name}</div>
@@ -1632,7 +1840,23 @@ const DateSession: React.FC<DateSessionProps> = ({
                             <button type="button" onClick={() => { setShowInputBox(false); void handleRerollClick(); }} disabled={!canReroll || isTyping} className="tm-regen-btn rounded-full px-2 py-1 text-[10px] disabled:opacity-30">重新生成</button>
                         </div>
                         <div className="tm-compose-row flex items-end gap-2">
-                            <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder={isTyping ? "等待回应..." : "输入对话..."} disabled={isTyping} className={`min-w-0 flex-1 tm-input bg-transparent px-3 sm:px-4 py-3 outline-none font-light resize-none h-14 no-scrollbar leading-tight ${char.dateLightReading ? 'text-stone-800 placeholder:text-stone-400' : 'text-white placeholder:text-white/30'}`} autoFocus />
+                            <textarea
+                                ref={textareaRef}
+                                rows={1}
+                                value={input}
+                                onChange={(e) => setInput(e.target.value)}
+                                onKeyDown={handleComposerKeyDown}
+                                placeholder={isTyping ? "等待回应..." : "输入对话..."}
+                                disabled={isTyping}
+                                className={`min-w-0 flex-1 tm-input bg-transparent px-3 sm:px-4 py-3 outline-none font-light resize-none max-h-36 no-scrollbar leading-tight ${char.dateLightReading ? 'text-stone-800 placeholder:text-stone-400' : 'text-white placeholder:text-white/30'}`}
+                                style={{ minHeight: '3.5rem' }}
+                                autoFocus
+                            />
+                            {isInputOverflowing && (
+                                <button type="button" onClick={() => setIsFullscreenEditor(true)} className={`shrink-0 w-10 h-10 rounded-xl flex items-center justify-center ${char.dateLightReading ? 'text-stone-500 hover:bg-stone-200' : 'text-white/70 hover:bg-white/10'}`} title="放大编辑" aria-label="放大编辑">
+                                    <CornersOut className="w-5 h-5" weight="bold" />
+                                </button>
+                            )}
                             {(() => {
                                 const retryText = pendingRetryText || getPendingReplyText(messages);
                                 const canRetry = !input.trim() && !isTyping && !!retryText;
@@ -1651,6 +1875,87 @@ const DateSession: React.FC<DateSessionProps> = ({
                     </div>
                 )}
             </div>
+
+            {isFullscreenEditor && !historyReplay && (
+                <div
+                    className={`fixed inset-0 z-[180] flex min-h-0 flex-col overflow-hidden ${char.dateLightReading ? 'bg-stone-50 text-stone-800' : 'bg-slate-950 text-white'}`}
+                    style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="全屏编辑见面输入"
+                    onClick={(event) => event.stopPropagation()}
+                >
+                    <div className={`flex shrink-0 items-center gap-3 border-b px-4 py-3 ${char.dateLightReading ? 'border-stone-200' : 'border-white/10'}`}>
+                        <button type="button" onClick={() => setIsFullscreenEditor(false)} className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${char.dateLightReading ? 'text-stone-500 hover:bg-stone-100' : 'text-white/70 hover:bg-white/10'}`} title="退出全屏编辑" aria-label="退出全屏编辑">
+                            <CornersIn className="h-5 w-5" weight="bold" />
+                        </button>
+                        <div className="flex-1 text-center text-sm font-semibold">编辑此刻</div>
+                        <button type="button" onClick={() => { setIsFullscreenEditor(false); void handleSend(); }} disabled={!input.trim() || isTyping} className="rounded-full bg-primary px-3 py-1.5 text-xs font-bold text-white disabled:opacity-40">发送</button>
+                    </div>
+                    <div className="min-h-0 flex-1 p-4">
+                        <textarea
+                            ref={fullscreenTextareaRef}
+                            value={input}
+                            onChange={(event) => setInput(event.target.value)}
+                            onKeyDown={handleComposerKeyDown}
+                            autoFocus
+                            spellCheck
+                            className={`h-full w-full resize-none overflow-y-auto overscroll-contain rounded-2xl border p-4 text-[16px] leading-7 outline-none focus:ring-2 ${char.dateLightReading ? 'border-stone-200 bg-white text-stone-800 focus:ring-primary/20' : 'border-white/10 bg-white/[0.06] text-white focus:ring-primary/40'}`}
+                            aria-label="全屏见面输入框"
+                        />
+                    </div>
+                </div>
+            )}
+
+            <Modal
+                isOpen={showInterludeEditor}
+                title="插入一段过场"
+                onClose={() => { if (!isTyping) setShowInterludeEditor(false); }}
+                footer={
+                    <div className="flex w-full gap-2">
+                        {dateTimeAwarenessEnabled && (
+                            <button type="button" onClick={() => void handleInterludeSubmit(true)} disabled={isTyping || !onInterlude || !Number.isFinite(effectiveSceneClockAt) || (Number.isFinite(effectiveSceneClockAt) && realNow <= (effectiveSceneClockAt as number))} className="flex-1 rounded-2xl bg-slate-100 py-3 text-xs font-bold text-slate-600 disabled:opacity-40">一次补到现在</button>
+                        )}
+                        <button type="button" onClick={() => void handleInterludeSubmit(false)} disabled={isTyping || !onInterlude} className="flex-1 rounded-2xl bg-indigo-500 py-3 text-xs font-bold text-white shadow-lg shadow-indigo-200 disabled:opacity-40">{isTyping ? '生成中…' : '生成过场'}</button>
+                    </div>
+                }
+            >
+                <div className="space-y-3 py-1">
+                    <p className="text-sm leading-relaxed text-slate-500">描述这段时间里发生了什么。它不会作为用户台词写入记录，生成后的过场正文会成为本次见面的现场记录。</p>
+                    <textarea
+                        value={interludeDescription}
+                        onChange={(event) => setInterludeDescription(event.target.value)}
+                        placeholder="例如：雨下大了，你们收拾东西换到街角的咖啡店，路上聊起了小时候的事。"
+                        className="h-32 w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm leading-relaxed text-slate-700 outline-none focus:ring-2 focus:ring-indigo-200"
+                        autoFocus
+                    />
+                    <p className="text-[11px] leading-relaxed text-slate-400">可以不填，让角色根据上下文自然演出；一次见面可以插入任意多段过场。</p>
+                </div>
+            </Modal>
+
+            <Modal
+                isOpen={showClockEditor}
+                title="编辑剧情时间"
+                onClose={() => { if (!clockBusy) setShowClockEditor(false); }}
+                footer={
+                    <div className="flex w-full gap-3">
+                        <button type="button" onClick={() => setShowClockEditor(false)} disabled={clockBusy} className="flex-1 rounded-2xl bg-slate-100 py-3 font-bold text-slate-600 disabled:opacity-50">取消</button>
+                        <button type="button" onClick={() => void handleClockSave()} disabled={clockBusy || !clockInput.trim()} className="flex-1 rounded-2xl bg-primary py-3 font-bold text-white shadow-lg shadow-indigo-200 disabled:opacity-50">{clockBusy ? '保存中…' : '保存时间'}</button>
+                    </div>
+                }
+            >
+                <div className="space-y-3 py-1">
+                    <p className="text-sm leading-relaxed text-slate-500">这是剧情里的时间，不会因为现实中离开而自动流逝。允许手动往前或往回调整，调整会作为新的时钟检查点保存。</p>
+                    <input
+                        type="datetime-local"
+                        step={60}
+                        value={clockInput}
+                        onChange={(event) => setClockInput(event.target.value)}
+                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                    <p className="text-[11px] text-slate-400">角色当地时间：{formatHeaderClock(effectiveSceneClockAt) || '未设置'}</p>
+                </div>
+            </Modal>
 
             {/* Settings Overlay */}
             {showSettings && (

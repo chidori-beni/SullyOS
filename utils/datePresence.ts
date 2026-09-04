@@ -25,17 +25,31 @@ export const makeDateEncounterPresence = (
     encounterId: string,
     startedAt: number,
     status: DateEncounterPresence['status'] = 'active',
+    clock?: Pick<DateEncounterPresence, 'sceneClockAt' | 'sceneClockAdvancedMs' | 'sceneClockRevision' | 'sceneClockUpdatedAt' | 'sceneClockTimeZone'>,
 ): DateEncounterPresence => ({
     encounterId,
     startedAt,
     status,
     updatedAt: Date.now(),
+    ...(typeof clock?.sceneClockAt === 'number' ? { sceneClockAt: clock.sceneClockAt } : {}),
+    ...(typeof clock?.sceneClockAdvancedMs === 'number' ? { sceneClockAdvancedMs: clock.sceneClockAdvancedMs } : {}),
+    ...(typeof clock?.sceneClockRevision === 'number' ? { sceneClockRevision: clock.sceneClockRevision } : {}),
+    ...(typeof clock?.sceneClockUpdatedAt === 'number' ? { sceneClockUpdatedAt: clock.sceneClockUpdatedAt } : {}),
+    ...(clock?.sceneClockTimeZone ? { sceneClockTimeZone: clock.sceneClockTimeZone } : {}),
 });
 
 export const setActiveDatePresence = (
     charId: string,
     presence: DateEncounterPresence,
 ): void => {
+    const previous = memory.get(charId);
+    if (previous
+        && previous.encounterId === presence.encounterId
+        && typeof previous.sceneClockRevision === 'number'
+        && typeof presence.sceneClockRevision === 'number'
+        && presence.sceneClockRevision < previous.sceneClockRevision) {
+        return;
+    }
     memory.set(charId, presence);
     if (!canUseStorage()) return;
     try {
@@ -60,6 +74,11 @@ export const getActiveDatePresence = (charId: string): DateEncounterPresence | n
             startedAt: parsed.startedAt,
             status: parsed.status,
             updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
+            ...(typeof parsed.sceneClockAt === 'number' ? { sceneClockAt: parsed.sceneClockAt } : {}),
+            ...(typeof parsed.sceneClockAdvancedMs === 'number' ? { sceneClockAdvancedMs: parsed.sceneClockAdvancedMs } : {}),
+            ...(typeof parsed.sceneClockRevision === 'number' ? { sceneClockRevision: parsed.sceneClockRevision } : {}),
+            ...(typeof parsed.sceneClockUpdatedAt === 'number' ? { sceneClockUpdatedAt: parsed.sceneClockUpdatedAt } : {}),
+            ...(typeof parsed.sceneClockTimeZone === 'string' && parsed.sceneClockTimeZone ? { sceneClockTimeZone: parsed.sceneClockTimeZone } : {}),
         };
         memory.set(charId, presence);
         return presence;

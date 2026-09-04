@@ -1416,7 +1416,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
         userProfile: UserProfile,
         emojis: Emoji[],
         processedExcludeIds?: Set<number>,
-        options?: { useVisionDescriptions?: boolean },
+        options?: { useVisionDescriptions?: boolean; skipTimeGap?: boolean },
     ) => {
         // Filter Logic
         // 新版上下文范围由 chatContextRange 先按「自适应/拉杆最大范围」取窗；
@@ -1448,7 +1448,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                 }
             }
             // 时间感知强化开关：默认开启（undefined 视为 true），显式关掉后不再注入「距离上次聊天多久」提示
-            if (lastRealMsg && currentMsg && char.timeAwarenessEnabled !== false) timeGapHint = ChatPrompts.getTimeGapHint(lastRealMsg, currentMsg.timestamp, charTz);
+            if (lastRealMsg && currentMsg && char.timeAwarenessEnabled !== false && !options?.skipTimeGap) timeGapHint = ChatPrompts.getTimeGapHint(lastRealMsg, currentMsg.timestamp, charTz);
         }
 
         return {
@@ -1468,7 +1468,12 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     if (!cleaned.trim()) return IMAGE_SAVE_CLAIM_ONLY_MESSAGE;
                     content = cleaned;
                 }
-                const timeStr = `[${ChatPrompts.formatDate(m.timestamp, charTz)}]`;
+                const sceneClockAt = m.metadata?.source === 'date'
+                    && typeof m.metadata?.sceneClockAt === 'number'
+                    && Number.isFinite(m.metadata.sceneClockAt)
+                    ? m.metadata.sceneClockAt
+                    : undefined;
+                const timeStr = `[${ChatPrompts.formatDate(sceneClockAt ?? m.timestamp, charTz)}${sceneClockAt !== undefined ? ' · 剧情时间' : ''}]`;
                 const reactionContext = formatMessageReactionContext(m, char.name || '你', userProfile?.name || '用户');
                 const sourceTag = (() => {
                     const source = m.metadata?.source;

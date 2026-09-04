@@ -2273,8 +2273,18 @@ export interface DateObserveConfig {
 export interface DateState {
     /** 一次正式见面的稳定身份；暂停/恢复后保持不变。 */
     encounterId?: string;
-    /** 这次见面真正开始的时间，用于现实时间推进与结束卡片。 */
+    /** 这次见面真正开始的剧情时间，用于剧情时长与结束卡片。 */
     encounterStartedAt?: number;
+    /** 当前见面内的剧情时间；不随真实时间自动推进。 */
+    sceneClockAt?: number;
+    /** 本次见面由过场实际推进的剧情时长累计值（手动校时不计入）。 */
+    sceneClockAdvancedMs?: number;
+    /** 剧情时钟提交版本，防止旧的异步回复覆盖新手动校时。 */
+    sceneClockRevision?: number;
+    /** 最近一次剧情时钟提交的真实时间，仅用于恢复时决胜。 */
+    sceneClockUpdatedAt?: number;
+    /** 创建见面时冻结的角色墙钟时区。 */
+    sceneClockTimeZone?: string;
     dialogueQueue: DialogueItem[];
     dialogueBatch: DialogueItem[];
     /** 当前立绘批次正在显示的条目位置，供上一条/恢复进度使用。 */
@@ -2307,6 +2317,16 @@ export interface DateEncounterPresence {
     startedAt: number;
     status: 'active' | 'paused';
     updatedAt: number;
+    /** 当前见面内的剧情时间；不随真实时间自动推进。 */
+    sceneClockAt?: number;
+    /** 本次见面由过场推进的剧情时长累计值。 */
+    sceneClockAdvancedMs?: number;
+    /** 剧情时钟提交版本。 */
+    sceneClockRevision?: number;
+    /** 最近一次剧情时钟提交的真实时间。 */
+    sceneClockUpdatedAt?: number;
+    /** 创建见面时冻结的角色墙钟时区。 */
+    sceneClockTimeZone?: string;
 }
 
 // ─── 见面 · 剧情剧场 ────────────────────────────────────────────────

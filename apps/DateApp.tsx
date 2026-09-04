@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { CharacterProfile, Message, DateState, AppID } from '../types';
+import { CharacterProfile, Message, DateState, DateEncounterPresence, AppID } from '../types';
 import { DatePrompts, ApiMessage } from '../utils/datePrompts';
 import { processNewMessagesWithAutoArchive } from '../utils/memoryPalace/autoArchive';
 import type { PipelineResult } from '../utils/memoryPalace/pipeline';
@@ -27,6 +27,7 @@ import { clearActiveDatePresence, getActiveDatePresence, makeDateEncounterPresen
 import { isDatePhoneBridge, mergeDatePhoneMessages } from '../utils/datePhoneBridge';
 import { stripMessageReactionTags } from '../utils/messageReactions';
 import { stripFaceToFacePhoneSourceTags } from '../utils/sanitize';
+import { resolveCharTimeZone } from '../utils/timezone';
 import {
     buildDateHistoryGroups,
     formatDateHistoryDate,
@@ -46,6 +47,19 @@ const truncateHistoryPreview = (value: string, maxLength = 96): string => {
     if (!normalized) return '这次见面没有摘要。';
     return normalized.length > maxLength ? `${normalized.slice(0, maxLength).trimEnd()}…` : normalized;
 };
+
+type DateEncounterRuntime = {
+    id: string;
+    startedAt: number;
+    sceneClockAt: number;
+    sceneClockAdvancedMs: number;
+    sceneClockRevision: number;
+    sceneClockUpdatedAt: number;
+    sceneClockTimeZone?: string;
+};
+
+const isFiniteNumber = (value: unknown): value is number =>
+    typeof value === 'number' && Number.isFinite(value);
 
 const DateApp: React.FC = () => {
     const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, apiConfig, addToast, updateCharacter, virtualTime, userProfile, memoryPalaceConfig, dateAutoStartCharId, consumeDateAutoStart, characterGroups, groups, realtimeConfig } = useOS();
@@ -150,22 +164,79 @@ const DateApp: React.FC = () => {
     const [pendingSessionChar, setPendingSessionChar] = useState<CharacterProfile | null>(null);
     const [pendingMeetingInviteMessageId, setPendingMeetingInviteMessageId] = useState<number | undefined>(undefined);
     const [acceptedInviteLaunch, setAcceptedInviteLaunch] = useState<{ charId: string; meetingInviteMessageId?: number } | null>(null);
-    const activeEncounterRef = useRef<{ id: string; startedAt: number } | null>(null);
+    const [activeEncounterRuntime, setActiveEncounterRuntime] = useState<DateEncounterRuntime | null>(null);
+    const activeEncounterRef = useRef<DateEncounterRuntime | null>(null);
+    // 每个异步见面请求都有自己的序号；剧情时钟提交前会再次核对 encounter + revision，
+    // 防止旧的过场响应在用户手动校时、切换会话或离开后回写新状态。
+    const dateTurnRequestRef = useRef(0);
 
-    const newEncounter = () => ({
-        id: `date_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        startedAt: Date.now(),
-    });
+    const setEncounterRuntime = (runtime: DateEncounterRuntime | null) => {
+        activeEncounterRef.current = runtime;
+        setActiveEncounterRuntime(runtime);
+    };
+
+    const newEncounter = (target?: CharacterProfile): DateEncounterRuntime => {
+        const startedAt = Date.now();
+        return {
+            id: `date_${startedAt}_${Math.random().toString(36).slice(2, 8)}`,
+            startedAt,
+            sceneClockAt: startedAt,
+            sceneClockAdvancedMs: 0,
+            sceneClockRevision: 0,
+            sceneClockUpdatedAt: startedAt,
+            sceneClockTimeZone: target ? resolveCharTimeZone(target) : undefined,
+        };
+    };
+
+    type EncounterClockSource = Partial<DateState> & Partial<DateEncounterPresence>;
+    const getClockSourceRevision = (source?: EncounterClockSource | null): number =>
+        isFiniteNumber(source?.sceneClockRevision) ? source.sceneClockRevision : -1;
+    const getClockSourceUpdatedAt = (source?: EncounterClockSource | null): number =>
+        isFiniteNumber(source?.sceneClockUpdatedAt) ? source.sceneClockUpdatedAt : 0;
+
+    const runtimeFromSource = (
+        target: CharacterProfile | undefined,
+        source?: EncounterClockSource | null,
+        fallback?: DateEncounterRuntime | null,
+    ): DateEncounterRuntime => {
+        const fallbackStartedAt = fallback?.startedAt || Date.now();
+        const startedAt = isFiniteNumber(source?.encounterStartedAt)
+            ? source.encounterStartedAt
+            : isFiniteNumber(source?.startedAt)
+                ? source.startedAt
+                : fallbackStartedAt;
+        return {
+            id: source?.encounterId || fallback?.id || `date_${startedAt}_${Math.random().toString(36).slice(2, 8)}`,
+            startedAt,
+            sceneClockAt: isFiniteNumber(source?.sceneClockAt) ? source.sceneClockAt : (fallback?.sceneClockAt || startedAt),
+            sceneClockAdvancedMs: Math.max(0, isFiniteNumber(source?.sceneClockAdvancedMs) ? source.sceneClockAdvancedMs : (fallback?.sceneClockAdvancedMs || 0)),
+            sceneClockRevision: Math.max(0, Math.floor(isFiniteNumber(source?.sceneClockRevision) ? source.sceneClockRevision : (fallback?.sceneClockRevision || 0))),
+            sceneClockUpdatedAt: isFiniteNumber(source?.sceneClockUpdatedAt) ? source.sceneClockUpdatedAt : (fallback?.sceneClockUpdatedAt || startedAt),
+            sceneClockTimeZone: source?.sceneClockTimeZone || fallback?.sceneClockTimeZone || (target ? resolveCharTimeZone(target) : undefined),
+        };
+    };
+
+    const chooseEncounterSource = (
+        saved?: EncounterClockSource,
+        presence?: EncounterClockSource,
+    ): EncounterClockSource | undefined => {
+        if (!saved) return presence;
+        if (!presence || (saved.encounterId && presence.encounterId && saved.encounterId !== presence.encounterId)) return saved;
+        const savedRevision = getClockSourceRevision(saved);
+        const presenceRevision = getClockSourceRevision(presence);
+        if (presenceRevision !== savedRevision) return presenceRevision > savedRevision ? presence : saved;
+        return getClockSourceUpdatedAt(presence) > getClockSourceUpdatedAt(saved) ? presence : saved;
+    };
 
     const ensureEncounter = () => {
-        if (!activeEncounterRef.current) {
-            const saved = char?.savedDateState;
-            activeEncounterRef.current = {
-                id: saved?.encounterId || newEncounter().id,
-                startedAt: saved?.encounterStartedAt || saved?.timestamp || Date.now(),
-            };
-        }
-        return activeEncounterRef.current;
+        const current = activeEncounterRef.current;
+        if (current) return current;
+        const saved = char?.savedDateState;
+        const presence = char ? (getActiveDatePresence(char.id) || char.activeDateEncounter) : undefined;
+        const source = chooseEncounterSource(saved, presence);
+        const next = source ? runtimeFromSource(char, source) : newEncounter(char);
+        setEncounterRuntime(next);
+        return next;
     };
 
     // --- NEW: Editing State lifted to here for DB sync ---
@@ -182,8 +253,9 @@ const DateApp: React.FC = () => {
     const [editContent, setEditContent] = useState('');
 
     const char = characters.find(c => c.id === activeCharacterId);
-    const activateDateEncounter = (charId: string, encounter: { id: string; startedAt: number }) => {
-        const presence = makeDateEncounterPresence(encounter.id, encounter.startedAt, 'active');
+    const activateDateEncounter = (charId: string, encounter: DateEncounterRuntime) => {
+        setEncounterRuntime(encounter);
+        const presence = makeDateEncounterPresence(encounter.id, encounter.startedAt, 'active', encounter);
         setActiveDatePresence(charId, presence);
         updateCharacter(charId, { activeDateEncounter: presence });
         return presence;
@@ -193,6 +265,7 @@ const DateApp: React.FC = () => {
         if (encounterId && current?.encounterId && current.encounterId !== encounterId) return;
         clearActiveDatePresence(charId, encounterId);
         updateCharacter(charId, { activeDateEncounter: undefined });
+        if (!encounterId || activeEncounterRef.current?.id === encounterId) setEncounterRuntime(null);
     };
     const markMeetingInviteAccepted = (messageId: number | undefined, encounterId: string) => {
         if (typeof messageId !== 'number') return;
@@ -240,6 +313,57 @@ const DateApp: React.FC = () => {
             ? (charactersRef.current.find(item => item.id === target.id) || target)
             : target;
         markAmsgStateDirty({ char: liveTarget, userProfile, groups, realtimeConfig });
+    };
+
+    const sceneClockMetadata = (encounter: DateEncounterRuntime, extra: Record<string, any> = {}) => ({
+        source: 'date',
+        dateEncounterId: encounter.id,
+        dateEncounterStartedAt: encounter.startedAt,
+        sceneClockAt: encounter.sceneClockAt,
+        sceneClockAdvancedMs: encounter.sceneClockAdvancedMs,
+        sceneClockRevision: encounter.sceneClockRevision,
+        sceneClockUpdatedAt: encounter.sceneClockUpdatedAt,
+        ...(encounter.sceneClockTimeZone ? { sceneClockTimeZone: encounter.sceneClockTimeZone } : {}),
+        ...extra,
+    });
+
+    const makeNextClockRuntime = (
+        current: DateEncounterRuntime,
+        sceneClockAt: number,
+        sceneClockAdvancedMs = current.sceneClockAdvancedMs,
+    ): DateEncounterRuntime => ({
+        ...current,
+        sceneClockAt,
+        sceneClockAdvancedMs: Math.max(0, sceneClockAdvancedMs),
+        sceneClockRevision: current.sceneClockRevision + 1,
+        sceneClockUpdatedAt: Date.now(),
+    });
+
+    const commitSceneClock = (
+        charId: string,
+        next: DateEncounterRuntime,
+        expected: { encounterId: string; sceneClockRevision: number },
+    ): DateEncounterRuntime | null => {
+        const current = activeEncounterRef.current;
+        if (!current
+            || current.id !== expected.encounterId
+            || current.sceneClockRevision !== expected.sceneClockRevision
+            || next.id !== current.id) return null;
+        activateDateEncounter(charId, next);
+        return next;
+    };
+
+    const updateLatestSceneClockCheckpoint = async (charId: string, encounter: DateEncounterRuntime) => {
+        const recent = await DB.getRecentMessagesByCharIdAndSource(charId, 'date', 500);
+        const latest = [...recent].reverse().find(message => (
+            message.metadata?.source === 'date'
+            && message.metadata?.dateEncounterId === encounter.id
+        ));
+        if (!latest) return;
+        await DB.updateMessageMetadata(latest.id, (previous: any) => ({
+            ...(previous || {}),
+            ...sceneClockMetadata(encounter),
+        }));
     };
 
     const getDateContextFetchLimit = (c: CharacterProfile) => Math.max(c.contextLimit || 500, DATE_SESSION_MESSAGE_LIMIT) + 32;
@@ -318,7 +442,6 @@ const DateApp: React.FC = () => {
         if (mode === 'peek') {
             if (char && activeEncounterRef.current) {
                 clearDateEncounter(char.id, activeEncounterRef.current.id);
-                activeEncounterRef.current = null;
             }
             // 来自聊天：从感知页退出直接回聊天，不落在见面选择页
             if (cameFromChat) { returnToChat(); return; }
@@ -370,12 +493,9 @@ const DateApp: React.FC = () => {
             // DateApp can be unmounted when the user briefly switches to ChatApp.
             // The presence is enough to resume the same encounter identity even
             // when no explicit “退出并保存” snapshot was created yet.
-            activeEncounterRef.current = {
-                id: c.activeDateEncounter.encounterId,
-                startedAt: c.activeDateEncounter.startedAt,
-            };
-            activateDateEncounter(c.id, activeEncounterRef.current);
-            markMeetingInviteAccepted(options.meetingInviteMessageId, activeEncounterRef.current.id);
+            const encounter = runtimeFromSource(c, getActiveDatePresence(c.id) || c.activeDateEncounter);
+            activateDateEncounter(c.id, encounter);
+            markMeetingInviteAccepted(options.meetingInviteMessageId, encounter.id);
             setActiveCharacterId(c.id);
             setPeekStatus('');
             setHasSavedOpening(true);
@@ -414,12 +534,15 @@ const DateApp: React.FC = () => {
         // 恢复尝试开始前先武装崩溃哨兵：若这份重快照在 iOS 上把内容进程撑崩，
         // 哨兵会残留到下次进见面被检出并清理（见挂载时的自愈 effect）。
         armDateResumeAttempt(pendingSessionChar.id);
-        activeEncounterRef.current = {
-            id: pendingSessionChar.savedDateState?.encounterId || newEncounter().id,
-            startedAt: pendingSessionChar.savedDateState?.encounterStartedAt || pendingSessionChar.savedDateState?.timestamp || Date.now(),
-        };
-        activateDateEncounter(pendingSessionChar.id, activeEncounterRef.current);
-        markMeetingInviteAccepted(meetingInviteMessageId, activeEncounterRef.current.id);
+        const saved = pendingSessionChar.savedDateState;
+        const presence = getActiveDatePresence(pendingSessionChar.id) || pendingSessionChar.activeDateEncounter;
+        const encounter = runtimeFromSource(
+            pendingSessionChar,
+            chooseEncounterSource(saved, presence),
+            saved?.encounterId ? null : newEncounter(pendingSessionChar),
+        );
+        activateDateEncounter(pendingSessionChar.id, encounter);
+        markMeetingInviteAccepted(meetingInviteMessageId, encounter.id);
         setActiveCharacterId(pendingSessionChar.id);
         setMode('session');
         setPendingSessionChar(null);
@@ -435,7 +558,7 @@ const DateApp: React.FC = () => {
         // 新会话没有恢复快照可重放，撤销任何残留哨兵。
         clearDateResumeAttempt();
         clearDateEncounter(pendingSessionChar.id, pendingSessionChar.savedDateState?.encounterId);
-        activeEncounterRef.current = newEncounter();
+        setEncounterRuntime(null);
         updateCharacter(pendingSessionChar.id, { savedDateState: undefined });
         trackEvent('选择见面存档处理方式', { choice: 'new' });
         trackEvent('见面存档选重新开始');
@@ -480,7 +603,7 @@ const DateApp: React.FC = () => {
             clearDateResumeAttempt();
             clearDateEncounter(target.id, encounterId);
             updateCharacter(target.id, { savedDateState: undefined, activeDateEncounter: undefined });
-            activeEncounterRef.current = null;
+            if (activeEncounterRef.current?.id === encounterId || !encounterId) setEncounterRuntime(null);
             // 让下一次 fire_pack 同步立刻带上「已经没有见面了」，别等下一轮聊天。
             markDateTurnDirty({ ...target, activeDateEncounter: undefined, savedDateState: undefined });
             setPendingSessionChar(null);
@@ -508,7 +631,7 @@ const DateApp: React.FC = () => {
                     role: 'assistant',
                     type: 'text',
                     content: peekStatus,
-                    metadata: { source: 'date', isOpening: true, dateEncounterId: encounter.id, dateEncounterStartedAt: encounter.startedAt }
+                    metadata: sceneClockMetadata(encounter, { isOpening: true })
                 });
                 setHasSavedOpening(true);
             } catch (e) {
@@ -533,7 +656,7 @@ const DateApp: React.FC = () => {
     const startSessionFromMeetingInvite = async (
         c: CharacterProfile,
         opening: string,
-        encounter: { id: string; startedAt: number },
+        encounter: DateEncounterRuntime,
         meetingInviteMessageId?: number,
     ): Promise<boolean> => {
         if (activeEncounterRef.current?.id !== encounter.id) return false;
@@ -547,12 +670,7 @@ const DateApp: React.FC = () => {
                 role: 'assistant',
                 type: 'text',
                 content: cleanOpening,
-                metadata: {
-                    source: 'date',
-                    isOpening: true,
-                    dateEncounterId: encounter.id,
-                    dateEncounterStartedAt: encounter.startedAt,
-                },
+                metadata: sceneClockMetadata(encounter, { isOpening: true }),
             });
         } catch (error) {
             console.error('[DateApp] 接受见面邀约时保存开场失败', error);
@@ -582,8 +700,8 @@ const DateApp: React.FC = () => {
 
     // --- Peek (Generation) Logic ---
     const startPeek = async (c: CharacterProfile, options: { autoStart?: boolean; meetingInviteMessageId?: number } = {}) => {
-        const encounter = newEncounter();
-        activeEncounterRef.current = encounter;
+        const encounter = newEncounter(c);
+        setEncounterRuntime(encounter);
         setActiveCharacterId(c.id);
         setMode('peek');
         setPeekLoading(true);
@@ -693,10 +811,128 @@ const DateApp: React.FC = () => {
         }
     }, [memoryPalaceConfig, apiConfig, userProfile?.name, updateCharacter, addToast]);
 
+    const beginDateTurnRequest = () => {
+        dateTurnRequestRef.current += 1;
+        return dateTurnRequestRef.current;
+    };
+
+    const isCurrentDateTurnRequest = (
+        requestId: number,
+        encounterId: string,
+        sceneClockRevision: number,
+    ) => {
+        const current = activeEncounterRef.current;
+        return dateTurnRequestRef.current === requestId
+            && current?.id === encounterId
+            && current.sceneClockRevision === sceneClockRevision;
+    };
+
+    /** 手动校时是显式提交：允许往前或往回调，但会使正在飞行的旧请求失效。 */
+    const handleSetSceneClock = async (sceneClockAt: number): Promise<void> => {
+        if (!char || !isFiniteNumber(sceneClockAt)) return;
+        beginDateTurnRequest();
+        const current = ensureEncounter();
+        const next = makeNextClockRuntime(current, sceneClockAt, current.sceneClockAdvancedMs);
+        const committed = commitSceneClock(char.id, next, {
+            encounterId: current.id,
+            sceneClockRevision: current.sceneClockRevision,
+        });
+        if (!committed) throw new Error('见面状态已变化，请重新打开校时面板');
+        try {
+            await updateLatestSceneClockCheckpoint(char.id, committed);
+        } catch (error) {
+            // presence / saved state 已经即时更新；单条历史检查点失败不阻断继续见面，
+            // 下一条新消息会再次带上完整时钟快照。
+            console.warn('[DateApp] 更新剧情时钟检查点失败', error);
+        }
+        markDateTurnDirty({ ...char, activeDateEncounter: getActiveDatePresence(char.id) || undefined });
+        addToast('剧情时间已调整', 'success');
+        trackEvent('手动调整见面剧情时间');
+    };
+
+    /** 过场不创建 user 消息；只有生成后的 assistant 正文进入 date 历史与总结。 */
+    const handleInterlude = async (description: string, targetAt?: number): Promise<string> => {
+        if (!char) throw new Error('No char');
+        const requestId = beginDateTurnRequest();
+        const base = ensureEncounter();
+        const baseSnapshot = { ...base };
+        const allMsgs = await DB.getRecentMessagesByCharId(char.id, getDateContextFetchLimit(char), true);
+        const preparedAllMsgs = await materializeVisionDescriptions(allMsgs, apiConfig.visionApi);
+        const emojis = await DB.getEmojis();
+        const { messages } = await DatePrompts.buildInterludePayload({
+            char,
+            userProfile,
+            allMsgs: preparedAllMsgs,
+            emojis,
+            description,
+            targetAt,
+            sceneClockAt: baseSnapshot.sceneClockAt,
+            sceneClockAdvancedMs: baseSnapshot.sceneClockAdvancedMs,
+            sceneClockRevision: baseSnapshot.sceneClockRevision,
+            sceneClockUpdatedAt: baseSnapshot.sceneClockUpdatedAt,
+            sceneClockTimeZone: baseSnapshot.sceneClockTimeZone,
+            useVisionDescriptions: apiConfig.visionApi?.enabled === true,
+        });
+        const rawContent = await callLLM(messages, Math.max(apiConfig.temperature ?? 0.85, 0.85));
+        if (!isCurrentDateTurnRequest(requestId, baseSnapshot.id, baseSnapshot.sceneClockRevision)) {
+            throw new Error('这段过场已过期，请按当前剧情时间重新生成');
+        }
+
+        const resolved = DatePrompts.resolveInterludeSceneClock({
+            text: rawContent,
+            currentAt: baseSnapshot.sceneClockAt,
+            currentAdvancedMs: baseSnapshot.sceneClockAdvancedMs,
+            targetAt,
+            timeZone: baseSnapshot.sceneClockTimeZone,
+        });
+        const content = resolved.content.replace(/\[\[END_MEETING:\s*[^\]]*\]\]/gi, '').trim();
+        if (!content) throw new Error('过场没有生成正文，请重试');
+
+        const next = makeNextClockRuntime(
+            baseSnapshot,
+            resolved.sceneClockAt,
+            resolved.sceneClockAdvancedMs,
+        );
+        const saved = await DB.saveMessage({
+            charId: char.id,
+            role: 'assistant',
+            type: 'text',
+            content,
+            metadata: sceneClockMetadata(next, {
+                dateTurnKind: 'interlude',
+                sceneClockBefore: baseSnapshot.sceneClockAt,
+                sceneClockBeforeAdvancedMs: baseSnapshot.sceneClockAdvancedMs,
+                sceneClockAfter: next.sceneClockAt,
+                sceneClockAdvancedDeltaMs: resolved.sceneClockAdvancedDeltaMs,
+                sceneClockResolution: resolved.resolution,
+                ...(description.trim() ? { interludeInstruction: description.trim().slice(0, 4000) } : {}),
+                ...(targetAt !== undefined && isFiniteNumber(targetAt) ? { interludeTargetAt: targetAt } : {}),
+                ...(resolved.requestedSceneClockAt !== undefined ? { requestedSceneClockAt: resolved.requestedSceneClockAt } : {}),
+            }),
+        });
+        const committed = commitSceneClock(char.id, next, {
+            encounterId: baseSnapshot.id,
+            sceneClockRevision: baseSnapshot.sceneClockRevision,
+        });
+        if (!committed) {
+            await DB.deleteMessage(saved as number).catch(error => {
+                console.warn('[DateApp] 清理过期过场消息失败', error);
+            });
+            throw new Error('这段过场已过期，请按当前剧情时间重新生成');
+        }
+        markDateTurnDirty({ ...char, activeDateEncounter: getActiveDatePresence(char.id) || undefined });
+        await loadDateMessages(DATE_SESSION_MESSAGE_LIMIT);
+        runMemoryPalacePostHook(char);
+        trackEvent('生成一次见面过场', { 结果: resolved.resolution });
+        return content;
+    };
+
     // --- Session API Logic ---
     const handleSendMessage = async (text: string): Promise<string> => {
         if (!char) throw new Error("No char");
+        const requestId = beginDateTurnRequest();
         const encounter = ensureEncounter();
+        const encounterSnapshot = { ...encounter };
 
         // 重发场景：如果 DB 里最后一条已经是这条 user 消息（上一轮发送后 API 失败 / 网络抖动等），
         // 就跳过重复落库，直接走 API。与 chat app 行为对齐，让用户按发送键即可重新触发 LLM。
@@ -708,7 +944,7 @@ const DateApp: React.FC = () => {
 
         if (!isRetry) {
             // 1. Save User Msg
-            await DB.saveMessage({ charId: char.id, role: 'user', type: 'text', content: text, metadata: { source: 'date', dateEncounterId: encounter.id } });
+            await DB.saveMessage({ charId: char.id, role: 'user', type: 'text', content: text, metadata: sceneClockMetadata(encounterSnapshot, { dateTurnKind: 'dialogue' }) });
             markDateTurnDirty(char);
         }
 
@@ -729,15 +965,23 @@ const DateApp: React.FC = () => {
             emojis,
             userText: text,
             variant: 'send',
+            sceneClockAt: encounterSnapshot.sceneClockAt,
+            sceneClockAdvancedMs: encounterSnapshot.sceneClockAdvancedMs,
+            sceneClockRevision: encounterSnapshot.sceneClockRevision,
+            sceneClockUpdatedAt: encounterSnapshot.sceneClockUpdatedAt,
+            sceneClockTimeZone: encounterSnapshot.sceneClockTimeZone,
             useVisionDescriptions: apiConfig.visionApi?.enabled === true,
         });
         const rawContent = await callLLM(messages, apiConfig.temperature ?? 0.85);
+        if (!isCurrentDateTurnRequest(requestId, encounterSnapshot.id, encounterSnapshot.sceneClockRevision)) {
+            throw new Error('这轮回复已过期，请按当前剧情时间重新发送');
+        }
         const endMatch = rawContent.match(/\[\[END_MEETING:\s*([^\]]{1,200})\]\]/i);
         const content = rawContent.replace(/\[\[END_MEETING:\s*[^\]]*\]\]/gi, '').trim();
         if (endMatch?.[1]?.trim()) setEndSuggestedReason(endMatch[1].trim());
 
         // 3. Save AI Response
-        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: { source: 'date', dateEncounterId: encounter.id } });
+        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: sceneClockMetadata(encounterSnapshot, { dateTurnKind: 'dialogue' }) });
         markDateTurnDirty(char);
 
         // Refresh local state
@@ -751,6 +995,9 @@ const DateApp: React.FC = () => {
 
     const handleReroll = async (): Promise<string> => {
         if (!char || dateMessages.length === 0) throw new Error("No context");
+        const requestId = beginDateTurnRequest();
+        const currentEncounter = ensureEncounter();
+        const currentEncounterSnapshot = { ...currentEncounter };
 
         const lastMsg = dateMessages[dateMessages.length - 1];
         if (isDatePhoneBridge(lastMsg) || lastMsg.role !== 'assistant') throw new Error("Cannot reroll user message");
@@ -760,6 +1007,85 @@ const DateApp: React.FC = () => {
         const validMsgs = allMsgs.filter(m => m.id !== lastMsg.id);
         const preparedValidMsgs = await materializeVisionDescriptions(validMsgs, apiConfig.visionApi);
         const emojis = await DB.getEmojis();
+
+        // 过场是可重 roll 的：只允许重掷当前时间线最末端的过场，旧的过场不提供
+        // 单独入口，避免替换中间检查点后让后续剧情出现两条时间线。
+        if (lastMsg.metadata?.dateTurnKind === 'interlude') {
+            const beforeAt = isFiniteNumber(lastMsg.metadata?.sceneClockBefore)
+                ? lastMsg.metadata.sceneClockBefore
+                : currentEncounterSnapshot.sceneClockAt;
+            const beforeAdvancedMs = Math.max(0, isFiniteNumber(lastMsg.metadata?.sceneClockBeforeAdvancedMs)
+                ? lastMsg.metadata.sceneClockBeforeAdvancedMs
+                : Math.max(0, currentEncounterSnapshot.sceneClockAdvancedMs - (Number(lastMsg.metadata?.sceneClockAdvancedDeltaMs) || 0)));
+            const targetAt = isFiniteNumber(lastMsg.metadata?.interludeTargetAt)
+                ? lastMsg.metadata.interludeTargetAt
+                : undefined;
+            const { messages } = await DatePrompts.buildInterludePayload({
+                char,
+                userProfile,
+                allMsgs: preparedValidMsgs,
+                emojis,
+                description: lastMsg.metadata?.interludeInstruction || '',
+                targetAt,
+                sceneClockAt: beforeAt,
+                sceneClockAdvancedMs: beforeAdvancedMs,
+                sceneClockRevision: currentEncounterSnapshot.sceneClockRevision,
+                sceneClockUpdatedAt: currentEncounterSnapshot.sceneClockUpdatedAt,
+                sceneClockTimeZone: currentEncounterSnapshot.sceneClockTimeZone,
+                useVisionDescriptions: apiConfig.visionApi?.enabled === true,
+                variant: 'reroll',
+            });
+            const rawContent = await callLLM(messages, Math.max(apiConfig.temperature ?? 0.85, 0.9));
+            if (!isCurrentDateTurnRequest(requestId, currentEncounterSnapshot.id, currentEncounterSnapshot.sceneClockRevision)) {
+                throw new Error('这段过场已过期，请按当前剧情时间重新生成');
+            }
+            const resolved = DatePrompts.resolveInterludeSceneClock({
+                text: rawContent,
+                currentAt: beforeAt,
+                currentAdvancedMs: beforeAdvancedMs,
+                targetAt,
+                timeZone: currentEncounterSnapshot.sceneClockTimeZone,
+            });
+            const content = resolved.content.replace(/\[\[END_MEETING:\s*[^\]]*\]\]/gi, '').trim();
+            if (!content) throw new Error('过场没有生成正文，请重试');
+            const next = makeNextClockRuntime(
+                currentEncounterSnapshot,
+                resolved.sceneClockAt,
+                resolved.sceneClockAdvancedMs,
+            );
+            const newMessageId = await DB.saveMessage({
+                charId: char.id,
+                role: 'assistant',
+                type: 'text',
+                content,
+                metadata: sceneClockMetadata(next, {
+                    dateTurnKind: 'interlude',
+                    sceneClockBefore: beforeAt,
+                    sceneClockBeforeAdvancedMs: beforeAdvancedMs,
+                    sceneClockAfter: next.sceneClockAt,
+                    sceneClockAdvancedDeltaMs: resolved.sceneClockAdvancedDeltaMs,
+                    sceneClockResolution: resolved.resolution,
+                    ...(lastMsg.metadata?.interludeInstruction ? { interludeInstruction: lastMsg.metadata.interludeInstruction } : {}),
+                    ...(targetAt !== undefined ? { interludeTargetAt: targetAt } : {}),
+                    ...(resolved.requestedSceneClockAt !== undefined ? { requestedSceneClockAt: resolved.requestedSceneClockAt } : {}),
+                    rerolledFromMessageId: lastMsg.id,
+                }),
+            });
+            const committed = commitSceneClock(char.id, next, {
+                encounterId: currentEncounterSnapshot.id,
+                sceneClockRevision: currentEncounterSnapshot.sceneClockRevision,
+            });
+            if (!committed) {
+                await DB.deleteMessage(newMessageId).catch(error => console.warn('[DateApp] 清理过期过场重掷消息失败', error));
+                throw new Error('这段过场已过期，请按当前剧情时间重新生成');
+            }
+            await DB.deleteMessage(lastMsg.id);
+            markDateTurnDirty({ ...char, activeDateEncounter: getActiveDatePresence(char.id) || undefined });
+            trackEvent('重掷见面回复', { 目标: '过场' });
+            await loadDateMessages(DATE_SESSION_MESSAGE_LIMIT);
+            runMemoryPalacePostHook(char);
+            return content;
+        }
 
         // 重掷的是开场白（isOpening 锚点消息）：走感知同款 payload 重新生成开场。
         // 不能走下面的普通 reroll 路径——开场白前面没有触发它的 user 消息。旧逻辑会
@@ -775,10 +1101,12 @@ const DateApp: React.FC = () => {
                 useVisionDescriptions: apiConfig.visionApi?.enabled === true,
             });
             const content = await callLLM(messages, Math.max(apiConfig.temperature ?? 0.85, 0.9));
+            if (!isCurrentDateTurnRequest(requestId, currentEncounterSnapshot.id, currentEncounterSnapshot.sceneClockRevision)) {
+                throw new Error('这轮回复已过期，请按当前剧情时间重新生成');
+            }
             // 生成成功后才动库：先删旧开场、再带 isOpening 落新开场，请求失败时原剧情不丢
             await DB.deleteMessage(lastMsg.id);
-            const encounter = ensureEncounter();
-            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content, metadata: { source: 'date', isOpening: true, dateEncounterId: encounter.id, dateEncounterStartedAt: encounter.startedAt } });
+            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content, metadata: sceneClockMetadata(currentEncounterSnapshot, { isOpening: true }) });
             markDateTurnDirty(char);
             trackEvent('重掷见面回复', { 目标: '开场白' });
             // 阅读模式空会话时顶部渲染的开场 & 退出快照里的 peekStatus 同步成新开场
@@ -803,18 +1131,25 @@ const DateApp: React.FC = () => {
             emojis,
             userText: lastUserMsg.content,
             variant: 'reroll',
+            sceneClockAt: currentEncounterSnapshot.sceneClockAt,
+            sceneClockAdvancedMs: currentEncounterSnapshot.sceneClockAdvancedMs,
+            sceneClockRevision: currentEncounterSnapshot.sceneClockRevision,
+            sceneClockUpdatedAt: currentEncounterSnapshot.sceneClockUpdatedAt,
+            sceneClockTimeZone: currentEncounterSnapshot.sceneClockTimeZone,
             useVisionDescriptions: apiConfig.visionApi?.enabled === true,
         });
         // Reroll 略调高温度求多样性，但绝不低于用户配置的基线。
         const rawContent = await callLLM(messages, Math.max(apiConfig.temperature ?? 0.85, 0.9));
+        if (!isCurrentDateTurnRequest(requestId, currentEncounterSnapshot.id, currentEncounterSnapshot.sceneClockRevision)) {
+            throw new Error('这轮回复已过期，请按当前剧情时间重新生成');
+        }
         const endMatch = rawContent.match(/\[\[END_MEETING:\s*([^\]]{1,200})\]\]/i);
         const content = rawContent.replace(/\[\[END_MEETING:\s*[^\]]*\]\]/gi, '').trim();
         setEndSuggestedReason(endMatch?.[1]?.trim() || '');
 
         // 生成成功后才删旧回复：以前先删后调 API，请求一失败上一条剧情就永久消失
         await DB.deleteMessage(lastMsg.id);
-        const encounter = ensureEncounter();
-        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: { source: 'date', dateEncounterId: encounter.id } });
+        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: sceneClockMetadata(currentEncounterSnapshot, { dateTurnKind: 'dialogue' }) });
         markDateTurnDirty(char);
         trackEvent('重掷见面回复', { 目标: '回复' });
 
@@ -916,7 +1251,7 @@ const DateApp: React.FC = () => {
             }
             if (char.activeDateEncounter?.encounterId && char.activeDateEncounter.encounterId === resolvedEncounterId) {
                 clearDateEncounter(char.id, resolvedEncounterId);
-                activeEncounterRef.current = null;
+                if (activeEncounterRef.current?.id === resolvedEncounterId) setEncounterRuntime(null);
             }
             setHistoryDeleteTarget(null);
             setHistorySelectedGroupId(null);
@@ -969,12 +1304,26 @@ const DateApp: React.FC = () => {
         clearDateResumeAttempt();
         if (char) {
             const encounter = ensureEncounter();
-            const presence = activateDateEncounter(char.id, encounter);
+            const nextEncounter = runtimeFromSource(char, {
+                ...finalState,
+                encounterId: encounter.id,
+                encounterStartedAt: encounter.startedAt,
+            }, encounter);
+            const presence = activateDateEncounter(char.id, nextEncounter);
             updateCharacter(char.id, {
-                savedDateState: { ...finalState, encounterId: encounter.id, encounterStartedAt: encounter.startedAt },
+                savedDateState: {
+                    ...finalState,
+                    encounterId: nextEncounter.id,
+                    encounterStartedAt: nextEncounter.startedAt,
+                    sceneClockAt: nextEncounter.sceneClockAt,
+                    sceneClockAdvancedMs: nextEncounter.sceneClockAdvancedMs,
+                    sceneClockRevision: nextEncounter.sceneClockRevision,
+                    sceneClockUpdatedAt: nextEncounter.sceneClockUpdatedAt,
+                    sceneClockTimeZone: nextEncounter.sceneClockTimeZone,
+                },
                 activeDateEncounter: presence,
             });
-            activeEncounterRef.current = null;
+            setEncounterRuntime(null);
             addToast('进度已保存', 'success');
         }
         // 来自聊天：退出见面回聊天
@@ -1007,16 +1356,27 @@ const DateApp: React.FC = () => {
     const finishEncounter = async (finalState: DateState) => {
         if (!char) return;
         const encounter = ensureEncounter();
-        const endedAt = Date.now();
+        const realEndedAt = Date.now();
+        // 见面长度和结束卡展示都以剧情时钟为准；现实结束时刻只作为调试/同步留档，
+        // 不能把用户离开 App 的时间误当成剧情里经过的时间。
+        const sceneEndedAt = isFiniteNumber(finalState.sceneClockAt) ? finalState.sceneClockAt : encounter.sceneClockAt;
         let current: Message[] = [];
         try {
-            const allDate = await DB.getRecentMessagesByCharIdAndSource(char.id, 'date', 500);
+            // 收尾总结不是交互热路径：这里完整读取 date 源，确保任意早期过场都不会
+            // 因为后续消息超过 500 条而从见面总结素材里消失。
+            const allDate = await DB.getRecentMessagesByCharIdAndSource(char.id, 'date', Number.MAX_SAFE_INTEGER);
             current = allDate.filter(m => m.metadata?.dateEncounterId === encounter.id);
         } catch (error) {
             // 读历史失败也不能卡住收尾：大不了这次的总结简略一点。
             console.warn('[DateApp] 读取见面正文失败，改用简略摘要收尾', error);
         }
-        const transcript = current.slice(-30).map(m => {
+        // 总结默认只取最近 30 条以控制请求体，但过场是用户明确插入的时间轴节点，
+        // 即使它较早也必须进入总结素材，不能因为后续对话多而被窗口截掉。
+        const summaryMessages = current.filter((message, index) => (
+            index >= Math.max(0, current.length - 30)
+            || message.metadata?.dateTurnKind === 'interlude'
+        ));
+        const transcript = summaryMessages.map(m => {
             const clean = typeof m.content === 'string'
                 ? stripFaceToFacePhoneSourceTags(stripMessageReactionTags(m.content))
                 : m.content;
@@ -1025,13 +1385,14 @@ const DateApp: React.FC = () => {
         const localSummary = current.length > 0
             ? `你和${char.name}结束了这次见面，共留下 ${current.length} 条现场记录。`
             : `你和${char.name}结束了这次见面。`;
+        const sceneTimeLabel = DatePrompts.formatSceneClock(sceneEndedAt, encounter.sceneClockTimeZone);
         let summary = '';
         try {
             // callLLM 自己没有超时，慢渠道会无限期挂着。这一层 race 是收尾流程的保命绳。
             summary = await Promise.race([
                 callLLM([
-                    { role: 'system', content: '你是见面记录整理器。用一段简洁、温柔、忠于原文的中文，概括这次线下见面的地点、共同活动、重要情绪与结束方式。不要虚构，不要加标题，80字以内。' },
-                    { role: 'user', content: transcript || '这次见面没有留下更多对话。' },
+                    { role: 'system', content: `你是见面记录整理器。本次见面结束时的剧情时间是 ${sceneTimeLabel}；如果摘要提到时间，必须以这个剧情时间为准，不要使用用户离开 App 的现实时间。用一段简洁、温柔、忠于原文的中文，概括这次线下见面的地点、共同活动、重要情绪与结束方式。不要虚构，不要加标题，80字以内。` },
+                    { role: 'user', content: transcript ? `本次见面结束时的剧情时间：${sceneTimeLabel}\n${transcript}` : '这次见面没有留下更多对话。' },
                 ], 0.3),
                 new Promise<string>((_, reject) => setTimeout(
                     () => reject(new Error('见面总结超时')), FINISH_SUMMARY_TIMEOUT_MS,
@@ -1042,7 +1403,7 @@ const DateApp: React.FC = () => {
             summary = localSummary;
         }
         if (!summary.trim()) summary = localSummary;
-        const durationMs = Math.max(0, endedAt - encounter.startedAt);
+        const durationMs = Math.max(0, sceneEndedAt - encounter.startedAt);
         // 两条结束卡都用 try 包住：写失败最多是少一张卡片，而下面的状态清理必须照走，
         // 否则用户会永远卡在「有未结束的见面」，云端的自然主动也跟着被闷掉。
         try {
@@ -1056,10 +1417,17 @@ const DateApp: React.FC = () => {
                 isDateEnding: true,
                 dateEncounterId: encounter.id,
                 dateEncounterStartedAt: encounter.startedAt,
-                dateEncounterEndedAt: endedAt,
+                dateEncounterEndedAt: sceneEndedAt,
+                dateEncounterSceneClockAt: sceneEndedAt,
+                dateEncounterRealEndedAt: realEndedAt,
                 dateEncounterDurationMs: durationMs,
                 dateEncounterDurationText: formatDuration(durationMs),
                 dateEncounterSummary: summary.trim(),
+                sceneClockAt: sceneEndedAt,
+                sceneClockAdvancedMs: encounter.sceneClockAdvancedMs,
+                sceneClockRevision: encounter.sceneClockRevision,
+                sceneClockUpdatedAt: encounter.sceneClockUpdatedAt,
+                ...(encounter.sceneClockTimeZone ? { sceneClockTimeZone: encounter.sceneClockTimeZone } : {}),
             },
         });
         await DB.saveMessage({
@@ -1071,7 +1439,10 @@ const DateApp: React.FC = () => {
                 source: 'date-end-popup',
                 dateEncounterId: encounter.id,
                 startedAt: encounter.startedAt,
-                endedAt,
+                endedAt: sceneEndedAt,
+                realEndedAt,
+                sceneClockAt: sceneEndedAt,
+                sceneClockTimeZone: encounter.sceneClockTimeZone,
                 durationText: formatDuration(durationMs),
                 summary: summary.trim(),
                 charName: char.name,
@@ -1084,7 +1455,7 @@ const DateApp: React.FC = () => {
         }
         clearDateResumeAttempt();
         clearDateEncounter(char.id, encounter.id);
-        activeEncounterRef.current = null;
+        setEncounterRuntime(null);
         setEndSuggestedReason('');
         // updateCharacter is intentionally async; pass the post-finish snapshot to
         // the first fire_pack sync as well, otherwise one stale pack could still
@@ -1630,8 +2001,18 @@ const DateApp: React.FC = () => {
                     peekStatus={historyReplayGroupId ? '' : peekStatus}
                     initialState={historyReplayGroupId ? undefined : char.savedDateState}
                     historyReplay={Boolean(historyReplayGroupId)}
+                    encounterId={historyReplayGroupId ? undefined : activeEncounterRuntime?.id}
+                    encounterStartedAt={historyReplayGroupId ? undefined : activeEncounterRuntime?.startedAt}
+                    sceneClockAt={historyReplayGroupId ? undefined : activeEncounterRuntime?.sceneClockAt}
+                    sceneClockAdvancedMs={historyReplayGroupId ? undefined : activeEncounterRuntime?.sceneClockAdvancedMs}
+                    sceneClockRevision={historyReplayGroupId ? undefined : activeEncounterRuntime?.sceneClockRevision}
+                    sceneClockUpdatedAt={historyReplayGroupId ? undefined : activeEncounterRuntime?.sceneClockUpdatedAt}
+                    sceneClockTimeZone={historyReplayGroupId ? undefined : activeEncounterRuntime?.sceneClockTimeZone}
+                    dateTimeAwarenessEnabled={char.dateTimeAwarenessEnabled !== false}
                     onSendMessage={handleSendMessage}
                     onReroll={handleReroll}
+                    onInterlude={historyReplayGroupId ? undefined : handleInterlude}
+                    onSetSceneClock={historyReplayGroupId ? undefined : handleSetSceneClock}
                     onExit={onExitSession}
                     onEnd={finishEncounter}
                     endSuggestedReason={endSuggestedReason}

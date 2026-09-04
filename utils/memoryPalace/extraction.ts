@@ -17,6 +17,15 @@ function generateId(): string {
     return `mn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** 见面记录的真实落库时间可能只是用户点击发送的时间；有剧情钟时，
+ * 记忆提取应使用剧情时间，避免过场跨日/超前后把长期记忆标到现实日期。 */
+const messageTimelineTimestamp = (message: Message): number => {
+    const sceneClockAt = message.metadata?.source === 'date' ? message.metadata?.sceneClockAt : undefined;
+    return typeof sceneClockAt === 'number' && Number.isFinite(sceneClockAt)
+        ? sceneClockAt
+        : message.timestamp;
+};
+
 // ─── 共用的 prompt 规则部分 ──────────────────────────
 //
 // 设计决策（2026-04）：palace extraction 的提示词**完全固定**，不会被用户
@@ -79,7 +88,7 @@ function buildConversationText(messages: Message[], charName: string, userLabel:
     return messages
         .map(m => {
             const body = formatMessageForPrompt(m, charName, userLabel).slice(0, 600);
-            const ts = m.timestamp;
+            const ts = messageTimelineTimestamp(m);
             if (!ts || ts <= 0) return body;
             const d = new Date(ts);
             const stamp = `[${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}]`;
@@ -99,7 +108,7 @@ function parseMemoryNodesFromBuffer(
 ): MemoryNode[] {
     if (parsed.length === 0) return [];
 
-    const msgTimestamps = messages.map(m => m.timestamp).filter(t => t > 0);
+    const msgTimestamps = messages.map(messageTimelineTimestamp).filter(t => t > 0);
     const firstTs = msgTimestamps[0] ?? Date.now();
     const lastTs = msgTimestamps[msgTimestamps.length - 1] ?? firstTs;
     const midTime = Math.round((firstTs + lastTs) / 2);
@@ -479,8 +488,8 @@ pinDays 仅在需要置顶时才写，大多数记忆不需要。
         console.log(`🏰 [Extraction] 缓冲区提取完成：从 ${messages.length} 条消息中提取 ${parsed.length} 条记忆`);
 
         // 生成日期标签
-        const firstTs = messages[0]?.timestamp;
-        const lastTs = messages[messages.length - 1]?.timestamp;
+        const firstTs = messages[0] ? messageTimelineTimestamp(messages[0]) : undefined;
+        const lastTs = messages[messages.length - 1] ? messageTimelineTimestamp(messages[messages.length - 1]) : undefined;
         const d1 = (firstTs != null && firstTs > 0) ? new Date(firstTs) : new Date();
         const d2 = (lastTs != null && lastTs > 0) ? new Date(lastTs) : d1;
         const fmt = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}`;

@@ -2385,11 +2385,29 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   .filter(m => !m.metadata?.proactiveHint)
                   .pop();
               const DATE_AFTERGLOW_MS = 3 * 60 * 60 * 1000;
-              const justMetOffline = lastRealMsgRaw?.metadata?.source === 'date'
-                  && (now.getTime() - lastRealMsgRaw.timestamp) < DATE_AFTERGLOW_MS;
+              const lastOfflineRecord = lastRealMsgRaw
+                  && (lastRealMsgRaw.metadata?.source === 'date' || lastRealMsgRaw.metadata?.source === 'date-end-popup')
+                  ? lastRealMsgRaw
+                  : undefined;
+              const sceneClockAt = typeof lastOfflineRecord?.metadata?.sceneClockAt === 'number'
+                  && Number.isFinite(lastOfflineRecord.metadata.sceneClockAt)
+                  ? lastOfflineRecord.metadata.sceneClockAt
+                  : undefined;
+              const sceneClockTimeZone = typeof lastOfflineRecord?.metadata?.sceneClockTimeZone === 'string'
+                  && lastOfflineRecord.metadata.sceneClockTimeZone
+                  ? lastOfflineRecord.metadata.sceneClockTimeZone
+                  : resolveCharTimeZone(char);
+              const sceneTimeStr = sceneClockAt !== undefined
+                  ? ChatPrompts.formatDate(sceneClockAt, sceneClockTimeZone)
+                  : timeStr;
+              const justMetOffline = !!lastOfflineRecord
+                  && (now.getTime() - lastOfflineRecord.timestamp) < DATE_AFTERGLOW_MS;
+              const afterglowTimeLine = sceneClockAt !== undefined
+                  ? `现实现在是 ${timeStr}，但这次见面的剧情结束时间是 ${sceneTimeStr}；涉及见面时以剧情时间为准，不要把现实时间倒灌成见面时间`
+                  : `现在是 ${timeStr}`;
 
               const hintContent = justMetOffline
-                      ? `[系统提示（非${userName}发言）: 现在是 ${timeStr}。你和${userName}刚刚在线下见过面（如果上下文里有标着 [约会] 的内容，那就是你们见面时发生的事），现在你们暂时分开了，你拿起手机想给${userName}发条消息。请基于刚才的见面来发——可以回味见面里的某个细节、补一句当时没说出口的话、关心${userName}到家了没，或者就是刚分开就有点想念。绝对不要表现得好像很久没联系，更不要对刚才的见面毫不知情。一两句话就好。]`
+                      ? `[系统提示（非${userName}发言）: ${afterglowTimeLine}。你和${userName}刚刚在线下见过面（如果上下文里有标着 [约会] 的内容，那就是你们见面时发生的事），现在你们暂时分开了，你拿起手机想给${userName}发条消息。请基于刚才的见面来发——可以回味见面里的某个细节、补一句当时没说出口的话、关心${userName}到家了没，或者就是刚分开就有点想念。绝对不要表现得好像很久没联系，更不要对刚才的见面毫不知情。一两句话就好。]`
                       : `[系统提示（非${userName}发言）: 现在是 ${timeStr}。${timeSinceUser ? `${userName}已经 ${timeSinceUser} 没有找你说话了。` : ''}这是系统给你的一次主动发消息机会——${userName}并没有在跟你说话，是你想主动找${userName}。像真人一样随意地发条消息吧，比如：随手拍了张照片想分享、刚看到个有趣的事想说、突然想到个冷知识、吐槽今天的天气/食物/见闻、或者就是单纯想找${userName}聊几句。不要刻意，不要像在"汇报近况"，就像你真的拿起手机随手发了条消息。一两句话就好。${timeSinceUser && parseInt(timeSinceUser) > 2 ? `（${userName}挺久没找你了，你也可以表达想念、好奇${userName}在干嘛、或者小小地抱怨一下。）` : ''}]`;
 
               if (callLifecycleChanged()) return;

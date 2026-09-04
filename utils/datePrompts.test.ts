@@ -105,19 +105,80 @@ describe('DatePrompts.buildSessionPayload', () => {
         expect(lastReroll.content).toContain('Reroll');
     });
 
-    it('注入现实时间连续性，明确短时间不能让持续活动瞬间结束', async () => {
+    it('注入剧情时间连续性，现实中离开不会让持续活动瞬间结束', async () => {
         const startedAt = Date.now() - 35 * 60_000;
+        const sceneClockAt = startedAt + 35 * 60_000;
         const input = baseInput(makeChar());
         input.allMsgs = [
-            makeMsg({ role: 'assistant', content: '[normal] 开始吃饭', timestamp: startedAt, metadata: { source: 'date', isOpening: true, dateEncounterStartedAt: startedAt } }),
-            makeMsg({ content: '这个好吃', timestamp: Date.now() - 3 * 60_000, metadata: { source: 'date' } }),
+            makeMsg({ role: 'assistant', content: '[normal] 开始吃饭', timestamp: startedAt, metadata: { source: 'date', isOpening: true, dateEncounterStartedAt: startedAt, sceneClockAt: startedAt } }),
+            makeMsg({ content: '这个好吃', timestamp: Date.now() - 3 * 60_000, metadata: { source: 'date', sceneClockAt, sceneClockAdvancedMs: 0 } }),
         ];
         const { messages } = await DatePrompts.buildSessionPayload(input);
         const sys = sysOf(messages);
-        expect(sys).toContain('现实时间连续性');
+        expect(sys).toContain('剧情时间连续性');
+        expect(sys).not.toContain('现实时间连续性');
+        expect(sys).not.toContain('距离上一条消息');
         expect(sys).toContain('已持续约 35 分钟');
         expect(sys).toContain('仅过几分钟时，绝不能');
         expect(sys).toContain('不要因为用户没有重复提醒');
+    });
+});
+
+describe('DatePrompts scene clock', () => {
+    it('严格解析并移除 SCENE_CLOCK 标签', () => {
+        const value = DatePrompts.parseSceneClockTag('[normal] 雨停了。\n[[SCENE_CLOCK: 2026-09-04 18:30]]');
+        expect(value.resolution).toBe('parsed');
+        expect(value.requestedAt).toBe(DatePrompts.parseSceneClockInput('2026-09-04 18:30'));
+        expect(value.content).toBe('[normal] 雨停了。');
+    });
+
+    it('缺失或非法标签使用保守的三十分钟回退', () => {
+        const currentAt = Date.now();
+        const missing = DatePrompts.resolveInterludeSceneClock({ text: '[normal] 继续走。', currentAt });
+        expect(missing.resolution).toBe('missing');
+        expect(missing.sceneClockAt - currentAt).toBe(30 * 60_000);
+
+        const invalid = DatePrompts.resolveInterludeSceneClock({ text: '[[SCENE_CLOCK: not-a-date]]', currentAt });
+        expect(invalid.resolution).toBe('invalid');
+        expect(invalid.sceneClockAt - currentAt).toBe(30 * 60_000);
+    });
+
+    it('拒绝倒退、限制模型异常远跳，但允许显式目标时间补到现在', () => {
+        const currentAt = Date.now();
+        const backward = DatePrompts.resolveInterludeSceneClock({
+            text: '[[SCENE_CLOCK: 2026-09-03 18:30]]',
+            currentAt,
+        });
+        expect(backward.resolution).toBe('backward-rejected');
+        expect(backward.sceneClockAt).toBe(currentAt);
+
+        const far = DatePrompts.resolveInterludeSceneClock({
+            text: `[[SCENE_CLOCK: ${new Date(currentAt + 30 * 24 * 60 * 60_000).toISOString().slice(0, 16).replace('T', ' ')}]]`,
+            currentAt,
+        });
+        expect(far.resolution).toBe('clamped');
+        expect(far.sceneClockAt - currentAt).toBe(7 * 24 * 60 * 60_000);
+
+        const target = DatePrompts.resolveInterludeSceneClock({ text: '正文', currentAt, targetAt: currentAt + 2 * 60 * 60_000 });
+        expect(target.resolution).toBe('target');
+        expect(target.sceneClockAt).toBe(currentAt + 2 * 60 * 60_000);
+    });
+
+    it('过场 payload 保留最后一条现场历史，且把导演描述留在本轮请求', async () => {
+        const allMsgs = [
+            makeMsg({ role: 'assistant', content: '[normal] 开场', metadata: { source: 'date', isOpening: true, dateEncounterStartedAt: 1000, sceneClockAt: 1000 } }),
+            makeMsg({ role: 'user', content: '我们坐一会儿', metadata: { source: 'date', sceneClockAt: 1000 } }),
+        ];
+        localStorage.removeItem('mp_lastMsgId_char-1');
+        const { messages } = await DatePrompts.buildInterludePayload({
+            char: makeChar(), userProfile: user, allMsgs, emojis: [],
+            description: '雨下大了，你们换到街角的咖啡店。', sceneClockAt: 1000,
+        });
+        const system = sysOf(messages);
+        expect(system).toContain('过场');
+        expect(system).toContain('雨下大了');
+        expect(messages.some(message => JSON.stringify(message).includes('我们坐一会儿'))).toBe(true);
+        expect(messages[messages.length - 1].role).toBe('user');
     });
 });
 

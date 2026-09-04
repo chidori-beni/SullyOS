@@ -72,4 +72,21 @@ describe('buildMessageHistory 引用双语消息', () => {
         expect(content).not.toContain('<翻译>');
         expect(content).not.toContain('<译文>');
     });
+
+    it('见面历史在普通聊天上下文里使用剧情钟并明确标注', () => {
+        const sceneClockAt = new Date('2026-09-04T18:30:00').getTime();
+        const { apiMessages } = ChatPrompts.buildMessageHistory([
+            {
+                id: 1,
+                charId: 'c1',
+                role: 'assistant',
+                type: 'text',
+                content: '海边的风还没有停。',
+                timestamp: new Date('2026-09-04T14:00:00').getTime(),
+                metadata: { source: 'date', sceneClockAt },
+            },
+        ] as any[], 10, char, userProfile, []);
+        expect(apiMessages[0].content).toContain('剧情时间');
+        expect(apiMessages[0].content).toContain('18:30');
+    });
 });
