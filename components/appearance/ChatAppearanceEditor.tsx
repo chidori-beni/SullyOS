@@ -23,6 +23,16 @@ type Props = {
     embedded?: boolean;
     /** 卡片 CSS 编辑器的成功/失败提示走宿主的 toast（外观 App 与装扮抽屉各有一份）。 */
     onNotify?: (message: string, kind: 'success' | 'error') => void;
+    /**
+     * 只渲染其中一段。装扮抽屉重排后，「所有聊天」和「这个角色」共用同一组页签，
+     * 每个页签只要这一整页里的一部分：
+     *   style      可视化设置（整套预设 / 聊天壳 / 头部 / 气泡与头像 / 输入栏）+ 去哪儿改什么
+     *   background 消息区底纹
+     *   code       三份手写 CSS（弹窗 / 卡片）+ 一键还原白框
+     *   sound      全局默认提示音
+     * 不传 = 全都渲染（外观 App 那种整页用法）。
+     */
+    section?: 'all' | 'style' | 'background' | 'code' | 'sound';
 };
 
 // 聊天细节微调的默认值快照。切预设时先铺这层再叠预设配置：否则从「沉浸剧场」切回
@@ -410,7 +420,8 @@ const ChoiceGroup: React.FC<{
     </div>
 );
 
-export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onResetAllChrome, onOpenApp, embedded = false, onNotify }) => {
+export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onResetAllChrome, onOpenApp, embedded = false, onNotify, section = 'all' }) => {
+    const show = (id: 'style' | 'background' | 'code' | 'sound') => section === 'all' || section === id;
     const avatarShape = theme.chatAvatarShape || defaults.chatAvatarShape;
     const avatarSize = theme.chatAvatarSize || defaults.chatAvatarSize;
     const avatarMode = theme.chatAvatarMode || defaults.chatAvatarMode;
@@ -626,6 +637,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
             </section>
             )}
 
+            {show('style') && (<>
             {/* 聊天壳设置：同私聊「聊天装扮」的悬浮形态——面板 fixed 贴底、无遮罩，不占文档流，
                 预览保持完整尺寸也能边看边调。圆气泡点按 = 收起/展开面板，按住可拖到不挡手的位置。
                 嵌入抽屉时这两件都不需要：抽屉自己就只占下半屏，控件平铺即可。 */}
@@ -712,9 +724,6 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
 
                 {page === 1 && (<>
                     <ChoiceGroup title="聊天壳" items={choices.chrome} value={chromeStyle} onPick={(value) => updateTheme({ chatChromeStyle: value as OSTheme['chatChromeStyle'] })} />
-                    <div className="mt-4">
-                        <ChoiceGroup title="消息区背景" items={choices.background} value={backgroundStyle} onPick={(value) => updateTheme({ chatBackgroundStyle: value as OSTheme['chatBackgroundStyle'] })} />
-                    </div>
                 </>)}
 
                 {page === 2 && (<>
@@ -815,6 +824,21 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
             </section>
             )}
 
+            </>)}
+
+            {show('background') && (
+                <section className={groupClass}>
+                    <div className="mb-3">
+                        <h2 className="sully-ui-label text-sm font-bold uppercase tracking-widest text-slate-400">消息区底纹</h2>
+                        <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
+                            所有私聊共用的底纹 / 网格 / 渐变。想给某个角色单独换一张背景图，切到「这个角色」。
+                        </p>
+                    </div>
+                    <ChoiceGroup title="消息区背景" items={choices.background} value={backgroundStyle} onPick={(value) => updateTheme({ chatBackgroundStyle: value as OSTheme['chatBackgroundStyle'] })} />
+                </section>
+            )}
+
+            {show('sound') && (
             <section className={groupClass}>
                 <div className="mb-3">
                     <h2 className="sully-ui-label text-sm font-bold uppercase tracking-widest text-slate-400">全局默认提示音</h2>
@@ -829,9 +853,11 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                     hint={<>🔔 <b>全局默认</b>：某角色未单独设提示音时，收到 ta 新发的最后一条消息就响这个。角色自己设的会盖过它。</>}
                 />
             </section>
+            )}
 
             {/* 聊天弹窗 CSS：「＋」菜单点开的那些设置框 / 抽屉。
                 注入点在 Chat.tsx，只在聊天页生效 —— 外观 App 里的同款弹窗不受影响。 */}
+            {show('code') && (<>
             <section className={groupClass}>
                 <div className="mb-3">
                     <h2 className="sully-ui-label text-sm font-bold uppercase tracking-widest text-slate-400">聊天弹窗 · CSS</h2>
@@ -858,6 +884,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                     onNotify={onNotify}
                 />
             </section>
+
 
             {/* 卡片 CSS：聊天里三十多种卡片（彼方 / 通话 / 日程邀约 / 音乐……）以前没有任何
                 钩子，深色卡丢进浅色聊天只能干瞪眼。现在统一一段 CSS 管全部，靠 data-card 分辨。 */}
@@ -886,6 +913,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
             </section>
 
             {/* 进阶装扮：把外观可视化设置 / 气泡工坊 / 白框 CSS 三个装扮入口串成一条有引导的路 */}
+            {/* 「去哪儿改什么」的路标，跟三份 CSS 放一起（它讲的就是各自在哪） */}
             <section className={groupClass}>
                 <div className="mb-3 flex items-start justify-between gap-2">
                     <div>
@@ -961,6 +989,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                 </div>
             </section>
 
+
             <section className={groupClass}>
                 <div className="mb-3">
                     <h2 className="sully-ui-label text-sm font-bold uppercase tracking-widest text-slate-400">白框自定义 (CSS)</h2>
@@ -975,6 +1004,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                     一键还原全部聊天白框美化（救援）
                 </button>
             </section>
+            </>)}
 
             <div className="px-2 pb-2 text-center text-[10px] leading-relaxed text-slate-400">
                 这一版先把聊天外观做成模块化换壳。后面如果你想继续往深处玩，我们还可以拆成每个角色单独一套聊天壳，甚至让不同 app 模拟不同平台 UI。
