@@ -53,7 +53,9 @@ interface DateSessionProps {
     sceneClockUpdatedAt?: number;
     sceneClockTimeZone?: string;
     dateTimeAwarenessEnabled?: boolean;
-    onSendMessage: (text: string) => Promise<string>; // Returns AI content
+    onSendMessage: (text: string) => Promise<string | { queued: true; jobId: string }>; // Returns AI content or a queued background turn
+    /** 普通见面回复已交给 Worker，期间不允许再开新轮 / 校时 / 结束。 */
+    backgroundPending?: boolean;
     onReroll: () => Promise<string>;
     onInterlude?: (description: string, targetAt?: number) => Promise<string>;
     onSetSceneClock?: (timestamp: number) => Promise<void>;
@@ -141,6 +143,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     sceneClockTimeZone,
     dateTimeAwarenessEnabled = true,
     onSendMessage,
+    backgroundPending = false,
     onReroll,
     onInterlude,
     onSetSceneClock,
@@ -181,6 +184,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     const [input, setInput] = useState('');
     const [showInputBox, setShowInputBox] = useState(false);
     const [isTyping, setIsTyping] = useState(false); // Waiting for API
+    const interactionBusy = isTyping || backgroundPending;
     const [isShowingOpening, setIsShowingOpening] = useState(!historyReplay && !initialState); // True until first user interaction
     const [showExitModal, setShowExitModal] = useState(false);
     const [endingEncounter, setEndingEncounter] = useState(false);
@@ -197,11 +201,11 @@ const DateSession: React.FC<DateSessionProps> = ({
     const MAX_DATE_INPUT_HEIGHT = 144;
     const handledEndSuggestionRef = useRef('');
     useEffect(() => {
-        if (!endSuggestedReason || isTyping || isTextAnimating || dialogueQueue.length > 0) return;
+        if (!endSuggestedReason || interactionBusy || isTextAnimating || dialogueQueue.length > 0) return;
         if (handledEndSuggestionRef.current === endSuggestedReason) return;
         handledEndSuggestionRef.current = endSuggestedReason;
         setShowExitModal(true);
-    }, [endSuggestedReason, isTyping, isTextAnimating, dialogueQueue.length]);
+    }, [endSuggestedReason, interactionBusy, isTextAnimating, dialogueQueue.length]);
     // API 失败时本地记住本轮输入，不依赖父组件的 DB 刷新是否已经完成；用户可直接点重试。
     const [pendingRetryText, setPendingRetryText] = useState('');
 
@@ -631,7 +635,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                 return true;
             }
             if (showInterludeEditor) {
-                if (!isTyping) setShowInterludeEditor(false);
+                if (!interactionBusy) setShowInterludeEditor(false);
                 return true;
             }
             if (showClockEditor) {
@@ -651,7 +655,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             return true;
         });
         return unregister;
-    }, [voiceFavoriteTarget, voiceFavoriteBusy, isFullscreenEditor, showSettings, showInterludeEditor, showClockEditor, clockBusy, isTyping, showMenu, showExitModal, registerBackHandler]);
+    }, [voiceFavoriteTarget, voiceFavoriteBusy, isFullscreenEditor, showSettings, showInterludeEditor, showClockEditor, clockBusy, interactionBusy, showMenu, showExitModal, registerBackHandler]);
 
     const dateEmotionKeys = [...REQUIRED_EMOTIONS_SET, ...(char.customDateSprites || [])];
 
@@ -993,7 +997,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     };
 
     const handleSend = async () => {
-        if (historyReplay || isTyping) return;
+        if (historyReplay || interactionBusy) return;
         const inputText = input.trim();
         // 本地失败输入优先，DB 时间线兜底。这样即使父组件刷新尚未落到这一帧，重试键也不会失效。
         const retryText = pendingRetryText || getPendingReplyText(messages);
@@ -1007,7 +1011,13 @@ const DateSession: React.FC<DateSessionProps> = ({
         setIsShowingOpening(false); // First user interaction - opening phase is over
 
         try {
-            const aiContent = await onSendMessage(text);
+            const result = await onSendMessage(text);
+            if (typeof result !== 'string') {
+                setCurrentText('已交给后台生成；你可以离开见面，完成后会收到提醒。');
+                setPendingRetryText('');
+                return;
+            }
+            const aiContent = result;
             // 先剥出观测块更新 HUD，再解析剩余正文
             const { observation: obs, rest } = extractObservation(aiContent, { lenient: observeEnabled, custom: char.dateObserve?.custom });
             if (hasObservation(obs)) setObservation(obs);
@@ -1029,7 +1039,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     };
 
     const handleRerollClick = async () => {
-        if (historyReplay || isTyping) return;
+        if (historyReplay || interactionBusy) return;
         setIsTyping(true);
         try {
             const aiContent = await onReroll();
@@ -1056,7 +1066,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     };
 
     const handleInterludeSubmit = async (catchUpToNow = false) => {
-        if (historyReplay || isTyping || !onInterlude) return;
+        if (historyReplay || interactionBusy || !onInterlude) return;
         const targetAt = catchUpToNow ? realNow : undefined;
         setShowInterludeEditor(false);
         setIsTyping(true);
@@ -1078,7 +1088,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     };
 
     const openClockEditor = () => {
-        if (!Number.isFinite(effectiveSceneClockAt)) return;
+        if (interactionBusy || !Number.isFinite(effectiveSceneClockAt)) return;
         setClockInput(DatePrompts.formatSceneClockInputValue(effectiveSceneClockAt as number, effectiveSceneClockTimeZone));
         setShowClockEditor(true);
         setShowMenu(false);
@@ -1130,7 +1140,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     };
 
     const handleEndClick = async () => {
-        if (endingEncounter) return;
+        if (endingEncounter || interactionBusy) return;
         setEndingEncounter(true);
         try {
             await onEnd(buildCurrentState());
@@ -1298,19 +1308,19 @@ const DateSession: React.FC<DateSessionProps> = ({
 
                 {showMenu && (
                     <div className="flex flex-col items-end gap-1.5 animate-fade-in" onClick={(e) => e.stopPropagation()}>
-                        {!isTyping && canReroll && (
+                        {!interactionBusy && canReroll && (
                             <button onClick={() => { setShowMenu(false); setShowVoiceLangPicker(false); handleRerollClick(); }} className="h-9 px-3.5 rounded-full flex items-center gap-2 text-xs font-bold border shadow-lg active:scale-95 transition-all bg-black/40 backdrop-blur-md border-white/15 text-white hover:bg-white/20">
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
                                 重新生成
                             </button>
                         )}
 
-                        {!historyReplay && onInterlude && <button onClick={() => { setShowInterludeEditor(true); setShowMenu(false); setShowVoiceLangPicker(false); }} disabled={isTyping} className="h-9 px-3.5 rounded-full flex items-center gap-2 text-xs font-bold border shadow-lg active:scale-95 transition-all bg-indigo-500/70 backdrop-blur-md border-indigo-200/30 text-white hover:bg-indigo-500 disabled:opacity-40">
+                        {!historyReplay && onInterlude && <button onClick={() => { setShowInterludeEditor(true); setShowMenu(false); setShowVoiceLangPicker(false); }} disabled={interactionBusy} className="h-9 px-3.5 rounded-full flex items-center gap-2 text-xs font-bold border shadow-lg active:scale-95 transition-all bg-indigo-500/70 backdrop-blur-md border-indigo-200/30 text-white hover:bg-indigo-500 disabled:opacity-40">
                             <span aria-hidden="true">⏭</span>
                             过场
                         </button>}
 
-                        {!historyReplay && onSetSceneClock && <button onClick={openClockEditor} disabled={isTyping} className="h-9 px-3.5 rounded-full flex items-center gap-2 text-xs font-bold border shadow-lg active:scale-95 transition-all bg-black/40 backdrop-blur-md border-white/15 text-white hover:bg-white/20 disabled:opacity-40">
+                        {!historyReplay && onSetSceneClock && <button onClick={openClockEditor} disabled={interactionBusy} className="h-9 px-3.5 rounded-full flex items-center gap-2 text-xs font-bold border shadow-lg active:scale-95 transition-all bg-black/40 backdrop-blur-md border-white/15 text-white hover:bg-white/20 disabled:opacity-40">
                             <span aria-hidden="true">◷</span>
                             编辑剧情时间
                         </button>}
@@ -1524,9 +1534,9 @@ const DateSession: React.FC<DateSessionProps> = ({
                         </div>
                         {showMenu && (
                             <div className="tm-reading-menu mt-2 flex flex-wrap justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
-                                {!historyReplay && !isTyping && canReroll && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { setShowMenu(false); void handleRerollClick(); }}>重新生成</button>}
-                                {!historyReplay && onInterlude && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" disabled={isTyping} onClick={() => { setShowInterludeEditor(true); setShowMenu(false); }}>⏭ 过场</button>}
-                                {!historyReplay && onSetSceneClock && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" disabled={isTyping} onClick={openClockEditor}>◷ 编辑剧情时间</button>}
+                                {!historyReplay && !interactionBusy && canReroll && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { setShowMenu(false); void handleRerollClick(); }}>重新生成</button>}
+                                {!historyReplay && onInterlude && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" disabled={interactionBusy} onClick={() => { setShowInterludeEditor(true); setShowMenu(false); }}>⏭ 过场</button>}
+                                {!historyReplay && onSetSceneClock && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" disabled={interactionBusy} onClick={openClockEditor}>◷ 编辑剧情时间</button>}
                                 {!historyReplay && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { setShowSettings(true); setShowMenu(false); }}>布置场景</button>}
                                 <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { setShowExitModal(true); setShowMenu(false); }}>{historyReplay ? '退出回顾' : '离开 / 结束'}</button>
                                 {!historyReplay && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { const next = !observeEnabled; updateCharacter(char.id, { dateObserve: { ...char.dateObserve, enabled: next } }); setShowMenu(false); addToast(next ? '观测已开启 · 下条回复生效' : '观测已关闭', 'info'); }}>观测{observeEnabled ? ' · 开' : ' · 关'}</button>}
@@ -1832,7 +1842,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             )}
 
             {/* Input Layer */}
-            <div className={`tm-compose-layer absolute inset-x-0 bottom-0 z-40 flex justify-center pointer-events-none transition-all duration-300 ${isTyping || showInputBox ? 'opacity-100' : 'opacity-0'}`} style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
+            <div className={`tm-compose-layer absolute inset-x-0 bottom-0 z-40 flex justify-center pointer-events-none transition-all duration-300 ${interactionBusy || showInputBox ? 'opacity-100' : 'opacity-0'}`} style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
                 {isTyping && (
                     <div className="absolute bottom-1/2 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-auto">
                         <div className="bg-black/80 backdrop-blur-md px-6 py-3 rounded-full border border-white/20 shadow-2xl animate-pulse flex items-center gap-3">
@@ -1844,8 +1854,8 @@ const DateSession: React.FC<DateSessionProps> = ({
                 {showInputBox && !historyReplay && (
                     <div className={`tm-compose w-[90%] min-w-0 max-w-lg backdrop-blur-xl rounded-2xl p-2 shadow-2xl animate-fade-in mb-8 pointer-events-auto ${char.dateLightReading ? 'bg-stone-100 border border-stone-300' : 'bg-white/10 border border-white/20'}`} onClick={(e) => e.stopPropagation()}>
                         <div className="tm-compose-toolbar flex items-center justify-between gap-2">
-                            <span className="tm-compose-status text-[10px] opacity-60">{isTyping ? '正在延续此刻…' : '此时此刻'}</span>
-                            <button type="button" onClick={() => { setShowInputBox(false); void handleRerollClick(); }} disabled={!canReroll || isTyping} className="tm-regen-btn rounded-full px-2 py-1 text-[10px] disabled:opacity-30">重新生成</button>
+                            <span className="tm-compose-status text-[10px] opacity-60">{backgroundPending ? '后台正在延续此刻…' : '此时此刻'}</span>
+                            <button type="button" onClick={() => { setShowInputBox(false); void handleRerollClick(); }} disabled={!canReroll || interactionBusy} className="tm-regen-btn rounded-full px-2 py-1 text-[10px] disabled:opacity-30">重新生成</button>
                         </div>
                         <div className="tm-compose-row flex items-end gap-2">
                             <textarea
@@ -1854,8 +1864,8 @@ const DateSession: React.FC<DateSessionProps> = ({
                                 value={input}
                                 onChange={(e) => setInput(e.target.value)}
                                 onKeyDown={handleComposerKeyDown}
-                                placeholder={isTyping ? "等待回应..." : "输入对话..."}
-                                disabled={isTyping}
+                                placeholder={backgroundPending ? "后台生成中..." : "输入对话..."}
+                                disabled={interactionBusy}
                                 className={`min-w-0 flex-1 tm-input bg-transparent px-3 sm:px-4 py-3 outline-none font-light resize-none max-h-36 no-scrollbar leading-tight ${char.dateLightReading ? 'text-stone-800 placeholder:text-stone-400' : 'text-white placeholder:text-white/30'}`}
                                 style={{ minHeight: '3.5rem' }}
                                 autoFocus
@@ -1867,18 +1877,26 @@ const DateSession: React.FC<DateSessionProps> = ({
                             )}
                             {(() => {
                                 const retryText = pendingRetryText || getPendingReplyText(messages);
-                                const canRetry = !input.trim() && !isTyping && !!retryText;
+                                const canRetry = !input.trim() && !interactionBusy && !!retryText;
                                 return (
                                     <button
                                         type="button"
                                         onClick={handleSend}
-                                        disabled={(!input.trim() && !canRetry) || isTyping}
+                                        disabled={(!input.trim() && !canRetry) || interactionBusy}
                                         className="shrink-0 px-4 sm:px-6 tm-send-btn tm-send bg-white text-black rounded-xl font-bold text-sm hover:bg-slate-200 disabled:opacity-50 transition-colors h-14 flex items-center justify-center"
                                     >
                                         {canRetry ? '重试' : '发送'}
                                     </button>
                                 );
                             })()}
+                        </div>
+                    </div>
+                )}
+                {backgroundPending && !isTyping && (
+                    <div className="absolute bottom-1/2 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-auto">
+                        <div className="bg-black/80 backdrop-blur-md px-5 py-3 rounded-full border border-indigo-300/30 shadow-2xl flex items-center gap-3">
+                            <div className="w-2 h-2 bg-indigo-300 rounded-full animate-pulse" />
+                            <span className="text-xs text-white font-bold tracking-wide">后台生成中 · 离开后也会继续</span>
                         </div>
                     </div>
                 )}
@@ -1898,7 +1916,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                             <CornersIn className="h-5 w-5" weight="bold" />
                         </button>
                         <div className="flex-1 text-center text-sm font-semibold">编辑此刻</div>
-                        <button type="button" onClick={() => { setIsFullscreenEditor(false); void handleSend(); }} disabled={!input.trim() || isTyping} className="rounded-full bg-primary px-3 py-1.5 text-xs font-bold text-white disabled:opacity-40">发送</button>
+                        <button type="button" onClick={() => { setIsFullscreenEditor(false); void handleSend(); }} disabled={!input.trim() || interactionBusy} className="rounded-full bg-primary px-3 py-1.5 text-xs font-bold text-white disabled:opacity-40">发送</button>
                     </div>
                     <div className="min-h-0 flex-1 p-4">
                         <textarea
@@ -1918,13 +1936,13 @@ const DateSession: React.FC<DateSessionProps> = ({
             <Modal
                 isOpen={showInterludeEditor}
                 title="插入一段过场"
-                onClose={() => { if (!isTyping) setShowInterludeEditor(false); }}
+                onClose={() => { if (!interactionBusy) setShowInterludeEditor(false); }}
                 footer={
                     <div className="flex w-full gap-2">
                         {dateTimeAwarenessEnabled && (
-                            <button type="button" onClick={() => void handleInterludeSubmit(true)} disabled={isTyping || !onInterlude || !Number.isFinite(effectiveSceneClockAt) || (Number.isFinite(effectiveSceneClockAt) && realNow <= (effectiveSceneClockAt as number))} className="flex-1 rounded-2xl bg-slate-100 py-3 text-xs font-bold text-slate-600 disabled:opacity-40">一次补到现在</button>
+                            <button type="button" onClick={() => void handleInterludeSubmit(true)} disabled={interactionBusy || !onInterlude || !Number.isFinite(effectiveSceneClockAt) || (Number.isFinite(effectiveSceneClockAt) && realNow <= (effectiveSceneClockAt as number))} className="flex-1 rounded-2xl bg-slate-100 py-3 text-xs font-bold text-slate-600 disabled:opacity-40">一次补到现在</button>
                         )}
-                        <button type="button" onClick={() => void handleInterludeSubmit(false)} disabled={isTyping || !onInterlude} className="flex-1 rounded-2xl bg-indigo-500 py-3 text-xs font-bold text-white shadow-lg shadow-indigo-200 disabled:opacity-40">{isTyping ? '生成中…' : '生成过场'}</button>
+                        <button type="button" onClick={() => void handleInterludeSubmit(false)} disabled={interactionBusy || !onInterlude} className="flex-1 rounded-2xl bg-indigo-500 py-3 text-xs font-bold text-white shadow-lg shadow-indigo-200 disabled:opacity-40">{isTyping ? '生成中…' : backgroundPending ? '后台生成中…' : '生成过场'}</button>
                     </div>
                 }
             >

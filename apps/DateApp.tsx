@@ -29,6 +29,14 @@ import { stripMessageReactionTags } from '../utils/messageReactions';
 import { stripFaceToFacePhoneSourceTags } from '../utils/sanitize';
 import { resolveCharTimeZone } from '../utils/timezone';
 import {
+    buildPendingDateBackgroundJob,
+    cancelPendingDateBackgroundJobs,
+    getPendingDateBackgroundJobForEncounter,
+    removePendingDateBackgroundJob,
+    savePendingDateBackgroundJob,
+    schedulePendingDateBackgroundJob,
+} from '../utils/dateBackgroundJobs';
+import {
     buildDateHistoryGroups,
     formatDateHistoryDate,
     formatDateHistoryExport,
@@ -96,6 +104,8 @@ const DateApp: React.FC = () => {
             if (intent.autoStart && intent.charId) {
                 setMode('select');
                 setAcceptedInviteLaunch({ charId: intent.charId, meetingInviteMessageId: intent.meetingInviteMessageId });
+            } else if (intent.openEncounter && intent.charId && intent.encounterId) {
+                setPendingDateEncounterOpen({ charId: intent.charId, encounterId: intent.encounterId });
             } else if (intent.openHistory && intent.charId && intent.encounterId) {
                 setPendingHistoryOpen({ charId: intent.charId, encounterId: intent.encounterId });
             } else {
@@ -164,6 +174,8 @@ const DateApp: React.FC = () => {
     const [pendingSessionChar, setPendingSessionChar] = useState<CharacterProfile | null>(null);
     const [pendingMeetingInviteMessageId, setPendingMeetingInviteMessageId] = useState<number | undefined>(undefined);
     const [acceptedInviteLaunch, setAcceptedInviteLaunch] = useState<{ charId: string; meetingInviteMessageId?: number } | null>(null);
+    const [pendingDateEncounterOpen, setPendingDateEncounterOpen] = useState<{ charId: string; encounterId: string } | null>(null);
+    const [dateBackgroundPendingJobId, setDateBackgroundPendingJobId] = useState<string | null>(null);
     const [activeEncounterRuntime, setActiveEncounterRuntime] = useState<DateEncounterRuntime | null>(null);
     const activeEncounterRef = useRef<DateEncounterRuntime | null>(null);
     // 每个异步见面请求都有自己的序号；剧情时钟提交前会再次核对 encounter + revision，
@@ -410,9 +422,60 @@ const DateApp: React.FC = () => {
             // 靠 dateLoadLimit 闭包会读到上一个角色翻开的深度，和重置后的 state 对不上。
             setDateLoadLimit(DATE_SESSION_MESSAGE_LIMIT);
             setDateHistoryReachedEnd(false);
+            setDateBackgroundPendingJobId(activeEncounterRef.current
+                ? getPendingDateBackgroundJobForEncounter(activeEncounterRef.current.id)?.jobId || null
+                : null);
             loadDateMessages(DATE_SESSION_MESSAGE_LIMIT);
         }
     }, [char, mode, historyReplayGroupId]);
+
+    useEffect(() => {
+        if (!char || mode !== 'session' || historyReplayGroupId || typeof window === 'undefined') return;
+        const handleBackgroundDateProgress = (event: Event) => {
+            const detail = (event as CustomEvent).detail || {};
+            if (!detail.dateBackground
+                || detail.charId !== char.id
+                || detail.dateEncounterId !== activeEncounterRef.current?.id) return;
+            setDateBackgroundPendingJobId(null);
+            if (typeof detail.endMeetingReason === 'string' && detail.endMeetingReason.trim()) {
+                setEndSuggestedReason(detail.endMeetingReason.trim());
+            }
+            void loadDateMessages(DATE_SESSION_MESSAGE_LIMIT).then(() => {
+                markDateTurnDirty(char);
+            }).catch(error => {
+                console.warn('[DateApp] 刷新后台见面回复失败', error);
+            });
+        };
+        window.addEventListener('active-msg-progress', handleBackgroundDateProgress);
+        return () => window.removeEventListener('active-msg-progress', handleBackgroundDateProgress);
+        // 当前见面身份由 activeEncounterRef 保持；只在角色 / 会话页面切换时重绑监听。
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [char?.id, mode, historyReplayGroupId]);
+
+    // 页面被系统回收在「保存 user 消息」之后、schedule 之前时，重开见面要把 pending
+    // 继续交给 Worker；如果这台 Worker 明确不支持，则保留 user 消息，让用户按重试回前台。
+    useEffect(() => {
+        if (!char || mode !== 'session' || historyReplayGroupId) return;
+        const encounter = activeEncounterRef.current;
+        if (!encounter) return;
+        const pending = getPendingDateBackgroundJobForEncounter(encounter.id);
+        if (!pending) {
+            setDateBackgroundPendingJobId(null);
+            return;
+        }
+        setDateBackgroundPendingJobId(pending.jobId);
+        void schedulePendingDateBackgroundJob({ jobId: pending.jobId, char, api: apiConfig }).then(outcome => {
+            if (outcome.status === 'fallback') {
+                removePendingDateBackgroundJob(pending.jobId);
+                setDateBackgroundPendingJobId(null);
+                addToast('后台见面暂不可用，点击重试即可在前台生成', 'info');
+            }
+        }).catch(error => {
+            console.warn('[DateApp] 恢复见面后台任务失败', error);
+        });
+        // 见面身份由 ref 固定；只在角色 / 会话切换时尝试恢复一次。
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [char?.id, mode, historyReplayGroupId]);
 
 
     /** 阅读模式要更早的记录：limit 递增重取（反向游标，limit 越大够得越远）。 */
@@ -587,6 +650,7 @@ const DateApp: React.FC = () => {
             || target.activeDateEncounter?.encounterId;
         try {
             if (encounterId) {
+                await cancelPendingDateBackgroundJobs(encounterId);
                 const [dateMsgs, popupMsgs] = await Promise.all([
                     DB.getRecentMessagesByCharIdAndSource(target.id, 'date', Number.MAX_SAFE_INTEGER),
                     DB.getRecentMessagesByCharIdAndSource(target.id, 'date-end-popup', Number.MAX_SAFE_INTEGER),
@@ -756,6 +820,32 @@ const DateApp: React.FC = () => {
         // 这个 effect 的稳定触发源，避免每次输入消息都重新开始感知。
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [acceptedInviteLaunch, characters]);
+
+    // 后台见面通知点击后的精确回跳：按 encounterId 恢复正在进行的这一场，
+    // 不凭 charId 猜“最近一场”，也不创建新的 encounter。
+    useEffect(() => {
+        if (!pendingDateEncounterOpen) return;
+        const request = pendingDateEncounterOpen;
+        const target = characters.find(c => c.id === request.charId);
+        if (!target) return;
+        setPendingDateEncounterOpen(null);
+        const source = getActiveDatePresence(target.id) || target.activeDateEncounter || target.savedDateState;
+        if (!source || source.encounterId !== request.encounterId) {
+            setMode('select');
+            addToast('这条见面回复对应的现场已经结束或被删除', 'info');
+            return;
+        }
+        const encounter = runtimeFromSource(target, source);
+        activateDateEncounter(target.id, encounter);
+        setActiveCharacterId(target.id);
+        setPeekStatus('');
+        setHasSavedOpening(true);
+        setDateBackgroundPendingJobId(getPendingDateBackgroundJobForEncounter(request.encounterId)?.jobId || null);
+        setMode('session');
+        trackEvent('从见面后台通知打开现场');
+        // 导航意图本身才是稳定触发源；其余命令函数随渲染更新即可。
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pendingDateEncounterOpen, characters]);
 
     // 与聊天侧 useChatAI 完全一致的 Memory Palace 后台流程：
     // 触发缓冲区处理 + 自动归档（如开启） + 50 轮认知消化。
@@ -928,7 +1018,7 @@ const DateApp: React.FC = () => {
     };
 
     // --- Session API Logic ---
-    const handleSendMessage = async (text: string): Promise<string> => {
+    const handleSendMessage = async (text: string): Promise<string | { queued: true; jobId: string }> => {
         if (!char) throw new Error("No char");
         const requestId = beginDateTurnRequest();
         const encounter = ensureEncounter();
@@ -940,12 +1030,16 @@ const DateApp: React.FC = () => {
         const isRetry = recentCheck.length > 0
             && recentCheck[0].role === 'user'
             && recentCheck[0].content === text
-            && recentCheck[0].metadata?.source === 'date';
+            && recentCheck[0].metadata?.source === 'date'
+            && recentCheck[0].metadata?.dateEncounterId === encounterSnapshot.id;
 
+        let sourceUserMessageId: number;
         if (!isRetry) {
             // 1. Save User Msg
-            await DB.saveMessage({ charId: char.id, role: 'user', type: 'text', content: text, metadata: sceneClockMetadata(encounterSnapshot, { dateTurnKind: 'dialogue' }) });
+            sourceUserMessageId = await DB.saveMessage({ charId: char.id, role: 'user', type: 'text', content: text, metadata: sceneClockMetadata(encounterSnapshot, { dateTurnKind: 'dialogue' }) });
             markDateTurnDirty(char);
+        } else {
+            sourceUserMessageId = recentCheck[0].id;
         }
 
         // 2. Prepare Context
@@ -972,6 +1066,57 @@ const DateApp: React.FC = () => {
             sceneClockTimeZone: encounterSnapshot.sceneClockTimeZone,
             useVisionDescriptions: apiConfig.visionApi?.enabled === true,
         });
+
+        // 普通纯文本回复先尝试交给 AMSG2。pending 必须在 schedule 前写入，
+        // 这样即使页面在上传/建任务之间被系统回收，下一次打开仍能恢复这轮。
+        const pending = buildPendingDateBackgroundJob({
+            char,
+            encounter: {
+                encounterId: encounterSnapshot.id,
+                startedAt: encounterSnapshot.startedAt,
+                sceneClockAt: encounterSnapshot.sceneClockAt,
+                sceneClockAdvancedMs: encounterSnapshot.sceneClockAdvancedMs,
+                sceneClockRevision: encounterSnapshot.sceneClockRevision,
+            },
+            sourceUserMessageId,
+            messages,
+        });
+        if (pending) {
+            const existing = getPendingDateBackgroundJobForEncounter(encounterSnapshot.id);
+            if (existing && existing.jobId !== pending.jobId) {
+                throw new Error('上一条见面回复仍在后台生成，请等待它完成后再继续');
+            }
+            if (!existing || existing.jobId === pending.jobId) {
+                // 同一条 user 消息重试时复用确定性 jobId，不重复生成另一份快照。
+                const currentPending = getPendingDateBackgroundJobForEncounter(encounterSnapshot.id);
+                if (!currentPending || currentPending.jobId === pending.jobId) {
+                    if (!currentPending) {
+                        // 仅在尚未有 pending 时写入；已有 pending 由恢复路径继续调度。
+                        savePendingDateBackgroundJob(pending);
+                    }
+                    const remote = await schedulePendingDateBackgroundJob({
+                        jobId: pending.jobId,
+                        char,
+                        api: apiConfig,
+                    });
+                    if (remote.status === 'queued' || remote.status === 'uncertain') {
+                        setDateBackgroundPendingJobId(pending.jobId);
+                        await loadDateMessages(DATE_SESSION_MESSAGE_LIMIT);
+                        addToast(
+                            remote.status === 'queued'
+                                ? '已交给后台生成，切到后台也会继续'
+                                : '后台任务正在确认，稍后会自动补收结果',
+                            'info',
+                        );
+                        return { queued: true, jobId: pending.jobId };
+                    }
+                    // Worker 不支持 / 本次探测不到 / 明确建任务失败：本地生成一次，
+                    // 不把「没有副作用」的失败误当成已在云端运行。
+                    removePendingDateBackgroundJob(pending.jobId);
+                }
+            }
+        }
+
         const rawContent = await callLLM(messages, apiConfig.temperature ?? 0.85);
         if (!isCurrentDateTurnRequest(requestId, encounterSnapshot.id, encounterSnapshot.sceneClockRevision)) {
             throw new Error('这轮回复已过期，请按当前剧情时间重新发送');
@@ -1356,6 +1501,8 @@ const DateApp: React.FC = () => {
     const finishEncounter = async (finalState: DateState) => {
         if (!char) return;
         const encounter = ensureEncounter();
+        await cancelPendingDateBackgroundJobs(encounter.id);
+        setDateBackgroundPendingJobId(null);
         const realEndedAt = Date.now();
         // 见面长度和结束卡展示都以剧情时钟为准；现实结束时刻只作为调试/同步留档，
         // 不能把用户离开 App 的时间误当成剧情里经过的时间。
@@ -2009,6 +2156,7 @@ const DateApp: React.FC = () => {
                     sceneClockUpdatedAt={historyReplayGroupId ? undefined : activeEncounterRuntime?.sceneClockUpdatedAt}
                     sceneClockTimeZone={historyReplayGroupId ? undefined : activeEncounterRuntime?.sceneClockTimeZone}
                     dateTimeAwarenessEnabled={char.dateTimeAwarenessEnabled !== false}
+                    backgroundPending={historyReplayGroupId ? false : Boolean(dateBackgroundPendingJobId)}
                     onSendMessage={handleSendMessage}
                     onReroll={handleReroll}
                     onInterlude={historyReplayGroupId ? undefined : handleInterlude}

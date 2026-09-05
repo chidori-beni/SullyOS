@@ -12,6 +12,7 @@ import {
 import { stripInternalAssistantProtocolMarkers } from './sanitize';
 import { noteCallBannerOpened } from './incomingCall';
 import { callLaunch } from './callLaunch';
+import { dateLaunch } from './dateLaunch';
 import { runPendingToolCalls } from './instantToolRunner';
 import { drainPendingDiaries } from './pendingDiary';
 import { applyEmotionEvalRaw } from './emotionApply';
@@ -2609,6 +2610,7 @@ const handleDeepLink = () => {
   const charId = currentUrl.searchParams.get('activeMsgCharId');
   const openApp = currentUrl.searchParams.get('openApp');
   const sessionId = currentUrl.searchParams.get('callSessionId');
+  const dateEncounterId = currentUrl.searchParams.get('dateEncounterId');
 
   if (openApp === 'chat' && charId) {
     // 冷启动是点来电横幅进来的（SW 把旗插在 URL 上）。必须在补收落库**之前**记下来——
@@ -2624,6 +2626,17 @@ const handleDeepLink = () => {
       detail: { charId, openApp: 'call', sessionId },
     }));
   }
+  if (openApp === 'date' && charId && dateEncounterId) {
+    dateLaunch.request({
+      surface: 'companion',
+      charId,
+      encounterId: dateEncounterId,
+      openEncounter: true,
+    });
+    window.dispatchEvent(new CustomEvent('active-msg-open', {
+      detail: { charId, openApp: 'date', encounterId: dateEncounterId },
+    }));
+  }
 
   // 参数只要出现过就从地址栏清掉，不管齐不齐——角色 id 留在 URL 里，
   // 收藏、分享、截图都会把它带出去。统计侧另有 data-exclude-search 兜底
@@ -2633,6 +2646,7 @@ const handleDeepLink = () => {
     currentUrl.searchParams.delete('activeMsgCharId');
     currentUrl.searchParams.delete('incomingCall');
     currentUrl.searchParams.delete('callSessionId');
+    currentUrl.searchParams.delete('dateEncounterId');
     // Keep same-page navigation markers (for example the browser back guard)
     // while removing only the consumed deep-link parameters from the URL.
     window.history.replaceState(window.history.state, '', currentUrl.toString());
@@ -2733,11 +2747,25 @@ export const ActiveMsgRuntime = {
                 console.warn('[ActiveMsg] 打开通话前补收后台结果失败，稍后仍会按前台兜底重试', error);
               });
             }
+            if (event.data?.openApp === 'date'
+              && event.data?.charId
+              && event.data?.encounterId) {
+              await catchUpMissedPushes('manual').catch(error => {
+                console.warn('[ActiveMsg] 打开见面前补收后台结果失败，稍后仍会按前台兜底重试', error);
+              });
+              dateLaunch.request({
+                surface: 'companion',
+                charId: String(event.data.charId),
+                encounterId: String(event.data.encounterId),
+                openEncounter: true,
+              });
+            }
             window.dispatchEvent(new CustomEvent('active-msg-open', {
               detail: {
                 charId: event.data?.charId,
                 openApp: event.data?.openApp,
                 sessionId: event.data?.sessionId,
+                encounterId: event.data?.encounterId,
               },
             }));
             await runPendingToolCallsSafely();

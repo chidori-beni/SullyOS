@@ -4,6 +4,8 @@ export interface DateLaunchIntent {
     charId?: string;
     /** Open the historical encounter containing this id instead of the character picker. */
     encounterId?: string;
+    /** 打开一个仍在进行中的见面（后台回复通知点击）；不是历史回顾。 */
+    openEncounter?: boolean;
     openHistory?: boolean;
     /** 接受角色邀约后，生成开场并直接创建本次见面，不停在感知页。 */
     autoStart?: boolean;

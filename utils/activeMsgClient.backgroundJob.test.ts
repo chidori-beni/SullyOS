@@ -144,6 +144,15 @@ describe('后台任务能力探测的缓存', () => {
     expect(fetchCalls()).toBe(1);
   });
 
+  it('见面后台必须有独立能力位，不能把通话后台误当成见面后台', async () => {
+    configCheck({ success: true, data: { backgroundJobs: true, callBackgroundJobs: true } });
+    expect(await ActiveMsgClient.probeDateBackgroundJobSupportDetailed()).toBe('unsupported');
+
+    configCheck({ success: true, data: { backgroundJobs: true, dateBackgroundJobs: true } });
+    forgetBackgroundJobProbe();
+    expect(await ActiveMsgClient.probeDateBackgroundJobSupportDetailed()).toBe('supported');
+  });
+
   it('只有基础后台任务、没有通话 handler 的旧 Worker 仍按不支持处理', async () => {
     configCheck({ success: true, data: { backgroundJobs: true } });
 

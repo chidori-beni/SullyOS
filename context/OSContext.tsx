@@ -94,6 +94,7 @@ import { recoverInterruptedCallSession } from '../utils/callSessionRecovery';
 import { cancelAllPendingCallBackgroundJobs } from '../utils/callBackgroundJobs';
 import { callLaunch } from '../utils/callLaunch';
 import { chatDetailLaunch } from '../utils/chatDetailLaunch';
+import { dateLaunch } from '../utils/dateLaunch';
 import { runCallMemoryPalacePostFlow } from '../utils/memoryPalace/callPostFlow';
 import { getActiveDatePresence } from '../utils/datePresence';
 import { getCallLifecycleGeneration, isCallActiveForChar } from '../utils/callSessionLifecycle';
@@ -1985,15 +1986,24 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       };
 
       const openHandler = (e: Event) => {
-          const { charId, openApp, sessionId } = (e as CustomEvent).detail as {
+          const { charId, openApp, sessionId, encounterId } = (e as CustomEvent).detail as {
               charId?: string;
               openApp?: string;
               sessionId?: string;
+              encounterId?: string;
           };
           if (!charId) return;
           if (openApp === 'call' && sessionId) {
               callLaunch.request({ charId, sessionId });
               setActiveApp(AppID.Call);
+          } else if (openApp === 'date' && encounterId) {
+              dateLaunch.request({
+                  surface: 'companion',
+                  charId,
+                  encounterId,
+                  openEncounter: true,
+              });
+              setActiveApp(AppID.Date);
           } else {
               // 消息 App 每次挂载都从好友列表起步，只设 activeCharacterId 不够：
               // 用户从推送横幅 / 桌面预览卡点进来，要的是这段对话本身。

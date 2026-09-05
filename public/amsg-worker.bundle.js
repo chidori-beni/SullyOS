@@ -82,7 +82,7 @@ var init_amsgToolPack = __esm({
 });
 
 // utils/mcpFireCore.ts
-var DEFAULT_MAX_TOOL_NAME_LEN, MCP_FIRE_NAME_PREFIX, MCP_FIRE_NAME_BUDGET, sanitizeMcpToolName, withMcpDedupeSuffix, serverSlug, buildMcpNameMap, MCP_RESULT_MAX_CHARS, formatMcpToolResult, stripTextFakedMcpCalls, escapeRegExp2, stripQuotes, positionalKeys, coerceBySchema, splitTopLevel, parseFakedArgs, extractTextFakedMcpCalls, MCP_PROTOCOL_VERSION, MCP_REQUEST_TIMEOUT_MS, createMcpSessionState, buildRpcRequest, parseSse, parseResp, readSseResponse, postCore, initializeCore, ensureInitializedCore, isRecord, resolveLocalSchemaRef, schemaAccepts, normalizeMcpValueBySchema, normalizeMcpToolArguments, targetHost, callMcpToolCore, buildMcpDirectHeaders, filterMcpServersForChar, buildMcpFireTools, buildMcpFireBlock;
+var DEFAULT_MAX_TOOL_NAME_LEN, MCP_FIRE_NAME_PREFIX, MCP_FIRE_NAME_BUDGET, sanitizeMcpToolName, withMcpDedupeSuffix, serverSlug, buildMcpNameMap, MCP_RESULT_MAX_CHARS, formatMcpToolResult, stripTextFakedMcpCalls, escapeRegExp2, stripQuotes, positionalKeys, coerceBySchema, splitTopLevel, parseFakedArgs, extractTextFakedMcpCalls, MCP_PROTOCOL_VERSION, MCP_REQUEST_TIMEOUT_MS, createMcpSessionState, buildRpcRequest, parseSse, parseResp, readSseResponse, postCore, initializeCore, ensureInitializedCore, isRecord2, resolveLocalSchemaRef, schemaAccepts, normalizeMcpValueBySchema, normalizeMcpToolArguments, targetHost, callMcpToolCore, buildMcpDirectHeaders, filterMcpServersForChar, buildMcpFireTools, buildMcpFireBlock;
 var init_mcpFireCore = __esm({
   "utils/mcpFireCore.ts"() {
     "use strict";
@@ -416,7 +416,7 @@ var init_mcpFireCore = __esm({
       }
       await session.initPromise;
     };
-    isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+    isRecord2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
     resolveLocalSchemaRef = (schema, rootSchema) => {
       const ref = typeof schema?.$ref === "string" ? schema.$ref : "";
       if (!ref.startsWith("#/")) return schema;
@@ -449,17 +449,17 @@ var init_mcpFireCore = __esm({
             break;
           }
         }
-        const decodedMatchesSchema = acceptsObject && isRecord(normalized) || acceptsArray && Array.isArray(normalized);
+        const decodedMatchesSchema = acceptsObject && isRecord2(normalized) || acceptsArray && Array.isArray(normalized);
         if (!decodedMatchesSchema) normalized = value;
       }
       const alternatives = [...schema?.oneOf || [], ...schema?.anyOf || []];
       if (alternatives.length) {
         const matching = alternatives.find(
-          (item) => isRecord(normalized) && schemaAccepts(item, "object") || Array.isArray(normalized) && schemaAccepts(item, "array")
+          (item) => isRecord2(normalized) && schemaAccepts(item, "object") || Array.isArray(normalized) && schemaAccepts(item, "array")
         );
         if (matching) normalized = normalizeMcpValueBySchema(normalized, matching, rootSchema, depth + 1);
       }
-      if (isRecord(normalized) && acceptsObject) {
+      if (isRecord2(normalized) && acceptsObject) {
         const result = { ...normalized };
         const properties = schema?.properties || {};
         for (const [key, childSchema] of Object.entries(properties)) {
@@ -474,7 +474,7 @@ var init_mcpFireCore = __esm({
         }
         for (const item of schema?.allOf || []) {
           const merged = normalizeMcpValueBySchema(result, item, rootSchema, depth + 1);
-          if (isRecord(merged)) Object.assign(result, merged);
+          if (isRecord2(merged)) Object.assign(result, merged);
         }
         return result;
       }
@@ -9075,13 +9075,183 @@ var buildHandler = (kind) => ({
 var callReplyHandler = buildHandler(CALL_BACKGROUND_REPLY_KIND);
 var sleepDreamHandler = buildHandler(SLEEP_DREAM_KIND);
 
+// utils/amsgDateJob.ts
+var DATE_BACKGROUND_REPLY_KIND = "date-reply";
+var DATE_BACKGROUND_REPLY_RESULT_KIND = "date-reply";
+var DATE_BACKGROUND_JOB_SCHEMA_VERSION = 1;
+var isRecord = (value) => !!value && typeof value === "object" && !Array.isArray(value);
+var isFiniteNumber = (value) => typeof value === "number" && Number.isFinite(value);
+var isRole = (value) => value === "system" || value === "user" || value === "assistant";
+var normalizeContent = (content) => {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.map((part) => {
+      if (!part || typeof part !== "object") return "";
+      const item = part;
+      return typeof item.text === "string" ? item.text : "";
+    }).filter(Boolean).join("\n");
+  }
+  return content == null ? "" : String(content);
+};
+var normalizeDateBackgroundMessages = (messages) => messages.filter((message) => isRole(message?.role)).map((message) => ({ role: message.role, content: normalizeContent(message.content).trim() })).filter((message) => !!message.content);
+var dateBackgroundJobKey = (clientJobId) => `date:${clientJobId}`;
+var parseDateBackgroundJobInput = (value) => {
+  const raw = typeof value === "string" ? (() => {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  })() : value;
+  if (!isRecord(raw) || raw.v !== DATE_BACKGROUND_JOB_SCHEMA_VERSION || raw.kind !== DATE_BACKGROUND_REPLY_KIND || raw.turnKind !== "reply" || typeof raw.clientJobId !== "string" || typeof raw.charId !== "string" || typeof raw.charName !== "string" || typeof raw.encounterId !== "string" || !isFiniteNumber(raw.encounterStartedAt) || !Number.isInteger(raw.sourceUserMessageId) || !isFiniteNumber(raw.sceneClockAt) || !isFiniteNumber(raw.sceneClockAdvancedMs) || !Number.isInteger(raw.sceneClockRevision) || !isFiniteNumber(raw.createdAt) || !Array.isArray(raw.messages) || !raw.messages.length) return null;
+  const messages = raw.messages.filter((message) => isRecord(message));
+  if (messages.length !== raw.messages.length) return null;
+  const normalized = messages.map((message) => ({
+    role: message.role,
+    content: message.content
+  }));
+  const safeMessages = normalizeDateBackgroundMessages(normalized);
+  if (safeMessages.length !== messages.length) return null;
+  return {
+    v: DATE_BACKGROUND_JOB_SCHEMA_VERSION,
+    kind: DATE_BACKGROUND_REPLY_KIND,
+    turnKind: "reply",
+    clientJobId: raw.clientJobId,
+    charId: raw.charId,
+    charName: raw.charName,
+    encounterId: raw.encounterId,
+    encounterStartedAt: raw.encounterStartedAt,
+    sourceUserMessageId: raw.sourceUserMessageId,
+    sceneClockAt: raw.sceneClockAt,
+    sceneClockAdvancedMs: raw.sceneClockAdvancedMs,
+    sceneClockRevision: raw.sceneClockRevision,
+    messages: safeMessages,
+    createdAt: raw.createdAt
+  };
+};
+var buildDateBackgroundJobResult = (args) => ({
+  v: DATE_BACKGROUND_JOB_SCHEMA_VERSION,
+  resultKind: DATE_BACKGROUND_REPLY_RESULT_KIND,
+  clientJobId: args.job.clientJobId,
+  charId: args.job.charId,
+  charName: args.job.charName,
+  encounterId: args.job.encounterId,
+  encounterStartedAt: args.job.encounterStartedAt,
+  sourceUserMessageId: args.job.sourceUserMessageId,
+  turnKind: args.job.turnKind,
+  sceneClockAt: args.job.sceneClockAt,
+  sceneClockAdvancedMs: args.job.sceneClockAdvancedMs,
+  sceneClockRevision: args.job.sceneClockRevision,
+  text: args.text,
+  generatedAt: args.generatedAt ?? Date.now()
+});
+
+// worker/amsg/src/dateFire.ts
+var BACKGROUND_DATE_TIMEOUT_MS = 18e4;
+var discardJob3 = async (writeState, jobId) => {
+  if (!writeState) return;
+  try {
+    await writeState(AMSG_JOB_NAMESPACE, [{ key: dateBackgroundJobKey(jobId), value: null }]);
+  } catch (error) {
+    console.warn("[amsg:date] job \u884C\u6CA1\u5220\u6389\uFF08\u7B49 TTL \u515C\u5E95\uFF09", jobId, error);
+  }
+};
+var readDateJob = async (ctx, jobId) => {
+  const rows = await ctx.readState(AMSG_JOB_NAMESPACE);
+  const row = rows.find((entry) => entry.key === dateBackgroundJobKey(jobId));
+  if (!row?.value) return null;
+  let json;
+  try {
+    json = await unpackStateValue(row.value);
+  } catch (error) {
+    await discardJob3(ctx.writeState, jobId);
+    throw new Error(`\u89C1\u9762\u540E\u53F0 job ${jobId} \u7684\u8F93\u5165\u89E3\u538B\u5931\u8D25\uFF08\u6570\u636E\u635F\u574F\uFF09\uFF1A${String(error)}`);
+  }
+  const job = parseDateBackgroundJobInput(json);
+  if (!job) {
+    await discardJob3(ctx.writeState, jobId);
+    throw new Error(`\u89C1\u9762\u540E\u53F0 job ${jobId} \u7684\u8F93\u5165\u89E3\u6790\u5931\u8D25\uFF08\u6570\u636E\u635F\u574F\uFF09`);
+  }
+  if (job.charId !== ctx.task.metadata?.charId) {
+    await discardJob3(ctx.writeState, jobId);
+    throw new Error(`\u89C1\u9762\u540E\u53F0 job ${jobId} \u7684 charId \u4E0E\u4EFB\u52A1\u5BF9\u4E0D\u4E0A`);
+  }
+  return job;
+};
+var previewText2 = (text) => {
+  const singleLine = text.replace(/\[\[END_MEETING:[^\]]*\]\]/gi, "").replace(/\[\[.*?\]\]/g, "").replace(/\s+/g, " ").trim();
+  return singleLine.length > 88 ? `${singleLine.slice(0, 88)}\u2026` : singleLine;
+};
+var dateReplyHandler = {
+  async beforeFire({ ctx, taskMeta }) {
+    const jobId = taskMeta[AMSG_JOB_ID_KEY];
+    if (typeof jobId !== "string" || !jobId) {
+      throw new Error(`\u89C1\u9762\u540E\u53F0\u4EFB\u52A1\u7684 metadata \u91CC\u6CA1\u6709 ${AMSG_JOB_ID_KEY}`);
+    }
+    const job = await readDateJob(ctx, jobId);
+    if (!job) return { skip: true, reason: `\u89C1\u9762\u540E\u53F0 job ${jobId} \u7684\u8F93\u5165\u5DF2\u4E0D\u5728\uFF08\u8FC7\u671F\u6216\u5DF2\u64A4\u9500\uFF09` };
+    if (job.kind !== DATE_BACKGROUND_REPLY_KIND || job.turnKind !== "reply") {
+      await discardJob3(ctx.writeState, jobId);
+      throw new Error(`\u89C1\u9762\u540E\u53F0 job ${jobId} \u7684\u4EFB\u52A1\u79CD\u7C7B\u6216 turnKind \u4E0D\u4E00\u81F4`);
+    }
+    return {
+      messages: job.messages,
+      totalTimeoutMs: BACKGROUND_DATE_TIMEOUT_MS,
+      state: { jobId, job }
+    };
+  },
+  async llmOutput({ ctx, state }) {
+    const { jobId, job } = state;
+    const text = stripReasoningTags(ctx.llmOutputText || "").trim();
+    if (!text) {
+      await discardJob3(ctx.writeState, jobId);
+      return { decision: "skip-push", reason: "date-empty-generation" };
+    }
+    if (typeof ctx.emitResult !== "function") {
+      console.warn("[amsg:date] \u5F53\u524D Worker \u6CA1\u6709 emitResult\uFF0C\u89C1\u9762\u540E\u53F0\u7ED3\u679C\u65E0\u6CD5\u9001\u56DE\u5BA2\u6237\u7AEF", jobId);
+      await discardJob3(ctx.writeState, jobId);
+      return { decision: "skip-push", reason: "date-emit-result-unsupported" };
+    }
+    const result = buildDateBackgroundJobResult({ job, text, generatedAt: Date.now() });
+    try {
+      await ctx.emitResult({
+        ...result,
+        notification: {
+          show: "when-hidden",
+          title: `${job.charName}\u7684\u89C1\u9762\u56DE\u590D\u5DF2\u751F\u6210`,
+          body: previewText2(text) || "\u89C1\u9762\u91CC\u6709\u4E86\u65B0\u7684\u56DE\u5E94\u3002",
+          tag: `amsg-date-${job.encounterId}-${jobId}`,
+          data: {
+            openApp: "date",
+            charId: job.charId,
+            encounterId: job.encounterId,
+            resultKind: result.resultKind,
+            jobId
+          }
+        }
+      });
+    } catch (error) {
+      console.warn("[amsg:date] \u7ED3\u679C\u6CA1\u80FD\u5199\u8FDB\u6536\u4EF6\u7BB1\uFF0C\u672C\u8F6E\u8BA9\u4E0A\u6E38\u91CD\u8BD5", jobId, error);
+      throw error;
+    }
+    await discardJob3(ctx.writeState, jobId);
+    console.log("[amsg:date] \u540E\u53F0\u89C1\u9762\u7ED3\u679C\u5DF2\u9001\u8FDB\u6536\u4EF6\u7BB1", {
+      jobId,
+      charId: job.charId,
+      encounterId: job.encounterId
+    });
+    return { decision: "skip-push", reason: "date-result-emitted" };
+  }
+};
+
 // worker/amsg/src/fireKinds.ts
 var FIRE_KIND_HANDLERS = Object.assign(
   /* @__PURE__ */ Object.create(null),
   {
     [PLATE_CONSOLIDATE_KIND]: plateConsolidateHandler,
     [CALL_BACKGROUND_REPLY_KIND]: callReplyHandler,
-    [SLEEP_DREAM_KIND]: sleepDreamHandler
+    [SLEEP_DREAM_KIND]: sleepDreamHandler,
+    [DATE_BACKGROUND_REPLY_KIND]: dateReplyHandler
   }
 );
 var KIND_FIRE_SCRATCH_KEY = "kindFire";
@@ -15588,6 +15758,9 @@ var src_default = {
           // 后台任务基础设施先于通话/陪睡任务上线。单独报这一位，避免只有旧的
           // plate handler 的 Worker 被新前端误认为能接收 call-reply / sleep-dream。
           callBackgroundJobs: true,
+          // 见面普通回复使用独立的 date-reply handler，必须单独回显能力位；旧 Worker
+          // 即使已有通话后台，也不能接收见面 prompt 快照。
+          dateBackgroundJobs: true,
           // 这份代码认不认「前台静默投递」：页面还开着时由 SW 抑制横幅，但仍保留
           // push 让它在真实后台状态下显示。同 backgroundJobs 一个套路——报的是
           // **这份代码有没有**，不是只看版本号。

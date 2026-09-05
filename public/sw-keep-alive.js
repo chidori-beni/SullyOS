@@ -1579,7 +1579,7 @@ async function removeQueuedRequest(id) {
 }
 
 // worker/sw-keep-alive.ts
-var SW_VERSION = "1.18.1";
+var SW_VERSION = "1.18.2";
 function isIncomingCallNotificationData(data) {
   return !!data && typeof data === "object" && data.sullyIncomingCall === true;
 }
@@ -2058,6 +2058,7 @@ sw.addEventListener("notificationclick", (event) => {
   const charId = payload?.metadata?.charId || payload?.charId || event.notification.data?.charId || "";
   const openApp = payload?.notification?.data?.openApp || payload?.openApp || event.notification.data?.openApp || "";
   const sessionId = payload?.notification?.data?.sessionId || payload?.sessionId || event.notification.data?.sessionId || "";
+  const encounterId = payload?.notification?.data?.encounterId || payload?.encounterId || event.notification.data?.encounterId || "";
   const isCall = isIncomingCallNotificationData(event.notification.data) || isIncomingCallNotificationData(payload);
   event.notification.close();
   event.waitUntil((async () => {
@@ -2073,13 +2074,14 @@ sw.addEventListener("notificationclick", (event) => {
     if (clients.length > 0) {
       const client = clients[0];
       await client.focus();
-      client.postMessage({ type: "active-msg-open", charId, incomingCall: isCall, openApp, sessionId });
+      client.postMessage({ type: "active-msg-open", charId, incomingCall: isCall, openApp, sessionId, encounterId });
       return;
     }
     const openUrl = new URL(sw.registration.scope || sw.location.origin);
-    openUrl.searchParams.set("openApp", openApp === "call" ? "call" : "chat");
+    openUrl.searchParams.set("openApp", openApp === "call" ? "call" : openApp === "date" ? "date" : "chat");
     if (charId) openUrl.searchParams.set("activeMsgCharId", charId);
     if (sessionId) openUrl.searchParams.set("callSessionId", sessionId);
+    if (encounterId) openUrl.searchParams.set("dateEncounterId", encounterId);
     if (isCall) openUrl.searchParams.set("incomingCall", "1");
     await sw.clients.openWindow(openUrl.toString());
   })());

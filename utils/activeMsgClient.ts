@@ -424,6 +424,7 @@ const ensureWorkerReady = async () => {
  * 只在内存里存，换 workerUrl 自然作废——用户中途换后端时不该拿旧结论当数。
  */
 let backgroundJobProbe: { workerUrl: string; supported: boolean; at: number } | null = null;
+let dateBackgroundJobProbe: { workerUrl: string; supported: boolean; at: number } | null = null;
 
 /**
  * 存量答案是「不支持」时，最多隔这么久就再问一遍。
@@ -448,7 +449,10 @@ const BACKGROUND_JOB_UNSUPPORTED_RECHECK_MS = 5 * 60_000;
  *
  * 从零部署那条路不用调：它换的是 workerUrl 本身，键一变旧缓存自然作废。
  */
-export const forgetBackgroundJobProbe = (): void => { backgroundJobProbe = null; };
+export const forgetBackgroundJobProbe = (): void => {
+  backgroundJobProbe = null;
+  dateBackgroundJobProbe = null;
+};
 
 /**
  * 后台任务能力探测的三种结论。
@@ -2501,6 +2505,45 @@ export const ActiveMsgClient = {
   /** 只问「能不能交」的那一版：问不到当不能交。要区分「问不到」用上面那个。 */
   async probeBackgroundJobSupport(): Promise<boolean> {
     return (await this.probeBackgroundJobSupportDetailed()) === 'supported';
+  },
+
+  /**
+   * 见面后台任务能力探测。
+   *
+   * `backgroundJobs` 只代表后台分派骨架存在；见面使用独立 handler，必须等 Worker
+   * 明确回 `dateBackgroundJobs` 才提交 `date-reply`，否则旧 bundle 会把任务静默判死。
+   */
+  async probeDateBackgroundJobSupportDetailed(): Promise<BackgroundJobProbeOutcome> {
+    let config: ActiveMsg2GlobalConfig;
+    try {
+      config = await ensureWorkerReady();
+    } catch {
+      return 'unknown';
+    }
+    const cached = dateBackgroundJobProbe;
+    if (
+      cached?.workerUrl === config.workerUrl
+      && (cached.supported || Date.now() - cached.at < BACKGROUND_JOB_UNSUPPORTED_RECHECK_MS)
+    ) {
+      return cached.supported ? 'supported' : 'unsupported';
+    }
+    try {
+      const { status, body } = await fetchWithAuthRaw(
+        'config-check', config, { method: 'GET' }, '见面后台能力探测',
+      );
+      if (status !== 200 || body?.success !== true) return 'unknown';
+      const supported = body?.data?.backgroundJobs === true
+        && body?.data?.dateBackgroundJobs === true;
+      dateBackgroundJobProbe = { workerUrl: config.workerUrl, supported, at: Date.now() };
+      return supported ? 'supported' : 'unsupported';
+    } catch (error) {
+      console.warn(`${ACTIVE_MSG_RUNTIME_HEADER} 见面后台能力探测没发出去，不记缓存`, error);
+      return 'unknown';
+    }
+  },
+
+  async probeDateBackgroundJobSupport(): Promise<boolean> {
+    return (await this.probeDateBackgroundJobSupportDetailed()) === 'supported';
   },
 
   /**
