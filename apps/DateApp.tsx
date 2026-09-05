@@ -1102,12 +1102,6 @@ const DateApp: React.FC = () => {
                     if (remote.status === 'queued' || remote.status === 'uncertain') {
                         setDateBackgroundPendingJobId(pending.jobId);
                         await loadDateMessages(DATE_SESSION_MESSAGE_LIMIT);
-                        addToast(
-                            remote.status === 'queued'
-                                ? '已交给后台生成，切到后台也会继续'
-                                : '后台任务正在确认，稍后会自动补收结果',
-                            'info',
-                        );
                         return { queued: true, jobId: pending.jobId };
                     }
                     // Worker 不支持 / 本次探测不到 / 明确建任务失败：本地生成一次，

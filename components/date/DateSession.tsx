@@ -1013,7 +1013,9 @@ const DateSession: React.FC<DateSessionProps> = ({
         try {
             const result = await onSendMessage(text);
             if (typeof result !== 'string') {
-                setCurrentText('已交给后台生成；你可以离开见面，完成后会收到提醒。');
+                // 前台只保留轻量的等待状态；是否需要系统通知交给 Service Worker
+                // 在真正收到结果时按窗口可见性判断，不在见面页额外提醒。
+                setCurrentText('正在回复…');
                 setPendingRetryText('');
                 return;
             }
@@ -1854,7 +1856,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                 {showInputBox && !historyReplay && (
                     <div className={`tm-compose w-[90%] min-w-0 max-w-lg backdrop-blur-xl rounded-2xl p-2 shadow-2xl animate-fade-in mb-8 pointer-events-auto ${char.dateLightReading ? 'bg-stone-100 border border-stone-300' : 'bg-white/10 border border-white/20'}`} onClick={(e) => e.stopPropagation()}>
                         <div className="tm-compose-toolbar flex items-center justify-between gap-2">
-                            <span className="tm-compose-status text-[10px] opacity-60">{backgroundPending ? '后台正在延续此刻…' : '此时此刻'}</span>
+                            <span className="tm-compose-status text-[10px] opacity-60">{backgroundPending ? '正在回复…' : '此时此刻'}</span>
                             <button type="button" onClick={() => { setShowInputBox(false); void handleRerollClick(); }} disabled={!canReroll || interactionBusy} className="tm-regen-btn rounded-full px-2 py-1 text-[10px] disabled:opacity-30">重新生成</button>
                         </div>
                         <div className="tm-compose-row flex items-end gap-2">
@@ -1864,7 +1866,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                 value={input}
                                 onChange={(e) => setInput(e.target.value)}
                                 onKeyDown={handleComposerKeyDown}
-                                placeholder={backgroundPending ? "后台生成中..." : "输入对话..."}
+                                placeholder={backgroundPending ? "等待回应..." : "输入对话..."}
                                 disabled={interactionBusy}
                                 className={`min-w-0 flex-1 tm-input bg-transparent px-3 sm:px-4 py-3 outline-none font-light resize-none max-h-36 no-scrollbar leading-tight ${char.dateLightReading ? 'text-stone-800 placeholder:text-stone-400' : 'text-white placeholder:text-white/30'}`}
                                 style={{ minHeight: '3.5rem' }}
@@ -1889,14 +1891,6 @@ const DateSession: React.FC<DateSessionProps> = ({
                                     </button>
                                 );
                             })()}
-                        </div>
-                    </div>
-                )}
-                {backgroundPending && !isTyping && (
-                    <div className="absolute bottom-1/2 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-auto">
-                        <div className="bg-black/80 backdrop-blur-md px-5 py-3 rounded-full border border-indigo-300/30 shadow-2xl flex items-center gap-3">
-                            <div className="w-2 h-2 bg-indigo-300 rounded-full animate-pulse" />
-                            <span className="text-xs text-white font-bold tracking-wide">后台生成中 · 离开后也会继续</span>
                         </div>
                     </div>
                 )}
@@ -1942,7 +1936,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                         {dateTimeAwarenessEnabled && (
                             <button type="button" onClick={() => void handleInterludeSubmit(true)} disabled={interactionBusy || !onInterlude || !Number.isFinite(effectiveSceneClockAt) || (Number.isFinite(effectiveSceneClockAt) && realNow <= (effectiveSceneClockAt as number))} className="flex-1 rounded-2xl bg-slate-100 py-3 text-xs font-bold text-slate-600 disabled:opacity-40">一次补到现在</button>
                         )}
-                        <button type="button" onClick={() => void handleInterludeSubmit(false)} disabled={interactionBusy || !onInterlude} className="flex-1 rounded-2xl bg-indigo-500 py-3 text-xs font-bold text-white shadow-lg shadow-indigo-200 disabled:opacity-40">{isTyping ? '生成中…' : backgroundPending ? '后台生成中…' : '生成过场'}</button>
+                        <button type="button" onClick={() => void handleInterludeSubmit(false)} disabled={interactionBusy || !onInterlude} className="flex-1 rounded-2xl bg-indigo-500 py-3 text-xs font-bold text-white shadow-lg shadow-indigo-200 disabled:opacity-40">{isTyping ? '生成中…' : backgroundPending ? '等待回应…' : '生成过场'}</button>
                     </div>
                 }
             >
