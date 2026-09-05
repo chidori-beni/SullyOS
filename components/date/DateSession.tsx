@@ -8,7 +8,12 @@ import ObserveHUD from './ObserveHUD';
 import { DatePrompts, extractObservation, hasObservation } from '../../utils/datePrompts';
 import { isBlobRef } from '../../utils/blobRef';
 import { clearDateResumeAttempt } from '../../utils/dateSessionRecovery';
-import { cleanTextForTts, cleanVoiceMarkupForDisplay } from '../../utils/minimaxTts';
+import {
+    cleanTextForTts,
+    cleanVoiceMarkupForDisplay,
+    resolveMiniMaxModel,
+    supportsMiniMaxInterjections,
+} from '../../utils/minimaxTts';
 import { synthesizeSpeech, characterHasVoice } from '../../utils/ttsRouter';
 import { resolveTtsProvider } from '../../utils/ttsProvider';
 import { cleanTextForTtsFish, stripFishMarkupForDisplay } from '../../utils/fishAudioTts';
@@ -18,6 +23,7 @@ import {
     extractDateDialogueSpeechText as extractDialogueSpeechText,
     isDateDialogueLine as isDialogueLine,
     parseDateDialogue as parseDialogue,
+    addFallbackDateInterjectionToReply,
     protectMiniMaxInterjectionsForTranslation,
 } from '../../utils/dateVoiceMarkup';
 import { planNovelLoadMore } from '../../utils/dateSessionHistory';
@@ -231,6 +237,31 @@ const DateSession: React.FC<DateSessionProps> = ({
     const scrollToNovelHistoryTopRef = useRef(false);
     const voiceEnabled = !!char.dateVoiceEnabled;
     const voiceLang = char.dateVoiceLang || '';
+    const dateTtsProvider = resolveTtsProvider(apiConfig);
+    const dateMiniMaxModel = resolveMiniMaxModel(char.voiceProfile?.model);
+    const canUseDateMiniMaxInterjections = dateTtsProvider === 'minimax'
+        && supportsMiniMaxInterjections(dateMiniMaxModel);
+    const unsupportedDateModelWarnedRef = useRef('');
+    const parseDateDialogueForPlayback = React.useCallback((fullText: string): DialogueItem[] => {
+        return addFallbackDateInterjectionToReply(
+            parseDialogue(fullText, 'normal'),
+            canUseDateMiniMaxInterjections,
+        );
+    }, [voiceEnabled, canUseDateMiniMaxInterjections]);
+
+    useEffect(() => {
+        if (!voiceEnabled || dateTtsProvider !== 'minimax' || canUseDateMiniMaxInterjections) {
+            unsupportedDateModelWarnedRef.current = '';
+            return;
+        }
+        if (unsupportedDateModelWarnedRef.current === dateMiniMaxModel) return;
+        unsupportedDateModelWarnedRef.current = dateMiniMaxModel;
+        addToast(
+            `当前 MiniMax 模型「${dateMiniMaxModel}」不支持语气词；当前仍可朗读，但已自动去除标签。请在角色语音设置改为 speech-2.8-turbo 或 speech-2.8-hd。`,
+            'info',
+        );
+    }, [voiceEnabled, dateTtsProvider, canUseDateMiniMaxInterjections, dateMiniMaxModel, addToast]);
+
     // Bridges the current line's VOICE emotion ([v:xxx], 跟立绘情绪分开) to the GAL
     // voice effect (which keys off currentText only). undefined = 不传情绪，自然朗读。
     // A ref so it doesn't churn the effect's deps.
@@ -649,9 +680,9 @@ const DateSession: React.FC<DateSessionProps> = ({
                     lenient: observeEnabled,
                     custom: char.dateObserve?.custom,
                 });
-                return parseDialogue(rest, 'normal');
+                return parseDateDialogueForPlayback(rest);
             });
-    }, [historyReplay, messages, observeEnabled, char.dateObserve?.custom]);
+    }, [historyReplay, messages, observeEnabled, char.dateObserve?.custom, parseDateDialogueForPlayback]);
 
     const pickFallbackSprite = (sprites: Record<string, string>) => {
         const key = ['normal', 'default', ...dateEmotionKeys].find(k => sprites[k] && !isBlobRef(sprites[k]));
@@ -762,7 +793,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             const startText = peekStatus || "Waiting for connection...";
             const { observation: peekObs, rest: peekRest } = extractObservation(startText, { lenient: observeEnabled, custom: char.dateObserve?.custom });
             if (hasObservation(peekObs)) setObservation(peekObs);
-            const items = parseDialogue(peekRest, 'normal');
+            const items = parseDateDialogueForPlayback(peekRest);
             setDialogueBatch(items);
             setDialogueQueue(items.slice(1));
 
@@ -867,7 +898,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         if (historyReplay) return;
         if (isTyping || !lastAssistantContent) return;
         const { rest } = extractObservation(lastAssistantContent, { lenient: observeEnabled, custom: char.dateObserve?.custom });
-        const items = parseDialogue(rest, 'normal');
+        const items = parseDateDialogueForPlayback(rest);
         if (items.length === 0) return;
         setDialogueBatch(items);
         processNextDialogue(items[0], items.slice(1), 0);
@@ -980,7 +1011,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             // 先剥出观测块更新 HUD，再解析剩余正文
             const { observation: obs, rest } = extractObservation(aiContent, { lenient: observeEnabled, custom: char.dateObserve?.custom });
             if (hasObservation(obs)) setObservation(obs);
-            const items = parseDialogue(rest, 'normal');
+            const items = parseDateDialogueForPlayback(rest);
             setDialogueBatch(items);
             setDialogueQueue(items.slice(1));
             if (items.length > 0) {
@@ -1004,7 +1035,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             const aiContent = await onReroll();
             const { observation: obs, rest } = extractObservation(aiContent, { lenient: observeEnabled, custom: char.dateObserve?.custom });
             if (hasObservation(obs)) setObservation(obs);
-            const items = parseDialogue(rest, 'normal');
+            const items = parseDateDialogueForPlayback(rest);
             setDialogueBatch(items);
             setDialogueQueue(items.slice(1));
             if (items.length > 0) processNextDialogue(items[0], items.slice(1), 0);
@@ -1034,7 +1065,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             const aiContent = await onInterlude(interludeDescription.trim(), targetAt);
             const { observation: obs, rest } = extractObservation(aiContent, { lenient: observeEnabled, custom: char.dateObserve?.custom });
             if (hasObservation(obs)) setObservation(obs);
-            const items = parseDialogue(rest, 'normal');
+            const items = parseDateDialogueForPlayback(rest);
             setDialogueBatch(items);
             setDialogueQueue(items.slice(1));
             if (items.length > 0) processNextDialogue(items[0], items.slice(1), 0);
@@ -1635,6 +1666,11 @@ const DateSession: React.FC<DateSessionProps> = ({
                                         const messageSceneClockAt = typeof msg.metadata?.sceneClockAt === 'number' && Number.isFinite(msg.metadata.sceneClockAt)
                                             ? msg.metadata.sceneClockAt
                                             : effectiveSceneClockAt;
+                                         const parsedMessageItems = addFallbackDateInterjectionToReply(
+                                             parseDialogue(msgBody || '', 'normal'),
+                                             canUseDateMiniMaxInterjections,
+                                         );
+                                        let parsedMessageItemIndex = 0;
                                         return (
                                         <>
                                             <div className="tc-header">
@@ -1668,7 +1704,10 @@ const DateSession: React.FC<DateSessionProps> = ({
                                                 {(msgBody || '').split('\n').map((line, idx) => {
                                                 // 与立绘模式共用同一个解析器：正文显示用 text，
                                                 // 播放/收藏用 speechText（其中保留 MiniMax 语气词）。
-                                                const lineItem = parseDialogue(line, 'normal')[0];
+                                                const rawLineItem = parseDialogue(line, 'normal')[0];
+                                                const lineItem = rawLineItem
+                                                    ? (parsedMessageItems[parsedMessageItemIndex++] || rawLineItem)
+                                                    : null;
                                                 const cleanLine = lineItem?.text || '';
                                                 if (!cleanLine) return null;
                                                 const lineIsDialogue = !!lineItem?.speechText && isDialogueLine(cleanLine);

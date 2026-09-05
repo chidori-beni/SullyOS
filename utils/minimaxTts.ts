@@ -8,7 +8,19 @@ import { hashTtsParams, getCachedTts, saveCachedTts } from './ttsCache';
 import { normalizeVoiceTags } from './sanitize';
 import { prepareNuojiSpeechText } from './nuojiSpeechText';
 
-const DEFAULT_MODEL = 'speech-2.8-hd';
+export const DEFAULT_MODEL = 'speech-2.8-hd';
+
+/** MiniMax 官方只在这两个模型上实现 inline 语气词。 */
+export const MINIMAX_INTERJECTION_MODELS = new Set([
+  'speech-2.8-hd',
+  'speech-2.8-turbo',
+]);
+
+export const resolveMiniMaxModel = (model?: string | null): string =>
+  (model || '').trim() || DEFAULT_MODEL;
+
+export const supportsMiniMaxInterjections = (model?: string | null): boolean =>
+  MINIMAX_INTERJECTION_MODELS.has(resolveMiniMaxModel(model).toLowerCase());
 
 // MiniMax 支持的语气标签 — 这些在 TTS 中会被正确演绎，必须保留
 export const VALID_INTERJECTION_TAGS = new Set([
@@ -16,6 +28,11 @@ export const VALID_INTERJECTION_TAGS = new Set([
   'breath', 'pant', 'inhale', 'exhale', 'gasps', 'sniffs', 'snorts',
   'lip-smacking', 'humming', 'hissing', 'emm', 'burps', 'sneezes',
 ]);
+
+/** 删除 MiniMax 语气声，但保留普通括号和暂停标记。用于不支持语气词的旧模型。 */
+export const stripMiniMaxInterjectionTags = (text: string): string =>
+  (text || '').replace(/\(([^)]{1,80})\)/g, (match, inner: string) =>
+    VALID_INTERJECTION_TAGS.has(inner.trim().toLowerCase()) ? '' : match);
 
 // LLM 可以写在 <语音 emotion="…"> 里的取值。其余/未知一律丢弃不传。
 // 注意这不等于 MiniMax 的 API 枚举 —— 'calm' / 'fluent' 是本项目历史上教给模型的说法，
@@ -158,6 +175,18 @@ export const cleanTextForTts = (raw: string): string => {
   // 6. Collapse whitespace
   text = text.replace(/\s+/g, ' ').trim();
   return text;
+};
+
+/**
+ * 统一生成最终送入 MiniMax 的文本。
+ * 语气词能力跟模型绑定：旧模型即使收到标签也不会演绎，先删掉避免被当作普通英文念出来。
+ */
+export const prepareMiniMaxTtsText = (text: string, model?: string | null): string => {
+  const effectiveModel = resolveMiniMaxModel(model);
+  const source = supportsMiniMaxInterjections(effectiveModel)
+    ? text
+    : stripMiniMaxInterjectionTags(text);
+  return prepareNuojiSpeechText(source);
 };
 
 export interface ParsedVoiceOutput {
@@ -404,10 +433,11 @@ export async function synthesizeSpeechDetailed(
   // 就原样送、一个都不加；没有标记才在 …… 。！？ —— 和「逗号+转折连词」处插。
   // 原来的 insertSpeechBreaks 是每个标点都插、还叠在模型写的标记之上，
   // 同一个 speech-2.8-hd 在糯叽机自然、在这边夸张，主因就在这。
-  const processedText = prepareNuojiSpeechText(text);
+  const model = resolveMiniMaxModel(vp?.model);
+  const processedText = prepareMiniMaxTtsText(text, model);
 
   const payload: any = {
-    model: vp?.model || DEFAULT_MODEL,
+    model,
     text: processedText,
     stream: false,
     voice_setting: {

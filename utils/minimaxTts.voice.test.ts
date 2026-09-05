@@ -1,5 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { stripEmotionTags, cleanTextForTts, parseVoiceOutput, insertSpeechBreaks, cleanVoiceMarkupForDisplay, normalizeEmotionForApi, buildVoiceSettings } from './minimaxTts';
+import {
+  stripEmotionTags,
+  cleanTextForTts,
+  parseVoiceOutput,
+  insertSpeechBreaks,
+  cleanVoiceMarkupForDisplay,
+  normalizeEmotionForApi,
+  buildVoiceSettings,
+  DEFAULT_MODEL,
+  resolveMiniMaxModel,
+  supportsMiniMaxInterjections,
+  prepareMiniMaxTtsText,
+} from './minimaxTts';
 
 describe('stripEmotionTags', () => {
   it('removes [emotion] / 【emotion】 tags anywhere, leaves prose', () => {
@@ -205,5 +217,22 @@ describe('语气声白名单 —— 补齐 MiniMax 官方列表', () => {
 
   it('(breath) 一直是合法的', () => {
     expect(cleanTextForTts('(breath) 那我说了')).toContain('(breath)');
+  });
+});
+
+describe('MiniMax 语气声模型能力', () => {
+  it('只把 speech-2.8-hd / speech-2.8-turbo 视为支持语气词的模型', () => {
+    expect(resolveMiniMaxModel('')).toBe(DEFAULT_MODEL);
+    expect(supportsMiniMaxInterjections('speech-2.8-hd')).toBe(true);
+    expect(supportsMiniMaxInterjections('speech-2.8-turbo')).toBe(true);
+    expect(supportsMiniMaxInterjections('speech-02-hd')).toBe(false);
+    expect(supportsMiniMaxInterjections('speech-2.6-hd')).toBe(false);
+  });
+
+  it('旧模型不会把语气标签当普通英文读出来，2.8 模型则保留标签', () => {
+    const source = '(chuckle) 你来了。';
+    expect(prepareMiniMaxTtsText(source, 'speech-2.8-turbo')).toContain('(chuckle)');
+    expect(prepareMiniMaxTtsText(source, 'speech-02-hd')).not.toContain('(chuckle)');
+    expect(prepareMiniMaxTtsText(source, 'speech-02-hd')).toContain('你来了');
   });
 });

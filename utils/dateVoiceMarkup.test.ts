@@ -5,6 +5,7 @@ import {
     extractDateDialogueText,
     isDateDialogueLine,
     parseDateDialogue,
+    addFallbackDateInterjectionToReply,
     protectMiniMaxInterjectionsForTranslation,
 } from './dateVoiceMarkup';
 
@@ -38,6 +39,27 @@ describe('见面台词的显示 / TTS 双通道', () => {
 
     it('旧格式仍能从显示文本提取纯台词作为回退朗读源', () => {
         expect(extractDateDialogueText('"旧记录"')).toBe('旧记录');
+    });
+});
+
+describe('见面回复级语气声兜底', () => {
+    it('没有模型标签时只给整段回复补一个 TTS 标签，正文保持不变', () => {
+        const source = parseDateDialogue('[happy] "哈哈，你来了。"\n[normal] "先坐下吧。"');
+        const prepared = addFallbackDateInterjectionToReply(source, true);
+        const speech = prepared.map(item => item.speechText || '').join(' ');
+
+        expect(prepared.map(item => item.text)).toEqual(source.map(item => item.text));
+        expect(speech.match(/\((?:chuckle|laughs|sighs|coughs|clear-throat|groans|breath|pant|inhale|exhale|gasps|sniffs|snorts|lip-smacking|humming|hissing|emm|burps|sneezes)\)/g))
+            .toHaveLength(1);
+        expect(prepared[0].speechText).toContain('(chuckle)');
+    });
+
+    it('已有标签或只有旁白时不重复添加', () => {
+        const withTag = parseDateDialogue('[normal] "已经笑了" (chuckle)');
+        expect(addFallbackDateInterjectionToReply(withTag, true)).toEqual(withTag);
+
+        const narration = parseDateDialogue('[normal] 她看向窗外。');
+        expect(addFallbackDateInterjectionToReply(narration, true)).toEqual(narration);
     });
 });
 

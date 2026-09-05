@@ -147,6 +147,56 @@ export const parseDateDialogue = (fullText: string, initialEmotion: string = 'no
     return results;
 };
 
+export const hasDateMiniMaxInterjection = (text?: string | null): boolean => {
+    if (!text) return false;
+    return [...text.matchAll(INTERJECTION_TAG_RE)].some(([, inner]) => isValidInterjection(inner));
+};
+
+/**
+ * 只在没有模型标签时，为一整段回复补一个极保守的语气声。
+ * 这是 TTS 专用字段的兜底，不改 item.text，所以正文、收藏和翻译显示不受影响。
+ */
+export const inferDateMiniMaxInterjection = (text: string, voiceEmotion?: string): string => {
+    const normalized = cleanDateTextForDisplay(text).replace(/["“”「」]/g, '');
+    if (/(哈哈|呵呵|嘿嘿|笑|好笑|有趣)/.test(normalized)) return 'chuckle';
+    if (/(唉|叹气|叹|累|困|疲惫|抱歉|对不起|算了)/.test(normalized)
+        || voiceEmotion === 'sad' || voiceEmotion === 'fearful') {
+        return 'sighs';
+    }
+    return 'breath';
+};
+
+export const addFallbackDateInterjectionToReply = (
+    items: DialogueItem[],
+    enabled: boolean = true,
+): DialogueItem[] => {
+    if (!enabled || items.length === 0) return items;
+
+    const hasExistingTag = items.some(item =>
+        hasDateMiniMaxInterjection(item.speechText || item.text),
+    );
+    if (hasExistingTag) return items;
+
+    const index = items.findIndex(item => {
+        if (!isDateDialogueLine(item.text)) return false;
+        const speechText = item.speechText || extractDateDialogueSpeechText(item.text);
+        return speechText.replace(/\(([^)]{1,80})\)/g, '').trim().length >= 4;
+    });
+    if (index < 0) return items;
+
+    const item = items[index];
+    const speechText = item.speechText || extractDateDialogueSpeechText(item.text);
+    if (!speechText) return items;
+    const tag = inferDateMiniMaxInterjection(item.text, item.voiceEmotion);
+    const nextSpeechText = tag === 'chuckle'
+        ? speechText + ' (chuckle)'
+        : '(' + tag + ') ' + speechText;
+
+    return items.map((candidate, itemIndex) =>
+        itemIndex === index ? { ...candidate, speechText: nextSpeechText } : candidate,
+    );
+};
+
 type ProtectedVoiceTag = { token: string; tag: string };
 
 export type ProtectedMiniMaxInterjections = {

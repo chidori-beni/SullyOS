@@ -1,5 +1,16 @@
-import { describe, it, expect } from 'vitest';
-import { DatePrompts, DATE_STYLE_PRESETS, extractObservation, stripObservation, hasObservation, resolveObserveFields, OBSERVE_OPEN, OBSERVE_CLOSE } from './datePrompts';
+import { afterEach, describe, it, expect } from 'vitest';
+import {
+    DatePrompts,
+    DATE_STYLE_PRESETS,
+    DATE_VOICE_RUNTIME_CONTRACT,
+    extractObservation,
+    stripObservation,
+    hasObservation,
+    resolveObserveFields,
+    OBSERVE_OPEN,
+    OBSERVE_CLOSE,
+} from './datePrompts';
+import { setVoicePromptOverrides } from './ttsProvider';
 import type { CharacterProfile, UserProfile, Message } from '../types';
 
 const makeChar = (overrides: Partial<CharacterProfile> = {}): CharacterProfile => ({
@@ -30,6 +41,10 @@ const sysOf = (messages: Array<{ role: string; content: any }>): string => {
     return typeof sys?.content === 'string' ? sys.content : '';
 };
 
+afterEach(() => {
+    setVoicePromptOverrides(undefined);
+});
+
 describe('DatePrompts.buildSessionPayload', () => {
     const baseInput = (char: CharacterProfile) => ({
         char,
@@ -46,6 +61,18 @@ describe('DatePrompts.buildSessionPayload', () => {
         expect(sys).toContain('风格：电影感');
         expect(sys).toContain('Visual Novel Mode');
         expect(sys).not.toContain('叙事人称');
+    });
+
+    it('自定义语音指南之后仍追加不可覆盖的语气词运行契约', async () => {
+        setVoicePromptOverrides({ dateVoice: '只写自定义口吻，不要使用任何语气声。' } as any);
+        const { messages } = await DatePrompts.buildSessionPayload(
+            baseInput(makeChar({ dateVoiceEnabled: true })),
+        );
+        const sys = sysOf(messages);
+        expect(sys).toContain('只写自定义口吻');
+        expect(sys).toContain(DATE_VOICE_RUNTIME_CONTRACT);
+        expect(sys).toContain('speech-2.8-turbo');
+        expect(sys).toContain('(chuckle)');
     });
 
     it('按 dateStyleConfig.style 切换风格块', async () => {

@@ -42,6 +42,20 @@ export const DATE_VOICE_GUIDE = `4. **语音情绪（跟立绘分开）**: \`[em
    - 不要手写 \`<#秒#>\` 停顿标记，客户端会自动处理自然停顿；普通括号中的正常正文不要改成语气声标签。`;
 
 /**
+ * 运行时契约必须追加在用户自定义语音指南之后，避免旧的自定义文本把
+ * 解析、显示和 TTS 的边界覆盖掉。模型只负责产出标签，客户端负责消毒与兜底。
+ */
+export const DATE_VOICE_RUNTIME_CONTRACT = [
+    '### 语音标签运行契约（本段优先级高于上方自定义指南）',
+    '如果本轮开启了见面语音，必须遵守以下运行规则，不能被上方自定义内容取消：',
+    '1. 语气声只能使用官方英文标签：(chuckle)、(laughs)、(sighs)、(coughs)、(clear-throat)、(groans)、(breath)、(pant)、(inhale)、(exhale)、(gasps)、(sniffs)、(snorts)、(lip-smacking)、(humming)、(hissing)、(emm)、(burps)、(sneezes)。',
+    '2. 标签只能写在带引号台词对应的语音文本中，不能单独成行；它们会从正文显示中隐藏，但会保留给语音合成。',
+    '3. 在支持语气声的模型上，每个完整角色回复最多使用 1 个标签；语境明显时优先使用 1 个合适标签，不要每句都加。',
+    '4. 没有合适语境时不要硬造标签；客户端只会在支持模型上做一次保守兜底。',
+    '5. 只有 speech-2.8-hd 和 speech-2.8-turbo 支持这些语气声；其他模型不要输出标签，也不要把标签当作普通英文说出来。',
+].join('\n');
+
+/**
  * 注入 prompt 的当前时间，直接取真实系统时间（完整日期 + 星期 + 时分）。
  * 不要从 OSContext 的 virtualTime 取——那个名字唬人，实际也是每秒同步的真实
  * 时间，但只有"星期 + 时:分"，缺日期，而且没必要让 prompt 构建依赖 React 状态。
@@ -726,6 +740,10 @@ const buildVNModeBlock = (char: CharacterProfile, userName: string, sceneClockAt
     const extraBlock = buildExtraStyleBlock(styleConfig);
     const digBlock = isDigDeeperOn(styleConfig) ? `${DIG_DEEPER_BLOCK}\n` : '';
     const observeBlock = isObserveOn(char) ? buildObserveBlock(char) : '';
+    const voiceGuide = getVoicePromptOverride('dateVoice') ?? DATE_VOICE_GUIDE;
+    const voiceBlock = char.dateVoiceEnabled
+        ? voiceGuide + '\n\n' + DATE_VOICE_RUNTIME_CONTRACT
+        : '';
     return `### [Visual Novel Mode: 视觉小说脚本模式]
 你正在与用户进行**面对面**的互动。这不是聊天，是一场真实的见面。
 
@@ -734,7 +752,7 @@ const buildVNModeBlock = (char: CharacterProfile, userName: string, sceneClockAt
 1. **禁止混写**: 严禁在同一行里既写动作又写带引号的台词。
 2. **情绪标签**: **每一行都必须以** \`[emotion]\` **开头**，表示该行的表情立绘。情绪随内容变化——台词温柔就用 [happy]，动作紧张就用 [shy]，语气冲就用 [angry]。**不要整段只用一个情绪，要逐行根据语境切换。** 仅限使用以下情绪: ${dateEmotions.join(', ')}。不要使用任何不在此列表中的标签。
 3. **格式**: 台词用双引号 **"..."**，动作/叙述直接写（不加引号）。
-${char.dateVoiceEnabled ? (getVoicePromptOverride('dateVoice') ?? DATE_VOICE_GUIDE) : ''}
+${voiceBlock}
 
 ### 如何理解「用户输入」（必须严格遵守）
 用户的每一条输入按以下规则解析，不要混为一谈：
