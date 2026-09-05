@@ -7,7 +7,7 @@
 
 import type { APIConfig, CharacterProfile, DateEncounterPresence, Message } from '../types';
 import { DB } from './db';
-import { getActiveDatePresence } from './datePresence';
+import { getActiveDatePresence, makeDateEncounterPresence, setActiveDatePresence } from './datePresence';
 import {
   ActiveMsgClient,
   mayHaveCreatedBackgroundJob,
@@ -25,6 +25,8 @@ import {
 } from './amsgDateJob';
 import { stripFaceToFacePhoneSourceTags } from './sanitize';
 import { stripMessageReactionTags } from './messageReactions';
+import { extractObservation } from './datePrompts';
+import { resolveDialogueSceneClock } from './dateObservationClock';
 
 const PENDING_KEY = 'sully-date-background-jobs-v1';
 const MAX_PENDING = 8;
@@ -298,19 +300,55 @@ export const applyDateBackgroundResult = async (payload: unknown): Promise<boole
     return true;
   }
 
-  await DB.saveMessage({
+  const { observation } = extractObservation(content, {
+    lenient: char.dateObserve?.enabled === true,
+    custom: char.dateObserve?.custom,
+  });
+  const resolved = resolveDialogueSceneClock({
+    rawContent: content,
+    observation,
+    currentAt: result.sceneClockAt,
+    currentAdvancedMs: result.sceneClockAdvancedMs,
+    timeZone: presence.sceneClockTimeZone,
+  });
+  const visibleContent = resolved.content.trim();
+  if (!visibleContent) {
+    removePendingDateBackgroundJob(result.clientJobId);
+    return true;
+  }
+  const nextSceneClockAt = resolved.advanced ? resolved.sceneClockAt : result.sceneClockAt;
+  const nextSceneClockAdvancedMs = resolved.advanced
+    ? resolved.sceneClockAdvancedMs
+    : result.sceneClockAdvancedMs;
+  const nextSceneClockRevision = resolved.advanced
+    ? result.sceneClockRevision + 1
+    : result.sceneClockRevision;
+  const nextSceneClockUpdatedAt = resolved.advanced
+    ? Date.now()
+    : (typeof presence.sceneClockUpdatedAt === 'number' ? presence.sceneClockUpdatedAt : presence.updatedAt);
+  const savedMessageId = await DB.saveMessage({
     charId: result.charId,
     role: 'assistant',
     type: 'text',
-    content,
+    content: visibleContent,
     timestamp: result.generatedAt,
     metadata: {
       source: 'date',
       dateEncounterId: result.encounterId,
       dateEncounterStartedAt: result.encounterStartedAt,
-      sceneClockAt: result.sceneClockAt,
-      sceneClockAdvancedMs: result.sceneClockAdvancedMs,
-      sceneClockRevision: result.sceneClockRevision,
+      sceneClockAt: nextSceneClockAt,
+      sceneClockAdvancedMs: nextSceneClockAdvancedMs,
+      sceneClockRevision: nextSceneClockRevision,
+      sceneClockUpdatedAt: nextSceneClockUpdatedAt,
+      ...(presence.sceneClockTimeZone ? { sceneClockTimeZone: presence.sceneClockTimeZone } : {}),
+      sceneClockBefore: result.sceneClockAt,
+      sceneClockBeforeAdvancedMs: result.sceneClockAdvancedMs,
+      sceneClockAfter: nextSceneClockAt,
+      sceneClockAdvancedDeltaMs: resolved.sceneClockAdvancedDeltaMs,
+      sceneClockResolution: resolved.resolution,
+      ...(resolved.source ? { sceneClockSource: resolved.source } : {}),
+      ...(resolved.requestedSceneClockAt !== undefined ? { requestedSceneClockAt: resolved.requestedSceneClockAt } : {}),
+      ...(resolved.observedSceneClockText ? { observedSceneClockText: resolved.observedSceneClockText.slice(0, 240) } : {}),
       dateTurnKind: result.turnKind === 'reply' ? 'dialogue' : result.turnKind,
       backgroundGenerated: true,
       backgroundJobId: result.clientJobId,
@@ -320,6 +358,46 @@ export const applyDateBackgroundResult = async (payload: unknown): Promise<boole
       ...(endReason ? { endMeetingReason: endReason } : {}),
     },
   });
+
+  if (resolved.advanced) {
+    // 消息保存和角色保存不是同一 IndexedDB 事务，所以在第二个写入点再做一次
+    // encounter/revision 闸门。过期结果只清理自己刚写的消息，不碰新剧情。
+    const latestChar = await DB.getCharacter(result.charId);
+    const latestPresence = latestChar ? findActiveEncounter(latestChar) : null;
+    if (!latestChar
+      || !latestPresence
+      || latestPresence.encounterId !== result.encounterId
+      || (typeof latestPresence.sceneClockRevision === 'number'
+        && latestPresence.sceneClockRevision !== result.sceneClockRevision)) {
+      await DB.deleteMessage(savedMessageId).catch(error => {
+        console.warn(`${HEADER} 清理过期后台见面回复失败`, error);
+      });
+      removePendingDateBackgroundJob(result.clientJobId);
+      return true;
+    }
+    const nextPresence = makeDateEncounterPresence(
+      result.encounterId,
+      result.encounterStartedAt,
+      latestPresence.status,
+      {
+        sceneClockAt: nextSceneClockAt,
+        sceneClockAdvancedMs: nextSceneClockAdvancedMs,
+        sceneClockRevision: nextSceneClockRevision,
+        sceneClockUpdatedAt: nextSceneClockUpdatedAt,
+        sceneClockTimeZone: latestPresence.sceneClockTimeZone,
+      },
+    );
+    try {
+      await DB.saveCharacter({ ...latestChar, activeDateEncounter: nextPresence });
+    } catch (error) {
+      await DB.deleteMessage(savedMessageId).catch(cleanupError => {
+        console.warn(`${HEADER} 回滚后台见面回复失败`, cleanupError);
+      });
+      console.warn(`${HEADER} 保存后台见面剧情时钟失败，保留 pending 等待重试`, error);
+      return false;
+    }
+    setActiveDatePresence(result.charId, nextPresence);
+  }
   removePendingDateBackgroundJob(result.clientJobId);
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('active-msg-progress', {
@@ -328,6 +406,13 @@ export const applyDateBackgroundResult = async (payload: unknown): Promise<boole
         dateEncounterId: result.encounterId,
         dateBackground: true,
         clientJobId: result.clientJobId,
+        sceneClockAt: nextSceneClockAt,
+        sceneClockAdvancedMs: nextSceneClockAdvancedMs,
+        sceneClockRevision: nextSceneClockRevision,
+        sceneClockUpdatedAt: nextSceneClockUpdatedAt,
+        ...(presence.sceneClockTimeZone ? { sceneClockTimeZone: presence.sceneClockTimeZone } : {}),
+        sceneClockResolution: resolved.resolution,
+        messageId: savedMessageId,
         ...(endReason ? { endMeetingReason: endReason } : {}),
       },
     }));

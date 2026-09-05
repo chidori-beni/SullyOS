@@ -126,6 +126,7 @@ describe('DatePrompts.buildSessionPayload', () => {
         expect(lastSend.content).toContain('我来了');
         expect(lastSend.content).toContain('System Note');
         expect(lastSend.content).not.toContain('Reroll');
+        expect(sysOf(send.messages)).toContain('[[SCENE_CLOCK: YYYY-MM-DD HH:MM]]');
 
         const reroll = await DatePrompts.buildSessionPayload({ ...baseInput(makeChar()), variant: 'reroll' });
         const lastReroll = reroll.messages[reroll.messages.length - 1];

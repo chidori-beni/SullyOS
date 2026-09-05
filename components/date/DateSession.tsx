@@ -291,6 +291,21 @@ const DateSession: React.FC<DateSessionProps> = ({
         }
         return undefined;
     }, [messages]);
+    // 立绘 HUD 必须跟随当前见面最后一条角色回复，而不是停留在组件第一次
+    // 解析到的 observation。后台回复、加载更多历史、编辑和删除都会改变这条身份。
+    const latestAssistantMessage = React.useMemo(() => {
+        for (let index = messages.length - 1; index >= 0; index -= 1) {
+            const message = messages[index];
+            if (message.role !== 'assistant' || isDatePhoneBridge(message) || message.metadata?.isDateEnding === true) continue;
+            if (message.metadata?.source && message.metadata.source !== 'date') continue;
+            if (!historyReplay
+                && encounterId
+                && typeof message.metadata?.dateEncounterId === 'string'
+                && message.metadata.dateEncounterId !== encounterId) continue;
+            return message;
+        }
+        return undefined;
+    }, [messages, historyReplay, encounterId]);
     const effectiveSceneClockAt = typeof sceneClockAt === 'number' && Number.isFinite(sceneClockAt)
         ? sceneClockAt
         : typeof initialState?.sceneClockAt === 'number' && Number.isFinite(initialState.sceneClockAt)
@@ -886,28 +901,36 @@ const DateSession: React.FC<DateSessionProps> = ({
     };
 
     // 立绘引擎（dialogueQueue / currentText / dialogueBatch）默认只在进会话或收到新回复时解析一次。
-    // 若用户在阅读模式里编辑 / 重新生成了「最后一条 AI 回复」，messages 会更新、阅读模式即时反映，
-    // 但立绘引擎不会自动重解析 —— 于是立绘停在旧文字、旧语音，感觉「没同步」。这里监听最后一条
-    // assistant 消息的内容，变了就把当前批次重解析同步过来。首帧跳过（含 initialState 恢复的播放
-    // 位置），isTyping 时也跳过（新回复交给 handleSend / handleRerollClick 处理，避免重复解析）。
-    const lastAssistantContent = React.useMemo(() => {
-        for (let i = messages.length - 1; i >= 0; i--) {
-            if (messages[i]?.role === 'assistant' && !isDatePhoneBridge(messages[i])) return messages[i].content || '';
+    // 阅读模式编辑 / 后台回复会更新 messages；这里必须同时同步 observation，不能只重建台词队列。
+    useEffect(() => {
+        if (historyReplay || isTyping) return;
+        if (!latestAssistantMessage) {
+            // 没有落库消息时仍保留未保存的 peek 观测；已有消息但删空了角色回复时隐藏旧 HUD。
+            if (messages.some(message => message.role === 'user' || message.role === 'assistant')) {
+                setObservation(null);
+            }
+            return;
         }
-        return '';
-    }, [messages]);
+        const { observation: latestObservation } = extractObservation(latestAssistantMessage.content || '', {
+            lenient: observeEnabled,
+            custom: char.dateObserve?.custom,
+        });
+        setObservation(hasObservation(latestObservation) ? latestObservation : null);
+    }, [latestAssistantMessage?.id, latestAssistantMessage?.content, historyReplay, isTyping, messages.length, observeEnabled, char.dateObserve?.custom]);
+
     const dialogueSyncMountRef = useRef(false);
     useEffect(() => {
         if (!dialogueSyncMountRef.current) { dialogueSyncMountRef.current = true; return; }
         if (historyReplay) return;
-        if (isTyping || !lastAssistantContent) return;
-        const { rest } = extractObservation(lastAssistantContent, { lenient: observeEnabled, custom: char.dateObserve?.custom });
+        if (isTyping || !latestAssistantMessage) return;
+        const { observation: latestObservation, rest } = extractObservation(latestAssistantMessage.content || '', { lenient: observeEnabled, custom: char.dateObserve?.custom });
+        setObservation(hasObservation(latestObservation) ? latestObservation : null);
         const items = parseDateDialogueForPlayback(rest);
         if (items.length === 0) return;
         setDialogueBatch(items);
         processNextDialogue(items[0], items.slice(1), 0);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [lastAssistantContent]);
+    }, [latestAssistantMessage?.id, latestAssistantMessage?.content, historyReplay, isTyping]);
 
     // 回顾中允许编辑原消息。消息内容变化后，阅读模式会由 props 立即更新，
     // 立绘播放队列也同步重建，并尽量保留当前所在的条目位置。

@@ -4,6 +4,8 @@ const dbMock = vi.hoisted(() => ({
   getCharacter: vi.fn(),
   getMessagesByCharId: vi.fn(),
   saveMessage: vi.fn(),
+  saveCharacter: vi.fn(),
+  deleteMessage: vi.fn(),
 }));
 
 vi.mock('./db', () => ({ DB: dbMock }));
@@ -22,10 +24,13 @@ vi.mock('./amsgLlmCredentials', () => ({
   })),
 }));
 
+import { clearActiveDatePresence } from './datePresence';
 import { applyDateBackgroundResult } from './dateBackgroundJobs';
+import { DatePrompts } from './datePrompts';
 
 describe('date background result bridge', () => {
   beforeEach(() => {
+    clearActiveDatePresence('char-1');
     dbMock.getCharacter.mockReset().mockResolvedValue({
       id: 'char-1',
       name: '小满',
@@ -50,6 +55,8 @@ describe('date background result bridge', () => {
       },
     ]);
     dbMock.saveMessage.mockReset().mockResolvedValue(43);
+    dbMock.saveCharacter.mockReset().mockResolvedValue(undefined);
+    dbMock.deleteMessage.mockReset().mockResolvedValue(undefined);
     vi.stubGlobal('window', { dispatchEvent: vi.fn() });
     vi.stubGlobal('localStorage', {
       getItem: () => null,
@@ -129,5 +136,50 @@ describe('date background result bridge', () => {
     });
     await expect(applyDateBackgroundResult(result())).resolves.toBe(true);
     expect(dbMock.saveMessage).not.toHaveBeenCalled();
+  });
+
+  it('后台回复的观测时间推进剧情钟，并同步 character presence', async () => {
+    const currentAt = DatePrompts.parseSceneClockInput('2026-09-05 19:30', 'Asia/Tokyo')!;
+    const expectedAt = DatePrompts.parseSceneClockInput('2026-09-05 19:38', 'Asia/Tokyo')!;
+    const char = {
+      id: 'char-1',
+      name: '小满',
+      dateObserve: { enabled: true },
+      activeDateEncounter: {
+        encounterId: 'enc-1',
+        startedAt: 1_000,
+        status: 'active',
+        sceneClockAt: currentAt,
+        sceneClockAdvancedMs: 0,
+        sceneClockRevision: 3,
+        sceneClockTimeZone: 'Asia/Tokyo',
+      },
+    };
+    dbMock.getCharacter.mockReset().mockResolvedValue(char);
+    const payload = result({
+      sceneClockAt: currentAt,
+      text: `⟦OBSERVE⟧
+时间｜傍晚七点三十八分
+地点｜窗边
+状态｜安静
+⟦/OBSERVE⟧
+[normal] 雨声小了。`,
+    });
+
+    await expect(applyDateBackgroundResult(payload)).resolves.toBe(true);
+    expect(dbMock.saveCharacter).toHaveBeenCalledWith(expect.objectContaining({
+      activeDateEncounter: expect.objectContaining({
+        sceneClockAt: expectedAt,
+        sceneClockRevision: 4,
+      }),
+    }));
+    expect(dbMock.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+      content: expect.stringContaining('[normal] 雨声小了。'),
+      metadata: expect.objectContaining({
+        sceneClockAt: expectedAt,
+        sceneClockRevision: 4,
+        sceneClockResolution: 'observation-exact',
+      }),
+    }));
   });
 });

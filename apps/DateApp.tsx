@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { CharacterProfile, Message, DateState, DateEncounterPresence, AppID } from '../types';
-import { DatePrompts, ApiMessage } from '../utils/datePrompts';
+import { DatePrompts, ApiMessage, extractObservation } from '../utils/datePrompts';
 import { processNewMessagesWithAutoArchive } from '../utils/memoryPalace/autoArchive';
 import type { PipelineResult } from '../utils/memoryPalace/pipeline';
 import { incrementDigestRound, runCognitiveDigestion } from '../utils/memoryPalace';
@@ -28,6 +28,7 @@ import { isDatePhoneBridge, mergeDatePhoneMessages } from '../utils/datePhoneBri
 import { stripMessageReactionTags } from '../utils/messageReactions';
 import { stripFaceToFacePhoneSourceTags } from '../utils/sanitize';
 import { resolveCharTimeZone } from '../utils/timezone';
+import { resolveDialogueSceneClock } from '../utils/dateObservationClock';
 import {
     buildPendingDateBackgroundJob,
     cancelPendingDateBackgroundJobs,
@@ -378,6 +379,38 @@ const DateApp: React.FC = () => {
         }));
     };
 
+    /** 普通回复的剧情钟只读取 OBSERVE.time / 隐藏 SCENE_CLOCK，不扫描正文。 */
+    const resolveDialogueClock = (rawContent: string, encounter: DateEncounterRuntime) => {
+        const { observation } = extractObservation(rawContent, {
+            lenient: char?.dateObserve?.enabled === true,
+            custom: char?.dateObserve?.custom,
+        });
+        return resolveDialogueSceneClock({
+            rawContent,
+            observation,
+            currentAt: encounter.sceneClockAt,
+            currentAdvancedMs: encounter.sceneClockAdvancedMs,
+            timeZone: encounter.sceneClockTimeZone,
+        });
+    };
+
+    const dialogueClockMetadata = (
+        before: DateEncounterRuntime,
+        after: DateEncounterRuntime,
+        resolved: ReturnType<typeof resolveDialogueSceneClock>,
+        extra: Record<string, any> = {},
+    ) => sceneClockMetadata(after, {
+        sceneClockBefore: before.sceneClockAt,
+        sceneClockBeforeAdvancedMs: before.sceneClockAdvancedMs,
+        sceneClockAfter: after.sceneClockAt,
+        sceneClockAdvancedDeltaMs: resolved.sceneClockAdvancedDeltaMs,
+        sceneClockResolution: resolved.resolution,
+        ...(resolved.source ? { sceneClockSource: resolved.source } : {}),
+        ...(resolved.requestedSceneClockAt !== undefined ? { requestedSceneClockAt: resolved.requestedSceneClockAt } : {}),
+        ...(resolved.observedSceneClockText ? { observedSceneClockText: resolved.observedSceneClockText.slice(0, 240) } : {}),
+        ...extra,
+    });
+
     const getDateContextFetchLimit = (c: CharacterProfile) => Math.max(c.contextLimit || 500, DATE_SESSION_MESSAGE_LIMIT) + 32;
     const loadRecentDateMessages = async (charId: string, limit = DATE_SESSION_MESSAGE_LIMIT) => {
         return (await DB.getRecentMessagesByCharIdAndSource(charId, 'date', limit))
@@ -385,7 +418,7 @@ const DateApp: React.FC = () => {
     };
 
     // --- Data Loading ---
-    const loadDateMessages = async (limit = dateLoadLimit) => {
+    const loadDateMessages = async (limit = dateLoadLimit, syncClockFromHistory = false) => {
         if (char) {
             // 见面记录只取最近窗口，不再把该角色全部聊天 getAll 进内存。
             // TODO(date-assets): 后续把角色立绘/背景本体迁到 assets store 后，这里还能再把 limit 放宽。
@@ -406,6 +439,55 @@ const DateApp: React.FC = () => {
                 char.name,
             );
             setDateMessages(timeline);
+
+            // 旧版本已经把「观测时间」写进正文，但没有把它同步到剧情钟。
+            // 进入会话时做一次保守自愈，既修复已有的 19:30 / 19:38 分裂，
+            // 也让完全重启 PWA 后顶部时钟与最新阅读卡保持一致。普通刷新路径
+            // 不执行这里的提交，避免异步请求准备期间改变它的 revision。
+            if (syncClockFromHistory) {
+                const current = activeEncounterRef.current;
+                const hasPendingBackgroundTurn = !!current && !!getPendingDateBackgroundJobForEncounter(current.id);
+                const latestAssistant = [...filtered].reverse().find(message => (
+                    message.role === 'assistant'
+                    && !isDatePhoneBridge(message)
+                    && message.metadata?.source === 'date'
+                    && message.metadata?.isDateEnding !== true
+                    && (!current?.id || !message.metadata?.dateEncounterId || message.metadata.dateEncounterId === current.id)
+                ));
+                if (current && !hasPendingBackgroundTurn && latestAssistant) {
+                    const resolved = resolveDialogueClock(latestAssistant.content || '', current);
+                    if (resolved.advanced) {
+                        const next = makeNextClockRuntime(current, resolved.sceneClockAt, resolved.sceneClockAdvancedMs);
+                        const committed = commitSceneClock(char.id, next, {
+                            encounterId: current.id,
+                            sceneClockRevision: current.sceneClockRevision,
+                        });
+                        if (committed) {
+                            const syncedMetadata = dialogueClockMetadata(current, next, resolved, {
+                                dateTurnKind: latestAssistant.metadata?.dateTurnKind || 'dialogue',
+                            });
+                            try {
+                                await DB.updateMessageMetadata(latestAssistant.id, (previous: any) => ({
+                                    ...(previous || {}),
+                                    ...syncedMetadata,
+                                }));
+                            } catch (error) {
+                                // presence/runtime 已经完成 CAS 提交；历史元数据写失败时，
+                                // 不要让用户卡在空白会话，下一次进入仍可再次自愈。
+                                console.warn('[DateApp] 回填最新见面观测时间失败', error);
+                            }
+                            // 当前 timeline 是本次 DB 读取的快照。同步把同一份元数据
+                            // 写入 React 投影，避免首次进入阅读模式仍短暂显示旧分钟。
+                            setDateMessages(messages => messages.map(message => (
+                                message.id === latestAssistant.id
+                                    ? { ...message, metadata: { ...(message.metadata || {}), ...syncedMetadata } }
+                                    : message
+                            )));
+                            markDateTurnDirty({ ...char, activeDateEncounter: getActiveDatePresence(char.id) || undefined });
+                        }
+                    }
+                }
+            }
             // 拿回来的比要的少 = 库里的见面记录已经取完，阅读模式不用再往前翻了。
             setDateHistoryReachedEnd(filtered.length < limit);
             
@@ -425,7 +507,7 @@ const DateApp: React.FC = () => {
             setDateBackgroundPendingJobId(activeEncounterRef.current
                 ? getPendingDateBackgroundJobForEncounter(activeEncounterRef.current.id)?.jobId || null
                 : null);
-            loadDateMessages(DATE_SESSION_MESSAGE_LIMIT);
+            loadDateMessages(DATE_SESSION_MESSAGE_LIMIT, true);
         }
     }, [char, mode, historyReplayGroupId]);
 
@@ -439,6 +521,22 @@ const DateApp: React.FC = () => {
             setDateBackgroundPendingJobId(null);
             if (typeof detail.endMeetingReason === 'string' && detail.endMeetingReason.trim()) {
                 setEndSuggestedReason(detail.endMeetingReason.trim());
+            }
+            // Worker 已在落库前把剧情钟写回 presence；React 这边也要立即接上，
+            // 否则后台回复虽已出现在阅读模式，顶部「此时此刻」仍停在旧分钟。
+            const current = activeEncounterRef.current;
+            const presence = getActiveDatePresence(char.id)
+                || charactersRef.current.find(item => item.id === char.id)?.activeDateEncounter;
+            if (current && presence?.encounterId === current.id) {
+                const presenceRevision = typeof presence.sceneClockRevision === 'number'
+                    ? presence.sceneClockRevision
+                    : current.sceneClockRevision;
+                if (presenceRevision >= current.sceneClockRevision) {
+                    const nextRuntime = runtimeFromSource(char, presence, current);
+                    if (nextRuntime.sceneClockRevision >= current.sceneClockRevision) {
+                        setEncounterRuntime(nextRuntime);
+                    }
+                }
             }
             void loadDateMessages(DATE_SESSION_MESSAGE_LIMIT).then(() => {
                 markDateTurnDirty(char);
@@ -709,7 +807,7 @@ const DateApp: React.FC = () => {
         // 2. 切换模式并刷新数据
         setMode('session');
         trackEvent('走过去开始见面会话');
-        await loadDateMessages(DATE_SESSION_MESSAGE_LIMIT);
+        await loadDateMessages(DATE_SESSION_MESSAGE_LIMIT, true);
     };
 
     /**
@@ -1116,12 +1214,38 @@ const DateApp: React.FC = () => {
             throw new Error('这轮回复已过期，请按当前剧情时间重新发送');
         }
         const endMatch = rawContent.match(/\[\[END_MEETING:\s*([^\]]{1,200})\]\]/i);
-        const content = rawContent.replace(/\[\[END_MEETING:\s*[^\]]*\]\]/gi, '').trim();
+        const resolved = resolveDialogueClock(rawContent, encounterSnapshot);
+        const content = resolved.content.replace(/\[\[END_MEETING:\s*[^\]]*\]\]/gi, '').trim();
+        if (!content) throw new Error('回复没有生成正文，请重试');
         if (endMatch?.[1]?.trim()) setEndSuggestedReason(endMatch[1].trim());
 
-        // 3. Save AI Response
-        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: sceneClockMetadata(encounterSnapshot, { dateTurnKind: 'dialogue' }) });
-        markDateTurnDirty(char);
+        // 3. 先保存带新检查点的回复，再用 encounter + revision CAS 提交剧情钟。
+        // 没有明确推进时沿用旧快照，不增加 revision。
+        const nextEncounter = resolved.advanced
+            ? makeNextClockRuntime(encounterSnapshot, resolved.sceneClockAt, resolved.sceneClockAdvancedMs)
+            : encounterSnapshot;
+        const savedMessageId = await DB.saveMessage({
+            charId: char.id,
+            role: 'assistant',
+            type: 'text',
+            content,
+            metadata: dialogueClockMetadata(encounterSnapshot, nextEncounter, resolved, { dateTurnKind: 'dialogue' }),
+        });
+        if (resolved.advanced) {
+            const committed = commitSceneClock(char.id, nextEncounter, {
+                encounterId: encounterSnapshot.id,
+                sceneClockRevision: encounterSnapshot.sceneClockRevision,
+            });
+            if (!committed) {
+                await DB.deleteMessage(savedMessageId).catch(error => {
+                    console.warn('[DateApp] 清理过期见面回复失败', error);
+                });
+                throw new Error('这轮回复已过期，请按当前剧情时间重新发送');
+            }
+        }
+        markDateTurnDirty(resolved.advanced
+            ? { ...char, activeDateEncounter: getActiveDatePresence(char.id) || undefined }
+            : char);
 
         // Refresh local state
         await loadDateMessages(DATE_SESSION_MESSAGE_LIMIT);
@@ -1255,6 +1379,18 @@ const DateApp: React.FC = () => {
             return content;
         }
 
+        const beforeAt = isFiniteNumber(lastMsg.metadata?.sceneClockBefore)
+            ? lastMsg.metadata.sceneClockBefore
+            : currentEncounterSnapshot.sceneClockAt;
+        const beforeAdvancedMs = Math.max(0, isFiniteNumber(lastMsg.metadata?.sceneClockBeforeAdvancedMs)
+            ? lastMsg.metadata.sceneClockBeforeAdvancedMs
+            : Math.max(0, currentEncounterSnapshot.sceneClockAdvancedMs - (Number(lastMsg.metadata?.sceneClockAdvancedDeltaMs) || 0)));
+        const rerollClockBase: DateEncounterRuntime = {
+            ...currentEncounterSnapshot,
+            sceneClockAt: beforeAt,
+            sceneClockAdvancedMs: beforeAdvancedMs,
+        };
+
         const validDateMsgs = preparedValidMsgs.filter(m => m.metadata?.source === 'date');
         const lastUserMsg = validDateMsgs[validDateMsgs.length - 1];
         if (!lastUserMsg || lastUserMsg.role !== 'user') throw new Error("Context lost");
@@ -1270,8 +1406,9 @@ const DateApp: React.FC = () => {
             emojis,
             userText: lastUserMsg.content,
             variant: 'reroll',
-            sceneClockAt: currentEncounterSnapshot.sceneClockAt,
-            sceneClockAdvancedMs: currentEncounterSnapshot.sceneClockAdvancedMs,
+            // 让模型从被替换回复之前的剧情时刻重写，避免 reroll 把旧推进再累计一次。
+            sceneClockAt: beforeAt,
+            sceneClockAdvancedMs: beforeAdvancedMs,
             sceneClockRevision: currentEncounterSnapshot.sceneClockRevision,
             sceneClockUpdatedAt: currentEncounterSnapshot.sceneClockUpdatedAt,
             sceneClockTimeZone: currentEncounterSnapshot.sceneClockTimeZone,
@@ -1283,14 +1420,62 @@ const DateApp: React.FC = () => {
             throw new Error('这轮回复已过期，请按当前剧情时间重新生成');
         }
         const endMatch = rawContent.match(/\[\[END_MEETING:\s*([^\]]{1,200})\]\]/i);
-        const content = rawContent.replace(/\[\[END_MEETING:\s*[^\]]*\]\]/gi, '').trim();
+        const parsedFromBase = resolveDialogueClock(rawContent, rerollClockBase);
+        // 旧回复的推进已经包含在 currentEncounterSnapshot 里。新回复若只重写到
+        // 同一时刻，不再增加 revision；若它继续向前，只累计相对当前时刻的增量。
+        const resolved = parsedFromBase.advanced && parsedFromBase.sceneClockAt > currentEncounterSnapshot.sceneClockAt
+            ? {
+                ...parsedFromBase,
+                sceneClockAdvancedMs: currentEncounterSnapshot.sceneClockAdvancedMs
+                    + (parsedFromBase.sceneClockAt - currentEncounterSnapshot.sceneClockAt),
+                sceneClockAdvancedDeltaMs: parsedFromBase.sceneClockAt - currentEncounterSnapshot.sceneClockAt,
+            }
+            : parsedFromBase.advanced
+                ? {
+                    ...parsedFromBase,
+                    sceneClockAt: currentEncounterSnapshot.sceneClockAt,
+                    sceneClockAdvancedMs: currentEncounterSnapshot.sceneClockAdvancedMs,
+                    sceneClockAdvancedDeltaMs: 0,
+                    advanced: false,
+                    resolution: 'unchanged' as const,
+                }
+                : parsedFromBase;
+        const content = resolved.content.replace(/\[\[END_MEETING:\s*[^\]]*\]\]/gi, '').trim();
+        if (!content) throw new Error('回复没有生成正文，请重试');
         setEndSuggestedReason(endMatch?.[1]?.trim() || '');
 
-        // 生成成功后才删旧回复：以前先删后调 API，请求一失败上一条剧情就永久消失
+        const nextEncounter = resolved.advanced
+            ? makeNextClockRuntime(currentEncounterSnapshot, resolved.sceneClockAt, resolved.sceneClockAdvancedMs)
+            : currentEncounterSnapshot;
+        // 生成成功后才删旧回复：先保存新回复，再提交时钟，CAS 失败时保留旧剧情。
+        const newMessageId = await DB.saveMessage({
+            charId: char.id,
+            role: 'assistant',
+            type: 'text',
+            content,
+            metadata: dialogueClockMetadata(currentEncounterSnapshot, nextEncounter, resolved, {
+                dateTurnKind: 'dialogue',
+                rerolledFromMessageId: lastMsg.id,
+            }),
+        });
+        if (resolved.advanced) {
+            const committed = commitSceneClock(char.id, nextEncounter, {
+                encounterId: currentEncounterSnapshot.id,
+                sceneClockRevision: currentEncounterSnapshot.sceneClockRevision,
+            });
+            if (!committed) {
+                await DB.deleteMessage(newMessageId).catch(error => console.warn('[DateApp] 清理过期见面重掷回复失败', error));
+                throw new Error('这轮回复已过期，请按当前剧情时间重新发送');
+            }
+        } else if (!isCurrentDateTurnRequest(requestId, currentEncounterSnapshot.id, currentEncounterSnapshot.sceneClockRevision)) {
+            await DB.deleteMessage(newMessageId).catch(error => console.warn('[DateApp] 清理过期见面重掷回复失败', error));
+            throw new Error('这轮回复已过期，请按当前剧情时间重新发送');
+        }
         await DB.deleteMessage(lastMsg.id);
-        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: sceneClockMetadata(currentEncounterSnapshot, { dateTurnKind: 'dialogue' }) });
-        markDateTurnDirty(char);
-        trackEvent('重掷见面回复', { 目标: '回复' });
+        markDateTurnDirty(resolved.advanced
+            ? { ...char, activeDateEncounter: getActiveDatePresence(char.id) || undefined }
+            : char);
+        trackEvent('重掷见面回复', { 目标: '回复', 时间结果: resolved.resolution });
 
         // Sync
         await loadDateMessages(DATE_SESSION_MESSAGE_LIMIT);

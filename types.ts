@@ -2277,9 +2277,9 @@ export interface DateState {
     encounterId?: string;
     /** 这次见面真正开始的剧情时间，用于剧情时长与结束卡片。 */
     encounterStartedAt?: number;
-    /** 当前见面内的剧情时间；不随真实时间自动推进。 */
+    /** 当前见面内的剧情时间；不随现实等待推进，只随明确演出的剧情推进。 */
     sceneClockAt?: number;
-    /** 本次见面由过场实际推进的剧情时长累计值（手动校时不计入）。 */
+    /** 本次见面累计自动推进的剧情时长（手动校时不计入）。 */
     sceneClockAdvancedMs?: number;
     /** 剧情时钟提交版本，防止旧的异步回复覆盖新手动校时。 */
     sceneClockRevision?: number;
@@ -2319,9 +2319,9 @@ export interface DateEncounterPresence {
     startedAt: number;
     status: 'active' | 'paused';
     updatedAt: number;
-    /** 当前见面内的剧情时间；不随真实时间自动推进。 */
+    /** 当前见面内的剧情时间；不随现实等待推进，只随明确演出的剧情推进。 */
     sceneClockAt?: number;
-    /** 本次见面由过场推进的剧情时长累计值。 */
+    /** 本次见面累计自动推进的剧情时长。 */
     sceneClockAdvancedMs?: number;
     /** 剧情时钟提交版本。 */
     sceneClockRevision?: number;

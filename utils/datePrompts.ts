@@ -865,11 +865,13 @@ const resolveSessionClock = (
 const buildContinuityBlock = (clock: SessionClockSnapshot): string => {
     const elapsedMinutes = Math.max(0, Math.floor((clock.sceneClockAt - clock.encounterStartedAt) / 60000));
     const advancedText = clock.sceneClockAdvancedMs > 0
-        ? `过场累计推进约 ${Math.floor(clock.sceneClockAdvancedMs / 60000)} 分钟。`
+        ? `剧情累计推进约 ${Math.floor(clock.sceneClockAdvancedMs / 60000)} 分钟。`
         : '';
     return `
 ### 线下见面的剧情时间连续性（最高优先级）
 当前剧情时间：${formatSceneClock(clock.sceneClockAt, clock.sceneClockTimeZone)}（这是本次见面的唯一权威时间，一切时间判断以此为准）。这次见面在剧情内已持续约 ${elapsedMinutes} 分钟。${advancedText ? ` ${advancedText}` : ''}
+- 如果本轮正文确实演出了新的剧情时刻（例如自然演出了一段活动或明确写到时间向前），在回复最后另起一行输出 \`[[SCENE_CLOCK: YYYY-MM-DD HH:MM]]\`。没有推进就不要输出；这是给客户端的隐藏时间标记，不是角色台词，也不要在正文解释它。
+- 如果回复中提供了结构化「时间」字段，它必须与这个隐藏标记表示同一剧情时刻；如果没有输出标记，时间字段也必须与当前剧情时间一致或只表达当前时刻的自然描述。不要把现实等待时间当成剧情推进。
 - **未收到明确的时间推进指令时，绝对不要自行跳跃时间。** 用户长时间没有输入不代表剧情内经过了时间——那只是现实中用户离开了，剧情停在原地等他回来。
 - 默认延续上一轮仍在进行的地点、姿势、物品和活动，除非用户明确改变，或剧情内经过的时间足以自然完成。
 - 吃饭、通勤、洗澡、看电影、工作、上课、亲密互动等都有符合常识的持续时间。仅过几分钟时，绝不能为了“推进剧情”擅自宣布完成或瞬移到下一场景。
