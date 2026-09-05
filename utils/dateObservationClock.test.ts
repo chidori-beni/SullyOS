@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import type { Message } from '../types';
 import { DatePrompts } from './datePrompts';
 import {
+    buildDateSceneSnapshot,
     parseObservationSceneClock,
     resolveDialogueSceneClock,
 } from './dateObservationClock';
@@ -9,6 +11,26 @@ const TIME_ZONE = 'Asia/Tokyo';
 const base = DatePrompts.parseSceneClockInput('2026-09-05 19:30', TIME_ZONE)!;
 
 const clockText = (timestamp: number): string => DatePrompts.formatSceneClockInputValue(timestamp, TIME_ZONE).replace('T', ' ');
+
+const dateMessage = (id: number, role: Message['role'], content: string, metadata: Record<string, any> = {}): Message => ({
+    id,
+    charId: 'char-1',
+    role,
+    type: 'text',
+    content,
+    timestamp: base + id * 1000,
+    metadata: { source: 'date', dateEncounterId: 'enc-1', ...metadata },
+});
+
+const observationReply = (time: string): string => [
+    '⟦OBSERVE⟧',
+    `时间｜${time}`,
+    '地点｜沙发深处',
+    '状态｜安静地听着雨声',
+    '细节｜发梢沾着细小水珠',
+    '⟦/OBSERVE⟧',
+    '[normal] 雨声压过了沙发深处的交谈。',
+].join('\n');
 
 describe('date observation scene clock', () => {
     it.each([
@@ -110,5 +132,67 @@ describe('date observation scene clock', () => {
         expect(tagged.resolution).toBe('tag');
         expect(tagged.content).toBe('[normal] 继续说话。');
         expect(clockText(tagged.sceneClockAt)).toBe('2026-09-05 19:38');
+    });
+
+    it('当前快照从最新角色回复的观测时间回填旧 runtime', () => {
+        const snapshot = buildDateSceneSnapshot({
+            messages: [
+                dateMessage(1, 'assistant', observationReply('傍晚七点三十八分'), {
+                    sceneClockAt: base,
+                    sceneClockAdvancedMs: 0,
+                    sceneClockRevision: 4,
+                    sceneClockUpdatedAt: base,
+                }),
+                // 用户消息即使带有较新的 metadata，也不能成为当前剧情时钟来源。
+                dateMessage(2, 'user', '我看向窗外。', {
+                    sceneClockAt: base + 20 * 60_000,
+                    sceneClockRevision: 99,
+                }),
+            ],
+            encounterId: 'enc-1',
+            runtime: {
+                encounterId: 'enc-1',
+                sceneClockAt: base,
+                sceneClockAdvancedMs: 0,
+                sceneClockRevision: 4,
+                sceneClockUpdatedAt: base,
+                sceneClockTimeZone: TIME_ZONE,
+            },
+            observeEnabled: true,
+            timeZone: TIME_ZONE,
+        });
+
+        expect(snapshot).not.toBeNull();
+        expect(clockText(snapshot!.sceneClockAt!)).toBe('2026-09-05 19:38');
+        expect(snapshot!.source).toBe('observation');
+        expect(snapshot!.sourceMessageId).toBe(1);
+        expect(snapshot!.observation?.time).toBe('傍晚七点三十八分');
+    });
+
+    it('手动校时标记存在时，旧观测时间不能把剧情钟改回去', () => {
+        const manualAt = base + 5 * 60_000;
+        const snapshot = buildDateSceneSnapshot({
+            messages: [dateMessage(1, 'assistant', observationReply('傍晚七点三十八分'), {
+                sceneClockAt: manualAt,
+                sceneClockAdvancedMs: 0,
+                sceneClockRevision: 5,
+                sceneClockUpdatedAt: manualAt,
+                sceneClockSource: 'manual',
+            })],
+            encounterId: 'enc-1',
+            runtime: {
+                encounterId: 'enc-1',
+                sceneClockAt: manualAt,
+                sceneClockRevision: 5,
+                sceneClockUpdatedAt: manualAt,
+                sceneClockTimeZone: TIME_ZONE,
+            },
+            observeEnabled: true,
+            timeZone: TIME_ZONE,
+        });
+
+        expect(snapshot).not.toBeNull();
+        expect(snapshot!.sceneClockAt).toBe(manualAt);
+        expect(snapshot!.source).toBe('runtime');
     });
 });

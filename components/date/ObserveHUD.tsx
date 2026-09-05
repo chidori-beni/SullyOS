@@ -19,6 +19,8 @@ interface ObserveHUDProps {
     variant?: 'hud' | 'card';
     charName?: string;
     config?: DateObserveConfig;
+    /** 当前剧情时钟的统一显示值；只覆盖 OBSERVE 的 time 行。 */
+    timeOverride?: string;
 }
 
 // ── 样式主题 ─────────────────────────────────────────────────────────
@@ -183,14 +185,16 @@ const THEMES: Record<DateObserveStyleId, Theme> = {
 const getTheme = (id?: DateObserveStyleId): Theme => THEMES[id || 'hologram'] || THEMES.hologram;
 
 /** 合并默认维度 + 自定义维度，按字段顺序产出渲染行（仅保留有值的） */
-const buildRows = (observation: DateObservation, config?: DateObserveConfig, charName = '') =>
+const buildRows = (observation: DateObservation, config?: DateObserveConfig, charName = '', timeOverride?: string) =>
     resolveObserveFields(config, charName)
         .map(f => ({
             key: f.key,
             glyph: f.glyph,
             en: f.en,
             cn: f.display,
-            value: (f.isCustom
+            value: (f.key === 'time' && timeOverride
+                ? timeOverride
+                : f.isCustom
                 ? (observation.extra?.[f.key] || '')
                 : ((observation[f.key as keyof DateObservation] as string) || '')).trim(),
         }))
@@ -232,7 +236,7 @@ const PanelHeader: React.FC<{ theme: Theme; charName?: string; right?: React.Rea
     </div>
 );
 
-const ObserveHUD: React.FC<ObserveHUDProps> = ({ observation, variant = 'hud', charName, config }) => {
+const ObserveHUD: React.FC<ObserveHUDProps> = ({ observation, variant = 'hud', charName, config, timeOverride }) => {
     // Hooks 必须无条件、且在任何 early-return 之前调用（React Rules of Hooks）。
     // 立绘模式默认收起，避免观测面板挡住角色；阅读模式的 card 仍始终展开。
     const [collapsed, setCollapsed] = useState(() => variant === 'hud');
@@ -242,7 +246,7 @@ const ObserveHUD: React.FC<ObserveHUDProps> = ({ observation, variant = 'hud', c
     }, [variant]);
 
     const theme = getTheme(config?.style);
-    const rows = buildRows(observation, config, charName);
+    const rows = buildRows(observation, config, charName, timeOverride);
     if (rows.length === 0) return null;
 
     const customCss = config?.customCss?.trim();

@@ -25,7 +25,7 @@ export const makeDateEncounterPresence = (
     encounterId: string,
     startedAt: number,
     status: DateEncounterPresence['status'] = 'active',
-    clock?: Pick<DateEncounterPresence, 'sceneClockAt' | 'sceneClockAdvancedMs' | 'sceneClockRevision' | 'sceneClockUpdatedAt' | 'sceneClockTimeZone'>,
+    clock?: Pick<DateEncounterPresence, 'sceneClockAt' | 'sceneClockAdvancedMs' | 'sceneClockRevision' | 'sceneClockUpdatedAt' | 'sceneClockTimeZone' | 'sceneClockSource'>,
 ): DateEncounterPresence => ({
     encounterId,
     startedAt,
@@ -36,6 +36,7 @@ export const makeDateEncounterPresence = (
     ...(typeof clock?.sceneClockRevision === 'number' ? { sceneClockRevision: clock.sceneClockRevision } : {}),
     ...(typeof clock?.sceneClockUpdatedAt === 'number' ? { sceneClockUpdatedAt: clock.sceneClockUpdatedAt } : {}),
     ...(clock?.sceneClockTimeZone ? { sceneClockTimeZone: clock.sceneClockTimeZone } : {}),
+    ...(clock?.sceneClockSource ? { sceneClockSource: clock.sceneClockSource } : {}),
 });
 
 export const setActiveDatePresence = (
@@ -79,6 +80,7 @@ export const getActiveDatePresence = (charId: string): DateEncounterPresence | n
             ...(typeof parsed.sceneClockRevision === 'number' ? { sceneClockRevision: parsed.sceneClockRevision } : {}),
             ...(typeof parsed.sceneClockUpdatedAt === 'number' ? { sceneClockUpdatedAt: parsed.sceneClockUpdatedAt } : {}),
             ...(typeof parsed.sceneClockTimeZone === 'string' && parsed.sceneClockTimeZone ? { sceneClockTimeZone: parsed.sceneClockTimeZone } : {}),
+            ...(typeof parsed.sceneClockSource === 'string' && parsed.sceneClockSource ? { sceneClockSource: parsed.sceneClockSource } : {}),
         };
         memory.set(charId, presence);
         return presence;

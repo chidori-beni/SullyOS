@@ -1,5 +1,6 @@
-import type { DateObservation } from '../types';
-import { DatePrompts } from './datePrompts';
+import type { DateObservation, DateObserveCustomField, Message } from '../types';
+import { DatePrompts, extractObservation, hasObservation } from './datePrompts';
+import { isDatePhoneBridge } from './datePhoneBridge';
 import { nowInTimeZone, wallClockToTimestamp } from './timezone';
 
 const MINUTE_MS = 60 * 1000;
@@ -386,5 +387,190 @@ export const resolveDialogueSceneClock = (input: {
         requestedSceneClockAt: requestedAt,
         advanced: true,
         resolution,
+    };
+};
+
+/**
+ * 当前见面界面使用的单一时间快照。
+ *
+ * DateApp 生成它，DateSession 只消费它。这样左上角、立绘观测和阅读模式
+ * 的“当前剧情时间”不会再分别从 runtime、state 和消息内容各取一份。
+ */
+export interface DateSceneSnapshot {
+    sceneClockAt?: number;
+    sceneClockAdvancedMs: number;
+    sceneClockRevision: number;
+    sceneClockUpdatedAt?: number;
+    sceneClockTimeZone?: string;
+    observation: DateObservation | null;
+    source: 'runtime' | 'message' | 'saved' | 'observation' | 'timestamp';
+    sceneClockSource?: string;
+    sourceMessageId?: number;
+}
+
+export interface DateSceneClockSource {
+    encounterId?: string;
+    sceneClockAt?: number;
+    sceneClockAdvancedMs?: number;
+    sceneClockRevision?: number;
+    sceneClockUpdatedAt?: number;
+    sceneClockTimeZone?: string;
+    sceneClockSource?: string;
+}
+
+export interface BuildDateSceneSnapshotInput {
+    messages: Message[];
+    encounterId?: string;
+    runtime?: DateSceneClockSource | null;
+    savedState?: DateSceneClockSource | null;
+    observeEnabled?: boolean;
+    customObservationFields?: DateObserveCustomField[];
+    timeZone?: string;
+}
+
+type SceneClockCandidate = {
+    at: number;
+    advancedMs: number;
+    revision: number;
+    updatedAt?: number;
+    timeZone?: string;
+    clockSource?: string;
+    source: DateSceneSnapshot['source'];
+    sourceMessageId?: number;
+    priority: number;
+};
+
+const finiteOrUndefined = (value: unknown): number | undefined => (
+    typeof value === 'number' && Number.isFinite(value) ? value : undefined
+);
+
+const isEligibleSceneAssistant = (message: Message, encounterId?: string): boolean => {
+    if (message.role !== 'assistant' || isDatePhoneBridge(message)) return false;
+    if (message.metadata?.isDateEnding === true) return false;
+    if (message.metadata?.source && message.metadata.source !== 'date') return false;
+    const messageEncounterId = typeof message.metadata?.dateEncounterId === 'string'
+        ? message.metadata.dateEncounterId
+        : undefined;
+    return !encounterId || !messageEncounterId || messageEncounterId === encounterId;
+};
+
+const candidateFromSource = (
+    source: DateSceneClockSource | null | undefined,
+    sourceKind: DateSceneSnapshot['source'],
+    priority: number,
+    sourceMessageId?: number,
+): SceneClockCandidate | null => {
+    const at = finiteOrUndefined(source?.sceneClockAt);
+    if (at === undefined) return null;
+    const advancedMs = Math.max(0, finiteOrUndefined(source?.sceneClockAdvancedMs) || 0);
+    const revision = Math.max(0, Math.floor(finiteOrUndefined(source?.sceneClockRevision) || 0));
+    return {
+        at,
+        advancedMs,
+        revision,
+        updatedAt: finiteOrUndefined(source?.sceneClockUpdatedAt),
+        timeZone: typeof source?.sceneClockTimeZone === 'string' ? source.sceneClockTimeZone : undefined,
+        clockSource: typeof source?.sceneClockSource === 'string' ? source.sceneClockSource : undefined,
+        source: sourceKind,
+        sourceMessageId,
+        priority,
+    };
+};
+
+const newerSceneClockCandidate = (
+    current: SceneClockCandidate | null,
+    next: SceneClockCandidate | null,
+): SceneClockCandidate | null => {
+    if (!current) return next;
+    if (!next) return current;
+    if (next.revision !== current.revision) return next.revision > current.revision ? next : current;
+    if ((next.updatedAt || 0) !== (current.updatedAt || 0)) {
+        return (next.updatedAt || 0) > (current.updatedAt || 0) ? next : current;
+    }
+    return next.priority > current.priority ? next : current;
+};
+
+/**
+ * 从当前见面消息和持久化 runtime 生成统一的显示快照。
+ * 消息 metadata 有更高 revision 时优先于旧 runtime；没有 metadata 的旧消息
+ * 则用最新 assistant 的 OBSERVE.time 做一次仅显示层的兼容回填。手动校时会
+ * 通过 sceneClockSource=manual 阻止旧 OBSERVE 文本再次覆盖手动时间。
+ */
+export const buildDateSceneSnapshot = (
+    input: BuildDateSceneSnapshotInput,
+): DateSceneSnapshot | null => {
+    const latestAssistantMessage = [...input.messages].reverse().find(message => (
+        isEligibleSceneAssistant(message, input.encounterId)
+    ));
+    if (!latestAssistantMessage && !input.runtime && !input.savedState) return null;
+
+    const messageClock = candidateFromSource(
+        latestAssistantMessage?.metadata,
+        'message',
+        20,
+        latestAssistantMessage?.id,
+    );
+    let candidate = newerSceneClockCandidate(
+        candidateFromSource(input.savedState, 'saved', 10),
+        newerSceneClockCandidate(candidateFromSource(input.runtime, 'runtime', 30), messageClock),
+    );
+
+    if (!candidate && latestAssistantMessage) {
+        candidate = {
+            at: latestAssistantMessage.timestamp,
+            advancedMs: 0,
+            revision: 0,
+            source: 'timestamp',
+            sourceMessageId: latestAssistantMessage.id,
+            priority: 0,
+        };
+    }
+    if (!candidate) return null;
+
+    const observation = latestAssistantMessage
+        ? extractObservation(
+            latestAssistantMessage.content,
+            {
+                lenient: input.observeEnabled === true,
+                custom: input.customObservationFields,
+            },
+        )
+        : null;
+    const displayObservation = hasObservation(observation?.observation) ? observation.observation : null;
+    const hasManualClock = candidate.clockSource === 'manual'
+        || messageClock?.clockSource === 'manual';
+    let sceneClockAt = candidate.at;
+    let sceneClockAdvancedMs = candidate.advancedMs;
+    let sceneClockRevision = candidate.revision;
+    let sceneClockUpdatedAt = candidate.updatedAt;
+    let source = candidate.source;
+
+    if (latestAssistantMessage && displayObservation && !hasManualClock) {
+        const resolved = resolveDialogueSceneClock({
+            rawContent: latestAssistantMessage.content,
+            observation: displayObservation,
+            currentAt: candidate.at,
+            currentAdvancedMs: candidate.advancedMs,
+            timeZone: candidate.timeZone || input.timeZone,
+        });
+        if (resolved.advanced) {
+            sceneClockAt = resolved.sceneClockAt;
+            sceneClockAdvancedMs = resolved.sceneClockAdvancedMs;
+            sceneClockRevision = candidate.revision + 1;
+            sceneClockUpdatedAt = latestAssistantMessage.timestamp;
+            source = 'observation';
+        }
+    }
+
+    return {
+        sceneClockAt,
+        sceneClockAdvancedMs,
+        sceneClockRevision,
+        sceneClockUpdatedAt,
+        sceneClockTimeZone: candidate.timeZone || input.timeZone,
+        observation: displayObservation,
+        source,
+        sceneClockSource: source === 'observation' ? 'observation' : candidate.clockSource,
+        sourceMessageId: latestAssistantMessage?.id ?? candidate.sourceMessageId,
     };
 };

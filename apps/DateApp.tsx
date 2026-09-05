@@ -28,7 +28,7 @@ import { isDatePhoneBridge, mergeDatePhoneMessages } from '../utils/datePhoneBri
 import { stripMessageReactionTags } from '../utils/messageReactions';
 import { stripFaceToFacePhoneSourceTags } from '../utils/sanitize';
 import { resolveCharTimeZone } from '../utils/timezone';
-import { resolveDialogueSceneClock } from '../utils/dateObservationClock';
+import { buildDateSceneSnapshot, resolveDialogueSceneClock } from '../utils/dateObservationClock';
 import {
     buildPendingDateBackgroundJob,
     cancelPendingDateBackgroundJobs,
@@ -65,6 +65,7 @@ type DateEncounterRuntime = {
     sceneClockRevision: number;
     sceneClockUpdatedAt: number;
     sceneClockTimeZone?: string;
+    sceneClockSource?: string;
 };
 
 const isFiniteNumber = (value: unknown): value is number =>
@@ -226,6 +227,7 @@ const DateApp: React.FC = () => {
             sceneClockRevision: Math.max(0, Math.floor(isFiniteNumber(source?.sceneClockRevision) ? source.sceneClockRevision : (fallback?.sceneClockRevision || 0))),
             sceneClockUpdatedAt: isFiniteNumber(source?.sceneClockUpdatedAt) ? source.sceneClockUpdatedAt : (fallback?.sceneClockUpdatedAt || startedAt),
             sceneClockTimeZone: source?.sceneClockTimeZone || fallback?.sceneClockTimeZone || (target ? resolveCharTimeZone(target) : undefined),
+            sceneClockSource: source?.sceneClockSource || fallback?.sceneClockSource,
         };
     };
 
@@ -266,6 +268,27 @@ const DateApp: React.FC = () => {
     const [editContent, setEditContent] = useState('');
 
     const char = characters.find(c => c.id === activeCharacterId);
+    const dateSceneSnapshot = useMemo(() => {
+        const snapshot = buildDateSceneSnapshot({
+            messages: dateMessages,
+            encounterId: historyReplayGroupId ? undefined : activeEncounterRuntime?.id,
+            runtime: historyReplayGroupId ? undefined : activeEncounterRuntime,
+            savedState: historyReplayGroupId ? undefined : char?.savedDateState,
+            observeEnabled: char?.dateObserve?.enabled === true,
+            customObservationFields: char?.dateObserve?.custom,
+            timeZone: historyReplayGroupId
+                ? undefined
+                : activeEncounterRuntime?.sceneClockTimeZone || (char ? resolveCharTimeZone(char) : undefined),
+        });
+        // 没有正式角色回复时仍要让 DateSession 使用 peek 的本地 observation；
+        // 顶栏时间则继续由现有 runtime props 提供。
+        return snapshot?.sourceMessageId !== undefined ? snapshot : null;
+    }, [
+        dateMessages,
+        historyReplayGroupId,
+        activeEncounterRuntime,
+        char,
+    ]);
     const activateDateEncounter = (charId: string, encounter: DateEncounterRuntime) => {
         setEncounterRuntime(encounter);
         const presence = makeDateEncounterPresence(encounter.id, encounter.startedAt, 'active', encounter);
@@ -337,6 +360,7 @@ const DateApp: React.FC = () => {
         sceneClockRevision: encounter.sceneClockRevision,
         sceneClockUpdatedAt: encounter.sceneClockUpdatedAt,
         ...(encounter.sceneClockTimeZone ? { sceneClockTimeZone: encounter.sceneClockTimeZone } : {}),
+        ...(encounter.sceneClockSource ? { sceneClockSource: encounter.sceneClockSource } : {}),
         ...extra,
     });
 
@@ -344,12 +368,18 @@ const DateApp: React.FC = () => {
         current: DateEncounterRuntime,
         sceneClockAt: number,
         sceneClockAdvancedMs = current.sceneClockAdvancedMs,
+        sceneClockSource?: string | null,
     ): DateEncounterRuntime => ({
         ...current,
         sceneClockAt,
         sceneClockAdvancedMs: Math.max(0, sceneClockAdvancedMs),
         sceneClockRevision: current.sceneClockRevision + 1,
         sceneClockUpdatedAt: Date.now(),
+        ...(sceneClockSource === null
+            ? { sceneClockSource: undefined }
+            : sceneClockSource !== undefined
+                ? { sceneClockSource }
+                : {}),
     });
 
     const commitSceneClock = (
@@ -366,7 +396,38 @@ const DateApp: React.FC = () => {
         return next;
     };
 
-    const updateLatestSceneClockCheckpoint = async (charId: string, encounter: DateEncounterRuntime) => {
+    /**
+     * 旧版消息可能已经演到了更晚的 OBSERVE 时间，但 active runtime 仍停在旧分钟。
+     * 显示快照会先立即纠正界面；在真正发起下一轮请求前，这里再把同一修正提交回
+     * runtime/presence，确保模型收到的剧情时间也不落后。后台 pending 时不能抢先提交，
+     * 否则会破坏 Worker 已经拿到的 revision 闸门。
+     */
+    const reconcileEncounterFromSceneSnapshot = (current: DateEncounterRuntime): DateEncounterRuntime => {
+        if (!char || getPendingDateBackgroundJobForEncounter(current.id)) return current;
+        const snapshot = dateSceneSnapshot;
+        if (!snapshot
+            || (snapshot.source !== 'observation' && snapshot.source !== 'message')
+            || !isFiniteNumber(snapshot.sceneClockAt)
+            || snapshot.sceneClockAt <= current.sceneClockAt) return current;
+        const next: DateEncounterRuntime = {
+            ...current,
+            sceneClockAt: snapshot.sceneClockAt,
+            sceneClockAdvancedMs: Math.max(current.sceneClockAdvancedMs, snapshot.sceneClockAdvancedMs),
+            sceneClockRevision: Math.max(current.sceneClockRevision + 1, snapshot.sceneClockRevision),
+            sceneClockUpdatedAt: Date.now(),
+            sceneClockSource: snapshot.sceneClockSource || snapshot.source,
+        };
+        return commitSceneClock(char.id, next, {
+            encounterId: current.id,
+            sceneClockRevision: current.sceneClockRevision,
+        }) || current;
+    };
+
+    const updateLatestSceneClockCheckpoint = async (
+        charId: string,
+        encounter: DateEncounterRuntime,
+        extra: Record<string, any> = {},
+    ) => {
         const recent = await DB.getRecentMessagesByCharIdAndSource(charId, 'date', 500);
         const latest = [...recent].reverse().find(message => (
             message.metadata?.source === 'date'
@@ -376,6 +437,7 @@ const DateApp: React.FC = () => {
         await DB.updateMessageMetadata(latest.id, (previous: any) => ({
             ...(previous || {}),
             ...sceneClockMetadata(encounter),
+            ...extra,
         }));
     };
 
@@ -457,7 +519,7 @@ const DateApp: React.FC = () => {
                 if (current && !hasPendingBackgroundTurn && latestAssistant) {
                     const resolved = resolveDialogueClock(latestAssistant.content || '', current);
                     if (resolved.advanced) {
-                        const next = makeNextClockRuntime(current, resolved.sceneClockAt, resolved.sceneClockAdvancedMs);
+                        const next = makeNextClockRuntime(current, resolved.sceneClockAt, resolved.sceneClockAdvancedMs, resolved.source || 'observation');
                         const committed = commitSceneClock(char.id, next, {
                             encounterId: current.id,
                             sceneClockRevision: current.sceneClockRevision,
@@ -1019,15 +1081,15 @@ const DateApp: React.FC = () => {
     const handleSetSceneClock = async (sceneClockAt: number): Promise<void> => {
         if (!char || !isFiniteNumber(sceneClockAt)) return;
         beginDateTurnRequest();
-        const current = ensureEncounter();
-        const next = makeNextClockRuntime(current, sceneClockAt, current.sceneClockAdvancedMs);
+        const current = reconcileEncounterFromSceneSnapshot(ensureEncounter());
+        const next = makeNextClockRuntime(current, sceneClockAt, current.sceneClockAdvancedMs, 'manual');
         const committed = commitSceneClock(char.id, next, {
             encounterId: current.id,
             sceneClockRevision: current.sceneClockRevision,
         });
         if (!committed) throw new Error('见面状态已变化，请重新打开校时面板');
         try {
-            await updateLatestSceneClockCheckpoint(char.id, committed);
+            await updateLatestSceneClockCheckpoint(char.id, committed, { sceneClockSource: 'manual' });
         } catch (error) {
             // presence / saved state 已经即时更新；单条历史检查点失败不阻断继续见面，
             // 下一条新消息会再次带上完整时钟快照。
@@ -1042,7 +1104,7 @@ const DateApp: React.FC = () => {
     const handleInterlude = async (description: string, targetAt?: number): Promise<string> => {
         if (!char) throw new Error('No char');
         const requestId = beginDateTurnRequest();
-        const base = ensureEncounter();
+        const base = reconcileEncounterFromSceneSnapshot(ensureEncounter());
         const baseSnapshot = { ...base };
         const allMsgs = await DB.getRecentMessagesByCharId(char.id, getDateContextFetchLimit(char), true);
         const preparedAllMsgs = await materializeVisionDescriptions(allMsgs, apiConfig.visionApi);
@@ -1080,6 +1142,7 @@ const DateApp: React.FC = () => {
             baseSnapshot,
             resolved.sceneClockAt,
             resolved.sceneClockAdvancedMs,
+            'interlude',
         );
         const saved = await DB.saveMessage({
             charId: char.id,
@@ -1119,7 +1182,7 @@ const DateApp: React.FC = () => {
     const handleSendMessage = async (text: string): Promise<string | { queued: true; jobId: string }> => {
         if (!char) throw new Error("No char");
         const requestId = beginDateTurnRequest();
-        const encounter = ensureEncounter();
+        const encounter = reconcileEncounterFromSceneSnapshot(ensureEncounter());
         const encounterSnapshot = { ...encounter };
 
         // 重发场景：如果 DB 里最后一条已经是这条 user 消息（上一轮发送后 API 失败 / 网络抖动等），
@@ -1222,7 +1285,7 @@ const DateApp: React.FC = () => {
         // 3. 先保存带新检查点的回复，再用 encounter + revision CAS 提交剧情钟。
         // 没有明确推进时沿用旧快照，不增加 revision。
         const nextEncounter = resolved.advanced
-            ? makeNextClockRuntime(encounterSnapshot, resolved.sceneClockAt, resolved.sceneClockAdvancedMs)
+            ? makeNextClockRuntime(encounterSnapshot, resolved.sceneClockAt, resolved.sceneClockAdvancedMs, resolved.source || 'observation')
             : encounterSnapshot;
         const savedMessageId = await DB.saveMessage({
             charId: char.id,
@@ -1259,7 +1322,7 @@ const DateApp: React.FC = () => {
     const handleReroll = async (): Promise<string> => {
         if (!char || dateMessages.length === 0) throw new Error("No context");
         const requestId = beginDateTurnRequest();
-        const currentEncounter = ensureEncounter();
+        const currentEncounter = reconcileEncounterFromSceneSnapshot(ensureEncounter());
         const currentEncounterSnapshot = { ...currentEncounter };
 
         const lastMsg = dateMessages[dateMessages.length - 1];
@@ -1315,6 +1378,7 @@ const DateApp: React.FC = () => {
                 currentEncounterSnapshot,
                 resolved.sceneClockAt,
                 resolved.sceneClockAdvancedMs,
+                'interlude',
             );
             const newMessageId = await DB.saveMessage({
                 charId: char.id,
@@ -1445,7 +1509,7 @@ const DateApp: React.FC = () => {
         setEndSuggestedReason(endMatch?.[1]?.trim() || '');
 
         const nextEncounter = resolved.advanced
-            ? makeNextClockRuntime(currentEncounterSnapshot, resolved.sceneClockAt, resolved.sceneClockAdvancedMs)
+            ? makeNextClockRuntime(currentEncounterSnapshot, resolved.sceneClockAt, resolved.sceneClockAdvancedMs, resolved.source || 'observation')
             : currentEncounterSnapshot;
         // 生成成功后才删旧回复：先保存新回复，再提交时钟，CAS 失败时保留旧剧情。
         const newMessageId = await DB.saveMessage({
@@ -1644,6 +1708,7 @@ const DateApp: React.FC = () => {
                     sceneClockRevision: nextEncounter.sceneClockRevision,
                     sceneClockUpdatedAt: nextEncounter.sceneClockUpdatedAt,
                     sceneClockTimeZone: nextEncounter.sceneClockTimeZone,
+                    sceneClockSource: nextEncounter.sceneClockSource,
                 },
                 activeDateEncounter: presence,
             });
@@ -1679,7 +1744,7 @@ const DateApp: React.FC = () => {
      */
     const finishEncounter = async (finalState: DateState) => {
         if (!char) return;
-        const encounter = ensureEncounter();
+        const encounter = reconcileEncounterFromSceneSnapshot(ensureEncounter());
         await cancelPendingDateBackgroundJobs(encounter.id);
         setDateBackgroundPendingJobId(null);
         const realEndedAt = Date.now();
@@ -2334,6 +2399,8 @@ const DateApp: React.FC = () => {
                     sceneClockRevision={historyReplayGroupId ? undefined : activeEncounterRuntime?.sceneClockRevision}
                     sceneClockUpdatedAt={historyReplayGroupId ? undefined : activeEncounterRuntime?.sceneClockUpdatedAt}
                     sceneClockTimeZone={historyReplayGroupId ? undefined : activeEncounterRuntime?.sceneClockTimeZone}
+                    sceneClockSource={historyReplayGroupId ? undefined : activeEncounterRuntime?.sceneClockSource}
+                    sceneSnapshot={dateSceneSnapshot}
                     dateTimeAwarenessEnabled={char.dateTimeAwarenessEnabled !== false}
                     backgroundPending={historyReplayGroupId ? false : Boolean(dateBackgroundPendingJobId)}
                     onSendMessage={handleSendMessage}
