@@ -26,4 +26,19 @@ describe('见面后台通知直达', () => {
     expect(session).not.toContain('后台生成中 · 离开后也会继续');
     expect(session).not.toContain('后台正在延续此刻');
   });
+
+  it('后台回复完成前保持 TYPING，刷新新消息后才解除等待', () => {
+    const dateApp = read('../apps/DateApp.tsx');
+    const session = read('../components/date/DateSession.tsx');
+    expect(session).toContain('{!interactionBusy && (');
+    expect(session).toContain('{interactionBusy && (');
+
+    const handlerAt = dateApp.indexOf('const handleBackgroundDateProgress');
+    const refreshAt = dateApp.indexOf('void loadDateMessages(DATE_SESSION_MESSAGE_LIMIT).then(() => {');
+    const clearAt = dateApp.indexOf('setDateBackgroundPendingJobId(null);', refreshAt);
+    expect(handlerAt).toBeGreaterThan(-1);
+    expect(refreshAt).toBeGreaterThan(-1);
+    expect(clearAt).toBeGreaterThan(refreshAt);
+    expect(dateApp.slice(handlerAt, refreshAt)).not.toContain('setDateBackgroundPendingJobId(null);');
+  });
 });

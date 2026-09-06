@@ -580,7 +580,6 @@ const DateApp: React.FC = () => {
             if (!detail.dateBackground
                 || detail.charId !== char.id
                 || detail.dateEncounterId !== activeEncounterRef.current?.id) return;
-            setDateBackgroundPendingJobId(null);
             if (typeof detail.endMeetingReason === 'string' && detail.endMeetingReason.trim()) {
                 setEndSuggestedReason(detail.endMeetingReason.trim());
             }
@@ -601,8 +600,12 @@ const DateApp: React.FC = () => {
                 }
             }
             void loadDateMessages(DATE_SESSION_MESSAGE_LIMIT).then(() => {
+                // 先让 DateSession 拿到新角色消息，再解除等待态，避免旧卡片短暂露出。
+                setDateBackgroundPendingJobId(null);
                 markDateTurnDirty(char);
             }).catch(error => {
+                // 结果已经落库；刷新失败时也不能把界面永久卡在 TYPING。
+                setDateBackgroundPendingJobId(null);
                 console.warn('[DateApp] 刷新后台见面回复失败', error);
             });
         };

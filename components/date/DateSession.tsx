@@ -473,7 +473,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     // GAL mode: auto-play voice only for dialogue lines (quoted text), stop previous on advance
     // Uses cache so replaying the same line doesn't re-fetch
     useEffect(() => {
-        if (!voiceEnabled || isNovelMode || !currentText || isTyping) return;
+        if (!voiceEnabled || isNovelMode || !currentText || interactionBusy) return;
         // Stop any currently playing audio when text changes (advancing to next line)
         if (dateAudioRef.current) {
             dateAudioRef.current.pause();
@@ -507,7 +507,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         };
         play();
         return () => { cancelled = true; setGalVoiceLoading(false); if (dateAudioRef.current) { dateAudioRef.current.pause(); } };
-    }, [currentText, voiceEnabled, isNovelMode]);
+    }, [currentText, voiceEnabled, isNovelMode, interactionBusy]);
 
     // GAL mode: manual play/pause for the current dialogue line
     const handleGalVoiceToggle = async () => {
@@ -931,7 +931,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     // 立绘引擎（dialogueQueue / currentText / dialogueBatch）默认只在进会话或收到新回复时解析一次。
     // 阅读模式编辑 / 后台回复会更新 messages；这里必须同时同步 observation，不能只重建台词队列。
     useEffect(() => {
-        if (historyReplay || isTyping) return;
+        if (historyReplay || interactionBusy) return;
         if (!latestAssistantMessage) {
             // 没有落库消息时仍保留未保存的 peek 观测；已有消息但删空了角色回复时隐藏旧 HUD。
             if (messages.some(message => message.role === 'user' || message.role === 'assistant')) {
@@ -944,13 +944,13 @@ const DateSession: React.FC<DateSessionProps> = ({
             custom: char.dateObserve?.custom,
         });
         setObservation(hasObservation(latestObservation) ? latestObservation : null);
-    }, [latestAssistantMessage?.id, latestAssistantMessage?.content, historyReplay, isTyping, messages.length, observeEnabled, char.dateObserve?.custom]);
+    }, [latestAssistantMessage?.id, latestAssistantMessage?.content, historyReplay, interactionBusy, messages.length, observeEnabled, char.dateObserve?.custom]);
 
     const dialogueSyncMountRef = useRef(false);
     useEffect(() => {
         if (!dialogueSyncMountRef.current) { dialogueSyncMountRef.current = true; return; }
         if (historyReplay) return;
-        if (isTyping || !latestAssistantMessage) return;
+        if (interactionBusy || !latestAssistantMessage) return;
         const { observation: latestObservation, rest } = extractObservation(latestAssistantMessage.content || '', { lenient: observeEnabled, custom: char.dateObserve?.custom });
         setObservation(hasObservation(latestObservation) ? latestObservation : null);
         const items = parseDateDialogueForPlayback(rest);
@@ -958,7 +958,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         setDialogueBatch(items);
         processNextDialogue(items[0], items.slice(1), 0);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [latestAssistantMessage?.id, latestAssistantMessage?.content, historyReplay, isTyping]);
+    }, [latestAssistantMessage?.id, latestAssistantMessage?.content, historyReplay, interactionBusy]);
 
     // 回顾中允许编辑原消息。消息内容变化后，阅读模式会由 props 立即更新，
     // 立绘播放队列也同步重建，并尽量保留当前所在的条目位置。
@@ -1871,7 +1871,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                     <div className="absolute inset-x-0 bottom-0 h-[90%] flex items-end justify-center pointer-events-none z-10 overflow-hidden">
                         {currentSprite && <img src={currentSprite} className="max-h-full max-w-full object-contain drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)] transition-all duration-300 origin-bottom" style={{ filter: showInputBox ? 'brightness(1)' : (isTextAnimating ? 'brightness(1.05)' : 'brightness(1)'), transform: `translate(${spriteConfig.x}%, ${spriteConfig.y}%) scale(${isTextAnimating ? spriteConfig.scale * 1.02 : spriteConfig.scale})` }} />}
                     </div>
-                    {!isTyping && (
+                    {!interactionBusy && (
                         <div className="absolute inset-x-0 bottom-8 z-30 flex justify-center">
                             <div
                                 className="w-[90%] max-w-lg bg-black/60 backdrop-blur-xl rounded-2xl border border-white/10 p-6 min-h-[140px] shadow-2xl animate-slide-up hover:bg-black/70 cursor-pointer"
@@ -1919,7 +1919,7 @@ const DateSession: React.FC<DateSessionProps> = ({
 
             {/* Input Layer */}
             <div className={`tm-compose-layer absolute inset-x-0 bottom-0 z-40 flex justify-center pointer-events-none transition-all duration-300 ${interactionBusy || showInputBox ? 'opacity-100' : 'opacity-0'}`} style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
-                {isTyping && (
+                {interactionBusy && (
                     <div className="absolute bottom-1/2 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-auto">
                         <div className="bg-black/80 backdrop-blur-md px-6 py-3 rounded-full border border-white/20 shadow-2xl animate-pulse flex items-center gap-3">
                              <div className="flex gap-1.5"><div className="w-2 h-2 bg-white rounded-full animate-bounce"></div><div className="w-2 h-2 bg-white rounded-full animate-bounce delay-75"></div><div className="w-2 h-2 bg-white rounded-full animate-bounce delay-150"></div></div>
