@@ -30,9 +30,10 @@ import {
     extractCardTextFromPng,
     looksLikeSillyTavernCard,
     normalizeSillyTavernCard,
-    parseSillyTavernCardText,
+    type SillyTavernCard,
     type StCardConversion,
 } from '../utils/stCharacterCard';
+import { resolveUserMacroName } from '../utils/characterIdentity';
 import { stripSensitiveCardFields } from '../utils/characterCard';
 import { confirmExportSafety } from '../utils/exportGuard';
 import { trackEvent } from '../utils/analytics';
@@ -163,6 +164,15 @@ const Character: React.FC = () => {
   const [wbModalSearch, setWbModalSearch] = useState('');
   const [wbModalExpandedCategory, setWbModalExpandedCategory] = useState<string | null>(null);
   const [showGroupModal, setShowGroupModal] = useState(false); // 角色分组管理
+  /**
+   * ST 卡导入的「身份确认」中转站（见 交接说明-双层角色世界.md）。
+   * 卡片先解析成归一化结构停在这里，等用户确认 {{user}} 指谁、认不认识机主，
+   * **之后**才做转换——因为 convertSillyTavernCard 在转换那一刻就把 {{user}} 烤进正文了。
+   */
+  const [pendingStCard, setPendingStCard] = useState<{ card: SillyTavernCard; avatar: string } | null>(null);
+  const [stHostRelation, setStHostRelation] = useState<NonNullable<CharacterProfile['hostRelation']>>('partner');
+  /** '' = 机主本人；否则是某个已存在角色的 id。 */
+  const [stUserTargetId, setStUserTargetId] = useState('');
   const [newGroupName, setNewGroupName] = useState('');
   // 编辑页「新建分组并指派」的内联输入
   const [detailGroupDraft, setDetailGroupDraft] = useState<string | null>(null);
@@ -1150,7 +1160,11 @@ ${isInitialGeneration ? `
    * 开场白（first_mes）作为第一条角色消息直接写进聊天记录——SullyOS 没有单独的
    * 开场白字段，塞进提示词只会让角色反复念它。
    */
-  const importSillyTavernCard = async (conversion: StCardConversion, avatar: string) => {
+  const importSillyTavernCard = async (
+      conversion: StCardConversion,
+      avatar: string,
+      identity?: Pick<CharacterProfile, 'hostRelation' | 'narrativeLayer' | 'userMacroTarget'>,
+  ) => {
       const charId = newCharacterId();
       const mounted = conversion.worldbooks.map(toMountedWorldbook);
       await syncImportedWorldbooks(mounted, `${conversion.profile.name} 的世界书`);
@@ -1166,6 +1180,7 @@ ${isInitialGeneration ? `
           refinedMemories: {},
           activeMemoryMonths: [],
           mountedWorldbooks: mounted,
+          ...identity,
       };
 
       const detail = [
@@ -1208,7 +1223,13 @@ ${isInitialGeneration ? `
 
       const run = async () => {
           const lower = file.name.toLowerCase();
-          const stOptions = { userName: userProfile?.name || '' };
+          // ST 卡一律先停在身份确认弹窗，不当场转换——{{user}} 在转换那一刻就被烤进正文，
+          // 必须等用户说清它指谁。SullyOS 自家的卡不走这条路，行为不变。
+          const stage = (card: SillyTavernCard, avatar: string) => {
+              setStHostRelation('partner');
+              setStUserTargetId('');
+              setPendingStCard({ card, avatar });
+          };
 
           if (lower.endsWith('.png') || file.type === 'image/png') {
               // 角色卡图片本身就是头像，顺手压一张进来。
@@ -1216,13 +1237,13 @@ ${isInitialGeneration ? `
                   file.arrayBuffer().then(buf => extractCardTextFromPng(new Uint8Array(buf))),
                   processImage(file).catch(() => ''),
               ]);
-              await importSillyTavernCard(parseSillyTavernCardText(text, stOptions), avatar);
+              stage(normalizeSillyTavernCard(JSON.parse(text)), avatar);
               return;
           }
 
           if (lower.endsWith('.charx')) {
               const { text, avatar } = await readCharxCard(file);
-              await importSillyTavernCard(parseSillyTavernCardText(text, stOptions), avatar);
+              stage(normalizeSillyTavernCard(JSON.parse(text)), avatar);
               return;
           }
 
@@ -1233,10 +1254,7 @@ ${isInitialGeneration ? `
           }
           if (looksLikeSillyTavernCard(data)) {
               // 裸 JSON 的 ST 卡没有图，头像留空，用户自己换一张。
-              await importSillyTavernCard(
-                  convertSillyTavernCard(normalizeSillyTavernCard(data), stOptions),
-                  '',
-              );
+              stage(normalizeSillyTavernCard(data), '');
               return;
           }
           throw new Error('无效的角色卡文件');
@@ -1249,6 +1267,29 @@ ${isInitialGeneration ? `
           })
           .finally(() => {
               if (cardImportRef.current) cardImportRef.current.value = '';
+          });
+  };
+
+  /** 身份确认完毕，此刻才做转换并落库。 */
+  const confirmStCardImport = () => {
+      if (!pendingStCard) return;
+      const { card, avatar } = pendingStCard;
+      const target = characters.find(c => c.id === stUserTargetId);
+      const identity: Pick<CharacterProfile, 'hostRelation' | 'narrativeLayer' | 'userMacroTarget'> = {
+          hostRelation: stHostRelation,
+          // 不认识机主的角色即为「机主创作出来的角色」，ta 不知道自己被创作。
+          narrativeLayer: stHostRelation === 'stranger' ? 'fiction' : 'real',
+          userMacroTarget: target
+              ? { kind: 'character', id: target.id, name: target.name }
+              : { kind: 'host' },
+      };
+      // 卡片正文/开场白里的 {{user}} 在这里定稿；世界书正文保留宏，运行时按 userMacroTarget 展开。
+      const userName = target ? target.name : (userProfile?.name || '');
+      setPendingStCard(null);
+      importSillyTavernCard(convertSillyTavernCard(card, { userName }), avatar, identity)
+          .catch((err: any) => {
+              console.error(err);
+              addToast(err?.message || '导入失败', 'error');
           });
   };
 
@@ -2047,6 +2088,67 @@ ${isInitialGeneration ? `
                         )}
                     </>
                 )}
+            </div>
+        </Modal>
+
+        {/* ST 卡导入 · 身份确认（见 交接说明-双层角色世界.md） */}
+        <Modal isOpen={!!pendingStCard} title="这个角色是谁的？" onClose={() => setPendingStCard(null)}>
+            <div className="space-y-4">
+                <div className="text-sm text-slate-700">
+                    正在导入 <span className="font-bold text-primary">{pendingStCard?.card.name || '角色'}</span>
+                </div>
+
+                <div className="space-y-2">
+                    <div className="text-xs font-bold text-slate-500">ta 和你（机主）是什么关系？</div>
+                    {([
+                        { v: 'partner', label: '我的陪伴角色', hint: '和你有已建立的关系，群聊里会记得你。默认' },
+                        { v: 'friend', label: '朋友', hint: '认识你，但只是朋友，不会发展暧昧' },
+                        { v: 'stranger', label: '不认识我', hint: '从酒馆搬来、过自己日子的角色。ta 不知道你是谁' },
+                    ] as const).map(o => (
+                        <button
+                            key={o.v}
+                            onClick={() => setStHostRelation(o.v)}
+                            className={`w-full text-left px-4 py-2.5 rounded-xl border transition-colors ${
+                                stHostRelation === o.v
+                                    ? 'bg-primary/10 border-primary/40'
+                                    : 'bg-slate-50 border-transparent'
+                            }`}
+                        >
+                            <div className="text-sm font-bold text-slate-700">{o.label}</div>
+                            <div className="text-[11px] text-slate-400 mt-0.5">{o.hint}</div>
+                        </button>
+                    ))}
+                </div>
+
+                <div className="space-y-2">
+                    <div className="text-xs font-bold text-slate-500">卡里的 <code>{'{{user}}'}</code> 指谁？</div>
+                    <select
+                        value={stUserTargetId}
+                        onChange={e => setStUserTargetId(e.target.value)}
+                        className="w-full px-4 py-2.5 bg-slate-100 rounded-xl text-sm text-slate-700 outline-none focus:ring-2 focus:ring-primary/20"
+                    >
+                        <option value="">我本人（{userProfile?.name || '未命名'}）</option>
+                        {characters.map(c => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                    </select>
+                    <div className="text-[11px] text-slate-400 leading-relaxed">
+                        从酒馆搬来的角色，这里要选 ta 在酒馆配队的那个 user（也导入成角色）。
+                        选错会让 ta 把你当成恋人——
+                        <span className="font-bold text-slate-500">你和那个 user 同名时，这个错误完全看不出来。</span>
+                    </div>
+                </div>
+
+                <div className="flex gap-2 pt-1">
+                    <button
+                        onClick={() => setPendingStCard(null)}
+                        className="flex-1 py-2.5 bg-slate-100 text-slate-500 text-sm font-bold rounded-xl active:scale-95 transition-transform"
+                    >取消</button>
+                    <button
+                        onClick={confirmStCardImport}
+                        className="flex-1 py-2.5 bg-primary text-white text-sm font-bold rounded-xl shadow-sm shadow-primary/30 active:scale-95 transition-transform"
+                    >导入</button>
+                </div>
             </div>
         </Modal>
 

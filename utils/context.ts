@@ -13,6 +13,7 @@ import {
     type ResolvedWorldbookEntry,
     type WorldbookScanMessage,
 } from './worldbook';
+import { resolveUserMacroName } from './characterIdentity';
 
 /**
  * Memory Central
@@ -157,7 +158,10 @@ export const ContextBuilder = {
                   filteredBooks,
                   timeOptions?.worldbookMessages || [],
                   char.name,
-                  user.name,
+                  // 世界书正文保留 {{user}}，在这里才展开。搬进来的酒馆角色应指向
+                  // ta 在酒馆配队的那个 user（也是一个角色），否则会展开成机主的名字——
+                  // 机主与该 user 同名时这个错误完全看不出来。缺省仍是机主，旧角色零变化。
+                  resolveUserMacroName(char, user),
                   timeOptions?.worldbookMode ?? 'online',
               );
         const worldbookSections = splitWorldbookSections(resolvedWorldbookEntries);

@@ -3085,6 +3085,35 @@ export interface CharacterProfile {
   worldview?: string;
   /** 角色分组：指向 CharacterGroup.id；空或指向已删分组 = 未分组。仅本地组织用，不随角色卡导出 */
   groupId?: string;
+
+  // ── 双层角色世界（见 交接说明-双层角色世界.md）────────────────────────────
+  // 三个字段全部可选，缺省时行为与改造前完全一致，绝不影响既有陪伴角色。
+  /**
+   * 叙事层：
+   * - real（缺省）：与机主同处现实层，知道 fiction 层的角色是机主创作的；
+   * - fiction：机主创作出来的角色，**不知道自己被创作**，对 ta 而言世界是真的。
+   */
+  narrativeLayer?: 'real' | 'fiction';
+  /**
+   * 与机主本人的关系。缺省 = partner（旧角色保持现状，不改变任何既有体验）。
+   * - partner：机主的陪伴角色；
+   * - friend：认识机主，但只是朋友；
+   * - stranger：**不认识机主**。私聊/群聊提示词里不再把机主当成"一直在聊的那个人"。
+   */
+  hostRelation?: 'partner' | 'friend' | 'stranger';
+  /**
+   * 角色卡正文与世界书里的 `{{user}}` 指谁。缺省 = 机主（旧角色保持现状）。
+   * 从酒馆搬进来的角色应指向 ta 在酒馆里配队的那个 user（此处也是一个 CharacterProfile），
+   * 否则 `{{user}}` 会展开成机主的名字——机主与该 user 同名时这个错误完全看不出来。
+   */
+  userMacroTarget?:
+      | { kind: 'host' }
+      /** name 是落库冗余（同 WorldChatMessage.fromName）：拿不到完整角色表的调用方
+       *  （如 ContextBuilder.buildCoreContext）直接用它，角色被删也不会丢名。
+       *  给了角色表时以表里的当前名字为准，冗余名只作兜底。 */
+      | { kind: 'character'; id: string; name?: string };
+  // ──────────────────────────────────────────────────────────────────────
+
   memories: MemoryFragment[];
   refinedMemories?: Record<string, string>;
   activeMemoryMonths?: string[];
