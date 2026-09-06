@@ -1118,13 +1118,6 @@ const DateSession: React.FC<DateSessionProps> = ({
         }
     };
 
-    const handleComposerKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-        if (event.key === 'Enter' && !event.shiftKey) {
-            event.preventDefault();
-            void handleSend();
-        }
-    };
-
     const handleInterludeSubmit = async (catchUpToNow = false) => {
         if (historyReplay || interactionBusy || !onInterlude) return;
         const targetAt = catchUpToNow ? realNow : undefined;
@@ -1939,7 +1932,6 @@ const DateSession: React.FC<DateSessionProps> = ({
                                 rows={1}
                                 value={input}
                                 onChange={(e) => setInput(e.target.value)}
-                                onKeyDown={handleComposerKeyDown}
                                 placeholder={backgroundPending ? "等待回应..." : "输入对话..."}
                                 disabled={interactionBusy}
                                 className={`min-w-0 flex-1 tm-input bg-transparent px-3 sm:px-4 py-3 outline-none font-light resize-none max-h-36 no-scrollbar leading-tight ${char.dateLightReading ? 'text-stone-800 placeholder:text-stone-400' : 'text-white placeholder:text-white/30'}`}
@@ -1991,7 +1983,6 @@ const DateSession: React.FC<DateSessionProps> = ({
                             ref={fullscreenTextareaRef}
                             value={input}
                             onChange={(event) => setInput(event.target.value)}
-                            onKeyDown={handleComposerKeyDown}
                             autoFocus
                             spellCheck
                             className={`h-full w-full resize-none overflow-y-auto overscroll-contain rounded-2xl border p-4 text-[16px] leading-7 outline-none focus:ring-2 ${char.dateLightReading ? 'border-stone-200 bg-white text-stone-800 focus:ring-primary/20' : 'border-white/10 bg-white/[0.06] text-white focus:ring-primary/40'}`}

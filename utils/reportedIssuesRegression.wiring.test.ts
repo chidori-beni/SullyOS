@@ -17,6 +17,15 @@ describe('用户反馈回归保护', () => {
         expect(inputLayer).toContain('className="shrink-0 px-4 sm:px-6');
     });
 
+    it('见面输入框回车只换行，发送只由发送按钮触发', () => {
+        const source = read('../components/date/DateSession.tsx');
+        const inputLayer = source.slice(source.indexOf('{/* Input Layer */}'), source.indexOf('{/* Settings Overlay */}'));
+
+        expect(source).not.toContain('const handleComposerKeyDown');
+        expect(inputLayer).not.toContain('onKeyDown={handleComposerKeyDown}');
+        expect(inputLayer).toContain('onClick={handleSend}');
+    });
+
     it('剧情重试会在再次生成前先尝试归档，避免超长上下文把后置归档永久卡死', () => {
         const source = read('../components/date/story/StoryTheaterSession.tsx');
         const send = source.slice(source.indexOf('const send = useCallback'), source.indexOf('const archivedCount ='));
