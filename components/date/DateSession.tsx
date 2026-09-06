@@ -290,19 +290,26 @@ const DateSession: React.FC<DateSessionProps> = ({
 
     // 立绘 HUD 必须跟随当前见面最后一条角色回复，而不是停留在组件第一次
     // 解析到的 observation。后台回复、加载更多历史、编辑和删除都会改变这条身份。
+    const hasScopedEncounterMessage = !historyReplay && !!encounterId && messages.some(message => (
+        message.metadata?.source === 'date'
+        && message.metadata?.dateEncounterId === encounterId
+    ));
     const latestAssistantMessage = React.useMemo(() => {
         for (let index = messages.length - 1; index >= 0; index -= 1) {
             const message = messages[index];
             if (message.role !== 'assistant' || isDatePhoneBridge(message) || message.metadata?.isDateEnding === true) continue;
             if (message.metadata?.source && message.metadata.source !== 'date') continue;
-            if (!historyReplay
-                && encounterId
-                && typeof message.metadata?.dateEncounterId === 'string'
-                && message.metadata.dateEncounterId !== encounterId) continue;
+            if (!historyReplay && encounterId) {
+                const messageEncounterId = typeof message.metadata?.dateEncounterId === 'string'
+                    ? message.metadata.dateEncounterId
+                    : undefined;
+                if (messageEncounterId && messageEncounterId !== encounterId) continue;
+                if (hasScopedEncounterMessage && !messageEncounterId) continue;
+            }
             return message;
         }
         return undefined;
-    }, [messages, historyReplay, encounterId]);
+    }, [messages, historyReplay, encounterId, hasScopedEncounterMessage]);
     const latestSceneClockMessage = React.useMemo(() => {
         if (latestAssistantMessage
             && typeof latestAssistantMessage.metadata?.sceneClockAt === 'number'
@@ -1173,9 +1180,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         sceneClockRevision: effectiveSceneClockRevision,
         sceneClockUpdatedAt: effectiveSceneClockUpdatedAt,
         sceneClockTimeZone: effectiveSceneClockTimeZone,
-        sceneClockSource: sceneClockSource
-            ?? initialState?.sceneClockSource
-            ?? (sceneSnapshot?.source === 'observation' ? 'observation' : undefined),
+        sceneClockSource: sceneClockSource ?? initialState?.sceneClockSource,
         dialogueQueue,
         dialogueBatch,
         dialogueIndex: currentDialogueIndex,
@@ -1735,16 +1740,12 @@ const DateSession: React.FC<DateSessionProps> = ({
                                     ) : (() => {
                                         // 观测协议：从这条回复里剥出观测块，正文上方渲染独立卡片，正文本身不显示块文本
                                         const { observation: msgObs, rest: msgBody } = extractObservation(msg.content || '', { lenient: observeEnabled, custom: char.dateObserve?.custom });
-                                        const isCurrentSceneMessage = sceneSnapshot?.sourceMessageId === msg.id;
-                                        const messageSceneClockAt = isCurrentSceneMessage
-                                            && typeof sceneSnapshot?.sceneClockAt === 'number'
-                                            && Number.isFinite(sceneSnapshot.sceneClockAt)
-                                            ? sceneSnapshot.sceneClockAt
-                                            : typeof msg.metadata?.sceneClockAt === 'number' && Number.isFinite(msg.metadata.sceneClockAt)
-                                                ? msg.metadata.sceneClockAt
-                                                : effectiveSceneClockAt;
-                                        const messageTimeOverride = isCurrentSceneMessage
-                                            ? (formatHeaderClock(messageSceneClockAt) || undefined)
+                                        // 卡片的 OBSERVE.time 是消息正文的一部分，必须保持原文，
+                                        // 这样它与打开编辑器看到的 content 始终一致。剧情钟仍显示在
+                                        // 这条卡片自己的 header，以及阅读页顶部/立绘 HUD 中。
+                                        const messageSceneClockAt = typeof msg.metadata?.sceneClockAt === 'number'
+                                            && Number.isFinite(msg.metadata.sceneClockAt)
+                                            ? msg.metadata.sceneClockAt
                                             : undefined;
                                          const parsedMessageItems = addFallbackDateInterjectionToReply(
                                              parseDialogue(msgBody || '', 'normal'),
@@ -1784,7 +1785,6 @@ const DateSession: React.FC<DateSessionProps> = ({
                                                         variant="card"
                                                         charName={char.name}
                                                         config={char.dateObserve}
-                                                        timeOverride={messageTimeOverride}
                                                     />
                                                 )}
                                                 {(msgBody || '').split('\n').map((line, idx) => {

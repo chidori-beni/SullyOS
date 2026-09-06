@@ -346,7 +346,9 @@ export const applyDateBackgroundResult = async (payload: unknown): Promise<boole
       sceneClockAfter: nextSceneClockAt,
       sceneClockAdvancedDeltaMs: resolved.sceneClockAdvancedDeltaMs,
       sceneClockResolution: resolved.resolution,
-      ...(resolved.source ? { sceneClockSource: resolved.source } : {}),
+      ...(resolved.advanced
+        ? (resolved.source ? { sceneClockSource: resolved.source } : {})
+        : (presence.sceneClockSource ? { sceneClockSource: presence.sceneClockSource } : {})),
       ...(resolved.requestedSceneClockAt !== undefined ? { requestedSceneClockAt: resolved.requestedSceneClockAt } : {}),
       ...(resolved.observedSceneClockText ? { observedSceneClockText: resolved.observedSceneClockText.slice(0, 240) } : {}),
       dateTurnKind: result.turnKind === 'reply' ? 'dialogue' : result.turnKind,

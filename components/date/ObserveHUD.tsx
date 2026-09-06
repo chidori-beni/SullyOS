@@ -19,7 +19,7 @@ interface ObserveHUDProps {
     variant?: 'hud' | 'card';
     charName?: string;
     config?: DateObserveConfig;
-    /** 当前剧情时钟的统一显示值；只覆盖 OBSERVE 的 time 行。 */
+    /** 当前剧情时钟的统一显示值；仅用于立绘 HUD，不覆盖阅读卡片原文。 */
     timeOverride?: string;
 }
 
@@ -246,7 +246,9 @@ const ObserveHUD: React.FC<ObserveHUDProps> = ({ observation, variant = 'hud', c
     }, [variant]);
 
     const theme = getTheme(config?.style);
-    const rows = buildRows(observation, config, charName, timeOverride);
+    // 阅读卡片必须展示消息 content 里的原始 OBSERVE.time；只有当前立绘 HUD
+    // 可以用已提交的剧情钟做派生显示，否则切换到下一轮时旧卡片会“闪回”原文。
+    const rows = buildRows(observation, config, charName, variant === 'hud' ? timeOverride : undefined);
     if (rows.length === 0) return null;
 
     const customCss = config?.customCss?.trim();

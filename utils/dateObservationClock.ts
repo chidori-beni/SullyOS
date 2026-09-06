@@ -142,7 +142,7 @@ const makeWallClockTimestamp = (
 };
 
 const hasTemporalWords = (value: string): boolean => (
-    /时间|时刻|凌晨|清晨|早上|上午|中午|下午|傍晚|晚上|夜里|夜间|晚间|明天|次日|第二天|隔天|后|前|刚才|稍后|一会儿|过一会|around|about|am|pm/i.test(value)
+    /时间|时刻|凌晨|清晨|早上|上午|中午|下午|傍晚|晚上|深夜|半夜|午夜|夜里|夜间|晚间|明天|次日|第二天|隔天|后|前|刚才|稍后|一会儿|过一会|around|about|am|pm/i.test(value)
 );
 
 const parseRelativeObservationTime = (
@@ -211,7 +211,7 @@ const parseObservationTimeInternal = (
         text = text.slice(explicitNextDay[0].length).trim();
     }
 
-    const qualifierMatch = text.match(/^(凌晨|清晨|早上|上午|中午|下午|傍晚|晚上|夜里|夜间|晚间|黎明|dawn|morning|afternoon|evening|night)\s*/i);
+    const qualifierMatch = text.match(/^(凌晨|清晨|早上|上午|中午|下午|傍晚|晚上|深夜|半夜|午夜|夜里|夜间|晚间|黎明|dawn|morning|afternoon|evening|night|midnight)\s*/i);
     const qualifier = qualifierMatch?.[1]?.toLowerCase() || '';
     if (qualifierMatch) text = text.slice(qualifierMatch[0].length).trim();
 
@@ -238,11 +238,15 @@ const parseObservationTimeInternal = (
         if (amPm === 'PM' && hour < 12) hour += 12;
     } else if (qualifier) {
         if (hour > 23) return { parsed: null, reason: 'invalid' };
-        if (/凌晨|清晨|早上|上午|黎明|dawn|morning/i.test(qualifier)) {
+        if (/午夜|midnight/i.test(qualifier)) {
             if (hour > 12) return { parsed: null, reason: 'invalid' };
             if (hour === 12) hour = 0;
-        } else if (/中午|下午|傍晚|晚上|夜里|夜间|晚间|afternoon|evening|night/i.test(qualifier)) {
-            if (hour >= 1 && hour <= 11) hour += 12;
+        } else if (/凌晨|清晨|早上|上午|黎明|dawn|morning/i.test(qualifier)) {
+            if (hour > 12) return { parsed: null, reason: 'invalid' };
+            if (hour === 12) hour = 0;
+        } else if (/中午|下午|傍晚|晚上|深夜|半夜|夜里|夜间|晚间|afternoon|evening|night/i.test(qualifier)) {
+            if (/晚上|深夜|半夜|夜里|夜间|晚间|evening|night/i.test(qualifier) && hour === 12) hour = 0;
+            else if (hour >= 1 && hour <= 11) hour += 12;
         }
     } else {
         if (hour > 23) return { parsed: null, reason: 'invalid' };
@@ -403,7 +407,7 @@ export interface DateSceneSnapshot {
     sceneClockUpdatedAt?: number;
     sceneClockTimeZone?: string;
     observation: DateObservation | null;
-    source: 'runtime' | 'message' | 'saved' | 'observation' | 'timestamp';
+    source: 'runtime' | 'message' | 'saved' | 'timestamp';
     sceneClockSource?: string;
     sourceMessageId?: number;
 }
@@ -444,14 +448,20 @@ const finiteOrUndefined = (value: unknown): number | undefined => (
     typeof value === 'number' && Number.isFinite(value) ? value : undefined
 );
 
-const isEligibleSceneAssistant = (message: Message, encounterId?: string): boolean => {
+const isEligibleSceneAssistant = (
+    message: Message,
+    encounterId?: string,
+    allowUnscopedLegacy = true,
+): boolean => {
     if (message.role !== 'assistant' || isDatePhoneBridge(message)) return false;
     if (message.metadata?.isDateEnding === true) return false;
     if (message.metadata?.source && message.metadata.source !== 'date') return false;
     const messageEncounterId = typeof message.metadata?.dateEncounterId === 'string'
         ? message.metadata.dateEncounterId
         : undefined;
-    return !encounterId || !messageEncounterId || messageEncounterId === encounterId;
+    return !encounterId
+        || messageEncounterId === encounterId
+        || (allowUnscopedLegacy && !messageEncounterId);
 };
 
 const candidateFromSource = (
@@ -492,23 +502,34 @@ const newerSceneClockCandidate = (
 
 /**
  * 从当前见面消息和持久化 runtime 生成统一的显示快照。
- * 消息 metadata 有更高 revision 时优先于旧 runtime；没有 metadata 的旧消息
- * 则用最新 assistant 的 OBSERVE.time 做一次仅显示层的兼容回填。手动校时会
- * 通过 sceneClockSource=manual 阻止旧 OBSERVE 文本再次覆盖手动时间。
+ * 消息 metadata 只作为已经提交的 checkpoint；OBSERVE.time 只负责提供当前
+ * 观察原文，不能在渲染阶段再次推进剧情钟。旧数据的一次性迁移由 DateApp
+ * 在进入会话的事件边界处理，避免 useMemo / 重渲染重复产生状态变化。
  */
 export const buildDateSceneSnapshot = (
     input: BuildDateSceneSnapshotInput,
 ): DateSceneSnapshot | null => {
-    const latestAssistantMessage = [...input.messages].reverse().find(message => (
-        isEligibleSceneAssistant(message, input.encounterId)
+    const hasScopedEncounterMessage = !!input.encounterId && input.messages.some(message => (
+        message.metadata?.source === 'date'
+        && message.metadata?.dateEncounterId === input.encounterId
     ));
+    const isCurrentEncounterAssistant = (message: Message): boolean => (
+        isEligibleSceneAssistant(message, input.encounterId, !hasScopedEncounterMessage)
+    );
+    const latestAssistantMessage = [...input.messages].reverse().find(isCurrentEncounterAssistant);
     if (!latestAssistantMessage && !input.runtime && !input.savedState) return null;
 
+    // 最新回复可能是旧格式、没有 checkpoint；此时仍从同一 encounter 的较早
+    // assistant checkpoint 恢复，绝不退回用自然语言 observation 推算当前时刻。
+    const latestCheckpointMessage = [...input.messages].reverse().find(message => (
+        isCurrentEncounterAssistant(message)
+        && finiteOrUndefined(message.metadata?.sceneClockAt) !== undefined
+    ));
     const messageClock = candidateFromSource(
-        latestAssistantMessage?.metadata,
+        latestCheckpointMessage?.metadata,
         'message',
         20,
-        latestAssistantMessage?.id,
+        latestCheckpointMessage?.id,
     );
     let candidate = newerSceneClockCandidate(
         candidateFromSource(input.savedState, 'saved', 10),
@@ -537,30 +558,11 @@ export const buildDateSceneSnapshot = (
         )
         : null;
     const displayObservation = hasObservation(observation?.observation) ? observation.observation : null;
-    const hasManualClock = candidate.clockSource === 'manual'
-        || messageClock?.clockSource === 'manual';
-    let sceneClockAt = candidate.at;
-    let sceneClockAdvancedMs = candidate.advancedMs;
-    let sceneClockRevision = candidate.revision;
-    let sceneClockUpdatedAt = candidate.updatedAt;
-    let source = candidate.source;
-
-    if (latestAssistantMessage && displayObservation && !hasManualClock) {
-        const resolved = resolveDialogueSceneClock({
-            rawContent: latestAssistantMessage.content,
-            observation: displayObservation,
-            currentAt: candidate.at,
-            currentAdvancedMs: candidate.advancedMs,
-            timeZone: candidate.timeZone || input.timeZone,
-        });
-        if (resolved.advanced) {
-            sceneClockAt = resolved.sceneClockAt;
-            sceneClockAdvancedMs = resolved.sceneClockAdvancedMs;
-            sceneClockRevision = candidate.revision + 1;
-            sceneClockUpdatedAt = latestAssistantMessage.timestamp;
-            source = 'observation';
-        }
-    }
+    const sceneClockAt = candidate.at;
+    const sceneClockAdvancedMs = candidate.advancedMs;
+    const sceneClockRevision = candidate.revision;
+    const sceneClockUpdatedAt = candidate.updatedAt;
+    const source = candidate.source;
 
     return {
         sceneClockAt,
@@ -570,7 +572,7 @@ export const buildDateSceneSnapshot = (
         sceneClockTimeZone: candidate.timeZone || input.timeZone,
         observation: displayObservation,
         source,
-        sceneClockSource: source === 'observation' ? 'observation' : candidate.clockSource,
+        sceneClockSource: candidate.clockSource,
         sourceMessageId: latestAssistantMessage?.id ?? candidate.sourceMessageId,
     };
 };

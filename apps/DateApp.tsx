@@ -406,7 +406,7 @@ const DateApp: React.FC = () => {
         if (!char || getPendingDateBackgroundJobForEncounter(current.id)) return current;
         const snapshot = dateSceneSnapshot;
         if (!snapshot
-            || (snapshot.source !== 'observation' && snapshot.source !== 'message')
+            || (snapshot.source !== 'message' && snapshot.source !== 'saved')
             || !isFiniteNumber(snapshot.sceneClockAt)
             || snapshot.sceneClockAt <= current.sceneClockAt) return current;
         const next: DateEncounterRuntime = {
@@ -467,7 +467,9 @@ const DateApp: React.FC = () => {
         sceneClockAfter: after.sceneClockAt,
         sceneClockAdvancedDeltaMs: resolved.sceneClockAdvancedDeltaMs,
         sceneClockResolution: resolved.resolution,
-        ...(resolved.source ? { sceneClockSource: resolved.source } : {}),
+        // 只有真正被接受的推进才改变来源；同值、模糊或被拒绝的观测
+        // 不能把手动校时等当前权威来源改写成 observation。
+        ...(resolved.advanced && resolved.source ? { sceneClockSource: resolved.source } : {}),
         ...(resolved.requestedSceneClockAt !== undefined ? { requestedSceneClockAt: resolved.requestedSceneClockAt } : {}),
         ...(resolved.observedSceneClockText ? { observedSceneClockText: resolved.observedSceneClockText.slice(0, 240) } : {}),
         ...extra,
@@ -502,21 +504,71 @@ const DateApp: React.FC = () => {
             );
             setDateMessages(timeline);
 
-            // 旧版本已经把「观测时间」写进正文，但没有把它同步到剧情钟。
-            // 进入会话时做一次保守自愈，既修复已有的 19:30 / 19:38 分裂，
-            // 也让完全重启 PWA 后顶部时钟与最新阅读卡保持一致。普通刷新路径
-            // 不执行这里的提交，避免异步请求准备期间改变它的 revision。
+            // 进入会话时只同步已经提交的 message checkpoint；不要在每次加载时
+            // 重新把 OBSERVE.time 当成当前时钟，否则编辑/重渲染会重复触发状态迁移。
+            // 对完全没有旧 checkpoint 的 legacy encounter，保留一次受限的自然语言
+            // 迁移，迁移成功后立即把 checkpoint 写回消息。
             if (syncClockFromHistory) {
                 const current = activeEncounterRef.current;
                 const hasPendingBackgroundTurn = !!current && !!getPendingDateBackgroundJobForEncounter(current.id);
-                const latestAssistant = [...filtered].reverse().find(message => (
-                    message.role === 'assistant'
-                    && !isDatePhoneBridge(message)
-                    && message.metadata?.source === 'date'
-                    && message.metadata?.isDateEnding !== true
-                    && (!current?.id || !message.metadata?.dateEncounterId || message.metadata.dateEncounterId === current.id)
+                const hasScopedEncounterMessage = !!current?.id && filtered.some(message => (
+                    message.metadata?.source === 'date'
+                    && message.metadata?.dateEncounterId === current.id
                 ));
-                if (current && !hasPendingBackgroundTurn && latestAssistant) {
+                const isCurrentEncounterAssistant = (message: Message): boolean => {
+                    if (message.role !== 'assistant'
+                        || isDatePhoneBridge(message)
+                        || message.metadata?.source !== 'date'
+                        || message.metadata?.isDateEnding === true) return false;
+                    const messageEncounterId = typeof message.metadata?.dateEncounterId === 'string'
+                        ? message.metadata.dateEncounterId
+                        : undefined;
+                    return !current?.id
+                        || messageEncounterId === current.id
+                        || (!hasScopedEncounterMessage && !messageEncounterId);
+                };
+                const latestAssistant = [...filtered].reverse().find(message => (
+                    isCurrentEncounterAssistant(message)
+                ));
+                const latestCheckpoint = [...filtered].reverse().find(message => (
+                    isCurrentEncounterAssistant(message)
+                    && isFiniteNumber(message.metadata?.sceneClockAt)
+                ));
+
+                if (current && !hasPendingBackgroundTurn && latestCheckpoint
+                    && isFiniteNumber(latestCheckpoint.metadata?.sceneClockAt)
+                    && Number(latestCheckpoint.metadata?.sceneClockRevision) > current.sceneClockRevision) {
+                    const checkpoint = latestCheckpoint.metadata || {};
+                    const next: DateEncounterRuntime = {
+                        ...current,
+                        sceneClockAt: latestCheckpoint.metadata!.sceneClockAt,
+                        sceneClockAdvancedMs: Math.max(current.sceneClockAdvancedMs, isFiniteNumber(checkpoint.sceneClockAdvancedMs) ? checkpoint.sceneClockAdvancedMs : 0),
+                        sceneClockRevision: Math.floor(Number(checkpoint.sceneClockRevision)),
+                        sceneClockUpdatedAt: isFiniteNumber(checkpoint.sceneClockUpdatedAt)
+                            ? checkpoint.sceneClockUpdatedAt
+                            : current.sceneClockUpdatedAt,
+                        sceneClockTimeZone: typeof checkpoint.sceneClockTimeZone === 'string' && checkpoint.sceneClockTimeZone
+                            ? checkpoint.sceneClockTimeZone
+                            : current.sceneClockTimeZone,
+                        sceneClockSource: typeof checkpoint.sceneClockSource === 'string' && checkpoint.sceneClockSource
+                            ? checkpoint.sceneClockSource
+                            : current.sceneClockSource,
+                    };
+                    const committed = commitSceneClock(char.id, next, {
+                        encounterId: current.id,
+                        sceneClockRevision: current.sceneClockRevision,
+                    });
+                    if (committed) {
+                        markDateTurnDirty({ ...char, activeDateEncounter: getActiveDatePresence(char.id) || undefined });
+                    }
+                } else if (current
+                    && !hasPendingBackgroundTurn
+                    && !latestCheckpoint
+                    && current.sceneClockRevision <= 0
+                    && current.sceneClockSource !== 'manual'
+                    && latestAssistant) {
+                    // 只给完全没有 checkpoint 的旧会话做一次迁移；有任何已提交
+                    // revision 的会话都以 runtime/presence 为准，不再猜测正文时间。
                     const resolved = resolveDialogueClock(latestAssistant.content || '', current);
                     if (resolved.advanced) {
                         const next = makeNextClockRuntime(current, resolved.sceneClockAt, resolved.sceneClockAdvancedMs, resolved.source || 'observation');

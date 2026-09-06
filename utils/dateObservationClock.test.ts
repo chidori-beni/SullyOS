@@ -35,6 +35,7 @@ const observationReply = (time: string): string => [
 describe('date observation scene clock', () => {
     it.each([
         ['傍晚七点三十八分', '2026-09-05 19:38'],
+        ['深夜十一点二十分，床头微弱的暖黄光线下', '2026-09-05 23:20'],
         ['19时38分', '2026-09-05 19:38'],
         ['周六 19:38', '2026-09-05 19:38'],
         ['晚上八点左右', '2026-09-05 20:00'],
@@ -134,7 +135,7 @@ describe('date observation scene clock', () => {
         expect(clockText(tagged.sceneClockAt)).toBe('2026-09-05 19:38');
     });
 
-    it('当前快照从最新角色回复的观测时间回填旧 runtime', () => {
+    it('当前快照只读取已提交 checkpoint，不在渲染阶段用观测时间推进 runtime', () => {
         const snapshot = buildDateSceneSnapshot({
             messages: [
                 dateMessage(1, 'assistant', observationReply('傍晚七点三十八分'), {
@@ -163,9 +164,71 @@ describe('date observation scene clock', () => {
         });
 
         expect(snapshot).not.toBeNull();
-        expect(clockText(snapshot!.sceneClockAt!)).toBe('2026-09-05 19:38');
-        expect(snapshot!.source).toBe('observation');
+        expect(clockText(snapshot!.sceneClockAt!)).toBe('2026-09-05 19:30');
+        expect(snapshot!.source).toBe('runtime');
         expect(snapshot!.sourceMessageId).toBe(1);
+        expect(snapshot!.observation?.time).toBe('傍晚七点三十八分');
+    });
+
+    it('最新回复缺少 checkpoint 时，从同一 encounter 的较早 checkpoint 恢复，但不解析最新正文', () => {
+        const checkpointAt = base + 8 * 60_000;
+        const snapshot = buildDateSceneSnapshot({
+            messages: [
+                dateMessage(1, 'assistant', observationReply('傍晚七点三十八分'), {
+                    sceneClockAt: checkpointAt,
+                    sceneClockAdvancedMs: 8 * 60_000,
+                    sceneClockRevision: 5,
+                    sceneClockUpdatedAt: checkpointAt,
+                }),
+                dateMessage(2, 'assistant', observationReply('深夜十一点二十分'), {}),
+            ],
+            encounterId: 'enc-1',
+            runtime: {
+                encounterId: 'enc-1',
+                sceneClockAt: base,
+                sceneClockAdvancedMs: 0,
+                sceneClockRevision: 4,
+                sceneClockUpdatedAt: base,
+                sceneClockTimeZone: TIME_ZONE,
+            },
+            observeEnabled: true,
+            timeZone: TIME_ZONE,
+        });
+
+        expect(snapshot).not.toBeNull();
+        expect(snapshot!.sceneClockAt).toBe(checkpointAt);
+        expect(snapshot!.source).toBe('message');
+        expect(snapshot!.sourceMessageId).toBe(2);
+        expect(snapshot!.observation?.time).toBe('深夜十一点二十分');
+    });
+
+    it('当前 encounter 已有带 ID 的回复时，不采纳无 ID 的旧回复', () => {
+        const snapshot = buildDateSceneSnapshot({
+            messages: [
+                dateMessage(2, 'assistant', observationReply('傍晚七点三十八分'), {
+                    sceneClockAt: base,
+                    sceneClockRevision: 4,
+                    sceneClockUpdatedAt: base,
+                }),
+                {
+                    ...dateMessage(3, 'assistant', observationReply('深夜十一点二十分')),
+                    metadata: { source: 'date' },
+                },
+            ],
+            encounterId: 'enc-1',
+            runtime: {
+                encounterId: 'enc-1',
+                sceneClockAt: base,
+                sceneClockRevision: 4,
+                sceneClockUpdatedAt: base,
+                sceneClockTimeZone: TIME_ZONE,
+            },
+            observeEnabled: true,
+            timeZone: TIME_ZONE,
+        });
+
+        expect(snapshot).not.toBeNull();
+        expect(snapshot!.sourceMessageId).toBe(2);
         expect(snapshot!.observation?.time).toBe('傍晚七点三十八分');
     });
 

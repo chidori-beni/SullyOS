@@ -2287,7 +2287,7 @@ export interface DateState {
     sceneClockUpdatedAt?: number;
     /** 创建见面时冻结的角色墙钟时区。 */
     sceneClockTimeZone?: string;
-    /** 最近一次校时来源；manual 用于阻止旧观测文本覆盖手动时间。 */
+    /** 最近一次剧情时钟提交来源（如 manual / observation / interlude）。 */
     sceneClockSource?: string;
     dialogueQueue: DialogueItem[];
     dialogueBatch: DialogueItem[];
@@ -2331,7 +2331,7 @@ export interface DateEncounterPresence {
     sceneClockUpdatedAt?: number;
     /** 创建见面时冻结的角色墙钟时区。 */
     sceneClockTimeZone?: string;
-    /** 最近一次校时来源；manual 用于阻止旧观测文本覆盖手动时间。 */
+    /** 最近一次剧情时钟提交来源（如 manual / observation / interlude）。 */
     sceneClockSource?: string;
 }
 

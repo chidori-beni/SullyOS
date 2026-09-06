@@ -24,7 +24,7 @@ vi.mock('./amsgLlmCredentials', () => ({
   })),
 }));
 
-import { clearActiveDatePresence } from './datePresence';
+import { clearActiveDatePresence, setActiveDatePresence } from './datePresence';
 import { applyDateBackgroundResult } from './dateBackgroundJobs';
 import { DatePrompts } from './datePrompts';
 
@@ -181,5 +181,37 @@ describe('date background result bridge', () => {
         sceneClockResolution: 'observation-exact',
       }),
     }));
+  });
+
+  it('后台回复没有推进时，消息 checkpoint 保留当前的手动校时来源', async () => {
+    const manualChar = {
+      id: 'char-1',
+      name: '小满',
+      dateObserve: { enabled: true },
+      activeDateEncounter: {
+        encounterId: 'enc-1',
+        startedAt: 1_000,
+        status: 'active' as const,
+        sceneClockAt: 2_000,
+        sceneClockAdvancedMs: 0,
+        sceneClockRevision: 3,
+        sceneClockSource: 'manual',
+      },
+    };
+    dbMock.getCharacter.mockReset().mockResolvedValue(manualChar);
+    setActiveDatePresence('char-1', manualChar.activeDateEncounter);
+
+    await expect(applyDateBackgroundResult(result({
+      text: '⟦OBSERVE⟧\n时间｜深夜十一点二十分\n地点｜窗边\n状态｜安静\n⟦/OBSERVE⟧\n[normal] 继续听雨。',
+    }))).resolves.toBe(true);
+
+    expect(dbMock.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({
+        sceneClockAt: 2_000,
+        sceneClockRevision: 3,
+        sceneClockSource: 'manual',
+      }),
+    }));
+    clearActiveDatePresence('char-1');
   });
 });
