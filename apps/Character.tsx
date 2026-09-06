@@ -171,8 +171,23 @@ const Character: React.FC = () => {
    */
   const [pendingStCard, setPendingStCard] = useState<{ card: SillyTavernCard; avatar: string } | null>(null);
   const [stHostRelation, setStHostRelation] = useState<NonNullable<CharacterProfile['hostRelation']>>('partner');
+  /**
+   * 叙事层与「认不认识机主」**互相独立**，不能由前者推导后者：
+   * 「我女儿」认识机主、且和机主同处现实层；「真实层里还没搭过话的人」不认识机主但同样是 real；
+   * 反过来，机主创作的角色也可能在剧场里和机主打过照面。四种组合都成立。
+   * 这里只把 hostRelation 当作**默认值的来源**，用户随时可以单独改。
+   */
+  const [stNarrativeLayer, setStNarrativeLayer] = useState<NonNullable<CharacterProfile['narrativeLayer']>>('real');
+  /** 用户是否手动动过叙事层；动过之后就不再跟着 hostRelation 走。 */
+  const [stLayerTouched, setStLayerTouched] = useState(false);
   /** '' = 机主本人；否则是某个已存在角色的 id。 */
   const [stUserTargetId, setStUserTargetId] = useState('');
+
+  /** 改「认不认识机主」时顺带更新叙事层的默认值——但用户手动改过就不再覆盖。 */
+  const pickStHostRelation = (v: NonNullable<CharacterProfile['hostRelation']>) => {
+      setStHostRelation(v);
+      if (!stLayerTouched) setStNarrativeLayer(v === 'stranger' ? 'fiction' : 'real');
+  };
   const [newGroupName, setNewGroupName] = useState('');
   // 编辑页「新建分组并指派」的内联输入
   const [detailGroupDraft, setDetailGroupDraft] = useState<string | null>(null);
@@ -1227,6 +1242,8 @@ ${isInitialGeneration ? `
           // 必须等用户说清它指谁。SullyOS 自家的卡不走这条路，行为不变。
           const stage = (card: SillyTavernCard, avatar: string) => {
               setStHostRelation('partner');
+              setStNarrativeLayer('real');
+              setStLayerTouched(false);
               setStUserTargetId('');
               setPendingStCard({ card, avatar });
           };
@@ -1277,8 +1294,8 @@ ${isInitialGeneration ? `
       const target = characters.find(c => c.id === stUserTargetId);
       const identity: Pick<CharacterProfile, 'hostRelation' | 'narrativeLayer' | 'userMacroTarget'> = {
           hostRelation: stHostRelation,
-          // 不认识机主的角色即为「机主创作出来的角色」，ta 不知道自己被创作。
-          narrativeLayer: stHostRelation === 'stranger' ? 'fiction' : 'real',
+          // 由用户单独选定，**不从 hostRelation 推导**——两者正交，见 stNarrativeLayer 处的说明。
+          narrativeLayer: stNarrativeLayer,
           userMacroTarget: target
               ? { kind: 'character', id: target.id, name: target.name }
               : { kind: 'host' },
@@ -1548,6 +1565,89 @@ ${isInitialGeneration ? `
                                     className="w-full h-24 bg-white rounded-3xl p-5 text-sm shadow-sm resize-none focus:ring-1 focus:ring-primary/20 transition-all vr-reader-scroll"
                                     placeholder="在这个世界里，魔法是存在的..."
                                 />
+                            </div>
+
+                            {/* 身份归属：新建角色 / 导入后改主意 / 双向配队（先导的那个回头指向后导的）都靠这里。
+                                见 交接说明-双层角色世界.md §5 铁律 ①②③。三项缺省时行为与改造前完全一致。 */}
+                            <div className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 space-y-4">
+                                <div>
+                                    <label className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest block">身份归属</label>
+                                    <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                                        下面三项相互独立。从酒馆搬来的角色建议设一遍；不管它则与以前完全一样。
+                                    </p>
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <div className="text-[11px] font-bold text-slate-500">ta 和你（机主）是什么关系？</div>
+                                    {([
+                                        { v: 'partner', label: '我的陪伴角色', hint: '和你有已建立的关系，群聊里会记得你。默认' },
+                                        { v: 'friend', label: '朋友', hint: '认识你，但只是朋友，不会发展暧昧' },
+                                        { v: 'stranger', label: '不认识我', hint: '过自己日子的角色，ta 不知道你是谁' },
+                                    ] as const).map(o => (
+                                        <button
+                                            key={o.v}
+                                            onClick={() => handleChange('hostRelation', o.v)}
+                                            className={`w-full text-left px-4 py-2 rounded-2xl border transition-colors ${
+                                                (formData.hostRelation || 'partner') === o.v
+                                                    ? 'bg-primary/10 border-primary/40'
+                                                    : 'bg-slate-50 border-transparent'
+                                            }`}
+                                        >
+                                            <div className="text-xs font-bold text-slate-700">{o.label}</div>
+                                            <div className="text-[10px] text-slate-400 mt-0.5">{o.hint}</div>
+                                        </button>
+                                    ))}
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <div className="text-[11px] font-bold text-slate-500">ta 知道「有些角色是你写出来的」吗？</div>
+                                    {([
+                                        { v: 'real', label: '知道', hint: '和你同一层。陪伴角色、朋友、死对头、家人都属于这里' },
+                                        { v: 'fiction', label: '不知道', hint: '以为自己的世界都是真的。从酒馆搬来的角色属于这里' },
+                                    ] as const).map(o => (
+                                        <button
+                                            key={o.v}
+                                            onClick={() => handleChange('narrativeLayer', o.v)}
+                                            className={`w-full text-left px-4 py-2 rounded-2xl border transition-colors ${
+                                                (formData.narrativeLayer || 'real') === o.v
+                                                    ? 'bg-primary/10 border-primary/40'
+                                                    : 'bg-slate-50 border-transparent'
+                                            }`}
+                                        >
+                                            <div className="text-xs font-bold text-slate-700">{o.label}</div>
+                                            <div className="text-[10px] text-slate-400 mt-0.5">{o.hint}</div>
+                                        </button>
+                                    ))}
+                                    <div className="text-[10px] text-slate-400 leading-relaxed pt-0.5">
+                                        这一项和上面那项是<span className="font-bold text-slate-500">分开的</span>——
+                                        认识你的角色也可以不知道有「创作」这回事。
+                                    </div>
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <div className="text-[11px] font-bold text-slate-500">世界书里的 <code className="text-[10px]">{'{{user}}'}</code> 指谁？</div>
+                                    <select
+                                        value={formData.userMacroTarget?.kind === 'character' ? formData.userMacroTarget.id : ''}
+                                        onChange={e => {
+                                            const target = characters.find(c => c.id === e.target.value);
+                                            handleChange('userMacroTarget', target
+                                                ? { kind: 'character', id: target.id, name: target.name }
+                                                : { kind: 'host' });
+                                        }}
+                                        className="w-full px-4 py-2.5 bg-slate-50 rounded-2xl text-xs text-slate-700 outline-none focus:ring-1 focus:ring-primary/20"
+                                    >
+                                        <option value="">我本人（{userProfile?.name || '未命名'}）</option>
+                                        {characters.filter(c => c.id !== formData.id).map(c => (
+                                            <option key={c.id} value={c.id}>{c.name}</option>
+                                        ))}
+                                    </select>
+                                    <div className="text-[10px] text-slate-400 leading-relaxed pt-0.5">
+                                        <span className="font-bold text-slate-500">双向配队在这里补齐</span>：
+                                        先导入的角色当时选不到还不存在的搭档，导完另一个之后回这里改就行。
+                                        <br />注意：角色<span className="font-bold text-slate-500">设定正文</span>里的
+                                        <code className="text-[10px]">{'{{user}}'}</code> 在导入那一刻就已定稿，改这里只影响世界书。
+                                    </div>
+                                </div>
                             </div>
 
                             <CharacterLookWardrobe
@@ -2107,7 +2207,7 @@ ${isInitialGeneration ? `
                     ] as const).map(o => (
                         <button
                             key={o.v}
-                            onClick={() => setStHostRelation(o.v)}
+                            onClick={() => pickStHostRelation(o.v)}
                             className={`w-full text-left px-4 py-2.5 rounded-xl border transition-colors ${
                                 stHostRelation === o.v
                                     ? 'bg-primary/10 border-primary/40'
@@ -2118,6 +2218,31 @@ ${isInitialGeneration ? `
                             <div className="text-[11px] text-slate-400 mt-0.5">{o.hint}</div>
                         </button>
                     ))}
+                </div>
+
+                <div className="space-y-2">
+                    <div className="text-xs font-bold text-slate-500">ta 知道「有些角色是你写出来的」吗？</div>
+                    {([
+                        { v: 'real', label: '知道', hint: '和你处在同一层。你的陪伴角色、朋友、死对头、女儿都属于这里' },
+                        { v: 'fiction', label: '不知道', hint: '以为自己的世界都是真的。从酒馆搬来过日子的角色属于这里' },
+                    ] as const).map(o => (
+                        <button
+                            key={o.v}
+                            onClick={() => { setStNarrativeLayer(o.v); setStLayerTouched(true); }}
+                            className={`w-full text-left px-4 py-2.5 rounded-xl border transition-colors ${
+                                stNarrativeLayer === o.v
+                                    ? 'bg-primary/10 border-primary/40'
+                                    : 'bg-slate-50 border-transparent'
+                            }`}
+                        >
+                            <div className="text-sm font-bold text-slate-700">{o.label}</div>
+                            <div className="text-[11px] text-slate-400 mt-0.5">{o.hint}</div>
+                        </button>
+                    ))}
+                    <div className="text-[11px] text-slate-400 leading-relaxed">
+                        这一项和上面那项是<span className="font-bold text-slate-500">分开的</span>——
+                        认识你的角色也可以不知道有「创作」这回事，不认识你的角色也可以和你同处一层。
+                    </div>
                 </div>
 
                 <div className="space-y-2">
