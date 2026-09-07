@@ -115,6 +115,10 @@ const MODE_INFO: Record<WorldHomeMode, { name: string; short: string; desc: stri
     light: { name: '轻度 · 以你为主', short: '以你为主', desc: '只是观察角色生活的一个切面。世界里 ta 依旧以你为最重要的人——和聊天里完全一致。', badge: 'bg-sky-400/90 text-sky-950' },
     medium: { name: '中度 · 你是一份子', short: '你是一份子', desc: '你是这个世界的普通一员，存在但不特殊，角色不围着你转。', badge: 'bg-amber-400/90 text-amber-950' },
     heavy: { name: '重度 · 无你世界', short: '无你世界', desc: '你不存在（或只是透明的幽灵）。角色之间自行生活，演绎中完全无视你。', badge: 'bg-rose-400/90 text-rose-950' },
+    // 第四档不在上面那条「存在感递减」的线上，所以放最后：
+    // 原三档把「你在不在这个世界」和「你对 ta 有多重要」绑成了一条线，
+    // 于是「不住在这个世界、但 ta 挺在意你」（异地网友）这一格没有了。
+    distant: { name: '远方 · 网上认识的', short: '在远方', desc: '你不住在这个世界，但 ta 认识你——你们是网上认识的，从没见过面。ta 会想起你、给你发消息，但你不会出现在镇上。', badge: 'bg-violet-400/90 text-violet-950' },
 };
 
 const TIME_MODE_INFO: Record<WorldTimeMode, { name: string; short: string; desc: string; hint: string; badge: string }> = {

@@ -359,7 +359,8 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
                     stripImages: true,
                 });
                 const systemPrompt = payload.systemPrompt
-                    + buildWorldSystemAddendum(world, char, userProfile?.name || '')
+                    // lastEpisodes 是本轮开演前取的，[0] 即真正的上一集 → 「好久不见」的时间基准
+                    + buildWorldSystemAddendum(world, char, userProfile?.name || '', lastEpisodes[0]?.createdAt)
                     + await buildFullDayScheduleBlock(world, worldChar);
                 const directive = (world.directives || []).find(d => d.charId === char.id);
                 // sim 模式：喂回这名角色自己的单视角总结 + 本卷氛围（绝不喂全知 synopsis）

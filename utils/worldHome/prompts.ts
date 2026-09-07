@@ -9,7 +9,7 @@
  *     （buildChatRequestPayload 那条链路不变）。
  */
 
-import type { CharacterProfile, WorldProfile, WorldHouse, WorldCharBeat, WorldHomeMode, WorldNarrativeStyle } from '../../types';
+import type { CharacterProfile, WorldProfile, WorldHouse, WorldCharBeat, WorldHomeMode, WorldTimeMode, WorldNarrativeStyle } from '../../types';
 import { dmThreadsOf, groupThreadOf, formatThreadForPrompt } from './threads';
 import { nowInTimeZone, tzLabel } from '../timezone';
 
@@ -213,7 +213,7 @@ export function houseOf(world: WorldProfile, charId: string): WorldHouse | null 
     return world.houses.find(h => h.residentIds.includes(charId)) || null;
 }
 
-/** user 存在感的三档规则文本。 */
+/** user 存在感的四档规则文本。 */
 export function buildModeRule(mode: WorldHomeMode, userName: string): string {
     const u = userName || '用户';
     switch (mode) {
@@ -223,17 +223,79 @@ export function buildModeRule(mode: WorldHomeMode, userName: string): string {
             return `【模式：中度】${u} 是这个世界里的普通一员，和其他人没有什么不同。可以自然提及 ta，但 ta 不特殊，你的生活不围着 ta 转。此刻 ta 不在场，不要替 ta 行动或说话。`;
         case 'heavy':
             return `【模式：重度·重要】在这个世界里，${u} 不存在（或者说只是一个谁也看不见的幽灵）。演绎中绝对不要提及、暗示、想起或寻找 ta。你的生活完全由这个世界里的居民和事件构成。即使你的记忆里有 ta，在这个世界里那些记忆也如同上辈子的梦，不会浮现。`;
+        // 第四档：ta 不住在这个世界，但你们真的认识——网上认识的异地朋友。
+        // 关键在于把「不在场」和「不重要」拆开：ta 不会出现在镇上，但你可以惦记 ta。
+        case 'distant':
+            return `【模式：远方】${u} 不住在这个世界。ta 认识你，但你们从没见过面——你们是在网上认识的。你可以想起 ta、可以给 ta 发消息、可以在心里跟 ta 说话，也可以跟镇上的人提起「网上认识的一个朋友」；但 ta 不会出现在镇上，不要让 ta 登场，也不要编造你们见过面的经历。`;
     }
 }
 
-/** 注入到角色 systemPrompt 末尾的家园场景框定。 */
-export function buildWorldSystemAddendum(world: WorldProfile, char: CharacterProfile, userName: string): string {
+/**
+ * 小镇版「好久不见」（阶段 1.3）。
+ *
+ * **不复用 `utils/timezone.ts` 的 `interactionGapNote`**：那份的口径是
+ * 「你和**对方**上次联系」，预设对方就在聊天框对面；小镇里机主未必在场，
+ * `heavy` 档甚至**绝对不许提及 ta**（模式铁律，见上）。所以另写一份，按档位分支。
+ *
+ * 时间口径也不同：
+ * - `real` 模式剧情时间 ≈ 真实时间 → 空白期是**真的过去了那么久**，可以直说；
+ * - `sim`  模式剧情时间与现实无关 → **不能说「过去了 N 天」**（剧情里也许才过半天），
+ *   只能提「有一阵子没有 ta 的消息」，且仅在 ta 有存在感的档位。
+ *
+ * 门槛设为 1 天：小镇本来就是半天一跳，几小时的间隔不算「好久」，天天提反而廉价。
+ */
+export function buildWorldGapNote(
+    mode: WorldHomeMode,
+    timeMode: WorldTimeMode | undefined,
+    userName: string,
+    lastEpisodeAt?: number,
+    nowTs: number = Date.now(),
+): string {
+    if (!lastEpisodeAt) return '';
+    const diffMs = nowTs - lastEpisodeAt;
+    if (diffMs < 0) return '';
+    const days = Math.floor(diffMs / 86400000);
+    if (days < 1) return '';
+
+    const u = userName || '用户';
+    const isReal = (timeMode ?? 'real') === 'real';
+    // 只有「机主在这个世界里有分量」的两档才提到 ta：
+    // heavy 是铁律不许提；medium 明说「ta 不特殊」，硬提反而违背档位语义。
+    const mentionsUser = mode === 'light' || mode === 'distant';
+
+    if (!isReal) {
+        if (!mentionsUser) return '';
+        return `⌛ 你已经有一阵子没有 ${u} 的消息了——把这份惦记自然带进当下的状态，但不要因此让 ta 登场。\n`;
+    }
+
+    const span = `${days} 天`;
+    const blank = `⌛ 距离上一段生活过去了 ${span}，这段日子你照常过着。可以自然带入这段空白（攒下的事、变化、情绪），但不必刻意交代每一天。`;
+    if (!mentionsUser) return `${blank}\n`;
+    return `${blank}这期间你也有 ${span} 没有 ${u} 的消息了。\n`;
+}
+
+/**
+ * 注入到角色 systemPrompt 末尾的家园场景框定。
+ *
+ * `lastEpisodeAt` 给「好久不见」用（阶段 1.3），**只在演新一轮时传**：
+ * 重 roll（`rerollWorldCharBeat`）是把同一轮重演一遍，那一轮的空白期早已定稿，
+ * 而且此刻上一集就是刚写的、算出来接近 0，传了反而是错的。
+ */
+export function buildWorldSystemAddendum(
+    world: WorldProfile,
+    char: CharacterProfile,
+    userName: string,
+    lastEpisodeAt?: number,
+    nowTs?: number,
+): string {
+    const gapNote = buildWorldGapNote(world.mode, world.timeMode, userName, lastEpisodeAt, nowTs);
     return `
 
 ---
 [家园 · ${world.name}]
 接下来不是和 ${userName || '用户'} 的聊天，而是你在共同世界「${world.name}」里的一段真实生活演绎。
 ${buildModeRule(world.mode, userName)}
+${gapNote}
 铁律：你只扮演你自己（${char.name}）。同世界的其他角色各有自己的演绎轮，你看不到他们的内心，只能根据他们外在的言行做反应；不要替任何其他角色做决定或编造他们的内心戏。NPC 的言行可以引用（他们由世界引擎给出）。
 保持你在聊天中一贯的人设、记忆与行事风格——这是同一个你，只是生活在这个世界里。`;
 }

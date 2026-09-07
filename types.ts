@@ -1571,7 +1571,18 @@ export interface SignalBooklet {
  * - medium: 中度——user 是世界中普通的一份子，不特殊
  * - heavy: 重度——user 不存在 / 是透明的幽灵，演绎中完全无视（通常用于看角色之间的关系）
  */
-export type WorldHomeMode = 'light' | 'medium' | 'heavy';
+/**
+ * 机主在这个小镇里的**存在感**（与时间模式 WorldTimeMode 正交）。
+ *
+ * `distant` 是后补的第四档，起因是原三档把两件事绑在了一条线上——
+ * 「你在不在这个世界」和「你对 ta 有多重要」——于是
+ * **「你不住在这个世界，但 ta 挺在意你」这一格消失了**（异地网友）。
+ * 用户原话：「现实中网友还可以不是一个国家的呢……为啥非要把我当梦里的人。」
+ *
+ * 与 `hostRelation:'friend'` ＋ `narrativeLayer:'fiction'` 配套，凑齐完整的网友玩法。
+ * 见 `交接说明-双层角色世界.md` §6.2。
+ */
+export type WorldHomeMode = 'light' | 'medium' | 'heavy' | 'distant';
 
 /**
  * 时间模式（与存在感模式 WorldHomeMode 正交，创建时单独选）：

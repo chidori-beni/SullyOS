@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { extractJson, parseCharBeat, parseNpcScene, storyTimeLabel, buildModeRule, buildWorldCharTurn, buildNpcTurn, parseRolledNpcs, buildNpcRollPrompt, NARRATIVE_STYLES, narrationPersonGuide, realNowSeg, realObserveTarget, worldTimeLabel, formatRealClock, migrateWorldDaySegs, SEGMENTS_PER_DAY, worldNow, worldTzLabel, clampRealClockToNow, alignCharToWorldClock } from './prompts';
+import { extractJson, parseCharBeat, parseNpcScene, storyTimeLabel, buildModeRule, buildWorldGapNote, buildWorldCharTurn, buildNpcTurn, parseRolledNpcs, buildNpcRollPrompt, NARRATIVE_STYLES, narrationPersonGuide, realNowSeg, realObserveTarget, worldTimeLabel, formatRealClock, migrateWorldDaySegs, SEGMENTS_PER_DAY, worldNow, worldTzLabel, clampRealClockToNow, alignCharToWorldClock } from './prompts';
 import { applyRelationshipDeltas, collectSeeds, buildSummary, dropDuplicatePosts } from './engine';
 import { ensureThreads, applyBeatToThreads, applyNpcGroupLines, applyNpcDms, npcInboxes, dmThreadsOf, groupThreadOf, formatThreadForPrompt, dmThreadId, GROUP_THREAD_ID } from './threads';
 import { WorldScheduler } from './scheduler';
@@ -331,6 +331,76 @@ describe('buildModeRule（三档 user 存在感）', () => {
         const rule = buildModeRule('heavy', '阿月');
         expect(rule).toContain('不存在');
         expect(rule).toContain('绝对不要提及');
+    });
+
+    // ── 第四档「远方」：把「不在场」和「不重要」拆开（异地网友那一格） ──
+    it('远方：ta 不住在这个世界，但你们真的认识', () => {
+        const rule = buildModeRule('distant', '阿月');
+        expect(rule).toContain('不住在这个世界');
+        expect(rule).toContain('阿月');
+    });
+
+    it('远方 ≠ 重度：不许说 ta 不存在，反而要允许惦记', () => {
+        const rule = buildModeRule('distant', '阿月');
+        expect(rule).not.toContain('不存在');
+        expect(rule).toContain('可以想起');
+    });
+
+    it('远方 ≠ 轻度：ta 仍然不许在镇上登场，也不许编造见过面', () => {
+        const rule = buildModeRule('distant', '阿月');
+        expect(rule).toContain('不要让 ta 登场');
+        expect(rule).toContain('不要编造你们见过面');
+    });
+});
+
+describe('buildWorldGapNote —— 小镇版「好久不见」', () => {
+    const NOW = Date.UTC(2026, 8, 7, 12, 0, 0);
+    const daysAgo = (d: number) => NOW - d * 86400000;
+
+    it('没演过 / 不满一天 → 空串（小镇本就半天一跳，天天提会很廉价）', () => {
+        expect(buildWorldGapNote('light', 'real', '阿月', undefined, NOW)).toBe('');
+        expect(buildWorldGapNote('light', 'real', '阿月', daysAgo(0.4), NOW)).toBe('');
+    });
+
+    it('时间倒流（脏数据）不崩，返回空串', () => {
+        expect(buildWorldGapNote('light', 'real', '阿月', NOW + 86400000, NOW)).toBe('');
+    });
+
+    it('real + 轻度：既说时间空白，也说好久没 ta 的消息', () => {
+        const note = buildWorldGapNote('light', 'real', '阿月', daysAgo(3), NOW);
+        expect(note).toContain('3 天');
+        expect(note).toContain('阿月');
+    });
+
+    it('⛔ real + 重度：说时间空白，但一个字都不许提到 ta（模式铁律）', () => {
+        const note = buildWorldGapNote('heavy', 'real', '阿月', daysAgo(3), NOW);
+        expect(note).toContain('3 天');
+        expect(note).not.toContain('阿月');
+    });
+
+    it('real + 中度：只说时间空白——该档明说「ta 不特殊」，硬提反而违背语义', () => {
+        const note = buildWorldGapNote('medium', 'real', '阿月', daysAgo(3), NOW);
+        expect(note).toContain('3 天');
+        expect(note).not.toContain('阿月');
+    });
+
+    it('real + 远方：网友口径，会提到好久没消息', () => {
+        expect(buildWorldGapNote('distant', 'real', '阿月', daysAgo(5), NOW)).toContain('阿月');
+    });
+
+    it('⛔ sim 模式绝不说「过去了 N 天」——剧情时间与现实无关', () => {
+        const note = buildWorldGapNote('light', 'sim', '阿月', daysAgo(3), NOW);
+        expect(note).not.toContain('3 天');
+        expect(note).toContain('阿月');
+    });
+
+    it('sim + 重度/中度 → 空串（既不能说天数，也不能提 ta，那就没什么可说的）', () => {
+        expect(buildWorldGapNote('heavy', 'sim', '阿月', daysAgo(3), NOW)).toBe('');
+        expect(buildWorldGapNote('medium', 'sim', '阿月', daysAgo(3), NOW)).toBe('');
+    });
+
+    it('timeMode 缺省（旧世界无此字段）按 real 处理', () => {
+        expect(buildWorldGapNote('light', undefined, '阿月', daysAgo(2), NOW)).toContain('2 天');
     });
 });
 
