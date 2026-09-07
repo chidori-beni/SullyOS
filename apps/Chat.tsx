@@ -253,6 +253,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     const [settingsContextLimit, setSettingsContextLimit] = useState(500);
     const [settingsContextRangeMode, setSettingsContextRangeMode] = useState<ContextRangeMode>('manual');
     const [settingsHideSysLogs, setSettingsHideSysLogs] = useState(false);
+    const [settingsShowTokenUsage, setSettingsShowTokenUsage] = useState(true);
     const [settingsHtmlModeCustomPrompt, setSettingsHtmlModeCustomPrompt] = useState('');
     const contextSuiteAnyEnabled = memoryPalaceConfig.featureFlags?.recallRouter === true
         || memoryPalaceConfig.featureFlags?.interactionAdaptation === true
@@ -1210,6 +1211,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 setSettingsContextLimit(char.contextLimit || 500);
                 setSettingsContextRangeMode(resolveContextRangeMode(char));
                 setSettingsHideSysLogs(char.hideSystemLogs || false);
+                setSettingsShowTokenUsage(char.showTokenUsage !== false);
                 setSettingsHtmlModeCustomPrompt((char as any).htmlModeCustomPrompt || '');
                 clearUnread(char.id);
             }
@@ -1356,6 +1358,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         setSettingsContextLimit(char.contextLimit || 500);
         setSettingsContextRangeMode(resolveContextRangeMode(char));
         setSettingsHideSysLogs(char.hideSystemLogs || false);
+        setSettingsShowTokenUsage(char.showTokenUsage !== false);
         setSettingsHtmlModeCustomPrompt((char as any).htmlModeCustomPrompt || '');
     }, [modalType, char?.id]);
 
@@ -2721,6 +2724,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             contextFollowsMemoryPalaceHwm: nextFollowsOneShotWaterline,
             contextUserStartMessageId: nextUserStart,
             hideSystemLogs: settingsHideSysLogs,
+            showTokenUsage: settingsShowTokenUsage,
             htmlModeCustomPrompt: settingsHtmlModeCustomPrompt,
         } as any);
         setModalType('none');
@@ -3902,6 +3906,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 settingsContextLimit={settingsContextLimit} setSettingsContextLimit={setSettingsContextLimit}
                 settingsContextRangeMode={settingsContextRangeMode} setSettingsContextRangeMode={setSettingsContextRangeMode}
                 settingsHideSysLogs={settingsHideSysLogs} setSettingsHideSysLogs={setSettingsHideSysLogs}
+                settingsShowTokenUsage={settingsShowTokenUsage} setSettingsShowTokenUsage={setSettingsShowTokenUsage}
                 contextSuiteAnyEnabled={contextSuiteAnyEnabled}
                 contextSuiteAllEnabled={contextSuiteAllEnabled}
                 onToggleContextSuite={handleToggleContextSuite}
@@ -4045,6 +4050,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 memoryPalaceStatusText={memoryPalaceStatus}
                 lastTokenUsage={lastTokenUsage}
                 tokenBreakdown={tokenBreakdown}
+                showTokenUsage={char.showTokenUsage !== false}
                 onClose={onBack || closeApp}
                 onTriggerAI={handleManualTrigger}
                 onShowCharsPanel={() => setShowPanel('chars')}

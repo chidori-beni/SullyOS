@@ -28,6 +28,8 @@ interface ChatModalsProps {
     setSettingsContextRangeMode: (v: ContextRangeMode) => void;
     settingsHideSysLogs: boolean;
     setSettingsHideSysLogs: (v: boolean) => void;
+    settingsShowTokenUsage: boolean;
+    setSettingsShowTokenUsage: (v: boolean) => void;
     // Main API quick switch (global; independent from the schedule/emotion secondary API)
     apiConfig?: APIConfig;
     onApplyMainApiPreset?: (preset: ApiPreset) => void;
@@ -263,6 +265,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     settingsContextLimit, setSettingsContextLimit,
     settingsContextRangeMode, setSettingsContextRangeMode,
     settingsHideSysLogs, setSettingsHideSysLogs,
+    settingsShowTokenUsage, setSettingsShowTokenUsage,
     apiConfig, onApplyMainApiPreset,
     contextSuiteAnyEnabled, contextSuiteAllEnabled, onToggleContextSuite,
     preserveContext, setPreserveContext,
@@ -634,6 +637,22 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                          </div>
                          <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
                              开启后隐藏见面/小程序等自动产生的灰色提示（转账、戳一戳、发图提示除外）。
+                         </p>
+                     </div>
+
+                     <div className="pt-2 border-t border-slate-100">
+                         <div className="flex justify-between items-center cursor-pointer" onClick={() => setSettingsShowTokenUsage(!settingsShowTokenUsage)}>
+                             <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">显示 Token 用量</label>
+                             <div
+                                 role="switch"
+                                 aria-checked={settingsShowTokenUsage}
+                                 className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${settingsShowTokenUsage ? 'bg-primary' : 'bg-slate-200'}`}
+                             >
+                                 <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${settingsShowTokenUsage ? 'translate-x-4' : ''}`}></div>
+                             </div>
+                         </div>
+                         <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
+                             开启后在聊天顶栏显示最近一次本地生成的 Token 总数；关闭只隐藏显示，不影响回复和 API 用量统计。
                          </p>
                      </div>
 

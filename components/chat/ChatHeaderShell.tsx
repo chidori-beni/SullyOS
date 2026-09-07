@@ -39,6 +39,8 @@ interface ChatHeaderShellProps {
     onDeleteBuff?: (buffId: string) => void;
     /** 隐藏顶栏情绪 buff 栏（Appearance 里的「显示情绪栏」开关）。 */
     hideBuffs?: boolean;
+    /** 是否显示最近一次本地生成的 Token 用量；缺省保持旧版显示。 */
+    showTokenUsage?: boolean;
     headerStyle?: 'default' | 'minimal' | 'gradient' | 'wechat' | 'telegram' | 'discord' | 'pixel';
     avatarShape?: 'circle' | 'rounded' | 'square';
     headerAlign?: 'left' | 'center';
@@ -84,6 +86,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     extraAction,
     triggerIcon = 'lightning',
     hideBuffs = false,
+    showTokenUsage = true,
     headerStyle = 'default',
     avatarShape = 'circle',
     headerAlign = 'left',
@@ -326,9 +329,9 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
         );
     };
 
-    const floatingStatusNodes = (lastTokenUsage || isInstantSending || isEmotionEvaluating || isMemoryPalaceProcessing) ? (
+    const floatingStatusNodes = ((showTokenUsage && lastTokenUsage) || isInstantSending || isEmotionEvaluating || isMemoryPalaceProcessing) ? (
         <div className={`absolute ${extraAction ? 'right-20' : 'right-12'} top-1/2 -translate-y-1/2 flex items-center gap-1.5 pointer-events-none`}>
-            {lastTokenUsage && (
+            {showTokenUsage && lastTokenUsage && (
                 <div className={`sully-chat-token text-[9px] px-1.5 py-0.5 rounded-md font-mono border ${isDarkHeader ? 'bg-slate-800 text-slate-300 border-white/10' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/20' : 'bg-slate-100/95 text-slate-400 border-slate-200'}`}>
                     {lastTokenUsage}
                 </div>
@@ -370,7 +373,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                 <div className={`sully-chat-name font-bold ${primaryTextClass}`}>{activeCharacter.name}</div>
                 <div className="sully-chat-status flex items-center gap-2 flex-wrap">
                     {onlineStatusNode}
-                    {lastTokenUsage && (
+                    {showTokenUsage && lastTokenUsage && (
                         <div className={`sully-chat-token text-[9px] px-1.5 py-0.5 rounded-md font-mono border ${isDarkHeader ? 'bg-slate-800 text-slate-300 border-white/10' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/20' : 'bg-slate-100 text-slate-400 border-slate-200'}`} title={tokenBreakdown ? `prompt: ${tokenBreakdown.prompt} | completion: ${tokenBreakdown.completion} | msgs: ${tokenBreakdown.msgCount} | pass: ${tokenBreakdown.pass}` : ''}>
                             {lastTokenUsage}
                         </div>

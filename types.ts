@@ -3171,9 +3171,11 @@ export interface CharacterProfile {
    * 不能突破最大范围向更早读取；一旦被移动中的最大范围越过便自动失效。
    */
   contextUserStartMessageId?: number;
-  hideSystemLogs?: boolean; 
+  hideSystemLogs?: boolean;
+  /** 是否在当前聊天顶栏显示最近一次本地生成的 Token 用量；缺省保持旧版显示。 */
+  showTokenUsage?: boolean;
   /** 旧版归档内部隐藏线；新版 AI 原文范围不再拿它当用户断点。 */
-  hideBeforeMessageId?: number; 
+  hideBeforeMessageId?: number;
   
   dateBackground?: string;
   sprites?: Record<string, string>;
