@@ -14,7 +14,9 @@ import { resolveCharTimeZone } from '../utils/timezone';
 
 type CalendarTab = 'month' | 'mine' | 'theirs' | 'review';
 type ComposerMode = 'event' | 'task';
+type CalendarActionTarget = { kind: 'task' | 'event'; id: string };
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
+const LONG_PRESS_MS = 550;
 const INPUT = 'w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none focus:border-violet-300 focus:bg-white';
 const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const parseDateKey = (value: string) => {
@@ -54,6 +56,10 @@ const ScheduleApp: React.FC = () => {
     const [taskVoicePending, setTaskVoicePending] = useState<Set<string>>(new Set());
     const [taskVoiceFailed, setTaskVoiceFailed] = useState<Set<string>>(new Set());
     const taskVoiceEventRef = useRef<Map<string, string>>(new Map());
+    const [actionMenuTarget, setActionMenuTarget] = useState<CalendarActionTarget | null>(null);
+    const longPressTimerRef = useRef<number | null>(null);
+    const longPressPointRef = useRef<{ x: number; y: number } | null>(null);
+    const longPressTriggeredRef = useRef(false);
 
     const [taskTitle, setTaskTitle] = useState('');
     const [taskNote, setTaskNote] = useState('');
@@ -75,6 +81,40 @@ const ScheduleApp: React.FC = () => {
     const [eventRepeatDays, setEventRepeatDays] = useState<number[]>([1, 2, 3, 4, 5]);
     const [eventRepeatUntil, setEventRepeatUntil] = useState('');
     const selectedChar = characters.find(char => char.id === selectedCharId);
+
+    const clearLongPressTimer = () => {
+        if (longPressTimerRef.current !== null) {
+            window.clearTimeout(longPressTimerRef.current);
+            longPressTimerRef.current = null;
+        }
+    };
+    const cancelLongPress = () => {
+        clearLongPressTimer();
+        longPressPointRef.current = null;
+    };
+    const beginLongPress = (target: CalendarActionTarget, event: React.PointerEvent<HTMLElement>) => {
+        if (event.pointerType === 'mouse' && event.button !== 0) return;
+        clearLongPressTimer();
+        longPressTriggeredRef.current = false;
+        longPressPointRef.current = { x: event.clientX, y: event.clientY };
+        longPressTimerRef.current = window.setTimeout(() => {
+            longPressTriggeredRef.current = true;
+            longPressPointRef.current = null;
+            setActionMenuTarget(target);
+        }, LONG_PRESS_MS);
+    };
+    const handleLongPressMove = (event: React.PointerEvent<HTMLElement>) => {
+        const point = longPressPointRef.current;
+        if (!point) return;
+        if (Math.hypot(event.clientX - point.x, event.clientY - point.y) > 10) cancelLongPress();
+    };
+    const suppressClickAfterLongPress = (event: React.MouseEvent<HTMLElement>) => {
+        if (!longPressTriggeredRef.current) return;
+        longPressTriggeredRef.current = false;
+        event.preventDefault();
+        event.stopPropagation();
+    };
+    useEffect(() => () => clearLongPressTimer(), []);
 
     const loadUserData = useCallback(async () => {
         const [storedTasks, storedEvents] = await Promise.all([DB.getAllTasks(), DB.getAllAnniversaries()]);
@@ -477,6 +517,35 @@ const ScheduleApp: React.FC = () => {
     const deleteEvent = async (id: string) => {
         await DB.deleteAnniversary(id); setEvents(current => current.filter(event => event.id !== id)); notifyCalendarDataUpdated();
     };
+    const closeActionMenu = () => setActionMenuTarget(null);
+    const editActionMenuTarget = () => {
+        const target = actionMenuTarget;
+        setActionMenuTarget(null);
+        if (!target) return;
+        if (target.kind === 'task') {
+            const task = tasks.find(item => item.id === target.id);
+            if (task) openTaskComposer(selectedDate, task);
+            return;
+        }
+        const event = events.find(item => item.id === target.id);
+        if (event) openEventComposer(event.date, event);
+    };
+    const deleteActionMenuTarget = async () => {
+        const target = actionMenuTarget;
+        setActionMenuTarget(null);
+        if (!target) return;
+        if (target.kind === 'task') {
+            await deleteTask(target.id);
+            return;
+        }
+        await deleteEvent(target.id);
+    };
+    const actionMenuTask = actionMenuTarget?.kind === 'task'
+        ? tasks.find(item => item.id === actionMenuTarget.id)
+        : undefined;
+    const actionMenuEvent = actionMenuTarget?.kind === 'event'
+        ? events.find(item => item.id === actionMenuTarget.id)
+        : undefined;
     const toggleCharTodo = async (index: number) => {
         if (!charTodo) return;
         const updated = { ...charTodo, items: charTodo.items.map((item, itemIndex) => itemIndex === index ? { ...item, done: !item.done } : item) };
@@ -502,7 +571,16 @@ const ScheduleApp: React.FC = () => {
             && !voicePending
             && task.naturalReminder !== false
             && Boolean(apiConfig.apiKey && apiConfig.baseUrl);
-        return <div key={task.id} className={`group relative flex items-start gap-3 rounded-[1.45rem] border p-4 shadow-sm transition ${task.isCompleted ? 'border-white/70 bg-white/65' : 'border-violet-100 bg-white/90'}`}>
+        return <div
+            key={task.id}
+            onPointerDown={event => beginLongPress({ kind: 'task', id: task.id }, event)}
+            onPointerMove={handleLongPressMove}
+            onPointerUp={cancelLongPress}
+            onPointerCancel={cancelLongPress}
+            onPointerLeave={cancelLongPress}
+            onContextMenu={event => event.preventDefault()}
+            onClickCapture={suppressClickAfterLongPress}
+            className={`group relative flex select-none items-start gap-3 rounded-[1.45rem] border p-4 shadow-sm transition ${task.isCompleted ? 'border-white/70 bg-white/65' : 'border-violet-100 bg-white/90'}`}>
             <button onClick={() => toggleTask(task)} className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 transition ${task.isCompleted ? 'border-emerald-400 bg-emerald-400 text-white' : 'border-violet-300 bg-white'}`} aria-label={task.isCompleted ? '恢复待办' : '完成待办'}>{task.isCompleted ? '✓' : ''}</button>
             <div className="min-w-0 flex-1">
                 {showTimelineOwner && <div className="mb-2 flex items-center gap-2 text-[10px] font-bold"><span className="rounded-full bg-sky-50 px-2 py-0.5 text-sky-500">你</span><span className="text-slate-400">待办</span></div>}
@@ -512,7 +590,7 @@ const ScheduleApp: React.FC = () => {
                 {voiceCanRetry && <div className="mt-2 flex items-center gap-2 text-[10px] text-slate-400"><span>{taskVoiceFailed.has(task.id) ? 'TA这次还没接上话' : '完成记录已保存，可以让TA留一句话'}</span><button onClick={() => retryCompletedTaskSpeech(task)} className="rounded-full bg-violet-50 px-2.5 py-1 font-bold text-violet-500">{taskVoiceFailed.has(task.id) ? '再问一次' : '让TA说一句'}</button></div>}
                 {task.note && <div className="mt-2 text-xs leading-relaxed text-slate-400">{task.note}</div>}
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-400"><span className="rounded-full bg-sky-50 px-2 py-0.5 text-sky-500">{dateLabel}{showDueTime ? ` · 截止 ${task.dueTime}` : ''}</span>{supervisor && <span className="inline-flex items-center gap-1"><img src={supervisor.avatar || '/sully/head.png'} className="h-4 w-4 rounded-full object-cover" alt="" />{supervisor.name} 共享</span>}<span className={`rounded-full px-2 py-0.5 ${supervisor && task.naturalReminder !== false ? 'bg-violet-50 text-violet-500' : 'bg-slate-100 text-slate-400'}`}>{supervisor && task.naturalReminder !== false ? '聊天中可自然提起' : '仅共享记录'}</span></div>
-            </div><div className="flex shrink-0 items-start gap-1"><button aria-label={`编辑待办：${task.title}`} onClick={() => openTaskComposer(selectedDate, task)} className="rounded-full px-2 py-1 text-[10px] font-bold text-violet-400 transition hover:bg-violet-50">编辑</button><button aria-label={`删除待办：${task.title}`} onClick={() => deleteTask(task.id)} className="px-1 text-slate-300 transition hover:text-rose-400">×</button></div>
+            </div>
         </div>;
     };
 
@@ -520,7 +598,15 @@ const ScheduleApp: React.FC = () => {
         if (item.kind === 'task') return renderTask(item.task, true);
         if (item.kind === 'event') {
             const event = item.event;
-            return <div className="group rounded-2xl border border-rose-100 bg-white/85 p-3 shadow-sm">
+            return <div
+                onPointerDown={event => beginLongPress({ kind: 'event', id: event.id }, event)}
+                onPointerMove={handleLongPressMove}
+                onPointerUp={cancelLongPress}
+                onPointerCancel={cancelLongPress}
+                onPointerLeave={cancelLongPress}
+                onContextMenu={event => event.preventDefault()}
+                onClickCapture={suppressClickAfterLongPress}
+                className="group select-none rounded-2xl border border-rose-100 bg-white/85 p-3 shadow-sm">
                 <div className="flex gap-3">
                     <span className="mt-1 h-8 w-1 shrink-0 rounded-full bg-rose-300" />
                     <div className="min-w-0 flex-1">
@@ -528,7 +614,6 @@ const ScheduleApp: React.FC = () => {
                         <div className="mt-1 text-[11px] text-slate-400">{item.startTime ? (item.endTime ? `至 ${item.endTime}` : '单点') : '全天'}{event.location ? ` · ${event.location}` : ''}</div>
                         {event.note && <p className="mt-2 text-xs leading-relaxed text-slate-500">{event.note}</p>}
                     </div>
-                    <div className="flex shrink-0 items-start gap-1"><button aria-label={`编辑日程：${event.title}`} onClick={() => openEventComposer(event.date, event)} className="rounded-full px-2 py-1 text-[10px] font-bold text-rose-400 transition hover:bg-rose-50">编辑</button><button aria-label={`删除日程：${event.title}`} onClick={() => deleteEvent(event.id)} className="text-slate-300 opacity-0 transition hover:text-rose-400 group-hover:opacity-100">×</button></div>
                 </div>
             </div>;
         }
@@ -572,7 +657,7 @@ const ScheduleApp: React.FC = () => {
                     <div className="mt-4 flex justify-center gap-4 text-[10px] text-slate-400"><span className="text-sky-400">● 待办</span><span className="text-rose-400">● 日程 / 纪念日</span></div>
                 </section>
                 <section className="space-y-3">
-                    <div className="px-1"><h2 className="font-bold">{selectedDate === today ? '今天' : selectedDate}</h2><p className="text-[11px] text-slate-400">你与 {selectedChar?.name || '角色'} 的安排都按你的本地时间排列；角色原始时间可在“TA 的”查看</p></div>
+                    <div className="px-1"><h2 className="font-bold">{selectedDate === today ? '今天' : selectedDate}</h2><p className="text-[11px] text-slate-400">你与 {selectedChar?.name || '角色'} 的安排都按你的本地时间排列；角色原始时间可在“TA 的”查看。长按卡片可编辑或删除。</p></div>
                     <div className="flex flex-wrap items-center gap-3 px-1 text-[10px] font-bold"><span className="text-sky-500">● 你</span><span className="text-violet-500">● {selectedChar?.name || '角色'}</span><span className="font-normal text-slate-400">左侧时间为你的设备时间（角色日程已换算）</span></div>
                     {selectedDayTimeline.length > 0 ? <div className="relative space-y-3 overflow-hidden rounded-3xl border border-white/80 bg-white/35 p-2 sm:p-3">
                         {selectedDayTimeline.map(item => <div key={item.id} className="relative grid grid-cols-[2.75rem_0.9rem_minmax(0,1fr)] items-stretch gap-1 sm:grid-cols-[3rem_1rem_minmax(0,1fr)] sm:gap-1.5">
@@ -593,7 +678,7 @@ const ScheduleApp: React.FC = () => {
                 </section>
 
                 <section className="space-y-4">
-                    <div className="flex items-center justify-between"><div><h2 className="text-base font-bold">日程</h2><p className="mt-1 text-[11px] text-slate-400">像 TA 一样按天看一条时间线；点日期也能回看过去。</p></div><button onClick={() => openEventComposer(selectedDate)} className="text-xs font-bold text-rose-500">＋添加</button></div>
+                    <div className="flex items-center justify-between"><div><h2 className="text-base font-bold">日程</h2><p className="mt-1 text-[11px] text-slate-400">像 TA 一样按天看一条时间线；点日期也能回看过去。长按卡片可编辑或删除。</p></div><button onClick={() => openEventComposer(selectedDate)} className="text-xs font-bold text-rose-500">＋添加</button></div>
                     <div className="flex items-center justify-between rounded-2xl border border-white/80 bg-white/60 px-2 py-2 shadow-sm">
                         <button aria-label="前一天" onClick={() => shiftSelectedDate(-1)} className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-lg text-slate-400">‹</button>
                         <label className="flex min-w-0 flex-1 items-center justify-center gap-2 text-xs font-bold text-slate-600"><span>{formatTimelineDate(selectedDate, today)}</span><input aria-label="选择日程日期" type="date" value={selectedDate} onChange={event => selectCalendarDate(event.target.value)} className="max-w-[8.5rem] rounded-xl bg-slate-100 px-2 py-1.5 text-[11px] font-medium text-slate-500" /></label>
@@ -602,17 +687,25 @@ const ScheduleApp: React.FC = () => {
                     {personalScheduleGroups.length > 0 ? personalScheduleGroups.map(group => <div key={group.date} className="relative pl-3">
                         <div className="mb-2 flex items-center gap-2 text-xs font-bold text-rose-500"><span className="h-2 w-2 rounded-full bg-rose-400 shadow-sm" />{formatTimelineDate(group.date, today)}</div>
                         <div className="relative ml-1 space-y-3 border-l-2 border-rose-200 pl-5">
-                            {group.items.map(event => <div key={event.id} className="group relative rounded-2xl border border-rose-100 bg-white/85 p-3 shadow-sm">
+                            {group.items.map(event => <div
+                                key={event.id}
+                                onPointerDown={pointerEvent => beginLongPress({ kind: 'event', id: event.id }, pointerEvent)}
+                                onPointerMove={handleLongPressMove}
+                                onPointerUp={cancelLongPress}
+                                onPointerCancel={cancelLongPress}
+                                onPointerLeave={cancelLongPress}
+                                onContextMenu={pointerEvent => pointerEvent.preventDefault()}
+                                onClickCapture={suppressClickAfterLongPress}
+                                className="group relative select-none rounded-2xl border border-rose-100 bg-white/85 p-3 shadow-sm">
                                 <span className="absolute -left-[1.6rem] top-5 h-3 w-3 rounded-full border-2 border-white bg-rose-400" />
-                                 <button onClick={() => { selectCalendarDate(group.date); setTab('month'); }} className="block w-full pr-16 text-left"><div className="flex flex-wrap items-center gap-2"><b className="text-sm">{event.title}</b><span className="rounded-full bg-rose-50 px-2 py-0.5 text-[9px] text-rose-500">{event.kind === 'event' ? '日程' : '纪念日'}</span>{event.repeat && <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[9px] text-sky-500">每周重复</span>}</div><div className="mt-1 text-[11px] text-slate-400">{event.startTime || '全天'}{event.endTime ? `–${event.endTime}` : ''}{event.location ? ` · ${event.location}` : ''}</div>{event.note && <p className="mt-2 text-xs leading-relaxed text-slate-500">{event.note}</p>}</button>
-                                <div className="absolute right-2 top-2 flex items-center gap-1"><button aria-label={`编辑日程：${event.title}`} onClick={() => openEventComposer(event.date, event)} className="rounded-full px-2 py-1 text-[10px] font-bold text-rose-400 transition hover:bg-rose-50">编辑</button><button aria-label={`删除日程：${event.title}`} onClick={() => deleteEvent(event.id)} className="px-1 text-slate-300 transition hover:text-rose-400">×</button></div>
+                                 <button onClick={() => { selectCalendarDate(group.date); setTab('month'); }} className="block w-full text-left"><div className="flex flex-wrap items-center gap-2"><b className="text-sm">{event.title}</b><span className="rounded-full bg-rose-50 px-2 py-0.5 text-[9px] text-rose-500">{event.kind === 'event' ? '日程' : '纪念日'}</span>{event.repeat && <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[9px] text-sky-500">每周重复</span>}</div><div className="mt-1 text-[11px] text-slate-400">{event.startTime || '全天'}{event.endTime ? `–${event.endTime}` : ''}{event.location ? ` · ${event.location}` : ''}</div>{event.note && <p className="mt-2 text-xs leading-relaxed text-slate-500">{event.note}</p>}</button>
                             </div>)}
                         </div>
                     </div>) : <div className="rounded-3xl border-2 border-dashed border-white bg-white/35 py-8 text-center text-xs text-slate-400">还没有日程，先给未来留一点位置。</div>}
                 </section>
 
                 <section className="space-y-4">
-                    <div className="flex items-center justify-between"><div><h2 className="text-base font-bold">待办</h2><p className="mt-1 text-[11px] text-slate-400">只显示这一天生效的待办；回看过去日期仍保留完成记录。</p></div><button onClick={() => openTaskComposer(selectedDate)} className="text-xs font-bold text-violet-500">＋添加</button></div>
+                    <div className="flex items-center justify-between"><div><h2 className="text-base font-bold">待办</h2><p className="mt-1 text-[11px] text-slate-400">只显示这一天生效的待办；回看过去日期仍保留完成记录。长按卡片可编辑或删除。</p></div><button onClick={() => openTaskComposer(selectedDate)} className="text-xs font-bold text-violet-500">＋添加</button></div>
                     {personalTaskGroups.length > 0 ? personalTaskGroups.map(group => <div key={group.date} className="space-y-2"><div className="px-1 text-xs font-bold text-sky-500">生效 · {formatTimelineDate(group.date, today)}</div>{group.items.map(task => renderTask(task))}</div>) : <div className="rounded-3xl border-2 border-dashed border-white bg-white/35 py-8 text-center text-xs text-slate-400">还没有待办，给自己安排一件小事吧。</div>}
                 </section>
             </div>}
@@ -674,6 +767,17 @@ const ScheduleApp: React.FC = () => {
                     <label className="block text-[10px] font-bold tracking-widest text-slate-400">关联角色（共享并允许提醒）</label><div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">{characters.map(char => <button type="button" key={char.id} onClick={() => setTaskSupervisor(char.id)} className={`shrink-0 rounded-full px-3 py-2 text-xs font-bold ${taskSupervisor === char.id ? 'bg-violet-500 text-white' : 'bg-slate-100 text-slate-500'}`}>{char.name}</button>)}</div>
                     <label className="flex items-center justify-between rounded-2xl bg-violet-50 p-3 text-xs text-slate-600"><span><b className="block">允许 TA 在聊天中自然提起</b><span className="text-[10px] text-slate-400">只给上面选中的角色提醒权限；关闭后仍会共享这条记录</span></span><input type="checkbox" checked={taskReminder} onChange={event => setTaskReminder(event.target.checked)} className="h-5 w-5 accent-violet-500" /></label>
                 </div>}
+            </div>
+        </Modal>
+        <Modal
+            isOpen={Boolean(actionMenuTarget)}
+            title={actionMenuTask ? '待办操作' : actionMenuEvent ? '日程操作' : '选择操作'}
+            onClose={closeActionMenu}
+        >
+            <div className="space-y-3">
+                <p className="break-words text-center text-sm font-semibold text-slate-600">{actionMenuTask?.title || actionMenuEvent?.title || '这条记录'}</p>
+                <button type="button" disabled={!actionMenuTask && !actionMenuEvent} onClick={editActionMenuTarget} className="w-full rounded-2xl bg-violet-50 py-3 text-sm font-bold text-violet-500 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-40">编辑</button>
+                <button type="button" disabled={!actionMenuTask && !actionMenuEvent} onClick={() => { void deleteActionMenuTarget(); }} className="w-full rounded-2xl bg-rose-50 py-3 text-sm font-bold text-rose-500 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-40">删除</button>
             </div>
         </Modal>
     </div>;
