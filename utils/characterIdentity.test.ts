@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    buildChatPartnerNote,
     buildGroupHostAwarenessLine,
     buildIdentityNote,
     expandCharBodyMacros,
@@ -238,5 +239,65 @@ describe('expandCharBodyMacros —— 正文里残留的宏', () => {
         expect(expandCharBodyMacros(undefined, c, host, [])).toBe('');
         expect(expandCharBodyMacros(null, c, host, [])).toBe('');
         expect(expandCharBodyMacros('', c, host, [])).toBe('');
+    });
+});
+
+
+describe('buildChatPartnerNote —— 私聊里「对面这位是谁」', () => {
+    const toPartner = { kind: 'character', id: 'u1', name: '凌葵羽' } as const;
+
+    it('缺省角色输出空串，旧角色零变化', () => {
+        expect(buildChatPartnerNote({}, '颜千夜', '颜千夜')).toBe('');
+        expect(buildChatPartnerNote({ hostRelation: 'partner' }, '颜千夜', '颜千夜')).toBe('');
+        expect(buildChatPartnerNote(undefined, '颜千夜', '颜千夜')).toBe('');
+    });
+
+    it('⭐ 用户实测那个坑：stranger + {{user}} 指向别人 → 必须点破两人不是同一个', () => {
+        const note = buildChatPartnerNote(
+            { hostRelation: 'stranger', userMacroTarget: toPartner },
+            '颜千夜', '凌葵羽',
+        );
+        expect(note).toContain('对面是这台手机的机主「颜千夜」');
+        expect(note).toContain('你不认识 ta');
+        expect(note).toContain('「凌葵羽」是**另一个人**，不是对面这位');
+    });
+
+    it('friend 说到朋友为止，同样会点破身份', () => {
+        const note = buildChatPartnerNote(
+            { hostRelation: 'friend', userMacroTarget: toPartner },
+            '颜千夜', '凌葵羽',
+        );
+        expect(note).toContain('你和 ta 是朋友，关系止于朋友');
+        expect(note).toContain('「凌葵羽」是**另一个人**');
+    });
+
+    it('{{user}} 指向机主本人时不做区分（本来就是同一个人）', () => {
+        expect(buildChatPartnerNote(
+            { hostRelation: 'stranger', userMacroTarget: { kind: 'host' } },
+            '颜千夜', '颜千夜',
+        )).not.toContain('另一个人');
+    });
+
+    it('同名时也不硬造区分——两个名字一样就没什么可分的', () => {
+        expect(buildChatPartnerNote(
+            { hostRelation: 'stranger', userMacroTarget: { kind: 'character', id: 'u1', name: '颜千夜' } },
+            '颜千夜', '颜千夜',
+        )).not.toContain('另一个人');
+    });
+
+    it('⛔ 铁律①：只说是谁/不是谁，一个关系词都不许出现', () => {
+        const note = buildChatPartnerNote(
+            { hostRelation: 'stranger', userMacroTarget: toPartner },
+            '颜千夜', '凌葵羽',
+        );
+        for (const word of ['恋人', '喜欢', '爱', '伴侣', '在乎', '重要的人', '前任', '暧昧']) {
+            expect(note).not.toContain(word);
+        }
+    });
+
+    it('机主没名字时也不崩，只是说得笼统些', () => {
+        const note = buildChatPartnerNote({ hostRelation: 'stranger' }, '', '');
+        expect(note).toContain('对面是这台手机的机主。');
+        expect(note).toContain('你不认识 ta');
     });
 });

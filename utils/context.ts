@@ -13,7 +13,7 @@ import {
     type ResolvedWorldbookEntry,
     type WorldbookScanMessage,
 } from './worldbook';
-import { resolveUserMacroName, expandCharBodyMacros } from './characterIdentity';
+import { resolveUserMacroName, expandCharBodyMacros, buildChatPartnerNote } from './characterIdentity';
 
 /**
  * Memory Central
@@ -186,6 +186,25 @@ export const ContextBuilder = {
         context += `- 用户备注/爱称 (User Note/Nickname): ${bodyMacro(char.description) || '无'}\n`;
         context += `  (注意: 这个备注是用户对你的称呼或印象，可能包含比喻。如果备注内容（如“快乐小狗”）与你的核心设定冲突，请以核心设定为准，不要真的扮演成动物，除非核心设定里写了你是动物。)\n`;
         context += `- 核心性格/指令:\n${bodyMacro(char.systemPrompt) || '你是一个温柔、拟人化的AI伴侣。'}\n\n`;
+
+        // 1'. 正在和你说话的是谁（私聊 / 见面 / 通话共用）
+        //
+        // 必要性：卡片正文里的「{{user}}」是 ta 在酒馆配队的搭档，而聊天框对面坐的是机主。
+        // 两者同时出现在提示词里却没有一句话把它们分开时，模型必然合并成一个人——
+        // 用户 2026-09-07 实测：「游霄」设了 {{user}}=凌葵羽 + 不认识机主，私聊里
+        // 他照样把机主当前任。这一段就是那句缺失的话。
+        //
+        // 群聊不走这里：它在 GroupChat.tsx 有自己的「先认清 U」（buildGroupHostAwarenessLine），
+        // 两边都注入会重复且措辞打架。
+        // 缺省角色（partner 且没指过 userMacroTarget）返回空串，旧角色零变化。
+        if (!groupOptions) {
+            const partnerNote = buildChatPartnerNote(
+                char,
+                user?.name,
+                resolveUserMacroName(char, user),
+            );
+            if (partnerNote) context += `${partnerNote}\n\n`;
+        }
 
         // 1a. 真实时间感知 (Time Awareness) — 跟随 timeAwarenessEnabled 设置，默认开启。
         // 统一在 buildCoreContext 注入，让所有调用方（私聊/查手机/人际关系/通话/约会…）都知道"现在"。

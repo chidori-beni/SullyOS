@@ -91,6 +91,54 @@ export const expandCharBodyMacros = (
 };
 
 /**
+ * 私聊 / 见面 / 通话都必须回答的那个问题：**正在跟你说话的这个人，是谁？**
+ *
+ * 用户实测踩到的坑（2026-09-07）：给「游霄」设了 `{{user}}` = 凌葵羽、且「不认识机主」，
+ * 结果私聊里他照样把机主当前任。原因是提示词里同时摆着两样东西却没有一句话把它们分开：
+ *
+ * ```
+ * 卡片正文：你和「凌葵羽」是前任            ← 来自 userMacroTarget
+ * 用户画像：颜千夜（机主档案）              ← 来自 UserProfile
+ * ```
+ *
+ * 模型只能把两者合并成一个人——它没做错，是我们没说。
+ * 这段就是那句缺失的话。
+ *
+ * **只陈述「是谁 / 不是谁」，绝不描述任何关系**（铁律 ①：配队 ≠ 恋人，
+ * `{{user}}` 指向谁纯属身份归属，不蕴含亲密度）。关系标签仍由 `buildIdentityNote` 负责。
+ *
+ * 缺省角色（`partner` 且没指过 `userMacroTarget`）**返回空串**，旧角色零变化。
+ */
+export const buildChatPartnerNote = (
+    char: Pick<CharacterProfile, 'hostRelation' | 'userMacroTarget'> | null | undefined,
+    hostName: string | null | undefined,
+    counterpartName?: string | null,
+): string => {
+    const host = (hostName || '').trim();
+    const counterpart = (counterpartName || '').trim();
+    const relation = hostRelationOf(char);
+    // 指向机主本人 / 没指过时，卡里的 {{user}} 就是对面这位，无需区分。
+    const needsSplit = !!counterpart && !!host && counterpart !== host
+        && char?.userMacroTarget?.kind === 'character';
+    if (relation === 'partner' && !needsSplit) return '';
+
+    const lines: string[] = [];
+    lines.push(host ? `- 对面是这台手机的机主「${host}」。` : '- 对面是这台手机的机主。');
+    if (relation === 'stranger') {
+        lines.push('- 你不认识 ta，此前从未与 ta 说过话。');
+    } else if (relation === 'friend') {
+        lines.push('- 你和 ta 是朋友，关系止于朋友。');
+    }
+    if (needsSplit) {
+        lines.push(
+            `- 你的设定里出现的「${counterpart}」是**另一个人**，不是对面这位。`
+            + `不要把两人混为一谈，也不要把设定中对「${counterpart}」的称呼、往事与情绪套到对面这位身上。`
+        );
+    }
+    return `【正在和你说话的人】\n${lines.join('\n')}`;
+};
+
+/**
  * 群聊提示词里那段「先认清 U」。
  *
  * 原文（`apps/GroupChat.tsx`）是写死的"群里的用户就是你一直在私聊的那个人"，
