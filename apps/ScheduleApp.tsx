@@ -45,6 +45,8 @@ const ScheduleApp: React.FC = () => {
     const [charTodo, setCharTodo] = useState<RoomTodo | null>(null);
     const [composerMode, setComposerMode] = useState<ComposerMode>('event');
     const [showComposer, setShowComposer] = useState(false);
+    const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+    const [editingEventId, setEditingEventId] = useState<string | null>(null);
     const [showMoodPicker, setShowMoodPicker] = useState(false);
     const [generatingLetter, setGeneratingLetter] = useState(false);
     const [openedLetters, setOpenedLetters] = useState<Set<string>>(new Set());
@@ -162,13 +164,41 @@ const ScheduleApp: React.FC = () => {
         ];
     }, [cursor]);
 
-    const openTaskComposer = (date = selectedDate) => {
-        setTaskDateMode('single'); setTaskStartDate(date); setTaskDate(date); setTaskSupervisor(selectedCharId || characters[0]?.id || ''); setComposerMode('task'); setShowComposer(true);
-        trackEvent('打开日历新建待办');
+    const openTaskComposer = (date = selectedDate, task?: Task) => {
+        const endDate = task ? taskDateKey(task) : date;
+        const startDate = task ? taskStartDateKey(task) : date;
+        setEditingTaskId(task?.id || null);
+        setEditingEventId(null);
+        setTaskTitle(task?.title || '');
+        setTaskNote(task?.note || '');
+        setTaskDateMode(task && startDate !== endDate ? 'range' : 'single');
+        setTaskStartDate(startDate);
+        setTaskDate(endDate);
+        setTaskTime(task?.dueTime || '');
+        setTaskSupervisor(task?.supervisorId || selectedCharId || characters[0]?.id || '');
+        setTaskReminder(task?.naturalReminder !== false);
+        setComposerMode('task');
+        setShowComposer(true);
+        trackEvent(task ? '打开日历编辑待办' : '打开日历新建待办');
     };
-    const openEventComposer = (date = selectedDate) => {
-        setEventDate(date); setEventChar(''); setEventRepeats(false); setEventRepeatDays([1, 2, 3, 4, 5]); setEventRepeatUntil(''); setComposerMode('event'); setShowComposer(true);
-        trackEvent('打开日历新建事件');
+    const openEventComposer = (date = selectedDate, event?: Anniversary) => {
+        const repeat = event?.repeat;
+        setEditingTaskId(null);
+        setEditingEventId(event?.id || null);
+        setEventTitle(event?.title || '');
+        setEventDate(event?.date || date);
+        setEventKind(event?.kind || (event ? 'anniversary' : 'event'));
+        setEventStart(event?.startTime || '');
+        setEventEnd(event?.endTime || '');
+        setEventLocation(event?.location || '');
+        setEventNote(event?.note || '');
+        setEventChar(event?.charId || '');
+        setEventRepeats(Boolean(repeat));
+        setEventRepeatDays(repeat?.weekdays?.length ? [...repeat.weekdays] : [1, 2, 3, 4, 5]);
+        setEventRepeatUntil(repeat?.until || '');
+        setComposerMode('event');
+        setShowComposer(true);
+        trackEvent(event ? '打开日历编辑事件' : '打开日历新建事件');
     };
     const selectCalendarDate = (value: string) => {
         if (!value) return;
@@ -340,17 +370,53 @@ const ScheduleApp: React.FC = () => {
             addToast('开始日期不能晚于截止日期', 'error');
             return;
         }
+        const editingTask = editingTaskId ? tasks.find(item => item.id === editingTaskId) : undefined;
+        if (editingTaskId && !editingTask) {
+            addToast('这条待办已经不存在，请刷新后再试', 'error');
+            await loadUserData().catch(() => undefined);
+            return;
+        }
+        const title = taskTitle.trim();
+        const note = taskNote.trim() || undefined;
+        const dueTime = taskTime || undefined;
+        const supervisorId = taskSupervisor || editingTask?.supervisorId || characters[0]?.id || '';
+        const meaningChanged = Boolean(editingTask && (
+            editingTask.title !== title
+            || (editingTask.note || '') !== (note || '')
+            || taskStartDateKey(editingTask) !== startDate
+            || taskDateKey(editingTask) !== taskDate
+            || editingTask.supervisorId !== supervisorId
+        ));
+        const createdAt = editingTask?.createdAt || Date.now();
         const task: Task = {
-            id: `task-${Date.now()}`, title: taskTitle.trim(), note: taskNote.trim() || undefined,
-            ...(taskDateMode === 'range' && startDate !== taskDate ? { startDate } : {}),
-            deadline: taskDate, dueTime: taskTime || undefined, supervisorId: taskSupervisor || characters[0]?.id || '',
-            naturalReminder: taskReminder, tone: 'gentle', isCompleted: false, createdAt: Date.now(),
+            ...(editingTask || {}),
+            id: editingTask?.id || 'task-' + createdAt,
+            title,
+            note,
+            startDate: taskDateMode === 'range' && startDate !== taskDate ? startDate : undefined,
+            deadline: taskDate,
+            dueTime,
+            supervisorId,
+            naturalReminder: taskReminder,
+            tone: editingTask?.tone || 'gentle',
+            isCompleted: editingTask?.isCompleted || false,
+            completedAt: editingTask?.completedAt,
+            createdAt,
+            ...(meaningChanged ? { supervisorSpeech: undefined } : {}),
         };
+        if (editingTask && meaningChanged) {
+            taskVoiceEventRef.current.delete(editingTask.id);
+            setTaskVoicePending(current => { const next = new Set(current); next.delete(editingTask.id); return next; });
+            setTaskVoiceFailed(current => { const next = new Set(current); next.delete(editingTask.id); return next; });
+        }
         await DB.saveTask(task);
-        setTasks(current => sortTasksForCalendar([...current, task]));
+        setTasks(current => sortTasksForCalendar(
+            editingTask ? current.map(item => item.id === task.id ? task : item) : [...current, task],
+        ));
         notifyCalendarDataUpdated();
-        setTaskTitle(''); setTaskNote(''); setTaskTime(''); setTaskDateMode('single'); setTaskStartDate(today); setTaskDate(today); setShowComposer(false);
-        addToast('待办已加入共享日历，聊天时可由角色自然提起', 'success');
+        setSelectedDate(taskDate); setCursor(parseDateKey(taskDate));
+        setTaskTitle(''); setTaskNote(''); setTaskTime(''); setTaskDateMode('single'); setTaskStartDate(today); setTaskDate(today); setEditingTaskId(null); setEditingEventId(null); setShowComposer(false);
+        addToast(editingTask ? '待办已更新' : '待办已加入共享日历，聊天时可由角色自然提起', 'success');
     };
     const toggleTask = async (task: Task) => {
         if (task.isCompleted) {
@@ -379,19 +445,34 @@ const ScheduleApp: React.FC = () => {
             addToast('重复日程至少选择一天', 'error');
             return;
         }
+        const editingEvent = editingEventId ? events.find(item => item.id === editingEventId) : undefined;
+        if (editingEventId && !editingEvent) {
+            addToast('这条日程已经不存在，请刷新后再试', 'error');
+            await loadUserData().catch(() => undefined);
+            return;
+        }
         const repeatUntil = eventRepeatUntil && eventRepeatUntil >= eventDate ? eventRepeatUntil : undefined;
         const event: Anniversary = {
-            id: `calendar-${Date.now()}`, title: eventTitle.trim(), date: eventDate, kind: eventKind,
+            ...(editingEvent || {}),
+            id: editingEvent?.id || 'calendar-' + Date.now(), title: eventTitle.trim(), date: eventDate, kind: eventKind,
             startTime: eventStart || undefined, endTime: eventEnd || undefined, location: eventLocation.trim() || undefined,
             note: eventNote.trim() || undefined, charId: eventChar,
             repeat: eventRepeats && eventRepeatDays.length > 0 ? { type: 'weekly', weekdays: eventRepeatDays, until: repeatUntil } : undefined,
         };
         await DB.saveAnniversary(event);
-        setEvents(current => [...current, event].sort((a, b) => a.date.localeCompare(b.date) || (a.startTime || '').localeCompare(b.startTime || '')));
+        setEvents(current => {
+            const next = editingEvent ? current.map(item => item.id === event.id ? event : item) : [...current, event];
+            return next.sort((a, b) => a.date.localeCompare(b.date) || (a.startTime || '').localeCompare(b.startTime || ''));
+        });
         notifyCalendarDataUpdated();
         setSelectedDate(eventDate); setCursor(parseDateKey(eventDate));
-        setEventTitle(''); setEventStart(''); setEventEnd(''); setEventLocation(''); setEventNote(''); setEventRepeats(false); setEventRepeatDays([1, 2, 3, 4, 5]); setEventRepeatUntil(''); setShowComposer(false);
-        addToast(eventKind === 'anniversary' ? '纪念日已保存' : '日程已保存', 'success');
+        setEventTitle(''); setEventStart(''); setEventEnd(''); setEventLocation(''); setEventNote(''); setEventRepeats(false); setEventRepeatDays([1, 2, 3, 4, 5]); setEventRepeatUntil(''); setEventKind('event'); setEditingTaskId(null); setEditingEventId(null); setShowComposer(false);
+        addToast(editingEvent ? (eventKind === 'anniversary' ? '纪念日已更新' : '日程已更新') : (eventKind === 'anniversary' ? '纪念日已保存' : '日程已保存'), 'success');
+    };
+    const closeComposer = () => {
+        setShowComposer(false);
+        setEditingTaskId(null);
+        setEditingEventId(null);
     };
     const deleteEvent = async (id: string) => {
         await DB.deleteAnniversary(id); setEvents(current => current.filter(event => event.id !== id)); notifyCalendarDataUpdated();
@@ -431,7 +512,7 @@ const ScheduleApp: React.FC = () => {
                 {voiceCanRetry && <div className="mt-2 flex items-center gap-2 text-[10px] text-slate-400"><span>{taskVoiceFailed.has(task.id) ? 'TA这次还没接上话' : '完成记录已保存，可以让TA留一句话'}</span><button onClick={() => retryCompletedTaskSpeech(task)} className="rounded-full bg-violet-50 px-2.5 py-1 font-bold text-violet-500">{taskVoiceFailed.has(task.id) ? '再问一次' : '让TA说一句'}</button></div>}
                 {task.note && <div className="mt-2 text-xs leading-relaxed text-slate-400">{task.note}</div>}
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-400"><span className="rounded-full bg-sky-50 px-2 py-0.5 text-sky-500">{dateLabel}{showDueTime ? ` · 截止 ${task.dueTime}` : ''}</span>{supervisor && <span className="inline-flex items-center gap-1"><img src={supervisor.avatar || '/sully/head.png'} className="h-4 w-4 rounded-full object-cover" alt="" />{supervisor.name} 共享</span>}<span className={`rounded-full px-2 py-0.5 ${supervisor && task.naturalReminder !== false ? 'bg-violet-50 text-violet-500' : 'bg-slate-100 text-slate-400'}`}>{supervisor && task.naturalReminder !== false ? '聊天中可自然提起' : '仅共享记录'}</span></div>
-            </div><button aria-label={`删除待办：${task.title}`} onClick={() => deleteTask(task.id)} className="px-1 text-slate-300 transition hover:text-rose-400">×</button>
+            </div><div className="flex shrink-0 items-start gap-1"><button aria-label={`编辑待办：${task.title}`} onClick={() => openTaskComposer(selectedDate, task)} className="rounded-full px-2 py-1 text-[10px] font-bold text-violet-400 transition hover:bg-violet-50">编辑</button><button aria-label={`删除待办：${task.title}`} onClick={() => deleteTask(task.id)} className="px-1 text-slate-300 transition hover:text-rose-400">×</button></div>
         </div>;
     };
 
@@ -447,7 +528,7 @@ const ScheduleApp: React.FC = () => {
                         <div className="mt-1 text-[11px] text-slate-400">{item.startTime ? (item.endTime ? `至 ${item.endTime}` : '单点') : '全天'}{event.location ? ` · ${event.location}` : ''}</div>
                         {event.note && <p className="mt-2 text-xs leading-relaxed text-slate-500">{event.note}</p>}
                     </div>
-                    <button aria-label={`删除日程：${event.title}`} onClick={() => deleteEvent(event.id)} className="text-slate-300 opacity-0 transition hover:text-rose-400 group-hover:opacity-100">×</button>
+                    <div className="flex shrink-0 items-start gap-1"><button aria-label={`编辑日程：${event.title}`} onClick={() => openEventComposer(event.date, event)} className="rounded-full px-2 py-1 text-[10px] font-bold text-rose-400 transition hover:bg-rose-50">编辑</button><button aria-label={`删除日程：${event.title}`} onClick={() => deleteEvent(event.id)} className="text-slate-300 opacity-0 transition hover:text-rose-400 group-hover:opacity-100">×</button></div>
                 </div>
             </div>;
         }
@@ -523,8 +604,8 @@ const ScheduleApp: React.FC = () => {
                         <div className="relative ml-1 space-y-3 border-l-2 border-rose-200 pl-5">
                             {group.items.map(event => <div key={event.id} className="group relative rounded-2xl border border-rose-100 bg-white/85 p-3 shadow-sm">
                                 <span className="absolute -left-[1.6rem] top-5 h-3 w-3 rounded-full border-2 border-white bg-rose-400" />
-                                <button onClick={() => { selectCalendarDate(group.date); setTab('month'); }} className="block w-full pr-5 text-left"><div className="flex flex-wrap items-center gap-2"><b className="text-sm">{event.title}</b><span className="rounded-full bg-rose-50 px-2 py-0.5 text-[9px] text-rose-500">{event.kind === 'event' ? '日程' : '纪念日'}</span>{event.repeat && <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[9px] text-sky-500">每周重复</span>}</div><div className="mt-1 text-[11px] text-slate-400">{event.startTime || '全天'}{event.endTime ? `–${event.endTime}` : ''}{event.location ? ` · ${event.location}` : ''}</div>{event.note && <p className="mt-2 text-xs leading-relaxed text-slate-500">{event.note}</p>}</button>
-                                <button aria-label={`删除日程：${event.title}`} onClick={() => deleteEvent(event.id)} className="absolute right-2 top-2 px-1 text-slate-300 transition hover:text-rose-400">×</button>
+                                 <button onClick={() => { selectCalendarDate(group.date); setTab('month'); }} className="block w-full pr-16 text-left"><div className="flex flex-wrap items-center gap-2"><b className="text-sm">{event.title}</b><span className="rounded-full bg-rose-50 px-2 py-0.5 text-[9px] text-rose-500">{event.kind === 'event' ? '日程' : '纪念日'}</span>{event.repeat && <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[9px] text-sky-500">每周重复</span>}</div><div className="mt-1 text-[11px] text-slate-400">{event.startTime || '全天'}{event.endTime ? `–${event.endTime}` : ''}{event.location ? ` · ${event.location}` : ''}</div>{event.note && <p className="mt-2 text-xs leading-relaxed text-slate-500">{event.note}</p>}</button>
+                                <div className="absolute right-2 top-2 flex items-center gap-1"><button aria-label={`编辑日程：${event.title}`} onClick={() => openEventComposer(event.date, event)} className="rounded-full px-2 py-1 text-[10px] font-bold text-rose-400 transition hover:bg-rose-50">编辑</button><button aria-label={`删除日程：${event.title}`} onClick={() => deleteEvent(event.id)} className="px-1 text-slate-300 transition hover:text-rose-400">×</button></div>
                             </div>)}
                         </div>
                     </div>) : <div className="rounded-3xl border-2 border-dashed border-white bg-white/35 py-8 text-center text-xs text-slate-400">还没有日程，先给未来留一点位置。</div>}
@@ -559,11 +640,11 @@ const ScheduleApp: React.FC = () => {
                 </section>
             </div>}
         </main>
-        <Modal isOpen={showComposer} title={composerMode === 'event' ? '添加日程 / 纪念日' : '添加我的待办'} onClose={() => setShowComposer(false)} footer={composerMode === 'event' ? <><button type="button" onClick={() => setShowComposer(false)} className="flex-1 rounded-2xl bg-slate-100 py-3 font-bold text-slate-500">取消</button><button type="button" onClick={addEvent} className="flex-[1.5] rounded-2xl bg-rose-400 py-3 font-bold text-white shadow-lg shadow-rose-200">保存</button></> : <><button type="button" onClick={() => setShowComposer(false)} className="flex-1 rounded-2xl bg-slate-100 py-3 font-bold text-slate-500">取消</button><button type="button" onClick={addTask} className="flex-[1.5] rounded-2xl bg-violet-500 py-3 font-bold text-white shadow-lg shadow-violet-200">加入日历</button></>}>
+        <Modal isOpen={showComposer} title={composerMode === 'event' ? (editingEventId ? '编辑日程 / 纪念日' : '添加日程 / 纪念日') : (editingTaskId ? '编辑我的待办' : '添加我的待办')} onClose={closeComposer} footer={composerMode === 'event' ? <><button type="button" onClick={closeComposer} className="flex-1 rounded-2xl bg-slate-100 py-3 font-bold text-slate-500">取消</button><button type="button" onClick={addEvent} className="flex-[1.5] rounded-2xl bg-rose-400 py-3 font-bold text-white shadow-lg shadow-rose-200">{editingEventId ? '保存修改' : '保存'}</button></> : <><button type="button" onClick={closeComposer} className="flex-1 rounded-2xl bg-slate-100 py-3 font-bold text-slate-500">取消</button><button type="button" onClick={addTask} className="flex-[1.5] rounded-2xl bg-violet-500 py-3 font-bold text-white shadow-lg shadow-violet-200">{editingTaskId ? '保存修改' : '加入日历'}</button></>}>
             <div className="space-y-4">
-                <div role="tablist" aria-label="新建内容类型" className="grid grid-cols-2 rounded-2xl bg-slate-100 p-1 text-xs font-bold">
-                    <button type="button" role="tab" aria-selected={composerMode === 'event'} onClick={() => setComposerMode('event')} className={`rounded-xl py-2.5 transition ${composerMode === 'event' ? 'bg-white text-rose-500 shadow-sm' : 'text-slate-400'}`}>日程</button>
-                    <button type="button" role="tab" aria-selected={composerMode === 'task'} onClick={() => setComposerMode('task')} className={`rounded-xl py-2.5 transition ${composerMode === 'task' ? 'bg-white text-violet-500 shadow-sm' : 'text-slate-400'}`}>待办</button>
+                <div role="tablist" aria-label={editingTaskId || editingEventId ? '编辑内容类型' : '新建内容类型'} className="grid grid-cols-2 rounded-2xl bg-slate-100 p-1 text-xs font-bold">
+                    <button type="button" role="tab" disabled={Boolean(editingTaskId || editingEventId)} aria-selected={composerMode === 'event'} onClick={() => setComposerMode('event')} className={`rounded-xl py-2.5 transition ${composerMode === 'event' ? 'bg-white text-rose-500 shadow-sm' : 'text-slate-400'} disabled:cursor-not-allowed disabled:opacity-60`}>日程</button>
+                    <button type="button" role="tab" disabled={Boolean(editingTaskId || editingEventId)} aria-selected={composerMode === 'task'} onClick={() => setComposerMode('task')} className={`rounded-xl py-2.5 transition ${composerMode === 'task' ? 'bg-white text-violet-500 shadow-sm' : 'text-slate-400'} disabled:cursor-not-allowed disabled:opacity-60`}>待办</button>
                 </div>
                 {composerMode === 'event' ? <div className="space-y-4">
                     <div className="grid grid-cols-2 rounded-2xl bg-slate-100 p-1 text-xs font-bold">
