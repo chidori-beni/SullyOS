@@ -13,7 +13,7 @@ import {
     type ResolvedWorldbookEntry,
     type WorldbookScanMessage,
 } from './worldbook';
-import { resolveUserMacroName } from './characterIdentity';
+import { resolveUserMacroName, expandCharBodyMacros } from './characterIdentity';
 
 /**
  * Memory Central
@@ -28,8 +28,14 @@ export const ContextBuilder = {
      *
      * @param options.skipMemories 跳过月度总结和日度记录（开启记忆宫殿时用向量记忆替代）
      */
-    buildRoleSettingsContext: (char: CharacterProfile, options?: { skipMemories?: boolean }): string => {
+    buildRoleSettingsContext: (
+        char: CharacterProfile,
+        options?: { skipMemories?: boolean; userProfile?: UserProfile | null },
+    ): string => {
         let context = `[System: Character Role Settings]\n\n`;
+        // 正文里残留的 {{user}} / {{char}} 现场展开；既有角色正文里没有宏，是纯空操作。
+        // 见 characterIdentity.expandCharBodyMacros。
+        const bodyMacro = (text?: string | null) => expandCharBodyMacros(text, char, options?.userProfile);
 
         // 1. 角色名
         context += `### 角色名\n`;
@@ -37,7 +43,7 @@ export const ContextBuilder = {
 
         // 2. 核心指令（完整，不截断）
         context += `### 核心指令\n`;
-        context += `${char.systemPrompt || '你是一个温柔、拟人化的AI伴侣。'}\n\n`;
+        context += `${bodyMacro(char.systemPrompt) || '你是一个温柔、拟人化的AI伴侣。'}\n\n`;
 
         // 2b. 自我领悟词条（常驻自我认知，影响情绪评估）
         if (char.selfInsights && char.selfInsights.length > 0) {
@@ -50,7 +56,7 @@ export const ContextBuilder = {
 
         // 3. 世界观（完整，不截断，不含世界书）
         if (char.worldview && char.worldview.trim()) {
-            context += `### 世界观与设定\n${char.worldview}\n\n`;
+            context += `### 世界观与设定\n${bodyMacro(char.worldview)}\n\n`;
         }
 
         // 4. 记忆摘要（月度总结 + 当月日度总结）
@@ -170,12 +176,16 @@ export const ContextBuilder = {
         context += `${groupOptions?.headerOverride ?? '[System: Roleplay Configuration]'}\n\n`;
 
         // 1. 核心身份 (Identity)
+        // 正文里残留的 {{user}} / {{char}} 在这里现场展开：只有导入时选了「暂不指定」的角色
+        // 才留得下宏（双向配队时搭档还没进来，选不了）。既有角色正文里没有宏，探针一测即
+        // 原样返回，是纯空操作。见 characterIdentity.expandCharBodyMacros。
+        const bodyMacro = (text?: string | null) => expandCharBodyMacros(text, char, user);
         context += `### 你的身份 (Character)\n`;
         context += `- 名字: ${char.name}\n`;
         // Change: Explicitly label description as User Note to avoid literal interpretation
-        context += `- 用户备注/爱称 (User Note/Nickname): ${char.description || '无'}\n`;
+        context += `- 用户备注/爱称 (User Note/Nickname): ${bodyMacro(char.description) || '无'}\n`;
         context += `  (注意: 这个备注是用户对你的称呼或印象，可能包含比喻。如果备注内容（如“快乐小狗”）与你的核心设定冲突，请以核心设定为准，不要真的扮演成动物，除非核心设定里写了你是动物。)\n`;
-        context += `- 核心性格/指令:\n${char.systemPrompt || '你是一个温柔、拟人化的AI伴侣。'}\n\n`;
+        context += `- 核心性格/指令:\n${bodyMacro(char.systemPrompt) || '你是一个温柔、拟人化的AI伴侣。'}\n\n`;
 
         // 1a. 真实时间感知 (Time Awareness) — 跟随 timeAwarenessEnabled 设置，默认开启。
         // 统一在 buildCoreContext 注入，让所有调用方（私聊/查手机/人际关系/通话/约会…）都知道"现在"。
@@ -198,7 +208,7 @@ export const ContextBuilder = {
 
         // 2. 世界观 (Worldview) - New Centralized Logic
         if (char.worldview && char.worldview.trim() && !groupOptions?.skipWorldview) {
-            context += `### 世界观与设定 (World Settings)\n${char.worldview}\n\n`;
+            context += `### 世界观与设定 (World Settings)\n${bodyMacro(char.worldview)}\n\n`;
         }
 
         context += formatWorldbookSection(worldbookSections.afterCharacter, '扩展设定集 (Worldbooks)');

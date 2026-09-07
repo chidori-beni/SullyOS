@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     buildGroupHostAwarenessLine,
     buildIdentityNote,
+    expandCharBodyMacros,
     hostRelationOf,
     knowsHost,
     narrativeLayerOf,
@@ -32,6 +33,39 @@ describe('缺省语义（旧角色行为必须零变化）', () => {
 
     it('缺省角色不会被多注入任何身份说明', () => {
         expect(buildIdentityNote({})).toBe('');
+    });
+});
+
+describe('叙事层与「认不认识机主」互相独立', () => {
+    // 四种组合都必须成立：把两者绑死（stranger→fiction、其余→real）会漏掉另外两格。
+    it('认识机主 + 同处现实层：朋友 / 死对头 / 我女儿', () => {
+        const c = { hostRelation: 'friend' as const, narrativeLayer: 'real' as const };
+        expect(hostRelationOf(c)).toBe('friend');
+        expect(narrativeLayerOf(c)).toBe('real');
+        expect(knowsHost(c)).toBe(true);
+    });
+
+    it('不认识机主 + 仍在现实层：真实层里还没搭过话的人', () => {
+        const c = { hostRelation: 'stranger' as const, narrativeLayer: 'real' as const };
+        expect(narrativeLayerOf(c)).toBe('real');
+        expect(knowsHost(c)).toBe(false);
+    });
+
+    it('认识机主 + 被创作：在剧场里和机主打过照面的角色', () => {
+        const c = { hostRelation: 'friend' as const, narrativeLayer: 'fiction' as const };
+        expect(narrativeLayerOf(c)).toBe('fiction');
+        expect(knowsHost(c)).toBe(true);
+    });
+
+    it('不认识机主 + 被创作：从酒馆搬来过日子的角色', () => {
+        const c = { hostRelation: 'stranger' as const, narrativeLayer: 'fiction' as const };
+        expect(narrativeLayerOf(c)).toBe('fiction');
+        expect(knowsHost(c)).toBe(false);
+    });
+
+    it('两个读取函数互不影响：只给其中一个字段时，另一个仍回落各自的缺省', () => {
+        expect(narrativeLayerOf({ hostRelation: 'stranger' } as any)).toBe('real');
+        expect(hostRelationOf({ narrativeLayer: 'fiction' } as any)).toBe('partner');
     });
 });
 
@@ -95,17 +129,114 @@ describe('buildGroupHostAwarenessLine —— 群聊硬编码分支', () => {
 });
 
 describe('buildIdentityNote', () => {
-    it('stranger + 配队对象', () => {
-        const note = buildIdentityNote({ hostRelation: 'stranger' }, '颜千夜');
-        expect(note).toContain('你不认识这台手机的机主');
-        expect(note).toContain('「颜千夜」');
+    it('stranger 切断与机主的关系', () => {
+        expect(buildIdentityNote({ hostRelation: 'stranger' })).toBe('你不认识这台手机的机主，也从未与 ta 说过话。');
     });
 
     it('friend 只说到朋友为止', () => {
         expect(buildIdentityNote({ hostRelation: 'friend' })).toBe('你和这台手机的机主是朋友，关系止于朋友。');
     });
 
-    it('partner 即使给了配队对象也只输出那一行，不谈与机主的关系', () => {
-        expect(buildIdentityNote({ hostRelation: 'partner' }, '某某')).toBe('你生活里真正重要的那个人是「某某」。');
+    // ── 「配队 ≠ 恋人」：{{user}} 指向谁只是身份归属，不蕴含任何关系 ──
+    it('只给名字、没给关系标签时，一个字都不许提两人的关系', () => {
+        const note = buildIdentityNote({ hostRelation: 'stranger' }, { name: '颜千夜' });
+        expect(note).toBe('你不认识这台手机的机主，也从未与 ta 说过话。');
+        expect(note).not.toContain('颜千夜');
+    });
+
+    it('绝不把配队升格成恋爱措辞', () => {
+        const note = buildIdentityNote({ hostRelation: 'stranger' }, { name: '颜千夜' });
+        for (const word of ['重要的人', '恋人', '喜欢', '爱', '伴侣', '在乎']) {
+            expect(note).not.toContain(word);
+        }
+    });
+
+    it('给了标签就原样引用——死对头不会被写成恋人', () => {
+        expect(buildIdentityNote({ hostRelation: 'stranger' }, { name: '某某', label: '死对头' }))
+            .toContain('你和「某某」的关系：死对头。');
+    });
+
+    it('暧昧期、刚认识这类未定关系同样原样保留', () => {
+        expect(buildIdentityNote({}, { name: '某某', label: '还在暧昧，谁都没先开口' }))
+            .toBe('你和「某某」的关系：还在暧昧，谁都没先开口。');
+    });
+
+    it('partner 且无标签时输出空串，不多注入任何东西', () => {
+        expect(buildIdentityNote({ hostRelation: 'partner' }, { name: '某某' })).toBe('');
+    });
+});
+
+
+describe('userMacroTarget: unset —— 「暂不指定」这一档', () => {
+    it('解析上等同机主：用户忘了回来设，行为也和从前一样', () => {
+        expect(resolveUserMacroName({ id: 'c1', userMacroTarget: { kind: 'unset' } }, host, [])).toBe('颜千夜');
+    });
+
+    it('机主没名字时回空串，不会吐出 undefined', () => {
+        expect(resolveUserMacroName({ id: 'c1', userMacroTarget: { kind: 'unset' } }, null, [])).toBe('');
+    });
+});
+
+describe('expandCharBodyMacros —— 正文里残留的宏', () => {
+    const partner = { id: 'u-tavern', name: '倾川' };
+
+    it('既有角色（正文无宏）原样返回，是纯空操作', () => {
+        const text = '他是个沉默寡言的剑客，习惯在雨天擦刀。';
+        expect(expandCharBodyMacros(text, { id: 'c1', name: '萧逸' }, host, [])).toBe(text);
+    });
+
+    it('unset + 未指定 → 展开成机主，不把 {{user}} 字面量漏给模型', () => {
+        expect(expandCharBodyMacros(
+            '你和 {{user}} 是青梅竹马。',
+            { id: 'c1', name: '萧逸', userMacroTarget: { kind: 'unset' } },
+            host, [],
+        )).toBe('你和 颜千夜 是青梅竹马。');
+    });
+
+    it('unset + 之后指向搭档 → 展开成搭档的名字（双向配队补齐）', () => {
+        expect(expandCharBodyMacros(
+            '你和 {{user}} 是青梅竹马。',
+            { id: 'c1', name: '萧逸', userMacroTarget: { kind: 'character', id: 'u-tavern', name: '倾川' } },
+            host, [partner],
+        )).toBe('你和 倾川 是青梅竹马。');
+    });
+
+    it('同一段文本改指向即变，可反复改（不必存原文、不必"兑现"）', () => {
+        const body = '{{char}} 深爱着 {{user}}。';
+        const asHost = expandCharBodyMacros(body, { id: 'c1', name: '萧逸', userMacroTarget: { kind: 'unset' } }, host, [partner]);
+        const asPartner = expandCharBodyMacros(body, { id: 'c1', name: '萧逸', userMacroTarget: { kind: 'character', id: 'u-tavern' } }, host, [partner]);
+        expect(asHost).toBe('萧逸 深爱着 颜千夜。');
+        expect(asPartner).toBe('萧逸 深爱着 倾川。');
+    });
+
+    it('{{char}} 与大小写 / 空格变体都认', () => {
+        expect(expandCharBodyMacros(
+            '{{ Char }} 对 {{ USER }} 说：',
+            { id: 'c1', name: '萧逸', userMacroTarget: { kind: 'character', id: 'u-tavern' } },
+            host, [partner],
+        )).toBe('萧逸 对 倾川 说：');
+    });
+
+    it('认识 <BOT> / <USER> 这套旧式宏', () => {
+        expect(expandCharBodyMacros(
+            '<BOT> 看着 <USER>。',
+            { id: 'c1', name: '萧逸', userMacroTarget: { kind: 'character', id: 'u-tavern' } },
+            host, [partner],
+        )).toBe('萧逸 看着 倾川。');
+    });
+
+    it('指向的角色被删 → 回退机主，不让悬空 id 把提示词搞塌', () => {
+        expect(expandCharBodyMacros(
+            '{{user}} 来了。',
+            { id: 'c1', name: '萧逸', userMacroTarget: { kind: 'character', id: 'gone' } },
+            host, [],
+        )).toBe('颜千夜 来了。');
+    });
+
+    it('空 / null / undefined 输入回空串', () => {
+        const c = { id: 'c1', name: '萧逸' };
+        expect(expandCharBodyMacros(undefined, c, host, [])).toBe('');
+        expect(expandCharBodyMacros(null, c, host, [])).toBe('');
+        expect(expandCharBodyMacros('', c, host, [])).toBe('');
     });
 });

@@ -3111,7 +3111,16 @@ export interface CharacterProfile {
       /** name 是落库冗余（同 WorldChatMessage.fromName）：拿不到完整角色表的调用方
        *  （如 ContextBuilder.buildCoreContext）直接用它，角色被删也不会丢名。
        *  给了角色表时以表里的当前名字为准，冗余名只作兜底。 */
-      | { kind: 'character'; id: string; name?: string };
+      | { kind: 'character'; id: string; name?: string }
+      /**
+       * 「暂不指定」：导入时搭档还没进来，选不了。此时**正文里的 `{{user}}` 原样保留**，
+       * 由 `ContextBuilder.buildCoreContext` 每次构建提示词时按当前指向现场展开
+       * （见 `expandCharBodyMacros`）——所以之后在角色资料页改指向可以反复改、立刻生效。
+       *
+       * 解析上等同 host（`resolveUserMacroName` 回退机主），因此**没有"半成品状态"**：
+       * 就算用户忘了回来设，行为也和从前一模一样，不会把 `{{user}}` 字面量漏给模型。
+       */
+      | { kind: 'unset' };
   // ──────────────────────────────────────────────────────────────────────
 
   memories: MemoryFragment[];

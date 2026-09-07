@@ -34,8 +34,11 @@ export const knowsHost = (char?: Pick<CharacterProfile, 'hostRelation'> | null):
 /**
  * `{{user}}` 在这个角色身上应该展开成谁的名字。
  *
- * - 缺省 / `{kind:'host'}` → 机主档案名（改造前的唯一行为）
- * - `{kind:'character'}`   → 该 CharacterProfile 的名字（酒馆配队的 user）
+ * - 缺省 / `{kind:'host'}` / `{kind:'unset'}` → 机主档案名（改造前的唯一行为）
+ * - `{kind:'character'}`                     → 该 CharacterProfile 的名字（酒馆配队的 user）
+ *
+ * `unset`（导入时选「暂不指定」）之所以也回退机主：正文里的 `{{user}}` 此时尚未定稿，
+ * 若用户始终没回来指定，行为必须与从前一致——**不允许存在"半成品状态"**。
  *
  * 取名优先级：角色表里的当前名字 → 落库冗余的 `target.name` → 机主。
  * `characters` 省略时（如 `ContextBuilder.buildCoreContext` 拿不到完整角色表）直接吃冗余名。
@@ -49,11 +52,42 @@ export const resolveUserMacroName = (
 ): string => {
     const hostName = (userProfile?.name || '').trim();
     const target = char?.userMacroTarget;
-    if (!target || target.kind === 'host') return hostName;
+    if (!target || target.kind === 'host' || target.kind === 'unset') return hostName;
     // 自环：ta 的 {{user}} 指向 ta 自己，语义上无意义，按未设置处理
     if (char && target.id === char.id) return hostName;
     const live = characters?.find(c => c.id === target.id)?.name?.trim();
     return live || target.name?.trim() || hostName;
+};
+
+/** 正文里可能残留的宏：`{{char}}` / `{{user}}` / `<BOT>` / `<USER>`。 */
+const BODY_MACRO_PROBE = /\{\{|<BOT>|<USER>/;
+
+/**
+ * 展开角色**正文**（描述 / 核心指令 / 世界观）里残留的 `{{user}}` `{{char}}`。
+ *
+ * 背景：从酒馆导入时，这些宏本来在那一刻就被烤进正文了。但**双向配队**有个死结——
+ * 先导入的角色选不到还不存在的搭档，正文一旦烤死就再也改不回来。
+ * 所以导入弹窗提供「暂不指定」：那一档**不展开** `{{user}}`，留到这里每次构建提示词时
+ * 按 `userMacroTarget` 现场展开。于是之后在角色资料页改指向可以**反复改、立刻生效**，
+ * 既不必存一份原文，也不用什么"兑现"动作。
+ *
+ * **对既有角色是纯空操作**：他们正文里的宏早在导入时就没了，探针一测即原样返回。
+ * 世界书不走这里——它本来就保留宏，由 `expandWorldbookMacros` 负责。
+ */
+export const expandCharBodyMacros = (
+    text: string | null | undefined,
+    char: Pick<CharacterProfile, 'id' | 'name' | 'userMacroTarget'> | null | undefined,
+    userProfile: Pick<UserProfile, 'name'> | null | undefined,
+    characters?: readonly Pick<CharacterProfile, 'id' | 'name'>[],
+): string => {
+    const src = text || '';
+    if (!src || !BODY_MACRO_PROBE.test(src)) return src;
+    const charName = (char?.name || '').trim();
+    const userName = resolveUserMacroName(char, userProfile, characters);
+    let out = src;
+    if (charName) out = out.replace(/\{\{\s*char\s*\}\}/gi, charName).replace(/<BOT>/g, charName);
+    if (userName) out = out.replace(/\{\{\s*user\s*\}\}/gi, userName).replace(/<USER>/g, userName);
+    return out;
 };
 
 /**
@@ -92,7 +126,7 @@ export const buildGroupHostAwarenessLine = (
  */
 export const buildIdentityNote = (
     char: Pick<CharacterProfile, 'hostRelation' | 'narrativeLayer'> | null | undefined,
-    partnerName = '',
+    counterpart?: { name: string; label?: string },
 ): string => {
     const lines: string[] = [];
     if (hostRelationOf(char) === 'stranger') {
@@ -100,7 +134,11 @@ export const buildIdentityNote = (
     } else if (hostRelationOf(char) === 'friend') {
         lines.push('你和这台手机的机主是朋友，关系止于朋友。');
     }
-    const partner = partnerName.trim();
-    if (partner) lines.push(`你生活里真正重要的那个人是「${partner}」。`);
+    // 「{{user}} 指向谁」纯粹是身份归属，**不蕴含任何关系**——配队的两人可能是恋人，
+    // 也可能是死对头、刚认识、还在暧昧。所以只有用户**显式写了关系标签**才注入这一行，
+    // 且原样引用标签，绝不替用户升格成「最重要的人」之类的说法。
+    const name = counterpart?.name?.trim();
+    const label = counterpart?.label?.trim();
+    if (name && label) lines.push(`你和「${name}」的关系：${label}。`);
     return lines.join('\n');
 };

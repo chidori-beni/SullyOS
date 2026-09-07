@@ -180,8 +180,45 @@ const Character: React.FC = () => {
   const [stNarrativeLayer, setStNarrativeLayer] = useState<NonNullable<CharacterProfile['narrativeLayer']>>('real');
   /** 用户是否手动动过叙事层；动过之后就不再跟着 hostRelation 走。 */
   const [stLayerTouched, setStLayerTouched] = useState(false);
-  /** '' = 机主本人；否则是某个已存在角色的 id。 */
+  /**
+   * '' = 机主本人；`__unset__` = 暂不指定；否则是某个已存在角色的 id。
+   *
+   * 「暂不指定」是为**双向配队**准备的：两张卡互相指向对方时，先导入的那张选不到
+   * 还不存在的搭档。选它则**正文里的 `{{user}}` 原样保留**，之后在角色资料页
+   * 「身份归属」里改指向即可——由 `ContextBuilder` 每次构建提示词时现场展开，
+   * 所以能反复改、立刻生效。
+   */
   const [stUserTargetId, setStUserTargetId] = useState('');
+
+  /**
+   * 把该角色聊天记录里残留的 `{{user}}` / `{{char}}` 换成真名。
+   *
+   * 正文（设定 / 描述 / 世界观）由 `ContextBuilder` 每次构建提示词时现场展开，改指向即时生效；
+   * **开场白是个例外**——它在导入时就作为一条 assistant 消息落库了，永远走不到那条路。
+   * 所以在用户于「身份归属」里选定对象的那一刻，把它补写一次。
+   *
+   * 只改真正含宏的消息（一般就是开场白那一条），其余原样跳过；失败不打断主流程。
+   */
+  const rewriteGreetingMacros = async (
+      charId: string,
+      charName: string,
+      target?: CharacterProfile,
+  ) => {
+      try {
+          const userName = (target?.name || userProfile?.name || '').trim();
+          if (!userName) return;
+          const msgs = await DB.getMessagesByCharId(charId, true);
+          for (const m of msgs) {
+              if (typeof m.content !== 'string' || !/\{\{|<BOT>|<USER>/.test(m.content)) continue;
+              let next = m.content;
+              if (charName) next = next.replace(/\{\{\s*char\s*\}\}/gi, charName).replace(/<BOT>/g, charName);
+              next = next.replace(/\{\{\s*user\s*\}\}/gi, userName).replace(/<USER>/g, userName);
+              if (next !== m.content && typeof m.id === 'number') await DB.updateMessage(m.id, next);
+          }
+      } catch (err) {
+          console.error('[身份归属] 开场白补写失败', err);
+      }
+  };
 
   /** 改「认不认识机主」时顺带更新叙事层的默认值——但用户手动改过就不再覆盖。 */
   const pickStHostRelation = (v: NonNullable<CharacterProfile['hostRelation']>) => {
@@ -1291,17 +1328,22 @@ ${isInitialGeneration ? `
   const confirmStCardImport = () => {
       if (!pendingStCard) return;
       const { card, avatar } = pendingStCard;
-      const target = characters.find(c => c.id === stUserTargetId);
+      const deferUser = stUserTargetId === '__unset__';
+      const target = deferUser ? undefined : characters.find(c => c.id === stUserTargetId);
       const identity: Pick<CharacterProfile, 'hostRelation' | 'narrativeLayer' | 'userMacroTarget'> = {
           hostRelation: stHostRelation,
           // 由用户单独选定，**不从 hostRelation 推导**——两者正交，见 stNarrativeLayer 处的说明。
           narrativeLayer: stNarrativeLayer,
-          userMacroTarget: target
-              ? { kind: 'character', id: target.id, name: target.name }
-              : { kind: 'host' },
+          userMacroTarget: deferUser
+              ? { kind: 'unset' }
+              : target
+                  ? { kind: 'character', id: target.id, name: target.name }
+                  : { kind: 'host' },
       };
       // 卡片正文/开场白里的 {{user}} 在这里定稿；世界书正文保留宏，运行时按 userMacroTarget 展开。
-      const userName = target ? target.name : (userProfile?.name || '');
+      // 例外：选了「暂不指定」时 userName 传空串，expandCardMacros 会**整段跳过 {{user}}**，
+      // 把宏留在正文里，改由 ContextBuilder 每次构建提示词时现场展开（可反复改指向）。
+      const userName = deferUser ? '' : (target ? target.name : (userProfile?.name || ''));
       setPendingStCard(null);
       importSillyTavernCard(convertSillyTavernCard(card, { userName }), avatar, identity)
           .catch((err: any) => {
@@ -1627,16 +1669,27 @@ ${isInitialGeneration ? `
                                 <div className="space-y-1.5">
                                     <div className="text-[11px] font-bold text-slate-500">世界书里的 <code className="text-[10px]">{'{{user}}'}</code> 指谁？</div>
                                     <select
-                                        value={formData.userMacroTarget?.kind === 'character' ? formData.userMacroTarget.id : ''}
+                                        value={
+                                            formData.userMacroTarget?.kind === 'character' ? formData.userMacroTarget.id
+                                                : formData.userMacroTarget?.kind === 'unset' ? '__unset__'
+                                                : ''
+                                        }
                                         onChange={e => {
-                                            const target = characters.find(c => c.id === e.target.value);
-                                            handleChange('userMacroTarget', target
-                                                ? { kind: 'character', id: target.id, name: target.name }
-                                                : { kind: 'host' });
+                                            const v = e.target.value;
+                                            const target = characters.find(c => c.id === v);
+                                            handleChange('userMacroTarget', v === '__unset__'
+                                                ? { kind: 'unset' }
+                                                : target
+                                                    ? { kind: 'character', id: target.id, name: target.name }
+                                                    : { kind: 'host' });
+                                            // 正文里的宏由 ContextBuilder 现场展开，改指向即时生效；
+                                            // 但开场白已经作为一条聊天记录落库了，走不到那条路——在这里补写一次。
+                                            if (v !== '__unset__') void rewriteGreetingMacros(formData.id, formData.name, target);
                                         }}
                                         className="w-full px-4 py-2.5 bg-slate-50 rounded-2xl text-xs text-slate-700 outline-none focus:ring-1 focus:ring-primary/20"
                                     >
                                         <option value="">我本人（{userProfile?.name || '未命名'}）</option>
+                                        <option value={'__unset__'}>暂不指定（正文里的宏先留着）</option>
                                         {characters.filter(c => c.id !== formData.id).map(c => (
                                             <option key={c.id} value={c.id}>{c.name}</option>
                                         ))}
@@ -1644,8 +1697,10 @@ ${isInitialGeneration ? `
                                     <div className="text-[10px] text-slate-400 leading-relaxed pt-0.5">
                                         <span className="font-bold text-slate-500">双向配队在这里补齐</span>：
                                         先导入的角色当时选不到还不存在的搭档，导完另一个之后回这里改就行。
-                                        <br />注意：角色<span className="font-bold text-slate-500">设定正文</span>里的
-                                        <code className="text-[10px]">{'{{user}}'}</code> 在导入那一刻就已定稿，改这里只影响世界书。
+                                        <br />导入时选过<span className="font-bold text-slate-500">「暂不指定」</span>的角色，
+                                        正文里的 <code className="text-[10px]">{'{{user}}'}</code> 还留着，
+                                        改这里<span className="font-bold text-slate-500">即时生效、可反复改</span>。
+                                        <br />导入时已经选定过对象的角色，正文在那一刻就定稿了，改这里只影响世界书。
                                     </div>
                                 </div>
                             </div>
@@ -2253,6 +2308,7 @@ ${isInitialGeneration ? `
                         className="w-full px-4 py-2.5 bg-slate-100 rounded-xl text-sm text-slate-700 outline-none focus:ring-2 focus:ring-primary/20"
                     >
                         <option value="">我本人（{userProfile?.name || '未命名'}）</option>
+                        <option value={'__unset__'}>暂不指定（等 ta 的搭档导入后再设）</option>
                         {characters.map(c => (
                             <option key={c.id} value={c.id}>{c.name}</option>
                         ))}
@@ -2262,6 +2318,14 @@ ${isInitialGeneration ? `
                         选错会让 ta 把你当成恋人——
                         <span className="font-bold text-slate-500">你和那个 user 同名时，这个错误完全看不出来。</span>
                     </div>
+                    {stUserTargetId === '__unset__' && (
+                        <div className="text-[11px] text-amber-600 bg-amber-50 rounded-xl px-3 py-2 leading-relaxed">
+                            <span className="font-bold">两张卡互相指向对方时用这一档</span>：先导入的这张现在选不到
+                            还没进来的搭档。导完另一张之后，来这个角色的「设定 → 身份归属」里补上即可，
+                            <span className="font-bold">之后还能反复改</span>。
+                            <br />在你补之前，ta 的行为和以前完全一样（按你本人算），不会出岔子。
+                        </div>
+                    )}
                 </div>
 
                 <div className="flex gap-2 pt-1">
