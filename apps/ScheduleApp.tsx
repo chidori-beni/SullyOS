@@ -4,7 +4,7 @@ import { DB } from '../utils/db';
 import { Anniversary, CalendarMoodId, DailySchedule, RoomTodo, Task } from '../types';
 import Modal from '../components/os/Modal';
 import { getLocalDateKey } from '../utils/localDate';
-import { buildTaskSupervisorCalendarContext, CALENDAR_DATA_UPDATED_EVENT, eventsForDate, getCalendarDeviceTimeZone, getCalendarSourceDates, mergeCalendarDayTimeline, notifyCalendarDataUpdated, projectCharacterSchedulesForCalendarDay, sortTasksForCalendar, taskDateKey, tasksForDate, type CalendarTimelineItem } from '../utils/calendarIntegration';
+import { buildTaskSupervisorCalendarContext, CALENDAR_DATA_UPDATED_EVENT, eventsForDate, getCalendarDeviceTimeZone, getCalendarSourceDates, mergeCalendarDayTimeline, notifyCalendarDataUpdated, projectCharacterSchedulesForCalendarDay, sortTasksForCalendar, taskDateKey, taskStartDateKey, tasksForDate, type CalendarTimelineItem } from '../utils/calendarIntegration';
 import { trackEvent } from '../utils/analytics';
 import { buildMonthlyReviewStats, buildSullyMonthlyReport, CALENDAR_MOODS, chooseMonthlyMessageCharacterId } from '../utils/calendarMonthlyReview';
 import { requestMonthlyLetter } from '../utils/monthlyLetter';
@@ -55,6 +55,8 @@ const ScheduleApp: React.FC = () => {
 
     const [taskTitle, setTaskTitle] = useState('');
     const [taskNote, setTaskNote] = useState('');
+    const [taskDateMode, setTaskDateMode] = useState<'single' | 'range'>('single');
+    const [taskStartDate, setTaskStartDate] = useState(today);
     const [taskDate, setTaskDate] = useState(today);
     const [taskTime, setTaskTime] = useState('');
     const [taskSupervisor, setTaskSupervisor] = useState(initialCharId);
@@ -127,12 +129,12 @@ const ScheduleApp: React.FC = () => {
         deviceTimeZone: calendarDeviceTimeZone,
     }), [calendarCharSchedules, calendarDeviceTimeZone, selectedChar?.customTimezone, selectedChar?.customTimezoneEnabled, selectedDate]);
     const selectedDayTimeline = useMemo(
-        () => mergeCalendarDayTimeline(selectedEvents, selectedTasks, calendarCharacterSlots),
-        [calendarCharacterSlots, selectedEvents, selectedTasks],
+        () => mergeCalendarDayTimeline(selectedEvents, selectedTasks, calendarCharacterSlots, selectedDate),
+        [calendarCharacterSlots, selectedDate, selectedEvents, selectedTasks],
     );
     // The personal page is a day view, like Nuoji's calendar: a task is visible
-    // on its effective/deadline date, while selecting an older date reveals its
-    // completed row again.
+    // on every date in its effective range, while completed rows remain
+    // available for historical review.
     const personalScheduleGroups = useMemo(() => {
         const items = eventsForDate(events, selectedDate);
         return items.length > 0 ? [{ date: selectedDate, items }] : [];
@@ -161,7 +163,7 @@ const ScheduleApp: React.FC = () => {
     }, [cursor]);
 
     const openTaskComposer = (date = selectedDate) => {
-        setTaskDate(date); setTaskSupervisor(selectedCharId || characters[0]?.id || ''); setComposerMode('task'); setShowComposer(true);
+        setTaskDateMode('single'); setTaskStartDate(date); setTaskDate(date); setTaskSupervisor(selectedCharId || characters[0]?.id || ''); setComposerMode('task'); setShowComposer(true);
         trackEvent('打开日历新建待办');
     };
     const openEventComposer = (date = selectedDate) => {
@@ -333,15 +335,21 @@ const ScheduleApp: React.FC = () => {
 
     const addTask = async () => {
         if (!taskTitle.trim() || !taskDate) return;
+        const startDate = taskDateMode === 'range' ? taskStartDate : taskDate;
+        if (!startDate || startDate > taskDate) {
+            addToast('开始日期不能晚于截止日期', 'error');
+            return;
+        }
         const task: Task = {
             id: `task-${Date.now()}`, title: taskTitle.trim(), note: taskNote.trim() || undefined,
+            ...(taskDateMode === 'range' && startDate !== taskDate ? { startDate } : {}),
             deadline: taskDate, dueTime: taskTime || undefined, supervisorId: taskSupervisor || characters[0]?.id || '',
             naturalReminder: taskReminder, tone: 'gentle', isCompleted: false, createdAt: Date.now(),
         };
         await DB.saveTask(task);
         setTasks(current => sortTasksForCalendar([...current, task]));
         notifyCalendarDataUpdated();
-        setTaskTitle(''); setTaskNote(''); setTaskTime(''); setShowComposer(false);
+        setTaskTitle(''); setTaskNote(''); setTaskTime(''); setTaskDateMode('single'); setTaskStartDate(today); setTaskDate(today); setShowComposer(false);
         addToast('待办已加入共享日历，聊天时可由角色自然提起', 'success');
     };
     const toggleTask = async (task: Task) => {
@@ -397,6 +405,12 @@ const ScheduleApp: React.FC = () => {
 
     const renderTask = (task: Task, showTimelineOwner = false) => {
         const supervisor = characters.find(char => char.id === task.supervisorId);
+        const taskStart = taskStartDateKey(task);
+        const taskEnd = taskDateKey(task);
+        const dateLabel = taskStart === taskEnd
+            ? `截止 ${taskEnd}`
+            : `有效期 ${taskStart} 至 ${taskEnd}`;
+        const showDueTime = Boolean(task.dueTime && taskEnd === selectedDate);
         const supervisorSpeech = task.isCompleted && isTaskCommentDisplayable(task.supervisorSpeech?.text, task.title)
             ? task.supervisorSpeech.text
             : null;
@@ -416,7 +430,7 @@ const ScheduleApp: React.FC = () => {
                 {voicePending && <div className="mt-2 rounded-2xl bg-violet-50/80 px-3 py-2 text-[11px] leading-relaxed italic text-violet-400">{supervisor?.name || '角色'}正在看这件事……</div>}
                 {voiceCanRetry && <div className="mt-2 flex items-center gap-2 text-[10px] text-slate-400"><span>{taskVoiceFailed.has(task.id) ? 'TA这次还没接上话' : '完成记录已保存，可以让TA留一句话'}</span><button onClick={() => retryCompletedTaskSpeech(task)} className="rounded-full bg-violet-50 px-2.5 py-1 font-bold text-violet-500">{taskVoiceFailed.has(task.id) ? '再问一次' : '让TA说一句'}</button></div>}
                 {task.note && <div className="mt-2 text-xs leading-relaxed text-slate-400">{task.note}</div>}
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-400"><span className="rounded-full bg-sky-50 px-2 py-0.5 text-sky-500">截止 {taskDateKey(task)}{task.dueTime ? ` · ${task.dueTime}` : ''}</span>{supervisor && <span className="inline-flex items-center gap-1"><img src={supervisor.avatar || '/sully/head.png'} className="h-4 w-4 rounded-full object-cover" alt="" />{supervisor.name} 共享</span>}<span className={`rounded-full px-2 py-0.5 ${supervisor && task.naturalReminder !== false ? 'bg-violet-50 text-violet-500' : 'bg-slate-100 text-slate-400'}`}>{supervisor && task.naturalReminder !== false ? '聊天中可自然提起' : '仅共享记录'}</span></div>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-400"><span className="rounded-full bg-sky-50 px-2 py-0.5 text-sky-500">{dateLabel}{showDueTime ? ` · 截止 ${task.dueTime}` : ''}</span>{supervisor && <span className="inline-flex items-center gap-1"><img src={supervisor.avatar || '/sully/head.png'} className="h-4 w-4 rounded-full object-cover" alt="" />{supervisor.name} 共享</span>}<span className={`rounded-full px-2 py-0.5 ${supervisor && task.naturalReminder !== false ? 'bg-violet-50 text-violet-500' : 'bg-slate-100 text-slate-400'}`}>{supervisor && task.naturalReminder !== false ? '聊天中可自然提起' : '仅共享记录'}</span></div>
             </div><button aria-label={`删除待办：${task.title}`} onClick={() => deleteTask(task.id)} className="px-1 text-slate-300 transition hover:text-rose-400">×</button>
         </div>;
     };
@@ -518,7 +532,7 @@ const ScheduleApp: React.FC = () => {
 
                 <section className="space-y-4">
                     <div className="flex items-center justify-between"><div><h2 className="text-base font-bold">待办</h2><p className="mt-1 text-[11px] text-slate-400">只显示这一天生效的待办；回看过去日期仍保留完成记录。</p></div><button onClick={() => openTaskComposer(selectedDate)} className="text-xs font-bold text-violet-500">＋添加</button></div>
-                    {personalTaskGroups.length > 0 ? personalTaskGroups.map(group => <div key={group.date} className="space-y-2"><div className="px-1 text-xs font-bold text-sky-500">截止 · {formatTimelineDate(group.date, today)}</div>{group.items.map(task => renderTask(task))}</div>) : <div className="rounded-3xl border-2 border-dashed border-white bg-white/35 py-8 text-center text-xs text-slate-400">还没有待办，给自己安排一件小事吧。</div>}
+                    {personalTaskGroups.length > 0 ? personalTaskGroups.map(group => <div key={group.date} className="space-y-2"><div className="px-1 text-xs font-bold text-sky-500">生效 · {formatTimelineDate(group.date, today)}</div>{group.items.map(task => renderTask(task))}</div>) : <div className="rounded-3xl border-2 border-dashed border-white bg-white/35 py-8 text-center text-xs text-slate-400">还没有待办，给自己安排一件小事吧。</div>}
                 </section>
             </div>}
             {tab === 'theirs' && <div className="space-y-5">
@@ -568,7 +582,13 @@ const ScheduleApp: React.FC = () => {
                 </div> : <div className="space-y-4">
                     <input autoFocus value={taskTitle} onChange={event => setTaskTitle(event.target.value)} placeholder="要完成什么？" className={INPUT} />
                     <textarea value={taskNote} onChange={event => setTaskNote(event.target.value)} placeholder="备注（可选）" rows={2} className={INPUT} />
-                    <div className="grid grid-cols-2 gap-3"><label className="block text-[10px] font-bold text-slate-400">截止日期<input type="date" value={taskDate} onChange={event => setTaskDate(event.target.value)} className={`mt-1 ${INPUT}`} required /></label><label className="block text-[10px] font-bold text-slate-400">截止 / 提醒时间（可选）<input type="time" value={taskTime} onChange={event => setTaskTime(event.target.value)} className={`mt-1 ${INPUT}`} /></label></div>
+                    <div className="grid grid-cols-2 rounded-2xl bg-slate-100 p-1 text-xs font-bold">
+                        <button type="button" onClick={() => { setTaskDateMode('single'); setTaskStartDate(taskDate); }} className={`rounded-xl py-2.5 transition ${taskDateMode === 'single' ? 'bg-white text-violet-500 shadow-sm' : 'text-slate-400'}`}>单日待办</button>
+                        <button type="button" onClick={() => { setTaskDateMode('range'); if (!taskStartDate) setTaskStartDate(taskDate); }} className={`rounded-xl py-2.5 transition ${taskDateMode === 'range' ? 'bg-white text-violet-500 shadow-sm' : 'text-slate-400'}`}>日期范围</button>
+                    </div>
+                    {taskDateMode === 'range' ? <div className="grid grid-cols-2 gap-3"><label className="block text-[10px] font-bold text-slate-400">开始日期<input type="date" value={taskStartDate} onChange={event => setTaskStartDate(event.target.value)} className={`mt-1 ${INPUT}`} required /></label><label className="block text-[10px] font-bold text-slate-400">截止日期<input type="date" value={taskDate} onChange={event => setTaskDate(event.target.value)} className={`mt-1 ${INPUT}`} required /></label></div> : <label className="block text-[10px] font-bold text-slate-400">日期<input type="date" value={taskDate} onChange={event => { setTaskDate(event.target.value); setTaskStartDate(event.target.value); }} className={`mt-1 ${INPUT}`} required /></label>}
+                    {taskDateMode === 'range' && taskStartDate && taskDate && taskStartDate > taskDate && <p className="-mt-2 text-[10px] text-rose-400">开始日期不能晚于截止日期</p>}
+                    <label className="block text-[10px] font-bold text-slate-400">截止 / 提醒时间（可选）<input type="time" value={taskTime} onChange={event => setTaskTime(event.target.value)} className={`mt-1 ${INPUT}`} /></label>
                     <div className="rounded-2xl bg-violet-50 p-3 text-[10px] leading-relaxed text-slate-500">保存后，这件事会进入你和角色共用的日历。角色会在正常聊天中看到它；是否提起由当时的语境决定，不会在这里直接生成台词。</div>
                     <label className="block text-[10px] font-bold tracking-widest text-slate-400">关联角色（共享并允许提醒）</label><div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">{characters.map(char => <button type="button" key={char.id} onClick={() => setTaskSupervisor(char.id)} className={`shrink-0 rounded-full px-3 py-2 text-xs font-bold ${taskSupervisor === char.id ? 'bg-violet-500 text-white' : 'bg-slate-100 text-slate-500'}`}>{char.name}</button>)}</div>
                     <label className="flex items-center justify-between rounded-2xl bg-violet-50 p-3 text-xs text-slate-600"><span><b className="block">允许 TA 在聊天中自然提起</b><span className="text-[10px] text-slate-400">只给上面选中的角色提醒权限；关闭后仍会共享这条记录</span></span><input type="checkbox" checked={taskReminder} onChange={event => setTaskReminder(event.target.checked)} className="h-5 w-5 accent-violet-500" /></label>

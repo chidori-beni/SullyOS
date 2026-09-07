@@ -1,4 +1,5 @@
 import type { CharacterProfile, Task } from '../types';
+import { taskDateKey, taskStartDateKey } from './calendarIntegration';
 
 /**
  * 待办台词是一个很小的“监督员”旁路请求。
@@ -74,12 +75,15 @@ const roleCardBlock = (input: TaskSupervisorPromptInput): string => {
 
 const taskBlock = (input: TaskSupervisorPromptInput): string => {
     const { task } = input;
+    const deadline = task.deadline ? taskDateKey(task) : '';
+    const startDate = taskStartDateKey(task);
     return [
         '待办内容：' + dataOrNone(task.title, TASK_SUPERVISOR_PROMPT_BUDGETS.taskTitle),
         task.note?.trim()
             ? '用户备注：' + compactTaskVoiceData(task.note, TASK_SUPERVISOR_PROMPT_BUDGETS.taskNote)
             : '',
-        task.deadline ? '截止日期：' + dataOrNone(task.deadline, 32) : '',
+        task.startDate && deadline && startDate !== deadline ? '开始日期：' + dataOrNone(startDate, 32) : '',
+        deadline ? '截止日期：' + dataOrNone(deadline, 32) : '',
         task.dueTime ? '截止时间：' + dataOrNone(task.dueTime, 16) : '',
     ].filter(Boolean).join('\n');
 };

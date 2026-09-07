@@ -6,6 +6,7 @@
 // 优先级：AI 输出 > 系统变量。合并在 XinshengLayoutRenderer 里做（systemData 在前，data 在后）。
 
 import { DB } from '../db';
+import { taskOccursOnDate } from '../calendarIntegration';
 
 export interface XinshengSystemData {
     currentDate: string;
@@ -42,7 +43,7 @@ export const buildXinshengTodoData = async (now = new Date()): Promise<Pick<Xins
     try {
         const today = dateKey(now);
         const all = await DB.getAllTasks();
-        const todays = (all || []).filter(t => !!t && (!t.deadline || t.deadline.startsWith(today)));
+        const todays = (all || []).filter(t => !!t && (!t.deadline || taskOccursOnDate(t, today)));
         const done = todays.filter(t => !!t.isCompleted);
         const lines = todays.map(t => `${t.isCompleted ? '✓' : '○'} ${t.title || ''}`).join('\n');
         return {

@@ -1,5 +1,5 @@
 import type { Anniversary, CalendarMoodId, Task } from '../types';
-import { eventOccursOnDate, taskDateKey } from './calendarIntegration';
+import { eventOccursOnDate, taskOverlapsDateRange } from './calendarIntegration';
 
 export const CALENDAR_MOODS: Array<{ id: CalendarMoodId; label: string; face: string; color: string }> = [
     { id: 'happy', label: '开心', face: '😊', color: '#fbbf24' },
@@ -70,7 +70,7 @@ export const buildMonthlyReviewStats = (params: {
     const longestEvent = [...eventOccurrences]
         .sort((left, right) => durationMinutes(right.event) - durationMinutes(left.event))[0]?.event;
 
-    const monthTasks = params.tasks.filter(task => taskDateKey(task).startsWith(`${params.monthKey}-`));
+    const monthTasks = params.tasks.filter(task => taskOverlapsDateRange(task, dates[0], dates[dates.length - 1]));
     const completedTasks = monthTasks.filter(task => task.isCompleted);
     return {
         monthKey: params.monthKey,
@@ -94,7 +94,10 @@ export const chooseMonthlyMessageCharacterId = (params: {
     events: Anniversary[];
 }): string | undefined => {
     const scores = new Map(params.characterIds.map(id => [id, 0]));
-    for (const date of daysInMonth(params.monthKey)) {
+    const dates = daysInMonth(params.monthKey);
+    const monthStart = dates[0];
+    const monthEnd = dates[dates.length - 1];
+    for (const date of dates) {
         for (const event of params.events) {
             if (eventOccursOnDate(event, date) && scores.has(event.charId)) {
                 scores.set(event.charId, (scores.get(event.charId) || 0) + 2);
@@ -102,7 +105,9 @@ export const chooseMonthlyMessageCharacterId = (params: {
         }
     }
     for (const task of params.tasks) {
-        if (task.isCompleted && taskDateKey(task).startsWith(`${params.monthKey}-`) && scores.has(task.supervisorId)) {
+        if (task.isCompleted && monthStart && monthEnd
+            && taskOverlapsDateRange(task, monthStart, monthEnd)
+            && scores.has(task.supervisorId)) {
             scores.set(task.supervisorId, (scores.get(task.supervisorId) || 0) + 1);
         }
     }

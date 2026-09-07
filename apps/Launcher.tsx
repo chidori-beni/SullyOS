@@ -18,7 +18,7 @@ import { useLocalDateKey } from '../hooks/useLocalDateKey';
 import { resolveCharTimeZone } from '../utils/timezone';
 import { trackEvent } from '../utils/analytics';
 import { chatDetailLaunch } from '../utils/chatDetailLaunch';
-import { CALENDAR_DATA_UPDATED_EVENT, eventOccursOnDate, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey } from '../utils/calendarIntegration';
+import { CALENDAR_DATA_UPDATED_EVENT, eventOccursOnDate, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, taskOccursOnDate, taskStartDateKey } from '../utils/calendarIntegration';
 import {
     carouselCloneResetIndex,
     carouselLogicalIndex,
@@ -647,7 +647,7 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, tasks, c
 
     const todayStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const visibleTasks = useMemo(
-        () => sortTasksForCalendar((tasks as Task[]).filter(task => !task.isCompleted && taskDateKey(task) === todayStr)).slice(0, 5),
+        () => sortTasksForCalendar((tasks as Task[]).filter(task => !task.isCompleted && taskOccursOnDate(task, todayStr))).slice(0, 5),
         [tasks, todayStr]
     );
 
@@ -674,7 +674,7 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, tasks, c
                           const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                           const isToday = day === now.getDate();
                           const hasEvent = anniversaries.some((a: any) => eventOccursOnDate(a, dateStr))
-                              || tasks.some((task: Task) => taskDateKey(task) === dateStr);
+                              || tasks.some((task: Task) => taskOccursOnDate(task, dateStr));
                           
                           return (
                               <div key={day} className="flex flex-col items-center justify-center h-8 relative">
@@ -709,7 +709,7 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, tasks, c
                                   <span className="min-w-0 flex-1">
                                       <span className="block truncate text-sm font-bold" style={{ color: contentColor }}>{task.title}</span>
                                       <span className="block truncate text-[10px] opacity-50" style={{ color: contentColor }}>
-                                      {taskDateKey(task) < todayStr ? '已到期' : taskDateKey(task) === todayStr ? '今天' : taskDateKey(task)}{task.dueTime ? ` · ${task.dueTime}` : ''}
+                                      {taskStartDateKey(task) === taskDateKey(task) ? '今天' : `进行中 · 截止 ${taskDateKey(task)}`}{task.dueTime && taskDateKey(task) === todayStr ? ` · 截止 ${task.dueTime}` : ''}
                                   </span>
                               </span>
                           </button>

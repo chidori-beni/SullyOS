@@ -3994,6 +3994,8 @@ export interface Task {
     tone: 'gentle' | 'strict' | 'tsundere';
     /** 用户自己的待办说明；旧数据没有时按空字符串处理。 */
     note?: string;
+    /** 用户本地生效起始日期 YYYY-MM-DD；缺省时按 deadline 处理为单日待办。 */
+    startDate?: string;
     /** 用户本地日期 YYYY-MM-DD；deadline 继续保留以兼容旧版。 */
     deadline?: string;
     /** 可选的本地时间 HH:mm，用于日历排序与聊天中的自然提醒。 */
