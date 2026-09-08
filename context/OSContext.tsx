@@ -76,7 +76,7 @@ import { Capacitor } from '@capacitor/core';
 import { formatBytes } from '../utils/format';
 import { isEmotionEvalSkipped } from '../utils/devDebug';
 import { isBenignApplicationConsoleMessage } from '../utils/applicationConsole';
-import { toMountedWorldbook } from '../utils/worldbook';
+import { replaceMountedWorldbook } from '../utils/worldbook';
 import { initLocalStorageMirror } from '../utils/lsMirror';
 // 备份用：把存在 localStorage 的本机配置随导出一起带走（键名须与 importFullData 对齐）
 import { exportPostOfficeLocal } from '../utils/vrWorld/postOffice';
@@ -3596,11 +3596,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       if (charsToSync.length > 0) {
           const updatedChars = characters.map(char => {
               if (char.mountedWorldbooks?.some(m => m.id === id)) {
-                  const newMounted = char.mountedWorldbooks.map(m =>
-                      m.id === id
-                          ? toMountedWorldbook(fullUpdatedWb)
-                          : m
-                  );
+                  const newMounted = replaceMountedWorldbook(char.mountedWorldbooks, fullUpdatedWb);
                   const newChar = { ...char, mountedWorldbooks: newMounted };
                   // 这条落库绕开了 updateCharacter，得自己打脏：世界书正文进 fire_pack 的系统
                   // 提示词，不刷的话角色到点还照着改之前的设定说话。

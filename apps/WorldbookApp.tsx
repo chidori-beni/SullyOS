@@ -2,7 +2,8 @@ import React, { useState, useMemo, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { Worldbook, WorldbookDepthRole, WorldbookMode, WorldbookPosition, WorldbookSelectiveLogic } from '../types';
 import Modal from '../components/os/Modal';
-import { Check, DiamondsFour, BookOpen, DownloadSimple, Trash, UploadSimple, WarningCircle, X } from '@phosphor-icons/react';
+import { Check, CornersOut, DiamondsFour, BookOpen, DownloadSimple, Trash, UploadSimple, WarningCircle, X } from '@phosphor-icons/react';
+import WorldbookTextFullscreenEditor from '../components/WorldbookTextFullscreenEditor';
 import {
     parseStandardWorldbook,
     serializeStandardWorldbook,
@@ -23,6 +24,7 @@ const WorldbookApp: React.FC = () => {
     
     // View State
     const [isEditing, setIsEditing] = useState(false);
+    const [isContentFullscreen, setIsContentFullscreen] = useState(false);
     const [editingBook, setEditingBook] = useState<Worldbook | null>(null);
     const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
     const [previewBookId, setPreviewBookId] = useState<string | null>(null);
@@ -100,7 +102,8 @@ const WorldbookApp: React.FC = () => {
     };
 
     const handleCreate = () => {
-        setEditingBook(null); 
+        setEditingBook(null);
+        setIsContentFullscreen(false);
         setTempTitle('');
         setTempContent('');
         setTempCategory(''); // Default empty
@@ -126,6 +129,7 @@ const WorldbookApp: React.FC = () => {
 
     const handleEdit = (book: Worldbook) => {
         setEditingBook(book);
+        setIsContentFullscreen(false);
         setTempTitle(book.title);
         setTempContent(book.content);
         setTempCategory(book.category || '');
@@ -208,6 +212,7 @@ const WorldbookApp: React.FC = () => {
             addWorldbook(newBook);
             addToast('新书已创建', 'success');
         }
+        setIsContentFullscreen(false);
         setIsEditing(false);
     };
 
@@ -349,9 +354,18 @@ const WorldbookApp: React.FC = () => {
     if (isEditing) {
         return (
             <div className="h-full w-full bg-[#f5f6fa] flex flex-col font-sans animate-fade-in">
+                <WorldbookTextFullscreenEditor
+                    isOpen={isContentFullscreen}
+                    title={tempTitle.trim() || (editingBook ? '编辑条目' : '新建条目')}
+                    value={tempContent}
+                    onChange={setTempContent}
+                    onExit={() => setIsContentFullscreen(false)}
+                    onSave={handleSave}
+                    placeholder="在此输入详细的设定内容，支持 Markdown 格式..."
+                />
                 <div className="bg-white/90 backdrop-blur-xl border-b border-slate-200/70 shrink-0 z-20" style={{ paddingTop: 'var(--safe-top)' }}>
                     <div className="h-16 max-w-2xl mx-auto w-full flex items-center justify-between px-5">
-                        <button onClick={() => setIsEditing(false)} className="px-3 py-2 -ml-3 rounded-xl text-slate-500 font-semibold text-sm hover:bg-slate-100 active:scale-95 transition-all">取消</button>
+                        <button onClick={() => { setIsContentFullscreen(false); setIsEditing(false); }} className="px-3 py-2 -ml-3 rounded-xl text-slate-500 font-semibold text-sm hover:bg-slate-100 active:scale-95 transition-all">取消</button>
                         <div className="text-center">
                             <div className="text-[10px] font-bold tracking-[0.16em] text-indigo-400 uppercase">Worldbook</div>
                             <div className="text-sm font-bold text-slate-800 mt-0.5">{editingBook ? '编辑条目' : '新建条目'}</div>
@@ -620,9 +634,21 @@ const WorldbookApp: React.FC = () => {
                         </div>
 
                         <div className="bg-white rounded-[1.5rem] border border-slate-200/70 p-5 shadow-sm shadow-slate-200/40">
-                            <div className="text-[11px] font-bold tracking-[0.14em] text-indigo-500 uppercase">设定内容</div>
-                            <p className="text-[10px] text-slate-400 mt-1 mb-3">支持 Markdown；这里只填写实际需要注入模型的内容。</p>
-                            <textarea 
+                            <div className="flex items-start justify-between gap-3">
+                                <div>
+                                    <div className="text-[11px] font-bold tracking-[0.14em] text-indigo-500 uppercase">设定内容</div>
+                                    <p className="text-[10px] text-slate-400 mt-1">支持 Markdown；这里只填写实际需要注入模型的内容。</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsContentFullscreen(true)}
+                                    className="inline-flex shrink-0 items-center gap-1 rounded-full border border-indigo-100 bg-indigo-50 px-2.5 py-1.5 text-[10px] font-bold text-indigo-600 active:scale-95 transition-transform"
+                                >
+                                    <CornersOut size={13} weight="bold" />
+                                    全屏编辑
+                                </button>
+                            </div>
+                            <textarea
                                 value={tempContent}
                                 onChange={e => setTempContent(e.target.value)}
                                 placeholder="在此输入详细的设定内容，支持 Markdown 格式..." 

@@ -9,6 +9,7 @@ import {
     sortWorldbooksForDisplay,
     splitWorldbookSections,
     toMountedWorldbook,
+    replaceMountedWorldbook,
 } from './worldbook';
 
 const book = (overrides: Partial<MountedWorldbook> = {}): MountedWorldbook => ({
@@ -173,6 +174,59 @@ describe('standard worldbook import', () => {
 });
 
 describe('mounted worldbook synchronization', () => {
+    it('replaces every matching mount from the complete global entry and keeps other entries/order', () => {
+        const other = book({ id: 'other', title: '其他条目', content: '不变' });
+        const mounted = [
+            book({ id: 'book-1', title: '旧标题', content: '旧正文', constant: true }),
+            other,
+            book({ id: 'book-1', title: '重复旧缓存', content: '也要更新' }),
+        ];
+        const worldbook = {
+            ...book({
+                id: 'book-1',
+                title: '新标题',
+                content: '新正文',
+                constant: false,
+                key: ['月亮'],
+                position: 4,
+                depth: 2,
+                role: 1,
+                disable: true,
+            }),
+            createdAt: 1,
+            updatedAt: 2,
+        };
+
+        const next = replaceMountedWorldbook(mounted, worldbook);
+
+        expect(next).not.toBe(mounted);
+        expect(next.map(item => item.id)).toEqual(['book-1', 'other', 'book-1']);
+        expect(next[0]).toMatchObject({
+            title: '新标题',
+            content: '新正文',
+            constant: false,
+            key: ['月亮'],
+            position: 4,
+            depth: 2,
+            role: 1,
+            disable: true,
+        });
+        expect(next[2]).toMatchObject({ title: '新标题', content: '新正文' });
+        expect(next[1]).toBe(other);
+    });
+
+    it('returns the original array when the global entry is not mounted', () => {
+        const mounted = [book({ id: 'other' })];
+        const worldbook = {
+            ...book({ id: 'missing', title: '不存在' }),
+            createdAt: 1,
+            updatedAt: 2,
+        };
+
+        expect(replaceMountedWorldbook(mounted, worldbook)).toBe(mounted);
+        expect(replaceMountedWorldbook([], worldbook)).toEqual([]);
+    });
+
     it('copies edited activation and injection settings into the character mount cache', () => {
         const mounted = toMountedWorldbook({
             ...book({

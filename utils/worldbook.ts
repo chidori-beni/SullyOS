@@ -97,6 +97,23 @@ export const toMountedWorldbook = (book: Worldbook): MountedWorldbook => ({
     displayOrder: book.displayOrder,
 });
 
+/**
+ * 把全局世界书的完整记录投影回角色挂载缓存。
+ *
+ * mountedWorldbooks 是冗余缓存，不能只手动替换 title/content；世界书 App
+ * 还可能同时修改触发词、注入位置和启用状态。没有匹配项时保持原数组引用，
+ * 方便调用方避免无意义的角色更新。
+ */
+export const replaceMountedWorldbook = (
+    mountedWorldbooks: MountedWorldbook[],
+    worldbook: Worldbook,
+): MountedWorldbook[] => {
+    if (!mountedWorldbooks.some(book => book.id === worldbook.id)) return mountedWorldbooks;
+    return mountedWorldbooks.map(book => (
+        book.id === worldbook.id ? toMountedWorldbook(worldbook) : book
+    ));
+};
+
 export const normalizeWorldbookMode = (value: unknown): WorldbookMode => (
     value === 'online' || value === 'offline' ? value : 'all'
 );
