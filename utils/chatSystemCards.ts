@@ -43,6 +43,26 @@ export const isDateEndingMessage = (
   && message?.metadata?.isDateEnding === true
 );
 
+/**
+ * 导入补丁里的消息可能拿到新的 IndexedDB id，但 timestamp 仍然属于过去。
+ * 聊天页必须按真实消息时间显示，否则恢复的结束卡会被排到所有新消息后面。
+ */
+export const sortChatMessagesChronologically = <T extends {
+  timestamp?: unknown;
+  id?: unknown;
+}>(messages: readonly T[]): T[] => [...messages].sort((left, right) => {
+  const leftTimestamp = typeof left.timestamp === 'number' && Number.isFinite(left.timestamp)
+    ? left.timestamp
+    : 0;
+  const rightTimestamp = typeof right.timestamp === 'number' && Number.isFinite(right.timestamp)
+    ? right.timestamp
+    : 0;
+  if (leftTimestamp !== rightTimestamp) return leftTimestamp - rightTimestamp;
+  const leftId = typeof left.id === 'number' && Number.isFinite(left.id) ? left.id : 0;
+  const rightId = typeof right.id === 'number' && Number.isFinite(right.id) ? right.id : 0;
+  return leftId - rightId;
+});
+
 const dateEncounterIdOf = (
   message: { metadata?: { dateEncounterId?: unknown } | null },
 ): string => typeof message?.metadata?.dateEncounterId === 'string'
@@ -55,6 +75,8 @@ const dateEncounterIdOf = (
  */
 export const filterChatMessages = <T extends {
   metadata?: { source?: unknown; isDateEnding?: unknown; dateEncounterId?: unknown } | null;
+  timestamp?: unknown;
+  id?: unknown;
 }>(messages: readonly T[]): T[] => {
   const popupEncounterIds = new Set(
     messages
@@ -63,7 +85,7 @@ export const filterChatMessages = <T extends {
       .filter(Boolean),
   );
 
-  return messages.filter(message => {
+  return sortChatMessagesChronologically(messages.filter(message => {
     const source = message.metadata?.source;
     if (source === 'date') {
       if (!isDateEndingMessage(message)) return false;
@@ -71,7 +93,7 @@ export const filterChatMessages = <T extends {
       return !encounterId || !popupEncounterIds.has(encounterId);
     }
     return source !== 'call' && source !== 'story_theater_memory';
-  });
+  }));
 };
 
 /** `score_card` 靠 type 而不是 source 认，历史消息里没有 metadata.source。 */

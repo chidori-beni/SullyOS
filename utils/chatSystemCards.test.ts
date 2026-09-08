@@ -63,6 +63,12 @@ describe('聊天页的见面结束卡片兜底', () => {
     const popup = { metadata: { source: 'date-end-popup', dateEncounterId: 'date-recovered' }, id: 3 };
     expect(filterChatMessages([ending, popup])).toEqual([popup]);
   });
+
+  it('按 timestamp 排序，而不是按导入后新分配的 id 排序', () => {
+    const newestIdButOldTime = { metadata: { source: 'date-end-popup', dateEncounterId: 'date-recovered' }, id: 999, timestamp: 100 };
+    const olderIdButNewTime = { metadata: {}, id: 1000, timestamp: 200 };
+    expect(filterChatMessages([olderIdButNewTime, newestIdButOldTime]).map(message => message.id)).toEqual([999, 1000]);
+  });
 });
 
 describe('Chat.tsx 的两处过滤必须共用同一个判定', () => {
