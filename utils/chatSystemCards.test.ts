@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import path from 'path';
-import { isAlwaysVisibleSystemCard, isHiddenSystemLog } from './chatSystemCards';
+import { filterChatMessages, isAlwaysVisibleSystemCard, isHiddenSystemLog } from './chatSystemCards';
 
 const read = (rel: string) => readFileSync(path.resolve(__dirname, rel), 'utf8');
 
@@ -25,6 +25,16 @@ describe('隐藏系统日志不能吃掉卡片类 system 消息', () => {
     expect(isHiddenSystemLog({ role: 'system', type: 'score_card', metadata: {} }, true)).toBe(false);
   });
 
+  it('只有见面结束锚点时，也不能被隐藏系统日志吞掉', () => {
+    const ending = {
+      role: 'system',
+      type: 'system',
+      metadata: { source: 'date', isDateEnding: true, dateEncounterId: 'date-recovered' },
+    };
+    expect(isAlwaysVisibleSystemCard(ending)).toBe(true);
+    expect(isHiddenSystemLog(ending, true)).toBe(false);
+  });
+
   it('真正的系统旁白仍然被隐藏', () => {
     const log = { role: 'system', type: 'system', metadata: { source: 'system-log' } };
     expect(isHiddenSystemLog(log, true)).toBe(true);
@@ -39,16 +49,34 @@ describe('隐藏系统日志不能吃掉卡片类 system 消息', () => {
   });
 });
 
+describe('聊天页的见面结束卡片兜底', () => {
+  it('没有 date-end-popup 时保留结束锚点', () => {
+    const ending = { metadata: { source: 'date', isDateEnding: true, dateEncounterId: 'date-recovered' }, id: 2 };
+    expect(filterChatMessages([
+      { metadata: { source: 'date', dateEncounterId: 'date-recovered' }, id: 1 },
+      ending,
+    ])).toEqual([ending]);
+  });
+
+  it('已有漂亮卡片时不重复显示结束锚点', () => {
+    const ending = { metadata: { source: 'date', isDateEnding: true, dateEncounterId: 'date-recovered' }, id: 2 };
+    const popup = { metadata: { source: 'date-end-popup', dateEncounterId: 'date-recovered' }, id: 3 };
+    expect(filterChatMessages([ending, popup])).toEqual([popup]);
+  });
+});
+
 describe('Chat.tsx 的两处过滤必须共用同一个判定', () => {
   const chat = read('../apps/Chat.tsx');
 
   it('读库和渲染都调用 isHiddenSystemLog，不再各写各的白名单', () => {
-    expect(chat).toContain("import { isHiddenSystemLog } from '../utils/chatSystemCards';");
+    expect(chat).toContain("import { filterChatMessages, isHiddenSystemLog } from '../utils/chatSystemCards';");
     expect(chat).toContain('isHiddenSystemLog(m, currentChar?.hideSystemLogs)');
     expect(chat).toContain('isHiddenSystemLog(m, char?.hideSystemLogs)');
     // 手写白名单一处都不能留：留一处就等于下次再漏一种卡片。
     expect(chat).not.toContain("m.metadata?.source !== 'call-end-popup'");
     expect(chat).not.toContain("m.type !== 'score_card'");
+    expect(chat).toContain('filterChatMessages(recent)');
+    expect(chat).toContain('filterChatMessages(messages)');
   });
 });
 

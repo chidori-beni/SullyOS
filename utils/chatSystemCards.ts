@@ -28,6 +28,52 @@ export type AlwaysVisibleSystemCardSource = typeof ALWAYS_VISIBLE_SYSTEM_CARD_SO
 
 const SOURCE_SET: ReadonlySet<string> = new Set(ALWAYS_VISIBLE_SYSTEM_CARD_SOURCES);
 
+/**
+ * 见面结束时会同时落两条记录：
+ * - `date-end-popup`：聊天页专用的漂亮卡片；
+ * - `source: date + isDateEnding`：见面历史页用的结束锚点。
+ *
+ * 旧版导入 / 增量补丁有可能只留下第二条。它仍然是一个已经完成的事件，
+ * 不能像普通见面正文一样从聊天列表里静默过滤掉；聊天页会把它渲染成同一张卡片。
+ */
+export const isDateEndingMessage = (
+  message: { metadata?: { source?: unknown; isDateEnding?: unknown } | null },
+): boolean => (
+  message?.metadata?.source === 'date'
+  && message?.metadata?.isDateEnding === true
+);
+
+const dateEncounterIdOf = (
+  message: { metadata?: { dateEncounterId?: unknown } | null },
+): string => typeof message?.metadata?.dateEncounterId === 'string'
+  ? message.metadata.dateEncounterId
+  : '';
+
+/**
+ * 聊天页只显示普通聊天和系统卡片，不显示见面正文；见面结束锚点是卡片缺失时的兜底。
+ * 如果同一 encounter 已有 `date-end-popup`，隐藏锚点，避免恢复后出现两张卡片。
+ */
+export const filterChatMessages = <T extends {
+  metadata?: { source?: unknown; isDateEnding?: unknown; dateEncounterId?: unknown } | null;
+}>(messages: readonly T[]): T[] => {
+  const popupEncounterIds = new Set(
+    messages
+      .filter(message => message.metadata?.source === 'date-end-popup')
+      .map(dateEncounterIdOf)
+      .filter(Boolean),
+  );
+
+  return messages.filter(message => {
+    const source = message.metadata?.source;
+    if (source === 'date') {
+      if (!isDateEndingMessage(message)) return false;
+      const encounterId = dateEncounterIdOf(message);
+      return !encounterId || !popupEncounterIds.has(encounterId);
+    }
+    return source !== 'call' && source !== 'story_theater_memory';
+  });
+};
+
 /** `score_card` 靠 type 而不是 source 认，历史消息里没有 metadata.source。 */
 const ALWAYS_VISIBLE_SYSTEM_CARD_TYPES: ReadonlySet<string> = new Set(['score_card']);
 
@@ -37,9 +83,10 @@ const ALWAYS_VISIBLE_SYSTEM_CARD_TYPES: ReadonlySet<string> = new Set(['score_ca
  * 只判断"要不要豁免"，不判断 role/开关本身——调用方自己已经知道当前角色开没开。
  */
 export const isAlwaysVisibleSystemCard = (
-  message: { type?: string | null; metadata?: { source?: unknown } | null },
+  message: { type?: string | null; metadata?: { source?: unknown; isDateEnding?: unknown } | null },
 ): boolean => {
   if (typeof message?.type === 'string' && ALWAYS_VISIBLE_SYSTEM_CARD_TYPES.has(message.type)) return true;
+  if (isDateEndingMessage(message)) return true;
   const source = message?.metadata?.source;
   return typeof source === 'string' && SOURCE_SET.has(source);
 };

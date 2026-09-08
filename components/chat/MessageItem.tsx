@@ -1861,9 +1861,13 @@ const MessageItem = React.memo(({
         const isCallSummary = m.metadata?.source === 'call-end-popup';
         const isMissedCall = m.metadata?.source === 'incoming-call-missed';
 
-        if (m.metadata?.source === 'date-end-popup') {
-            const startedAt = Number(m.metadata?.startedAt || m.timestamp);
-            const endedAt = Number(m.metadata?.endedAt || m.timestamp);
+        if (m.metadata?.source === 'date-end-popup' || m.metadata?.isDateEnding === true) {
+            const startedAt = Number(m.metadata?.startedAt || m.metadata?.dateEncounterStartedAt || m.timestamp);
+            const endedAt = Number(m.metadata?.endedAt || m.metadata?.dateEncounterRealEndedAt || m.timestamp);
+            const displayCharName = m.metadata?.charName || charName || 'TA';
+            const displayAvatar = m.metadata?.charAvatar || charAvatar;
+            const durationText = m.metadata?.durationText || m.metadata?.dateEncounterDurationText || '';
+            const summary = m.metadata?.summary || m.metadata?.dateEncounterSummary || '这次见面已经结束。';
             const dateText = new Date(startedAt).toLocaleString(undefined, { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
             return (
                 <div className={`${cardShellClass} flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`} {...cardHook}>
@@ -1879,15 +1883,15 @@ const MessageItem = React.memo(({
                                 }}
                             >
                             <div className="flex items-center gap-3 border-b border-rose-100 px-4 py-3">
-                                {m.metadata?.charAvatar ? <img src={m.metadata.charAvatar} className="h-10 w-10 rounded-full object-cover ring-2 ring-white shadow" alt="" /> : <div className="h-10 w-10 rounded-full bg-rose-300 text-white flex items-center justify-center font-bold">{String(m.metadata?.charName || '?').slice(0, 1)}</div>}
+                                {displayAvatar ? <img src={displayAvatar} className="h-10 w-10 rounded-full object-cover ring-2 ring-white shadow" alt="" /> : <div className="h-10 w-10 rounded-full bg-rose-300 text-white flex items-center justify-center font-bold">{String(displayCharName).slice(0, 1)}</div>}
                                 <div className="min-w-0 flex-1">
                                     <div className="text-[10px] font-bold tracking-[0.18em] text-rose-400">此时此刻 · 见面完结</div>
-                                    <div className="truncate text-sm font-bold text-slate-700">和 {m.metadata?.charName || 'TA'} 的见面</div>
+                                    <div className="truncate text-sm font-bold text-slate-700">和 {displayCharName} 的见面</div>
                                 </div>
                             </div>
                             <div className="space-y-2 px-4 py-3">
-                                <div className="flex justify-between text-[10px] text-slate-400"><span>{dateText}</span><span>{m.metadata?.durationText || ''}</span></div>
-                                <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-slate-600">{m.metadata?.summary || '这次见面已经结束。'}</p>
+                                <div className="flex justify-between text-[10px] text-slate-400"><span>{dateText}</span><span>{durationText}</span></div>
+                                <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-slate-600">{summary}</p>
                                 <div className="text-[9px] text-slate-300">{new Date(startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} — {new Date(endedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                             </div>
                             </button>
