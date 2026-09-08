@@ -50,6 +50,7 @@ const ScheduleApp: React.FC = () => {
     const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
     const [editingEventId, setEditingEventId] = useState<string | null>(null);
     const [showMoodPicker, setShowMoodPicker] = useState(false);
+    const [moodDate, setMoodDate] = useState(today);
     const [generatingLetter, setGeneratingLetter] = useState(false);
     const [openedLetters, setOpenedLetters] = useState<Set<string>>(new Set());
     const monthlyGenerationId = useRef(0);
@@ -187,7 +188,7 @@ const ScheduleApp: React.FC = () => {
     }, [selectedDate, tasks]);
     const reviewMonthKey = `${reviewCursor.getFullYear()}-${String(reviewCursor.getMonth() + 1).padStart(2, '0')}`;
     const currentMonthKey = today.slice(0, 7);
-    const selectedMood = CALENDAR_MOODS.find(mood => mood.id === userProfile.calendarDailyMoods?.[today]);
+    const selectedMood = CALENDAR_MOODS.find(mood => mood.id === userProfile.calendarDailyMoods?.[moodDate]);
     const monthlyStats = useMemo(() => buildMonthlyReviewStats({
         monthKey: reviewMonthKey,
         moods: userProfile.calendarDailyMoods,
@@ -243,6 +244,7 @@ const ScheduleApp: React.FC = () => {
     const selectCalendarDate = (value: string) => {
         if (!value) return;
         setSelectedDate(value);
+        setMoodDate(value > today ? today : value);
         setCursor(parseDateKey(value));
     };
     const shiftSelectedDate = (offset: number) => {
@@ -250,10 +252,17 @@ const ScheduleApp: React.FC = () => {
         next.setDate(next.getDate() + offset);
         selectCalendarDate(dateKey(next));
     };
+    const shiftMoodDate = (offset: number) => {
+        const next = parseDateKey(moodDate);
+        next.setDate(next.getDate() + offset);
+        const nextKey = dateKey(next);
+        if (nextKey > today) return;
+        setMoodDate(nextKey);
+    };
     const chooseMood = (mood: CalendarMoodId) => {
-        updateUserProfile({ calendarDailyMoods: { ...(userProfile.calendarDailyMoods || {}), [today]: mood } });
+        updateUserProfile({ calendarDailyMoods: { ...(userProfile.calendarDailyMoods || {}), [moodDate]: mood } });
         setShowMoodPicker(false);
-        addToast('今天的心情已记下', 'success');
+        addToast(moodDate === today ? '今天的心情已记下' : `${moodDate} 的心情已补记`, 'success');
         trackEvent('记录日历心情');
     };
     const generateMonthlyMessage = async () => {
@@ -647,14 +656,16 @@ const ScheduleApp: React.FC = () => {
         <main className="relative z-10 flex-1 overflow-y-auto px-5 pb-28 pt-5 no-scrollbar">
             {tab === 'month' && <div className="space-y-5">
                 <section className="rounded-[2rem] border border-white bg-white/75 p-5 shadow-[0_18px_50px_rgba(85,73,125,0.09)] backdrop-blur-xl">
-                    <div className="mb-5 flex items-center justify-between"><button onClick={() => setCursor(current => new Date(current.getFullYear(), current.getMonth() - 1, 1))} className="h-8 w-8 rounded-full bg-slate-100">‹</button><button onClick={() => { setCursor(parseDateKey(today)); setSelectedDate(today); }} className="font-bold">{cursor.getFullYear()} 年 {cursor.getMonth() + 1} 月</button><button onClick={() => setCursor(current => new Date(current.getFullYear(), current.getMonth() + 1, 1))} className="h-8 w-8 rounded-full bg-slate-100">›</button></div>
+                    <div className="mb-5 flex items-center justify-between"><button onClick={() => setCursor(current => new Date(current.getFullYear(), current.getMonth() - 1, 1))} className="h-8 w-8 rounded-full bg-slate-100">‹</button><button onClick={() => selectCalendarDate(today)} className="font-bold">{cursor.getFullYear()} 年 {cursor.getMonth() + 1} 月</button><button onClick={() => setCursor(current => new Date(current.getFullYear(), current.getMonth() + 1, 1))} className="h-8 w-8 rounded-full bg-slate-100">›</button></div>
                     <div className="grid grid-cols-7 text-center text-[10px] font-bold text-slate-300">{WEEKDAYS.map(day => <div key={day} className="pb-2">{day}</div>)}</div>
                     <div className="grid grid-cols-7 gap-y-2 text-center">{calendarCells.map((cell, index) => {
                         if (!cell) return <div key={`empty-${index}`} className="h-11" />;
+                        const mood = CALENDAR_MOODS.find(option => option.id === userProfile.calendarDailyMoods?.[cell]);
                         const hasTasks = tasksForDate(tasks, cell).length > 0, hasEvents = eventsForDate(events, cell).length > 0;
-                        return <button key={cell} onClick={() => setSelectedDate(cell)} className="relative flex h-11 flex-col items-center justify-center"><span className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${cell === selectedDate ? 'bg-violet-500 text-white shadow-md shadow-violet-200' : cell === today ? 'bg-violet-100 text-violet-600' : ''}`}>{Number(cell.slice(-2))}</span><span className="absolute bottom-0 flex gap-0.5">{hasTasks && <i className="h-1 w-1 rounded-full bg-sky-400" />}{hasEvents && <i className="h-1 w-1 rounded-full bg-rose-400" />}</span></button>;
+                        const moodDescription = mood ? `，${mood.label}` : '';
+                        return <button key={cell} onClick={() => selectCalendarDate(cell)} aria-label={`${cell}${moodDescription}`} className="relative flex h-11 flex-col items-center justify-center"><span className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${cell === selectedDate ? 'bg-violet-500 text-white shadow-md shadow-violet-200' : cell === today ? 'bg-violet-100 text-violet-600' : ''}`}>{Number(cell.slice(-2))}</span><span className="absolute bottom-0 flex h-3 items-center gap-1">{mood && <span className="text-[11px] leading-none" title={`${mood.label} · ${cell}`}>{mood.face}</span>}{hasTasks && <i className="h-1 w-1 rounded-full bg-sky-400" />}{hasEvents && <i className="h-1 w-1 rounded-full bg-rose-400" />}</span></button>;
                     })}</div>
-                    <div className="mt-4 flex justify-center gap-4 text-[10px] text-slate-400"><span className="text-sky-400">● 待办</span><span className="text-rose-400">● 日程 / 纪念日</span></div>
+                    <div className="mt-4 flex flex-wrap justify-center gap-4 text-[10px] text-slate-400"><span className="text-sky-400">● 待办</span><span className="text-rose-400">● 日程 / 纪念日</span><span>😊 心情</span></div>
                 </section>
                 <section className="space-y-3">
                     <div className="px-1"><h2 className="font-bold">{selectedDate === today ? '今天' : selectedDate}</h2><p className="text-[11px] text-slate-400">你与 {selectedChar?.name || '角色'} 的安排都按你的本地时间排列；角色原始时间可在“TA 的”查看。长按卡片可编辑或删除。</p></div>
@@ -671,10 +682,17 @@ const ScheduleApp: React.FC = () => {
             {tab === 'mine' && <div className="space-y-6">
                 <section className="rounded-[2rem] border border-white bg-white/80 p-5 shadow-sm backdrop-blur-xl">
                     <button onClick={() => setShowMoodPicker(current => !current)} className="flex w-full items-center justify-between text-left">
-                        <div><div className="text-[10px] font-bold tracking-[0.22em] text-violet-400">TODAY'S MOOD</div><h2 className="mt-1 text-base font-bold">今天心情怎么样？</h2><p className="mt-1 text-[11px] text-slate-400">只记录你的心情，不会替角色做判断。</p></div>
+                        <div><div className="text-[10px] font-bold tracking-[0.22em] text-violet-400">MOOD LOG</div><h2 className="mt-1 text-base font-bold">{moodDate === today ? '今天心情怎么样？' : `${moodDate} 那天是什么心情？`}</h2><p className="mt-1 text-[11px] text-slate-400">可以补记过去的某一天，之后也能修改。</p></div>
                         <span className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-violet-50 to-sky-50 text-4xl shadow-inner">{selectedMood?.face || '＋'}</span>
                     </button>
-                    {showMoodPicker && <div className="mt-4 grid grid-cols-3 gap-2 border-t border-slate-100 pt-4">{CALENDAR_MOODS.map(mood => <button key={mood.id} onClick={() => chooseMood(mood.id)} className={`rounded-2xl border p-3 text-center transition ${selectedMood?.id === mood.id ? 'border-violet-300 bg-violet-50 shadow-sm' : 'border-transparent bg-slate-50'}`}><span className="block text-3xl">{mood.face}</span><span className="mt-1 block text-[11px] font-bold text-slate-500">{mood.label}</span></button>)}</div>}
+                    {showMoodPicker && <div className="mt-4 border-t border-slate-100 pt-4">
+                        <div className="flex items-center justify-between rounded-2xl bg-slate-50/80 px-2 py-2">
+                            <button type="button" aria-label="选择前一天的心情" onClick={() => shiftMoodDate(-1)} className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-lg text-slate-400">‹</button>
+                            <label className="flex min-w-0 flex-1 items-center justify-center gap-2 text-xs font-bold text-slate-600"><span>{moodDate === today ? '今天' : moodDate}</span><input aria-label="选择要记录心情的日期" type="date" value={moodDate} max={today} onChange={event => { if (event.target.value && event.target.value <= today) setMoodDate(event.target.value); }} className="max-w-[8.5rem] rounded-xl bg-white px-2 py-1.5 text-[11px] font-medium text-slate-500" /></label>
+                            <button type="button" aria-label="选择后一天的心情" disabled={moodDate >= today} onClick={() => shiftMoodDate(1)} className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-lg text-slate-400 disabled:opacity-30">›</button>
+                        </div>
+                        <div className="mt-3 grid grid-cols-3 gap-2">{CALENDAR_MOODS.map(mood => <button key={mood.id} onClick={() => chooseMood(mood.id)} className={`rounded-2xl border p-3 text-center transition ${selectedMood?.id === mood.id ? 'border-violet-300 bg-violet-50 shadow-sm' : 'border-transparent bg-slate-50'}`}><span className="block text-3xl">{mood.face}</span><span className="mt-1 block text-[11px] font-bold text-slate-500">{mood.label}</span></button>)}</div>
+                    </div>}
                 </section>
 
                 <section className="space-y-4">
