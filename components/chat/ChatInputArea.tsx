@@ -299,6 +299,27 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         });
     };
 
+    // iOS 独立 PWA 在键盘弹出时会由 iosStandalone.ts 在 document 上锁住外层 touchmove。
+    // 短文本框虽然不能滚动，但 iOS 的选区手柄仍需要 touchmove 扩大/缩小选区；
+    // 在捕获阶段截住已有选区的事件，让它不要落到全局滚动锁，保留 WebKit 的原生处理。
+    React.useEffect(() => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+
+        const guardSelectionTouchMove = (event: TouchEvent) => {
+            if (textarea.selectionStart === textarea.selectionEnd) return;
+            event.stopImmediatePropagation();
+        };
+
+        textarea.addEventListener('touchmove', guardSelectionTouchMove, {
+            capture: true,
+            passive: false,
+        });
+        return () => {
+            textarea.removeEventListener('touchmove', guardSelectionTouchMove, { capture: true });
+        };
+    }, [selectionMode]);
+
     // Keep long messages visible while they are being composed, matching the
     // call composer: grow with the content up to six lines, then scroll inside.
     // 测量必须防呆：元素还没进入布局（切 App、面板动画、键盘回流中）时 scrollHeight 会量出

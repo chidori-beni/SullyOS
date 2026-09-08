@@ -58,6 +58,17 @@ describe('user voice message wiring', () => {
     expect(standalone).toContain('if (isScrollableTextEntry(target)) return;');
   });
 
+  it('lets iOS drag selection handles in a short composer', () => {
+    const chatInput = read('components/chat/ChatInputArea.tsx');
+    // 选区拖动不是输入框滚动：已有选区时必须在捕获阶段绕过 document 的键盘滚动锁，
+    // 但不能 preventDefault，否则 WebKit 自己也无法更新选区。
+    expect(chatInput).toContain("textarea.addEventListener('touchmove', guardSelectionTouchMove");
+    expect(chatInput).toContain('capture: true');
+    expect(chatInput).toContain('passive: false');
+    expect(chatInput).toContain('textarea.selectionStart === textarea.selectionEnd');
+    expect(chatInput).toContain('event.stopImmediatePropagation();');
+  });
+
   it('keeps the chat composer compact and offers scroll/fullscreen controls for long text', () => {
     const chatInput = read('components/chat/ChatInputArea.tsx');
     expect(chatInput).toContain("textarea.style.overflowY = isOverflowing ? 'auto' : 'hidden'");
@@ -88,8 +99,8 @@ describe('user voice message wiring', () => {
     }
 
     const editor = read('components/appearance/ChatAppearanceEditor.tsx');
-    expect(editor).toContain('chatShowSendButton: value === 'show'');
-    expect(editor).toContain('chatShowVoiceButton: value === 'show'');
+    expect(editor).toContain("chatShowSendButton: value === 'show'");
+    expect(editor).toContain("chatShowVoiceButton: value === 'show'");
   });
 
   // 语音在消息栏可以被关掉，所以加号菜单里必须永远留一份，功能不能因为一个开关就消失。
