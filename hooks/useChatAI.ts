@@ -48,7 +48,7 @@ import { getLastRealUserMessageAt } from '../utils/amsg2ExpireGuard';
 import { getPendingTasks, hasActiveAiTask, isAmsg2EnabledForChar } from '../utils/amsg2Tasks';
 import { buildAmsg2NoticesText, buildAmsg2TaskContextText, collectAmsg2TaskContext } from '../utils/amsg2TaskContext';
 import { resolveCharTimeZone } from '../utils/timezone';
-import { announceInstantChatRoute, clearInstantChatPending, getInstantChatPending, resolveInstantChatReadiness, sendInstantChatTurn, stageInstantChatExpiredNotices } from '../utils/amsgInstantChat';
+import { AMSG_INSTANT_CHAT_PENDING_EVENT, announceInstantChatRoute, clearInstantChatPending, getInstantChatPending, resolveInstantChatReadiness, sendInstantChatTurn, stageInstantChatExpiredNotices } from '../utils/amsgInstantChat';
 // worker 模块的常量叶子（零运行时依赖，前端引它不带进 worker 环境）：
 // 云端 fire 的总时长上限，安全网超时从它推导，worker 调预算时前端自动跟上。
 import { INSTANT_TOTAL_TIMEOUT_MS } from '../worker/amsg/src/instantChat';
@@ -66,6 +66,19 @@ import {
     getMemoryPalaceHighWaterMarkForContext,
     loadCharacterContextRange,
 } from '../utils/chatContextRange';
+
+type RecallPreparationState = 'complete' | 'degraded' | 'skipped';
+
+/**
+ * 只描述当前这一轮的前台→云端交接，不参与请求路由或错误处理。
+ * `accepted` 只在 sendInstantChatTurn 确认 202 后设置；`sent` 只给旧 Instant Push
+ * 的「已发出」文案使用，避免把两个协议的成功语义混在一起。
+ */
+type RecallSubmitStatus =
+    | { phase: 'recalling' }
+    | { phase: 'submitting'; recall: RecallPreparationState }
+    | { phase: 'accepted' }
+    | { phase: 'sent' };
 
 // ─── 云端情绪评估的安全网定时器（模块级，按角色）───
 // 为什么不放 hook 里：结论（emotionDone）是全局事件，用户切了角色、离开聊天页之后
@@ -503,6 +516,12 @@ export const useChatAI = ({
     const [streamingBubbles, setStreamingBubbles] = useState<string[]>([]);
     const [streamingThinking, setStreamingThinking] = useState('');
     const [recallStatus, setRecallStatus] = useState<string>('');
+    const [recallSubmitStatus, setRecallSubmitStatus] = useState<RecallSubmitStatus | null>(null);
+    // 取消/重试/切角色时，旧请求的 finally 不能把新一轮的提示清掉。
+    const recallSubmitAttemptRef = useRef(0);
+    const setRecallSubmitStatusForAttempt = (attemptId: number, status: RecallSubmitStatus | null) => {
+        if (recallSubmitAttemptRef.current === attemptId) setRecallSubmitStatus(status);
+    };
     const [searchStatus, setSearchStatus] = useState<string>('');
     const [diaryStatus, setDiaryStatus] = useState<string>('');
     const [xhsStatus, setXhsStatus] = useState<string>('');
@@ -518,6 +537,34 @@ export const useChatAI = ({
     // LLM 提取（+ 50 轮认知消化）。用 ref 在 finally 里读最新状态。
     const charRef = useRef(char);
     charRef.current = char;
+
+    // 云端回复真正入库/失败时会清掉 pending 记录；此时把「可以切后台」收起。
+    // 这个监听只负责展示状态，不改变 pending 或回复回收逻辑。
+    useEffect(() => {
+        const charId = char?.id;
+        recallSubmitAttemptRef.current += 1;
+        setRecallSubmitStatus(null);
+        if (!charId || typeof window === 'undefined') return;
+
+        const handlePendingChange = (event: Event) => {
+            const eventCharId = (event as CustomEvent<{ charId?: string }>).detail?.charId;
+            if (eventCharId !== charId || getInstantChatPending(charId)) return;
+            recallSubmitAttemptRef.current += 1;
+            setRecallSubmitStatus(null);
+        };
+        window.addEventListener(AMSG_INSTANT_CHAT_PENDING_EVENT, handlePendingChange);
+        return () => window.removeEventListener(AMSG_INSTANT_CHAT_PENDING_EVENT, handlePendingChange);
+    }, [char?.id]);
+
+    // 受理提示只短暂露出；云端待收状态仍由原来的指示灯继续表达。
+    useEffect(() => {
+        if (recallSubmitStatus?.phase !== 'accepted' && recallSubmitStatus?.phase !== 'sent') return;
+        const attemptId = recallSubmitAttemptRef.current;
+        const timer = setTimeout(() => {
+            if (recallSubmitAttemptRef.current === attemptId) setRecallSubmitStatus(null);
+        }, 4500);
+        return () => clearTimeout(timer);
+    }, [recallSubmitStatus]);
 
     // beforeunload 保护：记忆宫殿后台处理中时，阻止用户意外关闭页面
     useEffect(() => {
@@ -854,10 +901,16 @@ export const useChatAI = ({
         const abortController = new AbortController();
         abortRef.current = abortController;
 
+        const recallSubmitAttempt = ++recallSubmitAttemptRef.current;
         setIsTyping(true);
         setStreamingBubbles([]);
         setStreamingThinking('');
         setRecallStatus('');
+        if (char.memoryPalaceEnabled) {
+            setRecallSubmitStatusForAttempt(recallSubmitAttempt, { phase: 'recalling' });
+        } else {
+            setRecallSubmitStatusForAttempt(recallSubmitAttempt, null);
+        }
         // 全局横幅「xx 正在回应…」（ChatBroadcast）。isTyping 等 UI 状态随 Chat 卸载
         // 一起销毁，但这个异步闭包会继续跑完并落库——横幅靠 window 事件与组件生命周期
         // 解耦，用户切走 Chat 也能看到生成还活着。finally 里派发 end（两条路径都经过）。
@@ -1100,6 +1153,30 @@ export const useChatAI = ({
                 timelyByWorker: instantChatRoute,
                 recallEntryPoint: 'chat_app',
             }));
+        const recallPreparation: RecallPreparationState = !payload.recallTrace
+            ? 'skipped'
+            : payload.recallTrace.outcome === 'error'
+                ? 'degraded'
+                : payload.recallTrace.outcome.startsWith('skipped')
+                    ? 'skipped'
+                    : 'complete';
+            // 旧 Instant Push 只有在本轮没有被客户端工具模式截走时才是真正的云端路由。
+            // 这样「提交中」不会在本地工具循环里误亮。
+            const instantPushRoute = instantPushConfigured
+                && !instantChatRoute
+                && !payload.flags.luckinChatActive
+                && !payload.flags.mcdActive
+                && !payload.flags.luckinActive
+                && !payload.flags.mcpChatActive;
+            if (instantChatRoute || instantPushRoute) {
+                setRecallSubmitStatusForAttempt(recallSubmitAttempt, {
+                    phase: 'submitting',
+                    recall: recallPreparation,
+                });
+            } else {
+                // 普通本地回复继续使用原有 typing 指示，不额外占一行状态空间。
+                setRecallSubmitStatusForAttempt(recallSubmitAttempt, null);
+            }
             const systemPrompt = payload.systemPrompt;
             const cleanedApiMessages = payload.cleanedApiMessages;
             const fullMessages = payload.fullMessages;
@@ -1392,13 +1469,19 @@ export const useChatAI = ({
             // 表现就是"选了城市也没用 / 角色不下单"。这些模式下跳过 instant push, 用本地 fetch 跑工具循环。
             // 双向互斥后理论上到不了：走到这条 trace 说明两边开关同时亮着（脏配置），当断言告警看。
             const AMSG2_SUPPRESSED_TRACE = 'amsg2-suppressed-by-instant';
-            if (instantPushConfigured && !instantChatRoute && !payload.flags.luckinChatActive && !payload.flags.mcdActive && !payload.flags.luckinActive && !payload.flags.mcpChatActive) {
+            if (instantPushRoute) {
                 // 走这条路 = 上面那段 amsg2 的工具、排程现状块都白拼了（instant 发的是原始
                 // fullMessages、请求体不带 tools），下面的活跃会话租约也不会开。三样都是静默
                 // 失效，留一条 trace 让观察窗看得见，别让人对着「功能不响」凭空排查。
                 if (amsg2ToolsInjected) {
                     appendInstantTraceEntry({ ts: new Date().toISOString(), event: AMSG2_SUPPRESSED_TRACE });
                 }
+                const markInstantPushSent = () => {
+                    // 旧 Instant Push 的回调点表示请求已经交给发送通道，不等同于 /instant-chat
+                    // 的 202 受理，因此只显示「已发出」，不借此宣称任务已被云端接收。
+                    setRecallSubmitStatusForAttempt(recallSubmitAttempt, { phase: 'sent' });
+                    onInstantPosted?.();
+                };
                 const instantResult = await sendInstantPushAndAwaitReply({
                     contactName: char.name,
                     messages: fullMessages as InstantPushPayload['messages'],
@@ -1415,7 +1498,7 @@ export const useChatAI = ({
                     // 副 API 情绪评估: worker 跑完主回复后用这套跑 eval, 推 emotion_update 回来 (见 worker 包装层).
                     // 放顶层字段, 不进 metadata —— 框架不会回显它, 副 API apiKey 不会泄进 push.
                     ...(cloudEmotionEval ? { emotionEval: cloudEmotionEval } : {}),
-                }, char.id, undefined, onInstantPosted);
+                }, char.id, undefined, markInstantPushSent);
                 if (!instantResult.ok && instantResult.outcome !== 'cancelled') {
                     // 长报错 (worker 400 校验信息 + CF 错误页可能很长) 走弹窗, 手机用户能
                     // 看清并复制反馈; 没注入 showError 时降级到 toast.
@@ -1509,6 +1592,8 @@ export const useChatAI = ({
                 if (instantChatResult.ok) {
                     // 这次 POST 已经把权威的那份 fire_pack 传上去了，收尾不必再打脏重传一遍。
                     instantChatAccepted = true;
+                    // sendInstantChatTurn 只有在底层 /instant-chat 得到 202 后才会返回 ok。
+                    setRecallSubmitStatusForAttempt(recallSubmitAttempt, { phase: 'accepted' });
                     // 202 只说明云端收下了，不说明角色真的读到过这些回执：那一轮可能空输出被
                     // 判 skip-push，也可能 fire 重试打光标 failed。所以这里只记账不销账，等回复
                     // 真的落库那一刻（activeMsgRuntime 认末段到齐）再调
@@ -2194,6 +2279,7 @@ export const useChatAI = ({
             setStreamingBubbles([]);  // 错误/中断路径兜底清预览
             setStreamingThinking('');
             setRecallStatus('');
+            if (!instantChatAccepted) setRecallSubmitStatusForAttempt(recallSubmitAttempt, null);
             setSearchStatus('');
             setDiaryStatus('');
             setXhsStatus('');
@@ -2328,6 +2414,8 @@ export const useChatAI = ({
         setIsTyping(false);
         setStreamingBubbles([]);
         setStreamingThinking('');
+        recallSubmitAttemptRef.current += 1;
+        setRecallSubmitStatus(null);
         setRecallStatus('');
         setSearchStatus('');
         setDiaryStatus('');
@@ -2359,6 +2447,7 @@ export const useChatAI = ({
         streamingBubbles,
         streamingThinking,
         recallStatus,
+        recallSubmitStatus,
         searchStatus,
         diaryStatus,
         xhsStatus,

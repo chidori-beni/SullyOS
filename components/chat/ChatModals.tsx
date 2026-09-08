@@ -30,6 +30,8 @@ interface ChatModalsProps {
     setSettingsHideSysLogs: (v: boolean) => void;
     settingsShowTokenUsage: boolean;
     setSettingsShowTokenUsage: (v: boolean) => void;
+    settingsShowRecallSubmitStatus: boolean;
+    setSettingsShowRecallSubmitStatus: (v: boolean) => void;
     // Main API quick switch (global; independent from the schedule/emotion secondary API)
     apiConfig?: APIConfig;
     onApplyMainApiPreset?: (preset: ApiPreset) => void;
@@ -266,6 +268,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     settingsContextRangeMode, setSettingsContextRangeMode,
     settingsHideSysLogs, setSettingsHideSysLogs,
     settingsShowTokenUsage, setSettingsShowTokenUsage,
+    settingsShowRecallSubmitStatus, setSettingsShowRecallSubmitStatus,
     apiConfig, onApplyMainApiPreset,
     contextSuiteAnyEnabled, contextSuiteAllEnabled, onToggleContextSuite,
     preserveContext, setPreserveContext,
@@ -653,6 +656,26 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                          </div>
                          <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
                              开启后在聊天顶栏显示最近一次本地生成的 Token 总数；关闭只隐藏显示，不影响回复和 API 用量统计。
+                         </p>
+                     </div>
+
+                     <div className="pt-2 border-t border-slate-100">
+                         <button
+                             type="button"
+                             onClick={() => setSettingsShowRecallSubmitStatus(!settingsShowRecallSubmitStatus)}
+                             aria-pressed={settingsShowRecallSubmitStatus}
+                             className="w-full min-h-[44px] flex justify-between items-center gap-3 text-left"
+                         >
+                             <span className="text-xs font-bold text-slate-400">显示召回/提交状态</span>
+                             <span
+                                 aria-hidden="true"
+                                 className={settingsShowRecallSubmitStatus ? 'shrink-0 w-10 h-6 rounded-full p-1 transition-colors flex items-center bg-primary' : 'shrink-0 w-10 h-6 rounded-full p-1 transition-colors flex items-center bg-slate-200'}
+                             >
+                                 <span className={settingsShowRecallSubmitStatus ? 'w-4 h-4 bg-white rounded-full shadow-sm transition-transform translate-x-4' : 'w-4 h-4 bg-white rounded-full shadow-sm transition-transform'}></span>
+                             </span>
+                         </button>
+                         <p className="text-[10px] text-slate-400 leading-relaxed">
+                             发送时提示记忆准备与云端受理进度；关闭只隐藏提示，不影响回复。
                          </p>
                      </div>
 

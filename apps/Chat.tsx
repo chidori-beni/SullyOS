@@ -73,6 +73,7 @@ import { flushAmsgState, markAmsgStateDirty, markAmsgStateDirtyForAll } from '..
 import { ActiveMsgClient } from '../utils/activeMsgClient';
 import { deriveNaturalProfile } from '../utils/naturalProactive';
 import { AMSG_INSTANT_CHAT_PENDING_EVENT, AMSG_INSTANT_CHAT_PENDING_LS_KEY, getInstantChatPending } from '../utils/amsgInstantChat';
+import { loadChatRecallSubmitHintEnabled, saveChatRecallSubmitHintEnabled } from '../utils/chatRecallSubmitHint';
 import { formatAmsgToolTrace } from '../utils/amsgToolTrace';
 import { formatDateDividerLabel, shouldShowDateDivider } from '../utils/chatDateDivider';
 import {
@@ -254,6 +255,11 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     const [settingsContextRangeMode, setSettingsContextRangeMode] = useState<ContextRangeMode>('manual');
     const [settingsHideSysLogs, setSettingsHideSysLogs] = useState(false);
     const [settingsShowTokenUsage, setSettingsShowTokenUsage] = useState(true);
+    const [settingsShowRecallSubmitStatus, setSettingsShowRecallSubmitStatus] = useState(() => loadChatRecallSubmitHintEnabled());
+    const handleToggleRecallSubmitStatus = (enabled: boolean) => {
+        setSettingsShowRecallSubmitStatus(enabled);
+        saveChatRecallSubmitHintEnabled(enabled);
+    };
     const [settingsHtmlModeCustomPrompt, setSettingsHtmlModeCustomPrompt] = useState('');
     const contextSuiteAnyEnabled = memoryPalaceConfig.featureFlags?.recallRouter === true
         || memoryPalaceConfig.featureFlags?.interactionAdaptation === true
@@ -443,7 +449,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     }, [activeCharacterId]);
 
     // --- Initialize Hook ---
-    const { isTyping, streamingBubbles, streamingThinking, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, cancelGeneration, stopProactiveChat, isProactiveActive } = useChatAI({
+    const { isTyping, streamingBubbles, streamingThinking, recallStatus, recallSubmitStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, cancelGeneration, stopProactiveChat, isProactiveActive } = useChatAI({
         char,
         userProfile,
         apiConfig,
@@ -464,6 +470,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         luckinChatRef,
         updateCharacter,
     });
+    const visibleRecallSubmitStatus = settingsShowRecallSubmitStatus ? recallSubmitStatus : null;
 
     // 这些入口只把用户事件落进本地消息库，不会经过 triggerAI 的收尾同步。
     // 统一从这里把最终本地状态送进自然主动的 fire_pack；targetChar 允许转发卡同步到目标角色。
@@ -3907,6 +3914,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 settingsContextRangeMode={settingsContextRangeMode} setSettingsContextRangeMode={setSettingsContextRangeMode}
                 settingsHideSysLogs={settingsHideSysLogs} setSettingsHideSysLogs={setSettingsHideSysLogs}
                 settingsShowTokenUsage={settingsShowTokenUsage} setSettingsShowTokenUsage={setSettingsShowTokenUsage}
+                settingsShowRecallSubmitStatus={settingsShowRecallSubmitStatus} setSettingsShowRecallSubmitStatus={handleToggleRecallSubmitStatus}
                 contextSuiteAnyEnabled={contextSuiteAnyEnabled}
                 contextSuiteAllEnabled={contextSuiteAllEnabled}
                 onToggleContextSuite={handleToggleContextSuite}
@@ -4434,11 +4442,44 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                     </>
                 )}
                 {/* instantChatPending：这一轮在云端跑，本机可以关页面，指示灯靠落盘记录活着。 */}
-                {(isTyping || instantChatPending || recallStatus || searchStatus || diaryStatus || isProactiveComposing) && !selectionMode && (
+                {(isTyping || instantChatPending || visibleRecallSubmitStatus || recallStatus || searchStatus || diaryStatus || isProactiveComposing) && !selectionMode && (
                     <div className="sully-typing-indicator flex items-end gap-3 px-3 mb-6 animate-fade-in">
                         <img src={char.avatar} className={`sully-typing-avatar ${chatPendingAvatarClass}`} />
                         <div className="sully-typing-bubble bg-white px-4 py-3 rounded-2xl shadow-sm">
-                            {isProactiveComposing && !isTyping && !recallStatus && !searchStatus && !diaryStatus ? (
+                            {visibleRecallSubmitStatus ? (
+                                <div
+                                    role="status"
+                                    aria-live="polite"
+                                    aria-atomic="true"
+                                    className={visibleRecallSubmitStatus.phase === 'accepted' || visibleRecallSubmitStatus.phase === 'sent'
+                                        ? 'flex items-center gap-2 text-xs text-emerald-600 font-medium'
+                                        : 'flex items-center gap-2 text-xs text-indigo-500 font-medium'}
+                                >
+                                    {visibleRecallSubmitStatus.phase === 'accepted' || visibleRecallSubmitStatus.phase === 'sent' ? (
+                                        <svg className="h-3.5 w-3.5 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="m5 12 4 4L19 8" />
+                                        </svg>
+                                    ) : (
+                                        <svg className="h-3 w-3 shrink-0 animate-spin motion-reduce:animate-none" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                                        </svg>
+                                    )}
+                                    <span>
+                                        {visibleRecallSubmitStatus.phase === 'recalling'
+                                            ? '正在召回记忆…'
+                                            : visibleRecallSubmitStatus.phase === 'submitting'
+                                                ? visibleRecallSubmitStatus.recall === 'degraded'
+                                                    ? '可用记忆已准备，正在提交云端…'
+                                                    : visibleRecallSubmitStatus.recall === 'skipped'
+                                                        ? '上下文准备完成，正在提交云端…'
+                                                        : '记忆准备完成，正在提交云端…'
+                                                : visibleRecallSubmitStatus.phase === 'accepted'
+                                                    ? '云端任务已接收，现在可以切后台'
+                                                    : '云端请求已发出，可切后台'}
+                                    </span>
+                                </div>
+                            ) : isProactiveComposing && !isTyping && !recallStatus && !searchStatus && !diaryStatus ? (
                                 <div className="flex items-center gap-2 text-xs text-teal-600 font-medium">
                                     <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                                     {char.name} 在给你写消息…
