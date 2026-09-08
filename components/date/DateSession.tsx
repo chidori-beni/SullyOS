@@ -194,6 +194,9 @@ const DateSession: React.FC<DateSessionProps> = ({
     const [isShowingOpening, setIsShowingOpening] = useState(!historyReplay && !initialState); // True until first user interaction
     const [showExitModal, setShowExitModal] = useState(false);
     const [endingEncounter, setEndingEncounter] = useState(false);
+    // 正式结束会触发 DateApp 切页并卸载本组件；卸载清理不能把旧现场快照再写回去。
+    // 用 ref 在点击的同一拍锁住，避免 React 尚未重渲染前的自动保存竞态。
+    const endingEncounterRef = useRef(false);
     const [showInterludeEditor, setShowInterludeEditor] = useState(false);
     const [interludeDescription, setInterludeDescription] = useState('');
     const [showClockEditor, setShowClockEditor] = useState(false);
@@ -1194,12 +1197,16 @@ const DateSession: React.FC<DateSessionProps> = ({
     };
 
     const handleEndClick = async () => {
-        if (endingEncounter || interactionBusy) return;
+        if (endingEncounter || endingEncounterRef.current || interactionBusy) return;
+        endingEncounterRef.current = true;
         setEndingEncounter(true);
         try {
             await onEnd(buildCurrentState());
-        } finally {
+        } catch (error) {
+            // 只有结束失败时才允许重试；成功后保持锁到组件卸载，防止卸载清理复活存档。
+            endingEncounterRef.current = false;
             setEndingEncounter(false);
+            throw error;
         }
     };
 
@@ -1216,6 +1223,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         }
         // Direct DB save — works during beforeunload when React state updates are useless
         const saveStateToDB = () => {
+            if (endingEncounterRef.current) return;
             try {
                 const state = stateRef.current();
                 DB.saveCharacter({ ...charRef.current, savedDateState: state });
@@ -1250,7 +1258,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             // 都会发生 —— 尤其 React.StrictMode (dev) 的「挂载→卸载→重挂载」探测：
             // 一进正式见面就被自己的卸载副作用导航回选择页，并弹两次「进度已保存」。
             // 直接 DB 持久化与其它自动保存路径（beforeunload / visibilitychange / 定时）一致。
-            saveStateToDB();
+            if (!endingEncounterRef.current) saveStateToDB();
         };
     }, []);
 

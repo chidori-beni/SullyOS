@@ -296,11 +296,18 @@ const DateApp: React.FC = () => {
         updateCharacter(charId, { activeDateEncounter: presence });
         return presence;
     };
-    const clearDateEncounter = (charId: string, encounterId?: string) => {
+    const clearDateEncounter = (
+        charId: string,
+        encounterId?: string,
+        options: { clearSavedDateState?: boolean } = {},
+    ) => {
         const current = getActiveDatePresence(charId) || charactersRef.current.find(item => item.id === charId)?.activeDateEncounter;
         if (encounterId && current?.encounterId && current.encounterId !== encounterId) return;
         clearActiveDatePresence(charId, encounterId);
-        updateCharacter(charId, { activeDateEncounter: undefined });
+        updateCharacter(charId, {
+            activeDateEncounter: undefined,
+            ...(options.clearSavedDateState ? { savedDateState: undefined } : {}),
+        });
         if (!encounterId || activeEncounterRef.current?.id === encounterId) setEncounterRuntime(null);
     };
     const markMeetingInviteAccepted = (messageId: number | undefined, encounterId: string) => {
@@ -1900,7 +1907,9 @@ const DateApp: React.FC = () => {
             addToast('结束卡片没能保存，但这次见面已经正常结束', 'info');
         }
         clearDateResumeAttempt();
-        clearDateEncounter(char.id, encounter.id);
+        // DateSession 卸载时会做一次兜底自动保存；这里必须在离开前明确退休恢复快照，
+        // 并配合 DateSession 的结束锁，避免旧现场在结束卡写完后被复活。
+        clearDateEncounter(char.id, encounter.id, { clearSavedDateState: true });
         setEncounterRuntime(null);
         setEndSuggestedReason('');
         // updateCharacter is intentionally async; pass the post-finish snapshot to
