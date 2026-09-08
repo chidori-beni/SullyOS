@@ -335,6 +335,7 @@ interface OSContextType {
   addWorldbook: (wb: Worldbook) => void;
   updateWorldbook: (id: string, updates: Partial<Worldbook>) => Promise<void>;
   deleteWorldbook: (id: string) => void;
+  deleteWorldbooks: (ids: string[]) => Promise<void>;
   reorderWorldbooks: (category: string, orderedIds: string[]) => Promise<void>;
 
   // Novels (NEW)
@@ -3612,25 +3613,33 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       }
   };
 
-  const deleteWorldbook = async (id: string) => {
-      setWorldbooks(prev => prev.filter(wb => wb.id !== id));
-      await DB.deleteWorldbook(id);
-      
-      // Sync delete: Remove from characters
+  const deleteWorldbooks = async (ids: string[]) => {
+      const idsToDelete = [...new Set(ids.filter(Boolean))];
+      if (idsToDelete.length === 0) return;
+      const idsSet = new Set(idsToDelete);
+
+      setWorldbooks(prev => prev.filter(wb => !idsSet.has(wb.id)));
+      await Promise.all(idsToDelete.map(id => DB.deleteWorldbook(id)));
+
+      // Sync delete once for the whole batch. Doing this per entry would let
+      // multiple sequential deletions rebuild a character from the same stale
+      // closure and accidentally put an earlier mount back.
       const updatedChars = characters.map(char => {
-          if (char.mountedWorldbooks?.some(m => m.id === id)) {
-              const newMounted = char.mountedWorldbooks.filter(m => m.id !== id);
-              const newChar = { ...char, mountedWorldbooks: newMounted };
-              // 同 updateWorldbook：绕开 updateCharacter 的落库要自己打脏，否则云端提示词
-              // 里还挂着这本已经删掉的世界书。
-              DB.saveCharacter(newChar).then(() => {
-                  markAmsgStateDirty({ char: newChar, userProfile, groups, realtimeConfig });
-              });
-              return newChar;
-          }
-          return char;
+          if (!char.mountedWorldbooks?.some(book => idsSet.has(book.id))) return char;
+          const newMounted = char.mountedWorldbooks.filter(book => !idsSet.has(book.id));
+          const newChar = { ...char, mountedWorldbooks: newMounted };
+          // 同 updateWorldbook：绕开 updateCharacter 的落库要自己打脏，否则云端提示词
+          // 里还挂着已经删掉的世界书。
+          DB.saveCharacter(newChar).then(() => {
+              markAmsgStateDirty({ char: newChar, userProfile, groups, realtimeConfig });
+          });
+          return newChar;
       });
       setCharacters(updatedChars);
+  };
+
+  const deleteWorldbook = async (id: string) => {
+      await deleteWorldbooks([id]);
       addToast('世界书已删除 (同步移除角色挂载)', 'success');
   };
 
@@ -5341,6 +5350,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     addWorldbook,
     updateWorldbook,
     deleteWorldbook,
+    deleteWorldbooks,
     reorderWorldbooks,
     novels,
     addNovel,

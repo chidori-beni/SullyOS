@@ -20,7 +20,7 @@ import { shareOrDownloadFile } from '../utils/shareExport';
 import { trackEvent } from '../utils/analytics';
 
 const WorldbookApp: React.FC = () => {
-    const { closeApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, reorderWorldbooks, addToast } = useOS();
+    const { closeApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, deleteWorldbooks, reorderWorldbooks, addToast } = useOS();
     
     // View State
     const [isEditing, setIsEditing] = useState(false);
@@ -32,6 +32,8 @@ const WorldbookApp: React.FC = () => {
     const [isSelecting, setIsSelecting] = useState(false);
     const [selectedBookIds, setSelectedBookIds] = useState<Set<string>>(new Set());
     const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+    const [categoryToDelete, setCategoryToDelete] = useState<string | null>(null);
+    const [isDeletingCategory, setIsDeletingCategory] = useState(false);
     const [draggingBookId, setDraggingBookId] = useState<string | null>(null);
     const [dragOverBookId, setDragOverBookId] = useState<string | null>(null);
     const listScrollRef = useRef<HTMLDivElement>(null);
@@ -295,10 +297,45 @@ const WorldbookApp: React.FC = () => {
     const confirmBulkDelete = async () => {
         const ids = [...selectedBookIds];
         if (ids.length === 0) return;
-        for (const id of ids) await deleteWorldbook(id);
+        await deleteWorldbooks(ids);
         setShowBulkDeleteConfirm(false);
         leaveSelectionMode();
         addToast(`已删除 ${ids.length} 条世界书条目`, 'success');
+    };
+
+    const requestDeleteCategory = (event: React.MouseEvent, category: string) => {
+        event.stopPropagation();
+        setCategoryToDelete(category);
+    };
+
+    const confirmDeleteCategory = async () => {
+        if (!categoryToDelete || isDeletingCategory) return;
+        const category = categoryToDelete;
+        const books = groupedBooks[category] || [];
+        const ids = books.map(book => book.id);
+        if (ids.length === 0) {
+            setCategoryToDelete(null);
+            return;
+        }
+
+        setIsDeletingCategory(true);
+        try {
+            await deleteWorldbooks(ids);
+            if (expandedCategory === category) setExpandedCategory(null);
+            setCategoryPages(previous => {
+                const next = { ...previous };
+                delete next[category];
+                return next;
+            });
+            setPreviewBookId(current => current && ids.includes(current) ? null : current);
+            setSelectedBookIds(current => new Set([...current].filter(id => !ids.includes(id))));
+            addToast(`已删除分组「${category}」的 ${ids.length} 条世界书`, 'success');
+        } catch (error: any) {
+            addToast(error?.message || '分组删除失败，请重试', 'error');
+        } finally {
+            setIsDeletingCategory(false);
+            setCategoryToDelete(null);
+        }
     };
 
     const toggleCategory = (cat: string) => {
@@ -775,14 +812,24 @@ const WorldbookApp: React.FC = () => {
                             </div>
                             <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider group-hover:text-indigo-600 transition-colors">{category}</h3>
                             <span className="text-[9px] bg-white/50 px-1.5 rounded text-slate-400 border border-white/50">{books.length}</span>
-                            <button
-                                onClick={(event) => handleExportGroup(event, category, books)}
-                                className="ml-auto p-2 -my-2 rounded-full text-slate-400 hover:text-indigo-600 hover:bg-white/70 active:scale-90 transition-all"
-                                title="导出该组为标准世界书"
-                            >
-                                <DownloadSimple size={16} weight="bold" />
-                            </button>
-                        </div>
+                             <button
+                                 onClick={(event) => handleExportGroup(event, category, books)}
+                                 className="ml-auto p-2 -my-2 rounded-full text-slate-400 hover:text-indigo-600 hover:bg-white/70 active:scale-90 transition-all"
+                                 title="导出该组为标准世界书"
+                             >
+                                 <DownloadSimple size={16} weight="bold" />
+                             </button>
+                             {!isSelecting && (
+                                 <button
+                                     onClick={(event) => requestDeleteCategory(event, category)}
+                                     className="p-2 -my-2 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 active:scale-90 transition-all"
+                                     title={`删除分组「${category}」`}
+                                     aria-label={`删除分组「${category}」`}
+                                 >
+                                     <Trash size={16} weight="bold" />
+                                 </button>
+                             )}
+                         </div>
 
                         {/* Group Items */}
                         <div className={`space-y-3 pl-2 transition-all duration-300 ${expandedCategory === category ? 'opacity-100 mt-2' : 'max-h-0 opacity-0 overflow-hidden'}`}>
@@ -942,8 +989,8 @@ const WorldbookApp: React.FC = () => {
                 </div>
             </Modal>
 
-            <Modal
-                isOpen={showBulkDeleteConfirm}
+             <Modal
+                 isOpen={showBulkDeleteConfirm}
                 title="批量删除确认"
                 onClose={() => setShowBulkDeleteConfirm(false)}
                 footer={
@@ -962,9 +1009,43 @@ const WorldbookApp: React.FC = () => {
                         <br/><span className="text-xs text-red-400 opacity-80 mt-1 block">将同时从已挂载的角色中移除，且无法撤销。</span>
                     </div>
                 </div>
-            </Modal>
+             </Modal>
 
-            {/* Delete Confirmation Modal */}
+             <Modal
+                 isOpen={categoryToDelete !== null}
+                 title="删除整个分组？"
+                 onClose={() => { if (!isDeletingCategory) setCategoryToDelete(null); }}
+                 footer={
+                     <div className="flex gap-3 w-full">
+                         <button
+                             onClick={() => setCategoryToDelete(null)}
+                             disabled={isDeletingCategory}
+                             className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-50"
+                         >
+                             取消
+                         </button>
+                         <button
+                             onClick={confirmDeleteCategory}
+                             disabled={isDeletingCategory}
+                             className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl shadow-lg shadow-red-200 active:scale-95 transition-transform disabled:opacity-50"
+                         >
+                             {isDeletingCategory ? '删除中…' : '确认删除整组'}
+                         </button>
+                     </div>
+                 }
+             >
+                 <div className="text-center py-4 text-sm text-slate-600 flex flex-col items-center gap-3">
+                     <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center text-red-500 mb-1">
+                         <Trash size={24} weight="bold" />
+                     </div>
+                     <div>
+                         确定要删除分组 <span className="font-bold text-slate-900">“{categoryToDelete}”</span> 中的全部 <span className="font-bold text-slate-900">{categoryToDelete ? (groupedBooks[categoryToDelete] || []).length : 0}</span> 条世界书吗？
+                         <br/><span className="text-xs text-red-400 opacity-80 mt-1 block">将同时从已挂载的角色中移除，且无法撤销。</span>
+                     </div>
+                 </div>
+             </Modal>
+
+             {/* Delete Confirmation Modal */}
             <Modal 
                 isOpen={showDeleteConfirm} 
                 title="删除确认" 
