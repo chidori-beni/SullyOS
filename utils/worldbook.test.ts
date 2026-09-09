@@ -57,6 +57,41 @@ describe('worldbook activation', () => {
         expect(resolveWorldbookEntries([online, offline, legacy], [], '', '', 'offline').map(entry => entry.book.id))
             .toEqual(['offline', 'legacy']);
     });
+
+    it('keeps schedule-only mounts out of chat but always includes them in schedule context', () => {
+        const scheduleOnly = book({
+            id: 'schedule-only',
+            content: '萧逸的日程专用职业规则。',
+            scheduleOnly: true,
+            constant: false,
+            key: ['永远不会命中'],
+            mode: 'offline',
+            useProbability: true,
+            probability: 0,
+        });
+
+        expect(resolveWorldbookEntries([scheduleOnly], [], '萧逸', '用户', 'online')).toEqual([]);
+        expect(resolveWorldbookEntries(
+            [scheduleOnly],
+            [],
+            '萧逸',
+            '用户',
+            'online',
+            { contextPurpose: 'schedule' },
+        ).map(entry => entry.book.id)).toEqual(['schedule-only']);
+    });
+
+    it('仍允许 disable 作为日程专用条目的总开关', () => {
+        const disabled = book({ id: 'disabled-schedule', scheduleOnly: true, disable: true });
+        expect(resolveWorldbookEntries(
+            [disabled],
+            [],
+            '',
+            '',
+            'online',
+            { contextPurpose: 'schedule' },
+        )).toEqual([]);
+    });
 });
 
 describe('worldbook display order', () => {
@@ -177,7 +212,7 @@ describe('mounted worldbook synchronization', () => {
     it('replaces every matching mount from the complete global entry and keeps other entries/order', () => {
         const other = book({ id: 'other', title: '其他条目', content: '不变' });
         const mounted = [
-            book({ id: 'book-1', title: '旧标题', content: '旧正文', constant: true }),
+            book({ id: 'book-1', title: '旧标题', content: '旧正文', constant: true, scheduleOnly: true }),
             other,
             book({ id: 'book-1', title: '重复旧缓存', content: '也要更新' }),
         ];
@@ -210,6 +245,7 @@ describe('mounted worldbook synchronization', () => {
             depth: 2,
             role: 1,
             disable: true,
+            scheduleOnly: true,
         });
         expect(next[2]).toMatchObject({ title: '新标题', content: '新正文' });
         expect(next[1]).toBe(other);

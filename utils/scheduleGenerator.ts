@@ -10,10 +10,11 @@ import { loadCharacterContextRange } from './chatContextRange';
 import { ChatPrompts } from './chatPrompts';
 import { cleanApiMessages, flattenImageContentParts } from './promptMessageCleanup';
 import { getFlowNarrativeKey, isScheduleFeatureOn } from './scheduleFeature';
-import { resolveWorldbookEntries } from './worldbook';
+import { isScheduleOnlyWorldbook, resolveWorldbookEntries } from './worldbook';
 import {
     buildScheduleFingerprint,
     buildSchedulePlan,
+    formatScheduleOnlyWorldbookBlock,
     formatSchedulePlanPrompt,
     normalizeScheduleRequirement,
 } from './schedulePlanner';
@@ -307,13 +308,15 @@ export async function generateDailyScheduleForChar(
         console.warn('[Schedule] memory palace inject failed (non-fatal):', e);
     }
 
-    // 世界书只解析一次：概率条目、关键词条目和普通聊天 / 日程看到的激活结果必须一致。
+    // 世界书只解析一次：普通条目沿用聊天的激活规则，日程专用条目在这里稳定纳入；
+    // planner 与最终日程 prompt 共用同一份解析结果，避免出现两套集合。
     const resolvedWorldbookEntries = resolveWorldbookEntries(
         char.mountedWorldbooks || [],
         historyMessages,
         char.name,
         userProfile.name,
         'online',
+        { contextPurpose: 'schedule' },
     );
     const recentSchedules = await DB.getRecentDailySchedulesByCharId(char.id, 14).catch((error) => {
         console.warn('[Schedule] load recent schedules failed; continuing without dedupe hints:', error);
@@ -330,12 +333,19 @@ export async function generateDailyScheduleForChar(
         recentSchedules,
         worldbookEntries: resolvedWorldbookEntries.map(entry => ({
             id: entry.book.id,
+            title: entry.book.title,
             content: entry.content,
         })),
     });
-    const schedulePlanBlock = formatSchedulePlanPrompt(schedulePlan, char.scheduleStyle || 'lifestyle', {
+    const scheduleOnlyWorldbookEntries = resolvedWorldbookEntries
+        .filter(entry => isScheduleOnlyWorldbook(entry.book));
+    const schedulePlanBlock = `${formatScheduleOnlyWorldbookBlock(scheduleOnlyWorldbookEntries.map(entry => ({
+        id: entry.book.id,
+        title: entry.book.title,
+        content: entry.content,
+    })))}${formatSchedulePlanPrompt(schedulePlan, char.scheduleStyle || 'lifestyle', {
         rerollRequirement,
-    });
+    })}`;
 
     // 含详细记忆，并让关键词世界书使用与私聊相同的消息窗口激活。
     // 日程没有普通聊天的消息数组，所以位置 4 以“指定深度提醒”参考块加入；
@@ -349,7 +359,11 @@ export async function generateDailyScheduleForChar(
         {
             worldbookMessages: historyMessages,
             worldbookMode: 'online',
-            resolvedWorldbookEntries,
+            // 日程专用世界书由上面的高优先级专用块注入一次；普通世界书仍按
+            // 原位置进入基础上下文，避免专用条目重复出现或受 position 影响。
+            resolvedWorldbookEntries: resolvedWorldbookEntries
+                .filter(entry => !isScheduleOnlyWorldbook(entry.book)),
+            worldbookContextPurpose: 'schedule',
             includeAtDepthWorldbooks: true,
             wallClockNow: now,
             nowTimestamp: baseNow.getTime(),

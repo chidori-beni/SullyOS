@@ -1307,6 +1307,8 @@ export interface MountedWorldbook extends WorldbookEntryConfig {
     title: string;
     content: string;
     category?: string;
+    /** 角色级挂载开关：只在生成日程时读取，不进入普通聊天上下文。 */
+    scheduleOnly?: boolean;
 }
 
 export interface Worldbook extends WorldbookEntryConfig {

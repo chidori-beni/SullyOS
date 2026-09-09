@@ -11,6 +11,7 @@ import { DEFAULT_SCHEDULE_SLEEP_POLICY, type ScheduleSleepPolicy } from './sched
 /** 世界书已经通过统一激活器解析过后的最小输入。这里只读正文和来源 id。 */
 export interface SchedulePlannerWorldbookEntry {
     id: string;
+    title?: string;
     content: string;
 }
 
@@ -307,6 +308,27 @@ export interface SchedulePlanPromptOptions {
     /** 仅用于本次手动重抽，不会写入 SchedulePlan 或 DailySchedule。 */
     rerollRequirement?: string;
 }
+
+/**
+ * 把角色绑定的“仅日程”世界书放在日程任务附近，避免只依赖普通世界书位置
+ * 来表达优先级。原始条目不会进入普通聊天上下文。
+ */
+export const formatScheduleOnlyWorldbookBlock = (
+    entries: SchedulePlannerWorldbookEntry[] = [],
+): string => {
+    const usableEntries = entries.filter(entry => typeof entry.content === 'string' && entry.content.trim());
+    if (usableEntries.length === 0) return '';
+    const body = usableEntries.map((entry, index) => (
+        `### 日程专用条目 ${index + 1}${entry.title ? `：${entry.title}` : ''}\n${entry.content.trim()}`
+    )).join('\n\n');
+    return `## 日程专用世界书（本次日程必须优先阅读）
+<schedule_only_worldbooks>
+${body}
+</schedule_only_worldbooks>
+请把这些条目视为本次日程规划的高优先级角色资料：优先遵守其中关于职业、固定安排、作息和现实边界的内容；它们不能覆盖聊天记录中的明确硬事实，也不能要求捏造不可能发生的活动。
+
+`;
+};
 
 /** 把本地计划翻译成提示词；它是软约束，聊天里明确说过的硬事实优先。 */
 export const formatSchedulePlanPrompt = (

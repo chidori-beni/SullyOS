@@ -3,6 +3,7 @@ import type { DailySchedule } from '../types';
 import {
     buildScheduleFingerprint,
     buildSchedulePlan,
+    formatScheduleOnlyWorldbookBlock,
     formatSchedulePlanPrompt,
     normalizeScheduleRequirement,
 } from './schedulePlanner';
@@ -149,5 +150,15 @@ describe('日程本地规划器', () => {
         expect(prompt).toContain('<schedule_user_request>');
         expect(prompt).toContain(normalized!);
         expect((plan as any).rerollRequirement).toBeUndefined();
+    });
+
+    it('会把日程专用世界书放在日程规划附近作为优先规则', () => {
+        const block = formatScheduleOnlyWorldbookBlock([
+            { id: 'career-book', title: '萧逸职业日程', content: '比赛日优先安排赛道工作。' },
+        ]);
+
+        expect(block).toContain('本次日程必须优先阅读');
+        expect(block).toContain('比赛日优先安排赛道工作。');
+        expect(block).toContain('<schedule_only_worldbooks>');
     });
 });

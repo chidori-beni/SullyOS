@@ -1,6 +1,7 @@
 import type { APIConfig, CharacterProfile, Message, UserProfile } from '../types';
 import { CALENDAR_MOODS, type MonthlyReviewStats } from './calendarMonthlyReview';
 import { safeFetchJson } from './safeApi';
+import { isScheduleOnlyWorldbook } from './worldbook';
 
 /**
  * 月度寄语和普通聊天一样需要角色的声音，但它不是普通聊天的一轮回复。
@@ -155,7 +156,7 @@ export const buildMonthlyLetterRoleContext = (
         ...(character.memories || []).slice(-4).map(memory => `${compactText(memory.date, 24)}：${compactText(memory.summary, 260)}`),
     ].filter(Boolean);
     const worldbookLines = (character.mountedWorldbooks || [])
-        .filter(book => !book.disable && book.mode !== 'offline')
+        .filter(book => !isScheduleOnlyWorldbook(book) && !book.disable && book.mode !== 'offline')
         .sort((left, right) => (left.order ?? 0) - (right.order ?? 0) || left.title.localeCompare(right.title))
         .slice(0, 8)
         .map(book => `【${compactText(book.title, 80)}】\n${compactText(book.content, 700)}`);

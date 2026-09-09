@@ -479,6 +479,20 @@ const Character: React.FC = () => {
       if (editingWorldbookId === bookId) closeMountedWorldbookEditor();
   };
 
+  const setWorldbookScheduleOnly = (bookId: string, enabled: boolean) => {
+      if (!formData) return;
+      const currentBooks = formData.mountedWorldbooks || [];
+      handleChange('mountedWorldbooks', currentBooks.map(book => {
+          if (book.id !== bookId) return book;
+          if (enabled) return { ...book, scheduleOnly: true };
+          const normalBook = { ...book };
+          delete normalBook.scheduleOnly;
+          return normalBook;
+      }));
+      addToast(enabled ? '已设为仅日程读取' : '已恢复普通聊天与日程都可读取', 'success');
+      trackEvent('切换世界书日程专用模式', { enabled });
+  };
+
   const closeMountedWorldbookEditor = () => {
       setEditingWorldbookId(null);
       setIsWorldbookEditorFullscreen(false);
@@ -2064,6 +2078,9 @@ ${isInitialGeneration ? `
                                                            <span className="text-sm font-bold text-slate-700 truncate">{displayBook.title}</span>
                                                            {displayBook.category && <span className="text-[9px] text-slate-400 truncate">{displayBook.category}</span>}
                                                        </span>
+                                                       {wb.scheduleOnly && (
+                                                           <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-bold text-amber-600">仅日程</span>
+                                                       )}
                                                        <span className={`ml-1 shrink-0 text-slate-300 transition-transform ${previewWorldbookId === wb.id ? 'rotate-90' : ''}`} aria-hidden="true">›</span>
                                                    </button>
                                                    <div className="flex items-center gap-1 ml-2">
@@ -2098,6 +2115,18 @@ ${isInitialGeneration ? `
                                                                <PencilSimple size={12} weight="bold" /> 编辑
                                                            </button>
                                                        </div>
+                                                       <label className="mb-3 flex cursor-pointer items-start gap-2 rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2.5">
+                                                           <input
+                                                               type="checkbox"
+                                                               checked={wb.scheduleOnly === true}
+                                                               onChange={event => setWorldbookScheduleOnly(wb.id, event.currentTarget.checked)}
+                                                               className="mt-0.5 h-4 w-4 shrink-0 accent-amber-500"
+                                                           />
+                                                           <span className="min-w-0">
+                                                               <span className="block text-[11px] font-bold text-amber-700">仅用于日程</span>
+                                                               <span className="mt-0.5 block text-[10px] leading-relaxed text-amber-600/80">不注入普通私聊等聊天上下文；生成日程时会优先读取。</span>
+                                                           </span>
+                                                       </label>
                                                        <p className="max-h-48 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-slate-600 select-text">
                                                            {displayBook.content || <span className="italic text-slate-400">暂无内容...</span>}
                                                        </p>

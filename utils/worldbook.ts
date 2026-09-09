@@ -9,6 +9,12 @@ import type {
 
 export type WorldbookLike = Worldbook | MountedWorldbook;
 export type WorldbookScene = Exclude<WorldbookMode, 'all'>;
+export type WorldbookContextPurpose = 'chat' | 'schedule';
+
+export interface WorldbookResolveOptions {
+    /** 解析给普通聊天，还是解析给日程生成。缺省为普通聊天。 */
+    contextPurpose?: WorldbookContextPurpose;
+}
 
 export interface WorldbookScanMessage {
     role?: string;
@@ -109,9 +115,13 @@ export const replaceMountedWorldbook = (
     worldbook: Worldbook,
 ): MountedWorldbook[] => {
     if (!mountedWorldbooks.some(book => book.id === worldbook.id)) return mountedWorldbooks;
-    return mountedWorldbooks.map(book => (
-        book.id === worldbook.id ? toMountedWorldbook(worldbook) : book
-    ));
+    return mountedWorldbooks.map(book => {
+        if (book.id !== worldbook.id) return book;
+        const next = toMountedWorldbook(worldbook);
+        // scheduleOnly 是角色挂载关系上的字段，不能被全局世界书编辑同步清掉。
+        if (book.scheduleOnly === true) next.scheduleOnly = true;
+        return next;
+    });
 };
 
 export const normalizeWorldbookMode = (value: unknown): WorldbookMode => (
@@ -135,6 +145,11 @@ export const sortWorldbooksForDisplay = <T extends Worldbook>(books: T[]): T[] =
                 || left.index - right.index;
         })
         .map(({ book }) => book)
+);
+
+/** 仅角色挂载缓存拥有这个开关；全局世界书记录本身没有作用域偏好。 */
+export const isScheduleOnlyWorldbook = (book: WorldbookLike): boolean => (
+    (book as MountedWorldbook).scheduleOnly === true
 );
 
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -194,8 +209,12 @@ export const isWorldbookEntryActive = (
     book: WorldbookLike,
     messages: WorldbookScanMessage[] = [],
     scene: WorldbookScene = 'online',
+    contextPurpose: WorldbookContextPurpose = 'chat',
 ): boolean => {
     if (book.disable) return false;
+    // 日程专用条目表达的是“绑定后日程必须读取”，不再受普通聊天的
+    // 关键词、扫描深度、概率和 online/offline 场景筛选影响；disable 仍是总开关。
+    if (isScheduleOnlyWorldbook(book)) return contextPurpose === 'schedule';
     const mode = normalizeWorldbookMode(book.mode);
     if (mode !== 'all' && mode !== scene) return false;
 
@@ -233,8 +252,9 @@ export const resolveWorldbookEntries = (
     charName = '',
     userName = '',
     scene: WorldbookScene = 'online',
+    options: WorldbookResolveOptions = {},
 ): ResolvedWorldbookEntry[] => books
-    .filter(book => isWorldbookEntryActive(book, messages, scene))
+    .filter(book => isWorldbookEntryActive(book, messages, scene, options.contextPurpose ?? 'chat'))
     .map(book => ({
         book,
         content: expandWorldbookMacros(book.content || '', charName, userName),

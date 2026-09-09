@@ -8,9 +8,12 @@ import { TIME_FRAMING_CONVERSATIONAL } from './timeFramingNote';
 import { resolveCharTimeZone, nowInTimeZone, tzAwarenessNote, interactionGapNote } from './timezone';
 import {
     formatWorldbookSection,
+    isScheduleOnlyWorldbook,
     resolveWorldbookEntries,
     splitWorldbookSections,
     type ResolvedWorldbookEntry,
+    type WorldbookContextPurpose,
+    type WorldbookLike,
     type WorldbookScanMessage,
 } from './worldbook';
 import { resolveUserMacroName, expandCharBodyMacros, buildChatPartnerNote } from './characterIdentity';
@@ -141,6 +144,8 @@ export const ContextBuilder = {
             worldbookMode?: Exclude<WorldbookMode, 'all'>;
             /** 由调用方预先解析，避免带概率的世界书在同一请求内被重复投骰。 */
             resolvedWorldbookEntries?: ResolvedWorldbookEntry[];
+            /** 普通聊天默认排除角色挂载的日程专用世界书；日程生成显式传 schedule。 */
+            worldbookContextPurpose?: WorldbookContextPurpose;
             /** 日程是单条 prompt，没有普通聊天的消息数组；按参考块读取位置 4。 */
             includeAtDepthWorldbooks?: boolean;
         },
@@ -155,11 +160,14 @@ export const ContextBuilder = {
         },
     ): string => {
         const skipBookIds = groupOptions?.skipWorldbookIds;
-        const filteredBooks = (char.mountedWorldbooks || []).filter(wb => !skipBookIds || !skipBookIds.has(wb.id));
+        const worldbookContextPurpose = timeOptions?.worldbookContextPurpose ?? 'chat';
+        const includeBook = (book: WorldbookLike) => (
+            (!skipBookIds || !skipBookIds.has(book.id))
+            && (worldbookContextPurpose === 'schedule' || !isScheduleOnlyWorldbook(book))
+        );
+        const filteredBooks = (char.mountedWorldbooks || []).filter(includeBook);
         const resolvedWorldbookEntries = timeOptions?.resolvedWorldbookEntries
-            ? timeOptions.resolvedWorldbookEntries.filter(entry => (
-                !skipBookIds || !skipBookIds.has(entry.book.id)
-            ))
+            ? timeOptions.resolvedWorldbookEntries.filter(entry => includeBook(entry.book))
             : resolveWorldbookEntries(
                   filteredBooks,
                   timeOptions?.worldbookMessages || [],
@@ -169,6 +177,7 @@ export const ContextBuilder = {
                   // 机主与该 user 同名时这个错误完全看不出来。缺省仍是机主，旧角色零变化。
                   resolveUserMacroName(char, user),
                   timeOptions?.worldbookMode ?? 'online',
+                  { contextPurpose: worldbookContextPurpose },
               );
         const worldbookSections = splitWorldbookSections(resolvedWorldbookEntries);
 
@@ -508,9 +517,16 @@ export const ContextBuilder = {
 
         // 1. 找出共享的世界书（被 2+ 角色挂载，按 id 计）
         const wbCount = new Map<string, { count: number; entry: { id: string; title: string; content: string; category?: string } }>();
+        // 同一条全局世界书只要被任一成员标成“仅日程”，就不能提升为群聊共享设定；
+        // 否则共享块会绕过角色级作用域，把它泄漏给整个群聊。
+        const scheduleOnlyIds = new Set(
+            members.flatMap(member => (member.mountedWorldbooks || [])
+                .filter(book => isScheduleOnlyWorldbook(book))
+                .map(book => book.id)),
+        );
         for (const m of members) {
             for (const wb of (m.mountedWorldbooks || [])) {
-                if (!wb.id) continue;
+                if (!wb.id || scheduleOnlyIds.has(wb.id)) continue;
                 const existing = wbCount.get(wb.id);
                 if (existing) existing.count += 1;
                 else wbCount.set(wb.id, { count: 1, entry: wb });
