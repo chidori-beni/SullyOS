@@ -715,6 +715,31 @@ const Messaging: React.FC = () => {
         window.setTimeout(() => document.getElementById(`comment-input-${postId}`)?.focus(), 50);
     };
 
+    // 朋友圈的评论输入框长在信息流里，键盘弹起后 app 高度会收到键盘上方（见 utils/iosStandalone.ts），
+    // 光靠 focusin 那一次 scrollIntoView 是按旧高度算的，收缩后输入框会被甩到可视区外，
+    // 再叠上绝对定位的底部标签栏（z-index 45）压在上面，打字完全看不见自己写了什么。
+    // 评论态期间跟着 visualViewport 变化重新滚一次，把输入框稳定钉在可视区内。
+    useEffect(() => {
+        if (!momentCommentPostId) return;
+        const scrollComposerIntoView = () => {
+            const input = document.getElementById(`comment-input-${momentCommentPostId}`);
+            const target = input?.closest('.nj-moments-comment-compose') || input;
+            try {
+                target?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+            } catch {
+                // 老 WebKit 不支持对象参数，滚不动就维持原位，不影响输入。
+            }
+        };
+        const raf = window.requestAnimationFrame(scrollComposerIntoView);
+        const timer = window.setTimeout(scrollComposerIntoView, 300);
+        window.visualViewport?.addEventListener('resize', scrollComposerIntoView);
+        return () => {
+            window.cancelAnimationFrame(raf);
+            window.clearTimeout(timer);
+            window.visualViewport?.removeEventListener('resize', scrollComposerIntoView);
+        };
+    }, [momentCommentPostId, momentReplyTarget]);
+
     const sendMomentComment = async () => {
         if (!momentCommentPostId || !momentCommentText.trim()) return;
         const post = postsRef.current.find(item => item.id === momentCommentPostId);
@@ -1460,7 +1485,7 @@ const Messaging: React.FC = () => {
     return (
         <div ref={appRef} className="sully-messaging-app" onClick={() => { if (contextMenu) setContextMenu(null); if (momentActionsPostId) setMomentActionsPostId(null); }}>
             {!!scopedCss && <style data-sully-messaging-theme>{scopedCss}</style>}
-            <div id="chat-list-screen" className="screen active sully-messaging-screen" {...attrs} data-prev-tab={previousTab} data-tab-anim={tabAnim}>
+            <div id="chat-list-screen" className="screen active sully-messaging-screen" {...attrs} data-prev-tab={previousTab} data-tab-anim={tabAnim} data-moment-commenting={momentCommentPostId ? 'true' : undefined}>
                 <div className="content-area sully-messaging-content">
                     {tab === 'chat' && renderChatTab()}
                     {tab === 'moments' && renderMomentsTab()}

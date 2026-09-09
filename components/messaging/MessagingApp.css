@@ -1057,7 +1057,12 @@
 .nj-moments-comment-author,.nj-moments-comment-target { color:#4c647b; font-weight:600; }
 .nj-moments-comment-reply-word { color:var(--nj-msg-text-muted,#999); }
 .nj-moments-comment-content { color:var(--nj-msg-text,#444); }
-.nj-moments-comment-compose { margin-top:10px; }
+.nj-moments-comment-compose { margin-top:10px; scroll-margin-top:12px; scroll-margin-bottom:16px; }
+/* 评论态收起底部标签栏：标签栏是 position:absolute + z-index:45 的不透明条（主题还会给它换底图），
+   评论输入框长在信息流里，键盘一弹就被它压在下面，用户看不见自己输入的内容。
+   评论时标签栏本来也点不着，直接收掉。信息流为标签栏预留的 padding-bottom 保留不动——
+   那只是可滚动的空白，收掉反而会让贴底的信息流跳一下。 */
+#chat-list-screen[data-moment-commenting="true"] .nj-tab-bottom-bar { display:none !important; }
 .nj-moments-comment-banner { display:flex; align-items:center; justify-content:space-between; padding:6px 10px; border-radius:4px 4px 0 0; color:var(--nj-msg-text-muted,#666); background:var(--nj-msg-comment-banner-bg,#f0f0f0); font-size:13px; }
 .nj-moments-comment-banner b { color:#576b95; font-weight:600; }
 .nj-moments-comment-banner button { border:0; padding:0 4px; color:var(--nj-msg-text-muted,#999); background:transparent; font-size:16px; }
