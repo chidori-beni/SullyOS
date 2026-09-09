@@ -28,6 +28,7 @@ export const CARD_STRIPPED_FIELDS = [
   'embeddedTheme',           // CharacterExportData 上的内嵌主题（导入侧一并剥离）
   'bubbleStyle',
   'chatFineTune',            // 聊天装扮（细节微调的角色级覆盖）：发卡人的界面偏好，接收方用自己的
+  'chatTriggerPlacement',    // 触发 AI 按钮位置：发卡人的界面偏好，接收方用自己的
   'chromeCustomCss',
   'chatSound',
   'chatSoundBound',

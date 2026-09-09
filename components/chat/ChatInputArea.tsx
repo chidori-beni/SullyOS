@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, Heartbeat, PencilSimple, Alarm, Sparkle, FadersHorizontal, LinkSimple, Star, Waveform, CornersOut, CornersIn } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, Heartbeat, PencilSimple, Alarm, Sparkle, FadersHorizontal, LinkSimple, Star, Waveform, Lightning, Stop, CornersOut, CornersIn } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { AcnhActionTile } from '../os/acnhIcons';
@@ -18,6 +18,9 @@ interface ChatInputAreaProps {
     showPanel: 'none' | 'actions' | 'emojis' | 'chars';
     setShowPanel: (v: 'none' | 'actions' | 'emojis' | 'chars') => void;
     onSend: () => void;
+    /** 与顶栏闪电按钮相同的手动触发回调；仅在启用输入栏位置时显示。 */
+    onTriggerAI?: () => void;
+    triggerIcon?: 'lightning' | 'stop';
     onOpenVoiceInput?: () => void;
     onDeleteSelected: () => void;
     onForwardSelected?: () => void;
@@ -72,6 +75,8 @@ interface ChatInputAreaProps {
     /** 消息栏是否显示语音按钮。默认开。关掉只是收起按钮，
      *  加号菜单第 3 页始终留着一份语音入口，功能不会消失。 */
     showVoiceButton?: boolean;
+    /** 是否在输入框右侧显示触发 AI 按钮；默认关闭，保持群聊等复用方旧行为。 */
+    showTriggerButton?: boolean;
     chromeStyle?: 'soft' | 'flat' | 'floating' | 'pixel';
     /** 动森彩蛋模式：输入栏换成木质草绿圆角。 */
     acnh?: boolean;
@@ -79,7 +84,7 @@ interface ChatInputAreaProps {
 
 const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     input, setInput, isTyping, selectionMode,
-    showPanel, setShowPanel, onSend, onOpenVoiceInput, onDeleteSelected, onForwardSelected, onFavoriteSelected, selectedCount,
+    showPanel, setShowPanel, onSend, onTriggerAI, onOpenVoiceInput, onDeleteSelected, onForwardSelected, onFavoriteSelected, selectedCount,
     favoriteEligibleCount = 0, favoriteSkippedCount = 0, favoriteSaving = false,
     emojis, characters = [], activeCharacterId = '', onCharSelect = () => {},
     unreadMessages = {},
@@ -100,6 +105,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     sendButtonStyle = 'circle',
     showSendButton = false,
     showVoiceButton = true,
+    triggerIcon = 'lightning',
+    showTriggerButton = false,
     chromeStyle = 'soft',
     acnh = false,
 }) => {
@@ -616,6 +623,19 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             {isInputOverflowing && (
                                 <button type="button" onClick={openFullscreenEditor} className={actionButtonClass} title="放大编辑" aria-label="放大编辑">
                                     <CornersOut className="w-5 h-5" weight="bold" />
+                                </button>
+                            )}
+                            {showTriggerButton && onTriggerAI && (
+                                <button
+                                    type="button"
+                                    onClick={onTriggerAI}
+                                    className={actionButtonClass}
+                                    title={triggerIcon === 'stop' ? '停止生成' : '触发 AI'}
+                                    aria-label={triggerIcon === 'stop' ? '停止生成' : '触发 AI'}
+                                >
+                                    {triggerIcon === 'stop'
+                                        ? <Stop className="w-5 h-5" weight="fill" />
+                                        : <Lightning className="w-5 h-5" weight="bold" />}
                                 </button>
                             )}
                             <button type="button" onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={actionButtonClass} title="表情包" aria-label="表情包">

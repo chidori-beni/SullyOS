@@ -27,6 +27,8 @@ interface ChatHeaderShellProps {
     extraAction?: { label: string; icon: React.ReactNode; onClick: () => void };
     /** 触发按钮图标：生成中想显示"停止"时传 'stop'。不传 = 原行为（闪电） */
     triggerIcon?: 'lightning' | 'stop';
+    /** 是否在顶栏显示触发 AI 按钮；关闭时由输入栏接管。 */
+    showTrigger?: boolean;
     isEmotionEvaluating?: boolean;
     isInstantSending?: boolean;
     isMemoryPalaceProcessing?: boolean;
@@ -85,6 +87,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     statusText,
     extraAction,
     triggerIcon = 'lightning',
+    showTrigger = true,
     hideBuffs = false,
     showTokenUsage = true,
     headerStyle = 'default',
@@ -329,8 +332,11 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
         );
     };
 
+    const floatingStatusRightClass = extraAction
+        ? (showTrigger ? 'right-20' : 'right-10')
+        : (showTrigger ? 'right-12' : 'right-2');
     const floatingStatusNodes = ((showTokenUsage && lastTokenUsage) || isInstantSending || isEmotionEvaluating || isMemoryPalaceProcessing) ? (
-        <div className={`absolute ${extraAction ? 'right-20' : 'right-12'} top-1/2 -translate-y-1/2 flex items-center gap-1.5 pointer-events-none`}>
+        <div className={`absolute ${floatingStatusRightClass} top-1/2 -translate-y-1/2 flex items-center gap-1.5 pointer-events-none`}>
             {showTokenUsage && lastTokenUsage && (
                 <div className={`sully-chat-token text-[9px] px-1.5 py-0.5 rounded-md font-mono border ${isDarkHeader ? 'bg-slate-800 text-slate-300 border-white/10' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/20' : 'bg-slate-100/95 text-slate-400 border-slate-200'}`}>
                     {lastTokenUsage}
@@ -426,14 +432,19 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
 
                     <div
                         onClick={onShowCharsPanel}
-                        className={`flex ${extraAction ? 'w-[calc(100%-11rem)]' : 'w-[calc(100%-7rem)]'} max-w-[420px] cursor-pointer items-end justify-center`}
+                        className={`flex ${extraAction
+                            ? (showTrigger ? 'w-[calc(100%-11rem)]' : 'w-[calc(100%-7rem)]')
+                            : (showTrigger ? 'w-[calc(100%-7rem)]' : 'w-[calc(100%-3rem)]')
+                        } max-w-[420px] cursor-pointer items-end justify-center`}
                     >
                         {renderCenteredInfo()}
                     </div>
 
-                    <button onClick={onTriggerAI} className={`sully-chat-trigger absolute right-0 bottom-2 p-2 ${actionButtonClass}`} title={triggerIcon === 'stop' ? '停止生成' : '触发 AI'}>
-                        {triggerIconNode}
-                    </button>
+                    {showTrigger && (
+                        <button onClick={onTriggerAI} className={`sully-chat-trigger absolute right-0 bottom-2 p-2 ${actionButtonClass}`} title={triggerIcon === 'stop' ? '停止生成' : '触发 AI'}>
+                            {triggerIconNode}
+                        </button>
+                    )}
                     {extraAction && (
                         <button onClick={extraAction.onClick} className={`absolute right-10 bottom-2 p-2 ${iconButtonClass}`} title={extraAction.label} aria-label={extraAction.label}>
                             {extraAction.icon}
@@ -456,9 +467,11 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                             {extraAction.icon}
                         </button>
                     )}
-                    <button onClick={onTriggerAI} className={`sully-chat-trigger p-2 ${extraAction ? '' : 'ml-auto'} ${actionButtonClass}`} title={triggerIcon === 'stop' ? '停止生成' : '触发 AI'}>
-                        {triggerIconNode}
-                    </button>
+                    {showTrigger && (
+                        <button onClick={onTriggerAI} className={`sully-chat-trigger p-2 ${extraAction ? '' : 'ml-auto'} ${actionButtonClass}`} title={triggerIcon === 'stop' ? '停止生成' : '触发 AI'}>
+                            {triggerIconNode}
+                        </button>
+                    )}
                 </div>
             )}
 

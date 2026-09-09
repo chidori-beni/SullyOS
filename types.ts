@@ -2934,6 +2934,8 @@ export interface NaturalProactiveConfig {
   profile?: NaturalProactiveProfile;
 }
 
+export type ChatTriggerPlacement = 'header' | 'input';
+
 export interface CharacterProfile {
   id: string;
   name: string;
@@ -3155,6 +3157,8 @@ export interface CharacterProfile {
    *  enabled 为 false/undefined 或整个字段缺省 = 完全跟随全局（现状零变化）。
    *  属美化类本地偏好：随完整备份走，但角色卡分享时剥离（见 utils/characterCard.ts）。 */
   chatFineTune?: ChatFineTuneOverride;
+  /** 「触发 AI」闪电按钮的位置；缺省保持旧行为，显示在聊天顶栏右上角。 */
+  chatTriggerPlacement?: ChatTriggerPlacement;
   chatBackground?: string;
   contextLimit?: number;
   /**

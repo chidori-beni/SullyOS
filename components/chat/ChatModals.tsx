@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import Modal from '../os/Modal';
-import { CharacterProfile, Message, Emoji, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
+import { CharacterProfile, ChatTriggerPlacement, Message, Emoji, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
 import ScheduleCard from '../schedule/ScheduleCard';
 import EmotionSettingsPanel from './EmotionSettingsPanel';
 import { isTranslationLangPreset, normalizeTranslationLangLabel, TRANSLATION_LANG_MAX_LENGTH, TRANSLATION_LANG_PRESETS } from '../../utils/translationLang';
@@ -32,6 +32,8 @@ interface ChatModalsProps {
     setSettingsShowTokenUsage: (v: boolean) => void;
     settingsShowRecallSubmitStatus: boolean;
     setSettingsShowRecallSubmitStatus: (v: boolean) => void;
+    settingsTriggerPlacement: ChatTriggerPlacement;
+    setSettingsTriggerPlacement: (v: ChatTriggerPlacement) => void;
     // Main API quick switch (global; independent from the schedule/emotion secondary API)
     apiConfig?: APIConfig;
     onApplyMainApiPreset?: (preset: ApiPreset) => void;
@@ -269,6 +271,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     settingsHideSysLogs, setSettingsHideSysLogs,
     settingsShowTokenUsage, setSettingsShowTokenUsage,
     settingsShowRecallSubmitStatus, setSettingsShowRecallSubmitStatus,
+    settingsTriggerPlacement, setSettingsTriggerPlacement,
     apiConfig, onApplyMainApiPreset,
     contextSuiteAnyEnabled, contextSuiteAllEnabled, onToggleContextSuite,
     preserveContext, setPreserveContext,
@@ -557,6 +560,38 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                              </span>
                              <span className="shrink-0 text-[11px] font-bold text-primary">去装扮 →</span>
                          </button>
+                     </div>
+                     <div className="pt-2 border-t border-slate-100">
+                         <div className="text-xs font-bold text-slate-400 uppercase">闪电按钮位置</div>
+                         <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
+                             选择「触发 AI」闪电图标出现的位置；另一处会自动隐藏。默认保持在聊天顶栏右上角。
+                         </p>
+                         <div role="radiogroup" aria-label="闪电按钮位置" className="mt-3 grid grid-cols-2 gap-2">
+                             <button
+                                 type="button"
+                                 role="radio"
+                                 aria-checked={settingsTriggerPlacement === 'header'}
+                                 onClick={() => setSettingsTriggerPlacement('header')}
+                                 className={`rounded-2xl border px-3 py-3 text-left transition-all active:scale-[0.99] ${settingsTriggerPlacement === 'header'
+                                     ? 'border-primary bg-primary/5 text-primary shadow-sm'
+                                     : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
+                             >
+                                 <span className="block text-[11px] font-bold">聊天顶栏右上角</span>
+                                 <span className="mt-1 block text-[10px] leading-relaxed opacity-70">保持现在的位置</span>
+                             </button>
+                             <button
+                                 type="button"
+                                 role="radio"
+                                 aria-checked={settingsTriggerPlacement === 'input'}
+                                 onClick={() => setSettingsTriggerPlacement('input')}
+                                 className={`rounded-2xl border px-3 py-3 text-left transition-all active:scale-[0.99] ${settingsTriggerPlacement === 'input'
+                                     ? 'border-primary bg-primary/5 text-primary shadow-sm'
+                                     : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
+                             >
+                                 <span className="block text-[11px] font-bold">输入框右侧</span>
+                                 <span className="mt-1 block text-[10px] leading-relaxed opacity-70">放在表情包按钮左边</span>
+                             </button>
+                         </div>
                      </div>
                      <div>
                          {(activeCharacter.autoArchiveEnabled || activeCharacter.contextFollowsMemoryPalaceHwm) && settingsContextRangeMode === 'adaptive' ? (
