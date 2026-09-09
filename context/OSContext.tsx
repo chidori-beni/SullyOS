@@ -937,7 +937,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [appearancePresets, setAppearancePresets] = useState<AppearancePreset[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [errorDialog, setErrorDialog] = useState<{ title: string; details: string } | null>(null);
-  
+
+  // 长报错属于当前界面的上下文：切到另一个 App 或另一位角色时，
+  // 不要把旧界面的系统错误继续盖在新界面上。手动关闭仍保留给用户，
+  // 这里只处理导航造成的自动清理。
+  useEffect(() => {
+      setErrorDialog(null);
+  }, [activeApp, activeCharacterId]);
+
   const [lastMsgTimestamp, setLastMsgTimestamp] = useState<number>(0);
   const [unreadMessages, setUnreadMessages] = useState<Record<string, number>>({});
   const [proactiveComposingChars, setProactiveComposingChars] = useState<Record<string, true>>({});
