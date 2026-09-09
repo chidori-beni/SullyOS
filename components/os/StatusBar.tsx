@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useOS } from '../../context/OSContext';
 import Modal from './Modal';
 import { resolveStatusBarMode } from '../../utils/iosStandalone';
@@ -18,10 +18,12 @@ interface NavigatorWithBattery extends Navigator {
 }
 
 const StatusBar: React.FC = () => {
-  const { virtualTime, theme, systemLogs, clearLogs } = useOS();
+  const { virtualTime, theme, activeApp, systemLogs, clearLogs } = useOS();
   const [batteryLevel, setBatteryLevel] = useState<number>(100);
   const [isCharging, setIsCharging] = useState<boolean>(false);
   const [showLogModal, setShowLogModal] = useState(false);
+  const [errorIndicatorDismissed, setErrorIndicatorDismissed] = useState(false);
+  const previousAppRef = useRef(activeApp);
   
   // Format numbers to have leading zeros
   const format = (n: number) => n.toString().padStart(2, '0');
@@ -60,7 +62,23 @@ const StatusBar: React.FC = () => {
     initBattery();
   }, []);
 
-  const hasError = systemLogs.length > 0;
+  // SYSTEM ERROR 是全局状态栏提示，不应把上一界面的旧错误一直带到新界面。
+  // 日志本身仍保留在调试终端里；只有切换界面时暂时收起提示，出现新日志再提醒。
+  useEffect(() => {
+    if (previousAppRef.current === activeApp) return;
+    previousAppRef.current = activeApp;
+    setErrorIndicatorDismissed(true);
+    setShowLogModal(false);
+  }, [activeApp]);
+
+  // systemLogs 采用“最新一条在前”的顺序。用首条 id 而不是 length，
+  // 这样即使日志已经达到 50 条上限，新错误仍然能重新唤醒提示。
+  const latestLogId = systemLogs[0]?.id ?? null;
+  useEffect(() => {
+    if (latestLogId !== null) setErrorIndicatorDismissed(false);
+  }, [latestLogId]);
+
+  const hasError = systemLogs.length > 0 && !errorIndicatorDismissed;
   const hasIndexedDbBackingStoreError = systemLogs.some(log => {
     const text = `${log.message} ${log.detail || ''}`.toLowerCase();
     return text.includes('backing store') || text.includes('indexeddb.open');
