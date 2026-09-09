@@ -25,7 +25,7 @@ import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { normalizeUserImpression } from '../utils/impression';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { COMMON_TIMEZONES } from '../utils/timezone';
-import { replaceMountedWorldbook, toMountedWorldbook } from '../utils/worldbook';
+import { getEffectiveWorldbookMode, replaceMountedWorldbook, toMountedWorldbook, WORLDBOOK_MODE_LABELS } from '../utils/worldbook';
 import {
     convertSillyTavernCard,
     extractCardTextFromPng,
@@ -479,20 +479,6 @@ const Character: React.FC = () => {
       if (editingWorldbookId === bookId) closeMountedWorldbookEditor();
   };
 
-  const setWorldbookScheduleOnly = (bookId: string, enabled: boolean) => {
-      if (!formData) return;
-      const currentBooks = formData.mountedWorldbooks || [];
-      handleChange('mountedWorldbooks', currentBooks.map(book => {
-          if (book.id !== bookId) return book;
-          if (enabled) return { ...book, scheduleOnly: true };
-          const normalBook = { ...book };
-          delete normalBook.scheduleOnly;
-          return normalBook;
-      }));
-      addToast(enabled ? '已设为仅日程读取' : '已恢复普通聊天与日程都可读取', 'success');
-      trackEvent('切换世界书日程专用模式', { enabled });
-  };
-
   const closeMountedWorldbookEditor = () => {
       setEditingWorldbookId(null);
       setIsWorldbookEditorFullscreen(false);
@@ -550,7 +536,9 @@ const Character: React.FC = () => {
           setFormData(prev => prev && prev.id === editingId
               ? {
                   ...prev,
-                  mountedWorldbooks: replaceMountedWorldbook(prev.mountedWorldbooks || [], syncedWorldbook),
+                  mountedWorldbooks: replaceMountedWorldbook(prev.mountedWorldbooks || [], syncedWorldbook, {
+                      modeIsAuthoritative: true,
+                  }),
               }
               : prev);
           closeMountedWorldbookEditor();
@@ -2060,11 +2048,14 @@ ${isInitialGeneration ? `
                                    <label className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest block flex items-center gap-1"><Books size={12} /> 扩展设定 (Worldbooks)</label>
                                    <button onClick={openWorldbookModal} className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-1 rounded font-bold hover:bg-indigo-100">+ 挂载</button>
                                 </div>
-                                <div className="space-y-2">
-                                   {formData.mountedWorldbooks && formData.mountedWorldbooks.length > 0 ? (
-                                       formData.mountedWorldbooks.map(wb => {
-                                           const displayBook = worldbooks.find(book => book.id === wb.id) || wb;
-                                           return (
+                                        <div className="space-y-2">
+                                           {formData.mountedWorldbooks && formData.mountedWorldbooks.length > 0 ? (
+                                               formData.mountedWorldbooks.map(wb => {
+                                                   const displayBook = worldbooks.find(book => book.id === wb.id) || wb;
+                                                    const displayMode = getEffectiveWorldbookMode(wb) === 'schedule'
+                                                        ? 'schedule'
+                                                        : getEffectiveWorldbookMode(displayBook);
+                                                   return (
                                            <div key={wb.id} className="bg-white rounded-2xl border border-indigo-50 shadow-sm group overflow-hidden">
                                                <div className="flex items-center justify-between px-4 py-3">
                                                    <button
@@ -2078,9 +2069,9 @@ ${isInitialGeneration ? `
                                                            <span className="text-sm font-bold text-slate-700 truncate">{displayBook.title}</span>
                                                            {displayBook.category && <span className="text-[9px] text-slate-400 truncate">{displayBook.category}</span>}
                                                        </span>
-                                                       {wb.scheduleOnly && (
-                                                           <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-bold text-amber-600">仅日程</span>
-                                                       )}
+                                                        {displayMode === 'schedule' && (
+                                                            <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-bold text-amber-600">仅日程</span>
+                                                        )}
                                                        <span className={`ml-1 shrink-0 text-slate-300 transition-transform ${previewWorldbookId === wb.id ? 'rotate-90' : ''}`} aria-hidden="true">›</span>
                                                    </button>
                                                    <div className="flex items-center gap-1 ml-2">
@@ -2115,18 +2106,14 @@ ${isInitialGeneration ? `
                                                                <PencilSimple size={12} weight="bold" /> 编辑
                                                            </button>
                                                        </div>
-                                                       <label className="mb-3 flex cursor-pointer items-start gap-2 rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2.5">
-                                                           <input
-                                                               type="checkbox"
-                                                               checked={wb.scheduleOnly === true}
-                                                               onChange={event => setWorldbookScheduleOnly(wb.id, event.currentTarget.checked)}
-                                                               className="mt-0.5 h-4 w-4 shrink-0 accent-amber-500"
-                                                           />
-                                                           <span className="min-w-0">
-                                                               <span className="block text-[11px] font-bold text-amber-700">仅用于日程</span>
-                                                               <span className="mt-0.5 block text-[10px] leading-relaxed text-amber-600/80">不注入普通私聊等聊天上下文；生成日程时会优先读取。</span>
-                                                           </span>
-                                                       </label>
+                                                        <div className="mb-3 rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2.5">
+                                                            <div className="text-[11px] font-bold text-amber-700">
+                                                                生效范围：{WORLDBOOK_MODE_LABELS[displayMode]}
+                                                            </div>
+                                                            <div className="mt-0.5 text-[10px] leading-relaxed text-amber-600/80">
+                                                                生效范围请在「世界书」App 的编辑页设置；这里仅显示当前角色挂载到的结果。
+                                                            </div>
+                                                        </div>
                                                        <p className="max-h-48 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-slate-600 select-text">
                                                            {displayBook.content || <span className="italic text-slate-400">暂无内容...</span>}
                                                        </p>

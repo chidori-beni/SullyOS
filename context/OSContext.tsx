@@ -3597,7 +3597,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       if (charsToSync.length > 0) {
           const updatedChars = characters.map(char => {
               if (char.mountedWorldbooks?.some(m => m.id === id)) {
-                  const newMounted = replaceMountedWorldbook(char.mountedWorldbooks, fullUpdatedWb);
+                  const newMounted = replaceMountedWorldbook(char.mountedWorldbooks, fullUpdatedWb, {
+                      modeIsAuthoritative: true,
+                  });
                   const newChar = { ...char, mountedWorldbooks: newMounted };
                   // 这条落库绕开了 updateCharacter，得自己打脏：世界书正文进 fire_pack 的系统
                   // 提示词，不刷的话角色到点还照着改之前的设定说话。

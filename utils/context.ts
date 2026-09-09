@@ -141,7 +141,7 @@ export const ContextBuilder = {
             /** Recent messages used to activate keyword-based worldbook entries. */
             worldbookMessages?: WorldbookScanMessage[];
             /** Phone/chat by default; Date and other face-to-face callers pass offline. */
-            worldbookMode?: Exclude<WorldbookMode, 'all'>;
+            worldbookMode?: Exclude<WorldbookMode, 'all' | 'schedule'>;
             /** 由调用方预先解析，避免带概率的世界书在同一请求内被重复投骰。 */
             resolvedWorldbookEntries?: ResolvedWorldbookEntry[];
             /** 普通聊天默认排除角色挂载的日程专用世界书；日程生成显式传 schedule。 */

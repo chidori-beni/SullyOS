@@ -8,7 +8,7 @@ import type {
 } from '../types';
 
 export type WorldbookLike = Worldbook | MountedWorldbook;
-export type WorldbookScene = Exclude<WorldbookMode, 'all'>;
+export type WorldbookScene = Exclude<WorldbookMode, 'all' | 'schedule'>;
 export type WorldbookContextPurpose = 'chat' | 'schedule';
 
 export interface WorldbookResolveOptions {
@@ -101,6 +101,7 @@ export const toMountedWorldbook = (book: Worldbook): MountedWorldbook => ({
     matchWholeWords: book.matchWholeWords,
     sourceUid: book.sourceUid,
     displayOrder: book.displayOrder,
+    ...(normalizeWorldbookMode(book.mode) === 'schedule' ? { scheduleOnly: true } : {}),
 });
 
 /**
@@ -113,26 +114,36 @@ export const toMountedWorldbook = (book: Worldbook): MountedWorldbook => ({
 export const replaceMountedWorldbook = (
     mountedWorldbooks: MountedWorldbook[],
     worldbook: Worldbook,
+    options: { modeIsAuthoritative?: boolean } = {},
 ): MountedWorldbook[] => {
     if (!mountedWorldbooks.some(book => book.id === worldbook.id)) return mountedWorldbooks;
     return mountedWorldbooks.map(book => {
         if (book.id !== worldbook.id) return book;
         const next = toMountedWorldbook(worldbook);
-        // scheduleOnly 是角色挂载关系上的字段，不能被全局世界书编辑同步清掉。
-        if (book.scheduleOnly === true) next.scheduleOnly = true;
+        // 旧版角色级标记需要继续可读；用户显式保存新版作用域时，mode 才成为权威，
+        // 允许从 schedule 切回 all/online/offline 时清理旧镜像。
+        if (!options.modeIsAuthoritative && book.scheduleOnly === true) next.scheduleOnly = true;
         return next;
     });
 };
 
 export const normalizeWorldbookMode = (value: unknown): WorldbookMode => (
-    value === 'online' || value === 'offline' ? value : 'all'
+    value === 'online' || value === 'offline' || value === 'schedule' ? value : 'all'
 );
 
 export const WORLDBOOK_MODE_LABELS: Record<WorldbookMode, string> = {
     all: '线上 + 线下',
     online: '仅线上聊天',
     offline: '仅线下见面',
+    schedule: '仅用于日程',
 };
+
+/** 新 mode 是规范来源；旧角色挂载上的 scheduleOnly=true 作为兼容回退。 */
+export const getEffectiveWorldbookMode = (book: WorldbookLike): WorldbookMode => (
+    (book as MountedWorldbook).scheduleOnly === true
+        ? 'schedule'
+        : normalizeWorldbookMode(book.mode)
+);
 
 export const sortWorldbooksForDisplay = <T extends Worldbook>(books: T[]): T[] => (
     books
@@ -147,9 +158,9 @@ export const sortWorldbooksForDisplay = <T extends Worldbook>(books: T[]): T[] =
         .map(({ book }) => book)
 );
 
-/** 仅角色挂载缓存拥有这个开关；全局世界书记录本身没有作用域偏好。 */
+/** 兼容旧角色挂载数据，并统一识别新的全局 schedule mode。 */
 export const isScheduleOnlyWorldbook = (book: WorldbookLike): boolean => (
-    (book as MountedWorldbook).scheduleOnly === true
+    getEffectiveWorldbookMode(book) === 'schedule'
 );
 
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -215,7 +226,7 @@ export const isWorldbookEntryActive = (
     // 日程专用条目表达的是“绑定后日程必须读取”，不再受普通聊天的
     // 关键词、扫描深度、概率和 online/offline 场景筛选影响；disable 仍是总开关。
     if (isScheduleOnlyWorldbook(book)) return contextPurpose === 'schedule';
-    const mode = normalizeWorldbookMode(book.mode);
+    const mode = getEffectiveWorldbookMode(book);
     if (mode !== 'all' && mode !== scene) return false;
 
     const primary = book.key || [];

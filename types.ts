@@ -1274,10 +1274,10 @@ export interface DreamLog {
 export type WorldbookPosition = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 export type WorldbookDepthRole = 0 | 1 | 2;
 export type WorldbookSelectiveLogic = 0 | 1 | 2 | 3;
-export type WorldbookMode = 'all' | 'online' | 'offline';
+export type WorldbookMode = 'all' | 'online' | 'offline' | 'schedule';
 
 export interface WorldbookEntryConfig {
-    /** all = all scenes; online = phone/chat contexts; offline = face-to-face Date contexts. */
+    /** all = all scenes; online = phone/chat; offline = face-to-face; schedule = schedule generation only. */
     mode?: WorldbookMode;
     /** Primary activation keywords. Empty for constant entries. */
     key?: string[];
@@ -1307,7 +1307,7 @@ export interface MountedWorldbook extends WorldbookEntryConfig {
     title: string;
     content: string;
     category?: string;
-    /** 角色级挂载开关：只在生成日程时读取，不进入普通聊天上下文。 */
+    /** @deprecated 旧版角色级挂载开关；新数据请使用 mode: 'schedule'。 */
     scheduleOnly?: boolean;
 }
 

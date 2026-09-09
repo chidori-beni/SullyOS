@@ -12,7 +12,7 @@ const character = {
         { id: 'all', title: '共有规则', content: '两边都能看见。', category: '测试', mode: 'all' },
         { id: 'online', title: '线上规则', content: '线上不要使用标点。', category: '测试', mode: 'online' },
         { id: 'offline', title: '线下规则', content: '线下保留自然标点。', category: '测试', mode: 'offline' },
-        { id: 'schedule-only', title: '日程规则', content: '日程专用哨兵：安排赛车训练。', category: '测试', scheduleOnly: true },
+        { id: 'schedule-only', title: '日程规则', content: '日程专用哨兵：安排赛车训练。', category: '测试', mode: 'schedule' },
     ],
 } as any;
 

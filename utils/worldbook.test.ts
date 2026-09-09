@@ -10,6 +10,7 @@ import {
     splitWorldbookSections,
     toMountedWorldbook,
     replaceMountedWorldbook,
+    normalizeWorldbookMode,
 } from './worldbook';
 
 const book = (overrides: Partial<MountedWorldbook> = {}): MountedWorldbook => ({
@@ -79,6 +80,29 @@ describe('worldbook activation', () => {
             'online',
             { contextPurpose: 'schedule' },
         ).map(entry => entry.book.id)).toEqual(['schedule-only']);
+    });
+
+    it('treats schedule as a top-level mode and bypasses ordinary activation rules only for schedules', () => {
+        const scheduleMode = book({
+            id: 'schedule-mode',
+            content: '萧逸的职业日程规则。',
+            mode: 'schedule',
+            constant: false,
+            key: ['永远不会命中'],
+            useProbability: true,
+            probability: 0,
+        });
+
+        expect(normalizeWorldbookMode('schedule')).toBe('schedule');
+        expect(resolveWorldbookEntries([scheduleMode], [], '萧逸', '用户', 'online')).toEqual([]);
+        expect(resolveWorldbookEntries(
+            [scheduleMode],
+            [],
+            '萧逸',
+            '用户',
+            'online',
+            { contextPurpose: 'schedule' },
+        ).map(entry => entry.book.id)).toEqual(['schedule-mode']);
     });
 
     it('仍允许 disable 作为日程专用条目的总开关', () => {
@@ -228,6 +252,7 @@ describe('mounted worldbook synchronization', () => {
                 role: 1,
                 disable: true,
             }),
+            category: '同步测试',
             createdAt: 1,
             updatedAt: 2,
         };
@@ -255,6 +280,7 @@ describe('mounted worldbook synchronization', () => {
         const mounted = [book({ id: 'other' })];
         const worldbook = {
             ...book({ id: 'missing', title: '不存在' }),
+            category: '同步测试',
             createdAt: 1,
             updatedAt: 2,
         };
@@ -305,5 +331,25 @@ describe('mounted worldbook synchronization', () => {
         });
         expect(mounted).not.toHaveProperty('createdAt');
         expect(mounted).not.toHaveProperty('updatedAt');
+    });
+
+    it('mirrors the new schedule mode into the mount cache and clears it for an authoritative normal mode', () => {
+        const schedule = toMountedWorldbook({
+            ...book({ id: 'schedule-mode', mode: 'schedule' }),
+            category: '同步测试',
+            createdAt: 1,
+            updatedAt: 2,
+        });
+        expect(schedule).toMatchObject({ mode: 'schedule', scheduleOnly: true });
+
+        const staleMount = [book({ id: 'schedule-mode', scheduleOnly: true, mode: 'schedule' })];
+        const normalWorldbook = {
+            ...book({ id: 'schedule-mode', mode: 'all' }),
+            category: '同步测试',
+            createdAt: 1,
+            updatedAt: 3,
+        };
+        expect(replaceMountedWorldbook(staleMount, normalWorldbook, { modeIsAuthoritative: true })[0])
+            .not.toHaveProperty('scheduleOnly');
     });
 });

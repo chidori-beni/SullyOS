@@ -164,7 +164,7 @@ const WorldbookApp: React.FC = () => {
         const category = tempCategory.trim() || '未分类设定 (General)';
         const primaryKeywords = splitWorldbookKeywords(tempKeywords);
         const secondaryKeywords = splitWorldbookKeywords(tempSecondaryKeywords);
-        if (!tempConstant && primaryKeywords.length === 0) {
+        if (tempMode !== 'schedule' && !tempConstant && primaryKeywords.length === 0) {
             addToast('关键词触发模式至少需要一个主要关键词', 'error');
             return;
         }
@@ -488,43 +488,52 @@ const WorldbookApp: React.FC = () => {
                             </div>
 
                             <div className="border-t border-slate-100 pt-4">
-                                <label className="text-[11px] font-bold text-slate-400 uppercase mb-2 block tracking-[0.12em]">生效场景</label>
-                                <div className="grid grid-cols-3 gap-2">
-                                    {(['all', 'online', 'offline'] as WorldbookMode[]).map(mode => (
+                                <label className="text-[11px] font-bold text-slate-400 uppercase mb-2 block tracking-[0.12em]">生效范围</label>
+                                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                    {(['all', 'online', 'offline', 'schedule'] as WorldbookMode[]).map(mode => (
                                         <button
                                             key={mode}
                                             type="button"
                                             onClick={() => setTempMode(mode)}
                                             className={`rounded-xl border px-2 py-2.5 text-[11px] font-bold transition-all active:scale-95 ${tempMode === mode ? 'border-indigo-500 bg-indigo-50 text-indigo-600 ring-2 ring-indigo-100' : 'border-slate-200 bg-slate-50 text-slate-500'}`}
                                         >
-                                            {mode === 'all' ? '线上 + 线下' : mode === 'online' ? '仅线上' : '仅线下'}
+                                            {WORLDBOOK_MODE_LABELS[mode]}
                                         </button>
                                     ))}
                                 </div>
                                 <p className="mt-2 px-1 text-[10px] leading-relaxed text-slate-400">
-                                    线上用于聊天、群聊和通话；线下用于“见面”和见面剧情。旧条目默认两边都生效。
+                                    线上用于聊天、群聊和通话；线下用于“见面”和见面剧情；“仅用于日程”只在生成日程时读取，并会优先作为日程规则。旧条目默认两边都生效。
                                 </p>
                             </div>
 
                             <div className="border-t border-slate-100 pt-4">
                                 <label className="text-[11px] font-bold text-slate-400 uppercase mb-2 block tracking-[0.12em]">触发方式</label>
-                                <label className="flex items-center gap-3 py-2 cursor-pointer select-none">
-                                    <input
-                                        type="checkbox"
-                                        checked={!tempConstant}
-                                        onChange={e => setTempConstant(!e.target.checked)}
-                                        className="w-4 h-4 accent-indigo-500"
-                                    />
-                                    <span className="text-sm font-semibold text-slate-700">启用关键词触发</span>
-                                </label>
-                                <p className={`text-[10px] leading-relaxed mt-1 pl-7 ${tempConstant ? 'text-slate-400' : 'text-indigo-500'}`}>
-                                    {tempConstant
-                                        ? '未勾选：不检查关键词，这条世界书会始终生效。'
-                                        : '已勾选：只有主要关键词命中时才生效；未填写关键词将无法保存。'}
-                                </p>
+                                {tempMode === 'schedule' ? (
+                                    <div className="rounded-xl border border-amber-100 bg-amber-50/80 px-3 py-2.5 text-[10px] leading-relaxed text-amber-700">
+                                        <span className="font-bold">日程专用模式：</span>
+                                        生成日程时会直接读取这条世界书，忽略关键词、扫描深度和随机概率；关闭条目仍然不会读取。切换回其他范围后，原来的关键词和概率设置会恢复作用。
+                                    </div>
+                                ) : (
+                                    <>
+                                        <label className="flex items-center gap-3 py-2 cursor-pointer select-none">
+                                            <input
+                                                type="checkbox"
+                                                checked={!tempConstant}
+                                                onChange={e => setTempConstant(!e.target.checked)}
+                                                className="w-4 h-4 accent-indigo-500"
+                                            />
+                                            <span className="text-sm font-semibold text-slate-700">启用关键词触发</span>
+                                        </label>
+                                        <p className={`text-[10px] leading-relaxed mt-1 pl-7 ${tempConstant ? 'text-slate-400' : 'text-indigo-500'}`}>
+                                            {tempConstant
+                                                ? '未勾选：不检查关键词，这条世界书会始终生效。'
+                                                : '已勾选：只有主要关键词命中时才生效；未填写关键词将无法保存。'}
+                                        </p>
+                                    </>
+                                )}
                             </div>
 
-                            {!tempConstant && (
+                            {tempMode !== 'schedule' && !tempConstant && (
                                 <div className="space-y-4 animate-fade-in">
                                     <div>
                                         <label className="text-xs font-bold text-slate-400 mb-2 block">主要关键词</label>
@@ -650,23 +659,27 @@ const WorldbookApp: React.FC = () => {
                                 </div>
                                 <div>
                                     <label className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-2">
-                                        <input type="checkbox" checked={tempUseProbability} onChange={e => setTempUseProbability(e.target.checked)} className="accent-indigo-500" />
+                                        <input type="checkbox" checked={tempUseProbability} disabled={tempMode === 'schedule'} onChange={e => setTempUseProbability(e.target.checked)} className="accent-indigo-500 disabled:opacity-40" />
                                         启用随机概率
                                     </label>
                                     <input
                                         type="number"
                                         min={0}
                                         max={100}
-                                        disabled={!tempUseProbability}
+                                        disabled={!tempUseProbability || tempMode === 'schedule'}
                                         value={tempProbability}
                                         onChange={e => setTempProbability(Number(e.target.value))}
                                         className="w-full text-sm text-slate-700 bg-slate-50/80 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 transition-all disabled:opacity-40"
                                     />
                                 </div>
                             </div>
-                            <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 px-4 py-3 text-[10px] leading-relaxed text-indigo-700">
-                                <span className="font-bold">未勾选“启用随机概率”不代表条目没有激活。</span>
-                                未勾选时会跳过随机判定：只要条目已启用且满足常驻／关键词条件，就会按 100% 通过；勾选后，才会在条件满足时按上方百分比再次随机判断。
+                            <div className={`rounded-xl border px-4 py-3 text-[10px] leading-relaxed ${tempMode === 'schedule' ? 'border-amber-100 bg-amber-50/80 text-amber-700' : 'border-indigo-100 bg-indigo-50/70 text-indigo-700'}`}>
+                                {tempMode === 'schedule' ? (
+                                    <><span className="font-bold">日程专用模式不使用随机概率。</span>选择其他生效范围后，才会恢复这里的概率判定。</>
+                                ) : (
+                                    <><span className="font-bold">未勾选“启用随机概率”不代表条目没有激活。</span>
+                                    未勾选时会跳过随机判定：只要条目已启用且满足常驻／关键词条件，就会按 100% 通过；勾选后，才会在条件满足时按上方百分比再次随机判断。</>
+                                )}
                             </div>
                         </div>
 
@@ -782,7 +795,7 @@ const WorldbookApp: React.FC = () => {
                         创建或导入后，还要在角色编辑页的“扩展设定”中挂载；聊天生成回复时，已启用并满足常驻或关键词条件（以及可选的概率判定）的条目才会注入提示词。
                     </p>
                     <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">
-                        每条可单独设为线上、线下或两边生效；展开分组后按住条目右侧拖拽柄即可整理顺序，整理顺序不会改动提示词注入优先级。
+                        每条可单独设为线上、线下、两边或仅用于日程；展开分组后按住条目右侧拖拽柄即可整理顺序，整理顺序不会改动提示词注入优先级。
                     </p>
                     <p className="mt-2 rounded-xl bg-indigo-50 px-3 py-2 text-[10px] leading-relaxed text-indigo-700">
                         注意：“启用随机概率”未点亮 = 不使用随机抽取，条件满足时按 100% 通过；并不是“未激活”。
@@ -865,7 +878,7 @@ const WorldbookApp: React.FC = () => {
                                                 <span className="text-[9px] px-2 py-0.5 rounded-full bg-white/70 text-slate-400">
                                                     {WORLDBOOK_POSITION_LABELS[book.position ?? 1]}
                                                 </span>
-                                                <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold ${normalizeWorldbookMode(book.mode) === 'online' ? 'bg-sky-50 text-sky-600' : normalizeWorldbookMode(book.mode) === 'offline' ? 'bg-rose-50 text-rose-600' : 'bg-violet-50 text-violet-600'}`}>
+                                                <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold ${normalizeWorldbookMode(book.mode) === 'schedule' ? 'bg-amber-50 text-amber-600' : normalizeWorldbookMode(book.mode) === 'online' ? 'bg-sky-50 text-sky-600' : normalizeWorldbookMode(book.mode) === 'offline' ? 'bg-rose-50 text-rose-600' : 'bg-violet-50 text-violet-600'}`}>
                                                     {WORLDBOOK_MODE_LABELS[normalizeWorldbookMode(book.mode)]}
                                                 </span>
                                             </div>
