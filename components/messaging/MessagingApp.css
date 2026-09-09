@@ -536,6 +536,31 @@
 .nj-favorites-item-voice { display: flex; align-items: center; gap: 9px; }
 .nj-favorites-item-play { width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 50%; background: #17191e; color: #fff; }
 
+/* 通讯录卡片。整段只挂在 [data-kind="contact"] 上，文字/语音收藏卡的旧规则一条不动——
+   第三方主题（赦免系列等）改的是 .nj-favorites-item / -author / -content，
+   这三个类名在通讯录卡里仍是 article 的直接子元素，所以主题的颜色、圆角、边框照常生效。 */
+.nj-favorites-item[data-kind="contact"] {
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  grid-template-areas: "avatar author" "avatar content";
+  align-items: center;
+  column-gap: 11px;
+  text-align: left;
+}
+.nj-favorites-item[data-kind="contact"] > .nj-favorites-item-author { grid-area: author; margin-bottom: 3px; font-size: 11px; }
+.nj-favorites-item[data-kind="contact"] > .nj-favorites-item-content {
+  grid-area: content;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  white-space: normal;
+  font-size: 12px;
+}
+.nj-favorites-item-avatar { grid-area: avatar; width: 42px; height: 42px; border-radius: 50%; overflow: hidden; background: rgba(118,118,128,.11); }
+.nj-favorites-item-avatar img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.nj-favorites-item-chip { margin-left: 6px; border-radius: 999px; padding: 1px 6px; background: rgba(118,118,128,.13); color: inherit; font-size: 9px; }
+
 .nj-profile-cover { position: relative; height: 147px; background: linear-gradient(135deg,#ddd8d1,#b8c1c8); overflow: hidden; }
 .nj-profile-cover::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg,transparent,rgba(0,0,0,.2)); }
 .nj-profile-cover-image { width: 100%; height: 100%; object-fit: cover; filter: blur(14px); transform: scale(1.12); opacity: .7; }

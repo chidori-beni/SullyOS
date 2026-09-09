@@ -1,5 +1,6 @@
 import React, { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+    AddressBook,
     BellSlash,
     CalendarBlank,
     Camera,
@@ -18,7 +19,6 @@ import {
     Rows,
     ArrowsClockwise,
     Sparkle,
-    Star,
     Trash,
     UserCircle,
     X,
@@ -27,7 +27,7 @@ import { useOS } from '../context/OSContext';
 import { AppID, CharacterProfile, GalleryImage, Message, SocialComment, SocialPost } from '../types';
 import { DB } from '../utils/db';
 import { listTextFavorites, TextFavorite } from '../utils/textFavorites';
-import { getVoiceFavoriteBlob, listVoiceFavorites, VoiceFavorite } from '../utils/voiceFavorites';
+import { listVoiceFavorites, VoiceFavorite } from '../utils/voiceFavorites';
 import {
     DEFAULT_MESSAGING_LIST_PREFS,
     EMPTY_MESSAGING_THEME_STATE,
@@ -116,6 +116,16 @@ const parseJsonArray = (value: string): any[] => {
 };
 
 const FALLBACK_GROUP_ID = '__ungrouped__';
+
+// 通讯录卡片上的关系标签。缺省 partner，与 CharacterProfile.hostRelation 的缺省一致。
+// ⚠️ 只显示「与机主的关系」这一项。userMacroTarget（角色卡里 {{user}} 指谁）**不在这里露出**——
+// 把配队说成恋爱关系是双层角色世界的铁律 ①，通讯录不参与那件事。
+const HOST_RELATION_LABELS: Record<NonNullable<CharacterProfile['hostRelation']>, string> = {
+    partner: '陪伴',
+    friend: '朋友',
+    stranger: '不认识我',
+};
+
 // 消息 App 的「我的 → 相册」是用户自己的展示柜，不与角色相册共用归属。
 // GalleryImage 旧模型用 charId 做索引；使用保留值即可在不改 IndexedDB
 // 结构、不迁移/删除旧角色照片的情况下隔离两类图片。
@@ -253,7 +263,8 @@ const Messaging: React.FC = () => {
     const [profileGalleryUrlBusy, setProfileGalleryUrlBusy] = useState(false);
     const [textFavorites, setTextFavorites] = useState<TextFavorite[]>([]);
     const [voiceFavorites, setVoiceFavorites] = useState<VoiceFavorite[]>([]);
-    const [favoriteKind, setFavoriteKind] = useState<'text' | 'voice'>('text');
+    // 通讯录页的分组筛选。'all' = 不筛。分组被删掉时回退到 'all'（见 contactGroups）。
+    const [contactGroupId, setContactGroupId] = useState<string>('all');
     const [themeState, setThemeState] = useState<MessagingThemeState>({ ...EMPTY_MESSAGING_THEME_STATE });
     const [previewCss, setPreviewCss] = useState('');
     const [themeOpen, setThemeOpen] = useState(false);
@@ -599,6 +610,38 @@ const Messaging: React.FC = () => {
         return named;
     }, [characterGroups, orderedSummaries, prefs.groupingEnabled]);
 
+    // 通讯录页的分组。和 groupedSummaries 有两点不同，别直接复用它：
+    // 1. 这里是**全部角色**，不走「只留聊过天的」那道过滤——通讯录的存在意义就是把那批人捞回来；
+    // 2. groupId 指向已删分组时归「未分组」（types.ts 对 groupId 的约定），
+    //    groupedSummaries 那边漏了这一步，会让这些角色整个消失。
+    const contactGroups = useMemo(() => {
+        const groupMap = new Map<string, CharacterProfile[]>();
+        characters.forEach(char => {
+            const groupId = char.groupId && characterGroups.some(group => group.id === char.groupId) ? char.groupId : FALLBACK_GROUP_ID;
+            groupMap.set(groupId, [...(groupMap.get(groupId) || []), char]);
+        });
+        const named = characterGroups
+            .filter(group => groupMap.has(group.id))
+            .sort((a, b) => (a.order || a.createdAt || 0) - (b.order || b.createdAt || 0))
+            .map(group => ({ id: group.id, name: group.name, items: groupMap.get(group.id)! }));
+        if (groupMap.has(FALLBACK_GROUP_ID)) named.push({ id: FALLBACK_GROUP_ID, name: '未分组', items: groupMap.get(FALLBACK_GROUP_ID)! });
+        return named;
+    }, [characters, characterGroups]);
+
+    // 上次说话时间：通讯录按名字排，所以时间只用来显示，不参与排序。
+    const contactLastTalked = useMemo(() => {
+        const map = new Map<string, number>();
+        summaries.forEach(item => { if (item.last?.timestamp) map.set(item.char.id, item.last.timestamp); });
+        return map;
+    }, [summaries]);
+
+    const contactList = useMemo(() => {
+        const scoped = contactGroupId === 'all'
+            ? characters
+            : contactGroups.find(group => group.id === contactGroupId)?.items || characters;
+        return [...scoped].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
+    }, [characters, contactGroupId, contactGroups]);
+
     const persistPrefs = useCallback(async (next: MessagingListPrefs) => {
         setPrefs(next);
         await saveMessagingListPrefs(next).catch(() => addToast('好友列表设置保存失败', 'error'));
@@ -672,16 +715,6 @@ const Messaging: React.FC = () => {
             pinnedCharacterIds: pinned ? prefs.pinnedCharacterIds.filter(id => id !== charId) : [charId, ...prefs.pinnedCharacterIds],
         });
         setContextMenu(null);
-    };
-
-    const playVoiceFavorite = async (favorite: VoiceFavorite) => {
-        const blob = await getVoiceFavoriteBlob(favorite.id);
-        if (!blob) return addToast('这条语音的音频文件已不存在', 'error');
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        audio.onended = () => URL.revokeObjectURL(url);
-        audio.onerror = () => URL.revokeObjectURL(url);
-        await audio.play().catch(() => addToast('语音播放失败', 'error'));
     };
 
     const prependMomentPosts = async (newPosts: SocialPost[]) => {
@@ -1452,20 +1485,49 @@ const Messaging: React.FC = () => {
         </section>
     );
 
+    // 原本这一页是照搬糯叽机的「收藏」。Sully 自己在聊天页加号菜单里已经有一套分类更细的收藏，
+    // 两边重复；而 orderedSummaries 改成「只留聊过天的好友」之后，没聊过的角色只剩搜名字一条路。
+    // 于是把这一格换成通讯录：补回全员入口，也给双层角色世界的身份字段一个露出的地方。
+    // ⚠️ 类名（nj-favorites-*/nj-fav-*）、区块 id、tab 值 'favorites' 全部原样保留——
+    // 糯叽机主题按这些选择器和底栏 nth-child 写死了样式，改名等于让所有已存主题失效。
     const renderFavoritesTab = () => (
-        <section id="messaging-favorites-tab" className="journal-background nj-favorites-tab" data-empty={String(!(textFavorites.length || voiceFavorites.length))}>
+        <section id="messaging-favorites-tab" className="journal-background nj-favorites-tab" data-empty={String(!characters.length)}>
             <div className="ig-header glass-header nj-favorites-tab-header">
-                <div className="nj-favorites-tab-title">收藏</div>
+                <div className="nj-favorites-tab-title">通讯录</div>
                 <div className="nj-fav-decor-top" aria-hidden="true" />
-                <div className="nj-favorites-tabs details-scroll">
-                    <button className={`nj-favorites-tab-button ${favoriteKind === 'text' ? 'active' : ''}`} onClick={() => setFavoriteKind('text')}>文字 {textFavorites.length}</button>
-                    <button className={`nj-favorites-tab-button ${favoriteKind === 'voice' ? 'active' : ''}`} onClick={() => setFavoriteKind('voice')}>语音 {voiceFavorites.length}</button>
-                </div>
+                {/* 分组只有真分过组才出筛选条：一个自建分组都没有时全是「未分组」，两个按钮等于没得选。 */}
+                {contactGroups.length > 1 && <div className="nj-favorites-tabs details-scroll">
+                    <button className={`nj-favorites-tab-button ${contactGroupId === 'all' ? 'active' : ''}`} onClick={() => setContactGroupId('all')}>全部 {characters.length}</button>
+                    {contactGroups.map(group => <button key={group.id} className={`nj-favorites-tab-button ${contactGroupId === group.id ? 'active' : ''}`} onClick={() => setContactGroupId(group.id)}>{group.name} {group.items.length}</button>)}
+                </div>}
             </div>
             <div className="nj-favorites-list nj-fav-list">
-                {favoriteKind === 'text' ? textFavorites.map(item => <article className="nj-favorites-item nj-fav-card" key={item.id} data-kind="text" onClick={() => openChat(item.charId)}><div className="nj-favorites-item-author">{item.charName} · {formatListTime(item.sourceTimestamp)}</div><div className="nj-favorites-item-content">{item.content}</div></article>) : voiceFavorites.map(item => <article className="nj-favorites-item nj-fav-card" key={item.id} data-kind="voice"><div className="nj-favorites-item-author">{item.charName} · {formatListTime(item.sourceTimestamp)}</div><div className="nj-favorites-item-voice"><button className="nj-favorites-item-play" onClick={() => void playVoiceFavorite(item)}>▶</button><div className="nj-favorites-item-content">{item.spokenText || item.originalText || '语音收藏'}</div></div></article>)}
-                {favoriteKind === 'text' && !textFavorites.length && <div className="nj-empty-state">聊天里收藏的文字会出现在这里</div>}
-                {favoriteKind === 'voice' && !voiceFavorites.length && <div className="nj-empty-state">收藏的语音会出现在这里</div>}
+                {contactList.map(char => {
+                    const lastTalked = contactLastTalked.get(char.id);
+                    const relation = HOST_RELATION_LABELS[char.hostRelation || 'partner'];
+                    return <article
+                        className="nj-favorites-item nj-fav-card"
+                        key={char.id}
+                        data-kind="contact"
+                        data-relation={char.hostRelation || 'partner'}
+                        data-layer={char.narrativeLayer || 'real'}
+                        data-talked={String(!!lastTalked)}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => openChat(char.id)}
+                        onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openChat(char.id); } }}
+                    >
+                        <div className="nj-favorites-item-avatar"><img src={char.avatar} alt="" loading="lazy" /></div>
+                        <div className="nj-favorites-item-author">
+                            {char.name} · {lastTalked ? formatListTime(lastTalked) : '还没聊过'}
+                            <span className="nj-favorites-item-chip">{relation}</span>
+                            {char.narrativeLayer === 'fiction' && <span className="nj-favorites-item-chip">我创作的</span>}
+                        </div>
+                        <div className="nj-favorites-item-content">{char.description?.trim() || '还没有写设定。'}</div>
+                    </article>;
+                })}
+                {!characters.length && <div className="nj-empty-state">还没有好友<br /><small>新建或导入角色后，全部好友都会出现在这里</small></div>}
+                {!!characters.length && !contactList.length && <div className="nj-empty-state">这个分组里还没有人</div>}
             </div>
             <div className="nj-fav-decor-bottom" />
         </section>
@@ -1530,7 +1592,7 @@ const Messaging: React.FC = () => {
                 <div id="messaging-bottom-bar" className="glass-tab-bar nj-tab-bottom-bar" role="navigation" aria-label="消息应用标签栏">
                     <div className={`tab-item nj-tab-bottom-item nj-tab-bottom-item-chat ${tab === 'chat' ? 'active nj-tab-bottom-item-active' : ''}`} role="button" tabIndex={0} aria-label="消息" onClick={() => selectTab('chat')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') selectTab('chat'); }} onPointerDown={startThemeLongPress} onPointerUp={cancelThemeLongPress} onPointerCancel={cancelThemeLongPress} onPointerLeave={cancelThemeLongPress} onContextMenu={event => { event.preventDefault(); openThemeSettings(); }}><div className="glass-icon nj-tab-bottom-icon"><ChatCircleDots weight={tab === 'chat' ? 'fill' : 'regular'} />{unreadTotal > 0 && <span className="nj-tab-bottom-total-unread">{unreadTotal > 99 ? '99+' : unreadTotal}</span>}</div></div>
                     <div className={`tab-item nj-tab-bottom-item nj-tab-bottom-item-moments ${tab === 'moments' ? 'active nj-tab-bottom-item-active' : ''}`} role="button" tabIndex={0} aria-label="朋友圈" onClick={() => selectTab('moments')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') selectTab('moments'); }}><div className="glass-icon nj-tab-bottom-icon"><Planet weight={tab === 'moments' ? 'fill' : 'regular'} />{!!unseenMomentNotifications.length && <i className="nj-tab-bottom-moments-dot" />}</div></div>
-                    <div className={`tab-item nj-tab-bottom-item nj-tab-bottom-item-favorites ${tab === 'favorites' ? 'active nj-tab-bottom-item-active' : ''}`} role="button" tabIndex={0} aria-label="收藏" onClick={() => selectTab('favorites')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') selectTab('favorites'); }}><div className="glass-icon nj-tab-bottom-icon"><Star weight={tab === 'favorites' ? 'fill' : 'regular'} /></div></div>
+                    <div className={`tab-item nj-tab-bottom-item nj-tab-bottom-item-favorites ${tab === 'favorites' ? 'active nj-tab-bottom-item-active' : ''}`} role="button" tabIndex={0} aria-label="通讯录" onClick={() => selectTab('favorites')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') selectTab('favorites'); }}><div className="glass-icon nj-tab-bottom-icon"><AddressBook weight={tab === 'favorites' ? 'fill' : 'regular'} /></div></div>
                     <div className={`tab-item nj-tab-bottom-item nj-tab-bottom-item-profile ${tab === 'profile' ? 'active nj-tab-bottom-item-active' : ''}`} role="button" tabIndex={0} aria-label="我的" onClick={() => selectTab('profile')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') selectTab('profile'); }}><div className="glass-icon nj-tab-bottom-icon"><UserCircle weight={tab === 'profile' ? 'fill' : 'regular'} /></div></div>
                 </div>
             </div>
