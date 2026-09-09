@@ -83,6 +83,31 @@ describe('卡片钩子真的渲染进了 DOM', () => {
         expect(html).toContain('data-card-sub="diary_card"');
     });
 
+    it('朋友圈转发和 Spark 分享共用 social_card，但要能分开选中', () => {
+        const post = {
+            id: 'moment-1', authorName: '好友', authorAvatar: 'https://example.com/p.png',
+            title: '', content: '下雨了', images: ['data:image/jpeg;base64,AA'],
+            likes: 2, comments: [], timestamp: 1, tags: [], socialScope: 'moments',
+            location: '中野',
+        };
+        const moments = render({
+            ...base, role: 'user', type: 'social_card', content: '[分享朋友圈：下雨了]',
+            metadata: { post, momentShare: { scope: 'moments', imageCount: 5, sharedAt: 1 } },
+        } as Message);
+        expect(moments).toContain('data-card="social_card"');
+        expect(moments).toContain('data-card-sub="moments"');
+        expect(moments).toContain('朋友圈 · 动态分享');
+        // 落库只留 3 张，卡片按真实张数补「+N」角标
+        expect(moments).toContain('+4');
+
+        const sparkHtml = render({
+            ...base, role: 'user', type: 'social_card', content: '[分享帖子]',
+            metadata: { post: { ...post, id: 'spark-1', socialScope: 'spark', title: '标题' } },
+        } as Message);
+        expect(sparkHtml).toContain('data-card-sub="spark"');
+        expect(sparkHtml).toContain('Spark');
+    });
+
     it('戳一戳（自成一路的外壳）', () => {
         const html = render({ ...base, role: 'user', type: 'interaction', content: '戳了戳' } as Message);
         expect(html).toContain('data-card="interaction"');

@@ -776,6 +776,11 @@
 .sully-msg-character-picker button.selected { background:#eef5ff; color:#126bd4; }
 .sully-msg-character-picker img { width:34px; height:34px; object-fit:cover; border-radius:50%; }
 .sully-msg-character-picker i { font-style:normal; text-align:center; }
+/* 「分享到聊天」弹窗顶部那条动态预览：确认自己转的是哪一条，别错发。 */
+.sully-msg-share-preview { display:grid; grid-template-columns:36px minmax(0,1fr); align-items:start; gap:9px; margin-top:12px; padding:9px 10px; border-radius:11px; background:#f5f6f8; }
+.sully-msg-share-preview img { width:36px; height:36px; object-fit:cover; border-radius:8px; }
+.sully-msg-share-preview b { display:block; color:#3d4047; font-size:12px; }
+.sully-msg-share-preview p { margin:3px 0 0; overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; color:#7b8190; font-size:11px; line-height:1.5; }
 .sully-msg-range { width:100%; accent-color:#1677ff; }
 .sully-msg-progress { margin-top:12px; padding:9px 11px; color:#526179; background:#f2f6fc; border-radius:10px; text-align:center; font-size:11px; }
 .sully-msg-modal-actions { display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-top:18px; }

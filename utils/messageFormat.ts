@@ -15,6 +15,7 @@ import type { Message, Emoji } from '../types';
 import { formatLifeSimResetCardForContext } from './lifeSimChatCard';
 import { formatQixiEventCardForContext, tryParseQixiEventChatCard } from './qixiChatCard';
 import { formatTransferRecord } from './transferFormat';
+import { formatSocialCardForContext } from './socialShareCard';
 import { formatStatCount } from './videoParser';
 
 /**
@@ -266,6 +267,21 @@ export function normalizeMessageContent(
             return `[笔友会小说章节] ${head}：${intro}\n${body}`;
         }
         return '[笔友会小说章节]';
+    }
+
+    // 分享进聊天的社交动态（朋友圈转发 / Spark 笔记分享）。以前这里没有分支，归档和记忆宫殿
+    // 只能读到 content 里那句 `[分享帖子]`——角色当场聊得好好的，第二天总结完就彻底忘了聊过什么。
+    // 现在和聊天上下文走同一个格式化器，只是不带「请发表看法」那种一次性引导句。
+    if (type === 'social_card') {
+        return formatSocialCardForContext(msg.metadata?.post, {
+            charName,
+            userName,
+            sharedByRole: msg.role,
+            imageCount: msg.metadata?.momentShare?.imageCount,
+            postTimeLabel: typeof msg.metadata?.post?.timestamp === 'number' && msg.metadata.post.timestamp > 0
+                ? new Date(msg.metadata.post.timestamp).toLocaleString('zh-CN', { hour12: false })
+                : undefined,
+        });
     }
 
     // 小红书卡片：把笔记标题 + 正文 desc + 作者翻成可读文本喂给角色。标题来自分享文案

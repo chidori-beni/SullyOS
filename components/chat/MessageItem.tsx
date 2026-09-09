@@ -21,6 +21,7 @@ import QixiEventCardView from './QixiEventCard';
 import { getMessageReactions, reactionSignature, stripMessageReactionTags } from '../../utils/messageReactions';
 import { stripFaceToFacePhoneSourceTags } from '../../utils/sanitize';
 import { cardHookProps } from '../../utils/chatCardHooks';
+import { getSocialPostScope } from '../../utils/socialPostScope';
 
 // 思考链卡片支持的 12 种风格预设 — 同时被 MessageItem 与 ThinkingChainSettingsModal 复用
 export type ThinkingChainStyleId = 'echo' | 'whisper' | 'minimal' | 'ink' | 'neon' | 'terminal' | 'stellar' | 'tama' | 'pixel' | 'muji' | 'ins' | 'custom';
@@ -3390,16 +3391,69 @@ const MessageItem = React.memo(({
 
     if (m.type === 'social_card' && m.metadata?.post) {
         const post = m.metadata.post;
-        // If the saved image is a raw twemoji codepoint (eg "2728"), convert it to the actual emoji character;
-        // otherwise leave whatever the AI / user picked unchanged.
-        const rawImage: string | undefined = post.images?.[0];
-        let displayImage: string | undefined = rawImage;
-        if (typeof rawImage === 'string' && /^[0-9a-fA-F-]+$/.test(rawImage)) {
+        // 一张卡两种来源。朋友圈转发是九宫格式动态（真图 + 位置 + 点赞评论），
+        // Spark 分享是小红书式封面笔记——两种版式差太远，不能硬塞进同一个壳。
+        const scope = getSocialPostScope(post);
+        // 贴纸动态存的是 twemoji 码点（如 "2728"）；真正的图片是 data:/http(s) 直链。
+        const rawImages: string[] = Array.isArray(post.images) ? post.images : [];
+        const photos = rawImages.filter((value: string) => /^(?:data:image\/|https?:\/\/|blob:)/i.test(String(value || '').trim()));
+        const toEmoji = (value: string | undefined): string | undefined => {
+            if (typeof value !== 'string' || !/^[0-9a-fA-F-]+$/.test(value)) return value;
             try {
-                const points = rawImage.split('-').map(c => parseInt(c, 16)).filter(n => Number.isFinite(n));
-                if (points.length > 0) displayImage = String.fromCodePoint(...points);
-            } catch {}
+                const points = value.split('-').map(c => parseInt(c, 16)).filter(n => Number.isFinite(n));
+                return points.length ? String.fromCodePoint(...points) : value;
+            } catch { return value; }
+        };
+
+        if (scope === 'moments') {
+            // imageCount 是分享时记下的真实张数：落库只复制前 3 张（见 utils/socialShareCard.ts），
+            // 所以「还有 N 张」要按原动态的张数说，不能按 photos.length 说。
+            const totalImages: number = typeof m.metadata?.momentShare?.imageCount === 'number'
+                ? m.metadata.momentShare.imageCount
+                : photos.length;
+            const shownPhotos = photos.slice(0, 3);
+            const hiddenImages = Math.max(0, totalImages - shownPhotos.length);
+            const sticker = toEmoji(rawImages.find((value: string) => !photos.includes(value) && !String(value).startsWith('txt:')));
+            const body = (post.content || post.title || '').trim();
+            const commentCount = Array.isArray(post.comments) ? post.comments.length : 0;
+            return commonLayout(
+                <div className="sully-moment-share-card w-64 rounded-2xl overflow-hidden border border-slate-200/80 bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)]">
+                    <div className="px-3 pt-3 pb-2 flex items-center gap-2">
+                        {post.authorAvatar
+                            ? <img src={post.authorAvatar} alt="" className="w-6 h-6 rounded-md object-cover shrink-0" />
+                            : <span className="w-6 h-6 rounded-md bg-slate-200 shrink-0" />}
+                        <span className="text-[11px] font-semibold text-slate-700 truncate">{post.authorName || '朋友'}</span>
+                    </div>
+                    {body && <p className="px-3 text-xs text-slate-600 leading-relaxed line-clamp-3 whitespace-pre-wrap">{body}</p>}
+                    {!body && sticker && <div className="px-3 text-3xl leading-none">{sticker}</div>}
+                    {shownPhotos.length > 0 && (
+                        <div className={`mt-2 px-3 grid gap-1 ${shownPhotos.length === 1 ? 'grid-cols-1' : 'grid-cols-3'}`}>
+                            {shownPhotos.map((url: string, index: number) => (
+                                <div key={index} className={`relative overflow-hidden rounded-md bg-slate-100 ${shownPhotos.length === 1 ? 'aspect-[4/3]' : 'aspect-square'}`}>
+                                    <img src={url} alt="" loading="lazy" className="w-full h-full object-cover"
+                                        onError={(e: any) => { const c = e.target?.parentElement; if (c) c.style.display = 'none'; }} />
+                                    {/* 「+N」挂在最后一张上（不是写死第 3 张）：真实张数来自 momentShare.imageCount，
+                                        落库时截了几张不确定，写死索引会让角标在只留 1 张时静默消失。 */}
+                                    {index === shownPhotos.length - 1 && hiddenImages > 0 && (
+                                        <span className="absolute inset-0 bg-black/45 text-white text-[11px] font-semibold flex items-center justify-center">+{hiddenImages}</span>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {post.location && (
+                        <div className="px-3 mt-2 text-[10px] text-sky-600/80 truncate">📍 {post.location}</div>
+                    )}
+                    <div className="mt-2 px-3 py-2 border-t border-slate-100 flex items-center justify-between text-[9px] text-slate-400">
+                        <span className="font-medium text-emerald-600/80">朋友圈 · 动态分享</span>
+                        <span>{[post.likes ? `${post.likes} 赞` : '', commentCount ? `${commentCount} 评论` : ''].filter(Boolean).join(' · ')}</span>
+                    </div>
+                </div>
+            );
         }
+
+        // Spark 笔记：保持原来的封面式版式不动（旧记录全靠它渲染）。
+        const displayImage = toEmoji(rawImages[0]);
         return commonLayout(
             <div className="w-64 bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100 cursor-pointer active:opacity-90 transition-opacity">
                 <div className="h-32 w-full flex items-center justify-center text-6xl relative overflow-hidden" style={{ background: post.bgStyle || '#fce7f3' }}>

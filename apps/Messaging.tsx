@@ -13,6 +13,7 @@ import {
     MagnifyingGlass,
     NotePencil,
     LinkSimple,
+    PaperPlaneTilt,
     PencilSimple,
     Planet,
     PushPin,
@@ -52,6 +53,7 @@ import { processImage } from '../utils/file';
 import { buildSelfiePromptForGeneration, generateImageDataUrl, getImageGenConfig, isImageGenReady, normalizeImageIntent } from '../utils/novelaiImage';
 import { safeResponseJson } from '../utils/safeApi';
 import { getSocialPostScope, isMomentsPost, withSocialPostScope } from '../utils/socialPostScope';
+import { buildSharedSocialPost } from '../utils/socialShareCard';
 import { setChatViewSnapshot } from '../utils/chatGenEvents';
 import { chatDetailLaunch } from '../utils/chatDetailLaunch';
 import {
@@ -320,6 +322,10 @@ const Messaging: React.FC = () => {
     const [momentRerollPrompt, setMomentRerollPrompt] = useState('');
     const [momentRerollBusy, setMomentRerollBusy] = useState(false);
     const [momentActionsPostId, setMomentActionsPostId] = useState<string | null>(null);
+    const [momentSharePostId, setMomentSharePostId] = useState<string | null>(null);
+    const [momentShareTargetIds, setMomentShareTargetIds] = useState<string[]>([]);
+    const [momentShareNote, setMomentShareNote] = useState('');
+    const [momentShareBusy, setMomentShareBusy] = useState(false);
     const [momentCommentPostId, setMomentCommentPostId] = useState<string | null>(null);
     const [momentCommentText, setMomentCommentText] = useState('');
     const [momentReplyTarget, setMomentReplyTarget] = useState<SocialComment | null>(null);
@@ -656,6 +662,7 @@ const Messaging: React.FC = () => {
         tabAnimTimer.current = window.setTimeout(() => setTabAnim('idle'), 360);
         setContextMenu(null);
         closeMomentComment();
+        closeMomentShare();
     };
 
     const openChat = (charId: string) => {
@@ -763,6 +770,63 @@ const Messaging: React.FC = () => {
         setMomentReplyTarget(null);
         setMomentCommentText('');
     }, []);
+
+    const closeMomentShare = useCallback(() => {
+        setMomentSharePostId(null);
+        setMomentShareTargetIds([]);
+        setMomentShareNote('');
+    }, []);
+
+    const openMomentShare = (postId: string) => {
+        setMomentActionsPostId(null);
+        setMomentSharePostId(postId);
+        setMomentShareTargetIds([]);
+        setMomentShareNote('');
+    };
+
+    /**
+     * 把一条朋友圈动态转发进聊天。
+     *
+     * 卡片本身就是上下文：`social_card` 走 utils/socialShareCard.ts 的格式化器，
+     * 聊天上下文、归档总结和记忆宫殿读到的是同一段可读文本（楼主是谁、正文、位置、
+     * 点赞和评论），所以转发过去角色就"看见"了这条动态，可以直接聊。
+     *
+     * 附言单独存成一条普通文字消息排在卡片后面 —— 塞进卡片 metadata 的话，
+     * 上下文里它就成了卡片的一部分，角色分不清哪句是用户此刻说的话。
+     */
+    const shareMomentToChats = async () => {
+        const post = posts.find(item => item.id === momentSharePostId);
+        if (!post || !momentShareTargetIds.length || momentShareBusy) return;
+        const note = momentShareNote.trim();
+        setMomentShareBusy(true);
+        try {
+            const { post: sharedPost, momentShare } = buildSharedSocialPost(post);
+            for (const charId of momentShareTargetIds) {
+                await DB.saveMessage({
+                    charId,
+                    role: 'user',
+                    type: 'social_card',
+                    content: `[分享朋友圈：${(post.content || post.title || '').trim().slice(0, 20) || post.authorName}]`,
+                    metadata: { post: sharedPost, momentShare },
+                });
+                if (note) {
+                    await DB.saveMessage({ charId, role: 'user', type: 'text', content: note });
+                }
+            }
+            const targets = momentShareTargetIds.slice();
+            closeMomentShare();
+            addToast(targets.length === 1 ? '已分享到聊天' : `已分享给 ${targets.length} 位好友`, 'success');
+            // 转发的目的就是"接着聊这条动态"，所以只发给一个人时直接落到那段对话里。
+            if (targets.length === 1) {
+                setTab('chat');
+                openChat(targets[0]);
+            }
+        } catch (error: any) {
+            addToast(error?.message || '分享失败', 'error');
+        } finally {
+            setMomentShareBusy(false);
+        }
+    };
 
     const openMomentComment = (postId: string, replyTo: SocialComment | null = null) => {
         setMomentCommentPostId(postId);
@@ -1364,6 +1428,7 @@ const Messaging: React.FC = () => {
             {momentActionsPostId === post.id && <div className="nj-moments-post-actions-menu" onClick={event => event.stopPropagation()}>
                 <button type="button" title={userLiked ? '取消点赞' : '点赞'} onClick={() => void toggleUserMomentLike(post.id)}><Heart weight={userLiked ? 'fill' : 'regular'} /></button>
                 <button type="button" title="评论" onClick={() => openMomentComment(post.id)}><ChatCircleDots /></button>
+                <button type="button" title="分享到聊天" onClick={() => openMomentShare(post.id)}><PaperPlaneTilt /></button>
                 <button type="button" title="生成角色互动" disabled={!!momentRepliesPostId} onClick={() => void generateMomentInteractions(post.id)}><Sparkle /></button>
                 {(!!post.imagePrompt || !!images.length) && <button type="button" title="重新生成图片" onClick={() => {
                     setMomentActionsPostId(null);
@@ -1616,6 +1681,32 @@ const Messaging: React.FC = () => {
                 <button className="sully-msg-upload-btn" onClick={() => void drawNewMomentImage()} disabled={newMomentImageBusy || newMomentImages.length >= 9}><Sparkle />{newMomentImageBusy ? '正在生成图片…' : '使用生图 API 配图'}</button>
                 <label className="sully-msg-field-label">位置（可选）</label><input className="sully-msg-input" value={newMomentLocation} onChange={event => setNewMomentLocation(event.target.value)} placeholder="所在位置" />
             </div></div>}
+            {momentSharePostId && (() => {
+                const sharePost = posts.find(item => item.id === momentSharePostId);
+                if (!sharePost) return null;
+                const preview = (sharePost.content || sharePost.title || '').trim();
+                return <div className="sully-msg-modal-layer" onClick={() => !momentShareBusy && closeMomentShare()}><div className="sully-msg-modal-card" onClick={event => event.stopPropagation()}>
+                    <div className="sully-msg-modal-title">分享到聊天</div>
+                    <div className="sully-msg-share-preview">
+                        <img src={sharePost.authorAvatar} alt="" />
+                        <div>
+                            <b>{sharePost.authorName}</b>
+                            <p>{preview || '（这条动态只有配图）'}</p>
+                        </div>
+                    </div>
+                    <label className="sully-msg-field-label">分享给</label>
+                    <div className="sully-msg-character-picker">{characters.map(char => <button
+                        key={char.id}
+                        className={momentShareTargetIds.includes(char.id) ? 'selected' : ''}
+                        disabled={momentShareBusy}
+                        onClick={() => setMomentShareTargetIds(current => current.includes(char.id) ? current.filter(id => id !== char.id) : [...current, char.id])}
+                    ><img src={char.avatar} alt="" /><span>{char.name}</span><i>{momentShareTargetIds.includes(char.id) ? '✓' : ''}</i></button>)}</div>
+                    {!characters.length && <div className="sully-msg-progress">还没有好友，先去神经链接创建角色</div>}
+                    <label className="sully-msg-field-label">附言（可选）</label>
+                    <textarea className="sully-msg-small-textarea" value={momentShareNote} onChange={event => setMomentShareNote(event.target.value)} placeholder="想跟他说点什么，比如「你看这个」" disabled={momentShareBusy} />
+                    <div className="sully-msg-modal-actions"><button onClick={closeMomentShare} disabled={momentShareBusy}>取消</button><button className="primary" onClick={() => void shareMomentToChats()} disabled={momentShareBusy || !momentShareTargetIds.length}>{momentShareBusy ? '分享中…' : '分享'}</button></div>
+                </div></div>;
+            })()}
             {momentReroll && <div className="sully-msg-modal-layer" onClick={() => !momentRerollBusy && setMomentReroll(null)}><div className="sully-msg-modal-card" onClick={event => event.stopPropagation()}>
                 <div className="sully-msg-modal-title">重新生成朋友圈图片</div>
                 <p className="sully-msg-reroll-author">{posts.find(post => post.id === momentReroll.postId)?.authorName || '这条动态'}</p>

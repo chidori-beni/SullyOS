@@ -7,6 +7,7 @@ import { formatLifeSimResetCardForContext } from './lifeSimChatCard';
 import { formatQixiEventCardForContext, tryParseQixiEventChatCard } from './qixiChatCard';
 import { normalizeMessageContent, stickerPromptLabelFromUrl, theaterWhenPhrase } from './messageFormat';
 import { formatTransferRecord } from './transferFormat';
+import { formatSocialCardForContext, socialCardBriefLabel } from './socialShareCard';
 import { computeCurrentListening, getCurrentSlot } from './charMusicSchedule';
 import { getCharLyricSnippet } from './charLyricCache';
 import { MusicCfg, loadMusicCfgStandalone } from '../context/MusicContext';
@@ -101,7 +102,7 @@ function summarizeGroupMsgContent(m: Message): string {
         // [图片]/[表情] 式短占位, 混重型 tag 破坏局部一致; 对它的模仿 transferFormat 的
         // BARE_TRANSFER_RE 兜得住。
         case 'transfer': return `[转账${meta.amount ?? ''}]`;
-        case 'social_card': return `[分享帖子${meta.post?.title ? '：' + meta.post.title : ''}]`;
+        case 'social_card': return socialCardBriefLabel(meta.post);
         case 'chat_forward': return '[转发的聊天记录]';
         case 'xhs_card': return '[小红书笔记]';
         case 'score_card': return '[评分卡]';
@@ -1555,7 +1556,10 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     })}`;
                 }
                 else if (m.type === 'social_card') {
-                    const post = m.metadata?.post || {};
+                    // 一张卡两种来源：Spark 笔记（SocialApp 分享）和朋友圈动态（消息 App 转发）。
+                    // 两边的关键信息不一样——朋友圈要说清「楼主是谁」（角色自己 / 用户 / 另一个好友），
+                    // Spark 要说清马甲身份——所以整块搬进 socialShareCard，归档 / 记忆路径复用同一份。
+                    const post = m.metadata?.post || null;
                     // Look up this character's own Spark handles (sub-accounts) so the model can
                     // recognise when a post or comment in the shared card was authored by itself.
                     let myHandles: string[] = [];
@@ -1567,30 +1571,19 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                             myHandles = mine.map((h: any) => h?.handle).filter((s: any) => typeof s === 'string' && s.trim());
                         }
                     } catch {}
-                    const myHandleSet = new Set(myHandles);
-
-                    const userName = userProfile?.name || '用户';
-                    const tagAuthor = (name: string): string => {
-                        if (!name) return '路人';
-                        if (myHandleSet.has(name)) return `${name} (你自己的马甲)`;
-                        if (name === userName) return `${name} (用户)`;
-                        return name;
-                    };
-
-                    const postAuthorTag = tagAuthor(post.authorName || '路人');
-                    const commentsSample = (post.comments || []).map((c: any) => `${tagAuthor(c.authorName)}: ${c.content}`).join(' | ');
-
-                    let identityHint = '';
-                    if (myHandles.length > 0) {
-                        identityHint = `\n(你在 Spark 上的马甲: ${myHandles.map(h => `"${h}"`).join(', ')}。如果上面的楼主或评论作者出现这些名字，那就是你自己发的，请按此自洽回应，不要把自己的马甲当陌生人。)`;
-                    }
-                    const authoredByChar = myHandleSet.has(post.authorName);
-                    const authoredByUser = (post.authorName || '') === userName;
-                    let authorshipLine = '';
-                    if (authoredByChar) authorshipLine = '\n(注意：这条 Spark 笔记的楼主是你自己的马甲，用户在向你转发你自己发的帖子。)';
-                    else if (authoredByUser) authorshipLine = '\n(注意：这条 Spark 笔记是用户本人发的。)';
-
-                    content = `${timeStr} [用户分享了 Spark 笔记]\n楼主: ${postAuthorTag}\n标题: ${post.title}\n内容: ${post.content}\n热评: ${commentsSample}${identityHint}${authorshipLine}\n(请根据你的性格对这个帖子发表看法，比如吐槽、感兴趣或者不屑)`;
+                    const postTimeLabel = typeof post?.timestamp === 'number' && post.timestamp > 0
+                        ? ChatPrompts.formatDate(post.timestamp, charTz)
+                        : undefined;
+                    content = `${timeStr} ${formatSocialCardForContext(post, {
+                        charName: char.name || '你',
+                        charId: char.id,
+                        userName: userProfile?.name || '用户',
+                        sharedByRole: m.role as 'user' | 'assistant' | 'system',
+                        charHandles: myHandles,
+                        imageCount: m.metadata?.momentShare?.imageCount,
+                        postTimeLabel,
+                        withGuidance: true,
+                    })}`;
                 }
                 else if ((m.type as string) === 'xhs_card') {
                     const note = m.metadata?.xhsNote || {};

@@ -82,6 +82,18 @@ const readScoreCardType = (message: CardHookMessage): string | undefined => {
   }
 };
 
+/**
+ * social_card 的来源。旧记录没有 socialScope 字段：朋友圈动态的 id 一直以 `moment-` 开头，
+ * 其余归 Spark——判定规则与 utils/socialPostScope.ts 保持一致（这里不 import，避免
+ * 这个纯字符串工具反向依赖类型层）。
+ */
+const readSocialCardScope = (message: CardHookMessage): string => {
+  const post = message?.metadata?.post;
+  const scope = post?.socialScope;
+  if (scope === 'moments' || scope === 'spark') return scope;
+  return String(post?.id || '').startsWith('moment-') ? 'moments' : 'spark';
+};
+
 /** 这条消息该挂什么卡片钩子；不是卡片则返回 null。 */
 export const resolveCardHook = (message: CardHookMessage | null | undefined): CardHook | null => {
   if (!message) return null;
@@ -101,6 +113,9 @@ export const resolveCardHook = (message: CardHookMessage | null | undefined): Ca
     const sub = readScoreCardType(message);
     return sub ? { kind: type, sub } : { kind: type };
   }
+  // social_card 一张卡两种来源，长得完全不一样：朋友圈转发是九宫格式动态，
+  // Spark 分享是小红书式封面笔记。给个 sub，装扮里才能分开写样式。
+  if (type === 'social_card') return { kind: type, sub: readSocialCardScope(message) };
   return { kind: type };
 };
 
