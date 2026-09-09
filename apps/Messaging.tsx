@@ -330,6 +330,8 @@ const Messaging: React.FC = () => {
     const itemLongPressed = useRef(false);
     const appRef = useRef<HTMLDivElement>(null);
     const postsRef = useRef<SocialPost[]>([]);
+    // 评论草稿的最新值：失焦兜底跑在 setTimeout 里，闭包里的 state 已经是旧的了。
+    const momentCommentTextRef = useRef('');
     const momentImageViewerRef = useRef<HTMLDivElement>(null);
     const momentImageTransformRef = useRef<MomentImageTransform>(DEFAULT_MOMENT_IMAGE_TRANSFORM);
     const momentImagePointersRef = useRef<Map<number, MomentImagePoint>>(new Map());
@@ -518,6 +520,10 @@ const Messaging: React.FC = () => {
         postsRef.current = posts;
     }, [posts]);
 
+    useEffect(() => {
+        momentCommentTextRef.current = momentCommentText;
+    }, [momentCommentText]);
+
     useEffect(() => () => {
         if (tabAnimTimer.current) window.clearTimeout(tabAnimTimer.current);
         if (momentLikeTimer.current) window.clearTimeout(momentLikeTimer.current);
@@ -606,6 +612,7 @@ const Messaging: React.FC = () => {
         if (tabAnimTimer.current) window.clearTimeout(tabAnimTimer.current);
         tabAnimTimer.current = window.setTimeout(() => setTabAnim('idle'), 360);
         setContextMenu(null);
+        closeMomentComment();
     };
 
     const openChat = (charId: string) => {
@@ -714,6 +721,15 @@ const Messaging: React.FC = () => {
             momentLikeTimer.current = window.setTimeout(() => setMomentLikeAnimatedId(null), 1000);
         }
     };
+
+    // 关掉评论态。标签栏是靠 data-moment-commenting 收起来的，只要这里没被调到，
+    // 标签栏就回不来（用户会被困在朋友圈里，只能杀后台）——所以取消路径必须齐：
+    // 发送成功、输入框失焦且没打字、切标签页、离开朋友圈，都要走这里。
+    const closeMomentComment = useCallback(() => {
+        setMomentCommentPostId(null);
+        setMomentReplyTarget(null);
+        setMomentCommentText('');
+    }, []);
 
     const openMomentComment = (postId: string, replyTo: SocialComment | null = null) => {
         setMomentCommentPostId(postId);
@@ -1367,11 +1383,22 @@ const Messaging: React.FC = () => {
 
     const renderMomentCommentComposer = (postId: string) => {
         if (momentCommentPostId !== postId) return null;
-        return <div className="nj-moments-comment-compose">
+        // 失焦兜底：没打字就直接收掉评论态，标签栏立刻回来。
+        // 打了字不收——收键盘只是想看看上文，收掉会把内容丢了；这种情况靠「取消」按钮退出。
+        const handleComposerBlur = (event: React.FocusEvent<HTMLDivElement>) => {
+            const composer = event.currentTarget;
+            window.setTimeout(() => {
+                if (composer.contains(document.activeElement)) return;
+                if (momentCommentTextRef.current.trim()) return;
+                closeMomentComment();
+            }, 0);
+        };
+        return <div className="nj-moments-comment-compose" onBlur={handleComposerBlur}>
             {momentReplyTarget && <div className="nj-moments-comment-banner"><span>回复 <b>{momentReplyTarget.authorName}</b></span><button type="button" aria-label="取消回复" onClick={() => setMomentReplyTarget(null)}>×</button></div>}
             <div className="nj-moments-comment-compose-row">
                 <input id={`comment-input-${postId}`} name="moment-comment" autoComplete="off" autoFocus value={momentCommentText} onChange={event => setMomentCommentText(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void sendMomentComment(); }} placeholder={momentReplyTarget ? `回复 ${momentReplyTarget.authorName}` : '评论'} className="comment-input" />
                 <button type="button" onClick={() => void sendMomentComment()} disabled={!momentCommentText.trim()}>发送</button>
+                <button type="button" className="nj-moments-comment-cancel" aria-label="取消评论" onMouseDown={event => event.preventDefault()} onClick={closeMomentComment}>取消</button>
             </div>
         </div>;
     };

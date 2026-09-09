@@ -1061,8 +1061,13 @@
 /* 评论态收起底部标签栏：标签栏是 position:absolute + z-index:45 的不透明条（主题还会给它换底图），
    评论输入框长在信息流里，键盘一弹就被它压在下面，用户看不见自己输入的内容。
    评论时标签栏本来也点不着，直接收掉。信息流为标签栏预留的 padding-bottom 保留不动——
-   那只是可滚动的空白，收掉反而会让贴底的信息流跳一下。 */
-#chat-list-screen[data-moment-commenting="true"] .nj-tab-bottom-bar { display:none !important; }
+   那只是可滚动的空白，收掉反而会让贴底的信息流跳一下。
+
+   ⚠️ 必须同时限定 body.ios-keyboard-open：标签栏是朋友圈唯一的出口（切回消息列表才能退出 App）。
+   只看 data-moment-commenting 的话，一旦评论态因为任何原因没被清掉，标签栏就永久消失，
+   用户只能杀后台。挂上键盘态这层保险后，键盘一收（点「完成」）标签栏必定回来，
+   遮挡本来也只在键盘弹起时才存在。 */
+body.ios-keyboard-open #chat-list-screen[data-moment-commenting="true"] .nj-tab-bottom-bar { display:none !important; }
 .nj-moments-comment-banner { display:flex; align-items:center; justify-content:space-between; padding:6px 10px; border-radius:4px 4px 0 0; color:var(--nj-msg-text-muted,#666); background:var(--nj-msg-comment-banner-bg,#f0f0f0); font-size:13px; }
 .nj-moments-comment-banner b { color:#576b95; font-weight:600; }
 .nj-moments-comment-banner button { border:0; padding:0 4px; color:var(--nj-msg-text-muted,#999); background:transparent; font-size:16px; }
@@ -1071,6 +1076,8 @@
 .nj-moments-comment-banner + .nj-moments-comment-compose-row .comment-input { border-top:0; border-radius:0 0 4px 4px; }
 .nj-moments-comment-compose-row > button { flex:0 0 auto; border:0; border-radius:4px; padding:0 12px; color:#fff; background:#07c160; font-size:14px; font-weight:500; }
 .nj-moments-comment-compose-row > button:disabled { opacity:.45; }
+/* 取消评论：和「发送」同排的次级按钮，退出评论态用（键盘收起前也能点，见上面的标签栏规则）。 */
+.nj-moments-comment-compose-row > .nj-moments-comment-cancel { flex:0 0 auto; border:1px solid var(--nj-msg-comment-input-border,#e5e5e5); border-radius:4px; padding:0 12px; color:var(--nj-msg-text-muted,#666); background:var(--nj-msg-comment-input-bg,#fff); font-size:14px; }
 .like-animate { animation:sullyMomentLike .5s ease both; }
 @keyframes sullyMomentLike { 0%{transform:scale(1)} 45%{transform:scale(1.45)} 100%{transform:scale(1)} }
 
