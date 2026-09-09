@@ -1870,7 +1870,7 @@ const Settings: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-5 space-y-6 no-scrollbar pb-20">
+      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-5 space-y-6 no-scrollbar pb-20">
         
         {/* 数据备份区域 */}
         <SettingsSection
@@ -3644,7 +3644,7 @@ const Settings: React.FC = () => {
               ) : (
                   <>
                       <p className="text-[10px] text-slate-400 mb-2">选择要恢复的备份文件:</p>
-                      <div className="max-h-[50vh] overflow-y-auto space-y-2">
+                      <div className="max-h-[50vh] overflow-y-auto overflow-x-hidden space-y-2">
                           {cloudBackupFiles.map((file, i) => (
                               <button key={i} onClick={() => handleCloudRestore(file)} className="w-full p-3 bg-white border border-slate-200 rounded-xl text-left hover:bg-sky-50 hover:border-sky-200 transition-colors active:scale-[0.98]">
                                   <p className="text-[11px] text-slate-700 font-medium truncate">{file.name}</p>
@@ -3707,7 +3707,7 @@ const Settings: React.FC = () => {
                             <span className="text-slate-300">(下方已弱化显示)</span>
                         </div>
                     )}
-                    <div className="max-h-[40vh] overflow-y-auto no-scrollbar space-y-2">
+                    <div className="max-h-[40vh] overflow-y-auto overflow-x-hidden no-scrollbar space-y-2">
                         {filtered.length > 0 ? filtered.map(m => {
                             const suffix = commonPrefix && m.startsWith(commonPrefix) ? m.slice(commonPrefix.length) : m;
                             const selected = m === localModel;
@@ -3789,7 +3789,7 @@ const Settings: React.FC = () => {
                             <span className="text-slate-300">(下方已弱化显示)</span>
                         </div>
                     )}
-                    <div className="max-h-[40vh] overflow-y-auto no-scrollbar space-y-2">
+                    <div className="max-h-[40vh] overflow-y-auto overflow-x-hidden no-scrollbar space-y-2">
                         {filtered.length > 0 ? filtered.map(model => {
                             const suffix = commonPrefix && model.startsWith(commonPrefix) ? model.slice(commonPrefix.length) : model;
                             const selected = model === localVisionModel;
@@ -3906,7 +3906,7 @@ const Settings: React.FC = () => {
           onClose={() => setShowRealtimeModal(false)}
           footer={<button onClick={handleSaveRealtimeConfig} className="w-full py-3 bg-violet-500 text-white font-bold rounded-2xl shadow-lg">保存配置</button>}
       >
-          <div className="space-y-5 max-h-[60vh] overflow-y-auto no-scrollbar">
+          <div className="space-y-5 max-h-[60vh] overflow-y-auto overflow-x-hidden no-scrollbar">
               {/* 天气配置 */}
               <div className="bg-emerald-50/50 p-4 rounded-2xl space-y-3">
                   <div className="flex items-center justify-between">

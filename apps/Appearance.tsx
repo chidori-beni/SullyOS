@@ -942,7 +942,7 @@ const Appearance: React.FC = () => {
           <button onClick={() => { setActiveTab('presets'); trackEvent('切换外观定制标签页', { tab: 'presets' }); }} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'presets' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>外观预设</button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-5 space-y-6 no-scrollbar">
+      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-5 space-y-6 no-scrollbar">
         {activeTab === 'theme' ? (
             <>
                 <AppearanceGroup groupKey="style" title="整机风格" desc="桌面皮肤、陪伴形象、配色、字体、状态栏" open={!!openGroups.style} onToggle={() => toggleGroup('style')}>

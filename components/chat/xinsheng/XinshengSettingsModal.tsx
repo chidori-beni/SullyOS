@@ -180,7 +180,7 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
                     ))}
                 </div>
 
-                <div className="sully-ui-body flex-1 overflow-y-auto px-5 pt-2 pb-[calc(env(safe-area-inset-bottom)+20px)]">
+                <div className="sully-ui-body min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-5 pt-2 pb-[calc(env(safe-area-inset-bottom)+20px)]">
                     {tab === 'general' && (
                         <>
                             <label className="flex items-center gap-3 mb-4 px-3.5 py-3 rounded-2xl bg-slate-50">

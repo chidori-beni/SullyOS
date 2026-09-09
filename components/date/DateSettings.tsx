@@ -320,7 +320,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                     <div className="absolute top-2 left-2 bg-black/50 text-white text-[10px] px-2 py-1 rounded backdrop-blur-sm">预览 (Preview)</div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 space-y-8 pb-20" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 5rem)' }}>
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-5 space-y-8 pb-20" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 5rem)' }}>
                 <Section title="立绘位置调整">
                     <div className="space-y-6">
                         <div>

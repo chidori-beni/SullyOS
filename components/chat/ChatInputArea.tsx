@@ -1087,7 +1087,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                         </div>
                      )}
                      {showPanel === 'chars' && (
-                        <div className="p-5 space-y-6 overflow-y-auto no-scrollbar">
+                        <div className="p-5 space-y-6 overflow-y-auto overflow-x-hidden no-scrollbar">
                             <div>
                                 <button
                                     type="button"
@@ -1113,7 +1113,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                         className="w-full mb-2.5 px-3 py-2 rounded-xl bg-white/70 border border-slate-200 text-xs focus:outline-none focus:border-indigo-300"
                                     />
                                 )}
-                                <div className="flex flex-wrap gap-2 px-1 max-h-48 overflow-y-auto no-scrollbar pb-1">
+                                <div className="flex flex-wrap gap-2 px-1 max-h-48 overflow-y-auto overflow-x-hidden no-scrollbar pb-1">
                                     {(bubbleSearch.trim() ? [] : Object.values(PRESET_THEMES)).map(t => (
                                         <button key={t.id} onClick={() => onUpdateTheme(t.id)} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-bold border transition-all ${activeThemeId === t.id ? 'bg-primary text-white border-primary shadow-md' : 'bg-white border-slate-200 text-slate-600'}`}>
                                             <span className="flex -space-x-1">

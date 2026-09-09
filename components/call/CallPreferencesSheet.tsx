@@ -35,7 +35,7 @@ const CallPreferencesSheet: React.FC<CallPreferencesSheetProps> = ({
       `}</style>
       <section
         className={`sully-call-settings-sheet w-full rounded-t-[1.75rem] border-t px-5 pt-4 shadow-2xl ${lightTheme ? 'border-[#262239]/10 bg-[#f7f5fb]' : 'border-white/12 bg-[#120c22]'}`}
-        style={{ paddingBottom: 'max(1.25rem, var(--safe-bottom, 0px))' }}
+        style={{ paddingBottom: 'max(1.25rem, var(--safe-bottom, 0px))', overflowX: 'hidden' }}
         onClick={event => event.stopPropagation()}
       >
         <div className={`mx-auto mb-4 h-1 w-10 rounded-full ${lightTheme ? 'bg-[#262239]/15' : 'bg-white/15'}`} aria-hidden />

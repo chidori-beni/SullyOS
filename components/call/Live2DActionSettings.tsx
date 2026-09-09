@@ -364,7 +364,7 @@ const Live2DActionSettings: React.FC<Live2DActionSettingsProps> = ({
         </div>
 
         {settingsPage === 'framing' ? (
-        <div className="min-h-0 overflow-y-auto p-3 no-scrollbar">
+        <div className="min-h-0 overflow-y-auto overflow-x-hidden p-3 no-scrollbar">
       <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2.5">
         <div className="mb-2 flex items-center justify-between">
           <span className="text-[10px] font-medium text-white/65">镜头构图</span>
@@ -427,7 +427,7 @@ const Live2DActionSettings: React.FC<Live2DActionSettingsProps> = ({
         衣橱动作始终只允许用户手动切换；其余模型表情和非待机动作可按权限交给 AI。
       </p>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 no-scrollbar">
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 pb-3 no-scrollbar">
         {!actions.length ? (
           <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-8 text-center text-sm text-white/45">
             model3.json 没有声明 Motions 或 Expressions；基础眼神、呼吸和口型仍可使用。
@@ -568,7 +568,7 @@ const Live2DActionSettings: React.FC<Live2DActionSettingsProps> = ({
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 no-scrollbar">
+          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 no-scrollbar">
             {!customDraft.params.length ? (
               <div className="flex h-full min-h-32 flex-col items-center justify-center text-center">
                 <div className="text-sm font-medium text-white/70">这个动作还没有变化</div>

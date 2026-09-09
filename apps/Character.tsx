@@ -1497,7 +1497,7 @@ ${isInitialGeneration ? `
                         <input type="file" ref={cardImportRef} className="hidden" accept=".json,.png,.charx" onChange={handleImportCard} />
                    </div>
                </div>
-               <div className="flex-1 overflow-y-auto px-5 pb-20 no-scrollbar flex flex-col gap-3">
+               <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden px-5 pb-20 no-scrollbar flex flex-col gap-3">
                    {(() => {
                        // 建过分组 → 按组折叠展开（不再分页，分组本身就把列表变短了）；
                        // 没建过分组 → 维持原来的分页列表，零变化。
@@ -1622,7 +1622,7 @@ ${isInitialGeneration ? `
                    </div>
                  </div>
                </div>
-               <div className="flex-1 overflow-y-auto p-5 no-scrollbar pb-10">
+               <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-5 no-scrollbar pb-10">
                    {detailTab === 'identity' && (
                        <div className="space-y-6 animate-fade-in">
                            <div className="flex items-center gap-5">
@@ -2041,7 +2041,7 @@ ${isInitialGeneration ? `
                                            return (
                                                <div key={source}>
                                                    <div className="text-[10px] text-slate-400 mb-1">{label}</div>
-                                                   <div className="max-h-28 overflow-y-auto space-y-1 pr-1">
+                                                   <div className="max-h-28 overflow-y-auto overflow-x-hidden space-y-1 pr-1">
                                                        {list.slice(0, 50).map((v) => (
                                                            <button
                                                                key={`${source}-${v.voice_id}`}
@@ -2142,7 +2142,7 @@ ${isInitialGeneration ? `
                                                                 生效范围请在「世界书」App 的编辑页设置；这里仅显示当前角色挂载到的结果。
                                                             </div>
                                                         </div>
-                                                       <p className="max-h-48 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-slate-600 select-text">
+                                                       <p className="max-h-48 overflow-y-auto overflow-x-hidden whitespace-pre-wrap text-xs leading-relaxed text-slate-600 select-text">
                                                            {displayBook.content || <span className="italic text-slate-400">暂无内容...</span>}
                                                        </p>
                                                    </div>
@@ -2337,7 +2337,7 @@ ${isInitialGeneration ? `
             title="挂载世界书" 
             onClose={() => setShowWorldbookModal(false)} 
         >
-            <div className="max-h-[50vh] overflow-y-auto no-scrollbar space-y-3 p-1">
+            <div className="max-h-[50vh] overflow-y-auto overflow-x-hidden no-scrollbar space-y-3 p-1">
                 {worldbooks.length === 0 ? (
                     <div className="text-center text-slate-400 text-xs py-8">
                         还没有世界书，请去桌面【世界书】App 创建。
@@ -2634,7 +2634,7 @@ ${isInitialGeneration ? `
                 {characterGroups.length === 0 ? (
                     <div className="text-center text-xs text-slate-400 py-6">还没有分组。建一个试试——角色列表和各处选角色的地方都会按组展示。</div>
                 ) : (
-                    <div className="space-y-2 max-h-64 overflow-y-auto no-scrollbar">
+                    <div className="space-y-2 max-h-64 overflow-y-auto overflow-x-hidden no-scrollbar">
                         {sortCharacterGroups(characterGroups).map(g => (
                             <div key={g.id} className="flex items-center gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-100">
                                 <input

@@ -319,7 +319,7 @@ export const XinshengCardModal: React.FC<Props> = ({
                 的空档；长布局模板划到底之前，按钮会自己粘在屏幕底部，划多深都不挡。
                 两头的行为都对，不用在「跟着内容」和「固定在底部」之间二选一。 */}
             <div
-                className="sully-ui-body relative flex-1 overflow-y-auto no-scrollbar px-4"
+                className="sully-ui-body relative min-w-0 flex-1 overflow-y-auto overflow-x-hidden no-scrollbar px-4"
                 onTouchStart={onTouchStart}
                 onTouchEnd={onTouchEnd}
             >
@@ -427,7 +427,7 @@ export const XinshengCardModal: React.FC<Props> = ({
                     </div>
                     {/* 「清空」保留收藏 —— 按钮旁写清楚，否则用户以为收藏也没了 */}
                     <div className="px-5 pb-2 text-[10px] text-slate-400">清空会保留已收藏的条目</div>
-                    <div className="flex-1 overflow-y-auto px-5 pb-[calc(env(safe-area-inset-bottom)+16px)] space-y-1.5">
+                    <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden px-5 pb-[calc(env(safe-area-inset-bottom)+16px)] space-y-1.5">
                         {ids.length === 0 && (
                             <div className="py-8 text-center text-[12px] text-slate-400">
                                 {filter === 'favorited' ? '还没有收藏的心声' : '暂无心声记录'}
@@ -501,7 +501,7 @@ export const XinshengCardModal: React.FC<Props> = ({
                             aria-label="关闭全文"
                         >×</button>
                     </div>
-                    <div className="flex-1 overflow-y-auto px-5 pb-[calc(env(safe-area-inset-bottom)+24px)] space-y-5">
+                    <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden px-5 pb-[calc(env(safe-area-inset-bottom)+24px)] space-y-5">
                         {flattenEntryFields(current).map(({ key, value }) => (
                             <div key={key}>
                                 <div className="text-[10px] font-mono tracking-wide text-white/40 mb-1.5">{key}</div>
@@ -545,7 +545,7 @@ export const XinshengCardModal: React.FC<Props> = ({
                                 {presetActionError}
                             </div>
                         )}
-                        <div className="flex-1 overflow-y-auto px-5 pb-[calc(env(safe-area-inset-bottom)+20px)] space-y-2">
+                        <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden px-5 pb-[calc(env(safe-area-inset-bottom)+20px)] space-y-2">
                             {manualPreset && (
                                 <button
                                     onClick={() => void applyPreset(null)}

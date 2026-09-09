@@ -3267,7 +3267,7 @@ const CompanionHome: React.FC = () => {
           data-testid="companion-touch-settings"
         >
           <section
-            className="max-h-[88vh] w-full overflow-y-auto rounded-t-[2rem] border-t border-white/20 px-4 pb-5 pt-3 text-white shadow-[0_-24px_60px_rgba(0,0,0,.5)] backdrop-blur-2xl"
+            className="max-h-[88vh] w-full overflow-y-auto overflow-x-hidden rounded-t-[2rem] border-t border-white/20 px-4 pb-5 pt-3 text-white shadow-[0_-24px_60px_rgba(0,0,0,.5)] backdrop-blur-2xl"
             style={{ background: `linear-gradient(165deg, ${palette.panelTop}f7, ${palette.panelBottom}fc)`, animation: 'companion-drawer-up 260ms ease-out both', paddingBottom: 'max(1.25rem, calc(var(--safe-bottom, 0px) + 1rem))' }}
             onClick={event => event.stopPropagation()}
           >
@@ -4610,7 +4610,7 @@ const CompanionHome: React.FC = () => {
               </div>
               <button onClick={() => setAppStarOpen(false)} className="h-7 w-7 border border-white/15 text-[12px] text-white/60 active:scale-90">×</button>
             </div>
-            <div className="max-h-[calc(52vh-3.4rem)] overflow-y-auto px-3 py-3 no-scrollbar">
+            <div className="max-h-[calc(52vh-3.4rem)] overflow-y-auto overflow-x-hidden px-3 py-3 no-scrollbar">
               <div className="grid grid-cols-4 gap-x-2 gap-y-3">
                 {COMPANION_STAR_APPS.map(item => {
                   const Icon = Icons[item.icon];
@@ -4729,7 +4729,7 @@ const CompanionHome: React.FC = () => {
             data-collapsed={compositionEditorCollapsed ? 'true' : 'false'}
           >
             <section
-              className="h-full overflow-y-auto border-l border-white/20 px-4 pb-5 text-white shadow-2xl backdrop-blur-2xl no-scrollbar"
+              className="h-full overflow-y-auto overflow-x-hidden border-l border-white/20 px-4 pb-5 text-white shadow-2xl backdrop-blur-2xl no-scrollbar"
               style={{ paddingTop: 'max(1rem, calc(var(--safe-top, 0px) + .75rem))', paddingBottom: 'max(1.25rem, calc(var(--safe-bottom, 0px) + 1rem))', background: `linear-gradient(165deg, ${palette.panelTop}fa, ${palette.panelBottom}fd)`, boxShadow: `-24px 0 64px ${palette.shadow}bd, inset 1px 0 0 ${uiTint}28`, animation: 'companion-inspector-in 240ms cubic-bezier(.2,.8,.2,1) both' }}
             >
               <header className="flex items-center justify-between gap-2">

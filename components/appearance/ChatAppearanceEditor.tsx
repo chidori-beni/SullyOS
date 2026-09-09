@@ -666,7 +666,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
             <section
                 className={embedded
                     ? groupClass
-                    : 'fixed left-1/2 z-[105] w-[94%] max-w-md -translate-x-1/2 overflow-y-auto rounded-3xl border border-white/60 bg-white/95 p-4 shadow-[0_12px_40px_rgba(15,23,42,0.22)] backdrop-blur-xl [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'}
+                    : 'fixed left-1/2 z-[105] w-[94%] max-w-md -translate-x-1/2 overflow-y-auto overflow-x-hidden rounded-3xl border border-white/60 bg-white/95 p-4 shadow-[0_12px_40px_rgba(15,23,42,0.22)] backdrop-blur-xl [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'}
                 style={embedded ? undefined : { bottom: 'calc(16px + var(--safe-bottom, 0px))', maxHeight: '46vh' }}
             >
                 <div className="mb-4 flex items-center gap-1.5">

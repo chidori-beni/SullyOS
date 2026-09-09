@@ -196,7 +196,7 @@ const ChatDecorSheet: React.FC<Props> = ({
 
             {!peek && (
             <div
-                className="sully-ui-sheet sully-ui-plain w-full max-h-[74vh] overflow-y-auto rounded-t-3xl border-t border-white/60 bg-white/95 p-5 shadow-[0_-12px_40px_rgba(15,23,42,0.18)] [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                className="sully-ui-sheet sully-ui-plain w-full max-h-[74vh] overflow-y-auto overflow-x-hidden rounded-t-3xl border-t border-white/60 bg-white/95 p-5 shadow-[0_-12px_40px_rgba(15,23,42,0.18)] [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                 style={{ paddingBottom: 'calc(1.25rem + var(--safe-bottom))' }}
                 onClick={(e) => e.stopPropagation()}
             >

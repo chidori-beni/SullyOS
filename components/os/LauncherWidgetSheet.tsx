@@ -123,7 +123,7 @@ const LauncherWidgetSheet: React.FC<LauncherWidgetSheetProps> = ({
             <div className="absolute inset-0" style={{ background: 'rgba(20,17,14,0.42)' }} onClick={onClose} />
 
             <div
-                className="relative rounded-t-[1.75rem] px-5 pt-4 max-h-[78%] overflow-y-auto no-scrollbar"
+                className="relative rounded-t-[1.75rem] px-5 pt-4 max-h-[78%] overflow-y-auto overflow-x-hidden no-scrollbar"
                 style={{
                     background: surface,
                     color: text,
