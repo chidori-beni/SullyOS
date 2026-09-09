@@ -12,6 +12,7 @@ vi.mock('../db', () => ({
 const {
     appendXinshengEntry, clearXinshengHistory, deleteXinshengEntry, deleteOrphanedXinshengEntries,
     readXinshengHistory, toggleXinshengFavorite, XINSHENG_HISTORY_CAP,
+    updateXinshengEntryPreset,
     listXinshengPresets, saveXinshengPreset, updateXinshengPreset, deleteXinshengPreset,
     importXinshengPresets, buildPresetExportFile, parsePresetImportFile, normalizePreset,
     isPresetRandomEnabled, setPresetRandomEnabled, pickRandomPreset,
@@ -71,6 +72,63 @@ describe('心声历史', () => {
         await appendXinshengEntry('c2', 'xs_1', entry('b'));
         expect((await readXinshengHistory('c1')).xs_1.innerVoice).toBe('a');
         expect((await readXinshengHistory('c2')).xs_1.innerVoice).toBe('b');
+    });
+
+    it('只更新指定条目的显示快照，并保留正文、自定义字段和收藏状态', async () => {
+        await appendXinshengEntry('c1', 'xs_1', {
+            ...entry('a'),
+            customField: '正文还在',
+            _favorited: true,
+        });
+        await appendXinshengEntry('c1', 'xs_2', entry('b'));
+
+        const result = await updateXinshengEntryPreset('c1', 'xs_1', {
+            name: '预设 A',
+            displayMode: 'layout',
+            layout: '@quote innerVoice',
+            customCss: '.xt-root{}',
+            customPrompt: '不能落进历史',
+            aiVisibleFields: 'innerVoice',
+        } as any);
+
+        expect(result.updated).toBe(true);
+        expect(result.history.xs_1).toMatchObject({
+            innerVoice: 'a',
+            customField: '正文还在',
+            _favorited: true,
+            _presetOverride: {
+                name: '预设 A',
+                displayMode: 'layout',
+                layout: '@quote innerVoice',
+                customCss: '.xt-root{}',
+            },
+        });
+        expect(result.history.xs_1._preset).toBeUndefined();
+        expect(result.history.xs_1._presetOverride.customPrompt).toBeUndefined();
+        expect(result.history.xs_1._presetOverride.aiVisibleFields).toBeUndefined();
+        expect(result.history.xs_2._preset).toBeUndefined();
+    });
+
+    it('清除单条快照时不重建记录；目标不存在时不凭空创建', async () => {
+        await appendXinshengEntry('c1', 'xs_1', {
+            ...entry('a'),
+            _preset: { name: '旧预设', displayMode: 'planner', layout: '', customCss: '' },
+            customField: '保留',
+        });
+
+        const cleared = await updateXinshengEntryPreset('c1', 'xs_1', null);
+        expect(cleared.updated).toBe(true);
+        expect(cleared.history.xs_1.innerVoice).toBe('a');
+        expect(cleared.history.xs_1.customField).toBe('保留');
+        expect(cleared.history.xs_1._preset).toMatchObject({ name: '旧预设' });
+        expect(cleared.history.xs_1._presetOverride).toBeUndefined();
+
+        const missing = await updateXinshengEntryPreset('c1', 'xs_missing', {
+            name: '不会写入', displayMode: 'planner', layout: '', customCss: '',
+        });
+        expect(missing.updated).toBe(false);
+        expect(missing.reason).toBe('not-found');
+        expect((await readXinshengHistory('c1')).xs_missing).toBeUndefined();
     });
 });
 

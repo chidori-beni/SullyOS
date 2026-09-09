@@ -7,6 +7,7 @@
 
 import { DB } from '../db';
 import type { XinshengEntry } from './xinshengData';
+import type { XinshengEntryPreset } from './xinshengRandomPreset';
 
 const HISTORY_KEY = (charId: string) => `xinsheng_history_${charId}`;
 const PRESETS_KEY = 'xinsheng_presets';
@@ -123,6 +124,50 @@ export const toggleXinshengFavorite = async (charId: string, roundId: string): P
     history[roundId] = { ...cur, _favorited: !cur._favorited };
     await writeXinshengHistory(charId, history);
     return history;
+};
+
+export interface XinshengEntryPresetUpdateResult {
+    updated: boolean;
+    history: XinshengHistory;
+    reason?: 'not-found';
+}
+
+/**
+ * 只更新某一条历史心声的显示预设覆盖。
+ *
+ * 这里故意不接收调用方手里的整份 history：卡片可能开着很久，期间后台又落了一条
+ * 心声，拿旧 history 回写会把新记录抹掉。预设也在 store 边界重新裁成四个渲染字段，
+ * 避免把 customPrompt / aiVisibleFields 等只属于“生成”的配置带进历史。
+ * `null` 表示移除手动覆盖：如果这条记录有生成时的 `_preset`，会恢复它；没有时才回到
+ * 调用方当前角色设置的 fallback。原始 `_preset` 从不被手动调整覆盖，方便用户撤销试错。
+ */
+export const updateXinshengEntryPreset = async (
+    charId: string,
+    roundId: string,
+    preset: XinshengEntryPreset | null,
+): Promise<XinshengEntryPresetUpdateResult> => {
+    const history = await readXinshengHistory(charId);
+    const current = history[roundId];
+    if (!current) return { updated: false, history, reason: 'not-found' };
+
+    if (preset) {
+        history[roundId] = {
+            ...current,
+            _presetOverride: {
+                name: typeof preset.name === 'string' ? preset.name.slice(0, 60) : '',
+                displayMode: preset.displayMode === 'layout' ? 'layout' : 'planner',
+                layout: typeof preset.layout === 'string' ? preset.layout : '',
+                customCss: typeof preset.customCss === 'string' ? preset.customCss : '',
+            },
+        };
+    } else {
+        const withoutPreset = { ...current };
+        delete withoutPreset._presetOverride;
+        history[roundId] = withoutPreset;
+    }
+
+    await writeXinshengHistory(charId, history);
+    return { updated: true, history };
 };
 
 // ─── 预设库 ───
