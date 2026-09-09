@@ -33,6 +33,16 @@ import {
     removeTextFavoriteCollection,
     type TextFavoriteCollection,
 } from '../../utils/textFavoriteCollections';
+import {
+    MESSAGE_FAVORITE_COLLECTIONS_CHANGED_EVENT,
+    MESSAGE_FAVORITE_COLLECTION_COLLAPSE_THRESHOLD,
+    getMessageFavoriteCollectionVisibleMessages,
+    getMessageFavoriteCollectionMediaBlob,
+    listMessageFavoriteCollections,
+    removeMessageFavoriteCollection,
+    type MessageFavoriteCollection,
+    type MessageFavoriteCollectionMessage,
+} from '../../utils/messageFavoriteCollections';
 
 const PAGE_SIZE = 10;
 type FavoriteFilter = 'all' | 'text' | 'voice';
@@ -40,7 +50,8 @@ type SourceFilter = 'all' | VoiceFavoriteSource;
 type UnifiedFavorite =
     | { kind: 'voice'; item: VoiceFavorite }
     | { kind: 'text'; item: TextFavorite }
-    | { kind: 'text-collection'; item: TextFavoriteCollection };
+    | { kind: 'text-collection'; item: TextFavoriteCollection }
+    | { kind: 'message-collection'; item: MessageFavoriteCollection };
 
 interface FavoritesPortalProps {
     onClose: () => void;
@@ -48,7 +59,7 @@ interface FavoritesPortalProps {
 
 const filters: Array<{ value: FavoriteFilter; label: string }> = [
     { value: 'all', label: '全部' },
-    { value: 'text', label: '文字' },
+    { value: 'text', label: '文字/组' },
     { value: 'voice', label: '语音' },
 ];
 const sourceFilters: Array<{ value: SourceFilter; label: string }> = [
@@ -67,8 +78,11 @@ const favoriteTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
 const formatTime = (timestamp: number) => favoriteTimeFormatter.format(new Date(timestamp));
 const itemId = (item: UnifiedFavorite): string => `${item.kind}:${item.item.id}`;
 const sourceOf = (item: UnifiedFavorite): SourceFilter => item.item.source;
+const isCollection = (item: UnifiedFavorite): item is Extract<UnifiedFavorite, { kind: 'text-collection' | 'message-collection' }> => (
+    item.kind === 'text-collection' || item.kind === 'message-collection'
+);
 const sourceTimestampOf = (item: UnifiedFavorite): number => {
-    if (item.kind !== 'text-collection') return item.item.sourceTimestamp;
+    if (!isCollection(item)) return item.item.sourceTimestamp;
     return item.item.messages.reduce((latest, message) => Math.max(latest, message.timestamp), 0);
 };
 const favoritedAtOf = (item: UnifiedFavorite): number => item.item.favoritedAt;
@@ -83,10 +97,97 @@ const sortUnifiedFavorites = (items: UnifiedFavorite[]): UnifiedFavorite[] => (
     })
 );
 
+const CollectionMessageMedia: React.FC<{
+    message: MessageFavoriteCollectionMessage;
+    compact?: boolean;
+}> = ({ message, compact = false }) => {
+    const [mediaUrl, setMediaUrl] = useState<string | null>(null);
+    const [mediaState, setMediaState] = useState<'loading' | 'ready' | 'missing' | 'error'>(
+        message.kind === 'text' ? 'ready' : 'loading',
+    );
+
+    useEffect(() => {
+        if (message.kind === 'text') return;
+        let cancelled = false;
+        let objectUrl: string | null = null;
+        setMediaUrl(null);
+        setMediaState('loading');
+        (async () => {
+            let url: string | null = null;
+            if (message.media?.assetKey) {
+                const blob = await getMessageFavoriteCollectionMediaBlob(message.media.assetKey).catch(() => null);
+                if (blob) {
+                    const nextObjectUrl = URL.createObjectURL(blob);
+                    if (cancelled) {
+                        URL.revokeObjectURL(nextObjectUrl);
+                        return;
+                    }
+                    objectUrl = nextObjectUrl;
+                    url = nextObjectUrl;
+                }
+            }
+            if (!url && message.media?.remoteUrl) url = message.media.remoteUrl;
+            if (cancelled) return;
+            if (url) {
+                setMediaUrl(url);
+                setMediaState('ready');
+            } else {
+                setMediaState('missing');
+            }
+        })();
+        return () => {
+            cancelled = true;
+            if (objectUrl) URL.revokeObjectURL(objectUrl);
+        };
+    }, [message.kind, message.media?.assetKey, message.media?.remoteUrl]);
+
+    if (message.kind === 'text') {
+        return <p className="mt-1.5 text-[14px] leading-6 text-slate-800 whitespace-pre-wrap break-words">{message.content}</p>;
+    }
+
+    if (message.kind === 'voice') {
+        return (
+            <div className="mt-2 space-y-1.5" data-no-toggle>
+                {mediaUrl && mediaState === 'ready' ? (
+                    <audio controls preload="metadata" src={mediaUrl} className="w-full h-10" onError={() => setMediaState('error')} />
+                ) : (
+                    <div className="rounded-xl bg-slate-900/5 px-3 py-2 text-[12px] text-slate-500">
+                        {mediaState === 'loading' ? '正在加载语音…' : '语音文件暂不可用'}
+                    </div>
+                )}
+                <p className="text-[13px] leading-5 text-slate-600 whitespace-pre-wrap break-words">{message.content}</p>
+                {message.spokenText && message.spokenText !== message.content && (
+                    <p className="text-[12px] leading-5 text-slate-400 whitespace-pre-wrap break-words">语音：{message.spokenText}</p>
+                )}
+            </div>
+        );
+    }
+
+    return (
+        <div className="mt-2" data-no-toggle>
+            {mediaUrl && mediaState === 'ready' ? (
+                <img
+                    src={mediaUrl}
+                    alt={message.kind === 'emoji' ? '表情包' : '图片'}
+                    loading="lazy"
+                    onError={() => setMediaState('error')}
+                    className={`block w-auto max-w-full rounded-xl object-contain ${compact ? 'max-h-24' : 'max-h-64'}`}
+                />
+            ) : (
+                <div className="rounded-xl bg-slate-900/5 px-3 py-2 text-[12px] text-slate-500">
+                    {mediaState === 'loading' ? '正在加载图片…' : `${message.kind === 'emoji' ? '表情包' : '图片'}暂不可用`}
+                </div>
+            )}
+            <p className="mt-1.5 text-[12px] leading-5 text-slate-400">{message.content}</p>
+        </div>
+    );
+};
+
 const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose }) => {
     const [voiceItems, setVoiceItems] = useState<VoiceFavorite[]>([]);
     const [textItems, setTextItems] = useState<TextFavorite[]>([]);
     const [textCollections, setTextCollections] = useState<TextFavoriteCollection[]>([]);
+    const [messageCollections, setMessageCollections] = useState<MessageFavoriteCollection[]>([]);
     const [filter, setFilter] = useState<FavoriteFilter>('all');
     const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
     const [page, setPage] = useState(0);
@@ -94,6 +195,7 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose }) => {
     const [playingId, setPlayingId] = useState<string | null>(null);
     const [audioError, setAudioError] = useState<string | null>(null);
     const [removingId, setRemovingId] = useState<string | null>(null);
+    const [expandedCollectionIds, setExpandedCollectionIds] = useState<Set<string>>(new Set());
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const objectUrlRef = useRef<string | null>(null);
     const refreshGenerationRef = useRef(0);
@@ -101,15 +203,17 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose }) => {
 
     const refresh = useCallback(async () => {
         const generation = ++refreshGenerationRef.current;
-        const [voices, texts, collections] = await Promise.all([
+        const [voices, texts, collections, mixedCollections] = await Promise.all([
             listVoiceFavorites().catch(() => [] as VoiceFavorite[]),
             listTextFavorites().catch(() => [] as TextFavorite[]),
             listTextFavoriteCollections().catch(() => [] as TextFavoriteCollection[]),
+            listMessageFavoriteCollections().catch(() => [] as MessageFavoriteCollection[]),
         ]);
         if (!mountedRef.current || generation !== refreshGenerationRef.current) return;
         setVoiceItems(voices);
         setTextItems(texts);
         setTextCollections(collections);
+        setMessageCollections(mixedCollections);
         setLoading(false);
     }, []);
 
@@ -118,11 +222,13 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose }) => {
         window.addEventListener(VOICE_FAVORITES_CHANGED_EVENT, refresh);
         window.addEventListener(TEXT_FAVORITES_CHANGED_EVENT, refresh);
         window.addEventListener(TEXT_FAVORITE_COLLECTIONS_CHANGED_EVENT, refresh);
+        window.addEventListener(MESSAGE_FAVORITE_COLLECTIONS_CHANGED_EVENT, refresh);
         return () => {
             mountedRef.current = false;
             window.removeEventListener(VOICE_FAVORITES_CHANGED_EVENT, refresh);
             window.removeEventListener(TEXT_FAVORITES_CHANGED_EVENT, refresh);
             window.removeEventListener(TEXT_FAVORITE_COLLECTIONS_CHANGED_EVENT, refresh);
+            window.removeEventListener(MESSAGE_FAVORITE_COLLECTIONS_CHANGED_EVENT, refresh);
         };
     }, [refresh]);
 
@@ -131,16 +237,31 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose }) => {
         if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
     }, []);
 
+    useEffect(() => {
+        const currentIds = new Set([
+            ...textCollections.map(item => `text-collection:${item.id}`),
+            ...messageCollections.map(item => `message-collection:${item.id}`),
+        ]);
+        setExpandedCollectionIds(previous => {
+            const next = new Set([...previous].filter(id => currentIds.has(id)));
+            return next.size === previous.size ? previous : next;
+        });
+    }, [messageCollections, textCollections]);
+
     const allItems = useMemo<UnifiedFavorite[]>(() => sortUnifiedFavorites([
         ...voiceItems.map(item => ({ kind: 'voice' as const, item })),
         ...textItems.map(item => ({ kind: 'text' as const, item })),
         ...textCollections.map(item => ({ kind: 'text-collection' as const, item })),
-    ]), [textCollections, textItems, voiceItems]);
+        ...messageCollections.map(item => ({ kind: 'message-collection' as const, item })),
+    ]), [messageCollections, textCollections, textItems, voiceItems]);
     const filtered = useMemo(
         () => allItems.filter(item => (
             (filter === 'all'
-                || (filter === 'text' && (item.kind === 'text' || item.kind === 'text-collection'))
-                || (filter === 'voice' && item.kind === 'voice'))
+                || (filter === 'text' && (item.kind === 'text' || item.kind === 'text-collection' || item.kind === 'message-collection'))
+                || (filter === 'voice' && (
+                    item.kind === 'voice'
+                    || (item.kind === 'message-collection' && item.item.messages.some(message => message.kind === 'voice'))
+                )))
             && (sourceFilter === 'all' || sourceOf(item) === sourceFilter)
         )),
         [allItems, filter, sourceFilter],
@@ -201,21 +322,30 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose }) => {
         try {
             if (entry.kind === 'voice') await removeVoiceFavoriteById(entry.item.id);
             else if (entry.kind === 'text-collection') await removeTextFavoriteCollection(entry.item.id);
+            else if (entry.kind === 'message-collection') await removeMessageFavoriteCollection(entry.item.id);
             else await removeTextFavoriteById(entry.item.id);
+            if (isCollection(entry)) {
+                setExpandedCollectionIds(previous => {
+                    if (!previous.has(rowId)) return previous;
+                    const next = new Set(previous);
+                    next.delete(rowId);
+                    return next;
+                });
+            }
             await refresh();
         } finally {
             if (mountedRef.current) setRemovingId(null);
         }
     };
 
-    const emptyTitle = filter === 'text' ? '这里还没有文字收藏'
+    const emptyTitle = filter === 'text' ? '这里还没有文字或消息组'
         : filter === 'voice' ? '这里还没有语音收藏'
             : '这里还没有收藏';
     const emptyHint = filter === 'text'
-        ? '聊天里长按可收藏单条；想保留前因后果，请进入多选后点“收藏为一组”。'
+        ? '聊天里长按可收藏单条；想保留前因后果，请进入多选后点“收藏为一组”。语音和图片也会保留在组里。'
         : filter === 'voice'
             ? '在聊天、通话或见面里长按语音，就能收进来。'
-            : '在消息上长按，把想留下的文字或语音收进来；多选文字还能保存成完整片段。';
+            : '在消息上长按，把想留下的文字、语音或图片收进来；多选还能保存成完整片段。';
 
     const portal = (
         <div className="favorites-root">
@@ -280,7 +410,7 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose }) => {
                     )}
                     {filter === 'text' && (
                         <p className="mt-2 text-center text-[10px] leading-4 text-slate-400">
-                            多选聊天消息后点“收藏为一组”，这里会按一段完整对话显示
+                            多选聊天消息后点“收藏为一组”，这里会按一段完整对话显示；语音和图片也会保留在组里
                         </p>
                     )}
                 </header>
@@ -298,31 +428,69 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose }) => {
                         </div>
                     ) : visible.map((entry, index) => {
                         const rowId = itemId(entry);
-                        if (entry.kind === 'text-collection') {
+                        if (isCollection(entry)) {
                             const messages = entry.item.messages;
+                            const mixedMessages = entry.kind === 'message-collection' ? entry.item.messages : null;
+                            const mixed = !!mixedMessages;
+                            const collapsible = messages.length > MESSAGE_FAVORITE_COLLECTION_COLLAPSE_THRESHOLD;
+                            const expanded = expandedCollectionIds.has(rowId);
+                            const shownMessages = getMessageFavoriteCollectionVisibleMessages(messages, expanded);
                             const first = messages[0];
                             const last = messages[messages.length - 1];
                             const timeLabel = first.timestamp === last.timestamp
                                 ? formatTime(first.timestamp)
                                 : `${formatTime(first.timestamp)} - ${formatTime(last.timestamp)}`;
+                            const toggleExpanded = () => setExpandedCollectionIds(previous => {
+                                const next = new Set(previous);
+                                if (next.has(rowId)) next.delete(rowId);
+                                else next.add(rowId);
+                                return next;
+                            });
+                            const handleCardClick = (event: React.MouseEvent<HTMLElement>) => {
+                                if (!collapsible) return;
+                                const target = event.target;
+                                if (target instanceof Element && target.closest('button,audio,img,input,select,textarea,[data-no-toggle]')) return;
+                                toggleExpanded();
+                            };
+                            const kindLabels = mixedMessages
+                                ? [...new Set(mixedMessages.map(message => message.kind))].map(kind => ({
+                                    text: '文字', voice: '语音', emoji: '表情', image: '图片',
+                                }[kind])).join(' · ')
+                                : '文字片段';
                             return (
-                                <article key={rowId} className="favorite-row py-4 border-b border-slate-900/10" style={{ animationDelay: `${Math.min(index, 5) * 18}ms` }} data-kind="text-collection">
+                                <article
+                                    key={rowId}
+                                    className={`favorite-row py-4 border-b border-slate-900/10 ${collapsible ? 'cursor-pointer' : ''}`}
+                                    style={{ animationDelay: `${Math.min(index, 5) * 18}ms` }}
+                                    data-kind={entry.kind}
+                                    onClick={handleCardClick}
+                                >
                                     <div className="flex items-start gap-3">
                                         <div className="mt-0.5 shrink-0 w-11 h-11 grid place-items-center rounded-full bg-amber-50 text-amber-600 border border-amber-100" aria-hidden>
-                                            <FileText size={18} weight="bold" />
+                                            {mixed ? <Star size={18} weight="fill" /> : <FileText size={18} weight="bold" />}
                                         </div>
                                         <div className="min-w-0 flex-1">
                                             <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-500">
                                                 <span className="font-bold text-slate-700">{entry.item.charName}</span>
-                                                <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700">文字片段</span>
+                                                <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700">{kindLabels}</span>
                                                 <span className="px-1.5 py-0.5 rounded bg-slate-900/5">{messages.length} 条</span>
                                                 <time>{timeLabel}</time>
                                             </div>
+                                            {collapsible && (
+                                                <button
+                                                    type="button"
+                                                    onClick={event => { event.stopPropagation(); toggleExpanded(); }}
+                                                    className="mt-1.5 text-[11px] font-bold text-amber-700 active:text-amber-900"
+                                                    aria-expanded={expanded}
+                                                >
+                                                    {expanded ? '收起全文' : '卡片预览 · 点开查看全部'}
+                                                </button>
+                                            )}
                                         </div>
                                         <button
                                             type="button"
                                             disabled={removingId === rowId}
-                                            onClick={() => void remove(entry)}
+                                            onClick={event => { event.stopPropagation(); void remove(entry); }}
                                             className="self-start shrink-0 w-9 h-9 grid place-items-center rounded-full text-slate-400 active:bg-rose-50 active:text-rose-500 disabled:opacity-40"
                                             aria-label="取消整组收藏"
                                         >
@@ -330,16 +498,28 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose }) => {
                                         </button>
                                     </div>
                                     <div className="mt-3 overflow-hidden rounded-2xl border border-slate-900/5 bg-white/70">
-                                        {messages.map((message, messageIndex) => (
+                                        {shownMessages.map((message, messageIndex) => (
                                             <div key={`${message.messageId}-${messageIndex}`} className={`px-3.5 py-3 ${messageIndex > 0 ? 'border-t border-slate-900/5' : ''}`}>
                                                 <div className="flex items-center justify-between gap-3 text-[10px] text-slate-400">
                                                     <span className="font-bold text-slate-600">{message.speakerName}</span>
                                                     <time className="shrink-0">{formatTime(message.timestamp)}</time>
                                                 </div>
-                                                <p className="mt-1.5 text-[14px] leading-6 text-slate-800 whitespace-pre-wrap break-words">{message.content}</p>
+                                                {mixed
+                                                    ? <CollectionMessageMedia message={message as MessageFavoriteCollectionMessage} compact={!expanded} />
+                                                    : <p className="mt-1.5 text-[14px] leading-6 text-slate-800 whitespace-pre-wrap break-words">{message.content}</p>}
                                             </div>
                                         ))}
                                     </div>
+                                    {collapsible && !expanded && (
+                                        <button
+                                            type="button"
+                                            onClick={event => { event.stopPropagation(); toggleExpanded(); }}
+                                            className="mt-2 w-full rounded-xl bg-slate-900/5 py-2 text-[11px] font-bold text-slate-600 active:bg-slate-900/10"
+                                            aria-expanded={false}
+                                        >
+                                            还有 {messages.length - shownMessages.length} 条，展开查看完整内容
+                                        </button>
+                                    )}
                                 </article>
                             );
                         }

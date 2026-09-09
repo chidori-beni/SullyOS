@@ -23,7 +23,7 @@ interface ChatInputAreaProps {
     onForwardSelected?: () => void;
     onFavoriteSelected?: () => void | Promise<void>;
     selectedCount: number;
-    /** 选中项里实际可收藏的普通文字消息数，不等同于 selectedCount。 */
+    /** 选中项里实际可收藏的文字、语音或图片消息数，不等同于 selectedCount。 */
     favoriteEligibleCount?: number;
     favoriteSkippedCount?: number;
     favoriteSaving?: boolean;
@@ -555,13 +555,13 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     {onFavoriteSelected && (
                         <button
                             type="button"
-                            onClick={() => { void onFavoriteSelected?.(); trackEvent('收藏选中的文字'); }}
+                            onClick={() => { void onFavoriteSelected?.(); trackEvent('收藏选中的内容'); }}
                             disabled={favoriteSaving || favoriteEligibleCount === 0}
-                            title={favoriteSkippedCount > 0 ? `将收藏 ${favoriteEligibleCount} 条文字，跳过 ${favoriteSkippedCount} 条非文字或空消息` : undefined}
+                            title={favoriteSkippedCount > 0 ? `将收藏 ${favoriteEligibleCount} 条内容，跳过 ${favoriteSkippedCount} 条暂不支持的消息` : undefined}
                             className={`flex-1 min-w-[7.2rem] py-3 font-bold rounded-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-1.5 ${favoriteSaving || favoriteEligibleCount === 0 ? 'bg-amber-100 text-amber-400 shadow-none' : 'bg-gradient-to-r from-amber-400 to-orange-500 text-white shadow-amber-200'}`}
                         >
                             <Star className="w-5 h-5" weight="fill" />
-                            {favoriteSaving ? '收藏中…' : favoriteEligibleCount > 1 ? `收藏为一组 (${favoriteEligibleCount})` : '收藏文字 (1)'}
+                            {favoriteSaving ? '收藏中…' : favoriteEligibleCount > 1 ? `收藏为一组 (${favoriteEligibleCount})` : '收藏内容 (1)'}
                         </button>
                     )}
                     {onForwardSelected && (

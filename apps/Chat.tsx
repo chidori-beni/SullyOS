@@ -96,6 +96,17 @@ import {
     normalizeTextFavoriteCollectionMessages,
     upsertTextFavoriteCollection,
 } from '../utils/textFavoriteCollections';
+import { dataUrlToBlob } from '../utils/blobRef';
+import {
+    getMessageFavoriteCollection,
+    makeMessageFavoriteCollectionId,
+    messageFavoriteCollectionMediaAssetId,
+    normalizeMessageFavoriteCollectionMessages,
+    saveMessageFavoriteCollectionMedia,
+    upsertMessageFavoriteCollection,
+    type MessageFavoriteCollectionMessage,
+    type MessageFavoriteCollectionMessageInput,
+} from '../utils/messageFavoriteCollections';
 import { SCHEDULE_CHANGE_EVENT, type ScheduleChangeEventDetail } from '../utils/scheduleChange';
 import { notifyCalendarDataUpdated, scheduleInviteEventToAnniversary } from '../utils/calendarIntegration';
 import {
@@ -338,21 +349,6 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     const [showingTargetIds, setShowingTargetIds] = useState<Set<number>>(new Set());
 
     const char = characters.find(c => c.id === activeCharacterId) || characters[0];
-    // 多选收藏只取用户明确勾选的普通文字消息。这里按消息 id 重新排回聊天顺序，
-    // 不使用 Set 的点击顺序，也不把思维链 / 卡片 / 协议内容写进收藏快照。
-    const selectedTextFavoriteMessages = useMemo(() => normalizeTextFavoriteCollectionMessages(
-        messages
-            .filter(message => selectedMsgIds.has(message.id) && message.type === 'text' && message.role !== 'system')
-            .sort((a, b) => a.id - b.id)
-            .map(message => ({
-                messageId: message.id,
-                role: message.role === 'user' ? 'user' as const : 'assistant' as const,
-                speakerName: message.role === 'user' ? '我' : (char?.name || '未知角色'),
-                timestamp: message.timestamp,
-                content: message.content,
-            })),
-    ), [char?.name, messages, selectedMsgIds]);
-    const selectedTextFavoriteSkippedCount = Math.max(0, selectedMsgIds.size - selectedTextFavoriteMessages.length);
     const memoryRepairRound = useMemo(() => {
         let assistantIndex = -1;
         for (let i = messages.length - 1; i >= 0; i--) {
@@ -522,6 +518,62 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     const [voiceLoading, setVoiceLoading] = useState<Set<number>>(new Set());
     const [playingMsgId, setPlayingMsgId] = useState<number | null>(null);
     const chatAudioRef = useRef<HTMLAudioElement | null>(null);
+
+    const favoriteKindForMessage = useCallback((message: Message): MessageFavoriteCollectionMessageInput['kind'] | null => {
+        if (message.role === 'system') return null;
+        if (message.type === 'emoji' || message.type === 'image') {
+            // Pending/failed image-generation bubbles have no source to snapshot.
+            const source = typeof message.content === 'string' ? message.content.trim() : '';
+            if (!source || /^(?:javascript|vbscript):/i.test(source)) return null;
+            return message.type;
+        }
+        if (
+            message.type === 'voice'
+            || (message.role === 'assistant' && message.type === 'text' && (
+                !!voiceDataMap[message.id]
+                || /<[语語]音\b/i.test(message.content)
+            ))
+        ) return 'voice';
+        if (message.type === 'text') return 'text';
+        return null;
+    }, [voiceDataMap]);
+
+    // 多选收藏按聊天顺序生成一个可持久化的消息快照。文字继续兼容旧 v1
+    // 收藏组；语音、表情和图片会在点击收藏时补齐独立媒体资产并写入 v2。
+    const selectedFavoriteMessages = useMemo(() => {
+        const inputs: MessageFavoriteCollectionMessageInput[] = [];
+        messages
+            .filter(message => selectedMsgIds.has(message.id))
+            .sort((a, b) => a.id - b.id)
+            .forEach(message => {
+                const kind = favoriteKindForMessage(message);
+                if (!kind) return;
+                const voice = kind === 'voice' ? voiceDataMap[message.id] : undefined;
+                inputs.push({
+                    messageId: message.id,
+                    role: message.role === 'user' ? 'user' : 'assistant',
+                    speakerName: message.role === 'user' ? '我' : (char?.name || '未知角色'),
+                    timestamp: message.timestamp,
+                    kind,
+                    content: voice?.originalText || voice?.spokenText || message.content,
+                    spokenText: voice?.spokenText,
+                    lang: voice?.lang,
+                });
+            });
+        return normalizeMessageFavoriteCollectionMessages(inputs);
+    }, [char?.name, favoriteKindForMessage, messages, selectedMsgIds, voiceDataMap]);
+    const selectedFavoriteSkippedCount = Math.max(0, selectedMsgIds.size - selectedFavoriteMessages.length);
+    const selectedTextFavoriteMessages = useMemo(() => normalizeTextFavoriteCollectionMessages(
+        selectedFavoriteMessages
+            .filter(message => message.kind === 'text')
+            .map(message => ({
+                messageId: message.messageId,
+                role: message.role,
+                speakerName: message.speakerName,
+                timestamp: message.timestamp,
+                content: message.content,
+            })),
+    ), [selectedFavoriteMessages]);
     const prevIsTypingRef = useRef(false);
     // 即时对话那条路的自动合成扫描窗（用法见下面那个 auto-TTS 的 effect）：
     // 「正在输入」灯灭的那一下开窗，窗口内每次消息变化都补扫一遍；角色不对就整个作废。
@@ -3447,55 +3499,200 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         setSelectedThinkingMsgIds(new Set());
     };
 
+    const isSafeFavoriteRemoteUrl = (value: string): boolean => /^https?:\/\//i.test(value);
+
+    const resolveVoiceFavoriteMedia = async (
+        message: Message,
+        allowRemoteFallback: boolean,
+    ): Promise<{ blob: Blob | null; remoteUrl?: string; originalText: string; spokenText?: string; lang?: string }> => {
+        const stored = await DB.getAssetRaw(voiceAssetKey(message.id)).catch(() => null) as StoredVoice | null;
+        const inMemory = voiceDataMap[message.id];
+        const metadata = message.metadata && typeof message.metadata === 'object' ? message.metadata as Record<string, unknown> : {};
+        const originalText = stored?.originalText || inMemory?.originalText || (typeof metadata.transcript === 'string' ? metadata.transcript : '') || cleanTextForFavorite(message.content) || '语音消息';
+        const spokenText = stored?.spokenText || inMemory?.spokenText;
+        const lang = stored?.lang || inMemory?.lang;
+        if (typeof Blob !== 'undefined' && stored?.blob instanceof Blob && stored.blob.size > 0) {
+            return { blob: stored.blob, originalText, spokenText, lang };
+        }
+
+        const candidates = [
+            stored?.remoteUrl,
+            inMemory?.url,
+            typeof metadata.audioUrl === 'string' ? metadata.audioUrl : undefined,
+        ].map(value => typeof value === 'string' ? value.trim() : '').filter(Boolean);
+        let remoteFallback: string | undefined;
+        for (const source of candidates) {
+            try {
+                let blob: Blob;
+                if (/^data:/i.test(source)) blob = dataUrlToBlob(source);
+                else if (/^(?:blob:|https?:\/\/)/i.test(source)) blob = await fetchBlobForShare(source, 'audio/mpeg');
+                else continue;
+                if (blob.size > 0) return {
+                    blob,
+                    ...(isSafeFavoriteRemoteUrl(source) ? { remoteUrl: source } : {}),
+                    originalText,
+                    spokenText,
+                    lang,
+                };
+            } catch {
+                if (isSafeFavoriteRemoteUrl(source)) remoteFallback = remoteFallback || source;
+            }
+        }
+        if (allowRemoteFallback && remoteFallback) return { blob: null, remoteUrl: remoteFallback, originalText, spokenText, lang };
+        throw new Error('这条语音的音频还未准备好，请稍后再试');
+    };
+
+    const resolveImageFavoriteMedia = async (message: Message): Promise<{ blob: Blob | null; remoteUrl?: string }> => {
+        const source = typeof message.content === 'string' ? message.content.trim() : '';
+        if (!source || /^(?:javascript|vbscript):/i.test(source)) throw new Error('这张图片没有可保存的来源');
+        try {
+            const blob = /^data:/i.test(source)
+                ? dataUrlToBlob(source)
+                : await fetchBlobForShare(source, 'image/png');
+            if (blob.size > 0) return {
+                blob,
+                ...(isSafeFavoriteRemoteUrl(source) ? { remoteUrl: source } : {}),
+            };
+        } catch {
+            if (isSafeFavoriteRemoteUrl(source)) return { blob: null, remoteUrl: source };
+        }
+        throw new Error('这张图片暂时无法保存，请稍后再试');
+    };
+
+    const prepareMessageFavoriteCollection = async (
+        selected: MessageFavoriteCollectionMessage[],
+    ): Promise<{ id: string; messages: MessageFavoriteCollectionMessageInput[]; newlyWrittenAssetKeys: string[] }> => {
+        const id = makeMessageFavoriteCollectionId('chat', char.id, selected.map(message => message.messageId));
+        const existing = await getMessageFavoriteCollection(id);
+        const existingAssetKeys = new Set(
+            (existing?.messages || [])
+                .map(message => message.media?.assetKey)
+                .filter((key): key is string => typeof key === 'string'),
+        );
+        const newlyWrittenAssetKeys: string[] = [];
+        try {
+            const prepared: MessageFavoriteCollectionMessageInput[] = [];
+            for (const item of selected) {
+                const sourceMessage = messages.find(message => message.id === item.messageId);
+                if (!sourceMessage) throw new Error('选中的消息已经不在当前会话中');
+                let media: MessageFavoriteCollectionMessageInput['media'];
+                if (item.kind !== 'text') {
+                    const assetKey = messageFavoriteCollectionMediaAssetId(id, item.messageId, item.kind);
+                    const resolved = item.kind === 'voice'
+                        ? await resolveVoiceFavoriteMedia(sourceMessage, true)
+                        : await resolveImageFavoriteMedia(sourceMessage);
+                    if (resolved.blob) {
+                        const previousAsset = await DB.getAssetRaw(assetKey).catch(() => null);
+                        await saveMessageFavoriteCollectionMedia(assetKey, resolved.blob);
+                        if (previousAsset == null && !existingAssetKeys.has(assetKey)) newlyWrittenAssetKeys.push(assetKey);
+                        media = {
+                            assetKey,
+                            mimeType: resolved.blob.type || (item.kind === 'voice' ? 'audio/mpeg' : 'image/png'),
+                            ...(resolved.remoteUrl ? { remoteUrl: resolved.remoteUrl } : {}),
+                        };
+                    } else if (resolved.remoteUrl) {
+                        media = { remoteUrl: resolved.remoteUrl };
+                    } else {
+                        throw new Error(item.kind === 'voice' ? '语音文件无法保存' : '图片无法保存');
+                    }
+                }
+                prepared.push({ ...item, media });
+            }
+            return { id, messages: prepared, newlyWrittenAssetKeys };
+        } catch (error) {
+            await Promise.all(newlyWrittenAssetKeys.map(assetKey => DB.deleteAsset(assetKey).catch(() => undefined)));
+            throw error;
+        }
+    };
+
     const handleFavoriteSelected = async () => {
         if (textFavoriteSaving) return;
-        const selected = selectedTextFavoriteMessages;
+        const selected = selectedFavoriteMessages;
         if (selected.length === 0) {
-            addToast('请至少选择一条有正文的文字消息', 'info');
+            addToast('请至少选择一条可收藏的文字、语音或图片消息', 'info');
             return;
         }
 
-        const skipped = selectedTextFavoriteSkippedCount;
+        const skipped = selectedFavoriteSkippedCount;
+        const allText = selected.every(message => message.kind === 'text');
+        const single = selected.length === 1 ? selected[0] : null;
         setTextFavoriteSaving(true);
         try {
-            if (selected.length === 1) {
-                const item = selected[0];
+            if (single?.kind === 'text') {
                 await saveTextFavorite({
                     source: 'chat',
-                    sourceKey: makeTextFavoriteSourceKey(char.id, item.messageId),
-                    messageId: item.messageId,
+                    sourceKey: makeTextFavoriteSourceKey(char.id, single.messageId),
+                    messageId: single.messageId,
                     charId: char.id,
-                    charName: item.speakerName,
-                    role: item.role,
-                    sourceTimestamp: item.timestamp,
-                    content: item.content,
+                    charName: single.speakerName,
+                    role: single.role,
+                    sourceTimestamp: single.timestamp,
+                    content: single.content,
                 });
-            } else {
+                const sourceKey = makeTextFavoriteSourceKey(char.id, single.messageId);
+                setChatTextFavoriteKeys(previous => new Set(previous).add(sourceKey));
+            } else if (single?.kind === 'voice') {
+                const sourceMessage = messages.find(message => message.id === single.messageId);
+                if (!sourceMessage) throw new Error('选中的消息已经不在当前会话中');
+                const voice = await resolveVoiceFavoriteMedia(sourceMessage, false);
+                if (!voice.blob) throw new Error('这条语音没有可保存的音频文件');
+                await saveVoiceFavorite({
+                    source: 'chat',
+                    sourceKey: chatFavoriteSourceKey({ charId: char.id, id: single.messageId }),
+                    charId: char.id,
+                    charName: char.name,
+                    sourceTimestamp: single.timestamp,
+                    originalText: voice.originalText,
+                    spokenText: voice.spokenText,
+                    language: voice.lang,
+                    blob: voice.blob,
+                });
+                const sourceKey = chatFavoriteSourceKey({ charId: char.id, id: single.messageId });
+                setChatFavoriteKeys(previous => new Set(previous).add(sourceKey));
+            } else if (allText) {
                 await upsertTextFavoriteCollection({
                     source: 'chat',
                     charId: char.id,
                     charName: char.name,
-                    messages: selected,
+                    messages: selectedTextFavoriteMessages,
                 });
+            } else {
+                const prepared = await prepareMessageFavoriteCollection(selected);
+                try {
+                    await upsertMessageFavoriteCollection({
+                        source: 'chat',
+                        charId: char.id,
+                        charName: char.name,
+                        id: prepared.id,
+                        messages: prepared.messages,
+                    });
+                } catch (error) {
+                    await Promise.all(prepared.newlyWrittenAssetKeys.map(assetKey => DB.deleteAsset(assetKey).catch(() => undefined)));
+                    throw error;
+                }
             }
 
-            if (selected.length === 1) {
-                const sourceKey = makeTextFavoriteSourceKey(char.id, selected[0].messageId);
-                setChatTextFavoriteKeys(previous => new Set(previous).add(sourceKey));
-            }
-            const skippedHint = skipped > 0 ? `，跳过 ${skipped} 条非文字或空消息` : '';
-            addToast(
-                selected.length === 1
-                    ? `已收藏文字${skippedHint}`
-                    : `已收藏 ${selected.length} 条文字消息为一组${skippedHint}`,
-                'success',
-            );
-            setSelectionMode(false);
-            setSelectedMsgIds(new Set());
+            const skippedHint = skipped > 0 ? `，跳过 ${skipped} 条暂不支持的消息` : '';
+            const savedLabel = single?.kind === 'text'
+                ? '已收藏文字'
+                : single?.kind === 'voice'
+                    ? '已收藏语音'
+                    : allText
+                        ? `已收藏 ${selected.length} 条文字消息为一组`
+                        : `已收藏 ${selected.length} 条消息为一组`;
+            addToast(`${savedLabel}${skippedHint}`, 'success');
+
+            // A successful save clears only the messages that were actually
+            // saved. Unsupported/system selections remain visible so the user
+            // can remove them without losing their place in selection mode.
+            const savedIds = new Set(selected.map(message => message.messageId));
+            const remainingSelectedIds = new Set([...selectedMsgIds].filter(id => !savedIds.has(id)));
+            setSelectedMsgIds(remainingSelectedIds);
             setSelectedThinkingMsgIds(new Set());
+            if (remainingSelectedIds.size === 0) setSelectionMode(false);
         } catch (error: any) {
-            console.warn('[Chat] favorite selected text failed', error);
-            addToast(error?.message || '收藏失败，请检查浏览器存储空间', 'error');
+            console.warn('[Chat] favorite selected messages failed', error);
+            addToast(error?.message || '收藏失败，请检查浏览器存储空间；已保留当前选择', 'error');
         } finally {
             setTextFavoriteSaving(false);
         }
@@ -4669,8 +4866,8 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                     onForwardSelected={handleForwardSelected}
                     onFavoriteSelected={handleFavoriteSelected}
                     selectedCount={selectedMsgIds.size + Array.from(selectedThinkingMsgIds).filter(id => !selectedMsgIds.has(id)).length}
-                    favoriteEligibleCount={selectedTextFavoriteMessages.length}
-                    favoriteSkippedCount={selectedTextFavoriteSkippedCount}
+                    favoriteEligibleCount={selectedFavoriteMessages.length}
+                    favoriteSkippedCount={selectedFavoriteSkippedCount}
                     favoriteSaving={textFavoriteSaving}
                     emojis={filteredEmojis}
                     characters={characters} activeCharacterId={activeCharacterId}
