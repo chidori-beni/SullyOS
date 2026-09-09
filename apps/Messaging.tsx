@@ -558,13 +558,21 @@ const Messaging: React.FC = () => {
     const orderedSummaries = useMemo(() => {
         const needle = search.trim().toLocaleLowerCase();
         return summaries
+            // 平时只留「聊过天」的好友：一条消息都没有的角色不占位。
+            // 但置顶、有未读、正在送达主动消息的必须留着，
+            // 搜索时也要能搜出全部好友——否则新建的角色就再没有入口开第一次对话。
+            .filter(item => !!needle
+                || !!item.last
+                || (unreadMessages[item.char.id] || 0) > 0
+                || !!proactiveComposingChars[item.char.id]
+                || prefs.pinnedCharacterIds.includes(item.char.id))
             .filter(item => !needle || item.char.name.toLocaleLowerCase().includes(needle) || cleanPreview(item.last, !!proactiveComposingChars[item.char.id]).toLocaleLowerCase().includes(needle))
             .sort((a, b) => {
                 const pinDiff = Number(prefs.pinnedCharacterIds.includes(b.char.id)) - Number(prefs.pinnedCharacterIds.includes(a.char.id));
                 if (pinDiff) return pinDiff;
                 return (b.last?.timestamp || 0) - (a.last?.timestamp || 0);
             });
-    }, [prefs.pinnedCharacterIds, proactiveComposingChars, search, summaries]);
+    }, [prefs.pinnedCharacterIds, proactiveComposingChars, search, summaries, unreadMessages]);
 
     const groupedSummaries = useMemo(() => {
         if (!prefs.groupingEnabled) return [{ id: 'all', name: '', items: orderedSummaries }];
@@ -1292,7 +1300,7 @@ const Messaging: React.FC = () => {
                         </React.Fragment>
                     );
                 })}
-                {!orderedSummaries.length && <div className="nj-empty-state"><div className="nj-empty-state-symbol">☁︎</div>{search ? '没有找到匹配的好友或消息' : '还没有好友，先去神经链接创建角色吧'}</div>}
+                {!orderedSummaries.length && <div className="nj-empty-state"><div className="nj-empty-state-symbol">☁︎</div>{search ? '没有找到匹配的好友或消息' : (characters.length ? '还没有聊过天，搜索好友名字就能开始第一次对话' : '还没有好友，先去神经链接创建角色吧')}</div>}
             </div>
             <div className="nj-chat-tab-decor-bottom" aria-hidden="true" />
         </section>
