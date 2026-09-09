@@ -479,6 +479,24 @@ const Character: React.FC = () => {
       if (editingWorldbookId === bookId) closeMountedWorldbookEditor();
   };
 
+  const toggleMountedWorldbook = (bookId: string) => {
+      if (!formData) return;
+      const currentBooks = formData.mountedWorldbooks || [];
+      const target = currentBooks.find(book => book.id === bookId);
+      if (!target) return;
+      const nextEnabled = target.mountEnabled === false;
+      handleChange('mountedWorldbooks', currentBooks.map(book => (
+          book.id === bookId ? { ...book, mountEnabled: nextEnabled } : book
+      )));
+      addToast(
+          nextEnabled
+              ? `已重新启用「${target.title}」`
+              : `已暂时关闭「${target.title}」（仍保留挂载）`,
+          'success',
+      );
+      trackEvent('切换角色世界书挂载开关', { enabled: nextEnabled });
+  };
+
   const closeMountedWorldbookEditor = () => {
       setEditingWorldbookId(null);
       setIsWorldbookEditorFullscreen(false);
@@ -2074,8 +2092,18 @@ ${isInitialGeneration ? `
                                                         )}
                                                        <span className={`ml-1 shrink-0 text-slate-300 transition-transform ${previewWorldbookId === wb.id ? 'rotate-90' : ''}`} aria-hidden="true">›</span>
                                                    </button>
-                                                   <div className="flex items-center gap-1 ml-2">
-                                                       <button
+                                                    <div className="flex items-center gap-1 ml-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => toggleMountedWorldbook(wb.id)}
+                                                            aria-label={`${wb.mountEnabled === false ? '重新启用' : '暂时关闭'}世界书：${displayBook.title}`}
+                                                            aria-pressed={wb.mountEnabled !== false}
+                                                            title={wb.mountEnabled === false ? '重新启用这本世界书' : '暂时关闭这本世界书（仍保留挂载）'}
+                                                            className={`relative h-6 w-11 shrink-0 rounded-full p-1 transition-colors active:scale-95 ${wb.mountEnabled === false ? 'bg-slate-200' : 'bg-emerald-500'}`}
+                                                        >
+                                                            <span className={`block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${wb.mountEnabled === false ? 'translate-x-0' : 'translate-x-5'}`} />
+                                                        </button>
+                                                        <button
                                                            type="button"
                                                            onClick={() => openMountedWorldbookEditor(displayBook)}
                                                            aria-label={`编辑世界书：${displayBook.title}`}

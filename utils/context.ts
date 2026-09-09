@@ -8,6 +8,7 @@ import { TIME_FRAMING_CONVERSATIONAL } from './timeFramingNote';
 import { resolveCharTimeZone, nowInTimeZone, tzAwarenessNote, interactionGapNote } from './timezone';
 import {
     formatWorldbookSection,
+    isMountedWorldbookEnabled,
     isScheduleOnlyWorldbook,
     resolveWorldbookEntries,
     splitWorldbookSections,
@@ -521,12 +522,12 @@ export const ContextBuilder = {
         // 否则共享块会绕过角色级作用域，把它泄漏给整个群聊。
         const scheduleOnlyIds = new Set(
             members.flatMap(member => (member.mountedWorldbooks || [])
-                .filter(book => isScheduleOnlyWorldbook(book))
+                .filter(book => isMountedWorldbookEnabled(book) && isScheduleOnlyWorldbook(book))
                 .map(book => book.id)),
         );
         for (const m of members) {
             for (const wb of (m.mountedWorldbooks || [])) {
-                if (!wb.id || scheduleOnlyIds.has(wb.id)) continue;
+                if (!wb.id || !isMountedWorldbookEnabled(wb) || scheduleOnlyIds.has(wb.id)) continue;
                 const existing = wbCount.get(wb.id);
                 if (existing) existing.count += 1;
                 else wbCount.set(wb.id, { count: 1, entry: wb });

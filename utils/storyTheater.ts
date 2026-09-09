@@ -13,6 +13,7 @@ import type {
 import nightScreeningV627 from '../assets/presets/night-screening-v6.14.sully.json';
 import {
     formatWorldbookSection,
+    isMountedWorldbookEnabled,
     resolveWorldbookEntries,
     splitWorldbookSections,
     type WorldbookScanMessage,
@@ -977,6 +978,7 @@ export const dedupeTheaterWorldbooks = (characters: CharacterProfile[]): Mounted
     const output: MountedWorldbook[] = [];
     for (const char of characters) {
         for (const book of (char.mountedWorldbooks || [])) {
+            if (!isMountedWorldbookEnabled(book)) continue;
             const keys = [
                 book.id ? `id:${book.id}` : '',
                 `body:${book.title.trim().toLocaleLowerCase()}\u0000${book.content.trim()}`,

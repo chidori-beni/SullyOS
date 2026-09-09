@@ -1307,6 +1307,8 @@ export interface MountedWorldbook extends WorldbookEntryConfig {
     title: string;
     content: string;
     category?: string;
+    /** 角色级挂载开关；缺省视为开启，关闭时仍保留挂载但不注入任何 AI 上下文。 */
+    mountEnabled?: boolean;
     /** @deprecated 旧版角色级挂载开关；新数据请使用 mode: 'schedule'。 */
     scheduleOnly?: boolean;
 }

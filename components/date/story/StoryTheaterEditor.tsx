@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import { ArrowLeft, DownloadSimple, LockSimple, UploadSimple, UserCircle } from '@phosphor-icons/react';
 import type { CharacterProfile, StoryTheaterEntry, StoryTheaterMask, StoryTheaterPreset, UserProfile } from '../../../types';
 import { dedupeTheaterWorldbooks, downloadStoryPreset, estimateStoryTokens, getPresetPromptStats, resolveStoryPresetDocument, resolveStoryTheaterMask } from '../../../utils/storyTheater';
+import { isMountedWorldbookEnabled } from '../../../utils/worldbook';
 
 interface Props {
     initial: StoryTheaterEntry;
@@ -49,7 +50,7 @@ const StoryTheaterEditor: React.FC<Props> = ({ initial, characters, user, masks,
         return {
             ...current,
             characterIds,
-            selectedWorldbookIds: adding ? Array.from(new Set([...current.selectedWorldbookIds, ...(char.mountedWorldbooks || []).map(book => book.id)])) : current.selectedWorldbookIds.filter(id => validBooks.has(id)),
+            selectedWorldbookIds: adding ? Array.from(new Set([...current.selectedWorldbookIds, ...(char.mountedWorldbooks || []).filter(isMountedWorldbookEnabled).map(book => book.id)])) : current.selectedWorldbookIds.filter(id => validBooks.has(id)),
             characterMemoryDates: { ...current.characterMemoryDates, ...(adding && !current.characterMemoryDates[char.id] ? { [char.id]: localDateTime() } : {}) },
             characterContextLimits: { ...current.characterContextLimits, ...(adding && !current.characterContextLimits[char.id] ? { [char.id]: 100 } : {}) },
             updatedAt: Date.now(),

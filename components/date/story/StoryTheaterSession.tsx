@@ -5,6 +5,7 @@ import type { CharacterProfile, Message, StoryTheaterEntry, StoryTheaterMask, St
 import { DB } from '../../../utils/db';
 import { ContextBuilder } from '../../../utils/context';
 import { safeResponseJson, extractContent } from '../../../utils/safeApi';
+import { isMountedWorldbookEnabled } from '../../../utils/worldbook';
 import {
     appendStoryAffinityInputs,
     appendStoryUserTurn,
@@ -492,7 +493,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
     }, [entry, memoryActors, threadId]);
 
     const buildActorContexts = useCallback(async (query: string): Promise<string> => {
-        const allBookIds = new Set(actors.flatMap(actor => (actor.mountedWorldbooks || []).map(book => book.id)));
+        const allBookIds = new Set(actors.flatMap(actor => (actor.mountedWorldbooks || []).filter(isMountedWorldbookEnabled).map(book => book.id)));
         const blocks: string[] = [];
         for (const actor of actors) {
             if (!entry.carryCharacterMemory) {
@@ -531,8 +532,8 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             recalled = buildStoryActorMemoryEnvelope(maskCharacter.name, rawRecall, userProfile.name, mask.name);
         }
         const skipWorldbookIds = new Set([
-            ...(maskCharacter.mountedWorldbooks || []).map(book => book.id),
-            ...actors.flatMap(actor => (actor.mountedWorldbooks || []).map(book => book.id)),
+            ...(maskCharacter.mountedWorldbooks || []).filter(isMountedWorldbookEnabled).map(book => book.id),
+            ...actors.flatMap(actor => (actor.mountedWorldbooks || []).filter(isMountedWorldbookEnabled).map(book => book.id)),
         ]);
         const core = ContextBuilder.buildCoreContext({ ...maskCharacter, memoryPalaceInjection: recalled }, userProfile, true, recalled, {
             skipUserProfile: true,

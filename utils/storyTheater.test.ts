@@ -400,6 +400,18 @@ describe('剧情沙盒辅助逻辑', () => {
         expect(chars[1].mountedWorldbooks).toHaveLength(2);
     });
 
+    it('跳过关闭的角色挂载，但保留同一本世界书的开启挂载', () => {
+        const disabled = { id: 'a', title: 'A', content: '已关闭版本', category: '共同', mountEnabled: false };
+        const enabled = { id: 'a', title: 'A', content: '开启版本', category: '共同', mountEnabled: true };
+        const result = dedupeTheaterWorldbooks([
+            { id: 'c1', name: '一', mountedWorldbooks: [disabled] },
+            { id: 'c2', name: '二', mountedWorldbooks: [enabled] },
+        ] as CharacterProfile[]);
+
+        expect(result).toHaveLength(1);
+        expect(result[0]).toMatchObject({ id: 'a', content: '开启版本', mountEnabled: true });
+    });
+
     it('不会把不同世界书文件里 sourceUid 相同的条目误判成同一本', () => {
         const chars = [
             { id: 'c1', name: '一', mountedWorldbooks: [{ id: 'a', title: 'A', content: '一', category: '甲', sourceUid: 0 }] },

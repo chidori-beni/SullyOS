@@ -13,6 +13,7 @@ const character = {
         { id: 'online', title: '线上规则', content: '线上不要使用标点。', category: '测试', mode: 'online' },
         { id: 'offline', title: '线下规则', content: '线下保留自然标点。', category: '测试', mode: 'offline' },
         { id: 'schedule-only', title: '日程规则', content: '日程专用哨兵：安排赛车训练。', category: '测试', mode: 'schedule' },
+        { id: 'temporarily-off', title: '暂时关闭规则', content: '这条规则不该进提示词。', category: '测试', mode: 'all', mountEnabled: false },
     ],
 } as any;
 
@@ -33,10 +34,12 @@ describe('worldbook mode in shared context builder', () => {
         expect(online).toContain('线上不要使用标点。');
         expect(online).not.toContain('线下保留自然标点。');
         expect(online).not.toContain('日程专用哨兵');
+        expect(online).not.toContain('这条规则不该进提示词。');
         expect(offline).toContain('两边都能看见。');
         expect(offline).toContain('线下保留自然标点。');
         expect(offline).not.toContain('线上不要使用标点。');
         expect(offline).not.toContain('日程专用哨兵');
+        expect(offline).not.toContain('这条规则不该进提示词。');
     });
 
     it('日程作用域可以读取角色绑定的日程专用世界书', () => {

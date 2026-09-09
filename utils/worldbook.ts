@@ -83,6 +83,7 @@ export const toMountedWorldbook = (book: Worldbook): MountedWorldbook => ({
     title: book.title,
     content: book.content,
     category: book.category,
+    mountEnabled: true,
     mode: book.mode,
     key: book.key ? [...book.key] : undefined,
     keysecondary: book.keysecondary ? [...book.keysecondary] : undefined,
@@ -120,6 +121,8 @@ export const replaceMountedWorldbook = (
     return mountedWorldbooks.map(book => {
         if (book.id !== worldbook.id) return book;
         const next = toMountedWorldbook(worldbook);
+        // 挂载开关属于角色关系，不随全局世界书编辑一起被重置。
+        if (book.mountEnabled === false) next.mountEnabled = false;
         // 旧版角色级标记需要继续可读；用户显式保存新版作用域时，mode 才成为权威，
         // 允许从 schedule 切回 all/online/offline 时清理旧镜像。
         if (!options.modeIsAuthoritative && book.scheduleOnly === true) next.scheduleOnly = true;
@@ -143,6 +146,11 @@ export const getEffectiveWorldbookMode = (book: WorldbookLike): WorldbookMode =>
     (book as MountedWorldbook).scheduleOnly === true
         ? 'schedule'
         : normalizeWorldbookMode(book.mode)
+);
+
+/** 角色挂载开关缺省为开启；全局 Worldbook 没有该字段时也视为开启。 */
+export const isMountedWorldbookEnabled = (book: WorldbookLike): boolean => (
+    (book as MountedWorldbook).mountEnabled !== false
 );
 
 export const sortWorldbooksForDisplay = <T extends Worldbook>(books: T[]): T[] => (
@@ -222,6 +230,7 @@ export const isWorldbookEntryActive = (
     scene: WorldbookScene = 'online',
     contextPurpose: WorldbookContextPurpose = 'chat',
 ): boolean => {
+    if (!isMountedWorldbookEnabled(book)) return false;
     if (book.disable) return false;
     // 日程专用条目表达的是“绑定后日程必须读取”，不再受普通聊天的
     // 关键词、扫描深度、概率和 online/offline 场景筛选影响；disable 仍是总开关。

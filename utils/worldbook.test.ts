@@ -11,6 +11,7 @@ import {
     toMountedWorldbook,
     replaceMountedWorldbook,
     normalizeWorldbookMode,
+    isMountedWorldbookEnabled,
 } from './worldbook';
 
 const book = (overrides: Partial<MountedWorldbook> = {}): MountedWorldbook => ({
@@ -46,6 +47,14 @@ describe('worldbook activation', () => {
         expect(isWorldbookEntryActive(selectiveBook, [{ content: '学校里的老师和同学' }])).toBe(true);
         expect(isWorldbookEntryActive(selectiveBook, [{ content: '学校里的老师' }])).toBe(false);
         expect(isWorldbookEntryActive({ ...selectiveBook, disable: true }, [{ content: '学校里的老师和同学' }])).toBe(false);
+    });
+
+    it('keeps a temporarily disabled mount attached but excludes it from prompt resolution', () => {
+        const disabledMount = book({ mountEnabled: false });
+        expect(isMountedWorldbookEnabled(disabledMount)).toBe(false);
+        expect(isWorldbookEntryActive(disabledMount)).toBe(false);
+        expect(resolveWorldbookEntries([disabledMount])).toEqual([]);
+        expect(resolveWorldbookEntries([{ ...disabledMount, mountEnabled: true }])).toHaveLength(1);
     });
 
     it('separates online and offline entries while legacy entries remain available in both', () => {
@@ -236,7 +245,7 @@ describe('mounted worldbook synchronization', () => {
     it('replaces every matching mount from the complete global entry and keeps other entries/order', () => {
         const other = book({ id: 'other', title: '其他条目', content: '不变' });
         const mounted = [
-            book({ id: 'book-1', title: '旧标题', content: '旧正文', constant: true, scheduleOnly: true }),
+            book({ id: 'book-1', title: '旧标题', content: '旧正文', constant: true, scheduleOnly: true, mountEnabled: false }),
             other,
             book({ id: 'book-1', title: '重复旧缓存', content: '也要更新' }),
         ];
@@ -271,6 +280,7 @@ describe('mounted worldbook synchronization', () => {
             role: 1,
             disable: true,
             scheduleOnly: true,
+            mountEnabled: false,
         });
         expect(next[2]).toMatchObject({ title: '新标题', content: '新正文' });
         expect(next[1]).toBe(other);
@@ -328,6 +338,7 @@ describe('mounted worldbook synchronization', () => {
             probability: 75,
             mode: 'offline',
             displayOrder: 3,
+            mountEnabled: true,
         });
         expect(mounted).not.toHaveProperty('createdAt');
         expect(mounted).not.toHaveProperty('updatedAt');
