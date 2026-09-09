@@ -21,7 +21,12 @@ interface ChatInputAreaProps {
     onOpenVoiceInput?: () => void;
     onDeleteSelected: () => void;
     onForwardSelected?: () => void;
+    onFavoriteSelected?: () => void | Promise<void>;
     selectedCount: number;
+    /** 选中项里实际可收藏的普通文字消息数，不等同于 selectedCount。 */
+    favoriteEligibleCount?: number;
+    favoriteSkippedCount?: number;
+    favoriteSaving?: boolean;
     emojis: Emoji[];
     /** 以下会话切换/主题 props 仅私聊使用；群聊等复用方不传（'chars' 面板不会被打开） */
     characters?: CharacterProfile[];
@@ -74,7 +79,8 @@ interface ChatInputAreaProps {
 
 const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     input, setInput, isTyping, selectionMode,
-    showPanel, setShowPanel, onSend, onOpenVoiceInput, onDeleteSelected, onForwardSelected, selectedCount,
+    showPanel, setShowPanel, onSend, onOpenVoiceInput, onDeleteSelected, onForwardSelected, onFavoriteSelected, selectedCount,
+    favoriteEligibleCount = 0, favoriteSkippedCount = 0, favoriteSaving = false,
     emojis, characters = [], activeCharacterId = '', onCharSelect = () => {},
     unreadMessages = {},
     customThemes = [], onUpdateTheme = () => {}, onRemoveTheme = () => {}, activeThemeId = '',
@@ -545,7 +551,19 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         <div className={`sully-chat-inputbar ${shellClass} pb-safe shrink-0 z-40 relative`}>
             
             {selectionMode ? (
-                <div className={`p-3 flex gap-2 ${isPixelStyle ? 'bg-[#f3e7d6]' : isDiscordStyle ? 'bg-slate-900/60 backdrop-blur-md' : 'bg-white/50 backdrop-blur-md'}`}>
+                <div className={`p-3 flex flex-wrap gap-2 ${isPixelStyle ? 'bg-[#f3e7d6]' : isDiscordStyle ? 'bg-slate-900/60 backdrop-blur-md' : 'bg-white/50 backdrop-blur-md'}`}>
+                    {onFavoriteSelected && (
+                        <button
+                            type="button"
+                            onClick={() => { void onFavoriteSelected?.(); trackEvent('收藏选中的文字'); }}
+                            disabled={favoriteSaving || favoriteEligibleCount === 0}
+                            title={favoriteSkippedCount > 0 ? `将收藏 ${favoriteEligibleCount} 条文字，跳过 ${favoriteSkippedCount} 条非文字或空消息` : undefined}
+                            className={`flex-1 min-w-[7.2rem] py-3 font-bold rounded-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-1.5 ${favoriteSaving || favoriteEligibleCount === 0 ? 'bg-amber-100 text-amber-400 shadow-none' : 'bg-gradient-to-r from-amber-400 to-orange-500 text-white shadow-amber-200'}`}
+                        >
+                            <Star className="w-5 h-5" weight="fill" />
+                            {favoriteSaving ? '收藏中…' : favoriteEligibleCount > 1 ? `收藏为一组 (${favoriteEligibleCount})` : '收藏文字 (1)'}
+                        </button>
+                    )}
                     {onForwardSelected && (
                         <button
                             onClick={() => { onForwardSelected?.(); trackEvent('转发选中的消息'); }}

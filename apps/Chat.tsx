@@ -92,6 +92,10 @@ import {
     removeTextFavorite,
     saveTextFavorite,
 } from '../utils/textFavorites';
+import {
+    normalizeTextFavoriteCollectionMessages,
+    upsertTextFavoriteCollection,
+} from '../utils/textFavoriteCollections';
 import { SCHEDULE_CHANGE_EVENT, type ScheduleChangeEventDetail } from '../utils/scheduleChange';
 import { notifyCalendarDataUpdated, scheduleInviteEventToAnniversary } from '../utils/calendarIntegration';
 import {
@@ -310,6 +314,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     // 思维链是 metadata.thinkingChain，没有独立 id，所以用宿主消息 id 作为键，
     // 与 selectedMsgIds 并行存在 —— 只勾思维链时只清 metadata，宿主消息保留。
     const [selectedThinkingMsgIds, setSelectedThinkingMsgIds] = useState<Set<number>>(new Set());
+    const [textFavoriteSaving, setTextFavoriteSaving] = useState(false);
 
     // --- Translation State (per-character) ---
     const [translationEnabled, setTranslationEnabled] = useState(() => {
@@ -333,6 +338,21 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     const [showingTargetIds, setShowingTargetIds] = useState<Set<number>>(new Set());
 
     const char = characters.find(c => c.id === activeCharacterId) || characters[0];
+    // 多选收藏只取用户明确勾选的普通文字消息。这里按消息 id 重新排回聊天顺序，
+    // 不使用 Set 的点击顺序，也不把思维链 / 卡片 / 协议内容写进收藏快照。
+    const selectedTextFavoriteMessages = useMemo(() => normalizeTextFavoriteCollectionMessages(
+        messages
+            .filter(message => selectedMsgIds.has(message.id) && message.type === 'text' && message.role !== 'system')
+            .sort((a, b) => a.id - b.id)
+            .map(message => ({
+                messageId: message.id,
+                role: message.role === 'user' ? 'user' as const : 'assistant' as const,
+                speakerName: message.role === 'user' ? '我' : (char?.name || '未知角色'),
+                timestamp: message.timestamp,
+                content: message.content,
+            })),
+    ), [char?.name, messages, selectedMsgIds]);
+    const selectedTextFavoriteSkippedCount = Math.max(0, selectedMsgIds.size - selectedTextFavoriteMessages.length);
     const memoryRepairRound = useMemo(() => {
         let assistantIndex = -1;
         for (let i = messages.length - 1; i >= 0; i--) {
@@ -3427,6 +3447,60 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         setSelectedThinkingMsgIds(new Set());
     };
 
+    const handleFavoriteSelected = async () => {
+        if (textFavoriteSaving) return;
+        const selected = selectedTextFavoriteMessages;
+        if (selected.length === 0) {
+            addToast('请至少选择一条有正文的文字消息', 'info');
+            return;
+        }
+
+        const skipped = selectedTextFavoriteSkippedCount;
+        setTextFavoriteSaving(true);
+        try {
+            if (selected.length === 1) {
+                const item = selected[0];
+                await saveTextFavorite({
+                    source: 'chat',
+                    sourceKey: makeTextFavoriteSourceKey(char.id, item.messageId),
+                    messageId: item.messageId,
+                    charId: char.id,
+                    charName: item.speakerName,
+                    role: item.role,
+                    sourceTimestamp: item.timestamp,
+                    content: item.content,
+                });
+            } else {
+                await upsertTextFavoriteCollection({
+                    source: 'chat',
+                    charId: char.id,
+                    charName: char.name,
+                    messages: selected,
+                });
+            }
+
+            if (selected.length === 1) {
+                const sourceKey = makeTextFavoriteSourceKey(char.id, selected[0].messageId);
+                setChatTextFavoriteKeys(previous => new Set(previous).add(sourceKey));
+            }
+            const skippedHint = skipped > 0 ? `，跳过 ${skipped} 条非文字或空消息` : '';
+            addToast(
+                selected.length === 1
+                    ? `已收藏文字${skippedHint}`
+                    : `已收藏 ${selected.length} 条文字消息为一组${skippedHint}`,
+                'success',
+            );
+            setSelectionMode(false);
+            setSelectedMsgIds(new Set());
+            setSelectedThinkingMsgIds(new Set());
+        } catch (error: any) {
+            console.warn('[Chat] favorite selected text failed', error);
+            addToast(error?.message || '收藏失败，请检查浏览器存储空间', 'error');
+        } finally {
+            setTextFavoriteSaving(false);
+        }
+    };
+
     // --- Forward Chat Records ---
     const [showForwardModal, setShowForwardModal] = useState(false);
     const [forwardGroupId, setForwardGroupId] = useState(GROUP_FILTER_ALL); // 转发弹窗的角色分组筛选
@@ -4593,7 +4667,11 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                     onOpenVoiceInput={() => { setShowPanel('none'); setUserVoiceInputOpen(true); }}
                     onDeleteSelected={handleBatchDelete}
                     onForwardSelected={handleForwardSelected}
+                    onFavoriteSelected={handleFavoriteSelected}
                     selectedCount={selectedMsgIds.size + Array.from(selectedThinkingMsgIds).filter(id => !selectedMsgIds.has(id)).length}
+                    favoriteEligibleCount={selectedTextFavoriteMessages.length}
+                    favoriteSkippedCount={selectedTextFavoriteSkippedCount}
+                    favoriteSaving={textFavoriteSaving}
                     emojis={filteredEmojis}
                     characters={characters} activeCharacterId={activeCharacterId}
                     onCharSelect={handleCharSelectCallback}

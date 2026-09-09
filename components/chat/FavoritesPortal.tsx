@@ -27,13 +27,20 @@ import {
     textFavoriteSourceLabel,
     type TextFavorite,
 } from '../../utils/textFavorites';
+import {
+    TEXT_FAVORITE_COLLECTIONS_CHANGED_EVENT,
+    listTextFavoriteCollections,
+    removeTextFavoriteCollection,
+    type TextFavoriteCollection,
+} from '../../utils/textFavoriteCollections';
 
 const PAGE_SIZE = 10;
 type FavoriteFilter = 'all' | 'text' | 'voice';
 type SourceFilter = 'all' | VoiceFavoriteSource;
 type UnifiedFavorite =
     | { kind: 'voice'; item: VoiceFavorite }
-    | { kind: 'text'; item: TextFavorite };
+    | { kind: 'text'; item: TextFavorite }
+    | { kind: 'text-collection'; item: TextFavoriteCollection };
 
 interface FavoritesPortalProps {
     onClose: () => void;
@@ -59,36 +66,50 @@ const favoriteTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
 });
 const formatTime = (timestamp: number) => favoriteTimeFormatter.format(new Date(timestamp));
 const itemId = (item: UnifiedFavorite): string => `${item.kind}:${item.item.id}`;
+const sourceOf = (item: UnifiedFavorite): SourceFilter => item.item.source;
+const sourceTimestampOf = (item: UnifiedFavorite): number => {
+    if (item.kind !== 'text-collection') return item.item.sourceTimestamp;
+    return item.item.messages.reduce((latest, message) => Math.max(latest, message.timestamp), 0);
+};
+const favoritedAtOf = (item: UnifiedFavorite): number => item.item.favoritedAt;
 
 const sortUnifiedFavorites = (items: UnifiedFavorite[]): UnifiedFavorite[] => (
     [...items].sort((a, b) => {
-        const sourceTime = b.item.sourceTimestamp - a.item.sourceTimestamp;
+        const sourceTime = sourceTimestampOf(b) - sourceTimestampOf(a);
         if (sourceTime !== 0) return sourceTime;
-        const savedTime = b.item.favoritedAt - a.item.favoritedAt;
+        const savedTime = favoritedAtOf(b) - favoritedAtOf(a);
         if (savedTime !== 0) return savedTime;
-        return b.item.id.localeCompare(a.item.id);
+        return itemId(b).localeCompare(itemId(a));
     })
 );
 
 const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose }) => {
     const [voiceItems, setVoiceItems] = useState<VoiceFavorite[]>([]);
     const [textItems, setTextItems] = useState<TextFavorite[]>([]);
+    const [textCollections, setTextCollections] = useState<TextFavoriteCollection[]>([]);
     const [filter, setFilter] = useState<FavoriteFilter>('all');
     const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
     const [page, setPage] = useState(0);
     const [loading, setLoading] = useState(true);
     const [playingId, setPlayingId] = useState<string | null>(null);
     const [audioError, setAudioError] = useState<string | null>(null);
+    const [removingId, setRemovingId] = useState<string | null>(null);
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const objectUrlRef = useRef<string | null>(null);
+    const refreshGenerationRef = useRef(0);
+    const mountedRef = useRef(true);
 
     const refresh = useCallback(async () => {
-        const [voices, texts] = await Promise.all([
+        const generation = ++refreshGenerationRef.current;
+        const [voices, texts, collections] = await Promise.all([
             listVoiceFavorites().catch(() => [] as VoiceFavorite[]),
             listTextFavorites().catch(() => [] as TextFavorite[]),
+            listTextFavoriteCollections().catch(() => [] as TextFavoriteCollection[]),
         ]);
+        if (!mountedRef.current || generation !== refreshGenerationRef.current) return;
         setVoiceItems(voices);
         setTextItems(texts);
+        setTextCollections(collections);
         setLoading(false);
     }, []);
 
@@ -96,9 +117,12 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose }) => {
         void refresh();
         window.addEventListener(VOICE_FAVORITES_CHANGED_EVENT, refresh);
         window.addEventListener(TEXT_FAVORITES_CHANGED_EVENT, refresh);
+        window.addEventListener(TEXT_FAVORITE_COLLECTIONS_CHANGED_EVENT, refresh);
         return () => {
+            mountedRef.current = false;
             window.removeEventListener(VOICE_FAVORITES_CHANGED_EVENT, refresh);
             window.removeEventListener(TEXT_FAVORITES_CHANGED_EVENT, refresh);
+            window.removeEventListener(TEXT_FAVORITE_COLLECTIONS_CHANGED_EVENT, refresh);
         };
     }, [refresh]);
 
@@ -110,11 +134,14 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose }) => {
     const allItems = useMemo<UnifiedFavorite[]>(() => sortUnifiedFavorites([
         ...voiceItems.map(item => ({ kind: 'voice' as const, item })),
         ...textItems.map(item => ({ kind: 'text' as const, item })),
-    ]), [textItems, voiceItems]);
+        ...textCollections.map(item => ({ kind: 'text-collection' as const, item })),
+    ]), [textCollections, textItems, voiceItems]);
     const filtered = useMemo(
         () => allItems.filter(item => (
-            (filter === 'all' || item.kind === filter)
-            && (sourceFilter === 'all' || item.item.source === sourceFilter)
+            (filter === 'all'
+                || (filter === 'text' && (item.kind === 'text' || item.kind === 'text-collection'))
+                || (filter === 'voice' && item.kind === 'voice'))
+            && (sourceFilter === 'all' || sourceOf(item) === sourceFilter)
         )),
         [allItems, filter, sourceFilter],
     );
@@ -168,20 +195,27 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose }) => {
 
     const remove = async (entry: UnifiedFavorite) => {
         const rowId = itemId(entry);
+        if (removingId) return;
         if (playingId === rowId) stopPlayback();
-        if (entry.kind === 'voice') await removeVoiceFavoriteById(entry.item.id);
-        else await removeTextFavoriteById(entry.item.id);
-        await refresh();
+        setRemovingId(rowId);
+        try {
+            if (entry.kind === 'voice') await removeVoiceFavoriteById(entry.item.id);
+            else if (entry.kind === 'text-collection') await removeTextFavoriteCollection(entry.item.id);
+            else await removeTextFavoriteById(entry.item.id);
+            await refresh();
+        } finally {
+            if (mountedRef.current) setRemovingId(null);
+        }
     };
 
     const emptyTitle = filter === 'text' ? '这里还没有文字收藏'
         : filter === 'voice' ? '这里还没有语音收藏'
             : '这里还没有收藏';
     const emptyHint = filter === 'text'
-        ? '在聊天里长按文字消息，就能收进来。'
+        ? '聊天里长按可收藏单条；想保留前因后果，请进入多选后点“收藏为一组”。'
         : filter === 'voice'
             ? '在聊天、通话或见面里长按语音，就能收进来。'
-            : '在消息上长按，把想留下的文字或语音收进来。';
+            : '在消息上长按，把想留下的文字或语音收进来；多选文字还能保存成完整片段。';
 
     const portal = (
         <div className="favorites-root">
@@ -210,7 +244,7 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose }) => {
                         </button>
                         <div className="min-w-0 text-center">
                             <h1 className="text-[17px] font-bold tracking-[.08em]">收藏</h1>
-                            <p className="mt-0.5 text-[10px] text-slate-500">{allItems.length} 条 · 文字 {textItems.length} · 语音 {voiceItems.length}</p>
+                            <p className="mt-0.5 text-[10px] text-slate-500">{allItems.length} 项 · 文字 {textItems.length} 条 / {textCollections.length} 组 · 语音 {voiceItems.length}</p>
                         </div>
                         <span className="w-10" aria-hidden />
                     </div>
@@ -244,9 +278,14 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose }) => {
                             ))}
                         </div>
                     )}
+                    {filter === 'text' && (
+                        <p className="mt-2 text-center text-[10px] leading-4 text-slate-400">
+                            多选聊天消息后点“收藏为一组”，这里会按一段完整对话显示
+                        </p>
+                    )}
                 </header>
 
-                <main key={`${filter}-${page}`} className="favorites-list flex-1 min-h-0 overflow-y-auto py-2">
+                <main key={`${filter}-${sourceFilter}-${page}`} className="favorites-list flex-1 min-h-0 overflow-y-auto py-2">
                     {loading ? (
                         <div className="h-full grid place-items-center text-sm text-slate-400">正在整理收藏…</div>
                     ) : visible.length === 0 ? (
@@ -259,6 +298,52 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose }) => {
                         </div>
                     ) : visible.map((entry, index) => {
                         const rowId = itemId(entry);
+                        if (entry.kind === 'text-collection') {
+                            const messages = entry.item.messages;
+                            const first = messages[0];
+                            const last = messages[messages.length - 1];
+                            const timeLabel = first.timestamp === last.timestamp
+                                ? formatTime(first.timestamp)
+                                : `${formatTime(first.timestamp)} - ${formatTime(last.timestamp)}`;
+                            return (
+                                <article key={rowId} className="favorite-row py-4 border-b border-slate-900/10" style={{ animationDelay: `${Math.min(index, 5) * 18}ms` }} data-kind="text-collection">
+                                    <div className="flex items-start gap-3">
+                                        <div className="mt-0.5 shrink-0 w-11 h-11 grid place-items-center rounded-full bg-amber-50 text-amber-600 border border-amber-100" aria-hidden>
+                                            <FileText size={18} weight="bold" />
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-500">
+                                                <span className="font-bold text-slate-700">{entry.item.charName}</span>
+                                                <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700">文字片段</span>
+                                                <span className="px-1.5 py-0.5 rounded bg-slate-900/5">{messages.length} 条</span>
+                                                <time>{timeLabel}</time>
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            disabled={removingId === rowId}
+                                            onClick={() => void remove(entry)}
+                                            className="self-start shrink-0 w-9 h-9 grid place-items-center rounded-full text-slate-400 active:bg-rose-50 active:text-rose-500 disabled:opacity-40"
+                                            aria-label="取消整组收藏"
+                                        >
+                                            <Trash size={16} />
+                                        </button>
+                                    </div>
+                                    <div className="mt-3 overflow-hidden rounded-2xl border border-slate-900/5 bg-white/70">
+                                        {messages.map((message, messageIndex) => (
+                                            <div key={`${message.messageId}-${messageIndex}`} className={`px-3.5 py-3 ${messageIndex > 0 ? 'border-t border-slate-900/5' : ''}`}>
+                                                <div className="flex items-center justify-between gap-3 text-[10px] text-slate-400">
+                                                    <span className="font-bold text-slate-600">{message.speakerName}</span>
+                                                    <time className="shrink-0">{formatTime(message.timestamp)}</time>
+                                                </div>
+                                                <p className="mt-1.5 text-[14px] leading-6 text-slate-800 whitespace-pre-wrap break-words">{message.content}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </article>
+                            );
+                        }
+
                         const isVoice = entry.kind === 'voice';
                         const voice = isVoice ? entry.item : null;
                         const text = isVoice ? null : entry.item;
@@ -298,7 +383,7 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose }) => {
                                         </p>
                                     )}
                                 </div>
-                                <button type="button" onClick={() => void remove(entry)} className="self-start shrink-0 w-9 h-9 grid place-items-center rounded-full text-slate-400 active:bg-rose-50 active:text-rose-500" aria-label="取消收藏">
+                                <button type="button" disabled={removingId === rowId} onClick={() => void remove(entry)} className="self-start shrink-0 w-9 h-9 grid place-items-center rounded-full text-slate-400 active:bg-rose-50 active:text-rose-500 disabled:opacity-40" aria-label="取消收藏">
                                     <Trash size={16} />
                                 </button>
                             </article>
