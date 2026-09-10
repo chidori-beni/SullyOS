@@ -355,7 +355,19 @@ describe('evaluateFriendshipUpgrade —— 关系「处出来」（阶段 2.8）
         expect(r.ready).toBe(true);
     });
 
-    it('⛔⭐ 留言墙发言本身不计数——它群发给所有角色，你冲着 A 说的话 B 不能白捡', () => {
+    it('⭐ 你在彼方精确回复了 ta → 算你跟 ta 说话', () => {
+        const directed = () => ({ role: 'user', type: 'vr_card', metadata: { userBoardPost: true, boardPost: '在吗', boardDirectedAtMe: true } });
+        const r = evaluateFriendshipUpgrade(stranger, Array.from({ length: N }, directed), HOST);
+        expect(r.fromHost).toBe(N);
+    });
+
+    it('⛔⭐ 你回复的是别人，这个角色不能白捡（广播仍会发给 ta）', () => {
+        const toOther = () => ({ role: 'user', type: 'vr_card', metadata: { userBoardPost: true, boardPost: '在吗', boardDirectedAtMe: false } });
+        const r = evaluateFriendshipUpgrade(stranger, Array.from({ length: 99 }, toOther), HOST);
+        expect(r.fromHost).toBe(0);
+    });
+
+    it('⛔⭐ 没指定回复谁的泛墙贴不计数', () => {
         // 用户 2026-09-10 原话：「我回复角色A，角色B那边也计数了怎么办？」
         // 留言簿里用户根本无法指定回复谁（onUserBoardPost 只收正文），所以只能这样解。
         const r = evaluateFriendshipUpgrade(stranger, Array.from({ length: 99 }, boardSay), HOST);

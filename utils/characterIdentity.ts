@@ -77,6 +77,11 @@ export interface ExchangeLike {
         userBoardPost?: boolean;
         /** 机主侧：**真的在留言墙上说了话**才有；只更新彼方状态时没有 */
         boardPost?: string;
+        /**
+         * 机主侧：这条广播是不是**冲着收件人本人**说的
+         * （用户在留言墙精确回复了 ta 那条留言）。`VRWorldApp.onUserBoardPost` 落的。
+         */
+        boardDirectedAtMe?: boolean;
         /** 角色侧：ta 这次留言回的是谁（`runSession.ts` 落的 `boardReplyToName`） */
         boardReplyToName?: string;
         boardPosts?: { content?: string; replyToName?: string }[];
@@ -107,7 +112,8 @@ export type ExchangeKind = 'host' | 'char' | 'both' | 'none';
  * | 私聊里机主说的话 | `host` |
  * | 私聊里角色的回复 | `char` |
  * | **角色在留言簿回了机主** | **`both`** —— 一条就同时证明了「你说过」和「ta 答了」 |
- * | 机主的留言墙发言 / 彼方状态广播 | `none` —— 群发给所有人，**不能算成跟某一个人的来往** |
+ * | **机主在彼方精确回复了 ta**（`boardDirectedAtMe`） | `host` —— 你确实在跟 ta 说话 |
+ * | 机主的泛泛墙贴 / 彼方状态广播 | `none` —— 群发给所有人，**不能算成跟某一个人的来往** |
  * | 角色独自看书 / 小镇过日子 | `none` |
  *
  * 关键就是那条 `both`：**彼方的来往靠「ta 回了你」来认定，而不是靠「你说了话」。**
@@ -118,8 +124,10 @@ export const classifyExchange = (msg: ExchangeLike, hostName?: string): Exchange
     const meta = msg.metadata || undefined;
 
     if (msg.role === 'user') {
-        // 彼方广播（留言墙发言 / 状态更新）一律不单独计数，理由见上。
-        return meta?.userBoardPost ? 'none' : 'host';
+        if (!meta?.userBoardPost) return 'host';
+        // 彼方广播：**只有精确回复了这个角色**才算跟 ta 说话。
+        // 泛泛的墙贴与状态更新会群发给所有接入角色，算了就等于「你回复 A，B 也白捡一条」。
+        return meta.boardDirectedAtMe ? 'host' : 'none';
     }
     if (msg.role !== 'assistant') return 'none';
 

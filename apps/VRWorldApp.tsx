@@ -314,24 +314,59 @@ const VRWorldApp: React.FC = () => {
         if (n) setReaderJump({ novel: n, seg: segIdx });
     }, [novels]);
 
-    // 用户在留言簿发言：落墙 + 以小卡片广播给所有接入彼方的角色私聊
-    const onUserBoardPost = useCallback(async (content: string) => {
+    /**
+     * 用户在留言簿发言：落墙 ＋ 以小卡片广播给所有接入彼方的角色私聊。
+     *
+     * `replyTo` 是后补的（2026-09-10）。此前用户**只能往墙上喊**，不能回复任何人——
+     * 而角色之间早就能精确互回、也能精确回用户。用户原话：
+     * 「角色能互相回复，角色还能回复我，**凭什么我不能回复角色**？」
+     *
+     * 精确回复还顺带解决了关系计数的一个死结：墙贴是**群发给所有接入角色**的，
+     * 「你冲着 A 说的话 B 也白捡一条」；带上 `replyToId` 之后，
+     * 系统就知道这句是对谁说的（见 `characterIdentity.classifyExchange`）。
+     */
+    const onUserBoardPost = useCallback(async (
+        content: string,
+        replyTo?: { id: string; name: string },
+    ) => {
         const t = content.trim();
         if (!t) return;
         const board = (await DB.getVRGuestbook()) || { id: 'board', messages: [], updatedAt: Date.now() };
         const id = `gb_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-        board.messages = [...board.messages, { id, authorId: 'user', authorName: userName, content: t, createdAt: Date.now() }];
+        board.messages = [...board.messages, {
+            id, authorId: 'user', authorName: userName, content: t, createdAt: Date.now(),
+            ...(replyTo ? { replyToId: replyTo.id, replyToName: replyTo.name } : {}),
+        }];
         board.updatedAt = Date.now();
         await DB.saveVRGuestbook(board);
+        // 被回复的那条是谁写的 → 广播时标出来，好让计数知道这句是冲着谁说的
+        const repliedAuthorId = replyTo
+            ? board.messages.find(m => m.id === replyTo.id)?.authorId
+            : undefined;
+        const headline = replyTo
+            ? `${userName} 在留言墙上回复 ${replyTo.name}：${t}`
+            : `${userName} 在留言墙上发了：${t}`;
         const enabled = eligibleVRCharacters;
         for (const c of enabled) {
             await DB.saveMessage({
                 charId: c.id, role: 'user', type: 'vr_card',
-                content: `「彼方 · 留言簿」${userName} 在留言墙上发了：${t}`,
-                metadata: { vrCard: true, room: 'guestbook', userBoardPost: true, activity: `${userName} 在留言墙上发了：${t}`, boardPost: t },
+                content: `「彼方 · 留言簿」${headline}`,
+                metadata: {
+                    vrCard: true, room: 'guestbook', userBoardPost: true,
+                    activity: headline, boardPost: t,
+                    ...(replyTo ? { boardReplyToId: replyTo.id, boardReplyToName: replyTo.name } : {}),
+                    // 这条广播是不是**冲着收件人本人**说的。计数只认这个，
+                    // 免得「你回复 A，B 也白捡一条」。
+                    boardDirectedAtMe: !!repliedAuthorId && repliedAuthorId === c.id,
+                },
             } as any);
         }
-        addToast?.(enabled.length > 0 ? `已留言，并广播给 ${enabled.length} 位接入角色` : '已留言', 'success');
+        addToast?.(
+            enabled.length > 0
+                ? (replyTo ? `已回复 ${replyTo.name}` : `已留言，并广播给 ${enabled.length} 位接入角色`)
+                : '已留言',
+            'success',
+        );
     }, [eligibleVRCharacters, userName, addToast]);
 
     // 用户更新自己的彼方状态：以行为卡片广播给所有接入彼方的角色（机制同留言簿发言）
@@ -2481,7 +2516,7 @@ const RoomScene: React.FC<{
     eligibleCharacters: CharacterProfile[];
     userName: string;
     userAvatar: string;
-    onUserBoardPost: (content: string) => Promise<void>;
+    onUserBoardPost: (content: string, replyTo?: { id: string; name: string }) => Promise<void>;
     addToast?: (m: string, t?: any) => void;
 }> = ({ roomId, occupants, latestByChar, onClose, onJump, characters, eligibleCharacters, userName, userAvatar, onUserBoardPost, addToast }) => {
     const room = getRoom(roomId);
@@ -2495,6 +2530,8 @@ const RoomScene: React.FC<{
     const [musicState, setMusicState] = useState<VRMusicRoomState | null>(null);
     const [board, setBoard] = useState<VRGuestbookState | null>(null);
     const [postText, setPostText] = useState('');
+    /** 正在回复的那条留言（用户点某条后进入）。null = 单纯往墙上发。 */
+    const [replyTo, setReplyTo] = useState<VRGuestbookMessage | null>(null);
     const [posting, setPosting] = useState(false);
     const [gbPage, setGbPage] = useState(0);          // 留言墙翻页：0 = 最新一页
     const [confirmClear, setConfirmClear] = useState(false); // 一键清空二次确认
@@ -2514,7 +2551,10 @@ const RoomScene: React.FC<{
         const t = postText.trim();
         if (!t || posting) return;
         setPosting(true);
-        try { await onUserBoardPost(t); setPostText(''); setGbPage(0); setBoard(await DB.getVRGuestbook()); }
+        try {
+            await onUserBoardPost(t, replyTo ? { id: replyTo.id, name: replyTo.authorName } : undefined);
+            setPostText(''); setReplyTo(null); setGbPage(0); setBoard(await DB.getVRGuestbook());
+        }
         finally { setPosting(false); }
     };
 
@@ -2668,12 +2708,27 @@ const RoomScene: React.FC<{
                                                     <span className="text-[8.5px] text-white/30 tabular-nums">{new Date(head.createdAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                                                 </div>
                                                 <div className="mt-1 space-y-1">
-                                                    {g.map(m => (
-                                                        <div key={m.id} className="text-[12.5px] leading-relaxed text-white/85 px-2.5 py-1 rounded-lg w-fit max-w-full" style={{ background: 'rgba(255,255,255,0.055)' }}>
-                                                            {m.replyToName && <span className="text-[10px] text-sky-200/45 mr-1">↩{m.replyToName}</span>}
-                                                            {m.content}
-                                                        </div>
-                                                    ))}
+                                                    {g.map(m => {
+                                                        // 被回复的那一条的原文。数据里 replyToId 一直是精确到条的，
+                                                        // 只是以前面板只显示 ↩名字 —— 于是「A 连发两条、B 回的是第二条」
+                                                        // 在墙上完全看不出来（角色那边一直是清楚的，提示词里带 #编号）。
+                                                        const quoted = m.replyToId ? all.find(x => x.id === m.replyToId) : undefined;
+                                                        return (
+                                                            <button key={m.id} type="button"
+                                                                onClick={() => { setReplyTo(m); setHideChibi(true); }}
+                                                                className="block text-left text-[12.5px] leading-relaxed text-white/85 px-2.5 py-1 rounded-lg w-fit max-w-full active:bg-white/10"
+                                                                style={{ background: 'rgba(255,255,255,0.055)' }}>
+                                                                {quoted ? (
+                                                                    <span className="block text-[10px] text-sky-200/45 mb-0.5 pl-1.5 border-l-2 border-sky-300/25 truncate max-w-[15rem]">
+                                                                        ↩{quoted.authorName}：{quoted.content}
+                                                                    </span>
+                                                                ) : m.replyToName && (
+                                                                    <span className="text-[10px] text-sky-200/45 mr-1">↩{m.replyToName}</span>
+                                                                )}
+                                                                {m.content}
+                                                            </button>
+                                                        );
+                                                    })}
                                                 </div>
                                             </div>
                                         </div>
@@ -2720,20 +2775,31 @@ const RoomScene: React.FC<{
                     </div>
                 )}
 
-                {/* 留言簿：用户发言（广播给所有接入角色） */}
+                {/* 留言簿：用户发言（广播给所有接入角色）。点墙上任一条即进入「回复该条」。 */}
                 {isGuestbook && (
-                    <div className="absolute left-0 right-0 z-30 flex items-center gap-2 px-3 py-2.5"
+                    <div className="absolute left-0 right-0 z-30 px-3 py-2.5"
                         style={{ bottom: vrBottomPad('0px'), background: 'linear-gradient(0deg,rgba(5,12,22,.92),transparent)' }}>
+                        {replyTo && (
+                            <div className="flex items-center gap-2 mb-1.5 px-3 py-1.5 rounded-xl"
+                                style={{ background: 'rgba(140,200,255,.10)', border: '1px solid rgba(140,200,255,.22)' }}>
+                                <span className="text-[10px] text-sky-200/70 shrink-0">回复 {replyTo.authorName}</span>
+                                <span className="text-[10.5px] text-white/45 truncate flex-1">{replyTo.content}</span>
+                                <button onClick={() => setReplyTo(null)}
+                                    className="text-[13px] text-white/45 px-1.5 shrink-0 active:text-white/80">×</button>
+                            </div>
+                        )}
+                        <div className="flex items-center gap-2">
                         <input value={postText} onChange={e => setPostText(e.target.value)}
                             onKeyDown={e => { if (e.key === 'Enter') submitPost(); }}
-                            placeholder={`以 ${userName} 的身份留句话…`}
+                            placeholder={replyTo ? `回复 ${replyTo.authorName}…` : `以 ${userName} 的身份留句话…（点墙上的话可以回复）`}
                             className="flex-1 rounded-full px-4 py-2 text-[12.5px] text-white placeholder-white/35 outline-none backdrop-blur-md"
                             style={{ background: 'rgba(255,255,255,.08)', border: '1px solid rgba(140,200,255,.25)' }} />
                         <button onClick={submitPost} disabled={!postText.trim() || posting}
                             className="h-9 px-4 rounded-full text-[12px] font-semibold text-white disabled:opacity-40 shrink-0"
                             style={{ background: 'linear-gradient(120deg, rgba(120,180,255,.9), rgba(150,200,235,.85))' }}>
-                            {posting ? '…' : '留言'}
+                            {posting ? '…' : (replyTo ? '回复' : '留言')}
                         </button>
+                        </div>
                     </div>
                 )}
             </div>
