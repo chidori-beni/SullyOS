@@ -362,6 +362,7 @@ const CheckPhone: React.FC = () => {
     // Detail State
     const [selectedChatRecord, setSelectedChatRecord] = useState<PhoneEvidence | null>(null);
     const [selectedEvidenceRecord, setSelectedEvidenceRecord] = useState<PhoneEvidence | null>(null);
+    const [syncingRecordId, setSyncingRecordId] = useState<string | null>(null);
     const [evidenceBackAppId, setEvidenceBackAppId] = useState<string>('home');
     const chatEndRef = useRef<HTMLDivElement>(null);
     const contactEndRef = useRef<HTMLDivElement>(null);
@@ -2095,6 +2096,74 @@ ${olderText}
         }
     };
 
+    // 手动把某一条查手机记录补进聊天：不受全局 sendToChat 开关影响，且复用同一套 phone_card 协议。
+    const handleSyncRecordToChat = async (record: PhoneEvidence) => {
+        if (!targetChar || record.systemMessageId || syncingRecordId === record.id) return;
+        setSyncingRecordId(record.id);
+
+        const app = appLabel(record.type);
+        const title = phoneFieldToText(record.title, '一条痕迹');
+        const detail = phoneFieldToText(record.detail, '...');
+        const value = phoneFieldToText(record.value);
+        const content = record.type === 'chat'
+            ? `[你手机的聊天软件] 你和「${title}」的对话：${detail.replace(/\n/g, ' ')}`
+            : `[你手机的${app}] ${title}${value ? ` · ${value}` : ''} — ${detail}`;
+
+        try {
+            const messageId = await DB.saveMessage({
+                charId: targetChar.id,
+                role: 'assistant',
+                type: 'phone_card',
+                content,
+                metadata: {
+                    phoneCard: { app, kind: record.type, title, detail, value: value || undefined, meta: record.meta },
+                    source: 'check_phone_manual',
+                },
+            } as any);
+
+            // 把消息 id 回写到手机记录：再次点击不重复发卡，删除记录时也能连同卡片一起清理。
+            updateCharacter(targetChar.id, (cur) => ({
+                phoneState: {
+                    ...cur.phoneState,
+                    records: (cur.phoneState?.records || []).map(item => item.id === record.id
+                        ? { ...item, systemMessageId: messageId }
+                        : item),
+                },
+            }));
+            const syncedRecord = { ...record, systemMessageId: messageId };
+            if (selectedChatRecord?.id === record.id) setSelectedChatRecord(syncedRecord);
+            if (selectedEvidenceRecord?.id === record.id) setSelectedEvidenceRecord(syncedRecord);
+            addToast('已生成小卡片 · 已进入聊天上下文', 'success');
+            trackEvent('手动把查手机内容同步到私聊', { appType: record.type });
+        } catch (e) {
+            console.error('manual phone card sync failed', e);
+            addToast('生成小卡片失败，请重试', 'error');
+        } finally {
+            setSyncingRecordId(null);
+        }
+    };
+
+    const renderPhoneCardAction = (record: PhoneEvidence, accent: string) => {
+        const synced = record.systemMessageId != null;
+        const loading = syncingRecordId === record.id;
+        return (
+            <div className="mt-1 mb-2">
+                <button onClick={() => handleSyncRecordToChat(record)} disabled={synced || loading}
+                    aria-label={synced ? '已进入聊天上下文' : '让角色记住这条内容'}
+                    className="w-full py-3 rounded-2xl text-[12px] font-semibold active:scale-[0.99] transition flex items-center justify-center gap-2 disabled:active:scale-100"
+                    style={synced
+                        ? { color: 'rgba(255,255,255,0.5)', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }
+                        : { color: '#fff', background: `${accent}1c`, border: `1px solid ${accent}55` }}>
+                    {loading
+                        ? <div className="w-3.5 h-3.5 border-2 border-white/25 border-t-white rounded-full animate-spin" />
+                        : synced ? <CheckSquare size={15} weight="fill" /> : <BookmarkSimple size={15} weight="fill" />}
+                    {loading ? '正在生成小卡片…' : synced ? '已进入聊天上下文' : '让 TA 记住这条 · 生成小卡片'}
+                </button>
+                {!synced && <p className="text-[10px] text-white/30 text-center mt-2">只发送这一条，不会改变“同步到私聊”开关。</p>}
+            </div>
+        );
+    };
+
     const fmtClock = (t: number) => formatPhoneTime(t, charTimeZone, 'en-US', { hour: '2-digit', minute: '2-digit' });
 
     const lastSeenText = (() => {
@@ -2258,7 +2327,8 @@ ${olderText}
                     <div ref={chatEndRef} />
                 </div>
                 {/* 归档只读：不再生成后续；改为「绑定到人际关系」（真人会双向同步） */}
-                <div className="shrink-0 w-full p-4 pb-6">
+                <div className="shrink-0 w-full p-4 pb-6 space-y-2">
+                    {renderPhoneCardAction(selectedChatRecord, accent)}
                     <button onClick={() => askConfirm({
                         title: '绑定到联系人？',
                         desc: linkedReal
@@ -2462,6 +2532,7 @@ ${olderText}
                         <div className="flex justify-between gap-4"><dt className="text-white/30">记录编号</dt><dd className="text-white/40 text-right font-mono">#{r.id.slice(-8).toUpperCase()}</dd></div>
                     </dl>
 
+                    {renderPhoneCardAction(r, accent)}
                     <button onClick={() => askConfirm({
                         title: '删除这条记录？', desc: '删除「' + r.title + '」后无法恢复。', confirmLabel: '删除', danger: true,
                         onConfirm: () => handleDeleteRecord(r),
