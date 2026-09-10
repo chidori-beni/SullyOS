@@ -275,6 +275,20 @@ export interface PromptBuildOptions {
      * scheduleMessageTagEnabled 处的说明。
      */
     timelyByWorker?: boolean;
+    /**
+     * 家园（小镇）路径。**必须传 true**，否则会注入 `buildChatPartnerNote` 那段
+     * 「对面是这台手机的机主……你不认识 ta」——在小镇里那句是错的，而且和
+     * `buildModeRule` 的存在感档位**正面打架**：
+     *
+     * ```
+     * 你不认识 ta，此前从未与 ta 说过话。          ← buildChatPartnerNote
+     * 【模式：远方】ta 认识你……你们是网上认识的。   ← buildModeRule
+     * ```
+     *
+     * 用户 2026-09-10 实测症状：「远方」档表现得和「重度」一模一样，就是被这句顶掉的。
+     * 小镇本来也没有「对面」——addendum 第一句就写着「这不是和 X 的聊天」。
+     */
+    worldHome?: boolean;
     /** 用户和角色仍在同一次线下见面中，但此刻通过手机互发消息。 */
     activeDateEncounter?: DateEncounterPresence;
     /**
@@ -463,7 +477,9 @@ export const ChatPrompts = {
             userProfile,
             true,
             undefined,
-            undefined,
+            // 小镇：关掉「正在和你说话的人」，该说的由存在感档位（buildModeRule）负责，
+            // 两边都注会直接矛盾。见 PromptBuildOptions.worldHome。
+            promptOptions?.worldHome ? { skipChatPartnerNote: true } : undefined,
             { worldbookMessages: currentMsgs },
             { deferVolatile: true },
         );

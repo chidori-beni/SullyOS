@@ -124,6 +124,12 @@ export const ContextBuilder = {
         memoryPalaceContext?: string,
         groupOptions?: {
             skipUserProfile?: boolean;
+            /**
+             * 小镇专用：它传 `groupOptions` 的**唯一目的**就是关掉「正在和你说话的人」那段
+             * —— 小镇没有「对面」，且该段与存在感档位（buildModeRule）正面矛盾。
+             * **别以为这字段没被直接读到就删掉它**：删了小镇会重新拿到那段矛盾文案。
+             */
+            skipChatPartnerNote?: boolean;
             skipWorldview?: boolean;
             skipWorldbookIds?: Set<string>;
             headerOverride?: string;
@@ -207,7 +213,10 @@ export const ContextBuilder = {
         // 群聊不走这里：它在 GroupChat.tsx 有自己的「先认清 U」（buildGroupHostAwarenessLine），
         // 两边都注入会重复且措辞打架。
         // 缺省角色（partner 且没指过 userMacroTarget）返回空串，旧角色零变化。
-        if (!groupOptions) {
+        // 非 1v1 上下文（群聊 / 剧场 / 通话面板 / 小镇）一律不注入：它们各有自己的身份框定 ——
+        // 群聊是 buildGroupHostAwarenessLine，小镇是 buildModeRule。传了 groupOptions 即视为非 1v1。
+        const skipPartnerNote = !!groupOptions;
+        if (!skipPartnerNote) {
             const partnerNote = buildChatPartnerNote(
                 char,
                 user?.name,

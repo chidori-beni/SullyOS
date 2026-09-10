@@ -393,8 +393,11 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         !!isListeningTogether,
         musicCfg,
         recentTrackSwitch,
-        (input.timelyByWorker || returningFromMode || activeDateEncounter || input.scheduleContext || input.busyReplyDecision || currentTurnHasUserImage) ? {
+        (input.timelyByWorker || returningFromMode || activeDateEncounter || input.scheduleContext || input.busyReplyDecision || currentTurnHasUserImage || input.recallEntryPoint === 'world_home') ? {
             timelyByWorker: input.timelyByWorker === true,
+            // 小镇：关掉「正在和你说话的人」。用现成的 recallEntryPoint 当信号，
+            // 不再新增入参；小镇两个调用点（engine.ts:357 / :598）本来就都传了它。
+            worldHome: input.recallEntryPoint === 'world_home',
             returningFromMode: activeDateEncounter ? undefined : (returningFromMode || undefined),
             abruptCallEnd: activeDateEncounter ? false : abruptCallEnd,
             activeDateEncounter,
