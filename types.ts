@@ -1054,6 +1054,8 @@ export interface PhoneEvidence {
     timestamp: number;
     systemMessageId?: number;
     value?: string;
+    /** 内置备忘录 / 钱包 / 浏览器记录的结构化字段；旧记录没有此字段也完全兼容。 */
+    meta?: Record<string, unknown>;
     /** 人际关系系统：本条记录归属的联系人（phoneState.contacts 里的 id） */
     contactId?: string;
 }

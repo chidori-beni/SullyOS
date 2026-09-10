@@ -13,16 +13,16 @@ import {
 } from '../utils/relationshipChat';
 import PersonaSim, { LifeLog, generatePersonaScript } from './PersonaSim';
 import { usePersonaSim, personaSimStore } from '../utils/personaSimStore';
-import { getLastInnerState } from '../utils/emotionApply';
 import { trackEvent } from '../utils/analytics';
 import { normalizePhoneEvidence, phoneFieldToText } from '../utils/phoneEvidence';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
 import {
-    User, Phone, ChatCircleDots, ChatCircle, ShoppingBag, Hamburger, Compass, GearSix,
+    User, Phone, ChatCircleDots, ChatCircle, ShoppingBag, Hamburger, GearSix,
     Plus, SignOut, CaretLeft, CaretRight, Cloud, ImagesSquare, LockSimple, Package,
     Storefront, Heart, ArrowsClockwise, Tray, DotsThree, ClockCounterClockwise, Sparkle,
     UsersThree, UserPlus, Prohibit, LinkSimple, PaperPlaneTilt, PencilSimple, Trash,
-    Robot, Brain, MaskHappy, Question, PaintBrush
+    Robot, Brain, MaskHappy, Question, PaintBrush, Notebook, Wallet, Globe, MagnifyingGlass,
+    Article, ArrowDownLeft, ArrowUpRight, BookmarkSimple, ListChecks, LockKey, CheckSquare
 } from '@phosphor-icons/react';
 
 type LayoutId = NonNullable<PhoneCustomApp['layout']>;
@@ -34,6 +34,88 @@ const APP_LAYOUTS: { id: LayoutId; name: string; desc: string; icon: string }[] 
     { id: 'forum', name: '论坛风格', desc: '帖子 / 楼层 / 回复', icon: '📋' },
     { id: 'novel', name: '小说风格', desc: '章节 / 正文阅读', icon: '📖' },
 ];
+
+type RawPhoneRow = Record<string, any>;
+
+const asPhoneRecord = (value: unknown): RawPhoneRow | undefined =>
+    value && typeof value === 'object' && !Array.isArray(value) ? value as RawPhoneRow : undefined;
+
+const unwrapPhoneRows = (value: unknown): { rows: RawPhoneRow[]; root?: RawPhoneRow } => {
+    if (Array.isArray(value)) {
+        return { rows: value.filter(item => !!asPhoneRecord(item)) as RawPhoneRow[] };
+    }
+    const root = asPhoneRecord(value);
+    const rows = Array.isArray(root?.rows)
+        ? root.rows.filter(item => !!asPhoneRecord(item)) as RawPhoneRow[]
+        : [];
+    return { rows, root };
+};
+
+const phoneBoolean = (value: unknown): boolean =>
+    value === true || value === 'true' || value === 1 || value === '1';
+
+const phoneChecklistText = (items: unknown): string => {
+    if (!Array.isArray(items)) return '';
+    return items.map(item => {
+        const row = asPhoneRecord(item);
+        const text = phoneFieldToText(row?.text ?? row?.title ?? item);
+        return text ? `${phoneBoolean(row?.done) ? '☑' : '☐'} ${text}` : '';
+    }).filter(Boolean).join('\n');
+};
+
+const buildPhoneRecordMeta = (type: string, item: RawPhoneRow, root?: RawPhoneRow): Record<string, unknown> | undefined => {
+    if (type === 'notes') {
+        return {
+            noteType: phoneFieldToText(item.noteType ?? item.type, 'text'),
+            body: phoneFieldToText(item.body ?? item.detail),
+            folder: phoneFieldToText(item.folder),
+            pinned: phoneBoolean(item.pinned),
+            locked: phoneBoolean(item.locked),
+            date: phoneFieldToText(item.date),
+            draftTo: phoneFieldToText(item.draftTo),
+            items: Array.isArray(item.items)
+                ? item.items.map(entry => {
+                    const row = asPhoneRecord(entry);
+                    return { text: phoneFieldToText(row?.text ?? row?.title ?? entry), done: phoneBoolean(row?.done) };
+                }).filter(entry => entry.text)
+                : undefined,
+            photoIdx: item.photoIdx == null ? undefined : phoneFieldToText(item.photoIdx),
+        };
+    }
+    if (type === 'wallet') {
+        const amount = phoneFieldToText(item.amount ?? item.value);
+        return {
+            amount,
+            balance: phoneFieldToText(item.balance ?? root?.balance),
+            time: phoneFieldToText(item.time ?? item.date),
+            category: phoneFieldToText(item.category),
+            note: phoneFieldToText(item.note ?? item.detail),
+            direction: amount.trim().startsWith('+') ? '收入' : '支出',
+        };
+    }
+    if (type === 'browser') {
+        return {
+            browserType: phoneFieldToText(item.pageType ?? item.type, 'article'),
+            site: phoneFieldToText(item.site),
+            snippet: phoneFieldToText(item.snippet ?? item.body ?? item.detail),
+            time: phoneFieldToText(item.time ?? item.date),
+        };
+    }
+    return undefined;
+};
+
+const phoneMetaValue = (record: PhoneEvidence, key: string): unknown => record.meta?.[key];
+const phoneMetaText = (record: PhoneEvidence, key: string, fallback = '') => phoneFieldToText(phoneMetaValue(record, key), fallback);
+const phoneMetaBoolean = (record: PhoneEvidence, key: string): boolean => phoneBoolean(phoneMetaValue(record, key));
+const phoneMetaItems = (record: PhoneEvidence): { text: string; done: boolean }[] => {
+    const items = phoneMetaValue(record, 'items');
+    return Array.isArray(items)
+        ? items.map(item => {
+            const row = asPhoneRecord(item);
+            return { text: phoneFieldToText(row?.text ?? item), done: phoneBoolean(row?.done) };
+        }).filter(item => item.text)
+        : [];
+};
 
 // 智能体 App：机主自己在玩的三类 AI 服务
 const AI_SERVICES: { id: AiServiceKind; name: string; tagline: string; accent: string }[] = [
@@ -333,7 +415,6 @@ const CheckPhone: React.FC = () => {
 
     // 人格模拟：演出脚本在全局 store 后台生成，生成期间用户可离开查手机/切到别的 OS App
     const sim = usePersonaSim();
-    const [showInner, setShowInner] = useState(false);
 
     // 二次确认弹窗：所有删除/移除/清空都先走这里
     const [confirmState, setConfirmState] = useState<{
@@ -623,7 +704,7 @@ const CheckPhone: React.FC = () => {
         setIsLoading(true);
         // 只上报内置 App 的固定类型；自定义 App 的 id 是用户造的，一律归成 custom
         trackEvent('刷新生成手机 App 数据', {
-            appType: ['call', 'order', 'delivery', 'social', 'contacts'].includes(type) ? type : 'custom',
+            appType: ['chat', 'call', 'order', 'delivery', 'contacts', 'notes', 'wallet', 'browser'].includes(type) ? type : 'custom',
         });
 
         try {
@@ -727,13 +808,32 @@ ${realCharRule}
                     promptInstruction = `生成 3 条该角色最近的外卖记录。value 字段请填写实付金额(如 ¥38.50)。
     格式JSON数组: [{ "title": "店名", "detail": "菜品明细", "value": "¥38.50" }, ...]`;
                     logPrefix = "外卖APP";
-                } else if (type === 'social') {
-                    promptInstruction = `生成 2 条该角色的朋友圈/社交媒体动态。
-    格式JSON数组: [{ "title": "时间/状态", "detail": "正文内容" }, ...]`;
-                    logPrefix = "朋友圈";
+                } else if (type === 'notes') {
+                    promptInstruction = `生成 6-9 条该角色手机备忘录里的真实记录，抄手机备忘录的混合形态：普通随笔、checklist 清单、draft 草稿、image 图片备注都可以出现，内容要符合人设和近期生活。
+    格式JSON对象: { "rows": [
+      { "type": "text", "title": "标题", "body": "正文", "folder": "文件夹", "pinned": false, "locked": false, "date": "今天 21:30" },
+      { "type": "checklist", "title": "清单标题", "items": [{ "text": "待办事项", "done": false }], "folder": "", "pinned": false, "locked": false, "date": "昨天" },
+      { "type": "draft", "title": "草稿标题", "body": "还没发出去的话", "draftTo": "联系人或平台", "folder": "", "pinned": false, "locked": true, "date": "周一" },
+      { "type": "image", "title": "图片备注", "body": "照片旁边写下的说明", "photoIdx": 0, "folder": "", "pinned": false, "locked": false, "date": "上周" }
+    ] }`;
+                    logPrefix = "备忘录";
+                } else if (type === 'wallet') {
+                    promptInstruction = `生成 10-14 条该角色手机钱包里的近期流水，混合日常消费、转账、收入和订阅，金额与场景要真实，避免重复流水或整齐的测试数据。
+    格式JSON对象: { "balance": "8642.50", "rows": [{ "name": "便利店早餐", "amount": "-38.00", "time": "今天 08:20", "category": "餐饮", "note": "可选备注" }, ...] }
+    amount 必须是带正负号的字符串；balance、name、time、category、note 都是字符串。`;
+                    logPrefix = "钱包";
+                } else if (type === 'browser') {
+                    promptInstruction = `生成 8-12 条该角色浏览器里的近期浏览记录，混合 search、article、video、product、social、image 类型，查询和网页内容要像真实生活留下的痕迹。
+    格式JSON对象: { "rows": [
+      { "type": "search", "title": "具体搜索词", "site": "百度", "snippet": "", "time": "今天 23:41" },
+      { "type": "article", "title": "文章标题", "site": "知乎", "snippet": "看到的摘要", "time": "昨天" }
+    ] }`;
+                    logPrefix = "浏览器";
                 }
             }
-            promptInstruction += `\n\n**JSON 字段类型硬约束**：每条记录的 "title"、"detail"、"value" 只能是字符串（value 可省略），绝不能返回对象或数组；标签、阅读进度、摘录、批注等结构请先整理成 detail 中的普通文本。`;
+            promptInstruction += ['notes', 'wallet', 'browser'].includes(type)
+                ? `\n\n**JSON 字段类型硬约束**：除 notes 的 checklist.items 外，title/name/body/detail/value/site/snippet/time/date 等文本字段只能是字符串，不能返回对象；pinned、locked、done 只能是布尔值。`
+                : `\n\n**JSON 字段类型硬约束**：每条记录的 "title"、"detail"、"value" 只能是字符串（value 可省略），绝不能返回对象或数组；标签、阅读进度、摘录、批注等结构请先整理成 detail 中的普通文本。`;
 
             const perspectiveLock = `### [视角锁定 · 极重要]
 接下来要生成的是**你（${targetChar.name}）自己手机里的东西**——你自己的生活、社交、记录。
@@ -758,7 +858,8 @@ ${realCharRule}
             // extractContent + extractJson：兼容 Claude 返回格式（正文在 reasoning_content、
             // 包 ```json 代码块、夹散文、尾逗号、内层未转义引号…），裸 JSON.parse 解不出来会丢空。
             const content = extractContent(data);
-            const json = extractJson(content) || [];
+            const parsed = extractJson(content);
+            const { rows: jsonRows, root: jsonRoot } = unwrapPhoneRows(parsed);
 
             const newRecordsToAdd: PhoneEvidence[] = [];
 
@@ -769,12 +870,27 @@ ${realCharRule}
             let contactsAcc: PhoneContact[] = [...(targetChar.phoneState?.contacts || [])];
             const isContactBearing = type === 'chat' || type === 'contacts';
 
-            if (Array.isArray(json)) {
-                for (const item of json) {
-                    if (!item || typeof item !== 'object') continue;
-                    const recordTitle = phoneFieldToText(item.title, 'Unknown');
-                    const recordDetail = phoneFieldToText(item.detail, '...');
-                    const recordValue = phoneFieldToText(item.value);
+            if (jsonRows.length > 0) {
+                for (const item of jsonRows) {
+                    const checklistDetail = type === 'notes' ? phoneChecklistText(item.items) : '';
+                    const recordTitle = phoneFieldToText(
+                        type === 'wallet' ? (item.name ?? item.title) : (item.title ?? item.name),
+                        'Unknown',
+                    );
+                    const recordDetail = phoneFieldToText(
+                        type === 'notes' ? (item.body || item.detail || checklistDetail)
+                            : type === 'wallet' ? (item.note ?? item.detail)
+                                : type === 'browser' ? (item.snippet ?? item.body ?? item.detail)
+                                    : item.detail,
+                        type === 'notes' ? '（空白备忘）' : type === 'browser' ? '（无摘要）' : '...',
+                    );
+                    const recordValue = phoneFieldToText(
+                        type === 'wallet' ? (item.amount ?? item.value)
+                            : type === 'browser' ? (item.site ?? item.value)
+                                : type === 'notes' ? (item.date ?? item.value)
+                                    : item.value,
+                    );
+                    const recordMeta = buildPhoneRecordMeta(type, item, jsonRoot);
 
                     // ---- 真假甄别 + 联系人 upsert ----
                     let contactId: string | undefined;
@@ -828,7 +944,7 @@ ${realCharRule}
                             role: 'assistant',
                             type: 'phone_card',
                             content: cardContent,
-                            metadata: { phoneCard: { app: logPrefix, kind: type, title: recordTitle, detail: recordDetail, value: recordValue || undefined } },
+                            metadata: { phoneCard: { app: logPrefix, kind: type, title: recordTitle, detail: recordDetail, value: recordValue || undefined, meta: recordMeta } },
                         } as any);
                         const currentMsgs = await DB.getMessagesByCharId(targetChar.id);
                         savedMsgId = currentMsgs[currentMsgs.length - 1]?.id;
@@ -840,6 +956,7 @@ ${realCharRule}
                         title: recordTitle,
                         detail: recordDetail,
                         value: recordValue || undefined,
+                        meta: recordMeta,
                         timestamp: Date.now(),
                         systemMessageId: savedMsgId,
                         contactId,
@@ -1939,14 +2056,17 @@ ${olderText}
     //  DERIVED STATS  (drive the "living" home screen)
     // ============================================================
     const charName = targetChar?.name || 'Unknown Device';
-    const allSorted = [...records].sort((a, b) => b.timestamp - a.timestamp);
-    const chatRecords = records.filter(r => r.type === 'chat');
-    const orderRecords = records.filter(r => r.type === 'order');
-    const deliveryRecords = records.filter(r => r.type === 'delivery');
-    const socialRecords = records.filter(r => r.type === 'social');
+    // 旧版本可能已经存过 social 记录；保留数据以免破坏历史，但不再给它单独入口或统计位。
+    const visibleRecords = records.filter(r => r.type !== 'social');
+    const allSorted = [...visibleRecords].sort((a, b) => b.timestamp - a.timestamp);
+    const chatRecords = visibleRecords.filter(r => r.type === 'chat');
+    const orderRecords = visibleRecords.filter(r => r.type === 'order');
+    const deliveryRecords = visibleRecords.filter(r => r.type === 'delivery');
+    const noteRecords = visibleRecords.filter(r => r.type === 'notes');
+    const walletRecords = visibleRecords.filter(r => r.type === 'wallet');
+    const browserRecords = visibleRecords.filter(r => r.type === 'browser');
     const simLogCount = targetChar?.phoneState?.simLogs?.length || 0;
     const sendToChat = targetChar?.phoneState?.sendToChat !== false; // 默认开
-    const lastInner = targetChar ? getLastInnerState(targetChar.id) : '';
     const lastTs = allSorted[0]?.timestamp;
 
     const appLabel = (type: string): string => {
@@ -1954,8 +2074,10 @@ ${olderText}
             case 'chat': return '聊天';
             case 'order': return '淘宝';
             case 'delivery': return '外卖';
-            case 'social': return '朋友圈';
             case 'call': return '通话';
+            case 'notes': return '备忘录';
+            case 'wallet': return '钱包';
+            case 'browser': return '浏览器';
             default: return customApps.find(a => a.id === type)?.name || 'App';
         }
     };
@@ -1982,7 +2104,10 @@ ${olderText}
         })()
         : 'no orders yet';
 
-    const momentsSub = socialRecords.length ? `${socialRecords.length} new posts` : 'nothing shared';
+    const notesSub = noteRecords.length ? `${noteRecords.length} 条记录` : '暂无记录';
+    const walletBalance = walletRecords.map(r => phoneMetaText(r, 'balance')).find(Boolean) || '';
+    const walletSub = walletBalance ? `余额 ¥${walletBalance}` : walletRecords.length ? `${walletRecords.length} 条流水` : '暂无流水';
+    const browserSub = browserRecords.length ? `${browserRecords.length} 条浏览记录` : '暂无记录';
     const taobaoSub = orderRecords.length ? `${orderRecords.length} items in cart` : 'cart is empty';
     // 「联系人」主卡副标题：TA 通讯录里的人数（不含用户自己）
     const contactCount = contacts.filter(c => !isUserName(c.name)).length;
@@ -2008,7 +2133,6 @@ ${olderText}
     const clockNow = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     const dateNow = now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
     const fallbackQuote = targetChar?.socialProfile?.bio || '“有些话，隔着屏幕，反而更接近真实。”';
-    const innerQuote = lastInner.trim();
 
     // ============================================================
     //  SUB-APPS
@@ -2146,9 +2270,12 @@ ${olderText}
         const layout = customApp?.layout || 'generic';
         const isCall = r.type === 'call';
         const isCommerce = r.type === 'order' || r.type === 'delivery' || layout === 'shop';
-        const isSocial = r.type === 'social' || layout === 'feed';
+        const isNote = r.type === 'notes';
+        const isWallet = r.type === 'wallet';
+        const isBrowser = r.type === 'browser';
+        const isSocial = layout === 'feed';
         const isNovel = layout === 'novel';
-        const accent = customApp?.color || (isCall ? '#4ade80' : r.type === 'order' ? '#ff7a45' : r.type === 'delivery' ? '#fbbf24' : isSocial ? '#c084fc' : '#8b9cff');
+        const accent = customApp?.color || (isCall ? '#4ade80' : r.type === 'order' ? '#ff7a45' : r.type === 'delivery' ? '#fbbf24' : isNote ? '#c084fc' : isWallet ? '#f6ad55' : isBrowser ? '#60a5fa' : isSocial ? '#c084fc' : '#8b9cff');
         const title = customApp?.name || appLabel(r.type);
         const dateText = new Date(r.timestamp).toLocaleString('zh-CN', {
             year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -2157,11 +2284,20 @@ ${olderText}
         const isOutgoing = isCall && (r.value?.includes('呼出') || r.value?.includes('Outgoing'));
         const callDirection = isMissed ? '未接来电' : isOutgoing ? '呼出' : '呼入';
         const callDuration = r.value?.match(/\((.*?)\)/)?.[1] || (isMissed ? '—' : '未记录');
+        const noteType = phoneMetaText(r, 'noteType', 'text');
+        const noteTypeLabel = ({ text: '随笔', checklist: '清单', draft: '草稿', image: '图片备注' } as Record<string, string>)[noteType] || noteType;
+        const walletAmount = r.value || phoneMetaText(r, 'amount');
+        const walletIsIncome = walletAmount.trim().startsWith('+');
+        const browserType = phoneMetaText(r, 'browserType', 'article');
+        const browserTypeLabel = ({ search: '搜索', article: '文章', video: '视频', product: '商品', social: '社交', image: '图片' } as Record<string, string>)[browserType] || browserType;
         const detailIcon = customApp
             ? <span className="text-lg">{customApp.icon}</span>
             : isCall ? <Phone size={20} weight="fill" />
                 : r.type === 'order' ? <ShoppingBag size={20} weight="fill" />
                     : r.type === 'delivery' ? <Hamburger size={20} weight="fill" />
+                        : isNote ? <Notebook size={20} weight="fill" />
+                            : isWallet ? <Wallet size={20} weight="fill" />
+                                : isBrowser ? <Globe size={20} weight="fill" />
                         : <ImagesSquare size={20} weight="fill" />;
 
         return (
@@ -2170,7 +2306,80 @@ ${olderText}
                     onBack={() => { setSelectedEvidenceRecord(null); setActiveAppId(evidenceBackAppId); }}
                     right={<span style={{ color: accent }}>{detailIcon}</span>} />
                 <div className="flex-1 overflow-y-auto no-scrollbar overscroll-contain px-5 pt-3 pb-10">
-                    {isSocial ? (
+                    {isNote ? (
+                        <article>
+                            <div className="flex items-start gap-4 pb-6 border-b border-white/[0.07]">
+                                <div className="w-16 h-16 rounded-2xl flex items-center justify-center shrink-0"
+                                    style={{ color: accent, background: `linear-gradient(135deg, ${accent}33, ${accent}0d)` }}>
+                                    <Notebook size={29} weight="light" />
+                                </div>
+                                <div className="min-w-0 flex-1 pt-0.5">
+                                    <div className="text-[18px] leading-7 font-semibold text-white/95 break-words">{r.title}</div>
+                                    <div className="text-[11px] text-white/40 mt-1.5 flex items-center gap-2">
+                                        <span>{noteTypeLabel}</span>
+                                        {phoneMetaText(r, 'folder') && <span>· {phoneMetaText(r, 'folder')}</span>}
+                                    </div>
+                                    <div className="flex items-center gap-2 mt-2 text-[10px] text-white/35">
+                                        {phoneMetaBoolean(r, 'pinned') && <span className="flex items-center gap-1"><BookmarkSimple size={12} weight="fill" />置顶</span>}
+                                        {phoneMetaBoolean(r, 'locked') && <span className="flex items-center gap-1"><LockKey size={12} weight="fill" />私密</span>}
+                                    </div>
+                                </div>
+                            </div>
+                            <section className="py-6 border-b border-white/[0.07]">
+                                <div className="text-[10px] tracking-[0.22em] uppercase mb-3" style={{ color: accent }}>备忘内容</div>
+                                {phoneMetaItems(r).length > 0 ? (
+                                    <div className="space-y-3">
+                                        {phoneMetaItems(r).map((item, i) => (
+                                            <div key={`${r.id}-item-${i}`} className={`flex items-start gap-2.5 text-[14px] leading-6 ${item.done ? 'text-white/35 line-through' : 'text-white/80'}`}>
+                                                <CheckSquare size={17} weight={item.done ? 'fill' : 'regular'} className="shrink-0 mt-1" style={{ color: item.done ? accent : 'rgba(255,255,255,0.35)' }} />
+                                                <span>{item.text}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-[14px] leading-7 text-white/75 whitespace-pre-wrap break-words">{r.detail || '没有留下更多内容。'}</div>
+                                )}
+                            </section>
+                            {phoneMetaText(r, 'draftTo') && <div className="py-5 border-b border-white/[0.07] text-[12px] text-white/55">草稿收件人：<span className="text-white/80">{phoneMetaText(r, 'draftTo')}</span></div>}
+                        </article>
+                    ) : isWallet ? (
+                        <article>
+                            <div className="flex items-start gap-4 pb-6 border-b border-white/[0.07]">
+                                <div className="w-16 h-16 rounded-2xl flex items-center justify-center shrink-0"
+                                    style={{ color: accent, background: `linear-gradient(135deg, ${accent}33, ${accent}0d)` }}>
+                                    <Wallet size={29} weight="light" />
+                                </div>
+                                <div className="min-w-0 flex-1 pt-0.5">
+                                    <div className="text-[18px] leading-7 font-semibold text-white/95 break-words">{r.title}</div>
+                                    <div className="text-[11px] text-white/40 mt-1.5">{phoneMetaText(r, 'category', '钱包流水')} · {phoneMetaText(r, 'time', dateText)}</div>
+                                    {walletAmount && <div className="text-[22px] font-bold mt-2" style={{ color: walletIsIncome ? '#4ade80' : accent }}>{walletAmount}</div>}
+                                </div>
+                            </div>
+                            <section className="py-6 border-b border-white/[0.07]">
+                                <div className="text-[10px] tracking-[0.22em] uppercase mb-3" style={{ color: accent }}>流水备注</div>
+                                <div className="text-[14px] leading-7 text-white/75 whitespace-pre-wrap break-words">{r.detail || '没有留下更多内容。'}</div>
+                            </section>
+                            {phoneMetaText(r, 'balance') && <div className="py-5 border-b border-white/[0.07] flex justify-between text-[12px]"><span className="text-white/35">记录时余额</span><span className="text-white/75">¥{phoneMetaText(r, 'balance')}</span></div>}
+                        </article>
+                    ) : isBrowser ? (
+                        <article>
+                            <div className="flex items-start gap-4 pb-6 border-b border-white/[0.07]">
+                                <div className="w-16 h-16 rounded-2xl flex items-center justify-center shrink-0"
+                                    style={{ color: accent, background: `linear-gradient(135deg, ${accent}33, ${accent}0d)` }}>
+                                    {browserType === 'search' ? <MagnifyingGlass size={29} weight="light" /> : <Globe size={29} weight="light" />}
+                                </div>
+                                <div className="min-w-0 flex-1 pt-0.5">
+                                    <div className="text-[18px] leading-7 font-semibold text-white/95 break-words">{r.title}</div>
+                                    <div className="text-[11px] text-white/40 mt-1.5 flex items-center gap-2"><span>{browserTypeLabel}</span>{phoneMetaText(r, 'site') && <span>· {phoneMetaText(r, 'site')}</span>}</div>
+                                    {phoneMetaText(r, 'time') && <div className="text-[10px] text-white/30 mt-2">{phoneMetaText(r, 'time')}</div>}
+                                </div>
+                            </div>
+                            <section className="py-6 border-b border-white/[0.07]">
+                                <div className="text-[10px] tracking-[0.22em] uppercase mb-3" style={{ color: accent }}>页面摘要</div>
+                                <div className="text-[14px] leading-7 text-white/75 whitespace-pre-wrap break-words">{r.detail || '没有留下更多内容。'}</div>
+                            </section>
+                        </article>
+                    ) : isSocial ? (
                         <article>
                             <div className="flex items-center gap-3 pb-4 border-b border-white/[0.07]">
                                 {targetChar?.avatar
@@ -2368,38 +2577,146 @@ ${olderText}
         );
     };
 
-    const renderMoments = () => {
+    const renderNotes = () => {
         const accent = '#c084fc';
-        const list = records.filter(r => r.type === 'social').sort((a, b) => b.timestamp - a.timestamp);
+        const list = noteRecords.sort((a, b) => {
+            const aPinned = phoneMetaBoolean(a, 'pinned') ? 1 : 0;
+            const bPinned = phoneMetaBoolean(b, 'pinned') ? 1 : 0;
+            return bPinned - aPinned || b.timestamp - a.timestamp;
+        });
+        const typeLabels: Record<string, string> = { text: '随笔', checklist: '清单', draft: '草稿', image: '图片备注' };
         return (
             <SubAppShell>
-                <TermHeader title="Moments" sub="朋友圈" accent={accent} onBack={() => setActiveAppId('home')}
-                    right={<ImagesSquare size={20} weight="fill" style={{ color: accent }} />} />
+                <TermHeader title="备忘录" sub="private notes" accent={accent} onBack={() => setActiveAppId('home')}
+                    right={<Notebook size={20} weight="fill" style={{ color: accent }} />} />
                 <div className="flex-1 overflow-y-auto px-4 pt-2 no-scrollbar pb-28 overscroll-contain space-y-3">
-                    {list.length === 0 && <EmptyState text="还没有动态" />}
-                    {list.map(r => (
-                        <div key={r.id} {...evidenceEntryProps(r, 'social')}
-                            className="group relative rounded-2xl p-4 pr-8 bg-white/[0.035] border border-white/[0.06] animate-slide-up cursor-pointer active:scale-[0.99] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60">
-                            <div className="flex items-center gap-3 mb-2.5">
-                                {targetChar?.avatar
-                                    ? <img src={targetChar.avatar} className="w-9 h-9 rounded-full object-cover" />
-                                    : <div className="w-9 h-9 rounded-full" style={{ background: accent }} />}
-                                <div className="min-w-0">
-                                    <div className="text-[13px] font-semibold text-white/95">{charName}</div>
-                                    <div className="text-[10px] text-white/35">{r.title || fmtClock(r.timestamp)}</div>
+                    {list.length === 0 && <EmptyState text="还没有备忘录" />}
+                    {list.map(r => {
+                        const items = phoneMetaItems(r);
+                        const noteType = phoneMetaText(r, 'noteType', 'text');
+                        return (
+                            <div key={r.id} {...evidenceEntryProps(r, 'notes')}
+                                className="group relative rounded-2xl p-4 pr-8 bg-white/[0.035] border border-white/[0.06] animate-slide-up cursor-pointer active:scale-[0.99] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60">
+                                <div className="flex items-start gap-3 mb-2.5">
+                                    <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: `${accent}1f`, color: accent }}>
+                                        {noteType === 'checklist' ? <ListChecks size={20} weight="light" /> : <Notebook size={20} weight="light" />}
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                        <div className="text-[13.5px] font-semibold text-white/95 truncate">{r.title}</div>
+                                        <div className="text-[10px] text-white/35 mt-0.5 flex items-center gap-2">
+                                            <span>{typeLabels[noteType] || noteType}</span>
+                                            {phoneMetaText(r, 'folder') && <span>· {phoneMetaText(r, 'folder')}</span>}
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-1.5 text-white/35 shrink-0">
+                                        {phoneMetaBoolean(r, 'pinned') && <BookmarkSimple size={14} weight="fill" />}
+                                        {phoneMetaBoolean(r, 'locked') && <LockKey size={14} weight="fill" />}
+                                    </div>
                                 </div>
+                                {items.length > 0 ? (
+                                    <div className="space-y-1.5 pl-1">
+                                        {items.slice(0, 3).map((item, i) => (
+                                            <div key={`${r.id}-item-${i}`} className={`flex items-start gap-2 text-[11.5px] leading-5 ${item.done ? 'text-white/30 line-through' : 'text-white/65'}`}>
+                                                <CheckSquare size={14} weight={item.done ? 'fill' : 'regular'} className="shrink-0 mt-0.5" style={{ color: item.done ? accent : 'rgba(255,255,255,0.3)' }} />
+                                                <span className="line-clamp-1">{item.text}</span>
+                                            </div>
+                                        ))}
+                                        {items.length > 3 && <div className="text-[10px] text-white/30 pl-5">还有 {items.length - 3} 项…</div>}
+                                    </div>
+                                ) : <div className="text-[12px] text-white/55 leading-relaxed line-clamp-3 whitespace-pre-wrap">{r.detail}</div>}
+                                <div className="flex justify-between items-center mt-3 pt-2 border-t border-white/[0.06] text-[10px] text-white/30">
+                                    <span>{phoneMetaText(r, 'date') || fmtClock(r.timestamp)}</span>
+                                    <span className="flex items-center gap-0.5" style={{ color: accent }}>查看详情 <CaretRight size={10} /></span>
+                                </div>
+                                <DelBtn onDelete={() => handleDeleteRecord(r)} />
                             </div>
-                            <div className="text-[13px] text-white/80 leading-relaxed whitespace-pre-wrap">{r.detail}</div>
-                            <div className="flex items-center gap-5 mt-3 pt-2.5 border-t border-white/[0.06] text-white/40">
-                                <span className="flex items-center gap-1.5 text-[11px]"><Heart size={14} weight="fill" style={{ color: accent }} /> {3 + (r.id.length % 30)}</span>
-                                <span className="flex items-center gap-1.5 text-[11px]"><ChatCircle size={14} /> {1 + (r.id.length % 9)}</span>
-                                <span className="ml-auto flex items-center gap-0.5 text-[10px]" style={{ color: accent }}>查看详情 <CaretRight size={10} /></span>
-                            </div>
-                            <DelBtn onDelete={() => handleDeleteRecord(r)} />
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
-                <RefreshFab onClick={() => handleGenerate('social')} label="刷新动态" accent={accent} loading={isLoading} />
+                <RefreshFab onClick={() => handleGenerate('notes')} label="刷新备忘录" accent={accent} loading={isLoading} />
+            </SubAppShell>
+        );
+    };
+
+    const renderWallet = () => {
+        const accent = '#f6ad55';
+        const list = walletRecords.sort((a, b) => b.timestamp - a.timestamp);
+        return (
+            <SubAppShell>
+                <TermHeader title="钱包" sub="wallet" accent={accent} onBack={() => setActiveAppId('home')}
+                    right={<Wallet size={20} weight="fill" style={{ color: accent }} />} />
+                <div className="px-4 pb-2 shrink-0">
+                    <div className="rounded-2xl p-4 border border-white/[0.06] overflow-hidden relative" style={{ background: `linear-gradient(120deg, ${accent}26, ${accent}08)` }}>
+                        <div className="absolute -right-5 -top-8 w-28 h-28 rounded-full blur-2xl" style={{ background: `${accent}33` }} />
+                        <div className="relative flex items-center gap-3">
+                            <Wallet size={27} weight="fill" style={{ color: accent }} />
+                            <div>
+                                <div className="text-[10px] tracking-[0.2em] uppercase text-white/45">可用余额</div>
+                                <div className="text-[24px] font-light text-white tabular-nums mt-0.5">{walletBalance ? `¥${walletBalance}` : '¥ --'}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div className="flex-1 overflow-y-auto px-4 pt-1 no-scrollbar pb-28 overscroll-contain space-y-2.5">
+                    {list.length === 0 && <EmptyState text="还没有钱包流水" />}
+                    {list.map(r => {
+                        const amount = r.value || phoneMetaText(r, 'amount');
+                        const income = amount.trim().startsWith('+');
+                        return (
+                            <div key={r.id} {...evidenceEntryProps(r, 'wallet')}
+                                className="group relative flex items-center gap-3 rounded-2xl p-3.5 pr-8 bg-white/[0.035] border border-white/[0.06] animate-slide-up cursor-pointer active:scale-[0.99] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/60">
+                                <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: `${income ? '#4ade80' : accent}1f`, color: income ? '#4ade80' : accent }}>
+                                    {income ? <ArrowDownLeft size={20} weight="bold" /> : <ArrowUpRight size={20} weight="bold" />}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <div className="text-[13.5px] font-semibold text-white/95 truncate">{r.title}</div>
+                                    <div className="text-[10px] text-white/35 mt-0.5 flex items-center gap-1.5">
+                                        <span>{phoneMetaText(r, 'category', '日常')}</span>
+                                        {phoneMetaText(r, 'time') && <span>· {phoneMetaText(r, 'time')}</span>}
+                                    </div>
+                                    {r.detail && <div className="text-[10.5px] text-white/35 mt-1 truncate">{r.detail}</div>}
+                                </div>
+                                <span className="text-[15px] font-bold tabular-nums shrink-0" style={{ color: income ? '#4ade80' : accent }}>{amount || '—'}</span>
+                                <DelBtn onDelete={() => handleDeleteRecord(r)} />
+                            </div>
+                        );
+                    })}
+                </div>
+                <RefreshFab onClick={() => handleGenerate('wallet')} label="刷新钱包" accent={accent} loading={isLoading} />
+            </SubAppShell>
+        );
+    };
+
+    const renderBrowser = () => {
+        const accent = '#60a5fa';
+        const list = browserRecords.sort((a, b) => b.timestamp - a.timestamp);
+        const typeLabels: Record<string, string> = { search: '搜索', article: '文章', video: '视频', product: '商品', social: '社交', image: '图片' };
+        return (
+            <SubAppShell>
+                <TermHeader title="浏览器" sub="recent browsing" accent={accent} onBack={() => setActiveAppId('home')}
+                    right={<Globe size={20} weight="fill" style={{ color: accent }} />} />
+                <div className="flex-1 overflow-y-auto px-4 pt-2 no-scrollbar pb-28 overscroll-contain space-y-2.5">
+                    {list.length === 0 && <EmptyState text="还没有浏览记录" />}
+                    {list.map(r => {
+                        const kind = phoneMetaText(r, 'browserType', 'article');
+                        const isSearch = kind === 'search';
+                        return (
+                            <div key={r.id} {...evidenceEntryProps(r, 'browser')}
+                                className="group relative flex items-start gap-3 rounded-2xl p-3.5 pr-8 bg-white/[0.035] border border-white/[0.06] animate-slide-up cursor-pointer active:scale-[0.99] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60">
+                                <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: `${accent}1f`, color: accent }}>
+                                    {isSearch ? <MagnifyingGlass size={20} weight="bold" /> : kind === 'article' ? <Article size={20} weight="light" /> : <Globe size={20} weight="light" />}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <div className="text-[13.5px] font-semibold text-white/95 leading-snug line-clamp-2">{r.title}</div>
+                                    <div className="text-[10px] text-white/35 mt-1 flex items-center gap-1.5"><span>{typeLabels[kind] || kind}</span>{phoneMetaText(r, 'site') && <span>· {phoneMetaText(r, 'site')}</span>}{phoneMetaText(r, 'time') && <span>· {phoneMetaText(r, 'time')}</span>}</div>
+                                    {r.detail && r.detail !== '（无摘要）' && <div className="text-[11px] text-white/45 mt-1.5 leading-relaxed line-clamp-2">{r.detail}</div>}
+                                </div>
+                                <DelBtn onDelete={() => handleDeleteRecord(r)} />
+                            </div>
+                        );
+                    })}
+                </div>
+                <RefreshFab onClick={() => handleGenerate('browser')} label="刷新浏览器" accent={accent} loading={isLoading} />
             </SubAppShell>
         );
     };
@@ -3249,15 +3566,8 @@ ${olderText}
                 <div className="text-[12px] text-white/45 mt-0.5">{dateNow}</div>
             </div>
 
-            {/* Quote：有最近的内心独白(InnerState)就显示它（一行截断，点按看全文），否则兜底诗句 */}
-            {innerQuote ? (
-                <button onClick={() => setShowInner(true)} className="block w-full text-left mb-5 group">
-                    <p className="text-[13px] text-white/65 italic leading-relaxed line-clamp-1">「{innerQuote}」</p>
-                    <span className="text-[9px] tracking-wider text-white/30 group-active:text-white/55">有些话没说出口 · 轻触</span>
-                </button>
-            ) : (
-                <p className="text-[13px] text-white/55 italic mb-5 leading-relaxed">{fallbackQuote}</p>
-            )}
+            {/* 轻量的角色签名；更完整的内心内容由独立的心声功能承接 */}
+            <p className="text-[13px] text-white/55 italic mb-5 leading-relaxed">{fallbackQuote}</p>
 
             {/* Persona simulation hero */}
             <button onClick={() => { setActiveAppId('persona'); trackEvent('打开查手机子应用', { subApp: 'persona' }); }}
@@ -3277,16 +3587,20 @@ ${olderText}
                 </div>
             </button>
 
-            {/* App cards —— 「联系人」占据原 Message 的主位（Message 已废弃，收进联系人里做不起眼入口） */}
+            {/* App cards：只保留真正独立的手机功能；朋友圈内容统一由 Messaging 承接 */}
             <div className="grid grid-cols-2 gap-3.5 mb-3.5">
                 <HomeCard icon={<UsersThree size={24} weight="light" />} label="联系人" sub={contactsSub} accent="#f472b6"
                     onClick={() => { setActiveAppId('contacts'); trackEvent('打开查手机子应用', { subApp: 'contacts' }); }} />
-                <HomeCard icon={<ImagesSquare size={24} weight="light" />} label="Moments" sub={momentsSub} accent="#c084fc"
-                    onClick={() => { setActiveAppId('social'); trackEvent('打开查手机子应用', { subApp: 'social' }); }} />
                 <HomeCard icon={<Hamburger size={24} weight="light" />} label="Food" sub={foodSub} accent="#fbbf24"
                     onClick={() => { setActiveAppId('waimai'); trackEvent('打开查手机子应用', { subApp: 'waimai' }); }} />
                 <HomeCard icon={<ShoppingBag size={24} weight="light" />} label="Taobao" sub={taobaoSub} accent="#ff7a45"
                     onClick={() => { setActiveAppId('taobao'); trackEvent('打开查手机子应用', { subApp: 'taobao' }); }} />
+                <HomeCard icon={<Notebook size={24} weight="light" />} label="备忘录" sub={notesSub} accent="#c084fc"
+                    onClick={() => { setActiveAppId('notes'); trackEvent('打开查手机子应用', { subApp: 'notes' }); }} />
+                <HomeCard icon={<Wallet size={24} weight="light" />} label="钱包" sub={walletSub} accent="#f6ad55"
+                    onClick={() => { setActiveAppId('wallet'); trackEvent('打开查手机子应用', { subApp: 'wallet' }); }} />
+                <HomeCard icon={<Globe size={24} weight="light" />} label="浏览器" sub={browserSub} accent="#60a5fa"
+                    onClick={() => { setActiveAppId('browser'); trackEvent('打开查手机子应用', { subApp: 'browser' }); }} />
             </div>
 
             {/* 智能体：偷看「TA 的小手机」 —— 给个抢眼的横条入口 */}
@@ -3479,9 +3793,6 @@ ${olderText}
                             style={{ background: 'radial-gradient(circle at 35% 30%, #b89bff, #6d5bd6 55%, #2a2150 100%)', boxShadow: '0 0 24px rgba(157,124,255,0.55), inset 0 0 18px rgba(255,255,255,0.25)' }}>
                             <SignOut size={22} weight="bold" className="text-white" />
                         </button>
-                        <button onClick={() => setActiveAppId('social')} className="flex items-center justify-center text-white/70 p-2.5 hover:text-white rounded-2xl transition active:scale-90">
-                            <Compass size={22} weight="light" />
-                        </button>
                         <button onClick={toggleSendToChat} aria-label="同步到私聊"
                             className="relative flex items-center justify-center p-2.5 hover:text-white rounded-2xl transition active:scale-90"
                             style={{ color: sendToChat ? '#7dd3fc' : 'rgba(255,255,255,0.4)' }}>
@@ -3577,7 +3888,9 @@ ${olderText}
                     {activeAppId === 'call' && renderCallList()}
                     {activeAppId === 'taobao' && renderShop()}
                     {activeAppId === 'waimai' && renderFood()}
-                    {activeAppId === 'social' && renderMoments()}
+                    {activeAppId === 'notes' && renderNotes()}
+                    {activeAppId === 'wallet' && renderWallet()}
+                    {activeAppId === 'browser' && renderBrowser()}
                     {activeAppId === 'aiagent' && renderAiAgent()}
                     {activeAppId === 'ai_session' && renderAiSession()}
                     {activeAppId === 'persona' && targetChar && (
@@ -3596,37 +3909,6 @@ ${olderText}
                     )}
                     {customActive && renderCustomApp(customActive)}
                 </>
-            )}
-
-            {/* InnerState 全文 —— 「此刻内心」专属卡片 */}
-            {showInner && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 animate-fade-in">
-                    <div className="absolute inset-0 bg-black/40" onClick={() => setShowInner(false)} />
-                    <div className="relative w-full max-w-sm bg-white rounded-[2.5rem] shadow-2xl overflow-hidden animate-slide-up">
-                        {/* 标题 + 星点 */}
-                        <div className="px-6 pt-7 pb-3 flex items-center justify-center gap-2.5">
-                            <span className="flex items-end gap-0.5 text-[#b3c2f6]"><span className="w-1 h-1 rounded-full bg-current" /><span className="w-1.5 h-1.5 rounded-full bg-current" /><span className="w-1 h-1 rounded-full bg-current mb-1" /></span>
-                            <h3 className="text-lg font-bold text-slate-800">TA 此刻的内心</h3>
-                            <span className="flex items-end gap-0.5 text-[#b3c2f6]"><span className="w-1 h-1 rounded-full bg-current mb-1" /><span className="w-1.5 h-1.5 rounded-full bg-current" /><span className="w-1 h-1 rounded-full bg-current" /></span>
-                        </div>
-                        {/* 引文面板 */}
-                        <div className="px-6 pb-2">
-                            <div className="relative bg-slate-50 rounded-3xl px-5 pt-7 pb-5 max-h-[52vh] overflow-y-auto no-scrollbar">
-                                <span className="absolute top-2 left-4 text-[42px] leading-none font-black select-none pointer-events-none" style={{ color: '#5f82ef' }}>“</span>
-                                <p className="relative text-[14.5px] leading-[2] text-slate-600 whitespace-pre-wrap px-2" style={{ fontFamily: "'Shippori Mincho','Noto Sans SC',serif" }}>
-                                    {innerQuote}
-                                </p>
-                                <span className="block text-right text-[42px] leading-none font-black select-none pointer-events-none pr-2" style={{ color: '#5f82ef' }}>”</span>
-                            </div>
-                        </div>
-                        {/* 关闭 */}
-                        <div className="px-6 pb-6 pt-3">
-                            <button onClick={() => setShowInner(false)}
-                                className="w-full py-3.5 rounded-2xl text-white font-bold active:scale-[0.99] transition"
-                                style={{ background: '#5f82ef' }}>关闭</button>
-                        </div>
-                    </div>
-                </div>
             )}
 
             {/* 智能体 · 长按动作菜单（会话/卡片：编辑 / 删除） */}
