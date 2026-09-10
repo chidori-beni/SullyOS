@@ -31,6 +31,11 @@ import { PostOffice } from './postOffice';
 import { Signal, SignalState, recordMyLine, getMyRecentLines, takeSignalWhisper } from './signal';
 import { getReadingWindow, getBookmark, buildAnnotation } from './novel';
 import {
+    resolveVRActivityEligibility,
+    resolveVRActivityEligibilityMap,
+    type VRActivityBlockReason,
+} from './eligibility';
+import {
     buildVRSystemAddendum, buildLibraryRoomTurn, parseVROutput,
     buildMusicRoomTurn, parseMusicOutput,
     buildGuestbookRoomTurn, parseGuestbookOutput,
@@ -74,6 +79,29 @@ export interface VRSessionResult {
 
 const genId = (p: string) => `${p}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 const running = new Set<string>();
+
+function blockedSessionResult(
+    char: CharacterProfile,
+    reason: VRActivityBlockReason,
+    manual?: boolean,
+    room?: VRRoomId,
+    blockedChar?: CharacterProfile,
+): VRSessionResult {
+    try {
+        window.dispatchEvent(new CustomEvent('vr-session-blocked', {
+            detail: {
+                charId: char.id,
+                charName: char.name,
+                blockedCharId: blockedChar?.id || char.id,
+                blockedCharName: blockedChar?.name || char.name,
+                reason,
+                manual: !!manual,
+                room,
+            },
+        }));
+    } catch { /* SSR */ }
+    return { ok: false, room, reason };
+}
 
 /**
  * 自动登入的最小间隔闸 —— 一个角色两次真实的模型调用之间，至少要隔够设定间隔的一半。
@@ -221,6 +249,13 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
         }
     }
 
+    // 自动与手动入口共用同一日程门禁；manual 只绕过上面的最小间隔，不能绕过睡眠/忙碌状态。
+    const eligibilityAt = new Date();
+    const actorEligibility = await resolveVRActivityEligibility(char, eligibilityAt);
+    if (!actorEligibility.allowed) {
+        return blockedSessionResult(char, actorEligibility.reason || 'schedule-unavailable', manual);
+    }
+
     // API 优先级：角色自带覆盖 > 彼方独立 API > 聊天默认
     const vrGlobalApi = await getVRApi();
     const vrApi = char.vrState?.api?.baseUrl ? char.vrState.api : (vrGlobalApi?.baseUrl ? vrGlobalApi : apiConfig);
@@ -231,6 +266,14 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
     let roomId = rollRoom(char, novels, musicState, forcedRoom);
     if (!roomId) return { ok: false, reason: 'no-content' };
     let room = getRoom(roomId);
+
+    // 只把当前确实能活动的角色放进同场名单，避免忙碌/睡眠角色继续作为“在场”参与 prompt。
+    // 以同一个绝对时刻取快照，防止同一轮各角色因跨分钟而得到不一致的结果。
+    const roomCandidates = characters.filter(c =>
+        c.vrState?.enabled && c.vrState.currentRoom === roomId,
+    );
+    const roomEligibility = await resolveVRActivityEligibilityMap(roomCandidates, eligibilityAt);
+    const eligibleRoomCandidates = roomCandidates.filter(c => roomEligibility.get(c.id)?.allowed === true);
 
     running.add(char.id);
     // 信号坠落处的写诗会话锁 token（抢到才有值）；finally 里兜底放锁
@@ -253,7 +296,10 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
 
         // 在某房间的在场玩家名（含自己；用户本人接入彼方且挂在该房间时也算在场）
         const occupantsOf = (rid: VRRoomId) => {
-            const ns = characters.filter(c => c.vrState?.enabled && c.vrState.currentRoom === rid).map(c => c.name);
+            const ns = characters
+                .filter(c => c.vrState?.enabled && c.vrState.currentRoom === rid)
+                .filter(c => roomEligibility.get(c.id)?.allowed === true)
+                .map(c => c.name);
             if (!ns.includes(char.name)) ns.push(char.name);
             const uv = userProfile?.vrState;
             if (uv?.enabled && uv.currentRoom === rid && userProfile.name && !ns.includes(userProfile.name)) {
@@ -469,6 +515,20 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
         }
         let aiContent: string = data.choices?.[0]?.message?.content || '';
         aiContent = aiContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+        // 模型调用期间日程可能跨过忙碌/睡眠边界；在任何业务写入前再检查一次，
+        // 防止已经返回的内容继续落成批注、房间状态或 vr_card。
+        const commitCandidates = [char, ...eligibleRoomCandidates]
+            .filter((candidate, index, all) => all.findIndex(other => other.id === candidate.id) === index);
+        const commitEligibility = await resolveVRActivityEligibilityMap(commitCandidates, new Date());
+        const blockedCandidate = commitCandidates.find(candidate => {
+            const eligibility = commitEligibility.get(candidate.id);
+            return !eligibility?.allowed;
+        });
+        if (blockedCandidate) {
+            const reason = commitEligibility.get(blockedCandidate.id)?.reason || 'schedule-unavailable';
+            return blockedSessionResult(char, reason as VRActivityBlockReason, manual, room.id, blockedCandidate);
+        }
 
         const prevState = char.vrState || { enabled: true, intervalMinutes: VR_DEFAULT_INTERVAL_MIN };
         let activity = '';

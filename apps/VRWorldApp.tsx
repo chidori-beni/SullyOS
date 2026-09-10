@@ -22,6 +22,7 @@ import { PostOffice, MAX_LETTER_CHARS, exportIdentity, importIdentity, getAdminT
 import { Signal, getMyAuthorship, setSignalWhisper, hasSignalNoticeAck, ackSignalNotice, type SignalState } from '../utils/vrWorld/signal';
 import type { SignalPoem, SignalBooklet } from '../types';
 import { getVRApi, setVRApi, getVRApiLog, clearVRApiLog, type VRApiCall } from '../utils/vrWorld/vrApi';
+import { resolveVRActivityEligibilityMap, type VRActivityEligibility } from '../utils/vrWorld/eligibility';
 import { safeResponseJson } from '../utils/safeApi';
 
 const genLocalId = (p: string) => `${p}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -118,6 +119,9 @@ const VRWorldApp: React.FC = () => {
     const [feed, setFeed] = useState<FeedItem[]>([]);
     const [poBadge, setPoBadge] = useState<{ toSend: number; toCollect: number }>({ toSend: 0, toCollect: 0 });
     const [loading, setLoading] = useState(true);
+    // 日程资格是动态的：跨过 busy/sleep 边界后，房间在场名单也要随之更新。
+    // 空 Map 按“未知”处理，先隐藏角色；真正的活动仍由 runVRSession 现场硬检查。
+    const [vrEligibility, setVrEligibility] = useState<Map<string, VRActivityEligibility>>(new Map());
 
     // 邮局徽标：本地待寄出/待发送 + 后端待收取的回信（best-effort 探测）
     const refreshPoBadge = useCallback(async () => {
@@ -165,6 +169,33 @@ const VRWorldApp: React.FC = () => {
     }, []);
 
     const loadNovels = useCallback(async () => setNovels(await DB.getVRNovels()), []);
+    useEffect(() => {
+        let cancelled = false;
+        setVrEligibility(new Map());
+
+        const refresh = async () => {
+            const enabled = characters.filter(char => char.vrState?.enabled);
+            const next = await resolveVRActivityEligibilityMap(enabled);
+            if (!cancelled) setVrEligibility(next);
+        };
+
+        void refresh();
+        const timer = window.setInterval(() => {
+            if (document.visibilityState === 'visible') void refresh();
+        }, 30_000);
+        const onVisibility = () => {
+            if (document.visibilityState === 'visible') void refresh();
+        };
+        document.addEventListener('visibilitychange', onVisibility);
+        window.addEventListener('focus', onVisibility);
+        return () => {
+            cancelled = true;
+            window.clearInterval(timer);
+            document.removeEventListener('visibilitychange', onVisibility);
+            window.removeEventListener('focus', onVisibility);
+        };
+    }, [characters]);
+
     const loadFeed = useCallback(async () => {
         const items: FeedItem[] = [];
         for (const c of characters) {
@@ -208,8 +239,34 @@ const VRWorldApp: React.FC = () => {
         window.addEventListener('vr-session-done', handler);
         return () => window.removeEventListener('vr-session-done', handler);
     }, [reloadAll, refreshPoBadge]);
+    useEffect(() => {
+        const handler = (event: Event) => {
+            const detail = (event as CustomEvent<{
+                charName?: string;
+                blockedCharName?: string;
+                reason?: string;
+                manual?: boolean;
+            }>).detail;
+            if (!detail?.manual) return; // 自动调度被挡下时保持安静，下一轮再检查
+            const name = detail.blockedCharName || detail.charName || '角色';
+            if (detail.reason === 'schedule-sleep') {
+                addToast?.(`${name} 正在睡觉，暂时不会进入彼方`, 'info');
+            } else if (detail.reason === 'schedule-busy') {
+                addToast?.(`${name} 现在正忙，暂时不会进入彼方`, 'info');
+            } else if (detail.reason === 'schedule-unavailable') {
+                addToast?.(`暂时无法确认 ${name} 的日程，为避免打扰，本次没有进入彼方`, 'info');
+            }
+        };
+        window.addEventListener('vr-session-blocked', handler);
+        return () => window.removeEventListener('vr-session-blocked', handler);
+    }, [addToast]);
     // 离开房间（可能在邮局操作过）后刷新徽标
     useEffect(() => { if (enterRoom === null) void refreshPoBadge(); }, [enterRoom, refreshPoBadge]);
+
+    const eligibleVRCharacters = useMemo(
+        () => characters.filter(char => char.vrState?.enabled && vrEligibility.get(char.id)?.allowed === true),
+        [characters, vrEligibility],
+    );
 
     // 最近一条动态（按角色）
     const latestByChar = useMemo(() => {
@@ -221,7 +278,7 @@ const VRWorldApp: React.FC = () => {
     const occupantsByRoom = useMemo(() => {
         const map: Record<string, CharacterProfile[]> = {};
         for (const c of characters) {
-            if (c.vrState?.enabled) {
+            if (c.vrState?.enabled && vrEligibility.get(c.id)?.allowed === true) {
                 const room = c.vrState.currentRoom || 'library';
                 (map[room] ||= []).push(c);
             }
@@ -234,9 +291,9 @@ const VRWorldApp: React.FC = () => {
             (map[room] ||= []).push(pseudo);
         }
         return map;
-    }, [characters, userProfile, userName]);
+    }, [characters, userProfile, userName, vrEligibility]);
 
-    const enabledCount = characters.filter(c => c.vrState?.enabled).length;
+    const enabledCount = eligibleVRCharacters.length;
 
     // 返回键：有弹层先关弹层（阅读器/房间/上传/捏人），而不是直接退回桌面
     useEffect(() => registerBackHandler(() => {
@@ -266,7 +323,7 @@ const VRWorldApp: React.FC = () => {
         board.messages = [...board.messages, { id, authorId: 'user', authorName: userName, content: t, createdAt: Date.now() }];
         board.updatedAt = Date.now();
         await DB.saveVRGuestbook(board);
-        const enabled = characters.filter(c => c.vrState?.enabled);
+        const enabled = eligibleVRCharacters;
         for (const c of enabled) {
             await DB.saveMessage({
                 charId: c.id, role: 'user', type: 'vr_card',
@@ -275,14 +332,14 @@ const VRWorldApp: React.FC = () => {
             } as any);
         }
         addToast?.(enabled.length > 0 ? `已留言，并广播给 ${enabled.length} 位接入角色` : '已留言', 'success');
-    }, [characters, userName, addToast]);
+    }, [eligibleVRCharacters, userName, addToast]);
 
     // 用户更新自己的彼方状态：以行为卡片广播给所有接入彼方的角色（机制同留言簿发言）
     const onUserVRBroadcast = useCallback(async (room: VRRoomId, activity: string) => {
         const roomName = VR_ROOMS.find(r => r.id === room)?.name || '彼方';
         const act = (activity || '').trim() || '在彼方里挂机放空';
         const line = `${userName} 现在在「彼方 · ${roomName}」：${act}`;
-        const enabled = characters.filter(c => c.vrState?.enabled);
+        const enabled = eligibleVRCharacters;
         for (const c of enabled) {
             await DB.saveMessage({
                 charId: c.id, role: 'user', type: 'vr_card',
@@ -291,7 +348,7 @@ const VRWorldApp: React.FC = () => {
             } as any);
         }
         addToast?.(enabled.length > 0 ? `已更新状态，并广播给 ${enabled.length} 位接入角色` : '已更新彼方状态', 'success');
-    }, [characters, userName, addToast]);
+    }, [eligibleVRCharacters, userName, addToast]);
 
     const onDeleteFeed = useCallback(async (msgId: number) => {
         await DB.deleteMessage(msgId);
@@ -399,7 +456,8 @@ const VRWorldApp: React.FC = () => {
             {enterRoom && (
                 <RoomScene roomId={enterRoom} occupants={occupantsByRoom[enterRoom] || []}
                     latestByChar={latestByChar} onClose={() => setEnterRoom(null)} onJump={jumpToAnnotation}
-                    characters={characters} userName={userName} onUserBoardPost={onUserBoardPost} addToast={addToast} />
+                    characters={characters} eligibleCharacters={eligibleVRCharacters}
+                    userName={userName} onUserBoardPost={onUserBoardPost} addToast={addToast} />
             )}
             {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
             {readingPreferenceChar && (
@@ -1445,7 +1503,7 @@ const PostOfficePanel: React.FC<{ addToast?: (m: string, t?: any) => void; chara
         if (!assignFor) return;
         VRScheduler.triggerNow(charId, 'postoffice', assignFor.id);
         const cname = enabledChars.find(c => c.id === charId)?.name;
-        addToast?.(`${cname ?? '角色'} 正在去邮局回这封信…`, 'info');
+        addToast?.(`${cname ?? '角色'} 正在检查日程，尝试去邮局回这封信…`, 'info');
         trackEvent('指定角色去邮局回这封来信');
         setAssignFor(null);
         setTimeout(() => void load(), 5000);
@@ -2051,7 +2109,7 @@ const SignalPanel: React.FC<{ addToast?: (m: string, t?: any) => void; character
         setSignalWhisper(c.id, whisper);              // 取即焚：runSession 里读一次就删
         setWhisper('');
         VRScheduler.triggerNow(c.id, 'signal');
-        addToast?.(whisper.trim() ? `${c.name} 带着你的话，正在信号坠落处落笔…` : `${c.name} 正在信号坠落处落笔…`, 'info');
+        addToast?.(whisper.trim() ? `${c.name} 带着你的话，正在检查日程后去信号坠落处落笔…` : `${c.name} 正在检查日程后去信号坠落处落笔…`, 'info');
     };
 
     const load = useCallback(async () => {
@@ -2419,10 +2477,11 @@ const RoomScene: React.FC<{
     latestByChar: Record<string, FeedItem>; onClose: () => void;
     onJump: (novelId: string | undefined, segIdx: number) => void;
     characters: CharacterProfile[];
+    eligibleCharacters: CharacterProfile[];
     userName: string;
     onUserBoardPost: (content: string) => Promise<void>;
     addToast?: (m: string, t?: any) => void;
-}> = ({ roomId, occupants, latestByChar, onClose, onJump, characters, userName, onUserBoardPost, addToast }) => {
+}> = ({ roomId, occupants, latestByChar, onClose, onJump, characters, eligibleCharacters, userName, onUserBoardPost, addToast }) => {
     const room = getRoom(roomId);
     const slots = ROOM_SLOTS[roomId];
     const isMusic = roomId === 'music';
@@ -2632,13 +2691,13 @@ const RoomScene: React.FC<{
                 })()}
 
                 {/* 邮局：信件管理面板 */}
-                {isPostOffice && <PostOfficePanel addToast={addToast} characters={characters} userName={userName} />}
+                {isPostOffice && <PostOfficePanel addToast={addToast} characters={eligibleCharacters} userName={userName} />}
 
                 {/* 剧院：话剧部门面板（投稿 / 编排 / 演出 / 历史） */}
                 {isTheater && <TheaterPanel addToast={addToast} />}
 
                 {/* 信号坠落处：看当前合写的诗 + 翻阅诗集 + 参与（指定角色接一句） */}
-                {isSignal && <SignalPanel addToast={addToast} characters={characters} />}
+                {isSignal && <SignalPanel addToast={addToast} characters={eligibleCharacters} />}
 
                 {/* chibi 站位（可隐藏，避免挡住留言墙等文字） */}
                 {!hideChibi && occupants.map((c, i) => {
@@ -3570,7 +3629,7 @@ const SettingsView: React.FC<{
     const go = (room?: VRRoomId) => {
         if (!pickFor) return;
         VRScheduler.triggerNow(pickFor.id, room);
-        addToast?.(`${pickFor.name} 正在登入彼方…`, 'info');
+        addToast?.(`${pickFor.name} 正在检查日程，尝试登入彼方…`, 'info');
         setTimeout(onReload, 4000);
         setPickFor(null);
     };
