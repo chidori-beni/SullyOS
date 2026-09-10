@@ -457,7 +457,8 @@ const VRWorldApp: React.FC = () => {
                 <RoomScene roomId={enterRoom} occupants={occupantsByRoom[enterRoom] || []}
                     latestByChar={latestByChar} onClose={() => setEnterRoom(null)} onJump={jumpToAnnotation}
                     characters={characters} eligibleCharacters={eligibleVRCharacters}
-                    userName={userName} onUserBoardPost={onUserBoardPost} addToast={addToast} />
+                    userName={userName} userAvatar={userProfile?.avatar || ''}
+                    onUserBoardPost={onUserBoardPost} addToast={addToast} />
             )}
             {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
             {readingPreferenceChar && (
@@ -2479,9 +2480,10 @@ const RoomScene: React.FC<{
     characters: CharacterProfile[];
     eligibleCharacters: CharacterProfile[];
     userName: string;
+    userAvatar: string;
     onUserBoardPost: (content: string) => Promise<void>;
     addToast?: (m: string, t?: any) => void;
-}> = ({ roomId, occupants, latestByChar, onClose, onJump, characters, eligibleCharacters, userName, onUserBoardPost, addToast }) => {
+}> = ({ roomId, occupants, latestByChar, onClose, onJump, characters, eligibleCharacters, userName, userAvatar, onUserBoardPost, addToast }) => {
     const room = getRoom(roomId);
     const slots = ROOM_SLOTS[roomId];
     const isMusic = roomId === 'music';
@@ -2652,12 +2654,13 @@ const RoomScene: React.FC<{
                                     const isUser = head.authorId === 'user';
                                     const ch = isUser ? null : characters.find(c => c.id === head.authorId);
                                     const name = isUser ? head.authorName : (ch?.name || head.authorName);
+                                    const avatar = isUser ? userAvatar : ch?.avatar;
                                     const hue = (() => { let h = 0; for (let i = 0; i < head.authorId.length; i++) h = (h * 31 + head.authorId.charCodeAt(i)) % 360; return h; })();
                                     const nameColor = isUser ? '#7dd3fc' : `hsl(${hue},72%,74%)`;
                                     return (
                                         <div key={head.id} className="flex gap-2.5">
-                                            {ch?.avatar
-                                                ? <img src={ch.avatar} className="h-8 w-8 rounded-full object-cover shrink-0 mt-0.5" alt="" />
+                                            {avatar
+                                                ? <img src={avatar} className="h-8 w-8 rounded-full object-cover shrink-0 mt-0.5" alt="" />
                                                 : <div className="h-8 w-8 rounded-full shrink-0 mt-0.5 flex items-center justify-center text-[12px] font-bold text-white/95" style={{ background: isUser ? 'linear-gradient(135deg,#38bdf8,#6366f1)' : `hsl(${hue},45%,42%)` }}>{name.slice(0, 1)}</div>}
                                             <div className="min-w-0 flex-1">
                                                 <div className="flex items-baseline gap-1.5">
