@@ -15,6 +15,7 @@ import PersonaSim, { LifeLog, generatePersonaScript } from './PersonaSim';
 import { usePersonaSim, personaSimStore } from '../utils/personaSimStore';
 import { trackEvent } from '../utils/analytics';
 import { normalizePhoneEvidence, phoneFieldToText } from '../utils/phoneEvidence';
+import { resolveCharTimeZone } from '../utils/timezone';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
 import {
     User, Phone, ChatCircleDots, ChatCircle, ShoppingBag, Hamburger, GearSix,
@@ -238,8 +239,18 @@ const TAVERN_STYLES: TavernStyle[] = [
 //   on every render, which remounted whole sub-app subtrees → list items kept
 //   re-playing their entrance animation (闪烁) and chat scroll snapped back.)
 // ============================================================
-const StatusStrip: React.FC = () => {
-    const clock = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+const formatPhoneTime = (value: Date | number, timeZone: string | undefined, locale: string, options: Intl.DateTimeFormatOptions): string => {
+    const date = value instanceof Date ? value : new Date(value);
+    try {
+        return new Intl.DateTimeFormat(locale, { ...options, ...(timeZone ? { timeZone } : {}) }).format(date);
+    } catch {
+        // 角色时区被手动填错时，至少保留设备时间，不让查手机整个界面崩掉。
+        return new Intl.DateTimeFormat(locale, options).format(date);
+    }
+};
+
+const StatusStrip: React.FC<{ timeZone?: string }> = ({ timeZone }) => {
+    const clock = formatPhoneTime(Date.now(), timeZone, 'en-US', { hour: '2-digit', minute: '2-digit' });
     return (
         <div className="shrink-0" style={{ paddingTop: 'var(--safe-top)' }}>
             <div className="h-9 flex justify-between px-6 items-center z-30 relative pt-2 text-white/70">
@@ -254,10 +265,10 @@ const StatusStrip: React.FC = () => {
     );
 };
 
-const TermHeader: React.FC<{ title: string; sub?: string; accent: string; onBack: () => void; right?: React.ReactNode }> =
-    ({ title, sub, accent, onBack, right }) => (
+const TermHeader: React.FC<{ title: string; sub?: string; accent: string; onBack: () => void; right?: React.ReactNode; timeZone?: string }> =
+    ({ title, sub, accent, onBack, right, timeZone }) => (
         <div className="shrink-0 z-20">
-            <StatusStrip />
+            <StatusStrip timeZone={timeZone} />
             <div className="h-14 flex items-center justify-between px-4">
                 <button onClick={onBack} className="w-9 h-9 -ml-1 rounded-full flex items-center justify-center text-white/80 bg-white/[0.05] border border-white/[0.08] active:scale-90 transition">
                     <CaretLeft size={18} weight="bold" />
@@ -341,6 +352,8 @@ const CheckPhone: React.FC = () => {
     // activeAppId: 'home' | 'chat_detail' | 'app_id'
     const [activeAppId, setActiveAppId] = useState<string>('home');
     const [targetChar, setTargetChar] = useState<CharacterProfile | null>(null);
+    // 查手机属于角色的设备：角色开了自定义时区时，界面上的钟都按该时区显示。
+    const charTimeZone = resolveCharTimeZone(targetChar);
     const [isLoading, setIsLoading] = useState(false);
     const [page, setPage] = useState(0); // 0 = home, 1 = custom apps
     const [selectPage, setSelectPage] = useState(0); // Target Device 选人界面的翻页（每页 6 人）
@@ -2082,7 +2095,7 @@ ${olderText}
         }
     };
 
-    const fmtClock = (t: number) => new Date(t).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    const fmtClock = (t: number) => formatPhoneTime(t, charTimeZone, 'en-US', { hour: '2-digit', minute: '2-digit' });
 
     const lastSeenText = (() => {
         if (!lastTs) return 'Awaiting first sync';
@@ -2130,8 +2143,8 @@ ${olderText}
     })();
 
     const now = new Date();
-    const clockNow = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-    const dateNow = now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+    const clockNow = formatPhoneTime(now, charTimeZone, 'en-US', { hour: '2-digit', minute: '2-digit' });
+    const dateNow = formatPhoneTime(now, charTimeZone, 'en-US', { weekday: 'long', month: 'short', day: 'numeric' });
     const fallbackQuote = targetChar?.socialProfile?.bio || '“有些话，隔着屏幕，反而更接近真实。”';
 
     // ============================================================
@@ -2152,7 +2165,7 @@ ${olderText}
                             title: '清空全部聊天记录？', desc: `将删除这台手机里归档的全部 ${list.length} 段聊天记录，且无法恢复。`,
                             confirmLabel: '清空', danger: true, onConfirm: handleClearAllChats,
                         })} className="text-rose-300/80 active:scale-90 transition"><Trash size={18} weight="bold" /></button>
-                    ) : undefined} />
+                    ) : undefined} timeZone={charTimeZone} />
                 {/* 归档说明：旧的 Messages 模式已不再更新，新的对话走「人际关系」 */}
                 <div className="px-4 pt-1 pb-2 shrink-0">
                     <div className="rounded-xl px-3 py-2 bg-white/[0.04] border border-white/[0.07] text-[11px] text-white/55 leading-relaxed">
@@ -2211,7 +2224,7 @@ ${olderText}
 
         return (
             <SubAppShell>
-                <TermHeader title={selectedChatRecord.title} sub="归档 · 只读" accent={accent} onBack={() => setActiveAppId('chat')} />
+                <TermHeader title={selectedChatRecord.title} sub="归档 · 只读" accent={accent} onBack={() => setActiveAppId('chat')} timeZone={charTimeZone} />
                 <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 no-scrollbar overscroll-contain min-h-0">
                     {hiddenCount > 0 && (
                         <button onClick={() => setTranscriptExpanded(true)}
@@ -2277,7 +2290,7 @@ ${olderText}
         const isNovel = layout === 'novel';
         const accent = customApp?.color || (isCall ? '#4ade80' : r.type === 'order' ? '#ff7a45' : r.type === 'delivery' ? '#fbbf24' : isNote ? '#c084fc' : isWallet ? '#f6ad55' : isBrowser ? '#60a5fa' : isSocial ? '#c084fc' : '#8b9cff');
         const title = customApp?.name || appLabel(r.type);
-        const dateText = new Date(r.timestamp).toLocaleString('zh-CN', {
+        const dateText = formatPhoneTime(r.timestamp, charTimeZone, 'zh-CN', {
             year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit',
         });
         const isMissed = isCall && (r.value?.includes('未接') || r.value?.includes('Missed'));
@@ -2304,7 +2317,7 @@ ${olderText}
             <SubAppShell>
                 <TermHeader title={title} sub="record detail" accent={accent}
                     onBack={() => { setSelectedEvidenceRecord(null); setActiveAppId(evidenceBackAppId); }}
-                    right={<span style={{ color: accent }}>{detailIcon}</span>} />
+                    right={<span style={{ color: accent }}>{detailIcon}</span>} timeZone={charTimeZone} />
                 <div className="flex-1 overflow-y-auto no-scrollbar overscroll-contain px-5 pt-3 pb-10">
                     {isNote ? (
                         <article>
@@ -2465,7 +2478,7 @@ ${olderText}
         const list = records.filter(r => r.type === 'call').sort((a, b) => b.timestamp - a.timestamp);
         return (
             <SubAppShell>
-                <TermHeader title="Recents" sub="call log" accent={accent} onBack={() => setActiveAppId('home')} />
+                <TermHeader title="Recents" sub="call log" accent={accent} onBack={() => setActiveAppId('home')} timeZone={charTimeZone} />
                 <div className="flex-1 overflow-y-auto px-4 pt-2 no-scrollbar pb-28 overscroll-contain space-y-2">
                     {list.length === 0 && <EmptyState text="暂无通话记录" />}
                     {list.map(r => {
@@ -2504,7 +2517,7 @@ ${olderText}
         return (
             <SubAppShell>
                 <TermHeader title="淘宝" sub="my orders" accent={accent} onBack={() => setActiveAppId('home')}
-                    right={<ShoppingBag size={20} weight="fill" style={{ color: accent }} />} />
+                    right={<ShoppingBag size={20} weight="fill" style={{ color: accent }} />} timeZone={charTimeZone} />
                 {/* banner */}
                 <div className="px-4 pb-2 shrink-0">
                     <div className="rounded-2xl p-3.5 flex items-center gap-3 border border-white/[0.06] overflow-hidden relative"
@@ -2548,7 +2561,7 @@ ${olderText}
         return (
             <SubAppShell>
                 <TermHeader title="外卖" sub="recent orders" accent={accent} onBack={() => setActiveAppId('home')}
-                    right={<Hamburger size={20} weight="fill" style={{ color: accent }} />} />
+                    right={<Hamburger size={20} weight="fill" style={{ color: accent }} />} timeZone={charTimeZone} />
                 <div className="flex-1 overflow-y-auto px-4 pt-2 no-scrollbar pb-28 overscroll-contain space-y-3">
                     {list.length === 0 && <EmptyState text="还没有外卖记录" />}
                     {list.map(r => (
@@ -2588,7 +2601,7 @@ ${olderText}
         return (
             <SubAppShell>
                 <TermHeader title="备忘录" sub="private notes" accent={accent} onBack={() => setActiveAppId('home')}
-                    right={<Notebook size={20} weight="fill" style={{ color: accent }} />} />
+                    right={<Notebook size={20} weight="fill" style={{ color: accent }} />} timeZone={charTimeZone} />
                 <div className="flex-1 overflow-y-auto px-4 pt-2 no-scrollbar pb-28 overscroll-contain space-y-3">
                     {list.length === 0 && <EmptyState text="还没有备忘录" />}
                     {list.map(r => {
@@ -2644,7 +2657,7 @@ ${olderText}
         return (
             <SubAppShell>
                 <TermHeader title="钱包" sub="wallet" accent={accent} onBack={() => setActiveAppId('home')}
-                    right={<Wallet size={20} weight="fill" style={{ color: accent }} />} />
+                    right={<Wallet size={20} weight="fill" style={{ color: accent }} />} timeZone={charTimeZone} />
                 <div className="px-4 pb-2 shrink-0">
                     <div className="rounded-2xl p-4 border border-white/[0.06] overflow-hidden relative" style={{ background: `linear-gradient(120deg, ${accent}26, ${accent}08)` }}>
                         <div className="absolute -right-5 -top-8 w-28 h-28 rounded-full blur-2xl" style={{ background: `${accent}33` }} />
@@ -2694,7 +2707,7 @@ ${olderText}
         return (
             <SubAppShell>
                 <TermHeader title="浏览器" sub="recent browsing" accent={accent} onBack={() => setActiveAppId('home')}
-                    right={<Globe size={20} weight="fill" style={{ color: accent }} />} />
+                    right={<Globe size={20} weight="fill" style={{ color: accent }} />} timeZone={charTimeZone} />
                 <div className="flex-1 overflow-y-auto px-4 pt-2 no-scrollbar pb-28 overscroll-contain space-y-2.5">
                     {list.length === 0 && <EmptyState text="还没有浏览记录" />}
                     {list.map(r => {
@@ -2740,7 +2753,7 @@ ${olderText}
                     onBack={() => { if (contactSelectMode) exitContactSelect(); else setActiveAppId('home'); }}
                     right={contactSelectMode
                         ? <button onClick={exitContactSelect} className="text-[12px] font-semibold text-white/80 active:scale-90 transition">取消</button>
-                        : <button onClick={() => setShowContactModal(true)} className="text-white/80 active:scale-90 transition"><UserPlus size={20} weight="bold" /></button>} />
+                        : <button onClick={() => setShowContactModal(true)} className="text-white/80 active:scale-90 transition"><UserPlus size={20} weight="bold" /></button>} timeZone={charTimeZone} />
                 {/* 约束开关：是否允许虚构 NPC */}
                 <div className="px-4 pt-1 pb-2 shrink-0">
                     <div className="w-full flex items-center gap-2 rounded-xl px-3 py-2 bg-white/[0.04] border border-white/[0.07]">
@@ -2848,7 +2861,7 @@ ${olderText}
         return (
             <SubAppShell>
                 <TermHeader title="智能体" sub="TA 的小手机" accent={svc.accent} onBack={() => setActiveAppId('home')}
-                    right={<Robot size={20} weight="fill" style={{ color: svc.accent }} />} />
+                    right={<Robot size={20} weight="fill" style={{ color: svc.accent }} />} timeZone={charTimeZone} />
                 {/* 服务 tab */}
                 <div className="px-4 pb-2 shrink-0 flex gap-2">
                     {AI_SERVICES.map(s => {
@@ -2942,7 +2955,7 @@ ${olderText}
                 userBg: `linear-gradient(135deg,${tStyle.accent},${tStyle.accent}bb)`, userText: '#fff',
                 aiBg: tStyle.dark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.04)', aiText: tStyle.text }
             : getVendorTheme(s.serviceName, s.service);
-        const clock = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        const clock = formatPhoneTime(Date.now(), charTimeZone, 'en-US', { hour: '2-digit', minute: '2-digit' });
         const hairline = t.dark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)';
         const inputBg = t.dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)';
         const aiAvatarBg = t.key === 'gpt' ? '#000' : t.key === 'claude' ? '#f0e9da' : t.dark ? 'rgba(255,255,255,0.08)' : '#fff';
@@ -3181,7 +3194,7 @@ ${olderText}
             <SubAppShell>
                 {/* 聊天式顶栏：返回 + 可点的头像/名字（进资料） */}
                 <div className="shrink-0 z-20">
-                    <StatusStrip />
+                    <StatusStrip timeZone={charTimeZone} />
                     <div className="h-14 flex items-center gap-2 px-3">
                         <button onClick={() => { if (msgSelectMode) exitMsgSelect(); else setActiveAppId('contacts'); }} className="w-9 h-9 -ml-0.5 rounded-full flex items-center justify-center text-white/80 bg-white/[0.05] border border-white/[0.08] active:scale-90 transition shrink-0">
                             <CaretLeft size={18} weight="bold" />
@@ -3532,7 +3545,7 @@ ${olderText}
         return (
             <SubAppShell>
                 <TermHeader title={app.name} sub={layoutMeta?.name || 'custom app'} accent={accent} onBack={() => setActiveAppId('home')}
-                    right={<span className="text-lg">{app.icon}</span>} />
+                    right={<span className="text-lg">{app.icon}</span>} timeZone={charTimeZone} />
                 <div className="flex-1 overflow-y-auto px-4 pt-2 no-scrollbar pb-28 overscroll-contain space-y-3">
                     {list.length === 0 && <EmptyState text="暂无数据" />}
                     {list.map((r, idx) => renderCustomItem(r, idx, list.length, accent, layout, app))}
@@ -3757,7 +3770,7 @@ ${olderText}
                     style={{ background: 'linear-gradient(to bottom, rgba(7,8,9,0.35) 0%, rgba(7,8,9,0.1) 30%, rgba(7,8,9,0.85) 100%)' }} />
                 <div className="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-white/15 to-transparent pointer-events-none z-20" />
 
-                <StatusStrip />
+                <StatusStrip timeZone={charTimeZone} />
 
                 {/* Pager */}
                 <div className="flex-1 relative z-10 overflow-hidden" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
