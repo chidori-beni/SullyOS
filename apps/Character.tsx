@@ -34,7 +34,7 @@ import {
     type SillyTavernCard,
     type StCardConversion,
 } from '../utils/stCharacterCard';
-import { resolveUserMacroName } from '../utils/characterIdentity';
+import { resolveUserMacroName, evaluateFriendshipUpgrade, classifyExchange } from '../utils/characterIdentity';
 import { stripSensitiveCardFields } from '../utils/characterCard';
 import { confirmExportSafety } from '../utils/exportGuard';
 import { trackEvent } from '../utils/analytics';
@@ -206,6 +206,56 @@ const Character: React.FC = () => {
    *
    * 只改真正含宏的消息（一般就是开场白那一条），其余原样跳过；失败不打断主流程。
    */
+  /**
+   * 阶段 2.8「加联系方式」的仪式。用户点「算作朋友」后先填一句「在哪认识的」，
+   * 确认才落地——**要的是仪式感，不是可见性控制**（用户很清楚自己随时能跟谁都聊，
+   * 原话「毕竟我是最高维的」）。
+   */
+  const [acqOpen, setAcqOpen] = useState(false);
+  const [acqWhere, setAcqWhere] = useState('');
+
+  /** 根据实际互动猜一个默认答案：彼方来往占多数就填彼方。 */
+  const guessAcquaintanceWhere = (): string => {
+      const host = (userProfile?.name || '').trim();
+      let viaVR = 0;
+      let viaChat = 0;
+      for (const m of identityMsgs as any[]) {
+          const kind = classifyExchange(m, host);
+          if (kind === 'none') continue;
+          // both = ta 在留言簿回了你，那就是彼方的来往
+          if (kind === 'both') viaVR++; else viaChat++;
+      }
+      return viaVR > viaChat ? '彼方的留言簿' : '这台手机上';
+  };
+
+  /**
+   * 确立朋友关系：改 hostRelation ＋ 记下相识经过 ＋ **往聊天里落一条纪念消息**。
+   *
+   * 那条消息是关键 —— 用户原话「我希望这段记忆角色能拥有」。
+   * 消息会照常进记忆管线（`isMessageSemanticallyRelevant` 收 `role:'system'` 的有正文消息），
+   * 所以角色是真的会记得这件事，而不只是提示词里多一行。
+   */
+  const confirmAcquaintance = async () => {
+      if (!formData) return;
+      const charId = formData.id;
+      const charName = formData.name;
+      const where = acqWhere.trim() || guessAcquaintanceWhere();
+      handleChange('hostRelation', 'friend');
+      handleChange('acquaintance', { at: Date.now(), where });
+      setAcqOpen(false);
+      try {
+          await DB.saveMessage({
+              charId,
+              role: 'system',
+              type: 'text',
+              content: `你和${charName}是在${where}认识的，聊得来，于是交换了联系方式——从今天起可以在这里私下说话了。`,
+          } as any);
+      } catch (err) {
+          console.error('[身份归属] 相识记录落库失败', err);
+      }
+      addToast(`已确立朋友关系——你们是在${where}认识的`, 'success');
+  };
+
   const rewriteGreetingMacros = async (
       charId: string,
       charName: string,
@@ -226,6 +276,30 @@ const Character: React.FC = () => {
           console.error('[身份归属] 开场白补写失败', err);
       }
   };
+
+  /** 阶段 2.8 提议条的数据源：当前角色的私聊消息。切角色时重取，取不到就留空。 */
+  const [identityMsgs, setIdentityMsgs] = useState<{ role?: string; type?: string }[]>([]);
+  useEffect(() => {
+      let alive = true;
+      const charId = formData?.id;
+      if (!charId) { setIdentityMsgs([]); return; }
+      DB.getMessagesByCharId(charId, true)
+          .then(ms => { if (alive) setIdentityMsgs(ms as any); })
+          .catch(() => { if (alive) setIdentityMsgs([]); });
+      return () => { alive = false; };
+  }, [formData?.id]);
+
+  /**
+   * 阶段 2.8：这个「不认识我」的角色，是否已经和机主处熟了。
+   *
+   * ⛔ 只用来**显示一条提议**，绝不自动改 `hostRelation`——
+   * 那是用户的角色设定，替 ta 改等于踩「别把我的角色写崩」。
+   * 消息用已加载的聊天记录算；拿不到就当作还不够熟（宁可不提，也不要误催）。
+   */
+  const friendshipSuggest = useMemo(
+      () => evaluateFriendshipUpgrade(formData, identityMsgs, userProfile?.name),
+      [formData?.hostRelation, identityMsgs, userProfile?.name],
+  );
 
   /** 改「认不认识机主」时顺带更新叙事层的默认值——但用户手动改过就不再覆盖。 */
   const pickStHostRelation = (v: NonNullable<CharacterProfile['hostRelation']>) => {
@@ -1733,6 +1807,75 @@ ${isInitialGeneration ? `
                                         下面三项相互独立。从酒馆搬来的角色建议设一遍；不管它则与以前完全一样。
                                     </p>
                                 </div>
+
+                                {/* 阶段 2.8：关系「处出来」的提议。
+                                    只在够熟、且用户没说过「不用了」时出现；点了才改，改完下面还能改回去。 */}
+                                {/* 仪式面板：确认「在哪认识的」。这句会写进角色的认知，也会落成一条聊天记录。 */}
+                                {acqOpen && (
+                                    <div className="bg-emerald-50 border border-emerald-200 rounded-2xl px-4 py-3 space-y-2.5">
+                                        <div className="text-xs font-bold text-emerald-800">你们是在哪认识的？</div>
+                                        <div className="text-[10px] text-emerald-700/70 leading-relaxed">
+                                            这句会成为 <span className="font-bold">ta 自己的记忆</span>——之后聊天时 ta 知道你们是怎么认识、怎么加上联系方式的。
+                                        </div>
+                                        <input
+                                            value={acqWhere}
+                                            onChange={e => setAcqWhere(e.target.value)}
+                                            placeholder="彼方的留言簿"
+                                            className="w-full px-3.5 py-2 rounded-xl bg-white text-xs text-slate-700 outline-none focus:ring-1 focus:ring-emerald-300"
+                                        />
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => void confirmAcquaintance()}
+                                                className="flex-1 py-2 bg-emerald-600 text-white text-xs font-bold rounded-xl active:scale-95 transition-transform"
+                                            >就这么定</button>
+                                            <button
+                                                onClick={() => setAcqOpen(false)}
+                                                className="px-4 py-2 bg-white text-emerald-700/70 text-xs font-bold rounded-xl border border-emerald-200 active:scale-95 transition-transform"
+                                            >再想想</button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* 已经确立过的：显示来历，可改可清 */}
+                                {!acqOpen && formData.acquaintance?.where && (
+                                    <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-2.5 flex items-center gap-2">
+                                        <div className="text-[11px] text-slate-500 leading-relaxed flex-1">
+                                            你们是在<span className="font-bold text-slate-700">{formData.acquaintance.where}</span>认识的。
+                                            <br /><span className="text-[10px] text-slate-400">ta 记得这件事。</span>
+                                        </div>
+                                        <button
+                                            onClick={() => { setAcqWhere(formData.acquaintance?.where || ''); setAcqOpen(true); }}
+                                            className="text-[10px] text-slate-400 px-2.5 py-1.5 rounded-lg border border-slate-200 active:scale-95 transition-transform shrink-0"
+                                        >改</button>
+                                    </div>
+                                )}
+
+                                {!acqOpen && friendshipSuggest.ready && !formData.friendshipSuggestDismissed && (
+                                    <div className="bg-emerald-50 border border-emerald-100 rounded-2xl px-4 py-3 space-y-2">
+                                        <div className="text-xs font-bold text-emerald-800 leading-relaxed">
+                                            你和 ta 已经来回聊了不少
+                                            <span className="font-mono mx-1">
+                                                （你 {friendshipSuggest.fromHost} 条 · ta {friendshipSuggest.fromChar} 条）
+                                            </span>
+                                            —— 要把关系算成「朋友」吗？
+                                        </div>
+                                        <div className="text-[10px] text-emerald-700/70 leading-relaxed">
+                                            现在 ta 还被设成「不认识我」，所以群聊、私聊、小镇里都当你是陌生人。
+                                            改成朋友之后 ta 会认得你，<span className="font-bold">「远方」那档也才有意义</span>。
+                                            <br />随时能在下面改回去。
+                                        </div>
+                                        <div className="flex gap-2 pt-0.5">
+                                            <button
+                                                onClick={() => { setAcqWhere(guessAcquaintanceWhere()); setAcqOpen(true); }}
+                                                className="flex-1 py-2 bg-emerald-600 text-white text-xs font-bold rounded-xl active:scale-95 transition-transform"
+                                            >加个联系方式</button>
+                                            <button
+                                                onClick={() => handleChange('friendshipSuggestDismissed', true)}
+                                                className="px-4 py-2 bg-white text-emerald-700/70 text-xs font-bold rounded-xl border border-emerald-100 active:scale-95 transition-transform"
+                                            >不用了</button>
+                                        </div>
+                                    </div>
+                                )}
 
                                 <div className="space-y-1.5">
                                     <div className="text-[11px] font-bold text-slate-500">ta 和你（机主）是什么关系？</div>

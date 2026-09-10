@@ -147,6 +147,15 @@ export const ContextBuilder = {
             nowTimestamp?: number;
             /** Recent messages used to activate keyword-based worldbook entries. */
             worldbookMessages?: WorldbookScanMessage[];
+            /**
+             * 机主和这个角色**来回聊过**（阶段 2.8）。由调用方从消息窗口算好传进来——
+             * buildCoreContext 拿不到完整消息流，而这里只需要一个布尔值。
+             *
+             * 作用：让 `hostRelation:'stranger'` 的角色不再被每轮告知
+             * 「此前从未与 ta 说过话」——聊了几十轮之后那句是假的，
+             * 而且会把 ta 对机主的印象一遍遍清零。
+             */
+            hasExchangedWithHost?: boolean;
             /** Phone/chat by default; Date and other face-to-face callers pass offline. */
             worldbookMode?: Exclude<WorldbookMode, 'all' | 'schedule'>;
             /** 由调用方预先解析，避免带概率的世界书在同一请求内被重复投骰。 */
@@ -221,6 +230,7 @@ export const ContextBuilder = {
                 char,
                 user?.name,
                 resolveUserMacroName(char, user),
+                timeOptions?.hasExchangedWithHost === true,
             );
             if (partnerNote) context += `${partnerNote}\n\n`;
         }

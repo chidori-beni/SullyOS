@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
     buildChatPartnerNote,
+    evaluateFriendshipUpgrade,
+    FRIENDSHIP_SUGGEST_THRESHOLD,
     buildGroupHostAwarenessLine,
     buildIdentityNote,
     expandCharBodyMacros,
@@ -299,5 +301,153 @@ describe('buildChatPartnerNote —— 私聊里「对面这位是谁」', () => 
         const note = buildChatPartnerNote({ hostRelation: 'stranger' }, '', '');
         expect(note).toContain('对面是这台手机的机主。');
         expect(note).toContain('你不认识 ta');
+    });
+});
+
+
+describe('evaluateFriendshipUpgrade —— 关系「处出来」（阶段 2.8）', () => {
+    const stranger = { hostRelation: 'stranger' } as const;
+    const N = FRIENDSHIP_SUGGEST_THRESHOLD;
+    /** n 条机主消息 + m 条角色对话消息 */
+    const talk = (n: number, m: number) => [
+        ...Array.from({ length: n }, () => ({ role: 'user', type: 'text' })),
+        ...Array.from({ length: m }, () => ({ role: 'assistant', type: 'text' })),
+    ];
+
+    it('双方都过门槛才提议', () => {
+        expect(evaluateFriendshipUpgrade(stranger, talk(N, N)).ready).toBe(true);
+    });
+
+    it('⛔ 单方面刷屏不算处熟——你说了一百句 ta 没理你', () => {
+        const r = evaluateFriendshipUpgrade(stranger, talk(100, 0));
+        expect(r.ready).toBe(false);
+        expect(r.fromHost).toBe(100);
+        expect(r.fromChar).toBe(0);
+    });
+
+    it('差一条都不提议', () => {
+        expect(evaluateFriendshipUpgrade(stranger, talk(N, N - 1)).ready).toBe(false);
+        expect(evaluateFriendshipUpgrade(stranger, talk(N - 1, N)).ready).toBe(false);
+    });
+
+    it('⛔ 只对「不认识我」有意义——朋友/陪伴没有可升的', () => {
+        expect(evaluateFriendshipUpgrade({ hostRelation: 'friend' }, talk(99, 99)).ready).toBe(false);
+        expect(evaluateFriendshipUpgrade({ hostRelation: 'partner' }, talk(99, 99)).ready).toBe(false);
+        // 缺省即 partner，旧角色不会冒出提议
+        expect(evaluateFriendshipUpgrade({}, talk(99, 99)).ready).toBe(false);
+    });
+
+    // ── 彼方：一来一往要**两边都算**（2026-09-10 按用户反馈重写） ──
+    const HOST = '颜千夜';
+    /** 机主在留言墙真发了话 */
+    const boardSay = () => ({ role: 'user', type: 'vr_card', metadata: { userBoardPost: true, boardPost: '在吗' } });
+    /** 机主只是广播「我现在在健身房」——群发给每个角色，不是在跟谁说话 */
+    const boardStatus = () => ({ role: 'user', type: 'vr_card', metadata: { userBoardPost: true, activity: '在健身房挂机' } });
+    /** 角色在留言簿回了机主 */
+    const boardReply = () => ({ role: 'assistant', type: 'vr_card', metadata: { room: 'guestbook', boardReplyToName: HOST, boardPosts: [{ content: '在', replyToName: HOST }] } });
+    /** 角色自己在彼方看书 */
+    const alone = () => ({ role: 'assistant', type: 'vr_card', metadata: { room: 'library' } });
+
+    it('⭐ 彼方来往由「ta 回了你」认定，一条同时算双方', () => {
+        const r = evaluateFriendshipUpgrade(stranger, Array.from({ length: N }, boardReply), HOST);
+        expect(r.fromHost).toBe(N);
+        expect(r.fromChar).toBe(N);
+        expect(r.ready).toBe(true);
+    });
+
+    it('⛔⭐ 留言墙发言本身不计数——它群发给所有角色，你冲着 A 说的话 B 不能白捡', () => {
+        // 用户 2026-09-10 原话：「我回复角色A，角色B那边也计数了怎么办？」
+        // 留言簿里用户根本无法指定回复谁（onUserBoardPost 只收正文），所以只能这样解。
+        const r = evaluateFriendshipUpgrade(stranger, Array.from({ length: 99 }, boardSay), HOST);
+        expect(r.fromHost).toBe(0);
+        expect(r.fromChar).toBe(0);
+    });
+
+    it('⛔ 发一百条墙贴没人理 → 谁的计数都不动', () => {
+        const msgs = [...Array.from({ length: 99 }, boardSay), ...Array.from({ length: 99 }, alone)];
+        const r = evaluateFriendshipUpgrade(stranger, msgs, HOST);
+        expect(r.ready).toBe(false);
+        expect(r.fromHost + r.fromChar).toBe(0);
+    });
+
+    it('⛔ 状态广播不算——它同样群发给每个接入角色', () => {
+        const r = evaluateFriendshipUpgrade(stranger, Array.from({ length: 99 }, boardStatus), HOST);
+        expect(r.fromHost).toBe(0);
+    });
+
+    it('⛔ 「ta 独自度过的时间」不算——在彼方看书、在小镇过日子都不是在跟你来往', () => {
+        const msgs = [
+            ...Array.from({ length: N }, () => ({ role: 'user', type: 'text' })),
+            ...Array.from({ length: 99 }, alone),
+            ...Array.from({ length: 99 }, () => ({ role: 'assistant', type: 'world_card' })),
+        ];
+        const r = evaluateFriendshipUpgrade(stranger, msgs, HOST);
+        expect(r.fromChar).toBe(0);
+        expect(r.ready).toBe(false);
+    });
+
+    it('⛔ 角色在留言簿回的是别人，不算回你', () => {
+        const toOther = { role: 'assistant', type: 'vr_card', metadata: { room: 'guestbook', boardReplyToName: '别人', boardPosts: [{ content: 'hi', replyToName: '别人' }] } };
+        const r = evaluateFriendshipUpgrade(stranger, Array.from({ length: 99 }, () => toOther), HOST);
+        expect(r.fromChar).toBe(0);
+    });
+
+    it('不传机主名时，角色侧的彼方往来保守地不计入', () => {
+        const r = evaluateFriendshipUpgrade(stranger, Array.from({ length: 99 }, boardReply));
+        expect(r.fromChar).toBe(0);
+    });
+
+    it('空 / null 输入不崩', () => {
+        expect(evaluateFriendshipUpgrade(stranger, []).ready).toBe(false);
+        expect(evaluateFriendshipUpgrade(stranger, null).ready).toBe(false);
+        expect(evaluateFriendshipUpgrade(null, talk(99, 99)).ready).toBe(false);
+    });
+
+    it('门槛可调，判定逻辑不变', () => {
+        expect(evaluateFriendshipUpgrade(stranger, talk(3, 3), '', 3).ready).toBe(true);
+        expect(evaluateFriendshipUpgrade(stranger, talk(3, 2), '', 3).ready).toBe(false);
+    });
+});
+
+
+describe('陌生但聊过 / 相识经过（阶段 2.8）', () => {
+    const stranger = { hostRelation: 'stranger' } as const;
+
+    it('⛔ 没聊过：维持原话「此前从未与 ta 说过话」', () => {
+        expect(buildChatPartnerNote(stranger, '颜千夜', '', false))
+            .toContain('此前从未与 ta 说过话');
+    });
+
+    it('⭐ 聊过之后不许再说「从未说过话」——那句已经是假的，还会把印象一遍遍清零', () => {
+        const note = buildChatPartnerNote(stranger, '颜千夜', '', true);
+        expect(note).not.toContain('从未与 ta 说过话');
+        expect(note).toContain('聊得来的陌生人');
+    });
+
+    it('相识经过会告诉角色，且明说「这段经过你记得」', () => {
+        const note = buildChatPartnerNote(
+            { hostRelation: 'friend', acquaintance: { at: 1, where: '彼方的留言簿' } } as any,
+            '颜千夜', '', true,
+        );
+        expect(note).toContain('你们是在彼方的留言簿认识的');
+        expect(note).toContain('这段经过你记得');
+    });
+
+    it('⛔ 还是陌生人时不提相识经过——没确立就没有这回事', () => {
+        const note = buildChatPartnerNote(
+            { hostRelation: 'stranger', acquaintance: { at: 1, where: '彼方' } } as any,
+            '颜千夜', '', true,
+        );
+        expect(note).not.toContain('认识的');
+    });
+
+    it('⛔ 铁律①仍然成立：相识经过里不许冒出关系词', () => {
+        const note = buildChatPartnerNote(
+            { hostRelation: 'friend', acquaintance: { at: 1, where: '彼方' } } as any,
+            '颜千夜', '', true,
+        );
+        for (const w of ['恋人', '喜欢', '爱', '伴侣', '在乎', '重要的人']) {
+            expect(note).not.toContain(w);
+        }
     });
 });

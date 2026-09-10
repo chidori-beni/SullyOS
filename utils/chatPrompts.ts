@@ -34,6 +34,7 @@ import { buildUserCalendarContext } from './calendarIntegration';
 import { buildXinshengContinuityBlock, buildXinshengInstruction, selectXinshengContinuity } from './xinsheng/xinshengPrompt';
 import { readXinshengHistory } from './xinsheng/xinshengStore';
 import { prepareXinshengRoundPreset } from './xinsheng/xinshengRandomPreset';
+import { classifyExchange } from './characterIdentity';
 
 // 语音格式指导按当前 TTS 服务商二选一：用 MiniMax 才注入 MiniMax 那套（含 <#秒#> 停顿标记），
 // 用鱼声则注入鱼声版（去掉 MiniMax 专属标记，改用标点 / 省略号控制停顿）。
@@ -260,6 +261,24 @@ export const detectChatModeTransition = (messages: readonly Message[]): ChatMode
  * | 生活记录的代记工具说明 | 后台没有用户新说的话，记下来的一定是重复或臆造 | 不补（摘要数据仍保留） |
  * | `[schedule_message]` 教学 | 排的是浏览器里的本地定时消息，App 关着没人派发 | worker 追加自己的排程工具说明 |
  */
+/**
+ * 窗口里是否出现过「机主说过 ＋ 角色答过」（阶段 2.8）。
+ * 复用 characterIdentity 的同一套判定，免得两处对「什么算互动」各有一套。
+ */
+const hasHostExchange = (msgs: readonly any[] | null | undefined, hostName?: string): boolean => {
+    let host = false;
+    let char = false;
+    for (const m of msgs || []) {
+        const kind = classifyExchange(m, hostName);
+        // 留言簿里 ta 回了你（both）：一条就同时证明了两边。
+        if (kind === 'both') return true;
+        if (kind === 'host') host = true;
+        else if (kind === 'char') char = true;
+        if (host && char) return true;
+    }
+    return false;
+};
+
 export interface PromptBuildOptions {
     forFirePack?: boolean;
     /** 主 API 从完整数据库历史识别出的「刚从哪种模式回到 ChatApp」。 */
@@ -480,7 +499,13 @@ export const ChatPrompts = {
             // 小镇：关掉「正在和你说话的人」，该说的由存在感档位（buildModeRule）负责，
             // 两边都注会直接矛盾。见 PromptBuildOptions.worldHome。
             promptOptions?.worldHome ? { skipChatPartnerNote: true } : undefined,
-            { worldbookMessages: currentMsgs },
+            {
+                worldbookMessages: currentMsgs,
+                // 阶段 2.8：窗口里只要出现过「机主说 + 角色答」这一对，就说明你们聊过。
+                // 只需布尔值，所以用最近窗口判断足够——真聊过的话窗口里必然有痕迹；
+                // 窗口空（全新对话）时判为「没聊过」也正是对的。
+                hasExchangedWithHost: hasHostExchange(currentMsgs, userProfile?.name),
+            },
             { deferVolatile: true },
         );
         timings.buildCoreContext = Math.round(performance.now() - coreT0);

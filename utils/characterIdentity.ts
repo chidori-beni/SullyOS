@@ -59,6 +59,133 @@ export const resolveUserMacroName = (
     return live || target.name?.trim() || hostName;
 };
 
+/**
+ * 提议「升为朋友」的门槛：双方**各自**要达到的对话条数。
+ *
+ * 取 20 是因为它大约等于「聊过好几次」而不是「聊了一整晚」——
+ * 目标是让关系「处出来」的那一刻显得自然，而不是刷一轮就弹。
+ * 要调就改这里，判定逻辑不必动。
+ */
+export const FRIENDSHIP_SUGGEST_THRESHOLD = 20;
+
+/** 计数需要看的消息形状（`Message` 的子集，方便直接喂测试假数据）。 */
+export interface ExchangeLike {
+    role?: string;
+    type?: string;
+    metadata?: {
+        /** 机主侧：彼方留言簿/状态广播都带它 */
+        userBoardPost?: boolean;
+        /** 机主侧：**真的在留言墙上说了话**才有；只更新彼方状态时没有 */
+        boardPost?: string;
+        /** 角色侧：ta 这次留言回的是谁（`runSession.ts` 落的 `boardReplyToName`） */
+        boardReplyToName?: string;
+        boardPosts?: { content?: string; replyToName?: string }[];
+        [k: string]: unknown;
+    } | null;
+}
+
+/** 一条消息在「你俩的来往」里算什么。`both` = 一条消息同时证明了两边。 */
+export type ExchangeKind = 'host' | 'char' | 'both' | 'none';
+
+/**
+ * 这条消息在「你和 ta 之间的来往」里算什么。
+ *
+ * **两次修正的历史，别再改回去：**
+ *
+ * 1. 初版把角色侧的 `vr_card` 一刀切掉 → 「你在彼方跟 ta 一来一往，只算你那一半」，
+ *    与用户心智完全相反（原话「在彼方聊得不错成为朋友了」）。
+ * 2. 第二版让机主的留言墙发言直接计数 → 用户当即指出致命问题：
+ *    **「我回复角色A，角色B那边也计数了怎么办？」**
+ *    确实如此——`VRWorldApp.tsx:327` 把每条墙贴**群发给所有接入彼方的角色**，
+ *    而且用户在留言簿**根本无法指定回复谁**（`onUserBoardPost(content)` 只收正文，
+ *    只有角色会设 `replyToName`）。于是冲着 A 说的话，B 也白捡一条。
+ *
+ * **现在的规则：**
+ *
+ * | 消息 | 计入 |
+ * |---|---|
+ * | 私聊里机主说的话 | `host` |
+ * | 私聊里角色的回复 | `char` |
+ * | **角色在留言簿回了机主** | **`both`** —— 一条就同时证明了「你说过」和「ta 答了」 |
+ * | 机主的留言墙发言 / 彼方状态广播 | `none` —— 群发给所有人，**不能算成跟某一个人的来往** |
+ * | 角色独自看书 / 小镇过日子 | `none` |
+ *
+ * 关键就是那条 `both`：**彼方的来往靠「ta 回了你」来认定，而不是靠「你说了话」。**
+ * 于是「你发一百条墙贴没人理」时，谁的计数都不动——这正是用户要的。
+ */
+export const classifyExchange = (msg: ExchangeLike, hostName?: string): ExchangeKind => {
+    const type = msg.type as string | undefined;
+    const meta = msg.metadata || undefined;
+
+    if (msg.role === 'user') {
+        // 彼方广播（留言墙发言 / 状态更新）一律不单独计数，理由见上。
+        return meta?.userBoardPost ? 'none' : 'host';
+    }
+    if (msg.role !== 'assistant') return 'none';
+
+    if (type === 'world_card') return 'none';
+    if (type === 'vr_card') {
+        const host = (hostName || '').trim();
+        if (!host) return 'none';
+        if (meta?.boardReplyToName?.trim() === host) return 'both';
+        return (meta?.boardPosts || []).some(p => p?.replyToName?.trim() === host) ? 'both' : 'none';
+    }
+    return 'char';
+};
+
+/** 这条消息是否构成任何一种来往。`hasHostExchange` 之类的粗判用它。 */
+export const isMutualExchange = (msg: ExchangeLike, hostName?: string): boolean =>
+    classifyExchange(msg, hostName) !== 'none';
+
+export interface FriendshipSuggestion {
+    /** 够不够熟——够了才提议，且**仅仅是提议** */
+    ready: boolean;
+    /** 机主发出的条数 */
+    fromHost: number;
+    /** 角色回应的条数（不含 ta 独自活动的卡片） */
+    fromChar: number;
+    threshold: number;
+}
+
+/**
+ * 阶段 2.8：判断一个「不认识我」的角色，是否已经和机主处熟了。
+ *
+ * 起因是用户 2026-09-10 的一句话：
+ * 「我以为在彼方会通过互动什么的渐渐认识，渐渐成为网友，原来是需要我提前设定的啊？」
+ * —— 这个直觉比原设计更自然：**关系该处出来，而不是开局选好。**
+ *
+ * ⛔ **本函数只回答「够不够熟」，绝不改任何东西。**
+ * `hostRelation` 是用户的角色设定，自动改它等于替用户改角色关系，
+ * 直接踩「别把我的角色写崩」这条红线。真正的升级必须由用户点头（见 Character.tsx 的提议条）。
+ *
+ * 只对 `stranger` 有意义：
+ * - `friend` / `partner` 本来就认识机主，没有可升的；
+ * - `friend → partner` 属于恋爱线，归阶段 3.3 的好感阈值事件，**不要混进来**。
+ *
+ * 双方**各自**都要过门槛：单方面刷屏（你说了一百句 ta 没理你）不该算处熟了。
+ */
+export const evaluateFriendshipUpgrade = (
+    char: Pick<CharacterProfile, 'hostRelation'> | null | undefined,
+    messages: readonly ExchangeLike[] | null | undefined,
+    /** 机主名——判断角色在留言簿回的是不是 ta 时要用。不传则角色侧的彼方往来不计入。 */
+    hostName?: string,
+    threshold: number = FRIENDSHIP_SUGGEST_THRESHOLD,
+): FriendshipSuggestion => {
+    const limit = Math.max(1, Math.floor(threshold));
+    const empty: FriendshipSuggestion = { ready: false, fromHost: 0, fromChar: 0, threshold: limit };
+    if (hostRelationOf(char) !== 'stranger') return empty;
+
+    let fromHost = 0;
+    let fromChar = 0;
+    for (const msg of messages || []) {
+        const kind = classifyExchange(msg, hostName);
+        if (kind === 'host') fromHost++;
+        else if (kind === 'char') fromChar++;
+        else if (kind === 'both') { fromHost++; fromChar++; }
+    }
+    return { ready: fromHost >= limit && fromChar >= limit, fromHost, fromChar, threshold: limit };
+};
+
 /** 正文里可能残留的宏：`{{char}}` / `{{user}}` / `<BOT>` / `<USER>`。 */
 const BODY_MACRO_PROBE = /\{\{|<BOT>|<USER>/;
 
@@ -104,15 +231,20 @@ export const expandCharBodyMacros = (
  * 模型只能把两者合并成一个人——它没做错，是我们没说。
  * 这段就是那句缺失的话。
  *
+ * 另外承担两件事：**「陌生但聊过」这一档**（别再说「从未说过话」），
+ * 以及**相识经过**（`char.acquaintance`，角色自己知道你们是在哪认识的）。
+ *
  * **只陈述「是谁 / 不是谁」，绝不描述任何关系**（铁律 ①：配队 ≠ 恋人，
  * `{{user}}` 指向谁纯属身份归属，不蕴含亲密度）。关系标签仍由 `buildIdentityNote` 负责。
  *
  * 缺省角色（`partner` 且没指过 `userMacroTarget`）**返回空串**，旧角色零变化。
  */
 export const buildChatPartnerNote = (
-    char: Pick<CharacterProfile, 'hostRelation' | 'userMacroTarget'> | null | undefined,
+    char: Pick<CharacterProfile, 'hostRelation' | 'userMacroTarget' | 'acquaintance'> | null | undefined,
     hostName: string | null | undefined,
     counterpartName?: string | null,
+    /** 你们是否已经来回聊过（由 evaluateFriendshipUpgrade 的计数判定）。见下方 stranger 分支。 */
+    hasExchanged: boolean = false,
 ): string => {
     const host = (hostName || '').trim();
     const counterpart = (counterpartName || '').trim();
@@ -125,9 +257,20 @@ export const buildChatPartnerNote = (
     const lines: string[] = [];
     lines.push(host ? `- 对面是这台手机的机主「${host}」。` : '- 对面是这台手机的机主。');
     if (relation === 'stranger') {
-        lines.push('- 你不认识 ta，此前从未与 ta 说过话。');
+        // ⚠️ 「不认识」与「没说过话」是两件事，早先焊死在一句里 —— 于是聊了几十轮之后
+        // 提示词还在说「此前从未与 ta 说过话」，那句已经是**假的**，
+        // 而且每轮都在把角色对机主的印象清零（用户 2026-09-10 问「ta 会渐渐产生印象吗」，
+        // 答案原本是「不会，就是被这句堵死的」）。
+        lines.push(hasExchanged
+            ? '- 你原本不认识 ta。但你们已经来回聊过一阵子了——ta 现在算是个聊得来的陌生人，不再是完全的路人；该有的熟悉感和分寸感都可以自然带出来。'
+            : '- 你不认识 ta，此前从未与 ta 说过话。');
     } else if (relation === 'friend') {
         lines.push('- 你和 ta 是朋友，关系止于朋友。');
+    }
+    // 相识经过：用户在「身份归属」里确立关系时落下的，角色自己的来历认知。
+    const where = char?.acquaintance?.where?.trim();
+    if (where && relation !== 'stranger') {
+        lines.push(`- 你们是在${where}认识的，后来才加上联系方式、能私下说话。这段经过你记得。`);
     }
     if (needsSplit) {
         lines.push(
