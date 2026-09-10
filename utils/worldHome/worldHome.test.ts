@@ -794,3 +794,63 @@ describe('WorldScheduler', () => {
         expect(fired).toEqual(['w1']);
     });
 });
+
+
+describe('关系名变更史（阶段 2.3）—— 别再硬覆盖', () => {
+    const mkWorldWith = (rel: any) => ({
+        id: 'w1', name: '小镇', relationships: rel ? [rel] : [],
+    } as any);
+    const members = [{ id: 'a', name: '小满' }, { id: 'b', name: '阿岚' }];
+    const beatWith = (newLabel?: string, reason?: string) => ([{
+        charId: 'a', charName: '小满',
+        relationshipDeltas: [{ withName: '阿岚', delta: 5, ...(newLabel ? { newLabel } : {}), ...(reason ? { reason } : {}) }],
+    }] as any);
+
+    it('⭐ 改名时把旧名字存进 labelHistory，不再无声丢掉', () => {
+        const w = mkWorldWith({ fromId: 'a', toId: 'b', value: 10, label: '死对头' });
+        applyRelationshipDeltas(w, beatWith('别扭的同伴', '他救了我一命'), members, 12);
+        const rel = w.relationships[0];
+        expect(rel.label).toBe('别扭的同伴');
+        expect(rel.labelHistory).toHaveLength(1);
+        expect(rel.labelHistory[0].label).toBe('死对头');
+        expect(rel.labelHistory[0].round).toBe(12);
+        expect(rel.labelHistory[0].reason).toBe('他救了我一命');
+    });
+
+    it('多次改名按顺序累积，最旧的在最前', () => {
+        const w = mkWorldWith({ fromId: 'a', toId: 'b', value: 0, label: '陌生人' });
+        applyRelationshipDeltas(w, beatWith('点头之交'), members, 1);
+        applyRelationshipDeltas(w, beatWith('朋友'), members, 5);
+        applyRelationshipDeltas(w, beatWith('挚友'), members, 9);
+        const rel = w.relationships[0];
+        expect(rel.label).toBe('挚友');
+        expect(rel.labelHistory.map((h: any) => h.label)).toEqual(['陌生人', '点头之交', '朋友']);
+    });
+
+    it('⛔ 改成同一个名字不算变更，不会灌进重复历史', () => {
+        const w = mkWorldWith({ fromId: 'a', toId: 'b', value: 0, label: '朋友' });
+        applyRelationshipDeltas(w, beatWith('朋友'), members, 3);
+        expect(w.relationships[0].labelHistory).toBeUndefined();
+    });
+
+    it('⛔ 本来就没有名字时不记历史——没有旧名字可丢', () => {
+        const w = mkWorldWith({ fromId: 'a', toId: 'b', value: 0 });
+        applyRelationshipDeltas(w, beatWith('初识'), members, 2);
+        expect(w.relationships[0].label).toBe('初识');
+        expect(w.relationships[0].labelHistory).toBeUndefined();
+    });
+
+    it('没给 newLabel 时只动好感，名字与历史都不碰', () => {
+        const w = mkWorldWith({ fromId: 'a', toId: 'b', value: 10, label: '死对头' });
+        applyRelationshipDeltas(w, beatWith(undefined), members, 4);
+        expect(w.relationships[0].label).toBe('死对头');
+        expect(w.relationships[0].labelHistory).toBeUndefined();
+        expect(w.relationships[0].value).toBe(15);
+    });
+
+    it('不传 round 也能用（旧调用点不会崩）', () => {
+        const w = mkWorldWith({ fromId: 'a', toId: 'b', value: 0, label: '旧' });
+        applyRelationshipDeltas(w, beatWith('新'), members);
+        expect(w.relationships[0].labelHistory[0].round).toBeUndefined();
+    });
+});

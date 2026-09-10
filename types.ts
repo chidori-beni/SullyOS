@@ -1631,6 +1631,25 @@ export interface WorldRelationship {
     toId: string;
     /** from 眼中这段关系的名字（我视ta为挚友 / ta是我死对头…），用户可编辑，演绎不强行改 */
     label?: string;
+    /**
+     * 关系名的**变更史**（阶段 2.3），最旧在前。每次演绎改名时把**被替换掉的那个**追加进来。
+     *
+     * 为什么必须留：改造前是 `rel.label = rd.newLabel` **硬覆盖**——
+     * 剧情一旦给关系改了名，原来那个名字就**永久消失、无法回退**。
+     * 这与已定的设计直接冲突（见交接说明 §6.3）：
+     * 「锁 = 事前保险，历史 = 事后后悔药，**所以用户不必提前决定自己期不期待某段关系变化**」。
+     * 没有历史，那句话就不成立。
+     */
+    labelHistory?: {
+        /** 被替换掉的那个名字 */
+        label: string;
+        /** 何时被替换 */
+        replacedAt: number;
+        /** 第几轮换的 */
+        round?: number;
+        /** 演绎给出的理由（`relationshipDeltas[].reason`） */
+        reason?: string;
+    }[];
     /** 0-100，from 对 to 的好感/亲近度，演绎产出的 delta 会落在这里 */
     value: number;
 }

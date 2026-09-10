@@ -78,7 +78,13 @@ const dispatch = (name: string, detail: any) => {
  * 关系 delta 回填。关系有向：A 的演绎里"和 B 关系 +2"只代表 **A 对 B** 的好感变了，
  * B 对 A 怎么想由 B 自己的演绎轮决定——两边完全可以不对等。不存在的边按 50 起步。
  */
-export function applyRelationshipDeltas(world: WorldProfile, beats: WorldCharBeat[], members: { id: string; name: string }[]): void {
+export function applyRelationshipDeltas(
+    world: WorldProfile,
+    beats: WorldCharBeat[],
+    members: { id: string; name: string }[],
+    /** 第几轮改的——只用于写进 labelHistory，便于用户回滚时认得出是哪次转折。 */
+    round?: number,
+): void {
     const idOf = (name: string) => members.find(m => m.name === name)?.id;
     for (const beat of beats) {
         for (const rd of beat.relationshipDeltas || []) {
@@ -92,8 +98,21 @@ export function applyRelationshipDeltas(world: WorldProfile, beats: WorldCharBea
             }
             // 好感范围 -100 ~ +100（可为负 = 嫌隙/敌意）
             rel.value = Math.max(-100, Math.min(100, rel.value + rd.delta));
-            // 重大转折时，角色对这段关系的看法（label）也会变
-            if (rd.newLabel) rel.label = rd.newLabel;
+            // 重大转折时，角色对这段关系的看法（label）也会变。
+            // ⚠️ 改名前必须把旧名字存进 labelHistory —— 早先这里是硬覆盖，
+            // 剧情改一次名，原来那个就永久没了，用户想反悔也回不去
+            // （交接说明 §6.3：「历史 = 事后后悔药」，没有历史那条设计就是空的）。
+            if (rd.newLabel && rd.newLabel !== rel.label) {
+                if (rel.label) {
+                    (rel.labelHistory ||= []).push({
+                        label: rel.label,
+                        replacedAt: Date.now(),
+                        ...(round !== undefined ? { round } : {}),
+                        ...(rd.reason ? { reason: rd.reason } : {}),
+                    });
+                }
+                rel.label = rd.newLabel;
+            }
         }
     }
 }
@@ -269,6 +288,38 @@ export async function injectWorldCard(world: WorldProfile, beat: WorldCharBeat, 
         content: buildCardContent(world, storyTime, beat),
         metadata: buildWorldCardMeta(world, beat, round, storyTime),
     });
+}
+
+/**
+ * 阶段 2.5：把**已经注入过**的那张 world_card 就地改成新内容。
+ *
+ * 修的漏点：重演（`rerollWorldCharBeat`）只在「之前缺这拍」时才注入卡片，
+ * 于是**重演一拍已有的演绎时，小镇里换成了新版本，而角色聊天与记忆里留着旧版本**——
+ * 两边就此永久分叉。而 `real` 模式下 world_card 是要进记忆的，
+ * 也就是说角色会**一直记着一段你已经改掉的经历**。
+ *
+ * 用 `worldId + round` 定位该角色那张卡（一个世界一轮只会有一张）。
+ * 找不到就当没注入过，交由调用方决定要不要新建——**绝不在这里补插**，
+ * 否则重演几次就攒出几张同一轮的卡。
+ *
+ * @returns 是否真的改到了一张卡
+ */
+export async function updateInjectedWorldCard(
+    world: WorldProfile,
+    beat: WorldCharBeat,
+    round: number,
+    storyTime: string,
+): Promise<boolean> {
+    const msgs = await DB.getMessagesByCharId(beat.charId, true);
+    const target = [...msgs].reverse().find(m => {
+        if ((m.type as string) !== 'world_card') return false;
+        const meta = m.metadata as any;
+        return meta?.worldId === world.id && meta?.round === round;
+    });
+    if (!target || typeof target.id !== 'number') return false;
+    await DB.updateMessage(target.id, buildCardContent(world, storyTime, beat));
+    await DB.updateMessageMetadata(target.id, () => buildWorldCardMeta(world, beat, round, storyTime));
+    return true;
 }
 
 export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpisodeResult> {
@@ -460,7 +511,7 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
         };
         await DB.saveWorldEpisode(episode);
 
-        applyRelationshipDeltas(world, beats, members);
+        applyRelationshipDeltas(world, beats, members, episode.round);
         // armed 伏笔本轮已爆发 → resolved；本轮注入过的用户决策消费掉
         for (const seed of world.seeds || []) {
             if (seed.status === 'armed') seed.status = 'resolved';
@@ -656,10 +707,19 @@ export async function rerollWorldCharBeat(
         if (!hadBeat) {
             applyBeatToThreads(world, beat, members, episode.round, episode.storyTime);
             collectSeeds(world, beat, episode.round, episode.storyTime);
-            applyRelationshipDeltas(world, [beat], members);
+            applyRelationshipDeltas(world, [beat], members, episode.round);
             worldDirty = true;
             if (world.timeMode !== 'sim' && world.injectToChat !== false) {
                 try { await injectWorldCard(world, beat, episode.round, episode.storyTime); } catch { /* ignore */ }
+            }
+        } else if (world.timeMode !== 'sim' && world.injectToChat !== false) {
+            // 阶段 2.5：这一拍本来就有，副作用不能重复落；但**已经注入的那张卡必须跟着改**，
+            // 否则小镇里是新版本、角色聊天与记忆里是旧版本，两边永久分叉
+            // （real 模式下 world_card 是进记忆的 —— 角色会一直记着一段你已经改掉的经历）。
+            try {
+                await updateInjectedWorldCard(world, beat, episode.round, episode.storyTime);
+            } catch (e) {
+                console.error('[WorldHome] world_card 同步失败（重演）:', e);
             }
         }
         if (worldDirty) {

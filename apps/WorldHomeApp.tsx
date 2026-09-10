@@ -1387,6 +1387,33 @@ const WorldView: React.FC<{
         addToast('伏笔已点燃——下一轮观测时爆发', 'success');
     };
 
+    /** 正在查看变更史的那条关系（`fromId_toId`）。null = 都收起。 */
+    const [relHistoryOf, setRelHistoryOf] = useState<string | null>(null);
+
+    /**
+     * 把某段关系的名字回退到历史上的某一个（阶段 2.3）。
+     *
+     * 交接说明 §6.3 定的是「锁 = 事前保险，**历史 = 事后后悔药**，
+     * 所以用户不必提前决定自己期不期待某段关系变化」——
+     * 改造前 `engine.ts` 是硬覆盖，旧名字直接消失，那句话根本兑现不了。
+     *
+     * 回退本身也记进历史（把当前这个名字压进去），所以**反悔了还能再反悔回来**。
+     */
+    const revertRelLabel = (fromId: string, toId: string, toLabel: string) => {
+        void mutateWorld({
+            relationships: world.relationships.map(r => {
+                if (r.fromId !== fromId || r.toId !== toId) return r;
+                const history = [...(r.labelHistory || [])];
+                if (r.label && r.label !== toLabel) {
+                    history.push({ label: r.label, replacedAt: Date.now(), reason: '你手动回退' });
+                }
+                return { ...r, label: toLabel, labelHistory: history };
+            }),
+        });
+        setRelHistoryOf(null);
+        addToast(`关系已回退为「${toLabel}」`, 'success');
+    };
+
     const deleteSeed = (seedId: string) => {
         void mutateWorld({ seeds: (world.seeds || []).filter(s => s.id !== seedId) });
         addToast('伏笔已删除', 'success');
@@ -1721,7 +1748,14 @@ const WorldView: React.FC<{
                                                 <div className={`flex justify-between items-center text-[11px] ${t.textMain}`}>
                                                     <span className="font-bold flex items-center gap-1">
                                                         {nameOf(r!.fromId)} <CaretRight size={9} weight="bold" className="opacity-50" /> {nameOf(r!.toId)}
-                                                        {r!.label && <span className="text-[8.5px] font-black px-1.5 py-px rounded-full bg-rose-400/15 text-rose-500 border border-rose-400/25">{r!.label}</span>}
+                                                        {r!.label && ((r!.labelHistory || []).length > 0 ? (
+                                                            <button
+                                                                onClick={() => setRelHistoryOf(relHistoryOf === `${r!.fromId}_${r!.toId}` ? null : `${r!.fromId}_${r!.toId}`)}
+                                                                className="text-[8.5px] font-black px-1.5 py-px rounded-full bg-rose-400/15 text-rose-500 border border-rose-400/25 active:scale-95 transition-transform"
+                                                            >{r!.label} <span className="opacity-60">· 改过 {(r!.labelHistory || []).length} 次</span></button>
+                                                        ) : (
+                                                            <span className="text-[8.5px] font-black px-1.5 py-px rounded-full bg-rose-400/15 text-rose-500 border border-rose-400/25">{r!.label}</span>
+                                                        ))}
                                                     </span>
                                                     <span className={`font-black flex items-center gap-0.5 ${r!.value < 0 ? 'text-slate-400' : 'text-rose-400'}`}><Heart size={10} weight="fill" />{r!.value}</span>
                                                 </div>
@@ -1733,6 +1767,26 @@ const WorldView: React.FC<{
                                                             ? { left: '50%', width: `${(r!.value / 2)}%`, background: 'linear-gradient(90deg,#fb7185,#fbbf24)' }
                                                             : { right: '50%', width: `${(-r!.value / 2)}%`, background: 'linear-gradient(90deg,#64748b,#94a3b8)' }} />
                                                 </div>
+                                                {/* 关系名变更史（阶段 2.3）：剧情改过的名字都留着，可以退回去 */}
+                                                {relHistoryOf === `${r!.fromId}_${r!.toId}` && (
+                                                    <div className={`mt-1.5 rounded-lg border p-2 space-y-1.5 ${t.panelSolid}`}>
+                                                        <div className={`text-[9px] font-black tracking-wider uppercase ${t.textLabel}`}>这段关系被改过的名字</div>
+                                                        {[...(r!.labelHistory || [])].reverse().map((h, i) => (
+                                                            <button key={i}
+                                                                onClick={() => revertRelLabel(r!.fromId, r!.toId, h.label)}
+                                                                className={`w-full text-left rounded-md px-2 py-1.5 active:scale-[.98] transition-transform ${t.panel}`}>
+                                                                <div className={`text-[10.5px] font-bold ${t.textMain}`}>
+                                                                    {h.label}
+                                                                    <span className="opacity-45 font-normal ml-1.5">
+                                                                        {h.round !== undefined ? `第 ${h.round} 轮换掉` : '换掉'}
+                                                                    </span>
+                                                                </div>
+                                                                {h.reason && <div className="text-[9.5px] opacity-55 leading-snug mt-0.5">{h.reason}</div>}
+                                                            </button>
+                                                        ))}
+                                                        <div className="text-[9px] opacity-45 leading-relaxed">点任意一条即退回那个名字。退回也算一次变更，所以还能再退回来。</div>
+                                                    </div>
+                                                )}
                                             </div>
                                         ))}
                                     </div>
