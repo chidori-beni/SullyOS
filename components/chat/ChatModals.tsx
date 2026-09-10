@@ -11,6 +11,7 @@ import MessageReactionBar from './MessageReactionBar';
 import { getMessageReactions } from '../../utils/messageReactions';
 import { findActivePresetId } from '../../utils/apiPresetSwitch';
 import { normalizeScheduleRequirement, SCHEDULE_REROLL_REQUIREMENT_MAX_LENGTH } from '../../utils/schedulePlanner';
+import { isBroadcastableMessage } from '../../utils/messageBroadcast';
 
 interface ChatModalsProps {
     modalType: string;
@@ -88,6 +89,7 @@ interface ChatModalsProps {
     onSetHistoryStart: (id: number | undefined) => void;
     onRestoreAdaptiveContext?: () => void;
     onJumpToMessageInChat?: (id: number) => void;
+    onOpenBroadcast: (message: Message) => void;
     onEnterSelectionMode: () => void;
     onReplyMessage: () => void;
     onEditMessageStart: () => void;
@@ -286,7 +288,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     onTransfer, onImportEmoji, onSaveSettings,
     onOpenDecor, onClearHistory,
     onArchive, onCreatePrompt, onEditPrompt, onSavePrompt, onDeletePrompt,
-    onSetHistoryStart, onRestoreAdaptiveContext, onJumpToMessageInChat, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onCopyMessage,
+    onSetHistoryStart, onRestoreAdaptiveContext, onJumpToMessageInChat, onOpenBroadcast, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onCopyMessage,
     reactionShortcuts, onMessageReaction, onChangeReactionShortcuts,
     onDeleteEmoji, onMoveEmojiToFront, onDeleteCategory,
     allCharacters = [], onSaveCategoryVisibility,
@@ -1188,6 +1190,14 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                     {selectedMessage?.type === 'text' && (
                         <button onClick={onCopyMessage} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
                             复制文字
+                        </button>
+                    )}
+                    {isBroadcastableMessage(selectedMessage) && (
+                        <button
+                            onClick={() => { if (selectedMessage) onOpenBroadcast(selectedMessage); }}
+                            className="w-full py-3 bg-indigo-50 text-indigo-600 font-medium rounded-2xl active:bg-indigo-100 transition-colors flex items-center justify-center gap-2"
+                        >
+                            群发这句话
                         </button>
                     )}
                     {favoriteMode && toggleFavorite && (

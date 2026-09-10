@@ -31,6 +31,7 @@ import { isMcdActivatedInMessages, MCD_ACTIVATE_TRIGGER, MCD_DEACTIVATE_TRIGGER 
 import { isLuckinConfigured } from '../utils/luckinMcpClient';
 import { isLuckinActivatedInMessages, LUCKIN_ACTIVATE_TRIGGER, LUCKIN_DEACTIVATE_TRIGGER } from '../utils/luckinToolBridge';
 import MessageItem, { ThinkingChainBlock } from '../components/chat/MessageItem';
+import MessageBroadcastModal, { type BroadcastSendReport } from '../components/chat/MessageBroadcastModal';
 import McdMiniApp from '../components/mcd/McdMiniApp';
 import LuckinMiniApp from '../components/luckin/LuckinMiniApp';
 import LuckinLocationModal from '../components/luckin/LuckinLocationModal';
@@ -76,6 +77,7 @@ import { AMSG_INSTANT_CHAT_PENDING_EVENT, AMSG_INSTANT_CHAT_PENDING_LS_KEY, getI
 import { loadChatRecallSubmitHintEnabled, saveChatRecallSubmitHintEnabled } from '../utils/chatRecallSubmitHint';
 import { formatAmsgToolTrace } from '../utils/amsgToolTrace';
 import { formatDateDividerLabel, shouldShowDateDivider } from '../utils/chatDateDivider';
+import { prepareBroadcastText } from '../utils/messageBroadcast';
 import {
     VOICE_FAVORITES_CHANGED_EVENT,
     getVoiceFavorite,
@@ -296,6 +298,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         waterlineAlreadyAhead: boolean;
     } | null>(null);
     const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
+    type BroadcastDraft = { sourceMessageId: number; sourceCharId: string; text: string };
+    const [broadcastDraft, setBroadcastDraft] = useState<BroadcastDraft | null>(null);
+    const broadcastInFlightRef = useRef(false);
     const [selectedEmoji, setSelectedEmoji] = useState<Emoji | null>(null);
     const [selectedCategory, setSelectedCategory] = useState<EmojiCategory | null>(null); // For deletion modal
     const [editContent, setEditContent] = useState('');
@@ -3402,6 +3407,82 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         setModalType('message-options');
     }, []);
 
+    const handleOpenBroadcast = useCallback((message: Message) => {
+        const text = prepareBroadcastText(message);
+        if (!text) {
+            addToast('这条消息含有暂不支持的特殊格式，请复制可见文字后再发送。', 'info');
+            return;
+        }
+        // 先冻结来源和最终正文，再关闭长按菜单；后续切换角色不会改变本次群发内容。
+        setBroadcastDraft({ sourceMessageId: message.id, sourceCharId: message.charId, text });
+        setSelectedMessage(null);
+        setModalType('none');
+    }, [addToast]);
+
+    const handleCloseBroadcast = useCallback(() => {
+        if (broadcastInFlightRef.current) return;
+        setBroadcastDraft(null);
+    }, []);
+
+    const handleBroadcastSend = useCallback(async (targetIds: string[]): Promise<BroadcastSendReport> => {
+        const draft = broadcastDraft;
+        const uniqueTargetIds = Array.from(new Set(targetIds));
+        if (!draft || broadcastInFlightRef.current) {
+            return { savedIds: [], failures: uniqueTargetIds.map(characterId => ({ characterId, reason: '群发窗口已关闭' })) };
+        }
+
+        broadcastInFlightRef.current = true;
+        const savedIds: string[] = [];
+        const failures: BroadcastSendReport['failures'] = [];
+        try {
+            for (const targetId of uniqueTargetIds) {
+                if (targetId === draft.sourceCharId) continue;
+                const targetChar = characters.find(character => character.id === targetId);
+                if (!targetChar) {
+                    failures.push({ characterId: targetId, reason: '角色已不存在' });
+                    continue;
+                }
+                try {
+                    // 群发故意只写最普通的 user/text 消息，不复用 chat_forward 卡片协议。
+                    await DB.saveMessage({
+                        charId: targetChar.id,
+                        role: 'user',
+                        type: 'text',
+                        content: draft.text,
+                    });
+                    savedIds.push(targetChar.id);
+                } catch (error) {
+                    console.error('[Chat] 群发写入失败:', targetId, error);
+                    failures.push({ characterId: targetId, reason: '写入失败' });
+                    continue;
+                }
+                // 只要本地消息已保存，就算发送成功；云端状态同步是后续既有队列，失败也不能重写消息。
+                try {
+                    syncAmsgAfterUserMessage(targetChar);
+                } catch (error) {
+                    console.error('[Chat] 群发状态同步入队失败:', targetId, error);
+                }
+            }
+            if (savedIds.length > 0) {
+                addToast(
+                    failures.length > 0
+                        ? `已群发给 ${savedIds.length} 位好友，${failures.length} 位失败`
+                        : `已群发给 ${savedIds.length} 位好友`,
+                    failures.length > 0 ? 'info' : 'success',
+                );
+                trackEvent('群发一条普通消息', { count: savedIds.length, sourceMessageId: draft.sourceMessageId });
+            }
+            return { savedIds, failures };
+        } finally {
+            broadcastInFlightRef.current = false;
+        }
+    }, [addToast, broadcastDraft, characters, syncAmsgAfterUserMessage]);
+
+    useEffect(() => {
+        // 群发草稿绑定来源角色；切换聊天后不把旧角色的发送内容带到新角色界面。
+        setBroadcastDraft(null);
+    }, [activeCharacterId]);
+
     const handleUserMessageReaction = useCallback(async (emoji: string) => {
         if (!selectedMessage || selectedMessage.role !== 'assistant') return;
         const targetId = selectedMessage.id;
@@ -4213,7 +4294,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 onSaveSettings={saveSettings} onOpenDecor={(tab) => handlePanelAction('decor', tab)}
                 onClearHistory={handleClearHistory} onArchive={handleFullArchive}
                 onCreatePrompt={createNewPrompt} onEditPrompt={editSelectedPrompt} onSavePrompt={handleSavePrompt} onDeletePrompt={handleDeletePrompt}
-                onSetHistoryStart={handleSetHistoryStart} onRestoreAdaptiveContext={restoreAdaptiveContext} onJumpToMessageInChat={handleJumpToMessageInChat} onEnterSelectionMode={handleEnterSelectionMode}
+                onSetHistoryStart={handleSetHistoryStart} onRestoreAdaptiveContext={restoreAdaptiveContext} onJumpToMessageInChat={handleJumpToMessageInChat} onOpenBroadcast={handleOpenBroadcast} onEnterSelectionMode={handleEnterSelectionMode}
                 onReplyMessage={handleReplyMessage} onEditMessageStart={() => { if (selectedMessage) { setEditContent(selectedMessage.content); setModalType('edit-message'); } }}
                 reactionShortcuts={reactionShortcuts} onMessageReaction={handleUserMessageReaction} onChangeReactionShortcuts={handleChangeReactionShortcuts}
                 onConfirmEditMessage={confirmEditMessage} onDeleteMessage={handleDeleteMessage} onCopyMessage={handleCopyMessage} onDeleteEmoji={handleDeleteEmoji} onMoveEmojiToFront={handleMoveEmojiToFront} onDeleteCategory={handleDeleteCategory}
@@ -5335,6 +5416,18 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                     );
                 })()}
             </Modal>
+
+            {broadcastDraft && (
+                <MessageBroadcastModal
+                    isOpen={true}
+                    sourceText={broadcastDraft.text}
+                    sourceCharId={broadcastDraft.sourceCharId}
+                    characters={characters}
+                    groups={characterGroups}
+                    onClose={handleCloseBroadcast}
+                    onSend={handleBroadcastSend}
+                />
+            )}
         </div>
     );
 };
