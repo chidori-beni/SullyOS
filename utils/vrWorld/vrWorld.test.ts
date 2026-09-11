@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { chunkNovelText, chunkNovelTextAsync, getReadingWindow, buildNovel } from './novel';
-import { parseVROutput, parseMusicOutput, parseGuestbookOutput, parseGymOutput, parsePostOfficeOutput, parsePostOfficeReadOutput, parseSignalOutput } from './prompts';
+import { parseVROutput, parseMusicOutput, parseGuestbookOutput, parseGymOutput, parsePostOfficeOutput, parsePostOfficeReadOutput, parseSignalOutput, buildVRSystemAddendum } from './prompts';
 import { rollPoemLines, SIGNAL_LINES_MIN, SIGNAL_LINES_MAX, signalActFor } from './constants';
 import { maskPen } from './postOffice';
 import { decodeBytes } from './decodeText';
@@ -501,5 +501,34 @@ describe('信号坠落处 · rollPoemLines', () => {
             expect(n).toBeLessThanOrEqual(SIGNAL_LINES_MAX);
             expect(Number.isInteger(n)).toBe(true);
         }
+    });
+});
+
+
+describe('彼方 · 「认不认识」的判据（2026-09-11 用户实测报的）', () => {
+    // 用户原话：萧逸和一个纸片人角色在留言簿聊天时，
+    // 「彿彿现实中认识一样（两个人都是赛车手）」。
+    // 根因：判据太软，模型把「同行」读成了「多半认识」。
+    const room = { id: 'guestbook', name: '留言簿', blurb: 'x', affordance: 'y' } as any;
+
+    it('⭐ 必须明说「同行/同类/背景相似不算认识」', () => {
+        const t = buildVRSystemAddendum(room, '萧逸');
+        expect(t).toContain('同行、同类、背景相似');
+        expect(t).toContain('不算认识');
+    });
+
+    it('⭐ 必须给出具体反例，光说抽象规则模型会绕过去', () => {
+        expect(buildVRSystemAddendum(room, '萧逸')).toContain('两个赛车手');
+    });
+
+    it('⛔ 必须禁止编造共同往事', () => {
+        const t = buildVRSystemAddendum(room, '萧逸');
+        expect(t).toContain('别编造你们以前就认识');
+    });
+
+    it('✅ 但不能把路堵死——聊得来仍然可以热络起来', () => {
+        const t = buildVRSystemAddendum(room, '萧逸');
+        expect(t).toContain('聊得投机而热络');
+        expect(t).toContain('今天在这里刚认识的');
     });
 });
