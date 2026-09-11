@@ -4,7 +4,7 @@
 import {
     CharacterProfile, ChatTheme, Message, UserProfile,
     Task, Anniversary, DiaryEntry, RoomTodo, RoomNote, DailySchedule,
-    GalleryImage, FullBackupData, GroupProfile, SocialPost, StudyCourse, GameSession, Worldbook, NovelBook, Emoji, EmojiCategory,
+    GalleryImage, GalleryAlbum, FullBackupData, GroupProfile, SocialPost, StudyCourse, GameSession, Worldbook, NovelBook, Emoji, EmojiCategory,
     BankTransaction, SavingsGoal, BankFullState, DollhouseState, XhsStockImage, XhsActivityRecord, XhsOwnedPost, SongSheet, QuizSession, GuidebookSession,
     LifeSimState, HandbookEntry, Tracker, TrackerEntry, HotNewsSnapshot,
     LifeRecord, MedPlan, LifeRecordSettings, CharacterGroup,
@@ -20,6 +20,7 @@ import { exportAmsg2GlobalConfig, importAmsg2GlobalConfig } from './activeMsgSto
 import { exportWorldHomeLocal, importWorldHomeLocal } from './worldHome/localBackup';
 import { exportDesktopSkinLocal, importDesktopSkinLocal } from './desktopSkinBackup';
 import { getActiveDatePresence } from './datePresence';
+import { galleryAlbumNameKey, normalizeGalleryAlbumName, normalizeGalleryAlbumRecord, withoutGalleryImageAlbum } from './galleryAlbums';
 
 const DB_NAME = 'AetherOS_Data';
 // v67：两条并行线各自用掉了 v65/v66（A线: blob_assets + 生活记录；B线: room_plates 门牌 + digest_reports 消化日志），
@@ -28,7 +29,8 @@ const DB_NAME = 'AetherOS_Data';
 // v69：见面·剧情条目与糯米机原生预设。正文继续复用 messages 表，避免再造会话存储。
 // v70：剧场面具箱（原创人物面具）；角色面具仍只存 characterId，不复制神经链接资料。
 // v71：角色小红书伪主页；发帖归属与可删除的自由活动日志分离。
-const DB_VERSION = 71;
+// v72：角色相册自定义子相册（gallery_albums）与 GalleryImage.albumId。
+const DB_VERSION = 72;
 
 const STORE_CHARACTERS = 'characters';
 const STORE_CHAR_GROUPS = 'character_groups'; // 角色分组定义（角色通过 groupId 指向；与群聊 groups 无关）
@@ -38,8 +40,9 @@ const STORE_EMOJI_CATEGORIES = 'emoji_categories';
 const STORE_THEMES = 'themes';
 const STORE_ASSETS = 'assets';
 const STORE_BLOB_ASSETS = 'blob_assets'; // 图片二进制 Blob 存储（key=生成 id，value={id, blob}）；壁纸/小屋等图片改存 Blob 而非 base64，省 ~33% 空间且不占 JS 堆。见 utils/blobRef.ts
-const STORE_SCHEDULED = 'scheduled_messages'; 
+const STORE_SCHEDULED = 'scheduled_messages';
 const STORE_GALLERY = 'gallery';
+const STORE_GALLERY_ALBUMS = 'gallery_albums';
 const STORE_USER = 'user_profile'; 
 const STORE_DIARIES = 'diaries';
 const STORE_TASKS = 'tasks'; 
@@ -259,6 +262,29 @@ export const openDB = (): Promise<IDBDatabase> => {
       if (!db.objectStoreNames.contains(STORE_GALLERY)) {
           const galleryStore = db.createObjectStore(STORE_GALLERY, { keyPath: 'id' });
           galleryStore.createIndex('charId', 'charId', { unique: false });
+          galleryStore.createIndex('albumId', 'albumId', { unique: false });
+      } else {
+          const galleryStore = (event.target as IDBOpenDBRequest).transaction?.objectStore(STORE_GALLERY);
+          if (galleryStore && !galleryStore.indexNames.contains('albumId')) {
+              try { galleryStore.createIndex('albumId', 'albumId', { unique: false }); }
+              catch (e) { console.log('gallery albumId index migration skipped'); }
+          }
+      }
+
+      if (!db.objectStoreNames.contains(STORE_GALLERY_ALBUMS)) {
+          const galleryAlbumsStore = db.createObjectStore(STORE_GALLERY_ALBUMS, { keyPath: 'id' });
+          galleryAlbumsStore.createIndex('charId', 'charId', { unique: false });
+          galleryAlbumsStore.createIndex('charId_nameKey', ['charId', 'nameKey'], { unique: true });
+      } else {
+          const galleryAlbumsStore = (event.target as IDBOpenDBRequest).transaction?.objectStore(STORE_GALLERY_ALBUMS);
+          if (galleryAlbumsStore && !galleryAlbumsStore.indexNames.contains('charId')) {
+              try { galleryAlbumsStore.createIndex('charId', 'charId', { unique: false }); }
+              catch (e) { console.log('gallery_albums charId index migration skipped'); }
+          }
+          if (galleryAlbumsStore && !galleryAlbumsStore.indexNames.contains('charId_nameKey')) {
+              try { galleryAlbumsStore.createIndex('charId_nameKey', ['charId', 'nameKey'], { unique: true }); }
+              catch (e) { console.log('gallery_albums charId_nameKey index migration skipped'); }
+          }
       }
 
       createStore(STORE_USER, { keyPath: 'id' });
@@ -496,6 +522,11 @@ const normalizeWorldRelationships = (world: WorldProfile): WorldProfile => {
         }
     }
     return { ...world, relationships: out };
+};
+
+const createGalleryAlbumId = (): string => {
+    const randomUuid = globalThis.crypto?.randomUUID?.();
+    return randomUuid ? `gallery-album-${randomUuid}` : `gallery-album-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 };
 
 export const DB = {
@@ -1396,8 +1427,37 @@ export const DB = {
 
   saveGalleryImage: async (img: GalleryImage): Promise<void> => {
       const db = await openDB();
-      const transaction = db.transaction(STORE_GALLERY, 'readwrite');
-      transaction.objectStore(STORE_GALLERY).put(img);
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_GALLERY, 'readwrite');
+          const store = transaction.objectStore(STORE_GALLERY);
+          let failed = false;
+          const fail = (error: unknown) => {
+              if (failed) return;
+              failed = true;
+              try { transaction.abort(); } catch { /* ignore */ }
+              reject(error instanceof Error ? error : new Error(String(error)));
+          };
+          const existingRequest = store.get(img.id);
+          existingRequest.onsuccess = () => {
+              try {
+                  const existing = existingRequest.result as GalleryImage | undefined;
+                  // 消息/动态同步会用相同 id 重写图片记录；没有显式改分类时保留用户的归类。
+                  const next = img.albumId === undefined && existing?.charId === img.charId && existing?.albumId
+                      ? { ...img, albumId: existing.albumId }
+                      : img;
+                  const putRequest = store.put(next);
+                  putRequest.onerror = () => fail(putRequest.error || new Error('保存相册图片失败'));
+              } catch (error) { fail(error); }
+          };
+          existingRequest.onerror = () => fail(existingRequest.error || new Error('读取相册图片失败'));
+          transaction.oncomplete = () => { if (!failed) resolve(); };
+          transaction.onerror = () => {
+              if (!failed) reject(transaction.error || new Error('saveGalleryImage failed'));
+          };
+          transaction.onabort = () => {
+              if (!failed) reject(transaction.error || new Error('saveGalleryImage aborted'));
+          };
+      });
   },
 
   getGalleryImages: async (charId?: string): Promise<GalleryImage[]> => {
@@ -1417,19 +1477,225 @@ export const DB = {
       });
   },
 
-  updateGalleryImageReview: async (id: string, review: string): Promise<void> => {
+  getGalleryAlbums: async (charId?: string): Promise<GalleryAlbum[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_GALLERY_ALBUMS)) return [];
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_GALLERY_ALBUMS, 'readonly');
+          const store = transaction.objectStore(STORE_GALLERY_ALBUMS);
+          const request = charId
+              ? store.index('charId').getAll(IDBKeyRange.only(charId))
+              : store.getAll();
+          request.onsuccess = () => resolve((request.result || []) as GalleryAlbum[]);
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  saveGalleryAlbum: async (album: GalleryAlbum): Promise<void> => {
+      const db = await openDB();
+      const name = normalizeGalleryAlbumName(album.name);
+      const normalized: GalleryAlbum = {
+          ...album,
+          id: album.id.trim(),
+          charId: album.charId.trim(),
+          name,
+          nameKey: galleryAlbumNameKey(name),
+          createdAt: Number.isFinite(album.createdAt) ? album.createdAt : Date.now(),
+          updatedAt: Number.isFinite(album.updatedAt) ? album.updatedAt : Date.now(),
+      };
+      if (!normalized.id || !normalized.charId) throw new Error('相册信息不完整');
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_GALLERY_ALBUMS, 'readwrite');
+          const request = transaction.objectStore(STORE_GALLERY_ALBUMS).put(normalized);
+          request.onerror = () => reject(request.error || new Error('保存子相册失败'));
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error || request.error || new Error('saveGalleryAlbum failed'));
+          transaction.onabort = () => reject(transaction.error || new Error('saveGalleryAlbum aborted'));
+      });
+  },
+
+  createGalleryAlbum: async (charId: string, name: string): Promise<GalleryAlbum> => {
+      const now = Date.now();
+      const normalizedName = normalizeGalleryAlbumName(name);
+      const album: GalleryAlbum = {
+          id: createGalleryAlbumId(),
+          charId: charId.trim(),
+          name: normalizedName,
+          nameKey: galleryAlbumNameKey(normalizedName),
+          createdAt: now,
+          updatedAt: now,
+      };
+      if (!album.charId) throw new Error('相册缺少角色信息');
+      await DB.saveGalleryAlbum(album);
+      return album;
+  },
+
+  renameGalleryAlbum: async (id: string, name: string): Promise<GalleryAlbum> => {
+      const db = await openDB();
+      const normalizedName = normalizeGalleryAlbumName(name);
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_GALLERY_ALBUMS, 'readwrite');
+          const store = transaction.objectStore(STORE_GALLERY_ALBUMS);
+          const request = store.get(id);
+          let updated: GalleryAlbum | undefined;
+          let putRequest: IDBRequest | undefined;
+          let failed = false;
+          const fail = (error: unknown) => {
+              if (failed) return;
+              failed = true;
+              try { transaction.abort(); } catch { /* ignore */ }
+              reject(error instanceof Error ? error : new Error(String(error)));
+          };
+          request.onsuccess = () => {
+              const current = request.result as GalleryAlbum | undefined;
+              if (!current) {
+                  fail(new Error('子相册不存在'));
+                  return;
+              }
+              updated = {
+                  ...current,
+                  name: normalizedName,
+                  nameKey: galleryAlbumNameKey(normalizedName),
+                  updatedAt: Date.now(),
+              };
+              try {
+                  putRequest = store.put(updated);
+                  putRequest.onerror = () => fail(putRequest?.error || new Error('保存子相册失败'));
+              } catch (error) { fail(error); }
+          };
+          request.onerror = () => fail(request.error || new Error('读取子相册失败'));
+          transaction.oncomplete = () => {
+              if (!failed && updated) resolve(updated);
+          };
+          transaction.onerror = () => {
+              if (!failed) reject(transaction.error || new Error('renameGalleryAlbum failed'));
+          };
+          transaction.onabort = () => {
+              if (!failed) reject(transaction.error || new Error('renameGalleryAlbum aborted'));
+          };
+      });
+  },
+
+  /** 删除子相册本身，但在同一事务中把其照片移回未分类，绝不删除照片。 */
+  deleteGalleryAlbum: async (id: string): Promise<void> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction([STORE_GALLERY_ALBUMS, STORE_GALLERY], 'readwrite');
+          const albumStore = transaction.objectStore(STORE_GALLERY_ALBUMS);
+          const imageStore = transaction.objectStore(STORE_GALLERY);
+          let failed = false;
+          const fail = (error: unknown) => {
+              if (failed) return;
+              failed = true;
+              try { transaction.abort(); } catch { /* ignore */ }
+              reject(error instanceof Error ? error : new Error(String(error)));
+          };
+
+          const albumRequest = albumStore.get(id);
+          albumRequest.onsuccess = () => {
+              const album = albumRequest.result as GalleryAlbum | undefined;
+              if (!album) return;
+              const imageRequest = imageStore.index('albumId').getAll(IDBKeyRange.only(id));
+              imageRequest.onsuccess = () => {
+                  try {
+                      for (const image of (imageRequest.result || []) as GalleryImage[]) {
+                          imageStore.put(withoutGalleryImageAlbum(image));
+                      }
+                      albumStore.delete(id);
+                  } catch (error) {
+                      fail(error);
+                  }
+              };
+              imageRequest.onerror = () => fail(imageRequest.error || new Error('读取子相册照片失败'));
+          };
+          albumRequest.onerror = () => fail(albumRequest.error || new Error('读取子相册失败'));
+          transaction.oncomplete = () => {
+              if (!failed) resolve();
+          };
+          transaction.onerror = () => {
+              if (!failed) reject(transaction.error || new Error('deleteGalleryAlbum failed'));
+          };
+          transaction.onabort = () => {
+              if (!failed) reject(transaction.error || new Error('deleteGalleryAlbum aborted'));
+          };
+      });
+  },
+
+  /** 将一张照片移入指定角色的子相册；传 undefined 即移回未分类。 */
+  updateGalleryImageAlbum: async (id: string, albumId?: string): Promise<void> => {
+      const db = await openDB();
+      const nextAlbumId = albumId?.trim() || undefined;
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction([STORE_GALLERY, STORE_GALLERY_ALBUMS], 'readwrite');
+          const imageStore = transaction.objectStore(STORE_GALLERY);
+          const albumStore = transaction.objectStore(STORE_GALLERY_ALBUMS);
+          let failed = false;
+          const fail = (error: unknown) => {
+              if (failed) return;
+              failed = true;
+              try { transaction.abort(); } catch { /* ignore */ }
+              reject(error instanceof Error ? error : new Error(String(error)));
+          };
+          const imageRequest = imageStore.get(id);
+          imageRequest.onsuccess = () => {
+              const image = imageRequest.result as GalleryImage | undefined;
+              if (!image) {
+                  fail(new Error('照片不存在'));
+                  return;
+              }
+              const apply = (album?: GalleryAlbum) => {
+                  if (album && album.charId !== image.charId) {
+                      fail(new Error('不能把照片移到别的角色的子相册'));
+                      return;
+                  }
+                  const next = nextAlbumId ? { ...image, albumId: nextAlbumId } : withoutGalleryImageAlbum(image);
+                  try { imageStore.put(next); } catch (error) { fail(error); }
+              };
+              if (!nextAlbumId) {
+                  apply();
+                  return;
+              }
+              const albumRequest = albumStore.get(nextAlbumId);
+              albumRequest.onsuccess = () => {
+                  const album = albumRequest.result as GalleryAlbum | undefined;
+                  if (!album) {
+                      fail(new Error('目标子相册不存在'));
+                      return;
+                  }
+                  apply(album);
+              };
+              albumRequest.onerror = () => fail(albumRequest.error || new Error('读取目标子相册失败'));
+          };
+          imageRequest.onerror = () => fail(imageRequest.error || new Error('读取照片失败'));
+          transaction.oncomplete = () => {
+              if (!failed) resolve();
+          };
+          transaction.onerror = () => {
+              if (!failed) reject(transaction.error || new Error('updateGalleryImageAlbum failed'));
+          };
+          transaction.onabort = () => {
+              if (!failed) reject(transaction.error || new Error('updateGalleryImageAlbum aborted'));
+          };
+      });
+  },
+
+  updateGalleryImageReview: async (id: string, review: string): Promise<GalleryImage> => {
       const db = await openDB();
       const transaction = db.transaction(STORE_GALLERY, 'readwrite');
       const store = transaction.objectStore(STORE_GALLERY);
       return new Promise((resolve, reject) => {
           const req = store.get(id);
+          let updated: GalleryImage | undefined;
           req.onsuccess = () => {
-              const data = req.result as GalleryImage;
+              const data = req.result as GalleryImage | undefined;
               if (data) {
                   data.review = review;
                   data.reviewTimestamp = Date.now();
+                  updated = data;
                   store.put(data);
-                  resolve();
+                  transaction.oncomplete = () => updated ? resolve(updated) : reject(new Error('更新照片点评失败'));
+                  transaction.onerror = () => reject(transaction.error);
+                  transaction.onabort = () => reject(transaction.error || new Error('updateGalleryImageReview aborted'));
               } else reject(new Error('Image not found'));
           };
           req.onerror = () => reject(req.error);
@@ -3009,7 +3275,7 @@ export const DB = {
           });
       };
 
-      const [characters, characterGroups, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, storyTheaters, storyTheaterPresets, storyTheaterMasks, novels, bankTx, bankData, xhsActivities, xhsOwnedPosts, xhsStockImages, songs, quizzes, guidebookSessions, scheduledMessages, lifeSimStates, handbooks, trackers, trackerEntries, hotNewsSnapshots, vrNovels, vrAnnotations, customCreatorParts, vrMusic, vrGuestbook, vrScripts, vrStagedPlays, vrPresets, vrLetters, vrSettings, worlds, worldEpisodes, lifeRecords, medPlans, lifeRecordSettings] = await Promise.all([
+      const [characters, characterGroups, messages, themes, emojis, emojiCategories, assets, galleryImages, galleryAlbums, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, storyTheaters, storyTheaterPresets, storyTheaterMasks, novels, bankTx, bankData, xhsActivities, xhsOwnedPosts, xhsStockImages, songs, quizzes, guidebookSessions, scheduledMessages, lifeSimStates, handbooks, trackers, trackerEntries, hotNewsSnapshots, vrNovels, vrAnnotations, customCreatorParts, vrMusic, vrGuestbook, vrScripts, vrStagedPlays, vrPresets, vrLetters, vrSettings, worlds, worldEpisodes, lifeRecords, medPlans, lifeRecordSettings] = await Promise.all([
           getAllFromStore(STORE_CHARACTERS),
           getAllFromStore(STORE_CHAR_GROUPS),
           getAllFromStore(STORE_MESSAGES),
@@ -3018,6 +3284,7 @@ export const DB = {
           getAllFromStore(STORE_EMOJI_CATEGORIES),
           getAllFromStore(STORE_ASSETS),
           getAllFromStore(STORE_GALLERY),
+          getAllFromStore(STORE_GALLERY_ALBUMS),
           getAllFromStore(STORE_USER),
           getAllFromStore(STORE_DIARIES),
           getAllFromStore(STORE_TASKS),
@@ -3075,7 +3342,7 @@ export const DB = {
       const dollhouseRecord = bankData.find((d: any) => d.id === 'dollhouse_state');
 
       return {
-          characters, characterGroups, messages, customThemes: themes, savedEmojis: emojis, emojiCategories, assets, galleryImages, userProfile, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, savedJournalStickers: journalStickers, socialPosts, courses, games, worldbooks, storyTheaters, storyTheaterPresets, storyTheaterMasks, novels,
+          characters, characterGroups, messages, customThemes: themes, savedEmojis: emojis, emojiCategories, assets, galleryImages, galleryAlbums, userProfile, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, savedJournalStickers: journalStickers, socialPosts, courses, games, worldbooks, storyTheaters, storyTheaterPresets, storyTheaterMasks, novels,
           bankState: mainState ? { ...mainState, id: undefined } : undefined,
           bankDollhouse: dollhouseRecord?.data || undefined,
           bankTransactions: bankTx,
@@ -3135,7 +3402,7 @@ export const DB = {
       
       const availableStores = [
           STORE_CHARACTERS, STORE_CHAR_GROUPS, STORE_MESSAGES, STORE_THEMES, STORE_EMOJIS, STORE_EMOJI_CATEGORIES,
-          STORE_ASSETS, STORE_GALLERY, STORE_USER, STORE_DIARIES,
+          STORE_ASSETS, STORE_GALLERY, STORE_GALLERY_ALBUMS, STORE_USER, STORE_DIARIES,
           STORE_TASKS, STORE_ANNIVERSARIES, STORE_ROOM_TODOS, STORE_ROOM_NOTES,
           STORE_GROUPS, STORE_JOURNAL_STICKERS, STORE_SOCIAL_POSTS, STORE_COURSES, STORE_GAMES, STORE_WORLDBOOKS, STORE_STORY_THEATERS, STORE_STORY_THEATER_PRESETS, STORE_STORY_THEATER_MASKS, STORE_NOVELS, STORE_SONGS,
           STORE_BANK_TX, STORE_BANK_DATA,
@@ -3200,6 +3467,7 @@ export const DB = {
           data.emojiCategories !== undefined,
           data.assets !== undefined,
           data.savedJournalStickers !== undefined,
+          data.galleryAlbums !== undefined,
           data.galleryImages !== undefined,
           data.diaries !== undefined,
           data.tasks !== undefined,
@@ -3443,8 +3711,70 @@ export const DB = {
           data.savedJournalStickers = undefined as any;
       }, data.savedJournalStickers?.length || 0);
 
+      // 子相册是独立元数据；字段缺失代表旧备份，不代表“没有子相册”。
+      // 旧备份导入到已经分类过的设备时，尽量按 imageId + charId 复用现有归属，避免
+      // 用户只是恢复旧照片就被静默打散分类。新备份则严格以备份中的相册定义为准。
+      const hasGalleryAlbumsBackup = data.galleryAlbums !== undefined;
+      let importedGalleryAlbumsById = new Map<string, GalleryAlbum>();
+      const legacyGalleryAssignments = new Map<string, string>();
+
+      if (hasGalleryAlbumsBackup) {
+          const normalizedAlbums: GalleryAlbum[] = [];
+          const seenIds = new Set<string>();
+          const seenNames = new Set<string>();
+          const rawAlbums = Array.isArray(data.galleryAlbums) ? data.galleryAlbums : [];
+          for (const raw of rawAlbums) {
+              const album = normalizeGalleryAlbumRecord(raw);
+              if (!album) {
+                  console.warn('[DB] 备份中的无效子相册已跳过');
+                  continue;
+              }
+              const nameKey = `${album.charId}\u0000${album.nameKey}`;
+              if (seenIds.has(album.id) || seenNames.has(nameKey)) {
+                  console.warn(`[DB] 备份中的重复子相册已跳过：${album.name}`);
+                  continue;
+              }
+              seenIds.add(album.id);
+              seenNames.add(nameKey);
+              normalizedAlbums.push(album);
+          }
+          data.galleryAlbums = normalizedAlbums;
+          importedGalleryAlbumsById = new Map(normalizedAlbums.map(album => [album.id, album]));
+      } else if (data.galleryImages !== undefined && hasStore(STORE_GALLERY_ALBUMS)) {
+          const [existingAlbums, existingImages] = await Promise.all([
+              getAllFromStore<GalleryAlbum>(STORE_GALLERY_ALBUMS),
+              getAllFromStore<GalleryImage>(STORE_GALLERY),
+          ]);
+          const existingAlbumsById = new Map(existingAlbums.map(album => [album.id, album]));
+          for (const image of existingImages) {
+              const album = image.albumId ? existingAlbumsById.get(image.albumId) : undefined;
+              if (album && album.charId === image.charId) {
+                  legacyGalleryAssignments.set(`${image.charId}\u0000${image.id}`, album.id);
+              }
+          }
+      }
+
+      const normalizeImportedGalleryImage = (image: GalleryImage): GalleryImage => {
+          let albumId: string | undefined;
+          if (hasGalleryAlbumsBackup) {
+              const album = image.albumId ? importedGalleryAlbumsById.get(image.albumId) : undefined;
+              if (album && album.charId === image.charId) albumId = album.id;
+          } else {
+              albumId = legacyGalleryAssignments.get(`${image.charId}\u0000${image.id}`);
+          }
+          return albumId ? { ...image, albumId } : withoutGalleryImageAlbum(image);
+      };
+
+      await runSection('相册分类', hasGalleryAlbumsBackup, async () => {
+          await clearAndAdd(STORE_GALLERY_ALBUMS, data.galleryAlbums, '相册分类', false);
+          data.galleryAlbums = undefined as any;
+      }, data.galleryAlbums?.length || 0);
+
       await runSection('相册图片', data.galleryImages !== undefined, async () => {
-          await clearAndAdd(STORE_GALLERY, data.galleryImages, '相册图片', true);
+          const images = Array.isArray(data.galleryImages)
+              ? data.galleryImages.map(normalizeImportedGalleryImage)
+              : [];
+          await clearAndAdd(STORE_GALLERY, images, '相册图片', true);
           data.galleryImages = undefined as any;
       }, data.galleryImages?.length || 0);
       await runSection('日记', data.diaries !== undefined, async () => {

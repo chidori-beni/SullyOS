@@ -2,19 +2,31 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { GalleryImage, CharacterProfile } from '../types';
+import { GalleryAlbum, GalleryImage } from '../types';
 import { safeResponseJson } from '../utils/safeApi';
 import ConfirmDialog from '../components/os/ConfirmDialog';
 import { trackEvent } from '../utils/analytics';
+import { GALLERY_ALBUM_NAME_MAX_LENGTH, GALLERY_UNFILED_ID, galleryAlbumNameKey, withoutGalleryImageAlbum } from '../utils/galleryAlbums';
 
 const Gallery: React.FC = () => {
     const { closeApp, characters, apiConfig, addToast } = useOS();
     const [view, setView] = useState<'albums' | 'grid' | 'detail'>('albums');
     const [activeCharId, setActiveCharId] = useState<string | null>(null);
     const [images, setImages] = useState<GalleryImage[]>([]);
+    const [albums, setAlbums] = useState<GalleryAlbum[]>([]);
+    /** null = 全部；GALLERY_UNFILED_ID = 未分类；其它值为真实子相册 id。 */
+    const [activeAlbumId, setActiveAlbumId] = useState<string | null>(null);
+    const [isLoadingGallery, setIsLoadingGallery] = useState(false);
     const [selectedImage, setSelectedImage] = useState<GalleryImage | null>(null);
     const [isReviewing, setIsReviewing] = useState(false);
+    const [isMovingImage, setIsMovingImage] = useState(false);
     const [showChatContext, setShowChatContext] = useState(false);
+
+    const [albumManagerOpen, setAlbumManagerOpen] = useState(false);
+    const [albumEditor, setAlbumEditor] = useState<{ mode: 'create' | 'rename'; album?: GalleryAlbum } | null>(null);
+    const [albumNameDraft, setAlbumNameDraft] = useState('');
+    const [isSavingAlbum, setIsSavingAlbum] = useState(false);
+    const galleryLoadSeq = useRef(0);
 
     // Long-press delete state
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -25,27 +37,44 @@ const Gallery: React.FC = () => {
 
     useEffect(() => {
         // Load image counts for all characters
+        let cancelled = false;
         const loadCounts = async () => {
-            const counts: Record<string, number> = {};
-            for (const char of characters) {
-                const imgs = await DB.getGalleryImages(char.id);
-                counts[char.id] = imgs.length;
-            }
-            setAlbumCounts(counts);
+            const entries = await Promise.all(characters.map(async char => [char.id, (await DB.getGalleryImages(char.id)).length] as const));
+            if (!cancelled) setAlbumCounts(Object.fromEntries(entries));
         };
-        if (view === 'albums') loadCounts();
+        if (view === 'albums') void loadCounts();
+        return () => { cancelled = true; };
     }, [characters, view]);
 
     useEffect(() => {
-        if (activeCharId) {
-            DB.getGalleryImages(activeCharId).then(imgs => {
-                setImages(imgs.sort((a, b) => b.timestamp - a.timestamp));
-            });
+        if (!activeCharId) {
+            galleryLoadSeq.current += 1;
+            setImages([]);
+            setAlbums([]);
+            setActiveAlbumId(null);
+            setIsLoadingGallery(false);
+            return;
         }
-    }, [activeCharId]);
+        const requestId = ++galleryLoadSeq.current;
+        setIsLoadingGallery(true);
+        void Promise.all([DB.getGalleryImages(activeCharId), DB.getGalleryAlbums(activeCharId)])
+            .then(([imgs, loadedAlbums]) => {
+                if (requestId !== galleryLoadSeq.current) return;
+                setImages([...imgs].sort((a, b) => b.timestamp - a.timestamp));
+                setAlbums([...loadedAlbums].sort((a, b) => a.createdAt - b.createdAt));
+                setActiveAlbumId(null);
+            })
+            .catch(error => {
+                if (requestId === galleryLoadSeq.current) addToast(`相册加载失败：${error?.message || error}`, 'error');
+            })
+            .finally(() => {
+                if (requestId === galleryLoadSeq.current) setIsLoadingGallery(false);
+            });
+    }, [activeCharId, addToast]);
 
     const handleCharClick = (id: string) => {
         setActiveCharId(id);
+        setActiveAlbumId(null);
         setView('grid');
         trackEvent('打开角色相册');
     };
@@ -57,8 +86,129 @@ const Gallery: React.FC = () => {
 
     const handleBack = () => {
         if (view === 'detail') { setView('grid'); setShowChatContext(false); }
-        else if (view === 'grid') { setView('albums'); setActiveCharId(null); }
+        else if (view === 'grid') { setView('albums'); setActiveCharId(null); setActiveAlbumId(null); setAlbumManagerOpen(false); }
         else closeApp();
+    };
+
+    const activeCharacter = characters.find(c => c.id === activeCharId);
+    const knownAlbumIds = new Set(albums.map(album => album.id));
+    const isUnfiledImage = (image: GalleryImage): boolean => !image.albumId || !knownAlbumIds.has(image.albumId);
+    const albumCount = (albumId: string): number => images.filter(image => image.albumId === albumId).length;
+    const unfiledCount = images.filter(isUnfiledImage).length;
+    const visibleImages = activeAlbumId === null
+        ? images
+        : activeAlbumId === GALLERY_UNFILED_ID
+            ? images.filter(isUnfiledImage)
+            : images.filter(image => image.albumId === activeAlbumId);
+    const selectedImageAlbumId = selectedImage?.albumId && knownAlbumIds.has(selectedImage.albumId)
+        ? selectedImage.albumId
+        : GALLERY_UNFILED_ID;
+
+    const openCreateAlbum = () => {
+        if (!activeCharId) return;
+        setAlbumNameDraft('');
+        setAlbumEditor({ mode: 'create' });
+    };
+
+    const openRenameAlbum = (album: GalleryAlbum) => {
+        setAlbumNameDraft(album.name);
+        setAlbumEditor({ mode: 'rename', album });
+    };
+
+    const handleSaveAlbum = async (event: React.FormEvent) => {
+        event.preventDefault();
+        if (!activeCharId || !albumEditor || isSavingAlbum) return;
+
+        let nameKey: string;
+        try {
+            nameKey = galleryAlbumNameKey(albumNameDraft);
+        } catch (error: any) {
+            addToast(error?.message || '子相册名称不正确', 'error');
+            return;
+        }
+
+        const duplicate = albums.find(album => {
+            if (albumEditor.mode === 'rename' && album.id === albumEditor.album?.id) return false;
+            try { return galleryAlbumNameKey(album.name) === nameKey; } catch { return false; }
+        });
+        if (duplicate) {
+            addToast('这个角色已经有同名子相册了', 'error');
+            return;
+        }
+
+        setIsSavingAlbum(true);
+        try {
+            if (albumEditor.mode === 'create') {
+                const created = await DB.createGalleryAlbum(activeCharId, albumNameDraft);
+                setAlbums(current => [...current, created].sort((a, b) => a.createdAt - b.createdAt));
+                addToast(`已创建子相册「${created.name}」`, 'success');
+                trackEvent('创建角色相册子相册');
+            } else if (albumEditor.album) {
+                const renamed = await DB.renameGalleryAlbum(albumEditor.album.id, albumNameDraft);
+                setAlbums(current => current.map(album => album.id === renamed.id ? renamed : album));
+                addToast('子相册已重命名', 'success');
+                trackEvent('重命名角色相册子相册');
+            }
+            setAlbumEditor(null);
+        } catch (error: any) {
+            const message = error?.name === 'ConstraintError'
+                ? '这个角色已经有同名子相册了'
+                : (error?.message || '保存子相册失败');
+            addToast(message, 'error');
+        } finally {
+            setIsSavingAlbum(false);
+        }
+    };
+
+    const requestDeleteAlbum = (album: GalleryAlbum) => {
+        setConfirmDialog({
+            isOpen: true,
+            title: '删除子相册',
+            message: `确定要删除「${album.name}」吗？里面的 ${albumCount(album.id)} 张照片会保留并移到「未分类」，不会删除照片。`,
+            variant: 'warning',
+            onConfirm: async () => {
+                try {
+                    await DB.deleteGalleryAlbum(album.id);
+                    setAlbums(current => current.filter(item => item.id !== album.id));
+                    setImages(current => current.map(image => image.albumId === album.id ? withoutGalleryImageAlbum(image) : image));
+                    if (activeAlbumId === album.id) setActiveAlbumId(null);
+                    addToast(`子相册「${album.name}」已删除，照片已移到未分类`, 'success');
+                    trackEvent('删除角色相册子相册');
+                } catch (error: any) {
+                    addToast(`删除子相册失败：${error?.message || error}`, 'error');
+                } finally {
+                    setConfirmDialog(null);
+                }
+            }
+        });
+    };
+
+    const handleMoveImage = async (value: string) => {
+        if (!selectedImage || isMovingImage) return;
+        const nextAlbumId = value === GALLERY_UNFILED_ID ? undefined : value;
+        if (nextAlbumId && !albums.some(album => album.id === nextAlbumId)) {
+            addToast('目标子相册不存在，请刷新后重试', 'error');
+            return;
+        }
+        const currentAlbumId = selectedImage.albumId && knownAlbumIds.has(selectedImage.albumId)
+            ? selectedImage.albumId
+            : undefined;
+        if (currentAlbumId === nextAlbumId) return;
+
+        setIsMovingImage(true);
+        try {
+            await DB.updateGalleryImageAlbum(selectedImage.id, nextAlbumId);
+            const updated = nextAlbumId ? { ...selectedImage, albumId: nextAlbumId } : withoutGalleryImageAlbum(selectedImage);
+            setSelectedImage(updated);
+            setImages(current => current.map(image => image.id === updated.id ? updated : image));
+            const targetName = nextAlbumId ? albums.find(album => album.id === nextAlbumId)?.name : undefined;
+            addToast(targetName ? `已移入「${targetName}」` : '已移到未分类', 'success');
+            trackEvent(nextAlbumId ? '移动照片到角色子相册' : '移出角色子相册');
+        } catch (error: any) {
+            addToast(`移动照片失败：${error?.message || error}`, 'error');
+        } finally {
+            setIsMovingImage(false);
+        }
     };
 
     // Long-press handlers for album deletion
@@ -203,9 +353,8 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
                 throw new Error(`AI 返回内容为空. Raw: ${debugStr.substring(0, 100)}...`);
             }
 
-            await DB.updateGalleryImageReview(selectedImage.id, reviewText);
-
-            const updatedImage = { ...selectedImage, review: reviewText, reviewTimestamp: Date.now() };
+            // DB 层会重新读取最新照片记录，避免点评请求期间移动照片导致 albumId 被旧状态覆盖。
+            const updatedImage = await DB.updateGalleryImageReview(selectedImage.id, reviewText);
             setSelectedImage(updatedImage);
             setImages(prev => prev.map(img => img.id === selectedImage.id ? updatedImage : img));
 
@@ -288,15 +437,40 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
     );
 
     const renderGrid = () => (
-        <div className="flex-1 overflow-y-auto p-1.5 animate-fade-in">
-            {images.length === 0 ? (
+        <div className="flex-1 min-h-0 overflow-y-auto animate-fade-in">
+            <div className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur-xl border-b border-slate-100/80">
+                <div className="flex items-center gap-2 px-3 pt-2.5 overflow-x-auto no-scrollbar">
+                    <button type="button" onClick={() => setActiveAlbumId(null)} className={`shrink-0 px-3 py-1.5 rounded-full text-[11px] font-semibold transition-colors ${activeAlbumId === null ? 'bg-slate-800 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200'}`}>
+                        全部 <span className="ml-1 opacity-60">{images.length}</span>
+                    </button>
+                    <button type="button" onClick={() => setActiveAlbumId(GALLERY_UNFILED_ID)} className={`shrink-0 px-3 py-1.5 rounded-full text-[11px] font-semibold transition-colors ${activeAlbumId === GALLERY_UNFILED_ID ? 'bg-slate-800 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200'}`}>
+                        未分类 <span className="ml-1 opacity-60">{unfiledCount}</span>
+                    </button>
+                    {albums.map(album => (
+                        <button type="button" key={album.id} onClick={() => setActiveAlbumId(album.id)} title={album.name} className={`shrink-0 max-w-44 truncate px-3 py-1.5 rounded-full text-[11px] font-semibold transition-colors ${activeAlbumId === album.id ? 'bg-slate-800 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200'}`}>
+                            {album.name} <span className="ml-1 opacity-60">{albumCount(album.id)}</span>
+                        </button>
+                    ))}
+                </div>
+                <div className="flex items-center justify-between px-4 pt-2 pb-2">
+                    <span className="text-[10px] tracking-[0.16em] uppercase text-slate-400">子相册</span>
+                    <button type="button" onClick={() => setAlbumManagerOpen(true)} className="text-[11px] text-slate-500 hover:text-slate-800 px-2 py-1 rounded-lg hover:bg-white">管理</button>
+                </div>
+            </div>
+            {isLoadingGallery ? (
+                <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-3 py-20">
+                    <div className="w-6 h-6 border-2 border-slate-200 border-t-slate-500 rounded-full animate-spin" />
+                    <span className="text-sm">正在打开相册…</span>
+                </div>
+            ) : visibleImages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-slate-300 gap-3 py-20">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor" className="w-14 h-14 opacity-40"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg>
-                    <span className="text-sm">还没有照片</span>
+                    <span className="text-sm">{activeAlbumId === GALLERY_UNFILED_ID ? '没有未分类照片' : activeAlbumId ? '这个子相册还没有照片' : '还没有照片'}</span>
+                    {activeAlbumId === null && albums.length === 0 && <span className="text-[11px] leading-relaxed">点击右上角「＋」创建第一个子相册</span>}
                 </div>
             ) : (
-                <div className="grid grid-cols-3 gap-1">
-                    {images.map(img => (
+                <div className="grid grid-cols-3 gap-1 p-1.5">
+                    {visibleImages.map(img => (
                         <div key={img.id} onClick={() => handleImageClick(img)} className="aspect-square bg-slate-100 relative cursor-pointer overflow-hidden rounded-sm">
                             <img src={img.url} className="w-full h-full object-cover hover:scale-105 transition-transform duration-300" loading="lazy" />
                             {img.review && <div className="absolute top-1.5 right-1.5 w-2 h-2 bg-primary rounded-full ring-2 ring-white shadow-sm"></div>}
@@ -334,6 +508,27 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
                     className="max-w-full max-h-full object-contain"
                     alt="Detail"
                 />
+            </div>
+
+            {/* 分类入口：详情页直接移动单张照片，已有旧照片也能从这里补分类。 */}
+            <div className="shrink-0 w-full bg-[#161616] border-t border-white/10 px-5 py-3">
+                <div className="flex items-center justify-between gap-3">
+                    <span className="text-[11px] text-white/55 shrink-0">归入子相册</span>
+                    {albums.length > 0 ? (
+                        <select
+                            aria-label="把照片归入子相册"
+                            value={selectedImageAlbumId}
+                            onChange={event => { void handleMoveImage(event.target.value); }}
+                            disabled={isMovingImage}
+                            className="min-w-0 max-w-[65%] bg-white/10 text-white/85 border border-white/10 rounded-lg px-2.5 py-1.5 text-[11px] outline-none disabled:opacity-50"
+                        >
+                            <option value={GALLERY_UNFILED_ID} className="text-slate-800">未分类</option>
+                            {albums.map(album => <option key={album.id} value={album.id} className="text-slate-800">{album.name}</option>)}
+                        </select>
+                    ) : (
+                        <button type="button" onClick={openCreateAlbum} className="text-[11px] text-white/70 hover:text-white border border-white/15 rounded-lg px-2.5 py-1.5">＋ 新建子相册</button>
+                    )}
+                </div>
             </div>
 
             {/* Review & Context Section */}
@@ -401,9 +596,77 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
         </div>
     );
 
+    const renderAlbumManager = () => {
+        if (!albumManagerOpen || !activeCharId) return null;
+        return (
+            <div className="absolute inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/35 p-3" onClick={() => setAlbumManagerOpen(false)}>
+                <div role="dialog" aria-modal="true" aria-label="管理子相册" className="w-full max-w-sm max-h-[78%] overflow-hidden rounded-3xl bg-white shadow-2xl" onClick={event => event.stopPropagation()}>
+                    <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+                        <div>
+                            <h2 className="text-base font-semibold text-slate-800">管理子相册</h2>
+                            <p className="text-[10px] text-slate-400 mt-1">{activeCharacter?.name || '角色'} 的照片分类</p>
+                        </div>
+                        <button type="button" onClick={() => setAlbumManagerOpen(false)} className="p-2 rounded-full text-slate-400 hover:bg-slate-100" aria-label="关闭管理子相册">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+                        </button>
+                    </div>
+                    <div className="overflow-y-auto p-4 space-y-2">
+                        {albums.length === 0 ? (
+                            <div className="py-8 text-center text-sm text-slate-400">还没有自定义子相册</div>
+                        ) : albums.map(album => (
+                            <div key={album.id} className="flex items-center gap-2 rounded-2xl bg-slate-50 border border-slate-100 px-3 py-2.5">
+                                <div className="w-9 h-9 rounded-xl bg-white flex items-center justify-center text-slate-400 shrink-0">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75h19.5M3.75 5.25h5.379c.398 0 .78.158 1.061.439l1.372 1.372c.281.281.663.439 1.061.439h8.628a1.5 1.5 0 0 1 1.5 1.5v8.25a1.5 1.5 0 0 1-1.5 1.5H3.75a1.5 1.5 0 0 1-1.5-1.5v-10.5a1.5 1.5 0 0 1 1.5-1.5Z" /></svg>
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                    <div className="text-sm text-slate-700 truncate">{album.name}</div>
+                                    <div className="text-[10px] text-slate-400 mt-0.5">{albumCount(album.id)} 张照片</div>
+                                </div>
+                                <button type="button" onClick={() => openRenameAlbum(album)} className="text-[11px] text-slate-500 px-2 py-1.5 rounded-lg hover:bg-white">重命名</button>
+                                <button type="button" onClick={() => requestDeleteAlbum(album)} className="text-[11px] text-red-400 px-2 py-1.5 rounded-lg hover:bg-red-50">删除</button>
+                            </div>
+                        ))}
+                    </div>
+                    <div className="px-4 pb-4">
+                        <button type="button" onClick={openCreateAlbum} className="w-full py-2.5 rounded-2xl border border-dashed border-slate-300 text-sm font-semibold text-slate-600 hover:bg-slate-50">＋ 新建子相册</button>
+                        <p className="text-[10px] text-slate-400 leading-relaxed text-center mt-2">删除子相册不会删除照片，照片会回到「未分类」。</p>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    const renderAlbumEditor = () => {
+        if (!albumEditor) return null;
+        const isCreate = albumEditor.mode === 'create';
+        return (
+            <div className="absolute inset-0 z-[100] flex items-end sm:items-center justify-center bg-black/35 p-3" onClick={() => !isSavingAlbum && setAlbumEditor(null)}>
+                <form role="dialog" aria-modal="true" aria-label={isCreate ? '新建子相册' : '重命名子相册'} onSubmit={handleSaveAlbum} className="w-full max-w-sm rounded-3xl bg-white shadow-2xl p-5" onClick={event => event.stopPropagation()}>
+                    <h2 className="text-base font-semibold text-slate-800">{isCreate ? '新建子相册' : '重命名子相册'}</h2>
+                    <p className="text-[11px] text-slate-400 mt-1.5">给这个角色的照片取一个好找的分类名</p>
+                    <input
+                        autoFocus
+                        value={albumNameDraft}
+                        onChange={event => setAlbumNameDraft(event.target.value)}
+                        maxLength={GALLERY_ALBUM_NAME_MAX_LENGTH}
+                        placeholder="例如：旅行、日常、约会"
+                        disabled={isSavingAlbum}
+                        className="w-full mt-4 px-3.5 py-3 rounded-2xl bg-slate-50 border border-slate-200 text-sm text-slate-800 outline-none focus:border-slate-400"
+                    />
+                    <div className="flex items-center justify-end gap-2 mt-4">
+                        <button type="button" onClick={() => setAlbumEditor(null)} disabled={isSavingAlbum} className="px-4 py-2.5 rounded-xl text-sm text-slate-500 hover:bg-slate-100">取消</button>
+                        <button type="submit" disabled={isSavingAlbum || !albumNameDraft.trim()} className="px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800 text-white disabled:opacity-40">{isSavingAlbum ? '保存中…' : '保存'}</button>
+                    </div>
+                </form>
+            </div>
+        );
+    };
+
     return (
         <div className="h-full w-full bg-slate-50 flex flex-col font-light relative">
             <ConfirmDialog isOpen={!!confirmDialog} title={confirmDialog?.title || ''} message={confirmDialog?.message || ''} variant={confirmDialog?.variant} confirmText="确认" onConfirm={confirmDialog?.onConfirm || (() => setConfirmDialog(null))} onCancel={() => setConfirmDialog(null)} />
+            {renderAlbumManager()}
+            {renderAlbumEditor()}
 
             {/* Header */}
             {view !== 'detail' && (
@@ -413,9 +676,17 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                         </button>
                         <h1 className="text-lg font-semibold text-slate-800 ml-2 tracking-tight">
-                            {view === 'albums' ? '相册' : characters.find(c => c.id === activeCharId)?.name || '相册'}
+                            {view === 'albums' ? '相册' : activeCharacter?.name || '相册'}
                         </h1>
-                        {view === 'grid' && <span className="text-xs text-slate-400 ml-2 font-mono">{images.length}</span>}
+                        {view === 'grid' && <span className="text-xs text-slate-400 ml-2 font-mono">{visibleImages.length}</span>}
+                        {view === 'grid' && (
+                            <div className="ml-auto flex items-center gap-1">
+                                <button type="button" onClick={openCreateAlbum} className="p-2 rounded-full text-slate-500 hover:bg-slate-100 active:scale-90" aria-label="新建子相册" title="新建子相册">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75h5.379c.398 0 .78.158 1.061.439l1.372 1.372c.281.281.663.439 1.061.439h8.628a1.5 1.5 0 0 0 1.5-1.5v-4.5a1.5 1.5 0 0 0-1.5-1.5H3.75a1.5 1.5 0 0 0-1.5 1.5v3.75Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 4.5v3M13.5 6h3" /></svg>
+                                </button>
+                                <button type="button" onClick={() => setAlbumManagerOpen(true)} className="px-2 py-1.5 rounded-lg text-[11px] text-slate-500 hover:bg-slate-100" aria-label="管理子相册">管理</button>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}

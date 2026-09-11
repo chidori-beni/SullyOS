@@ -3730,10 +3730,22 @@ export interface GalleryImage {
     charId: string;
     url: string;
     timestamp: number;
+    /** 自定义子相册 id；缺失表示未分类。 */
+    albumId?: string;
     review?: string;
     reviewTimestamp?: number;
     savedDate?: string; // YYYY-MM-DD format
     chatContext?: string[]; // Recent chat messages at time of save
+}
+
+export interface GalleryAlbum {
+    id: string;
+    charId: string;
+    name: string;
+    /** trim + NFKC + 小写后的名称，用于同一角色内的唯一约束。 */
+    nameKey: string;
+    createdAt: number;
+    updatedAt: number;
 }
 
 export interface StickerData {
@@ -4420,6 +4432,7 @@ export interface FullBackupData {
     savedJournalStickers?: {name: string, url: string}[]; 
     assets?: { id: string, data: string }[];
     galleryImages?: GalleryImage[];
+    galleryAlbums?: GalleryAlbum[];
     userProfile?: UserProfile;
     diaries?: DiaryEntry[];
     tasks?: Task[];
