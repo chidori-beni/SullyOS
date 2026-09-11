@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { Worldbook, WorldbookDepthRole, WorldbookMode, WorldbookPosition, WorldbookSelectiveLogic } from '../types';
 import Modal from '../components/os/Modal';
-import { Check, CornersOut, DiamondsFour, BookOpen, DownloadSimple, Trash, UploadSimple, WarningCircle, X } from '@phosphor-icons/react';
+import { Check, CornersOut, DiamondsFour, BookOpen, CaretRight, DownloadSimple, Trash, UploadSimple, WarningCircle, X } from '@phosphor-icons/react';
 import WorldbookTextFullscreenEditor from '../components/WorldbookTextFullscreenEditor';
 import {
     parseStandardWorldbook,
@@ -49,6 +49,7 @@ const WorldbookApp: React.FC = () => {
     const [showCategoryPicker, setShowCategoryPicker] = useState(false);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [showImportConfirm, setShowImportConfirm] = useState(false);
+    const [showGuide, setShowGuide] = useState(false);
     const importRef = useRef<HTMLInputElement>(null);
     const [tempEnabled, setTempEnabled] = useState(true);
     const [tempMode, setTempMode] = useState<WorldbookMode>('all');
@@ -784,22 +785,36 @@ const WorldbookApp: React.FC = () => {
 
             {/* Content List */}
             <div ref={listScrollRef} className="flex-1 overflow-y-auto p-5 pb-24 space-y-4 no-scrollbar relative z-0">
-                <div className="rounded-2xl border border-indigo-100/80 bg-white/75 backdrop-blur-md p-4 shadow-sm text-slate-600">
-                    <div className="flex items-center gap-2 text-xs font-bold text-indigo-600">
-                        <BookOpen size={16} weight="bold" /> 世界书是做什么的？
-                    </div>
-                    <p className="mt-2 text-[11px] leading-relaxed">
-                        世界书是一组按条件提供给 AI 的补充设定，可用于世界观、人物关系、地点和规则等内容。它不会自己发消息，也不等同于角色记忆。
-                    </p>
-                    <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">
-                        创建或导入后，还要在角色编辑页的“扩展设定”中挂载；聊天生成回复时，已启用并满足常驻或关键词条件（以及可选的概率判定）的条目才会注入提示词。
-                    </p>
-                    <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">
-                        每条可单独设为线上、线下、两边或仅用于日程；展开分组后按住条目右侧拖拽柄即可整理顺序，整理顺序不会改动提示词注入优先级。
-                    </p>
-                    <p className="mt-2 rounded-xl bg-indigo-50 px-3 py-2 text-[10px] leading-relaxed text-indigo-700">
-                        注意：“启用随机概率”未点亮 = 不使用随机抽取，条件满足时按 100% 通过；并不是“未激活”。
-                    </p>
+                <div className="rounded-2xl border border-indigo-100/80 bg-white/75 backdrop-blur-md shadow-sm text-slate-600">
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setShowGuide(current => !current);
+                            trackEvent('展开世界书说明', { expanded: !showGuide });
+                        }}
+                        aria-expanded={showGuide}
+                        className="flex w-full items-center gap-2 px-4 py-3 text-left active:bg-indigo-50/60 transition-colors"
+                    >
+                        <BookOpen size={16} weight="bold" className="text-indigo-600" />
+                        <span className="flex-1 text-xs font-bold text-indigo-600">世界书是做什么的？</span>
+                        <CaretRight size={14} weight="bold" className={`text-indigo-400 transition-transform ${showGuide ? 'rotate-90' : ''}`} />
+                    </button>
+                    {showGuide && (
+                        <div className="border-t border-indigo-100/80 px-4 pb-4 pt-3">
+                            <p className="text-[11px] leading-relaxed">
+                                世界书是一组按条件提供给 AI 的补充设定，可用于世界观、人物关系、地点和规则等内容。它不会自己发消息，也不等同于角色记忆。
+                            </p>
+                            <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">
+                                创建或导入后，还要在角色编辑页的“扩展设定”中挂载；聊天生成回复时，已启用并满足常驻或关键词条件（以及可选的概率判定）的条目才会注入提示词。
+                            </p>
+                            <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">
+                                每条可单独设为线上、线下、两边或仅用于日程；展开分组后按住条目右侧拖拽柄即可整理顺序，整理顺序不会改动提示词注入优先级。
+                            </p>
+                            <p className="mt-2 rounded-xl bg-indigo-50 px-3 py-2 text-[10px] leading-relaxed text-indigo-700">
+                                注意：“启用随机概率”未点亮 = 不使用随机抽取，条件满足时按 100% 通过；并不是“未激活”。
+                            </p>
+                        </div>
+                    )}
                 </div>
 
                 {Object.keys(groupedBooks).length === 0 && (
