@@ -62,7 +62,6 @@ const Gallery: React.FC = () => {
                 if (requestId !== galleryLoadSeq.current) return;
                 setImages([...imgs].sort((a, b) => b.timestamp - a.timestamp));
                 setAlbums([...loadedAlbums].sort((a, b) => a.createdAt - b.createdAt));
-                setActiveAlbumId(null);
             })
             .catch(error => {
                 if (requestId === galleryLoadSeq.current) addToast(`相册加载失败：${error?.message || error}`, 'error');
@@ -70,7 +69,9 @@ const Gallery: React.FC = () => {
             .finally(() => {
                 if (requestId === galleryLoadSeq.current) setIsLoadingGallery(false);
             });
-    }, [activeCharId, addToast]);
+    // addToast 在 OSContext 中不是稳定引用；不能把它放进依赖，否则相册空状态下
+    // 每次 Provider render 都会重复执行清空 setState，造成闪屏/渲染循环。
+    }, [activeCharId]);
 
     const handleCharClick = (id: string) => {
         setActiveCharId(id);
