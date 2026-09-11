@@ -4,7 +4,7 @@
 import {
     CharacterProfile, ChatTheme, Message, UserProfile,
     Task, Anniversary, DiaryEntry, RoomTodo, RoomNote, DailySchedule,
-    GalleryImage, GalleryAlbum, FullBackupData, GroupProfile, SocialPost, StudyCourse, GameSession, Worldbook, NovelBook, Emoji, EmojiCategory,
+    GalleryImage, GalleryAlbum, GalleryCategoryOrder, FullBackupData, GroupProfile, SocialPost, StudyCourse, GameSession, Worldbook, NovelBook, Emoji, EmojiCategory,
     BankTransaction, SavingsGoal, BankFullState, DollhouseState, XhsStockImage, XhsActivityRecord, XhsOwnedPost, SongSheet, QuizSession, GuidebookSession,
     LifeSimState, HandbookEntry, Tracker, TrackerEntry, HotNewsSnapshot,
     LifeRecord, MedPlan, LifeRecordSettings, CharacterGroup,
@@ -20,7 +20,7 @@ import { exportAmsg2GlobalConfig, importAmsg2GlobalConfig } from './activeMsgSto
 import { exportWorldHomeLocal, importWorldHomeLocal } from './worldHome/localBackup';
 import { exportDesktopSkinLocal, importDesktopSkinLocal } from './desktopSkinBackup';
 import { getActiveDatePresence } from './datePresence';
-import { galleryAlbumNameKey, normalizeGalleryAlbumName, normalizeGalleryAlbumRecord, withoutGalleryImageAlbum } from './galleryAlbums';
+import { GALLERY_ALL_ID, GALLERY_UNFILED_ID, galleryAlbumNameKey, normalizeGalleryAlbumName, normalizeGalleryAlbumRecord, normalizeGalleryCategoryOrderRecord, reconcileGalleryCategoryOrder, withoutGalleryImageAlbum } from './galleryAlbums';
 
 const DB_NAME = 'AetherOS_Data';
 // v67：两条并行线各自用掉了 v65/v66（A线: blob_assets + 生活记录；B线: room_plates 门牌 + digest_reports 消化日志），
@@ -30,7 +30,8 @@ const DB_NAME = 'AetherOS_Data';
 // v70：剧场面具箱（原创人物面具）；角色面具仍只存 characterId，不复制神经链接资料。
 // v71：角色小红书伪主页；发帖归属与可删除的自由活动日志分离。
 // v72：角色相册自定义子相册（gallery_albums）与 GalleryImage.albumId。
-const DB_VERSION = 72;
+// v73：角色相册分类顺序（gallery_category_orders），顺序包含全部/未分类两个虚拟分类。
+const DB_VERSION = 73;
 
 const STORE_CHARACTERS = 'characters';
 const STORE_CHAR_GROUPS = 'character_groups'; // 角色分组定义（角色通过 groupId 指向；与群聊 groups 无关）
@@ -43,6 +44,7 @@ const STORE_BLOB_ASSETS = 'blob_assets'; // 图片二进制 Blob 存储（key=�
 const STORE_SCHEDULED = 'scheduled_messages';
 const STORE_GALLERY = 'gallery';
 const STORE_GALLERY_ALBUMS = 'gallery_albums';
+const STORE_GALLERY_CATEGORY_ORDERS = 'gallery_category_orders';
 const STORE_USER = 'user_profile'; 
 const STORE_DIARIES = 'diaries';
 const STORE_TASKS = 'tasks'; 
@@ -286,6 +288,8 @@ export const openDB = (): Promise<IDBDatabase> => {
               catch (e) { console.log('gallery_albums charId_nameKey index migration skipped'); }
           }
       }
+
+      createStore(STORE_GALLERY_CATEGORY_ORDERS, { keyPath: 'charId' });
 
       createStore(STORE_USER, { keyPath: 'id' });
       
@@ -1491,6 +1495,58 @@ export const DB = {
       });
   },
 
+  getGalleryCategoryOrder: async (charId: string): Promise<GalleryCategoryOrder | undefined> => {
+      const normalizedCharId = charId.trim();
+      if (!normalizedCharId) return undefined;
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_GALLERY_CATEGORY_ORDERS)) return undefined;
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_GALLERY_CATEGORY_ORDERS, 'readonly');
+          const request = transaction.objectStore(STORE_GALLERY_CATEGORY_ORDERS).get(normalizedCharId);
+          request.onsuccess = () => {
+              const record = normalizeGalleryCategoryOrderRecord(request.result);
+              resolve(record?.charId === normalizedCharId ? record : undefined);
+          };
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  saveGalleryCategoryOrder: async (charId: string, categoryIds: readonly string[]): Promise<void> => {
+      const normalizedCharId = charId.trim();
+      if (!normalizedCharId) throw new Error('分类顺序缺少角色信息');
+      const albums = await DB.getGalleryAlbums(normalizedCharId);
+      const record: GalleryCategoryOrder = {
+          charId: normalizedCharId,
+          categoryIds: reconcileGalleryCategoryOrder(categoryIds, albums),
+          updatedAt: Date.now(),
+      };
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_GALLERY_CATEGORY_ORDERS)) return;
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_GALLERY_CATEGORY_ORDERS, 'readwrite');
+          const request = transaction.objectStore(STORE_GALLERY_CATEGORY_ORDERS).put(record);
+          request.onerror = () => reject(request.error || new Error('保存相册分类顺序失败'));
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error || request.error || new Error('saveGalleryCategoryOrder failed'));
+          transaction.onabort = () => reject(transaction.error || new Error('saveGalleryCategoryOrder aborted'));
+      });
+  },
+
+  deleteGalleryCategoryOrder: async (charId: string): Promise<void> => {
+      const normalizedCharId = charId.trim();
+      if (!normalizedCharId) return;
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_GALLERY_CATEGORY_ORDERS)) return;
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_GALLERY_CATEGORY_ORDERS, 'readwrite');
+          const request = transaction.objectStore(STORE_GALLERY_CATEGORY_ORDERS).delete(normalizedCharId);
+          request.onerror = () => reject(request.error || new Error('删除相册分类顺序失败'));
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error || request.error || new Error('deleteGalleryCategoryOrder failed'));
+          transaction.onabort = () => reject(transaction.error || new Error('deleteGalleryCategoryOrder aborted'));
+      });
+  },
+
   saveGalleryAlbum: async (album: GalleryAlbum): Promise<void> => {
       const db = await openDB();
       const name = normalizeGalleryAlbumName(album.name);
@@ -1580,9 +1636,10 @@ export const DB = {
   deleteGalleryAlbum: async (id: string): Promise<void> => {
       const db = await openDB();
       return new Promise((resolve, reject) => {
-          const transaction = db.transaction([STORE_GALLERY_ALBUMS, STORE_GALLERY], 'readwrite');
+          const transaction = db.transaction([STORE_GALLERY_ALBUMS, STORE_GALLERY, STORE_GALLERY_CATEGORY_ORDERS], 'readwrite');
           const albumStore = transaction.objectStore(STORE_GALLERY_ALBUMS);
           const imageStore = transaction.objectStore(STORE_GALLERY);
+          const orderStore = transaction.objectStore(STORE_GALLERY_CATEGORY_ORDERS);
           let failed = false;
           const fail = (error: unknown) => {
               if (failed) return;
@@ -1597,14 +1654,26 @@ export const DB = {
               if (!album) return;
               const imageRequest = imageStore.index('albumId').getAll(IDBKeyRange.only(id));
               imageRequest.onsuccess = () => {
-                  try {
-                      for (const image of (imageRequest.result || []) as GalleryImage[]) {
-                          imageStore.put(withoutGalleryImageAlbum(image));
+                  const orderRequest = orderStore.get(album.charId);
+                  orderRequest.onsuccess = () => {
+                      try {
+                          for (const image of (imageRequest.result || []) as GalleryImage[]) {
+                              imageStore.put(withoutGalleryImageAlbum(image));
+                          }
+                          const order = normalizeGalleryCategoryOrderRecord(orderRequest.result);
+                          if (order) {
+                              orderStore.put({
+                                  ...order,
+                                  categoryIds: order.categoryIds.filter(categoryId => categoryId !== id),
+                                  updatedAt: Date.now(),
+                              });
+                          }
+                          albumStore.delete(id);
+                      } catch (error) {
+                          fail(error);
                       }
-                      albumStore.delete(id);
-                  } catch (error) {
-                      fail(error);
-                  }
+                  };
+                  orderRequest.onerror = () => fail(orderRequest.error || new Error('读取相册分类顺序失败'));
               };
               imageRequest.onerror = () => fail(imageRequest.error || new Error('读取子相册照片失败'));
           };
@@ -1676,6 +1745,98 @@ export const DB = {
           transaction.onabort = () => {
               if (!failed) reject(transaction.error || new Error('updateGalleryImageAlbum aborted'));
           };
+      });
+  },
+
+  /** 在同一个事务中把多张同角色照片移动到一个子相册；任一校验失败则全部回滚。 */
+  updateGalleryImagesAlbum: async (charId: string, ids: readonly string[], albumId?: string): Promise<number> => {
+      const normalizedCharId = charId.trim();
+      const uniqueIds = [...new Set(ids.map(id => id.trim()).filter(Boolean))];
+      if (!normalizedCharId || uniqueIds.length === 0) return 0;
+
+      const requestedAlbumId = albumId?.trim() || undefined;
+      const nextAlbumId = requestedAlbumId === GALLERY_UNFILED_ID ? undefined : requestedAlbumId;
+      if (nextAlbumId === GALLERY_ALL_ID) throw new Error('不能把照片移到全部');
+
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction([STORE_GALLERY, STORE_GALLERY_ALBUMS], 'readwrite');
+          const imageStore = transaction.objectStore(STORE_GALLERY);
+          const albumStore = transaction.objectStore(STORE_GALLERY_ALBUMS);
+          let failed = false;
+          let updatedCount = 0;
+          const fail = (error: unknown) => {
+              if (failed) return;
+              failed = true;
+              try { transaction.abort(); } catch { /* ignore */ }
+              reject(error instanceof Error ? error : new Error(String(error)));
+          };
+
+          const readAndUpdateImages = (targetAlbum?: GalleryAlbum) => {
+              if (targetAlbum && targetAlbum.charId !== normalizedCharId) {
+                  fail(new Error('不能把照片移到别的角色的子相册'));
+                  return;
+              }
+
+              const loaded: Array<GalleryImage | undefined> = new Array(uniqueIds.length);
+              let remaining = uniqueIds.length;
+              uniqueIds.forEach((id, index) => {
+                  const request = imageStore.get(id);
+                  request.onsuccess = () => {
+                      if (failed) return;
+                      const image = request.result as GalleryImage | undefined;
+                      if (!image) {
+                          fail(new Error('批量移动时发现照片不存在'));
+                          return;
+                      }
+                      loaded[index] = image;
+                      remaining -= 1;
+                      if (remaining > 0) return;
+
+                      const images = loaded as GalleryImage[];
+                      if (images.some(imageItem => imageItem.charId !== normalizedCharId)) {
+                          fail(new Error('只能批量移动当前角色的照片'));
+                          return;
+                      }
+                      try {
+                          for (const image of images) {
+                              const next = nextAlbumId
+                                  ? { ...image, albumId: nextAlbumId }
+                                  : withoutGalleryImageAlbum(image);
+                              const putRequest = imageStore.put(next);
+                              putRequest.onerror = () => fail(putRequest.error || new Error('批量移动照片失败'));
+                          }
+                          updatedCount = images.length;
+                      } catch (error) {
+                          fail(error);
+                      }
+                  };
+                  request.onerror = () => fail(request.error || new Error('读取批量移动照片失败'));
+              });
+          };
+
+          transaction.oncomplete = () => { if (!failed) resolve(updatedCount); };
+          transaction.onerror = () => {
+              if (!failed) reject(transaction.error || new Error('updateGalleryImagesAlbum failed'));
+          };
+          transaction.onabort = () => {
+              if (!failed) reject(transaction.error || new Error('updateGalleryImagesAlbum aborted'));
+          };
+
+          if (nextAlbumId) {
+              const albumRequest = albumStore.get(nextAlbumId);
+              albumRequest.onsuccess = () => {
+                  const targetAlbum = albumRequest.result as GalleryAlbum | undefined;
+                  if (!targetAlbum) {
+                      fail(new Error('目标子相册不存在'));
+                      return;
+                  }
+                  readAndUpdateImages(targetAlbum);
+              };
+              albumRequest.onerror = () => fail(albumRequest.error || new Error('读取目标子相册失败'));
+          } else {
+              readAndUpdateImages();
+          }
       });
   },
 
@@ -3275,7 +3436,7 @@ export const DB = {
           });
       };
 
-      const [characters, characterGroups, messages, themes, emojis, emojiCategories, assets, galleryImages, galleryAlbums, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, storyTheaters, storyTheaterPresets, storyTheaterMasks, novels, bankTx, bankData, xhsActivities, xhsOwnedPosts, xhsStockImages, songs, quizzes, guidebookSessions, scheduledMessages, lifeSimStates, handbooks, trackers, trackerEntries, hotNewsSnapshots, vrNovels, vrAnnotations, customCreatorParts, vrMusic, vrGuestbook, vrScripts, vrStagedPlays, vrPresets, vrLetters, vrSettings, worlds, worldEpisodes, lifeRecords, medPlans, lifeRecordSettings] = await Promise.all([
+      const [characters, characterGroups, messages, themes, emojis, emojiCategories, assets, galleryImages, galleryAlbums, galleryCategoryOrders, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, storyTheaters, storyTheaterPresets, storyTheaterMasks, novels, bankTx, bankData, xhsActivities, xhsOwnedPosts, xhsStockImages, songs, quizzes, guidebookSessions, scheduledMessages, lifeSimStates, handbooks, trackers, trackerEntries, hotNewsSnapshots, vrNovels, vrAnnotations, customCreatorParts, vrMusic, vrGuestbook, vrScripts, vrStagedPlays, vrPresets, vrLetters, vrSettings, worlds, worldEpisodes, lifeRecords, medPlans, lifeRecordSettings] = await Promise.all([
           getAllFromStore(STORE_CHARACTERS),
           getAllFromStore(STORE_CHAR_GROUPS),
           getAllFromStore(STORE_MESSAGES),
@@ -3285,6 +3446,7 @@ export const DB = {
           getAllFromStore(STORE_ASSETS),
           getAllFromStore(STORE_GALLERY),
           getAllFromStore(STORE_GALLERY_ALBUMS),
+          getAllFromStore(STORE_GALLERY_CATEGORY_ORDERS),
           getAllFromStore(STORE_USER),
           getAllFromStore(STORE_DIARIES),
           getAllFromStore(STORE_TASKS),
@@ -3342,7 +3504,7 @@ export const DB = {
       const dollhouseRecord = bankData.find((d: any) => d.id === 'dollhouse_state');
 
       return {
-          characters, characterGroups, messages, customThemes: themes, savedEmojis: emojis, emojiCategories, assets, galleryImages, galleryAlbums, userProfile, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, savedJournalStickers: journalStickers, socialPosts, courses, games, worldbooks, storyTheaters, storyTheaterPresets, storyTheaterMasks, novels,
+          characters, characterGroups, messages, customThemes: themes, savedEmojis: emojis, emojiCategories, assets, galleryImages, galleryAlbums, galleryCategoryOrders, userProfile, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, savedJournalStickers: journalStickers, socialPosts, courses, games, worldbooks, storyTheaters, storyTheaterPresets, storyTheaterMasks, novels,
           bankState: mainState ? { ...mainState, id: undefined } : undefined,
           bankDollhouse: dollhouseRecord?.data || undefined,
           bankTransactions: bankTx,
@@ -3402,7 +3564,7 @@ export const DB = {
       
       const availableStores = [
           STORE_CHARACTERS, STORE_CHAR_GROUPS, STORE_MESSAGES, STORE_THEMES, STORE_EMOJIS, STORE_EMOJI_CATEGORIES,
-          STORE_ASSETS, STORE_GALLERY, STORE_GALLERY_ALBUMS, STORE_USER, STORE_DIARIES,
+          STORE_ASSETS, STORE_GALLERY, STORE_GALLERY_ALBUMS, STORE_GALLERY_CATEGORY_ORDERS, STORE_USER, STORE_DIARIES,
           STORE_TASKS, STORE_ANNIVERSARIES, STORE_ROOM_TODOS, STORE_ROOM_NOTES,
           STORE_GROUPS, STORE_JOURNAL_STICKERS, STORE_SOCIAL_POSTS, STORE_COURSES, STORE_GAMES, STORE_WORLDBOOKS, STORE_STORY_THEATERS, STORE_STORY_THEATER_PRESETS, STORE_STORY_THEATER_MASKS, STORE_NOVELS, STORE_SONGS,
           STORE_BANK_TX, STORE_BANK_DATA,
@@ -3468,6 +3630,7 @@ export const DB = {
           data.assets !== undefined,
           data.savedJournalStickers !== undefined,
           data.galleryAlbums !== undefined,
+          data.galleryCategoryOrders !== undefined,
           data.galleryImages !== undefined,
           data.diaries !== undefined,
           data.tasks !== undefined,
@@ -3715,6 +3878,7 @@ export const DB = {
       // 旧备份导入到已经分类过的设备时，尽量按 imageId + charId 复用现有归属，避免
       // 用户只是恢复旧照片就被静默打散分类。新备份则严格以备份中的相册定义为准。
       const hasGalleryAlbumsBackup = data.galleryAlbums !== undefined;
+      const hasGalleryCategoryOrdersBackup = data.galleryCategoryOrders !== undefined;
       let importedGalleryAlbumsById = new Map<string, GalleryAlbum>();
       const legacyGalleryAssignments = new Map<string, string>();
 
@@ -3754,6 +3918,23 @@ export const DB = {
           }
       }
 
+      if (hasGalleryCategoryOrdersBackup) {
+          const normalizedOrders: GalleryCategoryOrder[] = [];
+          const seenCharIds = new Set<string>();
+          const rawOrders = Array.isArray(data.galleryCategoryOrders) ? data.galleryCategoryOrders : [];
+          for (const raw of rawOrders) {
+              const order = normalizeGalleryCategoryOrderRecord(raw);
+              if (!order || seenCharIds.has(order.charId)) {
+                  if (order) console.warn(`[DB] 备份中的重复相册分类顺序已跳过：${order.charId}`);
+                  else console.warn('[DB] 备份中的无效相册分类顺序已跳过');
+                  continue;
+              }
+              seenCharIds.add(order.charId);
+              normalizedOrders.push(order);
+          }
+          data.galleryCategoryOrders = normalizedOrders;
+      }
+
       const normalizeImportedGalleryImage = (image: GalleryImage): GalleryImage => {
           let albumId: string | undefined;
           if (hasGalleryAlbumsBackup) {
@@ -3769,6 +3950,11 @@ export const DB = {
           await clearAndAdd(STORE_GALLERY_ALBUMS, data.galleryAlbums, '相册分类', false);
           data.galleryAlbums = undefined as any;
       }, data.galleryAlbums?.length || 0);
+
+      await runSection('相册分类顺序', hasGalleryCategoryOrdersBackup, async () => {
+          await clearAndAdd(STORE_GALLERY_CATEGORY_ORDERS, data.galleryCategoryOrders, '相册分类顺序', false);
+          data.galleryCategoryOrders = undefined as any;
+      }, data.galleryCategoryOrders?.length || 0);
 
       await runSection('相册图片', data.galleryImages !== undefined, async () => {
           const images = Array.isArray(data.galleryImages)

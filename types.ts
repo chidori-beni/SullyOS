@@ -3748,6 +3748,13 @@ export interface GalleryAlbum {
     updatedAt: number;
 }
 
+export interface GalleryCategoryOrder {
+    charId: string;
+    /** 包含 GALLERY_ALL_ID、GALLERY_UNFILED_ID 和实体 GalleryAlbum.id。 */
+    categoryIds: string[];
+    updatedAt: number;
+}
+
 export interface StickerData {
     id: string;
     url: string;
@@ -4433,6 +4440,7 @@ export interface FullBackupData {
     assets?: { id: string, data: string }[];
     galleryImages?: GalleryImage[];
     galleryAlbums?: GalleryAlbum[];
+    galleryCategoryOrders?: GalleryCategoryOrder[];
     userProfile?: UserProfile;
     diaries?: DiaryEntry[];
     tasks?: Task[];

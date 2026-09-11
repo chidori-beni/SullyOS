@@ -3476,6 +3476,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
     setCharacters(prev => { const remaining = prev.filter(c => c.id !== id); if (remaining.length > 0 && activeCharacterId === id) { setActiveCharacterId(remaining[0].id); } return remaining; });
     await DB.deleteCharacter(id);
+    try {
+      await DB.deleteGalleryCategoryOrder(id);
+    } catch (err) {
+      console.warn('[deleteCharacter] 相册分类顺序清理失败', err);
+    }
     // 表情分类不随角色级联删除会留下「幽灵专属包」：单聊面板被可见性过滤掉（删不掉），
     // 群聊面板/提示词却还能看到。删完角色顺手按剩余角色清一次残留（详见 DB.cleanupEmojiResidue）。
     try {
@@ -4104,7 +4109,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const allStores = [
               // character_groups（角色分组定义）必须与 characters 同进退：
               // 角色身上的 groupId 指向这张表，漏导会让导入端全员回落「未分组」
-              'characters', 'character_groups', 'messages', 'themes', 'emojis', 'emoji_categories', 'assets', 'gallery', 'gallery_albums',
+              'characters', 'character_groups', 'messages', 'themes', 'emojis', 'emoji_categories', 'assets', 'gallery', 'gallery_albums', 'gallery_category_orders',
               'user_profile', 'diaries', 'tasks', 'anniversaries', 'room_todos',
               'room_notes', 'groups', 'journal_stickers', 'social_posts', 'courses', 'games', 'worldbooks', 'story_theaters', 'story_theater_presets', 'story_theater_masks', 'novels', 'songs',
               'bank_transactions', 'bank_data',
@@ -4135,7 +4140,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               storesToProcess = allStores.filter(s => s !== 'assets'); // Exclude raw assets store
           } else if (mode === 'media_only') {
               // media_only now includes themes/assets for complete media backup
-              storesToProcess = ['gallery', 'gallery_albums', 'emojis', 'emoji_categories', 'journal_stickers', 'user_profile', 'characters', 'messages', 'themes', 'assets', 'bank_data',
+              storesToProcess = ['gallery', 'gallery_albums', 'gallery_category_orders', 'emojis', 'emoji_categories', 'journal_stickers', 'user_profile', 'characters', 'messages', 'themes', 'assets', 'bank_data',
                   'pixel_home_assets', 'pixel_home_layouts', 'daily_schedule', 'cc_custom_parts'];
           }
 
@@ -4389,7 +4394,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes',
               'room_plates', 'digest_reports',
               'bank_transactions', 'scheduled_messages', 'memory_batches', 'hotnews_snapshots',
-              'character_groups', 'gallery_albums',
+              'character_groups', 'gallery_albums', 'gallery_category_orders',
               'story_theaters', 'story_theater_presets',
               'life_records', 'med_plans', 'life_record_settings'
           ]);
@@ -4419,6 +4424,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               emoji_categories: 'emojiCategories',
               gallery: 'galleryImages',
               gallery_albums: 'galleryAlbums',
+              gallery_category_orders: 'galleryCategoryOrders',
               diaries: 'diaries',
               tasks: 'tasks',
               anniversaries: 'anniversaries',
@@ -4656,6 +4662,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   case 'assets': backupData.assets = processedData; break;
                   case 'gallery': backupData.galleryImages = processedData; break;
                   case 'gallery_albums': backupData.galleryAlbums = processedData; break;
+                  case 'gallery_category_orders': backupData.galleryCategoryOrders = processedData; break;
                   case 'user_profile': if (processedData[0]) backupData.userProfile = processedData[0]; break;
                   case 'diaries': backupData.diaries = processedData; break;
                   case 'tasks': backupData.tasks = processedData; break;

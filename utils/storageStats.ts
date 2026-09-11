@@ -116,6 +116,7 @@ const STORE_CATEGORY: Record<string, StorageCategoryKey> = {
     emoji_categories: 'media',
     gallery: 'media',
     gallery_albums: 'media',
+    gallery_category_orders: 'media',
     themes: 'media',
     journal_stickers: 'media',
     // 记忆宫殿

@@ -6,7 +6,7 @@ import { GalleryAlbum, GalleryImage } from '../types';
 import { safeResponseJson } from '../utils/safeApi';
 import ConfirmDialog from '../components/os/ConfirmDialog';
 import { trackEvent } from '../utils/analytics';
-import { GALLERY_ALBUM_NAME_MAX_LENGTH, GALLERY_UNFILED_ID, galleryAlbumNameKey, withoutGalleryImageAlbum } from '../utils/galleryAlbums';
+import { GALLERY_ALBUM_NAME_MAX_LENGTH, GALLERY_ALL_ID, GALLERY_UNFILED_ID, galleryAlbumNameKey, galleryCategoryIdToActiveAlbumId, reconcileGalleryCategoryOrder, withoutGalleryImageAlbum } from '../utils/galleryAlbums';
 
 const Gallery: React.FC = () => {
     const { closeApp, characters, apiConfig, addToast } = useOS();
@@ -16,13 +16,20 @@ const Gallery: React.FC = () => {
     const [albums, setAlbums] = useState<GalleryAlbum[]>([]);
     /** null = 全部；GALLERY_UNFILED_ID = 未分类；其它值为真实子相册 id。 */
     const [activeAlbumId, setActiveAlbumId] = useState<string | null>(null);
+    const [categoryOrder, setCategoryOrder] = useState<string[]>([]);
     const [isLoadingGallery, setIsLoadingGallery] = useState(false);
     const [selectedImage, setSelectedImage] = useState<GalleryImage | null>(null);
     const [isReviewing, setIsReviewing] = useState(false);
     const [isMovingImage, setIsMovingImage] = useState(false);
     const [showChatContext, setShowChatContext] = useState(false);
+    const [isSelectingImages, setIsSelectingImages] = useState(false);
+    const [selectedImageIds, setSelectedImageIds] = useState<Set<string>>(new Set());
+    const [isBatchMoving, setIsBatchMoving] = useState(false);
 
     const [albumManagerOpen, setAlbumManagerOpen] = useState(false);
+    const [albumManagerMode, setAlbumManagerMode] = useState<'manage' | 'sort'>('manage');
+    const [sortDraft, setSortDraft] = useState<string[]>([]);
+    const [isSavingCategoryOrder, setIsSavingCategoryOrder] = useState(false);
     const [albumEditor, setAlbumEditor] = useState<{ mode: 'create' | 'rename'; album?: GalleryAlbum } | null>(null);
     const [albumNameDraft, setAlbumNameDraft] = useState('');
     const [isSavingAlbum, setIsSavingAlbum] = useState(false);
@@ -34,6 +41,9 @@ const Gallery: React.FC = () => {
 
     // Album image counts
     const [albumCounts, setAlbumCounts] = useState<Record<string, number>>({});
+    const activeCharIdRef = useRef<string | null>(null);
+    activeCharIdRef.current = activeCharId;
+    const categorySelectionSeq = useRef(0);
 
     useEffect(() => {
         // Load image counts for all characters
@@ -52,16 +62,31 @@ const Gallery: React.FC = () => {
             setImages([]);
             setAlbums([]);
             setActiveAlbumId(null);
+            setCategoryOrder([]);
+            setIsSelectingImages(false);
+            setSelectedImageIds(new Set());
             setIsLoadingGallery(false);
             return;
         }
         const requestId = ++galleryLoadSeq.current;
+        const categorySelectionAtRequest = categorySelectionSeq.current;
         setIsLoadingGallery(true);
-        void Promise.all([DB.getGalleryImages(activeCharId), DB.getGalleryAlbums(activeCharId)])
-            .then(([imgs, loadedAlbums]) => {
+        void Promise.all([
+            DB.getGalleryImages(activeCharId),
+            DB.getGalleryAlbums(activeCharId),
+            DB.getGalleryCategoryOrder(activeCharId),
+        ])
+            .then(([imgs, loadedAlbums, savedCategoryOrder]) => {
                 if (requestId !== galleryLoadSeq.current) return;
+                const sortedAlbums = [...loadedAlbums].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+                const nextCategoryOrder = reconcileGalleryCategoryOrder(savedCategoryOrder?.categoryIds, sortedAlbums);
                 setImages([...imgs].sort((a, b) => b.timestamp - a.timestamp));
-                setAlbums([...loadedAlbums].sort((a, b) => a.createdAt - b.createdAt));
+                setAlbums(sortedAlbums);
+                setCategoryOrder(nextCategoryOrder);
+                // 用户在慢加载期间主动点过分类时，不能用默认分类覆盖他的选择。
+                if (categorySelectionSeq.current === categorySelectionAtRequest) {
+                    setActiveAlbumId(galleryCategoryIdToActiveAlbumId(nextCategoryOrder[0] || GALLERY_ALL_ID));
+                }
             })
             .catch(error => {
                 if (requestId === galleryLoadSeq.current) addToast(`相册加载失败：${error?.message || error}`, 'error');
@@ -73,21 +98,39 @@ const Gallery: React.FC = () => {
     // 每次 Provider render 都会重复执行清空 setState，造成闪屏/渲染循环。
     }, [activeCharId]);
 
+    const exitImageSelection = () => {
+        setIsSelectingImages(false);
+        setSelectedImageIds(new Set());
+    };
+
     const handleCharClick = (id: string) => {
+        categorySelectionSeq.current += 1;
         setActiveCharId(id);
         setActiveAlbumId(null);
+        setCategoryOrder([]);
+        exitImageSelection();
         setView('grid');
         trackEvent('打开角色相册');
     };
 
+    const handleCategoryClick = (categoryId: string) => {
+        categorySelectionSeq.current += 1;
+        setActiveAlbumId(galleryCategoryIdToActiveAlbumId(categoryId));
+        exitImageSelection();
+    };
+
     const handleImageClick = (img: GalleryImage) => {
+        if (isSelectingImages) {
+            toggleImageSelection(img.id);
+            return;
+        }
         setSelectedImage(img);
         setView('detail');
     };
 
     const handleBack = () => {
         if (view === 'detail') { setView('grid'); setShowChatContext(false); }
-        else if (view === 'grid') { setView('albums'); setActiveCharId(null); setActiveAlbumId(null); setAlbumManagerOpen(false); }
+        else if (view === 'grid') { setView('albums'); setActiveCharId(null); setActiveAlbumId(null); setAlbumManagerOpen(false); exitImageSelection(); }
         else closeApp();
     };
 
@@ -104,6 +147,111 @@ const Gallery: React.FC = () => {
     const selectedImageAlbumId = selectedImage?.albumId && knownAlbumIds.has(selectedImage.albumId)
         ? selectedImage.albumId
         : GALLERY_UNFILED_ID;
+    const orderedCategoryIds = reconcileGalleryCategoryOrder(categoryOrder, albums);
+    const categoryLabel = (categoryId: string): string => {
+        if (categoryId === GALLERY_ALL_ID) return '全部';
+        if (categoryId === GALLERY_UNFILED_ID) return '未分类';
+        return albums.find(album => album.id === categoryId)?.name || '已删除分类';
+    };
+    const categoryCount = (categoryId: string): number => {
+        if (categoryId === GALLERY_ALL_ID) return images.length;
+        if (categoryId === GALLERY_UNFILED_ID) return unfiledCount;
+        return albumCount(categoryId);
+    };
+
+    const openAlbumManager = () => {
+        setAlbumManagerMode('manage');
+        setAlbumManagerOpen(true);
+    };
+
+    const openCategorySort = () => {
+        setSortDraft([...orderedCategoryIds]);
+        setAlbumManagerMode('sort');
+    };
+
+    const moveSortDraft = (index: number, direction: -1 | 1) => {
+        setSortDraft(current => {
+            const next = reconcileGalleryCategoryOrder(current, albums);
+            const targetIndex = index + direction;
+            if (index < 0 || index >= next.length || targetIndex < 0 || targetIndex >= next.length) return next;
+            [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
+            return next;
+        });
+    };
+
+    const handleSaveCategoryOrder = async () => {
+        if (!activeCharId || isSavingCategoryOrder) return;
+        const charId = activeCharId;
+        const nextOrder = reconcileGalleryCategoryOrder(sortDraft, albums);
+        setIsSavingCategoryOrder(true);
+        try {
+            await DB.saveGalleryCategoryOrder(charId, nextOrder);
+            if (activeCharIdRef.current === charId) {
+                setCategoryOrder(nextOrder);
+                setSortDraft(nextOrder);
+                setAlbumManagerMode('manage');
+                addToast('分类顺序已保存', 'success');
+            }
+        } catch (error: any) {
+            if (activeCharIdRef.current === charId) addToast(`保存分类顺序失败：${error?.message || error}`, 'error');
+        } finally {
+            setIsSavingCategoryOrder(false);
+        }
+    };
+
+    const toggleImageSelection = (imageId: string) => {
+        setSelectedImageIds(current => {
+            const next = new Set(current);
+            if (next.has(imageId)) next.delete(imageId);
+            else next.add(imageId);
+            return next;
+        });
+    };
+
+    const allVisibleImagesSelected = visibleImages.length > 0 && visibleImages.every(image => selectedImageIds.has(image.id));
+
+    const toggleSelectAllVisible = () => {
+        setSelectedImageIds(current => {
+            const next = new Set(current);
+            if (allVisibleImagesSelected) {
+                visibleImages.forEach(image => next.delete(image.id));
+            } else {
+                visibleImages.forEach(image => next.add(image.id));
+            }
+            return next;
+        });
+    };
+
+    const handleBatchMove = async (value: string) => {
+        if (!activeCharId || isBatchMoving || selectedImageIds.size === 0 || !value) return;
+        const charId = activeCharId;
+        const selectedIds = [...selectedImageIds];
+        const nextAlbumId = value === GALLERY_UNFILED_ID ? undefined : value;
+        if (nextAlbumId && !albums.some(album => album.id === nextAlbumId)) {
+            addToast('目标子相册不存在，请刷新后重试', 'error');
+            return;
+        }
+
+        setIsBatchMoving(true);
+        const loadSeqAtStart = galleryLoadSeq.current;
+        try {
+            const movedCount = await DB.updateGalleryImagesAlbum(charId, selectedIds, nextAlbumId);
+            if (activeCharIdRef.current !== charId || loadSeqAtStart !== galleryLoadSeq.current) return;
+            const selectedIdSet = new Set(selectedIds);
+            setImages(current => current.map(image => {
+                if (!selectedIdSet.has(image.id)) return image;
+                return nextAlbumId ? { ...image, albumId: nextAlbumId } : withoutGalleryImageAlbum(image);
+            }));
+            exitImageSelection();
+            const targetName = nextAlbumId ? albums.find(album => album.id === nextAlbumId)?.name : undefined;
+            addToast(targetName ? `已将 ${movedCount} 张照片移入「${targetName}」` : `已将 ${movedCount} 张照片移到未分类`, 'success');
+            trackEvent(nextAlbumId ? '批量移动照片到角色子相册' : '批量移出角色子相册');
+        } catch (error: any) {
+            if (activeCharIdRef.current === charId) addToast(`批量移动照片失败：${error?.message || error}`, 'error');
+        } finally {
+            setIsBatchMoving(false);
+        }
+    };
 
     const openCreateAlbum = () => {
         if (!activeCharId) return;
@@ -141,7 +289,10 @@ const Gallery: React.FC = () => {
         try {
             if (albumEditor.mode === 'create') {
                 const created = await DB.createGalleryAlbum(activeCharId, albumNameDraft);
-                setAlbums(current => [...current, created].sort((a, b) => a.createdAt - b.createdAt));
+                const nextAlbums = [...albums, created].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+                const nextOrder = reconcileGalleryCategoryOrder([...categoryOrder, created.id], nextAlbums);
+                setAlbums(nextAlbums);
+                setCategoryOrder(nextOrder);
                 addToast(`已创建子相册「${created.name}」`, 'success');
                 trackEvent('创建角色相册子相册');
             } else if (albumEditor.album) {
@@ -170,9 +321,14 @@ const Gallery: React.FC = () => {
             onConfirm: async () => {
                 try {
                     await DB.deleteGalleryAlbum(album.id);
-                    setAlbums(current => current.filter(item => item.id !== album.id));
+                    const nextAlbums = albums.filter(item => item.id !== album.id);
+                    const nextOrder = reconcileGalleryCategoryOrder(categoryOrder.filter(categoryId => categoryId !== album.id), nextAlbums);
+                    setAlbums(nextAlbums);
+                    setCategoryOrder(nextOrder);
                     setImages(current => current.map(image => image.albumId === album.id ? withoutGalleryImageAlbum(image) : image));
-                    if (activeAlbumId === album.id) setActiveAlbumId(null);
+                    if (activeAlbumId === album.id) {
+                        setActiveAlbumId(galleryCategoryIdToActiveAlbumId(nextOrder[0] || GALLERY_ALL_ID));
+                    }
                     addToast(`子相册「${album.name}」已删除，照片已移到未分类`, 'success');
                     trackEvent('删除角色相册子相册');
                 } catch (error: any) {
@@ -441,21 +597,15 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
         <div className="flex-1 min-h-0 overflow-y-auto animate-fade-in">
             <div className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur-xl border-b border-slate-100/80">
                 <div className="flex items-center gap-2 px-3 pt-2.5 overflow-x-auto no-scrollbar">
-                    <button type="button" onClick={() => setActiveAlbumId(null)} className={`shrink-0 px-3 py-1.5 rounded-full text-[11px] font-semibold transition-colors ${activeAlbumId === null ? 'bg-slate-800 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200'}`}>
-                        全部 <span className="ml-1 opacity-60">{images.length}</span>
-                    </button>
-                    <button type="button" onClick={() => setActiveAlbumId(GALLERY_UNFILED_ID)} className={`shrink-0 px-3 py-1.5 rounded-full text-[11px] font-semibold transition-colors ${activeAlbumId === GALLERY_UNFILED_ID ? 'bg-slate-800 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200'}`}>
-                        未分类 <span className="ml-1 opacity-60">{unfiledCount}</span>
-                    </button>
-                    {albums.map(album => (
-                        <button type="button" key={album.id} onClick={() => setActiveAlbumId(album.id)} title={album.name} className={`shrink-0 max-w-44 truncate px-3 py-1.5 rounded-full text-[11px] font-semibold transition-colors ${activeAlbumId === album.id ? 'bg-slate-800 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200'}`}>
-                            {album.name} <span className="ml-1 opacity-60">{albumCount(album.id)}</span>
+                    {orderedCategoryIds.map(categoryId => (
+                        <button type="button" key={categoryId} onClick={() => handleCategoryClick(categoryId)} title={categoryLabel(categoryId)} className={`shrink-0 max-w-44 truncate px-3 py-1.5 rounded-full text-[11px] font-semibold transition-colors ${activeAlbumId === galleryCategoryIdToActiveAlbumId(categoryId) ? 'bg-slate-800 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200'}`}>
+                            {categoryLabel(categoryId)} <span className="ml-1 opacity-60">{categoryCount(categoryId)}</span>
                         </button>
                     ))}
                 </div>
                 <div className="flex items-center justify-between px-4 pt-2 pb-2">
-                    <span className="text-[10px] tracking-[0.16em] uppercase text-slate-400">子相册</span>
-                    <button type="button" onClick={() => setAlbumManagerOpen(true)} className="text-[11px] text-slate-500 hover:text-slate-800 px-2 py-1 rounded-lg hover:bg-white">管理</button>
+                    <span className="text-[10px] tracking-[0.16em] uppercase text-slate-400">{isSelectingImages ? `已选 ${selectedImageIds.size} 张` : '子相册'}</span>
+                    {!isSelectingImages && <button type="button" onClick={openAlbumManager} className="text-[11px] text-slate-500 hover:text-slate-800 px-2 py-1 rounded-lg hover:bg-white">管理</button>}
                 </div>
             </div>
             {isLoadingGallery ? (
@@ -472,12 +622,45 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
             ) : (
                 <div className="grid grid-cols-3 gap-1 p-1.5">
                     {visibleImages.map(img => (
-                        <div key={img.id} onClick={() => handleImageClick(img)} className="aspect-square bg-slate-100 relative cursor-pointer overflow-hidden rounded-sm">
+                        <div
+                            key={img.id}
+                            onClick={() => handleImageClick(img)}
+                            role={isSelectingImages ? 'checkbox' : undefined}
+                            aria-checked={isSelectingImages ? selectedImageIds.has(img.id) : undefined}
+                            aria-label={isSelectingImages ? `${selectedImageIds.has(img.id) ? '取消选择' : '选择'}照片` : undefined}
+                            className={`aspect-square bg-slate-100 relative cursor-pointer overflow-hidden rounded-sm ${isSelectingImages && selectedImageIds.has(img.id) ? 'ring-2 ring-primary ring-inset' : ''}`}
+                        >
                             <img src={img.url} className="w-full h-full object-cover hover:scale-105 transition-transform duration-300" loading="lazy" />
+                            {isSelectingImages && selectedImageIds.has(img.id) && <div className="absolute inset-0 bg-primary/20 pointer-events-none" />}
                             {img.review && <div className="absolute top-1.5 right-1.5 w-2 h-2 bg-primary rounded-full ring-2 ring-white shadow-sm"></div>}
                             {img.savedDate && <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/50 to-transparent px-1.5 pb-1 pt-3"><span className="text-[8px] text-white/80 font-mono">{img.savedDate}</span></div>}
+                            {isSelectingImages && (
+                                <div className={`absolute top-1.5 left-1.5 w-5 h-5 rounded-full flex items-center justify-center border shadow-sm ${selectedImageIds.has(img.id) ? 'bg-primary border-primary text-white' : 'bg-black/25 border-white/80 text-transparent'}`}>
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="m5 12 4 4L19 6" /></svg>
+                                </div>
+                            )}
                         </div>
                     ))}
+                </div>
+            )}
+            {isSelectingImages && (
+                <div className="sticky bottom-0 z-20 bg-white/95 backdrop-blur-xl border-t border-slate-200/80 px-3 py-2.5 shadow-[0_-8px_24px_rgba(15,23,42,0.08)]">
+                    <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-slate-500 shrink-0">已选 {selectedImageIds.size} 张</span>
+                        <select
+                            aria-label="批量加入子相册"
+                            value=""
+                            onChange={event => { void handleBatchMove(event.target.value); }}
+                            disabled={selectedImageIds.size === 0 || isBatchMoving}
+                            className="min-w-0 flex-1 bg-slate-100 text-slate-700 border border-slate-200 rounded-xl px-2.5 py-2 text-[11px] outline-none disabled:opacity-50"
+                        >
+                            <option value="">{isBatchMoving ? '移动中…' : '加入子相册…'}</option>
+                            {orderedCategoryIds.filter(categoryId => categoryId !== GALLERY_ALL_ID).map(categoryId => (
+                                <option key={categoryId} value={categoryId}>{categoryId === GALLERY_UNFILED_ID ? '移到未分类' : `移入「${categoryLabel(categoryId)}」`}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-1">只操作当前角色、当前分类中的照片；每张照片只属于一个子相册。</div>
                 </div>
             )}
         </div>
@@ -599,39 +782,77 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
 
     const renderAlbumManager = () => {
         if (!albumManagerOpen || !activeCharId) return null;
+        const isSorting = albumManagerMode === 'sort';
+        const draftCategoryIds = reconcileGalleryCategoryOrder(sortDraft, albums);
         return (
-            <div className="absolute inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/35 p-3" onClick={() => setAlbumManagerOpen(false)}>
-                <div role="dialog" aria-modal="true" aria-label="管理子相册" className="w-full max-w-sm max-h-[78%] overflow-hidden rounded-3xl bg-white shadow-2xl" onClick={event => event.stopPropagation()}>
+            <div className="absolute inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/35 p-3" onClick={() => !isSavingCategoryOrder && setAlbumManagerOpen(false)}>
+                <div role="dialog" aria-modal="true" aria-label={isSorting ? '调整分类顺序' : '管理子相册'} className="w-full max-w-sm max-h-[78%] overflow-hidden rounded-3xl bg-white shadow-2xl" onClick={event => event.stopPropagation()}>
                     <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-                        <div>
-                            <h2 className="text-base font-semibold text-slate-800">管理子相册</h2>
+                        <div className="flex items-center gap-2 min-w-0">
+                            {isSorting && (
+                                <button type="button" onClick={() => setAlbumManagerMode('manage')} disabled={isSavingCategoryOrder} className="p-1.5 -ml-1.5 rounded-full text-slate-400 hover:bg-slate-100 disabled:opacity-40" aria-label="返回管理子相册">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
+                                </button>
+                            )}
+                            <div className="min-w-0">
+                            <h2 className="text-base font-semibold text-slate-800 truncate">{isSorting ? '调整分类顺序' : '管理子相册'}</h2>
                             <p className="text-[10px] text-slate-400 mt-1">{activeCharacter?.name || '角色'} 的照片分类</p>
+                            </div>
                         </div>
-                        <button type="button" onClick={() => setAlbumManagerOpen(false)} className="p-2 rounded-full text-slate-400 hover:bg-slate-100" aria-label="关闭管理子相册">
+                        <button type="button" onClick={() => setAlbumManagerOpen(false)} disabled={isSavingCategoryOrder} className="p-2 rounded-full text-slate-400 hover:bg-slate-100 disabled:opacity-40" aria-label="关闭管理子相册">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
                         </button>
                     </div>
-                    <div className="overflow-y-auto p-4 space-y-2">
-                        {albums.length === 0 ? (
-                            <div className="py-8 text-center text-sm text-slate-400">还没有自定义子相册</div>
-                        ) : albums.map(album => (
-                            <div key={album.id} className="flex items-center gap-2 rounded-2xl bg-slate-50 border border-slate-100 px-3 py-2.5">
-                                <div className="w-9 h-9 rounded-xl bg-white flex items-center justify-center text-slate-400 shrink-0">
-                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75h19.5M3.75 5.25h5.379c.398 0 .78.158 1.061.439l1.372 1.372c.281.281.663.439 1.061.439h8.628a1.5 1.5 0 0 1 1.5 1.5v8.25a1.5 1.5 0 0 1-1.5 1.5H3.75a1.5 1.5 0 0 1-1.5-1.5v-10.5a1.5 1.5 0 0 1 1.5-1.5Z" /></svg>
+                    {isSorting ? (
+                        <div className="overflow-y-auto p-4 space-y-2">
+                            <p className="text-[11px] text-slate-400 leading-relaxed px-1 pb-1">最前面的分类会作为打开这个角色相册时的默认分类。</p>
+                            {draftCategoryIds.map((categoryId, index) => (
+                                <div key={categoryId} className="flex items-center gap-2 rounded-2xl bg-slate-50 border border-slate-100 px-3 py-2.5">
+                                    <span className="w-5 text-center text-xs font-mono text-slate-400 shrink-0">{index + 1}</span>
+                                    <div className="min-w-0 flex-1">
+                                        <div className="text-sm text-slate-700 truncate">{categoryLabel(categoryId)}</div>
+                                        <div className="text-[10px] text-slate-400 mt-0.5">{categoryCount(categoryId)} 张照片{index === 0 ? ' · 默认打开' : ''}</div>
+                                    </div>
+                                    <button type="button" onClick={() => moveSortDraft(index, -1)} disabled={index === 0 || isSavingCategoryOrder} className="w-8 h-8 rounded-lg text-slate-500 hover:bg-white disabled:opacity-25" aria-label={`将${categoryLabel(categoryId)}上移`}>
+                                        <span aria-hidden="true">↑</span>
+                                    </button>
+                                    <button type="button" onClick={() => moveSortDraft(index, 1)} disabled={index === draftCategoryIds.length - 1 || isSavingCategoryOrder} className="w-8 h-8 rounded-lg text-slate-500 hover:bg-white disabled:opacity-25" aria-label={`将${categoryLabel(categoryId)}下移`}>
+                                        <span aria-hidden="true">↓</span>
+                                    </button>
                                 </div>
-                                <div className="min-w-0 flex-1">
-                                    <div className="text-sm text-slate-700 truncate">{album.name}</div>
-                                    <div className="text-[10px] text-slate-400 mt-0.5">{albumCount(album.id)} 张照片</div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="overflow-y-auto p-4 space-y-2">
+                            {albums.length === 0 ? (
+                                <div className="py-8 text-center text-sm text-slate-400">还没有自定义子相册</div>
+                            ) : albums.map(album => (
+                                <div key={album.id} className="flex items-center gap-2 rounded-2xl bg-slate-50 border border-slate-100 px-3 py-2.5">
+                                    <div className="w-9 h-9 rounded-xl bg-white flex items-center justify-center text-slate-400 shrink-0">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75h19.5M3.75 5.25h5.379c.398 0 .78.158 1.061.439l1.372 1.372c.281.281.663.439 1.061.439h8.628a1.5 1.5 0 0 1 1.5 1.5v8.25a1.5 1.5 0 0 1-1.5 1.5H3.75a1.5 1.5 0 0 1-1.5-1.5v-10.5a1.5 1.5 0 0 1 1.5-1.5Z" /></svg>
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                        <div className="text-sm text-slate-700 truncate">{album.name}</div>
+                                        <div className="text-[10px] text-slate-400 mt-0.5">{albumCount(album.id)} 张照片</div>
+                                    </div>
+                                    <button type="button" onClick={() => openRenameAlbum(album)} className="text-[11px] text-slate-500 px-2 py-1.5 rounded-lg hover:bg-white">重命名</button>
+                                    <button type="button" onClick={() => requestDeleteAlbum(album)} className="text-[11px] text-red-400 px-2 py-1.5 rounded-lg hover:bg-red-50">删除</button>
                                 </div>
-                                <button type="button" onClick={() => openRenameAlbum(album)} className="text-[11px] text-slate-500 px-2 py-1.5 rounded-lg hover:bg-white">重命名</button>
-                                <button type="button" onClick={() => requestDeleteAlbum(album)} className="text-[11px] text-red-400 px-2 py-1.5 rounded-lg hover:bg-red-50">删除</button>
-                            </div>
-                        ))}
-                    </div>
-                    <div className="px-4 pb-4">
-                        <button type="button" onClick={openCreateAlbum} className="w-full py-2.5 rounded-2xl border border-dashed border-slate-300 text-sm font-semibold text-slate-600 hover:bg-slate-50">＋ 新建子相册</button>
-                        <p className="text-[10px] text-slate-400 leading-relaxed text-center mt-2">删除子相册不会删除照片，照片会回到「未分类」。</p>
-                    </div>
+                            ))}
+                        </div>
+                    )}
+                    {isSorting ? (
+                        <div className="px-4 pb-4 flex items-center justify-end gap-2">
+                            <button type="button" onClick={() => setAlbumManagerMode('manage')} disabled={isSavingCategoryOrder} className="px-4 py-2.5 rounded-xl text-sm text-slate-500 hover:bg-slate-100 disabled:opacity-40">取消</button>
+                            <button type="button" onClick={() => void handleSaveCategoryOrder()} disabled={isSavingCategoryOrder} className="px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800 text-white disabled:opacity-40">{isSavingCategoryOrder ? '保存中…' : '保存排序'}</button>
+                        </div>
+                    ) : (
+                        <div className="px-4 pb-4 space-y-2">
+                            <button type="button" onClick={openCategorySort} className="w-full py-2.5 rounded-2xl border border-slate-200 text-sm font-semibold text-slate-600 hover:bg-slate-50">☷ 调整分类顺序</button>
+                            <button type="button" onClick={openCreateAlbum} className="w-full py-2.5 rounded-2xl border border-dashed border-slate-300 text-sm font-semibold text-slate-600 hover:bg-slate-50">＋ 新建子相册</button>
+                            <p className="text-[10px] text-slate-400 leading-relaxed text-center mt-2">删除子相册不会删除照片，照片会回到「未分类」。</p>
+                        </div>
+                    )}
                 </div>
             </div>
         );
@@ -677,15 +898,22 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                         </button>
                         <h1 className="text-lg font-semibold text-slate-800 ml-2 tracking-tight">
-                            {view === 'albums' ? '相册' : activeCharacter?.name || '相册'}
+                            {view === 'albums' ? '相册' : isSelectingImages ? '选择照片' : activeCharacter?.name || '相册'}
                         </h1>
                         {view === 'grid' && <span className="text-xs text-slate-400 ml-2 font-mono">{visibleImages.length}</span>}
-                        {view === 'grid' && (
+                        {view === 'grid' && !isSelectingImages && (
                             <div className="ml-auto flex items-center gap-1">
                                 <button type="button" onClick={openCreateAlbum} className="p-2 rounded-full text-slate-500 hover:bg-slate-100 active:scale-90" aria-label="新建子相册" title="新建子相册">
                                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75h5.379c.398 0 .78.158 1.061.439l1.372 1.372c.281.281.663.439 1.061.439h8.628a1.5 1.5 0 0 0 1.5-1.5v-4.5a1.5 1.5 0 0 0-1.5-1.5H3.75a1.5 1.5 0 0 0-1.5 1.5v3.75Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 4.5v3M13.5 6h3" /></svg>
                                 </button>
-                                <button type="button" onClick={() => setAlbumManagerOpen(true)} className="px-2 py-1.5 rounded-lg text-[11px] text-slate-500 hover:bg-slate-100" aria-label="管理子相册">管理</button>
+                                <button type="button" onClick={openAlbumManager} className="px-2 py-1.5 rounded-lg text-[11px] text-slate-500 hover:bg-slate-100" aria-label="管理子相册">管理</button>
+                                <button type="button" onClick={() => { setIsSelectingImages(true); setSelectedImageIds(new Set()); }} className="px-2 py-1.5 rounded-lg text-[11px] text-slate-500 hover:bg-slate-100" aria-label="选择照片">选择</button>
+                            </div>
+                        )}
+                        {view === 'grid' && isSelectingImages && (
+                            <div className="ml-auto flex items-center gap-1">
+                                <button type="button" onClick={toggleSelectAllVisible} disabled={visibleImages.length === 0} className="px-2 py-1.5 rounded-lg text-[11px] text-slate-500 hover:bg-slate-100 disabled:opacity-40">{allVisibleImagesSelected ? '取消全选' : '全选当前分类'}</button>
+                                <button type="button" onClick={exitImageSelection} className="px-2 py-1.5 rounded-lg text-[11px] text-slate-500 hover:bg-slate-100">取消</button>
                             </div>
                         )}
                     </div>
