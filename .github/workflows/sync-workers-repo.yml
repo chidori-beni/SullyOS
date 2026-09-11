@@ -40,7 +40,7 @@ concurrency:
 # 部署仓库的 owner/name 全写：它跟本仓库不在同一个账号下，
 # 界面和文档里给用户的 fork 链接指的也是这个地址。
 env:
-  TARGET_REPO: Tosd0/sullyos-workers
+  TARGET_REPO: chidori-beni/sullyos-workers
 
 jobs:
   sync:
