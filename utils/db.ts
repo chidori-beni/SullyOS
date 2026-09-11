@@ -677,6 +677,47 @@ export const DB = {
   },
 
   /**
+   * 按消息主键读取语音清理所需的最小时间信息。
+   * 不调用 getMessagesByCharId，避免为了给旧语音补时间戳而把整段聊天历史读进内存。
+   */
+  getMessageTimestampsByIds: async (ids: number[]): Promise<Map<number, number>> => {
+    const uniqueIds = [...new Set(ids.filter(id => Number.isSafeInteger(id) && id > 0))];
+    if (!uniqueIds.length) return new Map();
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_MESSAGES, 'readonly');
+      const store = transaction.objectStore(STORE_MESSAGES);
+      const timestamps = new Map<number, number>();
+      let settled = false;
+      const fail = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        reject(error instanceof Error ? error : new Error(String(error || 'message timestamp lookup failed')));
+      };
+      transaction.oncomplete = () => {
+        if (settled) return;
+        settled = true;
+        resolve(timestamps);
+      };
+      transaction.onerror = () => fail(transaction.error);
+      transaction.onabort = () => fail(transaction.error || new Error('message timestamp lookup aborted'));
+
+      for (const id of uniqueIds) {
+        const request = store.get(id);
+        request.onsuccess = () => {
+          const message = request.result as Message | undefined;
+          if (!message) return;
+          const timestamp = message.timestamp;
+          if (typeof timestamp === 'number' && Number.isFinite(timestamp) && timestamp > 0) {
+            timestamps.set(id, timestamp);
+          }
+        };
+        request.onerror = () => fail(request.error);
+      }
+    });
+  },
+
+  /**
    * 某个角色的聊天条数。走 charId 索引的 count()，**一条消息都不会被读出来**，
    * IndexedDB 只回一个数字。使用统计的规模档位用它，别拿 getMessagesByCharId
    * 去 length ——那会把整段聊天记录读进内存。
@@ -1310,6 +1351,35 @@ export const DB = {
     });
   },
 
+  /**
+   * 只扫描 assets 的主键，不把 Blob 值读进 JS 堆。
+   *
+   * 音频保留策略只需要检查 `voice_msg_` / `tts_` 两类候选；清理时如果
+   * 直接调用 getAllAssets()，会把壁纸、图片和所有音频一起结构化克隆到内存，
+   * 在手机上反而可能因为清理而触发一次内存峰值。
+   */
+  getAssetKeysByPrefix: async (prefix: string): Promise<string[]> => {
+    if (!prefix) return [];
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_ASSETS, 'readonly');
+      const store = transaction.objectStore(STORE_ASSETS);
+      const request = store.openKeyCursor(IDBKeyRange.bound(prefix, `${prefix}\uffff`));
+      const keys: string[] = [];
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) {
+          resolve(keys);
+          return;
+        }
+        const key = cursor.primaryKey;
+        if (typeof key === 'string' && key.startsWith(prefix)) keys.push(key);
+        cursor.continue();
+      };
+      request.onerror = () => reject(request.error);
+    });
+  },
+
   getAsset: async (id: string): Promise<string | null> => {
       const db = await openDB();
       return new Promise((resolve, reject) => {
@@ -1364,6 +1434,59 @@ export const DB = {
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error);
       transaction.onabort = () => reject(transaction.error || new Error('deleteAsset aborted'));
+    });
+  },
+
+  /**
+   * 在同一条 readwrite transaction 中重新读取并按条件删除资产。
+   * 条件函数必须同步完成；这样清理扫描与新的语音写入撞在一起时，
+   * 不会拿着旧快照把刚写入的音频删掉。
+   */
+  deleteAssetsIf: async (
+    ids: string[],
+    shouldDelete: (id: string, data: any) => boolean,
+  ): Promise<string[]> => {
+    const uniqueIds = [...new Set(ids.filter(id => typeof id === 'string' && id.length > 0))];
+    if (!uniqueIds.length) return [];
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_ASSETS, 'readwrite');
+      const store = transaction.objectStore(STORE_ASSETS);
+      const deleted: string[] = [];
+      let settled = false;
+      const fail = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        reject(error instanceof Error ? error : new Error(String(error || 'asset transaction failed')));
+      };
+      transaction.oncomplete = () => {
+        if (!settled) {
+          settled = true;
+          resolve(deleted);
+        }
+      };
+      transaction.onerror = () => fail(transaction.error);
+      transaction.onabort = () => fail(transaction.error || new Error('deleteAssetsIf aborted'));
+
+      for (const id of uniqueIds) {
+        const request = store.get(id);
+        request.onsuccess = () => {
+          const record = request.result;
+          if (!record) return;
+          let remove = false;
+          try {
+            remove = shouldDelete(id, record.data);
+          } catch {
+            // A malformed single asset must never abort cleanup for the rest.
+            remove = false;
+          }
+          if (!remove) return;
+          const deleteRequest = store.delete(id);
+          deleteRequest.onsuccess = () => deleted.push(id);
+          deleteRequest.onerror = () => fail(deleteRequest.error);
+        };
+        request.onerror = () => fail(request.error);
+      }
     });
   },
 

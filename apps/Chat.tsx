@@ -85,6 +85,7 @@ import {
     removeVoiceFavorite,
     saveVoiceFavorite,
 } from '../utils/voiceFavorites';
+import { AUDIO_ASSETS_CLEANED_EVENT } from '../utils/audioRetention';
 import {
     TEXT_FAVORITES_CHANGED_EVENT,
     cleanTextForFavorite,
@@ -510,6 +511,8 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         blob?: Blob;
         remoteUrl?: string;
         favorite?: boolean;
+        /** Audio retention starts when this asset was written. Optional for legacy rows. */
+        createdAt?: number;
         originalText: string;
         spokenText?: string;
         lang?: string;
@@ -525,6 +528,18 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     const [playingMsgId, setPlayingMsgId] = useState<number | null>(null);
     const chatAudioRef = useRef<HTMLAudioElement | null>(null);
 
+    /** Keep a tiny durable marker so an expired manually-generated role voice still has a play button. */
+    const markVoiceGenerated = useCallback((messageId: number) => {
+        setMessages(prev => prev.map(message => (
+            message.id === messageId
+                ? { ...message, metadata: { ...(message.metadata || {}), voiceGenerated: true } }
+                : message
+        )));
+        DB.updateMessageMetadata(messageId, prev => ({ ...(prev || {}), voiceGenerated: true })).catch(error => {
+            console.warn('[Chat] persist voice-generated marker failed', error);
+        });
+    }, []);
+
     const favoriteKindForMessage = useCallback((message: Message): MessageFavoriteCollectionMessageInput['kind'] | null => {
         if (message.role === 'system') return null;
         if (message.type === 'emoji' || message.type === 'image') {
@@ -537,6 +552,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             message.type === 'voice'
             || (message.role === 'assistant' && message.type === 'text' && (
                 !!voiceDataMap[message.id]
+                || message.metadata?.voiceGenerated === true
                 || /<[语語]音\b/i.test(message.content)
             ))
         ) return 'voice';
@@ -608,23 +624,28 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
 
     const persistVoice = async (msgId: number, url: string, blob: Blob | null, originalText: string, spokenText: string | undefined, lang: string | undefined) => {
         try {
+            const createdAt = Date.now();
             const stored: StoredVoice = blob
-                ? { blob, originalText, spokenText, lang, favorite: false }
-                : { remoteUrl: url, originalText, spokenText, lang, favorite: false };
+                ? { blob, originalText, spokenText, lang, favorite: false, createdAt }
+                : { remoteUrl: url, originalText, spokenText, lang, favorite: false, createdAt };
             await DB.saveAssetRaw(voiceAssetKey(msgId), stored);
         } catch (e) {
             console.warn('[Chat] persist voice failed', e);
         }
     };
 
-    /** Drop in-memory + on-disk voice data for the given message ids. */
-    const discardVoiceForMessages = (ids: Iterable<number>) => {
-        const idList = Array.from(ids);
-        if (!idList.length) return;
+    /**
+     * Retention can remove an asset while this chat is mounted. Forget only the
+     * document-scoped object URLs here; the retention layer already removed the
+     * IndexedDB rows, and this must not delete a freshly regenerated replacement.
+     */
+    const forgetVoiceDataForMessages = useCallback((ids: Iterable<number>) => {
+        const idSet = new Set(ids);
+        if (!idSet.size) return;
         setVoiceDataMap(prev => {
             let changed = false;
             const next = { ...prev };
-            for (const id of idList) {
+            for (const id of idSet) {
                 const entry = next[id];
                 if (!entry) continue;
                 if (entry.url && entry.url.startsWith('blob:')) {
@@ -636,6 +657,13 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             }
             return changed ? next : prev;
         });
+    }, []);
+
+    /** Drop in-memory + on-disk voice data for the given message ids. */
+    const discardVoiceForMessages = (ids: Iterable<number>) => {
+        const idList = Array.from(ids);
+        if (!idList.length) return;
+        forgetVoiceDataForMessages(idList);
         // Best-effort: remove persisted entries so they don't reappear on next load.
         for (const id of idList) {
             DB.deleteAsset(voiceAssetKey(id)).catch(() => { /* ignore */ });
@@ -645,9 +673,12 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     const handlePlayVoice = (msgId: number) => {
         const data = voiceDataMap[msgId];
         if (!data) {
-            // No voice data yet — trigger TTS generation (e.g. placeholder voice bar clicked)
             const msg = messages.find(m => m.id === msgId);
-            if (msg) handleManualTts(msg, false);
+            // A user's original recording cannot be recreated from its
+            // transcript. Character voice messages can be synthesized again.
+            if (msg && !(msg.role === 'user' && msg.type === 'voice')) {
+                handleManualTts(msg, false);
+            }
             return;
         }
         if (!chatAudioRef.current) chatAudioRef.current = new Audio();
@@ -668,6 +699,19 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     const handlePlayVoiceRef = useRef(handlePlayVoice);
     handlePlayVoiceRef.current = handlePlayVoice;
     const onPlayVoiceStable = useCallback((id: number) => handlePlayVoiceRef.current(id), []);
+
+    useEffect(() => {
+        const onAudioAssetsCleaned = (event: Event) => {
+            const detail = (event as CustomEvent<{ assetIds?: unknown[] }>).detail;
+            const messageIds = (detail?.assetIds || [])
+                .filter((assetId): assetId is string => typeof assetId === 'string')
+                .map(assetId => assetId.startsWith('voice_msg_') ? Number(assetId.slice('voice_msg_'.length)) : NaN)
+                .filter(id => Number.isSafeInteger(id) && id > 0);
+            if (messageIds.length) forgetVoiceDataForMessages(messageIds);
+        };
+        window.addEventListener(AUDIO_ASSETS_CLEANED_EVENT, onAudioAssetsCleaned);
+        return () => window.removeEventListener(AUDIO_ASSETS_CLEANED_EVENT, onAudioAssetsCleaned);
+    }, [forgetVoiceDataForMessages]);
 
     // LLM 翻译兜底（语音条中外对照用）。查 res.ok + 失败重试一次 ——
     // 以前不查状态码、失败静默吞掉，翻译一次拿不到就永远空着（「外语语音没翻译」主因）。
@@ -691,6 +735,10 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     };
 
     const handleManualTts = async (msg: Message, autoTriggered = false, force = false): Promise<GeneratedVoiceData | null> => {
+        // User recordings are not TTS input. Once their original Blob expires,
+        // the transcript remains readable but there is no honest way to recreate
+        // the speaker's voice from text.
+        if (msg.role === 'user' && msg.type === 'voice') return null;
         if (voiceLoading.has(msg.id)) return null;
         // 重 roll 时先把旧音频留一份，合成完拿来比对：MiniMax 偶尔会原样返回同一段，
         // 那种情况下界面显示"重新生成成功"但听感一点没变，得自动再试一次（见下面 force 分支）。
@@ -831,6 +879,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             setVoiceDataMap(prev => ({ ...prev, [msg.id]: { url: blobUrl, originalText, spokenText: storedSpokenText, lang: storedLang } }));
             // Persist so the voice bar survives leaving and re-entering the chat.
             persistVoice(msg.id, blobUrl, blob, originalText, storedSpokenText, storedLang);
+            if (msg.role === 'assistant' && msg.type === 'text') markVoiceGenerated(msg.id);
             // 合成完是否立刻播（规则和来由见 shouldAutoPlayGeneratedVoice）：
             // AI 自动发来的默认不响、等用户点；用户自己点着要的一定响。
             if (shouldAutoPlayGeneratedVoice({ autoTriggered, autoPlayEnabled: char.chatVoiceAutoPlay })) {
@@ -911,7 +960,13 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 return;
             }
             let current: GeneratedVoiceData | VoiceData | undefined = voiceDataMap[msg.id];
-            if (!current) current = await handleManualTts(msg, false) || undefined;
+            if (!current) {
+                if (msg.role === 'user' && msg.type === 'voice') {
+                    addToast('这条录音已自动清理，转写文字仍保留，但原音频无法恢复', 'info');
+                    return;
+                }
+                current = await handleManualTts(msg, false) || undefined;
+            }
             if (!current) return;
             const stored = await DB.getAssetRaw(voiceAssetKey(msg.id)) as StoredVoice | null;
 

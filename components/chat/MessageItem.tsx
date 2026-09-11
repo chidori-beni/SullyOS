@@ -3937,6 +3937,9 @@ const MessageItem = React.memo(({
     // 未闭合的开标签也算 (历史坏数据: 语音块曾被 chunkText 切碎, 开标签落单) —
     // 当语音条渲染 + 转文字兜底, 而不是把原始标签漏给用户看。
     const hasVoiceTag = !isUser && /<[语語]音[^>]*>/.test(m.content);
+    // Manual TTS on ordinary role text has no <语音> tag. Keep showing its
+    // play/placeholder bar after the temporary asset is swept from IndexedDB.
+    const hasGeneratedVoice = !isUser && m.type === 'text' && m.metadata?.voiceGenerated === true;
     // Spoken text inside the <语音> tag — lets the placeholder bar offer a 转文字 toggle
     // even when no audio was synthesized (e.g. character has no MiniMax voice configured),
     // so fake voice messages stay readable just like real ones.
@@ -3947,7 +3950,7 @@ const MessageItem = React.memo(({
         ?? ''
     ).replace(/<字幕>[\s\S]*?<\/字幕>/g, '').trim()) : '';
     const isUserVoiceMessage = isUser && m.type === 'voice';
-    const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag || isUserVoiceMessage;
+    const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag || hasGeneratedVoice || isUserVoiceMessage;
     // Don't render empty bubbles (e.g. messages that were just "---"), unless voice data exists or pending
     if (!displayContent && !hasVoiceContent) return null;
 
@@ -4041,7 +4044,7 @@ const MessageItem = React.memo(({
             )}
 
             {/* Layer 6: Voice Bar */}
-            {(voiceData?.url || voiceLoading || hasVoiceTag || isUserVoiceMessage) && ((!isUser && m.type === 'text') || isUserVoiceMessage) && (() => {
+            {(voiceData?.url || voiceLoading || hasVoiceTag || hasGeneratedVoice || isUserVoiceMessage) && ((!isUser && m.type === 'text') || isUserVoiceMessage) && (() => {
                 const vbBg = styleConfig.voiceBarBg;
                 const vbActiveBg = styleConfig.voiceBarActiveBg;
                 const vbBtn = styleConfig.voiceBarBtnColor;
@@ -4189,8 +4192,8 @@ const MessageItem = React.memo(({
                             </div>
                             <span className="text-[10px] shrink-0 animate-pulse" style={{ color: vbText || '#94a3b8' }}>合成中</span>
                         </div>
-                    ) : (hasVoiceTag || isUserVoiceMessage) ? (
-                        /* Voice tag exists in content but no audio yet — either TTS is still
+                    ) : (hasVoiceTag || hasGeneratedVoice || isUserVoiceMessage) ? (
+                        /* A voice tag or generated-voice marker exists but no audio yet — either TTS is still
                            pending (app restart / auto-TTS) or the character has no MiniMax voice
                            configured. Offer a 转文字 toggle here too so the text stays readable,
                            aligning fake voice messages with real ones. */
@@ -4254,6 +4257,7 @@ const MessageItem = React.memo(({
            prev.msg.metadata?.reviewStatus === next.msg.metadata?.reviewStatus &&
            prev.msg.metadata?.status === next.msg.metadata?.status &&
            prev.msg.metadata?.receipt === next.msg.metadata?.receipt &&
+           prev.msg.metadata?.voiceGenerated === next.msg.metadata?.voiceGenerated &&
            // 心声 roundId 落库可能晚于这条消息的首次渲染（比如推送补收路径先画出一版
            // 没有 metadata 的气泡，DB 写完 roundId 后才重新 setMessages）——漏看这个字段
            // 会导致头像已经"能点"了，界面却因为判等为真而不重渲染，点击一直没反应。

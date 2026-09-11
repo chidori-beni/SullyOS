@@ -98,6 +98,7 @@ import { dateLaunch } from '../utils/dateLaunch';
 import { runCallMemoryPalacePostFlow } from '../utils/memoryPalace/callPostFlow';
 import { getActiveDatePresence } from '../utils/datePresence';
 import { getCallLifecycleGeneration, isCallActiveForChar } from '../utils/callSessionLifecycle';
+import { AUDIO_RETENTION_CHECK_INTERVAL_MS, cleanupExpiredAudioAssets } from '../utils/audioRetention';
 
 interface ProactiveQueueEntry {
   charId: string;
@@ -893,6 +894,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [activeCharacterId, setActiveCharacterId] = useState<string>('');
+
   // 'active-msg-received' handler（下方 Global Proactive Message Handler）依赖数组只有
   // sendProactiveNativeNotification，不含 characters，若在 handler 里直接闭包 characters
   // 会永远拿到挂载时那份空数组 —— 导致横幅头像查不到 char.avatar，退化成姓名首字兜底。
@@ -917,6 +919,35 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [userProfile, setUserProfile] = useState<UserProfile>(defaultUserProfile);
   
   const [isDataLoaded, setIsDataLoaded] = useState(false);
+
+  // 音频资产只能在 PWA 有机会运行 JS 时清理：启动、回到前台、pageshow，
+  // 以及应用仍打开时的低频巡检。清理本身是 fire-and-forget，不阻塞首屏，
+  // 也不会触碰 messages / memories，只处理可重建 TTS 和未收藏的语音 Blob。
+  useEffect(() => {
+      if (!isDataLoaded) return;
+      let cancelled = false;
+      const runRetentionSweep = () => {
+          if (cancelled || (typeof document !== 'undefined' && document.visibilityState !== 'visible')) return;
+          void cleanupExpiredAudioAssets().catch(error => {
+              console.warn('[audio-retention] background sweep failed', error);
+          });
+      };
+      const onVisible = () => {
+          if (document.visibilityState === 'visible') runRetentionSweep();
+      };
+      const onPageShow = () => runRetentionSweep();
+      runRetentionSweep();
+      const timer = window.setInterval(runRetentionSweep, AUDIO_RETENTION_CHECK_INTERVAL_MS);
+      document.addEventListener('visibilitychange', onVisible);
+      window.addEventListener('pageshow', onPageShow);
+      return () => {
+          cancelled = true;
+          window.clearInterval(timer);
+          document.removeEventListener('visibilitychange', onVisible);
+          window.removeEventListener('pageshow', onPageShow);
+      };
+  }, [isDataLoaded]);
+
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [apiPresets, setApiPresets] = useState<ApiPreset[]>([]);
   const [realtimeConfig, setRealtimeConfig] = useState<RealtimeConfig>(defaultRealtimeConfig);

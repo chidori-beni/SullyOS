@@ -9,10 +9,12 @@
  *
  * Storage lives in the existing `assets` object store via `DB.saveAssetRaw` /
  * `DB.getAssetRaw`, so no schema migration is required. Entries record
- * `createdAt` / `lastUsedAt` timestamps for optional future pruning; we don't
- * auto-evict yet — the user explicitly asked for a long-lived cache.
+ * `createdAt` / `lastUsedAt`; the shared cache is reproducible and is subject
+ * to the local 24-hour audio retention sweep in `audioRetention.ts`.
  */
 import { DB } from './db';
+
+export const TTS_CACHE_ASSET_PREFIX = 'tts_';
 
 // cyrb53: fast non-crypto 64-bit hash. Collisions are astronomically unlikely
 // for the number of distinct (text, voice-config) pairs a user will generate.
@@ -42,7 +44,7 @@ function stableStringify(value: any): string {
 }
 
 export function hashTtsParams(params: any): string {
-  return 'tts_' + cyrb53(stableStringify(params));
+  return TTS_CACHE_ASSET_PREFIX + cyrb53(stableStringify(params));
 }
 
 interface TtsCacheEntry {
