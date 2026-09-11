@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { extractJson, parseCharBeat, parseNpcScene, storyTimeLabel, buildModeRule, buildWorldGapNote, buildWorldCharTurn, buildNpcTurn, parseRolledNpcs, buildNpcRollPrompt, NARRATIVE_STYLES, narrationPersonGuide, realNowSeg, realObserveTarget, worldTimeLabel, formatRealClock, migrateWorldDaySegs, SEGMENTS_PER_DAY, worldNow, worldTzLabel, clampRealClockToNow, alignCharToWorldClock } from './prompts';
-import { applyRelationshipDeltas, collectSeeds, buildSummary, dropDuplicatePosts } from './engine';
+import { applyRelationshipDeltas, shareWorldCardTo, collectSeeds, buildSummary, dropDuplicatePosts } from './engine';
 import { ensureThreads, applyBeatToThreads, applyNpcGroupLines, applyNpcDms, npcInboxes, dmThreadsOf, groupThreadOf, formatThreadForPrompt, dmThreadId, GROUP_THREAD_ID } from './threads';
 import { WorldScheduler } from './scheduler';
 import type { CharacterProfile, WorldProfile } from '../../types';
@@ -852,5 +852,39 @@ describe('关系名变更史（阶段 2.3）—— 别再硬覆盖', () => {
         const w = mkWorldWith({ fromId: 'a', toId: 'b', value: 0, label: '旧' });
         applyRelationshipDeltas(w, beatWith('新'), members);
         expect(w.relationships[0].labelHistory[0].round).toBeUndefined();
+    });
+});
+
+
+describe('一起追连载 · shareWorldCardTo（阶段 2.6）', () => {
+    const beat = {
+        charId: 'aa', charName: '阿岚', location: '厨房', mood: '烦',
+        narrative: '她把锅摔了。',
+        secrets: [{ text: '其实她是因为看到小满和别人在一起才发火' }],
+    } as any;
+    const mkWorld = (memberIds: string[]) => ({
+        id: 'w1', name: '小镇', mode: 'light', memberIds, houses: [], npcs: [], relationships: [],
+    } as any);
+
+    it('⛔⭐ 铁律：镇上的居民不能收 —— 居民开上帝视角会毁掉伏笔系统', async () => {
+        const res = await shareWorldCardTo(mkWorld(['aa', 'bb']), beat, 3, '第3天 白天', 'bb');
+        expect(res.ok).toBe(false);
+        expect(res.reason).toContain('住在镇上');
+    });
+
+    it('⛔ 也不能分享给当事人自己', async () => {
+        const res = await shareWorldCardTo(mkWorld(['aa']), beat, 3, '第3天 白天', 'aa');
+        expect(res.ok).toBe(false);
+    });
+
+    it('⭐ 镇外的角色可以收 —— ta 是在读机主写的故事', async () => {
+        const res = await shareWorldCardTo(mkWorld(['aa', 'bb']), beat, 3, '第3天 白天', 'outsider');
+        expect(res.ok).toBe(true);
+    });
+
+    it('memberIds 缺失（旧存档）时不崩，按「不是镇民」处理', async () => {
+        const w = { id: 'w1', name: '小镇', mode: 'light', houses: [], npcs: [], relationships: [] } as any;
+        const res = await shareWorldCardTo(w, beat, 1, 't', 'x');
+        expect(res.ok).toBe(true);
     });
 });

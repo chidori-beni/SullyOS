@@ -17,7 +17,7 @@
 
 import type {
     CharacterProfile, UserProfile, GroupProfile, RealtimeConfig, APIConfig,
-    WorldProfile, WorldEpisode, WorldCharBeat, WorldCardMeta,
+    WorldProfile, WorldEpisode, WorldCharBeat, WorldCardMeta, WorldCardShareMeta,
 } from '../../types';
 import { DB } from '../db';
 import { buildChatRequestPayload } from '../chatRequestPayload';
@@ -236,6 +236,23 @@ function buildCardContent(world: WorldProfile, storyTime: string, beat: WorldCha
     return lines.join('\n');
 }
 
+/**
+ * 阶段 2.6：分享给**镇外角色**看的版本 —— 比当事人那版还多，因为 ta 是**读者**。
+ *
+ * ⚠️ 别把这个版本发给镇上的居民。引擎铁律是「每个角色只看得到自己那份，伏笔才成立」；
+ * 而镇外的角色不是居民，ta 是在读机主写的故事 —— **读者本来就该比角色知道得多**。
+ * 「你看 aa 和 bb 今天吵架了」——ta 知道 bb 为什么生气，而 aa 不知道，这正是要的效果。
+ */
+function buildSharedCardContent(world: WorldProfile, storyTime: string, beat: WorldCharBeat): string {
+    const lines = [buildCardContent(world, storyTime, beat)];
+    if (beat.secrets?.length) {
+        lines.push('');
+        lines.push('（只有你这个"读者"知道的部分——镇上没人知道）：');
+        for (const s of beat.secrets) lines.push(`· ${s.text}`);
+    }
+    return lines.join('\n');
+}
+
 /** 组装某一拍的 world_card metadata（与彼方 vr_card 同构，注入聊天 / 进记忆用）。 */
 export function buildWorldCardMeta(world: WorldProfile, beat: WorldCharBeat, round: number, storyTime: string): WorldCardMeta {
     return {
@@ -288,6 +305,40 @@ export async function injectWorldCard(world: WorldProfile, beat: WorldCharBeat, 
         content: buildCardContent(world, storyTime, beat),
         metadata: buildWorldCardMeta(world, beat, round, storyTime),
     });
+}
+
+/**
+ * 阶段 2.6「一起追连载」：把某个镇民这一拍**分享给镇外的另一个角色**。
+ *
+ * 用户 A 明确提出的玩法：
+ * 「我其实挺想和角色讨论我创作的角色的，比如和他说『你看 aa 和 bb 今天吵架了』
+ *  『cc 和 dd 怎么在一起了！』」
+ *
+ * 此前做不到：`injectWorldCard` 写死落到 `beat.charId`，
+ * Sully 萧逸不是那个镇的成员，他不知道 aa/bb 发生了什么，你说了他接不上话。
+ *
+ * **⛔ 收件人必须是镇外的角色。** 发给镇上的居民会破坏伏笔系统
+ * （居民只该看得到自己那份）。调用方负责过滤，这里再兜一道。
+ */
+export async function shareWorldCardTo(
+    world: WorldProfile,
+    beat: WorldCharBeat,
+    round: number,
+    storyTime: string,
+    toCharId: string,
+): Promise<{ ok: boolean; reason?: string }> {
+    if (toCharId === beat.charId) return { ok: false, reason: '这就是 ta 自己的事' };
+    if ((world.memberIds || []).includes(toCharId)) {
+        // 兜底：镇民开上帝视角会毁掉伏笔
+        return { ok: false, reason: '这个角色就住在镇上，不能让 ta 看别人的内心戏' };
+    }
+    const share: WorldCardShareMeta = { sharedFrom: beat.charName, asReader: true };
+    await DB.saveMessage({
+        charId: toCharId, role: 'assistant', type: 'world_card',
+        content: buildSharedCardContent(world, storyTime, beat),
+        metadata: { ...buildWorldCardMeta(world, beat, round, storyTime), ...share },
+    });
+    return { ok: true };
 }
 
 /**

@@ -23,7 +23,7 @@ import {
 import { DB } from '../utils/db';
 import { getChibi } from '../utils/vrWorld/chibi';
 import { WorldScheduler, toTickEntries } from '../utils/worldHome/scheduler';
-import { isWorldRunning, injectWorldCard } from '../utils/worldHome/engine';
+import { isWorldRunning, injectWorldCard, shareWorldCardTo } from '../utils/worldHome/engine';
 import { worldTimeLabel, worldTzLabel, isNightWorld, houseOf, NARRATIVE_STYLES, buildNpcRollPrompt, parseRolledNpcs, realObserveTarget, clampRealClockToNow, migrateWorldDaySegs, SEGMENTS_PER_DAY } from '../utils/worldHome/prompts';
 import { COMMON_TIMEZONES } from '../utils/timezone';
 import { SIM_CHAPTER_DAYS, SIM_CHAPTER_CLOCKS } from '../utils/worldHome/chapters';
@@ -1051,8 +1051,13 @@ const ResidentDayCard: React.FC<{
     onDirective: (impulseText: string, text: string) => void;
     onReroll?: () => void;
     onInject?: () => void;
-}> = ({ char, beat: b, t, world, onPhone, onDirective, onReroll, onInject }) => {
+    /** 阶段 2.6：把这一拍分享给某个**镇外**角色（一起追连载）。 */
+    onShare?: (toCharId: string) => void;
+    /** 可分享的对象——调用方已滤掉镇上的居民 */
+    shareTargets?: { id: string; name: string }[];
+}> = ({ char, beat: b, t, world, onPhone, onDirective, onReroll, onInject, onShare, shareTargets }) => {
     const [open, setOpen] = useState(false);
+    const [sharePickerOpen, setSharePickerOpen] = useState(false);
     if (!b) {
         return (
             <div className={`flex items-center gap-2 rounded-xl border px-2.5 py-2 ${t.panelSolid}`}>
@@ -1174,6 +1179,31 @@ const ResidentDayCard: React.FC<{
                                     <PaperPlaneTilt size={11} weight="fill" className="text-sky-500" />发到聊天
                                 </button>
                             )}
+                            {onShare && (shareTargets || []).length > 0 && (
+                                <button onClick={() => setSharePickerOpen(v => !v)}
+                                    className={`flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-lg border ${t.chip} active:scale-95 transition-transform`}
+                                    title="讲给镇外的角色听——ta 是读者，看得到连当事人都瞒着的部分">
+                                    <PaperPlaneTilt size={11} weight="fill" className="text-emerald-500" />讲给别人听
+                                </button>
+                            )}
+                        </div>
+                    )}
+                    {/* 阶段 2.6：只列**镇外**角色。镇民开上帝视角会毁掉伏笔系统。 */}
+                    {sharePickerOpen && onShare && (
+                        <div className={`mt-1.5 rounded-xl border p-2 space-y-1.5 ${t.panelSolid}`}>
+                            <div className={`text-[9.5px] leading-relaxed ${t.textSub}`}>
+                                讲给谁听？<span className="opacity-60">ta 不住在这个镇上，所以是以「读者」身份听——
+                                连 {b.charName} 瞒着别人的事都会告诉 ta。</span>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                                {(shareTargets || []).map(tgt => (
+                                    <button key={tgt.id}
+                                        onClick={() => { onShare(tgt.id); setSharePickerOpen(false); }}
+                                        className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border ${t.chip} active:scale-95 transition-transform`}>
+                                        {tgt.name}
+                                    </button>
+                                ))}
+                            </div>
                         </div>
                     )}
                 </div>
@@ -1284,6 +1314,35 @@ const WorldView: React.FC<{
             addToast(`已把这段观测发到和 ${beat.charName} 的聊天里`, 'success');
         } catch {
             addToast('发送失败，稍后再试', 'error');
+        }
+    };
+
+    /**
+     * 阶段 2.6「一起追连载」：能听你讲镇上故事的角色 —— **只有镇外的**。
+     *
+     * ⛔ 镇上的居民不在列。引擎铁律是「每个角色只看得到自己那份，伏笔才成立」；
+     * 而镇外的角色不是居民，ta 是在读你写的故事，**读者本来就该比角色知道得多**。
+     */
+    const shareTargets = useMemo(
+        () => characters
+            .filter(c => !(world.memberIds || []).includes(c.id))
+            .map(c => ({ id: c.id, name: c.name })),
+        [characters, world.memberIds],
+    );
+
+    /** 把某一拍讲给镇外的角色听。 */
+    const shareBeatTo = async (fromCharId: string, toCharId: string) => {
+        if (!latest) { addToast('还没有可分享的观测', 'error'); return; }
+        const beat = latest.beats.find(b => b.charId === fromCharId);
+        if (!beat) { addToast('这一轮 ta 还没演出来', 'error'); return; }
+        const toName = characters.find(c => c.id === toCharId)?.name || '对方';
+        try {
+            const res = await shareWorldCardTo(world, beat, latest.round, latest.storyTime, toCharId);
+            if (!res.ok) { addToast(res.reason || '分享失败', 'error'); return; }
+            trackEvent('分享小镇动态给镇外角色');
+            addToast(`已讲给 ${toName} 听——ta 知道的比 ${beat.charName} 自己还多`, 'success');
+        } catch {
+            addToast('分享失败，稍后再试', 'error');
         }
     };
 
@@ -1693,6 +1752,8 @@ const WorldView: React.FC<{
                                                     onDirective={(impulseText, text) => sendDirective(r.id, impulseText, text)}
                                                     onReroll={latest?.beats.some(b => b.charId === r.id) ? () => { setRerollDir(''); setRerollTarget({ charId: r.id, charName: r.name }); } : undefined}
                                                     onInject={world.timeMode !== 'sim' && world.injectToChat !== false && latest?.beats.some(b => b.charId === r.id) ? () => injectBeatToChat(r.id) : undefined}
+                                                    onShare={latest?.beats.some(b => b.charId === r.id) ? (toId: string) => void shareBeatTo(r.id, toId) : undefined}
+                                                    shareTargets={shareTargets}
                                                 />
                                             ))}
                                         </div>

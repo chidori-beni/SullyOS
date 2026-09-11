@@ -1459,6 +1459,21 @@ export interface VRWorldCharState {
     };
 }
 
+/**
+ * 阶段 2.6「一起追连载」：这张 `world_card` 是**分享给镇外角色**的，不是 ta 自己的生活。
+ *
+ * 设计上有一条漂亮性质，别搞反（见交接说明 §7 阶段 2.6）：
+ * - **镇上的居民绝不能开上帝视角** —— 每个角色只看得到自己那份，伏笔才成立。引擎铁律。
+ * - **镇外的角色可以开上帝视角** —— ta 不是居民，ta 是在**读机主写的小说**。
+ *   把瞒下的事全告诉 ta 完全没问题：**读者本来就该比角色知道得多。**
+ */
+export interface WorldCardShareMeta {
+    /** 这段是谁的（原主角色名） */
+    sharedFrom: string;
+    /** 分享时是否给了「读者特权」（含角色瞒下的事） */
+    asReader?: boolean;
+}
+
 /** 注入聊天的 vr_card 消息的 metadata 结构。 */
 export interface VRCardMeta {
     vrCard: true;
