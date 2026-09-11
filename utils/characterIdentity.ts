@@ -290,6 +290,44 @@ export const buildChatPartnerNote = (
 };
 
 /**
+ * 阶段 2.1：把「你和机主之间」的两栏铺成提示词。
+ *
+ * **两栏的注入方式刻意不同**（用户 2026-09-11 选定）：
+ *
+ * | 栏 | 怎么注入 |
+ * |---|---|
+ * | `toHost`（ta 怎么看机主） | 直接告诉 ta —— 那是 ta 自己的内心 |
+ * | `fromHost`（机主怎么看 ta） | **不当作 ta 知道的事**，而是「写到机主时的分寸」 |
+ *
+ * 为什么 `fromHost` 不能直说：告诉角色「机主只当你是朋友」，
+ * **暗恋 / 单相思当场就塌了** —— ta 会知道自己没戏，那出戏就没了。
+ * 改成叙述约束之后，效果是：角色可以照样偷偷喜欢，
+ * 但演绎里机主不会回应超过机主自己写的那个程度。
+ *
+ * 缺省（两栏都空）返回空串，旧角色零变化。
+ */
+export const buildHostBondNote = (
+    char: Pick<CharacterProfile, 'hostBond'> | null | undefined,
+    hostName?: string | null,
+): string => {
+    const toHost = char?.hostBond?.toHost?.trim();
+    const fromHost = char?.hostBond?.fromHost?.trim();
+    if (!toHost && !fromHost) return '';
+    const host = (hostName || '').trim() || '机主';
+
+    const lines: string[] = [];
+    if (toHost) lines.push(`- 你心里怎么看这段关系：${toHost}`);
+    if (fromHost) {
+        lines.push(
+            `- ⚠️ 写到${host}时的分寸：ta 对你的言行**止于「${fromHost}」**。`
+            + `不要让 ta 表现得比这更亲近，也不要替 ta 认定心意。`
+            + `（你自己单方面怎么想不受这条限制。）`
+        );
+    }
+    return `【你和${host}之间】\n${lines.join('\n')}`;
+};
+
+/**
  * 群聊提示词里那段「先认清 U」。
  *
  * 原文（`apps/GroupChat.tsx`）是写死的"群里的用户就是你一直在私聊的那个人"，

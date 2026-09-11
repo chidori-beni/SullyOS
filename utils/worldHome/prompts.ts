@@ -12,6 +12,7 @@
 import type { CharacterProfile, WorldProfile, WorldHouse, WorldCharBeat, WorldHomeMode, WorldTimeMode, WorldNarrativeStyle } from '../../types';
 import { dmThreadsOf, groupThreadOf, formatThreadForPrompt } from './threads';
 import { nowInTimeZone, tzLabel } from '../timezone';
+import { buildHostBondNote } from '../characterIdentity';
 
 /** 大段正文的文风预设（世界编辑器里选）。 */
 export const NARRATIVE_STYLES: Record<Exclude<WorldNarrativeStyle, 'custom'>, { name: string; guide: string }> = {
@@ -289,13 +290,17 @@ export function buildWorldSystemAddendum(
     nowTs?: number,
 ): string {
     const gapNote = buildWorldGapNote(world.mode, world.timeMode, userName, lastEpisodeAt, nowTs);
+    // 阶段 2.1：小镇里关于机主原本只有粗粒度的 WorldHomeMode，
+    // **没有「这个角色对机主具体什么关系」——所以三角 / 第三者玩法在小镇里根本演不出来**
+    // （交接说明 §6.4 明确标了「这两栏必须注入小镇提示词」）。
+    const bondNote = buildHostBondNote(char, userName);
     return `
 
 ---
 [家园 · ${world.name}]
 接下来不是和 ${userName || '用户'} 的聊天，而是你在共同世界「${world.name}」里的一段真实生活演绎。
 ${buildModeRule(world.mode, userName)}
-${gapNote}
+${bondNote ? `${bondNote}\n` : ''}${gapNote}
 铁律：你只扮演你自己（${char.name}）。同世界的其他角色各有自己的演绎轮，你看不到他们的内心，只能根据他们外在的言行做反应；不要替任何其他角色做决定或编造他们的内心戏。NPC 的言行可以引用（他们由世界引擎给出）。
 保持你在聊天中一贯的人设、记忆与行事风格——这是同一个你，只是生活在这个世界里。`;
 }

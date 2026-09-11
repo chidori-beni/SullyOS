@@ -1924,6 +1924,49 @@ ${isInitialGeneration ? `
                                     </div>
                                 </div>
 
+                                {/* 阶段 2.1：你和 ta 之间具体什么关系。两栏有向、可以完全不对等。 */}
+                                <div className="space-y-2">
+                                    <div className="text-[11px] font-bold text-slate-500">你和 ta 之间</div>
+                                    <div className="text-[10px] text-slate-400 leading-relaxed">
+                                        随便写，说不清的关系也行。<span className="font-bold text-slate-500">两栏互不影响</span>——
+                                        ta 偷偷喜欢你、而你只当 ta 是朋友，是完全成立的。
+                                    </div>
+
+                                    <div className="space-y-1">
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="text-[10.5px] font-bold text-slate-600">你怎么看 ta</span>
+                                            <span className="text-[9px] px-1.5 py-px rounded-full bg-slate-100 text-slate-400">ta 看不到</span>
+                                        </div>
+                                        <input
+                                            value={formData.hostBond?.fromHost || ''}
+                                            onChange={e => handleChange('hostBond', { ...(formData.hostBond || {}), fromHost: e.target.value })}
+                                            placeholder="就是个朋友"
+                                            className="w-full px-4 py-2.5 bg-slate-50 rounded-2xl text-xs text-slate-700 outline-none focus:ring-1 focus:ring-primary/20"
+                                        />
+                                        <div className="text-[10px] text-slate-400 leading-relaxed">
+                                            <span className="font-bold text-slate-500">不会告诉 ta</span>——否则暗恋当场就塌了（ta 会知道自己没戏）。
+                                            它只用来<span className="font-bold text-slate-500">约束演绎怎么写你</span>：
+                                            写「就是个朋友」，小镇里就不会出现你对 ta 含情脉脉。剧情永远不改这一栏。
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-1">
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="text-[10.5px] font-bold text-slate-600">ta 怎么看你</span>
+                                            <span className="text-[9px] px-1.5 py-px rounded-full bg-amber-50 text-amber-600">ta 自己的内心</span>
+                                        </div>
+                                        <input
+                                            value={formData.hostBond?.toHost || ''}
+                                            onChange={e => handleChange('hostBond', { ...(formData.hostBond || {}), toHost: e.target.value })}
+                                            placeholder="已经在偷偷喜欢了"
+                                            className="w-full px-4 py-2.5 bg-slate-50 rounded-2xl text-xs text-slate-700 outline-none focus:ring-1 focus:ring-primary/20"
+                                        />
+                                        <div className="text-[10px] text-slate-400 leading-relaxed">
+                                            这栏会直接告诉 ta。<span className="font-bold text-slate-500">私聊、见面、群聊、小镇都生效</span>。
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <div className="space-y-1.5">
                                     <div className="text-[11px] font-bold text-slate-500">世界书里的 <code className="text-[10px]">{'{{user}}'}</code> 指谁？</div>
                                     <select

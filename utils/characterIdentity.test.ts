@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     buildChatPartnerNote,
+    buildHostBondNote,
     evaluateFriendshipUpgrade,
     FRIENDSHIP_SUGGEST_THRESHOLD,
     buildGroupHostAwarenessLine,
@@ -461,5 +462,53 @@ describe('陌生但聊过 / 相识经过（阶段 2.8）', () => {
         for (const w of ['恋人', '喜欢', '爱', '伴侣', '在乎', '重要的人']) {
             expect(note).not.toContain(w);
         }
+    });
+});
+
+
+describe('buildHostBondNote —— 你和 ta 之间的两栏（阶段 2.1）', () => {
+    const bond = (fromHost?: string, toHost?: string) => ({ hostBond: { fromHost, toHost } } as any);
+
+    it('两栏都空 → 空串，旧角色零变化', () => {
+        expect(buildHostBondNote({} as any, '颜千夜')).toBe('');
+        expect(buildHostBondNote(bond('', ''), '颜千夜')).toBe('');
+        expect(buildHostBondNote(null, '颜千夜')).toBe('');
+    });
+
+    it('「ta 怎么看你」直接告诉 ta —— 那是 ta 自己的内心', () => {
+        expect(buildHostBondNote(bond(undefined, '已经在偷偷喜欢了'), '颜千夜'))
+            .toContain('你心里怎么看这段关系：已经在偷偷喜欢了');
+    });
+
+    it('⛔⭐ 「你怎么看 ta」绝不能说成「ta 知道的事」——说了暗恋当场就塌', () => {
+        const note = buildHostBondNote(bond('就是个朋友', '已经在偷偷喜欢了'), '颜千夜');
+        // 必须是「写到 ta 时的分寸」这种叙述约束，不是「颜千夜心里只当你是朋友」
+        expect(note).toContain('写到颜千夜时的分寸');
+        expect(note).toContain('止于「就是个朋友」');
+        expect(note).not.toContain('颜千夜心里');
+        expect(note).not.toContain('颜千夜只');
+    });
+
+    it('⭐ 必须明说「你单方面怎么想不受限制」——三角戏就靠这句', () => {
+        const note = buildHostBondNote(bond('就是个朋友', '偷偷喜欢'), '颜千夜');
+        expect(note).toContain('单方面');
+        expect(note).toContain('不受这条限制');
+    });
+
+    it('只有一栏时也能用', () => {
+        expect(buildHostBondNote(bond('就是个朋友'), '颜千夜')).toContain('止于「就是个朋友」');
+        expect(buildHostBondNote(bond(undefined, '死对头'), '颜千夜')).toContain('死对头');
+    });
+
+    it('⭐ 自由文本能承载说不清 / 不正当的关系（用户 B 爱玩「user 是第三者」）', () => {
+        const note = buildHostBondNote(bond('我知道我不该，但停不下来', '他有家室，而我是那个第三者'), '颜千夜');
+        expect(note).toContain('他有家室，而我是那个第三者');
+        expect(note).toContain('我知道我不该，但停不下来');
+    });
+
+    it('机主没名字时用「机主」兜底，不吐出 undefined', () => {
+        const note = buildHostBondNote(bond('朋友', '喜欢'), '');
+        expect(note).toContain('【你和机主之间】');
+        expect(note).not.toContain('undefined');
     });
 });

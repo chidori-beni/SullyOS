@@ -17,7 +17,7 @@ import {
     type WorldbookLike,
     type WorldbookScanMessage,
 } from './worldbook';
-import { resolveUserMacroName, expandCharBodyMacros, buildChatPartnerNote } from './characterIdentity';
+import { resolveUserMacroName, expandCharBodyMacros, buildChatPartnerNote, buildHostBondNote } from './characterIdentity';
 
 /**
  * Memory Central
@@ -234,6 +234,12 @@ export const ContextBuilder = {
             );
             if (partnerNote) context += `${partnerNote}\n\n`;
         }
+
+        // 阶段 2.1：你和 ta 之间具体是什么关系（两栏）。
+        // 群聊也给——它同样需要知道「这个角色对机主是什么关系」，
+        // 只是不需要 buildChatPartnerNote 那段「对面是谁」。小镇另走 addendum。
+        const bondNote = buildHostBondNote(char, user?.name);
+        if (bondNote) context += `${bondNote}\n\n`;
 
         // 1a. 真实时间感知 (Time Awareness) — 跟随 timeAwarenessEnabled 设置，默认开启。
         // 统一在 buildCoreContext 注入，让所有调用方（私聊/查手机/人际关系/通话/约会…）都知道"现在"。
