@@ -22,7 +22,13 @@ export const AMSG_D1_NAME = 'sullyos-amsg';
 /** 上传时的模块名，同时是 metadata.main_module，两处必须一致。 */
 const MAIN_MODULE = 'worker.bundle.js';
 
-const BUNDLE_BASE = 'https://raw.githubusercontent.com/Tosd0/sullyos-workers/main/amsg';
+// 指向**自己的** fork，而不是上游 Tosd0/sullyos-workers——跟 worker 侧的自更新
+// （worker/amsg/src/selfUpdate.ts）保持同一个来源。
+//
+// 原因：这个 fork 的 worker 打了补丁（sanitize.ts 不再丢掉只含发图指令的整行）。
+// 这里要是还指着上游，新装的人第一次部署拿到的就是不带补丁的旧版，表现只是
+// 「图发不出来」，极难联想到是首次部署这一步拉错了仓库。
+const BUNDLE_BASE = 'https://raw.githubusercontent.com/chidori-beni/sullyos-workers/main/amsg';
 const BUNDLE_URL = `${BUNDLE_BASE}/${MAIN_MODULE}`;
 const WRANGLER_URL = `${BUNDLE_BASE}/wrangler.toml`;
 

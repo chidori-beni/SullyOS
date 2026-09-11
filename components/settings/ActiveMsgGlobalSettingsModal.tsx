@@ -111,7 +111,7 @@ const REQUIRED_WORKER_FEATURES = [
 const REQUIRED_WORKER_VERSION = '2.6.0-next.23';
 
 /** 装着打包好的 worker 代码的部署仓库：fork 它 → 在 Cloudflare 连上 → 以后点 Sync fork 更新。 */
-const WORKERS_REPO_URL = 'https://github.com/Tosd0/sullyos-workers';
+const WORKERS_REPO_URL = 'https://github.com/chidori-beni/sullyos-workers';
 const SETUP_WALKTHROUGH_URL = 'https://github.com/qegj567-cloud/SullyOS/blob/master/docs/amsg2-setup-walkthrough.md';
 /** 一键部署要的那枚 API Token 在这里建。 */
 const CF_TOKEN_URL = 'https://dash.cloudflare.com/profile/api-tokens';
