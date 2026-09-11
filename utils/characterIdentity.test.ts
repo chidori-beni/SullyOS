@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+    applyBondChange,
+    buildBondChangeNotice,
     buildChatPartnerNote,
     buildHostBondNote,
     evaluateFriendshipUpgrade,
@@ -510,5 +512,53 @@ describe('buildHostBondNote —— 你和 ta 之间的两栏（阶段 2.1）', (
         const note = buildHostBondNote(bond('朋友', '喜欢'), '');
         expect(note).toContain('【你和机主之间】');
         expect(note).not.toContain('undefined');
+    });
+});
+
+
+describe('applyBondChange —— 「ta 怎么看你」的自动改写', () => {
+    const NOW = 1_700_000_000_000;
+
+    it('第一次有说法：直接写上，不记历史（没有旧的可丢）', () => {
+        const r = applyBondChange(undefined, '就是个网友', 'world', undefined, NOW);
+        expect(r!.hostBond.toHost).toBe('就是个网友');
+        expect(r!.hostBond.toHostHistory).toEqual([]);
+        expect(r!.from).toBeUndefined();
+    });
+
+    it('⭐ 改写时把旧的那句存进变更史，可回滚', () => {
+        const prev = { toHost: '就是个网友' };
+        const r = applyBondChange(prev, '好像有点在意了', 'world', '她说要下线时我愣了一下', NOW);
+        expect(r!.hostBond.toHost).toBe('好像有点在意了');
+        expect(r!.hostBond.toHostHistory).toHaveLength(1);
+        expect(r!.hostBond.toHostHistory![0]).toMatchObject({
+            text: '就是个网友', source: 'world', reason: '她说要下线时我愣了一下',
+        });
+        expect(r!.from).toBe('就是个网友');
+    });
+
+    it('⛔⭐ 同一句话 → 返回 null，调用方什么都别做', () => {
+        // 否则每轮观测都会刷一条「ta 对你的看法变了」
+        expect(applyBondChange({ toHost: '就是个网友' }, '就是个网友', 'world')).toBeNull();
+        expect(applyBondChange({ toHost: '就是个网友' }, '  就是个网友  ', 'world')).toBeNull();
+    });
+
+    it('⛔ 空值不改 —— 模型没给就别清掉用户原来写的', () => {
+        expect(applyBondChange({ toHost: '原来的' }, '', 'world')).toBeNull();
+        expect(applyBondChange({ toHost: '原来的' }, null, 'world')).toBeNull();
+        expect(applyBondChange({ toHost: '原来的' }, undefined, 'world')).toBeNull();
+    });
+
+    it('不碰另一栏（fromHost 是用户手写的，永不被改）', () => {
+        const r = applyBondChange({ fromHost: '就是个朋友', toHost: 'a' }, 'b', 'impression');
+        expect(r!.hostBond.fromHost).toBe('就是个朋友');
+    });
+
+    it('提示文案不写成角色口吻 —— 那是 ta 该自己流露的，系统代说会假', () => {
+        const withFrom = buildBondChangeNotice('游霄', '好像有点在意了', '就是个网友');
+        expect(withFrom).toContain('游霄');
+        expect(withFrom).toContain('就是个网友');
+        expect(withFrom).toContain('好像有点在意了');
+        expect(buildBondChangeNotice('游霄', '就是个网友')).toContain('有了说法');
     });
 });

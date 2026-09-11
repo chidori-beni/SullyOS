@@ -1460,6 +1460,28 @@ export interface VRWorldCharState {
 }
 
 /**
+ * **只给用户看的聊天提示**，绝不进角色的上下文与记忆。
+ *
+ * 用户 2026-09-11 提的形态：「角色偷偷更新对你的印象，然后系统提示一下……
+ * 不要弹窗提示（用户有看不见就错过的可能），希望能留在聊天窗口，
+ * **但是这句系统提示不注入角色记忆**」。
+ *
+ * 为什么不让角色在台词里说：用户当场指出「不会显得有点生硬吗？
+ * 仿佛角色被下了什么指令，要对用户产生印象改变似的」—— 确实会。
+ * 所以角色什么都不演，改动在后台发生，只给用户留一道可见的痕。
+ *
+ * ⚠️ 带此标记的消息**必须**在两处被排除：
+ * 1. `ChatPrompts.buildMessageHistory` —— 不进 API 历史
+ * 2. `isMessageSemanticallyRelevant` —— 不进记忆管线
+ * 漏掉任一处，角色就会读到「系统说我对你改观了」，比让 ta 直接演还糟。
+ */
+export interface UiNoticeMeta {
+    uiNotice: true;
+    /** 提示种类，用于渲染时区分图标/措辞 */
+    noticeKind?: 'bond_changed';
+}
+
+/**
  * 阶段 2.6「一起追连载」：这张 `world_card` 是**分享给镇外角色**的，不是 ta 自己的生活。
  *
  * 设计上有一条漂亮性质，别搞反（见交接说明 §7 阶段 2.6）：
@@ -3178,6 +3200,21 @@ export interface CharacterProfile {
       fromHost?: string;
       /** ta 怎么看机主。ta 自己的内心，会随剧情变，照常告诉 ta。 */
       toHost?: string;
+      /**
+       * `toHost` 的变更史（最旧在前），同 `WorldRelationship.labelHistory` 的路子。
+       *
+       * 用户 2026-09-11 选定「**直接改，但留变更史可回滚**」——
+       * 与 §6.3 一致：锁 = 事前保险，历史 = 事后后悔药。
+       */
+      toHostHistory?: {
+          /** 被替换掉的那句 */
+          text: string;
+          replacedAt: number;
+          /** 哪来的改动：小镇演绎 / 印象重算 / 用户手动 */
+          source?: 'world' | 'impression' | 'manual';
+          /** 演绎给的理由 */
+          reason?: string;
+      }[];
   };
   /**
    * 阶段 2.8：用户看过「要不要算朋友」的提议后按了「不用了」。
@@ -3730,29 +3767,10 @@ export interface GalleryImage {
     charId: string;
     url: string;
     timestamp: number;
-    /** 自定义子相册 id；缺失表示未分类。 */
-    albumId?: string;
     review?: string;
     reviewTimestamp?: number;
     savedDate?: string; // YYYY-MM-DD format
     chatContext?: string[]; // Recent chat messages at time of save
-}
-
-export interface GalleryAlbum {
-    id: string;
-    charId: string;
-    name: string;
-    /** trim + NFKC + 小写后的名称，用于同一角色内的唯一约束。 */
-    nameKey: string;
-    createdAt: number;
-    updatedAt: number;
-}
-
-export interface GalleryCategoryOrder {
-    charId: string;
-    /** 包含 GALLERY_ALL_ID、GALLERY_UNFILED_ID 和实体 GalleryAlbum.id。 */
-    categoryIds: string[];
-    updatedAt: number;
 }
 
 export interface StickerData {
@@ -4439,8 +4457,6 @@ export interface FullBackupData {
     savedJournalStickers?: {name: string, url: string}[]; 
     assets?: { id: string, data: string }[];
     galleryImages?: GalleryImage[];
-    galleryAlbums?: GalleryAlbum[];
-    galleryCategoryOrders?: GalleryCategoryOrder[];
     userProfile?: UserProfile;
     diaries?: DiaryEntry[];
     tasks?: Task[];

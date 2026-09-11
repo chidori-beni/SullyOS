@@ -398,6 +398,14 @@ export function buildWorldCharTurn(args: {
     userName: string;
 }): string {
     const { world, char, members, storyTime, round, lastSummary, npcScene, npcHooks, beatsSoFar, recentPosts, exposures, directive, priorChapter, userName } = args;
+
+    // 机主也可以作为 relationships 的对象 —— 但门槛比镜民高。
+    // ① heavy 档机主根本不存在，一字不提；
+    // ② 其余档也只在**真的发生转折**时给 relabel，
+    //    否则每轮都问「你对 ta 改观了吗」会诱导模型硬演变化（用户担心过这点）。
+    const hostBondHint = world.mode === 'heavy'
+        ? ''
+        : `你和「${userName}」之间也可以写进去，但**仅限于你心里对这段关系的定位真的变了**的那一刻（用 relabel 写新的定位）。没变就别写 —— 平常没事不要无中生有地「重新审视」你们的关系。`;
     const isLateNight = storyTime.includes('凌晨');
     const others = members.filter(m => m.id !== char.id);
     const npcNames = new Map(world.npcs.map(n => [n.id, n.name]));
@@ -526,6 +534,7 @@ ${groupSection}
   "relationships": [{ "with": "成员名", "delta": -4到4的整数, "reason": "为什么", "relabel": "（仅在这段关系发生重大转折时才给）你对这段关系新的定位/称呼，例如从「死对头」变成「不打不相识的损友」；平时省略此字段" }]
 }
 规则：
+- relationships 的 "with" 一般是镇上的成员。${hostBondHint}
 - timeline 给 ${isLateNight ? '2~4' : '3~6'} 条，时间要符合${isLateNight ? '凌晨0点到5点（午夜到黎明前）' : storyTime.includes('早') ? '清晨到上午' : storyTime.includes('中午') ? '午间到下午' : '傍晚到深夜'}；**shared=false 表示这段你想瞒着**（别人看不到，但可能成为伏笔）。
 - **工作日和周末的状态会不一样**（看上面剧情时间里的「周几」），但具体怎么个不一样**完全取决于你的身份设定，别 OOC**：上班族/学生工作日有上班上学通勤的固定骨架、周末才松弛；而自由职业、休学在家、无业、自律到雷打不动的人，未必按工作日/周末的节奏走——按你这个人真实的生活方式来，别硬套朝九晚五。
 - **别每天都过得一个样**：你的生活不是复读机，今天的行程、地点、在意的事要和前几天明显不同。时不时给生活来点计划外的意外——临时加班、东西坏了、偶遇旧识、突如其来的好/坏消息、心血来潮的决定、天气搅局……让每一段都有新鲜变量，而不是「晨跑→工作→回家」的固定循环。

@@ -1466,7 +1466,11 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
         const userStartMessageId = (char.contextRangePolicyVersion || 0) >= 1
             ? char.contextUserStartMessageId
             : char.hideBeforeMessageId;
-        let effectiveHistory = messages.filter(m => !userStartMessageId || m.id >= userStartMessageId);
+        // 只给用户看的系统提示（UiNoticeMeta）绝不进 API 历史 ——
+        // 让角色读到「系统说我对你改观了」比让 ta 直接演还糟。
+        let effectiveHistory = messages
+            .filter(m => !(m.metadata as any)?.uiNotice)
+            .filter(m => !userStartMessageId || m.id >= userStartMessageId);
         // Memory Palace: 过滤已被记忆宫殿处理过的消息（由向量记忆替代，节省 token）
         if (processedExcludeIds && processedExcludeIds.size > 0) {
             effectiveHistory = effectiveHistory.filter(m => !processedExcludeIds.has(m.id));

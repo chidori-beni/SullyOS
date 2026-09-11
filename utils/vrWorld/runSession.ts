@@ -23,6 +23,7 @@ import { DB } from '../db';
 import { buildChatRequestPayload } from '../chatRequestPayload';
 import { safeFetchJson } from '../safeApi';
 import { processNewMessagesWithAutoArchive } from '../memoryPalace/autoArchive';
+import { structuralStrangers } from '../characterIdentity';
 import { loadMusicCfgStandalone } from '../../context/MusicContext';
 import { getCharLyricSnippet } from '../charLyricCache';
 import { getRoom, VR_DEFAULT_INTERVAL_MIN, rollPoemLines, signalActFor, SIGNAL_EVENT_ENDED } from './constants';
@@ -488,7 +489,14 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
             // 且纯文本情景里历史图片只是撑爆上下文的噪声 → 压平成文本占位
             stripImages: true,
         });
-        const systemPrompt = payload.systemPrompt + buildVRSystemAddendum(room, char.name);
+        // 跨层的人结构上不可能和 ta 有共同过去——点名说清，但**不说原因**
+        // （用户选定「就当网友，不告诉他对方是纸片人」）。
+        // 只靠「有具体交集才算认识」不够：那仍要模型自己判断，
+        // 而它能从同行/同乡/同好任何一个角度脑补出交情。
+        // recallNames 收的正是这一轮 ta 会接触到的人（在场的 + 留言墙上的）。
+        const roomPeers = characters.filter(c => c.id !== char.id && recallNames.has(c.name));
+        const systemPrompt = payload.systemPrompt
+            + buildVRSystemAddendum(room, char.name, structuralStrangers(char, roomPeers));
 
         // 调 LLM（记录一次调用，供"调用记录"对账）
         const baseUrl = vrApi.baseUrl.replace(/\/+$/, '');

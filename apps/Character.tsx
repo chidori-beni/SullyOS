@@ -1,8 +1,8 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
-import { AppID, CharacterProfile, CharacterExportData, UserImpression, MemoryFragment, MountedWorldbook, Worldbook } from '../types';
-import { SlidersHorizontal, SpeakerHigh, Books, BookOpen, ArrowSquareOut, CaretRight, X } from '@phosphor-icons/react';
+import { AppID, CharacterProfile, CharacterExportData, UserImpression, MemoryFragment, MountedWorldbook } from '../types';
+import { SlidersHorizontal, SpeakerHigh, Books, BookOpen, CornersIn, CornersOut, PencilSimple, X } from '@phosphor-icons/react';
 import Modal from '../components/os/Modal';
 import { processImage } from '../utils/file';
 import { Capacitor } from '@capacitor/core';
@@ -17,6 +17,7 @@ import ImpressionPanel from '../components/character/ImpressionPanel';
 import RoomPlatePanel from '../components/character/RoomPlatePanel';
 import MemoryArchivist from '../components/character/MemoryArchivist';
 import ChibiStudio, { ChibiShelfPanel } from '../components/character/ChibiStudio';
+import WorldbookTextFullscreenEditor from '../components/WorldbookTextFullscreenEditor';
 import { characterLaunch } from '../utils/characterLaunch';
 import { safeFetchJson, extractContent } from '../utils/safeApi';
 import { fetchMiniMaxVoices, MiniMaxVoiceItem } from '../utils/minimaxVoice';
@@ -24,7 +25,7 @@ import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { normalizeUserImpression } from '../utils/impression';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { COMMON_TIMEZONES } from '../utils/timezone';
-import { getEffectiveWorldbookMode, toMountedWorldbook, WORLDBOOK_MODE_LABELS } from '../utils/worldbook';
+import { getEffectiveWorldbookMode, replaceMountedWorldbook, toMountedWorldbook, WORLDBOOK_MODE_LABELS } from '../utils/worldbook';
 import {
     convertSillyTavernCard,
     extractCardTextFromPng,
@@ -101,7 +102,7 @@ const CharacterCard: React.FC<{
 );
 
 const Character: React.FC = () => {
-  const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, addCharacter, updateCharacter, deleteCharacter, characterGroups, createCharacterGroup, renameCharacterGroup, deleteCharacterGroup, apiConfig, addToast, userProfile, worldbooks, addWorldbook } = useOS();
+  const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, addCharacter, updateCharacter, deleteCharacter, characterGroups, createCharacterGroup, renameCharacterGroup, deleteCharacterGroup, apiConfig, addToast, userProfile, worldbooks, addWorldbook, updateWorldbook } = useOS();
   const launchIntent = characterLaunch.peek();
   const [view, setView] = useState<'list' | 'detail'>(() => launchIntent ? 'detail' : 'list');
   const [charPage, setCharPage] = useState(0); // 角色列表分页（每页 6 个，仅未建分组时）
@@ -161,11 +162,14 @@ const Character: React.FC = () => {
   const [isDeleting, setIsDeleting] = useState(false);
   const [showWorldbookModal, setShowWorldbookModal] = useState(false); // New Modal
   const [previewWorldbookId, setPreviewWorldbookId] = useState<string | null>(null);
+  const [editingWorldbookId, setEditingWorldbookId] = useState<string | null>(null);
+  const [worldbookDraftTitle, setWorldbookDraftTitle] = useState('');
+  const [worldbookDraftContent, setWorldbookDraftContent] = useState('');
+  const [isWorldbookEditorFullscreen, setIsWorldbookEditorFullscreen] = useState(false);
+  const [isSavingWorldbook, setIsSavingWorldbook] = useState(false);
   // 挂载世界书弹窗：搜索词 + 当前展开的分组（分组默认折叠，避免全量条目一次性渲染卡爆）
   const [wbModalSearch, setWbModalSearch] = useState('');
   const [wbModalExpandedCategory, setWbModalExpandedCategory] = useState<string | null>(null);
-  // 角色已挂载的世界书也按分组展示；默认折叠，进入角色页时先看到轻量的分组摘要。
-  const [mountedWorldbookExpandedCategories, setMountedWorldbookExpandedCategories] = useState<string[]>([]);
   const [showGroupModal, setShowGroupModal] = useState(false); // 角色分组管理
   /**
    * ST 卡导入的「身份确认」中转站（见 交接说明-双层角色世界.md）。
@@ -546,6 +550,7 @@ const Character: React.FC = () => {
       const currentBooks = formData.mountedWorldbooks || [];
       handleChange('mountedWorldbooks', currentBooks.filter(b => b.id !== bookId));
       setPreviewWorldbookId(current => current === bookId ? null : current);
+      if (editingWorldbookId === bookId) closeMountedWorldbookEditor();
   };
 
   const toggleMountedWorldbook = (bookId: string) => {
@@ -566,28 +571,76 @@ const Character: React.FC = () => {
       trackEvent('切换角色世界书挂载开关', { enabled: nextEnabled });
   };
 
-  const openWorldbookApp = (bookId: string) => {
-      setPreviewWorldbookId(bookId);
-      openApp(AppID.Worldbook);
-      trackEvent('从角色页打开世界书 App', { bookId });
+  const closeMountedWorldbookEditor = () => {
+      setEditingWorldbookId(null);
+      setIsWorldbookEditorFullscreen(false);
+      setIsSavingWorldbook(false);
   };
 
-  const toggleMountedWorldbookCategory = (category: string) => {
-      setMountedWorldbookExpandedCategories(current => current.includes(category)
-          ? current.filter(item => item !== category)
-          : [...current, category]);
+  const openMountedWorldbookEditor = (book: MountedWorldbook) => {
+      // 优先读取世界书 App 的完整记录；角色上的 mountedWorldbooks 只是缓存，
+      // 旧数据可能存在孤儿挂载，但不能只写角色缓存制造第二份分叉数据。
+      const source = worldbooks.find(candidate => candidate.id === book.id);
+      if (!source) {
+          addToast('世界书 App 中已不存在这条记录，无法编辑；可以先卸载后重新挂载', 'error');
+          return;
+      }
+      setEditingWorldbookId(book.id);
+      setWorldbookDraftTitle(source.title);
+      setWorldbookDraftContent(source.content);
+      setIsWorldbookEditorFullscreen(false);
+      setPreviewWorldbookId(book.id);
+      trackEvent('从角色页打开世界书编辑');
   };
 
-  const mountedWorldbookGroups = useMemo(() => {
-      const groups: Record<string, Array<{ mountedBook: MountedWorldbook; displayBook: MountedWorldbook | Worldbook }>> = {};
-      (formData?.mountedWorldbooks || []).forEach(mountedBook => {
-          const displayBook = worldbooks.find(book => book.id === mountedBook.id) || mountedBook;
-          const category = displayBook.category || mountedBook.category || '未分类设定 (General)';
-          if (!groups[category]) groups[category] = [];
-          groups[category].push({ mountedBook, displayBook });
-      });
-      return Object.entries(groups);
-  }, [formData?.mountedWorldbooks, worldbooks]);
+  const saveMountedWorldbook = async () => {
+      if (!formData || !editingWorldbookId) return;
+      const mountedBook = formData.mountedWorldbooks?.find(book => book.id === editingWorldbookId);
+      const worldbook = worldbooks.find(book => book.id === editingWorldbookId);
+      if (!mountedBook) {
+          addToast('找不到这条角色挂载的世界书', 'error');
+          return;
+      }
+      if (!worldbook) {
+          addToast('世界书 App 中已不存在这条记录，无法同步保存', 'error');
+          return;
+      }
+      const title = worldbookDraftTitle.trim();
+      if (!title) {
+          addToast('请输入世界书标题', 'error');
+          return;
+      }
+
+      setIsSavingWorldbook(true);
+      try {
+          await updateWorldbook(worldbook.id, {
+              title,
+              content: worldbookDraftContent,
+          });
+
+          // updateWorldbook 会同步所有角色缓存；这里立即同步当前页的本地草稿，
+          // 让 Character 页在同一次打开状态下也显示新标题/正文，不等下一次进入。
+          const syncedWorldbook = {
+              ...worldbook,
+              title,
+              content: worldbookDraftContent,
+          };
+          setFormData(prev => prev && prev.id === editingId
+              ? {
+                  ...prev,
+                  mountedWorldbooks: replaceMountedWorldbook(prev.mountedWorldbooks || [], syncedWorldbook, {
+                      modeIsAuthoritative: true,
+                  }),
+              }
+              : prev);
+          closeMountedWorldbookEditor();
+          addToast('世界书条目已保存，并同步角色页与世界书 App', 'success');
+      } catch (error: any) {
+          addToast(error?.message || '世界书条目保存失败', 'error');
+      } finally {
+          setIsSavingWorldbook(false);
+      }
+  };
 
   // 挂载弹窗的分组数据。必须 useMemo：之前这段 reduce 内联在 JSX 里，
   // 弹窗没打开时整个编辑表单每敲一个字都会重新分组一遍全部世界书。
@@ -619,6 +672,11 @@ const Character: React.FC = () => {
       setShowWorldbookModal(true);
       trackEvent('打开挂载世界书弹窗');
   };
+
+  const editingMountedWorldbook = formData?.mountedWorldbooks?.find(book => book.id === editingWorldbookId) || null;
+  const editingWorldbookSource = editingWorldbookId
+      ? worldbooks.find(book => book.id === editingWorldbookId) || null
+      : null;
 
   // ... (Other handlers unchanged)
   const handleToggleActiveMonth = (year: string, month: string) => {
@@ -2194,108 +2252,96 @@ ${isInitialGeneration ? `
                                    <label className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest block flex items-center gap-1"><Books size={12} /> 扩展设定 (Worldbooks)</label>
                                    <button onClick={openWorldbookModal} className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-1 rounded font-bold hover:bg-indigo-100">+ 挂载</button>
                                 </div>
-                                <div className="space-y-3">
-                                    {mountedWorldbookGroups.length > 0 ? (
-                                        mountedWorldbookGroups.map(([category, books]) => {
-                                            const isCategoryExpanded = mountedWorldbookExpandedCategories.includes(category);
-                                            return (
-                                                <div key={category} className="overflow-hidden rounded-2xl border border-indigo-100/80 bg-white/80 shadow-sm">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => toggleMountedWorldbookCategory(category)}
-                                                        aria-expanded={isCategoryExpanded}
-                                                        className="flex w-full items-center gap-2 px-4 py-3 text-left active:bg-indigo-50/60 transition-colors"
-                                                    >
-                                                        <CaretRight size={14} weight="bold" className={`shrink-0 text-indigo-400 transition-transform ${isCategoryExpanded ? 'rotate-90' : ''}`} />
-                                                        <span className="min-w-0 flex-1 truncate text-xs font-bold text-slate-700">{category}</span>
-                                                        <span className="shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-500">{books.length}</span>
-                                                        <span className="shrink-0 text-[10px] text-slate-400">{isCategoryExpanded ? '收起' : '展开'}</span>
-                                                    </button>
-                                                    {isCategoryExpanded && (
-                                                        <div className="space-y-2 border-t border-indigo-50 bg-slate-50/40 p-2">
-                                                            {books.map(({ mountedBook: wb, displayBook }) => {
-                                                                const displayMode = getEffectiveWorldbookMode(wb) === 'schedule'
-                                                                    ? 'schedule'
-                                                                    : getEffectiveWorldbookMode(displayBook);
-                                                                return (
-                                                                    <div key={wb.id} className="overflow-hidden rounded-2xl border border-indigo-50 bg-white shadow-sm">
-                                                                        <div className="flex items-center justify-between px-3 py-3">
-                                                                            <button
-                                                                                type="button"
-                                                                                onClick={() => setPreviewWorldbookId(current => current === wb.id ? null : wb.id)}
-                                                                                aria-expanded={previewWorldbookId === wb.id}
-                                                                                className="flex min-w-0 flex-1 items-center gap-2 text-left active:opacity-70 transition-opacity"
-                                                                            >
-                                                                                <BookOpen size={19} className="shrink-0 text-indigo-400" />
-                                                                                <span className="flex min-w-0 flex-col">
-                                                                                    <span className="truncate text-sm font-bold text-slate-700">{displayBook.title}</span>
-                                                                                    {displayBook.category && <span className="truncate text-[9px] text-slate-400">{displayBook.category}</span>}
-                                                                                </span>
-                                                                                {displayMode === 'schedule' && (
-                                                                                    <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-bold text-amber-600">仅日程</span>
-                                                                                )}
-                                                                                <span className={`ml-1 shrink-0 text-slate-300 transition-transform ${previewWorldbookId === wb.id ? 'rotate-90' : ''}`} aria-hidden="true">›</span>
-                                                                            </button>
-                                                                            <div className="ml-2 flex items-center gap-1">
-                                                                                <button
-                                                                                    type="button"
-                                                                                    onClick={() => toggleMountedWorldbook(wb.id)}
-                                                                                    aria-label={`${wb.mountEnabled === false ? '重新启用' : '暂时关闭'}世界书：${displayBook.title}`}
-                                                                                    aria-pressed={wb.mountEnabled !== false}
-                                                                                    title={wb.mountEnabled === false ? '重新启用这本世界书' : '暂时关闭这本世界书（仍保留挂载）'}
-                                                                                    className={`relative h-6 w-11 shrink-0 rounded-full p-1 transition-colors active:scale-95 ${wb.mountEnabled === false ? 'bg-slate-200' : 'bg-emerald-500'}`}
-                                                                                >
-                                                                                    <span className={`block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${wb.mountEnabled === false ? 'translate-x-0' : 'translate-x-5'}`} />
-                                                                                </button>
-                                                                                <button
-                                                                                    type="button"
-                                                                                    onClick={() => openWorldbookApp(displayBook.id)}
-                                                                                    aria-label={`在世界书 App 中打开：${displayBook.title}`}
-                                                                                    title="在世界书 App 中查看或编辑"
-                                                                                    className="rounded-full p-2 text-slate-300 transition-all hover:bg-indigo-50 hover:text-indigo-500 active:scale-90"
-                                                                                >
-                                                                                    <ArrowSquareOut size={16} weight="bold" />
-                                                                                </button>
-                                                                                <button
-                                                                                    type="button"
-                                                                                    onClick={() => unmountWorldbook(displayBook.id)}
-                                                                                    aria-label={`卸载世界书：${displayBook.title}`}
-                                                                                    className="rounded-full p-2 text-slate-300 transition-all hover:bg-red-50 hover:text-red-400 active:scale-90"
-                                                                                >
-                                                                                    <X size={16} weight="bold" />
-                                                                                </button>
-                                                                            </div>
-                                                                        </div>
-                                                                        {previewWorldbookId === wb.id && (
-                                                                            <div className="border-t border-indigo-50 bg-indigo-50/30 px-3 py-3 animate-fade-in">
-                                                                                <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.12em] text-indigo-400">条目内容（只读）</div>
-                                                                                <div className="mb-3 rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2.5">
-                                                                                    <div className="text-[11px] font-bold text-amber-700">
-                                                                                        生效范围：{WORLDBOOK_MODE_LABELS[displayMode]}
-                                                                                    </div>
-                                                                                    <div className="mt-0.5 text-[10px] leading-relaxed text-amber-600/80">
-                                                                                        生效范围请在「世界书」App 的编辑页设置；这里仅显示当前角色挂载到的结果。
-                                                                                    </div>
-                                                                                </div>
-                                                                                <p className="max-h-48 overflow-y-auto overflow-x-hidden whitespace-pre-wrap text-xs leading-relaxed text-slate-600 select-text">
-                                                                                    {displayBook.content || <span className="italic text-slate-400">暂无内容...</span>}
-                                                                                </p>
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-                                                                );
-                                                            })}
+                                        <div className="space-y-2">
+                                           {formData.mountedWorldbooks && formData.mountedWorldbooks.length > 0 ? (
+                                               formData.mountedWorldbooks.map(wb => {
+                                                   const displayBook = worldbooks.find(book => book.id === wb.id) || wb;
+                                                    const displayMode = getEffectiveWorldbookMode(wb) === 'schedule'
+                                                        ? 'schedule'
+                                                        : getEffectiveWorldbookMode(displayBook);
+                                                   return (
+                                           <div key={wb.id} className="bg-white rounded-2xl border border-indigo-50 shadow-sm group overflow-hidden">
+                                               <div className="flex items-center justify-between px-4 py-3">
+                                                   <button
+                                                       type="button"
+                                                       onClick={() => setPreviewWorldbookId(current => current === wb.id ? null : wb.id)}
+                                                       aria-expanded={previewWorldbookId === wb.id}
+                                                       className="flex items-center gap-2 min-w-0 flex-1 text-left active:opacity-70 transition-opacity"
+                                                   >
+                                                       <BookOpen size={20} className="shrink-0 text-indigo-400" />
+                                                       <span className="flex flex-col min-w-0">
+                                                           <span className="text-sm font-bold text-slate-700 truncate">{displayBook.title}</span>
+                                                           {displayBook.category && <span className="text-[9px] text-slate-400 truncate">{displayBook.category}</span>}
+                                                       </span>
+                                                        {displayMode === 'schedule' && (
+                                                            <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-bold text-amber-600">仅日程</span>
+                                                        )}
+                                                       <span className={`ml-1 shrink-0 text-slate-300 transition-transform ${previewWorldbookId === wb.id ? 'rotate-90' : ''}`} aria-hidden="true">›</span>
+                                                   </button>
+                                                    <div className="flex items-center gap-1 ml-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => toggleMountedWorldbook(wb.id)}
+                                                            aria-label={`${wb.mountEnabled === false ? '重新启用' : '暂时关闭'}世界书：${displayBook.title}`}
+                                                            aria-pressed={wb.mountEnabled !== false}
+                                                            title={wb.mountEnabled === false ? '重新启用这本世界书' : '暂时关闭这本世界书（仍保留挂载）'}
+                                                            className={`relative h-6 w-11 shrink-0 rounded-full p-1 transition-colors active:scale-95 ${wb.mountEnabled === false ? 'bg-slate-200' : 'bg-emerald-500'}`}
+                                                        >
+                                                            <span className={`block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${wb.mountEnabled === false ? 'translate-x-0' : 'translate-x-5'}`} />
+                                                        </button>
+                                                        <button
+                                                           type="button"
+                                                           onClick={() => openMountedWorldbookEditor(displayBook)}
+                                                           aria-label={`编辑世界书：${displayBook.title}`}
+                                                           title="编辑世界书"
+                                                           className="p-2 rounded-full text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 active:scale-90 transition-all"
+                                                       >
+                                                           <PencilSimple size={16} weight="bold" />
+                                                       </button>
+                                                       <button
+                                                           type="button"
+                                                           onClick={() => unmountWorldbook(displayBook.id)}
+                                                           aria-label={`卸载世界书：${displayBook.title}`}
+                                                           className="p-2 rounded-full text-slate-300 hover:text-red-400 hover:bg-red-50 active:scale-90 transition-all"
+                                                       >
+                                                           <X size={16} weight="bold" />
+                                                       </button>
+                                                   </div>
+                                               </div>
+                                               {previewWorldbookId === wb.id && (
+                                                   <div className="border-t border-indigo-50 bg-indigo-50/30 px-4 py-3 animate-fade-in">
+                                                       <div className="flex items-center justify-between gap-3 mb-2">
+                                                           <span className="text-[10px] font-bold tracking-[0.12em] text-indigo-400 uppercase">条目内容</span>
+                                                           <button
+                                                               type="button"
+                                                               onClick={() => openMountedWorldbookEditor(displayBook)}
+                                                               className="shrink-0 inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-indigo-600 border border-indigo-100 shadow-sm active:scale-95 transition-transform"
+                                                           >
+                                                               <PencilSimple size={12} weight="bold" /> 编辑
+                                                           </button>
+                                                       </div>
+                                                        <div className="mb-3 rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2.5">
+                                                            <div className="text-[11px] font-bold text-amber-700">
+                                                                生效范围：{WORLDBOOK_MODE_LABELS[displayMode]}
+                                                            </div>
+                                                            <div className="mt-0.5 text-[10px] leading-relaxed text-amber-600/80">
+                                                                生效范围请在「世界书」App 的编辑页设置；这里仅显示当前角色挂载到的结果。
+                                                            </div>
                                                         </div>
-                                                    )}
-                                                </div>
-                                            );
-                                        })
-                                    ) : (
-                                        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 py-4 text-center text-xs text-slate-400">
-                                            暂未挂载任何世界书
-                                        </div>
-                                    )}
-                                </div>
+                                                       <p className="max-h-48 overflow-y-auto overflow-x-hidden whitespace-pre-wrap text-xs leading-relaxed text-slate-600 select-text">
+                                                           {displayBook.content || <span className="italic text-slate-400">暂无内容...</span>}
+                                                       </p>
+                                                   </div>
+                                               )}
+                                           </div>
+                                           );
+                                       })
+                                   ) : (
+                                       <div className="text-center py-4 bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-slate-400 text-xs">
+                                           暂未挂载任何世界书
+                                       </div>
+                                   )}
+                               </div>
                            </div>
 
                            {/* Export Card Button */}
@@ -2570,6 +2616,98 @@ ${isInitialGeneration ? `
                 )}
             </div>
         </Modal>
+
+        {/* Character 页的快捷世界书编辑：只编辑标题/正文，持久化仍统一走 updateWorldbook。 */}
+        <Modal
+            isOpen={!!editingWorldbookId && !isWorldbookEditorFullscreen}
+            title="编辑世界书条目"
+            onClose={() => { if (!isSavingWorldbook) closeMountedWorldbookEditor(); }}
+            footer={
+                <div className="flex w-full gap-3">
+                    <button
+                        type="button"
+                        onClick={closeMountedWorldbookEditor}
+                        disabled={isSavingWorldbook}
+                        className="flex-1 rounded-2xl bg-slate-100 py-3 font-bold text-slate-600 active:scale-95 transition-transform disabled:opacity-40"
+                    >
+                        取消
+                    </button>
+                    <button
+                        type="button"
+                        onClick={saveMountedWorldbook}
+                        disabled={!editingWorldbookSource || isSavingWorldbook}
+                        className="flex-1 rounded-2xl bg-indigo-500 py-3 font-bold text-white shadow-lg shadow-indigo-200 active:scale-95 transition-transform disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                        {isSavingWorldbook ? '保存中…' : '保存并同步'}
+                    </button>
+                </div>
+            }
+        >
+            <div className="space-y-4">
+                {!editingWorldbookSource && (
+                    <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-700">
+                        世界书 App 中已找不到这条记录，当前只能关闭编辑器；请先重新导入或创建后再挂载。
+                    </div>
+                )}
+                <div>
+                    <label className="mb-2 block text-xs font-bold text-slate-500">标题</label>
+                    <input
+                        value={worldbookDraftTitle}
+                        onChange={event => setWorldbookDraftTitle(event.target.value)}
+                        disabled={!editingWorldbookSource || isSavingWorldbook}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none transition-all focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-50 disabled:opacity-50"
+                    />
+                </div>
+                <div>
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                        <label className="block text-xs font-bold text-slate-500">条目内容</label>
+                        <button
+                            type="button"
+                            onClick={() => setIsWorldbookEditorFullscreen(true)}
+                            disabled={!editingWorldbookSource || isSavingWorldbook}
+                            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-indigo-100 bg-indigo-50 px-2.5 py-1 text-[10px] font-bold text-indigo-600 active:scale-95 transition-transform disabled:opacity-40"
+                        >
+                            <CornersOut size={13} weight="bold" />
+                            全屏编辑
+                        </button>
+                    </div>
+                    <textarea
+                        value={worldbookDraftContent}
+                        onChange={event => setWorldbookDraftContent(event.target.value)}
+                        disabled={!editingWorldbookSource || isSavingWorldbook}
+                        placeholder="输入需要注入模型的设定内容..."
+                        className="h-64 w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 p-4 font-mono text-sm leading-relaxed text-slate-700 outline-none transition-all focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-50 disabled:opacity-50"
+                    />
+                    <p className="mt-2 px-1 text-[10px] leading-relaxed text-slate-400">
+                        这里保存后会同时更新世界书 App 与所有挂载该条目的角色。
+                    </p>
+                </div>
+            </div>
+        </Modal>
+
+        <WorldbookTextFullscreenEditor
+            isOpen={!!editingWorldbookId && isWorldbookEditorFullscreen}
+            title={worldbookDraftTitle.trim() || editingMountedWorldbook?.title || '编辑世界书'}
+            value={worldbookDraftContent}
+            onChange={setWorldbookDraftContent}
+            onExit={() => setIsWorldbookEditorFullscreen(false)}
+            onSave={saveMountedWorldbook}
+            saveDisabled={!editingWorldbookSource || isSavingWorldbook}
+            placeholder="输入需要注入模型的设定内容..."
+        >
+            <div className="shrink-0">
+                <label className="mb-2 block text-xs font-bold text-slate-500">标题</label>
+                <input
+                    value={worldbookDraftTitle}
+                    onChange={event => setWorldbookDraftTitle(event.target.value)}
+                    disabled={!editingWorldbookSource || isSavingWorldbook}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-800 outline-none transition-all focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50 disabled:opacity-50"
+                />
+                {!editingWorldbookSource && (
+                    <p className="mt-2 text-[10px] leading-relaxed text-amber-600">对应的世界书记录已被删除，无法同步保存。</p>
+                )}
+            </div>
+        </WorldbookTextFullscreenEditor>
 
         {/* ST 卡导入 · 身份确认（见 交接说明-双层角色世界.md） */}
         <Modal isOpen={!!pendingStCard} title="这个角色是谁的？" onClose={() => setPendingStCard(null)}>

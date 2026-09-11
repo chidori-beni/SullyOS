@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { chunkNovelText, chunkNovelTextAsync, getReadingWindow, buildNovel } from './novel';
 import { parseVROutput, parseMusicOutput, parseGuestbookOutput, parseGymOutput, parsePostOfficeOutput, parsePostOfficeReadOutput, parseSignalOutput, buildVRSystemAddendum } from './prompts';
+import { structuralStrangers } from '../characterIdentity';
 import { rollPoemLines, SIGNAL_LINES_MIN, SIGNAL_LINES_MAX, signalActFor } from './constants';
 import { maskPen } from './postOffice';
 import { decodeBytes } from './decodeText';
@@ -530,5 +531,51 @@ describe('彼方 · 「认不认识」的判据（2026-09-11 用户实测报的�
         const t = buildVRSystemAddendum(room, '萧逸');
         expect(t).toContain('聊得投机而热络');
         expect(t).toContain('今天在这里刚认识的');
+    });
+});
+
+
+describe('彼方 · 跨层的人结构上不可能认识（2026-09-11 用户追问）', () => {
+    // 用户指出第一版修窄了：「只针对同行问题进行修复的话，
+    // 遇到不同行的，是不是还有概率让萧逸和纸片人彿彿现实中也认识一般呢？」
+    const room = { id: 'guestbook', name: '留言簿', blurb: 'x', affordance: 'y' } as any;
+    const real = (name: string) => ({ name, narrativeLayer: 'real' } as any);
+    const fic = (name: string) => ({ name, narrativeLayer: 'fiction' } as any);
+
+    it('⭐ 跨层 → 列进「没有交集」名单', () => {
+        expect(structuralStrangers(real('萧逸'), [fic('纸片人'), real('另一个真人')]))
+            .toEqual(['纸片人']);
+    });
+
+    it('同层 → 不列（他们本来就可能认识）', () => {
+        expect(structuralStrangers(fic('A'), [fic('B'), fic('C')])).toEqual([]);
+    });
+
+    it('缺省按 real 处理，旧角色零变化', () => {
+        expect(structuralStrangers({} as any, [{ name: 'X' } as any])).toEqual([]);
+    });
+
+    it('⭐ 名单非空时，提示词里点名并说死「确实没发生过」', () => {
+        const t = buildVRSystemAddendum(room, '萧逸', ['纸片人']);
+        expect(t).toContain('纸片人');
+        expect(t).toContain('确实没有发生过');
+        expect(t).toContain('初次照面');
+    });
+
+    it('⭐ 必须堆上「任何相似之处都只是巧合」——不能只堵同行', () => {
+        const t = buildVRSystemAddendum(room, '萧逸', ['纸片人']);
+        expect(t).toContain('同行、同乡、同好');
+        expect(t).toContain('只是巧合');
+    });
+
+    it('⛔⭐ 绝不能透露原因（用户选定「不告诉他对方是纸片人」）', () => {
+        const t = buildVRSystemAddendum(room, '萧逸', ['纸片人']);
+        for (const w of ['虚构', '纸片人是', '创作', '写出来', '不存在', '另一个世界', '叙事层']) {
+            expect(t).not.toContain(w);
+        }
+    });
+
+    it('名单为空时不输出这段（别白占上下文）', () => {
+        expect(buildVRSystemAddendum(room, '萧逸', [])).not.toContain('确实没有发生过');
     });
 });

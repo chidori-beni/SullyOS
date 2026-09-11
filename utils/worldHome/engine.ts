@@ -20,6 +20,7 @@ import type {
     WorldProfile, WorldEpisode, WorldCharBeat, WorldCardMeta, WorldCardShareMeta,
 } from '../../types';
 import { DB } from '../db';
+import { applyBondChange, buildBondChangeNotice } from '../characterIdentity';
 import { buildChatRequestPayload } from '../chatRequestPayload';
 import { safeFetchJson } from '../safeApi';
 import { processNewMessagesWithAutoArchive } from '../memoryPalace/autoArchive';
@@ -78,16 +79,47 @@ const dispatch = (name: string, detail: any) => {
  * 关系 delta 回填。关系有向：A 的演绎里"和 B 关系 +2"只代表 **A 对 B** 的好感变了，
  * B 对 A 怎么想由 B 自己的演绎轮决定——两边完全可以不对等。不存在的边按 50 起步。
  */
+/** 角色这一轮对**机主**的关系定位变了（阶段 2.1 的 `hostBond.toHost`）。 */
+export interface HostBondDelta {
+    charId: string;
+    charName: string;
+    /** 新的定位（角色给的 relabel） */
+    newLabel: string;
+    reason?: string;
+}
+
 export function applyRelationshipDeltas(
     world: WorldProfile,
     beats: WorldCharBeat[],
     members: { id: string; name: string }[],
     /** 第几轮改的——只用于写进 labelHistory，便于用户回滚时认得出是哪次转折。 */
     round?: number,
-): void {
+    /**
+     * 机主名。给了才会把「对机主」那条**挑出来**（它不是镇民，不能进 world.relationships）。
+     * 挑出来的部分从返回值拿，由调用方落到 `CharacterProfile.hostBond`——
+     * 这里是纯函数，不碰 DB。
+     */
+    hostName?: string,
+): HostBondDelta[] {
     const idOf = (name: string) => members.find(m => m.name === name)?.id;
+    const host = (hostName || '').trim();
+    const hostDeltas: HostBondDelta[] = [];
     for (const beat of beats) {
         for (const rd of beat.relationshipDeltas || []) {
+            // 「对机主」那条：机主不是镇民，落进 world.relationships 会变成一条指向
+            // 不存在成员的悬空边。挑出来交给调用方写进 hostBond.toHost。
+            if (host && rd.withName?.trim() === host) {
+                const label = rd.newLabel?.trim();
+                if (label) {
+                    hostDeltas.push({
+                        charId: beat.charId,
+                        charName: beat.charName,
+                        newLabel: label,
+                        ...(rd.reason ? { reason: rd.reason } : {}),
+                    });
+                }
+                continue;
+            }
             const otherId = idOf(rd.withName);
             if (!otherId || otherId === beat.charId) continue;
             let rel = world.relationships.find(r => r.fromId === beat.charId && r.toId === otherId);
@@ -113,6 +145,33 @@ export function applyRelationshipDeltas(
                 }
                 rel.label = rd.newLabel;
             }
+        }
+    }
+    return hostDeltas;
+}
+
+/**
+ * 把「对机主」的关系变化落到角色身上，并往聊天里留一条**只给用户看**的提示。
+ *
+ * 用户 2026-09-11 定的形态：**角色不在台词里演这件事**（那会显得被下了指令），
+ * 改动静悄悄发生；但也不能让用户错过，所以在聊天窗口留一道痕
+ * —— 且这条痕**不进角色上下文、不进记忆**（`UiNoticeMeta`）。
+ */
+export async function applyHostBondDeltas(deltas: HostBondDelta[]): Promise<void> {
+    for (const d of deltas) {
+        try {
+            const char = await DB.getCharacter(d.charId);
+            if (!char) continue;
+            const changed = applyBondChange(char.hostBond, d.newLabel, 'world', d.reason);
+            if (!changed) continue;   // 同一句话 → 什么都不做，免得每轮刷提示
+            await DB.saveCharacter({ ...char, hostBond: changed.hostBond });
+            await DB.saveMessage({
+                charId: d.charId, role: 'system', type: 'text',
+                content: buildBondChangeNotice(d.charName, changed.to, changed.from),
+                metadata: { uiNotice: true, noticeKind: 'bond_changed' },
+            } as any);
+        } catch (e) {
+            console.error('[WorldHome] hostBond 落库失败:', e);
         }
     }
 }
@@ -562,7 +621,8 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
         };
         await DB.saveWorldEpisode(episode);
 
-        applyRelationshipDeltas(world, beats, members, episode.round);
+        const hostBondDeltas = applyRelationshipDeltas(world, beats, members, episode.round, userProfile?.name);
+        await applyHostBondDeltas(hostBondDeltas);
         // armed 伏笔本轮已爆发 → resolved；本轮注入过的用户决策消费掉
         for (const seed of world.seeds || []) {
             if (seed.status === 'armed') seed.status = 'resolved';
@@ -758,7 +818,9 @@ export async function rerollWorldCharBeat(
         if (!hadBeat) {
             applyBeatToThreads(world, beat, members, episode.round, episode.storyTime);
             collectSeeds(world, beat, episode.round, episode.storyTime);
-            applyRelationshipDeltas(world, [beat], members, episode.round);
+            await applyHostBondDeltas(
+                applyRelationshipDeltas(world, [beat], members, episode.round, userProfile?.name),
+            );
             worldDirty = true;
             if (world.timeMode !== 'sim' && world.injectToChat !== false) {
                 try { await injectWorldCard(world, beat, episode.round, episode.storyTime); } catch { /* ignore */ }

@@ -327,6 +327,95 @@ export const buildHostBondNote = (
     return `【你和${host}之间】\n${lines.join('\n')}`;
 };
 
+/** `toHost` 被改写的来源。 */
+export type BondChangeSource = 'world' | 'impression' | 'manual';
+
+/**
+ * 计算「ta 怎么看你」的一次改写结果 —— **纯函数，不落库**。
+ *
+ * 改写策略是用户 2026-09-11 定的：**直接改，但留变更史可回滚**（同 §6.3 的
+ * 「锁 = 事前保险，历史 = 事后后悔药」）。而且角色**不在台词里演这件事**——
+ * 用户原话：「不会显得有点生硬吗？仿佛角色被下了什么指令，要对用户产生印象改变似的」。
+ * 改动静悄悄发生，只往聊天里留一条**只给用户看**的提示（见 `UiNoticeMeta`）。
+ *
+ * @returns `null` 表示没有实质变化（同一句话 / 空值），调用方就什么都不要做——
+ *          尤其不要落提示，否则每轮观测都刷一条「ta 对你的看法变了」。
+ */
+export const applyBondChange = (
+    prev: CharacterProfile['hostBond'] | undefined,
+    nextText: string | null | undefined,
+    source: BondChangeSource,
+    reason?: string,
+    nowTs: number = Date.now(),
+): { hostBond: NonNullable<CharacterProfile['hostBond']>; from?: string; to: string } | null => {
+    const next = (nextText || '').trim();
+    if (!next) return null;
+    const current = (prev?.toHost || '').trim();
+    if (current === next) return null;
+
+    const history = [...(prev?.toHostHistory || [])];
+    if (current) {
+        history.push({
+            text: current,
+            replacedAt: nowTs,
+            source,
+            ...(reason ? { reason } : {}),
+        });
+    }
+    return {
+        hostBond: { ...(prev || {}), toHost: next, toHostHistory: history },
+        from: current || undefined,
+        to: next,
+    };
+};
+
+/**
+ * 那条只给用户看的提示文案。
+ *
+ * 刻意**不写成角色的口吻**（「我好像重新认识了你」之类）——那是角色该自己
+ * 在对话里流露的东西，由系统代说会假。这里就是一条旁白式的记录。
+ */
+export const buildBondChangeNotice = (
+    charName: string,
+    to: string,
+    from?: string,
+): string => (
+    from
+        ? `${charName} 对你们这段关系的看法变了：「${from}」→「${to}」`
+        : `${charName} 心里对你们这段关系有了说法：「${to}」`
+);
+
+/**
+ * 在场的人里，哪些**结构上不可能和 ta 有过去**。
+ *
+ * 起因（用户 2026-09-11 指出，我第一版修窄了）：
+ * 「萧逸和我是同维度角色，**不应该和纸片人认识**吗？只是我这边的情况，
+ *  和他认识的纸片人刚好和他是同行。**只针对同行问题进行修复的话，
+ *  遇到不同行的，是不是还有概率**会让萧逸和纸片人仿佛现实中也认识一般呢？」
+ *
+ * 完全正确。「有具体交集才算认识」这条规则仍然要模型**自己判断**有没有交集，
+ * 而它能从任何角度脑补出来：同乡、同校、都认识某某、气质像旧识……
+ * 同行只是那一次碰上的角度，堵了这个还有下一个。
+ *
+ * 而跨层这件事是**结构性事实**，不需要模型判断：
+ * `real` 层的角色活在机主的现实里，`fiction` 层的活在机主写的故事里，
+ * **他们只可能在彼方这类共享空间初次照面**，不可能有共同过去。
+ *
+ * ⛔ **只回名单，不回原因。** 调用方也绝不能把「因为对方是纸片人」写进提示词——
+ * 用户 2026-09-11 明确选定「就当网友，不告诉他对方是纸片人」。
+ * 「你和这个人没打过交道」与「这个人是虚构的」是两句话，只说前一句。
+ */
+export const structuralStrangers = (
+    self: Pick<CharacterProfile, 'narrativeLayer'> | null | undefined,
+    others: readonly Pick<CharacterProfile, 'name' | 'narrativeLayer'>[] | null | undefined,
+): string[] => {
+    const mine = narrativeLayerOf(self);
+    return (others || [])
+        .filter(o => narrativeLayerOf(o) !== mine)
+        .map(o => (o?.name || '').trim())
+        .filter(Boolean);
+};
+
 /**
  * 群聊提示词里那段「先认清 U」。
  *
