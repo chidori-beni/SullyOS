@@ -9,6 +9,7 @@ import { SARModuleShopOverlay } from '../../apps/vrWorld/SARModuleShop';
 import { SARHubPanels } from '../../apps/vrWorld/SARHubPanels';
 import { FishingMarketOverlay } from '../../apps/vrWorld/FishingMarketOverlay';
 import { SARFamiliarityDialog } from '../../apps/vrWorld/SARFamiliarityDialog';
+import { SARObjectInspector } from '../../apps/vrWorld/SARObjectInspector';
 import { createFishingMarketState, saveFishingMarketState } from '../../utils/vrWorld/fishingMarket';
 import { ensureSARCommerce, readSARCommerce } from '../../utils/vrWorld/sarCommerce';
 import { SAR_MODULE_CATALOG } from '../../utils/vrWorld/sarModuleShop';
@@ -20,6 +21,7 @@ function Harness() {
     const [view, setView] = useState(new URLSearchParams(location.search).get('facility') || 'cabinet');
     useEffect(() => { (window as any).facilityQA = { os, setView }; });
     const close = () => setView('closed');
+    if (view === 'inspector') return <SARObjectInspector title="安全区检查" onClose={close}><div style={{height:1400}}>长篇物品详情</div></SARObjectInspector>;
     if (view === 'cabinet') return <SARAssemblyCabinetOverlay characters={os.characters} characterGroups={os.characterGroups} apiConfig={os.apiConfig} groups={os.groups} userProfile={os.userProfile} onClose={close}/>;
     if (view === 'gacha') return <React.Profiler id="gacha" onRender={(_id, _phase, duration) => { ((window as any).gachaCommits ||= []).push(duration); }}><SARGachaOverlay onClose={close}/></React.Profiler>;
     if (view === 'modules') return <SARModuleShopOverlay npcEnabled onClose={close}/>;

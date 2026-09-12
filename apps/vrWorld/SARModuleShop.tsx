@@ -40,7 +40,7 @@ import {
 // 彼方在「自理安全区」名单里（utils/safeAreaApps.ts），外壳不替它让位，
 // 所以顶栏必须让开完整的 --chrome-top（安全区 + SullyOS 状态栏）。
 // 原先这里减了 44px，返回键正好落进状态栏的点击层，点了没反应。
-const SAFE_TOP = 'var(--chrome-top)';
+const SAFE_TOP = 'var(--chrome-top, var(--safe-top, 0px))';
 const SAFE_BOTTOM = 'var(--safe-bottom,0px)';
 
 const categoryMeta: Record<SARModuleCategory, { label: string; code: string; color: string; glow: string; mark: string }> = {
@@ -361,7 +361,7 @@ export const SARModuleShopOverlay: React.FC<{
                 .sar-module-shop{position:fixed;inset:0;z-index:390;overflow:hidden;color:#edf4f0;background:linear-gradient(180deg,rgba(7,15,20,.94),rgba(10,15,19,.985));font-family:ui-sans-serif,system-ui,-apple-system,"Noto Sans SC",sans-serif;isolation:isolate}
                 .sar-module-shop:before{content:"";position:absolute;inset:0;z-index:-2;background:radial-gradient(circle at 76% 10%,rgba(111,173,170,.13),transparent 32%),radial-gradient(circle at 10% 62%,rgba(142,123,193,.11),transparent 38%),linear-gradient(rgba(151,203,196,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(151,203,196,.035) 1px,transparent 1px);background-size:auto,auto,28px 28px,28px 28px}
                 .sar-module-shop:after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;background:linear-gradient(90deg,transparent 3.5%,rgba(159,207,200,.12) 3.7%,transparent 3.9%,transparent 96.1%,rgba(159,207,200,.1) 96.3%,transparent 96.5%)}
-                .sar-module-shop__header{position:absolute;inset:0 0 auto;height:58px;display:grid;grid-template-columns:52px 1fr auto;align-items:center;padding:0 12px;border-bottom:1px solid rgba(174,218,210,.12);background:rgba(6,13,17,.82);backdrop-filter:blur(14px)}
+                .sar-module-shop__header{position:absolute;inset:0 0 auto;height:58px;display:grid;grid-template-columns:44px minmax(0,1fr) auto 40px;align-items:center;padding:0 12px;border-bottom:1px solid rgba(174,218,210,.12);background:rgba(6,13,17,.82);backdrop-filter:blur(14px)}
                 .sar-module-shop__back{width:38px;height:38px;border:1px solid rgba(181,224,216,.16);background:rgba(255,255,255,.025);color:#c5d7d2;display:grid;place-items:center;clip-path:polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px)}
                 .sar-module-shop__title{text-align:center}.sar-module-shop__title small{display:block;font-family:ui-monospace,monospace;font-size:7px;letter-spacing:.34em;color:rgba(157,212,203,.48)}.sar-module-shop__title h1{margin:3px 0 0;font:500 17px/1.1 "Noto Serif SC",serif;letter-spacing:.2em;color:#edf4f0}
                 .sar-module-shop__currency{min-width:64px;text-align:right;font:600 10px/1 ui-monospace,monospace;color:#a8d8d0}.sar-module-shop__currency span{display:block;margin-top:5px;font:400 7px/1 ui-sans-serif,system-ui;color:rgba(219,238,234,.4);letter-spacing:.12em}
