@@ -8,6 +8,10 @@ import { processImage } from '../utils/file';
 import { validateScopedCss, runCssRenderabilityCheck, CssValidationResult } from '../utils/scopedCss';
 import { trackEvent } from '../utils/analytics';
 import { resolveBubbleCornerRadii, shouldHideBubbleTail } from '../utils/bubbleAppearance';
+import { shareOrDownloadFile } from '../utils/shareExport';
+import { readShareText } from '../utils/pngShare';
+import { migrateDataUrlToRef, resolveBlobRefsDeep, useBlobRefUrl } from '../utils/blobRef';
+import TokenImg from '../components/os/TokenImg';
 
 const cloneTheme = (theme: ChatTheme): ChatTheme => {
     if (typeof structuredClone === 'function') {
@@ -621,7 +625,7 @@ const ThemeMaker: React.FC = () => {
     // 永远发新 id（防覆盖自己已有作品）；CSS 走与保存一致的可渲染性校验，坏 CSS 不入库。
     const importThemeFile = async (file: File) => {
         try {
-            const parsed = JSON.parse(await file.text());
+            const parsed = JSON.parse(await readShareText(file, 'chat-theme'));
             const raw = (parsed && typeof parsed === 'object' && parsed.kind === 'sullyos-chat-theme') ? parsed.theme : parsed;
             if (!raw || typeof raw !== 'object' || !raw.user || !raw.ai) {
                 addToast('导入失败：不是有效的气泡主题文件', 'error');
@@ -645,17 +649,31 @@ const ThemeMaker: React.FC = () => {
         }
     };
 
-    const exportSavedTheme = (theme: ChatTheme) => {
-        const blob = new Blob([JSON.stringify({ kind: 'sullyos-chat-theme', version: 1, theme }, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement('a');
-        anchor.href = url;
-        anchor.download = `${(theme.name || '自定义气泡').replace(/[\\/:*?\"<>|]/g, '_')}.sully-bubble.json`;
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-        URL.revokeObjectURL(url);
-        addToast(`已导出「${theme.name}」`, 'success');
+    // 导出成分享文件：主题里的图存的是令牌，令牌只有本机认得，原样导出对方只会拿到
+    // 一串死字符串、图全空。所以先在一份深拷贝上把令牌换回内嵌的 data URL
+    // （resolveBlobRefsDeep 是原地改的，绝不能拿库里那套主题去喂）。
+    const exportSavedTheme = async (theme: ChatTheme) => {
+        const portable = cloneTheme(theme);
+        try {
+            await resolveBlobRefsDeep(portable);
+        } catch {
+            addToast('导出失败：图片读取不出来', 'error');
+            return;
+        }
+
+        try {
+            const result = await shareOrDownloadFile({
+                card: { kind: 'chat-theme', title: theme.name || '自定义气泡' },
+                content: JSON.stringify({ kind: 'sullyos-chat-theme', version: 1, theme: portable }, null, 2),
+                fileName: `${(theme.name || '自定义气泡').replace(/[\\/:*?\"<>|]/g, '_')}.sully-bubble.json`,
+                mimeType: 'application/json;charset=utf-8',
+                shareTitle: `气泡主题：${theme.name || '自定义气泡'}`,
+            });
+            if (result === 'cancelled') return;
+            addToast(result === 'shared' ? `已打开「${theme.name}」分享面板` : `已导出「${theme.name}」`, 'success');
+        } catch {
+            addToast('导出失败：无法分享或下载文件', 'error');
+        }
     };
 
     // 删除只移除气泡库里的存档；若正在编辑这套气泡，工坊内容保留为未保存状态，避免用户手滑丢稿。
@@ -1176,7 +1194,7 @@ const ThemeMaker: React.FC = () => {
                             type="file"
                             ref={themeImportInputRef}
                             className="hidden"
-                            accept=".json,application/json"
+                            accept=".json,.png,application/json,image/png"
                             onChange={(e) => { const f = e.target.files?.[0]; if (f) importThemeFile(f); e.target.value = ''; }}
                         />
                         <button

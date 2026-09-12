@@ -1,4 +1,6 @@
 import React, { useRef, useState } from 'react';
+import { readShareText } from '../../utils/pngShare';
+import { shareOrDownloadFile } from '../../utils/shareExport';
 import {
     BUILTIN_SOUNDS,
     WhiteboxSound,
@@ -117,6 +119,9 @@ const WhiteboxSoundEditor: React.FC<Props> = ({ sound, onChangeSound, showBind =
     const handleShareImport = () => {
         const code = window.prompt('粘贴提示音分享码（SULLYSND1:...）：', '')?.trim();
         if (!code) return;
+        importSoundCode(code);
+    };
+    const importSoundCode = (code: string) => {
         const incoming = decodeSoundShare(code);
         if (!incoming) { window.alert('分享码无法识别，请确认完整粘贴。'); return; }
         unlockWhiteboxAudio();
@@ -223,6 +228,20 @@ const WhiteboxSoundEditor: React.FC<Props> = ({ sound, onChangeSound, showBind =
             )}
 
             {/* 提示音独立分享码 */}
+            <div className="flex flex-wrap gap-2">
+                <label className="cursor-pointer rounded-lg px-2.5 py-1 text-[10px] font-semibold text-indigo-500">图片导入
+                    <input type="file" accept=".png,.txt,image/png,text/plain" className="sr-only" onChange={async event => {
+                        const file = event.target.files?.[0]; event.target.value = ''; if (!file) return;
+                        try { importSoundCode(await readShareText(file, 'whitebox-sound')); }
+                        catch (error: any) { window.alert(error?.message || '提示音导入失败'); }
+                    }} />
+                </label>
+                <button disabled={!sound} className="rounded-lg px-2.5 py-1 text-[10px] font-semibold text-indigo-500 disabled:opacity-30" onClick={async () => {
+                    if (!sound) return;
+                    try { await shareOrDownloadFile({ content: encodeSoundShare(sound), fileName: '白框提示音.txt', mimeType: 'text/plain', card: { kind: 'whitebox-sound', title: '白框提示音' } }); }
+                    catch (error: any) { window.alert(error?.message || '提示音导出失败'); }
+                }}>图片分享</button>
+            </div>
             <div className="flex items-center gap-2">
                 <button onClick={handleShareImport} className="rounded-lg px-2.5 py-1 text-[10px] font-semibold text-slate-400 hover:bg-slate-100 hover:text-slate-600">导入分享码</button>
                 <button onClick={handleShareExport} disabled={!sound} className={`rounded-lg px-2.5 py-1 text-[10px] font-semibold ${sound ? 'text-slate-400 hover:bg-slate-100 hover:text-slate-600' : 'text-slate-300'}`}>导出分享码</button>

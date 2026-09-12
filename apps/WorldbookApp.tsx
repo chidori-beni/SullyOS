@@ -17,6 +17,7 @@ import {
 } from '../utils/worldbook';
 import { confirmExportSafety } from '../utils/exportGuard';
 import { shareOrDownloadFile } from '../utils/shareExport';
+import { readShareFile } from '../utils/pngShare';
 import { trackEvent } from '../utils/analytics';
 
 const WorldbookApp: React.FC = () => {
@@ -223,8 +224,9 @@ const WorldbookApp: React.FC = () => {
         const file = event.target.files?.[0];
         if (!file) return;
         try {
-            const text = await file.text();
-            const category = file.name.replace(/\.json$/i, '').trim() || '导入世界书';
+            const source = await readShareFile(file, 'worldbook');
+            const text = await source.text();
+            const category = source.name.replace(/\.json$/i, '').trim() || '导入世界书';
             const imported = parseStandardWorldbook(text, category);
             for (const book of imported) await addWorldbook(book);
             addToast(`已导入 ${imported.length} 条世界书条目`, 'success');
@@ -249,11 +251,13 @@ const WorldbookApp: React.FC = () => {
         const safeName = category.replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_').trim() || 'worldbook';
         // 原生 / WebView 壳里 `<a download>` 常常点了没反应，强制先拉起分享面板，兜底才走下载。
         const result = await shareOrDownloadFile({
+            card: { kind: 'worldbook', title: category },
             content: json,
             fileName: `${safeName}.json`,
             mimeType: 'application/json;charset=utf-8',
             shareTitle: `导出世界书「${category}」`,
         });
+        if (result === 'cancelled') return;
         const verb = result === 'shared' ? '已调起分享' : '已导出';
         addToast(`${verb}「${category}」共 ${books.length} 条`, 'success');
         trackEvent('导出分组为标准世界书');
@@ -745,7 +749,7 @@ const WorldbookApp: React.FC = () => {
                                     {isSelecting ? '取消' : '管理'}
                                 </button>
                             )}
-                            <input ref={importRef} type="file" className="hidden" onChange={handleImport} />
+                            <input ref={importRef} type="file" accept=".json,.png,application/json,image/png" className="hidden" onChange={handleImport} />
                             <button
                                 onClick={() => { setShowImportConfirm(true); trackEvent('打开导入世界书弹窗'); }}
                                 className="w-9 h-9 bg-white/80 text-indigo-500 border border-white rounded-full shadow-sm flex items-center justify-center active:scale-90 transition-transform"

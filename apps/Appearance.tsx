@@ -23,6 +23,8 @@ import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import CssSlotEditor from '../components/appearance/CssSlotEditor';
 import { BUILTIN_NOTIFY_CSS_PRESETS, NOTIFY_CSS_AI_PROMPT, NOTIFY_HOOKS } from '../utils/globalCss';
+import { shareOrDownloadBlob } from '../utils/shareExport';
+import { readShareFile } from '../utils/pngShare';
 
 const CustomIconImage: React.FC<{ value: string; alt: string; preserveOutline?: boolean }> = ({ value, alt, preserveOutline = false }) => {
     const url = useBlobRefUrl(value);
@@ -315,45 +317,9 @@ const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply,
             const fileName = `appearance_${preset?.name || 'preset'}.zip`;
             const title = `外观预设 - ${preset?.name || 'preset'}`;
 
-            if (Capacitor.isNativePlatform()) {
-                // Native: 写到 Cache 再调系统分享
-                const base64 = await new Promise<string>((resolve, reject) => {
-                    const reader = new FileReader();
-                    reader.onloadend = () => resolve(String(reader.result).split(',')[1] || '');
-                    reader.onerror = () => reject(reader.error);
-                    reader.readAsDataURL(blob);
-                });
-                await Filesystem.writeFile({ path: fileName, data: base64, directory: Directory.Cache });
-                const uri = await Filesystem.getUri({ directory: Directory.Cache, path: fileName });
-                await Share.share({ title, files: [uri.uri] });
-            } else {
-                // Web: 先触发浏览器原生下载，再尝试拉起系统分享面板
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = fileName;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-
-                try {
-                    const file = new File([blob], fileName, { type: 'application/zip' });
-                    if (
-                        typeof navigator !== 'undefined' &&
-                        typeof navigator.share === 'function' &&
-                        (typeof (navigator as any).canShare !== 'function' || (navigator as any).canShare({ files: [file] }))
-                    ) {
-                        await navigator.share({ title, files: [file] });
-                    }
-                } catch (shareErr: any) {
-                    // 用户取消分享是正常情况，吞掉
-                    if (shareErr?.name !== 'AbortError') {
-                        console.warn('[Appearance] share failed', shareErr);
-                    }
-                }
-            }
-            addToast('预设已导出', 'success');
+            const result = await shareOrDownloadBlob({ blob, fileName, shareTitle: title, card: { kind: 'appearance', title: preset?.name || '外观预设' } });
+            if (result === 'cancelled') return;
+            addToast(result === 'shared' ? '已打开预设分享面板' : '预设已导出', 'success');
         } catch (e: any) {
             addToast(e.message || '导出失败', 'error');
         }
@@ -363,7 +329,7 @@ const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply,
         const file = e.target.files?.[0];
         if (!file) return;
         try {
-            await onImport(file);
+            await onImport(await readShareFile(file, 'appearance'));
             trackEvent('导入外观预设文件');
         } catch (err: any) {
             addToast(err.message || '导入失败', 'error');
@@ -432,8 +398,8 @@ const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply,
             {/* Import */}
             <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                 <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">导入外观预设</h2>
-                <p className="text-[10px] text-slate-400 mb-3">从 .zip 文件导入他人分享的外观预设（兼容旧版 .json）。系统整合备份也会包含当前外观设置，单独预设文件更适合分享。</p>
-                <input type="file" ref={importRef} className="hidden" accept=".zip,.json,application/zip,application/json" onChange={handleImport} />
+                <p className="text-[10px] text-slate-400 mb-3">支持 PNG 分享原图、ZIP 和旧版 JSON。系统整合备份也会包含当前外观设置，单独预设文件更适合分享。</p>
+                <input type="file" ref={importRef} className="hidden" accept=".png,.zip,.json,image/png,application/zip,application/json" onChange={handleImport} />
                 <button onClick={() => importRef.current?.click()}
                     className="w-full py-2.5 bg-gradient-to-r from-blue-50 to-cyan-50 text-blue-500 font-bold text-xs rounded-xl border border-blue-200 active:scale-95 transition-transform flex items-center justify-center gap-2">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>

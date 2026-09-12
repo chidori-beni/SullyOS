@@ -35,6 +35,8 @@ import {
 } from '../utils/stCharacterCard';
 import { resolveUserMacroName, evaluateFriendshipUpgrade, classifyExchange } from '../utils/characterIdentity';
 import { stripSensitiveCardFields } from '../utils/characterCard';
+import { shareOrDownloadFile } from '../utils/shareExport';
+import { readShareText } from '../utils/pngShare';
 import { confirmExportSafety } from '../utils/exportGuard';
 import { trackEvent } from '../utils/analytics';
 import { sortCharacterGroups, GROUP_FILTER_UNGROUPED } from '../components/character/CharacterGroupFilter';
@@ -1205,65 +1207,18 @@ ${isInitialGeneration ? `
 
       const json = JSON.stringify(exportData, null, 2);
       const fileName = `${formData.name || 'Character'}_Card.json`;
-      
-      if (Capacitor.isNativePlatform()) {
-          try {
-              await Filesystem.writeFile({
-                  path: fileName,
-                  data: json,
-                  directory: Directory.Cache,
-                  encoding: Encoding.UTF8,
-              });
-              const uriResult = await Filesystem.getUri({
-                  directory: Directory.Cache,
-                  path: fileName,
-              });
-              await Share.share({
-                  title: '导出角色卡',
-                  files: [uriResult.uri],
-              });
-              addToast('已调起分享', 'success');
-              return;
-          } catch (e: any) {
-              console.error("Native Export Error", e);
-              addToast('原生分享失败，尝试浏览器分享/下载', 'info');
-          }
-      }
 
       try {
-          // Align with Settings export fallback logic for wrapped webviews:
-          // try Web Share first, then fallback to download.
-          const file = new File([json], fileName, { type: 'application/json' });
-          const canShareFile = typeof navigator !== 'undefined'
-              && typeof navigator.share === 'function'
-              && (typeof navigator.canShare !== 'function' || navigator.canShare({ files: [file] }));
-
-          if (canShareFile) {
-              await navigator.share({
-                  title: '导出角色卡',
-                  files: [file],
-              });
-              addToast('已调起分享', 'success');
-              return;
-          }
-      } catch (e: any) {
-          // User cancellation and unsupported cases should continue to download fallback.
-          if (e?.name !== 'AbortError') {
-              console.error('Web Share Export Error', e);
-          }
-      }
-
-          const blob = new Blob([json], { type: 'application/json' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = fileName;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-          
-          addToast('角色卡已生成并下载', 'success');
+          const result = await shareOrDownloadFile({
+              card: { kind: 'character', title: formData.name, previewUrl: /^(data:|blob:|https?:|\/)/.test(exportData.avatar || '') ? exportData.avatar : undefined },
+              content: json,
+              fileName,
+              mimeType: 'application/json;charset=utf-8',
+              shareTitle: '导出角色卡',
+          });
+          if (result === 'cancelled') return;
+          addToast(result === 'shared' ? '已打开角色卡分享面板' : '角色卡已生成并导出', 'success');
+      } catch (error: any) { addToast(error?.message || '角色卡导出失败', 'error'); }
   };
 
   const newCharacterId = () => `char-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -1417,6 +1372,16 @@ ${isInitialGeneration ? `
           };
 
           if (lower.endsWith('.png') || file.type === 'image/png') {
+              // PNG 有两种：SullyOS 自己的分享卡（正文藏在 PNG 的私有 chunk 里），
+              // 和酒馆的角色卡 PNG。先按分享卡试一次，不是就走下面酒馆那条老路。
+              try {
+                  const shared = JSON.parse(await readShareText(file, 'character')) as CharacterExportData;
+                  if (shared?.type === 'sully_character_card') {
+                      await importSullyCard(shared);
+                      return;
+                  }
+              } catch { /* 不是 SullyOS 分享卡，继续按酒馆卡解析 */ }
+
               // 角色卡图片本身就是头像，顺手压一张进来。
               const [text, avatar] = await Promise.all([
                   file.arrayBuffer().then(buf => extractCardTextFromPng(new Uint8Array(buf))),
@@ -1510,7 +1475,7 @@ ${isInitialGeneration ? `
                         <ToolButton label="关闭" title="关闭" onClick={closeApp}>
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
                         </ToolButton>
-                        <input type="file" ref={cardImportRef} className="hidden" accept=".json,.png,.charx" onChange={handleImportCard} />
+                        <input type="file" ref={cardImportRef} className="hidden" accept=".json,.png,.charx,application/json,image/png" onChange={handleImportCard} />
                    </div>
                </div>
                <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden px-5 pb-20 no-scrollbar flex flex-col gap-3">

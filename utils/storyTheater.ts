@@ -1347,8 +1347,9 @@ export const makeStoryPresetFileName = (name: string): string => {
     return `${safeName}.json`;
 };
 
-export const downloadStoryPreset = async (preset: StoryTheaterPreset): Promise<'shared' | 'downloaded'> => (
+export const downloadStoryPreset = async (preset: StoryTheaterPreset): Promise<'shared' | 'downloaded' | 'cancelled'> => (
     shareOrDownloadFile({
+        card: { kind: 'story', title: preset.name || '剧情预设' },
         content: JSON.stringify(preset.document, null, 2),
         fileName: makeStoryPresetFileName(preset.name),
         mimeType: 'application/json',

@@ -1,8 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { DB } from '../../utils/db';
-import { Capacitor } from '@capacitor/core';
-import { Directory, Encoding, Filesystem } from '@capacitor/filesystem';
-import { Share } from '@capacitor/share';
+import { shareOrDownloadFile } from '../../utils/shareExport';
+import { readShareText } from '../../utils/pngShare';
 
 // 聊天「白框」自定义 CSS 编辑器（Appearance 全局默认 与 单角色定制 共用）。
 // 选择器钩子覆盖顶栏、输入栏、整屏背景与普通消息布局；完整清单见下方 AI_PROMPT。
@@ -309,6 +308,7 @@ const ChromeCssEditor: React.FC<{ value: string; onChange: (css: string) => void
     const [copied, setCopied] = useState(false);
     const [custom, setCustom] = useState<Preset[]>([]);
     const txtImportRef = useRef<HTMLInputElement>(null);
+    const presetImageRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
         let alive = true;
@@ -333,14 +333,14 @@ const ChromeCssEditor: React.FC<{ value: string; onChange: (css: string) => void
         const file = event.target.files?.[0];
         if (!file) return;
         try {
-            const css = (await file.text()).replace(/^\uFEFF/, '');
+            const css = (await readShareText(file, 'chrome-css')).replace(/^\uFEFF/, '');
             if (!css.trim()) {
                 window.alert('TXT 文件内容为空。');
                 return;
             }
             onChange(css);
-        } catch {
-            window.alert('TXT 导入失败，请确认文件可以正常读取。');
+        } catch (error: any) {
+            window.alert(error?.message || '样式导入失败，请确认文件可以正常读取。');
         } finally {
             event.target.value = '';
         }
@@ -355,27 +355,13 @@ const ChromeCssEditor: React.FC<{ value: string; onChange: (css: string) => void
         const dateKey = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
         const fileName = `sullyos-whitebox-${dateKey}.txt`;
         try {
-            if (Capacitor.isNativePlatform()) {
-                await Filesystem.writeFile({
-                    path: fileName,
-                    data: value,
-                    directory: Directory.Cache,
-                    encoding: Encoding.UTF8,
-                });
-                const uri = await Filesystem.getUri({ directory: Directory.Cache, path: fileName });
-                await Share.share({ title: 'SullyOS 白框样式', files: [uri.uri] });
-                return;
-            }
-
-            const blob = new Blob([value], { type: 'text/plain;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-            const anchor = document.createElement('a');
-            anchor.href = url;
-            anchor.download = fileName;
-            document.body.appendChild(anchor);
-            anchor.click();
-            anchor.remove();
-            URL.revokeObjectURL(url);
+            await shareOrDownloadFile({
+                card: { kind: 'chrome-css', title: '白框样式' },
+                content: value,
+                fileName,
+                mimeType: 'text/plain;charset=utf-8',
+                shareTitle: 'SullyOS 白框样式',
+            });
         } catch (error: any) {
             if (error?.name !== 'AbortError') window.alert('TXT 导出失败，请重试。');
         }
@@ -390,6 +376,9 @@ const ChromeCssEditor: React.FC<{ value: string; onChange: (css: string) => void
         if (typeof window === 'undefined') return;
         const code = window.prompt('粘贴预设导出码（SULLYCSS1:...）：', '')?.trim();
         if (!code) return;
+        importPresetCode(code);
+    };
+    const importPresetCode = (code: string) => {
         let incoming: Preset[] = [];
         try { incoming = decodePresets(code); } catch { window.alert('导出码无法识别，请确认完整粘贴。'); return; }
         if (!incoming.length) { window.alert('没解析到有效预设。'); return; }
@@ -433,6 +422,16 @@ const ChromeCssEditor: React.FC<{ value: string; onChange: (css: string) => void
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-1.5">
                     <span className="text-[11px] font-bold text-slate-500">我的预设 <span className="font-normal text-slate-400">· 全角色通用</span></span>
                     <div className="flex items-center gap-1">
+                        <input ref={presetImageRef} type="file" accept=".png,.txt,image/png,text/plain" hidden onChange={async event => {
+                            const file = event.target.files?.[0]; event.target.value = ''; if (!file) return;
+                            try { importPresetCode(await readShareText(file, 'chrome-presets')); }
+                            catch (error: any) { window.alert(error?.message || '预设导入失败'); }
+                        }} />
+                        <button onClick={() => presetImageRef.current?.click()} className="rounded-md px-2 py-1 text-[10px] font-semibold text-indigo-500">图片导入</button>
+                        <button disabled={!custom.length} onClick={async () => {
+                            try { await shareOrDownloadFile({ content: encodePresets(custom), fileName: '白框预设集.txt', mimeType: 'text/plain', card: { kind: 'chrome-presets', title: '白框预设集' } }); }
+                            catch (error: any) { window.alert(error?.message || '预设导出失败'); }
+                        }} className="rounded-md px-2 py-1 text-[10px] font-semibold text-indigo-500 disabled:opacity-30">图片分享</button>
                         <button onClick={handleImport} className="rounded-md px-2 py-1 text-[10px] font-semibold text-slate-400 hover:bg-slate-100 hover:text-slate-600">导入</button>
                         <button onClick={handleExport} disabled={!custom.length} className={`rounded-md px-2 py-1 text-[10px] font-semibold ${custom.length ? 'text-slate-400 hover:bg-slate-100 hover:text-slate-600' : 'text-slate-300'}`}>导出</button>
                     </div>
@@ -461,9 +460,9 @@ const ChromeCssEditor: React.FC<{ value: string; onChange: (css: string) => void
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                     <span className="text-[11px] font-bold text-slate-500">CSS 代码 <span className="font-normal text-slate-400">· 可手改 / 粘贴</span></span>
                     <div className="flex items-center gap-1">
-                        <input ref={txtImportRef} type="file" accept=".txt,text/plain" className="hidden" onChange={handleTxtImport} />
-                        <button onClick={() => txtImportRef.current?.click()} className="rounded-lg px-2 py-1 text-[10px] font-semibold text-indigo-500 hover:bg-indigo-50">导入 TXT</button>
-                        <button onClick={handleTxtExport} disabled={!value.trim()} className={`rounded-lg px-2 py-1 text-[10px] font-semibold ${value.trim() ? 'text-indigo-500 hover:bg-indigo-50' : 'text-slate-300'}`}>导出 TXT</button>
+                        <input ref={txtImportRef} type="file" accept=".png,.css,.txt,image/png,text/css,text/plain" className="hidden" onChange={handleTxtImport} />
+                        <button onClick={() => txtImportRef.current?.click()} className="rounded-lg px-2 py-1 text-[10px] font-semibold text-indigo-500 hover:bg-indigo-50">导入 PNG / CSS</button>
+                        <button onClick={handleTxtExport} disabled={!value.trim()} className={`rounded-lg px-2 py-1 text-[10px] font-semibold ${value.trim() ? 'text-indigo-500 hover:bg-indigo-50' : 'text-slate-300'}`}>导出分享</button>
                         {value && <button onClick={() => onChange('')} className="rounded-lg px-2 py-1 text-[10px] font-semibold text-rose-400 hover:bg-rose-50 hover:text-rose-500">清空</button>}
                     </div>
                 </div>
