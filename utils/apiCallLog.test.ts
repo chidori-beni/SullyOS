@@ -362,6 +362,12 @@ describe('buildPromptBreakdown', () => {
         const blocks = buildPromptBreakdown({ messages: [{ role: 'system', content: sys }] })!;
         expect(blocks.length).toBeLessThanOrEqual(48);
         expect(blocks[blocks.length - 1].label).toContain('其余');
+        expect(blocks[blocks.length - 1].children).toHaveLength(33);
+        expect(blocks[blocks.length - 1].children?.map(block => block.label)).toEqual([
+            ...Array.from({ length: 33 }, (_, i) => `块${i + 47}`),
+        ]);
+        expect(blocks[blocks.length - 1].children?.reduce((sum, block) => sum + block.chars, 0))
+            .toBe(blocks[blocks.length - 1].chars);
     });
 });
 

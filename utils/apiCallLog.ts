@@ -105,6 +105,8 @@ export interface PromptBlockStat {
     label: string;
     /** 该块字符数（含标题行与换行） */
     chars: number;
+    /** 超过展示上限时，父块只做汇总；这里保留被合并的子块统计，避免只剩一个“其余 N 块”。 */
+    children?: PromptBlockStat[];
 }
 
 export type ApiRequestCaptureSectionKind =
@@ -502,8 +504,13 @@ export function buildPromptBreakdown(body: unknown): PromptBlockStat[] | undefin
         // 限容：病态多块时合并尾巴，保证单条记录体积可控
         if (out.length > MAX_BREAKDOWN_BLOCKS) {
             const head = out.slice(0, MAX_BREAKDOWN_BLOCKS - 1);
-            const restChars = out.slice(MAX_BREAKDOWN_BLOCKS - 1).reduce((sum, b) => sum + b.chars, 0);
-            head.push({ label: `（其余 ${out.length - (MAX_BREAKDOWN_BLOCKS - 1)} 块合计）`, chars: restChars });
+            const children = out.slice(MAX_BREAKDOWN_BLOCKS - 1);
+            const restChars = children.reduce((sum, b) => sum + b.chars, 0);
+            head.push({
+                label: `（其余 ${children.length} 块合计）`,
+                chars: restChars,
+                children,
+            });
             return head;
         }
         return out;
