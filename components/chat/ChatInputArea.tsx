@@ -1,10 +1,12 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
+import TokenImg from '../os/TokenImg';
 import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, Heartbeat, PencilSimple, Alarm, Sparkle, FadersHorizontal, LinkSimple, Star, Waveform, Lightning, Stop, CornersOut, CornersIn, Briefcase } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { AcnhActionTile } from '../os/acnhIcons';
 import { isIOSStandaloneWebApp } from '../../utils/iosStandalone';
 import { trackEvent } from '../../utils/analytics';
+import { findEmojiSuggestions } from '../../utils/emojiSuggestions';
 
 const EMOJI_PAGE_SIZE = 40;
 // 消息栏最多长到六行（144px），再多就在框内滚动。和 max-h-36 保持一致。
@@ -22,6 +24,14 @@ interface ChatInputAreaProps {
     onTriggerAI?: () => void;
     triggerIcon?: 'lightning' | 'stop';
     onOpenVoiceInput?: () => void;
+    /** 上游「输入与发送」那套：发送键在没聚焦输入框时切成「生成回复」。 */
+    sendButtonGenerates?: boolean;
+    enterToSend?: boolean;
+    onGenerate?: () => void;
+    autoReplyEnabled?: boolean;
+    autoReplySeconds?: number | null;
+    onCancelAutoReply?: () => void;
+    onInputFocusChange?: (focused: boolean) => void;
     onDeleteSelected: () => void;
     onForwardSelected?: () => void;
     onFavoriteSelected?: () => void | Promise<void>;
@@ -31,6 +41,9 @@ interface ChatInputAreaProps {
     favoriteSkippedCount?: number;
     favoriteSaving?: boolean;
     emojis: Emoji[];
+    emojiSuggestionsEnabled?: boolean;
+    /** Visible library across all categories, independent of the open emoji tab. */
+    suggestionEmojis?: Emoji[];
     /** 以下会话切换/主题 props 仅私聊使用；群聊等复用方不传（'chars' 面板不会被打开） */
     characters?: CharacterProfile[];
     activeCharacterId?: string;
@@ -86,7 +99,10 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     input, setInput, isTyping, selectionMode,
     showPanel, setShowPanel, onSend, onTriggerAI, onOpenVoiceInput, onDeleteSelected, onForwardSelected, onFavoriteSelected, selectedCount,
     favoriteEligibleCount = 0, favoriteSkippedCount = 0, favoriteSaving = false,
+    sendButtonGenerates = false, enterToSend = true, onGenerate,
+    autoReplyEnabled = false, autoReplySeconds = null, onCancelAutoReply, onInputFocusChange,
     emojis, characters = [], activeCharacterId = '', onCharSelect = () => {},
+    emojiSuggestionsEnabled = false, suggestionEmojis = emojis,
     unreadMessages = {},
     customThemes = [], onUpdateTheme = () => {}, onRemoveTheme = () => {}, activeThemeId = '',
     actionsContent,
@@ -115,6 +131,38 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     const fullscreenTextareaRef = useRef<HTMLTextAreaElement>(null);
     const [isFullscreenEditor, setIsFullscreenEditor] = useState(false);
     const [isInputOverflowing, setIsInputOverflowing] = useState(false);
+    // ── 上游「发送键可切成生成键」所需的最小状态 ──────────────────
+    // 只加判定用的东西，版面仍然是我方这一套。
+    const [isComposing, setIsComposing] = useState(false);
+    const [dismissedSuggestionInput, setDismissedSuggestionInput] = useState<string | null>(null);
+    const suggestedEmojis = useMemo(() => emojiSuggestionsEnabled && !isComposing && !selectionMode
+        && showPanel === 'none' && dismissedSuggestionInput !== input
+        ? findEmojiSuggestions(suggestionEmojis, input) : [],
+    [emojiSuggestionsEnabled, isComposing, selectionMode, showPanel, dismissedSuggestionInput, suggestionEmojis, input]);
+    useEffect(() => { setDismissedSuggestionInput(null); }, [input, activeCharacterId]);
+    const suggestionsRef = useRef<HTMLDivElement>(null);
+    const sendButtonRef = useRef<HTMLButtonElement>(null);
+    const [isInputFocused, setIsInputFocused] = useState(false);
+    const canSwitchToGenerate = sendButtonGenerates && !!onGenerate;
+    const canEndEditing = canSwitchToGenerate || autoReplyEnabled;
+    const isGenerateButton = canSwitchToGenerate && !isInputFocused;
+    const primaryButtonDisabled = isGenerateButton ? isTyping : !input.trim();
+    useEffect(() => { onInputFocusChange?.(isInputFocused); }, [isInputFocused, onInputFocusChange]);
+    useEffect(() => {
+        setIsInputFocused(!!textareaRef.current && document.activeElement === textareaRef.current);
+    }, [selectionMode, activeCharacterId]);
+    useEffect(() => {
+        if (!canSwitchToGenerate || !isInputFocused) return;
+        // 移动端点空白处收起键盘，好让发送键切回生成态。
+        const blurOnOutsidePointer = (event: PointerEvent) => {
+            const target = event.target;
+            if (!(target instanceof Node)) return;
+            if (textareaRef.current?.contains(target) || sendButtonRef.current?.contains(target)) return;
+            textareaRef.current?.blur();
+        };
+        document.addEventListener('pointerdown', blurOnOutsidePointer, true);
+        return () => document.removeEventListener('pointerdown', blurOnOutsidePointer, true);
+    }, [canSwitchToGenerate, isInputFocused]);
     const [actionsPage, setActionsPage] = useState<0 | 1 | 2>(0);
     // 气泡样式面板：搜索 + 两步确认删除（防止 hover 小 × 误删）
     const [bubbleSearch, setBubbleSearch] = useState('');
@@ -147,7 +195,12 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
+        // 候选词确认不能当发送；229 兼容部分输入法在确认时漏报 isComposing。
+        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+        if (e.key === 'Escape' && canEndEditing) {
+            textareaRef.current?.blur();
+        }
+        if (enterToSend && e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             sendFromComposer();
         }
@@ -296,6 +349,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     };
 
     const handleInputFocus = () => {
+        setIsInputFocused(true);
         if (!useIOSStandaloneInputFix) return;
         setShowPanel('none');
         const textarea = textareaRef.current;
@@ -557,6 +611,37 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             <div className={`fixed inset-0 z-[-1] ${isPixelStyle ? 'bg-[#eadfce]/70 backdrop-blur-[2px]' : isDiscordStyle ? 'bg-slate-950/70 backdrop-blur-[2px]' : 'bg-white/60 backdrop-blur-[2px]'}`} />
         )}
         <div className={`sully-chat-inputbar ${shellClass} pb-safe shrink-0 z-40 relative`}>
+            {suggestedEmojis.length > 0 && (
+                <div ref={suggestionsRef} role="region" aria-label="表情包联想"
+                    className={`sully-emoji-suggestions border-b px-4 pb-2 pt-2 ${isDiscordStyle ? 'border-white/10 bg-slate-900 text-slate-300' : isPixelStyle ? 'border-[#8f674a]/20 text-[#8f674a]' : 'border-slate-100 text-slate-500'}`}>
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px]">表情联想 · 点击发送</span>
+                        <button type="button" aria-label="收起表情联想" onClick={() => setDismissedSuggestionInput(input)}
+                            className="-mr-2 flex h-8 w-8 items-center justify-center rounded-full text-base hover:bg-slate-400/10">×</button>
+                    </div>
+                    <div className="flex gap-2 overflow-x-auto overscroll-x-contain pb-1">
+                        {suggestedEmojis.map(emoji => (
+                            <button key={emoji.url} type="button" aria-label={`发送表情：${emoji.name}`} title={emoji.name}
+                                onMouseDown={event => event.preventDefault()}
+                                onClick={() => {
+                                    setDismissedSuggestionInput(input);
+                                    onPanelAction('send-emoji', emoji);
+                                    textareaRef.current?.focus({ preventScroll: true });
+                                }}
+                                className="flex w-16 shrink-0 flex-col items-center gap-1 rounded-xl p-1 hover:bg-slate-400/10 active:scale-95 transition-transform motion-reduce:transition-none">
+                                <TokenImg value={emoji.url} alt={emoji.name} decoding="async" className="h-12 w-12 object-contain" />
+                                <span className="w-full truncate text-center text-[10px]">{emoji.name}</span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
+            {autoReplySeconds !== null && !selectionMode && (
+                <div className="flex min-h-10 items-center justify-center gap-1 px-4 text-xs text-slate-500">
+                    <span role="status">即将回复 · {autoReplySeconds} 秒</span>
+                    <button type="button" onClick={onCancelAutoReply} className="min-h-11 px-3 font-bold text-primary" aria-label="取消自动回复">取消</button>
+                </div>
+            )}
             
             {selectionMode ? (
                 <div className={`p-3 flex flex-wrap gap-2 ${isPixelStyle ? 'bg-[#f3e7d6]' : isDiscordStyle ? 'bg-slate-900/60 backdrop-blur-md' : 'bg-white/50 backdrop-blur-md'}`}>
@@ -646,12 +731,18 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     </div>
                     {showSendButton && (
                         <button
-                            onClick={sendFromComposer}
-                            disabled={!input.trim()}
-                            className={`${sendButtonClass} ${input.trim() ? '' : 'opacity-45 shadow-none'}`}
-                            aria-label="发送"
+                            ref={sendButtonRef}
+                            onPointerDown={e => { if (canSwitchToGenerate && isInputFocused && e.button === 0) e.preventDefault(); }}
+                            onClick={isGenerateButton ? onGenerate : sendFromComposer}
+                            disabled={primaryButtonDisabled}
+                            className={`${sendButtonClass} ${primaryButtonDisabled ? 'opacity-45 shadow-none' : ''}`}
+                            aria-label={isGenerateButton ? (isTyping ? '正在生成回复' : '生成回复') : '发送'}
                         >
-                            {sendButtonStyle === 'pill' ? <span>发送</span> : <PaperPlaneTilt className="w-5 h-5" weight="fill" />}
+                            {sendButtonStyle === 'pill'
+                                ? <span>{isGenerateButton ? (isTyping ? '生成中' : '生成') : '发送'}</span>
+                                : isGenerateButton
+                                    ? <Lightning className={`w-5 h-5 ${isTyping ? 'animate-pulse' : ''}`} weight="fill" />
+                                    : <PaperPlaneTilt className="w-5 h-5" weight="fill" />}
                         </button>
                     )}
 

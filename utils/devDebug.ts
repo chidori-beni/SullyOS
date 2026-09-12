@@ -42,6 +42,8 @@ export const DEV_DEBUG_CAPTURE_CATEGORIES: DevDebugCaptureCategoryMeta[] = [
 const CAPTURE_CATEGORY_KEYS: DevDebugCaptureCategory[] = DEV_DEBUG_CAPTURE_CATEGORIES.map((c) => c.key);
 
 export interface DevDebugFlags {
+    /** Local authored SAR replay / expression editor; never grants real progress. */
+    sarExpressionReview: boolean;
     skipPromptBuild: boolean;
     skipEmotionEval: boolean;
     /**
@@ -95,6 +97,7 @@ export const DEV_DEBUG_LOG_EVENT = 'sullyos-dev-debug-log-change';
 const DEV_DEBUG_AVAILABILITY_EVENT = 'sullyos-dev-debug-availability';
 
 export const DEFAULT_DEV_DEBUG_FLAGS: DevDebugFlags = {
+    sarExpressionReview: false,
     skipPromptBuild: false,
     skipEmotionEval: false,
     mergeSystemMessages: false,
@@ -150,6 +153,7 @@ function normalizeFlags(value: unknown): DevDebugFlags {
     const legacyHasCapture = !('captureEnabled' in source) && captureLogs.length > 0;
     return {
         skipPromptBuild: source.skipPromptBuild === true,
+        sarExpressionReview: source.sarExpressionReview === true,
         skipEmotionEval: source.skipEmotionEval === true,
         mergeSystemMessages: source.mergeSystemMessages === true,
         captureEnabled: source.captureEnabled === true || legacyHasCapture,

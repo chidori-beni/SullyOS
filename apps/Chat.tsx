@@ -17,11 +17,11 @@ import { useLocalDateKey } from '../hooks/useLocalDateKey';
 import { resolveCharTimeZone, wallClockToTimestamp } from '../utils/timezone';
 import { generateSlotTheater } from '../utils/theaterGenerator';
 import TheaterPlayer from '../components/schedule/TheaterPlayer';
-import { formatMessageWithTime, normalizeMessageContent } from '../utils/messageFormat';
+import { buildSARMemoryBoundaryInstruction, formatMessageWithTime, normalizeMessageContent } from '../utils/messageFormat';
 import { sortEmojisForDisplay } from '../utils/emojiLibrary';
 import { getRoomLabel } from '../utils/memoryPalace/types';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeXhsLiteDetail } from '../utils/xhsMcpClient';
-import { extractWebpageContent, detectFirstUrl, detectXhsShortUrl, extractXhsShareTitle, isXhsUrl, extractXhsNoteId, expandShortUrl, type ExtractedWebpage } from '../utils/webpageExtractor';
+import { extractWebpageContent, detectFirstUrl, detectXhsShortUrl, extractXhsShareTitle, isXhsUrl, extractXhsNoteLink, expandShortUrl, type ExtractedWebpage } from '../utils/webpageExtractor';
 import { isVideoShareUrl, parseVideoShareUrl } from '../utils/videoParser';
 import { isDevDebugAvailable } from '../utils/devDebug';
 import { filterChatMessages, isHiddenSystemLog } from '../utils/chatSystemCards';
@@ -43,6 +43,7 @@ import CharacterEntryTransition from '../components/chat/CharacterEntryTransitio
 import ChatDecorSheet, { ChatDecorTab } from '../components/chat/ChatDecorSheet';
 import ChatInputArea from '../components/chat/ChatInputArea';
 import UserVoiceInputModal from '../components/chat/UserVoiceInputModal';
+import { loadChatInputPreferences, saveChatInputPreferences } from '../utils/chatInputPreferences';
 import InstantChatRouteNotice from '../components/chat/InstantChatRouteNotice';
 import MemoryRepairPortal from '../components/chat/MemoryRepairPortal';
 import FavoritesPortal from '../components/chat/FavoritesPortal';
@@ -58,7 +59,7 @@ import ScheduleChangeNotice from '../components/chat/ScheduleChangeNotice';
 import { useChatAI } from '../hooks/useChatAI';
 import { cleanTextForTts, parseVoiceOutput } from '../utils/minimaxTts';
 import { collectVoiceBatchSubtitle, isPoisonedVoiceSubtitle } from '../utils/voiceSubtitle';
-import { synthesizeSpeechDetailed, characterHasVoice } from '../utils/ttsRouter';
+import { synthesizeSpeechDetailed, characterHasVoice, cleanTextForTtsProvider, stripTtsMarkupForDisplay, providerUsesRawVoiceMarkup } from '../utils/ttsRouter';
 import { blobsAreIdentical, speedJitterForAttempt } from '../utils/blobEquals';
 import { shouldAutoGenerateVoice, shouldAutoPlayGeneratedVoice } from '../utils/voicePlayback';
 import { voiceLanguageAnalyticsValue, voiceLanguagePromptLabel } from '../utils/voiceLanguage';
@@ -80,6 +81,7 @@ import { loadChatRecallSubmitHintEnabled, saveChatRecallSubmitHintEnabled } from
 import { formatAmsgToolTrace } from '../utils/amsgToolTrace';
 import { formatDateDividerLabel, shouldShowDateDivider } from '../utils/chatDateDivider';
 import { prepareBroadcastText } from '../utils/messageBroadcast';
+import { resolveSARModuleSpeechSource } from '../utils/vrWorld/sarModuleRuntime';
 import {
     VOICE_FAVORITES_CHANGED_EVENT,
     getVoiceFavorite,
@@ -167,6 +169,7 @@ const isVisibleChatMessage = (message: Message, hideSystemLogs = false) => (
     && !(hideSystemLogs && message.role === 'system' && message.type !== 'score_card')
 );
 
+import { useChatAutoReply } from '../hooks/useChatAutoReply';
 /** 即时对话那一轮回复「推送陆续到齐」的宽限时间，也就是自动合成的补扫窗口有多长（见下面的 auto-TTS effect）。 */
 const INSTANT_VOICE_SCAN_WINDOW_MS = 30_000;
 type InstantToolUiStatus = {
@@ -183,7 +186,7 @@ interface ChatProps {
 }
 
 const Chat: React.FC<ChatProps> = ({ onBack }) => {
-    const { characters, activeCharacterId, setActiveCharacterId, addCharacter, availableModels, addCustomTheme, addWorldbook, saveAppearancePreset, updateCharacter, apiConfig, commitApiConfig, apiPresets, addApiPreset, closeApp, openApp, customThemes, removeCustomTheme, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: osTheme, updateTheme, proactiveComposingChars, openDateWithChar } = useOS();
+    const { activeApp, updateUserProfile, characters, activeCharacterId, setActiveCharacterId, addCharacter, availableModels, addCustomTheme, addWorldbook, saveAppearancePreset, updateCharacter, apiConfig, commitApiConfig, apiPresets, addApiPreset, closeApp, openApp, customThemes, removeCustomTheme, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: osTheme, updateTheme, proactiveComposingChars, openDateWithChar } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
     const localDateKey = useLocalDateKey();
 
@@ -235,6 +238,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     const [showEntry, setShowEntry] = useState(false);
     const WINDOW_RADIUS = 25;
     const [input, setInput] = useState('');
+    const [isInputFocused, setIsInputFocused] = useState(false);
     const [showPanel, setShowPanel] = useState<'none' | 'actions' | 'emojis' | 'chars'>('none');
     const [collaborationOpen, setCollaborationOpen] = useState(false);
     const [collaborationPreviewAssetId, setCollaborationPreviewAssetId] = useState<string | null>(null);
@@ -307,6 +311,10 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         setSettingsShowRecallSubmitStatus(enabled);
         saveChatRecallSubmitHintEnabled(enabled);
     };
+    // 合上游新增：输入与发送偏好（发送键行为 / 回车 / 自动回复）。
+    // 与上面我方原有的几项并存，互不覆盖。
+    const [inputPreferences, setInputPreferences] = useState(loadChatInputPreferences);
+    const [settingsInputPreferences, setSettingsInputPreferences] = useState(loadChatInputPreferences);
     const [settingsHtmlModeCustomPrompt, setSettingsHtmlModeCustomPrompt] = useState('');
     const contextSuiteAnyEnabled = memoryPalaceConfig.featureFlags?.recallRouter === true
         || memoryPalaceConfig.featureFlags?.interactionAdaptation === true
@@ -520,6 +528,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         luckinMiniAppRef,
         luckinChatRef,
         updateCharacter,
+        updateUserProfile,
     });
     const visibleRecallSubmitStatus = settingsShowRecallSubmitStatus ? recallSubmitStatus : null;
 
@@ -785,12 +794,16 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             discardVoiceForMessages([msg.id]);
         }
 
+        // SAR 模块改变的是角色真正“发到外面/念出来”的表达。content 仍保存真意供上下文与
+        // 总结读取，但 TTS 必须优先读 surface；否则会出现气泡是古风、耳朵听到原台词的穿帮。
+        const voiceSourceContent = resolveSARModuleSpeechSource(msg);
+        const sarVoiceSurface = voiceSourceContent !== msg.content;
         // Parse the structured voice output: spoken text (sanitized) + per-message emotion.
-        const parsedVoice = parseVoiceOutput(msg.content);
-        // 鱼声用原生 inline cue（[happy]/[whispering]…），要拿未剥离的 rawSpeech 送 API；
-        // MiniMax 用清洗过的 speech。
-        const isFishTts = resolveTtsProvider(apiConfig) === 'fishaudio';
-        const voiceTagContent = parsedVoice.hasVoiceTag ? (isFishTts ? parsedVoice.rawSpeech : parsedVoice.speech) : '';
+        const parsedVoice = parseVoiceOutput(voiceSourceContent);
+        // Fish / ElevenLabs 的适配器需要看到原始 inline cue；MiniMax 使用已消毒的 speech。
+        const ttsProvider = resolveTtsProvider(apiConfig);
+        const preserveRawMarkup = providerUsesRawVoiceMarkup(apiConfig);
+        const voiceTagContent = parsedVoice.hasVoiceTag ? (preserveRawMarkup ? parsedVoice.rawSpeech : parsedVoice.speech) : '';
         const voiceEmotion = parsedVoice.emotion;
 
         // Auto-TTS: only generate voice when AI explicitly used <语音> tag
@@ -798,7 +811,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         // F12 调试：打印 LLM 这条消息的带标签原文，方便核对语音标签写法是否正确。
         // 放在上面那道门之后：即时对话的扫描窗里每来一条消息都要重扫一遍，
         // 搁在门前的话没有语音标签的普通消息会被反复打印，控制台直接刷屏。
-        console.log('[voice] LLM 原文(带标签):', { provider: isFishTts ? 'fishaudio' : 'minimax', content: msg.content, voiceTagContent, emotion: voiceEmotion });
+        console.log('[voice] LLM 原文(带标签):', { provider: ttsProvider, content: voiceSourceContent, voiceTagContent, emotion: voiceEmotion, sarSurface: sarVoiceSurface });
 
         // MiniMax not configured for this character: don't attempt synthesis (it would
         // throw and surface an error toast on every message / every tap). Instead remind
@@ -847,25 +860,18 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 // matches the message's target language we reuse those halves directly —
                 // translating again would just echo the target language back and produce
                 // two identical foreign-language lines in the expanded voice bar.
-                const bilingualIdx = msg.content.toLowerCase().indexOf('%%bilingual%%');
+                const bilingualIdx = voiceSourceContent.toLowerCase().indexOf('%%bilingual%%');
                 const hasBilingual = bilingualIdx !== -1;
                 if (hasBilingual && voiceLang) {
-                    const langAText = cleanTextForTts(msg.content.substring(0, bilingualIdx));
-                    const langBText = cleanTextForTts(msg.content.substring(bilingualIdx + '%%BILINGUAL%%'.length));
+                    const langAText = cleanTextForTtsProvider(voiceSourceContent.substring(0, bilingualIdx), apiConfig);
+                    const langBText = stripTtsMarkupForDisplay(voiceSourceContent.substring(bilingualIdx + '%%BILINGUAL%%'.length), apiConfig);
                     if (!langAText || langAText.length < 2) return null;
                     spokenText = langAText;
                     originalText = langBText || '';
                 } else {
-                    // 鱼声：保留 inline cue 送 API，显示侧剥掉；MiniMax：照旧。
-                    if (isFishTts) {
-                        spokenText = cleanTextForTtsFish(msg.content);
-                        if (!spokenText || spokenText.length < 2) return null;
-                        originalText = stripFishMarkupForDisplay(spokenText) || spokenText;
-                    } else {
-                        originalText = cleanTextForTts(msg.content);
-                        if (!originalText || originalText.length < 2) return null;
-                        spokenText = originalText;
-                    }
+                    spokenText = cleanTextForTtsProvider(voiceSourceContent, apiConfig);
+                    if (!spokenText || spokenText.length < 2) return null;
+                    originalText = stripTtsMarkupForDisplay(spokenText, apiConfig) || spokenText;
                     if (voiceLang) {
                         const langLabel = voiceLanguagePromptLabel(voiceLang);
                         const translated = await llmTranslate(`Translate the following text to ${langLabel}. Output ONLY the translation, nothing else.`, originalText);
@@ -901,7 +907,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             }
             if (blobUrl.startsWith('blob:')) voiceBlobUrlsRef.current.add(blobUrl);
             // 鱼声的 spokenText 里有 inline cue（[whispering] 等），转文字面板要剥掉再存，别让用户看到标记。
-            const displaySpoken = isFishTts ? stripFishMarkupForDisplay(spokenText) : spokenText;
+            const displaySpoken = providerUsesRawVoiceMarkup(apiConfig) ? stripFishMarkupForDisplay(spokenText) : spokenText;
             const storedSpokenText = voiceTagContent ? displaySpoken : (voiceLang ? displaySpoken : undefined);
             const storedLang = voiceLang || undefined;
             setVoiceDataMap(prev => ({ ...prev, [msg.id]: { url: blobUrl, originalText, spokenText: storedSpokenText, lang: storedLang } }));
@@ -1314,10 +1320,10 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         if (!activeCharacterId) return;
 
         const charIdAtStart = activeCharacterId;
-        // 只用倒序游标取「最近 N 条」（含少量缓冲，抵消 date/call/系统消息被过滤后条数变少），
-        // 不再 getAll 全量反序列化 —— 图片多/消息多的账号原本要把整段历史（含内联图片）一次性读进
-        // 内存才显示 30 条，首次打开会卡好几秒。totalCount 走 index.count，不反序列化、极廉价。
+        // 倒序游标先过滤展示范围再取最近 N 条。缓冲只用于判断是否还有历史，
+        // 不能靠固定缓冲抵消见面/通话记录：它们可能连续几百条，挤掉真正的私聊。
         const fetchLimit = requestedVisibleCount >= 100000 ? requestedVisibleCount : requestedVisibleCount + 16;
+        const accept = (message: Message) => isVisibleChatMessage(message, !!charRef.current?.hideSystemLogs);
         const applyResult = (recent: Message[], totalCount: number) => {
             // 用 ref 取当前 char（避免闭包过期）
             const currentChar = charRef.current;
@@ -1336,7 +1342,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
         };
         try {
-            const { messages: recent, totalCount } = await DB.getRecentMessagesWithCount(activeCharacterId, fetchLimit);
+            const { messages: recent, totalCount } = await DB.getRecentMessagesWithCount(activeCharacterId, fetchLimit, accept);
             // Guard against stale async results: if the user switched characters
             // while the DB query was in flight, discard this result.
             if (activeCharIdRef.current !== charIdAtStart) return;
@@ -1347,7 +1353,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             await new Promise(r => setTimeout(r, 200));
             if (activeCharIdRef.current !== charIdAtStart) return;
             try {
-                const { messages: recent, totalCount } = await DB.getRecentMessagesWithCount(activeCharacterId, fetchLimit);
+                const { messages: recent, totalCount } = await DB.getRecentMessagesWithCount(activeCharacterId, fetchLimit, accept);
                 if (activeCharIdRef.current !== charIdAtStart) return;
                 applyResult(recent, totalCount);
             } catch { /* give up silently */ }
@@ -1529,6 +1535,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         setSettingsShowTokenUsage(char.showTokenUsage !== false);
         setSettingsTriggerPlacement(char.chatTriggerPlacement === 'input' ? 'input' : 'header');
         setSettingsHtmlModeCustomPrompt((char as any).htmlModeCustomPrompt || '');
+        setSettingsInputPreferences(inputPreferences);
     }, [modalType, char?.id]);
 
     // Load all messages when history-manager modal opens
@@ -1556,12 +1563,12 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     }, []);
 
     useEffect(() => {
-        if (activeCharacterId && lastMsgTimestamp > 0) {
+        if (activeCharacterId) {
             reloadMessages(visibleCountRef.current);
             clearUnread(activeCharacterId);
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- clearUnread is stable (useCallback with []), omit to prevent stale-dep lint noise
-    }, [lastMsgTimestamp, activeCharacterId, reloadMessages, clearUnread]);
+    }, [lastMsgTimestamp, activeCharacterId, char?.hideSystemLogs, reloadMessages, clearUnread]);
 
     // 即时对话待收记录的跨标签页补听。同一聊天开两个标签页时，回复推送到达后 SW 把
     // 广播发给所有 client，后台标签页的 flush 可能先抢到并落库——销账的 CustomEvent
@@ -1679,7 +1686,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
 
     // --- Actions ---
 
-    const handleSendText = async (customContent?: string, customType?: MessageType, metadata?: any) => {
+    const sendText = async (customContent?: string, customType?: MessageType, metadata?: any) => {
         if (!char || (!input.trim() && !customContent)) return;
         // 只累加内存里的计数，这里不发任何请求；页面切走时才按区间报一次。见 utils/analytics.ts
         noteMessageSent();
@@ -1768,19 +1775,22 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         if (type === 'text') {
             let xhsCardCreated = false;
             let webpageCardCreated = false;
-            const xhsFullNoteId = extractXhsNoteId(text);
+            const xhsFullNote = extractXhsNoteLink(text);
+            const xhsFullNoteId = xhsFullNote?.noteId;
             // 同时识别桌面/旧版 xhslink.com 与手机版新版 xhslink.cn。
             const xhsShortUrl = detectXhsShortUrl(text);
             if (xhsFullNoteId || xhsShortUrl) {
                 let noteId = xhsFullNoteId || '';
-                let xsecToken = text.match(/xsec_token=([^&\s]+)/)?.[1];
+                let xsecToken = xhsFullNote?.xsecToken;
                 let shortLinkError = '';
                 // 短链（xhslink.com / xhslink.cn）不含 id/token —— 先经 sfworker 展开成真实链接再提取。
                 if (!noteId && xhsShortUrl) {
                     try {
                         const finalUrl = await expandShortUrl(xhsShortUrl);
-                        noteId = extractXhsNoteId(finalUrl) || '';
-                        xsecToken = xsecToken || finalUrl.match(/xsec_token=([^&\s]+)/)?.[1];
+                        const expandedNote = extractXhsNoteLink(finalUrl);
+                        noteId = expandedNote?.noteId || '';
+                        xsecToken = expandedNote?.xsecToken;
+                        if (!noteId) shortLinkError = '短链返回的页面中未找到笔记地址';
                         if (isDevDebugAvailable()) console.log('[卡片调试] 小红书短链展开 →', finalUrl, '| noteId =', noteId);
                     } catch (e) {
                         console.warn('xhslink 短链展开失败:', e);
@@ -1804,7 +1814,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                     const mcpUrl = realtimeConfig?.xhsMcpConfig?.serverUrl;
                     if (mcpUrl && realtimeConfig?.xhsMcpConfig?.enabled) {
                         try {
-                            const noteUrl = `https://www.xiaohongshu.com/explore/${noteId}${xsecToken ? `?xsec_token=${xsecToken}&xsec_source=pc_share` : ''}`;
+                            const noteUrl = `https://www.xiaohongshu.com/explore/${noteId}${xsecToken ? `?xsec_token=${encodeURIComponent(xsecToken)}&xsec_source=pc_share` : ''}`;
                             // loadAllComments：和角色自己浏览笔记 (XHS_DETAIL) 一致地把评论区也抓回来，
                             // 否则 user 分享的笔记只有标题/正文，角色读不到评论（char 分享给 user 的却能看到）。
                             const result = await XhsMcpClient.getNoteDetail(mcpUrl, noteUrl, xsecToken, { loadAllComments: true });
@@ -1911,7 +1921,8 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         }
 
         await reloadMessages(visibleCountRef.current);
-        setShowPanel('none');
+        // 自动回复模式下允许连续挑表情，用户主动收起加号等面板后才计时。
+        if (!inputPreferences.autoReply) setShowPanel('none');
 
         // Instant Push 模式：发完文本自动触发 AI（响应在 worker 端跑、后台 push 回写聊天页）。
         // 本地模式仍维持手动触发以保留现有 UX。triggerAI 内部会从 DB 拉完整历史，
@@ -1926,6 +1937,18 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             // 标记"准备中"三个点：拼接+发送期间显示，SSE POST 入队 (onInstantPosted) 后清除。
             setInstantSendingActive(true);
             triggerAI(messages, undefined, () => setInstantSendingActive(false));
+        }
+        return true;
+    };
+
+    const handleSendText = async (customContent?: string, customType?: MessageType, metadata?: any) => {
+        const finish = autoReply.beginSend(char?.id || null);
+        try {
+            const sent = await sendText(customContent, customType, metadata);
+            finish(sent === true && (!customType || ['text', 'image', 'emoji'].includes(customType)));
+        } catch (error) {
+            finish(false);
+            throw error;
         }
     };
 
@@ -2140,6 +2163,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     // 三个点（从写入 DB 到 SSE POST 入队之间），由 onInstantPosted 清除 ——
     // 与 autoTriggerOnSend 自动路径的指示器行为一致。本地模式无此指示器，直接 triggerAI。
     const handleManualTrigger = () => {
+        autoReply.cancel();
         // 同上：上一轮还在跑时 triggerAI 会静默 reject，提前挡掉避免指示灯卡死。
         if (isTyping) return;
         // 即时对话（amsg2）那一轮 POST 完 isTyping 就回 false 了，但云端回复可能还没落库
@@ -2156,6 +2180,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
 
     const handleReroll = async () => {
         if (isTyping || messages.length === 0) return;
+        autoReply.cancel();
 
         const lastMsg = messages[messages.length - 1];
         if (lastMsg.role !== 'assistant') return;
@@ -2184,12 +2209,16 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     };
 
     const handleImageSelect = async (file: File) => {
+        const finishImage = autoReply.beginSend(char?.id || null);
         try {
             const base64 = await processImage(file, { maxWidth: 600, quality: 0.6, forceJpeg: true });
-            setShowPanel('none');
+            if (!inputPreferences.autoReply) setShowPanel('none');
             await handleSendText(base64, 'image');
         } catch (err: any) {
             addToast(err.message || '图片处理失败', 'error');
+        } finally {
+            // 是否真正发出由 handleSendText 标记；这里仅解除图片处理期间的暂停。
+            finishImage(false);
         }
     };
 
@@ -2897,6 +2926,8 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             chatTriggerPlacement: settingsTriggerPlacement,
             htmlModeCustomPrompt: settingsHtmlModeCustomPrompt,
         } as any);
+        setInputPreferences(settingsInputPreferences);
+        saveChatInputPreferences(settingsInputPreferences);
         setModalType('none');
         addToast('设置已保存', 'success');
     };
@@ -3270,6 +3301,8 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                     .join('\n');
                 
                 let prompt = template;
+                const sarMemoryBoundary = buildSARMemoryBoundaryInstruction(rawLog);
+                if (sarMemoryBoundary) prompt = `${sarMemoryBoundary}\n\n${prompt}`;
                 prompt = prompt.replace(/\$\{dateStr\}/g, dateStr);
                 prompt = prompt.replace(/\$\{char\.name\}/g, char.name);
                 prompt = prompt.replace(/\$\{userProfile\.name\}/g, userProfile.name);
@@ -4229,12 +4262,23 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     })), [emojis, activeCategory, hiddenCategoryIds]);
 
     // Memoize ChatInputArea callbacks
-    const handleSendCallback = useCallback(() => handleSendText(), [char, input, replyTarget]);
+    const handleSendCallback = useCallback(() => handleSendText(), [char, input, replyTarget, inputPreferences]);
     const handleCharSelectCallback = useCallback((id: string) => { setActiveCharacterId(id); setShowPanel('none'); }, []);
     // 聊天细节微调（外观 → 聊天细节，全局打底；角色开了「聊天装扮」时逐字段覆盖）：
     // CSS 全默认时为空串不注入；chatModuleAlign 不走 CSS，作为布局属性传给 MessageItem。
     // 注意：这两个 useMemo 必须留在下面 `if (!char) return` 之前——提前返回会跳过它们，
     // hook 数量在两次渲染间对不上，React 会抛 "Rendered fewer hooks than expected" 直接崩。
+    // 合上游新增：自动回复（你不说话时按设置自己接话）。
+    const autoReply = useChatAutoReply({
+        enabled: inputPreferences.autoReply,
+        conversationId: activeCharacterId || null,
+        active: activeApp === AppID.Chat && !!char,
+        blocked: isInputFocused || !!input.trim() || showPanel !== 'none' || modalType !== 'none'
+            || selectionMode || isSummarizing || collaborationOpen
+            || showProactiveModal || showActiveMsg2Modal || showThinkingChainModal,
+        generating: isTyping || instantChatPending || isProactiveComposing,
+        onGenerate: handleManualTrigger,
+    });
     const mergedFineTune = useMemo(() => mergeChatFineTune(osTheme, char?.chatFineTune), [osTheme, char?.chatFineTune]);
     const chatFineTuneCss = useMemo(() => buildChatFineTuneCss(mergedFineTune), [mergedFineTune]);
     // 兜底：正常情况下 OSContext 启动时一定会保底一个角色，char 不该为空。
@@ -4559,6 +4603,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
              )}
 
              <ChatModals
+                settingsInputPreferences={settingsInputPreferences} setSettingsInputPreferences={setSettingsInputPreferences}
                 modalType={modalType} setModalType={setModalType}
                 transferAmt={transferAmt} setTransferAmt={setTransferAmt}
                 transferNote={transferNote} setTransferNote={setTransferNote}
@@ -4719,6 +4764,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 showTrigger={char.chatTriggerPlacement !== 'input'}
                 onClose={onBack || closeApp}
                 onTriggerAI={handleManualTrigger}
+                hideTrigger={inputPreferences.sendButtonGenerates}
                 onShowCharsPanel={() => setShowPanel('chars')}
                 onDeleteBuff={(buffId) => {
                     const currentBuffs = char.activeBuffs || [];
@@ -5252,6 +5298,13 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                     showPanel={showPanel} setShowPanel={setShowPanel}
                     onSend={handleSendCallback}
                     onOpenVoiceInput={() => { setShowPanel('none'); setUserVoiceInputOpen(true); }}
+                    onGenerate={handleManualTrigger}
+                    sendButtonGenerates={inputPreferences.sendButtonGenerates}
+                    enterToSend={inputPreferences.enterToSend}
+                    autoReplyEnabled={inputPreferences.autoReply}
+                    autoReplySeconds={autoReply.seconds}
+                    onCancelAutoReply={autoReply.cancel}
+                    onInputFocusChange={setIsInputFocused}
                     onDeleteSelected={handleBatchDelete}
                     onForwardSelected={handleForwardSelected}
                     onFavoriteSelected={handleFavoriteSelected}
@@ -5260,6 +5313,8 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                     favoriteSkippedCount={selectedFavoriteSkippedCount}
                     favoriteSaving={textFavoriteSaving}
                     emojis={filteredEmojis}
+                    emojiSuggestionsEnabled={inputPreferences.emojiSuggestions}
+                    suggestionEmojis={aiVisibleEmojis}
                     characters={characters} activeCharacterId={activeCharacterId}
                     onCharSelect={handleCharSelectCallback}
                     unreadMessages={unreadMessages}

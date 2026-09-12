@@ -77,6 +77,7 @@ const ToggleRow: React.FC<{
         <button
             type="button"
             role="switch"
+            aria-label={title}
             aria-checked={checked}
             onClick={() => onChange(!checked)}
             className={`relative h-6 w-11 shrink-0 rounded-full border transition-colors ${
@@ -413,6 +414,10 @@ const DevDebugPanel: React.FC = () => {
                             onChange={(checked) => updateFlag('mergeSystemMessages', checked)}
                         />
                         <div className="h-px bg-white/10" />
+                        {import.meta.env.DEV && <>
+                            <ToggleRow title="SAR 剧情与表情校对" detail="临时开放名册回顾，不改变真实星级或奖励。" checked={flags.sarExpressionReview} onChange={checked => updateFlag('sarExpressionReview', checked)} />
+                            <div className="h-px bg-white/10" />
+                        </>}
                         {/* 只是入口：打开后由 Amsg2DebugPanel 自己在页面上挂小窗，本面板不渲染它的内容。 */}
                         <ToggleRow
                             title="amsg2 任务观察窗"

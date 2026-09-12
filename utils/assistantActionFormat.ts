@@ -28,7 +28,15 @@ const normalizeExerciseSummary = (raw: string): string => {
 export const normalizeAssistantEmojiFormatting = (raw: string): string => {
     let content = raw || '';
 
-    // 表情：既修单括号机器语法，也修 UI / 通知里的人类可读摘要。
+    // 表情：先统一双括号里的全角冒号/大小写，再修单括号和历史摘要。
+    content = content.replace(
+        /\[\[\s*SEND_EMOJI\s*[:：]\s*([^\]\r\n]+?)\s*\]\]/gi,
+        (_all, name: string) => `[[SEND_EMOJI: ${name.trim()}]]`,
+    );
+    content = content.replace(
+        /(^|[^\[])\[(?:你|User|用户|System|[\w一-龥]+)\s*发送了表情包[:：]\s*([^\]\r\n]+?)\s*\](?!\])/gm,
+        (_all, prefix: string, name: string) => `${prefix}[[SEND_EMOJI: ${name.trim()}]]`,
+    );
     content = content.replace(
         /(^|[^\[])\[\s*SEND_EMOJI\s*[:：]\s*([^\]\r\n]+?)\s*\](?!\])/gim,
         (_all, prefix: string, name: string) => `${prefix}[[SEND_EMOJI: ${name.trim()}]]`,

@@ -21,6 +21,7 @@ import { encodeVectorsForBackup, encodeVectorsForBackupChunked } from '../utils/
 import { ProactiveChat } from '../utils/proactiveChat';
 import { VRScheduler, type VRSessionOutcome } from '../utils/vrWorld/scheduler';
 import { runVRSession } from '../utils/vrWorld/runSession';
+import { allowsAutomaticVR } from '../utils/vrWorld/participation';
 import { logVRApiCall } from '../utils/vrWorld/vrApi';
 import { VR_DEFAULT_INTERVAL_MIN } from '../utils/vrWorld/constants';
 import { WorldScheduler, toTickEntries } from '../utils/worldHome/scheduler';
@@ -35,9 +36,11 @@ import { rewriteStaleWorkerUrl } from '../utils/proxyWorker';
 import { buildFetchFailureDetail, classifyFetchFailure, describeReachabilityProbe, parseTargetUrl, probeOriginReachability, shouldProbeReachability, summarizeFetchRequestBody } from '../utils/networkFailureDiagnosis';
 import { INSTALLED_APPS, HIDDEN_APP_NAMES } from '../constants';
 import { isAnalyticsRequestUrl, trackEvent, trackDataScaleOnce, trackCurrentAppearanceOnce, trackCurrentCharSettingsOnce, trackCurrentFeaturesOnce } from '../utils/analytics';
+import { loadChatInputPreferences, saveChatInputPreferences } from '../utils/chatInputPreferences';
 import { collectAppearance, collectCharSettings, collectDataScale, collectFeatureFlagsAsync } from '../utils/analyticsSnapshot';
 import { normalizeApiConfig, normalizeApiPreset } from '../utils/apiConfigNormalize';
 import { markBackupDone } from '../utils/backupReminder';
+import { collectSARLocalBackup, restoreSARLocalBackup } from '../utils/vrWorld/sarBackup';
 import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../utils/impression';
 import { normalizeModelIds } from '../utils/modelList';
 import {
@@ -359,7 +362,7 @@ interface OSContextType {
 
   // User Profile
   userProfile: UserProfile;
-  updateUserProfile: (updates: Partial<UserProfile>) => void;
+  updateUserProfile: (updates: Partial<UserProfile> | ((prev: UserProfile) => Partial<UserProfile>)) => void;
 
   availableModels: string[];
   setAvailableModels: (models: string[]) => void;
@@ -2899,12 +2902,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // 调度表里还排着队，角色却已经不接入了（或者压根被删了）：这条调度不该继续存在。
           // 就地撤掉并留一行记录 —— 不撤的话它会一直空转，而空转是完全静默的，
           // 用户那边只看得到「明明全关了，调用记录还在涨」，谁也说不清是哪一边错了。
-          if (!char || !char.vrState?.enabled) {
+          if (!char || !char.vrState?.enabled || (!manual && !allowsAutomaticVR(char.vrState))) {
               VRScheduler.stop(charId);
               void logVRApiCall({
                   ts: Date.now(), charId, charName: char?.name, ok: false, ms: 0,
                   kind: 'skipped', charEnabled: !!char?.vrState?.enabled,
-                  note: char ? '角色未接入彼方，已撤掉这条残留调度' : '角色已不存在，已撤掉这条残留调度',
+                  note: char?.vrState?.enabled ? '角色仅手动活动，已撤掉这条残留调度' : char ? '角色未接入彼方，已撤掉这条残留调度' : '角色已不存在，已撤掉这条残留调度',
               });
               return;
           }
@@ -2917,10 +2920,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   apiConfig: apiConfigRef.current,
                   userProfile: userProfileRef.current,
                   groups: groupsRef.current,
-                  realtimeConfig: realtimeConfigRef.current,
-                  memoryPalaceConfig: memoryPalaceConfigRef.current,
-                  updateCharacter,
-                  forcedRoom: room as any,
+                   realtimeConfig: realtimeConfigRef.current,
+                   memoryPalaceConfig: memoryPalaceConfigRef.current,
+                   updateCharacter,
+                   updateUserProfile,
+                   forcedRoom: room as any,
                   forcedLetterId: letterId,
                   manual,
               });
@@ -2931,6 +2935,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               outcome = 'failed';
           }
 
+          if (!allowsAutomaticVR(charactersRef.current.find(c => c.id === charId)?.vrState)) return;
           const { tripped, streak } = VRScheduler.report(charId, outcome);
           if (!tripped) return;
           // 熔断了：调度已经被掐掉，这里把角色一并落回未接入，让界面和实际跑的东西对上，
@@ -2952,7 +2957,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       // 导入备份后角色虽 enabled 但调度表为空，这里补建/清理使其按时触发。
       VRScheduler.reconcile(
           charactersRef.current
-              .filter(c => c.vrState?.enabled)
+              .filter(c => allowsAutomaticVR(c.vrState))
               .map(c => ({ charId: c.id, intervalMinutes: c.vrState?.intervalMinutes || VR_DEFAULT_INTERVAL_MIN }))
       );
 
@@ -3762,9 +3767,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       await DB.deleteSong(id);
   };
 
-  const updateUserProfile = async (updates: Partial<UserProfile>) => {
-      setUserProfile(prev => {
-          const next = { ...prev, ...updates };
+  const updateUserProfile = async (updates: Partial<UserProfile> | ((prev: UserProfile) => Partial<UserProfile>)) => {
+       setUserProfile(prev => {
+           const patch = typeof updates === 'function' ? updates(prev) : updates;
+           const next = { ...prev, ...patch };
           // 用户资料是所有角色共享的素材（名字、人设直接烤进 fire_pack 模板），改完不打脏的话
           // 角色到点还按旧名字叫你。仿表情库：逐个打脏，没开 2.0 的角色被 markDirty 的门筛掉。
           DB.saveUserProfile(next).then(() => {
@@ -4276,6 +4282,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               cloudBackupConfig: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('os_cloud_backup_config'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
               remoteVectorConfig: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('os_remote_vector_config'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
 
+              // SAR 活动室：公告/初见、双卡池及人格推演记录必须跟用户历史一起迁移。
+              chatInputPreferences: (mode === 'text_only' || mode === 'full') ? loadChatInputPreferences() : undefined,
+              sarLocalState: (mode === 'text_only' || mode === 'full') ? collectSARLocalBackup() : undefined,
+
               // Instant Push
               instantPushConfig: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('instant_push_config_v1'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
               pushVapid: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('push_vapid_v1'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
@@ -4480,6 +4490,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
               if (backupData.socialAppData?.userProfile) processObject(backupData.socialAppData.userProfile, 'socialAppData.userProfile');
               if (backupData.socialAppData?.userBg) processObject(backupData.socialAppData.userBg, 'socialAppData.userBg');
+              if (backupData.sarLocalState) processObject(backupData.sarLocalState, 'sarLocalState');
               if (backupData.roomCustomAssets) processObject(backupData.roomCustomAssets, 'roomCustomAssets');
               if (backupData.theme) processObject(backupData.theme, 'theme');
               if (backupData.customIcons) processObject(backupData.customIcons, 'customIcons');
@@ -4491,6 +4502,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               if (backupData.roomCustomAssets) backupData.roomCustomAssets = stripBase64(backupData.roomCustomAssets);
               if (backupData.customIcons) backupData.customIcons = stripBase64(backupData.customIcons);
               if (backupData.appearancePresets) backupData.appearancePresets = stripBase64(backupData.appearancePresets);
+              if (backupData.sarLocalState) backupData.sarLocalState = stripBase64(backupData.sarLocalState);
               if (backupData.theme) {
                   // Save preset decoration content before stripping (SVGs start with data:image and would be stripped)
                   const savedPresetDecos = backupData.theme.desktopDecorations
@@ -5049,6 +5061,13 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // 备份一旦命中特征就整包拒绝，不能出现“导入了一半才报错”的状态。
           assertSupportedSullyBackup(data);
 
+          // 在 importFullData 为释放内存逐项清空 data 字段前冻结“这是否是主历史替换”。
+          // 新版 media_only 明确不动 SAR；旧备份没有 mode 时，只要带 characters/messages
+          // 就按整档恢复处理，避免导入后继续沿用另一份历史的公告/卡池/推演记录。
+          const replacesPrimaryHistory = data.collaborationBackupMode !== 'media_only'
+              && (Object.prototype.hasOwnProperty.call(data, 'characters')
+                  || Object.prototype.hasOwnProperty.call(data, 'messages'));
+
           // 协同文件先完整读出并校验，再开始写任何主数据库。这样文件索引损坏或 ZIP
           // 缺项时会整包中止，不会出现主数据已恢复、协同文件只回来一半的状态。
           let collaborationAssetRecords: Array<{ id: string; blob: Blob; createdAt: number }> | undefined;
@@ -5218,6 +5237,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           }
           
           showImportProgress('settings', '正在恢复系统设置...', 92, { current: '系统设置', currentFile: '' });
+          if (data.sarLocalState) await restoreAssetsInPlace(data.sarLocalState, 'SAR 存档');
+          restoreSARLocalBackup(data.sarLocalState, { replaceMissing: replacesPrimaryHistory });
+          if (data.chatInputPreferences !== undefined) saveChatInputPreferences(data.chatInputPreferences);
           if (data.theme) {
               await restoreAssetsInPlace(data.theme, '系统主题');
               await updateTheme(data.theme);

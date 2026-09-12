@@ -16,6 +16,15 @@
 const RELOAD_MARK_KEY = 'sullyos_chunk_reload_at';
 const RELOAD_COOLDOWN_MS = 60_000;
 
+// EOF 本身不能证明是 chunk：JSON / 用户脚本也会报语法错误。
+// 只为懒加载 Promise 的拒绝记录来源，保留原 Error 和堆栈（也兼容 frozen Error）。
+const moduleLoadErrors = new WeakSet<object>();
+export const markModuleLoadError = (error: unknown): void => {
+    if (error !== null && typeof error === 'object') moduleLoadErrors.add(error);
+};
+
+const INCOMPLETE_MODULE_RE = /^(?:Unexpected EOF|Unexpected end of (?:input|script))\.?$/i;
+
 /** 各浏览器动态 import / chunk 加载失败的报错指纹 (Safari / Chrome / Firefox / webpack 风格) */
 const CHUNK_ERROR_RE = new RegExp(
     [
@@ -45,7 +54,13 @@ export const isChunkLoadError = (err: unknown): boolean => {
         // 仍优先检查对象里的 message，最后再保留通用 String 兜底。
         messages.push(String(err));
     }
-    return messages.some(msg => CHUNK_ERROR_RE.test(msg));
+    if (messages.some(msg => CHUNK_ERROR_RE.test(msg))) return true;
+    // 合上游新增：模块脚本被截断时浏览器只抛一个光秃秃的 SyntaxError（Unexpected EOF 之类），
+    // 单看文案跟普通语法错误分不开，所以只认 preloadableLazy 标记过的那些。
+    return err instanceof Error
+        && moduleLoadErrors.has(err)
+        && err.name === 'SyntaxError'
+        && INCOMPLETE_MODULE_RE.test(err.message.trim());
 };
 
 /**

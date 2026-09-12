@@ -150,6 +150,16 @@ describe('DatePrompts.buildSessionPayload', () => {
         expect(sys).toContain('仅过几分钟时，绝不能');
         expect(sys).toContain('不要因为用户没有重复提醒');
     });
+
+    it('没有模块状态时，Date system prompt 不增加 SAR 文本或输出容器', async () => {
+        const { messages } = await DatePrompts.buildSessionPayload({
+            ...baseInput(makeChar({ vrState: { enabled: true, intervalMinutes: 120 } })),
+            userProfile: { ...user, vrState: { enabled: true } },
+        });
+        const sys = sysOf(messages);
+        expect(sys).not.toContain('### SAR 临时模块');
+        expect(sys).not.toContain('<SAR_MODULE_OUTPUT>');
+    });
 });
 
 describe('DatePrompts scene clock', () => {
@@ -208,6 +218,7 @@ describe('DatePrompts scene clock', () => {
         expect(messages.some(message => JSON.stringify(message).includes('我们坐一会儿'))).toBe(true);
         expect(messages[messages.length - 1].role).toBe('user');
     });
+
 });
 
 describe('OBSERVE 观测协议', () => {

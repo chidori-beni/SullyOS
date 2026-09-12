@@ -1034,7 +1034,9 @@ ${extraBlock ? `\n${extraBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlo
 - 这个内部标记和任何来源标记都不能出现在你的正文、台词或动作描写中。
 - 继续输出当前线下剧本格式；除非内容本身需要，不要因为手机消息就让双方瞬间换场或结束见面。` : '';
 
-        const systemPrompt = baseSystemPrompt + phoneContinuityBlock;
+        // SAR 模块（恐龙咖啡馆）正在生效时，把它的上下文也挂上去 —— 合上游时新增。
+        const systemPrompt = baseSystemPrompt + phoneContinuityBlock
+            + ContextBuilder.buildSARModuleContext(char, userProfile, 'date');
 
         // 每轮轮换的聚焦线索：把注意力推向不同的具体方向，相邻回复天然有差异
         const focusLine = isDigDeeperOn(char.dateStyleConfig) ? ` 本轮线索：${pickFocusHint()}。` : '';

@@ -7,10 +7,12 @@
 import { CharacterProfile, APIConfig } from '../types';
 import {
   synthesizeSpeechDetailed as minimaxSynthesizeDetailed,
+  cleanTextForTts,
+  cleanVoiceMarkupForDisplay,
   type TtsResult,
   type TtsSynthOptions,
 } from './minimaxTts';
-import { synthesizeSpeechFishDetailed, resolveFishAudioApiKey } from './fishAudioTts';
+import { synthesizeSpeechFishDetailed, resolveFishAudioApiKey, cleanTextForTtsFish, stripFishMarkupForDisplay } from './fishAudioTts';
 import { resolveTtsProvider } from './ttsProvider';
 import { resolveMiniMaxApiKey } from './minimaxApiKey';
 
@@ -68,3 +70,18 @@ export const canSynthesizeSpeech = (char: CharacterProfile, apiConfig: APIConfig
 /** 鱼声的清洗器需要看到原始 inline cue；MiniMax 用已消毒的 speech。 */
 export const providerUsesRawVoiceMarkup = (apiConfig: APIConfig): boolean =>
   resolveTtsProvider(apiConfig) !== 'minimax';
+
+/**
+ * 按服务商清洗待朗读文本，调用方不必自己猜哪种标记该保留。
+ *
+ * （合上游恐龙咖啡馆那批时补的：Chat.tsx 生成语音前统一走它。
+ *   上游那份还分了 ElevenLabs 一路，本 fork 没接，只留 MiniMax / 鱼声两家。）
+ */
+export const cleanTextForTtsProvider = (text: string, apiConfig: APIConfig): string => (
+  resolveTtsProvider(apiConfig) === 'fishaudio' ? cleanTextForTtsFish(text) : cleanTextForTts(text)
+);
+
+/** 按服务商剥掉只给 TTS 看的标记，用于界面显示。 */
+export const stripTtsMarkupForDisplay = (text: string, apiConfig: APIConfig): string => (
+  resolveTtsProvider(apiConfig) === 'fishaudio' ? stripFishMarkupForDisplay(text) : cleanVoiceMarkupForDisplay(text)
+);

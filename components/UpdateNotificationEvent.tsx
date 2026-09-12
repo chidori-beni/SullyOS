@@ -1,3 +1,5 @@
+import { SARUpdatePopup } from './os/SARUpdatePopup';
+import { SAR_UPDATE_KEY, SAR_CHANGELOG, sarLaunch } from '../utils/sarUpdate';
 /**
  * 全局版本更新提醒。
  *
@@ -569,11 +571,21 @@ const NetworkTransitNoticePopup: React.FC<UpdatePopupProps> = ({ onDone, onExit 
  * 同时上线好几个功能时，各自值得单独说一次，所以排成队列：关掉一条接着弹下一条，
  * 已读各记各的 key——点掉其中一条不影响另一条还会不会露面。
  */
+const SARUpdateAnnouncement: React.FC<UpdatePopupProps> = ({ onDone, onExit }) => {
+    const { openApp } = useOS();
+    return <SARUpdatePopup onDone={onDone} onVisit={() => {
+        sarLaunch.request(); openApp(AppID.VRWorld); onExit();
+    }} onGuide={() => {
+        try { sessionStorage.setItem(FAQ_TARGET_SECTION_KEY, SAR_CHANGELOG); } catch { /* 手册首页仍可打开 */ }
+        openApp(AppID.FAQ); onExit();
+    }}/>;
+};
+
 const UPDATE_QUEUE: { key: string; render: (props: UpdatePopupProps) => React.ReactNode }[] = [
     { key: UPDATE_NOTIFICATION_KEY_2026_08_30, render: (props) => <CollaborationUpdatePopup {...props} /> },
+    { key: SAR_UPDATE_KEY, render: (props) => <SARUpdateAnnouncement {...props} /> },
     { key: NETWORK_TRANSIT_NOTICE_KEY_2026_08, render: (props) => <NetworkTransitNoticePopup {...props} /> },
     { key: UPDATE_NOTIFICATION_KEY_2026_08_10, render: (props) => <Live2DUpdatePopup {...props} /> },
-    { key: UPDATE_NOTIFICATION_KEY_2026_08_03, render: (props) => <Amsg2UpdatePopup {...props} /> },
 ];
 
 export const shouldShowUpdateNotification = (): boolean => UPDATE_QUEUE.some((entry) => !isUpdateSeen(entry.key));

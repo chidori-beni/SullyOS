@@ -29,6 +29,7 @@ import { vectorizeAndStore } from './vectorStore';
 import { bulkSetArchived } from './supabaseVector';
 import { safeFetchJson, extractContent, extractJson } from '../safeApi';
 import { enforceSummaryLengthBudget } from './summaryLengthBudget';
+import { buildSARMemoryBoundaryInstruction } from '../messageFormat';
 
 const VALID_ROOMS: MemoryRoom[] = [
     'living_room', 'bedroom', 'study', 'user_room',
@@ -165,6 +166,7 @@ async function callCompressionLLM(
     const oldSummaryBlock = oldSummaryContent
         ? `\n## 你之前已经回忆过这件事一次，那时记下的是：\n${oldSummaryContent}\n\n后来又新增了下面这些：\n`
         : `\n## 关于这件事的零散记忆碎片：\n`;
+    const sarMemoryBoundary = buildSARMemoryBoundaryInstruction(`${oldSummaryContent || ''}\n${livesText}`);
 
     const systemPrompt = `你是 ${charName}。下面这些记忆都属于一件事：「${box.name}」。
 请把它们整合成一段连贯的、第一人称（「我」）的回忆。
@@ -177,6 +179,7 @@ async function callCompressionLLM(
 5. **连贯但简洁**：不套「起因/经过/结果」模板，但要让读者能按顺序看懂事情怎么发展的。
 6. **覆盖所有关键词**（这是给向量检索用的）—— 每条新增的旧记忆里出现过的具体名词、地点、人物必须在 content 里出现一次。
 7. **content 字符串内严禁使用半角双引号 \`"\`**。要引用人物原话、书名、外号、术语，一律用中文方角引号「」、《》或单引号 \`'\`。否则会破坏外层 JSON 解析、整批记忆白丢。
+${sarMemoryBoundary ? `\n${sarMemoryBoundary}` : ''}
 
 附带输出 metadata：
 - name：5-12 字的精炼盒名

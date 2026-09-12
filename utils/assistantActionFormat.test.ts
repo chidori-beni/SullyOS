@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { normalizeAssistantActionFormatting as normalize } from './assistantActionFormat';
 
 describe('normalizeAssistantActionFormatting', () => {
+    it.each(['[[SEND_EMOJI：咬你]]', '[[send_emoji: 咬你]]', '[凯恩 发送了表情包：咬你]'])('统一表情变体 %s 且重复处理不变', raw => {
+        expect(normalize(raw)).toBe('[[SEND_EMOJI: 咬你]]');
+        expect(normalize(normalize(raw))).toBe('[[SEND_EMOJI: 咬你]]');
+    });
+
     it('修复单括号与展示态表情，并保持规范标签幂等', () => {
         expect(normalize('[SEND_EMOJI: 开心]')).toBe('[[SEND_EMOJI: 开心]]');
         expect(normalize('[表情：小狗泪丧]')).toBe('[[SEND_EMOJI: 小狗泪丧]]');

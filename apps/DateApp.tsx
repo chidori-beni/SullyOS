@@ -39,6 +39,13 @@ import {
 } from '../utils/dateBackgroundJobs';
 import { buildInPersonContinueInstruction } from '../utils/meetingContinue';
 import {
+    advanceSARModuleAfterReply,
+    createSARModuleEventMeta,
+    createSARModuleSurfaceMeta,
+    getSARModuleRuntimePlan,
+    parseSARModuleReply,
+} from '../utils/vrWorld/sarModuleRuntime';
+import {
     buildDateHistoryGroups,
     formatDateHistoryDate,
     formatDateHistoryExport,
@@ -73,7 +80,7 @@ const isFiniteNumber = (value: unknown): value is number =>
     typeof value === 'number' && Number.isFinite(value);
 
 const DateApp: React.FC = () => {
-    const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, apiConfig, addToast, updateCharacter, virtualTime, userProfile, memoryPalaceConfig, dateAutoStartCharId, consumeDateAutoStart, characterGroups, groups, realtimeConfig } = useOS();
+    const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, apiConfig, addToast, updateCharacter, updateUserProfile, virtualTime, userProfile, memoryPalaceConfig, dateAutoStartCharId, consumeDateAutoStart, characterGroups, groups, realtimeConfig } = useOS();
 
     // 是否由聊天「见面」按钮进入：为真时，退出见面流程回到聊天而非见面选择页/桌面。
     // 用本地 state（而非 context）承载：DateApp 切走即卸载，标记随之消失，不会泄漏到
@@ -1247,6 +1254,7 @@ const DateApp: React.FC = () => {
         const requestId = beginDateTurnRequest();
         const encounter = reconcileEncounterFromSceneSnapshot(ensureEncounter());
         const encounterSnapshot = { ...encounter };
+        const sarModulePlan = getSARModuleRuntimePlan(char, userProfile);
 
         // 重发场景：如果 DB 里最后一条已经是这条 user 消息（上一轮发送后 API 失败 / 网络抖动等），
         // 就跳过重复落库，直接走 API。与 chat app 行为对齐，让用户按发送键即可重新触发 LLM。
@@ -1618,6 +1626,28 @@ const DateApp: React.FC = () => {
             ? { ...char, activeDateEncounter: getActiveDatePresence(char.id) || undefined }
             : char);
         trackEvent('重掷见面回复', { 目标: '回复', 时间结果: resolved.resolution });
+        const sarPlan = getSARModuleRuntimePlan(char, userProfile);
+        const parsed = parseSARModuleReply(rawContent, sarPlan);
+        const sarModuleEvents = createSARModuleEventMeta(sarPlan);
+        const userSurface = sarPlan.user?.phase === 'active' && parsed.userSurface
+            ? createSARModuleSurfaceMeta(sarPlan.user, parsed.userSurface)
+            : undefined;
+        if (sarModuleEvents.length > 0 || userSurface) {
+            await DB.updateMessageMetadata(lastUserMsg.id, previous => ({
+                ...(previous || {}),
+                ...(userSurface ? { sarModuleSurface: userSurface } : {}),
+                ...(sarModuleEvents.length > 0 ? { sarModuleEvents } : {}),
+            }));
+        }
+        const assistantSurface = sarPlan.character?.phase === 'active' && parsed.assistantSurface
+            ? createSARModuleSurfaceMeta(sarPlan.character, parsed.assistantSurface)
+            : undefined;
+
+        // 生成成功后才删旧回复：以前先删后调 API，请求一失败上一条剧情就永久消失
+        await DB.deleteMessage(lastMsg.id);
+        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: parsed.canonical, metadata: { source: 'date', ...(assistantSurface ? { sarModuleSurface: assistantSurface } : {}) } });
+        markDateTurnDirty(char);
+        trackEvent('重掷见面回复', { 目标: '回复' });
 
         // Sync
         await loadDateMessages(DATE_SESSION_MESSAGE_LIMIT);
@@ -1625,7 +1655,7 @@ const DateApp: React.FC = () => {
         // Memory Palace 后台流程（Reroll 也算一轮新输出）
         runMemoryPalacePostHook(char);
 
-        return content;
+        return parsed.assistantSurface || parsed.canonical;
     };
 
     // --- Editing & Deletion ---

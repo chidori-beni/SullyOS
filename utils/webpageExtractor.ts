@@ -151,7 +151,7 @@ export function extractXhsShareTitle(text: string): string {
   const xhsUrl = urls.find(candidate => isXhsUrl(candidate.replace(/[.,;:!?'"）)\]】]+$/, '')));
   if (!xhsUrl) return '';
 
-  const prefix = cleanXhsShareTitle(text.slice(0, text.indexOf(xhsUrl)));
+  const prefix = cleanXhsShareTitle(text.slice(0, text.indexOf(xhsUrl)).replace(/\[$/, ''));
   return /^(?:小红书|REDnote)$/i.test(prefix) ? '' : prefix;
 }
 
@@ -166,11 +166,11 @@ export function isXhsUrl(url: string): boolean {
 }
 
 /**
- * 从完整分享文案或单个链接中提取小红书笔记 ID。
+ * 从完整分享文案或单个链接中提取小红书笔记 ID 和已解码的 token。
  * 同时支持国内域名 xiaohongshu.com 和新版国际域名 rednote.com；
  * xhslink.com / xhslink.cn 短链没有 ID，需先 expandShortUrl 后再调用本函数。
  */
-export function extractXhsNoteId(text: string): string | null {
+export function extractXhsNoteLink(text: string): { noteId: string; xsecToken?: string } | null {
   if (!text) return null;
 
   const candidates: string[] = [...(text.match(/https?:\/\/[^\s，。！？；、"'《》()（）【】]+/ig) || [])];
@@ -179,18 +179,33 @@ export function extractXhsNoteId(text: string): string | null {
 
   for (const candidate of candidates) {
     try {
-      const parsed = new URL(candidate.replace(/[.,;:!?'")\]]+$/, ''));
-      const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
-      const isNoteHost = ['xiaohongshu.com', 'rednote.com']
-        .some(domain => host === domain || host.endsWith(`.${domain}`));
-      if (!isNoteHost) continue;
-      const noteId = parsed.pathname.match(XHS_NOTE_PATH_RE)?.[1];
-      if (noteId) return noteId;
+      // 分享文本可能来自 Markdown；只还原链接中的常见转义。
+      let parsed = new URL(candidate.replace(/\\([_&])/g, '$1').replace(/[.,;:!?'")\]]+$/, ''));
+      for (let depth = 0; depth < 4; depth++) {
+        const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
+        const isNoteHost = ['xiaohongshu.com', 'rednote.com']
+          .some(domain => host === domain || host.endsWith(`.${domain}`));
+        if (!isNoteHost || !/^https?:$/.test(parsed.protocol)) break;
+        const noteId = parsed.pathname.match(XHS_NOTE_PATH_RE)?.[1];
+        if (noteId) {
+          // URLSearchParams 解码一次即可：手机分享常带 %3D，不能原样送给详情 API。
+          return { noteId, xsecToken: parsed.searchParams.get('xsec_token') || undefined };
+        }
+        // 兼容旧代理一路 follow 到验证码页的响应，不需要访问或通过验证码。
+        if (parsed.pathname !== '/website-login/captcha') break;
+        const redirectPath = parsed.searchParams.get('redirectPath');
+        if (!redirectPath) break;
+        parsed = new URL(redirectPath, parsed.origin);
+      }
     } catch {
       // 忽略文案里的坏链接，继续检查下一个 URL。
     }
   }
   return null;
+}
+
+export function extractXhsNoteId(text: string): string | null {
+  return extractXhsNoteLink(text)?.noteId || null;
 }
 
 /**

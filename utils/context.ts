@@ -18,6 +18,7 @@ import {
     type WorldbookScanMessage,
 } from './worldbook';
 import { resolveUserMacroName, expandCharBodyMacros, buildChatPartnerNote, buildHostBondNote } from './characterIdentity';
+import { buildSARModulePrompt } from './vrWorld/sarModuleRuntime';
 
 /**
  * Memory Central
@@ -25,6 +26,16 @@ import { resolveUserMacroName, expandCharBodyMacros, buildChatPartnerNote, build
  * 包含：身份设定、用户画像、世界观、核心记忆、详细记忆、以及角色内心看法。
  */
 export const ContextBuilder = {
+
+    /**
+     * SAR 模块的唯一上下文出口。调用方按自身输出格式选择 chat/date，避免把模块规则
+     * 复制进每个 App，也避免误改基础人设、记忆召回或情绪状态本身。
+     */
+    buildSARModuleContext: (
+        char: CharacterProfile,
+        user: UserProfile,
+        surface: 'chat' | 'date',
+    ): string => buildSARModulePrompt(char, user, surface),
 
     /**
      * 构建角色设定+记忆上下文（角色名、核心指令、世界观 + 月度总结 & 当月日度总结）

@@ -13,6 +13,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { APIConfig, CharacterProfile, CloudBackupConfig, OSTheme, RealtimeConfig } from '../types';
 import {
+    collectSARFeatureFlags,
     amsg2Stage,
     collectAppearance,
     collectCharSettings,
@@ -485,6 +486,28 @@ describe('当前角色设置 · 桌面陪伴与通话形象', () => {
             } as unknown as CharacterProfile],
             'a',
         );
+        expectNoLeak(flags);
+    });
+});
+
+
+describe('SAR / 私聊 / 周年赠礼快照', () => {
+    it('明确开关进入枚举快照，字段内容与用户输入不泄漏', () => {
+        localStorage.setItem('sully-chat-input-preferences-v1', JSON.stringify({ sendButtonGenerates: true, enterToSend: false, autoReply: true, private: POISON.key }));
+        localStorage.setItem('vr_sar_club_state_v1', JSON.stringify({ npcPreference: 'hide', roomView: 'characters-hidden', introReaction: POISON.myName }));
+        localStorage.setItem('vr_fishing_simple_mode', 'true');
+        localStorage.setItem('vr_sar_session_theme_v1', 'light');
+        localStorage.setItem('sullyos_first_anniversary_seen_v1', '1');
+        const flags = collectSARFeatureFlags();
+        expect(flags).toMatchObject({ 发送键生成: '开', 回车发送: '关', 自动回复: '开', SAR角色: '关', SAR房间显示: '隐藏角色', SAR简易钓鱼: '开', SAR对话配色: '浅色', 周年赠礼已阅: '是' });
+        expectNoLeak(flags);
+    });
+    it('各新来源都塞入毒药也只输出缺省枚举', () => {
+        localStorage.setItem('sully-chat-input-preferences-v1', JSON.stringify({ sendButtonGenerates: POISON.key, enterToSend: POISON.key, autoReply: POISON.key }));
+        localStorage.setItem('vr_sar_club_state_v1', JSON.stringify({ npcPreference: POISON.key, roomView: POISON.key }));
+        for (const key of ['vr_fishing_simple_mode','vr_sar_session_theme_v1','sullyos_first_anniversary_seen_v1']) localStorage.setItem(key, POISON.key);
+        const flags = collectSARFeatureFlags();
+        expect(flags).toMatchObject({ 发送键生成: '关', 回车发送: '开', 自动回复: '关', SAR角色: '未选择', SAR房间显示: '全部显示', SAR简易钓鱼: '关', SAR对话配色: '浅色', 周年赠礼已阅: '否' });
         expectNoLeak(flags);
     });
 });

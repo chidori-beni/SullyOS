@@ -29,6 +29,8 @@ interface ChatHeaderShellProps {
     triggerIcon?: 'lightning' | 'stop';
     /** 是否在顶栏显示触发 AI 按钮；关闭时由输入栏接管。 */
     showTrigger?: boolean;
+    /** 私聊启用底部生成入口时隐藏顶栏闪电（合上游新增）。 */
+    hideTrigger?: boolean;
     isEmotionEvaluating?: boolean;
     isInstantSending?: boolean;
     isMemoryPalaceProcessing?: boolean;
@@ -88,6 +90,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     extraAction,
     triggerIcon = 'lightning',
     showTrigger = true,
+    hideTrigger = false,
     hideBuffs = false,
     showTokenUsage = true,
     headerStyle = 'default',
@@ -440,7 +443,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                         {renderCenteredInfo()}
                     </div>
 
-                    {showTrigger && (
+                    {showTrigger && !hideTrigger && (
                         <button onClick={onTriggerAI} className={`sully-chat-trigger absolute right-0 bottom-2 p-2 ${actionButtonClass}`} title={triggerIcon === 'stop' ? '停止生成' : '触发 AI'}>
                             {triggerIconNode}
                         </button>

@@ -2,6 +2,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Modal from '../os/Modal';
 import { CharacterProfile, ChatTriggerPlacement, Message, Emoji, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
+import ChatInputSettings from './ChatInputSettings';
+import ChatSettingsSection from './ChatSettingsSection';
+import type { ChatInputPreferences } from '../../utils/chatInputPreferences';
 import ScheduleCard from '../schedule/ScheduleCard';
 import EmotionSettingsPanel from './EmotionSettingsPanel';
 import { isTranslationLangPreset, normalizeTranslationLangLabel, TRANSLATION_LANG_MAX_LENGTH, TRANSLATION_LANG_PRESETS } from '../../utils/translationLang';
@@ -31,6 +34,9 @@ interface ChatModalsProps {
     setSettingsContextRangeMode: (v: ContextRangeMode) => void;
     settingsHideSysLogs: boolean;
     setSettingsHideSysLogs: (v: boolean) => void;
+    /** 合上游新增：输入与发送偏好（发送键行为 / 回车 / 自动回复）。 */
+    settingsInputPreferences: ChatInputPreferences;
+    setSettingsInputPreferences: (value: ChatInputPreferences) => void;
     settingsShowTokenUsage: boolean;
     setSettingsShowTokenUsage: (v: boolean) => void;
     settingsShowRecallSubmitStatus: boolean;
@@ -273,6 +279,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     settingsContextLimit, setSettingsContextLimit,
     settingsContextRangeMode, setSettingsContextRangeMode,
     settingsHideSysLogs, setSettingsHideSysLogs,
+    settingsInputPreferences, setSettingsInputPreferences,
     settingsShowTokenUsage, setSettingsShowTokenUsage,
     settingsShowRecallSubmitStatus, setSettingsShowRecallSubmitStatus,
     settingsTriggerPlacement, setSettingsTriggerPlacement,
@@ -454,6 +461,10 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                 footer={<button onClick={onSaveSettings} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">保存设置</button>}
             >
                 <div className="space-y-6">
+                     {/* 合上游新增：输入与发送。单开一节放在最前面，下面原有的设置一项没动。 */}
+                     <ChatSettingsSection title="输入与发送" summary="发送键行为、回车、自动回复">
+                         <ChatInputSettings value={settingsInputPreferences} onChange={setSettingsInputPreferences} />
+                     </ChatSettingsSection>
                      {apiConfig && apiPresets && onApplyMainApiPreset && (
                          <div className="rounded-2xl border border-sky-200 bg-sky-50 p-3.5">
                              <div className="flex items-start justify-between gap-3">

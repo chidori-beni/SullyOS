@@ -1,3 +1,6 @@
+import { acquireCharacterModule, consumeCharacterModule, characterModuleAllowance, characterModuleCount } from './sarCharacterCommerce';
+import { newSARPurchaseId } from './sarCommerce';
+import { applyKanataTitle, extractKanataTitle } from './kanataTitle';
 /**
  * 「彼方」会话运行器 —— 一次自主登入的完整闭环。
  *
@@ -46,6 +49,27 @@ import {
     buildTheaterRoomTurn, parseScriptOutput,
     buildSignalRoomTurn, parseSignalOutput,
 } from './prompts';
+import {
+    buildSARCharacterCabinetTurn,
+    createSARCharacterCabinetNote,
+    parseSARCharacterCabinetOutput,
+    rollSARCharacterCabinetScenario,
+    type SARCharacterCabinetScenario,
+} from './sarCharacterCabinet';
+import { SAR_MODULE_CATALOG, type SARModuleDefinition } from './sarModuleShop';
+import { installSARModuleOnUser } from './sarModuleRuntime';
+import {
+    beginFishingTrip, pendingFishingTrip, settleFishingTrip, ensureActorAccounts, listMarketActors, mutateFishingMarket, resolveFishingWeather,
+    speciesById, type FishingCatch, type MarketActor,
+} from './fishingMarket';
+import {
+    applyMarketPlan, buildFishingTurn, buildMarketTurn, flushMarketReceipts, parseFishingReaction,
+    parseMarketPlan,
+} from './fishingCharacter';
+import { readFishingMarketState } from './fishingMarket';
+import { allowsAutomaticVR, withLatestVRParticipation } from './participation';
+import { fishingTripCard, flushFishingDeliveries } from './fishingDelivery';
+import { prepareGardenVisit,parseGardenVisit,applyGardenVisit,gardenVisitAvailable,type GardenVisitSnapshot } from './dinosaurCharacter';
 
 /** 记忆管线所需配置的最小形状（避免从 OSContext 反向 import 造成循环依赖）。 */
 interface MemoryConfigLike {
@@ -62,9 +86,13 @@ export interface VRSessionDeps {
     groups: GroupProfile[];
     realtimeConfig?: RealtimeConfig;
     memoryPalaceConfig?: MemoryConfigLike;
-    updateCharacter: (id: string, updates: Partial<CharacterProfile>) => Promise<void> | void;
+    updateCharacter: (id: string, updates: Partial<CharacterProfile> | ((current: CharacterProfile) => Partial<CharacterProfile>)) => Promise<void> | void;
+    /** 角色在 SAR 商店对用户装载模块时写回用户状态；旧调用方可省略。 */
+    updateUserProfile?: (updates: Partial<UserProfile> | ((prev: UserProfile) => Partial<UserProfile>)) => Promise<void> | void;
     /** 用户手动触发时指定的房间；省略 = 随机。不可用（如指定图书馆但无书）时自动回退随机。 */
     forcedRoom?: VRRoomId;
+    /** 手动从水域入口出发时明确活动，不改变其它房间的随机规则。 */
+    forcedSARActivity?: 'fishing' | 'market' | 'garden';
     /** 用户在邮局指定要让该角色回复的来信 id（forcedRoom 应为 postoffice）。 */
     forcedLetterId?: string;
     /** 用户亲手点的（「让 ta 现在去逛一次」这类），不受自动登入的最小间隔闸限制。 */
@@ -210,23 +238,62 @@ function nameLine(name: string, act: string): string {
     return t.startsWith(name) ? t : `${name}${act}`;
 }
 
-/** roll 一个房间：图书馆需有书；听歌房需有歌单或正在放歌；留言簿/娱乐室/邮局/剧院恒可去。 */
-export function rollRoom(char: CharacterProfile, novels: VRWorldNovel[], musicState: VRMusicRoomState | null, prefer?: VRRoomId): VRRoomId | null {
+function readTaggedValue(raw: string, tag: string): string {
+    const match = raw.match(new RegExp(`<${tag}>\\s*([\\s\\S]*?)\\s*</${tag}>`, 'i'));
+    return match?.[1]?.trim() || '';
+}
+
+function buildSARModuleShopTurn(charName: string, module: SARModuleDefinition, canUseOnUser: boolean, userName: string, available = true): string {
+    return `你这次在彼方的 SAR 活动空间逛模块商店，并选中了「${module.title}」。
+模块作用：${module.description}
+${available ? `这枚模块已有库存，或可用你自己的 ${module.price} 鳞币购买；你也可以只逛不买。` : '你今天的零用预算不足，手里也没有这枚模块；只能浏览、研究展示或吐槽，不能买下、赠送或装载。'}
+${canUseOnUser
+        ? `${userName} 此刻也在 SAR，且明确允许角色对自己使用模块。请根据 ${charName} 的性格与双方关系，决定是当场对 ${userName} 装载，还是只买下来研究。`
+        : '用户此刻不满足被装载条件，你可以看展示、研究或吐槽，禁止声称已对用户装载。'}
+
+请写一段具体、符合角色的自由活动记录，不要泛泛概括。严格输出：
+<ACTIVITY>第三人称一句话概述，20~55字</ACTIVITY>
+<NOTE>角色自己的详细随笔/吐槽，60~180字</NOTE>
+<BUY>${available ? 'YES 或 NO，是否想用自己的钱买下；已有库存则不重复扣款' : 'NO'}</BUY>
+<USE_ON_USER>${canUseOnUser ? 'YES 或 NO' : 'NO'}</USE_ON_USER>`;
+}
+
+/** roll 一个房间：图书馆需有书；听歌房需有歌单或正在放歌；其余常规房间与 SAR 恒可去。 */
+export function rollRoom(
+    char: CharacterProfile,
+    novels: VRWorldNovel[],
+    musicState: VRMusicRoomState | null,
+    prefer?: VRRoomId,
+    random: () => number = Math.random,
+): VRRoomId | null {
     // 信号坠落处【不进随机池】——它是用户自发参与的特殊活动，只在用户点「参与→指定角色」
     // 时以 forcedRoom='signal' 进入，角色不会自己随机逛过去。
     if (prefer === 'signal') return 'signal';
     // 用户手动点“听歌房”时必须尊重选择。即使当前没有歌，听歌房提示词也支持
     // 角色戴着耳机放空；不能因为没有歌单就悄悄随机跳去剧院等其他房间。
     if (prefer === 'music') return 'music';
-    const pool: VRRoomId[] = ['guestbook', 'gym', 'postoffice', 'theater'];
+    const pool: VRRoomId[] = ['guestbook', 'gym', 'postoffice', 'theater', 'sar'];
     if (novels.length > 0) pool.push('library');
     if (gatherCharSongs(char).length > 0 || musicState?.nowPlaying) pool.push('music');
     if (prefer && pool.includes(prefer)) return prefer; // 指定的房间可用则去，否则回退随机
-    return pool[Math.floor(Math.random() * pool.length)];
+    const rolled = Number(random());
+    const normalized = Number.isFinite(rolled) ? Math.max(0, Math.min(0.999999999, rolled)) : 0;
+    return pool[Math.floor(normalized * pool.length)];
 }
 
 export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult> {
-    const { char, characters, apiConfig, userProfile, groups, realtimeConfig, memoryPalaceConfig, updateCharacter, forcedRoom, forcedLetterId, manual } = deps;
+    if (typeof navigator !== 'undefined' && navigator.locks) {
+        return navigator.locks.request('vr-character-session:' + deps.char.id, { ifAvailable: true }, lock =>
+            lock ? runVRSessionUnlocked(deps) : Promise.resolve({ ok: false, reason: 'busy' }));
+    }
+    return runVRSessionUnlocked(deps);
+}
+async function runVRSessionUnlocked(deps: VRSessionDeps): Promise<VRSessionResult> {
+    const { char, characters, apiConfig, userProfile, groups, realtimeConfig, memoryPalaceConfig, updateUserProfile, forcedRoom, forcedSARActivity, forcedLetterId, manual } = deps;
+    if (!char.vrState?.enabled) return { ok: false, reason: 'not-enabled' };
+    if (!manual && !allowsAutomaticVR(char.vrState)) return { ok: false, reason: 'manual-only' };
+    const updateCharacter = (id: string, patch: Partial<CharacterProfile>) =>
+        deps.updateCharacter(id, current => withLatestVRParticipation(current, patch));
 
     if (running.has(char.id)) return { ok: false, reason: 'busy' };
 
@@ -292,6 +359,8 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
         // 公共材料
         const emojis = await DB.getEmojis();
         const categories = await DB.getEmojiCategories();
+        // 上游这里改用了 loadCharacterContextMessages（9/06 的「统一上下文范围」那批），
+        // 本 fork 还没搬那一批，沿用原来的读法：按角色自己的 contextLimit 取最近若干条。
         const contextLimit = char.contextLimit || 500;
         const historyMsgs = await DB.getRecentMessagesByCharId(char.id, contextLimit);
 
@@ -324,6 +393,14 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
         let signalMode: 'append' | 'start' = 'append';
         let signalRolledLines = 0;
         let signalWhisper = '';
+        let sarScenario: SARCharacterCabinetScenario | null = null;
+        let sarMode: 'cabinet' | 'module-shop' | 'fishing' | 'market' | 'garden' | null = null;
+        let gardenSnapshot: GardenVisitSnapshot | null = null;
+        let fishingCatch: FishingCatch | null = null;
+        const fishingActor: MarketActor = { id: char.id, name: char.name, kind: 'character' };
+        let sarShopModule: SARModuleDefinition | null = null;
+        let sarShopAvailable = false;
+        let sarCanUseOnUser = false;
         const recallNames = new Set<string>();
         const recallExtra: string[] = [];
 
@@ -376,6 +453,7 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
             occupantsOf('music').forEach(n => recallNames.add(n));
             roomTurn = buildMusicRoomTurn(musicState, occupantsOf('music'), pickable, char.name, nowLyric);
         } else if (room.id === 'guestbook') {
+            await flushFishingDeliveries(characters).catch(() => {});
             guestbook = await DB.getVRGuestbook();
             let hotTopics: string[] = [];
             try {
@@ -384,7 +462,7 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
                 hotTopics = items.map(it => it?.title || it?.name || it?.desc).filter(Boolean);
             } catch { /* 热点拉不到就不聊 */ }
             occupantsOf('guestbook').forEach(n => recallNames.add(n));
-            (guestbook?.messages || []).slice(-50).forEach(m => { if (m.authorId !== char.id) recallNames.add(m.authorName); });
+            (guestbook?.messages || []).slice(-50).forEach(m => { if (m.authorId !== char.id && !m.kind) recallNames.add(m.authorName); });
             roomTurn = buildGuestbookRoomTurn(guestbook?.messages || [], occupantsOf('guestbook'), char.name, hotTopics);
         } else if (room.id === 'postoffice') {
             // 取一封"还没回过"的来信给角色看（有就可能回信，没有就写新信）
@@ -427,6 +505,68 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
         } else if (room.id === 'theater') {
             occupantsOf('theater').forEach(n => recallNames.add(n));
             roomTurn = buildTheaterRoomTurn(occupantsOf('theater'), char.name);
+        } else if (room.id === 'sar') {
+            // 水域和布告板与既有设施同属 SAR，每次仍只调用一轮模型。
+            const activityRoll = Math.random();
+            sarMode = forcedSARActivity || (activityRoll < .3 ? 'fishing' : activityRoll < .5 ? 'market' : activityRoll < .71 ? 'module-shop' : 'cabinet');
+            if(!forcedSARActivity&&activityRoll>=.5&&activityRoll<.7&&gardenVisitAvailable(readFishingMarketState(),char.id))sarMode='garden';
+            if(sarMode==='garden'){
+                const market=readFishingMarketState();
+                if(!market.dinosaurGarden?.visitsEnabled)return {ok:false,room:'sar',reason:'共同摆弄还没有开启'};
+                gardenSnapshot=prepareGardenVisit(market,fishingActor);roomTurn=gardenSnapshot.prompt;
+                room={...room,name:'恐龙箱庭',blurb:'水域旁的一桌橡皮泥恐龙。用户和角色共同摆弄、留便签、续写小剧场。',affordance:'留便签、移动一只未固定的恐龙，或续写它的状态。'};
+                market.dinosaurGarden?.events.slice(-6).forEach(e=>recallExtra.push(e.summary+(e.words||'')));
+            } else if (sarMode === 'fishing' || sarMode === 'market') {
+                const actors = listMarketActors(userProfile, characters);
+                let market = await mutateFishingMarket(s => ensureActorAccounts(s, actors));
+                await flushFishingDeliveries(characters).catch(() => {});
+                await flushMarketReceipts(characters);
+                // Receipts may include a gift or sale since this character's previous visit.
+                historyMsgs.splice(0, historyMsgs.length, ...await DB.getRecentMessagesByCharId(char.id, contextLimit));
+                room = { ...room, name: sarMode === 'fishing' ? '彼方水域' : '内部布告板',
+                    blurb: sarMode === 'fishing' ? 'SAR 门外的水域，天气影响水下出没的生物。' : '只属于这一家玩家的市场，有行情、挂单、需求与留言。',
+                    affordance: sarMode === 'fishing' ? '你可以钓鱼，决定保留、放生或在允许时卖给艾文，并独立决定是否私聊分享。' : '你可以用自己的游戏钱币与其他玩家交易、发需求、回复或匿名喊话。' };
+                if (sarMode === 'fishing') {
+                    const pending = pendingFishingTrip(market, char.id);
+                    if (!pending) {
+                        const weather = await resolveFishingWeather(realtimeConfig, market.seed);
+                        market = await mutateFishingMarket(s => beginFishingTrip(s, fishingActor, weather));
+                    }
+                    fishingCatch = pendingFishingTrip(market, char.id)!.catch;
+                    roomTurn = buildFishingTurn(fishingActor, fishingCatch, market, userProfile.name || '用户');
+                    recallExtra.push(`彼方钓鱼，${speciesById(fishingCatch.speciesId)?.name}`);
+                } else {
+                    roomTurn = buildMarketTurn(fishingActor, market);
+                    market.ledger.filter(e => e.participants.includes(char.id)).slice(-8).forEach(e => recallExtra.push(e.text));
+                }
+            } else if (sarMode === 'module-shop') {
+                // 自主活动没有用户填写参数的交互，不抽取需要字面配置的模块。
+                const compatible = SAR_MODULE_CATALOG.filter(module => module.supportsUserTarget && !module.configuration);
+                const wallet = readFishingMarketState();
+                const owned = compatible.filter(module => characterModuleCount(wallet, char.id, module.id) > 0);
+                const affordable = compatible.filter(module => module.price <= characterModuleAllowance(wallet, fishingActor));
+                const choices = owned.length ? owned : affordable.length ? affordable : compatible;
+                sarShopModule = choices[Math.floor(Math.random() * choices.length)] || null;
+                sarShopAvailable = Boolean(owned.length || affordable.length);
+                if (!sarShopModule) return { ok: false, room: 'sar', reason: 'no-module' };
+                const uv = userProfile.vrState;
+                sarCanUseOnUser = Boolean(
+                    updateUserProfile
+                    && sarShopAvailable
+                    && uv?.allowCharacterModules === true
+                    && uv.enabled
+                    && uv.currentRoom === 'sar'
+                    && !uv.sarModule,
+                );
+                if (sarCanUseOnUser && userProfile.name) recallNames.add(userProfile.name);
+                recallExtra.push(`SAR 模块商店「${sarShopModule.title}」`);
+                roomTurn = buildSARModuleShopTurn(char.name, sarShopModule, sarCanUseOnUser, userProfile.name || '用户', sarShopAvailable);
+            } else {
+                sarScenario = rollSARCharacterCabinetScenario(char, characters, userProfile);
+                if (sarScenario.target.kind !== 'wanderer') recallNames.add(sarScenario.target.name);
+                recallExtra.push(`SAR 临时芯片「${sarScenario.variant.title}」与「${sarScenario.story.title}」`);
+                roomTurn = buildSARCharacterCabinetTurn(char.name, sarScenario);
+            }
         } else if (room.id === 'signal') {
             // 写诗会话锁已在 if-chain 之前抢到，signalState（锁内最新全文）已就绪。
             if (!signalState) return { ok: false, room: 'signal', reason: 'signal-busy' };
@@ -495,8 +635,18 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
         // 而它能从同行/同乡/同好任何一个角度脑补出交情。
         // recallNames 收的正是这一轮 ta 会接触到的人（在场的 + 留言墙上的）。
         const roomPeers = characters.filter(c => c.id !== char.id && recallNames.has(c.name));
+        // 称号解锁：自己或任一角色已有称号，或 SAR 熟悉度已解锁 titles。
+        let titleUnlocked = !!userProfile?.vrState?.title || characters.some(c => !!c.vrState?.title);
+        try { titleUnlocked ||= !!readFishingMarketState().sarFamiliarity?.unlocks.includes('titles'); } catch { /* 读不出来就当没解锁 */ }
         const systemPrompt = payload.systemPrompt
-            + buildVRSystemAddendum(room, char.name, structuralStrangers(char, roomPeers));
+            + buildVRSystemAddendum(
+                room,
+                char.name,
+                structuralStrangers(char, roomPeers),
+                sarMode === 'fishing' || sarMode === 'market' || sarMode === 'garden' ? sarMode : undefined,
+                char.vrState?.title,
+                titleUnlocked,
+            );
 
         // 调 LLM（记录一次调用，供"调用记录"对账）
         const baseUrl = vrApi.baseUrl.replace(/\/+$/, '');
@@ -523,6 +673,9 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
         }
         let aiContent: string = data.choices?.[0]?.message?.content || '';
         aiContent = aiContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+        const titleProposal = extractKanataTitle(aiContent, sarMode === 'fishing' || sarMode === 'garden');
+        aiContent = titleProposal.content;
+        if (!aiContent.trim()) return { ok: false, room: room.id, reason: 'empty' };
 
         // 模型调用期间日程可能跨过忙碌/睡眠边界；在任何业务写入前再检查一次，
         // 防止已经返回的内容继续落成批注、房间状态或 vr_card。
@@ -658,10 +811,7 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
             // 串行化写入：临界区内重新拉取最新留言墙再追加本次新消息，杜绝并发覆盖
             if (newMsgs.length > 0) {
                 await withSharedRoomLock(async () => {
-                    const fresh = (await DB.getVRGuestbook()) || { id: 'board', messages: [], updatedAt: Date.now() };
-                    fresh.messages = [...fresh.messages, ...newMsgs];
-                    fresh.updatedAt = Date.now();
-                    await DB.saveVRGuestbook(fresh);
+                    await DB.appendVRGuestbookMessages(newMsgs);
                 });
             }
             await updateCharacter(char.id, { vrState: { ...prevState, currentRoom: 'guestbook', lastActiveAt: Date.now() } });
@@ -695,6 +845,128 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
             cardLines = [`「彼方 · ${room.name}」`, nameLine(char.name, activity)];
             if (parsed.roles.length) cardLines.push(`登场：${parsed.roles.map(r => r.name).join('、')}`);
             meta = { vrCard: true, room: 'theater', activity };
+        } else if(room.id==='sar'&&sarMode==='garden'&&gardenSnapshot){
+            const plan=parseGardenVisit(aiContent);if(!plan)return {ok:false,room:'sar',reason:'empty'};
+            try{const next=await mutateFishingMarket(s=>applyGardenVisit(s,fishingActor,plan,gardenSnapshot!));activity=next.dinosaurGarden!.events.at(-1)!.summary;}
+            catch(e){return {ok:false,room:'sar',reason:e instanceof Error?e.message:'箱庭改动未能保存'};}
+            await updateCharacter(char.id,{vrState:{...prevState,currentRoom:'sar',sarActivity:'garden',lastActiveAt:Date.now()}});
+            cardLines=['「彼方 · 恐龙箱庭」','程序事实：'+activity,'角色当时的便签（小剧场里的表达，不是现实债务或关系事实）：'+JSON.stringify(plan.words)];
+            meta={vrCard:true,room:'sar',activity,behavior:plan.words};
+            try{await flushMarketReceipts(characters);}catch{cardLines.push('箱庭已保存，事件回执下次进入时继续同步。');}
+        } else if (room.id === 'sar' && sarMode === 'fishing' && fishingCatch) {
+            const parsed = parseFishingReaction(aiContent);
+            if (!parsed) return { ok: false, room: 'sar', reason: 'fishing-pending' };
+            try { await mutateFishingMarket(s => settleFishingTrip(s, fishingActor, fishingCatch!.id, parsed)); }
+            catch { return { ok: false, room: 'sar', reason: 'fishing-pending' }; }
+            const completed = readFishingMarketState().fishingTrips!.find(t => t.catch.id === fishingCatch!.id)!;
+            const card = fishingTripCard(completed);
+            activity = card.activity; cardLines = [card.content]; meta = card.metadata;
+            await updateCharacter(char.id, { vrState: { ...prevState, currentRoom: 'sar', sarActivity: 'fishing', lastActiveAt: Date.now() } });
+            // The outbox writes the activity card and optional ordinary chat message exactly once.
+            await flushFishingDeliveries(characters).catch(() => {});
+            await flushMarketReceipts(characters).catch(() => {});
+        } else if (room.id === 'sar' && sarMode === 'market') {
+            let note = ''; let words = ''; let share: 'none' | 'guestbook' | 'dm' = 'none';
+            const parsed = parseMarketPlan(aiContent);
+            if (!parsed) return { ok: false, room: 'sar', reason: 'empty' };
+            let receipt = ''; let succeeded = false;
+            try {
+                await mutateFishingMarket(s => { const next = applyMarketPlan(s, fishingActor, parsed); receipt = next.ledger[next.ledger.length - 1]?.text || ''; return next; });
+                succeeded = true;
+            } catch (e) { receipt = `这次尝试未成交：${e instanceof Error ? e.message : '本地操作失败'}。余额和道具未因这次尝试改变。`; }
+            activity = receipt; note = parsed.note;
+            // Never publish a success boast when the action actually failed.
+            if (succeeded) { share = parsed.share; words = parsed.shareWords; }
+            cardLines = ['「彼方 · 内部布告板」', '程序回执：' + receipt];
+            if (parsed.words) cardLines.push(`${succeeded ? '本轮提交的原话' : '未提交的草稿'}（只作表达证据）：${JSON.stringify(parsed.words)}`);
+            cardLines.push(`角色随笔（主观感受与打算；结算以程序回执为准）：${note}`);
+            if (share === 'guestbook' && words) {
+                try {
+                    await withSharedRoomLock(async () => {
+                        await DB.appendVRGuestbookMessages([{ id: genId('gb'), authorId: char.id, authorName: char.name, content: words, createdAt: Date.now() }]);
+                    });
+                    cardLines.push(`已在本地留言簿发出（原话，非事实断言）：${JSON.stringify(words)}`);
+                } catch { cardLines.push(`留言未能发出；待发送草稿：${JSON.stringify(words)}`); share = 'none'; }
+            } else if (share === 'dm' && words) {
+                cardLines.push(`发给用户的私聊原话（夸张不改变上述事实）：${JSON.stringify(words)}`);
+            }
+            await updateCharacter(char.id, { vrState: { ...prevState, currentRoom: 'sar', sarActivity: sarMode, lastActiveAt: Date.now() } });
+            meta = { vrCard: true, room: 'sar', activity, behavior: note, marketActivity: true,
+                ...(share === 'dm' && words ? { privateWords: words } : {}),
+                ...(share === 'guestbook' && words ? { boardPost: words, boardPosts: [{ content: words }] } : {}) };
+            try { await flushMarketReceipts(characters); }
+            catch { cardLines.push('交易与鱼获已保存；部分角色事件回执待本地同步，下次进入水域重试。'); }
+        } else if (room.id === 'sar' && sarMode === 'module-shop' && sarShopModule) {
+            const parsedActivity = readTaggedValue(aiContent, 'ACTIVITY');
+            const note = readTaggedValue(aiContent, 'NOTE');
+            const wantsUser = /^yes$/i.test(readTaggedValue(aiContent, 'USE_ON_USER'));
+            if (!parsedActivity && !note) return { ok: false, room: 'sar', reason: 'empty' };
+            const wantsBuy = /^yes$/i.test(readTaggedValue(aiContent, 'BUY')) || wantsUser;
+            let acquired = false;
+            let settlementFailed = false;
+            if (sarShopAvailable && wantsBuy) {
+                try { await acquireCharacterModule(fishingActor, sarShopModule.id, newSARPurchaseId()); acquired = true; }
+                catch { settlementFailed = true; }
+            }
+            let usedOnUser = Boolean(acquired && sarCanUseOnUser && wantsUser && updateUserProfile);
+            if (usedOnUser) {
+                try { await consumeCharacterModule(char.id, sarShopModule.id); }
+                catch { usedOnUser = false; settlementFailed = true; }
+            }
+            await updateCharacter(char.id, {
+                vrState: {
+                    ...prevState,
+                    currentRoom: 'sar',
+                    sarActivity: 'module-shop',
+                    lastActiveAt: Date.now(),
+                },
+            });
+            if (usedOnUser && updateUserProfile) {
+                const runtime = installSARModuleOnUser(sarShopModule, char);
+                await updateUserProfile(previous => ({
+                    vrState: {
+                        ...(previous.vrState || { enabled: true }),
+                        sarModule: runtime,
+                    },
+                }));
+                try {
+                    window.dispatchEvent(new CustomEvent('sar-module-installed-on-user', {
+                        detail: { charId: char.id, charName: char.name, moduleId: sarShopModule.id, moduleTitle: sarShopModule.title },
+                    }));
+                } catch { /* SSR */ }
+            }
+            activity = usedOnUser
+                ? `在 SAR 模块商店用自己的「${sarShopModule.title}」为你装载。`
+                : acquired ? `在 SAR 模块商店研究「${sarShopModule.title}」，模块留在自己的仓库里。`
+                : `在 SAR 模块商店看了看「${sarShopModule.title}」，这次没有购买或装载。`;
+            cardLines = [
+                '「彼方 · SAR 模块商店」', nameLine(char.name, activity),
+                `模块：${sarShopModule.title} · ${sarShopModule.effectLabel}`,
+            ];
+            // Do not publish imagined purchases after a declined or stale settlement.
+            if (note && acquired && !settlementFailed) cardLines.push(`随笔：${note}`);
+            if (usedOnUser) cardLines.push('装载：已使用角色自己的一枚模块 · 5 次成功互动');
+            meta = { vrCard: true, room: 'sar', activity,
+                behavior: acquired && !settlementFailed ? note || undefined : undefined,
+                sarModuleShop: { moduleId: sarShopModule.id, moduleTitle: sarShopModule.title, usedOnUser },
+            };
+        } else if (room.id === 'sar' && sarScenario) {
+            const parsed = parseSARCharacterCabinetOutput(aiContent);
+            if (!parsed) return { ok: false, room: 'sar', reason: 'empty' };
+            const note = createSARCharacterCabinetNote(char, sarScenario, parsed);
+            await updateCharacter(char.id, { vrState: { ...prevState, currentRoom: 'sar', sarActivity: 'cabinet', lastActiveAt: Date.now() } });
+            activity = parsed.activity || `在 SAR 活动空间把「${sarScenario.variant.title}」和「${sarScenario.story.title}」用在了 ${sarScenario.target.name} 身上。`;
+            cardLines = [
+                '「彼方 · SAR 活动空间」',
+                nameLine(char.name, activity),
+                `对象：${sarScenario.target.name}`,
+                `芯片：${sarScenario.variant.title} × ${sarScenario.story.title}`,
+                `记录标题：${parsed.title}`,
+                `剧情：${parsed.story}`,
+                `随笔：${parsed.notes}`,
+                `高光：${parsed.highlight}`,
+            ];
+            meta = { vrCard: true, room: 'sar', activity, sarCabinetNote: note };
         } else if (room.id === 'signal') {
             // === 信号坠落处：解析 1~2 行 → 写回后端（起新篇 / 接龙）===
             const bk = signalState!.booklet;
@@ -798,7 +1070,12 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
             meta = { vrCard: true, room: 'postoffice', activity, letterExcerpt };
         }
 
-        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'vr_card', content: cardLines.join('\n'), metadata: meta });
+        if (!(room.id === 'sar' && sarMode === 'fishing')) await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'vr_card', content: cardLines.join('\n'), metadata: meta });
+        // Only a successfully parsed and saved activity can change the title, and only its actor.
+        if (titleUnlocked && titleProposal.title !== undefined) {
+            try { await deps.updateCharacter(char.id, current => applyKanataTitle(current, char.vrState, titleProposal.title!)); }
+            catch (error) { console.warn('[VRWorld] Activity saved; optional title update failed', error); }
+        }
 
         // 记忆管线（fire-and-forget）
         try {
@@ -820,6 +1097,10 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
         console.error('[VRWorld] session error:', err);
         return { ok: false, room: room.id, reason: modelCallFailed ? 'api-error' : 'error' };
     } finally {
+        if (room.id === 'sar') {
+            await flushFishingDeliveries(characters).catch(() => {});
+            await flushMarketReceipts(characters).catch(() => {});
+        }
         running.delete(char.id);
         // 兜底放锁：任何提前 return / 异常路径漏放，这里补放（漏了也有 TTL 自动回收）
         if (signalLockToken) void Signal.unlock(signalLockToken).catch(() => {});

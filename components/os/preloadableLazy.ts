@@ -1,4 +1,5 @@
 import React, { lazy } from 'react';
+import { markModuleLoadError } from '../../utils/chunkLoadRecovery';
 
 export type PreloadableLazy = React.LazyExoticComponent<React.ComponentType<any>> & {
   preload: () => Promise<unknown>;
@@ -17,6 +18,12 @@ const loadWithTransientRetry = async <T,>(factory: () => Promise<T>): Promise<T>
   try {
     return await factory();
   } catch (firstError) {
+    // 模块脚本被截断时浏览器抛的是光秃秃的 SyntaxError，重试只会再解析一次同一份坏文件。
+    // 这种直接往上抛，交给 chunk 恢复那条路（整页刷新）处理。
+    if (firstError instanceof Error && firstError.name === 'SyntaxError') {
+      markModuleLoadError(firstError);
+      throw firstError;
+    }
     await wait(SPECULATIVE_RETRY_DELAY_MS);
     try {
       return await factory();
@@ -42,7 +49,8 @@ export const createPreloadableLazy = (
     if (!request) {
       const nextRequest = loadWithTransientRetry(factory);
       request = nextRequest;
-      void nextRequest.catch(() => {
+      void nextRequest.catch(error => {
+        markModuleLoadError(error);
         if (request === nextRequest) request = null;
       });
     }

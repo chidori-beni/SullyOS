@@ -1,3 +1,4 @@
+import { avatarDecorationImageStyle } from '../utils/anniversaryGifts';
 
 
 
@@ -1021,13 +1022,7 @@ const ThemeMaker: React.FC = () => {
                         <img 
                             src={style.avatarDecoration}
                             className="absolute pointer-events-none z-10 max-w-none"
-                            style={{
-                                left: `${style.avatarDecorationX ?? 50}%`,
-                                top: `${style.avatarDecorationY ?? 50}%`,
-                                width: `${36 * (style.avatarDecorationScale ?? 1)}px`, 
-                                height: 'auto',
-                                transform: `translate(-50%, -50%) rotate(${style.avatarDecorationRotate ?? 0}deg)`,
-                            }}
+                            style={avatarDecorationImageStyle(style, 36)}
                         />
                     )}
                 </div>

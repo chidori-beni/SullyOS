@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
-import { detectFirstUrl, detectXhsShortUrl, extractXhsShareTitle, isXhsUrl, extractXhsNoteId, parseWebpageHtml, extractWebpageContent } from './webpageExtractor';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { detectFirstUrl, detectXhsShortUrl, extractXhsShareTitle, isXhsUrl, extractXhsNoteId, extractXhsNoteLink, expandShortUrl, parseWebpageHtml, extractWebpageContent } from './webpageExtractor';
 
 describe('detectFirstUrl', () => {
   it('从一句话里揪出 http(s) 链接', () => {
@@ -90,6 +90,45 @@ describe('extractXhsNoteId', () => {
     expect(extractXhsNoteId(`https://rednote.com.example.com/explore/${NOTE_ID}`)).toBeNull();
     expect(extractXhsNoteId(`https://fake-rednote.com/explore/${NOTE_ID}`)).toBeNull();
     expect(extractXhsNoteId('https://www.rednote.com/explore')).toBeNull();
+  });
+});
+
+describe('手机小红书分享回归', () => {
+  const noteId = '6aa4aaf6000000000b00eab5';
+  const shortUrl = 'https://xhslink.cn/o/2KuQOsv8aMN';
+  const noteUrl = `http://www.xiaohongshu.com/discovery/item/${noteId}?xsec_source=app_share&xsec_token=test%2Btoken%3D`;
+  const captchaUrl = `https://www.xiaohongshu.com/website-login/captcha?redirectPath=${encodeURIComponent(noteUrl)}&verifyType=217`;
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('识别用户手机分享文案以及 Markdown 链接', () => {
+    for (const link of [shortUrl, `[${shortUrl}](${shortUrl})`]) {
+      const text = `胡闹厨房别太胡闹 敌人8双人满血的含金量 两个人重开... ${link} 先复制一下，打开【小红书】看看这篇好文！`;
+      expect(detectXhsShortUrl(text)).toBe(shortUrl);
+      expect(extractXhsShareTitle(text)).toBe('胡闹厨房别太胡闹 敌人8双人满血的含金量 两个人重开');
+    }
+  });
+
+  it('兼容线上旧代理的验证码页响应，恢复笔记和 token', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      success: true, data: { finalUrl: captchaUrl },
+    }))));
+    const expanded = await expandShortUrl(shortUrl);
+    expect(extractXhsNoteLink(expanded)).toEqual({ noteId, xsecToken: 'test+token=' });
+    expect(extractXhsNoteId(expanded)).toBe(noteId);
+  });
+
+  it('兼容直接笔记 URL 和电脑版文案，token 仅解码一次', () => {
+    expect(extractXhsNoteLink(noteUrl)).toEqual({ noteId, xsecToken: 'test+token=' });
+    expect(extractXhsNoteLink(`80 【胡闹厨房别太胡闹 - 兮橙 | 小红书】 😆 code 😆 [https://www.xiaohongshu.com/discovery/item/${noteId}?xsec_token=desktop_token=](https://www.xiaohongshu.com/discovery/item/${noteId}?xsec_token=desktop_token=)`))
+      .toEqual({ noteId, xsecToken: 'desktop_token=' });
+    expect(extractXhsNoteLink(noteUrl.replace('test%2Btoken%3D', 'test%253D'))?.xsecToken).toBe('test%3D');
+  });
+
+  it('不从外站或无效验证码回跳链接中提取笔记', () => {
+    expect(extractXhsNoteLink(captchaUrl.replace('https://www.xiaohongshu.com/', 'https://example.com/'))).toBeNull();
+    expect(extractXhsNoteLink(`https://www.xiaohongshu.com/website-login/captcha?redirectPath=${encodeURIComponent(noteUrl.replace('www.xiaohongshu.com', 'example.com'))}`)).toBeNull();
+    expect(extractXhsNoteLink('https://www.xiaohongshu.com/website-login/captcha?verifyType=217')).toBeNull();
   });
 });
 

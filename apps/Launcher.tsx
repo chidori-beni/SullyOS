@@ -1017,6 +1017,7 @@ const Launcher: React.FC = () => {
   useEffect(() => { activePageIndexRef.current = activePageIndex; }, [activePageIndex]);
 
   useEffect(() => {
+      let cancelled = false;
       const loadData = async () => {
           // SAFEGUARD: If characters array is empty, reset widget char
           if (!characters || characters.length === 0) {
@@ -1036,16 +1037,13 @@ const Launcher: React.FC = () => {
                   DB.getAllAnniversaries(),
                   DB.getAllTasks()
               ]);
-              
-              if (msgs.length > 0) {
-                  const visibleMsgs = msgs.filter(m => m.role !== 'system');
-                  if (visibleMsgs.length > 0) {
-                      const last = visibleMsgs[visibleMsgs.length - 1];
-                      const cleanContent = last.content.replace(/\[.*?\]/g, '').trim();
-                      setLastMessage(cleanContent || (last.type === 'image' ? '[图片]' : '[消息]'));
-                  } else {
-                      setLastMessage(targetChar.description || "System Ready.");
-                  }
+              if (cancelled) return;
+              // 我方这里读的是该角色的全部消息（上面 DB.getMessagesByCharId），
+              // 取最后一条即最新；上游改成了只取 1 条的新读法，这批不跟。
+              const last = msgs[msgs.length - 1];
+              if (last) {
+                  const cleanContent = last.content.replace(/\[.*?\]/g, '').trim();
+                  setLastMessage(cleanContent || (last.type === 'image' ? '[图片]' : '[消息]'));
               } else {
                   setLastMessage(targetChar.description || "System Ready.");
               }
@@ -1059,6 +1057,7 @@ const Launcher: React.FC = () => {
       if (isDataLoaded) {
           loadData();
       }
+      return () => { cancelled = true; };
   }, [activeCharacterId, lastMsgTimestamp, isDataLoaded, characters]); // Trigger on characters change
 
   useEffect(() => {

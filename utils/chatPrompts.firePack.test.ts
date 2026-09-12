@@ -240,3 +240,19 @@ describe('小红书：worker 够不着的服务器不写进 fire_pack', () => {
         expect(await withServer('https://xhs.example.com', true)).toContain('小红书');
     });
 });
+
+
+describe('SAR public introduction', () => {
+    it.each(['manual', 'scheduled'])('enabled %s characters know the public setting without the manual-only extra paragraph', async activityMode => {
+        const char = baseChar({ vrState: { enabled: true, activityMode } });
+        for (const firePack of [false, true]) {
+            const out = await build(char, firePack);
+            expect(out).toContain('凯恩和艾文是来自另一个世界的玩家');
+            expect(out).toContain('是否见过、聊过、熟不熟，要以实际活动记录和记忆为准');
+            expect(out).not.toContain('仅手动活动');
+        }
+    });
+    it('does not give disconnected characters the SAR introduction', async () => {
+        expect(await build(baseChar({ vrState: { enabled: false } }), false)).not.toContain('凯恩和艾文是来自另一个世界的玩家');
+    });
+});
