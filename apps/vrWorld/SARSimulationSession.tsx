@@ -251,11 +251,13 @@ export const SARSimulationSession: React.FC<{
                         </section>}
                     </div>
                 </div>
+                {/* 回车＝换行。发送只走右边那颗按钮：这里写的是台词和动作，经常要分行，
+                    原先回车直接发出去太容易误发。 */}
                 <footer className="sars-composer">
                     {hasNewText&&<button type="button" className="sars-new-text" onClick={latest}><ArrowDown size={14}/>回到最新内容</button>}
                     {error&&<p role="alert" className="sars-error">{error}</p>}
                     {active?<div className="sars-compose-row">
-                        <textarea ref={draftRef} rows={1} aria-label="你说的话或动作" value={draft} maxLength={4000} disabled={sending||!char} placeholder={char?'说些什么，或做个动作…':'角色资料已不存在，无法继续'} onChange={event=>setDraft(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing){event.preventDefault();void send();}}}/>
+                        <textarea ref={draftRef} rows={1} aria-label="你说的话或动作" value={draft} maxLength={4000} disabled={sending||!char} placeholder={char?'说些什么，或做个动作…':'角色资料已不存在，无法继续'} onChange={event=>setDraft(event.target.value)}/>
                         <button type="button" aria-label="发送" disabled={!draft.trim()||sending||!char} onClick={()=>void send()}>{sending?<CircleNotch size={19} className="animate-spin"/>:<ArrowUp size={21} weight="bold"/>}</button>
                     </div>:<div className="sars-readonly">已封存 · {run.interactionsUsed} 次互动</div>}
                 </footer>
