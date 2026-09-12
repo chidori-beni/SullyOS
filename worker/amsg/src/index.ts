@@ -116,6 +116,7 @@ import {
 } from '../../../utils/amsgToolPack';
 import { buildRealtimeWorldBlock } from './realtimeWorld';
 import { handleSelfUpdate } from './selfUpdate';
+import { handleCronTriggerRead, handleCronTriggerWrite, isCronTriggerAuthFailure } from './cronTrigger';
 import {
   buildMcpDirectHeaders,
   buildMcpFireBlock,
@@ -405,8 +406,6 @@ interface FireStash {
   plannedSelfSendUuids: string[];
   /** 本次触发用到的角色 id / 任务归属键，排程时要写进新任务的 metadata。 */
   charId: string;
-  /** 防穿帮闸锚点：这份 fire_pack 记的「用户最后一次开口」。 */
-  anchorMs: number;
   /**
    * 角色的时间参照系（fire_pack 的 tzId）。worker 里一切「给角色看的时间」
    * ——当前时间槽、self_log 时间戳、排程清单、send_at 解析与打回文案——都从这一份出。
@@ -1273,8 +1272,6 @@ export const runFireScheduleTool = async (
         amsgMode: parsed.mode,
         amsgClientTaskId: clientTaskId,
         amsgExpirePolicy: parsed.expirePolicy,
-        // 防穿帮闸锚点：这条排下去之后，用户再开口就算「对话往前走了」。
-        amsgAnchorMs: stash.anchorMs,
         amsgTaskInstruction: buildTaskInstruction(parsed.mode, parsed.promptHint),
         // 自排标记：到点兜底闸只拦带它的任务（用户面板排的不受连发上限管）。
         amsgSelfScheduled: true,
@@ -1308,7 +1305,6 @@ export const runFireScheduleTool = async (
       || parsed.recurrence,
     ...(parsed.promptHint ? { promptHint: parsed.promptHint } : {}),
     expirePolicy: parsed.expirePolicy,
-    anchorLastUserMsgAt: stash.anchorMs,
     source: 'character',
     status: 'scheduled',
     createdAt: nowMs,
@@ -1740,17 +1736,31 @@ export const amsgHooks = {
     const presenceLastUserMessageAt = presence?.charId === charId ? presence.lastUserMessageAt : null;
     const expireInput = {
       policy,
-      recurrenceType: ctx.task.recurrenceType,
-      anchorMs: typeof taskMeta.amsgAnchorMs === 'number' ? taskMeta.amsgAnchorMs : null,
       lastUserMessageAt: laterOf(pack.lastUserMessageAt ?? null, presenceLastUserMessageAt),
       nowMs: ctx.now.getTime(),
       occurrenceMs,
     };
+    // 判定输入原样留一行，**放行也留**。客户端送达兜底闸会拿同一套规则、更新的数据
+    // 再判一次，两边结论不一样时（worker 放行 → 生成 → 推送，客户端吞掉）用户看到的
+    // 就是「通知弹出来了、点进去没有」，而这中间没有任何一处说得出发生过什么。只有把
+    // 两边的输入都留下来，事后才分得清是哪一边、因为哪个字段。
+    // 「最后一次开口」拆成两个来源分别记：合并后的那一个值看不出 fire_pack 是不是
+    // 陈旧的，而「fire_pack 落后于真实对话」正是两边判定分叉的头号原因。
+    // 字段全是时间戳与枚举，不含正文、不含角色名。
+    const expireTrace = {
+      taskId: ctx.task.id,
+      // 判定本身已经不看任务类型了（一次性和循环同一条规则），但排查时得认得出是哪种。
+      recurrenceType: ctx.task.recurrenceType,
+      ...expireInput,
+      packLastUserMessageAt: pack.lastUserMessageAt ?? null,
+      presenceLastUserMessageAt,
+    };
     if (!instant && shouldExpireFire(expireInput)) {
-      console.log('[amsg:expire-skip]', { taskId: ctx.task.id, ...expireInput });
+      console.log('[amsg:expire-skip]', { ...expireTrace, reason: 'conversation-moved-on' });
       await recordSkip(ctx, charId, 'conversation-moved-on', occurrenceMs);
       return { skip: true } as const;
     }
+    if (!instant) console.log('[amsg:expire-pass]', expireTrace);
 
     // 任务指令缺失（开发期旧格式任务）：不能用默认 auto 指令凑一个渲染——那会把
     // prompted 任务的方向偷换掉，发出去的内容和用户当初排的不是一回事。
@@ -2001,7 +2011,6 @@ export const amsgHooks = {
       plannedSelfSends: plannedSelfSendTasks.length,
       plannedSelfSendUuids: plannedSelfSendTasks.map((t) => t.taskUuid),
       charId,
-      anchorMs: pack.lastUserMessageAt ?? 0,
       tz,
       taskUuid: typeof ctx.task.uuid === 'string' ? ctx.task.uuid : null,
       taskRowId: ctx.task.id != null ? String(ctx.task.id) : null,
@@ -3200,6 +3209,7 @@ const readServerVersion = async (request: Request, env: Env) => {
  *   GET  /debug         上面那些再加库和 cron 的状况，给隔着屏幕帮人排障用
  *   POST /instant-chat  即时对话：一个请求受理一轮聊天（见 ./instantChat）
  *   POST /self-update   自己去取最新代码覆盖自己（见 ./selfUpdate，要共享密钥 + CF_API_TOKEN）
+ *   GET/POST /cron-trigger  查看 / 暂停 / 恢复自己的 cron trigger（见 ./cronTrigger，认证同上）
  *   其它请求            配置不全时直接 503 + 说明缺什么，不进上游
  */
 // 两个 handler 都只收 (request/event, env)：CF 还会给第三个参数 ctx，但这里用不上——
@@ -3307,6 +3317,47 @@ export default {
         success: result.ok,
         data: result.ok ? result : undefined,
         error: result.ok ? undefined : { code: result.code, message: result.message },
+      });
+    }
+
+    if (pathname.endsWith('/cron-trigger')) {
+      if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
+      // 跟 /self-update 一样排在配置门之前，也一样自己校验共享密钥、不吃这道门的豁免。
+      // 认证没过回 401；「读不到 / 改不了」是 Worker 自己的配置问题，读时当状态报（200）、
+      // 改时当失败报（400）。
+      if (method === 'GET') {
+        const state = await handleCronTriggerRead(env, request);
+        if (!state.supported && isCronTriggerAuthFailure(state.code)) {
+          return jsonWithCors(401, {
+            success: false,
+            error: { code: state.code, message: state.message },
+          });
+        }
+        return jsonWithCors(200, { success: true, data: state });
+      }
+      if (method !== 'POST') {
+        return jsonWithCors(405, {
+          success: false,
+          error: { code: 'METHOD_NOT_ALLOWED', message: '/cron-trigger 只接受 GET 和 POST' },
+        });
+      }
+      let enabled: unknown;
+      try {
+        enabled = ((await request.json()) as { enabled?: unknown } | null)?.enabled;
+      } catch {
+        enabled = undefined;
+      }
+      if (typeof enabled !== 'boolean') {
+        return jsonWithCors(400, {
+          success: false,
+          error: { code: 'BAD_REQUEST', message: '请求体要是 { "enabled": true | false }' },
+        });
+      }
+      const result = await handleCronTriggerWrite(env, request, enabled);
+      if (result.ok) return jsonWithCors(200, { success: true, data: result });
+      return jsonWithCors(isCronTriggerAuthFailure(result.code) ? 401 : 400, {
+        success: false,
+        error: { code: result.code, message: result.message },
       });
     }
 

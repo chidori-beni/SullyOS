@@ -1985,7 +1985,6 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 recurrenceType: 'none',
                 promptHint,
                 expirePolicy: 'force',
-                anchorLastUserMsgAt: result.anchorMs,
                 source: 'user',
                 status: 'scheduled',
                 createdAt: Date.now(),

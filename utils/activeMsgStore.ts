@@ -228,6 +228,22 @@ export const ActiveMsgStore = {
     });
   },
 
+  /**
+   * 收件箱里现在有几条。**只数个数，不读内容**——给前台那趟定期巡查用。
+   *
+   * 巡查每几秒就要跑一次，不能每回都把整表读出来再原样丢掉。count() 不反序列化任何
+   * 记录，空表时几乎不花时间；数出来是 0 就到此为止，有货才去走完整的冲刷。
+   */
+  async countInboxMessages(): Promise<number> {
+    const db = await openDB();
+    return new Promise<number>((resolve, reject) => {
+      const tx = db.transaction(STORE_INBOX, 'readonly');
+      const request = tx.objectStore(STORE_INBOX).count();
+      request.onsuccess = () => resolve(request.result || 0);
+      request.onerror = () => reject(request.error);
+    });
+  },
+
   async listInboxMessages(): Promise<ActiveMsg2InboxMessage[]> {
     const db = await openDB();
     return new Promise((resolve, reject) => {
