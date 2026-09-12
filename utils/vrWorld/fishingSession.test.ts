@@ -36,6 +36,35 @@ it('manual-only participants cannot be started by a stale timer, but explicit in
     const update=deps.updateCharacter.mock.calls.at(-1)![1];
     expect(update(char).vrState.activityMode).toBe('manual');
 });
+
+it('automatic exclusions skip every model call and cannot be bypassed by a forced SAR mode',async()=>{
+    const char={...a,id:'blocked-automatic',vrState:{...a.vrState,excludedAutoRooms:['guestbook','gym','postoffice','theater','library','music','sar']}};
+    expect(await runVRSession({...deps,char,manual:false,forcedRoom:undefined})).toMatchObject({ok:false,reason:'no-content'});
+    expect(await runVRSession({...deps,char,manual:false,forcedSARActivity:'market'})).toMatchObject({ok:false,reason:'no-content'});
+    expect(safeFetchJson).not.toHaveBeenCalled();
+    expect(buildChatRequestPayload).not.toHaveBeenCalled();
+});
+
+it('manual module-shop invitation stays in the shop even when automatic SAR is disabled',async()=>{
+    vi.spyOn(Math,'random').mockReturnValue(0);
+    answer('<ACTIVITY>看了看模块。</ACTIVITY><NOTE>有点意思。</NOTE><BUY>NO</BUY><USE_ON_USER>NO</USE_ON_USER>');
+    const char={...a,vrState:{...a.vrState,excludedAutoRooms:['sar'],excludedAutoSARActivities:['module-shop']}};
+    expect(await runVRSession({...deps,char,forcedSARActivity:'module-shop'})).toMatchObject({ok:true});
+    expect(safeFetchJson).toHaveBeenCalledTimes(1);
+    const body=JSON.parse((vi.mocked(safeFetchJson).mock.calls[0][1] as any).body);
+    expect(body.messages[0].content).toContain('此刻只在模块商店');
+    expect(mocks.messages.at(-1).metadata.sarModuleShop).toBeDefined();
+    expect(readFishingMarketState().fishingTrips||[]).toHaveLength(0);
+});
+
+it('manual cabinet invitation cannot randomly turn into fishing',async()=>{
+    vi.spyOn(Math,'random').mockReturnValue(0);
+    answer(JSON.stringify({title:'芯片测试',story:'一场临时芯片故事。',notes:'收好随笔。'}));
+    expect(await runVRSession({...deps,forcedSARActivity:'cabinet'})).toMatchObject({ok:true});
+    expect(safeFetchJson).toHaveBeenCalledTimes(1);
+    expect(mocks.messages.at(-1).content).toContain('芯片：');
+    expect(readFishingMarketState().fishingTrips||[]).toHaveLength(0);
+});
 it('a disconnected character cannot be started even through a manual entry',async()=>{
     expect(await runVRSession({...deps,char:{...a,vrState:{...a.vrState,enabled:false}},forcedSARActivity:'market'})).toMatchObject({ok:false,reason:'not-enabled'});
     expect(safeFetchJson).not.toHaveBeenCalled();

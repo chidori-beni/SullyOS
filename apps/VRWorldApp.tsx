@@ -25,6 +25,13 @@ const DinosaurGarden = React.lazy(() => import('./vrWorld/dinosaur/DinosaurGarde
 import { CreatorIframe, type ChibiResult } from '../components/Like520Event';
 import { useMusic, type Song } from '../context/MusicContext';
 import { DB } from '../utils/db';
+import { LibraryView, NovelPreferenceModal } from './vrWorld/VRLibrary';
+import { VRActivityPicker, VRActivityRestrictions } from './vrWorld/VRActivityPicker';
+import type { VRSARActivity } from '../types';
+import { gardenResidents } from '../utils/vrWorld/dinosaurGarden';
+import { readFishingMarketState } from '../utils/vrWorld/fishingMarket';
+import { readableNovels, readingPreferenceLabel } from '../utils/vrWorld/library';
+import type { VRLibraryCategory } from '../types';
 import { useResilientAssetUrl, attachAudioMirrorFallback } from '../utils/assetUrl';
 import { VRScheduler, VR_FAIL_LIMIT } from '../utils/vrWorld/scheduler';
 import { allowsAutomaticVR, joinVRState, isSARActivityOccupant } from '../utils/vrWorld/participation';
@@ -219,6 +226,8 @@ const VRWorldApp: React.FC = () => {
     useEffect(() => { if (showFishingMarket) trackSARFeature(showFishingMarket === 'sell' ? 'water' : showFishingMarket); }, [showFishingMarket]);
     // 启用流程：设定 chibi 后回调启用
     const [pendingEnable, setPendingEnable] = useState<string | null>(null);
+    const [libraryCategories, setLibraryCategories] = useState<VRLibraryCategory[]>([]);
+    const [uploadCategoryId, setUploadCategoryId] = useState<string | undefined>();
     const [readingPreferenceCharId, setReadingPreferenceCharId] = useState<string | null>(null);
     const readingPreferenceChar = useMemo(
         () => characters.find(char => char.id === readingPreferenceCharId) || null,
@@ -334,7 +343,10 @@ const VRWorldApp: React.FC = () => {
         };
     }, [familiarity, sarHubPanel, tab, loading, enterRoom, sarPromptStep, showSarDialogue, showSarGacha, showSarCabinet, showSarModuleShop, showFishingMarket, showHelp, sarState, worldPage]);
 
-    const loadNovels = useCallback(async () => setNovels(await DB.getVRNovels()), []);
+    const loadNovels = useCallback(async () => {
+        const [books, categories] = await Promise.all([DB.getVRNovels(), DB.getVRLibraryCategories()]);
+        setNovels(books); setLibraryCategories(categories);
+    }, []);
     useEffect(() => {
         let cancelled = false;
         setVrEligibility(new Map());
@@ -394,7 +406,8 @@ const VRWorldApp: React.FC = () => {
     }, [characters]);
 
     const reloadAll = useCallback(async () => {
-        setLoading(true);
+        // Background refresh must not unmount the library and reset its filter/selection.
+        // Initial loading is already true until the first load finishes.
         await Promise.all([loadNovels(), loadFeed()]);
         setLoading(false);
     }, [loadNovels, loadFeed]);
@@ -661,8 +674,10 @@ const VRWorldApp: React.FC = () => {
                         onDeleteFeed={onDeleteFeed} onDeleteFeedMany={onDeleteFeedMany}
                         roomPage={worldPage} onRoomPageChange={setWorldPage}/>
                 ) : tab === 'library' ? (
-                    <LibraryView novels={novels} characters={characters} onOpen={setReaderNovel}
-                        onAdd={() => { setShowUpload(true); trackEvent('打开小说上架弹窗'); }}
+                    <LibraryView novels={novels} categories={libraryCategories} characters={characters} onOpen={setReaderNovel}
+                        onEdit={async edit => { await DB.editVRLibrary(edit); await loadNovels(); }}
+                        onPreference={char => setReadingPreferenceCharId(char.id)}
+                        onAdd={categoryId => { setUploadCategoryId(categoryId); setShowUpload(true); trackEvent('打开小说上架弹窗'); }}
                         onDelete={async (id) => { await DB.deleteVRNovel(id); await loadNovels(); addToast?.('已删除', 'success'); }} />
                 ) : tab === 'settings' ? (
                     <div className="space-y-3">
@@ -748,17 +763,16 @@ const VRWorldApp: React.FC = () => {
             {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
             {readingPreferenceChar && (
                 <NovelPreferenceModal
+                    key={readingPreferenceChar.id}
                     char={readingPreferenceChar}
                     novels={novels}
+                    categories={libraryCategories}
                     onClose={() => setReadingPreferenceCharId(null)}
-                    onSave={(novelIds) => {
-                        const current = readingPreferenceChar.vrState || { enabled: false, intervalMinutes: VR_DEFAULT_INTERVAL_MIN };
-                        updateCharacter(readingPreferenceChar.id, {
-                            vrState: { ...current, preferredNovelIds: novelIds.length > 0 ? novelIds : undefined },
-                        });
-                        addToast?.(novelIds.length > 0
-                            ? `已为 ${readingPreferenceChar.name} 优先选择 ${novelIds.length} 本书`
-                            : `${readingPreferenceChar.name} 将从全书库自动轮换`, 'success');
+                    onSave={preference => {
+                        updateCharacter(readingPreferenceChar.id, latest => ({
+                            vrState: { ...(latest.vrState || { enabled: false, intervalMinutes: VR_DEFAULT_INTERVAL_MIN }), ...preference },
+                        }));
+                        addToast?.('阅读偏好已保存', 'success');
                         setReadingPreferenceCharId(null);
                     }}
                 />
@@ -766,7 +780,7 @@ const VRWorldApp: React.FC = () => {
             {readerNovel && <ReaderModal novel={readerNovel} characters={characters} onClose={() => setReaderNovel(null)} />}
             {readerJump && <ReaderModal novel={readerJump.novel} characters={characters} initialSeg={readerJump.seg} peek onClose={() => setReaderJump(null)} />}
             {showUpload && (
-                <UploadModal onClose={() => setShowUpload(false)}
+                <UploadModal categories={libraryCategories} initialCategoryId={uploadCategoryId} onClose={() => setShowUpload(false)}
                     onCommit={async (novel) => {
                         await DB.saveVRNovel(novel); await loadNovels(); setShowUpload(false);
                         addToast?.(`《${novel.title}》已上架（${novel.segments.length} 段）`, 'success');
@@ -1283,7 +1297,7 @@ const HelpModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
                 <Block title="怎么开始" tone="rgba(245,208,138,.95)">
                     <Step n={1}>去 <b>「接入」</b> 标签：给角色捏个小人形象，打开开关。默认<b>仅手动活动</b>；想让 ta 自己逛，再选「自动活动」和间隔。</Step>
-                    <Step n={2}>想用图书馆，先去 <b>「书库」</b> 上传一本小说。</Step>
+                    <Step n={2}>想用图书馆，先去 <b>「书库」</b> 上传小说。可以按分类整理，并在「谁来读这些书」里让角色按分类轮换。</Step>
                     <Step n={3}>不想等？在「接入」里点 <b>「让 ta 现在去逛一次」</b>，可以<b className="text-amber-200">指定房间或随机</b>，立刻看效果。</Step>
                 </Block>
 
@@ -3185,48 +3199,6 @@ const RoomScene: React.FC<{
 };
 
 // ============ 书库 ============
-const LibraryView: React.FC<{
-    novels: VRWorldNovel[]; characters: CharacterProfile[];
-    onOpen: (n: VRWorldNovel) => void; onAdd: () => void; onDelete: (id: string) => void;
-}> = ({ novels, characters, onOpen, onAdd, onDelete }) => (
-    <div className="space-y-3">
-        <button onClick={onAdd} className="w-full rounded-xl py-2.5 text-[13px] font-bold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform shadow-[0_4px_14px_rgba(120,100,255,0.4)]"
-            style={{ background: 'linear-gradient(120deg, rgba(150,168,255,.92), rgba(188,168,255,.85) 55%, rgba(150,212,204,.9))' }}>
-            <Plus size={16} weight="bold" /> 上传小说（支持 .txt）
-        </button>
-        {novels.length === 0 ? (
-            <p className="text-[11px] text-indigo-300/50 py-6 text-center">书库空空如也。上传的小说是所有角色共享的读物，每个角色各自留批注、各自记书签。</p>
-        ) : (
-            <PagedList items={novels} perPage={20} render={(novel) => {
-                const readers = characters.filter(c => getBookmark(c.vrState?.novelBookmarks, novel.id) > 0);
-                return (
-                    <div key={novel.id} className="rounded-2xl p-3.5 mb-3 backdrop-blur-sm" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.07)' }}>
-                        <div className="flex items-start gap-2">
-                            <BookOpen size={18} weight="fill" className="text-amber-200 mt-0.5 shrink-0" />
-                            <div className="flex-1 min-w-0">
-                                <div className="text-[13px] font-bold truncate">{novel.title}</div>
-                                {novel.author && <div className="text-[10px] text-indigo-300/60">{novel.author}</div>}
-                                <div className="text-[10px] text-indigo-300/50 mt-0.5">{novel.segments.length} 段 · {novel.totalChars.toLocaleString()} 字</div>
-                            </div>
-                            <button onClick={() => onDelete(novel.id)} className="p-1.5 rounded-full active:bg-white/10 text-indigo-300/50"><Trash size={15} /></button>
-                        </div>
-                        {readers.length > 0 && (
-                            <div className="mt-2 flex flex-wrap gap-1.5">
-                                {readers.map(c => {
-                                    const bm = getBookmark(c.vrState?.novelBookmarks, novel.id);
-                                    const pct = Math.round((bm / Math.max(1, novel.segments.length)) * 100);
-                                    return <span key={c.id} className="text-[9.5px] bg-white/10 rounded-full px-2 py-0.5 text-indigo-100/80">{c.name} {pct}%</span>;
-                                })}
-                            </div>
-                        )}
-                        <button onClick={() => onOpen(novel)} className="mt-2 text-[11px] text-indigo-300 font-semibold flex items-center gap-0.5 active:opacity-70">翻开阅读 / 看批注 <CaretRight size={12} weight="bold" /></button>
-                    </div>
-                );
-            }} />
-        )}
-    </div>
-);
-
 // ============ 阅读器主题 ============
 interface ReaderTheme { id: string; name: string; bg: string; paper: string; text: string; sub: string; accent: string; annBg: string; }
 const READER_THEMES: ReaderTheme[] = [
@@ -3466,10 +3438,12 @@ type UploadFileInfo = {
 };
 
 const UploadModal: React.FC<{
+    categories: VRLibraryCategory[]; initialCategoryId?: string;
     onClose: () => void;
     onCommit: (novel: VRWorldNovel) => Promise<void> | void;
     onError: (msg: string) => void;
-}> = ({ onClose, onCommit, onError }) => {
+}> = ({ onClose, onCommit, onError, categories, initialCategoryId }) => {
+    const [categoryId, setCategoryId] = useState(initialCategoryId || '');
     const uploadFieldClass = 'w-full rounded-lg border border-indigo-100/70 bg-white px-3 py-2 text-slate-800 caret-indigo-500 placeholder:text-indigo-300 outline-none focus:border-indigo-300';
     const [title, setTitle] = useState('');
     const [author, setAuthor] = useState('');
@@ -3582,7 +3556,7 @@ const UploadModal: React.FC<{
                 onProgress: (r) => setProgress(Math.round(r * 100)),
             });
             if (novel.segments.length === 0) { onError('正文是空的'); setBusy(false); return; }
-            await onCommit(novel);
+            await onCommit({ ...novel, categoryId: categories.some(c => c.id === categoryId) ? categoryId : undefined });
             trackEvent('上架一本小说到书库');
         } catch (e) {
             console.error('[VRWorld] build novel failed', e);
@@ -3641,6 +3615,7 @@ const UploadModal: React.FC<{
                 <div className="space-y-2.5">
                     <input value={title} onChange={e => setTitle(e.target.value)} placeholder="书名（必填）" className={`${uploadFieldClass} text-[13px]`} />
                     <input value={author} onChange={e => setAuthor(e.target.value)} placeholder="作者（选填）" className={`${uploadFieldClass} text-[13px]`} />
+                    <label className="block text-[11px] text-indigo-100">书籍分类<select aria-label="上架书籍分类" value={categoryId} onChange={e => setCategoryId(e.target.value)} disabled={busy} className={`${uploadFieldClass} mt-1 text-[13px]`}><option value="">未分类</option>{categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
                     <input value={summary} onChange={e => setSummary(e.target.value)} placeholder="一句话简介（选填，喂给角色当背景）" className={`${uploadFieldClass} text-[13px]`} />
                     {!fileInfo && (
                         <>
@@ -3927,128 +3902,9 @@ const UserVRPanel: React.FC<{
 // ============ 接入设置 ============
 const INTERVAL_OPTIONS = [60, 120, 180, 360, 720];
 
-const NovelPreferenceModal: React.FC<{
-    char: CharacterProfile;
-    novels: VRWorldNovel[];
-    onSave: (novelIds: string[]) => void;
-    onClose: () => void;
-}> = ({ char, novels, onSave, onClose }) => {
-    const validNovelIds = useMemo(() => new Set(novels.map(novel => novel.id)), [novels]);
-    const [selected, setSelected] = useState<Set<string>>(() => new Set(
-        (char.vrState?.preferredNovelIds || []).filter(id => validNovelIds.has(id)),
-    ));
-    const [query, setQuery] = useState('');
-    const [page, setPage] = useState(0);
-    const pageSize = 18;
-
-    useEffect(() => {
-        setSelected(new Set((char.vrState?.preferredNovelIds || []).filter(id => validNovelIds.has(id))));
-        setQuery('');
-        setPage(0);
-    }, [char.id, validNovelIds]);
-
-    const filtered = useMemo(() => {
-        const needle = query.trim().toLocaleLowerCase();
-        if (!needle) return novels;
-        return novels.filter(novel => `${novel.title}\n${novel.author || ''}`.toLocaleLowerCase().includes(needle));
-    }, [novels, query]);
-    const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-    const currentPage = Math.min(page, pageCount - 1);
-    const visible = filtered.slice(currentPage * pageSize, currentPage * pageSize + pageSize);
-
-    const toggle = (novelId: string) => {
-        setSelected(current => {
-            const next = new Set(current);
-            if (next.has(novelId)) next.delete(novelId);
-            else next.add(novelId);
-            return next;
-        });
-    };
-
-    return (
-        <div className="fixed inset-0 z-[340] flex items-end justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
-            <div
-                className="flex h-[min(86dvh,760px)] w-full max-w-md flex-col overflow-hidden rounded-t-[28px]"
-                style={{ background: 'linear-gradient(180deg,#1d1a31,#0f0d1c)', border: '1px solid rgba(255,255,255,.12)', paddingBottom: vrBottomPad('0px') }}
-                onClick={event => event.stopPropagation()}
-            >
-                <header className="shrink-0 px-4 pt-4 pb-3 border-b border-white/10">
-                    <div className="flex items-center gap-3">
-                        <div className="min-w-0 flex-1">
-                            <h2 className="text-[15px] font-bold text-white">{char.name} 的阅读偏好</h2>
-                            <p className="mt-1 text-[10.5px] leading-4 text-indigo-200/55">
-                                不选择就是全书库自动轮换；选中后优先在这些书里轮换。
-                            </p>
-                        </div>
-                        <button type="button" onClick={onClose} className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-white/55 active:bg-white/10" aria-label="关闭阅读偏好">
-                            <X size={18} />
-                        </button>
-                    </div>
-                    <label className="mt-3 flex h-10 items-center gap-2 rounded-xl bg-white/[0.07] px-3 text-indigo-100/60 ring-1 ring-white/10 focus-within:ring-indigo-300/45">
-                        <MagnifyingGlass size={15} />
-                        <input
-                            value={query}
-                            onChange={event => { setQuery(event.target.value); setPage(0); }}
-                            placeholder={`搜索 ${novels.length.toLocaleString()} 本小说`}
-                            className="min-w-0 flex-1 bg-transparent text-[12px] text-white outline-none placeholder:text-indigo-200/30"
-                        />
-                    </label>
-                    <div className="mt-2 flex items-center justify-between text-[10px] text-indigo-200/45">
-                        <span>{selected.size > 0 ? `已优先 ${selected.size} 本` : '当前：自动轮换全部小说'}</span>
-                        {query && <span>找到 {filtered.length.toLocaleString()} 本</span>}
-                    </div>
-                </header>
-
-                <main className="vr-reader-scroll min-h-0 flex-1 overflow-y-auto px-4 py-1">
-                    {visible.length === 0 ? (
-                        <div className="grid h-40 place-items-center text-[11px] text-indigo-200/35">没有找到这本书</div>
-                    ) : visible.map(novel => {
-                        const active = selected.has(novel.id);
-                        const bookmark = getBookmark(char.vrState?.novelBookmarks, novel.id);
-                        const progress = Math.min(100, Math.round(bookmark / Math.max(1, novel.segments.length) * 100));
-                        return (
-                            <button
-                                type="button"
-                                key={novel.id}
-                                onClick={() => toggle(novel.id)}
-                                aria-pressed={active}
-                                className="flex w-full items-center gap-3 border-b border-white/[0.07] py-3 text-left active:bg-white/[0.04]"
-                            >
-                                <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-md border text-white transition-colors ${active ? 'border-indigo-400 bg-indigo-400' : 'border-white/20 bg-white/[0.03]'}`}>
-                                    {active && <Check size={12} weight="bold" />}
-                                </span>
-                                <span className="min-w-0 flex-1">
-                                    <span className="block truncate text-[12.5px] font-semibold text-white/90">{novel.title}</span>
-                                    <span className="mt-0.5 block truncate text-[9.5px] text-indigo-200/40">
-                                        {novel.author ? `${novel.author} · ` : ''}{novel.segments.length.toLocaleString()} 段{bookmark > 0 ? ` · ${progress}%` : ''}
-                                    </span>
-                                </span>
-                            </button>
-                        );
-                    })}
-                </main>
-
-                <footer className="shrink-0 border-t border-white/10 px-4 pt-3">
-                    {pageCount > 1 && (
-                        <div className="mb-3 flex items-center justify-center gap-4 text-[10px] text-indigo-100/55">
-                            <button type="button" onClick={() => setPage(value => Math.max(0, value - 1))} disabled={currentPage === 0} className="grid h-8 w-8 place-items-center rounded-full bg-white/[0.06] disabled:opacity-25" aria-label="上一页"><CaretLeft size={13} weight="bold" /></button>
-                            <span className="tabular-nums">{currentPage + 1} / {pageCount}</span>
-                            <button type="button" onClick={() => setPage(value => Math.min(pageCount - 1, value + 1))} disabled={currentPage >= pageCount - 1} className="grid h-8 w-8 place-items-center rounded-full bg-white/[0.06] disabled:opacity-25" aria-label="下一页"><CaretRight size={13} weight="bold" /></button>
-                        </div>
-                    )}
-                    <div className="flex gap-2">
-                        <button type="button" onClick={() => setSelected(new Set())} disabled={selected.size === 0} className="flex-1 rounded-xl border border-white/15 py-2.5 text-[12px] text-white/65 disabled:opacity-30">恢复自动轮换</button>
-                        <button type="button" onClick={() => onSave(Array.from(selected))} className="flex-1 rounded-xl py-2.5 text-[12px] font-bold text-white" style={{ background: 'linear-gradient(120deg,rgba(128,145,245,.95),rgba(171,142,235,.95))' }}>保存偏好</button>
-                    </div>
-                </footer>
-            </div>
-        </div>
-    );
-};
-
 const SettingsView: React.FC<{
     characters: CharacterProfile[];
-    updateCharacter: (id: string, updates: Partial<CharacterProfile>) => void;
+    updateCharacter: ReturnType<typeof useOS>['updateCharacter'];
     addToast?: (msg: string, type?: any) => void;
     novels: VRWorldNovel[]; onReload: () => void;
     onRequestEnable: (char: CharacterProfile) => void;
@@ -4066,10 +3922,21 @@ const SettingsView: React.FC<{
     const visibleCharacters = groupedCharacters.slice(currentPage * 5, currentPage * 5 + 5);
     useEffect(() => { setSettingsPage(0); }, [settingsGroupId]);
     const novelCount = novels.length;
-    const validNovelIds = useMemo(() => new Set(novels.map(novel => novel.id)), [novels]);
-    const go = (room?: VRRoomId) => {
+
+    const go = (room?: VRRoomId, sarActivity?: VRSARActivity) => {
         if (!pickFor) return;
-        VRScheduler.triggerNow(pickFor.id, room);
+        if (room === 'library' && !readableNovels(novels, pickFor).length) {
+            addToast?.('当前阅读范围内还没有书，请先归入书籍或调整阅读偏好。', 'info');
+            return;
+        }
+        if (sarActivity === 'garden') {
+            const market = readFishingMarketState();
+            if (!market.dinosaurGarden?.visitsEnabled || !gardenResidents(market).length) {
+                addToast?.('先在恐龙箱庭开启共同摆弄，并在桌上放一只恐龙。', 'info');
+                return;
+            }
+        }
+        VRScheduler.triggerNow(pickFor.id, room, undefined, sarActivity);
         addToast?.(`${pickFor.name} 正在检查日程，尝试登入彼方…`, 'info');
         setTimeout(onReload, 4000);
         setPickFor(null);
@@ -4117,7 +3984,6 @@ const SettingsView: React.FC<{
                 const interval = st?.intervalMinutes || VR_DEFAULT_INTERVAL_MIN;
                 const chibi = getChibi(char);
                 const failStreak = VRScheduler.getFailStreak(char.id);
-                const preferredNovelCount = (st?.preferredNovelIds || []).filter(id => validNovelIds.has(id)).length;
                 return (
                     <div key={char.id} data-vr-character={char.id} className="rounded-2xl p-3.5 backdrop-blur-sm" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.07)' }}>
                         <div className="flex items-center gap-2.5">
@@ -4168,12 +4034,15 @@ const SettingsView: React.FC<{
                                 </button>
                             </>
                         )}
+                        <VRActivityRestrictions char={char} onChange={change => {
+                            updateCharacter(char.id, latest => ({vrState:change(latest.vrState || {enabled:false,intervalMinutes:VR_DEFAULT_INTERVAL_MIN})}));
+                        }}/>
                         {novelCount > 0 && (
                             <button onClick={() => onEditReadingPreference(char)}
                                 className="mt-2.5 flex w-full items-center gap-2 border-t border-white/[0.07] pt-2.5 text-left active:opacity-70">
                                 <BookOpen size={13} weight="fill" className="text-indigo-200/70" />
                                 <span className="text-[11px] font-semibold text-indigo-100/75">阅读偏好</span>
-                                <span className="ml-auto text-[10px] text-indigo-300/45">{preferredNovelCount > 0 ? `优先 ${preferredNovelCount} 本` : '自动轮换全部'}</span>
+                                <span className="ml-auto text-[10px] text-indigo-300/45">{readingPreferenceLabel(char)}</span>
                                 <CaretRight size={11} weight="bold" className="text-indigo-300/35" />
                             </button>
                         )}
@@ -4181,18 +4050,9 @@ const SettingsView: React.FC<{
                 );
             })}
             {pageNavigation}
-            <ActionSheet open={!!pickFor} title={pickFor ? `让 ${pickFor.name} 现在去哪个房间？` : ''}
-                actions={[
-                    { label: '随机一个房间', onClick: () => go() },
-                    ...(novelCount > 0 ? [{ label: '图书馆 · 读书写批注', onClick: () => go('library') }] : []),
-                    { label: '剧院 · 写剧本投稿', onClick: () => go('theater') },
-                    { label: '听歌房 · 点歌锐评', onClick: () => go('music') },
-                    { label: '留言簿 · 发帖版聊', onClick: () => go('guestbook') },
-                    { label: '娱乐室 · 放开玩', onClick: () => go('gym') },
-                    { label: '邮局 · 写漂流信', onClick: () => go('postoffice') },
-                    { label: 'SAR 活动空间 · 抽芯片写随笔', onClick: () => go('sar') },
-                    // 信号坠落处不放这里：参与统一走活动 banner → 面板「✍ 参与」，那条路才有「耳语」
-                ]} onClose={() => setPickFor(null)} />
+            {pickFor && <VRActivityPicker char={pickFor} libraryAvailable={readableNovels(novels,pickFor).length > 0}
+                gardenReason={(() => {const market=readFishingMarketState();return !market.dinosaurGarden?.visitsEnabled ? '先在箱庭开启共同摆弄' : !gardenResidents(market).length ? '先在桌上放一只恐龙' : undefined;})()}
+                onGo={go} onClose={() => setPickFor(null)}/>}
         </div>
     );
 };

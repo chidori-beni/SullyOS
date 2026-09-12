@@ -1,5 +1,6 @@
 
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
+import type { VRSARActivity } from '../types';
 import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, CharacterGroup, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile, MemoryPalaceFeatureFlags } from '../types';
 import { DB } from '../utils/db';
 import { SLOW_FLUSH_TIMING_EVENT } from '../utils/slowFlushProbe';
@@ -2897,7 +2898,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       });
 
       // 「彼方」自主登入 —— 独立调度，复用同一批 refs 拿最新状态
-      const runVR = async (charId: string, room?: string, letterId?: string, manual?: boolean) => {
+      const runVR = async (charId: string, room?: string, letterId?: string, manual?: boolean, sarActivity?: VRSARActivity) => {
           const char = charactersRef.current.find(c => c.id === charId);
           // 调度表里还排着队，角色却已经不接入了（或者压根被删了）：这条调度不该继续存在。
           // 就地撤掉并留一行记录 —— 不撤的话它会一直空转，而空转是完全静默的，
@@ -2925,6 +2926,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                    updateCharacter,
                    updateUserProfile,
                    forcedRoom: room as any,
+                  forcedSARActivity: sarActivity,
                   forcedLetterId: letterId,
                   manual,
               });
@@ -2951,7 +2953,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           });
           addToast(`${char.name} 连续 ${streak} 次没能调通模型，已暂停 ta 在彼方的自主登入`, 'error');
       };
-      VRScheduler.onTrigger((charId: string, room?: string, letterId?: string, manual?: boolean) => { void runVR(charId, room, letterId, manual); });
+      VRScheduler.onTrigger((charId: string, room?: string, letterId?: string, manual?: boolean, sarActivity?: VRSARActivity) => { void runVR(charId, room, letterId, manual, sarActivity); });
 
       // 以角色 vrState 为准对账调度表：调度表存 localStorage、不随备份迁移，
       // 导入备份后角色虽 enabled 但调度表为空，这里补建/清理使其按时触发。

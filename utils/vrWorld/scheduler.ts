@@ -14,6 +14,8 @@
  * 角色按时登入"的核心诉求；云端加速可后续叠加。
  */
 
+import type { VRSARActivity } from '../../types';
+
 export interface VRSchedule {
     charId: string;
     intervalMs: number;
@@ -82,7 +84,7 @@ function removeLastFire(charId: string) {
     saveLastFire(m);
 }
 
-let triggerCallback: ((charId: string, room?: string, letterId?: string, manual?: boolean) => void | Promise<void>) | null = null;
+let triggerCallback: ((charId: string, room?: string, letterId?: string, manual?: boolean, sarActivity?: VRSARActivity) => void | Promise<void>) | null = null;
 let visibilityListener: (() => void) | null = null;
 let focusListener: (() => void) | null = null;
 let mainThreadTimer: ReturnType<typeof setInterval> | null = null;
@@ -177,7 +179,7 @@ function detachListeners() {
 
 export const VRScheduler = {
     /** 注册触发回调（应用启动时调一次）。 */
-    onTrigger(callback: (charId: string, room?: string, letterId?: string, manual?: boolean) => void | Promise<void>) {
+    onTrigger(callback: (charId: string, room?: string, letterId?: string, manual?: boolean, sarActivity?: VRSARActivity) => void | Promise<void>) {
         triggerCallback = callback;
         attachListeners();
         checkOverdue();
@@ -295,9 +297,12 @@ export const VRScheduler = {
     },
 
     /** 立刻触发一次（UI 上"现在去逛逛"按钮用），不影响计划。room 可指定房间，省略则随机；letterId 可指定要回复的来信。 */
-    triggerNow(charId: string, room?: string, letterId?: string) {
+    triggerNow(charId: string, room?: string, letterId?: string, sarActivity?: VRSARActivity) {
         setLastFire(charId, Date.now());
         schedulePreciseTimer();
-        if (triggerCallback) void triggerCallback(charId, room, letterId, true);
+        if (triggerCallback) {
+            if (sarActivity) void triggerCallback(charId, room, letterId, true, sarActivity);
+            else void triggerCallback(charId, room, letterId, true);
+        }
     },
 };

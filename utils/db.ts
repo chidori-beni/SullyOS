@@ -8,7 +8,7 @@ import {
     BankTransaction, SavingsGoal, BankFullState, DollhouseState, XhsStockImage, XhsActivityRecord, XhsOwnedPost, SongSheet, QuizSession, GuidebookSession,
     LifeSimState, HandbookEntry, Tracker, TrackerEntry, HotNewsSnapshot,
     LifeRecord, MedPlan, LifeRecordSettings, CharacterGroup,
-    VRWorldNovel, VRNovelAnnotation, CustomCreatorPart, VRMusicRoomState, VRGuestbookState, VRScript, VRStagedPlay, VRLetter,
+    VRWorldNovel, VRLibraryCategory, VRNovelAnnotation, CustomCreatorPart, VRMusicRoomState, VRGuestbookState, VRScript, VRStagedPlay, VRLetter,
     WorldProfile, WorldEpisode, StoryTheaterEntry, StoryTheaterPreset, StoryTheaterMask
 } from '../types';
 import { exportPostOfficeLocal, importPostOfficeLocal } from './vrWorld/postOffice';
@@ -21,6 +21,7 @@ import { exportWorldHomeLocal, importWorldHomeLocal } from './worldHome/localBac
 import { exportDesktopSkinLocal, importDesktopSkinLocal } from './desktopSkinBackup';
 import { getActiveDatePresence } from './datePresence';
 import { GALLERY_ALL_ID, GALLERY_UNFILED_ID, galleryAlbumNameKey, normalizeGalleryAlbumName, normalizeGalleryAlbumRecord, normalizeGalleryCategoryOrderRecord, reconcileGalleryCategoryOrder, withoutGalleryImageAlbum } from './galleryAlbums';
+import { editLibrary, VR_LIBRARY_RECORD, type LibraryEdit } from './vrWorld/library';
 
 const DB_NAME = 'AetherOS_Data';
 // v67：两条并行线各自用掉了 v65/v66（A线: blob_assets + 生活记录；B线: room_plates 门牌 + digest_reports 消化日志），
@@ -2855,6 +2856,38 @@ export const DB = {
   },
 
   // --- VR World 「彼方」 全局小说库 ---
+  getVRLibraryCategories: async (): Promise<VRLibraryCategory[]> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const req = db.transaction(STORE_VR_SETTINGS, 'readonly').objectStore(STORE_VR_SETTINGS).get(VR_LIBRARY_RECORD);
+          req.onsuccess = () => resolve(req.result?.categories || []);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  editVRLibrary: async (edit: LibraryEdit): Promise<void> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction([STORE_VR_SETTINGS, STORE_VR_NOVELS], 'readwrite');
+          const settings = tx.objectStore(STORE_VR_SETTINGS), books = tx.objectStore(STORE_VR_NOVELS);
+          const categoryRequest = settings.get(VR_LIBRARY_RECORD), novelRequest = books.getAll();
+          let ready = 0;
+          let failure: unknown;
+          const apply = () => {
+              if (++ready !== 2) return;
+              try {
+                  const result = editLibrary(categoryRequest.result?.categories || [], novelRequest.result || [], edit);
+                  settings.put({ id: VR_LIBRARY_RECORD, categories: result.categories });
+                  for (const novel of result.changed) books.put(novel);
+              } catch (error) { failure = error; tx.abort(); }
+          };
+          categoryRequest.onsuccess = apply;
+          novelRequest.onsuccess = apply;
+          tx.oncomplete = () => resolve();
+          tx.onerror = tx.onabort = () => reject(failure || tx.error || new Error('书库分类保存失败'));
+      });
+  },
+
   getVRNovels: async (): Promise<VRWorldNovel[]> => {
       const db = await openDB();
       if (!db.objectStoreNames.contains(STORE_VR_NOVELS)) return [];
@@ -2868,8 +2901,12 @@ export const DB = {
 
   saveVRNovel: async (novel: VRWorldNovel): Promise<void> => {
       const db = await openDB();
-      const transaction = db.transaction(STORE_VR_NOVELS, 'readwrite');
-      transaction.objectStore(STORE_VR_NOVELS).put(novel);
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_VR_NOVELS, 'readwrite');
+          transaction.objectStore(STORE_VR_NOVELS).put(novel);
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = transaction.onabort = () => reject(transaction.error || new Error('书籍保存失败'));
+      });
   },
 
   deleteVRNovel: async (id: string): Promise<void> => {
