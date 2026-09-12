@@ -15,6 +15,7 @@ import { processImage } from '../utils/file';
 import { ContextBuilder } from '../utils/context';
 import { Coffee, ClipboardText, ChartBar, Coin, Target, UserCircle, BookOpen, Lightning, Storefront } from '@phosphor-icons/react';
 import { addLocalDays, getLocalDateKey } from '../utils/localDate';
+import { roundMoney, sumMoney } from '../utils/format';
 import { useLocalDateKey } from '../hooks/useLocalDateKey';
 import { trackEvent } from '../utils/analytics';
 
@@ -284,7 +285,7 @@ const BankApp: React.FC = () => {
         }
 
         const todayTx = txs.filter(t => t.dateStr === today);
-        const spent = todayTx.reduce((sum, t) => sum + t.amount, 0);
+        const spent = sumMoney(todayTx.map(t => t.amount));
         const appeal = calculateAppeal(currentState.shop.staff.length, currentState.shop.unlockedRecipes);
 
         const finalState = { ...currentState, todaySpent: spent, shop: { ...currentState.shop, appeal } };
@@ -324,7 +325,7 @@ const BankApp: React.FC = () => {
         trackEvent('记一笔账');
 
         const cur = stateRef.current;
-        const newSpent = cur.todaySpent + amount;
+        const newSpent = roundMoney(cur.todaySpent + amount);
         const newState = { ...cur, todaySpent: newSpent };
         stateRef.current = newState;
         setState(newState);
@@ -353,7 +354,7 @@ const BankApp: React.FC = () => {
         let newSpent = cur.todaySpent;
         const today = getLocalDateKey();
         if (tx.dateStr === today) {
-            newSpent = Math.max(0, cur.todaySpent - tx.amount);
+            newSpent = Math.max(0, roundMoney(cur.todaySpent - tx.amount));
         }
 
         const newState = { ...cur, todaySpent: newSpent };
