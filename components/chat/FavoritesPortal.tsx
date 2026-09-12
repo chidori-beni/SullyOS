@@ -4,6 +4,7 @@ import {
     CaretLeft,
     CaretRight,
     FileText,
+    MagnifyingGlass,
     Pause,
     Play,
     Star,
@@ -43,8 +44,31 @@ import {
     type MessageFavoriteCollection,
     type MessageFavoriteCollectionMessage,
 } from '../../utils/messageFavoriteCollections';
+import { chatMessageFuzzyMatchesKeyword } from '../../utils/chatMessageSearch';
 
 const PAGE_SIZE = 10;
+
+/**
+ * 一条收藏里「能拿来搜」的文字。
+ *
+ * 四种收藏结构不一样：语音有原文、朗读稿和翻译，文字有正文，两种合集要把里面每条
+ * 消息的说话人和正文摊平进来。角色名一律带上——「搜角色名把 ta 的收藏都翻出来」是
+ * 最常用的一种找法。媒体消息用它的可读兜底文案，不拿 URL 去搜。
+ */
+const searchableFavoriteText = (entry: UnifiedFavorite): string => {
+    const parts: string[] = [entry.item.charName || ''];
+    if (entry.kind === 'voice') {
+        parts.push(entry.item.originalText || '', entry.item.spokenText || '', entry.item.translation || '');
+    } else if (entry.kind === 'text') {
+        parts.push(entry.item.content || '');
+    } else {
+        for (const message of entry.item.messages) {
+            parts.push(message.speakerName || '', message.content || '');
+            if ('spokenText' in message) parts.push(message.spokenText || '');
+        }
+    }
+    return parts.filter(Boolean).join(' ');
+};
 type FavoriteFilter = 'all' | 'text' | 'voice';
 type SourceFilter = 'all' | VoiceFavoriteSource;
 type UnifiedFavorite =
@@ -191,6 +215,8 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose }) => {
     const [filter, setFilter] = useState<FavoriteFilter>('all');
     const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
     const [page, setPage] = useState(0);
+    const [searchOpen, setSearchOpen] = useState(false);
+    const [keyword, setKeyword] = useState('');
     const [loading, setLoading] = useState(true);
     const [playingId, setPlayingId] = useState<string | null>(null);
     const [audioError, setAudioError] = useState<string | null>(null);
@@ -263,8 +289,11 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose }) => {
                     || (item.kind === 'message-collection' && item.item.messages.some(message => message.kind === 'voice'))
                 )))
             && (sourceFilter === 'all' || sourceOf(item) === sourceFilter)
+            // 关键词挂在最后一层：先按类型 / 来源筛，再在结果里找词。
+            // 复用聊天记录搜索那一套匹配（NFKC 归一化 + 子序列模糊匹配），两处行为一致。
+            && chatMessageFuzzyMatchesKeyword({ type: 'text', content: searchableFavoriteText(item) }, keyword)
         )),
-        [allItems, filter, sourceFilter],
+        [allItems, filter, keyword, sourceFilter],
     );
     const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
     const visible = filtered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
@@ -272,6 +301,9 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose }) => {
     useEffect(() => {
         if (page >= pageCount) setPage(Math.max(0, pageCount - 1));
     }, [page, pageCount]);
+
+    // 改完关键词还停在第 3 页会看起来「什么都没搜到」，回第一页。
+    useEffect(() => { setPage(0); }, [keyword]);
 
     const stopPlayback = useCallback(() => {
         audioRef.current?.pause();
@@ -376,8 +408,44 @@ const FavoritesPortal: React.FC<FavoritesPortalProps> = ({ onClose }) => {
                             <h1 className="text-[17px] font-bold tracking-[.08em]">收藏</h1>
                             <p className="mt-0.5 text-[10px] text-slate-500">{allItems.length} 项 · 文字 {textItems.length} 条 / {textCollections.length} 组 · 语音 {voiceItems.length}</p>
                         </div>
-                        <span className="w-10" aria-hidden />
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setSearchOpen(open => {
+                                    if (open) setKeyword('');   // 收起时清空，免得筛选悄悄留着
+                                    return !open;
+                                });
+                            }}
+                            aria-pressed={searchOpen}
+                            aria-label={searchOpen ? '关闭搜索' : '搜索收藏'}
+                            className={`w-10 h-10 -mr-1 grid place-items-center rounded-full transition-colors ${searchOpen ? 'bg-slate-900/10 text-slate-800' : 'text-slate-600 active:bg-black/5'}`}
+                        >
+                            <MagnifyingGlass size={21} weight="bold" />
+                        </button>
                     </div>
+                    {searchOpen && (
+                        <div className="mt-2 flex items-center gap-2 rounded-full bg-slate-900/5 px-3 h-9">
+                            <MagnifyingGlass size={15} weight="bold" className="shrink-0 text-slate-400" />
+                            <input
+                                autoFocus
+                                value={keyword}
+                                onChange={event => setKeyword(event.target.value)}
+                                placeholder="搜正文、角色名、朗读稿…"
+                                className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-slate-400"
+                                aria-label="搜索收藏"
+                            />
+                            {keyword && (
+                                <button type="button" onClick={() => setKeyword('')} className="shrink-0 w-6 h-6 grid place-items-center rounded-full text-slate-400 active:bg-black/5" aria-label="清空关键词">
+                                    <X size={13} weight="bold" />
+                                </button>
+                            )}
+                        </div>
+                    )}
+                    {searchOpen && keyword.trim() !== '' && (
+                        <p className="mt-1.5 text-center text-[10px] text-slate-400">
+                            找到 {filtered.length} 项
+                        </p>
+                    )}
                     <div className="flex items-center justify-center gap-1.5 mt-2" role="tablist" aria-label="收藏类型">
                         {filters.map(option => (
                             <button
