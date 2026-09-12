@@ -121,8 +121,18 @@ const stripXinshengLines = (t: string): string =>
     .filter(line => !XINSHENG_LINE_RE.test(line))
     .join('\n');
 
-/** 源标签 `[聊天]/[通话]/[约会]` → 换行 (保留分隔语义) */
-const stripSourceTags = (t: string): string => t.replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, '\n');
+/**
+ * 历史来源标签 → 换行（保留分隔语义）。
+ *
+ * 历史原文只会注入 `[聊天]/[通话]/[约会]`，但模型偶尔会在模仿时把标签做成
+ * 中英混写（线上实例如 `[聊chat]`），甚至直接翻成 `[chat]`。这些仍然是内部
+ * 元数据，不该作为角色正文展示。只对白名单中的三组来源词做容错，避免吞掉普通
+ * 方括号内容。
+ */
+export const stripLeakedSourceTags = (t: string): string => t.replace(
+  /\s*\[\s*(?:聊\s*(?:天|chat)|chat|通\s*(?:话|call)|call|约\s*(?:会|date)|date)\s*\]\s*/giu,
+  '\n',
+);
 
 /**
  * 面对面期间的手机消息来源标记是 prompt 内部元数据，不是角色台词。
@@ -502,7 +512,7 @@ export function sanitizeForNotification(text: string): string {
   result = stripRoleNamePrefix(result);
   result = stripSystemLogLeak(result);
   // 7. 源标签 [聊天] 等
-  result = stripSourceTags(result);
+  result = stripLeakedSourceTags(result);
   result = stripFaceToFacePhoneSourceTags(result);
   // 8. 内部状态 / 业务标签 / 引用
   result = stripInnerState(result);
@@ -549,7 +559,7 @@ export function sanitizeForBubble(
   //      也不能让用户在气泡里看到一坨 JSON。
   result = stripXinshengLines(result);
   // 2. 源标签 / 时间戳 / 系统日志 leak / 业务标签
-  result = stripSourceTags(result);
+  result = stripLeakedSourceTags(result);
   result = stripFaceToFacePhoneSourceTags(result);
   result = stripTimestamps(result);
   result = stripSystemLogLeak(result);
@@ -674,7 +684,7 @@ export function sanitizeIntoSegments(text: string): Segment[] {
   cleaned = stripTimestamps(cleaned);
   cleaned = stripChineseDate(cleaned);
   cleaned = stripRoleNamePrefix(cleaned);
-  cleaned = stripSourceTags(cleaned);
+  cleaned = stripLeakedSourceTags(cleaned);
   cleaned = stripFaceToFacePhoneSourceTags(cleaned);
   // 注意: 这里**不**剥 stripQuotes — 引用要带到客户端让 Step 7 配 aiReplyTarget.
   // sanitizeTextForBanner 单独剥引用给 notification.

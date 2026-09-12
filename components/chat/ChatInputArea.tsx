@@ -122,7 +122,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     const [isBubbleSectionOpen, setIsBubbleSectionOpen] = useState(false);
     const [pendingDeleteThemeId, setPendingDeleteThemeId] = useState<string | null>(null);
     const [emojiSelectionMode, setEmojiSelectionMode] = useState(false);
-    const [selectedEmojis, setSelectedEmojis] = useState<any[]>([]);
+    const [selectedEmojis, setSelectedEmojis] = useState<Emoji[]>([]);
     // 手动分页避免旧版/第三方 WebView 不触发 IntersectionObserver，永远卡在「加载中」。
     const [emojiPage, setEmojiPage] = useState(0);
     const emojiPageCount = Math.max(1, Math.ceil(emojis.length / EMOJI_PAGE_SIZE));
@@ -283,8 +283,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         if (type === 'emoji') {
             if (emojiSelectionMode) {
                 setSelectedEmojis(prev => {
-                    const exists = prev.find(e => e.url === item.url);
-                    if (exists) return prev.filter(e => e.url !== item.url);
+                    const exists = prev.find(e => e.name === item.name);
+                    if (exists) return prev.filter(e => e.name !== item.name);
                     return [...prev, item];
                 });
             } else {
@@ -440,7 +440,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
 
     React.useEffect(() => {
         if (emojiSelectionMode) {
-            setSelectedEmojis(prev => prev.filter(se => emojis.some(e => e.url === se.url)));
+            const names = new Set(emojis.map(e => e.name));
+            setSelectedEmojis(prev => prev.filter(se => names.has(se.name)));
         }
     }, [emojis]);
 
@@ -548,7 +549,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
           ? 'text-slate-400'
           : 'text-slate-400';
 
-    const selectedEmojiUrls = emojiSelectionMode ? new Set(selectedEmojis.map(se => se.url)) : new Set();
+    const selectedEmojiNames = emojiSelectionMode ? new Set(selectedEmojis.map(se => se.name)) : new Set();
 
     return (
         <>
@@ -724,6 +725,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                     <div className="flex h-10 shrink-0 items-center pl-1 pr-3">
                                         <button
                                             onClick={(e) => { e.stopPropagation(); setEmojiSelectionMode(true); }}
+                                            aria-label="批量管理表情"
                                             className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors shadow-sm ${
                                                 isPixelStyle ? 'bg-[#c99872] text-[#fff7ed] hover:bg-[#b07d57]' :
                                                 isDiscordStyle ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' :
@@ -748,6 +750,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                                 }
                                             }} 
                                             disabled={selectedEmojis.length === 0}
+                                            aria-label="删除选中的表情"
                                             className={`${emojiImportTileClass} !bg-red-50 !border-red-400 !text-red-500 ${selectedEmojis.length === 0 ? 'opacity-40 cursor-not-allowed' : 'active:scale-95'}`}
                                         >
                                             <Trash className="w-8 h-8" weight="fill" />
@@ -756,14 +759,14 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                         <button onClick={() => onPanelAction('emoji-import')} className={emojiImportTileClass}>+</button>
                                     )}
                                     {visibleEmojis.map((e) => {
-                                        const isSelected = selectedEmojiUrls.has(e.url);
+                                        const isSelected = selectedEmojiNames.has(e.name);
                                         return (
                                         <button
-                                            // key 必须用 url 而不是索引：索引 key 会让 React 复用 <img> 节点、
-                                            // 切分组时只换 src——旧分组的位图在新图解码完成前一直挂在格子上
-                                            // （表现为"新分组显示旧分组的图"）。按 url 重建节点则空白等加载，不串图。
-                                            key={e.url}
+                                            // name 是表情库主键；不同表情可共用 URL / 去重后的 Blob 令牌。
+                                            // 用图片地址当记录 key 会冲突，切分组/翻页时残留、复制旧格子。
+                                            key={e.name}
                                             onClick={(ev) => handleItemClick(ev, e, 'emoji')}
+                                            aria-pressed={emojiSelectionMode ? isSelected : undefined}
                                             // Long press handlers for Emojis
                                             onTouchStart={(ev) => handleTouchStart(e, 'emoji', ev)}
                                             onTouchMove={handleTouchMove}
@@ -776,7 +779,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                             className={`${emojiTileClass} ${isSelected ? '!border-blue-500' : ''}`}
                                         >
                                             <div className="aspect-square w-full">
-                                                <img src={e.url} loading="lazy" decoding="async" className="sully-emoji-thumb w-full h-full object-contain pointer-events-none" />
+                                                {/* 换图仍重建 img，避免新图解码前残留旧位图；分页和懒加载照旧。 */}
+                                                <img key={e.url} src={e.url} loading="lazy" decoding="async" className="sully-emoji-thumb w-full h-full object-contain pointer-events-none" />
                                             </div>
                                             <span className={`text-[9px] truncate w-full text-center mt-0.5 leading-tight pointer-events-none ${emojiLabelClass}`}>{e.name}</span>
                                             {isSelected && <div className="absolute inset-0 bg-blue-500/20 rounded-2xl pointer-events-none border-2 border-blue-500" />}

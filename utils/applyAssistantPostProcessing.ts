@@ -62,6 +62,7 @@ import { markAmsgStateDirty } from './amsgStateSync';
 import { announceScheduleChanges, applyAssistantScheduleChanges } from './scheduleChange';
 import { extractCallInvite, formatCallInviteTag, requestIncomingCall } from './incomingCall';
 import { persistMissedCall } from '../components/call/IncomingCallOverlay';
+import { stripLeakedSourceTags } from './sanitize';
 
 // ─── 模块内辅助 ──────────────────────────────────────────────────────────────
 
@@ -74,8 +75,8 @@ const normalizeAiContent = (raw: string): string => {
     cleaned = cleaned.replace(/<(?:think|thinking|thought)>[\s\S]*$/gi, '');
     cleaned = cleaned.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
     cleaned = cleaned.replace(/^[\w一-龥]+:\s*/, '');
-    // Strip source tags [聊天]/[通话]/[约会] leaked from history context — replace with newline to preserve intended splits
-    cleaned = cleaned.replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, '\n');
+    // Strip source tags leaked from history context, including model-mutated forms such as [聊chat].
+    cleaned = stripLeakedSourceTags(cleaned);
     // Face-to-face phone source markers are prompt metadata, never visible dialogue.
     // Keep this early (before second-pass/tool detection) so a model echo cannot be
     // fed back into the next round or persisted into memory.

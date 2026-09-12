@@ -50,6 +50,15 @@ describe('sanitizeForNotification', () => {
     expect(sanitizeForNotification('你好[聊天]在吗')).toBe('你好\n在吗');
   });
 
+  it('A2b 模型把来源标签中英混写或翻译后仍会剥掉', () => {
+    expect(sanitizeForNotification('抖音BGM有节奏感，那就听着\n[聊chat] 播客那是别人的习惯')).toBe(
+      '抖音BGM有节奏感，那就听着\n播客那是别人的习惯',
+    );
+    expect(sanitizeForNotification('前文 [chat] 后文 [通call] 收尾 [约date] 好')).toBe(
+      '前文\n后文\n收尾\n好',
+    );
+  });
+
   it('A3 时间戳 4 变体一次过', () => {
     // 注意: English 12h `\(...\)` 不吃 trailing 空格 (跟原版正则保持一致),
     // 所以 `(1:52 PM) hi4` 剥后是 ' hi4'.
@@ -237,6 +246,15 @@ describe('bubble vs notification differences', () => {
     const input = '前文[面对面手机消息]后文\n⟦SRC:FACE_PHONE⟧继续';
     expect(sanitizeForBubble(input)).toBe('前文\n后文\n继续');
     expect(sanitizeForNotification(input)).toBe('前文\n后文\n继续');
+  });
+
+  it('气泡与 worker 分段都不会泄漏模型变形后的来源标签', () => {
+    const raw = '得了吧 [聊chat] 刚才还叫宝宝';
+    expect(sanitizeForBubble(raw)).toBe('得了吧\n刚才还叫宝宝');
+    expect(sanitizeIntoSegments(raw).map(segment => segment.sanitized)).toEqual([
+      '得了吧',
+      '刚才还叫宝宝',
+    ]);
   });
 
   it('A8 bubble 路径: markdown link → text (无 [链接：] 包装)', () => {

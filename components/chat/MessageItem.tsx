@@ -13,6 +13,7 @@ import { formatStatCount } from '../../utils/videoParser';
 import { trackEvent } from '../../utils/analytics';
 import { resolveBubbleCornerRadii, shouldHideBubbleTail } from '../../utils/bubbleAppearance';
 import { formatChatTimestamp } from '../../utils/chatTimestamp';
+import { stripLeakedSourceTags } from '../../utils/sanitize';
 import McdCard from './McdCard';
 import HtmlCard from './HtmlCard';
 import LuckinCard from './LuckinCard';
@@ -3969,13 +3970,12 @@ const MessageItem = React.memo(({
     };
 
     // Robust content cleanup: strip legacy markers, separators, bilingual tags, stray formatting
-    const stripJunk = (s: string) => stripFaceToFacePhoneSourceTags(stripMessageReactionTags(stripFishCuesForDisplay(s
+    const stripJunk = (s: string) => stripFaceToFacePhoneSourceTags(stripMessageReactionTags(stripFishCuesForDisplay(stripLeakedSourceTags(s
         .replace(/%%TRANS%%[\s\S]*/gi, '')           // legacy translation marker
         .replace(/%%BILINGUAL%%/gi, '\n')            // raw bilingual marker → newline
         // stray bilingual XML tags — 容错版：全角括号/斜杠、标签内空格、简繁、少写 `>` 的截断形态
         // (如 `</译文`) 都吃掉。掉格式消息已经按破标签落过库，显示端不容错就会原样漏给用户。
         .replace(/[<＜]\s*[/／]?\s*(?:翻[译譯]|原文|[译譯]文)\s*[>＞]?/g, '')
-        .replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, '\n')   // source tags leaked from history context
         .replace(/\[\[(?:QU[OA]TE|引用)[：:][\s\S]*?\]\]/g, '')  // residual double-bracket quotes (incl. typos & Chinese)
         .replace(/\[(?:QU[OA]TE|引用)[：:][^\]]*\]/g, '')     // residual single-bracket quotes (incl. typos & Chinese)
         .replace(/\[[^\[\]\n「」]{0,24}引用了[^\[\]\n「」]{0,24}「[^」\n]*?」[^\[\]\n]{0,24}\]\s*/g, '')  // imitated history render [xx引用了xx说的「…」，并回复了 ↓]
@@ -3999,7 +3999,7 @@ const MessageItem = React.memo(({
         .replace(/[ \t]{2,}/g, ' ')
         .replace(/[ \t]+([，。！？、；：,.!?…])/g, '$1')
         .replace(/\n{3,}/g, '\n\n')                  // collapse excess newlines
-        .trim())));   // ⚠️ 末尾再洗一遍鱼声情绪 cue（[excited]/[pause]/(laughs) 等），避免漏到气泡/翻译里
+        .trim()))));   // ⚠️ 末尾再洗一遍鱼声情绪 cue（[excited]/[pause]/(laughs) 等），避免漏到气泡/翻译里
 
     const rawContent = m.content;
 
