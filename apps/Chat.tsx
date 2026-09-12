@@ -49,6 +49,8 @@ import MemoryRepairPortal from '../components/chat/MemoryRepairPortal';
 import FavoritesPortal from '../components/chat/FavoritesPortal';
 import ImageViewer from '../components/chat/ImageViewer';
 import ChatModals from '../components/chat/ChatModals';
+import ChatHistoryCleanupModal from '../components/chat/ChatHistoryCleanupModal';
+import type { ChatCleanupPlan } from '../utils/chatHistoryCleanup';
 import Modal from '../components/os/Modal';
 import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import ActiveMsg2SettingsModal from '../components/chat/ActiveMsg2SettingsModal';
@@ -321,7 +323,6 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     const contextSuiteAllEnabled = memoryPalaceConfig.featureFlags?.recallRouter === true
         && memoryPalaceConfig.featureFlags?.interactionAdaptation === true
         && memoryPalaceConfig.featureFlags?.deepEngagement === true;
-    const [preserveContext, setPreserveContext] = useState(true);
     const [isVectorizing, setIsVectorizing] = useState(false);
     // 记忆宫殿「一键存入」：打开设置弹窗时算出待处理条数（排除热区的真实口径），处理中显示逐轮进度
     const [vectorizePendingCount, setVectorizePendingCount] = useState<number | null>(null);
@@ -363,6 +364,8 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
 
     // --- Multi-Select State ---
     const [selectionMode, setSelectionMode] = useState(false);
+    const [showHistoryCleanup, setShowHistoryCleanup] = useState(false);
+    useEffect(() => setShowHistoryCleanup(false), [activeCharacterId]);
     const [selectedMsgIds, setSelectedMsgIds] = useState<Set<number>>(new Set());
     // 思维链是 metadata.thinkingChain，没有独立 id，所以用宿主消息 id 作为键，
     // 与 selectedMsgIds 并行存在 —— 只勾思维链时只清 metadata，宿主消息保留。
@@ -696,10 +699,11 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     }, []);
 
     /** Drop in-memory + on-disk voice data for the given message ids. */
-    const discardVoiceForMessages = (ids: Iterable<number>) => {
+    const discardVoiceForMessages = (ids: Iterable<number>, deletePersisted = true) => {
         const idList = Array.from(ids);
         if (!idList.length) return;
         forgetVoiceDataForMessages(idList);
+        if (!deletePersisted) return; // 区间清理已在同一事务中删掉磁盘语音。
         // Best-effort: remove persisted entries so they don't reappear on next load.
         for (const id of idList) {
             DB.deleteAsset(voiceAssetKey(id)).catch(() => { /* ignore */ });
@@ -2967,85 +2971,20 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         );
     };
 
-    const handleClearHistory = async () => {
-        if (!char) return;
-
-        // 记忆宫殿安全检查：如果角色启用了记忆宫殿，检查是否有未被向量化处理的消息
-        if (char.memoryPalaceEnabled) {
-            const hwm = await getMemoryPalaceHWM(char.id);
-            const allMessages = await DB.getMessagesByCharId(char.id, true);
-            const textMessages = allMessages.filter(m => m.type === 'text' && m.content?.trim());
-            const unprocessedCount = textMessages.filter(m => m.id > hwm).length;
-
-            if (unprocessedCount > 0) {
-                // 有未处理的消息，弹出选择对话框
-                const processedMsgs = allMessages.filter(m => m.id <= hwm);
-                const choice = confirm(
-                    `⚠️ 记忆宫殿提醒\n\n` +
-                    `当前有 ${unprocessedCount} 条聊天记录尚未被记忆宫殿处理（向量化）。\n` +
-                    `直接清空会导致这些记录永久丢失，无法被角色记住。\n\n` +
-                    `点击「确定」→ 仅删除已被记忆宫殿处理过的记录（安全）\n` +
-                    `点击「取消」→ 取消清空操作\n\n` +
-                    `（看不懂在问什么的话就点确定）`
-                );
-
-                if (!choice) {
-                    return; // 用户取消
-                }
-
-                // 安全删除：只删除高水位之前的消息
-                if (processedMsgs.length === 0) {
-                    addToast('没有已处理的记录可以删除', 'info');
-                    return;
-                }
-                const processedIds = processedMsgs.map(m => m.id);
-                await DB.deleteMessages(processedIds);
-                discardVoiceForMessages(processedIds);
-                // 清历史同样动了云端 fire_pack 的对话快照来源，落库后打脏（下同）。
-                markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
-                const remaining = allMessages.filter(m => m.id > hwm);
-                setMessages(remaining.slice(-200));
-                setTotalMsgCount(remaining.length);
-                setVisibleCount(LOAD_BATCH_SIZE);
-                visibleCountRef.current = LOAD_BATCH_SIZE;
-                addToast(`已安全清理 ${processedMsgs.length} 条已处理记录，保留 ${remaining.length} 条未处理记录`, 'success');
-                trackEvent('清空聊天记录');
-                setModalType('none');
-                return;
-            }
-        }
-
-        // 原有逻辑（无记忆宫殿 or 所有消息已处理）
-        if (preserveContext) {
-            const allMessages = await DB.getMessagesByCharId(char.id, true);
-            const toKeep = allMessages.slice(-10);
-            const toKeepIds = new Set(toKeep.map(m => m.id));
-            const toDelete = allMessages.filter(m => !toKeepIds.has(m.id));
-            if (toDelete.length === 0) {
-                addToast('消息太少，无需清理', 'info');
-                return;
-            }
-            const toDeleteIds = toDelete.map(m => m.id);
-            await DB.deleteMessages(toDeleteIds);
-            discardVoiceForMessages(toDeleteIds);
-            setMessages(toKeep);
-            setTotalMsgCount(toKeep.length);
-            setVisibleCount(LOAD_BATCH_SIZE);
-            visibleCountRef.current = LOAD_BATCH_SIZE;
-            addToast(`已清理 ${toDelete.length} 条历史，保留最近10条`, 'success');
-        } else {
-            const allIds = (await DB.getMessagesByCharId(char.id, true)).map(m => m.id);
-            await DB.clearMessages(char.id);
-            discardVoiceForMessages(allIds);
-            setMessages([]);
-            setTotalMsgCount(0);
-            setVisibleCount(LOAD_BATCH_SIZE);
-            visibleCountRef.current = LOAD_BATCH_SIZE;
-            addToast('已清空', 'success');
-        }
-        markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+    const handleHistoryCleanupDone = async (plan: ChatCleanupPlan) => {
         trackEvent('清空聊天记录');
-        setModalType('none');
+        markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+        if (activeCharIdRef.current !== plan.charId) return;
+        discardVoiceForMessages(plan.ids, false);
+        setAllHistoryMessages([]);
+        setSelectedMessage(null);
+        setSelectedMsgIds(new Set());
+        setSelectedThinkingMsgIds(new Set());
+        // 上游这里还会重置「历史窗口」，那是另一批的功能（utils/chatHistoryWindow.ts），
+        // 本 fork 没有；下面的 setVisibleCount + reloadMessages 已经把视图归位了。
+        setVisibleCount(LOAD_BATCH_SIZE);
+        visibleCountRef.current = LOAD_BATCH_SIZE;
+        await reloadMessages(LOAD_BATCH_SIZE);
     };
 
     // 只在打开聊天设置时计算一键存入的待处理量；不开弹窗的用户没有额外 DB 扫描。
@@ -4598,6 +4537,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                  </div>
              )}
 
+             {showHistoryCleanup && <ChatHistoryCleanupModal key={char.id} character={char} onClose={() => setShowHistoryCleanup(false)} onDeleted={handleHistoryCleanupDone} />}
              <ChatModals
                 settingsInputPreferences={settingsInputPreferences} setSettingsInputPreferences={setSettingsInputPreferences}
                 modalType={modalType} setModalType={setModalType}
@@ -4612,7 +4552,6 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 contextSuiteAnyEnabled={contextSuiteAnyEnabled}
                 contextSuiteAllEnabled={contextSuiteAllEnabled}
                 onToggleContextSuite={handleToggleContextSuite}
-                preserveContext={preserveContext} setPreserveContext={setPreserveContext}
                 editContent={editContent} setEditContent={setEditContent}
                 archivePrompts={archivePrompts} selectedPromptId={selectedPromptId} setSelectedPromptId={(id: string) => {
                     setSelectedPromptId(id);
@@ -4631,7 +4570,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 onTransfer={() => { if(transferAmt) handleSendText(`[转账]`, 'transfer', { amount: transferAmt, note: transferNote.trim() || undefined, status: 'pending' }); setTransferNote(''); setModalType('none'); }}
                 onImportEmoji={handleImportEmoji}
                 onSaveSettings={saveSettings} onOpenDecor={(tab) => handlePanelAction('decor', tab)}
-                onClearHistory={handleClearHistory} onArchive={handleFullArchive}
+                onOpenHistoryCleanup={() => { setModalType('none'); setShowHistoryCleanup(true); }} onArchive={handleFullArchive}
                 onCreatePrompt={createNewPrompt} onEditPrompt={editSelectedPrompt} onSavePrompt={handleSavePrompt} onDeletePrompt={handleDeletePrompt}
                 onSetHistoryStart={handleSetHistoryStart} onRestoreAdaptiveContext={restoreAdaptiveContext} onJumpToMessageInChat={handleJumpToMessageInChat} onOpenBroadcast={handleOpenBroadcast} onEnterSelectionMode={handleEnterSelectionMode}
                 onReplyMessage={handleReplyMessage} onEditMessageStart={() => { if (selectedMessage) { setEditContent(selectedMessage.content); setModalType('edit-message'); } }}

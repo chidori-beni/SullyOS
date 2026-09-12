@@ -1,3 +1,6 @@
+import ChatHistoryCleanupModal from '../components/chat/ChatHistoryCleanupModal';
+import { markAmsgStateDirty } from '../utils/amsgStateSync';
+import { loadRangeMessagePage, formatRangeTimestamp } from '../utils/memoryPalace/rangeMessagePage';
 import React, { useState, useEffect, useCallback, useDeferredValue, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import {
@@ -660,7 +663,7 @@ const MemoryWaterlineEditor: React.FC<{
 // ─── 主组件 ───────────────────────────────────────────
 
 export default function MemoryPalaceApp() {
-    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, updateRemoteVectorConfig, addToast, apiConfig, characterGroups } = useOS();
+    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, updateRemoteVectorConfig, addToast, apiConfig, characterGroups, groups, realtimeConfig } = useOS();
     const char = characters.find(c => c.id === activeCharacterId);
     const [selectGroupId, setSelectGroupId] = useState(GROUP_FILTER_ALL); // 选角色页的分组筛选
 
@@ -706,6 +709,8 @@ export default function MemoryPalaceApp() {
     const [selectedMonths, setSelectedMonths] = useState<Set<string>>(new Set());
 
     // 手动总结与向量化（保底机制）：圈选聊天区间 → 走一次总结，不碰水位线
+    const [showHistoryCleanup, setShowHistoryCleanup] = useState(false);
+    useEffect(() => setShowHistoryCleanup(false), [char?.id]);
     const [rangeModalOpen, setRangeModalOpen] = useState(false);
     const [rangeMessages, setRangeMessages] = useState<Message[]>([]);
     const [rangeLoading, setRangeLoading] = useState(false);
@@ -3990,6 +3995,17 @@ create table if not exists memory_vectors (
                         {!hasEmbeddingConfig ? '请先配置 Embedding API' : '选择聊天区间总结'}
                     </button>
                 </div>
+
+                {!isGlobal && char && <div style={{ marginTop: 16 }}>
+                    <button type="button" onClick={() => setShowHistoryCleanup(true)} className="w-full rounded-2xl border border-red-100 bg-red-50 py-3 text-sm font-bold text-red-700">清理指定范围 / 保留最近 N 条</button>
+                    <p className="mt-2 text-center text-xs text-slate-500">不需要副 API。永久删除前会有两次确认。</p>
+                    {showHistoryCleanup && <ChatHistoryCleanupModal key={char.id} character={char} onClose={() => setShowHistoryCleanup(false)} onDeleted={() => {
+                        trackEvent('清空聊天记录');
+                        markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+                        setRangeModalOpen(false); setRangeMessages([]); setRangeStartId(null); setRangeEndId(null);
+                        addToast('选中的聊天原文已清理，已有记忆保留', 'success');
+                    }} />}
+                </div>}
 
                 {/* 手动总结：区间选择弹窗（浏览聊天记录 → 点选起点/终点 → 总结） */}
                 {rangeModalOpen && char && (() => {

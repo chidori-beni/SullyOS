@@ -653,6 +653,17 @@ export const DB = {
    * @param includeProcessed 是否包含已被记忆宫殿处理的消息（默认 false，即自动过滤）。
    *                         记忆归档、批量总结等需要完整历史的场景应传 true。
    */
+  /** 合上游：按主键读一条消息。区间清理与其配套测试要用。 */
+  getMessageById: async (id: number): Promise<Message | null> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_MESSAGES, 'readonly');
+      const request = transaction.objectStore(STORE_MESSAGES).get(id);
+      request.onsuccess = () => resolve((request.result as Message | undefined) || null);
+      request.onerror = () => reject(request.error);
+    });
+  },
+
   getMessagesByCharId: async (charId: string, includeProcessed: boolean = false): Promise<Message[]> => {
     const db = await openDB();
     return new Promise((resolve, reject) => {

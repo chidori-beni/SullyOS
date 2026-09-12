@@ -34,7 +34,7 @@ describe('打脏入口接线（保存后调 markAmsgStateDirty）', () => {
     for (const [start, end] of [
       ['const handleDeleteMessage', 'const confirmEditMessage'],
       ['const confirmEditMessage', 'const handleQuickReply'],
-      ['const handleClearHistory', "trackEvent('清空聊天记录');\n        setModalType"],
+      ['const handleHistoryCleanupDone', '// 只在打开聊天设置时计算一键存入'],
       ['const handleReroll', 'const handleImageSelect'],
     ] as const) {
       expect(sliceBetween(src, start, end), `${start} 里少了打脏调用`).toContain('markAmsgStateDirty(');

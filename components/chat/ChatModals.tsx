@@ -47,8 +47,6 @@ interface ChatModalsProps {
     contextSuiteAnyEnabled: boolean;
     contextSuiteAllEnabled: boolean;
     onToggleContextSuite: () => void;
-    preserveContext: boolean;
-    setPreserveContext: (v: boolean) => void;
     editContent: string;
     setEditContent: (v: string) => void;
     
@@ -86,7 +84,8 @@ interface ChatModalsProps {
     onSaveSettings: () => void;
     /** 打开「装扮」抽屉（可指定页签）。聊天背景已从这份设置里搬到那边，这里只留跳转。 */
     onOpenDecor: (tab?: string) => void;
-    onClearHistory: () => void;
+    /** 打开「分段清理聊天记录」。上游用它取代了原来那颗一键清空。 */
+    onOpenHistoryCleanup?: () => void;
     onArchive: () => void;
     onCreatePrompt: () => void;
     onEditPrompt: () => void;
@@ -282,7 +281,6 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     settingsShowRecallSubmitStatus, setSettingsShowRecallSubmitStatus,
     apiConfig, onApplyMainApiPreset,
     contextSuiteAnyEnabled, contextSuiteAllEnabled, onToggleContextSuite,
-    preserveContext, setPreserveContext,
     editContent, setEditContent,
     newCategoryName, setNewCategoryName, onAddCategory,
     newEmojiName, setNewEmojiName, onRenameEmoji,
@@ -292,7 +290,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     allHistoryMessages = [],
     contextRangeSnapshot,
     onTransfer, onImportEmoji, onSaveSettings,
-    onOpenDecor, onClearHistory,
+    onOpenDecor, onOpenHistoryCleanup,
     onArchive, onCreatePrompt, onEditPrompt, onSavePrompt, onDeletePrompt,
     onSetHistoryStart, onRestoreAdaptiveContext, onJumpToMessageInChat, onOpenBroadcast, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onCopyMessage,
     reactionShortcuts, onMessageReaction, onChangeReactionShortcuts,
@@ -875,15 +873,10 @@ const ChatModals: React.FC<ChatModalsProps> = ({
 
                      <div className="pt-2 border-t border-slate-100">
                          <label className="text-xs font-bold text-red-400 uppercase mb-3 block">危险区域 (Danger Zone)</label>
-                         <div className="flex items-center gap-2 mb-3 cursor-pointer" onClick={() => setPreserveContext(!preserveContext)}>
-                             <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-colors ${preserveContext ? 'bg-primary border-primary' : 'bg-slate-100 border-slate-300'}`}>
-                                 {preserveContext && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
-                             </div>
-                             <span className="text-sm text-slate-600">清空时保留最后10条记录 (维持语境)</span>
-                         </div>
-                         <button onClick={onClearHistory} className="w-full py-3 bg-red-50 text-red-500 font-bold rounded-2xl border border-red-100 active:scale-95 transition-transform flex items-center justify-center gap-2">
-                             执行清空
-                         </button>
+                         {onOpenHistoryCleanup && <div className="mb-4">
+                             <button type="button" onClick={onOpenHistoryCleanup} className="w-full rounded-2xl border border-red-100 bg-red-50 py-3 text-sm font-bold text-red-600">清理指定范围 / 保留最近 N 条</button>
+                             <p className="mt-2 text-center text-[10px] text-slate-400">按页选择记录，永久删除前需要两次确认。</p>
+                         </div>}
                      </div>
                 </div>
             </Modal>
