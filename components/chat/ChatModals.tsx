@@ -462,55 +462,80 @@ const ChatModals: React.FC<ChatModalsProps> = ({
             >
                 <div className="space-y-6">
                      {/* 合上游新增：输入与发送。单开一节放在最前面，下面原有的设置一项没动。 */}
-                     <ChatSettingsSection title="输入与发送" summary="发送键行为、回车、自动回复">
+                     <ChatSettingsSection title="输入与发送" summary="闪电按钮位置、回车、自动回复">
+                         <div className="mb-3">
+                             <div className="text-xs font-bold text-slate-400 uppercase">闪电按钮位置</div>
+                             <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
+                                 选择「触发 AI」闪电图标出现的位置；另一处会自动隐藏。默认保持在聊天顶栏右上角。
+                             </p>
+                             <div role="radiogroup" aria-label="闪电按钮位置" className="mt-3 grid grid-cols-2 gap-2">
+                                 <button
+                                     type="button"
+                                     role="radio"
+                                     aria-checked={settingsTriggerPlacement === 'header'}
+                                     onClick={() => setSettingsTriggerPlacement('header')}
+                                     className={`rounded-2xl border px-3 py-3 text-left transition-all active:scale-[0.99] ${settingsTriggerPlacement === 'header'
+                                         ? 'border-primary bg-primary/5 text-primary shadow-sm'
+                                         : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
+                                 >
+                                     <span className="block text-[11px] font-bold">聊天顶栏右上角</span>
+                                     <span className="mt-1 block text-[10px] leading-relaxed opacity-70">保持现在的位置</span>
+                                 </button>
+                                 <button
+                                     type="button"
+                                     role="radio"
+                                     aria-checked={settingsTriggerPlacement === 'input'}
+                                     onClick={() => setSettingsTriggerPlacement('input')}
+                                     className={`rounded-2xl border px-3 py-3 text-left transition-all active:scale-[0.99] ${settingsTriggerPlacement === 'input'
+                                         ? 'border-primary bg-primary/5 text-primary shadow-sm'
+                                         : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
+                                 >
+                                     <span className="block text-[11px] font-bold">输入框右侧</span>
+                                     <span className="mt-1 block text-[10px] leading-relaxed opacity-70">放在表情包按钮左边</span>
+                                 </button>
+                             </div>
+                         </div>
                          <ChatInputSettings value={settingsInputPreferences} onChange={setSettingsInputPreferences} />
                      </ChatSettingsSection>
                      {apiConfig && apiPresets && onApplyMainApiPreset && (
-                         <div className="rounded-2xl border border-sky-200 bg-sky-50 p-3.5">
-                             <div className="flex items-start justify-between gap-3">
-                                 <div className="min-w-0">
-                                     <div className="flex items-center gap-2">
-                                         <div className="text-xs font-bold text-sky-800">主 API</div>
-                                         <span className="rounded-full bg-white/80 px-2 py-0.5 text-[9px] font-bold text-sky-600">全局</span>
+                         <ChatSettingsSection
+                             title="主 API"
+                             summary={`全局 · 当前：${apiPresets.find(preset => preset.id === activeMainPresetId)?.name || '手动配置'}${apiConfig.model ? ' · ' + apiConfig.model : ' · 尚未填写模型'}`}
+                         >
+                             <div className="rounded-2xl border border-sky-200 bg-sky-50 p-3.5">
+                                 {apiPresets.length > 0 ? (
+                                     <div className="flex flex-wrap gap-2">
+                                         {apiPresets.map(preset => {
+                                             const isActive = preset.id === activeMainPresetId;
+                                             return (
+                                                 <button
+                                                     key={preset.id}
+                                                     type="button"
+                                                     onClick={() => onApplyMainApiPreset(preset)}
+                                                     className={`max-w-full rounded-xl border px-3 py-2 text-left transition-all active:scale-95 ${isActive
+                                                         ? 'border-sky-400 bg-white text-sky-700 shadow-sm'
+                                                         : 'border-sky-100 bg-white/60 text-slate-600 hover:border-sky-300'}`}
+                                                 >
+                                                     <span className="block max-w-[15rem] truncate text-[11px] font-bold">
+                                                         {isActive && <span className="mr-1">✓</span>}{preset.name}
+                                                     </span>
+                                                     <span className="mt-0.5 block max-w-[15rem] truncate text-[9px] text-slate-400">
+                                                         {preset.config.model || '未填写模型'}
+                                                     </span>
+                                                 </button>
+                                             );
+                                         })}
                                      </div>
-                                     <p className="mt-1 text-[10px] leading-relaxed text-sky-700/80">
-                                         当前：{apiPresets.find(preset => preset.id === activeMainPresetId)?.name || '手动配置'}
-                                         {apiConfig.model ? ` · ${apiConfig.model}` : ' · 尚未填写模型'}
+                                 ) : (
+                                     <p className="rounded-xl border border-dashed border-sky-200 bg-white/50 px-3 py-2 text-[10px] leading-relaxed text-sky-700/70">
+                                         还没有主 API 预设，请到主设置页的「API 配置」中创建。
                                      </p>
-                                 </div>
-                             </div>
-                             {apiPresets.length > 0 ? (
-                                 <div className="mt-3 flex flex-wrap gap-2">
-                                     {apiPresets.map(preset => {
-                                         const isActive = preset.id === activeMainPresetId;
-                                         return (
-                                             <button
-                                                 key={preset.id}
-                                                 type="button"
-                                                 onClick={() => onApplyMainApiPreset(preset)}
-                                                 className={`max-w-full rounded-xl border px-3 py-2 text-left transition-all active:scale-95 ${isActive
-                                                     ? 'border-sky-400 bg-white text-sky-700 shadow-sm'
-                                                     : 'border-sky-100 bg-white/60 text-slate-600 hover:border-sky-300'}`}
-                                             >
-                                                 <span className="block max-w-[15rem] truncate text-[11px] font-bold">
-                                                     {isActive && <span className="mr-1">✓</span>}{preset.name}
-                                                 </span>
-                                                 <span className="mt-0.5 block max-w-[15rem] truncate text-[9px] text-slate-400">
-                                                     {preset.config.model || '未填写模型'}
-                                                 </span>
-                                             </button>
-                                         );
-                                     })}
-                                 </div>
-                             ) : (
-                                 <p className="mt-3 rounded-xl border border-dashed border-sky-200 bg-white/50 px-3 py-2 text-[10px] leading-relaxed text-sky-700/70">
-                                     还没有主 API 预设，请到主设置页的「API 配置」中创建。
+                                 )}
+                                 <p className="mt-3 text-[10px] leading-relaxed text-sky-700/70">
+                                     点击预设会立即切换，和下方的“保存设置”无关。已单独配置的情绪副 API 不会被覆盖；未配置副 API 时，情绪评估会跟随主 API。
                                  </p>
-                             )}
-                             <p className="mt-3 text-[10px] leading-relaxed text-sky-700/70">
-                                 点击预设会立即切换，和下方的“保存设置”无关。已单独配置的情绪副 API 不会被覆盖；未配置副 API 时，情绪评估会跟随主 API。
-                             </p>
-                         </div>
+                             </div>
+                         </ChatSettingsSection>
                      )}
 
                      <div className="rounded-2xl border border-violet-200 bg-violet-50 p-3.5">
@@ -559,38 +584,6 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                              </span>
                              <span className="shrink-0 text-[11px] font-bold text-primary">去装扮 →</span>
                          </button>
-                     </div>
-                     <div className="pt-2 border-t border-slate-100">
-                         <div className="text-xs font-bold text-slate-400 uppercase">闪电按钮位置</div>
-                         <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
-                             选择「触发 AI」闪电图标出现的位置；另一处会自动隐藏。默认保持在聊天顶栏右上角。
-                         </p>
-                         <div role="radiogroup" aria-label="闪电按钮位置" className="mt-3 grid grid-cols-2 gap-2">
-                             <button
-                                 type="button"
-                                 role="radio"
-                                 aria-checked={settingsTriggerPlacement === 'header'}
-                                 onClick={() => setSettingsTriggerPlacement('header')}
-                                 className={`rounded-2xl border px-3 py-3 text-left transition-all active:scale-[0.99] ${settingsTriggerPlacement === 'header'
-                                     ? 'border-primary bg-primary/5 text-primary shadow-sm'
-                                     : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
-                             >
-                                 <span className="block text-[11px] font-bold">聊天顶栏右上角</span>
-                                 <span className="mt-1 block text-[10px] leading-relaxed opacity-70">保持现在的位置</span>
-                             </button>
-                             <button
-                                 type="button"
-                                 role="radio"
-                                 aria-checked={settingsTriggerPlacement === 'input'}
-                                 onClick={() => setSettingsTriggerPlacement('input')}
-                                 className={`rounded-2xl border px-3 py-3 text-left transition-all active:scale-[0.99] ${settingsTriggerPlacement === 'input'
-                                     ? 'border-primary bg-primary/5 text-primary shadow-sm'
-                                     : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
-                             >
-                                 <span className="block text-[11px] font-bold">输入框右侧</span>
-                                 <span className="mt-1 block text-[10px] leading-relaxed opacity-70">放在表情包按钮左边</span>
-                             </button>
-                         </div>
                      </div>
                      <div>
                          {(activeCharacter.autoArchiveEnabled || activeCharacter.contextFollowsMemoryPalaceHwm) && settingsContextRangeMode === 'adaptive' ? (

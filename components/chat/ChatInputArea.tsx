@@ -85,8 +85,8 @@ interface ChatInputAreaProps {
     /** 消息栏是否显示发送按钮。默认关 —— 本 fork 习惯用回车发送。
      *  社区美化里针对发送键写的样式，只有打开它才有落点。 */
     showSendButton?: boolean;
-    /** 消息栏是否显示语音按钮。默认开。关掉只是收起按钮，
-     *  加号菜单第 3 页始终留着一份语音入口，功能不会消失。 */
+    /** 消息栏是否显示语音按钮。默认开。关掉时加号菜单第 3 页会自动补上一个
+     *  语音入口，功能不会消失；开着时加号菜单里就不重复摆一个。 */
     showVoiceButton?: boolean;
     /** 是否在输入框右侧显示触发 AI 按钮；默认关闭，保持群聊等复用方旧行为。 */
     showTriggerButton?: boolean;
@@ -1120,9 +1120,9 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                               本来就是同一件事（把这个聊天打扮好看），却被分在两页里。现在统一并进
                               上一页的「装扮」抽屉，这页只留纯工具入口。 */}
                           <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 2 ? '' : 'hidden'}`}>
-                            {/* 语音：和消息栏上那个按钮是同一个入口。消息栏那个可以在外观里关掉，
-                                这里这个不受开关影响，保证功能永远找得到。 */}
-                            {onOpenVoiceInput && (
+                            {/* 语音：和消息栏上那个按钮是同一个入口。消息栏那个开着时这里就不重复摆一个；
+                                只有把消息栏那个关掉，这里才补上，保证功能永远找得到。 */}
+                            {onOpenVoiceInput && !showVoiceButton && (
                             <button
                               onClick={onOpenVoiceInput}
                               className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}

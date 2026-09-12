@@ -11,13 +11,8 @@ const ChatInputSettings: React.FC<ChatInputSettingsProps> = ({ value, onChange }
     const [openHelp, setOpenHelp] = useState<keyof ChatInputPreferences | null>(null);
     return (
         <div className="space-y-1">
-            <p className="mb-2 text-[10px] text-slate-400">以下输入习惯对所有私聊生效</p>
+            <p className="mb-2 text-[10px] text-slate-400">上面的闪电按钮位置只对当前角色生效；以下输入习惯对所有私聊生效</p>
             {([
-                {
-                    key: 'sendButtonGenerates',
-                    label: '发送按钮代替生成按钮',
-                    help: '开启后，不用够右上角的闪电了。输入框里有光标时，右下角发文字；点一下聊天空白处，右下角就变成闪电，让对方回复已发送的消息。只收起键盘可能还留着光标，点一下空白处就好。没发出的草稿会保留。',
-                },
                 {
                     key: 'enterToSend',
                     label: '回车发送文字',

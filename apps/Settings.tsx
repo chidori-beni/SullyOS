@@ -1898,31 +1898,235 @@ const Settings: React.FC = () => {
 
       <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-5 space-y-6 no-scrollbar pb-20">
 
-        {/* 美化入口本身被错误 CSS 盖住时，必须有一个完全不经过日记 App 的急救通道。 */}
+        {/* AI 连接设置区域 */}
         <SettingsSection
-            title="外观急救"
-            badge={hasJournalAppearanceOverride
-                ? <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-bold shrink-0">日记美化已启用</span>
-                : undefined}
+            title="API 配置"
             icon={
-                <div className="p-2 bg-amber-100/70 rounded-xl text-amber-700">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M11.42 15.17 17.25 21a2.12 2.12 0 0 0 3-3l-5.84-5.84M11.42 15.17l2.83-2.83M11.42 15.17l-4.68 4.68a2.121 2.121 0 0 1-3-3l6.59-6.59m4.08 1.9 2.83-2.83m0 0 1.5-1.5a2.121 2.121 0 0 0-3-3l-1.5 1.5m3 3-3-3m-3.91 3.91-4.95-4.95a2.121 2.121 0 0 0-3 3l4.95 4.95" /></svg>
+                <div className="p-2 bg-emerald-100/50 rounded-xl text-emerald-600">
+                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
+                    </svg>
                 </div>
             }
+            actions={
+                <button onClick={() => { setNewPresetName(''); setShowPresetModal(true); }} className="text-[10px] bg-slate-100 text-slate-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
+                    新建预设
+                </button>
+            }
         >
-            <p className="text-xs text-slate-500 leading-relaxed">
-                如果交换日记的自定义 CSS 把返回键、设置键遮住或变得无法点击，可以从这里直接清除日记主题与 CSS，不影响日记内容。
-            </p>
-            <button
-                type="button"
-                disabled={!hasJournalAppearanceOverride}
-                onClick={handleJournalAppearanceEmergencyReset}
-                className="mt-3 w-full rounded-xl bg-amber-600 px-4 py-3 text-xs font-bold text-white shadow-sm transition active:scale-[.98] disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none"
-            >
-                {hasJournalAppearanceOverride ? '重置交换日记美化' : '交换日记当前为原版'}
-            </button>
+            {/* Presets List */}
+            {apiPresets.length > 0 && (
+                <div className="mb-4">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">我的预设 (Presets)</label>
+                    <div className="flex gap-2 flex-wrap">
+                        {apiPresets.map(preset => (
+                            <div key={preset.id} className={`flex items-center rounded-lg pl-3 pr-1 py-1 shadow-sm border transition-colors ${
+                                activePresetId === preset.id
+                                    ? 'bg-primary/5 border-primary/30'
+                                    : 'bg-white border-slate-200'
+                            }`}>
+                                <button type="button" onClick={() => applyPreset(preset)}
+                                    title={`切换到 ${preset.name}`}
+                                    className={`text-xs font-medium cursor-pointer mr-1.5 transition-colors ${
+                                        activePresetId === preset.id ? 'text-primary' : 'text-slate-600 hover:text-primary'
+                                    }`}>
+                                    {preset.name}
+                                    {activePresetId === preset.id && <span className="ml-1 text-[9px] font-bold">· 使用中</span>}
+                                </button>
+                                <button
+                                    type="button"
+                                    aria-label={`编辑预设 ${preset.name}`}
+                                    title="编辑这条预设"
+                                    onClick={(event) => { event.stopPropagation(); openEditPreset(preset); }}
+                                    className="p-1 rounded-full text-slate-300 hover:bg-primary/10 hover:text-primary transition-colors">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M13.586 3.586a2 2 0 1 1 2.828 2.828l-.793.793-2.828-2.828.793-.793ZM11.379 5.793 3 14.172V17h2.828l8.38-8.379-2.83-2.828Z" /></svg>
+                                </button>
+                                <button
+                                    type="button"
+                                    aria-label={`长按或双击删除预设 ${preset.name}`}
+                                    title="长按或双击删除"
+                                    onPointerDown={(event) => { event.stopPropagation(); beginPresetDeleteHold(preset.id, preset.name); }}
+                                    onPointerUp={cancelPresetDeleteHold}
+                                    onPointerCancel={cancelPresetDeleteHold}
+                                    onPointerLeave={cancelPresetDeleteHold}
+                                    onDoubleClick={(event) => { event.stopPropagation(); deleteApiPreset(preset.id, preset.name); }}
+                                    onContextMenu={(event) => event.preventDefault()}
+                                    className={`p-1 rounded-full transition-colors select-none touch-none ${
+                                        holdingDeletePresetId === preset.id
+                                            ? 'bg-red-100 text-red-500 scale-110'
+                                            : 'text-slate-300 hover:bg-red-50 hover:text-red-400'
+                                    }`}>
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" /></svg>
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                    <p className="text-[9px] text-slate-300 mt-1.5 pl-1">点名称直接切换并生效；铅笔改这条预设的内容；长按或双击 × 才会删除。</p>
+                </div>
+            )}
+
+            <div className="space-y-4">
+                <div className="group">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">URL</label>
+                    <input type="text" value={localUrl} onChange={(e) => setLocalUrl(e.target.value)} placeholder="https://..." className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                </div>
+
+                <div className="group">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">Key</label>
+                    <input type="password" value={localKey} onChange={(e) => setLocalKey(e.target.value)} placeholder="sk-..." className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                </div>
+
+                {/* 高级（流式 / 温度）— 默认折叠，灰色低调，明确写"不建议修改" */}
+                <div className="pt-1">
+                    <button
+                        type="button"
+                        onClick={() => setShowApiAdvanced(v => !v)}
+                        className="text-[10px] text-slate-300 hover:text-slate-400 transition-colors flex items-center gap-1 pl-1 active:scale-95"
+                    >
+                        <span>高级（不建议修改）</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`w-2.5 h-2.5 transition-transform ${showApiAdvanced ? 'rotate-180' : ''}`}>
+                            <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+                        </svg>
+                    </button>
+                    {showApiAdvanced && (
+                        <div className="mt-2 pl-2 border-l-2 border-slate-100 space-y-3 py-2">
+                            <p className="text-[10px] text-slate-300 leading-relaxed">
+                                这两项绝大多数用户保持默认即可。除非接口报错"only stream supported"或对回复风格有强需求，否则不建议改。
+                            </p>
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <span className="text-[10px] text-slate-400">流式输出 (Stream)</span>
+                                    <p className="text-[9px] text-slate-300 mt-0.5">仅在你的 API 强制要求时打开</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setLocalStream(v => !v)}
+                                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${localStream ? 'bg-slate-400' : 'bg-slate-200'}`}
+                                >
+                                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${localStream ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                                </button>
+                            </div>
+                            <div>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-[10px] text-slate-400">温度 (Temperature)</span>
+                                    <span className="text-[10px] font-mono text-slate-400">{localTemperature.toFixed(2)}</span>
+                                </div>
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max="2"
+                                    step="0.05"
+                                    value={localTemperature}
+                                    onChange={(e) => setLocalTemperature(parseFloat(e.target.value))}
+                                    className="w-full accent-slate-400 mt-1"
+                                />
+                                <p className="text-[9px] text-slate-300 mt-0.5">默认 0.85；只作用于聊天和约会的主回复</p>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                <div className="pt-2">
+                     <div className="flex justify-between items-center mb-1.5 pl-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Model</label>
+                        <button onClick={fetchModels} disabled={isLoadingModels} className="text-[10px] text-primary font-bold">{isLoadingModels ? 'Fetching...' : '刷新模型列表'}</button>
+                    </div>
+                    
+                    <button
+                        onClick={() => setShowModelModal(true)}
+                        title={localModel || 'Select Model...'}
+                        className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-3 text-sm text-slate-700 flex justify-between items-center gap-2 active:bg-white transition-all shadow-sm"
+                    >
+                        <span
+                            className="font-mono overflow-hidden whitespace-nowrap min-w-0 flex-1 text-left"
+                            style={{ direction: 'rtl', textOverflow: 'ellipsis' }}
+                        >
+                            <bdi style={{ direction: 'ltr' }}>{localModel || 'Select Model...'}</bdi>
+                        </span>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-slate-400 flex-shrink-0"><path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" /></svg>
+                    </button>
+                </div>
+
+                <button onClick={handleSaveApi} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-primary/20 bg-primary active:scale-95 transition-all mt-2">
+                    {statusMsg || '保存配置'}
+                </button>
+                {apiPresets.length > 0 && (
+                    <p className="text-[9px] text-slate-300 px-1 leading-relaxed">
+                        这里改的是当前生效的配置，不会动上面的预设；要把改动存回某条预设，点它的铅笔。
+                    </p>
+                )}
+
+                <button
+                    onClick={async () => {
+                        if (!localUrl.trim() || !localKey.trim() || !localModel.trim()) return;
+                        setTestingApi(true);
+                        setTestApiResult(null);
+                        try {
+                            const res = await fetch(`${localUrl.trim().replace(/\/+$/, '')}/chat/completions`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localKey.trim()}` },
+                                body: JSON.stringify({
+                                    model: localModel.trim(),
+                                    messages: [{ role: 'user', content: 'Hi' }],
+                                    max_tokens: 5,
+                                    stream: localStream,
+                                }),
+                            });
+                            if (res.ok) {
+                                // 走 safeResponseJson —— 它能透明把 SSE 流响应拼成普通 chat/completion 结构
+                                const data = await safeResponseJson(res);
+                                const reply = extractContent(data);
+                                setTestApiResult(`✅ 连接成功 — 模型回复: "${reply.slice(0, 30)}"`);
+                            } else {
+                                const text = await res.text().catch(() => '');
+                                setTestApiResult(`❌ HTTP ${res.status}: ${text.slice(0, 100)}`);
+                            }
+                        } catch (err: any) {
+                            setTestApiResult(`❌ 连接失败: ${err.message}`);
+                        } finally {
+                            setTestingApi(false);
+                        }
+                    }}
+                    disabled={testingApi || !localUrl.trim() || !localKey.trim() || !localModel.trim()}
+                    className={`w-full py-2.5 rounded-2xl font-bold text-sm border mt-2 active:scale-95 transition-all ${
+                        testingApi || !localUrl.trim() || !localKey.trim() || !localModel.trim()
+                            ? 'border-slate-200 text-slate-400 bg-slate-50'
+                            : 'border-primary/30 text-primary bg-primary/5 hover:bg-primary/10'
+                    }`}
+                >
+                    {testingApi ? '测试中...' : '🧪 测试连接'}
+                </button>
+
+                {testApiResult && (
+                    <div className={`mt-2 text-xs px-3 py-2 rounded-xl ${
+                        testApiResult.startsWith('✅') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'
+                    }`}>
+                        {testApiResult}
+                    </div>
+                )}
+            </div>
         </SettingsSection>
-        
+
+        {/* API 调用记录入口 — 点开看最近 5 天各 App / 角色 / 用途的调用明细 */}
+        <button
+            type="button"
+            onClick={() => setShowApiCallLog(true)}
+            className="w-full bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 flex items-center gap-3 active:scale-[0.99] transition-transform text-left"
+        >
+            <div className="p-2 bg-sky-100/60 rounded-xl text-sky-600 shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 0 1-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0 1 15 18.257V17.25m6-12V15a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 15V5.25m18 0A2.25 2.25 0 0 0 18.75 3H5.25A2.25 2.25 0 0 0 3 5.25m18 0V12a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 12V5.25" />
+                </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+                <h2 className="text-sm font-semibold text-slate-600 tracking-wider">API 调用记录</h2>
+                <p className="text-[11px] text-slate-400 mt-0.5">最近 5 天：时间 · 哪个 API · 哪个 App · 哪个角色 · 用途</p>
+            </div>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-slate-300 shrink-0">
+                <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clipRule="evenodd" />
+            </svg>
+        </button>
+
         {/* 数据备份区域 */}
         <SettingsSection
             title="备份与恢复 (ZIP)"
@@ -2233,214 +2437,28 @@ const Settings: React.FC = () => {
             </p>
         </SettingsSection>
 
-        {/* AI 连接设置区域 */}
-        <SettingsSection
-            title="API 配置"
-            icon={
-                <div className="p-2 bg-emerald-100/50 rounded-xl text-emerald-600">
-                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
-                    </svg>
-                </div>
-            }
-            actions={
-                <button onClick={() => { setNewPresetName(''); setShowPresetModal(true); }} className="text-[10px] bg-slate-100 text-slate-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
-                    新建预设
-                </button>
-            }
-        >
-            {/* Presets List */}
-            {apiPresets.length > 0 && (
-                <div className="mb-4">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">我的预设 (Presets)</label>
-                    <div className="flex gap-2 flex-wrap">
-                        {apiPresets.map(preset => (
-                            <div key={preset.id} className={`flex items-center rounded-lg pl-3 pr-1 py-1 shadow-sm border transition-colors ${
-                                activePresetId === preset.id
-                                    ? 'bg-primary/5 border-primary/30'
-                                    : 'bg-white border-slate-200'
-                            }`}>
-                                <button type="button" onClick={() => applyPreset(preset)}
-                                    title={`切换到 ${preset.name}`}
-                                    className={`text-xs font-medium cursor-pointer mr-1.5 transition-colors ${
-                                        activePresetId === preset.id ? 'text-primary' : 'text-slate-600 hover:text-primary'
-                                    }`}>
-                                    {preset.name}
-                                    {activePresetId === preset.id && <span className="ml-1 text-[9px] font-bold">· 使用中</span>}
-                                </button>
-                                <button
-                                    type="button"
-                                    aria-label={`编辑预设 ${preset.name}`}
-                                    title="编辑这条预设"
-                                    onClick={(event) => { event.stopPropagation(); openEditPreset(preset); }}
-                                    className="p-1 rounded-full text-slate-300 hover:bg-primary/10 hover:text-primary transition-colors">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M13.586 3.586a2 2 0 1 1 2.828 2.828l-.793.793-2.828-2.828.793-.793ZM11.379 5.793 3 14.172V17h2.828l8.38-8.379-2.83-2.828Z" /></svg>
-                                </button>
-                                <button
-                                    type="button"
-                                    aria-label={`长按或双击删除预设 ${preset.name}`}
-                                    title="长按或双击删除"
-                                    onPointerDown={(event) => { event.stopPropagation(); beginPresetDeleteHold(preset.id, preset.name); }}
-                                    onPointerUp={cancelPresetDeleteHold}
-                                    onPointerCancel={cancelPresetDeleteHold}
-                                    onPointerLeave={cancelPresetDeleteHold}
-                                    onDoubleClick={(event) => { event.stopPropagation(); deleteApiPreset(preset.id, preset.name); }}
-                                    onContextMenu={(event) => event.preventDefault()}
-                                    className={`p-1 rounded-full transition-colors select-none touch-none ${
-                                        holdingDeletePresetId === preset.id
-                                            ? 'bg-red-100 text-red-500 scale-110'
-                                            : 'text-slate-300 hover:bg-red-50 hover:text-red-400'
-                                    }`}>
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" /></svg>
-                                </button>
-                            </div>
-                        ))}
-                    </div>
-                    <p className="text-[9px] text-slate-300 mt-1.5 pl-1">点名称直接切换并生效；铅笔改这条预设的内容；长按或双击 × 才会删除。</p>
-                </div>
-            )}
-
-            <div className="space-y-4">
-                <div className="group">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">URL</label>
-                    <input type="text" value={localUrl} onChange={(e) => setLocalUrl(e.target.value)} placeholder="https://..." className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
-                </div>
-
-                <div className="group">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">Key</label>
-                    <input type="password" value={localKey} onChange={(e) => setLocalKey(e.target.value)} placeholder="sk-..." className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
-                </div>
-
-                {/* 高级（流式 / 温度）— 默认折叠，灰色低调，明确写"不建议修改" */}
-                <div className="pt-1">
-                    <button
-                        type="button"
-                        onClick={() => setShowApiAdvanced(v => !v)}
-                        className="text-[10px] text-slate-300 hover:text-slate-400 transition-colors flex items-center gap-1 pl-1 active:scale-95"
-                    >
-                        <span>高级（不建议修改）</span>
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`w-2.5 h-2.5 transition-transform ${showApiAdvanced ? 'rotate-180' : ''}`}>
-                            <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+        {/* ───────── 主动消息 2.0（定时推送） ───────── */}
+        <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
+            <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                    <div className="p-2 bg-violet-100/60 rounded-xl text-violet-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
                         </svg>
-                    </button>
-                    {showApiAdvanced && (
-                        <div className="mt-2 pl-2 border-l-2 border-slate-100 space-y-3 py-2">
-                            <p className="text-[10px] text-slate-300 leading-relaxed">
-                                这两项绝大多数用户保持默认即可。除非接口报错"only stream supported"或对回复风格有强需求，否则不建议改。
-                            </p>
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <span className="text-[10px] text-slate-400">流式输出 (Stream)</span>
-                                    <p className="text-[9px] text-slate-300 mt-0.5">仅在你的 API 强制要求时打开</p>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => setLocalStream(v => !v)}
-                                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${localStream ? 'bg-slate-400' : 'bg-slate-200'}`}
-                                >
-                                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${localStream ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                                </button>
-                            </div>
-                            <div>
-                                <div className="flex items-center justify-between">
-                                    <span className="text-[10px] text-slate-400">温度 (Temperature)</span>
-                                    <span className="text-[10px] font-mono text-slate-400">{localTemperature.toFixed(2)}</span>
-                                </div>
-                                <input
-                                    type="range"
-                                    min="0"
-                                    max="2"
-                                    step="0.05"
-                                    value={localTemperature}
-                                    onChange={(e) => setLocalTemperature(parseFloat(e.target.value))}
-                                    className="w-full accent-slate-400 mt-1"
-                                />
-                                <p className="text-[9px] text-slate-300 mt-0.5">默认 0.85；只作用于聊天和约会的主回复</p>
-                            </div>
-                        </div>
-                    )}
-                </div>
-
-                <div className="pt-2">
-                     <div className="flex justify-between items-center mb-1.5 pl-1">
-                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Model</label>
-                        <button onClick={fetchModels} disabled={isLoadingModels} className="text-[10px] text-primary font-bold">{isLoadingModels ? 'Fetching...' : '刷新模型列表'}</button>
                     </div>
-                    
-                    <button
-                        onClick={() => setShowModelModal(true)}
-                        title={localModel || 'Select Model...'}
-                        className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-3 text-sm text-slate-700 flex justify-between items-center gap-2 active:bg-white transition-all shadow-sm"
-                    >
-                        <span
-                            className="font-mono overflow-hidden whitespace-nowrap min-w-0 flex-1 text-left"
-                            style={{ direction: 'rtl', textOverflow: 'ellipsis' }}
-                        >
-                            <bdi style={{ direction: 'ltr' }}>{localModel || 'Select Model...'}</bdi>
-                        </span>
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-slate-400 flex-shrink-0"><path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" /></svg>
-                    </button>
+                    <h2 className="text-sm font-semibold text-slate-600 tracking-wider">主动消息 2.0</h2>
                 </div>
-
-                <button onClick={handleSaveApi} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-primary/20 bg-primary active:scale-95 transition-all mt-2">
-                    {statusMsg || '保存配置'}
-                </button>
-                {apiPresets.length > 0 && (
-                    <p className="text-[9px] text-slate-300 px-1 leading-relaxed">
-                        这里改的是当前生效的配置，不会动上面的预设；要把改动存回某条预设，点它的铅笔。
-                    </p>
-                )}
-
                 <button
-                    onClick={async () => {
-                        if (!localUrl.trim() || !localKey.trim() || !localModel.trim()) return;
-                        setTestingApi(true);
-                        setTestApiResult(null);
-                        try {
-                            const res = await fetch(`${localUrl.trim().replace(/\/+$/, '')}/chat/completions`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localKey.trim()}` },
-                                body: JSON.stringify({
-                                    model: localModel.trim(),
-                                    messages: [{ role: 'user', content: 'Hi' }],
-                                    max_tokens: 5,
-                                    stream: localStream,
-                                }),
-                            });
-                            if (res.ok) {
-                                // 走 safeResponseJson —— 它能透明把 SSE 流响应拼成普通 chat/completion 结构
-                                const data = await safeResponseJson(res);
-                                const reply = extractContent(data);
-                                setTestApiResult(`✅ 连接成功 — 模型回复: "${reply.slice(0, 30)}"`);
-                            } else {
-                                const text = await res.text().catch(() => '');
-                                setTestApiResult(`❌ HTTP ${res.status}: ${text.slice(0, 100)}`);
-                            }
-                        } catch (err: any) {
-                            setTestApiResult(`❌ 连接失败: ${err.message}`);
-                        } finally {
-                            setTestingApi(false);
-                        }
-                    }}
-                    disabled={testingApi || !localUrl.trim() || !localKey.trim() || !localModel.trim()}
-                    className={`w-full py-2.5 rounded-2xl font-bold text-sm border mt-2 active:scale-95 transition-all ${
-                        testingApi || !localUrl.trim() || !localKey.trim() || !localModel.trim()
-                            ? 'border-slate-200 text-slate-400 bg-slate-50'
-                            : 'border-primary/30 text-primary bg-primary/5 hover:bg-primary/10'
-                    }`}
+                    onClick={() => { trackEvent('打开主动消息2.0配置'); setShowAmsg2Modal(true); }}
+                    className="text-[10px] bg-violet-100 text-violet-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform"
                 >
-                    {testingApi ? '测试中...' : '🧪 测试连接'}
+                    配置
                 </button>
-
-                {testApiResult && (
-                    <div className={`mt-2 text-xs px-3 py-2 rounded-xl ${
-                        testApiResult.startsWith('✅') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'
-                    }`}>
-                        {testApiResult}
-                    </div>
-                )}
             </div>
-        </SettingsSection>
+            <p className="text-xs text-slate-500 leading-relaxed">
+                角色到点自动给你发消息，App 关着也能收。需要你自己部署一个 Cloudflare Worker（自带 D1 数据库 + 定时触发），在配置里填地址即可。聊天上云（即时对话）与定时主动消息都由它承担。
+            </p>
+        </section>
 
         {/* 角色生图（NovelAI）。面板本体在 components/settings/ImageGenSettings.tsx——
             这份文件已经太长，新功能一律独立成组件，避免每次改一处都要重贴整份。 */}
@@ -2621,26 +2639,6 @@ const Settings: React.FC = () => {
                 )}
             </div>
         </SettingsSection>
-
-        {/* API 调用记录入口 — 点开看最近 5 天各 App / 角色 / 用途的调用明细 */}
-        <button
-            type="button"
-            onClick={() => setShowApiCallLog(true)}
-            className="w-full bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 flex items-center gap-3 active:scale-[0.99] transition-transform text-left"
-        >
-            <div className="p-2 bg-sky-100/60 rounded-xl text-sky-600 shrink-0">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 0 1-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0 1 15 18.257V17.25m6-12V15a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 15V5.25m18 0A2.25 2.25 0 0 0 18.75 3H5.25A2.25 2.25 0 0 0 3 5.25m18 0V12a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 12V5.25" />
-                </svg>
-            </div>
-            <div className="flex-1 min-w-0">
-                <h2 className="text-sm font-semibold text-slate-600 tracking-wider">API 调用记录</h2>
-                <p className="text-[11px] text-slate-400 mt-0.5">最近 5 天：时间 · 哪个 API · 哪个 App · 哪个角色 · 用途</p>
-            </div>
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-slate-300 shrink-0">
-                <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clipRule="evenodd" />
-            </svg>
-        </button>
 
         {/* 其他 API 区域 — 非 LLM 类（语音、写歌等），不会跟随预设切换 */}
         <SettingsSection
@@ -3052,6 +3050,31 @@ const Settings: React.FC = () => {
             })()}
         </SettingsSection>
 
+        {/* 美化入口本身被错误 CSS 盖住时，必须有一个完全不经过日记 App 的急救通道。 */}
+        <SettingsSection
+            title="外观急救"
+            badge={hasJournalAppearanceOverride
+                ? <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-bold shrink-0">日记美化已启用</span>
+                : undefined}
+            icon={
+                <div className="p-2 bg-amber-100/70 rounded-xl text-amber-700">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M11.42 15.17 17.25 21a2.12 2.12 0 0 0 3-3l-5.84-5.84M11.42 15.17l2.83-2.83M11.42 15.17l-4.68 4.68a2.121 2.121 0 0 1-3-3l6.59-6.59m4.08 1.9 2.83-2.83m0 0 1.5-1.5a2.121 2.121 0 0 0-3-3l-1.5 1.5m3 3-3-3m-3.91 3.91-4.95-4.95a2.121 2.121 0 0 0-3 3l4.95 4.95" /></svg>
+                </div>
+            }
+        >
+            <p className="text-xs text-slate-500 leading-relaxed">
+                如果交换日记的自定义 CSS 把返回键、设置键遮住或变得无法点击，可以从这里直接清除日记主题与 CSS，不影响日记内容。
+            </p>
+            <button
+                type="button"
+                disabled={!hasJournalAppearanceOverride}
+                onClick={handleJournalAppearanceEmergencyReset}
+                className="mt-3 w-full rounded-xl bg-amber-600 px-4 py-3 text-xs font-bold text-white shadow-sm transition active:scale-[.98] disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none"
+            >
+                {hasJournalAppearanceOverride ? '重置交换日记美化' : '交换日记当前为原版'}
+            </button>
+        </SettingsSection>
+
         {/* ───────── 推送凭据 (VAPID) ───────── */}
         {/* VAPID 公私钥, 与 Proactive / Instant Push 共用一份 — 独立成块, 避免再被当成 */}
         {/* Instant Push 的子配置, 也避免两边 key 不一致互相抢同一个 pushManager 订阅. */}
@@ -3308,29 +3331,6 @@ const Settings: React.FC = () => {
             </p>
         </SettingsSection>
 
-        {/* ───────── 主动消息 2.0（定时推送） ───────── */}
-        <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
-            <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                    <div className="p-2 bg-violet-100/60 rounded-xl text-violet-600">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-                        </svg>
-                    </div>
-                    <h2 className="text-sm font-semibold text-slate-600 tracking-wider">主动消息 2.0</h2>
-                </div>
-                <button
-                    onClick={() => { trackEvent('打开主动消息2.0配置'); setShowAmsg2Modal(true); }}
-                    className="text-[10px] bg-violet-100 text-violet-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform"
-                >
-                    配置
-                </button>
-            </div>
-            <p className="text-xs text-slate-500 leading-relaxed">
-                角色到点自动给你发消息，App 关着也能收。需要你自己部署一个 Cloudflare Worker（自带 D1 数据库 + 定时触发），在配置里填地址即可。聊天上云（即时对话）与定时主动消息都由它承担。
-            </p>
-        </section>
-
         {/* 自定义网络代理 — 刻意低调的高级入口。默认折叠，不主动指引基本发现不了。
             普通用户无需配置：默认走作者部署的公共 Worker，所有功能开箱即用。 */}
         {!showProxyConfig ? (
@@ -3438,6 +3438,7 @@ const Settings: React.FC = () => {
             </div>
         </SettingsSection>
         )}
+
 
         <VersionInfo />
 
