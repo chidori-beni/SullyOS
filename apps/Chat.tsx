@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot, AppID, OSTheme } from '../types';
-import type { ActiveMsg2TaskRecord, ChatTriggerPlacement } from '../types';
+import type { ActiveMsg2TaskRecord } from '../types';
 import { configFromPreset } from '../utils/apiPresetSwitch';
 import { processImage } from '../utils/file';
 import { safeResponseJson, extractContent } from '../utils/safeApi';
@@ -306,7 +306,6 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     const [settingsHideSysLogs, setSettingsHideSysLogs] = useState(false);
     const [settingsShowTokenUsage, setSettingsShowTokenUsage] = useState(true);
     const [settingsShowRecallSubmitStatus, setSettingsShowRecallSubmitStatus] = useState(() => loadChatRecallSubmitHintEnabled());
-    const [settingsTriggerPlacement, setSettingsTriggerPlacement] = useState<ChatTriggerPlacement>('header');
     const handleToggleRecallSubmitStatus = (enabled: boolean) => {
         setSettingsShowRecallSubmitStatus(enabled);
         saveChatRecallSubmitHintEnabled(enabled);
@@ -1385,7 +1384,6 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 setSettingsContextRangeMode(resolveContextRangeMode(char));
                 setSettingsHideSysLogs(char.hideSystemLogs || false);
                 setSettingsShowTokenUsage(char.showTokenUsage !== false);
-                setSettingsTriggerPlacement(char.chatTriggerPlacement === 'input' ? 'input' : 'header');
                 setSettingsHtmlModeCustomPrompt((char as any).htmlModeCustomPrompt || '');
                 clearUnread(char.id);
             }
@@ -1533,7 +1531,6 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         setSettingsContextRangeMode(resolveContextRangeMode(char));
         setSettingsHideSysLogs(char.hideSystemLogs || false);
         setSettingsShowTokenUsage(char.showTokenUsage !== false);
-        setSettingsTriggerPlacement(char.chatTriggerPlacement === 'input' ? 'input' : 'header');
         setSettingsHtmlModeCustomPrompt((char as any).htmlModeCustomPrompt || '');
         setSettingsInputPreferences(inputPreferences);
     }, [modalType, char?.id]);
@@ -2923,7 +2920,6 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             contextUserStartMessageId: nextUserStart,
             hideSystemLogs: settingsHideSysLogs,
             showTokenUsage: settingsShowTokenUsage,
-            chatTriggerPlacement: settingsTriggerPlacement,
             htmlModeCustomPrompt: settingsHtmlModeCustomPrompt,
         } as any);
         setInputPreferences(settingsInputPreferences);
@@ -4613,7 +4609,6 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 settingsHideSysLogs={settingsHideSysLogs} setSettingsHideSysLogs={setSettingsHideSysLogs}
                 settingsShowTokenUsage={settingsShowTokenUsage} setSettingsShowTokenUsage={setSettingsShowTokenUsage}
                 settingsShowRecallSubmitStatus={settingsShowRecallSubmitStatus} setSettingsShowRecallSubmitStatus={handleToggleRecallSubmitStatus}
-                settingsTriggerPlacement={settingsTriggerPlacement} setSettingsTriggerPlacement={setSettingsTriggerPlacement}
                 contextSuiteAnyEnabled={contextSuiteAnyEnabled}
                 contextSuiteAllEnabled={contextSuiteAllEnabled}
                 onToggleContextSuite={handleToggleContextSuite}
@@ -4761,7 +4756,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 lastTokenUsage={lastTokenUsage}
                 tokenBreakdown={tokenBreakdown}
                 showTokenUsage={char.showTokenUsage !== false}
-                showTrigger={char.chatTriggerPlacement !== 'input'}
+                showTrigger={inputPreferences.triggerPlacement !== 'input'}
                 onClose={onBack || closeApp}
                 onTriggerAI={handleManualTrigger}
                 hideTrigger={inputPreferences.sendButtonGenerates}
@@ -5340,7 +5335,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                     showSendButton={osTheme.chatShowSendButton ?? false}
                     showVoiceButton={osTheme.chatShowVoiceButton ?? true}
                     onTriggerAI={handleManualTrigger}
-                    showTriggerButton={char.chatTriggerPlacement === 'input'}
+                    showTriggerButton={inputPreferences.triggerPlacement === 'input'}
                     chromeStyle={osTheme.chatChromeStyle}
                     acnh={acnh}
                 />

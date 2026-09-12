@@ -11,7 +11,7 @@ const ChatInputSettings: React.FC<ChatInputSettingsProps> = ({ value, onChange }
     const [openHelp, setOpenHelp] = useState<keyof ChatInputPreferences | null>(null);
     return (
         <div className="space-y-1">
-            <p className="mb-2 text-[10px] text-slate-400">上面的闪电按钮位置只对当前角色生效；以下输入习惯对所有私聊生效</p>
+            <p className="mb-2 text-[10px] text-slate-400">以下设置对所有私聊生效</p>
             {([
                 {
                     key: 'enterToSend',

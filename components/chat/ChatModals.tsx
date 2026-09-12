@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import Modal from '../os/Modal';
-import { CharacterProfile, ChatTriggerPlacement, Message, Emoji, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
+import { CharacterProfile, Message, Emoji, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
 import ChatInputSettings from './ChatInputSettings';
 import ChatSettingsSection from './ChatSettingsSection';
 import type { ChatInputPreferences } from '../../utils/chatInputPreferences';
@@ -41,8 +41,6 @@ interface ChatModalsProps {
     setSettingsShowTokenUsage: (v: boolean) => void;
     settingsShowRecallSubmitStatus: boolean;
     setSettingsShowRecallSubmitStatus: (v: boolean) => void;
-    settingsTriggerPlacement: ChatTriggerPlacement;
-    setSettingsTriggerPlacement: (v: ChatTriggerPlacement) => void;
     // Main API quick switch (global; independent from the schedule/emotion secondary API)
     apiConfig?: APIConfig;
     onApplyMainApiPreset?: (preset: ApiPreset) => void;
@@ -282,7 +280,6 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     settingsInputPreferences, setSettingsInputPreferences,
     settingsShowTokenUsage, setSettingsShowTokenUsage,
     settingsShowRecallSubmitStatus, setSettingsShowRecallSubmitStatus,
-    settingsTriggerPlacement, setSettingsTriggerPlacement,
     apiConfig, onApplyMainApiPreset,
     contextSuiteAnyEnabled, contextSuiteAllEnabled, onToggleContextSuite,
     preserveContext, setPreserveContext,
@@ -466,15 +463,15 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                          <div className="mb-3">
                              <div className="text-xs font-bold text-slate-400 uppercase">闪电按钮位置</div>
                              <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
-                                 选择「触发 AI」闪电图标出现的位置；另一处会自动隐藏。默认保持在聊天顶栏右上角。
+                                 选择「触发 AI」闪电图标出现的位置；另一处会自动隐藏。对所有私聊统一生效，默认在聊天顶栏右上角。
                              </p>
                              <div role="radiogroup" aria-label="闪电按钮位置" className="mt-3 grid grid-cols-2 gap-2">
                                  <button
                                      type="button"
                                      role="radio"
-                                     aria-checked={settingsTriggerPlacement === 'header'}
-                                     onClick={() => setSettingsTriggerPlacement('header')}
-                                     className={`rounded-2xl border px-3 py-3 text-left transition-all active:scale-[0.99] ${settingsTriggerPlacement === 'header'
+                                     aria-checked={settingsInputPreferences.triggerPlacement === 'header'}
+                                     onClick={() => setSettingsInputPreferences({ ...settingsInputPreferences, triggerPlacement: 'header' })}
+                                     className={`rounded-2xl border px-3 py-3 text-left transition-all active:scale-[0.99] ${settingsInputPreferences.triggerPlacement === 'header'
                                          ? 'border-primary bg-primary/5 text-primary shadow-sm'
                                          : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
                                  >
@@ -484,9 +481,9 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                  <button
                                      type="button"
                                      role="radio"
-                                     aria-checked={settingsTriggerPlacement === 'input'}
-                                     onClick={() => setSettingsTriggerPlacement('input')}
-                                     className={`rounded-2xl border px-3 py-3 text-left transition-all active:scale-[0.99] ${settingsTriggerPlacement === 'input'
+                                     aria-checked={settingsInputPreferences.triggerPlacement === 'input'}
+                                     onClick={() => setSettingsInputPreferences({ ...settingsInputPreferences, triggerPlacement: 'input' })}
+                                     className={`rounded-2xl border px-3 py-3 text-left transition-all active:scale-[0.99] ${settingsInputPreferences.triggerPlacement === 'input'
                                          ? 'border-primary bg-primary/5 text-primary shadow-sm'
                                          : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
                                  >

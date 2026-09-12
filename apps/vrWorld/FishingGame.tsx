@@ -131,6 +131,8 @@ export const FishingGame: React.FC<{
                 {onOpenCollection&&<button type="button" onClick={onOpenCollection}>查看收藏 →</button>}
             </div>}
             {phase==='idle'&&simple&&<div className="fishing-simple-hint">看到鱼影，点附近抛竿</div>}
+            {/* 手动模式原本一句提示都没有，只有水域页问号里那段说明，上手门槛太高。 */}
+            {phase==='idle'&&!simple&&<div className="fishing-simple-hint">按住水面光弧顺时针转，松手往回转<br/>让光弧一直罩住鱼，进度条就会涨</div>}
             {phase==='escaped'&&<div className="fishing-water-status" role="status">{simple?'空军了，鱼影溜走了':'鱼影游远了'}</div>}
             {saving&&<div className="fishing-water-status" role="status">收进水箱…</div>}
         </div>

@@ -42,7 +42,7 @@ export async function seedSARBackup(os: any) {
     localStorage.setItem('sar-garden-guide-v1','done');
     localStorage.setItem(ANNIVERSARY_SEEN_KEY,'1');
     localStorage.setItem(SAR_UPDATE_KEY,'1');
-    saveChatInputPreferences({sendButtonGenerates:true,enterToSend:false,autoReply:true,emojiSuggestions:true});
+    saveChatInputPreferences({sendButtonGenerates:true,enterToSend:false,autoReply:true,emojiSuggestions:true,triggerPlacement:'input'});
 }
 export async function readSARBackup() {
     const sar = collectSARLocalBackup();

@@ -37,6 +37,9 @@ import {
     installSARModuleOnUser,
 } from '../../utils/vrWorld/sarModuleRuntime';
 
+// 彼方在「自理安全区」名单里（utils/safeAreaApps.ts），外壳不替它让位，
+// 所以顶栏必须让开完整的 --chrome-top（安全区 + SullyOS 状态栏）。
+// 原先这里减了 44px，返回键正好落进状态栏的点击层，点了没反应。
 const SAFE_TOP = 'var(--chrome-top)';
 const SAFE_BOTTOM = 'var(--safe-bottom,0px)';
 
@@ -393,13 +396,13 @@ export const SARModuleShopOverlay: React.FC<{
                 @media (prefers-reduced-motion:reduce){.sar-module-card,.sar-module-detail-backdrop,.sar-module-detail,.sar-module-receipt,.sar-module-install,.sar-module-install__sheet,.sar-module-loading__avatar,.sar-module-loading__chip{animation:none!important}.sar-module-card:active,.sar-module-buy:active,.sar-module-roll button:active:not(:disabled){transform:none}}
             `}</style>
             <style>{`.sar-module-buy{min-height:48px;font-size:13px}.sar-module-buy span:last-child{font:500 13px/1.4 system-ui,sans-serif;color:inherit}.sar-module-buy:disabled{opacity:.48;cursor:not-allowed}.sar-module-detail__owned{font-size:11px;line-height:1.8;color:#b0c1ba}.sar-module-original{font-size:10px;opacity:.58;margin-right:2px}.sar-module-discount{display:flex;gap:9px;align-items:flex-start;margin:14px 0;padding:11px 12px;border:1px solid rgba(199,164,112,.24);border-radius:10px;background:rgba(185,142,83,.07);color:#dbc39e}.sar-module-discount svg{flex-shrink:0;margin-top:3px}.sar-module-discount b{display:block;font-size:12px;font-weight:600;line-height:1.6}.sar-module-discount span{display:block;font-size:11px;line-height:1.7;color:inherit;opacity:.82}`}</style>
-            <header className="sar-module-shop__header" style={{ paddingTop: `max(0px, calc(${SAFE_TOP} - 44px))`, height: `calc(58px + max(0px, calc(${SAFE_TOP} - 44px)))` }}>
+            <header className="sar-module-shop__header" style={{ paddingTop: SAFE_TOP, height: `calc(58px + ${SAFE_TOP})` }}>
                 <button type="button" className="sar-module-shop__back" onClick={onClose} aria-label={capturedTarget ? '放开角色并返回' : '离开模块商店'}><CaretLeft size={18} /></button>
                 <div className="sar-module-shop__title"><small>{capturedTarget ? 'SAR · FIELD LOADOUT' : 'SAR · MODULE COUNTER'}</small><h1>{capturedTarget ? '现场装载' : '模块商店'}</h1></div>
                 <div className="sar-module-shop__currency">{capturedTarget ? ownedTotal : balance}<span>{capturedTarget ? '袋中模块' : '鳞币'}</span></div>
                 <SARFacilityGuide facility="modules" auto={!capturedTarget}/>
             </header>
-            <main className="sar-module-shop__body" style={{ top: `calc(58px + max(0px, calc(${SAFE_TOP} - 44px)))` }}>
+            <main className="sar-module-shop__body" style={{ top: `calc(58px + ${SAFE_TOP})` }}>
                 {capturedTarget && capturedChibi ? (
                     <div className="sar-module-captured">
                         <div className="sar-module-captured__figure">
