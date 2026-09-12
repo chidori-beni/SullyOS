@@ -4100,10 +4100,8 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         }
 
         if (artifact.kind === 'journal-css') {
-            // 本 fork 没有搬上游的「交换日记美化」（utils/journalAppearance.ts 与
-            // JournalApp 的 .sully-journal-* 钩子都不存在），写进 theme 也没人读，
-            // 所以这里如实告诉用户，而不是假装保存成功。
-            return '本版暂不支持交换日记美化：日记 App 还没有可供 CSS 挂载的结构，作品已保留在文件柜里';
+            await updateTheme({ journalAppearance: { preset: 'original', customCss: String(artifact.payload.css || '') } });
+            return '交换日记美化已保存并启用';
         }
 
         if (artifact.kind === 'schedule-css') {
