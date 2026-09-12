@@ -401,12 +401,12 @@ const OneShotCapturePanel: React.FC<{
     onToggle: () => void;
     onClear: () => void;
 }> = ({ capture, armed, onToggle, onClear }) => {
-    const [expandedSectionId, setExpandedSectionId] = useState<string | null>(null);
+    const [expandedSectionIds, setExpandedSectionIds] = useState<Set<string>>(new Set());
     const [showFixedSections, setShowFixedSections] = useState(false);
     const [copyNotice, setCopyNotice] = useState('');
 
     useEffect(() => {
-        setExpandedSectionId(null);
+        setExpandedSectionIds(new Set());
         setShowFixedSections(false);
         setCopyNotice('');
     }, [capture?.id]);
@@ -448,11 +448,18 @@ const OneShotCapturePanel: React.FC<{
         () => capture ? summarizeApiRequestCaptureDuplicates(capture) : null,
         [capture],
     );
+    const classifiedChars = useMemo(
+        () => capture?.sections.reduce((sum, section) => sum + section.chars, 0) || 1,
+        [capture],
+    );
+    const estimateTokensForChars = useCallback((chars: number): number | null => {
+        if (capture?.promptTokens == null) return null;
+        return Math.round(capture.promptTokens * chars / classifiedChars);
+    }, [capture?.promptTokens, classifiedChars]);
     const sourceStats = useMemo(() => {
         if (!capture) return [];
         const grouped = new Map<ApiRequestCaptureSectionKind, { chars: number; count: number; source: string }>();
         capture.sections
-            .filter(section => section.kind !== 'system' && section.kind !== 'request' && section.kind !== 'tools')
             .forEach(section => {
             const current = grouped.get(section.kind) || {
                 chars: 0,
@@ -465,9 +472,39 @@ const OneShotCapturePanel: React.FC<{
             });
         const total = [...grouped.values()].reduce((sum, item) => sum + item.chars, 0) || 1;
         return [...grouped.entries()]
-            .map(([kind, item]) => ({ ...item, kind, pct: item.chars / total * 100 }))
+            .map(([kind, item]) => ({
+                ...item,
+                kind,
+                pct: item.chars / total * 100,
+                estimatedTokens: estimateTokensForChars(item.chars),
+            }))
             .sort((a, b) => b.chars - a.chars);
-    }, [capture]);
+    }, [capture, estimateTokensForChars]);
+    const fixedChars = useMemo(
+        () => fixedSections.reduce((sum, section) => sum + section.chars, 0),
+        [fixedSections],
+    );
+    const fixedTokenEstimate = estimateTokensForChars(fixedChars);
+    const allSectionIds = useMemo(
+        () => capture?.sections.map(section => section.id) || [],
+        [capture],
+    );
+    const allSectionsExpanded = allSectionIds.length > 0 && allSectionIds.every(id => expandedSectionIds.has(id));
+
+    const toggleSection = useCallback((id: string) => {
+        setExpandedSectionIds(previous => {
+            const next = new Set(previous);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }, []);
+
+    const toggleAllSections = useCallback(() => {
+        const shouldExpand = !allSectionsExpanded;
+        setExpandedSectionIds(shouldExpand ? new Set(allSectionIds) : new Set());
+        setShowFixedSections(shouldExpand);
+    }, [allSectionIds, allSectionsExpanded]);
 
     const exportTxt = useCallback(() => {
         if (!capture || !txtReport) return;
@@ -477,12 +514,13 @@ const OneShotCapturePanel: React.FC<{
     }, [capture, txtReport]);
 
     const renderSection = (section: ApiRequestCaptureSection) => {
-        const expanded = expandedSectionId === section.id;
+        const expanded = expandedSectionIds.has(section.id);
+        const estimatedTokens = estimateTokensForChars(section.chars);
         return (
             <div key={section.id} className="overflow-hidden rounded-xl border border-slate-200/70 bg-white/80">
                 <button
                     type="button"
-                    onClick={() => setExpandedSectionId(expanded ? null : section.id)}
+                    onClick={() => toggleSection(section.id)}
                     className="flex w-full items-start gap-2 px-3 py-2.5 text-left"
                 >
                     <span className={`mt-0.5 shrink-0 rounded-md px-1.5 py-0.5 text-[9px] font-semibold ${CAPTURE_KIND_STYLE[section.kind]}`}>
@@ -490,13 +528,15 @@ const OneShotCapturePanel: React.FC<{
                     </span>
                     <span className="min-w-0 flex-1">
                         <span className="flex items-baseline gap-2">
-                            <span className="min-w-0 flex-1 truncate text-[10px] font-semibold text-slate-600" title={section.label}>{section.label}</span>
-                            <span className="shrink-0 font-mono text-[9px] text-slate-400">{fmt(section.chars)} 字符</span>
+                            <span className="min-w-0 flex-1 break-words text-[10px] font-semibold text-slate-600" title={section.label}>{section.label}</span>
+                            <span className="shrink-0 text-right font-mono text-[9px] text-slate-400">
+                                {fmt(section.chars)} 字符{estimatedTokens != null ? ` · ~${fmt(estimatedTokens)} tok` : ''}
+                            </span>
                         </span>
                         <span className="mt-0.5 block break-words text-[9px] leading-relaxed text-slate-400">
                             来自：{getApiRequestCaptureSectionSource(section)}
                         </span>
-                        <span className="mt-0.5 block truncate font-mono text-[8px] text-slate-300" title={section.path || ''}>
+                        <span className="mt-0.5 block break-all font-mono text-[8px] text-slate-300" title={section.path || ''}>
                             {section.path || (section.messageIndex != null ? `messages[${section.messageIndex}]` : '请求体')}
                         </span>
                     </span>
@@ -619,21 +659,25 @@ const OneShotCapturePanel: React.FC<{
                         {sourceStats.length > 0 && (
                             <div className="mt-4 border-t border-slate-200/70 pt-3">
                                 <div className="flex items-baseline justify-between gap-2">
-                                    <h4 className="text-[11px] font-bold text-slate-600">可变化内容组成</h4>
-                                    <span className="text-[9px] text-slate-400">仅比较动态内容 · 非 Token</span>
+                                    <h4 className="text-[11px] font-bold text-slate-600">全部输入构成</h4>
+                                    <span className="shrink-0 text-[9px] text-slate-400">
+                                        {capture.promptTokens != null ? `实际 ${fmt(capture.promptTokens)} tok` : 'Token 未返回'}
+                                    </span>
                                 </div>
                                 <p className="mt-1 text-[9px] leading-relaxed text-slate-400">
-                                    这里关注会随聊天变化的历史、记忆和场景；固定基础指令已单独收起，不参与占比。
+                                    现在把系统提示词、记忆、历史、工具和请求参数都列出来；“~tok”是把接口返回的总输入 Token 按字符占比折算，方便找大头，不是模型逐块精确计费。
                                 </p>
                                 <div className="mt-2.5 space-y-2.5">
                                     {sourceStats.map(item => (
                                         <div key={item.kind}>
                                             <div className="flex items-baseline gap-2">
-                                                <span className="min-w-0 flex-1 truncate text-[10px] font-semibold text-slate-600" title={item.source}>
+                                                <span className="min-w-0 flex-1 break-words text-[10px] font-semibold text-slate-600" title={item.source}>
                                                     {CAPTURE_KIND_LABEL[item.kind]}
                                                 </span>
-                                                <span className="shrink-0 font-mono text-[9px] text-slate-400">
-                                                    {fmt(item.chars)} 字符 · {item.pct < 1 ? '<1' : Math.round(item.pct)}%
+                                                <span className="shrink-0 text-right font-mono text-[9px] text-slate-400">
+                                                    {fmt(item.chars)} 字符
+                                                    {item.estimatedTokens != null ? ` · ~${fmt(item.estimatedTokens)} tok` : ' · tok 未返回'}
+                                                    {' · '}{item.pct < 1 ? '<1' : Math.round(item.pct)}%
                                                 </span>
                                             </div>
                                             <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-100">
@@ -648,6 +692,12 @@ const OneShotCapturePanel: React.FC<{
                                         </div>
                                     ))}
                                 </div>
+                                {sourceStats[0] && (
+                                    <p className="mt-3 rounded-lg bg-amber-50/70 px-2.5 py-2 text-[9px] leading-relaxed text-amber-700">
+                                        优先检查：<span className="font-bold">{CAPTURE_KIND_LABEL[sourceStats[0].kind]}</span> 是当前最大项（{fmt(sourceStats[0].chars)} 字符
+                                        {sourceStats[0].estimatedTokens != null ? `，约 ${fmt(sourceStats[0].estimatedTokens)} tok` : ''}）。想降输入 Token，先展开下方同类分区，从这里开始删减或缩短。
+                                    </p>
+                                )}
                             </div>
                         )}
 
@@ -663,9 +713,12 @@ const OneShotCapturePanel: React.FC<{
                                         <span className="flex items-center gap-2">
                                             <span className="text-[11px] font-bold text-slate-600">基础固定指令</span>
                                             <span className="rounded-full bg-violet-50 px-1.5 py-0.5 text-[8px] font-semibold text-violet-500">稳定基线</span>
+                                            <span className="shrink-0 font-mono text-[9px] text-slate-400">
+                                                {fmt(fixedChars)} 字符{fixedTokenEstimate != null ? ` · ~${fmt(fixedTokenEstimate)} tok` : ''}
+                                            </span>
                                         </span>
                                         <span className="mt-0.5 block text-[9px] leading-relaxed text-slate-400">
-                                            应用和预设正常工作所需，通常不会随聊天轮数持续增长；已合并显示，不作为首要膨胀项。
+                                            应用和预设正常工作所需，通常不会随聊天轮数持续增长；现在保留总量，避免把它误当成“没有占用”。
                                         </span>
                                     </span>
                                     <span className="shrink-0 pt-0.5 text-[9px] font-semibold text-violet-500">
@@ -681,24 +734,31 @@ const OneShotCapturePanel: React.FC<{
                         )}
 
                         <div className="mt-4 border-t border-slate-200/70 pt-3">
-                            <div className="mb-2">
+                            <div className="mb-2 flex items-start justify-between gap-2">
                                 <h4 className="text-[11px] font-bold text-slate-600">动态内容与请求配置</h4>
-                                <p className="mt-0.5 text-[9px] text-slate-400">按实际发送顺序列出；每段都标明来源和原始请求位置。</p>
+                                <button
+                                    type="button"
+                                    onClick={toggleAllSections}
+                                    className="shrink-0 text-[9px] font-semibold text-primary"
+                                >
+                                    {allSectionsExpanded ? '全部收起' : '展开全部正文'}
+                                </button>
                             </div>
+                            <p className="mb-2 text-[9px] text-slate-400">按实际发送顺序列出；每段都标明来源、原始请求位置和字符/估算 Token。可逐段展开，也可以一次打开全部正文。</p>
                             <div className="space-y-1.5">
                             {detailSections.map(renderSection)}
 
                             <div className="overflow-hidden rounded-xl border border-slate-200/70 bg-white/80">
                                 <button
                                     type="button"
-                                    onClick={() => setExpandedSectionId(expandedSectionId === rawId ? null : rawId)}
+                                    onClick={() => toggleSection(rawId)}
                                     className="flex w-full items-center gap-2 px-3 py-2 text-left"
                                 >
                                     <span className="shrink-0 rounded-md bg-slate-800 px-1.5 py-0.5 text-[9px] font-semibold text-white">原始</span>
                                     <span className="min-w-0 flex-1 truncate text-[10px] text-slate-600">完整请求 JSON（核对所有字段）</span>
-                                    <span className="shrink-0 text-[9px] text-slate-300">{expandedSectionId === rawId ? '▲' : '▼'}</span>
+                                    <span className="shrink-0 text-[9px] text-slate-300">{expandedSectionIds.has(rawId) ? '▲' : '▼'}</span>
                                 </button>
-                                {expandedSectionId === rawId && (
+                                {expandedSectionIds.has(rawId) && (
                                     <CaptureSectionContent
                                         content={JSON.stringify(capture.payload, null, 2)}
                                         mono
@@ -722,14 +782,15 @@ const OneShotCapturePanel: React.FC<{
 
 const CaptureSectionContent: React.FC<{ content: string; mono?: boolean; onCopy: (value: string) => void }> = ({ content, mono, onCopy }) => (
     <div className="border-t border-slate-100 bg-slate-50/70 p-2.5">
-        <div className="mb-2 flex justify-end">
+        <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="text-[9px] text-slate-400">正文可上下滑动查看，复制会保留完整内容</span>
             <button type="button" onClick={() => onCopy(content)} className="rounded-lg bg-white px-2 py-1 text-[9px] font-semibold text-primary shadow-sm">
                 复制本区
             </button>
         </div>
         <pre
             tabIndex={0}
-            className={`max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-slate-200/70 bg-white p-3 text-[10px] leading-5 text-slate-700 select-text ${mono ? 'font-mono' : 'font-sans'}`}
+            className={`max-h-[45vh] overflow-auto whitespace-pre-wrap break-all rounded-lg border border-slate-200/70 bg-white p-3 text-[10px] leading-5 text-slate-700 select-text ${mono ? 'font-mono' : 'font-sans'}`}
         >
             {content || '（空内容）'}
         </pre>
@@ -753,23 +814,33 @@ const PromptBreakdownView: React.FC<{ blocks: PromptBlockStat[]; promptTokens?: 
         : blocks;
     const rows = [...merged].sort((a, b) => b.chars - a.chars);
     const fmt = (n: number) => n.toLocaleString('en-US');
+    const largest = rows[0];
     return (
         <div className="mt-2 pt-2 border-t border-slate-100 space-y-1.5" onClick={(ev) => ev.stopPropagation()}>
             <div className="flex items-baseline justify-between">
                 <span className="text-[10px] font-bold text-slate-400">输入构成 · 共 {fmt(totalChars)} 字符</span>
                 {promptTokens != null && (
-                    <span className="text-[9px] text-slate-300">token 列为按字符占比折算的估算</span>
+                    <span className="text-[9px] text-slate-400">实际输入 {fmt(promptTokens)} tok</span>
                 )}
             </div>
+            <p className="text-[9px] leading-relaxed text-slate-400">
+                每行的 “~tok” 是按字符占比估算，用来找大头，不是模型逐块精确计费；这条历史记录只保存统计，不保存正文。想看具体文字，请先开启上方“本次发送统计”再发一次。
+            </p>
+            {largest && (
+                <p className="rounded-lg bg-amber-50/70 px-2.5 py-1.5 text-[9px] leading-relaxed text-amber-700">
+                    优先检查：<span className="font-bold">{largest.label}</span>（{fmt(largest.chars)} 字符
+                    {promptTokens != null ? `，约 ${fmt(Math.round(promptTokens * largest.chars / totalChars))} tok` : ''}）。
+                </p>
+            )}
             {rows.map((b, i) => {
                 const pct = (b.chars / totalChars) * 100;
                 const estTok = promptTokens != null ? Math.round(promptTokens * b.chars / totalChars) : null;
                 return (
                     <div key={i} className="min-w-0">
                         <div className="flex items-baseline justify-between gap-2 min-w-0">
-                            <span className="text-[10px] text-slate-500 truncate" title={b.label}>{b.label}</span>
+                            <span className="min-w-0 break-words text-[10px] text-slate-500" title={b.label}>{b.label}</span>
                             <span className="text-[10px] font-mono text-slate-400 shrink-0">
-                                {fmt(b.chars)} 字{estTok != null ? ` · ~${fmt(estTok)} tok` : ''} · {pct < 1 ? '<1' : Math.round(pct)}%
+                                {fmt(b.chars)} 字符{estTok != null ? ` · ~${fmt(estTok)} tok` : ''} · {pct < 1 ? '<1' : Math.round(pct)}%
                             </span>
                         </div>
                         <div className="h-1 rounded-full bg-slate-100 overflow-hidden">
