@@ -36,6 +36,7 @@ import { getDatePhoneSpeaker, isDatePhoneBridge, formatDatePhoneMarkdown } from 
 import { stripMessageReactionTags } from '../../utils/messageReactions';
 import { stripFaceToFacePhoneSourceTags } from '../../utils/sanitize';
 import { ArrowLeft, CornersIn, CornersOut } from '@phosphor-icons/react';
+import { MEETING_CONTINUE_DISPLAY_TEXT } from '../../utils/meetingContinue';
 
 interface DateSessionProps {
     char: CharacterProfile;
@@ -57,7 +58,7 @@ interface DateSessionProps {
     /** DateApp 生成的统一当前见面显示快照。 */
     sceneSnapshot?: DateSceneSnapshot | null;
     dateTimeAwarenessEnabled?: boolean;
-    onSendMessage: (text: string) => Promise<string | { queued: true; jobId: string }>; // Returns AI content or a queued background turn
+    onSendMessage: (text: string, kind?: 'continue') => Promise<string | { queued: true; jobId: string }>; // Returns AI content or a queued background turn
     /** 普通见面回复已交给 Worker，期间不允许再开新轮 / 校时 / 结束。 */
     backgroundPending?: boolean;
     onReroll: () => Promise<string>;
@@ -1057,14 +1058,14 @@ const DateSession: React.FC<DateSessionProps> = ({
         }
     };
 
-    const handleSend = async () => {
+    const submitTurn = async (kind?: 'continue') => {
         if (historyReplay || interactionBusy) return;
         const inputText = input.trim();
         // 本地失败输入优先，DB 时间线兜底。这样即使父组件刷新尚未落到这一帧，重试键也不会失效。
         const retryText = pendingRetryText || getPendingReplyText(messages);
-        if (!inputText && !retryText) return;
-        const text = inputText || retryText;
-        if (inputText) {
+        if (kind !== 'continue' && !inputText && !retryText) return;
+        const text = kind === 'continue' ? MEETING_CONTINUE_DISPLAY_TEXT : (inputText || retryText);
+        if (kind !== 'continue' && inputText) {
             setInput('');
             setShowInputBox(false);
         }
@@ -1072,7 +1073,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         setIsShowingOpening(false); // First user interaction - opening phase is over
 
         try {
-            const result = await onSendMessage(text);
+            const result = await onSendMessage(text, kind);
             if (typeof result !== 'string') {
                 // 前台只保留轻量的等待状态；是否需要系统通知交给 Service Worker
                 // 在真正收到结果时按窗口可见性判断，不在见面页额外提醒。
@@ -1100,6 +1101,9 @@ const DateSession: React.FC<DateSessionProps> = ({
             setIsTyping(false);
         }
     };
+
+    const handleSend = () => { void submitTurn(); };
+    const handleContinue = () => { void submitTurn('continue'); };
 
     const handleRerollClick = async () => {
         if (historyReplay || interactionBusy) return;
@@ -1356,6 +1360,16 @@ const DateSession: React.FC<DateSessionProps> = ({
             {/* Menu Layer — 常驻只留「输入」+「菜单」两钮，其余操作收进带文字标签的下拉菜单 */}
             <div className={`absolute top-0 right-0 p-4 pt-12 z-[100] flex flex-col items-end gap-2 pointer-events-auto ${isNovelMode ? 'hidden' : ''}`}>
                 <div className="flex gap-3">
+                    {!historyReplay && <button
+                        onClick={(e) => { e.stopPropagation(); setShowMenu(false); setShowVoiceLangPicker(false); handleContinue(); }}
+                        disabled={interactionBusy}
+                        className="h-10 px-3.5 rounded-full flex items-center gap-1.5 border bg-black/30 backdrop-blur-md border-white/20 text-white text-xs font-bold shadow-lg active:scale-95 transition-all hover:bg-white/20 disabled:opacity-40"
+                        title={`本轮不主动行动，让${char.name}继续陪伴并推进见面`}
+                        aria-label="继续当前见面"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5"><path fillRule="evenodd" d="M4.5 5.653c0-1.427 1.529-2.33 2.779-1.643l11.54 6.347c1.295.712 1.295 2.573 0 3.286L7.28 19.99c-1.25.687-2.779-.217-2.779-1.643V5.653Z" clipRule="evenodd" /></svg>
+                        继续
+                    </button>}
                     {!historyReplay && <button onClick={(e) => { e.stopPropagation(); setShowInputBox(!showInputBox); setShowMenu(false); setShowVoiceLangPicker(false); }} className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all shadow-lg active:scale-95 ${showInputBox ? 'bg-primary border-primary text-white' : 'bg-black/30 backdrop-blur-md border-white/20 text-white hover:bg-white/20'}`}>
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" /></svg>
                     </button>}

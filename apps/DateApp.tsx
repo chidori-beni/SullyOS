@@ -37,6 +37,7 @@ import {
     savePendingDateBackgroundJob,
     schedulePendingDateBackgroundJob,
 } from '../utils/dateBackgroundJobs';
+import { buildInPersonContinueInstruction } from '../utils/meetingContinue';
 import {
     buildDateHistoryGroups,
     formatDateHistoryDate,
@@ -1241,7 +1242,7 @@ const DateApp: React.FC = () => {
     };
 
     // --- Session API Logic ---
-    const handleSendMessage = async (text: string): Promise<string | { queued: true; jobId: string }> => {
+    const handleSendMessage = async (text: string, kind?: 'continue'): Promise<string | { queued: true; jobId: string }> => {
         if (!char) throw new Error("No char");
         const requestId = beginDateTurnRequest();
         const encounter = reconcileEncounterFromSceneSnapshot(ensureEncounter());
@@ -1255,11 +1256,23 @@ const DateApp: React.FC = () => {
             && recentCheck[0].content === text
             && recentCheck[0].metadata?.source === 'date'
             && recentCheck[0].metadata?.dateEncounterId === encounterSnapshot.id;
+        // API 中断后的重试只会带回显示文本；从已落库标记恢复“继续”的完整语义。
+        const isContinueTurn = kind === 'continue'
+            || (isRetry && recentCheck[0].metadata?.meetingContinue === true);
 
         let sourceUserMessageId: number;
         if (!isRetry) {
             // 1. Save User Msg
-            sourceUserMessageId = await DB.saveMessage({ charId: char.id, role: 'user', type: 'text', content: text, metadata: sceneClockMetadata(encounterSnapshot, { dateTurnKind: 'dialogue' }) });
+            sourceUserMessageId = await DB.saveMessage({
+                charId: char.id,
+                role: 'user',
+                type: 'text',
+                content: text,
+                metadata: sceneClockMetadata(encounterSnapshot, {
+                    dateTurnKind: 'dialogue',
+                    ...(isContinueTurn ? { meetingContinue: true } : {}),
+                }),
+            });
             markDateTurnDirty(char);
         } else {
             sourceUserMessageId = recentCheck[0].id;
@@ -1275,12 +1288,15 @@ const DateApp: React.FC = () => {
         await loadDateMessages(DATE_SESSION_MESSAGE_LIMIT);
 
         const emojis = await DB.getEmojis();
+        const modelText = isContinueTurn
+            ? buildInPersonContinueInstruction(userProfile?.name, char.name)
+            : text;
         const { messages } = await DatePrompts.buildSessionPayload({
             char,
             userProfile,
             allMsgs: preparedAllMsgs,
             emojis,
-            userText: text,
+            userText: modelText,
             variant: 'send',
             sceneClockAt: encounterSnapshot.sceneClockAt,
             sceneClockAdvancedMs: encounterSnapshot.sceneClockAdvancedMs,
