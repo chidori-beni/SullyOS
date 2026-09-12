@@ -40,6 +40,7 @@ import type { RecallEntryPoint, RecallTrace } from './memoryPalace/trace';
 import { DB } from './db';
 import type { ScheduleContextSnapshot } from './scheduleContext';
 import type { BusyReplyDecision } from './busyAutoReply';
+import { loadCollaborationFileCabinetBlock } from '../features/collaboration/chatLibrary';
 
 export { cleanApiMessages, flattenImageContentParts } from './promptMessageCleanup';
 
@@ -544,6 +545,13 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
             // M3 核心原则常驻；分析结果只决定是否在后面追加当轮状态策略。
             volatileTail += renderConversationEngagementGuidance(
                 engagementTrace.analysis as ConversationEngagementAnalysis | undefined,
+            );
+        }
+        if (char.chatCollaborationEnabled) {
+            volatileTail += await loadCollaborationFileCabinetBlock(
+                char.id,
+                historyMsgsForPrompt,
+                userProfile?.name || '用户',
             );
         }
     }

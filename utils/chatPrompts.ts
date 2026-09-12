@@ -1238,6 +1238,14 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
 
 `;
 
+        if (char.chatCollaborationEnabled) {
+            baseSystemPrompt += `
+
+### 协同功能
+你在普通聊天。需要处理文件时，可引导${userProfile.name}从 ChatApp 加号页进入“协同工作”；不要在这里假装制作。系统另给已有文件标题，可按规则发送。
+`;
+        }
+
         // 特殊模式结束后的第一轮必须把输出格式重新锚定到 ChatApp。
         // 主聊天路径会从完整 DB 历史算好 returningFromMode；直接调用 ChatPrompts 的旧路径
         // 则用 currentMsgs 兜底。不能再看固定的倒数第二条：用户可能连续发多个气泡，界面
@@ -1284,8 +1292,9 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
 
         // Voice message prompt injection
         if (char.chatVoiceEnabled) {
-            const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español', de: 'Deutsch', ru: 'Русский' };
             const voiceLang = char.chatVoiceLang || '';
+            // 这一批不搬上游的 voiceLanguage 模块，标签退回内联表（基线原样）。
+            const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español', de: 'Deutsch', ru: 'Русский' };
             const langLabel = voiceLang ? (VOICE_LANG_LABELS[voiceLang] || voiceLang) : '';
             if (voiceLang) {
                 baseSystemPrompt += `\n\n### 🎤 语音消息功能
@@ -1585,6 +1594,10 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                 // TODO(记录形态): 戳一戳 / 时间间隔提示等其他系统事件, 等转账的 [[记录:TRANSFER]]
                 // 观察一段时间后再迁 (transferFormat.ts 头注) —— 防线已按整个记录命名空间就位。
                 if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`;
+                else if (m.type === 'collaboration_file') {
+                    const fileName = String(m.metadata?.fileName || m.content || '未命名文件');
+                    content = `${timeStr} [你在聊天界面向用户交付了协同文件：《${fileName}》]`;
+                }
                 else if (m.type === 'transfer') {
                     // 统一记录形态 [[记录:TRANSFER|to=|amount=|status=]] —— 跟输出语法
                     // [[ACTION:TRANSFER|to=|amount=]] 共用词汇表 (见 transferFormat.ts 头注)。

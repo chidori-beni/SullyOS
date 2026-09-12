@@ -10,8 +10,9 @@ import {
   type TtsResult,
   type TtsSynthOptions,
 } from './minimaxTts';
-import { synthesizeSpeechFishDetailed } from './fishAudioTts';
+import { synthesizeSpeechFishDetailed, resolveFishAudioApiKey } from './fishAudioTts';
 import { resolveTtsProvider } from './ttsProvider';
+import { resolveMiniMaxApiKey } from './minimaxApiKey';
 
 export type { TtsResult, TtsSynthOptions };
 
@@ -51,3 +52,19 @@ export const characterHasVoice = (char: CharacterProfile, apiConfig: APIConfig):
   }
   return !!(vp?.voiceId || (vp?.timberWeights && vp.timberWeights.length > 0));
 };
+
+/**
+ * 当前服务商的 Key + 当前角色音色是否都已配置。
+ *
+ * （合上游协同工作台时补的：CollaborationWindow 用它决定要不要给协同回复配语音。
+ *   上游那份还分了 ElevenLabs 一路，本 fork 没接 ElevenLabs，只留 MiniMax / 鱼声两家。）
+ */
+export const canSynthesizeSpeech = (char: CharacterProfile, apiConfig: APIConfig): boolean => {
+  if (!characterHasVoice(char, apiConfig)) return false;
+  if (resolveTtsProvider(apiConfig) === 'fishaudio') return !!resolveFishAudioApiKey(apiConfig);
+  return !!resolveMiniMaxApiKey(apiConfig);
+};
+
+/** 鱼声的清洗器需要看到原始 inline cue；MiniMax 用已消毒的 speech。 */
+export const providerUsesRawVoiceMarkup = (apiConfig: APIConfig): boolean =>
+  resolveTtsProvider(apiConfig) !== 'minimax';

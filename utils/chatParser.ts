@@ -7,6 +7,12 @@ import { extractTransferCommands } from './transferFormat';
 import { executeLifeDirectives } from './lifeRecords';
 import { wallClockToTimestamp } from './timezone';
 import { addReactionToMetadata, extractMessageReactionCommands, findReactionTarget } from './messageReactions';
+import { CollaborationStore } from '../features/collaboration/store';
+import {
+    collaborationFileMessageMetadata,
+    extractCollaborationFileDirectives,
+    resolveCollaborationFileByTitle,
+} from '../features/collaboration/chatLibrary';
 
 export interface MusicActionSnapshot {
     songId: number;
@@ -177,6 +183,40 @@ export const ChatParser = {
                 await DB.updateMessageMetadata(target.id, (previous) =>
                     addReactionToMetadata(previous, command.emoji, 'assistant', messageTimestamp ?? Date.now()));
                 target.metadata = addReactionToMetadata(target.metadata, command.emoji, 'assistant', messageTimestamp ?? Date.now());
+            }
+        }
+
+        // COLLAB_FILE — current-chat collaboration mode can hand the user an
+        // existing file from the sidecar cabinet. The chat message stores only
+        // metadata + assetId; the canonical Blob remains in CollaborationStore.
+        const fileDirectives = extractCollaborationFileDirectives(content);
+        if (fileDirectives.requestedTitles.length > 0) {
+            content = fileDirectives.visibleText;
+            try {
+                const chars = await DB.getAllCharacters();
+                const collaborationEnabled = !!chars.find(char => char.id === charId)?.chatCollaborationEnabled;
+                if (!collaborationEnabled) {
+                    console.warn('[CollaborationFileCabinet] 忽略未开启协同能力时的文件标记:', { charId });
+                } else {
+                    const files = await CollaborationStore.listLibraryFiles(charId);
+                    for (const requestedTitle of fileDirectives.requestedTitles) {
+                        const file = resolveCollaborationFileByTitle(files, requestedTitle);
+                        if (!file) {
+                            addToast(`文件柜里找不到《${requestedTitle}》，已跳过发送`, 'error');
+                            continue;
+                        }
+                        await persist({
+                            charId,
+                            role: 'assistant',
+                            type: 'collaboration_file',
+                            content: `[协同文件：${file.name}]`,
+                            metadata: collaborationFileMessageMetadata(file),
+                        });
+                    }
+                }
+            } catch (error) {
+                console.warn('[CollaborationFileCabinet] 发送文件失败:', error);
+                addToast('协同文件柜暂时读取失败', 'error');
             }
         }
 

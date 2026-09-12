@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { MountedWorldbook } from '../types';
+import type { MountedWorldbook, Worldbook } from '../types';
 import {
     injectWorldbookDepthEntries,
     isWorldbookEntryActive,
@@ -12,6 +12,7 @@ import {
     replaceMountedWorldbook,
     normalizeWorldbookMode,
     isMountedWorldbookEnabled,
+    upsertMountedWorldbooks,
 } from './worldbook';
 
 const book = (overrides: Partial<MountedWorldbook> = {}): MountedWorldbook => ({
@@ -362,5 +363,21 @@ describe('mounted worldbook synchronization', () => {
         };
         expect(replaceMountedWorldbook(staleMount, normalWorldbook, { modeIsAuthoritative: true })[0])
             .not.toHaveProperty('scheduleOnly');
+    });
+
+    it('mounts a complete generated group without duplicates and keeps it injectable', () => {
+        const now = Date.now();
+        // 本 fork 的 Worldbook.category 是必填，而 book() 返回的是 Partial<MountedWorldbook>，
+        // 展开后 TS 只看到 category?: string。上游那边这个字段是可选的，所以它不用标注。
+        const generated: Worldbook[] = ([
+            { ...book({ id: 'generated-1', title: '常驻校规', content: '午夜后禁止离开宿舍。', category: '学院', constant: true, order: 10, position: 1 }), createdAt: now, updatedAt: now },
+            { ...book({ id: 'generated-2', title: '雨夜钟楼', content: '钟楼会在雨夜开放。', category: '学院', constant: false, key: ['钟楼'], scanDepth: 4, order: 20, position: 1 }), createdAt: now, updatedAt: now },
+        ] as Worldbook[]);
+        const mounted = upsertMountedWorldbooks([book({ id: 'existing', title: '已有条目', order: 300 })], generated);
+        const retried = upsertMountedWorldbooks(mounted, generated);
+
+        expect(retried.map(entry => entry.id)).toEqual(['existing', 'generated-1', 'generated-2']);
+        expect(retried.filter(entry => entry.category === '学院')).toHaveLength(2);
+        expect(resolveWorldbookEntries(retried, [{ content: '我们去钟楼看看' }]).map(entry => entry.book.id)).toEqual(['generated-1', 'generated-2', 'existing']);
     });
 });
