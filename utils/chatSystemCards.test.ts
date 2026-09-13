@@ -77,7 +77,11 @@ describe('Chat.tsx 的两处过滤必须共用同一个判定', () => {
   it('读库和渲染都调用 isHiddenSystemLog，不再各写各的白名单', () => {
     expect(chat).toContain("import { filterChatMessages, isHiddenSystemLog } from '../utils/chatSystemCards';");
     expect(chat).toContain('isHiddenSystemLog(m, currentChar?.hideSystemLogs)');
-    expect(chat).toContain('isHiddenSystemLog(m, char?.hideSystemLogs)');
+    // 渲染侧这一处后来收敛进了 browseableChatMessages —— 跳转定位算下标和渲染切片
+    // 必须用同一套过滤，两边各写一遍会下标错位（见 featureWiring.chatHistoryWindow.test.ts）。
+    // 判定来源仍然只有 isHiddenSystemLog 一个，只是换了个落点。
+    expect(chat).toContain('isHiddenSystemLog(m, hideSystemLogs)');
+    expect(chat).toContain('browseableChatMessages(messages, char?.hideSystemLogs)');
     // 手写白名单一处都不能留：留一处就等于下次再漏一种卡片。
     expect(chat).not.toContain("m.metadata?.source !== 'call-end-popup'");
     expect(chat).not.toContain("m.type !== 'score_card'");
