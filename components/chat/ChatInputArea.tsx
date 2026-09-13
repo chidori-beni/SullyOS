@@ -992,6 +992,11 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <span className="text-xs font-bold">重新生成</span>
                             </button>
 
+
+                          </div>
+
+                          {/* Page 1: 外部服务 */}
+                          <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 1 ? '' : 'hidden'}`}>
                             {/* 情绪按钮已并入日程 — 情绪/意识流与日程强制同步，配置面板在日程 Modal 下方 */}
 
                             {/* Schedule Button */}
@@ -1003,10 +1008,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <span className="text-xs font-bold">日程/情绪</span>
                             </button>
 
-                          </div>
-
-                          {/* Page 1: 外部服务 */}
-                          <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 1 ? '' : 'hidden'}`}>
                             {/* Proactive Message Button（从第一页移到第二页） */}
                             <button onClick={() => onPanelAction('proactive')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform relative ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 {acnh ? <AcnhActionTile kind="proactive" /> : (
@@ -1115,6 +1116,14 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                               <span className="text-xs font-bold">{xinshengEnabled ? '心声已开' : '心声'}</span>
                             </button>
 
+
+                          </div>
+
+                          {/* Page 2: 更多
+                              以前这页还挂着「提示音」「白框」两个格子——它们和上一页的「聊天装扮」
+                              本来就是同一件事（把这个聊天打扮好看），却被分在两页里。现在统一并进
+                              上一页的「装扮」抽屉，这页只留纯工具入口。 */}
+                          <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 2 ? '' : 'hidden'}`}>
                             {/* 装扮：该角色所有美化的统一入口 —— 微调 / 背景 / 气泡 / 白框 / 提示音
                                 五个页签在一个抽屉里。以前这几项分散在本页、下一页和「设置」弹窗里，
                                 找一个要翻三处；现在这一个格子全包，旧入口不再单列。 */}
@@ -1128,13 +1137,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                               <span className="text-xs font-bold">装扮</span>
                             </button>
 
-                          </div>
-
-                          {/* Page 2: 更多
-                              以前这页还挂着「提示音」「白框」两个格子——它们和上一页的「聊天装扮」
-                              本来就是同一件事（把这个聊天打扮好看），却被分在两页里。现在统一并进
-                              上一页的「装扮」抽屉，这页只留纯工具入口。 */}
-                          <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 2 ? '' : 'hidden'}`}>
                             {/* 语音：和消息栏上那个按钮是同一个入口。消息栏那个开着时这里就不重复摆一个；
                                 只有把消息栏那个关掉，这里才补上，保证功能永远找得到。 */}
                             {onOpenVoiceInput && !showVoiceButton && (
