@@ -19,6 +19,7 @@ import { confirmExportSafety } from '../utils/exportGuard';
 import { trackEvent } from '../utils/analytics';
 import { Check, ImageSquare, Sparkle, Trash, UploadSimple } from '@phosphor-icons/react';
 import AppIconEditor from '../components/appearance/AppIconEditor';
+import BootAnimationSettings from '../components/appearance/BootAnimationSettings';
 import { Capacitor } from '@capacitor/core';
 import { Share } from '@capacitor/share';
 import CssSlotEditor from '../components/appearance/CssSlotEditor';
@@ -1652,6 +1653,7 @@ const Appearance: React.FC = () => {
                             );
                         })}
                     </div>
+                    <BootAnimationSettings theme={theme} updateTheme={updateTheme} />
                 </section>
                 </AppearanceGroup>
 
