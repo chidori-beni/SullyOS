@@ -22,6 +22,7 @@ import { characterLaunch } from '../utils/characterLaunch';
 import { safeFetchJson, extractContent } from '../utils/safeApi';
 import { fetchMiniMaxVoices, MiniMaxVoiceItem } from '../utils/minimaxVoice';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
+import { normalizeElevenLabsVoiceId, synthesizeSpeechElevenLabsDetailed } from '../utils/elevenLabsTts';
 import { normalizeUserImpression } from '../utils/impression';
 import { parseGeneratedImpression } from '../utils/impressionGeneration';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
@@ -330,6 +331,7 @@ const Character: React.FC = () => {
   // Impression State
   const [isGeneratingImpression, setIsGeneratingImpression] = useState(false);
   const [isLoadingVoices, setIsLoadingVoices] = useState(false);
+  const [isTestingElevenLabsVoice, setIsTestingElevenLabsVoice] = useState(false);
   const [voiceOptions, setVoiceOptions] = useState<Record<'system' | 'voice_cloning' | 'voice_generation', MiniMaxVoiceItem[]>>({
       system: [],
       voice_cloning: [],
@@ -376,6 +378,47 @@ const Character: React.FC = () => {
       }));
       addToast(`已应用音色：${voice.voice_name || voice.voice_id}`, 'success');
       trackEvent('应用音色到角色', { source });
+  };
+
+  const handleTestElevenLabsVoice = async () => {
+      if (!formData || isTestingElevenLabsVoice) return;
+      const voiceId = normalizeElevenLabsVoiceId(formData.voiceProfile?.elevenLabsVoiceId);
+      if (!voiceId) {
+          addToast('请先填写 ElevenLabs Voice ID', 'info');
+          return;
+      }
+      if (!apiConfig.elevenLabsApiKey?.trim()) {
+          addToast('请先在设置 → 其他 API 保存 ElevenLabs Key', 'info');
+          return;
+      }
+      setIsTestingElevenLabsVoice(true);
+      let previewUrl = '';
+      const releasePreviewUrl = () => {
+          if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
+          previewUrl = '';
+      };
+      try {
+          const previewChar: CharacterProfile = {
+              ...formData,
+              voiceProfile: { ...(formData.voiceProfile || {}), elevenLabsVoiceId: voiceId },
+          };
+          const { url } = await synthesizeSpeechElevenLabsDetailed(
+              `你好，我是${formData.name || '你的角色'}。现在能听见我的声音吗？`,
+              previewChar,
+              apiConfig,
+          );
+          previewUrl = url;
+          const audio = new Audio(url);
+          audio.onended = releasePreviewUrl;
+          audio.onerror = releasePreviewUrl;
+          await audio.play();
+          addToast('ElevenLabs 试听已开始', 'success');
+      } catch (error: any) {
+          releasePreviewUrl();
+          addToast(error?.message || 'ElevenLabs 试听失败', 'error');
+      } finally {
+          setIsTestingElevenLabsVoice(false);
+      }
   };
 
   // Load archive prompts from localStorage (shared with ChatApp)
@@ -2042,7 +2085,7 @@ ${isInitialGeneration ? `
 
                            <div className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 space-y-3">
                                <div className="flex items-center justify-between">
-                                   <label className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest flex items-center gap-1"><SpeakerHigh size={12} /> MiniMax 音色设定</label>
+                                   <label className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest flex items-center gap-1"><SpeakerHigh size={12} /> 角色语音音色</label>
                                    <div className="flex gap-1.5">
                                        <button
                                            onClick={() => { setActiveCharacterId(formData.id); openApp(AppID.VoiceDesigner); }}
@@ -2060,6 +2103,39 @@ ${isInitialGeneration ? `
                                    </div>
                                </div>
                                <p className="text-[11px] text-slate-500">已有 voice_id 可直接填，不依赖查询。聊天角色配置后，后续接 TTS 可直接读取。</p>
+
+                               {/* MiniMax 合成参数档位：不选就是经典档，老角色升级后声音不会变。 */}
+                               <div className="rounded-2xl border border-violet-200/60 bg-violet-50/40 p-2.5 space-y-2">
+                                   <div className="flex items-center justify-between gap-2">
+                                       <span className="text-[10px] font-bold text-violet-600 uppercase tracking-widest">MiniMax 合成参数</span>
+                                       <span className="text-[9px] text-slate-400">老角色默认经典</span>
+                                   </div>
+                                   <div className="grid grid-cols-2 gap-1 rounded-xl bg-white/80 p-1">
+                                       {([
+                                           ['legacy', '经典参数'],
+                                           ['natural-v2', '新版自然参数'],
+                                       ] as const).map(([version, label]) => {
+                                           const activeVersion = formData.voiceProfile?.minimaxParamVersion === 'natural-v2' ? 'natural-v2' : 'legacy';
+                                           return (
+                                               <button
+                                                   key={version}
+                                                   type="button"
+                                                   onClick={() => handleChange('voiceProfile', mergeCharacterVoiceProfile(formData.voiceProfile, {
+                                                       minimaxParamVersion: version,
+                                                   }))}
+                                                   className={`rounded-lg px-2 py-1.5 text-[10px] font-bold transition-colors ${activeVersion === version ? 'bg-violet-500 text-white shadow-sm' : 'text-slate-400'}`}
+                                               >
+                                                   {label}
+                                               </button>
+                                           );
+                                       })}
+                                   </div>
+                                   <p className="text-[10px] text-slate-400 leading-relaxed">
+                                       {formData.voiceProfile?.minimaxParamVersion === 'natural-v2'
+                                           ? '对齐捏声音试听与聊天、见面、电话参数，保留模型原生韵律，不再自动插停顿。换档后会重新合成，不会读到旧音频。'
+                                           : '保留现有自动停顿、参数限幅和动态情感优先规则，历史效果不会改变。'}
+                                   </p>
+                               </div>
 
                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                    <input
@@ -2105,7 +2181,31 @@ ${isInitialGeneration ? `
                                    <p className="text-[10px] text-slate-400">从 fish.audio 选好音色后，把那一页的链接（含 ?modelId=…）或 32 位 id 直接贴进来都行，会自动识别。设置里语音选「鱼声 Fish」后该角色就用它合成；与上面的 MiniMax voice_id 各存各的。</p>
                                </div>
 
-                               {/* 语速：MiniMax 与鱼声共用 voiceProfile.speed */}
+                               {/* ElevenLabs 音色：角色独立保存，设置页只负责 Key / 模型。 */}
+                               <div className="rounded-2xl border border-violet-200/60 bg-violet-50/40 p-2.5 space-y-1.5">
+                                   <div className="flex items-center justify-between gap-2">
+                                       <div className="text-[10px] font-bold text-violet-600 uppercase tracking-widest">ElevenLabs 音色</div>
+                                       <button
+                                           type="button"
+                                           onClick={() => void handleTestElevenLabsVoice()}
+                                           disabled={isTestingElevenLabsVoice}
+                                           className="text-[10px] rounded-lg border border-violet-200 bg-white px-2 py-1 font-bold text-violet-600 disabled:opacity-50"
+                                       >
+                                           {isTestingElevenLabsVoice ? '试听中…' : '试听'}
+                                       </button>
+                                   </div>
+                                   <input
+                                       value={formData.voiceProfile?.elevenLabsVoiceId || ''}
+                                       onChange={(e) => handleChange('voiceProfile', mergeCharacterVoiceProfile(formData.voiceProfile, {
+                                           elevenLabsVoiceId: e.target.value,
+                                       }))}
+                                       className="w-full bg-white rounded-2xl px-3 py-2 text-xs border border-slate-200"
+                                       placeholder="粘贴 Voice ID 或 ElevenLabs 音色页面链接"
+                                   />
+                                   <p className="text-[10px] text-slate-400">从 ElevenLabs Voices / Voice Library 复制 Voice ID；也可直接粘贴含 voiceId 的页面链接。设置里语音选 ElevenLabs 后使用，与 MiniMax、鱼声音色分别保存。</p>
+                               </div>
+
+                               {/* 语速：三家 TTS 共用 voiceProfile.speed */}
                                <div className="space-y-1 pt-1">
                                    <div className="flex items-center justify-between">
                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">语速</label>

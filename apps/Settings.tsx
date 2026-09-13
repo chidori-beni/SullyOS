@@ -19,6 +19,11 @@ import { getLuckinToken, setLuckinToken as saveLuckinToken, isLuckinEnabled, set
 import { consumeProxyWorkerSettingsFocus, getProxyWorkerUrl, setProxyWorkerUrl, DEFAULT_PROXY_WORKER } from '../utils/proxyWorker';
 import { VOICE_ACTING_GUIDE } from '../utils/minimaxTts';
 import { FISH_VOICE_ACTING_GUIDE } from '../utils/fishAudioTts';
+import {
+    DEFAULT_ELEVENLABS_MODEL,
+    ELEVENLABS_MODEL_OPTIONS,
+    getElevenLabsVoiceActingGuide,
+} from '../utils/elevenLabsTts';
 import { DATE_VOICE_GUIDE } from '../utils/datePrompts';
 import { Sun, Newspaper, NotePencil, Notebook, Book, ForkKnife, Coffee, PlugsConnected } from '@phosphor-icons/react';
 import { loadMcpServers, saveMcpServers, createMcpServer, testMcpConnection, resetMcpSession, getMcpUseNativeTools, setMcpUseNativeTools, type McpServerConfig } from '../utils/mcpClient';
@@ -44,7 +49,7 @@ import {
 } from '../utils/avatarModelBackup';
 import { normalizeApiBaseUrl, normalizeApiCredential, normalizeApiModel } from '../utils/apiConfigNormalize';
 import { configFromPreset, findActivePresetId } from '../utils/apiPresetSwitch';
-import type { APIConfig } from '../types';
+import type { APIConfig, TtsProvider } from '../types';
 import { describeImageWithVisionApi, VISION_API_TEST_IMAGE_DATA_URL, visionApiConfigFromPreset } from '../utils/visionApi';
 
 // hot_news（news.orz.ai）可选热榜平台。key 必须与 API 的 ?platform= 完全一致。
@@ -483,11 +488,19 @@ const Settings: React.FC = () => {
     apiConfig.minimaxRegion === 'overseas' ? 'overseas' : 'domestic'
   );
   const [localAceStepKey, setLocalAceStepKey] = useState(apiConfig.aceStepApiKey || '');
-  const [localTtsProvider, setLocalTtsProvider] = useState<'minimax' | 'fishaudio'>(
-    apiConfig.ttsProvider === 'fishaudio' ? 'fishaudio' : 'minimax'
+  const [localTtsProvider, setLocalTtsProvider] = useState<TtsProvider>(
+    apiConfig.ttsProvider === 'fishaudio' || apiConfig.ttsProvider === 'elevenlabs'
+      ? apiConfig.ttsProvider
+      : 'minimax'
   );
   const [localFishKey, setLocalFishKey] = useState(apiConfig.fishAudioApiKey || '');
   const [localFishModel, setLocalFishModel] = useState(apiConfig.fishAudioModel || 's2.1-pro');
+  const [localElevenLabsKey, setLocalElevenLabsKey] = useState(apiConfig.elevenLabsApiKey || '');
+  const [localElevenLabsModel, setLocalElevenLabsModel] = useState(apiConfig.elevenLabsModel || DEFAULT_ELEVENLABS_MODEL);
+  const [localElevenLabsStability, setLocalElevenLabsStability] = useState(apiConfig.elevenLabsStability ?? 0.5);
+  const [localElevenLabsSimilarityBoost, setLocalElevenLabsSimilarityBoost] = useState(apiConfig.elevenLabsSimilarityBoost ?? 0.8);
+  const [localElevenLabsStyle, setLocalElevenLabsStyle] = useState(apiConfig.elevenLabsStyle ?? 0);
+  const [localElevenLabsUseSpeakerBoost, setLocalElevenLabsUseSpeakerBoost] = useState(apiConfig.elevenLabsUseSpeakerBoost === true);
   const [localSpeechProvider, setLocalSpeechProvider] = useState<NonNullable<APIConfig['speechRecognitionProvider']>>(
     apiConfig.speechRecognitionProvider || 'system'
   );
@@ -496,6 +509,7 @@ const Settings: React.FC = () => {
   // 自定义语音表演指南（留空 → 用内置默认）。按服务商分两份。
   const [localVoicePromptMinimax, setLocalVoicePromptMinimax] = useState(apiConfig.voicePrompts?.minimax || '');
   const [localVoicePromptFish, setLocalVoicePromptFish] = useState(apiConfig.voicePrompts?.fishaudio || '');
+  const [localVoicePromptElevenLabs, setLocalVoicePromptElevenLabs] = useState(apiConfig.voicePrompts?.elevenlabs || '');
   const [localVoicePromptDate, setLocalVoicePromptDate] = useState(apiConfig.voicePrompts?.dateVoice || '');
   const [showVoicePrompts, setShowVoicePrompts] = useState(false);
   const [showAceStepGuide, setShowAceStepGuide] = useState(false);
@@ -883,20 +897,34 @@ const Settings: React.FC = () => {
       setLocalMiniMaxGroupId(apiConfig.minimaxGroupId || '');
       setLocalMiniMaxRegion(apiConfig.minimaxRegion === 'overseas' ? 'overseas' : 'domestic');
       setLocalAceStepKey(apiConfig.aceStepApiKey || '');
-      setLocalTtsProvider(apiConfig.ttsProvider === 'fishaudio' ? 'fishaudio' : 'minimax');
+      setLocalTtsProvider(
+          apiConfig.ttsProvider === 'fishaudio' || apiConfig.ttsProvider === 'elevenlabs'
+              ? apiConfig.ttsProvider
+              : 'minimax'
+      );
       setLocalFishKey(apiConfig.fishAudioApiKey || '');
       setLocalFishModel(apiConfig.fishAudioModel || 's2.1-pro');
+      setLocalElevenLabsKey(apiConfig.elevenLabsApiKey || '');
+      setLocalElevenLabsModel(apiConfig.elevenLabsModel || DEFAULT_ELEVENLABS_MODEL);
+      setLocalElevenLabsStability(apiConfig.elevenLabsStability ?? 0.5);
+      setLocalElevenLabsSimilarityBoost(apiConfig.elevenLabsSimilarityBoost ?? 0.8);
+      setLocalElevenLabsStyle(apiConfig.elevenLabsStyle ?? 0);
+      setLocalElevenLabsUseSpeakerBoost(apiConfig.elevenLabsUseSpeakerBoost === true);
       setLocalSpeechProvider(apiConfig.speechRecognitionProvider || 'system');
       setLocalSiliconFlowSpeechKey(apiConfig.siliconFlowSpeechApiKey || '');
       setLocalSpeechStripEmoji(apiConfig.speechRecognitionStripEmoji !== false);
       setLocalVoicePromptMinimax(apiConfig.voicePrompts?.minimax || '');
       setLocalVoicePromptFish(apiConfig.voicePrompts?.fishaudio || '');
+      setLocalVoicePromptElevenLabs(apiConfig.voicePrompts?.elevenlabs || '');
       setLocalVoicePromptDate(apiConfig.voicePrompts?.dateVoice || '');
   }, [
       apiConfig.minimaxApiKey, apiConfig.minimaxGroupId, apiConfig.minimaxRegion, apiConfig.aceStepApiKey,
       apiConfig.ttsProvider, apiConfig.fishAudioApiKey, apiConfig.fishAudioModel,
+      apiConfig.elevenLabsApiKey, apiConfig.elevenLabsModel, apiConfig.elevenLabsStability,
+      apiConfig.elevenLabsSimilarityBoost, apiConfig.elevenLabsStyle, apiConfig.elevenLabsUseSpeakerBoost,
       apiConfig.speechRecognitionProvider, apiConfig.siliconFlowSpeechApiKey, apiConfig.speechRecognitionStripEmoji,
-      apiConfig.voicePrompts?.minimax, apiConfig.voicePrompts?.fishaudio, apiConfig.voicePrompts?.dateVoice,
+      apiConfig.voicePrompts?.minimax, apiConfig.voicePrompts?.fishaudio,
+      apiConfig.voicePrompts?.elevenlabs, apiConfig.voicePrompts?.dateVoice,
   ]);
 
   // 当前生效的是哪条预设 —— 按已保存的配置反查，不额外记状态。
@@ -1140,8 +1168,7 @@ const Settings: React.FC = () => {
     }
   };
 
-  const handleSaveOtherApis = () => {
-    updateApiConfig({
+  const buildOtherApiConfig = (overrides: Partial<APIConfig> = {}): Partial<APIConfig> => ({
       minimaxApiKey: localMiniMaxKey,
       minimaxGroupId: localMiniMaxGroupId,
       minimaxRegion: localMiniMaxRegion,
@@ -1149,15 +1176,26 @@ const Settings: React.FC = () => {
       ttsProvider: localTtsProvider,
       fishAudioApiKey: localFishKey,
       fishAudioModel: localFishModel,
+      elevenLabsApiKey: localElevenLabsKey,
+      elevenLabsModel: localElevenLabsModel,
+      elevenLabsStability: localElevenLabsStability,
+      elevenLabsSimilarityBoost: localElevenLabsSimilarityBoost,
+      elevenLabsStyle: localElevenLabsStyle,
+      elevenLabsUseSpeakerBoost: localElevenLabsUseSpeakerBoost,
       speechRecognitionProvider: localSpeechProvider,
       siliconFlowSpeechApiKey: localSiliconFlowSpeechKey.trim(),
       speechRecognitionStripEmoji: localSpeechStripEmoji,
       voicePrompts: {
         minimax: localVoicePromptMinimax.trim() ? localVoicePromptMinimax : undefined,
         fishaudio: localVoicePromptFish.trim() ? localVoicePromptFish : undefined,
+        elevenlabs: localVoicePromptElevenLabs.trim() ? localVoicePromptElevenLabs : undefined,
         dateVoice: localVoicePromptDate.trim() ? localVoicePromptDate : undefined,
       },
-    });
+      ...overrides,
+  });
+
+  const handleSaveOtherApis = () => {
+    updateApiConfig(buildOtherApiConfig());
     setOtherStatusMsg('已保存');
     setTimeout(() => setOtherStatusMsg(''), 2000);
   };
@@ -1165,42 +1203,23 @@ const Settings: React.FC = () => {
   // 选「谁来做语音生成」立即落库——不需要再点下面的保存。
   // 连同当前「其他 API」草稿一起提交（与保存按钮同一份 payload）：一是即时生效，
   // 二是避免 [apiConfig] 同步 effect 把刚填、还没保存的 Key 草稿冲掉。
-  const selectTtsProvider = (provider: 'minimax' | 'fishaudio') => {
+  const selectTtsProvider = (provider: TtsProvider) => {
     setLocalTtsProvider(provider);
-    updateApiConfig({
-      minimaxApiKey: localMiniMaxKey,
-      minimaxGroupId: localMiniMaxGroupId,
-      minimaxRegion: localMiniMaxRegion,
-      aceStepApiKey: localAceStepKey,
-      fishAudioApiKey: localFishKey,
-      fishAudioModel: localFishModel,
-      voicePrompts: {
-        minimax: localVoicePromptMinimax.trim() ? localVoicePromptMinimax : undefined,
-        fishaudio: localVoicePromptFish.trim() ? localVoicePromptFish : undefined,
-        dateVoice: localVoicePromptDate.trim() ? localVoicePromptDate : undefined,
-      },
-      ttsProvider: provider,
-    });
-    addToast(provider === 'fishaudio' ? '语音生成已切到鱼声 Fish' : '语音生成已切到 MiniMax', 'success');
+    updateApiConfig(buildOtherApiConfig({ ttsProvider: provider }));
+    const providerLabel = provider === 'fishaudio' ? '鱼声 Fish' : provider === 'elevenlabs' ? 'ElevenLabs' : 'MiniMax';
+    addToast(`语音生成已切到 ${providerLabel}`, 'success');
   };
 
   // 选鱼声模型：立即落库（同上，连带草稿一起提交，避免被同步 effect 冲掉）。
   const selectFishModel = (model: string) => {
     setLocalFishModel(model);
-    updateApiConfig({
-      minimaxApiKey: localMiniMaxKey,
-      minimaxGroupId: localMiniMaxGroupId,
-      minimaxRegion: localMiniMaxRegion,
-      aceStepApiKey: localAceStepKey,
-      fishAudioApiKey: localFishKey,
-      ttsProvider: localTtsProvider,
-      fishAudioModel: model,
-      voicePrompts: {
-        minimax: localVoicePromptMinimax.trim() ? localVoicePromptMinimax : undefined,
-        fishaudio: localVoicePromptFish.trim() ? localVoicePromptFish : undefined,
-        dateVoice: localVoicePromptDate.trim() ? localVoicePromptDate : undefined,
-      },
-    });
+    updateApiConfig(buildOtherApiConfig({ fishAudioModel: model }));
+  };
+
+  // ElevenLabs 模型会改变可用的语音标签，因此和鱼声模型一样立即落库。
+  const selectElevenLabsModel = (model: string) => {
+    setLocalElevenLabsModel(model);
+    updateApiConfig(buildOtherApiConfig({ elevenLabsModel: model }));
   };
 
   const fetchModels = async () => {
@@ -2676,7 +2695,7 @@ const Settings: React.FC = () => {
 
             <div className="space-y-4">
                 <p className="text-[11px] text-slate-400 -mt-1 pl-1 leading-relaxed">
-                    🎙️ 语音生成支持 <span className="font-semibold text-slate-500">MiniMax</span> 和 <span className="font-semibold text-slate-500">鱼声 Fish</span> 两家——下面两边都可以填，最后在底部「当前语音引擎」里二选一。
+                    🎙️ 语音生成支持 <span className="font-semibold text-slate-500">MiniMax</span>、<span className="font-semibold text-slate-500">鱼声 Fish</span> 和 <span className="font-semibold text-slate-500">ElevenLabs</span> 三家——下面三边都可以填，最后在底部「当前语音引擎」里三选一。
                 </p>
 
                 <div className="group rounded-2xl border border-cyan-200/70 bg-cyan-50/45 p-3 space-y-3">
@@ -2797,14 +2816,80 @@ const Settings: React.FC = () => {
                     </p>
                 </div>
 
-                {/* 底部：当前语音引擎二选一 —— radio 样式（不是 tab 切换，配置都在上面，这里只挑用哪家） */}
+                {/* ElevenLabs —— Voice ID 在角色页配置，这里保存账号、全局模型和通用声音参数。 */}
+                <div className="group">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">ElevenLabs API Key</label>
+                    <input
+                        type="password"
+                        name="elevenlabs-api-key"
+                        autoComplete="new-password"
+                        spellCheck={false}
+                        value={localElevenLabsKey}
+                        onChange={(e) => setLocalElevenLabsKey(e.target.value)}
+                        placeholder="ElevenLabs API Key"
+                        className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all"
+                    />
+                    <p className="text-[11px] text-slate-400 mt-1 pl-1">
+                        在 <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline font-semibold">ElevenLabs API Keys</a> 创建。角色音色在「角色 → 语音」填写 Voice ID；网页端合成会通过项目代理转发，不写入服务端存储。
+                    </p>
+
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-3 mb-1.5 block pl-1">ElevenLabs 模型</label>
+                    <select
+                        value={localElevenLabsModel}
+                        onChange={(e) => selectElevenLabsModel(e.target.value)}
+                        className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-3 py-2.5 text-sm focus:bg-white transition-all"
+                    >
+                        {ELEVENLABS_MODEL_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                    </select>
+                    <p className="text-[11px] text-slate-400 mt-1 pl-1">
+                        Flash v2.5 默认更适合实时聊天；v3 支持更丰富的方括号 Audio Tags。切换后对应的内置语音提示规则也会同步切换。
+                    </p>
+
+                    <details className="mt-3 rounded-xl border border-slate-200/60 bg-white/35 px-3 py-2">
+                        <summary className="cursor-pointer text-[11px] font-semibold text-slate-500 select-none">声音参数（高级）</summary>
+                        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {([
+                                ['稳定度', localElevenLabsStability, setLocalElevenLabsStability],
+                                ['相似度', localElevenLabsSimilarityBoost, setLocalElevenLabsSimilarityBoost],
+                                ['风格强度', localElevenLabsStyle, setLocalElevenLabsStyle],
+                            ] as const).map(([label, value, setter]) => (
+                                <label key={label} className="text-[11px] text-slate-500">
+                                    <span className="flex justify-between mb-1"><span>{label}</span><span className="font-mono">{value.toFixed(2)}</span></span>
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="1"
+                                        step="0.05"
+                                        value={value}
+                                        onChange={(e) => setter(Number(e.target.value))}
+                                        className="w-full accent-primary"
+                                    />
+                                </label>
+                            ))}
+                            <label className="flex items-center justify-between gap-3 text-[11px] text-slate-500 sm:col-span-2">
+                                <span>Speaker Boost（更贴近原音色，可能增加少量延迟）</span>
+                                <input
+                                    type="checkbox"
+                                    checked={localElevenLabsUseSpeakerBoost}
+                                    onChange={(e) => setLocalElevenLabsUseSpeakerBoost(e.target.checked)}
+                                    className="w-4 h-4 accent-primary"
+                                />
+                            </label>
+                        </div>
+                    </details>
+                </div>
+
+                {/* 底部：当前语音引擎三选一 —— radio 样式（不是 tab 切换，配置都在上面，这里只挑用哪家） */}
                 <div className="group rounded-2xl border border-slate-200/70 bg-slate-50/60 p-3">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-0.5 block">当前语音引擎（二选一）</label>
-                    <p className="text-[11px] text-slate-400 mb-2.5">聊天语音条 / 约会 / 电话用哪一家。上面两边的 Key 都会保留，这里只切换当前生效的。</p>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-0.5 block">当前语音引擎（三选一）</label>
+                    <p className="text-[11px] text-slate-400 mb-2.5">聊天语音条 / 约会 / 电话用哪一家。上面三家的配置都会保留，这里只切换当前生效的。</p>
                     <div className="space-y-2">
                         {([
                             ['minimax', 'MiniMax', '国内可直连，默认推荐'],
                             ['fishaudio', '鱼声 Fish', '需科学上网（梯子 / 魔法），否则一直合成失败'],
+                            ['elevenlabs', 'ElevenLabs', '多语言音色丰富；需可访问 ElevenLabs API'],
                         ] as const).map(([key, name, desc]) => {
                             const active = localTtsProvider === key;
                             return (
@@ -2851,6 +2936,7 @@ const Settings: React.FC = () => {
                             {([
                                 ['minimax', 'MiniMax 语音指南', localVoicePromptMinimax, setLocalVoicePromptMinimax, VOICE_ACTING_GUIDE, '聊天 + 电话 · MiniMax 引擎时生效'] as const,
                                 ['fishaudio', '鱼声 Fish 语音指南', localVoicePromptFish, setLocalVoicePromptFish, FISH_VOICE_ACTING_GUIDE, '聊天 + 电话 · 鱼声引擎时生效'] as const,
+                                ['elevenlabs', 'ElevenLabs 语音指南', localVoicePromptElevenLabs, setLocalVoicePromptElevenLabs, getElevenLabsVoiceActingGuide(localElevenLabsModel), '聊天 + 电话 · ElevenLabs 引擎时生效（内置默认随模型切换）'] as const,
                                 ['dateVoice', '见面（约会）语音情绪', localVoicePromptDate, setLocalVoicePromptDate, DATE_VOICE_GUIDE, '见面专用 [v:xxx] 规则 · 角色开了见面语音时生效，与引擎无关'] as const,
                             ]).map(([key, title, value, setValue, def, hint]) => {
                                 const active = localTtsProvider === key;

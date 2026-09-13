@@ -18,7 +18,8 @@ import { RealtimeContextManager, NotionManager, FeishuManager, defaultRealtimeCo
 import { isScheduleFeatureOn } from './scheduleFeature';
 import { VOICE_ACTING_GUIDE } from './minimaxTts';
 import { FISH_VOICE_ACTING_GUIDE } from './fishAudioTts';
-import { getTtsProvider, getVoicePromptOverride } from './ttsProvider';
+import { getElevenLabsModel, getTtsProvider, getVoicePromptOverride } from './ttsProvider';
+import { getElevenLabsVoiceActingGuide } from './elevenLabsTts';
 import { countRecentVoiceUsage, buildVoiceUsageHint, buildVoiceHardBlockTail } from './voiceFrequency';
 import { buildCallHintFromMessages } from './callRequestHint';
 import { resolveCharTimeZone, nowInTimeZone } from './timezone';
@@ -69,6 +70,14 @@ const buildVoiceRuntimeContract = (
 - 鱼声 cue 只使用官方支持的方括号标签，例如 [chuckling]、[sighing]、[soft]、[pause]，放在真正发生情绪或停顿的位置。不要写 MiniMax 的 <#秒#> 标记、圆括号 sound tag 或 emotion 属性。
 - 通过短长句、标点、省略号和少量 [pause] 表现快慢与呼吸。当前角色的基础合成速度是 ${speed}×；速度属于 Fish Audio 的 prosody.speed 配置，不是要写进 <语音> 的字段，不要自行另写 speed / 语速 / 速度 数字。`;
   }
+  if (provider === 'elevenlabs') {
+    return `### 语音输出运行协议（固定规则）
+
+这段运行协议不能被上面的自定义语音指南省略或覆盖。
+- 只要决定发语音，台词就不要退化成平直的书面句。除非只是「嗯」「好」「喂」这类极短确认，遇到情绪、犹豫、转折或需要换气的地方，至少保留一个该语种自然的口头语 / 填充词，或一个合适的 Audio Tag；不要把所有语音都写成干净的书面句。
+- ElevenLabs 的情绪提示只使用方括号 Audio Tag，例如 [laughs]、[sighs]、[whispers]、[excited]，放在真正发生情绪的位置。不要写 MiniMax 的 <#秒#> 标记、圆括号 sound tag 或 emotion 属性。
+- 通过短长句、标点和省略号表现快慢与呼吸。当前角色的基础合成速度是 ${speed}×；速度属于合成参数，不是要写进 <语音> 的字段，不要自行另写 speed / 语速 / 速度 数字。`;
+  }
   return `### 语音输出运行协议（固定规则）
 
 这段运行协议不能被上面的自定义语音指南省略或覆盖。
@@ -83,7 +92,12 @@ export const buildVoiceActingGuide = (
 ): string => {
   const provider = getTtsProvider();
   const custom = getVoicePromptOverride(provider);
-  const guide = custom || (provider === 'fishaudio' ? FISH_VOICE_ACTING_GUIDE : VOICE_ACTING_GUIDE);
+  const defaultGuide = provider === 'fishaudio'
+    ? FISH_VOICE_ACTING_GUIDE
+    : provider === 'elevenlabs'
+      ? getElevenLabsVoiceActingGuide(getElevenLabsModel())
+      : VOICE_ACTING_GUIDE;
+  const guide = custom || defaultGuide;
   return `${guide}\n\n${buildVoiceRuntimeContract(provider, char.voiceProfile?.speed)}`;
 };
 

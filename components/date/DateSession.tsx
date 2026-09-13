@@ -9,14 +9,17 @@ import { DatePrompts, extractObservation, hasObservation } from '../../utils/dat
 import { isBlobRef } from '../../utils/blobRef';
 import { clearDateResumeAttempt } from '../../utils/dateSessionRecovery';
 import {
-    cleanTextForTts,
-    cleanVoiceMarkupForDisplay,
     resolveMiniMaxModel,
     supportsMiniMaxInterjections,
 } from '../../utils/minimaxTts';
-import { synthesizeSpeech, characterHasVoice } from '../../utils/ttsRouter';
+import {
+    canSynthesizeSpeech,
+    characterHasVoice,
+    cleanTextForTtsProvider,
+    stripTtsMarkupForDisplay,
+    synthesizeSpeech,
+} from '../../utils/ttsRouter';
 import { resolveTtsProvider } from '../../utils/ttsProvider';
-import { cleanTextForTtsFish, stripFishMarkupForDisplay } from '../../utils/fishAudioTts';
 import {
     cleanDateTextForDisplay as cleanTextForDisplay,
     extractDateDialogueText as extractDialogueText,
@@ -442,11 +445,13 @@ const DateSession: React.FC<DateSessionProps> = ({
     }, [isFullscreenEditor]);
 
     const translateAndSpeak = async (text: string, emotion?: string): Promise<DateSpeechResult | null> => {
-        if (!characterHasVoice(char, apiConfig)) return null;
+        // 改用 canSynthesizeSpeech：除了角色有没有音色，还要求当前服务商的 Key 已配好，
+        // 否则会白跑一趟合成再失败。
+        if (!canSynthesizeSpeech(char, apiConfig)) return null;
         try {
-            // 鱼声保留 inline cue，用 Fish 专属清洗；MiniMax 走原来的清洗。
+            // 按当前服务商清洗（鱼声 / ElevenLabs 保留各自的 inline cue，MiniMax 走原来的清洗）。
             const provider = resolveTtsProvider(apiConfig);
-            const sourceTtsText = provider === 'fishaudio' ? cleanTextForTtsFish(text) : cleanTextForTts(text);
+            const sourceTtsText = cleanTextForTtsProvider(text, apiConfig);
             let ttsText = sourceTtsText;
             if (!ttsText || ttsText.length < 2) return null;
             if (voiceLang) {
@@ -490,9 +495,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             });
             return {
                 url,
-                spokenText: provider === 'fishaudio'
-                    ? stripFishMarkupForDisplay(ttsText)
-                    : cleanVoiceMarkupForDisplay(ttsText),
+                spokenText: stripTtsMarkupForDisplay(ttsText, apiConfig),
             };
         } catch (err: any) {
             console.warn('Date TTS failed:', err?.message);

@@ -6,12 +6,14 @@ import { extractContent, safeFetchJson } from '../utils/safeApi';
 import { minimaxFetch } from '../utils/minimaxEndpoint';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { hashTtsParams, getCachedTts, saveCachedTts } from '../utils/ttsCache';
-import { cleanTextForTts, convertHexAudioToBlob, fetchRemoteAudioBlob, VALID_EMOTIONS, normalizeEmotionForApi, stripEmotionTags, VOICE_ACTING_GUIDE, cleanVoiceMarkupForDisplay } from '../utils/minimaxTts';
+import { buildMiniMaxTtsCacheKey, buildMiniMaxTtsPayload, cleanTextForTts, convertHexAudioToBlob, fetchRemoteAudioBlob, getMiniMaxParamVersion, prepareMiniMaxSpeechText, VALID_EMOTIONS, normalizeEmotionForApi, stripEmotionTags, VOICE_ACTING_GUIDE, cleanVoiceMarkupForDisplay } from '../utils/minimaxTts';
 import { resolveSpeechEmotion } from '../utils/voiceEmotionPolicy';
 import { prepareNuojiSpeechText } from '../utils/nuojiSpeechText';
 import { normalizeVoiceTags } from '../utils/sanitize';
 import { FISH_VOICE_ACTING_GUIDE, synthesizeSpeechFishDetailed, resolveFishAudioApiKey, cleanTextForTtsFish, stripFishMarkupForDisplay } from '../utils/fishAudioTts';
-import { resolveTtsProvider, getTtsProvider, getVoicePromptOverride } from '../utils/ttsProvider';
+import { resolveTtsProvider, getElevenLabsModel, getTtsProvider, getVoicePromptOverride } from '../utils/ttsProvider';
+import { getElevenLabsVoiceActingGuide, stripElevenLabsMarkupForDisplay } from '../utils/elevenLabsTts';
+import { canSynthesizeSpeech, synthesizeSpeechDetailed as synthesizeSpeechRoutedDetailed } from '../utils/ttsRouter';
 import { chatDetailLaunch } from '../utils/chatDetailLaunch';
 import { VOICE_LANGUAGE_OPTIONS } from '../utils/voiceLanguage';
 import { notePlaybackStarted } from '../utils/audioOutputRoute';
@@ -429,11 +431,19 @@ const SoundWaveGlyph = () => (
     ))}
   </span>
 );
+/** 通话提示词里注入哪一份内置语音指南 —— 跟着当前引擎走。 */
+const callVoiceActingGuide = (): string => {
+  const provider = getTtsProvider();
+  if (provider === 'fishaudio') return FISH_VOICE_ACTING_GUIDE;
+  if (provider === 'elevenlabs') return getElevenLabsVoiceActingGuide(getElevenLabsModel());
+  return VOICE_ACTING_GUIDE;
+};
 const renderAssistantLine = (text: string, accent = '#8b5cf6') => {
   // 朗读用的停顿标记 <#0.4#> 不显示出来
   let trimmed = text.replace(/<#[\d.]+#>/g, '').trim();
-  // 鱼声的 inline cue（[whispering]/[break] 等）是演出指令，不该显示给用户。
+  // 鱼声 / ElevenLabs 的 inline cue（[whispering]/[laughs] 等）是演出指令，不该显示给用户。
   if (getTtsProvider() === 'fishaudio') trimmed = stripFishMarkupForDisplay(trimmed);
+  else if (getTtsProvider() === 'elevenlabs') trimmed = stripElevenLabsMarkupForDisplay(trimmed);
   // 按 中文舞台指示（…）、英文语气词标签 (sighs)、换行 切分，前两者作为特殊元素渲染
   const parts = trimmed.split(SOUND_TAG_SPLIT_RE).filter(Boolean);
   return parts.map((part, idx) => {
@@ -574,7 +584,7 @@ ${directionBlock}` : ''}
 
 注意：不要写小说式中文旁白，如”（我靠在椅背上，目光看向远方）”——会被直接删掉，等于白写。
 
-${getVoicePromptOverride(getTtsProvider()) ?? (getTtsProvider() === 'fishaudio' ? FISH_VOICE_ACTING_GUIDE : VOICE_ACTING_GUIDE)}
+${getVoicePromptOverride(getTtsProvider()) ?? callVoiceActingGuide()}
 
 ### 历史消息的来源标记（重要）
 
@@ -1399,113 +1409,54 @@ const CallApp: React.FC = () => {
   const resolveVoiceId = () => selectedChar?.voiceProfile?.voiceId?.trim() || '';
   const resolveModel = () => selectedChar?.voiceProfile?.model?.trim() || 'speech-2.8-hd';
   const resolveGroupId = () => (apiConfig.minimaxGroupId || '').trim();
-  const buildTtsExtras = () => {
-    const vp = selectedChar?.voiceProfile;
-    if (!vp) return {};
-    const extras: any = {};
-    const tw = vp.timberWeights;
-    if (tw && tw.length > 1) {
-      extras.timber_weights = (() => {
-        const totalWeight = tw.reduce((sum: number, t: any) => sum + (t.weight || 0), 0);
-        if (totalWeight === 0) return tw.map((t: any) => ({ voice_id: t.voice_id, weight: Math.round(100 / tw.length) }));
-        const raw = tw.map((t: any) => ({ voice_id: t.voice_id, weight: Math.round((t.weight / totalWeight) * 100) }));
-        const diff = 100 - raw.reduce((s: number, r: any) => s + r.weight, 0);
-        if (diff !== 0) raw[0].weight += diff;
-        return raw;
-      })();
-    }
-    if (vp.voiceModify) {
-      const vm: any = {};
-      // Soft-clamp voice_modify to prevent extreme spikes during excited speech
-      const sc = (v: number, limit: number) => {
-        if (Math.abs(v) <= limit) return v;
-        const sign = v > 0 ? 1 : -1;
-        return sign * (limit + Math.log1p(Math.abs(v) - limit) * (limit * 0.15));
-      };
-      if (vp.voiceModify.pitch) vm.pitch = Math.round(sc(vp.voiceModify.pitch, 40));
-      if (vp.voiceModify.intensity) vm.intensity = Math.round(sc(vp.voiceModify.intensity, 30));
-      if (vp.voiceModify.timbre) vm.timbre = Math.round(sc(vp.voiceModify.timbre, 40));
-      if (vp.voiceModify.sound_effects) vm.sound_effects = vp.voiceModify.sound_effects;
-      if (Object.keys(vm).length) extras.voice_modify = vm;
-    }
-    return extras;
-  };
-  const resolveVoiceSettingFields = (emotionOverride?: string) => {
-    const vp = selectedChar?.voiceProfile;
-    // Per-utterance emotion from <语音 emotion="…"> wins over the static voiceProfile emotion.
-    const picked = (emotionOverride && VALID_EMOTIONS.has(emotionOverride)) ? emotionOverride : (vp?.emotion || '');
-    // 送 API 前统一归一化：calm/fluent → neutral，非法值 → 不带这个字段（与 minimaxTts 同一套规则）。
-    const emotion = normalizeEmotionForApi(picked);
-    return {
-      // Clamp speed & pitch to safe human-like ranges
-      speed: Math.max(0.75, Math.min(1.4, vp?.speed ?? 1)),
-      vol: Math.max(0.3, Math.min(2, vp?.vol ?? 1)),
-      pitch: Math.max(-8, Math.min(8, vp?.pitch ?? 0)),
-      english_normalization: true,
-      ...(emotion ? { emotion } : {}),
-    };
-  };
-  // ── TTS 服务商分发：电话语音也支持 MiniMax ↔ 鱼声二选一 ──
-  const isFishTts = resolveTtsProvider(apiConfig) === 'fishaudio';
+  // ── TTS 服务商分发：MiniMax 保留电话专用的分段兜底；鱼声 / ElevenLabs 走共享路由。 ──
+  const activeTtsProvider = resolveTtsProvider(apiConfig);
   // 当前服务商下，这个角色能否合成语音（决定要不要走 TTS / 给"语音未配置"提示）。
-  const hasConfiguredVoice = (): boolean => {
-    if (isFishTts) {
-      return !!resolveFishAudioApiKey(apiConfig) && !!selectedChar?.voiceProfile?.fishReferenceId;
-    }
-    const voiceId = resolveVoiceId();
-    const hasTimber = (selectedChar?.voiceProfile?.timberWeights?.length || 0) > 1;
-    return !!resolveMiniMaxApiKey(apiConfig) && (!!voiceId || hasTimber);
-  };
+  // 三家的「Key + 音色都齐了吗」判断统一收在 ttsRouter.canSynthesizeSpeech，别再各写一份。
+  const hasConfiguredVoice = (): boolean => !!selectedChar && canSynthesizeSpeech(selectedChar, apiConfig);
   // Receiver mode is still an audible route; it must never disable TTS.
   const canSpeakVoice = (): boolean => hasConfiguredVoice();
-  // 鱼声合成：直接把（带 inline cue 的）文本交给鱼声合成器，由 cleanTextForTtsFish 做
-  // 鱼声专属清洗——保留 [happy]/[whispering]/[break] 等 cue，只清系统标记 / <#秒#> 残留。
-  // 绝不能先走 MiniMax 的 cleanTextForTts，那会把方括号 cue 全剥掉。
-  const synthesizeFishCallUrl = async (rawText: string, emotion?: string): Promise<string> => {
-    if (!selectedChar) throw new Error('未选择角色');
-    if (!cleanTextForTtsFish(rawText).trim()) throw new Error('可朗读文本为空');
-    const { url } = await synthesizeSpeechFishDetailed(rawText, selectedChar, apiConfig, {
-      languageBoost: voiceLang || undefined,
-      emotion,
-    });
-    return url;
-  };
   // ── 通话语音合成统一入口：开场白 / 正常回合 / 重roll / 主动开口共用 ──
   // MiniMax：缓存命中 → 单发合成 → 失败再分段兜底；鱼声：直接合成。
   // 抛错或返回空 url 都表示没有可播放音频，由调用方降级为纯文字。
   const synthesizeCallAudioUrl = async (rawText: string, emotion?: string): Promise<{ url: string; traceIds: string[] }> => {
-    if (isFishTts) {
-      const fishUrl = await synthesizeFishCallUrl(rawText, emotion);
-      return { url: fishUrl || '', traceIds: [] };
+    // 鱼声 / ElevenLabs：原始文本直接交给共享路由，由各自的清洗器保留自家 inline cue。
+    // 绝不能先走 MiniMax 的 cleanTextForTts，那会把方括号 cue 全剥掉。
+    if (activeTtsProvider !== 'minimax') {
+      if (!selectedChar) throw new Error('未选择角色');
+      const { url } = await synthesizeSpeechRoutedDetailed(rawText, selectedChar, apiConfig, {
+        languageBoost: voiceLang || undefined,
+        emotion,
+      });
+      return { url: url || '', traceIds: [] };
     }
     const minimaxApiKey = resolveMiniMaxApiKey(apiConfig);
     const voiceId = resolveVoiceId();
     const groupId = resolveGroupId();
-    // 停顿改用糯叽机的稀疏规则（见 utils/nuojiSpeechText）：有人工标记就原样送，
-    // 没有才在 …… 。！？ —— 和「逗号+转折连词」处插，逗号/顿号一律不插、句末不留尾巴。
-    const speechText = prepareNuojiSpeechText(cleanTextForTts(rawText));
+    // 停顿按角色的参数档位走：经典档用糯叽机的稀疏规则（见 utils/nuojiSpeechText）——
+    // 有人工标记就原样送，没有才在 …… 。！？ —— 和「逗号+转折连词」处插；
+    // 新版自然档一个字都不改，把韵律交回 MiniMax。
+    const voiceProfile = selectedChar?.voiceProfile;
+    const paramVersion = getMiniMaxParamVersion(voiceProfile);
     const model = resolveModel();
+    const speechText = prepareMiniMaxSpeechText(cleanTextForTts(rawText), voiceProfile, model);
     if (!speechText.trim()) throw new Error('可朗读文本为空');
 
     const synthesizeChunk = async (chunk: string, idx = 0, total = 1): Promise<{ blob?: Blob; remoteUrl?: string; traceId: string }> => {
-      const ttsPayload: any = {
+      // 请求体和聊天共用 buildMiniMaxTtsPayload（音色限幅、hex 内联音频、顶层
+      // english_normalization 全在那一处），这里只补电话专有的两件事：
+      // legacyTransport:'call' 保住 32k/128k 单声道；textAlreadyPrepared 避免切块后二次插停顿。
+      const ttsPayload = buildMiniMaxTtsPayload(chunk, voiceProfile, {
+        voiceId,
         model,
-        text: chunk,
-        stream: false,
-        // 和聊天那边保持一致：让 MiniMax 把音频内联返回（hex），不再给签名网址。
-        // 好处有三：省掉第二次跨域 GET（常被拦，拦了就退回裸链接、还进不了缓存）；
-        // 拿到的是本地 blob，口型分析（WebAudio）读得到；而且每段都能存进 TTS 缓存。
-        output_format: 'hex',
-        voice_setting: { voice_id: voiceId, ...resolveVoiceSettingFields(emotion) },
-        audio_setting: { format: 'mp3', sample_rate: 32000, bitrate: 128000, channel: 1 },
-        // 顶层参数，不能塞进 voice_setting（塞进去会被忽略）。与 minimaxTts 保持一致。
-        english_normalization: true,
-        ...(voiceLang ? { language_boost: voiceLang } : {}),
-        ...buildTtsExtras(),
-      };
-      if (groupId) ttsPayload.group_id = groupId;
+        emotion,
+        languageBoost: voiceLang || undefined,
+        groupId: groupId || undefined,
+        legacyTransport: 'call',
+        textAlreadyPrepared: true,
+      });
 
-      const chunkCacheKey = ttsCacheKeyFromPayload(ttsPayload);
+      const chunkCacheKey = buildMiniMaxTtsCacheKey(ttsPayload, paramVersion);
       const cachedChunk = await getCachedTts(chunkCacheKey);
       if (cachedChunk) {
         return { blob: cachedChunk, traceId: 'cache' };

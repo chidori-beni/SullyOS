@@ -10,6 +10,47 @@ import { prepareNuojiSpeechText } from './nuojiSpeechText';
 
 export const DEFAULT_MODEL = 'speech-2.8-hd';
 
+/**
+ * MiniMax 合成参数版本。
+ *
+ * 老角色没有这个字段 → 一律按 legacy 走，保证升级后声音不会突然变样；
+ * natural-v2 是上游新调出来的一套「更自然」的参数，必须由用户主动给某个角色开启。
+ */
+export type MiniMaxParamVersion = 'legacy' | 'natural-v2';
+
+export const getMiniMaxParamVersion = (vp: CharacterProfile['voiceProfile']): MiniMaxParamVersion =>
+  vp?.minimaxParamVersion === 'natural-v2' ? 'natural-v2' : 'legacy';
+
+const MINIMAX_LANGUAGE_BOOST_ALIASES: Record<string, string> = {
+  zh: 'Chinese',
+  'zh-cn': 'Chinese',
+  'zh-hans': 'Chinese',
+  'zh-tw': 'Chinese',
+  'zh-hant': 'Chinese',
+  yue: 'Chinese,Yue',
+  en: 'English',
+  ja: 'Japanese',
+  ko: 'Korean',
+  fr: 'French',
+  es: 'Spanish',
+  de: 'German',
+  ru: 'Russian',
+  ar: 'Arabic',
+  it: 'Italian',
+  pt: 'Portuguese',
+  hi: 'Hindi',
+  id: 'Indonesian',
+  tr: 'Turkish',
+  vi: 'Vietnamese',
+};
+
+/** 把项目内用的 ISO 语种码翻成 MiniMax language_boost 的官方枚举（认不出来就原样送）。 */
+export const normalizeMiniMaxLanguageBoost = (languageBoost?: string): string | undefined => {
+  const value = (languageBoost || '').trim();
+  if (!value) return undefined;
+  return MINIMAX_LANGUAGE_BOOST_ALIASES[value.toLowerCase()] || value;
+};
+
 /** MiniMax 官方只在这两个模型上实现 inline 语气词。 */
 export const MINIMAX_INTERJECTION_MODELS = new Set([
   'speech-2.8-hd',
@@ -189,6 +230,93 @@ export const prepareMiniMaxTtsText = (text: string, model?: string | null): stri
   return prepareNuojiSpeechText(source);
 };
 
+/**
+ * 按参数版本决定要不要动文本。
+ *
+ * 经典档继续走糯叽机那套稀疏停顿规则（本 fork 的二改，见 nuojiSpeechText）；
+ * 新版档一个字都不改，把韵律完全交回 MiniMax 自己处理。
+ */
+export const prepareMiniMaxSpeechText = (
+  text: string,
+  vp: CharacterProfile['voiceProfile'],
+  model?: string | null,
+): string => (
+  getMiniMaxParamVersion(vp) === 'natural-v2'
+    ? (text || '').trim()
+    : prepareMiniMaxTtsText(text, model ?? vp?.model)
+);
+
+export interface MiniMaxTtsPayloadOptions {
+  languageBoost?: string;
+  emotion?: string;
+  voiceId?: string;
+  model?: string;
+  groupId?: string;
+  /** 电话历史上固定请求 32k/128k 单声道；经典档必须继续保留，否则老通话缓存全失效。 */
+  legacyTransport?: 'shared' | 'call';
+  /** 电话先整段处理再切块；切块后不能二次插停顿。 */
+  textAlreadyPrepared?: boolean;
+}
+
+/**
+ * 构建版本化的 MiniMax 请求体；聊天、约会、电话共用这一处。
+ *
+ * 与上游的差别（都是本 fork 已有的二改，不能被这一批覆盖掉）：
+ * - `english_normalization` 放**顶层**。塞进 voice_setting 会被 MiniMax 直接忽略，
+ *   数字和英文就一直念不对。
+ * - 经典档用 `output_format: 'hex'` 把音频内联在响应里，省掉第二次跨域 GET
+ *   （那一步常被 CORS 拦住，只能退回裸链接、也进不了缓存）。
+ */
+export const buildMiniMaxTtsPayload = (
+  text: string,
+  vp: CharacterProfile['voiceProfile'],
+  options: MiniMaxTtsPayloadOptions = {},
+): any => {
+  const paramVersion = getMiniMaxParamVersion(vp);
+  const model = options.model || resolveMiniMaxModel(vp?.model);
+  const payloadText = options.textAlreadyPrepared
+    ? (text || '').trim()
+    : prepareMiniMaxSpeechText(text, vp, model);
+  const payload: any = {
+    model,
+    text: payloadText,
+    stream: false,
+    output_format: paramVersion === 'natural-v2' ? 'url' : 'hex',
+    voice_setting: {
+      voice_id: options.voiceId ?? vp?.voiceId ?? '',
+      ...buildVoiceSettings(vp, options.emotion, paramVersion),
+    },
+    audio_setting: paramVersion === 'natural-v2' || options.legacyTransport === 'call'
+      ? { format: 'mp3', sample_rate: 32000, bitrate: 128000, channel: 1 }
+      : { format: 'mp3' },
+    ...buildTtsExtras(vp, paramVersion),
+  };
+  // 经典档继续显式要求英文/数字归一化；新版档不带，交给模型自己判断。
+  if (paramVersion !== 'natural-v2') payload.english_normalization = true;
+
+  const languageBoost = paramVersion === 'natural-v2'
+    ? normalizeMiniMaxLanguageBoost(options.languageBoost)
+    : options.languageBoost || undefined;
+  if (languageBoost) payload.language_boost = languageBoost;
+  if (options.groupId) payload.group_id = options.groupId;
+  return payload;
+};
+
+/** 新版用独立的缓存命名空间，绝不复用经典参数生成的旧音频。 */
+export const buildMiniMaxTtsCacheKey = (
+  payload: any,
+  paramVersion: MiniMaxParamVersion = 'legacy',
+): string => hashTtsParams({
+  kind: paramVersion === 'natural-v2' ? 'minimax-t2a-natural-v2' : 'minimax-t2a',
+  text: payload.text,
+  model: payload.model,
+  voice_setting: payload.voice_setting,
+  timber_weights: payload.timber_weights,
+  voice_modify: payload.voice_modify,
+  language_boost: payload.language_boost,
+  audio_setting: payload.audio_setting,
+});
+
 export interface ParsedVoiceOutput {
   /** Text OUTSIDE the <语音> tag — what shows in the chat bubble. */
   display: string;
@@ -308,8 +436,11 @@ const softClamp = (value: number, limit: number): number => {
   return sign * (limit + Math.log1p(excess) * (limit * 0.15));
 };
 
-/** Build timber_weights & voice_modify extras from a voiceProfile */
-export const buildTtsExtras = (vp: CharacterProfile['voiceProfile']) => {
+/** Build timber_weights & voice_modify extras from a voiceProfile. */
+export const buildTtsExtras = (
+  vp: CharacterProfile['voiceProfile'],
+  paramVersion: MiniMaxParamVersion = 'legacy',
+) => {
   if (!vp) return {};
   const extras: any = {};
   const tw = vp.timberWeights;
@@ -325,13 +456,21 @@ export const buildTtsExtras = (vp: CharacterProfile['voiceProfile']) => {
   }
   if (vp.voiceModify) {
     const vm: any = {};
-    // Clamp voice_modify params to prevent extreme spikes (e.g. sudden shrill voice)
-    // pitch: safe range ±40 (full API range is ±100)
-    // intensity: safe range ±30 — this is the biggest culprit for sudden shrill spikes
-    // timbre: safe range ±40
-    if (vp.voiceModify.pitch) vm.pitch = Math.round(softClamp(vp.voiceModify.pitch, 40));
-    if (vp.voiceModify.intensity) vm.intensity = Math.round(softClamp(vp.voiceModify.intensity, 30));
-    if (vp.voiceModify.timbre) vm.timbre = Math.round(softClamp(vp.voiceModify.timbre, 40));
+    if (paramVersion === 'natural-v2') {
+      // 新版只按接口的硬边界保护，保证「捏声音试听」和实际播放用的是同一组数值。
+      const officialClamp = (value: number) => Math.max(-100, Math.min(100, Math.round(value)));
+      if (vp.voiceModify.pitch) vm.pitch = officialClamp(vp.voiceModify.pitch);
+      if (vp.voiceModify.intensity) vm.intensity = officialClamp(vp.voiceModify.intensity);
+      if (vp.voiceModify.timbre) vm.timbre = officialClamp(vp.voiceModify.timbre);
+    } else {
+      // 经典档原样保留历史的柔性限幅，防止老角色升级后声音突变。
+      // pitch: safe range ±40 (full API range is ±100)
+      // intensity: safe range ±30 — this is the biggest culprit for sudden shrill spikes
+      // timbre: safe range ±40
+      if (vp.voiceModify.pitch) vm.pitch = Math.round(softClamp(vp.voiceModify.pitch, 40));
+      if (vp.voiceModify.intensity) vm.intensity = Math.round(softClamp(vp.voiceModify.intensity, 30));
+      if (vp.voiceModify.timbre) vm.timbre = Math.round(softClamp(vp.voiceModify.timbre, 40));
+    }
     if (vp.voiceModify.sound_effects) vm.sound_effects = vp.voiceModify.sound_effects;
     if (Object.keys(vm).length) extras.voice_modify = vm;
   }
@@ -343,7 +482,24 @@ export const buildTtsExtras = (vp: CharacterProfile['voiceProfile']) => {
  * `emotionOverride` (validated MiniMax emotion, e.g. from a <语音 emotion="…"> tag)
  * wins over the character's static voiceProfile.emotion. Invalid values are ignored.
  */
-export const buildVoiceSettings = (vp: CharacterProfile['voiceProfile'], emotionOverride?: string) => {
+export const buildVoiceSettings = (
+  vp: CharacterProfile['voiceProfile'],
+  emotionOverride?: string,
+  paramVersion: MiniMaxParamVersion = 'legacy',
+) => {
+  if (paramVersion === 'natural-v2') {
+    // 新版放开限幅到接口本身的范围，并且「角色选了固定情感」优先于每条语音的动态情感。
+    const savedEmotion = normalizeEmotionForApi((vp?.emotion || '').trim().toLowerCase());
+    const dynamicEmotion = normalizeEmotionForApi((emotionOverride || '').trim().toLowerCase());
+    const emotion = savedEmotion || dynamicEmotion;
+    return {
+      speed: Math.max(0.5, Math.min(2, vp?.speed ?? 1)),
+      vol: Math.max(0.01, Math.min(10, vp?.vol ?? 1)),
+      pitch: Math.max(-12, Math.min(12, vp?.pitch ?? 0)),
+      ...(emotion ? { emotion } : {}),
+    };
+  }
+
   const picked = (emotionOverride && VALID_EMOTIONS.has(emotionOverride))
     ? emotionOverride
     : (vp?.emotion || '');
@@ -435,57 +591,28 @@ export async function synthesizeSpeechDetailed(
     throw new Error('角色未配置语音');
   }
 
-  // 停顿改用糯叽机那套稀疏规则（见 nuojiSpeechText）：文本里已经有 <#x#> / (chuckle)
-  // 就原样送、一个都不加；没有标记才在 …… 。！？ —— 和「逗号+转折连词」处插。
-  // 原来的 insertSpeechBreaks 是每个标点都插、还叠在模型写的标记之上，
-  // 同一个 speech-2.8-hd 在糯叽机自然、在这边夸张，主因就在这。
-  const model = resolveMiniMaxModel(vp?.model);
-  const processedText = prepareMiniMaxTtsText(text, model);
-
-  const payload: any = {
-    model,
-    text: processedText,
-    stream: false,
-    // 合上游：直接让 MiniMax 把音频内联在响应里（hex），不再返回签名网址。
-    // 省掉第二次跨域 GET —— 那一步常被 CORS 拦住，只能退回裸链接、也进不了缓存。
-    // 传输格式不影响音色参数和缓存键。
-    output_format: 'hex',
-    voice_setting: {
-      voice_id: vp?.voiceId || '',
-      ...buildVoiceSettings(vp, options?.emotion),
-    },
-    audio_setting: { format: 'mp3' },
-    // english_normalization 是**顶层**参数，不是 voice_setting 的字段。
-    // 以前塞在 voice_setting 里，MiniMax 直接忽略 —— 数字/英文一直没被正常念。
-    english_normalization: true,
-    ...buildTtsExtras(vp),
-  };
-  // 重 roll 的语速微调：叠加后仍夹在 buildVoiceSettings 用的同一档安全区间内，
+  // 请求体统一交给 buildMiniMaxTtsPayload 拼（经典档 / 新版档两套参数都在那里）：
+  // 经典档继续走糯叽机的稀疏停顿 + hex 内联音频 + 顶层 english_normalization；
+  // 新版档不动文本、放开限幅，由用户逐个角色主动开启。
+  const paramVersion = getMiniMaxParamVersion(vp);
+  const payload = buildMiniMaxTtsPayload(text, vp, {
+    languageBoost: options?.languageBoost,
+    emotion: options?.emotion,
+  });
+  // 重 roll 的语速微调：叠加后仍夹在本档位自己的安全区间内，
   // 保证「听不出快慢差别，但请求体不同」——既换到另一条音频，也不改变角色语速手感。
   if (options?.speedJitter) {
+    const [lo, hi] = paramVersion === 'natural-v2' ? [0.5, 2] : [0.75, 1.4];
     payload.voice_setting.speed = Math.max(
-      0.75,
-      Math.min(1.4, (payload.voice_setting.speed ?? 1) + options.speedJitter),
+      lo,
+      Math.min(hi, (payload.voice_setting.speed ?? 1) + options.speedJitter),
     );
   }
-
-  // Only set language_boost when an explicit voice language is chosen. Leaving it
-  // unset keeps Chinese prosody stable (auto-detect made the tone wobble per line).
-  if (options?.languageBoost) payload.language_boost = options.languageBoost;
 
   // Check the shared cache before hitting the network. Two call sites that
   // build the same payload get the same hash and reuse whichever one synthesized
   // the audio first — across sessions, across apps.
-  const cacheKey = hashTtsParams({
-    kind: 'minimax-t2a',
-    text: payload.text,
-    model: payload.model,
-    voice_setting: payload.voice_setting,
-    timber_weights: payload.timber_weights,
-    voice_modify: payload.voice_modify,
-    language_boost: payload.language_boost,
-    audio_setting: payload.audio_setting,
-  });
+  const cacheKey = buildMiniMaxTtsCacheKey(payload, paramVersion);
   // 重 roll 时跳过读缓存（写回照旧），否则拿回来的永远是同一条旧音频。
   if (!options?.forceRegenerate) {
     const cached = await getCachedTts(cacheKey);

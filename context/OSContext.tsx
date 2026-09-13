@@ -74,7 +74,7 @@ import { markAmsgStateDirty, markAmsgStateDirtyForAll, resumePendingAmsgStateSyn
 import { loadMusicPlaybackSnapshot } from './MusicContext';
 import { setCharNameRegistry } from '../utils/charNameRegistry';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
-import { setTtsProvider, setVoicePromptOverrides } from '../utils/ttsProvider';
+import { setElevenLabsModel, setTtsProvider, setVoicePromptOverrides } from '../utils/ttsProvider';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
 import { formatBytes } from '../utils/format';
@@ -644,6 +644,14 @@ const defaultApiConfig: APIConfig = {
   minimaxApiKey: '',
   minimaxGroupId: '',
   minimaxRegion: 'domestic',
+  ttsProvider: 'minimax',
+  fishAudioModel: 's2.1-pro',
+  elevenLabsApiKey: '',
+  elevenLabsModel: 'eleven_flash_v2_5',
+  elevenLabsStability: 0.5,
+  elevenLabsSimilarityBoost: 0.8,
+  elevenLabsStyle: 0,
+  elevenLabsUseSpeakerBoost: false,
   speechRecognitionProvider: 'system',
   siliconFlowSpeechApiKey: '',
   speechRecognitionStripEmoji: true,
@@ -2325,6 +2333,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   useEffect(() => {
     setTtsProvider(apiConfig.ttsProvider);
   }, [apiConfig.ttsProvider]);
+  // ElevenLabs 的 v3 与 Flash/Multilingual 使用不同的提示词标记；prompt 构建器靠单例读当前模型。
+  useEffect(() => {
+    setElevenLabsModel(apiConfig.elevenLabsModel);
+  }, [apiConfig.elevenLabsModel]);
   // 同步用户自定义语音表演指南（同上：chatPrompts 拿不到 apiConfig，靠单例读最新值）。
   useEffect(() => {
     setVoicePromptOverrides(apiConfig.voicePrompts);
