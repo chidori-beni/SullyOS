@@ -1,5 +1,5 @@
 
-import { useState, useRef, useEffect, MutableRefObject } from 'react';
+import { useState, useRef, useEffect, useSyncExternalStore, MutableRefObject } from 'react';
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff, Amsg2ExpiredNoticeRecord } from '../types';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
@@ -30,6 +30,8 @@ import { callMcpTool, getMcpUseNativeTools, hasWorkerUnreachableMcpServer } from
 import { buildMcpOpenAITools, buildMcpRejectedToolsFallbackBody, buildMcpTextFallbackBody, extractTextFakedMcpCalls, formatMcpToolResult, sanitizeMcpLeadInText, shouldRetryMcpWithoutTools, stripTextFakedMcpCalls, type FakedMcpCall } from '../utils/mcpToolBridge';
 import { buildToolResultMessage, normalizeToolCallsForCompat } from '../utils/toolCallCompat';
 import { buildChatRequestPayload } from '../utils/chatRequestPayload';
+import { acquireChatReply, isChatReplyActive, subscribeChatReplies } from '../utils/chatReplyLock';
+import { withChatContinuation } from '../utils/chatContinuation';
 import {
     isInstantConfigReady,
     sendInstantPushAndAwaitReply,
@@ -508,10 +510,13 @@ export const useChatAI = ({
     // 音乐上下文 — 用于聊天时注入"user 正在听什么 + 当前歌词窗口"
     const music = useMusic();
 
-    const [isTyping, setIsTyping] = useState(false);
+    const [localTyping, setLocalTyping] = useState(false);
+    const characterTyping = useSyncExternalStore(subscribeChatReplies, () => isChatReplyActive(char?.id), () => false);
+    // 同一挂载实例仍串行使用流式预览状态；跨页面重进则读取角色的后台占位。
+    const isTyping = localTyping || characterTyping;
     // isTyping 是 React state，在同一事件循环内不会同步更新。自动发送和手动
     // ⚡ 触发可能因此同时通过 isTyping 检查，尤其是忙碌自动回复这条本地快速路径
-    // 根本不会先 setIsTyping(true)。用 ref 做真正同步的入口锁，保证一轮发送只
+    // 根本不会先 setLocalTyping(true)。用 ref 做真正同步的入口锁，保证一轮发送只
     // 能有一个 triggerAI；否则两次调用会各落一条自动回复，甚至一条继续走普通模型。
     const triggerInFlightRef = useRef(false);
     // 「停止生成」用：本轮所有模型请求（主请求 / 兼容重试 / 各工具循环）共用一个
@@ -520,6 +525,9 @@ export const useChatAI = ({
     // 和「真报错」——前者不写 [回复处理失败] 系统消息、也不弹错。
     const abortRef = useRef<AbortController | null>(null);
     const cancelledRef = useRef(false);
+    // 本 fork 有「停止生成」而上游没有：停止时要能放掉上面那个全局占位，
+    // 否则一按停、马上重发会被占位挡住。release 本身幂等，重复调用安全。
+    const replyReleaseRef = useRef<(() => void) | null>(null);
     // 流式预览气泡：stream 开启时，已完成行与安全尾句随增量以临时气泡上屏。
     // 流结束后由 applyAssistantPostProcessing 正常落库渲染，预览随即清空 —— 只影响体感，不改持久化。
     const [streamingBubbles, setStreamingBubbles] = useState<string[]>([]);
@@ -907,14 +915,19 @@ export const useChatAI = ({
         // 也不能让成功结算时多扣/少扣。重掷仍使用效果，但成功后不再次扣回合。
         const sarModulePlan = getSARModuleRuntimePlan(charForGen, userProfile);
 
-        // 本轮的中止句柄：必须在 setIsTyping(true) 之前挂上，否则「正在输入」已经亮起、
+        // 合上游：按角色抢一个跨页面的回复占位。抢不到说明这个角色已经有一轮在跑
+        // （可能是在别的页面开的），本轮直接退出；退出前要把 fork 自己的入口锁一起放掉。
+        const releaseReply = acquireChatReply(char.id);
+        if (!releaseReply) { triggerInFlightRef.current = false; onInstantPosted?.(); return; }
+        replyReleaseRef.current = releaseReply;
+        // 本轮的中止句柄：必须在 setLocalTyping(true) 之前挂上，否则「正在输入」已经亮起、
         // 停止按钮却还拿不到 controller，用户点了没反应。
         cancelledRef.current = false;
         const abortController = new AbortController();
         abortRef.current = abortController;
 
         const recallSubmitAttempt = ++recallSubmitAttemptRef.current;
-        setIsTyping(true);
+        setLocalTyping(true);
         setStreamingBubbles([]);
         setStreamingThinking('');
         setRecallStatus('');
@@ -962,6 +975,7 @@ export const useChatAI = ({
             // Keep the Service Worker alive while we make potentially long AI calls.
             // 放在受 triggerAI finally 保护的 try 内，启动异常也能释放入口锁，避免
             // 这次异常后后续所有消息都被误判为“仍在生成”。
+            // 初始化失败也必须经过 finally 释放本轮占位。
             await KeepAlive.start();
             const baseUrl = effectiveApi.baseUrl.replace(/\/+$/, '');
             const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${effectiveApi.apiKey || 'sk-none'}` };
@@ -1192,7 +1206,9 @@ export const useChatAI = ({
             }
             const systemPrompt = payload.systemPrompt;
             const cleanedApiMessages = payload.cleanedApiMessages;
-            const fullMessages = payload.fullMessages;
+            const fullMessages = payload.flags.promptBuildSkipped
+                ? payload.fullMessages
+                : withChatContinuation(payload.fullMessages, userProfile.name);
             const promptBuildSkipped = payload.flags.promptBuildSkipped;
             if (payload.flags.mcdActive) {
                 console.log(`🍔 [MCD-MiniApp] 注入协同点餐上下文 step=${mcdMiniSnap?.step} cartItems=${mcdMiniSnap?.cart?.length || 0} menuItems=${mcdMiniSnap?.menuMeals ? Object.keys(mcdMiniSnap.menuMeals).length : 0} nutrition=${mcdMiniSnap?.nutritionData ? mcdMiniSnap.nutritionData.length : 0}字`);
@@ -2316,8 +2332,10 @@ export const useChatAI = ({
         } finally {
             if (abortRef.current === abortController) abortRef.current = null;
             triggerInFlightRef.current = false;
+            releaseReply();
+            replyReleaseRef.current = null;
+            setLocalTyping(false);
             KeepAlive.stop();
-            setIsTyping(false);
             // 本轮生成结束（成功/失败/中断都经过）→ 停止本地续租；远端靠 45s TTL 自然失效。
             // 未开过租约（instant push / 非 amsg2 角色）时是幂等 no-op。
             if (!instantChatAccepted) stopAmsgChatPresence(char.id);
@@ -2464,7 +2482,10 @@ export const useChatAI = ({
         }
 
         KeepAlive.stop();
-        setIsTyping(false);
+        // 放掉本轮的全局回复占位：不放的话按了停止之后马上重发会被自己挡住。
+        replyReleaseRef.current?.();
+        replyReleaseRef.current = null;
+        setLocalTyping(false);
         setStreamingBubbles([]);
         setStreamingThinking('');
         recallSubmitAttemptRef.current += 1;

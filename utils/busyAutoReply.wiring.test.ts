@@ -11,7 +11,9 @@ describe('忙碌自动回复的聊天入口接线', () => {
     it('在 API 配置检查和模型生成状态之前读取最新 DB 历史并本地落盘', () => {
         const decisionAt = source.indexOf("if (char.busyAutoReplyEnabled === true && isScheduleFeatureOn(char))");
         const apiCheckAt = source.indexOf('const effectiveApi = overrideApiConfig || apiConfig;');
-        const typingAt = source.indexOf('setIsTyping(true);', apiCheckAt);
+        // 合上游后 isTyping 拆成了 localTyping（本机）+ characterTyping（跨页面占位），
+        // 置位的函数随之改名；这里只是跟着改锚点，断言的顺序含义不变。
+        const typingAt = source.indexOf('setLocalTyping(true);', apiCheckAt);
         expect(decisionAt).toBeGreaterThan(-1);
         expect(apiCheckAt).toBeGreaterThan(decisionAt);
         expect(typingAt).toBeGreaterThan(apiCheckAt);

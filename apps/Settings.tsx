@@ -868,10 +868,12 @@ const Settings: React.FC = () => {
 
   useEffect(() => {
       setLocalVisionEnabled(apiConfig.visionApi?.enabled === true);
+  }, [apiConfig.visionApi?.enabled]);
+  useEffect(() => {
       setLocalVisionUrl(apiConfig.visionApi?.baseUrl || '');
       setLocalVisionKey(apiConfig.visionApi?.apiKey || '');
       setLocalVisionModel(apiConfig.visionApi?.model || '');
-  }, [apiConfig.visionApi?.enabled, apiConfig.visionApi?.baseUrl, apiConfig.visionApi?.apiKey, apiConfig.visionApi?.model]);
+  }, [apiConfig.visionApi?.baseUrl || '', apiConfig.visionApi?.apiKey || '', apiConfig.visionApi?.model || '']);
 
   useEffect(() => {
       setLocalMiniMaxKey(apiConfig.minimaxApiKey || '');
@@ -1027,9 +1029,9 @@ const Settings: React.FC = () => {
     setTimeout(() => setStatusMsg(''), 2000);
   };
 
-  const handleSaveVisionApi = () => {
+  const handleSaveVisionApi = (enabled = localVisionEnabled) => {
     const nextVisionApi = {
-      enabled: localVisionEnabled,
+      enabled,
       baseUrl: normalizeApiBaseUrl(localVisionUrl),
       apiKey: normalizeApiCredential(localVisionKey),
       model: normalizeApiModel(localVisionModel),
@@ -1044,6 +1046,22 @@ const Settings: React.FC = () => {
     updateApiConfig({ visionApi: nextVisionApi });
     setVisionStatusMsg(nextVisionApi.enabled ? '识图 API 已接入' : '已关闭，沿用原有识图方式');
     setTimeout(() => setVisionStatusMsg(''), 2200);
+  };
+
+  const handleToggleVisionApi = () => {
+    const enabled = !localVisionEnabled;
+    setLocalVisionEnabled(enabled);
+    if (!enabled) {
+      // 关闭立即落盘；保留已保存的凭据，未保存的输入仍留在表单里。
+      updateApiConfig({ visionApi: {
+        baseUrl: '', apiKey: '', model: '', ...apiConfig.visionApi, enabled: false,
+      } });
+      setVisionStatusMsg('已关闭，沿用原有识图方式');
+    } else if (normalizeApiBaseUrl(localVisionUrl) && normalizeApiCredential(localVisionKey) && normalizeApiModel(localVisionModel)) {
+      handleSaveVisionApi(true);
+    } else {
+      setVisionStatusMsg('请填写 URL、Key 和 Model，保存后接入');
+    }
   };
 
   const loadVisionApiPreset = (preset: typeof apiPresets[0]) => {
@@ -2516,7 +2534,7 @@ const Settings: React.FC = () => {
                             type="button"
                             role="switch"
                             aria-checked={localVisionEnabled}
-                            onClick={() => setLocalVisionEnabled(value => !value)}
+                            onClick={handleToggleVisionApi}
                             className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${localVisionEnabled ? 'bg-violet-500' : 'bg-slate-200'}`}
                         >
                             <span className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${localVisionEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
@@ -2619,7 +2637,7 @@ const Settings: React.FC = () => {
                     </button>
                     <button
                         type="button"
-                        onClick={handleSaveVisionApi}
+                        onClick={() => handleSaveVisionApi()}
                         disabled={isLoadingVisionModels || testingVisionApi}
                         className="py-3 rounded-2xl font-bold text-white shadow-lg shadow-violet-500/20 bg-violet-500 active:scale-95 transition-all disabled:opacity-50"
                     >

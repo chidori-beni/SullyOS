@@ -6,7 +6,7 @@ import { DB } from '../utils/db';
 import { SLOW_FLUSH_TIMING_EVENT } from '../utils/slowFlushProbe';
 import type { AvatarTouchRecord } from '../utils/avatarTouch';
 import { clampClaudeTemperature, modelRejectsSamplingParams, stripSamplingParams } from '../utils/samplingParamCompat';
-import { extractImagesInPlace, deepCloneForExport, parseImageDataUrlForBackup, type BackupObjectPath } from '../utils/backupExport';
+import { extractImagesInPlace, deepCloneForExport, stripBackupImages, parseImageDataUrlForBackup, type BackupObjectPath } from '../utils/backupExport';
 import { isBlobRef, getBlobForRef, migrateDataUrlToRef, migrateAppearancePresetBlobRefs, resolveBlobRefsDeep, BLOBREF_PREFIX, deleteBlobRefIfUnreferenced } from '../utils/blobRef';
 import { initPwaIcon, clearPwaIcon } from '../utils/appIcon';
 import { LEGACY_DEFAULT_WALLPAPER, isLegacyDefaultWallpaper, shouldPreserveLegacyDefaultWallpaper } from '../utils/wallpaperCompat';
@@ -4079,27 +4079,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const assetDedupMap = new Map<string, string>();
 
           // Strip Base64 Images (Recursive) - Used for Text Only Mode
-          const stripBase64 = (obj: any): any => {
-              if (typeof obj === 'string') {
-                  // text_only 模式剥掉所有图片：data:image 与 blobref 令牌（令牌无二进制随行，
-                  // 恢复端认不得，等同一张丢失的图）都清空。
-                  if (obj.startsWith('data:image') || obj.startsWith(BLOBREF_PREFIX)) return '';
-                  return obj;
-              }
-              if (Array.isArray(obj)) {
-                  return obj.map(item => stripBase64(item));
-              }
-              if (obj !== null && typeof obj === 'object') {
-                  const newObj: any = {};
-                  for (const key in obj) {
-                      if (Object.prototype.hasOwnProperty.call(obj, key)) {
-                          newObj[key] = stripBase64(obj[key]);
-                      }
-                  }
-                  return newObj;
-              }
-              return obj;
-          };
+          const stripBase64 = stripBackupImages;
 
           const stripTextOnlyMedia = (obj: any): any => {
               const stripped = stripBase64(obj);

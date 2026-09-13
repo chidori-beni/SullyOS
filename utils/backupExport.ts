@@ -15,6 +15,19 @@
  */
 export type BackupObjectPath = Array<string | number>;
 
+/** 文字备份逐字段剥图；嵌套的通讯录、完整聊天原文、话题盒都必须保留。 */
+export function stripBackupImages(obj: any): any {
+    if (typeof obj === 'string') {
+        if (obj.startsWith('data:image') || obj.startsWith('blobref:')) return '';
+        return obj;
+    }
+    if (Array.isArray(obj)) return obj.map(stripBackupImages);
+    if (obj !== null && typeof obj === 'object') {
+        return Object.fromEntries(Object.entries(obj).map(([key, value]) => [key, stripBackupImages(value)]));
+    }
+    return obj;
+}
+
 export function extractImagesInPlace(
     root: unknown,
     resolveImage: (dataUrl: string, path: BackupObjectPath) => string,
