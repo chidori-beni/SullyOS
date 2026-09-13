@@ -20,7 +20,6 @@ import { trackEvent } from '../utils/analytics';
 import { Check, ImageSquare, Sparkle, Trash, UploadSimple } from '@phosphor-icons/react';
 import AppIconEditor from '../components/appearance/AppIconEditor';
 import { Capacitor } from '@capacitor/core';
-import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import CssSlotEditor from '../components/appearance/CssSlotEditor';
 import { BUILTIN_NOTIFY_CSS_PRESETS, NOTIFY_CSS_AI_PROMPT, NOTIFY_HOOKS } from '../utils/globalCss';

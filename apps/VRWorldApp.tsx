@@ -3117,7 +3117,7 @@ const RoomScene: React.FC<{
                                 style={{ background: 'rgba(140,200,255,.10)', border: '1px solid rgba(140,200,255,.22)' }}>
                                 <span className="text-[10px] text-sky-200/70 shrink-0">回复 {replyTo.authorName}</span>
                                 <span className="text-[10.5px] text-white/45 truncate flex-1">{replyTo.content}</span>
-                                <button onClick={() => setReplyTo(null)}
+                                <button onClick={() => setReplyTo(null)} aria-label="取消回复"
                                     className="text-[13px] text-white/45 px-1.5 shrink-0 active:text-white/80">×</button>
                             </div>
                         )}

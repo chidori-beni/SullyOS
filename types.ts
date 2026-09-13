@@ -4571,6 +4571,8 @@ export interface FullBackupData {
     version: number;
     theme?: OSTheme;
     apiConfig?: APIConfig;
+    /** 查手机 App 独立 API；null/缺省时跟随聊天默认。 */
+    checkPhoneApi?: APIConfig | null;
     instantPushConfig?: InstantPushConfig;
     pushVapid?: { vapidPublicKey: string; vapidPrivateKey: string; vapidEmail?: string; updatedAt?: number; };
     /**
