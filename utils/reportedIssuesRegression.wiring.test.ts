@@ -102,4 +102,22 @@ describe('用户反馈回归保护', () => {
         expect(item).toContain('showExpandedTranslation');
         expect(item).toContain('{renderContent(langBContent)}');
     });
+
+    it('冷启动第一帧按 localStorage 镜像决定开场，不闪水母', () => {
+        // 用户报：关了开场动画、或选了「原版」，冷启动仍会闪一下紫色水母。
+        // 病根是 theme 要等 IndexedDB，第一帧 bootAnimationEnabled/Style 都是 undefined
+        // （分别被判成「开启」和「水母」）。修法见 utils/bootPreference。
+        const shell = read('../components/PhoneShell.tsx');
+
+        // 开关与风格都不许直接读 theme 来决定第一帧
+        expect(shell).not.toContain('const bootAnimationEnabled = theme.bootAnimationEnabled !== false;');
+        expect(shell).not.toContain('style={theme.bootAnimationStyle}');
+
+        expect(shell).toContain('useState(readBootPreference)');
+        expect(shell).toContain('bootPreference.style ?? theme.bootAnimationStyle');
+        expect(shell).toContain('style={bootAnimationStyle}');
+        // 镜像只允许「关掉」不允许「打开」：数据到位后不会中途补播。
+        expect(shell).toContain('(bootPreference.enabled ?? true)');
+        expect(shell).toContain('rememberBootPreference(theme)');
+    });
 });

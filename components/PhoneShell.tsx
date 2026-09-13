@@ -121,6 +121,7 @@ import DreamSimIndicator from './os/DreamSimIndicator';
 import SuspendedCallBar from './os/SuspendedCallBar';
 import ErrorDialog from './os/ErrorDialog';
 import BootSequence from './os/BootSequence';
+import { readBootPreference, rememberBootPreference } from '../utils/bootPreference';
 import { setAppPayloadWarmer, shouldUseIdleAppPreload } from './os/appPreload';
 import { isBrowserBackGuardState, makeBrowserBackGuardState } from '../utils/browserBackGuard';
 import { INCOMING_CALL_EVENT, getPendingIncomingCall } from '../utils/incomingCall';
@@ -477,7 +478,17 @@ const PhoneShell: React.FC = () => {
 
   // 冷启动「世界入场」是否已结束。结束前由 BootSequence 接管整屏（同时取代旧的黑屏 spinner）。
   const [bootDone, setBootDone] = useState(false);
-  const bootAnimationEnabled = theme.bootAnimationEnabled !== false;
+  // ⚠️ theme 要等 IndexedDB 读完才有，第一帧是空的——直接用它判定会让「关了动画」
+  // 和「选了原版」的用户每次冷启动都先闪一帧水母。改为先读 localStorage 里的同步镜像。
+  // 见 utils/bootPreference。镜像只允许「关掉」不允许「打开」，所以数据到位后也不会中途补播。
+  const [bootPreference] = useState(readBootPreference);
+  const bootAnimationEnabled = (bootPreference.enabled ?? true)
+      && (!isDataLoaded || theme.bootAnimationEnabled !== false);
+  const bootAnimationStyle = bootPreference.style ?? theme.bootAnimationStyle;
+  useEffect(() => {
+    // 数据就绪后把当前选择镜像下来，供下次冷启动第一帧使用。
+    if (isDataLoaded) rememberBootPreference(theme);
+  }, [isDataLoaded, theme.bootAnimationEnabled, theme.bootAnimationStyle]);
   useEffect(() => {
     if (!isLocked || typeof window === 'undefined') return;
     try { window.sessionStorage.setItem(LAUNCHER_HOME_RESET_PENDING_KEY, '1'); } catch { /* ignore */ }
@@ -908,7 +919,7 @@ const PhoneShell: React.FC = () => {
   // 冷启动：先放「世界入场」cinematic（数据没就绪时它持续呼吸等待，绝不出现 spinner）。
   // BootSequence 在「数据就绪 + 停留够时长」后推进退场，再交还控制权给下方的锁屏/桌面。
   if (!bootDone && bootAnimationEnabled) {
-    return <BootSequence dataReady={isDataLoaded} wallpaper={theme.wallpaper} style={theme.bootAnimationStyle} onDone={() => setBootDone(true)} />;
+    return <BootSequence dataReady={isDataLoaded} wallpaper={theme.wallpaper} style={bootAnimationStyle} onDone={() => setBootDone(true)} />;
   }
 
   // 兜底：理论上 bootDone 时数据已就绪；万一未就绪（极端慢）退化为最简静态深色屏，不闪 spinner。
