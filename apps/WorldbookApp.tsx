@@ -21,7 +21,7 @@ import { readShareFile } from '../utils/pngShare';
 import { trackEvent } from '../utils/analytics';
 
 const WorldbookApp: React.FC = () => {
-    const { closeApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, deleteWorldbooks, reorderWorldbooks, addToast } = useOS();
+    const { closeApp, worldbooks, addWorldbook, updateWorldbook, updateWorldbooks, deleteWorldbook, deleteWorldbooks, reorderWorldbooks, addToast } = useOS();
     
     // View State
     const [isEditing, setIsEditing] = useState(false);
@@ -174,9 +174,12 @@ const WorldbookApp: React.FC = () => {
             disable: !tempEnabled,
             mode: tempMode,
             constant: tempConstant,
-            key: tempConstant ? [] : primaryKeywords,
-            keysecondary: tempConstant ? [] : secondaryKeywords,
-            selective: !tempConstant && secondaryKeywords.length > 0,
+            // ⚠️ 这三行以前是 `tempConstant ? [] : ...` —— 一旦把某条改成「常驻」，
+            // 用户辛苦填的关键词就被清空了，而且改回「关键词触发」也找不回来。
+            // 关键词只是存着，是否生效由 constant 决定，不该顺手抹掉。
+            key: primaryKeywords,
+            keysecondary: secondaryKeywords,
+            selective: secondaryKeywords.length > 0,
             selectiveLogic: tempSelectiveLogic,
             position: tempPosition,
             depth: Math.max(0, Math.floor(tempDepth || 0)),

@@ -1,6 +1,7 @@
 
 
 
+import { replaceMountedWorldbook } from './worldbook';
 import {
     CharacterProfile, ChatTheme, Message, UserProfile,
     Task, Anniversary, DiaryEntry, RoomTodo, RoomNote, DailySchedule,
@@ -2753,6 +2754,68 @@ export const DB = {
       const db = await openDB();
       const transaction = db.transaction(STORE_WORLDBOOKS, 'readwrite');
       transaction.objectStore(STORE_WORLDBOOKS).delete(id);
+  },
+
+  /**
+   * 在**同一个读写事务**里改世界书库 + 同步角色的挂载缓存。
+   *
+   * 为什么必须走事务：批量操作如果循环调用「单条更新」，每次都带着组件里那份
+   * 旧的 characters 快照，后一次保存会把前一次的结果覆盖掉 ——
+   * 表现就是「删掉的挂载又活过来了」。
+   *
+   * updates === null 表示删除这些条目（并从所有角色身上摘掉）。
+   *
+   * ⚠️ 与上游的差别：上游用裸 toMountedWorldbook() 重建挂载项，会把角色自己
+   * 关掉的挂载开关（mountEnabled === false）和旧版 scheduleOnly 标记一起冲掉。
+   * 本 fork 改用 replaceMountedWorldbook —— 它专门保这两样。
+   */
+  mutateWorldbooks: async (ids: string[], updates: Partial<Worldbook> | null): Promise<{ books: Worldbook[]; characters: CharacterProfile[] }> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction([STORE_WORLDBOOKS, STORE_CHARACTERS], 'readwrite');
+          const library = tx.objectStore(STORE_WORLDBOOKS);
+          const charactersStore = tx.objectStore(STORE_CHARACTERS);
+          const targets = new Set(ids);
+          const books: Worldbook[] = [];
+          const changedCharacters: CharacterProfile[] = [];
+          const request = library.getAll();
+          request.onsuccess = () => {
+              for (const book of request.result as Worldbook[]) {
+                  if (!targets.has(book.id)) continue;
+                  if (updates === null) library.delete(book.id);
+                  else {
+                      // id / createdAt 一律保留：绑定只认 id，重建 id 会让所有挂载失联。
+                      const next = { ...book, ...updates, id: book.id, createdAt: book.createdAt, updatedAt: Date.now() };
+                      books.push(next);
+                      library.put(next);
+                  }
+              }
+              const chars = charactersStore.getAll();
+              chars.onsuccess = () => {
+                  for (const char of chars.result as CharacterProfile[]) {
+                      const mounted = char.mountedWorldbooks || [];
+                      if (updates === null) {
+                          if (!mounted.some(book => targets.has(book.id))) continue;
+                          const next = { ...char, mountedWorldbooks: mounted.filter(book => !targets.has(book.id)) };
+                          changedCharacters.push(next);
+                          charactersStore.put(next);
+                          continue;
+                      }
+                      if (!mounted.some(book => targets.has(book.id))) continue;
+                      let nextMounted = mounted;
+                      for (const book of books) {
+                          nextMounted = replaceMountedWorldbook(nextMounted, book, { modeIsAuthoritative: true });
+                      }
+                      const next = { ...char, mountedWorldbooks: nextMounted };
+                      changedCharacters.push(next);
+                      charactersStore.put(next);
+                  }
+              };
+          };
+          tx.oncomplete = () => resolve({ books, characters: changedCharacters });
+          tx.onerror = () => reject(tx.error || new Error('世界书保存失败'));
+          tx.onabort = () => reject(tx.error || new Error('世界书保存已撤销'));
+      });
   },
 
   // --- 见面 · 剧情剧场 ---
