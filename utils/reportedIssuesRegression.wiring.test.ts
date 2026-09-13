@@ -26,6 +26,18 @@ describe('用户反馈回归保护', () => {
         expect(inputLayer).toContain('onClick={handleSend}');
     });
 
+    it('SAR 输入框回车只换行，发送只由发送按钮触发', () => {
+        // 用户明确要求过：多行输入框一律回车换行。见面那条已经有守卫（上面一条），
+        // SAR 这条是补的 —— 上游 cd2d8a75 又把回车即发送加了回来，合的时候没拦住，
+        // 用户自己发现的。以后再被合进来，这条会立刻变红。
+        const source = read('../apps/vrWorld/SARSimulationSession.tsx');
+
+        expect(source).not.toContain("key==='Enter'");
+        expect(source).not.toContain("key === 'Enter'");
+        // 发送仍然要有按钮入口，别连发都发不出去。
+        expect(source).toContain('onClick={()=>void send()}');
+    });
+
     it('剧情重试会在再次生成前先尝试归档，避免超长上下文把后置归档永久卡死', () => {
         const source = read('../components/date/story/StoryTheaterSession.tsx');
         const send = source.slice(source.indexOf('const send = useCallback'), source.indexOf('const archivedCount ='));

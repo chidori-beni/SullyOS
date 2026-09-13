@@ -290,7 +290,7 @@ export const SARSimulationSession: React.FC<{
                     {archiveAction&&<output className="sars-action-status" role="status">{archiveAction}</output>}
                     {pendingReply&&<p className="sars-action-status">{messageScene(pendingReply)}等待重新生成，沿用当时的输入。</p>}
                     {active||pendingReply?<div className="sars-compose-row">
-                        <textarea ref={draftRef} rows={1} aria-label="你说的话或动作" value={draft} maxLength={4000} disabled={sending||!char||!!pendingReply} placeholder={pendingReply?'点击生成，重试已删除的回复':char?'说些什么，或做个动作…':'角色资料已不存在，无法继续'} onChange={event=>setDraft(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing){event.preventDefault();void send();}}}/>
+                        <textarea ref={draftRef} rows={1} aria-label="你说的话或动作" value={draft} maxLength={4000} disabled={sending||!char||!!pendingReply} placeholder={pendingReply?'点击生成，重试已删除的回复':char?'说些什么，或做个动作…':'角色资料已不存在，无法继续'} onChange={event=>setDraft(event.target.value)}/>
                         <button type="button" aria-label={pendingReply?'生成':'发送'} disabled={(!draft.trim()&&!pendingReply)||sending||!char} onClick={()=>void send()}>{sending?<CircleNotch size={19} className="animate-spin"/>:<ArrowUp size={21} weight="bold"/>}</button>
                     </div>:<div className="sars-readonly">已封存 · {run.interactionsUsed} 次互动</div>}
                 </footer>
