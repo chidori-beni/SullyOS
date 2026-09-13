@@ -653,7 +653,26 @@ function repairTruncatedJson(text: string): string | null {
     return repaired;
 }
 
-export function extractJson(raw: string): any | null {
+/** Repair formatting outside strings; preserve apostrophes and literal `, }` in prose. */
+function repairJsonPresentation(text: string): string {
+    let result = '';
+    let inString = false;
+    let escaped = false;
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (escaped) { result += ch; escaped = false; continue; }
+        if (inString && ch === '\\') { result += ch; escaped = true; continue; }
+        if (ch === '"') inString = !inString;
+        if (inString && ch.charCodeAt(0) < 32) {
+            result += JSON.stringify(ch).slice(1, -1);
+        } else if (!inString && ch === ',' && /^[\s]*[}\]]/.test(text.slice(i + 1))) {
+            continue;
+        } else result += ch;
+    }
+    return result;
+}
+
+export function extractJson(raw: string, options: { allowTruncated?: boolean; silent?: boolean } = {}): any | null {
     if (!raw) return null;
 
     // 1. Strip markdown code fences
@@ -681,6 +700,7 @@ export function extractJson(raw: string): any | null {
 
     // 4. Try parsing the extracted substring
     try { return JSON.parse(jsonStr); } catch {}
+    try { return JSON.parse(repairJsonPresentation(jsonStr)); } catch {}
 
     // 5. Fix common AI formatting issues and retry
     let fixed = jsonStr
@@ -699,6 +719,7 @@ export function extractJson(raw: string): any | null {
     // — the inner " breaks JSON parsing because they're not \-escaped.
     const innerQuoteFixed = escapeUnescapedInnerQuotes(jsonStr);
     if (innerQuoteFixed && innerQuoteFixed !== jsonStr) {
+        try { return JSON.parse(repairJsonPresentation(innerQuoteFixed)); } catch {}
         try { return JSON.parse(innerQuoteFixed); } catch {}
         try {
             return JSON.parse(innerQuoteFixed
@@ -710,7 +731,7 @@ export function extractJson(raw: string): any | null {
     // 7. Try to repair truncated JSON (LLM hit max_tokens)
     // Find the first { and attempt to close any open strings/brackets
     const firstBrace = text.indexOf('{');
-    if (firstBrace >= 0) {
+    if (firstBrace >= 0 && options.allowTruncated !== false) {
         let truncated = text.slice(firstBrace);
         const repaired = repairTruncatedJson(truncated);
         if (repaired) {
@@ -756,6 +777,6 @@ export function extractJson(raw: string): any | null {
         } catch {}
     }
 
-    console.error('[extractJson] All attempts failed. Raw:', raw.slice(0, 300));
+    if (!options.silent) console.error('[extractJson] All attempts failed. Raw:', raw.slice(0, 300));
     return null;
 }

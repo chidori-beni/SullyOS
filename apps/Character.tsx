@@ -22,6 +22,7 @@ import { safeFetchJson, extractContent } from '../utils/safeApi';
 import { fetchMiniMaxVoices, MiniMaxVoiceItem } from '../utils/minimaxVoice';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { normalizeUserImpression } from '../utils/impression';
+import { parseGeneratedImpression } from '../utils/impressionGeneration';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { COMMON_TIMEZONES } from '../utils/timezone';
 import { getEffectiveWorldbookMode, toMountedWorldbook, WORLDBOOK_MODE_LABELS } from '../utils/worldbook';
@@ -1140,11 +1141,7 @@ ${isInitialGeneration ? `
                   stream: apiConfig.stream === true
               })
           }, 0);
-          let content = extractContent(data);
-
-          content = content.replace(/```json/g, '').replace(/```/g, '').trim();
-          const parsed = normalizeUserImpression(JSON.parse(content));
-          if (!parsed) throw new Error('印象生成结果不完整');
+          const parsed = parseGeneratedImpression(data);
 
           if (editingIdRef.current === targetId) {
               handleChange('impression', parsed);

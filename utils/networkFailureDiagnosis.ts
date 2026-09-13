@@ -156,7 +156,7 @@ const VERDICTS: Record<FetchFailureKind, { verdict: string; causes: string }> = 
         causes: '中途切走了页面 · 手动点了停止',
     },
     timeout: {
-        verdict: '请求超时：到点为止一个响应字节都没等到。连接是**挂住不返回**，不是被明确拒绝——这两种要查的东西不一样。',
+        verdict: '请求超时：在截止时间前未完成。仅凭超时无法判断是连接、上游处理还是响应传输阶段。',
         causes: '代理/梯子接下了连接但上游是黑洞 · 这个域名没走代理、直连被拦截丢包 · 解析到的 IP 不可达 · 对方服务器无响应',
     },
     offline: {
@@ -172,7 +172,7 @@ const VERDICTS: Record<FetchFailureKind, { verdict: string; causes: string }> = 
         causes: '地址填错/少了 https:// · 复制时带进了空格或中文引号',
     },
     blocked: {
-        verdict: '请求在拿到响应头之前就失败了——浏览器没告诉我们具体是哪一步断的。',
+        verdict: '浏览器没有向页面提供可读取的响应；可能是连接失败，也可能已收到响应但被 CORS 拦截，暂时无法确定。',
         causes: '梯子/代理把这个域名的连接掐了 · DNS 解析不到 · 浏览器扩展（广告拦截/隐私盾/脚本管理器）屏蔽了 · 对方返回的是一张不带 CORS 头的页面（限流、人机验证、网关报错）',
     },
     unknown: {
@@ -210,7 +210,7 @@ export const readResourceTimingHint = (
     const entry = entries
         .filter(item => typeof item?.startTime === 'number' && item.startTime >= startedAt)
         .pop();
-    if (!entry) return 'Resource Timing: 没有这条请求的记录（通常说明连接压根没建立起来，或被扩展在发出前就拦掉了）';
+    if (!entry) return 'Resource Timing: 没有这条请求的记录；无法据此判断连接是否建立，或响应是否被浏览器隐藏。';
     // 跨域资源拿不到 Timing-Allow-Origin 授权时，规范要求把 responseStatus、transferSize、
     // 各阶段时间戳统统置 0。这时候「transferSize=0」的意思是「没授权看」，不是「一个字节都
     // 没传」——照字面读会得出跟事实相反的结论，所以这些字段整个不印，改成一句说明。
@@ -235,19 +235,16 @@ export const readResourceTimingHint = (
 };
 
 /**
- * 「失败得多快」本身就是证据，而且是 JS 侧唯一能拿到的、区分「连接被吞」和「立刻被拒」
- * 的线索——这两种的排查方向完全相反：
- *   - 挂几秒到几十秒才失败 ⇒ TCP/TLS 握手没人应答（黑洞）。查代理分流规则、换节点。
- *   - 几十毫秒就失败 ⇒ 有人明确说不 。查 DNS、扩展、防火墙、混合内容。
+ * 耗时只能帮助缩小范围，不能区分 DNS、握手、上游处理和响应 CORS 检查。
  */
 export const readStallHint = (durationMs?: number, kind?: FetchFailureKind): string => {
     if (typeof durationMs !== 'number' || !Number.isFinite(durationMs)) return '';
     if (kind && kind !== 'blocked' && kind !== 'timeout' && kind !== 'unknown') return '';
     if (durationMs >= 5000) {
-        return `耗时线索: 挂了 ${(durationMs / 1000).toFixed(1)}s 才失败、且一个字节都没收到 → 连接建立阶段被吞（握手没人应答），不是「立刻被拒」。这种形态最常见的是：该域名没走代理走了直连、或代理节点到上游是黑洞。优先换节点 / 把该域名显式加进代理规则。`;
+        return `耗时线索: ${(durationMs / 1000).toFixed(1)}s 后失败，可能涉及代理/连接等待、上游处理或传输中断；也可能是较晚返回的响应被 CORS 拦截，不能仅凭耗时确定失败阶段。`;
     }
     if (durationMs <= 300) {
-        return `耗时线索: ${Math.round(durationMs)}ms 就失败，属于「立刻被拒」→ DNS 解析不到、浏览器扩展或防火墙在发出前拦掉、代理直接拒绝连接。不像是线路慢或被墙。`;
+        return `耗时线索: ${Math.round(durationMs)}ms 就失败，可能是快速的 CORS 拒绝、DNS/代理失败或扩展拦截；不能仅凭耗时认定请求未发出。`;
     }
     return '';
 };
@@ -377,11 +374,12 @@ export const probeOriginReachability = async (
 };
 
 /** 把复检结论翻成给人看的一句话 + 下一步该往哪查。 */
-export const describeReachabilityProbe = (verdict: ReachabilityVerdict, host: string): string => {
+export const describeReachabilityProbe = (verdict: ReachabilityVerdict, host: string, method = 'GET'): string => {
     const who = host || '该域名';
     switch (verdict) {
         case 'reachable':
-            return `连通性复检: no-cors 直连 ${who} 成功 → 只能确认这个域名当前可达；原 POST 仍可能在生成后断流、被网关关闭，或因最终响应缺少 CORS 头而被浏览器拦截。上游若已开始生成，即使页面显示失败也可能计费；请先核对服务商日志，不要连续重发。`;
+            return `连通性复检: no-cors 直连 ${who} 成功 → 只能确认这个域名当前可达，不能确认原文件或接口可用；原 ${method.toUpperCase()} 可能被网关关闭、链接失效，或因响应缺少 CORS 头而被浏览器拦截。`
+                + (method.toUpperCase() === 'POST' ? '上游若已开始生成，即使页面显示失败也可能计费；请先核对服务商日志，不要连续重发。' : '资源加载失败不等于生成失败；请检查原资源链接的有效期及响应头。');
         case 'unreachable':
             return `连通性复检: no-cors 直连 ${who} 同样失败 → 这台设备到 ${who} 是真的连不上。按顺序查：梯子的分流规则（把该域名放进代理）、DNS、浏览器扩展（广告拦截/隐私盾）、系统或路由器防火墙。`;
         case 'timeout':

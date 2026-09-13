@@ -376,14 +376,20 @@ export const convertHexAudioToBlob = (hexAudio: string, mimeType = 'audio/mpeg')
 
 /** Fetch remote audio URL and return as Blob */
 export const fetchRemoteAudioBlob = async (sourceUrl: string): Promise<Blob> => {
-  const cacheBustedUrl = sourceUrl.includes('?')
-    ? `${sourceUrl}&_ts=${Date.now()}`
-    : `${sourceUrl}?_ts=${Date.now()}`;
-  const response = await fetch(cacheBustedUrl, { cache: 'no-store' });
-  if (!response.ok) throw new Error(`音频下载失败（HTTP ${response.status}）`);
-  const blob = await response.blob();
-  if (!blob.size) throw new Error('音频下载为空文件');
-  return blob;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    // 签名网址原样请求：签名和缓存身份属于上游，加 _ts 反而可能让签名失效。
+    const response = await fetch(sourceUrl, { cache: 'no-store', signal: controller.signal });
+    if (!response.ok) throw new Error(`音频下载失败（HTTP ${response.status}）`);
+    const type = response.headers.get('content-type') || '';
+    if (/text\/html|application\/(?:json|xml)/i.test(type)) throw new Error('音频地址返回了错误页面');
+    const blob = await response.blob();
+    if (!blob.size) throw new Error('音频下载为空文件');
+    return blob;
+  } finally {
+    clearTimeout(timer);
+  }
 };
 
 /**
@@ -440,6 +446,10 @@ export async function synthesizeSpeechDetailed(
     model,
     text: processedText,
     stream: false,
+    // 合上游：直接让 MiniMax 把音频内联在响应里（hex），不再返回签名网址。
+    // 省掉第二次跨域 GET —— 那一步常被 CORS 拦住，只能退回裸链接、也进不了缓存。
+    // 传输格式不影响音色参数和缓存键。
+    output_format: 'hex',
     voice_setting: {
       voice_id: vp?.voiceId || '',
       ...buildVoiceSettings(vp, options?.emotion),
@@ -506,7 +516,8 @@ export async function synthesizeSpeechDetailed(
   }
 
   const audio = data?.data?.audio;
-  if (!audio) {
+  // 合上游：空串和非字符串也算没拿到（以前 !audio 挡不住 ' ' 这类脏值）
+  if (typeof audio !== 'string' || !audio.trim()) {
     // Log full response for debugging
     console.error('[TTS] No audio in response:', JSON.stringify(data).slice(0, 500));
     throw new Error('TTS 返回无音频数据');

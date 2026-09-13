@@ -229,7 +229,7 @@ describe('buildFetchFailureDetail', () => {
             pageProtocol: 'https:',
         }, { startedAt: 0, perf: { getEntriesByName: () => [] } });
         expect(text).toContain('请求超时');
-        expect(text).toContain('连接建立阶段被吞');
+        expect(text).toContain('不能仅凭耗时确定失败阶段');
         expect(text).not.toContain('不符合已知');
         expect(text).not.toContain('看下面的错误原文');
     });
@@ -268,25 +268,35 @@ describe('buildFetchFailureDetail', () => {
                 getEntriesByName: () => [{ startTime: 9_000, responseStatus: 200, transferSize: 0, duration: 1038 }],
             },
         });
-        expect(text).toContain('连接建立阶段被吞');
+        expect(text).toContain('不能仅凭耗时确定失败阶段');
         expect(text).not.toContain('对方其实回了');
         expect(text).not.toContain('responseStatus=200');
     });
 });
 
 describe('readStallHint', () => {
-    it('挂了 20s 才失败 → 判成「连接被吞」，指向代理分流规则', () => {
+    it('MiniMax 的快速 GET 失败保留 CORS 可能性，不误判为请求未发出', () => {
+        const text = buildFetchFailureDetail({
+            url: 'https://audio.example.com/voice.mp3', method: 'GET', durationMs: 162,
+            error: new TypeError('Load failed'), online: true, pageOrigin: 'https://friedsully.com',
+        }, { startedAt: 0, perf: { getEntriesByName: () => [] } });
+        expect(text).toContain('请求: GET');
+        expect(text).toContain('CORS');
+        expect(text).not.toContain('拿到响应头之前就失败');
+        expect(text).not.toContain('通常说明连接压根没建立');
+    });
+    it('耗时较长不能确定卡在连接阶段，也可能是上游处理或 CORS', () => {
         const hint = readStallHint(20187, 'blocked');
         expect(hint).toContain('20.2s');
-        expect(hint).toContain('连接建立阶段被吞');
         expect(hint).toContain('代理');
-        expect(hint).toContain('不是「立刻被拒」');
-        expect(hint).not.toContain('DNS');
+        expect(hint).toContain('CORS');
+        expect(hint).toContain('不能仅凭耗时');
+        expect(hint).not.toContain('一个字节都没收到');
     });
 
-    it('几十毫秒就失败 → 判成「立刻被拒」，指向 DNS/扩展，不能提被墙', () => {
+    it('几十毫秒就失败也可能是已收到响应后的 CORS 拒绝', () => {
         const hint = readStallHint(43, 'blocked');
-        expect(hint).toContain('立刻被拒');
+        expect(hint).toContain('CORS');
         expect(hint).toContain('DNS');
         expect(hint).not.toContain('连接建立阶段被吞');
     });
@@ -302,7 +312,7 @@ describe('readStallHint', () => {
 });
 
 describe('readResourceTimingHint', () => {
-    it('没有记录时说明「连接可能压根没建立」', () => {
+    it('没有记录时不武断认定连接未建立', () => {
         expect(readResourceTimingHint('https://a.example.com/x', {
             startedAt: 1000, perf: { getEntriesByName: () => [] },
         })).toContain('没有这条请求的记录');
@@ -437,7 +447,7 @@ describe('probeOriginReachability', () => {
 
 describe('describeReachabilityProbe', () => {
     it('通了 → 只确认域名可达，并警告生成后失败仍可能计费', () => {
-        const text = describeReachabilityProbe('reachable', 'sullymeow.ccwu.cc');
+        const text = describeReachabilityProbe('reachable', 'sullymeow.ccwu.cc', 'POST');
         expect(text).toContain('域名当前可达');
         expect(text).toContain('原 POST');
         expect(text).toContain('CORS');
@@ -445,6 +455,14 @@ describe('describeReachabilityProbe', () => {
         expect(text).toContain('不要连续重发');
         expect(text).not.toContain('问题出在响应本身');
         expect(text).not.toContain('梯子的分流规则');
+    });
+
+    it('GET 音频下载失败不能被说成 POST 生成失败', () => {
+        const text = describeReachabilityProbe('reachable', 'audio.example.com', 'GET');
+        expect(text).toContain('原 GET');
+        expect(text).toContain('资源加载失败不等于生成失败');
+        expect(text).not.toContain('POST');
+        expect(text).not.toContain('可能计费');
     });
 
     it('没通 → 指向线路，不能再提 CORS 把人带偏', () => {

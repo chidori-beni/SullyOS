@@ -63,7 +63,7 @@ import { cleanTextForTts, parseVoiceOutput } from '../utils/minimaxTts';
 import { collectVoiceBatchSubtitle, isPoisonedVoiceSubtitle } from '../utils/voiceSubtitle';
 import { synthesizeSpeechDetailed, characterHasVoice, cleanTextForTtsProvider, stripTtsMarkupForDisplay, providerUsesRawVoiceMarkup } from '../utils/ttsRouter';
 import { blobsAreIdentical, speedJitterForAttempt } from '../utils/blobEquals';
-import { shouldAutoGenerateVoice, shouldAutoPlayGeneratedVoice } from '../utils/voicePlayback';
+import { playVoiceAudio, primeVoiceAudio, stopVoiceAudio, voicePlaybackErrorMessage, shouldAutoGenerateVoice, shouldAutoPlayGeneratedVoice } from '../utils/voicePlayback';
 import { voiceLanguageAnalyticsValue, voiceLanguagePromptLabel } from '../utils/voiceLanguage';
 import { fetchBlobForShare, shareOrDownloadBlob } from '../utils/shareExport';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
@@ -566,6 +566,22 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     const [voiceLoading, setVoiceLoading] = useState<Set<number>>(new Set());
     const [playingMsgId, setPlayingMsgId] = useState<number | null>(null);
     const chatAudioRef = useRef<HTMLAudioElement | null>(null);
+    // 合上游：正在合成的消息 id（比 voiceLoading 这个 state 早一帧，挡得住同一帧的重复点击）；
+    // 以及「本组件还挂着吗」——合成回来时用户可能已经切走角色了。
+    const voiceRequestsRef = useRef(new Set<number>());
+    const voiceMountedRef = useRef(true);
+    const prepareChatAudio = () => {
+        if (!chatAudioRef.current) chatAudioRef.current = new Audio();
+        return chatAudioRef.current;
+    };
+    /** 播放失败时如实弹一句原因，而不是默默吞掉、也不重新生成一遍音频。 */
+    const playChatVoice = (msgId: number, url: string) => {
+        void playVoiceAudio(prepareChatAudio(), url, {
+            onPlaying: () => setPlayingMsgId(msgId),
+            onStopped: () => setPlayingMsgId(null),
+            onError: error => addToast(voicePlaybackErrorMessage(error), 'info'),
+        });
+    };
 
     /** Keep a tiny durable marker so an expired manually-generated role voice still has a play button. */
     const markVoiceGenerated = useCallback((messageId: number) => {
@@ -721,17 +737,13 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             }
             return;
         }
-        if (!chatAudioRef.current) chatAudioRef.current = new Audio();
-        const audio = chatAudioRef.current;
+        const audio = prepareChatAudio();
         if (playingMsgId === msgId) {
-            audio.pause();
+            stopVoiceAudio(audio);
             setPlayingMsgId(null);
             return;
         }
-        audio.src = data.url;
-        audio.onended = () => setPlayingMsgId(null);
-        audio.play().catch(() => {});
-        setPlayingMsgId(msgId);
+        playChatVoice(msgId, data.url);
     };
 
     // 稳定的播放回调：用 ref 持有最新闭包，引用永不变 —— 避免每条消息每次渲染都新建箭头函数，
@@ -779,7 +791,10 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         // the transcript remains readable but there is no honest way to recreate
         // the speaker's voice from text.
         if (msg.role === 'user' && msg.type === 'voice') return null;
-        if (voiceLoading.has(msg.id)) return null;
+        if (voiceRequestsRef.current.has(msg.id)) return null;
+        // 用户手动点的这一下是真实手势，趁机解锁音频元素；自动触发的不算手势，不解锁。
+        if (!autoTriggered) primeVoiceAudio(prepareChatAudio());
+        voiceRequestsRef.current.add(msg.id);
         // 重 roll 时先把旧音频留一份，合成完拿来比对：MiniMax 偶尔会原样返回同一段，
         // 那种情况下界面显示"重新生成成功"但听感一点没变，得自动再试一次（见下面 force 分支）。
         let previousBlob: Blob | null = null;
@@ -908,6 +923,11 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 blobUrl = retry.url;
                 blob = retry.blob;
             }
+            // 合成期间用户可能已经切走角色或退出聊天；这时别再往界面里塞数据，直接把 blob 还回去。
+            if (!voiceMountedRef.current || activeCharIdRef.current !== msg.charId) {
+                if (blobUrl.startsWith('blob:')) URL.revokeObjectURL(blobUrl);
+                return null;
+            }
             if (blobUrl.startsWith('blob:')) voiceBlobUrlsRef.current.add(blobUrl);
             // 鱼声的 spokenText 里有 inline cue（[whispering] 等），转文字面板要剥掉再存，别让用户看到标记。
             const displaySpoken = providerUsesRawVoiceMarkup(apiConfig) ? stripFishMarkupForDisplay(spokenText) : spokenText;
@@ -920,11 +940,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             // 合成完是否立刻播（规则和来由见 shouldAutoPlayGeneratedVoice）：
             // AI 自动发来的默认不响、等用户点；用户自己点着要的一定响。
             if (shouldAutoPlayGeneratedVoice({ autoTriggered, autoPlayEnabled: char.chatVoiceAutoPlay })) {
-                if (!chatAudioRef.current) chatAudioRef.current = new Audio();
-                chatAudioRef.current.src = blobUrl;
-                chatAudioRef.current.onended = () => setPlayingMsgId(null);
-                chatAudioRef.current.play().catch(() => {});
-                setPlayingMsgId(msg.id);
+                playChatVoice(msg.id, blobUrl);
             }
             return { url: blobUrl, originalText, spokenText: storedSpokenText, lang: storedLang, blob };
         } catch (err: any) {
@@ -934,6 +950,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             return null;
         } finally {
             setVoiceLoading(prev => { const next = new Set(prev); next.delete(msg.id); return next; });
+            voiceRequestsRef.current.delete(msg.id);
         }
     };
 
@@ -1310,7 +1327,11 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         // 重 roll 的抖动计数同理，按角色重来。
         voiceRerollAttemptRef.current.clear();
         const urls = voiceBlobUrlsRef.current;
+        voiceMountedRef.current = true;
         return () => {
+            // 合上游：离开这个角色之后，合成回来的音频不该再往界面里塞（见上面那道在场检查）。
+            voiceMountedRef.current = false;
+            if (chatAudioRef.current) stopVoiceAudio(chatAudioRef.current);
             urls.forEach(u => { try { URL.revokeObjectURL(u); } catch { /* ignore */ } });
             urls.clear();
         };
@@ -1377,7 +1398,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             // by the cleanup effect and must not be reused against new messages.
             setVoiceDataMap({});
             setPlayingMsgId(null);
-            if (chatAudioRef.current) { try { chatAudioRef.current.pause(); } catch { /* ignore */ } }
+            if (chatAudioRef.current) { try { stopVoiceAudio(chatAudioRef.current); } catch { /* ignore */ } }
 
             reloadMessages(LOAD_BATCH_SIZE);
             loadEmojiData();

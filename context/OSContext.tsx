@@ -1367,7 +1367,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   if (shouldProbeReachability(classifyFetchFailure({ url: urlStr, error: err }))) {
                       void (async () => {
                           const verdict = await probeOriginReachability(urlStr, originalFetch);
-                          const line = describeReachabilityProbe(verdict, parseTargetUrl(urlStr).host);
+                          const line = describeReachabilityProbe(verdict, parseTargetUrl(urlStr).host, method);
                           if (!line) return;
                           setSystemLogs(prev => prev.map(log => (
                               log.id === logId ? { ...log, detail: `${log.detail || ''}\n${line}` } : log
