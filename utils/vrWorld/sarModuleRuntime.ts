@@ -333,9 +333,13 @@ export const buildSARModulePrompt = (
     );
     // 心声开着时必须点名它：上面那句「最终只输出以下容器」会让模型把心声一并吞掉，
     // 而模块提示词原本一个字都没提过心声，两个功能互相不知道对方存在。
-    // 摘心声的代码（extractXinsheng）是全文扫描、不挑位置，所以放在容器外面最安全：
-    // 既不会污染 CHAR_TRUE / CHAR_SURFACE 的气泡对齐，也照样摘得到。
-    if (char.xinshengEnabled) lines.push(
+    //
+    // ⚠️ 写在容器外还不够：parseSARModuleReply 只取 CHAR_TRUE，容器外的内容会被整段丢掉，
+    //    心声于是根本走不到 extractXinsheng。配套改动见下面的 carryTrailingXinsheng。
+    //
+    // 只对聊天注入：见面（DateApp）不跑 applyAssistantPostProcessing，没人摘心声，
+    // 补过去只会把一行 JSON 明晃晃显示在正文里。
+    if (char.xinshengEnabled && surface === 'chat') lines.push(
         ``,
         `例外：心声 JSON 不受上面那句「只输出容器」的限制。把它写在 </SAR_MODULE_OUTPUT> 之后、`
         + `作为整段输出的最后一行，容器内部不要出现心声。心声写角色的真实内心，对应 CHAR_TRUE，`
@@ -400,17 +404,38 @@ const tag = (raw: string, name: string): string | undefined => {
 };
 
 /** 模型不守容器时安全降级：原始输出视为真实回复，不猜、不污染 canonical。 */
+/** 心声 JSON 的起手标记，和 utils/xinsheng/xinshengData.ts 里 extractXinsheng 用的是同一个。 */
+const XINSHENG_MARKER_RE = /\{"t"\s*:\s*"xinsheng"/i;
+
+/**
+ * 按提示词要求，心声写在 </SAR_MODULE_OUTPUT> 之后（写进容器会打乱 CHAR_TRUE / CHAR_SURFACE
+ * 的气泡逐条对齐）。但拆容器时只取 CHAR_TRUE，容器外的内容会被丢掉 —— 心声因此永远到不了
+ * applyAssistantPostProcessing 里的 extractXinsheng。这里把它原样接回 canonical 末尾：
+ * extractXinsheng 是全文扫描、不挑位置，会把它摘走并从正文里去掉，不会留成气泡。
+ *
+ * 只有调用方明确要（聊天路径）才接。见面路径不摘心声，接回去等于把 JSON 显示出来。
+ */
+const trailingXinsheng = (raw: string): string => {
+    const close = '</SAR_MODULE_OUTPUT>';
+    const end = raw.toUpperCase().lastIndexOf(close);
+    const outside = end === -1 ? '' : raw.slice(end + close.length);
+    const at = outside.search(XINSHENG_MARKER_RE);
+    return at === -1 ? '' : outside.slice(at).trim();
+};
+
 export const parseSARModuleReply = (
     raw: string,
     plan: SARModuleRuntimePlan,
+    options: { carryTrailingXinsheng?: boolean } = {},
 ): SARModuleParsedReply => {
     // 无模块/只有已退场提示时保持原始回复字节不动：不 trim、不解析、不猜测。
     if (!plan.requiresEnvelope) return { canonical: raw, enveloped: false };
     const body = tag(raw, 'SAR_MODULE_OUTPUT') || raw;
     const canonical = tag(body, 'CHAR_TRUE');
     if (!canonical) return { canonical: raw.trim(), enveloped: false };
+    const carried = options.carryTrailingXinsheng ? trailingXinsheng(raw) : '';
     return {
-        canonical,
+        canonical: carried ? `${canonical}\n${carried}` : canonical,
         assistantSurface: plan.character?.phase === 'active' ? tag(body, 'CHAR_SURFACE') : undefined,
         userSurface: plan.user?.phase === 'active' ? tag(body, 'USER_SURFACE') : undefined,
         enveloped: true,

@@ -2222,7 +2222,9 @@ export const useChatAI = ({
                 }
             };
             const rawAiContent = data.choices?.[0]?.message?.content || '';
-            const sarReply = parseSARModuleReply(rawAiContent, sarModulePlan);
+            // carryTrailingXinsheng：模块生效时心声按提示词写在容器外，拆容器会丢掉容器外的内容，
+            // 这里要求把它接回 canonical，后面的 extractXinsheng 才摘得到（见 sarModuleRuntime）。
+            const sarReply = parseSARModuleReply(rawAiContent, sarModulePlan, { carryTrailingXinsheng: true });
             const latestUserMessage = currentMsgs.slice().reverse().find(message => (
                 message.role === 'user' && message.type === 'text'
             ));

@@ -280,4 +280,48 @@ describe('模块提前结束与请求返回的顺序', () => {
         expect(ended).toMatchObject({ phase: 'afterglow', afterglowTurns: 3 });
         expect(advanceSARModuleAfterReply(ended, requested)).toBe(ended);
     });
+    // 回归守卫：这个 bug 修过两次。第一次只在提示词里让模型「把心声写在容器外」，
+    // 但 parseSARModuleReply 只取 CHAR_TRUE，容器外的内容被整段丢掉，心声根本走不到
+    // extractXinsheng —— 表现就是「开着模块就没有心声」。
+    it('模块生效时：聊天注入心声例外说明，见面不注入', () => {
+        const runtime = installSARModuleOnCharacter(module, 1);
+        const char = { ...baseChar, xinshengEnabled: true, vrState: { ...baseChar.vrState!, sarModule: runtime } } as CharacterProfile;
+        expect(buildSARModulePrompt(char, baseUser, 'chat')).toContain('</SAR_MODULE_OUTPUT>');
+        expect(buildSARModulePrompt(char, baseUser, 'chat')).toContain('心声');
+        // 见面不跑 applyAssistantPostProcessing，没人摘心声，注入只会把 JSON 显示出来
+        expect(buildSARModulePrompt(char, baseUser, 'date')).not.toContain('心声 JSON');
+        // 没开心声的角色，聊天也不该出现这段
+        const plain = { ...char, xinshengEnabled: false } as CharacterProfile;
+        expect(buildSARModulePrompt(plain, baseUser, 'chat')).not.toContain('心声 JSON');
+    });
+
+    it('拆容器时把写在容器外的心声接回 canonical（否则会被整段丢掉）', () => {
+        const runtime = installSARModuleOnCharacter(module, 1);
+        const char = { ...baseChar, xinshengEnabled: true, vrState: { ...baseChar.vrState!, sarModule: runtime } } as CharacterProfile;
+        const plan = getSARModuleRuntimePlan(char, baseUser);
+        expect(plan.requiresEnvelope).toBe(true);
+        const xinsheng = '{"t":"xinsheng","innerVoice":"其实有点开心"}';
+        const raw = `<SAR_MODULE_OUTPUT>
+<CHAR_TRUE>今天还好。</CHAR_TRUE>
+<CHAR_SURFACE>今天■■。</CHAR_SURFACE>
+</SAR_MODULE_OUTPUT>
+${xinsheng}`;
+
+        // 聊天路径：必须带回来，extractXinsheng 之后会把它从正文里摘走
+        const chat = parseSARModuleReply(raw, plan, { carryTrailingXinsheng: true });
+        expect(chat.canonical).toContain('今天还好。');
+        expect(chat.canonical).toContain('"t":"xinsheng"');
+        expect(chat.assistantSurface).toContain('今天■■。');
+
+        // 见面路径（默认不带）：canonical 里不该混进 JSON
+        const date = parseSARModuleReply(raw, plan);
+        expect(date.canonical).toBe('今天还好。');
+        expect(date.canonical).not.toContain('xinsheng');
+
+        // 容器外没有心声时不该凭空加东西
+        const clean = `<SAR_MODULE_OUTPUT>
+<CHAR_TRUE>只有正文</CHAR_TRUE>
+</SAR_MODULE_OUTPUT>`;
+        expect(parseSARModuleReply(clean, plan, { carryTrailingXinsheng: true }).canonical).toBe('只有正文');
+    });
 });
