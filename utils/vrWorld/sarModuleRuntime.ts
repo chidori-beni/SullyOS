@@ -331,6 +331,16 @@ export const buildSARModulePrompt = (
         `<USER_SURFACE>用户本轮输入的外显版本；未受影响时留空</USER_SURFACE>`,
         `</SAR_MODULE_OUTPUT>`,
     );
+    // 心声开着时必须点名它：上面那句「最终只输出以下容器」会让模型把心声一并吞掉，
+    // 而模块提示词原本一个字都没提过心声，两个功能互相不知道对方存在。
+    // 摘心声的代码（extractXinsheng）是全文扫描、不挑位置，所以放在容器外面最安全：
+    // 既不会污染 CHAR_TRUE / CHAR_SURFACE 的气泡对齐，也照样摘得到。
+    if (char.xinshengEnabled) lines.push(
+        ``,
+        `例外：心声 JSON 不受上面那句「只输出容器」的限制。把它写在 </SAR_MODULE_OUTPUT> 之后、`
+        + `作为整段输出的最后一行，容器内部不要出现心声。心声写角色的真实内心，对应 CHAR_TRUE，`
+        + `不要按模块扭曲后的外显版本来写。`,
+    );
     return `\n\n${lines.join('\n')}\n`;
 };
 

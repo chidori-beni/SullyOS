@@ -5092,6 +5092,8 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                                     aria-atomic="true"
                                     className={visibleRecallSubmitStatus.phase === 'accepted' || visibleRecallSubmitStatus.phase === 'sent'
                                         ? 'flex items-center gap-2 text-xs text-emerald-600 font-medium'
+                                        : visibleRecallSubmitStatus.phase === 'local'
+                                            ? 'flex items-center gap-2 text-xs text-amber-600 font-medium'
                                         : 'flex items-center gap-2 text-xs text-indigo-500 font-medium'}
                                 >
                                     {visibleRecallSubmitStatus.phase === 'accepted' || visibleRecallSubmitStatus.phase === 'sent' ? (
@@ -5107,6 +5109,8 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                                     <span>
                                         {visibleRecallSubmitStatus.phase === 'recalling'
                                             ? '正在召回记忆…'
+                                            : visibleRecallSubmitStatus.phase === 'local'
+                                                ? 'SAR 模块生效中，本轮在本机生成（不走云端，请留在页面）'
                                             : visibleRecallSubmitStatus.phase === 'submitting'
                                                 ? visibleRecallSubmitStatus.recall === 'degraded'
                                                     ? '可用记忆已准备，正在提交云端…'

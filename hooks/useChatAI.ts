@@ -87,7 +87,10 @@ type RecallSubmitStatus =
     | { phase: 'recalling' }
     | { phase: 'submitting'; recall: RecallPreparationState }
     | { phase: 'accepted' }
-    | { phase: 'sent' };
+    | { phase: 'sent' }
+    // 本轮明确不上云时也给个交代：以前这里直接置 null，状态栏只闪过一句
+    // 「正在召回记忆…」就没了，用户以为功能坏了。reason 只用来挑文案。
+    | { phase: 'local'; reason: 'sar-module' };
 
 // ─── 云端情绪评估的安全网定时器（模块级，按角色）───
 // 为什么不放 hook 里：结论（emotionDone）是全局事件，用户切了角色、离开聊天页之后
@@ -1200,6 +1203,10 @@ export const useChatAI = ({
                     phase: 'submitting',
                     recall: recallPreparation,
                 });
+            } else if (instantChatVeto === 'sar-module') {
+                // 模块生效/余韵期间即时对话被否决（见上面的 instantChatVeto）。
+                // 这是设计使然，但得让用户看见，否则状态栏突然少了好几条会被当成故障。
+                setRecallSubmitStatusForAttempt(recallSubmitAttempt, { phase: 'local', reason: 'sar-module' });
             } else {
                 // 普通本地回复继续使用原有 typing 指示，不额外占一行状态空间。
                 setRecallSubmitStatusForAttempt(recallSubmitAttempt, null);

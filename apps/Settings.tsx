@@ -513,7 +513,10 @@ const Settings: React.FC = () => {
   const [editPresetModel, setEditPresetModel] = useState('');
   const [editPresetStream, setEditPresetStream] = useState(false);
   const [editPresetTemperature, setEditPresetTemperature] = useState(0.85);
-  const [holdingDeletePresetId, setHoldingDeletePresetId] = useState<string | null>(null);
+  // 删预设改成「两次点击」：第一下把这颗 × 武装成待确认（变红并提示），第二下才真删。
+  // 原来是「按住 0.7 秒」——在手机上按住一个 20px 的小图标不动太难，常常什么都没发生
+  // 又不给任何反馈，看起来就像「删不掉」。3 秒内没有第二下就自动解除武装。
+  const [pendingDeletePresetId, setPendingDeletePresetId] = useState<string | null>(null);
   const presetDeleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // UI States
@@ -916,7 +919,7 @@ const Settings: React.FC = () => {
   };
 
   const openEditPreset = (preset: typeof apiPresets[0]) => {
-      cancelPresetDeleteHold();
+      cancelPresetDelete();
       const isActive = activePresetId === preset.id;
       setEditingPresetId(preset.id);
       setEditPresetName(preset.name);
@@ -960,12 +963,12 @@ const Settings: React.FC = () => {
       addToast(wasActive ? `「${name}」已更新，当前配置同步生效` : `「${name}」已更新`, 'success');
   };
 
-  const cancelPresetDeleteHold = useCallback(() => {
+  const cancelPresetDelete = useCallback(() => {
       if (presetDeleteTimerRef.current) {
           clearTimeout(presetDeleteTimerRef.current);
           presetDeleteTimerRef.current = null;
       }
-      setHoldingDeletePresetId(null);
+      setPendingDeletePresetId(null);
   }, []);
 
   useEffect(() => () => {
@@ -973,23 +976,22 @@ const Settings: React.FC = () => {
   }, []);
 
   // 删预设只是把这张「存档卡」扔掉：当前生效的配置是拷贝，不受影响。
-  const deleteApiPreset = (id: string, name: string) => {
-      cancelPresetDeleteHold();
-      removeApiPreset(id);
-      setEditingPresetId(current => (current === id ? null : current));
-      addToast(`已删除预设: ${name}`, 'success');
-  };
-
-  const beginPresetDeleteHold = (id: string, name: string) => {
-      cancelPresetDeleteHold();
-      setHoldingDeletePresetId(id);
-      presetDeleteTimerRef.current = setTimeout(() => {
-          presetDeleteTimerRef.current = null;
-          setHoldingDeletePresetId(null);
+  // 第一下武装，第二下真删；去点别的预设的 × 会把上一个解除武装。
+  const handlePresetDeleteTap = (id: string, name: string) => {
+      if (pendingDeletePresetId === id) {
+          cancelPresetDelete();
           removeApiPreset(id);
           setEditingPresetId(current => (current === id ? null : current));
           addToast(`已删除预设: ${name}`, 'success');
-      }, 700);
+          return;
+      }
+      cancelPresetDelete();
+      setPendingDeletePresetId(id);
+      addToast(`再点一次 × 删除「${name}」`, 'info');
+      presetDeleteTimerRef.current = setTimeout(() => {
+          presetDeleteTimerRef.current = null;
+          setPendingDeletePresetId(null);
+      }, 3000);
   };
 
   const handleSavePreset = () => {
@@ -1959,18 +1961,17 @@ const Settings: React.FC = () => {
                                     className="p-1 rounded-full text-slate-300 hover:bg-primary/10 hover:text-primary transition-colors">
                                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M13.586 3.586a2 2 0 1 1 2.828 2.828l-.793.793-2.828-2.828.793-.793ZM11.379 5.793 3 14.172V17h2.828l8.38-8.379-2.83-2.828Z" /></svg>
                                 </button>
+                                {/* before:-inset-2.5 把可点范围从 20px 撑到 40px（手机能稳稳点中），
+                                    伪元素不占布局，这一行预设的外观和高度完全不变。 */}
                                 <button
                                     type="button"
-                                    aria-label={`长按或双击删除预设 ${preset.name}`}
-                                    title="长按或双击删除"
-                                    onPointerDown={(event) => { event.stopPropagation(); beginPresetDeleteHold(preset.id, preset.name); }}
-                                    onPointerUp={cancelPresetDeleteHold}
-                                    onPointerCancel={cancelPresetDeleteHold}
-                                    onPointerLeave={cancelPresetDeleteHold}
-                                    onDoubleClick={(event) => { event.stopPropagation(); deleteApiPreset(preset.id, preset.name); }}
+                                    aria-label={`${pendingDeletePresetId === preset.id ? '再点一次 × 删除' : '删除'}预设 ${preset.name}`}
+                                    title={pendingDeletePresetId === preset.id ? '再点一次删除' : '点两次删除'}
+                                    onClick={(event) => { event.stopPropagation(); handlePresetDeleteTap(preset.id, preset.name); }}
                                     onContextMenu={(event) => event.preventDefault()}
-                                    className={`p-1 rounded-full transition-colors select-none touch-none ${
-                                        holdingDeletePresetId === preset.id
+                                    className={`relative p-1 rounded-full transition-colors select-none touch-none
+                                        before:absolute before:-inset-2.5 before:content-[''] ${
+                                        pendingDeletePresetId === preset.id
                                             ? 'bg-red-100 text-red-500 scale-110'
                                             : 'text-slate-300 hover:bg-red-50 hover:text-red-400'
                                     }`}>
@@ -1979,7 +1980,7 @@ const Settings: React.FC = () => {
                             </div>
                         ))}
                     </div>
-                    <p className="text-[9px] text-slate-300 mt-1.5 pl-1">点名称直接切换并生效；铅笔改这条预设的内容；长按或双击 × 才会删除。</p>
+                    <p className="text-[9px] text-slate-300 mt-1.5 pl-1">点名称直接切换并生效；铅笔改这条预设的内容；× 点两次才会删除（第一次只是确认）。</p>
                 </div>
             )}
 
