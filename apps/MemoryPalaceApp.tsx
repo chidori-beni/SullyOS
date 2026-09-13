@@ -28,8 +28,6 @@ import {
     DEFAULT_MANUAL_CONTEXT_LIMIT,
 } from '../utils/chatContextRange';
 import {
-    buildRangeSearchEntries,
-    filterRangeSearchEntries,
     getRangeEndpointLabel,
     getRangeSelectionHint,
 } from '../utils/memoryPalace/rangeSelection';
@@ -53,15 +51,7 @@ import {
 const RANGE_PAGE_SIZE = 50;
 
 /** 手动总结面板：把毫秒时间戳格式化成「2026-03-20 14:30」 */
-const fmtRangeTs = (ts: number): string => {
-    if (!ts) return '';
-    try {
-        return new Date(ts).toLocaleString('zh-CN', {
-            year: 'numeric', month: '2-digit', day: '2-digit',
-            hour: '2-digit', minute: '2-digit',
-        });
-    } catch { return ''; }
-};
+const fmtRangeTs = formatRangeTimestamp;
 
 /** UI 内部类型：统一描述"关联"来源（EventBox 兄弟 or 旧 MemoryLink） */
 type LinkedMemoryUI = {
@@ -723,16 +713,31 @@ export default function MemoryPalaceApp() {
     const [rangeRunning, setRangeRunning] = useState(false);
     const [rangeProgress, setRangeProgress] = useState('');
     const [rangeResult, setRangeResult] = useState<string | null>(null);
-    // 输入优先响应；消息内容和格式化日期只在记录集变化时预计算一次。
-    const deferredRangeQuery = useDeferredValue(rangeQuery);
-    const rangeSearchEntries = useMemo(
-        () => buildRangeSearchEntries(rangeMessages, fmtRangeTs),
-        [rangeMessages],
-    );
-    const filteredRangeMessages = useMemo(
-        () => filterRangeSearchEntries(rangeSearchEntries, deferredRangeQuery),
-        [rangeSearchEntries, deferredRangeQuery],
-    );
+    const [rangeCursor, setRangeCursor] = useState<{ beforeId?: number; afterId?: number }>({});
+    const [rangeHasOlder, setRangeHasOlder] = useState(false);
+    const [rangeHasNewer, setRangeHasNewer] = useState(false);
+    useEffect(() => {
+        if (!rangeModalOpen || !char) { setRangeMessages([]); return; }
+        const controller = new AbortController();
+        setRangeLoading(true);
+        setRangePendingId(null);
+        const timer = setTimeout(() => {
+            void loadRangeMessagePage(char.id, { ...rangeCursor, query: rangeQuery, limit: RANGE_PAGE_SIZE, signal: controller.signal })
+                .then(result => {
+                    if (controller.signal.aborted) return;
+                    setRangeMessages(result.messages);
+                    setRangeHasOlder(rangeCursor.afterId !== undefined || result.hasMore);
+                    setRangeHasNewer(rangeCursor.beforeId !== undefined || (rangeCursor.afterId !== undefined && result.hasMore));
+                }).catch(error => {
+                    if (controller.signal.aborted) return;
+                    setRangeMessages([]);
+                    setRangeHasOlder(false);
+                    setRangeHasNewer(false);
+                    addToast('加载聊天记录失败：' + (error?.message || error), 'error');
+                }).finally(() => { if (!controller.signal.aborted) setRangeLoading(false); });
+        }, rangeQuery ? 250 : 0);
+        return () => { clearTimeout(timer); controller.abort(); };
+    }, [rangeModalOpen, char?.id, rangeCursor, rangeQuery]);
     // 完成后的结果弹窗（逐条列出新增记忆，和水位线总结一致）
     const [rangeResultData, setRangeResultData] = useState<import('../utils/memoryPalace/pipeline').RangeProcessResult | null>(null);
 
@@ -1795,22 +1800,9 @@ export default function MemoryPalaceApp() {
         setRangeEndId(null);
         setRangePendingId(null);
         setRangeQuery('');
-        try {
-            const { DB } = await import('../utils/db');
-            // includeProcessed=true：手动保底要能重总结早已过水位线的旧消息
-            const msgs = await DB.getMessagesByCharId(char.id, true);
-            const list = (msgs || [])
-                .filter((m: Message) => m && typeof m.content === 'string' && m.content.trim().length > 0)
-                .sort((a: Message, b: Message) => a.id - b.id);
-            setRangeMessages(list);
-            // 默认翻到最后一页（最新消息），和聊天记录翻到底部一致
-            setRangePage(Math.max(0, Math.ceil(list.length / RANGE_PAGE_SIZE) - 1));
-        } catch (e: any) {
-            addToast(`加载聊天记录失败：${e?.message || e}`, 'error');
-            setRangeMessages([]);
-        } finally {
-            setRangeLoading(false);
-        }
+        setRangeCursor({});
+        setRangePage(0);
+        setRangeMessages([]);
     };
 
     // 点选一条消息：先进入"待确认"，由用户再点[设为起点]/[设为终点]，避免误触
@@ -4013,15 +4005,8 @@ create table if not exists memory_vectors (
                     const hasEndpoint = rangeStartId != null || rangeEndId != null;
                     const lo = bothSet ? Math.min(rangeStartId!, rangeEndId!) : null;
                     const hi = bothSet ? Math.max(rangeStartId!, rangeEndId!) : null;
-                    const selectedCount = (lo != null && hi != null)
-                        ? rangeMessages.filter(m => m.id >= lo && m.id <= hi).length
-                        : (hasEndpoint ? 1 : 0);
-
-                    // 翻页：每页 RANGE_PAGE_SIZE 条，避免一次渲染几百条 DOM
-                    const totalPages = Math.max(1, Math.ceil(filteredRangeMessages.length / RANGE_PAGE_SIZE));
-                    const page = Math.min(Math.max(0, rangePage), totalPages - 1);
-                    const pageStart = page * RANGE_PAGE_SIZE;
-                    const shown = filteredRangeMessages.slice(pageStart, pageStart + RANGE_PAGE_SIZE);
+                    const shown = rangeMessages;
+                    const page = rangePage;
 
                     return (
                         <div
@@ -4066,7 +4051,7 @@ create table if not exists memory_vectors (
                                         </span>
                                         <input
                                             value={rangeQuery}
-                                            onChange={e => { setRangeQuery(e.target.value); setRangePage(0); }}
+                                            onChange={e => { setRangeQuery(e.target.value); setRangePage(0); setRangeCursor({}); }}
                                             placeholder="模糊搜索内容或日期（如 生日 / 2026-03）"
                                             style={{
                                                 width: '100%', padding: '8px 10px 8px 30px', borderRadius: 10,
@@ -4086,29 +4071,29 @@ create table if not exists memory_vectors (
                                     )}
                                     {!rangeLoading && shown.length === 0 && (
                                         <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12, padding: 24 }}>
-                                            {rangeMessages.length === 0 ? '这个角色还没有聊天记录' : '没有匹配的消息'}
+                                            {rangeQuery ? '没有匹配的消息' : '没有聊天记录'}
                                         </div>
                                     )}
-                                    {!rangeLoading && filteredRangeMessages.length > RANGE_PAGE_SIZE && (
+                                    {!rangeLoading && (rangeHasOlder || rangeHasNewer) && (
                                         <div style={{
                                             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                                             gap: 8, padding: '6px 8px', marginBottom: 6,
                                             background: '#faf5ff', borderRadius: 8,
                                         }}>
                                             <button
-                                                onClick={() => setRangePage(p => Math.max(0, p - 1))}
-                                                disabled={page <= 0}
-                                                style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 7, border: '1px solid #ddd6fe', background: page <= 0 ? '#f1f5f9' : '#fff', color: page <= 0 ? '#cbd5e1' : '#7c3aed', cursor: page <= 0 ? 'not-allowed' : 'pointer' }}
+                                                onClick={() => { setRangeCursor({ beforeId: shown[0]?.id }); setRangePage(p => p + 1); }}
+                                                disabled={!rangeHasOlder}
+                                                style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 7, border: '1px solid #ddd6fe', background: !rangeHasOlder ? '#f1f5f9' : '#fff', color: !rangeHasOlder ? '#cbd5e1' : '#7c3aed', cursor: !rangeHasOlder ? 'not-allowed' : 'pointer' }}
                                             >
                                                 ‹ 更早
                                             </button>
                                             <span style={{ fontSize: 10, color: '#7c3aed', fontWeight: 600 }}>
-                                                第 {page + 1} / {totalPages} 页 · 共 {filteredRangeMessages.length} 条
+                                                从最新起第 {page + 1} 页 · 本页 {shown.length} 条
                                             </span>
                                             <button
-                                                onClick={() => setRangePage(p => Math.min(totalPages - 1, p + 1))}
-                                                disabled={page >= totalPages - 1}
-                                                style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 7, border: '1px solid #ddd6fe', background: page >= totalPages - 1 ? '#f1f5f9' : '#fff', color: page >= totalPages - 1 ? '#cbd5e1' : '#7c3aed', cursor: page >= totalPages - 1 ? 'not-allowed' : 'pointer' }}
+                                                onClick={() => { setRangeCursor({ afterId: shown[shown.length - 1]?.id }); setRangePage(p => Math.max(0, p - 1)); }}
+                                                disabled={!rangeHasNewer}
+                                                style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 7, border: '1px solid #ddd6fe', background: !rangeHasNewer ? '#f1f5f9' : '#fff', color: !rangeHasNewer ? '#cbd5e1' : '#7c3aed', cursor: !rangeHasNewer ? 'not-allowed' : 'pointer' }}
                                             >
                                                 更新 ›
                                             </button>
@@ -4191,7 +4176,7 @@ create table if not exists memory_vectors (
                                     )}
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                                         <span style={{ fontSize: 11, color: '#64748b' }}>
-                                            {getRangeSelectionHint(rangeStartId, rangeEndId, selectedCount)}
+                                            {bothSet ? '已选区间（包含起点与终点）' : getRangeSelectionHint(rangeStartId, rangeEndId, 0)}
                                         </span>
                                         <button
                                             onClick={() => { setRangeStartId(null); setRangeEndId(null); }}

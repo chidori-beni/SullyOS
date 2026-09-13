@@ -1,3 +1,4 @@
+import { loadCharacterContextMessages } from '../utils/chatContextRange';
 /**
  * LifeSimApp — 都市模拟人生 · 2026现代版
  * 核心体验：看角色操控都市居民，制造都市Drama，离线回来发现整栋楼翻天覆地
@@ -435,9 +436,9 @@ const LifeSimApp: React.FC = () => {
                 let decision: CharDecision;
 
                 if (canUseApi) {
-                    const rawMessages = await DB.getRecentMessagesByCharId(charId, 20);
+                    const rawMessages = await loadCharacterContextMessages(char);
                     const chatHistory = formatRecentChatForSim(
-                        rawMessages as any, char.name, userProfile.name || '你', 20
+                        rawMessages as any, char.name, userProfile.name || '你', rawMessages.length
                     );
                     await injectMemoryPalace(char, undefined, chatHistory || undefined);
                     const systemPrompt = buildCharTurnSystemPrompt(char, userProfile, chatHistory, s, s.actionLog);

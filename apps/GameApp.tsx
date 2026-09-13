@@ -1,3 +1,4 @@
+import { loadCharacterContextMessages } from '../utils/chatContextRange';
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useOS } from '../context/OSContext';
@@ -370,7 +371,7 @@ const GameApp: React.FC = () => {
 
             // 2. Neural Link: Private Chat Sync
             try {
-                const msgs = await DB.getMessagesByCharId(p.id, true);
+                const msgs = await loadCharacterContextMessages(p);
                 const privateMsgs = msgs.filter(m => !m.groupId); // Only private chats (Neural Link needs full history)
                 
                 const lastMsg = privateMsgs[privateMsgs.length - 1];

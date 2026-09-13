@@ -25,6 +25,7 @@ import {
     LayoutTemplate, SlotDef, SlotRole, SlotPayload,
 } from '../types';
 import { DB } from './db';
+import { loadCharacterContextMessages } from './chatContextRange';
 import { safeResponseJson, extractJson } from './safeApi';
 import { ContextBuilder } from './context';
 import { LAYOUT_TEMPLATES, pickTemplate } from './handbookLayouts';
@@ -379,7 +380,7 @@ async function fillCharTurn(
     // 抽 ta 平时怎么说话的样本
     let speechSamples: string[] = [];
     try {
-        const all = await DB.getMessagesByCharId(char.id, true);
+        const all = await loadCharacterContextMessages(char);
         const charMsgs = all.filter((m: any) =>
             m.role === 'assistant'
             && typeof m.content === 'string'

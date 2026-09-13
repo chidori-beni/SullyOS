@@ -1,3 +1,4 @@
+import { loadCharacterContextMessages } from '../../utils/chatContextRange';
 
 import React, { useState, useEffect, useRef } from 'react';
 import { BankShopState, CharacterProfile, UserProfile, APIConfig, ShopStaff } from '../../types';
@@ -107,10 +108,9 @@ const BankShopScene: React.FC<Props> = ({
             const context = ContextBuilder.buildCoreContext(char, userProfile, true);
 
             // Load recent chat history for richer context
-            const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 40);
+            const recentMsgs = await loadCharacterContextMessages(char);
             const chatSnippet = recentMsgs
                 .filter(m => m.type === 'text')
-                .slice(-20)
                 .map(m => `${m.role === 'user' ? userProfile.name : char.name}: ${m.content.substring(0, 80)}`)
                 .join('\n');
 

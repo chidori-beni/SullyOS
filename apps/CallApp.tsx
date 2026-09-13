@@ -1,3 +1,4 @@
+import { loadCharacterContextMessages } from '../utils/chatContextRange';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Microphone, SpeakerHigh, PhoneDisconnect, Translate, Gear, Clock, CaretLeft, CaretRight, Phone, VideoCamera, VideoCameraSlash, Cube, FolderOpen, FileZip, Moon, Sun, Check } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
@@ -2193,20 +2194,13 @@ const CallApp: React.FC = () => {
     touchContext = '',
   ): Promise<any[]> => {
     if (!selectedChar?.id) return [{ role: 'user', content: input }];
-    const limit = selectedChar.contextLimit || 500;
     const [allMsgs, emojis] = await Promise.all([
-      DB.getMessagesByCharId(selectedChar.id, true),
+      loadCharacterContextMessages(selectedChar),
       DB.getEmojis().catch(() => []),
     ]);
-    // 记忆宫殿水位过滤与约会侧 buildDateHistory 相同；hideBeforeMessageId
-    // 由 buildMessageHistory 内部处理。
-    const hwm = (() => {
-      try { return parseInt(localStorage.getItem(`mp_lastMsgId_${selectedChar.id}`) || '0', 10) || 0; } catch { return 0; }
-    })();
-    const palaceFiltered = hwm > 0 ? allMsgs.filter(m => m.id > hwm) : allMsgs;
-    const filtered = palaceFiltered.filter(m => !(skipDbId && m.id === skipDbId));
+    const filtered = allMsgs.filter(m => !(skipDbId && m.id === skipDbId));
     const { apiMessages } = ChatPrompts.buildMessageHistory(
-      filtered, limit, selectedChar, userProfile || ({} as any), emojis,
+      filtered, Math.max(1, filtered.length), selectedChar, userProfile || ({} as any), emojis,
     );
     const lastMsg = filtered[filtered.length - 1];
     const timeGapHint = ChatPrompts.getTimeGapHint(lastMsg, Date.now());
@@ -2463,7 +2457,8 @@ ${sentencePlan}`;
     const userName = userProfile?.name?.trim() || '用户';
     let callMsgs: Message[] = [];
     if (selectedChar) {
-      callMsgs = await DB.getMessagesByCharId(selectedChar.id);
+      // 改用全 App 统一的上下文范围；callMsgs 在外层已用 let 声明，这里只赋值。
+      callMsgs = await loadCharacterContextMessages(selectedChar);
       await injectMemoryPalace(selectedChar, callMsgs);
     }
     const baseCallPrompt = selectedChar

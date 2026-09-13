@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { loadStoryActorContext, replaceStoryTheaterReply, STORY_REROLL_INSTRUCTION } from '../../../utils/storyTheaterReply';
 import { Archive, ArrowBendDownRight, ArrowClockwise, ArrowLeft, Broadcast, CaretDown, CaretLeft, CaretRight, ChatCircleDots, Clock, Database, DownloadSimple, Eye, EyeSlash, FilmSlate, GearSix, HeartStraight, Key, MapPin, PaperPlaneTilt, PencilSimple, SlidersHorizontal, SpinnerGap, Trash, X } from '@phosphor-icons/react';
 import { useOS } from '../../../context/OSContext';
 import type { CharacterProfile, Message, StoryTheaterEntry, StoryTheaterMask, StoryTheaterPreset } from '../../../types';
@@ -505,7 +506,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                 continue;
             }
             const limit = Math.max(0, Math.min(500, entry.characterContextLimits[actor.id] ?? 100));
-            const recent = limit > 0 ? await DB.getRecentMessagesByCharId(actor.id, limit) : [];
+            const recent = await loadStoryActorContext(actor, entry.id, limit);
             let recalled = '';
             const embedding = memoryPalaceConfig.embedding;
             if (actor.memoryPalaceEnabled && embedding?.baseUrl && embedding?.apiKey) {
@@ -521,14 +522,14 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             blocks.push(`${core}\n${formatActorRecentMessages(actor, recent, userProfile.name, mask.name)}`.trim());
         }
         return blocks.join('\n\n---\n\n');
-    }, [actors, entry.carryCharacterMemory, entry.characterContextLimits, mask.name, memoryPalaceConfig.embedding, remoteVectorConfig, userProfile]);
+    }, [actors, entry.id, entry.carryCharacterMemory, entry.characterContextLimits, mask.name, memoryPalaceConfig.embedding, remoteVectorConfig, userProfile]);
 
     const buildMaskMemoryContext = useCallback(async (query: string): Promise<string> => {
         if (!entry.carryCharacterMemory || !mask.characterId) return '';
         const maskCharacter = characters.find(char => char.id === mask.characterId);
         if (!maskCharacter) return '';
         const limit = Math.max(0, Math.min(500, entry.characterContextLimits[maskCharacter.id] ?? 100));
-        const recent = limit > 0 ? await DB.getRecentMessagesByCharId(maskCharacter.id, limit) : [];
+        const recent = await loadStoryActorContext(maskCharacter, entry.id, limit);
         let recalled = '';
         const embedding = memoryPalaceConfig.embedding;
         if (maskCharacter.memoryPalaceEnabled && embedding?.baseUrl && embedding?.apiKey) {
@@ -545,7 +546,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             headerOverride: `[你当前身份的既有记忆：${maskCharacter.name}]`,
         }, { skipTimeAwareness: true });
         return `${core}\n${formatActorRecentMessages(maskCharacter, recent, userProfile.name, mask.name)}`.trim();
-    }, [actors, characters, entry.carryCharacterMemory, entry.characterContextLimits, mask.characterId, mask.name, memoryPalaceConfig.embedding, remoteVectorConfig, userProfile]);
+    }, [actors, characters, entry.id, entry.carryCharacterMemory, entry.characterContextLimits, mask.characterId, mask.name, memoryPalaceConfig.embedding, remoteVectorConfig, userProfile]);
 
     const independentRecall = useCallback(async (query: string, recent: Message[], activeEntry: StoryTheaterEntry = entry): Promise<string> => {
         if (activeEntry.writesToCharacterMemory || !activeEntry.archives.some(archive => archive.strategy === 'vector')) return '';
@@ -736,6 +737,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                 ...(affinityEnabled ? [{ role: 'system' as const, content: RELATIONSHIP_TEXTURE_GUIDE }] : []),
                 ...(affinityAwarenessReminder ? [{ role: 'system' as const, content: affinityAwarenessReminder }] : []),
                 { role: 'system' as const, content: identityGuard },
+                ...(isReroll ? [{ role: 'system' as const, content: STORY_REROLL_INSTRUCTION }] : []),
             ];
             const payload = appendStoryUserTurn(payloadBeforeTurn, modelInput, compiled.assistantPrefill, promptEntry.forceUserLastMessage === true);
             let promptTokenCount = estimateStoryTokens(payload.map(message => `${message.role}\n${message.content}`).join('\n'));
@@ -749,16 +751,20 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                 setContextTokensExact(true);
             });
             const prefill = compiled.assistantPrefill?.content || '';
+            // 上游这里还会用 reconcileStoryAffinityScores 承接上一轮的关系绝对值，
+            // 但那属于更早一批（fork 的 storyTheater.ts 里没有这个函数），本批不带。
             const content = prefill && !generated.startsWith(prefill) ? `${prefill}${generated}` : generated;
-            if (isReroll && rerollTarget) {
-                const mirrorIds = Object.values((rerollTarget.metadata?.theaterMirrorIds || {}) as Record<string, number>).map(Number).filter(Boolean);
-                await DB.deleteMessages([rerollTarget.id, ...mirrorIds]);
-            }
-            await saveCentralAndMirrors('assistant', content, {
+            const replyMetadata = {
                 theaterPromptTokens: promptTokenCount,
                 theaterPromptTokensExact: promptTokenCountExact,
                 ...(affinityInputs.length > 0 ? { theaterAffinityInputs: affinityInputs } : {}),
-            });
+            };
+            if (isReroll && rerollTarget) {
+                if (mirrorArchived(rerollTarget, promptEntry)) throw new Error('这条回复已进入记忆归档，请刷新后查看');
+                await replaceStoryTheaterReply(rerollTarget, content, replyMetadata);
+            } else {
+                await saveCentralAndMirrors('assistant', content, replyMetadata);
+            }
             if (!isContinueTurn) setInput('');
             setAffinityDrafts({});
             setShowAffinityInput(false);

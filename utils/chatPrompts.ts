@@ -1,5 +1,6 @@
 import { sarPublicContext } from './vrWorld/kanataPublicContext';
 import { kanataTitleContext } from './vrWorld/kanataTitle';
+import { selectCharacterContextMessages } from './chatContextRange';
 
 import { getImageGenConfig, isImageGenReady } from './novelaiImage';
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, DailySchedule, DateEncounterPresence } from '../types';
@@ -1477,15 +1478,14 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
     ) => {
         // Filter Logic
         // 新版上下文范围由 chatContextRange 先按「自适应/拉杆最大范围」取窗；
-        // 这里只应用用户额外断点。旧角色尚未完成迁移时才回退 hideBeforeMessageId。
-        const userStartMessageId = (char.contextRangePolicyVersion || 0) >= 1
-            ? char.contextUserStartMessageId
-            : char.hideBeforeMessageId;
-        // 只给用户看的系统提示（UiNoticeMeta）绝不进 API 历史 ——
-        // 让角色读到「系统说我对你改观了」比让 ta 直接演还糟。
-        let effectiveHistory = messages
-            .filter(m => !(m.metadata as any)?.uiNotice)
-            .filter(m => !userStartMessageId || m.id >= userStartMessageId);
+        // 范围边界改由全 App 统一的 selectCharacterContextMessages 决定（合上游）。
+        // 但「只给用户看的系统提示」(UiNoticeMeta) 是本 fork 独有的，上游没有这个概念，
+        // 必须继续挡在 API 历史之外 —— 让角色读到「系统说我对你改观了」比让 ta 直接演还糟。
+        // 先滤再算范围：别让这些提示占掉可用的上下文条数。
+        let effectiveHistory = selectCharacterContextMessages(
+            messages.filter(m => !(m.metadata as any)?.uiNotice),
+            char,
+        );
         // Memory Palace: 过滤已被记忆宫殿处理过的消息（由向量记忆替代，节省 token）
         if (processedExcludeIds && processedExcludeIds.size > 0) {
             effectiveHistory = effectiveHistory.filter(m => !processedExcludeIds.has(m.id));

@@ -1,3 +1,4 @@
+import { loadCharacterContextMessages } from '../utils/chatContextRange';
 import { avatarDecorationImageStyle, isAnniversaryFrame } from '../utils/anniversaryGifts';
 
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
@@ -1160,8 +1161,8 @@ ${sharedScene.text}${activeGroup ? buildGroupTopicContext(activeGroup) : ''}`;
         const privateGapInfo = await getPrivateTimeGap(member.id);
 
         // 私聊+群聊合并时间线：让角色看清两条线的先后关系，感情才能衔接。
-        // includeProcessed=true——被宫殿归档的私聊也是"底色"，不能漏
-        const privateMsgs = await DB.getRecentMessagesByCharId(member.id, timelineCap, true);
+        // 私聊侧遵守角色的原文范围，再与本群独立窗口合并。
+        const privateMsgs = await loadCharacterContextMessages(member);
         const memberTimeline = buildMemberTimeline({
             privateMsgs,
             groupMsgs: liveGroupMsgs,

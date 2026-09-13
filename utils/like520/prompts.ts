@@ -1,3 +1,4 @@
+import { selectCharacterContextMessages } from '../chatContextRange';
 /**
  * 520 特别活动 (2026.5.20) — LLM Prompt & 调用模块
  *
@@ -1081,9 +1082,7 @@ export async function runLike520CallA(
     console.log('[520][CallA] memory palace injection:\n', (char as any).memoryPalaceInjection || '(none)');
 
     const baseContext = ContextBuilder.buildCoreContext(char, userProfile, true);
-    const contextLimit = char.contextLimit || 500;
-    const recentMsgs = recentMessages
-        .slice(-contextLimit)
+    const recentMsgs = selectCharacterContextMessages(recentMessages, char)
         .map(m => `${m.role}: ${m.type === 'image' ? '[图片]' : m.content}`)
         .join('\n');
 
@@ -1108,9 +1107,7 @@ export async function runLike520CallB(
 ): Promise<Like520CallBResult> {
     // Call B 已经在 char 上有 memoryPalaceInjection（Call A 已注入），不再重新召回
     const baseContext = ContextBuilder.buildCoreContext(char, userProfile, true);
-    const contextLimit = char.contextLimit || 500;
-    const recentMsgs = recentMessages
-        .slice(-contextLimit)
+    const recentMsgs = selectCharacterContextMessages(recentMessages, char)
         .map(m => `${m.role}: ${m.type === 'image' ? '[图片]' : m.content}`)
         .join('\n');
 

@@ -1,3 +1,4 @@
+import { loadCharacterContextMessages } from '../utils/chatContextRange';
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useOS } from '../context/OSContext';
@@ -524,7 +525,7 @@ const BankApp: React.FC = () => {
             // 2. Build Context
             await injectMemoryPalace(randomChar);
             const charContext = ContextBuilder.buildCoreContext(randomChar, userProfile, true);
-            const recentMsgs = await DB.getMessagesByCharId(randomChar.id);
+            const recentMsgs = await loadCharacterContextMessages(randomChar);
             const chatSnippet = recentMsgs.slice(-10).map(m => m.content.substring(0, 50)).join(' | ');
 
             const previousGuestbook = (current.shop.guestbook || []).slice(0, 10).map(g => `${g.authorName}: ${g.content}`).join('\n');

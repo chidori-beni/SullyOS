@@ -162,3 +162,18 @@ export const loadCharacterContextRange = async (
 
 export const countMessagesFrom = (messages: Message[], messageId: number): number =>
     chronologicalPrivateMessages(messages).filter(message => message.id >= messageId).length;
+
+/** 所有 AI 入口共用的原文范围。UI 浏览、导出、记忆整理仍直接使用 DB。 */
+export const loadCharacterContextMessages = async (
+    character: CharacterProfile | string,
+): Promise<Message[]> => {
+    const char = typeof character === 'string' ? await DB.getCharacter(character) : character;
+    if (!char) return [];
+    return (await loadCharacterContextRange(char)).messages;
+};
+
+/** 已有消息快照的入口也遵守同一边界，不能用残留的手动条数截断自适应范围。 */
+export const selectCharacterContextMessages = (messages: Message[], char: CharacterProfile): Message[] =>
+    computeContextRangeSnapshot(messages, (char.contextRangePolicyVersion || 0) >= 1 ? char : {
+        ...char, contextUserStartMessageId: char.contextUserStartMessageId ?? char.hideBeforeMessageId,
+    }, getMemoryPalaceHighWaterMarkForContext(char.id)).messages;

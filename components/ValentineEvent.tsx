@@ -1,3 +1,4 @@
+import { loadCharacterContextMessages } from '../utils/chatContextRange';
 
 /**
  * ValentineEvent.tsx
@@ -521,9 +522,8 @@ export const ValentineSession: React.FC<ValentineSessionProps> = ({ charId, onCl
 
         try {
             // 获取聊天历史摘要
-            const msgs = await DB.getMessagesByCharId(cId);
-            const limit = c.contextLimit || 500;
-            const recentMsgs = msgs.slice(-Math.min(limit, 80)).map(m => {
+            const msgs = await loadCharacterContextMessages(c);
+            const recentMsgs = msgs.map(m => {
                 const content = m.type === 'image' ? '[图片]' : m.content;
                 return `${m.role}: ${content}`;
             }).join('\n');

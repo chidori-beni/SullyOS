@@ -1,3 +1,4 @@
+import { loadCharacterContextMessages } from '../utils/chatContextRange';
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
@@ -467,8 +468,8 @@ const SongwritingApp: React.FC = () => {
 
         try {
             // Fetch recent 200 messages for context
-            const recentMessages = await DB.getRecentMessagesByCharId(collaborator.id, 200);
-            const msgContext = recentMessages.slice(-20).map(m => ({
+            const recentMessages = await loadCharacterContextMessages(collaborator);
+            const msgContext = recentMessages.map(m => ({
                 role: m.role === 'user' ? 'user' : 'assistant',
                 content: m.content
             }));

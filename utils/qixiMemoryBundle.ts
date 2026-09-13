@@ -1,3 +1,4 @@
+import { loadCharacterContextMessages } from './chatContextRange';
 import { APIConfig, CharacterProfile, Message, UserProfile } from '../types';
 import { ContextBuilder } from './context';
 import { DB } from './db';
@@ -666,7 +667,7 @@ export async function prepareQixiMemoryBundle(
     } = {},
 ): Promise<QixiMemoryPreparation> {
     let messages: Message[] = [];
-    try { messages = await DB.getMessagesByCharId(char.id); } catch { /* fallback below */ }
+    try { messages = await loadCharacterContextMessages(char); } catch { /* fallback below */ }
     const contextSignature = buildContextSignature(messages, char, user);
     const cached = loadQixiMemoryBundle(char.id);
     if (!options.forceRegenerate && cached?.contextSignature === contextSignature) {

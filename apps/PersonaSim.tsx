@@ -1,3 +1,4 @@
+import { loadCharacterContextMessages } from '../utils/chatContextRange';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
@@ -88,9 +89,9 @@ export async function generatePersonaScript(opts: {
     const { char, userProfile, apiConfig, mode, theme, userPresence = 'default', tone = 'mix' } = opts;
     await injectMemoryPalace(char, undefined, theme, userProfile.name);
     const context = ContextBuilder.buildCoreContext(char, userProfile, true, char.memoryPalaceInjection);
-    const msgs = await DB.getMessagesByCharId(char.id);
+    const msgs = await loadCharacterContextMessages(char);
     // 跟随用户为该角色设置的最大上下文（没设则默认 500）——避免「吵完架来看 if 线，结果 char 不记得吵什么」
-    const ctxLimit = char.contextLimit && char.contextLimit > 0 ? char.contextLimit : 500;
+    const ctxLimit = Math.max(1, msgs.length);
     const recent = msgs.slice(-ctxLimit).map(m => {
         const who = m.role === 'user' ? userProfile.name : char.name;
         const c = m.type === 'text' ? m.content : `[${m.type}]`;

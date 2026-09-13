@@ -295,8 +295,8 @@ export async function generateDailyScheduleForChar(
     const historyMessages: Message[] = await loadCharacterContextRange(char)
         .then(snapshot => snapshot.messages)
         .catch(async e => {
-            console.warn('[Schedule] load private-chat context range failed, falling back to recent history:', e);
-            return DB.getRecentMessagesByCharId(char.id, char.contextLimit || 500, true).catch(() => [] as Message[]);
+            console.warn('[Schedule] load private-chat context range failed, omitting dialogue history:', e);
+            return [] as Message[];
         });
     const emojis = await DB.getEmojis().catch(() => [] as Emoji[]);
 

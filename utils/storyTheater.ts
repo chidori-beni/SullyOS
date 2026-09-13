@@ -301,6 +301,9 @@ const normalizeDocument = (value: any, fallbackName: string): StoryTheaterPreset
         enabled: prompt?.enabled !== false,
         role: normalizeRole(prompt?.role),
         content: String(prompt?.content || ''),
+        ...(prompt?.section?.id && ['start', 'end'].includes(prompt.section.edge) ? {
+            section: { id: String(prompt.section.id), name: String(prompt.section.name || '自定义分组'), edge: prompt.section.edge },
+        } : {}),
         ...(NATIVE_MARKERS.includes(prompt?.marker) ? { marker: prompt.marker } : {}),
     }));
     if (prompts.length === 0) throw new Error('预设中没有提示词条目');
@@ -582,6 +585,7 @@ export interface StoryPresetPromptGroup {
     startIndex: number;
     endIndex: number;
     protected: boolean;
+    customSectionId?: string;
 }
 
 const STORY_PRESET_GROUP_SPECS = [
@@ -596,7 +600,7 @@ const STORY_PRESET_GROUP_SPECS = [
     { key: 'exit', label: '出口与收尾', description: '出口检查、核心续写与定义增强', start: 'nmj-v64-section-exit-start', end: 'enhanceDefinitions' },
 ] as const;
 
-export const isStoryPresetSectionMarker = (prompt: StoryTheaterPresetPrompt): boolean => /^nmj-v6[45]-section-.+-(start|end)$/.test(prompt.id);
+export const isStoryPresetSectionMarker = (prompt: StoryTheaterPresetPrompt): boolean => Boolean(prompt.section) || /^nmj-v6[45]-section-.+-(start|end)$/.test(prompt.id);
 
 export const isProtectedStoryPrompt = (prompt: StoryTheaterPresetPrompt): boolean => Boolean(
     prompt.marker || prompt.id === 'nmj-v64-section-sources-start' || prompt.id === 'nmj-v64-section-sources-end'
@@ -610,7 +614,7 @@ export const getStoryPresetPromptGroups = (document: StoryTheaterPresetDocument)
     for (const spec of STORY_PRESET_GROUP_SPECS) {
         const startIndex = prompts.findIndex(prompt => prompt.id === spec.start);
         const endIndex = prompts.findIndex(prompt => prompt.id === spec.end);
-        if (startIndex < 0 || endIndex < startIndex) continue;
+        if (startIndex < 0 || endIndex < startIndex || claimed.has(startIndex) || claimed.has(endIndex)) continue;
         const indexes = Array.from({ length: endIndex - startIndex + 1 }, (_, offset) => startIndex + offset);
         indexes.forEach(index => claimed.add(index));
         groups.push({
@@ -622,6 +626,15 @@ export const getStoryPresetPromptGroups = (document: StoryTheaterPresetDocument)
             endIndex,
             protected: 'protected' in spec && spec.protected === true,
         });
+    }
+    for (let startIndex = 0; startIndex < prompts.length; startIndex++) {
+        const section = prompts[startIndex].section;
+        if (section?.edge !== 'start' || claimed.has(startIndex)) continue;
+        const endIndex = prompts.findIndex((prompt, index) => index > startIndex && prompt.section?.id === section.id && prompt.section.edge === 'end');
+        if (endIndex < 0 || prompts.slice(startIndex + 1, endIndex).some(prompt => prompt.section) || Array.from({ length: endIndex - startIndex + 1 }, (_, offset) => startIndex + offset).some(index => claimed.has(index))) continue;
+        const indexes = Array.from({ length: endIndex - startIndex + 1 }, (_, offset) => startIndex + offset);
+        indexes.forEach(index => claimed.add(index));
+        groups.push({ key: `section:${section.id}`, label: section.name, description: '自定义分组 · 可添加提示词、调整顺序', promptIds: indexes.map(index => prompts[index].id), startIndex, endIndex, protected: false, customSectionId: section.id });
     }
     let cursor = 0;
     while (cursor < prompts.length) {
@@ -641,6 +654,37 @@ export const getStoryPresetPromptGroups = (document: StoryTheaterPresetDocument)
         cursor += 1;
     }
     return groups.sort((a, b) => a.startIndex - b.startIndex);
+};
+
+export const addStoryPresetGroup = (document: StoryTheaterPresetDocument, name: string): StoryTheaterPresetDocument => {
+    const id = makeStoryTheaterId();
+    return { ...document, prompts: [...document.prompts, ...(['start', 'end'] as const).map(edge => ({
+        id: makeStoryTheaterId(), name: name.trim() || '自定义分组', enabled: false, role: 'system' as const, content: '',
+        section: { id, name: name.trim() || '自定义分组', edge },
+    }))] };
+};
+
+export const renameStoryPresetGroup = (document: StoryTheaterPresetDocument, sectionId: string, name: string): StoryTheaterPresetDocument => ({
+    ...document, prompts: document.prompts.map(prompt => prompt.section?.id === sectionId
+        ? { ...prompt, section: { ...prompt.section, name } } : prompt),
+});
+
+export const ungroupStoryPresetGroup = (document: StoryTheaterPresetDocument, sectionId: string): StoryTheaterPresetDocument => ({
+    ...document, prompts: document.prompts.filter(prompt => prompt.section?.id !== sectionId),
+});
+
+export const moveStoryPresetPromptToGroup = (document: StoryTheaterPresetDocument, promptId: string, groupKey: string): StoryTheaterPresetDocument => {
+    const groups = getStoryPresetPromptGroups(document);
+    const source = groups.find(group => group.promptIds.includes(promptId));
+    const target = groups.find(group => group.key === groupKey);
+    const prompt = document.prompts.find(item => item.id === promptId);
+    if (!prompt || !target || target.protected || source?.protected || source?.key === target.key || isProtectedStoryPrompt(prompt) || isStoryPresetSectionMarker(prompt)) return document;
+    const next = { ...document, prompts: document.prompts.filter(item => item.id !== promptId) };
+    const destination = getStoryPresetPromptGroups(next).find(group => group.key === groupKey);
+    if (!destination) return document;
+    const last = next.prompts[destination.endIndex];
+    next.prompts.splice(isStoryPresetSectionMarker(last) ? destination.endIndex : destination.endIndex + 1, 0, prompt);
+    return next;
 };
 
 export const applyStoryPresetChoice = (
@@ -898,7 +942,7 @@ export const compileStoryPreset = (input: {
             );
             injectedMarkers.add('world_before');
         }
-        if (!prompt.enabled) continue;
+        if (!prompt.enabled || prompt.section) continue;
         let raw = prompt.content;
         if (prompt.marker) {
             if (injectedMarkers.has(prompt.marker)) continue;

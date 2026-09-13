@@ -1,3 +1,4 @@
+import { loadCharacterContextMessages } from '../utils/chatContextRange';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
@@ -145,9 +146,9 @@ export async function generateDreamScript(opts: {
     await injectMemoryPalace(char, undefined, undefined, userProfile.name);
     // 需求明确：contextbuilder(false) —— 不带当月详细记忆，只要角色底子
     const context = ContextBuilder.buildCoreContext(char, userProfile, false, char.memoryPalaceInjection);
-    const msgs = await DB.getMessagesByCharId(char.id);
-    // 最近上下文：默认 500，跟随角色在 chatapp 中设置的 contextLimit
-    const ctxLimit = char.contextLimit && char.contextLimit > 0 ? char.contextLimit : 500;
+    const msgs = await loadCharacterContextMessages(char);
+    // 原文范围统一遵守角色的自适应 / 手动设置
+    const ctxLimit = Math.max(1, msgs.length);
     const recent = msgs.slice(-ctxLimit).map(m => {
         const who = m.role === 'user' ? userProfile.name : char.name;
         const c = m.type === 'text' ? m.content : `[${m.type}]`;

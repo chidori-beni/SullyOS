@@ -1,3 +1,4 @@
+import { loadCharacterContextMessages } from '../utils/chatContextRange';
 
 import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
@@ -724,9 +725,9 @@ const RoomApp: React.FC = () => {
                 setTodaysTodo(existingTodo);
             }
 
-            const recentMsgs = await DB.getMessagesByCharId(c.id);
+            const recentMsgs = await loadCharacterContextMessages(c);
             // Increased context from 20 to 50
-            const chatContext = recentMsgs.slice(-50).map(m => {
+            const chatContext = recentMsgs.map(m => {
                 const role = m.role === 'user' ? '用户' : c.name;
                 return `${role}: ${m.content.substring(0, 50)}`; 
             }).join('\n');

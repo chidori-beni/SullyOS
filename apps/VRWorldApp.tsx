@@ -1,3 +1,4 @@
+import { loadCharacterContextMessages } from '../utils/chatContextRange';
 import { SAR_NPC_PREFERENCE_EVENT } from '../utils/vrWorld/sarNpcPreference';
 import { closeSARFacilityGuide } from '../utils/vrWorld/sarFacilityGuides';
 import { sarLaunch } from '../utils/sarUpdate';
@@ -386,18 +387,13 @@ const VRWorldApp: React.FC = () => {
             //   · 聊天攒多了把旧 vr_card 挤出最近窗口 → 不该因此从动态流消失。
             // （清空聊天会真删消息，删掉就没了——那是预期行为，逻辑不变。）
             const msgs = await DB.getVRCardsByCharId(c.id);
-            // 「对 AI 不可见」判定：归档隐藏起点（hideBeforeMessageId，m.id < 它即隐藏）
-            // 或记忆宫殿高水位（mp_lastMsgId，m.id <= 它即被向量记忆替代）。
-            // 两者都让 LLM 读不到原文——动态本身仍在，只是上下文看不到，UI 里暗显并标「已隐藏」。
-            const hideBefore = (c as any).hideBeforeMessageId || 0;
-            let mpHwm = 0;
-            try { mpHwm = parseInt(localStorage.getItem(`mp_lastMsgId_${c.id}`) || '0', 10) || 0; } catch { /* ignore */ }
-            const hiddenCut = Math.max(hideBefore - 1, mpHwm); // m.id <= hiddenCut ⇒ 对 AI 不可见
+            // 可见性与实际发送的自适应/手动范围保持一致。
+            const visibleIds = new Set((await loadCharacterContextMessages(c)).map(message => message.id));
             for (const m of msgs) {
                 // 用户在留言簿的发言会广播进每个角色的 vr_card（供 LLM 上下文用），
                 // 但它不是"角色自己的动态"——不进动态流，也不当作 chibi 气泡。
                 if (!m.metadata?.userBoardPost) {
-                    items.push({ msgId: m.id, charId: c.id, charName: c.name, avatar: c.avatar, timestamp: m.timestamp, meta: m.metadata as VRCardMeta, content: m.content, hidden: m.id <= hiddenCut });
+                    items.push({ msgId: m.id, charId: c.id, charName: c.name, avatar: c.avatar, timestamp: m.timestamp, meta: m.metadata as VRCardMeta, content: m.content, hidden: !visibleIds.has(m.id) });
                 }
             }
         }

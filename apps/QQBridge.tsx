@@ -1,3 +1,4 @@
+import { loadCharacterContextMessages } from '../utils/chatContextRange';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useOS } from '../context/OSContext';
 import { useChatAI } from '../hooks/useChatAI';
@@ -107,13 +108,13 @@ const QQBridge: React.FC = () => {
       return;
     }
     let cancelled = false;
-    DB.getRecentMessagesByCharId(char.id, char.contextLimit || 200).then(msgs => {
+    loadCharacterContextMessages(char).then(msgs => {
       if (cancelled) return;
       setMessages(msgs);
       lastForwardedIdRef.current = msgs.reduce((acc, m) => Math.max(acc, m.id), 0);
     });
     return () => { cancelled = true; };
-  }, [char?.id, char?.contextLimit]);
+  }, [char?.id, char?.contextLimit, char?.contextRangeMode, char?.contextUserStartMessageId, char?.autoArchiveEnabled, char?.contextFollowsMemoryPalaceHwm]);
 
   // Forward newly arrived assistant text messages to QQ
   useEffect(() => {
@@ -195,7 +196,7 @@ const QQBridge: React.FC = () => {
       content: text,
       metadata: { source: 'qq', qqUserId: userId },
     });
-    const fresh = await DB.getRecentMessagesByCharId(char.id, char.contextLimit || 200);
+    const fresh = await loadCharacterContextMessages(char);
     setMessages(fresh);
     await chatAI.triggerAI(fresh);
   }, [char, chatAI, log]);

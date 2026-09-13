@@ -1,3 +1,4 @@
+import { selectCharacterContextMessages } from './chatContextRange';
 /**
  * 聊天请求载荷统一构造器
  *
@@ -286,9 +287,14 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     );
     let emojis = visibleEmojiLibrary.emojis;
     const categories = visibleEmojiLibrary.categories;
-    const rawRecentMsgsHint = input.recentMsgsHint ?? historyMsgs;
+    // 正文、召回、世界书扫描和识图共用可见范围；UI 近窗可能仍缓存着范围外旧消息。
+    const selectedHistory = selectCharacterContextMessages(historyMsgs, char);
+    const visibleIds = new Set(selectedHistory.map(message => message.id));
+    const rawRecentMsgsHint = input.recentMsgsHint
+        ? input.recentMsgsHint.filter(message => visibleIds.has(message.id))
+        : selectedHistory;
     const useVisionDescriptions = input.visionApiConfig?.enabled === true;
-    let historyMsgsForPrompt = historyMsgs;
+    let historyMsgsForPrompt = selectedHistory;
     let recentMsgsHint = rawRecentMsgsHint;
 
     if (useVisionDescriptions) {
@@ -296,7 +302,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         // 再把写回 metadata 的新快照映射回两套窗口，避免同一轮的 system/history 各跑一次识图。
         const uniqueMessages = new Map<number, Message>();
         for (const message of rawRecentMsgsHint) uniqueMessages.set(message.id, message);
-        for (const message of historyMsgs) uniqueMessages.set(message.id, message);
+        for (const message of selectedHistory) uniqueMessages.set(message.id, message);
         const uniqueMessageList = [...uniqueMessages.values()];
         // 糯叽机 4.71 同款策略：只识别本轮出现的表情，并把结果写回表情库永久复用。
         // 先补表情库，再构建 system prompt/history，这一轮主模型就能看到画面。
@@ -307,7 +313,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         );
         const prepared = await materializeVisionDescriptions(uniqueMessageList, input.visionApiConfig);
         const preparedById = new Map(prepared.map(message => [message.id, message]));
-        historyMsgsForPrompt = historyMsgs.map(message => preparedById.get(message.id) || message);
+        historyMsgsForPrompt = selectedHistory.map(message => preparedById.get(message.id) || message);
         recentMsgsHint = rawRecentMsgsHint.map(message => preparedById.get(message.id) || message);
     }
 

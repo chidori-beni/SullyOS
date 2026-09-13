@@ -18,6 +18,7 @@ import {
     HandbookPage, HandbookFragment, HandbookLayout, LayoutPlacement, LayoutRole,
 } from '../types';
 import { DB } from './db';
+import { loadCharacterContextMessages } from './chatContextRange';
 import { safeResponseJson, extractJson } from './safeApi';
 import { ContextBuilder } from './context';
 import { getLocalDayRange } from './localDate';
@@ -549,7 +550,7 @@ export async function generateLifestreamPage(
     // 这是"像不像 ta"最关键的输入: prompt 描述规则,样本展示语气
     let speechSamples: string[] = [];
     try {
-        const all = await DB.getMessagesByCharId(char.id, true);
+        const all = await loadCharacterContextMessages(char);
         const charMsgs = all.filter(m =>
             m.role === 'assistant'
             && typeof m.content === 'string'
@@ -557,7 +558,7 @@ export async function generateLifestreamPage(
             && m.content.length < 600
             && !(m.content.trim().startsWith('{') && m.content.trim().endsWith('}'))
         );
-        // 跨时间均匀抽 30 条,避免全是最近一段对话
+        // 在可见范围内均匀抽 30 条语气样本
         if (charMsgs.length <= 30) {
             speechSamples = charMsgs.map(m => m.content.slice(0, 200));
         } else {

@@ -1,3 +1,4 @@
+import { loadCharacterContextMessages } from '../utils/chatContextRange';
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useOS } from '../context/OSContext';
@@ -453,7 +454,7 @@ const SocialApp: React.FC = () => {
 
             for (const char of selectedChars) {
                 const coreContext = ContextBuilder.buildCoreContext(char, userProfile, false);
-                const msgs = await DB.getMessagesByCharId(char.id);
+                const msgs = await loadCharacterContextMessages(char);
                 const recentStatus = msgs.length > 0 ? `(最近私聊状态: 刚和用户聊过 "${msgs[msgs.length-1].content.substring(0, 20)}...")` : '(最近无私聊，生活平淡)';
                 
                 const handles = characterHandles[char.id] || [];

@@ -1,3 +1,4 @@
+import { loadCharacterContextMessages } from '../utils/chatContextRange';
 /**
  * WhiteDayEvent.tsx
  * 白色情人节特别活动模块 (2026.3.14)
@@ -647,10 +648,8 @@ export const WhiteDaySession: React.FC<WhiteDaySessionProps> = ({ charId, onClos
             return;
         }
         try {
-            const msgs = await DB.getMessagesByCharId(cId);
-            const limit = c.contextLimit || 500;
+            const msgs = await loadCharacterContextMessages(c);
             const recentMsgs = msgs
-                .slice(-limit)
                 .map(m => `${m.role}: ${m.type === 'image' ? '[图片]' : m.content}`)
                 .join('\n');
 

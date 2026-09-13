@@ -1,3 +1,4 @@
+import { loadCharacterContextMessages } from './chatContextRange';
 
 /**
  * XHS Free Roam Engine — 角色自主小红书活动
@@ -289,10 +290,9 @@ ${notes.length > 0 ? `你发过的帖子:\n${notesList}` : '你还没有发过�
 
 // ==================== Core Engine ====================
 
-const getRecentChatContext = async (charId: string, contextLimit: number): Promise<string> => {
+const getRecentChatContext = async (char: CharacterProfile): Promise<string> => {
     try {
-        const limit = contextLimit || 500;
-        const msgs = await DB.getRecentMessagesByCharId(charId, limit);
+        const msgs = await loadCharacterContextMessages(char);
         if (msgs.length === 0) return '还没有和用户聊过天。';
 
         // Return raw messages — no summarization, no truncation
@@ -489,7 +489,7 @@ export const XhsFreeRoamEngine = {
             // 1. Build context
             callbacks.onStatus(`${char.name}正在思考...`);
             const pastActivities = await DB.getXhsActivities(char.id, 10);
-            const chatSummary = await getRecentChatContext(char.id, char.contextLimit || 500);
+            const chatSummary = await getRecentChatContext(char);
             const systemPrompt = buildFreeRoamSystemPrompt(char, user, chatSummary, pastActivities);
 
             // 4. Character decides

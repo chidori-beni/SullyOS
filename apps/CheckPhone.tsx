@@ -1,3 +1,4 @@
+import { loadCharacterContextMessages } from '../utils/chatContextRange';
 import React, { useState, useEffect, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
@@ -723,7 +724,7 @@ const CheckPhone: React.FC = () => {
 
         try {
             await injectMemoryPalace(targetChar);
-            const msgs = await DB.getMessagesByCharId(targetChar.id);
+            const msgs = await loadCharacterContextMessages(targetChar);
             const lastMsg = msgs[msgs.length - 1];
 
             // 「距离上次联系多久」交给 buildCoreContext 统一注入（受时间感知开关管控、口径与聊天/见面一致）
@@ -732,11 +733,7 @@ const CheckPhone: React.FC = () => {
                 { lastInteractionTs: lastMsg?.timestamp },
             );
 
-            // 聊天/通讯录类按 chatapp 的上下文设置（默认 500）取，其它 App 维持轻量 50 条
-            const recentWindow = (type === 'chat' || type === 'contacts')
-                ? (targetChar.contextLimit && targetChar.contextLimit > 0 ? targetChar.contextLimit : 500)
-                : 50;
-            const recentMsgs = msgs.slice(-recentWindow).map(m => {
+            const recentMsgs = msgs.map(m => {
                 const roleName = m.role === 'user' ? userProfile.name : targetChar.name;
                 const content = m.type === 'text' ? m.content : `[${m.type}]`;
                 return `${roleName}: ${content}`;
@@ -1028,12 +1025,12 @@ ${realCharRule}
     // 组 context：跟 handleGenerate 一致（含记忆宫殿 + 时间感知 + 最近聊天），让偷看到的 AI 记录贴合真实近况
     const buildAiContext = async (char: CharacterProfile) => {
         await injectMemoryPalace(char);
-        const msgs = await DB.getMessagesByCharId(char.id);
+        const msgs = await loadCharacterContextMessages(char);
         const lastMsg = msgs[msgs.length - 1];
         const context = ContextBuilder.buildCoreContext(
             char, userProfile, true, undefined, undefined, { lastInteractionTs: lastMsg?.timestamp },
         );
-        const recentMsgs = msgs.slice(-50).map(m => {
+        const recentMsgs = msgs.map(m => {
             const roleName = m.role === 'user' ? userProfile.name : char.name;
             return `${roleName}: ${m.type === 'text' ? m.content : `[${m.type}]`}`;
         }).join('\n');

@@ -1,3 +1,4 @@
+import { loadCharacterContextMessages } from './chatContextRange';
 import type {
   APIConfig,
   CharacterProfile,
@@ -480,7 +481,7 @@ export const requestCompanionStartupDraft = async (options: {
   if (!baseUrl) throw new Error('请先在设置中配置主聊天 API');
 
   const [allMessages, emojis] = await Promise.all([
-    DB.getMessagesByCharId(character.id, true),
+    loadCharacterContextMessages(character),
     DB.getEmojis().catch(() => []),
   ]);
   const recentMessages = allMessages

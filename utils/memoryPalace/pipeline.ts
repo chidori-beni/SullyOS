@@ -1,3 +1,5 @@
+import { loadRangeMessageContents } from './rangeMessagePage';
+import { loadCharacterContextMessages } from '../chatContextRange';
 /**
  * Memory Palace — 集成管线 (Pipeline)
  *
@@ -1337,7 +1339,7 @@ export async function injectMemoryPalace(
     }
     try {
         const loadStartedAt = performance.now();
-        const msgs = recentMessages ?? await DB.getMessagesByCharId(char.id);
+        const msgs = recentMessages ?? await loadCharacterContextMessages(char.id);
         trace.stages.push({
             name: 'load_messages',
             durationMs: Math.round(performance.now() - loadStartedAt),
@@ -2425,8 +2427,8 @@ export async function processMessageRange(
         const lo = Math.min(fromMsgId, toMsgId);
         const hi = Math.max(fromMsgId, toMsgId);
 
-        // 加载全部消息（含已处理的），取区间内的语义相关消息，按 id 升序
-        const allMessages = await DB.getMessagesByCharId(charId, true);
+        // 只加载用户选区内的正文，含已处理消息，不推进水位线。
+        const allMessages = await loadRangeMessageContents(charId, lo, hi);
         const toProcess = allMessages
             .filter(m => isMessageSemanticallyRelevant(m))
             .filter(m => m.id >= lo && m.id <= hi)
