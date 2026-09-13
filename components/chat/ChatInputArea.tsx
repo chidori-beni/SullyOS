@@ -971,6 +971,18 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <span className="text-xs font-bold">设置</span>
                             </button>
                             
+                            {/* 相册：直接从系统相册挑一张发给角色。
+                                这一块在第 5 批合上游「协同工作台」时被三方合连带删掉过一次，
+                                当时没做删除行核对才漏掉 —— 删了之后 onImageSelect 就彻底没有入口了。 */}
+                            <button onClick={() => chatImageInputRef.current?.click()} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                                {acnh ? <AcnhActionTile kind="image" /> : (
+                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-pink-300 border-pink-400/20' : 'bg-pink-50 text-pink-400 border-pink-100'}`}>
+                                    <Image className="w-6 h-6" weight="bold" />
+                                </div>)}
+                                <span className="text-xs font-bold">相册</span>
+                            </button>
+                            <input type="file" ref={chatImageInputRef} className="hidden" accept="image/*" onChange={(e) => handleImageChange(e, 'chat')} />
+
                             {/* Regenerate Button */}
                             <button onClick={onReroll} disabled={!canReroll} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${canReroll ? (isDiscordStyle ? 'text-slate-200' : 'text-slate-600') : 'text-slate-300 opacity-50'}`}>
                                 {acnh ? <AcnhActionTile kind="regenerate" /> : (
