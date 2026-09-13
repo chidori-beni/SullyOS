@@ -26,27 +26,23 @@ const normalizeExerciseSummary = (raw: string): string => {
  * 其它副作用标签在 classifier 之前的既有处理顺序。
  */
 export const normalizeAssistantEmojiFormatting = (raw: string): string => {
-    let content = raw || '';
-
-    // 表情：先统一双括号里的全角冒号/大小写，再修单括号和历史摘要。
-    content = content.replace(
-        /\[\[\s*SEND_EMOJI\s*[:：]\s*([^\]\r\n]+?)\s*\]\]/gi,
-        (_all, name: string) => `[[SEND_EMOJI: ${name.trim()}]]`,
-    );
-    content = content.replace(
-        /(^|[^\[])\[(?:你|User|用户|System|[\w一-龥]+)\s*发送了表情包[:：]\s*([^\]\r\n]+?)\s*\](?!\])/gm,
-        (_all, prefix: string, name: string) => `${prefix}[[SEND_EMOJI: ${name.trim()}]]`,
-    );
-    content = content.replace(
-        /(^|[^\[])\[\s*SEND_EMOJI\s*[:：]\s*([^\]\r\n]+?)\s*\](?!\])/gim,
-        (_all, prefix: string, name: string) => `${prefix}[[SEND_EMOJI: ${name.trim()}]]`,
-    );
-    content = content.replace(
-        /(^|[^\[])\[\s*(?:表情|表情包)\s*[:：]\s*([^\]\r\n]+?)\s*\](?!\])/gm,
-        (_all, prefix: string, name: string) => `${prefix}[[SEND_EMOJI: ${name.trim()}]]`,
-    );
-
-    return content;
+    const closing: Record<string, string> = { '[[': ']]', '[': ']', '【': '】', '［［': '］］', '［': '］' };
+    // 引号 / 代码块里的是讲解用的示例，不要去"修"它。
+    //
+    // ⚠️ 上游这里用的是后行断言 `(?<![[【［])`；本 fork 不能用 ——
+    // iOS Safari < 16.4 不支持后行断言，会直接抛 Invalid regular expression，
+    // 被聊天兜底 catch 包成错误气泡弹给用户（见 utils/noLookbehind.test.ts）。
+    // 等价写法：在 replace 回调里用 offset 自己回头看一眼前一个字符。
+    // 语义和后行断言完全一致，但**不消耗字符** —— 两个表情命令挨着写时，
+    // 第二个照样能修（改成「捕获前缀」的写法会把第二个漏掉）。
+    const openers = new Set(['[', '【', '［']);
+    return (raw || '').split(/(```[\s\S]*?```|`[^`\r\n]*`)/g).map((part, index) => index % 2 ? part : part.replace(
+        /(\[\[|\[|【|［［|［)\s*(?:SEND_EMOJI|(?:[^\[\]【】［］\r\n:：]{1,40}?\s*)?发送了表情包|表情包|表情)\s*[:：]\s*([^\[\]【】［］\r\n]+?)\s*(\]\]|\]|】|］］|］)(?![\]】］])/gim,
+        (all: string, open: string, name: string, close: string, offset: number, whole: string) => {
+            if (offset > 0 && openers.has(whole[offset - 1])) return all;
+            return closing[open] === close ? '[[SEND_EMOJI: ' + name.trim() + ']]' : all;
+        },
+    )).join('');
 };
 
 /** 幂等：已经是 [[...]] 的规范标签不会再次包裹。 */
