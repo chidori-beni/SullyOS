@@ -610,39 +610,39 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         {emojiSelectionMode && (
             <div className={`fixed inset-0 z-[-1] ${isPixelStyle ? 'bg-[#eadfce]/70 backdrop-blur-[2px]' : isDiscordStyle ? 'bg-slate-950/70 backdrop-blur-[2px]' : 'bg-white/60 backdrop-blur-[2px]'}`} />
         )}
+        {/* 辅助提示保持在输入栏外，避免改变社区 CSS 的 > div:first-child / nth-child 目标。 */}
+        {suggestedEmojis.length > 0 && (
+            <div ref={suggestionsRef} role="region" aria-label="表情包联想"
+                className={`sully-chat-emoji-suggestions sully-emoji-suggestions shrink-0 relative z-40 ${shellClass} border-b px-4 pb-2 pt-2 ${isDiscordStyle ? 'border-white/10 bg-slate-900 text-slate-300' : isPixelStyle ? 'border-[#8f674a]/20 text-[#8f674a]' : 'border-slate-100 text-slate-500'}`}>
+                <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px]">表情联想 · 点击发送</span>
+                    <button type="button" aria-label="收起表情联想" onClick={() => setDismissedSuggestionInput(input)}
+                        className="-mr-2 flex h-8 w-8 items-center justify-center rounded-full text-base hover:bg-slate-400/10">×</button>
+                </div>
+                <div className="flex gap-2 overflow-x-auto overscroll-x-contain pb-1">
+                    {suggestedEmojis.map(emoji => (
+                        <button key={emoji.url} type="button" aria-label={`发送表情：${emoji.name}`} title={emoji.name}
+                            onMouseDown={event => event.preventDefault()}
+                            onClick={() => {
+                                setDismissedSuggestionInput(input);
+                                onPanelAction('send-emoji', emoji);
+                                textareaRef.current?.focus({ preventScroll: true });
+                            }}
+                            className="flex w-16 shrink-0 flex-col items-center gap-1 rounded-xl p-1 hover:bg-slate-400/10 active:scale-95 transition-transform motion-reduce:transition-none">
+                            <TokenImg value={emoji.url} alt={emoji.name} decoding="async" className="h-12 w-12 object-contain" />
+                            <span className="w-full truncate text-center text-[10px]">{emoji.name}</span>
+                        </button>
+                    ))}
+                </div>
+            </div>
+        )}
+        {autoReplySeconds !== null && !selectionMode && (
+            <div className={`sully-chat-auto-reply shrink-0 relative z-40 flex min-h-10 items-center justify-center gap-1 px-4 text-xs text-slate-500 ${shellClass}`}>
+                <span role="status">即将回复 · {autoReplySeconds} 秒</span>
+                <button type="button" onClick={onCancelAutoReply} className="min-h-11 px-3 font-bold text-primary" aria-label="取消自动回复">取消</button>
+            </div>
+        )}
         <div className={`sully-chat-inputbar ${shellClass} pb-safe shrink-0 z-40 relative`}>
-            {suggestedEmojis.length > 0 && (
-                <div ref={suggestionsRef} role="region" aria-label="表情包联想"
-                    className={`sully-emoji-suggestions border-b px-4 pb-2 pt-2 ${isDiscordStyle ? 'border-white/10 bg-slate-900 text-slate-300' : isPixelStyle ? 'border-[#8f674a]/20 text-[#8f674a]' : 'border-slate-100 text-slate-500'}`}>
-                    <div className="flex items-center justify-between gap-2">
-                        <span className="text-[10px]">表情联想 · 点击发送</span>
-                        <button type="button" aria-label="收起表情联想" onClick={() => setDismissedSuggestionInput(input)}
-                            className="-mr-2 flex h-8 w-8 items-center justify-center rounded-full text-base hover:bg-slate-400/10">×</button>
-                    </div>
-                    <div className="flex gap-2 overflow-x-auto overscroll-x-contain pb-1">
-                        {suggestedEmojis.map(emoji => (
-                            <button key={emoji.url} type="button" aria-label={`发送表情：${emoji.name}`} title={emoji.name}
-                                onMouseDown={event => event.preventDefault()}
-                                onClick={() => {
-                                    setDismissedSuggestionInput(input);
-                                    onPanelAction('send-emoji', emoji);
-                                    textareaRef.current?.focus({ preventScroll: true });
-                                }}
-                                className="flex w-16 shrink-0 flex-col items-center gap-1 rounded-xl p-1 hover:bg-slate-400/10 active:scale-95 transition-transform motion-reduce:transition-none">
-                                <TokenImg value={emoji.url} alt={emoji.name} decoding="async" className="h-12 w-12 object-contain" />
-                                <span className="w-full truncate text-center text-[10px]">{emoji.name}</span>
-                            </button>
-                        ))}
-                    </div>
-                </div>
-            )}
-            {autoReplySeconds !== null && !selectionMode && (
-                <div className="flex min-h-10 items-center justify-center gap-1 px-4 text-xs text-slate-500">
-                    <span role="status">即将回复 · {autoReplySeconds} 秒</span>
-                    <button type="button" onClick={onCancelAutoReply} className="min-h-11 px-3 font-bold text-primary" aria-label="取消自动回复">取消</button>
-                </div>
-            )}
-            
             {selectionMode ? (
                 <div className={`p-3 flex flex-wrap gap-2 ${isPixelStyle ? 'bg-[#f3e7d6]' : isDiscordStyle ? 'bg-slate-900/60 backdrop-blur-md' : 'bg-white/50 backdrop-blur-md'}`}>
                     {onFavoriteSelected && (
@@ -676,8 +676,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     </button>
                 </div>
             ) : (
-                <div className="p-3 px-4 flex gap-2 items-end relative">
-                    <button type="button" onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className={actionButtonClass} aria-label="更多功能">
+                <div className="sully-chat-composer p-3 px-4 flex gap-2 items-end relative">
+                    <button type="button" onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className={`sully-chat-actions-button ${actionButtonClass}`} aria-label="更多功能">
                         <Plus className="w-5 h-5" weight="bold" />
                     </button>
                     {onOpenVoiceInput && showVoiceButton && (
@@ -686,7 +686,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                         </button>
                     )}
                     {/* 主题可以把外框做成直角、圆角或胶囊；内容层始终沿用外框的圆角并裁剪，避免文字从弧形边缘漏出。 */}
-                    <div className={`flex-1 min-w-0 flex items-center px-1 overflow-hidden transition-all ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
+                    <div className={`sully-chat-input-wrap flex-1 min-w-0 flex items-center px-1 overflow-hidden transition-all ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
                         <div className="sully-chat-input-clip flex min-w-0 flex-1 items-center" style={{ overflow: 'hidden', borderRadius: 'inherit' }}>
                             <textarea
                                 ref={textareaRef}
@@ -699,7 +699,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 enterKeyHint="send"
                                 autoCorrect="on"
                                 autoCapitalize="sentences"
-                                className={`flex-1 min-w-0 bg-transparent px-3 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-36 overscroll-contain ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`}
+                                className={`sully-chat-textarea flex-1 min-w-0 bg-transparent px-3 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-36 overscroll-contain ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`}
                                 placeholder="Message..."
                                 /* 高度完全交给 syncTextareaHeight 命令式管理。这里再写 inline height
                                    会和它打架（React 重渲染时把量好的高度冲回 auto，出现半行/撑高的抽风）。
@@ -735,7 +735,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             onPointerDown={e => { if (canSwitchToGenerate && isInputFocused && e.button === 0) e.preventDefault(); }}
                             onClick={isGenerateButton ? onGenerate : sendFromComposer}
                             disabled={primaryButtonDisabled}
-                            className={`${sendButtonClass} ${primaryButtonDisabled ? 'opacity-45 shadow-none' : ''}`}
+                            className={`sully-chat-send-button ${sendButtonClass} ${primaryButtonDisabled ? 'opacity-45 shadow-none' : ''}`}
                             aria-label={isGenerateButton ? (isTyping ? '正在生成回复' : '生成回复') : '发送'}
                         >
                             {sendButtonStyle === 'pill'

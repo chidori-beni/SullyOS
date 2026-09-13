@@ -25,6 +25,11 @@ const AI_PROMPT = `你是一个 CSS 设计师。我在用一个叫 SullyOS 的�
 - .sully-chat-token     右上角 token 用量小标签
 - .sully-chat-trigger   右侧「触发 AI」的小闪电按钮
 - .sully-chat-inputbar  底部输入栏整块
+- .sully-chat-composer 输入栏内的输入行（建议用此类名，不依赖子元素序号）
+- .sully-chat-input-wrap / .sully-chat-textarea 输入框外壳 / 文本输入框
+- .sully-chat-actions-button / .sully-chat-send-button 功能按钮 / 发送按钮
+- .sully-chat-emoji-suggestions 表情联想区（输入栏外的独立同级区域）
+- .sully-chat-auto-reply 自动回复倒计时（输入栏外的独立同级区域）
 - .sully-chat-panel     点「＋」拉起的功能面板（表情/动作菜单），其中按钮是 .sully-chat-panel button
 - .sully-chat-message   普通消息整行；同时带 -ai / -user 和 -group-first / -group-last 状态类
 - .sully-chat-message-content 该条消息的气泡列

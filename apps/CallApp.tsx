@@ -1491,7 +1491,10 @@ const CallApp: React.FC = () => {
         model,
         text: chunk,
         stream: false,
-        output_format: 'url',
+        // 和聊天那边保持一致：让 MiniMax 把音频内联返回（hex），不再给签名网址。
+        // 好处有三：省掉第二次跨域 GET（常被拦，拦了就退回裸链接、还进不了缓存）；
+        // 拿到的是本地 blob，口型分析（WebAudio）读得到；而且每段都能存进 TTS 缓存。
+        output_format: 'hex',
         voice_setting: { voice_id: voiceId, ...resolveVoiceSettingFields(emotion) },
         audio_setting: { format: 'mp3', sample_rate: 32000, bitrate: 128000, channel: 1 },
         // 顶层参数，不能塞进 voice_setting（塞进去会被忽略）。与 minimaxTts 保持一致。
