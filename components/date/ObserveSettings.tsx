@@ -3,6 +3,7 @@ import { useOS } from '../../context/OSContext';
 import { CharacterProfile, DateObservation, DateObserveConfig, DateObserveStyleId, DateCssPreset } from '../../types';
 import { OBSERVE_DIMENSIONS } from '../../utils/datePrompts';
 import ObserveHUD, { OBSERVE_STYLES } from './ObserveHUD';
+import { shareOrDownloadFile } from '../../utils/shareExport';
 
 /**
  * 见面设置里的「观测协议 OBSERVE」配置块（默认折叠）：
@@ -83,14 +84,13 @@ const ObserveSettings: React.FC<ObserveSettingsProps> = ({ char }) => {
         e.target.value = '';
     };
 
-    const exportObserveCss = () => {
-        const blob = new Blob([observeCssDraft], { type: 'text/css;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${char.name}_OBSERVE面板.css`;
-        a.click();
-        URL.revokeObjectURL(url);
+    const exportObserveCss = async () => {
+        await shareOrDownloadFile({
+            content: observeCssDraft,
+            fileName: `${char.name}_OBSERVE面板.css`,
+            mimeType: 'text/css;charset=utf-8',
+            shareTitle: `${char.name} 的 OBSERVE 面板`,
+        });
     };
 
     const saveObservePreset = () => {

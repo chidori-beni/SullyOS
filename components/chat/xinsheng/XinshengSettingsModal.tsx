@@ -24,6 +24,7 @@ import {
     updateXinshengPreset,
     type XinshengPreset,
 } from '../../../utils/xinsheng/xinshengStore';
+import { shareOrDownloadFile } from '../../../utils/shareExport';
 
 type TabKey = 'general' | 'layout' | 'css' | 'prompt' | 'fields' | 'presets';
 
@@ -129,16 +130,14 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
         toast(`已载入「${p.name}」，记得点保存`, 'success');
     };
 
-    const exportPreset = (p: XinshengPreset) => {
+    const exportPreset = async (p: XinshengPreset) => {
         try {
-            const blob = new Blob([buildPresetExportFile(p)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `xinsheng-${p.name}.json`;
-            a.click();
-            // 立刻 revoke 会让部分 WebView 的下载拿不到内容，给一拍
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            await shareOrDownloadFile({
+                content: buildPresetExportFile(p),
+                fileName: `xinsheng-${p.name}.json`,
+                mimeType: 'application/json;charset=utf-8',
+                shareTitle: `心声预设：${p.name}`,
+            });
             toast(`已导出「${p.name}」`, 'success');
         } catch (e) {
             toast('导出失败', 'error');

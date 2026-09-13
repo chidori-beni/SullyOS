@@ -11,6 +11,7 @@ import type { MemoryRoom } from '../../utils/memoryPalace/types';
 import { PixelAssetDB } from './pixelHomeDb';
 import PixelAssetGenerator from './PixelAssetGenerator';
 import { trackEvent } from '../../utils/analytics';
+import { shareOrDownloadBlob } from '../../utils/shareExport';
 
 interface Props {
   assets: PixelAsset[];
@@ -174,12 +175,13 @@ const AssetLibrary: React.FC<Props> = ({ assets, onChanged, onSelectAsset, isSel
       zip.file(`${asset.name}_${asset.pixelSize}px.png`, blob);
     }
     const content = await zip.generateAsync({ type: 'blob' });
-    const url = URL.createObjectURL(content);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `pixel_assets_${Date.now()}.zip`;
-    a.click();
-    URL.revokeObjectURL(url);
+    // 素材包可能很大，原生壳走分片写盘，别一次性转 base64 把 WebView 撑爆。
+    await shareOrDownloadBlob({
+      blob: content,
+      fileName: `pixel_assets_${Date.now()}.zip`,
+      shareTitle: '像素素材包',
+      nativeChunked: true,
+    });
     trackEvent('导出像素素材包');
   }, [assets, selectedIds, selectMode, filtered]);
 

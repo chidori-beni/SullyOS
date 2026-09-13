@@ -22,6 +22,7 @@ import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
+import { shareOrDownloadBlob } from '../utils/shareExport';
 
 // ============================================================
 // 美术资产配置（用户填入实际 PNG URL 后生效）
@@ -1076,13 +1077,10 @@ ${answerSummary}
             await Share.share({ title, files: [uri.uri] });
             return;
         }
-        // 先触发浏览器原生下载（非阻塞，立即派发）
-        const link = document.createElement('a');
-        link.download = fileName;
-        link.href = base64;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        // 统一出口：原生壳拉系统分享，手机网页优先文件分享，桌面才下载。
+        const response = await fetch(base64);
+        const blob = await response.blob();
+        await shareOrDownloadBlob({ blob, fileName, shareTitle: title });
         // 同时尝试系统分享面板（iOS Safari / Android Chrome / PWA）
         try {
             const res = await fetch(base64);

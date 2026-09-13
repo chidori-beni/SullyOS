@@ -6,6 +6,7 @@ import {
     MessagingThemeState,
     validateMessagingCss,
 } from '../../utils/messagingTheme';
+import { shareOrDownloadFile } from '../../utils/shareExport';
 
 interface MessagingThemeSettingsProps {
     state: MessagingThemeState;
@@ -104,16 +105,13 @@ const MessagingThemeSettings: React.FC<MessagingThemeSettingsProps> = ({ state, 
         }, '预设已删除');
     };
 
-    const exportPreset = (preset: MessagingThemePreset) => {
-        const blob = new Blob([`/* ${preset.name} — SullyOS / 糯叽机消息 App 兼容主题 */\n\n${preset.css}`], { type: 'text/css;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `${safeFileName(preset.name)}.css`;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.setTimeout(() => URL.revokeObjectURL(url), 500);
+    const exportPreset = async (preset: MessagingThemePreset) => {
+        await shareOrDownloadFile({
+            content: `/* ${preset.name} — SullyOS / 糯叽机消息 App 兼容主题 */\n\n${preset.css}`,
+            fileName: `${safeFileName(preset.name)}.css`,
+            mimeType: 'text/css;charset=utf-8',
+            shareTitle: `消息主题：${preset.name}`,
+        });
     };
 
     const importCss = async (event: React.ChangeEvent<HTMLInputElement>) => {

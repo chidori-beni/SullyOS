@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { DEFAULT_MESSAGE_BANNER_CSS, sanitizeMessageBannerCss } from '../../utils/messageBannerCss';
 import { DB } from '../../utils/db';
 import MessageBannerCard, { MESSAGE_BANNER_CARD_GUARD_CSS } from '../MessageBannerCard';
+import { shareOrDownloadFile } from '../../utils/shareExport';
 
 interface Props {
   value: string;
@@ -96,20 +97,17 @@ const MessageBannerCssEditor: React.FC<Props> = ({ value, onChange }) => {
     }
   };
 
-  const exportCss = () => {
+  const exportCss = async () => {
     if (!value.trim()) {
       window.alert('当前没有可导出的 CSS。');
       return;
     }
-    const blob = new Blob([value], { type: 'text/css;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = 'sullyos-message-banner.css';
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
+    await shareOrDownloadFile({
+      content: value,
+      fileName: 'sullyos-message-banner.css',
+      mimeType: 'text/css;charset=utf-8',
+      shareTitle: '消息横幅 CSS',
+    });
   };
 
   return (

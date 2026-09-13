@@ -8,6 +8,7 @@ import {
     renameChatCardCssPreset,
     upsertChatCardCssPreset,
 } from '../../utils/chatCardCss';
+import { shareOrDownloadFile } from '../../utils/shareExport';
 
 /**
  * 「装扮 → 所有聊天 → 卡片 · CSS」编辑器。
@@ -124,17 +125,14 @@ const ChatCardCssEditor: React.FC<Props> = ({
         }
     };
 
-    const handleExport = () => {
+    const handleExport = async () => {
         if (!value.trim()) { notify('当前没有可导出的 CSS。', 'error'); return; }
-        const blob = new Blob([value], { type: 'text/css;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement('a');
-        anchor.href = url;
-        anchor.download = 'sullyos-chat-cards.css';
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-        URL.revokeObjectURL(url);
+        await shareOrDownloadFile({
+            content: value,
+            fileName: 'sullyos-chat-cards.css',
+            mimeType: 'text/css;charset=utf-8',
+            shareTitle: '聊天卡片 CSS',
+        });
     };
 
     return (

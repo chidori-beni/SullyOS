@@ -6,6 +6,7 @@ import { processImage } from '../../utils/file';
 import { pickDateFallbackSprite } from '../../utils/dateSprites';
 import { DATE_STYLE_PRESETS } from '../../utils/datePrompts';
 import ObserveSettings from './ObserveSettings';
+import { shareOrDownloadFile } from '../../utils/shareExport';
 
 // 标准情绪列表
 const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
@@ -98,14 +99,13 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
         addToast(`已删除阅读预设「${preset.name}」`, 'success');
     };
 
-    const exportReadingCss = () => {
-        const blob = new Blob([readingCssDraft], { type: 'text/css;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${char.name}_此时此刻阅读主题.css`;
-        a.click();
-        URL.revokeObjectURL(url);
+    const exportReadingCss = async () => {
+        await shareOrDownloadFile({
+            content: readingCssDraft,
+            fileName: `${char.name}_此时此刻阅读主题.css`,
+            mimeType: 'text/css;charset=utf-8',
+            shareTitle: `${char.name} 的阅读主题`,
+        });
     };
 
     // 文风与叙事（即时生效：system prompt 每次请求重建，存上就影响下一条回复）

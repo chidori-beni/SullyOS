@@ -23,6 +23,7 @@ import {
     Like520CallBResult,
     Like520TucaoKey,
 } from '../utils/like520/prompts';
+import { shareOrDownloadBlob } from '../utils/shareExport';
 
 // ============================================================
 // 日期判定 / 持久化 key
@@ -2394,11 +2395,14 @@ const LetterView: React.FC<{ text: string; onNext: () => void; onClose: () => vo
             // radial-gradient 时会拿这个色填整块 wrapper，挑顶端色能让"上面那一节"
             // 不再突变
             const canvas = await html2canvas(target, { backgroundColor: '#fefbf4', scale: 2, useCORS: true });
-            const url = canvas.toDataURL('image/png');
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `520_letter_${Date.now()}.png`;
-            a.click();
+            const blob = await new Promise<Blob>((resolve, reject) => {
+                canvas.toBlob((result: Blob | null) => result ? resolve(result) : reject(new Error('信件图片生成失败')), 'image/png');
+            });
+            await shareOrDownloadBlob({
+                blob,
+                fileName: `520_letter_${Date.now()}.png`,
+                shareTitle: '520 特别信件',
+            });
         } catch (e) {
             console.error('[520] letter save failed', e);
         } finally {

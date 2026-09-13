@@ -6,6 +6,7 @@ import {
   GLOBAL_CSS_AI_PROMPT,
   UI_HOOK_CATALOG,
 } from '../../utils/globalCss';
+import { shareOrDownloadFile } from '../../utils/shareExport';
 
 /**
  * 「外观 → 全局弹窗 · CSS」编辑器。
@@ -108,14 +109,14 @@ const GlobalCssEditor: React.FC<Props> = ({ value, presets, activePresetId, onPa
     }
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!value.trim()) { notify('当前没有可导出的 CSS。', 'error'); return; }
-    const blob = new Blob([value], { type: 'text/css;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url; anchor.download = 'sullyos-global-ui.css';
-    document.body.appendChild(anchor); anchor.click(); anchor.remove();
-    URL.revokeObjectURL(url);
+    await shareOrDownloadFile({
+      content: value,
+      fileName: 'sullyos-global-ui.css',
+      mimeType: 'text/css;charset=utf-8',
+      shareTitle: '全局界面 CSS',
+    });
   };
 
   return (

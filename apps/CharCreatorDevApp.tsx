@@ -7,6 +7,7 @@ import { buildBuiltinPartsPackZip, type BuiltinPackItem } from '../utils/builtin
 import { trackEvent } from '../utils/analytics';
 import type { CustomCreatorPart } from '../types';
 import type { ParsedPsdPart } from '../utils/psdCreatorImport';
+import { shareOrDownloadBlob } from '../utils/shareExport';
 
 // 与捏人器 character_creator.html 里 PARTS 的 key 一一对应
 const CC_CATEGORIES: { key: string; label: string; multi?: boolean }[] = [
@@ -85,12 +86,13 @@ const CharCreatorDevApp: React.FC = () => {
         try {
             const { blob, plan } = await buildBuiltinPartsPackZip(items);
             if (!plan.manifest.length) { addToast?.('没有可导出的部件（都缺类目）', 'error'); return; }
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `creator_builtin_parts_${hint}_${Date.now()}.zip`;
-            document.body.appendChild(a); a.click(); a.remove();
-            setTimeout(() => URL.revokeObjectURL(url), 2000);
+            // 素材包可能很大，原生壳走分片写盘。
+            await shareOrDownloadBlob({
+                blob,
+                fileName: `creator_builtin_parts_${hint}_${Date.now()}.zip`,
+                shareTitle: '内置部件包',
+                nativeChunked: true,
+            });
             addToast?.(plan.skipped
                 ? `已导出 ${plan.manifest.length} 个内置部件（跳过 ${plan.skipped} 个缺类目）`
                 : `已导出 ${plan.manifest.length} 个内置部件`, 'success');

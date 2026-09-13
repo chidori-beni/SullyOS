@@ -4,11 +4,8 @@ import ImageGenSettings from '../components/settings/ImageGenSettings';
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { Capacitor } from '@capacitor/core';
-import { Filesystem, Directory } from '@capacitor/filesystem';
-import { Share } from '@capacitor/share';
 import { extractContent, safeResponseJson } from '../utils/safeApi';
 import { extractModelIds, normalizeModelIds } from '../utils/modelList';
-import { EXPORT_CHUNK_SIZE, sliceRanges } from '../utils/backupExport';
 import { bucketRetryCount, isAnalyticsConfigured, isAnalyticsEnabled, setAnalyticsEnabled, trackEvent } from '../utils/analytics';
 import Modal from '../components/os/Modal';
 import { NotionManager, FeishuManager, RealtimeContextManager, fetchOwmWeather, fetchOpenMeteoWeather } from '../utils/realtimeContext';
@@ -51,6 +48,7 @@ import { normalizeApiBaseUrl, normalizeApiCredential, normalizeApiModel } from '
 import { configFromPreset, findActivePresetId } from '../utils/apiPresetSwitch';
 import type { APIConfig, TtsProvider } from '../types';
 import { describeImageWithVisionApi, VISION_API_TEST_IMAGE_DATA_URL, visionApiConfigFromPreset } from '../utils/visionApi';
+import { shareOrDownloadBlob } from '../utils/shareExport';
 
 // hot_news（news.orz.ai）可选热榜平台。key 必须与 API 的 ?platform= 完全一致。
 const HOTNEWS_PLATFORM_OPTIONS: { key: string; label: string }[] = [
@@ -549,6 +547,8 @@ const Settings: React.FC = () => {
   const [showGithubModal, setShowGithubModal] = useState(false);
   const [showCloudRestoreModal, setShowCloudRestoreModal] = useState(false);
   const [cloudBackupFiles, setCloudBackupFiles] = useState<import('../types').CloudBackupFile[]>([]);
+  const [cloudBackupListState, setCloudBackupListState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [cloudBackupListError, setCloudBackupListError] = useState('');
   const [cloudTestResult, setCloudTestResult] = useState<string>('');
   const [cloudTesting, setCloudTesting] = useState(false);
   const [avatarModelInventory, setAvatarModelInventory] = useState<AvatarModelBackupInventory | null>(null);
@@ -1300,68 +1300,26 @@ const Settings: React.FC = () => {
           // Trigger export (Context handles loading state UI)
           const blob = await exportSystem(mode);
           
-          if (Capacitor.isNativePlatform()) {
-              // 手机端分片写盘：整包一次性 readAsDataURL 会把几十~上百 MB 的 base64
-              // 一股脑塞进内存，WebView 容易 OOM 闪退。改成按 3MiB 切片，每片转成纯
-              // base64 再 appendFile 追加。先写临时文件，全部写完才改名+分享；中途任何
-              // 一步失败都删掉残片，避免留下一个看着像成功、其实损坏的 .zip。
-              const fileName = `Sully_Backup_${mode}_${Date.now()}.zip`;
-              const tempName = `${fileName}.part`;
-
-              // 读一个 Blob 分片为纯 base64（去掉 data:...;base64, 前缀）。
-              const sliceToBase64 = (slice: Blob): Promise<string> => new Promise((resolve, reject) => {
-                  const reader = new FileReader();
-                  reader.onloadend = () => {
-                      const result = String(reader.result);
-                      const comma = result.indexOf(',');
-                      resolve(comma >= 0 ? result.slice(comma + 1) : result);
-                  };
-                  reader.onerror = () => reject(reader.error || new Error('读取备份分片失败'));
-                  reader.onabort = () => reject(new Error('读取备份分片被中断'));
-                  reader.readAsDataURL(slice);
-              });
-
-              try {
-                  const ranges = sliceRanges(blob.size, EXPORT_CHUNK_SIZE);
-                  for (let i = 0; i < ranges.length; i++) {
-                      const [start, end] = ranges[i];
-                      const base64 = await sliceToBase64(blob.slice(start, end));
-                      if (i === 0) {
-                          await Filesystem.writeFile({ path: tempName, data: base64, directory: Directory.Cache });
-                      } else {
-                          await Filesystem.appendFile({ path: tempName, data: base64, directory: Directory.Cache });
-                      }
-                  }
-                  // 全部分片写盘成功，才把临时文件改名为正式名并分享。
-                  await Filesystem.rename({ from: tempName, to: fileName, directory: Directory.Cache });
-                  const uriResult = await Filesystem.getUri({ directory: Directory.Cache, path: fileName });
-                  await Share.share({ title: `Sully Backup`, files: [uriResult.uri] });
-              } catch (e) {
-                  console.error("Native write failed", e);
-                  // 尽力清掉写了一半的残片，别留下损坏文件。
-                  try { await Filesystem.deleteFile({ path: tempName, directory: Directory.Cache }); } catch { /* ignore */ }
-                  trackEvent('保存备份文件到手机失败', { mode });
-                  addToast("保存文件失败", "error");
-              }
-          } else {
-              // Web Download
+          // 分片写盘那一整套（大包一次性转 base64 会把 WebView 撑爆）已经收进
+          // shareOrDownloadBlob 的 nativeChunked，这里不再自己重写一遍。
+          const fileName = `Sully_Backup_${mode}_${new Date().toISOString().slice(0, 10)}.zip`;
+          if (!Capacitor.isNativePlatform()) {
+              // 网页端额外留一条手动下载链接，作为浏览器禁掉文件分享/自动下载时的最后救援。
               // 上一次导出的 object URL 先 revoke 掉，否则它会一直占着整包内存直到刷新页面。
               if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current);
               const url = URL.createObjectURL(blob);
               downloadUrlRef.current = url;
               setDownloadUrl(url);
-              const fileName = 'Sully_Backup_' + mode + '_' + new Date().toISOString().slice(0,10) + '.zip';
               setDownloadFileName(fileName);
               setShowExportModal(true);
-
-              // Auto click
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = fileName;
-              document.body.appendChild(a);
-              a.click();
-              document.body.removeChild(a);
           }
+          const result = await shareOrDownloadBlob({
+              blob,
+              fileName,
+              shareTitle: 'Sully Backup',
+              nativeChunked: true,
+          });
+          if (result === 'cancelled') return;
       } catch (e: any) {
           // 只报导出档位，错误文案是动态串不能进属性
           trackEvent('导出备份失败', { mode });
@@ -1396,53 +1354,17 @@ const Settings: React.FC = () => {
   };
 
   const deliverStandaloneBackup = async (blob: Blob, fileName: string, shareTitle: string) => {
-      if (Capacitor.isNativePlatform()) {
-          const tempName = `${fileName}.part`;
-          const sliceToBase64 = (slice: Blob): Promise<string> => new Promise((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onloadend = () => {
-                  const result = String(reader.result);
-                  const comma = result.indexOf(',');
-                  resolve(comma >= 0 ? result.slice(comma + 1) : result);
-              };
-              reader.onerror = () => reject(reader.error || new Error('读取模型备份分片失败'));
-              reader.onabort = () => reject(new Error('读取模型备份分片被中断'));
-              reader.readAsDataURL(slice);
-          });
-
-          try {
-              const ranges = sliceRanges(blob.size, EXPORT_CHUNK_SIZE);
-              for (let index = 0; index < ranges.length; index++) {
-                  const [start, end] = ranges[index];
-                  const base64 = await sliceToBase64(blob.slice(start, end));
-                  if (index === 0) {
-                      await Filesystem.writeFile({ path: tempName, data: base64, directory: Directory.Cache });
-                  } else {
-                      await Filesystem.appendFile({ path: tempName, data: base64, directory: Directory.Cache });
-                  }
-              }
-              await Filesystem.rename({ from: tempName, to: fileName, directory: Directory.Cache });
-              const uriResult = await Filesystem.getUri({ directory: Directory.Cache, path: fileName });
-              await Share.share({ title: shareTitle, files: [uriResult.uri] });
-          } catch (error) {
-              try { await Filesystem.deleteFile({ path: tempName, directory: Directory.Cache }); } catch { /* ignore */ }
-              throw error;
-          }
-          return;
+      // 原生壳的分片写盘已经收进 shareOrDownloadBlob 的 nativeChunked，这里不再自己写一遍；
+      // 网页端额外留一条手动下载链接兜底。
+      if (!Capacitor.isNativePlatform()) {
+          if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current);
+          const url = URL.createObjectURL(blob);
+          downloadUrlRef.current = url;
+          setDownloadUrl(url);
+          setDownloadFileName(fileName);
+          setShowExportModal(true);
       }
-
-      if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current);
-      const url = URL.createObjectURL(blob);
-      downloadUrlRef.current = url;
-      setDownloadUrl(url);
-      setDownloadFileName(fileName);
-      setShowExportModal(true);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = fileName;
-      document.body.appendChild(anchor);
-      anchor.click();
-      document.body.removeChild(anchor);
+      await shareOrDownloadBlob({ blob, fileName, shareTitle, nativeChunked: true });
   };
 
   const handleAvatarModelExport = async () => {
@@ -1580,17 +1502,28 @@ const Settings: React.FC = () => {
   const handleOpenCloudRestore = async () => {
       setShowCloudRestoreModal(true);
       setCloudBackupFiles([]);
+      setCloudBackupListState('loading');
+      setCloudBackupListError('');
       try {
           const files = await listCloudBackups();
           setCloudBackupFiles(files);
+          setCloudBackupListState('ready');
           trackEvent('加载云端备份列表', { provider: cloudBackupConfig.provider === 'github' ? 'github' : 'webdav', result: '成功' });
-      } catch {
+      } catch (error: any) {
+          const message = error?.message || '获取云端备份列表失败';
+          setCloudBackupListError(message);
+          setCloudBackupListState('error');
           trackEvent('加载云端备份列表', { provider: cloudBackupConfig.provider === 'github' ? 'github' : 'webdav', result: '失败' });
-          addToast('获取云端备份列表失败', 'error');
+          addToast(message, 'error');
       }
   };
 
   const handleCloudRestore = async (file: import('../types').CloudBackupFile) => {
+      // 分片没传完的那种备份点了也只会中途失败，直接挡在门外并说明原因。
+      if (file.status === 'incomplete') {
+          addToast(file.statusMessage || '这个备份上传未完成，暂时不能恢复', 'error');
+          return;
+      }
       setShowCloudRestoreModal(false);
       try {
           await cloudRestoreFromWebDAV(file);
@@ -3771,7 +3704,7 @@ const Settings: React.FC = () => {
                       </label>
                       <p className="text-[10px] text-slate-400 leading-relaxed pl-5">
                           开启后，GitHub 请求会由所选 Worker 转发，备份仍存放在你的 GitHub 私有仓库；
-                          项目不建立备份数据库，也不主动留存 Token 或备份文件。大于 80MB 时仍会自动分片。
+                          项目不建立备份数据库，也不主动留存 Token 或备份文件。大于 32MB 时会自动分片，并在全部完成后发布。
                       </p>
                   </div>
               )}
@@ -3796,14 +3729,40 @@ const Settings: React.FC = () => {
       {/* Cloud Restore Modal */}
       <Modal isOpen={showCloudRestoreModal} title="从云端恢复" onClose={() => setShowCloudRestoreModal(false)}>
           <div className="space-y-2 p-1">
-              {cloudBackupFiles.length === 0 ? (
+              {cloudBackupListState === 'loading' ? (
                   <div className="text-center py-8"><p className="text-[11px] text-slate-400">正在加载云端备份列表...</p></div>
+              ) : cloudBackupListState === 'error' ? (
+                  <div className="text-center py-7 px-3 space-y-3">
+                      <p className="text-[11px] text-red-500 leading-relaxed">{cloudBackupListError || '获取云端备份列表失败'}</p>
+                      <button onClick={handleOpenCloudRestore} className="px-4 py-2 rounded-xl bg-slate-800 text-white text-[11px] font-bold">重新加载</button>
+                  </div>
+              ) : cloudBackupListState === 'ready' && cloudBackupFiles.length === 0 ? (
+                  <div className="text-center py-8"><p className="text-[11px] text-slate-400">云端还没有备份</p></div>
               ) : (
                   <>
                       <p className="text-[10px] text-slate-400 mb-2">选择要恢复的备份文件:</p>
                       <div className="max-h-[50vh] overflow-y-auto overflow-x-hidden space-y-2">
-                          {cloudBackupFiles.map((file, i) => (
-                              <button key={i} onClick={() => handleCloudRestore(file)} className="w-full p-3 bg-white border border-slate-200 rounded-xl text-left hover:bg-sky-50 hover:border-sky-200 transition-colors active:scale-[0.98]">
+                          {cloudBackupFiles.map((file, i) => file.status === 'incomplete' ? (
+                              <div key={file.href || i} className="w-full p-3 bg-amber-50/70 border border-amber-200 rounded-xl text-left">
+                                  <div className="flex items-start justify-between gap-2">
+                                      <p className="text-[11px] text-slate-700 font-medium truncate">{file.name}</p>
+                                      <span className="shrink-0 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[9px] font-bold">上传未完成</span>
+                                  </div>
+                                  <p className="text-[10px] text-amber-700 mt-1 leading-relaxed">{file.statusMessage || '附件不完整，不能恢复'}</p>
+                                  <div className="flex items-center justify-between gap-3 mt-2">
+                                      <span className="text-[10px] text-slate-400">{file.lastModified ? new Date(file.lastModified).toLocaleString('zh-CN') : '未知时间'}</span>
+                                      {cloudBackupConfig.provider === 'github' && cloudBackupConfig.githubOwner && (
+                                          <a
+                                              href={`https://github.com/${cloudBackupConfig.githubOwner}/${cloudBackupConfig.githubRepo || 'sully-backup'}/releases`}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="text-[10px] text-amber-700 font-semibold hover:underline"
+                                          >去 GitHub 查看 ↗</a>
+                                      )}
+                                  </div>
+                              </div>
+                          ) : (
+                              <button key={file.href || i} onClick={() => handleCloudRestore(file)} className="w-full p-3 bg-white border border-slate-200 rounded-xl text-left hover:bg-sky-50 hover:border-sky-200 transition-colors active:scale-[0.98]">
                                   <p className="text-[11px] text-slate-700 font-medium truncate">{file.name}</p>
                                   <div className="flex items-center gap-3 mt-1">
                                       <span className="text-[10px] text-slate-400">{file.lastModified ? new Date(file.lastModified).toLocaleString('zh-CN') : '未知时间'}</span>

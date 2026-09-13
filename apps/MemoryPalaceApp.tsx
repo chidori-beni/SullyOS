@@ -46,6 +46,7 @@ import {
     makeCustomMemoryPalaceWaterline,
     resolveMemoryPalaceWaterline,
 } from '../utils/memoryPalace/waterline';
+import { shareOrDownloadFile } from '../utils/shareExport';
 
 /** 手动总结面板：每页渲染多少条聊天记录（翻页，避免一次性塞几百条 DOM 卡顿） */
 const RANGE_PAGE_SIZE = 50;
@@ -2119,15 +2120,12 @@ export default function MemoryPalaceApp() {
             const json = JSON.stringify(data, null, 2);
             const safeName = (char.name || 'character').replace(/[\\/:*?"<>|]/g, '_');
             const fileName = `${safeName}_记忆宫殿_${new Date().toISOString().slice(0, 10)}.json`;
-            const blob = new Blob([json], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = fileName;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            const exportDisposition = await shareOrDownloadFile({
+                content: json,
+                fileName,
+                mimeType: 'application/json;charset=utf-8',
+                shareTitle: `${char.name}的记忆宫殿`,
+            });
             trackEvent('导出记忆宫殿备份');
             const vecPart = exportWithVectors ? `、${c.vectors} 条向量` : '';
             setExportResult(`[ok]已导出 ${nodeCount} 条记忆、${c.eventBoxes} 个事件盒、${c.anticipations} 个期盼${vecPart}`);

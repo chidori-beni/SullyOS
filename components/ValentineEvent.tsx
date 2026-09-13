@@ -33,6 +33,7 @@ import {
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { markAmsgStateDirty } from '../utils/amsgStateSync';
 import { createQixiChatMessagePair } from '../utils/qixiChatCard';
+import { shareOrDownloadBlob } from '../utils/shareExport';
 
 // ============================================================
 // 情人节立绘 Sprite 映射 (占位 emoji，等图片整理好后替换为图床URL)
@@ -698,10 +699,11 @@ export const ValentineSession: React.FC<ValentineSessionProps> = ({ charId, onCl
                     files: [uriResult.uri],
                 });
             } else {
-                const link = document.createElement('a');
-                link.download = fileName;
-                link.href = canvas.toDataURL('image/png');
-                link.click();
+                const blob = await new Promise<Blob>((resolve, reject) => {
+                    canvas.toBlob(result => result ? resolve(result) : reject(new Error('长图生成失败')), 'image/png');
+                });
+                const result = await shareOrDownloadBlob({ blob, fileName, shareTitle: '特别时光 - 导出长图' });
+                if (result === 'cancelled') return;
             }
             addToast('导出成功', 'success');
         } catch (e: any) {

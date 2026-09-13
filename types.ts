@@ -4803,8 +4803,13 @@ export interface CloudBackupConfig {
 export interface CloudBackupFile {
     name: string;
     size: number;
-    lastModified: string;       // ISO date string
+    lastModified: string | number; // ISO date string or epoch timestamp
     href: string;               // WebDAV: remote path. GitHub: 'releaseId:assetId'
+    /** GitHub can expose an interrupted draft/release without a restorable asset set. */
+    status?: 'ready' | 'incomplete';
+    statusMessage?: string;
+    /** Expected GitHub asset sizes, in the same order as the ids encoded in href. */
+    partSizes?: number[];
 }
 
 // --- GUIDEBOOK (攻略本) APP TYPES ---

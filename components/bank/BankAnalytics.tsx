@@ -4,6 +4,7 @@ import { BankTransaction, SavingsGoal, APIConfig } from '../../types';
 import { safeResponseJson } from '../../utils/safeApi';
 import { getLocalDateKey } from '../../utils/localDate';
 import { formatMoney, roundMoney, sumMoney } from '../../utils/format';
+import { shareOrDownloadFile } from '../../utils/shareExport';
 
 interface Props {
     transactions: BankTransaction[];
@@ -60,7 +61,7 @@ const BankAnalytics: React.FC<Props> = ({ transactions, goals, currency, onDelet
     const totalSpent = useMemo(() => sumMoney(filteredTx.map(tx => tx.amount)), [filteredTx]);
 
     // CSV Export
-    const handleExportCSV = () => {
+    const handleExportCSV = async () => {
         if (transactions.length === 0) return;
         const BOM = '\uFEFF';
         const header = '日期,时间,金额,备注,分类\n';
@@ -75,15 +76,12 @@ const BankAnalytics: React.FC<Props> = ({ transactions, goals, currency, onDelet
             })
             .join('\n');
         const csv = BOM + header + rows;
-        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `记账记录_${new Date().toISOString().split('T')[0]}.csv`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        await shareOrDownloadFile({
+            content: csv,
+            fileName: `记账记录_${new Date().toISOString().split('T')[0]}.csv`,
+            mimeType: 'text/csv;charset=utf-8',
+            shareTitle: '记账记录',
+        });
     };
 
     // Group by category

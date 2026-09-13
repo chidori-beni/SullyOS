@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import type { CssPreset } from '../../utils/cssPresets';
 import { removeCssPreset, renameCssPreset, upsertCssPreset } from '../../utils/cssPresets';
 import type { GlobalCssBuiltinPreset, UiHookEntry } from '../../utils/globalCss';
+import { shareOrDownloadFile } from '../../utils/shareExport';
 
 /**
  * 一个「CSS 槽」的编辑器：一段 CSS + 一堆预设 + 一份 AI 提示词 + 一张类名速查。
@@ -114,14 +115,14 @@ const CssSlotEditor: React.FC<Props> = ({ slotLabel, hooks, aiPrompt, builtins, 
     }
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!value.trim()) { notify('当前没有可导出的 CSS。', 'error'); return; }
-    const blob = new Blob([value], { type: 'text/css;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url; anchor.download = exportName;
-    document.body.appendChild(anchor); anchor.click(); anchor.remove();
-    URL.revokeObjectURL(url);
+    await shareOrDownloadFile({
+      content: value,
+      fileName: exportName,
+      mimeType: 'text/css;charset=utf-8',
+      shareTitle: exportName,
+    });
   };
 
   return (
