@@ -4716,7 +4716,6 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 lastTokenUsage={lastTokenUsage}
                 tokenBreakdown={tokenBreakdown}
                 showTokenUsage={char.showTokenUsage !== false}
-                showTrigger={inputPreferences.triggerPlacement !== 'input'}
                 onClose={onBack || closeApp}
                 onTriggerAI={handleManualTrigger}
                 hideTrigger={inputPreferences.sendButtonGenerates}
@@ -5299,7 +5298,6 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                     showSendButton={osTheme.chatShowSendButton ?? false}
                     showVoiceButton={osTheme.chatShowVoiceButton ?? true}
                     onTriggerAI={handleManualTrigger}
-                    showTriggerButton={inputPreferences.triggerPlacement === 'input'}
                     chromeStyle={osTheme.chatChromeStyle}
                     acnh={acnh}
                 />

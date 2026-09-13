@@ -457,39 +457,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
             >
                 <div className="space-y-6">
                      {/* 合上游新增：输入与发送。单开一节放在最前面，下面原有的设置一项没动。 */}
-                     <ChatSettingsSection title="输入与发送" summary="闪电按钮位置、回车、自动回复">
-                         <div className="mb-3">
-                             <div className="text-xs font-bold text-slate-400 uppercase">闪电按钮位置</div>
-                             <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
-                                 选择「触发 AI」闪电图标出现的位置；另一处会自动隐藏。对所有私聊统一生效，默认在聊天顶栏右上角。
-                             </p>
-                             <div role="radiogroup" aria-label="闪电按钮位置" className="mt-3 grid grid-cols-2 gap-2">
-                                 <button
-                                     type="button"
-                                     role="radio"
-                                     aria-checked={settingsInputPreferences.triggerPlacement === 'header'}
-                                     onClick={() => setSettingsInputPreferences({ ...settingsInputPreferences, triggerPlacement: 'header' })}
-                                     className={`rounded-2xl border px-3 py-3 text-left transition-all active:scale-[0.99] ${settingsInputPreferences.triggerPlacement === 'header'
-                                         ? 'border-primary bg-primary/5 text-primary shadow-sm'
-                                         : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
-                                 >
-                                     <span className="block text-[11px] font-bold">聊天顶栏右上角</span>
-                                     <span className="mt-1 block text-[10px] leading-relaxed opacity-70">保持现在的位置</span>
-                                 </button>
-                                 <button
-                                     type="button"
-                                     role="radio"
-                                     aria-checked={settingsInputPreferences.triggerPlacement === 'input'}
-                                     onClick={() => setSettingsInputPreferences({ ...settingsInputPreferences, triggerPlacement: 'input' })}
-                                     className={`rounded-2xl border px-3 py-3 text-left transition-all active:scale-[0.99] ${settingsInputPreferences.triggerPlacement === 'input'
-                                         ? 'border-primary bg-primary/5 text-primary shadow-sm'
-                                         : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
-                                 >
-                                     <span className="block text-[11px] font-bold">输入框右侧</span>
-                                     <span className="mt-1 block text-[10px] leading-relaxed opacity-70">放在表情包按钮左边</span>
-                                 </button>
-                             </div>
-                         </div>
+                     <ChatSettingsSection title="输入与发送" summary="发送键行为、回车、自动回复">
                          <ChatInputSettings value={settingsInputPreferences} onChange={setSettingsInputPreferences} />
                      </ChatSettingsSection>
                      {apiConfig && apiPresets && onApplyMainApiPreset && (

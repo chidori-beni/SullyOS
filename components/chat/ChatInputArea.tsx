@@ -695,6 +695,9 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 onChange={(e) => setInput(e.target.value)}
                                 onKeyDown={handleKeyDown}
                                 onFocus={handleInputFocus}
+                                // 没有这一行，isInputFocused 进去就出不来：自动回复的
+                                // 「等输入框没光标」永远不成立，倒计时一次都不会开始。
+                                onBlur={() => setIsInputFocused(false)}
                                 inputMode="text"
                                 enterKeyHint="send"
                                 autoCorrect="on"
