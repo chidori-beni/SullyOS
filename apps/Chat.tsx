@@ -41,6 +41,7 @@ import { resolveChatTheme } from '../utils/groupChat/theme';
 import ChatHeader from '../components/chat/ChatHeaderShell';
 import CharacterEntryTransition from '../components/chat/CharacterEntryTransition';
 import ChatDecorSheet, { ChatDecorTab } from '../components/chat/ChatDecorSheet';
+import { resolveChatAppearance, splitAppearancePatch, pickChatAppearance } from '../utils/chatAppearanceOverride';
 import ChatInputArea from '../components/chat/ChatInputArea';
 import UserVoiceInputModal from '../components/chat/UserVoiceInputModal';
 import { loadChatInputPreferences, saveChatInputPreferences } from '../utils/chatInputPreferences';
@@ -201,7 +202,7 @@ interface ChatProps {
 }
 
 const Chat: React.FC<ChatProps> = ({ onBack }) => {
-    const { activeApp, updateUserProfile, characters, activeCharacterId, setActiveCharacterId, addCharacter, availableModels, addCustomTheme, addWorldbook, saveAppearancePreset, updateCharacter, apiConfig, commitApiConfig, apiPresets, addApiPreset, closeApp, openApp, customThemes, removeCustomTheme, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: osTheme, updateTheme, proactiveComposingChars, openDateWithChar } = useOS();
+    const { activeApp, updateUserProfile, characters, activeCharacterId, setActiveCharacterId, addCharacter, availableModels, addCustomTheme, addWorldbook, saveAppearancePreset, updateCharacter, apiConfig, commitApiConfig, apiPresets, addApiPreset, closeApp, openApp, customThemes, removeCustomTheme, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: globalTheme, updateTheme, proactiveComposingChars, openDateWithChar } = useOS();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
     const localDateKey = useLocalDateKey();
 
@@ -416,6 +417,20 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     const [showingTargetIds, setShowingTargetIds] = useState<Set<number>>(new Set());
 
     const char = characters.find(c => c.id === activeCharacterId) || characters[0];
+    /**
+     * 聊天页看到的 theme = 全局打底 + 这个角色单独定制的 16 项外观。
+     *
+     * 故意沿用 `osTheme` 这个名字盖住 useOS() 拿到的全局值：下面几十处读取
+     * （顶栏样式、气泡、头像、输入栏、发送按钮……）因此一次性全部变成「按角色」的，
+     * 不用逐个改，也不会漏掉某一处导致半边跟随全局半边跟随角色。
+     *
+     * 白名单外的字段（壁纸、主色、动画开关……）原样透传，不受影响。
+     * 要拿**全局原值**的地方（装扮抽屉的「所有聊天」页）请显式用 globalTheme。
+     */
+    const osTheme = useMemo(
+        () => resolveChatAppearance(globalTheme, char),
+        [globalTheme, char?.chatAppearance, char?.chatFineTune?.enabled],
+    );
     const memoryRepairRound = useMemo(() => {
         let assistantIndex = -1;
         for (let i = messages.length - 1; i >= 0; i--) {
@@ -5780,8 +5795,19 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                                 updateCharacter(char.id, { chatSound: s || undefined } as any);
                             }
                         }}
-                        theme={osTheme}
+                        theme={globalTheme}
                         onUpdateTheme={(updates) => { void updateTheme(updates); }}
+                        charAppearanceTheme={osTheme}
+                        onUpdateCharAppearance={(patch) => {
+                            // 「所有聊天」那套控件是按整份 theme 写的，一次可能同时含
+                            // 外观 16 项和微调 9 项（「快速预设」就会一口气写十几项）。
+                            // 这里按字段归属拆开，分别落到 chatAppearance / chatFineTune。
+                            const { appearance, fineTune } = splitAppearancePatch(patch);
+                            updateCharacter(char.id, {
+                                chatAppearance: { ...pickChatAppearance(char.chatAppearance), ...appearance },
+                                chatFineTune: { ...override, ...fineTune, enabled: true },
+                            } as any);
+                        }}
                         onResetAllChrome={resetAllChromeCss}
                         onOpenApp={openApp}
 

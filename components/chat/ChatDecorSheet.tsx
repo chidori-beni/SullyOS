@@ -100,6 +100,13 @@ type Props = {
     /** 「所有聊天」作用域：原外观 App 那一页，整套全局聊天装扮 */
     theme: OSTheme;
     onUpdateTheme: (updates: Partial<OSTheme>) => void;
+    /**
+     * 「这个角色」作用域用的生效值 = 全局 + 该角色的 16 项外观覆盖。
+     * 两个作用域共用同一套控件，区别只在读哪份值、写哪儿。
+     */
+    charAppearanceTheme: OSTheme;
+    /** 角色侧的写入口：调用方负责把补丁拆进 chatAppearance / chatFineTune。 */
+    onUpdateCharAppearance: (patch: Partial<OSTheme>) => void;
     onResetAllChrome: () => void;
     onOpenApp: (appId: AppID) => void;
     /** 卡片 CSS 的保存 / 重命名 / 删除结果走聊天页的 toast。 */
@@ -109,7 +116,7 @@ type Props = {
 /** 提示语按 (作用域 × 页签) 给，两边说的不是一回事。 */
 const TAB_HINTS: Record<DecorTabId, { char: string; global: string }> = {
     style: {
-        char: '头像、字号、间距这些细节。不改就跟随「所有聊天」。',
+        char: '聊天壳、顶栏、气泡与头像、输入栏——跟「所有聊天」同样 25 项，只对 ta 生效。',
         global: '全部私聊的打底：聊天壳、顶栏、气泡与头像、输入栏。',
     },
     bubble: {
@@ -155,6 +162,8 @@ const ChatDecorSheet: React.FC<Props> = ({
     onChangeSoundBound,
     theme,
     onUpdateTheme,
+    charAppearanceTheme,
+    onUpdateCharAppearance,
     onResetAllChrome,
     onOpenApp,
     onNotify,
@@ -263,7 +272,19 @@ const ChatDecorSheet: React.FC<Props> = ({
                         </div>
                         {fineTuneCustomized && (
                             <>
-                                <ChatFineTunePanel value={fineTuneValue} onChange={onChangeFineTune} />
+                                {/* 跟「所有聊天」**同一套控件**（同一个组件、同样 6 页），
+                                    只是读的是这个角色的生效值、写的是这个角色的覆盖。
+                                    原来这里只有 9 项微调，现在 25 项全在——
+                                    那 9 项就在这套控件的第 4 页，没有少，只是不再单独列一遍。 */}
+                                <ChatAppearanceEditor
+                                    embedded
+                                    section="style"
+                                    scopeLabel="character"
+                                    theme={charAppearanceTheme}
+                                    updateTheme={onUpdateCharAppearance}
+                                    onOpenApp={onOpenApp}
+                                    onNotify={onNotify}
+                                />
                                 <button
                                     onClick={onOpenFloatingFineTune}
                                     className="mt-3 w-full rounded-2xl border border-primary/20 bg-primary/5 px-4 py-2.5 text-[11px] font-bold text-primary transition-all active:scale-[0.99]">

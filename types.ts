@@ -3406,6 +3406,13 @@ export interface CharacterProfile {
    *  enabled 为 false/undefined 或整个字段缺省 = 完全跟随全局（现状零变化）。
    *  属美化类本地偏好：随完整备份走，但角色卡分享时剥离（见 utils/characterCard.ts）。 */
   chatFineTune?: ChatFineTuneOverride;
+  /**
+   * 这个角色单独一套聊天外观（聊天壳 / 顶栏 / 气泡与头像 / 输入栏，共 16 项）。
+   * 声明成 Partial<OSTheme> 只是为了复用类型——**实际读写两头都过
+   * utils/chatAppearanceOverride 的白名单**，别的 theme 字段塞进来也会被丢掉。
+   * 与 chatFineTune 共用同一个「单独定制」开关（chatFineTune.enabled）。
+   */
+  chatAppearance?: Partial<OSTheme>;
   /** 「触发 AI」闪电按钮的位置；缺省保持旧行为，显示在聊天顶栏右上角。 */
   chatTriggerPlacement?: ChatTriggerPlacement;
   chatBackground?: string;

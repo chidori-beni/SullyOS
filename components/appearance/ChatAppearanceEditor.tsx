@@ -33,6 +33,12 @@ type Props = {
      * 不传 = 全都渲染（外观 App 那种整页用法）。
      */
     section?: 'all' | 'style' | 'background' | 'code' | 'sound';
+    /**
+     * 这套控件现在是在给「所有聊天」还是「某一个角色」调。
+     * **只影响文案**（哪句话该说「全局打底」、哪句该说「只对 ta 生效」），
+     * 不改任何结构、类名或控件——角色侧复用的就是同一份 DOM。
+     */
+    scopeLabel?: 'global' | 'character';
 };
 
 // 聊天细节微调的默认值快照。切预设时先铺这层再叠预设配置：否则从「沉浸剧场」切回
@@ -420,7 +426,8 @@ const ChoiceGroup: React.FC<{
     </div>
 );
 
-export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onResetAllChrome, onOpenApp, embedded = false, onNotify, section = 'all' }) => {
+export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onResetAllChrome, onOpenApp, embedded = false, onNotify, section = 'all', scopeLabel = 'global' }) => {
+    const perCharacter = scopeLabel === 'character';
     const show = (id: 'style' | 'background' | 'code' | 'sound') => section === 'all' || section === id;
     const avatarShape = theme.chatAvatarShape || defaults.chatAvatarShape;
     const avatarSize = theme.chatAvatarSize || defaults.chatAvatarSize;
@@ -797,7 +804,9 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                         微调全部回默认（一键清残留）
                     </button>
                     <p className="mt-2 text-[10px] text-slate-400">
-                        这里设置的是全局打底。想给某个角色单独一套？进 ta 的聊天 → 「＋」→「装扮」→「微调」。
+                        {perCharacter
+                            ? '这些只对当前这个角色生效。想一次改掉所有聊天，切到上面的「所有聊天」。'
+                            : '这里设置的是全局打底。想给某个角色单独一套？进 ta 的聊天 → 「＋」→「装扮」，切到「这个角色」。'}
                     </p>
                 </>)}
 
