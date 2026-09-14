@@ -6,7 +6,6 @@ import { ChatAppearanceEditor } from '../appearance/ChatAppearanceEditor';
 import ChatFineTunePanel from './ChatFineTunePanel';
 import ChromeCssEditor from './ChromeCssEditor';
 import WhiteboxSoundEditor from './WhiteboxSoundEditor';
-import './ChatDecorSheet.css';
 
 /**
  * 角色「装扮」总面板 —— 从聊天「＋」菜单的单个「装扮」入口进入。
@@ -166,10 +165,8 @@ const ChatDecorSheet: React.FC<Props> = ({
     // 于是「所有聊天」那边根本没有页签、是一条长滚动，两边入口长得完全不一样。
     const [scope, setScope] = useState<'char' | 'global'>(tab === 'global' ? 'global' : 'char');
     const isGlobal = scope === 'global';
-    // 「先躲开，让我看看效果」：把抽屉整个收起来，只留一枚返回钮。原版有，重排时补回来。
+    // 「先躲开，让我看看效果」：把抽屉整个收起来，只留这颗小圆钮。原版有，重排时补回来。
     const [peek, setPeek] = useState(false);
-    // 面板透明度：抽屉后面就是真聊天，调淡了不用收起也能看效果。取自上游。
-    const [panelOpacity, setPanelOpacity] = useState(100);
 
     const globalEditor = (section: 'style' | 'background' | 'code' | 'sound') => (
         <ChatAppearanceEditor
@@ -185,86 +182,64 @@ const ChatDecorSheet: React.FC<Props> = ({
 
     return (
         <div className="sully-ui-overlay fixed inset-0 z-[110] flex items-end justify-center bg-black/5" onClick={onClose}>
-            {/* 收起后的返回钮。原来是右下角一枚箭头圆钮，会压在输入栏上；
-                改成上游那枚右侧中部的文字钮，不挡手，也说得清点下去会发生什么。 */}
-            {peek && (
-                <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); setPeek(false); }}
-                    className="chat-decoration-return"
-                    aria-label="展开装扮面板"
-                >返回装扮</button>
-            )}
+            {/* 一键预览：收起抽屉看真效果，再点一下回来。抽屉收起时它仍然浮着。 */}
+            <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setPeek(p => !p); }}
+                aria-pressed={peek}
+                aria-label={peek ? '展开装扮面板' : '收起面板，预览当前效果'}
+                className="fixed right-3 z-[112] flex h-11 w-11 items-center justify-center rounded-full bg-white/95 text-primary shadow-lg ring-1 ring-primary/25 transition-all active:scale-90"
+                style={{ bottom: 'calc(var(--safe-bottom) + 18px)' }}
+            >
+                <span className="text-[17px] font-bold leading-none">{peek ? '⌃' : '⌄'}</span>
+            </button>
 
             {!peek && (
             <div
-                className="sully-ui-sheet sully-ui-plain chat-decoration w-full max-h-[74vh] overflow-y-auto overflow-x-hidden rounded-t-3xl border-t border-white/60 p-5 shadow-[0_-12px_40px_rgba(32,22,46,0.18)] [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                /* ⚠️ 透明度绝不能写成行内 backgroundColor —— 行内样式压过一切 CSS，
-                   用户的「聊天弹窗 CSS」就再也改不动这个抽屉的底色了。
-                   这里只往下传一个变量，真正上色的那条规则在 ChatDecorSheet.css 的 @layer 里，
-                   用户写了自己的 background 就直接赢。 */
-                style={{ paddingBottom: 'calc(1.25rem + var(--safe-bottom))', ['--decor-opacity' as string]: panelOpacity / 100 }}
+                className="sully-ui-sheet sully-ui-plain w-full max-h-[74vh] overflow-y-auto overflow-x-hidden rounded-t-3xl border-t border-white/60 bg-white/95 p-5 shadow-[0_-12px_40px_rgba(15,23,42,0.18)] [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                style={{ paddingBottom: 'calc(1.25rem + var(--safe-bottom))' }}
                 onClick={(e) => e.stopPropagation()}
             >
-                <div className="sully-ui-head chat-decoration-heading">
+                <div className="sully-ui-head mb-3 flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                        {/* 角色名放小字那行：大标题固定两个字，滑杆和按钮才挤得下。
-                            「在改谁」下面那排作用域按钮已经写得很清楚了。 */}
-                        <div className="chat-decoration-eyebrow truncate">{isGlobal ? '所有聊天' : charName}</div>
-                        <div className="sully-ui-title chat-decoration-name">装扮</div>
+                        <div className="sully-ui-title text-sm font-bold text-slate-800">装扮 · {isGlobal ? '所有聊天' : charName}</div>
+                        <div className="sully-ui-hint mt-0.5 text-[10px] leading-relaxed text-slate-400">
+                            {isGlobal ? TAB_HINTS[active].global : TAB_HINTS[active].char}
+                        </div>
                     </div>
-                    {/* 透明度：调淡抽屉就能看清后面的真聊天，不必整个收起来。 */}
-                    <label className="chat-decoration-opacity">
-                        <span>透明度 <output>{panelOpacity}%</output></span>
-                        <input
-                            type="range" aria-label="面板透明度" min={30} max={100} step={5} value={panelOpacity}
-                            style={{ ['--slider-fill' as string]: `${(panelOpacity - 30) / 70 * 100}%` }}
-                            onChange={(e) => setPanelOpacity(Number(e.target.value))}
-                        />
-                    </label>
-                    <div className="chat-decoration-tools">
-                        <button type="button" className="chat-decoration-tool" onClick={() => setPeek(true)}>看效果</button>
-                        <button type="button" onClick={onClose} className="sully-ui-close chat-decoration-tool chat-decoration-done">完成</button>
-                    </div>
+                    <button onClick={onClose} className="sully-ui-close shrink-0 px-2 text-xl leading-none text-slate-400 hover:text-slate-600">{'×'}</button>
                 </div>
 
                 {/* 作用域：改这个角色，还是改全部私聊的打底 */}
-                <div className="chat-decoration-scope">
-                    <span>正在设置</span>
-                    <div className="chat-decoration-scope-buttons" role="group" aria-label="正在设置">
-                        {([['char', charName], ['global', '所有聊天']] as const).map(([id, label]) => (
-                            <button
-                                key={id}
-                                type="button"
-                                onClick={() => setScope(id)}
-                                aria-pressed={scope === id}
-                                className={`chat-decoration-scope-btn sully-ui-tab ${scope === id ? 'chat-decoration-scope-on sully-ui-tab-on' : ''}`}
-                            >
-                                {label}
-                            </button>
-                        ))}
-                    </div>
+                <div className="mb-3 flex gap-1 rounded-2xl bg-slate-100 p-1">
+                    {([['char', charName], ['global', '所有聊天']] as const).map(([id, label]) => (
+                        <button
+                            key={id}
+                            onClick={() => setScope(id)}
+                            aria-pressed={scope === id}
+                            className={`sully-ui-tab flex-1 truncate rounded-xl py-1.5 text-[11px] font-bold transition-all active:scale-[0.98] ${
+                                scope === id ? 'sully-ui-tab-on bg-white text-slate-800 shadow-sm' : 'text-slate-400'
+                            }`}
+                        >
+                            {label}
+                        </button>
+                    ))}
                 </div>
 
-                {/* 这一页在干嘛。原来挤在标题下面，页签一多就看不全，现在独占一行。 */}
-                <p className="sully-ui-hint chat-decoration-summary">
-                    {isGlobal ? TAB_HINTS[active].global : TAB_HINTS[active].char}
-                </p>
-
                 {/* 五个页签，两个作用域共用同一组 */}
-                <nav className="chat-decoration-tabs" aria-label="装扮分类">
+                <div className="-mx-1 mb-4 flex gap-1.5 overflow-x-auto px-1 no-scrollbar">
                     {TABS.map((item) => (
                         <button
                             key={item.id}
-                            type="button"
                             onClick={() => onChangeTab(item.id)}
-                            aria-pressed={active === item.id}
-                            className={`chat-decoration-tab sully-ui-tab ${active === item.id ? 'chat-decoration-tab-on sully-ui-tab-on' : ''}`}
+                            className={`sully-ui-tab shrink-0 rounded-full px-3.5 py-1.5 text-[11px] font-bold transition-all active:scale-95 ${
+                                active === item.id ? 'sully-ui-tab-on bg-primary text-white shadow-sm' : 'bg-slate-100 text-slate-500'
+                            }`}
                         >
                             {item.label}
                         </button>
                     ))}
-                </nav>
+                </div>
 
                 {/* ══ 样式 ══ */}
                 {active === 'style' && (isGlobal ? globalEditor('style') : (
