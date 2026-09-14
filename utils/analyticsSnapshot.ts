@@ -1,6 +1,7 @@
 import { loadChatInputPreferences } from './chatInputPreferences';
 import { readSARClubState, sarRoomView } from './vrWorld/sarClub';
 import { ANNIVERSARY_SEEN_KEY } from './anniversaryGifts';
+import { readFishingMarketState } from './vrWorld/fishingMarket';
 /**
  * 使用统计 · 会话级快照的收集层。
  *
@@ -377,6 +378,25 @@ function hasLocalJsonConfig(key: string): boolean {
     }
 }
 
+/** 存档内已完成 + 当前未完成的剧情去重；回顾不会增加数量，不收剧情 ID。 */
+function collectSARDialogueCounts(): Record<string, string> {
+    try {
+        const npcs = readFishingMarketState().sarFamiliarity?.npcs;
+        const count = (npc: 'caian' | 'aiven'): string => {
+            const progress = npcs?.[npc];
+            const ids = new Set(Object.keys(progress?.completed || {}));
+            if (progress?.pending?.sceneId) ids.add(progress.pending.sceneId);
+            const n = ids.size;
+            return n === 0 ? '0' : n <= 5 ? '1–5' : n <= 10 ? '6–10' : n <= 20 ? '11–20'
+                : n <= 30 ? '21–30' : n <= 40 ? '31–40' : '41+';
+        };
+        return { 凯恩已触发对话数: count('caian'), 艾文已触发对话数: count('aiven') };
+    } catch {
+        // 坏档或存储不可读不应变成「没玩过」，也不能阻断其他快照。
+        return { 凯恩已触发对话数: '读取失败', 艾文已触发对话数: '读取失败' };
+    }
+}
+
 /** SAR 发布功能单独参与冷启动轮转，不加宽原有功能快照。 */
 export function collectSARFeatureFlags(): Record<string, string> {
     const input = loadChatInputPreferences();
@@ -391,6 +411,7 @@ export function collectSARFeatureFlags(): Record<string, string> {
         SAR简易钓鱼: isLocalFlagOn('vr_fishing_simple_mode', 'true') ? '开' : '关',
         SAR对话配色: isLocalFlagOn('vr_sar_session_theme_v1', 'dark') ? '深色' : '浅色',
         周年赠礼已阅: isLocalFlagOn(ANNIVERSARY_SEEN_KEY, '1') ? '是' : '否',
+        ...collectSARDialogueCounts(),
     };
 }
 

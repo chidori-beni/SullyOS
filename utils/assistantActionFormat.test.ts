@@ -61,3 +61,16 @@ describe('sticker history syntax recovery', () => {
 it('repairs adjacent stickers without skipping the second token', () => {
  expect(normalize('[[你发送了表情包: 甲]][[你发送了表情包: 乙]]')).toBe('[[SEND_EMOJI: 甲]][[SEND_EMOJI: 乙]]');
 });
+
+it.each(['[', '【', '［'])('preserves extra opening bracket %s and still repairs the next sticker', prefix => {
+    const malformed = `${prefix}[[你发送了表情包: 甲]]`;
+    expect(normalize(`${malformed}[[你发送了表情包: 乙]]`))
+        .toBe(`${malformed}[[SEND_EMOJI: 乙]]`);
+});
+
+it('repairs adjacent mixed-width brackets at the start and after ordinary text', () => {
+    const raw = '[表情: 甲]【表情：乙】［［SEND_EMOJI：丙］］';
+    const expected = '[[SEND_EMOJI: 甲]][[SEND_EMOJI: 乙]][[SEND_EMOJI: 丙]]';
+    expect(normalize(raw)).toBe(expected);
+    expect(normalize(`正文${raw}`)).toBe(`正文${expected}`);
+});
