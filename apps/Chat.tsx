@@ -46,6 +46,7 @@ import { resolveChatAppearance, splitAppearancePatch, pickChatAppearance } from 
 import ChatInputArea from '../components/chat/ChatInputArea';
 import UserVoiceInputModal from '../components/chat/UserVoiceInputModal';
 import { loadChatInputPreferences, saveChatInputPreferences } from '../utils/chatInputPreferences';
+import { loadChatActionOrder, normalizeChatActionOrder, saveChatActionOrder } from '../utils/chatActionOrder';
 import InstantChatRouteNotice from '../components/chat/InstantChatRouteNotice';
 import MemoryRepairPortal from '../components/chat/MemoryRepairPortal';
 import FavoritesPortal from '../components/chat/FavoritesPortal';
@@ -342,6 +343,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     // 与上面我方原有的几项并存，互不覆盖。
     const [inputPreferences, setInputPreferences] = useState(loadChatInputPreferences);
     const [settingsInputPreferences, setSettingsInputPreferences] = useState(loadChatInputPreferences);
+    // 加号菜单排序是本机所有私聊共用的 UI 偏好，沿用“已应用值 + 设置草稿值”的保存语义。
+    const [chatActionOrder, setChatActionOrder] = useState(loadChatActionOrder);
+    const [settingsChatActionOrder, setSettingsChatActionOrder] = useState(loadChatActionOrder);
     const [settingsHtmlModeCustomPrompt, setSettingsHtmlModeCustomPrompt] = useState('');
     const contextSuiteAnyEnabled = memoryPalaceConfig.featureFlags?.recallRouter === true
         || memoryPalaceConfig.featureFlags?.interactionAdaptation === true
@@ -1613,7 +1617,8 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         setSettingsShowTokenUsage(char.showTokenUsage !== false);
         setSettingsHtmlModeCustomPrompt((char as any).htmlModeCustomPrompt || '');
         setSettingsInputPreferences(inputPreferences);
-    }, [modalType, char?.id]);
+        setSettingsChatActionOrder(chatActionOrder);
+    }, [modalType, char?.id, chatActionOrder]);
 
     // Load all messages when history-manager modal opens
     useEffect(() => {
@@ -3096,6 +3101,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         } as any);
         setInputPreferences(settingsInputPreferences);
         saveChatInputPreferences(settingsInputPreferences);
+        const normalizedActionOrder = normalizeChatActionOrder(settingsChatActionOrder);
+        setChatActionOrder(normalizedActionOrder);
+        saveChatActionOrder(normalizedActionOrder);
         setModalType('none');
         addToast('设置已保存', 'success');
     };
@@ -4776,6 +4784,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
              {showHistoryCleanup && <ChatHistoryCleanupModal key={char.id} character={char} onClose={() => setShowHistoryCleanup(false)} onDeleted={handleHistoryCleanupDone} />}
              <ChatModals
                 settingsInputPreferences={settingsInputPreferences} setSettingsInputPreferences={setSettingsInputPreferences}
+                settingsChatActionOrder={settingsChatActionOrder} setSettingsChatActionOrder={setSettingsChatActionOrder}
                 modalType={modalType} setModalType={setModalType}
                 transferAmt={transferAmt} setTransferAmt={setTransferAmt}
                 transferNote={transferNote} setTransferNote={setTransferNote}
@@ -5521,6 +5530,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                     characters={characters} activeCharacterId={activeCharacterId}
                     onCharSelect={handleCharSelectCallback}
                     unreadMessages={unreadMessages}
+                    builtInActionOrder={chatActionOrder}
                     customThemes={customThemes} onUpdateTheme={(id) => updateCharacter(char.id, { bubbleStyle: id })}
                     onRemoveTheme={removeCustomTheme} activeThemeId={currentThemeId}
                     onPanelAction={handlePanelAction}

@@ -3,8 +3,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import Modal from '../os/Modal';
 import { CharacterProfile, Message, Emoji, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
 import ChatInputSettings from './ChatInputSettings';
+import ChatActionOrderSettings from './ChatActionOrderSettings';
 import ChatSettingsSection from './ChatSettingsSection';
 import type { ChatInputPreferences } from '../../utils/chatInputPreferences';
+import type { ChatActionOrder } from '../../utils/chatActionOrder';
 import ScheduleCard from '../schedule/ScheduleCard';
 import EmotionSettingsPanel from './EmotionSettingsPanel';
 import { isTranslationLangPreset, normalizeTranslationLangLabel, TRANSLATION_LANG_MAX_LENGTH, TRANSLATION_LANG_PRESETS } from '../../utils/translationLang';
@@ -37,6 +39,9 @@ interface ChatModalsProps {
     /** 合上游新增：输入与发送偏好（发送键行为 / 回车 / 自动回复）。 */
     settingsInputPreferences: ChatInputPreferences;
     setSettingsInputPreferences: (value: ChatInputPreferences) => void;
+    /** 私聊内置加号菜单的排序草稿，随聊天设置一起保存。 */
+    settingsChatActionOrder: ChatActionOrder;
+    setSettingsChatActionOrder: (value: ChatActionOrder) => void;
     settingsShowTokenUsage: boolean;
     setSettingsShowTokenUsage: (v: boolean) => void;
     settingsShowRecallSubmitStatus: boolean;
@@ -279,6 +284,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     settingsContextRangeMode, setSettingsContextRangeMode,
     settingsHideSysLogs, setSettingsHideSysLogs,
     settingsInputPreferences, setSettingsInputPreferences,
+    settingsChatActionOrder, setSettingsChatActionOrder,
     settingsShowTokenUsage, setSettingsShowTokenUsage,
     settingsShowRecallSubmitStatus, setSettingsShowRecallSubmitStatus,
     apiConfig, onApplyMainApiPreset,
@@ -466,6 +472,9 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                      {/* 合上游新增：输入与发送。单开一节放在最前面，下面原有的设置一项没动。 */}
                      <ChatSettingsSection title="输入与发送" summary="发送键行为、回车、自动回复">
                          <ChatInputSettings value={settingsInputPreferences} onChange={setSettingsInputPreferences} />
+                     </ChatSettingsSection>
+                     <ChatSettingsSection title="加号菜单顺序" summary="调整“＋”菜单里每一项的位置">
+                         <ChatActionOrderSettings value={settingsChatActionOrder} onChange={setSettingsChatActionOrder} />
                      </ChatSettingsSection>
                      {apiConfig && apiPresets && onApplyMainApiPreset && (
                          <ChatSettingsSection
