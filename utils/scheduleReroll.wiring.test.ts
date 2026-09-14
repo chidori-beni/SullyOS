@@ -31,6 +31,8 @@ describe('日程重抽临时要求接线', () => {
         expect(generator).toContain('rerollRequirement?: string;');
         expect(generator).toContain('targetDate?: string;');
         expect(generator).toContain('userRequirementApplied: Boolean(rerollRequirement)');
+        expect(generator).toContain('planningAhead: true as const');
+        expect(generator).toContain('targetDate,');
         expect(generator).not.toContain('rerollRequirement: rerollRequirement');
     });
 });

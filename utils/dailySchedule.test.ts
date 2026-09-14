@@ -10,7 +10,7 @@ vi.mock('./db', () => ({
 
 import { DB } from './db';
 import { getDailyScheduleForChar, getLocalDailySchedule } from './dailySchedule';
-import type { CharacterProfile, DailySchedule } from '../types';
+import type { CharacterProfile, DailySchedule, SchedulePlanningMeta } from '../types';
 
 const originalTimeZone = process.env.TZ;
 const getSchedule = vi.mocked(DB.getDailySchedule);
@@ -29,12 +29,30 @@ beforeEach(() => {
     deleteSchedule.mockReset();
 });
 
-const schedule = (date: string, generatedAt: number): DailySchedule => ({
+const schedule = (
+    date: string,
+    generatedAt: number,
+    planningMeta?: SchedulePlanningMeta,
+): DailySchedule => ({
     id: `char-1_${date}`,
     charId: 'char-1',
     date,
     slots: [{ startTime: '08:00', activity: '早餐' }],
     generatedAt,
+    ...(planningMeta ? { planningMeta } : {}),
+});
+
+const planningMeta = (
+    date: string,
+    extra: Partial<SchedulePlanningMeta> = {},
+): SchedulePlanningMeta => ({
+    schemaVersion: 1,
+    seed: 123,
+    generationId: `schedule-char-1-${date}-0-test`,
+    rerollIndex: 0,
+    variationClass: 'routine',
+    careerFocus: 'none',
+    ...extra,
 });
 
 describe('local daily schedule compatibility', () => {
@@ -112,6 +130,66 @@ describe('local daily schedule compatibility', () => {
         // 读取时洛杉矶已经翻到 7/21，localKey 正好等于那份残留记录的 key。
         const readAt = new Date('2026-07-21T18:00:00.000Z'); // 洛杉矶 7/21 11:00
         getSchedule.mockResolvedValue(staleButSameKey);
+
+        await expect(getDailyScheduleForChar(losAngelesChar, readAt)).resolves.toBeNull();
+        expect(saveSchedule).not.toHaveBeenCalled();
+    });
+
+    it('跨过角色午夜后保留带明确标记的明日预排表', async () => {
+        const preplanned = schedule(
+            '2026-07-21',
+            new Date('2026-07-20T16:30:00.000Z').getTime(),
+            planningMeta('2026-07-21', {
+                planningAhead: true,
+                targetDate: '2026-07-21',
+            }),
+        );
+        const readAt = new Date('2026-07-21T18:00:00.000Z');
+        getSchedule.mockResolvedValue(preplanned);
+
+        await expect(getDailyScheduleForChar(losAngelesChar, readAt)).resolves.toBe(preplanned);
+        expect(saveSchedule).not.toHaveBeenCalled();
+        expect(deleteSchedule).not.toHaveBeenCalled();
+    });
+
+    it('不把目标日不一致的预排标记当成今天的日程', async () => {
+        const mismatched = schedule(
+            '2026-07-21',
+            new Date('2026-07-20T16:30:00.000Z').getTime(),
+            planningMeta('2026-07-21', {
+                planningAhead: true,
+                targetDate: '2026-07-22',
+            }),
+        );
+        const readAt = new Date('2026-07-21T18:00:00.000Z');
+        getSchedule.mockResolvedValue(mismatched);
+
+        await expect(getDailyScheduleForChar(losAngelesChar, readAt)).resolves.toBeNull();
+        expect(saveSchedule).not.toHaveBeenCalled();
+    });
+
+    it('兼容已上传旧版生成的无标记明日预排表，且不回写标记', async () => {
+        const oldFormatPreplanned = schedule(
+            '2026-09-16',
+            new Date('2026-09-15T20:00:00.000Z').getTime(),
+            planningMeta('2026-09-16'),
+        );
+        const readAt = new Date('2026-09-16T18:00:00.000Z');
+        getSchedule.mockResolvedValue(oldFormatPreplanned);
+
+        await expect(getDailyScheduleForChar(losAngelesChar, readAt)).resolves.toBe(oldFormatPreplanned);
+        expect(saveSchedule).not.toHaveBeenCalled();
+        expect(deleteSchedule).not.toHaveBeenCalled();
+    });
+
+    it('不把预排功能上线前的无标记旧表当成明日预排', async () => {
+        const beforePreplanFeature = schedule(
+            '2026-09-15',
+            new Date('2026-09-14T07:00:00.000Z').getTime(),
+            planningMeta('2026-09-15'),
+        );
+        const readAt = new Date('2026-09-15T18:00:00.000Z');
+        getSchedule.mockResolvedValue(beforePreplanFeature);
 
         await expect(getDailyScheduleForChar(losAngelesChar, readAt)).resolves.toBeNull();
         expect(saveSchedule).not.toHaveBeenCalled();

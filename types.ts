@@ -969,6 +969,10 @@ export interface SchedulePlanningMeta {
     sleepMode?: ScheduleSleepMode;
     /** 只记是否用过一次性要求，不保存要求正文。 */
     userRequirementApplied?: boolean;
+    /** 这是在目标日开始前生成的预排日程；当天生成的日程不写此字段。 */
+    planningAhead?: true;
+    /** 预排日程所属的角色当地日历日。 */
+    targetDate?: string;
 }
 
 export interface DailySchedule {

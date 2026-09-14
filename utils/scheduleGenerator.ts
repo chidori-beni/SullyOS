@@ -522,6 +522,10 @@ ${validation.errors.join('；')}
                 calendarMode: schedulePlan.calendarMode,
                 sleepMode: schedulePlan.sleepMode,
                 userRequirementApplied: Boolean(rerollRequirement),
+                ...(planningAhead ? {
+                    planningAhead: true as const,
+                    targetDate,
+                } : {}),
                 ...(schedulePlan.sourceWorldbookIds.length > 0
                     ? { sourceWorldbookIds: schedulePlan.sourceWorldbookIds }
                     : {}),
