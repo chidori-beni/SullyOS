@@ -154,7 +154,7 @@ interface ChatModalsProps {
     onScheduleEdit?: (index: number, slot: ScheduleSlot, targetSchedule?: DailySchedule) => void;
     onScheduleDelete?: (index: number, targetSchedule?: DailySchedule) => void;
     onScheduleReroll?: (requirement?: string) => void | Promise<void>;
-    onSchedulePlanTomorrow?: (forceRegenerate?: boolean) => void | Promise<void>;
+    onSchedulePlanTomorrow?: (forceRegenerate?: boolean, requirement?: string) => void | Promise<void>;
     onScheduleCoverChange?: (dataUrl: string, targetSchedule?: DailySchedule) => void;
     onScheduleStyleChange?: (style: 'lifestyle' | 'mindful') => void;
     onPlayTheater?: (index: number) => void;
@@ -322,6 +322,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     const [historySearch, setHistorySearch] = useState('');
     const [scheduleRerollPromptOpen, setScheduleRerollPromptOpen] = useState(false);
     const [scheduleRerollRequirement, setScheduleRerollRequirement] = useState('');
+    const [scheduleRerollTarget, setScheduleRerollTarget] = useState<'today' | 'tomorrow'>('today');
     const [scheduleView, setScheduleView] = useState<'today' | 'tomorrow'>('today');
     const longPressTimerRef = useRef<number | null>(null);
     const longPressTriggeredRef = useRef(false);
@@ -354,6 +355,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     useEffect(() => {
         setScheduleRerollPromptOpen(false);
         setScheduleRerollRequirement('');
+        setScheduleRerollTarget('today');
         setScheduleView('today');
     }, [activeCharacter?.id, modalType]);
 
@@ -1501,7 +1503,10 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                     {onSchedulePlanTomorrow && (
                                         <button
                                             type="button"
-                                            onClick={() => onSchedulePlanTomorrow(Boolean(scheduleTomorrowData))}
+                                            onClick={() => {
+                                                setScheduleRerollTarget('tomorrow');
+                                                setScheduleRerollPromptOpen(true);
+                                            }}
                                             disabled={isScheduleGenerating}
                                             className="shrink-0 rounded-xl bg-violet-500 px-3 py-2 text-[10px] font-bold text-white shadow-sm disabled:opacity-40"
                                         >
@@ -1519,7 +1524,10 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                 compact={false}
                                 onEdit={onScheduleEdit ? (index, slot) => onScheduleEdit(index, slot, visibleSchedule || undefined) : undefined}
                                 onDelete={onScheduleDelete ? (index) => onScheduleDelete(index, visibleSchedule || undefined) : undefined}
-                                onReroll={!visibleScheduleIsTomorrow && onScheduleReroll ? () => setScheduleRerollPromptOpen(true) : undefined}
+                                onReroll={!visibleScheduleIsTomorrow && onScheduleReroll ? () => {
+                                    setScheduleRerollTarget('today');
+                                    setScheduleRerollPromptOpen(true);
+                                } : undefined}
                                 onCoverImageChange={onScheduleCoverChange ? (dataUrl) => onScheduleCoverChange(dataUrl, visibleSchedule || undefined) : undefined}
                                 onPlayTheater={onPlayTheater}
                                 isGenerating={isScheduleGenerating}
@@ -1545,7 +1553,9 @@ const ChatModals: React.FC<ChatModalsProps> = ({
 
             <Modal
                 isOpen={modalType === 'schedule' && scheduleRerollPromptOpen}
-                title="重新生成今日日程"
+                title={scheduleRerollTarget === 'tomorrow'
+                    ? scheduleTomorrowData ? '重新预排明日日程' : '预排明日日程'
+                    : '重新生成今日日程'}
                 onClose={closeScheduleRerollPrompt}
                 footer={
                     <>
@@ -1561,25 +1571,37 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                             onClick={() => {
                                 const requirement = normalizeScheduleRequirement(scheduleRerollRequirement);
                                 closeScheduleRerollPrompt();
-                                onScheduleReroll?.(requirement);
+                                if (scheduleRerollTarget === 'tomorrow') {
+                                    onSchedulePlanTomorrow?.(Boolean(scheduleTomorrowData), requirement);
+                                } else {
+                                    onScheduleReroll?.(requirement);
+                                }
                             }}
                             disabled={isScheduleGenerating}
                             className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-40"
                         >
-                            {isScheduleGenerating ? '生成中...' : '确认重抽'}
+                            {isScheduleGenerating
+                                ? '生成中...'
+                                : scheduleRerollTarget === 'tomorrow'
+                                    ? scheduleTomorrowData ? '确认重新预排' : '确认预排'
+                                    : '确认重抽'}
                         </button>
                     </>
                 }
             >
                 <p className="text-xs text-slate-500 leading-relaxed mb-3">
-                    可以写这次想调整的方向，也可以留空让系统自由重抽。这个要求只影响本次日程，不会改角色设定。
+                    {scheduleRerollTarget === 'tomorrow'
+                        ? '可以写明天想安排或避开的方向，也可以留空让系统自由预排。这个要求只影响明天这一次日程，不会改角色设定。'
+                        : '可以写这次想调整的方向，也可以留空让系统自由重抽。这个要求只影响本次日程，不会改角色设定。'}
                 </p>
                 <textarea
                     autoFocus
                     value={scheduleRerollRequirement}
                     onChange={event => setScheduleRerollRequirement(event.target.value)}
                     maxLength={SCHEDULE_REROLL_REQUIREMENT_MAX_LENGTH}
-                    placeholder="例如：希望今天正常睡够 8 小时；今天是周末，少安排正式工作；别忘了安排一次商业活动"
+                    placeholder={scheduleRerollTarget === 'tomorrow'
+                        ? '例如：明天上午安排运动；晚上 0 点前睡觉；留一点空闲时间'
+                        : '例如：希望今天正常睡够 8 小时；今天是周末，少安排正式工作；别忘了安排一次商业活动'}
                     className="w-full h-32 bg-slate-100 rounded-2xl p-4 resize-none text-sm leading-relaxed outline-none focus:ring-1 focus:ring-primary/20"
                 />
                 <p className="text-[10px] text-slate-400 text-right mt-1">

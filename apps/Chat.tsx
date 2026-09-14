@@ -2854,10 +2854,10 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         }
     };
 
-    const handleSchedulePlanTomorrow = (forceRegenerate: boolean = false) => {
+    const handleSchedulePlanTomorrow = (forceRegenerate: boolean = false, rerollRequirement?: string) => {
         if (!char) return;
         const tomorrowKey = addScheduleDateKey(getScheduleDateKey(char), 1);
-        if (tomorrowKey) void generateDailySchedule(char, forceRegenerate, undefined, tomorrowKey);
+        if (tomorrowKey) void generateDailySchedule(char, forceRegenerate, rerollRequirement, tomorrowKey);
     };
 
     const handleScheduleStyleChange = async (style: 'lifestyle' | 'mindful') => {
