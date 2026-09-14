@@ -199,7 +199,11 @@ const ChatDecorSheet: React.FC<Props> = ({
             {!peek && (
             <div
                 className="sully-ui-sheet sully-ui-plain chat-decoration w-full max-h-[74vh] overflow-y-auto overflow-x-hidden rounded-t-3xl border-t border-white/60 p-5 shadow-[0_-12px_40px_rgba(32,22,46,0.18)] [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                style={{ paddingBottom: 'calc(1.25rem + var(--safe-bottom))', backgroundColor: `rgba(250, 249, 252, ${panelOpacity / 100})` }}
+                /* ⚠️ 透明度绝不能写成行内 backgroundColor —— 行内样式压过一切 CSS，
+                   用户的「聊天弹窗 CSS」就再也改不动这个抽屉的底色了。
+                   这里只往下传一个变量，真正上色的那条规则在 ChatDecorSheet.css 的 @layer 里，
+                   用户写了自己的 background 就直接赢。 */
+                style={{ paddingBottom: 'calc(1.25rem + var(--safe-bottom))', ['--decor-opacity' as string]: panelOpacity / 100 }}
                 onClick={(e) => e.stopPropagation()}
             >
                 <div className="sully-ui-head chat-decoration-heading">

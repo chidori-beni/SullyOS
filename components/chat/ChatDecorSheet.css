@@ -11,9 +11,20 @@
  * 1. 上游把颜色**写死**在每条规则里。本 fork 全部改成 `var(--decor-*)` ——
  *    因为这个抽屉同时挂着 `.sully-ui-*` 钩子，用户的「聊天弹窗 CSS」要能改它。
  *    写死的话用户那份 CSS 得逐条 !important 才盖得动。
- * 2. 选择器一律保持**单类名**（不写 `.a .b` 串联），特异性 0,1,0，
- *    用户 CSS 里同样的单类名写在后面就能盖过去，不用 !important。
- * 3. 只管**外壳**（顶栏 / 作用域 / 页签 / 滚动区），页签里的内容仍是原来的
+ * 2. **所有规则一律「单个类名」**（特异性 0,1,0），刚好够赢过 Tailwind 的 reset
+ *    （`button {…}` 之类是 0,0,1），又跟用户的 `.sully-ui-*` 钩子**完全同级**。
+ *    同级时**后写的赢**，而用户的「聊天弹窗 CSS」是 Chat.tsx 里 body 内的一个裸 <style>，
+ *    永远排在这份打包 CSS（head 里的 <link>）后面 → **用户写了就一定盖得过**，
+ *    不用 !important、不用算特异性。这就是「紫皮肤只当默认值」。
+ *
+ *    ⚠️ 试过 `@layer` —— **不行**。带层的规则会输给**所有**不带层的规则，
+ *    包括 Tailwind 的 reset（`button{background:transparent;color:inherit}`），
+ *    结果「完成」按钮的紫底整个没了（computed 变成 rgba(0,0,0,0)）。
+ *    分层挡不住 Tailwind，只能靠同级 + 顺序。
+ *
+ * 3. **绝不写行内 style 上色**。行内样式压过一切 CSS，用户再也改不动。
+ *    透明度滑杆因此只往下传 `--decor-opacity` 变量，真正上色的是下面那条普通规则。
+ * 4. 只管**外壳**（顶栏 / 作用域 / 页签 / 滚动区），页签里的内容仍是原来的
  *    Tailwind 组件，一个没动。
  */
 
@@ -31,6 +42,11 @@
 
     color: var(--decor-ink);
     font-family: system-ui, sans-serif;
+    /* 透明度滑杆只改 --decor-opacity（组件传下来），上色在这一条。
+       用户自己写了 background 就整条盖掉、滑杆不再染色 —— 那是对的，ta 的优先。
+       想让滑杆对自己的颜色也生效，照抄这行换个色即可：
+           background-color: rgba(你的 RGB, var(--decor-opacity, 1));  */
+    background-color: rgba(250, 249, 252, var(--decor-opacity, 1));
 }
 
 .chat-decoration-heading {
