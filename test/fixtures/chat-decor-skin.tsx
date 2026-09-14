@@ -15,6 +15,8 @@ function Demo(){
   const [custom,setCustom]=useState(true);
   const [theme,setTheme]=useState<OSTheme>(BASE);
   const [char,setChar]=useState<CharacterProfile>({id:'demo',name:'小夜',chatFineTune:{enabled:true}} as CharacterProfile);
+  // 三份 CSS 也接成真状态：不然编辑框是受控的、打字打不进去，「存当前」永远是灰的。
+  const setChatField=(patch:Partial<CharacterProfile>)=>setChar(c=>({...c,...patch}));
   const charTheme=resolveChatAppearance(theme,char);
   return <div style={{height:'100vh',padding:20,fontSize:13,color:'#475569'}}>
     <p>（这里假装是真聊天，抽屉浮在上面）</p>
@@ -27,9 +29,11 @@ function Demo(){
       onOpenFloatingFineTune={()=>{}}
       onUploadBackground={()=>{}} onRemoveBackground={()=>{}}
       globalBackground={theme.chatBackground} onUploadGlobalBackground={()=>{}} onRemoveGlobalBackground={()=>{}}
-      charCardCss="" onChangeCharCardCss={()=>{}} charDialogCss="" onChangeCharDialogCss={()=>{}}
+      charCardCss={char.chatCardCustomCss||''} onChangeCharCardCss={css=>setChatField({chatCardCustomCss:css})}
+      charDialogCss={char.chatDialogCustomCss||''} onChangeCharDialogCss={css=>setChatField({chatDialogCustomCss:css})}
       onOpenBubblePicker={()=>{}} onOpenThemeMaker={()=>{}}
-      chromeCss="" onChangeChromeCss={()=>{}} onResetChromeCss={()=>{}}
+      chromeCss={char.chromeCustomCss||''} onChangeChromeCss={css=>setChatField({chromeCustomCss:css})}
+      onResetChromeCss={()=>setChatField({chromeCustomCss:''})}
       sound={null} soundBound={false} onChangeSound={()=>{}} onChangeSoundBound={()=>{}}
       theme={theme} onUpdateTheme={patch=>setTheme(t=>({...t,...patch}))}
       charAppearanceTheme={charTheme}

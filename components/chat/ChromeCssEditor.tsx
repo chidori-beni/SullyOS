@@ -90,15 +90,6 @@ const AI_PROMPT = `你是一个 CSS 设计师。我在用一个叫 SullyOS 的�
 
 type Preset = { name: string; code: string; swatch?: string };
 
-// 从一段 CSS 里尽力抠出 .sully-chat-header 的背景值，给「我的预设」生成缩略色块（抠不到则用中性灰）。
-const extractSwatch = (code: string): string => {
-    const block = code.match(/\.sully-chat-header\s*\{([^}]*)\}/);
-    const body = block ? block[1] : code;
-    const m = body.match(/background(?:-color)?\s*:\s*([^;!]+)/i);
-    const val = m ? m[1].trim() : '';
-    return val && !/url\(/i.test(val) ? val : '#e2e8f0';
-};
-
 // 内置完整风格（点击=替换文本框、立刻生效）。
 const PRESETS: Preset[] = [
     {
@@ -441,21 +432,25 @@ const ChromeCssEditor: React.FC<{ value: string; onChange: (css: string) => void
                         <button onClick={handleExport} disabled={!custom.length} className={`rounded-md px-2 py-1 text-[10px] font-semibold ${custom.length ? 'text-slate-400 hover:bg-slate-100 hover:text-slate-600' : 'text-slate-300'}`}>导出</button>
                     </div>
                 </div>
+{/* 自己存的预设用**纯文字卡片**，不用上面内置风格那种缩略图：
+                    缩略色块是从 CSS 里抠 .sully-chat-header 的 background 生成的，
+                    而自己写的 CSS 十有八九没设这一条 —— 抠不到就一律回退成灰色，
+                    于是一排预设全是同样的空白灰块，还不如直接把名字写清楚。 */}
                 <div className="flex flex-wrap gap-2">
                     {custom.map((p) => (
-                        <div key={p.name} className={cardCls}>
-                            <button onClick={() => onChange(p.code)} title={p.name} className="absolute inset-0">
-                                <span className="absolute inset-0" style={{ background: extractSwatch(p.code) }} />
-                                <span className={cardLabelCls} style={{ background: 'linear-gradient(to top, rgba(0,0,0,.5), transparent)' }}>{p.name}</span>
+                        <div key={p.name} className="relative shrink-0">
+                            <button onClick={() => onChange(p.code)} title={p.name}
+                                className="max-w-[190px] truncate rounded-xl border border-slate-200 bg-white py-2 pl-3 pr-7 text-left text-[11px] font-bold text-slate-600 shadow-sm transition-all hover:border-primary/40 hover:bg-slate-50 active:scale-95">
+                                {p.name}
                             </button>
                             <button onClick={() => handleDeletePreset(p.name)} title="删除"
-                                className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-black/45 text-[10px] leading-none text-white opacity-80 hover:bg-rose-500">×</button>
+                                className="absolute right-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full bg-slate-200 text-[10px] leading-none text-slate-500 transition-colors hover:bg-rose-500 hover:text-white">×</button>
                         </div>
                     ))}
                     {/* 保存当前为预设 */}
                     <button onClick={handleSavePreset} disabled={!value.trim()} title={value.trim() ? '把当前 CSS 存为预设' : '先写点 CSS'}
-                        className={`flex h-14 w-[78px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl border border-dashed text-[10px] font-bold transition-all active:scale-95 ${value.trim() ? 'border-emerald-300 text-emerald-600 hover:bg-emerald-50' : 'border-slate-200 text-slate-300'}`}>
-                        <span className="text-lg leading-none">＋</span>存当前
+                        className={`shrink-0 rounded-xl border border-dashed px-3 py-2 text-[11px] font-bold transition-all active:scale-95 ${value.trim() ? 'border-emerald-300 text-emerald-600 hover:bg-emerald-50' : 'border-slate-200 text-slate-300'}`}>
+                        ＋ 存当前
                     </button>
                 </div>
             </div>

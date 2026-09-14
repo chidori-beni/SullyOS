@@ -223,10 +223,15 @@ const ChatDecorSheet: React.FC<Props> = ({
                 <span className="text-[17px] font-bold leading-none">{peek ? '⌃' : '⌄'}</span>
             </button>
 
-            {!peek && (
+            {/* ⚠️ 收起预览时**不能卸载**这块，只能藏起来。
+                卸载会把里面所有组件的内部状态一起清掉 —— 最明显的是「所有聊天」那套
+                6 页控件的当前页码：点一下小箭头看效果，再点回来就跳回第 1 页「快速预设」，
+                得重新翻到刚才那一页。改成 display:none 之后，藏起来也还在，回来还在原处。
+                （滚动位置同理，也一并保住了。） */}
             <div
+                hidden={peek}
+                style={{ paddingBottom: 'calc(1.25rem + var(--safe-bottom))', ...(peek ? { display: 'none' } : null) }}
                 className="sully-ui-sheet sully-ui-plain w-full max-h-[74vh] overflow-y-auto overflow-x-hidden rounded-t-3xl border-t border-white/60 bg-white/95 p-5 shadow-[0_-12px_40px_rgba(15,23,42,0.18)] [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                style={{ paddingBottom: 'calc(1.25rem + var(--safe-bottom))' }}
                 onClick={(e) => e.stopPropagation()}
             >
                 <div className="sully-ui-head mb-3 flex items-start justify-between gap-2">
@@ -425,7 +430,6 @@ const ChatDecorSheet: React.FC<Props> = ({
                     />
                 ))}
             </div>
-            )}
 
             {/* 脱离 CSS 控制的救援键：只在「代码」页签的角色侧出现。portal 到 body 在聊天 DOM 之外，
                 加 id 守护（#sully-safe-reset 特异性高于 *），连 *{display:none!important} 也盖不掉，
