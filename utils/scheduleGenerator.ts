@@ -4,8 +4,8 @@ import { ContextBuilder } from './context';
 import { DB } from './db';
 import { safeResponseJson, extractContent, extractJson } from './safeApi';
 import { injectMemoryPalace } from './memoryPalace/pipeline';
-import { getDailyScheduleForChar } from './dailySchedule';
-import { getScheduleDateKey, getScheduleWallClock } from './scheduleTime';
+import { getDailyScheduleForChar, getDailyScheduleForCharDate } from './dailySchedule';
+import { getScheduleDateKey, getScheduleWeekdayForDateKey, getScheduleWallClock } from './scheduleTime';
 import { loadCharacterContextRange } from './chatContextRange';
 import { ChatPrompts } from './chatPrompts';
 import { cleanApiMessages, flattenImageContentParts } from './promptMessageCleanup';
@@ -82,13 +82,20 @@ function buildLifestylePrompt(
     dayOfWeek: string,
     chatHistoryBlock: string,
     schedulePlanBlock: string,
+    options: { planningAhead?: boolean } = {},
 ): string {
+    const dateInstruction = options.planningAhead
+        ? `目标日期是 ${today} (星期${dayOfWeek})。这是提前为角色当地明天预排的完整日程；当前现实时间只用于参考上下文，不代表目标日已经开始或已经过去。`
+        : `今天是 ${today} (星期${dayOfWeek})。`;
+    const taskTitle = options.planningAhead
+        ? '生成角色在目标日期的完整日程 + 意识流独白'
+        : '生成角色的今日日程 + 意识流独白';
     return `${baseContext}
 ${chatHistoryBlock}
 ${schedulePlanBlock}
-## Task: 生成角色的今日日程 + 意识流独白
+## Task: ${taskTitle}
 
-今天是 ${today} (星期${dayOfWeek})。用户名字是「${user.name}」。
+${dateInstruction}用户名字是「${user.name}」。
 
 ${chatHistoryBlock ? `**重要：上面给了你最近和「${user.name}」的聊天记录。如果对话里出现了今天/最近 ta 提到「${char.name}」要做的事（例如"早上去上班""下午有约"），生成的 slot 必须严格遵循；不要无视这些已知事实另起炉灶。**\n` : ''}
 
@@ -192,13 +199,20 @@ function buildMindfulPrompt(
     dayOfWeek: string,
     chatHistoryBlock: string,
     schedulePlanBlock: string,
+    options: { planningAhead?: boolean } = {},
 ): string {
+    const dateInstruction = options.planningAhead
+        ? `目标日期是 ${today} (星期${dayOfWeek})。这是提前为角色当地明天预排的完整日程；当前现实时间只用于参考上下文，不代表目标日已经开始或已经过去。`
+        : `今天是 ${today} (星期${dayOfWeek})。`;
+    const taskTitle = options.planningAhead
+        ? '生成角色在目标日期的完整思绪 + 意识流独白'
+        : '生成角色的今日思绪 + 意识流独白';
     return `${baseContext}
 ${chatHistoryBlock}
 ${schedulePlanBlock}
-## Task: 生成角色的今日思绪 + 意识流独白
+## Task: ${taskTitle}
 
-今天是 ${today} (星期${dayOfWeek})。用户名字是「${user.name}」。
+${dateInstruction}用户名字是「${user.name}」。
 
 ${chatHistoryBlock ? `**重要：上面给了你最近和「${user.name}」的聊天记录。如果对话里出现了今天/最近 ta 提到「${char.name}」在等什么、想什么、惦记什么，生成的 slot 必须呼应这些已知事实，不要凭空发散。**\n` : ''}
 
@@ -264,18 +278,39 @@ export async function generateDailyScheduleForChar(
     userProfile: UserProfile,
     apiConfig: ApiConfig,
     forceRegenerate: boolean = false,
-    options?: { rerollRequirement?: string },
+    options?: {
+        rerollRequirement?: string;
+        /** 明确的角色当地目标日期；缺省为角色当地今天。 */
+        targetDate?: string;
+        /** 仅供确定性测试使用；业务调用仍默认捕获当前真实时刻。 */
+        now?: Date;
+    },
 ): Promise<DailySchedule | null> {
     // 总开关关闭时直接短路，避免副 API / 兜底调用
     if (!isScheduleFeatureOn(char)) return null;
 
-    const baseNow = new Date();
+    const suppliedNow = options?.now ? new Date(options.now) : null;
+    const baseNow = suppliedNow && Number.isFinite(suppliedNow.getTime()) ? suppliedNow : new Date();
     const now = getScheduleWallClock(char, baseNow);
-    const today = getScheduleDateKey(char, baseNow);
+    const currentDate = getScheduleDateKey(char, baseNow);
+    const requestedTargetDate = typeof options?.targetDate === 'string'
+        ? options.targetDate.trim()
+        : '';
+    const requestedWeekday = requestedTargetDate
+        ? getScheduleWeekdayForDateKey(requestedTargetDate)
+        : null;
+    const targetDate = requestedWeekday === null ? currentDate : requestedTargetDate;
+    // 预排只允许从今天往未来写；历史日期应通过回看/编辑入口处理，不能被误覆盖。
+    if (targetDate < currentDate) return null;
+    const planningAhead = targetDate !== currentDate;
+    const targetWeekday = getScheduleWeekdayForDateKey(targetDate) ?? now.getDay();
     const rerollRequirement = normalizeScheduleRequirement(options?.rerollRequirement);
 
-    // 同一天默认复用事实；重抽时读取旧表，只递增 rerollIndex 让本地骰子真正换面。
-    const existing = await getDailyScheduleForChar(char, baseNow);
+    // 同一天/同一目标日默认复用事实；重抽时读取对应日期旧表，只递增 rerollIndex
+    // 让本地骰子真正换面。未来日期禁止走旧 key 兼容迁移。
+    const existing = planningAhead
+        ? await getDailyScheduleForCharDate(char, targetDate)
+        : await getDailyScheduleForChar(char, baseNow);
     if (!forceRegenerate && existing) return existing;
     const previousRerollIndex = existing?.planningMeta?.rerollIndex;
     const previousReroll = Number.isFinite(previousRerollIndex) ? Number(previousRerollIndex) : 0;
@@ -324,10 +359,13 @@ export async function generateDailyScheduleForChar(
     });
     const schedulePlan = buildSchedulePlan({
         char,
-        today,
-        localWeekday: now.getDay(),
-        isWeekend: now.getDay() === 0 || now.getDay() === 6,
-        wallClockMinutes: now.getHours() * 60 + now.getMinutes(),
+        today: targetDate,
+        localWeekday: targetWeekday,
+        isWeekend: targetWeekday === 0 || targetWeekday === 6,
+        // 明天从完整的一天开始规划，不把当前角色时间（例如 23:30）当成目标日的
+        // 截止线；非预排路径保持原有“今天已经进行到这里”的语义。
+        wallClockMinutes: planningAhead ? 0 : now.getHours() * 60 + now.getMinutes(),
+        planningAhead,
         sleepMode: char.scheduleSleepMode,
         rerollIndex,
         recentSchedules,
@@ -372,12 +410,12 @@ export async function generateDailyScheduleForChar(
 
     const chatHistoryBlock = formatChatHistoryForSchedule(historyMessages, char, userProfile, emojis);
 
-    const dayOfWeek = ['日', '一', '二', '三', '四', '五', '六'][now.getDay()];
+    const targetDayOfWeek = ['日', '一', '二', '三', '四', '五', '六'][targetWeekday];
 
     const style = char.scheduleStyle || 'lifestyle';
     const prompt = style === 'mindful'
-        ? buildMindfulPrompt(baseContext, char, userProfile, today, dayOfWeek, chatHistoryBlock, schedulePlanBlock)
-        : buildLifestylePrompt(baseContext, char, userProfile, today, dayOfWeek, chatHistoryBlock, schedulePlanBlock);
+        ? buildMindfulPrompt(baseContext, char, userProfile, targetDate, targetDayOfWeek, chatHistoryBlock, schedulePlanBlock, { planningAhead })
+        : buildLifestylePrompt(baseContext, char, userProfile, targetDate, targetDayOfWeek, chatHistoryBlock, schedulePlanBlock, { planningAhead });
 
     const requestSchedule = async (requestPrompt: string): Promise<{
         slots: ScheduleSlot[];
@@ -394,7 +432,7 @@ export async function generateDailyScheduleForChar(
             }),
             // API 调用记录标签（全局 fetch 拦截器读取）；不传会兜底成「用户当时打开的 App」，
             // 后台任务被标成 Message/群聊 之类，用户看记录一头雾水。
-            __sullyMeta: { appName: '日程系统', charId: char.id, charName: char.name, purpose: '生成当日日程' },
+            __sullyMeta: { appName: '日程系统', charId: char.id, charName: char.name, purpose: planningAhead ? '预排未来日程' : '生成当日日程' },
         } as RequestInit);
 
         if (!response.ok) {
@@ -465,9 +503,9 @@ ${validation.errors.join('；')}
         }
 
         const schedule: DailySchedule = {
-            id: `${char.id}_${today}`,
+            id: `${char.id}_${targetDate}`,
             charId: char.id,
-            date: today,
+            date: targetDate,
             slots,
             generatedAt: Date.now(),
             coverImage,
@@ -475,7 +513,7 @@ ${validation.errors.join('；')}
             planningMeta: {
                 schemaVersion: 1,
                 seed: schedulePlan.seed,
-                generationId: `schedule-${char.id}-${today}-${schedulePlan.rerollIndex}-${Date.now().toString(36)}`,
+                generationId: `schedule-${char.id}-${targetDate}-${schedulePlan.rerollIndex}-${Date.now().toString(36)}`,
                 rerollIndex: schedulePlan.rerollIndex,
                 variationClass: schedulePlan.variationClass,
                 careerFocus: schedulePlan.careerFocus,
@@ -490,6 +528,9 @@ ${validation.errors.join('；')}
             },
         };
 
+        // 真实业务请求如果在网络等待期间跨过角色午夜，目标“明天”可能已经变成昨天；
+        // 这种陈旧结果宁可不落库，也不覆盖新的一天。测试注入 now 时跳过这条实时竞态检查。
+        if (!options?.now && targetDate < getScheduleDateKey(char)) return null;
         await DB.saveDailySchedule(schedule);
         return schedule;
     } catch (e) {

@@ -118,6 +118,22 @@ describe('日程本地规划器', () => {
         expect(formatSchedulePlanPrompt(plan)).not.toContain('7-9 小时');
     });
 
+    it('预排未来日期时要求生成完整一天，不把当前时刻当成目标日截止线', () => {
+        const plan = buildSchedulePlan({
+            char: racer,
+            today: '2026-09-15',
+            localWeekday: 2,
+            wallClockMinutes: 0,
+            planningAhead: true,
+        });
+
+        expect(plan.targetDate).toBe('2026-09-15');
+        expect(plan.planningAhead).toBe(true);
+        expect(formatSchedulePlanPrompt(plan)).toContain('预排角色当地未来日程');
+        expect(formatSchedulePlanPrompt(plan)).toContain('目标日尚未开始');
+        expect(formatSchedulePlanPrompt(plan)).not.toContain('角色当地当前时间是 00:00');
+    });
+
     it('只有显式 no-sleep 配置才会关闭睡眠约束，普通职业设定不会自动豁免', () => {
         const plan = buildSchedulePlan({
             char: { ...racer, scheduleSleepMode: 'no-sleep' },

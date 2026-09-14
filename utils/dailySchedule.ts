@@ -55,6 +55,19 @@ export async function getLocalDailySchedule(
     return null;
 }
 
+/**
+ * 按明确的角色当地日历日读取一张表。
+ *
+ * 这是给“预排明天”和历史查看用的精确入口：不能走当前日的旧 key 兼容迁移，
+ * 否则手机日期/UTC 旧记录可能被误搬成未来日程。
+ */
+export function getDailyScheduleForCharDate(
+    char: Pick<CharacterProfile, 'id'>,
+    dateKey: string,
+): Promise<DailySchedule | null> {
+    return DB.getDailySchedule(char.id, dateKey);
+}
+
 /** 按角色自己的日历日读取日程；未开启自定义时区时保持原本的手机时间行为。 */
 export function getDailyScheduleForChar(
     char: Pick<CharacterProfile, 'id' | 'customTimezoneEnabled' | 'customTimezone'>,

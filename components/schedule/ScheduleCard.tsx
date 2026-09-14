@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { DailySchedule, ScheduleSlot, CharacterProfile } from '../../types';
-import { getScheduleWallClock } from '../../utils/scheduleTime';
+import { getScheduleDateKey, getScheduleWallClock } from '../../utils/scheduleTime';
 import { getScheduleSlotTemporalState } from '../../utils/scheduleClock';
 import { resolveCharTimeZone, tzShortLabel } from '../../utils/timezone';
 import { useOS } from '../../context/OSContext';
@@ -25,6 +25,13 @@ const formatDate = (now: Date): string => {
     const days = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
     const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
     return `${months[now.getMonth()]} ${now.getDate()} · ${days[now.getDay()]}`;
+};
+
+const formatDateKey = (value: string): string => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!match) return value;
+    const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    return formatDate(date);
 };
 
 const formatClock = (now: Date): string =>
@@ -98,6 +105,10 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
 
     const tickingNow = useTickingNow();
     const wallClock = getScheduleWallClock(character, tickingNow);
+    const currentCharDate = getScheduleDateKey(character, tickingNow);
+    const scheduleDateRelation = schedule?.date
+        ? schedule.date > currentCharDate ? 1 : schedule.date < currentCharDate ? -1 : 0
+        : 0;
     // 角色设了自己的时区时，上面那个钟走的是 ta 那边的时间——标出地名，
     // 免得用户拿它当自己的手机时间读。
     const charTzName = (() => {
@@ -107,6 +118,9 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
     const charAvatar = character?.avatar;
     const charName = character?.name || '角色';
     const coverImage = schedule?.coverImage;
+    // 预排明天时，卡片日期必须跟着这张表的角色当地 date，而不是把当前墙钟日期
+    // 误显示成明天；顶部的大钟仍保留当前角色时间，方便用户知道现在到哪了。
+    const scheduleDateLabel = schedule?.date ? formatDateKey(schedule.date) : formatDate(wallClock);
 
     const startEdit = (idx: number, slot: ScheduleSlot) => {
         setEditingIdx(idx);
@@ -209,7 +223,7 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
                             className="text-[10px] font-bold px-2 py-0.5 rounded-full border"
                             style={{ background: accentBg, borderColor: palette.line }}
                         >
-                            {formatDate(wallClock)}
+                            {scheduleDateLabel}
                         </span>
                         <ScheduleAppearanceButton compact />
                     </div>
@@ -278,11 +292,15 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
                         </div>
                     ) : schedule && schedule.slots.length > 0 ? (
                         schedule.slots.map((slot, idx) => {
-                            const temporalState = getScheduleSlotTemporalState(
-                                schedule.slots,
-                                idx,
-                                wallClock.getHours() * 60 + wallClock.getMinutes(),
-                            );
+                            const temporalState = scheduleDateRelation > 0
+                                ? 'upcoming'
+                                : scheduleDateRelation < 0
+                                    ? 'past'
+                                    : getScheduleSlotTemporalState(
+                                        schedule.slots,
+                                        idx,
+                                        wallClock.getHours() * 60 + wallClock.getMinutes(),
+                                    );
                             const isCurrent = temporalState === 'current';
                             const isPast = temporalState === 'past';
                             const isFuture = temporalState === 'upcoming'; // 还没到的时段：按钮灰着，点了给提示

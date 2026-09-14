@@ -10,7 +10,7 @@ import { buildMonthlyReviewStats, buildSullyMonthlyReport, CALENDAR_MOODS, choos
 import { requestMonthlyLetter } from '../utils/monthlyLetter';
 import { formatTaskComment, isTaskCommentDisplayable } from '../utils/taskComment';
 import { requestTaskSupervisorVoice, runTaskSupervisorVoiceOnce } from '../utils/taskSupervisorVoice';
-import { resolveCharTimeZone } from '../utils/timezone';
+import { nowInTimeZone, resolveCharTimeZone } from '../utils/timezone';
 
 type CalendarTab = 'month' | 'mine' | 'theirs' | 'review';
 type ComposerMode = 'event' | 'task';
@@ -40,6 +40,10 @@ const ScheduleApp: React.FC = () => {
     const [reviewCursor, setReviewCursor] = useState(() => parseDateKey(today));
     const [selectedDate, setSelectedDate] = useState(today);
     const [selectedCharId, setSelectedCharId] = useState(initialCharId);
+    const [selectedCharDate, setSelectedCharDate] = useState(() => {
+        const initialChar = characters.find(char => char.id === initialCharId);
+        return getLocalDateKey(nowInTimeZone(resolveCharTimeZone(initialChar)));
+    });
     const [tasks, setTasks] = useState<Task[]>([]);
     const [events, setEvents] = useState<Anniversary[]>([]);
     const [charSchedule, setCharSchedule] = useState<DailySchedule | null>(null);
@@ -82,6 +86,12 @@ const ScheduleApp: React.FC = () => {
     const [eventRepeatDays, setEventRepeatDays] = useState<number[]>([1, 2, 3, 4, 5]);
     const [eventRepeatUntil, setEventRepeatUntil] = useState('');
     const selectedChar = characters.find(char => char.id === selectedCharId);
+    const selectedCharLocalToday = getLocalDateKey(nowInTimeZone(resolveCharTimeZone(selectedChar)));
+
+    // “TA 的”页是角色自己的日历，不应沿用用户设备跨午夜后的日期。
+    useEffect(() => {
+        setSelectedCharDate(selectedCharLocalToday);
+    }, [selectedCharId, selectedChar?.customTimezone, selectedChar?.customTimezoneEnabled, selectedCharLocalToday]);
 
     const clearLongPressTimer = () => {
         if (longPressTimerRef.current !== null) {
@@ -146,8 +156,8 @@ const ScheduleApp: React.FC = () => {
         const sourceDates = getCalendarSourceDates(selectedDate, deviceTimeZone, sourceTimeZone);
         const calendarSourceDates = sourceDates.length > 0 ? sourceDates : [selectedDate];
         Promise.all([
-            DB.getDailySchedule(selectedCharId, selectedDate),
-            DB.getRoomTodo(selectedCharId, selectedDate),
+            DB.getDailySchedule(selectedCharId, selectedCharDate),
+            DB.getRoomTodo(selectedCharId, selectedCharDate),
             Promise.all(calendarSourceDates.map(date => DB.getDailySchedule(selectedCharId, date))),
         ])
             .then(([schedule, todo, schedules]) => {
@@ -160,7 +170,7 @@ const ScheduleApp: React.FC = () => {
                 if (active) console.error('Character calendar load failed', error);
             });
         return () => { active = false; };
-    }, [selectedChar?.customTimezone, selectedChar?.customTimezoneEnabled, selectedCharId, selectedDate]);
+    }, [selectedChar?.customTimezone, selectedChar?.customTimezoneEnabled, selectedCharId, selectedCharDate, selectedDate]);
 
     const selectedTasks = useMemo(() => tasksForDate(tasks, selectedDate), [tasks, selectedDate]);
     const selectedEvents = useMemo(() => eventsForDate(events, selectedDate), [events, selectedDate]);
@@ -608,7 +618,7 @@ const ScheduleApp: React.FC = () => {
         if (item.kind === 'event') {
             const event = item.event;
             return <div
-                onPointerDown={event => beginLongPress({ kind: 'event', id: event.id }, event)}
+                onPointerDown={pointerEvent => beginLongPress({ kind: 'event', id: event.id }, pointerEvent)}
                 onPointerMove={handleLongPressMove}
                 onPointerUp={cancelLongPress}
                 onPointerCancel={cancelLongPress}
@@ -729,9 +739,9 @@ const ScheduleApp: React.FC = () => {
             </div>}
             {tab === 'theirs' && <div className="space-y-5">
                 <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">{characters.map(char => <button key={char.id} onClick={() => setSelectedCharId(char.id)} className={`flex shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold ${selectedCharId === char.id ? 'border-violet-300 bg-violet-500 text-white' : 'border-white bg-white/70 text-slate-500'}`}><img src={char.avatar} className="h-7 w-7 rounded-full object-cover" />{char.name}</button>)}</div>
-                <div className="rounded-[2rem] bg-white/75 p-5 shadow-sm"><div className="flex items-center justify-between"><div><div className="text-[10px] font-bold tracking-[0.2em] text-violet-400">CHARACTER DAY</div><h2 className="mt-1 text-lg font-bold">{selectedDate}</h2></div><input type="date" value={selectedDate} onChange={event => setSelectedDate(event.target.value)} className="rounded-xl bg-slate-100 px-3 py-2 text-xs text-slate-500" /></div></div>
+                <div className="rounded-[2rem] bg-white/75 p-5 shadow-sm"><div className="flex items-center justify-between"><div><div className="text-[10px] font-bold tracking-[0.2em] text-violet-400">CHARACTER DAY</div><h2 className="mt-1 text-lg font-bold">{selectedCharDate}</h2><p className="mt-1 text-[10px] text-slate-400">按 {selectedChar?.name || 'TA'} 所在地的日历日</p></div><input type="date" value={selectedCharDate} onChange={event => { if (event.target.value) setSelectedCharDate(event.target.value); }} className="rounded-xl bg-slate-100 px-3 py-2 text-xs text-slate-500" /></div></div>
                 <section className="space-y-3"><h3 className="px-1 text-sm font-bold">日程</h3>{charSchedule?.slots.map((slot, index) => <div key={`${slot.startTime}-${index}`} className="rounded-2xl border border-violet-100 bg-white/80 p-4"><div className="flex gap-3"><span className="text-xl">{slot.emoji || '◌'}</span><div><div className="text-xs font-bold text-violet-500">{slot.startTime}{slot.endTime ? `–${slot.endTime}` : ''} · {slot.busyLevel === 'sleep' ? '休息中' : slot.busyLevel === 'busy' ? '比较忙' : slot.busyLevel === 'light' ? '稍忙' : '较空闲'}</div><div className="mt-1 font-semibold">{slot.activity}</div>{slot.description && <p className="mt-1 text-xs text-slate-400">{slot.description}</p>}</div></div></div>)}{!charSchedule && <div className="rounded-2xl border-2 border-dashed border-white py-8 text-center text-xs text-slate-400">这一天还没有生成角色日程</div>}</section>
-                <section className="space-y-3"><div className="flex items-center justify-between px-1"><h3 className="text-sm font-bold">TA 的待办</h3><span className="text-[10px] text-slate-400">与房间同步</span></div>{charTodo?.items.map((item, index) => <button key={`${item.text}-${index}`} onClick={() => toggleCharTodo(index)} className="flex w-full items-center gap-3 rounded-2xl bg-white/80 p-3 text-left shadow-sm"><span className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${item.done ? 'border-emerald-400 bg-emerald-400 text-white' : 'border-violet-200'}`}>{item.done ? '✓' : ''}</span><span className={`text-sm ${item.done ? 'line-through opacity-40' : ''}`}>{item.text}</span></button>)}{!charTodo?.items.length && <div className="py-6 text-center text-xs text-slate-400">TA 今天还没有写待办</div>}</section>
+                <section className="space-y-3"><div className="flex items-center justify-between px-1"><h3 className="text-sm font-bold">TA 的待办</h3><span className="text-[10px] text-slate-400">与房间同步</span></div>{charTodo?.items.map((item, index) => <button key={`${item.text}-${index}`} onClick={() => toggleCharTodo(index)} className="flex w-full items-center gap-3 rounded-2xl bg-white/80 p-3 text-left shadow-sm"><span className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${item.done ? 'border-emerald-400 bg-emerald-400 text-white' : 'border-violet-200'}`}>{item.done ? '✓' : ''}</span><span className={`text-sm ${item.done ? 'line-through opacity-40' : ''}`}>{item.text}</span></button>)}{!charTodo?.items.length && <div className="py-6 text-center text-xs text-slate-400">TA 这一天还没有写待办</div>}</section>
             </div>}
             {tab === 'review' && <div className="space-y-5">
                 <section className="rounded-[2rem] border border-white bg-white/75 p-5 shadow-sm backdrop-blur-xl">

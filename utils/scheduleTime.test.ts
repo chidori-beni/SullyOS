@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import type { CharacterProfile, ScheduleSlot } from '../types';
 import {
+    addScheduleDateKey,
     getCurrentScheduleSlotIndex,
     getScheduleDateKey,
     getScheduleWallClock,
@@ -53,5 +54,18 @@ describe('character schedule clock', () => {
             { startTime: 'not-a-time', activity: '坏数据' },
             ...slots,
         ], losAngelesChar, instant)).toBe(1);
+    });
+
+    it('keeps Beijing date/time when the Tokyo device has already crossed midnight', () => {
+        process.env.TZ = 'Asia/Tokyo';
+        const beijingChar = {
+            customTimezoneEnabled: true,
+            customTimezone: 'Asia/Shanghai',
+        } as CharacterProfile;
+        const instant = new Date('2026-09-14T15:30:00.000Z'); // 东京 9/15 00:30，北京 9/14 23:30
+        expect(getScheduleDateKey(beijingChar, instant)).toBe('2026-09-14');
+        expect(getScheduleWallClock(beijingChar, instant).getHours()).toBe(23);
+        expect(addScheduleDateKey('2026-09-14', 1)).toBe('2026-09-15');
+        expect(addScheduleDateKey('2026-03-01', -1)).toBe('2026-02-28');
     });
 });

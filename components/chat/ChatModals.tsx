@@ -146,11 +146,13 @@ interface ChatModalsProps {
     textFavorited?: boolean;
     // Schedule
     scheduleData?: DailySchedule | null;
+    scheduleTomorrowData?: DailySchedule | null;
     isScheduleGenerating?: boolean;
-    onScheduleEdit?: (index: number, slot: ScheduleSlot) => void;
-    onScheduleDelete?: (index: number) => void;
+    onScheduleEdit?: (index: number, slot: ScheduleSlot, targetSchedule?: DailySchedule) => void;
+    onScheduleDelete?: (index: number, targetSchedule?: DailySchedule) => void;
     onScheduleReroll?: (requirement?: string) => void | Promise<void>;
-    onScheduleCoverChange?: (dataUrl: string) => void;
+    onSchedulePlanTomorrow?: (forceRegenerate?: boolean) => void | Promise<void>;
+    onScheduleCoverChange?: (dataUrl: string, targetSchedule?: DailySchedule) => void;
     onScheduleStyleChange?: (style: 'lifestyle' | 'mindful') => void;
     onPlayTheater?: (index: number) => void;
     // Schedule master toggle
@@ -302,7 +304,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     chatVoiceEnabled, onToggleChatVoice, chatVoiceAutoPlay, onToggleChatVoiceAutoPlay, chatVoiceLang, onSetChatVoiceLang,
     onGenerateVoice, voiceAvailable, onDownloadVoice, voiceDownloadable, voiceCollectable, onToggleVoiceFavorite, voiceFavorited,
     onToggleTextFavorite, textFavorited,
-    scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
+    scheduleData, scheduleTomorrowData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onSchedulePlanTomorrow, onScheduleCoverChange,
     onScheduleStyleChange, onPlayTheater,
     isScheduleFeatureEnabled, onToggleScheduleFeature, isScheduleInviteEnabled, onToggleScheduleInvite,
     busyAutoReplyEnabled, busyAutoReplyUseScheduleText, busyAutoReplyBusyText, busyAutoReplySleepText,
@@ -316,6 +318,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     const [historySearch, setHistorySearch] = useState('');
     const [scheduleRerollPromptOpen, setScheduleRerollPromptOpen] = useState(false);
     const [scheduleRerollRequirement, setScheduleRerollRequirement] = useState('');
+    const [scheduleView, setScheduleView] = useState<'today' | 'tomorrow'>('today');
     const longPressTimerRef = useRef<number | null>(null);
     const longPressTriggeredRef = useRef(false);
     const HISTORY_PAGE_SIZE = 50;
@@ -347,7 +350,11 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     useEffect(() => {
         setScheduleRerollPromptOpen(false);
         setScheduleRerollRequirement('');
+        setScheduleView('today');
     }, [activeCharacter?.id, modalType]);
+
+    const visibleSchedule = scheduleView === 'tomorrow' ? scheduleTomorrowData || null : scheduleData || null;
+    const visibleScheduleIsTomorrow = scheduleView === 'tomorrow';
 
     const startHistoryLongPress = (msgId: number) => {
         longPressTriggeredRef.current = false;
@@ -1477,14 +1484,54 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                 </div>
                             )}
 
+                            <div className="mb-3 grid grid-cols-2 rounded-2xl bg-slate-100 p-1 text-xs font-bold">
+                                <button
+                                    type="button"
+                                    onClick={() => setScheduleView('today')}
+                                    className={`rounded-xl py-2.5 transition ${!visibleScheduleIsTomorrow ? 'bg-white text-violet-600 shadow-sm' : 'text-slate-400'}`}
+                                >
+                                    今天
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setScheduleView('tomorrow')}
+                                    className={`rounded-xl py-2.5 transition ${visibleScheduleIsTomorrow ? 'bg-white text-violet-600 shadow-sm' : 'text-slate-400'}`}
+                                >
+                                    明天
+                                </button>
+                            </div>
+
+                            {visibleScheduleIsTomorrow && (
+                                <div className="mb-3 flex items-center gap-3 rounded-2xl border border-violet-100 bg-violet-50/70 p-3">
+                                    <div className="min-w-0 flex-1">
+                                        <p className="text-xs font-bold text-violet-800">角色当地明日预排</p>
+                                        <p className="mt-0.5 text-[10px] leading-relaxed text-violet-600">
+                                            提前排好完整一天，不会改变今天的聊天状态，也不会提前发邀约或主动消息。
+                                        </p>
+                                    </div>
+                                    {onSchedulePlanTomorrow && (
+                                        <button
+                                            type="button"
+                                            onClick={() => onSchedulePlanTomorrow(Boolean(scheduleTomorrowData))}
+                                            disabled={isScheduleGenerating}
+                                            className="shrink-0 rounded-xl bg-violet-500 px-3 py-2 text-[10px] font-bold text-white shadow-sm disabled:opacity-40"
+                                        >
+                                            {isScheduleGenerating
+                                                ? '生成中…'
+                                                : scheduleTomorrowData ? '重新预排' : '预排明日'}
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+
                             <ScheduleCard
-                                schedule={scheduleData || null}
+                                schedule={visibleSchedule}
                                 character={activeCharacter}
                                 compact={false}
-                                onEdit={onScheduleEdit}
-                                onDelete={onScheduleDelete}
-                                onReroll={onScheduleReroll ? () => setScheduleRerollPromptOpen(true) : undefined}
-                                onCoverImageChange={onScheduleCoverChange}
+                                onEdit={onScheduleEdit ? (index, slot) => onScheduleEdit(index, slot, visibleSchedule || undefined) : undefined}
+                                onDelete={onScheduleDelete ? (index) => onScheduleDelete(index, visibleSchedule || undefined) : undefined}
+                                onReroll={!visibleScheduleIsTomorrow && onScheduleReroll ? () => setScheduleRerollPromptOpen(true) : undefined}
+                                onCoverImageChange={onScheduleCoverChange ? (dataUrl) => onScheduleCoverChange(dataUrl, visibleSchedule || undefined) : undefined}
                                 onPlayTheater={onPlayTheater}
                                 isGenerating={isScheduleGenerating}
                             />

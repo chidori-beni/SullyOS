@@ -30,8 +30,11 @@
 | `timezone.ts` → `tzAwarenessNote(tz)` | prompt 里那段时差提示 |
 | `scheduleTime.ts` → `getScheduleWallClock(char, base?)` | 角色墙上时间，`nowInTimeZone(resolveCharTimeZone(char))` 的快捷方式 |
 | `scheduleTime.ts` → `getScheduleDateKey(char, base?)` | 角色所在地的日历日 `YYYY-MM-DD` |
+| `scheduleTime.ts` → `addScheduleDateKey(dateKey, days)` | 对角色日历日做不受设备时区 / 夏令时影响的前后日期运算 |
+| `scheduleTime.ts` → `getScheduleWeekdayForDateKey(dateKey)` | 读取明确日期对应的星期，给预排提示词使用 |
 | `scheduleTime.ts` → `getCurrentScheduleSlotIndex(slots, char, base?)` | 按角色时间找当前时段 |
 | `dailySchedule.ts` → `getDailyScheduleForChar(char, at?)` | 按角色的日历日读日程，带旧 key 兼容 |
+| `dailySchedule.ts` → `getDailyScheduleForCharDate(char, dateKey)` | 精确读取指定角色日期；预排未来日时不触发旧 key 迁移 |
 | `localDate.ts` → `getLocalDateKey(date)` | 日期 key。注意别用 `toISOString().slice(0,10)`，那是 UTC 日 |
 | `hooks/useLocalDateKey.ts` → `useLocalDateKey(tz)` | 组件里用的响应式日期 key，跨午夜自动刷新 |
 
@@ -44,6 +47,10 @@
 日程存 IndexedDB 用的 key 是 `${charId}_${dateKey}`。**写入和读取必须算出同一个字符串**，否则会「写进 A、读 B」，每次打开都判定没日程、反复调 LLM 重新生成——烧 token 而且从界面上看不出来。
 
 写入侧统一走 `getScheduleDateKey(char)`，读取侧统一走 `getDailyScheduleForChar(char)`。
+
+现在聊天里的日程面板还可以切到「明天」：预排生成器接收明确的角色当地 `targetDate`，用目标日期的星期和完整 00:00–深夜语义生成，并把表保存到目标日期的 IndexedDB key。未来日程的编辑和看板日期也跟着这张表的 `date` 走；卡片不会拿用户设备的当前日期或当前分钟把明早标成已过。
+
+预排明天只负责本地保存和次日切换前的准备，不会提前覆盖今天的聊天注入、邀约卡或主动消息 fire-pack。角色当地跨午夜后，聊天侧重新读取日期，昨天预排的表自然成为今天；若想让 PWA 关闭时也提前携带多天排程，需要另行设计带日期索引的 worker 协议，不能把未来表混进当前单日 fire-pack。
 
 `dailySchedule.ts` 里还有一层旧 key 兼容（更早版本按 UTC 日、接入角色时区前按手机日）。迁移时会校验 `generatedAt` 确实属于角色当地的今天，并且把旧记录**搬走**而不是复制——留副本的话，等角色当地日历翻到那个日期，同一份日程会被当成两天用。
 
@@ -88,7 +95,7 @@
 
 ### 测试还没盖到的
 
-- 日程生成的**写入侧**：prompt 里那句「今天是 X (星期 Y)」和落库用的 `date` / `id`
+- 日程生成实际调用 API 后的**写入侧**：prompt 里那句「今天是 X (星期 Y)」和落库用的 `date` / `id`（当前已有规划器和日期运算单测，但没有把真实 API 响应完整 mock 到 DB 写入端到端）
 - `nowInTimeZone` 本身没有直接的单测
 
 ## 已知限制：设备夏令时空档

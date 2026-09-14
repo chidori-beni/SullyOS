@@ -13,7 +13,7 @@ describe('日程重抽临时要求接线', () => {
 
         expect(modals).toContain('scheduleRerollPromptOpen');
         expect(modals).toContain('maxLength={SCHEDULE_REROLL_REQUIREMENT_MAX_LENGTH}');
-        expect(modals).toContain('onReroll={onScheduleReroll ? () => setScheduleRerollPromptOpen(true) : undefined}');
+        expect(modals).toContain('onReroll={!visibleScheduleIsTomorrow && onScheduleReroll ? () => setScheduleRerollPromptOpen(true) : undefined}');
         expect(modals).toContain('这个要求只影响本次日程，不会改角色设定');
         expect(modals).toContain('onScheduleReroll?.(requirement)');
     });
@@ -23,8 +23,10 @@ describe('日程重抽临时要求接线', () => {
         const generator = read('./scheduleGenerator.ts');
 
         expect(chat).toContain('rerollRequirement?: string');
-        expect(chat).toContain('rerollRequirement ? { rerollRequirement } : undefined');
-        expect(generator).toContain('options?: { rerollRequirement?: string }');
+        expect(chat).toContain('...(rerollRequirement ? { rerollRequirement } : {})');
+        expect(chat).toContain('...(targetDate ? { targetDate } : {})');
+        expect(generator).toContain('rerollRequirement?: string;');
+        expect(generator).toContain('targetDate?: string;');
         expect(generator).toContain('userRequirementApplied: Boolean(rerollRequirement)');
         expect(generator).not.toContain('rerollRequirement: rerollRequirement');
     });

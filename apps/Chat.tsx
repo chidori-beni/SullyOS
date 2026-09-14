@@ -12,9 +12,10 @@ import { buildChatFineTuneCss, mergeChatFineTune } from '../utils/chatFineTuneCs
 import ChatFineTunePanel from '../components/chat/ChatFineTunePanel';
 import { FadersHorizontal } from '@phosphor-icons/react';
 import { generateDailyScheduleForChar, isScheduleFeatureOn } from '../utils/scheduleGenerator';
-import { getDailyScheduleForChar } from '../utils/dailySchedule';
+import { getDailyScheduleForChar, getDailyScheduleForCharDate } from '../utils/dailySchedule';
 import { useLocalDateKey } from '../hooks/useLocalDateKey';
 import { resolveCharTimeZone, wallClockToTimestamp } from '../utils/timezone';
+import { addScheduleDateKey, getScheduleDateKey } from '../utils/scheduleTime';
 import { generateSlotTheater } from '../utils/theaterGenerator';
 import TheaterPlayer from '../components/schedule/TheaterPlayer';
 import { buildSARMemoryBoundaryInstruction, formatMessageWithTime, normalizeMessageContent } from '../utils/messageFormat';
@@ -314,6 +315,8 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     // 切换角色时收掉装扮气泡与抽屉：定制是 per-character 的，避免误改到下一个角色
     useEffect(() => { setFineTuneOpen(false); setFineTunePanelOpen(false); setDecorTab(null); }, [activeCharacterId]);
     const [scheduleData, setScheduleData] = useState<DailySchedule | null>(null);
+    /** 预排的角色当地明日日程；不参与当前聊天注入或当前 fire-pack。 */
+    const [scheduleTomorrowData, setScheduleTomorrowData] = useState<DailySchedule | null>(null);
     const [scheduleInviteEnabled, setScheduleInviteEnabledState] = useState<boolean>(() => isScheduleInviteEnabled());
     const scheduleInviteResolvingRef = useRef<Set<number>>(new Set());
     const [scheduleChangeNotice, setScheduleChangeNotice] = useState<ScheduleChangeEventDetail | null>(null);
@@ -463,6 +466,12 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     }, [messages]);
     const charDateKey = useLocalDateKey(resolveCharTimeZone(char));
     charRef.current = char; // Keep ref in sync for async callbacks
+
+    // 角色当地跨午夜后，昨天预排的表已经成为今天：清掉旧的“明天”缓存，
+    // 打开面板时重新按新日期读取，避免把同一张表显示成两天。
+    useEffect(() => {
+        setScheduleTomorrowData(null);
+    }, [activeCharacterId, charDateKey]);
     const historyContextRange = useMemo(() => {
         if (!char) return undefined;
         return computeContextRangeSnapshot(
@@ -2683,41 +2692,59 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     // --- Schedule Handlers ---
     const loadSchedule = async () => {
         if (!char) return;
-        if (!isScheduleFeatureOn(char)) { setScheduleData(null); return; }
-        const s = await getDailyScheduleForChar(char);
-        setScheduleData(s);
+        if (!isScheduleFeatureOn(char)) {
+            setScheduleData(null);
+            setScheduleTomorrowData(null);
+            return;
+        }
+        const todayKey = getScheduleDateKey(char);
+        const tomorrowKey = addScheduleDateKey(todayKey, 1);
+        const [todaySchedule, tomorrowSchedule] = await Promise.all([
+            getDailyScheduleForChar(char),
+            tomorrowKey ? getDailyScheduleForCharDate(char, tomorrowKey) : Promise.resolve(null),
+        ]);
+        setScheduleData(todaySchedule);
+        setScheduleTomorrowData(tomorrowSchedule);
     };
 
     // Load schedule when modal opens
     React.useEffect(() => {
         if (modalType === 'schedule') loadSchedule();
-    }, [modalType]);
+    }, [modalType, activeCharacterId, charDateKey]);
 
     // 日程表随 fire_pack 一起上云（角色到点按它说自己在干嘛），改完要让云端那份跟上：
     // 用户把「健身」改成「在家养病」，角色晚上还说「刚从健身房回来」就穿帮了。
-    const handleScheduleEdit = async (index: number, slot: ScheduleSlot) => {
-        if (!scheduleData) return;
-        const newSlots = [...scheduleData.slots];
+    const handleScheduleEdit = async (index: number, slot: ScheduleSlot, targetSchedule?: DailySchedule) => {
+        const sourceSchedule = targetSchedule || scheduleData;
+        if (!sourceSchedule) return;
+        const newSlots = [...sourceSchedule.slots];
         newSlots[index] = slot;
-        const updated = { ...scheduleData, slots: newSlots };
-        setScheduleData(updated);
+        const updated = { ...sourceSchedule, slots: newSlots };
+        const isCurrentSchedule = sourceSchedule.date === scheduleData?.date;
+        if (isCurrentSchedule) setScheduleData(updated);
+        else setScheduleTomorrowData(updated);
         await DB.saveDailySchedule(updated);
-        markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+        if (isCurrentSchedule && char) markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
     };
 
-    const handleScheduleDelete = async (index: number) => {
-        if (!scheduleData) return;
-        const newSlots = scheduleData.slots.filter((_, i) => i !== index);
-        const updated = { ...scheduleData, slots: newSlots };
-        setScheduleData(updated);
+    const handleScheduleDelete = async (index: number, targetSchedule?: DailySchedule) => {
+        const sourceSchedule = targetSchedule || scheduleData;
+        if (!sourceSchedule) return;
+        const newSlots = sourceSchedule.slots.filter((_, i) => i !== index);
+        const updated = { ...sourceSchedule, slots: newSlots };
+        const isCurrentSchedule = sourceSchedule.date === scheduleData?.date;
+        if (isCurrentSchedule) setScheduleData(updated);
+        else setScheduleTomorrowData(updated);
         await DB.saveDailySchedule(updated);
-        markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+        if (isCurrentSchedule && char) markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
     };
 
-    const handleScheduleCoverChange = async (dataUrl: string) => {
-        if (!scheduleData) return;
-        const updated = { ...scheduleData, coverImage: dataUrl };
-        setScheduleData(updated);
+    const handleScheduleCoverChange = async (dataUrl: string, targetSchedule?: DailySchedule) => {
+        const sourceSchedule = targetSchedule || scheduleData;
+        if (!sourceSchedule) return;
+        const updated = { ...sourceSchedule, coverImage: dataUrl };
+        if (sourceSchedule.date === scheduleData?.date) setScheduleData(updated);
+        else setScheduleTomorrowData(updated);
         await DB.saveDailySchedule(updated);
     };
 
@@ -2788,6 +2815,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         targetChar: typeof char,
         forceRegenerate: boolean = false,
         rerollRequirement?: string,
+        targetDate?: string,
     ) => {
         if (!targetChar || isScheduleGenerating) return;
         setIsScheduleGenerating(true);
@@ -2797,19 +2825,34 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 userProfile,
                 apiConfig,
                 forceRegenerate,
-                rerollRequirement ? { rerollRequirement } : undefined,
+                rerollRequirement || targetDate
+                    ? { ...(rerollRequirement ? { rerollRequirement } : {}), ...(targetDate ? { targetDate } : {}) }
+                    : undefined,
             );
             if (result) {
-                const scheduleWithInvite = await ensureScheduleInvite(targetChar, result);
-                setScheduleData(scheduleWithInvite);
-                // 跨天后台重新生成也要刷云端：不刷的话角色到点照着昨天的作息表说话
-                markAmsgStateDirty({ char: targetChar, userProfile, groups, realtimeConfig });
+                const isCurrentTarget = !targetDate || targetDate === getScheduleDateKey(targetChar);
+                // 预排未来日期只落本地，不提前创建今天的聊天邀约或覆盖当前 fire-pack。
+                const scheduleWithInvite = isCurrentTarget
+                    ? await ensureScheduleInvite(targetChar, result)
+                    : result;
+                if (isCurrentTarget) {
+                    setScheduleData(scheduleWithInvite);
+                    markAmsgStateDirty({ char: targetChar, userProfile, groups, realtimeConfig });
+                } else {
+                    setScheduleTomorrowData(scheduleWithInvite);
+                }
             }
         } catch (e) {
             console.error('[Schedule] Generation error:', e);
         } finally {
             setIsScheduleGenerating(false);
         }
+    };
+
+    const handleSchedulePlanTomorrow = (forceRegenerate: boolean = false) => {
+        if (!char) return;
+        const tomorrowKey = addScheduleDateKey(getScheduleDateKey(char), 1);
+        if (tomorrowKey) void generateDailySchedule(char, forceRegenerate, undefined, tomorrowKey);
     };
 
     const handleScheduleStyleChange = async (style: 'lifestyle' | 'mindful') => {
@@ -4809,10 +4852,12 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 textFavorited={!!(selectedMessage?.id && chatTextFavoriteKeys.has(chatTextFavoriteSourceKey(selectedMessage)))}
                 onToggleTextFavorite={selectedMessage ? () => handleToggleTextFavorite(selectedMessage) : undefined}
                 scheduleData={scheduleData}
+                scheduleTomorrowData={scheduleTomorrowData}
                 isScheduleGenerating={isScheduleGenerating}
                 onScheduleEdit={handleScheduleEdit}
                 onScheduleDelete={handleScheduleDelete}
                 onScheduleReroll={(requirement) => generateDailySchedule(char, true, requirement)}
+                onSchedulePlanTomorrow={handleSchedulePlanTomorrow}
                 onScheduleCoverChange={handleScheduleCoverChange}
                 onScheduleStyleChange={handleScheduleStyleChange}
                 onPlayTheater={handlePlayTheater}
