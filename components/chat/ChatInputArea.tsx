@@ -9,6 +9,8 @@ import { trackEvent } from '../../utils/analytics';
 import { findEmojiSuggestions } from '../../utils/emojiSuggestions';
 
 const EMOJI_PAGE_SIZE = 40;
+/** 加号菜单每页放几个动作按钮。页数由按钮总数自动算，不写死。 */
+const ACTION_PAGE_SIZE = 8;
 // 消息栏最多长到六行（144px），再多就在框内滚动。和 max-h-36 保持一致。
 const MAX_INPUT_HEIGHT = 144;
 
@@ -163,7 +165,11 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         document.addEventListener('pointerdown', blurOnOutsidePointer, true);
         return () => document.removeEventListener('pointerdown', blurOnOutsidePointer, true);
     }, [canSwitchToGenerate, isInputFocused]);
-    const [actionsPage, setActionsPage] = useState<0 | 1 | 2>(0);
+    const [actionsPage, setActionsPage] = useState(0);
+    // 动作页数由按钮总数算出来，而那个计算发生在下面的 JSX 里；
+    // 滑动翻页的上限要用到它，所以渲染时顺手记在 ref 上带出来。
+    // （只写 ref、不 setState，不会触发额外渲染。）
+    const actionPageCountRef = useRef(1);
     // 气泡样式面板：搜索 + 两步确认删除（防止 hover 小 × 误删）
     const [bubbleSearch, setBubbleSearch] = useState('');
     // 会话面板的主要用途仍是切换聊天；气泡选择作为次级工具默认收起。
@@ -304,10 +310,11 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         actionsSwipeStart.current = null;
         const SWIPE_THRESHOLD = 40;
         if (Math.abs(dx) > SWIPE_THRESHOLD && Math.abs(dx) > Math.abs(dy)) {
-            if (dx < 0 && actionsPage < 2) {
-                setActionsPage((actionsPage + 1) as 0 | 1 | 2);
+            // 上限用按钮总数算出来的页数，别写死 2 —— 以后加按钮加到第 4 页也能滑过去。
+            if (dx < 0 && actionsPage < actionPageCountRef.current - 1) {
+                setActionsPage(actionsPage + 1);
             } else if (dx > 0 && actionsPage > 0) {
-                setActionsPage((actionsPage - 1) as 0 | 1 | 2);
+                setActionsPage(actionsPage - 1);
             }
         }
     };
@@ -926,7 +933,34 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             onTouchEnd={handleActionsSwipeEnd}
                             onClickCapture={handleActionsClickCapture}
                         >
-                          <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 0 ? '' : 'hidden'}`}>
+                          {/* 隐藏的图片选择框：必须待在下面那个按钮列表**之外**——
+                              列表是按顺序切页的，混进一个不可见元素就会实打实占掉一格，
+                              第 1 页会变成 7 个按钮 + 1 个空格子。相册按钮点的是 ref，
+                              所以它放哪儿都行。 */}
+                          <input type="file" ref={chatImageInputRef} className="hidden" accept="image/*" onChange={(e) => handleImageChange(e, 'chat')} />
+                          {(() => {
+                            // 单一有序列表：20 个动作按钮先摊平成一串，再按每页 8 个切开。
+                            //
+                            // 原来是三个写死的分页 <div>，每次增删按钮都要手工重排
+                            // 「第几页放哪几个」—— 漏排就会出现「这页 9 个、那页 7 个」
+                            // （相册按钮那次就是这么歪的）。
+                            //
+                            // React.Children.toArray 还会自动丢掉 false / null，
+                            // 所以按条件隐藏的按钮（比如消息栏已显示语音键时，这里的
+                            // 「语音」就不出现）直接从序列里消失，不留空位。
+                            //
+                            // 顺序沿用原来三页的排法（原注释保留在此）：
+                            //   前 8 个 = 原「第 1 页」
+                            //   中 8 个 = 原「第 2 页 · 外部服务」
+                            //   后 4 个 = 原「第 3 页 · 更多」——
+                            //     这页以前还挂着「提示音」「白框」两个格子，它们和「装扮」
+                            //     本来就是同一件事（把这个聊天打扮好看），却被分在两页里；
+                            //     现在统一并进「装扮」抽屉，这页只留纯工具入口。
+                            // ⚠️ 必须取 .props.children 再摊平。直接 toArray(<>…</>) 拿到的是
+                            // **一个 fragment**（长度 1），不是里面那 20 个按钮 ——
+                            // 结果就是只渲染 1 页、20 个全挤在一起。tsc 和构建都查不出来，
+                            // 是在浏览器里数按钮才发现的。
+                            const items = React.Children.toArray((<>
                             <button onClick={() => onPanelAction('collaboration')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${acnh ? 'bg-white/70 border-[#e6dab4] text-[#7c6ee6]' : isDiscordStyle ? 'bg-slate-800 text-indigo-300 border-indigo-400/20' : 'bg-indigo-50 text-indigo-500 border-indigo-100'}`}>
                                     <Briefcase className="w-6 h-6" weight="fill" />
@@ -981,7 +1015,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 </div>)}
                                 <span className="text-xs font-bold">相册</span>
                             </button>
-                            <input type="file" ref={chatImageInputRef} className="hidden" accept="image/*" onChange={(e) => handleImageChange(e, 'chat')} />
 
                             {/* Regenerate Button */}
                             <button onClick={onReroll} disabled={!canReroll} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${canReroll ? (isDiscordStyle ? 'text-slate-200' : 'text-slate-600') : 'text-slate-300 opacity-50'}`}>
@@ -993,10 +1026,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             </button>
 
 
-                          </div>
-
-                          {/* Page 1: 外部服务 */}
-                          <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 1 ? '' : 'hidden'}`}>
                             {/* 情绪按钮已并入日程 — 情绪/意识流与日程强制同步，配置面板在日程 Modal 下方 */}
 
                             {/* Schedule Button */}
@@ -1117,13 +1146,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             </button>
 
 
-                          </div>
-
-                          {/* Page 2: 更多
-                              以前这页还挂着「提示音」「白框」两个格子——它们和上一页的「聊天装扮」
-                              本来就是同一件事（把这个聊天打扮好看），却被分在两页里。现在统一并进
-                              上一页的「装扮」抽屉，这页只留纯工具入口。 */}
-                          <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 2 ? '' : 'hidden'}`}>
                             {/* 装扮：该角色所有美化的统一入口 —— 微调 / 背景 / 气泡 / 白框 / 提示音
                                 五个页签在一个抽屉里。以前这几项分散在本页、下一页和「设置」弹窗里，
                                 找一个要翻三处；现在这一个格子全包，旧入口不再单列。 */}
@@ -1171,29 +1193,32 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                               </span>
                               <span className="text-xs font-bold">收藏</span>
                             </button>
-                          </div>
+                            </>).props.children);
+                            const pageCount = Math.max(1, Math.ceil(items.length / ACTION_PAGE_SIZE));
+                            actionPageCountRef.current = pageCount;
+                            // 按钮变少导致当前页超出范围时往回收，不然会停在一张空页上。
+                            const page = Math.min(actionsPage, pageCount - 1);
+                            return (<>
+                              {Array.from({ length: pageCount }, (_, i) => (
+                                <div key={i} className={`p-6 grid grid-cols-4 gap-8 ${page === i ? '' : 'hidden'}`}>
+                                  {items.slice(i * ACTION_PAGE_SIZE, (i + 1) * ACTION_PAGE_SIZE)}
+                                </div>
+                              ))}
 
-                          {/* 翻页指示器 */}
-                          <div className="flex items-center justify-center gap-3 pb-3 -mt-2">
-                            <button
-                              type="button"
-                              aria-label="第 1 页"
-                              onClick={() => setActionsPage(0)}
-                              className={`w-2 h-2 rounded-full transition-all ${actionsPage === 0 ? (isDiscordStyle ? 'bg-slate-200 w-5' : 'bg-slate-500 w-5') : (isDiscordStyle ? 'bg-slate-600' : 'bg-slate-300')}`}
-                            />
-                            <button
-                              type="button"
-                              aria-label="第 2 页"
-                              onClick={() => setActionsPage(1)}
-                              className={`w-2 h-2 rounded-full transition-all ${actionsPage === 1 ? (isDiscordStyle ? 'bg-slate-200 w-5' : 'bg-slate-500 w-5') : (isDiscordStyle ? 'bg-slate-600' : 'bg-slate-300')}`}
-                            />
-                            <button
-                              type="button"
-                              aria-label="第 3 页"
-                              onClick={() => setActionsPage(2)}
-                              className={`w-2 h-2 rounded-full transition-all ${actionsPage === 2 ? (isDiscordStyle ? 'bg-slate-200 w-5' : 'bg-slate-500 w-5') : (isDiscordStyle ? 'bg-slate-600' : 'bg-slate-300')}`}
-                            />
-                          </div>
+                              {/* 翻页指示器：几页就画几个点 */}
+                              <div className="flex items-center justify-center gap-3 pb-3 -mt-2">
+                                {Array.from({ length: pageCount }, (_, i) => (
+                                  <button
+                                    key={i}
+                                    type="button"
+                                    aria-label={`第 ${i + 1} 页`}
+                                    onClick={() => setActionsPage(i)}
+                                    className={`w-2 h-2 rounded-full transition-all ${page === i ? (isDiscordStyle ? 'bg-slate-200 w-5' : 'bg-slate-500 w-5') : (isDiscordStyle ? 'bg-slate-600' : 'bg-slate-300')}`}
+                                  />
+                                ))}
+                              </div>
+                            </>);
+                          })()}
                         </div>
                      )}
                      {showPanel === 'chars' && (
