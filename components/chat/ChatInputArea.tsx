@@ -514,6 +514,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     const isPixelStyle = inputStyle === 'pixel' || chromeStyle === 'pixel';
     const shellClass = acnh
         ? 'bg-[#a8d6bb] border-t-[3px] border-[#86c29a] shadow-[0_-3px_0_rgba(110,160,130,0.18)]'
+        : isDiscordStyle
+        ? 'bg-[#313338] border-t border-[#1e1f22] shadow-[0_-8px_24px_rgba(15,23,42,0.28)]'
         : chromeStyle === 'pixel'
         ? 'bg-[#eadfce] border-t-[3px] border-[#8f674a] shadow-[0_-4px_0_rgba(123,90,64,0.15)]'
         : chromeStyle === 'flat'

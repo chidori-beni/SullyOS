@@ -80,7 +80,7 @@ const presets: Array<{ name: string; desc: string; config: Partial<OSTheme> }> =
             chatAvatarMode: 'grouped',
             chatBubbleStyle: 'modern',
             chatMessageSpacing: 'default',
-            chatInputStyle: 'rounded',
+            chatInputStyle: 'default',
             chatSendButtonStyle: 'circle',
             chatShowTimestamp: 'always',
         },
@@ -98,7 +98,7 @@ const presets: Array<{ name: string; desc: string; config: Partial<OSTheme> }> =
             chatAvatarShape: 'square',
             chatAvatarSize: 'medium',
             chatAvatarMode: 'grouped',
-            chatBubbleStyle: 'wechat',
+            chatBubbleStyle: 'modern',
             chatMessageSpacing: 'default',
             chatInputStyle: 'wechat',
             chatSendButtonStyle: 'pill',
@@ -118,7 +118,7 @@ const presets: Array<{ name: string; desc: string; config: Partial<OSTheme> }> =
             chatAvatarShape: 'circle',
             chatAvatarSize: 'medium',
             chatAvatarMode: 'grouped',
-            chatBubbleStyle: 'flat',
+            chatBubbleStyle: 'modern',
             chatMessageSpacing: 'spacious',
             chatInputStyle: 'telegram',
             chatSendButtonStyle: 'circle',
@@ -138,7 +138,7 @@ const presets: Array<{ name: string; desc: string; config: Partial<OSTheme> }> =
             chatAvatarShape: 'rounded',
             chatAvatarSize: 'medium',
             chatAvatarMode: 'grouped',
-            chatBubbleStyle: 'shadow',
+            chatBubbleStyle: 'modern',
             chatMessageSpacing: 'compact',
             chatInputStyle: 'discord',
             chatSendButtonStyle: 'minimal',
@@ -151,7 +151,7 @@ const presets: Array<{ name: string; desc: string; config: Partial<OSTheme> }> =
         config: {
             chatChromeStyle: 'soft',
             chatBackgroundStyle: 'mesh',
-            chatHeaderStyle: 'minimal',
+            chatHeaderStyle: 'default',
             chatHeaderAlign: 'center',
             chatHeaderDensity: 'airy',
             chatStatusStyle: 'subtle',
@@ -171,14 +171,14 @@ const presets: Array<{ name: string; desc: string; config: Partial<OSTheme> }> =
         config: {
             chatChromeStyle: 'flat',
             chatBackgroundStyle: 'plain',
-            chatHeaderStyle: 'minimal',
+            chatHeaderStyle: 'default',
             chatHeaderAlign: 'center',
             chatHeaderDensity: 'compact',
             chatStatusStyle: 'subtle',
             chatAvatarShape: 'circle',
             chatAvatarSize: 'medium',
             chatAvatarMode: 'grouped',
-            chatBubbleStyle: 'flat',
+            chatBubbleStyle: 'modern',
             chatMessageSpacing: 'spacious',
             chatInputStyle: 'flat',
             chatSendButtonStyle: 'minimal',
@@ -201,7 +201,7 @@ const presets: Array<{ name: string; desc: string; config: Partial<OSTheme> }> =
             chatAvatarShape: 'rounded',
             chatAvatarSize: 'small',
             chatAvatarMode: 'grouped',
-            chatBubbleStyle: 'flat',
+            chatBubbleStyle: 'modern',
             chatMessageSpacing: 'compact',
             chatInputStyle: 'flat',
             chatSendButtonStyle: 'minimal',
@@ -262,7 +262,6 @@ const choices = {
         { value: 'soft', label: '柔雾', desc: '轻薄玻璃感' },
         { value: 'flat', label: '平面', desc: '更干净利落' },
         { value: 'floating', label: '悬浮', desc: '层次更明显' },
-        { value: 'pixel', label: '像素', desc: '硬边伪窗口' },
     ],
     background: [
         { value: 'plain', label: '纯净' },
@@ -272,7 +271,6 @@ const choices = {
     ],
     header: [
         { value: 'default', label: '默认' },
-        { value: 'minimal', label: '极简' },
         { value: 'gradient', label: '渐变' },
         { value: 'wechat', label: '微信感' },
         { value: 'telegram', label: 'Telegram' },
@@ -281,10 +279,7 @@ const choices = {
     ],
     bubble: [
         { value: 'modern', label: '现代' },
-        { value: 'flat', label: '扁平' },
         { value: 'outline', label: '描边' },
-        { value: 'shadow', label: '立体' },
-        { value: 'wechat', label: '微信感' },
         { value: 'ios', label: 'iOS' },
     ],
     visibility: [
@@ -293,7 +288,6 @@ const choices = {
     ],
     input: [
         { value: 'default', label: '默认' },
-        { value: 'rounded', label: '圆润' },
         { value: 'flat', label: '扁平' },
         { value: 'wechat', label: '微信感' },
         { value: 'ios', label: 'iOS' },
@@ -449,6 +443,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
     const headerStyle = theme.chatHeaderStyle || defaults.chatHeaderStyle;
     const inputStyle = theme.chatInputStyle || defaults.chatInputStyle;
     const chromeStyle = theme.chatChromeStyle || defaults.chatChromeStyle;
+    const isDiscordInput = inputStyle === 'discord';
     const backgroundStyle = theme.chatBackgroundStyle || defaults.chatBackgroundStyle;
     const headerAlign = theme.chatHeaderAlign || defaults.chatHeaderAlign;
     const headerDensity = theme.chatHeaderDensity || defaults.chatHeaderDensity;
@@ -634,14 +629,14 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                             );
                         })}
                     </div>
-                    <div className={`sully-chat-inputbar border-t px-3 py-3 ${chromeStyle === 'pixel' ? 'border-[#8f674a] bg-[#eadfce]' : headerStyle === 'discord' ? 'border-white/10 bg-slate-900/90' : 'border-slate-100 bg-white/80'}`}>
+                    <div className={`sully-chat-inputbar border-t px-3 py-3 ${isDiscordInput ? 'border-[#1e1f22] bg-[#313338]' : chromeStyle === 'pixel' ? 'border-[#8f674a] bg-[#eadfce]' : 'border-slate-100 bg-white/80'}`}>
                         <div className="flex items-end gap-2">
-                            <button className={`flex h-10 w-10 shrink-0 items-center justify-center ${chromeStyle === 'pixel' ? 'rounded-[4px] border-2 border-[#8f674a] bg-[#f8f0e0] text-[#8f674a]' : headerStyle === 'discord' ? 'rounded-full bg-slate-800 text-slate-200' : 'rounded-full bg-slate-100 text-slate-500'}`}>+</button>
+                            <button className={`flex h-10 w-10 shrink-0 items-center justify-center ${chromeStyle === 'pixel' ? 'rounded-[4px] border-2 border-[#8f674a] bg-[#f8f0e0] text-[#8f674a]' : isDiscordInput ? 'rounded-full bg-[#2b2d31] text-slate-200' : 'rounded-full bg-slate-100 text-slate-500'}`}>+</button>
                             <div className={`flex min-h-10 flex-1 items-center px-4 text-[11px] ${inputStyle === 'flat' ? 'rounded-none border-b border-slate-200 bg-transparent' : inputStyle === 'wechat' ? 'rounded-full border border-slate-200 bg-white' : inputStyle === 'ios' ? 'rounded-[26px] border border-white/80 bg-white/80 shadow-inner' : inputStyle === 'telegram' ? 'rounded-2xl border border-sky-100 bg-white' : inputStyle === 'discord' ? 'rounded-2xl border border-white/10 bg-slate-800 text-white' : inputStyle === 'pixel' ? 'rounded-[4px] border-2 border-[#8f674a] bg-[#f8f0e0]' : inputStyle === 'rounded' ? 'rounded-full bg-slate-100' : 'rounded-[22px] bg-slate-100'}`}>
                                 输入消息...
                             </div>
                             {showVoiceButton && (
-                            <button className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-transparent ${chromeStyle === 'pixel' ? 'text-[#8f674a]' : headerStyle === 'discord' ? 'text-slate-300' : 'text-slate-500'}`}>◍</button>
+                            <button className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-transparent ${chromeStyle === 'pixel' ? 'text-[#8f674a]' : isDiscordInput ? 'text-slate-300' : 'text-slate-500'}`}>◍</button>
                             )}
                             {showSendButton && (
                             <button className={`shrink-0 ${sendButtonStyle === 'pill' ? (chromeStyle === 'pixel' ? 'h-10 min-w-[68px] rounded-[4px] border-2 border-[#8f674a] bg-[#c99872] px-4 text-[11px] font-bold text-[#fff7ed]' : 'h-10 min-w-[68px] rounded-full bg-primary px-4 text-[11px] font-bold text-white') : sendButtonStyle === 'minimal' ? (chromeStyle === 'pixel' ? 'flex h-10 w-10 items-center justify-center rounded-[4px] border-2 border-[#8f674a] bg-[#c99872] text-[#fff7ed]' : 'flex h-10 w-10 items-center justify-center rounded-full bg-transparent text-primary') : (chromeStyle === 'pixel' ? 'flex h-10 w-10 items-center justify-center rounded-[4px] border-2 border-[#8f674a] bg-[#c99872] text-[#fff7ed]' : 'flex h-10 w-10 items-center justify-center rounded-full bg-primary text-white shadow-lg')}`}>

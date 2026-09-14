@@ -25,7 +25,9 @@ import { CHAT_FINE_TUNE_KEYS } from './chatFineTuneCss';
  * 允许按角色覆盖的 17 个视觉字段，以及每个字段的合法取值。
  *
  * 和「所有聊天」那一页的控件一一对应（见 components/appearance/ChatAppearanceEditor.tsx
- * 的 6 页面板）。加控件时**这里也要加**，否则新控件在角色作用域下存不进去。
+ * 的 6 页面板）。这里仍保留旧版已存入的样式值作为兼容层；新控件已经不再展示
+ * 那些看不出差异的重复选项，但老角色卡/快捷预设仍可安全读取，不会因导入而丢字段。
+ * 加控件时**这里也要加**，否则新控件在角色作用域下存不进去。
  */
 const APPEARANCE_CHOICES = {
     chatChromeStyle: ['soft', 'flat', 'floating', 'pixel'],
