@@ -4814,7 +4814,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
 
                 onTransfer={() => { if(transferAmt) handleSendText(`[转账]`, 'transfer', { amount: transferAmt, note: transferNote.trim() || undefined, status: 'pending' }); setTransferNote(''); setModalType('none'); }}
                 onImportEmoji={handleImportEmoji}
-                onSaveSettings={saveSettings} onOpenDecor={(tab) => handlePanelAction('decor', tab)}
+                onSaveSettings={saveSettings}
                 onOpenHistoryCleanup={() => { setModalType('none'); setShowHistoryCleanup(true); }} onArchive={handleFullArchive}
                 onCreatePrompt={createNewPrompt} onEditPrompt={editSelectedPrompt} onSavePrompt={handleSavePrompt} onDeletePrompt={handleDeletePrompt}
                 onSetHistoryStart={handleSetHistoryStart} onRestoreAdaptiveContext={restoreAdaptiveContext} onJumpToMessageInChat={handleJumpToMessageInChat} onOpenBroadcast={handleOpenBroadcast} onEnterSelectionMode={handleEnterSelectionMode}

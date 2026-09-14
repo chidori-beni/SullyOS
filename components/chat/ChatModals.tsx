@@ -87,8 +87,6 @@ interface ChatModalsProps {
     onTransfer: () => void;
     onImportEmoji: () => void;
     onSaveSettings: () => void;
-    /** 打开「装扮」抽屉（可指定页签）。聊天背景已从这份设置里搬到那边，这里只留跳转。 */
-    onOpenDecor: (tab?: string) => void;
     /** 打开「分段清理聊天记录」。上游用它取代了原来那颗一键清空。 */
     onOpenHistoryCleanup?: () => void;
     onArchive: () => void;
@@ -298,7 +296,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     allHistoryMessages = [],
     contextRangeSnapshot,
     onTransfer, onImportEmoji, onSaveSettings,
-    onOpenDecor, onOpenHistoryCleanup,
+    onOpenHistoryCleanup,
     onArchive, onCreatePrompt, onEditPrompt, onSavePrompt, onDeletePrompt,
     onSetHistoryStart, onRestoreAdaptiveContext, onJumpToMessageInChat, onOpenBroadcast, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onCopyMessage,
     reactionShortcuts, onMessageReaction, onChangeReactionShortcuts,
@@ -469,13 +467,6 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                 footer={<button onClick={onSaveSettings} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">保存设置</button>}
             >
                 <div className="space-y-6">
-                     {/* 合上游新增：输入与发送。单开一节放在最前面，下面原有的设置一项没动。 */}
-                     <ChatSettingsSection title="输入与发送" summary="发送键行为、回车、自动回复">
-                         <ChatInputSettings value={settingsInputPreferences} onChange={setSettingsInputPreferences} />
-                     </ChatSettingsSection>
-                     <ChatSettingsSection title="加号菜单顺序" summary="调整“＋”菜单里每一项的位置">
-                         <ChatActionOrderSettings value={settingsChatActionOrder} onChange={setSettingsChatActionOrder} />
-                     </ChatSettingsSection>
                      {apiConfig && apiPresets && onApplyMainApiPreset && (
                          <ChatSettingsSection
                              title="主 API"
@@ -517,6 +508,14 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                          </ChatSettingsSection>
                      )}
 
+                     {/* 合上游新增：输入与发送。 */}
+                     <ChatSettingsSection title="输入与发送" summary="发送键行为、回车、自动回复">
+                         <ChatInputSettings value={settingsInputPreferences} onChange={setSettingsInputPreferences} />
+                     </ChatSettingsSection>
+                     <ChatSettingsSection title="加号菜单顺序" summary="调整“＋”菜单里每一项的位置">
+                         <ChatActionOrderSettings value={settingsChatActionOrder} onChange={setSettingsChatActionOrder} />
+                     </ChatSettingsSection>
+
                      <div className="rounded-2xl border border-violet-200 bg-violet-50 p-3.5">
                          <div className="flex items-center gap-3">
                              <div className="min-w-0 flex-1">
@@ -545,25 +544,6 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                          </div>
                      </div>
 
-                     {/* 聊天背景图原来就摆在这儿，夹在 API 配置和上下文条数中间——它是纯美化项，
-                         和这份「功能设置」不是一回事。现已搬进「＋ → 装扮 → 背景」，和微调 /
-                         气泡 / 白框 / 提示音放在一起；这里只留一个跳转，免得老用户找不到。 */}
-                     <div>
-                         <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">装扮</label>
-                         <button
-                             type="button"
-                             onClick={() => onOpenDecor('background')}
-                             className="w-full flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left transition-all active:scale-[0.99] hover:bg-slate-100"
-                         >
-                             <span className="min-w-0">
-                                 <span className="block text-[11px] font-bold text-slate-700">聊天背景、气泡、白框、提示音</span>
-                                 <span className="mt-0.5 block text-[10px] text-slate-400">
-                                     {activeCharacter.chatBackground ? '这个角色已设过背景图 · 点此修改' : '这个角色的所有美化都在这里'}
-                                 </span>
-                             </span>
-                             <span className="shrink-0 text-[11px] font-bold text-primary">去装扮 →</span>
-                         </button>
-                     </div>
                      <div>
                          {(activeCharacter.autoArchiveEnabled || activeCharacter.contextFollowsMemoryPalaceHwm) && settingsContextRangeMode === 'adaptive' ? (
                              <div className="rounded-2xl border border-violet-200 bg-violet-50 p-3.5">
