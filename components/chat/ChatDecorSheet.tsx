@@ -5,6 +5,9 @@ import { WhiteboxSound } from '../../utils/whiteboxSound';
 import { ChatAppearanceEditor } from '../appearance/ChatAppearanceEditor';
 import ChatFineTunePanel from './ChatFineTunePanel';
 import ChromeCssEditor from './ChromeCssEditor';
+import ChatCardCssEditor from '../appearance/ChatCardCssEditor';
+import CssSlotEditor from '../appearance/CssSlotEditor';
+import { BUILTIN_DIALOG_CSS_PRESETS, DIALOG_CSS_AI_PROMPT, DIALOG_HOOKS } from '../../utils/globalCss';
 import WhiteboxSoundEditor from './WhiteboxSoundEditor';
 
 /**
@@ -77,19 +80,26 @@ type Props = {
     /** 切到悬浮圆气泡模式（关掉抽屉，把整个聊天让出来当预览） */
     onOpenFloatingFineTune: () => void;
 
-    /** 背景 */
+    /** 背景：角色那张 + 全局那张，两边同一套控件 */
     chatBackground?: string;
     onUploadBackground: (file: File) => void;
     onRemoveBackground: () => void;
+    globalBackground?: string;
+    onUploadGlobalBackground: (file: File) => void;
+    onRemoveGlobalBackground: () => void;
 
     /** 气泡 */
     onOpenBubblePicker: () => void;
     onOpenThemeMaker: () => void;
 
-    /** 白框 */
+    /** 代码：白框 / 卡片 / 聊天弹窗，三份都能按角色单独写，叠在全局那份之上 */
     chromeCss: string;
     onChangeChromeCss: (css: string) => void;
     onResetChromeCss: () => void;
+    charCardCss: string;
+    onChangeCharCardCss: (css: string) => void;
+    charDialogCss: string;
+    onChangeCharDialogCss: (css: string) => void;
 
     /** 提示音 */
     sound: WhiteboxSound | null;
@@ -120,16 +130,16 @@ const TAB_HINTS: Record<DecorTabId, { char: string; global: string }> = {
         global: '全部私聊的打底：聊天壳、顶栏、气泡与头像、输入栏。',
     },
     bubble: {
-        char: '给 ta 穿一套气泡；想做新的去气泡工坊。',
-        global: '气泡是穿在角色身上的，没有全局默认——去「这个角色」给每人挑一套。',
+        char: '气泡穿在角色身上，没有全局/角色之分——这一页两边一样。',
+        global: '气泡穿在角色身上，没有全局/角色之分——这一页两边一样。',
     },
     background: {
-        char: '底纹 + 背景图，都只对 ta 生效。',
+        char: '底纹 + 背景图，只对 ta 生效。',
         global: '所有私聊共用的底纹 / 网格 / 渐变。',
     },
     code: {
-        char: '手写 CSS 魔改这个角色的顶栏 / 输入栏 / 任意零件。',
-        global: '三份手写 CSS：聊天弹窗、消息卡片，以及坏 CSS 的救援键。',
+        char: '白框 / 卡片 / 聊天弹窗三份 CSS，只对 ta 生效，叠在「所有聊天」之上。',
+        global: '白框 / 卡片 / 聊天弹窗三份 CSS，所有私聊的打底。',
     },
     sound: {
         char: 'ta 新发的消息成为最新一条时响一次。不设则用全局默认。',
@@ -151,11 +161,18 @@ const ChatDecorSheet: React.FC<Props> = ({
     chatBackground,
     onUploadBackground,
     onRemoveBackground,
+    globalBackground,
+    onUploadGlobalBackground,
+    onRemoveGlobalBackground,
     onOpenBubblePicker,
     onOpenThemeMaker,
     chromeCss,
     onChangeChromeCss,
     onResetChromeCss,
+    charCardCss,
+    onChangeCharCardCss,
+    charDialogCss,
+    onChangeCharDialogCss,
     sound,
     soundBound,
     onChangeSound,
@@ -186,6 +203,9 @@ const ChatDecorSheet: React.FC<Props> = ({
             onResetAllChrome={onResetAllChrome}
             onOpenApp={onOpenApp}
             onNotify={onNotify}
+            backgroundImage={globalBackground}
+            onUploadBackground={onUploadGlobalBackground}
+            onRemoveBackground={onRemoveGlobalBackground}
         />
     );
 
@@ -303,90 +323,95 @@ const ChatDecorSheet: React.FC<Props> = ({
                     </>
                 ))}
 
-                {/* ══ 气泡 ══ 两边给同样的两个入口，只是措辞不同 */}
+                {/* ══ 气泡 ══ 气泡是「穿在角色身上」的，跟作用域无关 ——
+                    所以这一页不按作用域分岔，两边就是同一块，也不重复给两遍入口。 */}
                 {active === 'bubble' && (
                     <div className="space-y-2">
-                        {isGlobal && (
-                            <div className="mb-2 rounded-2xl border border-dashed border-slate-200 px-3 py-2 text-[10px] leading-relaxed text-slate-400">
-                                气泡是<b className="text-slate-500">穿在每个角色身上</b>的，没有全局默认。下面两个入口和「{charName}」里是同一个。
+                        <button
+                            onClick={onOpenThemeMaker}
+                            className="w-full rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3.5 text-left transition-all active:scale-[0.99]"
+                        >
+                            <div className="text-[12px] font-bold text-primary">打开气泡工坊 →</div>
+                            <div className="mt-0.5 text-[10px] leading-relaxed text-slate-400">
+                                颜色、圆角、贴图、装饰都在这里捏；做好的气泡也在这里挑来穿上。
                             </div>
-                        )}
-                        <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-3 py-2.5">
-                            <div className="min-w-0 pr-3">
-                                <div className="text-[11px] font-bold text-slate-700">换一套气泡</div>
-                                <div className="mt-0.5 text-[10px] text-slate-400">在「角色」页选内置或你做过的气泡，点一下就穿上。</div>
-                            </div>
-                            <button onClick={onOpenBubblePicker} className="shrink-0 rounded-xl bg-primary/10 px-3 py-1.5 text-[11px] font-bold text-primary transition-all active:scale-95">
-                                去选气泡 →
-                            </button>
-                        </div>
-                        <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-3 py-2.5">
-                            <div className="min-w-0 pr-3">
-                                <div className="text-[11px] font-bold text-slate-700">做一套新气泡</div>
-                                <div className="mt-0.5 text-[10px] text-slate-400">颜色、圆角、贴图、装饰都在气泡工坊里捏。</div>
-                            </div>
-                            <button onClick={onOpenThemeMaker} className="shrink-0 rounded-xl bg-primary/10 px-3 py-1.5 text-[11px] font-bold text-primary transition-all active:scale-95">
-                                去气泡工坊 →
-                            </button>
-                        </div>
+                        </button>
+                        <button
+                            onClick={onOpenBubblePicker}
+                            className="w-full rounded-2xl bg-slate-50 px-4 py-2.5 text-left transition-all active:scale-[0.99]"
+                        >
+                            <div className="text-[11px] font-bold text-slate-600">直接去「角色」页挑一套穿上 →</div>
+                        </button>
                         <p className="pt-1 text-[10px] leading-relaxed text-slate-400">
                             撞车时谁说了算：<b className="text-amber-600">可视化设置 &lt; 气泡主题 &lt; 自定义 CSS</b>。
                         </p>
                     </div>
                 )}
 
-                {/* ══ 背景 ══ */}
+                {/* ══ 背景 ══ 两边同一套控件：底纹 + 背景图。
+                    角色侧不再自己画一份上传框，避免两边长得不一样。 */}
                 {active === 'background' && (isGlobal ? globalEditor('background') : (
-                    <>
-                        {/* 底纹：跟「所有聊天」同一个控件。以前这里只有背景图，
-                            想给某个角色单独换成网格 / 纸张做不到，只能连所有聊天一起改。 */}
-                        {fineTuneCustomized ? (
-                            <ChatAppearanceEditor
-                                embedded
-                                section="background"
-                                scopeLabel="character"
-                                theme={charAppearanceTheme}
-                                updateTheme={onUpdateCharAppearance}
-                                onOpenApp={onOpenApp}
-                                onNotify={onNotify}
-                            />
-                        ) : (
-                            <p className="mb-3 rounded-2xl bg-slate-50 px-3 py-2.5 text-[10px] leading-relaxed text-slate-400">
-                                底纹现在跟随「所有聊天」。想给 ta 单独换一种，去「样式」页打开<b>单独定制</b>开关。
-                            </p>
-                        )}
-                        <div className="mt-3 mb-1 text-[11px] font-bold text-slate-600">这个角色的背景图</div>
-                        <div
-                            onClick={() => bgInputRef.current?.click()}
-                            className="relative flex h-32 cursor-pointer items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-slate-200 bg-slate-100 hover:border-primary/50"
-                        >
-                            {chatBackground
-                                ? <img src={chatBackground} className="h-full w-full object-cover opacity-60" alt="聊天背景" />
-                                : <span className="text-xs text-slate-400">点击上传图片 (原画质)</span>}
-                            {chatBackground && <span className="absolute z-10 rounded bg-white/80 px-2 py-1 text-xs">更换</span>}
-                        </div>
-                        <input type="file" ref={bgInputRef} className="hidden" accept="image/*" onChange={(e) => e.target.files?.[0] && onUploadBackground(e.target.files[0])} />
-                        {chatBackground && (
-                            <button onClick={onRemoveBackground} className="mt-2 text-[10px] font-bold text-red-400">移除背景</button>
-                        )}
-                        <p className="mt-3 text-[10px] leading-relaxed text-slate-400">
-                            只对 ta 生效。想改所有聊天共用的底纹，切到上面的「所有聊天」。
-                        </p>
-                    </>
+                    <ChatAppearanceEditor
+                        embedded
+                        section="background"
+                        scopeLabel="character"
+                        theme={charAppearanceTheme}
+                        updateTheme={onUpdateCharAppearance}
+                        onOpenApp={onOpenApp}
+                        onNotify={onNotify}
+                        backgroundImage={chatBackground}
+                        onUploadBackground={onUploadBackground}
+                        onRemoveBackground={onRemoveBackground}
+                    />
                 ))}
 
-                {/* ══ 代码 ══ 三份手写 CSS 从三个地方收到这一处 */}
+                {/* ══ 代码 ══ 两边同样三份、同样顺序：白框 → 卡片 → 聊天弹窗。
+                    角色那三份都叠在全局之上，冲突时角色赢（注入顺序在 Chat.tsx）。 */}
                 {active === 'code' && (isGlobal ? globalEditor('code') : (
-                    <>
-                        <div className="mb-2">
+                    <div className="space-y-5">
+                        <div>
                             <div className="text-[11px] font-bold text-slate-600">白框 · CSS</div>
-                            <div className="mt-0.5 text-[10px] leading-relaxed text-slate-400">
-                                这个角色专属，作用于 <code>.sully-chat-*</code> 各零件。↑ 上方聊天界面就是实时预览。
-                                卡片和弹窗那两份是全局的，在「所有聊天」里。
+                            <div className="mt-0.5 mb-2 text-[10px] leading-relaxed text-slate-400">
+                                聊天界面各零件（<code>.sully-chat-*</code>）。↑ 上方就是实时预览。
                             </div>
+                            <ChromeCssEditor value={chromeCss} onChange={onChangeChromeCss} />
                         </div>
-                        <ChromeCssEditor value={chromeCss} onChange={onChangeChromeCss} />
-                    </>
+                        <div>
+                            <div className="text-[11px] font-bold text-slate-600">卡片 · CSS</div>
+                            <div className="mt-0.5 mb-2 text-[10px] leading-relaxed text-slate-400">
+                                ta 发来的彼方 / 通话 / 日程邀约等卡片（<code>.sully-chat-card</code>）。
+                            </div>
+                            {/* 跟「所有聊天」同一个编辑器（内置样式、卡片清单都在）。
+                                预设库共用全局那一份 —— 预设是「一套写好的样式」，跟用在谁身上无关。 */}
+                            <ChatCardCssEditor
+                                value={charCardCss}
+                                presets={theme.chatCardCssPresets || []}
+                                onPatch={({ css, presets }) => { onChangeCharCardCss(css); onUpdateTheme({ chatCardCssPresets: presets }); }}
+                                onNotify={onNotify}
+                            />
+                        </div>
+                        <div>
+                            <div className="text-[11px] font-bold text-slate-600">聊天弹窗 · CSS</div>
+                            <div className="mt-0.5 mb-2 text-[10px] leading-relaxed text-slate-400">
+                                在 ta 的聊天里点开的设置框 / 抽屉（<code>.sully-ui-*</code>）。
+                            </div>
+                            <CssSlotEditor
+                                slotLabel="聊天弹窗"
+                                hooks={DIALOG_HOOKS}
+                                aiPrompt={DIALOG_CSS_AI_PROMPT}
+                                builtins={BUILTIN_DIALOG_CSS_PRESETS}
+                                exportName="sullyos-chat-dialogs.css"
+                                scopeHint="这段 CSS 只在这个角色的聊天页生效。"
+                                value={charDialogCss}
+                                presets={theme.chatDialogCssPresets || []}
+                                onPatch={({ css, presets }) => { onChangeCharDialogCss(css); onUpdateTheme({ chatDialogCssPresets: presets }); }}
+                                onNotify={onNotify}
+                            />
+                        </div>
+                        <p className="text-[10px] leading-relaxed text-slate-400">
+                            这三份都<b>叠在「所有聊天」那三份之上</b>，冲突时这里赢。
+                        </p>
+                    </div>
                 ))}
 
                 {/* ══ 声音 ══ */}

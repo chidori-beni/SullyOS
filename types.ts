@@ -221,6 +221,8 @@ export interface OSTheme {
   chatHeaderStyle?: 'default' | 'minimal' | 'gradient' | 'wechat' | 'telegram' | 'discord' | 'pixel';
   chatInputStyle?: 'default' | 'rounded' | 'flat' | 'wechat' | 'ios' | 'telegram' | 'discord' | 'pixel';
   chatChromeStyle?: 'soft' | 'flat' | 'floating' | 'pixel';
+  /** 所有私聊共用的背景图。角色自己设了 chatBackground 就用角色那张。 */
+  chatBackground?: string;
   chatBackgroundStyle?: 'plain' | 'grid' | 'paper' | 'mesh';
   chatHeaderAlign?: 'left' | 'center';
   chatHeaderDensity?: 'compact' | 'default' | 'airy';
@@ -3413,6 +3415,13 @@ export interface CharacterProfile {
    * 与 chatFineTune 共用同一个「单独定制」开关（chatFineTune.enabled）。
    */
   chatAppearance?: Partial<OSTheme>;
+  /**
+   * 这个角色专属的「卡片 CSS」「聊天弹窗 CSS」，跟 chromeCustomCss 同级同规则：
+   * **叠在全局那份之上**（全局先注入、角色后注入），冲突时角色赢。
+   * 跟白框一样会随角色卡分享出去。
+   */
+  chatCardCustomCss?: string;
+  chatDialogCustomCss?: string;
   /** 「触发 AI」闪电按钮的位置；缺省保持旧行为，显示在聊天顶栏右上角。 */
   chatTriggerPlacement?: ChatTriggerPlacement;
   chatBackground?: string;

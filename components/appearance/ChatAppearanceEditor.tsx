@@ -40,6 +40,14 @@ type Props = {
      * 不改任何结构、类名或控件——角色侧复用的就是同一份 DOM。
      */
     scopeLabel?: 'global' | 'character';
+    /**
+     * 背景图（底纹旁边那张）。**两个作用域都有**：
+     * 「所有聊天」存 theme.chatBackground，「这个角色」存 char.chatBackground。
+     * 存的地方不同，所以由调用方给值和回调，这里只负责画。
+     */
+    backgroundImage?: string;
+    onUploadBackground?: (file: File) => void;
+    onRemoveBackground?: () => void;
 };
 
 // 聊天细节微调的默认值快照。切预设时先铺这层再叠预设配置：否则从「沉浸剧场」切回
@@ -427,8 +435,9 @@ const ChoiceGroup: React.FC<{
     </div>
 );
 
-export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onResetAllChrome, onOpenApp, embedded = false, onNotify, section = 'all', scopeLabel = 'global' }) => {
+export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onResetAllChrome, onOpenApp, embedded = false, onNotify, section = 'all', scopeLabel = 'global', backgroundImage, onUploadBackground, onRemoveBackground }) => {
     const perCharacter = scopeLabel === 'character';
+    const bgInputRef = useRef<HTMLInputElement>(null);
     const show = (id: 'style' | 'background' | 'code' | 'sound') => section === 'all' || section === id;
     const avatarShape = theme.chatAvatarShape || defaults.chatAvatarShape;
     const avatarSize = theme.chatAvatarSize || defaults.chatAvatarSize;
@@ -841,10 +850,38 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                     <div className="mb-3">
                         <h2 className="sully-ui-label text-sm font-bold uppercase tracking-widest text-slate-400">消息区底纹</h2>
                         <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-                            所有私聊共用的底纹 / 网格 / 渐变。想给某个角色单独换一张背景图，切到「这个角色」。
+                            {perCharacter
+                                ? '只对这个角色生效。想一次改掉所有聊天，切到上面的「所有聊天」。'
+                                : '所有私聊共用的底纹 / 网格 / 渐变。想给某个角色单独一套，切到「这个角色」。'}
                         </p>
                     </div>
                     <ChoiceGroup title="消息区背景" items={choices.background} value={backgroundStyle} onPick={(value) => updateTheme({ chatBackgroundStyle: value as OSTheme['chatBackgroundStyle'] })} />
+
+                    {/* 背景图：以前只有角色能设，全局没有。两边现在同一套控件。 */}
+                    {onUploadBackground && (<>
+                        <div className="mt-5 mb-2">
+                            <h2 className="sully-ui-label text-sm font-bold uppercase tracking-widest text-slate-400">背景图</h2>
+                            <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
+                                {perCharacter
+                                    ? '设了就盖过底纹，也盖过「所有聊天」那张。'
+                                    : '设了就盖过底纹。某个角色自己设过的，仍以 ta 那张为准。'}
+                            </p>
+                        </div>
+                        <div
+                            onClick={() => bgInputRef.current?.click()}
+                            className="relative flex h-32 cursor-pointer items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-slate-200 bg-slate-100 hover:border-primary/50"
+                        >
+                            {backgroundImage
+                                ? <img src={backgroundImage} className="h-full w-full object-cover opacity-60" alt="聊天背景" />
+                                : <span className="text-xs text-slate-400">点击上传图片 (原画质)</span>}
+                            {backgroundImage && <span className="absolute z-10 rounded bg-white/80 px-2 py-1 text-xs">更换</span>}
+                        </div>
+                        <input type="file" ref={bgInputRef} className="hidden" accept="image/*"
+                            onChange={(e) => { const f = e.target.files?.[0]; if (f) onUploadBackground(f); e.target.value = ''; }} />
+                        {backgroundImage && onRemoveBackground && (
+                            <button onClick={onRemoveBackground} className="mt-2 text-[10px] font-bold text-red-400">移除背景图</button>
+                        )}
+                    </>)}
                 </section>
             )}
 
@@ -868,35 +905,26 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
             {/* 聊天弹窗 CSS：「＋」菜单点开的那些设置框 / 抽屉。
                 注入点在 Chat.tsx，只在聊天页生效 —— 外观 App 里的同款弹窗不受影响。 */}
             {show('code') && (<>
+
             <section className={groupClass}>
                 <div className="mb-3">
-                    <h2 className="sully-ui-label text-sm font-bold uppercase tracking-widest text-slate-400">聊天弹窗 · CSS</h2>
+                    <h2 className="sully-ui-label text-sm font-bold uppercase tracking-widest text-slate-400">白框自定义 (CSS)</h2>
                     <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-                        「＋」菜单里点开的设置框、抽屉全归这里，作用于 <code>.sully-ui-*</code> 钩子。
-                        <b>只在聊天页生效</b>：外观、设置那些页面里的同款弹窗不会被改到。
+                        <b>所有私聊共用的一份打底。</b>角色自己那份写在「这个角色」→「代码」里，
+                        <b>叠在这份之上</b>——两份都会生效，冲突时角色那份赢。
+                        写坏了导致聊天界面异常、连设置都打不开，点下面一键还原全部即可恢复。
                     </p>
                 </div>
-                <CssSlotEditor
-                    slotLabel="聊天弹窗"
-                    hooks={DIALOG_HOOKS}
-                    aiPrompt={DIALOG_CSS_AI_PROMPT}
-                    builtins={BUILTIN_DIALOG_CSS_PRESETS}
-                    exportName="sullyos-chat-dialogs.css"
-                    scopeHint="这段 CSS 只在聊天页生效。"
-                    value={theme.chatDialogCustomCss ?? theme.globalCustomCss ?? ''}
-                    presets={theme.chatDialogCssPresets || []}
-                    activePresetId={theme.chatDialogCssPresetId}
-                    onPatch={({ css, presets, presetId }) => updateTheme({
-                        chatDialogCustomCss: css,
-                        chatDialogCssPresets: presets,
-                        chatDialogCssPresetId: presetId,
-                        // 用户第一次动这个槽，旧字段就退休 —— 之后「清空」才是真的清空。
-                        globalCustomCss: undefined,
-                        globalCustomCssPresets: undefined,
-                        globalCustomCssPresetId: undefined,
-                    })}
-                    onNotify={onNotify}
-                />
+                {/* 全局白框 CSS 一直都会生效（注入点在 Chat.tsx），但以前这里只有「一键还原」、
+                    没有编辑器 —— 于是它只能被清空、不能被修改。补上。 */}
+                <div className="mb-3">
+                    <ChromeCssEditor value={theme.chatChromeCustomCss || ''} onChange={(css) => updateTheme({ chatChromeCustomCss: css })} />
+                </div>
+                <button
+                    onClick={() => { if (window.confirm('确定还原全部聊天白框美化？将清空「全局」以及「每个角色」的自定义 CSS（其它聊天外观设置不受影响）。')) onResetAllChrome?.(); }}
+                    className="w-full rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[12px] font-bold text-rose-600 transition-all hover:bg-rose-100 active:scale-[0.99]">
+                    一键还原全部聊天白框美化（救援）
+                </button>
             </section>
 
 
@@ -926,103 +954,35 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                 />
             </section>
 
-            {/* 进阶装扮：把外观可视化设置 / 气泡工坊 / 白框 CSS 三个装扮入口串成一条有引导的路 */}
-            {/* 「去哪儿改什么」的路标，跟三份 CSS 放一起（它讲的就是各自在哪） */}
-            <section className={groupClass}>
-                <div className="mb-3 flex items-start justify-between gap-2">
-                    <div>
-                        <h2 className="sully-ui-label text-sm font-bold uppercase tracking-widest text-slate-400">进阶装扮 · 去哪儿改什么</h2>
-                        <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-                            这一页管<b>全局</b>的整体壳子和细节微调；某个角色的单独装扮全在 ta 聊天里的「＋」→「装扮」。不知道谁生效？点右边「?」。
-                        </p>
-                    </div>
-                    <button
-                        onClick={() => setShowStyleHelp(v => !v)}
-                        className={`shrink-0 w-5 h-5 rounded-full text-[11px] font-bold leading-none flex items-center justify-center transition-colors ${showStyleHelp ? 'bg-primary text-white' : 'bg-slate-200 text-slate-500'}`}
-                        aria-label="装扮优先级说明"
-                    >
-                        ?
-                    </button>
-                </div>
-                {showStyleHelp && (
-                    <div className="mb-3 rounded-2xl bg-amber-50/70 border border-amber-200/60 px-4 py-3 text-[11px] text-slate-600 leading-relaxed space-y-2">
-                        <p className="font-bold text-amber-700">「我在三个地方都改了，到底谁生效？」</p>
-                        <p>
-                            角色那一侧的装扮已经全部并进 <span className="font-semibold">聊天「＋」→「装扮」</span> 这一个抽屉
-                            （微调 / 背景 / 气泡 / 白框 / 提示音 五个页签），不用再翻加号面板两页和设置弹窗。
-                            剩下的分工是这样，平时互不打架：
-                        </p>
-                        <p>
-                            <span className="font-semibold">🎛️ 这一页（可视化设置）</span>：聊天壳、头像、间距、细节微调。改整体布局用它，不用写一行代码。
-                        </p>
-                        <p>
-                            <span className="font-semibold">🎨 气泡工坊</span>：气泡本身的长相——颜色、圆角、贴图、装饰。做好的气泡按角色穿戴。
-                        </p>
-                        <p>
-                            <span className="font-semibold">✍️ 白框自定义 CSS</span>：手写代码深度魔改（头部、输入栏、任何零件）。入口在每个角色聊天的「＋」→「装扮」→「白框」。
-                        </p>
-                        <p className="font-semibold">改了同一个东西撞车时，谁说了算：</p>
-                        <p>
-                            <span className="font-semibold text-amber-600">可视化设置 &lt; 气泡主题 &lt; 自定义 CSS</span>。
-                            也就是：气泡工坊的主题能盖过这一页的设置；你手写的自定义 CSS 权力最大，两边都盖得过——
-                            所以老用户手里的美化代码永远不会被这页的开关弄坏。
-                        </p>
-                        <p>
-                            某个角色看起来「设置不生效」时，按这个顺序排查：先看 ta 有没有专属白框 CSS（聊天「＋」→「装扮」→「白框」），再看 ta 穿着哪套气泡（同一个抽屉的「气泡」页签），最后才是这一页。
-                        </p>
-                    </div>
-                )}
-                <div className="space-y-2">
-                    <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-3 py-2.5">
-                        <div className="min-w-0 pr-3">
-                            <div className="text-[11px] font-bold text-slate-700">想改气泡的颜色 / 贴图 / 装饰</div>
-                            <div className="mt-0.5 text-[10px] text-slate-400">去气泡工坊捏一套，保存后可以直接给角色穿上。</div>
-                        </div>
-                        <button
-                            onClick={() => onOpenApp?.(AppID.ThemeMaker)}
-                            className="shrink-0 rounded-xl bg-primary/10 px-3 py-1.5 text-[11px] font-bold text-primary transition-all active:scale-95">
-                            去气泡工坊 →
-                        </button>
-                    </div>
-                    <div className="rounded-2xl bg-slate-50 px-3 py-2.5">
-                        <div className="text-[11px] font-bold text-slate-700">想给某个角色单独一套微调</div>
-                        <div className="mt-0.5 text-[10px] text-slate-400">
-                            {embedded
-                                ? '切到上面的「这个角色」→「微调」，可以只覆盖字号、头像这些细节，其余跟随全局。'
-                                : '进 ta 的聊天 → 「＋」→「装扮」→「微调」，可以只覆盖字号、头像这些细节，其余跟随全局。'}
-                        </div>
-                    </div>
-                    <div className="rounded-2xl bg-slate-50 px-3 py-2.5">
-                        <div className="text-[11px] font-bold text-slate-700">想手写 CSS 深度魔改</div>
-                        <div className="mt-0.5 text-[10px] text-slate-400">
-                            {embedded
-                                ? '切到上面的「这个角色」→「白框」，那里能边写边看真聊天、还能存预设分享。'
-                                : '进角色聊天 → 「＋」→「装扮」→「白框」，那里能边写边预览、还能存预设分享。'}
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-
             <section className={groupClass}>
                 <div className="mb-3">
-                    <h2 className="sully-ui-label text-sm font-bold uppercase tracking-widest text-slate-400">白框自定义 (CSS)</h2>
+                    <h2 className="sully-ui-label text-sm font-bold uppercase tracking-widest text-slate-400">聊天弹窗 · CSS</h2>
                     <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-                        <b>所有私聊共用的一份打底。</b>角色自己那份写在「这个角色」→「代码」里，
-                        <b>叠在这份之上</b>——两份都会生效，冲突时角色那份赢。
-                        写坏了导致聊天界面异常、连设置都打不开，点下面一键还原全部即可恢复。
+                        「＋」菜单里点开的设置框、抽屉全归这里，作用于 <code>.sully-ui-*</code> 钩子。
+                        <b>只在聊天页生效</b>：外观、设置那些页面里的同款弹窗不会被改到。
                     </p>
                 </div>
-                {/* 全局白框 CSS 一直都会生效（注入点在 Chat.tsx），但以前这里只有「一键还原」、
-                    没有编辑器 —— 于是它只能被清空、不能被修改。补上。 */}
-                <div className="mb-3">
-                    <ChromeCssEditor value={theme.chatChromeCustomCss || ''} onChange={(css) => updateTheme({ chatChromeCustomCss: css })} />
-                </div>
-                <button
-                    onClick={() => { if (window.confirm('确定还原全部聊天白框美化？将清空「全局」以及「每个角色」的自定义 CSS（其它聊天外观设置不受影响）。')) onResetAllChrome?.(); }}
-                    className="w-full rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[12px] font-bold text-rose-600 transition-all hover:bg-rose-100 active:scale-[0.99]">
-                    一键还原全部聊天白框美化（救援）
-                </button>
+                <CssSlotEditor
+                    slotLabel="聊天弹窗"
+                    hooks={DIALOG_HOOKS}
+                    aiPrompt={DIALOG_CSS_AI_PROMPT}
+                    builtins={BUILTIN_DIALOG_CSS_PRESETS}
+                    exportName="sullyos-chat-dialogs.css"
+                    scopeHint="这段 CSS 只在聊天页生效。"
+                    value={theme.chatDialogCustomCss ?? theme.globalCustomCss ?? ''}
+                    presets={theme.chatDialogCssPresets || []}
+                    activePresetId={theme.chatDialogCssPresetId}
+                    onPatch={({ css, presets, presetId }) => updateTheme({
+                        chatDialogCustomCss: css,
+                        chatDialogCssPresets: presets,
+                        chatDialogCssPresetId: presetId,
+                        // 用户第一次动这个槽，旧字段就退休 —— 之后「清空」才是真的清空。
+                        globalCustomCss: undefined,
+                        globalCustomCssPresets: undefined,
+                        globalCustomCssPresetId: undefined,
+                    })}
+                    onNotify={onNotify}
+                />
             </section>
             </>)}
 

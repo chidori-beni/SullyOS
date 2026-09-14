@@ -26,6 +26,8 @@ function Demo(){
       onChangeFineTune={()=>{}} onClearFineTune={()=>setChar(c=>({...c,chatAppearance:undefined,chatFineTune:undefined}))}
       onOpenFloatingFineTune={()=>{}}
       onUploadBackground={()=>{}} onRemoveBackground={()=>{}}
+      globalBackground={theme.chatBackground} onUploadGlobalBackground={()=>{}} onRemoveGlobalBackground={()=>{}}
+      charCardCss="" onChangeCharCardCss={()=>{}} charDialogCss="" onChangeCharDialogCss={()=>{}}
       onOpenBubblePicker={()=>{}} onOpenThemeMaker={()=>{}}
       chromeCss="" onChangeChromeCss={()=>{}} onResetChromeCss={()=>{}}
       sound={null} soundBound={false} onChangeSound={()=>{}} onChangeSoundBound={()=>{}}

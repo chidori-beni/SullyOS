@@ -3001,6 +3001,15 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         setModalType('prompt-editor');
     };
 
+    const handleGlobalBgUpload = async (file: File) => {
+        try {
+            const dataUrl = await processImage(file, { skipCompression: true });
+            void updateTheme({ chatBackground: dataUrl });
+            addToast('所有聊天的背景已更新', 'success');
+        } catch (err: any) {
+            addToast(err.message, 'error');
+        }
+    };
     const handleBgUpload = async (file: File) => {
         try {
             const dataUrl = await processImage(file, { skipCompression: true });
@@ -4421,9 +4430,11 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
               : chatChromeStyle === 'floating'
                 ? 'flex flex-col h-full bg-[#eef2ff] overflow-hidden relative font-sans transition-[background-image,background-color] duration-500'
                 : 'flex flex-col h-full bg-[#f1f5f9] overflow-hidden relative font-sans transition-[background-image,background-color] duration-500';
-    const chatRootStyle: React.CSSProperties = char.chatBackground
+    // 背景图：角色自己那张优先；没设过就用「所有聊天」的那张。
+    const chatBackgroundImage = char.chatBackground || osTheme.chatBackground;
+    const chatRootStyle: React.CSSProperties = chatBackgroundImage
         ? {
-            backgroundImage: `url(${char.chatBackground})`,
+            backgroundImage: `url(${chatBackgroundImage})`,
             backgroundSize: 'cover',
             backgroundPosition: 'center',
         }
@@ -4503,11 +4514,15 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                const css = resolveCssSlot(osTheme.chatDialogCustomCss, osTheme.globalCustomCss);
                return css ? <style>{css}</style> : null;
              })()}
+             {/* 角色专属弹窗 CSS：排在全局之后 → 冲突时角色那份赢。跟白框同规则。 */}
+             {char.chatDialogCustomCss && <style>{char.chatDialogCustomCss}</style>}
 
              {/* 卡片自定义 CSS：作用于 .sully-chat-card[data-card=...]（彼方 / 通话 / 日程邀约……）。
                  只有全局一份——卡片是「哪个功能发来的」，跟角色无关，所以不做 per-character 覆盖。
                  排在白框之后：白框 CSS 里若也写了卡片选择器，同 !important 时以这里为准。 */}
              {osTheme.chatCardCustomCss && <style>{osTheme.chatCardCustomCss}</style>}
+             {/* 角色专属卡片 CSS：排在全局之后 → 冲突时角色那份赢。 */}
+             {char.chatCardCustomCss && <style>{char.chatCardCustomCss}</style>}
              {scheduleChangeNotice && (
                <ScheduleChangeNotice
                  key={scheduleChangeNotice.eventId}
@@ -5778,12 +5793,19 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                         chatBackground={char.chatBackground}
                         onUploadBackground={handleBgUpload}
                         onRemoveBackground={() => updateCharacter(char.id, { chatBackground: undefined })}
+                        globalBackground={globalTheme.chatBackground}
+                        onUploadGlobalBackground={handleGlobalBgUpload}
+                        onRemoveGlobalBackground={() => { void updateTheme({ chatBackground: undefined }); }}
 
                         onOpenBubblePicker={() => { setDecorTab(null); setShowPanel('chars'); }}
                         onOpenThemeMaker={() => { setDecorTab(null); openApp(AppID.ThemeMaker); }}
 
                         chromeCss={char.chromeCustomCss || ''}
                         onChangeChromeCss={(css) => updateCharacter(char.id, { chromeCustomCss: css } as any)}
+                        charCardCss={char.chatCardCustomCss || ''}
+                        onChangeCharCardCss={(css) => updateCharacter(char.id, { chatCardCustomCss: css } as any)}
+                        charDialogCss={char.chatDialogCustomCss || ''}
+                        onChangeCharDialogCss={(css) => updateCharacter(char.id, { chatDialogCustomCss: css } as any)}
                         onResetChromeCss={() => { updateCharacter(char.id, { chromeCustomCss: '' } as any); addToast('已还原该角色白框', 'success'); }}
 
                         sound={curSound}
