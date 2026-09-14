@@ -22,7 +22,7 @@ import type { CharacterProfile, OSTheme } from '../types';
 import { CHAT_FINE_TUNE_KEYS } from './chatFineTuneCss';
 
 /**
- * 允许按角色覆盖的 16 个视觉字段，以及每个字段的合法取值。
+ * 允许按角色覆盖的 17 个视觉字段，以及每个字段的合法取值。
  *
  * 和「所有聊天」那一页的控件一一对应（见 components/appearance/ChatAppearanceEditor.tsx
  * 的 6 页面板）。加控件时**这里也要加**，否则新控件在角色作用域下存不进去。
@@ -42,6 +42,9 @@ const APPEARANCE_CHOICES = {
     chatEmojiSize: ['small', 'medium', 'large'],
     chatInputStyle: ['default', 'rounded', 'flat', 'wechat', 'ios', 'telegram', 'discord', 'pixel'],
     chatSendButtonStyle: ['circle', 'pill', 'minimal'],
+    // 消息区底纹。原来只有「所有聊天」能改，角色侧只能换背景图、换不了底纹——
+    // 于是「给 ta 换成网格」做不到。它跟上面那些一样是纯视觉字段，按角色覆盖没有副作用。
+    chatBackgroundStyle: ['plain', 'grid', 'paper', 'mesh'],
 } as const satisfies Partial<Record<keyof OSTheme, readonly string[]>>;
 
 /** 只有 true/false 两种取值的那两项（都是本 fork 独有的）。 */

@@ -124,7 +124,7 @@ const TAB_HINTS: Record<DecorTabId, { char: string; global: string }> = {
         global: '气泡是穿在角色身上的，没有全局默认——去「这个角色」给每人挑一套。',
     },
     background: {
-        char: '只对 ta 生效的背景图。',
+        char: '底纹 + 背景图，都只对 ta 生效。',
         global: '所有私聊共用的底纹 / 网格 / 渐变。',
     },
     code: {
@@ -338,6 +338,24 @@ const ChatDecorSheet: React.FC<Props> = ({
                 {/* ══ 背景 ══ */}
                 {active === 'background' && (isGlobal ? globalEditor('background') : (
                     <>
+                        {/* 底纹：跟「所有聊天」同一个控件。以前这里只有背景图，
+                            想给某个角色单独换成网格 / 纸张做不到，只能连所有聊天一起改。 */}
+                        {fineTuneCustomized ? (
+                            <ChatAppearanceEditor
+                                embedded
+                                section="background"
+                                scopeLabel="character"
+                                theme={charAppearanceTheme}
+                                updateTheme={onUpdateCharAppearance}
+                                onOpenApp={onOpenApp}
+                                onNotify={onNotify}
+                            />
+                        ) : (
+                            <p className="mb-3 rounded-2xl bg-slate-50 px-3 py-2.5 text-[10px] leading-relaxed text-slate-400">
+                                底纹现在跟随「所有聊天」。想给 ta 单独换一种，去「样式」页打开<b>单独定制</b>开关。
+                            </p>
+                        )}
+                        <div className="mt-3 mb-1 text-[11px] font-bold text-slate-600">这个角色的背景图</div>
                         <div
                             onClick={() => bgInputRef.current?.click()}
                             className="relative flex h-32 cursor-pointer items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-slate-200 bg-slate-100 hover:border-primary/50"

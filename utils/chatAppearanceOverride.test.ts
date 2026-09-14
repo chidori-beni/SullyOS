@@ -10,8 +10,8 @@ const theme = { chatChromeStyle: 'soft', chatHeaderStyle: 'default', wallpaper: 
 const char = (patch: Partial<CharacterProfile>) => ({ id: 'c', name: '小夜', ...patch } as CharacterProfile);
 
 describe('按角色覆盖聊天外观', () => {
-    it('白名单正好 16 项，且跟 9 项微调零重叠（加起来才是界面上的 25 项）', () => {
-        expect(CHAT_APPEARANCE_KEYS).toHaveLength(16);
+    it('白名单正好 17 项，且跟 9 项微调零重叠', () => {
+        expect(CHAT_APPEARANCE_KEYS).toHaveLength(17);
         const overlap = CHAT_APPEARANCE_KEYS.filter(k => (CHAT_FINE_TUNE_KEYS as readonly string[]).includes(k));
         expect(overlap).toEqual([]);
     });
@@ -35,7 +35,7 @@ describe('按角色覆盖聊天外观', () => {
             chatAppearance: { wallpaper: 'evil.png', primaryHue: 9 } as Partial<OSTheme>,
         }));
         expect(result.wallpaper).toBe('#fff');
-        expect((result as Record<string, unknown>).primaryHue).toBeUndefined();
+        expect((result as unknown as Record<string, unknown>).primaryHue).toBeUndefined();
     });
 
     it('取值不在候选里、或类型不对的，直接丢掉', () => {
@@ -43,6 +43,13 @@ describe('按角色覆盖聊天外观', () => {
         expect(pickChatAppearance({ chatChromeStyle: 7 })).toEqual({});
         expect(pickChatAppearance({ chatShowSendButton: 'yes' })).toEqual({});
         expect(pickChatAppearance({ chatShowSendButton: true })).toEqual({ chatShowSendButton: true });
+    });
+
+    it('消息区底纹也能按角色换（原来只有全局能改）', () => {
+        expect(pickChatAppearance({ chatBackgroundStyle: 'grid' })).toEqual({ chatBackgroundStyle: 'grid' });
+        expect(resolveChatAppearance(theme, char({
+            chatFineTune: { enabled: true }, chatAppearance: { chatBackgroundStyle: 'mesh' },
+        })).chatBackgroundStyle).toBe('mesh');
     });
 
     it('本 fork 独有的那两个开关也能按角色定制', () => {

@@ -4,6 +4,7 @@ import WhiteboxSoundEditor from '../chat/WhiteboxSoundEditor';
 import { WhiteboxSound } from '../../utils/whiteboxSound';
 import ChatFineTunePanel from '../chat/ChatFineTunePanel';
 import ChatCardCssEditor from './ChatCardCssEditor';
+import ChromeCssEditor from '../chat/ChromeCssEditor';
 import CssSlotEditor from './CssSlotEditor';
 import { BUILTIN_DIALOG_CSS_PRESETS, DIALOG_CSS_AI_PROMPT, DIALOG_HOOKS } from '../../utils/globalCss';
 import { FadersHorizontal } from '@phosphor-icons/react';
@@ -1007,9 +1008,15 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                 <div className="mb-3">
                     <h2 className="sully-ui-label text-sm font-bold uppercase tracking-widest text-slate-400">白框自定义 (CSS)</h2>
                     <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
-                        聊天白框美化现在按「单个角色」管理：进该角色聊天 →「＋」→「装扮」→「白框」里设置、预览、存预设。
-                        如果某个角色的 CSS 写坏了导致聊天界面异常、连设置都打不开，点下面一键还原全部即可恢复。
+                        <b>所有私聊共用的一份打底。</b>角色自己那份写在「这个角色」→「代码」里，
+                        <b>叠在这份之上</b>——两份都会生效，冲突时角色那份赢。
+                        写坏了导致聊天界面异常、连设置都打不开，点下面一键还原全部即可恢复。
                     </p>
+                </div>
+                {/* 全局白框 CSS 一直都会生效（注入点在 Chat.tsx），但以前这里只有「一键还原」、
+                    没有编辑器 —— 于是它只能被清空、不能被修改。补上。 */}
+                <div className="mb-3">
+                    <ChromeCssEditor value={theme.chatChromeCustomCss || ''} onChange={(css) => updateTheme({ chatChromeCustomCss: css })} />
                 </div>
                 <button
                     onClick={() => { if (window.confirm('确定还原全部聊天白框美化？将清空「全局」以及「每个角色」的自定义 CSS（其它聊天外观设置不受影响）。')) onResetAllChrome?.(); }}
