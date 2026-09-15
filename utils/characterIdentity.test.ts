@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
     applyBondChange,
+    applyCharBondChange,
+    buildCharBondNote,
+    ALL_BOND_CAP,
     buildBondChangeNotice,
     buildChatPartnerNote,
     buildHostBondNote,
@@ -581,5 +584,126 @@ describe('applyBondChange —— 「ta 怎么看你」的自动改写', () => {
         expect(withFrom).toContain('就是个网友');
         expect(withFrom).toContain('好像有点在意了');
         expect(buildBondChangeNotice('游霄', '就是个网友')).toContain('有了说法');
+    });
+});
+
+
+describe('applyCharBondChange —— 全局关系 char↔char（阶段 2.4）', () => {
+    const NOW = 1_700_000_000_000;
+
+    it('第一次落一条：直接写上，不记历史', () => {
+        const r = applyCharBondChange(undefined, { toId: 'b', toName: '阿岚', label: '损友', value: 12 }, 'world', undefined, 3, NOW);
+        expect(r!.bonds).toHaveLength(1);
+        expect(r!.bonds[0]).toMatchObject({ toId: 'b', toName: '阿岚', label: '损友', value: 12 });
+        expect(r!.bonds[0].history).toBeUndefined();
+    });
+
+    it('⭐ 改名时把旧名字压进 history，可回退', () => {
+        const prev = [{ toId: 'b', label: '死对头', value: 0 }];
+        const r = applyCharBondChange(prev, { toId: 'b', label: '别扭的同伴' }, 'world', '他救了我一命', 12, NOW);
+        expect(r!.bonds[0].label).toBe('别扭的同伴');
+        expect(r!.bonds[0].history).toEqual([
+            { label: '死对头', replacedAt: NOW, round: 12, reason: '他救了我一命' },
+        ]);
+        expect(r!.from).toBe('死对头');
+        expect(r!.to).toBe('别扭的同伴');
+    });
+
+    it('⛔ 没有实质变化 → null，调用方别落库（否则每轮刷历史）', () => {
+        const prev = [{ toId: 'b', label: '朋友', value: 10 }];
+        expect(applyCharBondChange(prev, { toId: 'b', label: '朋友', value: 10 }, 'world')).toBeNull();
+        expect(applyCharBondChange(prev, { toId: 'b', label: '  朋友  ', value: 10 }, 'world')).toBeNull();
+    });
+
+    it('只有好感变了也算变，但不进 history', () => {
+        const prev = [{ toId: 'b', label: '朋友', value: 10 }];
+        const r = applyCharBondChange(prev, { toId: 'b', label: '朋友', value: 15 }, 'world');
+        expect(r!.bonds[0].value).toBe(15);
+        expect(r!.bonds[0].history).toBeUndefined();
+        expect(r!.to).toBeUndefined();   // 名字没换 → 没有可播报的改名
+    });
+
+    it('好感钳在 -100~100', () => {
+        const a = applyCharBondChange(undefined, { toId: 'b', label: 'x', value: 999 }, 'world');
+        const c = applyCharBondChange(undefined, { toId: 'b', label: 'x', value: -999 }, 'world');
+        expect(a!.bonds[0].value).toBe(100);
+        expect(c!.bonds[0].value).toBe(-100);
+    });
+
+    it('⭐ 关系锁：锁着时小镇同步改不动', () => {
+        const prev = [{ toId: 'b', label: '朋友', value: 10, locked: true }];
+        expect(applyCharBondChange(prev, { toId: 'b', label: '恋人', value: 80 }, 'world')).toBeNull();
+    });
+
+    it('⭐ 锁只拦同步，不拦人 —— manual 照样能改，锁不会自己松开', () => {
+        const prev = [{ toId: 'b', label: '朋友', value: 10, locked: true }];
+        const r = applyCharBondChange(prev, { toId: 'b', label: '恋人' }, 'manual', undefined, undefined, NOW);
+        expect(r!.bonds[0].label).toBe('恋人');
+        expect(r!.bonds[0].locked).toBe(true);
+    });
+
+    it('⛔ 默认不锁 —— 没设过这个字段的旧角色照常同步', () => {
+        const prev = [{ toId: 'b', label: '朋友' }];
+        expect(applyCharBondChange(prev, { toId: 'b', label: '挚友' }, 'world')).not.toBeNull();
+    });
+
+    it('多个对象各记各的，互不影响', () => {
+        let bonds: any = applyCharBondChange(undefined, { toId: 'b', label: '损友' }, 'world')!.bonds;
+        bonds = applyCharBondChange(bonds, { toId: 'c', label: '死对头' }, 'world')!.bonds;
+        expect(bonds).toHaveLength(2);
+        expect(bonds.map((x: any) => x.toId)).toEqual(['b', 'c']);
+    });
+
+    it('⛔ 没有 toId 就什么都不做', () => {
+        expect(applyCharBondChange(undefined, { toId: '', label: 'x' }, 'world')).toBeNull();
+    });
+});
+
+describe('buildCharBondNote —— 全局关系怎么注入（阶段 2.4）', () => {
+    const char = { charBonds: [
+        { toId: 'b', toName: '阿岚', label: '别扭的同伴', value: 30 },
+        { toId: 'c', toName: '阿澄', label: '死对头', value: -70 },
+        { toId: 'd', toName: '路人', label: '点头之交', value: 2 },
+    ] } as any;
+
+    it('只注入在场的人', () => {
+        const note = buildCharBondNote(char, [{ id: 'b', name: '阿岚' }]);
+        expect(note).toContain('阿岚');
+        expect(note).toContain('别扭的同伴');
+        expect(note).not.toContain('阿澄');
+    });
+
+    it('⛔ 绝不注入好感数值 —— 给模型看分数它会开始算分', () => {
+        const note = buildCharBondNote(char, [{ id: 'b' }, { id: 'c' }]);
+        expect(note).not.toContain('30');
+        expect(note).not.toContain('-70');
+    });
+
+    it('⛔ 明说这只是 ta 自己那一侧，别人怎么想 ta 不知道', () => {
+        const note = buildCharBondNote(char, [{ id: 'b' }]);
+        expect(note).toContain('你自己');
+    });
+
+    it("'all' 档按好感绝对值取前几条（爱得深恨得狠的优先）", () => {
+        const note = buildCharBondNote(char, 'all');
+        const order = ['阿澄', '阿岚', '路人'].map(n => note.indexOf(n));
+        expect(order[0]).toBeLessThan(order[1]);
+        expect(order[1]).toBeLessThan(order[2]);
+    });
+
+    it("'all' 档封顶，不会把整本通讯录背进对话", () => {
+        const many = { charBonds: Array.from({ length: 30 }, (_, i) => ({ toId: `x${i}`, toName: `人${i}`, label: '朋友', value: i })) } as any;
+        expect(buildCharBondNote(many, 'all').split(String.fromCharCode(10)).filter(l => l.startsWith('- ')).length).toBe(ALL_BOND_CAP);
+    });
+
+    it('没有关系 / 没有在场的人 → 空串，旧角色零变化', () => {
+        expect(buildCharBondNote({} as any, [{ id: 'b' }])).toBe('');
+        expect(buildCharBondNote(char, [])).toBe('');
+        expect(buildCharBondNote(char, [{ id: '不认识的' }])).toBe('');
+    });
+
+    it('没写关系名的那条不注入 —— 只有好感数值不构成一句话', () => {
+        const only = { charBonds: [{ toId: 'b', toName: '阿岚', value: 40 }] } as any;
+        expect(buildCharBondNote(only, [{ id: 'b', name: '阿岚' }])).toBe('');
     });
 });

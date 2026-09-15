@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { extractJson, parseCharBeat, parseNpcScene, storyTimeLabel, buildModeRule, buildWorldGapNote, buildWorldCharTurn, buildNpcTurn, parseRolledNpcs, buildNpcRollPrompt, NARRATIVE_STYLES, narrationPersonGuide, realNowSeg, realObserveTarget, worldTimeLabel, formatRealClock, migrateWorldDaySegs, SEGMENTS_PER_DAY, worldNow, worldTzLabel, clampRealClockToNow, alignCharToWorldClock } from './prompts';
-import { applyRelationshipDeltas, shareWorldCardTo, collectSeeds, buildSummary, dropDuplicatePosts } from './engine';
+import { applyRelationshipDeltas, shareWorldCardTo, collectSeeds, buildSummary, dropDuplicatePosts, mirrorWorldBondsToChars } from './engine';
+import { DB } from '../db';
 import { ensureThreads, applyBeatToThreads, applyNpcGroupLines, applyNpcDms, npcInboxes, dmThreadsOf, groupThreadOf, formatThreadForPrompt, dmThreadId, GROUP_THREAD_ID } from './threads';
 import { WorldScheduler } from './scheduler';
 import type { CharacterProfile, WorldProfile } from '../../types';
@@ -935,5 +936,73 @@ describe('一起追连载 · shareWorldCardTo（阶段 2.6）', () => {
         const w = { id: 'w1', name: '小镇', mode: 'light', houses: [], npcs: [], relationships: [] } as any;
         const res = await shareWorldCardTo(w, beat, 1, 't', 'x');
         expect(res.ok).toBe(true);
+    });
+});
+
+
+describe('全局关系镜像 · mirrorWorldBondsToChars（阶段 2.4）', () => {
+    const members = [{ id: 'm_a', name: '小满' }, { id: 'm_b', name: '阿岚' }];
+    const mkWorld = (rels: any[]) => ({ id: 'w_mirror', name: '小镇', relationships: rels } as any);
+
+    beforeEach(async () => {
+        for (const m of members) {
+            await DB.saveCharacter({ id: m.id, name: m.name } as any);
+        }
+    });
+
+    it('⭐ 镇上的关系镜像进各自角色卡，出了小镇也认得', async () => {
+        await mirrorWorldBondsToChars(mkWorld([
+            { fromId: 'm_a', toId: 'm_b', value: 30, label: '别扭的同伴' },
+        ]), members, 5);
+        const a = await DB.getCharacter('m_a');
+        expect(a!.charBonds).toHaveLength(1);
+        expect(a!.charBonds![0]).toMatchObject({ toId: 'm_b', toName: '阿岚', label: '别扭的同伴', value: 30, fromWorldId: 'w_mirror' });
+    });
+
+    it('⛔⭐ 铁律：只镜像 from=自己 那一侧，ta 不知道对方怎么看 ta', async () => {
+        await mirrorWorldBondsToChars(mkWorld([
+            { fromId: 'm_a', toId: 'm_b', value: 30, label: '损友' },
+            { fromId: 'm_b', toId: 'm_a', value: -40, label: '讨厌鬼' },
+        ]), members, 1);
+        const a = await DB.getCharacter('m_a');
+        const b = await DB.getCharacter('m_b');
+        // 各自只有一条，且都是自己那一侧
+        expect(a!.charBonds!.map(x => x.label)).toEqual(['损友']);
+        expect(b!.charBonds!.map(x => x.label)).toEqual(['讨厌鬼']);
+    });
+
+    it('⛔ 幂等：没变就不写，重复跑不会刷历史', async () => {
+        const w = mkWorld([{ fromId: 'm_a', toId: 'm_b', value: 10, label: '朋友' }]);
+        await mirrorWorldBondsToChars(w, members, 1);
+        await mirrorWorldBondsToChars(w, members, 2);
+        await mirrorWorldBondsToChars(w, members, 3);
+        const a = await DB.getCharacter('m_a');
+        expect(a!.charBonds![0].history).toBeUndefined();
+    });
+
+    it('⭐ 关系名变了才记历史，可回退', async () => {
+        await mirrorWorldBondsToChars(mkWorld([{ fromId: 'm_a', toId: 'm_b', value: 0, label: '死对头' }]), members, 1);
+        await mirrorWorldBondsToChars(mkWorld([{ fromId: 'm_a', toId: 'm_b', value: 0, label: '损友' }]), members, 9);
+        const a = await DB.getCharacter('m_a');
+        expect(a!.charBonds![0].label).toBe('损友');
+        expect(a!.charBonds![0].history).toHaveLength(1);
+        expect(a!.charBonds![0].history![0]).toMatchObject({ label: '死对头', round: 9 });
+    });
+
+    it('⭐ 全局那把锁锁住后，小镇再怎么变都同步不过来', async () => {
+        await mirrorWorldBondsToChars(mkWorld([{ fromId: 'm_a', toId: 'm_b', value: 0, label: '朋友' }]), members, 1);
+        const a0 = await DB.getCharacter('m_a');
+        await DB.saveCharacter({ ...a0!, charBonds: a0!.charBonds!.map(b => ({ ...b, locked: true })) });
+        await mirrorWorldBondsToChars(mkWorld([{ fromId: 'm_a', toId: 'm_b', value: 99, label: '恋人' }]), members, 2);
+        const a1 = await DB.getCharacter('m_a');
+        expect(a1!.charBonds![0]).toMatchObject({ label: '朋友', value: 0, locked: true });
+    });
+
+    it('⛔ 指向非成员的边不镜像（NPC / 已退镇的人）', async () => {
+        await mirrorWorldBondsToChars(mkWorld([
+            { fromId: 'm_a', toId: 'npc_x', value: 50, label: '面馆老板' },
+        ]), members, 1);
+        const a = await DB.getCharacter('m_a');
+        expect(a!.charBonds || []).toHaveLength(0);
     });
 });

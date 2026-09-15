@@ -475,3 +475,130 @@ export const buildIdentityNote = (
     if (name && label) lines.push(`你和「${name}」的关系：${label}。`);
     return lines.join('\n');
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 阶段 2.4 · 全局关系（char ↔ char，走出小镇也生效）
+// ─────────────────────────────────────────────────────────────────────────────
+
+type CharBond = NonNullable<CharacterProfile['charBonds']>[number];
+
+/** `charBonds` 被改写的来源。与 `BondChangeSource` 分开：这边没有「印象重算」那条路。 */
+export type CharBondSource = 'world' | 'manual';
+
+/**
+ * 往角色的**全局关系**里落一条改动 —— **纯函数，不落库**。
+ *
+ * 语义和 `applyBondChange`（char↔user 那一份）刻意保持一致，只是对象换成了另一个角色：
+ * 关系名直接改，但把旧名字压进 `history` 留作后悔药；锁着就当没发生（`manual` 除外）。
+ *
+ * `value` 单独处理：它不是「说法」而是连续量，**不进 history**（每轮 ±1 都记一条会淹掉真正的转折），
+ * 但同样受锁约束 —— 锁的语义是「这条关系这阵子别动」，只冻名字不冻数值会出现
+ * 数值写着「死对头」、名字还挂着「挚友」的自相矛盾状态（见 `WorldRelationship.locked`）。
+ *
+ * @returns `null` = 没有实质变化 / 这条锁着，调用方什么都别做（尤其别落库、别提示）。
+ */
+export const applyCharBondChange = (
+    prev: readonly CharBond[] | undefined,
+    next: { toId: string; toName?: string; label?: string; value?: number; fromWorldId?: string },
+    source: CharBondSource,
+    reason?: string,
+    round?: number,
+    nowTs: number = Date.now(),
+): { bonds: CharBond[]; from?: string; to?: string } | null => {
+    const toId = (next.toId || '').trim();
+    if (!toId) return null;
+
+    const list = [...(prev || [])];
+    const idx = list.findIndex(b => b.toId === toId);
+    const cur: CharBond | undefined = idx >= 0 ? list[idx] : undefined;
+
+    // 锁只拦自动同步，不拦人。同 applyBondChange。
+    if (cur?.locked && source !== 'manual') return null;
+
+    const label = (next.label || '').trim();
+    const nextValue = typeof next.value === 'number'
+        ? Math.max(-100, Math.min(100, Math.round(next.value)))
+        : undefined;
+    const curLabel = (cur?.label || '').trim();
+    const labelChanged = !!label && label !== curLabel;
+    const valueChanged = nextValue !== undefined && nextValue !== cur?.value;
+    if (!labelChanged && !valueChanged && cur) return null;
+
+    const history = [...(cur?.history || [])];
+    // 本来没名字就不记历史——没有旧名字可丢。同 applyRelationshipDeltas 的口径。
+    if (labelChanged && curLabel) {
+        history.push({
+            label: curLabel,
+            replacedAt: nowTs,
+            ...(round !== undefined ? { round } : {}),
+            ...(reason ? { reason } : {}),
+        });
+    }
+
+    const merged: CharBond = {
+        ...(cur || { toId }),
+        toId,
+        ...(next.toName?.trim() ? { toName: next.toName.trim() } : {}),
+        ...(label ? { label } : {}),
+        ...(nextValue !== undefined ? { value: nextValue } : {}),
+        ...(next.fromWorldId ? { fromWorldId: next.fromWorldId } : {}),
+        ...(history.length > 0 ? { history } : {}),
+    };
+    if (idx >= 0) list[idx] = merged; else list.push(merged);
+
+    return {
+        bonds: list,
+        from: labelChanged ? (curLabel || undefined) : undefined,
+        to: labelChanged ? label : undefined,
+    };
+};
+
+/**
+ * 「你和在场这些人之间」那段注入文本（阶段 2.4）。
+ *
+ * ⛔ **只说 ta 自己那一侧。** `charBonds` 本来就只存 from=自己 的边，这里再强调一次：
+ * 调用方绝不能把对方的 `charBonds` 也查出来拼进去 —— 那等于让 ta 读到别人的心，
+ * 直接破掉「镇上居民不能开上帝视角」这条铁律，伏笔也就不成立了。
+ *
+ * ⛔ **不注入好感数值。** 给模型看「好感 72」它会开始算分、会为了涨分而演，
+ * 而这套系统的长处是叙事不是数值（同交接说明 §5.7 对工作/学业的处理）。
+ *
+ * ⛔ **不说这段关系是从哪儿来的。** 「你们在小镇上处成了这样」对 `fiction` 层的角色
+ * 是句危险的话 —— ta 不知道自己被创作，小镇对 ta 就是生活本身。所以只给结论。
+ *
+ * @param peers 这一轮 ta 会接触到的人（群聊成员 / 彼方同场的人）。只有名单里的才注入，
+ *              否则一个处过十几段关系的角色会把整本通讯录背进每一次对话。
+ *              传 `'all'` = 没有在场名单的场合（1v1 私聊里 ta 提起第三个人），
+ *              退而用 `toName` 快照全给，但**封顶 `ALL_BOND_CAP` 条**，同样是怕背通讯录。
+ */
+export const ALL_BOND_CAP = 8;
+
+export const buildCharBondNote = (
+    char: Pick<CharacterProfile, 'charBonds'> | null | undefined,
+    peers: readonly { id: string; name?: string }[] | 'all' | null | undefined,
+): string => {
+    const bonds = char?.charBonds || [];
+    if (bonds.length === 0 || !peers || (peers !== 'all' && peers.length === 0)) return '';
+    // 'all' 档按好感绝对值排序取前 N —— 真正会被提起的是爱得深和恨得狠的，
+    // 不咸不淡的那些少一条也不影响。
+    const list: readonly { id: string; name?: string }[] = peers === 'all'
+        ? [...bonds]
+            .filter(b => (b.label || '').trim())
+            .sort((a, b) => Math.abs(b.value ?? 0) - Math.abs(a.value ?? 0))
+            .slice(0, ALL_BOND_CAP)
+            .map(b => ({ id: b.toId, name: b.toName }))
+        : peers;
+    const lines: string[] = [];
+    for (const peer of list) {
+        const bond = bonds.find(b => b.toId === peer.id);
+        const label = (bond?.label || '').trim();
+        if (!label) continue;
+        const name = (peer.name || bond?.toName || '').trim();
+        if (!name) continue;
+        lines.push(`- 你眼里的「${name}」：${label}`);
+    }
+    if (lines.length === 0) return '';
+    return '【你和在场这些人之间】\n'
+        + lines.join('\n')
+        + '\n（这是**你自己**心里的定位，别人怎么看你、怎么看彼此，你都不知道。）';
+};

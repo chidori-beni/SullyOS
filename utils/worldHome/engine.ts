@@ -18,10 +18,10 @@ import { loadCharacterContextMessages } from '../chatContextRange';
 
 import type {
     CharacterProfile, UserProfile, GroupProfile, RealtimeConfig, APIConfig,
-    WorldProfile, WorldEpisode, WorldCharBeat, WorldCardMeta, WorldCardShareMeta,
+    WorldProfile, WorldEpisode, WorldCharBeat, WorldCardMeta, WorldCardShareMeta, WorldRelationship,
 } from '../../types';
 import { DB } from '../db';
-import { applyBondChange, buildBondChangeNotice } from '../characterIdentity';
+import { applyBondChange, buildBondChangeNotice, applyCharBondChange } from '../characterIdentity';
 import { buildChatRequestPayload } from '../chatRequestPayload';
 import { safeFetchJson } from '../safeApi';
 import { processNewMessagesWithAutoArchive } from '../memoryPalace/autoArchive';
@@ -178,6 +178,68 @@ export async function applyHostBondDeltas(deltas: HostBondDelta[]): Promise<void
             } as any);
         } catch (e) {
             console.error('[WorldHome] hostBond 落库失败:', e);
+        }
+    }
+}
+
+/**
+ * 把这个小镇里的 char↔char 关系**镜像**一份到各角色的全局 `charBonds`（阶段 2.4）。
+ *
+ * 为什么要镜像而不是让别处直接读 world：一个角色可能同时在好几个小镇里，
+ * 而群聊 / 彼方 / 私聊拿不到「该读哪个 world」这个信息，也不该为了取一条关系
+ * 去把所有世界都载进内存。镜像之后，非小镇场景只认角色卡这一处，读起来是 O(1)。
+ *
+ * ⛔ **只镜像 from=自己 的那一侧** —— 铁律「镇上居民不能开上帝视角」。
+ * 世界里 A→B 和 B→A 本来就是两条独立记录，各自镜像进各自的角色卡，谁也看不到对方那条。
+ *
+ * ⛔ **调用方必须先判 `entersMemory`**：sim（模拟时间）小镇是平行宇宙，
+ * 说好了「删掉重开，角色身上干干净净」，一个字都不能往角色卡上写。
+ *
+ * 幂等：没变的关系不写库（`applyCharBondChange` 返回 null），所以每轮调用不会刷历史。
+ */
+export async function mirrorWorldBondsToChars(
+    world: WorldProfile,
+    members: { id: string; name: string }[],
+    round?: number,
+): Promise<void> {
+    const nameOf = (id: string) => members.find(m => m.id === id)?.name;
+    // 按「谁的卡」归拢，一个角色只读写一次库
+    const byOwner = new Map<string, WorldRelationship[]>();
+    for (const rel of world.relationships || []) {
+        if (!members.some(m => m.id === rel.fromId) || !members.some(m => m.id === rel.toId)) continue;
+        const arr = byOwner.get(rel.fromId) || [];
+        arr.push(rel);
+        byOwner.set(rel.fromId, arr);
+    }
+    for (const [ownerId, rels] of byOwner) {
+        try {
+            const char = await DB.getCharacter(ownerId);
+            if (!char) continue;
+            let bonds = char.charBonds;
+            let dirty = false;
+            for (const rel of rels) {
+                // 小镇那条边锁着 → 它本来就没变，这里也就没什么可同步的。
+                // 全局那条锁着 → applyCharBondChange 自己会拦（返回 null）。
+                const changed = applyCharBondChange(
+                    bonds,
+                    {
+                        toId: rel.toId,
+                        toName: nameOf(rel.toId),
+                        label: rel.label,
+                        value: rel.value,
+                        fromWorldId: world.id,
+                    },
+                    'world',
+                    undefined,
+                    round,
+                );
+                if (!changed) continue;
+                bonds = changed.bonds;
+                dirty = true;
+            }
+            if (dirty) await DB.saveCharacter({ ...char, charBonds: bonds });
+        } catch (e) {
+            console.error('[WorldHome] charBonds 镜像失败:', e);
         }
     }
 }
@@ -628,7 +690,13 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
         await DB.saveWorldEpisode(episode);
 
         const hostBondDeltas = applyRelationshipDeltas(world, beats, members, episode.round, userProfile?.name);
-        await applyHostBondDeltas(hostBondDeltas);
+        // ⛔ 只有「算数的」世界才能往角色卡上写。sim 是平行宇宙，说好了删掉重开
+        // 角色身上干干净净——之前 hostBond 这条漏判了，sim 镇也在偷偷改「ta 怎么看你」。
+        if (entersMemory) {
+            await applyHostBondDeltas(hostBondDeltas);
+            // 阶段 2.4：镇上处出来的 char↔char 关系镜像进各自角色卡，出了小镇也认
+            await mirrorWorldBondsToChars(world, members, episode.round);
+        }
         // armed 伏笔本轮已爆发 → resolved；本轮注入过的用户决策消费掉
         for (const seed of world.seeds || []) {
             if (seed.status === 'armed') seed.status = 'resolved';
@@ -824,9 +892,12 @@ export async function rerollWorldCharBeat(
         if (!hadBeat) {
             applyBeatToThreads(world, beat, members, episode.round, episode.storyTime);
             collectSeeds(world, beat, episode.round, episode.storyTime);
-            await applyHostBondDeltas(
-                applyRelationshipDeltas(world, [beat], members, episode.round, userProfile?.name),
-            );
+            const rerollHostDeltas = applyRelationshipDeltas(world, [beat], members, episode.round, userProfile?.name);
+            // 同主路径：sim 世界不往角色卡上写
+            if (world.timeMode !== 'sim' && world.injectToChat !== false) {
+                await applyHostBondDeltas(rerollHostDeltas);
+                await mirrorWorldBondsToChars(world, members, episode.round);
+            }
             worldDirty = true;
             if (world.timeMode !== 'sim' && world.injectToChat !== false) {
                 try { await injectWorldCard(world, beat, episode.round, episode.storyTime); } catch { /* ignore */ }

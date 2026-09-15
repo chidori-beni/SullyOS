@@ -3383,6 +3383,50 @@ export interface CharacterProfile {
       toHostLocked?: boolean;
   };
   /**
+   * **全局关系**（阶段 2.4）：ta 眼中自己和**别的角色**是什么关系。
+   *
+   * 起因：关系此前只活在 `WorldProfile.relationships` 里，**出了那个小镇就不生效**——
+   * 两个在镇上处成死对头的人，一进群聊或彼方就像素不相识。
+   *
+   * 为什么挂在角色身上而不是新开一张全局表：角色卡本来就是全局的，
+   * 而 `hostBond`（char↔user）已经是这个形状了 —— char↔char 照抄同一条路，
+   * 小镇演绎照样只动 `world.relationships`，演完**镜像**一份到这里
+   * （`engine.mirrorWorldBondsToChars`）。没有第二处真相，只有一处快照。
+   *
+   * ⛔ **只存 from=自己 的那一侧。** 这是铁律「镇上居民不能开上帝视角」的落点：
+   * ta 知道自己怎么看别人，**不知道别人怎么看 ta**。
+   *
+   * ⛔ **sim（模拟时间）小镇永不写进来。** sim 是平行宇宙，说好了「删掉重开，
+   * 角色身上干干净净」。镜像与 `world_card` 进记忆共用同一个闸
+   * （`timeMode !== 'sim' && injectToChat !== false`）。
+   */
+  charBonds?: {
+      /** 对方的 CharacterProfile.id */
+      toId: string;
+      /** 对方当时的名字，纯显示用快照——对方改名后列表仍认得出这是谁 */
+      toName?: string;
+      /** ta 眼中这段关系的名字（「不打不相识的损友」…）。注入提示词的就是这一项 */
+      label?: string;
+      /** 好感 -100~100。**不注入提示词**（给模型看数字它会开始算分），只用于界面显示 */
+      value?: number;
+      /**
+       * 关系锁·全局这一份（阶段 2.2 的语义）。`true` = 镜像不再覆盖它，
+       * 只有用户手动能改。与 `WorldRelationship.locked` 是**两把锁**：
+       * 那把拦的是「小镇里这条边别变」，这把拦的是「别把镇上的变化同步出来」。
+       * 两把都默认不锁，锁哪把都行，锁任意一把结果都是这里不动。
+       */
+      locked?: boolean;
+      /** 这份关系是从哪个小镇处出来的（只为界面上说明来历；手动新增时没有） */
+      fromWorldId?: string;
+      /** 关系名变更史，最旧在前。同 `WorldRelationship.labelHistory` 的路子，可回退 */
+      history?: {
+          label: string;
+          replacedAt: number;
+          round?: number;
+          reason?: string;
+      }[];
+  }[];
+  /**
    * 阶段 2.8：用户看过「要不要算朋友」的提议后按了「不用了」。
    * 只是**别再催**，不改 hostRelation；用户随时能在「身份归属」里手动改。
    */

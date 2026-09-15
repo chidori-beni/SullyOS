@@ -133,6 +133,8 @@ const Character: React.FC = () => {
   const [showChibiStudio, setShowChibiStudio] = useState(() => !!launchIntent?.openChibiStudio);
   const [editingId, setEditingId] = useState<string | null>(() => launchIntent?.charId || null);
   const [formData, setFormData] = useState<CharacterProfile | null>(null);
+  /** 阶段 2.4：正在展开变更史的那条全局关系（对方 charId）。null = 都收起。 */
+  const [openCharBondHistory, setOpenCharBondHistory] = useState<string | null>(null);
   const [imageGenCfg, setImageGenCfg] = useState<ImageGenConfig>(() => getImageGenConfig());
   const [isCompressing, setIsCompressing] = useState(false);
   // 头像 URL 输入的 draft, 不逐字 commit 到 formData.avatar —— 否则每输入一个字符,
@@ -1949,6 +1951,106 @@ ${isInitialGeneration ? `
                                                 ? <> 现在<span className="font-bold text-amber-600">锁着</span>：剧情不会再改它，<span className="font-bold text-slate-500">但你自己随时能改</span>。</>
                                                 : <> 剧情会慢慢改写这一栏；不想让它变就点上面的锁。</>}
                                         </div>
+                                    </div>
+
+                                    {/* ── 阶段 2.4：全局关系（ta 和别的角色之间） ───────────────
+                                        上面两栏是「ta 和你」，这一块是「ta 和别人」。
+                                        数据来自小镇演绎的镜像（只有真实时间的镇子会写进来），
+                                        出了小镇一样生效：群聊、彼方、私聊里提到这些人时 ta 都认得。 */}
+                                    <div className="space-y-1.5 pt-1">
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="text-[10.5px] font-bold text-slate-600">ta 和别的角色之间</span>
+                                            <span className="text-[9px] px-1.5 py-px rounded-full bg-slate-100 text-slate-400">走出小镇也生效</span>
+                                        </div>
+                                        {(formData.charBonds || []).length === 0 ? (
+                                            <div className="text-[10px] text-slate-400 leading-relaxed px-1">
+                                                还没有。<span className="font-bold text-slate-500">把 ta 和别人放进同一个小镇处一阵</span>，
+                                                处出来的关系会自动记到这里，之后在群聊、彼方、私聊里 ta 都认得这些人。
+                                                <br />⚠️ 只有<span className="font-bold text-slate-500">真实时间</span>的镇子会记；
+                                                模拟时间是平行宇宙，删掉重开角色身上干干净净。
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-1.5">
+                                                {(formData.charBonds || []).map((bond, i) => {
+                                                    const peerName = characters.find(c => c.id === bond.toId)?.name || bond.toName || '（已删除的角色）';
+                                                    const patch = (next: Partial<NonNullable<CharacterProfile['charBonds']>[number]>) =>
+                                                        handleChange('charBonds', (formData.charBonds || []).map((b, j) => j === i ? { ...b, ...next } : b));
+                                                    const history = bond.history || [];
+                                                    const open = openCharBondHistory === bond.toId;
+                                                    return (
+                                                        <div key={bond.toId} className="rounded-2xl bg-slate-50 px-3 py-2 space-y-1">
+                                                            <div className="flex items-center gap-1.5">
+                                                                <span className="text-[11px] font-bold text-slate-600 truncate">{peerName}</span>
+                                                                {typeof bond.value === 'number' && (
+                                                                    <span className={`text-[9px] font-bold ${bond.value < 0 ? 'text-slate-400' : 'text-rose-400'}`}>
+                                                                        {bond.value > 0 ? `+${bond.value}` : bond.value}
+                                                                    </span>
+                                                                )}
+                                                                {history.length > 0 && (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setOpenCharBondHistory(open ? null : bond.toId)}
+                                                                        className="text-[9px] px-1.5 py-px rounded-full bg-rose-50 text-rose-500 border border-rose-200 active:scale-95 transition-transform"
+                                                                    >改过 {history.length} 次</button>
+                                                                )}
+                                                                {/* 关系锁（阶段 2.2 的语义）：锁住就不再被小镇同步覆盖 */}
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => patch({ locked: !bond.locked })}
+                                                                    aria-pressed={!!bond.locked}
+                                                                    title={bond.locked ? '锁着：小镇的变化不会再同步过来。点一下解锁' : '点一下锁住：小镇里再怎么变，这条都不动'}
+                                                                    className={`ml-auto shrink-0 text-[9px] font-bold px-2 py-px rounded-full border active:scale-95 transition-transform ${
+                                                                        bond.locked
+                                                                            ? 'bg-amber-100 text-amber-700 border-amber-300'
+                                                                            : 'bg-white text-slate-400 border-slate-200'
+                                                                    }`}
+                                                                >{bond.locked ? '🔒' : '🔓'}</button>
+                                                            </div>
+                                                            <input
+                                                                value={bond.label || ''}
+                                                                onChange={e => patch({ label: e.target.value })}
+                                                                placeholder="ta 眼里这段关系是什么"
+                                                                className="w-full px-3 py-1.5 bg-white rounded-xl text-[11px] text-slate-700 outline-none focus:ring-1 focus:ring-primary/20"
+                                                            />
+                                                            {open && (
+                                                                <div className="space-y-1 pt-0.5">
+                                                                    <div className="text-[9px] font-bold text-slate-400 tracking-wider">这段关系被改过的名字</div>
+                                                                    {[...history].reverse().map((h, k) => (
+                                                                        <button
+                                                                            key={k}
+                                                                            type="button"
+                                                                            onClick={() => {
+                                                                                // 回退也算一次变更 —— 所以反悔了还能再反悔回来（同小镇那边的口径）
+                                                                                const nextHistory = [...history];
+                                                                                if (bond.label && bond.label !== h.label) {
+                                                                                    nextHistory.push({ label: bond.label, replacedAt: Date.now(), reason: '你手动回退' });
+                                                                                }
+                                                                                patch({ label: h.label, history: nextHistory });
+                                                                                setOpenCharBondHistory(null);
+                                                                            }}
+                                                                            className="w-full text-left rounded-lg bg-white px-2 py-1.5 active:scale-[.98] transition-transform"
+                                                                        >
+                                                                            <div className="text-[10.5px] font-bold text-slate-600">
+                                                                                {h.label}
+                                                                                <span className="opacity-45 font-normal ml-1.5">
+                                                                                    {h.round !== undefined ? `第 ${h.round} 轮换掉` : '换掉'}
+                                                                                </span>
+                                                                            </div>
+                                                                            {h.reason && <div className="text-[9.5px] text-slate-400 leading-snug mt-0.5">{h.reason}</div>}
+                                                                        </button>
+                                                                    ))}
+                                                                    <div className="text-[9px] text-slate-400">点任意一条即退回那个名字。退回也算一次变更，所以还能再退回来。</div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                                <div className="text-[10px] text-slate-400 leading-relaxed px-1">
+                                                    这里写的是「<span className="font-bold text-slate-500">ta 眼里</span>对方是什么」，
+                                                    <span className="font-bold text-slate-500">对方怎么看 ta，ta 并不知道</span>——各记各的，可以完全不对等。
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
 

@@ -29,7 +29,7 @@ import { DB } from '../db';
 import { buildChatRequestPayload } from '../chatRequestPayload';
 import { safeFetchJson } from '../safeApi';
 import { processNewMessagesWithAutoArchive } from '../memoryPalace/autoArchive';
-import { structuralStrangers } from '../characterIdentity';
+import { structuralStrangers, buildCharBondNote } from '../characterIdentity';
 import { loadMusicCfgStandalone } from '../../context/MusicContext';
 import { getCharLyricSnippet } from '../charLyricCache';
 import { getRoom, VR_DEFAULT_INTERVAL_MIN, rollPoemLines, signalActFor, SIGNAL_EVENT_ENDED } from './constants';
@@ -668,6 +668,8 @@ async function runVRSessionUnlocked(deps: VRSessionDeps): Promise<VRSessionResul
                 sarMode || undefined,   // 上游把活动种类收成 VRSARActivity，新增的抽芯片/模块商店也要传进去
                 char.vrState?.title,
                 titleUnlocked,
+                // 阶段 2.4：同场这些人，ta 心里各是什么定位（只有 ta 自己那一侧）
+                buildCharBondNote(char, roomPeers),
             );
 
         // 调 LLM（记录一次调用，供"调用记录"对账）

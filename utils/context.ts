@@ -17,7 +17,7 @@ import {
     type WorldbookLike,
     type WorldbookScanMessage,
 } from './worldbook';
-import { resolveUserMacroName, expandCharBodyMacros, buildChatPartnerNote, buildHostBondNote } from './characterIdentity';
+import { resolveUserMacroName, expandCharBodyMacros, buildChatPartnerNote, buildHostBondNote, buildCharBondNote } from './characterIdentity';
 import { buildSARModulePrompt } from './vrWorld/sarModuleRuntime';
 
 /**
@@ -251,6 +251,17 @@ export const ContextBuilder = {
         // 只是不需要 buildChatPartnerNote 那段「对面是谁」。小镇另走 addendum。
         const bondNote = buildHostBondNote(char, user?.name);
         if (bondNote) context += `${bondNote}\n\n`;
+
+        // 阶段 2.4：全局关系（ta 和**别的角色**之间）。
+        // 群聊 / 彼方各有「在场名单」，注入更精确，所以它们自己注
+        // （GroupChat.tsx、vrWorld/runSession.ts）；这里只管 1v1 ——
+        // 1v1 没有在场的第三者，但用户随时会问「你觉得 X 怎么样」，
+        // 所以按好感强弱取前几条（见 buildCharBondNote 的 'all' 档）。
+        // 小镇同样不从这里过：它走 addendum（与 skipPartnerNote 同一批场景）。
+        if (!groupOptions) {
+            const charBondNote = buildCharBondNote(char, 'all');
+            if (charBondNote) context += `${charBondNote}\n\n`;
+        }
 
         // 1a. 真实时间感知 (Time Awareness) — 跟随 timeAwarenessEnabled 设置，默认开启。
         // 统一在 buildCoreContext 注入，让所有调用方（私聊/查手机/人际关系/通话/约会…）都知道"现在"。
