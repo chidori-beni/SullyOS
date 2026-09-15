@@ -37,6 +37,7 @@ import { useResilientAssetUrl, attachAudioMirrorFallback } from '../utils/assetU
 import { VRScheduler, VR_FAIL_LIMIT } from '../utils/vrWorld/scheduler';
 import { allowsAutomaticVR, getVRAutoStrategy, isVRAutonomous, joinVRState, isSARActivityOccupant, isVRDynamicRecipient } from '../utils/vrWorld/participation';
 import { collectVRDiagnostics } from '../utils/vrWorld/diagnostics';
+import { readVRPactMode, saveVRPactMode, type VRPactMode } from '../utils/vrWorld/pact';
 import { VR_ROOMS, getRoom, VR_DEFAULT_INTERVAL_MIN, SIGNAL_EPIGRAPH, signalActFor, signalActRanges, SIGNAL_POEMS_PER_BOOKLET, SIGNAL_EVENT_ENDED, SIGNAL_MEMORIAL_CLOSING } from '../utils/vrWorld/constants';
 import { buildNovelAsync, groupAnnotationsBySeg, getBookmark } from '../utils/vrWorld/novel';
 import { decodeBytes } from '../utils/vrWorld/decodeText';
@@ -3923,6 +3924,15 @@ const SettingsView: React.FC<{
     const { characterGroups } = useOS();
     const [settingsGroupId, setSettingsGroupId] = useState<string>(GROUP_FILTER_ALL);
     const [settingsPage, setSettingsPage] = useState(0);
+    // 阶段 2.7：「止于朋友」公约。全局开关，随时可切，默认开（见 utils/vrWorld/pact.ts）
+    const [pactMode, setPactMode] = useState<VRPactMode>(() => readVRPactMode());
+    const switchPact = (mode: VRPactMode) => {
+        saveVRPactMode(mode);
+        setPactMode(mode);
+        addToast?.(mode === 'off'
+            ? '公约已关：彼方里的关系随他们自己长'
+            : '公约已开：彼方里新认识的人止于朋友', 'success');
+    };
     const groupedCharacters = useMemo(() => filterCharactersByGroup(characters, characterGroups, settingsGroupId), [characters, characterGroups, settingsGroupId]);
     const pageCount = Math.max(1, Math.ceil(groupedCharacters.length / 5));
     const currentPage = Math.min(settingsPage, pageCount - 1);
@@ -3999,6 +4009,35 @@ const SettingsView: React.FC<{
                 每次实际活动会留下动态卡片；自动活动连着 {VR_FAIL_LIMIT} 次调不通模型会暂停。
                 {novelCount === 0 && <span className="text-amber-300/80"> 书库还空着，先去「书库」上传一本。</span>}
             </p>
+            {/* ── 阶段 2.7：「止于朋友」公约 ─────────────────────────────
+                角色在彼方是真的会记住彼此的，所以两个来自不同小镇、各有配队对象的人
+                可以在你没盯着的地方处出感情来。镇里的关系有锁有回滚，彼方此前零防护。 */}
+            <div className="rounded-2xl p-3.5 backdrop-blur-sm space-y-2" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                <div className="flex items-center gap-2">
+                    <span className="text-[12px] font-bold">彼方公约 · 止于朋友</span>
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={pactMode !== 'off'}
+                        onClick={() => switchPact(pactMode === 'off' ? 'friends_only' : 'off')}
+                        className={`ml-auto shrink-0 text-[11px] font-bold px-3 py-1 rounded-full border active:scale-95 transition-transform ${
+                            pactMode !== 'off'
+                                ? 'bg-indigo-400/20 border-indigo-300/60 text-indigo-100'
+                                : 'bg-white/[0.06] border-white/10 text-indigo-200/50'
+                        }`}
+                    >{pactMode !== 'off' ? '已开启' : '已关闭'}</button>
+                </div>
+                <p className="text-[11px] text-indigo-300/60 leading-relaxed">
+                    {pactMode !== 'off' ? <>
+                        角色在彼方<b className="text-indigo-200/80">新认识</b>的人，关系止于朋友——能聊得来、能一起玩，但不往暧昧和恋爱上走。
+                        <br /><b className="text-indigo-200/80">本来就有关系的不受影响</b>：在同一个小镇处出过关系的那些人照旧，不会因为这条规矩变生分。
+                        <br />角色在彼方是<b className="text-indigo-200/80">真的会记住彼此</b>的，所以两个来自不同小镇、各有对象的人，可能在你没盯着的时候处出感情来。这条就是拦这个的。
+                    </> : <>
+                        关着。彼方里的关系<b className="text-amber-300/80">随他们自己长</b>，包括长出你没安排的那种。
+                        <br />想看点意外的时候关着，想护住手上的 CP 时再开回来——随时可切。
+                    </>}
+                </p>
+            </div>
             {characters.length === 0 && <p className="text-[11px] text-indigo-300/50 py-4 text-center">还没有角色。</p>}
             {/* 分组筛选（没建分组时不渲染）：深色底 */}
             <CharacterGroupFilterBar characters={characters} groups={characterGroups} dark

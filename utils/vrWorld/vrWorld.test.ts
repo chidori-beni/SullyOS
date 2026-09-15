@@ -645,3 +645,33 @@ describe('彼方 · 跨层的人结构上不可能认识（2026-09-11 用户追�
         expect(buildVRSystemAddendum(room, '萧逸', [])).not.toContain('确实没有发生过');
     });
 });
+
+
+describe('彼方公约接进提示词的位置（阶段 2.7 接线）', () => {
+    const room = { id: 'guestbook', name: '留言簿', blurb: 'x', affordance: 'y' } as any;
+    const PACT = '⛔ 你对《彼方》有自己的一条底线：**在这游戏里认识的人，关系止于朋友。**';
+
+    it('传了公约就出现在 addendum 里', () => {
+        expect(buildVRSystemAddendum(room, '萧逸', [], undefined, undefined, true, '', PACT)).toContain('止于朋友');
+    });
+
+    it('⛔ 不传就一个字都没有 —— 关掉公约时旧行为零变化', () => {
+        expect(buildVRSystemAddendum(room, '萧逸')).not.toContain('止于朋友');
+        expect(buildVRSystemAddendum(room, '萧逸', [], undefined, undefined, true, '', '')).not.toContain('止于朋友');
+    });
+
+    it('⭐ 顺序：先讲清谁是熟人谁是生人，再讲对生人的分寸', () => {
+        const t = buildVRSystemAddendum(room, '萧逸', [], undefined, undefined, true, '', PACT);
+        expect(t.indexOf('同行、同类、背景相似')).toBeLessThan(t.indexOf('止于朋友'));
+    });
+
+    it('全局关系那段（2.4）和公约（2.7）可以同时出现，互不覆盖', () => {
+        const t = buildVRSystemAddendum(
+            room, '萧逸', [], undefined, undefined, true,
+            ['【你和在场这些人之间】', '- 你眼里的「阿岚」：恋人'].join(String.fromCharCode(10)),
+            PACT,
+        );
+        expect(t).toContain('你眼里的「阿岚」：恋人');
+        expect(t).toContain('止于朋友');
+    });
+});
