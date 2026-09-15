@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { allowsAutomaticVR, joinVRState, withLatestVRParticipation, isSARActivityOccupant } from './participation';
+import { allowsAutomaticVR, joinVRState, withLatestVRParticipation, isSARActivityOccupant, isVRDynamicRecipient } from './participation';
 import { VRScheduler } from './scheduler';
 
 afterEach(() => {
@@ -37,6 +37,16 @@ it('new participation needs no automatic schedule; existing automatic users keep
     expect(joinVRState(legacy)).toMatchObject({activityMode:'scheduled',intervalMinutes:240});
     expect(joinVRState({...joined,enabled:false})).toMatchObject({enabled:true,activityMode:'manual'});
     expect(allowsAutomaticVR({enabled:false,intervalMinutes:60,activityMode:'scheduled'})).toBe(false);
+});
+
+it('schedule activity blocking does not block user VR dynamic delivery', () => {
+    browser();
+    const busyOrSleeping = [
+        { id: 'busy', vrState: { enabled: true, activityMode: 'scheduled' as const } },
+        { id: 'sleeping', vrState: { enabled: true, activityMode: 'manual' as const } },
+    ];
+    expect(busyOrSleeping.every(isVRDynamicRecipient)).toBe(true);
+    expect(isVRDynamicRecipient({ vrState: { enabled: false } })).toBe(false);
 });
 
 it('restoring manual participation removes stale schedules; inviting once does not restart them', () => {

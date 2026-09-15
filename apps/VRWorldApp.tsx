@@ -35,7 +35,7 @@ import { readableNovels, readingPreferenceLabel } from '../utils/vrWorld/library
 import type { VRLibraryCategory } from '../types';
 import { useResilientAssetUrl, attachAudioMirrorFallback } from '../utils/assetUrl';
 import { VRScheduler, VR_FAIL_LIMIT } from '../utils/vrWorld/scheduler';
-import { allowsAutomaticVR, joinVRState, isSARActivityOccupant } from '../utils/vrWorld/participation';
+import { allowsAutomaticVR, joinVRState, isSARActivityOccupant, isVRDynamicRecipient } from '../utils/vrWorld/participation';
 import { collectVRDiagnostics } from '../utils/vrWorld/diagnostics';
 import { VR_ROOMS, getRoom, VR_DEFAULT_INTERVAL_MIN, SIGNAL_EPIGRAPH, signalActFor, signalActRanges, SIGNAL_POEMS_PER_BOOKLET, SIGNAL_EVENT_ENDED, SIGNAL_MEMORIAL_CLOSING } from '../utils/vrWorld/constants';
 import { buildNovelAsync, groupAnnotationsBySeg, getBookmark } from '../utils/vrWorld/novel';
@@ -442,6 +442,12 @@ const VRWorldApp: React.FC = () => {
         () => characters.filter(char => char.vrState?.enabled && vrEligibility.get(char.id)?.allowed === true),
         [characters, vrEligibility],
     );
+    // “不主动活动”不等于“断开彼方”：忙碌/睡眠角色仍应收到机主在彼方发布的动态，
+    // 等它下次聊天或恢复活动时再读到。只有“当前能主动活动”的角色才进入在场/互动名单。
+    const connectedVRCharacters = useMemo(
+        () => characters.filter(isVRDynamicRecipient),
+        [characters],
+    );
 
     // 最近一条动态（按角色）
     const latestByChar = useMemo(() => {
@@ -468,7 +474,7 @@ const VRWorldApp: React.FC = () => {
         return map;
     }, [characters, userProfile, userName, vrEligibility]);
 
-    const enabledCount = eligibleVRCharacters.length;
+    const enabledCount = connectedVRCharacters.length;
 
     // 返回键：有弹层先关弹层（阅读器/房间/上传/捏人），而不是直接退回桌面
     useEffect(() => registerBackHandler(() => {
@@ -532,7 +538,8 @@ const VRWorldApp: React.FC = () => {
         const headline = replyTo
             ? `${userName} 在留言墙上回复 ${replyTo.name}：${t}`
             : `${userName} 在留言墙上发了：${t}`;
-        const enabled = eligibleVRCharacters;
+        // 接收用户动态只要求角色仍接入彼方；不受当前 busy/sleep 活动门禁影响。
+        const enabled = connectedVRCharacters;
         for (const c of enabled) {
             await DB.saveMessage({
                 charId: c.id, role: 'user', type: 'vr_card',
@@ -553,14 +560,16 @@ const VRWorldApp: React.FC = () => {
                 : '已留言',
             'success',
         );
-    }, [eligibleVRCharacters, userName, addToast]);
+    }, [connectedVRCharacters, userName, addToast]);
 
     // 用户更新自己的彼方状态：以行为卡片广播给所有接入彼方的角色（机制同留言簿发言）
     const onUserVRBroadcast = useCallback(async (room: VRRoomId, activity: string) => {
         const roomName = VR_ROOMS.find(r => r.id === room)?.name || '彼方';
         const act = (activity || '').trim() || '在彼方里挂机放空';
         const line = `${userName} 现在在「彼方 · ${roomName}」：${act}`;
-        const enabled = eligibleVRCharacters;
+        // 用户的彼方状态是发给已接入角色的动态；忙碌/睡眠只禁止角色主动活动，
+        // 不应该让它错过机主的这条消息。
+        const enabled = connectedVRCharacters;
         for (const c of enabled) {
             await DB.saveMessage({
                 charId: c.id, role: 'user', type: 'vr_card',
@@ -569,7 +578,7 @@ const VRWorldApp: React.FC = () => {
             } as any);
         }
         addToast?.(enabled.length > 0 ? `已更新状态，并广播给 ${enabled.length} 位接入角色` : '已更新彼方状态', 'success');
-    }, [eligibleVRCharacters, userName, addToast]);
+    }, [connectedVRCharacters, userName, addToast]);
 
     const onDeleteFeed = useCallback(async (msgId: number) => {
         await DB.deleteMessage(msgId);

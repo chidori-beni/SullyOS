@@ -12,6 +12,13 @@ export const joinVRState = (previous?: VRWorldCharState): VRWorldCharState => ({
 export const allowsAutomaticVR = (state?: VRWorldCharState): boolean =>
     Boolean(state?.enabled && state.activityMode !== 'manual');
 
+/**
+ * 已接入彼方的角色都能收到用户发布的彼方动态。
+ * 日程忙碌/睡眠只限制角色自己的活动资格，不影响它读取用户消息。
+ */
+export const isVRDynamicRecipient = (char: Pick<CharacterProfile, 'vrState'>): boolean =>
+    Boolean(char.vrState?.enabled);
+
 /** Connecting to Kanata alone does not place a character in SAR. */
 export const isSARActivityOccupant = (char: Pick<CharacterProfile,'vrState'>): boolean => {
     const state=char.vrState;
