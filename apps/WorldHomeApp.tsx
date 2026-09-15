@@ -1602,6 +1602,17 @@ const WorldView: React.FC<{
         addToast(now ? '这段关系已锁住，演绎不会再改它' : '已解锁，这段关系会继续随剧情变', 'success');
     };
 
+    /**
+     * 取消一条待发生的事（阶段 3 底座）。
+     * 不直接删记录 —— 留着 cancelled 才看得出「这事本来要发生、是我拦下来的」。
+     */
+    const cancelPending = (id: string) => {
+        void mutateWorld({
+            pendings: (world.pendings || []).map(p => p.id === id ? { ...p, status: 'cancelled' as const } : p),
+        });
+        addToast('已取消，下一轮不会再提这件事', 'success');
+    };
+
     const deleteSeed = (seedId: string) => {
         void mutateWorld({ seeds: (world.seeds || []).filter(s => s.id !== seedId) });
         addToast('伏笔已删除', 'success');
@@ -1995,6 +2006,51 @@ const WorldView: React.FC<{
                                     </div>
                                 ));
                             })()}
+                        </div>
+                    </div>
+                )}
+
+                {/* ── 待发生事件表（阶段 3 底座）：角色约好了、还没到的事 ──
+                    节日 / 阈值大事件将来也进这张表，不各写各的。 */}
+                {(world.pendings || []).some(p => p.status === 'scheduled') && (
+                    <div className={`rounded-2xl border p-3.5 ${t.panel}`}>
+                        <div className={`text-[10px] font-black tracking-[0.25em] uppercase flex items-center gap-1.5 mb-2.5 ${t.textLabel}`}>
+                            <Lightning size={11} weight="fill" />接下来要发生的事
+                        </div>
+                        <div className="space-y-1.5">
+                            {(world.pendings || [])
+                                .filter(p => p.status === 'scheduled')
+                                .sort((a, b) => a.dueRound - b.dueRound)
+                                .slice(0, 8)
+                                .map(p => {
+                                    const left = p.dueRound - world.storyClock;
+                                    const who = p.charIds.map(id => nameOf(id)).filter(Boolean).join(' × ');
+                                    return (
+                                        <div key={p.id} className={`rounded-xl border p-2.5 ${t.panelSolid}`}>
+                                            <div className={`flex items-center gap-1.5 text-[11px] ${t.textMain}`}>
+                                                <span className="font-bold truncate">{who || '全镇'}</span>
+                                                <span className={`text-[9px] font-black px-1.5 py-px rounded-full shrink-0 ${
+                                                    left <= 0 ? 'bg-amber-400/20 text-amber-500 border border-amber-400/30'
+                                                              : 'bg-white/10 opacity-60'
+                                                }`}>{left <= 0 ? '这一轮' : `还有 ${left} 个半天`}</span>
+                                                <button
+                                                    onClick={() => cancelPending(p.id)}
+                                                    aria-label="取消这件事"
+                                                    className="ml-auto shrink-0 p-1 opacity-45 active:scale-90 transition-transform"
+                                                ><X size={12} /></button>
+                                            </div>
+                                            <div className={`text-[11px] mt-0.5 ${t.textMain}`}>
+                                                {p.text}
+                                                {p.placeName && <span className="opacity-55">（{p.placeName}）</span>}
+                                            </div>
+                                            {p.source && <div className="text-[9.5px] opacity-45 mt-0.5">{p.source}</div>}
+                                        </div>
+                                    );
+                                })}
+                        </div>
+                        <div className="text-[9.5px] opacity-45 leading-relaxed mt-2">
+                            角色自己约好的事。到那一轮，双方的剧情里都会写着这件事——
+                            <b className="opacity-80">但也可能搞砸、迟到、临时去不成，那本身就是戏</b>。
                         </div>
                     </div>
                 )}

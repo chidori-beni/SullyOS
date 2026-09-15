@@ -455,11 +455,17 @@ export function buildWorldCharTurn(args: {
     exposures?: string[];
     /** 用户对该角色冲动的决策留言 */
     directive?: { impulseText: string; text: string };
+    /**
+     * 待发生事件注入（阶段 3 底座，engine 按 `world.pendings` 为该角色生成的现成文案）。
+     * `due` = 今天到点了，必须演；`preheat` = 还没到但快了，只是心里有个惦记。
+     * 两者**分开**是有意的：预热要是写成「必须处理」，角色会提前把事办了，期待感就没了。
+     */
+    pendings?: { due: string[]; preheat: string[] };
     /** sim 模式：上一卷归档后喂回的「该角色单方面视角总结 + 本卷氛围」（防上帝视角，只给 ta 自己的视角） */
     priorChapter?: { atmosphere?: string; charPerspective?: string };
     userName: string;
 }): string {
-    const { world, char, members, storyTime, round, lastSummary, npcScene, npcHooks, beatsSoFar, recentPosts, exposures, directive, priorChapter, userName } = args;
+    const { world, char, members, storyTime, round, lastSummary, npcScene, npcHooks, beatsSoFar, recentPosts, exposures, directive, pendings, priorChapter, userName } = args;
 
     // 机主也可以作为 relationships 的对象 —— 但门槛比镜民高。
     // ① heavy 档机主根本不存在，一字不提；
@@ -515,6 +521,26 @@ export function buildWorldCharTurn(args: {
     const exposureSection = (exposures && exposures.length > 0)
         ? `\n## ⚡ 这半天绕不开的事（必须在 narrative 里正面处理）\n${exposures.map(e => `- ${e}`).join('\n')}`
         : '';
+    // ── 待发生事件（阶段 3 底座）──
+    // ⚠️ due 和 preheat 必须分成两段、措辞不同：
+    // 预热要是也写成「绕不开、必须处理」，角色会在预热轮就把事办了 —— 期待感当场归零，
+    // 而「期待感」正是节日/约定好玩的地方（交接说明 §3.2 补充①）。
+    const NL = String.fromCharCode(10);
+    const bulletList = (xs: string[]) => xs.map(e => `- ${e}`).join(NL);
+    const dueSection = (pendings?.due && pendings.due.length > 0)
+        ? NL + [
+            '## 📌 今天说好了要做的事（在 narrative 里真的把它演出来）',
+            bulletList(pendings.due),
+            '（当然也可以搞砸、迟到、临时有事去不成——那本身就是这半天的戏。别当没这回事。）',
+        ].join(NL)
+        : '';
+    const preheatSection = (pendings?.preheat && pendings.preheat.length > 0)
+        ? NL + [
+            '## 🕗 快到了（还没发生，**今天别把它办了**）',
+            bulletList(pendings.preheat),
+            '（这半天它只是你心里的一个惦记：会想起、会准备、会盘算、会紧张或期待，但事情本身还没到。）',
+        ].join(NL)
+        : '';
     let directiveSection = '';
     if (directive) {
         directiveSection = world.mode === 'light'
@@ -562,7 +588,7 @@ ${postsSection}
 ## 这半天其他人的动静（你能看到/听说的部分）
 ${observable}
 ${spokenToMe.length > 0 ? `\n## 刚才有人当面对你说话（请在 narrative 里自然接住、给出回应）\n${spokenToMe.join('\n')}` : ''}
-${exposureSection}${directiveSection}${lateNightSection}
+${dueSection}${preheatSection}${exposureSection}${directiveSection}${lateNightSection}
 
 ## 你的手机（标【刚刚】的是这半天刚收到的新消息）
 ${dmSection}
@@ -586,6 +612,7 @@ ${groupSection}
   "secrets": [{ "text": "这半天你瞒着别人的事（对应 timeline 里 shared=false 的条目；没有就空数组）", "hideFrom": ["瞒着谁的名字；空数组=瞒所有人"] }],
   "statusPanel": { "体力": 0到100的数字, "心情值": 0到100的数字, "其他你想记录的状态": "自由发挥（最多再加2项）" },
   "dialogues": [{ "with": "在场成员的名字", "lines": ["你当面对ta说的话（ta会完整听到）"] }],
+  "appointments": [{ "with": "同世界成员的名字", "what": "约好一起做什么", "where": "在哪儿（可省）", "inRounds": 1 }],
   "phone": {
     "posts": ["这一段发的社交媒体动态（尽量发 1 条，记录此刻的心情/见闻/吐槽/晒图文案；除非你确实没心情发，否则别空着）"],
     "dms": [
@@ -607,6 +634,7 @@ ${groupSection}
 - 手机里标【刚刚】的消息该回就回（phone.dms / phone.group），已读不回也行，但要符合你的性格；鼓励聊得丰富些。
 - **想私下联系谁，就必须写进 phone.dms（to=对方名字 + lines），这才是真的把消息发出去、对方才收得到。只在 narrative 正文里写"我给ta发了条私聊"是不算数的——对方收不到，那条私聊等于没发。** 可以同时私聊好几个不同的人。
 - dialogues 只在你的 timeline 和对方真的有共处时才用；不在一起就用手机，或者互相挂念/冷战都行——聚焦你自己。
+- **appointments：只有这半天真的和某人说定了**「之后一起做某事」（当面说定或私聊里说定，对方也应下了）才写。写了之后系统会记着，到那一轮你和 ta 的剧情里都会出现这件事——所以**别随口乱约**，也别把单方面的念头写成约定（「我想约 ta」不算，要对方真的答应了才算）。没约就给空数组或省略。inRounds 一般填 1~4。
 - **好感真的会左右你的言行**：严格按上面「你的关系」里每个人的好感档位与行为基调来相处——低好感/负好感时别自来熟、别无缘无故友善；中立的人就保持客气的距离感。
 - relationships(delta) 要克制、来之不易：日常小事 ±1~2，只有真正触动你的大事才到 ±3~4；好感是慢慢攒起来、也可能因一件事崩掉的，**绝不会一两轮就突飞猛进**。好感和你嘴上/理智上对这段关系的定位可以完全相反，按真实人性演（口嫌体正 / 面和心不和都行）。只在真的发生了影响关系的事时才给。`;
 }
@@ -825,6 +853,20 @@ export function parseCharBeat(
             }))
             .slice(0, 3)
         : [];
+    // 约定（阶段 3.5）：只收得下「和真实成员约的、说得清做什么的」那几条。
+    // with 不在成员名单里就丢掉 —— 和谁约的都对不上号的话，到点了也没法注入给对方。
+    const appointments = Array.isArray(j.appointments)
+        ? j.appointments
+            .filter((a: any) => a && typeof a.with === 'string' && nameSet.has(a.with.trim()) && typeof a.what === 'string' && a.what.trim())
+            .map((a: any) => ({
+                with: a.with.trim(),
+                what: a.what.trim().slice(0, 60),
+                ...(typeof a.where === 'string' && a.where.trim() ? { where: a.where.trim().slice(0, 40) } : {}),
+                // 夹在 1~8：0 或负数等于「现在就发生」，那不是约定；太远的约定注定被忘掉
+                inRounds: Math.max(1, Math.min(8, Math.round(Number(a.inRounds)) || 1)),
+            }))
+            .slice(0, 3)
+        : [];
     const beatLocation = typeof j.location === 'string' && j.location.trim() ? j.location.trim().slice(0, 40) : '住处';
     return {
         charId: char.id,
@@ -840,6 +882,7 @@ export function parseCharBeat(
         impulse,
         secrets: secrets.length > 0 ? secrets : undefined,
         phone: (dms.length > 0 || posts.length > 0 || group.length > 0) ? { posts, dms, group } : undefined,
+        appointments: appointments.length > 0 ? appointments : undefined,
         dialogues: dialogues.length > 0 ? dialogues : undefined,
         relationshipDeltas: relationshipDeltas.length > 0 ? relationshipDeltas : undefined,
     };

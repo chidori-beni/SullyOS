@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { extractJson, parseCharBeat, resolvePlaceId, buildPlacesSection, parseNpcScene, storyTimeLabel, buildModeRule, buildWorldGapNote, buildWorldCharTurn, buildNpcTurn, parseRolledNpcs, buildNpcRollPrompt, NARRATIVE_STYLES, narrationPersonGuide, realNowSeg, realObserveTarget, worldTimeLabel, formatRealClock, migrateWorldDaySegs, SEGMENTS_PER_DAY, worldNow, worldTzLabel, clampRealClockToNow, alignCharToWorldClock } from './prompts';
-import { applyRelationshipDeltas, shareWorldCardTo, collectSeeds, buildSummary, dropDuplicatePosts, mirrorWorldBondsToChars } from './engine';
+import { applyRelationshipDeltas, shareWorldCardTo, collectSeeds, buildSummary, dropDuplicatePosts, mirrorWorldBondsToChars, collectAppointments, buildPendingNotes, settlePendings } from './engine';
 import { DB } from '../db';
 import { ensureThreads, applyBeatToThreads, applyNpcGroupLines, applyNpcDms, npcInboxes, dmThreadsOf, groupThreadOf, formatThreadForPrompt, dmThreadId, GROUP_THREAD_ID } from './threads';
 import { WorldScheduler } from './scheduler';
@@ -1111,6 +1111,195 @@ describe('固定地点表（阶段 3.1）', () => {
             const home = [{ id: 'home', name: '住处' }];
             expect(parseCharBeat('胡言乱语', char, ['小满'], [], home).placeId).toBe('home');
             expect(parseCharBeat('胡言乱语', char, ['小满'], [], places).placeId).toBeUndefined();
+        });
+    });
+});
+
+
+describe('待发生事件底座（阶段 3）', () => {
+    const members = [
+        { id: 'a', name: '小满' },
+        { id: 'b', name: '阿岚' },
+        { id: 'c', name: '阿澄' },
+    ];
+    const mkWorld = (pendings: any[] = []) => ({
+        id: 'w1', name: '小镇', storyClock: 10, relationships: [], pendings,
+    } as any);
+    const beatWith = (appointments: any[]) => ({
+        charId: 'a', charName: '小满', location: '住处', narrative: 'x', mood: '平静', appointments,
+    } as any);
+
+    describe('collectAppointments —— 约定落表', () => {
+        it('⭐ 说定的事变成一条待发生事件，双方共用一条', () => {
+            const w = mkWorld();
+            collectAppointments(w, beatWith([{ with: '阿岚', what: '一起去看那个展', where: '美术馆', inRounds: 2 }]), members, 10);
+            expect(w.pendings).toHaveLength(1);
+            expect(w.pendings[0]).toMatchObject({
+                kind: 'appointment', text: '一起去看那个展', placeName: '美术馆',
+                dueRound: 12, status: 'scheduled', createdRound: 10,
+            });
+            // ⛔ 一条记录两个人，不是各落一条 —— 否则 A 那条 fired 了 B 那条还躺着
+            expect([...w.pendings[0].charIds].sort()).toEqual(['a', 'b']);
+        });
+
+        it('⭐ 默认提前 1 轮预热 —— 约定与兑现之间那点忐忑正是它比随机相遇好玩的地方', () => {
+            const w = mkWorld();
+            collectAppointments(w, beatWith([{ with: '阿岚', what: '看展', inRounds: 3 }]), members, 10);
+            expect(w.pendings[0].leadRounds).toBe(1);
+        });
+
+        it('⭐ 对上地点表就带 placeId（给将来上地图用）', () => {
+            const w = { ...mkWorld(), places: [{ id: 'p_m', name: '美术馆' }] } as any;
+            collectAppointments(w, beatWith([{ with: '阿岚', what: '看展', where: '美术馆', inRounds: 1 }]), members, 10);
+            expect(w.pendings[0].placeId).toBe('p_m');
+        });
+
+        it('⛔⭐ 去重：A 和 B 各自写下同一个约定，只留一条', () => {
+            const w = mkWorld();
+            collectAppointments(w, beatWith([{ with: '阿岚', what: '一起去看那个展', inRounds: 2 }]), members, 10);
+            const bBeat = {
+                charId: 'b', charName: '阿岚', location: 'x', narrative: 'x', mood: 'x',
+                appointments: [{ with: '小满', what: '一起去看那个展', inRounds: 2 }],
+            } as any;
+            collectAppointments(w, bBeat, members, 10);
+            expect(w.pendings).toHaveLength(1);
+        });
+
+        it('⛔ 和不存在的人 / 和自己约的一律丢掉', () => {
+            const w = mkWorld();
+            collectAppointments(w, beatWith([
+                { with: '查无此人', what: '看展', inRounds: 1 },
+                { with: '小满', what: '自言自语', inRounds: 1 },
+            ]), members, 10);
+            expect(w.pendings).toHaveLength(0);
+        });
+
+        it('⛔ 没有约定时不建表、不写脏数据', () => {
+            const w = mkWorld();
+            collectAppointments(w, beatWith([]), members, 10);
+            expect(w.pendings).toHaveLength(0);
+            const w2 = { id: 'w', name: 'x', storyClock: 1, relationships: [] } as any;
+            collectAppointments(w2, { charId: 'a', charName: '小满', location: 'x', narrative: 'x', mood: 'x' } as any, members, 1);
+            expect(w2.pendings).toBeUndefined();
+        });
+    });
+
+    describe('buildPendingNotes —— 注入文案', () => {
+        const pend = (over: any = {}) => ({
+            id: 'p1', kind: 'appointment', charIds: ['a', 'b'], text: '一起去看那个展',
+            dueRound: 12, leadRounds: 1, status: 'scheduled', createdRound: 10, ...over,
+        });
+
+        it('⭐ 到点那轮进 due', () => {
+            const notes = buildPendingNotes(mkWorld([pend()]), 'a', 12, members);
+            expect(notes.due).toHaveLength(1);
+            expect(notes.due[0]).toContain('阿岚');
+            expect(notes.due[0]).toContain('一起去看那个展');
+            expect(notes.preheat).toHaveLength(0);
+        });
+
+        it('⭐⛔ 预热轮只进 preheat，绝不能进 due —— 否则角色会提前把事办了，期待感归零', () => {
+            const notes = buildPendingNotes(mkWorld([pend()]), 'a', 11, members);
+            expect(notes.due).toHaveLength(0);
+            expect(notes.preheat).toHaveLength(1);
+            expect(notes.preheat[0]).toContain('再过 1 个半天');
+        });
+
+        it('⛔ 还早的时候两边都不出现，不提前剧透', () => {
+            const notes = buildPendingNotes(mkWorld([pend({ dueRound: 20 })]), 'a', 10, members);
+            expect(notes.due).toHaveLength(0);
+            expect(notes.preheat).toHaveLength(0);
+        });
+
+        it('⛔ 不相干的人收不到', () => {
+            expect(buildPendingNotes(mkWorld([pend()]), 'c', 12, members).due).toHaveLength(0);
+        });
+
+        it('⭐ charIds 空 = 全镇的事，谁都收得到（节日将来走这条）', () => {
+            const notes = buildPendingNotes(mkWorld([pend({ charIds: [], text: '灯会' })]), 'c', 12, members);
+            expect(notes.due).toHaveLength(1);
+            expect(notes.due[0]).toContain('灯会');
+        });
+
+        it('⛔ 已经 fired / cancelled 的不再念', () => {
+            expect(buildPendingNotes(mkWorld([pend({ status: 'fired' })]), 'a', 12, members).due).toHaveLength(0);
+            expect(buildPendingNotes(mkWorld([pend({ status: 'cancelled' })]), 'a', 12, members).due).toHaveLength(0);
+        });
+
+        it('没有 leadRounds 就不预热，到点才说', () => {
+            const notes = buildPendingNotes(mkWorld([pend({ leadRounds: undefined })]), 'a', 11, members);
+            expect(notes.preheat).toHaveLength(0);
+        });
+
+        it('⛔ 没有待发生事件的旧世界 → 两个空数组，提示词一个字不多', () => {
+            const w = { id: 'w', name: 'x', storyClock: 1, relationships: [] } as any;
+            expect(buildPendingNotes(w, 'a', 5, members)).toEqual({ due: [], preheat: [] });
+        });
+    });
+
+    describe('settlePendings —— 一轮之后结算', () => {
+        const pend = (over: any = {}) => ({
+            id: 'p1', kind: 'appointment', charIds: ['a', 'b'], text: '看展',
+            dueRound: 12, status: 'scheduled', createdRound: 10, ...over,
+        });
+
+        it('⭐ 到点注入过就记 fired，下一轮不再重复念', () => {
+            const w = mkWorld([pend()]);
+            settlePendings(w, 12);
+            expect(w.pendings[0].status).toBe('fired');
+        });
+
+        it('⛔⭐ 不判断角色到底有没有真去 —— 爽约本身就是戏，系统不替用户裁定', () => {
+            // 角色那一拍完全没提这件事，照样记 fired；要不要当成失约由用户自己读剧情判断
+            const w = mkWorld([pend()]);
+            settlePendings(w, 12);
+            expect(w.pendings[0].status).toBe('fired');
+            expect(w.pendings[0].status).not.toBe('missed');
+        });
+
+        it('⛔ 没到点的不动', () => {
+            const w = mkWorld([pend({ dueRound: 20 })]);
+            settlePendings(w, 12);
+            expect(w.pendings[0].status).toBe('scheduled');
+        });
+
+        it('⛔ 用户取消过的不会被改回来', () => {
+            const w = mkWorld([pend({ status: 'cancelled' })]);
+            settlePendings(w, 99);
+            expect(w.pendings[0].status).toBe('cancelled');
+        });
+
+        it('旧世界没有这张表也不崩', () => {
+            const w = { id: 'w', name: 'x', storyClock: 1, relationships: [] } as any;
+            expect(() => settlePendings(w, 5)).not.toThrow();
+        });
+    });
+
+    describe('parseCharBeat 解析 appointments', () => {
+        const char = { id: 'a', name: '小满' } as any;
+        const raw = (aps: any) => JSON.stringify({ location: '住处', narrative: 'x', mood: 'x', appointments: aps });
+
+        it('收下合法的约定', () => {
+            const b = parseCharBeat(raw([{ with: '阿岚', what: '看展', where: '美术馆', inRounds: 2 }]), char, ['小满', '阿岚']);
+            expect(b.appointments).toEqual([{ with: '阿岚', what: '看展', where: '美术馆', inRounds: 2 }]);
+        });
+
+        it('⛔ with 不是成员就丢掉 —— 对不上号的话到点也没法注入给对方', () => {
+            const b = parseCharBeat(raw([{ with: '路人甲', what: '看展', inRounds: 1 }]), char, ['小满', '阿岚']);
+            expect(b.appointments).toBeUndefined();
+        });
+
+        it('inRounds 夹在 1~8：0 不是约定，太远的注定被忘', () => {
+            const b = parseCharBeat(raw([
+                { with: '阿岚', what: 'A', inRounds: 0 },
+                { with: '阿岚', what: 'B', inRounds: 999 },
+            ]), char, ['小满', '阿岚']);
+            expect(b.appointments!.map(a => a.inRounds)).toEqual([1, 8]);
+        });
+
+        it('⛔ 没写 appointments 的旧输出照常解析，字段为 undefined', () => {
+            const b = parseCharBeat(JSON.stringify({ location: '住处', narrative: 'x', mood: 'x' }), char, ['小满']);
+            expect(b.appointments).toBeUndefined();
         });
     });
 });

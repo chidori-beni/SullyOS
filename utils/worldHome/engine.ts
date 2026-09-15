@@ -28,7 +28,7 @@ import { processNewMessagesWithAutoArchive } from '../memoryPalace/autoArchive';
 import { getDailyScheduleForChar } from '../dailySchedule';
 import {
     worldTimeLabel, buildWorldSystemAddendum, buildWorldCharTurn, buildNpcTurn,
-    parseCharBeat, parseNpcScene, realObserveTarget, formatRealClock, migrateWorldDaySegs,
+    parseCharBeat, parseNpcScene, realObserveTarget, formatRealClock, migrateWorldDaySegs, resolvePlaceId,
     alignCharToWorldClock,
 } from './prompts';
 import { ensureThreads, applyBeatToThreads, applyNpcGroupLines, applyNpcDms, npcInboxes } from './threads';
@@ -333,6 +333,116 @@ function buildExposures(world: WorldProfile, charId: string, charName: string): 
     return out;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 待发生事件表（阶段 3 底座）—— 节日 / 约定 / 阈值大事件共用
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 把这一拍里角色**说定的约定**落进 `world.pendings`（阶段 3.5）。
+ *
+ * ⛔ **一条约定只落一条记录，两个人共用。** 早期写法是给双方各落一条，
+ * 结果 A 爽约时 B 那条还是 scheduled，界面上一条约定裂成两条状态不一样的 ——
+ * 所以 `charIds` 是数组，两人同进同出。
+ *
+ * ⛔ **去重**：A 和 B 都可能在各自那一拍写下同一个约定
+ * （「我约了 B 去看展」/「我和 A 约了去看展」）。同一对人 + 同一轮 + 意思相近就只留一条，
+ * 否则到点那天提示词里会重复念两遍。
+ */
+export function collectAppointments(
+    world: WorldProfile,
+    beat: WorldCharBeat,
+    members: { id: string; name: string }[],
+    round: number,
+): void {
+    if (!beat.appointments || beat.appointments.length === 0) return;
+    if (!world.pendings) world.pendings = [];
+    const idOf = (name: string) => members.find(m => m.name === name)?.id;
+    for (const ap of beat.appointments) {
+        const otherId = idOf(ap.with);
+        if (!otherId || otherId === beat.charId) continue;
+        const dueRound = round + Math.max(1, ap.inRounds || 1);
+        const pair = [beat.charId, otherId].sort().join('|');
+        const gist = ap.what.replace(/\s+/g, '');
+        const dup = world.pendings.some(p =>
+            p.kind === 'appointment'
+            && p.status === 'scheduled'
+            && [...p.charIds].sort().join('|') === pair
+            && Math.abs(p.dueRound - dueRound) <= 1
+            && (p.text.replace(/\s+/g, '').includes(gist) || gist.includes(p.text.replace(/\s+/g, '').slice(0, 10))));
+        if (dup) continue;
+        const placeId = resolvePlaceId(ap.where, world.places);
+        world.pendings.push({
+            id: genId('wpd'),
+            kind: 'appointment',
+            charIds: [beat.charId, otherId],
+            text: ap.what,
+            ...(ap.where ? { placeName: ap.where } : {}),
+            ...(placeId ? { placeId } : {}),
+            dueRound,
+            // 约定默认提前 1 轮预热：约定与兑现之间那点忐忑正是它比随机相遇好玩的地方
+            leadRounds: 1,
+            status: 'scheduled',
+            createdRound: round,
+            source: `${beat.charName} 和 ${ap.with} 约的`,
+        });
+    }
+    // 只留最近 40 条还没过去的 + 30 条已结束的，免得老世界无限膨胀
+    const live = world.pendings.filter(p => p.status === 'scheduled').slice(-40);
+    const done = world.pendings.filter(p => p.status !== 'scheduled').slice(-30);
+    world.pendings = [...done, ...live];
+}
+
+/**
+ * 为某个角色生成这一轮的待发生事件注入文案（阶段 3 底座）。
+ *
+ * `due`（今天到点）和 `preheat`（快到了）分开返回，提示词里也是两段 ——
+ * 预热要是写成「必须处理」，角色会在预热轮就把事办了，**期待感当场归零**，
+ * 而期待感正是节日/约定好玩的地方（交接说明 §3.2 补充①）。
+ */
+export function buildPendingNotes(
+    world: WorldProfile,
+    charId: string,
+    round: number,
+    members: { id: string; name: string }[],
+): { due: string[]; preheat: string[] } {
+    const due: string[] = [];
+    const preheat: string[] = [];
+    const nameOf = (id: string) => members.find(m => m.id === id)?.name;
+    for (const p of world.pendings || []) {
+        if (p.status !== 'scheduled') continue;
+        // charIds 空 = 全镇的事（节日），谁都收得到
+        if (p.charIds.length > 0 && !p.charIds.includes(charId)) continue;
+        const others = p.charIds.filter(id => id !== charId).map(nameOf).filter(Boolean) as string[];
+        const withWho = others.length > 0 ? `和${others.join('、')}` : '';
+        const where = p.placeName ? `在${p.placeName}` : '';
+        if (round >= p.dueRound) {
+            due.push(withWho
+                ? `今天你${withWho}${where ? `${where}` : ''}说好了：${p.text}。`
+                : `今天${where ? `${where}` : '镇上'}有这件事：${p.text}。`);
+        } else if (p.leadRounds && round >= p.dueRound - p.leadRounds) {
+            const left = p.dueRound - round;
+            preheat.push(withWho
+                ? `再过 ${left} 个半天，你${withWho}${where ? `${where}` : ''}约好了：${p.text}。`
+                : `再过 ${left} 个半天${where ? `，${where}` : ''}：${p.text}。`);
+        }
+    }
+    return { due, preheat };
+}
+
+/**
+ * 一轮演完之后结算待发生事件（阶段 3 底座）。
+ *
+ * 到点的那一轮注入过了就记 `fired` —— **不判断角色到底有没有真去**。
+ * 爽约本身就是戏（交接说明 §3.5），系统不该替用户裁定「这算不算失约」；
+ * 已经过了点还躺着 `scheduled` 的记 `missed`，让它从提示词里退场，不再每轮重复念。
+ */
+export function settlePendings(world: WorldProfile, round: number): void {
+    for (const p of world.pendings || []) {
+        if (p.status !== 'scheduled') continue;
+        if (round >= p.dueRound) p.status = 'fired';
+    }
+}
+
 /** 单个角色的 world_card 文本（注入本人的 1v1 聊天与记忆——本人的视角，含自己瞒的事）。 */
 function buildCardContent(world: WorldProfile, storyTime: string, beat: WorldCharBeat): string {
     const lines = [
@@ -604,6 +714,8 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
                     npcScene: lastNpcScene, npcHooks: lastNpcHooks, beatsSoFar: beats,
                     recentPosts: collectRecentPosts(lastBeats, beats),
                     exposures: buildExposures(world, char.id, char.name),
+                    // 阶段 3 底座：今天到点的事 + 快到了的事（两段分开注入，见 buildPendingNotes）
+                    pendings: buildPendingNotes(world, char.id, round, members),
                     directive: directive ? { impulseText: directive.impulseText, text: directive.text } : undefined,
                     priorChapter,
                     userName: userProfile?.name || '',
@@ -627,6 +739,8 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
                 applyBeatToThreads(world, beat, members, round, storyTime);
                 // 瞒下的事落进伏笔栏（pending，等用户点击引爆）
                 collectSeeds(world, beat, round, storyTime);
+                // 这半天说定的约定落进待发生事件表（阶段 3 底座）
+                collectAppointments(world, beat, members, round);
                 anyCharOk = true;
             } catch (e) {
                 // 单个角色失败不拖垮整轮——这半天 ta 只是没什么动静
@@ -701,12 +815,15 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
         for (const seed of world.seeds || []) {
             if (seed.status === 'armed') seed.status = 'resolved';
         }
+        // 到点的待发生事件本轮已注入过 → fired，别下一轮再念一遍（阶段 3 底座）
+        settlePendings(world, round);
         const remainingDirectives = (world.directives || []).filter(d => !consumedDirectiveIds.includes(d.id));
         const updatedWorld: WorldProfile = {
             ...world,
             relationships: world.relationships,
             threads: world.threads, // 本轮累积的私聊/群聊消息一并持久化
             seeds: world.seeds,
+            pendings: world.pendings,
             directives: remainingDirectives,
             storyClock: world.storyClock + 1,
             // real 模式：把世界的「现实段」推进到这次演的那一段
@@ -847,6 +964,7 @@ export async function rerollWorldCharBeat(
             npcScene: episode.npcScene, npcHooks: episode.npcHooks, beatsSoFar: otherBeats,
             recentPosts: collectRecentPosts(prevEp?.beats || [], otherBeats),
             exposures: buildExposures(world, char.id, char.name),
+            pendings: buildPendingNotes(world, char.id, episode.round, members),
             priorChapter, userName: userProfile?.name || '',
         });
         if (direction && direction.trim()) {
@@ -892,6 +1010,7 @@ export async function rerollWorldCharBeat(
         if (!hadBeat) {
             applyBeatToThreads(world, beat, members, episode.round, episode.storyTime);
             collectSeeds(world, beat, episode.round, episode.storyTime);
+            collectAppointments(world, beat, members, episode.round);
             const rerollHostDeltas = applyRelationshipDeltas(world, [beat], members, episode.round, userProfile?.name);
             // 同主路径：sim 世界不往角色卡上写
             if (world.timeMode !== 'sim' && world.injectToChat !== false) {
@@ -913,7 +1032,7 @@ export async function rerollWorldCharBeat(
             }
         }
         if (worldDirty) {
-            await DB.saveWorld({ ...world, threads: world.threads, seeds: world.seeds, relationships: world.relationships, feedReactions: world.feedReactions, updatedAt: Date.now() });
+            await DB.saveWorld({ ...world, threads: world.threads, seeds: world.seeds, pendings: world.pendings, relationships: world.relationships, feedReactions: world.feedReactions, updatedAt: Date.now() });
         }
         dispatch('world-episode-done', { worldId: world.id, episodeId: updatedEp.id, storyTime: episode.storyTime, round: episode.round });
         return { ok: true, episode: updatedEp };

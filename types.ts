@@ -1923,6 +1923,58 @@ export interface WorldSeed {
 }
 
 /**
+ * **待发生事件**（阶段 3 底座）：一件「约好了要在未来某轮发生」的事，到点了注入给相关角色。
+ *
+ * ## 为什么必须做成一张表，而不是四个功能各写各的
+ *
+ * 节日 / 角色约定 / 阈值大事件 **是同一个机制**，只是触发条件不同：
+ *
+ * | 功能 | 什么时候到点 |
+ * |---|---|
+ * | 节日 | 世界日历走到那天 |
+ * | 角色约定 | 约好的那一轮 |
+ * | 阈值大事件 | 好感越过某条线（落表时算好 dueRound） |
+ *
+ * 各写各的话，这条链根本串不起来：
+ * **节日临近 → 角色心里盘算约谁 → 变成一条约定 → 当天两人一起出现在灯会**。
+ * 三个机制串成一条，中间的「约定」既是节日的产物又是相遇的原因 —— 共用一张表才接得上。
+ *
+ * ## 和 `WorldSeed`（伏笔）的关系
+ *
+ * 伏笔本来就是这个形状（躺着 → 引爆 → 已爆发），但它**已经在跑、有用户数据**，
+ * 硬迁过来只有风险没有收益。所以伏笔留在 `WorldSeed`，两者并行、注入时并排出现。
+ * 新功能一律进这张表。
+ */
+export interface WorldPending {
+    id: string;
+    /** 哪一类。`appointment` = 角色之间约好的事；`festival`/`threshold` 留给后续批次 */
+    kind: 'appointment' | 'festival' | 'threshold';
+    /** 涉及谁（CharacterProfile.id）。**空数组 = 全镇**（节日就是这种） */
+    charIds: string[];
+    /** 一句话：要发生什么。会原样进提示词，所以得是人话 */
+    text: string;
+    /** 在哪儿（可选）。对上了地点表就有 id，对不上只留名字 —— 同 `WorldCharBeat.placeId` 的口径 */
+    placeId?: string;
+    placeName?: string;
+    /** 到点的那一轮（对 `WorldProfile.storyClock`）。 */
+    dueRound: number;
+    /**
+     * 提前几轮开始预热。节日好玩的是**期待感**不是当天
+     * （`还有 6 轮 → 镇上开始挂灯笼`、`还有 2 轮 → 盘算约谁`、`当天 → 正日子`）。
+     * 很便宜，效果差别巨大。0 / 缺省 = 不预热，到点才说。
+     */
+    leadRounds?: number;
+    /**
+     * scheduled=还没到 / fired=已注入过 / missed=过了点也没演成（爽约本身就是戏）
+     * / cancelled=用户手动取消
+     */
+    status: 'scheduled' | 'fired' | 'missed' | 'cancelled';
+    createdRound: number;
+    /** 来历（谁约的谁 / 哪个节日 / 哪条阈值），只为界面上说明「这条是怎么来的」 */
+    source?: string;
+}
+
+/**
  * 用户对某角色"内心冲动"的决策/留言（想辞职？想告白？）。
  * 下一轮演绎时以"内心的声音"注入该角色（light 模式下会联想到 user），注入后消费掉。
  */
@@ -1972,6 +2024,8 @@ export interface WorldProfile {
     houses: WorldHouse[];
     /** 固定地点表（阶段 3.1）。缺省/空数组 = 没建过，行为与改造前完全一致 */
     places?: WorldPlace[];
+    /** 待发生事件表（阶段 3 底座）。缺省 = 没有，提示词一个字都不多 */
+    pendings?: WorldPending[];
     relationships: WorldRelationship[];
     /** 世界内消息线程（私聊 + 世界群聊），随演绎累积，每线程截留最近若干条 */
     threads?: WorldThread[];
@@ -2034,6 +2088,23 @@ export interface WorldCharBeat {
     };
     /** 共处时当面对在场成员说的话（不是手机）——对话对象的演绎轮里会完整听到并被要求回应 */
     dialogues?: { with: string; lines: string[] }[];
+    /**
+     * 这半天**约好了**要在之后某一轮做的事（阶段 3.5，落进 `WorldProfile.pendings`）。
+     *
+     * 为什么值得单独做而不是靠随机相遇：
+     * ① **制造期待** —— 约定与兑现之间隔着一轮，中间有心情、准备、忐忑；
+     * ② **爽约是戏** —— 那轮出了别的事没去成，本身就是剧情。随机相遇产生不了爽约。
+     */
+    appointments?: {
+        /** 和谁（同世界成员名） */
+        with: string;
+        /** 约好做什么 */
+        what: string;
+        /** 在哪儿（可空） */
+        where?: string;
+        /** 几轮之后（1 = 下一轮） */
+        inRounds: number;
+    }[];
     /** 本轮产出的关系变化（按名字回填到 world.relationships）。newLabel：仅在关系重大转折时，
      *  角色对这段关系的新看法/称呼（覆盖 label，平时不给）。 */
     relationshipDeltas?: { withName: string; delta: number; reason?: string; newLabel?: string }[];
