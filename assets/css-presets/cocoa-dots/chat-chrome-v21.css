@@ -1,0 +1,657 @@
+/* ══════════════════════════════════════════════════════════════
+   可可点点 · 聊天白框 CSS   v21（语音时间戳间距 + 输入栏横向布局）
+   粘贴位置：进角色聊天 →「＋」→「装扮」→「白框」
+
+   v4 改了什么：
+   · 顶栏黑边改成「细内框」，刘海区不再是一整块黑
+   · 情绪面板发疯的真凶找到了：v3 的 `.sully-chat-header > *{position:relative}`
+     把那个面板的 Tailwind `absolute` 顶掉了，整段删除
+   · 表情反应的白圈去掉
+   · 日期分隔线换成蕾丝 + 爪印（原设计）
+   · 「加载历史消息」按钮接上美化（本批代码新加的钩子）
+   ══════════════════════════════════════════════════════════════ */
+
+
+/* ══════════ ① 图床槽位 ══════════
+
+   ⚠️ 写法只有一种，别漏了 url( ) ：
+
+        --img-btn-plus: url("https://files.catbox.moe/xxx.png");   ✓ 对
+        --img-btn-plus: https://files.catbox.moe/xxx.png;          ✗ 错，整行会被浏览器丢掉
+
+   这些变量最后是喂给 background-image 的，它只认 url(...) 包起来的值。
+   裸网址不是合法的图片值，浏览器会把**整条声明当垃圾丢掉**，表现就是「填了没反应」。
+
+   不放图就写  none 。
+
+   —— 换了图之后，记得把同名的 *-icon 那行设成 0，
+      否则按钮里原生的图标（＋ / 波形 / 箭头那些 svg）会压在你的图上面。
+      没换图就保持 1。 */
+.sully-chat-root{
+  /* 输入栏三颗键 · 128×128 透明 PNG */
+  --img-btn-plus:   url("https://files.catbox.moe/bfpune.png");
+  --img-btn-voice:  url("https://files.catbox.moe/zgb8kf.png");
+  --img-btn-send:   url("https://files.catbox.moe/ur4mlr.png");
+  --icon-plus:  0;    /* 上面放了图 → 0（藏掉原生图标） */
+  --icon-voice: 0;
+  --icon-send:  0;    /* 还没放图 → 1（保留原生图标） */
+  /* 输入框右端那颗表情包笑脸 · 128×128
+     它在 .sully-chat-input-clip **里面**（和输入框同级），
+     所以不归上面那三颗管，得单独给一个槽。 */
+  --img-btn-emoji: url('https://files.catbox.moe/plp9bu.png');
+  --icon-emoji: 0;
+
+  /* 顶栏两颗键 · 96×96 */
+  --img-btn-back:  url('https://files.catbox.moe/0nz8q3.png');
+  --img-btn-ai:    url('https://files.catbox.moe/itg4ve.png');
+  --icon-back: 0;
+  --icon-ai:   0;
+
+  /* 气泡下方那条线的两端 · 256×256 */
+  --img-bubble-paw:  url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23A79C93"><ellipse cx="12" cy="16" rx="6" ry="5"/><ellipse cx="5" cy="9" rx="2.6" ry="3.4"/><ellipse cx="19" cy="9" rx="2.6" ry="3.4"/><ellipse cx="9.5" cy="5" rx="2.4" ry="3.2"/><ellipse cx="14.5" cy="5" rx="2.4" ry="3.2"/></svg>');
+  --img-bubble-bear: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 36"><g stroke="%23A79C93" stroke-width="2.4"><circle cx="9" cy="11" r="6.4" fill="%23F7F5F2"/><circle cx="31" cy="11" r="6.4" fill="%23F7F5F2"/><ellipse cx="20" cy="21" rx="14" ry="12.6" fill="%23F7F5F2"/></g><circle cx="15" cy="19" r="1.9" fill="%236E6259"/><circle cx="25" cy="19" r="1.9" fill="%236E6259"/><ellipse cx="20" cy="25" rx="5.2" ry="4" fill="%23E6DED3"/><ellipse cx="20" cy="23.4" rx="2.1" ry="1.5" fill="%236E6259"/></svg>');
+  /* 语音条右端探出的熊 · 256×256 */
+  --img-voice-bear: url('https://files.catbox.moe/y85sho.png');
+  /* 加号菜单贴纸表（4列×5行，1024×1280）*/
+  --img-panel-sheet: none;
+
+  /* 配色 */
+  --cream:#F7F5F2; --milk:#FFFFFF; --paper:#FCFBF9; --ink:#302C29;
+  --cocoa:#4A3B31; --ash:#6E6259; --taupe:#A79C93; --taupe-lt:#D5CFC8;
+  --bubble-ai:#DAD4CD; --bubble-me:#E4DFD9; --kraft:#E6DED3;
+  --milktea:#A9866A; --dot:#DEDAD4;
+}
+
+
+/* ══════════ ② 底纹：覆盖层，不动你自己的背景图 ══════════
+   聊天背景图是内联样式写在 .sully-chat-root 上的，v1 用 !important 铺 background
+   直接把它盖死了。现在纹理挂在消息滚动区（本批代码新加的 .sully-chat-scroll 钩子）
+   的 ::before 上：你的背景图在最底下，纹理浮在中间，消息在最上面。
+   不想要纹理就把这一段删掉。 */
+.sully-chat-scroll{
+  background-color: transparent !important;   /* 透明 → 你的背景图透上来 */
+  background-image:
+    repeating-linear-gradient(48deg, rgba(167,156,147,.10) 0 1px, transparent 1px 30px),
+    repeating-linear-gradient(-48deg, rgba(167,156,147,.10) 0 1px, transparent 1px 30px),
+    radial-gradient(rgba(167,156,147,.26) 1px, transparent 1.15px) !important;
+  background-size: auto, auto, 9px 9px !important;
+  background-attachment: local, local, local !important;
+}
+
+/* 分层。
+   ⚠️ v3 写的是 `.sully-chat-root > *{position:relative}` —— 太粗暴了：
+   任何本来 position:absolute 的直接子元素都会被顶成 relative。
+   顶栏里那个「情绪」详情面板就是这么被打回文档流、挤成一根竖条的。
+   v4 只点名这三个，绝不用通配。 */
+.sully-chat-root > .sully-chat-header{ position:relative !important; z-index:50 !important; }
+.sully-chat-root > .sully-chat-scroll{ position:relative !important; z-index:1 !important; }
+.sully-chat-root > .sully-chat-inputbar{ position:relative !important; z-index:40 !important; }
+
+/* 没有上传背景图时，给个奶油底（有背景图的话它在下面，看不见这层）*/
+.sully-chat-root{ background-color: var(--cream); }
+
+
+/* ══════════ ③ 顶栏：黑底白波点外框（直角）+ 奶油圆角内胆 + 蕾丝扇贝 ══════════
+   回到最初设计稿的构造：
+     外框 = header 自己的背景（炭黑 + 白波点），**四角直角**，一路铺到刘海
+     内胆 = ::before（奶油 + 灰波点），**圆角 16px**
+     蕾丝 = ::after，从外框底沿垂下来，通宽
+
+   关键点：内胆用 ::before 且 z-index:-1。
+   之所以现在敢用（v3 用它翻过车）：分层那段已经给 .sully-chat-header 单独写了
+   position:relative + z-index:50，它自己就是一个层叠上下文。上下文内部的绘制顺序是
+   「元素自己的背景 → z-index 负的子元素 → 普通内容」，所以内胆正好垫在黑底之上、
+   头像名字之下，**完全不用给子元素加 position** —— 情绪面板和语音弹窗的 absolute
+   不会被顶掉（v3 就是栽在那一手上）。
+
+   padding-top 保持内联的 var(--safe-top) 不动：内容天然落在状态栏下方。 */
+.sully-chat-header{
+  position:relative !important;
+  overflow:visible !important;
+  border:0 !important;
+  border-radius:0 !important;                    /* 外角直角 */
+  /* 22px：内胆再往里留 7px，返回键离框沿还有 15px。
+     头像左对齐模式下最左边那颗按钮就是被这里挤出框的（v7 只有 14px）。 */
+  padding-left:22px !important;
+  padding-right:22px !important;
+  padding-bottom:14px !important;
+  background-color: var(--ink) !important;
+  background-image: radial-gradient(rgba(255,255,255,.30) 1px, transparent 1.1px) !important;
+  background-size: 7px 7px !important;
+  box-shadow: 0 4px 14px rgba(48,44,41,.16) !important;
+}
+/* 奶油内胆 */
+.sully-chat-header::before{
+  content:"" !important;
+  position:absolute !important; z-index:-1 !important;
+  top: max(6px, calc(var(--safe-top) - 4px)) !important;
+  left:7px !important; right:7px !important; bottom:7px !important;
+  border-radius:16px !important;
+  pointer-events:none !important;
+  background-color: var(--paper) !important;
+  background-image: radial-gradient(rgba(167,156,147,.26) 1px, transparent 1.1px) !important;
+  background-size: 8px 8px !important;
+}
+/* 蕾丝扇贝：从外框底沿垂下来，通宽（外角是直角，不用再往里收） */
+.sully-chat-header::after{
+  content:"" !important;
+  position:absolute !important;
+  left:0 !important; right:0 !important; top:100% !important; height:7px !important;
+  pointer-events:none !important;
+  /* 扁一点：把正圆换成横向椭圆（宽 7 高 4.2），间距拉到 14px */
+  background: radial-gradient(ellipse 7px 4.2px at 7px 0, var(--ink) 99%, transparent 100%) 0 0/14px 9px repeat-x !important;
+}
+.sully-chat-name{ color:var(--cocoa) !important; font-weight:700 !important; letter-spacing:.05em !important; }
+.sully-chat-status{ color:var(--ash) !important; letter-spacing:.16em !important; }
+.sully-chat-token{
+  background:var(--kraft) !important; color:var(--ash) !important;
+  border-color:var(--taupe-lt) !important; border-radius:99px !important;
+}
+.sully-chat-buffs button{
+  background:var(--milk) !important; color:var(--ash) !important;
+  border:1.5px dotted var(--taupe) !important; border-radius:99px !important;
+}
+/* 「情绪」详情面板：只上妆，绝不动 position */
+.sully-chat-header [class*="top-full"]{
+  background-color:var(--paper) !important;
+  border:1.5px dotted var(--taupe) !important;
+  border-radius:16px !important;
+  box-shadow:0 6px 20px rgba(48,44,41,.18) !important;
+}
+.sully-chat-header [class*="top-full"] button{
+  background:var(--milk) !important; color:var(--ash) !important;
+  border:1.5px dotted var(--taupe) !important; border-radius:99px !important;
+}
+.sully-chat-back, .sully-chat-trigger{
+  width:32px !important; height:32px !important; border-radius:99px !important;
+  background-color:var(--cream) !important;
+  border:1.5px dotted var(--taupe) !important;
+  color:var(--ash) !important;
+  background-repeat:no-repeat !important; background-position:center !important;
+  background-size:66% 66% !important;
+}
+.sully-chat-back{ background-image: var(--img-btn-back) !important; }
+.sully-chat-trigger{ background-image: var(--img-btn-ai) !important; color:var(--milktea) !important; }
+/* 换了图就把原生图标藏掉（上面把 --icon-back / --icon-ai 设成 0 即可） */
+.sully-chat-back svg{ opacity: var(--icon-back, 1) !important; }
+.sully-chat-trigger svg{ opacity: var(--icon-ai, 1) !important; }
+
+
+/* ══════════ ④ 日期分隔线：蕾丝 + 爪印（原设计）══════════ */
+.sully-chat-date-divider{ margin:22px 0 16px !important; }
+/* 两侧的蕾丝：一排半圆，不是直线 */
+.sully-chat-date-divider-line{
+  background:transparent !important; height:7px !important;
+  background-image: radial-gradient(circle at 5px 7px, var(--taupe-lt) 4.4px, transparent 4.9px) !important;
+  background-size:10px 10px !important; background-repeat:repeat-x !important;
+}
+/* 文字两边各一枚爪印 */
+.sully-chat-date-divider-text{
+  display:inline-flex !important; align-items:center !important; gap:7px !important;
+  color:var(--ash) !important; letter-spacing:.22em !important; font-size:10px !important;
+  background:rgba(230,222,211,.7) !important;
+  border:1px solid var(--taupe-lt) !important;
+  border-radius:99px !important; padding:2px 11px !important;
+}
+.sully-chat-date-divider-text::before,
+.sully-chat-date-divider-text::after{
+  content:"" !important; width:11px; height:11px; flex:none;
+  background:var(--img-bubble-paw) no-repeat center/contain !important;
+}
+
+
+/* ══════════ ④.5 「加载历史消息」按钮 ══════════ */
+.sully-chat-history-more{
+  background:var(--paper) !important;
+  border:1.5px dotted var(--taupe) !important;
+  border-radius:99px !important;
+  color:var(--ash) !important;
+  font-weight:700 !important;
+  box-shadow:0 2px 8px rgba(90,80,70,.12) !important;
+  backdrop-filter:none !important;          /* 原样式带毛玻璃，去掉省电 */
+  -webkit-backdrop-filter:none !important;
+  display:inline-flex !important; align-items:center !important; gap:6px !important;
+}
+.sully-chat-history-more::before{
+  content:"" !important; width:12px; height:12px; flex:none;
+  background:var(--img-bubble-paw) no-repeat center/contain !important;
+}
+
+
+/* ══════════ ⑤ 头像：圆框 + 小熊耳朵（纯 CSS，不用传图）══════════
+   耳朵和气泡同色系：角色侧用气泡灰褐、用户侧用用户气泡色，内耳深一档。
+   .sully-chat-message-avatar 是个 div 外壳（里面才是 img），所以伪元素可用。
+   顶栏那颗头像是 <img>，挂不了伪元素，只给圆环，没有耳朵。 */
+.sully-chat-message-avatar-img{
+  border-radius:99px !important;
+  border:0 !important;                       /* v4 那圈白边就是你看到的白线，去掉 */
+  box-shadow:0 0 0 2.5px var(--taupe), 0 2px 6px rgba(59,52,46,.16) !important;
+}
+.sully-chat-message-avatar{ overflow:visible !important; }
+.sully-chat-message-avatar::before{
+  content:"" !important; position:absolute !important;
+  left:1px; right:1px; top:-5px; height:11px;   /* 耳朵缩小、往里收 */
+  z-index:-1 !important; pointer-events:none !important;
+  background-repeat:no-repeat, no-repeat !important;
+  background-position:left top, right top !important;
+  background-size:11px 11px, 11px 11px !important;
+}
+/* 角色侧 */
+.sully-chat-message-ai .sully-chat-message-avatar::before{
+  background-image:
+    url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10.6" fill="%23DAD4CD" stroke="%23A79C93" stroke-width="2"/><circle cx="12" cy="12" r="4.8" fill="%23C6BEB4"/></svg>'),
+    url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10.6" fill="%23DAD4CD" stroke="%23A79C93" stroke-width="2"/><circle cx="12" cy="12" r="4.8" fill="%23C6BEB4"/></svg>') !important;
+}
+/* 用户侧 */
+.sully-chat-message-user .sully-chat-message-avatar::before{
+  background-image:
+    url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10.6" fill="%23E4DFD9" stroke="%23A79C93" stroke-width="2"/><circle cx="12" cy="12" r="4.8" fill="%23D0C9C1"/></svg>'),
+    url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10.6" fill="%23E4DFD9" stroke="%23A79C93" stroke-width="2"/><circle cx="12" cy="12" r="4.8" fill="%23D0C9C1"/></svg>') !important;
+}
+/* 顶栏头像：只有圆环，同样不要白边 */
+.sully-chat-avatar{
+  border-radius:99px !important;
+  border:0 !important;
+  box-shadow:0 0 0 2.5px var(--taupe), 0 2px 7px rgba(59,52,46,.20) !important;
+}
+
+
+/* ══════════ ⑥ 气泡 ══════════
+   耳朵：每条都有。
+   下方那条线（爪 — 线 — 熊）：只有一组的**最后一条**才画 ——
+   角色连发五条时，前四条只戴耳朵，第五条底下才收一条线。 */
+.sully-bubble-ai, .sully-bubble-user{
+  position:relative !important;
+  border:none !important; box-shadow:none !important;
+  border-radius:20px !important;
+  padding:9px 15px !important;
+  color:#40382F !important;
+  overflow:visible !important;
+}
+.sully-bubble-ai{ background:var(--bubble-ai) !important; }
+.sully-bubble-user{ background:var(--bubble-me) !important; }
+/* 只有组末那条要给线留出下方空间 */
+.sully-bubble-group-last{ margin-bottom:13px !important; }
+
+/* ── 耳朵（每条都有）──
+   ⚠️ 为什么选择器要写这么长：App 内部注了一条守卫（apps/Chat.tsx）
+       .sully-bubble-tail-hidden::before,
+       .sully-bubble-tail-hidden::after { content:none!important; display:none!important; }
+   它是给「气泡尾巴只在组末出现」那个设置兜底的，注入位置在本文件之后。
+   同为 !important 时后写的胜 —— v2 的 `.sully-bubble-ai::before` 权重和它一样，
+   于是每一条「非组末」气泡的耳朵都被它 content:none 掉了，看起来就是时有时无。
+   加一层 .sully-chat-message-content 把权重抬到 (0,2,0)，就压得住了。
+   display 也要显式写回来，因为守卫里有 display:none。 */
+.sully-chat-message-content .sully-bubble-ai::before,
+.sully-chat-message-content .sully-bubble-user::before{
+  display:block !important;
+  content:"" !important; position:absolute !important;
+  left:9px; right:9px; top:-9px; height:14px;
+  pointer-events:none; z-index:0;
+  background-repeat:no-repeat, no-repeat !important;
+  background-position:left top, right top !important;
+  background-size:17px 17px, 17px 17px !important;
+}
+.sully-chat-message-content .sully-bubble-ai::before{
+  background-image:
+    url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="%23DAD4CD"/><circle cx="12" cy="12" r="5.4" fill="%23C6BEB4"/></svg>'),
+    url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="%23DAD4CD"/><circle cx="12" cy="12" r="5.4" fill="%23C6BEB4"/></svg>') !important;
+}
+.sully-chat-message-content .sully-bubble-user::before{
+  background-image:
+    url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="%23E4DFD9"/><circle cx="12" cy="12" r="5.4" fill="%23D0C9C1"/></svg>'),
+    url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="%23E4DFD9"/><circle cx="12" cy="12" r="5.4" fill="%23D0C9C1"/></svg>') !important;
+}
+
+/* ── 下方长线（只有组末）—— 同样要提权 ── */
+.sully-chat-message-content .sully-bubble-ai::after,
+.sully-chat-message-content .sully-bubble-user::after{ content:none !important; }
+.sully-chat-message-content .sully-bubble-ai.sully-bubble-group-last::after{
+  display:block !important;
+  content:"" !important; position:absolute !important;
+  left:2px; right:-16px; bottom:-13px; height:15px; pointer-events:none;
+  background:
+    var(--img-bubble-paw) no-repeat 0 4px/11px 11px,
+    var(--img-bubble-bear) no-repeat right 0/16px 15px,
+    repeating-linear-gradient(90deg, var(--taupe) 0 3px, transparent 3px 6px) no-repeat 14px 9px/22px 1.4px,
+    linear-gradient(var(--taupe), var(--taupe)) no-repeat 38px 9px/calc(100% - 58px) 1.4px !important;
+}
+.sully-chat-message-content .sully-bubble-user.sully-bubble-group-last::after{
+  display:block !important;
+  content:"" !important; position:absolute !important;
+  left:-16px; right:2px; bottom:-13px; height:15px; pointer-events:none;
+  background:
+    var(--img-bubble-bear) no-repeat 0 0/16px 15px,
+    var(--img-bubble-paw) no-repeat right 4px/11px 11px,
+    repeating-linear-gradient(90deg, var(--taupe) 0 3px, transparent 3px 6px) no-repeat right 14px top 9px/22px 1.4px,
+    linear-gradient(var(--taupe), var(--taupe)) no-repeat 20px 9px/calc(100% - 58px) 1.4px !important;
+}
+
+
+/* ══════════ ⑦ 时间戳 / 引用 / 反应 ══════════ */
+.sully-message-time{
+  display:inline-flex !important; align-items:center !important; gap:4px !important;
+  width:auto !important; align-self:flex-start !important;
+  font-size:9px !important; color:var(--ash) !important;
+  background:rgba(230,222,211,.62) !important;
+  border:1px solid var(--taupe-lt) !important;
+  border-radius:99px !important; padding:1px 7px !important;
+}
+.sully-chat-message-user .sully-message-time{ align-self:flex-end !important; }
+.sully-message-time::before{
+  content:"" !important; width:8px; height:8px; flex:none;
+  background:var(--img-bubble-paw) no-repeat center/contain !important;
+}
+.sully-reply-quote{
+  border-left:3px dotted var(--taupe) !important;
+  background:rgba(255,255,255,.55) !important;
+  border-radius:0 9px 9px 0 !important;
+}
+.sully-reply-quote-name{ color:var(--ash) !important; }
+.sully-reply-quote-text{ color:#7E756C !important; }
+/* 表情反应：一枚贴着气泡的小奶油胶囊，点线边。
+   ⚠️ 双重边框的原因：这个胶囊本身是 <span>，里面装表情的**又是一个 <span>**，
+   v5 写的 `.sully-message-reactions span` 两个都命中，于是套了两圈点线边。
+   v6 用 `> span` 只打外层，内层显式清空。 */
+.sully-message-reactions{ margin-top:2px !important; }
+.sully-message-reactions > span > span{
+  background:transparent !important; border:0 !important;
+  padding:0 !important; box-shadow:none !important;
+}
+.sully-message-reactions > span{
+  background:var(--kraft) !important;
+  border:1.5px dotted var(--taupe) !important;
+  border-radius:99px !important;
+  box-shadow:none !important;
+  padding:0 7px !important;
+  min-width:0 !important; height:20px !important;
+  font-size:11px !important;
+  color:var(--ash) !important;
+}
+
+
+/* ══════════ ⑧ 语音条：干净胶囊，无斑点 ══════════ */
+.sully-voice-bar-shell{ overflow:visible !important; }
+.sully-voice-bar{
+  position:relative !important;
+  border-radius:99px !important;
+  background:var(--paper) !important;      /* ← 单色，不再铺点阵 */
+  border:1px solid var(--taupe-lt) !important;
+  box-shadow:0 0 0 3px rgba(255,255,255,.95), 0 3px 10px rgba(90,80,70,.10) !important;
+  padding-right:40px !important;
+}
+.sully-voice-bar::after{
+  content:"" !important; position:absolute !important;
+  right:-6px; top:-11px; width:42px; height:38px; z-index:2; pointer-events:none;
+  background:var(--img-voice-bear) no-repeat center/contain !important;
+}
+
+
+/* ══════════ ⑧-b 富内容的安全间距 ══════════
+   消息行的「宽松」只在组尾使用 mb-8；同角色、时间接近时，卡片 / 语音
+   可能被判成组内消息，只拿到 mb-2.5。可它们的贴纸、熊耳朵和阴影又会
+   越过自己的布局盒子，于是下一条气泡看起来像是贴上来甚至重叠。
+
+   这里只接管富内容，不改普通气泡的密度：
+   · 非组首：给顶部装饰留 12px 的实际布局空间；
+   · 非组尾：把尾距补到 32px，等同「宽松」的组尾距离。
+   组首 / 组尾仍交给原本的消息密度设置，避免普通聊天节奏被整段拉开。 */
+.sully-chat-message.sully-chat-card:not(.sully-chat-message-group-first),
+.sully-chat-message.sully-chat-message-module:not(.sully-chat-message-group-first),
+.sully-chat-message:has(.sully-voice-bar-shell):not(.sully-chat-message-group-first){
+  padding-top:12px !important;
+}
+.sully-chat-message.sully-chat-card:not(.sully-chat-message-group-last),
+.sully-chat-message.sully-chat-message-module:not(.sully-chat-message-group-last),
+.sully-chat-message:has(.sully-voice-bar-shell):not(.sully-chat-message-group-last){
+  margin-bottom:32px !important;
+}
+
+
+/* ══════════ ⑨「正在输入」/「发送准备中」══════════ */
+.sully-typing-bubble{
+  background:var(--bubble-ai) !important;
+  border:none !important; box-shadow:none !important; border-radius:20px !important;
+}
+.sully-typing-dot{ background:var(--ash) !important; }
+.sully-typing-avatar{ border-radius:99px !important; }
+.sully-pending-dot{ background:var(--taupe) !important; }
+
+
+/* ══════════ ⑩ 输入栏：顶栏的镜像 ══════════
+   同一套构造上下翻转：
+     外框 = .sully-chat-inputbar 自己的背景（炭黑 + 白波点），四角直角
+     内胆 = ::before（奶油 + 灰波点），圆角 16px，z-index:-1 垫在内容之下
+     蕾丝 = ::after，长在**上沿**、半圆朝上，和顶栏那排对称
+
+   padding-bottom 不覆盖：原本的 pb-safe 要留给 Home 指示条。
+   加号菜单展开时会被这个框一起裹住 —— 想让菜单跳出框外的话告诉我，改成只裹输入行。 */
+.sully-chat-inputbar{
+  position:relative !important;
+  overflow:visible !important;
+  border:0 !important;
+  border-radius:0 !important;
+  padding-left:8px !important;
+  padding-right:8px !important;
+  /* ── 底栏高度的三个旋钮之一 ──
+     整条底栏想再矮就把下面这三处一起调小（另两处见 ⑩-b、⑩-c）：
+       这里 padding-top、输入行的上下内边距、内胆底边留白。 */
+  padding-top:8px !important;
+  background-color: var(--ink) !important;
+  background-image: radial-gradient(rgba(255,255,255,.30) 1px, transparent 1.1px) !important;
+  background-size: 7px 7px !important;
+  box-shadow: 0 -4px 14px rgba(48,44,41,.14) !important;
+}
+/* 奶油内胆 */
+.sully-chat-inputbar::before{
+  content:"" !important;
+  position:absolute !important; z-index:-1 !important;
+  top:7px !important; left:7px !important; right:7px !important;
+  /* 底边收到 Home 指示条那条线上方 —— 不再一路铺到屏幕最底。
+     写两遍是兜底：老浏览器算不出 max()/var 时，退回上面那条 7px。 */
+  bottom:7px !important;
+  bottom: max(6px, calc(var(--safe-bottom) * 0.85)) !important;   /* ⑩-c 底栏高度旋钮：越小越矮 */
+  border-radius:16px !important;
+  pointer-events:none !important;
+  background-color: var(--paper) !important;
+  background-image: radial-gradient(rgba(167,156,147,.26) 1px, transparent 1.1px) !important;
+  background-size: 8px 8px !important;
+}
+/* 软键盘打开时，Sully 会把输入栏自己的 pb-safe 收为 0，
+   但 --safe-bottom 仍保留手机 Home 条的数值。若继续用上面的
+   safe-bottom 计算，奶油内胆会提前结束，而输入行按钮已经贴到键盘上沿，
+   于是按钮下半截落进黑色底纹，看起来像底部按钮错位。键盘态改用
+   输入行本身的 5px 底部留白对齐；键盘收起后自动回到上面的安全区规则。 */
+body.ios-keyboard-open .sully-chat-inputbar{
+  padding-bottom:0 !important;
+}
+body.ios-keyboard-open .sully-chat-inputbar::before{
+  bottom:6px !important;
+}
+/* 蕾丝扇贝：半圆朝上，长在外框上沿，和顶栏对称 */
+.sully-chat-inputbar::after{
+  content:"" !important;
+  position:absolute !important;
+  left:0 !important; right:0 !important; bottom:100% !important; height:7px !important;
+  pointer-events:none !important;
+  /* 同样的扁椭圆，圆心挪到盒子底部，露出上半边 */
+  background: radial-gradient(ellipse 7px 4.2px at 7px 7px, var(--ink) 99%, transparent 100%) 0 0/14px 9px repeat-x !important;
+}
+/* 底栏那条横在内胆下沿、还比内胆宽的浅色线：
+   是输入行外层和加号菜单容器各自带的 border-t / border 描边，
+   它们是通宽的，压在圆角内胆上就成了「错位」。一并清掉。 */
+/* 输入行 / 多选行外层：清掉它们自带的通宽描边和半透明白底。
+   多选（转发·删除）那一行是 bg-white/50 + backdrop-blur，
+   压在圆角内胆上就是你看到的那张「白纸」。加号菜单要留自己的底，排除掉。 */
+.sully-chat-inputbar > div:not(.sully-chat-panel){
+  border:0 !important;
+  box-shadow:none !important;
+  background:transparent !important;
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+.sully-chat-panel{ border:0 !important; box-shadow:none !important; }
+
+/* ⑩-b 底栏高度旋钮：输入行自带 p-3（上下各 12px），收到 5px。
+   想更矮就继续调小，想宽松就加大。 */
+.sully-chat-inputbar > div:not(.sully-chat-panel){
+  padding-top:5px !important;
+  padding-bottom:5px !important;
+}
+/* ══ 三颗键 / 输入框：高度对齐 ══
+   输入行用的是 align-items:flex-end —— 这是组件刻意的：多行输入时
+   输入框向上长、按钮贴着底边。所以**别去改 align-items**
+   （改成 center 的话，多行时按钮会浮在半空）。
+   想让它们看起来居中对齐，正确做法是把两者设成**同一个高度**：
+   底对齐 + 等高 = 视觉上就是齐的，而且多行时行为依然正确。 */
+.sully-chat-inputbar > div > button{
+  width:40px !important; height:40px !important; min-height:0 !important;
+}
+.sully-chat-input-clip{
+  min-height:40px !important;   /* 和上面那颗键一样高 */
+  box-sizing:border-box !important;
+}
+/* textarea 组件写死了 min-height:2.75rem(44px)，还带 py-3（上下各 12px）。
+   v15 只压了 min-height，padding 没动 —— 组件里有段 JS 会按 scrollHeight
+   命令式地写 inline height，量出来仍是 44 上下，于是输入框比按钮高 6px，
+   底对齐之下就显得「输入框往上翘」。padding 一起收掉才真的等高。
+   ⚠️ 别去改输入行的 align-items（它是 flex-end，多行时按钮要贴着底边）。 */
+.sully-chat-input-clip textarea{
+  min-height:40px !important;
+  padding-top:8px !important;
+  padding-bottom:8px !important;
+}
+
+.sully-chat-input-clip{
+  background:var(--milk) !important;
+  border-radius:20px !important;
+  border:1.5px dotted var(--taupe) !important;
+  padding:0 8px !important;
+}
+/* 表情包笑脸：在 clip 里面，是最后一颗按钮 */
+.sully-chat-input-clip button:last-of-type{
+  background-image: var(--img-btn-emoji) !important;
+  background-repeat:no-repeat !important;
+  background-position:center !important;
+  background-size:72% 72% !important;
+  border-radius:99px !important;
+}
+.sully-chat-input-clip button:last-of-type svg{ opacity: var(--icon-emoji, 1) !important; }
+/* 外层容器自带 `border border-transparent`，聚焦时会显边框，和点线圈叠成两层 */
+.sully-chat-inputbar div:has(> .sully-chat-input-clip){
+  border-color:transparent !important;
+  background:transparent !important;
+}
+.sully-chat-input-clip textarea{ color:var(--cocoa) !important; }
+.sully-chat-input-clip textarea::placeholder{ color:#B5AEA6 !important; }
+.sully-chat-inputbar > div > button{
+  border-radius:99px !important;
+  background-color:var(--cream) !important;
+  border:1.5px dotted var(--taupe) !important;
+  color:var(--ash) !important;
+  background-repeat:no-repeat !important; background-position:center !important;
+  background-size:64% 64% !important;
+  box-shadow:none !important;              /* 转发键自带蓝色光晕，去掉 */
+}
+.sully-chat-inputbar > div > button:nth-of-type(1){ background-image: var(--img-btn-plus) !important; }
+.sully-chat-inputbar > div > button:nth-of-type(2){ background-image: var(--img-btn-voice) !important; }
+.sully-chat-inputbar > div > button:nth-of-type(3){ background-image: var(--img-btn-send) !important; }
+/* 换了图就藏掉按钮里原生的 svg 图标，否则它压在你的图上面。
+   上面把 --icon-plus / --icon-voice / --icon-send 设成 0 即可。
+
+   ⚠️ v16 修的坑：发送键这两行原本写的是 `:last-of-type`。
+      「发送键」在装扮里关掉之后，输入行里只剩加号(1)、语音(2) 两颗，
+      :last-of-type 命中的就变成了**语音键自己** —— 它排在 nth-of-type(2)
+      后面、权重相同，于是 --img-btn-send(none) 把语音的熊图擦掉，
+      --icon-send(1) 又把原生波形放了回来。表现就是「语音的图床不生效」。
+      改成 nth-of-type(3) 后，没有发送键时这两行谁也选不中，互不干扰。
+
+   ⚠️ 序号是按「实际渲染出来的按钮」数的：
+      加号永远是 (1)；语音开着才占 (2)，关掉的话发送键就顶上来变成 (2)。
+      在装扮里开关这两颗键之后，记得回来对一下序号。 */
+.sully-chat-inputbar > div > button:nth-of-type(1) svg{ opacity: var(--icon-plus, 1) !important; }
+.sully-chat-inputbar > div > button:nth-of-type(2) svg{ opacity: var(--icon-voice, 1) !important; }
+.sully-chat-inputbar > div > button:nth-of-type(3) svg{ opacity: var(--icon-send, 1) !important; }
+
+
+/* ══════════ ⑪ 表情包消息 ══════════
+   表情包不是气泡（没有 .sully-bubble-*），所以耳朵和线都落不到它头上——这是对的。
+   这里只给它一点自己的质感：柔投影 + 稍微收一点尺寸。 */
+.sully-emoji-msg{
+  filter: drop-shadow(0 3px 6px rgba(90,80,70,.18)) !important;
+  border-radius:12px !important;
+}
+
+
+/* ══════════ ⑫ 加号菜单 ══════════ */
+.sully-chat-panel{
+  background-color:var(--cream) !important;
+  background-image:
+    radial-gradient(var(--dot) 1px, transparent 1.15px),
+    repeating-linear-gradient(48deg, rgba(167,156,147,.10) 0 1px, transparent 1px 26px) !important;
+  background-size:9px 9px, auto !important;
+}
+/* 功能格的图标砖。状态红点是这块砖的子元素，铺背景图不会盖住它。 */
+.sully-chat-panel button [class*="w-14"]{
+  background-color:var(--milk) !important;
+  border:1.5px dotted var(--taupe) !important;
+  border-radius:18px !important;
+  color:var(--ash) !important;
+  box-shadow:0 2px 7px rgba(90,80,70,.10) !important;
+}
+.sully-chat-panel button > span:last-child{ color:var(--ash) !important; }
+.sully-chat-panel [class*="rounded-full"][class*="px-3"]{
+  border:1.5px dotted var(--taupe) !important; color:var(--ash) !important;
+}
+
+/* ── 有贴纸表之后再放开这段 ──
+.sully-chat-panel button [class*="w-14"]{
+  background-image: var(--img-panel-sheet) !important;
+  background-size: 400% 500% !important; background-repeat: no-repeat !important;
+}
+.sully-chat-panel button [class*="w-14"] svg{ opacity:0 !important; }
+.sully-chat-panel [class*="grid-cols-4"] > button:nth-child(1) [class*="w-14"]{ background-position:0%    0%; }
+.sully-chat-panel [class*="grid-cols-4"] > button:nth-child(2) [class*="w-14"]{ background-position:33.3% 0%; }
+.sully-chat-panel [class*="grid-cols-4"] > button:nth-child(3) [class*="w-14"]{ background-position:66.6% 0%; }
+.sully-chat-panel [class*="grid-cols-4"] > button:nth-child(4) [class*="w-14"]{ background-position:100%  0%; }
+   三页共用同一套 nth-child，第 2 页第 1 格也会拿到「第 1 格」的图。
+   建议先只做第 1 页，看效果满意再往下扩。 */
+
+/* 输入框的外壳：去掉占位的透明边框 + 解除裁剪 */
+.sully-chat-inputbar div:has(> .sully-chat-input-clip){
+  border-width:0 !important;
+  padding-left:0 !important;
+  padding-right:0 !important;
+  overflow:visible !important;
+}
+
+
+/* ══════════ ⑩-d v20：语音时间戳 / 输入行横向布局 ══════════
+   时间戳是 absolute top-full，不会跟着消息行的 margin 一起下移。
+   给“语音消息且为本组最后一条”的内容盒留出底部空间，时间戳自然落到
+   语音条下方，同时这段空间也会计入消息高度，不会压住下一条消息。 */
+.sully-chat-message.sully-chat-message-group-last:has(.sully-voice-bar-shell) .sully-chat-message-content{
+  padding-bottom:10px !important;
+}
+
+/* 外框与 composer 各保留 8px 安全边距：按钮向两侧展开，但仍离深色边框有距离。
+   中间输入框用 flex 自动填满剩余宽度，发送键的胶囊样式不被改窄。 */
+.sully-chat-inputbar > .sully-chat-composer{
+  box-sizing:border-box !important;
+  min-width:0 !important;
+  gap:10px !important;
+  padding-left:8px !important;
+  padding-right:8px !important;
+}
+.sully-chat-inputbar > .sully-chat-composer > button:not(.sully-chat-send-button){
+  flex:0 0 40px !important;
+  width:40px !important;
+  min-width:40px !important;
+}
+.sully-chat-inputbar > .sully-chat-composer > .sully-chat-send-button{
+  flex-shrink:0 !important;
+}
+.sully-chat-inputbar > .sully-chat-composer > .sully-chat-input-wrap{
+  flex:1 1 auto !important;
+  min-width:0 !important;
+}

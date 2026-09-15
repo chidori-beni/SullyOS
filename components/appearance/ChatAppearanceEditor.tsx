@@ -8,6 +8,9 @@ import ChromeCssEditor from '../chat/ChromeCssEditor';
 import CssSlotEditor from './CssSlotEditor';
 import { BUILTIN_DIALOG_CSS_PRESETS, DIALOG_CSS_AI_PROMPT, DIALOG_HOOKS } from '../../utils/globalCss';
 import { FadersHorizontal } from '@phosphor-icons/react';
+import cocoaDotsChatChromeCss from '../../assets/css-presets/cocoa-dots/chat-chrome-v21.css?raw';
+import cocoaDotsCardCss from '../../assets/css-presets/cocoa-dots/chat-card-v3.css?raw';
+import cocoaDotsDialogCss from '../../assets/css-presets/cocoa-dots/chat-dialog-v2.css?raw';
 
 type Props = {
     theme: OSTheme;
@@ -64,7 +67,17 @@ const FINE_TUNE_DEFAULTS: Required<ChatFineTuneFields> = {
     chatModuleAlign: 'center',
 };
 
-const presets: Array<{ name: string; desc: string; config: Partial<OSTheme> }> = [
+const presets: Array<{ name: string; desc: string; config: Partial<OSTheme>; cssBundle?: boolean }> = [
+    {
+        name: '可可点点聊天套装',
+        desc: '一次换三份 CSS；保留聊天背景与桌面外观',
+        cssBundle: true,
+        config: {
+            chatChromeCustomCss: cocoaDotsChatChromeCss,
+            chatCardCustomCss: cocoaDotsCardCss,
+            chatDialogCustomCss: cocoaDotsDialogCss,
+        },
+    },
     {
         name: '默认聊天',
         desc: '柔和通用的聊天壳',
@@ -721,7 +734,7 @@ export const ChatAppearanceEditor: React.FC<Props> = ({ theme, updateTheme, onRe
                 {page === 0 && (<>
                     <p className="mb-3 text-[10px] text-slate-400">一键换整套聊天壳（含头像、气泡、间距与细节微调），切预设会先清掉微调残留。</p>
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                        {presets.map((preset) => (
+                        {presets.filter((preset) => !perCharacter || !preset.cssBundle).map((preset) => (
                             <button
                                 key={preset.name}
                                 onClick={() => updateTheme({ ...FINE_TUNE_DEFAULTS, ...preset.config })}

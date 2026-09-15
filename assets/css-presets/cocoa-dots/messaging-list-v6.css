@@ -1,0 +1,1089 @@
+/* ══════════════════════════════════════════════════════════════
+   可可点点 · 信息 App（好友列表）CSS   v6
+
+   v5 改了什么：
+     · 分组键被下面的好友列表盖住了 —— 修好了（见 ⑥ 段「消息」那一行）。
+       原因是两个叠一起：按钮 32px 比「消息」那行的行高还高、溢出到了
+       列表的地盘；而这一行和列表原生是同一个 z-index，后写的列表就盖了上来。
+       顺带把分组下拉菜单也救了，它之前同样被列表盖住。
+
+   v4 改了什么：
+     · 「消息」小标题右边那颗分组键：图标没居中修好了，并且加了图床槽
+       （① 段的 --img-btn-group）。原生那颗按钮是 34×32 的长方形、
+       而且没做 flex 居中，靠文字排版把 svg 顶得偏下，套上圆点线圈就更歪。
+
+   粘贴位置：信息 App → 底部「消息」标签 **长按**（或右键）→ 主题设置 → 粘贴 CSS
+
+   配套的另外两份（都是聊天页里面的，别混）：
+     · 白框-ins风轻松熊v17.txt   → 进角色聊天 →「＋」→ 装扮 → 白框
+     · 卡片-ins风轻松熊v2.txt    → 装扮 →「所有聊天」→ 卡片 · CSS
+
+   这份管的是「从聊天界面退出来之后」的信息 App 全部四个页签：
+     · 好友列表 —— 顶栏 / 搜索框 / 消息小标题 / 分组条 / 好友卡片 / 未读角标 / 空状态
+     · 朋友圈   —— 封面 / 动态卡片 / 点赞评论区 / 评论输入行
+     · 收藏     —— 分类胶囊 / 收藏卡片
+     · 我的     —— 拍立得头像 / 三个计数 / 资料条 / 关于我 / 相册
+     · 底部四个标签（四页共用）
+
+   ★ 好友列表上方那排「动态气泡」已经整条盖掉了，改成一条可以放图的横幅带，
+     见 ① 段的 --img-notes-cover 和 ⑤ 段。
+
+   ⚠️ 这份 CSS 会被 App 自动加作用域（只作用在信息 App 里，不会外溢）。
+      写变量用 :root{ } —— 它会被自动展开到四个页签 + 底栏，不要改成别的。
+   ══════════════════════════════════════════════════════════════ */
+
+
+/* ══════════════════════════════════════════════════════════════
+   ① 图床槽位 —— 要换图的话只动这一段就够了
+   ══════════════════════════════════════════════════════════════
+
+   ⚠️ 写法只有一种，别漏了 url( ) ：
+
+        --img-tab-chat: url("https://files.catbox.moe/xxx.png");   ✓ 对
+        --img-tab-chat: https://files.catbox.moe/xxx.png;          ✗ 错，整行会被浏览器丢掉
+
+   这些变量最后是喂给 background-image 的，它只认 url(...) 包起来的值。
+   裸网址不是合法的图片值，浏览器会把**整条声明当垃圾丢掉**，
+   表现就是「填了没反应」。
+
+   不放图就写  none 。
+
+   —— 换了图之后，记得把同名的 *-icon 那行设成 0，
+      否则按钮里原生的图标（箭头 / 铅笔 / 四个标签的 svg）会压在你的图上面。
+      没换图就保持 1。                                              */
+
+:root{
+
+  /* ── 1. 整页底图（铺满好友列表那一页，在纹理下面）──────────
+     竖图，建议 1080×1920 左右。不想要就 none。 */
+  --img-page-bg:      url('https://files.catbox.moe/h9wuh2.jpg');
+
+  /* ── 2. 顶栏底图（贴在黑框内胆里，奶油底之上）────────────
+     很宽很扁的图，建议 1080×260。 */
+  --img-header-bg:    none;
+
+  /* ── 3. 顶栏两颗键 · 96×96 透明 PNG ────────────────── */
+  --img-btn-back: url('https://files.catbox.moe/4wx0s8.png');   /* 左上「返回桌面」 */
+  --img-btn-edit:     url('https://files.catbox.moe/qxlcn1.png');   /* 右上「编辑角色」 */
+  --icon-back: 0;             /* 上面放了图 → 改成 0 */
+  --icon-edit: 0;
+
+  /* ── 4. 搜索框左边那颗放大镜 · 64×64 ─────────────── */
+  --img-search:       none;
+  --icon-search: 1;
+
+  /* ── 4.5「消息」小标题右边那颗分组键 · 96×96 透明 PNG ──
+     就是点开「按角色分组 / 展开全部分组 / 收起全部分组」那颗。 */
+  --img-btn-group:    url('https://files.catbox.moe/dgwdu4.png');
+  --icon-group: 0;            /* 上面放了图 → 改成 0 */
+
+  /* ── 5. 底部四颗标签 · 128×128 透明 PNG ───────────────
+     每颗有「没选中 / 选中」两张，只想放一张的话两个槽填一样的图。 */
+  --img-tab-chat:      url('https://files.catbox.moe/rp4tll.png');   --img-tab-chat-on:      url('https://files.catbox.moe/gk2wlj.png');
+  --img-tab-moments:   url('https://files.catbox.moe/vhbnm3.png');   --img-tab-moments-on:   url('https://files.catbox.moe/nn90rp.png');
+  --img-tab-favorites: url('https://files.catbox.moe/svb52n.png');   --img-tab-favorites-on: url('https://files.catbox.moe/ns0tw3.png');
+  --img-tab-profile:   url('https://files.catbox.moe/qlpkhd.png');   --img-tab-profile-on:   url('https://files.catbox.moe/sin5dt.png');
+  --icon-tab: 0;              /* 四颗都换了图 → 改成 0 */
+
+  /* ── 6. 卡片右下角的贴纸（每张好友卡片都会出现）· 256×256 ──
+     不想每张都有就保持 none。 */
+  --img-card-sticker: url('https://files.catbox.moe/edoj2n.png');
+
+  /* ── 6.5 盖住「动态气泡条」的横幅图 ★★★────────────────
+     好友列表上方那排「头像 + 一句话」的动态条，现在整条被盖住不显示了，
+     位置改成放一张你自己的横幅图。
+
+       --img-notes-cover   横幅图，宽扁图，建议 1080×280
+       --notes-cover-h     这条带子的高度，想更矮就调小
+
+     填 none 的话，那里会是一条奶油蕾丝带（下面 ⑤ 段画的），不会开天窗。
+     ⚠️ 盖住之后「You」那一格点不到了，改个性签名 / 头像请走
+        底部「我的」→ 右上角铅笔。
+     ⚠️ 不想要这条带子、想让它彻底消失（列表整体上移）：
+        把 ⑤ 段最后那行注释掉的 display:none 放出来。 */
+  --img-notes-cover: url('https://files.catbox.moe/670sb0.jpg');
+  --notes-cover-h: 92px;
+
+  /* ── 6.6 朋友圈封面图 · 建议 1080×1360 ──────────────
+     ⚠️ 只在「App 里没有设过封面」时才生效：App 的封面是写成内联样式的，
+        内联样式永远压过 CSS。想用这里这张，就别在 App 里传封面。 */
+  --img-moments-cover: none;
+
+  /* ── 7. 置顶卡片右上角探出来的那只 · 256×256 ─────────── */
+  --img-pin-bear: url('https://files.catbox.moe/18d6jx.png');
+
+  /* ── 8. 空状态中间那只（一个好友都没有时）· 512×512 ───── */
+  --img-empty-bear: url('https://files.catbox.moe/a8yjel.png');
+
+  /* ── 9. 通用小配件（爪印 / 耳朵），聊天白框那份也是这两张 ── */
+  --paw: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23A79C93"><ellipse cx="12" cy="16" rx="6" ry="5"/><ellipse cx="5" cy="9" rx="2.6" ry="3.4"/><ellipse cx="19" cy="9" rx="2.6" ry="3.4"/><ellipse cx="9.5" cy="5" rx="2.4" ry="3.2"/><ellipse cx="14.5" cy="5" rx="2.4" ry="3.2"/></svg>');
+  --ear: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10.6" fill="%23F7F5F2" stroke="%23A79C93" stroke-width="2"/><circle cx="12" cy="12" r="4.8" fill="%23E6DED3"/></svg>');
+
+
+  /* ══════════ 配色（和聊天白框 v13 同一套）══════════ */
+  --cream:#F7F5F2; --milk:#FFFFFF; --paper:#FCFBF9; --ink:#302C29;
+  --cocoa:#4A3B31; --ash:#6E6259; --taupe:#A79C93; --taupe-lt:#D5CFC8;
+  --kraft:#E6DED3; --milktea:#A9866A; --dot:#DEDAD4; --rose:#DCB6AC;
+
+  /* ══════════ 交给原生变量的部分 ══════════
+     这几个是信息 App 自己认的槽，先把大方向定住，下面各段再做细节。 */
+  --nj-msg-bg: #F7F5F2;
+  --nj-msg-text: #40382F;
+  --nj-msg-text-muted: #8B8078;
+  --nj-msg-text-time: #A79C93;
+  --nj-msg-card-bg: #FCFBF9;
+  --nj-msg-card-bg-pinned: #F2EDE4;
+  --nj-msg-card-radius: 20px;
+  --nj-msg-card-border: none;              /* 关掉原生那条通宽分隔线 */
+  --nj-msg-card-padding: 13px 15px;
+  --nj-msg-card-gap: 13px;
+  --nj-msg-card-active-transform: scale(.982);
+  --nj-msg-avatar-radius: 99px;
+  --nj-msg-avatar-shadow: none;            /* 圆环改用 box-shadow 自己画 */
+  --nj-msg-unread-bg: #A9866A;
+  --nj-msg-unread-color: #FFFFFF;
+  --nj-msg-tabbar-active: #4A3B31;
+  --nj-msg-tabbar-inactive: #A79C93;
+  --nj-msg-chat-search-bg: transparent;
+  --nj-msg-chat-search-radius: 20px;
+  --nj-avatar-size: 54px;
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   ② 页面底：奶油 + 斜纹 + 点阵
+   —— 底图（--img-page-bg）在最下面，纹理浮在上面，内容在最上面。
+      不想要纹理就把 background-image 删到只剩 var(--img-page-bg)。
+   ══════════════════════════════════════════════════════════════ */
+.nj-chat-tab{
+  background-color: var(--cream);
+  background-image:
+    repeating-linear-gradient(48deg, rgba(167,156,147,.09) 0 1px, transparent 1px 30px),
+    repeating-linear-gradient(-48deg, rgba(167,156,147,.09) 0 1px, transparent 1px 30px),
+    radial-gradient(rgba(167,156,147,.24) 1px, transparent 1.15px),
+    var(--img-page-bg);
+  background-size: auto, auto, 9px 9px, cover;
+  background-position: 0 0, 0 0, 0 0, center;
+  background-repeat: repeat, repeat, repeat, no-repeat;
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   ③ 顶栏：黑底白波点外框（直角）+ 奶油圆角内胆 + 蕾丝扇贝
+   —— 和聊天页顶栏是同一套构造，退出聊天进来不会突然换风格。
+
+   为什么内胆敢用 ::before + z-index:-1：
+   顶栏原生就是 position:sticky + z-index:20，它自己已经是一个层叠上下文，
+   上下文内部的绘制顺序是「元素自己的背景 → z-index 负的子元素 → 普通内容」，
+   所以内胆正好垫在黑底之上、标题按钮之下，**不用给任何子元素加 position**。
+   ══════════════════════════════════════════════════════════════ */
+.nj-chat-tab-header{
+  position: sticky;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  padding-left: 24px;
+  padding-right: 24px;
+  padding-bottom: 15px;
+  background-color: var(--ink);
+  background-image: radial-gradient(rgba(255,255,255,.30) 1px, transparent 1.1px);
+  background-size: 7px 7px;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: 0 4px 14px rgba(48,44,41,.16);
+}
+/* 奶油内胆 */
+.nj-chat-tab-header::before{
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: max(6px, calc(var(--nuo-safe-top) - 4px));
+  left: 8px; right: 8px; bottom: 8px;
+  border-radius: 16px;
+  pointer-events: none;
+  background-color: var(--paper);
+  background-image:
+    var(--img-header-bg),
+    radial-gradient(rgba(167,156,147,.26) 1px, transparent 1.1px);
+  background-size: cover, 8px 8px;
+  background-position: center, 0 0;
+  background-repeat: no-repeat, repeat;
+}
+/* 蕾丝扇贝：从外框底沿垂下来，通宽 */
+.nj-chat-tab-header::after{
+  content: "";
+  position: absolute;
+  left: 0; right: 0; top: 100%; height: 7px;
+  pointer-events: none;
+  background: radial-gradient(ellipse 7px 4.2px at 7px 0, var(--ink) 99%, transparent 100%) 0 0/14px 9px repeat-x;
+}
+/* 标题 */
+.nj-chat-tab-header-title-btn{
+  color: var(--cocoa);
+  font-weight: 700;
+  letter-spacing: .06em;
+}
+.nj-chat-tab-header-title-btn svg{ color: var(--taupe); }
+/* 左右两颗键：奶油圆钮 + 点线圈，和聊天页返回键同款 */
+.nj-chat-tab-header-back,
+.nj-chat-tab-header-edit{
+  box-sizing: border-box;
+  width: 32px; height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 99px;
+  background-color: var(--cream);
+  border: 1.5px dotted var(--taupe);
+  color: var(--ash);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 64% 64%;
+}
+.nj-chat-tab-header-back{ background-image: var(--img-btn-back); }
+.nj-chat-tab-header-edit{ background-image: var(--img-btn-edit); }
+.nj-chat-tab-header-back > svg,
+.nj-chat-tab-header-edit > svg{ width: 17px; height: 17px; }
+/* 换了图就把原生 svg 藏掉（上面把 --icon-back / --icon-edit 设成 0 即可） */
+.nj-chat-tab-header-back > svg{ opacity: var(--icon-back, 1); }
+.nj-chat-tab-header-edit > svg{ opacity: var(--icon-edit, 1); }
+
+
+/* ══════════════════════════════════════════════════════════════
+   ④ 搜索框：奶白胶囊 + 点线圈
+   ══════════════════════════════════════════════════════════════ */
+.nj-chat-tab-search-wrap{ padding: 14px 18px 4px; }
+.nj-chat-tab-search{
+  background-color: var(--milk);
+  background-image: var(--img-search);
+  background-repeat: no-repeat;
+  background-position: 15px center;
+  background-size: 15px 15px;
+  border: 1.5px dotted var(--taupe);
+  border-radius: 20px;
+  color: var(--ash);
+  box-shadow: 0 2px 8px rgba(90,80,70,.07);
+}
+.nj-chat-tab-search > svg{ color: var(--taupe); opacity: var(--icon-search, 1); }
+.nj-chat-tab-search-input{ color: var(--cocoa); font-size: 14px; }
+.nj-chat-tab-search-input::placeholder{ color: #B5AEA6; letter-spacing: .1em; }
+
+
+/* ══════════════════════════════════════════════════════════════
+   ⑤ 动态气泡条 → 换成一条横幅带 ★★★
+   —— 原本这里是「头像 + 一句话」那排动态。现在整条盖掉：
+      ① 带子自己 overflow:hidden，把探出去的气泡裁掉；
+      ② 里面所有内容 opacity:0 + pointer-events:none，看不见也点不到；
+      ③ ::after 铺一张满幅的图（--img-notes-cover），
+         没填图就退回一条奶油蕾丝带，不会开天窗。
+
+   为什么不用 display:none 把子元素干掉：
+   带子是横向滚动容器，子元素一旦不占位，高度会塌成 0，
+   ::after 的 inset:0 就没东西可撑，图也跟着没了。
+   所以是「留位置 + 藏内容 + 盖图」，不是删节点。
+   ══════════════════════════════════════════════════════════════ */
+.nj-chat-tab-notes{
+  position: relative;
+  overflow: hidden;
+  gap: 0;
+  padding: 0;
+  height: var(--notes-cover-h, 92px);
+  min-height: var(--notes-cover-h, 92px);
+  margin: 12px 16px 2px;
+  border: 1.5px dotted var(--taupe);
+  border-radius: 18px;
+  box-shadow: 0 0 0 3px rgba(255,255,255,.95), 0 3px 12px rgba(90,80,70,.11);
+}
+/* 藏内容。只动 opacity 和 pointer-events —— 不给 `> *` 加 position，
+   那会把原本 absolute 的气泡顶回文档流，把带子撑变形。 */
+.nj-chat-tab-notes > *{ opacity: 0; pointer-events: none; }
+/* 盖图。没填 --img-notes-cover 时下面那两层渐变兜底，是一条奶油蕾丝带。 */
+.nj-chat-tab-notes::after{
+  content: "";
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  pointer-events: none;
+  background-color: var(--paper);
+  background-image:
+    var(--img-notes-cover),
+    radial-gradient(circle at 6px 100%, var(--taupe-lt) 5px, transparent 5.5px),
+    radial-gradient(rgba(167,156,147,.24) 1px, transparent 1.15px);
+  background-size: cover, 12px 12px, 9px 9px;
+  background-position: center, 0 100%, 0 0;
+  background-repeat: no-repeat, repeat-x, repeat;
+}
+
+/* ── 不想要这条带子、想让它整条消失（下面的列表整体上移）──
+   把下面这行前后的注释符去掉即可。
+.nj-chat-tab-notes{ display: none; }
+   ────────────────────────────────────────────────────── */
+
+
+/* ══════════════════════════════════════════════════════════════
+   ⑤.5 动态气泡条的原始皮肤（现在被 ⑤ 盖住了，看不见）
+   —— 留着是为了「哪天又想把动态条露出来」：
+      把 ⑤ 那一整段删掉，这一段马上生效，气泡就是奶油点线胶囊 + 小熊耳朵。
+   ══════════════════════════════════════════════════════════════ */
+.nj-chat-tab-note-bubble{
+  color: var(--ash);
+  background: var(--paper);
+  border: 1.5px dotted var(--taupe);
+  border-radius: 16px;
+  box-shadow: 0 3px 10px rgba(90,80,70,.10);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  font-size: 10px;
+  letter-spacing: .04em;
+}
+.nj-chat-tab-note-bubble-tail1,
+.nj-chat-tab-note-bubble-tail2{
+  background: var(--paper);
+  border: 1.5px dotted var(--taupe);
+}
+.nj-chat-tab-note-avatar{
+  overflow: visible;
+  padding: 2px;
+  border: 0;
+  background: transparent;
+  box-shadow: 0 0 0 2.5px var(--taupe), 0 3px 8px rgba(59,52,46,.14);
+}
+.nj-chat-tab-note-avatar-img{ background: var(--cream); }
+/* 「我」那一格：原生是 <img> 直接子元素 + overflow:hidden，放开好长耳朵 */
+.nj-chat-tab-note-mine .nj-chat-tab-note-avatar{
+  overflow: visible;
+  padding: 2px;
+  background: transparent;
+}
+.nj-chat-tab-note-mine .nj-chat-tab-note-avatar > img{ border-radius: 99px; }
+/* 耳朵：贴在头像圆的左上 / 右上空角，压不到脸 */
+.nj-chat-tab-note-avatar::before{
+  content: "";
+  position: absolute;
+  left: -1px; right: -1px; top: -7px; height: 14px;
+  z-index: 0;
+  pointer-events: none;
+  background-image: var(--ear), var(--ear);
+  background-repeat: no-repeat, no-repeat;
+  background-position: left top, right top;
+  background-size: 14px 14px, 14px 14px;
+}
+.nj-chat-tab-note-avatar-img,
+.nj-chat-tab-note-mine .nj-chat-tab-note-avatar > img{ position: relative; z-index: 1; }
+.nj-chat-tab-note-plus{
+  background: var(--kraft);
+  border: 1.5px dotted var(--taupe);
+  color: var(--ash);
+}
+.nj-chat-tab-note-name{
+  color: var(--ash);
+  font-size: 9px;
+  letter-spacing: .12em;
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   ⑥ 「消息」小标题 + 分组条
+   ══════════════════════════════════════════════════════════════ */
+/* 「消息」这一行
+   ⚠️ 两条都必须写，缺一个分组键就会被下面的好友列表压住：
+
+   1) min-height —— 这一行的高度是被「消息」两个字撑起来的（约 20px），
+      而分组键是 32px，比行高高，会从这一行的盒子下沿溢出去。
+   2) z-index —— 溢出的那截正好落进好友列表的地盘。这一行和列表都被原生
+      设成了 position:relative + z-index:1（.nj-chat-tab > * 那条规则），
+      同层级时**后写的盖先写的**，列表在 DOM 里排在后面，就把按钮盖住了。
+      抬到 3 才压得住。
+
+   顺带把分组下拉菜单也救了：那个菜单是这一行的绝对定位子元素，
+   原生同样被列表盖住（菜单自己写了 z-index:75 也没用 —— 它被关在
+   这一行的层叠上下文里，出不去）。 */
+.nj-chat-tab-section-title{
+  position: relative;
+  z-index: 3;
+  min-height: 52px;
+  padding: 14px 20px 6px;
+}
+.nj-chat-tab-section-title > span:first-child{
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--cocoa);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .2em;
+}
+.nj-chat-tab-section-title > span:first-child::before{
+  content: "";
+  width: 13px; height: 13px;
+  flex: none;
+  background: var(--paw) no-repeat center/contain;
+}
+/* 分组键（「消息」右边那颗）
+   ⚠️ 居中必须自己写：原生这颗是 34×32 的长方形、而且没做 flex 居中，
+      里面的 svg 是当行内元素排的、坐在文字基线上，天然偏下偏右一点点。
+      原样只看得出「有点歪」，套上圆形点线圈之后偏移就很明显了。
+      所以这里三件事一起做：拉成正方形、inline-flex 居中、清掉 padding。
+   ⚠️ 底色要写 background-color 不能写 background：
+      简写会把 background-image 一起重置掉，图床那张图就没了。 */
+.nj-chat-tab-group-toggle{
+  box-sizing: border-box;
+  width: 32px; height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 99px;
+  border: 1.5px dotted var(--taupe);
+  background-color: var(--milk);
+  background-image: var(--img-btn-group);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 62% 62%;
+  color: var(--ash);
+}
+/* 原生 svg：尺寸收一点，换了图就靠 --icon-group 藏掉 */
+.nj-chat-tab-group-toggle-icon{
+  width: 16px; height: 16px;
+  display: block;
+  opacity: var(--icon-group, 1);
+}
+.nj-chat-tab-group-toggle.active{ background-color: var(--kraft); color: var(--cocoa); }
+/* 分组标题：牛皮纸小缎带
+   ⚠️ 宽度必须自己算：原生是 width:100%，再加左右各 18px 的 margin 就超出列表宽度，
+      最右边那个「几个人」的计数会被挤出屏幕外看不见。 */
+.nj-chat-group-header{
+  box-sizing: border-box;
+  width: calc(100% - 36px);
+  margin: 14px 18px 4px;
+  padding: 4px 12px;
+  color: var(--ash);
+  background: var(--kraft);
+  border: 1.5px dotted var(--taupe);
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .18em;
+}
+.nj-chat-group-caret{ color: var(--taupe); font-size: 9px; }
+.nj-chat-group-unread{
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 99px;
+  color: #fff;
+  background: var(--milktea);
+  text-align: center;
+  font-size: 9px;
+}
+.nj-chat-group-count{ margin-left: 6px; color: var(--taupe); opacity: 1; }
+/* 分组下拉菜单 */
+.nj-group-menu{
+  background: var(--paper);
+  border: 1.5px dotted var(--taupe);
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(48,44,41,.18);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.nj-group-menu-item{ color: var(--ash); border-radius: 12px; }
+.nj-group-menu-item:active{ background: var(--kraft); }
+
+
+/* ══════════════════════════════════════════════════════════════
+   ⑦ 好友卡片（这一页的主角）
+   —— 奶白纸 + 灰褐点线边 + 白外圈，和「卡片 CSS」那份的底一模一样。
+
+   ⚠️ 绝对不要给 .nj-chat-item 加 overflow:hidden 或 isolation：
+      置顶小熊是探到卡片外面的，裁了就没了。
+   ══════════════════════════════════════════════════════════════ */
+.nj-chat-tab-list{ padding: 4px 0 84px; }
+.nj-chat-item{
+  margin: 7px 16px;
+  border: 1.5px dotted var(--taupe);
+  border-radius: 20px;
+  background-color: var(--paper);
+  box-shadow: 0 0 0 3px rgba(255,255,255,.95), 0 3px 12px rgba(90,80,70,.11);
+}
+/* 右下角贴纸（--img-card-sticker 放了图才出现） */
+.nj-chat-item::before{
+  content: "";
+  position: absolute;
+  right: 10px; bottom: 8px;
+  width: 22px; height: 22px;
+  z-index: 0;
+  pointer-events: none;
+  opacity: .75;
+  background: var(--img-card-sticker) no-repeat center/contain;
+}
+
+/* ── 头像：圆环 + 小熊耳朵 ──
+   耳朵挂在外层 .nj-chat-item-avatar 上（它没有 overflow:hidden），
+   内包裹层提一层 z-index，保证耳朵在脸后面。 */
+.nj-chat-item-avatar-img{
+  position: relative;
+  z-index: 1;
+  background: var(--cream);
+  box-shadow: 0 0 0 2.5px var(--taupe), 0 2px 6px rgba(59,52,46,.16);
+}
+.nj-chat-item-avatar::before{
+  content: "";
+  position: absolute;
+  left: 0; right: 0; top: -6px; height: 13px;
+  z-index: 0;
+  pointer-events: none;
+  background-image: var(--ear), var(--ear);
+  background-repeat: no-repeat, no-repeat;
+  background-position: left top, right top;
+  background-size: 13px 13px, 13px 13px;
+}
+/* 未读角标：奶茶色小胶囊，白圈托底
+   ⚠️ z-index 必须写：上面给头像内包裹层提了 z-index:1（为了把耳朵压到脸后面），
+      角标原生没有 z-index，不显式抬高就会被那张头像盖住，表现是「有未读但看不见数字」。 */
+.nj-chat-item-unread-badge{
+  z-index: 2;
+  top: -3px; right: -3px;
+  color: #fff;
+  background: var(--milktea);
+  border: 2px solid var(--paper);
+  box-shadow: 0 2px 6px rgba(90,80,70,.22);
+  font-size: 9px;
+}
+
+/* ── 文字 ── */
+.nj-chat-item-name{
+  color: var(--cocoa);
+  font-size: 14.5px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+.nj-chat-item-time{
+  color: var(--ash);
+  background: rgba(230,222,211,.62);
+  border: 1px solid var(--taupe-lt);
+  border-radius: 99px;
+  padding: 1px 8px;
+  font-size: 9px;
+  letter-spacing: .06em;
+}
+.nj-chat-item-preview{
+  margin-top: 4px;
+  color: var(--taupe);
+  font-size: 12px;
+  letter-spacing: .02em;
+}
+.nj-chat-item[data-unread="1"] .nj-chat-item-preview,
+.nj-chat-item[data-unread="few"] .nj-chat-item-preview,
+.nj-chat-item[data-unread="many"] .nj-chat-item-preview{ color: var(--ash); }
+/* 正在写消息：预览前面加一枚一闪一闪的爪印 */
+.nj-chat-item[data-generating="true"] .nj-chat-item-preview::before{
+  content: "";
+  display: inline-block;
+  width: 10px; height: 10px;
+  margin-right: 5px;
+  vertical-align: -1px;
+  background: var(--paw) no-repeat center/contain;
+  animation: njPawBlink 1.1s ease-in-out infinite;
+}
+@keyframes njPawBlink{ 0%,100%{ opacity:.35 } 50%{ opacity:1 } }
+
+/* ── 置顶卡片：牛皮纸底 + 右上角探出的小熊 ── */
+.nj-chat-item[data-pinned="true"]{
+  background-color: var(--kraft);
+  border-style: dashed;
+}
+.nj-chat-item[data-pinned="true"]::after{
+  content: "";
+  position: absolute;
+  right: 12px; top: -11px;
+  width: 30px; height: 27px;
+  z-index: 2;
+  pointer-events: none;
+  background: var(--img-pin-bear) no-repeat center/contain;
+}
+.nj-chat-item-pin-mark{ display: inline-flex; align-items: center; color: var(--milktea); }
+
+/* ── 装饰位（原生给主题留的两个空位，默认不显示）──
+   想在每张卡片上再加自己的图，把下面的 none 换成 url("...")。 */
+.nj-chat-item{
+  --nj-item-deco-1-image: none;
+  --nj-item-deco-1-top: 8px;    --nj-item-deco-1-right: 10px;
+  --nj-item-deco-1-width: 20px; --nj-item-deco-1-height: 20px;
+  --nj-item-deco-2-image: none;
+  --nj-item-deco-2-bottom: 6px; --nj-item-deco-2-left: 14px;
+  --nj-item-deco-2-width: 18px; --nj-item-deco-2-height: 18px;
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   ⑧ 长按菜单
+   ══════════════════════════════════════════════════════════════ */
+.nj-chat-context-menu{
+  background: var(--paper);
+  border: 1.5px dotted var(--taupe);
+  border-radius: 18px;
+  box-shadow: 0 12px 32px rgba(48,44,41,.2);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.nj-chat-context-menu button{ color: var(--ash); border-radius: 12px; }
+.nj-chat-context-menu button:active{ background: var(--kraft); }
+
+
+/* ══════════════════════════════════════════════════════════════
+   ⑨ 空状态
+   ══════════════════════════════════════════════════════════════ */
+.nj-empty-state{
+  color: var(--taupe);
+  font-size: 12px;
+  letter-spacing: .1em;
+}
+.nj-empty-state-symbol{
+  width: 74px; height: 66px;
+  margin: 0 auto 14px;
+  font-size: 0;
+  opacity: 1;
+  background: var(--img-empty-bear) no-repeat center/contain;
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   ⑩ 底部标签栏：顶栏的镜像
+   —— 外框 = 炭黑 + 白波点（直角），内胆 = 奶油圆角（::before，z-index:-1），
+      蕾丝长在**上沿**、半圆朝上，和顶栏那排对称。
+
+   底栏原生就是 z-index:100，自己是层叠上下文，
+   所以 ::before 用 z-index:-1 会垫在黑底之上、四颗图标之下。
+   ══════════════════════════════════════════════════════════════ */
+.nj-tab-bottom-bar{
+  overflow: visible;
+  border: 0;
+  border-top: 0;
+  border-radius: 0;
+  padding-left: 10px;
+  padding-right: 10px;
+  padding-top: 8px;
+  background-color: var(--ink);
+  background-image: radial-gradient(rgba(255,255,255,.30) 1px, transparent 1.1px);
+  background-size: 7px 7px;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: 0 -4px 14px rgba(48,44,41,.14);
+}
+/* 奶油内胆 */
+.nj-tab-bottom-bar::before{
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 7px; left: 7px; right: 7px;
+  bottom: 7px;
+  bottom: max(7px, calc(var(--nuo-safe-bottom) * 0.5));
+  border-radius: 16px;
+  pointer-events: none;
+  background-color: var(--paper);
+  background-image: radial-gradient(rgba(167,156,147,.26) 1px, transparent 1.1px);
+  background-size: 8px 8px;
+}
+/* 蕾丝扇贝：半圆朝上，长在外框上沿 */
+.nj-tab-bottom-bar::after{
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: 100%; height: 7px;
+  pointer-events: none;
+  background: radial-gradient(ellipse 7px 4.2px at 7px 7px, var(--ink) 99%, transparent 100%) 0 0/14px 9px repeat-x;
+}
+.nj-tab-bottom-item{ color: var(--taupe); }
+.nj-tab-bottom-item.active{ color: var(--cocoa); }
+.nj-tab-bottom-icon{
+  width: 30px; height: 30px;
+  border-radius: 99px;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 66% 66%;
+}
+.nj-tab-bottom-item-active .nj-tab-bottom-icon{
+  background-color: var(--kraft);
+  box-shadow: 0 0 0 1.5px var(--taupe-lt);
+}
+/* 四颗图标各自的图 */
+.nj-tab-bottom-item-chat      .nj-tab-bottom-icon{ background-image: var(--img-tab-chat); }
+.nj-tab-bottom-item-moments   .nj-tab-bottom-icon{ background-image: var(--img-tab-moments); }
+.nj-tab-bottom-item-favorites .nj-tab-bottom-icon{ background-image: var(--img-tab-favorites); }
+.nj-tab-bottom-item-profile   .nj-tab-bottom-icon{ background-image: var(--img-tab-profile); }
+.nj-tab-bottom-item-chat.nj-tab-bottom-item-active      .nj-tab-bottom-icon{ background-image: var(--img-tab-chat-on); }
+.nj-tab-bottom-item-moments.nj-tab-bottom-item-active   .nj-tab-bottom-icon{ background-image: var(--img-tab-moments-on); }
+.nj-tab-bottom-item-favorites.nj-tab-bottom-item-active .nj-tab-bottom-icon{ background-image: var(--img-tab-favorites-on); }
+.nj-tab-bottom-item-profile.nj-tab-bottom-item-active   .nj-tab-bottom-icon{ background-image: var(--img-tab-profile-on); }
+/* 换了图就把原生 svg 藏掉（上面把 --icon-tab 设成 0 即可） */
+.nj-tab-bottom-icon > svg{ opacity: var(--icon-tab, 1); }
+/* 总未读角标 */
+.nj-tab-bottom-total-unread{
+  position: absolute;
+  top: -2px; left: calc(50% + 6px);
+  min-width: 16px; height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  color: #fff;
+  background: var(--milktea);
+  border: 2px solid var(--paper);
+  border-radius: 99px;
+  font-size: 8px;
+  font-weight: 700;
+}
+.nj-tab-bottom-moments-dot{ background: var(--rose); }
+
+
+/* ══════════════════════════════════════════════════════════════
+   ⑪ 朋友圈
+   ══════════════════════════════════════════════════════════════ */
+.nj-moments-tab{
+  background-color: var(--cream);
+  background-image:
+    repeating-linear-gradient(48deg, rgba(167,156,147,.09) 0 1px, transparent 1px 30px),
+    radial-gradient(rgba(167,156,147,.22) 1px, transparent 1.15px);
+  background-size: auto, 9px 9px;
+}
+/* 顶上三颗键（清空 / 生成 / 发布）：压在封面图上，做成奶油圆钮才看得清 */
+.nj-moments-header{ background: transparent; text-shadow: none; }
+.nj-moments-header-btns{ gap: 12px; }
+.nj-moments-header-btn{
+  box-sizing: border-box;
+  width: 32px; height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 99px;
+  background: var(--paper);
+  border: 1.5px dotted var(--taupe);
+  color: var(--ash);
+  opacity: 1;
+  box-shadow: 0 2px 8px rgba(48,44,41,.22);
+}
+.nj-moments-header-btn svg{ width: 17px; height: 17px; }
+.nj-moments-header-sticky{ color: var(--cocoa); }
+
+/* ── 封面 ──
+   ⚠️ --img-moments-cover 只在「App 里没设过封面」时生效：
+      App 的封面是内联样式，内联永远压过 CSS。 */
+.nj-moments-cover{
+  background-color: var(--kraft);
+  background-image: var(--img-moments-cover);
+  opacity: 1;
+  box-shadow: none;
+}
+/* 封面底沿垂一排蕾丝，和顶栏那排同一个语言。
+   ⚠️ z-index 必须比 2 小：名字 + 头像那一块（.nj-moments-cover-userinfo）
+      原生就是 z-index:2，蕾丝写 3 的话就会从头像脸上横穿过去。
+      写 1 是「压住封面、垫在头像下面」，扇贝从头像后面绕过去才对。 */
+.nj-moments-cover-wrap::after{
+  content: "";
+  position: absolute;
+  left: 0; right: 0; top: 100%; height: 8px;
+  z-index: 1;
+  pointer-events: none;
+  margin-top: -8px;
+  background: radial-gradient(ellipse 8px 5px at 8px 8px, var(--cream) 99%, transparent 100%) 0 0/16px 10px repeat-x;
+}
+.nj-moments-cover-gradient{ background: linear-gradient(180deg, rgba(48,44,41,.14) 0 22%, transparent 45%, rgba(48,44,41,.26)); }
+.nj-moments-cover-username{
+  color: #FFF7EE;
+  letter-spacing: .1em;
+  text-shadow: 0 1px 5px rgba(48,44,41,.55);
+}
+/* 封面右下角那颗头像：拍立得白边 + 灰褐点线 */
+.nj-moments-cover-avatar{
+  border: 0;
+  border-radius: 16px;
+  background: var(--paper);
+  padding: 3px;
+  box-shadow: 0 0 0 1.5px var(--taupe), 0 5px 16px rgba(48,44,41,.3);
+}
+.nj-moments-cover-avatar img{ border-radius: 13px; }
+
+/* ── 「N 条新消息」入口 ── */
+.nj-moments-notif-entry{
+  margin: 10px 16px 0;
+  padding: 10px 12px;
+  background: var(--paper);
+  border: 1.5px dotted var(--taupe);
+  border-bottom: 1.5px dotted var(--taupe);
+  border-radius: 16px;
+  box-shadow: 0 0 0 3px rgba(255,255,255,.9), 0 3px 10px rgba(90,80,70,.1);
+}
+.nj-moments-notif-avatar{ border-radius: 12px; background: var(--cream); }
+.nj-moments-notif-avatar span{
+  background: var(--milktea);
+  border-color: var(--paper);
+}
+.nj-moments-notif-summary{ color: var(--cocoa); font-size: 13px; letter-spacing: .04em; }
+.nj-moments-notif-caret{ color: var(--taupe); }
+
+/* ── 每条动态：奶白纸卡片 ── */
+.nj-moments-feed{ padding: 12px 0 84px; }
+.nj-moments-post{
+  margin: 0 16px 12px;
+  padding: 15px 15px 14px;
+  background: var(--paper);
+  border: 1.5px dotted var(--taupe);
+  border-bottom: 1.5px dotted var(--taupe);
+  border-radius: 20px;
+  box-shadow: 0 0 0 3px rgba(255,255,255,.95), 0 3px 12px rgba(90,80,70,.11);
+}
+/* 头像：拍立得小方块 */
+.nj-moments-post-avatar{
+  border-radius: 13px;
+  background: var(--cream);
+  box-shadow: 0 0 0 2px var(--taupe), 0 2px 6px rgba(59,52,46,.16);
+}
+.nj-moments-post-avatar img{ border-radius: 13px; }
+.nj-moments-post-name{
+  color: var(--milktea);
+  font-size: 14px;
+  letter-spacing: .05em;
+}
+.nj-moments-post-text{ color: #40382F; font-size: 13.5px; line-height: 1.7; }
+.nj-moments-post-img-cell{
+  border-radius: 12px;
+  background: var(--cream);
+  box-shadow: 0 0 0 1.5px var(--taupe-lt);
+}
+/* 时间 / 位置：和好友卡片的时间胶囊同款 */
+.nj-moments-post-meta{ gap: 6px; color: var(--taupe); font-size: 10px; }
+.nj-moments-post-time,
+.nj-moments-post-location{
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  color: var(--ash);
+  background: rgba(230,222,211,.62);
+  border: 1px solid var(--taupe-lt);
+  border-radius: 99px;
+  font-size: 9px;
+  letter-spacing: .06em;
+}
+.nj-moments-post-time::before{
+  content: "";
+  width: 8px; height: 8px;
+  flex: none;
+  background: var(--paw) no-repeat center/contain;
+}
+.nj-moments-post-actions-trigger{
+  color: var(--ash);
+  background: var(--kraft);
+  border: 1px solid var(--taupe-lt);
+  border-radius: 99px;
+  padding: 2px 9px;
+}
+.nj-moments-post-actions-menu{
+  background: var(--ink);
+  border-radius: 12px;
+  box-shadow: 0 6px 18px rgba(48,44,41,.3);
+}
+.nj-moments-post-actions-menu button{ border-right-color: rgba(255,255,255,.18); }
+
+/* ── 点赞 / 评论区：牛皮纸小块 ── */
+.nj-moments-engagement{
+  color: var(--ash);
+  background: var(--kraft);
+  border: 1px dashed var(--taupe-lt);
+  border-radius: 14px;
+  box-shadow: none;
+  font-size: 12.5px;
+}
+/* 小箭头是 CSS 三角，颜色得跟着牛皮纸走，不然会留一枚灰白角 */
+.nj-moments-engagement-arrow{ border-bottom-color: var(--kraft); }
+.nj-moments-likes{ color: var(--milktea); }
+.nj-moments-likes:has(+ .nj-moments-comment){ border-bottom-color: var(--taupe-lt); }
+.nj-moments-like-name{ font-size: 12.5px; }
+.nj-moments-comment-author,
+.nj-moments-comment-target{ color: var(--milktea); }
+.nj-moments-comment-content{ color: var(--ash); }
+.nj-moments-comment-reply-word{ color: var(--taupe); }
+/* 评论输入行 */
+.nj-moments-comment-banner{
+  color: var(--ash);
+  background: var(--kraft);
+  border-radius: 12px 12px 0 0;
+}
+.nj-moments-comment-banner b{ color: var(--milktea); }
+.nj-moments-comment-compose .comment-input{
+  border: 1.5px dotted var(--taupe);
+  border-radius: 14px;
+  color: var(--cocoa);
+  background: var(--milk);
+  font-size: 13px;
+}
+.nj-moments-comment-compose-row > button{
+  background: var(--milktea);
+  border-radius: 99px;
+  font-size: 12px;
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   ⑫ 收藏
+   ══════════════════════════════════════════════════════════════ */
+.nj-favorites-tab{
+  background-color: var(--cream);
+  background-image: radial-gradient(rgba(167,156,147,.22) 1px, transparent 1.15px);
+  background-size: 9px 9px;
+}
+.nj-favorites-tab-header{
+  background: rgba(252,251,249,.94);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-bottom: 1.5px dotted var(--taupe-lt);
+}
+.nj-favorites-tab-title{ color: var(--cocoa); letter-spacing: .2em; font-size: 16px; }
+.nj-favorites-tab-button{
+  color: var(--ash);
+  background: var(--milk);
+  border: 1.5px dotted var(--taupe);
+  border-radius: 99px;
+  font-size: 11px;
+  letter-spacing: .08em;
+}
+.nj-favorites-tab-button.active{ color: #fff; background: var(--milktea); border-style: solid; border-color: var(--milktea); }
+.nj-favorites-item,
+.nj-fav-card{
+  margin-bottom: 10px;
+  padding: 13px 14px;
+  background: var(--paper);
+  border: 1.5px dotted var(--taupe);
+  border-radius: 18px;
+  box-shadow: 0 0 0 3px rgba(255,255,255,.9), 0 3px 12px rgba(90,80,70,.1);
+}
+.nj-favorites-item-author{
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ash);
+  background: rgba(230,222,211,.62);
+  border: 1px solid var(--taupe-lt);
+  border-radius: 99px;
+  padding: 1px 8px;
+  font-size: 9px;
+  letter-spacing: .08em;
+}
+.nj-favorites-item-author::before{
+  content: "";
+  width: 9px; height: 9px;
+  flex: none;
+  background: var(--paw) no-repeat center/contain;
+}
+.nj-favorites-item-content{ color: #40382F; font-size: 13px; line-height: 1.7; }
+.nj-favorites-item-play{ background: var(--milktea); }
+
+
+/* ══════════════════════════════════════════════════════════════
+   ⑬ 我的（个人资料页）
+   ══════════════════════════════════════════════════════════════ */
+.nj-profile-tab{
+  background-color: var(--cream);
+  background-image:
+    repeating-linear-gradient(-48deg, rgba(167,156,147,.09) 0 1px, transparent 1px 30px),
+    radial-gradient(rgba(167,156,147,.22) 1px, transparent 1.15px);
+  background-size: auto, 9px 9px;
+}
+.nj-profile-tab-header{
+  background: rgba(252,251,249,.94);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-bottom: 1.5px dotted var(--taupe-lt);
+}
+.nj-profile-tab-title{ color: var(--cocoa); letter-spacing: .2em; }
+.nj-profile-edit-btn{
+  box-sizing: border-box;
+  width: 32px; height: 32px;
+  justify-content: center;
+  border-radius: 99px;
+  background: var(--cream);
+  border: 1.5px dotted var(--taupe);
+  color: var(--ash);
+}
+.nj-profile-edit-btn svg{ width: 16px; height: 16px; }
+
+/* ── 头像：原生是方的（App 里写死了 border-radius:0 !important），
+      不去跟它拧，改成一张拍立得：奶白相纸 + 灰褐点线边。 ── */
+.nj-profile-avatar{
+  padding: 5px 5px 12px;
+  border: 1.5px dotted var(--taupe);
+  background: var(--paper);
+  box-shadow: 0 0 0 3px rgba(255,255,255,.95), 0 4px 14px rgba(59,52,46,.16);
+  transform: rotate(-2deg);
+}
+/* ── 三个计数（动态 / 好友 / 收藏）：牛皮纸小格 ── */
+.nj-profile-stat-item{
+  padding: 7px 4px;
+  background: var(--paper);
+  border: 1.5px dotted var(--taupe);
+  border-radius: 14px;
+}
+.nj-profile-stat-count{ color: var(--cocoa); font-size: 16px; }
+.nj-profile-stat-label{ color: var(--taupe); font-size: 9px; letter-spacing: .14em; }
+
+.nj-profile-name{ color: var(--cocoa); font-size: 15px; letter-spacing: .06em; }
+.nj-profile-handle{ color: var(--taupe); }
+.nj-profile-signature{ color: var(--ash); line-height: 1.7; }
+.nj-profile-hobby-chip{
+  color: var(--ash);
+  background: var(--kraft);
+  border: 1.5px dotted var(--taupe);
+  border-radius: 99px;
+  font-size: 10px;
+  letter-spacing: .06em;
+}
+
+/* ── 生日 / 性别 / 所在地 那一条 ── */
+.nj-profile-info-bar{
+  background: var(--paper);
+  border: 1.5px dotted var(--taupe);
+  border-radius: 18px;
+  box-shadow: 0 0 0 3px rgba(255,255,255,.9), 0 3px 12px rgba(90,80,70,.1);
+}
+.nj-profile-info-icon{
+  background: var(--kraft);
+  border: 1px solid var(--taupe-lt);
+  color: var(--ash);
+}
+.nj-profile-info-label{ color: var(--taupe); letter-spacing: .12em; }
+.nj-profile-info-value{ color: var(--cocoa); }
+.nj-profile-info-divider{ width: 0; border-left: 1.5px dotted var(--taupe-lt); background: transparent; }
+
+/* ── 「关于我」/「相册」小标题：右边那根线换成蕾丝 ── */
+.nj-profile-section-title{ color: var(--ash); letter-spacing: .22em; }
+.nj-profile-about-title > span,
+.nj-profile-gallery-title > span:not(.nj-profile-gallery-count){
+  height: 7px;
+  background: transparent;
+  background-image: radial-gradient(circle at 5px 7px, var(--taupe-lt) 4.4px, transparent 4.9px);
+  background-size: 10px 10px;
+  background-repeat: repeat-x;
+}
+.nj-profile-about-text{ color: var(--ash); font-size: 13px; line-height: 1.85; }
+/* 展开渐隐那层：原生默认渐到白，这里是奶油底，不改会露出一道白 */
+.nj-profile-about-fade{ background: linear-gradient(rgba(247,245,242,0), var(--cream)); }
+.nj-profile-about-toggle{ color: var(--milktea); }
+
+/* ── 相册 ── */
+.nj-profile-gallery-count{
+  color: var(--ash);
+  background: var(--kraft);
+  border: 1px solid var(--taupe-lt);
+  border-radius: 99px;
+  padding: 2px 7px;
+}
+.nj-profile-gallery-actions button{
+  color: var(--ash);
+  background: var(--milk);
+  border: 1.5px dotted var(--taupe);
+  border-radius: 99px;
+}
+.nj-profile-gallery-cell{
+  border-radius: 14px;
+  background: var(--cream);
+  box-shadow: 0 0 0 2px rgba(255,255,255,.95), 0 0 0 3.5px var(--taupe-lt);
+}

@@ -1,4 +1,5 @@
 import { DB } from './db';
+import cocoaDotsMessagingCss from '../assets/css-presets/cocoa-dots/messaging-list-v6.css?raw';
 
 export const MESSAGING_THEME_STATE_ASSET_ID = 'messaging_theme_state_v1';
 export const MESSAGING_LIST_PREFS_ASSET_ID = 'messaging_list_prefs_v1';
@@ -113,6 +114,11 @@ export const BUILT_IN_MESSAGING_THEMES: Array<Pick<MessagingThemePreset, 'id' | 
   --nj-msg-tabbar-active: #111;
 }
 .nj-chat-tab-notes, .nj-chat-tab-decor-top { display: none; }`,
+    },
+    {
+        id: 'builtin-cocoa-dots-v6',
+        name: '可可点点 v6',
+        css: cocoaDotsMessagingCss,
     },
 ];
 

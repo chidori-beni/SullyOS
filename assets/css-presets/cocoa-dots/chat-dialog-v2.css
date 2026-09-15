@@ -1,0 +1,100 @@
+/* 可可点点 · 聊天弹窗与设置框 —— 和聊天白框同一套语言 */
+.sully-ui-overlay{
+  background:rgba(48,44,41,.34)!important;
+  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+}
+
+/* ══ 壳本身就是内胆，深棕色框用真实 border 画 ══
+   三段内容共用一张奶油底，避免相邻区域露出壳底色。
+   这里故意不用 inset 阴影：内阴影会被内容层盖住，滚动内容一长就
+   会压到外圈。真实 border 会把内容区留在边框以内，同时保留滚动能力。 */
+.sully-ui-sheet,.sully-ui-modal{
+  box-sizing:border-box!important;
+  background-color:#FCFBF9!important;
+  background-image:radial-gradient(rgba(167,156,147,.26) 1px,transparent 1.1px)!important;
+  background-size:8px 8px!important;
+  background-clip:padding-box!important;
+  border:6px solid #302C29!important;
+  box-shadow:0 -6px 22px rgba(48,44,41,.22)!important;
+  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+}
+.sully-ui-sheet{border-radius:22px 22px 0 0!important;}
+.sully-ui-modal{border-radius:22px!important;}
+
+/* 三段一律透明，背景全交给壳。没有独立内容区的壳（.sully-ui-plain）
+   因此也自动是奶油底 —— 心象设置、装扮「这个角色」不会再压在深底上。 */
+.sully-ui-head,.sully-ui-body,.sully-ui-foot{
+  background:transparent!important;
+  border:0!important;box-shadow:none!important;
+}
+/* 按钮区上下都留够，不贴着内容 */
+.sully-ui-foot{padding-top:16px!important;}
+/* body 的 padding 一律不覆盖：组件的横排布局是按它算宽度的 */
+
+.sully-ui-title{color:#4A3B31!important;font-weight:700!important;letter-spacing:.04em!important;}
+.sully-ui-hint{color:#8E837A!important;}
+.sully-ui-label{color:#A79C93!important;letter-spacing:.16em!important;}
+.sully-ui-close{
+  display:inline-flex!important;align-items:center!important;justify-content:center!important;
+  box-sizing:border-box!important;padding:0!important;
+  width:30px!important;height:30px!important;border-radius:99px!important;
+  line-height:1!important;
+  background:#F7F5F2!important;border:1.5px dotted #A79C93!important;color:#6E6259!important;
+}
+.sully-ui-card{
+  background:#FFFFFF!important;
+  border:1.5px dotted #A79C93!important;
+  border-radius:16px!important;box-shadow:none!important;
+}
+
+/* ══ 按钮 ══
+   两条路一起走：
+   1) 底部按钮区里的每个 button 无差别收编（不用逐个去源码挂钩子）
+   2) 内容区里那些自带颜色的按钮，按 Tailwind 类名点名 ——
+      红 / 紫 / 靛 / 品红 / 玫红 / 绿 / 琥珀 / 主题色，一网打尽 */
+.sully-ui-foot button,
+.sully-ui-body button[class*="bg-red-"],
+.sully-ui-body button[class*="bg-rose-"],
+.sully-ui-body button[class*="bg-violet-"],
+.sully-ui-body button[class*="bg-purple-"],
+.sully-ui-body button[class*="bg-indigo-"],
+.sully-ui-body button[class*="bg-fuchsia-"],
+.sully-ui-body button[class*="bg-emerald-"],
+.sully-ui-body button[class*="bg-green-"],
+.sully-ui-body button[class*="bg-amber-"],
+.sully-ui-body button[class*="bg-blue-"],
+.sully-ui-body button[class*="bg-primary"]{
+  background-color:#F7F5F2!important;background-image:none!important;
+  color:#6E6259!important;
+  border:1.5px dotted #A79C93!important;border-radius:99px!important;
+  box-shadow:none!important;
+}
+/* 主按钮：底部按钮区的最后一个，以及显式挂了 .sully-ui-btn 的 */
+.sully-ui-foot button:last-child,
+.sully-ui-btn{
+  background-color:#A9866A!important;background-image:none!important;
+  color:#FFFFFF!important;
+  border:1.5px solid #A9866A!important;border-radius:99px!important;box-shadow:none!important;
+}
+.sully-ui-btn-ghost{
+  background-color:#F7F5F2!important;background-image:none!important;color:#6E6259!important;
+  border:1.5px dotted #A79C93!important;border-radius:99px!important;box-shadow:none!important;
+}
+/* 危险按钮：保留警示，换成本主题的藕粉，不要那块正红 */
+.sully-ui-btn-danger,
+.sully-ui-foot .sully-ui-btn-danger,
+.sully-ui-body button[class*="text-red-"],
+.sully-ui-body button[class*="border-red-"]{
+  background-color:#FBF1EF!important;background-image:none!important;
+  color:#A85D4C!important;
+  border:1.5px solid #DCB6AC!important;border-radius:99px!important;box-shadow:none!important;
+}
+
+.sully-ui-tab{
+  background:transparent!important;color:#8E837A!important;
+  border-radius:99px!important;box-shadow:none!important;
+}
+.sully-ui-tab.sully-ui-tab-on{
+  background:#E6DED3!important;color:#4A3B31!important;
+  border:1.5px dotted #A79C93!important;
+}

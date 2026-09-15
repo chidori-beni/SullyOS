@@ -1,4 +1,5 @@
 import type { ChatCardCssPreset } from '../types';
+import cocoaDotsCardCss from '../assets/css-presets/cocoa-dots/chat-card-v3.css?raw';
 
 /**
  * 「装扮 → 所有聊天 → 卡片 · CSS」的数据层：卡片名录、给外部 AI 的提示词、内置预设，
@@ -115,6 +116,11 @@ export const BUILTIN_CARD_CSS_PRESETS: ReadonlyArray<ChatCardCssBuiltinPreset> =
     name: '浅色卡片',
     desc: '把彼方 / 人生模拟 / 查岗 / 跑团这几张深色卡拉浅，配浅色主题',
     css: LIGHT_CARDS_PRESET_CSS,
+  },
+  {
+    name: '可可点点 v3',
+    desc: '奶油卡片 + 炭黑点点，和可可点点聊天白框配套',
+    css: cocoaDotsCardCss,
   },
 ];
 

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { DB } from '../../utils/db';
 import { shareOrDownloadFile } from '../../utils/shareExport';
 import { readShareText } from '../../utils/pngShare';
+import cocoaDotsChatChromeCss from '../../assets/css-presets/cocoa-dots/chat-chrome-v21.css?raw';
 
 // 聊天「白框」自定义 CSS 编辑器（Appearance 全局默认 与 单角色定制 共用）。
 // 选择器钩子覆盖顶栏、输入栏、整屏背景与普通消息布局；完整清单见下方 AI_PROMPT。
@@ -92,6 +93,11 @@ type Preset = { name: string; code: string; swatch?: string };
 
 // 内置完整风格（点击=替换文本框、立刻生效）。
 const PRESETS: Preset[] = [
+    {
+        name: '可可点点 v21',
+        swatch: 'radial-gradient(circle at 1px 1px,#a79c93 1px,transparent 1.2px) 0 0/8px 8px,#f7f5f2',
+        code: cocoaDotsChatChromeCss,
+    },
     {
         name: '奶油少女',
         swatch: 'linear-gradient(135deg,#ffe3ef,#fff2e2 55%,#f1e7ff)',

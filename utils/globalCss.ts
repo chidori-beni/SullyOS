@@ -1,3 +1,5 @@
+import cocoaDotsDialogCss from '../assets/css-presets/cocoa-dots/chat-dialog-v2.css?raw';
+
 /**
  * 全局自定义 CSS：整机通用的弹窗 / 抽屉 / 设置框美化。
  *
@@ -285,7 +287,7 @@ export interface GlobalCssBuiltinPreset {
 }
 
 export const BUILTIN_DIALOG_CSS_PRESETS: ReadonlyArray<GlobalCssBuiltinPreset> = [
-  { name: '可可点点', desc: '炭黑点点外框 + 奶油内胆，和聊天界面同一套', css: COCOA_DOTS_DIALOG_CSS },
+  { name: '可可点点 v2', desc: '真实炭黑边框 + 奶油点阵内胆，和聊天界面同一套', css: cocoaDotsDialogCss },
 ];
 
 export const BUILTIN_NOTIFY_CSS_PRESETS: ReadonlyArray<GlobalCssBuiltinPreset> = [
