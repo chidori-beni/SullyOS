@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { extractJson, parseCharBeat, parseNpcScene, storyTimeLabel, buildModeRule, buildWorldGapNote, buildWorldCharTurn, buildNpcTurn, parseRolledNpcs, buildNpcRollPrompt, NARRATIVE_STYLES, narrationPersonGuide, realNowSeg, realObserveTarget, worldTimeLabel, formatRealClock, migrateWorldDaySegs, SEGMENTS_PER_DAY, worldNow, worldTzLabel, clampRealClockToNow, alignCharToWorldClock } from './prompts';
+import { extractJson, parseCharBeat, resolvePlaceId, buildPlacesSection, parseNpcScene, storyTimeLabel, buildModeRule, buildWorldGapNote, buildWorldCharTurn, buildNpcTurn, parseRolledNpcs, buildNpcRollPrompt, NARRATIVE_STYLES, narrationPersonGuide, realNowSeg, realObserveTarget, worldTimeLabel, formatRealClock, migrateWorldDaySegs, SEGMENTS_PER_DAY, worldNow, worldTzLabel, clampRealClockToNow, alignCharToWorldClock } from './prompts';
 import { applyRelationshipDeltas, shareWorldCardTo, collectSeeds, buildSummary, dropDuplicatePosts, mirrorWorldBondsToChars } from './engine';
 import { DB } from '../db';
 import { ensureThreads, applyBeatToThreads, applyNpcGroupLines, applyNpcDms, npcInboxes, dmThreadsOf, groupThreadOf, formatThreadForPrompt, dmThreadId, GROUP_THREAD_ID } from './threads';
@@ -1004,5 +1004,113 @@ describe('全局关系镜像 · mirrorWorldBondsToChars（阶段 2.4）', () => 
         ]), members, 1);
         const a = await DB.getCharacter('m_a');
         expect(a!.charBonds || []).toHaveLength(0);
+    });
+});
+
+
+describe('固定地点表（阶段 3.1）', () => {
+    const places = [
+        { id: 'p1', name: '城南河堤', blurb: '傍晚有人遛狗' },
+        { id: 'p2', name: '面馆' },
+        { id: 'p3', name: '图书馆', regularIds: ['m_a'] },
+    ];
+    const members = [{ id: 'm_a', name: '小满' }, { id: 'm_b', name: '阿岚' }];
+
+    describe('resolvePlaceId —— 把自由文本对到清单', () => {
+        it('完全同名直接对上', () => {
+            expect(resolvePlaceId('面馆', places)).toBe('p2');
+        });
+
+        it('空白不影响匹配', () => {
+            expect(resolvePlaceId('  面 馆 ', places)).toBe('p2');
+        });
+
+        it('⭐ 一方包含另一方也算（模型常只写半个名字）', () => {
+            expect(resolvePlaceId('河堤', places)).toBe('p1');
+            expect(resolvePlaceId('城南河堤旁边', places)).toBe('p1');
+        });
+
+        it('⭐ 包含匹配取最长的那条，不会对到更短的泛称上', () => {
+            const two = [{ id: 'short', name: '河' }, { id: 'long', name: '城南河堤' }];
+            expect(resolvePlaceId('城南河堤', two)).toBe('long');
+        });
+
+        it('⛔⭐ 对不上就是 undefined —— 这不是错误，角色本来就能去新地方', () => {
+            expect(resolvePlaceId('隔壁市的机场', places)).toBeUndefined();
+            expect(resolvePlaceId('', places)).toBeUndefined();
+            expect(resolvePlaceId(undefined, places)).toBeUndefined();
+        });
+
+        it('⛔ 没建地点表的旧世界一律 undefined，不崩', () => {
+            expect(resolvePlaceId('面馆', undefined)).toBeUndefined();
+            expect(resolvePlaceId('面馆', [])).toBeUndefined();
+        });
+    });
+
+    describe('buildPlacesSection —— 清单那段提示词', () => {
+        it('列出名字和说明', () => {
+            const t = buildPlacesSection({ places } as any, members);
+            expect(t).toContain('城南河堤：傍晚有人遛狗');
+            expect(t).toContain('面馆');
+        });
+
+        it('带上「谁平时在这儿上班/上学」（§5.7：具体但不引入数值）', () => {
+            const t = buildPlacesSection({ places } as any, members);
+            expect(t).toContain('小满平时在这儿上班/上学');
+            // ⛔ 不能冒出职位/工资/等级这类数值化的东西
+            for (const forbidden of ['职位', '工资', '薪水', '升职', '等级']) {
+                expect(t).not.toContain(forbidden);
+            }
+        });
+
+        it('⛔⭐ 措辞红线：必须明写「不是封闭名单」，否则会把「鼓励意外」那段废掉', () => {
+            const t = buildPlacesSection({ places } as any, members);
+            expect(t).toContain('不是一份封闭名单');
+            expect(t).toContain('完全可以去清单上没有的地方');
+        });
+
+        it('⭐ 也要说清为什么要复用名字', () => {
+            expect(buildPlacesSection({ places } as any, members)).toContain('别把同一个地方每次换个叫法');
+        });
+
+        it('⛔ 没建地点表 → 空串，旧世界提示词零变化', () => {
+            expect(buildPlacesSection({} as any, members)).toBe('');
+            expect(buildPlacesSection({ places: [] } as any, members)).toBe('');
+        });
+
+        it('常驻成员已退镇（查不到名字）时不留空括号', () => {
+            const t = buildPlacesSection({ places: [{ id: 'x', name: '面馆', regularIds: ['已删除'] }] } as any, members);
+            expect(t).not.toContain('（）');
+            expect(t).not.toContain('平时在这儿');
+        });
+    });
+
+    describe('parseCharBeat 顺带解析 placeId', () => {
+        const char = { id: 'm_a', name: '小满' } as any;
+        const raw = (loc: string) => JSON.stringify({ location: loc, narrative: '正文', mood: '平静' });
+
+        it('⭐ 对上清单就带 placeId 出来（将来上地图靠这个）', () => {
+            const b = parseCharBeat(raw('面馆'), char, ['小满'], [], places);
+            expect(b.location).toBe('面馆');
+            expect(b.placeId).toBe('p2');
+        });
+
+        it('⛔ 对不上就没有 placeId，location 原样保留', () => {
+            const b = parseCharBeat(raw('隔壁市的机场'), char, ['小满'], [], places);
+            expect(b.location).toBe('隔壁市的机场');
+            expect(b.placeId).toBeUndefined();
+        });
+
+        it('⛔ 不传地点表（老调用点）行为完全不变', () => {
+            const b = parseCharBeat(raw('面馆'), char, ['小满']);
+            expect(b.location).toBe('面馆');
+            expect(b.placeId).toBeUndefined();
+        });
+
+        it('模型没给 JSON 时的兜底也会尝试对一次（住处可能就在清单上）', () => {
+            const home = [{ id: 'home', name: '住处' }];
+            expect(parseCharBeat('胡言乱语', char, ['小满'], [], home).placeId).toBe('home');
+            expect(parseCharBeat('胡言乱语', char, ['小满'], [], places).placeId).toBeUndefined();
+        });
     });
 });

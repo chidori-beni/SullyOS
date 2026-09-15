@@ -1798,6 +1798,35 @@ export interface WorldHouse {
     residentIds: string[];
 }
 
+/**
+ * 小镇上的一个**固定地点**（阶段 3.1）。
+ *
+ * 解决的问题：`WorldCharBeat.location` 是自由文本，模型每轮自己编 ——
+ * 同一条河这轮叫「河堤」、下轮叫「小河边」、再下轮叫「河岸」，
+ * 世界读起来就没有「这是同一个地方」的实感。有了清单，角色会优先复用已有的名字。
+ *
+ * 同时这是**将来上地图的前置条件**：自由文本没法映射到固定地图上的坐标，
+ * `WorldCharBeat.placeId` 才可以。
+ *
+ * ⛔ **绝不能做成死名单。** 现有提示词特意鼓励意外（「别每天都过得一个样……
+ * 临时加班、东西坏了、偶遇旧识」），把地点锁死等于把那段废掉。
+ * 用户原话：「**地图上没有的地方就不显示小人，但剧情照走。**」
+ * 所以提示词里写的是「优先用清单里的，但**完全可以去清单上没有的地方**」，
+ * 解析时匹配不上就让 `placeId` 留空 —— 不匹配不是错误，是正常情况。
+ */
+export interface WorldPlace {
+    id: string;
+    name: string;
+    /** 一句话说这是个什么地方（会进提示词，让角色知道这儿能干嘛） */
+    blurb?: string;
+    /**
+     * 常驻在这儿上班/上学的成员（交接说明 §5.7）。
+     * ⛔ 只到「谁平时在哪儿」为止 —— **不要引入职位/工资/升职**，
+     * 一旦数值化这套系统就从叙事变成经营游戏了。
+     */
+    regularIds?: string[];
+}
+
 /** 成员（或 NPC）之间的**有向**关系条：from 对 to 的看法，与 to 对 from 的可以不对等。 */
 export interface WorldRelationship {
     fromId: string;
@@ -1941,6 +1970,8 @@ export interface WorldProfile {
     memberIds: string[];
     npcs: WorldNPC[];
     houses: WorldHouse[];
+    /** 固定地点表（阶段 3.1）。缺省/空数组 = 没建过，行为与改造前完全一致 */
+    places?: WorldPlace[];
     relationships: WorldRelationship[];
     /** 世界内消息线程（私聊 + 世界群聊），随演绎累积，每线程截留最近若干条 */
     threads?: WorldThread[];
@@ -1969,8 +2000,14 @@ export interface WorldProfile {
 export interface WorldCharBeat {
     charId: string;
     charName: string;
-    /** 角色根据环境自判定的主要位置 */
+    /** 角色根据环境自判定的主要位置（自由文本，模型原样给的） */
     location: string;
+    /**
+     * `location` 对上了世界地点表里的哪一条（阶段 3.1）。**对不上就是 undefined，这不是错误**
+     * —— 角色本来就可以去清单上没有的地方，见 `WorldPlace` 的注释。
+     * 将来上地图时，有 id 的显示小人，没 id 的剧情照走但不显示。
+     */
+    placeId?: string;
     /** 大段正文：聚焦一件有意义的事/一次内心拉扯（按世界设定的文风），私人视角，不外传 */
     narrative: string;
     /** 心情（一两个词） */

@@ -619,7 +619,7 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
                         temperature: 0.9, stream: false,
                     }),
                 }, 2, 0, { appName: '家园', charId: char.id, charName: char.name, purpose: `演绎 · ${world.name}` });
-                const beat = parseCharBeat(data.choices?.[0]?.message?.content || '', char, memberNames, world.npcs.map(n => n.name));
+                const beat = parseCharBeat(data.choices?.[0]?.message?.content || '', char, memberNames, world.npcs.map(n => n.name), world.places);
                 // 落库前剔除和最近动态重复的 post（上一轮 + 本轮已演绎角色）
                 dropDuplicatePosts(beat, collectRecentPosts(lastBeats, beats));
                 beats.push(beat);
@@ -861,7 +861,7 @@ export async function rerollWorldCharBeat(
                 temperature: 0.95, stream: false,
             }),
         }, 2, 0, { appName: '家园', charId: char.id, charName: char.name, purpose: `重演 · ${world.name}` });
-        const beat = parseCharBeat(data.choices?.[0]?.message?.content || '', char, memberNames, world.npcs.map(n => n.name));
+        const beat = parseCharBeat(data.choices?.[0]?.message?.content || '', char, memberNames, world.npcs.map(n => n.name), world.places);
         // 重演这一拍同样剔除和最近动态重复的 post
         dropDuplicatePosts(beat, collectRecentPosts(prevEp?.beats || [], otherBeats));
 

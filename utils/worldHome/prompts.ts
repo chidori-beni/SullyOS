@@ -9,7 +9,7 @@
  *     （buildChatRequestPayload 那条链路不变）。
  */
 
-import type { CharacterProfile, WorldProfile, WorldHouse, WorldCharBeat, WorldHomeMode, WorldTimeMode, WorldNarrativeStyle } from '../../types';
+import type { CharacterProfile, WorldProfile, WorldHouse, WorldPlace, WorldCharBeat, WorldHomeMode, WorldTimeMode, WorldNarrativeStyle } from '../../types';
 import { dmThreadsOf, groupThreadOf, formatThreadForPrompt } from './threads';
 import { nowInTimeZone, tzLabel } from '../timezone';
 import { buildHostBondNote } from '../characterIdentity';
@@ -305,6 +305,68 @@ ${bondNote ? `${bondNote}\n` : ''}${gapNote}
 保持你在聊天中一贯的人设、记忆与行事风格——这是同一个你，只是生活在这个世界里。`;
 }
 
+/**
+ * 把模型给的自由文本 `location` 对到地点表里的某一条（阶段 3.1）。
+ *
+ * ⛔ **对不上是正常情况，不是错误。** 角色本来就可以去清单上没有的地方
+ * （用户原话：「地图上没有的地方就不显示小人，但剧情照走」），
+ * 所以这里宁可放过也不硬凑 —— 硬凑会把「他去了一个新地方」错记成「他在老地方」。
+ *
+ * 匹配到 `id`：① 去掉空白后完全同名 ② 一方包含另一方（「河堤」↔「城南河堤」）。
+ * 都对不上返回 undefined。
+ */
+export function resolvePlaceId(
+    location: string | undefined,
+    places: readonly WorldPlace[] | undefined,
+): string | undefined {
+    const loc = (location || '').replace(/\s+/g, '');
+    if (!loc || !places || places.length === 0) return undefined;
+    const norm = (s: string) => (s || '').replace(/\s+/g, '');
+    const exact = places.find(p => norm(p.name) === loc);
+    if (exact) return exact.id;
+    // 包含匹配只在两边都有内容时才算，且取最长的那条（「河堤」对上「城南河堤」而不是「河」）
+    const partial = places
+        .filter(p => {
+            const n = norm(p.name);
+            return n.length > 0 && (n.includes(loc) || loc.includes(n));
+        })
+        .sort((a, b) => norm(b.name).length - norm(a.name).length)[0];
+    return partial?.id;
+}
+
+/**
+ * 地点清单那段提示词（阶段 3.1）。没建过地点表就返回空串，行为与改造前一致。
+ *
+ * ⛔ **措辞红线：这是清单不是名单。** 必须明写「完全可以去清单上没有的地方」——
+ * 现有提示词特意鼓励意外（临时加班、东西坏了、偶遇旧识…），
+ * 把地点写成封闭枚举等于把那一整段废掉，世界会变得死板。
+ */
+export function buildPlacesSection(
+    world: Pick<WorldProfile, 'places'>,
+    members: { id: string; name: string }[],
+): string {
+    const places = world.places || [];
+    if (places.length === 0) return '';
+    const lines = places.map(p => {
+        const regulars = (p.regularIds || [])
+            .map(id => members.find(m => m.id === id)?.name)
+            .filter(Boolean) as string[];
+        return `- ${p.name}${p.blurb ? `：${p.blurb}` : ''}`
+            + (regulars.length > 0 ? `（${regulars.join('、')}平时在这儿上班/上学）` : '');
+    });
+    const body = lines.join(String.fromCharCode(10));
+    return [
+        '',
+        '## 这个世界已有的地方',
+        body,
+        '写 location 和 timeline 的 place 时**优先用上面这些名字的原文**，别把同一个地方每次换个叫法'
+            + '（「河堤」「小河边」「河岸」写成三个地方，世界就散了）。',
+        '但这**不是一份封闭名单**：你完全可以去清单上没有的地方——新开的店、别的城市、谁家的院子、'
+            + '临时被叫去的地方都行，该去就去，照常写出来。',
+        '',
+    ].join(String.fromCharCode(10));
+}
+
 /** 居住安排的可读文本。 */
 function describeHousing(world: WorldProfile, members: CharacterProfile[]): string {
     const lines: string[] = [];
@@ -476,6 +538,7 @@ export function buildWorldCharTurn(args: {
 ## 这个世界
 ${world.worldview || '（一个安静的小世界）'}
 
+${buildPlacesSection(world, members)}
 ## 居住安排（注意：同住 ≠ 一直在一起。白天/夜晚大家完全可以各在各处忙自己的事）
 ${describeHousing(world, members)}
 你的住处：${myHouse ? `${myHouse.name}${myHouse.residentIds.length > 1 ? `（和 ${myHouse.residentIds.filter(id => id !== char.id).map(id => members.find(m => m.id === id)?.name).filter(Boolean).join('、')} 同住）` : ''}` : '你自己的住处（独居）'}
@@ -511,7 +574,7 @@ ${groupSection}
         : '一个上午/一个夜晚能发生很多事：自由安排你这半天的行程（完全可以出门、可以和同住的人一整个半天都碰不上面）'}，聚焦在**你自己**正在经历的事情上。
 严格输出一个 JSON 对象（建议用 \`\`\`json 代码块包裹，不要输出 JSON 之外的正文）：
 {
-  "location": "这半天你主要在哪",
+  "location": "这半天你主要在哪（清单上有的就用清单上的原文；没有的地方也照常写）",
   "mood": "一两个词的此刻心情",
   "timeline": [
     { "time": "8:30", "place": "河堤", "event": "晨跑，碰到了遛狗的邻居", "shared": true },
@@ -681,11 +744,23 @@ const clampNum = (v: any, lo: number, hi: number, fallback: number): number => {
 };
 
 /** 解析单角色演绎输出 → WorldCharBeat（解析失败时整段原文兜底进 narrative，绝不丢内容）。 */
-export function parseCharBeat(raw: string, char: CharacterProfile, memberNames: string[], npcNames: string[] = []): WorldCharBeat {
+export function parseCharBeat(
+    raw: string,
+    char: CharacterProfile,
+    memberNames: string[],
+    npcNames: string[] = [],
+    /** 世界的固定地点表（阶段 3.1）。传了才解析 placeId；不传 = 老调用点，行为不变 */
+    places?: readonly WorldPlace[],
+): WorldCharBeat {
     const j = extractJson(raw);
     const fallbackNarrative = (raw || '').replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```(?:json)?|```/g, '').trim().slice(0, 1400);
     if (!j || typeof j !== 'object') {
-        return { charId: char.id, charName: char.name, location: '住处', narrative: fallbackNarrative || '安静地度过了这半天。', mood: '平静' };
+        const loc = '住处';
+        return {
+            charId: char.id, charName: char.name, location: loc,
+            ...(resolvePlaceId(loc, places) ? { placeId: resolvePlaceId(loc, places) } : {}),
+            narrative: fallbackNarrative || '安静地度过了这半天。', mood: '平静',
+        };
     }
     const nameSet = new Set(memberNames);
     const dmNameSet = new Set([...memberNames, ...npcNames]); // 私聊对象可以是成员或 NPC
@@ -750,10 +825,13 @@ export function parseCharBeat(raw: string, char: CharacterProfile, memberNames: 
             }))
             .slice(0, 3)
         : [];
+    const beatLocation = typeof j.location === 'string' && j.location.trim() ? j.location.trim().slice(0, 40) : '住处';
     return {
         charId: char.id,
         charName: char.name,
-        location: typeof j.location === 'string' && j.location.trim() ? j.location.trim().slice(0, 40) : '住处',
+        location: beatLocation,
+        // 对不上清单就留空 —— 那说明 ta 去了个新地方，是正常的（见 resolvePlaceId）
+        ...(resolvePlaceId(beatLocation, places) ? { placeId: resolvePlaceId(beatLocation, places) } : {}),
         narrative: typeof j.narrative === 'string' && j.narrative.trim() ? j.narrative.trim() : (fallbackNarrative || '安静地度过了这半天。'),
         mood: typeof j.mood === 'string' && j.mood.trim() ? j.mood.trim().slice(0, 16) : '平静',
         statusPanel: Object.keys(statusPanel).length > 0 ? statusPanel : undefined,

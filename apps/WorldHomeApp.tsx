@@ -646,12 +646,70 @@ const WorldEditor: React.FC<{
         setSavedStyles(next); persistSavedStyles(next);
     };
 
+    // ── 阶段 3.1：固定地点表 ──────────────────────────────────────
+    const togglePlaceRegular = (placeId: string, charId: string) => {
+        upd({
+            places: (w.places || []).map(p => p.id !== placeId ? p : {
+                ...p,
+                regularIds: (p.regularIds || []).includes(charId)
+                    ? (p.regularIds || []).filter(x => x !== charId)
+                    : [...(p.regularIds || []), charId],
+            }),
+        });
+    };
+    const [collecting, setCollecting] = useState(false);
+    /**
+     * 从已经演过的剧情里**收集**地点，而不是让用户凭空想。
+     *
+     * 地点表最好的来源就是「这个世界实际已经发生过的地方」——凭空列清单既费劲
+     * 又容易列出一堆没人去过的地方。所以这个按钮扫最近的剧情，
+     * 把出现过的 location / timeline.place 去重后补进清单，已有的跳过。
+     */
+    const collectPlaces = async () => {
+        setCollecting(true);
+        try {
+            const episodes = await DB.getWorldEpisodes(w.id, 60);
+            const seen = new Map<string, number>();   // 名字 → 出现次数
+            for (const ep of episodes) {
+                for (const b of ep.beats || []) {
+                    const names = [b.location, ...((b.timeline || []).map(t => t.place))];
+                    for (const raw of names) {
+                        const n = (raw || '').trim();
+                        // 太长的多半是一句话不是地名；「住处」是兜底值不是真地点
+                        if (!n || n.length > 12 || n === '住处') continue;
+                        seen.set(n, (seen.get(n) || 0) + 1);
+                    }
+                }
+            }
+            const existing = new Set((w.places || []).map(p => p.name.trim()));
+            const fresh = [...seen.entries()]
+                .filter(([n]) => !existing.has(n))
+                .sort((a, b) => b[1] - a[1])          // 去得多的排前面
+                .slice(0, 12)
+                .map(([name]) => ({ id: genId('wp'), name }));
+            if (fresh.length === 0) {
+                addToast(episodes.length === 0 ? '这个世界还没演过，先观测几轮再来收集' : '没找到新地方，清单已经是全的了', 'info');
+                return;
+            }
+            upd({ places: [...(w.places || []), ...fresh] });
+            addToast(`收集到 ${fresh.length} 个地方，可以改名或删掉不要的`, 'success');
+        } catch {
+            addToast('收集失败，稍后再试', 'error');
+        } finally {
+            setCollecting(false);
+        }
+    };
+
     const toggleMember = (id: string) => {
         if (w.memberIds.includes(id)) {
             upd({
                 memberIds: w.memberIds.filter(m => m !== id),
                 houses: w.houses.map(h => ({ ...h, residentIds: h.residentIds.filter(r => r !== id) })),
                 relationships: w.relationships.filter(r => r.fromId !== id && r.toId !== id),
+                // 退镇的人也要从地点的「常驻」里摘掉，否则以后再加回来会悄悄复活（阶段 3.1）
+                places: (w.places || []).map(p => (p.regularIds || []).includes(id)
+                    ? { ...p, regularIds: (p.regularIds || []).filter(r => r !== id) }
+                    : p),
             });
         } else {
             upd({ memberIds: [...w.memberIds, id] });
@@ -863,6 +921,61 @@ const WorldEditor: React.FC<{
                 {characters.length === 0 && <div className="text-[11px] text-stone-400">还没有角色，先去「神经链接」创建</div>}
                 {characters.length > 0 && filterCharactersByGroup(characters, characterGroups, memberGroupId).length === 0 &&
                     <div className="text-[11px] text-stone-400">该分组下没有角色</div>}
+            </div>
+
+            {/* ── 阶段 3.1：固定地点表 ──────────────────────────────
+                作用：角色写 location 时优先复用这些名字，别把同一条河这轮写「河堤」、
+                下轮写「小河边」——世界读起来才有「这是同一个地方」的实感。
+                ⛔ 但它不是封闭名单：提示词里明写「完全可以去清单上没有的地方」。 */}
+            <div className={sectionCls}>
+                <div className="flex items-center justify-between gap-2">
+                    <div className={labelCls}>这个世界的地方</div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                        <button onClick={collectPlaces} disabled={collecting}
+                            className="text-[11px] px-2.5 py-1 rounded-lg bg-violet-100 text-violet-700 font-bold flex items-center gap-1 border border-violet-200 disabled:opacity-50 active:scale-95 transition-transform">
+                            <Sparkle size={12} weight="fill" />{collecting ? '收集中…' : '从剧情里收集'}</button>
+                        <button onClick={() => upd({ places: [...(w.places || []), { id: genId('wp'), name: '' }] })}
+                            className="text-[11px] px-2.5 py-1 rounded-lg bg-amber-100 text-amber-800 font-bold flex items-center gap-1 border border-amber-200"><Plus size={12} weight="bold" />地方</button>
+                    </div>
+                </div>
+                <div className="text-[10.5px] text-stone-400 leading-relaxed">
+                    列了之后，角色会<b className="text-stone-500">优先用这些名字</b>，不会每轮给同一个地方换个叫法。
+                    <b className="text-stone-500">不是封闭名单</b>——该去清单上没有的地方，角色照样会去，剧情照走。
+                    不列也能玩，只是地名会散一点。
+                </div>
+                {(w.places || []).map(pl => (
+                    <div key={pl.id} className="rounded-xl border border-stone-200 bg-white p-2.5 space-y-2">
+                        <div className="flex items-center gap-2">
+                            <MapPin size={14} className="text-amber-600 shrink-0" weight="fill" />
+                            <input className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-stone-50 border border-stone-100 text-[12px]" value={pl.name}
+                                placeholder="地方的名字"
+                                onChange={e => upd({ places: (w.places || []).map(x => x.id === pl.id ? { ...x, name: e.target.value } : x) })} />
+                            <button onClick={() => upd({ places: (w.places || []).filter(x => x.id !== pl.id) })} className="p-1 text-stone-400"><X size={14} /></button>
+                        </div>
+                        <input className="w-full px-2 py-1 rounded-lg bg-stone-50 border border-stone-100 text-[11px]" value={pl.blurb || ''}
+                            placeholder="一句话说这是个什么地方（可空）"
+                            onChange={e => upd({ places: (w.places || []).map(x => x.id === pl.id ? { ...x, blurb: e.target.value } : x) })} />
+                        {members.length > 0 && (
+                            <div className="space-y-1">
+                                <div className="text-[10px] text-stone-400">谁平时在这儿上班 / 上学</div>
+                                <div className="flex flex-wrap gap-1.5">
+                                    {members.map(m => (
+                                        <button key={m.id} onClick={() => togglePlaceRegular(pl.id, m.id)}
+                                            className={`text-[11px] px-2 py-0.5 rounded-full border ${(pl.regularIds || []).includes(m.id) ? 'bg-amber-500 border-amber-500 text-white' : 'bg-white border-stone-200 text-stone-600'}`}>
+                                            {m.name}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                ))}
+                {(w.places || []).length === 0 && (
+                    <div className="text-[11px] text-stone-400">
+                        还没列。演过几轮之后点「<b className="text-stone-500">从剧情里收集</b>」最省事——
+                        直接把角色已经去过的地方捞出来，不用凭空想。
+                    </div>
+                )}
             </div>
 
             <div className={sectionCls}>
