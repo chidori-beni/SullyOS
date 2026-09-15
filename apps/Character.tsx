@@ -1923,6 +1923,19 @@ ${isInitialGeneration ? `
                                         <div className="flex items-center gap-1.5">
                                             <span className="text-[10.5px] font-bold text-slate-600">ta 怎么看你</span>
                                             <span className="text-[9px] px-1.5 py-px rounded-full bg-amber-50 text-amber-600">ta 自己的内心</span>
+                                            {/* 关系锁（阶段 2.2）。默认不锁；锁只拦演绎，上面那个输入框照样能改。 */}
+                                            <button
+                                                type="button"
+                                                onClick={() => handleChange('hostBond', { ...(formData.hostBond || {}), toHostLocked: !formData.hostBond?.toHostLocked })}
+                                                aria-pressed={!!formData.hostBond?.toHostLocked}
+                                                className={`ml-auto text-[9px] font-bold px-2 py-px rounded-full border active:scale-95 transition-transform ${
+                                                    formData.hostBond?.toHostLocked
+                                                        ? 'bg-amber-100 text-amber-700 border-amber-300'
+                                                        : 'bg-slate-50 text-slate-400 border-slate-200'
+                                                }`}
+                                            >
+                                                {formData.hostBond?.toHostLocked ? '🔒 已锁住' : '🔓 未锁'}
+                                            </button>
                                         </div>
                                         <input
                                             value={formData.hostBond?.toHost || ''}
@@ -1932,6 +1945,9 @@ ${isInitialGeneration ? `
                                         />
                                         <div className="text-[10px] text-slate-400 leading-relaxed">
                                             这栏会直接告诉 ta。<span className="font-bold text-slate-500">私聊、见面、群聊、小镇都生效</span>。
+                                            {formData.hostBond?.toHostLocked
+                                                ? <> 现在<span className="font-bold text-amber-600">锁着</span>：剧情不会再改它，<span className="font-bold text-slate-500">但你自己随时能改</span>。</>
+                                                : <> 剧情会慢慢改写这一栏；不想让它变就点上面的锁。</>}
                                         </div>
                                     </div>
                                 </div>

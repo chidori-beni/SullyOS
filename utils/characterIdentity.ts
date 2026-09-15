@@ -338,7 +338,12 @@ export type BondChangeSource = 'world' | 'impression' | 'manual';
  * 用户原话：「不会显得有点生硬吗？仿佛角色被下了什么指令，要对用户产生印象改变似的」。
  * 改动静悄悄发生，只往聊天里留一条**只给用户看**的提示（见 `UiNoticeMeta`）。
  *
- * @returns `null` 表示没有实质变化（同一句话 / 空值），调用方就什么都不要做——
+ * **关系锁（阶段 2.2）**：`prev.toHostLocked` 为真时，除 `manual` 外的来源一律
+ * 当作「没有变化」处理。拦截点故意放在这里而不是各调用方 —— 小镇演绎和印象重算
+ * 是两条独立入口，将来还会有第三条，锁在源头只需守一处。
+ * `manual` 放行是有意的：锁是拦演绎的，不是拦人的，用户自己随时能改。
+ *
+ * @returns `null` 表示没有实质变化（同一句话 / 空值 / 这一栏锁着），调用方就什么都不要做——
  *          尤其不要落提示，否则每轮观测都刷一条「ta 对你的看法变了」。
  */
 export const applyBondChange = (
@@ -350,6 +355,8 @@ export const applyBondChange = (
 ): { hostBond: NonNullable<CharacterProfile['hostBond']>; from?: string; to: string } | null => {
     const next = (nextText || '').trim();
     if (!next) return null;
+    // 锁着就当没发生（用户手动改除外）。见上方注释与 hostBond.toHostLocked。
+    if (prev?.toHostLocked && source !== 'manual') return null;
     const current = (prev?.toHost || '').trim();
     if (current === next) return null;
 

@@ -549,6 +549,27 @@ describe('applyBondChange —— 「ta 怎么看你」的自动改写', () => {
         expect(applyBondChange({ toHost: '原来的' }, undefined, 'world')).toBeNull();
     });
 
+    it('⭐ 关系锁：锁着时演绎改不动（阶段 2.2）', () => {
+        const prev = { toHost: '就是个网友', toHostLocked: true };
+        expect(applyBondChange(prev, '好像有点在意了', 'world', '她下线时我愣了一下')).toBeNull();
+        expect(applyBondChange(prev, '好像有点在意了', 'impression')).toBeNull();
+    });
+
+    it('⭐ 关系锁只拦演绎，不拦人 —— manual 照样能改', () => {
+        const prev = { toHost: '就是个网友', toHostLocked: true };
+        const r = applyBondChange(prev, '其实是朋友', 'manual', undefined, NOW);
+        expect(r!.hostBond.toHost).toBe('其实是朋友');
+        // 锁不会因为用户改了一次就自己松开
+        expect(r!.hostBond.toHostLocked).toBe(true);
+        expect(r!.hostBond.toHostHistory![0]).toMatchObject({ text: '就是个网友', source: 'manual' });
+    });
+
+    it('⛔ 默认不锁 —— 没设过这个字段的老角色照旧会被演绎改写', () => {
+        // 交接说明 §5.3：默认全不锁，且「随心情切换」而非一次设定终身
+        expect(applyBondChange({ toHost: 'a' }, 'b', 'world')).not.toBeNull();
+        expect(applyBondChange({ toHost: 'a', toHostLocked: false }, 'b', 'world')).not.toBeNull();
+    });
+
     it('不碰另一栏（fromHost 是用户手写的，永不被改）', () => {
         const r = applyBondChange({ fromHost: '就是个朋友', toHost: 'a' }, 'b', 'impression');
         expect(r!.hostBond.fromHost).toBe('就是个朋友');

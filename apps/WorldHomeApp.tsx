@@ -18,7 +18,7 @@ import {
     ArrowLeft, Plus, GearSix, Trash, House, UsersThree,
     CaretRight, CaretDown, Sparkle, MapPin, DeviceMobile, X,
     MoonStars, SunHorizon, Heart, ChatCircleDots, Article, WifiHigh, BatteryFull, CellSignalFull,
-    Lightning, NotePencil, PaperPlaneTilt, EyeSlash,
+    Lightning, NotePencil, PaperPlaneTilt, EyeSlash, Lock, LockOpen,
 } from '@phosphor-icons/react';
 import { DB } from '../utils/db';
 import { getChibi } from '../utils/vrWorld/chibi';
@@ -1473,6 +1473,22 @@ const WorldView: React.FC<{
         addToast(`关系已回退为「${toLabel}」`, 'success');
     };
 
+    /**
+     * 关系锁（阶段 2.2）：冻住这条**有向边**，往后的演绎不再改它的好感和关系名。
+     *
+     * 挂在单向边上是有意的 —— 交接说明 §5.3 要的是随时能切的开关，
+     * 而 A→B 和 B→A 本来就是两条独立记录，锁到边这级才能表达
+     * 「他对她怎么变都行，但她对他别动」。默认全不锁。
+     */
+    const toggleRelLock = (fromId: string, toId: string) => {
+        const now = !world.relationships.find(r => r.fromId === fromId && r.toId === toId)?.locked;
+        void mutateWorld({
+            relationships: world.relationships.map(r =>
+                (r.fromId === fromId && r.toId === toId) ? { ...r, locked: now } : r),
+        });
+        addToast(now ? '这段关系已锁住，演绎不会再改它' : '已解锁，这段关系会继续随剧情变', 'success');
+    };
+
     const deleteSeed = (seedId: string) => {
         void mutateWorld({ seeds: (world.seeds || []).filter(s => s.id !== seedId) });
         addToast('伏笔已删除', 'success');
@@ -1818,7 +1834,20 @@ const WorldView: React.FC<{
                                                             <span className="text-[8.5px] font-black px-1.5 py-px rounded-full bg-rose-400/15 text-rose-500 border border-rose-400/25">{r!.label}</span>
                                                         ))}
                                                     </span>
-                                                    <span className={`font-black flex items-center gap-0.5 ${r!.value < 0 ? 'text-slate-400' : 'text-rose-400'}`}><Heart size={10} weight="fill" />{r!.value}</span>
+                                                    <span className="flex items-center gap-1.5">
+                                                        {/* 关系锁（阶段 2.2）：默认不锁，随时可切 */}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => toggleRelLock(r!.fromId, r!.toId)}
+                                                            aria-pressed={!!r!.locked}
+                                                            aria-label={`${r!.locked ? '解锁' : '锁住'} ${nameOf(r!.fromId)} 对 ${nameOf(r!.toId)} 的关系`}
+                                                            title={r!.locked ? '锁着：演绎不会改这段关系。点一下解锁' : '点一下锁住：往后的剧情不再改这段关系'}
+                                                            className={`shrink-0 rounded-full p-1 active:scale-90 transition-transform ${r!.locked ? 'text-amber-500 bg-amber-400/15' : 'opacity-35'}`}
+                                                        >
+                                                            {r!.locked ? <Lock size={11} weight="fill" /> : <LockOpen size={11} weight="bold" />}
+                                                        </button>
+                                                        <span className={`font-black flex items-center gap-0.5 ${r!.value < 0 ? 'text-slate-400' : 'text-rose-400'}`}><Heart size={10} weight="fill" />{r!.value}</span>
+                                                    </span>
                                                 </div>
                                                 {/* 好感 -100~100：中点为 0，向右暖色=好感、向左冷色=负好感 */}
                                                 <div className={`relative h-1.5 rounded-full overflow-hidden mt-1 ${t.barTrack}`}>

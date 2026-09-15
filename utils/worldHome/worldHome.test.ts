@@ -853,6 +853,55 @@ describe('关系名变更史（阶段 2.3）—— 别再硬覆盖', () => {
         applyRelationshipDeltas(w, beatWith('新'), members);
         expect(w.relationships[0].labelHistory[0].round).toBeUndefined();
     });
+
+    // ── 关系锁（阶段 2.2）──────────────────────────────────────────
+    it('⭐ 锁住的边：好感和关系名都不动', () => {
+        const w = mkWorldWith({ fromId: 'a', toId: 'b', value: 10, label: '死对头', locked: true });
+        applyRelationshipDeltas(w, beatWith('别扭的同伴', '他救了我一命'), members, 12);
+        expect(w.relationships[0].value).toBe(10);
+        expect(w.relationships[0].label).toBe('死对头');
+        expect(w.relationships[0].labelHistory).toBeUndefined();
+    });
+
+    it('⭐ 锁是单向的 —— 锁了 a→b 不影响 b→a', () => {
+        const w = { id: 'w1', name: '小镇', relationships: [
+            { fromId: 'a', toId: 'b', value: 10, label: '死对头', locked: true },
+            { fromId: 'b', toId: 'a', value: 10, label: '损友' },
+        ] } as any;
+        applyRelationshipDeltas(w, [
+            { charId: 'a', charName: '小满', relationshipDeltas: [{ withName: '阿岚', delta: 5, newLabel: '同伴' }] },
+            { charId: 'b', charName: '阿岚', relationshipDeltas: [{ withName: '小满', delta: 5, newLabel: '挚友' }] },
+        ] as any, members, 3);
+        expect(w.relationships[0]).toMatchObject({ value: 10, label: '死对头' });   // 锁着
+        expect(w.relationships[1]).toMatchObject({ value: 15, label: '挚友' });     // 没锁
+    });
+
+    it('⭐ 锁的粒度是「这一对」，同一 beat 里其他关系照常演绎', () => {
+        const w = { id: 'w1', name: '小镇', relationships: [
+            { fromId: 'a', toId: 'b', value: 10, locked: true },
+            { fromId: 'a', toId: 'c', value: 10 },
+        ] } as any;
+        const three = [...members, { id: 'c', name: '阿澄' }];
+        applyRelationshipDeltas(w, [{
+            charId: 'a', charName: '小满',
+            relationshipDeltas: [{ withName: '阿岚', delta: 5 }, { withName: '阿澄', delta: 5 }],
+        }] as any, three, 1);
+        expect(w.relationships[0].value).toBe(10);
+        expect(w.relationships[1].value).toBe(15);
+    });
+
+    it('⛔ 默认不锁 —— 没有这个字段的旧世界照常演绎', () => {
+        const w = mkWorldWith({ fromId: 'a', toId: 'b', value: 10, label: '朋友' });
+        applyRelationshipDeltas(w, beatWith('挚友'), members, 1);
+        expect(w.relationships[0]).toMatchObject({ value: 15, label: '挚友' });
+    });
+
+    it('⛔ 锁不会挡住还不存在的边 —— 新边本来就锁不上', () => {
+        const w = mkWorldWith(null);
+        applyRelationshipDeltas(w, beatWith('初识'), members, 1);
+        expect(w.relationships).toHaveLength(1);
+        expect(w.relationships[0].locked).toBeUndefined();
+    });
 });
 
 

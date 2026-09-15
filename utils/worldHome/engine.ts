@@ -124,6 +124,11 @@ export function applyRelationshipDeltas(
             const otherId = idOf(rd.withName);
             if (!otherId || otherId === beat.charId) continue;
             let rel = world.relationships.find(r => r.fromId === beat.charId && r.toId === otherId);
+            // 关系锁（阶段 2.2）：这条有向边冻着，value 和 label 都不动。
+            // 放在建边之前 —— 还不存在的边不可能锁着，所以先找、锁了就走。
+            // 注意只跳过这一条 delta：同一 beat 里其他关系照常演绎，
+            // 锁的粒度是「这一对」，不是「这个角色这一轮」。
+            if (rel?.locked) continue;
             if (!rel) {
                 // 没记录的边按「陌生中立」0 起步（不是凭空友善）
                 rel = { fromId: beat.charId, toId: otherId, value: 0 };
