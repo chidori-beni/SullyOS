@@ -18,7 +18,8 @@ export const BUILTIN_APPEARANCE_PRESETS: ReadonlyArray<BuiltinAppearancePresetDe
     id: 'builtin:cocoa-dots',
     name: '可可点点',
     description: '奶油可可色调、俏皮圆点和柔软小组件，整机像一间温暖的轻松熊甜品屋。',
-    version: 1,
+    // manifest 曾经发布过不含字体的 v1；升版本并给 URL 加查询参数，避免旧 PWA 缓存继续命中。
+    version: 2,
     manifestPath: 'appearance-presets/cocoa-dots/v1/preset.json',
     swatch: 'linear-gradient(rgba(247,245,242,.18),rgba(74,59,49,.18)),url("./appearance-presets/cocoa-dots/v1/wallpaper-desktop.png") center/cover',
   },
@@ -33,7 +34,9 @@ const isRecord = (value: unknown): value is Record<string, any> => (
 const getManifestUrl = (descriptor: BuiltinAppearancePresetDescriptor): string => {
   const base = import.meta.env.BASE_URL || '/';
   const baseWithSlash = base.endsWith('/') ? base : `${base}/`;
-  return new URL(`${baseWithSlash}${descriptor.manifestPath}`, document.baseURI).href;
+  const url = new URL(`${baseWithSlash}${descriptor.manifestPath}`, document.baseURI);
+  url.searchParams.set('v', String(descriptor.version));
+  return url.href;
 };
 
 const resolveResourceRef = (value: unknown, manifestUrl: string): unknown => (
@@ -92,7 +95,7 @@ const resolveManifestResources = (raw: Record<string, any>, manifestUrl: string)
 
 const fetchBuiltinAppearancePreset = async (descriptor: BuiltinAppearancePresetDescriptor): Promise<AppearancePreset> => {
   const manifestUrl = getManifestUrl(descriptor);
-  const response = await fetch(manifestUrl, { cache: 'force-cache' });
+  const response = await fetch(manifestUrl, { cache: 'no-cache' });
   if (!response.ok) {
     throw new Error(`内置外观「${descriptor.name}」加载失败（HTTP ${response.status}）`);
   }
