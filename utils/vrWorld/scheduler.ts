@@ -14,7 +14,16 @@
  * 角色按时登入"的核心诉求；云端加速可后续叠加。
  */
 
-import type { VRSARActivity } from '../../types';
+import type { CharacterProfile, VRSARActivity } from '../../types';
+import {
+    autonomyPlanNextAt,
+    autonomousRetryDelayMinutes,
+    createVRAutonomyPlan,
+    isVRAutonomyPlanDue,
+    normalizeVRAutonomyPlan,
+    type VRAutonomyActivityState,
+    type VRAutonomyPlan,
+} from './autonomy';
 
 export interface VRSchedule {
     charId: string;
@@ -24,6 +33,7 @@ export interface VRSchedule {
 type ScheduleMap = Record<string, VRSchedule>;
 type LastFireMap = Record<string, number>;
 type FailStreakMap = Record<string, number>;
+type AutonomyPlanMap = Record<string, VRAutonomyPlan>;
 
 /** 一轮活动的结局。`skipped` = 压根没调模型（没书没歌、房间被占、角色没接入），不算账。 */
 export type VRSessionOutcome = 'ok' | 'failed' | 'skipped';
@@ -31,6 +41,8 @@ export type VRSessionOutcome = 'ok' | 'failed' | 'skipped';
 const STORAGE_KEY = 'vr_schedules';
 const LAST_FIRE_KEY = 'vr_last_fire';
 const FAIL_STREAK_KEY = 'vr_fail_streak';
+const AUTONOMY_PLANS_KEY = 'vr_autonomy_plans_v1';
+const AUTONOMY_CLAIM_MS = 15 * 60_000;
 
 /**
  * 连着失败这么多次，就掐掉这个角色的自主登入。
@@ -62,6 +74,8 @@ const loadLastFire = () => load<LastFireMap>(LAST_FIRE_KEY);
 const saveLastFire = (m: LastFireMap) => save(LAST_FIRE_KEY, m);
 const loadFailStreak = () => load<FailStreakMap>(FAIL_STREAK_KEY);
 const saveFailStreak = (m: FailStreakMap) => save(FAIL_STREAK_KEY, m);
+const loadAutonomyPlans = () => load<AutonomyPlanMap>(AUTONOMY_PLANS_KEY);
+const saveAutonomyPlans = (m: AutonomyPlanMap) => save(AUTONOMY_PLANS_KEY, m);
 
 function removeFailStreak(charId: string) {
     const m = loadFailStreak();
@@ -84,6 +98,13 @@ function removeLastFire(charId: string) {
     saveLastFire(m);
 }
 
+function removeAutonomyPlan(charId: string) {
+    const plans = loadAutonomyPlans();
+    if (!plans[charId]) return;
+    delete plans[charId];
+    saveAutonomyPlans(plans);
+}
+
 let triggerCallback: ((charId: string, room?: string, letterId?: string, manual?: boolean, sarActivity?: VRSARActivity) => void | Promise<void>) | null = null;
 let visibilityListener: (() => void) | null = null;
 let focusListener: (() => void) | null = null;
@@ -103,6 +124,16 @@ function checkOverdue() {
             void triggerCallback(s.charId);
         }
     }
+    const plans = loadAutonomyPlans();
+    let plansChanged = false;
+    for (const plan of Object.values(plans)) {
+        if (!isVRAutonomyPlanDue(plan, now)) continue;
+        plan.claimedUntil = now + AUTONOMY_CLAIM_MS;
+        plan.reason = 'triggered';
+        plansChanged = true;
+        void triggerCallback(plan.charId);
+    }
+    if (plansChanged) saveAutonomyPlans(plans);
     schedulePreciseTimer();
 }
 
@@ -113,7 +144,8 @@ function schedulePreciseTimer() {
     }
     if (!triggerCallback) return;
     const schedules = Object.values(loadSchedules());
-    if (schedules.length === 0) return;
+    const plans = Object.values(loadAutonomyPlans());
+    if (schedules.length === 0 && plans.length === 0) return;
 
     const now = Date.now();
     let nextDue = Infinity;
@@ -121,6 +153,10 @@ function schedulePreciseTimer() {
         const lastFire = getLastFire(s.charId);
         const base = lastFire > 0 ? lastFire : now;
         const due = base + s.intervalMs;
+        if (due < nextDue) nextDue = due;
+    }
+    for (const plan of plans) {
+        const due = autonomyPlanNextAt(plan);
         if (due < nextDue) nextDue = due;
     }
     if (!Number.isFinite(nextDue)) return;
@@ -138,8 +174,9 @@ function stopSchedule(charId: string) {
     delete schedules[charId];
     saveSchedules(schedules);
     removeLastFire(charId);
+    removeAutonomyPlan(charId);
     removeFailStreak(charId);
-    if (Object.keys(schedules).length === 0) detachListeners();
+    if (Object.keys(schedules).length === 0 && Object.keys(loadAutonomyPlans()).length === 0) detachListeners();
     else schedulePreciseTimer();
 }
 
@@ -187,6 +224,7 @@ export const VRScheduler = {
 
     /** 启动/更新某角色的自主登入（intervalMinutes 会按 30min 对齐，最小 30）。 */
     start(charId: string, intervalMinutes: number) {
+        removeAutonomyPlan(charId);
         const clamped = Math.max(30, Math.round(intervalMinutes / 30) * 30);
         const intervalMs = clamped * 60 * 1000;
         const schedules = loadSchedules();
@@ -198,6 +236,26 @@ export const VRScheduler = {
         removeFailStreak(charId);
         attachListeners();
         console.log(`[VRScheduler] Started: ${charId}, every ${clamped}min`);
+    },
+
+    /** 启动/恢复按人设随机安排的自主活动；计划本身落 localStorage，刷新不会重新抽签。 */
+    startAutonomous(char: CharacterProfile) {
+        const schedules = loadSchedules();
+        if (schedules[char.id]) {
+            delete schedules[char.id];
+            saveSchedules(schedules);
+            removeLastFire(char.id);
+        }
+        const plans = loadAutonomyPlans();
+        const current = plans[char.id];
+        const normalized = current
+            ? normalizeVRAutonomyPlan(current, { char, lastActiveAt: char.vrState?.lastActiveAt })
+            : createVRAutonomyPlan({ char, lastActiveAt: char.vrState?.lastActiveAt });
+        plans[char.id] = { ...normalized, claimedUntil: undefined, reason: undefined };
+        saveAutonomyPlans(plans);
+        removeFailStreak(char.id);
+        attachListeners();
+        console.log(`[VRScheduler] Started: ${char.id}, autonomous plan`);
     },
 
     /** 停止某角色。 */
@@ -234,10 +292,70 @@ export const VRScheduler = {
         return loadFailStreak()[charId] || 0;
     },
 
+    /** 面板只读的自主计划状态；不把 localStorage 解析逻辑散到 React 组件里。 */
+    getAutonomyStatus(charId: string): {
+        active: boolean;
+        nextAt?: number;
+        dailyCheckpointAt?: number;
+        retryNotBefore?: number;
+        reason?: string;
+    } {
+        const plan = loadAutonomyPlans()[charId];
+        if (!plan) return { active: false };
+        return {
+            active: true,
+            nextAt: autonomyPlanNextAt(plan),
+            dailyCheckpointAt: plan.dailyCheckpointAt,
+            retryNotBefore: plan.retryNotBefore,
+            reason: plan.reason,
+        };
+    },
+
+    /** 一次自主触发结束后，按成功/阻止/失败分别安排下一次本地计划。 */
+    completeAutonomous(
+        charId: string,
+        outcome: VRSessionOutcome,
+        context: {
+            char?: CharacterProfile;
+            reason?: string;
+            activityState?: VRAutonomyActivityState;
+        } = {},
+    ) {
+        const plans = loadAutonomyPlans();
+        const current = plans[charId];
+        if (!current) return;
+        const now = Date.now();
+        if (outcome === 'ok' && context.char) {
+            plans[charId] = createVRAutonomyPlan({
+                char: context.char,
+                now,
+                lastActiveAt: now,
+                planSequence: current.planSequence + 1,
+                activityState: context.activityState || 'free',
+            });
+        } else {
+            current.claimedUntil = undefined;
+            current.reason = context.reason || (outcome === 'failed' ? 'temporary-error' : 'waiting');
+            current.retryNotBefore = now + autonomousRetryDelayMinutes(context.reason) * 60_000;
+            // 跨日后不要继续拿昨天的检查点反复补火。
+            if (context.char) {
+                const normalized = normalizeVRAutonomyPlan(current, {
+                    char: context.char,
+                    now,
+                    lastActiveAt: context.char.vrState?.lastActiveAt,
+                });
+                plans[charId] = { ...normalized, retryNotBefore: current.retryNotBefore, reason: current.reason };
+            }
+        }
+        saveAutonomyPlans(plans);
+        schedulePreciseTimer();
+    },
+
     /** 重载后恢复所有计划。 */
     resume() {
         const schedules = Object.values(loadSchedules());
-        if (schedules.length === 0) return;
+        const plans = Object.values(loadAutonomyPlans());
+        if (schedules.length === 0 && plans.length === 0) return;
         attachListeners();
         handleVisibility();
     },
@@ -254,12 +372,34 @@ export const VRScheduler = {
      * - 间隔被改过 → 跟随最新设定
      * - 已删除 / 已关闭的角色 → 清掉残留调度
      */
-    reconcile(active: { charId: string; intervalMinutes: number }[]) {
+    reconcile(active: Array<{
+        charId: string;
+        intervalMinutes: number;
+        autoStrategy?: 'fixed' | 'autonomous';
+        character?: CharacterProfile;
+    }>) {
         const schedules = loadSchedules();
+        const plans = loadAutonomyPlans();
         const activeIds = new Set(active.map(a => a.charId));
         let changed = false;
 
         for (const a of active) {
+            if (a.autoStrategy === 'autonomous' && a.character) {
+                if (schedules[a.charId]) {
+                    delete schedules[a.charId];
+                    removeLastFire(a.charId);
+                    changed = true;
+                }
+                const current = plans[a.charId];
+                const normalized = current
+                    ? normalizeVRAutonomyPlan(current, { char: a.character, lastActiveAt: a.character.vrState?.lastActiveAt })
+                    : createVRAutonomyPlan({ char: a.character, lastActiveAt: a.character.vrState?.lastActiveAt });
+                if (!current || JSON.stringify(current) !== JSON.stringify(normalized)) {
+                    plans[a.charId] = normalized;
+                    changed = true;
+                }
+                continue;
+            }
             const clamped = Math.max(30, Math.round(a.intervalMinutes / 30) * 30);
             const intervalMs = clamped * 60 * 1000;
             const existing = schedules[a.charId];
@@ -269,6 +409,10 @@ export const VRScheduler = {
                 changed = true;
             } else if (existing.intervalMs !== intervalMs) {
                 existing.intervalMs = intervalMs;
+                changed = true;
+            }
+            if (plans[a.charId]) {
+                delete plans[a.charId];
                 changed = true;
             }
         }
@@ -281,14 +425,22 @@ export const VRScheduler = {
                 changed = true;
             }
         }
+        for (const id of Object.keys(plans)) {
+            if (!activeIds.has(id)) {
+                delete plans[id];
+                removeFailStreak(id);
+                changed = true;
+            }
+        }
 
         if (changed) saveSchedules(schedules);
-        if (Object.keys(schedules).length > 0) attachListeners();
+        if (changed) saveAutonomyPlans(plans);
+        if (Object.keys(schedules).length > 0 || Object.keys(plans).length > 0) attachListeners();
         else detachListeners();
     },
 
     isActiveFor(charId: string): boolean {
-        return !!loadSchedules()[charId];
+        return !!loadSchedules()[charId] || !!loadAutonomyPlans()[charId];
     },
 
     getIntervalMinutes(charId: string): number | null {

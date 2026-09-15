@@ -71,9 +71,10 @@ import {
     parseMarketPlan,
 } from './fishingCharacter';
 import { readFishingMarketState } from './fishingMarket';
-import { allowsAutomaticVR, withLatestVRParticipation } from './participation';
+import { allowsAutomaticVR, isVRAutonomous, withLatestVRParticipation } from './participation';
 import { fishingTripCard, flushFishingDeliveries } from './fishingDelivery';
 import { prepareGardenVisit,parseGardenVisit,applyGardenVisit,gardenVisitAvailable,type GardenVisitSnapshot } from './dinosaurCharacter';
+import type { VRAutonomyActivityState } from './autonomy';
 
 /** 记忆管线所需配置的最小形状（避免从 OSContext 反向 import 造成循环依赖）。 */
 interface MemoryConfigLike {
@@ -108,6 +109,8 @@ export interface VRSessionResult {
     room?: VRRoomId;
     reason?: string;
     activity?: string;
+    /** 自主策略用于调节下一次频率；不影响旧 fixed/manual 调用。 */
+    activityState?: VRAutonomyActivityState;
 }
 
 const genId = (p: string) => `${p}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -119,6 +122,7 @@ function blockedSessionResult(
     manual?: boolean,
     room?: VRRoomId,
     blockedChar?: CharacterProfile,
+    activityState?: VRAutonomyActivityState,
 ): VRSessionResult {
     try {
         window.dispatchEvent(new CustomEvent('vr-session-blocked', {
@@ -133,7 +137,7 @@ function blockedSessionResult(
             },
         }));
     } catch { /* SSR */ }
-    return { ok: false, room, reason };
+    return { ok: false, room, reason, activityState };
 }
 
 /**
@@ -166,6 +170,9 @@ export function vrAutoGapMs(intervalMinutes?: number): number {
     const minutes = Number.isFinite(raw) && raw > 0 ? raw : VR_DEFAULT_INTERVAL_MIN;
     return Math.max((minutes * 60_000) / 2, MIN_AUTO_GAP_FLOOR_MS);
 }
+
+/** 自主策略不把旧 intervalMinutes 当成频率；只保留一个独立安全下限。 */
+export const vrAutonomousGapMs = (): number => 45 * 60_000;
 
 /** 各角色当前被最小间隔闸拦下的累计次数，给诊断导出用。 */
 export function getVRThrottleCounts(): Record<string, number> {
@@ -310,7 +317,9 @@ async function runVRSessionUnlocked(deps: VRSessionDeps): Promise<VRSessionResul
 
     // 最小间隔闸（见 lastAutoCallAt）。走到这里说明有东西在催，正常调度不会这么密。
     if (!manual) {
-        const minGap = vrAutoGapMs(char.vrState?.intervalMinutes);
+        const minGap = isVRAutonomous(char.vrState)
+            ? vrAutonomousGapMs()
+            : vrAutoGapMs(char.vrState?.intervalMinutes);
         const since = Date.now() - (lastAutoCallAt.get(char.id) || 0);
         if (since < minGap) {
             const times = (throttledCount.get(char.id) || 0) + 1;
@@ -330,9 +339,9 @@ async function runVRSessionUnlocked(deps: VRSessionDeps): Promise<VRSessionResul
 
     // 自动与手动入口共用同一日程门禁；manual 只绕过上面的最小间隔，不能绕过睡眠/忙碌状态。
     const eligibilityAt = new Date();
-    const actorEligibility = await resolveVRActivityEligibility(char, eligibilityAt);
+    const actorEligibility = await resolveVRActivityEligibility(char, eligibilityAt, { includeState: true });
     if (!actorEligibility.allowed) {
-        return blockedSessionResult(char, actorEligibility.reason || 'schedule-unavailable', manual);
+        return blockedSessionResult(char, actorEligibility.reason || 'schedule-unavailable', manual, undefined, undefined, actorEligibility.activityState);
     }
 
     // API 优先级：角色自带覆盖 > 彼方独立 API > 聊天默认
@@ -1105,7 +1114,7 @@ async function runVRSessionUnlocked(deps: VRSessionDeps): Promise<VRSessionResul
             window.dispatchEvent(new CustomEvent('vr-session-done', { detail: { charId: char.id, room: room.id, activity } }));
         } catch { /* SSR */ }
 
-        return { ok: true, room: room.id, activity };
+        return { ok: true, room: room.id, activity, activityState: actorEligibility.activityState || 'free' };
     } catch (err) {
         console.error('[VRWorld] session error:', err);
         return { ok: false, room: room.id, reason: modelCallFailed ? 'api-error' : 'error' };

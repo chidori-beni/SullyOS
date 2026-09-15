@@ -35,7 +35,7 @@ import { readableNovels, readingPreferenceLabel } from '../utils/vrWorld/library
 import type { VRLibraryCategory } from '../types';
 import { useResilientAssetUrl, attachAudioMirrorFallback } from '../utils/assetUrl';
 import { VRScheduler, VR_FAIL_LIMIT } from '../utils/vrWorld/scheduler';
-import { allowsAutomaticVR, joinVRState, isSARActivityOccupant, isVRDynamicRecipient } from '../utils/vrWorld/participation';
+import { allowsAutomaticVR, getVRAutoStrategy, isVRAutonomous, joinVRState, isSARActivityOccupant, isVRDynamicRecipient } from '../utils/vrWorld/participation';
 import { collectVRDiagnostics } from '../utils/vrWorld/diagnostics';
 import { VR_ROOMS, getRoom, VR_DEFAULT_INTERVAL_MIN, SIGNAL_EPIGRAPH, signalActFor, signalActRanges, SIGNAL_POEMS_PER_BOOKLET, SIGNAL_EVENT_ENDED, SIGNAL_MEMORIAL_CLOSING } from '../utils/vrWorld/constants';
 import { buildNovelAsync, groupAnnotationsBySeg, getBookmark } from '../utils/vrWorld/novel';
@@ -596,7 +596,8 @@ const VRWorldApp: React.FC = () => {
     const enableChar = (char: CharacterProfile) => {
         const vrState = joinVRState(char.vrState);
         updateCharacter(char.id, { vrState });
-        if (allowsAutomaticVR(vrState)) VRScheduler.start(char.id, vrState.intervalMinutes);
+        if (isVRAutonomous(vrState)) VRScheduler.startAutonomous({ ...char, vrState });
+        else if (allowsAutomaticVR(vrState)) VRScheduler.start(char.id, vrState.intervalMinutes);
         else VRScheduler.stop(char.id);
         trackEvent('开启角色接入彼方', { action: 'enable' });
     };
@@ -804,7 +805,8 @@ const VRWorldApp: React.FC = () => {
                             setPendingEnable(null);
                             const vrState = { ...joinVRState(charSnap.vrState), chibi };
                             updateCharacter(charSnap.id, { vrState });
-                            if (allowsAutomaticVR(vrState)) VRScheduler.start(charSnap.id, vrState.intervalMinutes);
+                            if (isVRAutonomous(vrState)) VRScheduler.startAutonomous({ ...charSnap, vrState });
+                            else if (allowsAutomaticVR(vrState)) VRScheduler.start(charSnap.id, vrState.intervalMinutes);
                             else VRScheduler.stop(charSnap.id);
                             addToast?.(`${charSnap.name} 已接入彼方`, 'success');
                             trackEvent('开启角色接入彼方', { action: 'enable' });
@@ -3953,14 +3955,35 @@ const SettingsView: React.FC<{
         trackEvent('开启角色接入彼方', { action: 'disable' });
     };
     const setInterval = (char: CharacterProfile, minutes: number) => {
-        updateCharacter(char.id, { vrState: { ...(char.vrState || {}), enabled: char.vrState?.enabled ?? true, intervalMinutes: minutes } });
-        if (allowsAutomaticVR(char.vrState)) VRScheduler.start(char.id, minutes);
+        const vrState = {
+            ...joinVRState(char.vrState),
+            enabled: char.vrState?.enabled ?? true,
+            activityMode: 'scheduled' as const,
+            autoStrategy: 'fixed' as const,
+            intervalMinutes: minutes,
+        };
+        updateCharacter(char.id, { vrState });
+        if (allowsAutomaticVR(vrState)) VRScheduler.start(char.id, minutes);
     };
     const setActivityMode = (char: CharacterProfile, activityMode: 'manual' | 'scheduled') => {
-        const vrState = { ...joinVRState(char.vrState), activityMode };
+        const vrState = {
+            ...joinVRState(char.vrState),
+            activityMode,
+            autoStrategy: activityMode === 'scheduled' ? 'fixed' as const : getVRAutoStrategy(char.vrState),
+        };
         updateCharacter(char.id, { vrState });
         if (allowsAutomaticVR(vrState)) VRScheduler.start(char.id, vrState.intervalMinutes);
         else VRScheduler.stop(char.id);
+    };
+    const setAutonomousMode = (char: CharacterProfile) => {
+        const vrState = {
+            ...joinVRState(char.vrState),
+            enabled: true,
+            activityMode: 'scheduled' as const,
+            autoStrategy: 'autonomous' as const,
+        };
+        updateCharacter(char.id, { vrState });
+        VRScheduler.startAutonomous({ ...char, vrState });
     };
     const pageNavigation = pageCount > 1 && <nav className="flex items-center justify-between gap-2 py-2 text-[11px] text-indigo-200/70" aria-label="角色接入分页">
         <button type="button" disabled={currentPage === 0} onClick={() => setSettingsPage(currentPage - 1)} className="min-h-10 rounded-xl bg-white/[0.06] px-3 disabled:opacity-25">上一页</button>
@@ -3972,7 +3995,8 @@ const SettingsView: React.FC<{
         <div className="space-y-3">
             <p className="text-[11px] text-indigo-300/60 leading-relaxed">
                 接入后，角色会知道「彼方」，小人可以挂在房间里。默认仅手动活动：等你选房间、邀请钓鱼或玩箱庭时才行动，不设置间隔、不自动调用模型。
-                想让 ta 自己逛，再开启自动活动。每次实际活动会留下动态卡片；自动活动连着 {VR_FAIL_LIMIT} 次调不通模型会暂停。
+                固定自动会按你选的间隔活动；角色自主会参考 ta 的性格、当地日程和当天状态随机安排，通常尽量每天至少一次，也可能一天多次。睡觉、忙碌、应用没运行或生成失败时会顺延。
+                每次实际活动会留下动态卡片；自动活动连着 {VR_FAIL_LIMIT} 次调不通模型会暂停。
                 {novelCount === 0 && <span className="text-amber-300/80"> 书库还空着，先去「书库」上传一本。</span>}
             </p>
             {characters.length === 0 && <p className="text-[11px] text-indigo-300/50 py-4 text-center">还没有角色。</p>}
@@ -3986,9 +4010,11 @@ const SettingsView: React.FC<{
                 const st = char.vrState;
                 const enabled = !!st?.enabled;
                 const automatic = allowsAutomaticVR(st);
+                const autonomous = isVRAutonomous(st);
                 const interval = st?.intervalMinutes || VR_DEFAULT_INTERVAL_MIN;
                 const chibi = getChibi(char);
                 const failStreak = VRScheduler.getFailStreak(char.id);
+                const autonomyStatus = autonomous ? VRScheduler.getAutonomyStatus(char.id) : { active: false };
                 return (
                     <div key={char.id} data-vr-character={char.id} className="rounded-2xl p-3.5 backdrop-blur-sm" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.07)' }}>
                         <div className="flex items-center gap-2.5">
@@ -4001,10 +4027,15 @@ const SettingsView: React.FC<{
                                 <div className="text-[13px] font-bold truncate">{char.name}</div>
                                 {enabled ? (
                                     <div className="text-[10px] text-indigo-300/60">
-                                        {automatic ? `每 ${interval >= 60 ? `${formatHours(interval)} 小时` : `${interval} 分`}自动活动一次` : '仅手动活动 · 等你邀请'}
+                                        {autonomous
+                                            ? '按性格与当天状态自主活动 · 通常每天至少一次，也可能多次'
+                                            : automatic
+                                                ? `每 ${interval >= 60 ? `${formatHours(interval)} 小时` : `${interval} 分`}自动活动一次`
+                                                : '仅手动活动 · 等你邀请'}
                                         {st?.sarModule && <span className="text-emerald-200/70"> · {st.sarModule.moduleTitle} {st.sarModule.phase === 'active' ? `${st.sarModule.remainingTurns}/${st.sarModule.totalTurns}` : `稳定 ${st.sarModule.afterglowTurns}/3`}</span>}
                                         {/* 后台失败本来一点声响都没有，攒到熔断前先让用户看见 */}
                                         {automatic && failStreak > 0 && <span className="text-amber-300/80"> · 已连续 {failStreak} 次没调通</span>}
+                                        {autonomous && autonomyStatus.nextAt && <span className="text-indigo-200/45"> · 下次约 {new Date(autonomyStatus.nextAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
                                     </div>
                                 ) : <div className="text-[10px] text-indigo-300/40">{chibi.isFallback ? '未设形象 · 未接入' : '未接入'}</div>}
                             </div>
@@ -4015,17 +4046,21 @@ const SettingsView: React.FC<{
                         </div>
                         {enabled && (
                             <>
-                                <div className="mt-3 grid grid-cols-2 gap-2" role="group" aria-label={`${char.name}的活动方式`}>
+                                <div className="mt-3 grid grid-cols-3 gap-2" role="group" aria-label={`${char.name}的活动方式`}>
                                     <button type="button" aria-pressed={!automatic} onClick={() => setActivityMode(char, 'manual')}
                                         className={`rounded-xl px-3 py-2.5 text-left border ${!automatic ? 'bg-indigo-400/20 border-indigo-300/60 text-indigo-100' : 'border-white/10 text-indigo-200/60'}`}>
                                         <b className="block text-[12px]">仅手动活动</b><span className="text-[10px]">你选择时才行动</span>
                                     </button>
-                                    <button type="button" aria-pressed={automatic} onClick={() => setActivityMode(char, 'scheduled')}
-                                        className={`rounded-xl px-3 py-2.5 text-left border ${automatic ? 'bg-indigo-400/20 border-indigo-300/60 text-indigo-100' : 'border-white/10 text-indigo-200/60'}`}>
-                                        <b className="block text-[12px]">自动活动</b><span className="text-[10px]">按间隔自己去逛</span>
+                                    <button type="button" aria-pressed={automatic && !autonomous} onClick={() => setActivityMode(char, 'scheduled')}
+                                        className={`rounded-xl px-3 py-2.5 text-left border ${automatic && !autonomous ? 'bg-indigo-400/20 border-indigo-300/60 text-indigo-100' : 'border-white/10 text-indigo-200/60'}`}>
+                                        <b className="block text-[12px]">固定自动</b><span className="text-[10px]">按间隔自己去逛</span>
+                                    </button>
+                                    <button type="button" aria-pressed={autonomous} onClick={() => setAutonomousMode(char)}
+                                        className={`rounded-xl px-3 py-2.5 text-left border ${autonomous ? 'bg-indigo-400/20 border-indigo-300/60 text-indigo-100' : 'border-white/10 text-indigo-200/60'}`}>
+                                        <b className="block text-[12px]">角色自主</b><span className="text-[10px]">按性格和状态安排</span>
                                     </button>
                                 </div>
-                                {automatic && <div className="flex flex-wrap gap-1.5 mt-2.5" aria-label="自动活动间隔">
+                                {automatic && !autonomous && <div className="flex flex-wrap gap-1.5 mt-2.5" aria-label="自动活动间隔">
                                     {INTERVAL_OPTIONS.map(opt => (
                                         <button key={opt} onClick={() => setInterval(char, opt)}
                                             className={`text-[10.5px] rounded-full px-2.5 py-1 font-semibold ${interval === opt ? 'bg-indigo-400 text-white' : 'bg-white/10 text-indigo-200/70'}`}>

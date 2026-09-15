@@ -1,12 +1,22 @@
 import type { CharacterProfile, VRWorldCharState } from '../../types';
 import { VR_DEFAULT_INTERVAL_MIN } from './constants';
 
+export type VRAutoStrategy = 'fixed' | 'autonomous';
+
+/** 未知或缺省值都按旧的固定间隔解释，保证旧存档与旧版本可回退。 */
+export const getVRAutoStrategy = (state?: Pick<VRWorldCharState, 'autoStrategy'>): VRAutoStrategy =>
+    state?.autoStrategy === 'autonomous' ? 'autonomous' : 'fixed';
+
+export const isVRAutonomous = (state?: Pick<VRWorldCharState, 'enabled' | 'activityMode' | 'autoStrategy'>): boolean =>
+    Boolean(state?.enabled && state.activityMode !== 'manual' && getVRAutoStrategy(state) === 'autonomous');
+
 /** 旧接入沿用自动设置；新接入默认等待用户邀请。 */
 export const joinVRState = (previous?: VRWorldCharState): VRWorldCharState => ({
     ...previous,
     enabled: true,
     activityMode: previous?.activityMode ?? (previous?.enabled ? 'scheduled' : 'manual'),
     intervalMinutes: previous?.intervalMinutes || VR_DEFAULT_INTERVAL_MIN,
+    autoStrategy: getVRAutoStrategy(previous),
 });
 
 export const allowsAutomaticVR = (state?: VRWorldCharState): boolean =>
@@ -42,6 +52,7 @@ export const withLatestVRParticipation = (current: CharacterProfile, patch: Part
             excludedAutoSARActivities: current.vrState?.excludedAutoSARActivities,
             enabled: current.vrState?.enabled ?? false,
             activityMode: current.vrState?.activityMode,
+            autoStrategy: getVRAutoStrategy(current.vrState),
             intervalMinutes: current.vrState?.intervalMinutes || VR_DEFAULT_INTERVAL_MIN,
         },
     };

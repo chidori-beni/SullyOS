@@ -11,6 +11,7 @@ import { getDailyScheduleForChar } from '../dailySchedule';
 import { getScheduleWallClock } from '../scheduleTime';
 import { resolveScheduleSlots } from '../scheduleInjection';
 import { isScheduleFeatureOn } from '../scheduleFeature';
+import type { VRAutonomyActivityState } from './autonomy';
 
 type ScheduleCharacter = Pick<
     CharacterProfile,
@@ -26,14 +27,29 @@ export interface VRActivityEligibility {
     allowed: boolean;
     reason?: VRActivityBlockReason;
     busyLevel?: Extract<ScheduleSlot['busyLevel'], 'busy' | 'sleep'>;
+    /** 仅自主调度需要；默认调用保持旧返回形状。 */
+    activityState?: VRAutonomyActivityState;
 }
 
-const allowed = (): VRActivityEligibility => ({ allowed: true });
+export interface VRActivityEligibilityOptions {
+    includeState?: boolean;
+}
+
+const allowed = (
+    state: VRAutonomyActivityState = 'free',
+    options: VRActivityEligibilityOptions = {},
+): VRActivityEligibility => options.includeState ? { allowed: true, activityState: state } : { allowed: true };
 
 const blocked = (
     reason: VRActivityBlockReason,
     busyLevel?: Extract<ScheduleSlot['busyLevel'], 'busy' | 'sleep'>,
-): VRActivityEligibility => ({ allowed: false, reason, busyLevel });
+    options: VRActivityEligibilityOptions = {},
+): VRActivityEligibility => ({
+    allowed: false,
+    reason,
+    ...(busyLevel ? { busyLevel } : {}),
+    ...(options.includeState ? { activityState: busyLevel || 'unavailable' } : {}),
+});
 
 /**
  * 用已经取到的日程快照判定当前时刻。
@@ -43,25 +59,26 @@ export function evaluateVRActivityEligibility(
     char: ScheduleCharacter,
     schedule: Pick<DailySchedule, 'slots'> | null | undefined,
     at: Date = new Date(),
+    options: VRActivityEligibilityOptions = {},
 ): VRActivityEligibility {
     // 旧角色没有开启日程时保持原有彼方行为，且不触碰日程存储。
-    if (!isScheduleFeatureOn(char)) return allowed();
+    if (!isScheduleFeatureOn(char)) return allowed('free', options);
 
     // 没有生成当天日程不是读取错误；没有可知的 busy/sleep 状态时保持兼容。
-    if (schedule == null) return allowed();
+    if (schedule == null) return allowed('free', options);
     if (!Array.isArray(schedule.slots) || !Number.isFinite(at.getTime())) {
-        return blocked('schedule-unavailable');
+        return blocked('schedule-unavailable', undefined, options);
     }
 
     try {
         const wallClock = getScheduleWallClock(char, at);
         const current = resolveScheduleSlots(schedule, wallClock).current;
-        if (current?.busyLevel === 'busy') return blocked('schedule-busy', 'busy');
-        if (current?.busyLevel === 'sleep') return blocked('schedule-sleep', 'sleep');
-        return allowed();
+        if (current?.busyLevel === 'busy') return blocked('schedule-busy', 'busy', options);
+        if (current?.busyLevel === 'sleep') return blocked('schedule-sleep', 'sleep', options);
+        return allowed(current?.busyLevel === 'light' ? 'light' : 'free', options);
     } catch {
         // 日程数据损坏时宁可暂停这一轮，也不要冒险让角色在未知状态下活动。
-        return blocked('schedule-unavailable');
+        return blocked('schedule-unavailable', undefined, options);
     }
 }
 
@@ -69,12 +86,13 @@ export function evaluateVRActivityEligibility(
 export async function resolveVRActivityEligibility(
     char: ScheduleCharacter & Pick<CharacterProfile, 'id'>,
     at: Date = new Date(),
+    options: VRActivityEligibilityOptions = {},
 ): Promise<VRActivityEligibility> {
-    if (!isScheduleFeatureOn(char)) return allowed();
+    if (!isScheduleFeatureOn(char)) return allowed('free', options);
 
     try {
         const schedule = await getDailyScheduleForChar(char, at);
-        const current = evaluateVRActivityEligibility(char, schedule, at);
+        const current = evaluateVRActivityEligibility(char, schedule, at, options);
         if (!current.allowed) return current;
 
         // 当天日程还没生成、或当天表在清晨没有命中当前时段时，补看前一个角色本地日，
@@ -89,10 +107,10 @@ export async function resolveVRActivityEligibility(
             char,
             new Date(at.getTime() - 12 * 60 * 60 * 1000),
         );
-        const previous = evaluateVRActivityEligibility(char, previousSchedule, at);
+        const previous = evaluateVRActivityEligibility(char, previousSchedule, at, options);
         return previous.allowed ? current : previous;
     } catch {
-        return blocked('schedule-unavailable');
+        return blocked('schedule-unavailable', undefined, options);
     }
 }
 
@@ -100,10 +118,11 @@ export async function resolveVRActivityEligibility(
 export async function resolveVRActivityEligibilityMap(
     chars: Array<ScheduleCharacter & Pick<CharacterProfile, 'id'>>,
     at: Date = new Date(),
+    options: VRActivityEligibilityOptions = {},
 ): Promise<Map<string, VRActivityEligibility>> {
     const entries = await Promise.all(chars.map(async char => [
         char.id,
-        await resolveVRActivityEligibility(char, at),
+        await resolveVRActivityEligibility(char, at, options),
     ] as const));
     return new Map(entries);
 }

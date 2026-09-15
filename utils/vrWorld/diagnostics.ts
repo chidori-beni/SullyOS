@@ -23,7 +23,7 @@ const PAGE_STARTED_AT = Date.now();
 
 /** 调度相关的 localStorage 键，一次全捞出来（彼方 / 主动发消息 / 家园各一套）。 */
 const SCHEDULE_KEYS = [
-    'vr_schedules', 'vr_last_fire', 'vr_fail_streak',
+    'vr_schedules', 'vr_last_fire', 'vr_fail_streak', 'vr_autonomy_plans_v1',
     'proactive_schedules', 'proactive_last_fire',
     'world_schedules', 'world_last_fire',
 ];
@@ -101,7 +101,7 @@ async function compareMemoryAgainstDb(memChars: CharacterProfile[]): Promise<str
         const flag = memOn === dbOn ? '' : '  ← **对不上**';
         lines.push(
             `${tail(mem.id)} 内存=${memOn ? '已接入' : '未接入'} 库里=${db ? (dbOn ? '已接入' : '未接入') : '库里没这个角色'}`
-            + ` 间隔=${mem.vrState?.intervalMinutes ?? '—'}分 上次活动=${at(mem.vrState?.lastActiveAt)}`
+            + ` 策略=${mem.vrState?.autoStrategy === 'autonomous' ? '角色自主' : '固定/手动'} 间隔=${mem.vrState?.intervalMinutes ?? '—'}分 上次活动=${at(mem.vrState?.lastActiveAt)}`
             + `${mem.vrState?.api?.baseUrl ? ' 角色自带API' : ''}${flag}`
         );
     }

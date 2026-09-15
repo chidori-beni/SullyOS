@@ -1503,8 +1503,10 @@ export interface VRWorldCharState {
     titleRevision?: string;
     /** 是否接入彼方；接入后知道游戏设定，也可由用户邀请参与。 */
     enabled: boolean;
-    /** manual 仅响应用户邀请；scheduled 定时活动。旧存档缺省仍按 scheduled。 */
+    /** manual 仅响应用户邀请；scheduled 表示允许自动活动。旧存档缺省仍按 scheduled。 */
     activityMode?: 'manual' | 'scheduled';
+    /** scheduled 下的自动策略；缺省为 fixed，保证旧角色继续按原固定间隔活动。 */
+    autoStrategy?: 'fixed' | 'autonomous';
     /** 自主登入间隔（分钟，30 对齐；默认 120 = 2h） */
     intervalMinutes: number;
     /**

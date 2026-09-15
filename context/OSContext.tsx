@@ -21,8 +21,8 @@ import { collectCharacterCompanionVoiceAssetIds } from '../utils/companionPreset
 import { encodeVectorsForBackup, encodeVectorsForBackupChunked } from '../utils/memoryPalace/db';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { VRScheduler, type VRSessionOutcome } from '../utils/vrWorld/scheduler';
-import { runVRSession } from '../utils/vrWorld/runSession';
-import { allowsAutomaticVR } from '../utils/vrWorld/participation';
+import { runVRSession, type VRSessionResult } from '../utils/vrWorld/runSession';
+import { allowsAutomaticVR, isVRAutonomous } from '../utils/vrWorld/participation';
 import { logVRApiCall } from '../utils/vrWorld/vrApi';
 import { VR_DEFAULT_INTERVAL_MIN } from '../utils/vrWorld/constants';
 import { WorldScheduler, toTickEntries } from '../utils/worldHome/scheduler';
@@ -2929,6 +2929,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           }
           if (!userProfileRef.current) return;
           let outcome: VRSessionOutcome = 'skipped';
+          let resultReason: string | undefined;
+          let resultActivityState: VRSessionResult['activityState'];
           try {
               const result = await runVRSession({
                   char,
@@ -2945,16 +2947,29 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   forcedLetterId: letterId,
                   manual,
               });
+              resultReason = result.reason;
+              resultActivityState = result.activityState;
               // 没书没歌、房间被别人占着这些都不算账，只有真的没调通模型才记一笔失败
               outcome = result.ok ? 'ok' : (result.reason === 'api-error' ? 'failed' : 'skipped');
           } catch (e) {
               console.error('[VRWorld] runVR error', e);
+              resultReason = 'api-error';
               outcome = 'failed';
           }
 
-          if (!allowsAutomaticVR(charactersRef.current.find(c => c.id === charId)?.vrState)) return;
+          const currentChar = charactersRef.current.find(c => c.id === charId);
+          if (!allowsAutomaticVR(currentChar?.vrState)) return;
           const { tripped, streak } = VRScheduler.report(charId, outcome);
-          if (!tripped) return;
+          if (!tripped) {
+              if (isVRAutonomous(currentChar?.vrState)) {
+                  VRScheduler.completeAutonomous(charId, outcome, {
+                      char: currentChar,
+                      reason: resultReason,
+                      activityState: resultActivityState,
+                  });
+              }
+              return;
+          }
           // 熔断了：调度已经被掐掉，这里把角色一并落回未接入，让界面和实际跑的东西对上，
           // 免得又变成「显示未接入、后台还在动」。用函数式更新拿最新的 vrState，
           // 别拿会话开头那份快照写回去，那会把这一轮刚记下的房间和时间抹掉。
@@ -2975,7 +2990,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       VRScheduler.reconcile(
           charactersRef.current
               .filter(c => allowsAutomaticVR(c.vrState))
-              .map(c => ({ charId: c.id, intervalMinutes: c.vrState?.intervalMinutes || VR_DEFAULT_INTERVAL_MIN }))
+              .map(c => ({
+                  charId: c.id,
+                  intervalMinutes: c.vrState?.intervalMinutes || VR_DEFAULT_INTERVAL_MIN,
+                  autoStrategy: isVRAutonomous(c.vrState) ? 'autonomous' as const : 'fixed' as const,
+                  character: c,
+              }))
       );
 
       // 「家园」演绎 —— 引擎跑在全局：用户不在家园界面（可能正在和别人私聊）时，

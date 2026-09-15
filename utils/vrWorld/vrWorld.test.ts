@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { chunkNovelText, chunkNovelTextAsync, getReadingWindow, buildNovel } from './novel';
 import { parseVROutput, parseMusicOutput, parseGuestbookOutput, parseGymOutput, parsePostOfficeOutput, parsePostOfficeReadOutput, parseSignalOutput, buildVRSystemAddendum } from './prompts';
 import { structuralStrangers } from '../characterIdentity';
@@ -17,6 +17,7 @@ describe('VRScheduler.reconcile', () => {
     beforeEach(() => {
         localStorage.removeItem('vr_schedules');
         localStorage.removeItem('vr_last_fire');
+        localStorage.removeItem('vr_autonomy_plans_v1');
     });
 
     it('补建 enabled 但缺调度的角色（导入备份后的核心场景）', () => {
@@ -52,6 +53,7 @@ describe('VRScheduler 熔断', () => {
         localStorage.removeItem('vr_schedules');
         localStorage.removeItem('vr_last_fire');
         localStorage.removeItem('vr_fail_streak');
+        localStorage.removeItem('vr_autonomy_plans_v1');
     });
 
     it('连续调不通模型就掐掉自主登入（令牌失效时别通宵一轮轮撞下去）', () => {
@@ -100,6 +102,65 @@ describe('VRScheduler 熔断', () => {
         for (let i = 0; i < VR_FAIL_LIMIT; i++) VRScheduler.report('c1', 'failed');
         expect(VRScheduler.isActiveFor('c1')).toBe(false);
         expect(VRScheduler.isActiveFor('c2')).toBe(true);
+    });
+});
+
+describe('VRScheduler 角色自主活动', () => {
+    const char = {
+        id: 'autonomous-char',
+        name: '自主角色',
+        description: '外向、好奇，喜欢探索。',
+        systemPrompt: '',
+        memories: [],
+        vrState: { enabled: true, activityMode: 'scheduled', autoStrategy: 'autonomous', intervalMinutes: 120 },
+    } as any;
+
+    beforeEach(() => {
+        localStorage.clear();
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-09-15T10:00:00Z'));
+    });
+
+    afterEach(() => {
+        VRScheduler.reconcile([]);
+        VRScheduler.onTrigger(() => {});
+        VRScheduler.reconcile([]);
+        vi.useRealTimers();
+    });
+
+    it('自主计划到期只触发一次，成功后重新抽下一次自然时间', () => {
+        const trigger = vi.fn();
+        VRScheduler.onTrigger(trigger);
+        VRScheduler.startAutonomous(char);
+        const first = JSON.parse(localStorage.getItem('vr_autonomy_plans_v1')!)[char.id];
+        vi.setSystemTime(first.nextNaturalAt + 1);
+        VRScheduler.onTrigger(trigger);
+        expect(trigger).toHaveBeenCalledTimes(1);
+        expect(trigger).toHaveBeenCalledWith(char.id);
+        const claimed = JSON.parse(localStorage.getItem('vr_autonomy_plans_v1')!)[char.id];
+        expect(claimed.claimedUntil).toBeGreaterThan(Date.now());
+
+        VRScheduler.completeAutonomous(char.id, 'ok', { char });
+        const next = JSON.parse(localStorage.getItem('vr_autonomy_plans_v1')!)[char.id];
+        expect(next.nextNaturalAt).toBeGreaterThan(Date.now());
+        expect(next.planSequence).toBe(first.planSequence + 1);
+    });
+
+    it('睡眠阻止时只安排重查，不把阻止算成失败或立即重试', () => {
+        const trigger = vi.fn();
+        VRScheduler.onTrigger(trigger);
+        VRScheduler.startAutonomous(char);
+        const plan = JSON.parse(localStorage.getItem('vr_autonomy_plans_v1')!)[char.id];
+        plan.nextNaturalAt = Date.now() - 1;
+        plan.dailyCheckpointAt = Date.now() + 24 * 60 * 60_000;
+        localStorage.setItem('vr_autonomy_plans_v1', JSON.stringify({ [char.id]: plan }));
+        VRScheduler.onTrigger(trigger);
+        expect(trigger).toHaveBeenCalledTimes(1);
+        VRScheduler.completeAutonomous(char.id, 'skipped', { char, reason: 'schedule-sleep' });
+        const deferred = JSON.parse(localStorage.getItem('vr_autonomy_plans_v1')!)[char.id];
+        expect(deferred.retryNotBefore - Date.now()).toBeGreaterThanOrEqual(60 * 60_000);
+        vi.advanceTimersByTime(10 * 60_000);
+        expect(trigger).toHaveBeenCalledTimes(1);
     });
 });
 
