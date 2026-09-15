@@ -94,7 +94,7 @@ type Preset = { name: string; code: string; swatch?: string };
 // 内置完整风格（点击=替换文本框、立刻生效）。
 const PRESETS: Preset[] = [
     {
-        name: '可可点点 v21',
+        name: '可可点点',
         swatch: 'radial-gradient(circle at 1px 1px,#a79c93 1px,transparent 1.2px) 0 0/8px 8px,#f7f5f2',
         code: cocoaDotsChatChromeCss,
     },

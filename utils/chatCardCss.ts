@@ -118,7 +118,7 @@ export const BUILTIN_CARD_CSS_PRESETS: ReadonlyArray<ChatCardCssBuiltinPreset> =
     css: LIGHT_CARDS_PRESET_CSS,
   },
   {
-    name: '可可点点 v3',
+    name: '可可点点',
     desc: '奶油卡片 + 炭黑点点，和可可点点聊天白框配套',
     css: cocoaDotsCardCss,
   },

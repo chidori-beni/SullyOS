@@ -39,8 +39,8 @@
 
    ⚠️ 写法只有一种，别漏了 url( ) ：
 
-        --img-tab-chat: url("https://files.catbox.moe/xxx.png");   ✓ 对
-        --img-tab-chat: https://files.catbox.moe/xxx.png;          ✗ 错，整行会被浏览器丢掉
+        --img-tab-chat: url("./appearance-presets/cocoa-dots/v1/css-assets/chat-btn-plus.png");   ✓ 对
+        --img-tab-chat: ./appearance-presets/cocoa-dots/v1/css-assets/chat-btn-plus.png;          ✗ 错，整行会被浏览器丢掉
 
    这些变量最后是喂给 background-image 的，它只认 url(...) 包起来的值。
    裸网址不是合法的图片值，浏览器会把**整条声明当垃圾丢掉**，
@@ -56,15 +56,15 @@
 
   /* ── 1. 整页底图（铺满好友列表那一页，在纹理下面）──────────
      竖图，建议 1080×1920 左右。不想要就 none。 */
-  --img-page-bg:      url('https://files.catbox.moe/h9wuh2.jpg');
+  --img-page-bg:      url('./appearance-presets/cocoa-dots/v1/css-assets/message-page-bg.jpg');
 
   /* ── 2. 顶栏底图（贴在黑框内胆里，奶油底之上）────────────
      很宽很扁的图，建议 1080×260。 */
   --img-header-bg:    none;
 
   /* ── 3. 顶栏两颗键 · 96×96 透明 PNG ────────────────── */
-  --img-btn-back: url('https://files.catbox.moe/4wx0s8.png');   /* 左上「返回桌面」 */
-  --img-btn-edit:     url('https://files.catbox.moe/qxlcn1.png');   /* 右上「编辑角色」 */
+  --img-btn-back: url('./appearance-presets/cocoa-dots/v1/css-assets/message-btn-back.png');   /* 左上「返回桌面」 */
+  --img-btn-edit:     url('./appearance-presets/cocoa-dots/v1/css-assets/message-btn-edit.png');   /* 右上「编辑角色」 */
   --icon-back: 0;             /* 上面放了图 → 改成 0 */
   --icon-edit: 0;
 
@@ -74,20 +74,20 @@
 
   /* ── 4.5「消息」小标题右边那颗分组键 · 96×96 透明 PNG ──
      就是点开「按角色分组 / 展开全部分组 / 收起全部分组」那颗。 */
-  --img-btn-group:    url('https://files.catbox.moe/dgwdu4.png');
+  --img-btn-group:    url('./appearance-presets/cocoa-dots/v1/css-assets/message-btn-group.png');
   --icon-group: 0;            /* 上面放了图 → 改成 0 */
 
   /* ── 5. 底部四颗标签 · 128×128 透明 PNG ───────────────
      每颗有「没选中 / 选中」两张，只想放一张的话两个槽填一样的图。 */
-  --img-tab-chat:      url('https://files.catbox.moe/rp4tll.png');   --img-tab-chat-on:      url('https://files.catbox.moe/gk2wlj.png');
-  --img-tab-moments:   url('https://files.catbox.moe/vhbnm3.png');   --img-tab-moments-on:   url('https://files.catbox.moe/nn90rp.png');
-  --img-tab-favorites: url('https://files.catbox.moe/svb52n.png');   --img-tab-favorites-on: url('https://files.catbox.moe/ns0tw3.png');
-  --img-tab-profile:   url('https://files.catbox.moe/qlpkhd.png');   --img-tab-profile-on:   url('https://files.catbox.moe/sin5dt.png');
+  --img-tab-chat:      url('./appearance-presets/cocoa-dots/v1/css-assets/message-tab-chat.png');   --img-tab-chat-on:      url('./appearance-presets/cocoa-dots/v1/css-assets/message-tab-chat-on.png');
+  --img-tab-moments:   url('./appearance-presets/cocoa-dots/v1/css-assets/message-tab-moments.png');   --img-tab-moments-on:   url('./appearance-presets/cocoa-dots/v1/css-assets/message-tab-moments-on.png');
+  --img-tab-favorites: url('./appearance-presets/cocoa-dots/v1/css-assets/message-tab-favorites.png');   --img-tab-favorites-on: url('./appearance-presets/cocoa-dots/v1/css-assets/message-tab-favorites-on.png');
+  --img-tab-profile:   url('./appearance-presets/cocoa-dots/v1/css-assets/message-tab-profile.png');   --img-tab-profile-on:   url('./appearance-presets/cocoa-dots/v1/css-assets/message-tab-profile-on.png');
   --icon-tab: 0;              /* 四颗都换了图 → 改成 0 */
 
   /* ── 6. 卡片右下角的贴纸（每张好友卡片都会出现）· 256×256 ──
      不想每张都有就保持 none。 */
-  --img-card-sticker: url('https://files.catbox.moe/edoj2n.png');
+  --img-card-sticker: url('./appearance-presets/cocoa-dots/v1/css-assets/message-card-sticker.png');
 
   /* ── 6.5 盖住「动态气泡条」的横幅图 ★★★────────────────
      好友列表上方那排「头像 + 一句话」的动态条，现在整条被盖住不显示了，
@@ -101,7 +101,7 @@
         底部「我的」→ 右上角铅笔。
      ⚠️ 不想要这条带子、想让它彻底消失（列表整体上移）：
         把 ⑤ 段最后那行注释掉的 display:none 放出来。 */
-  --img-notes-cover: url('https://files.catbox.moe/670sb0.jpg');
+  --img-notes-cover: url('./appearance-presets/cocoa-dots/v1/css-assets/message-notes-cover.jpg');
   --notes-cover-h: 92px;
 
   /* ── 6.6 朋友圈封面图 · 建议 1080×1360 ──────────────
@@ -110,10 +110,10 @@
   --img-moments-cover: none;
 
   /* ── 7. 置顶卡片右上角探出来的那只 · 256×256 ─────────── */
-  --img-pin-bear: url('https://files.catbox.moe/18d6jx.png');
+  --img-pin-bear: url('./appearance-presets/cocoa-dots/v1/css-assets/message-pin-bear.png');
 
   /* ── 8. 空状态中间那只（一个好友都没有时）· 512×512 ───── */
-  --img-empty-bear: url('https://files.catbox.moe/a8yjel.png');
+  --img-empty-bear: url('./appearance-presets/cocoa-dots/v1/css-assets/message-empty-bear.png');
 
   /* ── 9. 通用小配件（爪印 / 耳朵），聊天白框那份也是这两张 ── */
   --paw: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23A79C93"><ellipse cx="12" cy="16" rx="6" ry="5"/><ellipse cx="5" cy="9" rx="2.6" ry="3.4"/><ellipse cx="19" cy="9" rx="2.6" ry="3.4"/><ellipse cx="9.5" cy="5" rx="2.4" ry="3.2"/><ellipse cx="14.5" cy="5" rx="2.4" ry="3.2"/></svg>');

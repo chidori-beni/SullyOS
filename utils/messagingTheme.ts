@@ -117,7 +117,7 @@ export const BUILT_IN_MESSAGING_THEMES: Array<Pick<MessagingThemePreset, 'id' | 
     },
     {
         id: 'builtin-cocoa-dots-v6',
-        name: '可可点点 v6',
+        name: '可可点点',
         css: cocoaDotsMessagingCss,
     },
 ];

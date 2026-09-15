@@ -16,7 +16,7 @@
 /* ══════════ ① 图床槽位 ══════════ */
 .sully-chat-card{
   /* 卡片头条右端探出的贴纸 · 256×256 透明 PNG */
-  --img-card-vr:     url('https://files.catbox.moe/66l3l9.png');
+  --img-card-vr:     url('./appearance-presets/cocoa-dots/v1/css-assets/card-vr-sticker.png');
   --img-card-call:   none;
   --img-card-invite: none;
 

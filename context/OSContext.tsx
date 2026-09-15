@@ -92,6 +92,7 @@ import { exportMcpLocal } from '../utils/mcpClient';
 import { exportDesktopSkinLocal } from '../utils/desktopSkinBackup';
 import { assertSupportedSullyBackup } from '../utils/backupImportPolicy';
 import { createBuiltinSullyLive2DConfig, isBuiltinSullyLive2D, upgradeBuiltinSullyLive2DDefaults } from '../utils/builtinSullyLive2D';
+import { loadBuiltinAppearancePreset } from '../utils/builtinAppearancePresets';
 import { normalizeCharacterRoomAssetsInPlace } from '../utils/roomTemplateAssets';
 import { recoverInterruptedSleepCompanionSession } from '../utils/sleepCompanionSession';
 import { recoverInterruptedCallSession } from '../utils/callSessionRecovery';
@@ -398,6 +399,7 @@ interface OSContextType {
   appearancePresets: AppearancePreset[];
   saveAppearancePreset: (name: string, themeOverride?: OSTheme) => void;
   applyAppearancePreset: (id: string) => void;
+  applyBuiltinAppearancePreset: (id: string) => Promise<void>;
   deleteAppearancePreset: (id: string) => void;
   renameAppearancePreset: (id: string, name: string) => void;
   exportAppearancePreset: (id: string) => Promise<Blob>;
@@ -3837,9 +3839,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       addToast(`外观预设「${name}」已保存`, 'success');
   };
 
-  const applyAppearancePreset = async (id: string) => {
-      const preset = appearancePresets.find(p => p.id === id);
-      if (!preset) return;
+  type ApplyAppearancePresetOptions = {
+      replaceRuntimeAssets?: boolean;
+  };
+
+  const applyResolvedAppearancePreset = async (preset: AppearancePreset, options: ApplyAppearancePresetOptions = {}) => {
+      const replaceRuntimeAssets = options.replaceRuntimeAssets === true;
       // Strip banned legacy widget data from preset before applying — old beautification packs
       // may still carry launcherWidgetImage / bl / br, and they must never reach the UI.
       const sanitizedPresetTheme: any = { ...preset.theme, launcherWidgetImage: undefined };
@@ -3863,6 +3868,22 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       }
       if ('lockWallpaper' in sanitizedPresetTheme) {
           sanitizedPresetTheme.lockWallpaper = await resolveLockWallpaperStoredValue(sanitizedPresetTheme.lockWallpaper);
+      }
+      // 外观预设里的图片如果是静态资源，不应该被旧的 IndexedDB 槽位盖掉。
+      // 只有内置整机预设走替换模式；用户自己保存的预设继续保留原来的合并语义。
+      if (replaceRuntimeAssets) {
+          const allAssets = await DB.getAllAssets();
+          for (const asset of allAssets) {
+              const isPwaIcon = asset.id === 'icon__pwa_';
+              if (
+                  asset.id === 'custom_font_data' ||
+                  asset.id.startsWith('widget_') ||
+                  asset.id.startsWith('deco_') ||
+                  (asset.id.startsWith('icon_') && !isPwaIcon)
+              ) {
+                  await DB.deleteAsset(asset.id);
+              }
+          }
       }
       // Apply theme
       setTheme(sanitizedPresetTheme);
@@ -3893,10 +3914,16 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           console.warn('[applyAppearancePreset] localStorage 写入失败，已跳过', e);
           addToast('主题没能保存到本地（存储空间可能已满），重启后可能会还原', 'error');
       }
-      applyCustomFont(preset.theme.customFont);
+      if (replaceRuntimeAssets && !sanitizedPresetTheme.customFont) {
+          await DB.deleteAsset('custom_font_data');
+          applyCustomFont(undefined);
+      } else {
+          applyCustomFont(sanitizedPresetTheme.customFont);
+      }
       // Apply custom icons if present
       if (preset.customIcons) {
-          const persistedIcons: Record<string, string> = {};
+          const preservedPwaIcon = replaceRuntimeAssets ? customIcons._pwa_ : undefined;
+          const persistedIcons: Record<string, string> = preservedPwaIcon ? { _pwa_: preservedPwaIcon } : {};
           for (const [appId, iconUrl] of Object.entries(preset.customIcons)) {
               const stored = iconUrl.startsWith('data:') ? await migrateDataUrlToRef(iconUrl) : iconUrl;
               persistedIcons[appId] = stored;
@@ -3928,6 +3955,22 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           }
       }
       addToast(`已应用预设「${preset.name}」`, 'success');
+  };
+
+  const applyAppearancePreset = async (id: string) => {
+      const preset = appearancePresets.find(p => p.id === id);
+      if (!preset) return;
+      await applyResolvedAppearancePreset(preset);
+  };
+
+  const applyBuiltinAppearancePreset = async (id: string) => {
+      try {
+          const preset = await loadBuiltinAppearancePreset(id);
+          await applyResolvedAppearancePreset(preset, { replaceRuntimeAssets: true });
+      } catch (error: any) {
+          console.error('[applyBuiltinAppearancePreset]', error);
+          addToast(error?.message || '内置外观加载失败', 'error');
+      }
   };
 
   const deleteAppearancePreset = async (id: string) => {
@@ -5574,6 +5617,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     appearancePresets,
     saveAppearancePreset,
     applyAppearancePreset,
+    applyBuiltinAppearancePreset,
     deleteAppearancePreset,
     renameAppearancePreset,
     exportAppearancePreset,

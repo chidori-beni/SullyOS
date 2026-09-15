@@ -16,8 +16,8 @@
 
    ⚠️ 写法只有一种，别漏了 url( ) ：
 
-        --img-btn-plus: url("https://files.catbox.moe/xxx.png");   ✓ 对
-        --img-btn-plus: https://files.catbox.moe/xxx.png;          ✗ 错，整行会被浏览器丢掉
+        --img-btn-plus: url("./appearance-presets/cocoa-dots/v1/css-assets/chat-btn-plus.png");   ✓ 对
+        --img-btn-plus: ./appearance-presets/cocoa-dots/v1/css-assets/chat-btn-plus.png;          ✗ 错，整行会被浏览器丢掉
 
    这些变量最后是喂给 background-image 的，它只认 url(...) 包起来的值。
    裸网址不是合法的图片值，浏览器会把**整条声明当垃圾丢掉**，表现就是「填了没反应」。
@@ -29,21 +29,21 @@
       没换图就保持 1。 */
 .sully-chat-root{
   /* 输入栏三颗键 · 128×128 透明 PNG */
-  --img-btn-plus:   url("https://files.catbox.moe/bfpune.png");
-  --img-btn-voice:  url("https://files.catbox.moe/zgb8kf.png");
-  --img-btn-send:   url("https://files.catbox.moe/ur4mlr.png");
+  --img-btn-plus:   url("./appearance-presets/cocoa-dots/v1/css-assets/chat-btn-plus.png");
+  --img-btn-voice:  url("./appearance-presets/cocoa-dots/v1/css-assets/chat-btn-voice.png");
+  --img-btn-send:   url("./appearance-presets/cocoa-dots/v1/css-assets/chat-btn-send.png");
   --icon-plus:  0;    /* 上面放了图 → 0（藏掉原生图标） */
   --icon-voice: 0;
   --icon-send:  0;    /* 还没放图 → 1（保留原生图标） */
   /* 输入框右端那颗表情包笑脸 · 128×128
      它在 .sully-chat-input-clip **里面**（和输入框同级），
      所以不归上面那三颗管，得单独给一个槽。 */
-  --img-btn-emoji: url('https://files.catbox.moe/plp9bu.png');
+  --img-btn-emoji: url('./appearance-presets/cocoa-dots/v1/css-assets/chat-btn-emoji.png');
   --icon-emoji: 0;
 
   /* 顶栏两颗键 · 96×96 */
-  --img-btn-back:  url('https://files.catbox.moe/0nz8q3.png');
-  --img-btn-ai:    url('https://files.catbox.moe/itg4ve.png');
+  --img-btn-back:  url('./appearance-presets/cocoa-dots/v1/css-assets/chat-btn-back.png');
+  --img-btn-ai:    url('./appearance-presets/cocoa-dots/v1/css-assets/chat-btn-ai.png');
   --icon-back: 0;
   --icon-ai:   0;
 
@@ -51,7 +51,7 @@
   --img-bubble-paw:  url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23A79C93"><ellipse cx="12" cy="16" rx="6" ry="5"/><ellipse cx="5" cy="9" rx="2.6" ry="3.4"/><ellipse cx="19" cy="9" rx="2.6" ry="3.4"/><ellipse cx="9.5" cy="5" rx="2.4" ry="3.2"/><ellipse cx="14.5" cy="5" rx="2.4" ry="3.2"/></svg>');
   --img-bubble-bear: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 36"><g stroke="%23A79C93" stroke-width="2.4"><circle cx="9" cy="11" r="6.4" fill="%23F7F5F2"/><circle cx="31" cy="11" r="6.4" fill="%23F7F5F2"/><ellipse cx="20" cy="21" rx="14" ry="12.6" fill="%23F7F5F2"/></g><circle cx="15" cy="19" r="1.9" fill="%236E6259"/><circle cx="25" cy="19" r="1.9" fill="%236E6259"/><ellipse cx="20" cy="25" rx="5.2" ry="4" fill="%23E6DED3"/><ellipse cx="20" cy="23.4" rx="2.1" ry="1.5" fill="%236E6259"/></svg>');
   /* 语音条右端探出的熊 · 256×256 */
-  --img-voice-bear: url('https://files.catbox.moe/y85sho.png');
+  --img-voice-bear: url('./appearance-presets/cocoa-dots/v1/css-assets/chat-voice-bear.png');
   /* 加号菜单贴纸表（4列×5行，1024×1280）*/
   --img-panel-sheet: none;
 

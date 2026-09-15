@@ -26,6 +26,7 @@ import CssSlotEditor from '../components/appearance/CssSlotEditor';
 import { BUILTIN_NOTIFY_CSS_PRESETS, NOTIFY_CSS_AI_PROMPT, NOTIFY_HOOKS } from '../utils/globalCss';
 import { shareOrDownloadBlob } from '../utils/shareExport';
 import { readShareFile } from '../utils/pngShare';
+import { BUILTIN_APPEARANCE_PRESETS, type BuiltinAppearancePresetDescriptor } from '../utils/builtinAppearancePresets';
 
 const CustomIconImage: React.FC<{ value: string; alt: string; preserveOutline?: boolean }> = ({ value, alt, preserveOutline = false }) => {
     const url = useBlobRefUrl(value);
@@ -273,8 +274,10 @@ const buildAcnhLeaves = (): DesktopDecoration[] => ACNH_LEAF_LAYOUT.map((p, i) =
 // --- Preset Manager Component ---
 interface PresetManagerProps {
     presets: AppearancePreset[];
+    builtinPresets: ReadonlyArray<BuiltinAppearancePresetDescriptor>;
     onSave: (name: string) => void;
     onApply: (id: string) => void;
+    onApplyBuiltin: (id: string) => Promise<void>;
     onDelete: (id: string) => void;
     onRename: (id: string, name: string) => void;
     onExport: (id: string) => Promise<Blob>;
@@ -284,13 +287,14 @@ interface PresetManagerProps {
     currentTheme: OSTheme;
 }
 
-const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply, onDelete, onRename, onExport, onImport, onReset, addToast, currentTheme }) => {
+const PresetManager: React.FC<PresetManagerProps> = ({ presets, builtinPresets, onSave, onApply, onApplyBuiltin, onDelete, onRename, onExport, onImport, onReset, addToast, currentTheme }) => {
     const [newName, setNewName] = useState('');
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editName, setEditName] = useState('');
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
     const [confirmReset, setConfirmReset] = useState(false);
     const [resetting, setResetting] = useState(false);
+    const [applyingBuiltinId, setApplyingBuiltinId] = useState<string | null>(null);
     const importRef = useRef<HTMLInputElement>(null);
 
     const handleReset = async () => {
@@ -344,6 +348,16 @@ const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply,
         }
         setEditingId(null);
         setEditName('');
+    };
+
+    const handleApplyBuiltin = async (id: string) => {
+        setApplyingBuiltinId(id);
+        try {
+            await onApplyBuiltin(id);
+            trackEvent('应用内置外观预设');
+        } finally {
+            setApplyingBuiltinId(null);
+        }
     };
 
     return (
@@ -406,6 +420,35 @@ const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply,
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
                     选择文件导入
                 </button>
+            </section>
+
+            {/* Built-in Appearance Presets */}
+            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">内置外观 ({builtinPresets.length})</h2>
+                <p className="text-[10px] text-slate-400 mb-3">随 SullyOS 一起提供的整机风格，包含壁纸、图标、小组件和聊天外观，点击即可应用。</p>
+                <div className="space-y-3">
+                    {builtinPresets.map(preset => (
+                        <div key={preset.id} className="bg-slate-50 rounded-2xl border border-slate-100 overflow-hidden">
+                            <div className="h-14 relative overflow-hidden" style={{ background: preset.swatch }}>
+                                <div className="absolute inset-0 bg-white/10" />
+                                <span className="absolute top-2 right-2 text-[9px] text-slate-700/70 bg-white/70 px-2 py-0.5 rounded-full backdrop-blur-sm">内置</span>
+                            </div>
+                            <div className="p-3">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <div className="text-xs font-bold text-slate-700">{preset.name}</div>
+                                </div>
+                                <p className="text-[10px] text-slate-400 leading-relaxed mb-2">{preset.description}</p>
+                                <button
+                                    onClick={() => handleApplyBuiltin(preset.id)}
+                                    disabled={applyingBuiltinId !== null}
+                                    className="w-full px-3 py-1.5 bg-primary text-white text-[10px] font-bold rounded-lg active:scale-95 transition-transform shadow-sm disabled:opacity-50"
+                                >
+                                    {applyingBuiltinId === preset.id ? '正在应用...' : '应用'}
+                                </button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
             </section>
 
             {/* Preset List */}
@@ -514,7 +557,7 @@ const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply,
 };
 
 const Appearance: React.FC = () => {
-  const { theme, updateTheme, closeApp, openApp, setCustomIcon, customIcons, addToast, appearancePresets, saveAppearancePreset, applyAppearancePreset, deleteAppearancePreset, renameAppearancePreset, exportAppearancePreset, importAppearancePreset, resetAppearance, characters, activeCharacterId, updateCharacter } = useOS();
+  const { theme, updateTheme, closeApp, openApp, setCustomIcon, customIcons, addToast, appearancePresets, saveAppearancePreset, applyAppearancePreset, applyBuiltinAppearancePreset, deleteAppearancePreset, renameAppearancePreset, exportAppearancePreset, importAppearancePreset, resetAppearance, characters, activeCharacterId, updateCharacter } = useOS();
   // 一键还原全部「聊天白框自定义 CSS」：清掉全局 + 每个角色自带的。
   // 兼作救援：单角色的坏 CSS 把聊天界面整崩、进不去该角色设置时，从这里一键全清即可恢复。
   const [activeTab, setActiveTab] = useState<'theme' | 'icons' | 'presets'>('theme');
@@ -1746,8 +1789,10 @@ const Appearance: React.FC = () => {
         ) : activeTab === 'presets' ? (
             <PresetManager
                 presets={appearancePresets}
+                builtinPresets={BUILTIN_APPEARANCE_PRESETS}
                 onSave={saveAppearancePreset}
                 onApply={applyAppearancePreset}
+                onApplyBuiltin={applyBuiltinAppearancePreset}
                 onDelete={deleteAppearancePreset}
                 onRename={renameAppearancePreset}
                 onExport={exportAppearancePreset}

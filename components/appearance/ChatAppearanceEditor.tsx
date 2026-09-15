@@ -70,7 +70,7 @@ const FINE_TUNE_DEFAULTS: Required<ChatFineTuneFields> = {
 const presets: Array<{ name: string; desc: string; config: Partial<OSTheme>; cssBundle?: boolean }> = [
     {
         name: '可可点点聊天套装',
-        desc: '一次换三份 CSS；保留聊天背景与桌面外观',
+        desc: '奶油可可色调搭配俏皮圆点、柔软卡片和糖果感气泡，让聊天界面像一间温暖的小甜品屋。',
         cssBundle: true,
         config: {
             chatChromeCustomCss: cocoaDotsChatChromeCss,

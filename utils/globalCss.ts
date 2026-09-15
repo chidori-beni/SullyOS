@@ -287,7 +287,7 @@ export interface GlobalCssBuiltinPreset {
 }
 
 export const BUILTIN_DIALOG_CSS_PRESETS: ReadonlyArray<GlobalCssBuiltinPreset> = [
-  { name: '可可点点 v2', desc: '真实炭黑边框 + 奶油点阵内胆，和聊天界面同一套', css: cocoaDotsDialogCss },
+  { name: '可可点点', desc: '真实炭黑边框 + 奶油点阵内胆，和聊天界面同一套', css: cocoaDotsDialogCss },
 ];
 
 export const BUILTIN_NOTIFY_CSS_PRESETS: ReadonlyArray<GlobalCssBuiltinPreset> = [
