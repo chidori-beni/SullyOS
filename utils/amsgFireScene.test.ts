@@ -247,8 +247,63 @@ describe('resolveFireSceneSleep — 到点算「他这会儿是不是在睡」',
         expect(resolveFireSceneSleep(null, shanghaiAt(8), { tzId: 'Asia/Shanghai' })).toBeNull();
     });
 
-    it('跨天的包整段作废，跟「此刻在听」同一道日期门槛', () => {
-        expect(resolveFireSceneSleep(napScene, shanghaiAt(8) + 86_400_000, { tzId: 'Asia/Shanghai' })).toBeNull();
+    // 这道门槛比 renderFireSceneBlock 松一档，是故意的：见 resolveFireSceneSleep 的注释。
+    // fire_pack 只在用户开着 App 时重打，角色当地午夜一过随包那张表就作废，而深夜恰恰是
+    // 没人聊天、包永远过期的那几个小时——门槛一样严的话，这道闸在最需要它的时候必然失效。
+    it('刚过完角色当地午夜：用昨天那张表的睡眠时段兜底', () => {
+        expect(resolveFireSceneSleep(napScene, shanghaiAt(8) + 86_400_000, { tzId: 'Asia/Shanghai' }))
+            .toEqual({ sleptMinutes: 120, remainingMinutes: 330, totalMinutes: 450 });
+    });
+
+    it('隔了两天以上的陈表不再兜底', () => {
+        expect(resolveFireSceneSleep(napScene, shanghaiAt(8) + 2 * 86_400_000, { tzId: 'Asia/Shanghai' })).toBeNull();
+    });
+
+    // 2026-09-16 凌晨的真实事故：角色在上海时间 23:22 打的包（dateKey=前一天），
+    // 03:05 被自然主动捞起来，睡眠闸拿到 null，提示词里连作息都没有，
+    // 于是角色在「00:00–07:00 深睡」的时段里说自己「刚从模拟舱下来」。
+    describe('回归 · 跨角色本地午夜的深夜主动消息', () => {
+        const nightSchedule: RenderableSchedule = {
+            slots: [
+                { startTime: '00:00', activity: '深睡恢复', busyLevel: 'sleep' },
+                { startTime: '07:00', activity: '体能抗阻强化', busyLevel: 'busy' },
+                { startTime: '23:00', activity: '睡前放空', busyLevel: 'free' },
+            ],
+        };
+        // 打包：上海 08-01 23:22。触发：上海 08-02 03:05。
+        const packed: AmsgFireScene = { ...scene, dateKey: '2026-08-01', schedule: nightSchedule };
+        const fireAt = shanghaiAt(3, 5);
+
+        it('没有明日预排时，靠昨天那张表也能拦住', () => {
+            expect(resolveFireSceneSleep(packed, fireAt, { tzId: 'Asia/Shanghai' }))
+                .toEqual({ sleptMinutes: 185, remainingMinutes: 235, totalMinutes: 420 });
+        });
+
+        it('带上明日预排后，睡眠闸和提示词都用今天这一张', () => {
+            const tomorrow: RenderableSchedule = {
+                slots: [
+                    { startTime: '00:00', activity: '睡到自然醒', busyLevel: 'sleep' },
+                    { startTime: '09:00', activity: '媒体日', busyLevel: 'busy' },
+                ],
+            };
+            const withNextDay: AmsgFireScene = {
+                ...packed,
+                nextDay: { dateKey: '2026-08-02', schedule: tomorrow },
+            };
+            expect(resolveFireSceneSleep(withNextDay, fireAt, { tzId: 'Asia/Shanghai' }))
+                .toEqual({ sleptMinutes: 185, remainingMinutes: 355, totalMinutes: 540 });
+
+            const block = renderFireSceneBlock(withNextDay, fireAt, { tzId: 'Asia/Shanghai' });
+            expect(block).toContain('当前时段：00:00 你正在睡到自然醒');
+            expect(block).toContain('你现在确实睡着了');
+            // 昨天那张表一个字都不能漏进提示词。
+            expect(block).not.toContain('深睡恢复');
+            expect(block).not.toContain('体能抗阻强化');
+        });
+
+        it('提示词仍然守着严门槛：没有明日预排就整段不给，而不是照着昨天念', () => {
+            expect(renderFireSceneBlock(packed, fireAt, { tzId: 'Asia/Shanghai' })).toBe('');
+        });
     });
 
     it('按角色时区判定：同一时刻在东京已经不算这一觉了', () => {

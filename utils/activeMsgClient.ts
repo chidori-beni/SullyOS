@@ -10,6 +10,7 @@ import {
   Anniversary,
   APIConfig,
   CharacterProfile,
+  DailySchedule,
   Emoji,
   EmojiCategory,
   GroupProfile,
@@ -89,7 +90,8 @@ import {
 import type { AmsgFireScene } from './amsgFireScene';
 import { buildAmsgUserCalendar } from './amsgUserCalendar';
 import { buildSongPool } from './charMusicSchedule';
-import { getDailyScheduleForChar } from './dailySchedule';
+import { getDailyScheduleForChar, getDailyScheduleForCharDate } from './dailySchedule';
+import { addScheduleDateKey } from './scheduleTime';
 import { getLocalDateKey } from './localDate';
 import { isScheduleFeatureOn } from './scheduleGenerator';
 import {
@@ -701,6 +703,24 @@ const readEmojiLibrary = async (): Promise<EmojiLibrary> => {
   return { all, categories };
 };
 
+/**
+ * 只摘渲染会读到的字段：整份日程里还挂着每个时段缓存的小剧场台词和看板图，
+ * 带上去只是白占云端状态的体积（fire_pack 本来就有几万字）。
+ */
+const toRenderableSchedule = (schedule: DailySchedule): NonNullable<AmsgFireScene['schedule']> => ({
+  slots: schedule.slots.map((s) => ({
+    startTime: s.startTime,
+    ...(s.endTime ? { endTime: s.endTime } : {}),
+    activity: s.activity,
+    ...(s.busyLevel ? { busyLevel: s.busyLevel } : {}),
+    ...(s.description ? { description: s.description } : {}),
+    ...(s.emoji ? { emoji: s.emoji } : {}),
+    ...(s.location ? { location: s.location } : {}),
+    ...(s.innerThought ? { innerThought: s.innerThought } : {}),
+  })),
+  ...(schedule.flowNarrative ? { flowNarrative: schedule.flowNarrative } : {}),
+});
+
 // export 只为单测（activeMsgClient.test.ts 钉 tzId 取值与模板不烤时间）。
 export const buildFirePack = async (
   char: CharacterProfile,
@@ -758,26 +778,27 @@ export const buildFirePack = async (
   // 是同一个开关的两套行为。关掉时这几行连槽位一起不进模板。
   // 排程工具的 send_at 说明不受影响（那份在 amsgFireSchedule）：排时间本来就得知道现在几点。
   const timeAware = char.timeAwarenessEnabled !== false;
-  // 只摘渲染会读到的字段：整份日程里还挂着每个时段缓存的小剧场台词和看板图，
-  // 带上去只是白占云端状态的体积（fire_pack 本来就有几万字）。
+  const todayKey = getLocalDateKey(nowInTimeZone(tzId));
+  // 明天的预排表（用户提前排了才有）。非带不可的理由见 AmsgFireScene.nextDay：
+  // fire_pack 只在用户开着 App 时重打，角色当地午夜一过随包那张表就整段作废，
+  // 而深夜恰恰是没人聊天、包永远过期的那几个小时 —— 睡眠闸因此在最需要它的时候
+  // 看不见角色在睡觉，模型也拿不到作息，只能现编一个活动。
+  const tomorrowKey = addScheduleDateKey(todayKey, 1);
+  const tomorrowSchedule = schedule && tomorrowKey
+    ? await getDailyScheduleForCharDate(char, tomorrowKey).catch((e) => {
+        console.warn('[ActiveMsg2] 明日预排读取失败，这次不带明天那张表', char.id, e);
+        return null;
+      })
+    : null;
   const scene: AmsgFireScene | null = schedule
     ? {
         charId: char.id,
         // 这份表是角色当地「今天」的安排，到点先比日期再用（见 renderFireSceneBlock）。
-        dateKey: getLocalDateKey(nowInTimeZone(tzId)),
-        schedule: {
-          slots: schedule.slots.map((s) => ({
-            startTime: s.startTime,
-            ...(s.endTime ? { endTime: s.endTime } : {}),
-            activity: s.activity,
-            ...(s.busyLevel ? { busyLevel: s.busyLevel } : {}),
-            ...(s.description ? { description: s.description } : {}),
-            ...(s.emoji ? { emoji: s.emoji } : {}),
-            ...(s.location ? { location: s.location } : {}),
-            ...(s.innerThought ? { innerThought: s.innerThought } : {}),
-          })),
-          ...(schedule.flowNarrative ? { flowNarrative: schedule.flowNarrative } : {}),
-        },
+        dateKey: todayKey,
+        schedule: toRenderableSchedule(schedule),
+        ...(tomorrowSchedule?.slots?.length
+          ? { nextDay: { dateKey: tomorrowKey, schedule: toRenderableSchedule(tomorrowSchedule) } }
+          : {}),
         songPool: buildSongPool(char).map((s) => ({ id: s.id, name: s.name, artists: s.artists })),
       }
     : null;

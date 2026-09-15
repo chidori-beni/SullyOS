@@ -26,6 +26,7 @@ export interface AmsgFireSong {
 }
 import { getLocalDateKey } from './localDate';
 import { nowInTimeZone } from './timezone';
+import { addScheduleDateKey } from './scheduleTime';
 import { buildScheduleInjection, resolveScheduleSlots, type RenderableSchedule } from './scheduleInjection';
 import { pickSongFromPool, slotIsListening } from './charMusicSchedule';
 import { resolveScheduleSleepState, type ScheduleSleepState } from './scheduleSleep';
@@ -55,9 +56,37 @@ export interface AmsgFireScene {
    * 这个字段是聊天时演化出来的那一份（进化独白），有的话优先。
    */
   evolvedNarrative?: string;
+  /**
+   * 明天的预排表（用户提前排了才有）。
+   *
+   * 为什么非带不可：fire_pack 只在用户开着 App 的时候重打，而角色当地的午夜一过，
+   * 上面那张 dateKey 的表就整段作废了。用户睡着的那几个小时恰恰没人聊天，于是
+   * **每一条深夜触发的主动消息都是在「没有日程」的状态下生成的** —— 睡眠闸看不见
+   * 角色在睡觉（resolveFireSceneSleep 返回 null），提示词里连作息都没有，模型只能
+   * 现编一个活动。2026-09-16 凌晨那条「刚从模拟舱下来」就是这么来的：角色本该
+   * 00:00–07:00 深睡。带上明天这一张，跨过午夜之后就还有表可用。
+   */
+  nextDay?: { dateKey: string; schedule: RenderableSchedule } | null;
   /** 歌单抽样池（charMusicSchedule.buildSongPool 的结果，最多 20 首）。 */
   songPool: AmsgFireSong[];
 }
+
+/**
+ * 到点按角色墙钟挑「今天该用哪张表」：先看随包那张，再看明天的预排表。
+ *
+ * 一张表只管一天的老规矩没变——变的只是包里现在可能有两张，挑的是日期真正对得上的
+ * 那一张。两张都对不上（跨了两天以上、或者没预排）就返回 null，整段照旧不用。
+ */
+const resolveSceneScheduleForDay = (
+  scene: AmsgFireScene | null,
+  todayKey: string,
+): RenderableSchedule | null => {
+  if (!scene) return null;
+  if (scene.dateKey === todayKey && scene.schedule?.slots?.length) return scene.schedule;
+  const next = scene.nextDay;
+  if (next && next.dateKey === todayKey && next.schedule?.slots?.length) return next.schedule;
+  return null;
+};
 
 /**
  * 这次触发角色「此刻在听」的是哪一首（不在听歌的时段 / 歌单空 / 跨天作废 → null）。
@@ -75,14 +104,15 @@ export const resolveFireSceneSong = (
   nowMs: number,
   tz: AmsgTzRef,
 ): AmsgFireSong | null => {
-  if (!scene?.schedule?.slots?.length) return null;
+  if (!scene) return null;
   const wallNow = nowInTimeZone(tz.tzId, new Date(nowMs));
   // 跨天的包整段作废，「此刻在听」跟着走：那首歌是从当前时段推出来的，日程都不算数了，
   // 它就没有依据了（同 renderFireSceneBlock 的日期门槛）。
-  if (getLocalDateKey(wallNow) !== scene.dateKey) return null;
+  const schedule = resolveSceneScheduleForDay(scene, getLocalDateKey(wallNow));
+  if (!schedule) return null;
   if (scene.songPool.length === 0) return null;
 
-  const { current } = resolveScheduleSlots(scene.schedule, wallNow);
+  const { current } = resolveScheduleSlots(schedule, wallNow);
   if (!current || !slotIsListening(current)) return null;
   return pickSongFromPool(
     scene.songPool,
@@ -93,20 +123,37 @@ export const resolveFireSceneSong = (
 };
 
 /**
- * 这次触发时角色是不是正睡在日程里的一觉中（不在睡 / 没日程 / 跨天作废 → null）。
+ * 这次触发时角色是不是正睡在日程里的一觉中（不在睡 / 没日程 → null）。
  *
  * 给自然主动当闸用：它以前完全看不见日程，白天补觉的角色照样每十几分钟被问一次
- * 要不要联系，于是睡两个小时就爬起来发消息。日期门槛和时区折算跟
- * renderFireSceneBlock 共用同一套口径——一份表只管一天，跨天的整段不算数。
+ * 要不要联系，于是睡两个小时就爬起来发消息。
+ *
+ * **这一个的日期门槛比 renderFireSceneBlock 松一档，是故意的。** 渲染那边说错
+ * 「我正在开周五的会」是凭空捏造，宁缺勿错；而这边只回答「他这会儿是不是在睡」，
+ * 作息恰恰是一天里最稳定的那一部分。而且门槛一样严的话，这道闸在**最需要它的时候
+ * 必然失效**：fire_pack 只在用户开着 App 时重打，角色当地午夜一过随包那张表就作废，
+ * 而深夜正是没人聊天、包永远过期的那几个小时。2026-09-16 凌晨那条「刚从模拟舱下来」
+ * 就是这么发出来的——表上写着 00:00–07:00 深睡，闸却什么都没看见。
+ *
+ * 所以这里按三档取：
+ *   1. 日期对得上的那张表（随包的，或者明天的预排表）—— 正常情况；
+ *   2. 都对不上，但随包那张正好是**紧挨着的前一天**（即角色刚过完午夜）——
+ *      用它的睡眠时段兜底。只用来判「在不在睡」，一个字都不进提示词；
+ *   3. 再往前的陈表不用：隔了好几天的作息已经没有参考价值。
  */
 export const resolveFireSceneSleep = (
   scene: AmsgFireScene | null,
   nowMs: number,
   tz: AmsgTzRef,
 ): ScheduleSleepState | null => {
-  if (!scene?.schedule?.slots?.length) return null;
+  if (!scene) return null;
   const wallNow = nowInTimeZone(tz.tzId, new Date(nowMs));
-  if (getLocalDateKey(wallNow) !== scene.dateKey) return null;
+  const todayKey = getLocalDateKey(wallNow);
+  const exact = resolveSceneScheduleForDay(scene, todayKey);
+  if (exact) return resolveScheduleSleepState(exact.slots, wallNow);
+  // 兜底档：只认「昨天那张」，且只认它的睡眠时段。
+  if (!scene.schedule?.slots?.length) return null;
+  if (addScheduleDateKey(scene.dateKey, 1) !== todayKey) return null;
   return resolveScheduleSleepState(scene.schedule.slots, wallNow);
 };
 
@@ -124,15 +171,17 @@ export const renderFireSceneBlock = (
   tz: AmsgTzRef,
   options?: { includeClock?: boolean },
 ): string => {
-  if (!scene?.schedule?.slots?.length) return '';
+  if (!scene) return '';
 
   // 角色所在地的墙钟：日程表里的 "08:00" 说的是角色那边的八点。
   const wallNow = nowInTimeZone(tz.tzId, new Date(nowMs));
   // 跨天的包整段不用：这是 scene.dateKey 那天的安排，第二天再照着念就是在说昨天的事。
-  // 宁缺勿错，跟「实时世界拉不到就整段消失」同一条线。
-  if (getLocalDateKey(wallNow) !== scene.dateKey) return '';
+  // 宁缺勿错，跟「实时世界拉不到就整段消失」同一条线。包里带了明天的预排表时，
+  // 过了角色当地午夜就改用那一张——那张说的正是此刻这一天。
+  const schedule = resolveSceneScheduleForDay(scene, getLocalDateKey(wallNow));
+  if (!schedule) return '';
   const scheduleText = buildScheduleInjection(
-    scene.schedule,
+    schedule,
     scene.evolvedNarrative,
     wallNow,
     {
