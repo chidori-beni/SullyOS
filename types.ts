@@ -1959,6 +1959,13 @@ export interface WorldPending {
     /** 到点的那一轮（对 `WorldProfile.storyClock`）。 */
     dueRound: number;
     /**
+     * 持续到哪一轮（含）。缺省 = 只有 `dueRound` 那一轮。
+     *
+     * 加这个字段是因为**节日是一整天的事**，而一天有 4 段（早/中/晚/凌晨）。
+     * 没有它就得为同一个节日塞 4 条 pending，界面上一个灯会会显示成四条。
+     */
+    dueUntilRound?: number;
+    /**
      * 提前几轮开始预热。节日好玩的是**期待感**不是当天
      * （`还有 6 轮 → 镇上开始挂灯笼`、`还有 2 轮 → 盘算约谁`、`当天 → 正日子`）。
      * 很便宜，效果差别巨大。0 / 缺省 = 不预热，到点才说。
@@ -1972,6 +1979,35 @@ export interface WorldPending {
     createdRound: number;
     /** 来历（谁约的谁 / 哪个节日 / 哪条阈值），只为界面上说明「这条是怎么来的」 */
     source?: string;
+}
+
+/**
+ * 这个世界的一个**节日**（阶段 3.2）。
+ *
+ * 用户提案：建镇时 AI 生成一套「节日律法」—— 可以直接套现实（中/日/韩/美…），
+ * 也可以按世界观**纯架空**（魔法世界 / 古代 / 赛博朋克，AI 自己编）。
+ * **架空反而更简单**：不用对齐真实日历，挂世界内的月/日就行。
+ *
+ * ⭐ **必须提前几轮预热。** 节日好玩的是**期待感**不是当天：
+ * `还有 6 轮 → 镇上开始挂灯笼`、`还有 2 轮 → 角色盘算约谁`、`当天 → 正日子`。
+ * 很便宜，效果差别巨大。所以 `leadRounds` 缺省给 6（≈ 一天半），不是 0。
+ *
+ * ⛔ **不排期到某一段，而是占满那一整天**（`dueRound` ~ `dueUntilRound`）。
+ * 一天有 4 段，只挂在其中一段的话，同一个节日的早上有、晚上没有，很怪。
+ */
+export interface WorldFestival {
+    id: string;
+    name: string;
+    /** 这个节日是干嘛的、大家怎么过（进提示词，让角色知道该做什么） */
+    blurb?: string;
+    /** 世界日历上的月（1-12） */
+    month: number;
+    /** 世界日历上的日（1-31）。给到 31 而某月没有这天时，那年就不过 */
+    day: number;
+    /** 提前几轮开始预热。缺省 6（≈ 一天半）。0 = 当天才说 */
+    leadRounds?: number;
+    /** 关掉但保留（想过的年份再打开）。缺省视为开启 */
+    enabled?: boolean;
 }
 
 /**
@@ -2026,6 +2062,8 @@ export interface WorldProfile {
     places?: WorldPlace[];
     /** 待发生事件表（阶段 3 底座）。缺省 = 没有，提示词一个字都不多 */
     pendings?: WorldPending[];
+    /** 节日律法（阶段 3.2）。缺省/空 = 这个世界不过节，行为与改造前一致 */
+    festivals?: WorldFestival[];
     relationships: WorldRelationship[];
     /** 世界内消息线程（私聊 + 世界群聊），随演绎累积，每线程截留最近若干条 */
     threads?: WorldThread[];

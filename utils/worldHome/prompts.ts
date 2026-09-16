@@ -188,6 +188,105 @@ export function worldTimeLabel(world: WorldProfile, storyClock: number = world.s
     return storyTimeLabel(storyClock);
 }
 
+/**
+ * 某一轮落在世界日历的哪一天（阶段 3.2）。算不出来返回 null。
+ *
+ * 两种时间模式都能算，但来源不同：
+ * - **sim**：`simStartDate` + `floor(round / 4)` 天，纯算术，和现实无关。
+ * - **real**：以世界已演到的那天（`realClock.dayKey`）为基准，按轮差折算天数。
+ *   这条**只在往前看几轮时可靠** —— 现实里用户可能几天不观测，真实日期会跑到前头去。
+ *   节日排期只看未来一天半以内，误差不会积起来。
+ *
+ * 没有 `simStartDate` 也没有 `realClock` 的新世界返回 null：还没有日历，自然也过不了节。
+ */
+export function worldDateOfRound(
+    world: Pick<WorldProfile, 'timeMode' | 'simStartDate' | 'realClock' | 'storyClock'>,
+    round: number,
+): { year: number; month: number; day: number } | null {
+    if ((world.timeMode ?? 'real') === 'sim') {
+        if (!world.simStartDate) return null;
+        const { year, month, day } = world.simStartDate;
+        const d = new Date(year, month - 1, day);
+        d.setDate(d.getDate() + Math.floor(round / SEGMENTS_PER_DAY));
+        return { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() };
+    }
+    if (!world.realClock) return null;
+    const [y, m, dd] = world.realClock.dayKey.split('-').map(Number);
+    if (!y || !m || !dd) return null;
+    const d = new Date(y, m - 1, dd);
+    d.setDate(d.getDate() + Math.floor((round - world.storyClock) / SEGMENTS_PER_DAY));
+    return { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() };
+}
+
+/** 让 LLM 按世界观编一套节日律法（阶段 3.2）。可套现实也可纯架空——架空反而更简单。 */
+export function buildFestivalRollPrompt(args: {
+    worldName: string;
+    worldview: string;
+    count: number;
+    existingNames: string[];
+}): string {
+    const { worldName, worldview, count, existingNames } = args;
+    return [
+        `你在为共同世界「${worldName}」设计 ${count} 个**这个世界自己的节日**。`,
+        ``,
+        `## 世界观`,
+        worldview || '（作者还没细写，请你据世界名推断这个世界大概是什么样）',
+        existingNames.length > 0 ? `
+## 已有的节日（别重名、别重复）
+${existingNames.join('、')}` : '',
+        ``,
+        `要求：`,
+        `- **先判断这是个什么世界**。现代都市就可以直接用现实里的节日（春节、七夕、万圣节…）；`,
+        `  古代 / 奇幻 / 架空世界就**自己编**——架空反而更好写，不用对齐真实日历，`,
+        `  编出来的节日还能反过来把世界观撑起来（「渡灯节」「落雪祭」「换名日」…）。`,
+        `- 每个节日要**说清大家那天具体在干嘛**：挂什么、吃什么、去哪儿、有什么讲究或忌讳。`,
+        `  空泛的「庆祝丰收」没用，角色演不出来；「那天家家把旧灯笼放进河里漂走」才有画面。`,
+        `- 节日之间要**有冷有热**：别全是热闹的大节，也该有安静的、私人的、甚至有点伤感的。`,
+        `- 日期分散在一年里，别全挤在同一个月。`,
+        ``,
+        `严格输出一个 JSON 对象（建议 \`\`\`json 包裹，不要输出 JSON 之外的正文）：`,
+        `{`,
+        `  "festivals": [`,
+        `    { "name": "节日名", "blurb": "大家那天具体在干嘛（一到两句，要有画面）", "month": 1到12的整数, "day": 1到31的整数 }`,
+        `  ]`,
+        `}`,
+        `只要 ${count} 个，宁缺毋滥。`,
+    ].join(String.fromCharCode(10));
+}
+
+/** 解析 roll 出来的节日。过滤空名/重名/日期非法。 */
+export function parseRolledFestivals(
+    raw: string,
+    existingNames: string[] = [],
+): { name: string; blurb: string; month: number; day: number }[] {
+    const j = extractJson(raw);
+    let arr: any[] = Array.isArray(j?.festivals) ? j.festivals : Array.isArray(j) ? j : [];
+    if (arr.length === 0) {
+        // 兜底：模型直接吐了个裸数组（extractJson 只认对象）—— 同 parseRolledNpcs
+        const m = (raw || '').replace(/<think>[\s\S]*?<\/think>/gi, '').match(/\[[\s\S]*\]/);
+        if (m) { try { const a = JSON.parse(m[0]); if (Array.isArray(a)) arr = a; } catch { /* ignore */ } }
+    }
+    const seen = new Set(existingNames.map(n => n.trim()));
+    const out: { name: string; blurb: string; month: number; day: number }[] = [];
+    for (const f of arr) {
+        if (!f || typeof f.name !== 'string') continue;
+        const name = f.name.trim().slice(0, 16);
+        if (!name || seen.has(name)) continue;
+        const month = Math.round(Number(f.month));
+        const day = Math.round(Number(f.day));
+        // 日期不合法就整条丢掉：排期算的是月/日，瞎猜一个日子会让节日落在莫名其妙的时候
+        if (!(month >= 1 && month <= 12) || !(day >= 1 && day <= 31)) continue;
+        seen.add(name);
+        out.push({
+            name,
+            blurb: (typeof f.blurb === 'string' ? f.blurb.trim() : '').slice(0, 120),
+            month, day,
+        });
+        if (out.length >= 12) break;
+    }
+    return out;
+}
+
 /** 该世界「当前那一段」是否算夜晚（real 看 realClock，sim 看 storyClock）：晚上、凌晨都算夜。 */
 export function isNightWorld(world: WorldProfile): boolean {
     if (world.timeMode !== 'sim' && world.realClock) return world.realClock.seg >= 2;
@@ -707,8 +806,28 @@ export function buildNpcTurn(args: {
     inboxes?: { npcName: string; memberName: string; recent: string }[];
     /** 最近的社交动态（让 NPC + 路人疯狂点赞/评论） */
     recentPosts?: { ref: string; name: string; post: string }[];
+    /**
+     * 这一段镇上正在过/快到的节日（阶段 3.2）。
+     *
+     * ⭐ **必须先由世界引擎生成公共场景，再让各角色在其中演自己那份**，
+     * 否则十个角色会各写各的灯会（谁挂的灯、在哪条街、什么时辰全对不上）。
+     * 而 `npcScene` / `npcHooks` 本来就是喂给所有角色的「镇上动静」——
+     * 节日走同一条路，**零新机制**。（交接说明 §3.2 补充②）
+     */
+    festivalNote?: string;
 }): string {
-    const { world, members, storyTime, lastSummary, chapterAtmosphere, inboxes, recentPosts } = args;
+    const { world, members, storyTime, lastSummary, chapterAtmosphere, inboxes, recentPosts, festivalNote } = args;
+    const festivalSection = festivalNote
+        ? [
+            '',
+            '## 🎪 镇上的节日',
+            festivalNote,
+            'scene 要**具体写这个节日此刻的样子**（哪条街怎么布置了、摊子摆在哪、什么味道什么声音、'
+            + '谁家在忙什么），这是全镇共用的公共场景——各位主角接下来都会在这个场景里过这半天，'
+            + '所以细节要落地、可被接住，别写空泛的「大家都很开心」。hooks 里也给一两件节日相关的、'
+            + '主角能撞上的小事。',
+        ].join(String.fromCharCode(10))
+        : '';
     const lateNightNote = storyTime.includes('凌晨')
         ? `\n\n## 🌙 现在是凌晨（0点~5点）\n镇子基本睡着了。scene 写夜的质感：便利店的夜班灯、末班车、巡街的猫、亮着的一两扇窗；hooks 少而轻（1条就够）；groupLines 至多 1 条（只有夜猫子 NPC 才冒泡）；点赞评论克制些——深夜刷手机的人少，但深夜 emo 的动态容易引来同样失眠的人留下感性的共情评论。`
         : '';
@@ -721,7 +840,7 @@ export function buildNpcTurn(args: {
     return `你是共同世界「${world.name}」的世界引擎，负责一次性扮演镇上所有 NPC。NPC 没有独立记忆，完全为世界观氛围服务。
 
 ## 世界观
-${world.worldview || '（一个安静的小世界）'}
+${world.worldview || '（一个安静的小世界）'}${festivalSection}
 
 ## NPC 名单
 ${world.npcs.map(n => `- ${n.name}：${n.persona}`).join('\n')}

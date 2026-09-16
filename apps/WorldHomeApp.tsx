@@ -24,7 +24,7 @@ import { DB } from '../utils/db';
 import { getChibi } from '../utils/vrWorld/chibi';
 import { WorldScheduler, toTickEntries } from '../utils/worldHome/scheduler';
 import { isWorldRunning, injectWorldCard, shareWorldCardTo } from '../utils/worldHome/engine';
-import { worldTimeLabel, worldTzLabel, isNightWorld, houseOf, NARRATIVE_STYLES, buildNpcRollPrompt, parseRolledNpcs, realObserveTarget, clampRealClockToNow, migrateWorldDaySegs, SEGMENTS_PER_DAY } from '../utils/worldHome/prompts';
+import { worldTimeLabel, worldTzLabel, isNightWorld, houseOf, NARRATIVE_STYLES, buildNpcRollPrompt, parseRolledNpcs, buildFestivalRollPrompt, parseRolledFestivals, realObserveTarget, clampRealClockToNow, migrateWorldDaySegs, SEGMENTS_PER_DAY } from '../utils/worldHome/prompts';
 import { COMMON_TIMEZONES } from '../utils/timezone';
 import { SIM_CHAPTER_DAYS, SIM_CHAPTER_CLOCKS } from '../utils/worldHome/chapters';
 import { dmThreadsOf, groupThreadOf } from '../utils/worldHome/threads';
@@ -632,6 +632,39 @@ const WorldEditor: React.FC<{
         }
     };
 
+    // ── 阶段 3.2：节日律法 ──────────────────────────────────────
+    const [rollingFest, setRollingFest] = useState(false);
+    const rollFestivals = async () => {
+        const api = w.api?.baseUrl ? w.api : apiConfig;
+        if (!api?.baseUrl) { addToast('还没有可用的 API（先在设置里配一个，或给这个世界选个预设）', 'error'); return; }
+        setRollingFest(true);
+        try {
+            const baseUrl = api.baseUrl.replace(/\/+$/, '');
+            const data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${api.apiKey || 'sk-none'}` },
+                body: JSON.stringify({
+                    model: api.model,
+                    messages: [{ role: 'user', content: buildFestivalRollPrompt({
+                        worldName: w.name || '这个世界',
+                        worldview: w.worldview,
+                        count: 4,
+                        existingNames: (w.festivals || []).map(f => f.name).filter(Boolean),
+                    }) }],
+                    temperature: 0.95, stream: false,
+                }),
+            }, 2, 0, { appName: '家园', purpose: `roll 节日 · ${w.name || '新世界'}` });
+            const rolled = parseRolledFestivals(data.choices?.[0]?.message?.content || '', (w.festivals || []).map(f => f.name));
+            if (rolled.length === 0) { addToast('这次没 roll 出新的，再试一次？', 'error'); return; }
+            upd({ festivals: [...(w.festivals || []), ...rolled.map(f => ({ id: genId('wf'), ...f }))] });
+            addToast(`编出 ${rolled.length} 个节日，可以再改`, 'success');
+        } catch {
+            addToast('roll 失败了，检查下 API', 'error');
+        } finally {
+            setRollingFest(false);
+        }
+    };
+
     // 自定义文风收藏
     const [savedStyles, setSavedStyles] = useState<string[]>(loadSavedStyles);
     const saveCurrentStyle = () => {
@@ -974,6 +1007,58 @@ const WorldEditor: React.FC<{
                     <div className="text-[11px] text-stone-400">
                         还没列。演过几轮之后点「<b className="text-stone-500">从剧情里收集</b>」最省事——
                         直接把角色已经去过的地方捞出来，不用凭空想。
+                    </div>
+                )}
+            </div>
+
+            {/* ── 阶段 3.2：节日律法 ────────────────────────────────
+                ⭐ 节日好玩的是**期待感**不是当天，所以默认提前 6 轮（约一天半）预热。
+                排期走和约定同一张「待发生事件」表（charIds 空 = 全镇的事）。 */}
+            <div className={sectionCls}>
+                <div className="flex items-center justify-between gap-2">
+                    <div className={labelCls}>这个世界的节日</div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                        <button onClick={rollFestivals} disabled={rollingFest}
+                            className="text-[11px] px-2.5 py-1 rounded-lg bg-violet-100 text-violet-700 font-bold flex items-center gap-1 border border-violet-200 disabled:opacity-50 active:scale-95 transition-transform">
+                            <Sparkle size={12} weight="fill" />{rollingFest ? '编中…' : 'AI 编一套'}</button>
+                        <button onClick={() => upd({ festivals: [...(w.festivals || []), { id: genId('wf'), name: '', month: 1, day: 1 }] })}
+                            className="text-[11px] px-2.5 py-1 rounded-lg bg-amber-100 text-amber-800 font-bold flex items-center gap-1 border border-amber-200"><Plus size={12} weight="bold" />节日</button>
+                    </div>
+                </div>
+                <div className="text-[10.5px] text-stone-400 leading-relaxed">
+                    到日子那天，<b className="text-stone-500">全镇的人都知道今天是这个节</b>。
+                    而且会<b className="text-stone-500">提前一天半开始惦记</b>——节日好玩的是那股期待感，不是当天。
+                    <br />现代都市可以直接用现实里的节；古代 / 奇幻就让 AI 自己编，
+                    <b className="text-stone-500">架空反而更好写</b>，编出来的节日还能反过来把世界观撑起来。
+                </div>
+                {(w.festivals || []).map(f => (
+                    <div key={f.id} className="rounded-xl border border-stone-200 bg-white p-2.5 space-y-2">
+                        <div className="flex items-center gap-2">
+                            <input className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-stone-50 border border-stone-100 text-[12px]" value={f.name}
+                                placeholder="节日名"
+                                onChange={e => upd({ festivals: (w.festivals || []).map(x => x.id === f.id ? { ...x, name: e.target.value } : x) })} />
+                            <input type="number" min={1} max={12} className="w-12 px-1.5 py-1 rounded-lg bg-stone-50 border border-stone-100 text-[12px] text-center" value={f.month}
+                                onChange={e => upd({ festivals: (w.festivals || []).map(x => x.id === f.id ? { ...x, month: Math.max(1, Math.min(12, Number(e.target.value) || 1)) } : x) })} />
+                            <span className="text-[11px] text-stone-400 shrink-0">月</span>
+                            <input type="number" min={1} max={31} className="w-12 px-1.5 py-1 rounded-lg bg-stone-50 border border-stone-100 text-[12px] text-center" value={f.day}
+                                onChange={e => upd({ festivals: (w.festivals || []).map(x => x.id === f.id ? { ...x, day: Math.max(1, Math.min(31, Number(e.target.value) || 1)) } : x) })} />
+                            <span className="text-[11px] text-stone-400 shrink-0">日</span>
+                            <button onClick={() => upd({ festivals: (w.festivals || []).filter(x => x.id !== f.id) })} className="p-1 text-stone-400"><X size={14} /></button>
+                        </div>
+                        <textarea rows={2} className="w-full px-2 py-1 rounded-lg bg-stone-50 border border-stone-100 text-[11px] resize-none" value={f.blurb || ''}
+                            placeholder="那天大家具体在干嘛（挂什么、吃什么、去哪儿、有什么讲究）——空泛的说法角色演不出来"
+                            onChange={e => upd({ festivals: (w.festivals || []).map(x => x.id === f.id ? { ...x, blurb: e.target.value } : x) })} />
+                        <button
+                            onClick={() => upd({ festivals: (w.festivals || []).map(x => x.id === f.id ? { ...x, enabled: x.enabled === false } : x) })}
+                            className={`text-[10.5px] px-2 py-0.5 rounded-full border ${f.enabled === false ? 'bg-white border-stone-200 text-stone-400' : 'bg-amber-500 border-amber-500 text-white'}`}>
+                            {f.enabled === false ? '今年先不过' : '过这个节'}
+                        </button>
+                    </div>
+                ))}
+                {(w.festivals || []).length === 0 && (
+                    <div className="text-[11px] text-stone-400">
+                        还没有。点「<b className="text-stone-500">AI 编一套</b>」让它按你的世界观编几个——
+                        不列也能玩，只是这个世界里没有需要期待的日子。
                     </div>
                 )}
             </div>

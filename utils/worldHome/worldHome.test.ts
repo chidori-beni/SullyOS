@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { extractJson, parseCharBeat, resolvePlaceId, buildPlacesSection, parseNpcScene, storyTimeLabel, buildModeRule, buildWorldGapNote, buildWorldCharTurn, buildNpcTurn, parseRolledNpcs, buildNpcRollPrompt, NARRATIVE_STYLES, narrationPersonGuide, realNowSeg, realObserveTarget, worldTimeLabel, formatRealClock, migrateWorldDaySegs, SEGMENTS_PER_DAY, worldNow, worldTzLabel, clampRealClockToNow, alignCharToWorldClock } from './prompts';
-import { applyRelationshipDeltas, shareWorldCardTo, collectSeeds, buildSummary, dropDuplicatePosts, mirrorWorldBondsToChars, collectAppointments, buildPendingNotes, settlePendings } from './engine';
+import { extractJson, parseCharBeat, resolvePlaceId, buildPlacesSection, worldDateOfRound, parseRolledFestivals, parseNpcScene, storyTimeLabel, buildModeRule, buildWorldGapNote, buildWorldCharTurn, buildNpcTurn, parseRolledNpcs, buildNpcRollPrompt, NARRATIVE_STYLES, narrationPersonGuide, realNowSeg, realObserveTarget, worldTimeLabel, formatRealClock, migrateWorldDaySegs, SEGMENTS_PER_DAY, worldNow, worldTzLabel, clampRealClockToNow, alignCharToWorldClock } from './prompts';
+import { applyRelationshipDeltas, shareWorldCardTo, collectSeeds, buildSummary, dropDuplicatePosts, mirrorWorldBondsToChars, collectAppointments, buildPendingNotes, settlePendings, scheduleFestivals, buildFestivalNote } from './engine';
 import { DB } from '../db';
 import { ensureThreads, applyBeatToThreads, applyNpcGroupLines, applyNpcDms, npcInboxes, dmThreadsOf, groupThreadOf, formatThreadForPrompt, dmThreadId, GROUP_THREAD_ID } from './threads';
 import { WorldScheduler } from './scheduler';
@@ -1202,7 +1202,9 @@ describe('待发生事件底座（阶段 3）', () => {
             const notes = buildPendingNotes(mkWorld([pend()]), 'a', 11, members);
             expect(notes.due).toHaveLength(0);
             expect(notes.preheat).toHaveLength(1);
-            expect(notes.preheat[0]).toContain('再过 1 个半天');
+            // 措辞在第十六批改成了口语的「就这两天 / 还有 N 天」——比「再过 1 个半天」自然
+            expect(notes.preheat[0]).toContain('就这两天');
+            expect(notes.preheat[0]).toContain('一起去看那个展');
         });
 
         it('⛔ 还早的时候两边都不出现，不提前剧透', () => {
@@ -1300,6 +1302,201 @@ describe('待发生事件底座（阶段 3）', () => {
         it('⛔ 没写 appointments 的旧输出照常解析，字段为 undefined', () => {
             const b = parseCharBeat(JSON.stringify({ location: '住处', narrative: 'x', mood: 'x' }), char, ['小满']);
             expect(b.appointments).toBeUndefined();
+        });
+    });
+});
+
+
+describe('节日（阶段 3.2）', () => {
+    const members = [{ id: 'a', name: '小满' }, { id: 'b', name: '阿岚' }];
+    const simWorld = (over: any = {}) => ({
+        id: 'w1', name: '小镇', relationships: [], timeMode: 'sim',
+        simStartDate: { year: 2026, month: 3, day: 1 }, storyClock: 0, ...over,
+    } as any);
+
+    describe('worldDateOfRound —— 某一轮是哪天', () => {
+        it('sim：起始日 + 轮/4 天（一天四段）', () => {
+            const w = simWorld();
+            expect(worldDateOfRound(w, 0)).toEqual({ year: 2026, month: 3, day: 1 });
+            expect(worldDateOfRound(w, 3)).toEqual({ year: 2026, month: 3, day: 1 });
+            expect(worldDateOfRound(w, 4)).toEqual({ year: 2026, month: 3, day: 2 });
+            expect(worldDateOfRound(w, 40)).toEqual({ year: 2026, month: 3, day: 11 });
+        });
+
+        it('sim：会翻月', () => {
+            expect(worldDateOfRound(simWorld({ simStartDate: { year: 2026, month: 3, day: 30 } }), 8))
+                .toEqual({ year: 2026, month: 4, day: 1 });
+        });
+
+        it('real：以已演到的那天为基准按轮差折算', () => {
+            const w = { id: 'w', name: 'x', relationships: [], timeMode: 'real',
+                realClock: { dayKey: '2026-09-16', seg: 1 }, storyClock: 20 } as any;
+            expect(worldDateOfRound(w, 20)).toEqual({ year: 2026, month: 9, day: 16 });
+            expect(worldDateOfRound(w, 24)).toEqual({ year: 2026, month: 9, day: 17 });
+        });
+
+        it('⛔ 还没有日历的新世界返回 null —— 没日历自然过不了节', () => {
+            expect(worldDateOfRound({ id: 'w', name: 'x', relationships: [], timeMode: 'sim', storyClock: 0 } as any, 0)).toBeNull();
+            expect(worldDateOfRound({ id: 'w', name: 'x', relationships: [], timeMode: 'real', storyClock: 0 } as any, 0)).toBeNull();
+        });
+    });
+
+    describe('scheduleFestivals —— 排进待发生事件表', () => {
+        const fest = (over: any = {}) => ({ id: 'f1', name: '渡灯节', blurb: '把旧灯笼放进河里漂走', month: 3, day: 3, ...over });
+
+        it('⭐ 快到的节日会排进表，全镇的事（charIds 空）', () => {
+            const w = simWorld({ festivals: [fest()] });
+            scheduleFestivals(w, 0);   // 3/1 第一段，3/3 在 8~11 轮
+            expect(w.pendings).toHaveLength(1);
+            expect(w.pendings[0]).toMatchObject({ kind: 'festival', charIds: [], dueRound: 8, dueUntilRound: 11 });
+            expect(w.pendings[0].text).toContain('渡灯节');
+            expect(w.pendings[0].text).toContain('把旧灯笼放进河里漂走');
+        });
+
+        it('⭐⛔ 节日占满那一整天（4 段），不是挂在某一段上', () => {
+            const w = simWorld({ festivals: [fest()] });
+            scheduleFestivals(w, 0);
+            const p = w.pendings[0];
+            expect(p.dueUntilRound! - p.dueRound).toBe(3);
+        });
+
+        it('⭐ 默认提前 6 轮（约一天半）预热 —— 好玩的是期待感不是当天', () => {
+            const w = simWorld({ festivals: [fest()] });
+            scheduleFestivals(w, 0);
+            expect(w.pendings[0].leadRounds).toBe(6);
+        });
+
+        it('⛔ 幂等：每轮都调也只排一次', () => {
+            const w = simWorld({ festivals: [fest()] });
+            scheduleFestivals(w, 0);
+            scheduleFestivals(w, 1);
+            scheduleFestivals(w, 2);
+            expect(w.pendings).toHaveLength(1);
+        });
+
+        it('⛔ 还远的节日先不排（看太远 real 模式会越算越偏）', () => {
+            const w = simWorld({ festivals: [fest({ month: 12, day: 25 })] });
+            scheduleFestivals(w, 0);
+            expect(w.pendings || []).toHaveLength(0);
+        });
+
+        it('⛔ 关掉的节日不排', () => {
+            const w = simWorld({ festivals: [fest({ enabled: false })] });
+            scheduleFestivals(w, 0);
+            expect(w.pendings || []).toHaveLength(0);
+        });
+
+        it('⛔ 没有节日律法 / 没有日历时什么都不做，不崩', () => {
+            const w1 = simWorld();
+            scheduleFestivals(w1, 0);
+            expect(w1.pendings).toBeUndefined();
+            const w2 = { id: 'w', name: 'x', relationships: [], timeMode: 'sim', storyClock: 0, festivals: [fest()] } as any;
+            expect(() => scheduleFestivals(w2, 0)).not.toThrow();
+            expect(w2.pendings || []).toHaveLength(0);
+        });
+
+        it('明年同一天会重新排一次（source 带年份）', () => {
+            const w = simWorld({ festivals: [fest({ month: 3, day: 2 })] });
+            scheduleFestivals(w, 0);
+            expect(w.pendings).toHaveLength(1);
+            // 跳到快一年后的同一天前夕
+            w.storyClock = 4 * 365;
+            scheduleFestivals(w, 4 * 365);
+            expect(w.pendings.length).toBeGreaterThanOrEqual(1);
+        });
+    });
+
+    describe('节日的注入措辞', () => {
+        const festPending = (over: any = {}) => ({
+            id: 'p1', kind: 'festival', charIds: [], text: '渡灯节——把旧灯笼放进河里漂走',
+            dueRound: 8, dueUntilRound: 11, leadRounds: 6, status: 'scheduled', createdRound: 0, ...over,
+        });
+        const w = (p: any[]) => ({ id: 'w', name: 'x', relationships: [], storyClock: 0, pendings: p } as any);
+
+        it('⭐ 正日子那天全镇的人都收到', () => {
+            for (const r of [8, 9, 10, 11]) {
+                const notes = buildPendingNotes(w([festPending()]), 'a', r, members);
+                expect(notes.due).toHaveLength(1);
+                expect(notes.due[0]).toContain('今天是镇上的');
+            }
+        });
+
+        it('⭐ 预热说「还有几天」而不是「还有几个半天」', () => {
+            const notes = buildPendingNotes(w([festPending()]), 'a', 3, members);
+            expect(notes.preheat[0]).toContain('还有 1 天');
+            expect(notes.preheat[0]).not.toContain('个半天');
+        });
+
+        it('⭐⛔ 预热那句要明说「还没到」，别让角色提前把节过了', () => {
+            const notes = buildPendingNotes(w([festPending()]), 'a', 3, members);
+            expect(notes.due).toHaveLength(0);
+            expect(notes.preheat[0]).toContain('镇上已经有动静了');
+        });
+
+        it('⛔ 过完最后一段才收 —— 否则灯会只在早上有', () => {
+            const p = w([festPending()]);
+            settlePendings(p, 9);
+            expect(p.pendings[0].status).toBe('scheduled');
+            settlePendings(p, 11);
+            expect(p.pendings[0].status).toBe('fired');
+        });
+    });
+
+    describe('buildFestivalNote —— 喂给世界引擎的公共场景（补充②）', () => {
+        const w = (p: any[]) => ({ id: 'w', name: 'x', relationships: [], storyClock: 0, pendings: p } as any);
+        const festPending = (over: any = {}) => ({
+            id: 'p1', kind: 'festival', charIds: [], text: '渡灯节——把旧灯笼放进河里漂走',
+            dueRound: 8, dueUntilRound: 11, leadRounds: 6, status: 'scheduled', createdRound: 0, ...over,
+        });
+
+        it('⭐ 正日子标「今天就是正日子」', () => {
+            expect(buildFestivalNote(w([festPending()]), 9)).toContain('今天就是正日子');
+        });
+
+        it('⭐⛔ 预热期要明写「别提前把节过了」', () => {
+            const note = buildFestivalNote(w([festPending()]), 3);
+            expect(note).toContain('别提前把节过了');
+        });
+
+        it('⛔ 没节日 / 还早 → 空串，世界引擎提示词一个字不多', () => {
+            expect(buildFestivalNote(w([]), 5)).toBe('');
+            expect(buildFestivalNote(w([festPending()]), 0)).toBe('');
+        });
+
+        it('⛔ 约定不会混进世界引擎 —— 那是两个人私下的事，不是全镇的公共场景', () => {
+            const appointment = { id: 'p2', kind: 'appointment', charIds: ['a', 'b'], text: '看展',
+                dueRound: 2, status: 'scheduled', createdRound: 0 };
+            expect(buildFestivalNote(w([appointment]), 2)).toBe('');
+        });
+    });
+
+    describe('parseRolledFestivals', () => {
+        it('收下合法的节日', () => {
+            const raw = JSON.stringify({ festivals: [{ name: '渡灯节', blurb: '放灯', month: 3, day: 3 }] });
+            expect(parseRolledFestivals(raw)).toEqual([{ name: '渡灯节', blurb: '放灯', month: 3, day: 3 }]);
+        });
+
+        it('⛔ 日期不合法整条丢掉 —— 瞎猜一个日子会让节日落在莫名其妙的时候', () => {
+            const raw = JSON.stringify({ festivals: [
+                { name: 'A', month: 13, day: 1 },
+                { name: 'B', month: 3, day: 40 },
+                { name: 'C', month: 3, day: 3 },
+            ] });
+            expect(parseRolledFestivals(raw).map(f => f.name)).toEqual(['C']);
+        });
+
+        it('⛔ 重名的不收（含已有的）', () => {
+            const raw = JSON.stringify({ festivals: [{ name: '渡灯节', month: 1, day: 1 }] });
+            expect(parseRolledFestivals(raw, ['渡灯节'])).toHaveLength(0);
+        });
+
+        it('模型吐裸数组也认（同 parseRolledNpcs 的兜底）', () => {
+            expect(parseRolledFestivals('[{"name":"落雪祭","month":12,"day":1}]')).toHaveLength(1);
+        });
+
+        it('⛔ 垃圾输入返回空数组，不崩', () => {
+            expect(parseRolledFestivals('胡言乱语')).toEqual([]);
+            expect(parseRolledFestivals('')).toEqual([]);
         });
     });
 });

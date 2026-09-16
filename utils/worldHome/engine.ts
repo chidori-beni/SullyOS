@@ -29,6 +29,7 @@ import { getDailyScheduleForChar } from '../dailySchedule';
 import {
     worldTimeLabel, buildWorldSystemAddendum, buildWorldCharTurn, buildNpcTurn,
     parseCharBeat, parseNpcScene, realObserveTarget, formatRealClock, migrateWorldDaySegs, resolvePlaceId,
+    worldDateOfRound, SEGMENTS_PER_DAY,
     alignCharToWorldClock,
 } from './prompts';
 import { ensureThreads, applyBeatToThreads, applyNpcGroupLines, applyNpcDms, npcInboxes } from './threads';
@@ -415,18 +416,94 @@ export function buildPendingNotes(
         const others = p.charIds.filter(id => id !== charId).map(nameOf).filter(Boolean) as string[];
         const withWho = others.length > 0 ? `和${others.join('、')}` : '';
         const where = p.placeName ? `在${p.placeName}` : '';
-        if (round >= p.dueRound) {
-            due.push(withWho
-                ? `今天你${withWho}${where ? `${where}` : ''}说好了：${p.text}。`
-                : `今天${where ? `${where}` : '镇上'}有这件事：${p.text}。`);
+        const lastRound = p.dueUntilRound ?? p.dueRound;
+        const isFestival = p.kind === 'festival';
+        if (round >= p.dueRound && round <= lastRound) {
+            if (isFestival) {
+                due.push(`今天是镇上的「${p.text}」。这一天大家都在过节，你也在这个节日里过这半天。`);
+            } else {
+                due.push(`今天你${withWho}${where}说好了：${p.text}。`);
+            }
         } else if (p.leadRounds && round >= p.dueRound - p.leadRounds) {
             const left = p.dueRound - round;
-            preheat.push(withWho
-                ? `再过 ${left} 个半天，你${withWho}${where ? `${where}` : ''}约好了：${p.text}。`
-                : `再过 ${left} 个半天${where ? `，${where}` : ''}：${p.text}。`);
+            // 说「还有几天」比「还有几个半天」自然得多；不足一天就说「就这两天」
+            const when = left >= SEGMENTS_PER_DAY ? `还有 ${Math.floor(left / SEGMENTS_PER_DAY)} 天` : '就这两天';
+            if (isFestival) {
+                preheat.push(`${when}就是「${p.text}」。镇上已经有动静了，你也开始有点感觉——想做点什么、想约谁、或者不想过。`);
+            } else {
+                preheat.push(`${when}，你${withWho}${where}约好了：${p.text}。`);
+            }
         }
     }
     return { due, preheat };
+}
+
+/**
+ * 按节日律法往待发生事件表里排期（阶段 3.2）。
+ *
+ * 每轮开演前跑一次，只往前看 `leadRounds + 一天` 那么远：
+ * real 模式下「第 N 轮是哪天」是按轮差折算的，看太远会越算越偏
+ * （用户可能几天不观测，现实日期跑到前头去）。看得近就不会积误差。
+ *
+ * ⛔ **节日占满那一整天**（`dueRound` ~ `dueUntilRound`），不是挂在某一段上 ——
+ * 一天有 4 段，只挂一段的话同一个灯会早上有、晚上没有，很怪。
+ *
+ * 幂等：同一个节日同一天只排一次（按 `source` 去重），所以每轮调用都安全。
+ */
+export function scheduleFestivals(world: WorldProfile, round: number): void {
+    const festivals = (world.festivals || []).filter(f => f.enabled !== false);
+    if (festivals.length === 0) return;
+    if (!world.pendings) world.pendings = [];
+    for (const f of festivals) {
+        const lead = f.leadRounds ?? 6;
+        // 往前看到「预热期开始那天再往后一天」，足够把这个节日排进来
+        for (let r = round; r <= round + lead + SEGMENTS_PER_DAY; r++) {
+            const date = worldDateOfRound(world, r);
+            if (!date) return;            // 这个世界还没有日历 —— 整个排期都做不了
+            if (date.month !== f.month || date.day !== f.day) continue;
+            // 找到节日那天了。往回退到那天的第一段，再占满 4 段。
+            const firstOfDay = r - (r % SEGMENTS_PER_DAY);
+            const dueRound = Math.max(round, firstOfDay);
+            const source = `${f.id}@${date.year}-${date.month}-${date.day}`;
+            if (world.pendings.some(p => p.source === source)) break;   // 已经排过
+            world.pendings.push({
+                id: genId('wpd'),
+                kind: 'festival',
+                charIds: [],              // 空 = 全镇的事
+                text: f.blurb ? `${f.name}——${f.blurb}` : f.name,
+                dueRound,
+                dueUntilRound: firstOfDay + SEGMENTS_PER_DAY - 1,
+                ...(lead > 0 ? { leadRounds: lead } : {}),
+                status: 'scheduled',
+                createdRound: round,
+                source,
+            });
+            break;
+        }
+    }
+}
+
+/**
+ * 这一段镇上正在过 / 快到的节日，喂给**世界引擎**（阶段 3.2 补充②）。
+ *
+ * ⭐ 必须先让世界引擎生成**公共场景**，再让各角色在其中演自己那份 ——
+ * 否则十个角色会各写各的灯会（谁挂的灯、在哪条街、什么时辰全对不上）。
+ * `npcScene` / `npcHooks` 本来就是喂给所有角色的「镇上动静」，节日走同一条路，零新机制。
+ */
+export function buildFestivalNote(world: WorldProfile, round: number): string {
+    const lines: string[] = [];
+    for (const p of world.pendings || []) {
+        if (p.kind !== 'festival' || p.status !== 'scheduled') continue;
+        const lastRound = p.dueUntilRound ?? p.dueRound;
+        if (round >= p.dueRound && round <= lastRound) {
+            lines.push(`【今天就是正日子】${p.text}`);
+        } else if (p.leadRounds && round >= p.dueRound - p.leadRounds) {
+            const left = p.dueRound - round;
+            const when = left >= SEGMENTS_PER_DAY ? `还有 ${Math.floor(left / SEGMENTS_PER_DAY)} 天` : '就这两天';
+            lines.push(`【${when}】${p.text}——镇上开始有准备的动静了（还没到正日子，别提前把节过了）`);
+        }
+    }
+    return lines.join(String.fromCharCode(10));
 }
 
 /**
@@ -439,7 +516,8 @@ export function buildPendingNotes(
 export function settlePendings(world: WorldProfile, round: number): void {
     for (const p of world.pendings || []) {
         if (p.status !== 'scheduled') continue;
-        if (round >= p.dueRound) p.status = 'fired';
+        // 跨多段的事（节日占满一整天）要等最后一段过完才收 —— 否则灯会只在早上有
+        if (round >= (p.dueUntilRound ?? p.dueRound)) p.status = 'fired';
     }
 }
 
@@ -644,6 +722,9 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
     // 线程容器就位：本轮所有消息（NPC 群聊冒泡 / 角色私聊与群聊）都即时落在 world.threads 上，
     // 链式后续角色构建上下文时直接读到——消息在同一轮内就完成传递。
     ensureThreads(world);
+    // 节日排期：本轮开演前先把「快到的节日」排进待发生事件表（阶段 3.2）。
+    // 放在这里而不是结算时，是因为**预热要在本轮就生效** —— 排完这一轮就能注入。
+    scheduleFestivals(world, round);
     dispatch('world-episode-start', { worldId: world.id, worldName: world.name, storyTime, total: members.length });
 
     try {
@@ -763,7 +844,7 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${api.apiKey || 'sk-none'}` },
                     body: JSON.stringify({
                         model: api.model,
-                        messages: [{ role: 'user', content: buildNpcTurn({ world, members, storyTime, lastSummary, chapterAtmosphere: latestChapter?.atmosphere, inboxes: npcInboxes(world), recentPosts: recentPostsForNpc }) }],
+                        messages: [{ role: 'user', content: buildNpcTurn({ world, members, storyTime, lastSummary, chapterAtmosphere: latestChapter?.atmosphere, inboxes: npcInboxes(world), recentPosts: recentPostsForNpc, festivalNote: buildFestivalNote(world, round) }) }],
                         temperature: 0.9, stream: false,
                     }),
                 }, 2, 0, { appName: '家园', purpose: `NPC世界引擎 · ${world.name}` });
