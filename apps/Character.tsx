@@ -135,6 +135,8 @@ const Character: React.FC = () => {
   const [formData, setFormData] = useState<CharacterProfile | null>(null);
   /** 阶段 2.4：正在展开变更史的那条全局关系（对方 charId）。null = 都收起。 */
   const [openCharBondHistory, setOpenCharBondHistory] = useState<string | null>(null);
+  /** 阶段 3.4：AI 正在生成送礼喜恶清单。 */
+  const [genTaste, setGenTaste] = useState(false);
   const [imageGenCfg, setImageGenCfg] = useState<ImageGenConfig>(() => getImageGenConfig());
   const [isCompressing, setIsCompressing] = useState(false);
   // 头像 URL 输入的 draft, 不逐字 commit 到 formData.avatar —— 否则每输入一个字符,
@@ -542,6 +544,63 @@ const Character: React.FC = () => {
           if (!prev) return null;
           return { ...prev, [field]: value };
       });
+  };
+
+  /**
+   * 阶段 3.4：让 AI 依角色卡生成五档送礼喜恶。
+   *
+   * ⛔ **绝不覆盖用户手写的 `note`** —— 那一栏是用户自己补的说明，
+   * 重新生成时只换五档清单，`note` 原样留着。
+   */
+  const generateGiftTaste = async () => {
+      if (!formData) return;
+      if (!apiConfig?.baseUrl) { addToast('还没配 API', 'error'); return; }
+      setGenTaste(true);
+      try {
+          const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '');
+          const persona = [formData.description, formData.systemPrompt, formData.worldview]
+              .filter(Boolean).join(String.fromCharCode(10)).replace(/\s+/g, ' ').trim().slice(0, 1500);
+          const prompt = [
+              `依据下面这个角色的人设，写出 ta 对**收到的礼物**的五档好恶。`,
+              ``,
+              `## 角色：${formData.name}`,
+              persona || '（人设没写，请按名字推断一个合理的形象）',
+              ``,
+              `要求：`,
+              `- ⛔ **不要写成物品清单**。可以是具体的东西，也可以是「有人记得她随口提过的事」`,
+              `  「手写的信」「不打招呼就上门」这种**做不成道具**的东西——这套系统里礼物就是一句话，什么都能送。`,
+              `- 每档 2~4 条，短句，**贴这个人的性格与处境**，别写成通用的「喜欢花、讨厌虫子」。`,
+              `- 「非常讨厌」那档要真的踩到 ta 的痛处，但别和人设冲突。`,
+              `- 「一般」那档写**收到不会不高兴、但也不会有波澜**的东西——这一档最容易写空，认真想。`,
+              ``,
+              `严格输出一个 JSON 对象（不要输出 JSON 之外的正文）：`,
+              `{ "love": ["…"], "like": ["…"], "meh": ["…"], "dislike": ["…"], "hate": ["…"] }`,
+          ].join(String.fromCharCode(10));
+          const data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey || 'sk-none'}` },
+              body: JSON.stringify({ model: apiConfig.model, messages: [{ role: 'user', content: prompt }], temperature: 0.9, stream: false }),
+          }, 2, 0, { appName: '角色', charId: formData.id, charName: formData.name, purpose: '生成送礼喜恶' });
+          const raw = extractContent(data) || '';
+          const m = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').match(/\{[\s\S]*\}/);
+          const j = m ? JSON.parse(m[0]) : null;
+          if (!j) { addToast('没解析出来，再试一次？', 'error'); return; }
+          const pick = (k: string) => Array.isArray(j[k])
+              ? j[k].map((x: any) => String(x).trim()).filter(Boolean).slice(0, 6)
+              : [];
+          handleChange('giftTaste', {
+              ...(formData.giftTaste || {}),   // 先铺开旧的，下面只覆盖五档
+              love: pick('love'), like: pick('like'), meh: pick('meh'),
+              dislike: pick('dislike'), hate: pick('hate'),
+              // ⛔ note 是用户手写的，绝不覆盖
+              ...(formData.giftTaste?.note ? { note: formData.giftTaste.note } : {}),
+          });
+          addToast('生成好了，可以再改', 'success');
+      } catch {
+          addToast('生成失败，检查下 API', 'error');
+      } finally {
+          setGenTaste(false);
+      }
   };
 
   // Worldbook Logic
@@ -2052,6 +2111,74 @@ ${isInitialGeneration ? `
                                             </div>
                                         )}
                                     </div>
+                                </div>
+
+                                {/* ── 阶段 3.4：送礼喜恶 ─────────────────────────────
+                                    ⛔ 不是物品系统：每一条都是自由文本，「有人记得她随口提过的事」也能当礼物。
+                                    清单常驻注入 ta 自己的人设，收礼时由 ta 自己判断喜不喜欢——系统不判档、不加减好感。 */}
+                                <div className="space-y-2">
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="text-[11px] font-bold text-slate-500">ta 喜欢收到什么</span>
+                                        <button
+                                            type="button"
+                                            onClick={generateGiftTaste}
+                                            disabled={genTaste}
+                                            className="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-50 text-violet-600 border border-violet-200 disabled:opacity-50 active:scale-95 transition-transform"
+                                        >{genTaste ? '生成中…' : '按人设生成'}</button>
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 leading-relaxed">
+                                        别人送 ta 东西时，ta 会<span className="font-bold text-slate-500">对照这份清单按自己的性格反应</span>——
+                                        系统不打分、不替 ta 决定好感涨多少。
+                                        <br /><span className="font-bold text-slate-500">不用写成物品</span>：「有人记得她随口提过的事」「手写的信」
+                                        这种做不成道具的东西照样能送。
+                                    </div>
+                                    {([
+                                        ['love', '非常喜欢', 'bg-rose-50 text-rose-500'],
+                                        ['like', '喜欢', 'bg-amber-50 text-amber-600'],
+                                        ['meh', '一般', 'bg-slate-50 text-slate-400'],
+                                        ['dislike', '不太喜欢', 'bg-slate-100 text-slate-500'],
+                                        ['hate', '非常讨厌', 'bg-slate-200 text-slate-600'],
+                                    ] as const).map(([tier, label, cls]) => (
+                                        <div key={tier} className="flex items-start gap-2">
+                                            <span className={`shrink-0 mt-1.5 text-[10px] font-bold px-2 py-0.5 rounded-full ${cls}`}>{label}</span>
+                                            <input
+                                                value={(formData.giftTaste?.[tier] || []).join('、')}
+                                                onChange={e => handleChange('giftTaste', {
+                                                    ...(formData.giftTaste || {}),
+                                                    [tier]: e.target.value.split(/[、,，]/).map(x => x.trim()).filter(Boolean),
+                                                })}
+                                                placeholder="用「、」隔开几条"
+                                                className="flex-1 min-w-0 px-3 py-1.5 bg-slate-50 rounded-xl text-[11px] text-slate-700 outline-none focus:ring-1 focus:ring-primary/20"
+                                            />
+                                        </div>
+                                    ))}
+                                    <input
+                                        value={formData.giftTaste?.note || ''}
+                                        onChange={e => handleChange('giftTaste', { ...(formData.giftTaste || {}), note: e.target.value })}
+                                        placeholder="你自己补一句（重新生成时这一栏不会被覆盖）"
+                                        className="w-full px-3 py-1.5 bg-slate-50 rounded-xl text-[11px] text-slate-700 outline-none focus:ring-1 focus:ring-primary/20"
+                                    />
+                                    {(formData.giftsToHost || []).length > 0 && (
+                                        <div className="rounded-2xl bg-slate-50 px-3 py-2 space-y-1">
+                                            <div className="text-[10px] font-bold text-slate-500">ta 送过你的东西</div>
+                                            {(formData.giftsToHost || []).slice(-5).reverse().map((g, i) => (
+                                                <div key={i} className="text-[10.5px] text-slate-600">
+                                                    {g.what}
+                                                    <span className="text-slate-400 ml-1.5">
+                                                        {g.reaction === 'love' ? '· 你很喜欢'
+                                                            : g.reaction === 'like' ? '· 你喜欢'
+                                                            : g.reaction === 'meh' ? '· 你反应平平'
+                                                            : g.reaction === 'dislike' ? '· 你不太喜欢'
+                                                            : g.reaction === 'hate' ? '· 你很不喜欢'
+                                                            : '· 你还没表态'}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                            <div className="text-[9.5px] text-slate-400 leading-relaxed">
+                                                这份记录会告诉 ta「上次送对了没有」，所以 ta 下次会往那个方向送。
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
 
                                 <div className="space-y-1.5">

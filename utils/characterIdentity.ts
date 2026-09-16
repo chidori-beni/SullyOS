@@ -602,3 +602,83 @@ export const buildCharBondNote = (
         + lines.join('\n')
         + '\n（这是**你自己**心里的定位，别人怎么看你、怎么看彼此，你都不知道。）';
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 阶段 3.4 · 送礼
+// ─────────────────────────────────────────────────────────────────────────────
+
+const GIFT_TIER_LABELS: Record<string, string> = {
+    love: '收到会非常高兴',
+    like: '会喜欢',
+    meh: '不难不喜，收到就收到了',
+    dislike: '不太想收',
+    hate: '收到会很不舒服',
+};
+
+/**
+ * 「你对礼物的好恶」那段注入（阶段 3.4）。
+ *
+ * ⛔ **判档不额外调 LLM。** 清单直接进 ta 自己的提示词，由 ta 判断喜不喜欢、
+ * 反应成什么样、好感怎么变 —— 既省一次调用，又比系统判档更像那个人
+ * （交接说明 §5.7 同一条原则：这套系统的长处是叙事不是数值）。
+ *
+ * ⛔ **不注入数值、不规定好感该加减多少。** 一写数字模型就开始算分。
+ *
+ * 常驻注入而非只在收礼时注入：ta 自己送人东西、别人问 ta 喜欢什么、
+ * 逛街看到什么动心，都用得上这份自我认知。没填就是空串，旧角色零变化。
+ */
+export const buildGiftTasteNote = (
+    char: Pick<CharacterProfile, 'giftTaste'> | null | undefined,
+): string => {
+    const t = char?.giftTaste;
+    if (!t) return '';
+    const lines: string[] = [];
+    for (const tier of ['love', 'like', 'meh', 'dislike', 'hate'] as const) {
+        const items = (t[tier] || []).map(x => (x || '').trim()).filter(Boolean);
+        if (items.length === 0) continue;
+        lines.push(`- ${GIFT_TIER_LABELS[tier]}：${items.join('、')}`);
+    }
+    const note = (t.note || '').trim();
+    if (note) lines.push(`- 另外：${note}`);
+    if (lines.length === 0) return '';
+    return [
+        '【你对收到的东西的好恶】',
+        ...lines,
+        '（这是你自己的口味，不用特意说出来。别人送你东西时，'
+        + '按你**真实的**反应演：喜欢就高兴，不喜欢就别硬夸——'
+        + '当然要不要把不喜欢表现出来，取决于你是个什么样的人和对方是谁。）',
+    ].join('\n');
+};
+
+/**
+ * 「你送给机主的东西，ta 的反应」那段注入（阶段 3.4 的反馈回路）。
+ *
+ * 系统不可能知道机主喜欢什么，所以机主收到礼物后自己选喜恶，记在 `giftsToHost` 里，
+ * 再注入回来 —— 于是 ta 下次会往那个方向送。这就是回路。
+ *
+ * ⛔ **还没选反应的那几条也要说出来，而且要说成「还不知道」** ——
+ * 不说的话模型会默认「送了就等于送对了」，凭空脑补出一段皆大欢喜。
+ */
+export const buildGiftHistoryNote = (
+    char: Pick<CharacterProfile, 'giftsToHost'> | null | undefined,
+    hostName?: string,
+    limit = 6,
+): string => {
+    const list = (char?.giftsToHost || []).slice(-limit);
+    if (list.length === 0) return '';
+    const who = (hostName || '').trim() || 'ta';
+    const lines = list.map(g => {
+        const what = (g.what || '').trim();
+        if (!what) return '';
+        switch (g.reaction) {
+            case 'love': return `- 「${what}」——${who}非常喜欢`;
+            case 'like': return `- 「${what}」——${who}挺喜欢的`;
+            case 'meh': return `- 「${what}」——${who}反应平平`;
+            case 'dislike': return `- 「${what}」——${who}好像不太喜欢`;
+            case 'hate': return `- 「${what}」——${who}明显很不喜欢`;
+            default: return `- 「${what}」——**你还不知道${who}喜不喜欢**`;
+        }
+    }).filter(Boolean);
+    if (lines.length === 0) return '';
+    return `【你送过${who}的东西】\n${lines.join('\n')}`;
+};

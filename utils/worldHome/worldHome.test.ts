@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { extractJson, parseCharBeat, resolvePlaceId, buildPlacesSection, worldDateOfRound, parseRolledFestivals, parseRolledThresholds, GENERIC_THRESHOLDS, parseNpcScene, storyTimeLabel, buildModeRule, buildWorldGapNote, buildWorldCharTurn, buildNpcTurn, parseRolledNpcs, buildNpcRollPrompt, NARRATIVE_STYLES, narrationPersonGuide, realNowSeg, realObserveTarget, worldTimeLabel, formatRealClock, migrateWorldDaySegs, SEGMENTS_PER_DAY, worldNow, worldTzLabel, clampRealClockToNow, alignCharToWorldClock } from './prompts';
-import { applyRelationshipDeltas, shareWorldCardTo, collectSeeds, buildSummary, dropDuplicatePosts, mirrorWorldBondsToChars, collectAppointments, buildPendingNotes, settlePendings, scheduleFestivals, buildFestivalNote } from './engine';
+import { applyRelationshipDeltas, shareWorldCardTo, collectSeeds, buildSummary, dropDuplicatePosts, mirrorWorldBondsToChars, collectAppointments, buildPendingNotes, settlePendings, scheduleFestivals, buildFestivalNote, collectGifts, takeGifts } from './engine';
 import { DB } from '../db';
+import { buildGiftTasteNote, buildGiftHistoryNote } from '../characterIdentity';
 import { ensureThreads, applyBeatToThreads, applyNpcGroupLines, applyNpcDms, npcInboxes, dmThreadsOf, groupThreadOf, formatThreadForPrompt, dmThreadId, GROUP_THREAD_ID } from './threads';
 import { WorldScheduler } from './scheduler';
 import type { CharacterProfile, WorldProfile } from '../../types';
@@ -1692,6 +1693,177 @@ describe('好感阈值大事件（阶段 3.3）', () => {
                 expect(t.value).toBeGreaterThanOrEqual(-100);
                 expect(t.value).toBeLessThanOrEqual(100);
             }
+        });
+    });
+});
+
+
+describe('送礼（阶段 3.4）', () => {
+    const members = [{ id: 'a', name: '小满' }, { id: 'b', name: '阿岚' }];
+    const mkWorld = () => ({ id: 'w1', name: '小镇', storyClock: 5, relationships: [] } as any);
+    const beatWith = (gifts: any[]) => ({
+        charId: 'a', charName: '小满', location: '住处', narrative: 'x', mood: '平静', gifts,
+    } as any);
+
+    describe('collectGifts —— 投递', () => {
+        it('⭐ 送给镇上的人 → 落进对方收件箱', () => {
+            const w = mkWorld();
+            collectGifts(w, beatWith([{ to: '阿岚', what: '一束晒干的薰衣草', why: '她提过喜欢那个味道' }]), members, 5);
+            expect(w.giftInbox).toHaveLength(1);
+            expect(w.giftInbox[0]).toMatchObject({ toId: 'b', fromId: 'a', fromName: '小满', what: '一束晒干的薰衣草' });
+        });
+
+        it('⭐ 送给机主 → 另走一条路，等机主自己点反应', () => {
+            const w = mkWorld();
+            collectGifts(w, beatWith([{ to: '颜千夜', what: '一张纸条' }]), members, 5, '颜千夜');
+            expect(w.giftInbox).toBeUndefined();
+            expect(w.giftsForHost).toHaveLength(1);
+            expect(w.giftsForHost[0]).toMatchObject({ fromId: 'a', fromName: '小满', what: '一张纸条' });
+        });
+
+        it('⛔ 送给查无此人 / 送给自己的丢掉', () => {
+            const w = mkWorld();
+            collectGifts(w, beatWith([
+                { to: '路人甲', what: 'x' },
+                { to: '小满', what: '自己送自己' },
+            ]), members, 5);
+            expect(w.giftInbox || []).toHaveLength(0);
+        });
+
+        it('⛔ 没送东西时不建表', () => {
+            const w = mkWorld();
+            collectGifts(w, beatWith([]), members, 5);
+            expect(w.giftInbox).toBeUndefined();
+        });
+
+        it('⛔ 没传机主名时，机主名不会被当成成员', () => {
+            const w = mkWorld();
+            collectGifts(w, beatWith([{ to: '颜千夜', what: 'x' }]), members, 5);
+            expect(w.giftInbox || []).toHaveLength(0);
+            expect(w.giftsForHost).toBeUndefined();
+        });
+    });
+
+    describe('takeGifts —— 领取', () => {
+        it('⭐ 收礼方那一轮取走，文案带上是谁送的、为什么', () => {
+            const w = mkWorld();
+            collectGifts(w, beatWith([{ to: '阿岚', what: '薰衣草', why: '她提过喜欢' }]), members, 5);
+            const notes = takeGifts(w, 'b');
+            expect(notes).toHaveLength(1);
+            expect(notes[0]).toContain('小满');
+            expect(notes[0]).toContain('薰衣草');
+            expect(notes[0]).toContain('她提过喜欢');
+        });
+
+        it('⛔⭐ 取走即清除 —— 留着会每轮重复念', () => {
+            const w = mkWorld();
+            collectGifts(w, beatWith([{ to: '阿岚', what: '薰衣草' }]), members, 5);
+            expect(takeGifts(w, 'b')).toHaveLength(1);
+            expect(takeGifts(w, 'b')).toHaveLength(0);
+        });
+
+        it('⛔ 只取自己那份，别人的留着', () => {
+            const w = mkWorld();
+            collectGifts(w, beatWith([{ to: '阿岚', what: 'x' }]), members, 5);
+            expect(takeGifts(w, 'a')).toHaveLength(0);
+            expect(w.giftInbox).toHaveLength(1);
+        });
+
+        it('⛔ 没有收件箱的旧世界不崩', () => {
+            expect(takeGifts(mkWorld(), 'a')).toEqual([]);
+        });
+    });
+
+    describe('parseCharBeat 解析 gifts', () => {
+        const char = { id: 'a', name: '小满' } as any;
+        const raw = (gifts: any) => JSON.stringify({ location: '住处', narrative: 'x', mood: 'x', gifts });
+
+        it('收下合法的', () => {
+            const b = parseCharBeat(raw([{ to: '阿岚', what: '薰衣草', why: '她提过' }]), char, ['小满', '阿岚']);
+            expect(b.gifts).toEqual([{ to: '阿岚', what: '薰衣草', why: '她提过' }]);
+        });
+
+        it('⭐ 传了机主名才能送给机主', () => {
+            const withHost = parseCharBeat(raw([{ to: '颜千夜', what: 'x' }]), char, ['小满'], [], undefined, '颜千夜');
+            expect(withHost.gifts).toHaveLength(1);
+            const without = parseCharBeat(raw([{ to: '颜千夜', what: 'x' }]), char, ['小满']);
+            expect(without.gifts).toBeUndefined();
+        });
+
+        it('⛔ 送给查无此人的丢掉 —— 没人收得到', () => {
+            expect(parseCharBeat(raw([{ to: '路人甲', what: 'x' }]), char, ['小满', '阿岚']).gifts).toBeUndefined();
+        });
+
+        it('⛔ 没写 gifts 的旧输出照常解析', () => {
+            expect(parseCharBeat(JSON.stringify({ location: 'x', narrative: 'x', mood: 'x' }), char, ['小满']).gifts).toBeUndefined();
+        });
+    });
+
+    describe('buildGiftTasteNote —— ta 自己的口味', () => {
+        const char = { giftTaste: {
+            love: ['有人记得她随口提过的事'], like: ['手写的信'], meh: ['吃的'],
+            dislike: ['贵重的东西'], hate: ['不打招呼就上门'],
+        } } as any;
+
+        it('五档都列出来', () => {
+            const note = buildGiftTasteNote(char);
+            for (const x of ['有人记得她随口提过的事', '手写的信', '吃的', '贵重的东西', '不打招呼就上门']) {
+                expect(note).toContain(x);
+            }
+        });
+
+        it('⛔⭐ 不注入数值、不规定好感加减多少 —— 一写数字模型就开始算分', () => {
+            const note = buildGiftTasteNote(char);
+            for (const forbidden of ['好感 +', '好感+', '加 5', '扣 5', '分']) {
+                expect(note).not.toContain(forbidden);
+            }
+        });
+
+        it('⭐ 明说「不喜欢也别硬夸」，但要不要表现出来看性格', () => {
+            const note = buildGiftTasteNote(char);
+            expect(note).toContain('别硬夸');
+            expect(note).toContain('取决于你是个什么样的人');
+        });
+
+        it('用户手写的补充会带上', () => {
+            expect(buildGiftTasteNote({ giftTaste: { note: '对花粉过敏' } } as any)).toContain('对花粉过敏');
+        });
+
+        it('⛔ 没填 → 空串，旧角色零变化', () => {
+            expect(buildGiftTasteNote({} as any)).toBe('');
+            expect(buildGiftTasteNote({ giftTaste: {} } as any)).toBe('');
+            expect(buildGiftTasteNote({ giftTaste: { love: ['  ', ''] } } as any)).toBe('');
+        });
+    });
+
+    describe('buildGiftHistoryNote —— 反馈回路', () => {
+        it('⭐ 把机主的反应说清楚，ta 下次才知道该往哪送', () => {
+            const note = buildGiftHistoryNote({ giftsToHost: [
+                { what: '薰衣草', at: 1, reaction: 'love' },
+                { what: '一本旧书', at: 2, reaction: 'dislike' },
+            ] } as any, '颜千夜');
+            expect(note).toContain('薰衣草');
+            expect(note).toContain('非常喜欢');
+            expect(note).toContain('一本旧书');
+            expect(note).toContain('不太喜欢');
+        });
+
+        it('⛔⭐ 还没表态的要明说「你还不知道」—— 不说模型会默认送对了', () => {
+            const note = buildGiftHistoryNote({ giftsToHost: [{ what: '纸条', at: 1 }] } as any, '颜千夜');
+            expect(note).toContain('还不知道');
+        });
+
+        it('只留最近几条', () => {
+            const many = { giftsToHost: Array.from({ length: 20 }, (_, i) => ({ what: `礼物${i}`, at: i })) } as any;
+            const note = buildGiftHistoryNote(many, '颜千夜', 3);
+            expect(note.split(String.fromCharCode(10)).filter(l => l.startsWith('- ')).length).toBe(3);
+            expect(note).toContain('礼物19');
+            expect(note).not.toContain('礼物0】');
+        });
+
+        it('⛔ 没送过 → 空串', () => {
+            expect(buildGiftHistoryNote({} as any, '颜千夜')).toBe('');
+            expect(buildGiftHistoryNote({ giftsToHost: [] } as any, '颜千夜')).toBe('');
         });
     });
 });

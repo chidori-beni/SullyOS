@@ -398,6 +398,72 @@ export function collectAppointments(
 }
 
 /**
+ * 把这一拍送出去的礼物投递出去（阶段 3.4）。
+ *
+ * ⛔ **系统不判档、不加减好感。** 礼物就是一句自由文本，落进收礼方的收件箱，
+ * 由**收礼方自己那一轮**对照自己的好恶清单去演（`buildGiftTasteNote` 已经常驻注入）。
+ * 既省一次 LLM 调用，又比系统判档更像那个人。
+ *
+ * 送给**机主**的那份另走一条路：机主的喜好系统不可能知道，
+ * 所以落进 `world.giftsForHost` 等机主自己点一个反应，再写回送礼角色的 `giftsToHost`
+ * —— 那就是反馈回路（见 `buildGiftHistoryNote`）。
+ */
+export function collectGifts(
+    world: WorldProfile,
+    beat: WorldCharBeat,
+    members: { id: string; name: string }[],
+    round: number,
+    hostName?: string,
+): void {
+    if (!beat.gifts || beat.gifts.length === 0) return;
+    const host = (hostName || '').trim();
+    for (const g of beat.gifts) {
+        const to = (g.to || '').trim();
+        if (!to) continue;
+        if (host && to === host) {
+            (world.giftsForHost ||= []).push({
+                id: genId('gfh'),
+                fromId: beat.charId,
+                fromName: beat.charName,
+                what: g.what,
+                ...(g.why ? { why: g.why } : {}),
+                round,
+                at: Date.now(),
+            });
+            continue;
+        }
+        const target = members.find(m => m.name === to);
+        if (!target || target.id === beat.charId) continue;
+        (world.giftInbox ||= []).push({
+            toId: target.id,
+            fromId: beat.charId,
+            fromName: beat.charName,
+            what: g.what,
+            ...(g.why ? { why: g.why } : {}),
+            round,
+        });
+    }
+    // 收件箱只留最近 20 条：没人来取的（比如那个角色退镇了）不该无限堆
+    if (world.giftInbox && world.giftInbox.length > 20) world.giftInbox = world.giftInbox.slice(-20);
+    if (world.giftsForHost && world.giftsForHost.length > 30) world.giftsForHost = world.giftsForHost.slice(-30);
+}
+
+/**
+ * 取走某个角色收件箱里的礼物，转成注入文案（阶段 3.4）。
+ *
+ * **取走即清除**：礼物只该被收到一次，留着会每轮重复念。
+ * 同一轮里还没演的人当场就能收到（同 `threads` 的即时传递）。
+ */
+export function takeGifts(world: WorldProfile, charId: string): string[] {
+    const inbox = world.giftInbox || [];
+    if (inbox.length === 0) return [];
+    const mine = inbox.filter(g => g.toId === charId);
+    if (mine.length === 0) return [];
+    world.giftInbox = inbox.filter(g => g.toId !== charId);
+    return mine.map(g => `${g.fromName} 送了你：${g.what}${g.why ? `（${g.fromName}说：${g.why}）` : ''}`);
+}
+
+/**
  * 为某个角色生成这一轮的待发生事件注入文案（阶段 3 底座）。
  *
  * `due`（今天到点）和 `preheat`（快到了）分开返回，提示词里也是两段 ——
@@ -860,6 +926,8 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
                     exposures: buildExposures(world, char.id, char.name),
                     // 阶段 3 底座：今天到点的事 + 快到了的事（两段分开注入，见 buildPendingNotes）
                     pendings: buildPendingNotes(world, char.id, round, members),
+                    // 阶段 3.4：取走收件箱里别人送 ta 的东西（取走即清除，不会重复念）
+                    giftsReceived: takeGifts(world, char.id),
                     directive: directive ? { impulseText: directive.impulseText, text: directive.text } : undefined,
                     priorChapter,
                     userName: userProfile?.name || '',
@@ -875,7 +943,7 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
                         temperature: 0.9, stream: false,
                     }),
                 }, 2, 0, { appName: '家园', charId: char.id, charName: char.name, purpose: `演绎 · ${world.name}` });
-                const beat = parseCharBeat(data.choices?.[0]?.message?.content || '', char, memberNames, world.npcs.map(n => n.name), world.places);
+                const beat = parseCharBeat(data.choices?.[0]?.message?.content || '', char, memberNames, world.npcs.map(n => n.name), world.places, userProfile?.name);
                 // 落库前剔除和最近动态重复的 post（上一轮 + 本轮已演绎角色）
                 dropDuplicatePosts(beat, collectRecentPosts(lastBeats, beats));
                 beats.push(beat);
@@ -885,6 +953,8 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
                 collectSeeds(world, beat, round, storyTime);
                 // 这半天说定的约定落进待发生事件表（阶段 3 底座）
                 collectAppointments(world, beat, members, round);
+                // 送出去的礼物投递给收礼方（送给机主的另走一条路，等机主自己点反应）
+                collectGifts(world, beat, members, round, userProfile?.name);
                 anyCharOk = true;
             } catch (e) {
                 // 单个角色失败不拖垮整轮——这半天 ta 只是没什么动静
@@ -968,6 +1038,8 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
             threads: world.threads, // 本轮累积的私聊/群聊消息一并持久化
             seeds: world.seeds,
             pendings: world.pendings,
+            giftInbox: world.giftInbox,
+            giftsForHost: world.giftsForHost,
             directives: remainingDirectives,
             storyClock: world.storyClock + 1,
             // real 模式：把世界的「现实段」推进到这次演的那一段
@@ -1109,6 +1181,7 @@ export async function rerollWorldCharBeat(
             recentPosts: collectRecentPosts(prevEp?.beats || [], otherBeats),
             exposures: buildExposures(world, char.id, char.name),
             pendings: buildPendingNotes(world, char.id, episode.round, members),
+            giftsReceived: takeGifts(world, char.id),
             priorChapter, userName: userProfile?.name || '',
         });
         if (direction && direction.trim()) {
@@ -1123,7 +1196,7 @@ export async function rerollWorldCharBeat(
                 temperature: 0.95, stream: false,
             }),
         }, 2, 0, { appName: '家园', charId: char.id, charName: char.name, purpose: `重演 · ${world.name}` });
-        const beat = parseCharBeat(data.choices?.[0]?.message?.content || '', char, memberNames, world.npcs.map(n => n.name), world.places);
+        const beat = parseCharBeat(data.choices?.[0]?.message?.content || '', char, memberNames, world.npcs.map(n => n.name), world.places, userProfile?.name);
         // 重演这一拍同样剔除和最近动态重复的 post
         dropDuplicatePosts(beat, collectRecentPosts(prevEp?.beats || [], otherBeats));
 
@@ -1155,6 +1228,7 @@ export async function rerollWorldCharBeat(
             applyBeatToThreads(world, beat, members, episode.round, episode.storyTime);
             collectSeeds(world, beat, episode.round, episode.storyTime);
             collectAppointments(world, beat, members, episode.round);
+            collectGifts(world, beat, members, episode.round, userProfile?.name);
             const rerollHostDeltas = applyRelationshipDeltas(world, [beat], members, episode.round, userProfile?.name);
             // 同主路径：sim 世界不往角色卡上写
             if (world.timeMode !== 'sim' && world.injectToChat !== false) {
@@ -1176,7 +1250,7 @@ export async function rerollWorldCharBeat(
             }
         }
         if (worldDirty) {
-            await DB.saveWorld({ ...world, threads: world.threads, seeds: world.seeds, pendings: world.pendings, relationships: world.relationships, feedReactions: world.feedReactions, updatedAt: Date.now() });
+            await DB.saveWorld({ ...world, threads: world.threads, seeds: world.seeds, pendings: world.pendings, giftInbox: world.giftInbox, giftsForHost: world.giftsForHost, relationships: world.relationships, feedReactions: world.feedReactions, updatedAt: Date.now() });
         }
         dispatch('world-episode-done', { worldId: world.id, episodeId: updatedEp.id, storyTime: episode.storyTime, round: episode.round });
         return { ok: true, episode: updatedEp };

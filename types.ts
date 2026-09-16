@@ -2105,6 +2105,17 @@ export interface WorldProfile {
     festivals?: WorldFestival[];
     /** 好感阈值大事件（阶段 3.3）。缺省/空 = 不触发任何事，行为与改造前一致 */
     thresholds?: WorldThreshold[];
+    /**
+     * 待领取的礼物（阶段 3.4）。角色送出后落在这里，**收礼方演到自己那一轮时取走**。
+     * 同一轮里还没演的人当场就能收到（同 `threads` 的即时传递）。
+     */
+    giftInbox?: { toId: string; fromId: string; fromName: string; what: string; why?: string; round: number }[];
+    /**
+     * 送给**机主**的礼物，等机主自己选反应（阶段 3.4）。
+     * 机主的喜好系统不可能知道，所以这一档只能由 ta 自己点。
+     * 选完就写进送礼角色的 `giftsToHost` 并从这里移除。
+     */
+    giftsForHost?: { id: string; fromId: string; fromName: string; what: string; why?: string; round: number; at: number }[];
     relationships: WorldRelationship[];
     /** 世界内消息线程（私聊 + 世界群聊），随演绎累积，每线程截留最近若干条 */
     threads?: WorldThread[];
@@ -2174,6 +2185,18 @@ export interface WorldCharBeat {
      * ① **制造期待** —— 约定与兑现之间隔着一轮，中间有心情、准备、忐忑；
      * ② **爽约是戏** —— 那轮出了别的事没去成，本身就是剧情。随机相遇产生不了爽约。
      */
+    /**
+     * 这半天送出去的礼物（阶段 3.4）。收礼方会在**自己那一轮**收到并反应 ——
+     * 系统不判档、不加减好感，全交给收礼方自己演。
+     */
+    gifts?: {
+        /** 送给谁（同世界成员名，或机主的名字） */
+        to: string;
+        /** 送了什么（自由文本，⛔ 不是物品 id） */
+        what: string;
+        /** 为什么送（可空；收礼方看得到，会影响 ta 怎么理解这份礼物） */
+        why?: string;
+    }[];
     appointments?: {
         /** 和谁（同世界成员名） */
         with: string;
@@ -3612,6 +3635,49 @@ export interface CharacterProfile {
           round?: number;
           reason?: string;
       }[];
+  }[];
+  /**
+   * **送礼喜恶**（阶段 3.4）。五档，每档几句自由文本。
+   *
+   * ⛔ **绝不做物品系统。** 礼物就是一句自由文本（「送了她一束晒干的薰衣草」），
+   * 拿去对照收礼方的这份清单。不用背包 / 物品表 / 商店 / 获取途径 ——
+   * 工程量差好几倍，而且**比物品系统自由得多**：
+   * 能送「她连夜抄的一本书」这种做不成道具的东西。
+   *
+   * ⛔ **判档不额外调 LLM。** 清单注入**收礼方自己那一轮**的提示词，
+   * 由 ta 自己判断喜不喜欢、反应成什么样、好感怎么变 ——
+   * 既省一次调用，又比系统判档更像那个人（同样是「长处是叙事不是数值」）。
+   *
+   * 存在**角色身上而不是世界里**，所以跨镇通用，1v1 聊天里送东西照样生效。
+   */
+  giftTaste?: {
+      /** 非常喜欢 */
+      love?: string[];
+      like?: string[];
+      /** 一般（收到不会不高兴，但也不会有什么波澜） */
+      meh?: string[];
+      dislike?: string[];
+      /** 非常讨厌（送了会扣好感） */
+      hate?: string[];
+      /** 用户手写的补充说明。⛔ AI 重新生成时**永不覆盖这一栏** */
+      note?: string;
+  };
+  /**
+   * **ta 送给机主的东西 + 机主的反应**（阶段 3.4 的反馈回路）。
+   *
+   * 系统不可能知道机主喜欢什么 —— 所以机主收到礼物后**自己选**喜恶程度，
+   * 记在这里，再注入回 ta 的提示词：「上次送的那个她很喜欢」。
+   * 这样 ta 下次会往那个方向送。最旧在前，只留最近若干条。
+   */
+  giftsToHost?: {
+      /** 送了什么（自由文本） */
+      what: string;
+      at: number;
+      /** 机主选的反应。没选过 = undefined，注入时说「还不知道 ta 喜不喜欢」 */
+      reaction?: 'love' | 'like' | 'meh' | 'dislike' | 'hate';
+      /** 哪个小镇、第几轮送的（只为界面显示） */
+      worldId?: string;
+      round?: number;
   }[];
   /**
    * 阶段 2.8：用户看过「要不要算朋友」的提议后按了「不用了」。

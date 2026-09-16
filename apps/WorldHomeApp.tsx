@@ -1795,6 +1795,32 @@ const WorldView: React.FC<{
         addToast('已取消，下一轮不会再提这件事', 'success');
     };
 
+    /**
+     * 机主对收到的礼物选一个喜恶（阶段 3.4 的反馈回路）。
+     *
+     * 系统不可能知道机主喜欢什么 —— 所以这一档只能由 ta 自己点。
+     * 选完写进**送礼角色**的 `giftsToHost`，下次注入回 ta 的提示词，
+     * ta 就知道「上次送的那个她很喜欢」了。
+     */
+    const reactToGift = async (giftId: string, reaction: 'love' | 'like' | 'meh' | 'dislike' | 'hate') => {
+        const gift = (world.giftsForHost || []).find(g => g.id === giftId);
+        if (!gift) return;
+        try {
+            const char = await DB.getCharacter(gift.fromId);
+            if (char) {
+                const log = [...(char.giftsToHost || []), {
+                    what: gift.what, at: gift.at, reaction,
+                    worldId: world.id, round: gift.round,
+                }].slice(-20);
+                await DB.saveCharacter({ ...char, giftsToHost: log });
+            }
+        } catch (e) {
+            console.error('[WorldHome] 礼物反应落库失败:', e);
+        }
+        void mutateWorld({ giftsForHost: (world.giftsForHost || []).filter(g => g.id !== giftId) });
+        addToast('记下了，ta 下次会知道', 'success');
+    };
+
     const deleteSeed = (seedId: string) => {
         void mutateWorld({ seeds: (world.seeds || []).filter(s => s.id !== seedId) });
         addToast('伏笔已删除', 'success');
@@ -2188,6 +2214,46 @@ const WorldView: React.FC<{
                                     </div>
                                 ));
                             })()}
+                        </div>
+                    </div>
+                )}
+
+                {/* ── 阶段 3.4：角色送给机主的东西，等机主自己点一个反应 ──
+                    ⛔ 系统不可能知道机主喜欢什么，所以这一档只能由 ta 自己点。
+                    点完写进送礼角色的台账，下次注入回去 —— 这就是反馈回路。 */}
+                {(world.giftsForHost || []).length > 0 && (
+                    <div className={`rounded-2xl border p-3.5 ${t.panel}`}>
+                        <div className={`text-[10px] font-black tracking-[0.25em] uppercase flex items-center gap-1.5 mb-2.5 ${t.textLabel}`}>
+                            🎁 送给你的东西
+                        </div>
+                        <div className="space-y-2">
+                            {(world.giftsForHost || []).slice(-5).reverse().map(g => (
+                                <div key={g.id} className={`rounded-xl border p-2.5 space-y-1.5 ${t.panelSolid}`}>
+                                    <div className={`text-[11px] ${t.textMain}`}>
+                                        <b>{g.fromName}</b> 送了你：{g.what}
+                                    </div>
+                                    {g.why && <div className="text-[10px] opacity-55 leading-snug">{g.fromName}说：{g.why}</div>}
+                                    <div className="flex flex-wrap gap-1">
+                                        {([
+                                            ['love', '很喜欢'], ['like', '喜欢'], ['meh', '一般'],
+                                            ['dislike', '不太喜欢'], ['hate', '很不喜欢'],
+                                        ] as const).map(([k, label]) => (
+                                            <button key={k} onClick={() => reactToGift(g.id, k)}
+                                                className={`text-[10.5px] px-2 py-1 rounded-full border active:scale-95 transition-transform ${
+                                                    k === 'love' || k === 'like'
+                                                        ? 'bg-rose-400/15 border-rose-400/30 text-rose-400'
+                                                        : k === 'meh'
+                                                            ? 'bg-white/8 border-white/12 opacity-70'
+                                                            : 'bg-slate-400/15 border-slate-400/25 text-slate-400'
+                                                }`}>{label}</button>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="text-[9.5px] opacity-45 leading-relaxed mt-2">
+                            <b className="opacity-80">只有你知道你喜欢什么</b>，所以这一档得你自己点。
+                            点完 ta 就记住了，下次会往那个方向送。
                         </div>
                     </div>
                 )}

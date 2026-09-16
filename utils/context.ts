@@ -17,7 +17,7 @@ import {
     type WorldbookLike,
     type WorldbookScanMessage,
 } from './worldbook';
-import { resolveUserMacroName, expandCharBodyMacros, buildChatPartnerNote, buildHostBondNote, buildCharBondNote } from './characterIdentity';
+import { resolveUserMacroName, expandCharBodyMacros, buildChatPartnerNote, buildHostBondNote, buildCharBondNote, buildGiftTasteNote, buildGiftHistoryNote } from './characterIdentity';
 import { buildSARModulePrompt } from './vrWorld/sarModuleRuntime';
 
 /**
@@ -251,6 +251,21 @@ export const ContextBuilder = {
         // 只是不需要 buildChatPartnerNote 那段「对面是谁」。小镇另走 addendum。
         const bondNote = buildHostBondNote(char, user?.name);
         if (bondNote) context += `${bondNote}\n\n`;
+
+        // 阶段 3.4：送礼。两段都常驻注入 ——
+        // ta 自己的口味不只在收礼时有用（别人问 ta 喜欢什么、逛街看到什么动心都用得上），
+        // 送给机主的台账则是反馈回路的另一半（「上次送的那个她很喜欢」→ 下次往那边送）。
+        // 小镇走 addendum 那条路，不从这里过。
+        if (!groupOptions) {
+            const tasteNote = buildGiftTasteNote(char);
+            if (tasteNote) context += `${tasteNote}
+
+`;
+            const giftHistory = buildGiftHistoryNote(char, user?.name);
+            if (giftHistory) context += `${giftHistory}
+
+`;
+        }
 
         // 阶段 2.4：全局关系（ta 和**别的角色**之间）。
         // 群聊 / 彼方各有「在场名单」，注入更精确，所以它们自己注

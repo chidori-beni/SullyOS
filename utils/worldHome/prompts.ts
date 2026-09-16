@@ -656,11 +656,13 @@ export function buildWorldCharTurn(args: {
      * 两者**分开**是有意的：预热要是写成「必须处理」，角色会提前把事办了，期待感就没了。
      */
     pendings?: { due: string[]; preheat: string[] };
+    /** 阶段 3.4：这一轮收到的礼物（engine 从 `world.giftInbox` 取出来的现成文案）。 */
+    giftsReceived?: string[];
     /** sim 模式：上一卷归档后喂回的「该角色单方面视角总结 + 本卷氛围」（防上帝视角，只给 ta 自己的视角） */
     priorChapter?: { atmosphere?: string; charPerspective?: string };
     userName: string;
 }): string {
-    const { world, char, members, storyTime, round, lastSummary, npcScene, npcHooks, beatsSoFar, recentPosts, exposures, directive, pendings, priorChapter, userName } = args;
+    const { world, char, members, storyTime, round, lastSummary, npcScene, npcHooks, beatsSoFar, recentPosts, exposures, directive, pendings, giftsReceived, priorChapter, userName } = args;
 
     // 机主也可以作为 relationships 的对象 —— 但门槛比镜民高。
     // ① heavy 档机主根本不存在，一字不提；
@@ -736,6 +738,18 @@ export function buildWorldCharTurn(args: {
             '（这半天它只是你心里的一个惦记：会想起、会准备、会盘算、会紧张或期待，但事情本身还没到。）',
         ].join(NL)
         : '';
+    // ── 收到的礼物（阶段 3.4）──
+    // ⛔ 系统不判档、不加减好感：清单已经在 ta 自己的人设块里（buildGiftTasteNote），
+    // 喜不喜欢、要不要表现出来、好感怎么变，全由 ta 自己按性格演。
+    const giftSection = (giftsReceived && giftsReceived.length > 0)
+        ? NL + [
+            '## 🎁 有人送了你东西',
+            bulletList(giftsReceived),
+            '按你**真实的**反应演（对照你自己的好恶）：喜欢就高兴，不喜欢也别硬夸——'
+            + '但要不要把不喜欢表现出来，取决于你是个什么样的人、送的人是谁。'
+            + '好感怎么变写进 relationships 就行，**别只是道个谢就完事**。',
+        ].join(NL)
+        : '';
     let directiveSection = '';
     if (directive) {
         directiveSection = world.mode === 'light'
@@ -783,7 +797,7 @@ ${postsSection}
 ## 这半天其他人的动静（你能看到/听说的部分）
 ${observable}
 ${spokenToMe.length > 0 ? `\n## 刚才有人当面对你说话（请在 narrative 里自然接住、给出回应）\n${spokenToMe.join('\n')}` : ''}
-${dueSection}${preheatSection}${exposureSection}${directiveSection}${lateNightSection}
+${giftSection}${dueSection}${preheatSection}${exposureSection}${directiveSection}${lateNightSection}
 
 ## 你的手机（标【刚刚】的是这半天刚收到的新消息）
 ${dmSection}
@@ -808,6 +822,7 @@ ${groupSection}
   "statusPanel": { "体力": 0到100的数字, "心情值": 0到100的数字, "其他你想记录的状态": "自由发挥（最多再加2项）" },
   "dialogues": [{ "with": "在场成员的名字", "lines": ["你当面对ta说的话（ta会完整听到）"] }],
   "appointments": [{ "with": "同世界成员的名字", "what": "约好一起做什么", "where": "在哪儿（可省）", "inRounds": 1 }],
+  "gifts": [{ "to": "送给谁的名字", "what": "送了什么（一句话，什么都行）", "why": "为什么送（可省）" }],
   "phone": {
     "posts": ["这一段发的社交媒体动态（尽量发 1 条，记录此刻的心情/见闻/吐槽/晒图文案；除非你确实没心情发，否则别空着）"],
     "dms": [
@@ -829,6 +844,7 @@ ${groupSection}
 - 手机里标【刚刚】的消息该回就回（phone.dms / phone.group），已读不回也行，但要符合你的性格；鼓励聊得丰富些。
 - **想私下联系谁，就必须写进 phone.dms（to=对方名字 + lines），这才是真的把消息发出去、对方才收得到。只在 narrative 正文里写"我给ta发了条私聊"是不算数的——对方收不到，那条私聊等于没发。** 可以同时私聊好几个不同的人。
 - dialogues 只在你的 timeline 和对方真的有共处时才用；不在一起就用手机，或者互相挂念/冷战都行——聚焦你自己。
+- **gifts：只有这半天真的把东西给出去了才写。**送什么完全自由——买的、做的、捡的、手抄的、一张纸条、一句承诺都行，**不必是「道具」**。对方会在 ta 自己那一轮收到并按 ta 的口味反应。没送就省略。
 - **appointments：只有这半天真的和某人说定了**「之后一起做某事」（当面说定或私聊里说定，对方也应下了）才写。写了之后系统会记着，到那一轮你和 ta 的剧情里都会出现这件事——所以**别随口乱约**，也别把单方面的念头写成约定（「我想约 ta」不算，要对方真的答应了才算）。没约就给空数组或省略。inRounds 一般填 1~4。
 - **好感真的会左右你的言行**：严格按上面「你的关系」里每个人的好感档位与行为基调来相处——低好感/负好感时别自来熟、别无缘无故友善；中立的人就保持客气的距离感。
 - relationships(delta) 要克制、来之不易：日常小事 ±1~2，只有真正触动你的大事才到 ±3~4；好感是慢慢攒起来、也可能因一件事崩掉的，**绝不会一两轮就突飞猛进**。好感和你嘴上/理智上对这段关系的定位可以完全相反，按真实人性演（口嫌体正 / 面和心不和都行）。只在真的发生了影响关系的事时才给。`;
@@ -994,6 +1010,8 @@ export function parseCharBeat(
     npcNames: string[] = [],
     /** 世界的固定地点表（阶段 3.1）。传了才解析 placeId；不传 = 老调用点，行为不变 */
     places?: readonly WorldPlace[],
+    /** 机主名（阶段 3.4）。传了角色才能把礼物送给机主；不传就只认镇上的成员 */
+    hostName?: string,
 ): WorldCharBeat {
     const j = extractJson(raw);
     const fallbackNarrative = (raw || '').replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```(?:json)?|```/g, '').trim().slice(0, 1400);
@@ -1082,6 +1100,19 @@ export function parseCharBeat(
             }))
             .slice(0, 3)
         : [];
+    // 礼物（阶段 3.4）：to 必须是成员或机主 —— 送给查无此人的话没人收得到。
+    // ⛔ 不做物品系统，what 就是一句自由文本，原样收下。
+    const giftNameSet = new Set([...memberNames, ...(hostName ? [hostName] : [])]);
+    const gifts = Array.isArray(j.gifts)
+        ? j.gifts
+            .filter((g: any) => g && typeof g.to === 'string' && giftNameSet.has(g.to.trim()) && typeof g.what === 'string' && g.what.trim())
+            .map((g: any) => ({
+                to: g.to.trim(),
+                what: g.what.trim().slice(0, 80),
+                ...(typeof g.why === 'string' && g.why.trim() ? { why: g.why.trim().slice(0, 60) } : {}),
+            }))
+            .slice(0, 3)
+        : [];
     const beatLocation = typeof j.location === 'string' && j.location.trim() ? j.location.trim().slice(0, 40) : '住处';
     return {
         charId: char.id,
@@ -1098,6 +1129,7 @@ export function parseCharBeat(
         secrets: secrets.length > 0 ? secrets : undefined,
         phone: (dms.length > 0 || posts.length > 0 || group.length > 0) ? { posts, dms, group } : undefined,
         appointments: appointments.length > 0 ? appointments : undefined,
+        gifts: gifts.length > 0 ? gifts : undefined,
         dialogues: dialogues.length > 0 ? dialogues : undefined,
         relationshipDeltas: relationshipDeltas.length > 0 ? relationshipDeltas : undefined,
     };
