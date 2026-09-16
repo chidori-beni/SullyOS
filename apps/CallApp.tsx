@@ -27,6 +27,7 @@ import { processNewMessagesWithAutoArchive } from '../utils/memoryPalace/autoArc
 import { incrementDigestRound, runCognitiveDigestion } from '../utils/memoryPalace';
 import { RealtimeContextManager } from '../utils/realtimeContext';
 import { DB } from '../utils/db';
+import { buildCompanionshipBoundary, companionshipBoundaryOn } from '../utils/companionshipBoundary';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { Message, ChatTheme, AppID, type CharacterProfile } from '../types';
 import { PRESET_THEMES } from '../components/chat/ChatConstants';
@@ -479,6 +480,12 @@ const buildCallPrompt = (
   direction: CallDirection = 'outgoing',
   /** 角色自己排的开场白（只有 incoming 用得上）。 */
   incomingOpening?: string,
+  /**
+   * 「陪伴，不监督」边界是否生效（用户 2026-09-16 起改成可关，见
+   * `utils/companionshipBoundary.ts`）。**缺省 true** —— 这条原本是无条件生效的，
+   * 缺省 true 才能保证调用方没传时行为一个字都不变。
+   */
+  companionshipOn = true,
 ) => {
   const resolvedCharName = charName || '你的角色';
   // 电话里角色说的「现在几点 / 今天什么日子」是 ta 那边的时间，跟角色自定义时区走
@@ -550,13 +557,7 @@ ${directionBlock}` : ''}
 - 如果对方刚刚才打过来又打过来了，你会好奇的。
 - 如果对方半天没说话……”喂？你还在吗？”
 
-### 陪伴，不监督（高优先级边界）
-
-对方提到正在吃饭、洗漱、戴牙套、准备睡觉或之后要做什么，通常是在分享近况，不是在把进度交给你管理。
-- 可以关心、陪着聊或自然回应一次，但不要催快点、追问做完没有、倒计时、布置下一步，也不要把每段话收尾成提醒或命令。
-- 同一件生活小事不要换个说法反复叮嘱。关心不等于监督，更不等于管教。
-- 如果对方说“别催”“不要管我”“别说教”或表达类似边界，这条边界在本通电话后续持续有效。简短认错后真正停止，不要嘴上答应、下一句结尾又重复催促。
-- 想表达在意时，优先用陪伴、共情、分享自己的反应或顺着话题聊天，而不是指挥对方立刻行动。
+${buildCompanionshipBoundary('call', companionshipOn)}
 
 ### 关于回复的长度
 
@@ -2199,6 +2200,7 @@ const CallApp: React.FC = () => {
       resolveCharTimeZone(selectedChar),
       callDirection,
       incomingOpening,
+      companionshipBoundaryOn(selectedChar),
     );
     const thinkingPrompt = selectedChar.showThinkingChain
       ? [
@@ -2426,6 +2428,7 @@ ${sentencePlan}`;
           resolveCharTimeZone(selectedChar),
           callDirection,
           incomingOpening,
+          companionshipBoundaryOn(selectedChar),
         )
       : buildCallPrompt(userName, undefined, undefined, voiceLang || undefined, callMode, undefined, callDirection, incomingOpening);
     const thinkingPrompt = selectedChar?.showThinkingChain

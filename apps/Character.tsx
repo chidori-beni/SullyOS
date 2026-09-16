@@ -2232,7 +2232,7 @@ ${isInitialGeneration ? `
                            <div className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 space-y-4">
                                <div>
                                    <label className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest block">时间感知 & 时区</label>
-                                   <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">下面三个开关相互独立、可任意组合。改完即时生效（下一条回复起算）。</p>
+                                   <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">下面几个开关相互独立、可任意组合。改完即时生效（下一条回复起算）。</p>
                                </div>
 
                                {/* 1. 聊天 · 时间感知强化 */}
@@ -2247,6 +2247,28 @@ ${isInitialGeneration ? `
                                            className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ${formData.timeAwarenessEnabled !== false ? 'bg-primary' : 'bg-slate-200'}`}
                                        >
                                            <div className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow-md transition-transform ${formData.timeAwarenessEnabled !== false ? 'translate-x-5' : 'translate-x-0.5'}`}></div>
+                                       </button>
+                                   </div>
+                               </div>
+
+                               {/* 1b. 陪伴，不监督（一个开关同时管聊天和通话） */}
+                               <div className="border-t border-slate-100 pt-3">
+                                   <div className="flex items-center justify-between gap-3">
+                                       <div className="min-w-0">
+                                           <p className="text-xs font-bold text-slate-700">陪伴，不监督</p>
+                                           <p className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">
+                                               默认开。你说「我在洗漱」「等下要睡了」多半只是在分享近况，不是把待办交给 ta 管——
+                                               开着的时候 ta 不会催你快点、追问做完没有、每句话收尾都挂个提醒。
+                                               <b className="text-slate-500">你明确要 ta 提醒时照样会提醒。</b>
+                                               <br />想要一个会唠叨的角色（妈妈 / 教练 / 担心你身体的恋人）就关掉。
+                                               <b className="text-slate-500">聊天和通话共用这一个开关。</b>
+                                           </p>
+                                       </div>
+                                       <button
+                                           onClick={() => handleChange('companionshipBoundaryEnabled', formData.companionshipBoundaryEnabled === false)}
+                                           className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ${formData.companionshipBoundaryEnabled !== false ? 'bg-primary' : 'bg-slate-200'}`}
+                                       >
+                                           <div className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow-md transition-transform ${formData.companionshipBoundaryEnabled !== false ? 'translate-x-5' : 'translate-x-0.5'}`}></div>
                                        </button>
                                    </div>
                                </div>

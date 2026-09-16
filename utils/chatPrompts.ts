@@ -39,6 +39,7 @@ import { buildXinshengContinuityBlock, buildXinshengInstruction, selectXinshengC
 import { readXinshengHistory } from './xinsheng/xinshengStore';
 import { prepareXinshengRoundPreset } from './xinsheng/xinshengRandomPreset';
 import { classifyExchange, buildNarrationLine } from './characterIdentity';
+import { buildCompanionshipBoundary, companionshipBoundaryOn } from './companionshipBoundary';
 
 // 语音格式指导按当前 TTS 服务商二选一：用 MiniMax 才注入 MiniMax 那套（含 <#秒#> 停顿标记），
 // 用鱼声则注入鱼声版（去掉 MiniMax 专属标记，改用标点 / 省略号控制停顿）。
@@ -1440,6 +1441,12 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
         // 同 context.ts「表达底线」的设计）。靠「你是个活生生的、独一份的人」把身份焊进去，
         // 而不是靠「别像 XX」防守。同时给「闲聊可松弛、没人打分」的许可，卸掉「每句都要交高质量」
         // 的隐性考核压力——不必靠表演情绪深度来交差，滑回均值腔的诱因随之减弱。
+        // 「陪伴，不监督」（默认开）。放在「回到你自己」**之前** —— 那段是钢印，
+        // 必须留在模型开口前读到的最后一眼（见 volatileTailIndex 的注释）。
+        // 文案与通话共用同一份（utils/companionshipBoundary.ts），改一处两边都生效。
+        const companionship = buildCompanionshipBoundary('chat', companionshipBoundaryOn(char));
+        if (companionship) recencyTail += `\n\n${companionship}`;
+
         recencyTail += `\n\n### 最后，回到你自己
 你就是 ${char.name}。
 

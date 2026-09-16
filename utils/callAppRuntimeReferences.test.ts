@@ -279,7 +279,11 @@ describe('CallApp runtime references', () => {
     expect(source).toContain('injectCallWorldbookDepth(await buildHistoryMessages(input, skipDbId, touchContext))');
     expect(source).toContain('void startAmsgChatPresence(selectedChar.id, null)');
     expect(source).toContain('return () => stopAmsgChatPresence(selectedChar.id)');
-    expect(source).toContain('### 陪伴，不监督（高优先级边界）');
+    // 2026-09-16：这段文案抽到了 utils/companionshipBoundary.ts，**聊天和通话共用一份**
+    // （以前只有通话有，而聊天那边的测试早就写好了、源码却一直没落地）。
+    // 所以这里改成盯「有没有接上那份共用文案」，而不是盯字面量——
+    // 盯字面量会逼着两边各抄一份，迟早漂成「聊天里关了、打电话还是催我」。
+    expect(source).toContain("buildCompanionshipBoundary('call', companionshipOn)");
     expect(source).toContain('prepareSiliconFlowAudioPlayback();');
   });
 
