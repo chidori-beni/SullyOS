@@ -1239,6 +1239,63 @@ const WorldEditor: React.FC<{
                 </div>
             )}
 
+            {/* ── 阶段 4.1：你住进小镇 ──────────────────────────────
+                ⚠️ 与「存在感档位」正交：那个管「你对镇民有多重要」，这个管「你的人在不在镇上」。
+                ⛔ 每半天一次输入、单向不来回 —— 大纲被那一轮消费掉就清空，界面上没有「回复」入口。 */}
+            <div className={sectionCls}>
+                <div className={labelCls}>你住在这个镇上吗</div>
+                <div className="grid grid-cols-2 gap-1.5">
+                    {([
+                        ['absent', '不住', '你在画外看着'],
+                        ['silent', '静默', '人在，但什么都不做'],
+                        ['outline', '写大纲', '你写这半天在干嘛'],
+                        ['ghostwrite', 'AI 代笔', 'AI 替你写这半天'],
+                    ] as const).map(([k, label, desc]) => {
+                        const on = (w.hostPresence || 'absent') === k;
+                        return (
+                            <button key={k} type="button" onClick={() => upd({ hostPresence: k })}
+                                className={`rounded-xl px-2.5 py-2 text-left border ${on ? 'bg-amber-500 border-amber-500 text-white' : 'bg-white border-stone-200 text-stone-600'}`}>
+                                <b className="block text-[12px]">{label}</b>
+                                <span className={`text-[10px] ${on ? 'opacity-80' : 'text-stone-400'}`}>{desc}</span>
+                            </button>
+                        );
+                    })}
+                </div>
+                {w.hostPresence === 'ghostwrite' && (
+                    <div className="text-[10.5px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 leading-relaxed">
+                        AI 写的「你」容易讨好对方，<b>好感度可能涨得比你自己写时更快</b>。
+                    </div>
+                )}
+                {(w.hostPresence || 'absent') !== 'absent' && (
+                    <div className="text-[10px] text-stone-400 leading-relaxed">
+                        住进来之后，小镇<b className="text-stone-500">还是全景、还是半天一跳、还是不围着你转</b>——
+                        你只是从画外走进了画内。
+                        <br /><b className="text-stone-500">每半天一次输入，写多长都行，但写完就收割这半天的结果</b>，
+                        不能一来一回。想和谁好好说话，那是「见面」该干的事。
+                        {(w.mode === 'heavy' || w.mode === 'distant') && (
+                            <><br />⚠️ 你现在的存在感档位是「{w.mode === 'heavy' ? '重度·无你世界' : '远方'}」，
+                            那一档的意思是<b className="text-stone-500">你不在这个世界里</b>，和「住进来」是矛盾的。
+                            住进来期间会按「普通镇民」处理；想清清爽爽的话，把档位调成中度或轻度。</>
+                        )}
+                    </div>
+                )}
+                {w.hostPresence === 'outline' && (
+                    <div className="space-y-1">
+                        <textarea
+                            rows={3}
+                            value={w.hostOutline?.text || ''}
+                            onChange={e => upd({ hostOutline: { round: w.storyClock + 1, text: e.target.value } })}
+                            placeholder="这半天你在干嘛？（例：我去咖啡厅坐了一下午，本来想找他，但看到他和别人在一起就没过去，自己看了会儿书。临走前给他发了条消息又撤回了。）"
+                            className="w-full px-3 py-2 rounded-xl bg-stone-50 border border-stone-100 text-[11.5px] resize-none leading-relaxed"
+                        />
+                        <div className="text-[10px] text-stone-400 leading-relaxed">
+                            下一次「观测」时，镇上的人会看到你这半天做了什么，并按各自的性格接住。
+                            <b className="text-stone-500">写完这一次就交出去了</b>，他们的反应你在剧情里读。
+                        </div>
+                    </div>
+                )}
+            </div>
+
             {(w.timeMode || 'real') === 'real' && (
                 <div className={sectionCls}>
                     <div className={labelCls}>记忆与聊天</div>

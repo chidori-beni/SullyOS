@@ -29,7 +29,7 @@ import { getDailyScheduleForChar } from '../dailySchedule';
 import {
     worldTimeLabel, buildWorldSystemAddendum, buildWorldCharTurn, buildNpcTurn,
     parseCharBeat, parseNpcScene, realObserveTarget, formatRealClock, migrateWorldDaySegs, resolvePlaceId,
-    worldDateOfRound, SEGMENTS_PER_DAY,
+    worldDateOfRound, SEGMENTS_PER_DAY, buildGhostwritePrompt,
     alignCharToWorldClock,
 } from './prompts';
 import { ensureThreads, applyBeatToThreads, applyNpcGroupLines, applyNpcDms, npcInboxes } from './threads';
@@ -868,6 +868,36 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
             ? summarySource.slice().reverse().map(e => e.summary).join('\n')
             : undefined;
 
+        // ── 阶段 4.1：机主住进小镇 ────────────────────────────────────
+        // 「代笔」档：这一轮还没有大纲的话，先烧一次小调用替机主写这半天。
+        // ⛔ 失败不拖垮整轮 —— 退回「在场但没动作」的口径（buildHostPresenceSection 自己兜底），
+        //    绝不能让角色自己脑补机主做了什么。
+        if (world.hostPresence === 'ghostwrite' && world.hostOutline?.round !== round) {
+            try {
+                const ghost = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${api.apiKey || 'sk-none'}` },
+                    body: JSON.stringify({
+                        model: api.model,
+                        messages: [{ role: 'user', content: buildGhostwritePrompt({
+                            world,
+                            userName: userProfile?.name || '用户',
+                            userPersona: (userProfile?.bio || '').replace(/\s+/g, ' ').trim().slice(0, 400),
+                            storyTime,
+                            lastSummary,
+                            memberNames: members.map(m => m.name),
+                        }) }],
+                        temperature: 0.95, stream: false,
+                    }),
+                }, 2, 0, { appName: '家园', purpose: `代笔 · ${world.name}` });
+                const text = (ghost.choices?.[0]?.message?.content || '')
+                    .replace(/<think>[\s\S]*?<\/think>/gi, '').trim().slice(0, 600);
+                if (text) world.hostOutline = { round, text, byAi: true };
+            } catch (e) {
+                console.error('[WorldHome] 代笔失败，这半天按「在场但没动作」处理:', e);
+            }
+        }
+
         // NPC 引擎改到角色之后跑（见 ── 2.5 ──）：这样 NPC 能看到角色这一轮刚发的私聊/动态/
         // 群聊，当轮就回应。角色这一轮看到的「镇上动静」用上一轮 NPC 的产出——和角色彼此错一
         // 轮接话是一致的模型。本轮 NPC 的产出存进 episode、并在下一轮被角色接住。
@@ -1031,6 +1061,9 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
         }
         // 到点的待发生事件本轮已注入过 → fired，别下一轮再念一遍（阶段 3 底座）
         settlePendings(world, round);
+        // ⛔ 阶段 4.1：机主这半天的输入**用过即弃**。这就是「一次性输入、不许来回」
+        //    那条边界的实现方式 —— 清掉之后界面上也就没有「回复」可点了。别改成累积。
+        if (world.hostOutline?.round === round) world.hostOutline = undefined;
         const remainingDirectives = (world.directives || []).filter(d => !consumedDirectiveIds.includes(d.id));
         const updatedWorld: WorldProfile = {
             ...world,
@@ -1040,6 +1073,7 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
             pendings: world.pendings,
             giftInbox: world.giftInbox,
             giftsForHost: world.giftsForHost,
+            hostOutline: world.hostOutline,
             directives: remainingDirectives,
             storyClock: world.storyClock + 1,
             // real 模式：把世界的「现实段」推进到这次演的那一段

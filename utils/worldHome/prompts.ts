@@ -9,7 +9,7 @@
  *     （buildChatRequestPayload 那条链路不变）。
  */
 
-import type { CharacterProfile, WorldProfile, WorldHouse, WorldPlace, WorldCharBeat, WorldHomeMode, WorldTimeMode, WorldNarrativeStyle } from '../../types';
+import type { CharacterProfile, WorldProfile, WorldHouse, WorldPlace, WorldCharBeat, WorldHomeMode, WorldHostPresence, WorldTimeMode, WorldNarrativeStyle } from '../../types';
 import { dmThreadsOf, groupThreadOf, formatThreadForPrompt } from './threads';
 import { nowInTimeZone, tzLabel } from '../timezone';
 import { buildHostBondNote } from '../characterIdentity';
@@ -383,6 +383,107 @@ export function parseRolledThresholds(
     return out;
 }
 
+/**
+ * 机主这半天在镇上做了什么（阶段 4.1）。`absent` 或没写大纲时返回空串。
+ *
+ * ⛔ **三档的措辞必须分开，不能合并成一句「ta 在场」：**
+ * - `silent`：ta 在，但**什么都没做** —— 必须明说「不要替 ta 说话或行动」，
+ *   否则模型会热心地替机主编一段台词，那等于替用户玩他自己的角色。
+ * - `outline` / `ghostwrite`：ta 做了这些事 —— 角色可以看到、可以回应，
+ *   但**只能回应写出来的部分**，不许替 ta 补充没写的动作。
+ *
+ * ⛔ **绝不能让角色"等机主回话"。** 这是「一次性输入、不许来回」那条边界的提示词侧：
+ * 机主这半天写完就没了，角色要是把话头留在那儿等回应，下一轮只会尴尬地悬着。
+ */
+export function buildHostPresenceSection(
+    presence: WorldHostPresence | undefined,
+    userName: string,
+    outline?: { text: string; byAi?: boolean } | null,
+): string {
+    const p = presence || 'absent';
+    if (p === 'absent') return '';
+    const u = userName || '用户';
+    const NL2 = String.fromCharCode(10);
+    if (p === 'silent') {
+        return NL2 + [
+            `## ${u} 也在镇上`,
+            `${u} 这半天人就在这个镇子里，但**没有任何动作** ——`
+            + `⛔ 不要替 ta 说话、不要替 ta 行动、不要编造 ta 做了什么或去了哪里。`,
+            `你可以想起 ta、可以路过 ta 家门口、可以在心里嘀咕一句，`
+            + `但**这半天你们没有发生任何互动**。`,
+        ].join(NL2);
+    }
+    const text = (outline?.text || '').trim();
+    if (!text) {
+        // 选了写大纲/代笔却没有内容 —— 退回 silent 的口径，绝不能让模型自己发挥
+        return NL2 + [
+            `## ${u} 也在镇上`,
+            `${u} 这半天人在镇上，但没有留下任何动作 —— ⛔ 不要替 ta 说话或行动。`,
+        ].join(NL2);
+    }
+    return NL2 + [
+        `## ${u} 这半天做了什么（ta 就住在这个镇上）`,
+        text,
+        `↑ 这是 ${u} 本人这半天的行动。**只能依据上面写出来的部分**去反应：`
+        + `⛔ 别替 ta 补充没写的动作，⛔ 也别替 ta 说没写的话。`,
+        `如果 ta 的举动和你有关，就在你的 narrative / timeline / dialogues 里自然接住 ——`
+        + `该高兴就高兴，该躲就躲，该装没看见就装没看见，按你的性格来。`,
+        `⛔ **别把话头留在那儿等 ta 回应。** ${u} 这半天的输入就这一次，`
+        + `不会再补话；你把自己这半天过完整就行。`,
+    ].join(NL2);
+}
+
+/**
+ * 让 AI 替机主写这半天（阶段 4.1 的「代笔」档）。
+ *
+ * ⚠️ 用户 A 明确要求**保留这一档且不要任何机制限制**
+ * （曾提案砍掉它、并配一条「代笔不计好感」的铁律，**两条都已撤销**）。
+ * 理由：把信息交给用户，别替他们做决定 —— 所以界面上挂一行小字提醒就够了：
+ * 「AI 写的『你』容易讨好对方，好感度可能涨得比你自己写时更快。」
+ *
+ * 提示词这边只做一件事：**别写成讨好**。这不是机制限制，是写作要求。
+ */
+export function buildGhostwritePrompt(args: {
+    world: Pick<WorldProfile, 'name' | 'worldview'>;
+    userName: string;
+    userPersona?: string;
+    storyTime: string;
+    lastSummary?: string;
+    memberNames: string[];
+}): string {
+    const { world, userName, userPersona, storyTime, lastSummary, memberNames } = args;
+    const u = userName || '用户';
+    return [
+        `你要替「${u}」写 ta 在小镇「${world.name}」里这半天做了什么。`,
+        ``,
+        `## 这个世界`,
+        world.worldview || '（一个安静的小世界）',
+        userPersona ? `
+## ${u} 是个什么样的人
+${userPersona}` : '',
+        memberNames.length > 0 ? `
+## 镇上还住着
+${memberNames.join('、')}` : '',
+        ``,
+        `## 剧情时间`,
+        storyTime,
+        lastSummary ? `
+## 之前发生的事
+${lastSummary}` : '',
+        ``,
+        `要求：`,
+        `- 写 **${u} 这半天的行程与举动**，第一人称或第三人称都行，**80~200 字**，一段就好。`,
+        `- ⛔ **别写成讨好。** 不要让 ${u} 一味迁就、夸奖、主动示好 ——`,
+        `  ta 是个有自己生活的人：可以自己待着、可以忙别的、可以想找某人却没找成、`,
+        `  可以跟人闹别扭、也可以什么特别的都没发生。**平淡的半天完全合格。**`,
+        `- ⛔ **别替镇上的角色写反应。** 只写 ${u} 做了什么、说了什么，`,
+        `  对方怎么回应是他们自己那一轮的事。`,
+        `- ⛔ 别写 ${u} 的内心独白式长篇抒情 —— 这是给别人看的「ta 做了什么」，不是日记。`,
+        ``,
+        `直接输出那段文字，不要任何前后缀、不要 JSON、不要解释。`,
+    ].join(String.fromCharCode(10));
+}
+
 /** 该世界「当前那一段」是否算夜晚（real 看 realClock，sim 看 storyClock）：晚上、凌晨都算夜。 */
 export function isNightWorld(world: WorldProfile): boolean {
     if (world.timeMode !== 'sim' && world.realClock) return world.realClock.seg >= 2;
@@ -410,8 +511,34 @@ export function houseOf(world: WorldProfile, charId: string): WorldHouse | null 
 }
 
 /** user 存在感的四档规则文本。 */
-export function buildModeRule(mode: WorldHomeMode, userName: string): string {
+export function buildModeRule(
+    mode: WorldHomeMode,
+    userName: string,
+    /**
+     * 机主住不住在镇上（阶段 4.1）。⚠️ 与档位**正交**，但两者在「ta 在不在场」这件事上
+     * 会正面打架 —— `heavy` 说「ta 不存在」、`distant` 说「ta 不住这个世界」，
+     * 而住进小镇的字面意思就是 ta 的人**就在这儿**。
+     * 所以只要 ta 住进来了，这几档的「不在场」那半句必须让位（重要性那半句保留）。
+     */
+    presence: WorldHostPresence = 'absent',
+): string {
     const u = userName || '用户';
+    if (presence !== 'absent') {
+        // ta 人就在镇上 —— 此时再说「不要让 ta 登场」「ta 不存在」是直接的自相矛盾。
+        // 保留各档对**重要性**的定调，只把「不在场」换成「在场」。
+        switch (mode) {
+            case 'light':
+                return `【模式：轻度 · ${u} 就住在这个镇上】${u} 是你最重要的人——与你们平时聊天里的关系完全一致，而且 ta 现在**真的住在这个镇子里**，你们会在生活里遇上。`;
+            case 'heavy':
+            case 'distant':
+                // 这两档本来的定调是「ta 不存在 / 不住这儿」，与住进来彻底冲突。
+                // 不静默沿用，也不擅自改用户的设置——按「就是个普通镇民」演，并把冲突交给界面提示。
+                return `【${u} 就住在这个镇上】${u} 是这个世界里的一个居民，和其他人一样会在镇上走动。按 ta 实际做的事来反应，不必特意围着 ta 转。`;
+            case 'medium':
+            default:
+                return `【模式：中度 · ${u} 就住在这个镇上】${u} 是这个世界里的普通一员，和其他人没有什么不同，只是 ta 现在**真的住在镇子里**，你们会在生活里遇上。你的生活不围着 ta 转。`;
+        }
+    }
     switch (mode) {
         case 'light':
             return `【模式：轻度】这只是观察你生活的一个切面。在这个世界里，${u} 依旧是你最重要的人——与你们平时聊天里的关系完全一致。你的生活里可以自然地惦记 ta、想给 ta 发消息、期待 ta 的出现；但此刻 ta 不在场，不要凭空让 ta 登场。`;
@@ -494,7 +621,7 @@ export function buildWorldSystemAddendum(
 ---
 [家园 · ${world.name}]
 接下来不是和 ${userName || '用户'} 的聊天，而是你在共同世界「${world.name}」里的一段真实生活演绎。
-${buildModeRule(world.mode, userName)}
+${buildModeRule(world.mode, userName, world.hostPresence)}
 ${bondNote ? `${bondNote}\n` : ''}${gapNote}
 铁律：你只扮演你自己（${char.name}）。同世界的其他角色各有自己的演绎轮，你看不到他们的内心，只能根据他们外在的言行做反应；不要替任何其他角色做决定或编造他们的内心戏。NPC 的言行可以引用（他们由世界引擎给出）。
 保持你在聊天中一贯的人设、记忆与行事风格——这是同一个你，只是生活在这个世界里。`;
@@ -738,6 +865,14 @@ export function buildWorldCharTurn(args: {
             '（这半天它只是你心里的一个惦记：会想起、会准备、会盘算、会紧张或期待，但事情本身还没到。）',
         ].join(NL)
         : '';
+    // ── 机主住进小镇（阶段 4.1）──
+    // 只在 hostOutline 是**这一轮**的时候用：上一轮的大纲已经被消费掉了，
+    // 万一没清干净也不能拿旧的当新的（那会让角色对着一件早就过去的事作反应）。
+    const hostPresenceSection = buildHostPresenceSection(
+        world.hostPresence,
+        userName,
+        world.hostOutline?.round === round ? world.hostOutline : null,
+    );
     // ── 收到的礼物（阶段 3.4）──
     // ⛔ 系统不判档、不加减好感：清单已经在 ta 自己的人设块里（buildGiftTasteNote），
     // 喜不喜欢、要不要表现出来、好感怎么变，全由 ta 自己按性格演。
@@ -797,7 +932,7 @@ ${postsSection}
 ## 这半天其他人的动静（你能看到/听说的部分）
 ${observable}
 ${spokenToMe.length > 0 ? `\n## 刚才有人当面对你说话（请在 narrative 里自然接住、给出回应）\n${spokenToMe.join('\n')}` : ''}
-${giftSection}${dueSection}${preheatSection}${exposureSection}${directiveSection}${lateNightSection}
+${hostPresenceSection}${giftSection}${dueSection}${preheatSection}${exposureSection}${directiveSection}${lateNightSection}
 
 ## 你的手机（标【刚刚】的是这半天刚收到的新消息）
 ${dmSection}

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { extractJson, parseCharBeat, resolvePlaceId, buildPlacesSection, worldDateOfRound, parseRolledFestivals, parseRolledThresholds, GENERIC_THRESHOLDS, parseNpcScene, storyTimeLabel, buildModeRule, buildWorldGapNote, buildWorldCharTurn, buildNpcTurn, parseRolledNpcs, buildNpcRollPrompt, NARRATIVE_STYLES, narrationPersonGuide, realNowSeg, realObserveTarget, worldTimeLabel, formatRealClock, migrateWorldDaySegs, SEGMENTS_PER_DAY, worldNow, worldTzLabel, clampRealClockToNow, alignCharToWorldClock } from './prompts';
+import { extractJson, parseCharBeat, resolvePlaceId, buildPlacesSection, worldDateOfRound, parseRolledFestivals, parseRolledThresholds, GENERIC_THRESHOLDS, buildHostPresenceSection, buildGhostwritePrompt, parseNpcScene, storyTimeLabel, buildModeRule, buildWorldGapNote, buildWorldCharTurn, buildNpcTurn, parseRolledNpcs, buildNpcRollPrompt, NARRATIVE_STYLES, narrationPersonGuide, realNowSeg, realObserveTarget, worldTimeLabel, formatRealClock, migrateWorldDaySegs, SEGMENTS_PER_DAY, worldNow, worldTzLabel, clampRealClockToNow, alignCharToWorldClock } from './prompts';
 import { applyRelationshipDeltas, shareWorldCardTo, collectSeeds, buildSummary, dropDuplicatePosts, mirrorWorldBondsToChars, collectAppointments, buildPendingNotes, settlePendings, scheduleFestivals, buildFestivalNote, collectGifts, takeGifts } from './engine';
 import { DB } from '../db';
 import { buildGiftTasteNote, buildGiftHistoryNote } from '../characterIdentity';
@@ -1864,6 +1864,117 @@ describe('送礼（阶段 3.4）', () => {
         it('⛔ 没送过 → 空串', () => {
             expect(buildGiftHistoryNote({} as any, '颜千夜')).toBe('');
             expect(buildGiftHistoryNote({ giftsToHost: [] } as any, '颜千夜')).toBe('');
+        });
+    });
+});
+
+
+describe('你住进小镇（阶段 4.1）', () => {
+    const U = '颜千夜';
+
+    describe('buildHostPresenceSection', () => {
+        it('⛔ absent / 缺省 → 空串，行为与阶段 4 之前完全一致', () => {
+            expect(buildHostPresenceSection('absent', U)).toBe('');
+            expect(buildHostPresenceSection(undefined, U)).toBe('');
+            expect(buildHostPresenceSection(undefined, U, { text: '写了也没用' })).toBe('');
+        });
+
+        it('⭐⛔ 静默档必须明说「不要替 ta 说话或行动」', () => {
+            const t = buildHostPresenceSection('silent', U);
+            expect(t).toContain(U);
+            expect(t).toContain('不要替 ta 说话');
+            expect(t).toContain('没有发生任何互动');
+        });
+
+        it('⭐ 写了大纲 → 原样给出去，并要求只依据写出来的部分反应', () => {
+            const t = buildHostPresenceSection('outline', U, { text: '我去咖啡厅坐了一下午' });
+            expect(t).toContain('我去咖啡厅坐了一下午');
+            expect(t).toContain('别替 ta 补充没写的动作');
+        });
+
+        it('⭐⛔ 必须明说「别把话头留在那儿等回应」—— 这是「不许来回」的提示词侧', () => {
+            const t = buildHostPresenceSection('outline', U, { text: '我去找他了' });
+            expect(t).toContain('别把话头留在那儿等');
+            expect(t).toContain('就这一次');
+        });
+
+        it('⛔⭐ 选了写大纲却没写 → 退回「在场但没动作」，绝不让模型自己发挥', () => {
+            for (const p of ['outline', 'ghostwrite'] as const) {
+                const t = buildHostPresenceSection(p, U, null);
+                expect(t).toContain('不要替 ta 说话');
+                expect(t).not.toContain('这半天做了什么');
+            }
+            expect(buildHostPresenceSection('outline', U, { text: '   ' })).toContain('不要替 ta 说话');
+        });
+
+        it('代笔写出来的和自己写的走同一条路（下游不区分）', () => {
+            const mine = buildHostPresenceSection('outline', U, { text: '同一句话' });
+            const ai = buildHostPresenceSection('ghostwrite', U, { text: '同一句话', byAi: true });
+            expect(ai).toBe(mine);
+        });
+    });
+
+    describe('buildModeRule 撞上「住进小镇」', () => {
+        it('⛔⭐ 不住的时候，四档措辞一个字都没变（回归保护）', () => {
+            expect(buildModeRule('heavy', U)).toContain('不存在');
+            expect(buildModeRule('distant', U)).toContain('不住在这个世界');
+            expect(buildModeRule('light', U)).toContain('此刻 ta 不在场');
+            expect(buildModeRule('medium', U)).toContain('此刻 ta 不在场');
+        });
+
+        it('⛔⭐ 住进来之后，「ta 不存在 / 不在场」这类话必须消失 —— 那是直接的自相矛盾', () => {
+            for (const mode of ['light', 'medium', 'heavy', 'distant'] as const) {
+                const t = buildModeRule(mode, U, 'outline');
+                expect(t).toContain('就住在这个镇上');
+                for (const forbidden of ['不存在', '不在场', '不要凭空让 ta 登场', '不住在这个世界', '上辈子的梦']) {
+                    expect(t).not.toContain(forbidden);
+                }
+            }
+        });
+
+        it('⭐ 轻度住进来仍然保留「你最重要的人」那半句', () => {
+            expect(buildModeRule('light', U, 'silent')).toContain('最重要的人');
+        });
+
+        it('⭐ 中度住进来仍然保留「不围着 ta 转」', () => {
+            expect(buildModeRule('medium', U, 'silent')).toContain('不围着 ta 转');
+        });
+
+        it('重度 / 远方住进来 → 按普通镇民处理（冲突交给界面提示）', () => {
+            for (const mode of ['heavy', 'distant'] as const) {
+                expect(buildModeRule(mode, U, 'ghostwrite')).toContain('一个居民');
+            }
+        });
+    });
+
+    describe('buildGhostwritePrompt', () => {
+        const args = {
+            world: { name: '小镇', worldview: '一个安静的小世界' },
+            userName: U,
+            storyTime: '第3天 白天',
+            memberNames: ['小满', '阿岚'],
+        };
+
+        it('⭐⛔ 必须明写「别写成讨好」—— 这是代笔档唯一的写作要求', () => {
+            const t = buildGhostwritePrompt(args);
+            expect(t).toContain('别写成讨好');
+            expect(t).toContain('平淡的半天完全合格');
+        });
+
+        it('⛔ 必须禁止替镇上的角色写反应', () => {
+            expect(buildGhostwritePrompt(args)).toContain('别替镇上的角色写反应');
+        });
+
+        it('带上世界观、剧情时间、镇上还有谁', () => {
+            const t = buildGhostwritePrompt(args);
+            expect(t).toContain('一个安静的小世界');
+            expect(t).toContain('第3天 白天');
+            expect(t).toContain('小满');
+        });
+
+        it('机主的自我介绍会带上（有才带）', () => {
+            expect(buildGhostwritePrompt({ ...args, userPersona: '话很少的人' })).toContain('话很少的人');
+            expect(buildGhostwritePrompt(args)).not.toContain('是个什么样的人');
         });
     });
 });
