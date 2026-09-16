@@ -208,6 +208,10 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
                                 autoFocus
                                 onChange={e => setRenameDraft(e.target.value)}
                                 onKeyDown={e => { if (e.key === 'Enter') void commitRename(p); }}
+                                onFocus={e => {
+                                    const el = e.currentTarget;
+                                    setTimeout(() => el.scrollIntoView({ block: 'center', behavior: 'smooth' }), 350);
+                                }}
                                 className="flex-1 min-w-0 px-2.5 py-1.5 rounded-xl bg-white border border-indigo-300 text-[13px] focus:outline-none"
                             />
                         ) : (
@@ -270,10 +274,17 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
     if (!isOpen) return null;
 
     return (
-        <div className="sully-ui-layer fixed inset-0 z-[120] flex flex-col animate-fade-in">
+        // 高度跟「可视区」走，不是跟屏幕走：软键盘弹出时 iOS 不会缩 fixed 元素的参照系，
+        // 面板底边会连同里面的输入框一起藏到键盘底下。--visual-viewport-height 由
+        // utils/iosStandalone.ts 全局维护（iOS PWA / 安卓都在更新），没有它时退回整屏。
+        <div
+            className="sully-ui-layer fixed inset-x-0 top-0 z-[120] flex flex-col animate-fade-in"
+            style={{ height: 'var(--visual-viewport-height, 100lvh)' }}
+        >
             <div className="sully-ui-overlay absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
 
-            <div className="sully-ui-sheet relative mt-auto bg-white rounded-t-[2rem] shadow-2xl flex flex-col max-h-[88vh]">
+            {/* 88% 是相对上面那个「可视区高度」的，不能写 88vh —— vh 认的是整屏，键盘弹出后会超出去 */}
+            <div className="sully-ui-sheet relative mt-auto bg-white rounded-t-[2rem] shadow-2xl flex flex-col max-h-[88%]">
                 <div className="sully-ui-head px-5 pt-4 pb-2 flex items-center gap-2">
                     <div className="sully-ui-title text-[15px] font-bold text-slate-800 flex-1">自定义心声</div>
                     <button onClick={handleSave} className="sully-ui-btn px-4 py-1.5 rounded-full bg-indigo-500 text-white text-[12px] font-semibold active:scale-95 transition-transform">保存</button>

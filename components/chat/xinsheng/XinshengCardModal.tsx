@@ -540,13 +540,17 @@ export const XinshengCardModal: React.FC<Props> = ({
 
             {/* 单条历史的显示预设选择器。放在心声卡片自己的 CSS 之外，空白卡也能打开。 */}
             {showPresetPicker && current && (
-                <div className="fixed inset-0 z-[140] flex items-end bg-black/55">
+                // 同设置面板：高度跟可视区走，键盘弹出时搜索框不会被压在下面
+                <div
+                    className="fixed inset-x-0 top-0 z-[140] flex items-end bg-black/55"
+                    style={{ height: 'var(--visual-viewport-height, 100lvh)' }}
+                >
                     <button
                         className="absolute inset-0"
                         onClick={() => { if (!presetSaving) setShowPresetPicker(false); }}
                         aria-label="关闭预设选择器"
                     />
-                    <div className="relative w-full max-h-[80vh] rounded-t-[2rem] bg-white shadow-2xl flex flex-col">
+                    <div className="relative w-full max-h-[80%] rounded-t-[2rem] bg-white shadow-2xl flex flex-col">
                         <div className="px-5 pt-4 pb-2 flex items-center gap-2">
                             <div className="flex-1 min-w-0">
                                 <div className="text-[15px] font-bold text-slate-800">换这条心声的显示预设</div>
