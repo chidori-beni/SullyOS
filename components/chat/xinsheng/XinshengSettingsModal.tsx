@@ -19,6 +19,7 @@ import {
     isPresetRandomEnabled,
     listXinshengPresets,
     parsePresetImportFile,
+    renameXinshengPreset,
     saveXinshengPreset,
     setPresetRandomEnabled,
     toggleXinshengPresetPinned,
@@ -85,6 +86,8 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
     // 又不能改排序（旧预设照样常用），所以给「找得到」和「置顶」两条快捷路径。
     const [presetQuery, setPresetQuery] = useState('');
     const [openPresetId, setOpenPresetId] = useState<string | null>(null);
+    const [renamingId, setRenamingId] = useState<string | null>(null);
+    const [renameDraft, setRenameDraft] = useState('');
     const fileRef = useRef<HTMLInputElement>(null);
 
     const toast = useCallback((msg: string, kind: 'success' | 'error' | 'info' = 'info') => {
@@ -99,6 +102,7 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
         setTab('general');
         setPresetQuery('');
         setOpenPresetId(null);
+        setRenamingId(null);
         listXinshengPresets().then(setPresets).catch(() => {});
         isPresetRandomEnabled().then(setRandomOn).catch(() => {});
     }, [isOpen, char]);
@@ -173,6 +177,15 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
     const pinnedPresets = useMemo(() => filteredPresets.filter(p => p.pinned), [filteredPresets]);
     const otherPresets = useMemo(() => filteredPresets.filter(p => !p.pinned), [filteredPresets]);
 
+    const commitRename = async (p: XinshengPreset) => {
+        const name = renameDraft.trim();
+        if (!name) { toast('名字不能是空的', 'error'); return; }
+        if (name === p.name) { setRenamingId(null); return; }
+        setPresets(await renameXinshengPreset(p.id, name));
+        setRenamingId(null);
+        toast(`已改名为「${name}」`, 'success');
+    };
+
     const togglePin = async (p: XinshengPreset) => {
         setPresets(await toggleXinshengPresetPinned(p.id));
         toast(p.pinned ? `已取消置顶「${p.name}」` : `已置顶「${p.name}」`, 'success');
@@ -188,9 +201,26 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
                             className={`shrink-0 w-7 h-7 rounded-full text-[13px] leading-none active:scale-90 transition-transform ${p.pinned ? 'text-amber-400' : 'text-slate-300'}`}
                             aria-label={p.pinned ? '取消置顶' : '置顶'}
                         >{p.pinned ? '★' : '☆'}</button>
-                        <span className="flex-1 min-w-0 truncate text-[13px] font-semibold text-slate-700">{p.name}</span>
+                        {renamingId === p.id ? (
+                            <input
+                                type="text"
+                                value={renameDraft}
+                                autoFocus
+                                onChange={e => setRenameDraft(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter') void commitRename(p); }}
+                                className="flex-1 min-w-0 px-2.5 py-1.5 rounded-xl bg-white border border-indigo-300 text-[13px] focus:outline-none"
+                            />
+                        ) : (
+                            <span className="flex-1 min-w-0 truncate text-[13px] font-semibold text-slate-700">{p.name}</span>
+                        )}
                         <span className="shrink-0 text-[10px] text-slate-400">{p.displayMode === 'layout' ? '布局' : '默认卡'}</span>
                     </div>
+                    {renamingId === p.id ? (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                            <button onClick={() => void commitRename(p)} className="px-2.5 py-1 rounded-full bg-indigo-500 text-white text-[11px]">改名</button>
+                            <button onClick={() => setRenamingId(null)} className="px-2.5 py-1 rounded-full bg-white text-slate-400 text-[11px] border border-slate-200">取消</button>
+                        </div>
+                    ) : (
                     <div className="mt-2 flex flex-wrap gap-1.5">
                         <button onClick={() => loadPreset(p)} className="px-2.5 py-1 rounded-full bg-indigo-500 text-white text-[11px]">载入</button>
                         <button
@@ -210,8 +240,13 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
                             }}
                             className="px-2.5 py-1 rounded-full bg-white text-rose-500 text-[11px] border border-slate-200"
                         >删除</button>
+                        <button
+                            onClick={() => { setRenamingId(p.id); setRenameDraft(p.name); }}
+                            className="px-2.5 py-1 rounded-full bg-white text-slate-600 text-[11px] border border-slate-200"
+                        >重命名</button>
                         <button onClick={() => setOpenPresetId(null)} className="px-2.5 py-1 rounded-full bg-white text-slate-400 text-[11px] border border-slate-200">收起</button>
                     </div>
+                    )}
                 </div>
             ) : (
                 <div

@@ -31,10 +31,10 @@ import { buildSelfiePrompt, getCharacterAppearanceLooks, getImageGenConfig, isIm
 import { ChatParser, type FrozenMusicSong } from './chatParser';
 import { stripFaceToFacePhoneSourceTags, stripInternalAssistantProtocolMarkers } from './sanitize';
 import { extractXinsheng } from './xinsheng/xinshengData';
-import { appendXinshengEntry } from './xinsheng/xinshengStore';
+import { appendXinshengEntry, readXinshengFirePackPreset } from './xinsheng/xinshengStore';
 import { newXinshengRoundId, XINSHENG_ROUND_META_KEY, backfillXinshengRoundIdForSession } from './xinsheng/xinshengRound';
 import { dispatchXinshengUpdated } from './xinsheng/xinshengEvents';
-import { takeXinshengRoundPreset, toEntryPreset } from './xinsheng/xinshengRandomPreset';
+import { characterEntryPreset, takeXinshengRoundPreset, toEntryPreset } from './xinsheng/xinshengRandomPreset';
 import { resolveCharTimeZone } from './timezone';
 import { NotionManager, FeishuManager, XhsNote } from './realtimeContext';
 import { enqueuePendingDiary, removePendingDiary } from './pendingDiary';
@@ -869,6 +869,14 @@ export async function applyAssistantPostProcessing(
         if (picked.entry) {
             xinshengRoundId = newXinshengRoundId(messageTimestamp ?? Date.now());
             const roundId = xinshengRoundId;
+            // 这条是不是云端主动消息推回来的（一整条回复共享一个 sessionId）。
+            // 即时对话也走推送，但它的提示词是这台设备这一轮现拼的，内存里的 roundPresets
+            // 仍然作数，所以只认「非 instant」的那些。
+            const amsgMeta = (mcdInheritMeta as any)?.activeMsg2;
+            const pushSessionId = amsgMeta?.sessionId;
+            const fromFirePack = !!pushSessionId
+                && amsgMeta?.messageType !== 'instant'
+                && (mcdInheritMeta as any)?.source !== 'instant';
             // 「随机套预设」这一轮抽中的样式优先；没抽中（用户手动切换预设的常规情况）
             // 就把**此刻角色档案上实际生效的**布局/CSS/显示模式原样快照下来。
             //
@@ -876,23 +884,37 @@ export async function applyAssistantPostProcessing(
             // 历史卡片全都跟着"角色现在的设置"变皮：上周那条心声点开，显示的却是这周
             // 刚换的美化，完全对不上当时的样子。见 xinshengRandomPreset.ts 里为什么不
             // 把随机命中的那份写回角色档案（同一个道理，这里补上手动切换的那一半）。
-            const roundPreset = takeXinshengRoundPreset(char.id);
-            const presetSnapshot = roundPreset
-                ? toEntryPreset(roundPreset)
-                : {
-                    name: '',
-                    displayMode: (char.xinshengDisplayMode === 'layout' ? 'layout' : 'planner') as 'planner' | 'layout',
-                    layout: char.xinshengLayout || '',
-                    customCss: char.xinshengCustomCss || '',
-                };
+            //
+            // 主动消息（fire_pack）那条路两者都不对：文字是照**打包那一刻**的提示词生成的，
+            // 而打包可能发生在几小时前、App 重启前。它的样式在打包时已经落盘，下面异步读回来
+            // 盖掉这里的兜底（见 xinshengStore 的 readXinshengFirePackPreset）。这一路也不去
+            // 消费 roundPresets——那份是前台某一轮的，被这条推送吃掉的话轮到它落库就没得用了。
+            const roundPreset = fromFirePack ? null : takeXinshengRoundPreset(char.id);
+            const fallbackSnapshot = roundPreset ? toEntryPreset(roundPreset) : characterEntryPreset(char);
+            // 闭包里读 picked.entry 会丢掉外层的收窄，先固化成局部常量
+            const pickedEntry = picked.entry;
             // 不 await：落库慢一点无所谓，但绝不能因为它把整轮回复的上屏卡住。
-            appendXinshengEntry(char.id, roundId, {
-                ...picked.entry,
-                _at: messageTimestamp ?? Date.now(),
-                _preset: presetSnapshot,
-            })
-                .then(() => dispatchXinshengUpdated({ charId: char.id, roundId }))
-                .catch(e => console.warn('[xinsheng] 落库失败:', e));
+            void (async () => {
+                let presetSnapshot = fallbackSnapshot;
+                if (fromFirePack) {
+                    try {
+                        const packed = await readXinshengFirePackPreset(char.id);
+                        if (packed) presetSnapshot = packed;
+                    } catch (e) {
+                        console.warn('[xinsheng] 读主动消息预设快照失败，退回角色当前设置:', e);
+                    }
+                }
+                try {
+                    await appendXinshengEntry(char.id, roundId, {
+                        ...pickedEntry,
+                        _at: messageTimestamp ?? Date.now(),
+                        _preset: presetSnapshot,
+                    });
+                    dispatchXinshengUpdated({ charId: char.id, roundId });
+                } catch (e) {
+                    console.warn('[xinsheng] 落库失败:', e);
+                }
+            })();
 
             // 云端推送路径：一条回复常被 worker 拆成好几条独立 push，每条各自单独跑一遍
             // applyAssistantPostProcessing、互不知道彼此（见 activeMsgRuntime.ts 的
@@ -901,7 +923,6 @@ export async function applyAssistantPostProcessing(
             // 各自落库完了，metadata 里根本没有 roundId，头像点了毫无反应（不是事件被吞，
             // 是真的没有 onClick）。这里反向回填：同一个 sessionId 下还没打上 roundId 的
             // 早前气泡，统一补成这同一个 roundId。本地生成没有 sessionId，不会走这条。
-            const pushSessionId = (mcdInheritMeta as any)?.activeMsg2?.sessionId;
             if (pushSessionId) {
                 backfillXinshengRoundIdForSession(char.id, pushSessionId, roundId, DB)
                     .catch(e => console.warn('[xinsheng] 回填同 session 早前气泡失败:', e));

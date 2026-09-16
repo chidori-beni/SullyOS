@@ -15,7 +15,8 @@ const {
     updateXinshengEntryPreset,
     listXinshengPresets, saveXinshengPreset, updateXinshengPreset, deleteXinshengPreset,
     importXinshengPresets, buildPresetExportFile, parsePresetImportFile, normalizePreset,
-    toggleXinshengPresetPinned, sortXinshengPresets,
+    toggleXinshengPresetPinned, sortXinshengPresets, renameXinshengPreset,
+    saveXinshengFirePackPreset, readXinshengFirePackPreset,
     isPresetRandomEnabled, setPresetRandomEnabled, pickRandomPreset,
 } = await import('./xinshengStore');
 
@@ -272,6 +273,55 @@ describe('置顶预设', () => {
         const list = [normalizePreset({ name: 'A' }), normalizePreset({ name: 'B', pinned: true })];
         expect(sortXinshengPresets(list).map(p => p.name)).toEqual(['B', 'A']);
         expect(list.map(p => p.name)).toEqual(['A', 'B']);
+    });
+});
+
+describe('重命名预设', () => {
+    const add = (name: string) => saveXinshengPreset(name, {
+        customCss: '.xt-root{}', customPrompt: 'p', layout: '@header', displayMode: 'layout', aiVisibleFields: 'innerVoice',
+    });
+
+    it('只改名字，内容一个字不动，位置也不动', async () => {
+        await add('A'); const b = await add('B'); await add('C');
+        const list = await renameXinshengPreset(b!, '  蓝色小卡  ');
+        expect(list.map(p => p.name)).toEqual(['A', '蓝色小卡', 'C']);
+        const renamed = list[1];
+        expect(renamed.customCss).toBe('.xt-root{}');
+        expect(renamed.customPrompt).toBe('p');
+        expect(renamed.layout).toBe('@header');
+        expect(typeof renamed.updatedAt).toBe('number');
+    });
+
+    it('空名字直接忽略，不会把预设改成没名字', async () => {
+        const id = await add('A');
+        expect((await renameXinshengPreset(id!, '   ')).map(p => p.name)).toEqual(['A']);
+    });
+
+    it('改名不影响置顶', async () => {
+        const id = await add('A');
+        await toggleXinshengPresetPinned(id!);
+        expect((await renameXinshengPreset(id!, 'A2'))[0].pinned).toBe(true);
+    });
+});
+
+describe('主动消息（fire_pack）的预设快照', () => {
+    it('存了能读回来，按角色分开', async () => {
+        await saveXinshengFirePackPreset('c1', { name: 'A', displayMode: 'layout', layout: '@header', customCss: '.a{}' });
+        await saveXinshengFirePackPreset('c2', { name: 'B', displayMode: 'planner', layout: '', customCss: '' });
+        expect(await readXinshengFirePackPreset('c1')).toEqual({ name: 'A', displayMode: 'layout', layout: '@header', customCss: '.a{}' });
+        expect((await readXinshengFirePackPreset('c2'))!.displayMode).toBe('planner');
+    });
+
+    it('没存过读到 null；存着的是垃圾也补齐成合法形状', async () => {
+        expect(await readXinshengFirePackPreset('c9')).toBeNull();
+        await saveXinshengFirePackPreset('c1', { layout: 123 } as any);
+        expect(await readXinshengFirePackPreset('c1')).toEqual({ name: '', displayMode: 'planner', layout: '', customCss: '' });
+    });
+
+    it('重新打包会覆盖上一份（worker 上永远只有最后上传的那个包）', async () => {
+        await saveXinshengFirePackPreset('c1', { name: 'A', displayMode: 'layout', layout: '@a', customCss: '' });
+        await saveXinshengFirePackPreset('c1', { name: 'B', displayMode: 'layout', layout: '@b', customCss: '' });
+        expect((await readXinshengFirePackPreset('c1'))!.name).toBe('B');
     });
 });
 

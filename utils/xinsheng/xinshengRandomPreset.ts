@@ -12,7 +12,12 @@
 // 卡片渲染时优先用记录自带的预设，所以每条历史永远保持它生成时的样子。
 
 import type { CharacterProfile } from '../../types';
-import { isPresetRandomEnabled, pickRandomPreset, type XinshengPreset } from './xinshengStore';
+import {
+    isPresetRandomEnabled,
+    pickRandomPreset,
+    saveXinshengFirePackPreset,
+    type XinshengPreset,
+} from './xinshengStore';
 
 /**
  * 本轮抽中的预设，按角色存。**未被消费**（`peekXinshengRoundPreset` 还没读走）之前
@@ -85,6 +90,40 @@ export const toEntryPreset = (p: XinshengPreset): XinshengEntryPreset => ({
     layout: p.layout,
     customCss: p.customCss,
 });
+
+/** 角色档案上此刻实际生效的那套样式，当作一份预设快照。 */
+export const characterEntryPreset = (char: CharacterProfile): XinshengEntryPreset => ({
+    name: '',
+    displayMode: char.xinshengDisplayMode === 'layout' ? 'layout' : 'planner',
+    layout: char.xinshengLayout || '',
+    customCss: char.xinshengCustomCss || '',
+});
+
+/**
+ * 打**主动消息模板**（fire_pack）时调用，代替 prepareXinshengRoundPreset。
+ *
+ * 和前台那条路有两点不同，都是被真实故障逼出来的：
+ *
+ * 1. **不碰 roundPresets 那张内存表。** 打包发生在「最后一次聊天」，触发可能在几小时后，
+ *    中间隔着 App 重启和无数轮前台对话。往表里塞一份既救不了将来那次触发（内存早没了），
+ *    又会被下一轮前台回复顺手消费掉。
+ * 2. **把这份包会用的样式整份落盘。** 云端把消息推回来时，客户端照着这份快照渲染，
+ *    而不是照「角色现在的设置」——后者正是「A 预设的文字配 B 预设的 CSS」的成因。
+ *    随机开着就存抽中那个；随机关着也要存（用户可能在打包之后又手动换了预设）。
+ */
+export const prepareXinshengFirePackPreset = async (
+    char: CharacterProfile,
+): Promise<XinshengPreset | null> => {
+    if (!char?.id || !char.xinshengEnabled) return null;
+    try {
+        const picked = (await isPresetRandomEnabled()) ? await pickRandomPreset() : null;
+        await saveXinshengFirePackPreset(char.id, picked ? toEntryPreset(picked) : characterEntryPreset(char));
+        return picked;
+    } catch (e) {
+        console.warn('[xinsheng] 主动消息预设准备失败:', e);
+        return null;
+    }
+};
 
 /** 测试用：清干净所有角色的本轮预设。 */
 export const resetXinshengRoundPresets = (): void => { roundPresets.clear(); };

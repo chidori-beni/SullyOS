@@ -18,10 +18,12 @@ let pickRandomPreset: any;
 vi.mock('./xinshengStore', () => ({
     isPresetRandomEnabled: vi.fn(),
     pickRandomPreset: vi.fn(),
+    saveXinshengFirePackPreset: vi.fn(),
 }));
 
 const {
     prepareXinshengRoundPreset,
+    prepareXinshengFirePackPreset,
     takeXinshengRoundPreset,
     resetXinshengRoundPresets,
 } = await import('./xinshengRandomPreset');
@@ -29,6 +31,7 @@ const {
 const store = await import('./xinshengStore');
 isPresetRandomEnabled = store.isPresetRandomEnabled as any;
 pickRandomPreset = store.pickRandomPreset as any;
+const saveFirePackPreset = store.saveXinshengFirePackPreset as any;
 
 const CHAR: CharacterProfile = { id: 'c1', name: '萧逸', avatar: '', xinshengEnabled: true } as any;
 
@@ -39,6 +42,7 @@ beforeEach(() => {
     resetXinshengRoundPresets();
     isPresetRandomEnabled.mockReset();
     pickRandomPreset.mockReset();
+    saveFirePackPreset.mockReset();
     vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
 afterEach(() => { vi.restoreAllMocks(); });
@@ -90,6 +94,50 @@ describe('prepareXinshengRoundPreset', () => {
         const b = await prepareXinshengRoundPreset({ id: 'c2', xinshengEnabled: true } as any);
         expect(a).toEqual(presetA);
         expect(b).toEqual(presetB);
+    });
+});
+
+// ─── 真实故障复现 2：自然主动（fire_pack）的文字和 CSS 对不上号 ───────────────
+//
+// 用户实测反馈：只有「自然主动」生成的那些心声会出现 A 预设的文字配 B 预设的 CSS。
+// 根因：模板是最后一次聊天时打包上传的，到点由 worker 在云端渲染生成；等消息推回来，
+// 客户端内存里那张 roundPresets 表要么早被前台某一轮消费掉、要么根本活不过 App 重启，
+// 于是落库时只能退回「角色现在的设置」。修法是打包那一刻就把样式整份落盘。
+describe('prepareXinshengFirePackPreset', () => {
+    it('随机开着：存抽中那个预设的样式快照，并且不占用前台那一轮的抽取', async () => {
+        isPresetRandomEnabled.mockResolvedValue(true);
+        pickRandomPreset.mockResolvedValue(presetA);
+        expect(await prepareXinshengFirePackPreset(CHAR)).toEqual(presetA);
+        expect(saveFirePackPreset).toHaveBeenCalledWith('c1', {
+            name: 'A', displayMode: 'layout', layout: '', customCss: '',
+        });
+        // 内存表没被写脏：前台这一轮该抽还是要抽
+        expect(takeXinshengRoundPreset('c1')).toBeNull();
+    });
+
+    it('随机关着：也要存——存的是打包这一刻角色档案上生效的那套', async () => {
+        isPresetRandomEnabled.mockResolvedValue(false);
+        const char = {
+            id: 'c1', xinshengEnabled: true, xinshengDisplayMode: 'layout',
+            xinshengLayout: '@header', xinshengCustomCss: '.xt-root{}',
+        } as any;
+        expect(await prepareXinshengFirePackPreset(char)).toBeNull();
+        expect(saveFirePackPreset).toHaveBeenCalledWith('c1', {
+            name: '', displayMode: 'layout', layout: '@header', customCss: '.xt-root{}',
+        });
+        expect(pickRandomPreset).not.toHaveBeenCalled();
+    });
+
+    it('心声没开：什么都不存', async () => {
+        expect(await prepareXinshengFirePackPreset({ id: 'c1', xinshengEnabled: false } as any)).toBeNull();
+        expect(saveFirePackPreset).not.toHaveBeenCalled();
+    });
+
+    it('落盘失败只吞掉异常，不让整份模板打包挂掉', async () => {
+        isPresetRandomEnabled.mockResolvedValue(true);
+        pickRandomPreset.mockResolvedValue(presetA);
+        saveFirePackPreset.mockRejectedValue(new Error('IDB 挂了'));
+        expect(await prepareXinshengFirePackPreset(CHAR)).toBeNull();
     });
 });
 

@@ -37,7 +37,7 @@ import { buildAutoReplyCatchUpPrompt, buildBusyReplyPrompt, decideBusyReply, typ
 import { buildUserCalendarContext } from './calendarIntegration';
 import { buildXinshengContinuityBlock, buildXinshengInstruction, selectXinshengContinuity } from './xinsheng/xinshengPrompt';
 import { readXinshengHistory } from './xinsheng/xinshengStore';
-import { prepareXinshengRoundPreset } from './xinsheng/xinshengRandomPreset';
+import { prepareXinshengFirePackPreset, prepareXinshengRoundPreset } from './xinsheng/xinshengRandomPreset';
 import { classifyExchange, buildNarrationLine } from './characterIdentity';
 import { buildCompanionshipBoundary, companionshipBoundaryOn } from './companionshipBoundary';
 
@@ -1398,8 +1398,12 @@ ${buildVoiceActingGuide(char)}`;
         // 主动消息模板（forFirePack）照样注入：定时消息也是角色说的话，它那一刻的内心戏
         // 该被记下来。指令本身不带时效读数，烤进模板不会过期。
         if (char.xinshengEnabled) {
-            // 「随机套预设」开着时，这一轮用抽中那个预设的提示词（见 xinshengRandomPreset.ts）
-            const roundPreset = await prepareXinshengRoundPreset(char);
+            // 「随机套预设」开着时，这一轮用抽中那个预设的提示词（见 xinshengRandomPreset.ts）。
+            // 打模板（forFirePack）走另一条：那份包要几小时后才在云端渲染，抽中的样式必须
+            // 落盘，否则推回来时只能拿「角色现在的设置」凑合，字段和 CSS 对不上号。
+            const roundPreset = forFirePack
+                ? await prepareXinshengFirePackPreset(char)
+                : await prepareXinshengRoundPreset(char);
             const instruction = buildXinshengInstruction({
                 enabled: true,
                 customPrompt: roundPreset?.customPrompt || char.xinshengCustomPrompt,

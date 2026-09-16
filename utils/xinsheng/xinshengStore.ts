@@ -12,6 +12,7 @@ import type { XinshengEntryPreset } from './xinshengRandomPreset';
 const HISTORY_KEY = (charId: string) => `xinsheng_history_${charId}`;
 const PRESETS_KEY = 'xinsheng_presets';
 const RANDOM_ENABLED_KEY = 'xinsheng_preset_random_enabled';
+const FIRE_PACK_PRESET_KEY = (charId: string) => `xinsheng_firepack_preset_${charId}`;
 const LAST_RANDOM_KEY = 'xinsheng_preset_last_random_id';
 
 /** 历史上限。超出后从最旧的开始删，但收藏过的永远留着。 */
@@ -305,6 +306,17 @@ export const toggleXinshengPresetPinned = async (id: string): Promise<XinshengPr
     }
 };
 
+/** 只改名字，布局 / CSS / 提示词一个字不动。返回排好序的新列表。 */
+export const renameXinshengPreset = async (id: string, name: string): Promise<XinshengPreset[]> => {
+    const clean = name.trim().slice(0, 60);
+    const list = await readRawPresets();
+    const idx = list.findIndex(p => p.id === id);
+    if (idx < 0 || !clean) return sortXinshengPresets(list);
+    list[idx] = { ...list[idx], name: clean, updatedAt: Date.now() };
+    await savePresets(list);
+    return sortXinshengPresets(list);
+};
+
 export const deleteXinshengPreset = async (id: string): Promise<XinshengPreset[]> => {
     const list = (await readRawPresets()).filter(p => p.id !== id);
     await savePresets(list);
@@ -402,6 +414,46 @@ export const setPresetRandomEnabled = async (on: boolean): Promise<void> => {
         await DB.saveAssetRaw(RANDOM_ENABLED_KEY, !!on);
     } catch (e) {
         console.warn('[xinsheng] 保存随机开关失败:', e);
+    }
+};
+
+// ─── 主动消息模板（fire_pack）这一份用的是哪个预设 ───
+//
+// 自然主动的提示词是**最后一次聊天时**打包好、传到 worker 上的，到点（可能几小时后、
+// 也可能 App 早就被杀过一轮）才在云端渲染生成。生成用的心声字段来自那份打包时的提示词，
+// 可渲染那张卡时，客户端手上只有「角色现在的设置」——于是出现「A 预设的文字、B 预设的
+// CSS」。内存里那张 roundPresets 表在这里完全靠不住：它活不过一次 App 重启，打包与触发
+// 之间还夹着无数轮前台对话会把它消费掉。
+//
+// 所以打包那一刻就把「这份包会用的样式」整份快照落盘，云端推回来时按角色读回来用。
+// 每次重新打包都覆盖它 —— worker 上永远只有最后一次上传的那份包。
+
+export const saveXinshengFirePackPreset = async (
+    charId: string,
+    preset: XinshengEntryPreset,
+): Promise<void> => {
+    if (!charId) return;
+    try {
+        await DB.saveAssetRaw(FIRE_PACK_PRESET_KEY(charId), preset);
+    } catch (e) {
+        console.warn('[xinsheng] 存主动消息预设快照失败:', e);
+    }
+};
+
+export const readXinshengFirePackPreset = async (charId: string): Promise<XinshengEntryPreset | null> => {
+    if (!charId) return null;
+    try {
+        const raw = await DB.getAssetRaw(FIRE_PACK_PRESET_KEY(charId));
+        if (!raw || typeof raw !== 'object') return null;
+        return {
+            name: typeof (raw as any).name === 'string' ? (raw as any).name : '',
+            displayMode: (raw as any).displayMode === 'layout' ? 'layout' : 'planner',
+            layout: typeof (raw as any).layout === 'string' ? (raw as any).layout : '',
+            customCss: typeof (raw as any).customCss === 'string' ? (raw as any).customCss : '',
+        };
+    } catch (e) {
+        console.warn('[xinsheng] 读主动消息预设快照失败:', e);
+        return null;
     }
 };
 
