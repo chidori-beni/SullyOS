@@ -29,6 +29,9 @@ import { worldTimeLabel, worldTzLabel, isNightWorld, houseOf, NARRATIVE_STYLES, 
 import { COMMON_TIMEZONES } from '../utils/timezone';
 import { SIM_CHAPTER_DAYS, SIM_CHAPTER_CLOCKS } from '../utils/worldHome/chapters';
 import { dmThreadsOf, groupThreadOf } from '../utils/worldHome/threads';
+import { dmThreadId } from '../utils/worldHome/threads';
+import { OBSERVER_LENGTHS, DEFAULT_OBSERVER_LENGTH, buildObserverPrompt, parseObserverLines, appendObserverLines, dropObserverLines, formatThreadForObserver } from '../utils/worldHome/observer';
+import type { ObserverLength, ObserverPeer } from '../utils/worldHome/observer';
 import { safeFetchJson } from '../utils/safeApi';
 import { WORLD_API_KEY, WORLD_CUSTOM_STYLE_KEY } from '../utils/worldHome/localBackup';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
@@ -1618,6 +1621,196 @@ const ResidentDayCard: React.FC<{
 // ============================================================
 // 大世界视图
 // ============================================================
+// ============================================================
+// 5.1 双人私聊观测器
+// ============================================================
+/**
+ * 选两个角色 →「让他俩聊聊」→ 出一段 → 每条可改可删 →「再聊几句」接着往下。
+ *
+ * ⛔ 这个弹窗**不推进小镇**：不涨 storyClock、不排节日/约定、不碰关系。
+ *    产出只落 `world.threads` 里他俩那条私聊，和这半天的其它消息并排。
+ *    理由见 `utils/worldHome/observer.ts` 文件头。
+ */
+const ObserverModal: React.FC<{
+    world: WorldProfile;
+    members: CharacterProfile[];
+    api: APIConfig;
+    onMutate: (updates: Partial<WorldProfile>) => Promise<void>;
+    onEditMsg: (threadId: string, msgId: string, newText: string | null) => void | Promise<void>;
+    onClose: () => void;
+}> = ({ world, members, api, onMutate, onEditMsg, onClose }) => {
+    const { addToast } = useOS();
+    const [aId, setAId] = useState(members[0]?.id || '');
+    const [bId, setBId] = useState(members[1]?.id || '');
+    const [length, setLength] = useState<ObserverLength>(DEFAULT_OBSERVER_LENGTH);
+    const [topic, setTopic] = useState('');
+    const [busy, setBusy] = useState(false);
+    // 刚生成的那一批消息 id —— 只为「这段不要了」服务，关掉弹窗就忘（也不该记住）
+    const [lastIds, setLastIds] = useState<string[]>([]);
+    const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+    const tailRef = useRef<HTMLDivElement | null>(null);
+
+    const a = members.find(m => m.id === aId);
+    const b = members.find(m => m.id === bId);
+    const samePerson = !!a && a.id === bId;
+    const toPeer = (c: CharacterProfile): ObserverPeer => ({
+        id: c.id, name: c.name,
+        persona: (c.description || c.systemPrompt || '').replace(/\s+/g, ' ').trim().slice(0, 400),
+    });
+    const thread = (a && b && !samePerson) ? (world.threads || []).find(x => x.id === dmThreadId(a.id, b.id)) : undefined;
+    const shown = (thread?.messages || []).slice(-24);
+    const storyTime = worldTimeLabel(world);
+
+    // 出了新的一段就滚到底——不然用户得自己往下翻才看得见刚生成的内容
+    useEffect(() => { tailRef.current?.scrollIntoView({ block: 'end' }); }, [shown.length]);
+
+    const run = async (continued: boolean) => {
+        if (!a || !b || samePerson) return;
+        if (!api?.baseUrl) { addToast('还没有可用的 API（先在设置里配一个）', 'error'); return; }
+        setBusy(true);
+        trackEvent('双人私聊观测', { continued, length });
+        try {
+            const peerA = toPeer(a), peerB = toPeer(b);
+            const baseUrl = api.baseUrl.replace(/\/+$/, '');
+            const data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${api.apiKey || 'sk-none'}` },
+                body: JSON.stringify({
+                    model: api.model,
+                    messages: [{ role: 'user', content: buildObserverPrompt({
+                        world, a: peerA, b: peerB, storyTime, length,
+                        topic: topic.trim() || undefined,
+                        recent: formatThreadForObserver(thread),
+                        continued,
+                    }) }],
+                    temperature: 0.95, stream: false,
+                }),
+            }, 2, 0, { appName: '家园', purpose: `双人私聊 · ${a.name} × ${b.name}` });
+            const lines = parseObserverLines(data.choices?.[0]?.message?.content || '', peerA, peerB);
+            if (lines.length === 0) { addToast('这次没聊出来，再试一次？', 'error'); return; }
+            // 先克隆再改：appendObserverLines 是原地修改，直接动 props.world 会跳过 React 的更新
+            const draft = { ...world, threads: JSON.parse(JSON.stringify(world.threads || [])) } as WorldProfile;
+            const ids = appendObserverLines(draft, peerA, peerB, lines, world.storyClock, storyTime);
+            await onMutate({ threads: draft.threads });
+            setLastIds(ids);
+            setTopic('');
+            addToast(ids.length > 0 ? `聊了 ${ids.length} 条` : '这次说的都是重复的，再试一次？', ids.length > 0 ? 'success' : 'error');
+        } catch {
+            addToast('生成失败了，检查下 API', 'error');
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const undoLast = async () => {
+        if (!a || !b || lastIds.length === 0) return;
+        const draft = { ...world, threads: JSON.parse(JSON.stringify(world.threads || [])) } as WorldProfile;
+        dropObserverLines(draft, toPeer(a), toPeer(b), lastIds);
+        await onMutate({ threads: draft.threads });
+        setLastIds([]);
+        addToast('这段撤掉了', 'success');
+    };
+
+    const picker = (value: string, onChange: (v: string) => void, exclude: string) => (
+        <select value={value} onChange={e => { onChange(e.target.value); setLastIds([]); }}
+            className="flex-1 min-w-0 px-2.5 py-2 rounded-xl bg-white border border-stone-200 text-[12px] font-bold text-stone-800 focus:outline-none focus:border-violet-300">
+            {members.map(m => <option key={m.id} value={m.id} disabled={m.id === exclude}>{m.name}</option>)}
+        </select>
+    );
+
+    return (
+        <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/45 backdrop-blur-sm p-3" onClick={onClose}>
+            <div className="w-full max-w-[360px] max-h-[88vh] flex flex-col rounded-2xl bg-[#f7f3ea] shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+                <div className="px-4 pt-4 pb-2.5 shrink-0">
+                    <div className="flex items-center gap-1.5">
+                        <div className="text-[14px] font-black text-stone-800 flex items-center gap-1.5">
+                            <ChatCircleDots size={15} weight="fill" className="text-violet-500" />让两个人聊聊
+                        </div>
+                        <button onClick={onClose} className="ml-auto p-1 rounded-lg text-stone-400 active:bg-black/5"><X size={15} weight="bold" /></button>
+                    </div>
+                    {/* 这两句是给用户的定心丸：他们最怕的就是「我只是想看看，结果镇上的事被我搅了」 */}
+                    <p className="text-[10.5px] text-stone-400 mt-1.5 leading-relaxed">
+                        看他俩私下说话。<span className="font-bold text-stone-500">不会推进小镇的时间，也不会改他们的关系</span>，聊完每条都能改、能删。
+                    </p>
+                    <div className="flex items-center gap-1.5 mt-2.5">
+                        {picker(aId, setAId, bId)}
+                        <span className="text-[11px] font-black text-stone-400 shrink-0">和</span>
+                        {picker(bId, setBId, aId)}
+                    </div>
+                    {samePerson && <p className="text-[10.5px] text-rose-500 font-bold mt-1.5">得选两个不同的人。</p>}
+                </div>
+
+                {/* 已有的对话（含刚生成的）：每条可改可删 */}
+                <div className="flex-1 min-h-[80px] overflow-y-auto no-scrollbar px-4 py-1">
+                    {shown.length === 0 ? (
+                        <div className="h-full flex items-center justify-center text-[11px] text-stone-400 py-6">他们还没私聊过。</div>
+                    ) : (
+                        <div className="space-y-1.5 pb-1">
+                            {shown.map(m => {
+                                const mine = m.fromId === aId;
+                                const isNew = lastIds.includes(m.id);
+                                if (editing?.id === m.id) {
+                                    return (
+                                        <div key={m.id} className="rounded-xl border border-violet-300 bg-white p-2">
+                                            <textarea value={editing.text} onChange={e => setEditing({ id: m.id, text: e.target.value })} rows={2} autoFocus
+                                                className="w-full text-[12px] text-stone-800 bg-transparent focus:outline-none resize-none" />
+                                            <div className="flex gap-1.5 justify-end">
+                                                <button onClick={() => setEditing(null)} className="text-[11px] font-bold text-stone-400 px-2 py-0.5">取消</button>
+                                                <button onClick={async () => { const v = editing.text.trim(); if (v && thread) await onEditMsg(thread.id, m.id, v); setEditing(null); }}
+                                                    className="text-[11px] font-bold text-violet-600 px-2 py-0.5">保存</button>
+                                            </div>
+                                        </div>
+                                    );
+                                }
+                                return (
+                                    <div key={m.id} className={`flex items-start gap-1.5 ${mine ? '' : 'flex-row-reverse'}`}>
+                                        <div className={`max-w-[74%] rounded-2xl px-2.5 py-1.5 border ${isNew ? 'border-violet-300 bg-violet-50' : 'border-stone-200 bg-white'}`}>
+                                            <div className="text-[9.5px] font-black text-stone-400">{m.fromName}</div>
+                                            <div className="text-[12px] text-stone-800 leading-snug whitespace-pre-wrap break-words">{m.text}</div>
+                                        </div>
+                                        <div className="flex flex-col gap-0.5 pt-2 shrink-0">
+                                            <button onClick={() => setEditing({ id: m.id, text: m.text })} className="p-1 rounded-md text-stone-300 active:text-violet-500" title="改这句"><NotePencil size={11} weight="bold" /></button>
+                                            <button onClick={() => thread && onEditMsg(thread.id, m.id, null)} className="p-1 rounded-md text-stone-300 active:text-rose-500" title="删这句"><Trash size={11} weight="bold" /></button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                            <div ref={tailRef} />
+                        </div>
+                    )}
+                </div>
+
+                <div className="px-4 pt-2 pb-3 shrink-0 border-t border-stone-200 space-y-2">
+                    <div className="flex gap-1.5">
+                        {(Object.keys(OBSERVER_LENGTHS) as ObserverLength[]).map(k => (
+                            <button key={k} onClick={() => setLength(k)} title={OBSERVER_LENGTHS[k].hint}
+                                className={`flex-1 py-1.5 rounded-xl text-[11px] font-bold border transition-colors ${length === k ? 'bg-violet-500 border-violet-500 text-white' : 'bg-white border-stone-200 text-stone-500'}`}>
+                                {OBSERVER_LENGTHS[k].name}
+                            </button>
+                        ))}
+                    </div>
+                    <input value={topic} onChange={e => setTopic(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-white border border-stone-200 text-[12px] text-stone-800 focus:outline-none focus:border-violet-300"
+                        placeholder="想让他们聊点什么？（选填，留空就随他们）" />
+                    <div className="flex gap-1.5">
+                        {lastIds.length > 0 && (
+                            <button onClick={undoLast} disabled={busy}
+                                className="px-3 py-2.5 rounded-xl border border-stone-200 bg-white text-[12px] font-bold text-stone-500 active:bg-black/5 disabled:opacity-40">
+                                这段不要了
+                            </button>
+                        )}
+                        <button onClick={() => run(shown.length > 0)} disabled={busy || samePerson || !a || !b}
+                            className="flex-1 py-2.5 rounded-xl bg-violet-500 text-white text-[12.5px] font-black flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform disabled:opacity-40">
+                            <Sparkle size={14} weight="fill" />
+                            {busy ? '他们正在打字…' : shown.length > 0 ? '再聊几句' : '让他俩聊聊'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const WorldView: React.FC<{
     world: WorldProfile;
     characters: CharacterProfile[];
@@ -1626,7 +1819,9 @@ const WorldView: React.FC<{
     onBack?: () => void;
     topSafe?: boolean;
 }> = ({ world, characters, onEdit, onWorldUpdated, onBack, topSafe }) => {
-    const { addToast } = useOS();
+    const { addToast, apiConfig } = useOS();
+    // API 优先级与演绎引擎一致：世界私有覆盖 > 家园全局设置 > 全局聊天默认
+    const resolvedApi = world.api?.baseUrl ? world.api : ((loadWorldApi() as APIConfig | null) || apiConfig);
     const [episodes, setEpisodes] = useState<WorldEpisode[]>([]);
     const [progress, setProgress] = useState<{ done: number; total: number; charName?: string } | null>(
         isWorldRunning(world.id) ? { done: 0, total: world.memberIds.length } : null
@@ -1637,6 +1832,7 @@ const WorldView: React.FC<{
     const [chapterPage, setChapterPage] = useState(0);
     const [seedPage, setSeedPage] = useState(0);
     const [phoneView, setPhoneView] = useState<{ ownerId: string; tab?: 'feed' | 'dm' | 'group' } | null>(null);
+    const [observerOpen, setObserverOpen] = useState(false);
     const [rerollTarget, setRerollTarget] = useState<{ charId: string; charName: string } | null>(null);
     const [rerollDir, setRerollDir] = useState('');
 
@@ -2220,6 +2416,19 @@ const WorldView: React.FC<{
                     </div>
                 </div>
 
+                {/* ── 5.1 双人私聊观测器：选两个人，看他俩私下说话 ── */}
+                {members.length >= 2 && (
+                    <button onClick={() => { setObserverOpen(true); trackEvent('打开双人私聊观测器'); }}
+                        className={`w-full text-left rounded-2xl border p-3.5 ${t.panel} active:scale-[0.99] transition-transform`}>
+                        <div className={`text-[10px] font-black tracking-[0.25em] uppercase flex items-center gap-1.5 mb-1.5 ${t.textLabel}`}>
+                            <ChatCircleDots size={11} weight="fill" />让两个人聊聊
+                        </div>
+                        <div className={`text-[11.5px] leading-snug ${t.textMain} opacity-85`}>
+                            挑两个角色，看他俩私下说话。<span className="font-bold">不推进小镇时间</span>，聊完每条都能改。
+                        </div>
+                    </button>
+                )}
+
                 {/* ── 世界群聊（公共空间：成员 + NPC 都在里面冒泡） ── */}
                 {(() => {
                     const group = groupThreadOf(world);
@@ -2557,6 +2766,18 @@ const WorldView: React.FC<{
                     initialTab={phoneView.tab}
                     onClose={() => setPhoneView(null)}
                     onEditContent={applyContentEdit}
+                />
+            )}
+
+            {/* 5.1 双人私聊观测器 */}
+            {observerOpen && members.length >= 2 && (
+                <ObserverModal
+                    world={world}
+                    members={members}
+                    api={resolvedApi}
+                    onMutate={mutateWorld}
+                    onEditMsg={(threadId, msgId, newText) => applyContentEdit({ type: 'msg', threadId, msgId }, newText)}
+                    onClose={() => setObserverOpen(false)}
                 />
             )}
         </div>
