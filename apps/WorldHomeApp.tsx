@@ -21,6 +21,7 @@ import {
     Lightning, NotePencil, PaperPlaneTilt, EyeSlash, Lock, LockOpen,
 } from '@phosphor-icons/react';
 import { DB } from '../utils/db';
+import { WORLD_PRESETS, describePresetChanges, applyPreset } from '../utils/worldHome/presets';
 import { getChibi } from '../utils/vrWorld/chibi';
 import { WorldScheduler, toTickEntries } from '../utils/worldHome/scheduler';
 import { isWorldRunning, injectWorldCard, shareWorldCardTo } from '../utils/worldHome/engine';
@@ -1238,6 +1239,56 @@ const WorldEditor: React.FC<{
                     ))}
                 </div>
             )}
+
+            {/* ── 阶段 4.2：两套一键预设 ────────────────────────────
+                铁律④「一切争议点都是开关」的代价是开关越堆越多，设置页会吓人。
+                ⛔ 预设**不是默认值**：只在点下去的那一刻改，且只改自己声明的那几项。
+                ⛔ 点之前必须让用户看见会改什么 —— 两位使用者偏好条条相反，
+                   任何一套对另一个人都是「把我的设置改坏了」。 */}
+            <div className={sectionCls}>
+                <div className={labelCls}>先选个玩法（可选）</div>
+                <div className="text-[10.5px] text-stone-400 leading-relaxed">
+                    下面的设置很多，<b className="text-stone-500">不想一项项挑就点一套</b>。
+                    点之前能看到它会改哪几项，<b className="text-stone-500">其余的一概不碰</b>；点完照样能细调。
+                </div>
+                {WORLD_PRESETS.map(preset => {
+                    const changes = describePresetChanges(w, preset);
+                    const already = changes.length === 0;
+                    return (
+                        <div key={preset.id} className="rounded-xl border border-stone-200 bg-white p-2.5 space-y-1.5">
+                            <div className="flex items-center gap-2">
+                                <span className="text-[12px] font-bold text-stone-700">{preset.name}</span>
+                                <button
+                                    type="button"
+                                    disabled={already}
+                                    onClick={() => upd(applyPreset(preset))}
+                                    className={`ml-auto shrink-0 text-[11px] font-bold px-3 py-1 rounded-lg border active:scale-95 transition-transform ${
+                                        already
+                                            ? 'bg-stone-50 border-stone-200 text-stone-400'
+                                            : 'bg-amber-100 border-amber-200 text-amber-800'
+                                    }`}
+                                >{already ? '已是这套' : '用这套'}</button>
+                            </div>
+                            <div className="text-[10.5px] text-stone-500 leading-relaxed">{preset.blurb}</div>
+                            {changes.length > 0 && (
+                                <div className="space-y-0.5 pt-0.5">
+                                    {changes.map((c, i) => (
+                                        <div key={i} className="text-[10px] text-stone-400">
+                                            {c.label}：<span className="line-through opacity-60">{c.from}</span>
+                                            <span className="mx-1">→</span>
+                                            <b className="text-stone-600">{c.to}</b>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+                <div className="text-[10px] text-stone-400 leading-relaxed">
+                    ⛔ <b className="text-stone-500">不会碰</b>：时间模式（改了等于换一个世界）、
+                    关系锁（锁哪几对是你逐对挑的）、地点 / 节日 / 转折点（那是这个世界的内容，不是玩法偏好）。
+                </div>
+            </div>
 
             {/* ── 阶段 4.1：你住进小镇 ──────────────────────────────
                 ⚠️ 与「存在感档位」正交：那个管「你对镇民有多重要」，这个管「你的人在不在镇上」。
