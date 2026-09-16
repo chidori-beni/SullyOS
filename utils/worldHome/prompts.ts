@@ -287,6 +287,102 @@ export function parseRolledFestivals(
     return out;
 }
 
+/**
+ * 一套**通用的**好感阈值大事件（阶段 3.3）。
+ *
+ * ⛔ 这**不是写死的默认值** —— 它只在用户主动点「用通用的三条」时才插入，
+ * 插进去之后每一条都能改能删。世界里没有这张表时什么都不会触发。
+ *
+ * 措辞刻意写成「该发生的事」而不是结局：**不规定角色一定要告白 / 一定要绝交**，
+ * 只把事摆到桌上。怎么面对是角色自己的事（用户铁律：别把我的角色写崩）。
+ */
+export const GENERIC_THRESHOLDS: { name: string; value: number; direction: 'up' | 'down'; text: string }[] = [
+    {
+        name: '好像不只是朋友了', value: 45, direction: 'up',
+        text: '你发现自己对 ta 的在意，已经超出「朋友」这个词能装下的范围了',
+    },
+    {
+        name: '心意该有个说法了', value: 75, direction: 'up',
+        text: '这份心意压到了压不住的地步——要么说出来，要么找个理由继续瞒着，但你没法再当它不存在',
+    },
+    {
+        name: '这段关系撑不住了', value: -45, direction: 'down',
+        text: '你和 ta 之间积下的东西已经到了头——该摊开说，该翻脸，还是干脆各走各的',
+    },
+];
+
+/** 让 LLM 按世界观 + 角色，编几条好感阈值大事件（阶段 3.3）。 */
+export function buildThresholdRollPrompt(args: {
+    worldName: string;
+    worldview: string;
+    members: { name: string; persona: string }[];
+    count: number;
+    existingNames: string[];
+}): string {
+    const { worldName, worldview, members, count, existingNames } = args;
+    return [
+        `你在为共同世界「${worldName}」设计 ${count} 条**关系转折点**。`,
+        ``,
+        `规则：每个角色对另一个人的好感是 -100 ~ +100 的数值，平时慢慢涨落。`,
+        `当它**越过某条线**时，系统会把你写的这件事摆到那个角色面前，让 ta 这半天必须面对。`,
+        ``,
+        `## 世界观`,
+        worldview || '（作者还没细写，请你据世界名推断这个世界大概是什么样）',
+        members.length > 0 ? `
+## 住在这里的人
+${members.map(m => `- ${m.name}：${m.persona || '（没写人设）'}`).join(String.fromCharCode(10))}` : '',
+        existingNames.length > 0 ? `
+## 已有的（别重复）
+${existingNames.join('、')}` : '',
+        ``,
+        `要求：`,
+        `- **写「该发生的事」，不要写结局。** ⛔ 绝对不要写成「他会向 ta 告白」「两人绝交」——`,
+        `  那是替角色做决定。要写成 ta 此刻**不得不面对的处境**：`,
+        `  「这份心意压到了压不住的地步」而不是「他告白了」。怎么面对是角色自己的事。`,
+        `- 用**第二人称**写给角色本人（「你发现自己……」），不要写成第三人称的剧情梗概。`,
+        `- **别只写恋爱线**：往下越线的敌对/疏远转折同样重要，也可以有「从死对头变成能一起喝酒」这种。`,
+        `- 线的位置要有疏密：±40 左右是「变化开始明显」，±70 以上才是「压不住了」。`,
+        `- 贴这个世界的质感——古代和赛博朋克里，「关系到头了」的样子完全不同。`,
+        ``,
+        `严格输出一个 JSON 对象（建议 \`\`\`json 包裹，不要输出 JSON 之外的正文）：`,
+        `{`,
+        `  "thresholds": [`,
+        `    { "name": "短名字（界面上显示）", "value": -100到100的整数, "direction": "up 或 down", "text": "第二人称写给角色的那件事（一到两句）" }`,
+        `  ]`,
+        `}`,
+        `只要 ${count} 条，宁缺毋滥。`,
+    ].join(String.fromCharCode(10));
+}
+
+/** 解析 roll 出来的阈值事件。过滤空名/重名/数值非法。 */
+export function parseRolledThresholds(
+    raw: string,
+    existingNames: string[] = [],
+): { name: string; value: number; direction: 'up' | 'down'; text: string }[] {
+    const j = extractJson(raw);
+    let arr: any[] = Array.isArray(j?.thresholds) ? j.thresholds : Array.isArray(j) ? j : [];
+    if (arr.length === 0) {
+        const m = (raw || '').replace(/<think>[\s\S]*?<\/think>/gi, '').match(/\[[\s\S]*\]/);
+        if (m) { try { const a = JSON.parse(m[0]); if (Array.isArray(a)) arr = a; } catch { /* ignore */ } }
+    }
+    const seen = new Set(existingNames.map(n => n.trim()));
+    const out: { name: string; value: number; direction: 'up' | 'down'; text: string }[] = [];
+    for (const t of arr) {
+        if (!t || typeof t.name !== 'string' || typeof t.text !== 'string') continue;
+        const name = t.name.trim().slice(0, 16);
+        const text = t.text.trim().slice(0, 160);
+        if (!name || !text || seen.has(name)) continue;
+        const value = Math.round(Number(t.value));
+        // 数值不合法整条丢掉：越线判据全靠这个数，瞎猜一个会让事件在莫名其妙的时候炸
+        if (!Number.isFinite(value) || value < -100 || value > 100) continue;
+        const direction: 'up' | 'down' = t.direction === 'down' ? 'down' : 'up';
+        seen.add(name);
+        out.push({ name, value, direction, text });
+        if (out.length >= 8) break;
+    }
+    return out;
+}
+
 /** 该世界「当前那一段」是否算夜晚（real 看 realClock，sim 看 storyClock）：晚上、凌晨都算夜。 */
 export function isNightWorld(world: WorldProfile): boolean {
     if (world.timeMode !== 'sim' && world.realClock) return world.realClock.seg >= 2;

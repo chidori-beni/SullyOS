@@ -136,7 +136,11 @@ export function applyRelationshipDeltas(
                 world.relationships.push(rel);
             }
             // 好感范围 -100 ~ +100（可为负 = 嫌隙/敌意）
+            const before = rel.value;
             rel.value = Math.max(-100, Math.min(100, rel.value + rd.delta));
+            // 阶段 3.3：好感越过某条线 → 往待发生事件表里排一段大事件。
+            // ⛔ 锁住的边在上面就 continue 了，好感根本不动，自然越不过线 —— 白拿的，别再判一次。
+            scheduleThresholdEvents(world, rel, before, rel.value, members, round ?? 0);
             // 重大转折时，角色对这段关系的看法（label）也会变。
             // ⚠️ 改名前必须把旧名字存进 labelHistory —— 早先这里是硬覆盖，
             // 剧情改一次名，原来那个就永久没了，用户想反悔也回不去
@@ -417,10 +421,15 @@ export function buildPendingNotes(
         const withWho = others.length > 0 ? `和${others.join('、')}` : '';
         const where = p.placeName ? `在${p.placeName}` : '';
         const lastRound = p.dueUntilRound ?? p.dueRound;
-        const isFestival = p.kind === 'festival';
         if (round >= p.dueRound && round <= lastRound) {
-            if (isFestival) {
+            if (p.kind === 'festival') {
                 due.push(`今天是镇上的「${p.text}」。这一天大家都在过节，你也在这个节日里过这半天。`);
+            } else if (p.kind === 'threshold') {
+                // ⛔ 只把事摆到桌上，不规定结果。写成「今天必须告白」会把角色演崩 ——
+                // 该不该说、说不说得出口、说了之后怎样，全是角色自己的事。
+                due.push(`${p.text}——这半天，这件事到了不得不面对的时候。`
+                    + `怎么面对、面不面对得了，完全按你这个人的性格来：可以说出口，也可以又一次没说出口，`
+                    + `也可以用一件别的事把它岔开。**别为了推进剧情而勉强自己**。`);
             } else {
                 due.push(`今天你${withWho}${where}说好了：${p.text}。`);
             }
@@ -428,8 +437,10 @@ export function buildPendingNotes(
             const left = p.dueRound - round;
             // 说「还有几天」比「还有几个半天」自然得多；不足一天就说「就这两天」
             const when = left >= SEGMENTS_PER_DAY ? `还有 ${Math.floor(left / SEGMENTS_PER_DAY)} 天` : '就这两天';
-            if (isFestival) {
+            if (p.kind === 'festival') {
                 preheat.push(`${when}就是「${p.text}」。镇上已经有动静了，你也开始有点感觉——想做点什么、想约谁、或者不想过。`);
+            } else if (p.kind === 'threshold') {
+                preheat.push(`${p.text}——这件事最近一直压在你心里，还没到摊开的时候，但你知道它快了。`);
             } else {
                 preheat.push(`${when}，你${withWho}${where}约好了：${p.text}。`);
             }
@@ -480,6 +491,58 @@ export function scheduleFestivals(world: WorldProfile, round: number): void {
             });
             break;
         }
+    }
+}
+
+/**
+ * 好感越线 → 排一段大事件（阶段 3.3）。
+ *
+ * 判据是**越过**而不是「达到」：`before` 在线的这边、`after` 在线的那边才算。
+ * 否则好感在 60 上下反复抖一抖，同一条线会被反复触发。
+ *
+ * ⛔ **同一对人 + 同一条线只触发一次**（按 `source` 去重，且连已经 fired 的也算）。
+ * 恋爱线不该每次越线都重演一遍。想再来一次，用户删掉那条 pending 即可。
+ *
+ * ⛔ **锁住的关系不会走到这里** —— `applyRelationshipDeltas` 在更上游就跳过了锁住的边。
+ */
+export function scheduleThresholdEvents(
+    world: WorldProfile,
+    rel: WorldRelationship,
+    before: number,
+    after: number,
+    members: { id: string; name: string }[],
+    round: number,
+): void {
+    const thresholds = (world.thresholds || []).filter(t => t.enabled !== false);
+    if (thresholds.length === 0 || before === after) return;
+    const nameOf = (id: string) => members.find(m => m.id === id)?.name || '';
+    for (const t of thresholds) {
+        const crossed = t.direction === 'up'
+            ? (before < t.value && after >= t.value)
+            : (before > t.value && after <= t.value);
+        if (!crossed) continue;
+        const source = `th:${t.id}:${rel.fromId}->${rel.toId}`;
+        // 连 fired/cancelled 的也查：一段恋爱线不该每次越线都重演
+        if ((world.pendings || []).some(p => p.source === source)) continue;
+        const lead = t.leadRounds ?? 2;
+        if (!world.pendings) world.pendings = [];
+        world.pendings.push({
+            id: genId('wpd'),
+            kind: 'threshold',
+            // ⚠️ 只给**产生这个变化的那一方**。关系是有向的：A 对 B 的好感越了线，
+            // 不代表 B 对 A 也到了那一步 —— 两边都塞会凭空造出一段双向的默契。
+            charIds: [rel.fromId],
+            text: t.text,
+            dueRound: round + lead,
+            ...(lead > 0 ? { leadRounds: lead } : {}),
+            status: 'scheduled',
+            createdRound: round,
+            source,
+        });
+        // 顺手把对方的名字塞进文案里 —— 光说「有件事该说清楚了」角色不知道跟谁
+        const last = world.pendings[world.pendings.length - 1];
+        const other = nameOf(rel.toId);
+        if (other) last.text = `${last.text}（对方是${other}）`;
     }
 }
 

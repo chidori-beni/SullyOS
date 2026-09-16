@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { extractJson, parseCharBeat, resolvePlaceId, buildPlacesSection, worldDateOfRound, parseRolledFestivals, parseNpcScene, storyTimeLabel, buildModeRule, buildWorldGapNote, buildWorldCharTurn, buildNpcTurn, parseRolledNpcs, buildNpcRollPrompt, NARRATIVE_STYLES, narrationPersonGuide, realNowSeg, realObserveTarget, worldTimeLabel, formatRealClock, migrateWorldDaySegs, SEGMENTS_PER_DAY, worldNow, worldTzLabel, clampRealClockToNow, alignCharToWorldClock } from './prompts';
+import { extractJson, parseCharBeat, resolvePlaceId, buildPlacesSection, worldDateOfRound, parseRolledFestivals, parseRolledThresholds, GENERIC_THRESHOLDS, parseNpcScene, storyTimeLabel, buildModeRule, buildWorldGapNote, buildWorldCharTurn, buildNpcTurn, parseRolledNpcs, buildNpcRollPrompt, NARRATIVE_STYLES, narrationPersonGuide, realNowSeg, realObserveTarget, worldTimeLabel, formatRealClock, migrateWorldDaySegs, SEGMENTS_PER_DAY, worldNow, worldTzLabel, clampRealClockToNow, alignCharToWorldClock } from './prompts';
 import { applyRelationshipDeltas, shareWorldCardTo, collectSeeds, buildSummary, dropDuplicatePosts, mirrorWorldBondsToChars, collectAppointments, buildPendingNotes, settlePendings, scheduleFestivals, buildFestivalNote } from './engine';
 import { DB } from '../db';
 import { ensureThreads, applyBeatToThreads, applyNpcGroupLines, applyNpcDms, npcInboxes, dmThreadsOf, groupThreadOf, formatThreadForPrompt, dmThreadId, GROUP_THREAD_ID } from './threads';
@@ -1497,6 +1497,201 @@ describe('节日（阶段 3.2）', () => {
         it('⛔ 垃圾输入返回空数组，不崩', () => {
             expect(parseRolledFestivals('胡言乱语')).toEqual([]);
             expect(parseRolledFestivals('')).toEqual([]);
+        });
+    });
+});
+
+
+describe('好感阈值大事件（阶段 3.3）', () => {
+    const members = [{ id: 'a', name: '小满' }, { id: 'b', name: '阿岚' }];
+    const th = (over: any = {}) => ({
+        id: 't1', name: '心意压不住了', value: 60, direction: 'up' as const,
+        text: '你发现这份心意已经压不住了', ...over,
+    });
+    const mkWorld = (thresholds: any[], rel: any) => ({
+        id: 'w1', name: '小镇', storyClock: 5, thresholds, relationships: [rel],
+    } as any);
+    const beat = (delta: number) => ([{
+        charId: 'a', charName: '小满',
+        relationshipDeltas: [{ withName: '阿岚', delta }],
+    }] as any);
+
+    describe('越线检测', () => {
+        it('⭐ 涨过线时排一条大事件', () => {
+            const w = mkWorld([th()], { fromId: 'a', toId: 'b', value: 58 });
+            applyRelationshipDeltas(w, beat(4), members, 5);
+            expect(w.pendings).toHaveLength(1);
+            expect(w.pendings[0]).toMatchObject({ kind: 'threshold', charIds: ['a'], dueRound: 7, status: 'scheduled' });
+            expect(w.pendings[0].text).toContain('压不住');
+        });
+
+        it('⭐ 文案里带上对方是谁 —— 光说「有件事该说清楚了」角色不知道跟谁', () => {
+            const w = mkWorld([th()], { fromId: 'a', toId: 'b', value: 58 });
+            applyRelationshipDeltas(w, beat(4), members, 5);
+            expect(w.pendings[0].text).toContain('阿岚');
+        });
+
+        it('⛔⭐ 判据是「越过」不是「达到」—— 否则好感在线上下抖一抖会反复触发', () => {
+            // 已经在线上方，再涨不算越线
+            const w = mkWorld([th()], { fromId: 'a', toId: 'b', value: 70 });
+            applyRelationshipDeltas(w, beat(4), members, 5);
+            expect(w.pendings || []).toHaveLength(0);
+        });
+
+        it('⭐ 跌破那一档（敌对线）也能触发', () => {
+            const w = mkWorld([th({ value: -45, direction: 'down', text: '这段关系撑不住了' })],
+                { fromId: 'a', toId: 'b', value: -42 });
+            applyRelationshipDeltas(w, beat(-4), members, 5);
+            expect(w.pendings).toHaveLength(1);
+            expect(w.pendings[0].text).toContain('撑不住');
+        });
+
+        it('⛔ 方向不对不触发（好感在涨，不该触发「跌破」那条）', () => {
+            const w = mkWorld([th({ value: 60, direction: 'down' })], { fromId: 'a', toId: 'b', value: 58 });
+            applyRelationshipDeltas(w, beat(4), members, 5);
+            expect(w.pendings || []).toHaveLength(0);
+        });
+
+        it('⛔⭐ 同一对人 + 同一条线只触发一次 —— 恋爱线不该每次越线都重演', () => {
+            const w = mkWorld([th()], { fromId: 'a', toId: 'b', value: 58 });
+            applyRelationshipDeltas(w, beat(4), members, 5);           // 越过
+            w.relationships[0].value = 55;                              // 掉回来
+            applyRelationshipDeltas(w, beat(10), members, 9);           // 又越过
+            expect(w.pendings).toHaveLength(1);
+        });
+
+        it('⛔ 连已经演完 / 被取消的也算过一次', () => {
+            const w = mkWorld([th()], { fromId: 'a', toId: 'b', value: 58 });
+            applyRelationshipDeltas(w, beat(4), members, 5);
+            w.pendings[0].status = 'cancelled';
+            w.relationships[0].value = 55;
+            applyRelationshipDeltas(w, beat(10), members, 9);
+            expect(w.pendings).toHaveLength(1);
+        });
+
+        it('⛔⭐ 锁住的关系永不触发 —— 好感根本不动，白拿的保护（2.2）', () => {
+            const w = mkWorld([th()], { fromId: 'a', toId: 'b', value: 58, locked: true });
+            applyRelationshipDeltas(w, beat(40), members, 5);
+            expect(w.relationships[0].value).toBe(58);
+            expect(w.pendings || []).toHaveLength(0);
+        });
+
+        it('⛔ 关掉的那条不触发', () => {
+            const w = mkWorld([th({ enabled: false })], { fromId: 'a', toId: 'b', value: 58 });
+            applyRelationshipDeltas(w, beat(4), members, 5);
+            expect(w.pendings || []).toHaveLength(0);
+        });
+
+        it('⛔ 没配转折点的世界什么都不会触发（旧世界零变化）', () => {
+            const w = { id: 'w', name: 'x', relationships: [{ fromId: 'a', toId: 'b', value: 58 }] } as any;
+            applyRelationshipDeltas(w, beat(40), members, 5);
+            expect(w.pendings).toBeUndefined();
+        });
+
+        it('⛔⭐ 只给产生变化的那一方 —— 关系是有向的，两边都塞会凭空造出双向默契', () => {
+            const w = mkWorld([th()], { fromId: 'a', toId: 'b', value: 58 });
+            applyRelationshipDeltas(w, beat(4), members, 5);
+            expect(w.pendings[0].charIds).toEqual(['a']);
+            expect(w.pendings[0].charIds).not.toContain('b');
+        });
+
+        it('A→B 和 B→A 各算各的（两条独立的边）', () => {
+            const w = {
+                id: 'w1', name: '小镇', storyClock: 5, thresholds: [th()],
+                relationships: [
+                    { fromId: 'a', toId: 'b', value: 58 },
+                    { fromId: 'b', toId: 'a', value: 58 },
+                ],
+            } as any;
+            applyRelationshipDeltas(w, [
+                { charId: 'a', charName: '小满', relationshipDeltas: [{ withName: '阿岚', delta: 4 }] },
+                { charId: 'b', charName: '阿岚', relationshipDeltas: [{ withName: '小满', delta: 4 }] },
+            ] as any, members, 5);
+            expect(w.pendings).toHaveLength(2);
+            expect(w.pendings.map((p: any) => p.charIds[0]).sort()).toEqual(['a', 'b']);
+        });
+    });
+
+    describe('注入措辞', () => {
+        const pend = (over: any = {}) => ({
+            id: 'p1', kind: 'threshold', charIds: ['a'], text: '你发现这份心意已经压不住了（对方是阿岚）',
+            dueRound: 7, leadRounds: 2, status: 'scheduled', createdRound: 5, ...over,
+        });
+        const w = (p: any[]) => ({ id: 'w', name: 'x', relationships: [], storyClock: 5, pendings: p } as any);
+
+        it('⭐⛔ 只把事摆到桌上，不规定结果 —— 「今天必须告白」会把角色演崩', () => {
+            const notes = buildPendingNotes(w([pend()]), 'a', 7, members);
+            expect(notes.due).toHaveLength(1);
+            expect(notes.due[0]).toContain('不得不面对');
+            expect(notes.due[0]).toContain('别为了推进剧情而勉强自己');
+            // 措辞里明确留了「没说出口」这条路
+            expect(notes.due[0]).toContain('又一次没说出口');
+        });
+
+        it('⭐ 预热期是「压在心里还没到摊开的时候」，不是提前演', () => {
+            const notes = buildPendingNotes(w([pend()]), 'a', 6, members);
+            expect(notes.due).toHaveLength(0);
+            expect(notes.preheat[0]).toContain('还没到摊开的时候');
+        });
+
+        it('⛔ 不相干的人收不到', () => {
+            expect(buildPendingNotes(w([pend()]), 'b', 7, members).due).toHaveLength(0);
+        });
+
+        it('⛔ 不会混进喂给世界引擎的公共场景 —— 这是一个人心里的事', () => {
+            expect(buildFestivalNote(w([pend()]), 7)).toBe('');
+        });
+    });
+
+    describe('parseRolledThresholds', () => {
+        it('收下合法的', () => {
+            const raw = JSON.stringify({ thresholds: [{ name: 'A', value: 60, direction: 'up', text: '你……' }] });
+            expect(parseRolledThresholds(raw)).toEqual([{ name: 'A', value: 60, direction: 'up', text: '你……' }]);
+        });
+
+        it('⛔ 数值非法整条丢掉 —— 越线判据全靠这个数', () => {
+            const raw = JSON.stringify({ thresholds: [
+                { name: 'A', value: 200, direction: 'up', text: 'x' },
+                { name: 'B', value: 'abc', direction: 'up', text: 'x' },
+                { name: 'C', value: -50, direction: 'down', text: 'x' },
+            ] });
+            expect(parseRolledThresholds(raw).map(t => t.name)).toEqual(['C']);
+        });
+
+        it('direction 只认 down，其余一律当 up', () => {
+            const raw = JSON.stringify({ thresholds: [{ name: 'A', value: 1, direction: '乱写', text: 'x' }] });
+            expect(parseRolledThresholds(raw)[0].direction).toBe('up');
+        });
+
+        it('⛔ 没有 text 的不收 —— 光有个名字注入不进去', () => {
+            expect(parseRolledThresholds(JSON.stringify({ thresholds: [{ name: 'A', value: 1 }] }))).toHaveLength(0);
+        });
+
+        it('⛔ 垃圾输入返回空数组，不崩', () => {
+            expect(parseRolledThresholds('胡言乱语')).toEqual([]);
+        });
+    });
+
+    describe('GENERIC_THRESHOLDS —— 点了才有的通用三条', () => {
+        it('三条里有涨有跌，不是只有恋爱线', () => {
+            expect(GENERIC_THRESHOLDS.some(t => t.direction === 'up')).toBe(true);
+            expect(GENERIC_THRESHOLDS.some(t => t.direction === 'down')).toBe(true);
+        });
+
+        it('⛔⭐ 措辞是「该发生的事」而不是结局 —— 不替角色做决定', () => {
+            for (const t of GENERIC_THRESHOLDS) {
+                expect(t.text).toContain('你');
+                for (const forbidden of ['告白了', '在一起了', '绝交了', '分手了']) {
+                    expect(t.text).not.toContain(forbidden);
+                }
+            }
+        });
+
+        it('数值都在合法范围内', () => {
+            for (const t of GENERIC_THRESHOLDS) {
+                expect(t.value).toBeGreaterThanOrEqual(-100);
+                expect(t.value).toBeLessThanOrEqual(100);
+            }
         });
     });
 });

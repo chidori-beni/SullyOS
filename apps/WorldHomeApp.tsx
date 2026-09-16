@@ -24,7 +24,7 @@ import { DB } from '../utils/db';
 import { getChibi } from '../utils/vrWorld/chibi';
 import { WorldScheduler, toTickEntries } from '../utils/worldHome/scheduler';
 import { isWorldRunning, injectWorldCard, shareWorldCardTo } from '../utils/worldHome/engine';
-import { worldTimeLabel, worldTzLabel, isNightWorld, houseOf, NARRATIVE_STYLES, buildNpcRollPrompt, parseRolledNpcs, buildFestivalRollPrompt, parseRolledFestivals, realObserveTarget, clampRealClockToNow, migrateWorldDaySegs, SEGMENTS_PER_DAY } from '../utils/worldHome/prompts';
+import { worldTimeLabel, worldTzLabel, isNightWorld, houseOf, NARRATIVE_STYLES, buildNpcRollPrompt, parseRolledNpcs, buildFestivalRollPrompt, parseRolledFestivals, buildThresholdRollPrompt, parseRolledThresholds, GENERIC_THRESHOLDS, realObserveTarget, clampRealClockToNow, migrateWorldDaySegs, SEGMENTS_PER_DAY } from '../utils/worldHome/prompts';
 import { COMMON_TIMEZONES } from '../utils/timezone';
 import { SIM_CHAPTER_DAYS, SIM_CHAPTER_CLOCKS } from '../utils/worldHome/chapters';
 import { dmThreadsOf, groupThreadOf } from '../utils/worldHome/threads';
@@ -665,6 +665,48 @@ const WorldEditor: React.FC<{
         }
     };
 
+    // ── 阶段 3.3：好感阈值大事件 ─────────────────────────────
+    const [rollingTh, setRollingTh] = useState(false);
+    const rollThresholds = async () => {
+        const api = w.api?.baseUrl ? w.api : apiConfig;
+        if (!api?.baseUrl) { addToast('还没有可用的 API（先在设置里配一个，或给这个世界选个预设）', 'error'); return; }
+        setRollingTh(true);
+        try {
+            const baseUrl = api.baseUrl.replace(/\/+$/, '');
+            const data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${api.apiKey || 'sk-none'}` },
+                body: JSON.stringify({
+                    model: api.model,
+                    messages: [{ role: 'user', content: buildThresholdRollPrompt({
+                        worldName: w.name || '这个世界',
+                        worldview: w.worldview,
+                        members: members.map(m => ({ name: m.name, persona: (m.description || m.systemPrompt || '').replace(/\s+/g, ' ').trim().slice(0, 200) })),
+                        count: 4,
+                        existingNames: (w.thresholds || []).map(t => t.name).filter(Boolean),
+                    }) }],
+                    temperature: 0.95, stream: false,
+                }),
+            }, 2, 0, { appName: '家园', purpose: `roll 转折点 · ${w.name || '新世界'}` });
+            const rolled = parseRolledThresholds(data.choices?.[0]?.message?.content || '', (w.thresholds || []).map(t => t.name));
+            if (rolled.length === 0) { addToast('这次没 roll 出新的，再试一次？', 'error'); return; }
+            upd({ thresholds: [...(w.thresholds || []), ...rolled.map(t => ({ id: genId('wt'), ...t }))] });
+            addToast(`编出 ${rolled.length} 条转折点，可以再改`, 'success');
+        } catch {
+            addToast('roll 失败了，检查下 API', 'error');
+        } finally {
+            setRollingTh(false);
+        }
+    };
+    /** 插入一套通用的 —— 注意这是**点了才有**，不是写死的默认值。 */
+    const addGenericThresholds = () => {
+        const have = new Set((w.thresholds || []).map(t => t.name));
+        const fresh = GENERIC_THRESHOLDS.filter(t => !have.has(t.name)).map(t => ({ id: genId('wt'), ...t }));
+        if (fresh.length === 0) { addToast('这三条已经在了', 'info'); return; }
+        upd({ thresholds: [...(w.thresholds || []), ...fresh] });
+        addToast(`加了 ${fresh.length} 条，每条都能改`, 'success');
+    };
+
     // 自定义文风收藏
     const [savedStyles, setSavedStyles] = useState<string[]>(loadSavedStyles);
     const saveCurrentStyle = () => {
@@ -1059,6 +1101,61 @@ const WorldEditor: React.FC<{
                     <div className="text-[11px] text-stone-400">
                         还没有。点「<b className="text-stone-500">AI 编一套</b>」让它按你的世界观编几个——
                         不列也能玩，只是这个世界里没有需要期待的日子。
+                    </div>
+                )}
+            </div>
+
+            {/* ── 阶段 3.3：好感阈值大事件 ────────────────────────────
+                好感越过某条线 → 往「待发生事件」表里排一段该发生的事。
+                ⛔ 锁住的关系（2.2）好感根本不动，自然越不过线 —— 白拿的保护。 */}
+            <div className={sectionCls}>
+                <div className="flex items-center justify-between gap-2">
+                    <div className={labelCls}>关系转折点</div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                        <button onClick={rollThresholds} disabled={rollingTh}
+                            className="text-[11px] px-2.5 py-1 rounded-lg bg-violet-100 text-violet-700 font-bold flex items-center gap-1 border border-violet-200 disabled:opacity-50 active:scale-95 transition-transform">
+                            <Sparkle size={12} weight="fill" />{rollingTh ? '编中…' : 'AI 编一套'}</button>
+                        <button onClick={addGenericThresholds}
+                            className="text-[11px] px-2.5 py-1 rounded-lg bg-stone-100 text-stone-600 font-bold border border-stone-200 active:scale-95 transition-transform">用通用的三条</button>
+                    </div>
+                </div>
+                <div className="text-[10.5px] text-stone-400 leading-relaxed">
+                    两个人的好感<b className="text-stone-500">越过某条线</b>时，这件事会被摆到那个角色面前，让 ta 不得不面对。
+                    <br />⛔ <b className="text-stone-500">只摆事，不定结局</b>——该不该说、说不说得出口，全看角色自己的性格。
+                    <br />排进「接下来要发生的事」，<b className="text-stone-500">你看得见，也能提前点掉</b>。
+                    锁住的那些关系好感不会动，自然也不会触发。
+                    <br />不列也能玩，那就什么都不会触发。
+                </div>
+                {(w.thresholds || []).map(t => (
+                    <div key={t.id} className="rounded-xl border border-stone-200 bg-white p-2.5 space-y-2">
+                        <div className="flex items-center gap-2">
+                            <input className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-stone-50 border border-stone-100 text-[12px]" value={t.name}
+                                placeholder="转折点的名字"
+                                onChange={e => upd({ thresholds: (w.thresholds || []).map(x => x.id === t.id ? { ...x, name: e.target.value } : x) })} />
+                            <button
+                                onClick={() => upd({ thresholds: (w.thresholds || []).map(x => x.id === t.id ? { ...x, direction: x.direction === 'up' ? 'down' as const : 'up' as const } : x) })}
+                                title={t.direction === 'up' ? '好感涨过这条线时触发' : '好感跌破这条线时触发'}
+                                className={`shrink-0 text-[11px] font-bold px-2 py-1 rounded-lg border ${t.direction === 'up' ? 'bg-rose-50 text-rose-500 border-rose-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                                {t.direction === 'up' ? '涨过' : '跌破'}
+                            </button>
+                            <input type="number" min={-100} max={100} className="w-14 px-1.5 py-1 rounded-lg bg-stone-50 border border-stone-100 text-[12px] text-center" value={t.value}
+                                onChange={e => upd({ thresholds: (w.thresholds || []).map(x => x.id === t.id ? { ...x, value: Math.max(-100, Math.min(100, Number(e.target.value) || 0)) } : x) })} />
+                            <button onClick={() => upd({ thresholds: (w.thresholds || []).filter(x => x.id !== t.id) })} className="p-1 text-stone-400"><X size={14} /></button>
+                        </div>
+                        <textarea rows={2} className="w-full px-2 py-1 rounded-lg bg-stone-50 border border-stone-100 text-[11px] resize-none" value={t.text}
+                            placeholder="用「你……」写给角色本人：ta 此刻不得不面对的处境。别写成结局（「他告白了」是替角色做决定）"
+                            onChange={e => upd({ thresholds: (w.thresholds || []).map(x => x.id === t.id ? { ...x, text: e.target.value } : x) })} />
+                        <button
+                            onClick={() => upd({ thresholds: (w.thresholds || []).map(x => x.id === t.id ? { ...x, enabled: x.enabled === false } : x) })}
+                            className={`text-[10.5px] px-2 py-0.5 rounded-full border ${t.enabled === false ? 'bg-white border-stone-200 text-stone-400' : 'bg-amber-500 border-amber-500 text-white'}`}>
+                            {t.enabled === false ? '先不用这条' : '启用'}
+                        </button>
+                    </div>
+                ))}
+                {(w.thresholds || []).length === 0 && (
+                    <div className="text-[11px] text-stone-400">
+                        还没有，所以现在<b className="text-stone-500">什么都不会自动触发</b>。
+                        想要星露谷那种恋爱线 / 敌对线，点「AI 编一套」或「用通用的三条」起个头。
                     </div>
                 )}
             </div>

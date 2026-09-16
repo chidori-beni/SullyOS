@@ -1947,7 +1947,7 @@ export interface WorldSeed {
  */
 export interface WorldPending {
     id: string;
-    /** 哪一类。`appointment` = 角色之间约好的事；`festival`/`threshold` 留给后续批次 */
+    /** 哪一类。`appointment` 角色约的 / `festival` 全镇的节日 / `threshold` 好感越线触发的大事件 */
     kind: 'appointment' | 'festival' | 'threshold';
     /** 涉及谁（CharacterProfile.id）。**空数组 = 全镇**（节日就是这种） */
     charIds: string[];
@@ -2011,6 +2011,45 @@ export interface WorldFestival {
 }
 
 /**
+ * **好感阈值大事件**（阶段 3.3）：两个人的好感越过某条线时，排一段「该发生的事」。
+ *
+ * 星露谷式的恋爱线 / 敌对线。用的是同一张 `pendings` 表 ——
+ * 和节日、约定的唯一区别只是「什么时候到点」怎么算出来的。
+ *
+ * ## ⛔ 为什么它排期而不是当场发生
+ *
+ * 用户的铁律是「**别把我的角色写崩**」，而一段恋爱线/绝交戏实质上是在重新定义关系。
+ * 但做成「每次都要点头」又会变成烦人的弹窗，且和「星露谷式自动触发」的乐趣冲突。
+ *
+ * 所以走底座的既有形状：**排进表 → 用户在「接下来要发生的事」面板里看得见 → 可以取消**。
+ * 加上预热（默认 2 轮），用户有时间发现并拦下来。
+ * **事前可见 ＋ 可取消 = 事实上的「你点头才算」，但默认不打断。**
+ *
+ * ## ⛔ 锁住的关系永不触发
+ *
+ * 关系锁（2.2）拦在 `applyRelationshipDeltas` 的更上游 —— 锁住的边好感根本不动，
+ * 自然也越不过线。**这是白拿的，别再写第二道判断。**
+ */
+export interface WorldThreshold {
+    id: string;
+    /** 显示用的名字（「心意挑明的那天」「彻底闹翻」） */
+    name: string;
+    /** 好感越过这条线时触发。-100 ~ 100 */
+    value: number;
+    /** `up` = 往上越过（关系变好）；`down` = 往下越过（关系变坏） */
+    direction: 'up' | 'down';
+    /**
+     * 要发生什么。**写成「该发生的事」而不是「结局」** ——
+     * 具体怎么演、演不演得成，交给角色自己；系统只负责把这件事摆到桌上。
+     */
+    text: string;
+    /** 提前几轮预热。缺省 2 —— 比节日短，因为这是两个人之间的事，不需要全镇铺垫 */
+    leadRounds?: number;
+    /** 关掉但保留。缺省视为开启 */
+    enabled?: boolean;
+}
+
+/**
  * 用户对某角色"内心冲动"的决策/留言（想辞职？想告白？）。
  * 下一轮演绎时以"内心的声音"注入该角色（light 模式下会联想到 user），注入后消费掉。
  */
@@ -2064,6 +2103,8 @@ export interface WorldProfile {
     pendings?: WorldPending[];
     /** 节日律法（阶段 3.2）。缺省/空 = 这个世界不过节，行为与改造前一致 */
     festivals?: WorldFestival[];
+    /** 好感阈值大事件（阶段 3.3）。缺省/空 = 不触发任何事，行为与改造前一致 */
+    thresholds?: WorldThreshold[];
     relationships: WorldRelationship[];
     /** 世界内消息线程（私聊 + 世界群聊），随演绎累积，每线程截留最近若干条 */
     threads?: WorldThread[];
