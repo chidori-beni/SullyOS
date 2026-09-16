@@ -10,6 +10,7 @@ import {
     clearXinshengHistory,
     deleteXinshengEntry,
     listXinshengPresets,
+    toggleXinshengPresetPinned,
     readXinshengHistory,
     sortRoundIds,
     toggleXinshengFavorite,
@@ -128,6 +129,9 @@ export const XinshengCardModal: React.FC<Props> = ({
     const [presetSaving, setPresetSaving] = useState(false);
     const [presetActionError, setPresetActionError] = useState<string | null>(null);
     const [presetNotice, setPresetNotice] = useState<string | null>(null);
+    // 预设攒到几十个时，这个选择器一行一个要滑很久：加搜索 + 每行两个的紧凑格子，
+    // 置顶的（预设库里点过 ★ 的）由 listXinshengPresets 保证排在最前面。
+    const [presetQuery, setPresetQuery] = useState('');
     const touchStart = useRef<{ x: number; y: number } | null>(null);
     const presetSavingRef = useRef(false);
 
@@ -171,6 +175,21 @@ export const XinshengCardModal: React.FC<Props> = ({
         void loadPresets();
     }, [isOpen, loadPresets]);
 
+    const filteredPresets = useMemo(() => {
+        const q = presetQuery.trim().toLowerCase();
+        if (!q) return presets;
+        return presets.filter(p => p.name.toLowerCase().includes(q));
+    }, [presets, presetQuery]);
+
+    /** 置顶只改预设库里的排序标记，不碰这条历史的显示预设。 */
+    const togglePin = useCallback(async (p: XinshengPreset) => {
+        try {
+            setPresets(await toggleXinshengPresetPinned(p.id));
+        } catch {
+            setPresetActionError('置顶失败，请再试一次。');
+        }
+    }, []);
+
     // 系统变量（日期/待办/纪念日/消息数）打开时算一次，不进聊天热路径
     useEffect(() => {
         if (!isOpen || !char?.id) return;
@@ -201,6 +220,7 @@ export const XinshengCardModal: React.FC<Props> = ({
             setPresetTargetRoundId(null);
             setPresetActionError(null);
             setPresetNotice(null);
+            setPresetQuery('');
         }
     }, [isOpen]);
     // 切筛选后旧的 index 可能越界
@@ -244,6 +264,7 @@ export const XinshengCardModal: React.FC<Props> = ({
         if (!currentId) return;
         setPresetTargetRoundId(currentId);
         setPresetActionError(null);
+        setPresetQuery('');
         setShowPresetPicker(true);
     };
 
@@ -588,28 +609,47 @@ export const XinshengCardModal: React.FC<Props> = ({
                                     预设库还是空的，可以先去「自定义 → 预设库」导入心声美化。
                                 </div>
                             )}
-                            {presets.map(p => {
-                                const snapshot = toEntryPreset(p);
-                                const active = sameEntryPreset(entryPreset, snapshot);
-                                return (
-                                    <button
-                                        key={p.id}
-                                        onClick={() => void applyPreset(snapshot)}
-                                        disabled={presetSaving}
-                                        className={`w-full px-4 py-3 rounded-2xl border text-left disabled:opacity-50 ${active ? 'border-indigo-300 bg-indigo-50' : 'border-slate-200 bg-slate-50'}`}
-                                    >
-                                        <div className="flex items-center gap-2">
-                                            <span className="flex-1 min-w-0 truncate text-[13px] font-semibold text-slate-700">{p.name}</span>
-                                            <span className={`shrink-0 text-[10px] ${active ? 'text-indigo-500' : 'text-slate-400'}`}>
-                                                {active ? '当前' : p.displayMode === 'layout' ? '布局' : '默认卡'}
-                                            </span>
+                            {presets.length > 6 && (
+                                <input
+                                    type="text"
+                                    value={presetQuery}
+                                    onChange={e => setPresetQuery(e.target.value)}
+                                    placeholder="搜索预设名字"
+                                    className="w-full px-3 py-2 rounded-2xl bg-slate-50 border border-slate-200 text-[12px] focus:outline-none focus:border-indigo-300"
+                                />
+                            )}
+                            {presets.length > 0 && filteredPresets.length === 0 && (
+                                <div className="py-4 text-center text-[12px] text-slate-400">没有名字含「{presetQuery.trim()}」的预设</div>
+                            )}
+                            <div className="grid grid-cols-2 gap-1.5">
+                                {filteredPresets.map(p => {
+                                    const snapshot = toEntryPreset(p);
+                                    const active = sameEntryPreset(entryPreset, snapshot);
+                                    return (
+                                        <div
+                                            key={p.id}
+                                            className={`flex items-center gap-0.5 pl-0.5 pr-2 rounded-2xl border ${active ? 'border-indigo-300 bg-indigo-50' : p.pinned ? 'border-amber-200 bg-amber-50' : 'border-slate-200 bg-slate-50'}`}
+                                        >
+                                            <button
+                                                onClick={() => void togglePin(p)}
+                                                disabled={presetSaving}
+                                                className={`shrink-0 w-7 h-7 rounded-full text-[13px] leading-none disabled:opacity-50 active:scale-90 transition-transform ${p.pinned ? 'text-amber-400' : 'text-slate-300'}`}
+                                                aria-label={p.pinned ? '取消置顶' : '置顶'}
+                                            >{p.pinned ? '★' : '☆'}</button>
+                                            <button
+                                                onClick={() => void applyPreset(snapshot)}
+                                                disabled={presetSaving}
+                                                className="flex-1 min-w-0 py-2 text-left disabled:opacity-50"
+                                            >
+                                                <div className="truncate text-[12px] text-slate-700">{p.name}</div>
+                                                <div className={`text-[10px] ${active ? 'text-indigo-500' : 'text-slate-400'}`}>
+                                                    {active ? '当前' : p.displayMode === 'layout' ? '布局' : '默认卡'}
+                                                </div>
+                                            </button>
                                         </div>
-                                        <div className="mt-1 text-[11px] text-slate-400">
-                                            {p.displayMode === 'layout' ? '布局模板 + CSS' : 'Sully 默认卡'}
-                                        </div>
-                                    </button>
-                                );
-                            })}
+                                    );
+                                })}
+                            </div>
                         </div>
                     </div>
                 </div>

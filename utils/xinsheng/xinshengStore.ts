@@ -186,6 +186,8 @@ export interface XinshengPreset {
     aiVisibleFields: string;
     createdAt: number;
     updatedAt?: number;
+    /** 置顶。预设攒到几十个之后，常用的那几个要能一直待在最上面。 */
+    pinned?: boolean;
 }
 
 /** 糯叽机导出文件的信封。导入时按这个校验。 */
@@ -215,10 +217,23 @@ export const normalizePreset = (raw: any, index = 0): XinshengPreset => {
         aiVisibleFields: typeof raw?.aiVisibleFields === 'string' ? raw.aiVisibleFields : 'innerVoice',
         createdAt: typeof raw?.createdAt === 'number' ? raw.createdAt : Date.now(),
         updatedAt: typeof raw?.updatedAt === 'number' ? raw.updatedAt : undefined,
+        pinned: raw?.pinned === true,
     };
 };
 
-export const listXinshengPresets = async (): Promise<XinshengPreset[]> => {
+/**
+ * 置顶的排在前面，两组内部都保持原来的插入顺序（用户说过「旧预设也经常用」，
+ * 所以不按时间倒序，只把置顶的那几个抬到最上面）。`sort` 在现代引擎里是稳定的。
+ */
+export const sortXinshengPresets = (list: XinshengPreset[]): XinshengPreset[] =>
+    [...list].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+
+/**
+ * 库里**原始顺序**（= 插入顺序）的预设。写回一律基于这一份：
+ * 存储里永远保持插入顺序，置顶只在读出来给界面时排一次。
+ * 不这么做的话，取消置顶后那个预设会留在它被顶上去的位置，回不到原来的地方。
+ */
+const readRawPresets = async (): Promise<XinshengPreset[]> => {
     try {
         const raw = await DB.getAssetRaw(PRESETS_KEY);
         if (!Array.isArray(raw)) return [];
@@ -231,6 +246,10 @@ export const listXinshengPresets = async (): Promise<XinshengPreset[]> => {
     }
 };
 
+/** 给界面用：置顶的排在前面，其余保持插入顺序。 */
+export const listXinshengPresets = async (): Promise<XinshengPreset[]> =>
+    sortXinshengPresets(await readRawPresets());
+
 const savePresets = async (list: XinshengPreset[]): Promise<void> => {
     await DB.saveAssetRaw(PRESETS_KEY, list);
 };
@@ -240,7 +259,7 @@ export const saveXinshengPreset = async (
     body: Omit<XinshengPreset, 'id' | 'name' | 'createdAt' | 'updatedAt'>,
 ): Promise<string | null> => {
     try {
-        const list = await listXinshengPresets();
+        const list = await readRawPresets();
         const preset = normalizePreset({ ...body, name, createdAt: Date.now() }, list.length);
         await savePresets([...list, preset]);
         return preset.id;
@@ -256,7 +275,7 @@ export const updateXinshengPreset = async (
     body: Omit<XinshengPreset, 'id' | 'name' | 'createdAt' | 'updatedAt'>,
 ): Promise<boolean> => {
     try {
-        const list = await listXinshengPresets();
+        const list = await readRawPresets();
         const idx = list.findIndex(p => p.id === id);
         if (idx < 0) return false;
         list[idx] = normalizePreset({ ...list[idx], ...body, id, name, updatedAt: Date.now() }, idx);
@@ -268,10 +287,28 @@ export const updateXinshengPreset = async (
     }
 };
 
+/**
+ * 置顶 / 取消置顶。返回排好序的新列表，调用方直接拿去 setState。
+ * 整取整存和别的预设操作一致；置顶只是排序用的标记，不进导出文件。
+ */
+export const toggleXinshengPresetPinned = async (id: string): Promise<XinshengPreset[]> => {
+    try {
+        const list = await readRawPresets();
+        const idx = list.findIndex(p => p.id === id);
+        if (idx < 0) return sortXinshengPresets(list);
+        list[idx] = { ...list[idx], pinned: !list[idx].pinned };
+        await savePresets(list);
+        return sortXinshengPresets(list);
+    } catch (e) {
+        console.warn('[xinsheng] 置顶预设失败:', e);
+        return listXinshengPresets();
+    }
+};
+
 export const deleteXinshengPreset = async (id: string): Promise<XinshengPreset[]> => {
-    const list = (await listXinshengPresets()).filter(p => p.id !== id);
+    const list = (await readRawPresets()).filter(p => p.id !== id);
     await savePresets(list);
-    return list;
+    return sortXinshengPresets(list);
 };
 
 /**
@@ -293,7 +330,7 @@ export const importXinshengPresets = async (
         return { count: normalized.length, saved: normalized };
     }
 
-    const existing = await listXinshengPresets();
+    const existing = await readRawPresets();
     const usedIds = new Set(existing.map(p => p.id));
     const usedNames = new Set(existing.map(p => p.name));
     const merged = [...existing];

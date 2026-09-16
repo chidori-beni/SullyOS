@@ -15,6 +15,7 @@ const {
     updateXinshengEntryPreset,
     listXinshengPresets, saveXinshengPreset, updateXinshengPreset, deleteXinshengPreset,
     importXinshengPresets, buildPresetExportFile, parsePresetImportFile, normalizePreset,
+    toggleXinshengPresetPinned, sortXinshengPresets,
     isPresetRandomEnabled, setPresetRandomEnabled, pickRandomPreset,
 } = await import('./xinshengStore');
 
@@ -223,6 +224,54 @@ describe('预设', () => {
         await saveXinshengPreset('旧的', { customCss: '', customPrompt: '', layout: '', displayMode: 'planner', aiVisibleFields: '' });
         await importXinshengPresets([{ name: '新的' }], 'replace');
         expect((await listXinshengPresets()).map(p => p.name)).toEqual(['新的']);
+    });
+});
+
+describe('置顶预设', () => {
+    const add = (name: string) => saveXinshengPreset(name, {
+        customCss: '', customPrompt: '', layout: '', displayMode: 'planner', aiVisibleFields: 'innerVoice',
+    });
+
+    it('置顶的排到最前面，两组内部保持原来的插入顺序', async () => {
+        await add('A'); const b = await add('B'); await add('C'); const d = await add('D');
+        await toggleXinshengPresetPinned(d!);
+        await toggleXinshengPresetPinned(b!);
+        expect((await listXinshengPresets()).map(p => p.name)).toEqual(['B', 'D', 'A', 'C']);
+    });
+
+    it('再点一次取消置顶，回到原来的位置', async () => {
+        await add('A'); const b = await add('B'); await add('C');
+        await toggleXinshengPresetPinned(b!);
+        expect((await listXinshengPresets()).map(p => p.name)).toEqual(['B', 'A', 'C']);
+        await toggleXinshengPresetPinned(b!);
+        expect((await listXinshengPresets()).map(p => p.name)).toEqual(['A', 'B', 'C']);
+    });
+
+    it('覆盖（updateXinshengPreset）不会把置顶弄丢', async () => {
+        const id = await add('A');
+        await toggleXinshengPresetPinned(id!);
+        await updateXinshengPreset(id!, 'A', {
+            customCss: '.xt-root{}', customPrompt: '', layout: '@header', displayMode: 'layout', aiVisibleFields: 'innerVoice',
+        });
+        expect((await listXinshengPresets())[0].pinned).toBe(true);
+    });
+
+    it('置顶不进导出文件（别人导入时不该跟着被钉住）', async () => {
+        const id = await add('A');
+        await toggleXinshengPresetPinned(id!);
+        const file = JSON.parse(buildPresetExportFile((await listXinshengPresets())[0]));
+        expect(file.preset.pinned).toBeUndefined();
+    });
+
+    it('id 不存在时原样返回，不炸', async () => {
+        await add('A');
+        expect((await toggleXinshengPresetPinned('不存在')).map(p => p.name)).toEqual(['A']);
+    });
+
+    it('sortXinshengPresets 不改原数组', () => {
+        const list = [normalizePreset({ name: 'A' }), normalizePreset({ name: 'B', pinned: true })];
+        expect(sortXinshengPresets(list).map(p => p.name)).toEqual(['B', 'A']);
+        expect(list.map(p => p.name)).toEqual(['A', 'B']);
     });
 });
 

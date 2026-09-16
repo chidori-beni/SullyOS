@@ -21,6 +21,7 @@ import {
     parsePresetImportFile,
     saveXinshengPreset,
     setPresetRandomEnabled,
+    toggleXinshengPresetPinned,
     updateXinshengPreset,
     type XinshengPreset,
 } from '../../../utils/xinsheng/xinshengStore';
@@ -80,6 +81,10 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
     const [presets, setPresets] = useState<XinshengPreset[]>([]);
     const [randomOn, setRandomOn] = useState(false);
     const [presetName, setPresetName] = useState('');
+    // 预设库的两个精修：搜索框 + 每行两个的紧凑格子。几十个预设时一行一个要拉很久，
+    // 又不能改排序（旧预设照样常用），所以给「找得到」和「置顶」两条快捷路径。
+    const [presetQuery, setPresetQuery] = useState('');
+    const [openPresetId, setOpenPresetId] = useState<string | null>(null);
     const fileRef = useRef<HTMLInputElement>(null);
 
     const toast = useCallback((msg: string, kind: 'success' | 'error' | 'info' = 'info') => {
@@ -92,6 +97,8 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
         if (!isOpen) return;
         setValue(readSettings(char));
         setTab('general');
+        setPresetQuery('');
+        setOpenPresetId(null);
         listXinshengPresets().then(setPresets).catch(() => {});
         isPresetRandomEnabled().then(setRandomOn).catch(() => {});
     }, [isOpen, char]);
@@ -155,6 +162,75 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
             toast('导入失败：文件不是合法 JSON', 'error');
         }
     };
+
+    const filteredPresets = useMemo(() => {
+        const q = presetQuery.trim().toLowerCase();
+        if (!q) return presets;
+        return presets.filter(p => p.name.toLowerCase().includes(q));
+    }, [presets, presetQuery]);
+
+    // listXinshengPresets 已经把置顶的排在前面了，这里只是拆成两块好加小标题
+    const pinnedPresets = useMemo(() => filteredPresets.filter(p => p.pinned), [filteredPresets]);
+    const otherPresets = useMemo(() => filteredPresets.filter(p => !p.pinned), [filteredPresets]);
+
+    const togglePin = async (p: XinshengPreset) => {
+        setPresets(await toggleXinshengPresetPinned(p.id));
+        toast(p.pinned ? `已取消置顶「${p.name}」` : `已置顶「${p.name}」`, 'success');
+    };
+
+    const renderPresetGrid = (list: XinshengPreset[]) => (
+        <div className="grid grid-cols-2 gap-1.5">
+            {list.map(p => (p.id === openPresetId ? (
+                <div key={p.id} className="col-span-2 px-3 py-2.5 rounded-2xl bg-indigo-50 border border-indigo-200">
+                    <div className="flex items-center gap-1.5">
+                        <button
+                            onClick={() => void togglePin(p)}
+                            className={`shrink-0 w-7 h-7 rounded-full text-[13px] leading-none active:scale-90 transition-transform ${p.pinned ? 'text-amber-400' : 'text-slate-300'}`}
+                            aria-label={p.pinned ? '取消置顶' : '置顶'}
+                        >{p.pinned ? '★' : '☆'}</button>
+                        <span className="flex-1 min-w-0 truncate text-[13px] font-semibold text-slate-700">{p.name}</span>
+                        <span className="shrink-0 text-[10px] text-slate-400">{p.displayMode === 'layout' ? '布局' : '默认卡'}</span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                        <button onClick={() => loadPreset(p)} className="px-2.5 py-1 rounded-full bg-indigo-500 text-white text-[11px]">载入</button>
+                        <button
+                            onClick={async () => {
+                                await updateXinshengPreset(p.id, p.name, body);
+                                setPresets(await listXinshengPresets());
+                                toast(`已用当前设置覆盖「${p.name}」`, 'success');
+                            }}
+                            className="px-2.5 py-1 rounded-full bg-white text-slate-600 text-[11px] border border-slate-200"
+                        >覆盖</button>
+                        <button onClick={() => exportPreset(p)} className="px-2.5 py-1 rounded-full bg-white text-slate-600 text-[11px] border border-slate-200">导出</button>
+                        <button
+                            onClick={async () => {
+                                setPresets(await deleteXinshengPreset(p.id));
+                                setOpenPresetId(null);
+                                toast('已删除', 'success');
+                            }}
+                            className="px-2.5 py-1 rounded-full bg-white text-rose-500 text-[11px] border border-slate-200"
+                        >删除</button>
+                        <button onClick={() => setOpenPresetId(null)} className="px-2.5 py-1 rounded-full bg-white text-slate-400 text-[11px] border border-slate-200">收起</button>
+                    </div>
+                </div>
+            ) : (
+                <div
+                    key={p.id}
+                    className={`flex items-center gap-0.5 pl-0.5 pr-2 rounded-2xl border ${p.pinned ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-transparent'}`}
+                >
+                    <button
+                        onClick={() => void togglePin(p)}
+                        className={`shrink-0 w-7 h-7 rounded-full text-[13px] leading-none active:scale-90 transition-transform ${p.pinned ? 'text-amber-400' : 'text-slate-300'}`}
+                        aria-label={p.pinned ? '取消置顶' : '置顶'}
+                    >{p.pinned ? '★' : '☆'}</button>
+                    <button
+                        onClick={() => setOpenPresetId(p.id)}
+                        className="flex-1 min-w-0 py-2 text-left text-[12px] text-slate-700 truncate"
+                    >{p.name}</button>
+                </div>
+            )))}
+        </div>
+    );
 
     if (!isOpen) return null;
 
@@ -366,36 +442,43 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
                                 </div>
                             </Field>
 
-                            <Field label="预设库" hint="预设是全局共享的，所有角色都能用。载入之后记得回「总览」点右上角保存才会生效。">
-                                <div className="space-y-1.5">
-                                    {presets.length === 0 && (
-                                        <div className="py-6 text-center text-[12px] text-slate-400">还没有预设，先导入一个吧</div>
-                                    )}
-                                    {presets.map(p => (
-                                        <div key={p.id} className="px-3.5 py-2.5 rounded-2xl bg-slate-50">
-                                            <div className="flex items-center gap-2">
-                                                <span className="flex-1 text-[13px] font-semibold text-slate-700 truncate">{p.name}</span>
-                                                <span className="text-[10px] text-slate-400">{p.displayMode === 'layout' ? '布局' : '默认卡'}</span>
-                                            </div>
-                                            <div className="mt-2 flex flex-wrap gap-1.5">
-                                                <button onClick={() => loadPreset(p)} className="px-2.5 py-1 rounded-full bg-indigo-500 text-white text-[11px]">载入</button>
-                                                <button
-                                                    onClick={async () => {
-                                                        await updateXinshengPreset(p.id, p.name, body);
-                                                        setPresets(await listXinshengPresets());
-                                                        toast(`已用当前设置覆盖「${p.name}」`, 'success');
-                                                    }}
-                                                    className="px-2.5 py-1 rounded-full bg-slate-200 text-slate-600 text-[11px]"
-                                                >覆盖</button>
-                                                <button onClick={() => exportPreset(p)} className="px-2.5 py-1 rounded-full bg-slate-200 text-slate-600 text-[11px]">导出</button>
-                                                <button
-                                                    onClick={async () => { setPresets(await deleteXinshengPreset(p.id)); toast('已删除', 'success'); }}
-                                                    className="px-2.5 py-1 rounded-full bg-slate-200 text-rose-500 text-[11px]"
-                                                >删除</button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
+                            <Field
+                                label={`预设库（${presets.length}）`}
+                                hint="点名字展开「载入 / 覆盖 / 导出 / 删除」，点 ★ 把常用的钉到最上面。预设是全局共享的，载入之后记得回「总览」点右上角保存才会生效。"
+                            >
+                                {presets.length > 6 && (
+                                    <input
+                                        type="text"
+                                        value={presetQuery}
+                                        onChange={e => setPresetQuery(e.target.value)}
+                                        placeholder="搜索预设名字"
+                                        className="w-full mb-2 px-3 py-2 rounded-2xl bg-slate-50 border border-slate-200 text-[12px] focus:outline-none focus:border-indigo-300"
+                                    />
+                                )}
+
+                                {presets.length === 0 && (
+                                    <div className="py-6 text-center text-[12px] text-slate-400">还没有预设，先导入一个吧</div>
+                                )}
+
+                                {presets.length > 0 && filteredPresets.length === 0 && (
+                                    <div className="py-6 text-center text-[12px] text-slate-400">没有名字含「{presetQuery.trim()}」的预设</div>
+                                )}
+
+                                {pinnedPresets.length > 0 && (
+                                    <>
+                                        <div className="mb-1.5 text-[11px] font-semibold text-amber-500">★ 置顶（{pinnedPresets.length}）</div>
+                                        {renderPresetGrid(pinnedPresets)}
+                                    </>
+                                )}
+
+                                {otherPresets.length > 0 && (
+                                    <>
+                                        {pinnedPresets.length > 0 && (
+                                            <div className="mt-3 mb-1.5 text-[11px] font-semibold text-slate-400">其余预设（{otherPresets.length}）</div>
+                                        )}
+                                        {renderPresetGrid(otherPresets)}
+                                    </>
+                                )}
                             </Field>
 
                             <input
