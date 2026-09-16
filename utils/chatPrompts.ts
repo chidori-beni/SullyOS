@@ -38,7 +38,7 @@ import { buildUserCalendarContext } from './calendarIntegration';
 import { buildXinshengContinuityBlock, buildXinshengInstruction, selectXinshengContinuity } from './xinsheng/xinshengPrompt';
 import { readXinshengHistory } from './xinsheng/xinshengStore';
 import { prepareXinshengRoundPreset } from './xinsheng/xinshengRandomPreset';
-import { classifyExchange } from './characterIdentity';
+import { classifyExchange, buildNarrationLine } from './characterIdentity';
 
 // 语音格式指导按当前 TTS 服务商二选一：用 MiniMax 才注入 MiniMax 那套（含 <#秒#> 停顿标记），
 // 用鱼声则注入鱼声版（去掉 MiniMax 专属标记，改用标点 / 省略号控制停顿）。
@@ -1528,6 +1528,20 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
 
         return {
             apiMessages: historySlice.map((m, index) => {
+                // ── 阶段 5.2：旁白 ──
+                // ⛔ 必须在这里就把 role 改成 'system' 并套上旁白框。
+                // 旁白存库时是 role:'system' 的消息，但**内容是用户写的原话**——
+                // 直接放进去模型会当成一句没头没尾的指令；套框之后它才知道
+                // 「这是正在发生的事，不是谁说的话」。
+                // 环境档的框定里**一个字都不提用户/机主/系统**（见 buildNarrationLine）。
+                if ((m.metadata as any)?.narration) {
+                    const line = buildNarrationLine(
+                        typeof m.content === 'string' ? m.content : '',
+                        (m.metadata as any)?.narrationKind === 'directive' ? 'directive' : 'ambient',
+                        (m.metadata as any)?.narrationTo,
+                    );
+                    return { role: 'system' as const, content: line };
+                }
                 // Older rows may already contain a leaked source/reaction tag. Clean the
                 // prompt copy as well as the rendered bubble; otherwise the next model turn
                 // can still copy the historical leak even though new output is sanitized.

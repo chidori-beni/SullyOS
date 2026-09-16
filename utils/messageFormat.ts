@@ -442,6 +442,10 @@ export function formatMessageWithTime(
 export function isMessageSemanticallyRelevant(msg: Message): boolean {
     // 只给用户看的系统提示（UiNoticeMeta）不进记忆 —— 见 types.ts 的说明。
     if ((msg.metadata as any)?.uiNotice) return false;
+    // 旁白·指令档（阶段 5.2）不进记忆：那是后台调度（「让 A 忍住别提昨天的事」），
+    // **不是发生过的事**。记住它等于让角色事后回忆起「有人指挥过我」。
+    // ⚠️ 环境档相反 —— 「外面下起了雨」是剧情的一部分，照常进记忆。
+    if ((msg.metadata as any)?.narration && (msg.metadata as any)?.narrationKind === 'directive') return false;
     const type = msg.type as string;
     if (type === 'image' || type === 'emoji') return false;
     if (type === 'voice') return !!getVoiceTranscript(msg);

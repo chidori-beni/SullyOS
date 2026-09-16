@@ -682,3 +682,49 @@ export const buildGiftHistoryNote = (
     if (lines.length === 0) return '';
     return `【你送过${who}的东西】\n${lines.join('\n')}`;
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 阶段 5.2 · 旁白
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 一条消息是不是旁白（`NarrationMeta`）。 */
+export const isNarration = (msg: { metadata?: any } | null | undefined): boolean =>
+    !!msg?.metadata?.narration;
+
+/**
+ * 把一句旁白框成给模型看的文本（阶段 5.2）。
+ *
+ * ⛔ **环境档里一个字都不能提到用户 / 机主 / 系统。**
+ * 用户要的效果是「角色只知道**发生了这件事**，不知道是谁让它发生的」——
+ * 只要框定里出现「用户写道」「系统设定」，这个效果当场就废了。已写成测试。
+ *
+ * ⛔ **绝不能让它看起来像用户说的话。** 调用方必须同时把 role 改成 `'system'`
+ * （见 `buildMessageHistory`），否则角色会回你一句「外面下雨了吗？我看看」。
+ *
+ * 指令档反过来 —— 它就是**说给角色听的后台提示**，所以要明说「只有你听得见」，
+ * 免得 ta 当成场景里真实发生的事去描述。
+ */
+export const buildNarrationLine = (
+    text: string,
+    kind: 'ambient' | 'directive' = 'ambient',
+    /** 指令档：说给谁听。空 = 在场所有人 */
+    to?: string,
+): string => {
+    const body = (text || '').trim();
+    if (!body) return '';
+    if (kind === 'directive') {
+        const who = (to || '').trim();
+        return [
+            `⟦只有${who ? `${who}` : '你'}听得见的一句提示⟧`,
+            body,
+            '（这不是有人说出口的话，也不是场景里发生的事——别在台词里复述它、别问是谁说的，'
+            + '照它去演就行。要不要照办、照办到什么程度，仍然取决于你这个人。）',
+        ].join('\n');
+    }
+    return [
+        '⟦此刻正在发生⟧',
+        body,
+        '（这是这一刻真实发生的事，不是谁说的话。自然地接住它——'
+        + '⛔ 别问「这是谁说的」，也别去追究它为什么发生。）',
+    ].join('\n');
+};

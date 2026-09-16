@@ -31,7 +31,7 @@ import { completeGroupChatWithMcp } from '../utils/groupChat/mcp';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
 // 群聊输入区/表情面板已改用共享 ChatInputArea（其表情网格自带 useIncrementalReveal 增量渲染），
 // master 上给旧内联表情抽屉加的增量渲染随旧抽屉一并退役。
-import { UsersThree, Money, GearSix, Image as ImageIcon, ArrowsClockwise, PaintBrush, BellSimpleRinging, Code, Question } from '@phosphor-icons/react';
+import { UsersThree, Money, GearSix, Image as ImageIcon, ArrowsClockwise, PaintBrush, BellSimpleRinging, Code, Question, NotePencil } from '@phosphor-icons/react';
 import ChatHeaderShell from '../components/chat/ChatHeaderShell';
 import ChatInputArea from '../components/chat/ChatInputArea';
 import ChromeCssEditor from '../components/chat/ChromeCssEditor';
@@ -518,7 +518,7 @@ const GroupChat: React.FC = () => {
     // UI State — 面板状态对齐私聊 ChatInputArea 的 showPanel 约定
     const [showPanel, setShowPanel] = useState<'none' | 'actions' | 'emojis' | 'chars'>('none');
     const [activeEmojiCategory, setActiveEmojiCategory] = useState('default');
-    const [modalType, setModalType] = useState<'none' | 'create' | 'settings' | 'transfer' | 'member_select' | 'message-options' | 'edit-message' | 'packet-detail' | 'chrome-css' | 'chrome-sound' | 'html-prompt' | 'help'>('none');
+    const [modalType, setModalType] = useState<'none' | 'create' | 'settings' | 'transfer' | 'member_select' | 'message-options' | 'edit-message' | 'packet-detail' | 'chrome-css' | 'chrome-sound' | 'html-prompt' | 'help' | 'narration'>('none');
     const [tempHtmlPrompt, setTempHtmlPrompt] = useState('');
     const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
@@ -950,6 +950,38 @@ const GroupChat: React.FC = () => {
         (id: string) => (id === 'user' ? userProfile.name : (characters.find(c => c.id === id)?.name || '成员')),
         [characters, userProfile.name],
     );
+
+    // ── 阶段 5.2：旁白 ──────────────────────────────────────────
+    const [narrationText, setNarrationText] = useState('');
+    const [narrationKind, setNarrationKind] = useState<'ambient' | 'directive'>('ambient');
+    const [narrationTo, setNarrationTo] = useState<string>('');
+    /**
+     * 把一句旁白放进场景。
+     *
+     * ⛔ **存成 `role:'system'` 而不是 `'user'`** —— 存成 user 的话角色会把它当成
+     * 「你说的话」，转头回你一句「外面下雨了吗？我看看」，整个效果就废了。
+     * 提示词那边由 `buildMessageHistory` 认出 `narration` 标记再套框
+     * （见 characterIdentity.buildNarrationLine）。
+     */
+    const sendNarration = async () => {
+        const text = narrationText.trim();
+        if (!text || !activeGroup) return;
+        await DB.saveMessage({
+            groupId: activeGroup.id,
+            role: 'system',
+            type: 'text',
+            content: text,
+            timestamp: Date.now(),
+            metadata: {
+                narration: true,
+                narrationKind,
+                ...(narrationKind === 'directive' && narrationTo ? { narrationTo } : {}),
+            },
+        } as any);
+        setNarrationText('');
+        setModalType('none');
+        await refreshMessages(activeGroup.id);
+    };
 
     const handleSendPacket = () => {
         if (!activeGroup) return;
@@ -1918,6 +1950,13 @@ ${buildCharBondNote(member, characters.filter(c => activeGroup?.members.includes
                             <span className="text-xs font-bold">红包</span>
                         </button>
 
+                        <button onClick={() => { setModalType('narration'); setShowPanel('none'); }} className="flex flex-col items-center gap-2 active:scale-95 transition-transform text-slate-600">
+                            <div className="w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border bg-amber-50 text-amber-500 border-amber-100">
+                                <NotePencil className="w-6 h-6" weight="bold" />
+                            </div>
+                            <span className="text-xs font-bold">旁白</span>
+                        </button>
+
                         <button onClick={openGroupSettings} className="flex flex-col items-center gap-2 active:scale-95 transition-transform text-slate-600">
                             <div className="w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border bg-violet-50 text-violet-500 border-violet-100">
                                 <GearSix className="w-6 h-6" weight="bold" />
@@ -2221,6 +2260,63 @@ ${buildCharBondNote(member, characters.filter(c => activeGroup?.members.includes
                     onChange={e => setEditContent(e.target.value)}
                     className="w-full h-32 bg-slate-100 rounded-2xl p-4 resize-none focus:ring-1 focus:ring-primary/20 transition-all text-sm leading-relaxed"
                 />
+            </Modal>
+
+            {/* ── 阶段 5.2：旁白 ──────────────────────────────────────
+                ⛔ 两档去向不同：环境档进记忆（它是剧情），指令档不进（那是后台调度）。 */}
+            <Modal
+                isOpen={modalType === 'narration'} title="旁白" onClose={() => setModalType('none')}
+                footer={<button onClick={sendNarration} disabled={!narrationText.trim()} className="w-full py-3 bg-amber-500 text-white font-bold rounded-2xl disabled:opacity-40">放进场景</button>}
+            >
+                <div className="space-y-3">
+                    <div className="flex gap-2">
+                        {([['ambient', '环境'], ['directive', '指令']] as const).map(([k, label]) => (
+                            <button key={k} onClick={() => setNarrationKind(k)}
+                                className={`flex-1 py-2 rounded-xl text-sm font-bold transition-all ${narrationKind === k ? 'bg-amber-500 text-white shadow-md' : 'bg-slate-100 text-slate-500'}`}>
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+                    <textarea
+                        value={narrationText}
+                        onChange={e => setNarrationText(e.target.value)}
+                        placeholder={narrationKind === 'ambient'
+                            ? '外面下起了雨　／　她的手机在这时震了一下'
+                            : '忍住别提昨天的事　／　别再追问下去了'}
+                        className="w-full h-24 bg-slate-100 rounded-2xl p-4 resize-none text-sm leading-relaxed outline-none"
+                        autoFocus
+                    />
+                    {narrationKind === 'directive' && (
+                        <div className="space-y-1.5">
+                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">说给谁听（不选＝在场所有人）</div>
+                            <div className="grid grid-cols-4 gap-2 max-h-32 overflow-y-auto pr-1">
+                                {(activeGroup?.members || []).map(mid => {
+                                    const c = characters.find(ch => ch.id === mid);
+                                    if (!c) return null;
+                                    const on = narrationTo === c.name;
+                                    return (
+                                        <div key={mid} onClick={() => setNarrationTo(on ? '' : c.name)}
+                                            className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all cursor-pointer ${on ? 'border-violet-500 bg-violet-50 ring-1 ring-violet-500' : 'border-slate-100 bg-white'}`}>
+                                            <img src={c.avatar} className="w-9 h-9 rounded-full object-cover" />
+                                            <span className="text-[9px] text-slate-600 truncate w-full text-center font-medium">{c.name}</span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+                    <div className="text-[11px] text-slate-400 leading-relaxed bg-slate-50 rounded-xl px-3 py-2">
+                        {narrationKind === 'ambient' ? <>
+                            <b className="text-slate-600">这不是你说的话，是正在发生的事。</b>
+                            角色只知道<b className="text-slate-600">这件事发生了</b>，不知道是你写的，也不会问「这是谁说的」。
+                            <br />它<b className="text-slate-600">算剧情</b>，会进角色的记忆。
+                        </> : <>
+                            <b className="text-slate-600">只说给 ta 一个人听的一句提示</b>，别人听不见，ta 也不会在台词里复述。
+                            <br />要不要照办、照办到什么程度，<b className="text-slate-600">仍然取决于 ta 是个什么样的人</b>。
+                            <br />⛔ 它<b className="text-slate-600">不进记忆</b>——那是后台调度，不是发生过的事。
+                        </>}
+                    </div>
+                </div>
             </Modal>
 
             {/* Transfer Modal — 红包 2.0：拼手气 / 专属 */}

@@ -1883,6 +1883,30 @@ const MessageItem = React.memo(({
             );
         }
 
+        // 旁白（阶段 5.2）：你写进场景里的一句话。留在聊天窗口里让你看得见自己写了什么。
+        // ⛔ 两档的措辞必须分开 —— 环境档角色**不知道是你写的**，指令档是**只有 ta 听得见**的提示。
+        // 提示词那边的框定在 characterIdentity.buildNarrationLine。
+        if ((m.metadata as any)?.narration) {
+            const directive = (m.metadata as any)?.narrationKind === 'directive';
+            const to = (m.metadata as any)?.narrationTo as string | undefined;
+            return (
+                <div className={`${cardShellClass} w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in`} {...cardHook}>
+                    <div className="w-full px-6 my-2.5" {...interactionProps}>
+                        <div className={`mx-auto max-w-sm rounded-xl px-3 py-2 ${directive ? 'bg-violet-500/[0.07]' : 'bg-amber-500/[0.07]'}`}>
+                            <span className={`text-[11.5px] leading-[1.5] italic ${directive ? 'text-violet-400' : 'text-amber-600/80'}`}>
+                                {typeof m.content === 'string' ? m.content : ''}
+                            </span>
+                            <span className="block text-[9.5px] text-slate-400 mt-1 not-italic">
+                                {directive
+                                    ? `只说给${to ? to : '在场的人'}听的一句提示 · 不会被记住`
+                                    : '旁白 · ta 只知道这件事发生了，不知道是你写的'}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
         const isCallSummary = m.metadata?.source === 'call-end-popup';
         const isMissedCall = m.metadata?.source === 'incoming-call-missed';
 

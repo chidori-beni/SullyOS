@@ -4,6 +4,8 @@ import {
     applyCharBondChange,
     buildCharBondNote,
     ALL_BOND_CAP,
+    buildNarrationLine,
+    isNarration,
     buildBondChangeNotice,
     buildChatPartnerNote,
     buildHostBondNote,
@@ -705,5 +707,64 @@ describe('buildCharBondNote —— 全局关系怎么注入（阶段 2.4）', ()
     it('没写关系名的那条不注入 —— 只有好感数值不构成一句话', () => {
         const only = { charBonds: [{ toId: 'b', toName: '阿岚', value: 40 }] } as any;
         expect(buildCharBondNote(only, [{ id: 'b', name: '阿岚' }])).toBe('');
+    });
+});
+
+
+describe('旁白（阶段 5.2）', () => {
+    describe('环境档', () => {
+        const line = buildNarrationLine('外面下起了雨', 'ambient');
+
+        it('⭐ 原话照样在里面', () => {
+            expect(line).toContain('外面下起了雨');
+        });
+
+        it('⭐ 框成「正在发生的事」，不是谁说的话', () => {
+            expect(line).toContain('此刻正在发生');
+            expect(line).toContain('不是谁说的话');
+        });
+
+        it('⛔⭐ 第一红线：一个字都不能提到用户 / 机主 / 系统', () => {
+            for (const forbidden of ['用户', '机主', '系统', '玩家', '作者', '你写', '设定']) {
+                expect(line).not.toContain(forbidden);
+            }
+        });
+
+        it('⛔ 明说别追问「这是谁说的」—— 不然角色会当场破功', () => {
+            expect(line).toContain('别问「这是谁说的」');
+        });
+
+        it('缺省就是环境档', () => {
+            expect(buildNarrationLine('外面下起了雨')).toBe(line);
+        });
+    });
+
+    describe('指令档', () => {
+        it('⭐ 明说只有 ta 听得见 —— 否则 ta 会当成场景里真实发生的事去描述', () => {
+            const line = buildNarrationLine('忍住别提昨天的事', 'directive', '小满');
+            expect(line).toContain('只有小满听得见');
+            expect(line).toContain('别在台词里复述它');
+        });
+
+        it('⭐⛔ 不剥夺角色的选择 —— 照不照办仍取决于 ta 是谁', () => {
+            const line = buildNarrationLine('别再追问下去了', 'directive');
+            expect(line).toContain('仍然取决于你这个人');
+        });
+
+        it('没指定给谁时也说得通', () => {
+            expect(buildNarrationLine('别追问', 'directive')).toContain('只有你听得见');
+        });
+    });
+
+    it('⛔ 空白输入 → 空串，不产生半截框', () => {
+        expect(buildNarrationLine('')).toBe('');
+        expect(buildNarrationLine('   ', 'directive')).toBe('');
+    });
+
+    it('isNarration 认得出标记', () => {
+        expect(isNarration({ metadata: { narration: true } })).toBe(true);
+        expect(isNarration({ metadata: {} })).toBe(false);
+        expect(isNarration({})).toBe(false);
+        expect(isNarration(null)).toBe(false);
     });
 });
