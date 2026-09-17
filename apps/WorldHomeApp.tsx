@@ -30,6 +30,8 @@ import { COMMON_TIMEZONES } from '../utils/timezone';
 import { SIM_CHAPTER_DAYS, SIM_CHAPTER_CLOCKS } from '../utils/worldHome/chapters';
 import { dmThreadsOf, groupThreadOf } from '../utils/worldHome/threads';
 import { dmThreadId } from '../utils/worldHome/threads';
+import TownMap from '../components/worldHome/TownMap';
+import { buildTownScene, canRenderTownMap } from '../utils/worldHome/townMap';
 import { OBSERVER_LENGTHS, DEFAULT_OBSERVER_LENGTH, buildObserverPrompt, parseObserverLines, appendObserverLines, dropObserverLines, formatThreadForObserver } from '../utils/worldHome/observer';
 import type { ObserverLength, ObserverPeer } from '../utils/worldHome/observer';
 import { safeFetchJson } from '../utils/safeApi';
@@ -1838,6 +1840,13 @@ const WorldView: React.FC<{
 
     const members = useMemo(() => world.memberIds.map(id => characters.find(c => c.id === id)).filter(Boolean) as CharacterProfile[], [world.memberIds, characters]);
     const latest = episodes[0];
+    // ── 阶段 6：小镇地图 ────────────────────────────────────────
+    // ⛔ 只读：地图反映最近一轮各人的 placeId，一个字都不写回去（见 townMap.ts 铁律一）。
+    const townScene = useMemo(
+        () => buildTownScene(world, latest?.beats || [], members.map(m => ({ id: m.id, name: m.name }))),
+        [world, latest, members],
+    );
+    const [openSlotId, setOpenSlotId] = useState<string | null>(null);
     // 氛围跟随"即将到来的那一段"：早/中=白天，晚=夜晚
     const isNight = isNightWorld(world);
 
@@ -2415,6 +2424,45 @@ const WorldView: React.FC<{
                         })}
                     </div>
                 </div>
+
+                {/* ── 阶段 6：小镇地图 —— 这半天谁在哪儿 ──
+                    ⛔ 只读。点小人看 ta 的手机，点地点看这儿是干嘛的，**没有拖拽**：
+                       地图一旦能拖，下一步必然是「拖过去就算 ta 去了那儿」，
+                       那就成了系统替角色决定行踪。 */}
+                {canRenderTownMap(world) && (
+                    <div className={`rounded-2xl border p-3.5 ${t.panel}`}>
+                        <div className={`text-[10px] font-black tracking-[0.25em] uppercase flex items-center gap-1.5 mb-2.5 ${t.textLabel}`}>
+                            <MapPin size={11} weight="fill" />这半天大家在哪儿
+                            <span className="ml-auto normal-case tracking-normal font-bold text-[9px] opacity-70">{worldTimeLabel(world)}</span>
+                        </div>
+                        <TownMap
+                            scene={townScene}
+                            characters={characters}
+                            t={t}
+                            onFigureClick={id => { setPhoneView({ ownerId: id }); trackEvent('从小镇地图打开角色手机'); }}
+                            onSlotClick={id => setOpenSlotId(prev => (prev === id ? null : id))}
+                        />
+                        {/* 点开的那个地方说明。⛔ 用展开而不是弹窗 —— 一句话的介绍不值得打断视线。 */}
+                        {(() => {
+                            const slot = townScene.slots.find(x => x.id === openSlotId && !x.isElsewhere);
+                            if (!slot) return null;
+                            return (
+                                <div className={`mt-2 rounded-xl border p-2.5 ${t.panelSolid}`}>
+                                    <div className={`text-[11px] font-black ${t.textMain}`}>{slot.name}</div>
+                                    <div className={`text-[10.5px] leading-relaxed mt-0.5 ${t.textSub}`}>
+                                        {slot.blurb || '（还没写这是个什么地方，去世界设置里补一句）'}
+                                    </div>
+                                </div>
+                            );
+                        })()}
+                        {townScene.slots.some(x => x.isElsewhere) && (
+                            <div className={`text-[10px] leading-relaxed mt-2 ${t.textSub}`}>
+                                {/* ⭐ 这句是给用户的解释：对不上不是 bug，是我们宁可放过也不硬凑。 */}
+                                「镇上某处」＝这一轮没写明确切地点的人。<span className="opacity-70">不是出错了，只是没对上地点表。</span>
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 {/* ── 5.1 双人私聊观测器：选两个人，看他俩私下说话 ── */}
                 {members.length >= 2 && (
