@@ -31,7 +31,8 @@ import { SIM_CHAPTER_DAYS, SIM_CHAPTER_CLOCKS } from '../utils/worldHome/chapter
 import { dmThreadsOf, groupThreadOf } from '../utils/worldHome/threads';
 import { dmThreadId } from '../utils/worldHome/threads';
 import TownMap from '../components/worldHome/TownMap';
-import { buildTownScene, canRenderTownMap } from '../utils/worldHome/townMap';
+import { buildTownScene, canRenderTownMap, TERRAINS, MAP_COL_CHOICES, mapColsOf, guessTerrain, movePlace } from '../utils/worldHome/townMap';
+import type { WorldTerrain } from '../types';
 import { OBSERVER_LENGTHS, DEFAULT_OBSERVER_LENGTH, buildObserverPrompt, parseObserverLines, appendObserverLines, dropObserverLines, formatThreadForObserver } from '../utils/worldHome/observer';
 import type { ObserverLength, ObserverPeer } from '../utils/worldHome/observer';
 import { safeFetchJson } from '../utils/safeApi';
@@ -1015,6 +1016,24 @@ const WorldEditor: React.FC<{
                         <button onClick={collectPlaces} disabled={collecting}
                             className="text-[11px] px-2.5 py-1 rounded-lg bg-violet-100 text-violet-700 font-bold flex items-center gap-1 border border-violet-200 disabled:opacity-50 active:scale-95 transition-transform">
                             <Sparkle size={12} weight="fill" />{collecting ? '收集中…' : '从剧情里收集'}</button>
+                        <button onClick={() => {
+                            // 只在点这个按钮时猜，**绝不在建地点时自动猜** ——
+                            // 猜错的地貌（「墓园」猜成草木）比留空难看得多。
+                            // 而且只填空着的，不覆盖用户已经选过的。
+                            let n = 0;
+                            const next = (w.places || []).map(pp => {
+                                if (pp.terrain) return pp;
+                                const g = guessTerrain(pp.name);
+                                if (!g) return pp;
+                                n++;
+                                return { ...pp, terrain: g };
+                            });
+                            if (n === 0) { addToast('没有能按名字猜出来的，手动挑一下吧', 'info'); return; }
+                            upd({ places: next });
+                            addToast(`猜了 ${n} 个地方的配色，不对就手动改`, 'success');
+                        }}
+                            className="text-[11px] px-2.5 py-1 rounded-lg bg-stone-100 text-stone-600 font-bold flex items-center gap-1 border border-stone-200 active:scale-95 transition-transform">
+                            <Sparkle size={12} weight="fill" />猜配色</button>
                         <button onClick={() => upd({ places: [...(w.places || []), { id: genId('wp'), name: '' }] })}
                             className="text-[11px] px-2.5 py-1 rounded-lg bg-amber-100 text-amber-800 font-bold flex items-center gap-1 border border-amber-200"><Plus size={12} weight="bold" />地方</button>
                     </div>
@@ -1031,7 +1050,32 @@ const WorldEditor: React.FC<{
                             <input className="flex-1 min-w-0 px-2 py-1 rounded-lg bg-stone-50 border border-stone-100 text-[12px]" value={pl.name}
                                 placeholder="地方的名字"
                                 onChange={e => upd({ places: (w.places || []).map(x => x.id === pl.id ? { ...x, name: e.target.value } : x) })} />
+                            {/* 阶段 6.2：地图上的顺序就是这个清单的顺序。
+                                不另存坐标 —— 多一份坐标就多一份和地点表对不上的可能。
+                                用上下移不用拖拽：手机上拖小方块拖不准，而且加号菜单排序
+                                已经是同一套交互，同一件事只学一次。 */}
+                            <div className="flex flex-col shrink-0">
+                                <button onClick={() => upd({ places: movePlace(w.places || [], pl.id, -1) })}
+                                    className="px-1 text-stone-400 active:text-amber-600 leading-none text-[10px]" title="在地图上往前挪">&#9650;</button>
+                                <button onClick={() => upd({ places: movePlace(w.places || [], pl.id, 1) })}
+                                    className="px-1 text-stone-400 active:text-amber-600 leading-none text-[10px]" title="在地图上往后挪">&#9660;</button>
+                            </div>
                             <button onClick={() => upd({ places: (w.places || []).filter(x => x.id !== pl.id) })} className="p-1 text-stone-400"><X size={14} /></button>
+                        </div>
+                        {/* 阶段 6.2：地貌只决定地图上这个框的配色。
+                            不进提示词 —— 「这是个什么地方」是下面那句介绍的活儿。
+                            两边混起来的话，改个配色会莫名其妙改掉角色对这地方的认知。 */}
+                        <div className="flex flex-wrap gap-1 items-center">
+                            <span className="text-[10px] text-stone-400 shrink-0">地图配色</span>
+                            <button onClick={() => upd({ places: (w.places || []).map(x => x.id === pl.id ? { ...x, terrain: undefined } : x) })}
+                                className={`text-[11px] px-2 py-0.5 rounded-full border ${!pl.terrain ? 'bg-stone-700 border-stone-700 text-white' : 'bg-white border-stone-200 text-stone-500'}`}>不指定</button>
+                            {(Object.keys(TERRAINS) as WorldTerrain[]).map(k => (
+                                <button key={k} onClick={() => upd({ places: (w.places || []).map(x => x.id === pl.id ? { ...x, terrain: k } : x) })}
+                                    className={`text-[11px] px-2 py-0.5 rounded-full border ${pl.terrain === k ? 'text-white' : 'bg-white border-stone-200 text-stone-600'}`}
+                                    style={pl.terrain === k ? { background: TERRAINS[k].tint, borderColor: TERRAINS[k].tint } : undefined}>
+                                    {TERRAINS[k].emoji}{TERRAINS[k].name}
+                                </button>
+                            ))}
                         </div>
                         <input className="w-full px-2 py-1 rounded-lg bg-stone-50 border border-stone-100 text-[11px]" value={pl.blurb || ''}
                             placeholder="一句话说这是个什么地方（可空）"
@@ -1051,6 +1095,18 @@ const WorldEditor: React.FC<{
                         )}
                     </div>
                 ))}
+                {(w.places || []).length > 0 && (
+                    <div className="flex items-center gap-2 pt-1 flex-wrap">
+                        <span className="text-[10.5px] text-stone-400 shrink-0">地图一行放几个</span>
+                        {MAP_COL_CHOICES.map(c => (
+                            <button key={c} onClick={() => upd({ mapCols: c })}
+                                className={`text-[11px] px-3 py-0.5 rounded-full border font-bold ${mapColsOf(w) === c ? 'bg-amber-500 border-amber-500 text-white' : 'bg-white border-stone-200 text-stone-500'}`}>
+                                {c}
+                            </button>
+                        ))}
+                        <span className="text-[10px] text-stone-300">地方多就选 3，但手机上会小一点</span>
+                    </div>
+                )}
                 {(w.places || []).length === 0 && (
                     <div className="text-[11px] text-stone-400">
                         还没列。演过几轮之后点「<b className="text-stone-500">从剧情里收集</b>」最省事——
@@ -2454,6 +2510,7 @@ const WorldView: React.FC<{
                         <TownMap
                             scene={townScene}
                             characters={characters}
+                            world={world}
                             t={t}
                             onFigureClick={id => { setPhoneView({ ownerId: id }); trackEvent('从小镇地图打开角色手机'); }}
                             onSlotClick={id => setOpenSlotId(prev => (prev === id ? null : id))}

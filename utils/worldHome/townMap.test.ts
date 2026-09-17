@@ -8,6 +8,11 @@ import {
     scatterInSlot,
     buildTownScene,
     canRenderTownMap,
+    TERRAINS,
+    MAP_COL_CHOICES,
+    mapColsOf,
+    guessTerrain,
+    movePlace,
 } from './townMap';
 import type { WorldProfile, WorldCharBeat } from '../../types';
 
@@ -28,6 +33,112 @@ describe('阶段 6 · 小镇地图底座', () => {
 
         it('有地点就能画', () => {
             expect(canRenderTownMap(mkWorld([{ id: 'p1', name: '面包房' }]))).toBe(true);
+        });
+    });
+
+    describe('6.2 · 一行放几个', () => {
+        it('缺省 2 列 —— 手机竖屏下 3 个就开始挤了', () => {
+            expect(mapColsOf({})).toBe(2);
+            expect(mapColsOf({ mapCols: undefined })).toBe(2);
+        });
+
+        it('设成 3 就是 3', () => {
+            expect(mapColsOf({ mapCols: 3 })).toBe(3);
+        });
+
+        it('⛔ 存档里的坏值退回缺省，别信存档', () => {
+            expect(mapColsOf({ mapCols: 7 as unknown as 3 })).toBe(2);
+            expect(mapColsOf({ mapCols: 0 as unknown as 2 })).toBe(2);
+        });
+
+        it('只给两档', () => {
+            expect(MAP_COL_CHOICES).toEqual([2, 3]);
+        });
+
+        it('⭐ 排布跟着列数走', () => {
+            const four = [1, 2, 3, 4].map(i => ({ id: `p${i}`, name: `地方${i}` }));
+            const two = buildTownSlots({ ...mkWorld(four) }, false);
+            expect(two.map(s => [s.col, s.row])).toEqual([[0, 0], [1, 0], [0, 1], [1, 1]]);
+            const three = buildTownSlots({ ...mkWorld(four), mapCols: 3 } as WorldProfile, false);
+            expect(three.map(s => [s.col, s.row])).toEqual([[0, 0], [1, 0], [2, 0], [0, 1]]);
+        });
+    });
+
+    describe('6.2 · 地貌', () => {
+        it('六种地貌都有名字、图标和主色', () => {
+            for (const k of Object.keys(TERRAINS) as (keyof typeof TERRAINS)[]) {
+                expect(TERRAINS[k].name).toBeTruthy();
+                expect(TERRAINS[k].emoji).toBeTruthy();
+                expect(TERRAINS[k].tint).toMatch(/^#[0-9a-f]{6}$/i);
+            }
+        });
+
+        it('地貌原样带到槽上', () => {
+            const w = mkWorld([{ id: 'p1', name: '码头' }]);
+            (w.places as { terrain?: string }[])[0].terrain = 'water';
+            expect(buildTownSlots(w, false)[0].terrain).toBe('water');
+        });
+
+        it('⛔ 兜底槽永远没有地貌 —— 我们本来就不知道 ta 在哪儿', () => {
+            const slots = buildTownSlots(mkWorld([{ id: 'p1', name: '码头' }]), true);
+            expect(slots[slots.length - 1].terrain).toBeUndefined();
+        });
+
+        describe('按名字猜', () => {
+            it('认得出常见的几类', () => {
+                expect(guessTerrain('码头')).toBe('water');
+                expect(guessTerrain('后山')).toBe('height');
+                expect(guessTerrain('旧书店')).toBe('indoor');
+                expect(guessTerrain('中央广场')).toBe('street');
+                expect(guessTerrain('竹林')).toBe('green');
+            });
+
+            it('⭐ 越特殊的越先判：「荒废的花园」是僻静，不是草木', () => {
+                expect(guessTerrain('荒废的花园')).toBe('quiet');
+                expect(guessTerrain('墓园')).toBe('quiet');
+            });
+
+            it('⛔⭐ 但「旧」不算僻静的信号 —— 否则「旧书店」「旧市集」会被僻静全吃掉', () => {
+                expect(guessTerrain('旧书店')).toBe('indoor');
+                expect(guessTerrain('旧市集')).toBe('street');
+            });
+
+            it('⛔⭐ 猜不出就返回 undefined，绝不硬猜 —— 乱猜的地貌比留空难看得多', () => {
+                expect(guessTerrain('雾')).toBeUndefined();
+                expect(guessTerrain('Ω')).toBeUndefined();
+                expect(guessTerrain('')).toBeUndefined();
+                expect(guessTerrain('   ')).toBeUndefined();
+            });
+        });
+    });
+
+    describe('6.2 · 调顺序', () => {
+        const ps = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+
+        it('上移就是和前一个交换', () => {
+            expect(movePlace(ps, 'b', -1).map(p => p.id)).toEqual(['b', 'a', 'c']);
+        });
+
+        it('下移就是和后一个交换', () => {
+            expect(movePlace(ps, 'b', 1).map(p => p.id)).toEqual(['a', 'c', 'b']);
+        });
+
+        it('⛔ 不改传进来的数组', () => {
+            const before = ps.map(p => p.id);
+            movePlace(ps, 'a', 1);
+            expect(ps.map(p => p.id)).toEqual(before);
+        });
+
+        it('越界不动，也不炸', () => {
+            expect(movePlace(ps, 'a', -1).map(p => p.id)).toEqual(['a', 'b', 'c']);
+            expect(movePlace(ps, 'c', 1).map(p => p.id)).toEqual(['a', 'b', 'c']);
+            expect(movePlace(ps, '不存在', 1).map(p => p.id)).toEqual(['a', 'b', 'c']);
+        });
+
+        it('⭐ 地图顺序就是数组顺序 —— 不另存坐标，就不会和地点表对不上', () => {
+            const w = mkWorld([{ id: 'p1', name: '码头' }, { id: 'p2', name: '山顶' }]);
+            w.places = movePlace(w.places!, 'p2', -1);
+            expect(buildTownSlots(w, false).map(s => s.name)).toEqual(['山顶', '码头']);
         });
     });
 

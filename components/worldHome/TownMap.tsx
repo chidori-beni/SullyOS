@@ -23,8 +23,8 @@
 import React from 'react';
 import { MapPin, UsersThree } from '@phosphor-icons/react';
 import { getChibi } from '../../utils/vrWorld/chibi';
-import { TOWN_COLS, type TownSlot, type TownFigure, type TownScene } from '../../utils/worldHome/townMap';
-import type { CharacterProfile } from '../../types';
+import { TERRAINS, mapColsOf, type TownSlot, type TownFigure, type TownScene } from '../../utils/worldHome/townMap';
+import type { CharacterProfile, WorldProfile } from '../../types';
 
 /** 家园主视图的昼/夜 token 子集。只取用得上的几个，别把整套拖进来。 */
 interface Theme {
@@ -75,17 +75,31 @@ const Figure = React.memo<{
 });
 Figure.displayName = 'TownMapFigure';
 
-/** 一个地点的框。⛔ 只依赖地点本身 —— 小人是 children 传进来的，框子不跟着重绘。 */
+/**
+ * 一个地点的框。⛔ 只依赖地点本身 —— 小人是 children 传进来的，框子不跟着重绘。
+ *
+ * 地貌（6.2）只改**底纹和描边**，不改文字色：底色一深一浅的话，
+ * 昼夜两套主题里总有一套的字会看不清。用半透明叠在 panelSolid 上，两边都安全。
+ */
 const Slot = React.memo<{
     slot: TownSlot;
     t: Theme;
     overflow?: number;
     onClick?: (slotId: string) => void;
     children?: React.ReactNode;
-}>(({ slot, t, overflow, onClick, children }) => (
+}>(({ slot, t, overflow, onClick, children }) => {
+    const terrain = slot.terrain ? TERRAINS[slot.terrain] : null;
+    return (
     <div
         className={`relative rounded-2xl border overflow-hidden ${slot.isElsewhere ? 'border-dashed opacity-75' : ''} ${t.panelSolid}`}
-        style={{ aspectRatio: '1 / 0.82' }}
+        style={{
+            aspectRatio: '1 / 0.82',
+            ...(terrain ? {
+                // 从下往上的一层淡色 —— 像地面的颜色透上来，而不是整块染色。
+                backgroundImage: `linear-gradient(to top, ${terrain.tint}38, ${terrain.tint}10 55%, transparent)`,
+                borderColor: `${terrain.tint}66`,
+            } : null),
+        }}
     >
         <button
             onClick={() => onClick?.(slot.id)}
@@ -96,24 +110,28 @@ const Slot = React.memo<{
                 ? <UsersThree size={10} weight="fill" className="shrink-0 opacity-60" />
                 : <MapPin size={10} weight="fill" className="shrink-0 opacity-70" />}
             <span className={`text-[10px] font-black truncate ${t.textMain}`}>{slot.name}</span>
+            {terrain ? <span className="shrink-0 text-[9px] leading-none opacity-80" title={terrain.name}>{terrain.emoji}</span> : null}
             {overflow ? (
                 <span className={`ml-auto shrink-0 text-[9px] font-black px-1 rounded ${t.chip}`}>+{overflow}</span>
             ) : null}
         </button>
         {children}
     </div>
-));
+    );
+});
 Slot.displayName = 'TownMapSlot';
 
 const TownMap: React.FC<{
     scene: TownScene;
     characters: CharacterProfile[];
+    /** 只为读列数（6.2）。⛔ 组件不碰 world 的任何别的东西，更不写回去。 */
+    world: Pick<WorldProfile, 'mapCols'>;
     t: Theme;
     /** 点小人 —— 通常是打开 ta 的手机/资料 */
     onFigureClick?: (charId: string) => void;
     /** 点地点标题 —— 通常是展开这个地方的介绍 */
     onSlotClick?: (slotId: string) => void;
-}> = ({ scene, characters, t, onFigureClick, onSlotClick }) => {
+}> = ({ scene, characters, world, t, onFigureClick, onSlotClick }) => {
     // 按槽分组一次，免得每个槽都把整个 figures 数组过一遍。
     const bySlot = React.useMemo(() => {
         const m = new Map<string, TownFigure[]>();
@@ -131,7 +149,7 @@ const TownMap: React.FC<{
     );
 
     return (
-        <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${TOWN_COLS}, minmax(0, 1fr))` }}>
+        <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${mapColsOf(world)}, minmax(0, 1fr))` }}>
             {scene.slots.map(slot => (
                 <Slot
                     key={slot.id}

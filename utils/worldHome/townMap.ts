@@ -30,15 +30,85 @@
  * 而且「地图静态化 + 只重绘自身」（交接说明 §阶段 6 性能约束第 1、2 条）
  * 也就无从谈起 —— 位置都不稳定，memo 比较永远不相等。
  */
-import type { WorldProfile, WorldCharBeat } from '../../types';
+import type { WorldProfile, WorldCharBeat, WorldTerrain } from '../../types';
 
 /** 「不在任何已知地点」的那个槽的 id。⛔ 不要和真实 placeId 混用。 */
 export const ELSEWHERE_SLOT = '__elsewhere__';
 /** 这个槽显示成什么。刻意是模糊的说法 —— 我们确实不知道 ta 在哪儿。 */
 export const ELSEWHERE_NAME = '镇上某处';
 
-/** 每行摆几个地点。手机竖屏下 2 列最不挤，宽屏由渲染层自己再排。 */
+/** 每行摆几个地点的**缺省值**。手机竖屏下 2 列最不挤。 */
 export const TOWN_COLS = 2;
+
+/** 允许的列数。只给两档 —— 再多在手机上就没法看了。 */
+export const MAP_COL_CHOICES: (2 | 3)[] = [2, 3];
+
+/** 这个世界的地图一行放几个。⛔ 越界的旧值退回缺省，别信存档。 */
+export function mapColsOf(world: Pick<WorldProfile, 'mapCols'>): 2 | 3 {
+    return world.mapCols === 3 ? 3 : TOWN_COLS;
+}
+
+/**
+ * 地貌（阶段 6.2）。`tint` 是这个框的主色，渲染层拿它调出底纹和描边。
+ *
+ * ⛔ **这些不进提示词** —— 地貌是给用户看的，「这是个什么地方」是 `blurb` 的活儿。
+ * 两边混起来的话，用户改个配色会莫名其妙改掉角色对这地方的认知。
+ */
+export const TERRAINS: Record<WorldTerrain, { name: string; emoji: string; tint: string }> = {
+    street: { name: '街市', emoji: '🏘️', tint: '#d0913a' },
+    water:  { name: '水边', emoji: '🌊', tint: '#3f8fb5' },
+    green:  { name: '草木', emoji: '🌿', tint: '#549a5c' },
+    indoor: { name: '室内', emoji: '🪟', tint: '#a8764b' },
+    height: { name: '高处', emoji: '⛰️', tint: '#8076a3' },
+    quiet:  { name: '僻静', emoji: '🌙', tint: '#6b7682' },
+};
+
+/** 关键词表。放在这儿而不是组件里，是为了能测。 */
+const TERRAIN_HINTS: [WorldTerrain, string[]][] = [
+    ['water',  ['海', '河', '江', '湖', '池', '码头', '港', '滩', '溪', '桥', '泉', '井', '船']],
+    ['green',  ['林', '森', '树', '花', '草', '田', '园', '农', '苗', '谷', '竹']],
+    ['height', ['山', '塔', '崖', '顶', '坡', '岭', '台', '楼上', '天文']],
+    ['indoor', ['店', '馆', '屋', '房', '厅', '室', '铺', '坊', '院', '堂', '吧', '咖啡', '书']],
+    ['street', ['街', '市', '集', '广场', '路', '巷', '站', '口', '镇中']],
+    // ⛔ 这里**不要放「旧」**：它太弱了 ——「旧书店」「旧市集」都是热闹地方，
+    //    而僻静判得最早，放进来会把它们全吃掉（测试抓到过）。只留强信号。
+    ['quiet',  ['墓', '废', '荒', '秘', '地下', '深处', '角落', '尽头', '无人']],
+];
+
+/**
+ * 按名字猜地貌。
+ *
+ * ⛔ **猜不出就返回 `undefined`，绝不硬猜一个** —— 和 `resolvePlaceId`
+ * 「宁可放过不硬凑」同一条原则。乱猜的地貌（「墓园」猜成「草木」）比留空难看得多。
+ *
+ * ⭐ 而且这个函数**只在用户点「按名字猜」时跑**，绝不在建地点时自动跑。
+ */
+export function guessTerrain(name: string): WorldTerrain | undefined {
+    const n = (name || '').trim();
+    if (!n) return undefined;
+    // 僻静优先：「荒废的花园」该是僻静而不是草木。越特殊的越先判。
+    for (const [terrain, words] of [...TERRAIN_HINTS].reverse()) {
+        if (words.some(w => n.includes(w))) return terrain;
+    }
+    return undefined;
+}
+
+/**
+ * 把一个地点在清单里上移/下移一格 —— **地图上的顺序就是这个数组的顺序**。
+ *
+ * 为什么用上下移而不是拖拽：手机上拖一个小方块很难拖准，
+ * 而且这个项目里已经有同款（加号菜单排序）——同一件事只学一次。
+ *
+ * 不修改传进来的数组。越界时原样返回一份副本。
+ */
+export function movePlace<T extends { id: string }>(places: readonly T[], id: string, delta: -1 | 1): T[] {
+    const next = places.slice();
+    const i = next.findIndex(p => p.id === id);
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= next.length) return next;
+    [next[i], next[j]] = [next[j], next[i]];
+    return next;
+}
 
 /** 一个槽里最多显示几个小人，超出的折叠成「+N」。 */
 export const FIGURES_PER_SLOT = 6;
@@ -48,6 +118,8 @@ export interface TownSlot {
     id: string;
     name: string;
     blurb?: string;
+    /** 地貌，决定框的配色。可空＝中性。⛔ 兜底槽永远没有地貌。 */
+    terrain?: WorldTerrain;
     /** 网格坐标（渲染层可以自己换排法，这里只给一个稳定的默认） */
     col: number;
     row: number;
@@ -92,12 +164,14 @@ function hashId(s: string): number {
  */
 export function buildTownSlots(world: WorldProfile, needElsewhere: boolean): TownSlot[] {
     const places = world.places || [];
+    const cols = mapColsOf(world);
     const slots: TownSlot[] = places.map((p, i) => ({
         id: p.id,
         name: p.name,
         blurb: p.blurb,
-        col: i % TOWN_COLS,
-        row: Math.floor(i / TOWN_COLS),
+        terrain: p.terrain,
+        col: i % cols,
+        row: Math.floor(i / cols),
         isElsewhere: false,
     }));
     if (needElsewhere) {
@@ -105,8 +179,8 @@ export function buildTownSlots(world: WorldProfile, needElsewhere: boolean): Tow
         slots.push({
             id: ELSEWHERE_SLOT,
             name: ELSEWHERE_NAME,
-            col: i % TOWN_COLS,
-            row: Math.floor(i / TOWN_COLS),
+            col: i % cols,
+            row: Math.floor(i / cols),
             isElsewhere: true,
         });
     }
