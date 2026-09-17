@@ -2367,6 +2367,35 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         addToast(n ? `已还原 ${n} 处聊天白框美化` : '没有需要还原的白框美化', n ? 'success' : 'info');
     };
 
+    // ── 阶段 5.2：旁白（私聊）──────────────────────────────────
+    // 和群聊共用同一套底层（NarrationMeta + buildMessageHistory 的改写分支），
+    // 这里只是把入口接到私聊的加号菜单上。
+    // ⛔ 私聊只有一个角色，所以**没有「说给谁听」的选择** —— 指令档天然就是说给 ta 的。
+    const [narrationOpen, setNarrationOpen] = useState(false);
+    const [narrationText, setNarrationText] = useState('');
+    const [narrationKind, setNarrationKind] = useState<'ambient' | 'directive'>('ambient');
+    /**
+     * 把一句旁白放进场景。
+     *
+     * ⛔ **存成 `role:'system'` 而不是 `'user'`** —— 存成 user 的话角色会把它当成
+     * 「你说的话」，转头回你一句「外面下雨了吗？我看看」，整个效果当场就废。
+     * 提示词那边由 `buildMessageHistory` 认出 `narration` 标记再套框。
+     */
+    const sendNarration = async () => {
+        const text = narrationText.trim();
+        if (!text || !char) return;
+        await DB.saveMessage({
+            charId: char.id,
+            role: 'system',
+            type: 'text',
+            content: text,
+            metadata: { narration: true, narrationKind },
+        } as any);
+        setNarrationText('');
+        setNarrationOpen(false);
+        await reloadMessages(visibleCountRef.current);
+    };
+
     const handlePanelAction = (type: string, payload?: any) => {
         // 只统计「打开某个面板 / 开关某个能力」这几个固定入口，名单写死在这里；
         // 选表情、选分类之类的动作不上报。
@@ -2377,6 +2406,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             // 独立小功能：点一下就是用了一次，跟「打开某个面板」同一性质。
             // send-emoji / select-category 这些是「挑哪一个」，不进名单。
             'poke', 'emoji-import', 'add-category', 'mcd-end', 'luckin-end',
+            'narration',
         ].includes(type)) {
             trackEvent('打开聊天功能面板项', { action: type });
         }
@@ -2390,6 +2420,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 break;
             case 'transfer': setModalType('transfer'); break;
             case 'poke': handleSendText('[戳一戳]', 'interaction'); break;
+            case 'narration': setShowPanel('none'); setNarrationOpen(true); break;
             case 'archive': setModalType('archive-settings'); break;
             case 'settings': setModalType('chat-settings'); break;
             // 装扮总入口：payload 指定落在哪个页签（不传就回微调）。旧的 chrome-css /
@@ -4782,6 +4813,44 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
              )}
 
              {showHistoryCleanup && <ChatHistoryCleanupModal key={char.id} character={char} onClose={() => setShowHistoryCleanup(false)} onDeleted={handleHistoryCleanupDone} />}
+             {/* ── 阶段 5.2：旁白（私聊）──────────────────────────────
+                 ⛔ 两档去向不同：环境档进记忆（它是剧情），指令档不进（那是后台调度）。 */}
+             <Modal
+                 isOpen={narrationOpen} title="旁白" onClose={() => setNarrationOpen(false)}
+                 footer={<button onClick={sendNarration} disabled={!narrationText.trim()} className="w-full py-3 bg-amber-500 text-white font-bold rounded-2xl disabled:opacity-40">放进场景</button>}
+             >
+                 <div className="space-y-3">
+                     <div className="flex gap-2">
+                         {([['ambient', '环境'], ['directive', '指令']] as const).map(([k, label]) => (
+                             <button key={k} onClick={() => setNarrationKind(k)}
+                                 className={`flex-1 py-2 rounded-xl text-sm font-bold transition-all ${narrationKind === k ? 'bg-amber-500 text-white shadow-md' : 'bg-slate-100 text-slate-500'}`}>
+                                 {label}
+                             </button>
+                         ))}
+                     </div>
+                     <textarea
+                         value={narrationText}
+                         onChange={e => setNarrationText(e.target.value)}
+                         placeholder={narrationKind === 'ambient'
+                             ? '外面下起了雨　／　她的手机在这时震了一下'
+                             : '忍住别提昨天的事　／　别再追问下去了'}
+                         className="w-full h-24 bg-slate-100 rounded-2xl p-4 resize-none text-sm leading-relaxed outline-none"
+                         autoFocus
+                     />
+                     <div className="text-[11px] text-slate-400 leading-relaxed bg-slate-50 rounded-xl px-3 py-2">
+                         {narrationKind === 'ambient' ? <>
+                             <b className="text-slate-600">这不是你说的话，是正在发生的事。</b>
+                             {char?.name || 'ta'}只知道<b className="text-slate-600">这件事发生了</b>，不知道是你写的，也不会问「这是谁说的」。
+                             <br />它<b className="text-slate-600">算剧情</b>，会进 ta 的记忆。
+                         </> : <>
+                             <b className="text-slate-600">一句只给 ta 的提示</b>，ta 不会在台词里复述出来。
+                             <br />要不要照办、照办到什么程度，<b className="text-slate-600">仍然取决于 ta 是个什么样的人</b>。
+                             <br />⛔ 它<b className="text-slate-600">不进记忆</b>——那是后台调度，不是发生过的事。
+                         </>}
+                     </div>
+                 </div>
+             </Modal>
+
              <ChatModals
                 settingsInputPreferences={settingsInputPreferences} setSettingsInputPreferences={setSettingsInputPreferences}
                 settingsChatActionOrder={settingsChatActionOrder} setSettingsChatActionOrder={setSettingsChatActionOrder}

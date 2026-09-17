@@ -948,6 +948,17 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             // 所有内置动作先放进带稳定 ID 的注册表，再按用户设置的顺序取出，
                             // 最后才按每页 8 个切开。这样跨页调整也不会留下空格。
                             const builtInActions: Record<ChatActionId, React.ReactNode> = {
+                            /* 旁白（阶段 5.2）：你不说话，但往场景里放一句话。
+                                ⛔ 存成 role:'system' 而不是 'user' —— 见 Chat.tsx 的 sendNarration。 */
+                            narration: (
+                            <button onClick={() => onPanelAction('narration')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${acnh ? 'bg-white/70 border-[#e6dab4] text-[#c08a2e]' : isDiscordStyle ? 'bg-slate-800 text-amber-300 border-amber-400/20' : 'bg-amber-50 text-amber-500 border-amber-100'}`}>
+                                    <PencilSimple className="w-6 h-6" weight="fill" />
+                                </div>
+                                <span className="text-xs font-bold">旁白</span>
+                            </button>
+                            ),
+
                             collaboration: (
                             <button onClick={() => onPanelAction('collaboration')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${acnh ? 'bg-white/70 border-[#e6dab4] text-[#7c6ee6]' : isDiscordStyle ? 'bg-slate-800 text-indigo-300 border-indigo-400/20' : 'bg-indigo-50 text-indigo-500 border-indigo-100'}`}>

@@ -25,6 +25,9 @@ export const CHAT_ACTION_DEFINITIONS = [
     { id: 'voice', label: '语音' },
     { id: 'memory-link', label: '记忆链接' },
     { id: 'favorites', label: '收藏' },
+    // 旁白（阶段 5.2）。**刻意追加在末尾**：normalizeChatActionOrder 会把新动作
+    // 补到老用户已保存排序的末尾，默认顺序也放末尾，新老用户才会在同一格看到它。
+    { id: 'narration', label: '旁白' },
 ] as const;
 
 export type ChatActionId = typeof CHAT_ACTION_DEFINITIONS[number]['id'];
