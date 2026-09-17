@@ -1852,6 +1852,40 @@ export interface WorldHouse {
  */
 export type WorldTerrain = 'street' | 'water' | 'green' | 'indoor' | 'height' | 'quiet';
 
+/**
+ * 小镇地图上的小人用哪套形象（用户 2026-09-17 提）。
+ *
+ * - `pixel` —— 像素家园那套捏出来的像素小人
+ * - `chibi` —— 彼方那套 Q 版立绘
+ *
+ * ⭐ 缺省 `pixel`。用户原话是「**像素角色用到的地方太少了**」——
+ * 那套小人捏完只在小小窝一个角落里出现，这是在浪费一个已经做好的东西。
+ *
+ * ⛔ 但仍然是**开关**，不是写死：chibi 也很可爱，想换随时换。
+ * 而且两档会**互相兜底** —— 选的那档没有就用另一档，绝不让人从地图上消失。
+ */
+export type WorldFigureStyle = 'pixel' | 'chibi';
+
+/**
+ * 小镇地图的自定义底图（用户 2026-09-17 提：「可以本地传图片，也可以直接贴图床链接」）。
+ *
+ * ⛔ **本地上传的图不存在这里** —— 存进资产库（`world_map_bg_<worldId>`），
+ * 这里只留一个 `kind: 'asset'` 的标记。世界记录每改一个字段都要整条重写，
+ * 把一张几 MB 的 data URI 放进来，等于每次存世界都拖着它一起写。
+ */
+export interface WorldMapBg {
+    /** `url` = 用户贴的图床链接（原样用，我们不下载也不代理）；`asset` = 本地上传，存在资产库 */
+    kind: 'url' | 'asset';
+    /** 仅 `kind: 'url'` 时有意义 */
+    url?: string;
+    /**
+     * 压在底图上的遮罩浓度 0.1~0.8，缺省 0.35。
+     * ⛔ 不允许 0 —— 花哨的底图会让地点名和小人名字彻底看不清，
+     * 而那两样是这张图唯一的功能性内容。
+     */
+    dim?: number;
+}
+
 export interface WorldPlace {
     id: string;
     name: string;
@@ -2173,6 +2207,10 @@ export interface WorldProfile {
      * 不额外存坐标（多一份坐标就多一份和地点表对不上的可能）。
      */
     mapCols?: 2 | 3;
+    /** 地图小人用哪套形象。缺省像素（见 {@link WorldFigureStyle}）。 */
+    figureStyle?: WorldFigureStyle;
+    /** 地图底图。不设＝没有底图，就是现在的样子。 */
+    mapBg?: WorldMapBg;
     /** 待发生事件表（阶段 3 底座）。缺省 = 没有，提示词一个字都不多 */
     pendings?: WorldPending[];
     /** 节日律法（阶段 3.2）。缺省/空 = 这个世界不过节，行为与改造前一致 */

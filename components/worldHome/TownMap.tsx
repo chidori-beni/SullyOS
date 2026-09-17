@@ -24,6 +24,7 @@ import React from 'react';
 import { MapPin, UsersThree } from '@phosphor-icons/react';
 import { getChibi } from '../../utils/vrWorld/chibi';
 import { TERRAINS, mapColsOf, type TownSlot, type TownFigure, type TownScene } from '../../utils/worldHome/townMap';
+import { pickFigureSource, figureStyleOf, resolveMapBg, mapBgDimOf } from '../../utils/worldHome/townFigures';
 import type { CharacterProfile, WorldProfile } from '../../types';
 
 /** 家园主视图的昼/夜 token 子集。只取用得上的几个，别把整套拖进来。 */
@@ -33,13 +34,21 @@ interface Theme {
     chip: string;
 }
 
-/** 单个小人。⛔ memo 到自身 —— 别人换地方时这个不该重绘。 */
+/**
+ * 单个小人。⛔ memo 到自身 —— 别人换地方时这个不该重绘。
+ *
+ * 用哪套形象（像素 / chibi）由 `pickFigureSource` 决定，**两档互相兜底** ——
+ * 见 townFigures.ts。这里只负责画出来。
+ */
 const Figure = React.memo<{
     figure: TownFigure;
     char?: CharacterProfile;
+    /** 这个角色的像素小人（已渲染好的 data URI）。没捏过就没有。 */
+    pixel?: string;
+    style: 'pixel' | 'chibi';
     onClick?: (charId: string) => void;
-}>(({ figure, char, onClick }) => {
-    const chibi = char ? getChibi(char) : null;
+}>(({ figure, char, pixel, style, onClick }) => {
+    const src = pickFigureSource(style, pixel, char ? getChibi(char) : null);
     return (
         <button
             onClick={() => onClick?.(figure.charId)}
@@ -53,13 +62,19 @@ const Figure = React.memo<{
                 zIndex: 10 + figure.index,
             }}
         >
-            {chibi?.img ? (
+            {src ? (
                 <img
-                    src={chibi.img}
+                    src={src.img}
                     alt={figure.charName}
                     draggable={false}
-                    className="w-9 h-9 object-contain drop-shadow-[0_2px_3px_rgba(0,0,0,.25)]"
-                    style={{ transform: chibi.flip ? 'scaleX(-1)' : undefined, imageRendering: 'pixelated' }}
+                    /* 像素小人画大一点：它本来就是 53x56 的小图，
+                       和 chibi 同尺寸的话会显得比 chibi 矮一截。 */
+                    className={`${src.kind === 'pixel' ? 'w-11 h-11' : 'w-9 h-9'} object-contain drop-shadow-[0_2px_3px_rgba(0,0,0,.25)]`}
+                    style={{
+                        transform: src.flip ? 'scaleX(-1)' : undefined,
+                        // ⛔ 只有像素小人要 pixelated —— 给 chibi 用会把它糊成锯齿。
+                        imageRendering: src.kind === 'pixel' ? 'pixelated' : undefined,
+                    }}
                 />
             ) : (
                 // 连头像都没有：画一个首字圆片。⛔ 不能什么都不画 —— 那等于这个人消失了。
@@ -124,14 +139,18 @@ Slot.displayName = 'TownMapSlot';
 const TownMap: React.FC<{
     scene: TownScene;
     characters: CharacterProfile[];
-    /** 只为读列数（6.2）。⛔ 组件不碰 world 的任何别的东西，更不写回去。 */
-    world: Pick<WorldProfile, 'mapCols'>;
+    /** 只为读列数 / 小人形象 / 底图。⛔ 组件不碰 world 的别的东西，更不写回去。 */
+    world: Pick<WorldProfile, 'mapCols' | 'figureStyle' | 'mapBg'>;
+    /** charId → 像素小人 data URI。调用方异步备好，没备到的自动退 chibi。 */
+    pixelSprites?: Record<string, string>;
+    /** 本地上传那档底图的 data URI（调用方从资产库读）。贴链接那档用不上。 */
+    bgAssetUrl?: string | null;
     t: Theme;
     /** 点小人 —— 通常是打开 ta 的手机/资料 */
     onFigureClick?: (charId: string) => void;
     /** 点地点标题 —— 通常是展开这个地方的介绍 */
     onSlotClick?: (slotId: string) => void;
-}> = ({ scene, characters, world, t, onFigureClick, onSlotClick }) => {
+}> = ({ scene, characters, world, pixelSprites, bgAssetUrl, t, onFigureClick, onSlotClick }) => {
     // 按槽分组一次，免得每个槽都把整个 figures 数组过一遍。
     const bySlot = React.useMemo(() => {
         const m = new Map<string, TownFigure[]>();
@@ -148,7 +167,11 @@ const TownMap: React.FC<{
         [characters],
     );
 
-    return (
+    const style = figureStyleOf(world);
+    const bg = resolveMapBg(world.mapBg, bgAssetUrl);
+    const dim = mapBgDimOf(world.mapBg);
+
+    const grid = (
         <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${mapColsOf(world)}, minmax(0, 1fr))` }}>
             {scene.slots.map(slot => (
                 <Slot
@@ -159,10 +182,33 @@ const TownMap: React.FC<{
                     onClick={onSlotClick}
                 >
                     {(bySlot.get(slot.id) || []).map(f => (
-                        <Figure key={f.charId} figure={f} char={charById.get(f.charId)} onClick={onFigureClick} />
+                        <Figure
+                            key={f.charId}
+                            figure={f}
+                            char={charById.get(f.charId)}
+                            pixel={pixelSprites?.[f.charId]}
+                            style={style}
+                            onClick={onFigureClick}
+                        />
                     ))}
                 </Slot>
             ))}
+        </div>
+    );
+
+    if (!bg) return grid;
+    return (
+        <div className="relative rounded-2xl overflow-hidden">
+            {/* 底图铺在最底下。⛔ 用 background 而不是 <img>：图挂了就是没底图，
+                不会在地图中间留一个破图图标。 */}
+            <div
+                className="absolute inset-0 bg-center bg-cover"
+                style={{ backgroundImage: `url(${JSON.stringify(bg).slice(1, -1)})` }}
+            />
+            {/* ⛔ 遮罩是**必须的**，不是装饰：地点名和小人名字是这张图唯一的功能性内容，
+                一张花哨的底图会让它们彻底读不出来。浓度可调但有下限，见 mapBgDimOf。 */}
+            <div className="absolute inset-0 bg-black" style={{ opacity: dim }} />
+            <div className="relative p-2">{grid}</div>
         </div>
     );
 };

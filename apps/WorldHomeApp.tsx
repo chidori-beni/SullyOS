@@ -33,6 +33,10 @@ import { dmThreadId } from '../utils/worldHome/threads';
 import TownMap from '../components/worldHome/TownMap';
 import { buildTownScene, canRenderTownMap, TERRAINS, MAP_COL_CHOICES, mapColsOf, guessTerrain, movePlace } from '../utils/worldHome/townMap';
 import type { WorldTerrain } from '../types';
+import type { WorldFigureStyle } from '../types';
+import { pixelCharAssetKey, mapBgAssetKey, figureStyleOf, mapBgDimOf, looksLikeImageUrl, MAP_BG_MAX_W, MAP_BG_QUALITY } from '../utils/worldHome/townFigures';
+import { ensurePixelChar } from './pixelHome/pixelCharGenerator';
+import type { PixelCharConfig } from './pixelHome/pixelCharGenerator';
 import { OBSERVER_LENGTHS, DEFAULT_OBSERVER_LENGTH, buildObserverPrompt, parseObserverLines, appendObserverLines, dropObserverLines, formatThreadForObserver } from '../utils/worldHome/observer';
 import type { ObserverLength, ObserverPeer } from '../utils/worldHome/observer';
 import { safeFetchJson } from '../utils/safeApi';
@@ -1107,6 +1111,99 @@ const WorldEditor: React.FC<{
                         <span className="text-[10px] text-stone-300">地方多就选 3，但手机上会小一点</span>
                     </div>
                 )}
+                {(w.places || []).length > 0 && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10.5px] text-stone-400 shrink-0">地图上的小人</span>
+                        {([['pixel', '像素小人'], ['chibi', 'Q版立绘']] as [WorldFigureStyle, string][]).map(([k, label]) => (
+                            <button key={k} onClick={() => upd({ figureStyle: k })}
+                                className={`text-[11px] px-3 py-0.5 rounded-full border font-bold ${figureStyleOf(w) === k ? 'bg-amber-500 border-amber-500 text-white' : 'bg-white border-stone-200 text-stone-500'}`}>
+                                {label}
+                            </button>
+                        ))}
+                        {/* ⭐ 这句很重要：两档互相兜底，所以选了像素也不会有人消失。
+                            不说的话用户会以为「没捏过像素的角色会不见」而不敢切。 */}
+                        <span className="text-[10px] text-stone-300 w-full">
+                            没捏过像素小人的角色会自动用 Q 版，<b className="text-stone-400">不会有人从地图上消失</b>。像素小人在小小窝里捏。
+                        </span>
+                    </div>
+                )}
+                {/* ── 地图底图（用户 2026-09-17 要的：本地传图 或 贴图床链接）── */}
+                {(w.places || []).length > 0 && (
+                    <div className="rounded-xl border border-stone-200 bg-white p-2.5 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10.5px] font-bold text-stone-500">地图底图</span>
+                            {w.mapBg && (
+                                <button onClick={() => upd({ mapBg: undefined })} className="text-[10.5px] text-stone-400 underline">不要底图</button>
+                            )}
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                            <label className="text-[11px] px-2.5 py-1 rounded-lg bg-amber-100 text-amber-800 font-bold border border-amber-200 cursor-pointer active:scale-95 transition-transform">
+                                传张图
+                                <input type="file" accept="image/*" className="hidden" onChange={async e => {
+                                    const file = e.target.files?.[0];
+                                    e.target.value = '';
+                                    if (!file) return;
+                                    try {
+                                        // ⛔ 必须压：手机直出的图动辄几 MB，
+                                        //    而世界记录每改一个字段都要整条重写。
+                                        const dataUrl = await new Promise<string>((res, rej) => {
+                                            const fr = new FileReader();
+                                            fr.onload = () => res(String(fr.result || ''));
+                                            fr.onerror = () => rej(new Error('read'));
+                                            fr.readAsDataURL(file);
+                                        });
+                                        const img = await new Promise<HTMLImageElement>((res, rej) => {
+                                            const im = new Image();
+                                            im.onload = () => res(im);
+                                            im.onerror = () => rej(new Error('decode'));
+                                            im.src = dataUrl;
+                                        });
+                                        const scale = Math.min(1, MAP_BG_MAX_W / (img.naturalWidth || MAP_BG_MAX_W));
+                                        const cv = document.createElement('canvas');
+                                        cv.width = Math.max(1, Math.round((img.naturalWidth || MAP_BG_MAX_W) * scale));
+                                        cv.height = Math.max(1, Math.round((img.naturalHeight || MAP_BG_MAX_W) * scale));
+                                        cv.getContext('2d')!.drawImage(img, 0, 0, cv.width, cv.height);
+                                        const out = cv.toDataURL('image/jpeg', MAP_BG_QUALITY);
+                                        await DB.saveAsset(mapBgAssetKey(w.id), out);
+                                        upd({ mapBg: { kind: 'asset', dim: mapBgDimOf(w.mapBg) } });
+                                        addToast('底图换好了', 'success');
+                                    } catch {
+                                        addToast('这张图读不了，换一张试试', 'error');
+                                    }
+                                }} />
+                            </label>
+                            <span className="text-[10px] text-stone-300">或</span>
+                            <input
+                                className="flex-1 min-w-[140px] px-2 py-1 rounded-lg bg-stone-50 border border-stone-100 text-[11px]"
+                                placeholder="贴一个图片链接（图床也行）"
+                                defaultValue={w.mapBg?.kind === 'url' ? (w.mapBg.url || '') : ''}
+                                onBlur={e => {
+                                    const v = e.target.value.trim();
+                                    if (!v) return;
+                                    // ⭐ 判断刻意宽松：图床链接常常没有扩展名，
+                                    //    拦错了用户会以为功能坏了。
+                                    if (!looksLikeImageUrl(v)) { addToast('这看起来不像一个图片链接', 'error'); return; }
+                                    upd({ mapBg: { kind: 'url', url: v, dim: mapBgDimOf(w.mapBg) } });
+                                    addToast('底图换好了', 'success');
+                                }}
+                            />
+                        </div>
+                        {w.mapBg && (
+                            <div className="flex items-center gap-2">
+                                <span className="text-[10px] text-stone-400 shrink-0">压暗</span>
+                                <input type="range" min={0.1} max={0.8} step={0.05} value={mapBgDimOf(w.mapBg)} className="flex-1"
+                                    onChange={e => upd({ mapBg: { ...w.mapBg!, dim: Number(e.target.value) } })} />
+                                <span className="text-[10px] text-stone-400 w-8 text-right">{Math.round(mapBgDimOf(w.mapBg) * 100)}%</span>
+                            </div>
+                        )}
+                        {/* ⛔ 这句是解释为什么不给「完全不压暗」：不解释的话用户会觉得是限制。 */}
+                        <div className="text-[10px] text-stone-400 leading-relaxed">
+                            底图会压暗一点 —— <b className="text-stone-500">地名和角色名是这张图唯一有用的东西</b>，
+                            不压的话花一点的底图会让它们彻底看不清。所以最低只能压到 10%。
+                            <br />贴链接的话我们<b className="text-stone-500">不会下载它</b>，图挂了地图就退回没底图的样子。
+                        </div>
+                    </div>
+                )}
                 {(w.places || []).length === 0 && (
                     <div className="text-[11px] text-stone-400">
                         还没列。演过几轮之后点「<b className="text-stone-500">从剧情里收集</b>」最省事——
@@ -1903,6 +2000,44 @@ const WorldView: React.FC<{
         [world, latest, members],
     );
     const [openSlotId, setOpenSlotId] = useState<string | null>(null);
+
+    /**
+     * 各成员的像素小人（用户 2026-09-17 要的）。
+     *
+     * 像素家园把捏好的配置存在资产库 `pixel_char_<charId>`，这里读出来再渲染成图。
+     * `ensurePixelChar` 自带缓存，所以同一套配置只画一次。
+     *
+     * ⛔ 拿不到就不放进表里 —— `pickFigureSource` 会自动退回 chibi，
+     *    **绝不因为「没捏过像素小人」让这个人从地图上消失**。
+     */
+    const [pixelSprites, setPixelSprites] = useState<Record<string, string>>({});
+    useEffect(() => {
+        let dead = false;
+        (async () => {
+            const out: Record<string, string> = {};
+            await Promise.all(members.map(async m => {
+                try {
+                    const saved = await DB.getAsset(pixelCharAssetKey(m.id));
+                    if (!saved) return;
+                    const uri = await ensurePixelChar(JSON.parse(saved) as PixelCharConfig);
+                    if (uri) out[m.id] = uri;
+                } catch { /* 这个角色没有就算了，退 chibi */ }
+            }));
+            if (!dead) setPixelSprites(out);
+        })();
+        return () => { dead = true; };
+    }, [members]);
+
+    /** 本地上传的底图。贴链接那档不走这儿（`resolveMapBg` 直接用 url）。 */
+    const [bgAssetUrl, setBgAssetUrl] = useState<string | null>(null);
+    useEffect(() => {
+        let dead = false;
+        if (world.mapBg?.kind !== 'asset') { setBgAssetUrl(null); return; }
+        DB.getAsset(mapBgAssetKey(world.id))
+            .then(v => { if (!dead) setBgAssetUrl(v || null); })
+            .catch(() => { if (!dead) setBgAssetUrl(null); });
+        return () => { dead = true; };
+    }, [world.id, world.mapBg?.kind]);
     // 氛围跟随"即将到来的那一段"：早/中=白天，晚=夜晚
     const isNight = isNightWorld(world);
 
@@ -2511,6 +2646,8 @@ const WorldView: React.FC<{
                             scene={townScene}
                             characters={characters}
                             world={world}
+                            pixelSprites={pixelSprites}
+                            bgAssetUrl={bgAssetUrl}
                             t={t}
                             onFigureClick={id => { setPhoneView({ ownerId: id }); trackEvent('从小镇地图打开角色手机'); }}
                             onSlotClick={id => setOpenSlotId(prev => (prev === id ? null : id))}
