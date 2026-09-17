@@ -2429,6 +2429,22 @@ const WorldView: React.FC<{
                     ⛔ 只读。点小人看 ta 的手机，点地点看这儿是干嘛的，**没有拖拽**：
                        地图一旦能拖，下一步必然是「拖过去就算 ta 去了那儿」，
                        那就成了系统替角色决定行踪。 */}
+                {/* ⚠️ 没有地点表时**必须给一句话说明**，不能整块消失。
+                    第一版就是直接 `canRenderTownMap && (...)`，结果老世界（建于地点表之前）
+                    打开小镇什么都看不见，也不知道为什么 —— 用户当场问「地图在哪」。
+                    功能藏起来和没做是一回事。 */}
+                {!canRenderTownMap(world) && (
+                    <button onClick={onEdit} className={`w-full text-left rounded-2xl border p-3.5 ${t.panel} active:scale-[0.99] transition-transform`}>
+                        <div className={`text-[10px] font-black tracking-[0.25em] uppercase flex items-center gap-1.5 mb-1.5 ${t.textLabel}`}>
+                            <MapPin size={11} weight="fill" />这半天大家在哪儿
+                        </div>
+                        <div className={`text-[11.5px] leading-snug ${t.textMain} opacity-85`}>
+                            想看这张图，得先让小镇有「地方」。<span className="font-bold">点这儿去世界设置</span>，
+                            在「这个世界的地方」里点<span className="font-bold">「从剧情里收集」</span>——
+                            直接把大家已经去过的地方捞出来，不用自己想。
+                        </div>
+                    </button>
+                )}
                 {canRenderTownMap(world) && (
                     <div className={`rounded-2xl border p-3.5 ${t.panel}`}>
                         <div className={`text-[10px] font-black tracking-[0.25em] uppercase flex items-center gap-1.5 mb-2.5 ${t.textLabel}`}>
