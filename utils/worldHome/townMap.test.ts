@@ -79,6 +79,21 @@ describe('阶段 6 · 小镇地图底座', () => {
             expect(buildTownSlots(w, false)[0].terrain).toBe('water');
         });
 
+        it('⭐ 地点图的引用原样带到槽上（真正取地址是渲染层的事）', () => {
+            const w = mkWorld([{ id: 'p1', name: '面包房' }]);
+            (w.places as { img?: unknown }[])[0].img = { kind: 'url', url: 'https://img/bakery' };
+            expect(buildTownSlots(w, false)[0].img).toEqual({ kind: 'url', url: 'https://img/bakery' });
+        });
+
+        it('没配图的地点就是没有，不编一个', () => {
+            expect(buildTownSlots(mkWorld([{ id: 'p1', name: '面包房' }]), false)[0].img).toBeUndefined();
+        });
+
+        it('⛔ 兜底槽永远没有图 —— 我们根本不知道 ta 在哪儿', () => {
+            const slots = buildTownSlots(mkWorld([{ id: 'p1', name: '码头' }]), true);
+            expect(slots[slots.length - 1].img).toBeUndefined();
+        });
+
         it('⛔ 兜底槽永远没有地貌 —— 我们本来就不知道 ta 在哪儿', () => {
             const slots = buildTownSlots(mkWorld([{ id: 'p1', name: '码头' }]), true);
             expect(slots[slots.length - 1].terrain).toBeUndefined();

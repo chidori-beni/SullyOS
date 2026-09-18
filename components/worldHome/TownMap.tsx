@@ -24,7 +24,7 @@ import React from 'react';
 import { MapPin, UsersThree } from '@phosphor-icons/react';
 import { getChibi } from '../../utils/vrWorld/chibi';
 import { TERRAINS, mapColsOf, type TownSlot, type TownFigure, type TownScene } from '../../utils/worldHome/townMap';
-import { pickFigureSource, figureStyleOf, resolveMapBg, mapBgDimOf } from '../../utils/worldHome/townFigures';
+import { pickFigureSource, figureStyleOf, resolveMapBg, mapBgDimOf, resolveImageRef, placeImgDimOf } from '../../utils/worldHome/townFigures';
 import type { CharacterProfile, WorldProfile } from '../../types';
 
 /** 家园主视图的昼/夜 token 子集。只取用得上的几个，别把整套拖进来。 */
@@ -93,41 +93,69 @@ Figure.displayName = 'TownMapFigure';
 /**
  * 一个地点的框。⛔ 只依赖地点本身 —— 小人是 children 传进来的，框子不跟着重绘。
  *
- * 地貌（6.2）只改**底纹和描边**，不改文字色：底色一深一浅的话，
- * 昼夜两套主题里总有一套的字会看不清。用半透明叠在 panelSolid 上，两边都安全。
+ * ## 有图和没图是两套画法
+ *
+ * **没图**：地貌（6.2）给一层从下往上的淡色底纹 + 描边。
+ * 不改文字色 —— 底色一深一浅的话，昼夜两套主题里总有一套的字会看不清。
+ *
+ * **有图**（2026-09-19）：图铺满整个框，地貌**退成一圈描边就好**。
+ * 地貌本来就是「没有美术时的替代品」，真有图了还往上糊一层色只会把图弄脏。
+ *
+ * ⛔ 有图时地点名底下**必须垫一条深色渐变**：照片是什么颜色都可能，
+ * 白字压在浅色天空上会直接消失，而地点名是这张图唯一的功能性内容。
  */
 const Slot = React.memo<{
     slot: TownSlot;
     t: Theme;
+    /** 这个地点的图（已解析好的地址）。没有就走地貌那套。 */
+    img?: string | null;
+    /** 图上压多重的遮罩（整个世界共用一个值） */
+    imgDim?: number;
     overflow?: number;
     onClick?: (slotId: string) => void;
     children?: React.ReactNode;
-}>(({ slot, t, overflow, onClick, children }) => {
+}>(({ slot, t, img, imgDim = 0.3, overflow, onClick, children }) => {
     const terrain = slot.terrain ? TERRAINS[slot.terrain] : null;
     return (
     <div
-        className={`relative rounded-2xl border overflow-hidden ${slot.isElsewhere ? 'border-dashed opacity-75' : ''} ${t.panelSolid}`}
+        className={`relative rounded-2xl border overflow-hidden ${slot.isElsewhere ? 'border-dashed opacity-75' : ''} ${img ? 'bg-black' : t.panelSolid}`}
         style={{
             aspectRatio: '1 / 0.82',
-            ...(terrain ? {
+            ...(terrain ? { borderColor: `${terrain.tint}66` } : null),
+            // ⛔ 有图时不再叠地貌色：地貌是「没美术时的替代品」，真有图了叠上去只会把图弄脏。
+            ...(terrain && !img ? {
                 // 从下往上的一层淡色 —— 像地面的颜色透上来，而不是整块染色。
                 backgroundImage: `linear-gradient(to top, ${terrain.tint}38, ${terrain.tint}10 55%, transparent)`,
-                borderColor: `${terrain.tint}66`,
             } : null),
         }}
     >
+        {img ? (
+            <>
+                {/* ⛔ 用 background 而不是 <img>：图挂了就是没图，不会在框里留个破图图标。 */}
+                <div className="absolute inset-0 bg-center bg-cover"
+                    style={{ backgroundImage: `url(${JSON.stringify(img).slice(1, -1)})` }} />
+                <div className="absolute inset-0 bg-black" style={{ opacity: imgDim }} />
+                {/* 顶部那条渐变专门给地点名垫底 —— 照片顶部可能是任何颜色。 */}
+                <div className="absolute inset-x-0 top-0 h-9 z-20 pointer-events-none"
+                    style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,.55), transparent)' }} />
+            </>
+        ) : null}
         <button
             onClick={() => onClick?.(slot.id)}
             disabled={slot.isElsewhere}
             className="absolute inset-x-0 top-0 z-30 px-2 py-1.5 flex items-center gap-1 text-left disabled:cursor-default"
         >
             {slot.isElsewhere
-                ? <UsersThree size={10} weight="fill" className="shrink-0 opacity-60" />
-                : <MapPin size={10} weight="fill" className="shrink-0 opacity-70" />}
-            <span className={`text-[10px] font-black truncate ${t.textMain}`}>{slot.name}</span>
+                ? <UsersThree size={10} weight="fill" className={`shrink-0 ${img ? 'text-white/80' : 'opacity-60'}`} />
+                : <MapPin size={10} weight="fill" className={`shrink-0 ${img ? 'text-white/85' : 'opacity-70'}`} />}
+            {/* 有图时一律白字 + 描边阴影：底下是照片，主题色在这儿不作数。 */}
+            <span
+                className={`text-[10px] font-black truncate ${img ? 'text-white' : t.textMain}`}
+                style={img ? { textShadow: '0 1px 3px rgba(0,0,0,.85)' } : undefined}
+            >{slot.name}</span>
             {terrain ? <span className="shrink-0 text-[9px] leading-none opacity-80" title={terrain.name}>{terrain.emoji}</span> : null}
             {overflow ? (
-                <span className={`ml-auto shrink-0 text-[9px] font-black px-1 rounded ${t.chip}`}>+{overflow}</span>
+                <span className={`ml-auto shrink-0 text-[9px] font-black px-1 rounded ${img ? 'bg-black/55 text-white' : t.chip}`}>+{overflow}</span>
             ) : null}
         </button>
         {children}
@@ -140,17 +168,19 @@ const TownMap: React.FC<{
     scene: TownScene;
     characters: CharacterProfile[];
     /** 只为读列数 / 小人形象 / 底图。⛔ 组件不碰 world 的别的东西，更不写回去。 */
-    world: Pick<WorldProfile, 'mapCols' | 'figureStyle' | 'mapBg'>;
+    world: Pick<WorldProfile, 'mapCols' | 'figureStyle' | 'mapBg' | 'placeImgDim'>;
     /** charId → 像素小人 data URI。调用方异步备好，没备到的自动退 chibi。 */
     pixelSprites?: Record<string, string>;
     /** 本地上传那档底图的 data URI（调用方从资产库读）。贴链接那档用不上。 */
     bgAssetUrl?: string | null;
+    /** placeId → 本地上传那档地点图的 data URI。贴链接那档用不上。 */
+    placeImgAssets?: Record<string, string>;
     t: Theme;
     /** 点小人 —— 通常是打开 ta 的手机/资料 */
     onFigureClick?: (charId: string) => void;
     /** 点地点标题 —— 通常是展开这个地方的介绍 */
     onSlotClick?: (slotId: string) => void;
-}> = ({ scene, characters, world, pixelSprites, bgAssetUrl, t, onFigureClick, onSlotClick }) => {
+}> = ({ scene, characters, world, pixelSprites, bgAssetUrl, placeImgAssets, t, onFigureClick, onSlotClick }) => {
     // 按槽分组一次，免得每个槽都把整个 figures 数组过一遍。
     const bySlot = React.useMemo(() => {
         const m = new Map<string, TownFigure[]>();
@@ -170,6 +200,7 @@ const TownMap: React.FC<{
     const style = figureStyleOf(world);
     const bg = resolveMapBg(world.mapBg, bgAssetUrl);
     const dim = mapBgDimOf(world.mapBg);
+    const placeDim = placeImgDimOf(world);
 
     const grid = (
         <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${mapColsOf(world)}, minmax(0, 1fr))` }}>
@@ -178,6 +209,8 @@ const TownMap: React.FC<{
                     key={slot.id}
                     slot={slot}
                     t={t}
+                    img={resolveImageRef(slot.img, placeImgAssets?.[slot.id])}
+                    imgDim={placeDim}
                     overflow={scene.overflow[slot.id]}
                     onClick={onSlotClick}
                 >

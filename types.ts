@@ -1867,17 +1867,27 @@ export type WorldTerrain = 'street' | 'water' | 'green' | 'indoor' | 'height' | 
 export type WorldFigureStyle = 'pixel' | 'chibi';
 
 /**
- * 小镇地图的自定义底图（用户 2026-09-17 提：「可以本地传图片，也可以直接贴图床链接」）。
+ * 一张用户给的图（用户 2026-09-17 提：「可以本地传图片，也可以直接贴图床链接」）。
  *
- * ⛔ **本地上传的图不存在这里** —— 存进资产库（`world_map_bg_<worldId>`），
- * 这里只留一个 `kind: 'asset'` 的标记。世界记录每改一个字段都要整条重写，
- * 把一张几 MB 的 data URI 放进来，等于每次存世界都拖着它一起写。
+ * ⛔ **本地上传的图不存在这里** —— 存进资产库，这里只留一个 `kind: 'asset'` 的标记。
+ * 世界记录每改一个字段都要整条重写，把几 MB 的 data URI 放进来，
+ * 等于每次存世界都拖着它一起写。地点图更要命：十个地点就是十张。
  */
-export interface WorldMapBg {
+export interface WorldImageRef {
     /** `url` = 用户贴的图床链接（原样用，我们不下载也不代理）；`asset` = 本地上传，存在资产库 */
     kind: 'url' | 'asset';
     /** 仅 `kind: 'url'` 时有意义 */
     url?: string;
+}
+
+/**
+ * 小镇地图的**整体底图**。
+ *
+ * ⚠️ 有了地点图（`WorldPlace.img`，2026-09-19）之后这个的作用小了很多 ——
+ * 地点框是不透明的，底图基本只从格子缝里露出来。留着是因为它确实能定个调子，
+ * 但**别指望它** —— 想让地图好看，该给每个地点配图。
+ */
+export interface WorldMapBg extends WorldImageRef {
     /**
      * 压在底图上的遮罩浓度 0.1~0.8，缺省 0.35。
      * ⛔ 不允许 0 —— 花哨的底图会让地点名和小人名字彻底看不清，
@@ -1891,6 +1901,14 @@ export interface WorldPlace {
     name: string;
     /** 地貌，决定地图上这个框的配色。可空＝中性配色。见 {@link WorldTerrain}。 */
     terrain?: WorldTerrain;
+    /**
+     * 这个地方**长什么样**（用户 2026-09-19 提：「每个地点都可以上传不同的图片，
+     * 这样才有意义吧」——是的，整体底图会被不透明的地点框盖住，这个才是真正有用的）。
+     *
+     * ⛔ 本地上传的图存资产库 `world_place_img_<worldId>_<placeId>`，
+     * 这里只留标记。⛔ 也**不进提示词** —— 和地貌同理，「这是个什么地方」是 `blurb` 的活儿。
+     */
+    img?: WorldImageRef;
     /** 一句话说这是个什么地方（会进提示词，让角色知道这儿能干嘛） */
     blurb?: string;
     /**
@@ -2209,8 +2227,15 @@ export interface WorldProfile {
     mapCols?: 2 | 3;
     /** 地图小人用哪套形象。缺省像素（见 {@link WorldFigureStyle}）。 */
     figureStyle?: WorldFigureStyle;
-    /** 地图底图。不设＝没有底图，就是现在的样子。 */
+    /** 地图整体底图。不设＝没有底图。⚠️ 有地点图之后作用很小，见 {@link WorldMapBg}。 */
     mapBg?: WorldMapBg;
+    /**
+     * 压在**每张地点图**上的遮罩浓度 0.1~0.8，缺省 0.3。整个世界共用一个值。
+     *
+     * ⛔ 同样不允许 0：地点名和站在里面的角色名要读得出来。
+     * ⭐ 做成一个值而不是每个地点一个 —— 一张图一个浓度，整张地图会花得没法看。
+     */
+    placeImgDim?: number;
     /** 待发生事件表（阶段 3 底座）。缺省 = 没有，提示词一个字都不多 */
     pendings?: WorldPending[];
     /** 节日律法（阶段 3.2）。缺省/空 = 这个世界不过节，行为与改造前一致 */

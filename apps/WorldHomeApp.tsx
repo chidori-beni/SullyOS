@@ -34,7 +34,7 @@ import TownMap from '../components/worldHome/TownMap';
 import { buildTownScene, canRenderTownMap, TERRAINS, MAP_COL_CHOICES, mapColsOf, guessTerrain, movePlace } from '../utils/worldHome/townMap';
 import type { WorldTerrain } from '../types';
 import type { WorldFigureStyle } from '../types';
-import { pixelCharAssetKey, mapBgAssetKey, figureStyleOf, mapBgDimOf, looksLikeImageUrl, MAP_BG_MAX_W, MAP_BG_QUALITY } from '../utils/worldHome/townFigures';
+import { pixelCharAssetKey, mapBgAssetKey, placeImgAssetKey, figureStyleOf, mapBgDimOf, placeImgDimOf, looksLikeImageUrl, MAP_BG_MAX_W, MAP_BG_QUALITY, PLACE_IMG_MAX_W } from '../utils/worldHome/townFigures';
 import { ensurePixelChar } from './pixelHome/pixelCharGenerator';
 import type { PixelCharConfig } from './pixelHome/pixelCharGenerator';
 import { OBSERVER_LENGTHS, DEFAULT_OBSERVER_LENGTH, buildObserverPrompt, parseObserverLines, appendObserverLines, dropObserverLines, formatThreadForObserver } from '../utils/worldHome/observer';
@@ -1066,9 +1066,66 @@ const WorldEditor: React.FC<{
                             </div>
                             <button onClick={() => upd({ places: (w.places || []).filter(x => x.id !== pl.id) })} className="p-1 text-stone-400"><X size={14} /></button>
                         </div>
+                        {/* ── 2026-09-19：这个地方长什么样 ──
+                            用户原话：「每个地点都可以上传不同的图片，这样才有意义吧」——是的。
+                            整体底图会被不透明的地点框盖住，**这个才是真正有用的那个**。 */}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] text-stone-400 shrink-0">这儿长什么样</span>
+                            <label className="text-[11px] px-2 py-0.5 rounded-lg bg-amber-100 text-amber-800 font-bold border border-amber-200 cursor-pointer active:scale-95 transition-transform">
+                                传图
+                                <input type="file" accept="image/*" className="hidden" onChange={async e => {
+                                    const file = e.target.files?.[0];
+                                    e.target.value = '';
+                                    if (!file) return;
+                                    try {
+                                        // ⛔ 压得比整体底图狠：地点框只有一百多像素宽，
+                                        //    而且这是 N 张，不压狠点一个世界能堆出几十 MB。
+                                        const dataUrl = await new Promise<string>((res, rej) => {
+                                            const fr = new FileReader();
+                                            fr.onload = () => res(String(fr.result || ''));
+                                            fr.onerror = () => rej(new Error('read'));
+                                            fr.readAsDataURL(file);
+                                        });
+                                        const im = await new Promise<HTMLImageElement>((res, rej) => {
+                                            const i = new Image();
+                                            i.onload = () => res(i);
+                                            i.onerror = () => rej(new Error('decode'));
+                                            i.src = dataUrl;
+                                        });
+                                        const scale = Math.min(1, PLACE_IMG_MAX_W / (im.naturalWidth || PLACE_IMG_MAX_W));
+                                        const cv = document.createElement('canvas');
+                                        cv.width = Math.max(1, Math.round((im.naturalWidth || PLACE_IMG_MAX_W) * scale));
+                                        cv.height = Math.max(1, Math.round((im.naturalHeight || PLACE_IMG_MAX_W) * scale));
+                                        cv.getContext('2d')!.drawImage(im, 0, 0, cv.width, cv.height);
+                                        await DB.saveAsset(placeImgAssetKey(w.id, pl.id), cv.toDataURL('image/jpeg', MAP_BG_QUALITY));
+                                        upd({ places: (w.places || []).map(x => x.id === pl.id ? { ...x, img: { kind: 'asset' as const } } : x) });
+                                        addToast(`${pl.name || '这个地方'} 的图换好了`, 'success');
+                                    } catch {
+                                        addToast('这张图读不了，换一张试试', 'error');
+                                    }
+                                }} />
+                            </label>
+                            <input
+                                className="flex-1 min-w-[120px] px-2 py-0.5 rounded-lg bg-stone-50 border border-stone-100 text-[11px]"
+                                placeholder="或贴个图片链接"
+                                defaultValue={pl.img?.kind === 'url' ? (pl.img.url || '') : ''}
+                                onBlur={e => {
+                                    const v = e.target.value.trim();
+                                    if (!v) return;
+                                    if (!looksLikeImageUrl(v)) { addToast('这看起来不像一个图片链接', 'error'); return; }
+                                    upd({ places: (w.places || []).map(x => x.id === pl.id ? { ...x, img: { kind: 'url' as const, url: v } } : x) });
+                                    addToast(`${pl.name || '这个地方'} 的图换好了`, 'success');
+                                }}
+                            />
+                            {pl.img && (
+                                <button onClick={() => upd({ places: (w.places || []).map(x => x.id === pl.id ? { ...x, img: undefined } : x) })}
+                                    className="text-[10.5px] text-stone-400 underline shrink-0">去掉</button>
+                            )}
+                        </div>
                         {/* 阶段 6.2：地貌只决定地图上这个框的配色。
                             不进提示词 —— 「这是个什么地方」是下面那句介绍的活儿。
-                            两边混起来的话，改个配色会莫名其妙改掉角色对这地方的认知。 */}
+                            两边混起来的话，改个配色会莫名其妙改掉角色对这地方的认知。
+                            ⭐ 配了图之后地貌就只剩一圈描边了 —— 图比色块强得多。 */}
                         <div className="flex flex-wrap gap-1 items-center">
                             <span className="text-[10px] text-stone-400 shrink-0">地图配色</span>
                             <button onClick={() => upd({ places: (w.places || []).map(x => x.id === pl.id ? { ...x, terrain: undefined } : x) })}
@@ -1109,6 +1166,14 @@ const WorldEditor: React.FC<{
                             </button>
                         ))}
                         <span className="text-[10px] text-stone-300">地方多就选 3，但手机上会小一点</span>
+                    </div>
+                )}
+                {(w.places || []).some(p => p.img) && (
+                    <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-stone-400 shrink-0">地点图压暗</span>
+                        <input type="range" min={0.1} max={0.8} step={0.05} value={placeImgDimOf(w)} className="flex-1"
+                            onChange={e => upd({ placeImgDim: Number(e.target.value) })} />
+                        <span className="text-[10px] text-stone-400 w-8 text-right">{Math.round(placeImgDimOf(w) * 100)}%</span>
                     </div>
                 )}
                 {(w.places || []).length > 0 && (
@@ -1198,9 +1263,12 @@ const WorldEditor: React.FC<{
                         )}
                         {/* ⛔ 这句是解释为什么不给「完全不压暗」：不解释的话用户会觉得是限制。 */}
                         <div className="text-[10px] text-stone-400 leading-relaxed">
-                            底图会压暗一点 —— <b className="text-stone-500">地名和角色名是这张图唯一有用的东西</b>，
-                            不压的话花一点的底图会让它们彻底看不清。所以最低只能压到 10%。
-                            <br />贴链接的话我们<b className="text-stone-500">不会下载它</b>，图挂了地图就退回没底图的样子。
+                            {/* ⚠️ 老实说它现在作用很小。不说的话用户会以为传了整体底图就该好看了，
+                                结果被不透明的地点框盖住，只会觉得功能坏了。 */}
+                            ⚠️ <b className="text-stone-500">这是整张图的底</b>，会被上面那些地点框盖住大半 ——
+                            想让地图好看，<b className="text-stone-500">给每个地点单独配图</b>（上面每个地方都有「传图」）。
+                            <br />底图会压暗一点，最低 10%：地名和角色名得读得出来。
+                            贴链接的话我们<b className="text-stone-500">不会下载它</b>，图挂了就退回没底图的样子。
                         </div>
                     </div>
                 )}
@@ -2028,6 +2096,30 @@ const WorldView: React.FC<{
         return () => { dead = true; };
     }, [members]);
 
+    /**
+     * 各地点本地上传的图（2026-09-19）。贴链接那档不走这儿。
+     *
+     * ⛔ 只读 `kind === 'asset'` 的那些 —— 贴了链接的地点不该白跑一趟资产库。
+     */
+    const [placeImgAssets, setPlaceImgAssets] = useState<Record<string, string>>({});
+    const placeAssetSig = (world.places || []).filter(p => p.img?.kind === 'asset').map(p => p.id).join(',');
+    useEffect(() => {
+        let dead = false;
+        (async () => {
+            const out: Record<string, string> = {};
+            await Promise.all((world.places || [])
+                .filter(p => p.img?.kind === 'asset')
+                .map(async p => {
+                    try {
+                        const v = await DB.getAsset(placeImgAssetKey(world.id, p.id));
+                        if (v) out[p.id] = v;
+                    } catch { /* 这个地点的图读不出来就当没有，退回地貌配色 */ }
+                }));
+            if (!dead) setPlaceImgAssets(out);
+        })();
+        return () => { dead = true; };
+    }, [world.id, placeAssetSig]);
+
     /** 本地上传的底图。贴链接那档不走这儿（`resolveMapBg` 直接用 url）。 */
     const [bgAssetUrl, setBgAssetUrl] = useState<string | null>(null);
     useEffect(() => {
@@ -2648,6 +2740,7 @@ const WorldView: React.FC<{
                             world={world}
                             pixelSprites={pixelSprites}
                             bgAssetUrl={bgAssetUrl}
+                            placeImgAssets={placeImgAssets}
                             t={t}
                             onFigureClick={id => { setPhoneView({ ownerId: id }); trackEvent('从小镇地图打开角色手机'); }}
                             onSlotClick={id => setOpenSlotId(prev => (prev === id ? null : id))}

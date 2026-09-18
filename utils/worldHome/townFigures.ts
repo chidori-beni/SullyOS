@@ -14,13 +14,21 @@
  * 是那套像素小人捏完只在小小窝一个角落里出现。所以缺省改成**像素优先**，
  * 但按老规矩 **做成开关**：喜欢 chibi 的随时切回去（`WorldProfile.figureStyle`）。
  */
-import type { WorldFigureStyle, WorldMapBg } from '../../types';
+import type { WorldFigureStyle, WorldMapBg, WorldImageRef, WorldProfile } from '../../types';
 
 /** 角色的像素小人存在资产库的哪个 key。⛔ 必须和像素家园写入时用的一致。 */
 export const pixelCharAssetKey = (charId: string) => `pixel_char_${charId}`;
 
 /** 世界自定义底图存在资产库的哪个 key（本地上传的那种）。 */
 export const mapBgAssetKey = (worldId: string) => `world_map_bg_${worldId}`;
+
+/**
+ * **某个地点**的图存在资产库的哪个 key（2026-09-19）。
+ *
+ * ⛔ 必须带上 worldId：地点 id 只在世界内唯一，两个世界各有一个 `wp_xxx` 完全可能。
+ */
+export const placeImgAssetKey = (worldId: string, placeId: string) =>
+    `world_place_img_${worldId}_${placeId}`;
 
 /**
  * 本地上传的底图压到多大。
@@ -31,6 +39,15 @@ export const mapBgAssetKey = (worldId: string) => `world_map_bg_${worldId}`;
 export const MAP_BG_MAX_W = 1280;
 /** JPEG 质量。0.82 是「看不出来但小一半」的常见甜点。 */
 export const MAP_BG_QUALITY = 0.82;
+
+/**
+ * 地点图压到多大。
+ *
+ * ⭐ 比整体底图小得多是**有意的**：地点框在手机上只有一百多像素宽，640 已经是二倍图了。
+ * 而且这是 **N 张**（十个地点就是十张），压得不够狠的话，
+ * 一个世界能在 IndexedDB 里堆出几十 MB。
+ */
+export const PLACE_IMG_MAX_W = 640;
 
 /** 缺省的小人形象。⭐ 像素优先 —— 用户 2026-09-17 明确要求。 */
 export const DEFAULT_FIGURE_STYLE: WorldFigureStyle = 'pixel';
@@ -74,24 +91,30 @@ export function pickFigureSource(
 }
 
 /**
- * 底图最终该用哪个地址。
+ * 一张图最终该用哪个地址。底图和地点图共用这一个 —— 两边规则完全一样。
  *
  * - `kind: 'url'` → 直接用用户贴的图床链接（⛔ 我们不去下载它，也不代理它）
  * - `kind: 'asset'` → 用调用方从资产库读出来的那份 data URI
  *
- * 取不到就返回 `null` —— 渲染层退回没有底图的样子，**不要显示破图**。
+ * 取不到就返回 `null` —— 渲染层退回没有图的样子，**不要显示破图**。
  */
-export function resolveMapBg(
-    bg: WorldMapBg | undefined,
+export function resolveImageRef(
+    ref: WorldImageRef | undefined,
     assetDataUrl: string | null | undefined,
 ): string | null {
-    if (!bg) return null;
-    if (bg.kind === 'url') {
-        const u = (bg.url || '').trim();
+    if (!ref) return null;
+    if (ref.kind === 'url') {
+        const u = (ref.url || '').trim();
         return u ? u : null;
     }
     return assetDataUrl || null;
 }
+
+/** 底图那一路的旧名字。保留是因为它的语义更具体，读代码时一眼知道在说底图。 */
+export const resolveMapBg = (
+    bg: WorldMapBg | undefined,
+    assetDataUrl: string | null | undefined,
+): string | null => resolveImageRef(bg, assetDataUrl);
 
 /** 底图上压多重的一层遮罩（0~0.8）。缺省 0.35。 */
 export const DEFAULT_MAP_BG_DIM = 0.35;
@@ -106,6 +129,21 @@ export const DEFAULT_MAP_BG_DIM = 0.35;
 export function mapBgDimOf(bg: WorldMapBg | undefined): number {
     const d = bg?.dim;
     if (typeof d !== 'number' || Number.isNaN(d)) return DEFAULT_MAP_BG_DIM;
+    return Math.max(0.1, Math.min(0.8, d));
+}
+
+/** 压在每张地点图上的遮罩浓度。缺省 0.3 —— 比整体底图轻一点，因为地点图本来就该看清。 */
+export const DEFAULT_PLACE_IMG_DIM = 0.3;
+
+/**
+ * 地点图的遮罩浓度。整个世界共用一个值。
+ *
+ * ⛔ 和底图同理**不允许 0**：地点名和站在里面的角色名要读得出来。
+ * ⭐ 不做成每个地点一个 —— 一张图一个浓度，整张地图会花得没法看。
+ */
+export function placeImgDimOf(world: Pick<WorldProfile, 'placeImgDim'> | null | undefined): number {
+    const d = world?.placeImgDim;
+    if (typeof d !== 'number' || Number.isNaN(d)) return DEFAULT_PLACE_IMG_DIM;
     return Math.max(0.1, Math.min(0.8, d));
 }
 

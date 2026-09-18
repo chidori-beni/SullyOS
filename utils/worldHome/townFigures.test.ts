@@ -10,6 +10,11 @@ import {
     DEFAULT_MAP_BG_DIM,
     looksLikeImageUrl,
     MAP_BG_MAX_W,
+    placeImgAssetKey,
+    placeImgDimOf,
+    DEFAULT_PLACE_IMG_DIM,
+    resolveImageRef,
+    PLACE_IMG_MAX_W,
 } from './townFigures';
 
 describe('小镇地图 · 小人形象', () => {
@@ -63,6 +68,15 @@ describe('小镇地图 · 小人形象', () => {
     describe('存哪儿', () => {
         it('⛔ 像素小人的 key 必须和像素家园写入时用的一致，否则读不到', () => {
             expect(pixelCharAssetKey('c_abc')).toBe('pixel_char_c_abc');
+        });
+
+        it('⛔⭐ 地点图的 key 必须带 worldId —— 地点 id 只在世界内唯一，两个世界各有一个 wp_xxx 完全可能', () => {
+            expect(placeImgAssetKey('w1', 'p1')).toBe('world_place_img_w1_p1');
+            expect(placeImgAssetKey('w2', 'p1')).not.toBe(placeImgAssetKey('w1', 'p1'));
+        });
+
+        it('同一个世界里不同地点各存各的', () => {
+            expect(placeImgAssetKey('w1', 'p2')).not.toBe(placeImgAssetKey('w1', 'p1'));
         });
 
         it('底图按世界分开存', () => {
@@ -142,5 +156,56 @@ describe('小镇地图 · 自定义底图', () => {
     it('⛔ 本地图必须压 —— 一张手机直出的 4MB 图会让每次存世界都拖着它写', () => {
         expect(MAP_BG_MAX_W).toBeLessThanOrEqual(1600);
         expect(MAP_BG_MAX_W).toBeGreaterThanOrEqual(800);
+    });
+});
+
+describe('小镇地图 · 每个地点的图（2026-09-19，用户提的）', () => {
+    describe('取地址（和底图共用一套规则）', () => {
+        it('贴的链接原样用', () => {
+            expect(resolveImageRef({ kind: 'url', url: 'https://img/x' }, null)).toBe('https://img/x');
+        });
+
+        it('本地传的用资产库那份', () => {
+            expect(resolveImageRef({ kind: 'asset' }, 'data:image/jpeg;base64,AAA')).toBe('data:image/jpeg;base64,AAA');
+        });
+
+        it('⛔ 取不到返回 null —— 宁可退回地貌配色，也别显示破图', () => {
+            expect(resolveImageRef({ kind: 'asset' }, null)).toBeNull();
+            expect(resolveImageRef({ kind: 'url', url: '  ' }, null)).toBeNull();
+            expect(resolveImageRef(undefined, 'data:image/png;base64,X')).toBeNull();
+        });
+
+        it('⭐ 两档互不串味', () => {
+            expect(resolveImageRef({ kind: 'url', url: 'https://a/b' }, 'data:image/png;base64,OTHER')).toBe('https://a/b');
+        });
+    });
+
+    describe('遮罩', () => {
+        it('缺省 0.3 —— 比整体底图轻一点，因为地点图本来就该看清', () => {
+            expect(DEFAULT_PLACE_IMG_DIM).toBe(0.3);
+            expect(placeImgDimOf({})).toBe(0.3);
+            expect(placeImgDimOf(undefined)).toBe(0.3);
+            expect(placeImgDimOf(null)).toBe(0.3);
+        });
+
+        it('⛔⭐ 同样不允许 0 —— 地点名和站在里面的角色名要读得出来', () => {
+            expect(placeImgDimOf({ placeImgDim: 0 })).toBe(0.1);
+            expect(placeImgDimOf({ placeImgDim: -1 })).toBe(0.1);
+        });
+
+        it('上限 0.8', () => {
+            expect(placeImgDimOf({ placeImgDim: 2 })).toBe(0.8);
+        });
+
+        it('范围内原样用，坏值退缺省', () => {
+            expect(placeImgDimOf({ placeImgDim: 0.55 })).toBe(0.55);
+            expect(placeImgDimOf({ placeImgDim: NaN })).toBe(0.3);
+            expect(placeImgDimOf({ placeImgDim: '0.5' as unknown as number })).toBe(0.3);
+        });
+    });
+
+    it('⛔⭐ 地点图压得比整体底图狠 —— 这是 N 张，十个地点就是十张', () => {
+        expect(PLACE_IMG_MAX_W).toBeLessThan(MAP_BG_MAX_W);
+        expect(PLACE_IMG_MAX_W).toBeGreaterThanOrEqual(480);
     });
 });

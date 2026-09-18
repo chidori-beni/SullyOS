@@ -30,7 +30,7 @@
  * 而且「地图静态化 + 只重绘自身」（交接说明 §阶段 6 性能约束第 1、2 条）
  * 也就无从谈起 —— 位置都不稳定，memo 比较永远不相等。
  */
-import type { WorldProfile, WorldCharBeat, WorldTerrain } from '../../types';
+import type { WorldProfile, WorldCharBeat, WorldTerrain, WorldImageRef } from '../../types';
 
 /** 「不在任何已知地点」的那个槽的 id。⛔ 不要和真实 placeId 混用。 */
 export const ELSEWHERE_SLOT = '__elsewhere__';
@@ -120,6 +120,12 @@ export interface TownSlot {
     blurb?: string;
     /** 地貌，决定框的配色。可空＝中性。⛔ 兜底槽永远没有地貌。 */
     terrain?: WorldTerrain;
+    /**
+     * 这个地方长什么样（2026-09-19）。这里只带**引用**，
+     * 真正取地址是渲染层的事（`resolveImageRef`）—— 这一层不碰资产库。
+     * ⛔ 兜底槽永远没有图：我们根本不知道 ta 在哪儿。
+     */
+    img?: WorldImageRef;
     /** 网格坐标（渲染层可以自己换排法，这里只给一个稳定的默认） */
     col: number;
     row: number;
@@ -170,6 +176,7 @@ export function buildTownSlots(world: WorldProfile, needElsewhere: boolean): Tow
         name: p.name,
         blurb: p.blurb,
         terrain: p.terrain,
+        img: p.img,
         col: i % cols,
         row: Math.floor(i / cols),
         isElsewhere: false,
