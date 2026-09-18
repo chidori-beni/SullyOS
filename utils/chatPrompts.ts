@@ -8,7 +8,7 @@ import { ContextBuilder } from './context';
 import { DB } from './db';
 import { formatLifeSimResetCardForContext } from './lifeSimChatCard';
 import { formatQixiEventCardForContext, tryParseQixiEventChatCard } from './qixiChatCard';
-import { normalizeMessageContent, stickerPromptLabelFromUrl, theaterWhenPhrase } from './messageFormat';
+import { getVoiceTranscript, normalizeMessageContent, stickerPromptLabelFromUrl, theaterWhenPhrase } from './messageFormat';
 import { formatTransferRecord } from './transferFormat';
 import { formatSocialCardForContext, socialCardBriefLabel } from './socialShareCard';
 import { computeCurrentListening, getCurrentSlot } from './charMusicSchedule';
@@ -1634,7 +1634,19 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                      return { role: m.role, content: [{ type: "text", text: textPart + reactionContext }, { type: "image_url", image_url: { url: m.content } }] };
                 }
                 
-                if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') content = `${content}\n\n${timeGapHint}`; 
+                if (m.type === 'voice') {
+                    const speaker = m.role === 'user' ? '用户' : '你';
+                    const transcript = getVoiceTranscript(m);
+                    const rawDuration = m.metadata?.audioDuration;
+                    const duration = typeof rawDuration === 'number' && Number.isFinite(rawDuration) && rawDuration > 0
+                        ? `，约 ${Math.max(1, Math.round(rawDuration))} 秒`
+                        : '';
+                    content = transcript
+                        ? `${timeStr} ${sourceTag} ${speaker}发送了一条语音消息${duration}（这是录音，不是手打文字）。\n语音转写内容：「${transcript}」`
+                        : `${timeStr} ${sourceTag} ${speaker}发送了一条语音消息${duration}（这是录音，不是手打文字；当前没有可用的转写文字）。`;
+                }
+
+                if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') content = `${content}\n\n${timeGapHint}`;
                 
                 // TODO(记录形态): 戳一戳 / 时间间隔提示等其他系统事件, 等转账的 [[记录:TRANSFER]]
                 // 观察一段时间后再迁 (transferFormat.ts 头注) —— 防线已按整个记录命名空间就位。
