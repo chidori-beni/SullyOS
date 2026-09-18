@@ -49,6 +49,8 @@ import { normalizeApiBaseUrl, normalizeApiCredential, normalizeApiModel } from '
 import { configFromPreset, findActivePresetId } from '../utils/apiPresetSwitch';
 import type { APIConfig, TtsProvider } from '../types';
 import { describeImageWithVisionApi, VISION_API_TEST_IMAGE_DATA_URL, visionApiConfigFromPreset } from '../utils/visionApi';
+import { useUiLocale } from '../context/UiLocaleContext';
+import type { UiLocale } from '../utils/uiLocale';
 import { shareOrDownloadBlob } from '../utils/shareExport';
 
 // hot_news（news.orz.ai）可选热榜平台。key 必须与 API 的 ?platform= 完全一致。
@@ -475,6 +477,7 @@ const Settings: React.FC = () => {
       cloudBackupConfig, updateCloudBackupConfig,
       cloudBackupToWebDAV, cloudRestoreFromWebDAV, listCloudBackups,
   } = useOS();
+  const { locale, setLocale, t } = useUiLocale();
   
   const [localKey, setLocalKey] = useState(apiConfig.apiKey);
   const [localUrl, setLocalUrl] = useState(apiConfig.baseUrl);
@@ -1905,12 +1908,45 @@ const Settings: React.FC = () => {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
                 </svg>
             </button>
-            <h1 className="text-xl font-medium text-slate-700 tracking-wide">系统设置</h1>
+            <h1 className="text-xl font-medium text-slate-700 tracking-wide">{t('settings.title')}</h1>
         </div>
         </div>
       </div>
 
       <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-5 space-y-6 no-scrollbar pb-20">
+
+        <SettingsSection
+            title={t('settings.language.title')}
+            icon={
+                <div className="p-2 bg-sky-100 rounded-xl text-sky-600 text-sm font-bold" aria-hidden="true">文</div>
+            }
+        >
+            <p className="text-xs text-slate-500 leading-relaxed">{t('settings.language.description')}</p>
+            <div className="mt-3 grid grid-cols-2 gap-2" role="radiogroup" aria-label={t('settings.language.current')}>
+                {(['zh-CN', 'ja-JP'] as UiLocale[]).map(option => {
+                    const selected = locale === option;
+                    const label = option === 'zh-CN'
+                        ? t('settings.language.option.zh')
+                        : t('settings.language.option.ja');
+                    return (
+                        <button
+                            key={option}
+                            type="button"
+                            role="radio"
+                            aria-checked={selected}
+                            onClick={() => setLocale(option)}
+                            className={`rounded-xl border px-3 py-3 text-left text-xs font-bold transition active:scale-[.98] ${selected
+                                ? 'border-sky-400 bg-sky-50 text-sky-700 shadow-sm'
+                                : 'border-slate-200 bg-white text-slate-500 hover:border-sky-200'}`}
+                        >
+                            <span className="block">{label}</span>
+                            <span className="mt-1 block text-[10px] font-normal opacity-70">{option}</span>
+                        </button>
+                    );
+                })}
+            </div>
+            <p className="mt-3 text-[10px] text-slate-400 leading-relaxed">{t('settings.language.partialNotice')}</p>
+        </SettingsSection>
 
         {/* AI 连接设置区域 */}
         <SettingsSection

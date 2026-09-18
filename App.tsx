@@ -11,6 +11,7 @@ import WorldBroadcast from './components/WorldBroadcast';
 import ChatBroadcast from './components/ChatBroadcast';
 import { isIOSStandaloneWebApp } from './utils/iosStandalone';
 import { installDevDebugLifecycleCapture } from './utils/devDebug';
+import { UiLocaleProvider } from './context/UiLocaleContext';
 
 const App: React.FC = () => {
   React.useEffect(() => {
@@ -27,7 +28,8 @@ const App: React.FC = () => {
     : { height: 'var(--app-height, 100lvh)', minHeight: 'var(--app-height, 100lvh)' };
 
   return (
-    <>
+    <UiLocaleProvider>
+      <>
       <div
         className={shellClassName}
         style={shellStyle}
@@ -51,7 +53,8 @@ const App: React.FC = () => {
       <VRBroadcast />
       <WorldBroadcast />
       <ChatBroadcast />
-    </>
+      </>
+    </UiLocaleProvider>
   );
 };
 

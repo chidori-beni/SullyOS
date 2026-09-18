@@ -126,6 +126,7 @@ import { setAppPayloadWarmer, shouldUseIdleAppPreload } from './os/appPreload';
 import { isBrowserBackGuardState, makeBrowserBackGuardState } from '../utils/browserBackGuard';
 import { INCOMING_CALL_EVENT, getPendingIncomingCall } from '../utils/incomingCall';
 import { isRinging } from '../utils/callRingtone';
+import { useUiLocale } from '../context/UiLocaleContext';
 
 /*
 // Internal Error Boundary Component
@@ -401,6 +402,7 @@ const ImportRecoveryPopup: React.FC<{
 // 透明底让外壳虚化壁纸透出来。真卡住（>15s）才换成可点的刷新/返回兜底，避免低端设备
 // 仍在正常解析单个大模块时被 7 秒阈值过早判死。
 const AppLoadingFallback: React.FC<{ onReturn?: () => void; animationEnabled?: boolean }> = ({ onReturn, animationEnabled = true }) => {
+  const { t } = useUiLocale();
   const [show, setShow] = useState(false);
   const [stalled, setStalled] = useState(false);
   useEffect(() => {
@@ -416,9 +418,9 @@ const AppLoadingFallback: React.FC<{ onReturn?: () => void; animationEnabled?: b
     return (
       <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900/95 text-white p-6 text-center space-y-4" style={{ animation: 'appLoadIn 320ms ease-out both' }}>
         <style>{`@keyframes appLoadIn{from{opacity:0}to{opacity:1}}`}</style>
-        <h2 className="text-base font-bold">加载有点慢…</h2>
+        <h2 className="text-base font-bold">{t('shell.loading.slow')}</h2>
         <p className="text-xs text-slate-300 max-w-xs leading-relaxed">
-          首次打开会下载并解析功能代码；网络波动或设备性能较低都可能变慢。页面仍在继续加载，若长时间没有恢复再刷新。
+          {t('shell.loading.description')}
         </p>
         <div className="flex flex-col gap-3 w-full max-w-xs">
           <button
@@ -426,7 +428,7 @@ const AppLoadingFallback: React.FC<{ onReturn?: () => void; animationEnabled?: b
             onClick={() => { trackEvent('卡死页点刷新恢复'); window.location.reload(); }}
             className="w-full px-6 py-3 bg-red-600 rounded-full font-bold text-sm shadow-lg active:scale-95 transition-transform"
           >
-            刷新恢复
+            {t('common.refresh')}
           </button>
           {onReturn && (
             <button
@@ -434,7 +436,7 @@ const AppLoadingFallback: React.FC<{ onReturn?: () => void; animationEnabled?: b
               onClick={() => { onReturn(); trackEvent('从卡死页返回桌面'); }}
               className="w-full px-4 py-2 bg-slate-700 rounded-full text-xs font-bold active:scale-95 transition-transform"
             >
-              返回桌面
+              {t('common.backToHome')}
             </button>
           )}
         </div>
@@ -466,6 +468,7 @@ const LAUNCHER_HOME_RESET_PENDING_KEY = 'sullyos_launcher_home_reset_pending_v1'
 
 const PhoneShell: React.FC = () => {
   const { theme, isLocked, unlock, activeApp, closeApp, openApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, handleBack, suspendedCall, resumeCall, activeCharacterId, errorDialog, dismissError } = useOS();
+  const { t } = useUiLocale();
   const useIOSStandaloneLayout = isIOSStandaloneWebApp();
 
   // 三档顶部状态栏：安全显示 / 紧凑显示 / 隐藏。旧存档仍由 hideStatusBar 兼容解析。
@@ -1163,9 +1166,9 @@ const PhoneShell: React.FC = () => {
                   >
                       <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
                       <span className="text-[11px] font-bold text-amber-900 whitespace-nowrap">
-                          {daysSinceLastBackup() == null
-                              ? '还没备份过 · 去备份'
-                              : `已 ${daysSinceLastBackup()} 天没备份 · 去备份`}
+                           {daysSinceLastBackup() == null
+                               ? t('shell.backup.never')
+                               : t('shell.backup.days', { days: daysSinceLastBackup() || 0 })}
                       </span>
                   </button>
               </div>

@@ -58,6 +58,7 @@ import {
     updateLauncherUserWidget,
 } from '../utils/launcherUserWidgets';
 import { resolveLauncherDropKey, type LauncherDropCandidate } from '../utils/launcherDropTarget';
+import { useUiLocale } from '../context/UiLocaleContext';
 
 const CompanionHome = React.lazy(() => import('../components/os/CompanionHome'));
 
@@ -84,22 +85,21 @@ const launcherPageIndexById = (layout: LauncherPageLayout, pageId: string): numb
 // 1. Clock Component (Consumes virtualTime)
 const DesktopClock = React.memo(() => {
     const { virtualTime, theme } = useOS();
+    const { locale, t } = useUiLocale();
     const contentColor = theme.contentColor || '#ffffff';
     const paper = theme.skin !== 'animalcrossing' && theme.skin !== 'mobilegame' && theme.skin !== 'tamagotchi' && isPaperWallpaper(theme.wallpaper);
 
-    const days = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
-    const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
     const now = new Date();
-    const dayName = days[now.getDay()];
-    const monthName = months[now.getMonth()];
+    const dayName = new Intl.DateTimeFormat(locale, { weekday: 'short' }).format(now).toUpperCase();
+    const monthName = new Intl.DateTimeFormat(locale, { month: 'short' }).format(now).toUpperCase();
     const dateNum = now.getDate().toString().padStart(2, '0');
     const yearNum = now.getFullYear();
 
     // 简单问候（基于虚拟时间）
-    const greeting = virtualTime.hours < 5 ? 'Good Night'
-        : virtualTime.hours < 12 ? 'Good Morning'
-        : virtualTime.hours < 18 ? 'Good Afternoon'
-        : 'Good Evening';
+    const greeting = virtualTime.hours < 5 ? t('launcher.greeting.night')
+        : virtualTime.hours < 12 ? t('launcher.greeting.morning')
+        : virtualTime.hours < 18 ? t('launcher.greeting.afternoon')
+        : t('launcher.greeting.evening');
 
     const hh = virtualTime.hours.toString().padStart(2, '0');
     const mm = virtualTime.minutes.toString().padStart(2, '0');
@@ -111,7 +111,7 @@ const DesktopClock = React.memo(() => {
         return (
             <div className="mt-7 mb-5 text-center animate-fade-in select-none">
                 <div className="text-[13px] font-extrabold tracking-wide" style={{ color: '#8a7a5c' }}>
-                    🍃 {greeting}, Resident
+                    🍃 {greeting}, {t('launcher.resident')}
                 </div>
                 <div className="text-[3.5rem] font-extrabold leading-none mt-1.5 tracking-[2px]" style={{ color: '#8b7355' }}>
                     {hh}<span className="animate-pulse" style={{ color: '#cfcab2' }}>:</span>{mm}
@@ -133,7 +133,7 @@ const DesktopClock = React.memo(() => {
                         border: paper ? '1px solid rgba(91,72,51,0.07)' : '1px solid rgba(255,255,255,0.18)',
                     }}>
                     <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: paper ? '#788369' : '#4ade80', boxShadow: paper ? 'none' : '0 0 6px #4ade80' }} />
-                    <span className="text-[9px] font-bold tracking-[0.2em] uppercase">System Online</span>
+                    <span className="text-[9px] font-bold tracking-[0.2em] uppercase">{t('launcher.systemOnline')}</span>
                 </div>
                 <div className="h-[1px] flex-1 bg-gradient-to-r from-current to-transparent opacity-30" />
                 <span className="text-[9px] tracking-[0.2em] uppercase opacity-60">{yearNum}</span>
