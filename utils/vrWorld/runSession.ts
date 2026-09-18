@@ -30,7 +30,7 @@ import { buildChatRequestPayload } from '../chatRequestPayload';
 import { safeFetchJson } from '../safeApi';
 import { processNewMessagesWithAutoArchive } from '../memoryPalace/autoArchive';
 import { structuralStrangers, buildCharBondNote } from '../characterIdentity';
-import { readVRPactMode, buildVRPactRule } from './pact';
+import { readVRPactMode, buildVRPactRule, townmateIdsOf } from './pact';
 import { loadMusicCfgStandalone } from '../../context/MusicContext';
 import { getCharLyricSnippet } from '../charLyricCache';
 import { getRoom, VR_DEFAULT_INTERVAL_MIN, rollPoemLines, signalActFor, SIGNAL_EVENT_ENDED } from './constants';
@@ -658,6 +658,12 @@ async function runVRSessionUnlocked(deps: VRSessionDeps): Promise<VRSessionResul
         // 而它能从同行/同乡/同好任何一个角度脑补出交情。
         // recallNames 收的正是这一轮 ta 会接触到的人（在场的 + 留言墙上的）。
         const roomPeers = characters.filter(c => c.id !== char.id && recallNames.has(c.name));
+        // 「止于朋友」公约的第二类例外（2026-09-18）：和 ta 同住一个小镇的人
+        // **不是在彼方认识的**，公约管不到他们。一次会话只读一遍世界表。
+        // ⛔ 读不出来就当没有同镇的人 —— 退回旧行为（更保守），绝不因为读失败就放开约束。
+        let townmates: Set<string> | undefined;
+        try { townmates = townmateIdsOf(char.id, await DB.getWorlds()); }
+        catch { townmates = undefined; }
         // 称号解锁：自己或任一角色已有称号，或 SAR 熟悉度已解锁 titles。
         let titleUnlocked = !!userProfile?.vrState?.title || characters.some(c => !!c.vrState?.title);
         try { titleUnlocked ||= !!readFishingMarketState().sarFamiliarity?.unlocks.includes('titles'); } catch { /* 读不出来就当没解锁 */ }
@@ -673,7 +679,7 @@ async function runVRSessionUnlocked(deps: VRSessionDeps): Promise<VRSessionResul
                 buildCharBondNote(char, roomPeers),
                 // 阶段 2.7：「止于朋友」公约 —— 对在彼方新认识的人不发展暧昧。
                 // 本来就有关系的（charBonds 里有名字）自动豁免，见 pact.ts 的注释。
-                buildVRPactRule(readVRPactMode(), char, roomPeers),
+                buildVRPactRule(readVRPactMode(), char, roomPeers, townmates),
             );
 
         // 调 LLM（记录一次调用，供"调用记录"对账）

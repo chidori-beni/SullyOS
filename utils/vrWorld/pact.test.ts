@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-    readVRPactMode, saveVRPactMode, buildVRPactRule,
+    readVRPactMode, saveVRPactMode, buildVRPactRule, townmateIdsOf,
     VR_PACT_KEY, DEFAULT_VR_PACT_MODE,
 } from './pact';
 
@@ -105,9 +105,111 @@ describe('彼方公约 · 提示词（阶段 2.7）', () => {
         expect(rule).toContain('在这游戏里认识的人');
     });
 
+    it('⛔ 不传 townmates 时行为和以前一模一样 —— 老调用方零变化', () => {
+        const char = { charBonds: [{ toId: 'b', label: '恋人' }] } as any;
+        expect(buildVRPactRule('friends_only', char, peers))
+            .toBe(buildVRPactRule('friends_only', char, peers, undefined));
+        expect(buildVRPactRule('friends_only', char, peers, null))
+            .toBe(buildVRPactRule('friends_only', char, peers));
+    });
+
     it('没名字的同场者不会拼出空的例外名', () => {
         const char = { charBonds: [{ toId: 'x', label: '恋人' }] } as any;
         const rule = buildVRPactRule('friends_only', char, [{ id: 'x', name: '' }] as any);
         expect(rule).not.toContain('例外');
+    });
+});
+
+describe('彼方公约 · 同镇例外（2026-09-18 补的漏判）', () => {
+    const peers = [{ id: 'b', name: '阿岚' }, { id: 'c', name: '阿澄' }] as any;
+
+    describe('谁算同镇', () => {
+        it('同一个小镇里的其他成员都算', () => {
+            const worlds = [{ memberIds: ['a', 'b', 'c'] }];
+            expect([...townmateIdsOf('a', worlds)].sort()).toEqual(['b', 'c']);
+        });
+
+        it('⛔ 不含自己', () => {
+            expect(townmateIdsOf('a', [{ memberIds: ['a', 'b'] }]).has('a')).toBe(false);
+        });
+
+        it('⛔ 我不在的那个镇，里面的人不算我的邻居', () => {
+            const worlds = [{ memberIds: ['a', 'b'] }, { memberIds: ['x', 'y'] }];
+            expect([...townmateIdsOf('a', worlds)]).toEqual(['b']);
+        });
+
+        it('⭐ 住好几个镇的话，每个镇的邻居都算', () => {
+            const worlds = [{ memberIds: ['a', 'b'] }, { memberIds: ['a', 'c'] }];
+            expect([...townmateIdsOf('a', worlds)].sort()).toEqual(['b', 'c']);
+        });
+
+        it('没有世界 / 坏数据都不炸', () => {
+            expect(townmateIdsOf('a', null).size).toBe(0);
+            expect(townmateIdsOf('a', undefined).size).toBe(0);
+            expect(townmateIdsOf('a', []).size).toBe(0);
+            expect(townmateIdsOf('', [{ memberIds: ['a'] }]).size).toBe(0);
+            expect(townmateIdsOf('a', [{ memberIds: null }] as any).size).toBe(0);
+        });
+    });
+
+    describe('例外怎么写进提示词', () => {
+        it('⭐⛔ 同镇的人不受公约约束 —— 他们根本不是「在这游戏里认识的」', () => {
+            const rule = buildVRPactRule('friends_only', {} as any, peers, new Set(['b']));
+            expect(rule).toContain('阿岚不是你在这儿认识的');
+            expect(rule).toContain('本来就生活在同一个地方');
+            expect(rule).toContain('这条底线管不到你们之间');
+        });
+
+        it('⭐ 不同镇的那个照样被管住 —— 用户 B 的防线一点没动', () => {
+            const rule = buildVRPactRule('friends_only', {} as any, peers, new Set(['b']));
+            expect(rule).toContain('止于朋友');     // 规则本身还在
+            expect(rule).not.toContain('阿澄');      // 阿澄不同镇，没进任何例外
+        });
+
+        it('⛔⭐ 措辞只把人移出约束范围，绝不写成「你们可以发展关系」—— 那是替角色做决定', () => {
+            const rule = buildVRPactRule('friends_only', {} as any, peers, new Set(['b', 'c']));
+            for (const pushy of ['可以发展', '应该在一起', '去追', '试试看']) {
+                expect(rule).not.toContain(pushy);
+            }
+        });
+
+        it('⛔ 同镇的例外也不能提机主/系统，口径和原有那条一致', () => {
+            const rule = buildVRPactRule('friends_only', {} as any, peers, new Set(['b']));
+            for (const forbidden of ['用户', '机主', '手机', '配队', '系统', '规定你', '设定要求']) {
+                expect(rule).not.toContain(forbidden);
+            }
+        });
+
+        it('⛔ 已经因为 charBonds 豁免的人不重复列 —— 同一个名字出现在两句例外里会很怪', () => {
+            const char = { charBonds: [{ toId: 'b', label: '恋人' }] } as any;
+            const rule = buildVRPactRule('friends_only', char, peers, new Set(['b', 'c']));
+            expect(rule).toContain('例外是阿岚');                   // 走 charBonds 那句
+            expect(rule).toContain('阿澄不是你在这儿认识的');        // 走同镇那句
+            expect(rule).not.toContain('阿岚、阿澄不是你在这儿认识的'); // 不重复
+        });
+
+        it('⭐ 这正是要补的空窗期：镇里已经处上了但还没给关系名，也照样豁免', () => {
+            // charBonds 只有好感、没有 label → 老判据不豁免
+            const char = { charBonds: [{ toId: 'b', value: 60 }] } as any;
+            expect(buildVRPactRule('friends_only', char, peers)).not.toContain('例外');
+            // 同镇 → 豁免
+            expect(buildVRPactRule('friends_only', char, peers, new Set(['b'])))
+                .toContain('阿岚不是你在这儿认识的');
+        });
+
+        it('空集合等于没传，不留半截话', () => {
+            const rule = buildVRPactRule('friends_only', {} as any, peers, new Set());
+            expect(rule).toBe(buildVRPactRule('friends_only', {} as any, peers));
+            expect(rule).not.toContain('不是你在这儿认识的');
+        });
+
+        it('⛔ 关掉公约时同镇例外也一并不注入', () => {
+            expect(buildVRPactRule('off', {} as any, peers, new Set(['b']))).toBe('');
+        });
+
+        it('没名字的同镇者不会拼出空名字', () => {
+            const rule = buildVRPactRule('friends_only', {} as any, [{ id: 'b', name: '' }] as any, new Set(['b']));
+            expect(rule).not.toContain('不是你在这儿认识的');
+        });
     });
 });
