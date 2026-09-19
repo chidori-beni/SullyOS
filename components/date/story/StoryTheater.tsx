@@ -25,13 +25,14 @@ import { StoryAppearanceButton, StoryTheaterThemeProvider } from './StoryTheater
 import { deleteStoryTheaterData } from '../../../utils/storyTheaterDeletion';
 
 interface Props {
+    initialStoryId?: string;
     onSwitchCompanion: () => void;
     onClose: () => void;
 }
 
 type View = 'list' | 'editor' | 'session' | 'preset' | 'masks' | 'vectors';
 
-const StoryTheaterContent: React.FC<Props> = ({ onSwitchCompanion, onClose }) => {
+const StoryTheaterContent: React.FC<Props> = ({ initialStoryId, onSwitchCompanion, onClose }) => {
     const { characters, userProfile, addToast, remoteVectorConfig } = useOS();
     const [view, setView] = useState<View>('list');
     const [entries, setEntries] = useState<StoryTheaterEntry[]>([]);
@@ -43,6 +44,7 @@ const StoryTheaterContent: React.FC<Props> = ({ onSwitchCompanion, onClose }) =>
     const [deletingEntry, setDeletingEntry] = useState<StoryTheaterEntry | null>(null);
     const [deletingStory, setDeletingStory] = useState(false);
     const importInput = useRef<HTMLInputElement>(null);
+    const initialStoryHandled = useRef<string | null>(null);
     const presets = useMemo(() => withBuiltInStoryPresets(customPresets), [customPresets]);
 
     const reload = useCallback(async () => {
@@ -53,6 +55,14 @@ const StoryTheaterContent: React.FC<Props> = ({ onSwitchCompanion, onClose }) =>
     }, []);
 
     useEffect(() => { void reload(); }, [reload]);
+    useEffect(() => {
+        if (!initialStoryId || initialStoryHandled.current === initialStoryId || entries.length === 0) return;
+        const target = entries.find(item => item.id === initialStoryId);
+        if (!target) return;
+        initialStoryHandled.current = initialStoryId;
+        setActiveEntry(target);
+        setView('session');
+    }, [entries, initialStoryId]);
 
     const importPreset = useCallback(async (file: File): Promise<StoryTheaterPreset | null> => {
         try {

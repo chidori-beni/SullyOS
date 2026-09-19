@@ -449,6 +449,7 @@ const ensureWorkerReady = async () => {
  */
 let backgroundJobProbe: { workerUrl: string; supported: boolean; at: number } | null = null;
 let dateBackgroundJobProbe: { workerUrl: string; supported: boolean; at: number } | null = null;
+let storyBackgroundJobProbe: { workerUrl: string; supported: boolean; at: number } | null = null;
 
 /**
  * 存量答案是「不支持」时，最多隔这么久就再问一遍。
@@ -476,6 +477,7 @@ const BACKGROUND_JOB_UNSUPPORTED_RECHECK_MS = 5 * 60_000;
 export const forgetBackgroundJobProbe = (): void => {
   backgroundJobProbe = null;
   dateBackgroundJobProbe = null;
+  storyBackgroundJobProbe = null;
 };
 
 /**
@@ -2739,6 +2741,43 @@ export const ActiveMsgClient = {
   },
 
   /**
+   * 【见面】的【剧情】使用独立的 story-reply handler。普通 backgroundJobs 或
+   * dateBackgroundJobs 存在，都不能推出剧情后台可以接收，必须看专门能力位。
+   */
+  async probeStoryBackgroundJobSupportDetailed(): Promise<BackgroundJobProbeOutcome> {
+    let config: ActiveMsg2GlobalConfig;
+    try {
+      config = await ensureWorkerReady();
+    } catch {
+      return 'unknown';
+    }
+    const cached = storyBackgroundJobProbe;
+    if (
+      cached?.workerUrl === config.workerUrl
+      && (cached.supported || Date.now() - cached.at < BACKGROUND_JOB_UNSUPPORTED_RECHECK_MS)
+    ) {
+      return cached.supported ? 'supported' : 'unsupported';
+    }
+    try {
+      const { status, body } = await fetchWithAuthRaw(
+        'config-check', config, { method: 'GET' }, '剧情后台能力探测',
+      );
+      if (status !== 200 || body?.success !== true) return 'unknown';
+      const supported = body?.data?.backgroundJobs === true
+        && body?.data?.storyBackgroundJobs === true;
+      storyBackgroundJobProbe = { workerUrl: config.workerUrl, supported, at: Date.now() };
+      return supported ? 'supported' : 'unsupported';
+    } catch (error) {
+      console.warn(`${ACTIVE_MSG_RUNTIME_HEADER} 剧情后台能力探测没发出去，不记缓存`, error);
+      return 'unknown';
+    }
+  },
+
+  async probeStoryBackgroundJobSupport(): Promise<boolean> {
+    return (await this.probeStoryBackgroundJobSupportDetailed()) === 'supported';
+  },
+
+  /**
    * 排一条**后台任务**：不说话的那种活儿（门牌整理是第一个），跑完把结果送回客户端。
    *
    * 跟排主动消息的那条路（scheduleCharacterTask）共用调度器，但要的东西少得多：
@@ -2777,6 +2816,8 @@ export const ActiveMsgClient = {
     */
     temperature?: number;
     maxTokens?: number;
+    /** 仅传递后台 prompt 需要的额外 LLM 字段，例如 top_p。 */
+    extraBody?: Record<string, unknown>;
     /** 可选的未来触发时刻；省略时沿用立即执行的后台任务路径。 */
     firstSendTime?: string;
   }): Promise<{ uuid: string }> {
@@ -2817,6 +2858,7 @@ export const ActiveMsgClient = {
       credRefs: { chat: params.credRow.credId },
       ...(typeof params.temperature === 'number' ? { temperature: params.temperature } : {}),
       ...(params.maxTokens && params.maxTokens > 0 ? { maxTokens: params.maxTokens } : {}),
+      ...(params.extraBody && Object.keys(params.extraBody).length > 0 ? { llmExtraBody: params.extraBody } : {}),
       // 服务端要求「completePrompt 或 messages」二选一。到点真正发给 LLM 的 messages 由
       // worker 的 kind handler 返回值覆盖，这条占位内容永远不参与生成。
       messages: [{ role: 'user', content: AMSG2_PLACEHOLDER_PROMPT }],

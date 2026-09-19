@@ -2931,6 +2931,8 @@ const handleDeepLink = () => {
   const openApp = currentUrl.searchParams.get('openApp');
   const sessionId = currentUrl.searchParams.get('callSessionId');
   const dateEncounterId = currentUrl.searchParams.get('dateEncounterId');
+  const dateSurface = currentUrl.searchParams.get('dateSurface');
+  const storyId = currentUrl.searchParams.get('storyId');
 
   if (openApp === 'chat' && charId) {
     // 冷启动是点来电横幅进来的（SW 把旗插在 URL 上）。必须在补收落库**之前**记下来——
@@ -2946,7 +2948,16 @@ const handleDeepLink = () => {
       detail: { charId, openApp: 'call', sessionId },
     }));
   }
-  if (openApp === 'date' && charId && dateEncounterId) {
+  if (openApp === 'date' && dateSurface === 'story') {
+    dateLaunch.request({
+      surface: 'story',
+      ...(storyId ? { storyId } : {}),
+    });
+    window.dispatchEvent(new CustomEvent('active-msg-open', {
+      detail: { openApp: 'date', surface: 'story', ...(storyId ? { storyId } : {}) },
+    }));
+  }
+  if (openApp === 'date' && dateSurface !== 'story' && charId && dateEncounterId) {
     dateLaunch.request({
       surface: 'companion',
       charId,
@@ -2967,6 +2978,8 @@ const handleDeepLink = () => {
     currentUrl.searchParams.delete('incomingCall');
     currentUrl.searchParams.delete('callSessionId');
     currentUrl.searchParams.delete('dateEncounterId');
+    currentUrl.searchParams.delete('dateSurface');
+    currentUrl.searchParams.delete('storyId');
     // Keep same-page navigation markers (for example the browser back guard)
     // while removing only the consumed deep-link parameters from the URL.
     window.history.replaceState(window.history.state, '', currentUrl.toString());
@@ -3068,6 +3081,16 @@ export const ActiveMsgRuntime = {
               });
             }
             if (event.data?.openApp === 'date'
+              && event.data?.surface === 'story') {
+              await catchUpMissedPushes('manual').catch(error => {
+                console.warn('[ActiveMsg] 打开剧情前补收后台结果失败，稍后仍会按前台兜底重试', error);
+              });
+              dateLaunch.request({
+                surface: 'story',
+                ...(event.data?.storyId ? { storyId: String(event.data.storyId) } : {}),
+              });
+            }
+            if (event.data?.openApp === 'date'
               && event.data?.charId
               && event.data?.encounterId) {
               await catchUpMissedPushes('manual').catch(error => {
@@ -3086,6 +3109,8 @@ export const ActiveMsgRuntime = {
                 openApp: event.data?.openApp,
                 sessionId: event.data?.sessionId,
                 encounterId: event.data?.encounterId,
+                surface: event.data?.surface,
+                storyId: event.data?.storyId,
               },
             }));
             await runPendingToolCallsSafely();

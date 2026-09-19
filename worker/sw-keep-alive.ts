@@ -83,8 +83,9 @@ import { installReiSW } from '@rei-standard/amsg-sw';
  *            postMessage 成没成。排「推送到了、通知也弹了、界面半天不动」这类故障时，
  *            SW 到底有没有喊到页面是第一个要回答的问题。
  *            上游把这一条编成 1.18.0，这边 1.18.0~1.18.2 已被来电/通话/见面占用，顺延到 1.18.3。
+ *  - 1.18.4: 见面剧情后台回复通知点击后直达对应剧情线程。
  */
-const SW_VERSION = '1.18.3';
+const SW_VERSION = '1.18.4';
 
 /** 这条推送是不是一通来电（旗子由 worker/amsg/src/agentic.ts 立在 notification.data 上）。 */
 function isIncomingCallNotificationData(data: any): boolean {
@@ -899,6 +900,14 @@ sw.addEventListener('notificationclick', (event: NotificationEvent) => {
     || payload?.encounterId
     || event.notification.data?.encounterId
     || '';
+  const surface = payload?.notification?.data?.surface
+    || payload?.surface
+    || event.notification.data?.surface
+    || '';
+  const storyId = payload?.notification?.data?.storyId
+    || payload?.storyId
+    || event.notification.data?.storyId
+    || '';
   // 来电：点哪一下都算接。
   const isCall = isIncomingCallNotificationData(event.notification.data)
     || isIncomingCallNotificationData(payload);
@@ -920,7 +929,7 @@ sw.addEventListener('notificationclick', (event: NotificationEvent) => {
       await client.focus();
       // 来电和普通消息都要先把这一轮内容补收进来（应用侧同一条路），差别只在补收完
       // 之后是落进聊天页还是弹接听界面——那面旗由这条消息带过去。
-      client.postMessage({ type: 'active-msg-open', charId, incomingCall: isCall, openApp, sessionId, encounterId });
+      client.postMessage({ type: 'active-msg-open', charId, incomingCall: isCall, openApp, sessionId, encounterId, surface, storyId });
       return;
     }
 
@@ -929,6 +938,8 @@ sw.addEventListener('notificationclick', (event: NotificationEvent) => {
     if (charId) openUrl.searchParams.set('activeMsgCharId', charId);
     if (sessionId) openUrl.searchParams.set('callSessionId', sessionId);
     if (encounterId) openUrl.searchParams.set('dateEncounterId', encounterId);
+    if (surface) openUrl.searchParams.set('dateSurface', surface);
+    if (storyId) openUrl.searchParams.set('storyId', storyId);
     // 冷启动没有 client 可 postMessage，只能把旗插在 URL 上带过去。
     if (isCall) openUrl.searchParams.set('incomingCall', '1');
     await sw.clients.openWindow(openUrl.toString());

@@ -4005,6 +4005,7 @@ describe('即时对话的接线', () => {
     expect(body.data.backgroundJobs).toBe(true);
     expect(body.data.callBackgroundJobs).toBe(true);
     expect(body.data.dateBackgroundJobs).toBe(true);
+    expect(body.data.storyBackgroundJobs).toBe(true);
   });
 
   /**

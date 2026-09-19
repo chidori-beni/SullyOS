@@ -4,6 +4,15 @@ import { Archive, ArrowBendDownRight, ArrowClockwise, ArrowLeft, Broadcast, Care
 import { useOS } from '../../../context/OSContext';
 import type { CharacterProfile, Message, StoryTheaterEntry, StoryTheaterMask, StoryTheaterPreset } from '../../../types';
 import { DB } from '../../../utils/db';
+import {
+    buildPendingStoryBackgroundJob,
+    createPendingStoryBackgroundJob,
+    deleteStoryBackgroundJobMarker,
+    fingerprintStoryText,
+    getPendingStoryBackgroundJobForStory,
+    removePendingStoryBackgroundJob,
+    schedulePendingStoryBackgroundJob,
+} from '../../../utils/storyBackgroundJobs';
 import { ContextBuilder } from '../../../utils/context';
 import { safeResponseJson, extractContent } from '../../../utils/safeApi';
 import { isMountedWorldbookEnabled } from '../../../utils/worldbook';
@@ -291,6 +300,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [sending, setSending] = useState(false);
+    const [backgroundPendingJobId, setBackgroundPendingJobId] = useState<string | null>(null);
     const [memoryStatus, setMemoryStatus] = useState('');
     const [contextTokens, setContextTokens] = useState(0);
     const [contextTokensExact, setContextTokensExact] = useState(false);
@@ -312,6 +322,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
     // completions. Keep the state for UI only and use this ref as the real mutex.
     const sendLock = useRef(false);
     const archiveLock = useRef(false);
+    const postProcessLock = useRef(false);
     const bottomRef = useRef<HTMLDivElement>(null);
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const longPressOrigin = useRef<{ x: number; y: number } | null>(null);
@@ -322,6 +333,46 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
     }, [threadId]);
 
     useEffect(() => { void loadMessages(); }, [loadMessages]);
+    useEffect(() => {
+        const pending = getPendingStoryBackgroundJobForStory(entry.id);
+        setBackgroundPendingJobId(pending?.jobId || null);
+    }, [entry.id]);
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const handleBackgroundProgress = (event: Event) => {
+            const detail = (event as CustomEvent).detail as Record<string, unknown> | undefined;
+            if (detail?.storyBackground !== true || detail.storyId !== entry.id) return;
+            setBackgroundPendingJobId(null);
+            void loadMessages();
+        };
+        window.addEventListener('active-msg-progress', handleBackgroundProgress);
+        return () => window.removeEventListener('active-msg-progress', handleBackgroundProgress);
+    }, [entry.id, loadMessages]);
+    useEffect(() => {
+        if (actors.length === 0) return;
+        const pending = getPendingStoryBackgroundJobForStory(entry.id);
+        if (!pending) {
+            setBackgroundPendingJobId(null);
+            return;
+        }
+        setBackgroundPendingJobId(pending.jobId);
+        void schedulePendingStoryBackgroundJob({
+            jobId: pending.jobId,
+            char: actors[0],
+            api: apiConfig,
+        }).then(outcome => {
+            if (outcome.status === 'fallback') {
+                removePendingStoryBackgroundJob(pending.jobId);
+                void deleteStoryBackgroundJobMarker(pending.input.markerMessageId);
+                setBackgroundPendingJobId(null);
+                addToast('剧情后台暂不可用，点击推进即可在前台生成', 'info');
+            }
+        }).catch(error => {
+            console.warn('[StoryTheater] 恢复剧情后台任务失败', error);
+        });
+        // 只在剧情/角色切换时恢复一次；任务状态本身由 localStorage 和 result outbox 维护。
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [entry.id, actors[0]?.id]);
     useEffect(() => {
         setContextTokens(0);
         setContextTokensExact(false);
@@ -637,8 +688,51 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
         }
     }, [addToast, apiConfig, callCompletion, entry, loadMessages, mask.name, memoryPalaceConfig, onEntryChange, threadId]);
 
+    // 后台结果可能在剧情页已经卸载后才到达。重新进入时把“正文/镜像已落库，但
+    // 记忆整理或事件盒还没收尾”的工作补上；正文本身不依赖这一步才能安全显示。
+    const processBackgroundPostProcess = useCallback(async () => {
+        if (postProcessLock.current) return;
+        const rows = (await DB.getMessagesByCharId(threadId, true))
+            .filter(message => message.metadata?.source === 'story_theater')
+            .sort((a, b) => a.id - b.id);
+        const pending = rows.filter(message => message.metadata?.theaterPostProcessPending === true && message.role === 'assistant');
+        if (pending.length === 0) return;
+        postProcessLock.current = true;
+        try {
+            if (entry.writesToCharacterMemory) {
+                await applyActorMemoryPipeline();
+            } else {
+                const unarchived = rows.filter(message => !message.metadata?.theaterArchived);
+                const batch = selectStoryArchiveBatch(unarchived, entry.archiveAfter, entry.archiveKeepRecent ?? 5);
+                if (batch.length > 0) {
+                    const archivedEntry = await archiveIfNeeded();
+                    if (!archivedEntry) return;
+                }
+            }
+            await Promise.all(pending.map(message => DB.updateMessageMetadata(message.id, previous => ({
+                ...(previous || {}),
+                theaterPostProcessPending: false,
+            }))));
+            await loadMessages();
+        } catch (error) {
+            console.warn('[StoryTheater] 后台结果后处理失败，下次进入继续', error);
+        } finally {
+            postProcessLock.current = false;
+        }
+    }, [applyActorMemoryPipeline, archiveIfNeeded, entry, loadMessages, threadId]);
+
+    useEffect(() => {
+        void processBackgroundPostProcess();
+    }, [messages.length, processBackgroundPostProcess]);
+
     const send = useCallback(async (rerollTarget?: Message, continueRequested = false) => {
         if (sendLock.current || actors.length === 0) return;
+        const existingBackground = getPendingStoryBackgroundJobForStory(entry.id);
+        if (existingBackground) {
+            setBackgroundPendingJobId(existingBackground.jobId);
+            addToast('上一条剧情回复仍在后台生成，请等它完成后再继续', 'info');
+            return;
+        }
         sendLock.current = true;
         setSending(true);
         setRerollingId(rerollTarget?.id || null);
@@ -744,6 +838,73 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             let promptTokenCountExact = false;
             setContextTokens(promptTokenCount);
             setContextTokensExact(false);
+
+            // 和普通【见面】一样，先把这轮完整快照交给 AMSG2。Worker 不支持、探测明确失败
+            // 或本次任务确实没有建起来时，才回到下面已有的前台 fetch；排队响应不确定时
+            // 绝不能双发，否则会产生两次计费和两个版本的剧情正文。
+            const generationSettings = prepareStoryGenerationSettings(compiled.settings, entry.omitSamplingParams === true);
+            const extraBody = entry.omitSamplingParams ? undefined : {
+                ...(typeof generationSettings.top_p === 'number' ? { top_p: generationSettings.top_p } : {}),
+                ...(typeof generationSettings.frequency_penalty === 'number' ? { frequency_penalty: generationSettings.frequency_penalty } : {}),
+                ...(typeof generationSettings.presence_penalty === 'number' ? { presence_penalty: generationSettings.presence_penalty } : {}),
+            };
+            const rerollMirrorIds = isReroll
+                ? { ...((rerollTarget?.metadata?.theaterMirrorIds || {}) as Record<string, number>) }
+                : undefined;
+            const mirrorTargetIds = isReroll
+                ? Object.keys(rerollMirrorIds || {})
+                : memoryActors.map(actor => actor.id);
+            const mirrorTargets = mirrorTargetIds.map(charId => {
+                const anchorAt = Date.parse(entry.characterMemoryDates?.[charId] || '');
+                return {
+                    charId,
+                    ...(Number.isFinite(anchorAt) ? { anchorAt } : {}),
+                    entryCreatedAt: entry.createdAt,
+                };
+            });
+            const expectedTail = !isReroll && !assistantOpening ? current[current.length - 1] : undefined;
+            const pendingBackground = buildPendingStoryBackgroundJob({
+                entry,
+                threadId,
+                primaryChar: actors[0],
+                operation: isReroll ? 'replace' : 'append',
+                turnKind: isReroll ? 'reroll' : assistantOpening ? 'opening' : isContinueTurn ? 'continue' : retry ? 'retry' : 'advance',
+                sourceUserMessageId: userMessageId || undefined,
+                targetAssistantMessageId: isReroll ? rerollTarget?.id : undefined,
+                expectedTailId: expectedTail?.id,
+                expectedTailRole: expectedTail?.role,
+                expectedTailFingerprint: expectedTail ? fingerprintStoryText(expectedTail.content) : undefined,
+                targetAssistantFingerprint: isReroll && rerollTarget ? fingerprintStoryText(rerollTarget.content) : undefined,
+                targetMirrorIds: rerollMirrorIds,
+                messages: payload,
+                assistantPrefill: compiled.assistantPrefill?.content,
+                promptTokenEstimate: promptTokenCount,
+                affinityInputs,
+                mirrorTargets,
+                temperature: generationSettings.temperature,
+                maxTokens: generationSettings.max_tokens,
+                extraBody,
+            });
+            if (pendingBackground) {
+                const persistedBackground = await createPendingStoryBackgroundJob(pendingBackground);
+                setBackgroundPendingJobId(persistedBackground.jobId);
+                const remote = await schedulePendingStoryBackgroundJob({
+                    jobId: persistedBackground.jobId,
+                    char: actors[0],
+                    api: apiConfig,
+                });
+                if (remote.status === 'queued' || remote.status === 'uncertain') {
+                    if (!isContinueTurn) setInput('');
+                    setAffinityDrafts({});
+                    setShowAffinityInput(false);
+                    await loadMessages();
+                    return;
+                }
+                // 只有明确没有远端任务时才清掉 marker，然后走原有前台请求。
+                removePendingStoryBackgroundJob(persistedBackground.jobId);
+                await deleteStoryBackgroundJobMarker(persistedBackground.input.markerMessageId);
+                setBackgroundPendingJobId(null);
+            }
             const generated = await callCompletion(payload, compiled.settings, reported => {
                 promptTokenCount = reported;
                 promptTokenCountExact = true;
@@ -788,9 +949,10 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             setSending(false);
             setRerollingId(null);
         }
-    }, [actors, addToast, affinityDrafts, affinityEnabled, applyActorMemoryPipeline, archiveIfNeeded, buildActorContexts, buildMaskMemoryContext, callCompletion, effectivePreset, entry, independentRecall, input, loadMessages, mask, promptIdentityName, saveCentralAndMirrors, selectedBooks, threadId]);
+    }, [actors, addToast, affinityDrafts, affinityEnabled, apiConfig, applyActorMemoryPipeline, archiveIfNeeded, buildActorContexts, buildMaskMemoryContext, callCompletion, effectivePreset, entry, independentRecall, input, loadMessages, mask, memoryActors, promptIdentityName, saveCentralAndMirrors, selectedBooks, threadId]);
 
     const archivedCount = messages.filter(message => mirrorArchived(message, entry)).length;
+    const backgroundPending = Boolean(backgroundPendingJobId);
     const pendingRetryInput = getPendingStoryRetryInput(messages);
     const canWriteOpening = messages.length === 0 && entry.openingMode === 'assistant';
     const filledAffinityActorIds = actors.filter(actor => {
@@ -868,7 +1030,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                         }
                         if (message.role === 'user') return <section key={message.id} {...pressHandlersFor(message)} className='pl-4 border-l-2 border-violet-300'><div className='text-[9px] tracking-[.16em] font-bold text-violet-500'>你写下</div><p className='mt-2 text-sm leading-7 text-slate-600 whitespace-pre-wrap'>{message.content}</p></section>;
                         const isLatest = message.id === messages[messages.length - 1]?.id;
-                        return <article key={message.id} {...pressHandlersFor(message)}><StoryOutput content={message.content} onChoose={choice => setInput(choice)} affinityInputs={affinityInputsFromMessage(message, actors)} />{isLatest && <div className='mt-4 flex items-center justify-end gap-2'><span className='w-1.5 h-1.5 rounded-full bg-violet-400' /><button disabled={sending} onClick={() => void send(message)} className='inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-[10px] font-bold text-slate-500 disabled:opacity-40'>{rerollingId === message.id ? <SpinnerGap size={12} className='animate-spin' /> : <ArrowClockwise size={12} />}换一种写法</button></div>}</article>;
+                        return <article key={message.id} {...pressHandlersFor(message)}><StoryOutput content={message.content} onChoose={choice => setInput(choice)} affinityInputs={affinityInputsFromMessage(message, actors)} />{isLatest && <div className='mt-4 flex items-center justify-end gap-2'><span className='w-1.5 h-1.5 rounded-full bg-violet-400' /><button disabled={sending || backgroundPending} onClick={() => void send(message)} className='inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-[10px] font-bold text-slate-500 disabled:opacity-40'>{rerollingId === message.id ? <SpinnerGap size={12} className='animate-spin' /> : <ArrowClockwise size={12} />}换一种写法</button></div>}</article>;
                     })}
                 </div>
                 {pageCount > 1 && <StoryPagination className='mt-8' page={messagePage} pageCount={pageCount} onChange={setMessagePage} />}
@@ -886,6 +1048,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
         <footer className='story-safe-footer shrink-0 px-4 pt-3 bg-stone-100/95 backdrop-blur border-t border-slate-200'>
             <div className='max-w-2xl mx-auto'>
                 {memoryStatus && <div className='mb-2 flex items-center gap-2 text-[10px] text-violet-600'><SpinnerGap size={13} className='animate-spin' />{memoryStatus}</div>}
+                {backgroundPending && <div className='mb-2 flex items-center gap-2 text-[10px] text-violet-600'><SpinnerGap size={13} className='animate-spin' />剧情正在后台生成，切到别的页面也会继续；完成后会自动回到这里</div>}
                 {!sending && !memoryStatus && !input.trim() && pendingRetryInput && <div className='mb-2 text-[10px] text-violet-600'>上次续写可能中断了，点击推进即可继续</div>}
                 {!sending && !memoryStatus && canWriteOpening && <div className='mb-2 text-[10px] text-violet-600'>准备好了，点击推进让故事写下第一幕</div>}
                 {affinityEnabled && <div className='mb-2 overflow-hidden rounded-2xl border border-rose-200 bg-rose-50/70'>
@@ -906,9 +1069,9 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                     </div>}
                 </div>}
                 <div className='flex items-end gap-2 p-2 rounded-2xl bg-white border border-slate-200 shadow-sm'>
-                    <button type='button' onClick={() => void send(undefined, true)} disabled={sending || actors.length === 0} className='self-end h-11 shrink-0 px-3 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 text-xs font-bold active:scale-95 transition-transform disabled:opacity-30' title='本轮不主动行动，让剧情按当前预设继续' aria-label='继续当前剧情'>继续</button>
-                    <textarea value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void send(); } }} disabled={sending} rows={2} placeholder={pendingRetryInput ? '留空并点击推进，可继续上次中断' : canWriteOpening ? '也可以先写一句；留空推进则由故事开场' : '写下动作、对白、时间跳转，或你希望故事发生的事……'} className='min-w-0 min-h-12 max-h-36 flex-1 px-2 py-2 bg-transparent text-sm leading-6 resize-none outline-none disabled:opacity-50' />
-                    <button onClick={() => void send()} disabled={sending || (!input.trim() && !pendingRetryInput && !canWriteOpening)} title={!input.trim() && pendingRetryInput ? '继续上次中断' : canWriteOpening && !input.trim() ? '让故事先开场' : '推进'} className='story-send-button self-end w-11 h-11 shrink-0 rounded-xl bg-slate-900 text-white grid place-items-center disabled:opacity-30'>{sending ? <SpinnerGap size={18} className='animate-spin' /> : <PaperPlaneTilt size={18} weight='fill' />}</button>
+                    <button type='button' onClick={() => void send(undefined, true)} disabled={sending || backgroundPending || actors.length === 0} className='self-end h-11 shrink-0 px-3 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 text-xs font-bold active:scale-95 transition-transform disabled:opacity-30' title='本轮不主动行动，让剧情按当前预设继续' aria-label='继续当前剧情'>继续</button>
+                    <textarea value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void send(); } }} disabled={sending || backgroundPending} rows={2} placeholder={pendingRetryInput ? '留空并点击推进，可继续上次中断' : canWriteOpening ? '也可以先写一句；留空推进则由故事开场' : '写下动作、对白、时间跳转，或你希望故事发生的事……'} className='min-w-0 min-h-12 max-h-36 flex-1 px-2 py-2 bg-transparent text-sm leading-6 resize-none outline-none disabled:opacity-50' />
+                    <button onClick={() => void send()} disabled={sending || backgroundPending || (!input.trim() && !pendingRetryInput && !canWriteOpening)} title={!input.trim() && pendingRetryInput ? '继续上次中断' : canWriteOpening && !input.trim() ? '让故事先开场' : '推进'} className='story-send-button self-end w-11 h-11 shrink-0 rounded-xl bg-slate-900 text-white grid place-items-center disabled:opacity-30'>{sending ? <SpinnerGap size={18} className='animate-spin' /> : <PaperPlaneTilt size={18} weight='fill' />}</button>
                 </div>
                 <div className='mt-2 text-center text-[9px] text-slate-400'>Ctrl / ⌘ + Enter 推进 · 长按楼层可编辑或删除</div>
             </div>

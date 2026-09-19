@@ -88,6 +88,7 @@ const DateApp: React.FC = () => {
     // 之后从桌面直接打开的见面会话里。
     const [cameFromChat, setCameFromChat] = useState(false);
     const [meetSurface, setMeetSurface] = useState<'companion' | 'story'>(() => dateLaunch.peek()?.surface ?? 'companion');
+    const [initialStoryId, setInitialStoryId] = useState<string | undefined>(() => dateLaunch.peek()?.storyId);
 
     // 记忆宫殿（与聊天侧共用同一套上下文：同 charId、同高水位线）
     // 见面流也需要在 AI 回复后跑一次缓冲区检查 + 自动归档，否则只有"读"没有"写"。
@@ -112,6 +113,7 @@ const DateApp: React.FC = () => {
         const applyLaunchIntent = (intent: DateLaunchIntent) => {
             setCameFromChat(intent.returnTo === 'chat');
             setMeetSurface(intent.surface);
+            setInitialStoryId(intent.surface === 'story' ? intent.storyId : undefined);
             if (intent.autoStart && intent.charId) {
                 setMode('select');
                 setAcceptedInviteLaunch({ charId: intent.charId, meetingInviteMessageId: intent.meetingInviteMessageId });
@@ -2130,7 +2132,7 @@ const DateApp: React.FC = () => {
     // --- Render ---
 
     if (meetSurface === 'story' && mode === 'select' && !cameFromChat) {
-        return <StoryTheater onSwitchCompanion={() => setMeetSurface('companion')} onClose={closeApp} />;
+        return <StoryTheater initialStoryId={initialStoryId} onSwitchCompanion={() => setMeetSurface('companion')} onClose={closeApp} />;
     }
 
     if (mode === 'select' || !char) {

@@ -153,6 +153,15 @@ describe('后台任务能力探测的缓存', () => {
     expect(await ActiveMsgClient.probeDateBackgroundJobSupportDetailed()).toBe('supported');
   });
 
+  it('剧情后台必须有独立能力位，不能把普通见面后台误当成剧情后台', async () => {
+    configCheck({ success: true, data: { backgroundJobs: true, dateBackgroundJobs: true } });
+    expect(await ActiveMsgClient.probeStoryBackgroundJobSupportDetailed()).toBe('unsupported');
+
+    configCheck({ success: true, data: { backgroundJobs: true, storyBackgroundJobs: true } });
+    forgetBackgroundJobProbe();
+    expect(await ActiveMsgClient.probeStoryBackgroundJobSupportDetailed()).toBe('supported');
+  });
+
   it('只有基础后台任务、没有通话 handler 的旧 Worker 仍按不支持处理', async () => {
     configCheck({ success: true, data: { backgroundJobs: true } });
 
@@ -254,5 +263,11 @@ describe('后台任务的采样参数', () => {
     const task = scheduledTask();
     expect(task).not.toHaveProperty('temperature');
     expect(task).not.toHaveProperty('maxTokens');
+  });
+
+  it('额外采样字段通过 llmExtraBody 传递', async () => {
+    await schedule({ extraBody: { top_p: 0.9, frequency_penalty: 0.2 } });
+    const task = scheduledTask();
+    expect(task.llmExtraBody).toEqual({ top_p: 0.9, frequency_penalty: 0.2 });
   });
 });

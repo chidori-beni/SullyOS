@@ -2048,12 +2048,22 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       };
 
       const openHandler = (e: Event) => {
-          const { charId, openApp, sessionId, encounterId } = (e as CustomEvent).detail as {
+          const { charId, openApp, sessionId, encounterId, surface, storyId } = (e as CustomEvent).detail as {
               charId?: string;
               openApp?: string;
               sessionId?: string;
               encounterId?: string;
+              surface?: string;
+              storyId?: string;
           };
+          if (openApp === 'date' && surface === 'story') {
+              dateLaunch.request({
+                  surface: 'story',
+                  ...(storyId ? { storyId } : {}),
+              });
+              setActiveApp(AppID.Date);
+              return;
+          }
           if (!charId) return;
           if (openApp === 'call' && sessionId) {
               callLaunch.request({ charId, sessionId });

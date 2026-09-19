@@ -21,6 +21,8 @@ import { CALL_BACKGROUND_REPLY_KIND, SLEEP_DREAM_KIND } from '../../../utils/ams
 import { callReplyHandler, sleepDreamHandler } from './callFire';
 import { DATE_BACKGROUND_REPLY_KIND } from '../../../utils/amsgDateJob';
 import { dateReplyHandler } from './dateFire';
+import { STORY_BACKGROUND_REPLY_KIND } from '../../../utils/amsgStoryJob';
+import { storyReplyHandler } from './storyFire';
 
 /** client_state 的写入口（value 传 null 即删除该 key）。 */
 export type KindWriteState = (
@@ -112,6 +114,7 @@ export const FIRE_KIND_HANDLERS: Record<string, FireKindHandler> = Object.assign
     [CALL_BACKGROUND_REPLY_KIND]: callReplyHandler,
     [SLEEP_DREAM_KIND]: sleepDreamHandler,
     [DATE_BACKGROUND_REPLY_KIND]: dateReplyHandler,
+    [STORY_BACKGROUND_REPLY_KIND]: storyReplyHandler,
   },
 );
 

@@ -2,6 +2,8 @@ export interface DateLaunchIntent {
     surface: 'companion' | 'story';
     /** Optional direct target used by cards in the information screen. */
     charId?: string;
+    /** 后台剧情回复通知点击时，直接打开对应的剧情线程。 */
+    storyId?: string;
     /** Open the historical encounter containing this id instead of the character picker. */
     encounterId?: string;
     /** 打开一个仍在进行中的见面（后台回复通知点击）；不是历史回顾。 */
