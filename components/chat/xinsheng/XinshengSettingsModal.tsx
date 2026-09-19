@@ -497,19 +497,28 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
 
                             <Field
                                 label={`预设库（${presets.length}）`}
-                                action={presets.length > 1 ? (
-                                    <div className="shrink-0 inline-flex items-center rounded-full bg-slate-100 p-0.5" role="group" aria-label="预设排序">
-                                        {(['asc', 'desc'] as const).map(order => (
-                                            <button
-                                                key={order}
-                                                onClick={() => setPresetOrder(order)}
-                                                aria-pressed={presetOrder === order}
-                                                className={`px-2 py-1 rounded-full text-[10px] transition-colors ${presetOrder === order ? 'bg-white text-indigo-500 shadow-sm font-semibold' : 'text-slate-400'}`}
-                                            >{order === 'asc' ? '正序' : '倒序'}</button>
-                                        ))}
+                                action={(
+                                    <div className="shrink-0 flex items-center gap-1.5">
+                                        <button
+                                            onClick={() => fileRef.current?.click()}
+                                            aria-label="导入预设"
+                                            className="px-2.5 py-1.5 rounded-full bg-indigo-50 border border-indigo-100 text-indigo-500 text-[10px] font-semibold active:scale-95 transition-transform"
+                                        >导入</button>
+                                        {presets.length > 1 && (
+                                            <div className="inline-flex items-center rounded-full bg-slate-100 p-0.5" role="group" aria-label="预设排序">
+                                                {(['asc', 'desc'] as const).map(order => (
+                                                    <button
+                                                        key={order}
+                                                        onClick={() => setPresetOrder(order)}
+                                                        aria-pressed={presetOrder === order}
+                                                        className={`px-2 py-1 rounded-full text-[10px] transition-colors ${presetOrder === order ? 'bg-white text-indigo-500 shadow-sm font-semibold' : 'text-slate-400'}`}
+                                                    >{order === 'asc' ? '正序' : '倒序'}</button>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
-                                ) : undefined}
-                                hint="按导入顺序排列，正序是先导入 → 后导入，倒序是后导入 → 先导入；置顶仍固定在最上面。点名字展开操作。预设是全局共享的，载入之后记得回「总览」点右上角保存才会生效。"
+                                )}
+                                hint="右侧可直接导入预设；按导入顺序排列，正序是先导入 → 后导入，倒序是后导入 → 先导入；置顶仍固定在最上面。点名字展开操作。预设是全局共享的，载入之后记得回「总览」点右上角保存才会生效。"
                             >
                                 {presets.length > 6 && (
                                     <input
@@ -558,10 +567,6 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
                                     if (f) void importFile(f);
                                 }}
                             />
-                            <button
-                                onClick={() => fileRef.current?.click()}
-                                className="w-full py-3 rounded-2xl bg-slate-100 text-slate-600 text-[12px] font-semibold active:scale-95 transition-transform"
-                            >导入预设 .json（糯叽机导出的可直接用）</button>
                         </>
                     )}
                 </div>
