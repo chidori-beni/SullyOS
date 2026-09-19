@@ -22,9 +22,11 @@ import {
     renameXinshengPreset,
     saveXinshengPreset,
     setPresetRandomEnabled,
+    sortXinshengPresets,
     toggleXinshengPresetPinned,
     updateXinshengPreset,
     type XinshengPreset,
+    type XinshengPresetSortOrder,
 } from '../../../utils/xinsheng/xinshengStore';
 import { shareOrDownloadFile } from '../../../utils/shareExport';
 
@@ -66,9 +68,12 @@ const readSettings = (char: CharacterProfile): XinshengSettingsValue => ({
     aiVisibleFields: char.xinshengAiVisibleFields ?? 'innerVoice',
 });
 
-const Field: React.FC<{ label: string; hint?: React.ReactNode; children: React.ReactNode }> = ({ label, hint, children }) => (
+const Field: React.FC<{ label: React.ReactNode; hint?: React.ReactNode; action?: React.ReactNode; children: React.ReactNode }> = ({ label, hint, action, children }) => (
     <div className="mb-4">
-        <div className="text-[12px] font-semibold text-slate-700 mb-1">{label}</div>
+        <div className="flex items-center gap-2 mb-1">
+            <div className="flex-1 min-w-0 text-[12px] font-semibold text-slate-700">{label}</div>
+            {action}
+        </div>
         {hint && <div className="text-[11px] text-slate-400 leading-relaxed mb-1.5">{hint}</div>}
         {children}
     </div>
@@ -82,9 +87,10 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
     const [presets, setPresets] = useState<XinshengPreset[]>([]);
     const [randomOn, setRandomOn] = useState(false);
     const [presetName, setPresetName] = useState('');
-    // 预设库的两个精修：搜索框 + 每行两个的紧凑格子。几十个预设时一行一个要拉很久，
-    // 又不能改排序（旧预设照样常用），所以给「找得到」和「置顶」两条快捷路径。
+    // 预设库的三个精修：搜索框、按导入顺序正/倒序 + 每行两个的紧凑格子。几十个预设时一行一个要拉很久，
+    // 所以给「找得到」「排得顺」「置顶」三条快捷路径。
     const [presetQuery, setPresetQuery] = useState('');
+    const [presetOrder, setPresetOrder] = useState<XinshengPresetSortOrder>('asc');
     const [openPresetId, setOpenPresetId] = useState<string | null>(null);
     const [renamingId, setRenamingId] = useState<string | null>(null);
     const [renameDraft, setRenameDraft] = useState('');
@@ -168,12 +174,13 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
     };
 
     const filteredPresets = useMemo(() => {
+        const ordered = sortXinshengPresets(presets, presetOrder);
         const q = presetQuery.trim().toLowerCase();
-        if (!q) return presets;
-        return presets.filter(p => p.name.toLowerCase().includes(q));
-    }, [presets, presetQuery]);
+        if (!q) return ordered;
+        return ordered.filter(p => p.name.toLowerCase().includes(q));
+    }, [presets, presetOrder, presetQuery]);
 
-    // listXinshengPresets 已经把置顶的排在前面了，这里只是拆成两块好加小标题
+    // 正/倒序都保持置顶在上面，只改变置顶组和普通组各自的内部顺序。
     const pinnedPresets = useMemo(() => filteredPresets.filter(p => p.pinned), [filteredPresets]);
     const otherPresets = useMemo(() => filteredPresets.filter(p => !p.pinned), [filteredPresets]);
 
@@ -490,7 +497,19 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
 
                             <Field
                                 label={`预设库（${presets.length}）`}
-                                hint="点名字展开「载入 / 覆盖 / 导出 / 删除」，点 ★ 把常用的钉到最上面。预设是全局共享的，载入之后记得回「总览」点右上角保存才会生效。"
+                                action={presets.length > 1 ? (
+                                    <div className="shrink-0 inline-flex items-center rounded-full bg-slate-100 p-0.5" role="group" aria-label="预设排序">
+                                        {(['asc', 'desc'] as const).map(order => (
+                                            <button
+                                                key={order}
+                                                onClick={() => setPresetOrder(order)}
+                                                aria-pressed={presetOrder === order}
+                                                className={`px-2 py-1 rounded-full text-[10px] transition-colors ${presetOrder === order ? 'bg-white text-indigo-500 shadow-sm font-semibold' : 'text-slate-400'}`}
+                                            >{order === 'asc' ? '正序' : '倒序'}</button>
+                                        ))}
+                                    </div>
+                                ) : undefined}
+                                hint="按导入顺序排列，正序是先导入 → 后导入，倒序是后导入 → 先导入；置顶仍固定在最上面。点名字展开操作。预设是全局共享的，载入之后记得回「总览」点右上角保存才会生效。"
                             >
                                 {presets.length > 6 && (
                                     <input

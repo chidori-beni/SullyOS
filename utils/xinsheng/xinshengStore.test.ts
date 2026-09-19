@@ -221,6 +221,13 @@ describe('预设', () => {
         expect((await listXinshengPresets()).map(p => p.name)).toEqual(['浅浅蓝', '浅浅蓝 (2)', '浅浅蓝 (3)']);
     });
 
+    it('排序依据是导入顺序，不是预设名称', async () => {
+        await importXinshengPresets([{ name: 'Zeta' }, { name: 'Alpha' }]);
+        const list = await listXinshengPresets();
+        expect(list.map(p => p.name)).toEqual(['Zeta', 'Alpha']);
+        expect(sortXinshengPresets(list, 'desc').map(p => p.name)).toEqual(['Alpha', 'Zeta']);
+    });
+
     it('replace 模式整库替换', async () => {
         await saveXinshengPreset('旧的', { customCss: '', customPrompt: '', layout: '', displayMode: 'planner', aiVisibleFields: '' });
         await importXinshengPresets([{ name: '新的' }], 'replace');
@@ -273,6 +280,17 @@ describe('置顶预设', () => {
         const list = [normalizePreset({ name: 'A' }), normalizePreset({ name: 'B', pinned: true })];
         expect(sortXinshengPresets(list).map(p => p.name)).toEqual(['B', 'A']);
         expect(list.map(p => p.name)).toEqual(['A', 'B']);
+    });
+
+    it('支持正序 / 倒序，置顶仍固定在顶部', () => {
+        const list = [
+            normalizePreset({ name: 'Zeta' }),
+            normalizePreset({ name: 'Alpha', pinned: true }),
+            normalizePreset({ name: 'Beta' }),
+            normalizePreset({ name: 'Omega', pinned: true }),
+        ];
+        expect(sortXinshengPresets(list, 'asc').map(p => p.name)).toEqual(['Alpha', 'Omega', 'Zeta', 'Beta']);
+        expect(sortXinshengPresets(list, 'desc').map(p => p.name)).toEqual(['Omega', 'Alpha', 'Beta', 'Zeta']);
     });
 });
 

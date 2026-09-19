@@ -223,11 +223,24 @@ export const normalizePreset = (raw: any, index = 0): XinshengPreset => {
 };
 
 /**
- * 置顶的排在前面，两组内部都保持原来的插入顺序（用户说过「旧预设也经常用」，
- * 所以不按时间倒序，只把置顶的那几个抬到最上面）。`sort` 在现代引擎里是稳定的。
+ * 置顶的排在前面；默认正序保持预设进入库的顺序，倒序只反转置顶组和普通组各自的内部顺序。
  */
-export const sortXinshengPresets = (list: XinshengPreset[]): XinshengPreset[] =>
-    [...list].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+export type XinshengPresetSortOrder = 'asc' | 'desc';
+
+export const sortXinshengPresets = (
+    list: XinshengPreset[],
+    order: XinshengPresetSortOrder = 'asc',
+): XinshengPreset[] => {
+    const direction = order === 'desc' ? -1 : 1;
+    return list
+        .map((preset, index) => ({ preset, index }))
+        .sort((a, b) => {
+            const pinnedDifference = (b.preset.pinned ? 1 : 0) - (a.preset.pinned ? 1 : 0);
+            if (pinnedDifference !== 0) return pinnedDifference;
+            return direction * (a.index - b.index);
+        })
+        .map(({ preset }) => preset);
+};
 
 /**
  * 库里**原始顺序**（= 插入顺序）的预设。写回一律基于这一份：
