@@ -50,6 +50,7 @@ import {
     planGroupTopicBatch,
 } from '../utils/groupChat/topicBoxes';
 import { cardHookProps } from '../utils/chatCardHooks';
+import { areMessagesWithinGroupGap } from '../utils/chatMessageGrouping';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
@@ -1849,14 +1850,13 @@ ${buildCharBondNote(member, characters.filter(c => activeGroup?.members.includes
                     const char = characters.find(c => c.id === m.charId);
                     const prevMessage = i > 0 ? displayMessages[i - 1] : null;
                     const nextMessage = i < displayMessages.length - 1 ? displayMessages[i + 1] : null;
-                    const messageGroupGapMs = 30 * 60 * 1000;
                     const sameSpeaker = (other: Message | null) => !!other
                         && other.role === m.role
                         && other.charId === m.charId;
                     const isFirstInGroup = !sameSpeaker(prevMessage)
-                        || Math.abs(m.timestamp - prevMessage!.timestamp) > messageGroupGapMs;
+                        || !areMessagesWithinGroupGap(m.timestamp, prevMessage!.timestamp);
                     const isLastInGroup = !sameSpeaker(nextMessage)
-                        || Math.abs(nextMessage!.timestamp - m.timestamp) > messageGroupGapMs;
+                        || !areMessagesWithinGroupGap(nextMessage!.timestamp, m.timestamp);
                     const memberTheme = memberBubbleThemes.get(m.charId);
 
                     return (

@@ -84,6 +84,7 @@ import { AMSG_INSTANT_CHAT_PENDING_EVENT, AMSG_INSTANT_CHAT_PENDING_LS_KEY, getI
 import { loadChatRecallSubmitHintEnabled, saveChatRecallSubmitHintEnabled } from '../utils/chatRecallSubmitHint';
 import { formatAmsgToolTrace } from '../utils/amsgToolTrace';
 import { formatDateDividerLabel, shouldShowDateDivider } from '../utils/chatDateDivider';
+import { areMessagesWithinGroupGap } from '../utils/chatMessageGrouping';
 import { prepareBroadcastText } from '../utils/messageBroadcast';
 import { resolveSARModuleSpeechSource } from '../utils/vrWorld/sarModuleRuntime';
 import {
@@ -5189,24 +5190,23 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 {renderedMessages.map((m, i) => {
                     const prevMessage = i > 0 ? renderedMessages[i - 1] : null;
                     const nextMessage = i < renderedMessages.length - 1 ? renderedMessages[i + 1] : null;
-                    const messageGroupGapMs = 30 * 60 * 1000;
                     const breaksWithPrevious =
                         !prevMessage ||
                         prevMessage.role !== m.role ||
-                        Math.abs(m.timestamp - prevMessage.timestamp) > messageGroupGapMs;
+                        !areMessagesWithinGroupGap(m.timestamp, prevMessage.timestamp);
                     // 心声：「头像在组顶部、连续气泡共用一次」的显示方式下，那个头像绑的是
-                    // 组内第一条消息**自己的** metadata——但分组只按"同角色 + 30 分钟内"判定，
+                    // 组内第一条消息**自己的** metadata——但分组只按"同角色 + 5 分钟时间窗"判定，
                     // 跟是不是同一轮回复无关。一个组完全可能横跨好几轮回复（主动消息隔几分钟
                     // 又追一句也不破组），组里第一条甚至可能是开启心声之前发的、根本没有
                     // roundId。顶部头像代表的是"这一串消息"，点击该打开组内**最新**一轮的
                     // 心声，而不是死盯着第一条自己的 metadata——否则点了没反应。
-                    // 只在组首（isFirstInGroup）才需要算，往后扫到组尾为止。
+                    // 只在组首（isFirstInGroup）才需要算，往后扫到 5 分钟时间窗的组尾为止。
                     const groupXinshengRoundId = breaksWithPrevious
                         ? (() => {
                             let latest: string | undefined;
                             for (let j = i; j < displayMessages.length; j++) {
                                 const cand = displayMessages[j];
-                                if (j > i && (cand.role !== m.role || Math.abs(cand.timestamp - displayMessages[j - 1].timestamp) > messageGroupGapMs)) break;
+                                if (j > i && (cand.role !== m.role || !areMessagesWithinGroupGap(cand.timestamp, displayMessages[j - 1].timestamp))) break;
                                 const rid = (cand as any).metadata?.xinshengRoundId;
                                 if (typeof rid === 'string' && rid) latest = rid;
                             }
@@ -5216,7 +5216,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                     const breaksWithNext =
                         !nextMessage ||
                         nextMessage.role !== m.role ||
-                        Math.abs(nextMessage.timestamp - m.timestamp) > messageGroupGapMs;
+                        !areMessagesWithinGroupGap(nextMessage.timestamp, m.timestamp);
                     const suppressEntranceAnimation = streamPreviewHandoverIdsRef.current.has(m.id);
                     // 这一轮在云端跑过哪些工具（即时对话才有，worker 挂在最后一条推送上）。
                     // 一条推送拆出的每条气泡都继承了同一份（metadata 是整份往下铺的，见
