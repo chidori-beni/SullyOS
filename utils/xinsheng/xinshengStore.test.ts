@@ -16,6 +16,7 @@ const {
     listXinshengPresets, saveXinshengPreset, updateXinshengPreset, deleteXinshengPreset,
     importXinshengPresets, buildPresetExportFile, parsePresetImportFile, normalizePreset,
     toggleXinshengPresetPinned, sortXinshengPresets, renameXinshengPreset,
+    getXinshengPresetSortOrder, setXinshengPresetSortOrder,
     saveXinshengFirePackPreset, readXinshengFirePackPreset,
     isPresetRandomEnabled, setPresetRandomEnabled, pickRandomPreset,
 } = await import('./xinshengStore');
@@ -291,6 +292,18 @@ describe('置顶预设', () => {
         ];
         expect(sortXinshengPresets(list, 'asc').map(p => p.name)).toEqual(['Alpha', 'Omega', 'Zeta', 'Beta']);
         expect(sortXinshengPresets(list, 'desc').map(p => p.name)).toEqual(['Omega', 'Alpha', 'Beta', 'Zeta']);
+    });
+});
+
+describe('预设排序偏好', () => {
+    beforeEach(() => { localStorage.removeItem('xinsheng_preset_sort_order'); });
+
+    it('默认正序，选择倒序后下次读取仍是倒序', () => {
+        expect(getXinshengPresetSortOrder()).toBe('asc');
+        setXinshengPresetSortOrder('desc');
+        expect(getXinshengPresetSortOrder()).toBe('desc');
+        setXinshengPresetSortOrder('asc');
+        expect(getXinshengPresetSortOrder()).toBe('asc');
     });
 });
 

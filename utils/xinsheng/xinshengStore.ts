@@ -12,6 +12,7 @@ import type { XinshengEntryPreset } from './xinshengRandomPreset';
 const HISTORY_KEY = (charId: string) => `xinsheng_history_${charId}`;
 const PRESETS_KEY = 'xinsheng_presets';
 const RANDOM_ENABLED_KEY = 'xinsheng_preset_random_enabled';
+const PRESET_SORT_ORDER_KEY = 'xinsheng_preset_sort_order';
 const FIRE_PACK_PRESET_KEY = (charId: string) => `xinsheng_firepack_preset_${charId}`;
 const LAST_RANDOM_KEY = 'xinsheng_preset_last_random_id';
 
@@ -226,6 +227,23 @@ export const normalizePreset = (raw: any, index = 0): XinshengPreset => {
  * 置顶的排在前面；默认正序保持预设进入库的顺序，倒序只反转置顶组和普通组各自的内部顺序。
  */
 export type XinshengPresetSortOrder = 'asc' | 'desc';
+
+/** 预设列表的排序偏好只属于这台设备，不进预设文件，也不跟随云备份。 */
+export const getXinshengPresetSortOrder = (): XinshengPresetSortOrder => {
+    try {
+        return globalThis.localStorage?.getItem(PRESET_SORT_ORDER_KEY) === 'desc' ? 'desc' : 'asc';
+    } catch {
+        return 'asc';
+    }
+};
+
+export const setXinshengPresetSortOrder = (order: XinshengPresetSortOrder): void => {
+    try {
+        globalThis.localStorage?.setItem(PRESET_SORT_ORDER_KEY, order);
+    } catch {
+        // 隐私模式 / 存储被禁用时，排序本身仍然可用，只是不跨次记忆。
+    }
+};
 
 export const sortXinshengPresets = (
     list: XinshengPreset[],

@@ -15,6 +15,7 @@ import { XINSHENG_TEMPLATES } from '../../../utils/xinsheng/xinshengTemplates';
 import {
     buildPresetExportFile,
     deleteXinshengPreset,
+    getXinshengPresetSortOrder,
     importXinshengPresets,
     isPresetRandomEnabled,
     listXinshengPresets,
@@ -22,6 +23,7 @@ import {
     renameXinshengPreset,
     saveXinshengPreset,
     setPresetRandomEnabled,
+    setXinshengPresetSortOrder,
     sortXinshengPresets,
     toggleXinshengPresetPinned,
     updateXinshengPreset,
@@ -90,7 +92,7 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
     // 预设库的三个精修：搜索框、按导入顺序正/倒序 + 每行两个的紧凑格子。几十个预设时一行一个要拉很久，
     // 所以给「找得到」「排得顺」「置顶」三条快捷路径。
     const [presetQuery, setPresetQuery] = useState('');
-    const [presetOrder, setPresetOrder] = useState<XinshengPresetSortOrder>('asc');
+    const [presetOrder, setPresetOrder] = useState<XinshengPresetSortOrder>(() => getXinshengPresetSortOrder());
     const [openPresetId, setOpenPresetId] = useState<string | null>(null);
     const [renamingId, setRenamingId] = useState<string | null>(null);
     const [renameDraft, setRenameDraft] = useState('');
@@ -107,6 +109,7 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
         setValue(readSettings(char));
         setTab('general');
         setPresetQuery('');
+        setPresetOrder(getXinshengPresetSortOrder());
         setOpenPresetId(null);
         setRenamingId(null);
         listXinshengPresets().then(setPresets).catch(() => {});
@@ -114,6 +117,11 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
     }, [isOpen, char]);
 
     const patch = (p: Partial<XinshengSettingsValue>) => setValue(v => ({ ...v, ...p }));
+
+    const changePresetOrder = (order: XinshengPresetSortOrder) => {
+        setPresetOrder(order);
+        setXinshengPresetSortOrder(order);
+    };
 
     const layoutErrors = useMemo(
         () => (tab === 'layout' ? validateLayout(value.layout) : []),
@@ -509,7 +517,7 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
                                                 {(['asc', 'desc'] as const).map(order => (
                                                     <button
                                                         key={order}
-                                                        onClick={() => setPresetOrder(order)}
+                                                        onClick={() => changePresetOrder(order)}
                                                         aria-pressed={presetOrder === order}
                                                         className={`px-2 py-1 rounded-full text-[10px] transition-colors ${presetOrder === order ? 'bg-white text-indigo-500 shadow-sm font-semibold' : 'text-slate-400'}`}
                                                     >{order === 'asc' ? '正序' : '倒序'}</button>
