@@ -40,6 +40,7 @@ import { readXinshengHistory } from './xinsheng/xinshengStore';
 import { prepareXinshengFirePackPreset, prepareXinshengRoundPreset } from './xinsheng/xinshengRandomPreset';
 import { classifyExchange, buildNarrationLine } from './characterIdentity';
 import { buildCompanionshipBoundary, companionshipBoundaryOn } from './companionshipBoundary';
+import { formatBankExpenseShareForContext, readBankExpenseCardData } from './bankExpenseCard';
 
 // 语音格式指导按当前 TTS 服务商二选一：用 MiniMax 才注入 MiniMax 那套（含 <#秒#> 停顿标记），
 // 用鱼声则注入鱼声版（去掉 MiniMax 专属标记，改用标点 / 省略号控制停顿）。
@@ -129,6 +130,7 @@ function summarizeGroupMsgContent(m: Message): string {
         case 'mcd_card': return '[麦当劳点餐]';
         case 'html_card': return '[HTML卡片]';
         case 'news_card': return '[新闻卡片]';
+        case 'expense_card': return '[消费分享]';
         case 'trpg_card': return `[TRPG游戏片段${meta.trpg?.gameTitle ? '：《' + meta.trpg.gameTitle + '》' : ''}]`;
         case 'novel_card': return `[笔友会小说章节${meta.novel?.bookTitle ? '：《' + meta.novel.bookTitle + '》' : ''}]`;
         case 'world_card': return `[家园生活记录${meta.worldName ? '：' + meta.worldName : ''}]`;
@@ -1668,7 +1670,13 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                         amount: tMeta.amount,
                         receipt: tMeta.receipt,
                         status: tMeta.status,
-                    })}`;
+                     })}`;
+                }
+                else if ((m.type as string) === 'expense_card') {
+                    const expense = readBankExpenseCardData(m.metadata?.expenseCard);
+                    content = expense
+                        ? `${timeStr} ${formatBankExpenseShareForContext(expense, userProfile?.name || '用户', char?.name || '你')}`
+                        : `${timeStr} [消费分享] ${typeof m.content === 'string' ? m.content : '消费信息不完整'}`;
                 }
                 else if (m.type === 'social_card') {
                     // 一张卡两种来源：Spark 笔记（SocialApp 分享）和朋友圈动态（消息 App 转发）。

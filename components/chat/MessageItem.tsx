@@ -27,6 +27,7 @@ import { getMessageReactions, reactionSignature, stripMessageReactionTags } from
 import { stripFaceToFacePhoneSourceTags } from '../../utils/sanitize';
 import { cardHookProps } from '../../utils/chatCardHooks';
 import { getSocialPostScope } from '../../utils/socialPostScope';
+import { formatBankExpenseAmount, formatBankExpenseDate, readBankExpenseCardData } from '../../utils/bankExpenseCard';
 
 // 思考链卡片支持的 12 种风格预设 — 同时被 MessageItem 与 ThinkingChainSettingsModal 复用
 export type ThinkingChainStyleId = 'echo' | 'whisper' | 'minimal' | 'ink' | 'neon' | 'terminal' | 'stellar' | 'tama' | 'pixel' | 'muji' | 'ins' | 'custom';
@@ -902,6 +903,44 @@ const LifeRecordCard: React.FC<{
                 📋 生活记录
             </div>
         </div>
+    );
+};
+
+// ─── 存钱罐消费分享卡（用户主动把已记账的消费发给角色；没有确认/否决流程）───
+const BankExpenseCard: React.FC<{
+    m: Message;
+    commonLayout: (content: React.ReactNode) => JSX.Element;
+}> = ({ m, commonLayout }) => {
+    const data = readBankExpenseCardData(m.metadata?.expenseCard);
+    const note = data?.note?.trim() || '消费信息不完整';
+    const amount = data ? formatBankExpenseAmount(data) : '金额未知';
+    const dateLabel = data ? formatBankExpenseDate(data.dateStr) : '日期未知';
+
+    return commonLayout(
+        <div className="w-64 overflow-hidden rounded-2xl border border-amber-100 bg-gradient-to-br from-amber-50 to-orange-50 shadow-sm">
+            <div className="border-b border-amber-100/80 bg-white/45 px-3.5 pb-3 pt-3">
+                <div className="flex items-center gap-2.5">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/85 text-lg shadow-sm ring-2 ring-amber-200/70">
+                        🧾
+                    </div>
+                    <div className="min-w-0 flex-1">
+                        <div className="truncate text-xs font-bold text-slate-700">消费分享</div>
+                        <div className="mt-0.5 text-[10px] text-slate-400">来自存钱罐 · {dateLabel}</div>
+                    </div>
+                </div>
+                <div className="mt-3 flex items-end justify-between gap-2">
+                    <span className="text-[10px] font-semibold text-slate-400">这笔账</span>
+                    <span className="font-mono text-xl font-black tracking-tight text-amber-700">{amount}</span>
+                </div>
+            </div>
+            <div className="px-3.5 py-3">
+                <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-amber-700/70">消费备注</div>
+                <div className="break-words whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{note}</div>
+            </div>
+            <div className="border-t border-white/70 bg-white/35 px-3.5 py-1.5 text-[9px] text-slate-400">
+                🪙 你主动分享的消费记录
+            </div>
+        </div>,
     );
 };
 
@@ -3779,6 +3818,10 @@ const MessageItem = React.memo(({
 
     if (m.type === 'life_card') {
         return <LifeRecordCard m={m} charName={charName} commonLayout={commonLayout} selectionMode={selectionMode} onResolveLifeRecord={onResolveLifeRecord} />;
+    }
+
+    if (m.type === 'expense_card') {
+        return <BankExpenseCard m={m} commonLayout={commonLayout} />;
     }
 
     if (m.type === 'collaboration_file') {

@@ -3071,10 +3071,24 @@ export interface ChibiStudioData {
 export interface BankTransaction {
     id: string;
     amount: number;
-    category: string; 
+    category: string;
     note: string;
     timestamp: number;
     dateStr: string; // YYYY-MM-DD
+}
+
+/** 存钱罐流水同步到角色聊天时保存的只读卡片快照。 */
+export interface BankExpenseCardData {
+    version: 1;
+    source: 'bank';
+    transactionId: string;
+    owner: 'user';
+    amount: number;
+    currencySymbol: string;
+    note: string;
+    dateStr: string;
+    transactionTimestamp: number;
+    category?: string;
 }
 
 export interface SavingsGoal {
@@ -5039,7 +5053,7 @@ export interface GameSession {
     lastPlayedAt: number;
 }
 
-export type MessageType = 'text' | 'image' | 'emoji' | 'voice' | 'collaboration_file' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'luckin_card' | 'html_card' | 'news_card' | 'vr_card' | 'trpg_card' | 'novel_card' | 'world_card' | 'sim_card' | 'phone_card' | 'webpage_card' | 'theater_card' | 'room_card' | 'life_card' | 'group_topic_card' | 'schedule_invite' | 'schedule_invite_reply';
+export type MessageType = 'text' | 'image' | 'emoji' | 'voice' | 'collaboration_file' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'luckin_card' | 'html_card' | 'news_card' | 'vr_card' | 'trpg_card' | 'novel_card' | 'world_card' | 'sim_card' | 'phone_card' | 'webpage_card' | 'theater_card' | 'room_card' | 'life_card' | 'expense_card' | 'group_topic_card' | 'schedule_invite' | 'schedule_invite_reply';
 
 export interface Message {
     id: number;

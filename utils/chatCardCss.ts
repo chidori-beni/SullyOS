@@ -37,6 +37,7 @@ export const CHAT_CARD_CATALOG: ReadonlyArray<ChatCardCatalogEntry> = [
   { card: 'social_card', sub: 'moments', label: '朋友圈动态', tone: 'light', from: '消息 App 朋友圈转发' },
   { card: 'social_card', sub: 'spark', label: 'Spark 笔记', tone: 'light', from: 'Spark SocialApp 分享' },
   { card: 'life_card', label: '生活记录', tone: 'light', from: '生活记录' },
+  { card: 'expense_card', label: '消费分享', tone: 'light', from: '存钱罐' },
   { card: 'group_topic_card', label: '群话题', tone: 'light', from: '群聊' },
   { card: 'mcd_card', label: '麦当劳订单', tone: 'light', from: '麦当劳小程序' },
   { card: 'luckin_card', label: '瑞幸订单', tone: 'light', from: '瑞幸小程序' },

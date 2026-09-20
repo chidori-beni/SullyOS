@@ -74,3 +74,21 @@ describe('normalizeMessageContent · webpage_card', () => {
     expect(out).not.toContain('网页正文');
   });
 });
+
+describe('normalizeMessageContent · expense_card', () => {
+  it('把消费卡的日期、金额、备注和归属送进记忆链路', () => {
+    const out = normalizeMessageContent(
+      mk('expense_card', '[消费分享]', {
+        expenseCard: {
+          version: 1, source: 'bank', transactionId: 'tx-1', owner: 'user',
+          amount: 38, currencySymbol: '¥', note: '买咖啡', dateStr: '2026-09-20', transactionTimestamp: 1,
+        },
+      }),
+      '萧逸', '千夜',
+    );
+    expect(out).toContain('2026年9月20日');
+    expect(out).toContain('¥38');
+    expect(out).toContain('买咖啡');
+    expect(out).toContain('不是萧逸花的钱');
+  });
+});

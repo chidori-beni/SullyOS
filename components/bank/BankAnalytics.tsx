@@ -11,6 +11,7 @@ interface Props {
     goals: SavingsGoal[];
     currency: string;
     onDeleteTx: (id: string) => void;
+    onShareTx: (tx: BankTransaction) => void;
     apiConfig?: APIConfig;
     dailyBudget?: number;
 }
@@ -27,7 +28,7 @@ const CATEGORIES: Record<string, { icon: string; label: string; color: string; g
     other: { icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4e6.png', label: '其他', color: '#78909C', gradient: 'from-gray-400 to-slate-500' }
 };
 
-const BankAnalytics: React.FC<Props> = ({ transactions, goals, currency, onDeleteTx, apiConfig, dailyBudget = 100 }) => {
+const BankAnalytics: React.FC<Props> = ({ transactions, goals, currency, onDeleteTx, onShareTx, apiConfig, dailyBudget = 100 }) => {
     const [viewMode, setViewMode] = useState<'today' | 'week' | 'month'>('today');
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [categorizedTx, setCategorizedTx] = useState<Record<string, string>>({});
@@ -374,11 +375,22 @@ ${txList}
                                                 </div>
                                             </div>
                                         </div>
-                                        <div className="font-mono font-bold text-[#E64A19]">-{currency}{formatMoney(tx.amount)}</div>
+                                        <div className="flex flex-col items-end gap-1 pr-5">
+                                            <div className="font-mono font-bold text-[#E64A19]">-{currency}{formatMoney(tx.amount)}</div>
+                                            <button
+                                                type="button"
+                                                onClick={() => onShareTx(tx)}
+                                                className="rounded-lg bg-white px-2 py-1 text-[10px] font-bold text-[#8D6E63] shadow-sm border border-[#E8DCC8] hover:bg-[#FFF8E1] active:scale-95 transition-all"
+                                                aria-label={`把「${tx.note}」同步给角色聊天`}
+                                            >
+                                                ↗ 分享给角色
+                                            </button>
+                                        </div>
 
                                         <button
                                             onClick={() => onDeleteTx(tx.id)}
                                             className="absolute right-1 top-1 w-5 h-5 rounded-full bg-red-50 text-red-400 hover:bg-red-100 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all text-xs"
+                                            aria-label={`删除「${tx.note}」这笔账`}
                                         >
                                             ×
                                         </button>

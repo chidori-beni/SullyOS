@@ -59,6 +59,7 @@ export const CARD_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   'theater_card',
   'room_card',
   'life_card',
+  'expense_card',
   'group_topic_card',
   'schedule_invite',
   'schedule_invite_reply',

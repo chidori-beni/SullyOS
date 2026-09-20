@@ -187,6 +187,7 @@ const messageTypeLabel: Partial<Record<Message['type'], string>> = {
     music_card: '[音乐]',
     webpage_card: '[网页]',
     theater_card: '[小剧场]',
+    expense_card: '[消费分享]',
     schedule_invite: '[日程邀请]',
 };
 

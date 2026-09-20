@@ -18,6 +18,7 @@ import { formatTransferRecord } from './transferFormat';
 import { formatSocialCardForContext } from './socialShareCard';
 import { formatStatCount } from './videoParser';
 import { formatSARModuleEventsForContext } from './vrWorld/sarModuleRuntime';
+import { formatBankExpenseShareForContext, readBankExpenseCardData } from './bankExpenseCard';
 
 /**
  * 总结器只在输入确实含 SAR 双轨记录时收到这段硬边界；普通聊天/总结提示词保持原样。
@@ -151,6 +152,12 @@ export function normalizeMessageContent(
             receipt: meta.receipt,
             status: meta.status,
         });
+    }
+    if (type === 'expense_card') {
+        const expense = readBankExpenseCardData(msg.metadata?.expenseCard);
+        return expense
+            ? formatBankExpenseShareForContext(expense, userName, charName)
+            : (msg.content?.trim() || '[消费分享]');
     }
 
     // 结算卡：几种 app 产生，用字段逐一翻成自然文本

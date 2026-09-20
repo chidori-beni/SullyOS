@@ -112,6 +112,24 @@ describe('卡片钩子真的渲染进了 DOM', () => {
         const html = render({ ...base, role: 'user', type: 'interaction', content: '戳了戳' } as Message);
         expect(html).toContain('data-card="interaction"');
     });
+
+    it('存钱罐消费分享卡走独立卡片分支，不混进生活记录卡', () => {
+        const html = render({
+            ...base, role: 'user', type: 'expense_card', content: '[消费分享]',
+            metadata: {
+                source: 'bank-expense-share',
+                expenseCard: {
+                    version: 1, source: 'bank', transactionId: 'tx-1', owner: 'user',
+                    amount: 18, currencySymbol: '¥', note: '奶茶', dateStr: '2026-09-20', transactionTimestamp: 1,
+                },
+            },
+        } as Message);
+        expect(html).toContain('sully-chat-card');
+        expect(html).toContain('data-card="expense_card"');
+        expect(html).toContain('消费分享');
+        expect(html).not.toContain('确认');
+        expect(html).not.toContain('否决');
+    });
 });
 
 describe('内置「浅色卡片」预设的选择器打得中真卡片', () => {

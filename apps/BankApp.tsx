@@ -16,9 +16,10 @@ import { processImage } from '../utils/file';
 import { ContextBuilder } from '../utils/context';
 import { Coffee, ClipboardText, ChartBar, Coin, Target, UserCircle, BookOpen, Lightning, Storefront } from '@phosphor-icons/react';
 import { addLocalDays, getLocalDateKey } from '../utils/localDate';
-import { roundMoney, sumMoney } from '../utils/format';
+import { formatMoney, roundMoney, sumMoney } from '../utils/format';
 import { useLocalDateKey } from '../hooks/useLocalDateKey';
 import { trackEvent } from '../utils/analytics';
+import { bankExpenseShareDeliveryId, formatBankExpenseCardFallback, makeBankExpenseCardData } from '../utils/bankExpenseCard';
 
 const INITIAL_STATE: BankFullState = {
     config: {
@@ -76,6 +77,8 @@ const BankApp: React.FC = () => {
     const [showGoalModal, setShowGoalModal] = useState(false);
     const [showTutorial, setShowTutorial] = useState(false);
     const [showStaffEdit, setShowStaffEdit] = useState(false);
+    const [transactionToShare, setTransactionToShare] = useState<BankTransaction | null>(null);
+    const [isSharingTransaction, setIsSharingTransaction] = useState(false);
     
     // Guestbook Fullscreen State (Changed from Modal)
     const [showGuestbook, setShowGuestbook] = useState(false);
@@ -364,6 +367,38 @@ const BankApp: React.FC = () => {
         await DB.saveBankState(newState);
         setTransactions(prev => prev.filter(t => t.id !== id));
         addToast('记录已删除', 'success');
+    };
+
+    const handleShareTransactionToCharacter = async (charId: string) => {
+        const transaction = transactionToShare;
+        const target = characters.find(character => character.id === charId);
+        if (!transaction || !target) {
+            addToast('找不到要同步的角色，请重新选择', 'error');
+            return;
+        }
+
+        setIsSharingTransaction(true);
+        try {
+            const expenseCard = makeBankExpenseCardData(transaction, stateRef.current.config.currencySymbol);
+            await DB.saveMessageOnce(bankExpenseShareDeliveryId(transaction.id, target.id), {
+                charId: target.id,
+                role: 'user',
+                type: 'expense_card',
+                content: formatBankExpenseCardFallback(expenseCard),
+                metadata: {
+                    source: 'bank-expense-share',
+                    expenseCard,
+                },
+            });
+            trackEvent('同步消费到角色聊天');
+            setTransactionToShare(null);
+            addToast(`已同步到「${target.name}」的私聊`, 'success');
+        } catch (error) {
+            console.error('[Bank] 分享消费到聊天失败:', error);
+            addToast('同步失败，请稍后再试', 'error');
+        } finally {
+            setIsSharingTransaction(false);
+        }
     };
 
     // --- Game Logic ---
@@ -872,6 +907,7 @@ ${previousGuestbook}
                             goals={state.goals}
                             currency={state.config.currencySymbol}
                             onDeleteTx={handleDeleteTransaction}
+                            onShareTx={setTransactionToShare}
                             apiConfig={apiConfig}
                             dailyBudget={state.config.dailyBudget}
                         />
@@ -1089,6 +1125,46 @@ ${previousGuestbook}
                         </div>
                     </div>
                 </div>
+            </Modal>
+
+            <Modal
+                isOpen={!!transactionToShare}
+                title="同步消费到角色聊天"
+                onClose={() => { if (!isSharingTransaction) setTransactionToShare(null); }}
+            >
+                {transactionToShare && (
+                    <div className="space-y-4">
+                        <div className="rounded-2xl bg-[#FFF8E1] border border-[#FFE0B2] px-4 py-3 text-sm text-[#5D4037]">
+                            <div className="font-bold">{transactionToShare.note}</div>
+                            <div className="mt-1 text-xs text-[#A1887F]">
+                                {state.config.currencySymbol}{formatMoney(transactionToShare.amount)} · {transactionToShare.dateStr}
+                            </div>
+                        </div>
+                        <p className="text-xs leading-relaxed text-[#8D6E63]">
+                            选择一个角色，把这笔账作为「消费分享」卡片发进 ta 的私聊。不会自动触发回复。
+                        </p>
+                        {characters.length === 0 ? (
+                            <div className="rounded-2xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-400">还没有可同步的角色</div>
+                        ) : (
+                            <div className="space-y-2">
+                                {characters.map(character => (
+                                    <button
+                                        key={character.id}
+                                        type="button"
+                                        disabled={isSharingTransaction}
+                                        onClick={() => void handleShareTransactionToCharacter(character.id)}
+                                        className="w-full flex items-center gap-3 rounded-2xl border border-[#E8DCC8] bg-white px-3 py-3 text-left transition-colors hover:bg-[#FFF8E1] active:scale-[0.99] disabled:opacity-50"
+                                        aria-label={`同步给${character.name}`}
+                                    >
+                                        <img src={character.avatar || '/sully/head.png'} alt="" className="h-10 w-10 rounded-full object-cover bg-[#FDF6E3]" />
+                                        <span className="min-w-0 flex-1 truncate text-sm font-bold text-[#5D4037]">{character.name}</span>
+                                        <span className="text-xs font-bold text-[#FF7043]">{isSharingTransaction ? '同步中…' : '发给 ta'}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
             </Modal>
 
             {/* Staff Edit Modal */}
