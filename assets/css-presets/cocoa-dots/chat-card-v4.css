@@ -1,0 +1,255 @@
+/* ══════════════════════════════════════════════════════════════
+   可可点点 · 聊天卡片 CSS
+   粘贴位置：装扮 →「所有聊天」→「卡片 · CSS」
+   （这份是全局一份，私聊群聊通吃，不用每个角色粘一次）
+
+   配套的白框 CSS 是另一份：装扮 →「白框」，per-character。
+
+   选择器结构：每张卡片外层都是
+     .sully-chat-card[data-card="种类"]
+   有子类的再加 [data-card-sub="子类"]。
+   卡片内容的壳是 div[class*="overflow-hidden"][class*="rounded-"]。
+   完整卡片名录：编辑器里「有哪些卡片」那栏可以展开对着抄。
+   ══════════════════════════════════════════════════════════════ */
+
+
+/* ══════════ ① 图床槽位 ══════════ */
+.sully-chat-card{
+  /* 卡片头条右端探出的贴纸 · 256×256 透明 PNG */
+  --img-card-vr:     url('./appearance-presets/cocoa-dots/v1/css-assets/card-vr-sticker.png');
+  --img-card-call:   none;
+  --img-card-invite: none;
+
+  --paw: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23A79C93"><ellipse cx="12" cy="16" rx="6" ry="5"/><ellipse cx="5" cy="9" rx="2.6" ry="3.4"/><ellipse cx="19" cy="9" rx="2.6" ry="3.4"/><ellipse cx="9.5" cy="5" rx="2.4" ry="3.2"/><ellipse cx="14.5" cy="5" rx="2.4" ry="3.2"/></svg>');
+
+  --paper:#FCFBF9; --milk:#FFFFFF; --cocoa:#4A3B31; --ash:#6E6259; --ink:#302C29;
+  --taupe:#A79C93; --taupe-lt:#D5CFC8; --kraft:#E6DED3; --milktea:#A9866A;
+}
+
+
+/* ══════════ ② 所有卡片的共同底 ══════════
+   一句话把 30 多种卡片拉到同一个亮度：奶白纸、灰褐细边、白外圈。
+   下面再逐类做细节。 */
+.sully-chat-card div[class*="overflow-hidden"][class*="rounded-"]{
+  background:var(--paper) !important;
+  border:1px solid var(--taupe-lt) !important;
+  border-radius:18px !important;
+  box-shadow:0 0 0 3px rgba(255,255,255,.95), 0 3px 12px rgba(90,80,70,.12) !important;
+}
+/* 深色卡里为深底画的光晕 / 星点装饰层，铺到浅底上会发灰 */
+.sully-chat-card[data-card="vr_card"]   div[class*="pointer-events-none"],
+.sully-chat-card[data-card="sim_card"]  div[class*="pointer-events-none"],
+.sully-chat-card[data-card="phone_card"] div[class*="pointer-events-none"],
+.sully-chat-card[data-card="trpg_card"] div[class*="pointer-events-none"]{
+  opacity:.16 !important;
+}
+/* 深色卡的浅色文字要反过来，否则浅底浅字看不见 */
+.sully-chat-card[data-card="vr_card"]   div[class*="overflow-hidden"] *,
+.sully-chat-card[data-card="sim_card"]  div[class*="overflow-hidden"] *,
+.sully-chat-card[data-card="phone_card"] div[class*="overflow-hidden"] *,
+.sully-chat-card[data-card="trpg_card"] div[class*="overflow-hidden"] *{
+  color:var(--cocoa) !important;
+}
+/* 强调色（角色名、标签）留一点奶茶，不然整张卡糊成一片 */
+.sully-chat-card[data-card="vr_card"]   [class*="text-amber"],
+.sully-chat-card[data-card="sim_card"]  [class*="text-amber"],
+.sully-chat-card[data-card="phone_card"] [class*="text-amber"],
+.sully-chat-card[data-card="trpg_card"] [class*="text-amber"]{
+  color:var(--milktea) !important;
+}
+/* 卡内分隔线 */
+.sully-chat-card [class*="border-white/10"],
+.sully-chat-card [class*="border-b"],
+.sully-chat-card [class*="border-t"]{
+  border-color:var(--taupe-lt) !important;
+}
+/* 小标签（时间、kicker）统一灰褐 */
+.sully-chat-card [class*="text-[9px]"],
+.sully-chat-card [class*="text-[10px]"]{
+  color:var(--taupe) !important; letter-spacing:.12em !important;
+}
+
+
+/* ══════════ ③ 彼方 · 动态 ══════════
+   头条沿用胶囊语言：点阵向右渐隐 + 右端探出的小熊（头上一个粉三角当彼方的信号标）。 */
+.sully-chat-card[data-card="vr_card"]{ overflow:visible !important; }
+.sully-chat-card[data-card="vr_card"] div[class*="overflow-hidden"]{
+  overflow:visible !important;
+  position:relative !important;
+}
+/* 头条那一行（卡内第一块 border-b 的区域）：和顶栏同一套 ——
+   炭黑底 + 白波点，波点向右渐隐。整条带子里的文字和装饰全部转浅色，
+   否则原来那套灰褐字压在黑底上完全看不清。 */
+.sully-chat-card[data-card="vr_card"] div[class*="border-b"]:first-of-type{
+  background-color: var(--ink) !important;
+  background-image:
+    radial-gradient(rgba(255,255,255,.34) 1px, transparent 1.1px),
+    linear-gradient(90deg, var(--ink) 0 44%, rgba(48,44,41,0) 88%) !important;
+  background-size:7px 7px, 100% 100% !important;
+  background-repeat:repeat, no-repeat !important;
+  padding-right:46px !important;
+  border-radius:18px 18px 0 0 !important;
+  border-bottom-color: rgba(255,255,255,.14) !important;
+}
+/* 带子里所有文字转浅。权重刻意做高，压过上面那条通用的灰褐字规则。 */
+.sully-chat-card[data-card="vr_card"] div[class*="border-b"]:first-of-type *{
+  color:#F2EDE6 !important;
+}
+/* kicker（彼方 · 动态）和时间暗一档，别和房间名抢 */
+.sully-chat-card[data-card="vr_card"] div[class*="border-b"]:first-of-type [class*="text-[9px]"],
+.sully-chat-card[data-card="vr_card"] div[class*="border-b"]:first-of-type [class*="text-[10px]"]{
+  color:#BCAE9B !important;
+}
+/* 右端探出的小熊 */
+.sully-chat-card[data-card="vr_card"] div[class*="overflow-hidden"]::after{
+  content:"" !important; position:absolute !important;
+  right:-7px; top:-13px; width:44px; height:40px; z-index:2; pointer-events:none;
+  background:var(--img-card-vr) no-repeat center/contain !important;
+}
+/* 顶部那枚 ✦：黑底上要用浅暖色才看得清 */
+.sully-chat-card[data-card="vr_card"] div[class*="border-b"]:first-of-type span[class*="text-base"]{
+  color:#E8C79A !important;
+  filter:none !important;
+}
+/* 引文：点线左边框 + 牛皮纸底 */
+.sully-chat-card[data-card="vr_card"] div[class*="border-l-2"]{
+  border-left:3px dotted var(--milktea) !important;
+  background:rgba(230,222,211,.5) !important;
+  border-radius:0 9px 9px 0 !important;
+  padding:5px 9px !important;
+  color:var(--ash) !important;
+}
+/* 页脚：虚线分隔 + 「＋记忆」做成牛皮纸小标签 */
+.sully-chat-card[data-card="vr_card"] div[class*="border-t"]{
+  border-top:1.5px dashed var(--taupe-lt) !important;
+}
+.sully-chat-card[data-card="vr_card"] div[class*="border-t"] span:last-child{
+  background:var(--kraft) !important;
+  border:1px solid var(--taupe-lt) !important;
+  border-radius:99px !important;
+  padding:1.5px 8px !important;
+  color:#8A7458 !important;
+}
+/* 页脚左侧那句话前面加一枚爪印 */
+.sully-chat-card[data-card="vr_card"] div[class*="border-t"] span:first-child::before{
+  content:"" !important; display:inline-block;
+  width:10px; height:10px; margin-right:5px; vertical-align:-1px;
+  background:var(--paw) no-repeat center/contain !important;
+}
+
+
+/* ══════════ ④ 通话小结 / 未接来电 ══════════ */
+.sully-chat-card[data-card="system"][data-card-sub="call-end-popup"] div[class*="rounded-3xl"],
+.sully-chat-card[data-card="system"][data-card-sub="incoming-call-missed"] div[class*="rounded-3xl"]{
+  background:var(--paper) !important;
+  border:1px solid var(--taupe-lt) !important;
+  border-radius:20px !important;
+  box-shadow:0 0 0 3px rgba(255,255,255,.95), 0 3px 12px rgba(90,80,70,.12) !important;
+}
+/* 未接来电保留一点警示感：改成藕粉描边而不是玫红底 */
+.sully-chat-card[data-card="system"][data-card-sub="incoming-call-missed"] div[class*="rounded-3xl"]{
+  border-color:#DCB6AC !important;
+}
+.sully-chat-card[data-card="system"][data-card-sub="call-end-popup"] img,
+.sully-chat-card[data-card="system"][data-card-sub="incoming-call-missed"] img{
+  border-radius:99px !important;
+  box-shadow:0 0 0 2px #fff, 0 0 0 3.5px var(--taupe-lt) !important;
+}
+/* 通话小结里那句寄语 */
+.sully-chat-card[data-card="system"][data-card-sub="call-end-popup"] div[class*="italic"]{
+  background:var(--kraft) !important;
+  border:1px dashed var(--taupe-lt) !important;
+  border-radius:12px !important;
+  color:var(--ash) !important;
+}
+
+
+/* ══════════ ⑤ 见面邀请 / 见面完结 ══════════ */
+.sully-chat-card[data-card="system"][data-card-sub="date-meeting-invite"] div[class*="rounded-"],
+.sully-chat-card[data-card="system"][data-card-sub="date-end-popup"] button[class*="rounded-"]{
+  background:var(--paper) !important;
+  border:1px solid var(--taupe-lt) !important;
+  border-radius:20px !important;
+  box-shadow:0 0 0 3px rgba(255,255,255,.95), 0 3px 12px rgba(90,80,70,.12) !important;
+}
+/* 「接受并进入见面」按钮：奶茶实心，是这张卡唯一该抢眼的东西 */
+.sully-chat-card[data-card="system"][data-card-sub="date-meeting-invite"] button{
+  background:var(--milktea) !important;
+  border-radius:99px !important;
+  color:#fff !important;
+}
+
+
+/* ══════════ ⑥ 日程邀约 / 回复 ══════════ */
+.sully-chat-card[data-card="schedule_invite"] div[class*="rounded-"],
+.sully-chat-card[data-card="schedule_invite_reply"] div[class*="rounded-"]{
+  background:var(--paper) !important;
+  border-color:var(--taupe-lt) !important;
+}
+
+
+/* ══════════ ⑦ 转账 ══════════ */
+.sully-chat-card[data-card="transfer"] div[class*="rounded-"]{
+  background:linear-gradient(160deg, #FDFBF7, var(--kraft)) !important;
+  border:1px solid var(--taupe-lt) !important;
+  box-shadow:0 0 0 3px rgba(255,255,255,.95), 0 3px 12px rgba(90,80,70,.12) !important;
+}
+
+
+/* ══════════ ⑧ 系统日志小胶囊 ══════════ */
+.sully-chat-card[data-card="system"][data-card-sub="system-log"] div[class*="rounded-full"]{
+  background:rgba(230,222,211,.7) !important;
+  border:1px solid var(--taupe-lt) !important;
+  color:var(--ash) !important;
+}
+
+
+/* ══════════ ⑨ 存钱罐 · 消费分享 ══════════
+   把暖黄消费卡收进可可点点的奶白纸张：保留一点账单温度，
+   同时用细点阵、虚线和灰褐描边跟整套卡片统一。 */
+.sully-chat-card[data-card="expense_card"] div[class*="overflow-hidden"][class*="rounded-"]{
+  background:
+    radial-gradient(circle at 12px 12px, rgba(167,156,147,.24) 1px, transparent 1.2px),
+    linear-gradient(135deg, #FCFBF9 0%, #F7F1E8 100%) !important;
+  background-size:14px 14px, 100% 100% !important;
+  border-color:var(--taupe-lt) !important;
+  border-radius:18px !important;
+  box-shadow:0 0 0 3px rgba(255,255,255,.95), 0 3px 12px rgba(90,80,70,.12) !important;
+}
+.sully-chat-card[data-card="expense_card"] div[class*="border-b"]{
+  background:linear-gradient(90deg, rgba(230,222,211,.56), rgba(252,251,249,.94)) !important;
+  border-bottom:1.5px dashed var(--taupe-lt) !important;
+}
+.sully-chat-card[data-card="expense_card"] [class*="ring-amber-200"]{
+  background:rgba(255,255,255,.72) !important;
+  box-shadow:0 0 0 2px #fff, 0 0 0 3px var(--taupe-lt) !important;
+}
+.sully-chat-card[data-card="expense_card"] [class*="truncate"][class*="font-bold"]{
+  color:var(--cocoa) !important;
+  letter-spacing:.03em !important;
+}
+.sully-chat-card[data-card="expense_card"] [class*="text-amber-700"]{
+  color:var(--milktea) !important;
+}
+.sully-chat-card[data-card="expense_card"] [class*="font-mono"]{
+  color:var(--cocoa) !important;
+  letter-spacing:.02em !important;
+}
+.sully-chat-card[data-card="expense_card"] [class*="text-sm"]{
+  color:var(--ash) !important;
+}
+.sully-chat-card[data-card="expense_card"] [class*="border-t"]{
+  background:rgba(230,222,211,.48) !important;
+  border-top:1.5px dashed var(--taupe-lt) !important;
+  color:var(--ash) !important;
+}
+
+
+/* ══════════ ⑩ 其余卡片的兜底 ══════════
+   音乐 / 小红书 / 网页 / 朋友圈 / 新闻 / 日记…… 都吃 ② 那条通用规则，
+   想单独调某一张，照下面这个格式加一段就行：
+
+.sully-chat-card[data-card="music_card"] div[class*="overflow-hidden"][class*="rounded-"]{
+  background:#F4EFE6 !important;
+}
+*/
