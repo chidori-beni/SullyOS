@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { loadStoryActorContext, replaceStoryTheaterReply, STORY_REROLL_INSTRUCTION } from '../../../utils/storyTheaterReply';
-import { Archive, ArrowBendDownRight, ArrowClockwise, ArrowLeft, Broadcast, CaretDown, CaretLeft, CaretRight, ChatCircleDots, Clock, Database, DownloadSimple, Eye, EyeSlash, FilmSlate, GearSix, HeartStraight, Key, MapPin, PaperPlaneTilt, PencilSimple, SlidersHorizontal, SpinnerGap, Trash, X } from '@phosphor-icons/react';
+import { Archive, ArrowBendDownRight, ArrowClockwise, ArrowLeft, Broadcast, CaretDown, CaretLeft, CaretRight, ChatCircleDots, Clock, CornersIn, CornersOut, Database, DownloadSimple, Eye, EyeSlash, FilmSlate, GearSix, HeartStraight, Key, MapPin, PaperPlaneTilt, PencilSimple, SlidersHorizontal, SpinnerGap, Stop, Trash, X } from '@phosphor-icons/react';
 import { useOS } from '../../../context/OSContext';
 import type { CharacterProfile, Message, StoryTheaterEntry, StoryTheaterMask, StoryTheaterPreset } from '../../../types';
 import { DB } from '../../../utils/db';
 import {
     buildPendingStoryBackgroundJob,
+    cancelPendingStoryBackgroundJob,
     createPendingStoryBackgroundJob,
     deleteStoryBackgroundJobMarker,
     fingerprintStoryText,
@@ -80,6 +81,21 @@ interface Props {
     onOpenVectorMemory?: () => void;
     onEntryChange: (entry: StoryTheaterEntry) => Promise<void> | void;
 }
+
+interface StoryGenerationRun {
+    controller: AbortController;
+    cancelled: boolean;
+    jobId?: string;
+}
+
+const makeGenerationCancelledError = (): Error => {
+    const error = new Error('本轮剧情生成已停止');
+    error.name = 'AbortError';
+    return error;
+};
+
+const isAbortLikeError = (error: any): boolean => error?.name === 'AbortError'
+    || /aborted|aborterror|生成已停止/i.test(String(error?.message || error || ''));
 
 const textFromHistory = (messages: Message[], identityName: string): string => buildStoryHistory(messages).map(message => {
     const label = message.role === 'user' ? `${identityName}给出的推进（用户侧）` : '上一层剧场正文';
@@ -300,7 +316,9 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [sending, setSending] = useState(false);
+    const [isStopping, setIsStopping] = useState(false);
     const [backgroundPendingJobId, setBackgroundPendingJobId] = useState<string | null>(null);
+    const [isFullscreenEditor, setIsFullscreenEditor] = useState(false);
     const [memoryStatus, setMemoryStatus] = useState('');
     const [contextTokens, setContextTokens] = useState(0);
     const [contextTokensExact, setContextTokensExact] = useState(false);
@@ -321,11 +339,13 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
     // twice before `sending` re-renders the disabled button, creating two billable
     // completions. Keep the state for UI only and use this ref as the real mutex.
     const sendLock = useRef(false);
+    const generationRun = useRef<StoryGenerationRun | null>(null);
     const archiveLock = useRef(false);
     const postProcessLock = useRef(false);
     const bottomRef = useRef<HTMLDivElement>(null);
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const longPressOrigin = useRef<{ x: number; y: number } | null>(null);
+    const fullscreenTextareaRef = useRef<HTMLTextAreaElement>(null);
 
     const loadMessages = useCallback(async () => {
         const rows = await DB.getMessagesByCharId(threadId, true);
@@ -349,6 +369,13 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
         return () => window.removeEventListener('active-msg-progress', handleBackgroundProgress);
     }, [entry.id, loadMessages]);
     useEffect(() => {
+        if (!isFullscreenEditor) return;
+        const textarea = fullscreenTextareaRef.current;
+        if (!textarea) return;
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    }, [isFullscreenEditor]);
+    useEffect(() => {
         if (actors.length === 0) return;
         const pending = getPendingStoryBackgroundJobForStory(entry.id);
         if (!pending) {
@@ -356,11 +383,23 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             return;
         }
         setBackgroundPendingJobId(pending.jobId);
+        if (pending.lifecycle === 'cancel-requested') {
+            void cancelPendingStoryBackgroundJob(pending.jobId).then(() => {
+                setBackgroundPendingJobId(null);
+            }).catch(error => {
+                console.warn('[StoryTheater] 恢复取消剧情后台任务失败', error);
+            });
+            return;
+        }
         void schedulePendingStoryBackgroundJob({
             jobId: pending.jobId,
             char: actors[0],
             api: apiConfig,
         }).then(outcome => {
+            if (outcome.status === 'cancelled') {
+                setBackgroundPendingJobId(null);
+                return;
+            }
             if (outcome.status === 'fallback') {
                 removePendingStoryBackgroundJob(pending.jobId);
                 void deleteStoryBackgroundJobMarker(pending.input.markerMessageId);
@@ -512,12 +551,13 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
         }
     }, [actors, addToast, entry, exporting, mask.name, messages]);
 
-    const callCompletion = useCallback(async (payload: Array<{ role: string; content: string }>, settings?: Partial<StoryGenerationSettings>, onPromptTokens?: (tokens: number) => void): Promise<string> => {
+    const callCompletion = useCallback(async (payload: Array<{ role: string; content: string }>, settings?: Partial<StoryGenerationSettings>, onPromptTokens?: (tokens: number) => void, signal?: AbortSignal): Promise<string> => {
         const generationSettings = prepareStoryGenerationSettings(settings, entry.omitSamplingParams === true);
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
             body: JSON.stringify({ model: apiConfig.model, messages: payload, stream: false, ...generationSettings }),
+            signal,
             __sullyMeta: { appId: 'date', appName: '见面', purpose: '剧情见面生成' },
         } as RequestInit & { __sullyMeta: { appId: string; appName: string; purpose: string } });
         const data = await safeResponseJson(response);
@@ -628,7 +668,8 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
         await loadMessages();
     }, [apiConfig, characters, entry.writesToCharacterMemory, loadMessages, mask.name, memoryActors, memoryPalaceConfig, updateCharacter]);
 
-    const archiveIfNeeded = useCallback(async (): Promise<StoryTheaterEntry | null> => {
+    const archiveIfNeeded = useCallback(async (signal?: AbortSignal): Promise<StoryTheaterEntry | null> => {
+        const activeSignal = signal || generationRun.current?.controller.signal;
         if (entry.writesToCharacterMemory || archiveLock.current) return null;
         archiveLock.current = true;
         try {
@@ -647,7 +688,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                 summary = await callCompletion([
                     { role: 'system', content: '把剧场片段压缩成一只可长期常驻上下文的事件盒。使用第三人称，严格保留人物、因果、承诺、关系变化、未解决冲突和当前场景落点；不要评论写作，不要虚构片段外事实。控制在 800 字以内。' },
                     { role: 'user', content: `剧情：${entry.title}\n\n${transcript}` },
-                ], { temperature: 0.2, max_tokens: 1600 });
+                ], { temperature: 0.2, max_tokens: 1600 }, undefined, activeSignal);
             } else {
                 const embedding = memoryPalaceConfig.embedding;
                 const light = memoryPalaceConfig.lightLLM?.baseUrl ? memoryPalaceConfig.lightLLM : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };
@@ -660,6 +701,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                 if (result.error && result.stored === 0 && result.skipped === 0) throw new Error('这批正文没有生成可用的向量记忆');
             }
 
+            if (activeSignal?.aborted) throw makeGenerationCancelledError();
             await Promise.all(batch.map(message => DB.updateMessageMetadata(message.id, previous => ({ ...previous, theaterArchived: true, theaterArchiveStrategy: entry.archiveStrategy }))));
             const next: StoryTheaterEntry = {
                 ...entry,
@@ -679,6 +721,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             addToast(entry.archiveStrategy === 'summary' ? '旧正文已收进事件盒' : '旧正文已写入独立向量分区', 'success');
             return next;
         } catch (error: any) {
+            if (activeSignal?.aborted || isAbortLikeError(error)) throw error;
             console.error('[StoryTheater] archive failed', error);
             addToast(`剧情归档失败：${error?.message || error}`, 'error');
             return null;
@@ -727,6 +770,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
 
     const send = useCallback(async (rerollTarget?: Message, continueRequested = false) => {
         if (sendLock.current || actors.length === 0) return;
+        if (isStopping) return;
         const existingBackground = getPendingStoryBackgroundJobForStory(entry.id);
         if (existingBackground) {
             setBackgroundPendingJobId(existingBackground.jobId);
@@ -736,10 +780,16 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
         sendLock.current = true;
         setSending(true);
         setRerollingId(rerollTarget?.id || null);
+        const run: StoryGenerationRun = { controller: new AbortController(), cancelled: false };
+        generationRun.current = run;
+        const ensureRunActive = () => {
+            if (run.cancelled || run.controller.signal.aborted) throw makeGenerationCancelledError();
+        };
         try {
             const before = (await DB.getMessagesByCharId(threadId, true))
                 .filter(message => message.metadata?.source === 'story_theater')
                 .sort((a, b) => a.id - b.id);
+            ensureRunActive();
             const latest = before[before.length - 1];
             const isReroll = Boolean(rerollTarget && latest?.id === rerollTarget.id && latest.role === 'assistant' && !mirrorArchived(latest, entry));
             if (rerollTarget && !isReroll) return;
@@ -776,11 +826,14 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                             ...(affinityInputs.length > 0 ? { theaterAffinityInputs: affinityInputs } : {}),
                             ...(isContinueTurn ? { theaterContinue: true } : {}),
                         });
+            ensureRunActive();
             if (!isReroll && !assistantOpening) await loadMessages();
+            ensureRunActive();
 
             // 归档不能只放在成功生成之后：一旦会话已经碰到上游上下文上限，正文永远生成
             // 不出来，后置归档也就永远没有机会执行。重试已有 user 楼层时先归档，窗口可自愈。
             const promptEntry = await archiveIfNeeded() || entry;
+            ensureRunActive();
 
             const current = (await DB.getMessagesByCharId(threadId, true))
                 .filter(message => message.metadata?.source === 'story_theater')
@@ -792,6 +845,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                 buildMaskMemoryContext(modelText),
                 independentRecall(modelText, visibleHistory.slice(-8), promptEntry),
             ]);
+            ensureRunActive();
             const summaries = promptEntry.archives.filter(archive => archive.summary).map((archive, index) => `事件盒 ${index + 1}：${archive.summary}`).join('\n\n');
             const scenario = [
                 `### 当前剧情\n标题：${entry.title}\n前提：${entry.premise || '沿用已经发生的正文自然继续。'}`,
@@ -886,13 +940,17 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                 extraBody,
             });
             if (pendingBackground) {
+                ensureRunActive();
                 const persistedBackground = await createPendingStoryBackgroundJob(pendingBackground);
+                run.jobId = persistedBackground.jobId;
+                ensureRunActive();
                 setBackgroundPendingJobId(persistedBackground.jobId);
                 const remote = await schedulePendingStoryBackgroundJob({
                     jobId: persistedBackground.jobId,
                     char: actors[0],
                     api: apiConfig,
                 });
+                ensureRunActive();
                 if (remote.status === 'queued' || remote.status === 'uncertain') {
                     if (!isContinueTurn) setInput('');
                     setAffinityDrafts({});
@@ -900,17 +958,23 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                     await loadMessages();
                     return;
                 }
+                if (remote.status === 'cancelled') {
+                    setBackgroundPendingJobId(null);
+                    return;
+                }
                 // 只有明确没有远端任务时才清掉 marker，然后走原有前台请求。
                 removePendingStoryBackgroundJob(persistedBackground.jobId);
                 await deleteStoryBackgroundJobMarker(persistedBackground.input.markerMessageId);
                 setBackgroundPendingJobId(null);
             }
+            ensureRunActive();
             const generated = await callCompletion(payload, compiled.settings, reported => {
                 promptTokenCount = reported;
                 promptTokenCountExact = true;
                 setContextTokens(reported);
                 setContextTokensExact(true);
-            });
+            }, run.controller.signal);
+            ensureRunActive();
             const prefill = compiled.assistantPrefill?.content || '';
             // 上游这里还会用 reconcileStoryAffinityScores 承接上一轮的关系绝对值，
             // 但那属于更早一批（fork 的 storyTheater.ts 里没有这个函数），本批不带。
@@ -924,8 +988,10 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                 if (mirrorArchived(rerollTarget, promptEntry)) throw new Error('这条回复已进入记忆归档，请刷新后查看');
                 await replaceStoryTheaterReply(rerollTarget, content, replyMetadata);
             } else {
+                ensureRunActive();
                 await saveCentralAndMirrors('assistant', content, replyMetadata);
             }
+            ensureRunActive();
             if (!isContinueTurn) setInput('');
             setAffinityDrafts({});
             setShowAffinityInput(false);
@@ -933,6 +999,18 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             if (entry.writesToCharacterMemory) void applyActorMemoryPipeline();
             else void archiveIfNeeded();
         } catch (error: any) {
+            if (run.cancelled || run.controller.signal.aborted || isAbortLikeError(error)) {
+                if (run.jobId) {
+                    try {
+                        await cancelPendingStoryBackgroundJob(run.jobId);
+                        setBackgroundPendingJobId(null);
+                    } catch (cancelError) {
+                        console.warn('[StoryTheater] 停止时清理后台剧情任务失败', cancelError);
+                    }
+                }
+                if (!run.cancelled) addToast('已停止生成；你写下的这一层已保留，可以再次推进重试', 'info');
+                return;
+            }
             console.error('[StoryTheater] send failed', error);
             const message = String(error?.message || error);
             const isOpaqueBrowserFailure = /load failed|failed to fetch|networkerror|network request failed/i.test(message);
@@ -945,14 +1023,56 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                 'error',
             );
         } finally {
-            sendLock.current = false;
-            setSending(false);
-            setRerollingId(null);
+            if (generationRun.current === run) {
+                generationRun.current = null;
+                sendLock.current = false;
+                setSending(false);
+                setRerollingId(null);
+            }
         }
-    }, [actors, addToast, affinityDrafts, affinityEnabled, apiConfig, applyActorMemoryPipeline, archiveIfNeeded, buildActorContexts, buildMaskMemoryContext, callCompletion, effectivePreset, entry, independentRecall, input, loadMessages, mask, memoryActors, promptIdentityName, saveCentralAndMirrors, selectedBooks, threadId]);
+    }, [actors, addToast, affinityDrafts, affinityEnabled, apiConfig, applyActorMemoryPipeline, archiveIfNeeded, buildActorContexts, buildMaskMemoryContext, callCompletion, effectivePreset, entry, independentRecall, input, isStopping, loadMessages, mask, memoryActors, promptIdentityName, saveCentralAndMirrors, selectedBooks, threadId]);
+
+    const stopGeneration = useCallback(() => {
+        const run = generationRun.current;
+        const pendingJobId = run?.jobId || backgroundPendingJobId || getPendingStoryBackgroundJobForStory(entry.id)?.jobId;
+        if (!run && !pendingJobId) return;
+
+        if (run) {
+            run.cancelled = true;
+            run.controller.abort();
+        }
+        // 前台 fetch 可以立即结束；后台排程的远端取消在后台尽力完成，不能再让页面
+        // 被一个卡住的网络请求绑住。run 引用清掉后，旧 send 的 finally 不会碰新一轮 UI。
+        generationRun.current = null;
+        sendLock.current = false;
+        setSending(false);
+        setRerollingId(null);
+        if (!pendingJobId) {
+            setIsStopping(false);
+            addToast('已停止生成；你写下的这一层已保留，可以再次推进重试', 'info');
+            return;
+        }
+
+        setIsStopping(true);
+        void cancelPendingStoryBackgroundJob(pendingJobId).then(outcome => {
+            setBackgroundPendingJobId(null);
+            addToast(
+                outcome.remoteUncertain
+                    ? '本地已停止生成；远端任务正在自行收尾，迟到的回复不会写入剧情。'
+                    : '已停止生成；你写下的这一层已保留，可以再次推进重试',
+                'info',
+            );
+        }).catch(error => {
+            console.warn('[StoryTheater] 停止后台剧情任务失败', error);
+            // marker 没成功变成取消墓碑时，保留后台状态，避免迟到结果无保护地写回。
+            setBackgroundPendingJobId(pendingJobId);
+            addToast(`停止后台剧情失败：${error?.message || error}`, 'error');
+        }).finally(() => setIsStopping(false));
+    }, [addToast, backgroundPendingJobId, entry.id]);
 
     const archivedCount = messages.filter(message => mirrorArchived(message, entry)).length;
     const backgroundPending = Boolean(backgroundPendingJobId);
+    const generationBusy = sending || backgroundPending || isStopping;
     const pendingRetryInput = getPendingStoryRetryInput(messages);
     const canWriteOpening = messages.length === 0 && entry.openingMode === 'assistant';
     const filledAffinityActorIds = actors.filter(actor => {
@@ -1030,7 +1150,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                         }
                         if (message.role === 'user') return <section key={message.id} {...pressHandlersFor(message)} className='pl-4 border-l-2 border-violet-300'><div className='text-[9px] tracking-[.16em] font-bold text-violet-500'>你写下</div><p className='mt-2 text-sm leading-7 text-slate-600 whitespace-pre-wrap'>{message.content}</p></section>;
                         const isLatest = message.id === messages[messages.length - 1]?.id;
-                        return <article key={message.id} {...pressHandlersFor(message)}><StoryOutput content={message.content} onChoose={choice => setInput(choice)} affinityInputs={affinityInputsFromMessage(message, actors)} />{isLatest && <div className='mt-4 flex items-center justify-end gap-2'><span className='w-1.5 h-1.5 rounded-full bg-violet-400' /><button disabled={sending || backgroundPending} onClick={() => void send(message)} className='inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-[10px] font-bold text-slate-500 disabled:opacity-40'>{rerollingId === message.id ? <SpinnerGap size={12} className='animate-spin' /> : <ArrowClockwise size={12} />}换一种写法</button></div>}</article>;
+                        return <article key={message.id} {...pressHandlersFor(message)}><StoryOutput content={message.content} onChoose={choice => setInput(choice)} affinityInputs={affinityInputsFromMessage(message, actors)} />{isLatest && <div className='mt-4 flex items-center justify-end gap-2'><span className='w-1.5 h-1.5 rounded-full bg-violet-400' /><button disabled={generationBusy} onClick={() => void send(message)} className='inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-[10px] font-bold text-slate-500 disabled:opacity-40'>{rerollingId === message.id ? <SpinnerGap size={12} className='animate-spin' /> : <ArrowClockwise size={12} />}换一种写法</button></div>}</article>;
                     })}
                 </div>
                 {pageCount > 1 && <StoryPagination className='mt-8' page={messagePage} pageCount={pageCount} onChange={setMessagePage} />}
@@ -1048,9 +1168,10 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
         <footer className='story-safe-footer shrink-0 px-4 pt-3 bg-stone-100/95 backdrop-blur border-t border-slate-200'>
             <div className='max-w-2xl mx-auto'>
                 {memoryStatus && <div className='mb-2 flex items-center gap-2 text-[10px] text-violet-600'><SpinnerGap size={13} className='animate-spin' />{memoryStatus}</div>}
+                {sending && !backgroundPending && <div className='mb-2 flex items-center gap-2 text-[10px] text-violet-600'><SpinnerGap size={13} className='animate-spin' />剧情正在生成，点击右侧方块可以停止</div>}
                 {backgroundPending && <div className='mb-2 flex items-center gap-2 text-[10px] text-violet-600'><SpinnerGap size={13} className='animate-spin' />剧情正在后台生成，切到别的页面也会继续；完成后会自动回到这里</div>}
-                {!sending && !memoryStatus && !input.trim() && pendingRetryInput && <div className='mb-2 text-[10px] text-violet-600'>上次续写可能中断了，点击推进即可继续</div>}
-                {!sending && !memoryStatus && canWriteOpening && <div className='mb-2 text-[10px] text-violet-600'>准备好了，点击推进让故事写下第一幕</div>}
+                {!generationBusy && !memoryStatus && !input.trim() && pendingRetryInput && <div className='mb-2 text-[10px] text-violet-600'>上次续写可能中断了，点击推进即可继续</div>}
+                {!generationBusy && !memoryStatus && canWriteOpening && <div className='mb-2 text-[10px] text-violet-600'>准备好了，点击推进让故事写下第一幕</div>}
                 {affinityEnabled && <div className='mb-2 overflow-hidden rounded-2xl border border-rose-200 bg-rose-50/70'>
                     <button type='button' aria-expanded={showAffinityInput} onClick={() => setShowAffinityInput(value => !value)} className='w-full px-3 py-2.5 flex items-center gap-2 text-left'>
                         <HeartStraight size={15} weight={filledAffinityActorIds.length > 0 ? 'fill' : 'regular'} className='text-rose-500' />
@@ -1069,13 +1190,27 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                     </div>}
                 </div>}
                 <div className='flex items-end gap-2 p-2 rounded-2xl bg-white border border-slate-200 shadow-sm'>
-                    <button type='button' onClick={() => void send(undefined, true)} disabled={sending || backgroundPending || actors.length === 0} className='self-end h-11 shrink-0 px-3 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 text-xs font-bold active:scale-95 transition-transform disabled:opacity-30' title='本轮不主动行动，让剧情按当前预设继续' aria-label='继续当前剧情'>继续</button>
-                    <textarea value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void send(); } }} disabled={sending || backgroundPending} rows={2} placeholder={pendingRetryInput ? '留空并点击推进，可继续上次中断' : canWriteOpening ? '也可以先写一句；留空推进则由故事开场' : '写下动作、对白、时间跳转，或你希望故事发生的事……'} className='min-w-0 min-h-12 max-h-36 flex-1 px-2 py-2 bg-transparent text-sm leading-6 resize-none outline-none disabled:opacity-50' />
-                    <button onClick={() => void send()} disabled={sending || backgroundPending || (!input.trim() && !pendingRetryInput && !canWriteOpening)} title={!input.trim() && pendingRetryInput ? '继续上次中断' : canWriteOpening && !input.trim() ? '让故事先开场' : '推进'} className='story-send-button self-end w-11 h-11 shrink-0 rounded-xl bg-slate-900 text-white grid place-items-center disabled:opacity-30'>{sending ? <SpinnerGap size={18} className='animate-spin' /> : <PaperPlaneTilt size={18} weight='fill' />}</button>
+                    <button type='button' onClick={() => void send(undefined, true)} disabled={generationBusy || actors.length === 0} className='self-end h-11 shrink-0 px-3 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 text-xs font-bold active:scale-95 transition-transform disabled:opacity-30' title='本轮不主动行动，让剧情按当前预设继续' aria-label='继续当前剧情'>继续</button>
+                    <button type='button' onClick={() => setIsFullscreenEditor(true)} disabled={isStopping} className='self-end w-9 h-11 shrink-0 rounded-xl text-slate-400 grid place-items-center active:scale-95 transition-transform disabled:opacity-30' title='全屏编辑推进内容' aria-label='全屏编辑推进内容'><CornersOut size={18} /></button>
+                    <textarea value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void send(); } }} disabled={generationBusy} rows={2} placeholder={pendingRetryInput ? '留空并点击推进，可继续上次中断' : canWriteOpening ? '也可以先写一句；留空推进则由故事开场' : '写下动作、对白、时间跳转，或你希望故事发生的事……'} className='min-w-0 min-h-12 max-h-36 flex-1 px-2 py-2 bg-transparent text-sm leading-6 resize-none outline-none disabled:opacity-50' />
+                    <button type='button' onClick={() => generationBusy ? stopGeneration() : void send()} disabled={isStopping || (!generationBusy && !input.trim() && !pendingRetryInput && !canWriteOpening)} title={generationBusy ? (isStopping ? '正在停止生成…' : '停止生成') : !input.trim() && pendingRetryInput ? '继续上次中断' : canWriteOpening && !input.trim() ? '让故事先开场' : '推进'} aria-label={generationBusy ? '停止剧情生成' : '推进当前剧情'} className={`story-send-button self-end w-11 h-11 shrink-0 rounded-xl text-white grid place-items-center disabled:opacity-30 ${generationBusy ? 'bg-rose-600' : 'bg-slate-900'}`}>{generationBusy ? <Stop size={18} weight='bold' /> : <PaperPlaneTilt size={18} weight='fill' />}</button>
                 </div>
-                <div className='mt-2 text-center text-[9px] text-slate-400'>Ctrl / ⌘ + Enter 推进 · 长按楼层可编辑或删除</div>
+                <div className='mt-2 text-center text-[9px] text-slate-400'>Ctrl / ⌘ + Enter 推进 · 长按楼层可编辑或删除 · 右侧方块可停止生成</div>
             </div>
         </footer>
+        {isFullscreenEditor && <div className='fixed inset-0 z-[180] flex min-h-0 flex-col overflow-hidden bg-stone-100 text-slate-800' style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }} role='dialog' aria-modal='true' aria-label='全屏编辑剧情推进'>
+            <header className='shrink-0 border-b border-slate-200 bg-stone-100/95 px-4 py-3 backdrop-blur'>
+                <div className='flex items-center gap-3'>
+                    <div className='min-w-0 flex-1'><div className='text-[9px] tracking-[.18em] font-bold text-violet-500'>剧情推进</div><div className='mt-1 text-xs font-semibold text-slate-700'>{generationBusy ? (isStopping ? '正在停止生成…' : '生成中') : '可以慢慢写，不会丢字'}</div></div>
+                    <button type='button' onClick={() => setIsFullscreenEditor(false)} disabled={isStopping} className='w-10 h-10 rounded-xl grid place-items-center text-slate-400 active:scale-95 disabled:opacity-30' title='退出全屏编辑' aria-label='退出全屏编辑'><CornersIn size={20} /></button>
+                    <button type='button' onClick={() => generationBusy ? stopGeneration() : void send()} disabled={isStopping || (!generationBusy && !input.trim() && !pendingRetryInput && !canWriteOpening)} className={`h-10 shrink-0 rounded-xl px-4 text-xs font-bold text-white grid place-items-center disabled:opacity-30 ${generationBusy ? 'bg-rose-600' : 'bg-slate-900'}`} title={generationBusy ? '停止生成' : '推进'}>{generationBusy ? <span className='inline-flex items-center gap-1.5'><Stop size={15} weight='bold' />停止</span> : <span className='inline-flex items-center gap-1.5'><PaperPlaneTilt size={15} weight='fill' />推进</span>}</button>
+                </div>
+            </header>
+            <div className='min-h-0 flex-1 p-4'>
+                <textarea ref={fullscreenTextareaRef} value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void send(); } }} disabled={generationBusy} className='h-full w-full resize-none overflow-y-auto overscroll-contain rounded-2xl border border-slate-200 bg-white p-4 text-[16px] leading-7 outline-none shadow-sm disabled:opacity-50' placeholder={pendingRetryInput ? '留空并点击推进，可继续上次中断' : canWriteOpening ? '也可以先写一句；留空推进则由故事开场' : '写下动作、对白、时间跳转，或你希望故事发生的事……'} />
+            </div>
+            <div className='shrink-0 px-5 pb-3 text-center text-[9px] text-slate-400'>Ctrl / ⌘ + Enter 推进 · 右上角可以停止生成</div>
+        </div>}
         {showQuickPreset && <StoryQuickPresetPanel
             document={effectivePreset.document}
             hasOverride={Boolean(entry.presetOverride)}

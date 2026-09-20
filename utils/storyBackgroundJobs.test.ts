@@ -89,5 +89,54 @@ describe('剧情后台结果桥', () => {
     expect(rows.find(row => row.role === 'assistant')?.content).toBe('灯亮了。');
     expect(rows.some(row => row.id === markerId)).toBe(false);
   });
+
+  it('取消墓碑会吞掉迟到结果，并在重复收件时仍可销账', async () => {
+    const userId = await DB.saveMessage({
+      charId: THREAD_ID,
+      role: 'user',
+      type: 'text',
+      content: '我停在门口。',
+      metadata: { source: 'story_theater', theaterId: STORY_ID },
+      timestamp: 2000,
+    });
+    const markerId = await DB.saveMessage({
+      charId: THREAD_ID,
+      role: 'system',
+      type: 'system',
+      content: '',
+      timestamp: 2001,
+      metadata: {
+        source: 'story_theater_background_job',
+        storyBackgroundClientJobId: 'story-cancelled-job',
+        storyBackgroundJobState: 'canceled',
+      },
+    });
+    const job = buildStoryBackgroundJobInput({
+      clientJobId: 'story-cancelled-job',
+      storyId: STORY_ID,
+      storyTitle: '夜航',
+      threadId: THREAD_ID,
+      primaryCharId: 'char-story-test',
+      primaryCharName: '小满',
+      markerMessageId: markerId,
+      operation: 'append',
+      turnKind: 'advance',
+      sourceUserMessageId: userId,
+      expectedTailId: userId,
+      expectedTailRole: 'user',
+      expectedTailFingerprint: fingerprintStoryText('我停在门口。'),
+      messages: [{ role: 'user', content: '我停在门口。' }],
+      promptTokenEstimate: 20,
+      mirrorTargets: [],
+      createdAt: 2001,
+    });
+    const result = buildStoryBackgroundJobResult({ job, text: '门后传来脚步声。', generatedAt: 3000 });
+
+    await expect(applyStoryBackgroundResult(result)).resolves.toBe(true);
+    await expect(applyStoryBackgroundResult(result)).resolves.toBe(true);
+    const rows = (await DB.getMessagesByCharId(THREAD_ID, true)).sort((a, b) => a.id - b.id);
+    expect(rows.filter(row => row.role === 'assistant')).toHaveLength(0);
+    expect(rows.find(row => row.id === markerId)?.metadata?.storyBackgroundJobState).toBe('canceled');
+  });
 });
 

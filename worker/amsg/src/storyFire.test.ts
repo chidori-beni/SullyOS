@@ -36,7 +36,7 @@ const job: StoryBackgroundJobInput = {
 };
 
 describe('Worker 剧情后台 handler', () => {
-  it('使用冻结 prompt，并通过结果收件箱发 when-hidden 通知', async () => {
+  it('使用冻结 prompt，并通过结果收件箱发始终显示、前台静音的通知', async () => {
     const readState = vi.fn(async (namespace: string) => namespace === AMSG_JOB_NAMESPACE
       ? [{ key: storyBackgroundJobKey(JOB_ID), value: await packStateValue(JSON.stringify(job)) }]
       : []);
@@ -72,7 +72,7 @@ describe('Worker 剧情后台 handler', () => {
     const payload = (emitResult as any).mock.calls[0][0] as any;
     expect(payload.resultKind).toBe(STORY_BACKGROUND_REPLY_RESULT_KIND);
     expect(payload.text).toBe('新的正文。');
-    expect(payload.notification).toMatchObject({ show: 'when-hidden' });
+    expect(payload.notification).toMatchObject({ show: 'always', silent: 'when-visible' });
     expect(payload.notification.data).toMatchObject({
       openApp: 'date',
       surface: 'story',

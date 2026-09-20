@@ -14,6 +14,7 @@ import {
   mayHaveCreatedBackgroundJob,
   type BackgroundJobProbeOutcome,
 } from './activeMsgClient';
+import { AMSG_JOB_NAMESPACE } from './amsgTaskKinds';
 import { buildCharInstantCredRow, type LlmCredentialRow } from './amsgLlmCredentials';
 import {
   STORY_BACKGROUND_REPLY_KIND,
@@ -44,6 +45,9 @@ export interface PendingStoryBackgroundJob {
   taskUuid?: string;
   /** unknown 表示 schedule 请求可能已经到达远端，不能回退前台再生成一份。 */
   remoteState?: 'pending' | 'scheduled' | 'unknown';
+  /** cancel-requested 表示本地已落取消墓碑，不再允许恢复成新的后台排程。 */
+  lifecycle?: 'active' | 'cancel-requested';
+  cancelRequestedAt?: number;
   createdAt: number;
 }
 
@@ -62,6 +66,8 @@ const safeRead = (): PendingStoryBackgroundJob[] => {
         input,
         ...(typeof raw.taskUuid === 'string' && raw.taskUuid ? { taskUuid: raw.taskUuid } : {}),
         ...(raw.remoteState === 'scheduled' || raw.remoteState === 'unknown' ? { remoteState: raw.remoteState } : {}),
+        ...(raw.lifecycle === 'cancel-requested' ? { lifecycle: raw.lifecycle } : {}),
+        ...(typeof raw.cancelRequestedAt === 'number' ? { cancelRequestedAt: raw.cancelRequestedAt } : {}),
         createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : input.createdAt,
       }];
     });
@@ -97,7 +103,7 @@ export const removePendingStoryBackgroundJob = (jobId: string): void => {
 
 export const updatePendingStoryBackgroundJob = (
   jobId: string,
-  patch: Partial<Pick<PendingStoryBackgroundJob, 'taskUuid' | 'remoteState'>>,
+  patch: Partial<Pick<PendingStoryBackgroundJob, 'taskUuid' | 'remoteState' | 'lifecycle' | 'cancelRequestedAt'>>,
 ): PendingStoryBackgroundJob | null => {
   const jobs = safeRead();
   const index = jobs.findIndex(job => job.jobId === jobId);
@@ -113,6 +119,140 @@ export const deleteStoryBackgroundJobMarker = async (markerMessageId: number): P
   await DB.deleteMessage(markerMessageId).catch(error => {
     console.warn(`${HEADER} 清理隐藏任务 marker 失败`, markerMessageId, error);
   });
+};
+
+type StoryBackgroundMarkerState = 'active' | 'canceled' | 'missing' | 'mismatch';
+
+/**
+ * 取消的事实必须落在和结果桥同一张 messages 表里，不能只放 localStorage：
+ * localStorage 既不能和正文写入原子竞争，也可能在结果走 outbox 重放前被清掉。
+ */
+const getStoryBackgroundMarkerState = async (
+  markerMessageId: number,
+  jobId: string,
+): Promise<StoryBackgroundMarkerState> => {
+  if (!Number.isInteger(markerMessageId) || markerMessageId <= 0 || !jobId) return 'mismatch';
+  const db = await openDB();
+  return new Promise<StoryBackgroundMarkerState>((resolve, reject) => {
+    const transaction = db.transaction('messages', 'readonly');
+    const request = transaction.objectStore('messages').get(markerMessageId);
+    request.onsuccess = () => {
+      const marker = request.result as Message | undefined;
+      if (!marker) {
+        resolve('missing');
+        return;
+      }
+      if (marker.metadata?.source !== 'story_theater_background_job'
+        || marker.metadata?.storyBackgroundClientJobId !== jobId) {
+        resolve('mismatch');
+        return;
+      }
+      resolve(marker.metadata?.storyBackgroundJobState === 'canceled' ? 'canceled' : 'active');
+    };
+    request.onerror = () => reject(request.error || new Error('读取剧情后台 marker 失败'));
+    transaction.onerror = () => reject(transaction.error || new Error('读取剧情后台 marker 事务失败'));
+  });
+};
+
+/** 在 IndexedDB 事务提交后才报告成功，避免取消状态只写进了未提交的 request。 */
+export const markStoryBackgroundJobCanceled = async (
+  job: PendingStoryBackgroundJob,
+): Promise<StoryBackgroundMarkerState> => {
+  const markerMessageId = job.input.markerMessageId;
+  if (!Number.isInteger(markerMessageId) || markerMessageId <= 0) return 'mismatch';
+  const db = await openDB();
+  return new Promise<StoryBackgroundMarkerState>((resolve, reject) => {
+    const transaction = db.transaction('messages', 'readwrite');
+    const store = transaction.objectStore('messages');
+    let state: StoryBackgroundMarkerState = 'missing';
+    const request = store.get(markerMessageId);
+    request.onsuccess = () => {
+      const marker = request.result as Message | undefined;
+      if (!marker) {
+        state = 'missing';
+        return;
+      }
+      if (marker.metadata?.source !== 'story_theater_background_job'
+        || marker.metadata?.storyBackgroundClientJobId !== job.jobId) {
+        state = 'mismatch';
+        return;
+      }
+      state = marker.metadata?.storyBackgroundJobState === 'canceled' ? 'canceled' : 'active';
+      if (state === 'active') {
+        store.put({
+          ...marker,
+          metadata: {
+            ...(marker.metadata || {}),
+            storyBackgroundJobState: 'canceled',
+            storyBackgroundCanceledAt: Date.now(),
+          },
+        });
+      }
+    };
+    request.onerror = () => reject(request.error || new Error('读取剧情后台 marker 失败'));
+    transaction.oncomplete = () => resolve(state);
+    transaction.onerror = () => reject(transaction.error || new Error('取消剧情后台任务事务失败'));
+    transaction.onabort = () => reject(transaction.error || new Error('取消剧情后台任务事务已撤销'));
+  });
+};
+
+const waitForRemoteCancellation = async (operation: Promise<unknown>, timeoutMs = 8000): Promise<boolean> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await new Promise<boolean>(resolve => {
+      let settled = false;
+      const finish = (ok: boolean) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        resolve(ok);
+      };
+      timer = setTimeout(() => finish(false), timeoutMs);
+      operation.then(() => finish(true)).catch(() => finish(false));
+    });
+  } catch {
+    if (timer) clearTimeout(timer);
+    return false;
+  }
+};
+
+export type StoryBackgroundCancelOutcome = {
+  status: 'cancelled';
+  /** false 表示本地已停止且迟到结果会被丢弃，但远端取消仍需由服务端自行收尾。 */
+  remoteUncertain: boolean;
+};
+
+/**
+ * 先写本地取消墓碑，再尽力删掉远端输入与任务。即使网络请求卡住，页面也不会被它
+ * 永久锁住：迟到结果看到墓碑会销账但不写正文。
+ */
+export const cancelPendingStoryBackgroundJob = async (jobId: string): Promise<StoryBackgroundCancelOutcome> => {
+  const pending = getPendingStoryBackgroundJob(jobId);
+  if (!pending) return { status: 'cancelled', remoteUncertain: false };
+
+  const markerState = await markStoryBackgroundJobCanceled(pending);
+  if (markerState === 'active' || markerState === 'canceled') {
+    updatePendingStoryBackgroundJob(jobId, {
+      lifecycle: 'cancel-requested',
+      cancelRequestedAt: Date.now(),
+    });
+  }
+
+  const remoteOperations: Promise<unknown>[] = [
+    ActiveMsgClient.clearClientStateValue(AMSG_JOB_NAMESPACE, storyBackgroundJobKey(jobId)),
+  ];
+  if (pending.taskUuid) remoteOperations.push(ActiveMsgClient.cancelTask(pending.taskUuid));
+  const remoteResults = await Promise.all(remoteOperations.map(operation => waitForRemoteCancellation(operation)));
+
+  // Tombstone 已经是本地的最终裁决，删掉轻量索引不会让迟到结果重新写回。
+  removePendingStoryBackgroundJob(jobId);
+  return {
+    status: 'cancelled',
+    remoteUncertain: markerState === 'missing'
+      || markerState === 'mismatch'
+      || pending.remoteState === 'unknown'
+      || remoteResults.some(ok => !ok),
+  };
 };
 
 const stableHash = (value: string): string => {
@@ -242,6 +382,7 @@ export const createPendingStoryBackgroundJob = async (job: PendingStoryBackgroun
 export type StoryBackgroundScheduleOutcome =
   | { status: 'queued'; uuid: string }
   | { status: 'uncertain' }
+  | { status: 'cancelled' }
   | { status: 'fallback'; reason: 'unsupported' | 'unknown' | 'error' };
 
 const scheduling = new Set<string>();
@@ -261,17 +402,27 @@ export const schedulePendingStoryBackgroundJob = async (args: {
   api: Pick<APIConfig, 'baseUrl' | 'apiKey' | 'model'>;
 }): Promise<StoryBackgroundScheduleOutcome> => {
   const pending = getPendingStoryBackgroundJob(args.jobId);
-  if (!pending) return { status: 'fallback', reason: 'error' };
-  if (pending.taskUuid) return { status: 'queued', uuid: pending.taskUuid };
+  // 取消和排程可能同时在飞。pending 被取消函数删掉时，不能把这次竞态误判成
+  // “后台不可用”再落回前台，否则会绕过取消墓碑产生第二次生成。
+  if (!pending) return { status: 'cancelled' };
+  if (pending.lifecycle === 'cancel-requested') return { status: 'cancelled' };
   if (pending.remoteState === 'unknown') return { status: 'uncertain' };
   if (scheduling.has(args.jobId)) return { status: 'uncertain' };
 
-  const credRow = toCredentialRow(args.api, args.char.id);
-  if (!credRow) return { status: 'fallback', reason: 'error' };
-
   scheduling.add(args.jobId);
   try {
+    // taskUuid 可能是在取消请求发出前写入的；先确认墓碑仍然 active，避免把
+    // 已取消的旧任务重新恢复成“排队中”。
+    if (await getStoryBackgroundMarkerState(pending.input.markerMessageId, args.jobId) !== 'active') {
+      return { status: 'cancelled' };
+    }
+    if (pending.taskUuid) return { status: 'queued', uuid: pending.taskUuid };
+    const credRow = toCredentialRow(args.api, args.char.id);
+    if (!credRow) return { status: 'fallback', reason: 'error' };
     const probe = await ActiveMsgClient.probeStoryBackgroundJobSupportDetailed();
+    if (await getStoryBackgroundMarkerState(pending.input.markerMessageId, args.jobId) !== 'active') {
+      return { status: 'cancelled' };
+    }
     if (probe !== 'supported') return { status: 'fallback', reason: probeToFallbackReason(probe) };
 
     const scheduled = await ActiveMsgClient.scheduleBackgroundJob({
@@ -287,10 +438,42 @@ export const schedulePendingStoryBackgroundJob = async (args: {
       maxTokens: pending.input.maxTokens,
       extraBody: pending.input.extraBody,
     });
-    updatePendingStoryBackgroundJob(args.jobId, { taskUuid: scheduled.uuid, remoteState: 'scheduled' });
+    const markerState = await getStoryBackgroundMarkerState(pending.input.markerMessageId, args.jobId);
+    const latestPending = getPendingStoryBackgroundJob(args.jobId);
+    if (markerState !== 'active' || !latestPending || latestPending.lifecycle === 'cancel-requested') {
+      await Promise.all([
+        ActiveMsgClient.clearClientStateValue(AMSG_JOB_NAMESPACE, storyBackgroundJobKey(args.jobId)).catch(error => {
+          console.warn(`${HEADER} 取消竞态中清理后台输入失败`, args.jobId, error);
+        }),
+        ActiveMsgClient.cancelTask(scheduled.uuid).catch(error => {
+          console.warn(`${HEADER} 取消竞态中删除远端任务失败`, args.jobId, error);
+        }),
+      ]);
+      removePendingStoryBackgroundJob(args.jobId);
+      return { status: 'cancelled' };
+    }
+    if (!updatePendingStoryBackgroundJob(args.jobId, { taskUuid: scheduled.uuid, remoteState: 'scheduled' })) {
+      await Promise.all([
+        ActiveMsgClient.clearClientStateValue(AMSG_JOB_NAMESPACE, storyBackgroundJobKey(args.jobId)).catch(error => {
+          console.warn(`${HEADER} 排程后清理孤儿后台输入失败`, args.jobId, error);
+        }),
+        ActiveMsgClient.cancelTask(scheduled.uuid).catch(error => {
+          console.warn(`${HEADER} 排程后删除孤儿远端任务失败`, args.jobId, error);
+        }),
+      ]);
+      return { status: 'cancelled' };
+    }
     return { status: 'queued', uuid: scheduled.uuid };
   } catch (error) {
     if (mayHaveCreatedBackgroundJob(error)) {
+      const markerState = await getStoryBackgroundMarkerState(pending.input.markerMessageId, args.jobId).catch(() => 'active' as StoryBackgroundMarkerState);
+      if (markerState !== 'active' || getPendingStoryBackgroundJob(args.jobId)?.lifecycle === 'cancel-requested') {
+        await ActiveMsgClient.clearClientStateValue(AMSG_JOB_NAMESPACE, storyBackgroundJobKey(args.jobId)).catch(cleanupError => {
+          console.warn(`${HEADER} 不确定排程取消时清理后台输入失败`, args.jobId, cleanupError);
+        });
+        removePendingStoryBackgroundJob(args.jobId);
+        return { status: 'cancelled' };
+      }
       updatePendingStoryBackgroundJob(args.jobId, { remoteState: 'unknown' });
       console.warn(`${HEADER} schedule 响应不确定，保留 pending 防止本地双生成`, args.jobId, error);
       return { status: 'uncertain' };
@@ -337,10 +520,10 @@ const applyAtomically = async (
     let evaluated = false;
     let outcome: StoryApplyOutcome = 'retry';
 
-    const finishDropped = () => {
+    const finishDropped = (preserveMarker = false) => {
       outcome = 'dropped';
       const marker = threadRows?.find(row => row.id === result.markerMessageId);
-      if (marker) messageStore.delete(marker.id);
+      if (marker && !preserveMarker) messageStore.delete(marker.id);
     };
 
     const onReady = () => {
@@ -349,6 +532,15 @@ const applyAtomically = async (
       const rows = threadRows || [];
       const storyRows = messageRowsForThread(rows, result.threadId);
       const marker = rows.find(row => row.id === result.markerMessageId);
+      const markerMatches = marker?.metadata?.source === 'story_theater_background_job'
+        && marker.metadata?.storyBackgroundClientJobId === result.clientJobId;
+
+      // 取消墓碑必须保留：同一结果可能先从推送直达、再从 outbox 重放。若第一次
+      // 处理就删除墓碑，第二次会落入“marker 不见但剧情存在”的 retry 死循环。
+      if (markerMatches && marker?.metadata?.storyBackgroundJobState === 'canceled') {
+        finishDropped(true);
+        return;
+      }
       const duplicate = storyRows.find(message => (
         message.metadata?.storyBackgroundClientJobId === result.clientJobId
           || message.metadata?.backgroundJobId === result.clientJobId
@@ -358,8 +550,7 @@ const applyAtomically = async (
         finishDropped();
         return;
       }
-      if (!marker || marker.metadata?.source !== 'story_theater_background_job'
-        || marker.metadata?.storyBackgroundClientJobId !== result.clientJobId) {
+      if (!marker || !markerMatches) {
         // 任务已被删除/取消；如果只是结果比 marker 早到，则保留 outbox 重试。
         if (!marker && entry) {
           outcome = 'retry';

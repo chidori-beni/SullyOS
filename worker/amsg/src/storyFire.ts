@@ -103,7 +103,10 @@ export const storyReplyHandler: FireKindHandler = {
       await ctx.emitResult({
         ...result,
         notification: {
-          show: 'when-hidden',
+          // 剧情后台生成完成是用户明确等待的结果：无论 PWA 当前是否在前台，
+          // 都要进系统通知栏；前台时静音，避免用户正盯着剧情页却被自己吓一跳。
+          show: 'always',
+          silent: 'when-visible',
           title: '剧情回复已生成',
           body: previewText(text) || '剧情里有了新的回应。',
           tag: `amsg-story-${job.storyId}-${jobId}`,
