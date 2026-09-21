@@ -181,6 +181,37 @@ export const XinshengCardModal: React.FC<Props> = ({
         return presets.filter(p => p.name.toLowerCase().includes(q));
     }, [presets, presetQuery]);
 
+    // ── 「哪些预设跟这条心声的字段对得上」 ──
+    //
+    // 布局模板里写着的字段名，就是那份预设当时要求模型输出的字段。拿这条心声实际有的
+    // 字段去比一比，对得上的排最前面并打标——攒到一百多个预设以后，挨个点开试是唯一的
+    // 笨办法，这一步通常能把候选从一百多个收敛到两三个。
+    const entryFieldNames = useMemo(() => (
+        current
+            ? Object.keys(current).filter(k => !k.startsWith('_') && k !== 'raw' && !!(current as any)[k])
+            : []
+    ), [current]);
+
+    const fieldHits = useCallback((p: XinshengPreset): number => (
+        p.displayMode === 'layout' && p.layout && entryFieldNames.length > 0
+            ? entryFieldNames.filter(f => p.layout.includes(f)).length
+            : 0
+    ), [entryFieldNames]);
+
+    // 命中多的排前面；命中数一样就保持预设库原来的顺序（置顶的仍在前）
+    const matchedPresets = useMemo(() => (
+        filteredPresets
+            .map((p, i) => ({ p, hits: fieldHits(p), i }))
+            .filter(x => x.hits > 0)
+            .sort((a, b) => (b.hits - a.hits) || (a.i - b.i))
+            .map(x => x.p)
+    ), [filteredPresets, fieldHits]);
+
+    const unmatchedPresets = useMemo(
+        () => filteredPresets.filter(p => fieldHits(p) === 0),
+        [filteredPresets, fieldHits],
+    );
+
     /** 置顶只改预设库里的排序标记，不碰这条历史的显示预设。 */
     const togglePin = useCallback(async (p: XinshengPreset) => {
         try {
@@ -625,35 +656,54 @@ export const XinshengCardModal: React.FC<Props> = ({
                             {presets.length > 0 && filteredPresets.length === 0 && (
                                 <div className="py-4 text-center text-[12px] text-slate-400">没有名字含「{presetQuery.trim()}」的预设</div>
                             )}
-                            <div className="grid grid-cols-2 gap-1.5">
-                                {filteredPresets.map(p => {
-                                    const snapshot = toEntryPreset(p);
-                                    const active = sameEntryPreset(entryPreset, snapshot);
-                                    return (
-                                        <div
-                                            key={p.id}
-                                            className={`flex items-center gap-0.5 pl-0.5 pr-2 rounded-2xl border ${active ? 'border-indigo-300 bg-indigo-50' : p.pinned ? 'border-amber-200 bg-amber-50' : 'border-slate-200 bg-slate-50'}`}
-                                        >
-                                            <button
-                                                onClick={() => void togglePin(p)}
-                                                disabled={presetSaving}
-                                                className={`shrink-0 w-7 h-7 rounded-full text-[13px] leading-none disabled:opacity-50 active:scale-90 transition-transform ${p.pinned ? 'text-amber-400' : 'text-slate-300'}`}
-                                                aria-label={p.pinned ? '取消置顶' : '置顶'}
-                                            >{p.pinned ? '★' : '☆'}</button>
-                                            <button
-                                                onClick={() => void applyPreset(snapshot)}
-                                                disabled={presetSaving}
-                                                className="flex-1 min-w-0 py-2 text-left disabled:opacity-50"
-                                            >
-                                                <div className="truncate text-[12px] text-slate-700">{p.name}</div>
-                                                <div className={`text-[10px] ${active ? 'text-indigo-500' : 'text-slate-400'}`}>
-                                                    {active ? '当前' : p.displayMode === 'layout' ? '布局' : '默认卡'}
-                                                </div>
-                                            </button>
+                            {matchedPresets.length > 0 && (
+                                <div className="text-[11px] font-semibold text-emerald-600">
+                                    字段对得上（{matchedPresets.length}）
+                                </div>
+                            )}
+                            {[
+                                { list: matchedPresets, matched: true },
+                                { list: unmatchedPresets, matched: false },
+                            ].map(({ list, matched }) => (
+                                list.length === 0 ? null : (
+                                    <React.Fragment key={matched ? 'matched' : 'rest'}>
+                                        {!matched && matchedPresets.length > 0 && (
+                                            <div className="pt-1 text-[11px] font-semibold text-slate-400">
+                                                其余预设（{list.length}）
+                                            </div>
+                                        )}
+                                        <div className="grid grid-cols-2 gap-1.5">
+                                            {list.map(p => {
+                                                const snapshot = toEntryPreset(p);
+                                                const active = sameEntryPreset(entryPreset, snapshot);
+                                                return (
+                                                    <div
+                                                        key={p.id}
+                                                        className={`flex items-center gap-0.5 pl-0.5 pr-2 rounded-2xl border ${active ? 'border-indigo-300 bg-indigo-50' : matched ? 'border-emerald-200 bg-emerald-50' : p.pinned ? 'border-amber-200 bg-amber-50' : 'border-slate-200 bg-slate-50'}`}
+                                                    >
+                                                        <button
+                                                            onClick={() => void togglePin(p)}
+                                                            disabled={presetSaving}
+                                                            className={`shrink-0 w-7 h-7 rounded-full text-[13px] leading-none disabled:opacity-50 active:scale-90 transition-transform ${p.pinned ? 'text-amber-400' : 'text-slate-300'}`}
+                                                            aria-label={p.pinned ? '取消置顶' : '置顶'}
+                                                        >{p.pinned ? '★' : '☆'}</button>
+                                                        <button
+                                                            onClick={() => void applyPreset(snapshot)}
+                                                            disabled={presetSaving}
+                                                            className="flex-1 min-w-0 py-2 text-left disabled:opacity-50"
+                                                        >
+                                                            <div className="truncate text-[12px] text-slate-700">{p.name}</div>
+                                                            <div className={`text-[10px] ${active ? 'text-indigo-500' : matched ? 'text-emerald-600' : 'text-slate-400'}`}>
+                                                                {active ? '当前' : matched ? `对上 ${fieldHits(p)} 个字段` : p.displayMode === 'layout' ? '布局' : '默认卡'}
+                                                            </div>
+                                                        </button>
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
-                                    );
-                                })}
-                            </div>
+                                    </React.Fragment>
+                                )
+                            ))}
                         </div>
                     </div>
                 </div>

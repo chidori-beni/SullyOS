@@ -13,9 +13,9 @@
 
 import type { CharacterProfile } from '../../types';
 import {
+    appendXinshengFirePackPreset,
     isPresetRandomEnabled,
     pickRandomPreset,
-    saveXinshengFirePackPreset,
     type XinshengPreset,
 } from './xinshengStore';
 
@@ -117,12 +117,32 @@ export const prepareXinshengFirePackPreset = async (
     if (!char?.id || !char.xinshengEnabled) return null;
     try {
         const picked = (await isPresetRandomEnabled()) ? await pickRandomPreset() : null;
-        await saveXinshengFirePackPreset(char.id, picked ? toEntryPreset(picked) : characterEntryPreset(char));
+        await appendXinshengFirePackPreset(char.id, picked ? toEntryPreset(picked) : characterEntryPreset(char));
         return picked;
     } catch (e) {
         console.warn('[xinsheng] 主动消息预设准备失败:', e);
         return null;
     }
+};
+
+/**
+ * 这条回复是不是「云端照着 fire_pack 生成、推回来」的（自然主动、定时任务……）。
+ *
+ * **不能靠 sessionId 判**：上一版就是这么写的，而自然主动那条路的 push 本来就可能不带
+ * sessionId（见 activeMsgStore.consumeInboxMessages 里的排序兜底注释：「没 sessionId 的
+ * （老 worker / proactive push 等）走 sentAt fallback」）。判据一旦落空，整套对齐逻辑
+ * 直接不生效，表现就是「修了还是对不上号」。
+ *
+ * 改判 source：推送路径落库的每条 assistant 消息都带 `source: 'active_msg_2'`（见
+ * activeMsgRuntime 的 mcdInheritMeta）。即时对话也走推送，但它的提示词是这台设备这一轮
+ * 现拼的、内存里的 roundPresets 仍然作数，所以 messageType==='instant' 的排除在外。
+ */
+export const isFirePackPush = (mcdInheritMeta: any): boolean => {
+    const amsgMeta = mcdInheritMeta?.activeMsg2;
+    const source = mcdInheritMeta?.source;
+    const messageType = amsgMeta?.messageType ?? mcdInheritMeta?.messageType;
+    if (messageType === 'instant' || source === 'instant') return false;
+    return source === 'active_msg_2' || !!amsgMeta;
 };
 
 /** 测试用：清干净所有角色的本轮预设。 */

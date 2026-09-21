@@ -17,7 +17,8 @@ const {
     importXinshengPresets, buildPresetExportFile, parsePresetImportFile, normalizePreset,
     toggleXinshengPresetPinned, sortXinshengPresets, renameXinshengPreset,
     getXinshengPresetSortOrder, setXinshengPresetSortOrder,
-    saveXinshengFirePackPreset, readXinshengFirePackPreset,
+    appendXinshengFirePackPreset, readXinshengFirePackPresetLog,
+    readXinshengFirePackPresetAt, selectFirePackPresetAt, XINSHENG_FIRE_PACK_PRESET_CAP,
     isPresetRandomEnabled, setPresetRandomEnabled, pickRandomPreset,
 } = await import('./xinshengStore');
 
@@ -335,24 +336,82 @@ describe('重命名预设', () => {
     });
 });
 
-describe('主动消息（fire_pack）的预设快照', () => {
-    it('存了能读回来，按角色分开', async () => {
-        await saveXinshengFirePackPreset('c1', { name: 'A', displayMode: 'layout', layout: '@header', customCss: '.a{}' });
-        await saveXinshengFirePackPreset('c2', { name: 'B', displayMode: 'planner', layout: '', customCss: '' });
-        expect(await readXinshengFirePackPreset('c1')).toEqual({ name: 'A', displayMode: 'layout', layout: '@header', customCss: '.a{}' });
-        expect((await readXinshengFirePackPreset('c2'))!.displayMode).toBe('planner');
+// ─── 真实故障复现 3：上一版「只留最后一格」还是对不上号 ───────────────────────
+//
+// 用户连用几天后反馈：PWA 完全在后台，自然主动回来的心声**每次**都文字配错样式。
+// 成因：fire_pack 每轮聊天、每次改人设、每次切后台都会重打，而单格快照每次都被覆盖。
+// 凌晨那条主动消息用的是昨晚那份包，等第二天早上 App 处理到它时，单格里早就是新的了。
+// 改成按打包时间记的短账本，落库时按「这条消息生成的时刻」回查。
+describe('主动消息（fire_pack）的预设样式账本', () => {
+    const P = (name: string, layout = '') => ({ name, displayMode: 'layout' as const, layout, customCss: '' });
+
+    it('每次打包记一条，按角色分开', async () => {
+        await appendXinshengFirePackPreset('c1', P('A'), 1000);
+        await appendXinshengFirePackPreset('c1', P('B'), 2000);
+        await appendXinshengFirePackPreset('c2', P('C'), 1500);
+        expect((await readXinshengFirePackPresetLog('c1')).map(e => e.preset.name)).toEqual(['A', 'B']);
+        expect((await readXinshengFirePackPresetLog('c2')).map(e => e.preset.name)).toEqual(['C']);
     });
 
-    it('没存过读到 null；存着的是垃圾也补齐成合法形状', async () => {
-        expect(await readXinshengFirePackPreset('c9')).toBeNull();
-        await saveXinshengFirePackPreset('c1', { layout: 123 } as any);
-        expect(await readXinshengFirePackPreset('c1')).toEqual({ name: '', displayMode: 'planner', layout: '', customCss: '' });
+    it('凌晨触发、早上才处理：拿的是触发时那份，不是早上重打的那份', async () => {
+        await appendXinshengFirePackPreset('c1', P('昨晚'), 100);   // 睡前聊完
+        await appendXinshengFirePackPreset('c1', P('今早'), 900);   // 早上开 App 又重打
+        // 凌晨 500 生成的消息
+        expect((await readXinshengFirePackPresetAt('c1', 500))!.name).toBe('昨晚');
+        expect((await readXinshengFirePackPresetAt('c1', 1000))!.name).toBe('今早');
     });
 
-    it('重新打包会覆盖上一份（worker 上永远只有最后上传的那个包）', async () => {
-        await saveXinshengFirePackPreset('c1', { name: 'A', displayMode: 'layout', layout: '@a', customCss: '' });
-        await saveXinshengFirePackPreset('c1', { name: 'B', displayMode: 'layout', layout: '@b', customCss: '' });
-        expect((await readXinshengFirePackPreset('c1'))!.name).toBe('B');
+    it('样式没变就不重复记（随机关着、设置又没动时账本不会长）', async () => {
+        await appendXinshengFirePackPreset('c1', P('A'), 1000);
+        await appendXinshengFirePackPreset('c1', P('A'), 2000);
+        await appendXinshengFirePackPreset('c1', P('A', '@x'), 3000);
+        expect((await readXinshengFirePackPresetLog('c1')).length).toBe(2);
+    });
+
+    it('只留最近 N 条', async () => {
+        for (let i = 1; i <= XINSHENG_FIRE_PACK_PRESET_CAP + 5; i++) {
+            await appendXinshengFirePackPreset('c1', P(`第${i}`), i * 10);
+        }
+        const log = await readXinshengFirePackPresetLog('c1');
+        expect(log.length).toBe(XINSHENG_FIRE_PACK_PRESET_CAP);
+        expect(log[log.length - 1].preset.name).toBe(`第${XINSHENG_FIRE_PACK_PRESET_CAP + 5}`);
+    });
+
+    it('v1 的单格快照当作「最老的一条」迁进来', async () => {
+        store.set('xinsheng_firepack_preset_c1', { name: '老快照', displayMode: 'planner', layout: '', customCss: '' });
+        expect((await readXinshengFirePackPresetAt('c1', 500))!.name).toBe('老快照');
+        await appendXinshengFirePackPreset('c1', P('新的'), 1000);
+        expect((await readXinshengFirePackPresetAt('c1', 500))!.name).toBe('老快照');
+        expect((await readXinshengFirePackPresetAt('c1', 2000))!.name).toBe('新的');
+    });
+
+    it('存着的是垃圾也补齐成合法形状；没记过读到 null', async () => {
+        expect(await readXinshengFirePackPresetAt('c9', Date.now())).toBeNull();
+        await appendXinshengFirePackPreset('c1', { layout: 123 } as any, 1000);
+        expect(await readXinshengFirePackPresetAt('c1', 2000))
+            .toEqual({ name: '', displayMode: 'planner', layout: '', customCss: '' });
+    });
+
+    it('时间选中的那份一个字段都对不上时，按字段名回头挑一份渲染得出来的', () => {
+        const log = [
+            { builtAt: 100, preset: { name: '甲', displayMode: 'layout' as const, layout: '@section\n  innerVoice', customCss: '' } },
+            { builtAt: 200, preset: { name: '乙', displayMode: 'layout' as const, layout: '@section\n  heartRate', customCss: '' } },
+        ];
+        // 时间上该选「乙」，但这条心声只有 innerVoice —— 它是「甲」那份包生成的
+        expect(selectFirePackPresetAt(log, 300, ['innerVoice'])!.name).toBe('甲');
+        // 字段对得上就不动按时间选的那份
+        expect(selectFirePackPresetAt(log, 300, ['heartRate'])!.name).toBe('乙');
+        // 谁都对不上（字段是第三份包的）就维持按时间选的
+        expect(selectFirePackPresetAt(log, 300, ['mood'])!.name).toBe('乙');
+        // 默认卡不看字段（它不靠布局模板渲染）
+        const planner = [{ builtAt: 200, preset: { name: '默认', displayMode: 'planner' as const, layout: '', customCss: '' } }];
+        expect(selectFirePackPresetAt(planner, 300, ['innerVoice'])!.name).toBe('默认');
+    });
+
+    it('本机钟被调过、没有更早的条目时，退回最老的那条而不是 null', () => {
+        const log = [{ builtAt: 5000, preset: P('唯一') }];
+        expect(selectFirePackPresetAt(log, 1000)!.name).toBe('唯一');
+        expect(selectFirePackPresetAt([], 1000)).toBeNull();
     });
 });
 

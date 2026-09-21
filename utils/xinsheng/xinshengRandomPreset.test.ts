@@ -18,10 +18,11 @@ let pickRandomPreset: any;
 vi.mock('./xinshengStore', () => ({
     isPresetRandomEnabled: vi.fn(),
     pickRandomPreset: vi.fn(),
-    saveXinshengFirePackPreset: vi.fn(),
+    appendXinshengFirePackPreset: vi.fn(),
 }));
 
 const {
+    isFirePackPush,
     prepareXinshengRoundPreset,
     prepareXinshengFirePackPreset,
     takeXinshengRoundPreset,
@@ -31,7 +32,7 @@ const {
 const store = await import('./xinshengStore');
 isPresetRandomEnabled = store.isPresetRandomEnabled as any;
 pickRandomPreset = store.pickRandomPreset as any;
-const saveFirePackPreset = store.saveXinshengFirePackPreset as any;
+const saveFirePackPreset = store.appendXinshengFirePackPreset as any;
 
 const CHAR: CharacterProfile = { id: 'c1', name: '萧逸', avatar: '', xinshengEnabled: true } as any;
 
@@ -138,6 +139,29 @@ describe('prepareXinshengFirePackPreset', () => {
         pickRandomPreset.mockResolvedValue(presetA);
         saveFirePackPreset.mockRejectedValue(new Error('IDB 挂了'));
         expect(await prepareXinshengFirePackPreset(CHAR)).toBeNull();
+    });
+});
+
+// 上一版拿 sessionId 当「这条是不是主动消息推回来的」判据，而自然主动的 push 本来就
+// 可能不带 sessionId（见 activeMsgStore.consumeInboxMessages 的排序兜底注释），
+// 判据落空 = 整套对齐逻辑不生效 = 用户反馈的「修了还是对不上号」。
+describe('isFirePackPush', () => {
+    it('推送来的（含不带 sessionId 的自然主动）都算', () => {
+        expect(isFirePackPush({ source: 'active_msg_2', activeMsg2: { sessionId: 's1' } })).toBe(true);
+        expect(isFirePackPush({ source: 'active_msg_2', activeMsg2: { messageType: 'auto' } })).toBe(true);
+        expect(isFirePackPush({ source: 'active_msg_2' })).toBe(true);
+        expect(isFirePackPush({ activeMsg2: { messageId: 'm1' } })).toBe(true);
+    });
+
+    it('即时对话不算（它的提示词是这台设备现拼的）', () => {
+        expect(isFirePackPush({ source: 'active_msg_2', activeMsg2: { messageType: 'instant' } })).toBe(false);
+        expect(isFirePackPush({ source: 'instant' })).toBe(false);
+    });
+
+    it('本地生成的回复不算', () => {
+        expect(isFirePackPush(undefined)).toBe(false);
+        expect(isFirePackPush({})).toBe(false);
+        expect(isFirePackPush({ source: 'local' })).toBe(false);
     });
 });
 

@@ -13,7 +13,9 @@ const HISTORY_KEY = (charId: string) => `xinsheng_history_${charId}`;
 const PRESETS_KEY = 'xinsheng_presets';
 const RANDOM_ENABLED_KEY = 'xinsheng_preset_random_enabled';
 const PRESET_SORT_ORDER_KEY = 'xinsheng_preset_sort_order';
+// v1：单格快照（只记最后一次打包）。已被下面的账本取代，只在迁移时还读它一次。
 const FIRE_PACK_PRESET_KEY = (charId: string) => `xinsheng_firepack_preset_${charId}`;
+const FIRE_PACK_PRESET_LOG_KEY = (charId: string) => `xinsheng_firepack_presets_${charId}`;
 const LAST_RANDOM_KEY = 'xinsheng_preset_last_random_id';
 
 /** 历史上限。超出后从最旧的开始删，但收藏过的永远留着。 */
@@ -459,34 +461,127 @@ export const setPresetRandomEnabled = async (on: boolean): Promise<void> => {
 // 所以打包那一刻就把「这份包会用的样式」整份快照落盘，云端推回来时按角色读回来用。
 // 每次重新打包都覆盖它 —— worker 上永远只有最后一次上传的那份包。
 
-export const saveXinshengFirePackPreset = async (
+/** 账本里的一条：某一次打包，用的是哪套样式。 */
+export interface XinshengFirePackPresetEntry {
+    /** 打这份包的时刻（本机钟）。 */
+    builtAt: number;
+    preset: XinshengEntryPreset;
+}
+
+/** 账本长度上限。一天几十次打包，30 条大约够覆盖一两天内触发的主动消息。 */
+export const XINSHENG_FIRE_PACK_PRESET_CAP = 30;
+
+const normalizeFirePackPreset = (raw: any): XinshengEntryPreset => ({
+    name: typeof raw?.name === 'string' ? raw.name : '',
+    displayMode: raw?.displayMode === 'layout' ? 'layout' : 'planner',
+    layout: typeof raw?.layout === 'string' ? raw.layout : '',
+    customCss: typeof raw?.customCss === 'string' ? raw.customCss : '',
+});
+
+const sameFirePackPreset = (a: XinshengEntryPreset, b: XinshengEntryPreset): boolean =>
+    a.name === b.name && a.displayMode === b.displayMode && a.layout === b.layout && a.customCss === b.customCss;
+
+/**
+ * 读账本，顺带把 v1 那格单快照迁进来当「最老的一条」（builtAt=0，任何时刻都选得中它，
+ * 只有在没有更合适的条目时才会轮到它）。
+ */
+export const readXinshengFirePackPresetLog = async (
+    charId: string,
+): Promise<XinshengFirePackPresetEntry[]> => {
+    if (!charId) return [];
+    const out: XinshengFirePackPresetEntry[] = [];
+    try {
+        const legacy = await DB.getAssetRaw(FIRE_PACK_PRESET_KEY(charId));
+        if (legacy && typeof legacy === 'object') {
+            out.push({ builtAt: 0, preset: normalizeFirePackPreset(legacy) });
+        }
+    } catch { /* 迁移读失败就当没有 */ }
+    try {
+        const raw = await DB.getAssetRaw(FIRE_PACK_PRESET_LOG_KEY(charId));
+        if (Array.isArray(raw)) {
+            for (const item of raw) {
+                if (!item || typeof item !== 'object') continue;
+                const builtAt = typeof (item as any).builtAt === 'number' ? (item as any).builtAt : 0;
+                out.push({ builtAt, preset: normalizeFirePackPreset((item as any).preset) });
+            }
+        }
+    } catch (e) {
+        console.warn('[xinsheng] 读主动消息预设账本失败:', e);
+    }
+    return out.sort((a, b) => a.builtAt - b.builtAt);
+};
+
+/**
+ * 记一条「这次打的包用的是这套样式」。
+ *
+ * 和上一版的区别是**不再覆盖**：fire_pack 每轮聊天、每次改人设、每次切后台都会重打，
+ * 而一条自然主动可能是凌晨用昨晚那份包生成的、第二天早上才被 App 处理。只留最后一格的话，
+ * 处理到它时读到的早就是今早那份包的样式了——这正是上一版修完还是对不上号的原因。
+ *
+ * 样式跟上一条完全一样时不重复记（随机关着、设置又没动的常见情况下账本根本不会长）。
+ */
+export const appendXinshengFirePackPreset = async (
     charId: string,
     preset: XinshengEntryPreset,
+    builtAt: number = Date.now(),
 ): Promise<void> => {
     if (!charId) return;
     try {
-        await DB.saveAssetRaw(FIRE_PACK_PRESET_KEY(charId), preset);
+        const log = (await readXinshengFirePackPresetLog(charId)).filter(e => e.builtAt > 0);
+        const last = log[log.length - 1];
+        if (last && sameFirePackPreset(last.preset, preset)) return;
+        log.push({ builtAt, preset: normalizeFirePackPreset(preset) });
+        await DB.saveAssetRaw(
+            FIRE_PACK_PRESET_LOG_KEY(charId),
+            log.slice(Math.max(0, log.length - XINSHENG_FIRE_PACK_PRESET_CAP)),
+        );
     } catch (e) {
-        console.warn('[xinsheng] 存主动消息预设快照失败:', e);
+        console.warn('[xinsheng] 记主动消息预设账本失败:', e);
     }
 };
 
-export const readXinshengFirePackPreset = async (charId: string): Promise<XinshengEntryPreset | null> => {
-    if (!charId) return null;
-    try {
-        const raw = await DB.getAssetRaw(FIRE_PACK_PRESET_KEY(charId));
-        if (!raw || typeof raw !== 'object') return null;
-        return {
-            name: typeof (raw as any).name === 'string' ? (raw as any).name : '',
-            displayMode: (raw as any).displayMode === 'layout' ? 'layout' : 'planner',
-            layout: typeof (raw as any).layout === 'string' ? (raw as any).layout : '',
-            customCss: typeof (raw as any).customCss === 'string' ? (raw as any).customCss : '',
-        };
-    } catch (e) {
-        console.warn('[xinsheng] 读主动消息预设快照失败:', e);
-        return null;
+/**
+ * 「`atMs` 那一刻，worker 手上那份包用的是哪套样式」＝ 账本里**不晚于**那一刻的最后一条。
+ *
+ * 一条都不在它之前时（本机钟被调过、或这条消息比账本还老）退回最老的一条：
+ * 它离触发时刻最近，比拿「现在的设置」瞎凑强。
+ */
+export const selectFirePackPresetAt = (
+    log: readonly XinshengFirePackPresetEntry[],
+    atMs: number,
+    entryFields: readonly string[] = [],
+): XinshengEntryPreset | null => {
+    if (log.length === 0) return null;
+    const sorted = [...log].sort((a, b) => a.builtAt - b.builtAt);
+    let chosen: XinshengFirePackPresetEntry | null = null;
+    for (const entry of sorted) {
+        if (entry.builtAt <= atMs) chosen = entry;
     }
+    const byTime = (chosen ?? sorted[0]).preset;
+
+    // 时间对不上时的兜底：布局模板里写着的字段名，就是这份包当时要求模型输出的字段。
+    // 按时间选中的那份**一个字段都对不上**，说明这条心声根本不是它生成的（本机钟被调过、
+    // 账本被裁掉了、上传被云端挡回去过……）。这时按字段名回头找，宁可用一份能渲染出来的，
+    // 也别摆一张空白卡。找不到就维持按时间选的那份。
+    const fields = entryFields.filter(f => typeof f === 'string' && f.length > 0);
+    if (fields.length === 0) return byTime;
+    const hits = (preset: XinshengEntryPreset): number =>
+        (preset.displayMode === 'layout' && preset.layout
+            ? fields.filter(f => preset.layout.includes(f)).length
+            : 0);
+    if (hits(byTime) > 0 || byTime.displayMode !== 'layout') return byTime;
+    for (let i = sorted.length - 1; i >= 0; i--) {
+        if (hits(sorted[i].preset) > 0) return sorted[i].preset;
+    }
+    return byTime;
 };
+
+export const readXinshengFirePackPresetAt = async (
+    charId: string,
+    atMs: number,
+    entryFields: readonly string[] = [],
+): Promise<XinshengEntryPreset | null> =>
+    selectFirePackPresetAt(await readXinshengFirePackPresetLog(charId), atMs, entryFields);
 
 /**
  * 抽一个预设。会避开「上一次抽中的那个」——只有一个预设时除外。

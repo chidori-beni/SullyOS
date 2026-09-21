@@ -31,10 +31,10 @@ import { buildSelfiePrompt, getCharacterAppearanceLooks, getImageGenConfig, isIm
 import { ChatParser, type FrozenMusicSong } from './chatParser';
 import { stripFaceToFacePhoneSourceTags, stripInternalAssistantProtocolMarkers } from './sanitize';
 import { extractXinsheng } from './xinsheng/xinshengData';
-import { appendXinshengEntry, readXinshengFirePackPreset } from './xinsheng/xinshengStore';
+import { appendXinshengEntry, readXinshengFirePackPresetAt } from './xinsheng/xinshengStore';
 import { newXinshengRoundId, XINSHENG_ROUND_META_KEY, backfillXinshengRoundIdForSession } from './xinsheng/xinshengRound';
 import { dispatchXinshengUpdated } from './xinsheng/xinshengEvents';
-import { characterEntryPreset, takeXinshengRoundPreset, toEntryPreset } from './xinsheng/xinshengRandomPreset';
+import { characterEntryPreset, isFirePackPush, takeXinshengRoundPreset, toEntryPreset } from './xinsheng/xinshengRandomPreset';
 import { resolveCharTimeZone } from './timezone';
 import { NotionManager, FeishuManager, XhsNote } from './realtimeContext';
 import { enqueuePendingDiary, removePendingDiary } from './pendingDiary';
@@ -869,14 +869,16 @@ export async function applyAssistantPostProcessing(
         if (picked.entry) {
             xinshengRoundId = newXinshengRoundId(messageTimestamp ?? Date.now());
             const roundId = xinshengRoundId;
-            // 这条是不是云端主动消息推回来的（一整条回复共享一个 sessionId）。
-            // 即时对话也走推送，但它的提示词是这台设备这一轮现拼的，内存里的 roundPresets
-            // 仍然作数，所以只认「非 instant」的那些。
+            // 这条是不是云端照着 fire_pack 生成、推回来的（判据见 isFirePackPush ——
+            // 上一版拿 sessionId 当判据，而自然主动的 push 本来就可能不带 sessionId）。
             const amsgMeta = (mcdInheritMeta as any)?.activeMsg2;
             const pushSessionId = amsgMeta?.sessionId;
-            const fromFirePack = !!pushSessionId
-                && amsgMeta?.messageType !== 'instant'
-                && (mcdInheritMeta as any)?.source !== 'instant';
+            const fromFirePack = isFirePackPush(mcdInheritMeta);
+            // 它是**什么时候生成的**：worker 发出的时刻最接近生成时刻。messageTimestamp
+            // 在时间戳倒挂时会被换成「写库当刻」，所以它只当兜底。
+            const generatedAt = (typeof amsgMeta?.sentAt === 'number' ? amsgMeta.sentAt : null)
+                ?? messageTimestamp
+                ?? Date.now();
             // 「随机套预设」这一轮抽中的样式优先；没抽中（用户手动切换预设的常规情况）
             // 就把**此刻角色档案上实际生效的**布局/CSS/显示模式原样快照下来。
             //
@@ -886,9 +888,12 @@ export async function applyAssistantPostProcessing(
             // 把随机命中的那份写回角色档案（同一个道理，这里补上手动切换的那一半）。
             //
             // 主动消息（fire_pack）那条路两者都不对：文字是照**打包那一刻**的提示词生成的，
-            // 而打包可能发生在几小时前、App 重启前。它的样式在打包时已经落盘，下面异步读回来
-            // 盖掉这里的兜底（见 xinshengStore 的 readXinshengFirePackPreset）。这一路也不去
-            // 消费 roundPresets——那份是前台某一轮的，被这条推送吃掉的话轮到它落库就没得用了。
+            // 而打包可能发生在几小时前、App 重启前。每次打包都往账本里记一条，这里按
+            // 「这条消息生成的时刻」回查当时那份（见 xinshengStore 的
+            // readXinshengFirePackPresetAt）——只留最后一格是不够的：包每轮聊天都会重打，
+            // 凌晨那条主动消息往往要等第二天早上才被处理，那时最后一格早就是新的了。
+            // 这一路也不去消费 roundPresets——那份是前台某一轮的，被这条推送吃掉的话
+            // 轮到它落库就没得用了。
             const roundPreset = fromFirePack ? null : takeXinshengRoundPreset(char.id);
             const fallbackSnapshot = roundPreset ? toEntryPreset(roundPreset) : characterEntryPreset(char);
             // 闭包里读 picked.entry 会丢掉外层的收窄，先固化成局部常量
@@ -898,7 +903,11 @@ export async function applyAssistantPostProcessing(
                 let presetSnapshot = fallbackSnapshot;
                 if (fromFirePack) {
                     try {
-                        const packed = await readXinshengFirePackPreset(char.id);
+                        // 这条心声实际输出了哪些字段（下划线开头的是我们自己挂的元数据）——
+                        // 按时间选中的那份如果一个都对不上，store 会用它们回头再挑一次。
+                        const entryFields = Object.keys(pickedEntry)
+                            .filter(k => !k.startsWith('_') && k !== 'raw');
+                        const packed = await readXinshengFirePackPresetAt(char.id, generatedAt, entryFields);
                         if (packed) presetSnapshot = packed;
                     } catch (e) {
                         console.warn('[xinsheng] 读主动消息预设快照失败，退回角色当前设置:', e);
