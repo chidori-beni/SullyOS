@@ -1,163 +1,44 @@
-// @vitest-environment jsdom
-import React, { act } from 'react';
-import { createRoot, Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { GUIDE_KEY, GUIDE_SULLY_ID, initializeFirstUseGuide, readGuideStep, setGuideStep } from './firstUseGuide';
-import { AppID } from '../types';
-import FirstUseGuide from '../components/FirstUseGuide';
-import { MainApiMemoryChoice, SkipVectorMemoryChoice } from '../components/MemoryGuideActions';
+import { describe, expect, it, vi } from 'vitest';
 
-const mocked = vi.hoisted(() => ({ os: {} as any }));
-vi.mock('../context/OSContext', () => ({ useOS: () => mocked.os }));
+// 挡掉 OSContext：引导组件 import 了它，而它会把整个 App（DB、各种 App）拖进来。
+vi.mock('../context/OSContext', () => ({ useOS: () => ({ characters: [], apiConfig: {}, memoryPalaceConfig: {}, openApp: () => {}, setActiveCharacterId: () => {}, updateMemoryPalaceConfig: () => {} }) }));
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { initializeFirstUseGuide, readGuideStep } from './firstUseGuide';
 
-let root: Root;
-let host: HTMLDivElement;
-async function render() { await act(async () => root.render(React.createElement(React.Fragment, null,
-    React.createElement(FirstUseGuide), React.createElement(MainApiMemoryChoice), React.createElement(SkipVectorMemoryChoice)))); }
-async function click(text: string) {
-    const button = [...host.querySelectorAll('button')].find(b => b.textContent === text)!;
-    expect(button).toBeTruthy();
-    await act(async () => button.click());
-}
-beforeEach(() => {
-    (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-    localStorage.clear();
-    Element.prototype.scrollIntoView = vi.fn();
-    vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
-    host = document.createElement('div');
-    host.id = 'root';
-    document.body.append(host);
-    root = createRoot(host);
-    mocked.os = {
-        apiConfig: {}, memoryPalaceConfig: { embedding: {} },
-        characters: [{ id: GUIDE_SULLY_ID }], activeApp: AppID.Launcher,
-        activeCharacterId: GUIDE_SULLY_ID,
-        openApp: vi.fn((id) => { mocked.os.activeApp = id; }),
-        setActiveCharacterId: vi.fn(),
-        updateMemoryPalaceConfig: vi.fn(patch => Object.assign(mocked.os.memoryPalaceConfig, patch)),
-    };
-});
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-
-describe('first-use memory guide', () => {
-    it.each([0, 1, 2, 3, 4, 5, 6])('can directly skip step %s without changing configuration or navigating', async step => {
-        setGuideStep(step); await render();
-        await click('收起');
-        const previous = JSON.stringify(mocked.os.memoryPalaceConfig);
-        mocked.os.openApp.mockClear(); mocked.os.updateMemoryPalaceConfig.mockClear();
-        await click('直接跳过引导');
-        expect(localStorage.getItem(GUIDE_KEY)).toBe('done');
-        expect(document.querySelector('[aria-label="首次使用引导"]')).toBeNull();
-        expect(mocked.os.openApp).not.toHaveBeenCalled();
-        expect(mocked.os.updateMemoryPalaceConfig).not.toHaveBeenCalled();
-        expect(JSON.stringify(mocked.os.memoryPalaceConfig)).toBe(previous);
-        await act(async () => root.unmount()); root = createRoot(host); await render();
-        expect(document.querySelector('[aria-label="首次使用引导"]')).toBeNull();
-    });
-
-    it('points to Sully first, then moves the highlight to Send message and removes it on skip', async () => {
-        const card = document.createElement('button'); card.dataset.guide = 'sully-card';
-        card.getBoundingClientRect = () => ({ left: 200, top: 400, bottom: 440, width: 80, height: 40 } as DOMRect);
-        document.body.append(card);
-        setGuideStep(3); await render();
-        expect(card.classList.contains('first-use-highlight')).toBe(true);
-        expect(document.body.textContent).toContain('点击 Sully，打开角色详情');
-        const send = document.createElement('button'); send.dataset.guide = 'sully-message';
-        send.getBoundingClientRect = card.getBoundingClientRect;
-        await act(async () => { host.append(send); });
-        expect(send.classList.contains('first-use-highlight')).toBe(true);
-        expect(card.classList.contains('first-use-highlight')).toBe(false);
-        expect(document.body.textContent).toContain('点击「发消息」进入聊天');
-        await click('直接跳过引导');
-        expect(send.classList.contains('first-use-highlight')).toBe(false);
-        expect(document.body.textContent).not.toContain('点击「发消息」进入聊天');
-        card.remove(); send.remove();
-    });
-    it('does not interrupt existing users and preserves an unfinished new-user step', () => {
-        initializeFirstUseGuide(3);
+// 本 fork 关掉了首次使用引导（用户 2026-09-22 要求）。
+//
+// 原来这份文件测的是「引导会不会正确出现」，需要 jsdom 渲染整个引导组件。
+// 现在反过来：**盯着它必须一直是关的**。以后上游再动这块、或某次合并把
+// readGuideStep 的原逻辑合回来，这里会立刻变红。
+describe('首次使用引导已关闭', () => {
+    it('读步骤恒为 null —— 整条链路都以此为「不显示」的安全默认值', () => {
         expect(readGuideStep()).toBeNull();
-        expect(localStorage.getItem(GUIDE_KEY)).toBe('done');
-        localStorage.clear();
-        initializeFirstUseGuide(0);
-        expect(readGuideStep()).toBe(0);
-        setGuideStep(2);
-        initializeFirstUseGuide(1);
-        expect(readGuideStep()).toBe(2);
     });
 
-    it('requires saved configurations and both Sully switches before continuing', async () => {
-        initializeFirstUseGuide(0);
-        await render();
-        expect(mocked.os.openApp).toHaveBeenCalledWith(AppID.Settings);
-        await click('下一步');
-        expect(readGuideStep()).toBe(0);
-        mocked.os.apiConfig = { baseUrl: 'https://example.test/v1', apiKey: 'test', model: 'chat' };
-        await render(); await click('下一步');
-        expect(mocked.os.openApp).toHaveBeenLastCalledWith(AppID.MemoryPalace);
-        await click('下一步'); expect(readGuideStep()).toBe(1);
-        mocked.os.memoryPalaceConfig.embedding = { ...mocked.os.apiConfig, model: 'embedding' };
-        await render(); await click('下一步'); expect(readGuideStep()).toBe(1);
-        await click('我想暂时只用主 API');
-        expect(mocked.os.memoryPalaceConfig.lightLLM).toEqual(mocked.os.apiConfig);
-        await render(); await click('下一步');
-        await click('下一步'); expect(readGuideStep()).toBe(2);
-        mocked.os.characters[0].memoryPalaceEnabled = true;
-        await render(); await click('下一步'); expect(readGuideStep()).toBe(2);
-        mocked.os.characters[0].autoArchiveEnabled = true;
-        await render(); await click('下一步'); expect(readGuideStep()).toBe(3);
-        expect(mocked.os.openApp).toHaveBeenLastCalledWith(AppID.Character);
+    it('初始化（哪怕一个角色都没有）也不会把引导打开', () => {
+        expect(() => initializeFirstUseGuide(0)).not.toThrow();
+        expect(readGuideStep()).toBeNull();
     });
 
-    it('can skip vectors after choosing a secondary API, resumes that path, and can return to setup', async () => {
-        mocked.os.apiConfig = { baseUrl: 'https://example.test/v1', apiKey: 'test', model: 'chat' };
-        setGuideStep(1); await render();
-        await click('暂时跳过向量记忆'); expect(readGuideStep()).toBe(1);
-        await click('我想暂时只用主 API'); await render();
-        await click('暂时跳过向量记忆');
-        expect(readGuideStep()).toBe(3);
-        expect(mocked.os.characters[0].autoArchiveEnabled).toBeUndefined();
-        expect(mocked.os.memoryPalaceConfig.embedding).toEqual({});
-        expect(mocked.os.openApp).toHaveBeenLastCalledWith(AppID.Character);
-        await act(async () => root.unmount()); root = createRoot(host); await render();
-        expect(host.textContent).toContain('3/6');
-        await click('上一步'); expect(readGuideStep()).toBe(1);
-        mocked.os.memoryPalaceConfig.embedding = { ...mocked.os.apiConfig, model: 'embedding' };
-        await render(); await click('下一步');
-        expect(readGuideStep()).toBe(2);
-        expect(host.textContent).toContain('3/7');
+    it('源码里那一刀还在，没被上游合并悄悄合回去', () => {
+        const source = readFileSync(fileURLToPath(new URL('./firstUseGuide.ts', import.meta.url)), 'utf8');
+        // 函数体里只剩 return null；原逻辑收在注释里，方便随时改回来
+        expect(source).toContain('本 fork 关掉了首次使用引导');
+        expect(source).not.toMatch(/^\s*const value = localStorage\.getItem\(GUIDE_KEY\);/m);
     });
 
-    it('does not claim automatic memory is enabled after skipping vector setup', async () => {
-        mocked.os.memoryPalaceConfig.lightLLM = { baseUrl: 'https://example.test/v1', apiKey: 'test', model: 'chat' };
-        setGuideStep(1); await render(); await click('暂时跳过向量记忆');
-        await act(async () => setGuideStep(6));
-        expect(host.textContent).toContain('本次引导没有为你开启全自动记忆');
-        expect(host.textContent).not.toContain('7/7');
-        await click('完成引导'); expect(host.textContent).toBe('');
-    });
-
-    it('highlights generation without clicking it, then waits for the desktop Chat entry', async () => {
-        const generate = document.createElement('button');
-        generate.dataset.guide = 'generate';
-        const generateRequest = vi.fn(); generate.onclick = generateRequest;
-        document.body.append(generate);
-        setGuideStep(3); await render(); await render();
-        mocked.os.activeApp = AppID.Chat;
-        await render();
-        expect(readGuideStep()).toBe(4);
-        expect(generate.classList.contains('first-use-highlight')).toBe(true);
-        await click('知道了，回桌面');
-        expect(readGuideStep()).toBe(5);
-        expect(mocked.os.openApp).toHaveBeenLastCalledWith(AppID.Launcher);
-        await render();
-        await click('下一步'); expect(readGuideStep()).toBe(5);
-        mocked.os.activeApp = AppID.Chat; await render();
-        expect(readGuideStep()).toBe(6);
-        expect(host.textContent).toContain('全自动用户大部分时候不需要操作');
-        await click('完成引导');
-        expect(host.textContent).toBe('');
-        expect(generateRequest).not.toHaveBeenCalled();
-        expect(generate.classList.contains('first-use-highlight')).toBe(false);
-        generate.remove();
+    it('就算 localStorage 里写着「第 0 步」，引导也渲染不出任何东西', async () => {
+        // 直接渲染成字符串来证明 —— 这台机器的 jsdom 和 dev 服务器都装坏了
+        // （jsdom 缺 custom-elements、vite 缺 @babel/core），但 react-dom/server 是好的，
+        // 比「看代码里有 return null」更硬：真跑一遍。
+        // OSContext 要挡掉，否则 import 会把整个 App（含 IndexedDB）拖进来直接超时。
+        vi.stubGlobal('localStorage', {
+            getItem: () => '0', setItem: () => {}, removeItem: () => {}, clear: () => {},
+        } as unknown as Storage);
+        const { renderToStaticMarkup } = await import('react-dom/server');
+        const React = (await import('react')).default;
+        const FirstUseGuide = (await import('../components/FirstUseGuide')).default;
+        expect(renderToStaticMarkup(React.createElement(FirstUseGuide))).toBe('');
     });
 });
