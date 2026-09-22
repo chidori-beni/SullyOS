@@ -1,3 +1,4 @@
+import EmojiExportDialog from './EmojiExportDialog';
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import TokenImg from '../os/TokenImg';
 import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, Heartbeat, PencilSimple, Alarm, Sparkle, FadersHorizontal, LinkSimple, Star, Waveform, Lightning, Stop, CornersOut, CornersIn, Briefcase } from '@phosphor-icons/react';
@@ -180,6 +181,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     const [isBubbleSectionOpen, setIsBubbleSectionOpen] = useState(false);
     const [pendingDeleteThemeId, setPendingDeleteThemeId] = useState<string | null>(null);
     const [emojiSelectionMode, setEmojiSelectionMode] = useState(false);
+    const [exportEmojis, setExportEmojis] = useState<Emoji[] | null>(null);
     const [selectedEmojis, setSelectedEmojis] = useState<Emoji[]>([]);
     // 手动分页避免旧版/第三方 WebView 不触发 IntersectionObserver，永远卡在「加载中」。
     const [emojiPage, setEmojiPage] = useState(0);
@@ -240,8 +242,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         isLongPressTriggered.current = false;
 
         // 2. Skip long-press for the default category (no options needed)
-        if (type === 'category' && item.id === 'default') return;
-        
+        // All categories can export their original images.
+
         // 3. Store coordinates and start timer for valid long-press candidates
         if ('touches' in e) {
             startPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
@@ -623,6 +625,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         {emojiSelectionMode && (
             <div className={`fixed inset-0 z-[-1] ${isPixelStyle ? 'bg-[#eadfce]/70 backdrop-blur-[2px]' : isDiscordStyle ? 'bg-slate-950/70 backdrop-blur-[2px]' : 'bg-white/60 backdrop-blur-[2px]'}`} />
         )}
+        {exportEmojis && <EmojiExportDialog emojis={exportEmojis} onClose={() => setExportEmojis(null)} />}
         {/* 辅助提示保持在输入栏外，避免改变社区 CSS 的 > div:first-child / nth-child 目标。 */}
         {suggestedEmojis.length > 0 && (
             <div ref={suggestionsRef} role="region" aria-label="表情包联想"
@@ -867,6 +870,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                     ) : (
                                         <button onClick={() => onPanelAction('emoji-import')} className={emojiImportTileClass}>+</button>
                                     )}
+                                    {emojiSelectionMode && <button onClick={() => setExportEmojis([...selectedEmojis])} disabled={!selectedEmojis.length} aria-label="下载选中的表情" className={`${emojiImportTileClass} text-xs disabled:opacity-40`}>下载原图</button>}
                                     {visibleEmojis.map((e) => {
                                         const isSelected = selectedEmojiNames.has(e.name);
                                         return (

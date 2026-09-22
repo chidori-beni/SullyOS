@@ -5,6 +5,7 @@ import type { CharacterProfile, RealtimeConfig, UserProfile } from '../../types'
 import type { DinosaurGarden, DinoOrigin } from './dinosaurTypes';
 import { readDinosaurGarden } from './dinosaurStorage';
 import { AIVEN_FISH_SALE_REPLIES, validAivenFishSale, type AivenFishSale } from './fishingSale';
+import { marketEncounterText, realizeMarketEncounter, validMarketEncounter, validMarketEncounterResult, validMarketPersona, type MarketNPCPersona, type MarketEncounter, type MarketEncounterResult } from './marketEncounters';
 
 // A leaf module: importing the backup adapter must not pull in DB/prompt execution.
 export const FISHING_MARKET_STORAGE_KEY = 'vr_fishing_market_v1';
@@ -27,6 +28,9 @@ export interface MarketComment {
     id: string; authorId: string; authorName: string; alias?: string; content: string; createdAt: number;
 }
 export interface MarketPostBase {
+    npcPersona?: MarketNPCPersona;
+    encounter?: MarketEncounter;
+    encounterResult?: MarketEncounterResult;
     id: string; itemLabel: string; createdAt: number; expiresAt: number; closedAt?: number;
     status: 'open' | 'sold' | 'fulfilled' | 'removed' | 'expired'; comments: MarketComment[]; alias?: string;
 }
@@ -154,6 +158,11 @@ export const readFishingMarketState = (storage: Pick<Storage, 'getItem'> = local
     if (raw.fishingTrips?.some(t => (t.sale !== undefined && !validAivenFishSale(t.sale)) || (t.result?.disposition === 'sell' && !t.sale))
         || raw.ledger.some(e => e.aivenSale !== undefined && !validAivenFishSale(e.aivenSale))) throw new Error('售鱼回执无法读取；没有覆盖原存档');
     if (raw.sarFamiliarity !== undefined) validateFamiliarity(raw.sarFamiliarity);
+    if ([...raw.listings, ...raw.requests].some(p =>
+        (p.npcPersona !== undefined && !validMarketPersona(p.npcPersona))
+        || (p.encounter !== undefined && (!validMarketEncounter(p.encounter) || !validMarketPersona(p.npcPersona)))
+        || (p.encounterResult !== undefined && (!p.encounter || !validMarketEncounterResult(p.encounterResult)))))
+        throw new Error('路人事件存档异常，请先备份；没有覆盖原存档');
     return migrateFishingCollection({ ...raw, ...(raw.dinosaurGarden ? {dinosaurGarden:readDinosaurGarden(raw.dinosaurGarden)} : {}), research: raw.research || {}, discovered: raw.discovered || [],
         listings: raw.listings.map(p => ({ ...p, comments: p.comments || [] })),
         requests: raw.requests.map(p => ({ ...p, comments: p.comments || [], kind: p.kind || (p.speciesId ? 'item' : 'favor') })),
@@ -284,16 +293,17 @@ const transfer = (state: FishingMarketState, from: string, to: string, amount: n
     if (state.accounts[from] < amount) throw new Error('付款方余额不足');
     return { ...state.accounts, [from]: state.accounts[from] - amount, [to]: creditSARWallet(state.accounts[to], amount) };
 };
-export const buyListing = (state: FishingMarketState, id: string, buyer: MarketActor, now = Date.now()): FishingMarketState => {
+export const buyListing = (state: FishingMarketState, id: string, buyer: MarketActor, now = Date.now(), reaction = ''): FishingMarketState => {
     const p = state.listings.find(p => p.id === id && p.status === 'open' && p.expiresAt > now);
     if (!p) throw new Error('这张挂单已失效或已成交');
     if (p.catchId && !state.inventory.some(c => c.id === p.catchId && c.ownerId === p.sellerId)) throw new Error('卖家已没有这件东西');
     const accounts = transfer(state, buyer.id, p.sellerId, p.price);
+    const encounterResult = p.encounter ? realizeMarketEncounter(p.encounter, buyer, reaction) : undefined;
     const acquired = p.catchId ? state.inventory.find(c => c.id === p.catchId) : undefined;
     state = acquired ? recordFishingAcquisition(state, buyer, acquired.speciesId, 'purchase_' + p.id, now) : state;
     return logMarketEvent({ ...state, accounts, inventory: state.inventory.map(c => c.id === p.catchId ? { ...c, ownerId: buyer.id, ownerName: buyer.name, displayed: false } : c),
-        listings: state.listings.map(l => l.id === id ? { ...l, status: 'sold', buyerId: buyer.id, buyerName: buyer.name, closedAt: now } : l),
-    }, buyer.name + '向' + (p.alias || p.sellerName) + '支付 ' + p.price + ' 鳞币，买下「' + p.itemLabel + '」' + (p.catchId ? '；道具已转移。' : '（玩笑商品，仅文字约定）。'),
+        listings: state.listings.map(l => l.id === id ? { ...l, status: 'sold', buyerId: buyer.id, buyerName: buyer.name, closedAt: now, ...(encounterResult ? { encounterResult } : {}) } : l),
+    }, buyer.name + '向' + (p.alias || p.sellerName) + '支付 ' + p.price + ' 鳞币，买下「' + p.itemLabel + '」' + (p.catchId ? '；道具已转移。' : encounterResult ? '。' : '（玩笑商品，仅文字约定）。') + (encounterResult ? '\n' + marketEncounterText(encounterResult) : ''),
     [buyer.id, p.sellerId], p.note ? [{ name: p.alias || p.sellerName, content: p.note }] : undefined, now);
 };
 export const createRequest = (state: FishingMarketState, actor: MarketActor, speciesId: string | undefined, itemLabel: string, offer: number, body: string, now = Date.now(), kind: MarketRequest['kind'] = speciesId ? 'item' : 'favor', alias = ''): FishingMarketState => {
@@ -320,7 +330,7 @@ export const commentOnPost = (state: FishingMarketState, id: string, actor: Mark
         (c.alias || actor.name) + '在「' + p.itemLabel + '」下回复了。仅为发言，没有发生交易。',
         [actor.id, 'sellerId' in p ? p.sellerId : p.authorId], [{ name: c.alias || actor.name, content: c.content }], now);
 };
-export const fulfillRequest = (state: FishingMarketState, id: string, actor: MarketActor, submission = '', now = Date.now(), catchId = ''): FishingMarketState => {
+export const fulfillRequest = (state: FishingMarketState, id: string, actor: MarketActor, submission = '', now = Date.now(), catchId = '', reaction = ''): FishingMarketState => {
     const p = state.requests.find(p => p.id === id && p.status === 'open' && p.expiresAt > now);
     if (!p) throw new Error('需求已失效或已完成'); if (p.authorId === actor.id) throw new Error('不能响应自己的需求');
     const eligible = p.kind === 'item' ? availableCatches(state, actor.id, now).filter(c => c.speciesId === p.speciesId) : [];
@@ -328,14 +338,15 @@ export const fulfillRequest = (state: FishingMarketState, id: string, actor: Mar
     const c = catchId ? eligible.find(c => c.id === catchId) : eligible[0];
     if (p.kind === 'item' && catchId && !c) throw new Error('选中的藏品已不可交付，请重新选择；没有用其他藏品替代');
     if (p.kind === 'item' && !c) throw new Error('手里没有对方要的东西');
-    if (p.kind === 'favor' && !txt(submission)) throw new Error('写下你交付的内容');
+    if (p.kind === 'favor' && !p.encounter && !txt(submission)) throw new Error('写下你交付的内容');
     const accounts = p.kind === 'tip' ? transfer(state, actor.id, p.authorId, p.offer) : transfer(state, p.authorId, actor.id, p.offer);
+    const encounterResult = p.encounter ? realizeMarketEncounter(p.encounter, actor, reaction) : undefined;
     if (c) state = recordFishingAcquisition(state, { id: p.authorId, name: p.authorName }, c.speciesId, 'fulfillment_' + p.id, now);
     return logMarketEvent({ ...state, accounts, inventory: state.inventory.map(item => item.id === c?.id ? { ...item, ownerId: p.authorId, ownerName: p.authorName, displayed: false } : item),
         requests: state.requests.map(item => item.id === id ? { ...item, status: 'fulfilled', fulfillerId: actor.id, fulfillerName: actor.name, submission: txt(submission), closedAt: now,
-            ...(c ? { fulfilledCatch: marketCatchSnapshot(state, c) } : {}) } : item),
+            ...(c ? { fulfilledCatch: marketCatchSnapshot(state, c) } : {}), ...(encounterResult ? { encounterResult } : {}) } : item),
     }, p.kind === 'tip' ? actor.name + '真的给' + (p.alias || p.authorName) + '打赏了 ' + p.offer + ' 鳞币。'
-        : actor.name + '完成' + (p.alias || p.authorName) + '的「' + p.itemLabel + '」需求，收到 ' + p.offer + ' 鳞币。' + (c ? '藏品已交付。' : '仅交付文字约定，不创建实体道具。'),
+        : actor.name + '完成' + (p.alias || p.authorName) + '的「' + p.itemLabel + '」需求，收到 ' + p.offer + ' 鳞币。' + (c ? '藏品已交付。' : encounterResult ? '\n' + marketEncounterText(encounterResult) : '仅交付文字约定，不创建实体道具。'),
     [actor.id, p.authorId], [...(p.body ? [{ name: p.alias || p.authorName, content: p.body }] : []), ...(txt(submission) ? [{ name: actor.name, content: txt(submission) }] : [])], now);
 };
 export const removeMarketPost = (state: FishingMarketState, id: string, actorId: string, now = Date.now()): FishingMarketState => {
@@ -376,6 +387,32 @@ export const hatchEgg = (state: FishingMarketState, actor: MarketActor, id: stri
     return logMarketEvent({ ...state, inventory: state.inventory.map(c => c.id === id ? { ...c, speciesId: f.id, incubatingUntil: undefined, studied: false, displayed: false } : c),
         discovered: [...new Set([...state.discovered, f.id])] }, actor.name + '的恐龙蛋孵出了' + f.name + '，可陈列、观察或交易。', [actor.id], undefined, now);
 };
+/** One atomic warehouse sale: any invalid fish or quota overflow rejects the whole batch. */
+export function sellFishBatchToAiven(state: FishingMarketState, actor: MarketActor, catchIds: string[], at = Date.now(), words = ''): FishingMarketState {
+    if (!catchIds.length || new Set(catchIds).size !== catchIds.length) throw new Error('请选择不重复的鱼获');
+    const current = ensureMarketDay(state, at);
+    const catches = catchIds.map(id => requireCatch(current, actor, id, at));
+    if (catches.some(c => speciesById(c.speciesId)?.category !== 'fish')) throw new Error('艾文这里只收鱼，橡皮泥恐龙可以收藏或挂板转让');
+    const total = catches.reduce((sum, c) => sum + catchValue(current, c), 0);
+    const remaining = remainingSARBuyback(current.buybackBudgets, actor.id, at);
+    if (total > remaining) throw new Error(`今日回收额度还剩 ${remaining} 鳞币，这批鱼需要 ${total}；可以减少数量或挂板转让`);
+    const balance = creditSARWallet(current.accounts[actor.id] ?? 0, total);
+    const day = sarEconomyDay(at), previousDay = current.buybackBudgets?.[actor.id]?.day;
+    const ids = new Set(catchIds);
+    const names = catches.map(c => speciesById(c.speciesId)!.name);
+    const sale = { amount: total, at, replyIndex: marketHash(`${catchIds.join(':')}:${at}`) % AIVEN_FISH_SALE_REPLIES.length };
+    const reply = AIVEN_FISH_SALE_REPLIES[sale.replyIndex];
+    const next = { ...current, inventory: current.inventory.filter(c => !ids.has(c.id)),
+        accounts: { ...current.accounts, [actor.id]: balance },
+        buybackBudgets: { ...current.buybackBudgets, [actor.id]: { day: previousDay && previousDay > day ? previousDay : day, earned: SAR_DAILY_BUYBACK - remaining + total } } };
+    // A single summary receipt includes every sold fish, including old settled fishing trips.
+    const result = logMarketEvent(next,
+        `${actor.name}把仓库里的 ${catchIds.length} 条鱼（${names.join('、')}）${sarNpcContentEnabled() ? '卖给艾文' : '交给回收站'}，按当日行情与品质合计获得 ${total} 鳞币。图鉴记录保留。`,
+        [actor.id], sarNpcContentEnabled() ? [...(words.trim() ? [{ name: actor.name, content: words.trim().slice(0, 600) }] : []), { name: '艾文', content: reply.text }] : [], at);
+    result.ledger[result.ledger.length - 1].aivenSale = sale;
+    return result;
+}
+
 export function sellFishToAiven(state: FishingMarketState, actor: MarketActor, catchId: string, at = Date.now(), words = ''): { state: FishingMarketState; sale: AivenFishSale } {
     const current = ensureMarketDay(state, at);
     const caught = requireCatch(current, actor, catchId, at);
