@@ -1501,17 +1501,21 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
         userProfile: UserProfile,
         emojis: Emoji[],
         processedExcludeIds?: Set<number>,
-        options?: { useVisionDescriptions?: boolean; skipTimeGap?: boolean },
+        options?: { useVisionDescriptions?: boolean; skipTimeGap?: boolean; contextHighWaterMark?: number },
     ) => {
         // Filter Logic
         // 新版上下文范围由 chatContextRange 先按「自适应/拉杆最大范围」取窗；
         // 范围边界改由全 App 统一的 selectCharacterContextMessages 决定（合上游）。
+        // 上游新增的 contextHighWaterMark：让「只提供内存快照」的入口也能带上自己的水位，
+        // 不传就用该角色当前的水位（函数默认值），行为与以前一致。
+        //
         // 但「只给用户看的系统提示」(UiNoticeMeta) 是本 fork 独有的，上游没有这个概念，
         // 必须继续挡在 API 历史之外 —— 让角色读到「系统说我对你改观了」比让 ta 直接演还糟。
         // 先滤再算范围：别让这些提示占掉可用的上下文条数。
         let effectiveHistory = selectCharacterContextMessages(
             messages.filter(m => !(m.metadata as any)?.uiNotice),
             char,
+            options?.contextHighWaterMark,
         );
         // Memory Palace: 过滤已被记忆宫殿处理过的消息（由向量记忆替代，节省 token）
         if (processedExcludeIds && processedExcludeIds.size > 0) {

@@ -33,6 +33,7 @@ import { toolCallFingerprint } from '../utils/agenticToolFeedback';
 import { buildChatRequestPayload } from '../utils/chatRequestPayload';
 import { acquireChatReply, isChatReplyActive, subscribeChatReplies } from '../utils/chatReplyLock';
 import { withChatContinuation } from '../utils/chatContinuation';
+import { assertChatHasDialogue } from '../utils/chatRequestGuard';
 import {
     isInstantConfigReady,
     sendInstantPushAndAwaitReply,
@@ -1017,7 +1018,13 @@ export const useChatAI = ({
             }
             const fullHistory = contextRange?.messages || null;
             const contextMsgs = fullHistory || currentMsgs;
-            const limit = Math.max(1, fullHistory ? fullHistory.length : (char.contextLimit || 500));
+            // 空范围先报可操作的本地错误，避免继续识图/召回和发送 system-only 请求。
+            // 原始消息可能是无文字图片或卡片，此处只判角色；正文有效性在格式化后校验。
+            assertChatHasDialogue(contextMsgs.map(message => ({
+                role: message.role,
+                content: 'pending-format',
+            })));
+            const limit = Math.max(1, contextMsgs.length);
             if (fullHistory) {
                 console.log(`📊 [Context] Loaded ${fullHistory.length} msgs from DB (React state had ${currentMsgs.length}, mode=${contextRange?.mode}, maxStart=${contextRange?.maxRangeStartMessageId ?? 'none'}, effectiveStart=${contextRange?.effectiveStartMessageId ?? 'none'})`);
             }
@@ -1148,6 +1155,7 @@ export const useChatAI = ({
                 scheduleContext: scheduleContextForTurn,
                 busyReplyDecision: busyDecisionForTurn,
                 contextLimit: limit,
+                contextHighWaterMark: contextRange?.hwm,
                 realtimeConfig,
                 innerState: skipEmotionInjection ? undefined : (evolvedNarrative || undefined),
                 userListeningContext: (() => {
@@ -1218,6 +1226,8 @@ export const useChatAI = ({
             }
             const systemPrompt = payload.systemPrompt;
             const cleanedApiMessages = payload.cleanedApiMessages;
+            // 在续说补丁和本地/IP/即时对话分流前检查最终历史，不能用补出来的 user 掩盖空上下文。
+            assertChatHasDialogue(payload.fullMessages);
             const fullMessages = payload.flags.promptBuildSkipped
                 ? payload.fullMessages
                 : withChatContinuation(payload.fullMessages, userProfile.name);
