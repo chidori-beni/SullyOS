@@ -17,6 +17,7 @@ import { ROOM_CONFIGS, getRoomLabel } from './types';
 import { MemoryNodeDB, EventBoxDB } from './db';
 import { recordRecallReceipt } from './recallReceipts';
 import { formatMemoryDateWithDistance } from './memoryDate';
+import { memoryContentWithDates } from './relativeTime';
 
 const DEFAULT_MAX_OUTPUT_ITEMS = 15;
 const MAX_LIVE_NODES_PER_BOX = 8; // 单盒最多展开多少条活节点（防止超大盒污染）
@@ -208,7 +209,7 @@ export async function expandAndFormat(
         output += `（这些是你这几天一直记着的事。记着不等于要一直说——话赶到那儿了顺口提一句就够了，没赶到就让它待在心里；同一件事不必每次聊天都追问进展，也不必替 ta 安排什么时候去做。）\n`;
         for (const node of pinnedNodes) {
             const daysLeft = Math.ceil((node.pinnedUntil! - now) / (24 * 60 * 60 * 1000));
-            output += `- [${formatMemoryDateWithDistance(node.createdAt, now)}] ${node.content}（剩余 ${daysLeft} 天）\n`;
+            output += `- [${formatMemoryDateWithDistance(node.createdAt, now)}] ${memoryContentWithDates(node)}（剩余 ${daysLeft} 天）\n`;
         }
         output += `\n`;
         console.log(`📌 [MemoryPalace] 便利贴置顶 ${pinnedNodes.length} 条`);
@@ -255,7 +256,7 @@ export async function expandAndFormat(
 function buildStandaloneItem(r: ScoredMemory, now: number): RenderItem {
     const node = r.node;
     const date = formatMemoryDateWithDistance(node.createdAt, now);
-    const body = `(${date}, 重要性: ${node.importance})\n${node.content}`;
+    const body = `(${date}, 重要性: ${node.importance})\n${memoryContentWithDates(node)}`;
     return {
         guaranteed: r.recallGuarantee === 'explicit_entity',
         score: r.finalScore,
@@ -317,7 +318,7 @@ async function buildBoxItem(
         body += summary ? `_新增片段_：\n` : '';
         for (const n of liveToShow) {
             const d = formatMemoryDateWithDistance(n.createdAt, now);
-            body += `- [${d}] ${n.content}\n`;
+            body += `- [${d}] ${memoryContentWithDates(n)}\n`;
         }
         if (omitted > 0) body += `（另有 ${omitted} 条同盒活节点未展示）\n`;
     }

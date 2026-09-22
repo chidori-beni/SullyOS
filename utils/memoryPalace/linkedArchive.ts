@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react';
 import type { MemoryFragment } from '../../types';
 import { MemoryNodeDB } from './db';
 import { MEMORY_NODES_CHANGED } from './nodeChanges';
+import { memoryContentWithDates } from './relativeTime';
 
 /** Resolve explicit new links only. Never infer links for historical or imported archives. */
-export async function resolveLinkedArchives(charId: string, memories: MemoryFragment[]): Promise<MemoryFragment[]> {
+export async function resolveLinkedArchives(charId: string, memories: MemoryFragment[], readableExport = false): Promise<MemoryFragment[]> {
     return Promise.all(memories.map(async memory => {
         if (!memory.palaceMemoryId) return memory;
         const node = await MemoryNodeDB.getById(memory.palaceMemoryId);
-        return node?.charId === charId ? { ...memory, summary: node.content } : memory;
+        return node?.charId === charId ? { ...memory, summary: readableExport ? memoryContentWithDates(node) : node.content } : memory;
     }));
 }
 

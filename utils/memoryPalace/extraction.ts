@@ -12,6 +12,8 @@ import { safeFetchJson } from '../safeApi';
 import { safeParseJsonArray } from './jsonUtils';
 import { buildSARMemoryBoundaryInstruction, formatMessageForPrompt } from '../messageFormat';
 import { readRecallRuntimeSnapshot } from './trace';
+import { hasRelativeTime, hasMatchingRelativeSource, relativeTimeEnabled } from './relativeTime';
+import { getLocalDateKey } from '../localDate';
 
 function generateId(): string {
     return `mn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -80,14 +82,17 @@ function buildRulesBlock(charName: string, userLabel: string, includeEntities: b
 **日期标注（date，必填）**：每条消息前缀都带了 \`[YYYY-MM-DD HH:MM]\` 时间戳。每条记忆必须根据**该事件实际发生的那一天**填 date 字段（"YYYY-MM-DD"），而不是套用整批的某一天。同一批对话跨多天时，跨日的记忆要分别标各自的日期。`;
 }
 
-function buildConversationText(messages: Message[], charName: string, userLabel: string): string {
+function buildConversationText(messages: Message[], charName: string, userLabel: string, linkDates = false): string {
     // 每行带 [YYYY-MM-DD HH:MM] 时间戳前缀。
     // 没有这个 LLM 完全看不到日期，多日 batch 提取出来的记忆全部会被压到一个时间点
     // （见 parseMemoryNodesFromBuffer 的 midTime 兜底），跨日时间线就乱了。
     const pad2 = (n: number) => String(n).padStart(2, '0');
     return messages
-        .map(m => {
-            const body = formatMessageForPrompt(m, charName, userLabel).slice(0, 600);
+        .map((m, index) => {
+            const body = (linkDates ? `[M${index}] ` : '') + formatMessageForPrompt(m, charName, userLabel).slice(0, 600);
+            // ⚠️ 这里必须是 messageTimelineTimestamp，不是上游的 m.timestamp ——
+            // 见面产生的消息要用**剧情里的钟**（metadata.sceneClockAt），
+            // 用现实时间会让「昨天/上周」这类相对日期标注全部错位。上游没有这个概念。
             const ts = messageTimelineTimestamp(m);
             if (!ts || ts <= 0) return body;
             const d = new Date(ts);
@@ -104,7 +109,7 @@ const VALID_ROOMS: MemoryRoom[] = [
 
 /** 从消息缓冲区直接解析记忆节点（不依赖 TopicBox） */
 function parseMemoryNodesFromBuffer(
-    parsed: any[], charId: string, messages: Message[], _batchLabel: string, includeEntities: boolean,
+    parsed: any[], charId: string, messages: Message[], _batchLabel: string, includeEntities: boolean, linkDates = false,
 ): MemoryNode[] {
     if (parsed.length === 0) return [];
 
@@ -193,6 +198,17 @@ function parseMemoryNodesFromBuffer(
                 origin: 'extraction',
             };
             if (includeEntities) memory.entities = parseEntities(item.entities);
+            // No anchor guesses from event dates or the extraction batch. Only a valid original message reference.
+            if (linkDates && relativeTimeEnabled() && hasRelativeTime(memory.content)
+                && typeof item.relativeTimeSource === 'string' && /^M\d+$/.test(item.relativeTimeSource)) {
+                const source = messages[Number(item.relativeTimeSource.slice(1))];
+                if (source && Number.isFinite(source.timestamp) && source.timestamp > 0
+                    && hasMatchingRelativeSource(memory.content, formatMessageForPrompt(source, '', '').slice(0, 600))) {
+                    memory.relativeTimeAnchor = {
+                        dateKey: getLocalDateKey(new Date(source.timestamp)), source: 'message', messageId: source.id,
+                    };
+                }
+            }
             return memory;
         });
 }
@@ -400,8 +416,9 @@ export async function extractMemoriesFromBuffer(
     if (messages.length === 0) return { memories: [], crossTimeLinks: [], eventBoxHints: [], unpinIds: [], corrections: [] };
 
     const includeEntities = readRecallRuntimeSnapshot().featureFlagsSnapshot.recallRouter;
+    const linkDates = relativeTimeEnabled();
     const userLabel = userName || '用户';
-    const conversationText = buildConversationText(messages, charName, userLabel);
+    const conversationText = buildConversationText(messages, charName, userLabel, linkDates);
     const sarMemoryBoundary = buildSARMemoryBoundaryInstruction(conversationText);
 
     const contextBlock = charContext
@@ -430,7 +447,10 @@ export async function extractMemoriesFromBuffer(
 
     const systemPrompt = `你是 ${charName}。根据给定的对话内容，以你的第一人称视角（"我"）提取值得记住的记忆。${contextBlock}${relatedBlock}${pinnedBlock}
 
-${buildRulesBlock(charName, userLabel, includeEntities)}${relatedToRule}${unpinRule}${sarMemoryBoundary ? `\n\n${sarMemoryBoundary}` : ''}
+${buildRulesBlock(charName, userLabel, includeEntities)}${relatedToRule}${unpinRule}${sarMemoryBoundary ? `\n\n${sarMemoryBoundary}` : ''}${linkDates ? `
+
+## 相对时间来源
+content 保留原消息的相对时间措辞，不要自行添加日期括号。含“昨天、前天、几天前、上周、上个月、去年”等措辞时，额外输出 relativeTimeSource 字段，值为说出该措辞的原消息编号（例如 "M0"）。系统将以该消息的发送日补注，不使用 date 事件日。不同说话日期的相对时间应拆成不同记忆。没有可靠来源、跨时区语义不明或无法使用同一个参照日时，省略该字段，禁止猜测。` : ''}
 
 ## 输出格式
 
@@ -496,7 +516,7 @@ pinDays 仅在需要置顶时才写，大多数记忆不需要。
         const fmt = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}`;
         const batchLabel = fmt(d1) === fmt(d2) ? fmt(d1) : `${fmt(d1)}-${fmt(d2)}`;
 
-        const memories = parseMemoryNodesFromBuffer(parsed, charId, messages, batchLabel, includeEntities);
+        const memories = parseMemoryNodesFromBuffer(parsed, charId, messages, batchLabel, includeEntities, linkDates);
 
         // 解析跨时间关联（→ EventBox 绑定信号）+ eventName/eventTags 提示
         const { crossTimeLinks, eventBoxHints } = parseRelatedToAndHints(
