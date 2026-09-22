@@ -803,6 +803,10 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                      </div>
                      
                      {/* 记忆宫殿：一键向量化所有聊天记录 */}
+                     {/* 上游新增的提醒：别让人以为这些手动工具是必点的。 */}
+                     {isMemoryPalaceEnabled && <p className="mt-3 rounded-xl bg-violet-50 p-3 text-xs leading-relaxed text-violet-700">
+                         全自动记忆用户大部分时候无需操作下方的一键向量化等手动工具。日常聊天会按条件自动整理；这些不是常规必点按钮，仅在明确了解用途与影响时使用。查看和修改记忆可前往「神经链接」中的角色记忆页。
+                     </p>}
                      {isMemoryPalaceEnabled && onForceVectorize && (
                          <div className="pt-2 border-t border-slate-100">
                              <button

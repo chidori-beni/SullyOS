@@ -1,7 +1,11 @@
 import ChatHistoryCleanupModal from '../components/chat/ChatHistoryCleanupModal';
+import { DB } from '../utils/db';
+import { askLinkedArchiveDeletion, deleteNodeAndLinkedArchive } from '../utils/memoryPalace/linkedArchiveDeletion';
 import { markAmsgStateDirty } from '../utils/amsgStateSync';
 import { loadRangeMessagePage, formatRangeTimestamp } from '../utils/memoryPalace/rangeMessagePage';
 import React, { useState, useEffect, useCallback, useDeferredValue, useMemo } from 'react';
+import { MainApiMemoryChoice, SkipVectorMemoryChoice } from '../components/MemoryGuideActions';
+import { useFirstUseGuideStep, GUIDE_SULLY_ID } from '../utils/firstUseGuide';
 import { useOS } from '../context/OSContext';
 import {
     MemoryRoom, MemoryNode, ROOM_CONFIGS, ROOM_LABELS, getRoomLabel,
@@ -654,11 +658,21 @@ const MemoryWaterlineEditor: React.FC<{
 // ─── 主组件 ───────────────────────────────────────────
 
 export default function MemoryPalaceApp() {
+    const guideStep = useFirstUseGuideStep();
     const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, updateRemoteVectorConfig, addToast, apiConfig, characterGroups, groups, realtimeConfig } = useOS();
     const char = characters.find(c => c.id === activeCharacterId);
     const [selectGroupId, setSelectGroupId] = useState(GROUP_FILTER_ALL); // 选角色页的分组筛选
 
-    const [view, setView] = useState<'picker' | 'palace' | 'room' | 'memory' | 'settings' | 'globalSettings' | 'all' | 'boxes'>('picker');
+    const [view, setView] = useState<'picker' | 'palace' | 'room' | 'memory' | 'settings' | 'globalSettings' | 'all' | 'boxes'>(() => guideStep === 1 ? 'globalSettings' : 'picker');
+    useEffect(() => {
+        const reveal = () => {
+            if (guideStep === 1) setView('globalSettings');
+            if (guideStep === 2) setView('picker');
+        };
+        reveal();
+        window.addEventListener('sully:guide-navigate', reveal);
+        return () => window.removeEventListener('sully:guide-navigate', reveal);
+    }, [guideStep]);
     const [selectedRoom, setSelectedRoom] = useState<MemoryRoom | null>(null);
     const [selectedNode, setSelectedNode] = useState<MemoryNode | null>(null);
     const [roomCounts, setRoomCounts] = useState<Record<MemoryRoom, number>>({} as any);
@@ -1983,6 +1997,12 @@ export default function MemoryPalaceApp() {
 
     /** 彻底删除一条记忆（node + vector + links + EventBox 成员引用 + 远程同步） */
     const deleteMemory = async (nodeId: string) => {
+        const node = await MemoryNodeDB.getById(nodeId);
+        if (!node) return true;
+        const character = await DB.getCharacter(node.charId);
+        const hasBackup = character?.memories?.some(memory => memory.palaceMemoryId === nodeId);
+        const choice = hasBackup ? await askLinkedArchiveDeletion() : undefined;
+        if (choice === null) return false;
         // 先从 EventBox 中移除（若属于某盒）
         try { await removeMemoryFromBox(nodeId); } catch { /* ignore */ }
         // 删关联
@@ -2000,7 +2020,8 @@ export default function MemoryPalaceApp() {
             );
         }
         // 删节点
-        await MemoryNodeDB.delete(nodeId);
+        await deleteNodeAndLinkedArchive(node, choice);
+        return true;
     };
 
     /** 批量删除选中的记忆 */
@@ -2009,7 +2030,7 @@ export default function MemoryPalaceApp() {
         setDeleting(true);
         try {
             for (const id of selectedIds) {
-                await deleteMemory(id);
+                if (!await deleteMemory(id)) break;
             }
             // 刷新房间数据
             if (selectedRoom) {
@@ -2020,6 +2041,8 @@ export default function MemoryPalaceApp() {
             setSelectedIds(new Set());
             setSelectMode(false);
             loadStats();
+        } catch (error) {
+            addToast(error instanceof Error ? error.message : '删除失败，请重试', 'error');
         } finally {
             setDeleting(false);
         }
@@ -2029,7 +2052,7 @@ export default function MemoryPalaceApp() {
     const handleDeleteSingle = async (nodeId: string) => {
         setDeleting(true);
         try {
-            await deleteMemory(nodeId);
+            if (!await deleteMemory(nodeId)) return;
             setSelectedNode(null);
             setView(prevView);
             if (prevView === 'room' && selectedRoom && char) {
@@ -2047,6 +2070,8 @@ export default function MemoryPalaceApp() {
                 setExpandedBoxId(null);
             }
             loadStats();
+        } catch (error) {
+            addToast(error instanceof Error ? error.message : '删除失败，请重试', 'error');
         } finally {
             setDeleting(false);
         }
@@ -2256,7 +2281,7 @@ export default function MemoryPalaceApp() {
             const allNodes = await MemoryNodeDB.getByCharId(char.id);
             const migrated = allNodes.filter(n => n.boxId?.startsWith('migrated_'));
             for (const node of migrated) {
-                await deleteMemory(node.id);
+                if (!await deleteMemory(node.id)) break;
             }
             setMigrationResult(`已清除 ${migrated.length} 条迁移数据`);
             loadStats();
@@ -2535,7 +2560,7 @@ export default function MemoryPalaceApp() {
                                         <div style={{ height: 1, background: 'linear-gradient(90deg, transparent, #ede9fe, transparent)' }} />
 
                                         {/* 开关区 */}
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                        <div data-guide={c.id === GUIDE_SULLY_ID ? 'sully-memory' : undefined} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                                             {/* 记忆宫殿开关 */}
                                             <div
                                                 style={{
@@ -3065,10 +3090,12 @@ export default function MemoryPalaceApp() {
 
     if (view === 'settings' || view === 'globalSettings') {
         const isGlobal = view === 'globalSettings';
+        const guideSetup = isGlobal && guideStep === 1;
         const backTarget: 'palace' | 'picker' = isGlobal ? 'picker' : 'palace';
         const backLabel = isGlobal ? '← 返回选择角色' : '← 返回宫殿';
         return (
-            <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
+            <div data-guide={guideSetup ? 'memory-apis' : undefined} style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: guideSetup ? 16 : SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
+                {!guideSetup && <>
                 <div
                     onClick={() => setView(backTarget)}
                     style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer', marginBottom: 16 }}
@@ -3088,10 +3115,11 @@ export default function MemoryPalaceApp() {
                     </div>
                 </div>
 
+                </>}
                 {/* 费用警告 */}
                 {isGlobal && (<>
 
-                <div style={{
+                {!guideSetup && <div style={{
                     padding: 14, borderRadius: 14, marginBottom: 16,
                     background: '#fef2f2', border: '2px solid #fca5a5',
                     fontSize: 12, color: '#991b1b', lineHeight: 1.7,
@@ -3106,7 +3134,7 @@ export default function MemoryPalaceApp() {
                     <span style={{ fontSize: 11, color: '#b91c1c' }}>
                         注：「导入旧记忆」是一次性大批量操作，调用次数会明显多于日常，单独见那里的提示。
                     </span>
-                </div>
+                </div>}
 
                 {/* 副 API 配置 */}
                 <div style={{ background: '#f0fdf4', borderRadius: 16, padding: 16, border: '1px solid #bbf7d0', marginBottom: 16 }}>
@@ -3118,7 +3146,8 @@ export default function MemoryPalaceApp() {
                         用于<b>记忆提取、关联分析、认知消化</b>等后台任务。此配置全局生效，所有角色共用。
                         <span style={{ color: '#9ca3af' }}>仅作用于记忆宫殿相关流程，不影响主聊天，也不影响情绪感知。</span>
                     </div>
-                    <div style={{
+                    <MainApiMemoryChoice />
+                    {!guideSetup && <div style={{
                         fontSize: 10, color: '#9a3412', background: '#fff7ed',
                         border: '1px solid #fed7aa', borderRadius: 8, padding: '6px 8px',
                         marginBottom: 12, lineHeight: 1.6,
@@ -3126,7 +3155,7 @@ export default function MemoryPalaceApp() {
                         下方<b>不填</b>（URL 留空）时，记忆宫殿会<b>自动回退用主 API</b> 跑后台处理。
                         想让后台任务走更便宜的账户 / 不想占主 API 额度，就在这里填一个便宜模型。
                         看不懂怎么选？直接挑一个<b>每百万 token 几毛钱</b>的模型即可，后台任务不需要推理能力。
-                    </div>
+                    </div>}
 
                     {/* API 预设快速填充 */}
                     {apiPresets.length > 0 && (
@@ -3244,7 +3273,7 @@ export default function MemoryPalaceApp() {
                         </div>
                     )}
 
-                    {!hasLightApi && (
+                    {!guideSetup && !hasLightApi && (
                         <div style={{ marginTop: 8, fontSize: 11, color: '#a16207', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5 }}>
                             <Icon name="warning" size={12} />
                             <span>副 API 未配置 — 后台处理会<b>回退使用主 API</b>（功能可用，但会占主 API 额度）</span>
@@ -3253,14 +3282,14 @@ export default function MemoryPalaceApp() {
                 </div>
 
                 {/* Embedding API */}
-                <div style={{ background: '#f8f7ff', borderRadius: 16, padding: 16, border: '1px solid #e9e5ff' }}>
+                <div data-guide="embedding" style={{ background: '#f8f7ff', borderRadius: 16, padding: 16, border: '1px solid #e9e5ff' }}>
                     <div style={{ fontSize: 12, fontWeight: 700, color: '#7c3aed', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
                         <Icon name="link" size={14} />
                         <span>Embedding API（OpenAI 兼容格式）</span>
                     </div>
                     <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 16, lineHeight: 1.6 }}>
-                        推荐使用硅基流动（SiliconFlow），注册即送免费额度。
-                        下方选择模型后只需填入 API Key 即可。
+                        新手可使用硅基流动（SiliconFlow），请先在网页版完成实名认证才能使用。
+                        下方选择向量模型并填入 API Key 后保存。熟悉 Embedding 的用户也可配置其他兼容向量模型；不要填聊天模型。
                         <br/>
                         <span style={{ color: '#a16207', fontWeight: 600 }}>
                             注意：Embedding 用的是 <code>/embeddings</code> 端点，和主 API 不通用，因此
@@ -3441,6 +3470,7 @@ export default function MemoryPalaceApp() {
                         )}
                     </button>
 
+                    <SkipVectorMemoryChoice />
                     {testResult && (
                         <div style={{
                             marginTop: 8, fontSize: 12, padding: '8px 12px', borderRadius: 8,
@@ -3452,6 +3482,7 @@ export default function MemoryPalaceApp() {
                     )}
                 </div>
 
+                {!guideSetup && <>
                 {/* Rerank API（可选 cross-encoder 二次排序） */}
                 <details style={{ marginTop: 16, background: '#f0f9ff', borderRadius: 16, padding: 16, border: '1px solid #bae6fd' }}>
                     <summary style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -3842,6 +3873,7 @@ create table if not exists memory_vectors (
                         </button>
                     )}
                 </details>
+                </>}
                 </>)}
 
                 {/* 人格风格 & 反刍倾向：由 LLM 自动推断，默认折叠 */}
@@ -4800,7 +4832,7 @@ create table if not exists memory_vectors (
                 </>)}
 
                 {/* 危险区：一键清空 */}
-                {isGlobal && (
+                {isGlobal && !guideSetup && (
                 <div style={{ marginTop: 16, background: '#fef2f2', borderRadius: 16, padding: 16, border: '2px solid #fca5a5' }}>
                     <div style={{ fontSize: 12, fontWeight: 800, color: '#991b1b', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
                         <Icon name="warning" size={14} />

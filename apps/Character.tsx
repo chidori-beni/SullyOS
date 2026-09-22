@@ -17,6 +17,10 @@ import { DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import ImpressionPanel from '../components/character/ImpressionPanel';
 import RoomPlatePanel from '../components/character/RoomPlatePanel';
 import MemoryArchivist from '../components/character/MemoryArchivist';
+import { resolveLinkedArchives, useLinkedArchives } from '../utils/memoryPalace/linkedArchive';
+import { updateStoredMemoryNode } from '../utils/memoryPalace/vectorStore';
+import { MemoryNodeDB } from '../utils/memoryPalace/db';
+import { applyLinkedArchiveDeletion, LINKED_ARCHIVE_DELETED, type LinkedArchiveDeletionDetail } from '../utils/memoryPalace/linkedArchiveDeletion';
 import ChibiStudio, { ChibiShelfPanel } from '../components/character/ChibiStudio';
 import { characterLaunch } from '../utils/characterLaunch';
 import { safeFetchJson, extractContent } from '../utils/safeApi';
@@ -76,6 +80,7 @@ const CharacterCard: React.FC<{
     onDelete: (e: React.MouseEvent) => void;
 }> = ({ char, active, onClick, onDelete }) => (
     <div
+        data-guide={char.id === 'preset-sully-v2' ? 'sully-card' : undefined}
         onClick={onClick}
         className={`relative px-4 py-3.5 rounded-3xl border bg-white transition-colors cursor-pointer group shrink-0 shadow-[0_2px_10px_rgba(140,120,200,0.07)] ${
             active ? 'border-violet-300' : 'border-slate-100 hover:border-violet-200'
@@ -138,6 +143,22 @@ const Character: React.FC = () => {
   /** 阶段 3.4：AI 正在生成送礼喜恶清单。 */
   const [genTaste, setGenTaste] = useState(false);
   const [imageGenCfg, setImageGenCfg] = useState<ImageGenConfig>(() => getImageGenConfig());
+  const memoryCharacter = characters.find(character => character.id === formData?.id) || formData;
+  const linkedMemoryEnabled = !!memoryCharacter?.memoryPalaceEnabled;
+  const archiveMemories = useLinkedArchives(formData?.id, formData?.memories, linkedMemoryEnabled);
+  const { memoryPalaceConfig, remoteVectorConfig } = useOS();
+  useEffect(() => {
+      const applyDeletion = (event: Event) => {
+          const detail = (event as CustomEvent<LinkedArchiveDeletionDetail>).detail;
+          if (!detail?.nodeId || !['delete', 'keep'].includes(detail.choice)) return;
+          setFormData(previous => previous?.id === detail.charId
+              ? { ...previous, memories: applyLinkedArchiveDeletion(previous.memories || [], detail.nodeId, detail.choice) }
+              : previous);
+      };
+      window.addEventListener(LINKED_ARCHIVE_DELETED, applyDeletion);
+      return () => window.removeEventListener(LINKED_ARCHIVE_DELETED, applyDeletion);
+  }, []);
+  const [expandedMountedBookIds, setExpandedMountedBookIds] = useState<Set<string>>(new Set());
   const [isCompressing, setIsCompressing] = useState(false);
   // 头像 URL 输入的 draft, 不逐字 commit 到 formData.avatar —— 否则每输入一个字符,
   // 所有引用 char.avatar 的 <img> 都会拿到不完整字符串当相对路径请求根目录,
@@ -834,7 +855,25 @@ const Character: React.FC = () => {
   };
 
   const handleDeleteMemories = (ids: string[]) => { if (!formData) return; handleChange('memories', (formData.memories || []).filter(m => !ids.includes(m.id))); addToast(`已删除 ${ids.length} 条记忆`, 'success'); };
-  const handleUpdateMemory = (id: string, newSummary: string) => { if (!formData) return; handleChange('memories', (formData.memories || []).map(m => m.id === id ? { ...m, summary: newSummary } : m)); addToast('记忆已更新', 'success'); };
+  const handleUpdateMemory = async (id: string, newSummary: string) => {
+      if (!formData) return;
+      const targetId = formData.id;
+      const memory = formData.memories?.find(item => item.id === id);
+      if (linkedMemoryEnabled && memory?.palaceMemoryId) {
+          const source = await MemoryNodeDB.getById(memory.palaceMemoryId);
+          if (!source || source.charId !== targetId) throw new Error('关联的宫殿记忆已不存在，档案文本仍保留；关闭宫殿后可按传统档案编辑');
+          await updateStoredMemoryNode(memory.palaceMemoryId, { content: newSummary }, memoryPalaceConfig.embedding, remoteVectorConfig);
+      }
+      // In traditional mode an edit becomes an independent archive; re-enabling must not undo it.
+      const update = (memories: MemoryFragment[]) => memories.map(item => item.id === id
+          ? { ...item, summary: newSummary, palaceMemoryId: linkedMemoryEnabled ? item.palaceMemoryId : undefined } : item);
+      if (editingIdRef.current === targetId) setFormData(previous => previous?.id === targetId ? { ...previous, memories: update(previous.memories || []) } : previous);
+      else {
+          const latest = (await DB.getAllCharacters()).find(character => character.id === targetId);
+          if (latest) updateCharacter(targetId, { memories: update(latest.memories || []) });
+      }
+      addToast('记忆已更新', 'success');
+  };
 
   /**
    * 按指定日期强制重新总结：读原始聊天记录（忽略 hideBeforeMessageId），LLM 总结，
@@ -925,7 +964,7 @@ const Character: React.FC = () => {
       addToast('核心记忆已删除', 'success');
   };
 
-  const handleExportPreview = () => { if (!formData) return; const mems = formData.memories as any[]; if (!mems || mems.length === 0) { addToast('暂无记忆数据可导出', 'info'); return; } const sortedMemories = [...mems].sort((a, b) => a.date.localeCompare(b.date)); let text = `【角色档案】\nName: ${formData.name}\nExported: ${new Date().toLocaleString()}\n\n`; if (formData.refinedMemories) { text += `=== 核心记忆 ===\n`; Object.entries(formData.refinedMemories).sort().forEach(([k, v]) => { text += `[${k}]: ${v}\n`; }); text += `\n=== 详细日志 ===\n`; } let currentYear = '', currentMonth = ''; sortedMemories.forEach(mem => { const match = mem.date.match(/(\d{4})[-/年](\d{1,2})/); if (match) { const y = match[1], m = match[2]; if (y !== currentYear) { text += `\n[ ${y}年 ]\n`; currentYear = y; currentMonth = ''; } if (m !== currentMonth) { text += `\n-- ${parseInt(m)}月 --\n\n`; currentMonth = m; } } text += `${mem.date} ${mem.mood ? `(#${mem.mood})` : ''}\n${mem.summary}\n\n--------------------------\n\n`; }); setExportText(text); setShowExportModal(true); navigator.clipboard.writeText(text).then(() => addToast('内容已自动复制到剪贴板', 'info')).catch(() => {}); };
+  const handleExportPreview = async () => { if (!formData) return; let mems: MemoryFragment[]; try { mems = linkedMemoryEnabled ? await resolveLinkedArchives(formData.id, formData.memories || []) : (formData.memories || []); } catch { addToast("读取关联记忆失败，请重试", "error"); return; } if (!mems || mems.length === 0) { addToast('暂无记忆数据可导出', 'info'); return; } const sortedMemories = [...mems].sort((a, b) => a.date.localeCompare(b.date)); let text = `【角色档案】\nName: ${formData.name}\nExported: ${new Date().toLocaleString()}\n\n`; if (formData.refinedMemories) { text += `=== 核心记忆 ===\n`; Object.entries(formData.refinedMemories).sort().forEach(([k, v]) => { text += `[${k}]: ${v}\n`; }); text += `\n=== 详细日志 ===\n`; } let currentYear = '', currentMonth = ''; sortedMemories.forEach(mem => { const match = mem.date.match(/(\d{4})[-/年](\d{1,2})/); if (match) { const y = match[1], m = match[2]; if (y !== currentYear) { text += `\n[ ${y}年 ]\n`; currentYear = y; currentMonth = ''; } if (m !== currentMonth) { text += `\n-- ${parseInt(m)}月 --\n\n`; currentMonth = m; } } text += `${mem.date} ${mem.mood ? `(#${mem.mood})` : ''}\n${mem.summary}\n\n--------------------------\n\n`; }); setExportText(text); setShowExportModal(true); navigator.clipboard.writeText(text).then(() => addToast('内容已自动复制到剪贴板', 'info')).catch(() => {}); };
   // 原来分「原生分享」「网页下载」两个按钮，现在统一走一个出口：
   // 原生壳拉系统分享，手机网页优先文件分享，桌面浏览器才落到下载。
   const handleExportMemoryFile = async () => {
@@ -1715,7 +1754,7 @@ ${isInitialGeneration ? `
                  <div className="flex flex-col px-5 pt-2 pb-2">
                    <div className="flex justify-between items-center mb-3">
                        <button onClick={handleBack} className="p-2 -ml-2 rounded-full hover:bg-white/60 flex items-center gap-1 text-slate-600"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg><span className="text-sm font-medium">列表</span></button>
-                       <button onClick={() => { setActiveCharacterId(formData.id); chatDetailLaunch.request({ charId: formData.id, clearUnread: true }); openApp(AppID.Chat); }} className="text-xs px-3 py-1.5 bg-primary text-white rounded-full font-bold shadow-sm shadow-primary/30 flex items-center gap-1 active:scale-95 transition-transform"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M3.105 2.288a.75.75 0 0 0-.826.95l1.414 4.926H16.5a.75.75 0 0 1 0 1.5H3.693l-1.414 4.926a.75.75 0 0 0 .826.95 28.897 28.897 0 0 0 15.293-7.155.75.75 0 0 0 0-1.114A28.897 28.897 0 0 0 3.105 2.288Z" /></svg>发消息</button>
+                       <button data-guide={formData.id === 'preset-sully-v2' ? 'sully-message' : undefined} onClick={() => { setActiveCharacterId(formData.id); chatDetailLaunch.request({ charId: formData.id, clearUnread: true }); openApp(AppID.Chat); }} className="text-xs px-3 py-1.5 bg-primary text-white rounded-full font-bold shadow-sm shadow-primary/30 flex items-center gap-1 active:scale-95 transition-transform"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M3.105 2.288a.75.75 0 0 0-.826.95l1.414 4.926H16.5a.75.75 0 0 1 0 1.5H3.693l-1.414 4.926a.75.75 0 0 0 .826.95 28.897 28.897 0 0 0 15.293-7.155.75.75 0 0 0 0-1.114A28.897 28.897 0 0 0 3.105 2.288Z" /></svg>发消息</button>
                    </div>
                    <div className="flex gap-6 text-sm font-medium text-slate-400 pl-1">
                        <button onClick={() => { setDetailTab('identity'); trackEvent('切换角色详情标签页', { tab: 'identity' }); }} className={`pb-2 transition-colors relative ${detailTab === 'identity' ? 'text-slate-800' : ''}`}>设定{detailTab === 'identity' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-full"></div>}</button>
@@ -2673,7 +2712,8 @@ ${isInitialGeneration ? `
                                <button onClick={handleExportPreview} className="px-4 py-2 bg-white rounded-full text-xs font-semibold text-slate-500 shadow-sm border border-slate-100">备份</button>
                            </div>
                            <MemoryArchivist
-                               memories={formData.memories || []}
+                               memories={archiveMemories}
+                               linkedMemoryEnabled={linkedMemoryEnabled}
                                refinedMemories={formData.refinedMemories || {}}
                                activeMemoryMonths={formData.activeMemoryMonths || []}
                                charName={formData.name || ''}

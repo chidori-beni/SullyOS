@@ -446,7 +446,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                     </div>
 
                     {showTrigger && !hideTrigger && (
-                        <button onClick={onTriggerAI} className={`sully-chat-trigger absolute right-0 bottom-2 p-2 ${actionButtonClass}`} title={triggerIcon === 'stop' ? '停止生成' : '触发 AI'}>
+                        <button data-guide="generate" onClick={onTriggerAI} className={`sully-chat-trigger absolute right-0 bottom-2 p-2 ${actionButtonClass}`} title={triggerIcon === 'stop' ? '停止生成' : '触发 AI'}>
                             {triggerIconNode}
                         </button>
                     )}
@@ -473,7 +473,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                         </button>
                     )}
                     {showTrigger && (
-                        <button onClick={onTriggerAI} className={`sully-chat-trigger p-2 ${extraAction ? '' : 'ml-auto'} ${actionButtonClass}`} title={triggerIcon === 'stop' ? '停止生成' : '触发 AI'}>
+                        <button data-guide="generate" onClick={onTriggerAI} className={`sully-chat-trigger p-2 ${extraAction ? '' : 'ml-auto'} ${actionButtonClass}`} title={triggerIcon === 'stop' ? '停止生成' : '触发 AI'}>
                             {triggerIconNode}
                         </button>
                     )}

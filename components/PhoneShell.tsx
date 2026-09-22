@@ -1,3 +1,5 @@
+import FirstUseGuide from './FirstUseGuide';
+import { useFirstUseGuideStep } from '../utils/firstUseGuide';
 import AnniversaryGiftPopup from './os/AnniversaryGiftPopup';
 import { shouldShowAnniversaryGift, markAnniversaryGiftSeen } from '../utils/anniversaryGifts';
 
@@ -651,9 +653,11 @@ const PhoneShell: React.FC = () => {
   // Ta-da 周年赠礼先于更新公告，等基础启动提示、开机动画与解锁完成。
   const [showAnniversaryGift, setShowAnniversaryGift] = useState(false);
   const anniversaryAsked = useRef(false);
-  const anniversaryBlocked = showDisclaimer || showImportRecoveryPrompt || showAuthorLetter;
+  const firstUseGuideActive = useFirstUseGuideStep() !== null;
+  const anniversaryBlocked = firstUseGuideActive || showDisclaimer || showImportRecoveryPrompt || showAuthorLetter;
   // 待展示也占住顺序，避免同一轮 effects 同时开启赠礼和更新公告。
-  const anniversaryHasPriority = showAnniversaryGift || (!anniversaryAsked.current && shouldShowAnniversaryGift());
+  // Complete setup before promotional/release popups; disclaimer/recovery still have priority.
+  const anniversaryHasPriority = firstUseGuideActive || showAnniversaryGift || (!anniversaryAsked.current && shouldShowAnniversaryGift());
   useEffect(() => {
     if (anniversaryAsked.current || anniversaryBlocked || !isDataLoaded || isLocked || (!bootDone && bootAnimationEnabled)) return;
     if (shouldShowAnniversaryGift()) {
@@ -1117,6 +1121,7 @@ const PhoneShell: React.FC = () => {
             : { bottom: 'var(--standalone-safe-area-bottom, 0px)' }
         }
       >
+          <FirstUseGuide />
           {/* App Container */}
           <div className="flex-1 relative overflow-hidden" style={{ contain: useIOSStandaloneLayout ? undefined : 'layout style paint' }}>
             <AppErrorBoundary onCloseApp={closeApp} resetKey={`${activeApp}:${activeCharacterId || 'none'}`}>

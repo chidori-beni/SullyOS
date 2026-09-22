@@ -13,7 +13,8 @@ interface MemoryArchivistProps {
     userName: string;
     onRefine: (year: string, month: string, summary: string, formattedPrompt?: string) => Promise<void>;
     onDeleteMemories: (ids: string[]) => void;
-    onUpdateMemory: (id: string, newSummary: string) => void;
+    onUpdateMemory: (id: string, newSummary: string) => void | Promise<void>;
+    linkedMemoryEnabled?: boolean;
     onToggleActiveMonth: (year: string, month: string) => void;
     onUpdateRefinedMemory: (year: string, month: string, newContent: string) => void;
     onDeleteRefinedMemory: (year: string, month: string) => void;
@@ -27,7 +28,7 @@ interface MemoryArchivistProps {
     forceArchiveDefaultPromptId?: string;
 }
 
-const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemories, activeMemoryMonths, charName, userName, onRefine, onDeleteMemories, onUpdateMemory, onToggleActiveMonth, onUpdateRefinedMemory, onDeleteRefinedMemory, onForceArchiveDate, forceArchiveTemplates, forceArchiveDefaultPromptId }) => {
+const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemories, activeMemoryMonths, charName, userName, onRefine, onDeleteMemories, onUpdateMemory, linkedMemoryEnabled, onToggleActiveMonth, onUpdateRefinedMemory, onDeleteRefinedMemory, onForceArchiveDate, forceArchiveTemplates, forceArchiveDefaultPromptId }) => {
     // 每个日期的"强制重总结"运行状态
     const [forcingDate, setForcingDate] = useState<string | null>(null);
     // 重总结前弹出模板选择器：把 date 存起来打开 modal
@@ -62,6 +63,16 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
     const [isManageMode, setIsManageMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [editMemory, setEditMemory] = useState<MemoryFragment | null>(null);
+    const [savingMemory, setSavingMemory] = useState(false);
+    const [memorySaveError, setMemorySaveError] = useState('');
+    useEffect(() => { setMemorySaveError(''); }, [editMemory?.id]);
+    const saveEditedMemory = async () => {
+        if (!editMemory || savingMemory) return;
+        setSavingMemory(true); setMemorySaveError('');
+        try { await onUpdateMemory(editMemory.id, editMemory.summary); setEditMemory(null); }
+        catch (error) { setMemorySaveError(error instanceof Error ? error.message : '保存失败，请重试'); }
+        finally { setSavingMemory(false); }
+    };
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [expandedMemoryIds, setExpandedMemoryIds] = useState<Set<string>>(new Set());
 
@@ -381,12 +392,13 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
             {viewState.level === 'year' && <><div className="mb-4 flex items-center gap-2"><button onClick={handleBack} className="p-1.5 bg-white rounded-full text-slate-400 hover:text-slate-600 shadow-sm"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M17 10a.75.75 0 0 1-.75.75H5.612l4.158 3.96a.75.75 0 1 1-1.04 1.08l-5.5-5.25a.75.75 0 0 1 0-1.08l5.5-5.25a.75.75 0 1 1 1.04 1.08L5.612 9.25H16.25A.75.75 0 0 1 17 10Z" clipRule="evenodd" /></svg></button><h3 className="text-sm font-medium text-slate-600">选择月份</h3></div>{renderMonths()}</>}
             {viewState.level === 'month' && <><div className="mb-4 flex items-center gap-2"><button onClick={handleBack} className="p-1.5 bg-white rounded-full text-slate-400 hover:text-slate-600 shadow-sm"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M17 10a.75.75 0 0 1-.75.75H5.612l4.158 3.96a.75.75 0 1 1-1.04 1.08l-5.5-5.25a.75.75 0 0 1 0-1.08l5.5-5.25a.75.75 0 1 1 1.04 1.08L5.612 9.25H16.25A.75.75 0 0 1 17 10Z" clipRule="evenodd" /></svg></button><h3 className="text-sm font-medium text-slate-600">本月记忆 (点击眼睛图标激活详细回忆)</h3></div>{renderMemories()}</>}
 
-            <Modal isOpen={!!editMemory} title="编辑记忆" onClose={() => setEditMemory(null)} footer={<button onClick={() => { if(editMemory) onUpdateMemory(editMemory.id, editMemory.summary); setEditMemory(null); }} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">保存修改</button>}>
-                {editMemory && <div className="space-y-3"><div className="text-xs text-slate-400">日期: {editMemory.date}</div><textarea value={editMemory.summary} onChange={e => setEditMemory({...editMemory, summary: e.target.value})} className="w-full h-40 bg-slate-100 rounded-xl p-3 text-sm resize-none focus:outline-primary"/></div>}
+            <Modal isOpen={!!editMemory} title="编辑记忆" onClose={() => { if (!savingMemory) setEditMemory(null); }} footer={<button disabled={savingMemory || !editMemory?.summary.trim()} onClick={() => void saveEditedMemory()} className="w-full py-3 bg-primary text-white font-bold rounded-2xl disabled:opacity-50">{savingMemory ? '保存中…' : '保存修改'}</button>}>
+                {editMemory && <div className="space-y-3"><div className="text-xs text-slate-400">日期: {editMemory.date}</div>{linkedMemoryEnabled && editMemory.palaceMemoryId && <p className="text-xs text-violet-600">此条关联记忆宫殿。修改正文会同步修改宫殿并更新向量，可能产生 Embedding API 费用。</p>}<textarea disabled={savingMemory} value={editMemory.summary} onChange={e => setEditMemory({...editMemory, summary: e.target.value})} className="w-full h-40 bg-slate-100 rounded-xl p-3 text-sm resize-none focus:outline-primary"/>{memorySaveError && <p role="alert" className="text-xs text-red-500">{memorySaveError}</p>}</div>}
             </Modal>
             
             <Modal isOpen={showDeleteConfirm} title="确认删除" onClose={() => setShowDeleteConfirm(false)} footer={<div className="flex gap-2 w-full"><button onClick={() => setShowDeleteConfirm(false)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl">取消</button><button onClick={performDelete} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl shadow-lg shadow-red-200">确认删除</button></div>}>
                 <p className="text-sm text-slate-600 text-center py-4">确定删除选中的 {selectedIds.size} 条记忆吗？<br/><span className="text-xs text-red-400 mt-1 block">此操作不可恢复。</span></p>
+                {memories.some(memory => selectedIds.has(memory.id) && memory.palaceMemoryId) && <p className="text-xs text-slate-500">这里只删除神经链接的档案记录，关联的宫殿记忆仍保留。</p>}
             </Modal>
 
             {/* Core Memory Edit Modal */}

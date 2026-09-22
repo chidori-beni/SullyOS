@@ -239,7 +239,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
                         </div>
                     </div>
 
-                    <button onClick={onTriggerAI} className="p-2 text-indigo-500 hover:bg-indigo-50 rounded-full ml-auto" title="触发AI">
+                    <button data-guide="generate" onClick={onTriggerAI} className="p-2 text-indigo-500 hover:bg-indigo-50 rounded-full ml-auto" title="触发AI">
                         <Lightning className="w-5 h-5" weight="bold" />
                     </button>
                 </div>

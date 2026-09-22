@@ -1,6 +1,7 @@
 
 import { getImageGenConfig, isImageGenReady } from '../utils/novelaiImage';
 import ImageGenSettings from '../components/settings/ImageGenSettings';
+import { useFirstUseGuideStep } from '../utils/firstUseGuide';
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { Capacitor } from '@capacitor/core';
@@ -141,7 +142,14 @@ const SettingsSection: React.FC<{
     sectionProps?: Record<string, any>;
     children: React.ReactNode;
 }> = ({ icon, title, badge, actions, sectionProps, children }) => {
-    const [open, setOpen] = useState(false);
+    const guideStep = useFirstUseGuideStep();
+    const [open, setOpen] = useState(() => title === 'API 配置' && guideStep === 0);
+    useEffect(() => {
+        const reveal = () => { if (title === 'API 配置' && guideStep === 0) setOpen(true); };
+        reveal();
+        window.addEventListener('sully:guide-navigate', reveal);
+        return () => window.removeEventListener('sully:guide-navigate', reveal);
+    }, [guideStep, title]);
     return (
         <section {...sectionProps} className="bg-[#fffefe] rounded-3xl p-5 shadow-[0_8px_24px_rgba(15,23,42,0.05)] border border-slate-200/80">
             <div className={`flex items-center justify-between gap-2 ${open ? 'mb-4' : ''}`}>
@@ -1951,6 +1959,7 @@ const Settings: React.FC = () => {
         {/* AI 连接设置区域 */}
         <SettingsSection
             title="API 配置"
+            sectionProps={{ 'data-guide': 'api' }}
             icon={
                 <div className="p-2 bg-emerald-100/50 rounded-xl text-emerald-600">
                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">

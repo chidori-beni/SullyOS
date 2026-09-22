@@ -200,8 +200,19 @@ async function loadMemoriesByDateRanges(
 export function buildAutoArchiveFragments(
     memories: { id: string; content: string; createdAt: number }[],
     hideBeforeMessageId: number,
+    linkToPalace = false,
 ): NonNullable<PipelineResult['autoArchive']> | null {
     if (memories.length === 0) return null;
+    if (linkToPalace) return {
+        hideBeforeMessageId,
+        fragments: memories.map(memory => ({
+            id: `mp_link_${memory.id}`,
+            date: getLocalDateKey(new Date(memory.createdAt)),
+            summary: memory.content,
+            mood: 'palace',
+            palaceMemoryId: memory.id,
+        })),
+    };
 
     const fmtDate = (ts: number): string => {
         const d = new Date(ts);
@@ -249,7 +260,7 @@ export function buildAutoArchiveFragments(
  */
 export function mergePalaceFragmentsIntoMemories(
     existing: import('../../types').MemoryFragment[],
-    incoming: { id: string; date: string; summary: string; mood: string }[],
+    incoming: { id: string; date: string; summary: string; mood: string; palaceMemoryId?: string }[],
 ): import('../../types').MemoryFragment[] {
     if (incoming.length === 0) return existing;
 
@@ -258,10 +269,15 @@ export function mergePalaceFragmentsIntoMemories(
     const result = existing.slice();
     for (let i = 0; i < result.length; i++) {
         const m = result[i];
-        if (m.mood === 'palace') palaceByDate.set(m.date, i);
+        if (m.mood === 'palace' && !m.palaceMemoryId) palaceByDate.set(m.date, i);
     }
 
     for (const frag of incoming) {
+        if (frag.palaceMemoryId) {
+            // Never merge a new link into a pre-upgrade daily snapshot, even on the same date.
+            if (!result.some(memory => memory.palaceMemoryId === frag.palaceMemoryId)) result.push(frag);
+            continue;
+        }
         const existingIdx = palaceByDate.get(frag.date);
         if (existingIdx !== undefined) {
             // merge：把新 bullets 直接追加到 summary。
@@ -1682,7 +1698,7 @@ export interface PipelineResult {
      */
     autoArchive?: {
         /** 按日期切好的新 MemoryFragment 列表，id 已生成，mood='palace' */
-        fragments: { id: string; date: string; summary: string; mood: string }[];
+        fragments: { id: string; date: string; summary: string; mood: string; palaceMemoryId?: string }[];
         /** 这一批 buffer 处理完后的水位线（= 最后一条被处理 Message.id），应设到 char.hideBeforeMessageId */
         hideBeforeMessageId: number;
     } | null;
@@ -2201,15 +2217,16 @@ export async function processNewMessages(
         const newHighWaterMark = drainBuffer
             ? targetHighWaterMark
             : toProcess[toProcess.length - 1].id;
+        // Resolve committed nodes before advancing the waterline; read failures must not hide messages.
+        const storedNodes = (await Promise.all(core.memories.map(memory => MemoryNodeDB.getById(memory.id))))
+            .filter((node): node is import('./types').MemoryNode => !!node);
+        const autoArchive = buildAutoArchiveFragments(storedNodes, newHighWaterMark, true);
         await setReliableMemoryPalaceHighWaterMark(charId, newHighWaterMark);
         console.log(`✅ [Pipeline] 缓冲区处理完成：${core.stored} 条记忆, hwm ${lastProcessedId} → ${newHighWaterMark}`);
         onProgress?.(`记忆整理完成！新增 ${core.stored} 条记忆`);
 
-        // 9b. 自动归档建议：按日期 group 新记忆 → YAML bullets → 合成 MemoryFragment
-        //     caller（useChatAI / Chat）拿到后做"同日期 merge 进 char.memories + 推 hideBeforeMessageId"
-        //     这条路径让 palace 成功后自动同步到传统归档+聊天水位线
-        //     零 LLM 调用——风格化已经在 palace extraction 那次 LLM 调用里完成
-        const autoArchive = buildAutoArchiveFragments(core.memories, newHighWaterMark);
+        // 自动归档只关联实际落库的节点；去重跳过的候选不会生成悬空链接。
+        // 读取与建议构造在推进水位前完成，不额外调用 LLM / Embedding。
 
         // 构建返回结果
         const pipelineResult: PipelineResult = {

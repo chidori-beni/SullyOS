@@ -748,11 +748,13 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     {showSendButton && (
                         <button
                             ref={sendButtonRef}
+                            data-guide={isGenerateButton ? 'generate' : undefined}
                             onPointerDown={e => { if (canSwitchToGenerate && isInputFocused && e.button === 0) e.preventDefault(); }}
                             onClick={isGenerateButton ? onGenerate : sendFromComposer}
                             disabled={primaryButtonDisabled}
                             className={`sully-chat-send-button ${sendButtonClass} ${primaryButtonDisabled ? 'opacity-45 shadow-none' : ''}`}
                             aria-label={isGenerateButton ? (isTyping ? '正在生成回复' : '生成回复') : '发送'}
+                            title={isGenerateButton ? (isTyping ? '正在生成回复' : '让对方回复已发送的消息') : '发送文字'}
                         >
                             {sendButtonStyle === 'pill'
                                 ? <span>{isGenerateButton ? (isTyping ? '生成中' : '生成') : '发送'}</span>

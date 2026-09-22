@@ -12,6 +12,7 @@ import type {
 } from './types';
 import { DIGEST_REPORT_KEEP } from './types';
 import { bm25Index } from './bm25Index';
+import { notifyMemoryNodesChanged } from './nodeChanges';
 import type { VectorIndexEntry as VectorBackupIndexEntry } from '../backupFormat';
 
 // ─── Store 名称常量 ────────────────────────────────────
@@ -118,6 +119,25 @@ function syncNodeMetadataToRemote(node: MemoryNode): void {
 }
 
 export const MemoryNodeDB = {
+    /** A vectorized batch is all-or-nothing: never expose new text with missing/old vectors. */
+    saveVectorizedMany: async (entries: { node: MemoryNode; vector: MemoryVector }[]): Promise<void> => {
+        if (!entries.length) return;
+        const db = await openDB();
+        await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction([STORE_MEMORY_NODES, STORE_MEMORY_VECTORS], 'readwrite');
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error || new Error('记忆和向量保存已回滚'));
+            try {
+                for (const { node, vector } of entries) {
+                    tx.objectStore(STORE_MEMORY_NODES).put(node);
+                    tx.objectStore(STORE_MEMORY_VECTORS).put({ ...vector, vector: vecForStorage(vector.vector) });
+                }
+            } catch (error) { tx.abort(); reject(error); }
+        });
+        bm25Index.onNodesSaved(entries.map(entry => entry.node));
+        for (const charId of new Set(entries.map(entry => entry.node.charId))) notifyMemoryNodesChanged(charId);
+    },
     save: async (node: MemoryNode) => {
         await put<MemoryNode>(STORE_MEMORY_NODES, node);
         // 写入验证：确认数据真的持久化了
@@ -130,6 +150,7 @@ export const MemoryNodeDB = {
         // touchAccess 之类只改 metadata 的写入会被自动跳过。
         bm25Index.onNodeSaved(node);
         syncNodeMetadataToRemote(node);
+        notifyMemoryNodesChanged(node.charId);
     },
 
     getById: (id: string) => getByKey<MemoryNode>(STORE_MEMORY_NODES, id),
@@ -137,6 +158,7 @@ export const MemoryNodeDB = {
     delete: async (id: string) => {
         await deleteByKey(STORE_MEMORY_NODES, id);
         bm25Index.onNodeDeleted(id);
+        notifyMemoryNodesChanged();
     },
 
     getByCharId: (charId: string) =>
@@ -171,6 +193,7 @@ export const MemoryNodeDB = {
             tx.onerror = () => reject(tx.error);
         });
         bm25Index.onNodesSaved(nodes);
+        for (const charId of new Set(nodes.map(node => node.charId))) notifyMemoryNodesChanged(charId);
     },
 
     /** 更新访问记录（检索后调用） */

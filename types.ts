@@ -757,6 +757,8 @@ export interface MemoryFragment {
   date: string;
   summary: string;
   mood?: string;
+  /** Only new automatic archives carry a palace link; summary remains an offline/legacy fallback. */
+  palaceMemoryId?: string;
 }
 
 export interface SpriteConfig {
