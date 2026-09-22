@@ -47,6 +47,32 @@ describe('忙碌时自动回复', () => {
         expect(decideBusyReply({ char: char(), schedule: schedule('busy'), messages: [user('在吗')], now, roll: 99 }).mode).toBe('free');
     });
 
+    it('跨时区角色落在日程空档里时，不退回设备时钟去找当前时段', () => {
+        // 2026-09-23 线上现场：用户在东京（UTC+9），角色 Asia/Shanghai（UTC+8），
+        // 日程里的睡眠时段从角色当地 03:38 起。此刻设备 03:38、角色那边才 02:38，
+        // 角色落在 21:59→03:38 这个空档里，应当照常聊天。
+        // 回归守卫：曾经 `scheduleContext?.current ?? resolveScheduleSlots(schedule, now)`
+        // 把「空档」当成「没有快照」，兜底按设备时钟命中 03:38 那条，回了「睡了」。
+        const tokyoInstant = new Date('2026-09-22T18:38:00Z');
+        const shanghaiChar = char({ customTimezoneEnabled: true, customTimezone: 'Asia/Shanghai' });
+        const overnight: DailySchedule = {
+            id: 'char-1_2026-09-23', charId: 'char-1', date: '2026-09-23', generatedAt: 1,
+            slots: [
+                { startTime: '03:38', endTime: '09:30', activity: '沉睡休整', busyLevel: 'sleep' },
+                { startTime: '21:00', endTime: '21:59', activity: '晚间语音连麦', busyLevel: 'light' },
+            ],
+        };
+        const decision = decideBusyReply({
+            char: shanghaiChar,
+            schedule: overnight,
+            messages: [user('还没睡吗')],
+            now: tokyoInstant,
+            roll: 99,
+        });
+        expect(decision.mode).toBe('free');
+        expect(decision.slot).toBeNull();
+    });
+
     it('默认使用 APK 固定文案，也可自定义或按当前活动生成', () => {
         const slot = schedule('busy').slots[0];
         expect(buildAutoReplyText(char(), 'busy', slot)).toBe('[自动回复]现在在忙稍后回复');

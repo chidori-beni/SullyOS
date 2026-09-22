@@ -1,6 +1,7 @@
 import type { CharacterProfile, DailySchedule, Message, ScheduleSlot } from '../types';
 import { resolveScheduleSlots } from './scheduleInjection';
 import { createScheduleContextSnapshot, type ScheduleContextSnapshot } from './scheduleContext';
+import { getScheduleWallClock } from './scheduleTime';
 
 export type ScheduleBusyLevel = 'free' | 'light' | 'busy' | 'sleep';
 
@@ -170,8 +171,21 @@ export const decideBusyReply = (params: {
     if (char.busyAutoReplyEnabled !== true || !schedule) {
         return { mode: 'off', level: 'free', slot: null };
     }
-    const current = scheduleContext?.current
-        ?? resolveScheduleSlots(schedule, params.now ?? new Date()).current;
+    // 「当前时段」必须认快照算出来的那一条，**包括它算出来是 null 的情况**。
+    //
+    // 这里原来写的是 `scheduleContext?.current ?? resolveScheduleSlots(schedule, params.now)`。
+    // `??` 分不清「没有快照」和「快照说此刻没有当前时段」：日程条与条之间是允许有空档的
+    // （每条都带结束时间，洞天天都有，深夜那个尤其大），角色一落进空档，快照的 current
+    // 就是 null，于是这句一头栽进兜底——而兜底那条把**绝对时刻**当本地时间读，跨时区
+    // 角色等于被换回了设备的钟。
+    //
+    // 2026-09-23 的现场：用户在东京、角色 Asia/Shanghai，表里睡眠时段从 03:38 起。
+    // 角色当地 02:38 本该落在空档里照常聊天，兜底却按设备的 03:38 命中了睡眠时段，
+    // 回了一条「[自动回复]睡了」。诊断里「命中第 ?/6 条」的问号就是它——那一条压根
+    // 不是快照选中的，所以在快照里找不到下标。
+    const current = scheduleContext
+        ? scheduleContext.current
+        : resolveScheduleSlots(schedule, getScheduleWallClock(char, params.now ?? new Date())).current;
     const level = normalizeBusyLevel(current);
     if (!current || level === 'free') return { mode: 'free', level: 'free', slot: current };
     if (level === 'light') return { mode: 'multitask', level, slot: current };

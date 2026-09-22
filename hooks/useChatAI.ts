@@ -18,8 +18,6 @@ import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import { getDailyScheduleForChar } from '../utils/dailySchedule';
 import { createScheduleContextSnapshot, type ScheduleContextSnapshot } from '../utils/scheduleContext';
 import { decideBusyReply, type BusyReplyDecision } from '../utils/busyAutoReply';
-// 【临时排查代码】定位完删掉这一行和下面唯一的调用点。
-import { buildBusyAutoReplyDiagnostic } from '../utils/busyAutoReplyDiagnostic';
 import type { DigestResult } from '../utils/memoryPalace';
 // 麦当劳: useChatAI 现在只读 McdMiniApp 当前快照注入 system prompt + 给 LLM 一个
 // UI 钩子工具 propose_cart_items。MCP 实际调用都在 McdMiniApp 组件内做, useChatAI
@@ -861,10 +859,7 @@ export const useChatAI = ({
                         charId: char.id,
                         role: 'assistant',
                         type: 'text',
-                        // 【临时排查代码】自动回复后面贴一行运行时判断依据，定位「东京 2:00 就说睡了」
-                        //  用；连同 utils/busyAutoReplyDiagnostic.ts 一起删即可还原。
-                        content: busyDecision.text
-                            + buildBusyAutoReplyDiagnostic(turnScheduleContext, schedule, busyDecision.slot),
+                        content: busyDecision.text,
                         timestamp: turnScheduleContext.instant.getTime(),
                         metadata: {
                             busyAutoReply: {
