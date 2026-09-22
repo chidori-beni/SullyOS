@@ -905,9 +905,12 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             const rerollMirrorIds = isReroll
                 ? { ...((rerollTarget?.metadata?.theaterMirrorIds || {}) as Record<string, number>) }
                 : undefined;
-            const mirrorTargetIds = isReroll
-                ? Object.keys(rerollMirrorIds || {})
-                : memoryActors.map(actor => actor.id);
+            // 只有「真实时间陪伴」才把剧情正文镜像进角色记忆；虚构剧场一个收件人都不给。
+            const mirrorTargetIds = !entry.writesToCharacterMemory
+                ? []
+                : isReroll
+                    ? Object.keys(rerollMirrorIds || {})
+                    : memoryActors.map(actor => actor.id);
             const mirrorTargets = mirrorTargetIds.map(charId => {
                 const anchorAt = Date.parse(entry.characterMemoryDates?.[charId] || '');
                 return {

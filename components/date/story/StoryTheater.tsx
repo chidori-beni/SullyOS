@@ -23,6 +23,7 @@ import StoryTheaterSession from './StoryTheaterSession';
 import StoryVectorMemoryPanel from './StoryVectorMemoryPanel';
 import { StoryAppearanceButton, StoryTheaterThemeProvider } from './StoryTheaterTheme';
 import { deleteStoryTheaterData } from '../../../utils/storyTheaterDeletion';
+import { repairStoryTheaterFictionMirrors } from '../../../utils/storyTheaterMirrorRepair';
 
 interface Props {
     initialStoryId?: string;
@@ -45,14 +46,27 @@ const StoryTheaterContent: React.FC<Props> = ({ initialStoryId, onSwitchCompanio
     const [deletingStory, setDeletingStory] = useState(false);
     const importInput = useRef<HTMLInputElement>(null);
     const initialStoryHandled = useRef<string | null>(null);
+    const mirrorRepairDone = useRef(false);
     const presets = useMemo(() => withBuiltInStoryPresets(customPresets), [customPresets]);
 
     const reload = useCallback(async () => {
         const [storedEntries, storedPresets, storedMasks] = await Promise.all([DB.getStoryTheaters(), DB.getStoryTheaterPresets(), DB.getStoryTheaterMasks()]);
-        setEntries(storedEntries.map(normalizeStoryTheater).sort((a, b) => b.updatedAt - a.updatedAt));
+        const normalizedEntries = storedEntries.map(normalizeStoryTheater);
+        setEntries([...normalizedEntries].sort((a, b) => b.updatedAt - a.updatedAt));
         setCustomPresets(storedPresets.filter(preset => !preset.builtIn).sort((a, b) => b.updatedAt - a.updatedAt));
         setMasks(storedMasks.sort((a, b) => b.updatedAt - a.updatedAt));
-    }, []);
+        // 旧版本的后台生成会无视「虚构剧场」，把剧情正文镜像进角色聊天：那些消息界面里看不见、
+        // 删不掉，却会被注入角色上下文。进列表时顺手清一次，清完才算真的没污染。
+        if (!mirrorRepairDone.current) try {
+            mirrorRepairDone.current = true;
+            const repaired = await repairStoryTheaterFictionMirrors(normalizedEntries, characters.map(char => char.id));
+            if (repaired.deletedMessageCount > 0) {
+                addToast(`已清除 ${repaired.deletedMessageCount} 条误写进角色记忆的虚构剧情（${repaired.storyTitles.join('、')}）`, 'success');
+            }
+        } catch (error: any) {
+            console.error('[StoryTheater] fiction mirror repair failed', error);
+        }
+    }, [addToast, characters]);
 
     useEffect(() => { void reload(); }, [reload]);
     useEffect(() => {

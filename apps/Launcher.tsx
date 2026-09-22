@@ -18,6 +18,7 @@ import { useLocalDateKey } from '../hooks/useLocalDateKey';
 import { resolveCharTimeZone } from '../utils/timezone';
 import { trackEvent } from '../utils/analytics';
 import { chatDetailLaunch } from '../utils/chatDetailLaunch';
+import { isChatPreviewMessage } from '../utils/chatMessageVisibility';
 import { CALENDAR_DATA_UPDATED_EVENT, eventOccursOnDate, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, taskOccursOnDate, taskStartDateKey } from '../utils/calendarIntegration';
 import {
     carouselCloneResetIndex,
@@ -1040,7 +1041,10 @@ const Launcher: React.FC = () => {
               if (cancelled) return;
               // 我方这里读的是该角色的全部消息（上面 DB.getMessagesByCharId），
               // 取最后一条即最新；上游改成了只取 1 条的新读法，这批不跟。
-              const last = msgs[msgs.length - 1];
+              // 只能取私聊里真正看得见的那条：见面/通话/剧情镜像这些隐藏来源如果漏进来，
+              // 桌面会显示一条点进聊天却找不到、也删不掉的“幽灵消息”。
+              const visibleMsgs = msgs.filter(isChatPreviewMessage);
+              const last = visibleMsgs[visibleMsgs.length - 1];
               if (last) {
                   const cleanContent = last.content.replace(/\[.*?\]/g, '').trim();
                   setLastMessage(cleanContent || (last.type === 'image' ? '[图片]' : '[消息]'));

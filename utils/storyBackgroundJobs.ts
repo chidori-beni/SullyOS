@@ -289,7 +289,7 @@ export const makeStoryBackgroundJobId = (args: {
 };
 
 export const buildPendingStoryBackgroundJob = (args: {
-  entry: Pick<StoryTheaterEntry, 'id' | 'title' | 'createdAt'>;
+  entry: Pick<StoryTheaterEntry, 'id' | 'title' | 'createdAt'> & Partial<Pick<StoryTheaterEntry, 'writesToCharacterMemory'>>;
   threadId?: string;
   primaryChar: Pick<CharacterProfile, 'id' | 'name'>;
   operation: StoryBackgroundOperation;
@@ -311,6 +311,12 @@ export const buildPendingStoryBackgroundJob = (args: {
   extraBody?: Record<string, unknown>;
 }): PendingStoryBackgroundJob | null => {
   const threadId = args.threadId || storyTheaterThreadId(args.entry.id);
+  // 虚构剧场（writesToCharacterMemory !== true）绝不写角色侧镜像。前台 saveCentralAndMirrors
+  // 一直有这道闸，后台生成路径以前没有，剧情正文会被当成 story_theater_memory 塞进角色聊天，
+  // 界面里看不见却会进上下文和记忆宫殿。闸门收在这里，任何调用方都绕不过去。
+  const writesToCharacterMemory = args.entry.writesToCharacterMemory === true;
+  const mirrorTargets = writesToCharacterMemory ? args.mirrorTargets : [];
+  const targetMirrorIds = writesToCharacterMemory ? args.targetMirrorIds : undefined;
   const jobId = makeStoryBackgroundJobId({
     storyId: args.entry.id,
     operation: args.operation,
@@ -341,12 +347,12 @@ export const buildPendingStoryBackgroundJob = (args: {
     expectedTailRole: args.expectedTailRole,
     expectedTailFingerprint: args.expectedTailFingerprint,
     targetAssistantFingerprint: args.targetAssistantFingerprint,
-    targetMirrorIds: args.targetMirrorIds,
+    targetMirrorIds,
     messages: args.messages,
     assistantPrefill: args.assistantPrefill,
     promptTokenEstimate: args.promptTokenEstimate,
     affinityInputs: args.affinityInputs,
-    mirrorTargets: args.mirrorTargets,
+    mirrorTargets,
     temperature: args.temperature,
     maxTokens: args.maxTokens,
     extraBody: args.extraBody,
