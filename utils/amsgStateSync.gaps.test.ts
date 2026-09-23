@@ -120,7 +120,7 @@ describe('其余打脏入口接线', () => {
       // 这两处后来收敛成了一个单事务通道 mutateWorldbooks（见 docs/worldbook-management.md），
       // 打脏跟着搬进去了 —— 盯这一处即可，update/delete 都从这儿走。
       ['const mutateWorldbooks', 'const updateWorldbooks'],
-      // 情绪 buff 广播：一个点堵住 emotionApply / memoryDive / instant push 三个上游
+      // 情绪 buff 广播：一个点堵住 emotionApply / memoryDive 等几个上游
       ['const buffSyncHandler', '// 本地 fetch 聊天回复的全局回落'],
     ] as const) {
       expect(sliceBetween(src, start, end), `${start} 里少了打脏调用`).toMatch(/markAmsgStateDirty(ForAll)?\(/);

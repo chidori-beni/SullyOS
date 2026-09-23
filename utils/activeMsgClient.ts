@@ -108,7 +108,7 @@ import { listRecallableMonths } from './agenticTools';
 import { ChatPrompts } from './chatPrompts';
 import { nowInTimeZone, resolveCharTimeZone, tzAwarenessNote } from './timezone';
 import { DB } from './db';
-import { copyWorkerBundleToClipboard } from './instantPushClient';
+import { copyWorkerBundleToClipboard } from './workerDeploy';
 import { collectMcpFireServers, getMcpUseNativeTools } from './mcpClient';
 import { safeResponseJson } from './safeApi';
 import { getPendingUserMessageState } from './busyAutoReply';
@@ -1477,9 +1477,8 @@ const buildToolConfigEntry = (
  * 退订后要等浏览器清内部 removed 标记（SUBSCRIBE_SETTLE_MS），否则紧接着的
  * subscribe() 又拿到死哨兵。
  *
- * 判定口径与 instantPushClient.getOrCreateInstantSubscription /
- * proactivePushConfig.getOrCreateSubscription 的内联实现一致；那两处在各自文件里，
- * 将来合并时以这份抽出来的函数为准。export 供单测 mock pushManager 钉行为。
+ * 判定口径与 proactivePushConfig.getOrCreateSubscription 的内联实现一致；那一处在
+ * 它自己的文件里，将来合并时以这份抽出来的函数为准。export 供单测 mock pushManager 钉行为。
  */
 export const dropStaleSubscription = async (
   sub: PushSubscription | null,
@@ -1500,7 +1499,7 @@ export const dropStaleSubscription = async (
     }
   } catch {
     // 公钥读不出来（个别浏览器不暴露 options）就按可复用处理——
-    // 与 instant / proactive 两处同款 fall-through。
+    // 与 proactive 那处同款 fall-through。
   }
   return sub;
 };
@@ -1616,7 +1615,7 @@ const REQUEST_GZIP_THRESHOLD_BYTES = 16 * 1024;
 /**
  * 超阈值的请求体先 gzip 再上网线。
  *
- * 收益比 instant-push 那条路小一截，得说清楚：这里的正文进 HTTP 之前已经是**密文**，
+ * 收益有限，得说清楚：这里的正文进 HTTP 之前已经是**密文**，
  * 而 fire_pack 真正的压缩早在交给上游加密之前就做过了（见 amsgFirePack 的
  * packStateValue，省 60%）。所以这一层压掉的只是密文那层 base64 的膨胀，约 25%。
  * 慢网和 iOS 上行那几秒里，这 25% 仍然是实打实少传的字节。
@@ -1836,7 +1835,7 @@ export const ActiveMsgClient = {
         };
       }
     }
-    // 能力检测与 instant push / proactive push 共用 describePushCapabilityGap：
+    // 能力检测与 proactive push 共用 describePushCapabilityGap：
     // 它会说清缺的是三件套里的哪一件，「不支持」这三个字用户拿着没法action。
     const capabilityGap = describePushCapabilityGap();
     if (capabilityGap) {
@@ -2288,7 +2287,8 @@ export const ActiveMsgClient = {
    * 客户端落库之后销账。所以这里不做任何本地对账，读回来是什么就是什么。
    *
    * 读失败照常抛：调用方要能分清「读到了、里面确实没有」和「压根没读成」，
-   * 后者不构成任何结论（见 docs/instant-push-dual-channel.md 那条铁律）。
+   * 后者不构成任何结论——网络抖一下、请求被掐断都会读失败，消息可能好好地躺在账本上，
+   * 拿它判「消息没了 / 发送失败」就是误判。
    */
   async listOutboxEntries(): Promise<AmsgOutboxEntry[]> {
     const config = await ensureWorkerReady();
@@ -3176,7 +3176,7 @@ export const ActiveMsgClient = {
     // getAll（表情记录带图片数据），拿回来的还是同一份。
     const emojiLibrary = await readEmojiLibrary();
     const entries = [];
-    // 逐个串行：并发跑会同时开 N 个 IDB 事务，正是 instant push 那次超时的连接风暴成因。
+    // 逐个串行：并发跑会同时开 N 个 IDB 事务，容易撞上 IndexedDB 连接风暴（写失败、确认超时）。
     for (const item of items) {
       const firePack = await buildFirePack(
         item.char, item.userProfile, item.groups, item.realtimeConfig, emojiLibrary,

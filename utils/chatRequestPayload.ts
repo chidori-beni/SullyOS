@@ -587,7 +587,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     // 结构：[稳定 system] + [历史消息] + [易变状态 system] (+ 末尾 reminder)。
     // 稳定前缀不再包含分钟级时间戳等易变内容 → 支持前缀缓存的中转能跨轮命中；
     // 易变状态贴着生成点注入，时间/情绪/日程反而拿到最强 recency 注意力。
-    // 注意：instant push 的 worker 端情绪评估把 messages[0] 当 system、messages[1..]
+    // 注意：即时对话的 worker 端情绪评估把 messages[0] 当 system、messages[1..]
     // 展平为对话历史 —— 易变尾段会以「[系统]: …」行出现在历史末尾，信息不丢。
     const fullMessages: Array<{ role: string; content: any }> = [
         { role: 'system', content: systemPrompt },

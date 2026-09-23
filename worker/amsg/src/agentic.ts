@@ -1,17 +1,16 @@
 /**
  * amsg worker 满血 v2 — 服务端工具循环的纯逻辑（不碰网络 / 存储，方便单测）。
  *
- * 复用 instant push 的业务标签 classifier（../../instant-push/src/classifier）：
+ * 业务标签的识别交给同目录的 classifier（./classifier）：
  *   - 数据标签（RECALL / SEARCH / READ_DIARY / XHS_* …）→ tool-request，
- *     由 index.ts 的 executeToolCalls 在 worker 里就地执行（客户端离线，
- *     没有 instant 那条「推回客户端跑」的路）。
+ *     由 index.ts 的 executeToolCalls 在 worker 里就地执行（客户端可能离线，
+ *     工具只能在服务端跑）。
  *   - 副作用标签（POKE / TRANSFER / MUSIC_ACTION / 写日记 …）→ 结构化成
  *     directives 挂在最后一条 push 的 metadata 上，客户端收到时重放
- *     （收侧与 instant 共用，activeMsgRuntime 的 isLastChunk 守卫已就位）。
+ *     （activeMsgRuntime 的 isLastChunk 守卫保证只重放一次）。
  *
- * 与 instant 的关键差异：instant 每轮的旁白立刻推给用户；这里推送只在 finish
- * 时发生，所以中间轮的旁白和副作用要跨轮累积（FireSessionState），finish 时
- * 一起出——用户看到的内容与 instant 模式下逐轮看到的一致，只是一次到齐。
+ * 推送只在 finish 时发生，所以中间轮的旁白和副作用要跨轮累积（FireSessionState），
+ * finish 时一起出——用户一次收到整段回复，内容与逐轮说出来的一致。
  */
 
 import {
@@ -19,7 +18,7 @@ import {
   type Directive,
   type MusicActionSong,
   type ToolCall,
-} from '../../instant-push/src/classifier';
+} from './classifier';
 import type { ToolCallRecord } from '../../../utils/agenticToolFeedback';
 import {
   extractTextFakedMcpCalls,
@@ -129,8 +128,8 @@ export interface PushBuildInput {
   occurrenceMs: number;
   /**
    * round 1 XHS 工具抓到的笔记快照（stash.toolCtx.lastXhsNotesRef.current）。
-   * amsg2 的 round 1 在 worker 里跑，客户端没有 instantToolRunner 那次
-   * saveXhsSessionNotes 落库——不带回去 [[XHS_SHARE: n]] 重放必然 available:0。
+   * amsg2 的 round 1 在 worker 里跑，客户端本地没有这份笔记列表——不带回去
+   * [[XHS_SHARE: n]] 重放必然 available:0。
    * finish 时只挑 directive 引用到的几张随最后一条 push 带回（web push 单条
    * payload ~4KB，全量 8 张会撑爆整条 push，那就不是掉卡片而是掉消息了）。
    */
@@ -312,8 +311,8 @@ export const classifyNativeToolCalls = (
  *   - 有数据标签（或本轮有 MCP 调用）→ 原始旁白（prefix）暂存，返回 tool-request；
  *   - 无数据标签 → finish：把全部中间轮旁白 + 本轮正文**拼回一份全文**统一
  *     classify（跨轮被劈开的副作用标签块在这里合体），干净正文经
- *     sanitizeIntoSegments 分段（与 instant push / 客户端 chatParser.chunkText
- *     同一份：按换行切、[[...]] / [html] / <翻译> / <语音> 等标签块保持原子），
+ *     sanitizeIntoSegments 分段（与客户端 chatParser.chunkText 同一份：
+ *     按换行切、[[...]] / [html] / <翻译> / <语音> 等标签块保持原子），
  *     每段一条 push；全部 directives 挂最后一条的 metadata；
  *     全程无正文 → skip-push（这轮有没有副作用都不发，理由见分支处注释）。
  *

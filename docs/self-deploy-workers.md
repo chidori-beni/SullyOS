@@ -7,7 +7,6 @@
 | 目录 | 是什么 | 需要 D1 数据库 |
 |------|--------|---------------|
 | `amsg/` | 主动消息 2.0：角色到点主动发消息给你 | 需要 |
-| `instant-push/` | Instant Push：聊天回复走后台推送，关掉页面也能收 | 不需要（可选） |
 | `mcp-proxy/` | MCP 工具代理：让角色能连你自己配的 MCP 工具服务器 | 不需要 |
 
 每个都是独立的，只部署你要用的那个就行。
@@ -47,7 +46,7 @@ Cloudflare 面板 → **Compute** → **Workers & Pages** → 右上角 **Create
 
 | 位置 | 填什么 |
 |------|--------|
-| Path | 你要部署的那个子目录：`/amsg`、`/instant-push` 或 `/mcp-proxy` |
+| Path | 你要部署的那个子目录：`/amsg` 或 `/mcp-proxy` |
 | API token | 下拉选 **Create new token**，名字随便起 |
 | Variable name / value | 只有 `amsg/` 需要：`D1_DATABASE_ID` = 上一步复制的 Database ID |
 
@@ -74,8 +73,6 @@ Secrets 要等**部署完**再填：Worker 页面 → **Settings** → 最上面
 填完点右下角 **Deploy**。
 
 > ⚠️ VAPID 那一对**必须和 SullyOS 面板里的是同一对**。整个站点共用一个浏览器推送订阅，Worker 用别的密钥对去签，推送会被浏览器拒掉（403），表现是「一切正常但就是收不到」。
-
-**`instant-push/`** 需要 `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY`（同一对），`VAPID_EMAIL` 可选。
 
 **`mcp-proxy/`** 不需要密钥。
 

@@ -27,7 +27,6 @@ import { Sun, Newspaper, NotePencil, Notebook, Book, ForkKnife, Coffee, PlugsCon
 import { loadMcpServers, saveMcpServers, createMcpServer, testMcpConnection, resetMcpSession, getMcpUseNativeTools, setMcpUseNativeTools, type McpServerConfig } from '../utils/mcpClient';
 import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable, ensureSubscribed, sendTestPush, getPushDiagnostics, resetSubscription, deepResetSubscription, type PushDiagnostics } from '../utils/proactivePushConfig';
 import { ProactiveChat } from '../utils/proactiveChat';
-import { InstantPushSettingsModal } from '../components/settings/InstantPushSettingsModal';
 import { PushVapidSettingsModal } from '../components/settings/PushVapidSettingsModal';
 import PushSubscriptionPanel from '../components/settings/PushSubscriptionPanel';
 import ActiveMsgGlobalSettingsModal from '../components/settings/ActiveMsgGlobalSettingsModal';
@@ -466,7 +465,7 @@ const McpServersCard: React.FC<{
                 </div>
             ))}
             <p className="text-[10px] text-violet-700/60 leading-relaxed bg-violet-100/40 rounded-lg px-2 py-1.5">
-                开启 MCP 工具后，聊天会改用本地工具请求（跳过 Instant Push），本轮思考链会让位给工具调用；发布、下单、删除等操作仍会先征得你的确认。Token、自定义请求头与配置保存在本机；若配置了代理，请求会按你的设置经该代理转发。
+                开启 MCP 工具后，聊天会改用本地工具请求，本轮思考链会让位给工具调用；发布、下单、删除等操作仍会先征得你的确认。Token、自定义请求头与配置保存在本机；若配置了代理，请求会按你的设置经该代理转发。
             </p>
         </div>
     );
@@ -731,7 +730,6 @@ const Settings: React.FC = () => {
   // 连续 zombie 重置失败次数 — 累计 >= 3 时, "重置订阅" 按钮自动 morph 成
   // "深度重置". 不持久化, 刷新页面归零 (用户原话: "刷新页面正常消失").
   const [ppZombieStreak, setPpZombieStreak] = useState(0);
-  const [showInstantModal, setShowInstantModal] = useState(false);
   const [showAmsg2Modal, setShowAmsg2Modal] = useState(false);
   const [showVapidModal, setShowVapidModal] = useState(false);
   const [vapidReadyTick, setVapidReadyTick] = useState(0); // 关闭 VAPID 弹窗后刷新顶层徽标
@@ -3248,8 +3246,7 @@ const Settings: React.FC = () => {
         </SettingsSection>
 
         {/* ───────── 推送凭据 (VAPID) ───────── */}
-        {/* VAPID 公私钥, 与 Proactive / Instant Push 共用一份 — 独立成块, 避免再被当成 */}
-        {/* Instant Push 的子配置, 也避免两边 key 不一致互相抢同一个 pushManager 订阅. */}
+        {/* VAPID 公私钥：主动消息 2.0 部署 Worker 时用的就是这一对（一键部署自动沿用，手动部署照着填 env）。 */}
         {/* vapidReadyTick: VAPID 弹窗关闭后 +1, 让本节点 re-render 重读 isPushVapidReady(). */}
         <SettingsSection
             title="推送凭据 (VAPID)"
@@ -3268,7 +3265,7 @@ const Settings: React.FC = () => {
             }
         >
             <p className="text-xs text-slate-500 mb-3 leading-relaxed">
-                Proactive Push 和 Instant Push <b>共用同一份 VAPID 密钥对</b>。重新生成会让已开的推送失效，需要重新开启。
+                主动消息 2.0 的 Worker 用这对密钥签推送：一键部署会自动沿用，手动部署时把它们填进 Worker 的环境变量。重新生成之后要重新部署 Worker 才能生效。
             </p>
             <button
                 type="button"
@@ -3479,29 +3476,6 @@ const Settings: React.FC = () => {
         </SettingsSection>
         )}
 
-        {/* ───────── Instant Push ───────── */}
-        <SettingsSection
-            title="Instant Push"
-            icon={
-                <div className="p-2 bg-indigo-100/60 rounded-xl text-indigo-600">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M9.348 14.651a3.75 3.75 0 0 1 0-5.303m5.304 0a3.75 3.75 0 0 1 0 5.303m-7.425 2.122a6.75 6.75 0 0 1 0-9.546m9.546 0a6.75 6.75 0 0 1 0 9.546M5.106 18.894c-3.808-3.808-3.808-9.98 0-13.789m13.788 0c3.808 3.808 3.808 9.981 0 13.789M12 12h.008v.008H12V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
-                    </svg>
-                </div>
-            }
-            actions={
-                <button
-                    onClick={() => { trackEvent('打开Instant Push配置'); setShowInstantModal(true); }}
-                    className="text-[10px] bg-indigo-100 text-indigo-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform"
-                >
-                    配置
-                </button>
-            }
-        >
-            <p className="text-xs text-slate-500 leading-relaxed">
-                与上方 Push 加速器不同：前端发 prompt 到你自部署的 Worker，Worker 调你自己的 LLM 生成回复后分句逐条 Web Push。零数据库、零 cron。
-            </p>
-        </SettingsSection>
 
         {/* 自定义网络代理 — 刻意低调的高级入口。默认折叠，不主动指引基本发现不了。
             普通用户无需配置：默认走作者部署的公共 Worker，所有功能开箱即用。 */}
@@ -4628,11 +4602,6 @@ const Settings: React.FC = () => {
           </div>
       </Modal>
 
-      <InstantPushSettingsModal
-        open={showInstantModal}
-        onClose={() => setShowInstantModal(false)}
-        onOpenVapid={() => { setShowInstantModal(false); setShowVapidModal(true); }}
-      />
       <PushVapidSettingsModal
         open={showVapidModal}
         onClose={() => { setShowVapidModal(false); setVapidReadyTick((n) => n + 1); }}

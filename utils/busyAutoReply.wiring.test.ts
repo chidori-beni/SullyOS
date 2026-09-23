@@ -29,9 +29,9 @@ describe('忙碌自动回复的聊天入口接线', () => {
         expect(branch).toContain('timestamp: turnScheduleContext.instant.getTime(),');
         expect(branch).toContain('busyAutoReply: {');
         expect(branch).toContain('saved auto reply but failed to refresh chat UI');
-        expect(branch).toContain('auto reply posted but UI callback failed');
-        expect(branch).toContain('onInstantPosted?.();');
-        expect(branch).toMatch(/onInstantPosted\?\.\(\);[\s\S]*return;/);
+        // 原先这里还要求调用 onInstantPosted（Instant Push 的「发送中」指示灯收尾）；
+        // Instant Push 整条链路移除后这个回调没了，自动回复落盘后只需解锁入口并结束本轮。
+        expect(branch).toMatch(/triggerInFlightRef\.current = false;\s*return;/);
         expect(branch).not.toContain('safeFetchJson');
         expect(branch).not.toContain('sendInstantChatTurn');
     });

@@ -26,7 +26,7 @@ const ChatInputSettings: React.FC<ChatInputSettingsProps> = ({ value, onChange }
                 {
                     key: 'autoReply',
                     label: '发完后自动生成回复',
-                    help: '发过文字、图片或表情后，等输入框没有草稿和光标、加号等底部面板全部收起，再等 2 秒让对方回复。继续输入、打开面板或发送新消息，就重新等待。倒计时可以取消。这项开启时，Instant Push 的发送即回复也会按这里等。',
+                    help: '发过文字、图片或表情后，等输入框没有草稿和光标、加号等底部面板全部收起，再等 2 秒让对方回复。继续输入、打开面板或发送新消息，就重新等待。倒计时可以取消。',
                 },
                 {
                     key: 'emojiSuggestions',

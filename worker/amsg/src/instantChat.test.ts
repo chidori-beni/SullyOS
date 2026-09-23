@@ -222,7 +222,7 @@ describe('POST /instant-chat — gzip 上行', () => {
   });
 
   // 最要命的一档：`Content-Encoding` 是标准头，链路上的边缘节点会替你把请求体解开
-  // 却把头留着（SullyOS 在 instant-push 那条路上实测过）。只看头就去解压的话，
+  // 却把头留着（SullyOS 实测遇到过）。只看头就去解压的话，
   // 这里拿到的是明文，解压器当场抛错，用户侧是一句「请求体不是合法的 JSON」。
   it('头写着 gzip、字节其实是明文（边缘替我们解过了）→ 照常按明文读', async () => {
     const { upstream } = makeUpstream();

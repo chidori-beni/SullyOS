@@ -1778,8 +1778,8 @@ ${isInitialGeneration ? `
                                    <input value={formData.description} onChange={(e) => handleChange('description', e.target.value)} className="w-full bg-transparent py-1 text-sm text-slate-500 border-b border-slate-200" placeholder="描述" />
                                    {/* 头像 URL 入口: 与左侧上传文件平级. 走 draft -> 失焦/回车 commit,
                                        避免逐字 commit 导致所有引用 char.avatar 的 <img> 在打字时疯狂
-                                       请求不完整 URL. https URL 会作为 Instant Push 通知图标传到 worker;
-                                       本地上传 (data URL) 仅本地显示, 不进 push payload (data: 被 0.6+ 拒). */}
+                                       请求不完整 URL. https URL 会作为主动消息的通知图标传到 worker;
+                                       本地上传 (data URL) 仅本地显示, 不进 push payload. */}
                                    <input
                                        type="url"
                                        value={avatarUrlDraft}

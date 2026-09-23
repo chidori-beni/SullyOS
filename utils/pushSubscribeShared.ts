@@ -1,8 +1,7 @@
 /**
- * Shared Web Push subscribe helpers used by the Instant Push, Proactive Push
- * and 主动消息 2.0 paths. All of them hit the same browser race / encoding
- * quirks; this file is the single source of truth so a future browser-quirk
- * patch lands in one place instead of three.
+ * Shared Web Push subscribe helpers used by the Proactive Push and 主动消息 2.0
+ * paths. Both hit the same browser race / encoding quirks; this file is the
+ * single source of truth so a future browser-quirk patch lands in one place.
  *
  * 同时也是「浏览器这一侧推送现状」的唯一读法（readBrowserPushState 及它下面那
  * 几个 detect*）——设置页的状态面板拿它显示，各层不用各写一份厂商判定。
@@ -112,7 +111,7 @@ const LAST_SUBSCRIBE_FAILURE_KEY = 'push_last_subscribe_failure_v1';
  * 为什么要落盘：失败原文以前只走 toast，一闪而过，用户回头想看就没了——而这类
  * 失败恰恰是最需要照着原文排查的。落盘之后设置页的面板能把它固定显示出来。
  *
- * 三条推送链路（主动消息 2.0 / Instant Push / Proactive Push）共用这一份记录，
+ * 推送链路（主动消息 2.0 / Proactive Push）共用这一份记录，
  * 因为底下调的是同一个 `pushManager.subscribe()`，失败原因是设备级的、不分链路。
  *
  * 写在 subscribeWithRetry 里面而不是各调用方：调用方漏写一处，那条路径的失败就

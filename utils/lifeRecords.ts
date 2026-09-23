@@ -14,7 +14,7 @@ import { formatMoney, sumMoney } from './format';
  *  1. 注入（读路径）：buildLifeRecordInjection —— 按角色开关把今日摘要 + 潜意识约束 +
  *     [[LIFE:...]] 指令说明 + 否决反馈拼成 system prompt section（chatPrompts 调用）。
  *  2. 代记（写路径）：executeLifeDirectives —— 解析角色输出里的 [[LIFE:...]] 指令，
- *     去重后落库并插入可交互的 life_card 消息（chatParser 调用，本地 / instant push 共用）。
+ *     去重后落库并插入可交互的 life_card 消息（chatParser 调用，本地 / 云端回复共用）。
  *  3. 裁决：resolveLifeRecordCard —— 用户点卡片「确认 / 否决」，否决时回滚（含银行流水）
  *     并给代记角色挂一条一次性反馈（Chat.tsx 调用）。
  *

@@ -34,12 +34,6 @@ import { buildChatRequestPayload } from '../utils/chatRequestPayload';
 import { acquireChatReply, isChatReplyActive, subscribeChatReplies } from '../utils/chatReplyLock';
 import { withChatContinuation } from '../utils/chatContinuation';
 import { assertChatHasDialogue } from '../utils/chatRequestGuard';
-import {
-    isInstantConfigReady,
-    sendInstantPushAndAwaitReply,
-    formatDiagnostics,
-    type InstantPushPayload,
-} from '../utils/instantPushClient';
 import { applyAssistantPostProcessing, type XhsCaches } from '../utils/applyAssistantPostProcessing';
 import {
     computeStreamPreviewBubbles,
@@ -126,7 +120,7 @@ function buildEmotionEvalPrompt(
     apiMessages: Array<{ role: string; content: any }>,
     includeContext: boolean = true,
     // 小屋生活动态的可选输出段（utils/roomAmbient.ts，双闸通过时才非空）。
-    // instant 模式的 prompt 也是这里构建后传给 worker 的，所以这一处覆盖两条路径。
+    // 即时对话的 prompt 也是这里构建后传给 worker 的，所以这一处覆盖两条路径。
     ambientSection: string = ''
 ): string {
     // 直接复用主 API 的完整 system prompt 和消息历史，确保 100% 信息对齐
@@ -154,11 +148,11 @@ function buildEmotionEvalPrompt(
         ? JSON.stringify(currentBuffs, null, 2)
         : '（当前无buff，情绪平稳）';
 
-    // instant 模式 (includeContext=false): 章节结构与本地**完全一致**, 只把两段大文本 (system prompt、
+    // 即时对话 (includeContext=false): 章节结构与本地**完全一致**, 只把两段大文本 (system prompt、
     // 对话历史) 留成占位符 token, 由 worker 用本次请求已有的 messages 填回**原位** —— 输出与本地逐字
-    // 对齐 (顺序/章节/格式都一样), 又不必把上下文重复塞进请求体 (省一份, keepalive 不被降级).
-    // worker 端 (worker/instant-push runEmotionEval) 负责把 messages[0]=system、messages[1..]=对话历史
-    // 还原成与本地 mainSystemPrompt / recentLines 相同的文本替换进去.
+    // 对齐 (顺序/章节/格式都一样), 又不必把上下文重复塞进请求体.
+    // worker 端 (worker/amsg/src/emotionEval.ts + utils/emotionEvalCore.ts) 负责把 messages[0]=system、
+    // messages[1..]=对话历史还原成与本地 mainSystemPrompt / recentLines 相同的文本替换进去.
     const contextSection = includeContext
         ? `
 
@@ -384,8 +378,8 @@ export async function evaluateEmotionBackground(
     api: { baseUrl: string; apiKey: string; model: string; stream?: boolean }
 ): Promise<string | null> {
     // 全局横幅「xx 正在感受…」（ChatBroadcast）。这里是所有本地评估路径的汇聚点
-    // （主链路 fire & forget / post-push 补跑 / OSContext 主动消息），在函数级
-    // start/finally 派发一次即可全覆盖；instant 模式的 worker 评估另行点灯。
+    // （主链路 fire & forget / OSContext 主动消息），在函数级
+    // start/finally 派发一次即可全覆盖；即时对话的 worker 评估另行点灯。
     announceChatGen(CHAT_GEN_EVENTS.emotionStart, { charId: charData.id, charName: charData.name });
     try {
         const ambientSection = shouldRequestAmbient(charData.id) ? buildAmbientEvalSection(charData) : '';
@@ -621,127 +615,14 @@ export const useChatAI = ({
         setEvolvedNarrative('');
     }, [char?.id]);
 
-    // ─── Post-push emotion eval (Option B: online/offline split) ───────────────
+    // ─── 云端情绪评估的回程 ───────────────────────────────────────────────────
     //
-    // push 落库 (activeMsgRuntime) 后, 我们希望情绪 eval 跟 line 613 同样的 full ctx 跑 —
-    // 不再走 push-tail 的 degraded ctx. 两路触发:
-    //   1. 在线: activeMsgRuntime dispatch 'post-push-emotion-eval' 事件, 这里监听即时跑
-    //   2. 离线 / 切到别的 char: activeMsgRuntime 写 KV pending → useChatAI mount 切到这个
-    //      char 时 useEffect 兜底 drain
-    //
-    // 行为对齐 line 613: gate = isScheduleFeatureOn(char) && emotionConfig.enabled.
-    // ctx 重建用 buildChatRequestPayload 同一个 helper — push 那条 assistant msg 已经在
-    // DB 里 (activeMsgRuntime.flushInboxToChat 已 await saveMessage), DB.getRecentMessagesByCharId
-    // 拿到的 history 含它.
-    //
-    // 用 ref 包高频变化的依赖 (music / userProfile / 等), 不在 dep 数组里 → effect 只在 char.id 变时
-    // 重建 listener (切角色), 避免 music 每秒 tick 一次都 remove+addEventListener.
-    const emotionEvalDepsRef = useRef({
-        userProfile, groups, emojis, categories, realtimeConfig, apiConfig,
-        translationConfig, music, mcdMiniAppRef, luckinMiniAppRef, luckinChatRef, evolvedNarrative,
-    });
-    emotionEvalDepsRef.current = {
-        userProfile, groups, emojis, categories, realtimeConfig, apiConfig,
-        translationConfig, music, mcdMiniAppRef, luckinMiniAppRef, luckinChatRef, evolvedNarrative,
-    };
-
+    // 即时对话的情绪评估在 worker 跑 (副 API)，结果随回复回来后 activeMsgRuntime 落 buff 并广播
+    // innerState。这里只把 innerState 喂回 evolvedNarrative (下一轮 system prompt 用)，再熄灭徽章。
     useEffect(() => {
         if (!char?.id) return;
         const charIdAtMount = char.id;
 
-        const runEvalForPushedChar = async (): Promise<void> => {
-            // The listener is keyed by character ID, but settings may change without remounting it.
-            const evalChar = charRef.current?.id === charIdAtMount ? charRef.current : char;
-            // 双 gate: 跟 line 613 一致 (schedule feature on + emotionConfig enabled).
-            // 关掉的话还是要 clear pending, 否则下次 mount 反复尝试.
-            if (!isScheduleFeatureOn(evalChar) || !evalChar.emotionConfig?.enabled) {
-                try { await ActiveMsgStore.clearPendingEmotionEval(charIdAtMount); } catch { /* ignore */ }
-                return;
-            }
-
-            const deps = emotionEvalDepsRef.current;
-            if (isEmotionEvalSkipped()) {
-                try { await ActiveMsgStore.clearPendingEmotionEval(charIdAtMount); } catch { /* ignore */ }
-                return;
-            }
-            // 评估跟随全局流式开关（与 triggerAI 路径同口径；专用情绪 API 自带 stream 时以它为准）
-            const emotionApi = (evalChar.emotionConfig.api?.baseUrl)
-                ? { ...evalChar.emotionConfig.api, stream: (evalChar.emotionConfig.api as any).stream ?? !!(deps.apiConfig.stream ?? false) }
-                : { baseUrl: deps.apiConfig.baseUrl, apiKey: deps.apiConfig.apiKey, model: deps.apiConfig.model, stream: !!(deps.apiConfig.stream ?? false) };
-
-            try {
-                // 重新从 DB 拉与主聊天一致的「自适应/拉杆最大范围 + 用户断点」。
-                const pushedRange = await loadCharacterContextRange(evalChar);
-                const contextMsgs = pushedRange.messages;
-                if (pushedRange.userBreakpointExpired && updateCharacter) {
-                    updateCharacter(charIdAtMount, { contextUserStartMessageId: undefined });
-                }
-
-                // 跟 sendMessage line 553 同一个 helper, 同一份 ctx → emotion eval 看到的 systemPrompt
-                // + cleanedApiMessages 跟 主 API 调用看到的几乎完全一致 (差别仅在 music live snapshot 时序).
-                const mcdMiniSnap = deps.mcdMiniAppRef?.current;
-                const mcdMiniOpen = !!mcdMiniSnap?.open;
-                const luckinMiniSnap = deps.luckinMiniAppRef?.current;
-                const luckinMiniOpen = !!luckinMiniSnap?.open;
-                const payload = await buildChatRequestPayload({
-                    char: evalChar,
-                    userProfile: deps.userProfile,
-                    groups: deps.groups,
-                    emojis: deps.emojis,
-                    categories: deps.categories,
-                    historyMsgs: contextMsgs,
-                    contextLimit: Math.max(1, contextMsgs.length),
-                    recallEntryPoint: 'emotion_eval',
-                    realtimeConfig: deps.realtimeConfig,
-                    innerState: deps.evolvedNarrative || undefined,
-                    musicSnapshot: {
-                        current: deps.music.current,
-                        playing: deps.music.playing,
-                        lyric: deps.music.lyric,
-                        activeLyricIdx: deps.music.activeLyricIdx,
-                        listeningTogetherWith: deps.music.listeningTogetherWith,
-                        cfg: deps.music.cfg,
-                        recentTrackChange: deps.music.recentTrackChange,
-                    },
-                    translationConfig: deps.translationConfig,
-                    htmlMode: { enabled: !!(evalChar as any).htmlModeEnabled, customPrompt: (evalChar as any).htmlModeCustomPrompt },
-                    thinkingChain: { enabled: !!(evalChar as any).showThinkingChain, customPrompt: (evalChar as any).thinkingChainCustomPrompt },
-                    visionApiConfig: deps.apiConfig.visionApi,
-                    mcdMiniSnap: mcdMiniOpen ? mcdMiniSnap : undefined,
-                    luckinMiniSnap: luckinMiniOpen ? luckinMiniSnap : undefined,
-                });
-
-                if (payload.flags.promptBuildSkipped) {
-                    try { await ActiveMsgStore.clearPendingEmotionEval(charIdAtMount); } catch { /* ignore */ }
-                    return;
-                }
-
-                setEmotionStatus('evaluating');
-                const innerState = await evaluateEmotionBackground(
-                    evalChar, deps.userProfile, payload.systemPrompt, payload.cleanedApiMessages, emotionApi,
-                );
-                if (innerState) setEvolvedNarrative(innerState);
-                // 成功后清 pending. 失败不清 → 下次 mount drain 重试.
-                try { await ActiveMsgStore.clearPendingEmotionEval(charIdAtMount); } catch { /* ignore */ }
-            } catch (e) {
-                console.warn('[post-push-emotion-eval] failed', e);
-                // 保留 pending 给下次 mount 重试
-            } finally {
-                setEmotionStatus('');
-            }
-        };
-
-        // 1. 在线路径: 监听 push 落库后 activeMsgRuntime 发的事件
-        const handler = (e: Event) => {
-            const detail = (e as CustomEvent).detail;
-            if (detail?.charId !== charIdAtMount) return;
-            void runEvalForPushedChar();
-        };
-        window.addEventListener('post-push-emotion-eval', handler);
-
-        // 1b. instant 模式: 情绪评估在 worker 跑 (副 API), 结果走 emotion_update push → activeMsgRuntime
-        //     flush 时 applyEmotionEvalRaw 落 buff 并广播 innerState. 这里只把 innerState 喂回 evolvedNarrative
-        //     (下一轮 system prompt 用), buff 已在 activeMsgRuntime 落库.
         const innerStateHandler = (e: Event) => {
             const detail = (e as CustomEvent).detail;
             if (detail?.charId !== charIdAtMount) return;
@@ -760,13 +641,7 @@ export const useChatAI = ({
         };
         window.addEventListener(CHAT_GEN_EVENTS.emotionDone, emotionDoneHandler);
 
-        // 2. 离线路径兜底: mount 时检查这个 char 有没有 pending (老版本 / 非 worker-eval 路径残留的 push)
-        void ActiveMsgStore.getPendingEmotionEval(charIdAtMount).then((pending) => {
-            if (pending) void runEvalForPushedChar();
-        }).catch(() => { /* ignore */ });
-
         return () => {
-            window.removeEventListener('post-push-emotion-eval', handler);
             window.removeEventListener('emotion-innerstate-updated', innerStateHandler);
             window.removeEventListener(CHAT_GEN_EVENTS.emotionDone, emotionDoneHandler);
         };
@@ -801,16 +676,11 @@ export const useChatAI = ({
     const triggerAI = async (
         currentMsgs: Message[],
         overrideApiConfig?: { baseUrl: string; apiKey: string; model: string },
-        onInstantPosted?: () => void,
         opts?: { skipEmotionInjection?: boolean },
     ) => {
-        // 早退路径也要熄「发送准备中」灯: caller (Chat.tsx) 是先 setInstantSendingActive(true)
-        // 再调 triggerAI 的, 这里 return 掉而不通知的话指示灯会永远亮着。
-        if (isTyping || !char) { onInstantPosted?.(); return; }
+        if (isTyping || !char) return;
         // React state 的 isTyping 在当前 tick 里还是旧值时，也必须挡住第二个入口。
-        // 这是同一轮的重复入口，不要调用它自己的 onInstantPosted：那个回调会
-        // 熄灭共享的“发送中”指示，而真正的第一轮还在生成。第一轮结束/受理时
-        // 会负责正常收尾。
+        // 这是同一轮的重复入口，第一轮结束/受理时会负责正常收尾。
         if (triggerInFlightRef.current) return;
         triggerInFlightRef.current = true;
         // 即时对话（amsg2）路径：POST 202 受理之后 isTyping 立刻回 false（生成挪去云端跑，
@@ -824,7 +694,6 @@ export const useChatAI = ({
         if (getInstantChatPending(char.id)) {
             addToast('角色还在回复上一条消息，等这条回来再发下一条', 'info');
             triggerInFlightRef.current = false;
-            onInstantPosted?.();
             return;
         }
 
@@ -888,13 +757,6 @@ export const useChatAI = ({
                     markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
                     void flushAmsgState('busy-auto-reply');
                     triggerInFlightRef.current = false;
-                    try {
-                        onInstantPosted?.();
-                    } catch (callbackError) {
-                        // 回调只是 UI 指示灯收尾；即使调用方回调异常，也不能让
-                        // 已落盘的自动回复重新落入普通模型路径。
-                        console.warn('[BusyAutoReply] auto reply posted but UI callback failed', callbackError);
-                    }
                     return;
                 }
             } catch (error) {
@@ -906,7 +768,6 @@ export const useChatAI = ({
         if (!effectiveApi.baseUrl) {
             triggerInFlightRef.current = false;
             alert("请先在设置中配置 API URL");
-            onInstantPosted?.();
             return;
         }
 
@@ -926,7 +787,7 @@ export const useChatAI = ({
         // 合上游：按角色抢一个跨页面的回复占位。抢不到说明这个角色已经有一轮在跑
         // （可能是在别的页面开的），本轮直接退出；退出前要把 fork 自己的入口锁一起放掉。
         const releaseReply = acquireChatReply(char.id);
-        if (!releaseReply) { triggerInFlightRef.current = false; onInstantPosted?.(); return; }
+        if (!releaseReply) { triggerInFlightRef.current = false; return; }
         replyReleaseRef.current = releaseReply;
         // 本轮的中止句柄：必须在 setLocalTyping(true) 之前挂上，否则「正在输入」已经亮起、
         // 停止按钮却还拿不到 controller，用户点了没反应。
@@ -1042,15 +903,6 @@ export const useChatAI = ({
             // fire 时独家供给），本地那份照旧全量。判定材料和下面的 payload.flags 同源：
             // luckinChatActive / mcdActive / luckinActive 就是由这三个值算出来的
             // （skipPromptBuild 那个 dev 开关下 flags 会整片置 false，那时只有这边的 ref 是准的）。
-            // 历史 Instant Push 配置可能还留在本机；只要主动消息 2.0 已可用，就必须由
-            // 它优先接手。否则旧 Worker 会绕过本轮的前后台横幅策略，表现为代码已更新、
-            // 聊天页仍弹系统通知。
-            //
-            // Instant Push 配没配着，一回合只读这一次，下面所有用到的地方都吃这个值。
-            // 从这里到真正分流之间隔着好几个 await（构建 payload、取 amsg2 任务现状…），
-            // 期间用户在设置页存一次盘就能把它翻面；各读各的话会出现「按上云剥掉了时效段
-            // 的 prompt，最后却交给了 IP 或落回本地」——两个钟的问题原样回来。
-            const instantPushConfigured = isInstantConfigReady();
             const luckinChatOn = !!luckinChatRef?.current?.active;
             // 本机 / 内网的 MCP 服务器（docs/mcp-client.md 教用户填的 http://localhost:18061
             // 就是这一类）：上云那一轮前端不注入 MCP 说明块，而 worker 从 CF 那头连不上这类
@@ -1069,23 +921,20 @@ export const useChatAI = ({
             const instantChatReadiness = await resolveInstantChatReadiness(char);
             const instantChatOn = instantChatReadiness.ready;
             const instantChatRoute = instantChatOn && !instantChatVeto;
-            // 「即时对话开着、这一轮却没上云」的所有情形都在这一处留痕，三种原因去向不同：
+            // 「即时对话开着、这一轮却没上云」的所有情形都在这一处留痕，都是留在本地跑：
+            //   · SAR 模块效果：效果与解除提示需要本地解析；
             //   · 点单流程否决：瑞幸/麦当劳是客户端交互式循环（选城市、确认单），云端接不了
             //     手，这一轮留在本地跑是对的；
-            //   · MCP 地址 worker 够不着：同上，留在本地才有工具（见上面那段）；
-            //   · 旧 Instant Push 只在主动消息 2.0 未启用/不可用时才会接手；它不再抢占
-            //     已启用的即时对话。
+            //   · MCP 地址 worker 够不着：同上，留在本地才有工具（见上面那段）。
             // 几个原因同时成立时报最前面那个——越靠前越具体，也更可能是用户真正想问的。
             // 不留痕的话，用户看到的是「开关亮着、消息照常出来」，查无可查——静默分流那个坑
             // 就是这么来的。这里只报不拦：拦不拦已经由 instantChatRoute 说了算。
             if (instantChatOn && !instantChatRoute) {
-                const skipReason = instantChatVeto ?? 'not-ready';
+                const skipReason = instantChatVeto;
                 console.warn(
                     skipReason === 'mcp-worker-unreachable'
                         ? '[AmsgInstantChat] 这一轮没上云（有 MCP 服务器填的是本机/内网地址，worker 够不着），本地生成，工具照常可用'
-                        : instantChatVeto
-                            ? `[AmsgInstantChat] 这一轮没上云（${instantChatVeto} 点单流程需要客户端交互），本地生成`
-                            : '[AmsgInstantChat] 这一轮没走即时对话（当前不可用），照本地路径继续',
+                        : `[AmsgInstantChat] 这一轮没上云（${skipReason} 点单流程需要客户端交互），本地生成`,
                 );
                 appendInstantTraceEntry({
                     ts: new Date().toISOString(),
@@ -1114,9 +963,9 @@ export const useChatAI = ({
                 // 配置根本没读出来（IndexedDB 被别的标签页 versionchange 卡住 / iOS 存储压力）。
                 // 这不是「用户没开」：开关很可能开着，只是这一刻问不到。上面那条 trace 的条件
                 // （instantChatOn）在这里天然为假，所以单独留一条，别让这种情形在观察窗里查无此事。
-                // 点单流程否决 / Instant Push 配置还在（脏配置）时例外：配置就算读出来了这一轮
-                // 也轮不到即时对话（去向由 veto / IP 分支决定），照原路走本就是对的，只留痕不拦。
-                const configUnreadableFailsTurn = !instantChatVeto && !instantPushConfigured;
+                // 点单流程否决时例外：配置就算读出来了这一轮也轮不到即时对话（去向由 veto 决定），
+                // 照原路走本就是对的，只留痕不拦。
+                const configUnreadableFailsTurn = !instantChatVeto;
                 appendInstantTraceEntry({
                     ts: new Date().toISOString(),
                     event: 'instant-chat-config-unreadable',
@@ -1128,7 +977,7 @@ export const useChatAI = ({
                     // 被系统掐掉，回来时既没有回复也没有报错，设置页还写着「已开启」。所以和下面
                     // sendInstantChatTurn 没发出去同一口径：明确落系统消息 + 弹错，这一轮不发起
                     // 本地生成，用户稍后重发即可。**绝不静默退回本地生成**。收尾交给 finally
-                    // （熄 isTyping / 熄「发送准备中」灯 / 停 KeepAlive），和那条失败路径同一段。
+                    // （熄 isTyping / 停 KeepAlive），和那条失败路径同一段。
                     const reason = '即时对话暂时出了点问题：本地配置这一刻读不出来（可能是存储正忙）。这条没有发出去，稍等几秒重新发一次就好。';
                     console.warn('[AmsgInstantChat] 全局配置读不出来，开没开都不知道：这一轮明确报错等重发，不悄悄退回本地生成');
                     await DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content: `[${reason}]` });
@@ -1203,15 +1052,9 @@ export const useChatAI = ({
                 : payload.recallTrace.outcome.startsWith('skipped')
                     ? 'skipped'
                     : 'complete';
-            // 旧 Instant Push 只有在本轮没有被客户端工具模式截走时才是真正的云端路由。
-            // 这样「提交中」不会在本地工具循环里误亮。
-            const instantPushRoute = instantPushConfigured
-                && !instantChatRoute
-                && !payload.flags.luckinChatActive
-                && !payload.flags.mcdActive
-                && !payload.flags.luckinActive
-                && !payload.flags.mcpChatActive;
-            if (instantChatRoute || instantPushRoute) {
+            // 只有真正上云的这一轮才亮「提交中」，本地工具循环里不会误亮。
+            const showsCloudSubmitting = instantChatRoute;
+            if (showsCloudSubmitting) {
                 setRecallSubmitStatusForAttempt(recallSubmitAttempt, {
                     phase: 'submitting',
                     recall: recallPreparation,
@@ -1226,7 +1069,7 @@ export const useChatAI = ({
             }
             const systemPrompt = payload.systemPrompt;
             const cleanedApiMessages = payload.cleanedApiMessages;
-            // 在续说补丁和本地/IP/即时对话分流前检查最终历史，不能用补出来的 user 掩盖空上下文。
+            // 在续说补丁和本地/即时对话分流前检查最终历史，不能用补出来的 user 掩盖空上下文。
             assertChatHasDialogue(payload.fullMessages);
             const fullMessages = payload.flags.promptBuildSkipped
                 ? payload.fullMessages
@@ -1254,14 +1097,12 @@ export const useChatAI = ({
             //    未单独配置情绪 API 时回退到主 apiConfig。
             //    ── 路径分叉 ──
             //    - 本地 fetch 模式: 客户端 fire-and-forget 跑 eval (前端活着).
-            //    - 上云模式 (Instant Push / 即时对话): 不在客户端跑, 改把 eval prompt + 副 API 凭据
-            //      一起交给 worker, worker 跑完把结果推回来, 客户端 flush 时落 buff —— 这样前端被杀
-            //      也算数, 且不会跟客户端 eval 双跑双扣费. 见下方两个上云分支 + activeMsgRuntime.
+            //    - 即时对话: 不在客户端跑, 改把 eval prompt + 副 API 凭据一起交给 worker, worker 跑完
+            //      把结果推回来, 客户端 flush 时落 buff —— 这样前端被杀也算数, 且不会跟客户端 eval
+            //      双跑双扣费. 见下方即时对话分支 + activeMsgRuntime.
+            //    走哪条跟着 instantChatRoute（构建 payload 前冻结的同一回合终值）走，这里绝不自己
+            //    再判一次，否则可能「按上云把评估打包走了，实际却走本地」，情绪底色悄悄停更。
             const emotionEvalEnabled = !!(!promptBuildSkipped && !isEmotionEvalSkipped() && isScheduleFeatureOn(char) && char.emotionConfig?.enabled);
-            // 这一轮的生成在云端跑（两条路互斥，见 instantChatRoute 的算法）。
-            // instantPushConfigured 是路由判定处冻结的同一回合终值——这里绝不自己再读
-            // 一次，否则可能「按上云模式把评估打包走了，实际却走本地」，情绪底色悄悄停更。
-            const cloudGenRoute = instantPushConfigured || instantChatRoute;
             // 评估跟随全局流式开关（专用情绪 API 自带 stream 字段时以它为准）
             const evalStream: boolean = !!((effectiveApi as any).stream ?? apiConfig.stream ?? false);
             const emotionApi = emotionEvalEnabled
@@ -1273,7 +1114,7 @@ export const useChatAI = ({
             // 历史备注：曾为串行中转做过 1.5s 错峰（评估抢跑会把主回复压后一个评估时长），
             // 用户侧已排查确认当前渠道无该并发问题，2026-07 应用户要求取消延迟。
             // 上云模式不受影响：worker 那边自己安排评估的时机。
-            const fireLocalEmotionEval = (emotionEvalEnabled && !cloudGenRoute && emotionApi) ? () => {
+            const fireLocalEmotionEval = (emotionEvalEnabled && !instantChatRoute && emotionApi) ? () => {
                 setEmotionStatus('evaluating');
                 evaluateEmotionBackground(charForGen, userProfile, systemPrompt, cleanedApiMessages, emotionApi)
                     .then((innerState) => {
@@ -1283,13 +1124,12 @@ export const useChatAI = ({
                         setEmotionStatus('');
                     });
             } : null;
-            // 交给云端跑的那份评估配置。两条上云路径共用同一个形状（提示词模板 + 副 API 凭据），
-            // 只是搭在各自请求体的不同位置上：Instant Push 放顶层 emotionEval 字段，
-            // 即时对话放任务 metadata.amsgEmotionEval（那份走加密信封）。
-            const cloudEmotionEval = (emotionEvalEnabled && cloudGenRoute && emotionApi)
+            // 交给云端跑的那份评估配置（提示词模板 + 副 API 凭据），即时对话把它放进任务
+            // metadata.amsgEmotionEval（那份走加密信封）。
+            const cloudEmotionEval = (emotionEvalEnabled && instantChatRoute && emotionApi)
                 ? {
                     // includeContext=false: 不嵌 system prompt + 对话历史 (worker 复用本次请求的 messages 作前文),
-                    // 把 emotionEval 块压到最小, 让请求体留在 keepalive 64KB 上限内 (关前端也能跑完).
+                    // 把 emotionEval 块压到最小, 不把上下文在请求体里重复一份.
                     prompt: buildEmotionEvalPrompt(
                         charForGen, userProfile, systemPrompt, cleanedApiMessages, false,
                         shouldRequestAmbient(charForGen.id) ? buildAmbientEvalSection(charForGen) : ''
@@ -1303,21 +1143,19 @@ export const useChatAI = ({
             //
             // 正常的熄灭信号只有一个: worker 把结论推回来之后派发的 CHAT_GEN_EVENTS.emotionDone
             // (Chat 页的徽章和全局横幅各自监听, 都不依赖本 hook 存活 —— 用户切走 Chat 也能正常熄灭).
-            // 剩下两种情况自己收场: 这一轮压根没发出去 —— 下面两个失败分支当场调
+            // 剩下两种情况自己收场: 这一轮压根没发出去 —— 下面的失败分支当场调
             // extinguishCloudEmotionBadge; 结论永远没回来 (worker 被杀 / 推送丢了 / 用户部署的是旧版)
             // —— 徽章的 setTimeout 和横幅的 TTL 同时到点, 两边用的是同一个数.
             //
-            // 这个数按各自 worker 最长能跑多久给:
-            //   · Instant Push: 一个请求里跑完就回, 90s 足够;
-            //   · 即时对话: worker 那条 fire 的总时长上限是 INSTANT_TOTAL_TIMEOUT_MS（工具循环
-            //     也算在内），评估结果又是跟着主回复的最后一条推送回来的——直接从 worker 模块
-            //     import 那个数 + 一分钟推送在途余量，worker 侧调预算时这里自动跟上
-            //     （ChatBroadcast 的横幅 TTL 同样从它推导，见那边注释）。
-            const cloudEvalTimeoutMs = instantChatRoute ? INSTANT_TOTAL_TIMEOUT_MS + 60_000 : 90_000;
+            // 这个数按 worker 最长能跑多久给：worker 那条 fire 的总时长上限是 INSTANT_TOTAL_TIMEOUT_MS
+            // （工具循环也算在内），评估结果又是跟着主回复的最后一条推送回来的——直接从 worker 模块
+            // import 那个数 + 一分钟推送在途余量，worker 侧调预算时这里自动跟上
+            // （ChatBroadcast 的横幅 TTL 同样从它推导，见那边注释）。
+            const cloudEvalTimeoutMs = INSTANT_TOTAL_TIMEOUT_MS + 60_000;
             /**
              * 熄灭「情绪更新中」的三件套：撤掉安全网、灭页内徽章、灭全局横幅。
              *
-             * 这一轮没发出去时两个失败分支都要调它 —— 云端根本不会跑评估，那个正常的熄灭信号
+             * 这一轮没发出去时失败分支要调它 —— 云端根本不会跑评估，那个正常的熄灭信号
              * 永远不会来。少调一处的表现是：徽章亮着直到安全网到点，然后弹一句
              * 「worker 可能是旧版」的提示，而真实原因是这条消息压根没发出去。
              */
@@ -1344,7 +1182,7 @@ export const useChatAI = ({
                     clearCloudEmotionTimer(charIdAtArm);
                     cloudEmotionTimers.set(charIdAtArm, setTimeout(() => {
                         cloudEmotionTimers.delete(charIdAtArm);
-                        if (instantChatRoute && getInstantChatPending(charIdAtArm)) {
+                        if (getInstantChatPending(charIdAtArm)) {
                             armCloudEmotionSafetyNet(60_000);
                             return;
                         }
@@ -1356,9 +1194,7 @@ export const useChatAI = ({
                         // 静默熄灯, 用户只看到「情绪永远不更新」—— 给一条可操作的提示。
                         announceChatGen(CHAT_GEN_EVENTS.emotionFailed, {
                             charId: charIdAtArm, charName: charNameAtArm,
-                            reason: instantChatRoute
-                                ? '云端情绪评估超时无回音——worker 可能是旧版（不支持情绪评估），请到 设置→主动消息 2.0 重新部署 worker 后重试'
-                                : '云端情绪评估超时无回音——worker 可能是旧版（不支持情绪评估），请到 设置→Instant 消息设置 更新 worker 后重试',
+                            reason: '云端情绪评估超时无回音——worker 可能是旧版（不支持情绪评估），请到 设置→主动消息 2.0 重新部署 worker 后重试',
                         });
                     }, delayMs));
                 };
@@ -1467,8 +1303,6 @@ export const useChatAI = ({
             // 主动消息 2.0 本地工具：worker 已配置 + 角色没关掉时注入 schedule/cancel/renew/list，
             // 并注入「排程现状」背景块（常驻能力简介 + 进行中任务 + 作废待处理，角色自行判断怎么接）。
             // 是否注入在上面 thinking 门那里就算好了（amsg2ToolsInjected）。
-            // amsg2 和 Instant Push 在设置页已经是双向互斥，正常情况下不可能两个都开，
-            // 这里不需要额外判断（下面的 Instant Push 分支只为历史配置兜底保留）。
             let amsg2ExpiredIds: string[] = [];
             let amsg2Notices: Amsg2ExpiredNoticeRecord[] = [];
             if (amsg2ToolsInjected) {
@@ -1516,91 +1350,20 @@ export const useChatAI = ({
                 return insertAmsg2TaskContextBlock(messages, block, payload.volatileTailIndex);
             };
 
-            // ─── Instant Push 分支 ───
-            // 与本地 fetch 对称：sendInstantPushAndAwaitReply 内部完成 sub 获取 / push 监听 /
-            // 300s 超时兜底，返回时 push 已落库（或失败）。外层 finally 统一清 isTyping /
-            // KeepAlive / 跑 memory palace 后处理，与本地路径完全对齐。
-            // worker 端跑完 LLM → push → SW → activeMsgRuntime.flushInboxToChat 写 DB 并刷 UI。
-            // 瑞幸聊天点单 / 麦当劳 / 瑞幸小程序 这些"客户端工具循环"模式必须走本地 fetch:
-            // instant push 会把请求交给 worker 并在这里提前 return, 工具循环(callLuckinTool 等)根本跑不到,
-            // 表现就是"选了城市也没用 / 角色不下单"。这些模式下跳过 instant push, 用本地 fetch 跑工具循环。
-            // 双向互斥后理论上到不了：走到这条 trace 说明两边开关同时亮着（脏配置），当断言告警看。
-            const AMSG2_SUPPRESSED_TRACE = 'amsg2-suppressed-by-instant';
-            if (instantPushRoute && !sarModulePlan.hasActiveEffect && !sarModulePlan.hasAfterglow) {
-                // 走这条路 = 上面那段 amsg2 的工具、排程现状块都白拼了（instant 发的是原始
-                // fullMessages、请求体不带 tools），下面的活跃会话租约也不会开。三样都是静默
-                // 失效，留一条 trace 让观察窗看得见，别让人对着「功能不响」凭空排查。
-                if (amsg2ToolsInjected) {
-                    appendInstantTraceEntry({ ts: new Date().toISOString(), event: AMSG2_SUPPRESSED_TRACE });
-                }
-                const markInstantPushSent = () => {
-                    // 旧 Instant Push 的回调点表示请求已经交给发送通道，不等同于 /instant-chat
-                    // 的 202 受理，因此只显示「已发出」，不借此宣称任务已被云端接收。
-                    setRecallSubmitStatusForAttempt(recallSubmitAttempt, { phase: 'sent' });
-                    onInstantPosted?.();
-                };
-                const instantResult = await sendInstantPushAndAwaitReply({
-                    contactName: char.name,
-                    messages: fullMessages as InstantPushPayload['messages'],
-                    apiUrl: effectiveApi.baseUrl,
-                    apiKey: effectiveApi.apiKey,
-                    primaryModel: effectiveApi.model,
-                    maxTokens: 8000,
-                    temperature: userTemp,
-                    // amsg-instant 0.6+ 端 validateAvatarUrl 拒 data: / >2KB,
-                    // 这里按 contract 只传 https URL, data URL 本地头像直接不传
-                    // (SW 显示通知时回退到默认 app icon, 不影响推送成功率).
-                    avatarUrl: /^https?:\/\//i.test(char.avatar || '') ? char.avatar : undefined,
-                    metadata: { source: 'sullyos-chat', charId: char.id },
-                    // 副 API 情绪评估: worker 跑完主回复后用这套跑 eval, 推 emotion_update 回来 (见 worker 包装层).
-                    // 放顶层字段, 不进 metadata —— 框架不会回显它, 副 API apiKey 不会泄进 push.
-                    ...(cloudEmotionEval ? { emotionEval: cloudEmotionEval } : {}),
-                }, char.id, undefined, markInstantPushSent);
-                if (!instantResult.ok && instantResult.outcome !== 'cancelled') {
-                    // 长报错 (worker 400 校验信息 + CF 错误页可能很长) 走弹窗, 手机用户能
-                    // 看清并复制反馈; 没注入 showError 时降级到 toast.
-                    // 完整诊断由 instantPushClient 的 formatDiagnostics 输出 —— 涵盖
-                    // http (status/bodyBytes/keepalive/cf-ray/response 截断) / fetchError /
-                    // config / subscription / timeout / context / env 各段, 已主动 mask
-                    // worker / api host, 不含 apiKey / apiUrl / workerUrl / push endpoint.
-                    //
-                    // 'cancelled' = pagehide / signal abort, caller 自己取消的, 不弹错。
-                    const errMsg = instantResult.error || '未知错误';
-                    if (showError && instantResult.diagnostics) {
-                        showError(
-                            'Instant Push 发送失败',
-                            formatDiagnostics(instantResult.diagnostics, {
-                                outcome: instantResult.outcome,
-                                reason: errMsg,
-                            }),
-                        );
-                    } else if (showError) {
-                        showError('Instant Push 发送失败', `outcome: ${instantResult.outcome}\nreason: ${errMsg}`);
-                    } else {
-                        addToast(`Instant Push: ${errMsg}`, 'error');
-                    }
-                }
-                // 发送失败/取消 → worker 不会跑情绪评估，那个正常的熄灭信号永不到达，当场自己熄。
-                if (!instantResult.ok && cloudEmotionEval) extinguishCloudEmotionBadge();
-                return;
-            }
-
             // ─── 即时对话（主动消息 2.0 云端生成）分支 ───
-            // 和上面的 Instant Push 对称：这一轮的上下文 + 任务一个 POST 上云，云端跑完
-            // 走推送回来（收件箱同一条管线入库），客户端发完那一刻就自由了。
-            // 正常情况下两条路应互斥；即使旧 Instant Push 配置残留，只要即时对话可用，
-            // 上面的分支也会让位给这里，确保普通聊天使用同一套前后台横幅策略。
+            // 这一轮的上下文 + 任务一个 POST 上云，云端跑完走推送回来（收件箱同一条管线入库），
+            // 客户端发完那一刻就自由了。
             //
             // 走不走这条路，构建 payload 之前的 instantChatRoute 已经算完了，这里只认它
             // 一个值：「这份 prompt 剥没剥时效段」和「这一轮走不走云端」必须是同一个判断，
             // 各算各的话两边总有一天会不同意，剥过的那份 prompt 就落到别的路上去了。
-            // 没上云的那些情形（点单否决 / IP 配置也还在）在那一段里已经报过 trace，
+            // 没上云的那些情形（SAR 模块 / 点单否决 / MCP 地址够不着）在那一段里已经报过 trace，
             // 这边不重复报，也不重复拦。
             //
             // MCP 刻意不在排除名单里：worker fire 时自己解析 tool_config、自己跑后台
             // MCP（这次 POST 顺手把配置传上去了），云端答得了。排掉它的话，只要全局配着
             // 一台 enabled 的 MCP 服务器，即时对话就永远静默走回本地——设置页亮着
-            // 「已开启」、界面毫无异样，正是 instant push 静默分流那个坑的复刻。
+            // 「已开启」、界面毫无异样，用户查无可查。
             if (instantChatRoute) {
                 // 即时对话也必须维持前台租约：worker 在真正投递前靠它判断“页面还开着，
                 // 只写 outbox、不发 iOS 系统 Push”。受理成功后由 activeMsgRuntime 在收到
@@ -1728,7 +1491,7 @@ export const useChatAI = ({
 
             // 同角色活跃会话租约：本地 fetch 路径本轮真实消息已落库、模型请求即将发出，
             // 启动心跳告诉 worker「正在和这个角色聊」——到点的 expire AI 任务据此 skip，
-            // 别在用户正聊时又弹主动消息。instant push 路径在上方已 return，天然不重复开 lease。
+            // 别在用户正聊时又弹主动消息。即时对话路径在上方已 return，天然不重复开 lease。
             // 只对已排程 AI 任务的角色开租约：其余角色没有 worker 消费，开了纯浪费还刷 warn。
             const amsg2Cfg = char.activeMsg2Config;
             if (amsg2Cfg?.enabled && hasActiveAiTask(amsg2Cfg)) {
@@ -2274,9 +2037,9 @@ export const useChatAI = ({
             }, null, 2));
 
             // ─── 后处理管线 (13 步) ───
-            // 详见 utils/applyAssistantPostProcessing.ts。Phase 0 行为字节级不变;
-            // Phase 1 会让 instant push 路径也调它 (skipSecondPassLLM=true);
-            // Phase 2 会让 worker 端把识别的副作用打包成 directives 传过来重放。
+            // 详见 utils/applyAssistantPostProcessing.ts。本地路径跑完整管线；
+            // 云端回复（activeMsgRuntime 冲刷收件箱）也调它，带 skipSecondPassLLM=true 和
+            // worker 识别好的 directives 重放。
             // 后处理会逐条写库/刷新，第一条落库并不代表其余气泡已准备好。
             // 整轮结束前保持预览，登记对应正式消息供 UI 暂时隐藏；全部落库后再一起交接。
             const previewHandoverIds = new Set<number>();
@@ -2365,7 +2128,7 @@ export const useChatAI = ({
                     setXhsStatus,
                     updateTokenUsage,
                     // 整组 musicHooks 由 MusicProvider 注册到模块级 slot, 本地 fetch 路径和
-                    // instant push 路径 (activeMsgRuntime) 共享同一份, 见 MusicContext.loadMusicHooks.
+                    // 云端回复的冲刷 (activeMsgRuntime) 共享同一份, 见 MusicContext.loadMusicHooks.
                     musicHooks: loadMusicHooks() ?? undefined,
                 },
                 // 流式预览已把气泡展示过 → 落库免打字延迟，秒回填（未预览时行为不变）
@@ -2396,14 +2159,13 @@ export const useChatAI = ({
             // 本地路径回复已全部落库。OSContext 监听这个事件 bump lastMsgTimestamp——
             // 当前挂载的 Chat（可能是切走又切回后新 mount 的实例，本闭包的 setMessages
             // 对它已失效）会重新 reloadMessages；用户不在该会话时补未读 + toast。
-            // instant 路径不发：它的落库回落走 'active-msg-received'（activeMsgRuntime）。
+            // 即时对话路径不发：它的落库回落走 'active-msg-received'（activeMsgRuntime）。
             announceChatGen(CHAT_GEN_EVENTS.replyArrived, { charId: char.id, charName: char.name });
 
             // 防穿帮闸：仅当这轮请求真的成功、回执确实进了模型上下文并产出已落库的
             // 回复，才标记已告知；失败/中断路径不标，下轮重新注入（回执不丢）。
             // 放在 try 成功尾部（回复已 applyAssistantPostProcessing 落库），与 catch/finally 互斥；
-            // amsg2 与 Instant Push 设置页双向互斥，instant 路径在上方已 return（那条分支
-            // 只为历史配置兜底保留），这里只覆盖本地 fetch 路径。
+            // 即时对话路径在上方已 return，这里只覆盖本地 fetch 路径。
             if (amsg2ExpiredIds.length) {
                 void ActiveMsgStore.markExpiredNoticesNotified(char.id, amsg2ExpiredIds);
             }
@@ -2438,16 +2200,11 @@ export const useChatAI = ({
             setLocalTyping(false);
             KeepAlive.stop();
             // 本轮生成结束（成功/失败/中断都经过）→ 停止本地续租；远端靠 45s TTL 自然失效。
-            // 未开过租约（instant push / 非 amsg2 角色）时是幂等 no-op。
+            // 未开过租约（非 amsg2 角色）时是幂等 no-op。
             if (!instantChatAccepted) stopAmsgChatPresence(char.id);
-            // 全局横幅熄灭（成功/失败/instant 均经过这里；OSContext 同时借它兜底刷新，
+            // 全局横幅熄灭（成功/失败/即时对话均经过这里；OSContext 同时借它兜底刷新，
             // 覆盖 catch 里落库的错误系统消息）。
             announceChatGen(CHAT_GEN_EVENTS.replyEnd, { charId: char.id, charName: char.name });
-            // 兜底熄「发送准备中」灯 (幂等, 正常路径 deliver() 前已熄过)。不加的话
-            // config-missing / subscription-failed / 拼 context 阶段 throw 这些没走到
-            // POST 的路径都不会调 onInstantPosted, 头部「发送中…」徽章会卡死到刷新
-            // —— 2026-07 安卓用户实测: 订阅失败弹了错, 但三个小点到角色回复了都不消失。
-            onInstantPosted?.();
             setStreamingBubbles([]);  // 错误/中断路径兜底清预览
             setStreamingThinking('');
             setStreamingHandoverIds([]);

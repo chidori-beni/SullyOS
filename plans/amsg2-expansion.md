@@ -49,6 +49,7 @@
 - 生成 3 秒的东西上云，收益接近零，成本照付。
 - 生成 60 秒、且用户大概率已经切走的，收益最大。
 - 用户必须当场看到下一句才能继续的（通话），上云是负收益。
+- 云端只有异步一种形态（没有同步流式通道），所以先看结果能不能晚点到——必须当场拿到的，直接不考虑上云。
 
 成本那头有三项，按大小排：
 
@@ -226,24 +227,6 @@
 | 任务状态点名 | 拉 | 判「还在跑 / 已失败 / 行没了」 |
 
 **结果可以晚到的调用点根本不用碰推送**，只用 client_state 拉取就行，代码量减半。`utils/activeMsgRuntime.ts:309` 的 `startLateEmotionPoll` 是完整可抄的样板 —— 含「新一轮到达时旧轮询作废」「跳数用尽按失败收尾」「取回后删云端副本」。
-
----
-
-## Instant Push 下架后
-
-IP 下架不影响这轮上云，反而更简单：`hooks/useChatAI.ts:851` 的分流条件 `instantChatRoute = instantChatOn && !instantChatVeto && !instantPushConfigured` 会少一项，现在被 IP 截胡的那批用户自动落到主动消息 2.0 上。
-
-拆代码时这三处要留意：
-
-| 位置 | 处理 |
-|---|---|
-| `utils/activeMsgRuntime.ts` | **留着。** 它是两条路共用的送达层（收件箱 → 落库），只是日志 tag 叫 `instant-push`、看着像 IP 的文件。别按文件名删，可以顺手改名 |
-| `utils/emotionEvalCore.ts` | **留着。** `worker/instant-push/src/index.ts:26` 和 `worker/amsg/src/emotionEval.ts:28` 都 import 它，是两个 bundle 共用的零依赖叶子 |
-| `utils/activeMsgClient.ts:89` | **搬家。** 主动消息 2.0 从 `instantPushClient` 引了 `copyWorkerBundleToClipboard`，删之前先把它挪出来 |
-
-另外 IP 走了之后，全项目就没有「同步 + SSE 流式」的云端通道了（IP 的 `POST /instant` + SSE 是唯一一条）。上云从此只有异步一种形态 —— 这正好让筛选标准更干净：只看结果能不能晚点到。
-
-请求体 gzip 上行的现成实现也在 IP 那条路上（`utils/instantPushClient.ts:1093` 的 `compressRequest`，实现在 IP 的 client 库 + worker 里）。上游把 gzip 解压做掉之后这份就不用移植了。
 
 ---
 

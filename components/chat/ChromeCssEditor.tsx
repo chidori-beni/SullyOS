@@ -58,7 +58,6 @@ const AI_PROMPT = `你是一个 CSS 设计师。我在用一个叫 SullyOS 的�
 - .sully-voice-bar-shell       语音条外层；.sully-voice-bar 是可点的那条本体
 - .sully-typing-indicator      角色「正在输入」整行；-avatar 头像、-bubble 白气泡、
                                -dots 三点容器、-dot 每一颗
-- .sully-pending-dots          用户侧「发送准备中」的小圆点；每颗是 .sully-pending-dot
 - .sully-chat-message-sender   群聊里气泡上方的发言人名字
 - .sully-psyche                心象卡片（思考链）整块；-card / -title / -preview / -body
 - .sully-schedule-change      角色修改未来日程后浮出的整张回执

@@ -171,7 +171,7 @@ const DevDebugPanel: React.FC = () => {
         if (next) setFlags(readDevDebugFlags());
     }), []);
     // logCount 只在面板展开时才用得到（复制 (N) 按钮），收起 / 不可用都不订阅——
-    // 避免 instant-push 高频 append 时每条都触发整个 panel re-render。
+    // 避免主动消息链路高频 append 时每条都触发整个 panel re-render。
     useEffect(() => {
         if (!open) return;
         setLogCount(readDevDebugLog().length); // open 时拉一次最新值
@@ -400,7 +400,7 @@ const DevDebugPanel: React.FC = () => {
                         <div className="h-px bg-white/10" />
                         <ToggleRow
                             title="暂停情绪副评估"
-                            detail="主回复仍照常发送，但不启动本地或 Instant Push 的 emotion eval。"
+                            detail="主回复仍照常发送，但不启动情绪副评估（本地和即时对话都不跑）。"
                             checked={flags.skipEmotionEval}
                             onChange={(checked) => updateFlag('skipEmotionEval', checked)}
                         />

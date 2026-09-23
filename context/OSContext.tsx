@@ -84,6 +84,7 @@ import { formatBytes } from '../utils/format';
 import { isEmotionEvalSkipped } from '../utils/devDebug';
 import { isBenignApplicationConsoleMessage } from '../utils/applicationConsole';
 import { initLocalStorageMirror } from '../utils/lsMirror';
+import { cleanupInstantPushLegacyData } from '../utils/instantPushLegacyCleanup';
 // 备份用：把存在 localStorage 的本机配置随导出一起带走（键名须与 importFullData 对齐）
 import { exportPostOfficeLocal } from '../utils/vrWorld/postOffice';
 import { exportSignalLocal } from '../utils/vrWorld/signal';
@@ -1637,6 +1638,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
             setTimeout(() => addToast(`检测到本地设置曾被浏览器清除，已自动恢复 ${healedKeys.length} 项（主题 / API 等）`, 'info'), 2500);
         }
 
+        // 清掉 Instant Push 留在本机的旧配置和缓存（含 Worker 令牌、API Key 副本），只跑一次。
+        void cleanupInstantPushLegacyData();
+
         await loadSettings();
 
         // 老用户库存的鲨盘图链接就地改写成 jsDelivr（幂等、跑一次）。放在读 characters 之前，
@@ -2099,8 +2103,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
       // Phase 1: per-chunk UI refresh side-channel. push 路径下的 applyAssistantPostProcessing
       // 会逐条 saveMessage + fire 'active-msg-progress'; 这里只推 lastMsgTimestamp 让
-      // Chat.tsx 的 useEffect 重新 reloadMessages, 不弹 toast / 不增加未读 / 不 resolve
-      // sendInstantPush 那条 one-shot promise (那些只在 'active-msg-received' 触发一次)。
+      // Chat.tsx 的 useEffect 重新 reloadMessages, 不弹 toast / 不增加未读
+      // (那些只在 'active-msg-received' 触发一次)。
       const progressHandler = (event: Event) => {
           setLastMsgTimestamp(Date.now());
           const detail = (event as CustomEvent).detail as {
@@ -2159,7 +2163,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       };
 
       // 情绪 buff 落地后同步进内存 characters —— 必须是 App 级、不限当前打开的角色:
-      // instant 模式下 worker 推回 emotion_update 时用户常不在该角色聊天页 (在别的角色 /
+      // 云端情绪评估的结果推回来时用户常不在该角色聊天页 (在别的角色 /
       // 列表 / 后台 / 还没点进去). 之前只有 Chat.tsx 里那个 `charId === activeCharacterId`
       // 守卫的 handler 同步内存, 不匹配就直接 return —— buff 只落了 DB, 内存没更新; 而
       // OSContext 只在启动时 getAllCharacters, 切回该角色也不重读 DB, 于是 buff "回不到前端".
@@ -2171,7 +2175,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (!charId) return;
           // 内存同步 + 云端快照打脏合成一步。打脏放这里的理由:
           //   1. 主链路回合收尾那次打脏跑在情绪评估落库之前, 不补这一下云端那份情绪恒慢一拍;
-          //   2. 情绪广播源不止一个 (本地评估 / 记忆潜水 / instant push 回写), 全汇到这个事件,
+          //   2. 情绪广播源不止一个 (本地评估 / 记忆潜水 / 云端回写), 全汇到这个事件,
           //      堵这一个点就够, 不用去改每个上游。
           // 快照要的是合并后的角色, 所以跟 updateCharacter 一样在 updater 里取; 全局状态读 ref
           // 而不是闭包变量——本 effect 只在 sendProactiveNativeNotification 变化时重建, 闭包里
@@ -2210,7 +2214,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       // 本地 fetch 聊天回复的全局回落：triggerAI 的异步闭包在 Chat 卸载后继续跑完
       // 并落库，但它捕获的 setMessages 指向已卸载的实例。这里是它跟当前 UI 的唯一桥：
       //   - replyArrived（后处理管线全部落库后）→ bump lastMsgTimestamp 让当前挂载的
-      //     Chat 重新 reloadMessages；用户不在该会话时补未读 + toast——与 instant push
+      //     Chat 重新 reloadMessages；用户不在该会话时补未读 + toast——与推送收件
       //     的 'active-msg-received' 行为对齐。
       //   - replyEnd（finally，含失败路径）→ 只 bump 时间戳，把 catch 里落库的
       //     错误系统消息也刷出来。
@@ -3864,10 +3868,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const showError = (title: string, details: string) => {
       setErrorDialog({ title, details });
       // showError 是分发型入口，title 由调用方传。这里写显式白名单：
-      // 只有下面这三个写死的 title 会上报，其它（含以后新加的）一律不发，
+      // 只有下面这两个写死的 title 会上报，其它（含以后新加的）一律不发，
       // 也绝不把 title 原样透传出去（免得哪天有人往里塞 URL 或报错原文）。
-      if (title === 'Instant Push 发送失败') trackEvent('弹出报错详情弹窗', { 报错来源: 'Instant Push 发送失败' });
-      else if (title === '导入失败') trackEvent('弹出报错详情弹窗', { 报错来源: '导入失败' });
+      if (title === '导入失败') trackEvent('弹出报错详情弹窗', { 报错来源: '导入失败' });
       else if (title === '云端恢复失败') trackEvent('弹出报错详情弹窗', { 报错来源: '云端恢复失败' });
   };
   const dismissError = () => { setErrorDialog(null); };
@@ -4351,8 +4354,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               chatInputPreferences: (mode === 'text_only' || mode === 'full') ? loadChatInputPreferences() : undefined,
               sarLocalState: (mode === 'text_only' || mode === 'full') ? collectSARLocalBackup() : undefined,
 
-              // Instant Push
-              instantPushConfig: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('instant_push_config_v1'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
+              // 推送凭据 (VAPID)
               pushVapid: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('push_vapid_v1'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
 
 
@@ -5356,8 +5358,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (data.cloudBackupConfig) localStorage.setItem('os_cloud_backup_config', JSON.stringify(data.cloudBackupConfig));
           if (data.remoteVectorConfig) localStorage.setItem('os_remote_vector_config', JSON.stringify(data.remoteVectorConfig));
 
-          // Restore Instant Push
-          if (data.instantPushConfig) localStorage.setItem('instant_push_config_v1', JSON.stringify(data.instantPushConfig));
+          // Restore 推送凭据 (VAPID)
           if (data.pushVapid) localStorage.setItem('push_vapid_v1', JSON.stringify(data.pushVapid));
 
 

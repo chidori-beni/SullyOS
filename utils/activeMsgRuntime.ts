@@ -14,14 +14,13 @@ import { stripInternalAssistantProtocolMarkers } from './sanitize';
 import { noteCallBannerOpened } from './incomingCall';
 import { callLaunch } from './callLaunch';
 import { dateLaunch } from './dateLaunch';
-import { runPendingToolCalls } from './instantToolRunner';
 import { drainPendingDiaries } from './pendingDiary';
 import { applyEmotionEvalRaw } from './emotionApply';
 import { CHAT_GEN_EVENTS, announceChatGen, announceEmotionDone } from './chatGenEvents';
 import { processNewMessagesWithAutoArchive } from './memoryPalace/autoArchive';
 import { loadMusicHooks } from '../context/MusicContext';
 import type { XhsNote } from './realtimeContext';
-import { appendDevDebugInstantPushLog, appendDevDebugLog, isCaptureEnabled, makeDebugLogger } from './devDebug';
+import { appendDevDebugLog, makeDebugLogger } from './devDebug';
 import { getLastRealUserMessageAt, shouldExpireFire } from './amsg2ExpireGuard';
 import {
   AMSG_INSTANT_CHAT_PENDING_EVENT,
@@ -51,14 +50,14 @@ import {
 } from './amsgInstantPacing';
 
 // 同一个 category，两个 tag——保持 console 里现有的 [ActiveMsg] / [amsg] 标签，
-// 方便用户 / 文档里 grep 历史报错信息。两条 tag 都归 instant-push 一类。
-const log = makeDebugLogger('instant-push', 'ActiveMsg');
-const logAmsg = makeDebugLogger('instant-push', 'amsg');
+// 方便用户 / 文档里 grep 历史报错信息。两条 tag 都归 amsg 一类。
+const log = makeDebugLogger('amsg', 'ActiveMsg');
+const logAmsg = makeDebugLogger('amsg', 'amsg');
 
 let initialized = false;
 
-// 三写：console.info + 无条件 localStorage ring + 用户勾控的 devDebug。
-// 参见 instantPushClient.instantTrace 的注释，两边设计一致。
+// 三写：console.info + 无条件 localStorage ring（instantTraceLog，远端排障事后导出用）
+// + 用户勾控的 devDebug。
 function activeMsgTrace(event: string, details: Record<string, unknown> = {}): void {
   const entry = {
     ts: new Date().toISOString(),
@@ -72,9 +71,9 @@ function activeMsgTrace(event: string, details: Record<string, unknown> = {}): v
     console.info('[InstantTrace]', entry);
   } catch { /* ignore */ }
   appendInstantTraceEntry(entry);
-  // 也挂进 devDebug 的 instant-push 类目：勾了 IP 后，trace 跟 LLM 交换日志一起被
-  // 复制 / 下载导出。gate 由 isCaptureEnabled('instant-push') 自动管，未勾时零成本。
-  appendDevDebugLog('instant-push', { label: `trace:${event}`, data: entry });
+  // 也挂进 devDebug 的 amsg 类目：勾了之后 trace 跟其它主动消息日志一起被
+  // 复制 / 下载导出。gate 由 isCaptureEnabled('amsg') 自动管，未勾时零成本。
+  appendDevDebugLog('amsg', { label: `trace:${event}`, data: entry });
 }
 
 // ─── push 路径模块级 XHS 共享状态 ─────────────────────────────────────────────
@@ -82,12 +81,11 @@ function activeMsgTrace(event: string, details: Record<string, unknown> = {}): v
 // 本地 fetch 路径 useChatAI 用 useRef 持有 5 个 cache Map + 单次调用闭包的 lastXhsNotesRef.
 // 生命周期 = useChatAI mount 期间 (刷页面 / 切角色 = 清). 跨多次 send / 跨工具调用都共享.
 //
-// Instant push 路径在 React 之外跑 (SW postMessage → activeMsgRuntime 监听器), 没 useRef.
+// push 路径在 React 之外跑 (SW postMessage → activeMsgRuntime 监听器), 没 useRef.
 // 改成模块级单例: 跟本地路径"应用打开期间共享, 刷页面就清"行为字节级对齐.
 //
-// 跨 round 共享是关键: runXhsBrowse (round 1, 在 instantToolRunner) 填充 lastXhsNotesRef →
-// /continue → worker round 2 LLM 输出 [[XHS_SHARE: 序号]] → push 落库 → applyAssistantPostProcessing
-// 读同一份 ref. 上一轮笔记列表跨 SW 唤醒不丢 (只要主进程没刷新).
+// 笔记列表来自 worker 随 push 捎回的 metadata.xhsSession（落库后在冲刷时读回这里），
+// applyAssistantPostProcessing 重放 [[XHS_SHARE: 序号]] 等标签时读同一份 ref.
 //
 // 主进程刷新 / 浏览器关闭 → 清空, 跟本地路径 useChatAI 重 mount 清 useRef 等价.
 // 不写 IndexedDB — 行为与本地路径对齐, 不引入持久化代价.
@@ -309,8 +307,8 @@ const fetchOffloadedReasoning = (
 /**
  * 云端跑出来的一份评估原文 → 落 buff + 把 innerState 广播给下一轮。
  *
- * 两条云端路径共用这一处：Instant Push 把结果推成单独一条 emotion_update 消息，
- * 即时对话（amsg2）把它挂在最后一条回复的 metadata.amsgEmotionUpdate 上。
+ * 两种形态共用这一处：单独一条 emotion_update 消息（metadata.emotionRaw），或挂在
+ * 即时对话最后一条回复的 metadata.amsgEmotionUpdate 上。
  * 解析只认 applyEmotionEvalRaw 这一套（与本地评估路径同一份），别在任何一侧另写一个。
  */
 const landCloudEmotionResult = async (charId: string, raw: string): Promise<void> => {
@@ -412,7 +410,7 @@ export const handleInstantErrorPushMessage = async (data: unknown): Promise<void
   const meta = (data as { metadata?: Record<string, unknown> } | null)?.metadata;
   const charId = typeof meta?.charId === 'string' && meta.charId ? meta.charId : null;
   const taskUuid = typeof meta?.taskUuid === 'string' && meta.taskUuid ? meta.taskUuid : null;
-  // 不是即时对话的失败告知（旧 Instant Push 的诊断 push 没这两个字段）→ 不归这里管
+  // 不是即时对话的失败告知（缺这两个字段）→ 不归这里管
   if (!charId || !taskUuid) return;
   const reason = typeof meta?.reason === 'string' && meta.reason ? meta.reason : null;
   // worker 挂在 push 上的稳定 code（老 worker 没这个字段 → 走通用文案）。带上它，
@@ -607,7 +605,7 @@ const processInboxMessageWithPostProcessing = async (
   // 但 OSContext 真正驱动 chat UI 重新 reloadMessages 的是 lastMsgTimestamp, 而那个 state 现在
   // 只由 'active-msg-received' handler 改。为了让 push 路径下的 per-chunk 落库也立刻反映到 UI,
   // 用一个独立的 side-channel 事件 'active-msg-progress': OSContext 监听它后只 setLastMsgTimestamp,
-  // 不 fire toast / 不增加未读 / 不 resolve sendInstantPush 的 one-shot promise。
+  // 不 fire toast / 不增加未读。
   // 单条 inbox message 进来时 fire 一次 'active-msg-received' 即可保证 toast / 未读 / 通知一次发生。
   const dispatchProgress = () => {
     window.dispatchEvent(new CustomEvent('active-msg-progress', {
@@ -615,22 +613,16 @@ const processInboxMessageWithPostProcessing = async (
     }));
   };
 
-  // Phase 2 Round 2: 如果 worker 自动发的 ReasoningPush 已经被 SW 写到 reasoning_buffer,
-  // 在处理"这个 sessionId 的第一条 content"时把 reasoning_content 反取出来挂到 ctx, 让 thinking
-  // chain 卡片渲染到第一条 assistant message 的 metadata.thinkingChain.
-  // Round 1 worker 在 0.6 one-shot 时不发 reasoning push, claimReasoning 始终返回 null — 无副作用.
-  // messageIndex 来源: SW 在 saveContentToInbox 把 payload.messageIndex 写到 metadata. Round 2
-  // worker 用 1-based (buildContentPush 第 1 条 → messageIndex=1); 老 worker 没这个字段, ?? 0 fallback.
-  // 只对 first content claim (避免 N 条 push 同 session 时重复读 / 第 2 条挂错 metadata).
+  // messageIndex 来源: SW 在 saveContentToInbox 把 payload.messageIndex 写到 metadata, 1-based
+  // (第 1 条 → messageIndex=1); 没这个字段时 ?? 0 fallback.
   const sessionId: string | undefined = (message as any).sessionId
     || (message.metadata && (message.metadata as any).sessionId);
   const messageIndex: number = (message as any).messageIndex
     ?? (message.metadata && (message.metadata as any).messageIndex)
     ?? 0;
-  // amsg2 的即时对话走的是另一条：worker 不单发 reasoning push，而是把这次生成的思考链
-  // 挂在第一条 content push 的 metadata.amsgReasoning 上（太长时挪进 client_state、
-  // 只留 amsgReasoningRef，见 worker/amsg/src/index.ts 的 offloadOversizedPush）。
-  // 有它就用它，没有再回到上面那条 IP 的 buffer 路。
+  // 思考链挂在第一条 content push 的 metadata.amsgReasoning 上（太长时挪进 client_state、
+  // 只留 amsgReasoningRef，见 worker/amsg/src/index.ts 的 offloadOversizedPush），
+  // 只在第一条上取，渲染成第一条 assistant message 的 metadata.thinkingChain。
   // 定时任务那条路 worker 刻意不带思考（prompt 里没有「心象」提示词，原始推理腔当卡片
   // 是穿帮），所以这里也不会有值——收侧不用另设门。
   let reasoningContent: string | undefined;
@@ -641,21 +633,13 @@ const processInboxMessageWithPostProcessing = async (
       : await fetchOffloadedReasoning(message, offloadedCleanups);
     if (typeof metaReasoning === 'string' && metaReasoning.trim()) {
       reasoningContent = metaReasoning;
-    } else if (sessionId) {
-      try {
-        const buffered = await ActiveMsgStore.claimReasoning(sessionId);
-        reasoningContent = buffered?.reasoningContent;
-      } catch (e) {
-        console.warn('[ActiveMsg] claimReasoning failed', sessionId, e);
-      }
     }
   }
 
-  // amsg2 满血 v2: round 1 的 XHS 工具在 worker 里跑, 客户端没有 instantToolRunner 那次
-  // saveXhsSessionNotes 落库. worker 把 directive 引用到的笔记/xsecToken 随最后一条 push 的
+  // XHS 工具在 worker 里跑. worker 把 directive 引用到的笔记/xsecToken 随最后一条 push 的
   // metadata.xhsSession 带回来 (稀疏 {idx, note}, idx 1-based, 见 worker/amsg/src/agentic.ts
-  // buildXhsSessionPayload), 这里重建成按序号取卡的数组先落库, 下面的恢复块照旧读回内存单例
-  // ——与 instant 路径共用同一条恢复路, XHS_SHARE / 点赞 / 评论重放不再 available:0.
+  // buildXhsSessionPayload), 这里重建成按序号取卡的数组先落库, 下面的恢复块再读回内存单例
+  // ——XHS_SHARE / 点赞 / 评论重放才能按序号找到卡片.
   // 装不进一条 push（4KB 密文上限）的时候 worker 会把整份挪进 client_state、只在
   // metadata 留一个 xhsSessionRef 指过来（见 worker/amsg/src/index.ts 的
   // offloadOversizedPush）。这里按键取回，取到就跟内联那份走同一条落库路径。
@@ -679,8 +663,8 @@ const processInboxMessageWithPostProcessing = async (
     }
   }
 
-  // 恢复本 session round 1 工具抓到的 XHS 笔记: instantToolRunner 落了库, 这里读回内存单例.
-  // 跨 SW 唤醒 / 页面回收后内存 ref 被清空, 不恢复的话 round 2 的 [[XHS_SHARE]] / 评论 / 点赞
+  // 恢复本 session 工具抓到的 XHS 笔记: 上面落了库, 这里读回内存单例.
+  // 跨 SW 唤醒 / 页面回收后内存 ref 被清空, 不恢复的话 [[XHS_SHARE]] / 评论 / 点赞
   // 会因 lastXhsNotesRef 为空而静默掉卡片. 持久化优先于内存 (同 session 时两者等价, 重载后只剩持久化).
   if (sessionId) {
     try {
@@ -788,8 +772,8 @@ const processInboxMessageWithPostProcessing = async (
     // 把 worker hook 塞进 metadata.directives 的副作用结构化重放出来 (POKE/TRANSFER/ADD_EVENT/
     // schedule_message/MUSIC_ACTION/XHS_*). applyAssistantPostProcessing 会反向拼回 tag 喂给
     // chatParser + 内联 XHS handler.
-    // amsg-instant 0.8+ 一个 user turn 可能产 N 条 push, directives 只应该
-    // replay 一次. worker buildPushDecision 把 directives 挂在最后一条 push 上,
+    // 一个 user turn 可能产 N 条 push, directives 只应该
+    // replay 一次. worker 把 directives 挂在最后一条 push 上,
     // 这里加 isLastChunk 守卫双保险, 防未来 worker bug 在多条 push 都塞 directives.
     // 老 worker (无 messageIndex/totalMessages 字段) ?? 0 fallback, 0===0 也算 last.
     // replayDirectives=false = 这是重试、且上次已经把副作用跑完了（见 prepareInboxRetry）。
@@ -814,7 +798,7 @@ const processInboxMessageWithPostProcessing = async (
   // ─── 即时对话（amsg2）的情绪评估结果 ───
   // 云端跟主回复并行跑完的那份，挂在最后一条 push 的 metadata 上（装不下时挪进
   // client_state、只留 amsgEmotionRef，见 worker 的 offloadOversizedPush）。
-  // 走的是 Instant Push 的 emotion_update 同一条消费链：同一个 applyEmotionEvalRaw
+  // 跟单独一条 emotion_update 消息走同一条消费链：同一个 applyEmotionEvalRaw
   // 落 buff、同一个 'emotion-innerstate-updated' 喂下一轮、同一个 emotionDone
   // 熄灯，不另写第二套解析。
   //
@@ -873,16 +857,9 @@ const processInboxMessageWithPostProcessing = async (
     });
   }
 
-  // ─── Phase 2 Round 2 (2f): push 尾段 ───
-  // Memory Palace 缓冲区处理仍在这里 (跟本地 fetch 路径 finally 段对齐, 不依赖 React).
-  // 情绪评估**不再这里跑** — push-tail 用 char.systemPrompt + 50 条聊天的 degraded ctx,
-  // 会污染 useChatAI line 613 用 full ctx 算的 buff 状态. 改为 Option B:
-  //   - 写一条 pending 标记到 KV (charId → lastPushMsgId)
-  //   - dispatch 'post-push-emotion-eval' 事件
-  //   - useChatAI listener 接 (char.id 匹配时) → 用当前 React state 调 buildChatRequestPayload
-  //     重建 full ctx → evaluateEmotionBackground → setEvolvedNarrative + DB.saveCharacter
-  //   - useChatAI mount 时 useEffect 兜底 drain (应用关 / 切其他 char 期间 push 累积的)
-  // 见 hooks/useChatAI.ts 的 'post-push-emotion-eval' useEffect.
+  // ─── push 尾段 ───
+  // Memory Palace 缓冲区处理在这里跑 (跟本地 fetch 路径 finally 段对齐, 不依赖 React).
+  // 情绪评估不在这里跑: 云端已经跟主回复一起跑完, 结果就是上面落的那份.
   await runPushTailPipeline(message, char, userProfile);
 
   // 到这里这条消息才算真的落定（上面任何一步抛错都会让它被压回收件箱重试），
@@ -1141,64 +1118,10 @@ function getInstantMessageIndex(message: ActiveMsg2InboxMessage): number {
   return Number((message as any).messageIndex ?? (message.metadata as any)?.messageIndex ?? 0);
 }
 
-function getInstantTotalMessages(message: ActiveMsg2InboxMessage): number {
-  return Number((message as any).totalMessages ?? (message.metadata as any)?.totalMessages ?? 0);
-}
-
-function toChatCompletionsUrl(baseUrl?: string): string {
-  const trimmed = (baseUrl || '').trim();
-  if (!trimmed) return 'instant-push';
-  if (/\/chat\/completions\/?$/i.test(trimmed)) return trimmed;
-  return `${trimmed.replace(/\/+$/, '')}/chat/completions`;
-}
-
-async function logInstantPushLlmExchange(message: ActiveMsg2InboxMessage): Promise<void> {
-  if (!isCaptureEnabled('instant-push')) return;
-
-  const sessionId = getInstantSessionId(message);
-  if (!sessionId) return;
-
-  try {
-    const session = await ActiveMsgStore.getOutboundSession(sessionId);
-    appendDevDebugInstantPushLog({
-      url: toChatCompletionsUrl(session?.apiCredentials?.baseUrl),
-      method: 'POST',
-      status: 200,
-      requestBody: session
-        ? {
-            transport: 'instant-push',
-            sessionId,
-            model: session.apiCredentials.model,
-            messages: session.messages,
-          }
-        : {
-            transport: 'instant-push',
-            sessionId,
-            requestUnavailable: 'outbound session not found',
-          },
-      response: {
-        transport: 'instant-push',
-        sessionId,
-        messageId: message.messageId,
-        messageIndex: getInstantMessageIndex(message),
-        totalMessages: getInstantTotalMessages(message),
-        raw_content: message.body,
-        metadata: message.metadata,
-      },
-    });
-  } catch (e) {
-    console.warn('[DevDebug] instant-push LLM log failed', sessionId, e);
-  }
-}
-
 /**
- * 跑 push 路径的尾段: Memory Palace 缓冲区处理 + 情绪 eval pending 标记.
+ * 跑 push 路径的尾段: Memory Palace 缓冲区处理 + 通知 UI 重读角色 buff.
  *
  * Memory Palace 直接在这里跑 (pipeline 内部 self-contained, 不依赖 React state).
- * 情绪评估走 Option B:
- *   - 写 KV pending 标记 (charId → lastPushMsgId); 用户切回这个 chat 时 useChatAI useEffect drain
- *   - 同时 dispatch 'post-push-emotion-eval' 事件; 如果 useChatAI 已 mount 这个 char 就立即跑
- *   - 不管在线/离线, eval 最终用 useChatAI 内 buildChatRequestPayload 的 full ctx 跑 — 不再 degraded.
  */
 async function runPushTailPipeline(
   message: ActiveMsg2InboxMessage,
@@ -1235,9 +1158,8 @@ async function runPushTailPipeline(
     }
   }
 
-  // 2. 情绪评估 — 已迁到 worker (副 API): worker 跑完主回复后跑 eval, 推 emotion_update push,
-  // flushInboxToChat 看到 messageType==='emotion_update' 调 applyEmotionEvalRaw 落 buff.
-  // 所以这里不再触发客户端 eval (否则 worker + 客户端双跑双扣费). 见 worker/instant-push + useChatAI.
+  // 2. 情绪评估在 worker 跑 (副 API), 结果随 push 回来由 landCloudEmotionResult 落 buff.
+  // 这里不触发客户端 eval (否则 worker + 客户端双跑双扣费).
 
   // 顺手通过 message 触发 'emotion-updated' (跟 useChatAI line 382 一致), 让 UI 重新读 char.
   // 注意: 这里的 emotion-updated 是给 ChatHeader 的 buff 显示信号, 不是情绪 eval 完成信号 —
@@ -1765,8 +1687,6 @@ const DEDUPE_LOOKBACK_MESSAGES = 60;
  */
 export type FlushTrigger =
   | 'SW通知'          // Service Worker 收到推送后喊页面（唯一的实时路径）
-  | 'SW思维链'        // 思维链推送到达
-  | 'SW工具请求'      // 工具调用推送到达
   | '点通知进入'      // 用户点系统通知把 App 唤到前台
   | '回到前台'        // 页面重新可见
   | '启动'            // App 冷启动时的兜底排空
@@ -1816,7 +1736,7 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
   // 后续条目。Phase 1 改成: 先尝试走 applyAssistantPostProcessing (与本地 fetch 路径
   // 行为对齐 — emoji / 翻译 / HTML / 引用 / chunking 全部复用同一管线); 如果走管线失败,
   // 降级回原来的 "原文一次性 saveMessage" 防止消息丢失。dispatchEvent 始终 fire 一次,
-  // 保证 toast / 未读 / 通知 / sendInstantPush resolver 语义不变。
+  // 保证 toast / 未读 / 通知语义不变。
   for (const message of pendingMessages) {
     // 这一层是**整批消息的最后一道防线**：消息在 consumeInboxMessages 那一刻就已经从
     // 收件箱里没了，下面任何一步抛出去的异常都会穿过整个 for 循环，剩下的消息既没落进
@@ -2015,7 +1935,6 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
 
       if (looksLikeAssistantText) {
         try {
-          await logInstantPushLlmExchange(processableMessage);
           await processInboxMessageWithPostProcessing(processableMessage, persistTimestamp);
           routed = true;
         } catch (postErr) {
@@ -2135,13 +2054,10 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
       landedMessageIds.push(message.messageId);
 
       // 不管走 post-processing 还是 raw fallback, 单条 inbox message 触发一次 'active-msg-received',
-      // 保留原有 toast / 未读 / 通知 / sendInstantPush resolver 语义。body 用原文做预览即可。
-      // sessionId 必须带出来: instantPushClient 的 observed listener 用它做 receipt identity 匹配,
-      // 杜绝同 char 多轮并发 / 延迟到达的旧 push 被新一轮 send 误判为 delivered。
+      // 驱动 toast / 未读 / 通知。body 用原文做预览即可。
       markInstantChunkShown(message);
       window.dispatchEvent(new CustomEvent('active-msg-received', {
         detail: {
-          sessionId: (message as any).sessionId || (message.metadata as any)?.sessionId,
           charId: message.charId,
           charName: message.charName,
           body: cleanedPreviewBody || cleanedBody,
@@ -2324,50 +2240,6 @@ const scheduleLocalInboxWatch = (): void => {
   }, LOCAL_INBOX_WATCH_INTERVAL_MS);
 };
 
-// Phase 2 Round 2: 真实 tool runner. 启动时排空 + SW postMessage 触发. 失败诊断在 instantToolRunner 内.
-const runPendingToolCallsSafely = async () => {
-  try {
-    await runPendingToolCalls();
-  } catch (e) {
-    console.warn('[instant-push] runPendingToolCalls failed', e);
-  }
-};
-
-/**
- * 思维链(心象)回填: SW 收到 reasoning push 写完 buffer 后会 fire 'active-msg-reasoning'.
- *
- * 正常情况 worker 先发 reasoning 再发 content, reasoning 先落 buffer, content flush 时
- * claimReasoning 取到并挂上 thinkingChain. 但 reasoning / content 是两条独立 Web Push,
- * 弱网/移动端到达或处理顺序可能反转: content 抢先 flush 时 claimReasoning 拿到 null, 首条
- * 回复落库时没有 thinkingChain, 之后到的 reasoning 永远不再被 claim → 思维链丢失.
- *
- * 这里在 reasoning 到达后补一刀: 若该 session 的首条 assistant 回复已落库且还没挂 thinkingChain,
- * 就 claim 出 reasoning 回填到那条消息的 metadata, 再 fire progress 让 Chat 重渲染.
- * 若首条回复还没落库 (reasoning 先到的正常情形), 不 claim、留 buffer 给正常路径, 这里是 no-op.
- */
-const backfillReasoningSafely = async (sessionId?: string, charId?: string): Promise<void> => {
-  if (!sessionId || !charId) return;
-  try {
-    const msgs = await DB.getRecentMessagesByCharId(charId, 200);
-    const sessionMsgs = msgs
-      .filter((m) => m.role === 'assistant' && (m.metadata as any)?.sessionId === sessionId)
-      .sort((a, b) => ((a as any).id ?? 0) - ((b as any).id ?? 0));
-    if (sessionMsgs.length === 0) return; // content 还没落库, 留给正常 claim 路径
-    const first = sessionMsgs[0] as any;
-    if (first.metadata?.thinkingChain) return; // 正常 claim 已挂上, 不重复
-    if (typeof first.id !== 'number') return;
-
-    const buffered = await ActiveMsgStore.claimReasoning(sessionId);
-    const reasoning = buffered?.reasoningContent;
-    if (!reasoning) return;
-
-    await DB.updateMessageMetadata(first.id, (prev: any) => ({ ...(prev || {}), thinkingChain: reasoning }));
-    window.dispatchEvent(new CustomEvent('active-msg-progress', { detail: { charId } }));
-  } catch (e) {
-    console.warn('[ActiveMsg] backfill reasoning failed', sessionId, e);
-  }
-};
-
 // ─── 补收兜底 + 即时对话状态点名 ────────────────────────────────────────────
 // 推送是会静默丢的（换网、代理断流、系统压制、SW 没醒）。云端每条推送发出去之前都在
 // 服务端账本上记了一行，客户端落库之后销账，所以「哪些没收下」是查得出来的事实。
@@ -2430,7 +2302,8 @@ const notifyOutboxStaleDropped = (count: number): void => {
  * 拉一次云端账本、把补收到的冲刷进聊天流。
  *
  * 返回这一趟读到的全部条目；**读失败返回 null**。两者不能混：「没读成」不构成任何
- * 结论，调用方要拿它下「回复取不回」的判决时只能认前者（docs/instant-push-dual-channel.md）。
+ * 结论（网络抖一下、请求被掐断都会读失败，回复可能好好地躺在账本上），调用方要拿它下
+ * 「回复取不回」的判决时只能认前者。
  *
  * trigger 由调用方给：这个函数被上线补收、手动补收、60 秒点名三条路共用，而排障时
  * 要分的正是「是谁把消息捞回来的」——记成同一个就白记了。
@@ -2645,11 +2518,10 @@ const INSTANT_STATUS_CHECK_MAX_FAILURES = 5;
  *  - 上线补收：后台期间丢掉的推送去账本上捞回来。**不管有没有在等回复**——定时主动
  *    消息丢了的话客户端没有任何本地状态知道它来过（见 catchUpMissedPushes）。自带节流。
  *  - 即时对话点名：欠着回复就立刻点一次，不用再等满 60 秒。后台不排下一跳，周期从这里接上。
- *  - 待写日记 / pending tool calls：写 Notion/飞书的 fetch 后台会被冻结打断，回前台补打。
+ *  - 待写日记：写 Notion/飞书的 fetch 后台会被冻结打断，回前台补打。
  */
 export const handlePageBecameVisible = (): void => {
   notePageBecameVisible();
-  // 先 await flush 落库 round-1 旁白, 再跑 runner 触发 round-2, 避免 "B+A".
   void (async () => {
     await flushInboxToChat('回到前台');
     void catchUpMissedPushes('foreground');
@@ -2657,7 +2529,6 @@ export const handlePageBecameVisible = (): void => {
     void drainPendingDiaries(loadRealtimeConfigFromLocalStorage(), (charId) => {
       window.dispatchEvent(new CustomEvent('active-msg-progress', { detail: { charId } }));
     });
-    void runPendingToolCallsSafely();
   })();
 };
 
@@ -3006,14 +2877,6 @@ export const ActiveMsgRuntime = {
           return;
         }
 
-        if (type === 'active-msg-reasoning') {
-          // 先确保已到的 content 落库 (flush 链串行), 再尝试把思维链回填到首条回复上.
-          void flushInboxToChat('SW思维链').then(() =>
-            backfillReasoningSafely(event.data?.sessionId, event.data?.charId),
-          );
-          return;
-        }
-
         // SW 的 pushsubscriptionchange 写完标记后会通知一声：页面开着就立刻消费，
         // 不用等下次启动。真正的判定/清理都在 refreshPushSubscriptionIfMarked 里，
         // 通知丢了也没关系（启动兜底会再查一遍标记）。
@@ -3023,7 +2886,7 @@ export const ActiveMsgRuntime = {
         }
 
         // 即时对话终态失败的直发告知（worker 判死那一刻推的 error push）：当场收尾，
-        // 不用等 60s 点名。metadata 对不上号的（IP 诊断 push）在里面被静默略过。
+        // 不用等 60s 点名。metadata 对不上号的在里面被静默略过。
         if (type === 'active-msg-error') {
           void handleInstantErrorPushMessage(event.data);
           return;
@@ -3052,24 +2915,13 @@ export const ActiveMsgRuntime = {
           return;
         }
 
-        // Phase 2 Round 2: SW 收到 tool_request push 且当前 window visible → 跑 runner.
-        // 不 visible 时 SW 发的是 showNotification, 用户点击后落到 active-msg-open 分支,
-        // ActiveMsgRuntime.init 时这里的启动消费会兜底 (runPendingToolCallsSafely).
-        // 先 flush 再跑 runner: 同一轮的旁白 (round-1 prefix) 是单独的 content push, 必须保证
-        // 它先入库, 再让 runner 触发 round-2, 否则 round-2 回复可能抢在旁白前面 ("B+A").
-        if (type === 'instant-tool-request') {
-          void flushInboxToChat('SW工具请求').then(() => runPendingToolCallsSafely());
-          return;
-        }
-
         if (type === 'active-msg-open') {
           // App 还活着时点来电横幅走这条。同样要抢在 flushInboxToChat 前面立旗
           // （见 handleDeepLink 里那条注释）。
           if (event.data?.incomingCall && event.data?.charId) {
             noteCallBannerOpened(String(event.data.charId));
           }
-          // 严格串行: 先把 inbox 里的 round-1 旁白落库, 再跑 tool runner (它会触发 round-2),
-          // 保证用户回到界面时先看到旁白, 且 round-2 回复排在旁白之后.
+          // 先把 inbox 落库再广播, 用户回到界面时消息已经在了.
           void (async () => {
             await flushInboxToChat('点通知进入');
             // 通话/梦话结果不进共享 inbox，而是直接记在服务端 outbox。通知点击可能发生在
@@ -3113,7 +2965,6 @@ export const ActiveMsgRuntime = {
                 storyId: event.data?.storyId,
               },
             }));
-            await runPendingToolCallsSafely();
           })();
         }
       });
@@ -3192,10 +3043,8 @@ export const ActiveMsgRuntime = {
       }
     })();
 
-    // 启动兜底: 先 flush 落库 (含上次被杀进程时卡在 inbox 的 round-1 旁白), 再跑 runner
-    // 触发 round-2, 保证冷启动恢复时旁白也排在 round-2 回复之前.
+    // 启动兜底: 先 flush 落库 (含上次被杀进程时卡在 inbox 的消息).
     await flushInboxToChat('启动');
-    await runPendingToolCallsSafely();
     // 上次不在线时丢掉的推送去账本上捞回来。**这一趟无条件跑**：定时主动消息的推送
     // 丢了之后，本地不会留下任何「有条消息没到」的痕迹，账本是唯一的线索来源
     // （见 catchUpMissedPushes）。没配 Worker 的用户在里面就返回了，不打网络。

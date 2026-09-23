@@ -496,7 +496,7 @@ export const applyPlateConsolidateResult = async (
   // 「谁都可能被改过」保守处理（见 mergeCloudPlateEntries）。
   const snapshotAt = isCurrentJob ? (inFlight?.snapshotAt ?? 0) : 0;
 
-  // 逐块串行：并发跑会同时开好几个 IDB 事务，正是 instant push 那次超时的连接风暴成因。
+  // 逐块串行：并发跑会同时开好几个 IDB 事务，连接一挤爆，推送收件那边就会跟着超时。
   // 走 mutatePlate 而不是自己「读一份 → 改 → 存回去」：同一块门牌上还有别的路在写
   // （门牌面板的手改、本地整理、送达保证兜底），各写各的就是互相整块盖掉。
   for (const { room, entryIds } of result.rooms) {

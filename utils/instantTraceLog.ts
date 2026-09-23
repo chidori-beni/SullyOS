@@ -1,11 +1,11 @@
 /**
- * Instant Push / 主动消息链路共用的 trace ring buffer（localStorage）。
+ * 主动消息链路的 trace ring buffer（localStorage）。
  *
  * 「无条件抓」的那一层通道日志：不受 devDebug 勾选影响，开发者随时能翻最近发生了什么
  * （另外两写——console.info 和 appendDevDebugLog——各自留在调用方，语义不同）。
  *
- * 键名、容量、条目形状只在这里定义一次。写在 instantPushClient / activeMsgRuntime、
- * 读在调试面板，三处各抄一份的话，键一改（比如升 v2）读侧会静默显示空列表——
+ * 键名、容量、条目形状只在这里定义一次。写在 activeMsgRuntime / useChatAI、
+ * 读在调试面板，几处各抄一份的话，键一改（比如升 v2）读侧会静默显示空列表——
  * 调试面板骗人比没有更糟。
  */
 

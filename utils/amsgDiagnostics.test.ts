@@ -605,20 +605,18 @@ describe('resolveInstantChatBlocker — 即时对话卡在哪一道', () => {
     connected: true,
     pushSubscribed: true,
     workerSupportsInstantChat: true,
-    instantPushOn: false,
   };
 
-  it('四道全过才返回 null', () => {
+  it('三道全过才返回 null', () => {
     expect(resolveInstantChatBlocker(ALL_PASS)).toBeNull();
   });
 
   it('按「先补哪个」的顺序只报第一道：没连上盖过后面所有', () => {
-    // 什么都没配的人会同时踩中四道。一次把四条都说给他，等于让他自己排先后。
+    // 什么都没配的人会同时踩中三道。一次把三条都说给他，等于让他自己排先后。
     expect(resolveInstantChatBlocker({
       connected: false,
       pushSubscribed: false,
       workerSupportsInstantChat: false,
-      instantPushOn: true,
     })).toBe('没连上Worker');
   });
 
@@ -627,19 +625,13 @@ describe('resolveInstantChatBlocker — 即时对话卡在哪一道', () => {
       .toBe('没开推送');
   });
 
-  it('Worker 认不认 /instant-chat 排在 Instant Push 冲突之前', () => {
-    // 端点根本不存在的话，关掉 Instant Push 也还是开不了——先说该去重新部署。
-    expect(resolveInstantChatBlocker({ ...ALL_PASS, workerSupportsInstantChat: false, instantPushOn: true }))
-      .toBe('Worker太旧');
-  });
-
-  it('只剩两条发送路同开这一项时才报冲突', () => {
-    expect(resolveInstantChatBlocker({ ...ALL_PASS, instantPushOn: true })).toBe('与InstantPush冲突');
+  it('连上了、推送也开了，只差 Worker 不认 /instant-chat → Worker太旧', () => {
+    expect(resolveInstantChatBlocker({ ...ALL_PASS, workerSupportsInstantChat: false })).toBe('Worker太旧');
   });
 
   it('每个代号都配着一句话——设置页的黄字和使用统计的属性共用这份判定', () => {
     // 少一条的话界面上会出现空白提示：开关灰着、下面什么都不说。
-    const codes: InstantChatBlocker[] = ['没连上Worker', '没开推送', 'Worker太旧', '与InstantPush冲突'];
+    const codes: InstantChatBlocker[] = ['没连上Worker', '没开推送', 'Worker太旧'];
     for (const code of codes) {
       expect(INSTANT_CHAT_BLOCKER_HINTS[code], `${code} 没有对应文案`).toBeTruthy();
     }

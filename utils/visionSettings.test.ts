@@ -10,7 +10,6 @@ vi.mock('../components/os/Modal', () => ({ default: () => null }));
 vi.mock('../components/settings/VersionInfo', () => ({ default: () => null }));
 vi.mock('../components/settings/StorageUsagePanel', () => ({ default: () => null }));
 vi.mock('../components/settings/ActiveMsgGlobalSettingsModal', () => ({ default: () => null }));
-vi.mock('../components/settings/InstantPushSettingsModal', () => ({ InstantPushSettingsModal: () => null }));
 vi.mock('../components/settings/PushVapidSettingsModal', () => ({ PushVapidSettingsModal: () => null }));
 vi.mock('../components/settings/ApiCallLogModal', () => ({ default: () => null }));
 vi.mock('./avatarModelBackup', () => ({ getAvatarModelBackupInventory: async () => ({ models: [], totalBytes: 0 }) }));

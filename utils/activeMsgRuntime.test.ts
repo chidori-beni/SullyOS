@@ -1066,7 +1066,7 @@ describe('flushInboxToChat 落库时间戳（走真库）', () => {
   }, 20000);
 
   // 即时对话的情绪评估在 worker 里跟主回复并行跑，结果挂在最后一条推送的 metadata 上。
-  // 收侧得走 Instant Push 那条 emotion_update 同一条链：同一个 applyEmotionEvalRaw 落 buff、
+  // 收侧得跟单独一条 emotion_update 消息走同一条链：同一个 applyEmotionEvalRaw 落 buff、
   // 同一个 'instant-emotion-done' 熄灯。漏了这一段，用户看到的是「回复来了、情绪永远不更新、
   // 头顶那盏『情绪更新中』亮满十一分钟」。
   describe('即时对话带回来的情绪评估', () => {
@@ -2935,8 +2935,8 @@ describe('error push 到页面 → 当场收尾（handleInstantErrorPushMessage�
     expect(msgs.some((m: any) => String(m.content ?? '').includes('即时对话没能完成'))).toBe(false);
   }, 20000);
 
-  it('metadata 缺 taskUuid（旧 Instant Push 的诊断 push）→ 静默略过', async () => {
-    const charId = 'char-errpush-ip';
+  it('metadata 缺 taskUuid（不是即时对话的失败告知）→ 静默略过', async () => {
+    const charId = 'char-errpush-no-uuid';
     setInstantChatPending(charId, 'uuid-untouched');
 
     await handleInstantErrorPushMessage({ metadata: { charId }, code: 'SOME_DIAG', message: 'x' });

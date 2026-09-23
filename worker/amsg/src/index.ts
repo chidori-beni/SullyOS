@@ -142,7 +142,7 @@ import {
 import { setProxyWorkerUrlOverride } from '../../../utils/proxyWorker';
 import { XhsMcpClient } from '../../../utils/xhsMcpClient';
 // type-only：编译期擦除，classifier 的实现不会因为这行被拉进 bundle。
-import type { ToolCall } from '../../instant-push/src/classifier';
+import type { ToolCall } from './classifier';
 import {
   classifyNativeToolCalls,
   createFireSessionState,
@@ -207,8 +207,8 @@ interface Env extends NativeFcmEnv {
 // 「先传云端状态、成功了再建任务」（activeMsgClient 的 putClientStateOrThrow），
 // 所以读不到 fire_pack 就是异常，直接抛错，不降级（见 fireStateError）。
 //
-// v2 服务端工具循环：LLM 输出经 instant 同款业务标签 classifier 分类
-// （见 ./agentic.ts），数据标签由 executeToolCalls 在 worker 内就地执行
+// v2 服务端工具循环：LLM 输出经业务标签 classifier 分类
+// （见 ./agentic.ts、./classifier.ts），数据标签由 executeToolCalls 在 worker 内就地执行
 // （recall 读 tool_pack 里的月度总结，搜索 / Notion / 飞书 / XHS 用 tool_config
 // 里的凭据直调，全程不需要客户端在线）；副作用标签结构化成 directives 挂
 // 最后一条 push，客户端收到时重放。tool_pack / tool_config 与 fire_pack 同批上传，
@@ -216,7 +216,7 @@ interface Env extends NativeFcmEnv {
 //
 // 思考链走 metadata、不占一条 push：只发 content push，把这次生成的 reasoning 挂在
 // **第一条** push 的 metadata.amsgReasoning 上，客户端在那条上渲染思考链卡片
-// （收侧与 instant push 共用同一处认领，见 utils/activeMsgRuntime.ts）。
+// （收侧认领见 utils/activeMsgRuntime.ts）。
 // 这么走的好处是编号不动：hook 路径的 sendHookPushPayloads 会把 pushPayloads 数组整体
 // 编号（messageIndex/totalMessages），多插一条 reasoning push 就会把第一条 content
 // 顶到 messageIndex=2，多段消息的等齐、补收、directive 重放全跟着编号走。
@@ -2680,7 +2680,6 @@ export const amsgHooks = {
  * 内容不参与签名校验。但 scheduled() 一旦发现 email 为空就会整轮 return（一条任务
  * 都不处理、前端毫无提示），而「推送凭据」面板复制出来的 env 里 VAPID_EMAIL 是注释
  * 掉的可选项——照着部署必然缺它。所以这里给个缺省值兜底，配了就用用户配的。
- * （instant-push worker 一直是这个做法。）
  */
 export const resolveVapidEmail = (raw: string | undefined): string =>
   raw?.trim() || 'mailto:noreply@sullyos.app';

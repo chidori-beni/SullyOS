@@ -70,7 +70,7 @@ npm run dev
 - **Cloudflare Workers** - 联网能力的代理层（搜索 / 云备份 / 点单 MCP 等），单文件 `worker/index.js`，可一键自托管
 - **Capacitor** - 可打包成安卓 App，真·手机模拟器
 - **Phosphor Icons** - 图标库，看起来挺酷的
-- **AMSG（ReiStandard）** - 主动消息 / Instant Push 协议
+- **AMSG（ReiStandard）** - 主动消息协议
 - **Web Push** - 推送通知，叮叮叮
 - **JSZip** - 压缩文件，导出备份包用
 
@@ -231,7 +231,7 @@ VITE_HIDE_BUILD_BADGE=1 npm run build
 |------|------|--------|
 | **Skip Prompt Build** | 行为 | 跳过 `ContextBuilder` 的整套 prompt 组装，直接把你的裸消息怼给 LLM。用来避免它被人设束缚、不配合你输出你想要的调试内容 |
 | **Skip Emotion Eval** | 行为 | 跳过消息落库后的情绪评估管线（Russell 空间那套）。不需要调试情绪的时候可以打开（不配置日程也行）。 |
-| **记录 LLM 日志** | 捕获 | 勾上就录制所有 LLM 请求/响应（含 Instant Push 通道）。密钥字段自动 `<redacted>` 不用手动打码。以后想抓别的（MCP 调用之类）就再加一个捕获类，互不串桶 |
+| **记录 LLM 日志** | 捕获 | 勾上就录制所有 LLM 请求/响应。密钥字段自动 `<redacted>` 不用手动打码。以后想抓别的（MCP 调用之类）就再加一个捕获类，互不串桶 |
 
 捕获日志同时写 `localStorage` 和内存，各类混存、全局最多保留 100 条 / 1 MB（先到先淘汰）。为了省空间 / 隐私，**长文本默认写入时就折叠成前 10 字 + `...`**（那堆 system prompt 和聊天历史不会塞满 localStorage）；真要看完整请求体，打开「记录完整内容」开关再复现一次。录完可以**一键复制成 JSON** 或**下载成文件**丢给别人 debug，导出会自动带上当前分支和 commit hash，方便定位"到底是哪个版本炸的"。
 
@@ -241,47 +241,13 @@ VITE_HIDE_BUILD_BADGE=1 npm run build
 
 > 叮叮叮！调试面板不会让你的 Bug 自动修好，但至少能让你知道 Bug 在哪。大概。
 
-### Instant Push 走独立 Worker
+### 聊天上云走主动消息 2.0
 
-聊天上云的主力是主动消息 2.0 的即时对话；Instant Push 为独立可选部署（与即时对话在设置页互斥）。
+聊天回复想「发完就能锁屏走人」，走的是主动消息 2.0 的即时对话：每个用户自己部署一个 Cloudflare Worker（`worker/amsg/`），回复在 Worker 上生成，再以 Web Push 送回手机。设计与端点契约见 [`plans/amsg2-instant-chat.md`](./plans/amsg2-instant-chat.md)、[`plans/amsg2-instant-chat-contract.md`](./plans/amsg2-instant-chat-contract.md)。
 
-Instant Push 是基于 `@rei-standard/amsg-instant 0.8` 的 LLM-driven Web Push 通道
-（跟上面 sfworker 里的 push 加速器是两套独立链路）。每个 fork 用户自己部署一个
-Cloudflare Worker，跟仓库作者的 sully-n / 备份 Worker 完全无关。零数据库、零 cron、
-明文协议（HTTPS 已加密传输；攻击者拿到 Worker URL 也榨不出东西）。
-
-部署流程见 `worker/instant-push/README.md`，或打开 SullyOS Settings →
-Instant Push → 配置。
-
-#### Phase 2 Round 2 起：worker 端 agentic loop + reasoning + 副作用 directive
-
-Phase 2 Round 2 起 push 路径跟本地 fetch 路径**功能对齐**，不再降级：
-
-- **Agentic loop**：worker hook 看到 LLM 输出里的数据型标签（`[[RECALL/SEARCH/READ_DIARY/
-  FS_READ_DIARY/READ_NOTE/XHS_SEARCH/BROWSE/MY_PROFILE/DETAIL]]`）就走 `decision: 'tool-request'`，
-  推一条 `messageKind: tool_request` 给客户端。`utils/instantToolRunner.ts` 接到后用
-  `agenticTools.dispatchAgenticTool` 跑本地 MCP/DB/缓存，结果 OpenAI-shape POST 到
-  worker `/continue`，由它继续下一轮 LLM。一次推送最多 10 轮（`maxLoopIterations: 10`）。
-- **Reasoning chain**：worker 端 amsg-instant 0.8 在带 `reasoning_content` 的 LLM 响应上
-  自动 emit 一条独立 `ReasoningPush`。SW (sw-keep-alive 1.5.0+) 写到 `reasoning_buffer`
-  IndexedDB store，客户端处理同 sessionId 的第一条 content 时 atomic-claim，挂到
-  `Message.metadata.thinkingChain`（跟本地 fetch 路径一致的卡片渲染）。
-- **副作用 directive**：worker 端识别 `[[ACTION:POKE/TRANSFER/ADD_EVENT]]`、`[schedule_message...]`、
-  `[[MUSIC_ACTION:...]]`、`[[XHS_LIKE/FAV/COMMENT/REPLY/POST/SHARE:...]]`，**不执行**，把指令塞进
-  `ContentPush.metadata.directives`。客户端 `applyAssistantPostProcessing` 反向重建原 tag 字符串
-  喂给 `chatParser.parseAndExecuteActions` + 内联 XHS handler，**复用本地 fetch 路径的执行代码**
-  （单源真理）。当前 MUSIC_ACTION 在 push 路径仍降级（需要 musicHooks，跨 React 边界），下一版补。
-- **Memory Palace + 情绪评估**：`utils/activeMsgRuntime.ts:runPushTailPipeline` 在 push 路径
-  落库后跑跟 `useChatAI.ts:finally` 一致的尾段（`processNewMessages` + `evaluateEmotionBackground`）。
-  失败 fire-and-forget 不阻塞主链路。
-- **可选 D1 BlobStore**：agentic loop + reasoning 场景下 push payload p99 容易超 2.6 KB 安全线。
-  部署时给 worker 加 `DB` binding 即启用（见 `worker/instant-push/schema.sql` + `wrangler.toml`
-  的 `[[d1_databases]]` 注释块）；不配也能跑，小 payload 链路不受影响。
-- **离线兜底**：SW 收到 tool_request push 但当前 window 不 visible → `showNotification` 等
-  用户点开应用；启动时 `ActiveMsgRuntime.init` 排空 `pending_tool_calls` store 自动续跑
-  （iOS PWA swipe-kill 场景也兜得住）。
-
-详细决策映射 + 验证矩阵看 `~/.claude/plans/instant-push-agentic-loop-phase2.md` §四 / §六。
+- **工具在 Worker 里跑**：回忆、搜索、读日记、小红书这类数据标签由 Worker 就地执行，客户端不在线也能跑完（`worker/amsg/src/agentic.ts` + `classifier.ts`）。
+- **副作用只识别不执行**：戳一戳、转账、日程、音乐、小红书点赞这类标签，Worker 结构化成 directives 挂在最后一条推送上；客户端收到后由 `applyAssistantPostProcessing` 重放，复用本地聊天那套执行代码。
+- **收侧与本地聊天对齐**：推送落库后，`utils/activeMsgRuntime.ts` 的 `runPushTailPipeline` 跑跟本地聊天一致的尾段（记忆宫殿等）。
 
 ### ⚠️ 后端代理：二改请换成你自己的
 
@@ -297,7 +263,7 @@ Phase 2 Round 2 起 push 路径跟本地 fetch 路径**功能对齐**，不再�
 
 | 功能 | 位置 | 说明 |
 |------|------|------|
-| Instant Push（即时推送） | [`worker/instant-push/`](./worker/instant-push/) + 设置里填地址 | 每个 fork 自己部署一个 CF Worker |
+| 主动消息 2.0（含即时对话） | [`worker/amsg/`](./worker/amsg/) + 设置里一键部署或填地址 | 每个用户自己部署一个 CF Worker，教程见 [`docs/amsg2-setup-walkthrough.md`](./docs/amsg2-setup-walkthrough.md) |
 | 主动消息推送 | `worker/proactive-push/` + `utils/proactivePushConfig.ts` | 同上，自己部署 |
 | 小红书 Lite | `worker/xhs-lite/` + 小红书设置里填地址 | 自己部署 |
 | 网易云音乐（可选覆盖） | 播放器设置里可单独填 | 不填就跟随主代理 |

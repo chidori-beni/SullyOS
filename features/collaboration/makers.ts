@@ -165,7 +165,7 @@ const ALL_COLLABORATION_MAKERS: CollaborationMakerDefinition[] = [
     "chatInputStyle": "default", "chatBackgroundStyle": "mesh", "chatBubbleStyle": "modern",
     "chatMessageSpacing": "default", "chatShowTimestamp": "always", "chatHeaderAlign": "left",
     "chatHeaderDensity": "default", "chatStatusStyle": "subtle", "chatSendButtonStyle": "circle",
-    "chatPendingIndicator": true, "chatHideHeaderBuffs": false
+    "chatHideHeaderBuffs": false
   }
 }`, `这是原生字段预设，不接受自造 CSS 或不存在的键。要把色相、明暗、桌面皮肤、聊天顶栏/输入栏/气泡、头像、间距和时间戳做成同一套视觉方向，不要逐字段随机选择。
 可用枚举：skin=default|animalcrossing|mobilegame|tamagotchi|companion；desktopVariant=paper|nostalgia；statusBarMode=standard|compact|hidden；chatAvatarShape=circle|rounded|square；chatAvatarSize=small|medium|large；chatEmojiSize=small|medium|large；chatAvatarMode=grouped|every_message；chatAvatarPlacement=beside|above_group；chatAvatarVisibility=both|hide_ai|hide_user|hide_both；chatAvatarAlign=bottom|top|center；chatModuleAlign=anchor|center；chatChromeStyle=soft|flat|floating；chatHeaderStyle=default|gradient|wechat|telegram|discord|pixel；chatInputStyle=default|flat|wechat|ios|telegram|discord|pixel；chatBackgroundStyle=plain|grid|paper|mesh；chatBubbleStyle=modern|outline|ios；chatMessageSpacing=compact|default|spacious；chatShowTimestamp=always|hover|never；chatHeaderAlign=left|center；chatHeaderDensity=compact|default|airy；chatStatusStyle=subtle|pill|dot；chatSendButtonStyle=circle|pill|minimal。
@@ -362,7 +362,7 @@ const APPEARANCE_KEYS: Array<keyof OSTheme> = [
   'chatAvatarShape', 'chatAvatarSize', 'chatEmojiSize', 'chatAvatarMode', 'chatAvatarPlacement',
   'chatBubbleStyle', 'chatMessageSpacing', 'chatShowTimestamp', 'chatHeaderStyle', 'chatInputStyle',
   'chatChromeStyle', 'chatBackgroundStyle', 'chatHeaderAlign', 'chatHeaderDensity', 'chatStatusStyle',
-  'chatSendButtonStyle', 'chatPendingIndicator', 'chatHideHeaderBuffs',
+  'chatSendButtonStyle', 'chatHideHeaderBuffs',
   'chatAvatarVisibility', 'chatAvatarAlign', 'chatAvatarOffsetY', 'chatBubbleFontSize',
   'chatBubbleLineHeight', 'chatBubbleIndent', 'chatSnapToEdge', 'chatModuleAlign',
 ];

@@ -26,7 +26,7 @@ describe('聊天 Token 用量显示开关接线', () => {
     const header = read('components/chat/ChatHeaderShell.tsx');
 
     expect(header).toContain('showTokenUsage = true');
-    expect(header).toContain('((showTokenUsage && lastTokenUsage) || isInstantSending');
+    expect(header).toContain('((showTokenUsage && lastTokenUsage) || isEmotionEvaluating');
     expect((header.match(/showTokenUsage && lastTokenUsage && \(/g) || []).length).toBe(2);
   });
 });

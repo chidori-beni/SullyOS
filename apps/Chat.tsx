@@ -73,7 +73,6 @@ import { fetchBlobForShare, shareOrDownloadBlob } from '../utils/shareExport';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { CollaborationStore } from '../features/collaboration/store';
 import { resolveTtsProvider } from '../utils/ttsProvider';
-import { isInstantConfigReady, loadInstantConfig } from '../utils/instantPushClient';
 import { resolveActiveSound, playWhiteboxSound, unlockWhiteboxAudio, parseWhiteboxSound, upsertWhiteboxSound, stripWhiteboxSoundDirective, WhiteboxSound } from '../utils/whiteboxSound';
 import { normalizeTranslationLangLabel, isTranslationLangPreset } from '../utils/translationLang';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
@@ -192,13 +191,6 @@ const isVisibleChatMessage = (message: Message, hideSystemLogs = false) => (
 import { useChatAutoReply } from '../hooks/useChatAutoReply';
 /** 即时对话那一轮回复「推送陆续到齐」的宽限时间，也就是自动合成的补扫窗口有多长（见下面的 auto-TTS effect）。 */
 const INSTANT_VOICE_SCAN_WINDOW_MS = 30_000;
-type InstantToolUiStatus = {
-    charId: string;
-    phase: 'running' | 'continuing' | 'done' | 'failed';
-    text: string;
-    sessionId?: string;
-    updatedAt?: number;
-};
 
 interface ChatProps {
     /** Message 好友列表嵌套聊天时返回列表；独立打开时仍关闭 App。 */
@@ -218,13 +210,9 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         } catch { return 0; }
     }, []);
     const [messages, setMessages] = useState<Message[]>([]);
-    // Instant Push 路径："准备中"三个点 = 消息正在拼接+发送; 消失 = SSE POST 已排进
-    // 浏览器网络栈. 页面关闭时会主动 abort SSE, 让 worker 尽量走 Web Push fallback。
-    const [instantSendingActive, setInstantSendingActive] = useState(false);
     // 即时对话：这一轮已经交给云端、还没等到回复。它跟 isTyping 不一样——生成不在这台
     // 设备上跑，所以要扛得住关页面重开（记录落在 localStorage，见 amsgInstantChat）。
     const [instantChatPending, setInstantChatPending] = useState(false);
-    const [instantToolStatus, setInstantToolStatus] = useState<InstantToolUiStatus | null>(null);
     const [totalMsgCount, setTotalMsgCount] = useState(0);
     const [visibleCount, setVisibleCount] = useState(30);
     const [windowedFocusMsgId, setWindowedFocusMsgId] = useState<number | null>(null);
@@ -1211,7 +1199,6 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     //     云端那一轮如果还活着，回复到了照样会落库，这里不是"取消云端任务"。
     const handleStopGeneration = () => {
         const stopped = cancelGeneration();
-        setInstantSendingActive(false);
         setInstantChatPending(!!activeCharacterId && !!getInstantChatPending(activeCharacterId));
         addToast(stopped ? '已停止这一轮生成' : '当前没有正在生成的回复', 'info');
     };
@@ -1504,14 +1491,6 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 historyJumpUnlockTimerRef.current = null;
             }
             setFlashMsgId(null);
-            try {
-                const rawToolStatus = localStorage.getItem(`instant_tool_status_${activeCharacterId}`);
-                const parsed = rawToolStatus ? JSON.parse(rawToolStatus) as InstantToolUiStatus : null;
-                const fresh = parsed?.updatedAt && Date.now() - parsed.updatedAt < 2 * 60_000;
-                setInstantToolStatus(fresh && parsed.phase !== 'done' ? parsed : null);
-            } catch {
-                setInstantToolStatus(null);
-            }
         }
     }, [activeCharacterId, reloadMessages]);
 
@@ -1524,44 +1503,6 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         }
         setShowEntry(true);
     }, [activeCharacterId, osTheme.chatCharacterSwitchAnimationEnabled]);
-
-    useEffect(() => {
-        let clearTimer: ReturnType<typeof setTimeout> | null = null;
-        const handler = (e: Event) => {
-            const detail = (e as CustomEvent<InstantToolUiStatus>).detail;
-            if (!detail?.charId || detail.charId !== activeCharIdRef.current) return;
-
-            setInstantToolStatus(detail);
-            if (clearTimer) {
-                clearTimeout(clearTimer);
-                clearTimer = null;
-            }
-            if (detail.phase === 'done' || detail.phase === 'failed') {
-                clearTimer = setTimeout(() => {
-                    setInstantToolStatus((prev) => (
-                        prev?.sessionId && detail.sessionId && prev.sessionId !== detail.sessionId ? prev : null
-                    ));
-                    clearTimer = null;
-                }, detail.phase === 'failed' ? 8000 : 5000);
-            }
-        };
-        const receivedHandler = (e: Event) => {
-            const detail = (e as CustomEvent<{ charId?: string }>).detail;
-            if (detail?.charId && detail.charId !== activeCharIdRef.current) return;
-            try {
-                const charId = detail?.charId || activeCharIdRef.current;
-                if (charId) localStorage.removeItem(`instant_tool_status_${charId}`);
-            } catch { /* ignore */ }
-            setInstantToolStatus(null);
-        };
-        window.addEventListener('instant-tool-status', handler);
-        window.addEventListener('active-msg-received', receivedHandler);
-        return () => {
-            window.removeEventListener('instant-tool-status', handler);
-            window.removeEventListener('active-msg-received', receivedHandler);
-            if (clearTimer) clearTimeout(clearTimer);
-        };
-    }, []);
 
     useEffect(() => {
         const onScheduleChange = (event: Event) => {
@@ -1681,7 +1622,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
 
     // buff 同步已上移到 OSContext 的 App 级 'emotion-updated' 监听 (无条件按事件 charId 更新内存,
     // 不再受"当前是否开着该角色聊天页"限制). 之前这里有个 `charId === activeCharacterId` 守卫的
-    // handler, 导致 instant 模式下用户不在该角色页时 buff 回不到前端 (只落 DB), 故移除, 同时
+    // handler, 导致云端回复时用户不在该角色页的话 buff 回不到前端 (只落 DB), 故移除, 同时
     // 避免和 OSContext 双写.
 
     const handleInputChange = (val: string) => {
@@ -2043,35 +1984,15 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         // 来替它打脏。卡片替换和原消息删除也已经在上面完成，故这里上传的是最终形态。
         // 有发送后自动触发时，正常即时对话会由 sendInstantChatTurn 上传带 chat 段的权威包；
         // 忙碌自动回复 / 本地降级路径分别在自己的收尾处同步，避免普通包与即时包乱序覆盖。
-        const instantCfg = loadInstantConfig();
-        const autoTriggerOnSend = type === 'text'
-            && isInstantConfigReady(instantCfg)
-            && instantCfg.autoTriggerOnSend;
-        const instantReplyPending = !!getInstantChatPending(char.id);
-        if (!autoTriggerOnSend || isTyping || instantReplyPending) {
-            syncAmsgAfterUserMessage();
-            // 消息提交后立即启动已有队列的冲刷；队列内部仍保留即时对话欠账保护、失败退避和
-            // localStorage 底账。这样切后台 / 关闭前至少已经开始提交，强杀时还能下次补传。
-        }
+        // （原先 Instant Push 的「发送即回复」开着时这里会让位给它；Instant Push 已移除，现在总是同步。）
+        syncAmsgAfterUserMessage();
+        // 消息提交后立即启动已有队列的冲刷；队列内部仍保留即时对话欠账保护、失败退避和
+        // localStorage 底账。这样切后台 / 关闭前至少已经开始提交，强杀时还能下次补传。
 
         await reloadMessages(visibleCountRef.current);
         // 自动回复模式下允许连续挑表情，用户主动收起加号等面板后才计时。
         if (!inputPreferences.autoReply) setShowPanel('none');
 
-        // Instant Push 模式：发完文本自动触发 AI（响应在 worker 端跑、后台 push 回写聊天页）。
-        // 本地模式仍维持手动触发以保留现有 UX。triggerAI 内部会从 DB 拉完整历史，
-        // 闭包里的 messages 还没包含刚写入的 user msg 也没关系。
-        // 仅文本消息触发；image / xhs_card 等卡片消息不触发，与本地手动行为对齐。
-        // autoTriggerOnSend gate：instant ready 也只在用户显式开启"发送后自动触发"时才自动回复，
-        // 否则保留手动 ⚡（避免"启用 instant = 自动回复"的反直觉强绑定）。
-        if (autoTriggerOnSend) {
-            // 上一轮还在跑时直接跳过：triggerAI 内部会因 isTyping=true 静默 reject，
-            // 提前 guard 避免点亮"准备中"指示灯后没人来清，UI 灯被卡住。
-            if (isTyping) return;
-            // 标记"准备中"三个点：拼接+发送期间显示，SSE POST 入队 (onInstantPosted) 后清除。
-            setInstantSendingActive(true);
-            triggerAI(messages, undefined, () => setInstantSendingActive(false));
-        }
         return true;
     };
 
@@ -2293,23 +2214,16 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         }
     }, [char, userProfile, groups, realtimeConfig, scheduleAcceptedInviteCall, addToast, reloadMessages, syncAmsgAfterUserMessage]);
 
-    // 顶栏 ⚡ 手动触发。instant 模式下给"上一条 assistant 之后的所有 user 消息"打上"准备中"
-    // 三个点（从写入 DB 到 SSE POST 入队之间），由 onInstantPosted 清除 ——
-    // 与 autoTriggerOnSend 自动路径的指示器行为一致。本地模式无此指示器，直接 triggerAI。
+    // 顶栏 ⚡ 手动触发（也是「发完后自动生成」到点时调的那一下）。
     const handleManualTrigger = () => {
         autoReply.cancel();
-        // 同上：上一轮还在跑时 triggerAI 会静默 reject，提前挡掉避免指示灯卡死。
         if (isTyping) return;
         // 即时对话（amsg2）那一轮 POST 完 isTyping 就回 false 了，但云端回复可能还没落库
         // （instantChatPending 才是这段空窗期的真实状态）。这时候再点⚡会起第二轮独立生成，
         // 两条任务谁都拦不住谁，最后收到两条内容相近但措辞不同的回复。这里提前挡一道，
         // triggerAI 内部也补了同一道防线（双保险，见 useChatAI 里 getInstantChatPending 那段）。
         if (instantChatPending) { addToast('角色还在回复上一条消息，等这条回来再发下一条', 'info'); return; }
-        if (!isInstantConfigReady()) { triggerAI(messages); return; }
-        // instantSendingActive 驱动 header "发送中…" 徽章 (拼接+发送窗口). 消息上的三个小圆点
-        // 另走纯前端判定 (isTyping && 最后一条消息), 见渲染处.
-        setInstantSendingActive(true);
-        triggerAI(messages, undefined, () => setInstantSendingActive(false));
+        triggerAI(messages);
     };
 
     const handleReroll = async () => {
@@ -2339,7 +2253,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         trackEvent('重新生成回复');
 
         // 重 roll：不注入上一轮残留的情绪 buff 与意识流（innerState），两边独立重新生成。
-        triggerAI(newHistory, undefined, undefined, { skipEmotionInjection: true });
+        triggerAI(newHistory, undefined, { skipEmotionInjection: true });
     };
 
     const handleImageSelect = async (file: File) => {
@@ -5029,7 +4943,6 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 isTyping={isTyping}
                 isSummarizing={isSummarizing}
                 isEmotionEvaluating={emotionStatus === 'evaluating'}
-                isInstantSending={instantSendingActive}
                 isMemoryPalaceProcessing={!!memoryPalaceStatus}
                 memoryPalaceStatusText={memoryPalaceStatus}
                 lastTokenUsage={lastTokenUsage}
@@ -5313,8 +5226,6 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                             showTimestamp={osTheme.chatShowTimestamp}
                             suppressEntranceAnimation={suppressEntranceAnimation}
                             onAvatarClick={openXinshengCard}
-                            isPending={false}
-                            pendingIndicator={osTheme.chatPendingIndicator !== false}
                             onMcdSendCart={handleMcdSendCart}
                             onMcdCandidate={handleMcdCandidate}
                             onResolveTransfer={handleResolveTransfer}
@@ -5352,44 +5263,6 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                         ) : (
                             <span className="text-[11px] text-slate-400">已到当前最新消息</span>
                         )}
-                    </div>
-                )}
-                
-                {/* 纯前端「发送准备中」三个点: 不走 MessageItem (那条逐条路径实测渲染不出来), 直接挂在
-                    消息列表末尾、靠右(用户侧). 跟 header「发送中」同源 instantSendingActive 一起亮灭.
-                    原版精致观感 = 小号 (w-1) + 轻脉冲. 但原版用的 Tailwind 自定义类 animate-dot-pulse
-                    CDN 没生成 (一换就消失), 原版色 slate-400/70 又太淡看不见. 解法: 自己写 inline @keyframes
-                    (不依赖 CDN) 还原脉冲, 用实色 slate-400 (峰值满不透明) 保证看得见, 尺寸回到原版 w-1. */}
-                {instantSendingActive && !selectionMode && (
-                    <div className="flex justify-end px-3 -mt-1 -mb-4">
-                        <style>{`@keyframes chatPendingDot{0%,80%,100%{opacity:.35;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}`}</style>
-                        <span className="sully-pending-dots inline-flex items-center gap-[3px] mr-12 select-none pointer-events-none" role="status" aria-label="发送准备中">
-                            <span className="sully-pending-dot w-1 h-1 rounded-full bg-slate-400" style={{ animation: 'chatPendingDot 1.2s ease-in-out infinite' }} />
-                            <span className="sully-pending-dot w-1 h-1 rounded-full bg-slate-400" style={{ animation: 'chatPendingDot 1.2s ease-in-out infinite', animationDelay: '0.2s' }} />
-                            <span className="sully-pending-dot w-1 h-1 rounded-full bg-slate-400" style={{ animation: 'chatPendingDot 1.2s ease-in-out infinite', animationDelay: '0.4s' }} />
-                        </span>
-                    </div>
-                )}
-
-                {instantToolStatus && !selectionMode && (
-                    <div className="flex items-end gap-3 px-3 mb-4 animate-fade-in">
-                        <img src={char.avatar} className={chatPendingAvatarClass} />
-                        <div className={`max-w-[78%] px-4 py-3 rounded-2xl shadow-sm border ${
-                            instantToolStatus.phase === 'failed'
-                                ? 'bg-rose-50 border-rose-100 text-rose-700'
-                                : 'bg-white/95 border-white/70 text-slate-600'
-                        }`}>
-                            <div className="flex items-center gap-2 text-xs font-semibold leading-relaxed">
-                                {instantToolStatus.phase === 'failed' ? (
-                                    <span className="w-2 h-2 rounded-full bg-rose-400 shrink-0" />
-                                ) : instantToolStatus.phase === 'done' ? (
-                                    <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
-                                ) : (
-                                    <svg className="animate-spin h-3 w-3 shrink-0 text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                                )}
-                                <span>{instantToolStatus.text}</span>
-                            </div>
-                        </div>
                     </div>
                 )}
 

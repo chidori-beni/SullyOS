@@ -40,8 +40,6 @@ import { isStandaloneDisplayMode } from './iosStandalone';
 import { loadMcpServers, getMcpUseNativeTools } from './mcpClient';
 import { getLuckinToken, isLuckinEnabled } from './luckinMcpClient';
 import { getMcdToken, isMcdEnabled } from './mcdMcpClient';
-import { loadInstantConfig } from './instantPushClient';
-import { isPushVapidReady } from './pushVapid';
 import { getPendingTasks, isAmsg2EnabledForChar } from './amsg2Tasks';
 import { ActiveMsgStore } from './activeMsgStore';
 import { getVRApi } from './vrWorld/vrApi';
@@ -130,7 +128,6 @@ export function collectAppearance(
         表情尺寸: theme.chatEmojiSize ?? 'small',
         隐藏侧贴边: onOff(theme.chatSnapToEdge),
         // ── 开关 ──
-        准备中圆点: onOff(theme.chatPendingIndicator, true),
         隐藏情绪栏: onOff(theme.chatHideHeaderBuffs),
         // 白框自定义 CSS 是用户写的代码，只报用没用
         自定义白框CSS: theme.chatChromeCustomCss ? '用了' : '没用',
@@ -442,14 +439,13 @@ export interface FeatureSources {
  * 把「现在开着哪些功能」收敛成一份可上报的枚举表。
  *
  * 纯函数 + 直接读 localStorage 两种来源都有：能同步读到的（MCP、点单、QQ 桥、
- * 自习室、推送）在这里自己读，OSContext 只需要传它 state 里那几份。
+ * 自习室）在这里自己读，OSContext 只需要传它 state 里那几份。
  */
 export function collectFeatureFlags(src: FeatureSources): Record<string, string> {
     const rt = src.realtimeConfig;
     const input = loadChatInputPreferences();
     const sar = readSARClubState();
     const mcpServers = loadMcpServers();
-    const instant = loadInstantConfig();
     const luckinToken = getLuckinToken().length > 0;
     const mcdToken = getMcdToken().length > 0;
     // 「用起来了的角色」= 在面板里把开关打开过的（enabled:true 是用户表过态的真痕迹），
@@ -538,19 +534,11 @@ export function collectFeatureFlags(src: FeatureSources): Record<string, string>
         自习室独立线路: hasLocalJsonConfig('study_api_config') ? '配了' : '没配',
         彼方独立线路: src.vrIndependentApi ? '配了' : '没配',
 
-        // ── 推送 ──
-        // Instant Push「配了」= 填了 worker 地址，「开」还要 VAPID 也齐（跟
-        // isInstantConfigReady 同口径），否则会把「填了地址但没生成密钥」误报成开着。
-        //
+        // ── 主动消息 2.0 ──
         // 没报「主动消息 Push 加速」：那一层已经全局下线（proactivePushConfig.ts 的
         // FORCE_DISABLED，设置面板也藏了），loadPushConfig() 恒返回 enabled=false。
         // 报出来只会是一片「关」，看着像没人用，其实是被下掉了——这种数据比没有更坏。
-        InstantPush: triState(
-            Boolean(instant.workerUrl?.startsWith('https://')),
-            Boolean(instant.enabled && instant.workerUrl?.startsWith('https://') && isPushVapidReady()),
-        ),
-
-        // ── 主动消息 2.0 ──
+        //
         // 四态（见 amsg2Stage）：三关里卡在哪一关，要修的引导完全不是一回事。
         '主动消息2.0': amsg2Stage(
             Boolean(src.amsg2Global.workerUrl?.trim()),

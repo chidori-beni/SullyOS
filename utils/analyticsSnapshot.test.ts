@@ -154,10 +154,6 @@ describe('当前功能启用 · 不泄漏配置内容', () => {
         localStorage.setItem('aetheros.mcd.mcpToken', POISON.token);
         localStorage.setItem('qqBridge:wsUrl', POISON.url);
         localStorage.setItem('study_api_config', JSON.stringify({ baseUrl: POISON.url, apiKey: POISON.key }));
-        localStorage.setItem('instant_push_config_v1', JSON.stringify({
-            enabled: true, workerUrl: 'https://my-private-worker.invalid', clientToken: POISON.token,
-        }));
-
         expectNoLeak(collectFeatureFlags(poisonedSources()));
     });
 
@@ -258,14 +254,6 @@ describe('当前功能启用 · 开关值的判定', () => {
 
         localStorage.setItem('qqBridge:enabled', '1');
         expect(collectFeatureFlags(poisonedSources()).QQ桥接).toBe('开');
-    });
-
-    it('Instant Push 填了地址但没生成 VAPID 密钥 → 配了没开', () => {
-        localStorage.setItem('instant_push_config_v1', JSON.stringify({
-            enabled: true, workerUrl: 'https://my-worker.invalid',
-        }));
-        // push_vapid_v1 没设 → isPushVapidReady() 为 false
-        expect(collectFeatureFlags(poisonedSources()).InstantPush).toBe('配了没开');
     });
 
     it('MCP 分开数「配了几个 / 启用几个 / 连通几个」', () => {

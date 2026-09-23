@@ -23,14 +23,11 @@ const read = (relative: string) =>
 const chatAiSrc = read('../hooks/useChatAI.ts');
 const chatSrc = read('../apps/Chat.tsx');
 const settingsSrc = read('../components/settings/ActiveMsgGlobalSettingsModal.tsx');
-const instantPushSettingsSrc = read('../components/settings/InstantPushSettingsModal.tsx');
 
 /** 即时对话分支的判定行（分支起点、也是排序基准）。 */
 const INSTANT_CHAT_BRANCH_HEAD = 'if (instantChatRoute)';
-/** Instant Push 分支的判定行（脏配置时它先接手）。 */
-const INSTANT_PUSH_BRANCH_HEAD = 'if (instantPushConfigured && !payload.flags.luckinChatActive';
-/** 路由判定那一段的起点（一回合只读一次 Instant Push 配置，就是从这行开始）。 */
-const ROUTING_HEAD = 'const instantPushConfigured =';
+/** 路由判定那一段的起点（否决名单从这行开始拼）。 */
+const ROUTING_HEAD = 'const luckinChatOn =';
 
 /**
  * 取一段源码：从起点锚点到终点锚点之间。两个锚点都要求命中，找不到就抛一条写明
@@ -78,7 +75,8 @@ describe('useChatAI 的分流接缝', () => {
     expect(routing).toContain('hasWorkerUnreachableMcpServer(char.id)');
     expect(routing).toContain("'mcp-worker-unreachable'");
     // 否决也要留痕：走的是下面那条统一的 instant-chat-veto trace（reason 带着它）。
-    expect(routing).toMatch(/instantChatVeto \?\? 'instant-push-configured'/);
+    expect(routing).toContain('const skipReason = instantChatVeto;');
+    expect(routing).toContain('reason: skipReason');
   });
 
   it('全局配置读不出来单独留一条 trace（它不是「用户没开」）', () => {
@@ -112,28 +110,27 @@ describe('useChatAI 的分流接缝', () => {
     const payloadAt = chatAiSrc.indexOf('const payload = await stageT(');
     expect(routeAt).toBeGreaterThan(-1);
     expect(payloadAt).toBeGreaterThan(routeAt);
-    // IP 还开着（脏配置）时那份 payload 必须是全量的——剥过时效段的 prompt 不能交给 IP。
-    expect(routingSrc()).toContain('!instantPushConfigured');
+    // 上云只看两样：即时对话就绪、没被否决。
+    expect(routingSrc()).toContain('const instantChatRoute = instantChatOn && !instantChatVeto;');
   });
 
-  it('Instant Push 配没配着，一回合只读一次（读两次能读出两个答案）', () => {
-    // 从路由判定到真正分流之间隔着好几个 await，用户在设置页存一次盘就能把它翻面。
-    // 各读各的话：按上云剥掉时效段的 prompt，最后却交给 IP 或落回本地生成。
-    const reads = chatAiSrc.match(/isInstantConfigReady\(\)/g) ?? [];
-    expect(reads.length).toBe(1);
-    expect(routingSrc()).toContain(`${ROUTING_HEAD} isInstantConfigReady()`);
-    // 三个消费方都吃这一个 const（情绪评估的 cloudGenRoute 也在内，它决定评估在本地跑还是打包上云）。
-    expect(chatAiSrc).toContain(INSTANT_PUSH_BRANCH_HEAD);
-    expect(chatAiSrc).toContain(INSTANT_CHAT_BRANCH_HEAD);
-    expect(chatAiSrc).toMatch(/const cloudGenRoute = instantPushConfigured \|\| instantChatRoute;/);
+  it('云端生成只剩即时对话这一条路（聊天链路里不再有别的云端发送分支）', () => {
+    // 发送、情绪评估、安全网都只认 instantChatRoute；再冒出一条云端分支的话，这几处
+    // 要各自重新分叉，漏一处就是「按一条路打包、实际走了另一条」。
+    for (const src of [chatAiSrc, chatSrc]) {
+      for (const gone of ['instantPushClient', 'isInstantConfigReady', 'sendInstantPushAndAwaitReply', 'onInstantPosted']) {
+        expect(src).not.toContain(gone);
+      }
+    }
+    expect(chatAiSrc).not.toContain('cloudGenRoute');
   });
 
   it('分支只认 instantChatRoute，不拿原料重算一遍', () => {
     // 「这份 prompt 剥没剥时效段」和「这一轮走不走云端」必须出自同一个值。分支要是
-    // 自己再拿 instantChatOn / instantPushConfigured / 否决名单拼一次条件，两处早晚
-    // 会不同意——剥过时效段的 prompt 就落到 IP 或本地那条路上去了。
+    // 自己再拿 instantChatOn / 否决名单拼一次条件，两处早晚会不同意——剥过时效段的
+    // prompt 就落到本地那条路上去了。
     const branch = branchSrc();
-    for (const reDerived of ['instantChatOn', 'instantPushConfigured', 'instantChatVeto', 'isInstantConfigReady']) {
+    for (const reDerived of ['instantChatOn', 'instantChatVeto']) {
       expect(branch).not.toContain(reDerived);
     }
     // 上云那一路一进来就直奔发送，中间没有别的门。
@@ -142,9 +139,8 @@ describe('useChatAI 的分流接缝', () => {
   });
 
   it('开着即时对话却没上云 —— 每一种情形都在路由段留 trace，就这一处', () => {
-    // 两种原因：点单流程否决（瑞幸/麦当劳要客户端交互，这一轮留在本地是对的）、
-    // IP 配置也还在（脏配置，交给 IP，它不接就落回本地）。两个同时成立时报点单那个。
-    // 哪一种没留痕，都是「开关亮着、消息照常出来」的静默分流，用户查无可查。
+    // 原因都在否决名单里：SAR 模块、点单流程（瑞幸/麦当劳要客户端交互）、MCP 地址够不着，
+    // 这一轮留在本地是对的。哪一种没留痕，都是「开关亮着、消息照常出来」的静默分流，用户查无可查。
     const routing = routingSrc();
     // 否决的三个来源和 payload.flags 同源，只是算得更早
     for (const source of ['luckinChatRef?.current?.active', 'mcdMiniOpen', 'luckinMiniOpen']) {
@@ -152,7 +148,6 @@ describe('useChatAI 的分流接缝', () => {
     }
     expect(routing).toContain('const instantChatVeto');
     expect(routing).toContain("event: 'instant-chat-veto'");
-    expect(routing).toMatch(/instantChatVeto \?\? 'instant-push-configured'/);
     // 判定用的是「上云没成」这个总口径，不是逐个原因去数——漏一种就又静默了。
     expect(routing).toMatch(/if \(instantChatOn && !instantChatRoute\)/);
     // 留痕只此一处：多写一处迟早会漏掉某种情形，或者同一轮报两遍。
@@ -169,9 +164,9 @@ describe('useChatAI 的分流接缝', () => {
     expect(vetoBranch).not.toContain('return;');
   });
 
-  it('配置读不出来（config-unreadable）：裸情形明确报错拦下这一轮，veto/脏配置在场只留痕', () => {
+  it('配置读不出来（config-unreadable）：裸情形明确报错拦下这一轮，veto 在场只留痕', () => {
     // 静默退回本地的坑：用户按「发完就自由」的心智锁屏，本地 fetch 被系统掐死，回来
-    // 既无回复也无报错，设置页还写着「已开启」。裸情形（没有点单否决、IP 配置也不在）
+    // 既无回复也无报错，设置页还写着「已开启」。裸情形（没有否决）
     // 必须与 sendInstantChatTurn 失败同口径：落系统消息 + 弹错 + return，不发起本地
     // 生成。回归守卫——改回「静默走本地」这条会挂。
     const branch = sliceSrc(
@@ -181,22 +176,12 @@ describe('useChatAI 的分流接缝', () => {
       'const payload = await stageT(',
     );
     expect(branch).toContain("event: 'instant-chat-config-unreadable'");
-    // 裸情形的判定与两档去向：veto / IP 在场时本就轮不到即时对话，照原路只留痕不拦。
-    expect(branch).toMatch(/configUnreadableFailsTurn = !instantChatVeto && !instantPushConfigured/);
+    // 裸情形的判定与两档去向：veto 在场时本就轮不到即时对话，照原路只留痕不拦。
+    expect(branch).toMatch(/configUnreadableFailsTurn = !instantChatVeto;/);
     expect(branch).toMatch(/outcome: configUnreadableFailsTurn \? 'turn-failed' : 'other-route'/);
     // 拦下的那一档：落系统消息、弹错、return——绝不静默退回本地生成。
     expect(branch).toMatch(/if \(configUnreadableFailsTurn\) \{[\s\S]*?return;/);
     expect(branch).not.toContain('safeFetchJson');
-  });
-
-  it('两个分支都还在，且 Instant Push 排在即时对话前面（历史配置的兜底顺序不变）', () => {
-    // 双向互斥后两边理论上不会同时亮着；这条钉的是万一出现脏配置（两个开关都读到
-    // true）时谁先接手，顺序变了就是另一种未定义行为。
-    const instantPushAt = chatAiSrc.indexOf(INSTANT_PUSH_BRANCH_HEAD);
-    const instantChatAt = chatAiSrc.indexOf(INSTANT_CHAT_BRANCH_HEAD);
-    expect(instantPushAt).toBeGreaterThan(-1);
-    expect(instantChatAt).toBeGreaterThan(-1);
-    expect(instantChatAt).toBeGreaterThan(instantPushAt);
   });
 
   it('云端拿到的就是本地要发的那串消息和那份凭据（回执块只附在末尾，不动原消息）', () => {
@@ -244,10 +229,10 @@ describe('useChatAI 的分流接缝', () => {
   it('情绪评估跟着一起交给云端，不在本地再发一枪', () => {
     expect(branchSrc()).toContain('emotionEval: cloudEmotionEval');
     expect(branchSrc()).not.toContain('fireLocalEmotionEval');
-    // 本地那一枪的开关也得认这条路：cloudGenRoute 把即时对话算进去，
+    // 本地那一枪和上云那份认的是同一个 instantChatRoute，
     // 不然两边会同时跑评估（双扣费，而且后落的那份会盖掉先落的）。
-    expect(chatAiSrc).toMatch(/const cloudGenRoute = instantPushConfigured \|\| instantChatRoute;/);
-    expect(chatAiSrc).toMatch(/const fireLocalEmotionEval = \(emotionEvalEnabled && !cloudGenRoute/);
+    expect(chatAiSrc).toMatch(/const fireLocalEmotionEval = \(emotionEvalEnabled && !instantChatRoute/);
+    expect(chatAiSrc).toMatch(/const cloudEmotionEval = \(emotionEvalEnabled && instantChatRoute/);
   });
 
   it('上云前写好前台租约，并持续到收到回复后再停止', () => {
@@ -297,15 +282,14 @@ describe('设置页那一道门', () => {
     expect(chatAiSrc).not.toContain('probeInstantChatSupport');
   });
 
-  it('四道门缺一不可：四个输入都要喂进同一份判定', () => {
+  it('三道门缺一不可：三个输入都要喂进同一份判定', () => {
     // 顺序和每道门的文案钉在 amsgDiagnostics.test.ts（resolveInstantChatBlocker 是纯函数，
-    // 能直接测）。这里只钉「设置页确实把四个输入都递过去了」——漏一个的话那道门就消失了，
+    // 能直接测）。这里只钉「设置页确实把三个输入都递过去了」——漏一个的话那道门就消失了，
     // 界面上表现为开关能点，点完发一条挂一条。
     const gate = sliceSrc(settingsSrc, '即时对话开关的置灰理由', 'const instantChatBlocker = resolveInstantChatBlocker(', '\n  const instantChatBlockedReason');
     expect(gate).toContain('isConnected');
     expect(gate).toContain('pushStatus?.hasSubscription');
     expect(gate).toContain('instantChatSupported');
-    expect(gate).toContain('instantOn');
     // 黄字直接取自代号表：文案跟上报属性共用一份判定，不许哪天各写各的。
     expect(settingsSrc).toContain('INSTANT_CHAT_BLOCKER_HINTS[instantChatBlocker]');
   });
@@ -327,22 +311,5 @@ describe('设置页那一道门', () => {
     for (const save of saves) {
       expect(save).toContain('instantChatEnabled');
     }
-  });
-});
-
-describe('设置页双向互斥门', () => {
-  // 互斥是两个文件各持一半的跨文件约定：amsg2 面板挡「IP 开着时开即时对话」，
-  // Instant Push 面板挡反过来那半。哪边被重构丢了，另一边都感觉不到——两个开关
-  // 会一起亮着，聊天悄悄只走其中一条，用户完全看不出来。这里两条都要钉住。
-  it('正向门：amsg2 面板读 isInstantConfigReady 判断 IP 是否开着', () => {
-    expect(settingsSrc).toContain('isInstantConfigReady');
-  });
-
-  it('反向门：Instant Push 面板读 isInstantChatReady，且 handleSave 里有存档兜底', () => {
-    expect(instantPushSettingsSrc).toContain('isInstantChatReady');
-    // raceBlocked：存档前用最新读回的即时对话状态再夹一次 enabled，堵掉「modal 刚打开、
-    // isInstantChatReady() 还没读回来」那一小段时间窗口里手快把 IP 勾上就保存的抢跑。
-    const handleSave = sliceSrc(instantPushSettingsSrc, 'Instant Push 面板的 handleSave', 'const handleSave', '\n  };');
-    expect(handleSave).toContain('raceBlocked');
   });
 });

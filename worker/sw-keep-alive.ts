@@ -84,8 +84,10 @@ import { installReiSW } from '@rei-standard/amsg-sw';
  *            SW 到底有没有喊到页面是第一个要回答的问题。
  *            上游把这一条编成 1.18.0，这边 1.18.0~1.18.2 已被来电/通话/见面占用，顺延到 1.18.3。
  *  - 1.18.4: 见面剧情后台回复通知点击后直达对应剧情线程。
+ *  - 1.19.0: （上游）push handler 只分 content / emotion_update / error / result 四轨；
+ *            _blob 信封、reasoning、tool_request 三条路线随 Instant Push 移除。
  */
-const SW_VERSION = '1.18.4';
+const SW_VERSION = '1.19.0';
 
 /** 这条推送是不是一通来电（旗子由 worker/amsg/src/agentic.ts 立在 notification.data 上）。 */
 function isIncomingCallNotificationData(data: any): boolean {
@@ -95,12 +97,12 @@ function isIncomingCallNotificationData(data: any): boolean {
 const PING_INTERVAL = 15_000;
 const MAX_MANUAL_ALIVE_MS = 5 * 60_000;
 const ACTIVE_MSG_DB_NAME = 'ActiveMsg';
-// MUST be kept in sync with utils/activeMsgStore.ts:DB_VERSION. Phase 2 Round 1 bumped to 2 to add
-// outbound_sessions / pending_tool_calls / reasoning_buffer stores. SW only reads/writes `inbox`,
-// but if SW pins a lower version while main thread is on v2, SW's open() will throw VersionError
-// and push messages will be silently dropped.
+// MUST be kept in sync with utils/activeMsgStore.ts:DB_VERSION. If SW pins a lower version while
+// main thread is on v2, SW's open() will throw VersionError and push messages will be silently dropped.
 const ACTIVE_MSG_DB_VERSION = 2;
 const ACTIVE_MSG_INBOX_STORE = 'inbox';
+// 下面三张表现在没人读写（主线程启动时清空过一次旧数据）。建表逻辑留着是为了不动库版本：
+// 删表就得升 DB_VERSION，页面和 SW 必须同步升级，否则老的一方打开库直接 VersionError。
 const ACTIVE_MSG_OUTBOUND_SESSIONS_STORE = 'outbound_sessions';
 const ACTIVE_MSG_PENDING_TOOL_CALLS_STORE = 'pending_tool_calls';
 const ACTIVE_MSG_REASONING_BUFFER_STORE = 'reasoning_buffer';
@@ -128,7 +130,6 @@ function summarizeAmsgPayload(payload: any): Record<string, any> {
     charId: payload?.metadata?.charId,
     chunk: payload?.messageIndex,
     total: payload?.totalMessages,
-    hasBlob: payload?._blob === true,
   };
 }
 
@@ -412,11 +413,10 @@ function readPushPayload(event: PushEvent): any | null {
   }
 }
 
-// 单例连接缓存。SW 原本每条 push 都新开一条 ActiveMsg 连接且从不 close —— 在主库
-// (utils/db.ts) 连接风暴撑爆 Chromium backing store 后, 这里 open 同样失败 →
-// saveContentToInbox 抛错 → 永不 notifyClients('active-msg-received') → 主线程 Instant
-// Push 等不到落库确认而超时。复用同一条连接, 失效 (版本升级 / 浏览器强制关闭) 时清
-// 缓存自愈, 下条 push 自动重开。
+// 单例连接缓存。每条 push 都新开一条 ActiveMsg 连接且从不 close 的话, 会跟主库
+// (utils/db.ts) 的连接一起撑爆 Chromium backing store, 这里 open 失败 →
+// saveContentToInbox 抛错 → 永不 notifyClients('active-msg-received') → 页面迟迟等不到
+// 落库。复用同一条连接, 失效 (版本升级 / 浏览器强制关闭) 时清缓存自愈, 下条 push 自动重开。
 let inboxDbPromise: Promise<IDBDatabase> | null = null;
 
 function openInboxDb(): Promise<IDBDatabase> {
@@ -467,9 +467,7 @@ function openInboxDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(ACTIVE_MSG_INBOX_STORE)) {
         db.createObjectStore(ACTIVE_MSG_INBOX_STORE, { keyPath: 'messageId' });
       }
-      // Phase 2 Round 1: additive schema for agentic-loop / reasoning correlation. SW only writes
-      // `inbox` today, but it must own the schema for these stores so it can fire its own upgrade
-      // (and so an SW-first-install can still create them without main thread being open).
+      // 这三张表没人读写，只为让 SW-first 安装建出来的库跟主线程 v2 schema 一致（见常量处注释）。
       if (!db.objectStoreNames.contains(ACTIVE_MSG_OUTBOUND_SESSIONS_STORE)) {
         db.createObjectStore(ACTIVE_MSG_OUTBOUND_SESSIONS_STORE, { keyPath: 'sessionId' });
       }
@@ -535,7 +533,7 @@ async function withInboxTx(
   }
 }
 
-// ─── content / inbox (kind=content 老路径, tool_request 的 prefix 也走这里) ───
+// ─── content / inbox (kind=content) ───────────────────────────────────────────
 
 async function saveContentToInbox(payload: any) {
   const charId = payload?.metadata?.charId;
@@ -579,8 +577,8 @@ async function saveContentToInbox(payload: any) {
       taskUuid: payload?.taskUuid ?? null,
       recurrenceType: payload?.recurrenceType ?? null,
       occurrenceMs: payload?.occurrenceMs ?? null,
-      // sessionId / messageIndex 放到 metadata 里, 主线程 flushInboxToChat 反查 reasoning_buffer
-      // + 标记是第几条 (第 1 条才挂 metadata.thinkingChain).
+      // sessionId / messageIndex 放到 metadata 里, 主线程 flushInboxToChat 据此标记是第几条
+      // (第 1 条才挂 metadata.thinkingChain).
       metadata: {
         ...(payload?.metadata || {}),
         sessionId: payload?.sessionId,
@@ -601,110 +599,6 @@ async function saveContentToInbox(payload: any) {
     avatarUrl: payload?.avatarUrl,
     sentAt,
   });
-}
-
-// ─── reasoning_buffer (kind=reasoning, 主线程 claim) ─────────────────────────
-
-async function saveReasoningToBuffer(payload: any) {
-  const sessionId: string | undefined = payload?.sessionId;
-  const charId: string | undefined = payload?.metadata?.charId;
-  const reasoningContent: string = String(payload?.reasoningContent ?? '');
-  if (!sessionId || !charId || !reasoningContent) {
-    traceSw('reasoning-drop-incomplete', payload, {
-      hasSessionId: !!sessionId,
-      hasCharId: !!charId,
-      chars: reasoningContent.length,
-    });
-    return;
-  }
-
-  await withInboxTx(ACTIVE_MSG_REASONING_BUFFER_STORE, 'readwrite', (store) => {
-    store.put({
-      sessionId,
-      charId,
-      reasoningContent,
-      receivedAt: Date.now(),
-    });
-  });
-  traceSw('reasoning-buffer-saved', payload, { chars: reasoningContent.length });
-
-  // reasoning push 与 content push 是两条独立 Web Push, 到达/处理顺序不保证. 主线程只在处理
-  // "首条 content" 时 claimReasoning, 若 content 抢先落库, reasoning 会变孤儿、思维链丢失.
-  // 这里写完 buffer 立刻通知主线程: 若该 session 首条回复已落库就把思维链回填上去 (见
-  // activeMsgRuntime 'active-msg-reasoning' 处理); 若 content 还没到则是 no-op, 等正常 claim.
-  await notifyClients({ type: 'active-msg-reasoning', sessionId, charId });
-}
-
-/**
- * 清空同 sessionId 的 reasoning_buffer.
- * 镜像主应用 `applyAssistantPostProcessing` 跨 LLM round 的 `data = newResponse` 覆盖语义:
- * 早期 round 的 reasoning (工具规划阶段的内心戏) 不应混入最终一轮的 thinking chain.
- */
-async function clearReasoningBuffer(sessionId: string) {
-  if (!sessionId) return;
-  await withInboxTx(ACTIVE_MSG_REASONING_BUFFER_STORE, 'readwrite', (store) => {
-    store.delete(sessionId);
-  });
-}
-
-// ─── pending_tool_calls (kind=tool_request, 主线程 runner 跑) ────────────────
-
-async function savePendingToolCall(payload: any) {
-  const sessionId: string | undefined = payload?.sessionId;
-  const charId: string | undefined = payload?.metadata?.charId;
-  const toolCalls = Array.isArray(payload?.toolCalls) ? payload.toolCalls : [];
-  if (!sessionId || !charId || toolCalls.length === 0) return;
-
-  // 进入新 LLM round 前清空老 reasoning — 这一轮的 reasoning 是"工具规划"性质,
-  // 不属于最终给用户看的 thinking chain. claimReasoning 永远只读到最后一轮的 chunks.
-  await clearReasoningBuffer(sessionId).catch((e) => {
-    console.warn('[amsg] clearReasoningBuffer before tool_request failed', e);
-  });
-
-  // iteration 来自 worker hook metadata.iteration (Round 2 worker 一定带), 兜底 0 防老 worker.
-  // 客户端 /continue 时取它 + 1; 多轮 tool 链路里 iteration 单调递增, worker 也按它做 fail-fast 400.
-  const iteration = Number.isFinite(payload?.metadata?.iteration) ? Number(payload.metadata.iteration) : 0;
-
-  await withInboxTx(ACTIVE_MSG_PENDING_TOOL_CALLS_STORE, 'readwrite', (store) => {
-    store.put({
-      sessionId,
-      charId,
-      toolCalls,
-      llmOutputText: String(payload?.message || ''),
-      iteration,
-      createdAt: Date.now(),
-    });
-  });
-}
-
-async function notifyVisibleClientForToolRequest(payload: any) {
-  // 找一个 visible window: 在线 visible → postMessage 让 main 立即跑 runner.
-  // 否则展示通知, 让用户点开应用; 启动时 ActiveMsgRuntime.init 会消费 pending_tool_calls.
-  const clients = await sw.clients.matchAll({ type: 'window', includeUncontrolled: true });
-  const visibleClient = clients.find((c) => (c as WindowClient).visibilityState === 'visible');
-
-  if (visibleClient) {
-    visibleClient.postMessage({
-      type: 'instant-tool-request',
-      sessionId: payload?.sessionId,
-      charId: payload?.metadata?.charId,
-    });
-    return;
-  }
-
-  const charName = payload?.contactName || payload?.metadata?.charName || '主动消息';
-  const preview = String(payload?.message || '').slice(0, 40);
-  try {
-    await sw.registration.showNotification(charName, {
-      body: preview ? `${preview}…  (点开继续)` : '我想查点东西，点开继续',
-      icon: payload?.avatarUrl || './icons/icon-192.png',
-      badge: './icons/icon-192.png',
-      data: { payload, kind: 'tool_request' },
-      tag: `instant-tool-${payload?.sessionId}`,
-    });
-  } catch (e) {
-    console.warn('[amsg] tool_request notification failed', e);
-  }
 }
 
 // emotion_update push: worker 跑完副 API 情绪评估后推回的 buff 结果. 静默写进 inbox (不弹通知、
@@ -740,44 +634,10 @@ async function saveEmotionUpdateToInbox(payload: any) {
   await notifyClients({ type: 'active-msg-received', charId, charName: payload?.contactName || '', body: '', emotionUpdate: true });
 }
 
-
-// ─── _blob envelope (fetch real body, recurse) ───────────────────────────────
-
-async function fetchBlobEnvelope(payload: any): Promise<any | null> {
-  const url = payload?.url;
-  if (typeof url !== 'string' || !url) return null;
-  traceSw('blob-fetch-start', payload);
-  try {
-    const res = await fetch(url);
-    if (!res.ok) {
-      traceSw('blob-fetch-http-failed', payload, { status: res.status });
-      console.warn('[amsg] blob fetch returned', res.status, url);
-      return null;
-    }
-    const real = await res.json();
-    traceSw('blob-fetch-ok', real);
-    return real;
-  } catch (e) {
-    traceSw('blob-fetch-error', payload, {
-      error: e instanceof Error ? e.message : String(e),
-    });
-    console.warn('[amsg] blob fetch failed', url, e);
-    return null;
-  }
-}
-
 // ─── 路由总入口 ──────────────────────────────────────────────────────────────
 
 async function saveIncomingActiveMessage(payload: any) {
-  // 1. blob envelope: 真正 body 在 BlobStore 里, fetch 出来后用 body 继续路由.
-  // 重投递的 dedup 由主线程处理 (consumePendingToolCalls / inbox 都是原子 claim).
-  if (payload?._blob === true) {
-    const real = await fetchBlobEnvelope(payload);
-    if (!real) return;
-    return saveIncomingActiveMessage(real);
-  }
-
-  // 2. 按 messageKind 分轨; 兜底: 老 worker (0.6.x) 推过来的没 messageKind 字段, 当 content 处理.
+  // 按 messageKind 分轨; 没带 messageKind 字段的当 content 处理.
   const messageKind: string = payload?.messageKind ?? 'content';
   traceSw('route-payload', payload, { route: messageKind });
 
@@ -786,20 +646,8 @@ async function saveIncomingActiveMessage(payload: any) {
       await saveContentToInbox(payload);
       return;
 
-    case 'reasoning':
-      await saveReasoningToBuffer(payload);
-      return;
-
     case 'emotion_update':
       await saveEmotionUpdateToInbox(payload);
-      return;
-
-    case 'tool_request':
-      await savePendingToolCall(payload);
-      // tool_request 也可能带 prefix (worker hook 把数据标签前的 narration 放进 message),
-      // 走 content 路径让前置 narration 立刻显示 + 触发 applyAssistantPostProcessing 走副作用.
-      if (payload?.message) await saveContentToInbox(payload);
-      await notifyVisibleClientForToolRequest(payload);
       return;
 
     case 'error':

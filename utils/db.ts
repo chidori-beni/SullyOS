@@ -123,7 +123,7 @@ const SULLY_PRESET_EMOJIS = [
 // 单例连接缓存。openDB 原本每次调用都新开一条 IDB 连接, 既不复用也不 close ——
 // 在记忆管线 (hybridSearch / touchAccess 等) 并发读写下会瞬间堆出几十条 AetherOS_Data
 // 连接, 撑爆 Chromium 底层 backing store; 一旦底层报错, 整个 origin 的 IndexedDB
-// (含 Service Worker 的 dedupe / inbox 库) 可能跟着开不了或被强关, Instant Push 因此确认超时。
+// (含 Service Worker 的 dedupe / inbox 库) 可能跟着开不了或被强关, 推送消息因此确认超时。
 // 改成复用同一条连接, 并在连接被外部失效 (另一 tab 升级版本 / 浏览器强制关闭) 时
 // 清掉缓存, 下次 openDB 自动重开 —— 一处改, 全部 ~165 个调用点受益。
 let dbPromise: Promise<IDBDatabase> | null = null;

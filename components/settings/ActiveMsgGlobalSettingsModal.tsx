@@ -14,12 +14,7 @@ import {
 } from '../../utils/amsgDiagnostics';
 import { ActiveMsgStore, maskActiveMsgUserId } from '../../utils/activeMsgStore';
 import { cancelAllRemoteAmsgTasks, isWorkerUrlCleared, wipeAmsgCloudData } from '../../utils/amsgStateSync';
-import {
-  buildCloudflareDashboardUrl,
-  isInstantConfigReady,
-  loadInstantConfig,
-  saveInstantConfig,
-} from '../../utils/instantPushClient';
+import { buildCloudflareDashboardUrl } from '../../utils/workerDeploy';
 import { generateClientToken } from '../../utils/vapidGen';
 import { loadPushVapid, savePushVapid } from '../../utils/pushVapid';
 import {
@@ -243,9 +238,6 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
   >(null);
   /** 「暂停后台任务」的确认框开着没有。恢复不用确认。 */
   const [pauseConfirmOpen, setPauseConfirmOpen] = useState(false);
-  // Instant Push 也开着：聊天会走它，2.0 挂在本地那条路上的几样东西全静默失效——设置页
-  // 两道双向门通常已经拦住这种组合，这里读一次是给漏网脏配置兜底，关掉后立刻更新。
-  const [instantOn, setInstantOn] = useState(false);
   // 这台 worker 认不认 /instant-chat。即时对话的**唯一**版本门槛就在这儿，
   // 别处不做逐调用预检——每发一条消息多探一次网络，探失败还分不清是旧版还是网抖。
   const [instantChatSupported, setInstantChatSupported] = useState(false);
@@ -336,7 +328,6 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
     savedWorkerUrlRef.current = nextConfig.workerUrl || '';
     setConfig(nextConfig);
     setPushStatus(nextPushStatus);
-    setInstantOn(isInstantConfigReady());
     void probeWorkerCaps(Boolean(nextConfig.workerUrl?.trim()));
     if (nextConfig.workerUrl?.trim()) {
       void ActiveMsgClient.probeWorkerVersion().then(setWorkerVersion);
@@ -346,7 +337,6 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
           connected: Boolean(nextConfig.initializedAt),
           pushSubscribed: Boolean(nextPushStatus?.hasSubscription),
           workerSupportsInstantChat: supported,
-          instantPushOn: isInstantConfigReady(),
         }, Boolean(nextConfig.instantChatEnabled));
       });
       void runDiagnostics();
@@ -359,13 +349,6 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
       setWorkerVersion(null);
       setCronState(null);
     }
-  };
-
-  /** 关掉 Instant Push 的开关，worker 地址等配置留着——以后想切回去不用重填。 */
-  const disableInstantPush = () => {
-    saveInstantConfig({ ...loadInstantConfig(), enabled: false });
-    setInstantOn(false);
-    addToast('已关闭 Instant Push，聊天回到本地直连。', 'success');
   };
 
   useEffect(() => {
@@ -916,7 +899,6 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
     connected: isConnected,
     pushSubscribed: Boolean(pushStatus?.hasSubscription),
     workerSupportsInstantChat: instantChatSupported,
-    instantPushOn: instantOn,
   });
   const instantChatBlockedReason = instantChatBlocker ? INSTANT_CHAT_BLOCKER_HINTS[instantChatBlocker] : '';
 
@@ -1003,25 +985,6 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
                 {diagnosing ? '正在问 Worker…' : '还没有结果，点右上角检查一次。'}
               </p>
             )}
-          </div>
-        ) : null}
-
-        {/* 正常情况下两道双向门会拦住「两个都开」，能走到这儿全是脏配置遗留。
-            脏配置照样会让聊天悄悄走 Instant，2.0 挂在本地那条路上的东西全静默失效——
-            没有报错也没有提示，只会表现成「这功能怎么不响」，这张卡就是收拾它的入口。 */}
-        {instantOn ? (
-          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2">
-            <div className="font-bold text-amber-900 text-sm">Instant Push 也开着</div>
-            <p className="text-xs leading-relaxed text-amber-800">
-              检测到 Instant Push 还开着。即时对话已经覆盖了它的能力（发完就自由、云端跑工具、断网补收），两条路只能留一条。点下面把 Instant Push 关掉，聊天就交给 2.0。
-            </p>
-            <button
-              type="button"
-              onClick={disableInstantPush}
-              className="w-full py-2.5 bg-amber-500 text-white text-xs font-bold rounded-xl active:scale-95 transition-transform"
-            >
-              关掉 Instant Push（保留它的配置）
-            </button>
           </div>
         ) : null}
 
@@ -1246,7 +1209,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
                     ) : null}
                   </div>
                   <p className="text-[11px] text-slate-400">
-                    必须和「推送凭据 (VAPID)」面板里的是<strong>同一对</strong>（和 Instant Push 共用）——
+                    必须和「推送凭据 (VAPID)」面板里的是<strong>同一对</strong>——
                     整个站点只有一个浏览器推送订阅，Worker 用别的密钥对签推送会 403。
                   </p>
                 </div>

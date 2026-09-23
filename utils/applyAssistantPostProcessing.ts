@@ -1,9 +1,8 @@
 /**
  * applyAssistantPostProcessing — 抽自 hooks/useChatAI.ts 的 sendMessage 后处理管线
  *
- * Phase 0 重构目标: 把"API 拿到原始 aiContent → 13 步处理 → 逐条落库到 IndexedDB"
- * 这段约 1500 行的流水线抽成可复用函数, 让本地 fetch 和 instant push (Phase 1) 两条
- * 路径都调它, 保证行为字节级一致。
+ * 把"API 拿到原始 aiContent → 13 步处理 → 逐条落库到 IndexedDB"这段流水线抽成可复用函数,
+ * 本地 fetch 路径 (useChatAI) 和云端回复的冲刷 (activeMsgRuntime) 都调它, 保证行为一致。
  *
  * 13 步 (与计划编号对应):
  *  1. normalizeAiContent — 剥 <think>/时间戳/[聊天][通话][约会] 等
@@ -20,9 +19,9 @@
  * 12. hasDisplayContent + per-chunk sanitize
  * 13. 拟人打字延迟 (setTimeout)
  *
- * Phase 0 保证: 本地 fetch 路径 directives=[] / skipSecondPassLLM=false 行为字节级不变。
- * Phase 1 会让 instant push 路径 directives=[] / skipSecondPassLLM=true (worker 已跑过).
- * Phase 2 会让 worker 端把识别出的副作用 (RECALL/SEARCH/...) 结构化传 directives, 这里只重放。
+ * 本地 fetch 路径: directives=[] / skipSecondPassLLM=false, 跑完整管线。
+ * 云端回复: skipSecondPassLLM=true (worker 已跑过工具循环), worker 把识别出的副作用结构化成
+ * directives 传过来, 这里只重放。
  */
 
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, RealtimeConfig, GroupProfile } from '../types';
@@ -282,7 +281,7 @@ const parseMimickedXhsCount = (interactionText: string, label: string): number =
     const match = interactionText.match(new RegExp(`([\\d.,+万千亿kKmMwW]+)\\s*${label}`));
     return parseXhsCount(match?.[1] || 0);
 };
-// XHS side-effect helpers (POKE-style: 不抽到 agenticTools, 留给 Phase 2 Round 2 的 directive 重放)
+// XHS side-effect helpers (POKE-style: 不抽到 agenticTools, 云端回复靠 directive 重放触发)
 
 async function xhsPublish(
     conf: { mcpUrl: string },
@@ -356,7 +355,7 @@ async function xhsReplyComment(conf: { mcpUrl: string }, feedId: string, xsecTok
  * worker `onLLMOutput` hook 把识别到的副作用标签结构化传回, 客户端 applyAssistantPostProcessing
  * 反向重建标签后让下游 chatParser / 内联 XHS handler 复用同一份执行逻辑 (避免在客户端再写一遍).
  *
- * 字段形状跟 worker/instant-push/src/classifier.ts:Directive 必须保持一致 — 用 type 做
+ * 字段形状跟 worker/amsg/src/classifier.ts:Directive 必须保持一致 — 用 type 做
  * discriminator, 其他字段是 flat 而不是 nested payload (减少 push body 嵌套).
  */
 export type PostProcessDirective =
@@ -604,9 +603,9 @@ export interface PostProcessCtx {
      * 本地 fetch 路径 caller 不传 — 函数内自动创建 fresh, 单次 send 内同 round runXhsBrowse/Search 填充
      * 后立刻被同 round XHS_SHARE replay 读到 (跟历史行为字节级一致).
      *
-     * Instant push 路径 caller (utils/activeMsgRuntime.ts) **必传** module-level 单例:
-     * runXhsBrowse 在 instantToolRunner round 1 填充 → /continue → worker round 2 LLM 输出 XHS_SHARE
-     * → push 落库 → applyAssistantPostProcessing replay 读同一份 ref. 跨 round 共享 = 跟本地路径同 UX.
+     * 云端回复的 caller (utils/activeMsgRuntime.ts) **必传** module-level 单例: worker 跑 XHS 工具时
+     * 把引用到的笔记随 push 带回来, activeMsgRuntime 先重建进这个单例, 再由这里 replay XHS_SHARE
+     * 读同一份 ref. 跨 push 共享 = 跟本地路径同 UX.
      */
     lastXhsNotesRef?: { current: XhsNote[] };
     /** API 调用配置 */
@@ -624,19 +623,19 @@ export interface PostProcessCtx {
      */
     instantRender?: boolean;
     /**
-     * Phase 1+: 当 worker 已在自己内部跑过 2nd-pass LLM 时, 主线程不该再调一次。
-     * Phase 0 始终为 false / undefined。
+     * worker 已在自己内部跑过 2nd-pass LLM (云端回复) 时置 true, 主线程不该再调一次。
+     * 本地 fetch 路径不传。
      */
     skipSecondPassLLM?: boolean;
     /**
-     * Phase 2+: worker 端把识别到的副作用结构化传过来; 非空时只重放, 不再扫原文。
-     * Phase 0 始终为 [] / undefined。
+     * worker 端把识别到的副作用结构化传过来; 非空时只重放, 不再扫原文。
+     * 本地 fetch 路径不传。
      */
     directives?: PostProcessDirective[];
     /**
-     * Phase 2 Round 2: push 路径 reasoning chain 来源. SW 把 ReasoningPush 写到
-     * reasoning_buffer, flushInboxToChat 在处理 sessionId 的第一条 content 时 claim
-     * 出来塞到这里. 本地 fetch 路径不传 (Step 4 仍从 initialData.choices[0].message.reasoning_content 读).
+     * 云端回复的 reasoning chain 来源: flushInboxToChat 从第一条 content push 的
+     * metadata.amsgReasoning (或挪进 client_state 的那份) 取出来塞到这里.
+     * 本地 fetch 路径不传 (Step 4 从 initialData.choices[0].message.reasoning_content 读).
      */
     reasoningContent?: string;
     /**
@@ -655,8 +654,7 @@ export interface PostProcessCtx {
 // ─── 主入口 ─────────────────────────────────────────────────────────────────
 
 /**
- * 与 useChatAI 旧版 inline 实现行为字节级对齐。
- * skipSecondPassLLM=false + directives=[] 时是 Phase 0 默认形态。
+ * skipSecondPassLLM=false + directives=[] 时是本地 fetch 路径的默认形态。
  */
 export async function applyAssistantPostProcessing(
     rawAiContent: string,
@@ -748,26 +746,26 @@ export async function applyAssistantPostProcessing(
     // API 调用记录用 meta：二轮重生 / 调阅 / 日记 / 小红书等都归在「消息」App 下，purpose 见各分支。
     const apiLogMeta = { appName: '消息', charId: char.id, charName: char.name };
 
-    // Phase 1: skipSecondPassLLM=true (instant push 路径) 时, 跳过所有需要回连 LLM 的
+    // skipSecondPassLLM=true (云端回复) 时, 跳过所有需要回连 LLM 的
     // 二轮分支 (RECALL / SEARCH / READ_DIARY / FS_READ_DIARY / READ_NOTE / XHS_*)。
     // 这些 tag 留在原文里, 由后面 Step 6 的 ChatParser.sanitize 兜底剥掉 (chatParser.ts:225
     // 的正则覆盖 ACTION/RECALL/SEARCH/DIARY/READ_DIARY/FS_DIARY/FS_READ_DIARY/...),
     // XHS_* / READ_NOTE 兜底用 Step 12 的 hasDisplayContent + per-chunk sanitize 再清一遍。
     // 写日记类 (DIARY / FS_DIARY) 不走 LLM, 属于纯副作用 (像 POKE), 客户端可以直接执行。
-    // Phase 2 Round 2: directives 非空时, worker 已经把副作用标签结构化传过来 (并从 push body
+    // directives 非空时, worker 已经把副作用标签结构化传过来 (并从 push body
     // 里剥光了). 我们重建原 tag 字符串塞回 rawAiContent 头部, 让下游 chatParser.parseAndExecuteActions
     // + 后置 XHS_* 内联 handler 用同一份代码执行 — 零重复实现, 跟本地 fetch 路径同一份 source of truth.
     // tag 末尾 +\n\n 保证不跟正文粘连导致 regex 漏匹配; chatParser.sanitize 会把它们清干净.
     const replayedTagPrefix = reconstructDirectiveTags(directives);
     const hasReplayDirectives = !!directives && directives.length > 0;
 
-    // Phase 1 把 XHS 副作用 (LIKE/FAV/COMMENT/REPLY/POST/SHARE) 跟 2nd-pass LLM tools (SEARCH/BROWSE/
-    // DETAIL/MY_PROFILE) 一起用 skipSecondPassLLM 关掉了. Round 2 拆开: 副作用类只需要 MCP 调用,
-    // 不需要 LLM round-trip, 当 worker 给了 directives 时 (xhs_* in classifier) 这些 tag 已重建回正文,
-    // 必须执行. 用 disabledXhsSideEffects = (skipSecondPassLLM && !hasReplayDirectives) 区分:
-    //   - 本地 fetch 路径: skipSecondPassLLM=false → false → 不禁用, 跟历史行为一致
-    //   - Phase 1 push 路径 (老 worker, 无 directives): true && true → 禁用 (旧 trade-off 不变)
-    //   - Phase 2 push 路径 (Round 2 worker, 有 directives): true && false → 不禁用, 副作用照常跑
+    // XHS 副作用 (LIKE/FAV/COMMENT/REPLY/POST/SHARE) 跟 2nd-pass LLM tools (SEARCH/BROWSE/
+    // DETAIL/MY_PROFILE) 分开对待: 副作用类只需要 MCP 调用, 不需要 LLM round-trip, 当 worker 给了
+    // directives 时 (xhs_* in classifier) 这些 tag 已重建回正文, 必须执行.
+    // 用 disabledXhsSideEffects = (skipSecondPassLLM && !hasReplayDirectives) 区分:
+    //   - 本地 fetch 路径: skipSecondPassLLM=false → false → 不禁用
+    //   - 云端回复但没带 directives: true && true → 禁用 (原文里的 tag 没经 worker 识别, 不执行)
+    //   - 云端回复带 directives: true && false → 不禁用, 副作用照常跑
     const disabledXhsSideEffects = skipSecondPassLLM && !hasReplayDirectives;
 
     /** 从缓存或 notesPool 中查找 xsecToken — 仅副作用 XHS handler (COMMENT/REPLY/LIKE/FAV) 使用 */
@@ -779,7 +777,7 @@ export async function applyAssistantPostProcessing(
 
     /**
      * XHS 跨 tool 共享笔记缓冲 — 取代旧版 `let lastXhsNotesRef.current`.
-     * Caller (instant push 路径) 传了 module-level 单例就用它 (跨 round 共享让 XHS_SHARE 找到上轮笔记);
+     * Caller (云端回复) 传了 module-level 单例就用它 (跨 push 共享让 XHS_SHARE 找到 worker 带回的笔记);
      * 没传 (本地 fetch 路径) 自动创建 fresh (单次 send 内 runXhsBrowse → XHS_SHARE 同一函数闭包内共享, 跟历史一致).
      */
     const lastXhsNotesRef = ctx.lastXhsNotesRef ?? { current: [] as XhsNote[] };
@@ -1397,7 +1395,7 @@ export async function applyAssistantPostProcessing(
         }
 
         // 预写日志: 发请求前先把内容落进待写队列 (localStorage 同步落盘), 这样即使后续 fetch 失败 /
-        // app 被杀, 内容也不丢. 前台可见才立即写 (本地路径 + 前台 instant, fetch 可靠); 后台时不发
+        // app 被杀, 内容也不丢. 前台可见才立即写 (本地路径 + 前台收到的云端回复, fetch 可靠); 后台时不发
         // 这个脆弱的请求 (易被冻结打断, 甚至服务端写成功但响应丢失 → 回前台重试会重复写), 直接留在
         // 队列, 等 drainPendingDiaries 在回前台时补打. 写成功就删掉这条.
         const pendingDiaryId = enqueuePendingDiary({ kind: 'notion', charId: char.id, charName: char.name, title, content, mood: mood || undefined });
@@ -1931,7 +1929,7 @@ export async function applyAssistantPostProcessing(
             });
             await refreshMessageList();
         } else {
-            // 笔记缓冲为空 / 越界 → 卡片发不出来. instant 路径靠 saveXhsSessionNotes 持久化恢复,
+            // 笔记缓冲为空 / 越界 → 卡片发不出来. 云端回复靠 saveXhsSessionNotes 持久化恢复,
             // 走到这里说明恢复也没命中 (TTL 过期 / 跨 session), 留日志便于排查, 不再静默吞掉.
             console.warn('📕 [XHS] XHS_SHARE 序号越界, 跳过卡片', { idx: idx + 1, available: lastXhsNotesRef.current.length });
         }
@@ -2561,7 +2559,7 @@ export async function applyAssistantPostProcessing(
     // ─── Step 6: 展示本轮回复 (二轮结果 B / 无二轮时的单轮回复) ───
     // - 跑过二轮 (data !== initialData): aiContent 现在是 B; 一轮正文 A 已在 Step 2 开头先行展示, 这里只展示 B。
     // - 有重生指令但没真正发起二轮 (data 不变: 未配置/无结果/无日志/已激活/二轮异常 等): A 已展示, 跳过避免重复。
-    // - 没有重生 (普通回复 / instant push): leadInRendered 必为 false, 正常展示本轮唯一回复。
+    // - 没有重生 (普通回复 / 云端回复): leadInRendered 必为 false, 正常展示本轮唯一回复。
     if (leadInRendered && data === initialData) {
         await refreshMessageList();
     } else {

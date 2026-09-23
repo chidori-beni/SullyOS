@@ -60,7 +60,7 @@ export interface MusicActionHooks {
  * 而 `[[MUSIC_ACTION:add|歌单标题]]` 标签里只有歌单名、没有歌名。重放时若只能取
  * 「用户此刻在听的那首」，用户多半早就没在放歌了 —— 正文聊着这首歌，卡片和加歌单
  * 却整个没发生。worker 到点把那首歌冻进 directive，调用方（applyAssistantPostProcessing）
- * 再显式传进来。本地聊天 / instant push 路径不传，走原来的实时快照。
+ * 再显式传进来。本地聊天路径不传，走实时快照。
  */
 export interface FrozenMusicSong {
     id?: number;

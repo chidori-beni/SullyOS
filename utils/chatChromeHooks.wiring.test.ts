@@ -83,8 +83,7 @@ describe('聊天页里的钩子（不经 MessageItem 的那几个）', () => {
         'sully-typing-bubble',
         'sully-typing-dots',
         'sully-typing-dot ',
-        'sully-pending-dots',
-        'sully-pending-dot ',
+        // sully-pending-dots / -dot 随 Instant Push 一起移除（只在它的「发送准备中」时出现）
         'sully-chat-scroll',
         'sully-chat-history-more',
         'sully-chat-date-divider',

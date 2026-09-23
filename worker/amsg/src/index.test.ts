@@ -775,7 +775,7 @@ describe('onBeforeFire 注入通用 MCP', () => {
 // scheduled() 在 !vapid.email 时会 console.error 后直接 return——整个 tick 一条任务都不处理。
 // 而「推送凭据」面板复制出来的 env 里 VAPID_EMAIL 是注释掉的可选项，照着部署必然缺它，
 // 表现是「到点了什么都不发、前端没有任何报错」。email 只是 VAPID JWT 的 sub（联系方式），
-// 不影响签名有效性，缺省给一个合法 mailto 即可——instant-push worker 一直就是这么做的。
+// 不影响签名有效性，缺省给一个合法 mailto 即可。
 describe('VAPID 配置', () => {
   const baseEnv = {
     AMSG_MASTER_KEY: 'k'.repeat(64),
