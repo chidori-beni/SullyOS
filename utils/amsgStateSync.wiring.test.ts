@@ -75,7 +75,10 @@ describe('LLM 凭据行的重传接线', () => {
 
   it('删角色时连它名下那几行凭据一起清（keys 是 API Key，不能留在云端）', () => {
     const src = read('./amsg2CharCleanup.ts');
-    expect(src).toContain('deleteLlmCredentials({ credIds: charCredIds(');
+    // 清单由调用方给，这里钉的是「删角色那份清单是全量的」——少一种用途，
+    // 就有一行 API Key 留在云端没人再清。
+    expect(src).toContain('credPurposes: ALL_CREDENTIAL_PURPOSES');
+    expect(src).toContain('deleteLlmCredentials({ credIds })');
   });
 });
 

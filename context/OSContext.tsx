@@ -71,9 +71,10 @@ import { formatAmsgPreviewBody } from '../utils/amsgToastPreview';
 import { emitMessagePreview } from '../utils/messagePreview';
 import { INCOMING_CALL_MISSED_EVENT } from '../utils/incomingCall';
 import { resolveCharTimeZone } from '../utils/timezone';
-import { ActiveMsgStore, exportAmsg2GlobalConfig } from '../utils/activeMsgStore';
-import { charMayHaveCloudState, purgeCharCloudState } from '../utils/amsg2CharCleanup';
-import { markAmsgStateDirty, markAmsgStateDirtyForAll, resumePendingAmsgStateSync, syncAmsgLlmCredentials, syncAmsgToolConfigAndPrompts } from '../utils/amsgStateSync';
+import { ActiveMsgStore, backupHasBackendConnection, exportAmsg2GlobalConfig } from '../utils/activeMsgStore';
+import { charMayHaveCloudState, purgeCharCloudState, purgeCloudCharById } from '../utils/amsg2CharCleanup';
+import { parseCharCredId } from '../utils/amsgLlmCredentials';
+import { markAmsgStateDirty, markAmsgStateDirtyForAll, resumePendingAmsgStateSync, syncAmsgLlmCredentials, syncAmsgToolConfigAndPrompts, wipeAmsgCloudDataForReset } from '../utils/amsgStateSync';
 import { loadMusicPlaybackSnapshot } from './MusicContext';
 import { setCharNameRegistry } from '../utils/charNameRegistry';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
@@ -308,6 +309,30 @@ const normalizeMemoryPalaceConfig = (value?: Partial<MemoryPalaceGlobalConfig> |
 /** deleteCharacter 的结果：cloud-cleanup-failed = 云端还有任务没清掉，本地没删。 */
 export type DeleteCharacterResult = { status: 'deleted' } | { status: 'cloud-cleanup-failed' };
 
+/**
+ * resetSystem 的结果。
+ *
+ * `cloud-cleanup-failed` = 云端那份没清干净，**本地一个字节都还没动**，等调用方拿着
+ * worker 地址去问用户是重试还是照样重置。`failed` = 本地这一步自己炸了（已经提示过）。
+ * `done` 的时候页面正在刷新，调用方拿到它基本没机会做别的。
+ */
+/** importSystem 的可选行为。 */
+export interface ImportSystemOptions {
+  /**
+   * 备份里带着 Worker 后端连接（地址 + 共享密钥 + 主密钥 + 用户 id）时问一句要不要连上。
+   *
+   * **不给这个回调 = 一律不还原。** 程序分不清「自己的备份」和「别人的备份」：文件里没有
+   * 可信的身份标记，换新设备时用户 id 本来就跟备份里对不上——而那恰恰是最正当的自己人。
+   * 能判断的只有拿着文件的人，所以这里只负责把话问出去，不猜。
+   */
+  confirmBackendRestore?: (workerUrl: string) => boolean | Promise<boolean>;
+}
+
+export type ResetSystemResult =
+  | { status: 'done' }
+  | { status: 'cloud-cleanup-failed'; workerUrl: string; detail: string }
+  | { status: 'failed' };
+
 interface OSContextType {
   activeApp: AppID;
   openApp: (appId: AppID) => void;
@@ -444,9 +469,9 @@ interface OSContextType {
   listCloudBackups: () => Promise<CloudBackupFile[]>;
 
   // System
-  exportSystem: (mode: 'text_only' | 'media_only' | 'full') => Promise<Blob>;
-  importSystem: (fileOrJson: File | string) => Promise<void>; // Accept File or String
-  resetSystem: () => Promise<void>;
+  exportSystem: (mode: 'text_only' | 'media_only' | 'full', options?: { includeBackendConnection?: boolean }) => Promise<Blob>;
+  importSystem: (fileOrJson: File | string, options?: ImportSystemOptions) => Promise<void>; // Accept File or String
+  resetSystem: (options?: { force?: boolean }) => Promise<ResetSystemResult>;
   sysOperation: { status: 'idle' | 'processing', message: string, progress: number }; // Progress state
 
   // Logs
@@ -3369,7 +3394,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       const { uploadBackup, cleanupOldBackups } = await loadBackupProvider();
       try {
           setSysOperation({ status: 'processing', message: '正在打包备份数据...', progress: 0 });
-          const blob = await exportSystem(mode);
+          // ⚠️ 本 fork：云备份照旧带上主动消息 2.0 的后端连接。上游（e4e46f8a）把「导出默认
+          // 不带」做成了防分享泄露；但云备份只进用户自己的私有仓库，本来就含 API Key，
+          // 不带的话换设备从云端恢复后主动消息连不上。手动导出仍按上游默认不带、可勾选。
+          const blob = await exportSystem(mode, { includeBackendConnection: true });
 
           setSysOperation({ status: 'processing', message: '正在上传到云端...', progress: 50 });
           const filename = `Sully_Backup_${mode}_${Date.now()}.zip`;
@@ -3419,7 +3447,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
           setSysOperation({ status: 'processing', message: '正在恢复数据...', progress: 50 });
           const zipFile = new File([blob], file.name, { type: 'application/zip' });
-          await importSystem(zipFile);
+          // 同上：云端备份来自用户自己的私有仓库，里面的后端连接就是自己的，直接还原。
+          await importSystem(zipFile, { confirmBackendRestore: () => true });
       } catch (e: any) {
           setSysOperation({ status: 'idle', message: '', progress: 0 });
           addToast(`云端恢复失败: ${e.message}`, 'error');
@@ -4146,7 +4175,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   };
 
   // --- MODIFIED EXPORT SYSTEM WITH SEPARATED ASSETS ZIP ---
-  const exportSystem = async (mode: 'text_only' | 'media_only' | 'full'): Promise<Blob> => {
+  const exportSystem = async (
+      mode: 'text_only' | 'media_only' | 'full',
+      exportOptions: { includeBackendConnection?: boolean } = {},
+  ): Promise<Blob> => {
       try {
           setSysOperation({ status: 'processing', message: '正在初始化打包引擎...', progress: 0 });
           
@@ -4484,7 +4516,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // ActiveMsg 库里，不在上面那份 store 清单内，所以单独取一次；异步，故在字面量外。
           // 纯配置无媒体，跟着 text_only / full 走。
           if (mode === 'text_only' || mode === 'full') {
-              backupData.amsg2GlobalConfig = await exportAmsg2GlobalConfig();
+              backupData.amsg2GlobalConfig = await exportAmsg2GlobalConfig(exportOptions);
           }
 
           // 桌面皮肤偏好（电子宠物/手游风的界面配色 + 看板 banner）——异步（看板图令牌需解析为
@@ -5006,7 +5038,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       }
   };
 
-  const importSystem = async (fileOrJson: File | string): Promise<void> => {
+  const importSystem = async (
+      fileOrJson: File | string,
+      importOptions: ImportSystemOptions = {},
+  ): Promise<void> => {
       const sourceName = typeof fileOrJson === 'string' ? 'json' : fileOrJson.name;
       const sourceSize = typeof fileOrJson === 'string'
           ? (typeof Blob !== 'undefined' ? new Blob([fileOrJson]).size : fileOrJson.length)
@@ -5264,8 +5299,20 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               }
           };
 
+          // 备份里带着 Worker 后端连接时先问一句。谁拿到这个文件都能连上那台 Worker：
+          // 不问就连的话，导入者的 API 凭据和聊天上下文会写进别人那台 D1，而 ta 自己
+          // 毫不知情；分享备份的那位也没同意把后端借出去。不点头就只还原几个开关。
+          let allowBackendConnection = false;
+          const backupBackendConfig = (data as any)?.amsg2GlobalConfig;
+          if (backupHasBackendConnection(backupBackendConfig) && importOptions.confirmBackendRestore) {
+              allowBackendConnection = await importOptions.confirmBackendRestore(
+                  String(backupBackendConfig.workerUrl).trim(),
+              );
+          }
+
           showImportProgress('database', '正在写入数据库...', 50, { current: '准备写入数据库', currentFile: '' });
           await DB.importFullData(data, {
+              allowBackendConnection,
               beforeWrite: restoreAssetsInPlace,
               onProgress: progress => {
                   const sectionRatio = progress.sectionTotal > 0
@@ -5525,14 +5572,33 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               const amsgWorkerUrl = (await ActiveMsgStore.getGlobalConfig()).workerUrl?.trim();
               if (amsgWorkerUrl) {
                   const knownCharIds = new Set(importedChars.map(c => c.id));
+                  const orphanCharIds = new Set<string>();
                   const remoteTasks = await ActiveMsgClient.listAllTasks();
                   for (const task of remoteTasks) {
                       if (typeof task?.uuid !== 'string') continue;
                       const owner = typeof task?.charId === 'string' ? task.charId : '';
                       if (owner && knownCharIds.has(owner)) continue;
+                      if (owner) orphanCharIds.add(owner);
                       // 「导入即放弃旧数据」：这条任务的主人在新档里已经不存在了（连主人是谁
                       // 都没投影出来的同理），它正属于该一起放弃的部分，取消就是对的。
                       await ActiveMsgClient.cancelTask(task.uuid).catch(() => {});
+                  }
+                  // 凭据清单是另一条线索：只配过 API、没排过任务的角色在任务表里根本不露面，
+                  // 但 credId 的形状是 `char:<charId>/<用途>`，角色身份就编在那个字符串里。
+                  try {
+                      for (const { credId } of await ActiveMsgClient.listLlmCredentials()) {
+                          const parsed = parseCharCredId(credId);
+                          if (parsed && !knownCharIds.has(parsed.charId)) orphanCharIds.add(parsed.charId);
+                      }
+                  } catch (e) {
+                      console.warn('[amsg2] 导入后读云端凭据清单失败，孤儿角色可能漏清', e);
+                  }
+                  // 取消任务只解决「还会不会响」。旧档角色在云端那份上下文（完整角色卡 +
+                  // 最近 30 条对话原文，一个角色 32KB 起步）和那几行 API 凭据还留着，而且
+                  // 新档里已经没有这个角色，再没有任何一条路会去刷新它或清掉它——角色命名
+                  // 空间在 worker 侧没有 TTL，不在这里清就是永久留着。
+                  for (const charId of orphanCharIds) {
+                      await purgeCloudCharById(charId).catch(() => {});
                   }
                   // 留下来的角色逐个刷云端快照，同时把导入进来的实时感知凭据传上去。
                   // 走同一个入口：云端提示词是按凭据裁过的，两者必须同进同退。
@@ -5568,7 +5634,38 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       }
   };
 
-  const resetSystem = async () => { try { await DB.deleteDB(); localStorage.clear(); window.location.reload(); } catch (e) { console.error(e); addToast('重置失败，请手动清除浏览器数据', 'error'); } };
+  /**
+   * 把这台设备和它名下的云端数据一起归零。
+   *
+   * 云端那一步必须排在删库**之前**：2.0 的连接信息（worker 地址、主密钥、用户 id）
+   * 就住在马上要删掉的 ActiveMsg 库里，删完就再也够不着那台 worker 了——而云端留着的
+   * 任务会继续到点跑、继续烧 API 额度、继续往这台设备推消息。
+   *
+   * 「重置全部数据」是用户明确表达过毁灭意图的操作，所以这里可以真删云端；换地址、
+   * 清空地址那几个没有这层意味的操作一律只提示、不动手。
+   *
+   * 云端没清干净就先不删本地（除非调用方 force）：本地一删，用户连重试的入口都没有了。
+   * 判据只看任务和角色上下文这两样——前者不清会继续烧钱，后者是聊天原文；凭据行和推送
+   * 订阅没清成只记一笔，不拦着用户重置（老 worker 上压根没有凭据表，拿它当判据会把
+   * 一批根本没东西可清的人堵在门口）。
+   */
+  const resetSystem = async (options?: { force?: boolean }): Promise<ResetSystemResult> => {
+    try {
+      const cleanup = await wipeAmsgCloudDataForReset();
+      if (!options?.force && cleanup.status === 'failed') {
+        return { status: 'cloud-cleanup-failed', workerUrl: cleanup.workerUrl, detail: cleanup.detail };
+      }
+      await DB.deleteDB();
+      await ActiveMsgStore.deleteDB();
+      localStorage.clear();
+      window.location.reload();
+      return { status: 'done' };
+    } catch (e) {
+      console.error(e);
+      addToast('重置失败，请手动清除浏览器数据', 'error');
+      return { status: 'failed' };
+    }
+  };
   const openApp = (appId: AppID) => setActiveApp(appId);
   const closeApp = () => setActiveApp(AppID.Launcher);
   // 从聊天直接进入某角色的见面：切换当前角色 + 标记自动进入 + 打开见面 App

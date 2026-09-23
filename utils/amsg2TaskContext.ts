@@ -104,7 +104,7 @@ const buildAmsg2ChatScheduleBrief = (targetName?: string): string => {
     `- ${target}接下来顾不上手机时——睡觉、上课、上班、打游戏、洗澡、出门，或任何你了解的原因——你可以在途中想到ta，也可以估着ta回来时再联系。`,
     `- 内容不必总围着${target}转。结合刚才的聊天氛围、你自己的日程和正在经历的事、刚看到的细节和突然冒出的后续念头；分享自己的生活，往往比机械问候更像你。`,
     '- 「到点叫你」「等你忙完跟你说」「回头告诉你结果」这类话一说出口，就当场排成真任务，不要只在正文里答应；没排成，就别把承诺说死。',
-    `- 只问自己：那个时刻的你会自然想联系${target}吗？只要答案偏向会，就优先排下来；只有明确不会才算了。别把犹豫默认成不排，也别为了显得贴心硬排。`,
+    `- 只问自己：那个时刻的你会真的想联系${target}吗？会就排；只是随口一想、到时候未必真有话说的，就算了。也别为了显得贴心硬排。`,
     `- 时间贴着${target}的生活估；一局游戏和睡到天亮不是一个时长，有时差就按ta那边的钟算。`,
     `- ${target}明确说别打扰时就安静等；已经排着相近的一条，也别重复排。`,
   ].join('\n');
@@ -195,11 +195,14 @@ export function buildAmsg2TaskContextText(
   createdThisTurn?: ReadonlySet<string>,
   /** ChatApp 当前用户名；空值回退为「对方」。 */
   targetName?: string,
+  /** 「用户给你定的规矩」（amsgLimits.buildLimitsBrief），紧跟常驻简介。 */
+  limitsBrief?: string,
 ): string {
   const target = targetName?.trim() || '对方';
   const isNewThisTurn = (taskUuid: string) => !!createdThisTurn?.has(taskUuid);
   const hasNewThisTurn = pending.some((t) => isNewThisTurn(t.taskUuid));
   const parts: string[] = ['【你的主动消息排程·仅你可见】', buildAmsg2ChatScheduleBrief(target)];
+  if (limitsBrief) parts.push(limitsBrief);
 
   if (pending.length) {
     parts.push('进行中：');

@@ -3756,7 +3756,9 @@ export const DB = {
       }
   },
 
-  exportFullData: async (): Promise<Partial<FullBackupData>> => {
+  exportFullData: async (
+      options: { includeBackendConnection?: boolean } = {},
+  ): Promise<Partial<FullBackupData>> => {
       const db = await openDB();
       
       const getAllFromStore = (storeName: string): Promise<any[]> => {
@@ -3877,7 +3879,7 @@ export const DB = {
           luckinLocal: exportLuckinLocal(),       // 瑞幸 token + 启用状态（存 localStorage）
           mcdLocal: exportMcdLocal(),             // 麦当劳 token + 启用状态（存 localStorage）
           mcpLocal: exportMcpLocal(),             // 通用 MCP 服务器配置（存 localStorage）
-          amsg2GlobalConfig: await exportAmsg2GlobalConfig(), // 主动消息 2.0 全局配置（存独立的 ActiveMsg 库）
+          amsg2GlobalConfig: await exportAmsg2GlobalConfig(options), // 主动消息 2.0 全局配置（存独立的 ActiveMsg 库；后端连接默认不带走）
           desktopSkinLocal: await exportDesktopSkinLocal(), // 桌面皮肤：界面配色 + 看板 banner（看板图令牌解析为 data URL）
       };
   },
@@ -3894,6 +3896,11 @@ export const DB = {
               itemDone?: number;
               itemTotal?: number;
           }) => void;
+          /**
+           * 让备份里带的 Worker 地址 / 密钥 / 用户 id 落地。默认不落：导入者未必知道
+           * 这份文件是谁的，静默连上去的话，ta 的 API 凭据和聊天上下文会写进别人那台 D1。
+           */
+          allowBackendConnection?: boolean;
       } = {}
   ): Promise<void> => {
       const db = await openDB();
@@ -4435,7 +4442,10 @@ export const DB = {
           // 必须在 OSContext 那段「导入后跟云端对一次账」之前落地：那段的第一道门是
           // 「本机有没有 Worker 地址」，地址还没写回去的话它会整段跳过，旧档角色留在
           // 云端的无主任务就没人取消，等用户手填回地址时照样到点推送。
-          await importAmsg2GlobalConfig((data as any).amsg2GlobalConfig);
+          await importAmsg2GlobalConfig(
+              (data as any).amsg2GlobalConfig,
+              { allowBackendConnection: options.allowBackendConnection },
+          );
           (data as any).amsg2GlobalConfig = undefined;
       }, 1);
       await runSection('桌面皮肤偏好', (data as any).desktopSkinLocal !== undefined, async () => {

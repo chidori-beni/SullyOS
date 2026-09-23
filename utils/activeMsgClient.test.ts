@@ -51,6 +51,7 @@ import {
 import { clearInstantChatPending, setInstantChatPending } from './amsgInstantChat';
 import { AMSG_TOOL_CONFIG_KEY, AMSG_TOOL_PACK_KEY } from './amsgToolPack';
 import { AMSG_CHAT_PRESENCE_KEY } from './amsgChatPresence';
+import { AMSG_LIMITS_KEY } from './amsgLimits';
 import * as dailySchedule from './dailySchedule';
 import { ChatPrompts } from './chatPrompts';
 import { DB } from './db';
@@ -744,6 +745,13 @@ describe('scheduleCharacterTask 与欠着的即时对话 chat 段', () => {
     expect(writtenKeys()).toContain(AMSG_FIRE_PACK_KEY);
   });
 
+  // 上限单独一份、每次传上下文都顺手带上（欠着回复时也照带：它跟 chat 段无关）。
+  it('排任务时顺手把「频率与额度」那份一起传上去', async () => {
+    setInstantChatPending(CHAR_ID, 'uuid-waiting');
+    await schedule();
+    expect(writtenKeys()).toContain(AMSG_LIMITS_KEY);
+  });
+
   it('欠着回复 → 这一批把 fire_pack 抽掉，tool_pack / tool_config 照写、任务照建', async () => {
     setInstantChatPending(CHAR_ID, 'uuid-waiting');
 
@@ -1008,13 +1016,11 @@ describe('buildFirePack 的时区参照系与模板（①）', () => {
     expect(out.template).toContain(`现在是 ${AMSG_SLOT_CURRENT_TIME}`);
   });
 
-  it('随包带上用户设的连发上限；没设就不带（worker 侧用默认值）', async () => {
+  // 上限不再跟着 fire_pack 走：那一份要等「有待发任务、聊完一轮」才重传，改了上限会迟迟
+  // 不生效。上限单独住在 limits 那份记录里（见 amsgLimits），包里不该再有它。
+  it('fire_pack 不带连发上限（上限单独同步，见 amsgLimits）', async () => {
     const withLimit = await pack(baseChar({ activeMsg2Config: { enabled: true, maxUnansweredSends: 5 } }));
-    expect(withLimit.maxUnansweredSends).toBe(5);
-    const unlimited = await pack(baseChar({ activeMsg2Config: { enabled: true, maxUnansweredSends: 0 } }));
-    expect(unlimited.maxUnansweredSends).toBe(0);
-    const unset = await pack(baseChar());
-    expect(unset.maxUnansweredSends).toBeUndefined();
+    expect(withLimit).not.toHaveProperty('maxUnansweredSends');
   });
 
   // 回归守卫：用户设备的时区以前一个字都没上云。角色只看得到自己那边的钟，

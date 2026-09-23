@@ -51,7 +51,8 @@ import { AMSG_INSTANT_CHAT_PENDING_EVENT, announceInstantChatRoute, clearInstant
 // 云端 fire 的总时长上限，安全网超时从它推导，worker 调预算时前端自动跟上。
 import { INSTANT_TOTAL_TIMEOUT_MS } from '../worker/amsg/src/instantChat';
 import { appendInstantTraceEntry } from '../utils/instantTraceLog';
-import { AMSG2_TOOLS, AMSG2_TOOL_NAMES, createAmsg2ToolSession, executeAmsg2Tool, isAmsg2GlobalReady } from '../utils/amsg2ToolBridge';
+import { AMSG2_TOOL_NAMES, buildAmsg2Tools, createAmsg2ToolSession, executeAmsg2Tool, isAmsg2GlobalReady } from '../utils/amsg2ToolBridge';
+import { buildLimitsBrief, resolveAmsgLimits } from '../utils/amsgLimits';
 import { shouldSendThinkingParams } from '../utils/thinkingGate';
 import { buildClaudeProxyCompatibilityBody, shouldRetryClaudeProxyCompatibility } from '../utils/claudeProxyCompat';
 import { routeMiniAppToolCall } from '../utils/miniAppToolRoute';
@@ -1306,7 +1307,7 @@ export const useChatAI = ({
             let amsg2ExpiredIds: string[] = [];
             let amsg2Notices: Amsg2ExpiredNoticeRecord[] = [];
             if (amsg2ToolsInjected) {
-                baseReqBody.tools = [...(baseReqBody.tools || []), ...AMSG2_TOOLS];
+                baseReqBody.tools = [...(baseReqBody.tools || []), ...buildAmsg2Tools(resolveAmsgLimits(char.activeMsg2Config))];
                 if (!baseReqBody.tool_choice) baseReqBody.tool_choice = 'auto';
                 try {
                     // 回执这半边是「检出 + 落台账」的结果，带副作用，一轮只算一次；
@@ -1332,13 +1333,22 @@ export const useChatAI = ({
             const withAmsg2TaskContext = (messages: any[]): any[] => {
                 if (!amsg2ToolsInjected) return messages;
                 const now = Date.now();
+                const liveConfig = amsg2Session.getConfig();
+                const pending = getPendingTasks(liveConfig, now);
+                // 「用户给你定的规矩」：用户刚开口，连发额度只剩排着还没响的自排任务在占。
+                const limitsBrief = buildLimitsBrief({
+                    limits: resolveAmsgLimits(liveConfig),
+                    committedSends: pending.filter((t) => t.source === 'character').length,
+                    activeTasks: pending.length,
+                });
                 const text = buildAmsg2TaskContextText(
-                    getPendingTasks(amsg2Session.getConfig(), now),
+                    pending,
                     amsg2Notices,
                     now,
                     resolveCharTimeZone(char),
                     amsg2CreatedThisTurn,
                     userProfile.name,
+                    limitsBrief,
                 );
                 // 常驻简介让这一块总是非空：没任务时角色也得知道自己随时能排。
                 const block = { role: 'system', content: text };

@@ -28,6 +28,7 @@ import { loadMcpServers, saveMcpServers, createMcpServer, testMcpConnection, res
 import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable, ensureSubscribed, sendTestPush, getPushDiagnostics, resetSubscription, deepResetSubscription, type PushDiagnostics } from '../utils/proactivePushConfig';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { PushVapidSettingsModal } from '../components/settings/PushVapidSettingsModal';
+import AmsgCloudDataModal from '../components/settings/AmsgCloudDataModal';
 import PushSubscriptionPanel from '../components/settings/PushSubscriptionPanel';
 import ActiveMsgGlobalSettingsModal from '../components/settings/ActiveMsgGlobalSettingsModal';
 import { syncAmsgToolConfig, syncAmsgToolConfigAndPrompts } from '../utils/amsgStateSync';
@@ -560,6 +561,9 @@ const Settings: React.FC = () => {
   const [visionModelFilter, setVisionModelFilter] = useState('');
   const [showExportModal, setShowExportModal] = useState(false); // Used for completion now
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  /** 云端没清干净时停在这里：本地还一个字节都没动，等用户决定重试还是照样重置。 */
+  const [resetCloudFailure, setResetCloudFailure] = useState<{ workerUrl: string; detail: string } | null>(null);
   const [showPresetModal, setShowPresetModal] = useState(false);
   const [showApiCallLog, setShowApiCallLog] = useState(false);
   const [showRealtimeModal, setShowRealtimeModal] = useState(false);
@@ -731,6 +735,15 @@ const Settings: React.FC = () => {
   // "深度重置". 不持久化, 刷新页面归零 (用户原话: "刷新页面正常消失").
   const [ppZombieStreak, setPpZombieStreak] = useState(0);
   const [showAmsg2Modal, setShowAmsg2Modal] = useState(false);
+  const [showAmsgCloudData, setShowAmsgCloudData] = useState(false);
+  /**
+   * 导出时带不带主动消息 2.0 的后端连接（Worker 地址 + 密钥 + 用户 id）。
+   *
+   * 默认不带。备份是会被分享出去的，带上就等于把自己那台 Worker 的钥匙一起发了：
+   * 对方的 App 会静默连上来，把 ta 的 API 凭据和聊天上下文写进你的 D1，而 ta 手里的
+   * 主密钥能解开你那台机器上所有的密文。换设备恢复自己的备份才需要它。
+   */
+  const [exportBackendConnection, setExportBackendConnection] = useState(false);
   const [showVapidModal, setShowVapidModal] = useState(false);
   const [vapidReadyTick, setVapidReadyTick] = useState(0); // 关闭 VAPID 弹窗后刷新顶层徽标
 
@@ -1339,7 +1352,10 @@ const Settings: React.FC = () => {
           // 但绝不能发给别人。media_only 只有媒体、不含密钥，视为可分享。
           if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
               const includesSettings = mode !== 'media_only';
-              const msg = includesSettings
+              const includesBackend = includesSettings && exportBackendConnection;
+              const msg = includesBackend
+                  ? '该导出数据包含了明文密钥，以及主动消息 2.0 的后端连接（Worker 地址与主密钥）。拿到这个文件的人可以连上你那台 Worker，请不要发送给任何人'
+                  : includesSettings
                   ? '该导出数据包含了明文密钥，请不要发送给任何人'
                   : '该导出内容安全，可以用于分享';
               if (!window.confirm(`${msg}\n\n点「确定」继续导出，「取消」中止。`)) {
@@ -1349,7 +1365,7 @@ const Settings: React.FC = () => {
           }
 
           // Trigger export (Context handles loading state UI)
-          const blob = await exportSystem(mode);
+          const blob = await exportSystem(mode, { includeBackendConnection: exportBackendConnection });
           
           // 分片写盘那一整套（大包一次性转 base64 会把 WebView 撑爆）已经收进
           // shareOrDownloadBlob 的 nativeChunked，这里不再自己重写一遍。
@@ -1383,7 +1399,16 @@ const Settings: React.FC = () => {
       if (!file) return;
 
       // Pass the File object directly to importSystem
-      importSystem(file).catch(err => {
+      importSystem(file, {
+          // 备份里带着 Worker 后端连接时问一句。程序分不清这份文件是自己的还是别人的
+          // （换新设备时用户 id 本来就对不上），只有拿着文件的人知道，所以把话问出去。
+          confirmBackendRestore: (workerUrl) => window.confirm(
+              `这份备份里带着一个主动消息 2.0 的后端连接：\n\n${workerUrl}\n\n`
+              + '如果这是你自己导出的备份，点「确定」连上它。\n\n'
+              + '如果是别人给你的，点「取消」——连上去的话，你的 API 密钥和聊天记录会被写进对方那台服务器。\n\n'
+              + '（不连也不影响其它数据导入，之后可以在设置里手动填。）',
+          ),
+      }).catch(err => {
           console.error(err);
           // 只上报归类后的固定枚举：报错原文（可能含文件路径/内容片段）只留在 console
           const rawMessage = String(err?.message || '');
@@ -1663,9 +1688,32 @@ const Settings: React.FC = () => {
       }
   };
 
-  const confirmReset = () => {
-      resetSystem();
-      setShowResetConfirm(false);
+  // 重置会先清云端再删本地，清云端要发几个请求，所以按钮得自己顶着「进行中」。
+  // 顺利的话页面直接刷新，下面这些 setState 都执行不到。
+  const confirmReset = async () => {
+      setResetting(true);
+      try {
+          const result = await resetSystem();
+          if (result.status === 'cloud-cleanup-failed') {
+              setShowResetConfirm(false);
+              setResetCloudFailure({ workerUrl: result.workerUrl, detail: result.detail });
+          } else if (result.status === 'failed') {
+              setShowResetConfirm(false);
+          }
+      } finally {
+          setResetting(false);
+      }
+  };
+
+  /** 云端没清干净，用户仍然要重置：这一次不再拦，能清多少算多少。 */
+  const confirmResetAnyway = async () => {
+      setResetting(true);
+      try {
+          setResetCloudFailure(null);
+          await resetSystem({ force: true });
+      } finally {
+          setResetting(false);
+      }
   };
 
   // 保存实时感知配置
@@ -2193,6 +2241,23 @@ const Settings: React.FC = () => {
             }
         >
             <StorageUsagePanel />
+
+            <label className="mb-3 flex items-start gap-2 rounded-xl border border-slate-200 bg-white p-3 cursor-pointer">
+                <input
+                    type="checkbox"
+                    checked={exportBackendConnection}
+                    onChange={(e) => setExportBackendConnection(e.target.checked)}
+                    className="mt-0.5 shrink-0"
+                />
+                <span className="text-[11px] leading-relaxed text-slate-600">
+                    <span className="font-bold">包含主动消息 2.0 的后端连接</span>
+                    <span className="block text-slate-400">
+                        换设备恢复时勾上，Worker 地址和密钥会一起带走。
+                        <span className="font-bold text-rose-500">勾着导出的备份不要分享给别人</span>
+                        ——拿到文件的人能连上你那台 Worker，也能解开里面的聊天记录。
+                    </span>
+                </span>
+            </label>
 
             <div className="mb-3">
                 <button onClick={() => handleExport('full')} className="w-full py-4 bg-gradient-to-r from-violet-500 to-purple-600 border border-violet-300 rounded-xl text-xs font-bold text-white shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2 relative overflow-hidden mb-3">
@@ -4589,8 +4654,8 @@ const Settings: React.FC = () => {
           onClose={() => setShowResetConfirm(false)}
           footer={
               <div className="flex gap-2 w-full">
-                  <button onClick={() => setShowResetConfirm(false)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl">取消</button>
-                  <button onClick={confirmReset} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl shadow-lg shadow-red-200">确认格式化</button>
+                  <button onClick={() => setShowResetConfirm(false)} disabled={resetting} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl disabled:opacity-50">取消</button>
+                  <button onClick={confirmReset} disabled={resetting} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl shadow-lg shadow-red-200 disabled:opacity-60">{resetting ? '清理中…' : '确认格式化'}</button>
               </div>
           }
       >
@@ -4598,6 +4663,32 @@ const Settings: React.FC = () => {
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12 text-red-500"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
               <p className="text-center text-sm text-slate-600 font-medium">
                   这将<span className="text-red-500 font-bold">永久删除</span>所有角色、聊天记录和设置，且无法恢复！
+              </p>
+              <p className="text-center text-xs text-slate-400">
+                  主动消息 2.0 在云端存的定时任务、角色上下文和 API 凭据也会一起清掉。
+              </p>
+          </div>
+      </Modal>
+
+      {/* 云端没清干净：本地还一个字节都没动，让用户决定 */}
+      <Modal
+          isOpen={!!resetCloudFailure}
+          title="云端还没清干净"
+          onClose={() => setResetCloudFailure(null)}
+          footer={
+              <div className="flex gap-2 w-full">
+                  <button onClick={() => setResetCloudFailure(null)} disabled={resetting} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl disabled:opacity-50">先不重置</button>
+                  <button onClick={confirmResetAnyway} disabled={resetting} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl shadow-lg shadow-red-200 disabled:opacity-60">{resetting ? '清理中…' : '仍然重置'}</button>
+              </div>
+          }
+      >
+          <div className="flex flex-col gap-3 py-2 text-sm text-slate-600">
+              <p>{resetCloudFailure?.detail}。本地数据一个字节都还没动，你可以检查一下网络和 Worker 连接再试一次。</p>
+              <p className="text-xs text-slate-400 break-all">
+                  Worker 地址：{resetCloudFailure?.workerUrl}
+              </p>
+              <p className="text-xs text-rose-500">
+                  仍然重置的话，本地会归零，而云端那些没清掉的定时任务还会到点运行、消耗你的 API 额度。重置之后本地不再保存连接信息，只能去 Cloudflare 后台手动删掉那个 D1 数据库。
               </p>
           </div>
       </Modal>
@@ -4612,6 +4703,13 @@ const Settings: React.FC = () => {
         addToast={addToast}
         realtimeConfig={realtimeConfig}
         onOpenVapid={() => { setShowAmsg2Modal(false); setShowVapidModal(true); }}
+        onOpenCloudData={() => { setShowAmsg2Modal(false); setShowAmsgCloudData(true); }}
+      />
+      <AmsgCloudDataModal
+        isOpen={showAmsgCloudData}
+        onClose={() => setShowAmsgCloudData(false)}
+        characters={characters}
+        addToast={addToast}
       />
 
     </div>

@@ -3116,7 +3116,10 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
 
     const handleHistoryCleanupDone = async (plan: ChatCleanupPlan) => {
         trackEvent('清空聊天记录');
-        markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+        // invalidate 而不是普通打脏：云端那份 fire_pack 里存着最近 30 条对话原文，正是
+        // 用户此刻要删掉的东西。没有待触发任务的角色轮不到重传，普通打脏会被门丢掉，
+        // 那份原文就永久留在 D1 里了（角色命名空间在 worker 侧没有 TTL）。
+        markAmsgStateDirty({ char, userProfile, groups, realtimeConfig }, 'invalidate');
         if (activeCharIdRef.current !== plan.charId) return;
         discardVoiceForMessages(plan.ids, false);
         setAllHistoryMessages([]);

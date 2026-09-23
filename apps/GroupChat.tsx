@@ -22,7 +22,7 @@ import { parseDirectorActions, stripSkipMarker, parseGroupTopicBox } from '../ut
 import { GroupPacketMeta, PacketReceiptMeta, ClaimResult, claimPacket, effectivePacketStatus, makePacketMeta } from '../utils/groupChat/redpacket';
 import { messageLogText } from '../utils/groupChat/format';
 import { trackEvent } from '../utils/analytics';
-import { markAmsgStateDirty } from '../utils/amsgStateSync';
+import { markAmsgStateDirty, type AmsgDirtyReason } from '../utils/amsgStateSync';
 import { buildMemberTimeline, DEFAULT_MEMBER_TIMELINE_CAP } from '../utils/groupChat/timeline';
 import { buildGroupHostAwarenessLine, buildCharBondNote } from '../utils/characterIdentity';
 import { buildEmojiContextStr, buildGroupHistoryBlock, buildDirectorInstruction, buildRoundRobinInstruction, GroupHistoryBlock } from '../utils/groupChat/prompts';
@@ -505,10 +505,10 @@ const GroupChat: React.FC = () => {
     // 历史里写卡片 —— 两者都是主动消息 2.0 云端快照（fire_pack）的素材。群里有事就给成员
     // 逐个打脏，不然角色到点还活在上一次私聊那会儿的群里。同一轮里的多次调用会在微任务内
     // 合并成一次上传，没开主动消息的成员被 markAmsgStateDirty 内部的门筛掉。
-    const markGroupMembersDirty = useCallback((memberIds: string[]) => {
+    const markGroupMembersDirty = useCallback((memberIds: string[], reason: AmsgDirtyReason = 'refresh') => {
         for (const memberId of memberIds) {
             const member = charactersRef.current.find(c => c.id === memberId);
-            if (member) markAmsgStateDirty({ char: member, userProfile, groups, realtimeConfig });
+            if (member) markAmsgStateDirty({ char: member, userProfile, groups, realtimeConfig }, reason);
         }
     }, [userProfile, groups, realtimeConfig]);
 
@@ -879,6 +879,11 @@ const GroupChat: React.FC = () => {
         const remaining = preserveContext ? allGroupMsgs.slice(-10) : [];
         setMessages(remaining);
         setTotalMsgCount(remaining.length);
+
+        // 群里说过的话会进每个成员私聊 fire_pack 的【群聊背景】块，所以清空群聊之后，
+        // 成员在云端那份快照里还带着这段刚被删掉的群聊。这条路以前一次打脏都没有，
+        // 用 invalidate 是因为没有待触发任务的成员轮不到重传，普通打脏会被门丢掉。
+        markGroupMembersDirty(activeGroup.members || [], 'invalidate');
 
         addToast(`已清理 ${msgsToDelete.length} 条记录${preserveContext ? ' (保留最近10条)' : ''}`, 'success');
         trackEvent('清空群聊记录', { preserve: preserveContext ? 'on' : 'off' });

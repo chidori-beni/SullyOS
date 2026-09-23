@@ -18,6 +18,10 @@
 import type { ActiveMsg2TaskRecord, DateEncounterPresence, NaturalProactiveConfig } from '../types';
 import { renderFireSceneBlock, type AmsgFireScene } from './amsgFireScene';
 import { renderUserCalendarBlock, type AmsgUserCalendar } from './amsgUserCalendar';
+import { DEFAULT_MAX_UNANSWERED_SENDS } from './amsgLimits';
+
+// 连发上限的默认值与解析搬进了 amsgLimits（和其余几项上限住在一起），这里转出去给老调用方。
+export { DEFAULT_MAX_UNANSWERED_SENDS, resolveMaxUnansweredSends } from './amsgLimits';
 
 export const AMSG_STATE_NAMESPACE_PREFIX = 'amsg:char:';
 export const amsgStateNamespace = (charId: string) => `${AMSG_STATE_NAMESPACE_PREFIX}${charId}`;
@@ -325,6 +329,10 @@ const LAST_SKIP_REASONS = [
   'side-effects-only',
   'stale',
   'unanswered-limit',
+  'schedule-off',
+  'min-gap',
+  'recurring-unanswered',
+  'daily-limit',
 ] as const;
 
 export interface AmsgLastSkip {
@@ -341,6 +349,10 @@ export interface AmsgLastSkip {
    * side-effects-only     模型这次只做了副作用（点赞、写日记之类）却没说话，整条不发
    * stale                 到点时已经过期太久（服务停摆后恢复），不再补发
    * unanswered-limit      角色自排的任务到点时，用户未回复期间的连发条数已到用户设的上限
+   * schedule-off          角色自排的任务到点时，用户已经不让它排这类消息了（关了 2.0，或关了「可以排重复的」）
+   * min-gap               角色自排的任务到点时，离它上一条主动消息还没隔够用户设的间隔
+   * recurring-unanswered  重复的任务到点时，用户已经连续几次没回它了（回话后恢复）
+   * daily-limit           今天主动发的次数已到用户设的每日上限
    */
   reason: (typeof LAST_SKIP_REASONS)[number];
   skippedAt: number;
@@ -400,6 +412,17 @@ export const describeLastSkip = (skip: AmsgLastSkip, formatTime: (ms: number) =>
       // 写成「等你回复后恢复」的话，用户会一直等一条永远不会来的消息。
       return `${when} 那次主动消息没发——你未回复期间 ta 的连发条数已到你设置的连发上限，`
         + `跳过的这次不会补发；等你回话之后，ta 自己排的后续才会重新开始发。`;
+    case 'schedule-off':
+      // 两种来由共用这一句：关了主动消息 2.0（这时你自己排的也不发），或者 ta 自己排了
+      // 重复的消息、而你没让 ta 排。
+      return `${when} 那次主动消息没发——这类消息你已经关掉了（关了主动消息 2.0，或者没让 ta 排重复的），就不发了。`;
+    case 'min-gap':
+      return `${when} 那次主动消息没发——离 ta 上一条主动消息太近，没隔够你设的间隔，跳过的这次不会补发。`;
+    case 'recurring-unanswered':
+      // 跟上面几条不一样：这条会自己回来，得说清楚，不然用户以为每天的问候被删了。
+      return `${when} 那条重复消息这次没发——你已经连续几次没回它了，先停一停；你回一句话，它就照常恢复。`;
+    case 'daily-limit':
+      return `${when} 那次主动消息没发——今天 ta 主动找你的次数已经到了你设的每日上限，跳过的这次不会补发，明天重新计数。`;
   }
 };
 
@@ -551,12 +574,6 @@ export interface AmsgFirePack {
    */
   chat?: AmsgFirePackChat;
   /**
-   * 用户设的「未回复期间最多连发几条」（角色级设置，见 ActiveMsg2CharacterConfig 同名字段）。
-   * 0 = 不限；缺省 = worker 用 DEFAULT_MAX_UNANSWERED_SENDS。worker 拿它拦两处：
-   * 排程工具打回、以及角色自排任务到点时的兜底作废（用户面板排的任务不受它管）。
-   */
-  maxUnansweredSends?: number;
-  /**
    * 角色级「主动消息 2.0」开关（打包时取 isAmsg2EnabledForChar）。false 时云端 fire
    * 不注入排程说明块 / 排程工具 / 任务清单——本地路径的同名闸门是 useChatAI 的
    * amsg2ToolsInjected（角色级开关关掉的不注入，否则被用户显式关掉的功能会被角色
@@ -701,6 +718,12 @@ export interface AmsgSelfLogEntry {
   id: string;
   /** 发出去的时刻（epoch ms）。 */
   at: number;
+  /**
+   * 这一条开始生成的时刻（epoch ms）。两条之间的间隔拿它当锚：排程时比的就是开始时刻，
+   * 用发完的时刻比会平白差出一整次生成的时长（接了工具的一次能跑好几分钟）。
+   * 老日志里没有它，读的地方退回 at。
+   */
+  startedAt?: number;
   /** 正文（多段消息拼成一条记，超长截断）。 */
   text: string;
   /**
@@ -733,6 +756,14 @@ export interface AmsgSelfLog {
    */
   unansweredSends: number;
   /**
+   * 每天/每周重复的那些任务，在用户没回期间各自响了几次（按任务的 clientTaskId 记）。
+   *
+   * 「重复的消息连续几次没回就先停」按任务单独算：用户同时排着早安和晚安，一天没回
+   * 不该让两条互相消耗额度。跟 unansweredSends 同生同死——用户一开口一起清零。
+   * 可选字段：写这份日志的老 worker 没有它，读到时当作全是 0。
+   */
+  recurringSends?: Record<string, number>;
+  /**
    * 角色在这几次 fire 里给自己排下的任务（客户端还不知道它们存在）。
    *
    * 用途是让下一次 fire 的排程清单完整：fire_pack.pendingTasks 是打包那一刻的快照，
@@ -761,19 +792,9 @@ export const createSelfLog = (basePackAt: number, anchorUserMsgAt: number | null
   anchorUserMsgAt,
   entries: [],
   unansweredSends: 0,
+  recurringSends: {},
   tasks: [],
 });
-
-/** 未回复期间连发上限的缺省值（用户没设时 worker 用它）。 */
-export const DEFAULT_MAX_UNANSWERED_SENDS = 3;
-
-/** 用户设置 → 生效上限：0 = 不限（Infinity），没设/坏值 = 默认，其余取正整数。 */
-export const resolveMaxUnansweredSends = (value: unknown): number => {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_MAX_UNANSWERED_SENDS;
-  if (value === 0) return Infinity;
-  if (value < 1) return DEFAULT_MAX_UNANSWERED_SENDS;
-  return Math.min(99, Math.floor(value));
-};
 
 /**
  * 连发计数：用户未回复期间角色主动发出的条数（即时对话的回复不算）。
@@ -801,12 +822,23 @@ export const reconcileSelfLogWithPack = (
   let log = stored ?? createSelfLog(pack.builtAt, lastUserMessageAt);
   if (lastUserMessageAt != null
     && (log.anchorUserMsgAt == null || lastUserMessageAt > log.anchorUserMsgAt)) {
-    log = { ...log, anchorUserMsgAt: lastUserMessageAt, entries: [], unansweredSends: 0 };
+    log = { ...log, anchorUserMsgAt: lastUserMessageAt, entries: [], unansweredSends: 0, recurringSends: {} };
   }
   if (log.basePackAt !== pack.builtAt) {
     log = { ...log, basePackAt: pack.builtAt, tasks: [] };
   }
   return log;
+};
+
+/** 某条重复任务在用户没回期间已经响了几次。 */
+export const countRecurringSends = (log: AmsgSelfLog | null, clientTaskId: string): number =>
+  (clientTaskId && log?.recurringSends?.[clientTaskId]) || 0;
+
+/** 重复任务这一次真发出去了：给它的计数加一。 */
+export const bumpRecurringSend = (log: AmsgSelfLog, clientTaskId: string): AmsgSelfLog => {
+  if (!clientTaskId) return log;
+  const counts = log.recurringSends ?? {};
+  return { ...log, recurringSends: { ...counts, [clientTaskId]: (counts[clientTaskId] ?? 0) + 1 } };
 };
 
 /** 记下角色刚给自己排的任务（同 uuid 覆盖，fire 重跑不会记重）。 */
@@ -842,6 +874,8 @@ export const parseSelfLog = (value: string): AmsgSelfLog | null => {
       && typeof parsed.basePackAt === 'number'
       && (parsed.anchorUserMsgAt === null || typeof parsed.anchorUserMsgAt === 'number')
       && typeof parsed.unansweredSends === 'number'
+      && (parsed.recurringSends === undefined
+        || (!!parsed.recurringSends && typeof parsed.recurringSends === 'object'))
       && Array.isArray(parsed.tasks)
       && Array.isArray(parsed.entries)
       && parsed.entries.every((e: unknown) => {
@@ -888,8 +922,10 @@ export const renderSelfLogBlock = (
   // 计数不跟着过滤——连发额度问的是「用户没回期间总共发了几条」，跟正文在哪无关。
   const fresh = log.entries.filter((e) => e.at > log.basePackAt);
   const sends = countUnansweredSends(log);
+  // 说实话：到上限之后自排的那几条到点是**跳过**，不补发（一次性的当场就没了）。
+  // 写成「暂停、回复后恢复」的话，角色会以为排着的话迟早会说出去，照样许诺。
   const limitHalf = Number.isFinite(maxUnanswered)
-    ? `，上限 ${maxUnanswered} 条，到上限后你自己排的后续会暂停、等对方回复才恢复`
+    ? `，上限 ${maxUnanswered} 条，到上限后你自己排的后续到点会直接跳过、不补发，等对方回复才重新计数`
     : '';
   if (fresh.length === 0) {
     if (sends === 0) return '';
@@ -930,7 +966,8 @@ const fillSlot = (text: string, slot: string, value: string) => text.split(slot)
  * 「此刻在做什么」那段就不报钟点（见 renderFireSceneBlock）。取值与今日节日同源，
  * 都来自 tool_pack.timeAwarenessEnabled。
  *
- * 连发提醒长在自述块里（renderSelfLogBlock 的计数行），上限取 pack.maxUnansweredSends。
+ * 连发提醒长在自述块里（renderSelfLogBlock 的计数行），上限由调用方按用户设置解析好传进来
+ * （extras.maxUnansweredSends，见 amsgLimits；不传用默认值）。
  */
 export const renderFirePack = (
   pack: AmsgFirePack,
@@ -941,6 +978,8 @@ export const renderFirePack = (
     taskListBlock?: string;
     realtimeWorldBlock?: string;
     includeClock?: boolean;
+    /** 已解析的连发上限（Infinity = 不限）。 */
+    maxUnansweredSends?: number;
   },
 ): string => {
   const tz: AmsgTzRef = { tzId: pack.tzId };
@@ -959,7 +998,7 @@ export const renderFirePack = (
   out = fillSlot(out, AMSG_SLOT_AWAY_HINT, awayHint);
   out = fillSlot(out, AMSG_SLOT_TASK_INSTRUCTION, taskInstruction);
   out = fillSlot(out, AMSG_SLOT_SELF_LOG, renderSelfLogBlock(
-    extras?.selfLog ?? null, nowMs, tz, resolveMaxUnansweredSends(pack.maxUnansweredSends),
+    extras?.selfLog ?? null, nowMs, tz, extras?.maxUnansweredSends ?? DEFAULT_MAX_UNANSWERED_SENDS,
   ));
   out = fillSlot(out, AMSG_SLOT_TASK_LIST, extras?.taskListBlock ?? '');
   out = fillSlot(out, AMSG_SLOT_SCENE, renderFireSceneBlock(pack.scene, nowMs, tz, {
@@ -1060,10 +1099,6 @@ export const parseFirePack = (value: string): AmsgFirePack | null => {
       typeof parsed.builtAt === 'number' &&
       Array.isArray(parsed.pendingTasks) &&
       (parsed.scene === null || typeof parsed.scene === 'object') &&
-      (parsed.maxUnansweredSends === undefined
-        || (typeof parsed.maxUnansweredSends === 'number'
-          && Number.isFinite(parsed.maxUnansweredSends)
-          && parsed.maxUnansweredSends >= 0)) &&
       typeof parsed.selfScheduleEnabled === 'boolean'
     ) {
       return parsed as AmsgFirePack;

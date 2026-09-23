@@ -4040,7 +4040,9 @@ create table if not exists memory_vectors (
                     <p className="mt-2 text-center text-xs text-slate-500">不需要副 API。永久删除前会有两次确认。</p>
                     {showHistoryCleanup && <ChatHistoryCleanupModal key={char.id} character={char} onClose={() => setShowHistoryCleanup(false)} onDeleted={() => {
                         trackEvent('清空聊天记录');
-                        markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+                        // 同 Chat.tsx：用户删的正是云端那份快照里存着的对话原文，不能让它
+                        // 因为「这个角色没有待触发任务」被悄悄留下。
+                        markAmsgStateDirty({ char, userProfile, groups, realtimeConfig }, 'invalidate');
                         setRangeModalOpen(false); setRangeMessages([]); setRangeStartId(null); setRangeEndId(null);
                         addToast('选中的聊天原文已清理，已有记忆保留', 'success');
                     }} />}
