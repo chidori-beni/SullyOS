@@ -9,7 +9,7 @@ import CssSlotEditor from './CssSlotEditor';
 import { BUILTIN_DIALOG_CSS_PRESETS, DIALOG_CSS_AI_PROMPT, DIALOG_HOOKS } from '../../utils/globalCss';
 import { FadersHorizontal } from '@phosphor-icons/react';
 import cocoaDotsChatChromeCss from '../../assets/css-presets/cocoa-dots/chat-chrome-v21.css?raw';
-import cocoaDotsCardCss from '../../assets/css-presets/cocoa-dots/chat-card-v3.css?raw';
+import cocoaDotsCardCss from '../../assets/css-presets/cocoa-dots/chat-card-v5.css?raw';
 import cocoaDotsDialogCss from '../../assets/css-presets/cocoa-dots/chat-dialog-v2.css?raw';
 
 type Props = {

@@ -1,5 +1,5 @@
 import type { ChatCardCssPreset } from '../types';
-import cocoaDotsCardCss from '../assets/css-presets/cocoa-dots/chat-card-v4.css?raw';
+import cocoaDotsCardCss from '../assets/css-presets/cocoa-dots/chat-card-v5.css?raw';
 
 /**
  * 「装扮 → 所有聊天 → 卡片 · CSS」的数据层：卡片名录、给外部 AI 的提示词、内置预设，
