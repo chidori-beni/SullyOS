@@ -91,7 +91,7 @@ jobs:
           #
           # 每行是「目录:入口文件」——mcp-proxy 的入口是手写的 worker.js，不是
           # build:workers 打出来的 bundle，所以入口名要跟着 wrangler.toml 的 main 走。
-          for entry in amsg:worker.bundle.js instant-push:worker.bundle.js mcp-proxy:worker.js; do
+          for entry in amsg:worker.bundle.js mcp-proxy:worker.js; do
             name="${entry%%:*}"
             file="${entry##*:}"
             src="worker/$name"
