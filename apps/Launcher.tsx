@@ -88,6 +88,8 @@ const DesktopClock = React.memo(() => {
     const { virtualTime, theme } = useOS();
     const { locale, t } = useUiLocale();
     const contentColor = theme.contentColor || '#ffffff';
+    const clockStyle = theme.desktopClockStyle || (theme.desktopVariant === 'nostalgia' ? 'bold' : 'serif');
+    const serifClock = clockStyle === 'serif';
     const paper = theme.skin !== 'animalcrossing' && theme.skin !== 'mobilegame' && theme.skin !== 'tamagotchi' && isPaperWallpaper(theme.wallpaper);
 
     const now = new Date();
@@ -148,8 +150,8 @@ const DesktopClock = React.memo(() => {
             {/* 主时钟 */}
             <div className="flex items-end gap-4">
                 <div className="relative">
-                    <div className={`${paper ? 'text-[5.65rem] font-semibold tracking-[-0.055em] drop-shadow-[0_2px_0_rgba(255,255,255,0.34)]' : 'text-[6.25rem] font-black tracking-tighter drop-shadow-2xl'} leading-[0.84]`}
-                        style={{ fontFamily: paper ? `'Iowan Old Style', 'Baskerville', 'Times New Roman', serif` : `'Space Grotesk', 'SF Pro Display', sans-serif`, fontFeatureSettings: '"tnum"' }}>
+                    <div className={`${serifClock ? 'text-[5.65rem] font-semibold tracking-[-0.055em] drop-shadow-[0_2px_0_rgba(255,255,255,0.34)]' : 'text-[6.25rem] font-black tracking-tighter drop-shadow-2xl'} leading-[0.84]`}
+                        style={{ fontFamily: clockStyle === 'system' ? 'inherit' : serifClock ? `'Iowan Old Style', 'Baskerville', 'Times New Roman', serif` : `'Space Grotesk', 'SF Pro Display', sans-serif`, fontFeatureSettings: '"tnum"' }}>
                         <span>{virtualTime.hours.toString().padStart(2, '0')}</span>
                         <span className="opacity-35 font-thin mx-0.5 animate-pulse">:</span>
                         <span>{virtualTime.minutes.toString().padStart(2, '0')}</span>

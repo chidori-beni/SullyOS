@@ -950,7 +950,7 @@ ${identityMap}
 
     // 1. Feed Item (Glassmorphism)
     const renderFeedItem = (post: SocialPost) => (
-        <div key={post.id} onClick={() => handleOpenPost(post)} className="break-inside-avoid mb-3 bg-white/70 backdrop-blur-md rounded-2xl overflow-hidden shadow-sm hover:shadow-lg transition-all cursor-pointer active:scale-[0.98] border border-white/50 relative group">
+        <div key={post.id} onClick={() => handleOpenPost(post)} className="min-w-0 bg-white/70 backdrop-blur-md rounded-2xl overflow-hidden shadow-sm hover:shadow-lg transition-all cursor-pointer active:scale-[0.98] border border-white/50 relative group">
             <div className="aspect-[4/5] w-full flex items-center justify-center relative overflow-hidden" style={{ background: post.bgStyle }}>
                 {/* Decorative Overlay for "Premium" look */}
                 <div className="absolute inset-0 bg-white/5 backdrop-blur-[1px]"></div>
@@ -962,12 +962,12 @@ ${identityMap}
                 )}
             </div>
             <div className="p-3">
-                <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2 min-w-0">
+                <div className="flex justify-between items-center gap-2">
+                    <div className="flex flex-1 items-center gap-2 min-w-0">
                         <img src={post.authorAvatar} className="w-5 h-5 rounded-full object-cover shrink-0 ring-1 ring-white/50" />
                         <span className="text-[11px] text-slate-700 truncate font-medium">{post.authorName}</span>
                     </div>
-                    <div className="flex items-center gap-1 text-slate-400 group-hover:text-slate-600 transition-colors">
+                    <div className="flex shrink-0 items-center gap-1 text-slate-400 group-hover:text-slate-600 transition-colors">
                         <Icons.Heart filled={post.isLiked} className="w-4 h-4" onClick={(e) => handleLike(e, post)} />
                         <span className="text-[10px] font-medium">{post.likes}</span>
                     </div>
@@ -1253,7 +1253,8 @@ ${identityMap}
                                     </button>
                                 )}
                             </div>
-                            <div className="columns-2 gap-2 space-y-2 pb-24">
+                            {/* 完整卡片占一个网格单元，避免多栏分片与 backdrop-filter/裁切组合丢失作者栏。 */}
+                            <div className="grid grid-cols-2 items-start gap-x-2 gap-y-3 pb-24">
                                 {feed.map(post => renderFeedItem(post))}
                             </div>
                         </div>

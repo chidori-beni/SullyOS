@@ -22,6 +22,7 @@ import type {
 } from '../../types';
 import { DB } from '../db';
 import { applyBondChange, buildBondChangeNotice, applyCharBondChange } from '../characterIdentity';
+import { recoverWorldProgress } from './episodeOrder';
 import { buildChatRequestPayload } from '../chatRequestPayload';
 import { safeFetchJson } from '../safeApi';
 import { processNewMessagesWithAutoArchive } from '../memoryPalace/autoArchive';
@@ -680,6 +681,17 @@ function buildCardContent(world: WorldProfile, storyTime: string, beat: WorldCha
     return lines.join('\n');
 }
 
+/** 以纪事里的最新正文为准，只读本人经历，避免依赖尚未同步的聊天卡片/向量召回。 */
+export function buildOwnWorldHistory(world: WorldProfile, episodes: WorldEpisode[], charId: string): string {
+    const recent = episodes.filter(e => world.timeMode !== 'sim' || e.round > (world.simSummarizedClock || 0))
+        .slice(0, 8).reverse();
+    const entries = recent.flatMap(e => {
+        const beat = e.beats.find(b => b.charId === charId);
+        return beat ? [buildCardContent(world, e.storyTime, beat)] : [];
+    });
+    return entries.length ? '\n\n## 你在家园已经经历的事（当前有效版本）\n以下是你本人的经历和备忘录；如旧聊天卡片或回忆与此冲突，以这里为准。承接已有进展，不要重复演绎。\n' + entries.join('\n\n') : '';
+}
+
 /**
  * 阶段 2.6：分享给**镇外角色**看的版本 —— 比当事人那版还多，因为 ta 是**读者**。
  *
@@ -818,46 +830,49 @@ export async function updateInjectedWorldCard(
 }
 
 export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpisodeResult> {
-    const { world, characters, apiConfig, userProfile, groups, realtimeConfig, memoryPalaceConfig, trigger } = deps;
+    const { characters, apiConfig, userProfile, groups, realtimeConfig, memoryPalaceConfig, trigger } = deps;
+    const worldId = deps.world.id;
 
-    if (running.has(world.id)) return { ok: false, reason: 'busy' };
-
-    // 旧存档（一天三段制）防御性迁移到四段制（含凌晨）：启动 sweep 可能还没跑完就被 tick 抢跑，
-    // 这里原地换算，storyClock/clockSegs 随本轮结束的 saveWorld 一并持久化。
-    migrateWorldDaySegs(world);
-
-    const members = world.memberIds
-        .map(id => characters.find(c => c.id === id))
-        .filter(Boolean) as CharacterProfile[];
-    if (members.length === 0) return { ok: false, reason: 'no-members' };
-
-    // API 优先级：世界私有覆盖（旧数据）> 家园全局设置（localStorage）> 全局聊天默认
-    const worldHomeApi = readWorldHomeApiOverride();
-    const api = world.api?.baseUrl ? world.api : (worldHomeApi || apiConfig);
-    if (!api.baseUrl) return { ok: false, reason: 'no-api' };
-    const baseUrl = api.baseUrl.replace(/\/+$/, '');
-
-    // real 模式：演的那一段跟着真实时钟走，且只能补当天错过的段；已追上现实就没东西可演
-    const realTarget = world.timeMode !== 'sim' ? realObserveTarget(world) : null;
-    if (world.timeMode !== 'sim' && !realTarget) return { ok: false, reason: 'caught-up' };
-
-    running.add(world.id);
-    const storyTime = realTarget ? formatRealClock(realTarget) : worldTimeLabel(world);
-    const round = world.storyClock + 1;
-    // sim 模式不进记忆/聊天——演绎攒在家园里，靠每 20 天的结卷总结沉淀
-    const entersMemory = world.timeMode !== 'sim' && world.injectToChat !== false;
-    // sim 模式：已结卷归档的原文不再喂；最新一卷的单视角总结 + 氛围作为上文
-    const latestChapter = (world.chapters || [])[(world.chapters?.length || 0) - 1];
-    // 线程容器就位：本轮所有消息（NPC 群聊冒泡 / 角色私聊与群聊）都即时落在 world.threads 上，
-    // 链式后续角色构建上下文时直接读到——消息在同一轮内就完成传递。
-    ensureThreads(world);
-    // 节日排期：本轮开演前先把「快到的节日」排进待发生事件表（阶段 3.2）。
-    // 放在这里而不是结算时，是因为**预热要在本轮就生效** —— 排完这一轮就能注入。
-    scheduleFestivals(world, round);
-    dispatch('world-episode-start', { worldId: world.id, worldName: world.name, storyTime, total: members.length });
-
+    if (running.has(worldId)) return { ok: false, reason: 'busy' };
+    running.add(worldId);
     try {
-        const lastEpisodes = await DB.getWorldEpisodes(world.id, 2);
+        const world = await DB.getWorld(worldId) || deps.world;
+        const lastEpisodes = await DB.getWorldEpisodes(worldId, 8);
+
+        // 旧存档（一天三段制）防御性迁移到四段制（含凌晨）：启动 sweep 可能还没跑完就被 tick 抢跑，
+        // 这里原地换算，storyClock/clockSegs 随本轮结束的 saveWorld 一并持久化。
+        migrateWorldDaySegs(world);
+        recoverWorldProgress(world, lastEpisodes);
+
+        const members = world.memberIds
+            .map(id => characters.find(c => c.id === id))
+            .filter(Boolean) as CharacterProfile[];
+        if (members.length === 0) return { ok: false, reason: 'no-members' };
+
+        // API 优先级：世界私有覆盖（旧数据）> 家园全局设置（localStorage）> 全局聊天默认
+        const worldHomeApi = readWorldHomeApiOverride();
+        const api = world.api?.baseUrl ? world.api : (worldHomeApi || apiConfig);
+        if (!api.baseUrl) return { ok: false, reason: 'no-api' };
+        const baseUrl = api.baseUrl.replace(/\/+$/, '');
+
+        // real 模式：演的那一段跟着真实时钟走，且只能补当天错过的段；已追上现实就没东西可演
+        const realTarget = world.timeMode !== 'sim' ? realObserveTarget(world) : null;
+        if (world.timeMode !== 'sim' && !realTarget) return { ok: false, reason: 'caught-up' };
+
+        const storyTime = realTarget ? formatRealClock(realTarget) : worldTimeLabel(world);
+        const round = world.storyClock + 1;
+        // sim 模式不进记忆/聊天——演绎攒在家园里，靠每 20 天的结卷总结沉淀
+        const entersMemory = world.timeMode !== 'sim' && world.injectToChat !== false;
+        // sim 模式：已结卷归档的原文不再喂；最新一卷的单视角总结 + 氛围作为上文
+        const latestChapter = (world.chapters || [])[(world.chapters?.length || 0) - 1];
+        // 线程容器就位：本轮所有消息（NPC 群聊冒泡 / 角色私聊与群聊）都即时落在 world.threads 上，
+        // 链式后续角色构建上下文时直接读到——消息在同一轮内就完成传递。
+        ensureThreads(world);
+        // 节日排期：本轮开演前先把「快到的节日」排进待发生事件表（阶段 3.2）。
+        // 放在这里而不是结算时，是因为**预热要在本轮就生效** —— 排完这一轮就能注入。
+        scheduleFestivals(world, round);
+        dispatch('world-episode-start', { worldId: world.id, worldName: world.name, storyTime, total: members.length });
+
         // 给一点纵深：最近两轮的梗概都喂进去，世界才有"昨天"的概念。
         // sim 模式下，已归档（round ≤ simSummarizedClock）的原文不再喂——交给章节总结。
         const sinceClock = world.simSummarizedClock || 0;
@@ -865,7 +880,7 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
             ? lastEpisodes.filter(e => e.round > sinceClock)
             : lastEpisodes;
         const lastSummary = summarySource.length > 0
-            ? summarySource.slice().reverse().map(e => e.summary).join('\n')
+            ? summarySource.slice(0, 2).reverse().map(e => e.summary).join('\n')
             : undefined;
 
         // ── 阶段 4.1：机主住进小镇 ────────────────────────────────────
@@ -961,7 +976,7 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
                     directive: directive ? { impulseText: directive.impulseText, text: directive.text } : undefined,
                     priorChapter,
                     userName: userProfile?.name || '',
-                });
+                }) + buildOwnWorldHistory(world, lastEpisodes, char.id);
                 if (directive) consumedDirectiveIds.push(directive.id);
 
                 const data = await safeFetchJson(`${baseUrl}/chat/completions`, {
@@ -1152,8 +1167,8 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
         console.error('[WorldHome] episode error:', err);
         return { ok: false, reason: 'error' };
     } finally {
-        running.delete(world.id);
-        dispatch('world-episode-end', { worldId: world.id });
+        running.delete(worldId);
+        dispatch('world-episode-end', { worldId });
     }
 }
 

@@ -3042,7 +3042,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           try {
               const world = await DB.getWorld(d.worldId);
               if (!world) return;
-              await rerollWorldCharBeat({
+              const result = await rerollWorldCharBeat({
                   world,
                   characters: charactersRef.current,
                   apiConfig: apiConfigRef.current,
@@ -3055,6 +3055,16 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   charId: d.charId,
                   direction: d.direction,
               });
+              if (result.ok) {
+                  setLastMsgTimestamp(Date.now());
+                  const char = charactersRef.current.find(c => c.id === d.charId);
+                  if (char) markAmsgStateDirty({ char, userProfile: userProfileRef.current, groups: groupsRef.current, realtimeConfig: realtimeConfigRef.current });
+                  // 本 fork 的重演沿用自己的副作用规则（关系锁/改名历史/礼物/约定），
+                  // 上游那句「剧情、私信、羁绊和伏笔已同步」描述的是它的新重演，这里不照搬。
+                  addToast('重演已保存', 'success');
+              } else {
+                  addToast(result.reason === 'busy' ? '这个世界正在演绎中，稍后再试' : '重演没成功，请重试', 'error');
+              }
           } catch (err) {
               console.error('[WorldHome] reroll error', err);
           }

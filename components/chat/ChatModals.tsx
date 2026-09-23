@@ -876,6 +876,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                             <li>当前可处理的聊天内容会全部完成记忆整理。</li>
                             <li>{retainRecentForVectorize ? '最近 10 条原文继续注入聊天上下文。' : '已处理原文不再直接注入聊天上下文。'}</li>
                             <li>紫色水位线与橙色原文范围会同步，待处理统计从新水位重新开始。</li>
+                            <li className="font-bold text-red-600">该功能非常规使用功能，全自动模式下记忆宫殿会自己处理，如您确认确实需要使用该功能，请点击“确认开始”</li>
                         </ul>
                     </div>
                     <p className="text-[11px] text-slate-400">处理期间请保持应用打开，不要清空聊天。任何一批失败都不会移动水位线，可安全重试。</p>

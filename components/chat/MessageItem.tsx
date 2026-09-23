@@ -1099,12 +1099,12 @@ const TransferCard: React.FC<{
     if (receipt) {
         const accepted = receipt === 'accepted';
         return commonLayout(
-            <div className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-2xl shadow-sm border w-fit max-w-[240px] ${
+            <div data-status={receipt} className={`sully-chat-transfer-receipt flex items-center gap-2.5 px-3.5 py-2.5 rounded-2xl shadow-sm border w-fit max-w-[240px] ${
                 accepted
                     ? 'bg-gradient-to-br from-emerald-50 to-teal-50 border-emerald-100'
                     : 'bg-gradient-to-br from-slate-50 to-slate-100 border-slate-200'
             }`}>
-                <div className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center ${accepted ? 'bg-emerald-400/90 text-white' : 'bg-slate-300/90 text-white'}`}>
+                <div className={`sully-chat-transfer-icon shrink-0 w-7 h-7 rounded-full flex items-center justify-center ${accepted ? 'bg-emerald-400/90 text-white' : 'bg-slate-300/90 text-white'}`}>
                     {accepted ? (
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" strokeWidth={3} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
                     ) : (
@@ -1112,11 +1112,11 @@ const TransferCard: React.FC<{
                     )}
                 </div>
                 <div className="min-w-0">
-                    <div className={`text-xs font-semibold ${accepted ? 'text-emerald-700' : 'text-slate-600'}`}>
+                    <div className={`sully-chat-transfer-status text-xs font-semibold ${accepted ? 'text-emerald-700' : 'text-slate-600'}`}>
                         {actor}{accepted ? '已收款' : '退回了转账'}
                     </div>
                     {amount !== undefined && (
-                        <div className="text-[10px] text-slate-400">₩ {amount}</div>
+                        <div className="sully-chat-transfer-amount text-[10px] text-slate-400">₩ {amount}</div>
                     )}
                 </div>
             </div>
@@ -1141,32 +1141,32 @@ const TransferCard: React.FC<{
             {commonLayout(
                 <div
                     onClick={(e) => { if (selectionMode) return; e.stopPropagation(); setOpen(true); }}
-                    className={`w-64 rounded-2xl p-4 text-white shadow-lg relative overflow-hidden cursor-pointer active:scale-[0.98] transition-transform ${
+                    data-status={status} className={`sully-chat-transfer-card w-64 rounded-2xl p-4 text-white shadow-lg relative overflow-hidden cursor-pointer active:scale-[0.98] transition-transform ${
                         resolved ? 'bg-gradient-to-br from-amber-300/80 to-orange-400/80' : 'bg-gradient-to-br from-amber-400 to-orange-500'
                     }`}
                 >
-                    <div className="absolute top-0 right-0 p-4 opacity-20"><SullyPayMark className="w-12 h-12" /></div>
-                    <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-white/20 rounded-full"><SullyPayMark className="w-5 h-5" /></div>
-                        <span className="font-medium text-white/90">Sully Pay</span>
+                    <div className="sully-chat-transfer-watermark absolute top-0 right-0 p-4 opacity-20"><SullyPayMark className="w-12 h-12" /></div>
+                    <div className="sully-chat-transfer-header flex items-center gap-3 mb-2">
+                        <div className="sully-chat-transfer-icon p-2 bg-white/20 rounded-full"><SullyPayMark className="w-5 h-5" /></div>
+                        <span className="sully-chat-transfer-brand font-medium text-white/90">Sully Pay</span>
                     </div>
-                    <div className="text-2xl font-bold tracking-tight mb-1">₩ {amount}</div>
+                    <div className="sully-chat-transfer-amount text-2xl font-bold tracking-tight mb-1">₩ {amount}</div>
                     {note ? (
-                        <div className="text-[11px] text-white/80 truncate mb-0.5">{note}</div>
+                        <div className="sully-chat-transfer-note text-[11px] text-white/80 truncate mb-0.5">{note}</div>
                     ) : null}
                     <div className="flex items-center justify-between">
-                        <div className="text-[10px] text-white/70">转账给{counterparty}</div>
+                        <div className="sully-chat-transfer-recipient text-[10px] text-white/70">转账给{counterparty}</div>
                         {statusBadge && (
-                            <span className="text-[9px] bg-white/25 backdrop-blur-sm px-1.5 py-0.5 rounded-full">{statusBadge}</span>
+                            <span className="sully-chat-transfer-status text-[9px] bg-white/25 backdrop-blur-sm px-1.5 py-0.5 rounded-full">{statusBadge}</span>
                         )}
                     </div>
                 </div>
             )}
 
             {open && (
-                <div className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-center justify-center p-6 animate-fade-in" onClick={(e) => { e.stopPropagation(); setOpen(false); }}>
+                <div className="sully-chat-transfer-overlay fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-center justify-center p-6 animate-fade-in" onClick={(e) => { e.stopPropagation(); setOpen(false); }}>
                     <div
-                        className="w-full max-w-[320px] bg-white rounded-3xl overflow-hidden shadow-2xl"
+                        className="sully-chat-transfer-dialog w-full max-w-[320px] bg-white rounded-3xl overflow-hidden shadow-2xl"
                         onClick={(e) => e.stopPropagation()}
                     >
                         {/* 顶部金额区 */}
@@ -1209,11 +1209,11 @@ const TransferCard: React.FC<{
                                 <div className="flex gap-3 pt-2">
                                     <button
                                         onClick={() => handleResolve('returned')}
-                                        className="flex-1 py-2.5 rounded-xl text-sm font-medium text-slate-500 bg-slate-100 active:scale-95 transition-transform"
+                                        className="sully-chat-transfer-return flex-1 py-2.5 rounded-xl text-sm font-medium text-slate-500 bg-slate-100 active:scale-95 transition-transform"
                                     >退回</button>
                                     <button
                                         onClick={() => handleResolve('accepted')}
-                                        className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-r from-amber-400 to-orange-500 shadow-md active:scale-95 transition-transform"
+                                        className="sully-chat-transfer-accept flex-1 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-r from-amber-400 to-orange-500 shadow-md active:scale-95 transition-transform"
                                     >接收</button>
                                 </div>
                             ) : (
@@ -1873,7 +1873,7 @@ const MessageItem = React.memo(({
         const avatarClickable = !isUser && !!xinshengRoundId && !!onAvatarClick;
         return (
             <div
-                className={`relative ${avatarSizeClass} z-0 ${options?.className || ''}${avatarClickable ? ' cursor-pointer active:scale-95 transition-transform' : ''}`}
+                className={`${visible ? 'sully-chat-avatar-wrap ' : ''}relative ${avatarSizeClass} z-0 ${options?.className || ''}${avatarClickable ? ' cursor-pointer active:scale-95 transition-transform' : ''}`}
                 onClick={avatarClickable ? (e) => { e.stopPropagation(); onAvatarClick!(xinshengRoundId); } : undefined}
                 role={avatarClickable ? 'button' : undefined}
                 aria-label={avatarClickable ? '查看这一轮的心声' : undefined}
@@ -1891,7 +1891,7 @@ const MessageItem = React.memo(({
                         {styleConfig.avatarDecoration && (
                             <img
                                 src={styleConfig.avatarDecoration}
-                                className="absolute pointer-events-none z-10 max-w-none"
+                                className="sully-chat-avatar-frame absolute pointer-events-none z-10 max-w-none"
                                 style={avatarDecorationImageStyle(styleConfig, avatarSizePx)}
                             />
                         )}

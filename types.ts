@@ -153,6 +153,7 @@ export interface OSTheme {
   skin?: 'default' | 'animalcrossing' | 'mobilegame' | 'tamagotchi' | 'companion';
   /** 默认桌面的视觉版本：纸感是现行默认，nostalgia 是用户主动选择的最初粉绿白玻璃界面。 */
   desktopVariant?: 'paper' | 'nostalgia';
+  desktopClockStyle?: 'serif' | 'bold' | 'system';
   /** 动森皮肤下，聊天 App 是否也跟随换成动森界面。默认 true（undefined 视为 true）。关掉则聊天保持原样式。 */
   acnhChatSync?: boolean;
   launcherWidgetImage?: string; // DEPRECATED: always stripped on load — never renders.
@@ -2362,6 +2363,8 @@ export interface WorldCharBeat {
 
 /** 一轮演绎（"观测"或离线 tick 触发，推进半天剧情时间；IndexedDB world_episodes 表）。 */
 export interface WorldEpisode {
+    /** Read-time observation ordinal; does not replace round used by historical message references. */
+    observationNumber?: number;
     id: string;
     worldId: string;
     /** 第几轮（= 演绎完成后的 storyClock） */

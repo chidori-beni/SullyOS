@@ -2255,7 +2255,7 @@ const WorldView: React.FC<{
 
     /** 修改世界并刷新（决策/伏笔引爆都走这里）。 */
     const mutateWorld = async (updates: Partial<WorldProfile>) => {
-        await DB.saveWorld({ ...world, ...updates, updatedAt: Date.now() });
+        await DB.updateWorld(world.id, { ...updates, updatedAt: Date.now() });
         onWorldUpdated();
     };
 
@@ -2269,7 +2269,7 @@ const WorldView: React.FC<{
             const fr = { ...world.feedReactions };
             if (comments.length === 0 && !rx.likes) delete fr[target.key];
             else fr[target.key] = { ...rx, comments };
-            await DB.saveWorld({ ...world, feedReactions: fr, updatedAt: Date.now() });
+            await DB.updateWorld(world.id, { feedReactions: fr, updatedAt: Date.now() });
             onWorldUpdated();
             addToast('已删除', 'success');
             return;
@@ -2308,7 +2308,7 @@ const WorldView: React.FC<{
             }
             const updatedEp: WorldEpisode = { ...ep, beats: ep.beats.map(b => b.charId === target.charId ? newBeat : b) };
             await DB.saveWorldEpisode(updatedEp);
-            if (reactionUpdate) await DB.saveWorld({ ...world, feedReactions: reactionUpdate, updatedAt: Date.now() });
+            if (reactionUpdate) await DB.updateWorld(world.id, { feedReactions: reactionUpdate, updatedAt: Date.now() });
             await loadEpisodes();
             if (reactionUpdate) onWorldUpdated();
         } else {
@@ -3057,7 +3057,7 @@ const WorldView: React.FC<{
                                     <div key={ep.id} className={`rounded-2xl border overflow-hidden ${t.panel}`}>
                                         <button className="w-full flex items-center gap-2.5 p-3 text-left" onClick={() => setOpenEpisodeId(open ? null : ep.id)}>
                                             <div className="w-8 h-8 rounded-xl shrink-0 flex items-center justify-center font-black text-[11px] text-amber-950" style={{ background: 'linear-gradient(135deg,#ffd76e,#ffb347)' }}>
-                                                {ep.round}
+                                                {ep.observationNumber ?? ep.round}
                                             </div>
                                             <div className="flex-1 min-w-0">
                                                 <div className={`text-[12px] font-black font-serif ${t.textMain}`}>{ep.storyTime}
@@ -3175,7 +3175,12 @@ const WorldHomeApp: React.FC<{ embedded?: boolean; onFullscreen?: (full: boolean
     };
 
     const saveWorld = async (w: WorldProfile) => {
-        await DB.saveWorld(w);
+        const existing = worlds.some(item => item.id === w.id);
+        if (existing && draft) {
+            const patch = Object.fromEntries(Object.entries(w).filter(([key, value]) =>
+                JSON.stringify(value) !== JSON.stringify((draft as any)[key]))) as Partial<WorldProfile>;
+            await DB.updateWorld(w.id, patch);
+        } else await DB.saveWorld(w);
         // 调度表对账：所有世界的离线 tick 设置一起重建
         const all = await DB.getWorlds();
         WorldScheduler.reconcile(toTickEntries(all));

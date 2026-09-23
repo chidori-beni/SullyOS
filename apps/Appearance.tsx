@@ -24,6 +24,7 @@ import { Capacitor } from '@capacitor/core';
 import { Share } from '@capacitor/share';
 import CssSlotEditor from '../components/appearance/CssSlotEditor';
 import { BUILTIN_NOTIFY_CSS_PRESETS, NOTIFY_CSS_AI_PROMPT, NOTIFY_HOOKS } from '../utils/globalCss';
+import FullscreenSettings from '../components/appearance/FullscreenSettings';
 import { shareOrDownloadBlob } from '../utils/shareExport';
 import { readShareFile } from '../utils/pngShare';
 import { BUILTIN_APPEARANCE_PRESETS, type BuiltinAppearancePresetDescriptor } from '../utils/builtinAppearancePresets';
@@ -1177,6 +1178,17 @@ const Appearance: React.FC = () => {
                 {/* Global Font Section */}
                 <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                     <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">全局字体 (Global Font)</h2>
+                    <div className="mb-5">
+                        <div className="text-xs text-slate-500 mb-2">首页时间字体（更换壁纸时保持）</div>
+                        <div className="flex gap-2">
+                            {([['serif', '经典衬线'], ['bold', '粗体数字'], ['system', '跟随全局字体']] as const).map(([value, label]) => (
+                                <button key={value} onClick={() => updateTheme({ desktopClockStyle: value })}
+                                    className={`flex-1 py-2 rounded-xl text-xs ${(theme.desktopClockStyle || (theme.desktopVariant === 'nostalgia' ? 'bold' : 'serif')) === value ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500'}`}>
+                                    {label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
                     
                     <div className="flex bg-slate-100 p-1 rounded-xl mb-4">
                         <button onClick={() => setFontMode('local')} className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${fontMode === 'local' ? 'bg-white text-primary shadow-sm' : 'text-slate-400'}`}>本地文件</button>
@@ -1229,6 +1241,8 @@ const Appearance: React.FC = () => {
                         <button onClick={() => updateTheme({ customFont: undefined })} className="w-full py-2 text-xs font-bold text-red-400 bg-red-50 rounded-lg hover:bg-red-100 mt-2">恢复默认字体</button>
                     )}
                 </section>
+
+                <FullscreenSettings />
 
                 {/* Status Bar Layout */}
                 <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">

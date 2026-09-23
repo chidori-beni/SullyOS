@@ -37,6 +37,14 @@ const AI_PROMPT = `你是一个 CSS 设计师。我在用一个叫 SullyOS 的�
 - .sully-chat-message-avatar  默认贴在组末气泡旁的头像
 - .sully-chat-turn-avatar-slot 每组首条的头像槽（默认 display:none，内部已有正确的双方头像）
 - .sully-chat-turn-avatar      上述头像槽里的头像容器；图片是 .sully-chat-message-avatar-img
+- .sully-chat-avatar-wrap      消息头像通用容器（含组首头像），可用 ::before / ::after 添加头像框
+- .sully-chat-message-avatar-img 头像图片；修改 border-radius / clip-path 可改变方圆或异形轮廓
+- .sully-chat-avatar-frame     气泡工坊已有的头像框贴图（仅设置了贴图时存在）；可隐藏以免与 CSS 框叠加
+- .sully-chat-transfer-card / .sully-chat-transfer-receipt 转账主卡 / 收款或退回回执
+- .sully-chat-transfer-header / -icon / -brand / -watermark 转账标题行 / 图标 / 品牌文字 / 水印（均为 sully-chat-transfer 前缀）
+- .sully-chat-transfer-amount / -note / -recipient / -status 金额 / 备注 / 收款方 / 状态（同上前缀）
+- .sully-chat-transfer-overlay / -dialog / -accept / -return 转账弹窗遮罩 / 详情面板 / 接收 / 退回按钮（同上前缀）
+  主卡和回执可用 [data-status="pending"] / [data-status="accepted"] / [data-status="returned"] 区分状态。
 - .sully-bubble-ai / .sully-bubble-user 角色 / 用户气泡
 - .sully-message-time          气泡下方的时间戳
 - .sully-chat-scroll           消息滚动区（整块列表；给它铺底纹不会盖掉聊天背景图）
@@ -73,6 +81,11 @@ const AI_PROMPT = `你是一个 CSS 设计师。我在用一个叫 SullyOS 的�
 7. 性能：可以用静态 backdrop-filter/blur，但不要对 blur/backdrop 做持续动画。
 8. 若要“每轮头像在气泡上方”：显示 .sully-chat-turn-avatar-slot、隐藏 .sully-chat-message-avatar，
    给 .sully-chat-message-group-first 留出顶部空间，并清零 .sully-chat-message-content 的左右 margin。
+9. CSS 头像框画在 .sully-chat-avatar-wrap::after 上：content:""; position:absolute; inset:-20%;
+   background:url(透明框图直链) center/contain no-repeat; pointer-events:none; z-index:20。
+   容器保持 overflow:visible，只对 .sully-chat-message-avatar-img 做圆角或 clip-path，避免裁掉外框。
+   可用 .sully-chat-message-ai / .sully-chat-message-user 后代选择器区分双方；这些样式随 CSS 预设保存和切换。
+   顶栏 .sully-chat-avatar 是 img，不要在它上面使用伪元素头像框。
 
 【可以自由发挥的部分】
 - 背景：纯色、渐变、重复图案、图片（background: url(图片直链)）、多层叠加，随意。
