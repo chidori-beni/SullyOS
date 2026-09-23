@@ -126,8 +126,13 @@ const REQUIRED_WORKER_FEATURES = [
 //            内容后把那行真的删掉，不再留空壳（即时对话每轮的键都是新的，空壳只涨不
 //            跌，worker 每次生成都要把整个角色命名空间读一遍）。前端接入见
 //            utils/activeMsgClient.ts 的 clearClientStateValue 与存量空壳清理。
+//   next.28 — 跟着 amsg-shared 0.4.0-next.10 一起升：中转站回 HTTP 200、响应体里却是
+//            报错时，按模型调用失败处理，原话写进 last_error、任务照常重试。旧 worker
+//            上这类响应被当成模型「这轮没说话」静默跳过，面板上只写「没写出要说的话」，
+//            看不出是中转站在报错。同一批还带上 0.4.0-next.9 的脱敏补漏：形状像模型名
+//            的自建网关 Key 不再明文进 last_error。
 // 不比版本的话，旧粘贴部署会被误判为最新，问题全在 worker 侧静默发生。
-const REQUIRED_WORKER_VERSION = '2.6.0-next.27';
+const REQUIRED_WORKER_VERSION = '2.6.0-next.28';
 
 /** 装着打包好的 worker 代码的部署仓库：fork 它 → 在 Cloudflare 连上 → 以后点 Sync fork 更新。 */
 const WORKERS_REPO_URL = 'https://github.com/chidori-beni/sullyos-workers';

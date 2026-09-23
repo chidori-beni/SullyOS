@@ -16,6 +16,7 @@ import worker, {
 } from './index';
 import * as workerEntry from './index';
 import { DEFAULT_TOOL_ITERATIONS, MCP_MAX_TOOL_ITERATIONS } from './agentic';
+import { configureSkipDiagnostics } from './skipDiagnostics';
 import { MAX_PUSH_PAYLOAD_BYTES } from '@rei-standard/amsg-server/cloudflare';
 import { amsgEmotionUpdateKey, EMOTION_EVAL_RIDE_ALONG_MS } from './emotionEval';
 import { INSTANT_TOTAL_TIMEOUT_MS } from './instantChat';
@@ -2744,6 +2745,66 @@ describe('没发出去时写 last_skip', () => {
     const call = writeState.mock.calls.find(([, entries]) =>
       entries.some((e: { key: string }) => e.key === AMSG_CHAT_FAIL_KEY));
     expect(call).toBeFalsy();
+  });
+
+  // 回归守卫：跳过那一刻要留一行形状诊断，不然「为什么没说话」又只能靠猜。正文默认不进日志，
+  // 原文片段只在 Worker 配了 AMSG_DEBUG_LLM_RAW 时才带——这条接线断了，开关就是个摆设。
+  describe('跳过时记一行诊断', () => {
+    const THINK_ONLY = '<think>在想要不要回</think>';
+    const thinkOnlyResponse = {
+      model: 'm-1',
+      choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: THINK_ONLY } }],
+    };
+    const runFireCapturingDiag = async (llmOutputText: string, llmResponse: unknown) => {
+      const { ctx, scratch, writeState } = makeCtx({});
+      await amsgHooks.onBeforeFire(ctx);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        await amsgHooks.onLLMOutput({
+          sessionId: 'sess_task_42',
+          iteration: 0,
+          llmResponse,
+          llmOutputText,
+          contactName: 'Nyah',
+          metadata: { charId: CHAR_ID, amsgClientTaskId: 'client-task-1', amsgMode: 'auto' },
+          scratch,
+          writeState,
+        } as any);
+        return warn.mock.calls.find(([tag]) => tag === '[amsg:skip-diag]')?.[1];
+      } finally {
+        warn.mockRestore();
+      }
+    };
+
+    afterEach(() => {
+      configureSkipDiagnostics({ rawExcerpt: false });
+      configureInstantErrorPush(null);
+    });
+
+    it('正文全在思考块里 → 记下 reason 和形状，不带正文', async () => {
+      const diag = await runFireCapturingDiag(THINK_ONLY, thinkOnlyResponse);
+      expect(diag, '跳过时应该记一行 [amsg:skip-diag]').toMatchObject({
+        sessionId: 'sess_task_42', reason: 'empty-generation', model: 'm-1', contentType: 'string', visibleChars: 0,
+      });
+      expect(JSON.stringify(diag)).not.toContain('在想要不要回');
+    });
+
+    it('Worker 配了 AMSG_DEBUG_LLM_RAW=1 → 诊断带上原文片段', async () => {
+      buildWorkerConfig({
+        AMSG_MASTER_KEY: 'k'.repeat(64),
+        VAPID_EMAIL: 'mailto:a@b.c',
+        VAPID_PUBLIC_KEY: 'pub',
+        VAPID_PRIVATE_KEY: 'priv',
+        DB: {},
+        AMSG_DEBUG_LLM_RAW: '1',
+      } as any);
+      const diag = await runFireCapturingDiag(THINK_ONLY, thinkOnlyResponse);
+      expect(diag?.raw?.content).toContain('在想要不要回');
+    });
+
+    it('正常出正文不记诊断', async () => {
+      expect(await runFireCapturingDiag('在干嘛呢', {})).toBeUndefined();
+    });
   });
 
   it('正常出正文的 fire 不写 empty-generation', async () => {

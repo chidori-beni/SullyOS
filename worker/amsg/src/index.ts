@@ -172,6 +172,7 @@ import {
 import { buildScheduleChangeResult } from '../../../utils/amsgScheduleResult';
 import type { ActiveMsg2TaskRecord } from '../../../types';
 import { createHybridPushTransport, isFcmConfigured, type NativeFcmEnv } from './nativeFcm';
+import { configureSkipDiagnostics, isDebugFlagOn, logSkipDiagnostic } from './skipDiagnostics';
 
 interface Env extends NativeFcmEnv {
   AMSG_MASTER_KEY: string;
@@ -180,6 +181,11 @@ interface Env extends NativeFcmEnv {
   VAPID_PRIVATE_KEY: string;
   /** 可选共享密钥；配了才校验 X-Client-Token，不配则端点全开。 */
   AMSG_SERVER_TOKEN?: string;
+  /**
+   * 排查「模型这轮没说话」时临时打开：填 1 后，跳过诊断日志（[amsg:skip-diag]）会带上模型回复的
+   * 原文片段。默认只记形状、不含聊天正文，查完删掉。见 ./skipDiagnostics。
+   */
+  AMSG_DEBUG_LLM_RAW?: string;
   /** D1 binding（factory 默认 createD1Adapter(env.DB)，这里只是标注存在）。 */
   DB: unknown;
   /** 以下三项给 /self-update 用，都可选；没配 CF_API_TOKEN 就是不开自更新。见 ./selfUpdate。 */
@@ -2340,6 +2346,15 @@ export const amsgHooks = {
     }
 
     if (decision.decision === 'skip-push') {
+      // 先把模型这轮回了个什么记一行：last_skip 只有一个 reason，分不清是 content 为 null、
+      // 正文全在思考块里、被截断，还是中转站把报错包在了 200 里（见 ./skipDiagnostics）。
+      logSkipDiagnostic({
+        sessionId: ctx.sessionId,
+        reason: decision.reason,
+        iteration: ctx.iteration,
+        llmResponse: ctx.llmResponse,
+        llmOutputText: ctx.llmOutputText,
+      });
       // 这一轮没有正文，所以整条不发；但角色顺手改的日程要送到客户端去，不然它下一次
       // 读到的还是那条旧安排（见 agentic.ts 里 skip-push 那处注释）。走 emitResult：
       // 落服务端收件箱，客户端下次拉 outbox 一定拿得到，不用为它硬发一条空推送。
@@ -2690,6 +2705,8 @@ export const buildWorkerConfig = (env: Env) => {
   configureInstantErrorPush(env.DB && env.AMSG_MASTER_KEY
     ? { webpush, db: env.DB as unknown as InstantErrorPushDeps['db'], masterKey: env.AMSG_MASTER_KEY }
     : null);
+  // 跳过诊断要不要带原文片段，跟着面板上那个变量走（见 ./skipDiagnostics）。
+  configureSkipDiagnostics({ rawExcerpt: isDebugFlagOn(env.AMSG_DEBUG_LLM_RAW) });
   return {
     // db 缺省时 factory 自动用 createD1Adapter(env.DB)
     masterKey: env.AMSG_MASTER_KEY,

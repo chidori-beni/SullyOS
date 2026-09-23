@@ -286,6 +286,18 @@ env.DB (sullyos-amsg)   D1 Database
 
 九成是 VAPID 对不上。回第四步核对：Cloudflare 里的 `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` 必须和 SullyOS「推送凭据 (VAPID)」面板里显示的完全一致。改过之后要在 SullyOS 里重新点一次「开启通知与推送」。
 
+**面板上说「这次没写出要说的话」，或者即时对话提示「模型这轮没有生成内容」**
+
+后端跑完了，模型也回了话，只是回来的内容里没有能发出去的正文。这种情况有好几种成因，要看日志才分得清：
+
+1. 按上面的办法打开 Observability 日志，到 **Observability** 标签里搜 `amsg:skip-diag`，点开最近的那一条。
+2. 对照这几项看：
+   - `finishReason` 是 `length`、`reasoningChars` 很大：思考把输出额度用光了，正文没来得及写。换个不带思考的模型试试
+   - `finishReason` 是 `content_filter`，或者 `contentType` 是 `null` 且 `toolCalls` 是 `0`：被模型那边的内容审核拦下了
+   - `contentChars` 有数、`visibleChars` 是 `0`：模型把整段话都写进了思考块（`<think>` 里）
+   - `contentType` 是 `array`：这个接口返回的格式后端认不出来，换个接口地址或渠道试试
+3. 还是看不出来的话，去 Worker → **Settings** → **Variables and secrets** 加一个变量 `AMSG_DEBUG_LLM_RAW`，值填 `1`。之后再遇到，同一条日志里会多出一个 `raw`，是模型回复的开头几百字。这段会带上聊天内容，查完记得把变量删掉。
+
 **SullyOS 里点「连接」失败**
 
 提示里如果直接写了「缺 XXX」，那就是后端自己报的，照着补完再点一次就行（第四步那张表列了每个密钥是什么；用部署按钮装的去 Worker → **Settings** → **Variables and secrets** 补）。

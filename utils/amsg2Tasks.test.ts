@@ -414,6 +414,15 @@ describe('describeInstantChatFailure', () => {
     expect(text).not.toContain('生成失败');
   });
 
+  // 中转站把报错装在 HTTP 200 里（amsg-server 2.6.0-next.28 起按调用失败处理）：报错开头
+  // 换成了「HTTP 200 but …」，给用户看的仍得是破折号后面中转站的原话。
+  it('errorCode LLM_CALL_FAILED 且上游回的是 200 → 照样引中转站原话', () => {
+    const reason = 'AI API error: HTTP 200 but body is not a chat completion (no choices). '
+      + 'Request URL: https://relay.example.com/v1/chat/completions — 无效的令牌 (provider code: 401)';
+    expect(describeInstantChatFailure({ reason, errorCode: 'LLM_CALL_FAILED' }))
+      .toBe('模型接口拒了这次请求：无效的令牌 (provider code: 401)');
+  });
+
   it('errorCode PUSH_PAYLOAD_TOO_LARGE → 说这条太长，不套「生成失败」', () => {
     expect(describeInstantChatFailure({ reason: 'push payload 4200 bytes', errorCode: 'PUSH_PAYLOAD_TOO_LARGE' }))
       .toBe('这条回复太长，一条推送装不下');
