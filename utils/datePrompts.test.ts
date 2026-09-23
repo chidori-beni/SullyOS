@@ -11,7 +11,7 @@ import {
     OBSERVE_CLOSE,
 } from './datePrompts';
 import { setVoicePromptOverrides } from './ttsProvider';
-import type { CharacterProfile, UserProfile, Message } from '../types';
+import type { CharacterProfile, UserProfile, Message, MountedWorldbook } from '../types';
 
 const makeChar = (overrides: Partial<CharacterProfile> = {}): CharacterProfile => ({
     id: 'char-1',
@@ -434,6 +434,81 @@ ${OBSERVE_CLOSE}`;
             expect(observation).toBeNull();
             expect(rest).toBe(t);
         });
+    });
+});
+
+describe('见面里的世界书', () => {
+    const wb = (overrides: Partial<MountedWorldbook>): MountedWorldbook => ({
+        id: 'wb', title: '条目', content: '条目正文', category: '测试', ...overrides,
+    });
+    const history = () => [
+        makeMsg({ role: 'assistant', content: '[normal] 开场白' }),
+        makeMsg({ content: '第二句' }),
+        makeMsg({ role: 'assistant', content: '[happy] 第三句' }),
+        makeMsg({ content: '我来了' }),
+    ];
+    const sessionInput = (char: CharacterProfile, userText = '我来了') => ({
+        char, userProfile: user, allMsgs: history(), emojis: [], userText, variant: 'send' as const,
+    });
+    const contents = (messages: Array<{ content: any }>) => messages.map(m => String(m.content));
+
+    it('会话：「聊天记录指定深度」条目按深度插进对话，本轮 user 消息算最后一条', async () => {
+        const char = makeChar({
+            mountedWorldbooks: [
+                wb({ id: 'tail', content: '深度零的文风', position: 4, depth: 0, role: 0 }),
+                wb({ id: 'deep', content: '深度二的思考要求', position: 4, depth: 2, role: 0 }),
+            ],
+        });
+        const { messages } = await DatePrompts.buildSessionPayload(sessionInput(char));
+        const texts = contents(messages);
+
+        // 深度 0：放在本轮 user 消息之后，整条请求的最后
+        const tail = messages[messages.length - 1];
+        expect(tail).toEqual({ role: 'system', content: '深度零的文风' });
+        expect(messages[messages.length - 2].content).toContain('System Note');
+
+        // 深度 2：插在倒数第 2 条对话之前（[开场白, 第二句, 第三句, 本轮] → 第三句前）
+        const deepIndex = texts.indexOf('深度二的思考要求');
+        expect(messages[deepIndex].role).toBe('system');
+        expect(texts[deepIndex + 1]).toContain('第三句');
+
+        // 不会混进 system prompt 里重复一份
+        expect(sysOf(messages)).not.toContain('深度零的文风');
+        expect(sysOf(messages)).not.toContain('深度二的思考要求');
+    });
+
+    it('会话：关键词条目能被历史或本轮输入触发，没提到就不注入', async () => {
+        const char = makeChar({
+            mountedWorldbooks: [
+                wb({ id: 'from-history', content: '钟楼的设定', constant: false, key: ['第三句'], scanDepth: 4 }),
+                wb({ id: 'from-input', content: '月亮的设定', constant: false, key: ['月亮'], scanDepth: 4 }),
+                wb({ id: 'depth-kw', content: '雨天的状态', constant: false, key: ['下雨'], position: 4, depth: 0 }),
+                wb({ id: 'miss', content: '海边的设定', constant: false, key: ['海边'], scanDepth: 4 }),
+            ],
+        });
+        const { messages } = await DatePrompts.buildSessionPayload(sessionInput(char, '今晚月亮好圆，还下雨了'));
+        const sys = sysOf(messages);
+        expect(sys).toContain('钟楼的设定');
+        expect(sys).toContain('月亮的设定');
+        expect(sys).not.toContain('海边的设定');
+        expect(contents(messages)).toContain('雨天的状态');
+        expect(contents(messages).join('\n')).not.toContain('海边的设定');
+    });
+
+    it('开场感知：深度条目和关键词条目同样生效', () => {
+        const char = makeChar({
+            mountedWorldbooks: [
+                wb({ id: 'tail', content: '深度零的文风', position: 4, depth: 0 }),
+                wb({ id: 'deep', content: '深度四的提醒', position: 4, depth: 4, role: 1 }),
+                wb({ id: 'kw', content: '钟楼的设定', constant: false, key: ['第三句'], scanDepth: 4 }),
+            ],
+        });
+        const { messages } = DatePrompts.buildPeekPayload({ char, userProfile: user, allMsgs: history(), emojis: [] });
+        expect(messages.map(m => m.role)).toEqual(['system', 'user', 'user', 'system']);
+        expect(messages[1].content).toBe('深度四的提醒');
+        expect(messages[2].content).toContain('Start sensing');
+        expect(messages[3].content).toBe('深度零的文风');
+        expect(sysOf(messages)).toContain('钟楼的设定');
     });
 });
 

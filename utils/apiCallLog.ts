@@ -376,9 +376,42 @@ function fenceToggleLines(lines: string[]): Set<number> {
     return new Set(indices);
 }
 
+const WORLDBOOK_LABEL_RE = /世界书|world\s*book|worldbook|lore/i;
+
+/** 世界书段的收尾：每条以 `---` 结束，整段末尾再多一个空行（见 formatWorldbookSection）。 */
+const isWorldbookSectionEnd = (lines: string[], i: number): boolean =>
+    lines[i].trim() === '---' && i + 1 < lines.length && lines[i + 1].trim() === '';
+
 /**
- * 把一条 system 消息按块头切开。``` 围栏内的行不算块头——行为规范里的日记
- * 示例（`## 今天的小确幸` 等）都在代码块里，不加围栏感知会被误切成独立块。
+ * 找出真正开新块的块头行（行号 → 块名）。两类标题行不算块头：
+ * - ``` 围栏内的行：行为规范里的日记示例（`## 今天的小确幸` 等）都在代码块里。
+ * - 世界书段里条目正文自带的标题：条目是用户写的，常带自己的 `##` 小标题，按它切会把
+ *   一条设定拆成好几块，后半截还因为标题里没有「世界书」字样被归进「基础固定指令」。
+ *   世界书段见到收尾才恢复切块；往后找不到收尾（不是 formatWorldbookSection 拼出来的段）
+ *   就照常切，免得把后面的内容全吞进来。
+ */
+function findBlockHeaders(lines: string[]): Map<number, string> {
+    const fenceAt = fenceToggleLines(lines);
+    const headers = new Map<number, string>();
+    let inFence = false;
+    let worldbookEndLine = -1;
+    for (let i = 0; i < lines.length; i++) {
+        if (fenceAt.has(i)) inFence = !inFence;
+        if (inFence || i <= worldbookEndLine) continue;
+        const header = matchBlockHeader(lines[i]);
+        if (!header) continue;
+        headers.set(i, header);
+        if (WORLDBOOK_LABEL_RE.test(header)) {
+            for (let j = i + 1; j < lines.length; j++) {
+                if (isWorldbookSectionEnd(lines, j)) { worldbookEndLine = j; break; }
+            }
+        }
+    }
+    return headers;
+}
+
+/**
+ * 把一条 system 消息按块头切开（哪些行算块头见 findBlockHeaders）。
  * 一个块头都没有的短消息（双语 / MCP 尾部提醒等）整条算一块，取首行当名字。
  */
 function splitSystemBlocks(text: string): PromptBlockStat[] {
@@ -386,13 +419,11 @@ function splitSystemBlocks(text: string): PromptBlockStat[] {
     let label = '（开头·未分块部分）';
     let chars = 0;
     let sawHeader = false;
-    let inFence = false;
     const lines = text.split('\n');
-    const fenceAt = fenceToggleLines(lines);
+    const headers = findBlockHeaders(lines);
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
-        if (fenceAt.has(i)) inFence = !inFence;
-        const header = inFence ? null : matchBlockHeader(line);
+        const header = headers.get(i);
         if (header) {
             if (chars > 0) out.push({ label, chars });
             label = header.slice(0, BLOCK_LABEL_MAX);
@@ -460,16 +491,7 @@ export function buildPromptBreakdown(body: unknown): PromptBlockStat[] | undefin
         // user 消息发送——不拆的话构成面板只会显示「用户消息 ×1 · 100%」，看不出内里。
         // 巨型且含多个块头的 user 消息按 system 同款规则拆块；普通聊天消息不受影响。
         const HUGE_USER_MSG_SPLIT_CHARS = 8000;
-        const countBlockHeaders = (text: string): number => {
-            let n = 0, inFence = false;
-            const lines = text.split('\n');
-            const fenceAt = fenceToggleLines(lines);
-            for (let i = 0; i < lines.length; i++) {
-                if (fenceAt.has(i)) inFence = !inFence;
-                if (!inFence && matchBlockHeader(lines[i])) n++;
-            }
-            return n;
-        };
+        const countBlockHeaders = (text: string): number => findBlockHeaders(text.split('\n')).size;
         for (const msg of messages) {
             const text = contentToText(msg?.content);
             if (msg?.role === 'system') {
@@ -608,7 +630,7 @@ interface CaptureTextBlock {
 /** 与普通统计使用相同标题规则，但额外保留正文位置，正文无需复制第二份。 */
 function splitCaptureTextBlocks(text: string): CaptureTextBlock[] {
     const lines = text.split('\n');
-    const fenceAt = fenceToggleLines(lines);
+    const headers = findBlockHeaders(lines);
     const lineStarts: number[] = [];
     let offset = 0;
     for (const line of lines) {
@@ -617,13 +639,11 @@ function splitCaptureTextBlocks(text: string): CaptureTextBlock[] {
     }
 
     const blocks: CaptureTextBlock[] = [];
-    let inFence = false;
     let start = 0;
     let label = '开头 / 未分区提示词';
     let sawHeader = false;
     for (let i = 0; i < lines.length; i++) {
-        if (fenceAt.has(i)) inFence = !inFence;
-        const header = inFence ? null : matchBlockHeader(lines[i]);
+        const header = headers.get(i);
         if (!header) continue;
         const headerStart = lineStarts[i];
         if (headerStart > start) blocks.push({ label, start, end: headerStart });
@@ -641,7 +661,7 @@ function splitCaptureTextBlocks(text: string): CaptureTextBlock[] {
 
 function captureKindForLabel(label: string): ApiRequestCaptureSectionKind {
     if (/记忆|回忆|召回|话题盒|memory|event\s*box|topic\s*box|事件盒/i.test(label)) return 'memory';
-    if (/世界书|world\s*book|worldbook|lore/i.test(label)) return 'worldbook';
+    if (WORLDBOOK_LABEL_RE.test(label)) return 'worldbook';
     if (/群聊|群组聊天|group\s*(?:chat|scene|conversation)/i.test(label)) return 'group';
     if (/完整对话|对话历史|历史对话|聊天历史|conversation\s*history|chat\s*history|dialogue\s*history/i.test(label)) return 'history';
     if (/角色|关系|状态|上下文|character|relationship|context/i.test(label)) return 'context';

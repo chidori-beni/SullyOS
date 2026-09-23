@@ -276,7 +276,10 @@ describe('CallApp runtime references', () => {
     expect(source).toContain("if (document.visibilityState === 'visible') return;");
     expect(source).not.toContain('    schedulePending();');
     expect(source).toContain('worldbookMessages: [...callMsgs, { role: \'user\', content: input }]');
-    expect(source).toContain('injectCallWorldbookDepth(await buildHistoryMessages(input, skipDbId, touchContext))');
+    // 深度条目在贴完摄像头快照之后再插（上游 42c30a3f），前台通话与后台梦话快照共用同一解析器。
+    expect(source).toContain('const callDepthEntries = resolveCallWorldbookDepthEntries(messages);');
+    expect(source).toContain('injectWorldbookDepthEntries(attachSnapshotToLatestUserMessage(messages, userCameraSnapshot), callDepthEntries)');
+    expect(source).toContain('injectCallWorldbookDepth(await buildHistoryMessages(instruction))');
     expect(source).toContain('void startAmsgChatPresence(selectedChar.id, null)');
     expect(source).toContain('return () => stopAmsgChatPresence(selectedChar.id)');
     // 2026-09-16：这段文案抽到了 utils/companionshipBoundary.ts，**聊天和通话共用一份**

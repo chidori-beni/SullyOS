@@ -6,7 +6,9 @@
  *
  * 与聊天侧注入面的差异（刻意为之，不是漏配）：
  *   - 注入：ContextBuilder.buildCoreContext 全量（人设 / 世界书 / 印象 / 记忆 /
- *     记忆宫殿召回 / 情绪 buff）+ 当前虚拟时间。
+ *     记忆宫殿召回 / 情绪 buff）+ 当前虚拟时间。世界书和聊天同一套规则：关键词条目扫
+ *     最近的历史和本轮输入来触发，「聊天记录指定深度」的条目按深度插进对话
+ *     （见 withWorldbookDepthEntries）。只取「线下」场景可用的书（本 fork 的生效场景）。
  *   - 不注入：聊天 App 行为规范（IM 气泡 / 表情包 / 语音 / 引用 / 转账 / 小红书 /
  *     日记等工具块）——这些是线上聊天专属指令，面对面场景里输出会破坏 VN 格式。
  *   - 不注入：实时天气 / 新闻、群聊背景、Notion / 飞书日记标题——见面是高沉浸短会话，
@@ -25,6 +27,8 @@ import { injectMemoryPalace } from './memoryPalace/pipeline';
 import { resolveCharTimeZone, nowInTimeZone, wallClockToTimestamp } from './timezone';
 import { getVoicePromptOverride } from './ttsProvider';
 import { selectCharacterContextMessages } from './chatContextRange';
+import { injectWorldbookDepthEntries, resolveWorldbookEntries, type ResolvedWorldbookEntry, type WorldbookScanMessage } from './worldbook';
+import { resolveUserMacroName } from './characterIdentity';
 
 export type ApiMessage = { role: string; content: any };
 
@@ -865,6 +869,33 @@ const resolveSessionClock = (
     };
 };
 
+/**
+ * 见面用的世界书：关键词扫描 +「线下」场景，一次解析（上游 42c30a3f + 本 fork 的生效场景）。
+ * 同一份结果既交给 buildCoreContext（resolvedWorldbookEntries → 概率条目同轮只抽一次），
+ * 也从中取「聊天记录指定深度」的条目插进对话（withWorldbookDepthEntries）。
+ * 上游版本按默认 online 场景解析；见面是面对面，必须用 offline，否则「仅线上」的书会混进来。
+ */
+const resolveDateWorldbook = (
+    char: CharacterProfile,
+    userProfile: UserProfile,
+    scanMessages: WorldbookScanMessage[],
+): ResolvedWorldbookEntry[] => resolveWorldbookEntries(
+    char.mountedWorldbooks || [],
+    scanMessages,
+    char.name,
+    resolveUserMacroName(char, userProfile),
+    'offline',
+);
+
+/**
+ * 把「聊天记录指定深度」的世界书条目插进对话，规则与聊天侧一致：深度从对话末尾往回数，
+ * 深度 0 放在最后，深度 N 插在倒数第 N 条消息之前。其余位置的条目在 system prompt 里。
+ */
+const withWorldbookDepthEntries = (
+    conversation: ApiMessage[],
+    entries: ResolvedWorldbookEntry[],
+): ApiMessage[] => injectWorldbookDepthEntries(conversation, entries.filter(entry => entry.position === 4));
+
 const buildContinuityBlock = (clock: SessionClockSnapshot): string => {
     const elapsedMinutes = Math.max(0, Math.floor((clock.sceneClockAt - clock.encounterStartedAt) / 60000));
     const advancedText = clock.sceneClockAdvancedMs > 0
@@ -896,7 +927,9 @@ const buildSessionContext = async (input: {
     sceneClockUpdatedAt?: number;
     sceneClockTimeZone?: string;
     includeLastHistory: boolean;
-}): Promise<{ clock: SessionClockSnapshot; historyMsgs: ApiMessage[]; systemPrompt: string }> => {
+    /** 本轮输入原文（只参加世界书关键词扫描，不带 System Note，免得格式指令里的字眼误触发）。 */
+    worldbookScanTail?: string;
+}): Promise<{ clock: SessionClockSnapshot; historyMsgs: ApiMessage[]; systemPrompt: string; worldbookEntries: ResolvedWorldbookEntry[] }> => {
     const clock = resolveSessionClock(input.char, input.allMsgs, input);
     const historyMsgs = buildDateHistory(
         input.allMsgs,
@@ -910,6 +943,10 @@ const buildSessionContext = async (input: {
     // 向量召回挂到 char.memoryPalaceInjection，buildCoreContext 会读取；导演指令不在 allMsgs，
     // 因此不会被记忆宫殿当成一条真实对话。
     await injectMemoryPalace(input.char, input.allMsgs, undefined, input.userProfile?.name);
+    const worldbookScan: WorldbookScanMessage[] = input.worldbookScanTail
+        ? [...historyMsgs, { role: 'user', content: input.worldbookScanTail }]
+        : historyMsgs;
+    const worldbookEntries = resolveDateWorldbook(input.char, input.userProfile, worldbookScan);
     const systemPrompt = ContextBuilder.buildCoreContext(
         input.char,
         input.userProfile,
@@ -917,10 +954,10 @@ const buildSessionContext = async (input: {
         undefined,
         undefined,
         // 见面内的真实时间只作为 UI 对照，不允许进入模型的通用时间块。
-        { skipTimeAwareness: true, conversational: true, worldbookMode: 'offline' },
+        { skipTimeAwareness: true, conversational: true, worldbookMode: 'offline', resolvedWorldbookEntries: worldbookEntries },
     ) + buildVNModeBlock(input.char, input.userProfile?.name || '', clock.sceneClockAt, clock.sceneClockTimeZone)
         + buildContinuityBlock(clock);
-    return { clock, historyMsgs, systemPrompt };
+    return { clock, historyMsgs, systemPrompt, worldbookEntries };
 };
 
 export const DatePrompts = {
@@ -965,7 +1002,12 @@ export const DatePrompts = {
         // 线下时间感知关掉 → 抑制 buildCoreContext 的时间注入，让见面真正脱离现实时间线（纯架空）
         // conversational 不给：peek 是「用户还没走过去」的第三人称镜头，时间块末尾那句
         // 语境框定说的是「对方还在跟你说话」，跟这里的框定正好相反（见下面的 peekInstructions）。
-        const baseContext = ContextBuilder.buildCoreContext(char, userProfile, false, undefined, undefined, { skipTimeAwareness: !isDateTimeAwarenessOn(char), worldbookMode: 'offline' });
+        const worldbookEntries = resolveDateWorldbook(char, userProfile, apiMessages);
+        const baseContext = ContextBuilder.buildCoreContext(char, userProfile, false, undefined, undefined, {
+            skipTimeAwareness: !isDateTimeAwarenessOn(char),
+            worldbookMode: 'offline',
+            resolvedWorldbookEntries: worldbookEntries,
+        });
 
         // 文风预设也作用于开场感知；人称（pov）刻意不作用——peek 的设计就是
         // 第三人称旁观镜头（用户还没"走过去"），人称指令只影响 session 内叙述
@@ -992,10 +1034,12 @@ ${dateTimeOn ? `当前时间: ${timeStr}\n` : ''}时间上下文: ${gapHint}
 3. **描写风格**: ${preset.peekHint}。${isObserveOn(char) ? '先按下方「观测协议」输出观测块，再开始描写内容（描写本身不要加任何前缀）。' : '不要输出任何前缀，直接输出描写内容。'}
 ${extraBlock ? `\n${extraBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlock(char)}` : ''}`;
 
+        // 历史已经压进这一条 user 消息里，深度条目就以它为准：深度 0 在它之后，其余在它之前
+        const peekMsg: ApiMessage = { role: 'user', content: `[最近记录 (Previous Context)]:${recentMsgs}${contextSeparator}${peekInstructions}\n\n(Start sensing...)` };
         return {
             messages: [
                 { role: 'system', content: baseContext },
-                { role: 'user', content: `[最近记录 (Previous Context)]:${recentMsgs}${contextSeparator}${peekInstructions}\n\n(Start sensing...)` },
+                ...withWorldbookDepthEntries([peekMsg], worldbookEntries),
             ],
         };
     },
@@ -1020,9 +1064,10 @@ ${extraBlock ? `\n${extraBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlo
         sceneClockTimeZone?: string;
     }): Promise<{ messages: ApiMessage[] }> => {
         const { char, userProfile, allMsgs, emojis, userText, variant } = input;
-        const { clock, historyMsgs, systemPrompt: baseSystemPrompt } = await buildSessionContext({
+        const { clock, historyMsgs, systemPrompt: baseSystemPrompt, worldbookEntries } = await buildSessionContext({
             ...input,
             includeLastHistory: false,
+            worldbookScanTail: userText,
         });
         const encounterId = clock.encounterId;
         const hasFaceToFacePhoneMessages = allMsgs.some(message => (
@@ -1049,8 +1094,10 @@ ${extraBlock ? `\n${extraBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlo
         return {
             messages: [
                 { role: 'system', content: systemPrompt },
-                ...historyMsgs,
-                { role: 'user', content: `${userText}\n\n${note}` },
+                ...withWorldbookDepthEntries(
+                    [...historyMsgs, { role: 'user', content: `${userText}\n\n${note}` }],
+                    worldbookEntries,
+                ),
             ],
         };
     },

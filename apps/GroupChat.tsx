@@ -1561,12 +1561,7 @@ ${buildCharBondNote(member, characters.filter(c => activeGroup?.members.includes
                         });
                     }
 
-                    let text = String(data.choices?.[0]?.message?.content ?? '').trim();
-                    // 剥模型自作主张加的名字前缀（提示词禁止了，但仍要兜底）
-                    if (text.startsWith(`${member.name}:`) || text.startsWith(`${member.name}：`)) {
-                        text = text.slice(member.name.length + 1).trim();
-                    }
-                    const { skipped, content } = stripSkipMarker(text);
+                    const { skipped, content } = stripSkipMarker(String(data.choices?.[0]?.message?.content ?? ''), member.name);
                     if (skipped) continue; // 本轮潜水
 
                     await dispatchMemberActions([{ charId: member.id, content }], {

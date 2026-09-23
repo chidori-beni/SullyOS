@@ -2169,19 +2169,18 @@ const CallApp: React.FC = () => {
     const finalInput = timeGapHint ? `${taggedInput}\n\n${timeGapHint}` : taggedInput;
     return [...apiMessages, { role: 'user', content: finalInput }];
   };
-  const injectCallWorldbookDepth = (messages: any[]): any[] => {
-    if (!selectedChar) return messages;
-    const resolved = resolveWorldbookEntries(
+  const resolveCallWorldbookDepthEntries = (messages: any[]) => {
+    if (!selectedChar) return [];
+    return resolveWorldbookEntries(
       selectedChar.mountedWorldbooks || [],
       messages,
       selectedChar.name,
       userProfile?.name || '用户',
-    );
-    return injectWorldbookDepthEntries(
-      messages,
-      resolved.filter(entry => entry.position === 4),
-    );
+    ).filter(entry => entry.position === 4);
   };
+  const injectCallWorldbookDepth = (messages: any[]): any[] => (
+    selectedChar ? injectWorldbookDepthEntries(messages, resolveCallWorldbookDepthEntries(messages)) : messages
+  );
   // 给 Worker 预排梦话用的提示词快照。它不调用 LLM，只复用通话的 system prompt 与当前
   // IndexedDB 历史；真正生成由 sleepDreamHandler 在未来的 cron tick 执行。
   const buildBackgroundCallSnapshot = async (instruction: string): Promise<{
@@ -2418,6 +2417,15 @@ ${sentencePlan}`;
       callMsgs = await loadCharacterContextMessages(selectedChar);
       await injectMemoryPalace(selectedChar, callMsgs);
     }
+    const touchContext = selectedChar
+      ? buildPendingAvatarTouchContext(
+          pendingTouches,
+          selectedChar.name,
+          userName,
+        )
+      : '';
+    // 历史先建好：世界书关键词要扫它，「聊天记录指定深度」的条目也要插进它
+    const messages = await buildHistoryMessages(input, skipDbId, touchContext);
     const baseCallPrompt = selectedChar
       ? buildCallPrompt(
           userName,
@@ -2470,17 +2478,14 @@ ${sentencePlan}`;
     const systemPrompt = [baseSystemPrompt, userCameraSnapshot ? USER_CAMERA_SNAPSHOT_SYSTEM_NOTE : '']
       .filter(Boolean)
       .join('\n\n');
-    const touchContext = selectedChar
-      ? buildPendingAvatarTouchContext(
-          pendingTouches,
-          selectedChar.name,
-          userName,
-        )
-      : '';
-    const messages = injectCallWorldbookDepth(await buildHistoryMessages(input, skipDbId, touchContext));
+    // 深度条目在贴完快照之后再插（上游 42c30a3f）：快照要贴在用户本轮的话上，
+    // 不能让插进来的 user 角色条目顶掉「最后一条 user 消息」的位置。
+    // 同一份解析结果用两次：概率条目同轮只抽一次，降级为纯文字时激活结果不变。
+    const callDepthEntries = resolveCallWorldbookDepthEntries(messages);
+    const textOnlyMessages = injectWorldbookDepthEntries(messages, callDepthEntries);
     const requestMessages = userCameraSnapshot
-      ? attachSnapshotToLatestUserMessage(messages, userCameraSnapshot)
-      : messages;
+      ? injectWorldbookDepthEntries(attachSnapshotToLatestUserMessage(messages, userCameraSnapshot), callDepthEntries)
+      : textOnlyMessages;
     onPrepared?.({
       systemPrompt,
       messages: requestMessages.map(message => ({
@@ -2524,7 +2529,7 @@ ${sentencePlan}`;
       if (!userCameraSnapshot || !isVisionInputUnsupportedError(error)) throw error;
       console.warn('[camera-snapshot] provider rejected vision input; retrying text-only:', error);
       addToast('当前模型不支持图片；本轮已自动改为只发文字', 'info');
-      chatData = await sendChatRequest(messages, baseSystemPrompt, 2, '视频通话·快照降级为文字');
+      chatData = await sendChatRequest(textOnlyMessages, baseSystemPrompt, 2, '视频通话·快照降级为文字');
     }
     const parsed = parseCallAssistantMessage(
       chatData?.choices?.[0]?.message,

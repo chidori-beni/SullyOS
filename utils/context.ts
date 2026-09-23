@@ -1,5 +1,5 @@
 
-import { CharacterProfile, UserProfile, DailySchedule } from '../types';
+import { CharacterProfile, UserProfile, DailySchedule, MountedWorldbook } from '../types';
 import type { WorldbookMode } from '../types';
 import { normalizeUserImpression } from './impression';
 import { isScheduleFeatureOn } from './scheduleFeature';
@@ -7,6 +7,7 @@ import { buildScheduleInjection as buildScheduleInjectionText } from './schedule
 import { TIME_FRAMING_CONVERSATIONAL } from './timeFramingNote';
 import { resolveCharTimeZone, nowInTimeZone, tzAwarenessNote, interactionGapNote } from './timezone';
 import {
+    expandWorldbookMacros,
     formatWorldbookSection,
     isMountedWorldbookEnabled,
     isScheduleOnlyWorldbook,
@@ -578,8 +579,8 @@ export const ContextBuilder = {
             return { text: '', sharedWorldbookIds, worldviewIsShared };
         }
 
-        // 1. 找出共享的世界书（被 2+ 角色挂载，按 id 计）
-        const wbCount = new Map<string, { count: number; entry: { id: string; title: string; content: string; category?: string } }>();
+        // 1. 找出共享的世界书（被 2+ 角色挂载，按 id 计），顺带记下是谁挂的（上游 edf033c6：{{char}} 换成这几位成员名）
+        const wbMounts = new Map<string, { memberNames: string[]; entry: MountedWorldbook }>();
         // 同一条全局世界书只要被任一成员标成“仅日程”，就不能提升为群聊共享设定；
         // 否则共享块会绕过角色级作用域，把它泄漏给整个群聊。
         const scheduleOnlyIds = new Set(
@@ -590,14 +591,14 @@ export const ContextBuilder = {
         for (const m of members) {
             for (const wb of (m.mountedWorldbooks || [])) {
                 if (!wb.id || !isMountedWorldbookEnabled(wb) || scheduleOnlyIds.has(wb.id)) continue;
-                const existing = wbCount.get(wb.id);
-                if (existing) existing.count += 1;
-                else wbCount.set(wb.id, { count: 1, entry: wb });
+                const existing = wbMounts.get(wb.id);
+                if (existing) existing.memberNames.push(m.name);
+                else wbMounts.set(wb.id, { memberNames: [m.name], entry: wb });
             }
         }
-        const sharedBooks: { id: string; title: string; content: string; category?: string }[] = [];
-        wbCount.forEach((v, id) => {
-            if (v.count >= 2) {
+        const sharedBooks: MountedWorldbook[] = [];
+        wbMounts.forEach((v, id) => {
+            if (v.memberNames.length >= 2) {
                 sharedWorldbookIds.add(id);
                 sharedBooks.push(v.entry);
             }
@@ -623,7 +624,12 @@ export const ContextBuilder = {
             text += `### 共有世界观 (Shared World Settings)\n${members[0].worldview!.trim()}\n\n`;
         }
 
-        const resolvedSharedBooks = resolveWorldbookEntries(sharedBooks, worldbookMessages, '', user.name);
+        // 共有条目只写一次，{{char}} 换成挂了这条的几位成员（「阿澈、小白」）
+        const resolvedSharedBooks = resolveWorldbookEntries(sharedBooks, worldbookMessages, '', user.name)
+            .map(entry => ({
+                ...entry,
+                content: expandWorldbookMacros(entry.content, wbMounts.get(entry.book.id)?.memberNames.join('、') || '', ''),
+            }));
         text += formatWorldbookSection(resolvedSharedBooks, '共有扩展设定集 (Shared Worldbooks)');
 
         return { text, sharedWorldbookIds, worldviewIsShared };
