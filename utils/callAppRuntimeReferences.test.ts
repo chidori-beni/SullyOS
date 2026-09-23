@@ -344,4 +344,13 @@ describe('CallApp runtime references', () => {
     expect(callSource).toContain('openApp(AppID.Chat)');
     expect(callSource).toContain('registerBackHandler');
   });
+
+  it('stamps the live call line in the character timezone, same as history', () => {
+    const source = readFileSync(path.resolve(__dirname, '../apps/CallApp.tsx'), 'utf8');
+
+    // 设备时间（东京）和历史里的角色时间（北京）混用，模型会把 1 小时时差读成「用户离开了 1 小时」。
+    expect(source).not.toContain("[${new Date().toLocaleString('zh-CN')}] [通话]");
+    expect(source).toContain('[${ChatPrompts.formatDate(nowTs, charTz)}] [通话]');
+    expect(source).toContain('ChatPrompts.getTimeGapHint(lastMsg, nowTs, charTz)');
+  });
 });

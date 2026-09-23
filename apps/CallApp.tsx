@@ -2155,13 +2155,17 @@ const CallApp: React.FC = () => {
       filtered, Math.max(1, filtered.length), selectedChar, userProfile || ({} as any), emojis,
     );
     const lastMsg = filtered[filtered.length - 1];
-    const timeGapHint = ChatPrompts.getTimeGapHint(lastMsg, Date.now());
+    const charTz = resolveCharTimeZone(selectedChar);
+    const nowTs = Date.now();
+    const timeGapHint = ChatPrompts.getTimeGapHint(lastMsg, nowTs, charTz);
     // 现场这句也带上与历史一致的 [通话] 标——裸着的输入容易被模型接到
     // 最近的 [聊天] 线程上，通话里刚说的反而被忘掉。
     const inputWithTouch = touchContext
       ? `${touchContext}\n\n[用户本轮说的话]\n${input}`
       : input;
-    const taggedInput = `[${new Date().toLocaleString('zh-CN')}] [通话] ${inputWithTouch}`;
+    // 时间戳必须和上面历史消息用同一把尺子（角色时区 + 同一格式）。以前这里用设备时间，
+    // 用户在东京、角色设北京时间时，历史写 20:00、这句写 21:05，模型就以为用户离开了一个多小时。
+    const taggedInput = `[${ChatPrompts.formatDate(nowTs, charTz)}] [通话] ${inputWithTouch}`;
     const finalInput = timeGapHint ? `${taggedInput}\n\n${timeGapHint}` : taggedInput;
     return [...apiMessages, { role: 'user', content: finalInput }];
   };

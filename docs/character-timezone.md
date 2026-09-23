@@ -62,6 +62,16 @@ const current = scheduleContext?.current ?? resolveScheduleSlots(schedule, now).
 **规矩：拿到快照就认它的结果，包括 `null`；确实要兜底时，喂进去的必须是
 `getScheduleWallClock(char, at)` 折算过的角色墙钟，不能是绝对时刻。**
 
+### 同一段上下文里的时间戳必须同一把尺子
+
+模型会自己拿相邻两条消息的时间戳做减法。历史消息用 `ChatPrompts.formatDate(ts, charTz)`
+写角色墙钟，那么**本轮现场这句**也必须用它，不能用 `new Date().toLocaleString()`（设备时间）。
+
+2026-09-23 的现场：通话（`apps/CallApp.tsx` 的 `buildHistoryMessages`）里历史写北京 20:00，
+用户刚说的话却盖着东京 21:05，用户只停了 5 分钟，角色却说「你离开了一个多小时」。
+`getTimeGapHint` 算的是绝对时间差，本身没错，错在两边钟面不一致。
+回归守卫见 `utils/callAppRuntimeReferences.test.ts`「stamps the live call line in the character timezone」。
+
 ## 日期 key 的写读一致性
 
 日程存 IndexedDB 用的 key 是 `${charId}_${dateKey}`。**写入和读取必须算出同一个字符串**，否则会「写进 A、读 B」，每次打开都判定没日程、反复调 LLM 重新生成——烧 token 而且从界面上看不出来。
