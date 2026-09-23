@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { FileOrImageImport } from '../share/FileOrImageImport';
 import {
     ArrowCounterClockwise,
     Check,
@@ -7,7 +8,6 @@ import {
     DownloadSimple,
     Eye,
     GearSix,
-    UploadSimple,
     X,
 } from '@phosphor-icons/react';
 import { useOS } from '../../context/OSContext';
@@ -111,7 +111,6 @@ const JournalAppearanceButton: React.FC<JournalAppearanceButtonProps> = ({
     const { theme, updateTheme, addToast } = useOS();
     const [open, setOpen] = useState(false);
     const [copied, setCopied] = useState(false);
-    const cssImportRef = useRef<HTMLInputElement>(null);
     const appearanceButtonRef = useRef<HTMLButtonElement>(null);
     const [savedStyleBlocksButton, setSavedStyleBlocksButton] = useState(false);
     const [draft, setDraft] = useState<JournalAppearance>(() =>
@@ -387,21 +386,9 @@ const JournalAppearanceButton: React.FC<JournalAppearanceButtonProps> = ({
                             </button>
                         </div>
 
-                        <div className="mb-3 grid grid-cols-3 gap-2">
-                            <input
-                                ref={cssImportRef}
-                                type="file"
-                                accept=".png,.css,.txt,image/png,text/css,text/plain"
-                                className="hidden"
-                                onChange={importCss}
-                            />
-                            <button
-                                onClick={() => cssImportRef.current?.click()}
-                                className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-stone-200 bg-white px-2 text-[10px] font-bold text-slate-600"
-                            >
-                                <UploadSimple size={14} />
-                                导入 PNG / CSS
-                            </button>
+                        <div className="mb-3 grid grid-cols-2 gap-2">
+                            <FileOrImageImport onChange={importCss}
+                                className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-stone-200 bg-white px-2 text-[10px] font-bold text-slate-600" />
                             <button
                                 onClick={exportCss}
                                 className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-stone-200 bg-white px-2 text-[10px] font-bold text-slate-600"

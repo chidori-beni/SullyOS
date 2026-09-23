@@ -66,7 +66,7 @@ it('rejects malformed hidden events, impersonated actor ids, incomplete personas
  const {snapshot,data}=fixture();
  for(const modify of [
   (d:any)=>delete d.actions[0].event,
-  (d:any)=>d.actions[0].event.story='x'.repeat(601),
+  (d:any)=>d.actions[0].event.story='   ',
   (d:any)=>d.actions[0].mode='free',
   (d:any)=>d.personas[0].actorId='user',
   (d:any)=>delete d.personas,
@@ -74,7 +74,7 @@ it('rejects malformed hidden events, impersonated actor ids, incomplete personas
 });
 it('refuses to rename an NPC with open posts, and changing persona never refills a wallet',()=>{
  const {state,data}=fixture(),snapshot=prepareMarketNPCs(state,()=>.1);
- const altered=structuredClone(data);altered.personas[0].name='另一个人';expect(()=>parseMarketNPCs(JSON.stringify(altered),snapshot)).toThrow();
+ const altered=structuredClone(data);altered.personas[0].name='另一个人';const kept=parseMarketNPCs(JSON.stringify(altered),snapshot);expect(kept[0].persona).toEqual(snapshot.visitors[0].persona);const applied=applyMarketNPCs(state,snapshot,kept);expect(applied.state.accounts).toEqual(state.accounts);expect(applied.state.listings.at(-1)?.npcPersona?.name).toBe('路人0');
  const closed=M.removeMarketPost(state,state.listings[0].id,'wanderer:0');const next=prepareMarketNPCs(closed,()=>.1);
  const generated=applyMarketNPCs(closed,next,parseMarketNPCs(JSON.stringify(altered),next));
  expect(generated.state.accounts).toEqual(closed.accounts);expect(generated.state.listings[0].npcPersona?.name).toBe('路人0');
@@ -89,3 +89,15 @@ it('corrupt event saves fail without overwriting storage',()=>{
  const raw=localStorage.getItem(M.FISHING_MARKET_STORAGE_KEY);expect(()=>M.readFishingMarketState()).toThrow('路人事件');
  expect(localStorage.getItem(M.FISHING_MARKET_STORAGE_KEY)).toBe(raw);
 });
+
+ it('preserves stories beyond 600/1200 characters through settlement and backup',()=>{
+   const {input,snapshot,data}=fixture();const long='完整的故事。'.repeat(400)+'{{participant}}看到了结尾。';
+   data.actions[0].event!.story=long;
+   const generated=applyMarketNPCs(input,snapshot,parseMarketNPCs(JSON.stringify(data),snapshot));
+   const post=generated.state.listings[0];expect(post.encounter?.story).toBe(long);
+   const settled=M.buyListing(generated.state,post.id,user,Date.now(),'反应'.repeat(400));
+   expect(settled.listings[0].encounterResult?.story).toBe(long.replace('{{participant}}','用户'));
+   expect(settled.listings[0].encounterResult?.reaction).toBe('反应'.repeat(400));
+   M.saveFishingMarketState(settled);const backup=collectSARLocalBackup();localStorage.clear();restoreSARLocalBackup(backup,{replaceMissing:true});
+   expect(M.readFishingMarketState().listings[0].encounterResult?.story).toBe(long.replace('{{participant}}','用户'));
+ });

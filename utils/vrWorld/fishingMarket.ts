@@ -116,7 +116,7 @@ const money = (n: number) => {
     if (!Number.isSafeInteger(n) || n < 0 || n > 1_000_000) throw new Error('金额须为 0～1,000,000 的整数');
     return n;
 };
-const txt = (s: string, max = 240) => String(s || '').trim().slice(0, max);
+const txt = (s: string, max = Infinity) => String(s || '').trim().slice(0, max);
 export const marketHash = (text: string): number => {
     let h = 1779033703 ^ text.length;
     for (let i = 0; i < text.length; i++) { h = Math.imul(h ^ text.charCodeAt(i), 3432918353); h = h << 13 | h >>> 19; }
@@ -280,7 +280,7 @@ const capacity = (state: FishingMarketState, actorId: string) => {
 };
 export const createListing = (state: FishingMarketState, seller: MarketActor, caught: FishingCatch | null, price: number, note = '', now = Date.now(), customLabel = '', alias = ''): FishingMarketState => {
     capacity(state, seller.id); money(price); if (caught) caught = requireCatch(state, seller, caught.id, now);
-    const label = caught ? speciesById(caught.speciesId)!.name : txt(customLabel, 40); if (!label) throw new Error('写下要卖的东西');
+    const label = caught ? speciesById(caught.speciesId)!.name : txt(customLabel); if (!label) throw new Error('写下要卖的东西');
     const p: MarketListing = { id: marketId('listing'), sellerId: seller.id, sellerName: seller.name, catchId: caught?.id, itemLabel: label,
         price, note: txt(note), alias: txt(alias, 24) || undefined, createdAt: now, expiresAt: now + MARKET_DAY_MS, status: 'open', comments: [],
         ...(caught ? { catchSnapshot: marketCatchSnapshot(state, caught) } : {}) };
@@ -313,7 +313,7 @@ export const createRequest = (state: FishingMarketState, actor: MarketActor, spe
     if (kind === 'tip' && offer === 0) throw new Error('求打赏请填写大于 0 的金额');
     if (!txt(itemLabel)) throw new Error('写下你想要什么');
     const p: MarketRequest = { id: marketId('request'), authorId: actor.id, authorName: actor.name, kind,
-        speciesId: kind === 'item' ? speciesId : undefined, itemLabel: txt(itemLabel, 40), offer, body: txt(body),
+        speciesId: kind === 'item' ? speciesId : undefined, itemLabel: txt(itemLabel), offer, body: txt(body),
         alias: txt(alias, 24) || undefined, createdAt: now, expiresAt: now + MARKET_DAY_MS, status: 'open', comments: [] };
     return logMarketEvent({ ...state, requests: [...state.requests, p] }, actor.name + '发布「' + p.itemLabel + '」：' + (kind === 'tip' ? '求打赏' : '出价') + ' ' + offer + ' 鳞币。仅为请求，尚未成交。',
         [actor.id], p.body ? [{ name: p.alias || actor.name, content: p.body }] : undefined, now);

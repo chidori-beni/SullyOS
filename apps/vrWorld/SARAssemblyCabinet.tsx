@@ -15,6 +15,8 @@ import {
 } from '../../utils/vrWorld/sarGacha';
 import {
     forgeSARIdentityCard,
+    SARIdentitySaveError,
+    saveSARIdentityCard,
     readSARSimulationState,
     resolveSARUserMaskProfile,
     resolveSARWorldlineProfile,
@@ -91,17 +93,19 @@ const ModulePicker: React.FC<{
 
 const IdentityCardView: React.FC<{
     card: SARIdentityCard;
+    actor?: CharacterProfile;
     run?: SARSimulationRun;
     onStartRun: () => void;
     onEnterRun: () => void;
     onAssemble: () => void;
-}> = ({ card, run, onStartRun, onEnterRun, onAssemble }) => {
+    error?: string;
+}> = ({ card, actor, run, onStartRun, onEnterRun, onAssemble, error }) => {
     const { variant, story } = resolveSARSimulationModules(card);
     const worldline = resolveSARWorldlineProfile(card);
     const userMask = resolveSARUserMaskProfile(card);
     return <main className="sarc-reader-card">
         <div className="sarc-card-reading">
-            <div className="sarc-card-byline"><CharacterPortrait char={{name:card.charName,avatar:card.charAvatar||''}}/><span>{card.charName}<small>{worldline.worldName}</small></span></div>
+            <div className="sarc-card-byline"><CharacterPortrait char={actor || { name: card.charName, avatar: '' }}/><span>{card.charName}<small>{worldline.worldName}</small></span></div>
             <h2>{card.profile.title}</h2><p className="sarc-card-logline">{card.profile.logline}</p>
             <section className="sarc-card-opening"><h3>故事的开头</h3><p>{card.profile.openingScene}</p><blockquote><span>{card.charName}</span>{card.profile.openingLine}</blockquote></section>
             <details className="sarc-card-fold"><summary>你们在这里的身份</summary><h3>{card.charName}</h3><p>{card.profile.identity}</p><h3>与你的关系</h3><p>{card.profile.relationship}</p><h3>{userMask.title}</h3><p>{userMask.identity}</p><p>{userMask.lifePatch}</p></details>
@@ -109,7 +113,7 @@ const IdentityCardView: React.FC<{
             <p className="sarc-card-limit">一次故事最多五十次互动。你可以探索、陪伴，也可以只过眼前的生活。</p>
             <button type="button" className="sarc-card-another" onClick={onAssemble}>再铸一张异格</button>
         </div>
-        <footer className="sarc-card-start"><button type="button" aria-label={!run?'进入故事':run.status==='active'?'继续故事':'重读这段故事'} onClick={run?onEnterRun:onStartRun}><Play size={16} weight="fill"/>{!run?'进入故事':run.status==='active'?'继续故事':'重读这段故事'}{run&&<small>{run.interactionsUsed} / {run.maxInteractions}</small>}</button></footer>
+        <footer className="sarc-card-start">{error && <p className="sarc-error" role="alert">{error}</p>}<button type="button" aria-label={!run?'进入故事':run.status==='active'?'继续故事':'重读这段故事'} onClick={run?onEnterRun:onStartRun}><Play size={16} weight="fill"/>{!run?'进入故事':run.status==='active'?'继续故事':'重读这段故事'}{run&&<small>{run.interactionsUsed} / {run.maxInteractions}</small>}</button></footer>
     </main>;
 };
 
@@ -287,7 +291,11 @@ export const SARAssemblyCabinetOverlay: React.FC<{
             setActiveCard(card);
             setView('card');
         } catch (cause: any) {
-            setError(cause?.message || '铸造设备没有回应，请重试');
+            if (cause instanceof SARIdentitySaveError) {
+                setActiveCard(cause.card);
+                setView('card');
+            }
+            setError((cause?.message || '铸造设备没有回应，请重试') + (cause instanceof SARIdentitySaveError ? ' 本次内容暂留在此页，请勿离开；释放空间后点击进入故事重试保存，无需重新铸造。' : ''));
         } finally {
             setLoading(false);
         }
@@ -296,6 +304,8 @@ export const SARAssemblyCabinetOverlay: React.FC<{
     const startRun = () => {
         if (!activeCard) return;
         try {
+            setError('');
+            if (!readSARSimulationState().cards.some(card => card.id === activeCard.id)) saveSARIdentityCard(activeCard);
             startSARSimulationRun(activeCard.id);
             setSimulationState(readSARSimulationState());
             setView('session');
@@ -337,7 +347,7 @@ export const SARAssemblyCabinetOverlay: React.FC<{
                 onRunChange={() => setSimulationState(readSARSimulationState())}
                 onThemeChange={setSessionTheme}
                 onBack={handleBack}
-            /> : view === 'card' && activeCard ? <IdentityCardView card={activeCard} run={activeRun} onStartRun={startRun} onEnterRun={() => setView('session')} onAssemble={openAssembly} /> : view === 'note' && activeNote ? <CharacterNoteView note={activeNote} actor={characters.find(char => char.id === activeNote.actorId)} /> : view === 'cards' ? <CabinetRecordsView
+            /> : view === 'card' && activeCard ? <IdentityCardView card={activeCard} actor={characters.find(char => char.id === activeCard.charId)} error={error} run={activeRun} onStartRun={startRun} onEnterRun={() => setView('session')} onAssemble={openAssembly} /> : view === 'note' && activeNote ? <CharacterNoteView note={activeNote} actor={characters.find(char => char.id === activeNote.actorId)} /> : view === 'cards' ? <CabinetRecordsView
                 shelf={shelf} onShelfChange={setShelf} characters={characters} characterGroups={characterGroups} selectedCharId={selectedCharId} onSelectChar={setSelectedCharId}
                 cards={simulationState.cards} runs={simulationState.runs} notes={characterNotes} notesLoading={notesLoading}
                 notesError={notesError} onRetryNotes={() => setNotesRetry(value => value + 1)}

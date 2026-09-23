@@ -39,6 +39,10 @@ export const visitFamiliarity = async (npc: FamiliarityNpc, options: VisitOption
         const next = prepare(current, options.legacyTitles), state = next.sarFamiliarity!, p = state.npcs[npc];
         const prerequisitesMet = (id: string) => !!familiarityScene(id) && (familiarityScene(id)!.requires || []).every(required => p.completed[required]);
         const canOffer = (id: string) => prerequisitesMet(id) && (!familiarityScene(id)?.condition || options.sullyInSar);
+        // Caian's one-time Sully encounter is guaranteed on presence, independent of daily rolls.
+        if (npc === 'caian' && options.sullyInSar && !p.completed['C-SULLY'] && p.offerId !== 'C-SULLY' && p.pending?.sceneId !== 'C-SULLY' && !p.queuedSceneIds?.includes('C-SULLY')) {
+            p.queuedSceneIds = [...(p.queuedSceneIds || []), 'C-SULLY'];
+        }
         // Old queued/offered/interrupted saves must obey the same story order as a fresh roll.
         if (p.pending && !prerequisitesMet(p.pending.sceneId)) {
             p.queuedSceneIds = [...new Set([...(p.queuedSceneIds || []), p.pending.sceneId])];
@@ -61,7 +65,7 @@ export const visitFamiliarity = async (npc: FamiliarityNpc, options: VisitOption
         }
         p.offerId=null;
         p.queuedSceneIds=(p.queuedSceneIds||[]).filter(id=>!p.completed[id]);
-        if(!p.queuedSceneIds.some(canOffer)&&(!p.day || familiarityDay(now) > p.day)) {
+        if(!p.queuedSceneIds.some(id => canOffer(id) && familiarityScene(id)?.kind !== 'encounter')&&(!p.day || familiarityDay(now) > p.day)) {
             p.day = familiarityDay(now); p.offerId = null;
             const scenes = familiarityScenes(npc).filter(s => !p.completed[s.id] && !p.queuedSceneIds!.includes(s.id) && (s.requires || []).every(id => p.completed[id]));
             const roll=(kind:string,pool:typeof scenes,chance:number)=>{
@@ -70,10 +74,11 @@ export const visitFamiliarity = async (npc: FamiliarityNpc, options: VisitOption
             };
             roll('topic',scenes.filter(s=>s.kind==='topic'&&s.rank===p.stars+1),FAMILIARITY_TOPIC_CHANCE);
             roll('easter',scenes.filter(s=>s.kind==='easter'&&s.rank<=p.stars&&(s.id!=='A3-E06'||options.sullyId)),FAMILIARITY_EASTER_CHANCE);
-            roll('encounter',scenes.filter(s=>s.kind==='encounter'&&options.sullyInSar),FAMILIARITY_TOPIC_CHANCE);
+            if (npc !== 'caian') roll('encounter',scenes.filter(s=>s.kind==='encounter'&&options.sullyInSar),FAMILIARITY_TOPIC_CHANCE);
         }
         // A conditional encounter can wait for Sully to return without blocking other scenes.
-        const available=p.queuedSceneIds.findIndex(canOffer);
+        const ordinary=p.queuedSceneIds.findIndex(id => canOffer(id) && familiarityScene(id)?.kind === 'topic');
+        const available=ordinary >= 0 ? ordinary : p.queuedSceneIds.findIndex(canOffer);
         if(available>=0)p.offerId=p.queuedSceneIds.splice(available,1)[0];
         return next;
     }, storage);

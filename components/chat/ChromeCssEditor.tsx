@@ -3,6 +3,7 @@ import { DB } from '../../utils/db';
 import { shareOrDownloadFile } from '../../utils/shareExport';
 import { readShareText } from '../../utils/pngShare';
 import cocoaDotsChatChromeCss from '../../assets/css-presets/cocoa-dots/chat-chrome-v21.css?raw';
+import { FileOrImageImport } from '../share/FileOrImageImport';
 
 // 聊天「白框」自定义 CSS 编辑器（Appearance 全局默认 与 单角色定制 共用）。
 // 选择器钩子覆盖顶栏、输入栏、整屏背景与普通消息布局；完整清单见下方 AI_PROMPT。
@@ -322,7 +323,6 @@ const copyText = async (text: string): Promise<boolean> => {
 const ChromeCssEditor: React.FC<{ value: string; onChange: (css: string) => void }> = ({ value, onChange }) => {
     const [copied, setCopied] = useState(false);
     const [custom, setCustom] = useState<Preset[]>([]);
-    const txtImportRef = useRef<HTMLInputElement>(null);
     const presetImageRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
@@ -479,8 +479,7 @@ const ChromeCssEditor: React.FC<{ value: string; onChange: (css: string) => void
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                     <span className="text-[11px] font-bold text-slate-500">CSS 代码 <span className="font-normal text-slate-400">· 可手改 / 粘贴</span></span>
                     <div className="flex items-center gap-1">
-                        <input ref={txtImportRef} type="file" accept=".png,.css,.txt,image/png,text/css,text/plain" className="hidden" onChange={handleTxtImport} />
-                        <button onClick={() => txtImportRef.current?.click()} className="rounded-lg px-2 py-1 text-[10px] font-semibold text-indigo-500 hover:bg-indigo-50">导入 PNG / CSS</button>
+                        <FileOrImageImport onChange={handleTxtImport} className="rounded-lg px-2 py-1 text-[10px] font-semibold text-indigo-500 hover:bg-indigo-50" />
                         <button onClick={handleTxtExport} disabled={!value.trim()} className={`rounded-lg px-2 py-1 text-[10px] font-semibold ${value.trim() ? 'text-indigo-500 hover:bg-indigo-50' : 'text-slate-300'}`}>导出分享</button>
                         {value && <button onClick={() => onChange('')} className="rounded-lg px-2 py-1 text-[10px] font-semibold text-rose-400 hover:bg-rose-50 hover:text-rose-500">清空</button>}
                     </div>

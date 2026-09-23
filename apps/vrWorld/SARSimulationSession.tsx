@@ -3,7 +3,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { Archive, ArrowLeft, ArrowDown, ArrowUp, BookOpenText, CircleNotch, DotsThree, DownloadSimple, Moon, SealCheck, ShareNetwork, Sun, X } from '@phosphor-icons/react';
 import type { APIConfig, CharacterProfile, Message, UserProfile } from '../../types';
 import './sarReading.css';
-import { findSARPendingReply, isSARDeletedReply, replaceSARSimulationReply } from '../../utils/vrWorld/sarSimulationEdits';
+import { findSARPendingReply, isSARDeletedReply, replaceSARSimulationReply, replaceSARSimulationUserMessage } from '../../utils/vrWorld/sarSimulationEdits';
 import { shareOrDownloadBlob } from '../../utils/shareExport';
 import {
     archiveSARSimulationRun,
@@ -191,7 +191,11 @@ export const SARSimulationSession: React.FC<{
         if (!replyAction || busyRef.current || (!deleted && !editText.trim())) return;
         busyRef.current = true; setSending(true); setError('');
         try {
-            await replaceSARSimulationReply(run.id, replyAction.message, { content: editText.trim(), worldNarration: editNarration.trim(), deleted });
+            if (replyAction.message.role === 'user') {
+                await replaceSARSimulationUserMessage(run.id, replyAction.message, editText);
+            } else {
+                await replaceSARSimulationReply(run.id, replyAction.message, { content: editText.trim(), worldNarration: editNarration.trim(), deleted });
+            }
             setMessages(await loadSARSimulationMessages(run.id));
             setReplyAction(null);
             setArchiveAction(deleted ? '回复已删除，可从这一幕重新生成' : '修改已保存');
@@ -270,7 +274,7 @@ export const SARSimulationSession: React.FC<{
                             ? <div key={message.id} className="sars-deleted-reply"><span>{messageScene(message)} · 回复已删除</span><button type="button" disabled={sending||!char} onClick={()=>void send(message.id)}>生成这一幕</button></div>
                             : <React.Fragment key={message.id}>
                             {message.role==='assistant'&&getSARWorldNarration(message)&&<article className="sars-narration" aria-label="世界旁白"><p>{getSARWorldNarration(message)}</p></article>}
-                            <article className={`sars-message is-${message.role}`} data-sar-message-id={message.id}><header>{message.role==='user'?userProfile.name:card.charName}<span>{messageScene(message)}</span>{message.role==='assistant'&&<button type="button" className="sars-reply-menu" aria-label={messageScene(message)+'回复操作'} disabled={sending} onClick={()=>setReplyAction({message,mode:'menu'})}><DotsThree size={19}/></button>}</header><p>{message.content}</p></article>
+                            <article className={`sars-message is-${message.role}`} data-sar-message-id={message.id}><header>{message.role==='user'?userProfile.name:card.charName}<span>{messageScene(message)}</span>{(message.role==='assistant'||message.role==='user')&&<button type="button" className="sars-reply-menu" aria-label={messageScene(message)+(message.role==='user'?'我的消息操作':'回复操作')} disabled={sending} onClick={()=>setReplyAction({message,mode:'menu'})}><DotsThree size={19}/></button>}</header><p>{message.content}</p></article>
                         </React.Fragment>)}
                         {pendingText&&<article className="sars-message is-user is-pending"><header>{userProfile.name}</header><p>{pendingText}</p></article>}
                         {sending&&<div className="sars-loading" role="status"><CircleNotch size={16} className="animate-spin"/>{streamText||'正在接续这一刻……'}</div>}
@@ -290,7 +294,7 @@ export const SARSimulationSession: React.FC<{
                     {archiveAction&&<output className="sars-action-status" role="status">{archiveAction}</output>}
                     {pendingReply&&<p className="sars-action-status">{messageScene(pendingReply)}等待重新生成，沿用当时的输入。</p>}
                     {active||pendingReply?<div className="sars-compose-row">
-                        <textarea ref={draftRef} rows={1} aria-label="你说的话或动作" value={draft} maxLength={4000} disabled={sending||!char||!!pendingReply} placeholder={pendingReply?'点击生成，重试已删除的回复':char?'说些什么，或做个动作…':'角色资料已不存在，无法继续'} onChange={event=>setDraft(event.target.value)}/>
+                        <textarea ref={draftRef} rows={1} aria-label="你说的话或动作" value={draft} maxLength={4000} disabled={sending||!char||!!pendingReply} placeholder={pendingReply?'点击生成，重试已删除的回复':char?'说些什么，或做个动作…（回车换行，点击发送）':'角色资料已不存在，无法继续'} onChange={event=>setDraft(event.target.value)}/>
                         <button type="button" aria-label={pendingReply?'生成':'发送'} disabled={(!draft.trim()&&!pendingReply)||sending||!char} onClick={()=>void send()}>{sending?<CircleNotch size={19} className="animate-spin"/>:<ArrowUp size={21} weight="bold"/>}</button>
                     </div>:<div className="sars-readonly">已封存 · {run.interactionsUsed} 次互动</div>}
                 </footer>
@@ -308,15 +312,15 @@ export const SARSimulationSession: React.FC<{
             </section>}
             {replyAction&&<div className="sars-confirm" role="dialog" aria-modal="true" aria-label="回复操作"><section>
                 <button type="button" className="sars-confirm-close" aria-label="关闭回复操作" disabled={sending} onClick={()=>setReplyAction(null)}><X size={18}/></button>
-                <h2>{messageScene(replyAction.message)} · {replyAction.mode==='edit'?'修改回复':replyAction.mode==='delete'?'删除回复？':'回复操作'}</h2>
+                <h2>{messageScene(replyAction.message)} · {replyAction.message.role==='user'?(replyAction.mode==='edit'?'修改我的消息':'我的消息操作'):replyAction.mode==='edit'?'修改回复':replyAction.mode==='delete'?'删除回复？':'回复操作'}</h2>
                 {replyAction.mode==='menu'?<div className="sars-reply-actions">
                     <button type="button" onClick={()=>void copyReply(replyAction.message)}>复制</button>
                     <button type="button" onClick={()=>{setEditText(replyAction.message.content);setEditNarration(getSARWorldNarration(replyAction.message));setReplyAction({...replyAction,mode:'edit'});}}>修改</button>
-                    <button type="button" disabled={!char} onClick={()=>void send(replyAction.message.id)}>重新生成</button>
-                    <button type="button" onClick={()=>setReplyAction({...replyAction,mode:'delete'})}>删除</button>
+                    {replyAction.message.role==='assistant'&&<><button type="button" disabled={!char} onClick={()=>void send(replyAction.message.id)}>重新生成</button>
+                    <button type="button" onClick={()=>setReplyAction({...replyAction,mode:'delete'})}>删除</button></>}
                 </div>:replyAction.mode==='edit'?<>
-                    <label className="sars-edit-label">世界旁白<textarea aria-label="修改世界旁白" value={editNarration} maxLength={2400} disabled={sending} onChange={e=>setEditNarration(e.target.value)}/></label>
-                    <label className="sars-edit-label">角色回复<textarea aria-label="修改角色回复" value={editText} maxLength={12000} disabled={sending} onChange={e=>setEditText(e.target.value)}/></label>
+                    {replyAction.message.role==='assistant'&&<label className="sars-edit-label">世界旁白<textarea aria-label="修改世界旁白" value={editNarration} maxLength={2400} disabled={sending} onChange={e=>setEditNarration(e.target.value)}/></label>}
+                    <label className="sars-edit-label">{replyAction.message.role==='user'?'我的消息':'角色回复'}<textarea aria-label={replyAction.message.role==='user'?'修改我的消息':'修改角色回复'} value={editText} maxLength={replyAction.message.role==='user'?4000:12000} disabled={sending} onChange={e=>setEditText(e.target.value)}/></label>
                     <p>后续已有剧情不会自动改写。</p><button type="button" className="sars-reply-submit" disabled={sending||!editText.trim()} onClick={()=>void saveReply()}>保存修改</button>
                 </>:<><p>删除这一幕的回复与旁白，保留你的输入。之后点生成会重试这一幕，后续已有剧情保留。</p><button type="button" className="sars-reply-submit" disabled={sending} onClick={()=>void saveReply(true)}>确认删除回复</button></>}
                 {error&&<p role="alert" className="sars-error">{error}</p>}

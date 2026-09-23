@@ -1,3 +1,5 @@
+import { MarketResponseDetails } from './MarketResponseDetails';
+import { MarketNPCReplyError } from '../../utils/vrWorld/marketNPCSession';
 import { sarNpcContentEnabled } from '../../utils/vrWorld/sarNpcPreference';
 import { acknowledgeSARUpdateNotice, hasReadSARUpdateNotice } from '../../utils/vrWorld/sarUpdateNotices';
 import { SARUpdateDialogue } from './SARUpdateDialogue';
@@ -52,6 +54,7 @@ export const FishingMarketOverlay:React.FC<Props> = ({initialEntry='water',apiCo
     const user=actors[0];
     const [state,setState]=useState<FishingMarketState>(()=>{try{return ensureMarketDay(readFishingMarketState());}catch{return createFishingMarketState();}});
     const [error,setError]=useState('');
+    const [failedResponse,setFailedResponse]=useState<string|undefined>();
     const [weather,setWeather]=useState<FishingWeather|null>(null);
     const [tab,setTab]=useState<Tab>(initialEntry==='sell'?'catalog':initialEntry);
     const [boardNoticeRead,setBoardNoticeRead]=useState(()=>hasReadSARUpdateNotice('board'));
@@ -121,7 +124,7 @@ export const FishingMarketOverlay:React.FC<Props> = ({initialEntry='water',apiCo
     useEffect(()=>()=>npcAbort.current?.abort(),[]);
     const refreshVisitors = async () => {
         if (refreshInFlight.current || busy || trip) return;
-        refreshInFlight.current = true; setBusy(true); setError(''); setRefreshNotice('');
+        refreshInFlight.current = true; setBusy(true); setError(''); setFailedResponse(undefined); setRefreshNotice('');
         try {
             const visitor = rollMarketVisitor(characters,Math.random,sarNpcContentEnabled());
             if (visitor) {
@@ -140,7 +143,7 @@ export const FishingMarketOverlay:React.FC<Props> = ({initialEntry='water',apiCo
                 setRefreshNotice(result.visitors.map(v=>v.name).join('、')+'来过了。'+(result.skipped.length?'有 '+result.skipped.length+' 项行动因便笺或余额变化未执行。':''));
             }
             setNow(Date.now());
-        } catch (cause) { setRefreshNotice(''); report(cause); }
+        } catch (cause) { setRefreshNotice(''); setFailedResponse(cause instanceof MarketNPCReplyError ? cause.responseText : undefined); report(cause); }
         finally { npcAbort.current=null;refreshInFlight.current = false; setBusy(false); }
     };
     const onCaught=async(c:FishingCatch)=>{await commit(s=>addCatchToState(s,c));};
@@ -233,6 +236,7 @@ export const FishingMarketOverlay:React.FC<Props> = ({initialEntry='water',apiCo
         <main ref={mainRef} className={`min-h-0 flex-1 overflow-y-auto vr-reader-scroll ${tab==='water'?'fishing-water-main':atWater?'px-4 pt-4':'board-content'}`} style={tab==='water'?undefined:{paddingBottom:'calc(var(--safe-bottom) + 1.5rem)'}}>
             <div className={tab==='water'?'fishing-water-content':'mx-auto w-full max-w-[560px]'}>
                 {error&&<p role="alert" className="mb-3 rounded-lg bg-amber-200/10 px-3 py-2 text-[12px] leading-6 text-amber-100">{error}</p>}
+            {tab==='board' && failedResponse && <MarketResponseDetails text={failedResponse} />}
                 {tab==='water'&&<>
                     {weather?<FishingGame weather={weather} onCast={()=>rollFishingCatch(user,weather)} onCaught={onCaught} onOpenCollection={()=>{goTo('catalog');setViewer('user');}}/>:<div className="grid flex-1 place-items-center fish-note">水面正在醒来……</div>}
                     <details className="fishing-companions"><summary>角色钓鱼<CaretRight size={14}/></summary>{characterTripControls('fishing')}</details>

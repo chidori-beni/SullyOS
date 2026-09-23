@@ -91,7 +91,7 @@ const WHITEBOX_SELECTOR_GROUPS = [
       '.sully-chat-message-group-first', '.sully-chat-message-group-last', '.sully-chat-message-module',
       '.sully-chat-message-content', '.sully-chat-message-sender', '.sully-chat-message-avatar-slot',
       '.sully-chat-message-avatar', '.sully-chat-message-avatar-img', '.sully-chat-turn-avatar-slot',
-      '.sully-chat-turn-avatar',
+      '.sully-chat-turn-avatar', '.sully-chat-avatar-wrap', '.sully-chat-avatar-frame',
     ],
   },
   {
@@ -99,6 +99,10 @@ const WHITEBOX_SELECTOR_GROUPS = [
     selectors: [
       ...BUBBLE_SELECTOR_GROUPS[0].selectors, '.sully-emoji-msg', ...BUBBLE_SELECTOR_GROUPS[1].selectors,
     ],
+  },
+  {
+    label: '转账主卡、回执与详情',
+    selectors: ['card', 'receipt', 'header', 'icon', 'brand', 'watermark', 'amount', 'note', 'recipient', 'status', 'overlay', 'dialog', 'accept', 'return'].map(part => `.sully-chat-transfer-${part}`),
   },
   {
     label: '正式文件附件',
@@ -144,7 +148,7 @@ const ALL_COLLABORATION_MAKERS: CollaborationMakerDefinition[] = [
   {
     kind: 'whitebox-css', label: '白框制作', shortLabel: '白框', target: 'character', accent: '#ec4899',
     description: '聊天顶栏、输入栏、消息布局与整屏背景。',
-    prompt: protocol('whitebox-css', '{ "css": ".sully-chat-root{...}" }', cssDesignBrief('聊天白框、消息布局与整屏外壳', WHITEBOX_SELECTOR_GROUPS, '顶栏已预留安全区；需要贴顶时使用 var(--safe-top)。若做“每轮头像在上方”，显示 .sully-chat-turn-avatar-slot、隐藏 .sully-chat-message-avatar，并同步调整组首留白和消息列边距。正式文件附件是独立工作交付物，不应伪装成普通文本气泡。')),
+    prompt: protocol('whitebox-css', '{ "css": ".sully-chat-root{...}" }', cssDesignBrief('聊天白框、消息布局与整屏外壳', WHITEBOX_SELECTOR_GROUPS, '转账与头像框选择器已经在真实聊天页面开放，可直接使用，不需要用户另行添加白名单。转账主卡/回执用 data-status 区分 pending/accepted/returned（回执无 pending）。头像框画在 .sully-chat-avatar-wrap::after，使用透明背景图、pointer-events:none，容器 overflow:visible；圆角或 clip-path 只作用于 .sully-chat-message-avatar-img。已有贴图 .sully-chat-avatar-frame 可隐藏避免叠加。顶栏头像是 img，不可用伪元素。顶栏已预留安全区；需要贴顶时使用 var(--safe-top)。若做“每轮头像在上方”，显示 .sully-chat-turn-avatar-slot、隐藏 .sully-chat-message-avatar，并同步调整组首留白和消息列边距。正式文件附件是独立工作交付物，不应伪装成普通文本气泡。')),
   },
   {
     kind: 'appearance-preset', label: '当前界面美化', shortLabel: '整套界面', target: 'global', accent: '#2563eb',

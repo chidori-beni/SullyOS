@@ -4281,7 +4281,7 @@ const VRApiSettings: React.FC<{ apiPresets: ApiPreset[]; chatApi: APIConfig; add
                         {log.slice(0, 60).map((l, i) => {
                             const diag = !!l.kind;   // 诊断行：调度到点了，但这一轮没走到模型
                             return (
-                                <div key={i} className="flex items-start gap-2 text-[10.5px] py-1 border-b border-white/5 last:border-0">
+                                <div key={i} className="flex flex-wrap items-start gap-2 text-[10.5px] py-1 border-b border-white/5 last:border-0">
                                     <span className={`shrink-0 ${diag ? 'text-amber-400/70' : l.ok ? 'text-emerald-400/80' : 'text-rose-400/80'}`}>{diag ? '◌' : l.ok ? '●' : '○'}</span>
                                     <span className="text-white/75 truncate shrink-0">{l.charName || l.charId?.slice(-4) || '—'}</span>
                                     {diag ? (
@@ -4295,6 +4295,7 @@ const VRApiSettings: React.FC<{ apiPresets: ApiPreset[]; chatApi: APIConfig; add
                                         </>
                                     )}
                                     <span className="text-white/35 shrink-0 tabular-nums w-[68px] text-right">{new Date(l.ts).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                                    {l.error && <p className="w-full break-words text-rose-300/90">{l.error}</p>}
                                 </div>
                             );
                         })}

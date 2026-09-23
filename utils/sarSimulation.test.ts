@@ -23,6 +23,8 @@ import {
     resolveSARWorldlineProfile,
     resolveSARSimulationApi,
     startSARSimulationRun,
+    saveSARIdentityCard,
+    writeSARSimulationState,
 } from './vrWorld/sarSimulation';
 
 const memoryStorage = () => {
@@ -49,6 +51,52 @@ const worldlineFields = {
 };
 
 describe('SAR 推演与备份状态', () => {
+    const quotaCard = (id: string) => ({
+        id, charId: 'c', charName: 'C', charAvatar: 'data:image/png;base64,' + 'A'.repeat(50000),
+        variantId: 'variant-01', storyId: 'story-01', createdAt: 1, updatedAt: 1,
+        profile: { title: '异格', identity: '身份', steelSeal: '钢印', openingScene: '开场', openingLine: '台词' },
+    } as any);
+
+    it('压缩已有内联头像，连续保存第九张后仍能重读并进入故事', () => {
+        const storage = memoryStorage();
+        storage.setItem(SAR_SIMULATION_STORAGE_KEY, JSON.stringify({ version: 2, cards: [quotaCard('old')], runs: [] }));
+        const limited = {
+            getItem: storage.getItem,
+            setItem: (key: string, value: string) => {
+                if (value.length > 60000) throw new DOMException('Full', 'QuotaExceededError');
+                storage.setItem(key, value);
+            },
+        };
+        for (let i = 2; i <= 9; i++) saveSARIdentityCard(quotaCard(String(i)), limited);
+        const state = readSARSimulationState(limited);
+        expect(state.cards).toHaveLength(9);
+        expect(state.cards.every(card => !card.charAvatar)).toBe(true);
+        expect(state.cards.find(card => card.id === 'old')?.profile.title).toBe('异格');
+        const run = startSARSimulationRun('9', limited);
+        expect(readSARSimulationState(limited).runs[0].id).toBe(run.id);
+    });
+
+    it('存储失败会报错且不损坏旧卡或虚报启动成功', () => {
+        const storage = memoryStorage();
+        saveSARIdentityCard(quotaCard('old'), storage);
+        const before = storage.getItem(SAR_SIMULATION_STORAGE_KEY);
+        const full = { getItem: storage.getItem, setItem: () => { throw new DOMException('Full', 'QuotaExceededError'); } };
+        expect(() => saveSARIdentityCard(quotaCard('new'), full)).toThrow('保存失败');
+        expect(() => startSARSimulationRun('old', full)).toThrow('保存失败');
+        expect(storage.getItem(SAR_SIMULATION_STORAGE_KEY)).toBe(before);
+    });
+
+    it('移除所有旧头像副本但不修改传入卡片，角色原始资源不受影响', () => {
+        const card = quotaCard('inline');
+        const remote = { ...quotaCard('remote'), charAvatar: 'https://example.com/avatar.png' };
+        const blob = { ...quotaCard('blob'), charAvatar: 'blobref:avatar' };
+        const state = writeSARSimulationState({ version: 2, cards: [card, remote, blob], runs: [] }, memoryStorage());
+        expect(card.charAvatar).toMatch(/^data:/);
+        expect(state.cards.every(item => !('charAvatar' in item))).toBe(true);
+        expect(remote.charAvatar).toBe('https://example.com/avatar.png');
+        expect(blob.charAvatar).toBe('blobref:avatar');
+    });
+
     it('SAR 上下文只保留角色本体、User 基础资料和关系门牌', () => {
         const char = {
             id: 'c',

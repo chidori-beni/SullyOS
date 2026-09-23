@@ -69,6 +69,7 @@ export type SARIdentityCard = {
     id: string;
     charId: string;
     charName: string;
+    /** 仅兼容旧档；新卡不复制头像，显示时按 charId 读取角色资料。 */
     charAvatar?: string;
     variantId: string;
     storyId: string;
@@ -225,7 +226,6 @@ const migrateLegacyRecord = (record: any): { card: SARIdentityCard; run: SARSimu
             id: cardId,
             charId: record.charId,
             charName: cleanText(record.charName, 100) || '未命名角色',
-            charAvatar: typeof record.charAvatar === 'string' ? record.charAvatar : undefined,
             variantId: record.variantId,
             storyId: record.storyId,
             createdAt: now,
@@ -281,10 +281,28 @@ export const readSARSimulationState = (storage: StorageLike | undefined = browse
 };
 
 export const writeSARSimulationState = (state: SARSimulationState, storage: StorageLike | undefined = browserStorage()) => {
-    const normalized: SARSimulationState = { version: 2, cards: state.cards.slice(0, 100), runs: state.runs.slice(0, 160) };
-    try { storage?.setItem(SAR_SIMULATION_STORAGE_KEY, JSON.stringify(normalized)); } catch { /* ignore */ }
+    // Avatars belong to CharacterProfile. Drop all legacy copies (including
+    // links/blobrefs), and resolve the current character by charId in the UI.
+    const cards = state.cards.slice(0, 100).map(card => {
+        const { charAvatar, ...compact } = card;
+        return compact;
+    });
+    const normalized: SARSimulationState = { version: 2, cards, runs: state.runs.slice(0, 160) };
+    try {
+        if (!storage) throw new Error('Storage unavailable');
+        storage.setItem(SAR_SIMULATION_STORAGE_KEY, JSON.stringify(normalized));
+    } catch {
+        throw new Error('异格档案保存失败，本地存储可能已满或不可用。请先备份数据并释放空间，再重试。');
+    }
     return normalized;
 };
+
+export class SARIdentitySaveError extends Error {
+    constructor(public card: SARIdentityCard, cause: unknown) {
+        super(cause instanceof Error ? cause.message : '异格档案保存失败');
+        this.name = 'SARIdentitySaveError';
+    }
+}
 
 export const saveSARIdentityCard = (card: SARIdentityCard, storage: StorageLike | undefined = browserStorage()) => {
     const current = readSARSimulationState(storage);
@@ -821,14 +839,14 @@ export async function forgeSARIdentityCard(input: ForgeSARIdentityInput): Promis
         id: `sar_card_${now.toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
         charId: char.id,
         charName: char.name,
-        charAvatar: char.avatar || undefined,
         variantId: variant.id,
         storyId: story.id,
         createdAt: now,
         updatedAt: now,
         profile,
     };
-    saveSARIdentityCard(card);
+    try { saveSARIdentityCard(card); }
+    catch (cause) { throw new SARIdentitySaveError(card, cause); }
     return card;
 }
 

@@ -78,24 +78,26 @@ describe('SAR personal line production paths and boundaries', () => {
         expect(progress(storage).offerId).toBeNull();
         expect(progress(storage, 'caian').offerId).toBe('C1-01');
     });
-    it('checks Sully presence again at start and makes the encounter one-time after completion', async () => {
+    it.each(['aiven', 'caian'] as const)('%s checks Sully presence again at start and makes the encounter one-time after completion', async (npc) => {
+        const encounter = npc === 'caian' ? 'C-SULLY' : 'A-SULLY';
+        const topic = npc === 'caian' ? 'C1-01' : 'A1-01';
         const storage = setup();
         const opts = { storage, now: origin, userName: '小雨', sullyId: 'sully-local', sullyInSar: true, random: () => 0 };
-        await visitFamiliarity('aiven', opts);
-        expect(progress(storage).offerId).toBe('A1-01');
-        expect(progress(storage).queuedSceneIds).toContain('A-SULLY');
-        await startOffer(storage,origin);await finish(storage,origin);await visitFamiliarity('aiven',opts);
-        expect(progress(storage).offerId).toBe('A-SULLY');
+        await visitFamiliarity(npc, opts);
+        expect(progress(storage, npc).offerId).toBe(topic);
+        expect(progress(storage, npc).queuedSceneIds).toContain(encounter);
+        await startOffer(storage,origin,npc);await finish(storage,origin,npc);await visitFamiliarity(npc,opts);
+        expect(progress(storage, npc).offerId).toBe(encounter);
         const before = storage.getItem(FISHING_MARKET_STORAGE_KEY);
-        await expect(startFamiliarity('aiven', 'A-SULLY', { ...opts, sullyInSar: false })).rejects.toThrow('Sully');
+        await expect(startFamiliarity(npc, encounter, { ...opts, sullyInSar: false })).rejects.toThrow('Sully');
         expect(storage.getItem(FISHING_MARKET_STORAGE_KEY)).toBe(before);
-        await startFamiliarity('aiven', 'A-SULLY', opts);
+        await startFamiliarity(npc, encounter, opts);
         // Walking away after the conversation started does not cancel an already witnessed meeting.
-        await visitFamiliarity('aiven', { ...opts, sullyInSar: false, now: origin + day });
-        expect(progress(storage).pending?.sceneId).toBe('A-SULLY');
-        await finish(storage, origin + day);
-        await visitFamiliarity('aiven', { ...opts, now: origin + day });
-        expect(progress(storage).offerId).not.toBe('A-SULLY');
+        await visitFamiliarity(npc, { ...opts, sullyInSar: false, now: origin + day });
+        expect(progress(storage, npc).pending?.sceneId).toBe(encounter);
+        await finish(storage, origin + day,npc);
+        await visitFamiliarity(npc, { ...opts, now: origin + day });
+        expect(progress(storage, npc).offerId).not.toBe(encounter);
     });
     it('starts the star event on the next visit and restarts interruptions without lighting the star', async () => {
         const storage = setup();
@@ -232,3 +234,28 @@ it('requires the first paper story before the changed paper, including old queue
         await startOffer(storage,origin);await finish(storage,origin);expect(progress(storage).completed['A1-E07']).toBeDefined();
     }
 });
+
+ it('guarantees Caian Sully encounter after an earlier empty day, without rerolling topics or duplicating completion', async () => {
+    const storage=setup(), opts={storage,now:origin,userName:'测试',random:()=>.99};
+    await visitFamiliarity('caian',opts);
+    expect(progress(storage,'caian').offerId).toBeNull();
+    await visitFamiliarity('caian',{...opts,sullyInSar:true,sullyId:'preset-sully-v2'});
+    expect(progress(storage,'caian').offerId).toBe('C-SULLY');
+    await startFamiliarity('caian','C-SULLY',{...opts,sullyInSar:true});
+    await finish(storage,origin,'caian');
+    await visitFamiliarity('caian',{...opts,sullyInSar:true});
+    expect(progress(storage,'caian').offerId).toBeNull();
+    expect(progress(storage,'caian').queuedSceneIds).not.toContain('C-SULLY');
+ });
+ it('queues guaranteed Caian encounter behind an unfinished topic and waits if Sully leaves', async () => {
+    const storage=setup(), opts={storage,now:origin,userName:'测试',random:()=>0};
+    await visitFamiliarity('caian',opts);await startOffer(storage,origin,'caian');
+    await visitFamiliarity('caian',{...opts,sullyInSar:true});
+    expect(progress(storage,'caian').pending?.sceneId).toBe('C1-01');
+    expect(progress(storage,'caian').queuedSceneIds).toEqual(['C-SULLY']);
+    await finish(storage,origin,'caian');
+    await visitFamiliarity('caian',opts);
+    expect(progress(storage,'caian').offerId).toBeNull();
+    await visitFamiliarity('caian',{...opts,sullyInSar:true});
+    expect(progress(storage,'caian').offerId).toBe('C-SULLY');
+ });

@@ -109,6 +109,12 @@ title: 夜航日记
     expect(bubblePrompt).toContain('.sully-voice-bar-wave-segment');
     expect(whiteboxPrompt).toContain('.sully-chat-turn-avatar-slot');
     expect(whiteboxPrompt).toContain('.sully-collaboration-file-action');
+    for (const part of ['card', 'receipt', 'header', 'icon', 'brand', 'watermark', 'amount', 'note', 'recipient', 'status', 'overlay', 'dialog', 'accept', 'return']) {
+      expect(whiteboxPrompt).toContain(`.sully-chat-transfer-${part}`);
+    }
+    expect(whiteboxPrompt).toContain('.sully-chat-avatar-wrap');
+    expect(whiteboxPrompt).toContain('.sully-chat-avatar-frame');
+    expect(validateInstallableArtifact({ kind: 'whitebox-css', title: '转账和头像框', payload: { css: '.sully-chat-transfer-card[data-status="pending"]{color:red}.sully-chat-avatar-wrap::after{content:"";pointer-events:none}' } })).toEqual([]);
     expect(journalPrompt).toContain('.sully-journal-cursor-spark');
     expect(schedulePrompt).toContain('.sully-schedule-change-shine');
     expect(psychePrompt).toContain('.sully-psyche-body');

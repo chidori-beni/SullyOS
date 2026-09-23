@@ -4,6 +4,38 @@ import { openDB } from '../db';
 export const isSARDeletedReply = (message: Message) => message.role === 'assistant' && message.metadata?.sarDeleted === true;
 export const findSARPendingReply = (messages: Message[]) => messages.find(isSARDeletedReply);
 
+/** Correct the user's input without regenerating replies or spending a turn. */
+export async function replaceSARSimulationUserMessage(runId: string, expected: Message, text: string) {
+    const content = text.trim();
+    if (!content || content.length > 4000) throw new Error('请输入 1 至 4000 字的内容');
+    const db = await openDB();
+    await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('messages', 'readwrite');
+        const store = tx.objectStore('messages');
+        let failure: Error | undefined;
+        const request = store.index('charId').getAll(IDBKeyRange.only('sar-simulation:' + runId));
+        request.onsuccess = () => {
+            const messages = (request.result as Message[]).filter(m => m.metadata?.source === 'sar_simulation' && m.metadata?.sarRunId === runId);
+            const current = messages.find(m => m.id === expected.id);
+            if (!current || current.role !== 'user' || current.content !== expected.content || JSON.stringify(current.metadata) !== JSON.stringify(expected.metadata)) {
+                failure = new Error('这条消息已变化，请刷新后再试'); tx.abort(); return;
+            }
+            if (current.content === content) return;
+            store.put({ ...current, content });
+            // Cached continuity facts may have depended on the typo; prose remains unchanged.
+            for (const message of messages) {
+                if (message.id <= current.id || message.role !== 'assistant') continue;
+                const metadata = { ...message.metadata };
+                delete metadata.sarDirectorState;
+                store.put({ ...message, metadata });
+            }
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(failure || tx.error || new Error('消息保存失败'));
+        tx.onabort = () => reject(failure || tx.error || new Error('消息保存失败'));
+    });
+}
+
 export function resolveSARReplyRetry(messages: Message[], replyId: number) {
     const reply = messages.find(message => message.id === replyId && message.role === 'assistant');
     if (!reply) throw new Error('这条回复已经不存在，请重新打开故事');

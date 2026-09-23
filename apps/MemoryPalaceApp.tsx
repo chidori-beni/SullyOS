@@ -39,6 +39,7 @@ import {
     getRangeSelectionHint,
 } from '../utils/memoryPalace/rangeSelection';
 import { trackEvent } from '../utils/analytics';
+import { saveMemoryPalaceExport } from '../utils/memoryPalace/saveExport';
 import {
     EXTERNAL_MEMORY_MAX_CHARS,
     getExternalMemoryLengthInfo,
@@ -53,7 +54,6 @@ import {
     makeCustomMemoryPalaceWaterline,
     resolveMemoryPalaceWaterline,
 } from '../utils/memoryPalace/waterline';
-import { shareOrDownloadFile } from '../utils/shareExport';
 
 /** 手动总结面板：每页渲染多少条聊天记录（翻页，避免一次性塞几百条 DOM 卡顿） */
 const RANGE_PAGE_SIZE = 50;
@@ -2150,15 +2150,15 @@ export default function MemoryPalaceApp() {
             const json = JSON.stringify(data, null, 2);
             const safeName = (char.name || 'character').replace(/[\\/:*?"<>|]/g, '_');
             const fileName = `${safeName}_记忆宫殿_${new Date().toISOString().slice(0, 10)}.json`;
-            const exportDisposition = await shareOrDownloadFile({
-                content: json,
-                fileName,
-                mimeType: 'application/json;charset=utf-8',
-                shareTitle: `${char.name}的记忆宫殿`,
-            });
+            const exportDisposition = await saveMemoryPalaceExport(json, fileName, `${char.name}的记忆宫殿`);
+            if (exportDisposition.kind === 'cancelled') {
+                setExportResult('[warn]已取消分享');
+                return;
+            }
             trackEvent('导出记忆宫殿备份');
             const vecPart = exportWithVectors ? `、${c.vectors} 条向量` : '';
-            setExportResult(`[ok]已导出 ${nodeCount} 条记忆、${c.eventBoxes} 个事件盒、${c.anticipations} 个期盼${vecPart}`);
+            const destination = exportDisposition.kind === 'shared' ? '已交给系统分享，请在所选应用中完成保存：' : '已交给浏览器下载：';
+            setExportResult(`[ok]${destination}${nodeCount} 条记忆、${c.eventBoxes} 个事件盒、${c.anticipations} 个期盼${vecPart}`);
         } catch (e: any) {
             setExportResult(`[err]导出失败：${e?.message || e}`);
         } finally {
@@ -4671,13 +4671,13 @@ create table if not exists memory_vectors (
                     </label>
 
                     {exportResult && (
-                        <div style={{ fontSize: 12, marginBottom: 8, color: exportResult.startsWith('[err]') ? '#dc2626' : exportResult.startsWith('[warn]') ? '#d97706' : '#16a34a' }}>
+                        <div style={{ fontSize: 12, marginBottom: 8, overflowWrap: 'anywhere', color: exportResult.startsWith('[err]') ? '#dc2626' : exportResult.startsWith('[warn]') ? '#d97706' : '#16a34a' }}>
                             <StatusMessage msg={exportResult} />
                         </div>
                     )}
 
                     <button
-                        onClick={handleExportMemories}
+                        onClick={() => void handleExportMemories()}
                         disabled={exporting}
                         style={{
                             width: '100%', padding: '10px 0', borderRadius: 12,
@@ -4694,6 +4694,7 @@ create table if not exists memory_vectors (
                             </span>
                         )}
                     </button>
+
 
                     {/* 外部文本搬家：原文清洗后直接向量化、分房间并建链 */}
                     <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #dbeafe' }}>
