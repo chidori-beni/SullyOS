@@ -1,18 +1,70 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
-import { ArrowLeft, ArrowClockwise, Newspaper, WarningCircle, ArrowSquareOut } from '@phosphor-icons/react';
+import { ArrowLeft, ArrowClockwise, Newspaper, WarningCircle, ArrowSquareOut, PaperPlaneTilt, X, CheckCircle } from '@phosphor-icons/react';
 import { DB } from '../utils/db';
 import { RealtimeContextManager } from '../utils/realtimeContext';
 import { trackEvent } from '../utils/analytics';
-import type { HotNewsSnapshot, HotNewsItem } from '../types';
+import { flushAmsgState, markAmsgStateDirty } from '../utils/amsgStateSync';
+import { chatDetailLaunch } from '../utils/chatDetailLaunch';
+import { AppID } from '../types';
+import type { HotNewsSnapshot, HotNewsItem, CharacterProfile } from '../types';
 
 const SLOT_WINDOW = ['00:00–04:00', '04:00–08:00', '08:00–12:00', '12:00–16:00', '16:00–20:00', '20:00–24:00'];
 
 const HotNewsApp: React.FC = () => {
-    const { closeApp, realtimeConfig, addToast } = useOS();
+    const {
+        closeApp, openApp, realtimeConfig, addToast,
+        characters, userProfile, groups, setActiveCharacterId,
+    } = useOS();
     const [snapshot, setSnapshot] = useState<HotNewsSnapshot | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    // 分享给 TA：选中的那条热搜 + 已经发给了谁（发完后面板切到「去聊天」状态）
+    const [shareItem, setShareItem] = useState<HotNewsItem | null>(null);
+    const [sharedTo, setSharedTo] = useState<CharacterProfile | null>(null);
+    const [sending, setSending] = useState(false);
+
+    const closeShare = () => { setShareItem(null); setSharedTo(null); };
+
+    // 以用户身份往该角色私聊里落一张 news_card。和日程小剧场卡一样只「留痕」不自动触发回复：
+    // 用户进聊天后自己点回复，角色从 messageFormat 的 news_card(user) 分支读到标题 + 简介。
+    const shareToChar = async (target: CharacterProfile) => {
+        if (!shareItem || sending) return;
+        setSending(true);
+        try {
+            const title = shareItem.title;
+            await DB.saveMessage({
+                charId: target.id,
+                role: 'user',
+                type: 'news_card',
+                content: title,
+                metadata: {
+                    source: shareItem.source || '热点',
+                    title,
+                    url: shareItem.url,
+                    desc: shareItem.desc,
+                    sharedFrom: 'hot_news',
+                },
+            });
+            // 自然主动的 fire_pack 要带上这条新消息（同聊天里 syncAmsgAfterUserMessage 的做法）
+            markAmsgStateDirty({ char: target, userProfile, groups, realtimeConfig });
+            void flushAmsgState('user-message');
+            setSharedTo(target);
+        } catch (e: any) {
+            addToast(`分享失败：${e?.message || e}`, 'error');
+        } finally {
+            setSending(false);
+        }
+    };
+
+    const goChat = () => {
+        if (!sharedTo) return;
+        const id = sharedTo.id;
+        closeShare();
+        setActiveCharacterId(id);
+        chatDetailLaunch.request({ charId: id, clearUnread: true });
+        openApp(AppID.Chat);
+    };
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -78,7 +130,7 @@ const HotNewsApp: React.FC = () => {
         : '';
 
     return (
-        <div className="h-full w-full bg-[#f4efe4] flex flex-col font-serif text-stone-900">
+        <div className="relative h-full w-full bg-[#f4efe4] flex flex-col font-serif text-stone-900">
             {/* 顶栏 */}
             <div className="bg-[#f4efe4] border-b-2 border-stone-800 shrink-0 sticky top-0 z-10" style={{ paddingTop: 'var(--safe-top)' }}>
                 <div className="flex items-center px-4 py-3">
@@ -119,6 +171,7 @@ const HotNewsApp: React.FC = () => {
                     <span>
                         这只是<b>热点可视化</b>。聊天时角色会知道<b>这些热点</b>，但不一定会主动提。
                         当作背景认知自然存在；偶尔也会主动<b>分享成新闻卡片</b>找你聊。
+                        想指着某一条聊，点条目右边的 <b>纸飞机</b> 发给 TA。
                         {realtimeConfig.newsEnabled
                             ? '（已开启：角色会真的看到这些）'
                             : '（未开启「实时感知 → 新闻热点」，角色暂时看不到，去设置打开后才会聊）'}
@@ -166,6 +219,14 @@ const HotNewsApp: React.FC = () => {
                                                     <p className="text-[11px] text-stone-500/90 leading-snug mt-0.5">{it.desc}</p>
                                                 )}
                                             </div>
+                                            <button
+                                                onClick={() => { setSharedTo(null); setShareItem(it); }}
+                                                className="shrink-0 self-start -mt-0.5 p-1.5 rounded-full text-stone-400 hover:text-red-700 hover:bg-black/5 active:scale-90 transition-transform"
+                                                title="分享给 TA"
+                                                aria-label="分享给 TA"
+                                            >
+                                                <PaperPlaneTilt size={15} weight="bold" />
+                                            </button>
                                         </li>
                                     ))}
                                 </ol>
@@ -180,6 +241,67 @@ const HotNewsApp: React.FC = () => {
                     </p>
                 )}
             </div>
+
+            {/* 分享给 TA：选角色 → 发一张热点卡到私聊 */}
+            {shareItem && (
+                <div className="absolute inset-0 z-30 flex flex-col justify-end bg-black/40" onClick={closeShare}>
+                    <div
+                        className="bg-[#f4efe4] rounded-t-2xl border-t-2 border-stone-800 max-h-[70%] flex flex-col"
+                        style={{ paddingBottom: 'var(--safe-bottom, 0px)' }}
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <div className="flex items-start gap-2 px-4 pt-4 pb-3 border-b border-stone-300">
+                            <div className="flex-1 min-w-0">
+                                <p className="text-[10px] tracking-[0.3em] text-stone-500">分享给 TA</p>
+                                <p className="text-[14px] font-black text-stone-900 leading-snug mt-1 line-clamp-2">
+                                    {shareItem.source ? <span className="text-red-700">【{shareItem.source}】</span> : null}
+                                    {shareItem.title}
+                                </p>
+                            </div>
+                            <button onClick={closeShare} className="p-1.5 -mr-1 rounded-full hover:bg-black/5 active:scale-90" aria-label="关闭">
+                                <X size={18} weight="bold" className="text-stone-600" />
+                            </button>
+                        </div>
+
+                        {sharedTo ? (
+                            <div className="px-6 py-6 text-center">
+                                <CheckCircle size={36} weight="fill" className="mx-auto text-red-700" />
+                                <p className="text-sm font-bold text-stone-800 mt-2">已经发给 {sharedTo.name} 了</p>
+                                <p className="text-[11px] text-stone-500 mt-1 leading-relaxed">
+                                    TA 不会自己马上回，进聊天和 TA 说点什么、或点回复就行
+                                </p>
+                                <div className="flex gap-2 mt-5">
+                                    <button onClick={closeShare} className="flex-1 py-2.5 rounded-full border border-stone-400 text-sm text-stone-700 active:scale-95">
+                                        继续看热点
+                                    </button>
+                                    <button onClick={goChat} className="flex-1 py-2.5 rounded-full bg-stone-800 text-sm font-bold text-stone-50 active:scale-95">
+                                        去和 TA 聊
+                                    </button>
+                                </div>
+                            </div>
+                        ) : characters.length === 0 ? (
+                            <p className="px-6 py-10 text-center text-sm text-stone-500">还没有角色，先去创建一个吧</p>
+                        ) : (
+                            <div className="overflow-y-auto no-scrollbar py-1">
+                                {characters.map(c => (
+                                    <button
+                                        key={c.id}
+                                        disabled={sending}
+                                        onClick={() => shareToChar(c)}
+                                        className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-black/5 active:bg-black/10 disabled:opacity-50 text-left"
+                                    >
+                                        {c.avatar
+                                            ? <img src={c.avatar} alt="" className="w-10 h-10 rounded-full object-cover border border-stone-300 shrink-0" />
+                                            : <div className="w-10 h-10 rounded-full bg-stone-300 shrink-0" />}
+                                        <span className="flex-1 min-w-0 truncate text-[14px] text-stone-800">{c.name}</span>
+                                        <PaperPlaneTilt size={16} weight="bold" className="text-stone-400 shrink-0" />
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

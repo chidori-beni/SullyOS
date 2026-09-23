@@ -369,6 +369,18 @@ export function normalizeMessageContent(
         return `${head}\n网页正文：\n${body}`;
     }
 
+    // 热点卡片·用户转发：用户在「热点日报」里点「分享给 TA」发来的一条热搜。
+    // 角色主动分享的那种（role=assistant）content 里已经写好了第一人称文本，走默认分支。
+    // 热搜只有标题 + 一句简介，明确告诉角色没读过全文，免得对着标题编细节。
+    if (type === 'news_card' && msg.role === 'user') {
+        const md: any = msg.metadata || {};
+        const title = md.title || msg.content || '一条热点';
+        const source = md.source ? `（来源：${md.source}）` : '';
+        const desc = md.desc && md.desc !== title ? `\n简介：${md.desc}` : '';
+        const url = md.url ? `\n链接：${md.url}` : '';
+        return `[热点分享] ${userName}把一条热搜转给了你：「${title}」${source}${desc}${url}\n（注：你看到的只有热搜标题和简介，没读过相关报道全文；可以聊看法、问${userName}怎么看，但别编造报道里的具体细节。）`;
+    }
+
     // 小剧场卡片：用户在日程表"窥视"了角色某时段的行为演出，并把这一刻发到聊天里。
     // 归档/记忆宫殿要读到「用户偷看了你 + 你当时在做什么」，角色才会记得"被看到"这件事。
     if (type === 'theater_card') {

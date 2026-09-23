@@ -3493,7 +3493,9 @@ const MessageItem = React.memo(({
                     </div>
                     {/* 页脚 */}
                     <div className="px-3 py-1.5 flex items-center justify-between border-t border-stone-400/50">
-                        <span className="text-[9px] text-stone-500 italic">{charName || 'Ta'} 转给你看</span>
+                        <span className="text-[9px] text-stone-500 italic">
+                            {m.role === 'user' ? `转给 ${charName || 'Ta'} 看` : `${charName || 'Ta'} 转给你看`}
+                        </span>
                         {url
                             ? <span className="text-[10px] text-red-700 font-bold tracking-wide">查看原文 ›</span>
                             : <span className="text-[9px] text-stone-400">热点速读</span>}
