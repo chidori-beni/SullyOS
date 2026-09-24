@@ -15,7 +15,8 @@ import {
   type BackgroundJobProbeOutcome,
 } from './activeMsgClient';
 import { AMSG_JOB_NAMESPACE } from './amsgTaskKinds';
-import { buildCharInstantCredRow, type LlmCredentialRow } from './amsgLlmCredentials';
+import { buildCharInstantCredRow, toCredentialValue, type LlmCredentialRow } from './amsgLlmCredentials';
+import { storyCredId } from './storyApiPreset';
 import {
   STORY_BACKGROUND_REPLY_KIND,
   buildStoryBackgroundJobInput,
@@ -396,7 +397,16 @@ const scheduling = new Set<string>();
 const toCredentialRow = (
   api: Pick<APIConfig, 'baseUrl' | 'apiKey' | 'model'>,
   charId: string,
-): LlmCredentialRow | null => buildCharInstantCredRow(charId, api);
+  storyThreadId?: string,
+): LlmCredentialRow | null => {
+  // 剧情单独选了 API：写进剧情自己的一格。借用角色的 instant 格会和私聊互相覆盖，
+  // 任务在云端排队期间谁后写谁赢，剧情可能用私聊的 API 生成（反之亦然）。
+  if (storyThreadId) {
+    const value = toCredentialValue(api);
+    return value ? { credId: storyCredId(storyThreadId), value } : null;
+  }
+  return buildCharInstantCredRow(charId, api);
+};
 
 const probeToFallbackReason = (outcome: BackgroundJobProbeOutcome): 'unsupported' | 'unknown' => (
   outcome === 'unsupported' ? 'unsupported' : 'unknown'
@@ -406,6 +416,8 @@ export const schedulePendingStoryBackgroundJob = async (args: {
   jobId: string;
   char: Pick<CharacterProfile, 'id' | 'name'>;
   api: Pick<APIConfig, 'baseUrl' | 'apiKey' | 'model'>;
+  /** 剧情单独选了 API 预设（不跟随主 API） */
+  storyOwnApi?: boolean;
 }): Promise<StoryBackgroundScheduleOutcome> => {
   const pending = getPendingStoryBackgroundJob(args.jobId);
   // 取消和排程可能同时在飞。pending 被取消函数删掉时，不能把这次竞态误判成
@@ -423,7 +435,7 @@ export const schedulePendingStoryBackgroundJob = async (args: {
       return { status: 'cancelled' };
     }
     if (pending.taskUuid) return { status: 'queued', uuid: pending.taskUuid };
-    const credRow = toCredentialRow(args.api, args.char.id);
+    const credRow = toCredentialRow(args.api, args.char.id, args.storyOwnApi ? pending.input.threadId : undefined);
     if (!credRow) return { status: 'fallback', reason: 'error' };
     const probe = await ActiveMsgClient.probeStoryBackgroundJobSupportDetailed();
     if (await getStoryBackgroundMarkerState(pending.input.markerMessageId, args.jobId) !== 'active') {

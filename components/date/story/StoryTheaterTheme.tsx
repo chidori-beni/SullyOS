@@ -12,13 +12,22 @@ interface StoryAppearance {
     decor: StoryDecorMode;
     /** 剧情正文字号 px；旧存档没有这个字段时按默认 15px */
     fontSize: number;
+    /** 引号（“” 「」 ‘’ 『』）内文字的高亮；三项各自独立开关 */
+    quoteBold: boolean;
+    quoteColorOn: boolean;
+    quoteColor: string;
+    quoteBgOn: boolean;
+    quoteBg: string;
 }
+
+type StoryQuotePatch = Partial<Pick<StoryAppearance, 'quoteBold' | 'quoteColorOn' | 'quoteColor' | 'quoteBgOn' | 'quoteBg'>>;
 
 interface StoryThemeContextValue {
     appearance: StoryAppearance;
     setColor: (value: StoryColorMode) => void;
     setDecor: (value: StoryDecorMode) => void;
     setFontSize: (value: number) => void;
+    setQuote: (patch: StoryQuotePatch) => void;
 }
 
 const STORAGE_KEY = STORY_THEATER_APPEARANCE_STORAGE_KEY;
@@ -26,7 +35,23 @@ const STORY_APPEARANCE_HISTORY_KEY = '__sullyStoryAppearance';
 export const STORY_FONT_SIZE_MIN = 11;
 export const STORY_FONT_SIZE_MAX = 22;
 export const STORY_FONT_SIZE_DEFAULT = 15;
-const DEFAULT_APPEARANCE: StoryAppearance = { color: 'light', decor: 'plain', fontSize: STORY_FONT_SIZE_DEFAULT };
+const DEFAULT_QUOTE_COLOR = '#7c3aed';
+const DEFAULT_QUOTE_BG = '#fbbf24';
+const QUOTE_COLOR_SWATCHES = ['#7c3aed', '#db2777', '#dc2626', '#d97706', '#059669', '#2563eb', '#475569'];
+const QUOTE_BG_SWATCHES = ['#fbbf24', '#f472b6', '#a78bfa', '#60a5fa', '#34d399', '#94a3b8'];
+const DEFAULT_APPEARANCE: StoryAppearance = {
+    color: 'light',
+    decor: 'plain',
+    fontSize: STORY_FONT_SIZE_DEFAULT,
+    quoteBold: false,
+    quoteColorOn: false,
+    quoteColor: DEFAULT_QUOTE_COLOR,
+    quoteBgOn: false,
+    quoteBg: DEFAULT_QUOTE_BG,
+};
+
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+const readHex = (value: unknown, fallback: string): string => (typeof value === 'string' && HEX_COLOR.test(value) ? value : fallback);
 
 export function clampStoryFontSize(value: unknown): number {
     const size = Math.round(Number(value));
@@ -44,6 +69,11 @@ function readAppearance(): StoryAppearance {
             color: value.color === 'dark' ? 'dark' : 'light',
             decor: value.decor === 'cinema' ? 'cinema' : 'plain',
             fontSize: clampStoryFontSize(value.fontSize),
+            quoteBold: value.quoteBold === true,
+            quoteColorOn: value.quoteColorOn === true,
+            quoteColor: readHex(value.quoteColor, DEFAULT_QUOTE_COLOR),
+            quoteBgOn: value.quoteBgOn === true,
+            quoteBg: readHex(value.quoteBg, DEFAULT_QUOTE_BG),
         };
     } catch {
         return DEFAULT_APPEARANCE;
@@ -156,6 +186,15 @@ const STORY_THEME_CSS = `
   letter-spacing: .24em;
 }
 .story-theme .story-prose { font-size: var(--story-font-size, 15px); line-height: 2.13; }
+.story-theme.story-q-bold .story-quote { font-weight: 700; }
+.story-theme.story-q-color .story-quote { color: var(--story-quote-color) !important; }
+.story-theme.story-q-bg .story-quote {
+  background-color: color-mix(in srgb, var(--story-quote-bg) 32%, transparent);
+  border-radius: 4px;
+  padding: 0 2px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
 .story-theme .story-prose-user { font-size: calc(var(--story-font-size, 15px) - 1px); line-height: 2; }
 body.ios-keyboard-open .story-theme .story-safe-footer { padding-bottom: 12px !important; }
 body.ios-keyboard-open .story-theme .story-safe-sheet { padding-bottom: 18px !important; }
@@ -164,6 +203,39 @@ body.ios-keyboard-open .story-theme .story-quick-preset { bottom: 112px !importa
   .story-theme *, .story-theme *::before, .story-theme *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
 `;
+
+/** 主题根节点的 class / 变量；剧情页和弹出的外观面板（portal 在 body 下）共用 */
+function themeRootProps(appearance: StoryAppearance): { className: string; style: React.CSSProperties } {
+    const flags = [
+        appearance.quoteBold ? 'story-q-bold' : '',
+        appearance.quoteColorOn ? 'story-q-color' : '',
+        appearance.quoteBgOn ? 'story-q-bg' : '',
+    ].filter(Boolean).join(' ');
+    return {
+        className: `story-theme story-theme-${appearance.color} story-decor-${appearance.decor} ${flags}`,
+        style: {
+            ['--story-font-size' as string]: `${appearance.fontSize}px`,
+            ['--story-quote-color' as string]: appearance.quoteColor,
+            ['--story-quote-bg' as string]: appearance.quoteBg,
+        },
+    };
+}
+
+const ToggleChip: React.FC<{ on: boolean; onClick: () => void; label: string }> = ({ on, onClick, label }) => (
+    <button type='button' role='switch' aria-checked={on} aria-label={label} onClick={onClick} className={`w-11 h-6 shrink-0 rounded-full relative transition-colors ${on ? 'bg-violet-600' : 'bg-slate-200'}`}>
+        <span className={`absolute top-0.5 left-0 w-5 h-5 rounded-full bg-white shadow transition-transform ${on ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
+    </button>
+);
+
+const ColorRow: React.FC<{ value: string; swatches: string[]; onChange: (value: string) => void; label: string }> = ({ value, swatches, onChange, label }) => (
+    <div className='mt-2 flex flex-wrap items-center gap-2'>
+        {swatches.map(color => <button key={color} type='button' onClick={() => onChange(color)} aria-label={`${label} ${color}`} className={`w-6 h-6 rounded-full border-2 ${value.toLowerCase() === color ? 'border-violet-700' : 'border-transparent'}`} style={{ backgroundColor: color }} />)}
+        <label className='relative w-6 h-6 rounded-full overflow-hidden cursor-pointer' style={{ background: 'conic-gradient(red, yellow, lime, cyan, blue, magenta, red)' }} title='自选颜色'>
+            <input type='color' value={value} onChange={event => onChange(event.target.value)} aria-label={`${label} 自选`} className='absolute inset-0 w-full h-full opacity-0 cursor-pointer' />
+        </label>
+        <span className='text-[10px] tabular-nums text-slate-400'>{value}</span>
+    </div>
+);
 
 export const StoryTheaterThemeProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
     const [appearance, setAppearance] = useState<StoryAppearance>(readAppearance);
@@ -177,10 +249,11 @@ export const StoryTheaterThemeProvider: React.FC<React.PropsWithChildren> = ({ c
         setColor: color => setAppearance(current => ({ ...current, color })),
         setDecor: decor => setAppearance(current => ({ ...current, decor })),
         setFontSize: fontSize => setAppearance(current => ({ ...current, fontSize: clampStoryFontSize(fontSize) })),
+        setQuote: patch => setAppearance(current => ({ ...current, ...patch })),
     }), [appearance]);
 
     return <StoryThemeContext.Provider value={value}>
-        <div className={`story-theme story-theme-${appearance.color} story-decor-${appearance.decor} h-full w-full min-h-0`} style={{ ['--story-font-size' as string]: `${appearance.fontSize}px` }}>
+        <div className={`${themeRootProps(appearance).className} h-full w-full min-h-0`} style={themeRootProps(appearance).style}>
             <style>{STORY_THEME_CSS}</style>
             {children}
         </div>
@@ -227,15 +300,16 @@ export const StoryAppearanceButton: React.FC<{ className?: string }> = ({ classN
         };
     }, [closePanel, open, registerBackHandler]);
     if (!context) return null;
-    const { appearance, setColor, setDecor, setFontSize } = context;
+    const { appearance, setColor, setDecor, setFontSize, setQuote } = context;
+    const rootProps = themeRootProps(appearance);
 
     return <>
         <button type='button' onClick={() => setOpen(true)} className={`w-9 h-9 rounded-full grid place-items-center ${className}`} title='剧情外观' aria-label='剧情外观'>
             <Palette size={18} weight={appearance.decor === 'cinema' ? 'fill' : 'regular'} />
         </button>
         {open && createPortal(<div
-            className={`story-theme story-theme-${appearance.color} story-decor-${appearance.decor} fixed inset-0 z-[90] flex items-end sm:items-center justify-center overflow-y-auto overscroll-contain`}
-            style={{ ['--story-font-size' as string]: `${appearance.fontSize}px`, position: 'fixed', paddingTop: 'max(12px, var(--safe-top))', paddingBottom: 'max(0px, var(--safe-bottom))', backgroundColor: 'rgba(2, 6, 23, .35)' }}
+            className={`${rootProps.className} fixed inset-0 z-[90] flex items-end sm:items-center justify-center overflow-y-auto overscroll-contain`}
+            style={{ ...rootProps.style, position: 'fixed', paddingTop: 'max(12px, var(--safe-top))', paddingBottom: 'max(0px, var(--safe-bottom))', backgroundColor: 'rgba(2, 6, 23, .35)' }}
             onClick={closePanel}
             role='presentation'
         >
@@ -257,6 +331,20 @@ export const StoryAppearanceButton: React.FC<{ className?: string }> = ({ classN
                         <div className='flex items-center gap-3'><span className='text-xs font-semibold w-16'>正文字号</span><input type='range' min={STORY_FONT_SIZE_MIN} max={STORY_FONT_SIZE_MAX} step={1} value={appearance.fontSize} onChange={event => setFontSize(Number(event.target.value))} aria-label='剧情正文字号' className='min-w-0 flex-1 accent-violet-600' /><span className='w-11 shrink-0 text-right text-[11px] font-bold tabular-nums text-violet-700'>{appearance.fontSize}px</span></div>
                         <div className='mt-3 ml-[4.75rem] flex flex-wrap gap-2'>{[13, 14, 15, 16, 18].map(size => <button key={size} type='button' onClick={() => setFontSize(size)} className={`px-3 py-1.5 rounded-full text-[10px] font-bold ${appearance.fontSize === size ? 'bg-violet-600 text-white' : 'bg-white text-slate-500 border border-slate-200'}`}>{size}{size === STORY_FONT_SIZE_DEFAULT ? ' 默认' : ''}</button>)}</div>
                         <p className='story-prose mt-3 rounded-xl bg-white px-3 py-2 font-serif text-slate-800'>雨停了。他把伞收起来，回头看了你一眼。</p>
+                    </div>
+                    <div className='py-4 border-t border-slate-200'>
+                        <div className='text-xs font-semibold'>引号高亮</div>
+                        <p className='mt-1 text-[10px] leading-5 text-slate-500'>“” 「」 ‘’ 『』 包住的文字（连同引号）。三项可以随意组合。</p>
+                        <div className='mt-3 flex items-center gap-3'><span className='min-w-0 flex-1 text-[11px] font-semibold'>粗体</span><ToggleChip on={appearance.quoteBold} onClick={() => setQuote({ quoteBold: !appearance.quoteBold })} label='引号内文字粗体' /></div>
+                        <div className='mt-3'>
+                            <div className='flex items-center gap-3'><span className='min-w-0 flex-1 text-[11px] font-semibold'>换字体颜色</span><ToggleChip on={appearance.quoteColorOn} onClick={() => setQuote({ quoteColorOn: !appearance.quoteColorOn })} label='引号内文字换颜色' /></div>
+                            {appearance.quoteColorOn && <ColorRow value={appearance.quoteColor} swatches={QUOTE_COLOR_SWATCHES} onChange={quoteColor => setQuote({ quoteColor })} label='字体颜色' />}
+                        </div>
+                        <div className='mt-3'>
+                            <div className='flex items-center gap-3'><span className='min-w-0 flex-1 text-[11px] font-semibold'>加底色</span><ToggleChip on={appearance.quoteBgOn} onClick={() => setQuote({ quoteBgOn: !appearance.quoteBgOn })} label='引号内文字加底色' /></div>
+                            {appearance.quoteBgOn && <ColorRow value={appearance.quoteBg} swatches={QUOTE_BG_SWATCHES} onChange={quoteBg => setQuote({ quoteBg })} label='底色' />}
+                        </div>
+                        <p className='story-prose mt-3 rounded-xl bg-white px-3 py-2 font-serif text-slate-800'>她停下脚步。<span className='story-quote'>“你还记得吗？”</span>风把声音吹散了。<span className='story-quote'>「走吧。」</span></p>
                     </div>
                 </div>
             </div>

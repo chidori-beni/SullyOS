@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { loadStoryActorContext, replaceStoryTheaterReply, STORY_REROLL_INSTRUCTION } from '../../../utils/storyTheaterReply';
-import { Archive, ArrowBendDownRight, ArrowClockwise, ArrowLeft, Broadcast, CaretDown, CaretLeft, CaretRight, ChatCircleDots, Clock, CornersIn, CornersOut, Database, DownloadSimple, Eye, EyeSlash, FilmSlate, GearSix, HeartStraight, Key, MapPin, PaperPlaneTilt, PencilSimple, SlidersHorizontal, SpinnerGap, Stop, Trash, X } from '@phosphor-icons/react';
+import { Archive, ArrowBendDownRight, ArrowClockwise, ArrowLeft, Broadcast, CaretDown, CaretLeft, CaretRight, ChatCircleDots, Clock, CornersIn, CornersOut, Database, DownloadSimple, Eye, EyeSlash, FilmSlate, GearSix, HeartStraight, Key, MapPin, PaperPlaneTilt, PencilSimple, Plugs, SlidersHorizontal, SpinnerGap, Stop, Trash, X } from '@phosphor-icons/react';
 import { useOS } from '../../../context/OSContext';
 import type { CharacterProfile, Message, StoryTheaterEntry, StoryTheaterMask, StoryTheaterPreset } from '../../../types';
 import { DB } from '../../../utils/db';
@@ -66,11 +66,17 @@ import { processNewMessagesWithAutoArchive } from '../../../utils/memoryPalace/a
 import { incrementDigestRound, runCognitiveDigestion } from '../../../utils/memoryPalace';
 import StoryQuickPresetPanel from './StoryQuickPresetPanel';
 import { StoryAppearanceButton } from './StoryTheaterTheme';
+import StoryApiPresetSheet from './StoryApiPresetSheet';
+import { readStoryApiPresetId, resolveStoryApi, writeStoryApiPresetId } from '../../../utils/storyApiPreset';
+import { splitStoryQuotes } from '../../../utils/storyQuoteHighlight';
 import { shareOrDownloadFile } from '../../../utils/shareExport';
 import {
     buildStoryContinueInstruction,
     MEETING_CONTINUE_DISPLAY_TEXT,
 } from '../../../utils/meetingContinue';
+
+/** 引号包住的片段套上 .story-quote；是否加粗 / 换色 / 底色由剧情外观面板的开关决定（纯 CSS）。 */
+const QuoteText: React.FC<{ text: string }> = React.memo(({ text }) => <>{splitStoryQuotes(text).map((segment, index) => segment.quote ? <span key={index} className='story-quote'>{segment.text}</span> : <React.Fragment key={index}>{segment.text}</React.Fragment>)}</>);
 
 interface Props {
     entry: StoryTheaterEntry;
@@ -243,7 +249,7 @@ const StoryOutput: React.FC<{ content: string; onChoose?: (text: string) => void
         {!hasScene && relationship}
         {blocks.map((block, index) => {
             const lines = splitDisplayLines(block.text);
-            if (block.kind === 'story') return <p key={index} className='story-prose font-serif text-slate-800 whitespace-pre-wrap'>{block.text}</p>;
+            if (block.kind === 'story') return <p key={index} className='story-prose font-serif text-slate-800 whitespace-pre-wrap'><QuoteText text={block.text} /></p>;
             if (block.kind === 'scene') return <section key={index} className='py-4 border-y border-slate-300'>
                 <div className='flex items-center gap-2 text-[9px] tracking-[.22em] uppercase font-bold text-violet-600'><FilmSlate size={14} weight='fill' />{block.title}</div>
                 <div className='mt-3 grid grid-cols-2 gap-x-5 gap-y-3'>{lines.map((line, lineIndex) => <div key={lineIndex} className={line.label === '场面' ? 'col-span-2' : ''}><div className='flex items-center gap-1 text-[9px] font-bold text-slate-400'>{line.label === '时间' ? <Clock size={11} /> : line.label === '地点' ? <MapPin size={11} /> : null}{line.label || '场景'}</div><div className='mt-1 text-[12px] leading-5 text-slate-700'>{line.value}</div></div>)}</div>
@@ -296,7 +302,13 @@ const StoryOutput: React.FC<{ content: string; onChoose?: (text: string) => void
 };
 
 const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, onEdit, onOpenVectorMemory, onEntryChange }) => {
-    const { characters, userProfile, apiConfig, memoryPalaceConfig, remoteVectorConfig, updateCharacter, addToast } = useOS();
+    const { characters, userProfile, apiConfig, apiPresets, memoryPalaceConfig, remoteVectorConfig, updateCharacter, addToast } = useOS();
+    // 剧情专用 API：只记预设 id，在这里和主 API 合成；剧情里所有请求都走 storyApi，主配置不动。
+    const [storyApiPresetId, setStoryApiPresetId] = useState<string | null>(readStoryApiPresetId);
+    const [showApiSheet, setShowApiSheet] = useState(false);
+    const resolvedStoryApi = useMemo(() => resolveStoryApi(apiPresets, apiConfig, storyApiPresetId), [apiConfig, apiPresets, storyApiPresetId]);
+    const storyApi = resolvedStoryApi.api;
+    const storyOwnApi = !!resolvedStoryApi.preset;
     const threadId = storyTheaterThreadId(entry.id);
     const actors = useMemo(() => characters.filter(char => entry.characterIds.includes(char.id)), [characters, entry.characterIds]);
     const memoryActors = useMemo(() => {
@@ -394,7 +406,8 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
         void schedulePendingStoryBackgroundJob({
             jobId: pending.jobId,
             char: actors[0],
-            api: apiConfig,
+            api: storyApi,
+            storyOwnApi,
         }).then(outcome => {
             if (outcome.status === 'cancelled') {
                 setBackgroundPendingJobId(null);
@@ -553,10 +566,10 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
 
     const callCompletion = useCallback(async (payload: Array<{ role: string; content: string }>, settings?: Partial<StoryGenerationSettings>, onPromptTokens?: (tokens: number) => void, signal?: AbortSignal): Promise<string> => {
         const generationSettings = prepareStoryGenerationSettings(settings, entry.omitSamplingParams === true);
-        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+        const response = await fetch(`${storyApi.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-            body: JSON.stringify({ model: apiConfig.model, messages: payload, stream: false, ...generationSettings }),
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${storyApi.apiKey}` },
+            body: JSON.stringify({ model: storyApi.model, messages: payload, stream: false, ...generationSettings }),
             signal,
             __sullyMeta: { appId: 'date', appName: '见面', purpose: '剧情见面生成' },
         } as RequestInit & { __sullyMeta: { appId: string; appName: string; purpose: string } });
@@ -567,7 +580,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
         const content = extractContent(data).trim();
         if (!content) throw new Error(describeEmptyStoryCompletion(data));
         return content;
-    }, [apiConfig, entry.omitSamplingParams]);
+    }, [storyApi, entry.omitSamplingParams]);
 
     const saveCentralAndMirrors = useCallback(async (role: 'user' | 'assistant', content: string, centralMetadata: Record<string, unknown> = {}): Promise<number> => {
         const now = Date.now();
@@ -649,7 +662,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
     const applyActorMemoryPipeline = useCallback(async () => {
         if (!entry.writesToCharacterMemory) return;
         const embedding = memoryPalaceConfig.embedding;
-        const light = memoryPalaceConfig.lightLLM?.baseUrl ? memoryPalaceConfig.lightLLM : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };
+        const light = memoryPalaceConfig.lightLLM?.baseUrl ? memoryPalaceConfig.lightLLM : { baseUrl: storyApi.baseUrl, apiKey: storyApi.apiKey, model: storyApi.model };
         if (!embedding?.baseUrl || !embedding?.apiKey || !light.baseUrl) return;
         for (const actor of memoryActors) {
             if (!actor.memoryPalaceEnabled) continue;
@@ -666,7 +679,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
         }
         setMemoryStatus('');
         await loadMessages();
-    }, [apiConfig, characters, entry.writesToCharacterMemory, loadMessages, mask.name, memoryActors, memoryPalaceConfig, updateCharacter]);
+    }, [storyApi, characters, entry.writesToCharacterMemory, loadMessages, mask.name, memoryActors, memoryPalaceConfig, updateCharacter]);
 
     const archiveIfNeeded = useCallback(async (signal?: AbortSignal): Promise<StoryTheaterEntry | null> => {
         const activeSignal = signal || generationRun.current?.controller.signal;
@@ -691,7 +704,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                 ], { temperature: 0.2, max_tokens: 1600 }, undefined, activeSignal);
             } else {
                 const embedding = memoryPalaceConfig.embedding;
-                const light = memoryPalaceConfig.lightLLM?.baseUrl ? memoryPalaceConfig.lightLLM : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };
+                const light = memoryPalaceConfig.lightLLM?.baseUrl ? memoryPalaceConfig.lightLLM : { baseUrl: storyApi.baseUrl, apiKey: storyApi.apiKey, model: storyApi.model };
                 if (!embedding?.baseUrl || !embedding?.apiKey || !light.baseUrl) {
                     addToast('独立向量归档需要先完成向量记忆配置', 'error');
                     return null;
@@ -729,7 +742,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             archiveLock.current = false;
             setMemoryStatus('');
         }
-    }, [addToast, apiConfig, callCompletion, entry, loadMessages, mask.name, memoryPalaceConfig, onEntryChange, threadId]);
+    }, [addToast, storyApi, callCompletion, entry, loadMessages, mask.name, memoryPalaceConfig, onEntryChange, threadId]);
 
     // 后台结果可能在剧情页已经卸载后才到达。重新进入时把“正文/镜像已落库，但
     // 记忆整理或事件盒还没收尾”的工作补上；正文本身不依赖这一步才能安全显示。
@@ -951,7 +964,8 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                 const remote = await schedulePendingStoryBackgroundJob({
                     jobId: persistedBackground.jobId,
                     char: actors[0],
-                    api: apiConfig,
+                    api: storyApi,
+                    storyOwnApi,
                 });
                 ensureRunActive();
                 if (remote.status === 'queued' || remote.status === 'uncertain') {
@@ -1033,7 +1047,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                 setRerollingId(null);
             }
         }
-    }, [actors, addToast, affinityDrafts, affinityEnabled, apiConfig, applyActorMemoryPipeline, archiveIfNeeded, buildActorContexts, buildMaskMemoryContext, callCompletion, effectivePreset, entry, independentRecall, input, isStopping, loadMessages, mask, memoryActors, promptIdentityName, saveCentralAndMirrors, selectedBooks, threadId]);
+    }, [actors, addToast, affinityDrafts, affinityEnabled, storyApi, applyActorMemoryPipeline, archiveIfNeeded, buildActorContexts, buildMaskMemoryContext, callCompletion, effectivePreset, entry, independentRecall, input, isStopping, loadMessages, mask, memoryActors, promptIdentityName, saveCentralAndMirrors, selectedBooks, threadId]);
 
     const stopGeneration = useCallback(() => {
         const run = generationRun.current;
@@ -1146,12 +1160,12 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                                 </summary>
                                 {isExpanded && <div className='pb-5 pl-7'>
                                     {message.role === 'user'
-                                        ? <p className='story-prose-user text-slate-600 whitespace-pre-wrap'>{message.content}</p>
+                                        ? <p className='story-prose-user text-slate-600 whitespace-pre-wrap'><QuoteText text={message.content} /></p>
                                         : <StoryOutput content={message.content} affinityInputs={affinityInputsFromMessage(message, actors)} />}
                                 </div>}
                             </details>;
                         }
-                        if (message.role === 'user') return <section key={message.id} {...pressHandlersFor(message)} className='pl-4 border-l-2 border-violet-300'><div className='text-[9px] tracking-[.16em] font-bold text-violet-500'>你写下</div><p className='story-prose-user mt-2 text-slate-600 whitespace-pre-wrap'>{message.content}</p></section>;
+                        if (message.role === 'user') return <section key={message.id} {...pressHandlersFor(message)} className='pl-4 border-l-2 border-violet-300'><div className='text-[9px] tracking-[.16em] font-bold text-violet-500'>你写下</div><p className='story-prose-user mt-2 text-slate-600 whitespace-pre-wrap'><QuoteText text={message.content} /></p></section>;
                         const isLatest = message.id === messages[messages.length - 1]?.id;
                         return <article key={message.id} {...pressHandlersFor(message)}><StoryOutput content={message.content} onChoose={choice => setInput(choice)} affinityInputs={affinityInputsFromMessage(message, actors)} />{isLatest && <div className='mt-4 flex items-center justify-end gap-2'><span className='w-1.5 h-1.5 rounded-full bg-violet-400' /><button disabled={generationBusy} onClick={() => void send(message)} className='inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-[10px] font-bold text-slate-500 disabled:opacity-40'>{rerollingId === message.id ? <SpinnerGap size={12} className='animate-spin' /> : <ArrowClockwise size={12} />}换一种写法</button></div>}</article>;
                     })}
@@ -1198,9 +1212,28 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                     <textarea value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void send(); } }} disabled={generationBusy} rows={2} placeholder={pendingRetryInput ? '留空并点击推进，可继续上次中断' : canWriteOpening ? '也可以先写一句；留空推进则由故事开场' : '写下动作、对白、时间跳转，或你希望故事发生的事……'} className='min-w-0 min-h-12 max-h-36 flex-1 px-2 py-2 bg-transparent text-sm leading-6 resize-none outline-none disabled:opacity-50' />
                     <button type='button' onClick={() => generationBusy ? stopGeneration() : void send()} disabled={isStopping || (!generationBusy && !input.trim() && !pendingRetryInput && !canWriteOpening)} title={generationBusy ? (isStopping ? '正在停止生成…' : '停止生成') : !input.trim() && pendingRetryInput ? '继续上次中断' : canWriteOpening && !input.trim() ? '让故事先开场' : '推进'} aria-label={generationBusy ? '停止剧情生成' : '推进当前剧情'} className={`story-send-button self-end w-11 h-11 shrink-0 rounded-xl text-white grid place-items-center disabled:opacity-30 ${generationBusy ? 'bg-rose-600' : 'bg-slate-900'}`}>{generationBusy ? <Stop size={18} weight='bold' /> : <PaperPlaneTilt size={18} weight='fill' />}</button>
                 </div>
-                <div className='mt-2 text-center text-[9px] text-slate-400'>Ctrl / ⌘ + Enter 推进 · 长按楼层可编辑或删除 · 右侧方块可停止生成</div>
+                <div className='mt-2 flex items-center gap-2'>
+                    <button type='button' onClick={() => setShowApiSheet(true)} data-testid='story-api-preset-entry' className={`min-w-0 max-w-[60%] shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold ${storyOwnApi ? 'border-violet-200 bg-violet-50 text-violet-700' : resolvedStoryApi.missing ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-500'}`} title='剧情专用 API' aria-label='切换剧情专用 API'>
+                        <Plugs size={12} weight='fill' className='shrink-0' />
+                        <span className='truncate'>{resolvedStoryApi.preset ? resolvedStoryApi.preset.name : resolvedStoryApi.missing ? '预设已删 · 主 API' : `主 API${apiConfig.model ? ` · ${apiConfig.model}` : ''}`}</span>
+                    </button>
+                    <span className='min-w-0 flex-1 truncate text-right text-[9px] text-slate-400'>长按楼层可编辑或删除 · 右侧方块可停止生成</span>
+                </div>
             </div>
         </footer>
+        {showApiSheet && <StoryApiPresetSheet
+            apiPresets={apiPresets}
+            mainApi={apiConfig}
+            selectedId={resolvedStoryApi.preset?.id ?? null}
+            onClose={() => setShowApiSheet(false)}
+            onSelect={presetId => {
+                writeStoryApiPresetId(presetId);
+                setStoryApiPresetId(presetId);
+                setShowApiSheet(false);
+                const picked = presetId ? apiPresets.find(item => item.id === presetId) : null;
+                addToast(picked ? `剧情改用「${picked.name}」，下一轮生效` : '剧情改回跟随主 API', 'success');
+            }}
+        />}
         {isFullscreenEditor && <div className='fixed inset-0 z-[180] flex min-h-0 flex-col overflow-hidden bg-stone-100 text-slate-800' style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }} role='dialog' aria-modal='true' aria-label='全屏编辑剧情推进'>
             <header className='shrink-0 border-b border-slate-200 bg-stone-100/95 px-4 py-3 backdrop-blur'>
                 <div className='flex items-center gap-3'>
