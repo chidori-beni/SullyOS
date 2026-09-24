@@ -1,6 +1,6 @@
 import { loadCharacterContextMessages } from '../utils/chatContextRange';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Microphone, SpeakerHigh, PhoneDisconnect, Translate, Gear, Clock, CaretLeft, CaretRight, Phone, VideoCamera, VideoCameraSlash, Cube, FolderOpen, FileZip, Moon, Sun, Check } from '@phosphor-icons/react';
+import { Microphone, SpeakerHigh, PhoneDisconnect, Translate, Gear, Clock, CaretLeft, CaretRight, Phone, VideoCamera, VideoCameraSlash, Cube, FolderOpen, FileZip, Moon, Sun, Check, Plugs } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { extractContent, safeFetchJson } from '../utils/safeApi';
 import { minimaxFetch } from '../utils/minimaxEndpoint';
@@ -44,6 +44,8 @@ import {
 import CallSetupGuide, { type CallSetupGuideStep } from '../components/call/CallSetupGuide';
 import CallPreferencesSheet from '../components/call/CallPreferencesSheet';
 import SleepCompanionSheet from '../components/call/SleepCompanionSheet';
+import CallApiPresetSheet from '../components/call/CallApiPresetSheet';
+import { configFromPreset, findActivePresetId } from '../utils/apiPresetSwitch';
 import {
   SLEEP_DREAM_CHECK_INTERVAL_MS,
   SLEEP_DREAM_MAX_COUNT,
@@ -619,7 +621,7 @@ ${getVoicePromptOverride(getTtsProvider()) ?? callVoiceActingGuide()}
   return [coreContext, timeContext, callPrompt, voiceLangPrompt].filter(Boolean).join('\n\n');
 };
 const CallApp: React.FC = () => {
-  const { closeApp, openApp, characters, activeCharacterId, addToast, apiConfig, userProfile, customThemes, suspendCall, suspendedCall, clearSuspendedCall, updateCharacter, characterGroups, groups, realtimeConfig, memoryPalaceConfig, registerBackHandler } = useOS();
+  const { closeApp, openApp, characters, activeCharacterId, addToast, apiConfig, apiPresets, commitApiConfig, userProfile, customThemes, suspendCall, suspendedCall, clearSuspendedCall, updateCharacter, characterGroups, groups, realtimeConfig, memoryPalaceConfig, registerBackHandler } = useOS();
 
   const initialCallLaunchIntentRef = useRef(callLaunch.peek());
   // A chat call-card deep link opens directly into record detail. Keep the
@@ -647,6 +649,7 @@ const CallApp: React.FC = () => {
   // 函数——它们是普通异步函数，不是渲染期间读 state，必须读 ref 才不会拿到闭包里的旧值。
   const [sleepMode, setSleepMode] = useState(false);
   const [showSleepPanel, setShowSleepPanel] = useState(false);
+  const [showApiPresetPicker, setShowApiPresetPicker] = useState(false);
   const [sleepAutoHangupMinutes, setSleepAutoHangupMinutes] = useState<number>(loadSleepAutoHangupMinutes);
   const sleepModeRef = useRef(false);
   const sleepDreamCountRef = useRef(0);
@@ -3580,6 +3583,9 @@ ${sentencePlan}`;
   // 一段已经开始的通话安静太久时，角色可以自然接话两次。它是独立的显式偏好，
   // 默认关闭；“谁先开口”只决定刚接通时的第一句话。
   const idleNudgeBusyRef = useRef(false);
+  // 定时器里只调 ref：通话中途切了 API 预设，等到点时要用的是最新的 apiConfig，不是挂定时器那一刻的。
+  const fireIdleNudgeRef = useRef<() => Promise<void>>(async () => {});
+  const fireSleepLineRef = useRef<(phase: 'lullaby' | 'dream') => Promise<boolean>>(async () => false);
   const fireIdleNudge = async () => {
     if (!callPreferences.idleNudgeEnabled || idleNudgeBusyRef.current || !selectedChar?.id) return;
     if (document.visibilityState === 'hidden') return;
@@ -3668,7 +3674,7 @@ ${sentencePlan}`;
     if (viewMode !== 'in-call' || callState !== 'listening' || isAudioPlaying) return;
     if (!bubbles.length || idleNudgeCountRef.current >= 2 || idleNudgeBusyRef.current) return;
     const silenceMs = 50_000 + Math.random() * 30_000 + idleNudgeCountRef.current * 40_000;
-    const timer = window.setTimeout(() => { void fireIdleNudge(); }, silenceMs);
+    const timer = window.setTimeout(() => { void fireIdleNudgeRef.current(); }, silenceMs);
     return () => window.clearTimeout(timer);
   }, [viewMode, callState, isAudioPlaying, bubbles, draftInput, callPreferences.idleNudgeEnabled]);
 
@@ -3689,6 +3695,7 @@ ${sentencePlan}`;
       sleepAutoHangupTimerRef.current = null;
     }
   };
+  fireIdleNudgeRef.current = fireIdleNudge;
   const fireSleepLine = async (phase: 'lullaby' | 'dream'): Promise<boolean> => {
     if (sleepBusyRef.current || !selectedChar?.id) return false;
     if (document.visibilityState === 'hidden') return false; // 后台时先跳过，等下一次检查窗口再试
@@ -3770,6 +3777,7 @@ ${sentencePlan}`;
       sleepBusyRef.current = false;
     }
   };
+  fireSleepLineRef.current = fireSleepLine;
   const scheduleSleepDreamCheck = () => {
     clearSleepDreamTimer();
     if (!sleepModeRef.current) return;
@@ -3797,7 +3805,7 @@ ${sentencePlan}`;
         return;
       }
       if (shouldFireSleepDream(sleepDreamCountRef.current, callPreferences.sleepDreamEnabled, Math.random()) && !sleepBusyRef.current) {
-        const created = await fireSleepLine('dream');
+        const created = await fireSleepLineRef.current('dream');
         if (created) {
           sleepDreamCountRef.current += 1;
           updateSleepCompanionSession({ dreamCount: sleepDreamCountRef.current });
@@ -4616,6 +4624,23 @@ ${sentencePlan}`;
         >
           <Moon size={14} weight="fill" style={{ color: sleepMode ? accentColor : 'rgba(255,255,255,0.6)' }} />
         </button>
+        {/* 快捷切换 API 预设：跟月亮并排，不用挂断再去设置里换。 */}
+        <button
+          type="button"
+          onClick={() => setShowApiPresetPicker(true)}
+          title="切换 API"
+          aria-label="切换 API"
+          data-testid="call-api-preset-entry"
+          className="absolute flex h-7 w-7 items-center justify-center rounded-full border backdrop-blur-md transition active:scale-90"
+          style={{
+            right: 'calc(1.25rem + 36px)',
+            top: 'calc(max(2.25rem, var(--safe-top)) + 22px)',
+            background: 'rgba(255,255,255,0.06)',
+            borderColor: 'rgba(255,255,255,0.15)',
+          }}
+        >
+          <Plugs size={14} weight="fill" style={{ color: 'rgba(255,255,255,0.6)' }} />
+        </button>
         {/* name block */}
         <div className={`${callMode === 'video' ? 'pt-3' : 'pt-7'} text-center`}>
           {callMode !== 'video' && <div className="text-sm" style={{ color: `${accentColor}cc`, textShadow: `0 0 12px ${accentColor}` }}>❀</div>}
@@ -5082,6 +5107,23 @@ ${sentencePlan}`;
             </div>
           </div>
         </div>
+      )}
+      {showApiPresetPicker && (
+        <CallApiPresetSheet
+          apiPresets={apiPresets}
+          apiConfig={apiConfig}
+          accentColor={accentColor}
+          lightTheme={lightTheme}
+          onClose={() => setShowApiPresetPicker(false)}
+          onApply={(preset) => {
+            // 和设置页 / 聊天设置同一条路：主配置 + 云端凭据 + 待发任务的凭据一起换。
+            const wasActive = findActivePresetId(apiPresets, apiConfig) === preset.id;
+            commitApiConfig(configFromPreset(preset));
+            setShowApiPresetPicker(false);
+            addToast(wasActive ? `仍在用「${preset.name}」` : `已切换到「${preset.name}」，下一句开始生效`, 'success');
+            trackEvent('通话中切换API预设');
+          }}
+        />
       )}
       {showSleepPanel && (
         <SleepCompanionSheet
