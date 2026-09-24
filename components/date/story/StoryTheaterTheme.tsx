@@ -10,17 +10,29 @@ export type StoryDecorMode = 'plain' | 'cinema';
 interface StoryAppearance {
     color: StoryColorMode;
     decor: StoryDecorMode;
+    /** 剧情正文字号 px；旧存档没有这个字段时按默认 15px */
+    fontSize: number;
 }
 
 interface StoryThemeContextValue {
     appearance: StoryAppearance;
     setColor: (value: StoryColorMode) => void;
     setDecor: (value: StoryDecorMode) => void;
+    setFontSize: (value: number) => void;
 }
 
 const STORAGE_KEY = STORY_THEATER_APPEARANCE_STORAGE_KEY;
 const STORY_APPEARANCE_HISTORY_KEY = '__sullyStoryAppearance';
-const DEFAULT_APPEARANCE: StoryAppearance = { color: 'light', decor: 'plain' };
+export const STORY_FONT_SIZE_MIN = 11;
+export const STORY_FONT_SIZE_MAX = 22;
+export const STORY_FONT_SIZE_DEFAULT = 15;
+const DEFAULT_APPEARANCE: StoryAppearance = { color: 'light', decor: 'plain', fontSize: STORY_FONT_SIZE_DEFAULT };
+
+export function clampStoryFontSize(value: unknown): number {
+    const size = Math.round(Number(value));
+    if (!Number.isFinite(size) || size <= 0) return STORY_FONT_SIZE_DEFAULT;
+    return Math.min(STORY_FONT_SIZE_MAX, Math.max(STORY_FONT_SIZE_MIN, size));
+}
 const StoryThemeContext = createContext<StoryThemeContextValue | null>(null);
 
 function readAppearance(): StoryAppearance {
@@ -31,6 +43,7 @@ function readAppearance(): StoryAppearance {
         return {
             color: value.color === 'dark' ? 'dark' : 'light',
             decor: value.decor === 'cinema' ? 'cinema' : 'plain',
+            fontSize: clampStoryFontSize(value.fontSize),
         };
     } catch {
         return DEFAULT_APPEARANCE;
@@ -142,6 +155,8 @@ const STORY_THEME_CSS = `
   font-size: 8px;
   letter-spacing: .24em;
 }
+.story-theme .story-prose { font-size: var(--story-font-size, 15px); line-height: 2.13; }
+.story-theme .story-prose-user { font-size: calc(var(--story-font-size, 15px) - 1px); line-height: 2; }
 body.ios-keyboard-open .story-theme .story-safe-footer { padding-bottom: 12px !important; }
 body.ios-keyboard-open .story-theme .story-safe-sheet { padding-bottom: 18px !important; }
 body.ios-keyboard-open .story-theme .story-quick-preset { bottom: 112px !important; }
@@ -161,10 +176,11 @@ export const StoryTheaterThemeProvider: React.FC<React.PropsWithChildren> = ({ c
         appearance,
         setColor: color => setAppearance(current => ({ ...current, color })),
         setDecor: decor => setAppearance(current => ({ ...current, decor })),
+        setFontSize: fontSize => setAppearance(current => ({ ...current, fontSize: clampStoryFontSize(fontSize) })),
     }), [appearance]);
 
     return <StoryThemeContext.Provider value={value}>
-        <div className={`story-theme story-theme-${appearance.color} story-decor-${appearance.decor} h-full w-full min-h-0`}>
+        <div className={`story-theme story-theme-${appearance.color} story-decor-${appearance.decor} h-full w-full min-h-0`} style={{ ['--story-font-size' as string]: `${appearance.fontSize}px` }}>
             <style>{STORY_THEME_CSS}</style>
             {children}
         </div>
@@ -211,7 +227,7 @@ export const StoryAppearanceButton: React.FC<{ className?: string }> = ({ classN
         };
     }, [closePanel, open, registerBackHandler]);
     if (!context) return null;
-    const { appearance, setColor, setDecor } = context;
+    const { appearance, setColor, setDecor, setFontSize } = context;
 
     return <>
         <button type='button' onClick={() => setOpen(true)} className={`w-9 h-9 rounded-full grid place-items-center ${className}`} title='剧情外观' aria-label='剧情外观'>
@@ -219,7 +235,7 @@ export const StoryAppearanceButton: React.FC<{ className?: string }> = ({ classN
         </button>
         {open && createPortal(<div
             className={`story-theme story-theme-${appearance.color} story-decor-${appearance.decor} fixed inset-0 z-[90] flex items-end sm:items-center justify-center overflow-y-auto overscroll-contain`}
-            style={{ position: 'fixed', paddingTop: 'max(12px, var(--safe-top))', paddingBottom: 'max(0px, var(--safe-bottom))', backgroundColor: 'rgba(2, 6, 23, .35)' }}
+            style={{ ['--story-font-size' as string]: `${appearance.fontSize}px`, position: 'fixed', paddingTop: 'max(12px, var(--safe-top))', paddingBottom: 'max(0px, var(--safe-bottom))', backgroundColor: 'rgba(2, 6, 23, .35)' }}
             onClick={closePanel}
             role='presentation'
         >
@@ -237,6 +253,11 @@ export const StoryAppearanceButton: React.FC<{ className?: string }> = ({ classN
                 <div className='mt-5 min-h-0 overflow-y-auto overscroll-contain border-t border-slate-200'>
                     <div className='py-4 flex items-center gap-3'><span className='text-xs font-semibold w-16'>明暗</span><div className='min-w-0 flex-1 grid grid-cols-2 p-1 rounded-xl bg-slate-200'><button onClick={() => setColor('light')} className={`py-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1.5 ${appearance.color === 'light' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500'}`}><Sun size={14} />浅色</button><button onClick={() => setColor('dark')} className={`py-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1.5 ${appearance.color === 'dark' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500'}`}><Moon size={14} />深色</button></div></div>
                     <div className='py-4 border-t border-slate-200 flex items-center gap-3'><span className='text-xs font-semibold w-16'>装饰</span><div className='min-w-0 flex-1 grid grid-cols-2 p-1 rounded-xl bg-slate-200'><button onClick={() => setDecor('plain')} className={`py-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1.5 ${appearance.decor === 'plain' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500'}`}><SquaresFour size={14} />素雅</button><button onClick={() => setDecor('cinema')} className={`py-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1.5 ${appearance.decor === 'cinema' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500'}`}><Sparkle size={14} />花里胡哨</button></div></div>
+                    <div className='py-4 border-t border-slate-200'>
+                        <div className='flex items-center gap-3'><span className='text-xs font-semibold w-16'>正文字号</span><input type='range' min={STORY_FONT_SIZE_MIN} max={STORY_FONT_SIZE_MAX} step={1} value={appearance.fontSize} onChange={event => setFontSize(Number(event.target.value))} aria-label='剧情正文字号' className='min-w-0 flex-1 accent-violet-600' /><span className='w-11 shrink-0 text-right text-[11px] font-bold tabular-nums text-violet-700'>{appearance.fontSize}px</span></div>
+                        <div className='mt-3 ml-[4.75rem] flex flex-wrap gap-2'>{[13, 14, 15, 16, 18].map(size => <button key={size} type='button' onClick={() => setFontSize(size)} className={`px-3 py-1.5 rounded-full text-[10px] font-bold ${appearance.fontSize === size ? 'bg-violet-600 text-white' : 'bg-white text-slate-500 border border-slate-200'}`}>{size}{size === STORY_FONT_SIZE_DEFAULT ? ' 默认' : ''}</button>)}</div>
+                        <p className='story-prose mt-3 rounded-xl bg-white px-3 py-2 font-serif text-slate-800'>雨停了。他把伞收起来，回头看了你一眼。</p>
+                    </div>
                 </div>
             </div>
         </div>, document.body)}
