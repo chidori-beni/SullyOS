@@ -4,7 +4,7 @@ import { loadCharacterContextMessages } from './chatContextRange';
 // UI 层（CheckPhone.tsx）负责把这里的结果落库 / 镜像到对方角色，本文件只产数据，不碰 React。
 
 import { CharacterProfile, PhoneContact, UserProfile, ConvTopic, PhoneEvidence } from '../types';
-import { ContextBuilder } from './context';
+import { ContextBuilder, type CharacterContextInput, type ContextMessage } from './context';
 import { injectMemoryPalace } from './memoryPalace/pipeline';
 import { DB } from './db';
 import { safeResponseJson } from './safeApi';
@@ -225,13 +225,18 @@ async function chatCompletion(
     api: MiniApiConfig,
     userContent: string,
     temperature = 0.85,
+    characterContext?: CharacterContextInput,
+    history: ContextMessage[] = [],
 ): Promise<string> {
     const res = await fetch(`${api.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${api.apiKey}` },
         body: JSON.stringify({
             model: api.model,
-            messages: [{ role: 'user', content: userContent }],
+            messages: characterContext ? ContextBuilder.buildCharacterRequest(characterContext, [
+                { role: 'system', content: userContent }, ...history,
+                { role: 'user', content: '请按上述要求继续。' },
+            ]) : [{ role: 'user', content: userContent }],
             temperature,
         }),
     });
@@ -265,7 +270,7 @@ async function buildSpeakerContext(
     speaker: CharacterProfile,
     user: UserProfile,
     otherName: string,
-): Promise<string> {
+): Promise<CharacterContextInput> {
     try {
         if (speaker.memoryPalaceEnabled) {
             const recent = await loadCharacterContextMessages(speaker);
@@ -276,7 +281,7 @@ async function buildSpeakerContext(
     }
     // 让角色在和联系人对话时，也意识到「距离上次和用户联系多久了」（统一走 buildCoreContext）
     const lastInteractionTs = await lastUserInteractionTs(speaker.id);
-    return ContextBuilder.buildCoreContext(speaker, user, true, undefined, undefined, { lastInteractionTs });
+    return { char: speaker, user, timeOptions: { lastInteractionTs } };
 }
 
 /** 取该角色与用户最后一次互动的时间戳（最近一条消息）。失败/无消息返回 undefined。 */
@@ -377,11 +382,6 @@ export async function runRealConversation(
         }
     }
 
-    const labeled = () =>
-        turns.length
-            ? turns.map(t => `${t.speaker === 'A' ? a.name : b.name}: ${t.text}`).join('\n')
-            : '';
-
     // 从一段回复里抽出 [[Δ:+N]] 好感变化 + [[了解:…]] 新认识，剥掉这些标记，再去掉可能的「名字:」前缀
     const extract = (raw: string, selfName: string): { text: string; delta: number; learned: string } => {
         let delta = 0;
@@ -409,7 +409,7 @@ export async function runRealConversation(
 
     for (let i = 0; i < rounds; i++) {
         // ---- A 发 ----
-        const aPrompt = `${ctxA}
+        const aPrompt = `
 
 ### [你和用户「${user.name}」的私聊背景（仅供参考，不是这场对话）]
 ${recentA}
@@ -436,7 +436,7 @@ ${p.aSummary}】` : ''
 
 ${p.aSummary ? '最近的对话' : '已经发生的对话'}（"${a.name}:" 是你，"${b.name}:" 是对方）：
 """
-${labeled() || '（还没开始，由你起头）'}
+${turns.length ? '见独立消息历史。' : '（还没开始，由你起头）'}
 """
 
 要求：
@@ -458,7 +458,7 @@ ${labeled() || '（还没开始，由你起头）'}
 如果这次交流让你对「${b.name}」**有了新的认识**（TA 是谁、什么身份、在意什么、透露了什么关键信息——记住这些只是 TA 自己说的、**未必是真的**，写成你的判断），再另起一行用 [[了解:一句话]] 记下来；没有新认识就别写这一行。`;
         let aRaw = '';
         try {
-            aRaw = await chatCompletion(api, aPrompt);
+            aRaw = await chatCompletion(api, aPrompt, 0.85, ctxA, turns.map(t => ({ role: t.speaker === 'A' ? 'assistant' : 'user', content: t.text })));
         } catch {
             break;
         }
@@ -468,7 +468,7 @@ ${labeled() || '（还没开始，由你起头）'}
         if (aParsed.text) turns.push({ speaker: 'A', text: aParsed.text });
 
         // ---- B 回 ----
-        const bPrompt = `${ctxB}
+        const bPrompt = `
 
 ### [你和用户「${user.name}」的私聊背景（仅供参考，不是这场对话）]
 ${recentB}
@@ -495,7 +495,7 @@ ${p.bSummary}】` : ''
 
 ${p.bSummary ? '最近的对话' : '对话记录'}（"${b.name}:" 是你，"${a.name}:" 是对方）：
 """
-${labeled()}
+见独立消息历史。
 """
 
 要求：
@@ -511,7 +511,7 @@ ${labeled()}
 如果这次交流让你对「${a.name}」**有了新的认识**（TA 是谁、身份、在意什么、透露了什么——记住只是 TA 自己说的、**未必为真**，写成你的判断），再另起一行用 [[了解:一句话]] 记下来；没有就别写。`;
         let bRaw = '';
         try {
-            bRaw = await chatCompletion(api, bPrompt);
+            bRaw = await chatCompletion(api, bPrompt, 0.85, ctxB, turns.map(t => ({ role: t.speaker === 'B' ? 'assistant' : 'user', content: t.text })));
         } catch {
             break;
         }
@@ -568,7 +568,7 @@ export async function runNpcConversation(
 ): Promise<{ detail: string; learnedNew: string }> {
     const rounds = Math.max(1, Math.min(8, p.rounds ?? 4));
     const hostLastTs = await lastUserInteractionTs(p.host.id);
-    const ctxHost = ContextBuilder.buildCoreContext(p.host, p.user, true, undefined, undefined, { lastInteractionTs: hostLastTs });
+    const ctxHost = { char: p.host, user: p.user, timeOptions: { lastInteractionTs: hostLastTs } };
 
     // 续写时算出「下一句该谁说」，并提示模型从对的那一方接（避免一直自说自话繁殖 host 的话）
     const exTurns = parseTranscript(p.existingDetail || '');
@@ -580,7 +580,7 @@ export async function runNpcConversation(
             : `\n上一句是「${p.npcName}」说的，**接下来轮到你（${p.host.name}）**，第一行必须用「我:」开头。`)
         : '';
 
-    const prompt = `${ctxHost}
+    const prompt = `
 
 ### [人际关系 · 与虚构联系人的聊天]
 你是「${p.host.name}」。你正在用手机和「${p.npcName}」私聊。
@@ -605,7 +605,7 @@ ${p.learned}` : ''
 - 依据上方备注/身份设定的关系自然地聊；**不要凭空制造敌意、阴阳怪气或狗血冲突**，除非备注/身份/人设确实如此。
 - 紧扣已有对话往下接，别跳戏、别认错人。
 
-${p.existingDetail ? `已经聊了：\n"""\n${p.existingDetail}\n"""\n请接着往下聊。${turnHint}` : '现在开始这段对话。'}
+${p.existingDetail ? `已经聊了：\n"""\n见独立消息历史。\n"""\n请接着往下聊。${turnHint}` : '现在开始这段对话。'}
 
 任务：生成你（${p.host.name}）和「${p.npcName}」接下来 ${rounds} 个来回的对话，信息量要够。
 格式（**严格遵守**）：
@@ -616,7 +616,7 @@ ${p.existingDetail ? `已经聊了：\n"""\n${p.existingDetail}\n"""\n请接着�
 
     let out = '';
     try {
-        out = await chatCompletion(p.api, prompt, 0.9);
+        out = await chatCompletion(p.api, prompt, 0.9, ctxHost, exTurns.map(t => ({ role: t.isMe ? 'assistant' : 'user', content: t.text })));
     } catch {
         return { detail: p.existingDetail || '', learnedNew: '' };
     }

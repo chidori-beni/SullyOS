@@ -954,7 +954,7 @@ const buildSessionContext = async (input: {
         undefined,
         undefined,
         // 见面内的真实时间只作为 UI 对照，不允许进入模型的通用时间块。
-        { skipTimeAwareness: true, conversational: true, worldbookMode: 'offline', resolvedWorldbookEntries: worldbookEntries },
+        { skipTimeAwareness: true, conversational: true, worldbookMode: 'offline', resolvedWorldbookEntries: worldbookEntries, depthEntriesInjectedByCaller: true },
     ) + buildVNModeBlock(input.char, input.userProfile?.name || '', clock.sceneClockAt, clock.sceneClockTimeZone)
         + buildContinuityBlock(clock);
     return { clock, historyMsgs, systemPrompt, worldbookEntries };
@@ -1007,6 +1007,7 @@ export const DatePrompts = {
             skipTimeAwareness: !isDateTimeAwarenessOn(char),
             worldbookMode: 'offline',
             resolvedWorldbookEntries: worldbookEntries,
+            depthEntriesInjectedByCaller: true,
         });
 
         // 文风预设也作用于开场感知；人称（pov）刻意不作用——peek 的设计就是

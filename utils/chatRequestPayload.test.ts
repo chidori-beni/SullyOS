@@ -336,3 +336,28 @@ it('ChatApp user modules explicitly identify the pending messages without changi
     const other = await buildChatRequestPayload(input);
     expect(joinMessages(other.fullMessages)).not.toContain('USER_SURFACE 的聊天专用格式');
 });
+
+it('聊天深度世界书由消息层插入，公共上下文兜底不会再重复一份', async () => {
+    const input = baseInput();
+    input.char.mountedWorldbooks = [{ id: 'depth-test', title: '深度测试', content: 'UNIQUE_DEPTH_BOOK', constant: true, position: 4, depth: 0, role: 0 }];
+    const payload = await buildChatRequestPayload(input);
+    expect(joinMessages(payload.fullMessages).split('UNIQUE_DEPTH_BOOK')).toHaveLength(2);
+    expect(payload.fullMessages[0].content).not.toContain('UNIQUE_DEPTH_BOOK');
+});
+
+it('单串提示词消费者也从同一管线拿到深度世界书', async () => {
+    const input = baseInput();
+    input.char.mountedWorldbooks = [{ id: 'text-depth', title: '单串深度', content: 'TEXT_ONLY_DEPTH_BOOK', constant: true, position: 4 }];
+    const result = await ChatPrompts.buildSystemPrompt(input.char, input.userProfile, [], [], [], input.historyMsgs);
+    expect(result.split('TEXT_ONLY_DEPTH_BOOK')).toHaveLength(2);
+});
+
+it('文本入口误传 history 时仍保留深度世界书，不丢弃移交后的消息', async () => {
+    const input = baseInput();
+    input.char.mountedWorldbooks = [{ id: 'text-depth', title: '单串深度', content: 'TEXT_ONLY_DEPTH_BOOK', constant: true, position: 4 }];
+    const result = await ChatPrompts.buildSystemPrompt(
+        input.char, input.userProfile, [], [], [], input.historyMsgs,
+        undefined, undefined, undefined, undefined, undefined, { history: [] },
+    );
+    expect(result.split('TEXT_ONLY_DEPTH_BOOK')).toHaveLength(2);
+});

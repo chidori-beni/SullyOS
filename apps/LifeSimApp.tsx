@@ -1,3 +1,4 @@
+import { ContextBuilder, type CharacterContextInput } from '../utils/context';
 import { loadCharacterContextMessages } from '../utils/chatContextRange';
 /**
  * LifeSimApp — 都市模拟人生 · 2026现代版
@@ -74,7 +75,8 @@ const AI_MAX_RETRIES = 2;
 
 async function callCharAI(
     apiConfig: { baseUrl: string; apiKey: string; model: string },
-    systemPrompt: string
+    systemPrompt: string,
+    characterContext?: CharacterContextInput,
 ): Promise<string> {
     let lastError: Error | null = null;
 
@@ -87,7 +89,9 @@ async function callCharAI(
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
                     body: JSON.stringify({
                         model: apiConfig.model,
-                        messages: [{ role: 'user', content: systemPrompt }],
+                        messages: characterContext
+                            ? ContextBuilder.buildCharacterRequest(characterContext, [{ role: 'user', content: systemPrompt }])
+                            : [{ role: 'user', content: systemPrompt }],
                         temperature: 0.85, max_tokens: 8192, stream: false,
                         response_format: { type: 'json_object' },
                     }),
@@ -444,7 +448,7 @@ const LifeSimApp: React.FC = () => {
                     const systemPrompt = buildCharTurnSystemPrompt(char, userProfile, chatHistory, s, s.actionLog);
                     const raw = await callCharAI(
                         { baseUrl: resolvedApiConfig.baseUrl, apiKey: resolvedApiConfig.apiKey, model: resolvedApiConfig.model },
-                        systemPrompt
+                        systemPrompt, { char, user: userProfile }
                     );
 
                     rawJson = extractJson(raw);

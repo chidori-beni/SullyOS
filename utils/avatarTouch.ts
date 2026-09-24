@@ -462,20 +462,14 @@ export const requestAvatarTouchReply = async (options: {
     user.name,
   );
   const lastInteractionTs = recentMessages[recentMessages.length - 1]?.timestamp;
-  const coreContext = ContextBuilder.buildCoreContext(
-    character,
-    user,
-    true,
-    undefined,
-    undefined,
-    {
+  const characterContextInput = { char: character, user, includeDetailedMemories: true, timeOptions: {
       lastInteractionTs,
       worldbookMessages: [
         ...recentMessages.map(message => ({ role: message.role, content: message.content })),
         { role: 'user', content: eventText },
       ],
-    },
-  );
+    } };
+
   const { apiMessages } = ChatPrompts.buildMessageHistory(
     recentMessages,
     recentMessages.length,
@@ -484,7 +478,7 @@ export const requestAvatarTouchReply = async (options: {
     emojis,
   );
   const systemPrompt = buildAvatarTouchSystemPrompt(
-    coreContext,
+    '',
     character.name,
     user.name || '用户',
     hit,
@@ -498,11 +492,11 @@ export const requestAvatarTouchReply = async (options: {
     },
     body: JSON.stringify({
       model: apiConfig.model,
-      messages: [
+      messages: ContextBuilder.buildCharacterRequest(characterContextInput, [
         { role: 'system', content: systemPrompt },
         ...apiMessages,
         { role: 'user', content: eventText },
-      ],
+      ]),
       temperature: 0.9,
       max_tokens: 1200,
       stream: false,
@@ -868,20 +862,14 @@ export const requestAvatarTouchReactionPack = async (options: {
     .filter(message => message.role === 'user' || message.role === 'assistant');
   const eventText = `[桌面触摸设置] ${user.name || '用户'}选择了一次性生成${selectedZones.map(avatarTouchZoneLabel).join('、')}的反馈包。`;
   const lastInteractionTs = recentMessages[recentMessages.length - 1]?.timestamp;
-  const coreContext = ContextBuilder.buildCoreContext(
-    character,
-    user,
-    true,
-    undefined,
-    undefined,
-    {
+  const characterContextInput = { char: character, user, includeDetailedMemories: true, timeOptions: {
       lastInteractionTs,
       worldbookMessages: [
         ...recentMessages.map(message => ({ role: message.role, content: message.content })),
         { role: 'user', content: eventText },
       ],
-    },
-  );
+    } };
+
   const { apiMessages } = ChatPrompts.buildMessageHistory(
     recentMessages,
     recentMessages.length,
@@ -891,7 +879,7 @@ export const requestAvatarTouchReactionPack = async (options: {
   );
   const boundedReactionCount = Math.max(3, Math.min(6, reactionsPerZone));
   const systemPrompt = buildAvatarTouchReactionPackPrompt(
-    coreContext,
+    '',
     character.name,
     user.name || '用户',
     selectedZones,
@@ -908,11 +896,11 @@ export const requestAvatarTouchReactionPack = async (options: {
     },
     body: JSON.stringify({
       model: apiConfig.model,
-      messages: [
+      messages: ContextBuilder.buildCharacterRequest(characterContextInput, [
         { role: 'system', content: systemPrompt },
         ...apiMessages,
         { role: 'user', content: eventText },
-      ],
+      ]),
       temperature: 0.92,
       // 每条反馈 = 中文原文 + 译文 + TTS 语法 + 一整套 performance，实测 200~300 token。
       // 固定 4800 在选满 5 个部位（20 条）时必被截断，解析出来的包永远缺项，

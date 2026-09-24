@@ -34,7 +34,6 @@ import { buildMcpSystemBlock, MCP_TAIL_REMINDER } from './mcpToolBridge';
 import type { MusicCfg, Song, LyricLine, MusicPlaybackSnapshot, RecentTrackChange } from '../context/MusicContext';
 import { isPromptBuildSkipped, isSystemMessageMergeEnabled } from './devDebug';
 import { mergeSystemMessages } from './systemMessageMerge';
-import { injectWorldbookDepthEntries, resolveWorldbookEntries } from './worldbook';
 import { normalizeTranslationLangLabel } from './translationLang';
 import { cleanApiMessages, flattenImageContentParts } from './promptMessageCleanup';
 import { materializeStickerVisionDescriptions, materializeVisionDescriptions } from './visionApi';
@@ -402,6 +401,20 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     // 但主 API 的 historyMsgsForPrompt 来自完整 DB，仍然会看到它们。模式切换必须以 API
     // 真正要发送的历史为准，否则模型会收到特殊模式正文，却收不到「切回聊天格式」的提示。
     const returningFromMode = detectChatModeTransition(historyMsgsForPrompt);
+    // 在公共上下文管线之前准备实际历史，世界书触发和摆放共用这一份消息。
+    const { apiMessages } = ChatPrompts.buildMessageHistory(
+        historyMsgsForPrompt,
+        contextLimit,
+        char,
+        userProfile,
+        emojis,
+        undefined,
+        { useVisionDescriptions, contextHighWaterMark },
+    );
+
+    // ── 8. 剥离历史里旧的双语标签（stripImages 时先压平 image_url → 纯文本占位） ──
+    const cleanedApiMessages = cleanApiMessages(input.stripImages ? flattenImageContentParts(apiMessages) : apiMessages);
+
     // recentMsgsHint 可能仍是 Chat.tsx 的旧 React 快照；图片边界必须按这次真正送入模型的
     // 完整历史判断，否则刚发完图片时，针对图片的 recency 规则可能漏掉。
     const currentTurnHasUserImage = hasPendingUserImage(historyMsgsForPrompt);
@@ -418,7 +431,8 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         !!isListeningTogether,
         musicCfg,
         recentTrackSwitch,
-        (input.timelyByWorker || returningFromMode || activeDateEncounter || input.scheduleContext || input.busyReplyDecision || currentTurnHasUserImage || input.recallEntryPoint === 'world_home') ? {
+        {
+            history: cleanedApiMessages,
             timelyByWorker: input.timelyByWorker === true,
             // 小镇：关掉「正在和你说话的人」。用现成的 recallEntryPoint 当信号，
             // 不再新增入参；小镇两个调用点（engine.ts:357 / :598）本来就都传了它。
@@ -429,7 +443,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
             scheduleContext: input.scheduleContext,
             busyReplyDecision: input.busyReplyDecision,
             currentTurnHasUserImage,
-        } : undefined,
+        },
     );
     let systemPrompt = parts.stable;
     let volatileTail = parts.volatileState;
@@ -490,29 +504,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         }
     }
 
-    // ── 7. 历史消息构造 ───────────────────────────────────
-    const { apiMessages } = ChatPrompts.buildMessageHistory(
-        historyMsgsForPrompt,
-        contextLimit,
-        char,
-        userProfile,
-        emojis,
-        undefined,
-        { useVisionDescriptions, contextHighWaterMark },
-    );
-
-    // ── 8. 剥离历史里旧的双语标签（stripImages 时先压平 image_url → 纯文本占位） ──
-    const cleanedApiMessages = cleanApiMessages(input.stripImages ? flattenImageContentParts(apiMessages) : apiMessages);
-    const resolvedWorldbookEntries = resolveWorldbookEntries(
-        char.mountedWorldbooks || [],
-        cleanedApiMessages,
-        char.name,
-        userProfile.name,
-    );
-    const messagesWithWorldbookDepth = injectWorldbookDepthEntries(
-        cleanedApiMessages,
-        resolvedWorldbookEntries.filter(entry => entry.position === 4),
-    );
+    const messagesWithWorldbookDepth = parts.history;
 
     // ── 9. 麦当劳小程序上下文（购物车/菜单实时快照 → 易变尾段） ──
     const mcdActive = !!mcdMiniSnap?.open;

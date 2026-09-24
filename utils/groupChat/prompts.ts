@@ -46,6 +46,8 @@ export function buildEmojiContextStr(
 }
 
 export interface GroupHistoryBlock {
+    /** 保留原始消息边界，供公共上下文管线按深度放置世界书。 */
+    messages?: { role: 'user' | 'assistant'; content: string }[];
     /** 群历史文本（每行 `名字: 内容`，媒体用占位符） */
     text: string;
     /** 走结构化 image_url 附带的最近图片 */
@@ -99,7 +101,10 @@ export function buildGroupHistoryBlock(
     const attachedImages: { tag: number; url: string }[] = [];
     const lines: string[] = [];
     let prevTs: number | null = null;
+    const messages: NonNullable<GroupHistoryBlock['messages']> = [];
     msgs.forEach((m, i) => {
+        const lineStart = lines.length;
+        try {
         // 相邻消息隔得久时插一条分隔行，让导演直接在记录里"看见"时间跳变——
         // 否则用户隔几天回来发一句，模型会把几天前那条当"刚才"无缝续上旧话题。
         if (prevTs != null && typeof m.timestamp === 'number' && m.timestamp - prevTs >= GROUP_HISTORY_GAP_THRESHOLD_MS) {
@@ -147,12 +152,15 @@ export function buildGroupHistoryBlock(
             return;
         }
         lines.push(`${timePrefix}${name}: ${content}`);
+        } finally {
+            messages.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: lines.slice(lineStart).join('\n') });
+        }
     });
     const text = lines.join('\n');
     const attachedImagesNote = attachedImages.length > 0
         ? `\n（本轮附带 ${attachedImages.length} 张最近的图片，对应记录里的 [图片#1] ~ [图片#${attachedImages.length}]。请基于实际图片内容自然反应，不要无视，也不要瞎猜没附上的旧图。）\n`
         : '';
-    return { text, attachedImages, attachedImagesNote };
+    return { text, attachedImages, attachedImagesNote, messages };
 }
 
 /**

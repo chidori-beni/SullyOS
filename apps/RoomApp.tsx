@@ -630,15 +630,16 @@ const RoomApp: React.FC = () => {
     const initializeFallback = async (c: CharacterProfile) => {
         try {
             console.warn("Triggering Room Fallback Initialization");
-            const baseContext = ContextBuilder.buildCoreContext(c, userProfile, false);
-            const fallbackPrompt = `${baseContext}\n\nTask: User entered your room. Just say hello. JSON: { "welcomeMessage": "..." }`;
+            const characterContextInput = { char: c, user: userProfile, includeDetailedMemories: false };
+
+            const fallbackPrompt = `\n\nTask: User entered your room. Just say hello. JSON: { "welcomeMessage": "..." }`;
             
             const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
                 body: JSON.stringify({ 
                     model: apiConfig.model, 
-                    messages: [{ role: "user", content: fallbackPrompt }], 
+                    messages: ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: "user", content: fallbackPrompt }]),
                     temperature: 0.5,
                     max_tokens: 8000 // Keep it tiny
                 })
@@ -737,7 +738,8 @@ const RoomApp: React.FC = () => {
             const timeGapHint = getTimeGapHint(lastMsg?.timestamp);
 
             await injectMemoryPalace(c, recentMsgs);
-            const baseContext = ContextBuilder.buildCoreContext(c, userProfile, true); // Keep Full Context
+            const characterContextInput = { char: c, user: userProfile, includeDetailedMemories: true };
+
 
             // DEBUG FIX: Sanitize and truncate interactables context to prevent huge Base64 leakage
             const interactables = currentItems.filter(i => i.isInteractive).map(i => ({
@@ -746,7 +748,7 @@ const RoomApp: React.FC = () => {
                 context: (i.descriptionPrompt || '').substring(0, 200)
             }));
 
-            let prompt = `${baseContext}
+            let prompt = `
 
 ### [Environment Context - Critical]
 **当前现实时间**: ${nowDateStr} ${nowTimeStr}${tzSuffix}
@@ -801,7 +803,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
                 body: JSON.stringify({ 
                     model: apiConfig.model,
-                    messages: [{ role: "user", content: prompt }],
+                    messages: ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: "user", content: prompt }]),
                     temperature: 0.5, // Lower temp for stability
                     max_tokens: 8000,
                     // Safety Settings injection for Gemini-based proxies

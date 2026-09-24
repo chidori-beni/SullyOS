@@ -539,3 +539,68 @@ describe('DatePrompts.buildPeekPayload', () => {
         expect(userMsg).toContain('一张卡片');
     });
 });
+
+// ── 上游 25468054 新增的见面世界书回归（本 fork 见面走「线下」场景 + 单次解析，同样要满足）──
+describe('见面世界书注入回归', () => {
+    const book = (id: string, overrides: Record<string, unknown> = {}) => ({
+        id, title: id, content: `WB_${id}`, constant: true, position: 4 as const,
+        depth: 4, role: 0 as const, ...overrides,
+    });
+    const history = () => Array.from({ length: 6 }, (_, i) => makeMsg({
+        role: i % 2 ? 'user' : 'assistant', content: `记录${i}`,
+    }));
+
+    it.each(['send', 'reroll'] as const)('%s: 两本 depth=4/system 均完整进入实际请求且顺序稳定', async variant => {
+        const char = makeChar({ mountedWorldbooks: [book('D'), book('E')] });
+        const { messages } = await DatePrompts.buildSessionPayload({
+            char, userProfile: user, allMsgs: history(), emojis: [], userText: '记录5', variant,
+        });
+        const d = messages.findIndex(m => m.content === 'WB_D');
+        expect(d).toBe(3); // 顶层 system + 前两条历史
+        expect(messages[d]).toEqual({ role: 'system', content: 'WB_D' });
+        expect(messages[d + 1]).toEqual({ role: 'system', content: 'WB_E' });
+        expect(messages.slice(d + 2)).toHaveLength(4);
+        expect(JSON.stringify(messages).match(/WB_D/g)).toHaveLength(1);
+    });
+
+    it('短历史也注入；depth=0 保留消息角色与宏，不把 VN 指令追加给世界书', async () => {
+        const char = makeChar({ mountedWorldbooks: [book('D'), book('Z', {
+            depth: 0, role: 2, content: '{{char}}与{{user}}',
+        })] });
+        const { messages } = await DatePrompts.buildSessionPayload({
+            char, userProfile: user, allMsgs: [makeMsg()], emojis: [], userText: '你好', variant: 'send',
+        });
+        expect(messages[1]).toEqual({ role: 'system', content: 'WB_D' });
+        expect(messages[2].content).toContain('你好\n\n(System Note:');
+        expect(messages[3]).toEqual({ role: 'assistant', content: '小白与阿明' });
+    });
+
+    it('所有位置都用本轮对话匹配关键词，禁用/未命中不注入，系统指令不参与匹配', async () => {
+        const char = makeChar({ mountedWorldbooks: [
+            ...[0, 1, 2, 3, 4, 5, 6].map(position => book(`P${position}`, {
+                position, constant: false, key: ['灯塔'],
+            })),
+            book('disabled', { disable: true }),
+            book('miss', { constant: false, key: ['不存在'] }),
+            book('instruction', { constant: false, key: ['System Note'] }),
+        ] });
+        const result = await DatePrompts.buildSessionPayload({
+            char, userProfile: user, allMsgs: [makeMsg({ content: '灯塔' })],
+            emojis: [], userText: '灯塔', variant: 'send',
+        });
+        const json = JSON.stringify(result.messages);
+        for (let i = 0; i < 7; i++) expect(json).toContain(`WB_P${i}`);
+        for (const id of ['disabled', 'miss', 'instruction']) expect(json).not.toContain(`WB_${id}`);
+    });
+
+    it('感知开场由公共上下文带入深度条目，并支持关键词匹配', () => {
+        const { messages } = DatePrompts.buildPeekPayload({
+            char: makeChar({ mountedWorldbooks: [book('D'), book('K', {
+                position: 1, constant: false, key: ['记录5'],
+            })] }), userProfile: user, allMsgs: history(), emojis: [],
+        });
+        expect(messages[0].content).toContain('WB_K');
+        expect(messages.find(m => m.content === 'WB_D')?.role).toBe('system');
+        expect(JSON.stringify(messages).split('WB_D')).toHaveLength(2);
+    });
+});

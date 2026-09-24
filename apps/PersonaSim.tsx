@@ -88,7 +88,8 @@ export async function generatePersonaScript(opts: {
 }): Promise<SimScript> {
     const { char, userProfile, apiConfig, mode, theme, userPresence = 'default', tone = 'mix' } = opts;
     await injectMemoryPalace(char, undefined, theme, userProfile.name);
-    const context = ContextBuilder.buildCoreContext(char, userProfile, true, char.memoryPalaceInjection);
+    const characterContextInput = { char, user: userProfile, includeDetailedMemories: true, memoryPalaceContext: char.memoryPalaceInjection };
+
     const msgs = await loadCharacterContextMessages(char);
     // 跟随用户为该角色设置的最大上下文（没设则默认 500）——避免「吵完架来看 if 线，结果 char 不记得吵什么」
     const ctxLimit = Math.max(1, msgs.length);
@@ -99,11 +100,11 @@ export async function generatePersonaScript(opts: {
     }).join('\n');
     const firstTs = msgs.find(m => typeof m.timestamp === 'number')?.timestamp;
     const acquaintance = describeAcquaintance(firstTs, userProfile.name, char.name);
-    const prompt = buildDirectorPrompt(context, recent, mode, theme, char.name, acquaintance, userProfile.name, userPresence, tone);
+    const prompt = buildDirectorPrompt('', recent, mode, theme, char.name, acquaintance, userProfile.name, userPresence, tone);
     const res = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-        body: JSON.stringify({ model: apiConfig.model, messages: [{ role: 'user', content: prompt }], temperature: 0.98, max_tokens: 24000 }),
+        body: JSON.stringify({ model: apiConfig.model, messages: ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: 'user', content: prompt }]), temperature: 0.98, max_tokens: 24000 }),
     });
     if (!res.ok) throw new Error('API');
     const data = await safeResponseJson(res);

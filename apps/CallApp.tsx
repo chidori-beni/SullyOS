@@ -2197,6 +2197,7 @@ const CallApp: React.FC = () => {
       ContextBuilder.buildCoreContext(selectedChar, userProfile, true, undefined, undefined, {
         conversational: true,
         worldbookMessages: [...callMsgs, { role: 'user', content: instruction }],
+        depthEntriesInjectedByCaller: true,
       }),
       voiceLang || undefined,
       callMode,
@@ -2285,17 +2286,18 @@ const CallApp: React.FC = () => {
         const directorApi = resolvePerformanceDirectorApi(character);
         const baseUrl = directorApi.baseUrl?.replace(/\/+$/, '');
         if (!baseUrl) return null;
-        const coreContext = ContextBuilder.buildCoreContext(character, userProfile, true);
+        const characterContextInput = { char: character, user: userProfile, includeDetailedMemories: true };
+
         const prompt = buildAvatarPerformancePersonaPrompt({
           characterName: character.name,
-          coreContext,
+          coreContext: '',
         });
         const data = await safeFetchJson(`${baseUrl}/chat/completions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${directorApi.apiKey || 'sk-none'}` },
           body: JSON.stringify({
             model: directorApi.model,
-            messages: [{ role: 'user', content: prompt }],
+            messages: ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: 'user', content: prompt }]),
             temperature: 0.25,
             max_tokens: AVATAR_PERFORMANCE_PERSONA_MAX_TOKENS,
             stream: false,
@@ -2434,6 +2436,7 @@ ${sentencePlan}`;
           ContextBuilder.buildCoreContext(selectedChar, userProfile, true, undefined, undefined, {
             conversational: true,
             worldbookMessages: [...callMsgs, { role: 'user', content: input }],
+            depthEntriesInjectedByCaller: true,
           }),
           voiceLang || undefined,
           callMode,

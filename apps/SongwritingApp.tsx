@@ -507,7 +507,7 @@ const SongwritingApp: React.FC = () => {
             const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-                body: JSON.stringify({ model: apiConfig.model, messages: apiMessages, temperature: 0.8, max_tokens: 2000 })
+                body: JSON.stringify({ model: apiConfig.model, messages: ContextBuilder.buildCharacterRequest({ char: collaborator, user: userProfile }, apiMessages), temperature: 0.8, max_tokens: 2000 })
             });
 
             if (response.ok) {
@@ -864,10 +864,10 @@ const SongwritingApp: React.FC = () => {
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
                     body: JSON.stringify({
                         model: apiConfig.model,
-                        messages: [
+                        messages: ContextBuilder.buildCharacterRequest({ char: collaborator, user: userProfile }, [
                             { role: 'system', content: systemPrompt },
                             { role: 'user', content: userPrompt + retryInstruction },
-                        ],
+                        ]),
                         temperature: attempt === 0 ? 0.9 : 0.65,
                         max_tokens: 500,
                     }),
@@ -931,10 +931,10 @@ const SongwritingApp: React.FC = () => {
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
                 body: JSON.stringify({
                     model: apiConfig.model,
-                    messages: [
+                    messages: ContextBuilder.buildCharacterRequest({ char: collaborator, user: userProfile }, [
                         { role: 'system', content: systemPrompt },
                         { role: 'user', content: prompt },
-                    ],
+                    ]),
                     temperature: 0.7,
                     max_tokens: 500,
                 })

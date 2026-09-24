@@ -530,7 +530,8 @@ export const ValentineSession: React.FC<ValentineSessionProps> = ({ charId, onCl
             }).join('\n');
 
             await injectMemoryPalace(c, undefined, '情人节 我们在一起的回忆');
-            const baseContext = ContextBuilder.buildCoreContext(c, userProfile, true);
+            const characterContextInput = { char: c, user: userProfile, includeDetailedMemories: true };
+
 
             // 根据角色获取可用表情列表
             const availableEmotions = getAvailableEmotions(c);
@@ -572,10 +573,9 @@ export const ValentineSession: React.FC<ValentineSessionProps> = ({ charId, onCl
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
                 body: JSON.stringify({
                     model: apiConfig.model,
-                    messages: [
-                        { role: 'system', content: baseContext },
+                    messages: ContextBuilder.buildCharacterRequest(characterContextInput, [
                         { role: 'user', content: `[最近记录 (Previous Context)]:\n${recentMsgs}\n\n---\n\n${valentinePrompt}` }
-                    ],
+                    ]),
                     temperature: 0.88
                 })
             });

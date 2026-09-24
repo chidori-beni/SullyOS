@@ -62,11 +62,13 @@ interface LlmDetailReaction {
     wantToComment?: { comment: string };
 }
 
+type FreeRoamPrompt = { char: CharacterProfile; user: UserProfile; instructions: string };
+
 // ==================== LLM Helpers ====================
 
 const callLlm = async (
     apiConfig: APIConfig,
-    systemPrompt: string,
+    systemPrompt: FreeRoamPrompt,
     userMessage: string,
 ): Promise<string> => {
     const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '');
@@ -78,10 +80,9 @@ const callLlm = async (
         },
         body: JSON.stringify({
             model: apiConfig.model,
-            messages: [
-                { role: 'system', content: systemPrompt },
+            messages: ContextBuilder.buildCharacterRequest(systemPrompt, [
                 { role: 'user', content: userMessage },
-            ],
+            ]),
             temperature: 0.85,
             stream: false,
         }),
@@ -107,14 +108,14 @@ const parseJson = <T>(text: string): T | null => {
 
 // ==================== Prompt Builders ====================
 
-const buildFreeRoamSystemPrompt = (
+export const buildFreeRoamSystemPrompt = (
     char: CharacterProfile,
     user: UserProfile,
     recentChatSummary: string,
     pastActivities: XhsActivityRecord[],
-): string => {
+): FreeRoamPrompt => {
     // 加载完整上下文（含详细记忆和心情标签），让角色在自由活动时保持情感连贯
-    const coreContext = ContextBuilder.buildCoreContext(char, user, true);
+
     // 自由活动是角色自己在刷手机，「现在几点」得跟 ta 那边的钟——
     // coreContext 顶部注入的当前时间已按角色时区折算，这里再用设备时间就会自相矛盾。
     const charTz = resolveCharTimeZone(char);
@@ -134,7 +135,7 @@ const buildFreeRoamSystemPrompt = (
         }).join('\n');
     }
 
-    return `${coreContext}
+    return { char, user, instructions: `
 
 ### 🕐 当前状态
 - 现在是: ${timeStr} (${timeOfDay})
@@ -164,7 +165,7 @@ ${pastStr}
 - **搜索自己的帖子**: 你可以用自己的名字作为关键词搜索，看看自己发过的帖子现在怎么样了。
 - 不要每次都发帖，真实的人有时候只是刷刷看看。
 - 发的帖子要像你自己会发的东西——符合人设，不要写得太正式或像AI。
-- 你可以选择保存一些有趣的帖子内容作为话题，下次和用户聊天时可以提起。`;
+- 你可以选择保存一些有趣的帖子内容作为话题，下次和用户聊天时可以提起。` };
 };
 
 const buildDecisionPrompt = (): string => {
@@ -312,7 +313,7 @@ const getRecentChatContext = async (char: CharacterProfile): Promise<string> => 
 const handleViewDetail = async (
     mcpUrl: string,
     apiConfig: APIConfig,
-    systemPrompt: string,
+    systemPrompt: FreeRoamPrompt,
     noteId: string,
     noteTitle: string,
     contextNotes: any[],

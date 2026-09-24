@@ -544,7 +544,8 @@ export async function generateLifestreamPage(
     //   /user profile/impression(完整含 likes/triggers/comfort/changes)
     //   /refinedMemories/activeMemoryMonths 详细日志/memoryPalace/buff
     //   是聊天系统在用的 source of truth,改它会自动跟进
-    const coreContext = ContextBuilder.buildCoreContext(char, userProfile, true);
+    const characterContextInput = { char, user: userProfile, includeDetailedMemories: true };
+
 
     // ─── 1b. ta 实际怎么说话 — buildCoreContext 没的,得自己补 ──
     // 这是"像不像 ta"最关键的输入: prompt 描述规则,样本展示语气
@@ -617,7 +618,7 @@ export async function generateLifestreamPage(
     const prompt = `今天是 ${date}（星期${dayOfWeek}）。${userName} 已经在 ${W}x${H}px 的瘦长手账纸上写下了 ta 今天的碎片。请你 (角色「${char.name}」) **在纸上的空白处, 也写一组自己的今日碎片**——不是日记,是 ta 散落的瞬间,各自独立又拼出 ta 的一天。**写什么 + 写在哪都你定**。
 
 【角色完整档案】
-${coreContext}
+
 ${speechBlock}${scheduleBlock}
 
 ${occupiedBlock}
@@ -704,7 +705,7 @@ text 里允许少量 markdown 语法,渲染时会变成对应的视觉效果:
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
             body: JSON.stringify({
                 model: apiConfig.model,
-                messages: [{ role: 'user', content: prompt }],
+                messages: ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: 'user', content: prompt }]),
                 temperature: 0.85,
                 max_tokens: 12000,
             }),

@@ -704,7 +704,7 @@ export async function prepareQixiMemoryBundle(
             roomPlatesInjection: recallChar.roomPlatesInjection || '',
         };
         const recent = formatRecentMessages(messages);
-        const roleAndMemoryContext = ContextBuilder.buildCoreContext(memoryChar, user, true);
+
         const endpoint = `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`;
         const requestPhase = async (phase: 'first' | 'second' | 'third', userContent: string) => {
             const data = await safeFetchJson(
@@ -714,10 +714,9 @@ export async function prepareQixiMemoryBundle(
                     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
                     body: JSON.stringify({
                         model: apiConfig.model,
-                        messages: [
-                            { role: 'system', content: roleAndMemoryContext },
+                        messages: ContextBuilder.buildCharacterRequest({ char: memoryChar, user }, [
                             { role: 'user', content: userContent },
-                        ],
+                        ]),
                         temperature: 0.68,
                         max_tokens: 32000,
                         // 七夕首轮内容较长。强制使用流式传输，让上游尽早返回响应头/数据片段，

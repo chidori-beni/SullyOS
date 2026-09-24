@@ -655,7 +655,8 @@ export const WhiteDaySession: React.FC<WhiteDaySessionProps> = ({ charId, onClos
                 .join('\n');
 
             await injectMemoryPalace(c, undefined, '白色情人节 回顾我们的关系');
-            const baseContext = ContextBuilder.buildCoreContext(c, userProfile, true);
+            const characterContextInput = { char: c, user: userProfile, includeDetailedMemories: true };
+
             const availableEmotions = getAvailableEmotions(c);
 
             const prompt = `### 特别活动：白色情人节默契测验 (2026.3.14)
@@ -721,10 +722,9 @@ export const WhiteDaySession: React.FC<WhiteDaySessionProps> = ({ charId, onClos
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
                 body: JSON.stringify({
                     model: apiConfig.model,
-                    messages: [
-                        { role: 'system', content: baseContext },
+                    messages: ContextBuilder.buildCharacterRequest(characterContextInput, [
                         { role: 'user', content: `[最近记录]:\n${recentMsgs}\n\n---\n\n${prompt}` },
-                    ],
+                    ]),
                     temperature: 0.85,
                 }),
             });
@@ -793,7 +793,8 @@ export const WhiteDaySession: React.FC<WhiteDaySessionProps> = ({ charId, onClos
         setPhase('loading_review');
         try {
             await injectMemoryPalace(char, undefined, '白色情人节 回顾我们的关系');
-            const baseContext = ContextBuilder.buildCoreContext(char, userProfile, true);
+            const characterContextInput = { char, user: userProfile, includeDetailedMemories: true };
+
             const availableEmotions = getAvailableEmotions(char);
 
             const answerSummary = quizData.questions.map((q, i) => {
@@ -849,10 +850,9 @@ ${answerSummary}
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
                 body: JSON.stringify({
                     model: apiConfig.model,
-                    messages: [
-                        { role: 'system', content: baseContext },
+                    messages: ContextBuilder.buildCharacterRequest(characterContextInput, [
                         { role: 'user', content: prompt },
-                    ],
+                    ]),
                     temperature: 0.82,
                 }),
             });
@@ -917,7 +917,8 @@ ${answerSummary}
             setPhase('loading_comment');
 
             await injectMemoryPalace(char, undefined, '白色情人节 回顾我们的关系');
-            const baseContext = ContextBuilder.buildCoreContext(char, userProfile, true);
+            const characterContextInput = { char, user: userProfile, includeDetailedMemories: true };
+
             const availableEmotions = getAvailableEmotions(char);
 
             const prompt = `这是你和 ${userProfile.name} 一起 DIY 的白色情人节巧克力（主要是你做的，${userProfile.name} 帮忙装饰了照片）！请看看这块巧克力，用你的性格和说话方式评价一下——可以说说你们一起做的感受，夸夸自己的手艺，也可以调皮地调侃某个细节。
@@ -935,8 +936,7 @@ ${answerSummary}
                 headers,
                 body: JSON.stringify({
                     model: apiConfig.model,
-                    messages: [
-                        { role: 'system', content: baseContext },
+                    messages: ContextBuilder.buildCharacterRequest(characterContextInput, [
                         {
                             role: 'user',
                             content: [
@@ -944,7 +944,7 @@ ${answerSummary}
                                 { type: 'image_url', image_url: { url: imageBase64 } },
                             ],
                         },
-                    ],
+                    ]),
                     temperature: 0.88,
                 }),
             });
@@ -957,10 +957,9 @@ ${answerSummary}
                     headers,
                     body: JSON.stringify({
                         model: apiConfig.model,
-                        messages: [
-                            { role: 'system', content: baseContext },
+                        messages: ContextBuilder.buildCharacterRequest(characterContextInput, [
                             { role: 'user', content: fallbackPrompt },
-                        ],
+                        ]),
                         temperature: 0.88,
                     }),
                 });

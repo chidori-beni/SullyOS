@@ -156,7 +156,7 @@ A: 就是我也不知道什么意思。系统正在哈我。
 
 ### 记忆系统已经做好了，别重复造轮子
 
-**所有角色的长期信息**（人设、精炼记忆、印象档案、世界观书）都通过 `ContextBuilder.buildCoreContext()` 统一组装。它会在每次 API 请求前自动生成一段完整的角色上下文，包含：
+**所有角色的长期信息**（人设、精炼记忆、印象档案、世界观书）通过 `ContextBuilder.buildCharacterRequest({ char, user }, messages)` 在请求前统一组装，返回完整的消息数组，包含：
 
 - 角色基础设定（systemPrompt + worldview）
 - 用户档案（你的名字、人设、关系标签）
@@ -166,7 +166,7 @@ A: 就是我也不知道什么意思。系统正在哈我。
 
 **短期记忆**（最近聊天记录）直接走正常的 message history，和上面那段长期上下文一起塞进 API 请求。
 
-这意味着：**角色能记起所有事**，不需要你额外写记忆检索逻辑。只要往数据库里存了，ContextBuilder 会自动帮你塞进 Prompt。
+ContextBuilder 读取当前角色档案中的记忆与召回结果；消息范围和记忆宫殿召回仍须遵守 [记忆系统契约](docs/memory-system-overview.md)，不会自动读取全部数据库。挂载世界书的触发、顺序、深度和消息角色由公共管线处理，详见 [世界书管线](docs/worldbook-management.md#全-app-世界书构建管线)。
 
 ### 想加新 App？
 
@@ -174,7 +174,23 @@ A: 就是我也不知道什么意思。系统正在哈我。
 2. 在 `types.ts` 的 `AppID` 枚举里加个 ID
 3. 在 `constants.tsx` 的 `INSTALLED_APPS` 数组里注册（图标、名字、颜色）
 4. 在 `App.tsx` 的 `renderApp()` 里加 case
-5. 完事。UI 风格参考现有的用 Tailwind + glassmorphism。
+5. 涉及角色生成时，使用下面的统一请求入口。不要自行拼世界书，也不要将完整历史压成一段字符串后声称支持消息深度。
+
+```ts
+const messages = ContextBuilder.buildCharacterRequest(
+  { char, user: userProfile },
+  [
+    { role: 'system', content: appInstructions },
+    ...sceneHistory, // 本场景已筛选、已转换好的实际消息
+    { role: 'user', content: userInput },
+  ],
+);
+// 将 messages 直接作为 API 请求的 messages；无需任何世界书专用代码。
+```
+
+单次生成传一条任务消息即可。多人/自定义预设布局见世界书文档；旧 `buildCoreContext` 是文本兼容接口，新 App 不使用它。运行 `pnpm vitest run utils/contextPipeline.test.ts utils/contextWorldbook.test.ts` 检查管线契约。
+
+UI 风格参考现有的 Tailwind + glassmorphism。
 
 ### 数据流
 

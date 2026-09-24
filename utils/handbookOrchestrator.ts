@@ -27,7 +27,7 @@ import {
 import { DB } from './db';
 import { loadCharacterContextMessages } from './chatContextRange';
 import { safeResponseJson, extractJson } from './safeApi';
-import { ContextBuilder } from './context';
+import { ContextBuilder, type CharacterContextInput } from './context';
 import { LAYOUT_TEMPLATES, pickTemplate } from './handbookLayouts';
 import { getLocalDayRange } from './localDate';
 
@@ -113,7 +113,7 @@ const TODAY_ONLY_RULE = `
 
 // ─── LLM call ────────────────────────────────────────────
 async function callLLM(
-    apiConfig: ApiConfig, prompt: string, temperature: number, maxTokens: number = 4000,
+    apiConfig: ApiConfig, prompt: string, temperature: number, maxTokens: number = 4000, characterContext?: CharacterContextInput,
 ): Promise<string | null> {
     try {
         const t0 = Date.now();
@@ -122,7 +122,7 @@ async function callLLM(
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
             body: JSON.stringify({
                 model: apiConfig.model,
-                messages: [{ role: 'user', content: prompt }],
+                messages: characterContext ? ContextBuilder.buildCharacterRequest(characterContext, [{ role: 'user', content: prompt }]) : [{ role: 'user', content: prompt }],
                 temperature,
                 max_tokens: maxTokens,
             }),
@@ -375,7 +375,7 @@ async function fillCharTurn(
 
     const userName = userProfile.name || 'user';
     const dow = dayOfWeekZh(date);
-    const coreContext = ContextBuilder.buildCoreContext(char, userProfile, true);
+
 
     // 抽 ta 平时怎么说话的样本
     let speechSamples: string[] = [];
@@ -430,7 +430,7 @@ async function fillCharTurn(
     const prompt = `今天是 ${date} (星期${dow})。这是一本 *大家共写* 的手账, 你 (角色「${char.name}」) 在这一页留下你今天的笔迹。
 
 【你的人格档案】
-${coreContext}
+
 ${speechBlock}${todayChatBlock}
 
 ${filledBlock}
@@ -476,7 +476,7 @@ ${exampleSchemas}
             ? prompt + `\n\n【⚠️ 重试】上一次响应没产出有效内容 (slotId 错 / 数组空 / sticky 没 refersTo)。再试一次, 必须返回 ${targetMin}~${targetMax} 个有效对象的数组。`
             : prompt;
         if (isRetry) console.warn(`[Handbook v2] ⟳ char "${char.name}" — 重试 (第 ${attempt + 1} 次)`);
-        const raw = await callLLM(apiConfig, finalPrompt, 0.85, 6000);
+        const raw = await callLLM(apiConfig, finalPrompt, 0.85, 6000, { char, user: userProfile });
         attempt++;
         if (!raw) {
             console.error(`[Handbook v2] ✗ char "${char.name}" — LLM 返回空`);

@@ -604,7 +604,8 @@ export async function prepareQixiReunion(
     const fallback = createQixiReunionFallback(char, user, portraitPlan);
     if (!apiConfig.baseUrl || !apiConfig.apiKey || !apiConfig.model) throw new Error('Part 3 无法生成：请先配置可用的模型 API。');
     const memoryChar = { ...char, memoryPalaceInjection: '', roomPlatesInjection: '' };
-    const context = ContextBuilder.buildCoreContext(memoryChar, user, true);
+    const characterContextInput = { char: memoryChar, user, includeDetailedMemories: true };
+
     const endpoint = `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`;
     const knowsTechnicalIdentity = characterKnowsTechnicalIdentity(char);
     try {
@@ -615,10 +616,9 @@ export async function prepareQixiReunion(
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
                 body: JSON.stringify({
                     model: apiConfig.model,
-                    messages: [
-                        { role: 'system', content: context },
+                    messages: ContextBuilder.buildCharacterRequest(characterContextInput, [
                         { role: 'user', content: buildQixiFinalePrompt(char, user, memoryBundle, journey, portraitPlan) },
-                    ],
+                    ]),
                     temperature: 0.72,
                     max_tokens: 24000,
                     // 最终见面与约定一次生成，必须尽早收到流式数据以绕开代理 524 超时。

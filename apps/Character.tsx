@@ -1,3 +1,4 @@
+import CharacterStatsPanel from '../components/character/CharacterStatsPanel';
 import { loadCharacterContextMessages } from '../utils/chatContextRange';
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
@@ -133,7 +134,7 @@ const Character: React.FC = () => {
           return next;
       });
   };
-  const [detailTab, setDetailTab] = useState<'identity' | 'memory' | 'impression' | 'plates' | 'chibi'>(() => launchIntent?.openChibiStudio ? 'chibi' : 'identity');
+  const [detailTab, setDetailTab] = useState<'identity' | 'memory' | 'impression' | 'plates' | 'chibi' | 'stats'>(() => launchIntent?.openChibiStudio ? 'chibi' : 'identity');
   // QQ捏人工坊（手办柜）全屏覆盖层
   const [showChibiStudio, setShowChibiStudio] = useState(() => !!launchIntent?.openChibiStudio);
   const [editingId, setEditingId] = useState<string | null>(() => launchIntent?.charId || null);
@@ -906,8 +907,9 @@ const Character: React.FC = () => {
           // 模板优先级：override（弹窗现场选）→ 当前 state → 默认 preset
           const effectivePromptId = overridePromptId || selectedPromptId;
           const templateObj = archivePrompts.find(p => p.id === effectivePromptId) || DEFAULT_ARCHIVE_PROMPTS[0];
-          const baseContext = ContextBuilder.buildCoreContext(formData, userProfile);
-          let prompt = baseContext + '\n\n' + templateObj.content;
+          const characterContextInput = { char: formData, user: userProfile };
+
+          let prompt = '' + '\n\n' + templateObj.content;
           const sarMemoryBoundary = buildSARMemoryBoundaryInstruction(rawLog);
           if (sarMemoryBoundary) prompt = `${sarMemoryBoundary}\n\n${prompt}`;
           prompt = prompt.replace(/\$\{dateStr\}/g, dateStr);
@@ -918,7 +920,7 @@ const Character: React.FC = () => {
           const data = await safeFetchJson(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-              body: JSON.stringify({ model: apiConfig.model, messages: [{ role: 'user', content: prompt }], temperature: 0.5, max_tokens: 8000, stream: false }),
+              body: JSON.stringify({ model: apiConfig.model, messages: ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: 'user', content: prompt }]), temperature: 0.5, max_tokens: 8000, stream: false }),
           }, 0);
           let summary = extractContent(data).replace(/^["']|["']$/g, '');
           if (!summary) throw new Error('空响应');
@@ -1077,7 +1079,8 @@ const Character: React.FC = () => {
             const newMemories: MemoryFragment[] = [];
 
             await injectMemoryPalace(formData);
-            const baseContext = ContextBuilder.buildCoreContext(formData, userProfile);
+            const characterContextInput = { char: formData, user: userProfile };
+
 
             for (let i = 0; i < dates.length; i++) {
                 const date = dates[i];
@@ -1091,7 +1094,7 @@ const Character: React.FC = () => {
 
                 // Use selected template (same as ChatApp) with variable substitution
                 const templateObj = archivePrompts.find(p => p.id === selectedPromptId) || DEFAULT_ARCHIVE_PROMPTS[0];
-                let prompt = baseContext + '\n\n' + templateObj.content;
+                let prompt = '' + '\n\n' + templateObj.content;
                 const sarMemoryBoundary = buildSARMemoryBoundaryInstruction(rawLog);
                 if (sarMemoryBoundary) prompt = `${sarMemoryBoundary}\n\n${prompt}`;
                 prompt = prompt.replace(/\$\{dateStr\}/g, date);
@@ -1106,7 +1109,7 @@ const Character: React.FC = () => {
                         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
                         body: JSON.stringify({
                             model: apiConfig.model,
-                            messages: [{ role: "user", content: prompt }],
+                            messages: ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: "user", content: prompt }]),
                             max_tokens: 8000,
                             temperature: 0.5
                         })
@@ -1183,12 +1186,12 @@ const Character: React.FC = () => {
 
           // 构建完整角色上下文（包含人设、世界观、用户档案、精炼记忆等宏观信息）
           await injectMemoryPalace(formData);
-          const fullContext = ContextBuilder.buildCoreContext(formData, userProfile);
+          const characterContextInput = { char: formData, user: userProfile };
 
           let messagesToAnalyze = "";
 
           // 第一层：完整上下文 —— 宏观人格分析的基石
-          messagesToAnalyze += `\n【完整角色上下文 (Full Context - 宏观分析的基石)】:\n${fullContext}\n`;
+          messagesToAnalyze += `\n【完整角色上下文 (Full Context - 宏观分析的基石)】:\n\n`;
 
           // 第二层：最近聊天 —— 仅用于检测近期变化
           // 记忆部分已包含在 buildCoreContext 中（精炼月度总结 + 点亮月份的详细记忆），
@@ -1292,7 +1295,7 @@ ${isInitialGeneration ? `
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
               body: JSON.stringify({
                   model: apiConfig.model,
-                  messages: [{ role: "user", content: prompt }],
+                  messages: ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: "user", content: prompt }]),
                   max_tokens: 8000,
                   temperature: 0.5,
                   // 与「设置 → API → 流式输出」保持一致，不在印象功能里强制覆盖用户选择。
@@ -1756,12 +1759,13 @@ ${isInitialGeneration ? `
                        <button onClick={handleBack} className="p-2 -ml-2 rounded-full hover:bg-white/60 flex items-center gap-1 text-slate-600"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg><span className="text-sm font-medium">列表</span></button>
                        <button data-guide={formData.id === 'preset-sully-v2' ? 'sully-message' : undefined} onClick={() => { setActiveCharacterId(formData.id); chatDetailLaunch.request({ charId: formData.id, clearUnread: true }); openApp(AppID.Chat); }} className="text-xs px-3 py-1.5 bg-primary text-white rounded-full font-bold shadow-sm shadow-primary/30 flex items-center gap-1 active:scale-95 transition-transform"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M3.105 2.288a.75.75 0 0 0-.826.95l1.414 4.926H16.5a.75.75 0 0 1 0 1.5H3.693l-1.414 4.926a.75.75 0 0 0 .826.95 28.897 28.897 0 0 0 15.293-7.155.75.75 0 0 0 0-1.114A28.897 28.897 0 0 0 3.105 2.288Z" /></svg>发消息</button>
                    </div>
-                   <div className="flex gap-6 text-sm font-medium text-slate-400 pl-1">
+                   <div className="flex gap-5 overflow-x-auto whitespace-nowrap no-scrollbar [&>button]:shrink-0 text-sm font-medium text-slate-400 pl-1">
                        <button onClick={() => { setDetailTab('identity'); trackEvent('切换角色详情标签页', { tab: 'identity' }); }} className={`pb-2 transition-colors relative ${detailTab === 'identity' ? 'text-slate-800' : ''}`}>设定{detailTab === 'identity' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-full"></div>}</button>
                        <button onClick={() => { setDetailTab('memory'); trackEvent('切换角色详情标签页', { tab: 'memory' }); }} className={`pb-2 transition-colors relative ${detailTab === 'memory' ? 'text-slate-800' : ''}`}>记忆 ({(formData.memories || []).length}){detailTab === 'memory' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-full"></div>}</button>
                        <button onClick={() => { setDetailTab('impression'); trackEvent('切换角色详情标签页', { tab: 'impression' }); }} className={`pb-2 transition-colors relative ${detailTab === 'impression' ? 'text-slate-800' : ''}`}>印象{detailTab === 'impression' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-full"></div>}</button>
                        <button onClick={() => { setDetailTab('plates'); trackEvent('切换角色详情标签页', { tab: 'plates' }); }} className={`pb-2 transition-colors relative ${detailTab === 'plates' ? 'text-slate-800' : ''}`}>门牌{detailTab === 'plates' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-full"></div>}</button>
                        <button onClick={() => { setDetailTab('chibi'); trackEvent('切换角色详情标签页', { tab: 'chibi' }); }} className={`pb-2 transition-colors relative ${detailTab === 'chibi' ? 'text-slate-800' : ''}`}>手办{detailTab === 'chibi' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-full"></div>}</button>
+                       <button onClick={() => setDetailTab('stats')} className={`pb-2 transition-colors relative ${detailTab === 'stats' ? 'text-slate-800' : ''}`}>角色统计{detailTab === 'stats' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-full" />}</button>
                    </div>
                  </div>
                </div>
@@ -2744,6 +2748,8 @@ ${isInitialGeneration ? `
                    {detailTab === 'chibi' && formData.id && (
                        <ChibiShelfPanel charId={formData.id} onOpen={() => { setShowChibiStudio(true); trackEvent('打开QQ捏人工坊'); }} />
                    )}
+
+                   {detailTab === 'stats' && <CharacterStatsPanel character={formData} user={userProfile} onOpenMemory={() => setDetailTab('memory')} />}
 
                    {detailTab === 'plates' && formData.id && (
                        <RoomPlatePanel charId={formData.id} userName={userProfile.name} />

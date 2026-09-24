@@ -450,7 +450,8 @@ const JournalApp: React.FC = () => {
             // 主动点了“保存”。旧代码在这里直接 saveEntry()，于是循环按钮先弹“日记已保存”。
             await saveEntry({ silent: true });
             await injectMemoryPalace(selectedChar, undefined, currentEntry.userPage.text);
-            let systemPrompt = ContextBuilder.buildCoreContext(selectedChar, userProfile);
+            const characterContextInput = { char: selectedChar, user: userProfile };
+            let systemPrompt = '';
 
             const styleOptions = PAPER_STYLES.map(p => p.id).join(', ');
             const defaultStickers = DEFAULT_STICKERS.join(' ');
@@ -507,10 +508,10 @@ Structure:
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
                 body: JSON.stringify({
                     model: apiConfig.model,
-                    messages: [
+                    messages: ContextBuilder.buildCharacterRequest(characterContextInput, [
                         { role: 'system', content: systemPrompt },
                         { role: 'user', content: `Users Diary:\n${currentEntry.userPage.text}` }
-                    ],
+                    ]),
                     temperature: 0.85
                 })
             });
@@ -585,9 +586,10 @@ Structure:
 
         // 主 API 散文式总结 — 当宫殿没开 / 副 API 缺失 / 提取为空时的 fallback
         const generateProseSummary = async (): Promise<string> => {
-            const baseContext = ContextBuilder.buildCoreContext(selectedChar, userProfile);
+            const characterContextInput = { char: selectedChar, user: userProfile };
+
             const charPart = diary.charPage?.text?.trim() || '(对方没有回复)';
-            const prompt = `${baseContext}
+            const prompt = `
 
 ### [系统指令: 交换日记归档]
 当前任务: 把这篇【交换日记】(日期 ${diary.date}) 总结成一段对你 (${selectedChar.name}) 长期有效的记忆。
@@ -618,7 +620,7 @@ ${charPart}
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
                 body: JSON.stringify({
                     model: apiConfig.model,
-                    messages: [{ role: 'user', content: prompt }],
+                    messages: ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: 'user', content: prompt }]),
                     temperature: 0.4,
                     max_tokens: 1200,
                 }),

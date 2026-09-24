@@ -1,3 +1,4 @@
+import { ContextBuilder } from '../../utils/context';
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { NovelBook, NovelSegment, CharacterProfile, UserProfile } from '../../types';
@@ -241,7 +242,7 @@ const NovelWriter: React.FC<NovelWriterProps> = ({
             const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-                body: JSON.stringify({ model: apiConfig.model, messages: [{ role: "user", content: prompt }], temperature, max_tokens: 8000 })
+                body: JSON.stringify({ model: apiConfig.model, messages: ContextBuilder.buildCharacterRequest({ char, user: userProfile }, [{ role: "user", content: prompt }]), temperature, max_tokens: 8000 })
             });
 
             if (response.ok) {

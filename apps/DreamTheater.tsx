@@ -145,7 +145,8 @@ export async function generateDreamScript(opts: {
     // 记忆宫殿：内部按 memoryPalaceEnabled 自行把关，关闭时是 no-op
     await injectMemoryPalace(char, undefined, undefined, userProfile.name);
     // 需求明确：contextbuilder(false) —— 不带当月详细记忆，只要角色底子
-    const context = ContextBuilder.buildCoreContext(char, userProfile, false, char.memoryPalaceInjection);
+    const characterContextInput = { char, user: userProfile, includeDetailedMemories: false, memoryPalaceContext: char.memoryPalaceInjection };
+
     const msgs = await loadCharacterContextMessages(char);
     // 原文范围统一遵守角色的自适应 / 手动设置
     const ctxLimit = Math.max(1, msgs.length);
@@ -155,7 +156,7 @@ export async function generateDreamScript(opts: {
         return `${who}: ${c}`;
     }).join('\n');
 
-    const prompt = buildDreamPrompt(context, recent, char.name, userProfile.name, forcedArchetype);
+    const prompt = buildDreamPrompt('', recent, char.name, userProfile.name, forcedArchetype);
     const res = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
@@ -163,7 +164,7 @@ export async function generateDreamScript(opts: {
         // 中转的合法区间是 0~1，>1 会直接报错（OpenAI 虽允许到 2，但 1.0 已足够发散）。
         // max_tokens 用 8192：梦是一堆短碎片，足够用；16000 在 claude-3.5 等输出上限 8192 的
         // 模型上会 400。仍有「finish_reason==='length' → 截断」兜底。
-        body: JSON.stringify({ model: apiConfig.model, messages: [{ role: 'user', content: prompt }], temperature: 1.0, max_tokens: 8192 }),
+        body: JSON.stringify({ model: apiConfig.model, messages: ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: 'user', content: prompt }]), temperature: 1.0, max_tokens: 8192 }),
     });
     if (!res.ok) throw new Error('API');
     const data = await safeResponseJson(res);

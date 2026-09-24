@@ -300,6 +300,8 @@ const hasHostExchange = (msgs: readonly any[] | null | undefined, hostName?: str
 };
 
 export interface PromptBuildOptions {
+    /** 已完成清洗的实际消息，由公共上下文管线统一处理世界书。 */
+    history?: import('./context').ContextMessage[];
     forFirePack?: boolean;
     /** 主 API 从完整数据库历史识别出的「刚从哪种模式回到 ChatApp」。 */
     returningFromMode?: ChatModeTransition;
@@ -437,7 +439,8 @@ export const ChatPrompts = {
         const parts = await ChatPrompts.buildSystemPromptParts(
             char, userProfile, groups, emojis, categories, currentMsgs,
             realtimeConfig, evolvedNarrative, userListeningContext, isListeningTogether, musicCfg,
-            undefined, promptOptions,
+            // 本接口只返回文本，不能把深度条目移交给会被丢弃的 history 返回值。
+            undefined, { ...promptOptions, history: undefined },
         );
         return parts.stable + parts.volatileState + parts.recencyTail;
     },
@@ -478,7 +481,7 @@ export const ChatPrompts = {
         // 刚才一起听途中歌被切了（char 还没重新加入）—— 注入"察觉换歌"提示。
         recentTrackSwitch?: { songName: string; artists: string } | null,
         promptOptions?: PromptBuildOptions,
-    ): Promise<{ stable: string; volatileState: string; recencyTail: string }> => {
+    ): Promise<{ stable: string; volatileState: string; recencyTail: string; history: import('./context').ContextMessage[] }> => {
         // 主动消息的模板是最后一次聊天时打好、到点才渲染的，凡是「打包这一刻」的状态
         // 到触发时都已经过期，一律不烤进模板。见 PromptBuildOptions 的清单。
         const forFirePack = promptOptions?.forFirePack === true;
@@ -511,23 +514,21 @@ export const ChatPrompts = {
         // 记忆宫殿检索结果现在从 char.memoryPalaceInjection 读取。
         // deferVolatile：时间/宫殿召回/情绪 buff 三块不进 stable，由下面的 volatileState 承接。
         const coreT0 = performance.now();
-        let baseSystemPrompt = ContextBuilder.buildCoreContext(
-            char,
-            userProfile,
-            true,
-            undefined,
+        const context = ContextBuilder.buildCharacterContext({
+            char, user: userProfile, history: promptOptions?.history,
             // 小镇：关掉「正在和你说话的人」，该说的由存在感档位（buildModeRule）负责，
             // 两边都注会直接矛盾。见 PromptBuildOptions.worldHome。
-            promptOptions?.worldHome ? { skipChatPartnerNote: true } : undefined,
-            {
+            groupOptions: promptOptions?.worldHome ? { skipChatPartnerNote: true } : undefined,
+            timeOptions: {
                 worldbookMessages: currentMsgs,
                 // 阶段 2.8：窗口里只要出现过「机主说 + 角色答」这一对，就说明你们聊过。
                 // 只需布尔值，所以用最近窗口判断足够——真聊过的话窗口里必然有痕迹；
                 // 窗口空（全新对话）时判为「没聊过」也正是对的。
                 hasExchangedWithHost: hasHostExchange(currentMsgs, userProfile?.name),
             },
-            { deferVolatile: true },
-        );
+            layout: { deferVolatile: true },
+        });
+        let baseSystemPrompt = context.coreContext;
         timings.buildCoreContext = Math.round(performance.now() - coreT0);
 
         // ── 易变状态段（volatileState）──
@@ -1490,7 +1491,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
             .join(' ');
         console.log(`⏱ [buildSystemPrompt] total=${perfTotal}ms | stable=${baseSystemPrompt.length}ch volatile=${volatileState.length}ch | ${timingStr}`);
 
-        return { stable: baseSystemPrompt, volatileState, recencyTail };
+        return { stable: baseSystemPrompt, volatileState, recencyTail, history: context.history };
     },
 
     // 格式化消息历史

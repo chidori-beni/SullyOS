@@ -524,3 +524,15 @@ describe('buildPromptBreakdown · 落单围栏', () => {
         expect(labels).toEqual(['规则', '下一块', '聊天历史·用户消息 ×1']);
     });
 });
+
+it('没有标准收尾的世界书文本仍按标题拆分，所有消息分区可还原全文', () => {
+    const content = '### 扩展设定集 (Worldbooks)\n开头几行\n### 自定义规则\n' + '完整规则正文\n'.repeat(500) + '末尾标记';
+    const capture = buildApiRequestCapture({
+        url: 'https://example.com/v1/chat/completions',
+        body: JSON.stringify({ messages: [{ role: 'system', content }] }),
+    });
+    const parts = capture.sections.filter(s => s.messageIndex === 0);
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts.map(s => getApiRequestCaptureSectionContent(capture, s)).join('')).toBe(content);
+    expect(JSON.stringify(capture.payload)).toContain('末尾标记');
+});

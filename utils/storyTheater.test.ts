@@ -1,3 +1,4 @@
+import { ContextBuilder } from './context';
 import { describe, expect, it } from 'vitest';
 import type { CharacterProfile, Message, StoryTheaterPreset, UserProfile } from '../types';
 import { STORY_PRESET_SIMPLE_CHOICES } from '../components/date/story/StoryPresetMaker';
@@ -16,7 +17,6 @@ import {
     buildStoryPrefillInstruction,
     buildStoryMultiAffinityGuide,
     buildStoryWorldbookScanMessages,
-    buildTheaterWorldbookSlots,
     compileStoryPreset,
     prepareStoryGenerationSettings,
     createBlankStoryPreset,
@@ -424,7 +424,7 @@ describe('剧情沙盒辅助逻辑', () => {
     it('用当前轮输入立即触发关键词世界书，并保持最多二十条扫描窗口', () => {
         const history = Array.from({ length: 25 }, (_, index) => ({ role: index % 2 ? 'assistant' : 'user', content: `旧消息 ${index}` }));
         const scanMessages = buildStoryWorldbookScanMessages(history, '我现在肘击他');
-        const slots = buildTheaterWorldbookSlots([{
+        const payload = ContextBuilder.buildWorldbookRequest({ books: [{
             id: 'elbow',
             title: '肘击规则',
             content: '触发成功',
@@ -432,11 +432,13 @@ describe('剧情沙盒辅助逻辑', () => {
             key: ['肘击'],
             constant: false,
             position: 1,
-        }], scanMessages, '条条', ['苏利']);
+        }], history: scanMessages.map(message => ({ role: message.role || 'user', content: message.content })), userName: '条条', charName: '苏利',
+            render: slots => [{ role: 'system', content: slots.before + slots.after }],
+        });
 
         expect(scanMessages).toHaveLength(20);
         expect(scanMessages.at(-1)).toEqual({ role: 'user', content: '我现在肘击他' });
-        expect(slots.worldAfter).toContain('触发成功');
+        expect(JSON.stringify(payload)).toContain('触发成功');
     });
 
     it('把同一正文映射到每位角色自己的时间锚点', () => {

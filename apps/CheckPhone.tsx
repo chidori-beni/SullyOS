@@ -795,10 +795,8 @@ const CheckPhone: React.FC = () => {
             const lastMsg = msgs[msgs.length - 1];
 
             // 「距离上次联系多久」交给 buildCoreContext 统一注入（受时间感知开关管控、口径与聊天/见面一致）
-            const context = ContextBuilder.buildCoreContext(
-                targetChar, userProfile, true, undefined, undefined,
-                { lastInteractionTs: lastMsg?.timestamp },
-            );
+            const characterContextInput = { char: targetChar, user: userProfile, includeDetailedMemories: true, timeOptions: { lastInteractionTs: lastMsg?.timestamp } };
+
 
             const recentMsgs = msgs.map(m => {
                 const roleName = m.role === 'user' ? userProfile.name : targetChar.name;
@@ -919,14 +917,14 @@ ${realCharRule}
 - **绝不是用户「${userProfile.name}」的社交关系**：不要生成用户的人脉圈，也不要从用户的角度/口吻写备注。
 - 用户「${userProfile.name}」只是在偷看你的手机，TA **不是**你的联系人、**不进**你的通讯录（下面「和用户的最近聊天」只是背景参考，不是要生成的对象，也别把用户的熟人搬进来）。`;
 
-            const fullPrompt = `${context}\n\n### [你和用户「${userProfile.name}」的最近聊天（仅背景参考）]\n${recentMsgs}\n\n${perspectiveLock}\n\n### [Task]\n${promptInstruction}\n请结合上面的「当前时间 / 距离上次联系」和人设调整生成内容的时间戳和情绪。如果很久没联系，记录可能是近期的独处状态；如果刚聊过，记录可能与聊天内容相关。`;
+            const fullPrompt = `\n\n### [你和用户「${userProfile.name}」的最近聊天（仅背景参考）]\n${recentMsgs}\n\n${perspectiveLock}\n\n### [Task]\n${promptInstruction}\n请结合上面的「当前时间 / 距离上次联系」和人设调整生成内容的时间戳和情绪。如果很久没联系，记录可能是近期的独处状态；如果刚聊过，记录可能与聊天内容相关。`;
 
             const response = await fetch(`${effectiveApiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${effectiveApiConfig.apiKey}` },
                 body: JSON.stringify({
                     model: effectiveApiConfig.model,
-                    messages: [{ role: "user", content: fullPrompt }],
+                    messages: ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: "user", content: fullPrompt }]),
                     temperature: 0.8
                 })
             });
@@ -1076,11 +1074,15 @@ ${realCharRule}
     // ============================================================
 
     // 裸 LLM 调用（智能体生成 / 互动续写共用）
-    const callLLM = async (prompt: string, temperature = 0.85): Promise<string> => {
+    const callLLM = async (prompt: string, temperature = 0.85, withCharacter = true): Promise<string> => {
+        const recent = withCharacter && targetChar ? await loadCharacterContextMessages(targetChar) : [];
+        const messages = withCharacter && targetChar ? ContextBuilder.buildCharacterRequest({
+            char: targetChar, user: userProfile, timeOptions: { lastInteractionTs: recent[recent.length - 1]?.timestamp },
+        }, [{ role: 'user', content: prompt }]) : [{ role: 'user', content: prompt }];
         const response = await fetch(`${effectiveApiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${effectiveApiConfig.apiKey}` },
-            body: JSON.stringify({ model: effectiveApiConfig.model, messages: [{ role: 'user', content: prompt }], temperature }),
+            body: JSON.stringify({ model: effectiveApiConfig.model, messages, temperature }),
         });
         if (!response.ok) throw new Error('API Error');
         const data = await safeResponseJson(response);
@@ -1093,15 +1095,12 @@ ${realCharRule}
     const buildAiContext = async (char: CharacterProfile) => {
         await injectMemoryPalace(char);
         const msgs = await loadCharacterContextMessages(char);
-        const lastMsg = msgs[msgs.length - 1];
-        const context = ContextBuilder.buildCoreContext(
-            char, userProfile, true, undefined, undefined, { lastInteractionTs: lastMsg?.timestamp },
-        );
+
         const recentMsgs = msgs.map(m => {
             const roleName = m.role === 'user' ? userProfile.name : char.name;
             return `${roleName}: ${m.type === 'text' ? m.content : `[${m.type}]`}`;
         }).join('\n');
-        return { context, recentMsgs };
+        return { recentMsgs };
     };
 
     // 生成：偷看机主在某个 AI 服务里的使用记录
@@ -1110,7 +1109,7 @@ ${realCharRule}
         setIsLoading(true);
         trackEvent('偷看 AI 助手使用记录', { service });
         try {
-            const { context, recentMsgs } = await buildAiContext(targetChar);
+            const { recentMsgs } = await buildAiContext(targetChar);
             const userName = userProfile?.name || '用户';
             const pushToChat = targetChar.phoneState?.sendToChat !== false;
             const svcName = AI_SERVICES.find(s => s.id === service)?.name || 'AI';
@@ -1165,7 +1164,7 @@ ${AI_VENDOR_LORE}
 要点：扮演内容（剧情里）暴露你的幻想 / 渴望 / 不敢实现的关系。酒馆是 TA 卸下防备的安全屋，扮演里可以流露平时藏起来的反差面（暴戾者忽然温柔、温柔者露出掌控/施虐欲、疏离者变黏人），但**底色始终是「爱」**，不刻意过火。`;
             }
 
-            const fullPrompt = `${context}\n\n### [Recent Chat Context]\n${recentMsgs}\n\n### [Task]\n${task}\n请结合「当前时间 / 距离上次联系」和人设，让内容贴合你近期的真实状态。只输出 JSON，不要解释。`;
+            const fullPrompt = `\n\n### [Recent Chat Context]\n${recentMsgs}\n\n### [Task]\n${task}\n请结合「当前时间 / 距离上次联系」和人设，让内容贴合你近期的真实状态。只输出 JSON，不要解释。`;
 
             const content = await callLLM(fullPrompt);
             const now = Date.now();
@@ -1298,7 +1297,7 @@ ${prevRecap ? `\n【已有前情（仅供衔接，别重复）】\n${prevRecap}\
 ${olderText}
 
 要求：第三人称，含起因→经过→结果，重点写人物关系/情绪的变化与暴露的心事，200~350 字，文笔流畅，不要分点、不要"总结如下"开场白。直接输出正文：`;
-            let summaryText = (await callLLM(prompt, 0.7)).trim();
+            let summaryText = (await callLLM(prompt, 0.7, false)).trim();
             if (!summaryText) summaryText = '（这段剧情继续推进了）';
             const now = Date.now();
             patchAiSession(sessionId, (s) => ({
@@ -1331,8 +1330,8 @@ ${olderText}
             let prompt = '';
             if (isTavern) {
                 const card = aiCards.find(c => c.id === session.cardId);
-                const { context } = await buildAiContext(targetChar);
-                prompt = `${context}\n\n你正在玩"酒馆"沉浸式长剧情角色扮演（像和 AI 合写小说）。你是玩家 ${charName}，对面是 AI 扮演的角色「${card?.name || session.serviceName}」${card?.persona ? `（人设：${card.persona}）` : ''}${card?.scenario ? `（背景：${card.scenario}）` : ''}${card?.basedOn ? `（这角色是照着你在意的「${card.basedOn}」捏的）` : ''}。
+                await buildAiContext(targetChar);
+                prompt = `\n\n你正在玩"酒馆"沉浸式长剧情角色扮演（像和 AI 合写小说）。你是玩家 ${charName}，对面是 AI 扮演的角色「${card?.name || session.serviceName}」${card?.persona ? `（人设：${card.persona}）` : ''}${card?.scenario ? `（背景：${card.scenario}）` : ''}${card?.basedOn ? `（这角色是照着你在意的「${card.basedOn}」捏的）` : ''}。
 下面是对戏记录（"我:"=你/玩家，"对方:"=AI 扮的角色）。对方刚回了最新一段。
 **最关键的前提：你非常清楚「对方」只是一个 AI 在扮演「${card?.name || session.serviceName}」这个角色——不是真人。** 正因为它是 AI、是你召来陪你玩的工具，你**握着绝对主导权**：可以随意对它下指令、调教它、OOC 它、让它重演、改设定。你绝不会把它错当成真人去迁就讨好。
 **同时你是个有独立人格和意志的人**：有自己的脾气、立场、节奏和底线，该怼就怼、该愣就愣、不爽就不配合。对方写得好你才会被带动、真情流露（甚至流露平时藏起来的反差面：暴戾者忽然温柔、温柔者露出掌控欲 / 施虐欲、疏离者变黏人，底色是「爱」、不刻意过火）；写得烂或不对胃口，你完全可以不接、嫌弃、跳出来调教它。
@@ -1345,11 +1344,11 @@ ${olderText}
 只输出你这层楼真正发出去的字，不要 "我:" 前缀、不要解释。${recap}\n\n${transcript}`;
             } else {
                 // 潜入：你扮 AI（刚由你写完"对方:"那句），LLM 演 char 本人对这句的真实反应
-                const { context } = await buildAiContext(targetChar);
+                await buildAiContext(targetChar);
                 const aiDesc = session.service === 'claude'
                     ? `一个像 Claude 那样的深度对话 AI「${session.serviceName}」（你的树洞，你会对它说当面对人说不出口的真心话）`
                     : `AI 助手「${session.serviceName}」（你拿它查东西 / 出主意 / 排解，它只是个工具）`;
-                prompt = `${context}\n\n你（${charName}）正在用手机和 ${aiDesc} 聊天。下面是对话（"我:"=你本人，"对方:"=那个 AI）。AI 刚回了最新一段，请以你的本色人设续写 "我:" 的下一句——你对它这句话的真实反应 / 追问 / 倾诉，贴合你的处境与心事。可以满意、可以失望、可以怼它答非所问、可以顺着深聊，别一味客气。别太长。只输出正文，不要前缀、不要解释。${recap}\n\n${transcript}`;
+                prompt = `\n\n你（${charName}）正在用手机和 ${aiDesc} 聊天。下面是对话（"我:"=你本人，"对方:"=那个 AI）。AI 刚回了最新一段，请以你的本色人设续写 "我:" 的下一句——你对它这句话的真实反应 / 追问 / 倾诉，贴合你的处境与心事。可以满意、可以失望、可以怼它答非所问、可以顺着深聊，别一味客气。别太长。只输出正文，不要前缀、不要解释。${recap}\n\n${transcript}`;
             }
 
             let reply = (await callLLM(prompt)).trim();
@@ -1381,8 +1380,8 @@ ${olderText}
             let prompt = '';
             if (isTavern) {
                 const card = aiCards.find(c => c.id === session.cardId);
-                const { context } = await buildAiContext(targetChar);
-                prompt = `${context}\n\n你在还原一段"酒馆"沉浸式长剧情角色扮演（像小说）。玩家是 ${charName}(本色人设)，AI 扮演角色「${card?.name || session.serviceName}」${card?.persona ? `（人设：${card.persona}）` : ''}${card?.scenario ? `（背景：${card.scenario}）` : ''}${card?.basedOn ? `（这角色照着 TA 在意的「${card.basedOn}」捏的，扮演里那份在意会渗出来）` : ''}。
+                await buildAiContext(targetChar);
+                prompt = `\n\n你在还原一段"酒馆"沉浸式长剧情角色扮演（像小说）。玩家是 ${charName}(本色人设)，AI 扮演角色「${card?.name || session.serviceName}」${card?.persona ? `（人设：${card.persona}）` : ''}${card?.scenario ? `（背景：${card.scenario}）` : ''}${card?.basedOn ? `（这角色照着 TA 在意的「${card.basedOn}」捏的，扮演里那份在意会渗出来）` : ''}。
 **这是"替玩家跑一个完整回合"——所以要写"一来一回"两层楼**：先 AI 扮的角色「${card?.name || session.serviceName}」回应一段（"对方:"），再玩家 ${charName} 续一段（"我:"），承接最后一段（最后通常是"我:"，那就先"对方:"答、再"我:"续）。各 3-5 句小说体，*星号*包动作神态心理。**整段必须以 "我:"(玩家)收尾**（停在等对方处，方便随时接着玩）。
 **"我:"是玩家敲进输入框的 RP——只写故事场景里所扮角色的动作/对白**，括号外绝不要写玩家现实里的身体反应（盯屏幕、扔手机、吃东西、后背发凉等，那不会被敲进输入框）；**（全角括号内）= 越过角色直接跟皮下 AI 本体说话**（骂它 / OOC 提醒 / 指导怎么演 / 指出哪段不对）。玩家保有独立人格、清楚对面只是 AI。
 **两段都要带 "对方:" / "我:" 前缀，各自成行。** 不要解释。${recap}\n\n${session.transcript}`;
@@ -1514,13 +1513,13 @@ ${olderText}
         setIsLoading(true);
         trackEvent('用角色卡开一局');
         try {
-            const { context, recentMsgs } = await buildAiContext(targetChar);
+            const { recentMsgs } = await buildAiContext(targetChar);
             const task = `你（${charName}）在玩"酒馆"AI 角色扮演（沉浸式长剧情、像和 AI 合写小说）。这次的对手是你的角色卡「${card.name}」${card.kind === 'world' ? '（大型世界卡）' : ''}：
 人设/设定：${card.persona || '（自行发挥，贴合卡名）'}${card.scenario ? `\n初始场景：${card.scenario}` : ''}
 请生成 1 段你和这张卡的扮演记录。
 **transcript 写法**：长剧情小说体，第三人称叙事 + 引号对白，动作/神态/心理用 *星号*；"我:" = 你(玩家 ${charName}) 敲进输入框的 RP，"对方:" = AI 扮的「${card.name}」，交替推进，4-6 轮，首轮"对方:"当开场白、**整段以 "我:"(玩家)收尾**（停在等对方回应处）。**"我:"括号外只写故事里所扮角色的动作/对白，不要写你现实里的身体反应（盯屏幕/扔手机/吃东西等）；（全角括号内）= 越过角色直接跟皮下 AI 本体说话（骂它/OOC 提醒/指导怎么演/指出哪段不对）。**
 返回 JSON：{ "title": "剧情标题(12字内)", "transcript": "我: ...\\n对方: ..." }`;
-            const fullPrompt = `${context}\n\n### [Recent Chat Context]\n${recentMsgs}\n\n### [Task]\n${task}\n只输出 JSON，不要解释。`;
+            const fullPrompt = `\n\n### [Recent Chat Context]\n${recentMsgs}\n\n### [Task]\n${task}\n只输出 JSON，不要解释。`;
             const content = await callLLM(fullPrompt);
             const obj: any = extractJson(content) || {};
             if (!obj.transcript) { addToast('没生成出来，再试一次', 'error'); return; }
