@@ -5,7 +5,8 @@
 import { DB, openDB } from '../db';
 import { processNewMessagesWithAutoArchive } from '../memoryPalace/autoArchive';
 import type { APIConfig, CharacterProfile, VRWorldNovel } from '../../types';
-import { BOOKROOM_RECORD_PREFIX, buildArchive, type BookroomRecord } from './bookroom';
+import { BOOKROOM_RECORD_PREFIX, bookroomRecordId, buildArchive, chaptersFromAnchors, emptyRecord, type BookroomRecord } from './bookroom';
+import type { EpubTocEntry } from './epub';
 
 const SETTINGS = 'vr_settings';
 const NOVELS = 'vr_novels';
@@ -21,6 +22,16 @@ export async function listBookroomRecords(): Promise<BookroomRecord[]> {
     });
 }
 
+export async function getBookroomRecord(novelId: string): Promise<BookroomRecord | undefined> {
+    const db = await openDB();
+    if (!db.objectStoreNames.contains(SETTINGS)) return undefined;
+    return new Promise((resolve, reject) => {
+        const req = db.transaction(SETTINGS, 'readonly').objectStore(SETTINGS).get(bookroomRecordId(novelId));
+        req.onsuccess = () => resolve(req.result as BookroomRecord | undefined);
+        req.onerror = () => reject(req.error);
+    });
+}
+
 export async function saveBookroomRecord(record: BookroomRecord): Promise<void> {
     const db = await openDB();
     return new Promise((resolve, reject) => {
@@ -29,6 +40,34 @@ export async function saveBookroomRecord(record: BookroomRecord): Promise<void> 
         tx.oncomplete = () => resolve();
         tx.onerror = tx.onabort = () => reject(tx.error || new Error('书房记录保存失败'));
     });
+}
+
+/**
+ * 新书上架后，把 EPUB 自带目录和封面记到书房记录里。书房和彼方的上架都走这里，两边一致。
+ * 目录对不上（一章都没找到）时不存，界面会退回自动识别。
+ */
+export async function saveImportExtras(novel: VRWorldNovel, extras: { toc?: EpubTocEntry[]; cover?: string }): Promise<void> {
+    const mapped = extras.toc?.length ? chaptersFromAnchors(novel.segments, extras.toc) : [];
+    const chapters = mapped.length ? mapped : undefined;
+    if (!chapters && !extras.cover) return;
+    const prev = (await getBookroomRecord(novel.id)) || emptyRecord(novel.id);
+    await saveBookroomRecord({ ...prev, chapters: chapters || prev.chapters, cover: extras.cover || prev.cover, updatedAt: Date.now() });
+}
+
+/**
+ * 彻底删除：正文、角色批注（与彼方「下架」相同）+ 书房记录（进度、读书记录、封面）。
+ * 已经发进聊天的进度消息和记忆宫殿里的内容不动 —— 那些属于聊天记录。
+ */
+export async function deleteBookCompletely(novelId: string): Promise<void> {
+    await DB.deleteVRNovel(novelId);
+    const db = await openDB();
+    await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(SETTINGS, 'readwrite');
+        tx.objectStore(SETTINGS).delete(bookroomRecordId(novelId));
+        tx.oncomplete = () => resolve();
+        tx.onerror = tx.onabort = () => reject(tx.error || new Error('删除书房记录失败'));
+    });
+    try { localStorage.removeItem(`vr_user_bm_${novelId}`); } catch { /* ignore */ }
 }
 
 /**

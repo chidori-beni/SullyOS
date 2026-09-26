@@ -13,7 +13,7 @@ import {
     ArrowLeft, Plus, Trash, BookOpen, Planet, Clock, Play, CaretRight, X,
     UploadSimple, PencilSimple, FlipHorizontal, CaretLeft, Sparkle,
     CircleNotch, TextAa, Palette, Pause, MusicNotes, Queue, Question, Check, Gear, Package, Eye, EyeSlash,
-    SpeakerHigh, SpeakerSlash, MagnifyingGlass, ShieldCheck, MagicWand,
+    SpeakerHigh, SpeakerSlash, MagnifyingGlass, ShieldCheck, MagicWand, ListBullets,
 } from '@phosphor-icons/react';
 import TheaterPanel from './theater/TheaterPanel';
 import { SARCaianDialogue, SARClubStage, SARUpdateModal } from './vrWorld/SARClubEvent';
@@ -41,6 +41,10 @@ import { readVRPactMode, saveVRPactMode, type VRPactMode } from '../utils/vrWorl
 import { VR_ROOMS, getRoom, VR_DEFAULT_INTERVAL_MIN, SIGNAL_EPIGRAPH, signalActFor, signalActRanges, SIGNAL_POEMS_PER_BOOKLET, SIGNAL_EVENT_ENDED, SIGNAL_MEMORIAL_CLOSING } from '../utils/vrWorld/constants';
 import { buildNovelAsync, groupAnnotationsBySeg, getBookmark } from '../utils/vrWorld/novel';
 import { decodeBytes } from '../utils/vrWorld/decodeText';
+import { chapterIndexAt, detectChapters, fallbackSections, type BookChapter } from '../utils/bookroom/bookroom';
+import { getBookroomRecord, saveImportExtras } from '../utils/bookroom/bookroomDb';
+import { parseEpub, type EpubTocEntry } from '../utils/bookroom/epub';
+import { compressCover } from '../utils/bookroom/cover';
 import { extractPdfText, isPdfFile } from '../utils/pdfText';
 import { stripLeakedAttrs } from '../utils/vrWorld/prompts';
 import { PostOffice, MAX_LETTER_CHARS, exportIdentity, importIdentity, getAdminToken, setAdminToken, getPostOfficeBase, setPostOfficeBase, DEFAULT_POST_OFFICE_BASE, probePostOfficeBase, assertCompleteLetterReceipt, PostOfficeError, describePostOfficeError, type PostOfficeProbeResult, type RemoteReply, type RemoteLetterStat, type RemoteAdminLetter } from '../utils/vrWorld/postOffice';
@@ -3261,6 +3265,16 @@ const ReaderModal: React.FC<{ novel: VRWorldNovel; characters: CharacterProfile[
     const [fontSize, setFontSize] = useState<number>(() => Number(localStorage.getItem(READER_FONT_KEY)) || 15);
     const [mode, setMode] = useState<'page' | 'scroll'>(() => (localStorage.getItem(READER_MODE_KEY) === 'scroll' ? 'scroll' : 'page'));
     const [showCtl, setShowCtl] = useState(false);
+    const [showToc, setShowToc] = useState(false);
+    const tocListRef = useRef<HTMLDivElement>(null);
+    // 打开目录时把「在读」那一章滚到中间
+    useEffect(() => { if (showToc) tocListRef.current?.querySelector('[data-current="true"]')?.scrollIntoView({ block: 'center' }); }, [showToc]);
+    // 目录：书房存过的（EPUB 自带目录）优先，否则自动认「第 X 章」，再不行按位置分 20 段
+    const autoChapters = useMemo(() => detectChapters(novel.segments), [novel.segments]);
+    const [savedChapters, setSavedChapters] = useState<BookChapter[] | null>(null);
+    useEffect(() => { void getBookroomRecord(novel.id).then(r => setSavedChapters(r?.chapters?.length ? r.chapters : null)).catch(() => {}); }, [novel.id]);
+    const chapters = savedChapters || (autoChapters.length ? autoChapters : fallbackSections(total));
+    const chaptersGuessed = !savedChapters && !autoChapters.length;
 
     // 翻页态
     const [page, setPage] = useState(() => Math.floor(initialBm / PAGE_SIZE));
@@ -3335,6 +3349,24 @@ const ReaderModal: React.FC<{ novel: VRWorldNovel; characters: CharacterProfile[
         }, 300);
     };
 
+    // 跳到某一章：翻页模式翻到那页并滚到那一段；滚动模式把窗口挪过去
+    const jumpTo = (segIdx: number) => {
+        setShowToc(false);
+        if (mode === 'page') {
+            setPage(Math.floor(segIdx / PAGE_SIZE));
+            window.setTimeout(() => {
+                scrollRef.current?.querySelector<HTMLElement>(`[data-seg="${segIdx}"]`)?.scrollIntoView({ block: 'start' });
+            }, 60);
+        } else {
+            prevHeightRef.current = null;
+            setWinStart(segIdx); setWinEnd(Math.min(total, segIdx + 30)); setTopSeg(segIdx);
+            if (scrollRef.current) scrollRef.current.scrollTop = 0;
+            if (!peek) writeUserBm(novel.id, segIdx);
+        }
+    };
+    const curSeg = mode === 'page' ? page * PAGE_SIZE : topSeg;
+    const curChapter = chapterIndexAt(chapters, curSeg);
+
     const theme = READER_THEMES.find(t => t.id === themeId) || READER_THEMES[0];
     const annBySeg = useMemo(() => groupAnnotationsBySeg(annotations), [annotations]);
     const nameOf = (id: string) => characters.find(c => c.id === id)?.name;
@@ -3350,12 +3382,11 @@ const ReaderModal: React.FC<{ novel: VRWorldNovel; characters: CharacterProfile[
                 <button onClick={onClose} className="p-1.5 -ml-1.5 rounded-full active:bg-black/5" style={{ color: theme.text }}><X size={20} weight="bold" /></button>
                 <div className="min-w-0 flex-1">
                     <div className="text-[14px] font-bold truncate" style={{ color: theme.text }}>{novel.title}</div>
-                    <div className="text-[10px]" style={{ color: theme.sub }}>
-                        {mode === 'page'
-                            ? `第 ${page * PAGE_SIZE + 1}~${Math.min((page + 1) * PAGE_SIZE, total)} 段 / 共 ${total} 段`
-                            : `读到第 ${topSeg + 1} 段 / 共 ${total} 段 · ${Math.round((topSeg / Math.max(1, total)) * 100)}%`}
+                    <div className="text-[10px] truncate" style={{ color: theme.sub }}>
+                        {curChapter >= 0 && !chaptersGuessed ? `${chapters[curChapter].title} · ` : ''}{Math.round((curSeg / Math.max(1, total)) * 100)}%
                     </div>
                 </div>
+                <button onClick={() => setShowToc(true)} className="p-1.5 rounded-full active:bg-black/5" style={{ color: theme.accent }} aria-label="目录"><ListBullets size={19} weight="bold" /></button>
                 <button onClick={() => setShowCtl(s => !s)} className="p-1.5 rounded-full active:bg-black/5" style={{ color: theme.accent }}><Palette size={18} weight="bold" /></button>
             </div>
 
@@ -3417,6 +3448,30 @@ const ReaderModal: React.FC<{ novel: VRWorldNovel; characters: CharacterProfile[
                 ))}
             </div>
 
+            {/* 目录 */}
+            {showToc && (
+                <div className="fixed inset-0 z-[60] flex flex-col" style={{ background: theme.bg }}>
+                    <div className="flex items-center gap-2 px-4 pb-2 shrink-0" style={{ borderBottom: `1px solid ${theme.accent}22`, paddingTop: VR_TOP }}>
+                        <button onClick={() => setShowToc(false)} className="p-1.5 -ml-1.5 rounded-full active:bg-black/5" style={{ color: theme.text }} aria-label="关闭目录"><X size={20} weight="bold" /></button>
+                        <div className="min-w-0 flex-1">
+                            <div className="text-[14px] font-bold truncate" style={{ color: theme.text }}>目录</div>
+                            <div className="text-[10px]" style={{ color: theme.sub }}>{chaptersGuessed ? '没认出章节标题，按位置分段' : `共 ${chapters.length} 章`}</div>
+                        </div>
+                    </div>
+                    <div className="flex-1 overflow-y-auto vr-reader-scroll px-3 py-2" ref={tocListRef}>
+                        {chapters.map((c, i) => (
+                            <button key={`${c.segIdx}-${i}`} data-current={i === curChapter} onClick={() => jumpTo(c.segIdx)}
+                                className="w-full flex items-center gap-2 text-left px-3 py-3 rounded-lg active:opacity-70"
+                                style={{ borderBottom: `1px solid ${theme.accent}14`, background: i === curChapter ? `${theme.accent}1a` : 'transparent' }}>
+                                <span className="flex-1 min-w-0 truncate text-[14px]" style={{ color: i === curChapter ? theme.accent : i < curChapter ? theme.sub : theme.text, fontWeight: i === curChapter ? 700 : 400 }}>{c.title}</span>
+                                {i === curChapter && <span className="text-[10px] px-2 py-0.5 rounded-full shrink-0" style={{ background: theme.accent, color: theme.paper }}>在读</span>}
+                                <span className="text-[10px] shrink-0" style={{ color: theme.sub }}>{Math.round((c.segIdx / Math.max(1, total)) * 100)}%</span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
+
             {/* 底栏 */}
             {mode === 'page' ? (
                 <div className="flex items-center justify-between px-5 py-2.5 shrink-0" style={{ background: theme.paper, borderTop: `1px solid ${theme.accent}22`, paddingBottom: vrBottomPad('0.625rem') }}>
@@ -3441,7 +3496,7 @@ type UploadFileInfo = {
     chars: number;
     preview: string;
     encoding: string;
-    kind: 'text' | 'pdf';
+    kind: 'text' | 'pdf' | 'epub';
     pages?: number;
 };
 
@@ -3463,6 +3518,8 @@ const UploadModal: React.FC<{
     // 留着原始字节，手动换编码时无需重新读盘即可重解码
     const fileBufRef = useRef<ArrayBuffer | null>(null);
     const [chosenEncoding, setChosenEncoding] = useState<string>('auto');
+    // EPUB 自带的目录和封面：上架时一起记进书房记录（书房和彼方共用）
+    const epubExtrasRef = useRef<{ toc: EpubTocEntry[]; cover?: string } | null>(null);
     const fileRef = useRef<HTMLInputElement>(null);
     const [reading, setReading] = useState(false);
     const [readingStatus, setReadingStatus] = useState('');
@@ -3485,17 +3542,36 @@ const UploadModal: React.FC<{
     const onFile = async (f: File | undefined) => {
         if (!f) return;
         const pdfFile = isPdfFile(f);
+        const epubFile = f.type.toLowerCase() === 'application/epub+zip' || /\.epub$/i.test(f.name);
         const textFile = f.type.toLowerCase() === 'text/plain' || /\.(txt|text)$/i.test(f.name);
-        if (!pdfFile && !textFile) {
-            onError('目前只支持 .txt 和 .pdf 文件');
+        if (!pdfFile && !textFile && !epubFile) {
+            onError('目前支持 .epub、.txt 和 .pdf 文件');
             if (fileRef.current) fileRef.current.value = '';
             return;
         }
         setReading(true);
-        setReadingStatus(pdfFile ? '正在载入 PDF…' : '读取并识别编码中…');
+        setReadingStatus(epubFile ? '正在拆开 EPUB…' : pdfFile ? '正在载入 PDF…' : '读取并识别编码中…');
+        epubExtrasRef.current = null;
         try {
             const buf = await f.arrayBuffer();
-            if (pdfFile) {
+            if (epubFile) {
+                fileBufRef.current = null;
+                const book = await parseEpub(buf, f.name.replace(/\.epub$/i, ''));
+                let cover: string | undefined;
+                if (book.cover) { try { cover = await compressCover(book.cover); } catch { /* 封面坏了不影响上架 */ } }
+                epubExtrasRef.current = { toc: book.toc, cover };
+                fileContentRef.current = book.text;
+                setFileInfo({
+                    name: f.name,
+                    chars: book.text.length,
+                    preview: book.text.slice(0, 300).replace(/\s+/g, ' ').trim(),
+                    encoding: book.toc.length ? `EPUB · 目录 ${book.toc.length} 章` : 'EPUB',
+                    kind: 'epub',
+                });
+                if (!title.trim()) setTitle(book.title);
+                if (!author.trim() && book.author) setAuthor(book.author);
+                if (!summary.trim() && book.description) setSummary(book.description);
+            } else if (pdfFile) {
                 fileBufRef.current = null;
                 const result = await extractPdfText(buf, {
                     onProgress: ({ page, totalPages }) => setReadingStatus(`正在提取 PDF 文本… ${page}/${totalPages}`),
@@ -3521,10 +3597,10 @@ const UploadModal: React.FC<{
                 applyDecode(f.name, buf, 'auto');
             }
             setPasteText(''); // 文件优先，清掉粘贴框
-            if (!title.trim()) setTitle(f.name.replace(/\.(txt|text|pdf)$/i, ''));
+            if (!epubFile && !title.trim()) setTitle(f.name.replace(/\.(txt|text|pdf)$/i, ''));
         } catch (e) {
             console.error('[VRWorld] read novel file failed', e);
-            onError(pdfFile ? 'PDF 读取失败，文件可能已损坏、加密或网络组件加载失败' : '文件读取失败');
+            onError(epubFile ? `EPUB 读取失败：${e instanceof Error ? e.message : String(e)}` : pdfFile ? 'PDF 读取失败，文件可能已损坏、加密或网络组件加载失败' : '文件读取失败');
         } finally {
             setReading(false);
             setReadingStatus('');
@@ -3542,6 +3618,7 @@ const UploadModal: React.FC<{
     const clearFile = () => {
         fileContentRef.current = '';
         fileBufRef.current = null;
+        epubExtrasRef.current = null;
         setChosenEncoding('auto');
         setFileInfo(null);
         setReadingStatus('');
@@ -3564,6 +3641,9 @@ const UploadModal: React.FC<{
                 onProgress: (r) => setProgress(Math.round(r * 100)),
             });
             if (novel.segments.length === 0) { onError('正文是空的'); setBusy(false); return; }
+            if (fileInfo?.kind === 'epub' && epubExtrasRef.current) {
+                try { await saveImportExtras(novel, epubExtrasRef.current); } catch (e) { console.warn('[VRWorld] EPUB 目录/封面保存失败', e); }
+            }
             await onCommit({ ...novel, categoryId: categories.some(c => c.id === categoryId) ? categoryId : undefined });
             trackEvent('上架一本小说到书库');
         } catch (e) {
@@ -3581,7 +3661,7 @@ const UploadModal: React.FC<{
                     {!busy && <button onClick={onClose} className="ml-auto p-1 text-indigo-300/60"><X size={18} /></button>}
                 </div>
 
-                <input ref={fileRef} type="file" accept=".txt,text/plain,.pdf,application/pdf" className="hidden" onChange={e => onFile(e.target.files?.[0])} />
+                <input ref={fileRef} type="file" accept=".epub,application/epub+zip,.txt,text/plain,.pdf,application/pdf" className="hidden" onChange={e => onFile(e.target.files?.[0])} />
                 {reading ? (
                     <div className="w-full rounded-xl border border-indigo-300/30 py-5 mb-3 flex items-center justify-center gap-2 text-indigo-100/90">
                         <CircleNotch size={18} weight="bold" className="animate-spin" /> {readingStatus}
@@ -3616,7 +3696,7 @@ const UploadModal: React.FC<{
                 ) : (
                     <button onClick={() => fileRef.current?.click()}
                         className="w-full rounded-xl border border-dashed border-indigo-300/40 py-3 mb-3 text-[12.5px] text-indigo-100/90 flex items-center justify-center gap-2 active:bg-white/5">
-                        <UploadSimple size={16} weight="bold" /> 选择 .txt / .pdf 文件（大文件也 OK）
+                        <UploadSimple size={16} weight="bold" /> 选择 .epub / .txt / .pdf 文件（大文件也 OK）
                     </button>
                 )}
 

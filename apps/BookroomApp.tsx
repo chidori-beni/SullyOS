@@ -6,7 +6,7 @@
  * 归档（只删正文，记录全留）。逻辑见 utils/bookroom/。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Archive, BookOpenText, Check, ImageSquare, ListBullets, MagnifyingGlass, Plus, X } from '@phosphor-icons/react';
+import { ArrowLeft, Archive, BookOpenText, Check, ImageSquare, ListBullets, MagnifyingGlass, Plus, Trash, X } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import TokenImg from '../components/os/TokenImg';
@@ -19,7 +19,7 @@ import {
     findArchivedByTitle, formatPercent, locateSentence, progressRatio, unfinishedReaders,
     type BookChapter, type BookroomRecord, type SentenceMatch,
 } from '../utils/bookroom/bookroom';
-import { archiveBook, listBookroomRecords, restoreArchivedBook, saveBookroomRecord, sendProgressToCharacters } from '../utils/bookroom/bookroomDb';
+import { archiveBook, deleteBookCompletely, listBookroomRecords, restoreArchivedBook, saveBookroomRecord, saveImportExtras, sendProgressToCharacters } from '../utils/bookroom/bookroomDb';
 import { parseEpub } from '../utils/bookroom/epub';
 import { compressCover } from '../utils/bookroom/cover';
 import './bookroom/bookroom.css';
@@ -110,7 +110,7 @@ const BookroomApp: React.FC = () => {
                         <div className="bk-top-title"><small>BOOKROOM</small><h1>书房</h1></div>
                         <button className="bk-icon" onClick={() => setImporting(true)} aria-label="导入书"><Plus size={20} /></button>
                     </header>
-                    <main className="bk-scroll">
+                    <main className="bk-scroll overflow-y-auto">
                         <p className="bk-lead">在 Reeden 里读，回来告诉 {characters.length === 1 ? characters[0].name : 'ta'} 你读到了哪。书架和彼方书库是同一个。</p>
                         {loaded && !books.length && <div className="bk-empty"><BookOpenText size={36} weight="thin" /><p>书架还空着。<br />点右上角「+」导入一本 EPUB / TXT / PDF。</p></div>}
                         <div className="bk-shelf">
@@ -148,6 +148,16 @@ const BookroomApp: React.FC = () => {
                             setRecords(rs => [...rs.filter(r => r.novelId !== next.novelId), next]);
                             setNovels(ns => ns.filter(n => n.id !== book.novelId));
                             addToast('已归档，记录都还在', 'success');
+                        } catch (e) { addToast(e instanceof Error ? e.message : String(e), 'error'); }
+                    }}
+                    onDelete={async () => {
+                        if (!window.confirm(`彻底删除《${book.title}》？\n\n正文、角色在书上的批注、你的进度、读书记录和封面都会删掉，不能恢复。\n\n已经发进聊天的进度消息和角色的记忆不受影响。\n\n只想省空间的话，用「归档」更好。`)) return;
+                        try {
+                            await deleteBookCompletely(book.novelId);
+                            setRecords(rs => rs.filter(r => r.novelId !== book.novelId));
+                            setNovels(ns => ns.filter(n => n.id !== book.novelId));
+                            setOpenId(null);
+                            addToast('已删除', 'success');
                         } catch (e) { addToast(e instanceof Error ? e.message : String(e), 'error'); }
                     }}
                 />
@@ -188,8 +198,8 @@ const BookroomApp: React.FC = () => {
 const BookDetail: React.FC<{
     book: ShelfBook; characters: CharacterProfile[];
     onBack: () => void; onReport: (preset?: BookChapter) => void;
-    onSave: (rec: BookroomRecord) => Promise<void>; onArchive: () => void;
-}> = ({ book, characters, onBack, onReport, onSave, onArchive }) => {
+    onSave: (rec: BookroomRecord) => Promise<void>; onArchive: () => void; onDelete: () => void;
+}> = ({ book, characters, onBack, onReport, onSave, onArchive, onDelete }) => {
     const detected = useMemo(() => book.record.chapters || (book.novel ? detectChapters(book.novel.segments) : []), [book.novel, book.record.chapters]);
     const chapters = detected.length ? detected : fallbackSections(book.segCount);
     const myAt = book.record.progress?.segIdx;
@@ -208,7 +218,7 @@ const BookDetail: React.FC<{
                 <div className="bk-top-title"><small>{book.author || '佚名'}</small><h1 className="truncate">{book.title}</h1></div>
                 <span className="bk-icon" />
             </header>
-            <main className="bk-scroll">
+            <main className="bk-scroll overflow-y-auto">
                 <CoverCard book={book} onSave={onSave} />
 
                 {book.record.archived && (
@@ -308,6 +318,7 @@ const BookDetail: React.FC<{
                 {!book.record.archived && (
                     <button className="bk-danger" onClick={onArchive}><Archive size={16} /> 归档（删正文省空间，记录全留）</button>
                 )}
+                <button className="bk-danger bk-delete" onClick={onDelete}><Trash size={16} /> 彻底删除这本书</button>
             </main>
         </>
     );
@@ -409,7 +420,7 @@ const ReportSheet: React.FC<{
                     <button aria-pressed={tab === 'chapter'} onClick={() => setTab('chapter')}>选章节</button>
                     <button aria-pressed={tab === 'sentence'} onClick={() => setTab('sentence')}>粘一句原文</button>
                 </nav>
-                <div className="bk-sheet-body">
+                <div className="bk-sheet-body overflow-y-auto">
                     {finished ? <p className="bk-note">记为「读完了」。</p> : tab === 'chapter' ? (
                         <ol className="bk-toc bk-toc-pick" ref={listRef}>
                             {chapters.map((c, i) => (
@@ -517,14 +528,13 @@ const ImportSheet: React.FC<{
         try {
             const novel = await buildNovelAsync(title, text, { author, summary, onProgress: r => setStatus(`切分中… ${Math.round(r * 100)}%`) });
             if (!novel.segments.length) { onError('正文是空的'); return; }
-            const mapped = toc.length ? chaptersFromAnchors(novel.segments, toc) : [];
-            const chapters = mapped.length ? mapped : undefined;
             if (archived) {
-                await restoreArchivedBook(novel, archived, { chapters, cover });
+                const mapped = toc.length ? chaptersFromAnchors(novel.segments, toc) : [];
+                await restoreArchivedBook(novel, archived, { chapters: mapped.length ? mapped : undefined, cover });
                 await onImported(archived.novelId);
             } else {
                 await DB.saveVRNovel(novel);
-                if (chapters || cover) await saveBookroomRecord({ ...emptyRecord(novel.id), chapters, cover });
+                await saveImportExtras(novel, { toc, cover });
                 await onImported(novel.id);
             }
         } catch (e) { onError(`导入失败：${e instanceof Error ? e.message : String(e)}`); }
@@ -535,7 +545,7 @@ const ImportSheet: React.FC<{
         <div className="bk-sheet-backdrop" onClick={onClose}>
             <section className="bk-sheet" role="dialog" aria-label="导入书" onClick={e => e.stopPropagation()}>
                 <header><h2>导入一本书</h2><button className="bk-icon" onClick={onClose} aria-label="关闭"><X size={18} /></button></header>
-                <div className="bk-sheet-body">
+                <div className="bk-sheet-body overflow-y-auto">
                     <p className="bk-hint">用来认目录、找句子。和 Reeden 里那本用同一个文件最准。EPUB 只取文字和封面，插图排版留在 Reeden 里看。导入后彼方书库里也会出现。</p>
                     <input ref={fileRef} type="file" accept=".epub,.txt,.pdf,application/epub+zip,text/plain,application/pdf" hidden onChange={e => { const f = e.target.files?.[0]; if (f) void pickFile(f); }} />
                     <button className="bk-secondary" disabled={busy} onClick={() => fileRef.current?.click()}>选择 EPUB / TXT / PDF 文件</button>

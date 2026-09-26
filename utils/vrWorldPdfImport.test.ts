@@ -14,7 +14,7 @@ const uploadModal = source.slice(uploadModalStart, uploadModalEnd);
 describe('彼方书库 PDF 导入接线', () => {
     it('接受 PDF、提取全部文本并仅为 TXT 显示编码切换', () => {
         expect(source).toContain("import { extractPdfText, isPdfFile } from '../utils/pdfText'");
-        expect(uploadModal).toContain('accept=".txt,text/plain,.pdf,application/pdf"');
+        expect(uploadModal).toContain('accept=".epub,application/epub+zip,.txt,text/plain,.pdf,application/pdf"');
         expect(uploadModal).toContain('await extractPdfText(buf, {');
         expect(uploadModal).toContain("fileInfo.kind === 'text'");
         expect(uploadModal).toContain('/\\.(txt|text|pdf)$/i');
