@@ -185,3 +185,25 @@
 .bk-check { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .bk-check input { accent-color: var(--bk-accent); width: 16px; height: 16px; }
 .bk-tell small { font-size: 11px; color: var(--bk-sub); }
+
+/* 笔记 */
+.bk-note-actions { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 4px; }
+.bk-note-actions button, .bk-note-foot button, .bk-note-foot a {
+    display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 5px 10px;
+    border-radius: 99px; border: 1px solid var(--bk-line); background: var(--bk-paper); color: var(--bk-accent) !important; text-decoration: none;
+}
+.bk-note-actions button:disabled { opacity: .5; }
+.bk-notes { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.bk-note-item { border-left: 3px solid var(--bk-accent); background: #fff; border-radius: 4px 10px 10px 4px; padding: 9px 11px; }
+.bk-note-item small { display: block; font-size: 10.5px; color: var(--bk-sub); margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bk-note-item blockquote, .bk-quote { margin: 0; font-size: 13px; line-height: 1.75; color: var(--bk-ink); }
+.bk-quote { background: #fff; border-left: 3px solid var(--bk-accent); border-radius: 4px 10px 10px 4px; padding: 9px 11px; }
+.bk-note-mine { font-size: 12px; color: var(--bk-sub); margin: 6px 0 0; line-height: 1.6; }
+.bk-note-reply { font-size: 12.5px; margin: 6px 0 0; line-height: 1.65; background: var(--bk-accent-soft); color: #5b3625; border-radius: 8px; padding: 6px 9px; }
+.bk-note-reply b { color: var(--bk-accent); }
+.bk-note-foot { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.bk-note-foot button, .bk-note-foot a { font-size: 11px; padding: 3px 9px; }
+.bk-more { width: 100%; margin-top: 8px; background: none; border: 0; font-size: 12px; color: var(--bk-accent) !important; padding: 6px; }
+.bk-reply { background: var(--bk-accent-soft); border-radius: 12px; padding: 10px 12px; }
+.bk-reply b { font-size: 12px; color: var(--bk-accent); }
+.bk-reply p { margin: 4px 0 0; font-size: 14px; line-height: 1.7; white-space: pre-wrap; }

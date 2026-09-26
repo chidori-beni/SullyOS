@@ -5,6 +5,7 @@
  * 书房自己的记录存在 vr_settings 的 `bookroom-book-<novelId>` 里（全量备份已覆盖该表）。
  */
 import type { VRNovelAnnotation, VRNovelSegment, VRWorldNovel } from '../../types';
+import type { BookNote } from './reedenNotes';
 
 export const BOOKROOM_RECORD_PREFIX = 'bookroom-book-';
 export const bookroomRecordId = (novelId: string) => `${BOOKROOM_RECORD_PREFIX}${novelId}`;
@@ -51,6 +52,11 @@ export interface BookroomRecord {
     chapters?: BookChapter[];
     /** 封面：压缩过的小图 data URL（直接存在记录里，备份时跟着 vr_settings 一起走） */
     cover?: string;
+    /** 书名 / 段落块总数的冗余：聊天时生成「一起读的书」提醒要用，不必为此把整本正文读出来 */
+    title?: string;
+    segCount?: number;
+    /** 从 Reeden 导入或手动记下的划线笔记 */
+    notes?: BookNote[];
     archived?: BookArchive;
     updatedAt: number;
 }
@@ -321,4 +327,49 @@ export function buildArchive(novel: VRWorldNovel, annotations: VRNovelAnnotation
 export function findArchivedByTitle(records: BookroomRecord[], title: string): BookroomRecord | undefined {
     const t = title.trim();
     return records.find(r => r.archived && r.archived.title.trim() === t);
+}
+
+// ---------- 一起读：聊天时的防剧透提醒 ----------
+
+export interface ReadingTogetherBook {
+    title: string;
+    /** 用户读到的段落块 */
+    userSeg: number;
+    userChapter?: string;
+    /** 没有章节名时用百分比描述位置 */
+    userPercent?: number;
+    userFinished: boolean;
+    /** 角色在彼方读到的段落块（书签 = 下一次从哪读）；没读过为 undefined */
+    charSeg?: number;
+    charChapter?: string;
+    charPercent?: number;
+    charFinished: boolean;
+}
+
+/**
+ * 给角色看的「你们在一起读的书」—— 进聊天请求的易变尾段。
+ * 核心是防剧透：角色读得比用户靠前时，只能聊用户读过的部分；没读到的不许编。
+ */
+export function buildReadingTogetherNote(userName: string, books: ReadingTogetherBook[]): string {
+    if (!books.length) return '';
+    const where = (chapter: string | undefined, percent?: number) => (chapter ? `「${chapter}」` : percent != null ? `全书约 ${percent}% 处` : '书里某处');
+    const lines = books.map(b => {
+        const user = b.userFinished ? `${userName}已经读完了` : `${userName}读到${where(b.userChapter, b.userPercent)}`;
+        let me: string;
+        if (b.charSeg == null) me = '你还没读过这本，只知道' + userName + '跟你讲过的部分';
+        else if (b.charFinished) me = '你在《彼方》里已经读完了';
+        else me = `你在《彼方》里读到${where(b.charChapter, b.charPercent)}`;
+        const ahead = b.charSeg != null && !b.userFinished && (b.charFinished || b.charSeg - 1 > b.userSeg);
+        const behind = b.charSeg != null && !b.charFinished && (b.userFinished || b.charSeg - 1 < b.userSeg);
+        const tail = ahead ? `，比${userName}靠前` : behind ? `，比${userName}靠后` : '';
+        return `- 《${b.title}》：${user}；${me}${tail}。`;
+    });
+    return [
+        '',
+        '【你们在一起读的书】',
+        ...lines,
+        `聊到这些书时：只谈${userName}已经读过的部分。你读得比${userName}靠前的，后面的情节、人物命运、结局一个字都不能透露，最多卖个关子（比如「后面有段你一定会喜欢」）；`
+        + `你没读到或没读过的部分，你并不知道内容，不要编造情节，可以问${userName}、听${userName}讲。没聊到书时不必主动提。`,
+        '',
+    ].join('\n');
 }

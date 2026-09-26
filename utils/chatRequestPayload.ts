@@ -44,6 +44,7 @@ import type { BusyReplyDecision } from './busyAutoReply';
 import { loadCollaborationFileCabinetBlock } from '../features/collaboration/chatLibrary';
 import { buildSARUserSurfaceRequest, selectSARUserSurfaceTargets } from './vrWorld/sarUserSurface';
 import { getSARModuleRuntimePlan } from './vrWorld/sarModuleRuntime';
+import { loadReadingTogetherBlock } from './bookroom/readingTogether';
 
 export { cleanApiMessages, flattenImageContentParts } from './promptMessageCleanup';
 
@@ -532,6 +533,10 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
             volatileTail += block;
         }
     }
+
+    // ── 9c'. 书房「一起读的书」：防剧透（角色读得比用户靠前时只聊用户读过的部分）→ 易变尾段 ──
+    // 只读 vr_settings 里的小记录；没有共读的书时是空串，读失败也是空串。
+    volatileTail += await loadReadingTogetherBlock(char, userProfile?.name || '用户');
 
     // ── 9d. 通用 MCP 工具模式 (用户自配的远程 MCP 服务器, 见 docs/mcp-client.md) ──
     // 工具清单来自持久化的发现结果，变化很慢 → 稳定段。

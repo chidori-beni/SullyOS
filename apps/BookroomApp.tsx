@@ -6,7 +6,7 @@
  * 归档（只删正文，记录全留）。逻辑见 utils/bookroom/。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Archive, BookOpenText, Check, ImageSquare, ListBullets, MagnifyingGlass, Plus, Trash, X } from '@phosphor-icons/react';
+import { ArrowLeft, Archive, ArrowSquareOut, BookOpenText, ChatCircleText, Check, FileArrowUp, Highlighter, ImageSquare, ListBullets, MagnifyingGlass, Plus, Trash, X } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import TokenImg from '../components/os/TokenImg';
@@ -21,6 +21,8 @@ import {
 } from '../utils/bookroom/bookroom';
 import { archiveBook, deleteBookCompletely, listBookroomRecords, restoreArchivedBook, saveBookroomRecord, saveImportExtras, sendProgressToCharacters } from '../utils/bookroom/bookroomDb';
 import { parseEpub } from '../utils/bookroom/epub';
+import { mergeNotes, parseReedenNotes, placeNotes, suggestProgressFromNotes, titleFromCsvName, type BookNote } from '../utils/bookroom/reedenNotes';
+import { askCharacterAboutHighlight, buildHighlightMessage } from '../utils/bookroom/highlightReply';
 import { compressCover } from '../utils/bookroom/cover';
 import './bookroom/bookroom.css';
 
@@ -58,12 +60,14 @@ const Bar: React.FC<{ ratio: number; tone?: 'me' | 'char' }> = ({ ratio, tone = 
 );
 
 const BookroomApp: React.FC = () => {
-    const { closeApp, characters, apiConfig, memoryPalaceConfig, userProfile, addToast, registerBackHandler } = useOS();
+    const { closeApp, characters, apiConfig, memoryPalaceConfig, userProfile, groups, realtimeConfig, addToast, registerBackHandler } = useOS();
     const [novels, setNovels] = useState<VRWorldNovel[]>([]);
     const [records, setRecords] = useState<BookroomRecord[]>([]);
     const [loaded, setLoaded] = useState(false);
     const [openId, setOpenId] = useState<string | null>(null);
-    const [reporting, setReporting] = useState<{ preset?: BookChapter } | null>(null);
+    const [reporting, setReporting] = useState<{ preset?: BookChapter; note?: BookNote } | null>(null);
+    // 划线给 ta 看：note 为空表示手动粘一句
+    const [highlighting, setHighlighting] = useState<{ note?: BookNote } | null>(null);
     const [importing, setImporting] = useState(false);
 
     const reload = useCallback(async () => {
@@ -90,15 +94,25 @@ const BookroomApp: React.FC = () => {
     const book = books.find(b => b.novelId === openId) || null;
 
     useEffect(() => registerBackHandler(() => {
+        if (highlighting) { setHighlighting(null); return true; }
         if (reporting) { setReporting(null); return true; }
         if (importing) { setImporting(false); return true; }
         if (openId) { setOpenId(null); return true; }
         return false;
-    }), [registerBackHandler, reporting, importing, openId]);
+    }), [registerBackHandler, highlighting, reporting, importing, openId]);
 
     const saveRecord = async (rec: BookroomRecord) => {
-        await saveBookroomRecord(rec);
-        setRecords(rs => [...rs.filter(r => r.novelId !== rec.novelId), rec]);
+        const nv = novels.find(n => n.id === rec.novelId);
+        // 自动识别出的目录也存一份：聊天里说「读到第几章」要用，不必每次都扫正文
+        const autoChapters = !rec.chapters && nv ? detectChapters(nv.segments) : [];
+        const stamped: BookroomRecord = {
+            ...rec,
+            title: nv?.title || rec.title || rec.archived?.title,
+            segCount: nv?.segments.length ?? rec.segCount,
+            chapters: rec.chapters || (autoChapters.length ? autoChapters : undefined),
+        };
+        await saveBookroomRecord(stamped);
+        setRecords(rs => [...rs.filter(r => r.novelId !== rec.novelId), stamped]);
     };
 
     return (
@@ -137,6 +151,10 @@ const BookroomApp: React.FC = () => {
                     book={book} characters={characters}
                     onBack={() => setOpenId(null)}
                     onReport={preset => setReporting({ preset })}
+                    onReportAtNote={note => setReporting({ note })}
+                    onHighlight={note => setHighlighting({ note })}
+                    onError={msg => addToast(msg, 'error')}
+                    onInfo={msg => addToast(msg, 'success')}
                     onSave={saveRecord}
                     onArchive={async () => {
                         if (!book.novel) return;
@@ -165,7 +183,7 @@ const BookroomApp: React.FC = () => {
 
             {book && reporting && (
                 <ReportSheet
-                    book={book} characters={characters} preset={reporting.preset}
+                    book={book} characters={characters} preset={reporting.preset} presetNote={reporting.note}
                     onClose={() => setReporting(null)}
                     onDone={async (rec, text, tellIds) => {
                         await saveRecord(rec);
@@ -177,6 +195,28 @@ const BookroomApp: React.FC = () => {
                         }
                         setReporting(null);
                         addToast(tell.length ? `记好了，也告诉了 ${tell.map(c => c.name).join('、')}` : '进度记好了', 'success');
+                    }}
+                />
+            )}
+
+            {book && highlighting && (
+                <HighlightSheet
+                    book={book} characters={characters} note={highlighting.note}
+                    onClose={() => setHighlighting(null)}
+                    onAsk={async (char, quote, comment, chapter, segIdx) => {
+                        const reply = await askCharacterAboutHighlight({
+                            char, userProfile, groups, apiConfig, realtimeConfig, memoryPalaceConfig,
+                            novelId: book.novelId,
+                            message: buildHighlightMessage({ bookTitle: book.title, chapter, quote, comment }),
+                        });
+                        const answer = { charId: char.id, charName: char.name, content: reply, at: Date.now() };
+                        const notes = book.record.notes || [];
+                        const target = highlighting.note;
+                        const nextNotes: BookNote[] = target
+                            ? notes.map(n => n.id === target.id ? { ...n, replies: [...(n.replies || []), answer] } : n)
+                            : [...notes, { id: `m${Date.now().toString(36)}`, chapter: chapter || '', quote, note: comment || undefined, at: Date.now(), segIdx, source: 'manual', replies: [answer] }];
+                        await saveRecord({ ...book.record, notes: nextNotes, updatedAt: Date.now() });
+                        return reply;
                     }}
                 />
             )}
@@ -199,7 +239,9 @@ const BookDetail: React.FC<{
     book: ShelfBook; characters: CharacterProfile[];
     onBack: () => void; onReport: (preset?: BookChapter) => void;
     onSave: (rec: BookroomRecord) => Promise<void>; onArchive: () => void; onDelete: () => void;
-}> = ({ book, characters, onBack, onReport, onSave, onArchive, onDelete }) => {
+    onReportAtNote: (note: BookNote) => void; onHighlight: (note?: BookNote) => void;
+    onError: (msg: string) => void; onInfo: (msg: string) => void;
+}> = ({ book, characters, onBack, onReport, onSave, onArchive, onDelete, onReportAtNote, onHighlight, onError, onInfo }) => {
     const detected = useMemo(() => book.record.chapters || (book.novel ? detectChapters(book.novel.segments) : []), [book.novel, book.record.chapters]);
     const chapters = detected.length ? detected : fallbackSections(book.segCount);
     const myAt = book.record.progress?.segIdx;
@@ -295,6 +337,8 @@ const BookDetail: React.FC<{
                     {!book.record.archived && <p className="bk-hint">点某一章，直接报「读到这一章」。</p>}
                 </section>
 
+                <NotesCard book={book} chapters={chapters} onSave={onSave} onReportAtNote={onReportAtNote} onHighlight={onHighlight} onError={onError} onInfo={onInfo} />
+
                 {book.record.history.length > 0 && (
                     <section className="bk-card">
                         <h2>读书记录</h2>
@@ -353,24 +397,172 @@ const CoverCard: React.FC<{ book: ShelfBook; onSave: (rec: BookroomRecord) => Pr
     );
 };
 
+// ============ 笔记 ============
+
+const NOTES_PREVIEW = 8;
+
+const NotesCard: React.FC<{
+    book: ShelfBook; chapters: BookChapter[];
+    onSave: (rec: BookroomRecord) => Promise<void>;
+    onReportAtNote: (note: BookNote) => void; onHighlight: (note?: BookNote) => void;
+    onError: (msg: string) => void; onInfo: (msg: string) => void;
+}> = ({ book, chapters, onSave, onReportAtNote, onHighlight, onError, onInfo }) => {
+    const fileRef = useRef<HTMLInputElement>(null);
+    const [showAll, setShowAll] = useState(false);
+    const [busy, setBusy] = useState(false);
+    const notes = book.record.notes || [];
+    // 按书里的先后排；对不上位置的放最后
+    const ordered = [...notes].sort((a, b) => (a.segIdx ?? Infinity) - (b.segIdx ?? Infinity) || a.at - b.at);
+    const shown = showAll ? ordered : ordered.slice(0, NOTES_PREVIEW);
+
+    const importCsv = async (f: File) => {
+        setBusy(true);
+        try {
+            const text = decodeBytes(await f.arrayBuffer()).text;
+            const incoming = parseReedenNotes(text);
+            if (!incoming.length) { onError('这份笔记里没有内容'); return; }
+            const csvTitle = titleFromCsvName(f.name);
+            if (csvTitle && csvTitle !== book.title && !window.confirm(`这份笔记看起来是《${csvTitle}》的，确定要导入到《${book.title}》吗？`)) return;
+            const placed = book.novel ? placeNotes(book.novel.segments, chapters, incoming) : incoming;
+            const { notes: merged, added, updated } = mergeNotes(notes, placed);
+            await onSave({ ...book.record, notes: merged, updatedAt: Date.now() });
+            const missed = placed.filter(n => n.segIdx == null).length;
+            onInfo(`导入 ${added} 条新笔记${updated ? `，更新 ${updated} 条` : ''}${missed && book.novel ? `（${missed} 条在书里没找到原文）` : ''}`);
+            if (book.novel) {
+                const next = suggestProgressFromNotes(merged, book.record.progress?.segIdx);
+                if (next && window.confirm(`最新一条笔记在「${next.chapter || '书里某处'}」，比你记的进度靠后。要把进度更新到这里吗？`)) onReportAtNote(next);
+            }
+        } catch (e) { onError(`导入失败：${e instanceof Error ? e.message : String(e)}`); }
+        finally { setBusy(false); if (fileRef.current) fileRef.current.value = ''; }
+    };
+
+    const remove = (note: BookNote) => {
+        if (!window.confirm('删掉这条笔记？（聊天里已经发出去的消息不受影响）')) return;
+        void onSave({ ...book.record, notes: notes.filter(n => n.id !== note.id), updatedAt: Date.now() });
+    };
+
+    return (
+        <section className="bk-card">
+            <div className="bk-card-head"><h2><Highlighter size={16} /> 笔记{notes.length ? ` ${notes.length}` : ''}</h2></div>
+            <input ref={fileRef} type="file" accept=".csv,text/csv" hidden onChange={e => { const f = e.target.files?.[0]; if (f) void importCsv(f); }} />
+            <div className="bk-note-actions">
+                <button disabled={busy} onClick={() => fileRef.current?.click()}><FileArrowUp size={14} /> {busy ? '导入中…' : '导入 Reeden 笔记'}</button>
+                {!book.record.archived && <button onClick={() => onHighlight()}><ChatCircleText size={14} /> 划一句给 ta 看</button>}
+            </div>
+            {!notes.length && <p className="bk-hint">在 Reeden 的笔记页导出 CSV，再从这里导入。重复导入不会重复，只会补上新的。</p>}
+            <ul className="bk-notes">
+                {shown.map(n => {
+                    const ci = n.segIdx != null ? chapterIndexAt(chapters, n.segIdx) : -1;
+                    return (
+                        <li key={n.id} className="bk-note-item" style={{ borderLeftColor: n.color || 'var(--bk-accent)' }}>
+                            <small>{n.chapter || (ci >= 0 ? chapters[ci].title : '')}{n.segIdx == null && book.novel ? ' · 书里没找到这句' : ''}</small>
+                            <blockquote>{n.quote}</blockquote>
+                            {n.note && <p className="bk-note-mine">我：{n.note}</p>}
+                            {(n.replies || []).map(r => <p key={r.at} className="bk-note-reply"><b>{r.charName}</b>：{r.content}</p>)}
+                            <div className="bk-note-foot">
+                                {!book.record.archived && <button onClick={() => onHighlight(n)}><ChatCircleText size={13} /> 给 ta 看</button>}
+                                {n.link && <a href={n.link}><ArrowSquareOut size={13} /> 在 Reeden 打开</a>}
+                                <button onClick={() => remove(n)}>删除</button>
+                            </div>
+                        </li>
+                    );
+                })}
+            </ul>
+            {ordered.length > NOTES_PREVIEW && <button className="bk-more" onClick={() => setShowAll(v => !v)}>{showAll ? '收起' : `展开全部 ${ordered.length} 条`}</button>}
+        </section>
+    );
+};
+
+const HighlightSheet: React.FC<{
+    book: ShelfBook; characters: CharacterProfile[]; note?: BookNote;
+    onClose: () => void;
+    onAsk: (char: CharacterProfile, quote: string, comment: string, chapter: string | undefined, segIdx: number | undefined) => Promise<string>;
+}> = ({ book, characters, note, onClose, onAsk }) => {
+    const companions = characters.filter(c => book.record.companionIds.includes(c.id));
+    const ordered = [...companions, ...characters.filter(c => !book.record.companionIds.includes(c.id))];
+    const [charId, setCharId] = useState(ordered[0]?.id || '');
+    const [quote, setQuote] = useState(note?.quote || '');
+    const [comment, setComment] = useState(note?.note || '');
+    const [busy, setBusy] = useState(false);
+    const [reply, setReply] = useState('');
+    const [error, setError] = useState('');
+    const char = characters.find(c => c.id === charId);
+
+    const ask = async () => {
+        if (!char || !quote.trim()) return;
+        setBusy(true); setError('');
+        try {
+            let chapter = note?.chapter;
+            let segIdx = note?.segIdx;
+            if (!note && book.novel) {
+                // 手动粘的句子：顺手在书里找位置，章节名给 ta 当语境
+                const hit = locateSentence(book.novel.segments, quote)[0];
+                if (hit) {
+                    segIdx = hit.segIdx;
+                    const chs = book.record.chapters || detectChapters(book.novel.segments);
+                    chapter = chs[chapterIndexAt(chs, hit.segIdx)]?.title;
+                }
+            }
+            setReply(await onAsk(char, quote.trim(), comment.trim(), chapter || undefined, segIdx));
+        } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+        finally { setBusy(false); }
+    };
+
+    return (
+        <div className="bk-sheet-backdrop" onClick={busy ? undefined : onClose}>
+            <section className="bk-sheet" role="dialog" aria-label="划线给 ta 看" onClick={e => e.stopPropagation()}>
+                <header><h2>划线给 ta 看</h2><button className="bk-icon" onClick={onClose} disabled={busy} aria-label="关闭"><X size={18} /></button></header>
+                <div className="bk-sheet-body overflow-y-auto">
+                    {note ? <blockquote className="bk-quote">{note.quote}</blockquote>
+                        : <textarea value={quote} onChange={e => setQuote(e.target.value)} placeholder="粘贴你划的那一句…" rows={3} />}
+                    <textarea value={comment} onChange={e => setComment(e.target.value)} placeholder="想跟 ta 说什么？（可以不写）" rows={2} maxLength={500} />
+                    <div className="bk-tell">
+                        <small>给谁看</small>
+                        <div className="bk-pick">
+                            {ordered.slice(0, 12).map(c => (
+                                <button key={c.id} aria-pressed={c.id === charId} onClick={() => setCharId(c.id)}><Avatar char={c} size={20} /><span>{c.name}</span>{c.id === charId && <Check size={13} weight="bold" />}</button>
+                            ))}
+                        </div>
+                    </div>
+                    <p className="bk-hint">这句和 ta 的回应都会进你们的私聊和 ta 的记忆。每次点会调用一次聊天 API。</p>
+                    {reply && <div className="bk-reply"><b>{char?.name}</b><p>{reply}</p></div>}
+                    {error && <p className="bk-warn">{error}</p>}
+                </div>
+                <footer>
+                    {reply
+                        ? <button className="bk-primary" onClick={onClose}>好</button>
+                        : <button className="bk-primary" disabled={busy || !char || !quote.trim()} onClick={() => void ask()}>{busy ? `${char?.name || 'ta'} 正在看…` : '给 ta 看'}</button>}
+                </footer>
+            </section>
+        </div>
+    );
+};
+
 // ============ 报进度 ============
 
 const ReportSheet: React.FC<{
-    book: ShelfBook; characters: CharacterProfile[]; preset?: BookChapter;
+    book: ShelfBook; characters: CharacterProfile[]; preset?: BookChapter; presetNote?: BookNote;
     onClose: () => void; onDone: (rec: BookroomRecord, text: string, tellIds: string[]) => Promise<void>;
-}> = ({ book, characters, preset, onClose, onDone }) => {
+}> = ({ book, characters, preset, presetNote, onClose, onDone }) => {
     const novel = book.novel!;
     const detected = useMemo(() => book.record.chapters || detectChapters(novel.segments), [novel, book.record.chapters]);
     const chapters = detected.length ? detected : fallbackSections(novel.segments.length);
-    const [tab, setTab] = useState<'chapter' | 'sentence'>('chapter');
+    const [tab, setTab] = useState<'chapter' | 'sentence'>(presetNote ? 'sentence' : 'chapter');
     const current = book.record.progress ? chapterIndexAt(chapters, book.record.progress.segIdx) : -1;
     const [chapterIdx, setChapterIdx] = useState(() => {
         if (preset) return Math.max(0, chapters.findIndex(c => c.segIdx === preset.segIdx && c.title === preset.title));
         return Math.max(0, current);
     });
-    const [sentence, setSentence] = useState('');
-    const [matches, setMatches] = useState<SentenceMatch[] | null>(null);
-    const [picked, setPicked] = useState<SentenceMatch | null>(null);
+    const [sentence, setSentence] = useState(presetNote?.quote || '');
+    // 从笔记来的：直接用笔记已经对好的位置
+    const noteMatch = useMemo<SentenceMatch[] | null>(() => {
+        if (!presetNote) return null;
+        const found = locateSentence(novel.segments, presetNote.quote);
+        const same = found.find(m => m.segIdx === presetNote.segIdx) || found[0];
+        return same ? [same] : [];
+    }, [presetNote, novel.segments]);
+    const [matches, setMatches] = useState<SentenceMatch[] | null>(noteMatch);
+    const [picked, setPicked] = useState<SentenceMatch | null>(noteMatch?.[0] || null);
     const [thought, setThought] = useState('');
     const [finished, setFinished] = useState(false);
     const [tell, setTell] = useState<string[]>(book.record.companionIds);

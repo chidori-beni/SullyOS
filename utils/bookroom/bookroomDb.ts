@@ -105,9 +105,22 @@ export async function restoreArchivedBook(novel: VRWorldNovel, record: BookroomR
     return next;
 }
 
-interface MemoryConfigLike {
+export interface MemoryConfigLike {
     embedding?: { baseUrl?: string; apiKey?: string };
     lightLLM?: { baseUrl?: string; apiKey?: string; model?: string };
+}
+
+/** 触发记忆宫殿管线（和彼方活动卡同一套做法）。fire-and-forget，失败不影响主流程。 */
+export async function triggerMemoryPipeline(char: CharacterProfile, apiConfig: APIConfig, memoryPalaceConfig: MemoryConfigLike | undefined, userName: string): Promise<void> {
+    try {
+        const mpEmb = memoryPalaceConfig?.embedding;
+        const configured = memoryPalaceConfig?.lightLLM;
+        const mpLLM = configured?.baseUrl ? configured : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };
+        if (char.memoryPalaceEnabled && mpEmb?.baseUrl && mpEmb?.apiKey && mpLLM.baseUrl) {
+            const recent = await DB.getRecentMessagesByCharId(char.id, 50);
+            void processNewMessagesWithAutoArchive(recent, char.id, char.name, mpEmb as any, mpLLM as any, userName, false).catch(() => {});
+        }
+    } catch { /* 记忆失败不影响主流程 */ }
 }
 
 /**
@@ -128,15 +141,6 @@ export async function sendProgressToCharacters(input: {
             charId: char.id, role: 'user', type: 'text', content: input.text,
             metadata: { source: 'bookroom', bookroomNovelId: input.novelId },
         });
-        // 记忆管线（和彼方活动卡同一套做法，失败不影响进度保存）
-        try {
-            const mpEmb = input.memoryPalaceConfig?.embedding;
-            const configured = input.memoryPalaceConfig?.lightLLM;
-            const mpLLM = configured?.baseUrl ? configured : { baseUrl: input.apiConfig.baseUrl, apiKey: input.apiConfig.apiKey, model: input.apiConfig.model };
-            if (char.memoryPalaceEnabled && mpEmb?.baseUrl && mpEmb?.apiKey && mpLLM.baseUrl) {
-                const recent = await DB.getRecentMessagesByCharId(char.id, 50);
-                void processNewMessagesWithAutoArchive(recent, char.id, char.name, mpEmb as any, mpLLM as any, input.userName, false).catch(() => {});
-            }
-        } catch { /* 记忆失败不影响主流程 */ }
+        await triggerMemoryPipeline(char, input.apiConfig, input.memoryPalaceConfig, input.userName);
     }
 }
