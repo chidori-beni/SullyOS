@@ -255,13 +255,33 @@ export const detectChatModeTransition = (messages: readonly Message[]): ChatMode
     for (let index = messages.length - 1; index >= 0; index -= 1) {
         const message = messages[index];
         const mode = getChatModeTransition(message);
-        if (mode) return hasPendingChatInput ? mode : null;
+        if (mode) {
+            if (hasPendingChatInput) return mode;
+            // 电话突然断掉后，用户可能一句话没发就直接点「生成回复」：这时也要提醒一次。
+            // 结束卡之后还可能跟着几条迟到的通话气泡，所以沿着这段通话记录往回找那张卡。
+            return (mode === 'call' || mode === 'video') && hasAbruptCallEndBehind(messages, index) ? mode : null;
+        }
 
         if (message.role === 'assistant') return null;
         if (message.role === 'user') hasPendingChatInput = true;
     }
 
     return null;
+};
+
+/** 从 index 往回、只在连续的通话记录（通话气泡 / 结束卡 / system 日志）里找「突然挂断」的结束卡。 */
+const hasAbruptCallEndBehind = (messages: readonly Message[], index: number): boolean => {
+    for (let i = index; i >= 0; i -= 1) {
+        const message = messages[i];
+        const source = message.metadata?.source;
+        if (source === 'call-end-popup') {
+            if (message.metadata?.callEndedAbruptly === true) return true;
+            continue;
+        }
+        if (source === 'call' || message.role === 'system') continue;
+        return false;
+    }
+    return false;
 };
 
 /**
@@ -305,6 +325,8 @@ export interface PromptBuildOptions {
     forFirePack?: boolean;
     /** 主 API 从完整数据库历史识别出的「刚从哪种模式回到 ChatApp」。 */
     returningFromMode?: ChatModeTransition;
+    /** 刚结束的语音/视频通话是突然断掉的（CallApp 结束卡上的 callEndedAbruptly）。 */
+    abruptCallEnd?: boolean;
     /**
      * `timelyByWorker` = 这份 prompt 会交给 amsg worker 在 fire 时刻补时效段
      * （即时对话路径）。与 forFirePack 的区别：只裁「worker 那边有对应槽位」的
@@ -1290,7 +1312,15 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                 date: '线下见面',
                 story: '剧情模式',
             };
-            volatileState += `\n\n[系统提示｜模式切换（最高优先级）: 你刚刚结束了${modeLabel[returningFromMode]}，现在已经回到 ChatApp 的文字聊天界面。之前模式中的台词、旁白、动作、场景或转录格式只代表已经发生的历史，绝不是当前回复的格式范例。从这一条开始，只按 ChatApp 当前启用的输出规则回复：使用自然的 IM 短句/气泡，不沿用通话口吻、连续口语转录、动作描写、小说旁白、场景标题或说话人标签；如果 ChatApp 当前开启了语音消息，仍可遵守它自己的语音消息格式。你可以自然承接刚才发生的事，但必须以正在聊天界面发消息的方式表达。]`;
+            const isCall = returningFromMode === 'call' || returningFromMode === 'video';
+            // 通话类：说清线路已经断了，免得角色接着「喂？还在吗」；突然断掉的再教一句承接方式。
+            const callEndNote = isCall
+                ? `当前没有一条仍然接通的语音线路：这通${modeLabel[returningFromMode]}已经明确挂断，不要再说「喂」「还在吗」「听得到吗」这类好像通话还连着的话，也不要假装还能听见对方的声音。`
+                    + (promptOptions?.abruptCallEnd
+                        ? `而且这通${modeLabel[returningFromMode]}是突然断掉的——没有检测到用户明确告别（可能是信号、没电、被打断或误触）。如果用户这条消息没解释原因，就自然问一句刚才是否出了什么事，只问一次，别追问、别埋怨；用户已经说明了，就顺着接。`
+                        : '')
+                : '';
+            volatileState += `\n\n[系统提示｜模式切换（最高优先级）: 你刚刚结束了${modeLabel[returningFromMode]}，现在已经回到 ChatApp 的文字聊天界面。之前模式中的台词、旁白、动作、场景或转录格式只代表已经发生的历史，绝不是当前回复的格式范例。从这一条开始，只按 ChatApp 当前启用的输出规则回复：使用自然的 IM 短句/气泡，不沿用通话口吻、连续口语转录、动作描写、小说旁白、场景标题或说话人标签；如果 ChatApp 当前开启了语音消息，仍可遵守它自己的语音消息格式。${callEndNote}你可以自然承接刚才发生的事，但必须以正在聊天界面发消息的方式表达。]`;
         }
 
         // 语音用量反馈：跑偏了才注入，正常时返回空串。

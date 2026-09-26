@@ -10,7 +10,9 @@ import { ArrowLeft, Archive, ArrowSquareOut, BookOpenText, ChatCircleText, Check
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import TokenImg from '../components/os/TokenImg';
-import type { CharacterProfile, VRWorldNovel } from '../types';
+import type { CharacterProfile, VRNovelAnnotation, VRWorldNovel } from '../types';
+import { readingPreferenceLabel } from '../utils/vrWorld/library';
+import { stripLeakedAttrs } from '../utils/vrWorld/prompts';
 import { buildNovelAsync } from '../utils/vrWorld/novel';
 import { decodeBytes } from '../utils/vrWorld/decodeText';
 import { extractPdfText, isPdfFile } from '../utils/pdfText';
@@ -69,6 +71,8 @@ const BookroomApp: React.FC = () => {
     // 划线给 ta 看：note 为空表示手动粘一句
     const [highlighting, setHighlighting] = useState<{ note?: BookNote } | null>(null);
     const [importing, setImporting] = useState(false);
+    // 角色书单：看某个角色在读哪些书、读到哪、留过什么话
+    const [charView, setCharView] = useState<string | null>(null);
 
     const reload = useCallback(async () => {
         const [n, r] = await Promise.all([DB.getVRNovels(), listBookroomRecords()]);
@@ -98,8 +102,14 @@ const BookroomApp: React.FC = () => {
         if (reporting) { setReporting(null); return true; }
         if (importing) { setImporting(false); return true; }
         if (openId) { setOpenId(null); return true; }
+        if (charView) { setCharView(null); return true; }
         return false;
-    }), [registerBackHandler, highlighting, reporting, importing, openId]);
+    }), [registerBackHandler, highlighting, reporting, importing, openId, charView]);
+    const viewedChar = characters.find(c => c.id === charView) || null;
+    // 「谁在读」：在书架上任何一本书有彼方书签、或被设成一起读的人
+    const bookReaders = characters
+        .map(c => ({ char: c, count: books.filter(b => charRatio(c, b) != null || b.record.companionIds.includes(c.id)).length }))
+        .filter(x => x.count > 0);
 
     const saveRecord = async (rec: BookroomRecord) => {
         const nv = novels.find(n => n.id === rec.novelId);
@@ -117,7 +127,9 @@ const BookroomApp: React.FC = () => {
 
     return (
         <div className="bookroom">
-            {!book ? (
+            {!book && viewedChar ? (
+                <CharacterShelf char={viewedChar} books={books} onBack={() => setCharView(null)} onOpenBook={setOpenId} />
+            ) : !book ? (
                 <>
                     <header className="bk-top">
                         <button className="bk-icon" onClick={closeApp} aria-label="返回"><ArrowLeft size={20} /></button>
@@ -126,6 +138,20 @@ const BookroomApp: React.FC = () => {
                     </header>
                     <main className="bk-scroll overflow-y-auto">
                         <p className="bk-lead">在 Reeden 里读，回来告诉 {characters.length === 1 ? characters[0].name : 'ta'} 你读到了哪。书架和彼方书库是同一个。</p>
+                        {bookReaders.length > 0 && (
+                            <div className="bk-who">
+                                <small>谁在读 · 点开看 ta 的书单</small>
+                                <div className="bk-who-row">
+                                    {bookReaders.map(({ char, count }) => (
+                                        <button key={char.id} onClick={() => setCharView(char.id)}>
+                                            <Avatar char={char} size={44} />
+                                            <span>{char.name}</span>
+                                            <em>{count} 本</em>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                         {loaded && !books.length && <div className="bk-empty"><BookOpenText size={36} weight="thin" /><p>书架还空着。<br />点右上角「+」导入一本 EPUB / TXT / PDF。</p></div>}
                         <div className="bk-shelf">
                             {books.map(b => {
@@ -230,6 +256,104 @@ const BookroomApp: React.FC = () => {
                 />
             )}
         </div>
+    );
+};
+
+// ============ 角色书单 ============
+
+interface CharTrace { key: string; at: number; bookId: string; bookTitle: string; quote: string; content: string; kind: '批注' | '回应' }
+
+const CharacterShelf: React.FC<{
+    char: CharacterProfile; books: ShelfBook[];
+    onBack: () => void; onOpenBook: (novelId: string) => void;
+}> = ({ char, books, onBack, onOpenBook }) => {
+    const [annotations, setAnnotations] = useState<VRNovelAnnotation[] | null>(null);
+    const [showAll, setShowAll] = useState(false);
+    useEffect(() => {
+        let alive = true;
+        void DB.getVRAnnotations().then(all => { if (alive) setAnnotations(all.filter(a => a.authorId === char.id)); }).catch(() => { if (alive) setAnnotations([]); });
+        return () => { alive = false; };
+    }, [char.id]);
+
+    const rows = books
+        .map(b => ({ book: b, ratio: charRatio(char, b), companion: b.record.companionIds.includes(char.id) }))
+        .filter(x => x.ratio != null || x.companion);
+    const reading = rows.filter(x => x.ratio != null && x.ratio < 1).sort((a, b) => b.ratio! - a.ratio!);
+    const finished = rows.filter(x => x.ratio != null && x.ratio >= 1);
+    const notYet = rows.filter(x => x.ratio == null);
+
+    // ta 留下的话：彼方书页边的批注 + 书房里对你划线的回应，按时间倒序
+    const traces: CharTrace[] = [];
+    for (const a of annotations || []) {
+        const b = books.find(x => x.novelId === a.novelId);
+        if (!b) continue;
+        const quote = b.novel?.segments[a.segIdx]?.text.slice(0, 50).replace(/\s+/g, ' ') || b.record.archived?.annotationQuotes[a.id] || '';
+        traces.push({ key: `a-${a.id}`, at: a.createdAt, bookId: b.novelId, bookTitle: b.title, quote, content: stripLeakedAttrs(a.content), kind: '批注' });
+    }
+    for (const b of books) {
+        for (const n of b.record.notes || []) {
+            for (const r of n.replies || []) {
+                if (r.charId === char.id) traces.push({ key: `r-${n.id}-${r.at}`, at: r.at, bookId: b.novelId, bookTitle: b.title, quote: n.quote.slice(0, 50), content: r.content, kind: '回应' });
+            }
+        }
+    }
+    traces.sort((a, b) => b.at - a.at);
+    const shownTraces = showAll ? traces : traces.slice(0, 8);
+
+    const BookRow = ({ book, ratio }: { book: ShelfBook; ratio: number | null }) => {
+        const chapters = book.record.chapters || (book.novel ? detectChapters(book.novel.segments) : []);
+        const bm = char.vrState?.novelBookmarks?.[book.novelId];
+        const ch = bm != null && bm > 0 ? chapterIndexAt(chapters, bm - 1) : -1;
+        const me = book.record.progress ? progressRatio(book.record.progress.segIdx, book.segCount) : null;
+        return (
+            <button className="bk-book" onClick={() => onOpenBook(book.novelId)}>
+                <Cover title={book.title} cover={book.record.cover} archived={!!book.record.archived} />
+                <span className="bk-book-body">
+                    <strong>{book.title}</strong>
+                    <small>{ratio == null ? '还没在彼方翻开 · 和你一起读' : ratio >= 1 ? '读完了' : ch >= 0 ? chapters[ch].title : '已开始'}</small>
+                    <span className="bk-mini-row"><em>ta</em><Bar ratio={ratio ?? 0} tone="char" /><em>{ratio == null ? '—' : formatPercent(ratio)}</em></span>
+                    <span className="bk-mini-row"><em>我</em><Bar ratio={me ?? 0} /><em>{me == null ? '未开始' : formatPercent(me)}</em></span>
+                </span>
+            </button>
+        );
+    };
+
+    return (
+        <>
+            <header className="bk-top">
+                <button className="bk-icon" onClick={onBack} aria-label="返回书架"><ArrowLeft size={20} /></button>
+                <div className="bk-top-title"><small>READING LIST</small><h1>{char.name} 的书单</h1></div>
+                <span className="bk-icon" />
+            </header>
+            <main className="bk-scroll overflow-y-auto">
+                <section className="bk-char-hero">
+                    <Avatar char={char} size={56} />
+                    <div>
+                        <p className="bk-char-stats"><b>{reading.length}</b> 在读 · <b>{finished.length}</b> 读完 · <b>{traces.length}</b> 条留言</p>
+                        <p className="bk-hint">彼方里的阅读方式：{readingPreferenceLabel(char)}{char.vrState?.enabled ? '' : ' · 还没接入彼方，不会自己去读书'}</p>
+                    </div>
+                </section>
+
+                {reading.length > 0 && <><h3 className="bk-section">在读</h3><div className="bk-shelf">{reading.map(x => <BookRow key={x.book.novelId} book={x.book} ratio={x.ratio} />)}</div></>}
+                {finished.length > 0 && <><h3 className="bk-section">读完了</h3><div className="bk-shelf">{finished.map(x => <BookRow key={x.book.novelId} book={x.book} ratio={x.ratio} />)}</div></>}
+                {notYet.length > 0 && <><h3 className="bk-section">约好一起读、还没翻开</h3><div className="bk-shelf">{notYet.map(x => <BookRow key={x.book.novelId} book={x.book} ratio={null} />)}</div></>}
+                {!rows.length && <p className="bk-empty">{char.name} 还没读过书架上的书。</p>}
+
+                <h3 className="bk-section">{char.name} 留下的话</h3>
+                {annotations == null ? <p className="bk-hint">读取中…</p> : !traces.length ? <p className="bk-hint">还没有。ta 在彼方读书时会在页边写批注，你在书房划线给 ta 看时 ta 的回应也会记在这里。</p> : (
+                    <ul className="bk-notes">
+                        {shownTraces.map(t => (
+                            <li key={t.key} className="bk-note-item bk-trace" onClick={() => onOpenBook(t.bookId)}>
+                                <small>《{t.bookTitle}》 · {t.kind} · {new Date(t.at).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}</small>
+                                {t.quote && <blockquote>{t.quote}{t.quote.length >= 50 ? '…' : ''}</blockquote>}
+                                <p className="bk-note-reply"><b>{char.name}</b>：{t.content}</p>
+                            </li>
+                        ))}
+                    </ul>
+                )}
+                {traces.length > 8 && <button className="bk-more" onClick={() => setShowAll(v => !v)}>{showAll ? '收起' : `展开全部 ${traces.length} 条`}</button>}
+            </main>
+        </>
     );
 };
 

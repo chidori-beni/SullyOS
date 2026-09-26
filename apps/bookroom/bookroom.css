@@ -207,3 +207,16 @@
 .bk-reply { background: var(--bk-accent-soft); border-radius: 12px; padding: 10px 12px; }
 .bk-reply b { font-size: 12px; color: var(--bk-accent); }
 .bk-reply p { margin: 4px 0 0; font-size: 14px; line-height: 1.7; white-space: pre-wrap; }
+
+/* 谁在读 / 角色书单 */
+.bk-who { margin: -4px 0 14px; }
+.bk-who > small { font-size: 11px; color: var(--bk-sub); }
+.bk-who-row { display: flex; gap: 14px; overflow-x: auto; padding: 8px 2px 4px; }
+.bk-who-row button { display: flex; flex-direction: column; align-items: center; gap: 3px; background: none; border: 0; padding: 0; flex-shrink: 0; min-width: 52px; }
+.bk-who-row span { font-size: 12px; max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bk-who-row em { font-style: normal; font-size: 10px; color: var(--bk-sub); }
+.bk-char-hero { display: flex; gap: 14px; align-items: center; background: var(--bk-paper); border: 1px solid var(--bk-line); border-radius: 16px; padding: 14px; margin-bottom: 6px; }
+.bk-char-stats { margin: 0; font-size: 13px; }
+.bk-char-stats b { font-size: 18px; color: var(--bk-accent); }
+.bk-section { font-size: 13px; font-weight: 700; margin: 18px 2px 8px; color: var(--bk-sub); letter-spacing: .05em; }
+.bk-trace { cursor: pointer; }
