@@ -47,8 +47,10 @@ export interface BookroomRecord {
     companionIds: string[];
     progress?: BookProgressEntry;
     history: BookProgressEntry[];
-    /** 缓存的目录（正文删掉后仍能显示） */
+    /** 缓存的目录（正文删掉后仍能显示；EPUB 导入时来自书自带的目录） */
     chapters?: BookChapter[];
+    /** 封面：压缩过的小图 data URL（直接存在记录里，备份时跟着 vr_settings 一起走） */
+    cover?: string;
     archived?: BookArchive;
     updatedAt: number;
 }
@@ -130,6 +132,38 @@ function normalizeWithMap(text: string): { norm: string; map: number[] } {
 /** 去掉空白与常见标点差异，粘贴来的句子和原文才对得上。 */
 export function normalizeForMatch(s: string): string {
     return normalizeWithMap(s).norm;
+}
+
+/**
+ * EPUB 自带目录 → 段落块位置。每一章用「这章开头的一段原文」按顺序往后找，
+ * 找不到的章节跳过（不会让目录乱序）。
+ */
+export function chaptersFromAnchors(segments: VRNovelSegment[], toc: { title: string; anchor: string }[]): BookChapter[] {
+    const starts: number[] = [];
+    let joined = '';
+    for (const seg of segments) {
+        starts.push(joined.length);
+        joined += normalizeForMatch(seg.text);
+    }
+    const segAt = (pos: number) => {
+        let lo = 0, hi = starts.length - 1;
+        while (lo < hi) {
+            const mid = (lo + hi + 1) >> 1;
+            if (starts[mid] <= pos) lo = mid; else hi = mid - 1;
+        }
+        return segments[lo]?.idx ?? 0;
+    };
+    const out: BookChapter[] = [];
+    let from = 0;
+    for (const entry of toc) {
+        const key = normalizeForMatch(entry.anchor).slice(0, 24);
+        if (key.length < 2) continue;
+        const hit = joined.indexOf(key, from);
+        if (hit < 0) continue;
+        out.push({ title: entry.title, segIdx: segAt(hit) });
+        from = hit;
+    }
+    return out;
 }
 
 export interface SentenceMatch {

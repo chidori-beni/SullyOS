@@ -49,9 +49,12 @@ export async function archiveBook(novel: VRWorldNovel, record: BookroomRecord): 
     return next;
 }
 
-/** 重新导入同名书：沿用旧 id，角色书签和批注自动接回。 */
-export async function restoreArchivedBook(novel: VRWorldNovel, record: BookroomRecord): Promise<BookroomRecord> {
-    const next: BookroomRecord = { ...record, archived: undefined, chapters: undefined, updatedAt: Date.now() };
+/**
+ * 重新导入同名书：沿用旧 id，角色书签和批注自动接回。
+ * 目录按新导入的正文重算；新文件没带封面时保留旧封面。
+ */
+export async function restoreArchivedBook(novel: VRWorldNovel, record: BookroomRecord, extras: { chapters?: BookroomRecord['chapters']; cover?: string } = {}): Promise<BookroomRecord> {
+    const next: BookroomRecord = { ...record, archived: undefined, chapters: extras.chapters, cover: extras.cover || record.cover, updatedAt: Date.now() };
     const db = await openDB();
     await new Promise<void>((resolve, reject) => {
         const tx = db.transaction([SETTINGS, NOVELS], 'readwrite');

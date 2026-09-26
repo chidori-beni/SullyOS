@@ -48,7 +48,34 @@
     background: linear-gradient(90deg, #7d4a33 0 6px, #9a5b3c 6px);
     box-shadow: inset -3px 0 0 rgba(0,0,0,.12);
 }
-.bk-book.is-archived .bk-spine { background: linear-gradient(90deg, #7f7568 0 6px, #a29888 6px); }
+.bk-spine.is-archived { background: linear-gradient(90deg, #7f7568 0 6px, #a29888 6px); }
+.bk-spine.has-cover { background: var(--bk-line); overflow: hidden; box-shadow: 0 2px 6px rgba(60,40,30,.18); }
+.bk-book .bk-spine.has-cover { min-height: 0; height: 69px; align-self: flex-start; }
+.bk-spine.has-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.bk-spine.has-cover.is-archived img { filter: grayscale(.6); }
+.bk-spine-lg { width: 92px; height: 132px; min-height: 0; font-size: 34px; border-radius: 4px 10px 10px 4px; }
+
+/* 书的封面卡 */
+.bk-cover-card { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 14px; }
+.bk-cover-card > div { flex: 1; min-width: 0; }
+.bk-cover-meta { font-size: 12px; color: var(--bk-sub); margin: 2px 0 6px; }
+.bk-cover-summary { font-size: 12px; line-height: 1.6; margin: 0 0 8px; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.bk-cover-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.bk-cover-actions button {
+    display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 5px 10px;
+    border-radius: 99px; border: 1px solid var(--bk-line); background: var(--bk-paper); color: var(--bk-accent) !important;
+}
+.bk-cover-actions button:disabled { opacity: .5; }
+
+/* 导入：封面 + 书名作者 */
+.bk-import-row { display: flex; gap: 12px; align-items: stretch; }
+.bk-cover-pick {
+    width: 72px; height: 104px; flex-shrink: 0; border-radius: 4px 8px 8px 4px; overflow: hidden;
+    border: 1px dashed #c9b6a3; background: var(--bk-bg); color: var(--bk-sub) !important; font-size: 11px; line-height: 1.5;
+    display: grid; place-items: center; padding: 0;
+}
+.bk-cover-pick img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.bk-import-fields { flex: 1; display: flex; flex-direction: column; gap: 8px; justify-content: center; }
 .bk-book-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .bk-book-body strong { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bk-book-body small { font-size: 11px; color: var(--bk-sub); }

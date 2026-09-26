@@ -6,7 +6,7 @@
  * 归档（只删正文，记录全留）。逻辑见 utils/bookroom/。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Archive, BookOpenText, Check, ListBullets, MagnifyingGlass, Plus, X } from '@phosphor-icons/react';
+import { ArrowLeft, Archive, BookOpenText, Check, ImageSquare, ListBullets, MagnifyingGlass, Plus, X } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import TokenImg from '../components/os/TokenImg';
@@ -15,11 +15,13 @@ import { buildNovelAsync } from '../utils/vrWorld/novel';
 import { decodeBytes } from '../utils/vrWorld/decodeText';
 import { extractPdfText, isPdfFile } from '../utils/pdfText';
 import {
-    applyProgress, buildProgressMessage, chapterIndexAt, detectChapters, emptyRecord, fallbackSections,
+    applyProgress, buildProgressMessage, chapterIndexAt, chaptersFromAnchors, detectChapters, emptyRecord, fallbackSections,
     findArchivedByTitle, formatPercent, locateSentence, progressRatio, unfinishedReaders,
     type BookChapter, type BookroomRecord, type SentenceMatch,
 } from '../utils/bookroom/bookroom';
 import { archiveBook, listBookroomRecords, restoreArchivedBook, saveBookroomRecord, sendProgressToCharacters } from '../utils/bookroom/bookroomDb';
+import { parseEpub } from '../utils/bookroom/epub';
+import { compressCover } from '../utils/bookroom/cover';
 import './bookroom/bookroom.css';
 
 /** 书架上的一本：在架（有正文）或已归档（只有记录）。 */
@@ -41,6 +43,13 @@ const charRatio = (c: CharacterProfile, book: ShelfBook) => {
 const Avatar: React.FC<{ char: CharacterProfile; size?: number }> = ({ char, size = 26 }) => (
     <span className="bk-avatar" style={{ width: size, height: size }}>
         {char.avatar ? <TokenImg value={char.avatar} alt={char.name} /> : <span>{char.name.slice(0, 1)}</span>}
+    </span>
+);
+
+/** 书脊 / 封面：有封面图就显示图，没有就是带首字的书脊。 */
+const Cover: React.FC<{ title: string; cover?: string; archived?: boolean; large?: boolean }> = ({ title, cover, archived, large }) => (
+    <span className={`bk-spine ${cover ? 'has-cover' : ''} ${archived ? 'is-archived' : ''} ${large ? 'bk-spine-lg' : ''}`} aria-hidden>
+        {cover ? <img src={cover} alt="" /> : title.slice(0, 1)}
     </span>
 );
 
@@ -103,14 +112,14 @@ const BookroomApp: React.FC = () => {
                     </header>
                     <main className="bk-scroll">
                         <p className="bk-lead">在 Reeden 里读，回来告诉 {characters.length === 1 ? characters[0].name : 'ta'} 你读到了哪。书架和彼方书库是同一个。</p>
-                        {loaded && !books.length && <div className="bk-empty"><BookOpenText size={36} weight="thin" /><p>书架还空着。<br />点右上角「+」导入一本 TXT / PDF。</p></div>}
+                        {loaded && !books.length && <div className="bk-empty"><BookOpenText size={36} weight="thin" /><p>书架还空着。<br />点右上角「+」导入一本 EPUB / TXT / PDF。</p></div>}
                         <div className="bk-shelf">
                             {books.map(b => {
                                 const me = b.record.progress ? progressRatio(b.record.progress.segIdx, b.segCount) : null;
                                 const readers = characters.filter(c => charRatio(c, b) != null || b.record.companionIds.includes(c.id));
                                 return (
                                     <button key={b.novelId} className={`bk-book ${b.record.archived ? 'is-archived' : ''}`} onClick={() => setOpenId(b.novelId)}>
-                                        <span className="bk-spine" aria-hidden>{b.title.slice(0, 1)}</span>
+                                        <Cover title={b.title} cover={b.record.cover} archived={!!b.record.archived} />
                                         <span className="bk-book-body">
                                             <strong>{b.title}</strong>
                                             <small>{b.author || '佚名'} · {(b.totalChars / 10000).toFixed(1)} 万字{b.record.archived ? ' · 已归档' : ''}</small>
@@ -200,6 +209,8 @@ const BookDetail: React.FC<{
                 <span className="bk-icon" />
             </header>
             <main className="bk-scroll">
+                <CoverCard book={book} onSave={onSave} />
+
                 {book.record.archived && (
                     <div className="bk-note">这本书已归档：正文删掉了，记录都在。想接着读，就重新导入同名的书，所有记录会自动接回。</div>
                 )}
@@ -302,6 +313,35 @@ const BookDetail: React.FC<{
     );
 };
 
+// ============ 封面 ============
+
+const CoverCard: React.FC<{ book: ShelfBook; onSave: (rec: BookroomRecord) => Promise<void> }> = ({ book, onSave }) => {
+    const fileRef = useRef<HTMLInputElement>(null);
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState('');
+    const pick = async (f: File) => {
+        setBusy(true); setError('');
+        try { await onSave({ ...book.record, cover: await compressCover(f), updatedAt: Date.now() }); }
+        catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+        finally { setBusy(false); if (fileRef.current) fileRef.current.value = ''; }
+    };
+    return (
+        <section className="bk-cover-card">
+            <Cover title={book.title} cover={book.record.cover} archived={!!book.record.archived} large />
+            <div>
+                <p className="bk-cover-meta">{(book.totalChars / 10000).toFixed(1)} 万字{book.record.archived ? ' · 已归档' : ''}</p>
+                {book.novel?.summary && <p className="bk-cover-summary">{book.novel.summary}</p>}
+                <input ref={fileRef} type="file" accept="image/*" hidden onChange={e => { const f = e.target.files?.[0]; if (f) void pick(f); }} />
+                <div className="bk-cover-actions">
+                    <button disabled={busy} onClick={() => fileRef.current?.click()}><ImageSquare size={14} /> {busy ? '处理中…' : book.record.cover ? '换封面' : '上传封面'}</button>
+                    {book.record.cover && <button disabled={busy} onClick={() => { if (window.confirm('去掉这本书的封面？')) void onSave({ ...book.record, cover: undefined, updatedAt: Date.now() }); }}>去掉</button>}
+                </div>
+                {error && <p className="bk-warn">{error}</p>}
+            </div>
+        </section>
+    );
+};
+
 // ============ 报进度 ============
 
 const ReportSheet: React.FC<{
@@ -309,7 +349,7 @@ const ReportSheet: React.FC<{
     onClose: () => void; onDone: (rec: BookroomRecord, text: string, tellIds: string[]) => Promise<void>;
 }> = ({ book, characters, preset, onClose, onDone }) => {
     const novel = book.novel!;
-    const detected = useMemo(() => detectChapters(novel.segments), [novel]);
+    const detected = useMemo(() => book.record.chapters || detectChapters(novel.segments), [novel, book.record.chapters]);
     const chapters = detected.length ? detected : fallbackSections(novel.segments.length);
     const [tab, setTab] = useState<'chapter' | 'sentence'>('chapter');
     const current = book.record.progress ? chapterIndexAt(chapters, book.record.progress.segIdx) : -1;
@@ -424,41 +464,67 @@ const ImportSheet: React.FC<{
 }> = ({ records, onClose, onImported, onError }) => {
     const [title, setTitle] = useState('');
     const [author, setAuthor] = useState('');
+    const [summary, setSummary] = useState('');
     const [text, setText] = useState('');
+    const [toc, setToc] = useState<{ title: string; anchor: string }[]>([]);
+    const [cover, setCover] = useState<string | undefined>();
     const [status, setStatus] = useState('');
     const [busy, setBusy] = useState(false);
     const fileRef = useRef<HTMLInputElement>(null);
+    const coverRef = useRef<HTMLInputElement>(null);
     const archived = title.trim() ? findArchivedByTitle(records, title) : undefined;
 
     const pickFile = async (f: File) => {
         setBusy(true);
         try {
             const buf = await f.arrayBuffer();
+            const baseName = f.name.replace(/\.(txt|pdf|epub)$/i, '');
             let content: string;
-            if (isPdfFile(f)) {
+            let nextToc: { title: string; anchor: string }[] = [];
+            if (/\.epub$/i.test(f.name) || f.type === 'application/epub+zip') {
+                setStatus('正在拆开 EPUB…');
+                const book = await parseEpub(buf, baseName);
+                content = book.text;
+                nextToc = book.toc;
+                setTitle(book.title);
+                if (book.author) setAuthor(book.author);
+                if (book.description) setSummary(book.description);
+                if (book.cover) {
+                    try { setCover(await compressCover(book.cover)); } catch { /* 封面坏了不影响导入 */ }
+                }
+            } else if (isPdfFile(f)) {
                 const result = await extractPdfText(buf, { onProgress: ({ page, totalPages }) => setStatus(`正在提取 PDF 文字… ${page}/${totalPages}`) });
                 content = result.text.trim();
                 if (!content) { onError('PDF 里没有可提取的文字，可能是扫描件'); return; }
             } else if (/\.txt$/i.test(f.name) || f.type.startsWith('text/')) {
                 content = decodeBytes(buf).text;
-            } else { onError('目前只支持 .txt 和 .pdf'); return; }
+            } else { onError('目前支持 .epub、.txt 和 .pdf'); return; }
             setText(content);
-            if (!title.trim()) setTitle(f.name.replace(/\.(txt|pdf)$/i, ''));
-            setStatus(`读好了，共 ${content.length.toLocaleString()} 字`);
-        } catch (e) { onError(`读取失败：${e instanceof Error ? e.message : String(e)}`); }
+            setToc(nextToc);
+            if (!title.trim() && !nextToc.length) setTitle(baseName);
+            setStatus(`读好了，共 ${content.length.toLocaleString()} 字${nextToc.length ? `，自带目录 ${nextToc.length} 章` : ''}`);
+        } catch (e) { onError(`读取失败：${e instanceof Error ? e.message : String(e)}`); setStatus(''); }
         finally { setBusy(false); if (fileRef.current) fileRef.current.value = ''; }
+    };
+
+    const pickCover = async (f: File) => {
+        try { setCover(await compressCover(f)); } catch (e) { onError(e instanceof Error ? e.message : String(e)); }
+        finally { if (coverRef.current) coverRef.current.value = ''; }
     };
 
     const commit = async () => {
         setBusy(true);
         try {
-            const novel = await buildNovelAsync(title, text, { author, onProgress: r => setStatus(`切分中… ${Math.round(r * 100)}%`) });
+            const novel = await buildNovelAsync(title, text, { author, summary, onProgress: r => setStatus(`切分中… ${Math.round(r * 100)}%`) });
             if (!novel.segments.length) { onError('正文是空的'); return; }
+            const mapped = toc.length ? chaptersFromAnchors(novel.segments, toc) : [];
+            const chapters = mapped.length ? mapped : undefined;
             if (archived) {
-                await restoreArchivedBook(novel, archived);
+                await restoreArchivedBook(novel, archived, { chapters, cover });
                 await onImported(archived.novelId);
             } else {
                 await DB.saveVRNovel(novel);
+                if (chapters || cover) await saveBookroomRecord({ ...emptyRecord(novel.id), chapters, cover });
                 await onImported(novel.id);
             }
         } catch (e) { onError(`导入失败：${e instanceof Error ? e.message : String(e)}`); }
@@ -470,12 +536,20 @@ const ImportSheet: React.FC<{
             <section className="bk-sheet" role="dialog" aria-label="导入书" onClick={e => e.stopPropagation()}>
                 <header><h2>导入一本书</h2><button className="bk-icon" onClick={onClose} aria-label="关闭"><X size={18} /></button></header>
                 <div className="bk-sheet-body">
-                    <p className="bk-hint">用来认目录、找句子。和 Reeden 里那本用同一个文件最准。导入后彼方书库里也会出现。</p>
-                    <input ref={fileRef} type="file" accept=".txt,.pdf,text/plain,application/pdf" hidden onChange={e => { const f = e.target.files?.[0]; if (f) void pickFile(f); }} />
-                    <button className="bk-secondary" disabled={busy} onClick={() => fileRef.current?.click()}>选择 TXT / PDF 文件</button>
+                    <p className="bk-hint">用来认目录、找句子。和 Reeden 里那本用同一个文件最准。EPUB 只取文字和封面，插图排版留在 Reeden 里看。导入后彼方书库里也会出现。</p>
+                    <input ref={fileRef} type="file" accept=".epub,.txt,.pdf,application/epub+zip,text/plain,application/pdf" hidden onChange={e => { const f = e.target.files?.[0]; if (f) void pickFile(f); }} />
+                    <button className="bk-secondary" disabled={busy} onClick={() => fileRef.current?.click()}>选择 EPUB / TXT / PDF 文件</button>
                     {status && <p className="bk-hint">{status}</p>}
-                    <input className="bk-input" value={title} onChange={e => setTitle(e.target.value)} placeholder="书名" />
-                    <input className="bk-input" value={author} onChange={e => setAuthor(e.target.value)} placeholder="作者（可不填）" />
+                    <div className="bk-import-row">
+                        <button className="bk-cover-pick" onClick={() => coverRef.current?.click()} aria-label={cover ? '换封面' : '上传封面'}>
+                            {cover ? <img src={cover} alt="封面" /> : <span><ImageSquare size={20} /><br />封面</span>}
+                        </button>
+                        <input ref={coverRef} type="file" accept="image/*" hidden onChange={e => { const f = e.target.files?.[0]; if (f) void pickCover(f); }} />
+                        <div className="bk-import-fields">
+                            <input className="bk-input" value={title} onChange={e => setTitle(e.target.value)} placeholder="书名" />
+                            <input className="bk-input" value={author} onChange={e => setAuthor(e.target.value)} placeholder="作者（可不填）" />
+                        </div>
+                    </div>
                     {archived && <p className="bk-note">书房里有一本归档的《{archived.archived!.title}》，导入后会接回它的进度、目录和角色批注。</p>}
                 </div>
                 <footer><button className="bk-primary" disabled={busy || !text.trim() || !title.trim()} onClick={() => void commit()}>{busy ? '处理中…' : archived ? '导入并接回记录' : '放上书架'}</button></footer>
