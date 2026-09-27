@@ -6,6 +6,7 @@
  */
 import type { VRNovelAnnotation, VRNovelSegment, VRWorldNovel } from '../../types';
 import type { BookNote } from './reedenNotes';
+import type { BookReview, CharBookReview } from './stats';
 
 export const BOOKROOM_RECORD_PREFIX = 'bookroom-book-';
 export const bookroomRecordId = (novelId: string) => `${BOOKROOM_RECORD_PREFIX}${novelId}`;
@@ -57,6 +58,8 @@ export interface BookroomRecord {
     segCount?: number;
     /** 从 Reeden 导入或手动记下的划线笔记 */
     notes?: BookNote[];
+    /** 读完交换的书评：我的一篇 + 每个角色各一篇（重写会覆盖同一个人的旧书评） */
+    reviews?: { user?: BookReview; chars?: CharBookReview[] };
     archived?: BookArchive;
     updatedAt: number;
 }
@@ -344,12 +347,17 @@ export interface ReadingTogetherBook {
     charChapter?: string;
     charPercent?: number;
     charFinished: boolean;
+    /** 用户多少天没报这本书的进度了 */
+    quietDays?: number;
 }
 
 /**
  * 给角色看的「你们在一起读的书」—— 进聊天请求的易变尾段。
  * 核心是防剧透：角色读得比用户靠前时，只能聊用户读过的部分；没读到的不许编。
  */
+/** 几天没报进度，就允许角色轻轻问一句（读书提醒） */
+export const QUIET_DAYS = 3;
+
 export function buildReadingTogetherNote(userName: string, books: ReadingTogetherBook[]): string {
     if (!books.length) return '';
     const where = (chapter: string | undefined, percent?: number) => (chapter ? `「${chapter}」` : percent != null ? `全书约 ${percent}% 处` : '书里某处');
@@ -362,14 +370,17 @@ export function buildReadingTogetherNote(userName: string, books: ReadingTogethe
         const ahead = b.charSeg != null && !b.userFinished && (b.charFinished || b.charSeg - 1 > b.userSeg);
         const behind = b.charSeg != null && !b.charFinished && (b.userFinished || b.charSeg - 1 < b.userSeg);
         const tail = ahead ? `，比${userName}靠前` : behind ? `，比${userName}靠后` : '';
-        return `- 《${b.title}》：${user}；${me}${tail}。`;
+        const quiet = !b.userFinished && (b.quietDays ?? 0) >= QUIET_DAYS ? `（${userName}已经 ${b.quietDays} 天没说读到哪了）` : '';
+        return `- 《${b.title}》：${user}；${me}${tail}。${quiet}`;
     });
+    const anyQuiet = books.some(b => !b.userFinished && (b.quietDays ?? 0) >= QUIET_DAYS);
     return [
         '',
         '【你们在一起读的书】',
         ...lines,
         `聊到这些书时：只谈${userName}已经读过的部分。你读得比${userName}靠前的，后面的情节、人物命运、结局一个字都不能透露，最多卖个关子（比如「后面有段你一定会喜欢」）；`
-        + `你没读到或没读过的部分，你并不知道内容，不要编造情节，可以问${userName}、听${userName}讲。没聊到书时不必主动提。`,
+        + `你没读到或没读过的部分，你并不知道内容，不要编造情节，可以问${userName}、听${userName}讲。没聊到书时不必主动提。`
+        + (anyQuiet ? `有书${userName}好几天没提了：合适的时候（比如闲聊、主动找${userName}时）可以像随口想起那样问一句读到哪了，只问一次，不催、不说教；${userName}最近忙或不想读就放下。` : ''),
         '',
     ].join('\n');
 }

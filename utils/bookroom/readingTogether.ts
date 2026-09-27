@@ -35,6 +35,7 @@ export function pickReadingTogether(char: Pick<CharacterProfile, 'id' | 'vrState
                 charChapter: charSeg != null ? chapterAt(Math.max(0, charSeg - 1)) : undefined,
                 charPercent: charSeg != null ? pct(charSeg) : undefined,
                 charFinished: charSeg != null && total != null && charSeg >= total,
+                quietDays: Math.floor((now - r.progress!.at) / 86400000),
             };
         });
 }

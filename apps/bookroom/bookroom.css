@@ -220,3 +220,55 @@
 .bk-char-stats b { font-size: 18px; color: var(--bk-accent); }
 .bk-section { font-size: 13px; font-weight: 700; margin: 18px 2px 8px; color: var(--bk-sub); letter-spacing: .05em; }
 .bk-trace { cursor: pointer; }
+
+/* 三期：打卡 */
+.bk-checkin-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.bk-checkin-num { margin: 0; font-size: 13px; }
+.bk-checkin-num b { font-size: 24px; color: var(--bk-accent); margin-right: 2px; }
+.bk-checkin-head small { font-size: 11px; color: var(--bk-sub); }
+.bk-checkin-head button {
+    display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; font-size: 12px; padding: 7px 12px;
+    border-radius: 99px; border: 0; background: var(--bk-accent); color: #fff !important;
+}
+.bk-checkin-head button:disabled { background: var(--bk-accent-soft); color: var(--bk-accent) !important; }
+.bk-cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-top: 12px; text-align: center; }
+.bk-cal span { font-size: 11px; line-height: 26px; border-radius: 8px; color: var(--bk-sub); }
+.bk-cal .bk-cal-w { line-height: 18px; font-size: 10px; }
+.bk-cal .is-on { background: var(--bk-accent); color: #fff; font-weight: 700; }
+.bk-cal .is-today { box-shadow: inset 0 0 0 1.5px var(--bk-accent); }
+.bk-year-link { display: flex; align-items: center; justify-content: flex-end; gap: 2px; width: 100%; margin-top: 10px; background: none; border: 0; font-size: 12px; color: var(--bk-accent) !important; padding: 0; }
+
+/* 三期：年度书单 */
+.bk-stars { display: inline-flex; gap: 1px; color: #d59a2b; vertical-align: middle; }
+.bk-year-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.bk-year-stats div { background: var(--bk-paper); border: 1px solid var(--bk-line); border-radius: 14px; padding: 12px 4px; text-align: center; }
+.bk-year-stats b { display: block; font-size: 22px; color: var(--bk-accent); }
+.bk-year-stats small { font-size: 11px; color: var(--bk-sub); }
+.bk-year-books { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px 10px; }
+.bk-year-books button { display: flex; flex-direction: column; align-items: center; gap: 4px; background: none; border: 0; padding: 0; min-width: 0; }
+.bk-year-books span:not(.bk-spine):not(.bk-stars) { font-size: 12px; font-weight: 700; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bk-year-books small { font-size: 10px; color: var(--bk-sub); }
+.bk-letter { background: #fff; border: 1px solid var(--bk-line); border-radius: 14px; padding: 14px 16px; margin-bottom: 10px; }
+.bk-letter p { margin: 0; font-size: 14px; line-height: 1.85; white-space: pre-wrap; }
+.bk-letter small { display: block; text-align: right; margin-top: 8px; font-size: 12px; color: var(--bk-sub); }
+
+/* 三期：书评 */
+.bk-review { background: #fff; border: 1px solid var(--bk-line); border-radius: 12px; padding: 10px 12px; margin-top: 8px; }
+.bk-review.is-mine { border-color: var(--bk-accent-soft); background: #fffaf5; }
+.bk-review-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.bk-review-head b { font-size: 12.5px; color: var(--bk-accent); }
+.bk-review p { margin: 0; font-size: 13px; line-height: 1.8; white-space: pre-wrap; }
+.bk-rate { display: flex; justify-content: center; gap: 6px; color: #d59a2b; }
+.bk-rate button { background: none; border: 0; padding: 2px; color: #d59a2b !important; }
+.bk-footer-row { display: flex; gap: 8px; }
+.bk-footer-row .bk-secondary { width: auto; flex: 0 0 34%; }
+.bk-footer-row .bk-primary { flex: 1; }
+
+/* 三期：荐书 */
+.bk-recs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.bk-recs li { background: #fff; border: 1px solid var(--bk-line); border-radius: 12px; padding: 10px 12px; }
+.bk-recs li.is-pass { opacity: .55; }
+.bk-recs strong { font-size: 14px; }
+.bk-recs small { font-size: 11px; color: var(--bk-sub); }
+.bk-recs p { margin: 5px 0 0; font-size: 12.5px; line-height: 1.7; }
+.bk-note-foot button[aria-pressed="true"] { background: var(--bk-accent); color: #fff !important; border-color: var(--bk-accent); }

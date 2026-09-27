@@ -7,6 +7,7 @@ import { processNewMessagesWithAutoArchive } from '../memoryPalace/autoArchive';
 import type { APIConfig, CharacterProfile, VRWorldNovel } from '../../types';
 import { BOOKROOM_RECORD_PREFIX, bookroomRecordId, buildArchive, chaptersFromAnchors, emptyRecord, type BookroomRecord } from './bookroom';
 import type { EpubTocEntry } from './epub';
+import { BOOKROOM_META_ID, emptyMeta, type BookroomMeta } from './stats';
 
 const SETTINGS = 'vr_settings';
 const NOVELS = 'vr_novels';
@@ -29,6 +30,27 @@ export async function getBookroomRecord(novelId: string): Promise<BookroomRecord
         const req = db.transaction(SETTINGS, 'readonly').objectStore(SETTINGS).get(bookroomRecordId(novelId));
         req.onsuccess = () => resolve(req.result as BookroomRecord | undefined);
         req.onerror = () => reject(req.error);
+    });
+}
+
+/** 书房全局记录：打卡、荐书、年度寄语。 */
+export async function getBookroomMeta(): Promise<BookroomMeta> {
+    const db = await openDB();
+    if (!db.objectStoreNames.contains(SETTINGS)) return emptyMeta();
+    return new Promise((resolve, reject) => {
+        const req = db.transaction(SETTINGS, 'readonly').objectStore(SETTINGS).get(BOOKROOM_META_ID);
+        req.onsuccess = () => resolve({ ...emptyMeta(), ...(req.result || {}) });
+        req.onerror = () => reject(req.error);
+    });
+}
+
+export async function saveBookroomMeta(meta: BookroomMeta): Promise<void> {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(SETTINGS, 'readwrite');
+        tx.objectStore(SETTINGS).put(meta);
+        tx.oncomplete = () => resolve();
+        tx.onerror = tx.onabort = () => reject(tx.error || new Error('书房记录保存失败'));
     });
 }
 

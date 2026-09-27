@@ -6,7 +6,7 @@
  * 归档（只删正文，记录全留）。逻辑见 utils/bookroom/。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Archive, ArrowSquareOut, BookOpenText, ChatCircleText, Check, FileArrowUp, Highlighter, ImageSquare, ListBullets, MagnifyingGlass, Plus, Trash, X } from '@phosphor-icons/react';
+import { ArrowLeft, Archive, ArrowSquareOut, BookOpenText, CalendarCheck, CaretRight, ChatCircleText, Check, FileArrowUp, Highlighter, ImageSquare, ListBullets, MagnifyingGlass, NotePencil, Plus, Sparkle, Star, Trash, X } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import TokenImg from '../components/os/TokenImg';
@@ -21,10 +21,11 @@ import {
     findArchivedByTitle, formatPercent, locateSentence, progressRatio, unfinishedReaders,
     type BookChapter, type BookroomRecord, type SentenceMatch,
 } from '../utils/bookroom/bookroom';
-import { archiveBook, deleteBookCompletely, listBookroomRecords, restoreArchivedBook, saveBookroomRecord, saveImportExtras, sendProgressToCharacters } from '../utils/bookroom/bookroomDb';
+import { archiveBook, deleteBookCompletely, getBookroomMeta, listBookroomRecords, restoreArchivedBook, saveBookroomMeta, saveBookroomRecord, saveImportExtras, sendProgressToCharacters } from '../utils/bookroom/bookroomDb';
 import { parseEpub } from '../utils/bookroom/epub';
 import { mergeNotes, parseReedenNotes, placeNotes, suggestProgressFromNotes, titleFromCsvName, type BookNote } from '../utils/bookroom/reedenNotes';
-import { askCharacterAboutHighlight, buildHighlightMessage } from '../utils/bookroom/highlightReply';
+import { askCharacterAboutHighlight, askCharacterInBookroom, buildHighlightMessage, RECOMMEND_INSTRUCTION, REVIEW_INSTRUCTION, YEAR_LETTER_INSTRUCTION } from '../utils/bookroom/highlightReply';
+import { dateKey, monthGrid, parseRatedReview, parseRecommendation, readingDays, streakDays, yearSummary, emptyMeta, type BookRecommendation, type BookroomMeta } from '../utils/bookroom/stats';
 import { compressCover } from '../utils/bookroom/cover';
 import './bookroom/bookroom.css';
 
@@ -73,11 +74,19 @@ const BookroomApp: React.FC = () => {
     const [importing, setImporting] = useState(false);
     // 角色书单：看某个角色在读哪些书、读到哪、留过什么话
     const [charView, setCharView] = useState<string | null>(null);
+    // 三期：打卡 / 荐书 / 年度寄语的全局记录，书评弹窗，年度书单页
+    const [meta, setMeta] = useState<BookroomMeta>(emptyMeta);
+    const [reviewing, setReviewing] = useState(false);
+    const [yearView, setYearView] = useState<number | null>(null);
 
     const reload = useCallback(async () => {
-        const [n, r] = await Promise.all([DB.getVRNovels(), listBookroomRecords()]);
-        setNovels(n); setRecords(r); setLoaded(true);
+        const [n, r, m] = await Promise.all([DB.getVRNovels(), listBookroomRecords(), getBookroomMeta().catch(() => emptyMeta())]);
+        setNovels(n); setRecords(r); setMeta(m); setLoaded(true);
     }, []);
+    const saveMeta = async (next: BookroomMeta) => { await saveBookroomMeta(next); setMeta(next); };
+    // 请角色说点什么（书评 / 荐书 / 年度寄语）：统一走书房的共用流程
+    const ask = (char: CharacterProfile, req: { message: string; instruction: string; kind: string; purpose: string; novelId?: string }) =>
+        askCharacterInBookroom({ char, userProfile, groups, apiConfig, realtimeConfig, memoryPalaceConfig, ...req });
     useEffect(() => { void reload(); }, [reload]);
 
     const books = useMemo<ShelfBook[]>(() => {
@@ -98,13 +107,15 @@ const BookroomApp: React.FC = () => {
     const book = books.find(b => b.novelId === openId) || null;
 
     useEffect(() => registerBackHandler(() => {
+        if (reviewing) { setReviewing(false); return true; }
         if (highlighting) { setHighlighting(null); return true; }
         if (reporting) { setReporting(null); return true; }
         if (importing) { setImporting(false); return true; }
         if (openId) { setOpenId(null); return true; }
         if (charView) { setCharView(null); return true; }
+        if (yearView) { setYearView(null); return true; }
         return false;
-    }), [registerBackHandler, highlighting, reporting, importing, openId, charView]);
+    }), [registerBackHandler, reviewing, highlighting, reporting, importing, openId, charView, yearView]);
     const viewedChar = characters.find(c => c.id === charView) || null;
     // 「谁在读」：在书架上任何一本书有彼方书签、或被设成一起读的人
     const bookReaders = characters
@@ -128,7 +139,27 @@ const BookroomApp: React.FC = () => {
     return (
         <div className="bookroom">
             {!book && viewedChar ? (
-                <CharacterShelf char={viewedChar} books={books} onBack={() => setCharView(null)} onOpenBook={setOpenId} />
+                <CharacterShelf char={viewedChar} books={books} onBack={() => setCharView(null)} onOpenBook={setOpenId}
+                    recommendations={meta.recommendations.filter(r => r.charId === viewedChar.id)}
+                    onRecommend={async () => {
+                        const userName = userProfile?.name || '用户';
+                        const reply = await ask(viewedChar, { message: '【书房 · 荐书】给我推荐一本书吧，想看看你会选什么。', instruction: RECOMMEND_INSTRUCTION(userName), kind: 'recommend', purpose: '荐书' });
+                        const parsed = parseRecommendation(reply);
+                        if (!parsed) throw new Error(`ta 回复了，但没看出推荐的是哪本书：${reply.slice(0, 80)}`);
+                        const rec: BookRecommendation = { id: `rec${Date.now().toString(36)}`, charId: viewedChar.id, charName: viewedChar.name, ...parsed, at: Date.now() };
+                        await saveMeta({ ...meta, recommendations: [...meta.recommendations, rec] });
+                    }}
+                    onRecStatus={(id, status) => void saveMeta({ ...meta, recommendations: meta.recommendations.map(r => r.id === id ? { ...r, status: r.status === status ? undefined : status } : r) })}
+                    onRecDelete={id => void saveMeta({ ...meta, recommendations: meta.recommendations.filter(r => r.id !== id) })}
+                />
+            ) : !book && yearView ? (
+                <YearView year={yearView} records={records} meta={meta} characters={characters} onBack={() => setYearView(null)} onYear={setYearView} onOpenBook={setOpenId}
+                    onLetter={async (char, summaryText) => {
+                        const reply = await ask(char, { message: summaryText, instruction: YEAR_LETTER_INSTRUCTION(userProfile?.name || '用户', yearView), kind: 'year-letter', purpose: '年度寄语' });
+                        const letter = { year: yearView, charId: char.id, charName: char.name, text: reply, at: Date.now() };
+                        await saveMeta({ ...meta, yearLetters: [...meta.yearLetters.filter(l => !(l.year === yearView && l.charId === char.id)), letter] });
+                    }}
+                />
             ) : !book ? (
                 <>
                     <header className="bk-top">
@@ -138,6 +169,11 @@ const BookroomApp: React.FC = () => {
                     </header>
                     <main className="bk-scroll overflow-y-auto">
                         <p className="bk-lead">在 Reeden 里读，回来告诉 {characters.length === 1 ? characters[0].name : 'ta'} 你读到了哪。书架和彼方书库是同一个。</p>
+                        {loaded && books.length > 0 && (
+                            <CheckinCard records={records} meta={meta}
+                                onCheckin={() => void saveMeta({ ...meta, checkins: [...new Set([...meta.checkins, dateKey(Date.now())])] })}
+                                onYear={() => setYearView(new Date().getFullYear())} />
+                        )}
                         {bookReaders.length > 0 && (
                             <div className="bk-who">
                                 <small>谁在读 · 点开看 ta 的书单</small>
@@ -178,6 +214,7 @@ const BookroomApp: React.FC = () => {
                     onBack={() => setOpenId(null)}
                     onReport={preset => setReporting({ preset })}
                     onReportAtNote={note => setReporting({ note })}
+                    onReview={() => setReviewing(true)}
                     onHighlight={note => setHighlighting({ note })}
                     onError={msg => addToast(msg, 'error')}
                     onInfo={msg => addToast(msg, 'success')}
@@ -221,6 +258,8 @@ const BookroomApp: React.FC = () => {
                         }
                         setReporting(null);
                         addToast(tell.length ? `记好了，也告诉了 ${tell.map(c => c.name).join('、')}` : '进度记好了', 'success');
+                        const finishedNow = rec.progress && rec.progress.segIdx >= book.segCount - 1;
+                        if (finishedNow && !rec.reviews?.user && window.confirm(`读完《${book.title}》啦！要写一篇书评，和 ta 交换吗？`)) setReviewing(true);
                     }}
                 />
             )}
@@ -247,6 +286,31 @@ const BookroomApp: React.FC = () => {
                 />
             )}
 
+            {book && reviewing && (
+                <ReviewSheet
+                    book={book} characters={characters}
+                    onClose={() => setReviewing(false)}
+                    onSaveMine={async (text, rating) => {
+                        const reviews = { ...(book.record.reviews || {}), user: { text, rating, at: Date.now() } };
+                        await saveRecord({ ...book.record, reviews, updatedAt: Date.now() });
+                        return reviews;
+                    }}
+                    onExchange={async (char, mine, savedReviews) => {
+                        const bm = char.vrState?.novelBookmarks?.[book.novelId];
+                        const hasRead = bm != null && bm > 0;
+                        const hasFinished = hasRead && bm! >= book.segCount;
+                        const message = `【书房 · 书评】我读完了《${book.title}》${mine.rating ? `，给它 ${mine.rating} 星` : ''}：\n${mine.text}\n\n你也写一篇吧，我们交换看看。`;
+                        const reply = await ask(char, { message, instruction: REVIEW_INSTRUCTION(userProfile?.name || '用户', hasFinished, hasRead), kind: 'review', purpose: '交换书评', novelId: book.novelId });
+                        const parsed = parseRatedReview(reply);
+                        const charReview = { charId: char.id, charName: char.name, text: parsed.text, rating: parsed.rating, at: Date.now() };
+                        // 用刚存好的那份书评做底，别用渲染时的旧记录（不然会把刚写的「我的书评」盖掉）
+                        const reviews = { ...savedReviews, chars: [...(savedReviews.chars || []).filter(r => r.charId !== char.id), charReview] };
+                        await saveRecord({ ...book.record, reviews, updatedAt: Date.now() });
+                        return charReview;
+                    }}
+                />
+            )}
+
             {importing && (
                 <ImportSheet
                     records={records}
@@ -259,6 +323,208 @@ const BookroomApp: React.FC = () => {
     );
 };
 
+// ============ 打卡 ============
+
+const WEEK = ['一', '二', '三', '四', '五', '六', '日'];
+
+const CheckinCard: React.FC<{ records: BookroomRecord[]; meta: BookroomMeta; onCheckin: () => void; onYear: () => void }> = ({ records, meta, onCheckin, onYear }) => {
+    const now = new Date();
+    const days = useMemo(() => readingDays(records, meta), [records, meta]);
+    const streak = streakDays(days);
+    const prefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-`;
+    const monthCount = [...days].filter(k => k.startsWith(prefix)).length;
+    const today = dateKey(now.getTime());
+    const grid = monthGrid(now.getFullYear(), now.getMonth());
+    return (
+        <section className="bk-card bk-checkin">
+            <div className="bk-checkin-head">
+                <div>
+                    <p className="bk-checkin-num"><b>{streak}</b> 天连续阅读</p>
+                    <small>{now.getMonth() + 1} 月读了 {monthCount} 天 · 报进度、写笔记书评都算</small>
+                </div>
+                <button disabled={days.has(today)} onClick={onCheckin}><CalendarCheck size={16} /> {days.has(today) ? '今天读过了' : '今天读了'}</button>
+            </div>
+            <div className="bk-cal">
+                {WEEK.map(w => <span key={w} className="bk-cal-w">{w}</span>)}
+                {grid.map((d, i) => d == null ? <span key={`e${i}`} /> : (
+                    <span key={d} className={`${days.has(prefix + String(d).padStart(2, '0')) ? 'is-on' : ''} ${d === now.getDate() ? 'is-today' : ''}`}>{d}</span>
+                ))}
+            </div>
+            <button className="bk-year-link" onClick={onYear}>{now.getFullYear()} 年度书单 <CaretRight size={13} /></button>
+        </section>
+    );
+};
+
+// ============ 年度书单 ============
+
+const Stars: React.FC<{ n?: number; size?: number }> = ({ n, size = 12 }) => n ? (
+    <span className="bk-stars" aria-label={`${n} 星`}>{[1, 2, 3, 4, 5].map(i => <Star key={i} size={size} weight={i <= n ? 'fill' : 'regular'} />)}</span>
+) : null;
+
+const YearView: React.FC<{
+    year: number; records: BookroomRecord[]; meta: BookroomMeta; characters: CharacterProfile[];
+    onBack: () => void; onYear: (y: number) => void; onOpenBook: (id: string) => void;
+    onLetter: (char: CharacterProfile, summaryText: string) => Promise<void>;
+}> = ({ year, records, meta, characters, onBack, onYear, onOpenBook, onLetter }) => {
+    const sum = useMemo(() => yearSummary(records, meta, year), [records, meta, year]);
+    const [busyId, setBusyId] = useState<string | null>(null);
+    const [error, setError] = useState('');
+    const years = useMemo(() => {
+        const ys = new Set<number>([new Date().getFullYear()]);
+        for (const r of records) for (const h of r.history) ys.add(new Date(h.at).getFullYear());
+        return [...ys].sort((a, b) => b - a);
+    }, [records]);
+    const companions = characters
+        .map(c => ({ char: c, n: sum.companions[c.id] || 0 }))
+        .filter(x => x.n > 0)
+        .sort((a, b) => b.n - a.n);
+    const letters = meta.yearLetters.filter(l => l.year === year);
+    const summaryText = [
+        `【书房 · 年度书单】我们 ${year} 年一起读书的总结：`,
+        sum.finished.length ? `读完 ${sum.finished.length} 本：${sum.finished.map(f => `《${f.title}》${f.rating ? `（我打了 ${f.rating} 星）` : ''}`).join('、')}` : '今年还没有读完的书',
+        `一共读书 ${sum.days} 天，报了 ${sum.reports} 次进度，记了 ${sum.notes} 条笔记。`,
+        '给我写几句年度寄语吧。',
+    ].join('\n');
+    const candidates = companions.length ? companions.map(x => x.char) : characters.slice(0, 6);
+    return (
+        <>
+            <header className="bk-top">
+                <button className="bk-icon" onClick={onBack} aria-label="返回书架"><ArrowLeft size={20} /></button>
+                <div className="bk-top-title"><small>YEAR IN BOOKS</small><h1>{year} 年度书单</h1></div>
+                <span className="bk-icon" />
+            </header>
+            <main className="bk-scroll overflow-y-auto">
+                {years.length > 1 && <nav className="bk-tabs" style={{ margin: '0 0 12px' }}>{years.map(y => <button key={y} aria-pressed={y === year} onClick={() => onYear(y)}>{y}</button>)}</nav>}
+                <section className="bk-year-stats">
+                    <div><b>{sum.finished.length}</b><small>读完</small></div>
+                    <div><b>{sum.days}</b><small>读书天数</small></div>
+                    <div><b>{sum.reports}</b><small>报进度</small></div>
+                    <div><b>{sum.notes}</b><small>笔记</small></div>
+                </section>
+
+                <h3 className="bk-section">读完的书</h3>
+                {!sum.finished.length ? <p className="bk-hint">今年还没有读完的书。报进度时勾上「我读完了这本」就会出现在这里。</p> : (
+                    <div className="bk-year-books">
+                        {sum.finished.map(f => (
+                            <button key={f.novelId} onClick={() => onOpenBook(f.novelId)}>
+                                <Cover title={f.title} cover={f.cover} large />
+                                <span>{f.title}</span>
+                                <Stars n={f.rating} />
+                                <small>{new Date(f.finishedAt).getMonth() + 1} 月读完</small>
+                            </button>
+                        ))}
+                    </div>
+                )}
+
+                {companions.length > 0 && <>
+                    <h3 className="bk-section">一起读的人</h3>
+                    <div className="bk-readers bk-readers-lg">{companions.map(({ char, n }) => <span key={char.id} className="bk-chip"><Avatar char={char} size={20} />{char.name} · {n} 本</span>)}</div>
+                </>}
+
+                <h3 className="bk-section">年度寄语</h3>
+                {letters.map(l => (
+                    <section key={l.charId} className="bk-letter">
+                        <p>{l.text}</p>
+                        <small>—— {l.charName}</small>
+                    </section>
+                ))}
+                {error && <p className="bk-warn">{error}</p>}
+                <div className="bk-pick">
+                    {candidates.map(c => (
+                        <button key={c.id} disabled={!!busyId} onClick={async () => {
+                            setBusyId(c.id); setError('');
+                            try { await onLetter(c, summaryText); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+                            finally { setBusyId(null); }
+                        }}><Avatar char={c} size={20} /><span>{busyId === c.id ? `${c.name} 正在写…` : letters.some(l => l.charId === c.id) ? `请 ${c.name} 重写` : `请 ${c.name} 写几句`}</span></button>
+                    ))}
+                </div>
+                <p className="bk-hint">寄语会发进你们的私聊，也会进 ta 的记忆。</p>
+            </main>
+        </>
+    );
+};
+
+// ============ 书评 ============
+
+const ReviewsCard: React.FC<{ book: ShelfBook; onReview: () => void }> = ({ book, onReview }) => {
+    const mine = book.record.reviews?.user;
+    const theirs = book.record.reviews?.chars || [];
+    return (
+        <section className="bk-card">
+            <div className="bk-card-head"><h2><NotePencil size={16} /> 书评</h2>{(mine || theirs.length > 0) && <button onClick={onReview}>{mine ? '改 / 交换' : '写书评'}</button>}</div>
+            {!mine && !theirs.length && <>
+                <p className="bk-hint">读完以后写一篇，再请 ta 也写一篇，两篇并排放在这里。</p>
+                <button className="bk-secondary" style={{ marginTop: 8 }} onClick={onReview}><NotePencil size={15} /> 写书评</button>
+            </>}
+            {mine && <div className="bk-review is-mine"><div className="bk-review-head"><b>我</b><Stars n={mine.rating} /></div><p>{mine.text}</p></div>}
+            {theirs.map(r => <div key={r.charId} className="bk-review"><div className="bk-review-head"><b>{r.charName}</b><Stars n={r.rating} /></div><p>{r.text}</p></div>)}
+        </section>
+    );
+};
+
+const ReviewSheet: React.FC<{
+    book: ShelfBook; characters: CharacterProfile[];
+    onClose: () => void;
+    onSaveMine: (text: string, rating?: number) => Promise<NonNullable<BookroomRecord['reviews']>>;
+    onExchange: (char: CharacterProfile, mine: { text: string; rating?: number }, savedReviews: NonNullable<BookroomRecord['reviews']>) => Promise<{ charName: string; text: string; rating?: number }>;
+}> = ({ book, characters, onClose, onSaveMine, onExchange }) => {
+    const prev = book.record.reviews?.user;
+    const [rating, setRating] = useState<number | undefined>(prev?.rating);
+    const [text, setText] = useState(prev?.text || '');
+    const companions = characters.filter(c => book.record.companionIds.includes(c.id));
+    const ordered = [...companions, ...characters.filter(c => !book.record.companionIds.includes(c.id))];
+    const [charId, setCharId] = useState<string>(ordered[0]?.id || '');
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState('');
+    const [result, setResult] = useState<{ charName: string; text: string; rating?: number } | null>(null);
+    const char = characters.find(c => c.id === charId);
+
+    const submit = async (exchange: boolean) => {
+        if (!text.trim()) return;
+        setBusy(true); setError('');
+        try {
+            const saved = await onSaveMine(text.trim(), rating);
+            if (exchange && char) setResult(await onExchange(char, { text: text.trim(), rating }, saved));
+            else onClose();
+        } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+        finally { setBusy(false); }
+    };
+
+    return (
+        <div className="bk-sheet-backdrop" onClick={busy ? undefined : onClose}>
+            <section className="bk-sheet" role="dialog" aria-label="写书评" onClick={e => e.stopPropagation()}>
+                <header><h2>《{book.title}》书评</h2><button className="bk-icon" onClick={onClose} disabled={busy} aria-label="关闭"><X size={18} /></button></header>
+                <div className="bk-sheet-body overflow-y-auto">
+                    {result ? (
+                        <div className="bk-review"><div className="bk-review-head"><b>{result.charName}</b><Stars n={result.rating} size={14} /></div><p>{result.text}</p></div>
+                    ) : <>
+                        <div className="bk-rate">{[1, 2, 3, 4, 5].map(i => (
+                            <button key={i} aria-label={`${i} 星`} onClick={() => setRating(rating === i ? undefined : i)}><Star size={26} weight={rating && i <= rating ? 'fill' : 'regular'} /></button>
+                        ))}</div>
+                        <textarea value={text} onChange={e => setText(e.target.value)} placeholder="读完的感受、喜欢和不喜欢的地方……" rows={7} maxLength={3000} />
+                        <div className="bk-tell">
+                            <small>和谁交换（ta 会写一篇自己的，发进你们的私聊）</small>
+                            <div className="bk-pick">
+                                {ordered.slice(0, 12).map(c => (
+                                    <button key={c.id} aria-pressed={c.id === charId} onClick={() => setCharId(c.id)}><Avatar char={c} size={20} /><span>{c.name}</span>{c.id === charId && <Check size={13} weight="bold" />}</button>
+                                ))}
+                            </div>
+                        </div>
+                        <p className="bk-hint">ta 没在彼方读完这本的话，会老实说只读到哪、只评读过的部分。交换会调用一次聊天 API。</p>
+                    </>}
+                    {error && <p className="bk-warn">{error}</p>}
+                </div>
+                <footer className="bk-footer-row">
+                    {result ? <button className="bk-primary" onClick={onClose}>好</button> : <>
+                        <button className="bk-secondary" disabled={busy || !text.trim()} onClick={() => void submit(false)}>只存我的</button>
+                        <button className="bk-primary" disabled={busy || !text.trim() || !char} onClick={() => void submit(true)}>{busy ? `${char?.name || 'ta'} 正在写…` : '存下并交换'}</button>
+                    </>}
+                </footer>
+            </section>
+        </div>
+    );
+};
+
 // ============ 角色书单 ============
 
 interface CharTrace { key: string; at: number; bookId: string; bookTitle: string; quote: string; content: string; kind: '批注' | '回应' }
@@ -266,7 +532,13 @@ interface CharTrace { key: string; at: number; bookId: string; bookTitle: string
 const CharacterShelf: React.FC<{
     char: CharacterProfile; books: ShelfBook[];
     onBack: () => void; onOpenBook: (novelId: string) => void;
-}> = ({ char, books, onBack, onOpenBook }) => {
+    recommendations: BookRecommendation[];
+    onRecommend: () => Promise<void>;
+    onRecStatus: (id: string, status: 'want' | 'read' | 'pass') => void;
+    onRecDelete: (id: string) => void;
+}> = ({ char, books, onBack, onOpenBook, recommendations, onRecommend, onRecStatus, onRecDelete }) => {
+    const [recBusy, setRecBusy] = useState(false);
+    const [recError, setRecError] = useState('');
     const [annotations, setAnnotations] = useState<VRNovelAnnotation[] | null>(null);
     const [showAll, setShowAll] = useState(false);
     useEffect(() => {
@@ -339,6 +611,31 @@ const CharacterShelf: React.FC<{
                 {notYet.length > 0 && <><h3 className="bk-section">约好一起读、还没翻开</h3><div className="bk-shelf">{notYet.map(x => <BookRow key={x.book.novelId} book={x.book} ratio={null} />)}</div></>}
                 {!rows.length && <p className="bk-empty">{char.name} 还没读过书架上的书。</p>}
 
+                <h3 className="bk-section">{char.name} 推荐的书</h3>
+                <section className="bk-card">
+                    {!recommendations.length && <p className="bk-hint" style={{ marginTop: 0 }}>请 ta 按自己的口味和对你的了解推荐一本。推荐会发进你们的私聊。</p>}
+                    <ul className="bk-recs">
+                        {[...recommendations].reverse().map(r => (
+                            <li key={r.id} className={r.status === 'pass' ? 'is-pass' : ''}>
+                                <strong>《{r.title}》</strong>{r.author && <small> {r.author}</small>}
+                                <p>{r.reason}</p>
+                                <div className="bk-note-foot">
+                                    {(['want', 'read', 'pass'] as const).map(st => (
+                                        <button key={st} aria-pressed={r.status === st} onClick={() => onRecStatus(r.id, st)}>{{ want: '想读', read: '读过了', pass: '不感兴趣' }[st]}</button>
+                                    ))}
+                                    <button onClick={() => { if (window.confirm('删掉这条推荐？')) onRecDelete(r.id); }}>删除</button>
+                                </div>
+                            </li>
+                        ))}
+                    </ul>
+                    {recError && <p className="bk-warn">{recError}</p>}
+                    <button className="bk-secondary" style={{ marginTop: 8 }} disabled={recBusy} onClick={async () => {
+                        setRecBusy(true); setRecError('');
+                        try { await onRecommend(); } catch (e) { setRecError(e instanceof Error ? e.message : String(e)); }
+                        finally { setRecBusy(false); }
+                    }}><Sparkle size={15} /> {recBusy ? `${char.name} 正在想…` : `请 ${char.name} 推荐一本`}</button>
+                </section>
+
                 <h3 className="bk-section">{char.name} 留下的话</h3>
                 {annotations == null ? <p className="bk-hint">读取中…</p> : !traces.length ? <p className="bk-hint">还没有。ta 在彼方读书时会在页边写批注，你在书房划线给 ta 看时 ta 的回应也会记在这里。</p> : (
                     <ul className="bk-notes">
@@ -363,9 +660,9 @@ const BookDetail: React.FC<{
     book: ShelfBook; characters: CharacterProfile[];
     onBack: () => void; onReport: (preset?: BookChapter) => void;
     onSave: (rec: BookroomRecord) => Promise<void>; onArchive: () => void; onDelete: () => void;
-    onReportAtNote: (note: BookNote) => void; onHighlight: (note?: BookNote) => void;
+    onReportAtNote: (note: BookNote) => void; onHighlight: (note?: BookNote) => void; onReview: () => void;
     onError: (msg: string) => void; onInfo: (msg: string) => void;
-}> = ({ book, characters, onBack, onReport, onSave, onArchive, onDelete, onReportAtNote, onHighlight, onError, onInfo }) => {
+}> = ({ book, characters, onBack, onReport, onSave, onArchive, onDelete, onReportAtNote, onHighlight, onReview, onError, onInfo }) => {
     const detected = useMemo(() => book.record.chapters || (book.novel ? detectChapters(book.novel.segments) : []), [book.novel, book.record.chapters]);
     const chapters = detected.length ? detected : fallbackSections(book.segCount);
     const myAt = book.record.progress?.segIdx;
@@ -460,6 +757,8 @@ const BookDetail: React.FC<{
                     </ol>
                     {!book.record.archived && <p className="bk-hint">点某一章，直接报「读到这一章」。</p>}
                 </section>
+
+                <ReviewsCard book={book} onReview={onReview} />
 
                 <NotesCard book={book} chapters={chapters} onSave={onSave} onReportAtNote={onReportAtNote} onHighlight={onHighlight} onError={onError} onInfo={onInfo} />
 
