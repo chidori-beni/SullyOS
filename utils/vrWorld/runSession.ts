@@ -39,6 +39,8 @@ import { PostOffice } from './postOffice';
 import { Signal, SignalState, recordMyLine, getMyRecentLines, takeSignalWhisper } from './signal';
 import { getReadingWindow, getBookmark, buildAnnotation } from './novel';
 import { novelReadingMode, readableNovels } from './library';
+import { listBookroomRecords } from '../bookroom/bookroomDb';
+import { buildPaceCaps, clampWindow, readingPaceOf, READING_PACE_CHARS, withoutCaughtUp } from '../bookroom/pace';
 import {
     resolveVRActivityEligibility,
     resolveVRActivityEligibilityMap,
@@ -350,7 +352,9 @@ async function runVRSessionUnlocked(deps: VRSessionDeps): Promise<VRSessionResul
     const vrApi = char.vrState?.api?.baseUrl ? char.vrState.api : (vrGlobalApi?.baseUrl ? vrGlobalApi : apiConfig);
     if (!vrApi.baseUrl) return { ok: false, reason: 'no-api' };
 
-    const novels = await DB.getVRNovels();
+    // 书房陪读：一起读的书最多读到用户当前那一章结尾，追上了这一轮就不读这本（见 utils/bookroom/pace.ts）
+    const paceCaps = buildPaceCaps(await listBookroomRecords().catch(() => []), char.id);
+    const novels = withoutCaughtUp(await DB.getVRNovels(), char, paceCaps);
     const musicState = await DB.getVRMusicRoom();
     const gardenAvailable = gardenVisitAvailable(readFishingMarketState(), char.id);
     const sarAvailable = sarActivityPool(char, gardenAvailable, !!manual).length > 0;
@@ -456,7 +460,7 @@ async function runVRSessionUnlocked(deps: VRSessionDeps): Promise<VRSessionResul
             novel = pickNovel(novels, char);
             if (!novel) return { ok: false, room: 'library', reason: 'no-readable-novel' };
             const bm = getBookmark(char.vrState?.novelBookmarks, novel.id);
-            win = getReadingWindow(novel, bm >= novel.segments.length ? 0 : bm);
+            win = clampWindow(getReadingWindow(novel, bm >= novel.segments.length ? 0 : bm, READING_PACE_CHARS[readingPaceOf(char)]), paceCaps.get(novel.id));
             allAnn = await DB.getVRAnnotations(novel.id);
             const windowAnn = allAnn.filter(a => a.segIdx >= win!.from && a.segIdx < win!.to);
             roomTurn = buildLibraryRoomTurn(novel, win, windowAnn, char.id);

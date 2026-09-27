@@ -12,6 +12,7 @@ import { DB } from '../utils/db';
 import TokenImg from '../components/os/TokenImg';
 import type { CharacterProfile, VRNovelAnnotation, VRWorldNovel } from '../types';
 import { readingPreferenceLabel } from '../utils/vrWorld/library';
+import { READING_PACE_LABEL, readingPaceOf } from '../utils/bookroom/pace';
 import { stripLeakedAttrs } from '../utils/vrWorld/prompts';
 import { buildNovelAsync } from '../utils/vrWorld/novel';
 import { decodeBytes } from '../utils/vrWorld/decodeText';
@@ -63,7 +64,7 @@ const Bar: React.FC<{ ratio: number; tone?: 'me' | 'char' }> = ({ ratio, tone = 
 );
 
 const BookroomApp: React.FC = () => {
-    const { closeApp, characters, apiConfig, memoryPalaceConfig, userProfile, groups, realtimeConfig, addToast, registerBackHandler } = useOS();
+    const { closeApp, characters, updateCharacter, apiConfig, memoryPalaceConfig, userProfile, groups, realtimeConfig, addToast, registerBackHandler } = useOS();
     const [novels, setNovels] = useState<VRWorldNovel[]>([]);
     const [records, setRecords] = useState<BookroomRecord[]>([]);
     const [loaded, setLoaded] = useState(false);
@@ -215,6 +216,17 @@ const BookroomApp: React.FC = () => {
                     onReport={preset => setReporting({ preset })}
                     onReportAtNote={note => setReporting({ note })}
                     onReview={() => setReviewing(true)}
+                    onPullBack={char => {
+                        const userSeg = book.record.progress?.segIdx;
+                        if (userSeg == null) return;
+                        if (!window.confirm(`把 ${char.name} 在《${book.title}》的书签挪回到你的位置？
+
+ta 之前写的批注都还在；之后 ta 会从你这里接着读，最多读到你这一章的结尾。`)) return;
+                        updateCharacter(char.id, latest => ({
+                            vrState: { ...(latest.vrState || { enabled: false, intervalMinutes: 120 }), novelBookmarks: { ...(latest.vrState?.novelBookmarks || {}), [book.novelId]: userSeg } },
+                        }));
+                        addToast(`${char.name} 的书签已挪回你的位置`, 'success');
+                    }}
                     onHighlight={note => setHighlighting({ note })}
                     onError={msg => addToast(msg, 'error')}
                     onInfo={msg => addToast(msg, 'success')}
@@ -602,7 +614,7 @@ const CharacterShelf: React.FC<{
                     <Avatar char={char} size={56} />
                     <div>
                         <p className="bk-char-stats"><b>{reading.length}</b> 在读 · <b>{finished.length}</b> 读完 · <b>{traces.length}</b> 条留言</p>
-                        <p className="bk-hint">彼方里的阅读方式：{readingPreferenceLabel(char)}{char.vrState?.enabled ? '' : ' · 还没接入彼方，不会自己去读书'}</p>
+                        <p className="bk-hint">彼方里的阅读方式：{readingPreferenceLabel(char)} · {READING_PACE_LABEL[readingPaceOf(char)]}{char.vrState?.enabled ? '' : ' · 还没接入彼方，不会自己去读书'}</p>
                     </div>
                 </section>
 
@@ -660,9 +672,9 @@ const BookDetail: React.FC<{
     book: ShelfBook; characters: CharacterProfile[];
     onBack: () => void; onReport: (preset?: BookChapter) => void;
     onSave: (rec: BookroomRecord) => Promise<void>; onArchive: () => void; onDelete: () => void;
-    onReportAtNote: (note: BookNote) => void; onHighlight: (note?: BookNote) => void; onReview: () => void;
+    onReportAtNote: (note: BookNote) => void; onHighlight: (note?: BookNote) => void; onReview: () => void; onPullBack: (char: CharacterProfile) => void;
     onError: (msg: string) => void; onInfo: (msg: string) => void;
-}> = ({ book, characters, onBack, onReport, onSave, onArchive, onDelete, onReportAtNote, onHighlight, onReview, onError, onInfo }) => {
+}> = ({ book, characters, onBack, onReport, onSave, onArchive, onDelete, onReportAtNote, onHighlight, onReview, onPullBack, onError, onInfo }) => {
     const detected = useMemo(() => book.record.chapters || (book.novel ? detectChapters(book.novel.segments) : []), [book.novel, book.record.chapters]);
     const chapters = detected.length ? detected : fallbackSections(book.segCount);
     const myAt = book.record.progress?.segIdx;
@@ -702,6 +714,8 @@ const BookDetail: React.FC<{
                         const r = charRatio(c, book);
                         const bm = c.vrState?.novelBookmarks?.[book.novelId];
                         const ch = bm != null ? chapterIndexAt(chapters, Math.max(0, bm - 1)) : -1;
+                        // 读得比你靠前（且你还没读完）：可以把书签挪回你的位置
+                        const ahead = myAt != null && bm != null && bm - 1 > myAt && myAt < book.segCount - 1 && !book.record.archived;
                         return (
                             <div className="bk-progress-row" key={c.id}>
                                 <Avatar char={c} />
@@ -710,6 +724,7 @@ const BookDetail: React.FC<{
                                     <Bar ratio={r ?? 0} tone="char" />
                                 </div>
                                 <em>{r == null ? '—' : formatPercent(r)}</em>
+                                {ahead && <button className="bk-pullback" onClick={() => onPullBack(c)}>挪回我的位置</button>}
                             </div>
                         );
                     })}
@@ -719,7 +734,7 @@ const BookDetail: React.FC<{
 
                 <section className="bk-card">
                     <div className="bk-card-head"><h2>一起读的人</h2><button onClick={() => setPickCompanions(v => !v)}>{pickCompanions ? '完成' : '修改'}</button></div>
-                    <p className="bk-hint">报进度时默认告诉这些人，进度会进 ta 的聊天和记忆。</p>
+                    <p className="bk-hint">报进度时默认告诉这些人，进度会进 ta 的聊天和记忆。ta 们在彼方读这本时，最多读到你当前那一章的结尾，追上了就等你。</p>
                     {pickCompanions ? (
                         <div className="bk-pick">
                             {characters.map(c => {

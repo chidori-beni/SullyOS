@@ -272,3 +272,4 @@
 .bk-recs small { font-size: 11px; color: var(--bk-sub); }
 .bk-recs p { margin: 5px 0 0; font-size: 12.5px; line-height: 1.7; }
 .bk-note-foot button[aria-pressed="true"] { background: var(--bk-accent); color: #fff !important; border-color: var(--bk-accent); }
+.bk-pullback { flex-shrink: 0; font-size: 11px; padding: 3px 8px; border-radius: 99px; border: 1px solid var(--bk-line); background: var(--bk-paper); color: var(--bk-accent) !important; }

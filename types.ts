@@ -1462,6 +1462,8 @@ export interface VRWorldCharState {
     /** categories 模式只在所选分类中阅读，不回退到其他分类。缺省兼容旧的逐本优先规则。 */
     novelReadingMode?: 'all' | 'books' | 'categories';
     preferredNovelCategoryIds?: string[];
+    /** 每次去图书馆读多少：细读约 5 千字 / 正常约 1.5 万字 / 快读约 4 万字。缺省为正常（见 utils/bookroom/pace.ts） */
+    readingPace?: 'slow' | 'normal' | 'fast';
     /** 仅限制自动自由活动，手动邀请可绕过；空或缺省为不限制。 */
     excludedAutoRooms?: VRRoomId[];
     excludedAutoSARActivities?: VRSARActivity[];

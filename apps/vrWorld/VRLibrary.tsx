@@ -3,6 +3,7 @@ import { BookOpen, Check, Plus, X } from '@phosphor-icons/react';
 import type { CharacterProfile, VRLibraryCategory, VRWorldCharState, VRWorldNovel } from '../../types';
 import { novelReadingMode, readingPreferenceLabel, type LibraryEdit } from '../../utils/vrWorld/library';
 import { getBookmark } from '../../utils/vrWorld/novel';
+import { READING_PACE_CHARS, READING_PACE_LABEL, readingPaceOf, type ReadingPace } from '../../utils/bookroom/pace';
 import './vr-library.css';
 
 export function LibraryView({ novels, categories, characters, onOpen, onAdd, onDelete, onEdit, onPreference }: {
@@ -47,11 +48,11 @@ export function LibraryView({ novels, categories, characters, onOpen, onAdd, onD
             </article>; })}
         </div>
         {pages > 1 && <div className="vrl-pagination"><button disabled={!currentPage} onClick={() => setPage(currentPage - 1)}>上一页</button><span>{currentPage + 1} / {pages}</span><button disabled={currentPage === pages - 1} onClick={() => setPage(currentPage + 1)}>下一页</button></div>}
-        <details className="vrl-readers"><summary>谁来读这些书 <span>角色阅读偏好</span></summary><p>选择分类后，新归入的书也会自动进入 ta 的阅读范围。</p><input aria-label="查找阅读角色" placeholder="查找角色" value={readerQuery} onChange={e => setReaderQuery(e.target.value)}/><div className="vrl-reader-list">{readers.map(c => <button key={c.id} onClick={() => onPreference(c)}><span>{c.name}</span><small>{readingPreferenceLabel(c)} ›</small></button>)}{!readers.length && <p>没有找到角色。</p>}</div></details>
+        <details className="vrl-readers"><summary>谁来读这些书 <span>角色阅读偏好</span></summary><p>选择分类后，新归入的书也会自动进入 ta 的阅读范围。</p><input aria-label="查找阅读角色" placeholder="查找角色" value={readerQuery} onChange={e => setReaderQuery(e.target.value)}/><div className="vrl-reader-list">{readers.map(c => <button key={c.id} onClick={() => onPreference(c)}><span>{c.name}</span><small>{readingPreferenceLabel(c)} · {READING_PACE_LABEL[readingPaceOf(c)]} ›</small></button>)}{!readers.length && <p>没有找到角色。</p>}</div></details>
     </section>;
 }
 
-type Preference = Pick<VRWorldCharState,'novelReadingMode'|'preferredNovelIds'|'preferredNovelCategoryIds'>;
+type Preference = Pick<VRWorldCharState,'novelReadingMode'|'preferredNovelIds'|'preferredNovelCategoryIds'|'readingPace'>;
 export function NovelPreferenceModal({char,novels,categories,onClose,onSave}:{char:CharacterProfile;novels:VRWorldNovel[];categories:VRLibraryCategory[];onClose:()=>void;onSave:(preference:Preference)=>void}) {
     const panel = useRef<HTMLElement>(null);
     useEffect(() => {
@@ -63,6 +64,7 @@ export function NovelPreferenceModal({char,novels,categories,onClose,onSave}:{ch
     const [books,setBooks] = useState(char.vrState?.preferredNovelIds || []);
     const [chosen,setChosen] = useState(char.vrState?.preferredNovelCategoryIds || []);
     const [query,setQuery] = useState(''), [page,setPage] = useState(0);
+    const [pace,setPace] = useState<ReadingPace>(readingPaceOf(char));
     const list = mode === 'books' ? novels.filter(n => `${n.title} ${n.author || ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())) : [];
     const pages = Math.max(1,Math.ceil(list.length / 18)), p = Math.min(page,pages-1);
     const toggle = (id:string,values:string[],setter:(values:string[])=>void) => setter(values.includes(id) ? values.filter(x=>x!==id) : [...values,id]);
@@ -76,10 +78,12 @@ export function NovelPreferenceModal({char,novels,categories,onClose,onSave}:{ch
         <header><div><small>READING PREFERENCES</small><h2>{char.name} 的阅读偏好</h2></div><button aria-label="关闭阅读偏好" onClick={onClose}><X size={20}/></button></header>
         <nav className="vrl-modes" aria-label="阅读方式">{(['all','categories','books'] as const).map(value=><button key={value} aria-pressed={mode===value} onClick={()=>setMode(value)}>{{all:'全部轮换',categories:'按分类',books:'逐本优先'}[value]}</button>)}</nav>
         <main>
+            <p className="vrl-hint">每次去图书馆读多少（一起读的书另有规则：最多读到你当前那一章的结尾，追上了就等你）</p>
+            <nav className="vrl-modes" aria-label="阅读速度">{(['slow','normal','fast'] as const).map(value=><button key={value} aria-pressed={pace===value} onClick={()=>setPace(value)}>{READING_PACE_LABEL[value]}<small style={{display:'block',fontSize:10,opacity:.7}}>约 {READING_PACE_CHARS[value]/10000} 万字</small></button>)}</nav>
             <p className="vrl-hint">{mode==='categories' ? '只在所选分类里轮换，新归入的书自动加入。读完后在这些分类内重读；没有书时暂停阅读。' : mode==='books' ? '先读选中的书；读完后再从全书库轮换。' : '在全书库轮换阅读，每本书保留独立书签。'}</p>
             {mode==='categories' && <><div className="vrl-preference-list">{categories.map(c=><button key={c.id} aria-pressed={chosen.includes(c.id)} onClick={()=>toggle(c.id,chosen,setChosen)}><span className="vrl-check">{chosen.includes(c.id)&&<Check size={14}/>}</span><span>{c.name}</span><small>{novels.filter(n=>n.categoryId===c.id).length} 本</small></button>)}</div>{!categories.length && <p className="vrl-empty">先去书库新建分类，再把书整理进去。</p>}{missing.length>0 && <p className="vrl-hint">有 {missing.length} 个已移除的分类。<button onClick={()=>setChosen(chosen.filter(id=>!missing.includes(id)))}>清除失效选择</button></p>}{!chosen.length && <p className="vrl-hint">还没选分类，保存后将暂停阅读，直到你选择分类。</p>}</>}
             {mode==='books' && <><input aria-label="搜索偏好书目" placeholder="搜索书名或作者" value={query} onChange={e=>{setQuery(e.target.value);setPage(0);}}/><div className="vrl-preference-list">{list.slice(p*18,p*18+18).map(n=><button key={n.id} aria-pressed={books.includes(n.id)} onClick={()=>toggle(n.id,books,setBooks)}><span className="vrl-check">{books.includes(n.id)&&<Check size={14}/>}</span><span>{n.title}</span></button>)}</div>{pages>1 && <div className="vrl-pagination"><button disabled={!p} onClick={()=>setPage(p-1)}>上一页</button><span>{p+1} / {pages}</span><button disabled={p===pages-1} onClick={()=>setPage(p+1)}>下一页</button></div>}</>}
         </main>
-        <footer><button onClick={()=>setMode('all')}>恢复全部轮换</button><button className="vrl-primary" onClick={()=>onSave({novelReadingMode:mode,preferredNovelIds:books,preferredNovelCategoryIds:chosen})}>保存偏好</button></footer>
+        <footer><button onClick={()=>setMode('all')}>恢复全部轮换</button><button className="vrl-primary" onClick={()=>onSave({novelReadingMode:mode,preferredNovelIds:books,preferredNovelCategoryIds:chosen,readingPace:pace})}>保存偏好</button></footer>
     </section></div>;
 }
