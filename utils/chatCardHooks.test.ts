@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CARD_MESSAGE_TYPES, cardHookProps, isCardMessage, resolveCardHook } from './chatCardHooks';
+import { CARD_MESSAGE_TYPES, DERIVED_CARD_KINDS, cardHookProps, isCardMessage, resolveCardHook } from './chatCardHooks';
 import { CHAT_CARD_CATALOG } from './chatCardCss';
 
 describe('resolveCardHook', () => {
@@ -59,7 +59,7 @@ describe('卡片名录与实际钩子保持一致', () => {
 
   it('名录里的 data-card 值不是凭空写的（system 之外都得是真的消息 type）', () => {
     const unknown = CHAT_CARD_CATALOG
-      .filter(entry => entry.card !== 'system' && !CARD_MESSAGE_TYPES.has(entry.card))
+      .filter(entry => entry.card !== 'system' && !CARD_MESSAGE_TYPES.has(entry.card) && !DERIVED_CARD_KINDS.has(entry.card))
       .map(entry => entry.card);
     expect(unknown).toEqual([]);
   });

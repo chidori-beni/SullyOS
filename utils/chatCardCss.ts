@@ -1,5 +1,5 @@
 import type { ChatCardCssPreset } from '../types';
-import cocoaDotsCardCss from '../assets/css-presets/cocoa-dots/chat-card-v5.css?raw';
+import cocoaDotsCardCss from '../assets/css-presets/cocoa-dots/chat-card-v6.css?raw';
 
 /**
  * 「装扮 → 所有聊天 → 卡片 · CSS」的数据层：卡片名录、给外部 AI 的提示词、内置预设，
@@ -37,6 +37,7 @@ export const CHAT_CARD_CATALOG: ReadonlyArray<ChatCardCatalogEntry> = [
   { card: 'social_card', sub: 'moments', label: '朋友圈动态', tone: 'light', from: '消息 App 朋友圈转发' },
   { card: 'social_card', sub: 'spark', label: 'Spark 笔记', tone: 'light', from: 'Spark SocialApp 分享' },
   { card: 'life_card', label: '生活记录', tone: 'light', from: '生活记录' },
+  { card: 'bookroom_card', label: '书房 · 汇报', tone: 'light', from: '书房（读书进度 / 划线 / 书评 / 荐书 / 年度书单）' },
   { card: 'expense_card', label: '消费分享', tone: 'light', from: '存钱罐' },
   { card: 'group_topic_card', label: '群话题', tone: 'light', from: '群聊' },
   { card: 'mcd_card', label: '麦当劳订单', tone: 'light', from: '麦当劳小程序' },

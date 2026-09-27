@@ -66,6 +66,12 @@ export const CARD_MESSAGE_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * 不对应真实消息 type、而是从别的消息派生出来的卡片种类。
+ * bookroom_card = 书房发进私聊的汇报（普通 text + metadata.source='bookroom'）。
+ */
+export const DERIVED_CARD_KINDS: ReadonlySet<string> = new Set(['bookroom_card']);
+
+/**
  * score_card 把六七种卡片挤在同一个 type 里，真正的种类写在 metadata.scoreCard.type。
  * 历史消息可能只把 JSON 塞在 content 里，所以两处都要看——和 MessageItem 的取法一致。
  */
@@ -107,6 +113,12 @@ export const resolveCardHook = (message: CardHookMessage | null | undefined): Ca
     const source = message.metadata?.source;
     if (typeof source === 'string' && source.trim()) return { kind: 'system', sub: source.trim() };
     return { kind: 'system', sub: 'system-log' };
+  }
+
+  // 书房发进私聊的汇报：消息本身是普通 text（原样进上下文 / 记忆），显示成卡片（components/chat/BookroomChatCard）。
+  // sub = 哪一种：progress（读书进度）/ highlight / review / recommend / year-letter
+  if (message.role === 'user' && type === 'text' && message.metadata?.source === 'bookroom') {
+    return { kind: 'bookroom_card', sub: String(message.metadata?.bookroomKind || 'progress') };
   }
 
   if (!CARD_MESSAGE_TYPES.has(type)) return null;
