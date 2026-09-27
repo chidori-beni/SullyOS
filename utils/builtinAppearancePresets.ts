@@ -20,7 +20,9 @@ export const BUILTIN_APPEARANCE_PRESETS: ReadonlyArray<BuiltinAppearancePresetDe
     description: '奶油可可色调、俏皮圆点和柔软小组件，整机像一间温暖的轻松熊甜品屋。',
     // manifest 曾经发布过不含字体的 v1；升版本并给 URL 加查询参数，避免旧 PWA 缓存继续命中。
     // v3：卡片 CSS 从 chat-card-v3 升到 v5（补上消费分享卡、热点号外卡）。
-    version: 3,
+    // v4：换了查手机图标（新文件 icon-5-check_phone-v2，旧文件保留给已应用过的人），补上书房图标；
+    //     主色调改成灰可可（hue 360 / 饱和度 10 / 亮度 30），书房排进第三页「写歌」后面。
+    version: 4,
     manifestPath: 'appearance-presets/cocoa-dots/v1/preset.json',
     swatch: 'linear-gradient(rgba(247,245,242,.18),rgba(74,59,49,.18)),url("./appearance-presets/cocoa-dots/v1/wallpaper-desktop.png") center/cover',
   },
