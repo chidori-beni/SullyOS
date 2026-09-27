@@ -16,6 +16,7 @@ import {
 import { DB } from '../utils/db';
 import { resolveStatusBarMode, type StatusBarMode } from '../utils/iosStandalone';
 import { confirmExportSafety } from '../utils/exportGuard';
+import { isChunkLoadError } from '../utils/chunkLoadRecovery';
 import { trackEvent } from '../utils/analytics';
 import { Check, ImageSquare, Sparkle, Trash, UploadSimple } from '@phosphor-icons/react';
 import AppIconEditor from '../components/appearance/AppIconEditor';
@@ -327,7 +328,9 @@ const PresetManager: React.FC<PresetManagerProps> = ({ presets, builtinPresets, 
             if (result === 'cancelled') return;
             addToast(result === 'shared' ? '已打开预设分享面板' : '预设已导出', 'success');
         } catch (e: any) {
-            addToast(e.message || '导出失败', 'error');
+            // 压缩器（JSZip）也是懒加载的：页面还是更新前的旧版时会拿不到，原文照报，但告诉用户怎么办。
+            const hint = isChunkLoadError(e) ? '（App 刚更新过、这页还是旧版：从多任务划掉 SullyOS 重开再导出）' : '';
+            addToast(`${e.message || '导出失败'}${hint}`, 'error');
         }
     };
 

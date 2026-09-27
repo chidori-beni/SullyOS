@@ -2,6 +2,7 @@ import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import type { ShareCardOptions } from './pngShare';
+import { isChunkLoadError } from './chunkLoadRecovery';
 
 export interface ShareOrDownloadOptions {
     /** 有可导入内容的分享入口：打开 PNG 分享卡编辑器，并保留原格式导出。 */
@@ -79,8 +80,16 @@ export async function shareOrDownloadBlob(options: ShareOrDownloadBlobOptions): 
     const { blob, fileName, shareTitle = fileName, nativeChunked = false, preferDownloadOnWeb = false } = options;
     if (!(blob instanceof Blob) || blob.size === 0) throw new Error('文件为空，无法保存');
     if (options.card) {
-        const { openShareCardDialog } = await import('../components/share/ShareCardDialog');
-        return openShareCardDialog(options, options.card);
+        // 分享卡只是「包装纸」。部署更新后旧页面还开着时，这块懒加载 chunk 的旧文件名已从服务器消失，
+        // Safari 报 "Importing a module script failed."——此时退回普通分享，文件照样导出去，别整个失败。
+        let dialog: typeof import('../components/share/ShareCardDialog') | null = null;
+        try {
+            dialog = await import('../components/share/ShareCardDialog');
+        } catch (error) {
+            if (!isChunkLoadError(error)) throw error;
+            console.warn('[shareExport] 分享卡加载失败，退回普通分享', error);
+        }
+        if (dialog) return dialog.openShareCardDialog(options, options.card);
     }
 
     // 原生壳里失败的那个错要留着：下面兜底时不能悄悄退化成 a.download（WebView 里点了没反应），
