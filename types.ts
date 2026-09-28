@@ -3977,6 +3977,8 @@ export interface CharacterProfile {
       source?: 'system' | 'voice_cloning' | 'voice_generation' | 'custom';
       model?: string;
       notes?: string;
+      // 该角色自己的语音提示词（说话方式），接在全局语音指南后面发给模型；聊天语音 / 电话 / 见面共用。
+      voicePrompt?: string;
       timberWeights?: { voice_id: string; weight: number }[];
       voiceModify?: { pitch?: number; intensity?: number; timbre?: number; sound_effects?: string };
       emotion?: string;

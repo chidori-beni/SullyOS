@@ -2641,6 +2641,20 @@ ${isInitialGeneration ? `
                                    <p className="text-[10px] text-slate-400">越小越慢、越像娓娓道来。1.0 正常；觉得"赶"就拉到 0.85–0.95。MiniMax 与鱼声共用这个语速（鱼声没单独配时默认略慢 0.9）。</p>
                                </div>
 
+                               {/* 角色专属语音提示词：接在「设置 → 其他 API → 语音提示词」那份通用指南后面，聊天语音 / 电话 / 见面共用 */}
+                               <div className="space-y-1 pt-1">
+                                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">这个角色的说话方式</label>
+                                   <textarea
+                                       value={formData.voiceProfile?.voicePrompt || ''}
+                                       onChange={(e) => handleChange('voiceProfile', mergeCharacterVoiceProfile(formData.voiceProfile, {
+                                           voicePrompt: e.target.value,
+                                       }))}
+                                       className="w-full h-32 bg-slate-50 rounded-2xl px-3 py-2 text-xs border border-slate-200 resize-none overflow-y-auto"
+                                       placeholder="例：声音往下沉，不往上扬；几乎不用感叹号；「啧」写成 (lip-smacking)……"
+                                   />
+                                   <p className="text-[10px] text-slate-400">只写这个角色自己的声音性格。停顿、语气声这些通用规则在「设置 → 其他 API → 语音提示词」里写一次就行，这里会接在它后面一起发，冲突时以这里为准。聊天语音、电话、见面都生效；留空就只用通用的。</p>
+                               </div>
+
                                {(voiceOptions.system.length + voiceOptions.voice_cloning.length + voiceOptions.voice_generation.length) > 0 && (
                                    <div className="space-y-2 pt-1">
                                        {([

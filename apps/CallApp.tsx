@@ -9,6 +9,7 @@ import { hashTtsParams, getCachedTts, saveCachedTts } from '../utils/ttsCache';
 import { buildMiniMaxTtsCacheKey, buildMiniMaxTtsPayload, cleanTextForTts, convertHexAudioToBlob, fetchRemoteAudioBlob, getMiniMaxParamVersion, prepareMiniMaxSpeechText, VALID_EMOTIONS, normalizeEmotionForApi, stripEmotionTags, VOICE_ACTING_GUIDE, cleanVoiceMarkupForDisplay } from '../utils/minimaxTts';
 import { resolveSpeechEmotion } from '../utils/voiceEmotionPolicy';
 import { prepareNuojiSpeechText } from '../utils/nuojiSpeechText';
+import { buildCharacterVoicePromptBlock } from '../utils/voiceProfile';
 import { normalizeVoiceTags } from '../utils/sanitize';
 import { FISH_VOICE_ACTING_GUIDE, synthesizeSpeechFishDetailed, resolveFishAudioApiKey, cleanTextForTtsFish, stripFishMarkupForDisplay } from '../utils/fishAudioTts';
 import { resolveTtsProvider, getElevenLabsModel, getTtsProvider, getVoicePromptOverride } from '../utils/ttsProvider';
@@ -488,6 +489,8 @@ const buildCallPrompt = (
    * 缺省 true 才能保证调用方没传时行为一个字都不变。
    */
   companionshipOn = true,
+  /** 角色自己的语音说话方式（神经链接 → 语音），接在通用语音指南后面；没填就是空串。 */
+  charVoicePromptBlock = '',
 ) => {
   const resolvedCharName = charName || '你的角色';
   // 电话里角色说的「现在几点 / 今天什么日子」是 ta 那边的时间，跟角色自定义时区走
@@ -588,7 +591,7 @@ ${buildCompanionshipBoundary('call', companionshipOn)}
 注意：不要写小说式中文旁白，如”（我靠在椅背上，目光看向远方）”——会被直接删掉，等于白写。
 
 ${getVoicePromptOverride(getTtsProvider()) ?? callVoiceActingGuide()}
-
+${charVoicePromptBlock ? `\n${charVoicePromptBlock}\n` : ''}
 ### 历史消息的来源标记（重要）
 
 对话历史里每条消息都带来源标签：[聊天] 是你们平时在手机上打字聊的，[通话] 是打电话/视频时说的，[约会] 是见面时发生的。它们同属一段真实经历，按时间顺序排列。
@@ -2208,6 +2211,7 @@ const CallApp: React.FC = () => {
       callDirection,
       incomingOpening,
       companionshipBoundaryOn(selectedChar),
+      buildCharacterVoicePromptBlock(selectedChar),
     );
     const thinkingPrompt = selectedChar.showThinkingChain
       ? [
@@ -2447,6 +2451,7 @@ ${sentencePlan}`;
           callDirection,
           incomingOpening,
           companionshipBoundaryOn(selectedChar),
+          buildCharacterVoicePromptBlock(selectedChar),
         )
       : buildCallPrompt(userName, undefined, undefined, voiceLang || undefined, callMode, undefined, callDirection, incomingOpening);
     const thinkingPrompt = selectedChar?.showThinkingChain

@@ -17,6 +17,7 @@ import { MusicCfg, loadMusicCfgStandalone } from '../context/MusicContext';
 import { RealtimeContextManager, NotionManager, FeishuManager, defaultRealtimeConfig } from './realtimeContext';
 import { isScheduleFeatureOn } from './scheduleFeature';
 import { VOICE_ACTING_GUIDE } from './minimaxTts';
+import { buildCharacterVoicePromptBlock } from './voiceProfile';
 import { FISH_VOICE_ACTING_GUIDE } from './fishAudioTts';
 import { getElevenLabsModel, getTtsProvider, getVoicePromptOverride } from './ttsProvider';
 import { getElevenLabsVoiceActingGuide } from './elevenLabsTts';
@@ -90,7 +91,7 @@ const buildVoiceRuntimeContract = (
 };
 
 export const buildVoiceActingGuide = (
-  char: Pick<CharacterProfile, 'voiceProfile'>,
+  char: Pick<CharacterProfile, 'voiceProfile'> & Partial<Pick<CharacterProfile, 'name'>>,
 ): string => {
   const provider = getTtsProvider();
   const custom = getVoicePromptOverride(provider);
@@ -100,7 +101,9 @@ export const buildVoiceActingGuide = (
       ? getElevenLabsVoiceActingGuide(getElevenLabsModel())
       : VOICE_ACTING_GUIDE;
   const guide = custom || defaultGuide;
-  return `${guide}\n\n${buildVoiceRuntimeContract(provider, char.voiceProfile?.speed)}`;
+  // 角色自己的说话方式接在通用指南后面、固定运行协议前面；没填就是空串，原样不变
+  const charBlock = buildCharacterVoicePromptBlock(char);
+  return `${guide}\n\n${charBlock ? `${charBlock}\n\n` : ''}${buildVoiceRuntimeContract(provider, char.voiceProfile?.speed)}`;
 };
 
 // 群活动注入专用：把一条群消息压成"适合塞进别人私聊背景"的短文本。

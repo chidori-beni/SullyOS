@@ -26,6 +26,7 @@ import { ChatPrompts } from './chatPrompts';
 import { injectMemoryPalace } from './memoryPalace/pipeline';
 import { resolveCharTimeZone, nowInTimeZone, wallClockToTimestamp } from './timezone';
 import { getVoicePromptOverride } from './ttsProvider';
+import { buildCharacterVoicePromptBlock } from './voiceProfile';
 import { selectCharacterContextMessages } from './chatContextRange';
 import { injectWorldbookDepthEntries, resolveWorldbookEntries, type ResolvedWorldbookEntry, type WorldbookScanMessage } from './worldbook';
 import { resolveUserMacroName } from './characterIdentity';
@@ -746,8 +747,9 @@ const buildVNModeBlock = (char: CharacterProfile, userName: string, sceneClockAt
     const digBlock = isDigDeeperOn(styleConfig) ? `${DIG_DEEPER_BLOCK}\n` : '';
     const observeBlock = isObserveOn(char) ? buildObserveBlock(char) : '';
     const voiceGuide = getVoicePromptOverride('dateVoice') ?? DATE_VOICE_GUIDE;
+    const charVoiceBlock = buildCharacterVoicePromptBlock(char);
     const voiceBlock = char.dateVoiceEnabled
-        ? voiceGuide + '\n\n' + DATE_VOICE_RUNTIME_CONTRACT
+        ? voiceGuide + '\n\n' + (charVoiceBlock ? charVoiceBlock + '\n\n' : '') + DATE_VOICE_RUNTIME_CONTRACT
         : '';
     return `### [Visual Novel Mode: 视觉小说脚本模式]
 你正在与用户进行**面对面**的互动。这不是聊天，是一场真实的见面。
