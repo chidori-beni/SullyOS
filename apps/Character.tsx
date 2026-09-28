@@ -2,9 +2,10 @@ import CharacterStatsPanel from '../components/character/CharacterStatsPanel';
 import { loadCharacterContextMessages } from '../utils/chatContextRange';
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useOS } from '../context/OSContext';
 import { AppID, CharacterProfile, CharacterExportData, UserImpression, MemoryFragment, MountedWorldbook, Worldbook } from '../types';
-import { SlidersHorizontal, SpeakerHigh, Books, BookOpen, ArrowSquareOut, CaretRight, X } from '@phosphor-icons/react';
+import { SlidersHorizontal, SpeakerHigh, Books, BookOpen, ArrowSquareOut, CaretRight, X, CornersOut } from '@phosphor-icons/react';
 import Modal from '../components/os/Modal';
 import { processImage } from '../utils/file';
 import { Capacitor } from '@capacitor/core';
@@ -49,6 +50,7 @@ import { confirmExportSafety } from '../utils/exportGuard';
 import { trackEvent } from '../utils/analytics';
 import { sortCharacterGroups, GROUP_FILTER_UNGROUPED } from '../components/character/CharacterGroupFilter';
 import CharacterLookWardrobe from '../components/settings/CharacterLookWardrobe';
+import WorldbookTextFullscreenEditor from '../components/WorldbookTextFullscreenEditor';
 import { SectionFoldHeader, SectionOrderPanel } from '../components/character/NeuralSectionLayout';
 import { DEFAULT_NEURAL_SECTION_ORDER, loadNeuralSectionOrder, moveNeuralSection, saveNeuralSectionOrder, type NeuralSectionId } from '../utils/neuralSectionOrder';
 import { getImageGenConfig, setImageGenConfig, type ImageGenConfig } from '../utils/novelaiImage';
@@ -251,6 +253,8 @@ const Character: React.FC = () => {
   const toggleSection = (id: NeuralSectionId) => setOpenSections(prev => ({ ...prev, [id]: !prev[id] }));
   const sectionStyle = (id: NeuralSectionId): React.CSSProperties => ({ order: sectionOrder.indexOf(id) + 1 });
   const updateSectionOrder = (next: NeuralSectionId[]) => { setSectionOrder(next); saveNeuralSectionOrder(next); };
+  // 核心指令 / 世界观的全屏编辑。内容照常走 handleChange 自动保存，全屏里的「完成」只负责关掉。
+  const [fullscreenField, setFullscreenField] = useState<'systemPrompt' | 'worldview' | null>(null);
 
   /** 根据实际互动猜一个默认答案：彼方来往占多数就填彼方。 */
   const guessAcquaintanceWhere = (): string => {
@@ -1781,6 +1785,22 @@ ${isInitialGeneration ? `
                  </div>
                </div>
                <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-5 no-scrollbar pb-10">
+                   {fullscreenField && createPortal(
+                       <WorldbookTextFullscreenEditor
+                           isOpen
+                           badge={formData.name || '神经链接'}
+                           title={fullscreenField === 'systemPrompt' ? '核心指令' : '世界观 / 设定补充'}
+                           value={(fullscreenField === 'systemPrompt' ? formData.systemPrompt : formData.worldview) || ''}
+                           onChange={v => handleChange(fullscreenField, v)}
+                           onExit={() => setFullscreenField(null)}
+                           onSave={() => setFullscreenField(null)}
+                           saveLabel="完成"
+                           placeholder={fullscreenField === 'systemPrompt' ? '设定...' : '在这个世界里，魔法是存在的...'}
+                       >
+                           <p className="shrink-0 text-[10px] leading-relaxed text-slate-400">边写边自动保存，「退出全屏」和「完成」都不会丢内容。</p>
+                       </WorldbookTextFullscreenEditor>,
+                       document.body,
+                   )}
                    {detailTab === 'identity' && (
                        <div className="flex flex-col gap-6 animate-fade-in">
                            <div className="flex items-center gap-5">
@@ -1887,12 +1907,18 @@ ${isInitialGeneration ? `
                            </div>
 
                            <div style={sectionStyle('prompt')}>
-                               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block">核心指令 (System Prompt)</label>
+                               <div className="flex items-center justify-between mb-1.5">
+                                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">核心指令 (System Prompt)</label>
+                                   <button type="button" onClick={() => setFullscreenField('systemPrompt')} className="text-[10px] text-slate-400 px-2 py-0.5 rounded-full bg-white/70 border border-slate-200 flex items-center gap-1 active:scale-95 transition-transform"><CornersOut size={10} weight="bold" /> 全屏</button>
+                               </div>
                                <textarea value={formData.systemPrompt} onChange={(e) => handleChange('systemPrompt', e.target.value)} className="w-full h-40 bg-white rounded-3xl p-5 text-sm shadow-sm resize-none focus:ring-1 focus:ring-primary/20 transition-all vr-reader-scroll" placeholder="设定..." />
                            </div>
 
                             <div style={sectionStyle('worldview')}>
-                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block">世界观 / 设定补充 (Worldview & Lore)</label>
+                                <div className="flex items-center justify-between mb-1.5">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">世界观 / 设定补充 (Worldview & Lore)</label>
+                                    <button type="button" onClick={() => setFullscreenField('worldview')} className="text-[10px] text-slate-400 px-2 py-0.5 rounded-full bg-white/70 border border-slate-200 flex items-center gap-1 active:scale-95 transition-transform"><CornersOut size={10} weight="bold" /> 全屏</button>
+                                </div>
                                <textarea
                                     value={formData.worldview || ''}
                                     onChange={(e) => handleChange('worldview', e.target.value)}

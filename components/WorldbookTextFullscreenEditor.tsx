@@ -11,6 +11,10 @@ interface WorldbookTextFullscreenEditorProps {
     saveDisabled?: boolean;
     placeholder?: string;
     children?: React.ReactNode;
+    /** 标题上方的小字，默认 Worldbook（神经链接复用时换成自己的） */
+    badge?: string;
+    /** 右上按钮文字，默认「保存」；自动保存的页面可以改叫「完成」 */
+    saveLabel?: string;
 }
 
 /**
@@ -27,6 +31,8 @@ const WorldbookTextFullscreenEditor: React.FC<WorldbookTextFullscreenEditorProps
     saveDisabled = false,
     placeholder,
     children,
+    badge = 'Worldbook',
+    saveLabel = '保存',
 }) => {
     if (!isOpen) return null;
 
@@ -52,7 +58,7 @@ const WorldbookTextFullscreenEditor: React.FC<WorldbookTextFullscreenEditorProps
                     退出全屏
                 </button>
                 <div className="min-w-0 text-center">
-                    <div className="truncate text-[10px] font-bold uppercase tracking-[0.16em] text-indigo-400">Worldbook</div>
+                    <div className="truncate text-[10px] font-bold uppercase tracking-[0.16em] text-indigo-400">{badge}</div>
                     <div className="truncate text-sm font-bold text-slate-800">{title}</div>
                 </div>
                 <button
@@ -61,7 +67,7 @@ const WorldbookTextFullscreenEditor: React.FC<WorldbookTextFullscreenEditorProps
                     disabled={saveDisabled}
                     className="shrink-0 rounded-xl bg-indigo-500 px-3.5 py-2 text-xs font-bold text-white shadow-sm shadow-indigo-200 hover:bg-indigo-600 active:scale-95 transition-all disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                    保存
+                    {saveLabel}
                 </button>
             </div>
 
@@ -73,7 +79,7 @@ const WorldbookTextFullscreenEditor: React.FC<WorldbookTextFullscreenEditorProps
                     onChange={event => onChange(event.target.value)}
                     placeholder={placeholder}
                     aria-label={`${title}正文`}
-                    className="min-h-0 flex-1 resize-none rounded-2xl border border-slate-200 bg-white p-4 font-mono text-sm leading-relaxed text-slate-700 outline-none shadow-sm transition-all focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50"
+                    className="min-h-0 flex-1 overflow-y-auto resize-none rounded-2xl border border-slate-200 bg-white p-4 font-mono text-sm leading-relaxed text-slate-700 outline-none shadow-sm transition-all focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50"
                 />
             </div>
         </div>
