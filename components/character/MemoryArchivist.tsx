@@ -4,6 +4,10 @@ import { MemoryFragment } from '../../types';
 import Modal from '../../components/os/Modal';
 import { DEFAULT_REFINE_PROMPTS } from '../../components/chat/ChatConstants';
 import { buildMemoryArchiveIndex } from '../../utils/memoryArchiveIndex';
+import { filterMemoriesInWindow, recentMemoryWindowStart } from '../../utils/contextMemories';
+
+/** 小眼睛发送范围的快捷档位；0 = 整月。 */
+const RECENT_DAY_PRESETS = [0, 3, 7, 14];
 
 interface MemoryArchivistProps {
     memories: MemoryFragment[];
@@ -26,9 +30,22 @@ interface MemoryArchivistProps {
     /** 可选：传入归档模板列表 + 默认选中 id，用于重总结前让用户选模板（避开和内部月度精炼模板 state 同名） */
     forceArchiveTemplates?: { id: string; name: string; content: string }[];
     forceArchiveDefaultPromptId?: string;
+    /** 小眼睛只发最近 N 天；0 / undefined = 整月。 */
+    recentMemoryDays?: number;
+    onChangeRecentMemoryDays?: (days: number) => void;
+    /** 算「最近 N 天」起点用（角色自定义时区）。 */
+    timezoneChar?: { customTimezoneEnabled?: boolean; customTimezone?: string };
 }
 
-const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemories, activeMemoryMonths, charName, userName, onRefine, onDeleteMemories, onUpdateMemory, linkedMemoryEnabled, onToggleActiveMonth, onUpdateRefinedMemory, onDeleteRefinedMemory, onForceArchiveDate, forceArchiveTemplates, forceArchiveDefaultPromptId }) => {
+const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemories, activeMemoryMonths, charName, userName, onRefine, onDeleteMemories, onUpdateMemory, linkedMemoryEnabled, onToggleActiveMonth, onUpdateRefinedMemory, onDeleteRefinedMemory, onForceArchiveDate, forceArchiveTemplates, forceArchiveDefaultPromptId, recentMemoryDays, onChangeRecentMemoryDays, timezoneChar }) => {
+    const recentDays = recentMemoryDays && recentMemoryDays > 0 ? recentMemoryDays : 0;
+    const recentWindowStart = recentMemoryWindowStart({ ...timezoneChar, recentMemoryDays: recentDays });
+    const [customDaysOpen, setCustomDaysOpen] = useState(false);
+    const [customDaysText, setCustomDaysText] = useState('');
+    const applyCustomDays = () => {
+        const n = parseInt(customDaysText, 10);
+        if (Number.isInteger(n) && n > 0 && n <= 366) { onChangeRecentMemoryDays?.(n); setCustomDaysOpen(false); }
+    };
     // 每个日期的"强制重总结"运行状态
     const [forcingDate, setForcingDate] = useState<string | null>(null);
     // 重总结前弹出模板选择器：把 date 存起来打开 modal
@@ -296,6 +313,11 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                             {refinedContent}
                         </div>
                     )}
+                    {isActive && recentDays > 0 && rawMemories.length > 0 && (
+                        <p className="mt-2 text-[10px] leading-relaxed text-indigo-500">
+                            小眼睛只发最近 {recentDays} 天（{recentWindowStart} 起），本月会发送 {filterMemoriesInWindow(rawMemories, recentWindowStart).length} / {rawMemories.length} 条。更早的日子角色需要时可以自己翻阅整月。
+                        </p>
+                    )}
                     {rawMemories.length === 0 && refinedContent && (
                         <p className="mt-2 text-[10px] leading-relaxed text-indigo-500">
                             本月没有日度记录，但这条月度核心记忆仍会发送给角色。长按上方内容可编辑或删除。
@@ -388,6 +410,34 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                     )}
                 </div>
             </div>
+            {onChangeRecentMemoryDays && (
+                <div className="mb-5 px-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] text-slate-400 tracking-widest">小眼睛发送范围</span>
+                        {RECENT_DAY_PRESETS.map(days => (
+                            <button key={days} onClick={() => { setCustomDaysOpen(false); onChangeRecentMemoryDays(days); }} className={`text-[10px] px-2.5 py-1 rounded-full border shadow-sm transition-colors ${recentDays === days ? 'bg-primary text-white border-primary' : 'bg-white/60 text-slate-500 border-slate-200'}`}>
+                                {days === 0 ? '整月' : `最近 ${days} 天`}
+                            </button>
+                        ))}
+                        {recentDays > 0 && !RECENT_DAY_PRESETS.includes(recentDays) && !customDaysOpen && (
+                            <span className="text-[10px] px-2.5 py-1 rounded-full border shadow-sm bg-primary text-white border-primary">最近 {recentDays} 天</span>
+                        )}
+                        {customDaysOpen ? (
+                            <span className="flex items-center gap-1">
+                                <input type="number" inputMode="numeric" min={1} max={366} value={customDaysText} onChange={e => setCustomDaysText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') applyCustomDays(); }} className="w-14 text-[16px] leading-none px-2 py-0.5 rounded-lg border border-slate-200 bg-white" placeholder="天" autoFocus />
+                                <button onClick={applyCustomDays} className="text-[10px] px-2 py-1 rounded-full bg-primary text-white">确定</button>
+                            </span>
+                        ) : (
+                            <button onClick={() => { setCustomDaysText(recentDays ? String(recentDays) : ''); setCustomDaysOpen(true); }} className="text-[10px] px-2.5 py-1 rounded-full border border-dashed border-slate-300 text-slate-400">自定义</button>
+                        )}
+                    </div>
+                    <p className="mt-1.5 text-[10px] leading-relaxed text-slate-400">
+                        {recentDays > 0
+                            ? `开了小眼睛的月份里，只有最近 ${recentDays} 天（${recentWindowStart} 起）的日记会发给模型，更早的就算开着也不发。月度核心记忆照常全发；角色聊到更早的事时可以自己翻整月。`
+                            : '开了小眼睛的月份，整月日记全部发给模型。日记太长、Token 太多时，可以改成只发最近几天。'}
+                    </p>
+                </div>
+            )}
             {viewState.level === 'root' && renderYears()}
             {viewState.level === 'year' && <><div className="mb-4 flex items-center gap-2"><button onClick={handleBack} className="p-1.5 bg-white rounded-full text-slate-400 hover:text-slate-600 shadow-sm"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M17 10a.75.75 0 0 1-.75.75H5.612l4.158 3.96a.75.75 0 1 1-1.04 1.08l-5.5-5.25a.75.75 0 0 1 0-1.08l5.5-5.25a.75.75 0 1 1 1.04 1.08L5.612 9.25H16.25A.75.75 0 0 1 17 10Z" clipRule="evenodd" /></svg></button><h3 className="text-sm font-medium text-slate-600">选择月份</h3></div>{renderMonths()}</>}
             {viewState.level === 'month' && <><div className="mb-4 flex items-center gap-2"><button onClick={handleBack} className="p-1.5 bg-white rounded-full text-slate-400 hover:text-slate-600 shadow-sm"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M17 10a.75.75 0 0 1-.75.75H5.612l4.158 3.96a.75.75 0 1 1-1.04 1.08l-5.5-5.25a.75.75 0 0 1 0-1.08l5.5-5.25a.75.75 0 1 1 1.04 1.08L5.612 9.25H16.25A.75.75 0 0 1 17 10Z" clipRule="evenodd" /></svg></button><h3 className="text-sm font-medium text-slate-600">本月记忆 (点击眼睛图标激活详细回忆)</h3></div>{renderMemories()}</>}

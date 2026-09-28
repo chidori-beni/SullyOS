@@ -1,4 +1,4 @@
-import { readableContextMemories } from './contextMemories';
+import { filterMemoriesInWindow, readableContextMemories, recentMemoryDaysOf, recentMemoryWindowStart } from './contextMemories';
 
 import { CharacterProfile, UserProfile, DailySchedule, MountedWorldbook } from '../types';
 import type { WorldbookMode } from '../types';
@@ -109,16 +109,18 @@ export const ContextBuilder = {
             const now = new Date();
             const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
             if (char.memories && char.memories.length > 0) {
-                const currentMonthLogs = char.memories.filter(m => {
+                // 小眼睛设了「只发最近 N 天」时这里同样收窄，否则情绪评估每轮照发整月。
+                const currentMonthLogs = filterMemoriesInWindow(char.memories.filter(m => {
                     let normDate = m.date.replace(/[\/年月]/g, '-').replace('日', '');
                     const parts = normDate.split('-');
                     if (parts.length >= 2) {
                         normDate = `${parts[0]}-${parts[1].padStart(2, '0')}`;
                     }
                     return normDate.startsWith(currentMonthKey);
-                });
+                }), recentMemoryWindowStart(char));
                 if (currentMonthLogs.length > 0) {
-                    memorySection += `**本月详细记录 [${currentMonthKey}]**:\n`;
+                    const recentDays = recentMemoryDaysOf(char);
+                    memorySection += `**本月详细记录 [${currentMonthKey}]${recentDays ? `（最近 ${recentDays} 天）` : ''}**:\n`;
                     currentMonthLogs.forEach(m => {
                         memorySection += `- ${m.date} (${m.mood || 'rec'}): ${m.summary}\n`;
                     });
@@ -741,7 +743,10 @@ const renderCoreContext = (
                 entries.forEach(m => { details += `  - ${m.date} (${m.mood || 'rec'}): ${m.summary}\n`; });
             }
         });
-        if (details) memoryContent += `\n**当前激活的详细回忆 (Active Recall)**:${details}`;
+        if (details) {
+            const recentDays = recentMemoryDaysOf(char);
+            memoryContent += `\n**当前激活的详细回忆 (Active Recall)${recentDays ? `（仅最近 ${recentDays} 天；更早的日子可用 [[RECALL: YYYY-MM]] 调阅整月）` : ''}**:${details}`;
+        }
 
         if (!memoryContent) {
             memoryContent = "(暂无特定记忆，请基于当前对话互动)";

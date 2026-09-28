@@ -3830,6 +3830,11 @@ export interface CharacterProfile {
   memories: MemoryFragment[];
   refinedMemories?: Record<string, string>;
   activeMemoryMonths?: string[];
+  /**
+   * 小眼睛发送范围：开了小眼睛的月份里只发最近 N 天（按角色所在地日历日，今天算第 1 天）。
+   * 未设置 / 0 = 整月（旧行为）。只管自动带进上下文的那部分；角色自己 [[RECALL]] 翻日记时仍是整月。
+   */
+  recentMemoryDays?: number;
   
   writerPersona?: string;
   writerPersonaGeneratedAt?: number;

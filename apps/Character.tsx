@@ -2796,6 +2796,9 @@ ${isInitialGeneration ? `
                                onForceArchiveDate={handleForceArchiveDate}
                                forceArchiveTemplates={archivePrompts}
                                forceArchiveDefaultPromptId={selectedPromptId}
+                               recentMemoryDays={formData.recentMemoryDays || 0}
+                               onChangeRecentMemoryDays={days => handleChange('recentMemoryDays', days > 0 ? days : 0)}
+                               timezoneChar={formData}
                            />
                        </div>
                    )}

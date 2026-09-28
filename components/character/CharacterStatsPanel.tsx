@@ -63,7 +63,7 @@ export default function CharacterStatsPanel({ character, user, emojis = EMPTY_EM
             </div>
             <details open className="border-t border-slate-200 py-5"><summary className="cursor-pointer text-sm font-semibold">神经链接记忆 <span className="float-right font-mono text-xs font-normal text-slate-400">{stats.memoryRows.length} 条 / {number(stats.memoryCharacters)} 字</span></summary>
                 <div className="my-4 border-l-2 border-violet-300 bg-violet-50/60 px-3 py-3 text-xs leading-6 text-violet-800">
-                    {stats.memories.daily.length ? `小眼睛已开启：${stats.memories.daily.map(g => `${g.month}（${g.entries.length} 条）`).join('、')}。这些日度记忆仍可被读取。` : '所有日度记忆的小眼睛均已关闭。'}
+                    {stats.memories.daily.length ? `小眼睛已开启：${stats.memories.daily.map(g => `${g.month}（${g.entries.length} 条）`).join('、')}。${character.recentMemoryDays && character.recentMemoryDays > 0 ? `只发最近 ${character.recentMemoryDays} 天，条数已按此计算。` : '这些日度记忆仍可被读取。'}` : '所有日度记忆的小眼睛均已关闭。'}
                     <span className="block">月度总结 {stats.memories.monthly.length} 条，关闭小眼睛后仍然可读。</span>
                     <button onClick={onOpenMemory} className="mt-1 underline underline-offset-4">前往记忆检查 →</button>
                 </div><TextRows rows={stats.memoryRows} />

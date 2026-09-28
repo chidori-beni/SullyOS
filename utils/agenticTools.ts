@@ -114,6 +114,8 @@ export interface AgenticToolChar {
     name: string;
     xhsEnabled?: boolean;
     activeMemoryMonths?: string[];
+    /** 小眼睛只发最近 N 天时，开眼的月份并不完整在上下文里，RECALL 不能当成「已激活」跳过。 */
+    recentMemoryDays?: number;
     memories?: AgenticToolMemory[];
 }
 
@@ -170,7 +172,8 @@ export async function runRecall(
 ): Promise<RecallResult> {
     const { char } = ctx;
     const targetMonth = `${args.year}-${args.month.padStart(2, '0')}`;
-    const alreadyActive = !!char.activeMemoryMonths?.includes(targetMonth);
+    const partialWindow = typeof char.recentMemoryDays === 'number' && char.recentMemoryDays > 0;
+    const alreadyActive = !partialWindow && !!char.activeMemoryMonths?.includes(targetMonth);
 
     if (alreadyActive) {
         return { ok: true, alreadyActive: true, yearMonth: targetMonth, logsText: null };
