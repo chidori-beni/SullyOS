@@ -49,6 +49,8 @@ import { confirmExportSafety } from '../utils/exportGuard';
 import { trackEvent } from '../utils/analytics';
 import { sortCharacterGroups, GROUP_FILTER_UNGROUPED } from '../components/character/CharacterGroupFilter';
 import CharacterLookWardrobe from '../components/settings/CharacterLookWardrobe';
+import { SectionFoldHeader, SectionOrderPanel } from '../components/character/NeuralSectionLayout';
+import { DEFAULT_NEURAL_SECTION_ORDER, loadNeuralSectionOrder, moveNeuralSection, saveNeuralSectionOrder, type NeuralSectionId } from '../utils/neuralSectionOrder';
 import { getImageGenConfig, setImageGenConfig, type ImageGenConfig } from '../utils/novelaiImage';
 import {
     EXTERNAL_MEMORY_MAX_CHARS,
@@ -240,6 +242,15 @@ const Character: React.FC = () => {
    */
   const [acqOpen, setAcqOpen] = useState(false);
   const [acqWhere, setAcqWhere] = useState('');
+
+  // 「设定」页的模块排序（全局、存本机）与折叠状态（身份归属 / 时间 / 生活记录 / 语音默认收起）。
+  // 排序靠 flex 的 CSS order 实现，JSX 本身不挪位置，方便以后和上游合并。
+  const [sectionOrder, setSectionOrder] = useState<NeuralSectionId[]>(loadNeuralSectionOrder);
+  const [sectionOrderEditing, setSectionOrderEditing] = useState(false);
+  const [openSections, setOpenSections] = useState<Partial<Record<NeuralSectionId, boolean>>>({});
+  const toggleSection = (id: NeuralSectionId) => setOpenSections(prev => ({ ...prev, [id]: !prev[id] }));
+  const sectionStyle = (id: NeuralSectionId): React.CSSProperties => ({ order: sectionOrder.indexOf(id) + 1 });
+  const updateSectionOrder = (next: NeuralSectionId[]) => { setSectionOrder(next); saveNeuralSectionOrder(next); };
 
   /** 根据实际互动猜一个默认答案：彼方来往占多数就填彼方。 */
   const guessAcquaintanceWhere = (): string => {
@@ -1771,7 +1782,7 @@ ${isInitialGeneration ? `
                </div>
                <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-5 no-scrollbar pb-10">
                    {detailTab === 'identity' && (
-                       <div className="space-y-6 animate-fade-in">
+                       <div className="flex flex-col gap-6 animate-fade-in">
                            <div className="flex items-center gap-5">
                                <div className="relative group cursor-pointer w-24 h-24 shrink-0" onClick={() => fileInputRef.current?.click()}>
                                    <div className="w-full h-full rounded-[2rem] shadow-md bg-white border-4 border-white overflow-hidden relative"><img src={formData.avatar} className={`w-full h-full object-cover ${isCompressing ? 'opacity-50 blur-sm' : ''}`} alt="A" /></div>
@@ -1819,7 +1830,26 @@ ${isInitialGeneration ? `
                                </div>
                            </div>
 
-                           <div>
+                           {sectionOrderEditing ? (
+                               <SectionOrderPanel
+                                   order={sectionOrder}
+                                   onMove={(id, delta) => updateSectionOrder(moveNeuralSection(sectionOrder, id, delta))}
+                                   onReset={() => updateSectionOrder(DEFAULT_NEURAL_SECTION_ORDER.slice())}
+                                   onClose={() => setSectionOrderEditing(false)}
+                               />
+                           ) : (
+                               <div className="-my-3 flex justify-end">
+                                   <button
+                                       type="button"
+                                       onClick={() => setSectionOrderEditing(true)}
+                                       className="text-[10px] text-slate-400 px-2.5 py-1 rounded-full bg-white/70 border border-slate-200 flex items-center gap-1 active:scale-95 transition-transform"
+                                   >
+                                       <SlidersHorizontal size={10} weight="bold" /> 调整模块顺序
+                                   </button>
+                               </div>
+                           )}
+
+                           <div style={sectionStyle('group')}>
                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block">分组</label>
                                <div className="flex gap-2 items-center">
                                    <select
@@ -1856,12 +1886,12 @@ ${isInitialGeneration ? `
                                </div>
                            </div>
 
-                           <div>
+                           <div style={sectionStyle('prompt')}>
                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block">核心指令 (System Prompt)</label>
                                <textarea value={formData.systemPrompt} onChange={(e) => handleChange('systemPrompt', e.target.value)} className="w-full h-40 bg-white rounded-3xl p-5 text-sm shadow-sm resize-none focus:ring-1 focus:ring-primary/20 transition-all vr-reader-scroll" placeholder="设定..." />
                            </div>
 
-                            <div>
+                            <div style={sectionStyle('worldview')}>
                                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block">世界观 / 设定补充 (Worldview & Lore)</label>
                                <textarea
                                     value={formData.worldview || ''}
@@ -1873,13 +1903,20 @@ ${isInitialGeneration ? `
 
                             {/* 身份归属：新建角色 / 导入后改主意 / 双向配队（先导的那个回头指向后导的）都靠这里。
                                 见 交接说明-双层角色世界.md §5 铁律 ①②③。三项缺省时行为与改造前完全一致。 */}
-                            <div className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 space-y-4">
-                                <div>
-                                    <label className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest block">身份归属</label>
-                                    <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
-                                        下面三项相互独立。从酒馆搬来的角色建议设一遍；不管它则与以前完全一样。
-                                    </p>
-                                </div>
+                            <div style={sectionStyle('identity')} className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 space-y-4">
+                                <SectionFoldHeader
+                                    title="身份归属"
+                                    titleClassName="text-[10px] font-bold text-indigo-500"
+                                    open={!!openSections.identity}
+                                    onToggle={() => toggleSection('identity')}
+                                    description="下面三项相互独立。从酒馆搬来的角色建议设一遍；不管它则与以前完全一样。"
+                                    summary={<>
+                                        {({ partner: '我的陪伴角色', friend: '朋友', stranger: '不认识我' } as const)[formData.hostRelation || 'partner']}
+                                        {' · '}{(formData.narrativeLayer || 'real') === 'fiction' ? '不知道自己是被写出来的' : '知道有创作这回事'}
+                                        {friendshipSuggest.ready && !formData.friendshipSuggestDismissed && <span className="ml-1 font-bold text-emerald-600">· 有一条新提议</span>}
+                                    </>}
+                                />
+                                {openSections.identity && (<>
 
                                 {/* 阶段 2.8：关系「处出来」的提议。
                                     只在够熟、且用户没说过「不用了」时出现；点了才改，改完下面还能改回去。 */}
@@ -2261,22 +2298,37 @@ ${isInitialGeneration ? `
                                         <br />导入时已经选定过对象的角色，正文在那一刻就定稿了，改这里只影响世界书。
                                     </div>
                                 </div>
+                                </>)}
                             </div>
 
-                            <CharacterLookWardrobe
-                                charId={formData.id}
-                                charName={formData.name}
-                                cfg={imageGenCfg}
-                                onChange={patchImageGenConfig}
-                                addToast={addToast}
-                            />
+                            <div style={sectionStyle('wardrobe')}>
+                                <CharacterLookWardrobe
+                                    charId={formData.id}
+                                    charName={formData.name}
+                                    cfg={imageGenCfg}
+                                    onChange={patchImageGenConfig}
+                                    addToast={addToast}
+                                />
+                            </div>
 
                             {/* 时间感知 & 时区：三个独立开关，可任意组合（聊天时间感知 / 自定义时区 / 线下时间感知） */}
-                           <div className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 space-y-4">
-                               <div>
-                                   <label className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest block">时间感知 & 时区</label>
-                                   <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">下面几个开关相互独立、可任意组合。改完即时生效（下一条回复起算）。</p>
-                               </div>
+                           <div style={sectionStyle('time')} className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 space-y-4">
+                               <SectionFoldHeader
+                                   title="时间感知 & 时区"
+                                   titleClassName="text-[10px] font-bold text-indigo-500"
+                                   open={!!openSections.time}
+                                   onToggle={() => toggleSection('time')}
+                                   description="下面几个开关相互独立、可任意组合。改完即时生效（下一条回复起算）。"
+                                   summary={[
+                                       formData.customTimezoneEnabled && formData.customTimezone
+                                           ? `时区：${COMMON_TIMEZONES.find(tz => tz.id === formData.customTimezone)?.label || formData.customTimezone}`
+                                           : '时区跟随本机',
+                                       `聊天时间感知${formData.timeAwarenessEnabled !== false ? '开' : '关'}`,
+                                       `陪伴不监督${formData.companionshipBoundaryEnabled !== false ? '开' : '关'}`,
+                                       `见面时间感知${formData.dateTimeAwarenessEnabled !== false ? '开' : '关'}`,
+                                   ].join(' · ')}
+                               />
+                               {openSections.time && (<>
 
                                {/* 1. 聊天 · 时间感知强化 */}
                                <div className="border-t border-slate-100 pt-3">
@@ -2359,14 +2411,20 @@ ${isInitialGeneration ? `
                                        </button>
                                    </div>
                                </div>
+                               </>)}
                            </div>
 
                            {/* 生活记录注入：总开关 + 4 个模块小开关（数据在档案 App「生活记录」里维护） */}
-                           <div className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 space-y-4">
-                               <div>
-                                   <label className="text-[10px] font-bold text-rose-500 uppercase tracking-widest block">生活记录注入</label>
-                                   <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">把你在「档案 → 生活记录」里的生理期 / 药盒 / 记账 / 锻炼作为潜意识背景注入给该角色；你明确说出相关事实时，ta 还能帮你顺手记一笔（聊天里会出卡片，可确认 / 否决）。</p>
-                               </div>
+                           <div style={sectionStyle('lifeRecord')} className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 space-y-4">
+                               <SectionFoldHeader
+                                   title="生活记录注入"
+                                   titleClassName="text-[10px] font-bold text-rose-500"
+                                   open={!!openSections.lifeRecord}
+                                   onToggle={() => toggleSection('lifeRecord')}
+                                   description="把你在「档案 → 生活记录」里的生理期 / 药盒 / 记账 / 锻炼作为潜意识背景注入给该角色；你明确说出相关事实时，ta 还能帮你顺手记一笔（聊天里会出卡片，可确认 / 否决）。"
+                                   summary={formData.lifeRecordEnabled ? '已开启' : '未开启'}
+                               />
+                               {openSections.lifeRecord && (<>
 
                                {/* 总开关 */}
                                <div className="border-t border-slate-100 pt-3">
@@ -2406,12 +2464,17 @@ ${isInitialGeneration ? `
                                        </div>
                                    ))}
                                </div>
+                               </>)}
                            </div>
 
-                           <div className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 space-y-3">
-                               <div className="flex items-center justify-between">
-                                   <label className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest flex items-center gap-1"><SpeakerHigh size={12} /> 角色语音音色</label>
-                                   <div className="flex gap-1.5">
+                           <div style={sectionStyle('voice')} className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 space-y-3">
+                               <SectionFoldHeader
+                                   title={<><SpeakerHigh size={12} /> 角色语音音色</>}
+                                   titleClassName="text-[10px] font-bold text-emerald-600"
+                                   open={!!openSections.voice}
+                                   onToggle={() => toggleSection('voice')}
+                                   summary={formData.voiceProfile?.voiceName || formData.voiceProfile?.voiceId || '还没配音色'}
+                                   actions={<>
                                        <button
                                            onClick={() => { setActiveCharacterId(formData.id); openApp(AppID.VoiceDesigner); }}
                                            className="text-[10px] bg-violet-50 text-violet-700 px-2 py-1 rounded font-bold hover:bg-violet-100 flex items-center gap-0.5"
@@ -2425,8 +2488,9 @@ ${isInitialGeneration ? `
                                        >
                                            {isLoadingVoices ? '拉取中...' : '拉取可用音色'}
                                        </button>
-                                   </div>
-                               </div>
+                                   </>}
+                               />
+                               {openSections.voice && (<>
                                <p className="text-[11px] text-slate-500">已有 voice_id 可直接填，不依赖查询。聊天角色配置后，后续接 TTS 可直接读取。</p>
 
                                {/* MiniMax 合成参数档位：不选就是经典档，老角色升级后声音不会变。 */}
@@ -2580,10 +2644,11 @@ ${isInitialGeneration ? `
                                        })}
                                    </div>
                                )}
+                               </>)}
                            </div>
 
                            {/* Worldbook Section */}
-                           <div>
+                           <div style={sectionStyle('worldbook')}>
                                <div className="flex justify-between items-center mb-2 px-1">
                                    <label className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest block flex items-center gap-1"><Books size={12} /> 扩展设定 (Worldbooks)</label>
                                    <button onClick={openWorldbookModal} className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-1 rounded font-bold hover:bg-indigo-100">+ 挂载</button>
@@ -2693,7 +2758,7 @@ ${isInitialGeneration ? `
                            </div>
 
                            {/* Export Card Button */}
-                           <div className="pt-4">
+                           <div className="pt-4" style={{ order: 100 }}>
                                <button
                                    onClick={handleExportCard}
                                    className="w-full py-4 bg-slate-800 text-white rounded-2xl text-xs font-bold shadow-lg flex items-center justify-center gap-2 hover:bg-slate-700 active:scale-95 transition-all"
