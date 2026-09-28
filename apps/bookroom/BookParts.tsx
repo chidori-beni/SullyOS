@@ -1,11 +1,12 @@
 /** 书的详情页用到的卡片：封面、笔记、书评。 */
 import React, { useRef, useState } from 'react';
-import { ArrowSquareOut, BookOpenText, ChatCircleText, FileArrowUp, Highlighter, ImageSquare, NotePencil, Trash } from '@phosphor-icons/react';
+import { ArrowSquareOut, BookOpenText, ChatCircleText, FileArrowUp, Highlighter, HourglassMedium, ImageSquare, NotePencil, Trash } from '@phosphor-icons/react';
 import { decodeBytes } from '../../utils/vrWorld/decodeText';
-import { chapterIndexAt, type BookChapter, type BookroomRecord } from '../../utils/bookroom/bookroom';
+import { chapterIndexAt, type BookChapter, type BookroomRecord, type BookroomWaiting } from '../../utils/bookroom/bookroom';
+import { cancelNoteWaiting, cancelReviewWaiting } from '../../utils/bookroom/pendingReplies';
 import { mergeNotes, parseReedenNotes, placeNotes, suggestProgressFromNotes, titleFromCsvName, type BookNote } from '../../utils/bookroom/reedenNotes';
 import { compressCover } from '../../utils/bookroom/cover';
-import { Cover, Stars, type ShelfBook } from './shared';
+import { Cover, Stars, type ShelfBook, formatStamp } from './shared';
 
 // ============ 封面 ============
 
@@ -69,7 +70,7 @@ export const NotesCard: React.FC<{
             const { notes: merged, added, updated } = mergeNotes(notes, placed);
             await onSave({ ...book.record, notes: merged, updatedAt: Date.now() });
             const missed = placed.filter(n => n.segIdx == null).length;
-            onInfo(`导入 ${added} 条新笔记${updated ? `，更新 ${updated} 条` : ''}${missed && book.novel ? `（${missed} 条在书里没找到原文）` : ''}`);
+            onInfo(`新增 ${added} 条笔记${updated ? `；${updated} 条书房里已经有了，没有重复导入` : ''}${missed && book.novel ? `（${missed} 条在书里没找到原文）` : ''}`);
             if (book.novel) {
                 const next = suggestProgressFromNotes(merged, book.record.progress?.segIdx);
                 if (next && window.confirm(`最新一条笔记在「${next.chapter || '书里某处'}」，比你记的进度靠后。要把进度更新到这里吗？`)) onReportAtNote(next);
@@ -90,16 +91,19 @@ export const NotesCard: React.FC<{
                 <button disabled={busy} onClick={() => fileRef.current?.click()}><FileArrowUp size={14} /> {busy ? '导入中…' : '导入 Reeden 笔记'}</button>
                 {!book.record.archived && <button onClick={() => onHighlight()}><ChatCircleText size={14} /> 划一句给 ta 看</button>}
             </div>
-            {!notes.length && <p className="bk-hint">在 Reeden 的笔记页导出 CSV，再从这里导入。重复导入不会重复，只会补上新的。</p>}
+            {!notes.length && <p className="bk-hint">在 Reeden 的笔记页导出 CSV，再从这里导入。同一句只会留一条：重复导入、文件里有重复、或者之前已经手动划过这句，都不会多出来。</p>}
             <ul className="bk-notes">
                 {shown.map(n => {
                     const ci = n.segIdx != null ? chapterIndexAt(chapters, n.segIdx) : -1;
                     return (
                         <li key={n.id} className="bk-note-item" style={{ borderLeftColor: n.color || 'var(--bk-accent)' }}>
-                            <small>{n.chapter || (ci >= 0 ? chapters[ci].title : '')}{n.segIdx == null && book.novel ? ' · 书里没找到这句' : ''}</small>
+                            <small><span>{n.chapter || (ci >= 0 ? chapters[ci].title : '')}{n.segIdx == null && book.novel ? ' · 书里没找到这句' : ''}</span>{n.at ? <time>{formatStamp(n.at).full}</time> : null}</small>
                             <blockquote>{n.quote}</blockquote>
                             {n.note && <p className="bk-note-mine">我：{n.note}</p>}
                             {(n.replies || []).map(r => <p key={r.at} className="bk-note-reply"><b>{r.charName}</b>：{r.content}</p>)}
+                            {(n.waiting || []).map(w => (
+                                <WaitingLine key={w.charId} w={w} what="回你" onCancel={() => void onSave(cancelNoteWaiting(book.record, n.id, w.charId))} />
+                            ))}
                             <div className="bk-note-foot">
                                 {onLocate && book.novel && n.segIdx != null && <button onClick={() => onLocate(n.segIdx!)}><BookOpenText size={13} /> 看原文</button>}
                                 {!book.record.archived && <button onClick={() => onHighlight(n)}><ChatCircleText size={13} /> 给 ta 看</button>}
@@ -114,6 +118,19 @@ export const NotesCard: React.FC<{
         </section>
     );
 };
+
+// ============ 等 ta 回 ============
+
+export const WaitingLine: React.FC<{ w: BookroomWaiting; what: string; onCancel?: () => void }> = ({ w, what, onCancel }) => (
+    <p className="bk-waiting">
+        <HourglassMedium size={13} />
+        <span>
+            {w.charName} {w.activity ? `在「${w.activity}」` : '在忙'}，有空了会认真{what}
+            <small>{formatStamp(w.since).full} 分享{w.lastError ? ` · 上次没回成，稍后再试：${w.lastError}` : ''}</small>
+        </span>
+        {onCancel && <button className="bk-link-btn" onClick={() => { if (window.confirm(`不等 ${w.charName} 回这条了？`)) onCancel(); }}>不等了</button>}
+    </p>
+);
 
 // ============ 书评 ============
 
@@ -137,6 +154,9 @@ export const ReviewsCard: React.FC<{ book: ShelfBook; onReview: () => void; onSa
                     <p>{mine.text}</p>
                 </div>
             )}
+            {(book.record.reviews?.waiting || []).map(w => (
+                <WaitingLine key={w.charId} w={w} what="写一篇和你交换" onCancel={() => void onSave(cancelReviewWaiting(book.record, w.charId))} />
+            ))}
             {theirs.map(r => (
                 <div key={r.charId} className="bk-review">
                     <div className="bk-review-head"><b>{r.charName}</b><Stars n={r.rating} /><button className="bk-link-btn" onClick={() => removeChar(r.charId, r.charName)} aria-label={`删除${r.charName}的书评`}><Trash size={13} /></button></div>

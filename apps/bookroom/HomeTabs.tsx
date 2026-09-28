@@ -7,7 +7,8 @@ import type { CharacterProfile, VRLibraryCategory } from '../../types';
 import { chapterIndexAt, detectChapters, formatPercent, progressRatio, type BookroomRecord } from '../../utils/bookroom/bookroom';
 import { READING_PACE_LABEL, readingPaceOf } from '../../utils/bookroom/pace';
 import { yearSummary, type BookroomMeta } from '../../utils/bookroom/stats';
-import { Avatar, Bar, Cover, charRatio, type ShelfBook } from './shared';
+import { Avatar, Bar, Cover, charRatio, type ShelfBook, formatStamp } from './shared';
+import { WaitingLine } from './BookParts';
 import { CheckinCard } from './Footprints';
 
 // ============ 书架 ============
@@ -144,10 +145,11 @@ export const NotesHub: React.FC<{
                     const ci = n.segIdx != null ? chapterIndexAt(chapters, n.segIdx) : -1;
                     return (
                         <li key={`${b.novelId}-${n.id}`} className="bk-note-item" style={{ borderLeftColor: n.color || 'var(--bk-accent)' }}>
-                            <small>《{b.title}》 · {n.chapter || (ci >= 0 ? chapters[ci].title : '')}</small>
+                            <small><span>《{b.title}》 · {n.chapter || (ci >= 0 ? chapters[ci].title : '')}</span>{n.at ? <time>{formatStamp(n.at).full}</time> : null}</small>
                             <blockquote>{n.quote}</blockquote>
                             {n.note && <p className="bk-note-mine">我：{n.note}</p>}
                             {(n.replies || []).map(r => <p key={r.at} className="bk-note-reply"><b>{r.charName}</b>：{r.content}</p>)}
+                            {(n.waiting || []).map(w => <WaitingLine key={w.charId} w={w} what="回你" />)}
                             <div className="bk-note-foot">
                                 {b.novel && n.segIdx != null && <button onClick={() => onRead(b.novelId, n.segIdx!)}><BookOpenText size={13} /> 在书里看</button>}
                                 <button onClick={() => onOpenBookNotes(b.novelId)}>去这本书</button>

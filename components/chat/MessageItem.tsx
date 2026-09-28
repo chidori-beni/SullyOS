@@ -29,7 +29,7 @@ import { cardHookProps } from '../../utils/chatCardHooks';
 import { getSocialPostScope } from '../../utils/socialPostScope';
 import { formatBankExpenseAmount, formatBankExpenseDate, readBankExpenseCardData } from '../../utils/bankExpenseCard';
 
-import { BookroomChatCard } from './BookroomChatCard';
+import { BookroomChatCard, isBookroomReplyKind } from './BookroomChatCard';
 // 思考链卡片支持的 12 种风格预设 — 同时被 MessageItem 与 ThinkingChainSettingsModal 复用
 export type ThinkingChainStyleId = 'echo' | 'whisper' | 'minimal' | 'ink' | 'neon' | 'terminal' | 'stellar' | 'tama' | 'pixel' | 'muji' | 'ins' | 'custom';
 export interface ThinkingChainStyleSpec {
@@ -2882,8 +2882,9 @@ const MessageItem = React.memo(({
     }
 
     // 书房发进聊天的汇报（读书进度 / 划线 / 书评 / 荐书 / 年度书单）：显示成卡片，别像自己打的字
-    if (isUser && m.type === 'text' && m.metadata?.source === 'bookroom') {
-        return commonLayout(<BookroomChatCard content={m.content} kind={m.metadata?.bookroomKind} />);
+    // 书房：用户发的汇报 + 角色在书房里回的话（kind 以 -reply 结尾）都显示成卡片
+    if (m.type === 'text' && m.metadata?.source === 'bookroom' && (isUser || isBookroomReplyKind(m.metadata?.bookroomKind))) {
+        return commonLayout(<BookroomChatCard content={m.content} kind={m.metadata?.bookroomKind} side={isUser ? 'user' : 'char'} bookTitle={m.metadata?.bookroomBookTitle} deferredSince={m.metadata?.bookroomDeferredSince} />);
     }
 
     if (m.type === 'vr_card') {

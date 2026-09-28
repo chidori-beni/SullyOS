@@ -154,7 +154,10 @@
 .bk-history { list-style: none; margin: 0; padding: 0; }
 .bk-history li { display: flex; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--bk-line); }
 .bk-history li:last-child { border-bottom: 0; }
-.bk-history time { font-size: 11px; color: var(--bk-sub); width: 36px; flex-shrink: 0; padding-top: 1px; }
+.bk-seg2 { display: flex; gap: 6px; margin: 0 0 10px; }
+.bk-seg2 button { flex: 1; padding: 7px 8px; border-radius: 10px; border: 1px solid var(--bk-line); background: var(--bk-paper); font-size: 12.5px; }
+.bk-seg2 button[aria-pressed="true"] { background: var(--bk-accent-soft); border-color: var(--bk-accent); color: var(--bk-accent); font-weight: 700; }
+.bk-history time { font-size: 11px; line-height: 1.35; color: var(--bk-sub); width: 40px; flex-shrink: 0; padding-top: 1px; font-variant-numeric: tabular-nums; }
 .bk-history p { font-size: 12px; margin: 0; }
 .bk-history small { display: block; font-size: 12px; color: var(--bk-sub); margin-top: 3px; line-height: 1.5; }
 
@@ -197,12 +200,19 @@
 .bk-note-actions button:disabled { opacity: .5; }
 .bk-notes { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .bk-note-item { border-left: 3px solid var(--bk-accent); background: #fff; border-radius: 4px 10px 10px 4px; padding: 9px 11px; }
-.bk-note-item small { display: block; font-size: 10.5px; color: var(--bk-sub); margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bk-note-item small { display: flex; gap: 8px; font-size: 10.5px; color: var(--bk-sub); margin-bottom: 4px; white-space: nowrap; }
+.bk-note-item small > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.bk-note-item small > time { margin-left: auto; flex-shrink: 0; font-variant-numeric: tabular-nums; opacity: .85; }
 .bk-note-item blockquote, .bk-quote { margin: 0; font-size: 13px; line-height: 1.75; color: var(--bk-ink); }
 .bk-quote { background: #fff; border-left: 3px solid var(--bk-accent); border-radius: 4px 10px 10px 4px; padding: 9px 11px; }
 .bk-note-mine { font-size: 12px; color: var(--bk-sub); margin: 6px 0 0; line-height: 1.6; }
 .bk-note-reply { font-size: 12.5px; margin: 6px 0 0; line-height: 1.65; background: var(--bk-accent-soft); color: #5b3625; border-radius: 8px; padding: 6px 9px; }
 .bk-note-reply b { color: var(--bk-accent); }
+.bk-waiting { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; margin: 6px 0 0; line-height: 1.55; color: var(--bk-sub); border: 1px dashed var(--bk-line); border-radius: 8px; padding: 6px 9px; }
+.bk-waiting > svg { flex-shrink: 0; margin-top: 3px; }
+.bk-waiting > span { flex: 1; min-width: 0; }
+.bk-waiting small { display: block; font-size: 10.5px; opacity: .85; }
+.bk-waiting .bk-link-btn { flex-shrink: 0; }
 .bk-note-foot { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .bk-note-foot button, .bk-note-foot a { font-size: 11px; padding: 3px 9px; }
 .bk-more { width: 100%; margin-top: 8px; background: none; border: 0; font-size: 12px; color: var(--bk-accent) !important; padding: 6px; }

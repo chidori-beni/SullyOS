@@ -117,7 +117,9 @@ export const resolveCardHook = (message: CardHookMessage | null | undefined): Ca
 
   // 书房发进私聊的汇报：消息本身是普通 text（原样进上下文 / 记忆），显示成卡片（components/chat/BookroomChatCard）。
   // sub = 哪一种：progress（读书进度）/ highlight / review / recommend / year-letter
-  if (message.role === 'user' && type === 'text' && message.metadata?.source === 'bookroom') {
+  // 角色在书房里回的话（页边批注 / 书评 / 荐书 / 年度寄语）也是卡片，sub 是 highlight-reply 这种
+  if (type === 'text' && message.metadata?.source === 'bookroom'
+    && (message.role === 'user' || (message.role === 'assistant' && String(message.metadata?.bookroomKind || '').endsWith('-reply')))) {
     return { kind: 'bookroom_card', sub: String(message.metadata?.bookroomKind || 'progress') };
   }
 

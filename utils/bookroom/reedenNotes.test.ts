@@ -115,3 +115,34 @@ describe('一起读：防剧透提醒', () => {
         expect(note).toContain('你在《彼方》里读到全书约 75% 处');
     });
 });
+
+describe('导入去重：同一句只留一条', () => {
+    const r = (id: string, quote: string, extra: Record<string, unknown> = {}) => ({ id, chapter: '第一章', quote, at: 1, source: 'reeden' as const, ...extra });
+
+    it('同一份文件里重复的、标点空格不同的，都合成一条', () => {
+        const { notes, added, updated } = mergeNotes([], [
+            r('a', '你回来了。'), r('b', '你回来了'), r('c', ' 你 回来了！'), r('d', '另一句'),
+        ]);
+        expect(notes).toHaveLength(2);
+        expect([added, updated]).toEqual([2, 2]);
+    });
+
+    it('先在书房手动划过、再从 Reeden 导入：并进原来那条，角色回复和「等回复」都留着', () => {
+        const manual = { id: 'm1', chapter: '', quote: '你回来了。', note: '哭了', at: 5, source: 'manual' as const,
+            replies: [{ charId: 'c', charName: '萧逸', content: '嗯', at: 6 }], waiting: [{ charId: 'c2', charName: '夏以昼', since: 7 }] };
+        const { notes, added, updated } = mergeNotes([manual], [r('reeden-1', '你回来了', { note: '好难过', link: 'reeden://x', at: 3 })]);
+        expect([added, updated]).toEqual([0, 1]);
+        expect(notes).toHaveLength(1);
+        expect(notes[0]).toMatchObject({ id: 'm1', source: 'reeden', link: 'reeden://x', note: '哭了\n好难过', at: 3, replies: [{ content: '嗯' }], waiting: [{ charId: 'c2' }] });
+    });
+
+    it('同一条 Reeden 笔记改了想法再导：以新的为准，不拼接', () => {
+        const { notes } = mergeNotes([r('x', '一句', { note: '旧想法' })], [r('x', '一句', { note: '新想法' })]);
+        expect(notes[0].note).toBe('新想法');
+    });
+
+    it('已有列表里原本就重复的，也顺手合掉', () => {
+        const { notes } = mergeNotes([r('a', '同一句'), r('b', '同一句。')], []);
+        expect(notes).toHaveLength(1);
+    });
+});

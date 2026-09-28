@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { parseBookroomMessage } from '../../components/chat/BookroomChatCard';
+import { isBookroomReplyKind, parseBookroomMessage, ratingOfLine } from '../../components/chat/BookroomChatCard';
 import { buildProgressMessage } from './bookroom';
 import { buildHighlightMessage } from './highlightReply';
 import { resolveCardHook } from '../chatCardHooks';
@@ -33,7 +33,7 @@ describe('书房消息在聊天里显示成卡片', () => {
 
     it('聊天消息组件接上了卡片（只接用户那边、来源是书房的文字消息）', () => {
         const src = readFileSync(path.resolve(__dirname, '../../components/chat/MessageItem.tsx'), 'utf8');
-        expect(src).toContain("if (isUser && m.type === 'text' && m.metadata?.source === 'bookroom')");
+        expect(src).toContain("if (m.type === 'text' && m.metadata?.source === 'bookroom' && (isUser || isBookroomReplyKind(m.metadata?.bookroomKind)))");
     });
 });
 
@@ -41,8 +41,9 @@ describe('书房卡片能被卡片 CSS 选中', () => {
     it('挂 data-card="bookroom_card"，子类是哪一种汇报', () => {
         expect(resolveCardHook({ role: 'user', type: 'text', metadata: { source: 'bookroom' } })).toEqual({ kind: 'bookroom_card', sub: 'progress' });
         expect(resolveCardHook({ role: 'user', type: 'text', metadata: { source: 'bookroom', bookroomKind: 'review' } })).toEqual({ kind: 'bookroom_card', sub: 'review' });
-        // 角色的回复还是普通气泡；别的文字消息不受影响
-        expect(resolveCardHook({ role: 'assistant', type: 'text', metadata: { source: 'bookroom', bookroomKind: 'review-reply' } })).toBeNull();
+        // 角色在书房里回的话也是卡片；别的文字消息不受影响
+        expect(resolveCardHook({ role: 'assistant', type: 'text', metadata: { source: 'bookroom', bookroomKind: 'review-reply' } })).toEqual({ kind: 'bookroom_card', sub: 'review-reply' });
+        expect(resolveCardHook({ role: 'assistant', type: 'text', metadata: { source: 'bookroom' } })).toBeNull();
         expect(resolveCardHook({ role: 'user', type: 'text', content: '你好' })).toBeNull();
     });
 
@@ -55,5 +56,17 @@ describe('书房卡片能被卡片 CSS 选中', () => {
         expect(readFileSync(path.resolve(__dirname, '../chatCardCss.ts'), 'utf8')).toContain('cocoa-dots/chat-card-v6.css?raw');
         const preset = JSON.parse(readFileSync(path.resolve(__dirname, '../../public/appearance-presets/cocoa-dots/v1/preset.json'), 'utf8'));
         expect(preset.theme.chatCardCustomCss).toBe(css);
+    });
+});
+
+describe('角色的回复卡片', () => {
+    it('按 kind 起标题，认出评分行', () => {
+        expect(parseBookroomMessage('这句我也喜欢。', 'highlight-reply').title).toBe('页边批注');
+        expect(parseBookroomMessage('评分：4/5\n写得好', 'review-reply').lines).toEqual(['评分：4/5', '写得好']);
+        expect(ratingOfLine('评分：4/5')).toBe(4);
+        expect(ratingOfLine('评分: 3 / 5')).toBe(3);
+        expect(ratingOfLine('我给评分：很高')).toBeUndefined();
+        expect(isBookroomReplyKind('highlight-reply')).toBe(true);
+        expect(isBookroomReplyKind('highlight')).toBe(false);
     });
 });

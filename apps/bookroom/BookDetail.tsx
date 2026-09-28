@@ -9,7 +9,7 @@ import { DB } from '../../utils/db';
 import { stripLeakedAttrs } from '../../utils/vrWorld/prompts';
 import { chapterIndexAt, detectChapters, fallbackSections, formatPercent, progressRatio, type BookChapter, type BookroomRecord } from '../../utils/bookroom/bookroom';
 import type { BookNote } from '../../utils/bookroom/reedenNotes';
-import { Avatar, Bar, charRatio, SubTabs, type ShelfBook } from './shared';
+import { Avatar, Bar, charRatio, SubTabs, type ShelfBook, formatStamp } from './shared';
 import { CoverCard, NotesCard, ReviewsCard } from './BookParts';
 
 export type BookTab = 'progress' | 'toc' | 'notes' | 'reviews' | 'annotations';
@@ -96,7 +96,7 @@ const ProgressPanel: React.FC<React.ComponentProps<typeof BookDetail> & { chapte
                 <div className="bk-progress-row">
                     <span className="bk-avatar bk-avatar-me">我</span>
                     <div>
-                        <p>{myAt == null ? '还没报过进度' : myChapter >= 0 ? chapters[myChapter].title : '已开始'}</p>
+                        <p>{myAt == null ? '还没报过进度' : myChapter >= 0 ? chapters[myChapter].title : '已开始'}{myAt != null && book.record.progress?.chapterDone ? ' · 读完' : ''}</p>
                         <Bar ratio={myAt == null ? 0 : progressRatio(myAt, book.segCount)} />
                     </div>
                     <em>{myAt == null ? '—' : formatPercent(progressRatio(myAt, book.segCount))}</em>
@@ -156,9 +156,9 @@ const ProgressPanel: React.FC<React.ComponentProps<typeof BookDetail> & { chapte
                             const ci = chapterIndexAt(chapters, h.segIdx);
                             return (
                                 <li key={h.at}>
-                                    <time>{new Date(h.at).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}</time>
+                                    <time>{formatStamp(h.at).date}<br />{formatStamp(h.at).time}</time>
                                     <div>
-                                        <p>{ci >= 0 ? chapters[ci].title : '某处'} · {formatPercent(progressRatio(h.segIdx, book.segCount))}</p>
+                                        <p>{ci >= 0 ? chapters[ci].title : '某处'}{h.chapterDone ? ' · 读完' : ''} · {formatPercent(progressRatio(h.segIdx, book.segCount))}</p>
                                         {h.thought && <small>{h.thought}</small>}
                                     </div>
                                 </li>
@@ -188,13 +188,13 @@ const TocPanel: React.FC<{
                     <li key={`${c.segIdx}-${i}`} className={i === myChapter ? 'is-here' : i < myChapter ? 'is-read' : ''}>
                         <button disabled={archived} onClick={() => onRead(c.segIdx)}>
                             <span>{c.title}</span>
-                            {i === myChapter && <em>读到这</em>}
+                            {i === myChapter && <em>{book.record.progress?.chapterDone ? '读完' : '读到这'}</em>}
                         </button>
-                        {!archived && i !== myChapter && <button className="bk-toc-mark" onClick={() => onReport(c)}>读到这</button>}
+                        {!archived && i !== myChapter && <button className="bk-toc-mark" onClick={() => onReport(c)}>记进度</button>}
                     </li>
                 ))}
             </ol>
-            {!archived && <p className="bk-hint">点章节名打开阅读；点右边「读到这」记进度。</p>}
+            {!archived && <p className="bk-hint">点章节名打开阅读；点右边「记进度」报读到哪（可以选「读完这章」）。</p>}
         </section>
     );
 };
@@ -256,7 +256,7 @@ const AnnotationsPanel: React.FC<{
                     const expanded = open.has(a.id);
                     return (
                         <li key={a.id} className="bk-note-item bk-ann">
-                            <small>{nameOf(a)} · {ci >= 0 ? chapters[ci].title : '书里某处'}{a.targetAnnotationId ? ' · 回应别人' : ''}</small>
+                            <small><span>{nameOf(a)} · {ci >= 0 ? chapters[ci].title : '书里某处'}{a.targetAnnotationId ? ' · 回应别人' : ''}</span><time>{formatStamp(a.createdAt).full}</time></small>
                             {quote && <blockquote className={expanded ? '' : 'is-clamped'} onClick={() => toggle(a.id)}>{quote}</blockquote>}
                             {quote && quote.length > 60 && <button className="bk-link-btn" onClick={() => toggle(a.id)}>{expanded ? '收起原文' : '展开原文'}</button>}
                             <p className="bk-note-reply"><b>{nameOf(a)}</b>：{stripLeakedAttrs(a.content)}</p>

@@ -11,7 +11,7 @@ import { READING_PACE_LABEL, readingPaceOf } from '../../utils/bookroom/pace';
 import { stripLeakedAttrs } from '../../utils/vrWorld/prompts';
 import { chapterIndexAt, detectChapters, formatPercent, progressRatio, type BookroomRecord } from '../../utils/bookroom/bookroom';
 import type { BookRecommendation } from '../../utils/bookroom/stats';
-import { Avatar, Bar, Cover, Stars, SubTabs, charRatio, type ShelfBook } from './shared';
+import { Avatar, Bar, Cover, Stars, SubTabs, charRatio, type ShelfBook, formatStamp } from './shared';
 
 type TraceKind = '批注' | '回应' | '书评';
 interface CharTrace {
@@ -153,7 +153,7 @@ export const CharacterShelf: React.FC<{
                                     const ci = t.segIdx != null ? chapterIndexAt(chapters, t.segIdx) : -1;
                                     return (
                                         <li key={t.key} className="bk-note-item bk-ann">
-                                            <small>《{t.book.title}》{ci >= 0 ? ` · ${chapters[ci].title}` : ''} · {t.kind} · {new Date(t.at).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}</small>
+                                            <small><span>《{t.book.title}》{ci >= 0 ? ` · ${chapters[ci].title}` : ''} · {t.kind}</span><time>{formatStamp(t.at).full}</time></small>
                                             {t.quote && <blockquote className={expanded ? '' : 'is-clamped'} onClick={() => toggle(t.key)}>{t.quote}</blockquote>}
                                             {t.quote && t.quote.length > 60 && <button className="bk-link-btn" onClick={() => toggle(t.key)}>{expanded ? '收起原文' : '展开原文'}</button>}
                                             <p className="bk-note-reply"><b>{char.name}</b>{t.rating ? <> <Stars n={t.rating} /></> : null}：{t.content}</p>

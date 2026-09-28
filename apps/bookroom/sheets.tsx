@@ -5,15 +5,22 @@ import { DB } from '../../utils/db';
 import { buildNovelAsync } from '../../utils/vrWorld/novel';
 import { decodeBytes } from '../../utils/vrWorld/decodeText';
 import { extractPdfText, isPdfFile } from '../../utils/pdfText';
-import { applyProgress, buildProgressMessage, chapterIndexAt, chaptersFromAnchors, detectChapters, fallbackSections, findArchivedByTitle, formatPercent, locateSentence, progressRatio, type BookChapter, type BookroomRecord, type SentenceMatch } from '../../utils/bookroom/bookroom';
+import { applyProgress, buildProgressMessage, chapterEndSeg, chapterIndexAt, chaptersFromAnchors, detectChapters, fallbackSections, findArchivedByTitle, formatPercent, locateSentence, progressRatio, type BookChapter, type BookroomRecord, type SentenceMatch } from '../../utils/bookroom/bookroom';
 import { restoreArchivedBook, saveImportExtras } from '../../utils/bookroom/bookroomDb';
 import { parseEpub } from '../../utils/bookroom/epub';
 import type { BookNote } from '../../utils/bookroom/reedenNotes';
 import { compressCover } from '../../utils/bookroom/cover';
+import { BookroomBusyError } from '../../utils/bookroom/highlightReply';
 import { Avatar, Stars, type ShelfBook } from './shared';
 import type { CharacterProfile } from '../../types';
 
 // ============ 报进度 ============
+
+/** 角色在忙、记进「等回复」后给用户看的一句 */
+const waitingText = (busy: string, what: string) =>
+    `${busy}，先不打扰 ta。\n等 ta 按日程有空了，会认真${what}：回复挂在书房这里，也会发进你们的私聊。\n（要小手机开着的时候才会补上。）`;
+
+const CHAPTER_DONE_KEY = 'bookroom_report_chapter_done';
 
 export const ReportSheet: React.FC<{
     book: ShelfBook; characters: CharacterProfile[]; preset?: BookChapter; presetNote?: BookNote;
@@ -26,6 +33,8 @@ export const ReportSheet: React.FC<{
     const current = book.record.progress ? chapterIndexAt(chapters, book.record.progress.segIdx) : -1;
     const [chapterIdx, setChapterIdx] = useState(() => {
         if (preset) return Math.max(0, chapters.findIndex(c => c.segIdx === preset.segIdx && c.title === preset.title));
+        // 上次报的是「读完了第 N 章」，这次多半是第 N+1 章
+        if (book.record.progress?.chapterDone && current >= 0 && current + 1 < chapters.length) return current + 1;
         return Math.max(0, current);
     });
     const [sentence, setSentence] = useState(presetNote?.quote || '');
@@ -39,7 +48,12 @@ export const ReportSheet: React.FC<{
     const [matches, setMatches] = useState<SentenceMatch[] | null>(noteMatch);
     const [picked, setPicked] = useState<SentenceMatch | null>(noteMatch?.[0] || null);
     const [thought, setThought] = useState('');
-    const [finished, setFinished] = useState(false);
+    const [finishedBook, setFinished] = useState(false);
+    // 选章节时：「读完了这章」还是「读到这章中间」。习惯读完一章报一次，默认「读完」，记住上次的选择。
+    const [chapterDone, setChapterDoneState] = useState(() => {
+        try { return localStorage.getItem(CHAPTER_DONE_KEY) !== '0'; } catch { return true; }
+    });
+    const setChapterDone = (v: boolean) => { setChapterDoneState(v); try { localStorage.setItem(CHAPTER_DONE_KEY, v ? '1' : '0'); } catch { /* ignore */ } };
     const [tell, setTell] = useState<string[]>(book.record.companionIds);
     const [busy, setBusy] = useState(false);
     const listRef = useRef<HTMLOListElement>(null);
@@ -48,7 +62,12 @@ export const ReportSheet: React.FC<{
         listRef.current?.querySelector('.is-picked')?.scrollIntoView({ block: 'center' });
     }, []);
 
-    const segIdx = finished ? novel.segments.length - 1
+    const total = novel.segments.length;
+    const doneChapter = !finishedBook && tab === 'chapter' && chapterDone && !!chapters[chapterIdx];
+    // 读完的是最后一章 = 读完了整本
+    const finished = finishedBook || (doneChapter && chapterEndSeg(chapters, chapterIdx, total) >= total - 1);
+    const segIdx = finished ? total - 1
+        : doneChapter ? chapterEndSeg(chapters, chapterIdx, total)
         : tab === 'chapter' ? chapters[chapterIdx]?.segIdx ?? 0
         : picked?.segIdx;
     const canSave = segIdx != null && !busy;
@@ -64,7 +83,7 @@ export const ReportSheet: React.FC<{
         setBusy(true);
         try {
             const via = finished ? 'chapter' : tab;
-            const entry = { segIdx, via, sentence: via === 'sentence' ? sentence.trim().slice(0, 120) : undefined, at: Date.now(), thought: thought.trim() || undefined } as const;
+            const entry = { segIdx, via, sentence: via === 'sentence' ? sentence.trim().slice(0, 120) : undefined, chapterDone: doneChapter && !finished ? true : undefined, at: Date.now(), thought: thought.trim() || undefined } as const;
             const rec = applyProgress({ ...book.record, chapters: book.record.chapters || (detected.length ? detected : undefined) }, entry);
             const ci = chapterIndexAt(chapters, segIdx);
             const text = buildProgressMessage({
@@ -74,6 +93,7 @@ export const ReportSheet: React.FC<{
                 finished,
                 thought,
                 sentence: entry.sentence,
+                chapterDone: entry.chapterDone,
             });
             await onDone(rec, text, tell);
         } finally { setBusy(false); }
@@ -88,7 +108,11 @@ export const ReportSheet: React.FC<{
                     <button aria-pressed={tab === 'sentence'} onClick={() => setTab('sentence')}>粘一句原文</button>
                 </nav>
                 <div className="bk-sheet-body overflow-y-auto">
-                    {finished ? <p className="bk-note">记为「读完了」。</p> : tab === 'chapter' ? (
+                    {finishedBook ? <p className="bk-note">记为「读完了」。</p> : tab === 'chapter' ? (<>
+                        <div className="bk-seg2" role="group" aria-label="这章读完了吗">
+                            <button aria-pressed={chapterDone} onClick={() => setChapterDone(true)}>读完了这章</button>
+                            <button aria-pressed={!chapterDone} onClick={() => setChapterDone(false)}>读到这章中间</button>
+                        </div>
                         <ol className="bk-toc bk-toc-pick" ref={listRef}>
                             {chapters.map((c, i) => (
                                 <li key={`${c.segIdx}-${i}`} className={i === chapterIdx ? 'is-picked' : i === current ? 'is-here' : ''}>
@@ -96,7 +120,8 @@ export const ReportSheet: React.FC<{
                                 </li>
                             ))}
                         </ol>
-                    ) : (
+                        {finished && <p className="bk-note">这是最后一章，会记为「读完了这本」。</p>}
+                    </>) : (
                         <div className="bk-sentence">
                             <p className="bk-hint">在 Reeden 里长按你停下的那句，复制，粘到这里。</p>
                             <textarea value={sentence} onChange={e => { setSentence(e.target.value); setMatches(null); setPicked(null); }} placeholder="粘贴一句原文…" rows={3} />
@@ -114,7 +139,7 @@ export const ReportSheet: React.FC<{
                             })}
                         </div>
                     )}
-                    <label className="bk-check"><input type="checkbox" checked={finished} onChange={e => setFinished(e.target.checked)} /> 我读完了这本</label>
+                    <label className="bk-check"><input type="checkbox" checked={finishedBook} onChange={e => setFinished(e.target.checked)} /> 我读完了这本</label>
                     <textarea className="bk-thought" value={thought} onChange={e => setThought(e.target.value)} placeholder="想说点什么？（可以不写）" rows={2} maxLength={500} />
                     {characters.length > 0 && (
                         <div className="bk-tell">
@@ -147,6 +172,7 @@ export const HighlightSheet: React.FC<{
     const [busy, setBusy] = useState(false);
     const [reply, setReply] = useState('');
     const [error, setError] = useState('');
+    const [busyNote, setBusyNote] = useState('');
     const char = characters.find(c => c.id === charId);
 
     const ask = async () => {
@@ -165,7 +191,10 @@ export const HighlightSheet: React.FC<{
                 }
             }
             setReply(await onAsk(char, quote.trim(), comment.trim(), chapter || undefined, segIdx));
-        } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+        } catch (e) {
+            if (e instanceof BookroomBusyError) { setBusyNote(waitingText(e.brief, '回你')); setReply(' '); }
+            else setError(e instanceof Error ? e.message : String(e));
+        }
         finally { setBusy(false); }
     };
 
@@ -186,7 +215,8 @@ export const HighlightSheet: React.FC<{
                         </div>
                     </div>
                     <p className="bk-hint">这句和 ta 的回应都会进你们的私聊和 ta 的记忆。每次点会调用一次聊天 API。</p>
-                    {reply && <div className="bk-reply"><b>{char?.name}</b><p>{reply}</p></div>}
+                    {reply.trim() && <div className="bk-reply"><b>{char?.name}</b><p>{reply}</p></div>}
+                    {busyNote && <p className="bk-note" style={{ whiteSpace: 'pre-wrap' }}>{busyNote}</p>}
                     {error && <p className="bk-warn">{error}</p>}
                 </div>
                 <footer>
@@ -215,6 +245,7 @@ export const ReviewSheet: React.FC<{
     const [charId, setCharId] = useState<string>(ordered[0]?.id || '');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
+    const [waiting, setWaiting] = useState('');
     const [result, setResult] = useState<{ charName: string; text: string; rating?: number } | null>(null);
     const char = characters.find(c => c.id === charId);
 
@@ -225,7 +256,10 @@ export const ReviewSheet: React.FC<{
             const saved = await onSaveMine(text.trim(), rating);
             if (exchange && char) setResult(await onExchange(char, { text: text.trim(), rating }, saved));
             else onClose();
-        } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+        } catch (e) {
+            if (e instanceof BookroomBusyError) setWaiting(waitingText(e.brief, '写一篇和你交换'));
+            else setError(e instanceof Error ? e.message : String(e));
+        }
         finally { setBusy(false); }
     };
 
@@ -234,7 +268,7 @@ export const ReviewSheet: React.FC<{
             <section className="bk-sheet" role="dialog" aria-label="写书评" onClick={e => e.stopPropagation()}>
                 <header><h2>《{book.title}》书评</h2><button className="bk-icon" onClick={onClose} disabled={busy} aria-label="关闭"><X size={18} /></button></header>
                 <div className="bk-sheet-body overflow-y-auto">
-                    {result ? (
+                    {waiting ? <p className="bk-note" style={{ whiteSpace: 'pre-wrap' }}>{waiting}</p> : result ? (
                         <div className="bk-review"><div className="bk-review-head"><b>{result.charName}</b><Stars n={result.rating} size={14} /></div><p>{result.text}</p></div>
                     ) : <>
                         <div className="bk-rate">{[1, 2, 3, 4, 5].map(i => (
@@ -254,7 +288,7 @@ export const ReviewSheet: React.FC<{
                     {error && <p className="bk-warn">{error}</p>}
                 </div>
                 <footer className="bk-footer-row">
-                    {result ? <button className="bk-primary" onClick={onClose}>好</button> : <>
+                    {result || waiting ? <button className="bk-primary" onClick={onClose}>好</button> : <>
                         <button className="bk-secondary" disabled={busy || !text.trim()} onClick={() => void submit(false)}>只存我的</button>
                         <button className="bk-primary" disabled={busy || !text.trim() || !char} onClick={() => void submit(true)}>{busy ? `${char?.name || 'ta'} 正在写…` : '存下并交换'}</button>
                     </>}

@@ -5,7 +5,7 @@
  * 「笔记内容」是划线的原文，「备注」是用户写的想法，「回跳链接」形如 reeden://open_note?noteId=…
  */
 import type { VRNovelSegment } from '../../types';
-import { chapterIndexAt, locateSentence, type BookChapter } from './bookroom';
+import { chapterIndexAt, locateSentence, type BookChapter, type BookroomWaiting } from './bookroom';
 
 export interface CharNoteReply {
     charId: string;
@@ -32,6 +32,8 @@ export interface BookNote {
     segIdx?: number;
     source: 'reeden' | 'manual';
     replies?: CharNoteReply[];
+    /** 给了角色看、ta 在忙还没回的 */
+    waiting?: BookroomWaiting[];
 }
 
 export class ReedenCsvError extends Error {}
@@ -136,15 +138,68 @@ export function placeNotes(segments: VRNovelSegment[], chapters: BookChapter[], 
 }
 
 /** 合并：同一条笔记（同 id）以新导入的内容为准，但保留角色已经写的回应。 */
+/** 判断「是不是同一句」用：去掉空白和常见标点、统一大小写 */
+export const quoteKey = (quote: string) =>
+    quote.normalize('NFKC').toLowerCase().replace(/[\s\u3000"'“”‘’「」『』《》〈〉（）()\[\]【】,，.。!！?？;；:：、…—\-~～·]/g, '');
+
+const mergeText = (a?: string, b?: string) => {
+    const x = a?.trim(), y = b?.trim();
+    if (!x) return y || undefined;
+    if (!y || x === y || x.includes(y)) return x;
+    if (y.includes(x)) return y;
+    return `${x}\n${y}`;
+};
+
+/** 两条其实是同一句：合成一条。Reeden 的信息（id、链接、颜色）优先；角色回复、等回复、想法都并起来。 */
+function combineNotes(prev: BookNote, next: BookNote, sameId: boolean): BookNote {
+    const reeden = next.source === 'reeden' ? next : prev.source === 'reeden' ? prev : prev;
+    const other = reeden === prev ? next : prev;
+    const replies = [...(prev.replies || []), ...(next.replies || [])]
+        .filter((r, i, all) => all.findIndex(x => x.charId === r.charId && x.content === r.content) === i)
+        .sort((x, y) => x.at - y.at);
+    const waiting = [...(prev.waiting || []), ...(next.waiting || [])]
+        .filter((w, i, all) => all.findIndex(x => x.charId === w.charId) === i);
+    return {
+        ...other, ...reeden,
+        // 保留原来那条的 id：等回复队列、页面上的展开状态都认它
+        id: prev.id,
+        // 同一条 Reeden 笔记再导一次 = 更新，想法以新的为准；不同的两条划了同一句，想法并起来
+        note: sameId ? next.note : mergeText(prev.note, next.note),
+        chapter: reeden.chapter || other.chapter,
+        segIdx: reeden.segIdx ?? other.segIdx,
+        at: Math.min(prev.at, next.at),
+        replies: replies.length ? replies : undefined,
+        waiting: waiting.length ? waiting : undefined,
+    };
+}
+
+/**
+ * 把新导入的笔记并进已有的。**同一句原文只留一条**（不管是 Reeden 里重复划的、同一份 CSV 导两次，
+ * 还是先在书房手动「划一句给 ta 看」、后来又从 Reeden 导进来的）；已有列表里原本就重复的也顺手合掉。
+ * added = 真正多出来的条数；updated = 合进已有那条的条数。
+ */
 export function mergeNotes(existing: BookNote[], incoming: BookNote[]): { notes: BookNote[]; added: number; updated: number } {
-    const byId = new Map(existing.map(n => [n.id, n]));
-    let added = 0, updated = 0;
-    for (const n of incoming) {
-        const prev = byId.get(n.id);
-        if (prev) { updated++; byId.set(n.id, { ...n, replies: prev.replies }); }
-        else { added++; byId.set(n.id, n); }
-    }
-    return { notes: [...byId.values()].sort((a, b) => a.at - b.at), added, updated };
+    const out: BookNote[] = [];
+    const byKey = new Map<string, number>();
+    const byId = new Map<string, number>();
+    const put = (n: BookNote): 'added' | 'updated' => {
+        const key = quoteKey(n.quote) || `id:${n.id}`;
+        const sameId = byId.has(n.id);
+        const at = byId.get(n.id) ?? byKey.get(key);
+        if (at == null) {
+            byId.set(n.id, out.length); byKey.set(key, out.length);
+            out.push(n);
+            return 'added';
+        }
+        out[at] = combineNotes(out[at], n, sameId);
+        byId.set(n.id, at); byKey.set(key, at);
+        return 'updated';
+    };
+    for (const n of existing) put(n);
+    const before = out.length;
+    let updated = 0;
+    for (const n of incoming) if (put(n) === 'updated') updated++;
+    return { notes: out.sort((a, b) => a.at - b.at), added: out.length - before, updated };
 }
 
 /** 导入后建议把进度挪到哪：最新一条对上了位置、且比当前进度靠后的笔记。 */

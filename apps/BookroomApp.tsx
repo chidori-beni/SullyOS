@@ -13,8 +13,10 @@ import { DB } from '../utils/db';
 import type { CharacterProfile, VRLibraryCategory, VRWorldNovel } from '../types';
 import { detectChapters, emptyRecord, unfinishedReaders, type BookChapter, type BookroomRecord } from '../utils/bookroom/bookroom';
 import { archiveBook, deleteBookCompletely, getBookroomMeta, listBookroomRecords, saveBookroomMeta, saveBookroomRecord, sendProgressToCharacters } from '../utils/bookroom/bookroomDb';
-import type { BookNote } from '../utils/bookroom/reedenNotes';
-import { askCharacterAboutHighlight, askCharacterInBookroom, buildHighlightMessage, RECOMMEND_INSTRUCTION, REVIEW_INSTRUCTION, YEAR_LETTER_INSTRUCTION } from '../utils/bookroom/highlightReply';
+import { quoteKey, type BookNote } from '../utils/bookroom/reedenNotes';
+import { addNoteWaiting, addReviewWaiting } from '../utils/bookroom/pendingReplies';
+import { BOOKROOM_PENDING_ADDED_EVENT, BOOKROOM_UPDATED_EVENT } from '../components/BookroomPendingRunner';
+import { askCharacterAboutHighlight, askCharacterInBookroom, BookroomBusyError, buildHighlightMessage, buildReviewMessage, RECOMMEND_INSTRUCTION, REVIEW_INSTRUCTION, YEAR_LETTER_INSTRUCTION } from '../utils/bookroom/highlightReply';
 import { dateKey, emptyMeta, parseRatedReview, parseRecommendation, type BookRecommendation, type BookroomMeta } from '../utils/bookroom/stats';
 import { NovelReader } from '../components/reader/NovelReader';
 import type { ShelfBook } from './bookroom/shared';
@@ -64,11 +66,17 @@ const BookroomApp: React.FC = () => {
         setNovels(n); setRecords(r); setMeta(m); setCategories(c); setLoaded(true);
     }, []);
     useEffect(() => { void reload(); }, [reload]);
+    // 后台补上了角色欠的回复（等回复队列）：重新读一遍
+    useEffect(() => {
+        const on = () => void reload();
+        window.addEventListener(BOOKROOM_UPDATED_EVENT, on);
+        return () => window.removeEventListener(BOOKROOM_UPDATED_EVENT, on);
+    }, [reload]);
     const switchHome = (t: HomeTab) => { setHomeTab(t); try { localStorage.setItem(HOME_TAB_KEY, t); } catch { /* ignore */ } };
 
     const saveMeta = async (next: BookroomMeta) => { await saveBookroomMeta(next); setMeta(next); };
     // 请角色说点什么（书评 / 荐书 / 年度寄语）：统一走书房的共用流程
-    const ask = (char: CharacterProfile, req: { message: string; instruction: string; kind: string; purpose: string; novelId?: string }) =>
+    const ask = (char: CharacterProfile, req: { message: string; instruction: string; kind: string; purpose: string; novelId?: string; bookTitle?: string }) =>
         askCharacterInBookroom({ char, userProfile, groups, apiConfig, realtimeConfig, memoryPalaceConfig, ...req });
 
     const books = useMemo<ShelfBook[]>(() => {
@@ -285,18 +293,35 @@ const BookroomApp: React.FC = () => {
                     book={book} characters={characters} note={highlighting.note}
                     onClose={() => setHighlighting(null)}
                     onAsk={async (char, quote, comment, chapter, segIdx) => {
-                        const reply = await askCharacterAboutHighlight({
-                            char, userProfile, groups, apiConfig, realtimeConfig, memoryPalaceConfig,
-                            novelId: book.novelId,
-                            message: buildHighlightMessage({ bookTitle: book.title, chapter, quote, comment }),
-                        });
-                        const answer = { charId: char.id, charName: char.name, content: reply, at: Date.now() };
                         const notes = book.record.notes || [];
-                        const target = highlighting.note;
-                        const nextNotes: BookNote[] = target
-                            ? notes.map(n => n.id === target.id ? { ...n, replies: [...(n.replies || []), answer] } : n)
-                            : [...notes, { id: `m${Date.now().toString(36)}`, chapter: chapter || '', quote, note: comment || undefined, at: Date.now(), segIdx, source: 'manual', replies: [answer] }];
-                        await saveRecord({ ...book.record, notes: nextNotes, updatedAt: Date.now() });
+                        // 从笔记点进来的就是那条；手动粘的一句，书房里已经有同一句就用那条，别再多出一条
+                        const target = highlighting.note || notes.find(n => quoteKey(n.quote) === quoteKey(quote));
+                        const noteId = target?.id || `m${Date.now().toString(36)}`;
+                        const withNote: BookroomRecord = target ? book.record : {
+                            ...book.record,
+                            notes: [...notes, { id: noteId, chapter: chapter || '', quote, note: comment || undefined, at: Date.now(), segIdx, source: 'manual' }],
+                        };
+                        let reply: string;
+                        try {
+                            reply = await askCharacterAboutHighlight({
+                                char, userProfile, groups, apiConfig, realtimeConfig, memoryPalaceConfig,
+                                novelId: book.novelId, bookTitle: book.title,
+                                message: buildHighlightMessage({ bookTitle: book.title, chapter, quote, comment }),
+                            });
+                        } catch (e) {
+                            if (e instanceof BookroomBusyError) {
+                                // ta 在忙：先不打扰，记进「等回复」，有空了再认真回、挂回这条笔记
+                                await saveRecord(addNoteWaiting(withNote, noteId, { charId: char.id, charName: char.name, since: Date.now(), activity: e.activity, comment: comment || undefined }));
+                                window.dispatchEvent(new CustomEvent(BOOKROOM_PENDING_ADDED_EVENT));
+                            }
+                            throw e;
+                        }
+                        const answer = { charId: char.id, charName: char.name, content: reply, at: Date.now() };
+                        await saveRecord({
+                            ...withNote,
+                            notes: (withNote.notes || []).map(n => n.id === noteId ? { ...n, replies: [...(n.replies || []), answer], waiting: (n.waiting || []).filter(w => w.charId !== char.id) } : n),
+                            updatedAt: Date.now(),
+                        });
                         return reply;
                     }}
                 />
@@ -315,12 +340,22 @@ const BookroomApp: React.FC = () => {
                         const bm = char.vrState?.novelBookmarks?.[book.novelId];
                         const hasRead = bm != null && bm > 0;
                         const hasFinished = hasRead && bm! >= book.segCount;
-                        const message = `【书房 · 书评】我读完了《${book.title}》${mine.rating ? `，给它 ${mine.rating} 星` : ''}：\n${mine.text}\n\n你也写一篇吧，我们交换看看。`;
-                        const reply = await ask(char, { message, instruction: REVIEW_INSTRUCTION(userProfile?.name || '用户', hasFinished, hasRead), kind: 'review', purpose: '交换书评', novelId: book.novelId });
+                        const message = buildReviewMessage(book.title, mine);
+                        let reply: string;
+                        try {
+                            reply = await ask(char, { message, instruction: REVIEW_INSTRUCTION(userProfile?.name || '用户', hasFinished, hasRead), kind: 'review', purpose: '交换书评', novelId: book.novelId, bookTitle: book.title });
+                        } catch (e) {
+                            if (e instanceof BookroomBusyError) {
+                                // ta 在忙：先不写，记进「等回复」，有空了再认真写一篇
+                                await saveRecord(addReviewWaiting({ ...book.record, reviews: savedReviews }, { charId: char.id, charName: char.name, since: Date.now(), activity: e.activity }));
+                                window.dispatchEvent(new CustomEvent(BOOKROOM_PENDING_ADDED_EVENT));
+                            }
+                            throw e;
+                        }
                         const parsed = parseRatedReview(reply);
                         const charReview = { charId: char.id, charName: char.name, text: parsed.text, rating: parsed.rating, at: Date.now() };
                         // 用刚存好的那份书评做底，别用渲染时的旧记录（不然会把刚写的「我的书评」盖掉）
-                        const reviews = { ...savedReviews, chars: [...(savedReviews.chars || []).filter(r => r.charId !== char.id), charReview] };
+                        const reviews = { ...savedReviews, chars: [...(savedReviews.chars || []).filter(r => r.charId !== char.id), charReview], waiting: (savedReviews.waiting || []).filter(w => w.charId !== char.id) };
                         await saveRecord({ ...book.record, reviews, updatedAt: Date.now() });
                         return charReview;
                     }}

@@ -5,6 +5,7 @@ import { MusicProvider } from './context/MusicContext';
 import PhoneShell from './components/PhoneShell';
 import BuildBadge from './components/BuildBadge';
 import DevDebugPanel from './components/DevDebugPanel';
+import BookroomPendingRunner from './components/BookroomPendingRunner';
 import Amsg2DebugPanel from './components/Amsg2DebugPanel';
 import VRBroadcast from './components/VRBroadcast';
 import WorldBroadcast from './components/WorldBroadcast';
@@ -45,6 +46,8 @@ const App: React.FC = () => {
             {/* 挂在 Provider 里面才能直接读 characters（省掉轮询 IndexedDB），
                 面板自身用 portal 渲染到 body，绕开上面那层 transform 对 fixed 定位的影响。 */}
             <Amsg2DebugPanel />
+            {/* 书房「等回复」：角色忙完了补上欠的回复（不渲染东西） */}
+            <BookroomPendingRunner />
           </OSProvider>
         </div>
       </div>

@@ -29,6 +29,7 @@ export function pickReadingTogether(char: Pick<CharacterProfile, 'id' | 'vrState
                 title: r.title!,
                 userSeg,
                 userChapter: chapterAt(userSeg),
+                userChapterDone: !!r.progress!.chapterDone,
                 userPercent: pct(userSeg),
                 userFinished: total != null && userSeg >= total - 1,
                 charSeg,

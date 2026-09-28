@@ -23,6 +23,11 @@ export interface BookPosition {
     via: 'chapter' | 'sentence';
     /** via=sentence 时用户粘贴的原句（截短保存） */
     sentence?: string;
+    /**
+     * via=chapter 时：这一章已经读完了。此时 segIdx 记在这章最后一段（不是章节标题那段），
+     * 百分比、防剧透提醒、角色「比你靠前」的判断就都按「这章读完了」算。
+     */
+    chapterDone?: boolean;
 }
 
 export interface BookProgressEntry extends BookPosition {
@@ -42,6 +47,26 @@ export interface BookArchive {
     annotationQuotes: Record<string, string>;
 }
 
+/**
+ * 「等回复」：把书房的东西给角色看时 ta 正按日程忙 / 睡，先不回；
+ * 记在那条笔记（或书评）上，ta 有空了再认真回、挂回这里（utils/bookroom/pendingReplies.ts）。
+ */
+export interface BookroomWaiting {
+    charId: string;
+    charName: string;
+    /** 用户是什么时候分享的 */
+    since: number;
+    /** 那时 ta 在忙什么（日程上的活动） */
+    activity?: string;
+    /** 划线：用户这次附的话（可能和笔记里的想法不同） */
+    comment?: string;
+    /** 上次试着生成失败的时间和原因，隔一阵再试 */
+    lastTryAt?: number;
+    lastError?: string;
+    /** 补回时用户那条已经发进私聊了（模型那次没回成），重试时别再发一遍 */
+    messageSent?: boolean;
+}
+
 export interface BookroomRecord {
     id: string;
     novelId: string;
@@ -59,7 +84,7 @@ export interface BookroomRecord {
     /** 从 Reeden 导入或手动记下的划线笔记 */
     notes?: BookNote[];
     /** 读完交换的书评：我的一篇 + 每个角色各一篇（重写会覆盖同一个人的旧书评） */
-    reviews?: { user?: BookReview; chars?: CharBookReview[] };
+    reviews?: { user?: BookReview; chars?: CharBookReview[]; waiting?: BookroomWaiting[] };
     archived?: BookArchive;
     updatedAt: number;
 }
@@ -263,6 +288,13 @@ export function progressRatio(segIdx: number, segCount: number): number {
 
 export const formatPercent = (ratio: number) => `${Math.round(ratio * 100)}%`;
 
+/** 第 ci 章的最后一段（下一章标题的前一段；最后一章就是全书最后一段）。 */
+export function chapterEndSeg(chapters: BookChapter[], ci: number, segCount: number): number {
+    const next = chapters[ci + 1]?.segIdx;
+    const end = (next ?? segCount) - 1;
+    return Math.max(chapters[ci]?.segIdx ?? 0, Math.min(end, segCount - 1));
+}
+
 /** 章节标题进聊天时只截长度。 */
 const shortTitle = (t: string) => (t.length > 24 ? `${t.slice(0, 24)}…` : t);
 
@@ -277,10 +309,13 @@ export function buildProgressMessage(input: {
     finished: boolean;
     thought?: string;
     sentence?: string;
+    /** 这章读完了（不是只读到这章） */
+    chapterDone?: boolean;
 }): string {
+    const verb = input.chapterDone && input.chapterTitle ? '读完了' : '读到了';
     const where = input.finished
         ? `读完了《${input.bookTitle}》`
-        : `《${input.bookTitle}》读到了${input.chapterTitle ? `「${shortTitle(input.chapterTitle)}」` : ''}（全书约 ${formatPercent(input.ratio)}）`;
+        : `《${input.bookTitle}》${verb}${input.chapterTitle ? `「${shortTitle(input.chapterTitle)}」` : ''}（全书约 ${formatPercent(input.ratio)}）`;
     const lines = [`【书房 · 读书进度】我${where}`];
     if (input.sentence) lines.push(`停在这句：「${input.sentence.length > 60 ? `${input.sentence.slice(0, 60)}…` : input.sentence}」`);
     if (input.thought?.trim()) lines.push(`感想：${input.thought.trim()}`);
@@ -339,6 +374,8 @@ export interface ReadingTogetherBook {
     /** 用户读到的段落块 */
     userSeg: number;
     userChapter?: string;
+    /** 用户说的是「这章读完了」 */
+    userChapterDone?: boolean;
     /** 没有章节名时用百分比描述位置 */
     userPercent?: number;
     userFinished: boolean;
@@ -362,7 +399,9 @@ export function buildReadingTogetherNote(userName: string, books: ReadingTogethe
     if (!books.length) return '';
     const where = (chapter: string | undefined, percent?: number) => (chapter ? `「${chapter}」` : percent != null ? `全书约 ${percent}% 处` : '书里某处');
     const lines = books.map(b => {
-        const user = b.userFinished ? `${userName}已经读完了` : `${userName}读到${where(b.userChapter, b.userPercent)}`;
+        const user = b.userFinished ? `${userName}已经读完了`
+            : b.userChapterDone && b.userChapter ? `${userName}读完了${where(b.userChapter)}`
+            : `${userName}读到${where(b.userChapter, b.userPercent)}`;
         let me: string;
         if (b.charSeg == null) me = '你还没读过这本，只知道' + userName + '跟你讲过的部分';
         else if (b.charFinished) me = '你在《彼方》里已经读完了';

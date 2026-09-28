@@ -42,6 +42,17 @@ export const Stars: React.FC<{ n?: number; size?: number }> = ({ n, size = 12 })
     <span className="bk-stars" aria-label={`${n} 星`}>{[1, 2, 3, 4, 5].map(i => <Star key={i} size={size} weight={i <= n ? 'fill' : 'regular'} />)}</span>
 ) : null;
 
+/** 日期 + 时间：今年的写「9/27 21:05」，往年的带上年份。 */
+export function formatStamp(at: number): { date: string; time: string; full: string } {
+    const d = new Date(at);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const date = d.getFullYear() === new Date().getFullYear()
+        ? `${d.getMonth() + 1}/${d.getDate()}`
+        : `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+    const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return { date, time, full: `${date} ${time}` };
+}
+
 /** 页面里的小标签（子分类）。 */
 export function SubTabs<T extends string>({ tabs, value, onChange, className = '' }: { tabs: { id: T; label: string; badge?: number }[]; value: T; onChange: (id: T) => void; className?: string }) {
     return (
