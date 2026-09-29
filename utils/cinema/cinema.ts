@@ -95,7 +95,7 @@ export const PROACTIVE_LEVELS: { id: CinemaProactiveLevel; label: string }[] = [
 /** 两次开口之间至少隔多久（离角色上一次说话算起）。 */
 export const PROACTIVE_GAP_MS: Record<Exclude<CinemaProactiveLevel, 'off'>, number> = {
     quiet: 8 * 60_000,
-    normal: 4 * 60_000,
+    normal: 3 * 60_000, // 用户 09-30 嫌 4 分钟太久
     chatty: 90_000,
 };
 /** 两条笔记之间至少隔多久：话痨记得勤一点，安静就少记。 */
