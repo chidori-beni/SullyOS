@@ -121,9 +121,14 @@ export const watchSocketUrl = (workerUrl: string, pairing: Pick<CinemaPairing, '
     return `${base}/watch-room/ws?room=${encodeURIComponent(pairing.code)}&secret=${encodeURIComponent(pairing.secret)}&role=${role}`;
 };
 
-/** 模型回的话：去掉思考块、聊天用的 [[标签]]，按空行拆成几条气泡。 */
+/**
+ * 模型回的话：去掉思考块、聊天用的 [[标签]]，按空行拆成几条气泡。
+ * 心声那一行（`{"t":"xinsheng",...}`）从开头一直删到结尾：影院的提示词已经不要心声了，
+ * 但模型会照着私聊历史的惯性继续写，而且心声协议规定它总在最后。
+ */
 export const cleanCinemaReply = (raw: string): string[] => {
     const text = String(raw || '')
+        .replace(/\{\s*"t"\s*:\s*"xinsheng"[\s\S]*$/i, '')
         .replace(/<think>[\s\S]*?<\/think>/gi, '')
         .replace(/\[\[[^\]]*\]\]/g, '')
         .replace(/\r/g, '')

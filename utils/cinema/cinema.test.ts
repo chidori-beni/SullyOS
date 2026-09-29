@@ -43,6 +43,12 @@ describe('影院 · 回复清洗', () => {
         expect(cleanCinemaReply(raw)).toEqual(['这段好绝', '你看她的眼神']);
     });
 
+    it('漏出来的心声 JSON 整段删掉（不管黏在句尾还是单独一行）', () => {
+        const leaked = ['看得到 画面连上了', '进门撑伞这个跑这么急', '{"t":"xinsheng","music":"Midnight City","bank":"CNY"}'].join('\n');
+        expect(cleanCinemaReply(leaked)).toEqual(['看得到 画面连上了', '进门撑伞这个跑这么急']);
+        expect(cleanCinemaReply('好看{"t": "xinsheng", "innerVoice": "想' + '\n' + '靠近"}')).toEqual(['好看']);
+    });
+
     it('空回复返回空数组', () => {
         expect(cleanCinemaReply('<think>x</think>  ')).toEqual([]);
     });

@@ -15,10 +15,13 @@ import {
 } from '../utils/cinema/cinema';
 import { clearCinemaPairing, deleteCinemaSession, getCinemaPairing, listCinemaSessions, saveCinemaPairing, saveCinemaSession } from '../utils/cinema/cinemaDb';
 import { createWatchRoom, WatchRoomSocket, type WatchConnState, type WatchMessage } from '../utils/cinema/watchRoomClient';
-import { askCharacterInCinema } from '../utils/cinema/askCinema';
+import { askCharacterInCinema, warmCinemaContext } from '../utils/cinema/askCinema';
 import './cinema/cinema.css';
 
 type View = 'home' | 'pair' | 'room';
+
+/** 这么近收到的画面算「就是现在」，发消息时不用再向电脑要一帧。 */
+const RECENT_FRAME_MS = 6000;
 
 /** 电脑上要打开的观影端地址：跟 Sully 同一个站点下的 watch.html。 */
 const watchPageUrl = () => {
@@ -152,6 +155,11 @@ const CinemaApp: React.FC = () => {
         [characters, session?.charId, charId],
     );
 
+    // 进放映室就开始准备角色的上下文（人设、记忆、最近聊天），第一句话不用等
+    useEffect(() => {
+        if (view === 'room' && char) warmCinemaContext({ char, userProfile, groups, realtimeConfig });
+    }, [view, char, userProfile, groups, realtimeConfig]);
+
     const openSession = (s: CinemaSession) => {
         setSession(s);
         setFrame(null); frameRef.current = null;
@@ -205,7 +213,9 @@ const CinemaApp: React.FC = () => {
         try {
             let frameUrl = '';
             if (withFrame) {
-                const fresh = await requestFrame();
+                // 几秒内刚收到过画面就直接用，不再等电脑截新的
+                const recent = frameRef.current && Date.now() - frameRef.current.at < RECENT_FRAME_MS ? frameRef.current : null;
+                const fresh = recent || await requestFrame(1500);
                 const use = fresh || (isFrameFresh(frameRef.current) ? frameRef.current : null);
                 frameUrl = use?.dataUrl || '';
             }

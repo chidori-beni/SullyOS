@@ -7,6 +7,11 @@
  *
  * 放映室里的对话**不写进私聊**：一部片子边看边聊几十句，会把聊天记录冲掉。
  * 这一场记在影院自己的记录里（cinemaDb），以后再做「看完写进记忆」。
+ *
+ * 快：私聊那一整套（读全部聊天、记忆宫殿召回……）**一场只准备一次**，缓存 10 分钟；
+ * 每句话只在后面接上这一场的对话。进放映室时就提前准备（warmCinemaContext），
+ * 第一句也不用等。私聊历史只带最近 CINEMA_HISTORY_LIMIT 条，太长的上下文会拖慢首字。
+ * 心声在影院里关掉（提示词里不要求，回复里漏出来的也会被 cleanCinemaReply 删掉）。
  */
 import type { APIConfig, CharacterProfile, GroupProfile, RealtimeConfig, UserProfile } from '../../types';
 import { DB } from '../db';
@@ -16,12 +21,65 @@ import { safeFetchJson } from '../safeApi';
 import { attachSnapshotToLatestUserMessage, isVisionInputUnsupportedError } from '../userCameraSnapshot';
 import { buildCinemaInstruction, cleanCinemaReply, sessionLinesToApiMessages, type CinemaSession, type CinemaStatus } from './cinema';
 
-export interface AskCinemaInput {
+/** 私聊最近多少条带进放映室。够认出你们最近聊了什么，又不至于拖慢。 */
+export const CINEMA_HISTORY_LIMIT = 40;
+/** 准备好的上下文用多久。过了就重新准备一次（时间、记忆召回会更新）。 */
+export const CINEMA_CONTEXT_TTL_MS = 10 * 60 * 1000;
+
+export interface CinemaContextInput {
     char: CharacterProfile;
     userProfile: UserProfile;
     groups: GroupProfile[];
-    apiConfig: APIConfig;
     realtimeConfig?: RealtimeConfig;
+}
+
+interface PreparedContext {
+    systemPrompt: string;
+    history: any[];
+    at: number;
+}
+
+const contextCache = new Map<string, Promise<PreparedContext>>();
+const cacheAt = new Map<string, number>();
+
+async function buildContext(input: CinemaContextInput): Promise<PreparedContext> {
+    // 心声关掉：影院里要的是短短一两句，心声那一长串既拖慢又会露出来
+    const char: CharacterProfile = { ...input.char, xinshengEnabled: false };
+    const historyMsgs = await loadCharacterContextMessages(char);
+    const payload = await buildChatRequestPayload({
+        char, userProfile: input.userProfile, groups: input.groups,
+        emojis: await DB.getEmojis(), categories: await DB.getEmojiCategories(),
+        historyMsgs, contextLimit: Math.max(1, historyMsgs.length),
+        realtimeConfig: input.realtimeConfig,
+        stripImages: true,
+    });
+    let history = payload.cleanedApiMessages.slice(-CINEMA_HISTORY_LIMIT);
+    // 截断后开头如果是角色的话，前面缺了上下文，去掉那一条免得有的接口不认
+    while (history.length && history[0]?.role !== 'user') history = history.slice(1);
+    return { systemPrompt: payload.systemPrompt, history, at: Date.now() };
+}
+
+/** 取准备好的上下文；没有或过期了就准备一份。同一时间只准备一次。 */
+export function getCinemaContext(input: CinemaContextInput, now = Date.now()): Promise<PreparedContext> {
+    const key = input.char.id;
+    const at = cacheAt.get(key);
+    const cached = contextCache.get(key);
+    if (cached && at !== undefined && now - at < CINEMA_CONTEXT_TTL_MS) return cached;
+    const pending = buildContext(input);
+    contextCache.set(key, pending);
+    cacheAt.set(key, now);
+    // 准备失败别留在缓存里，下次重试
+    pending.catch(() => { if (contextCache.get(key) === pending) { contextCache.delete(key); cacheAt.delete(key); } });
+    return pending;
+}
+
+/** 进放映室时提前准备，第一句话就不用等。失败无所谓，发消息时会再试。 */
+export function warmCinemaContext(input: CinemaContextInput): void {
+    getCinemaContext(input).catch(error => console.warn('[cinema] 提前准备上下文失败，发消息时再试', error));
+}
+
+export interface AskCinemaInput extends CinemaContextInput {
+    apiConfig: APIConfig;
     /** 已经包含用户刚发的那句 */
     session: CinemaSession;
     status?: CinemaStatus | null;
@@ -39,20 +97,13 @@ export async function askCharacterInCinema(input: AskCinemaInput): Promise<AskCi
     if (!apiConfig.baseUrl) throw new Error('还没有配置聊天 API');
     const userName = userProfile?.name || '用户';
 
-    const historyMsgs = await loadCharacterContextMessages(char);
-    const payload = await buildChatRequestPayload({
-        char, userProfile, groups: input.groups,
-        emojis: await DB.getEmojis(), categories: await DB.getEmojiCategories(),
-        historyMsgs, contextLimit: Math.max(1, historyMsgs.length),
-        realtimeConfig: input.realtimeConfig,
-        stripImages: true,
-    });
+    const context = await getCinemaContext(input);
     const sessionMessages = sessionLinesToApiMessages(session.lines);
-    const textMessages = [...payload.cleanedApiMessages, ...sessionMessages];
+    const textMessages = [...context.history, ...sessionMessages];
     const frame = input.frameDataUrl && input.frameDataUrl.startsWith('data:image/') ? input.frameDataUrl : '';
 
     const send = (messages: any[], hasFrame: boolean, retries: number) => {
-        const system = payload.systemPrompt + buildCinemaInstruction({
+        const system = context.systemPrompt + buildCinemaInstruction({
             userName, charName: char.name, session, status: input.status, hasFrame,
         });
         const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '');
