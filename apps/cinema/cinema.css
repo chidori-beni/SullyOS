@@ -122,3 +122,4 @@
 .cn-dot-inline.on { background: #5fce7c; box-shadow: 0 0 6px #5fce7c; }
 .cn-end { flex-shrink: 0; height: 30px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--cn-line); background: var(--cn-panel-2); font-size: 13px; }
 .cn-end:disabled { opacity: .45; }
+.cn-hint { font-size: 12px; color: var(--cn-sub); line-height: 1.6; margin: 6px 2px 0; }

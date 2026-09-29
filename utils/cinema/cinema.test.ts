@@ -143,3 +143,40 @@ describe('影院 · 小插件的进度', () => {
         expect(text).toContain('播放页标题是「钟表馆事件 第2集」');
     });
 });
+
+describe('影院 · 线上 / 线下', () => {
+    const base = { userName: '千夜', charName: '萧逸', status: null, hasFrame: false };
+
+    it('开场时记下线上还是线下，线下才挂见面', () => {
+        expect(newCinemaSession({ charId: 'c', title: 'x', spoiler: 'first' }).meet).toBe('online');
+        expect(newCinemaSession({ charId: 'c', title: 'x', spoiler: 'first', dateEncounterId: 'e1' }).dateEncounterId).toBeUndefined();
+        const off = newCinemaSession({ charId: 'c', title: 'x', spoiler: 'first', meet: 'offline', dateEncounterId: 'e1' });
+        expect(off).toMatchObject({ meet: 'offline', dateEncounterId: 'e1' });
+    });
+
+    it('线上：告诉角色不在一起，不要动作', () => {
+        const text = buildCinemaInstruction({ ...base, session: { title: '钟表馆事件', spoiler: 'first', meet: 'online' } });
+        expect(text).toContain('**不在一起**');
+        expect(text).toContain('不要写动作描写');
+    });
+
+    it('旧记录没有 meet 字段，按线上算', () => {
+        const text = buildCinemaInstruction({ ...base, session: { title: '钟表馆事件', spoiler: 'first' } });
+        expect(text).toContain('**不在一起**');
+    });
+
+    it('线下：并肩坐着，可以有很轻的小动作，接着见面的场景', () => {
+        const text = buildCinemaInstruction({ ...base, session: { title: '钟表馆事件', spoiler: 'first', meet: 'offline' } });
+        expect(text).toContain('**并肩坐在一起**');
+        expect(text).toContain('不要换地方');
+        expect(text).toContain('（往你那边靠了靠）');
+        expect(text).not.toContain('不要写动作描写');
+    });
+
+    it('线下的话存进私聊时带上见面，散场卡写「面对面」', () => {
+        const session = { id: 's1', title: '钟表馆事件', meet: 'offline' as const, dateEncounterId: 'e1' };
+        expect(cinemaMessageMetadata(session)).toMatchObject({ cinemaMeet: 'offline', dateEncounterId: 'e1' });
+        expect(cinemaMessageMetadata({ id: 's1', title: 'x', meet: 'online' as const, dateEncounterId: 'e1' })).not.toHaveProperty('dateEncounterId');
+        expect(buildCinemaEndCardText({ ...session, lines: [] }, '萧逸')).toBe('一起看结束（面对面） · 萧逸｜《钟表馆事件》｜聊了0句');
+    });
+});

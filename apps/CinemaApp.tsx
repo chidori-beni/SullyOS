@@ -14,10 +14,11 @@ import { DB } from '../utils/db';
 import { endAmsgChatPresence, markAmsgStateDirty, startAmsgChatPresence, stopAmsgChatPresence } from '../utils/amsgStateSync';
 import { runCallMemoryPalacePostFlow } from '../utils/memoryPalace/callPostFlow';
 import { endCinemaPresence, getActiveCinemaPresence, touchCinemaPresence } from '../utils/cinema/cinemaPresence';
+import { getActiveDatePresence } from '../utils/datePresence';
 import {
     buildCinemaEndCardText, CINEMA_END_SOURCE, cinemaMessageMetadata,
     describeStatus, describeWork, formatVideoTime, isFrameFresh, mergeCinemaStatus, newCinemaSession, workerHostForDisplay,
-    type CinemaChatLine, type CinemaFrame, type CinemaPairing, type CinemaSession, type CinemaSpoilerMode, type CinemaStatus,
+    type CinemaChatLine, type CinemaFrame, type CinemaMeetMode, type CinemaPairing, type CinemaSession, type CinemaSpoilerMode, type CinemaStatus,
 } from '../utils/cinema/cinema';
 import { clearCinemaPairing, deleteCinemaSession, getCinemaPairing, listCinemaSessions, saveCinemaPairing, saveCinemaSession } from '../utils/cinema/cinemaDb';
 import { createWatchRoom, WatchRoomSocket, type WatchConnState, type WatchMessage } from '../utils/cinema/watchRoomClient';
@@ -50,6 +51,8 @@ const CinemaApp: React.FC = () => {
     const [title, setTitle] = useState('');
     const [episode, setEpisode] = useState('');
     const [spoiler, setSpoiler] = useState<CinemaSpoilerMode>('first');
+    // 线上 / 线下：用户手动选过就听用户的，没选过就看这个角色此刻在不在见面里
+    const [meetChoice, setMeetChoice] = useState<CinemaMeetMode | null>(null);
 
     // 放映室
     const [session, setSession] = useState<CinemaSession | null>(null);
@@ -230,11 +233,21 @@ const CinemaApp: React.FC = () => {
         setView('room');
     };
 
+    /** 这个角色此刻正在见面里的那次见面（见面暂停中不算）。 */
+    const activeEncounterFor = (id: string) => {
+        const c = characters.find(x => x.id === id);
+        const presence = getActiveDatePresence(id) || c?.activeDateEncounter;
+        return presence?.status === 'active' ? presence : null;
+    };
+    const meetingNow = charId ? activeEncounterFor(charId) : null;
+    const meet: CinemaMeetMode = meetChoice || (meetingNow ? 'offline' : 'online');
+
     const startSession = async () => {
         if (!pairing) { addToast('先配对电脑', 'info'); return; }
         if (!charId) { addToast('选一个一起看的人', 'info'); return; }
         if (!title.trim()) { addToast('填一下看什么', 'info'); return; }
-        const s = newCinemaSession({ charId, title, episode, spoiler });
+        const encounter = meet === 'offline' ? activeEncounterFor(charId) : null;
+        const s = newCinemaSession({ charId, title, episode, spoiler, meet, dateEncounterId: encounter?.encounterId });
         await saveCinemaSession(s);
         openSession(s);
     };
@@ -330,6 +343,7 @@ const CinemaApp: React.FC = () => {
                 content: buildCinemaEndCardText(done, char.name),
                 metadata: {
                     source: CINEMA_END_SOURCE, cinemaSessionId: done.id, cinemaTitle: done.title,
+                    ...(done.meet === 'offline' ? { cinemaMeet: 'offline' } : {}),
                     ...(done.episode ? { cinemaEpisode: done.episode } : {}),
                     ...(done.lastVideoTime !== undefined ? { cinemaVideoTime: Math.floor(done.lastVideoTime) } : {}),
                 },
@@ -402,7 +416,7 @@ const CinemaApp: React.FC = () => {
                 <header className="cn-top">
                     <button className="cn-icon" onClick={() => { setView('home'); void reload(); }} aria-label="返回"><ArrowLeft size={20} /></button>
                     <div className="cn-top-title">
-                        <small><span className={`cn-dot-inline ${conn === 'open' && screenOnline ? 'on' : conn === 'open' ? 'wait' : ''}`} title={connLabel} />{char?.name || '?'} 和你一起看</small>
+                        <small><span className={`cn-dot-inline ${conn === 'open' && screenOnline ? 'on' : conn === 'open' ? 'wait' : ''}`} title={connLabel} />{char?.name || '?'} {session.meet === 'offline' ? '坐在你旁边' : '和你隔着屏幕'}一起看</small>
                         <h1>{describeWork(session)}</h1>
                     </div>
                     <button className="cn-end" onClick={() => void endScreening()} disabled={ending}>散场</button>
@@ -488,7 +502,7 @@ const CinemaApp: React.FC = () => {
                     <label className="cn-label">和谁一起看</label>
                     <div className="cn-chars">
                         {characters.map(c => (
-                            <button key={c.id} className={`cn-char ${c.id === charId ? 'on' : ''}`} onClick={() => setCharId(c.id)}>
+                            <button key={c.id} className={`cn-char ${c.id === charId ? 'on' : ''}`} onClick={() => { setCharId(c.id); setMeetChoice(null); }}>
                                 {c.avatar ? <img src={c.avatar} alt="" /> : <span className="cn-char-ph">{c.name.slice(0, 1)}</span>}
                                 <span>{c.name}</span>
                             </button>
@@ -497,6 +511,18 @@ const CinemaApp: React.FC = () => {
                     <label className="cn-label">看什么</label>
                     <input className="cn-field" value={title} onChange={e => setTitle(e.target.value)} placeholder="片名，比如：葬送的芙莉莲" />
                     <input className="cn-field" value={episode} onChange={e => setEpisode(e.target.value)} placeholder="第几集（可以不填）" />
+                    <label className="cn-label">在哪儿看</label>
+                    <div className="cn-seg">
+                        <button className={meet === 'online' ? 'on' : ''} onClick={() => setMeetChoice('online')}>线上 · 各在各的地方</button>
+                        <button className={meet === 'offline' ? 'on' : ''} onClick={() => setMeetChoice('offline')}>线下 · 坐在一起</button>
+                    </div>
+                    <p className="cn-hint">
+                        {meet === 'offline'
+                            ? (meetingNow
+                                ? `你们正在见面，这一场会记在这次见面里。回到见面后 ${char?.name || 'TA'} 记得刚一起看了什么；看片用掉的时间，用见面里的「过场」往后推。`
+                                : `${char?.name || 'TA'} 现在没在见面里。选线下的话就当作你们坐在一起看，但不会接到哪次见面上。`)
+                            : `${char?.name || 'TA'} 知道你们不在一起，是隔着手机同步看。`}
+                    </p>
                     <label className="cn-label">{char?.name || 'TA'} 看过吗</label>
                     <div className="cn-seg">
                         <button className={spoiler === 'first' ? 'on' : ''} onClick={() => setSpoiler('first')}>第一次看</button>

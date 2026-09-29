@@ -20,4 +20,12 @@ describe('私聊上下文里的一起看记录', () => {
         expect(text).toContain('[一起看：钟表馆事件]');
         expect(text).toContain('[聊天]');
     });
+
+    it('线下一起看标成「面对面」', () => {
+        const history = [
+            { id: 1, charId: 'c1', role: 'user', type: 'text', content: '好吓人', timestamp: t0, metadata: { source: 'cinema', cinemaSessionId: 's2', cinemaTitle: '钟表馆事件', cinemaMeet: 'offline', dateEncounterId: 'e1' } },
+        ] as any[];
+        const { apiMessages } = ChatPrompts.buildMessageHistory(history, 10, char, userProfile, []);
+        expect(apiMessages.map((m: any) => String(m.content)).join(' ')).toContain('[一起看（面对面）：钟表馆事件]');
+    });
 });

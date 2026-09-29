@@ -39,9 +39,19 @@ export interface CinemaChatLine {
     withFrame?: boolean;
 }
 
+/**
+ * 线上 = 各在各的地方，隔着手机同步看；线下 = 正在见面，并肩坐着看同一块屏幕。
+ * 开场时萧逸正在见面里就默认线下（交接说明-一起看.md 需求池 ②）。
+ */
+export type CinemaMeetMode = 'online' | 'offline';
+
 export interface CinemaSession {
     id: string;
     charId: string;
+    /** 旧记录没有这个字段，按线上算 */
+    meet?: CinemaMeetMode;
+    /** 线下看时，这一场属于哪一次见面（见面那边据此知道「这次见面里一起看过片」） */
+    dateEncounterId?: string;
     title: string;
     episode?: string;
     spoiler: CinemaSpoilerMode;
@@ -84,9 +94,14 @@ export interface CinemaStatus {
     at: number;
 }
 
-export const newCinemaSession = (input: { charId: string; title: string; episode?: string; spoiler: CinemaSpoilerMode }, now = Date.now()): CinemaSession => ({
+export const newCinemaSession = (
+    input: { charId: string; title: string; episode?: string; spoiler: CinemaSpoilerMode; meet?: CinemaMeetMode; dateEncounterId?: string },
+    now = Date.now(),
+): CinemaSession => ({
     id: `${now.toString(36)}${Math.random().toString(36).slice(2, 7)}`,
     charId: input.charId,
+    meet: input.meet === 'offline' ? 'offline' : 'online',
+    ...(input.meet === 'offline' && input.dateEncounterId ? { dateEncounterId: input.dateEncounterId } : {}),
     title: input.title.trim() || '没起名字的片子',
     episode: input.episode?.trim() || undefined,
     spoiler: input.spoiler,
@@ -178,7 +193,7 @@ export const sessionLinesToApiMessages = (lines: CinemaChatLine[], limit = 30): 
 export interface CinemaPromptContext {
     userName: string;
     charName: string;
-    session: Pick<CinemaSession, 'title' | 'episode' | 'spoiler'>;
+    session: Pick<CinemaSession, 'title' | 'episode' | 'spoiler' | 'meet'>;
     status?: CinemaStatus | null;
     hasFrame: boolean;
 }
@@ -199,14 +214,21 @@ export const buildCinemaInstruction = (ctx: CinemaPromptContext): string => {
     const spoilerRule = session.spoiler === 'seen'
         ? `你以前看过${work}，可以聊细节、埋伏笔、讲${userName}可能没注意到的东西；但**绝对不能剧透${userName}还没看到的剧情**（当前进度之后发生的事），最多意味深长地说一句「后面你就知道了」。`
         : `你是第一次看${work}，跟${userName}一样不知道后面会怎样。可以猜、可以期待、可以被吓到，但不要假装知道后面的剧情。就算你本来对这部作品有印象，也当作没看过。`;
+    const offline = session.meet === 'offline';
+    const scene = offline
+        ? `你们正在见面，此刻**并肩坐在一起**看${work}，看的是同一块屏幕。之前见面里是在哪、是什么情形，照历史里的见面记录接着来，不要换地方。`
+        : `${userName}在电脑上放${work}，你们**不在一起**，各在各的地方隔着手机同步看。不要写成坐在一起，也不要有碰到对方的动作。`;
+    const format = offline
+        ? `- 只输出你要说的话，可以分几行（每行会变成一条气泡）。人就在旁边，可以带一点很轻的小动作，用（）括起来，比如（往你那边靠了靠），一次最多一个、一两句话以内，别写成大段描写。不要加引号或标题。`
+        : `- 只输出你要说的话，可以分几行（每行会变成一条气泡）。不要写动作描写，不要加引号或标题。`;
     return `
 
-【影院 · 一起看】${userName}在电脑上放${work}，你们正在一起看。${userName}的消息是边看边跟你说的。${progress}${pageTitle}${subtitle}
-${hasFrame ? `- 最后一条消息附带了**此刻屏幕上的画面**（电脑截图）。自然地结合画面说话，像坐在旁边一起看的人那样，不要描述「我看到一张截图」，也不要解释你是怎么看到的。画面里有字幕的话，字幕就是当下的台词。` : `- 这一轮没有拿到画面，只根据${userName}说的话和你们之前聊到的内容回应，不要编造画面细节。`}
+【影院 · 一起看】${scene}${userName}的消息是边看边跟你说的。${progress}${pageTitle}${subtitle}
+${hasFrame ? `- 最后一条消息附带了**此刻屏幕上的画面**（电脑截图）。自然地结合画面说话，像${offline ? '坐在旁边' : '一起看'}的人那样，不要描述「我看到一张截图」，也不要解释你是怎么看到的。画面里有字幕的话，字幕就是当下的台词。` : `- 这一轮没有拿到画面，只根据${userName}说的话和你们之前聊到的内容回应，不要编造画面细节。`}
 - ${spoilerRule}
 - 可以有自己的感想、吐槽、偏爱的角色，也可以讲一些更深的东西（镜头、伏笔、隐喻、背景、演员），但一切按你自己的性格和口吻来，不要变成百科或影评腔。
-- 你们在看片，回得**短**一点：通常 1~3 句，口语，像弹幕或贴耳小声说的话；${userName}认真问问题时可以多说一点。
-- 只输出你要说的话，可以分几行（每行会变成一条气泡）。不要写动作描写，不要加引号或标题。`;
+- 你们在看片，回得**短**一点：通常 1~3 句，口语，像弹幕或${offline ? '凑到耳边' : '贴着话筒'}小声说的话；${userName}认真问问题时可以多说一点。
+${format}`;
 };
 
 /** 状态里的播放进度转成人话，给界面上的状态条用。 */
@@ -226,18 +248,20 @@ export const describeStatus = (status: CinemaStatus | null | undefined): string 
 };
 
 /** 散场卡上那一行字（私聊界面显示，角色上下文里也看得到）。 */
-export const buildCinemaEndCardText = (session: Pick<CinemaSession, 'title' | 'episode' | 'lastVideoTime' | 'lines'>, charName: string): string => {
+export const buildCinemaEndCardText = (session: Pick<CinemaSession, 'title' | 'episode' | 'lastVideoTime' | 'lines' | 'meet'>, charName: string): string => {
     const time = formatVideoTime(session.lastVideoTime);
     const turns = session.lines.filter(line => line.role === 'user').length;
-    return `一起看结束 · ${charName}｜${describeWork(session)}${time ? `｜看到 ${time}` : ''}｜聊了${turns}句`;
+    return `一起看结束${session.meet === 'offline' ? '（面对面）' : ''} · ${charName}｜${describeWork(session)}${time ? `｜看到 ${time}` : ''}｜聊了${turns}句`;
 };
 
 /** 存进私聊消息库时挂的 metadata。 */
-export const cinemaMessageMetadata = (session: Pick<CinemaSession, 'id' | 'title' | 'episode'>, videoTime?: number) => ({
+export const cinemaMessageMetadata = (session: Pick<CinemaSession, 'id' | 'title' | 'episode' | 'meet' | 'dateEncounterId'>, videoTime?: number) => ({
     source: CINEMA_MESSAGE_SOURCE,
     cinemaSessionId: session.id,
     cinemaTitle: session.title,
     ...(session.episode ? { cinemaEpisode: session.episode } : {}),
+    ...(session.meet === 'offline' ? { cinemaMeet: 'offline' } : {}),
+    ...(session.meet === 'offline' && session.dateEncounterId ? { dateEncounterId: session.dateEncounterId } : {}),
     ...(typeof videoTime === 'number' && Number.isFinite(videoTime) ? { cinemaVideoTime: Math.floor(videoTime) } : {}),
 });
 

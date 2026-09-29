@@ -1084,8 +1084,22 @@ ${extraBlock ? `\n${extraBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlo
 - 这个内部标记和任何来源标记都不能出现在你的正文、台词或动作描写中。
 - 继续输出当前线下剧本格式；除非内容本身需要，不要因为手机消息就让双方瞬间换场或结束见面。` : '';
 
+        // 影院「线下一起看」：这次见面中并肩坐着看片时说的话，照通话的做法存在消息库里
+        // （source: 'cinema' + cinemaMeet: 'offline' + dateEncounterId），历史里标成 [一起看（面对面）：片名]。
+        const hasFaceToFaceCinema = !!encounterId && allMsgs.some(message => (
+            message.metadata?.source === 'cinema'
+            && message.metadata?.cinemaMeet === 'offline'
+            && message.metadata?.dateEncounterId === encounterId
+        ));
+        const cinemaContinuityBlock = hasFaceToFaceCinema ? `
+### 这次见面中一起看过片（只读来源）
+历史中的「[一起看（面对面）：片名]」是你们这次见面时，并肩坐着看片（影院）时说的话，已经按时间顺序在下方出现一次。
+- 这是真实发生过的一段共同经历，自然地承接和记得它，不要当作没发生，也不要整段复述。
+- 看片花掉的时间由${userProfile?.name || '用户'}回到见面后决定怎么推进（比如用过场）；你不要自己跳时间、换地方，也不要替对方决定片子看完了没有。
+- 继续输出当前线下剧本格式，不要沿用看片时的短句弹幕格式。` : '';
+
         // SAR 模块（恐龙咖啡馆）正在生效时，把它的上下文也挂上去 —— 合上游时新增。
-        const systemPrompt = baseSystemPrompt + phoneContinuityBlock
+        const systemPrompt = baseSystemPrompt + phoneContinuityBlock + cinemaContinuityBlock
             + ContextBuilder.buildSARModuleContext(char, userProfile, 'date');
 
         // 每轮轮换的聚焦线索：把注意力推向不同的具体方向，相邻回复天然有差异
