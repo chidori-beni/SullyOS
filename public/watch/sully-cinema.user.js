@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sully 影院 · 暂停同步
 // @namespace    https://chidori-beni.github.io/SullyOS/
-// @version      0.1.0
+// @version      0.1.1
 // @description  在 B站 / 腾讯视频 / 优酷 / 爱奇艺 看片时，把播放进度、暂停、第几集告诉手机上 Sully 影院里的角色。
 // @author       SullyOS
 // @match        *://www.bilibili.com/video/*
@@ -43,7 +43,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.1.0';
+  const VERSION = '0.1.1';
   const PAIR_KEY = 'sully-watch-pair';
   const TICK_MS = 15000;
   const MIN_GAP_MS = 1500;
@@ -111,6 +111,39 @@
   let pending = null;
   let warnedNoPair = false;
 
+  // ───────── 好几个标签页都开着视频时，只让一个报 ─────────
+  // 09-30 实测：同时开了两个 B站 视频，共享的是 A、放的也是 A，B 暂停着，
+  // 但 B 暂停中的心跳把 A 的进度盖掉了。现在「当班」的标签页才报：
+  //   · 按了播放的标签页接班（你正在放的，就是你在看的）
+  //   · 正在放的标签页，可以从「暂停着的」或「5 分钟没动静的」当班手里接班
+  //   · 暂停着、又不当班的标签页，一声不吭
+  // 当班记录放在油猴的存储里，所有标签页共用。
+  const ACTIVE_KEY = 'sully-active-tab';
+  const ACTIVE_STALE_MS = 5 * 60 * 1000;
+  const TAB_ID = Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+  const readActive = () => {
+    try {
+      const raw = GM_getValue(ACTIVE_KEY, null);
+      const active = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      return active && typeof active.id === 'string' ? active : null;
+    } catch (e) { return null; }
+  };
+
+  /** 这一次该不该我报；该的话顺手把当班记录写成我（刷新时间和暂停状态）。 */
+  const mayReport = (event) => {
+    const active = readActive();
+    const playing = !!video && !video.paused && !video.ended;
+    const mine = !!active && active.id === TAB_ID;
+    const stale = !active || Date.now() - active.at > ACTIVE_STALE_MS;
+    const take = mine
+      || event === 'play'
+      || (playing && (stale || active.paused))
+      || (!active && event === 'found');
+    if (take) GM_setValue(ACTIVE_KEY, JSON.stringify({ id: TAB_ID, at: Date.now(), paused: !playing }));
+    return take;
+  };
+
   const send = (event) => {
     const pair = readPair();
     if (!pair) {
@@ -119,6 +152,7 @@
       return;
     }
     if (!video) return;
+    if (!mayReport(event)) return;
     const payload = {
       source: 'userscript',
       version: VERSION,

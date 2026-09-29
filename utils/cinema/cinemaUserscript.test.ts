@@ -24,12 +24,13 @@ let attrs: Record<string, string> = {};
 let pageStorage: Record<string, string> = {};
 let title = '';
 
-const setup = (url: string, stored: Record<string, unknown> = {}) => {
-    const store = new Map<string, unknown>(Object.entries(stored));
+/** tab：模拟同一个浏览器里的另一个标签页——油猴存储共用（store），网页里的 video 各是各的（videos） */
+const setup = (url: string, stored: Record<string, unknown> = {}, tab?: { store: Map<string, unknown>; videos: FakeVideo[] }) => {
+    const store = tab?.store ?? new Map<string, unknown>(Object.entries(stored));
     const requests: any[] = [];
     const fakeDocument = {
         get title() { return title; },
-        querySelectorAll: () => videos,
+        querySelectorAll: () => tab?.videos ?? videos,
         documentElement: {
             setAttribute: (k: string, v: string) => { attrs[k] = v; },
             getAttribute: (k: string) => attrs[k] ?? null,
@@ -141,5 +142,55 @@ describe('暂停同步小插件', () => {
         env.start();
         vi.advanceTimersByTime(20_000);
         expect(env.requests).toHaveLength(0);
+    });
+
+    it('同时开着两个视频：只有在放的那个报，暂停着的那个不许盖掉进度（09-30 实测）', () => {
+        const shared = new Map<string, unknown>([['sully-watch-pair', PAIR]]);
+        const tabA = { store: shared, videos: [new FakeVideo(1440)] };
+        const tabB = { store: shared, videos: [new FakeVideo(2000)] };
+        const a = setup('https://www.bilibili.com/video/BVa', {}, tabA);
+        const b = setup('https://www.bilibili.com/video/BVb', {}, tabB);
+        a.start();
+        b.start();
+        vi.advanceTimersByTime(2000);
+
+        // B 先放了一下又暂停，然后 A 开始放
+        const vb = tabB.videos[0];
+        vb.paused = false; vb.dispatch('play');
+        vi.advanceTimersByTime(2000);
+        vb.paused = true; vb.currentTime = 50; vb.dispatch('pause');
+        vi.advanceTimersByTime(2000);
+        const va = tabA.videos[0];
+        va.paused = false; va.currentTime = 300; va.dispatch('play');
+        vi.advanceTimersByTime(2000);
+
+        const bBefore = b.requests.length;
+        // 之后十分钟：A 一直在放，B 一直暂停着
+        for (let i = 0; i < 120; i += 1) { va.currentTime += 5; vi.advanceTimersByTime(5000); }
+        expect(b.requests.length).toBe(bBefore); // B 一声不吭
+        const lastA = a.requests[a.requests.length - 1].body.payload;
+        expect(lastA).toMatchObject({ paused: false, event: 'tick' });
+        expect(lastA.time).toBeGreaterThan(300);
+    });
+
+    it('在当班的标签页暂停后，去另一个标签页按播放，就换那个当班', () => {
+        const shared = new Map<string, unknown>([['sully-watch-pair', PAIR]]);
+        const tabA = { store: shared, videos: [new FakeVideo(1440)] };
+        const tabB = { store: shared, videos: [new FakeVideo(2000)] };
+        const a = setup('https://www.bilibili.com/video/BVa', {}, tabA);
+        const b = setup('https://www.bilibili.com/video/BVb', {}, tabB);
+        a.start(); b.start();
+        const va = tabA.videos[0];
+        const vb = tabB.videos[0];
+        va.paused = false; va.dispatch('play');
+        vi.advanceTimersByTime(2000);
+        va.paused = true; va.dispatch('pause');
+        vi.advanceTimersByTime(2000);
+        const aBefore = a.requests.length;
+        vb.paused = false; vb.currentTime = 90; vb.dispatch('play');
+        vi.advanceTimersByTime(2000);
+        expect(b.requests[b.requests.length - 1].body.payload).toMatchObject({ event: 'play', time: 90 });
+        vi.advanceTimersByTime(5 * 60_000);
+        expect(a.requests.length).toBe(aBefore); // A 暂停着、已经不当班，不再报心跳
     });
 });
