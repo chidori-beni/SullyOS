@@ -16,7 +16,7 @@ import { runCallMemoryPalacePostFlow } from '../utils/memoryPalace/callPostFlow'
 import { endCinemaPresence, getActiveCinemaPresence, touchCinemaPresence } from '../utils/cinema/cinemaPresence';
 import {
     buildCinemaEndCardText, CINEMA_END_SOURCE, cinemaMessageMetadata,
-    describeStatus, describeWork, formatVideoTime, isFrameFresh, newCinemaSession, workerHostForDisplay,
+    describeStatus, describeWork, formatVideoTime, isFrameFresh, mergeCinemaStatus, newCinemaSession, workerHostForDisplay,
     type CinemaChatLine, type CinemaFrame, type CinemaPairing, type CinemaSession, type CinemaSpoilerMode, type CinemaStatus,
 } from '../utils/cinema/cinema';
 import { clearCinemaPairing, deleteCinemaSession, getCinemaPairing, listCinemaSessions, saveCinemaPairing, saveCinemaSession } from '../utils/cinema/cinemaDb';
@@ -67,6 +67,11 @@ const CinemaApp: React.FC = () => {
     const frameWaiters = useRef(new Map<string, (f: CinemaFrame) => void>());
     const frameRef = useRef<CinemaFrame | null>(null);
     const statusRef = useRef<CinemaStatus | null>(null);
+    // 观影端（画面）和油猴小插件（进度 / 暂停）各报各的，合成后才是 status
+    const screenStatusRef = useRef<CinemaStatus | null>(null);
+    const playerStatusRef = useRef<CinemaStatus | null>(null);
+    const sessionRef = useRef<CinemaSession | null>(null);
+    const progressSavedAt = useRef(0);
     const listRef = useRef<HTMLDivElement>(null);
 
     const reload = useCallback(async () => {
@@ -98,21 +103,56 @@ const CinemaApp: React.FC = () => {
                 if (waiter) { frameWaiters.current.delete(f.requestId); waiter(f); }
             }
         } else if (msg.type === 'status' || msg.type === 'player') {
+            const isPlayer = msg.type === 'player';
             const s: CinemaStatus = {
-                mode: msg.mode === 'local' || msg.mode === 'share' ? msg.mode : undefined,
+                mode: isPlayer ? 'site' : msg.mode === 'local' || msg.mode === 'share' ? msg.mode : undefined,
+                site: typeof msg.site === 'string' ? msg.site : undefined,
                 title: typeof msg.title === 'string' ? msg.title : undefined,
                 time: typeof msg.time === 'number' ? msg.time : undefined,
                 duration: typeof msg.duration === 'number' ? msg.duration : undefined,
                 paused: typeof msg.paused === 'boolean' ? msg.paused : undefined,
                 subtitle: typeof msg.subtitle === 'string' ? msg.subtitle : undefined,
                 sharing: typeof msg.sharing === 'boolean' ? msg.sharing : undefined,
-                at: Date.now(),
+                // 小插件的状态以 Worker 收到的时刻为准：刚连上时补发的可能是几小时前的
+                at: isPlayer && typeof msg.at === 'number' ? msg.at : Date.now(),
             };
-            statusRef.current = s;
-            setStatus(s);
-            if (msg.type === 'status') setScreenOnline(true);
+            if (isPlayer) playerStatusRef.current = s; else screenStatusRef.current = s;
+            refreshStatus();
+            if (!isPlayer) setScreenOnline(true);
+            if (isPlayer) rememberProgress(s);
         }
     }, []);
+
+    const refreshStatus = () => {
+        const merged = mergeCinemaStatus(screenStatusRef.current, playerStatusRef.current);
+        statusRef.current = merged;
+        setStatus(merged);
+    };
+
+    /**
+     * 记住看到哪：小插件报来的进度，暂停 / 看完时马上存，平时一分钟最多存一次。
+     * 以后打开这一场，「最近看过」里就写着看到几分几秒。
+     */
+    const rememberProgress = (s: CinemaStatus) => {
+        const current = sessionRef.current;
+        if (!current || typeof s.time !== 'number' || Date.now() - s.at > 60_000) return;
+        const urgent = s.paused === true;
+        if (!urgent && Date.now() - progressSavedAt.current < 60_000) return;
+        progressSavedAt.current = Date.now();
+        const next = { ...current, lastVideoTime: s.time };
+        sessionRef.current = next;
+        setSession(next);
+        void saveCinemaSession(next).catch(error => console.warn('[cinema] 存进度失败', error));
+    };
+
+    useEffect(() => { sessionRef.current = session; }, [session]);
+    // 小插件停了（关了标签页）要能看出来：定时按新鲜度重算一次
+    useEffect(() => {
+        if (view !== 'room') return;
+        const timer = setInterval(refreshStatus, 10_000);
+        return () => clearInterval(timer);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [view]);
 
     const needSocket = (view === 'pair' || view === 'room') && !!pairing;
     useEffect(() => {
@@ -185,6 +225,8 @@ const CinemaApp: React.FC = () => {
         setSession(s);
         setFrame(null); frameRef.current = null;
         setStatus(null); statusRef.current = null;
+        screenStatusRef.current = null; playerStatusRef.current = null;
+        progressSavedAt.current = 0;
         setView('room');
     };
 

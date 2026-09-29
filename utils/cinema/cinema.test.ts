@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    isPlayerFresh, mergeCinemaStatus, PLAYER_STALE_MS,
     buildCinemaEndCardText, cinemaMessageMetadata,
     buildCinemaInstruction, cleanCinemaReply, describeStatus, formatVideoTime, isFrameFresh, newCinemaSession,
     normalizeWorkerInput, sessionLinesToApiMessages, watchSocketUrl, workerHostForDisplay,
@@ -108,5 +109,37 @@ describe('影院 · 存进私聊', () => {
             lines: [{ role: 'user', text: 'a', at: 1 }, { role: 'char', text: 'b', at: 2 }, { role: 'user', text: 'c', at: 3 }],
         }, '萧逸');
         expect(text).toBe('一起看结束 · 萧逸｜《钟表馆事件》 第2集｜看到 23:10｜聊了2句');
+    });
+});
+
+describe('影院 · 小插件的进度', () => {
+    const now = 10_000_000;
+    const share = { mode: 'share' as const, sharing: true, at: now };
+    const player = { mode: 'site' as const, site: 'B站', title: '钟表馆事件 第2集', time: 600, duration: 1440, paused: true, at: now - 5000 };
+
+    it('小插件在报就用它的进度和暂停', () => {
+        expect(mergeCinemaStatus(share, player, now)).toMatchObject({ mode: 'site', site: 'B站', time: 600, paused: true });
+    });
+
+    it('播放中 45 秒没报就当它不在了，退回观影端', () => {
+        const playing = { ...player, paused: false, at: now - PLAYER_STALE_MS - 1 };
+        expect(isPlayerFresh(playing, now)).toBe(false);
+        expect(mergeCinemaStatus(share, playing, now)).toBe(share);
+    });
+
+    it('暂停中可以留久一点', () => {
+        expect(isPlayerFresh({ ...player, at: now - 10 * 60_000 }, now)).toBe(true);
+    });
+
+    it('本地片在观影端里放时，观影端自己的进度优先', () => {
+        const local = { mode: 'local' as const, time: 30, at: now };
+        expect(mergeCinemaStatus(local, player, now)).toBe(local);
+    });
+
+    it('状态条和提示词都写上平台、暂停和标题', () => {
+        expect(describeStatus({ ...player })).toBe('B站 · ⏸ 暂停 10:00 / 24:00');
+        const text = buildCinemaInstruction({ userName: '千夜', charName: '萧逸', session: { title: '钟表馆事件', spoiler: 'first' }, status: player, hasFrame: false });
+        expect(text).toContain('（暂停中）');
+        expect(text).toContain('播放页标题是「钟表馆事件 第2集」');
     });
 });

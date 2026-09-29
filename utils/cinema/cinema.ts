@@ -65,9 +65,16 @@ export interface CinemaFrame {
     requestId?: string;
 }
 
-/** 电脑发来的播放状态。 */
+/**
+ * 播放状态。三种来源：
+ *   local = 观影端网页里直接放的本地视频（精确）
+ *   share = 观影端在共享别的网页 / 窗口（只知道在不在共享，不知道进度）
+ *   site  = 油猴小插件从 B站 / 腾讯 / 优酷 / 爱奇艺 的播放器里读到的（精确，含暂停）
+ */
 export interface CinemaStatus {
-    mode?: 'share' | 'local';
+    mode?: 'share' | 'local' | 'site';
+    /** site 模式：哪个平台，比如「B站」 */
+    site?: string;
     title?: string;
     time?: number;
     duration?: number;
@@ -187,12 +194,14 @@ export const buildCinemaInstruction = (ctx: CinemaPromptContext): string => {
     const duration = formatVideoTime(status?.duration);
     const progress = time ? `现在放到 ${time}${duration ? ` / ${duration}` : ''}${status?.paused ? '（暂停中）' : ''}。` : '';
     const subtitle = status?.subtitle?.trim() ? `当前字幕：「${status.subtitle.trim().slice(0, 200)}」。` : '';
+    // 小插件读到的播放页标题，常带着第几集 / 分P 名，帮角色对上是哪一集
+    const pageTitle = status?.mode === 'site' && status.title?.trim() ? `电脑上的播放页标题是「${status.title.trim().slice(0, 80)}」。` : '';
     const spoilerRule = session.spoiler === 'seen'
         ? `你以前看过${work}，可以聊细节、埋伏笔、讲${userName}可能没注意到的东西；但**绝对不能剧透${userName}还没看到的剧情**（当前进度之后发生的事），最多意味深长地说一句「后面你就知道了」。`
         : `你是第一次看${work}，跟${userName}一样不知道后面会怎样。可以猜、可以期待、可以被吓到，但不要假装知道后面的剧情。就算你本来对这部作品有印象，也当作没看过。`;
     return `
 
-【影院 · 一起看】${userName}在电脑上放${work}，你们正在一起看。${userName}的消息是边看边跟你说的。${progress}${subtitle}
+【影院 · 一起看】${userName}在电脑上放${work}，你们正在一起看。${userName}的消息是边看边跟你说的。${progress}${pageTitle}${subtitle}
 ${hasFrame ? `- 最后一条消息附带了**此刻屏幕上的画面**（电脑截图）。自然地结合画面说话，像坐在旁边一起看的人那样，不要描述「我看到一张截图」，也不要解释你是怎么看到的。画面里有字幕的话，字幕就是当下的台词。` : `- 这一轮没有拿到画面，只根据${userName}说的话和你们之前聊到的内容回应，不要编造画面细节。`}
 - ${spoilerRule}
 - 可以有自己的感想、吐槽、偏爱的角色，也可以讲一些更深的东西（镜头、伏笔、隐喻、背景、演员），但一切按你自己的性格和口吻来，不要变成百科或影评腔。
@@ -207,6 +216,10 @@ export const describeStatus = (status: CinemaStatus | null | undefined): string 
     if (status.mode === 'local' && time) {
         const dur = formatVideoTime(status.duration);
         return `${status.paused ? '暂停' : '播放中'} ${time}${dur ? ` / ${dur}` : ''}`;
+    }
+    if (status.mode === 'site' && time) {
+        const dur = formatVideoTime(status.duration);
+        return `${status.site ? `${status.site} · ` : ''}${status.paused ? '⏸ 暂停' : '播放中'} ${time}${dur ? ` / ${dur}` : ''}`;
     }
     if (status.mode === 'share') return status.sharing ? '电脑正在共享画面' : '电脑还没开始共享画面';
     return '';
@@ -227,3 +240,29 @@ export const cinemaMessageMetadata = (session: Pick<CinemaSession, 'id' | 'title
     ...(session.episode ? { cinemaEpisode: session.episode } : {}),
     ...(typeof videoTime === 'number' && Number.isFinite(videoTime) ? { cinemaVideoTime: Math.floor(videoTime) } : {}),
 });
+
+/** 小插件多久没报就当它不在了（关了标签页、换了电脑）。播放中每 15 秒报一次。 */
+export const PLAYER_STALE_MS = 45_000;
+/** 暂停中不会一直报，暂停的状态留久一点。 */
+export const PLAYER_PAUSED_STALE_MS = 30 * 60 * 1000;
+
+/** 小插件报的状态还算不算数。 */
+export const isPlayerFresh = (player: CinemaStatus | null | undefined, now = Date.now()): player is CinemaStatus =>
+    !!player && now - player.at <= (player.paused ? PLAYER_PAUSED_STALE_MS : PLAYER_STALE_MS);
+
+/**
+ * 观影端（画面）和小插件（进度）各报各的，合成一份给界面和提示词用：
+ * 小插件还在报就用它的进度 / 暂停 / 标题，否则退回观影端的。
+ */
+export const mergeCinemaStatus = (
+    screen: CinemaStatus | null | undefined,
+    player: CinemaStatus | null | undefined,
+    now = Date.now(),
+): CinemaStatus | null => {
+    if (isPlayerFresh(player, now)) {
+        // 本地片在观影端里放时，观影端自己的进度更准，小插件不会出现在那个页面上
+        if (screen?.mode === 'local' && typeof screen.time === 'number') return screen;
+        return { ...player, mode: 'site', subtitle: player.subtitle || screen?.subtitle };
+    }
+    return screen || null;
+};

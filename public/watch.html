@@ -48,6 +48,10 @@
   .hidden { display: none !important; }
   .resume { background: var(--panel2); border-radius: 10px; padding: 10px 14px; margin-bottom: 10px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
   code { color: var(--accent); }
+  a.btn { display: inline-block; text-decoration: none; border-radius: 10px; padding: 9px 16px; background: var(--accent); color: var(--accent-ink); font-weight: 700; }
+  ol.steps { margin: 8px 0 0; padding-left: 20px; font-size: 14px; color: var(--sub); }
+  ol.steps li { margin-bottom: 6px; }
+  ol.steps b { color: var(--ink); }
 </style>
 </head>
 <body>
@@ -116,6 +120,22 @@
     <p class="hint" style="margin-top:0">先点一下，看看手机那边能不能看到画面。有的平台（会员剧、正版平台）有防录屏，截出来是黑的。</p>
     <div class="row"><button id="testBtn">试截一张</button></div>
     <div class="shot hidden" id="shotBox"><img id="shotImg" alt="" /><div id="shotText" class="hint"></div></div>
+  </section>
+
+  <!-- ④ 暂停同步小插件 -->
+  <section class="card">
+    <h2><span class="num">4</span> 暂停同步小插件（看 B站 / 腾讯 / 优酷 / 爱奇艺 时用）</h2>
+    <p class="hint" style="margin-top:0">装上以后，你在视频网站上一暂停、一拖进度，手机上的角色马上就知道；也会自动记住看到几分几秒、第几集。<br>
+    只传进度、暂停和网页标题，不传画面（画面还是靠上面的「共享」）。<b>装一次就行</b>，放本地视频不需要它。</p>
+    <div class="row" style="margin-top:8px"><span class="pill" id="pluginPill">还没检测到小插件</span></div>
+    <ol class="steps">
+      <li>先给浏览器装 <b>Tampermonkey（篡改猴）</b>扩展：Chrome 在「Chrome 网上应用店」搜 Tampermonkey；360 极速浏览器在「扩展中心」里搜。<br>
+        装完如果提示要开「开发者模式」或「允许运行用户脚本」，照提示去扩展管理页把它打开。</li>
+      <li>点这个按钮，Tampermonkey 会弹出安装页，点「安装」：<br><a class="btn" id="installLink" href="watch/sully-cinema.user.js" target="_blank" rel="noopener" style="margin-top:6px">安装小插件</a></li>
+      <li>装好后<b>刷新这一页</b>，上面变成「✓ 小插件已装好」就行。</li>
+      <li>去视频网站放一下。第一次报进度时 Tampermonkey 可能会问要不要允许连接 <code>workers.dev</code>，选「<b>总是允许</b>」。</li>
+    </ol>
+    <p class="hint" id="playerText">还没收到小插件的进度。</p>
   </section>
 
   <section class="card">
@@ -200,7 +220,9 @@
     sock.onmessage = (e) => {
       let msg; try { msg = JSON.parse(e.data); } catch { return; }
       if (!msg || typeof msg.type !== 'string') return;
-      if (msg.type === 'presence') {
+      if (msg.type === 'player') {
+        showPlayer(msg);
+      } else if (msg.type === 'presence') {
         const on = Number(msg.phone) > 0;
         setPill($('phonePill'), on ? 'ok' : '', on ? '手机在线' : '手机不在线');
       } else if (msg.type === 'capture-request') {
@@ -490,6 +512,25 @@
   } catch {
     setInterval(onTimer, 1000);
   }
+
+  // ───────── ④ 小插件 ─────────
+  // 小插件在这一页上会留下 data-sully-userscript 记号（它还会把配对信息抄走）
+  const checkPlugin = () => {
+    const ver = document.documentElement.getAttribute('data-sully-userscript');
+    if (!ver) { setPill($('pluginPill'), '', '还没检测到小插件'); return; }
+    const paired = document.documentElement.getAttribute('data-sully-userscript-paired') === '1';
+    setPill($('pluginPill'), paired ? 'ok' : 'warn', paired ? `✓ 小插件已装好（v${ver}）` : `小插件已装好（v${ver}），但这一页还没配对`);
+  };
+  setInterval(checkPlugin, 2000);
+  setTimeout(checkPlugin, 300);
+
+  // 放映室会把小插件报来的进度也转给这一页，在这里显示出来方便确认
+  const showPlayer = (msg) => {
+    const when = typeof msg.at === 'number' ? new Date(msg.at).toLocaleTimeString() : '';
+    const state = msg.paused ? '⏸ 暂停' : '▶ 播放中';
+    const time = fmt(msg.time), dur = fmt(msg.duration);
+    $('playerText').textContent = `最近一次（${when}）：${msg.site || ''} ${state} ${time}${dur ? ' / ' + dur : ''}　${msg.title || ''}`;
+  };
 
   // ───────── ③ 试截一张 ─────────
   $('testBtn').onclick = async () => {
