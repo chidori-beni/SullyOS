@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sully 影院 · 观影端</title>
+<!--
+  影院的电脑端。跟 Sully 放在同一个站点，但不加载 Sully 本体（角色、API 都在手机上）。
+  这一页只做两件事：把画面截给手机、报播放进度。经用户自己的 amsg Worker 中转
+  （worker/amsg/src/watchRoom.ts）。手机端见 apps/CinemaApp.tsx。
+  配对信息存在本页 localStorage：sully-watch-worker / sully-watch-pair。
+-->
+<style>
+  :root {
+    --bg: #16131a; --panel: #221e27; --panel2: #2c2732; --ink: #f3ece4; --sub: #a79d97;
+    --line: #3a3440; --accent: #e8a45c; --accent-ink: #2a1a0c; --ok: #5fce7c; --warn: #e6c25a; --bad: #ef8a8a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.6 system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 24px 16px 60px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .lead { color: var(--sub); margin: 0 0 20px; font-size: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px; margin-bottom: 16px; }
+  .card h2 { font-size: 16px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+  .num { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 13px; font-weight: 800; }
+  label { display: block; font-size: 13px; color: var(--sub); margin: 10px 0 6px; }
+  input[type=text] { width: 100%; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; color: var(--ink); font-size: 15px; outline: none; }
+  input[type=text]:focus { border-color: var(--accent); }
+  input.code { font-size: 26px; letter-spacing: .3em; text-transform: uppercase; font-family: ui-monospace, Consolas, monospace; max-width: 260px; }
+  button { font: inherit; cursor: pointer; border-radius: 10px; border: 1px solid var(--line); background: var(--panel2); color: var(--ink); padding: 9px 16px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
+  button:disabled { opacity: .45; cursor: default; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  .hint { font-size: 13px; color: var(--sub); margin: 8px 0 0; }
+  .err { color: var(--bad); font-size: 14px; margin-top: 10px; white-space: pre-wrap; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 3px 10px; border-radius: 999px; background: var(--panel2); color: var(--sub); }
+  .pill::before { content: ''; width: 8px; height: 8px; border-radius: 999px; background: #6b6470; }
+  .pill.ok { color: var(--ok); } .pill.ok::before { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .pill.warn { color: var(--warn); } .pill.warn::before { background: var(--warn); }
+  .tabs { display: flex; gap: 6px; background: var(--panel2); padding: 4px; border-radius: 12px; width: fit-content; margin-bottom: 14px; }
+  .tabs button { border: 0; background: none; color: var(--sub); }
+  .tabs button.on { background: var(--accent); color: var(--accent-ink); font-weight: 700; }
+  video.player { width: 100%; max-height: 70vh; background: #000; border-radius: 12px; display: block; }
+  video.preview { width: 320px; max-width: 100%; background: #000; border-radius: 10px; display: block; margin-top: 12px; }
+  .shot { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; margin-top: 12px; }
+  .shot img { width: 320px; max-width: 100%; border-radius: 10px; border: 1px solid var(--line); background: #000; }
+  .log { font: 12px/1.6 ui-monospace, Consolas, monospace; color: var(--sub); max-height: 160px; overflow: auto; white-space: pre-wrap; }
+  .hidden { display: none !important; }
+  .resume { background: var(--panel2); border-radius: 10px; padding: 10px 14px; margin-bottom: 10px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  code { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🎬 Sully 影院 · 观影端</h1>
+  <p class="lead">视频在这台电脑上放，手机上的角色经这一页看到画面、陪你聊。<br>请用 <b>Chrome</b> 或 <b>360 极速浏览器</b>（要「共享屏幕」功能）。</p>
+
+  <!-- ① 连接 -->
+  <section class="card" id="pairCard">
+    <h2><span class="num">1</span> 连上手机</h2>
+    <div id="pairForm">
+      <label>Worker 地址（手机「影院 → 配对电脑」页面上写着；只填 <code>cyoutatarou</code> 这样的子域也行）</label>
+      <input type="text" id="workerInput" placeholder="sullyos-amsg.xxx.workers.dev" autocomplete="off" />
+      <label>配对码（手机上显示的 6 位）</label>
+      <input type="text" id="codeInput" class="code" maxlength="7" placeholder="ABC123" autocomplete="off" />
+      <div class="row"><button class="primary" id="pairBtn">配对</button></div>
+      <div class="err" id="pairErr"></div>
+    </div>
+    <div id="pairedBox" class="hidden">
+      <div class="row" style="margin-top:0">
+        <span class="pill" id="connPill">连接中…</span>
+        <span class="pill" id="phonePill">手机不在线</span>
+        <span class="hint" id="roomText" style="margin:0"></span>
+      </div>
+      <div class="row"><button id="unpairBtn">解除配对</button></div>
+    </div>
+  </section>
+
+  <!-- ② 片源 -->
+  <section class="card" id="sourceCard">
+    <h2><span class="num">2</span> 放什么</h2>
+    <div class="tabs">
+      <button id="tabShare" class="on">共享网页 / 窗口</button>
+      <button id="tabLocal">播放本地视频</button>
+    </div>
+
+    <div id="sharePane">
+      <p class="hint" style="margin-top:0">B站、腾讯视频、优酷、爱奇艺……在另一个标签页里照常打开播放，然后在这里点「选择要共享的画面」，选那个标签页。<br>
+      用自己的播放器（PotPlayer 之类）看本地视频也行：选「窗口」，选那个播放器。<br>
+      <b>这一页可以放在后台</b>，别关掉就行。</p>
+      <div class="row">
+        <button class="primary" id="shareBtn">选择要共享的画面</button>
+        <button id="stopShareBtn" class="hidden">停止共享</button>
+      </div>
+      <video class="preview hidden" id="sharePreview" muted playsinline autoplay></video>
+    </div>
+
+    <div id="localPane" class="hidden">
+      <p class="hint" style="margin-top:0">选一个电脑里的视频直接在这里放，进度会自动记住，下次选同一个文件接着看。<br>
+      有外挂字幕的话一起选上（支持 .srt / .vtt）。浏览器放不了的格式（有的 mkv、HEVC）或者没声音时，改用自己的播放器 + 左边的「共享窗口」。</p>
+      <div class="row">
+        <button class="primary" id="pickVideoBtn">选择视频文件</button>
+        <button id="pickSubBtn">加字幕</button>
+        <input type="file" id="videoFile" accept="video/*,.mkv" class="hidden" />
+        <input type="file" id="subFile" accept=".srt,.vtt" class="hidden" />
+        <span class="hint" id="localName" style="margin:0"></span>
+      </div>
+      <div class="resume hidden" id="resumeBox"><span id="resumeText"></span><button id="restartBtn">从头开始</button></div>
+      <video class="player hidden" id="localPlayer" controls playsinline></video>
+    </div>
+  </section>
+
+  <!-- ③ 试截一张 -->
+  <section class="card">
+    <h2><span class="num">3</span> 试截一张</h2>
+    <p class="hint" style="margin-top:0">先点一下，看看手机那边能不能看到画面。有的平台（会员剧、正版平台）有防录屏，截出来是黑的。</p>
+    <div class="row"><button id="testBtn">试截一张</button></div>
+    <div class="shot hidden" id="shotBox"><img id="shotImg" alt="" /><div id="shotText" class="hint"></div></div>
+  </section>
+
+  <section class="card">
+    <h2>记录</h2>
+    <div class="log" id="log"></div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const LS_WORKER = 'sully-watch-worker';
+  const LS_PAIR = 'sully-watch-pair';
+  const LS_POS = 'sully-watch-pos:';
+
+  const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const lsDel = (k) => { try { localStorage.removeItem(k); } catch {} };
+
+  const log = (text) => {
+    const el = $('log');
+    const t = new Date().toLocaleTimeString();
+    el.textContent = `[${t}] ${text}\n` + el.textContent.slice(0, 6000);
+  };
+
+  // 跟 utils/cinema/cinema.ts 的 normalizeWorkerInput 同一套规则
+  const normalizeWorker = (raw) => {
+    const text = String(raw || '').trim().replace(/\/+$/, '');
+    if (!text) return '';
+    if (/^https?:\/\//i.test(text)) return text;
+    if (text.includes('.')) return 'https://' + text;
+    return `https://sullyos-amsg.${text}.workers.dev`;
+  };
+  const fmt = (s) => {
+    if (typeof s !== 'number' || !isFinite(s) || s < 0) return '';
+    s = Math.floor(s);
+    const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+    const p = (n) => String(n).padStart(2, '0');
+    return h ? `${h}:${p(m)}:${p(sec)}` : `${m}:${p(sec)}`;
+  };
+
+  // ───────── ① 配对与连接 ─────────
+  let pair = null;
+  try { pair = JSON.parse(lsGet(LS_PAIR) || 'null'); } catch {}
+  $('workerInput').value = lsGet(LS_WORKER) || '';
+
+  let ws = null, wsRetry = 0, wsTimer = null, pingTimer = null, stopped = false;
+
+  const setPill = (el, cls, text) => { el.className = 'pill ' + (cls || ''); el.textContent = text; };
+
+  const showPaired = () => {
+    $('pairForm').classList.toggle('hidden', !!pair);
+    $('pairedBox').classList.toggle('hidden', !pair);
+    if (pair) $('roomText').textContent = `房间 ${pair.code}`;
+  };
+
+  const send = (msg) => {
+    if (!ws || ws.readyState !== 1) return false;
+    const text = JSON.stringify(msg);
+    ws.send(text);
+    return true;
+  };
+
+  const connect = () => {
+    if (!pair) return;
+    clearTimeout(wsTimer);
+    try { ws && ws.close(); } catch {}
+    setPill($('connPill'), 'warn', '连接中…');
+    const base = pair.workerUrl.replace(/\/+$/, '').replace(/^http/i, 'ws');
+    const url = `${base}/watch-room/ws?room=${encodeURIComponent(pair.code)}&secret=${encodeURIComponent(pair.secret)}&role=screen`;
+    const sock = new WebSocket(url);
+    ws = sock;
+    sock.onopen = () => {
+      wsRetry = 0;
+      $('pairForm').classList.add('hidden');
+      setPill($('connPill'), 'ok', '已连上中转');
+      log('已连上放映室');
+      clearInterval(pingTimer);
+      pingTimer = setInterval(() => send({ type: 'ping' }), 25000);
+      pushStatus();
+    };
+    sock.onmessage = (e) => {
+      let msg; try { msg = JSON.parse(e.data); } catch { return; }
+      if (!msg || typeof msg.type !== 'string') return;
+      if (msg.type === 'presence') {
+        const on = Number(msg.phone) > 0;
+        setPill($('phonePill'), on ? 'ok' : '', on ? '手机在线' : '手机不在线');
+      } else if (msg.type === 'capture-request') {
+        captureAndSend('request', msg.requestId);
+      }
+    };
+    sock.onclose = (e) => {
+      if (ws !== sock) return;
+      clearInterval(pingTimer);
+      setPill($('connPill'), '', `断开了（${e.code}），重连中…`);
+      setPill($('phonePill'), '', '手机不在线');
+      if (stopped) return;
+      // 一次都连不上多半是房间换了（手机上点了「重新配对」），把输码框放出来
+      if (wsRetry >= 3) {
+        $('pairForm').classList.remove('hidden');
+        $('pairErr').textContent = '连不上原来的房间。手机上是不是重新配对过？输入新的配对码再点「配对」。';
+      }
+      const delay = Math.min(15000, 1000 * 2 ** wsRetry++);
+      wsTimer = setTimeout(connect, delay);
+    };
+  };
+
+  $('pairBtn').onclick = async () => {
+    const workerUrl = normalizeWorker($('workerInput').value);
+    const code = $('codeInput').value.replace(/[\s-]+/g, '').toUpperCase();
+    $('pairErr').textContent = '';
+    if (!workerUrl) { $('pairErr').textContent = '先填 Worker 地址'; return; }
+    if (code.length !== 6) { $('pairErr').textContent = '配对码是 6 位'; return; }
+    $('pairBtn').disabled = true;
+    try {
+      const res = await fetch(`${workerUrl}/watch-room/pair`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body?.data?.secret) {
+        const msg = body?.error?.message || (res.status === 404 ? 'Worker 上还没有放映室功能（手机上先点一次「更新 Worker」）' : '');
+        throw new Error(`${msg || '配对失败'}（HTTP ${res.status}）`);
+      }
+      lsSet(LS_WORKER, $('workerInput').value.trim());
+      pair = { workerUrl, code: body.data.code, secret: body.data.secret };
+      lsSet(LS_PAIR, JSON.stringify(pair));
+      showPaired();
+      stopped = false;
+      connect();
+    } catch (err) {
+      $('pairErr').textContent = (err && err.message) || String(err);
+      if (err instanceof TypeError) $('pairErr').textContent += '\n（连不上这个地址：看看 Worker 地址有没有填错）';
+    } finally {
+      $('pairBtn').disabled = false;
+    }
+  };
+
+  $('unpairBtn').onclick = () => {
+    if (!confirm('解除配对？以后要在手机上重新点「配对电脑」拿新的配对码。')) return;
+    stopped = true;
+    try { ws && ws.close(); } catch {}
+    pair = null;
+    lsDel(LS_PAIR);
+    showPaired();
+  };
+
+  // ───────── ② 片源 ─────────
+  let mode = 'share';
+  let shareStream = null, shareTrack = null, imageCapture = null;
+  const preview = $('sharePreview');
+  const player = $('localPlayer');
+  let localFile = null;
+
+  const switchTab = (next) => {
+    mode = next;
+    $('tabShare').classList.toggle('on', next === 'share');
+    $('tabLocal').classList.toggle('on', next === 'local');
+    $('sharePane').classList.toggle('hidden', next !== 'share');
+    $('localPane').classList.toggle('hidden', next !== 'local');
+    lastSample = null;
+    pushStatus();
+  };
+  $('tabShare').onclick = () => switchTab('share');
+  $('tabLocal').onclick = () => switchTab('local');
+
+  const stopShare = () => {
+    if (shareStream) shareStream.getTracks().forEach(t => t.stop());
+    shareStream = null; shareTrack = null; imageCapture = null;
+    preview.srcObject = null;
+    preview.classList.add('hidden');
+    $('stopShareBtn').classList.add('hidden');
+    $('shareBtn').textContent = '选择要共享的画面';
+    pushStatus();
+  };
+
+  $('shareBtn').onclick = async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      alert('这个浏览器不支持共享屏幕。换 Chrome 试试。');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false });
+      stopShare();
+      shareStream = stream;
+      shareTrack = stream.getVideoTracks()[0];
+      imageCapture = typeof ImageCapture === 'function' ? new ImageCapture(shareTrack) : null;
+      shareTrack.addEventListener('ended', () => { log('共享已停止'); stopShare(); });
+      preview.srcObject = stream;
+      preview.classList.remove('hidden');
+      $('stopShareBtn').classList.remove('hidden');
+      $('shareBtn').textContent = '换一个画面';
+      log('开始共享：' + (shareTrack.label || '（没有名字）'));
+      lastSample = null;
+      pushStatus();
+      setTimeout(() => captureAndSend('scene'), 800);
+    } catch (err) {
+      log('没有开始共享：' + ((err && err.message) || err));
+    }
+  };
+  $('stopShareBtn').onclick = stopShare;
+
+  // 本地视频
+  $('pickVideoBtn').onclick = () => $('videoFile').click();
+  $('pickSubBtn').onclick = () => $('subFile').click();
+  const posKey = (f) => `${LS_POS}${f.name}:${f.size}`;
+
+  $('videoFile').onchange = () => {
+    const f = $('videoFile').files && $('videoFile').files[0];
+    if (!f) return;
+    localFile = f;
+    player.querySelectorAll('track').forEach(t => t.remove());
+    if (player.src) URL.revokeObjectURL(player.src);
+    player.src = URL.createObjectURL(f);
+    player.classList.remove('hidden');
+    $('localName').textContent = f.name;
+    $('resumeBox').classList.add('hidden');
+    log('本地视频：' + f.name);
+  };
+  player.addEventListener('loadedmetadata', () => {
+    if (!localFile) return;
+    const saved = Number(lsGet(posKey(localFile)) || 0);
+    if (saved > 10 && saved < player.duration - 10) {
+      player.currentTime = saved;
+      $('resumeText').textContent = `上次看到 ${fmt(saved)}，已经接着放了。`;
+      $('resumeBox').classList.remove('hidden');
+    }
+    pushStatus();
+  });
+  player.addEventListener('error', () => {
+    log('这个文件浏览器放不了。改用自己的播放器，再用「共享网页 / 窗口」共享那个窗口。');
+  });
+  $('restartBtn').onclick = () => { player.currentTime = 0; $('resumeBox').classList.add('hidden'); };
+
+  const savePos = () => {
+    if (localFile && isFinite(player.currentTime) && player.currentTime > 0) lsSet(posKey(localFile), String(Math.floor(player.currentTime)));
+  };
+  ['play', 'pause', 'seeked'].forEach(ev => player.addEventListener(ev, () => { savePos(); pushStatus(); }));
+
+  const srtToVtt = (text) => 'WEBVTT\n\n' + text.replace(/\r/g, '').replace(/(\d\d:\d\d:\d\d),(\d\d\d)/g, '$1.$2');
+  $('subFile').onchange = async () => {
+    const f = $('subFile').files && $('subFile').files[0];
+    if (!f) return;
+    let text = await f.text();
+    if (!/^WEBVTT/.test(text.trim())) text = srtToVtt(text);
+    player.querySelectorAll('track').forEach(t => t.remove());
+    const track = document.createElement('track');
+    track.kind = 'subtitles'; track.label = '字幕'; track.default = true;
+    track.src = URL.createObjectURL(new Blob([text], { type: 'text/vtt' }));
+    player.appendChild(track);
+    track.addEventListener('load', () => { track.track.mode = 'showing'; });
+    log('字幕：' + f.name);
+  };
+  const currentSubtitle = () => {
+    const t = player.textTracks && player.textTracks[0];
+    if (!t || !t.activeCues) return '';
+    return Array.from(t.activeCues).map(c => c.text).join(' ').replace(/<[^>]+>/g, '').trim();
+  };
+
+  // ───────── 播放状态 ─────────
+  const statusPayload = () => {
+    if (mode === 'local') {
+      return {
+        type: 'status', mode: 'local', title: localFile ? localFile.name : '',
+        time: isFinite(player.currentTime) ? player.currentTime : undefined,
+        duration: isFinite(player.duration) ? player.duration : undefined,
+        paused: player.paused, subtitle: currentSubtitle(),
+      };
+    }
+    return { type: 'status', mode: 'share', sharing: !!shareTrack, title: shareTrack ? shareTrack.label : '' };
+  };
+  const pushStatus = () => send(statusPayload());
+
+  // ───────── 截图 ─────────
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const small = document.createElement('canvas');
+  small.width = 48; small.height = 27;
+  const sctx = small.getContext('2d', { willReadFrequently: true });
+
+  /** 取当前画面，返回可以 drawImage 的东西。共享模式优先用 ImageCapture（后台标签页也能取到新帧）。 */
+  const grabSource = async () => {
+    if (mode === 'local') {
+      if (!player.src || player.readyState < 2) return null;
+      return { src: player, w: player.videoWidth, h: player.videoHeight };
+    }
+    if (!shareTrack || shareTrack.readyState !== 'live') return null;
+    if (imageCapture) {
+      try {
+        const bmp = await imageCapture.grabFrame();
+        return { src: bmp, w: bmp.width, h: bmp.height, close: () => bmp.close && bmp.close() };
+      } catch {}
+    }
+    if (preview.readyState < 2) return null;
+    return { src: preview, w: preview.videoWidth, h: preview.videoHeight };
+  };
+
+  const snapshot = async (maxEdge = 640) => {
+    const g = await grabSource();
+    if (!g || !g.w || !g.h) return null;
+    const scale = Math.min(1, maxEdge / Math.max(g.w, g.h));
+    canvas.width = Math.round(g.w * scale); canvas.height = Math.round(g.h * scale);
+    ctx.drawImage(g.src, 0, 0, canvas.width, canvas.height);
+    sctx.drawImage(g.src, 0, 0, small.width, small.height);
+    g.close && g.close();
+    let q = 0.72, dataUrl = canvas.toDataURL('image/jpeg', q);
+    while (dataUrl.length > 900000 && q > 0.35) { q -= 0.12; dataUrl = canvas.toDataURL('image/jpeg', q); }
+    const px = sctx.getImageData(0, 0, small.width, small.height).data;
+    const gray = new Uint8Array(small.width * small.height);
+    let sum = 0;
+    for (let i = 0, j = 0; i < px.length; i += 4, j++) { gray[j] = (px[i] * 3 + px[i + 1] * 6 + px[i + 2]) / 10; sum += gray[j]; }
+    return { dataUrl, gray, mean: sum / gray.length };
+  };
+
+  let lastSentAt = 0;
+  let lastSample = null;
+
+  const captureAndSend = async (reason, requestId) => {
+    const shot = await snapshot();
+    if (!shot) {
+      if (requestId) log('手机要画面，但现在没有画面（还没共享 / 没选视频）');
+      return null;
+    }
+    const msg = { type: 'frame', reason, dataUrl: shot.dataUrl };
+    if (requestId) msg.requestId = requestId;
+    if (mode === 'local' && isFinite(player.currentTime)) msg.videoTime = player.currentTime;
+    if (send(msg)) { lastSentAt = Date.now(); lastSample = shot.gray; }
+    return shot;
+  };
+
+  const diff = (a, b) => {
+    if (!a || !b || a.length !== b.length) return 999;
+    let d = 0;
+    for (let i = 0; i < a.length; i++) d += Math.abs(a[i] - b[i]);
+    return d / a.length;
+  };
+
+  // 换镜头检测：每秒看一眼缩略图，跟上一张发出去的比。明显变了、离上次发送也够久，就发一帧。
+  // 计时放在专用 Worker 里：这一页在后台标签页时，页面自己的 setInterval 会被浏览器压到一分钟一次。
+  const SCENE_DIFF = 22, SCENE_MIN_GAP = 8000, TICK_GAP = 60000;
+  let sampling = false;
+  const sampleTick = async () => {
+    if (sampling || !pair || !ws || ws.readyState !== 1) return;
+    if (mode === 'local' && (player.paused || !player.src)) return;
+    if (mode === 'share' && !shareTrack) return;
+    sampling = true;
+    try {
+      const g = await grabSource();
+      if (!g || !g.w) return;
+      sctx.drawImage(g.src, 0, 0, small.width, small.height);
+      g.close && g.close();
+      const px = sctx.getImageData(0, 0, small.width, small.height).data;
+      const gray = new Uint8Array(small.width * small.height);
+      for (let i = 0, j = 0; i < px.length; i += 4, j++) gray[j] = (px[i] * 3 + px[i + 1] * 6 + px[i + 2]) / 10;
+      const d = diff(gray, lastSample);
+      const since = Date.now() - lastSentAt;
+      if ((d > SCENE_DIFF && since > SCENE_MIN_GAP) || (d > 3 && since > TICK_GAP)) {
+        await captureAndSend(d > SCENE_DIFF ? 'scene' : 'tick');
+      }
+    } finally {
+      sampling = false;
+    }
+  };
+  let statusCounter = 0;
+  const onTimer = () => {
+    sampleTick();
+    if (++statusCounter % 5 === 0 && mode === 'local' && !player.paused) { savePos(); pushStatus(); }
+  };
+  try {
+    const blob = new Blob(['setInterval(() => postMessage(0), 1000);'], { type: 'text/javascript' });
+    const timerWorker = new Worker(URL.createObjectURL(blob));
+    timerWorker.onmessage = onTimer;
+  } catch {
+    setInterval(onTimer, 1000);
+  }
+
+  // ───────── ③ 试截一张 ─────────
+  $('testBtn').onclick = async () => {
+    const shot = await snapshot();
+    $('shotBox').classList.remove('hidden');
+    if (!shot) {
+      $('shotImg').removeAttribute('src');
+      $('shotText').textContent = mode === 'share' ? '还没有共享画面。先点上面的「选择要共享的画面」。' : '还没有选视频，或者视频还没加载好。';
+      return;
+    }
+    $('shotImg').src = shot.dataUrl;
+    const sent = pair ? send({ type: 'frame', reason: 'test', dataUrl: shot.dataUrl }) : false;
+    const black = shot.mean < 6;
+    $('shotText').innerHTML = (black
+      ? '⚠️ <b>截出来几乎是全黑的。</b>这个平台可能开了防录屏（会员剧、正版平台常见），角色看不到画面。<br>如果视频本来就是黑场，等有画面了再试一次。'
+      : '✅ 截到了。') + '<br>' + (sent ? '已经发到手机上了，去手机的放映室看看。' : pair ? '但没发出去：还没连上中转。' : '还没配对手机，所以没发出去。');
+    log(`试截一张：平均亮度 ${shot.mean.toFixed(1)}，${Math.round(shot.dataUrl.length / 1024)}KB`);
+  };
+
+  window.addEventListener('beforeunload', savePos);
+  showPaired();
+  if (pair) connect();
+})();
+</script>
+</body>
+</html>

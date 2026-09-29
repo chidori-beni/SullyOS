@@ -1,0 +1,409 @@
+/**
+ * 影院 —— 电脑上放视频，手机里的角色同步看画面、陪你聊。
+ *
+ * 三个页面：首页（开一场 / 最近看过）· 配对电脑 · 放映室。
+ * 电脑那边是 public/watch.html（观影端），两边经用户自己的 amsg Worker 中转
+ * （worker/amsg/src/watchRoom.ts）。逻辑见 utils/cinema/，方案见工作区「交接说明-一起看.md」。
+ */
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, ArrowsClockwise, Copy, Eye, FilmSlate, Monitor, PaperPlaneRight, Trash } from '@phosphor-icons/react';
+import { useOS } from '../context/OSContext';
+import type { CharacterProfile } from '../types';
+import {
+    describeStatus, describeWork, formatVideoTime, isFrameFresh, newCinemaSession, workerHostForDisplay,
+    type CinemaChatLine, type CinemaFrame, type CinemaPairing, type CinemaSession, type CinemaSpoilerMode, type CinemaStatus,
+} from '../utils/cinema/cinema';
+import { clearCinemaPairing, deleteCinemaSession, getCinemaPairing, listCinemaSessions, saveCinemaPairing, saveCinemaSession } from '../utils/cinema/cinemaDb';
+import { createWatchRoom, WatchRoomSocket, type WatchConnState, type WatchMessage } from '../utils/cinema/watchRoomClient';
+import { askCharacterInCinema } from '../utils/cinema/askCinema';
+import './cinema/cinema.css';
+
+type View = 'home' | 'pair' | 'room';
+
+/** 电脑上要打开的观影端地址：跟 Sully 同一个站点下的 watch.html。 */
+const watchPageUrl = () => {
+    try { return new URL('watch.html', document.baseURI).href; } catch { return 'watch.html'; }
+};
+
+const copyText = async (text: string) => {
+    try { await navigator.clipboard.writeText(text); return true; } catch { return false; }
+};
+
+const CinemaApp: React.FC = () => {
+    const { closeApp, characters, apiConfig, userProfile, groups, realtimeConfig, addToast, registerBackHandler } = useOS();
+    const [view, setView] = useState<View>('home');
+    const [pairing, setPairing] = useState<CinemaPairing | null>(null);
+    const [sessions, setSessions] = useState<CinemaSession[]>([]);
+    const [loaded, setLoaded] = useState(false);
+
+    // 开一场
+    const [charId, setCharId] = useState<string>('');
+    const [title, setTitle] = useState('');
+    const [episode, setEpisode] = useState('');
+    const [spoiler, setSpoiler] = useState<CinemaSpoilerMode>('first');
+
+    // 放映室
+    const [session, setSession] = useState<CinemaSession | null>(null);
+    const [conn, setConn] = useState<WatchConnState>('closed');
+    const [screenOnline, setScreenOnline] = useState(false);
+    const [frame, setFrame] = useState<CinemaFrame | null>(null);
+    const [status, setStatus] = useState<CinemaStatus | null>(null);
+    const [draft, setDraft] = useState('');
+    const [withFrame, setWithFrame] = useState(true);
+    const [thinking, setThinking] = useState(false);
+    const [pairBusy, setPairBusy] = useState(false);
+
+    const socketRef = useRef<WatchRoomSocket | null>(null);
+    const frameWaiters = useRef(new Map<string, (f: CinemaFrame) => void>());
+    const frameRef = useRef<CinemaFrame | null>(null);
+    const statusRef = useRef<CinemaStatus | null>(null);
+    const listRef = useRef<HTMLDivElement>(null);
+
+    const reload = useCallback(async () => {
+        const [p, s] = await Promise.all([getCinemaPairing().catch(() => undefined), listCinemaSessions().catch(() => [])]);
+        setPairing(p || null);
+        setSessions(s);
+        setLoaded(true);
+    }, []);
+    useEffect(() => { void reload(); }, [reload]);
+    useEffect(() => {
+        if (!charId && characters.length) setCharId(characters[0].id);
+    }, [characters, charId]);
+
+    // ---- 放映室连接：配对页和放映室都要连（配对页靠它知道电脑连上没有）----
+    const handleMessage = useCallback((msg: WatchMessage) => {
+        if (msg.type === 'presence') {
+            setScreenOnline(Number(msg.screen) > 0);
+        } else if (msg.type === 'frame' && typeof msg.dataUrl === 'string') {
+            const f: CinemaFrame = {
+                dataUrl: msg.dataUrl, at: Date.now(), reason: String(msg.reason || ''),
+                videoTime: typeof msg.videoTime === 'number' ? msg.videoTime : undefined,
+                requestId: typeof msg.requestId === 'string' ? msg.requestId : undefined,
+            };
+            frameRef.current = f;
+            setFrame(f);
+            setScreenOnline(true);
+            if (f.requestId) {
+                const waiter = frameWaiters.current.get(f.requestId);
+                if (waiter) { frameWaiters.current.delete(f.requestId); waiter(f); }
+            }
+        } else if (msg.type === 'status' || msg.type === 'player') {
+            const s: CinemaStatus = {
+                mode: msg.mode === 'local' || msg.mode === 'share' ? msg.mode : undefined,
+                title: typeof msg.title === 'string' ? msg.title : undefined,
+                time: typeof msg.time === 'number' ? msg.time : undefined,
+                duration: typeof msg.duration === 'number' ? msg.duration : undefined,
+                paused: typeof msg.paused === 'boolean' ? msg.paused : undefined,
+                subtitle: typeof msg.subtitle === 'string' ? msg.subtitle : undefined,
+                sharing: typeof msg.sharing === 'boolean' ? msg.sharing : undefined,
+                at: Date.now(),
+            };
+            statusRef.current = s;
+            setStatus(s);
+            if (msg.type === 'status') setScreenOnline(true);
+        }
+    }, []);
+
+    const needSocket = (view === 'pair' || view === 'room') && !!pairing;
+    useEffect(() => {
+        if (!needSocket || !pairing) return;
+        const socket = new WatchRoomSocket(pairing, {
+            onMessage: handleMessage,
+            onState: (state) => { setConn(state); if (state !== 'open') setScreenOnline(false); },
+        });
+        socketRef.current = socket;
+        socket.start();
+        return () => { socket.stop(); socketRef.current = null; setConn('closed'); setScreenOnline(false); };
+    }, [needSocket, pairing, handleMessage]);
+
+    useEffect(() => {
+        listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
+    }, [session?.lines.length, thinking]);
+
+    useEffect(() => registerBackHandler(() => {
+        if (view !== 'home') { setView('home'); void reload(); return true; }
+        return false;
+    }), [registerBackHandler, view, reload]);
+
+    // ---- 配对 ----
+    const startPairing = async () => {
+        setPairBusy(true);
+        try {
+            const next = await createWatchRoom();
+            await saveCinemaPairing(next);
+            setPairing(next);
+            setView('pair');
+        } catch (error: any) {
+            addToast(error?.message || String(error), 'error');
+        } finally {
+            setPairBusy(false);
+        }
+    };
+
+    const forgetPairing = async () => {
+        if (!window.confirm('解除配对？电脑那边要重新输入配对码才能再连上。')) return;
+        await clearCinemaPairing();
+        setPairing(null);
+    };
+
+    // ---- 开场 ----
+    const char: CharacterProfile | undefined = useMemo(
+        () => characters.find(c => c.id === (session?.charId || charId)),
+        [characters, session?.charId, charId],
+    );
+
+    const openSession = (s: CinemaSession) => {
+        setSession(s);
+        setFrame(null); frameRef.current = null;
+        setStatus(null); statusRef.current = null;
+        setView('room');
+    };
+
+    const startSession = async () => {
+        if (!pairing) { addToast('先配对电脑', 'info'); return; }
+        if (!charId) { addToast('选一个一起看的人', 'info'); return; }
+        if (!title.trim()) { addToast('填一下看什么', 'info'); return; }
+        const s = newCinemaSession({ charId, title, episode, spoiler });
+        await saveCinemaSession(s);
+        openSession(s);
+    };
+
+    const removeSession = async (s: CinemaSession) => {
+        if (!window.confirm(`删掉这一场的记录？\n${describeWork(s)}`)) return;
+        await deleteCinemaSession(s.id);
+        void reload();
+    };
+
+    // ---- 放映室里说话 ----
+    const requestFrame = (timeoutMs = 2500): Promise<CinemaFrame | null> => {
+        const socket = socketRef.current;
+        const requestId = Math.random().toString(36).slice(2, 10);
+        if (!socket || !socket.send({ type: 'capture-request', requestId })) return Promise.resolve(null);
+        return new Promise(resolve => {
+            const timer = setTimeout(() => { frameWaiters.current.delete(requestId); resolve(null); }, timeoutMs);
+            frameWaiters.current.set(requestId, (f) => { clearTimeout(timer); resolve(f); });
+        });
+    };
+
+    const persist = async (next: CinemaSession) => {
+        setSession(next);
+        try { await saveCinemaSession(next); } catch (error) { console.warn('[cinema] 保存失败', error); }
+    };
+
+    const send = async () => {
+        const text = draft.trim();
+        if (!text || !session || !char || thinking) return;
+        setDraft('');
+        const videoTime = statusRef.current?.time;
+        const userLine: CinemaChatLine = { role: 'user', text, at: Date.now(), videoTime };
+        let current: CinemaSession = {
+            ...session, lines: [...session.lines, userLine], updatedAt: Date.now(),
+            lastVideoTime: videoTime ?? session.lastVideoTime,
+        };
+        await persist(current);
+        setThinking(true);
+        try {
+            let frameUrl = '';
+            if (withFrame) {
+                const fresh = await requestFrame();
+                const use = fresh || (isFrameFresh(frameRef.current) ? frameRef.current : null);
+                frameUrl = use?.dataUrl || '';
+            }
+            const result = await askCharacterInCinema({
+                char, userProfile, groups, apiConfig, realtimeConfig,
+                session: current, status: statusRef.current, frameDataUrl: frameUrl,
+            });
+            if (frameUrl && !result.sawFrame) addToast('当前模型不支持看图，这一轮只发了文字', 'info');
+            if (frameUrl && result.sawFrame) {
+                current = { ...current, lines: current.lines.map(l => l === userLine ? { ...l, withFrame: true } : l) };
+            }
+            const now = Date.now();
+            const replies: CinemaChatLine[] = result.lines.map((line, i) => ({ role: 'char', text: line, at: now + i }));
+            current = { ...current, lines: [...current.lines, ...replies], updatedAt: now };
+            await persist(current);
+        } catch (error: any) {
+            addToast(`${char.name} 没回上：${error?.message || error}`, 'error');
+        } finally {
+            setThinking(false);
+        }
+    };
+
+    // ---- 页面 ----
+    const connLabel = conn === 'open'
+        ? (screenOnline ? '电脑在线' : '等电脑连上')
+        : conn === 'connecting' ? '连接中…' : '没连上';
+
+    if (!loaded) return <div className="cinema"><div className="cn-empty">…</div></div>;
+
+    if (view === 'pair' && pairing) {
+        const url = watchPageUrl();
+        const host = workerHostForDisplay(pairing.workerUrl);
+        return (
+            <div className="cinema">
+                <header className="cn-top">
+                    <button className="cn-icon" onClick={() => { setView('home'); void reload(); }} aria-label="返回"><ArrowLeft size={20} /></button>
+                    <div className="cn-top-title"><small>PAIR</small><h1>配对电脑</h1></div>
+                    <span className="cn-icon" />
+                </header>
+                <main className="cn-scroll overflow-y-auto">
+                    <ol className="cn-steps">
+                        <li>
+                            <b>在电脑上用 Chrome 或 360 极速浏览器打开</b>
+                            <div className="cn-copy"><code>{url}</code><button onClick={async () => addToast(await copyText(url) ? '已复制' : '复制失败，手动抄一下', 'info')}><Copy size={16} /></button></div>
+                        </li>
+                        <li>
+                            <b>第一次打开会问 Worker 地址，填这个</b>
+                            <div className="cn-copy"><code>{host}</code><button onClick={async () => addToast(await copyText(host) ? '已复制' : '复制失败，手动抄一下', 'info')}><Copy size={16} /></button></div>
+                        </li>
+                        <li>
+                            <b>再输入配对码</b>
+                            <div className="cn-code">{pairing.code.slice(0, 3)} {pairing.code.slice(3)}</div>
+                            <p className="cn-lead">10 分钟内有效，只能用一次。配好以后电脑会记住，下次打开直接连。</p>
+                        </li>
+                    </ol>
+                    <div className={`cn-pair-state ${screenOnline ? 'ok' : ''}`}>
+                        <Monitor size={18} /> {screenOnline ? '电脑已经连上了！' : conn === 'open' ? '等电脑输入配对码…' : connLabel}
+                    </div>
+                    {screenOnline && <button className="cn-primary" onClick={() => { setView('home'); void reload(); }}>好了，回去开场</button>}
+                </main>
+            </div>
+        );
+    }
+
+    if (view === 'room' && session) {
+        const statusText = describeStatus(status);
+        return (
+            <div className="cinema">
+                <header className="cn-top">
+                    <button className="cn-icon" onClick={() => { setView('home'); void reload(); }} aria-label="返回"><ArrowLeft size={20} /></button>
+                    <div className="cn-top-title">
+                        <small>{char?.name || '?'} 和你一起看</small>
+                        <h1>{describeWork(session)}</h1>
+                    </div>
+                    <span className={`cn-dot ${conn === 'open' && screenOnline ? 'on' : conn === 'open' ? 'wait' : ''}`} title={connLabel} />
+                </header>
+                <section className="cn-screen">
+                    {frame
+                        ? <img src={frame.dataUrl} alt="电脑上的画面" />
+                        : <div className="cn-screen-empty">{screenOnline ? '电脑连上了，等它传画面…' : `${connLabel} · 在电脑上打开观影端`}</div>}
+                    <div className="cn-screen-bar">
+                        <span>{statusText || connLabel}</span>
+                        <button onClick={async () => { const f = await requestFrame(); if (!f) addToast('电脑没回画面（没共享屏幕，或者没连上）', 'info'); }}>
+                            <ArrowsClockwise size={14} /> 刷新画面
+                        </button>
+                    </div>
+                </section>
+                <div className="cn-chat overflow-y-auto" ref={listRef}>
+                    {session.lines.length === 0 && (
+                        <div className="cn-empty small">
+                            开场了。电脑上开始放以后，想说什么就说。<br />
+                            {char?.name} 每次回你之前都会看一眼当下的画面。
+                        </div>
+                    )}
+                    {session.lines.map((line, i) => (
+                        <div key={`${line.at}-${i}`} className={`cn-line ${line.role}`}>
+                            {line.role === 'char' && char?.avatar && <img className="cn-avatar" src={char.avatar} alt="" />}
+                            <div className="cn-bubble">
+                                {line.text}
+                                {line.role === 'user' && (line.withFrame || line.videoTime !== undefined) && (
+                                    <span className="cn-meta">{line.withFrame ? '附画面' : ''}{line.videoTime !== undefined ? ` ${formatVideoTime(line.videoTime)}` : ''}</span>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+                    {thinking && <div className="cn-line char"><div className="cn-bubble typing">{char?.name} 在看…</div></div>}
+                </div>
+                <footer className="cn-input">
+                    <button className={`cn-eye ${withFrame ? 'on' : ''}`} onClick={() => setWithFrame(v => !v)} aria-label="带不带画面" title={withFrame ? '发消息时带上画面' : '只发文字'}>
+                        <Eye size={20} weight={withFrame ? 'fill' : 'regular'} />
+                    </button>
+                    <textarea
+                        value={draft}
+                        onChange={e => setDraft(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }}
+                        placeholder={thinking ? `${char?.name} 在看…` : '边看边说…'}
+                        rows={1}
+                    />
+                    <button className="cn-send" onClick={() => void send()} disabled={!draft.trim() || thinking} aria-label="发送"><PaperPlaneRight size={20} weight="fill" /></button>
+                </footer>
+            </div>
+        );
+    }
+
+    // ---- 首页 ----
+    return (
+        <div className="cinema">
+            <header className="cn-top">
+                <button className="cn-icon" onClick={closeApp} aria-label="关闭"><ArrowLeft size={20} /></button>
+                <div className="cn-top-title"><small>CINEMA</small><h1>影院</h1></div>
+                <span className="cn-icon" />
+            </header>
+            <main className="cn-scroll overflow-y-auto">
+                <section className="cn-card">
+                    <div className="cn-card-head"><Monitor size={18} /> 电脑</div>
+                    {pairing ? (
+                        <>
+                            <p className="cn-lead">已配对 · 房间 <b>{pairing.code}</b>。电脑上打开观影端就会自动连上。</p>
+                            <div className="cn-row">
+                                <button className="cn-ghost" onClick={() => setView('pair')}>怎么在电脑上打开</button>
+                                <button className="cn-ghost" onClick={() => void startPairing()} disabled={pairBusy}>重新配对</button>
+                                <button className="cn-ghost danger" onClick={() => void forgetPairing()}>解除</button>
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            <p className="cn-lead">视频在电脑上放，角色在这里陪你看。先把电脑配对上（只要一次）。</p>
+                            <button className="cn-primary" onClick={() => void startPairing()} disabled={pairBusy}>{pairBusy ? '正在开放映室…' : '配对电脑'}</button>
+                        </>
+                    )}
+                </section>
+
+                <section className="cn-card">
+                    <div className="cn-card-head"><FilmSlate size={18} /> 开一场</div>
+                    <label className="cn-label">和谁一起看</label>
+                    <div className="cn-chars">
+                        {characters.map(c => (
+                            <button key={c.id} className={`cn-char ${c.id === charId ? 'on' : ''}`} onClick={() => setCharId(c.id)}>
+                                {c.avatar ? <img src={c.avatar} alt="" /> : <span className="cn-char-ph">{c.name.slice(0, 1)}</span>}
+                                <span>{c.name}</span>
+                            </button>
+                        ))}
+                    </div>
+                    <label className="cn-label">看什么</label>
+                    <input className="cn-field" value={title} onChange={e => setTitle(e.target.value)} placeholder="片名，比如：葬送的芙莉莲" />
+                    <input className="cn-field" value={episode} onChange={e => setEpisode(e.target.value)} placeholder="第几集（可以不填）" />
+                    <label className="cn-label">{char?.name || 'TA'} 看过吗</label>
+                    <div className="cn-seg">
+                        <button className={spoiler === 'first' ? 'on' : ''} onClick={() => setSpoiler('first')}>第一次看</button>
+                        <button className={spoiler === 'seen' ? 'on' : ''} onClick={() => setSpoiler('seen')}>看过（不剧透）</button>
+                    </div>
+                    <button className="cn-primary" onClick={() => void startSession()} disabled={!pairing}>{pairing ? '开场' : '先配对电脑'}</button>
+                </section>
+
+                {sessions.length > 0 && (
+                    <section className="cn-card">
+                        <div className="cn-card-head">最近看过</div>
+                        {sessions.slice(0, 20).map(s => {
+                            const who = characters.find(c => c.id === s.charId);
+                            return (
+                                <div key={s.id} className="cn-session">
+                                    <button className="cn-session-main" onClick={() => pairing ? openSession(s) : addToast('先配对电脑', 'info')}>
+                                        <b>{describeWork(s)}</b>
+                                        <small>
+                                            和 {who?.name || '（角色已删除）'} · {new Date(s.updatedAt).toLocaleDateString()}
+                                            {s.lastVideoTime !== undefined ? ` · 看到 ${formatVideoTime(s.lastVideoTime)}` : ''}
+                                            {` · ${s.lines.length} 句`}
+                                        </small>
+                                    </button>
+                                    <button className="cn-icon" onClick={() => void removeSession(s)} aria-label="删除"><Trash size={16} /></button>
+                                </div>
+                            );
+                        })}
+                    </section>
+                )}
+            </main>
+        </div>
+    );
+};
+
+export default CinemaApp;

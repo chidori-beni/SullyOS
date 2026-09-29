@@ -43,6 +43,7 @@ export const SELF_SAFE_AREA_APPS: ReadonlySet<AppID> = new Set<AppID>([
     AppID.HotNews,
     AppID.WorldHome,
     AppID.Bookroom,
+    AppID.Cinema,
     AppID.CharCreatorDev,
     AppID.SpecialMoments,
 ]);

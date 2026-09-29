@@ -197,6 +197,7 @@ import { buildTickReport, readOverdueTasks, recordTickOutcome, type TickReportDb
 import type { ActiveMsg2TaskRecord } from '../../../types';
 import { createHybridPushTransport, isFcmConfigured, type NativeFcmEnv } from './nativeFcm';
 import { configureSkipDiagnostics, isDebugFlagOn, logSkipDiagnostic } from './skipDiagnostics';
+import { handleWatchRoomDoClose, handleWatchRoomDoFetch, handleWatchRoomDoMessage, handleWatchRoomRoute, type WatchRoomNamespace } from './watchRoom';
 
 interface Env extends NativeFcmEnv {
   AMSG_MASTER_KEY: string;
@@ -3468,6 +3469,26 @@ export class InstantTickDO extends DurableObject<Env> {
     await this.ctx.storage.setAlarm(Date.now());
   }
 
+  /**
+   * 影院放映室（实例名 `watch:<配对码>`）走的是 fetch + WebSocket，跟上面的起跳器
+   * 各用各的实例、互不相干。复用这个类是为了不碰 DO migration，见 watchRoom.ts 开头。
+   */
+  async fetch(request: Request): Promise<Response> {
+    return handleWatchRoomDoFetch(this.ctx, request);
+  }
+
+  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    handleWatchRoomDoMessage(this.ctx, ws, message);
+  }
+
+  async webSocketClose(ws: WebSocket): Promise<void> {
+    handleWatchRoomDoClose(this.ctx, ws);
+  }
+
+  async webSocketError(ws: WebSocket): Promise<void> {
+    handleWatchRoomDoClose(this.ctx, ws);
+  }
+
   /** 独立 invocation，15 分钟墙钟。跑挂了不重设 alarm——下一分钟的 cron 会接着捡。 */
   async alarm(): Promise<void> {
     const uuid = await this.ctx.storage.get<string>(INSTANT_TICK_UUID_KEY);
@@ -3604,6 +3625,8 @@ export default {
           incomingCall: true,
           // 这份代码认不认角色对用户消息的 emoji 反应 directive；纯反应也会投递可读横幅。
           messageReactions: true,
+          // 影院放映室中转（/watch-room/*，见 watchRoom.ts）。真能不能用还要看 instantTick。
+          watchRoom: true,
           workerVersion: AMSG_BUNDLE_VERSION,
         },
       });
@@ -3733,6 +3756,22 @@ export default {
           error: { code: 'TICK_REPORT_FAILED', message: cause.message ? `${cause.name}: ${cause.message}` : cause.name },
         });
       }
+    }
+
+    // 影院放映室：手机建房间要过共享密钥；电脑配对、两边连 WebSocket、油猴报进度
+    // 都只认房间密钥（电脑和油猴脚本手里没有共享密钥）。
+    if (pathname.includes('/watch-room/')) {
+      if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
+      return handleWatchRoomRoute({
+        request,
+        namespace: env.INSTANT_TICK as unknown as WatchRoomNamespace | undefined,
+        checkClientToken: async (req) => {
+          const token = env.AMSG_SERVER_TOKEN?.trim() ?? '';
+          const clientToken = req.headers.get('X-Client-Token') ?? '';
+          return !token || (!!clientToken && await constantTimeEqual(clientToken, token));
+        },
+        json: jsonWithCors,
+      });
     }
 
     // 即时对话：一个请求把「传云端状态 + 建任务」串完，回 202 之后立刻起一跳。
