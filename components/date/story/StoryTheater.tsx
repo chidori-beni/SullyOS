@@ -34,7 +34,7 @@ interface Props {
 type View = 'list' | 'editor' | 'session' | 'preset' | 'masks' | 'vectors';
 
 const StoryTheaterContent: React.FC<Props> = ({ initialStoryId, onSwitchCompanion, onClose }) => {
-    const { characters, userProfile, addToast, remoteVectorConfig } = useOS();
+    const { characters, userProfile, addToast, remoteVectorConfig, worldbooks } = useOS();
     const [view, setView] = useState<View>('list');
     const [entries, setEntries] = useState<StoryTheaterEntry[]>([]);
     const [customPresets, setCustomPresets] = useState<StoryTheaterPreset[]>([]);
@@ -176,7 +176,7 @@ const StoryTheaterContent: React.FC<Props> = ({ initialStoryId, onSwitchCompanio
                 ? current.characterIds.filter(id => id !== selection.id)
                 : current.characterIds;
             const remainingActors = characters.filter(char => characterIds.includes(char.id));
-            const validBookIds = new Set(dedupeTheaterWorldbooks(remainingActors).map(book => book.id));
+            const validBookIds = new Set(dedupeTheaterWorldbooks(remainingActors, worldbooks).map(book => book.id));
             const characterMemoryDates = { ...current.characterMemoryDates };
             const characterContextLimits = { ...current.characterContextLimits };
             if (selection.type === 'character') {
@@ -196,7 +196,7 @@ const StoryTheaterContent: React.FC<Props> = ({ initialStoryId, onSwitchCompanio
                 updatedAt: Date.now(),
             };
         });
-    }, [characters, maskLocked]);
+    }, [characters, maskLocked, worldbooks]);
 
     const openEntryEditor = useCallback(async (entry: StoryTheaterEntry) => {
         const rows = await DB.getMessagesByCharId(storyTheaterThreadId(entry.id), true);

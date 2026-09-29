@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { ArrowLeft, DownloadSimple, LockSimple, UploadSimple, UserCircle } from '@phosphor-icons/react';
-import type { CharacterProfile, StoryTheaterEntry, StoryTheaterMask, StoryTheaterPreset, UserProfile } from '../../../types';
+import { ArrowLeft, CaretDown, DownloadSimple, LockSimple, MagnifyingGlass, UploadSimple, UserCircle } from '@phosphor-icons/react';
+import { useOS } from '../../../context/OSContext';
+import type { CharacterProfile, MountedWorldbook, StoryTheaterEntry, StoryTheaterMask, StoryTheaterPreset, UserProfile } from '../../../types';
 import { dedupeTheaterWorldbooks, downloadStoryPreset, estimateStoryTokens, getPresetPromptStats, resolveStoryPresetDocument, resolveStoryTheaterMask } from '../../../utils/storyTheater';
 import { isMountedWorldbookEnabled } from '../../../utils/worldbook';
 
@@ -28,6 +29,9 @@ const Toggle: React.FC<{ value: boolean; onChange: (value: boolean) => void; lab
 const StoryTheaterEditor: React.FC<Props> = ({ initial, characters, user, masks, maskLocked, presets, onCancel, onSave, onImportPreset, onEditPreset, onOpenMaskBox }) => {
     const [draft, setDraft] = useState<StoryTheaterEntry>({ ...initial });
     const [saving, setSaving] = useState(false);
+    const { worldbooks } = useOS();
+    const [libraryOpen, setLibraryOpen] = useState(false);
+    const [libraryQuery, setLibraryQuery] = useState('');
     const fileInput = useRef<HTMLInputElement>(null);
     const actors = useMemo(() => characters.filter(char => draft.characterIds.includes(char.id)), [characters, draft.characterIds]);
     const resolvedMask = useMemo(() => resolveStoryTheaterMask(draft.mask, user, characters, masks), [characters, draft.mask, masks, user]);
@@ -36,7 +40,29 @@ const StoryTheaterEditor: React.FC<Props> = ({ initial, characters, user, masks,
         if (draft.mask?.type === 'character') participantIds.add(draft.mask.id);
         return characters.filter(char => participantIds.has(char.id));
     }, [characters, draft.characterIds, draft.mask]);
-    const books = useMemo(() => dedupeTheaterWorldbooks(actors), [actors]);
+    // 角色挂载（且开启）的世界书 + 世界书库里其余可用于线下的条目。后者是「剧情专属」：只在本剧情勾选生效，不碰角色挂载，也就不会带进私聊。
+    const books = useMemo(() => dedupeTheaterWorldbooks(actors, worldbooks), [actors, worldbooks]);
+    const actorBookIds = useMemo(() => new Set(dedupeTheaterWorldbooks(actors).map(book => book.id)), [actors]);
+    const actorBooks = books.filter(book => actorBookIds.has(book.id));
+    const libraryBooks = books.filter(book => !actorBookIds.has(book.id));
+    const storyOnlyBooks = libraryBooks.filter(book => draft.selectedWorldbookIds.includes(book.id));
+    const libraryGroups = useMemo(() => {
+        const query = libraryQuery.trim().toLocaleLowerCase();
+        const groups = new Map<string, MountedWorldbook[]>();
+        for (const book of libraryBooks) {
+            if (query && ![book.title, book.category || '', book.content].some(text => text.toLocaleLowerCase().includes(query))) continue;
+            const category = book.category || '未分类';
+            groups.set(category, [...(groups.get(category) || []), book]);
+        }
+        return Array.from(groups.entries());
+    }, [libraryBooks, libraryQuery]);
+    const toggleBook = (id: string) => setDraft(current => ({ ...current, selectedWorldbookIds: current.selectedWorldbookIds.includes(id) ? current.selectedWorldbookIds.filter(item => item !== id) : [...current.selectedWorldbookIds, id], updatedAt: Date.now() }));
+    const toggleBookGroup = (ids: string[]) => setDraft(current => {
+        const allSelected = ids.every(id => current.selectedWorldbookIds.includes(id));
+        const selectedWorldbookIds = allSelected ? current.selectedWorldbookIds.filter(id => !ids.includes(id)) : Array.from(new Set([...current.selectedWorldbookIds, ...ids]));
+        return { ...current, selectedWorldbookIds, updatedAt: Date.now() };
+    });
+    const renderBookRow = (book: MountedWorldbook) => { const selected = draft.selectedWorldbookIds.includes(book.id); return <button key={book.id} onClick={() => toggleBook(book.id)} className='w-full py-3 flex items-center gap-3 text-left'><span className={`w-4 h-4 shrink-0 rounded border text-[10px] text-center text-white ${selected ? 'bg-violet-600 border-violet-600' : 'border-slate-300'}`}>{selected ? '✓' : ''}</span><span className='min-w-0'><span className='block text-xs font-semibold truncate'>{book.title}</span><span className='block text-[9px] text-slate-400'>{book.category || '未分类'}</span></span></button>; };
     const preset = presets.find(item => item.id === draft.presetId) || presets[0] || null;
     const effectivePreset = preset ? { ...preset, document: resolveStoryPresetDocument(preset, draft.presetOverride) } : null;
     const presetStats = getPresetPromptStats(effectivePreset);
@@ -46,7 +72,7 @@ const StoryTheaterEditor: React.FC<Props> = ({ initial, characters, user, masks,
         const adding = !current.characterIds.includes(char.id);
         const characterIds = adding ? [...current.characterIds, char.id] : current.characterIds.filter(id => id !== char.id);
         const remaining = characters.filter(item => characterIds.includes(item.id));
-        const validBooks = new Set(dedupeTheaterWorldbooks(remaining).map(book => book.id));
+        const validBooks = new Set(dedupeTheaterWorldbooks(remaining, worldbooks).map(book => book.id));
         return {
             ...current,
             characterIds,
@@ -120,8 +146,20 @@ const StoryTheaterEditor: React.FC<Props> = ({ initial, characters, user, masks,
                 </div>}
             </section>
             <section className='pt-6 border-t border-slate-200'>
-                <div className='text-[9px] tracking-[.22em] uppercase font-bold text-violet-500'>04 / Lore</div><h2 className='mt-1 text-lg font-semibold'>世界书沙盒</h2><p className='text-[10px] text-slate-500'>从角色挂载项同步并去重；勾选只属于本剧情。</p>
-                <div className='mt-3 divide-y divide-slate-100 border-y border-slate-200'>{books.length === 0 ? <div className='py-6 text-center text-xs text-slate-400'>所选角色没有挂载世界书</div> : books.map(book => { const selected = draft.selectedWorldbookIds.includes(book.id); return <button key={book.id} onClick={() => update('selectedWorldbookIds', selected ? draft.selectedWorldbookIds.filter(id => id !== book.id) : [...draft.selectedWorldbookIds, book.id])} className='w-full py-3 flex items-center gap-3 text-left'><span className={`w-4 h-4 rounded border text-[10px] text-center text-white ${selected ? 'bg-violet-600 border-violet-600' : 'border-slate-300'}`}>{selected ? '✓' : ''}</span><span className='min-w-0'><span className='block text-xs font-semibold truncate'>{book.title}</span><span className='block text-[9px] text-slate-400'>{book.category || '未分类'}</span></span></button>; })}</div>
+                <div className='text-[9px] tracking-[.22em] uppercase font-bold text-violet-500'>04 / Lore</div><h2 className='mt-1 text-lg font-semibold'>世界书沙盒</h2><p className='text-[10px] text-slate-500'>勾选只属于本剧情。剧情专用的世界书不用去神经链接挂载，直接从下面的世界书库添加，就不会带进私聊。</p>
+                <div className='mt-3 text-[10px] font-bold text-slate-400'>角色挂载的</div>
+                <div className='mt-1 divide-y divide-slate-100 border-y border-slate-200'>{actorBooks.length === 0 ? <div className='py-6 text-center text-xs text-slate-400'>所选角色没有开启的挂载世界书</div> : actorBooks.map(renderBookRow)}</div>
+                <div className='mt-4 text-[10px] font-bold text-violet-500'>剧情专属（只在本剧情生效，不进私聊）</div>
+                <div className='mt-1 divide-y divide-slate-100 border-y border-slate-200'>{storyOnlyBooks.length === 0 ? <div className='py-4 text-center text-xs text-slate-400'>还没有添加</div> : storyOnlyBooks.map(renderBookRow)}</div>
+                <button type='button' onClick={() => setLibraryOpen(open => !open)} className='mt-3 w-full py-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-center gap-1.5 text-xs font-bold text-violet-600'>从世界书库添加<CaretDown size={12} className={libraryOpen ? 'rotate-180' : ''} /></button>
+                {libraryOpen && <div className='mt-3'>
+                    <label className='flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200'><MagnifyingGlass size={14} className='text-slate-400' /><input value={libraryQuery} onChange={event => setLibraryQuery(event.target.value)} placeholder='搜标题、分类或正文' className='min-w-0 flex-1 bg-transparent text-xs outline-none' /></label>
+                    <p className='mt-2 text-[9px] text-slate-400'>「仅线上聊天」「仅用于日程」和已禁用的条目在剧情里不会生效，这里不列出。</p>
+                    {libraryGroups.length === 0 ? <div className='py-6 text-center text-xs text-slate-400'>{libraryQuery.trim() ? '没有搜到' : '世界书库里没有其他可用条目'}</div> : libraryGroups.map(([category, group]) => { const ids = group.map(book => book.id); const picked = ids.filter(id => draft.selectedWorldbookIds.includes(id)).length; return <details key={category} className='mt-2 rounded-xl bg-white border border-slate-200 px-3' open={!!libraryQuery.trim()}>
+                        <summary className='py-2.5 flex items-center gap-2 text-xs font-semibold cursor-pointer list-none'><span className='min-w-0 flex-1 truncate'>{category}</span><span className='text-[10px] text-slate-400'>{picked}/{ids.length}</span><span role='button' onClick={event => { event.preventDefault(); toggleBookGroup(ids); }} className='px-2 py-1 rounded-full bg-violet-50 text-[10px] font-bold text-violet-600'>{picked === ids.length ? '整组取消' : '整组勾选'}</span></summary>
+                        <div className='divide-y divide-slate-100 border-t border-slate-100'>{group.map(renderBookRow)}</div>
+                    </details>; })}
+                </div>}
             </section>
             <section className='pt-6 border-t border-slate-200'>
                 <div className='text-[9px] tracking-[.22em] uppercase font-bold text-violet-500'>05 / Preset</div><h2 className='mt-1 text-lg font-semibold'>装载剧情预设</h2><p className='text-[10px] text-slate-500'>只接受糯米机原生 sullyos.story-preset；内置预设复制后可编辑。</p>

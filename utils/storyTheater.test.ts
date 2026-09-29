@@ -1,6 +1,6 @@
 import { ContextBuilder } from './context';
 import { describe, expect, it } from 'vitest';
-import type { CharacterProfile, Message, StoryTheaterPreset, UserProfile } from '../types';
+import type { CharacterProfile, Message, StoryTheaterPreset, UserProfile, Worldbook } from '../types';
 import { STORY_PRESET_SIMPLE_CHOICES } from '../components/date/story/StoryPresetMaker';
 import {
     appendStoryAffinityInput,
@@ -419,6 +419,34 @@ describe('剧情沙盒辅助逻辑', () => {
         ] as CharacterProfile[];
 
         expect(dedupeTheaterWorldbooks(chars).map(book => book.id).sort()).toEqual(['a', 'b']);
+    });
+
+    it('剧情专属：可以直接从世界书库勾选，不需要挂到角色上；角色挂载项排前、同 id 以挂载项为准', () => {
+        const library = [
+            { id: 'a', title: 'A', content: '库里的版本', category: '共同', createdAt: 1, updatedAt: 1 },
+            { id: 'story', title: '剧情专用', content: '只给剧情', category: '剧情', createdAt: 1, updatedAt: 1 },
+            { id: 'off', title: '关掉的挂载', content: '角色上关了', category: '剧情', createdAt: 1, updatedAt: 1 },
+        ] as Worldbook[];
+        const chars = [{ id: 'c1', name: '一', mountedWorldbooks: [
+            { id: 'a', title: 'A', content: '挂载版本', category: '共同' },
+            { id: 'off', title: '关掉的挂载', content: '角色上关了', category: '剧情', mountEnabled: false },
+        ] }] as CharacterProfile[];
+        const result = dedupeTheaterWorldbooks(chars, library);
+        expect(result.map(book => book.id)).toEqual(['a', 'off', 'story']);
+        expect(result[0].content).toBe('挂载版本');
+        expect(result.every(book => book.mountEnabled !== false)).toBe(true);
+    });
+
+    it('世界书库里仅线上 / 仅日程 / 已禁用的条目不进剧情候选', () => {
+        const base = { category: '甲', createdAt: 1, updatedAt: 1 };
+        const library = [
+            { ...base, id: 'all', title: '全场景', content: '1' },
+            { ...base, id: 'offline', title: '线下', content: '2', mode: 'offline' },
+            { ...base, id: 'online', title: '线上', content: '3', mode: 'online' },
+            { ...base, id: 'schedule', title: '日程', content: '4', mode: 'schedule' },
+            { ...base, id: 'disabled', title: '禁用', content: '5', disable: true },
+        ] as Worldbook[];
+        expect(dedupeTheaterWorldbooks([], library).map(book => book.id).sort()).toEqual(['all', 'offline']);
     });
 
     it('用当前轮输入立即触发关键词世界书，并保持最多二十条扫描窗口', () => {

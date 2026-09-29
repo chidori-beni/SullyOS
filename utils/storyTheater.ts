@@ -9,11 +9,14 @@ import type {
     StoryTheaterPresetDocument,
     StoryTheaterPresetPrompt,
     UserProfile,
+    Worldbook,
 } from '../types';
 import nightScreeningV627 from '../assets/presets/night-screening-v6.14.sully.json';
 import {
     formatWorldbookSection,
+    getEffectiveWorldbookMode,
     isMountedWorldbookEnabled,
+    toMountedWorldbook,
     resolveWorldbookEntries,
     splitWorldbookSections,
     type WorldbookScanMessage,
@@ -1017,22 +1020,41 @@ export const appendStoryUserTurn = (
     ];
 };
 
-export const dedupeTheaterWorldbooks = (characters: CharacterProfile[]): MountedWorldbook[] => {
+const sortTheaterWorldbooks = (books: MountedWorldbook[]): MountedWorldbook[] => books.sort((a, b) => (a.category || '').localeCompare(b.category || '', 'zh-CN') || a.title.localeCompare(b.title, 'zh-CN'));
+
+export const dedupeTheaterWorldbooks = (characters: CharacterProfile[], library: Worldbook[] = []): MountedWorldbook[] => {
     const seen = new Set<string>();
     const output: MountedWorldbook[] = [];
+    const add = (book: MountedWorldbook, target: MountedWorldbook[]) => {
+        const keys = [
+            book.id ? `id:${book.id}` : '',
+            `body:${book.title.trim().toLocaleLowerCase()}\u0000${book.content.trim()}`,
+        ].filter(Boolean);
+        if (keys.length === 0 || keys.some(key => seen.has(key))) return;
+        keys.forEach(key => seen.add(key));
+        target.push({ ...book });
+    };
     for (const char of characters) {
         for (const book of (char.mountedWorldbooks || [])) {
             if (!isMountedWorldbookEnabled(book)) continue;
-            const keys = [
-                book.id ? `id:${book.id}` : '',
-                `body:${book.title.trim().toLocaleLowerCase()}\u0000${book.content.trim()}`,
-            ].filter(Boolean);
-            if (keys.length === 0 || keys.some(key => seen.has(key))) continue;
-            keys.forEach(key => seen.add(key));
-            output.push({ ...book });
+            add(book, output);
         }
     }
-    return output.sort((a, b) => (a.category || '').localeCompare(b.category || '', 'zh-CN') || a.title.localeCompare(b.title, 'zh-CN'));
+    // 剧情专属世界书：直接从全局世界书库勾选，不需要挂到角色身上，
+    // 所以不会跟着角色漏进私聊。排在角色挂载项之后，同 id 时角色挂载项优先。
+    const fromLibrary: MountedWorldbook[] = [];
+    for (const book of library) {
+        if (!isTheaterLibraryWorldbookUsable(book)) continue;
+        add(toMountedWorldbook(book), fromLibrary);
+    }
+    return [...sortTheaterWorldbooks(output), ...sortTheaterWorldbooks(fromLibrary)];
+};
+
+/** 剧情按「线下」场景解析世界书；仅线上 / 仅日程 / 全局禁用的条目进剧情也不会生效，不列出来。 */
+export const isTheaterLibraryWorldbookUsable = (book: Worldbook): boolean => {
+    if (book.disable) return false;
+    const mode = getEffectiveWorldbookMode(book);
+    return mode === 'all' || mode === 'offline';
 };
 
 export const buildStoryWorldbookScanMessages = (

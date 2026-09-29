@@ -302,7 +302,7 @@ const StoryOutput: React.FC<{ content: string; onChoose?: (text: string) => void
 };
 
 const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, onEdit, onOpenVectorMemory, onEntryChange }) => {
-    const { characters, userProfile, apiConfig, apiPresets, memoryPalaceConfig, remoteVectorConfig, updateCharacter, addToast } = useOS();
+    const { characters, userProfile, apiConfig, apiPresets, memoryPalaceConfig, remoteVectorConfig, updateCharacter, addToast, worldbooks } = useOS();
     // 剧情专用 API：只记预设 id，在这里和主 API 合成；剧情里所有请求都走 storyApi，主配置不动。
     const [storyApiPresetId, setStoryApiPresetId] = useState<string | null>(readStoryApiPresetId);
     const [showApiSheet, setShowApiSheet] = useState(false);
@@ -324,7 +324,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
     }), [entry.presetOverride, preset]);
     const activeMiniTheater = useMemo(() => getActiveStoryMiniTheaterPrompt(effectivePreset.document), [effectivePreset.document]);
     const affinityEnabled = useMemo(() => effectivePreset.document.prompts.some(prompt => prompt.id === 'nmj-v65-affinity-control' && prompt.enabled), [effectivePreset.document]);
-    const selectedBooks = useMemo(() => dedupeTheaterWorldbooks(actors).filter(book => entry.selectedWorldbookIds.includes(book.id)), [actors, entry.selectedWorldbookIds]);
+    const selectedBooks = useMemo(() => dedupeTheaterWorldbooks(actors, worldbooks).filter(book => entry.selectedWorldbookIds.includes(book.id)), [actors, worldbooks, entry.selectedWorldbookIds]);
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [sending, setSending] = useState(false);
