@@ -13,7 +13,7 @@ const nextCharId = () => `chat-visibility-${++sequence}`;
 afterEach(() => localStorage.clear());
 
 describe('私聊与桌面预览的消息范围', () => {
-    it.each(['date', 'call', 'story_theater_memory'])('%s 正文不出现在私聊和桌面消息卡', source => {
+    it.each(['date', 'call', 'cinema', 'story_theater_memory'])('%s 正文不出现在私聊和桌面消息卡', source => {
         const row = message({ metadata: { source } });
         expect(isVisibleChatMessage(row)).toBe(false);
         expect(isChatPreviewMessage(row)).toBe(false);

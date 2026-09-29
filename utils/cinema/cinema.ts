@@ -9,6 +9,14 @@
 export const CINEMA_PAIR_ID = 'cinema-pair';
 export const CINEMA_SESSION_PREFIX = 'cinema-session-';
 
+/**
+ * 放映室里的每句话都照通话的做法存进私聊的消息库（说一句进一句）：
+ * 私聊界面不显示，但角色的上下文里以「[一起看：片名]」出现，也进记忆宫殿。
+ * 散场时再落一条 system 卡片，私聊界面上看得到。
+ */
+export const CINEMA_MESSAGE_SOURCE = 'cinema';
+export const CINEMA_END_SOURCE = 'cinema-end';
+
 /** 手机记住的放映室（配对一次，以后打开直接连）。 */
 export interface CinemaPairing {
     id: typeof CINEMA_PAIR_ID;
@@ -41,6 +49,8 @@ export interface CinemaSession {
     updatedAt: number;
     /** 最后知道的播放进度（秒），下次打开提示「上次看到哪」 */
     lastVideoTime?: number;
+    /** 点过「散场」的时间。再点进来接着看会清掉 */
+    endedAt?: number;
     lines: CinemaChatLine[];
 }
 
@@ -201,3 +211,19 @@ export const describeStatus = (status: CinemaStatus | null | undefined): string 
     if (status.mode === 'share') return status.sharing ? '电脑正在共享画面' : '电脑还没开始共享画面';
     return '';
 };
+
+/** 散场卡上那一行字（私聊界面显示，角色上下文里也看得到）。 */
+export const buildCinemaEndCardText = (session: Pick<CinemaSession, 'title' | 'episode' | 'lastVideoTime' | 'lines'>, charName: string): string => {
+    const time = formatVideoTime(session.lastVideoTime);
+    const turns = session.lines.filter(line => line.role === 'user').length;
+    return `一起看结束 · ${charName}｜${describeWork(session)}${time ? `｜看到 ${time}` : ''}｜聊了${turns}句`;
+};
+
+/** 存进私聊消息库时挂的 metadata。 */
+export const cinemaMessageMetadata = (session: Pick<CinemaSession, 'id' | 'title' | 'episode'>, videoTime?: number) => ({
+    source: CINEMA_MESSAGE_SOURCE,
+    cinemaSessionId: session.id,
+    cinemaTitle: session.title,
+    ...(session.episode ? { cinemaEpisode: session.episode } : {}),
+    ...(typeof videoTime === 'number' && Number.isFinite(videoTime) ? { cinemaVideoTime: Math.floor(videoTime) } : {}),
+});

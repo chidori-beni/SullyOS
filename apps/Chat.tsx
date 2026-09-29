@@ -183,6 +183,7 @@ const browseableChatMessages = (messages: Message[], hideSystemLogs?: boolean): 
 const isVisibleChatMessage = (message: Message, hideSystemLogs = false) => (
     message.metadata?.source !== 'date'
     && message.metadata?.source !== 'call'
+    && message.metadata?.source !== 'cinema'
     && message.metadata?.source !== 'story_theater_memory'
     && !message.metadata?.proactiveHint
     && !(hideSystemLogs && message.role === 'system' && message.type !== 'score_card')

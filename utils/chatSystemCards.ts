@@ -22,6 +22,8 @@ export const ALWAYS_VISIBLE_SYSTEM_CARD_SOURCES = [
   'date-end-popup',
   /** 见面邀请 */
   'date-meeting-invite',
+  /** 影院散场 */
+  'cinema-end',
 ] as const;
 
 export type AlwaysVisibleSystemCardSource = typeof ALWAYS_VISIBLE_SYSTEM_CARD_SOURCES[number];
@@ -92,7 +94,7 @@ export const filterChatMessages = <T extends {
       const encounterId = dateEncounterIdOf(message);
       return !encounterId || !popupEncounterIds.has(encounterId);
     }
-    return source !== 'call' && source !== 'story_theater_memory';
+    return source !== 'call' && source !== 'cinema' && source !== 'story_theater_memory';
   }));
 };
 

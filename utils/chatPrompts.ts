@@ -1619,6 +1619,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     const source = m.metadata?.source;
                     if (source === 'call') return '[通话]';
                     if (source === 'date') return '[约会]';
+                    if (source === 'cinema') return `[一起看：${m.metadata?.cinemaTitle || '影片'}]`;
                     // This is internal prompt metadata, not a label the character should quote.
                     // Keep it terse and machine-like; the output sanitizer also accepts the old label.
                     if (m.metadata?.datePhoneMessage === true) return '⟦SRC:FACE_PHONE⟧';

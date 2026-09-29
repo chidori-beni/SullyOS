@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    buildCinemaEndCardText, cinemaMessageMetadata,
     buildCinemaInstruction, cleanCinemaReply, describeStatus, formatVideoTime, isFrameFresh, newCinemaSession,
     normalizeWorkerInput, sessionLinesToApiMessages, watchSocketUrl, workerHostForDisplay,
 } from './cinema';
@@ -90,5 +91,22 @@ describe('影院 · 提示词', () => {
         expect(describeStatus({ mode: 'local', time: 61, duration: 120, paused: true, at: 0 })).toBe('暂停 1:01 / 2:00');
         expect(describeStatus({ mode: 'share', sharing: true, at: 0 })).toBe('电脑正在共享画面');
         expect(describeStatus(null)).toBe('');
+    });
+});
+
+describe('影院 · 存进私聊', () => {
+    it('每句话挂上来源、这一场的 id 和片名', () => {
+        expect(cinemaMessageMetadata({ id: 's1', title: '钟表馆事件', episode: '第2集' }, 83.6)).toEqual({
+            source: 'cinema', cinemaSessionId: 's1', cinemaTitle: '钟表馆事件', cinemaEpisode: '第2集', cinemaVideoTime: 83,
+        });
+        expect(cinemaMessageMetadata({ id: 's1', title: 'x' })).toEqual({ source: 'cinema', cinemaSessionId: 's1', cinemaTitle: 'x' });
+    });
+
+    it('散场卡写清楚看了什么、看到哪、聊了几句', () => {
+        const text = buildCinemaEndCardText({
+            title: '钟表馆事件', episode: '第2集', lastVideoTime: 1390,
+            lines: [{ role: 'user', text: 'a', at: 1 }, { role: 'char', text: 'b', at: 2 }, { role: 'user', text: 'c', at: 3 }],
+        }, '萧逸');
+        expect(text).toBe('一起看结束 · 萧逸｜《钟表馆事件》 第2集｜看到 23:10｜聊了2句');
     });
 });

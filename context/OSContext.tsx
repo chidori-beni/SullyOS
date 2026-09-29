@@ -107,6 +107,7 @@ import { dateLaunch } from '../utils/dateLaunch';
 import { runCallMemoryPalacePostFlow } from '../utils/memoryPalace/callPostFlow';
 import { getActiveDatePresence } from '../utils/datePresence';
 import { getCallLifecycleGeneration, isCallActiveForChar } from '../utils/callSessionLifecycle';
+import { getActiveCinemaPresence } from '../utils/cinema/cinemaPresence';
 import { AUDIO_RETENTION_CHECK_INTERVAL_MS, cleanupExpiredAudioAssets } from '../utils/audioRetention';
 
 interface ProactiveQueueEntry {
@@ -2462,6 +2463,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (activeDatePresence?.status === 'active') {
               drainQueuedProactive();
               console.log(`🔕 [Proactive/Global] Skipped for ${char.name}: 正在面对面见面 (${activeDatePresence.encounterId})`);
+              return;
+          }
+
+          // 正在影院里一起看片（影院 App 被切走了也算，标记存在 localStorage）——
+          // 这会儿角色就在陪你看，私聊里再冒一条「我在外面散步」会很割裂。
+          const activeCinema = getActiveCinemaPresence(charId);
+          if (activeCinema) {
+              drainQueuedProactive();
+              console.log(`🔕 [Proactive/Global] Skipped for ${char.name}: 正在一起看《${activeCinema.title}》`);
               return;
           }
 

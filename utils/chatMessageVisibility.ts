@@ -1,10 +1,11 @@
 import type { Message } from '../types';
 
-/** 私聊界面的范围；见面/通话记录仍保留在库里，供各自界面和上下文使用。 */
+/** 私聊界面的范围；见面/通话/影院记录仍保留在库里，供各自界面和上下文使用。 */
 export const isVisibleChatMessage = (message: Message, hideSystemLogs = false): boolean => (
     !message.groupId
     && message.metadata?.source !== 'date'
     && message.metadata?.source !== 'call'
+    && message.metadata?.source !== 'cinema'
     && message.metadata?.source !== 'story_theater_memory'
     && !message.metadata?.proactiveHint
     && !(hideSystemLogs && message.role === 'system' && message.type !== 'score_card')

@@ -5,8 +5,9 @@
  * 此刻的画面贴在最后一条用户消息上（跟通话的「每轮快照」同一个做法）；
  * 模型不支持看图时自动退回只发文字。
  *
- * 放映室里的对话**不写进私聊**：一部片子边看边聊几十句，会把聊天记录冲掉。
- * 这一场记在影院自己的记录里（cinemaDb），以后再做「看完写进记忆」。
+ * 放映室里的每句话由 CinemaApp 存进私聊消息库（source: 'cinema'，私聊界面不显示），
+ * 照通话的做法说一句进一句。这里准备上下文时要把**这一场**的那几条排除掉——
+ * 这一场的对话由 session.lines 接在后面，不排除就会重复两遍。
  *
  * 快：私聊那一整套（读全部聊天、记忆宫殿召回……）**一场只准备一次**，缓存 10 分钟；
  * 每句话只在后面接上这一场的对话。进放映室时就提前准备（warmCinemaContext），
@@ -28,6 +29,8 @@ export const CINEMA_CONTEXT_TTL_MS = 10 * 60 * 1000;
 
 export interface CinemaContextInput {
     char: CharacterProfile;
+    /** 这一场的 id：私聊库里属于这一场的消息不进缓存的历史（由 session.lines 接上） */
+    sessionId?: string;
     userProfile: UserProfile;
     groups: GroupProfile[];
     realtimeConfig?: RealtimeConfig;
@@ -45,7 +48,8 @@ const cacheAt = new Map<string, number>();
 async function buildContext(input: CinemaContextInput): Promise<PreparedContext> {
     // 心声关掉：影院里要的是短短一两句，心声那一长串既拖慢又会露出来
     const char: CharacterProfile = { ...input.char, xinshengEnabled: false };
-    const historyMsgs = await loadCharacterContextMessages(char);
+    const historyMsgs = (await loadCharacterContextMessages(char))
+        .filter(message => !input.sessionId || message.metadata?.cinemaSessionId !== input.sessionId);
     const payload = await buildChatRequestPayload({
         char, userProfile: input.userProfile, groups: input.groups,
         emojis: await DB.getEmojis(), categories: await DB.getEmojiCategories(),
@@ -61,7 +65,7 @@ async function buildContext(input: CinemaContextInput): Promise<PreparedContext>
 
 /** 取准备好的上下文；没有或过期了就准备一份。同一时间只准备一次。 */
 export function getCinemaContext(input: CinemaContextInput, now = Date.now()): Promise<PreparedContext> {
-    const key = input.char.id;
+    const key = `${input.char.id}:${input.sessionId || ''}`;
     const at = cacheAt.get(key);
     const cached = contextCache.get(key);
     if (cached && at !== undefined && now - at < CINEMA_CONTEXT_TTL_MS) return cached;
@@ -97,7 +101,7 @@ export async function askCharacterInCinema(input: AskCinemaInput): Promise<AskCi
     if (!apiConfig.baseUrl) throw new Error('还没有配置聊天 API');
     const userName = userProfile?.name || '用户';
 
-    const context = await getCinemaContext(input);
+    const context = await getCinemaContext({ ...input, sessionId: session.id });
     const sessionMessages = sessionLinesToApiMessages(session.lines);
     const textMessages = [...context.history, ...sessionMessages];
     const frame = input.frameDataUrl && input.frameDataUrl.startsWith('data:image/') ? input.frameDataUrl : '';

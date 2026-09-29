@@ -910,6 +910,8 @@ export const DB = {
         && msg.type === 'text'
         && msg.metadata?.source !== 'date'
         && msg.metadata?.source !== 'date-end-popup'
+        // 影院的话不是「见面时用手机发的消息」；线下一起看以后单独做（交接说明-一起看.md 需求池 ②）
+        && msg.metadata?.source !== 'cinema'
         && msg.metadata?.datePhoneMessage !== true;
     // localStorage is the fast path while DateApp/ChatApp share a tab. The profile
     // fallback covers a tab reload or a second tab where the persisted encounter

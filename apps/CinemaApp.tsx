@@ -2,6 +2,7 @@
  * 影院 —— 电脑上放视频，手机里的角色同步看画面、陪你聊。
  *
  * 三个页面：首页（开一场 / 最近看过）· 配对电脑 · 放映室。
+ * 每句话照通话的做法存进私聊消息库（说一句进一句，私聊界面不显示）；点「散场」落一张卡片。
  * 电脑那边是 public/watch.html（观影端），两边经用户自己的 amsg Worker 中转
  * （worker/amsg/src/watchRoom.ts）。逻辑见 utils/cinema/，方案见工作区「交接说明-一起看.md」。
  */
@@ -9,7 +10,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ArrowsClockwise, Copy, Eye, FilmSlate, Monitor, PaperPlaneRight, Trash } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import type { CharacterProfile } from '../types';
+import { DB } from '../utils/db';
+import { endAmsgChatPresence, markAmsgStateDirty, startAmsgChatPresence, stopAmsgChatPresence } from '../utils/amsgStateSync';
+import { runCallMemoryPalacePostFlow } from '../utils/memoryPalace/callPostFlow';
+import { endCinemaPresence, getActiveCinemaPresence, touchCinemaPresence } from '../utils/cinema/cinemaPresence';
 import {
+    buildCinemaEndCardText, CINEMA_END_SOURCE, cinemaMessageMetadata,
     describeStatus, describeWork, formatVideoTime, isFrameFresh, newCinemaSession, workerHostForDisplay,
     type CinemaChatLine, type CinemaFrame, type CinemaPairing, type CinemaSession, type CinemaSpoilerMode, type CinemaStatus,
 } from '../utils/cinema/cinema';
@@ -33,7 +39,7 @@ const copyText = async (text: string) => {
 };
 
 const CinemaApp: React.FC = () => {
-    const { closeApp, characters, apiConfig, userProfile, groups, realtimeConfig, addToast, registerBackHandler } = useOS();
+    const { closeApp, characters, apiConfig, userProfile, groups, realtimeConfig, memoryPalaceConfig, updateCharacter, addToast, registerBackHandler } = useOS();
     const [view, setView] = useState<View>('home');
     const [pairing, setPairing] = useState<CinemaPairing | null>(null);
     const [sessions, setSessions] = useState<CinemaSession[]>([]);
@@ -55,6 +61,7 @@ const CinemaApp: React.FC = () => {
     const [withFrame, setWithFrame] = useState(true);
     const [thinking, setThinking] = useState(false);
     const [pairBusy, setPairBusy] = useState(false);
+    const [ending, setEnding] = useState(false);
 
     const socketRef = useRef<WatchRoomSocket | null>(null);
     const frameWaiters = useRef(new Map<string, (f: CinemaFrame) => void>());
@@ -156,11 +163,25 @@ const CinemaApp: React.FC = () => {
     );
 
     // 进放映室就开始准备角色的上下文（人设、记忆、最近聊天），第一句话不用等
+    const sessionId = session?.id;
     useEffect(() => {
-        if (view === 'room' && char) warmCinemaContext({ char, userProfile, groups, realtimeConfig });
-    }, [view, char, userProfile, groups, realtimeConfig]);
+        if (view === 'room' && char && sessionId) warmCinemaContext({ char, userProfile, groups, realtimeConfig, sessionId });
+    }, [view, char, sessionId, userProfile, groups, realtimeConfig]);
+
+    // 在放映室里 = 正在一起看：本地主动消息据此静默（cinemaPresence），云端主动消息
+    // 靠跟通话同一份「用户在前台」租约知道你正在跟 ta 在一起。离开放映室只停租约、不散场。
+    const charIdInRoom = view === 'room' ? char?.id : undefined;
+    useEffect(() => {
+        if (!charIdInRoom || !session) return;
+        touchCinemaPresence(charIdInRoom, session);
+        void startAmsgChatPresence(charIdInRoom, null);
+        return () => stopAmsgChatPresence(charIdInRoom);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [charIdInRoom, sessionId]);
 
     const openSession = (s: CinemaSession) => {
+        // 散过场的再点进来就是接着看
+        if (s.endedAt) { s = { ...s, endedAt: undefined }; void saveCinemaSession(s); }
         setSession(s);
         setFrame(null); frameRef.current = null;
         setStatus(null); statusRef.current = null;
@@ -209,6 +230,10 @@ const CinemaApp: React.FC = () => {
             lastVideoTime: videoTime ?? session.lastVideoTime,
         };
         await persist(current);
+        // 说一句进一句：存进私聊消息库（界面不显示），角色在私聊里也知道你们正在一起看
+        await saveLineToChat(char.id, current, 'user', text, videoTime);
+        touchCinemaPresence(char.id, current);
+        void startAmsgChatPresence(char.id, userLine.at);
         setThinking(true);
         try {
             let frameUrl = '';
@@ -231,10 +256,58 @@ const CinemaApp: React.FC = () => {
             const replies: CinemaChatLine[] = result.lines.map((line, i) => ({ role: 'char', text: line, at: now + i }));
             current = { ...current, lines: [...current.lines, ...replies], updatedAt: now };
             await persist(current);
+            for (const reply of replies) await saveLineToChat(char.id, current, 'assistant', reply.text, videoTime);
+            // 跟通话一样每轮打脏：云端主动消息那份上下文也跟着知道你们在一起看
+            markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
         } catch (error: any) {
             addToast(`${char.name} 没回上：${error?.message || error}`, 'error');
         } finally {
             setThinking(false);
+        }
+    };
+
+    const saveLineToChat = async (charId: string, s: CinemaSession, role: 'user' | 'assistant', content: string, videoTime?: number) => {
+        try {
+            await DB.saveMessage({ charId, role, type: 'text', content, metadata: cinemaMessageMetadata(s, videoTime) });
+        } catch (error) {
+            console.warn('[cinema] 存进私聊失败（放映室里照常）', error);
+        }
+    };
+
+    /** 散场：落一张卡片进私聊、清掉「正在一起看」、跟通话挂断一样整理记忆。 */
+    const endScreening = async () => {
+        if (!session || !char || ending) return;
+        if (!window.confirm(`散场？\n${char.name} 会记得今天一起看了${describeWork(session)}。之后还可以从「最近看过」点进来接着看。`)) return;
+        setEnding(true);
+        try {
+            const endedAt = Date.now();
+            const done: CinemaSession = { ...session, endedAt, updatedAt: endedAt };
+            await persist(done);
+            await DB.saveMessage({
+                charId: char.id, role: 'system', type: 'system',
+                content: buildCinemaEndCardText(done, char.name),
+                metadata: {
+                    source: CINEMA_END_SOURCE, cinemaSessionId: done.id, cinemaTitle: done.title,
+                    ...(done.episode ? { cinemaEpisode: done.episode } : {}),
+                    ...(done.lastVideoTime !== undefined ? { cinemaVideoTime: Math.floor(done.lastVideoTime) } : {}),
+                },
+            });
+            endCinemaPresence(char.id, done.id);
+            void endAmsgChatPresence(char.id);
+            stopAmsgChatPresence(char.id);
+            markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+            void runCallMemoryPalacePostFlow({
+                char,
+                getLiveChar: () => characters.find(c => c.id === char.id) || null,
+                memoryPalaceConfig, apiConfig, userName: userProfile?.name, updateCharacter,
+            }).catch(error => console.warn('[cinema] 散场后整理记忆失败', error));
+            addToast('散场了，这一场已经记下', 'success');
+            setView('home');
+            void reload();
+        } catch (error: any) {
+            addToast(`散场没成功：${error?.message || error}`, 'error');
+        } finally {
+            setEnding(false);
         }
     };
 
@@ -287,10 +360,10 @@ const CinemaApp: React.FC = () => {
                 <header className="cn-top">
                     <button className="cn-icon" onClick={() => { setView('home'); void reload(); }} aria-label="返回"><ArrowLeft size={20} /></button>
                     <div className="cn-top-title">
-                        <small>{char?.name || '?'} 和你一起看</small>
+                        <small><span className={`cn-dot-inline ${conn === 'open' && screenOnline ? 'on' : conn === 'open' ? 'wait' : ''}`} title={connLabel} />{char?.name || '?'} 和你一起看</small>
                         <h1>{describeWork(session)}</h1>
                     </div>
-                    <span className={`cn-dot ${conn === 'open' && screenOnline ? 'on' : conn === 'open' ? 'wait' : ''}`} title={connLabel} />
+                    <button className="cn-end" onClick={() => void endScreening()} disabled={ending}>散场</button>
                 </header>
                 <section className="cn-screen">
                     {frame
@@ -403,6 +476,7 @@ const CinemaApp: React.FC = () => {
                                             和 {who?.name || '（角色已删除）'} · {new Date(s.updatedAt).toLocaleDateString()}
                                             {s.lastVideoTime !== undefined ? ` · 看到 ${formatVideoTime(s.lastVideoTime)}` : ''}
                                             {` · ${s.lines.length} 句`}
+                                            {s.endedAt ? ' · 已散场' : who && getActiveCinemaPresence(who.id)?.sessionId === s.id ? ' · 正在看' : ''}
                                         </small>
                                     </button>
                                     <button className="cn-icon" onClick={() => void removeSession(s)} aria-label="删除"><Trash size={16} /></button>

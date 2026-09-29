@@ -22,6 +22,7 @@ export const messageSourceLabel = (source?: string): string => {
     if (source === 'date') return '见面 · DateApp';
     if (source === 'call' || source === 'call-end-popup') return '通话 · CallApp';
     if (source === 'story_theater' || source === 'story_theater_memory') return '剧情剧场';
+    if (source === 'cinema' || source === 'cinema-end') return '影院 · 一起看';
     if (source === 'active_msg_2') return '主动消息';
     return `其他 · ${source}`;
 };
