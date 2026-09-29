@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-    appendCinemaNote, buildCinemaInstruction, buildProactiveNudge, CINEMA_NOTES_KEEP, decideProactive, isSilentReply,
+    appendCinemaNote, buildCinemaInstruction, isPictureMovingSince, mergeCinemaStatus, buildProactiveNudge, CINEMA_NOTES_KEEP, decideProactive, isSilentReply,
     PROACTIVE_GAP_MS, PROACTIVE_PAUSE_MS, PROACTIVE_USER_QUIET_MS, type ProactiveState,
 } from './cinema';
 
@@ -87,5 +87,31 @@ describe('主动开口的提示词', () => {
         for (let i = 0; i < 40; i += 1) notes = appendCinemaNote(notes, { at: i, text: String(i) });
         expect(notes).toHaveLength(CINEMA_NOTES_KEEP);
         expect(notes[0].text).toBe('10');
+    });
+});
+
+describe('画面在动就不算暂停（09-30 实测：没点暂停，角色却问「怎么停在这了」）', () => {
+    const t = 50_000_000;
+    const share = { mode: 'share' as const, sharing: true, at: t };
+    const stalePaused = { mode: 'site' as const, site: 'B站', time: 300, paused: true, at: t - 10 * 60_000 };
+
+    it('小插件说暂停之后画面又换了两次场景 → 不信它', () => {
+        const scenes = [t - 60_000, t - 20_000];
+        expect(isPictureMovingSince(scenes, stalePaused.at)).toBe(true);
+        expect(mergeCinemaStatus(share, stalePaused, t, scenes)).toBe(share);
+    });
+
+    it('刚按暂停时弹出暂停图标算一次换场景，一次不够推翻暂停', () => {
+        const justPaused = { ...stalePaused, at: t - 10_000 };
+        expect(mergeCinemaStatus(share, justPaused, t, [t - 5000])).toMatchObject({ paused: true });
+    });
+
+    it('没有换场景就照信小插件的暂停', () => {
+        expect(mergeCinemaStatus(share, stalePaused, t, [])).toMatchObject({ paused: true, site: 'B站' });
+    });
+
+    it('小插件说在播放，画面动不动都照信', () => {
+        const playing = { ...stalePaused, paused: false, at: t - 5000 };
+        expect(mergeCinemaStatus(share, playing, t, [t - 1000, t - 500])).toMatchObject({ paused: false, time: 300 });
     });
 });

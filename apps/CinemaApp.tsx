@@ -81,6 +81,8 @@ const CinemaApp: React.FC = () => {
     const playerStatusRef = useRef<CinemaStatus | null>(null);
     const sessionRef = useRef<CinemaSession | null>(null);
     const progressSavedAt = useRef(0);
+    /** 最近几次换场景帧的时间：画面在动就不信旧的「暂停」（mergeCinemaStatus） */
+    const sceneTimesRef = useRef<number[]>([]);
     const listRef = useRef<HTMLDivElement>(null);
 
     const reload = useCallback(async () => {
@@ -135,7 +137,7 @@ const CinemaApp: React.FC = () => {
     }, []);
 
     const refreshStatus = () => {
-        const merged = mergeCinemaStatus(screenStatusRef.current, playerStatusRef.current);
+        const merged = mergeCinemaStatus(screenStatusRef.current, playerStatusRef.current, Date.now(), sceneTimesRef.current);
         statusRef.current = merged;
         setStatus(merged);
     };
@@ -251,6 +253,8 @@ const CinemaApp: React.FC = () => {
         noteBusyRef.current = false;
         lastNoteAtRef.current = 0;
         noteModelRef.current = undefined;
+        noteFailRef.current = 0;
+        sceneTimesRef.current = [];
         setLastNote(null);
         setView('room');
     };
@@ -432,15 +436,33 @@ const CinemaApp: React.FC = () => {
                     ? `${NOTE_MODEL_LABEL[model.source]}不会看图，画面笔记改用${NOTE_MODEL_LABEL[next.source]}`
                     : '没有会看图的模型，画面笔记先关掉了', 'info');
             } else {
+                // 09-30 实测「没有笔记」：以前失败了只写日志，用户看不见。现在第一次失败就把原话报出来；
+                // 同一个模型连着失败两次（有的接口不认图片但报错不说「图片」），换下一个模型试
                 console.warn('[cinema] 画面笔记失败', error);
+                noteFailRef.current += 1;
+                const message = (error as any)?.message || String(error);
+                const next = noteFailRef.current >= 2 ? nextNoteModel(candidates, model) : null;
+                if (next) {
+                    noteModelRef.current = next;
+                    noteFailRef.current = 0;
+                    lastNoteAtRef.current = 0;
+                    addToast(`画面笔记用${NOTE_MODEL_LABEL[model.source]}连续失败，改用${NOTE_MODEL_LABEL[next.source]}。报错：${message}`, 'info');
+                } else if (noteFailRef.current === 1) {
+                    addToast(`画面笔记没写成（${NOTE_MODEL_LABEL[model.source]}）：${message}`, 'error');
+                }
             }
         } finally {
             noteBusyRef.current = false;
         }
     };
+    const noteFailRef = useRef(0);
     const onFrameRef = useRef<(f: CinemaFrame) => void>(() => {});
     onFrameRef.current = (f) => {
-        if (f.reason === 'scene') scenesSinceCharRef.current += 1;
+        if (f.reason === 'scene') {
+            scenesSinceCharRef.current += 1;
+            sceneTimesRef.current = [...sceneTimesRef.current, Date.now()].slice(-10);
+            refreshStatus(); // 画面在动 → 旧的「暂停」可能要作废
+        }
         if (f.reason === 'scene' || f.reason === 'tick') void writeNote(f);
     };
 

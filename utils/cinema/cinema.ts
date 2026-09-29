@@ -423,6 +423,13 @@ export const PLAYER_STALE_MS = 45_000;
 /** 暂停中不会一直报，暂停的状态留久一点。 */
 export const PLAYER_PAUSED_STALE_MS = 30 * 60 * 1000;
 
+/**
+ * 画面在某个时刻之后还在动吗：之后至少来了两次换场景。
+ * 只算一次不够——刚按暂停时播放器会弹出暂停图标 / 控制条，本身就可能被当成一次换场景。
+ */
+export const isPictureMovingSince = (sceneTimes: number[], since: number): boolean =>
+    sceneTimes.filter(t => t > since + 3000).length >= 2;
+
 /** 小插件报的状态还算不算数。 */
 export const isPlayerFresh = (player: CinemaStatus | null | undefined, now = Date.now()): player is CinemaStatus =>
     !!player && now - player.at <= (player.paused ? PLAYER_PAUSED_STALE_MS : PLAYER_STALE_MS);
@@ -435,7 +442,14 @@ export const mergeCinemaStatus = (
     screen: CinemaStatus | null | undefined,
     player: CinemaStatus | null | undefined,
     now = Date.now(),
+    /** 电脑自己发来的换场景帧的时间（最近几次） */
+    sceneTimes: number[] = [],
 ): CinemaStatus | null => {
+    if (isPlayerFresh(player, now) && player.paused && isPictureMovingSince(sceneTimes, player.at)) {
+        // 小插件说暂停了，可画面在它说完之后还在不停换场景：那条「暂停」是旧的或者说的是别的标签页
+        // （09-30 实测：没点暂停，角色却问「怎么停在这了」）。不信它，退回观影端的状态。
+        return screen || null;
+    }
     if (isPlayerFresh(player, now)) {
         // 本地片在观影端里放时，观影端自己的进度更准，小插件不会出现在那个页面上
         if (screen?.mode === 'local' && typeof screen.time === 'number') return screen;
