@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Sully 影院 · 暂停同步
 // @namespace    https://chidori-beni.github.io/SullyOS/
-// @version      0.1.3
-// @description  在 B站 / 腾讯视频 / 优酷 / 爱奇艺 看片时，把播放进度、暂停、第几集告诉手机上 Sully 影院里的角色。
+// @version      0.2.0
+// @description  看片时把播放进度、暂停、第几集告诉手机上 Sully 影院里的角色。B站 / 腾讯视频 / 优酷 / 爱奇艺自动开启，其他网站在油猴菜单里点「在这个网站启用」。
 // @author       SullyOS
 // @match        *://www.bilibili.com/video/*
 // @match        *://www.bilibili.com/bangumi/play/*
@@ -15,13 +15,14 @@
 // @match        https://chidori-beni.github.io/SullyOS/watch.html*
 // @match        http://localhost/*watch.html*
 // @match        http://localhost:*/*watch.html*
+// @match        *://*/*
 // @grant        GM_xmlhttpRequest
+// @grant        GM_registerMenuCommand
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        unsafeWindow
 // @connect      workers.dev
 // @connect      *
-// @noframes
 // @run-at       document-idle
 // @downloadURL  https://chidori-beni.github.io/SullyOS/watch/sully-cinema.user.js
 // @updateURL    https://chidori-beni.github.io/SullyOS/watch/sully-cinema.user.js
@@ -43,7 +44,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.1.3';
+  const VERSION = '0.2.0';
   const PAIR_KEY = 'sully-watch-pair';
   const TICK_MS = 15000;
   const MIN_GAP_MS = 1500;
@@ -67,14 +68,58 @@
     return;
   }
 
-  // ───────── 视频网站：报进度 ─────────
+  // ───────── 在哪些网站干活 ─────────
+  // B站 / 腾讯 / 优酷 / 爱奇艺自动开启；别的网站要用户在油猴菜单里点「在这个网站启用」，
+  // 记在 GM 存储 sully-enabled-sites（网站主机名列表）。没启用的网站上脚本什么都不做。
+  // 很多网站的播放器放在另一个域名的 iframe 里，所以在 iframe 里要看「最外层是哪个网站」。
   const SITES = [
     { re: /bilibili\.com$/, name: 'B站' },
     { re: /v\.qq\.com$/, name: '腾讯视频' },
     { re: /youku\.com$/, name: '优酷' },
     { re: /iqiyi\.com$/, name: '爱奇艺' },
   ];
-  const site = (SITES.find(s => s.re.test(location.hostname)) || { name: location.hostname }).name;
+  const ENABLED_KEY = 'sully-enabled-sites';
+  const isTopFrame = (() => { try { return window.top === window.self; } catch (e) { return false; } })();
+
+  /** 最外层网页的主机名（在 iframe 里时往上找） */
+  const topHost = (() => {
+    if (isTopFrame) return location.hostname;
+    try { return window.top.location.hostname; } catch (e) { /* 跨域读不到 */ }
+    try {
+      const anc = location.ancestorOrigins;
+      if (anc && anc.length) return new URL(anc[anc.length - 1]).hostname;
+    } catch (e) { /* ignore */ }
+    try { return new URL(document.referrer).hostname; } catch (e) { return ''; }
+  })();
+
+  const readEnabledSites = () => {
+    try {
+      const raw = GM_getValue(ENABLED_KEY, '[]');
+      const list = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      return Array.isArray(list) ? list.filter(h => typeof h === 'string') : [];
+    } catch (e) { return []; }
+  };
+  const isBuiltinSite = (host) => SITES.some(s => s.re.test(host));
+  const isEnabledSite = (host) => !!host && (isBuiltinSite(host) || readEnabledSites().includes(host));
+
+  // 油猴菜单：只在最外层、非内置网站上出现
+  if (isTopFrame && !isBuiltinSite(location.hostname) && typeof GM_registerMenuCommand === 'function') {
+    const host = location.hostname;
+    const on = readEnabledSites().includes(host);
+    GM_registerMenuCommand(on ? `在 ${host} 停用 Sully 影院` : `在 ${host} 启用 Sully 影院`, () => {
+      const list = readEnabledSites().filter(h => h !== host);
+      if (!on) list.push(host);
+      GM_setValue(ENABLED_KEY, JSON.stringify(list));
+      if (confirm(on ? '已停用。刷新这一页生效，现在刷新吗？' : '已启用。刷新这一页（和里面的播放器）生效，现在刷新吗？')) location.reload();
+    });
+  }
+
+  if (!isEnabledSite(topHost)) return;
+  // 内置网站照旧只在最外层干活（它们的播放器不在 iframe 里，里面的广告 iframe 别来捣乱）
+  if (!isTopFrame && isBuiltinSite(location.hostname)) return;
+
+  // ───────── 视频网站：报进度 ─────────
+  const site = (SITES.find(s => s.re.test(topHost)) || { name: topHost }).name;
 
   /** 网页标题去掉平台尾巴，剩下的一般就是「片名 第N集」。 */
   const cleanTitle = (raw) => String(raw || '')
@@ -158,7 +203,8 @@
       version: VERSION,
       event,
       site,
-      title: cleanTitle(document.title),
+      // 在 iframe 里读到的是播放器的标题，没意义，就不报了（手机上有这一场的片名）
+      title: isTopFrame ? cleanTitle(document.title) : '',
       url: location.href.split('#')[0],
       time: isFinite(video.currentTime) ? Math.round(video.currentTime * 10) / 10 : undefined,
       duration: isFinite(video.duration) ? Math.round(video.duration) : undefined,

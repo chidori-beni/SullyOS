@@ -16,9 +16,9 @@ import { runCallMemoryPalacePostFlow } from '../utils/memoryPalace/callPostFlow'
 import { endCinemaPresence, getActiveCinemaPresence, touchCinemaPresence } from '../utils/cinema/cinemaPresence';
 import { getActiveDatePresence } from '../utils/datePresence';
 import {
-    appendCinemaNote, appendSubtitleLines, buildCinemaEndCardText, CINEMA_END_SOURCE, cinemaLineText, cinemaMessageMetadata, decideProactive,
+    appendCinemaNote, appendSubtitleLines, buildCinemaEndCardText, estimateVideoTime, pickSubtitleWindow, sanitizeExternalSubtitles, CINEMA_END_SOURCE, cinemaLineText, cinemaMessageMetadata, decideProactive,
     NOTE_GAP_MS, PROACTIVE_LEVELS, toCinemaLines,
-    type CinemaNote, type CinemaProactiveLevel, type CinemaSubtitleLine, type ProactiveReason,
+    type CinemaNote, type CinemaProactiveLevel, type CinemaSubtitleLine, type ExternalSubtitles, type ProactiveReason,
     describeStatus, describeWork, formatVideoTime, isFrameFresh, mergeCinemaStatus, newCinemaSession, sessionRemembers, workerHostForDisplay,
     type CinemaChatLine, type CinemaFrame, type CinemaMeetMode, type CinemaPairing, type CinemaSession, type CinemaSpoilerMode, type CinemaStatus,
 } from '../utils/cinema/cinema';
@@ -94,6 +94,9 @@ const CinemaApp: React.FC = () => {
     const sceneTimesRef = useRef<number[]>([]);
     /** 小插件读到的 B站 字幕（最近 20 句），萧逸开口时带上最近几句 */
     const subtitleLinesRef = useRef<CinemaSubtitleLine[]>([]);
+    /** 观影端第 5 块选的外挂字幕（电脑那边存着，手机进放映室时会再发一份） */
+    const externalSubsRef = useRef<ExternalSubtitles | null>(null);
+    const [externalSubsName, setExternalSubsName] = useState('');
     const listRef = useRef<HTMLDivElement>(null);
 
     const reload = useCallback(async () => {
@@ -125,6 +128,13 @@ const CinemaApp: React.FC = () => {
             if (f.requestId) {
                 const waiter = frameWaiters.current.get(f.requestId);
                 if (waiter) { frameWaiters.current.delete(f.requestId); waiter(f); }
+            }
+        } else if (msg.type === 'subtitle-file') {
+            externalSubsRef.current = sanitizeExternalSubtitles(msg as any);
+            setExternalSubsName(externalSubsRef.current?.name || '');
+        } else if (msg.type === 'subtitle-offset') {
+            if (externalSubsRef.current && typeof msg.offsetMs === 'number') {
+                externalSubsRef.current = { ...externalSubsRef.current, offsetMs: msg.offsetMs };
             }
         } else if (msg.type === 'status' || msg.type === 'player') {
             const isPlayer = msg.type === 'player';
@@ -362,11 +372,16 @@ const CinemaApp: React.FC = () => {
                 const use = fresh || (isFrameFresh(frameRef.current) ? frameRef.current : null);
                 frameUrl = use?.dataUrl || '';
             }
+            // 有外挂字幕、又读得到进度：用它挑「这一句 + 最近几句」，比 B站 AI 字幕准；否则用 B站 读到的
+            const external = externalSubsRef.current;
+            const videoNow = estimateVideoTime(statusRef.current);
+            const picked = external && videoNow !== undefined ? pickSubtitleWindow(external, videoNow) : null;
+            const statusForPrompt = picked && statusRef.current ? { ...statusRef.current, subtitle: picked.current || '' } : statusRef.current;
             const result = await askCharacterInCinema({
                 char, userProfile, groups, apiConfig, realtimeConfig,
-                session: sessionRef.current!, status: statusRef.current, frameDataUrl: frameUrl,
+                session: sessionRef.current!, status: statusForPrompt, frameDataUrl: frameUrl,
                 proactive: opts.proactive,
-                recentSubtitles: subtitleLinesRef.current,
+                recentSubtitles: picked ? picked.recent : subtitleLinesRef.current,
                 // 开着出声才教他写停顿和语气声；只打字的时候别让这些标记混进来
                 voiceGuide: voiceOnRef.current && canCinemaSpeak(char, apiConfig) ? buildVoiceActingGuide(char) : undefined,
             });
@@ -761,7 +776,7 @@ const CinemaApp: React.FC = () => {
     }
 
     if (view === 'room' && session) {
-        const statusText = describeStatus(status);
+        const statusText = [describeStatus(status), externalSubsName ? `字幕：${externalSubsName}` : ''].filter(Boolean).join(' · ');
         return (
             <div className="cinema">
                 <header className="cn-top">

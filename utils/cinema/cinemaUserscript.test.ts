@@ -41,7 +41,9 @@ const setup = (url: string, stored: Record<string, unknown> = {}, tab?: { store:
         },
     };
     const fakeWindow = { localStorage: { getItem: (k: string) => pageStorage[k] ?? null } };
+    const menus: string[] = [];
     const sandbox = {
+        GM_registerMenuCommand: (label: string) => { menus.push(label); },
         GM_getValue: (k: string, d: unknown) => (store.has(k) ? store.get(k) : d),
         GM_setValue: (k: string, v: unknown) => { store.set(k, v); },
         GM_xmlhttpRequest: (req: any) => { requests.push({ ...req, body: JSON.parse(req.data) }); },
@@ -51,7 +53,7 @@ const setup = (url: string, stored: Record<string, unknown> = {}, tab?: { store:
         location: new URL(url),
     };
     const run = new Function(...Object.keys(sandbox), SCRIPT);
-    return { store, requests, start: () => run(...Object.values(sandbox)) };
+    return { store, requests, menus, start: () => run(...Object.values(sandbox)) };
 };
 
 const addVideo = (duration: number) => {
@@ -281,5 +283,38 @@ describe('暂停同步小插件', () => {
         video.play();
         vi.advanceTimersByTime(20_000);
         expect(env.requests.some(r => r.body.payload.subtitle || r.body.payload.subtitles)).toBe(false);
+    });
+
+    it('别的网站默认不干活，油猴菜单里出现「启用」', () => {
+        const video = addVideo(1440);
+        const env = setup('https://some-video-site.example/play/1.html', { 'sully-watch-pair': PAIR });
+        env.start();
+        video.play();
+        vi.advanceTimersByTime(20_000);
+        expect(env.requests).toHaveLength(0);
+        expect(env.menus).toEqual(['在 some-video-site.example 启用 Sully 影院']);
+    });
+
+    it('在菜单里启用过的网站照常报进度，平台名就是网站名', () => {
+        const video = addVideo(1440);
+        const env = setup('https://some-video-site.example/play/1.html', {
+            'sully-watch-pair': PAIR,
+            'sully-enabled-sites': JSON.stringify(['some-video-site.example']),
+        });
+        env.start();
+        video.play();
+        vi.advanceTimersByTime(2000);
+        expect(env.requests[0].body.payload).toMatchObject({ site: 'some-video-site.example', paused: false });
+        expect(env.menus).toEqual(['在 some-video-site.example 停用 Sully 影院']);
+    });
+
+    it('内置平台不出菜单，照旧自动干活', () => {
+        const video = addVideo(1440);
+        const env = setup('https://www.bilibili.com/video/BVmenu', { 'sully-watch-pair': PAIR });
+        env.start();
+        video.play();
+        vi.advanceTimersByTime(2000);
+        expect(env.menus).toEqual([]);
+        expect(env.requests.length).toBeGreaterThan(0);
     });
 });

@@ -501,3 +501,62 @@ export const mergeCinemaStatus = (
 
 /** 这一场记不记（旧记录没有字段 = 记）。 */
 export const sessionRemembers = (session: Pick<CinemaSession, 'remember'> | null | undefined): boolean => session?.remember !== false;
+
+// ───────── 外挂字幕（观影端第 5 块选的字幕文件） ─────────
+
+/** 一句外挂字幕：[开始毫秒, 结束毫秒, 文字] */
+export type SubtitleCue = [number, number, string];
+
+export interface ExternalSubtitles {
+    name: string;
+    /** 正数 = 字幕推后：视频放到 t 时，对应字幕文件里 t - offset 那一句 */
+    offsetMs: number;
+    cues: SubtitleCue[];
+}
+
+export const MAX_EXTERNAL_CUES = 6000;
+
+/** 电脑发来的字幕文件：核对形状，坏的丢掉。没有句子就返回 null（= 不用外挂字幕了）。 */
+export const sanitizeExternalSubtitles = (msg: { name?: unknown; offsetMs?: unknown; cues?: unknown }): ExternalSubtitles | null => {
+    if (!Array.isArray(msg.cues)) return null;
+    const cues: SubtitleCue[] = [];
+    for (const raw of msg.cues.slice(0, MAX_EXTERNAL_CUES)) {
+        if (!Array.isArray(raw)) continue;
+        const [a, b, t] = raw;
+        if (typeof a !== 'number' || typeof b !== 'number' || typeof t !== 'string' || !Number.isFinite(a) || !Number.isFinite(b) || !t.trim()) continue;
+        cues.push([a, Math.max(a, b), t.trim().slice(0, 200)]);
+    }
+    if (!cues.length) return null;
+    cues.sort((x, y) => x[0] - y[0]);
+    return {
+        name: typeof msg.name === 'string' ? msg.name.slice(0, 120) : '字幕',
+        offsetMs: typeof msg.offsetMs === 'number' && Number.isFinite(msg.offsetMs) ? msg.offsetMs : 0,
+        cues,
+    };
+};
+
+/**
+ * 此刻大概放到第几秒：状态里的进度 + 离上报过了多久（在放的话）。
+ * 共享画面、没有小插件的时候没有进度，返回 undefined——外挂字幕就对不上。
+ */
+export const estimateVideoTime = (status: CinemaStatus | null | undefined, now = Date.now()): number | undefined => {
+    if (!status || typeof status.time !== 'number' || !Number.isFinite(status.time)) return undefined;
+    if (status.paused) return status.time;
+    return status.time + Math.max(0, (now - status.at) / 1000);
+};
+
+/** 按进度挑出「这一句」和「最近几句」（最近 windowSec 秒里开始的，最多 max 句）。 */
+export const pickSubtitleWindow = (
+    subs: ExternalSubtitles,
+    videoTime: number,
+    windowSec = 90,
+    max = CINEMA_SUBTITLES_IN_PROMPT,
+): { current?: string; recent: CinemaSubtitleLine[] } => {
+    const ms = videoTime * 1000 - subs.offsetMs;
+    const current = subs.cues.find(c => c[0] <= ms && ms < c[1])?.[2];
+    const recent = subs.cues
+        .filter(c => c[0] <= ms && c[0] >= ms - windowSec * 1000)
+        .slice(-max)
+        .map(c => ({ time: Math.max(0, Math.round((c[0] + subs.offsetMs) / 1000)), text: c[2] }));
+    return { current, recent };
+};

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    estimateVideoTime, pickSubtitleWindow, sanitizeExternalSubtitles,
     appendSubtitleLines, CINEMA_SUBTITLES_KEEP,
     splitCinemaActions, toCinemaLines, cinemaLineText,
     isPlayerFresh, mergeCinemaStatus, PLAYER_STALE_MS,
@@ -262,5 +263,39 @@ describe('影院 · B站 字幕', () => {
         expect(text).toContain('不是千夜说的');
         expect(text).toContain('1:40 你到底是谁');
         expect(text).toContain('· 我是钟表馆的主人');
+    });
+});
+
+describe('影院 · 外挂字幕', () => {
+    const subs = sanitizeExternalSubtitles({
+        name: '钟表馆事件 第1集.ass', offsetMs: 0,
+        cues: [[1000, 3000, '你到底是谁'], [4000, 6000, '我是钟表馆的主人'], [200000, 202000, '很久以后'], ['坏', 1, 2], [7000, 8000, '  ']],
+    })!;
+
+    it('电脑发来的字幕核对形状，坏的丢掉；没句子就是不用了', () => {
+        expect(subs.cues).toEqual([[1000, 3000, '你到底是谁'], [4000, 6000, '我是钟表馆的主人'], [200000, 202000, '很久以后']]);
+        expect(sanitizeExternalSubtitles({ cues: [] })).toBeNull();
+        expect(sanitizeExternalSubtitles({})).toBeNull();
+    });
+
+    it('估算此刻进度：在放就往后推，暂停就停在那', () => {
+        const at = 1_000_000;
+        expect(estimateVideoTime({ mode: 'site', time: 100, paused: false, at }, at + 5000)).toBe(105);
+        expect(estimateVideoTime({ mode: 'site', time: 100, paused: true, at }, at + 5000)).toBe(100);
+        expect(estimateVideoTime({ mode: 'share', sharing: true, at })).toBeUndefined();
+    });
+
+    it('按进度挑出这一句和最近几句', () => {
+        const picked = pickSubtitleWindow(subs, 5);
+        expect(picked.current).toBe('我是钟表馆的主人');
+        expect(picked.recent).toEqual([{ time: 1, text: '你到底是谁' }, { time: 4, text: '我是钟表馆的主人' }]);
+        expect(pickSubtitleWindow(subs, 3.5).current).toBeUndefined(); // 两句之间没台词
+    });
+
+    it('偏移：字幕推后 2 秒，视频放到 7 秒时才是第二句', () => {
+        const later = { ...subs, offsetMs: 2000 };
+        expect(pickSubtitleWindow(later, 4.5).current).toBe('你到底是谁');
+        expect(pickSubtitleWindow(later, 7).current).toBe('我是钟表馆的主人');
+        expect(pickSubtitleWindow(later, 7).recent.map(l => l.time)).toEqual([3, 6]);
     });
 });

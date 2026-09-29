@@ -134,8 +134,32 @@
       <li>点这个按钮，Tampermonkey 会弹出安装页，点「安装」：<br><a class="btn" id="installLink" href="watch/sully-cinema.user.js" target="_blank" rel="noopener" style="margin-top:6px">安装小插件</a></li>
       <li>装好后<b>刷新这一页</b>，上面变成「✓ 小插件已装好」就行。</li>
       <li>去视频网站放一下。第一次报进度时 Tampermonkey 可能会问要不要允许连接 <code>workers.dev</code>，选「<b>总是允许</b>」。</li>
+      <li><b>别的网站</b>（不是 B站 / 腾讯 / 优酷 / 爱奇艺）：在那个网站上点浏览器右上角的 Tampermonkey 图标 →「<b>在 xxx 启用 Sully 影院</b>」→ 刷新那一页。</li>
     </ol>
     <p class="hint" id="playerText" style="white-space:pre-line">还没收到小插件的进度。</p>
+  </section>
+
+  <!-- ⑤ 外挂字幕 -->
+  <section class="card">
+    <h2><span class="num">5</span> 外挂字幕（可选）</h2>
+    <p class="hint" style="margin-top:0">网站没有字幕、或者嫌自带字幕（比如 B站 AI 字幕）翻得不准时，把自己下载的字幕文件选进来（.srt / .ass / .vtt），
+    手机上的角色就能按进度读到「这一句 + 最近几句」台词。<br>
+    要能读到播放进度才对得上：<b>在这一页放本地视频</b>，或者<b>在装了小插件、启用了的网站上放</b>。只共享画面、没有小插件的话对不上时间。</p>
+    <div class="row">
+      <button class="primary" id="pickExtSubBtn">选择字幕文件</button>
+      <input type="file" id="extSubFile" accept=".srt,.ass,.ssa,.vtt" class="hidden" />
+      <button id="clearExtSubBtn" class="hidden">不用这份字幕了</button>
+      <span class="hint" id="extSubName" style="margin:0"></span>
+    </div>
+    <div class="row hidden" id="extSubOffsetRow">
+      <span class="hint" style="margin:0">字幕和画面对不上？</span>
+      <button data-offset="-1000">字幕提前 1 秒</button>
+      <button data-offset="-200">提前 0.2</button>
+      <button data-offset="200">推后 0.2</button>
+      <button data-offset="1000">字幕推后 1 秒</button>
+      <span class="pill" id="extSubOffset">偏移 0.0 秒</span>
+    </div>
+    <p class="hint hidden" id="extSubNow" style="white-space:pre-line"></p>
   </section>
 
   <section class="card">
@@ -144,6 +168,7 @@
   </section>
 </div>
 
+<script src="watch/subtitle-parser.js"></script>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
@@ -216,15 +241,20 @@
       clearInterval(pingTimer);
       pingTimer = setInterval(() => send({ type: 'ping' }), 25000);
       pushStatus();
+      sendExtSub();
     };
     sock.onmessage = (e) => {
       let msg; try { msg = JSON.parse(e.data); } catch { return; }
       if (!msg || typeof msg.type !== 'string') return;
       if (msg.type === 'player') {
         showPlayer(msg);
+        lastPlayerMsg = msg;
       } else if (msg.type === 'presence') {
         const on = Number(msg.phone) > 0;
         setPill($('phonePill'), on ? 'ok' : '', on ? '手机在线' : '手机不在线');
+        // 手机刚上线（进了放映室）：把外挂字幕再发一份，它那边是存在内存里的
+        if (on && !phoneWasOnline) sendExtSub();
+        phoneWasOnline = on;
       } else if (msg.type === 'capture-request') {
         captureAndSend('request', msg.requestId);
       }
@@ -538,6 +568,82 @@
     const probe = lastProbe ? `\n字幕侦探：${lastProbe}` : '';
     $('playerText').textContent = `最近一次（${when}）：${msg.site || ''} ${state} ${time}${dur ? ' / ' + dur : ''}　${msg.title || ''}${sub}${probe}`;
   };
+
+  // ───────── ⑤ 外挂字幕 ─────────
+  // 解析交给 watch/subtitle-parser.js。字幕整份发给手机一次（手机在放映室时），偏移单独发。
+  // 手机按「当前进度 + 偏移」挑出这一句和最近几句。这一页也记在 localStorage，刷新不用重选。
+  const LS_EXTSUB = 'sully-watch-extsub';
+  let extSub = null; // { name, offsetMs, cues: [[startMs, endMs, text], ...] }
+  let lastPlayerMsg = null;
+  let phoneWasOnline = false;
+  try { extSub = JSON.parse(lsGet(LS_EXTSUB) || 'null'); } catch {}
+
+  const saveExtSub = () => { if (extSub) lsSet(LS_EXTSUB, JSON.stringify(extSub)); else lsDel(LS_EXTSUB); };
+  const sendExtSub = () => send({
+    type: 'subtitle-file',
+    name: extSub ? extSub.name : '',
+    offsetMs: extSub ? extSub.offsetMs : 0,
+    cues: extSub ? extSub.cues : [],
+  });
+
+  const showExtSub = () => {
+    $('extSubName').textContent = extSub ? `${extSub.name}（${extSub.cues.length} 句）` : '';
+    $('clearExtSubBtn').classList.toggle('hidden', !extSub);
+    $('extSubOffsetRow').classList.toggle('hidden', !extSub);
+    $('extSubNow').classList.toggle('hidden', !extSub);
+    if (extSub) $('extSubOffset').textContent = `偏移 ${(extSub.offsetMs >= 0 ? '+' : '')}${(extSub.offsetMs / 1000).toFixed(1)} 秒`;
+  };
+
+  /** 现在放到第几秒：本地视频直接读；网站就用小插件最近一次报的进度往后推 */
+  const nowVideoTime = () => {
+    if (mode === 'local' && player.src && isFinite(player.currentTime)) return player.currentTime;
+    const m = lastPlayerMsg;
+    if (!m || typeof m.time !== 'number') return null;
+    const elapsed = m.paused || typeof m.at !== 'number' ? 0 : Math.max(0, (Date.now() - m.at) / 1000);
+    return m.time + elapsed;
+  };
+
+  // 每秒刷新一次「此刻这句」，方便对时间
+  setInterval(() => {
+    if (!extSub) return;
+    const t = nowVideoTime();
+    if (t === null) { $('extSubNow').textContent = '还读不到播放进度（放本地视频，或者在启用了小插件的网站上放）'; return; }
+    const ms = t * 1000 - extSub.offsetMs;
+    const cue = extSub.cues.find(c => c[0] <= ms && ms < c[1]);
+    $('extSubNow').textContent = `现在 ${fmt(t)}　此刻这句：${cue ? cue[2] : '（这会儿没台词）'}`;
+  }, 1000);
+
+  $('pickExtSubBtn').onclick = () => $('extSubFile').click();
+  $('extSubFile').onchange = async () => {
+    const f = $('extSubFile').files && $('extSubFile').files[0];
+    $('extSubFile').value = '';
+    if (!f) return;
+    const text = await f.text();
+    const cues = window.SullySubtitleParser ? window.SullySubtitleParser.parse(text, f.name) : [];
+    if (!cues.length) { alert('没认出字幕内容。支持 .srt / .ass / .vtt，文件是不是这几种？'); return; }
+    extSub = { name: f.name, offsetMs: 0, cues: cues.slice(0, 6000) };
+    saveExtSub();
+    showExtSub();
+    const sent = sendExtSub();
+    log(`外挂字幕：${f.name}，${cues.length} 句${sent ? '，已发给手机' : '（还没连上中转，连上后自动发）'}`);
+  };
+  $('clearExtSubBtn').onclick = () => {
+    extSub = null;
+    saveExtSub();
+    showExtSub();
+    sendExtSub();
+    log('不用外挂字幕了');
+  };
+  $('extSubOffsetRow').querySelectorAll('button[data-offset]').forEach(btn => {
+    btn.onclick = () => {
+      if (!extSub) return;
+      extSub.offsetMs += Number(btn.getAttribute('data-offset')) || 0;
+      saveExtSub();
+      showExtSub();
+      send({ type: 'subtitle-offset', offsetMs: extSub.offsetMs });
+    };
+  });
+  showExtSub();
 
   // ───────── ③ 试截一张 ─────────
   $('testBtn').onclick = async () => {
