@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sully 影院 · 暂停同步
 // @namespace    https://chidori-beni.github.io/SullyOS/
-// @version      0.1.1
+// @version      0.1.2
 // @description  在 B站 / 腾讯视频 / 优酷 / 爱奇艺 看片时，把播放进度、暂停、第几集告诉手机上 Sully 影院里的角色。
 // @author       SullyOS
 // @match        *://www.bilibili.com/video/*
@@ -43,7 +43,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.1.1';
+  const VERSION = '0.1.2';
   const PAIR_KEY = 'sully-watch-pair';
   const TICK_MS = 15000;
   const MIN_GAP_MS = 1500;
@@ -164,6 +164,9 @@
       duration: isFinite(video.duration) ? Math.round(video.duration) : undefined,
       paused: !!video.paused || !!video.ended,
       ended: !!video.ended,
+      // 当前这句字幕 + 上次报完以后新出现的几句（只有 B站 开着 CC / AI 字幕时才有）
+      subtitle: lastSubtitle || undefined,
+      subtitles: pendingSubtitles.length ? pendingSubtitles.splice(0) : undefined,
     };
     lastSentAt = Date.now();
     GM_xmlhttpRequest({
@@ -211,6 +214,56 @@
     if (!video.paused && since >= TICK_MS) send('tick');
     else if (video.paused && since >= 120000) send('tick');
   }, 5000);
+
+  // ───────── B站 字幕 ─────────
+  // B站 的 CC 字幕和 AI 字幕是叠在视频上的一段网页文字（不是画在画面里的），直接读文字，
+  // 不用看图、不花 token。用户要在播放器里把字幕打开，关着就读不到。
+  // 画面里自带的硬字幕读不到，那部分靠观影端截图 + 画面笔记。
+  // 新出现的句子先攒着，随每 15 秒一次的进度一起带走，不单独多发请求。
+  // 类名 2026-09-30 从 B站 播放器的代码里核对过：新版播放器是 bpx-player-subtitle-panel-*，
+  // 另一套字幕组件是 bili-subtitle-x-subtitle-panel-*（AI 字幕带一个「AI」小角标）。
+  // 中英双语字幕分主 / 副两组（major / minor），优先只读主字幕。
+  const SUBTITLE_SELECTORS = [
+    '.bpx-player-subtitle-panel-major-group .bpx-player-subtitle-panel-text',
+    '.bili-subtitle-x-subtitle-panel-major-group .bili-subtitle-x-subtitle-panel-text',
+    '.bpx-player-subtitle-panel-text',
+    '.bili-subtitle-x-subtitle-panel-text',
+    '.bilibili-player-video-subtitle .subtitle-item-text',
+  ];
+  const MAX_PENDING_SUBTITLES = 12;
+  let lastSubtitle = '';
+  const pendingSubtitles = [];
+
+  /** 取一个字幕元素的字，跳过「AI」角标、图标这类附件。 */
+  const textOf = (el) => {
+    const nodes = el && el.childNodes ? Array.from(el.childNodes) : [];
+    if (!nodes.length) return el.textContent || '';
+    return nodes.map(node => {
+      if (node.nodeType === 3) return node.textContent || '';
+      const cls = typeof node.className === 'string' ? node.className : '';
+      return /badge|icon/i.test(cls) ? '' : textOf(node);
+    }).join('');
+  };
+
+  const readSubtitle = () => {
+    if (site !== 'B站') return '';
+    for (const sel of SUBTITLE_SELECTORS) {
+      const els = document.querySelectorAll(sel);
+      if (!els || !els.length) continue;
+      const text = Array.from(els).map(textOf).join(' ').replace(/\s+/g, ' ').trim();
+      if (text) return text.slice(0, 200);
+    }
+    return '';
+  };
+
+  setInterval(() => {
+    const text = readSubtitle();
+    if (!text) { lastSubtitle = ''; return; }
+    if (text === lastSubtitle) return;
+    lastSubtitle = text;
+    pendingSubtitles.push({ time: video && isFinite(video.currentTime) ? Math.round(video.currentTime) : undefined, text });
+    if (pendingSubtitles.length > MAX_PENDING_SUBTITLES) pendingSubtitles.shift();
+  }, 1000);
 
   // 换集（地址变了）马上报一次新标题
   let lastUrl = location.href;

@@ -16,9 +16,9 @@ import { runCallMemoryPalacePostFlow } from '../utils/memoryPalace/callPostFlow'
 import { endCinemaPresence, getActiveCinemaPresence, touchCinemaPresence } from '../utils/cinema/cinemaPresence';
 import { getActiveDatePresence } from '../utils/datePresence';
 import {
-    appendCinemaNote, buildCinemaEndCardText, CINEMA_END_SOURCE, cinemaLineText, cinemaMessageMetadata, decideProactive,
+    appendCinemaNote, appendSubtitleLines, buildCinemaEndCardText, CINEMA_END_SOURCE, cinemaLineText, cinemaMessageMetadata, decideProactive,
     NOTE_GAP_MS, PROACTIVE_LEVELS, toCinemaLines,
-    type CinemaNote, type CinemaProactiveLevel, type ProactiveReason,
+    type CinemaNote, type CinemaProactiveLevel, type CinemaSubtitleLine, type ProactiveReason,
     describeStatus, describeWork, formatVideoTime, isFrameFresh, mergeCinemaStatus, newCinemaSession, sessionRemembers, workerHostForDisplay,
     type CinemaChatLine, type CinemaFrame, type CinemaMeetMode, type CinemaPairing, type CinemaSession, type CinemaSpoilerMode, type CinemaStatus,
 } from '../utils/cinema/cinema';
@@ -92,6 +92,8 @@ const CinemaApp: React.FC = () => {
     const progressSavedAt = useRef(0);
     /** 最近几次换场景帧的时间：画面在动就不信旧的「暂停」（mergeCinemaStatus） */
     const sceneTimesRef = useRef<number[]>([]);
+    /** 小插件读到的 B站 字幕（最近 20 句），萧逸开口时带上最近几句 */
+    const subtitleLinesRef = useRef<CinemaSubtitleLine[]>([]);
     const listRef = useRef<HTMLDivElement>(null);
 
     const reload = useCallback(async () => {
@@ -142,6 +144,7 @@ const CinemaApp: React.FC = () => {
             refreshStatus();
             if (!isPlayer) setScreenOnline(true);
             if (isPlayer) rememberProgress(s);
+            if (isPlayer) subtitleLinesRef.current = appendSubtitleLines(subtitleLinesRef.current, msg.subtitles);
         }
     }, []);
 
@@ -264,6 +267,7 @@ const CinemaApp: React.FC = () => {
         noteModelRef.current = undefined;
         noteFailRef.current = 0;
         sceneTimesRef.current = [];
+        subtitleLinesRef.current = [];
         setLastNote(null);
         getSpeaker().unlock();
         setView('room');
@@ -362,6 +366,7 @@ const CinemaApp: React.FC = () => {
                 char, userProfile, groups, apiConfig, realtimeConfig,
                 session: sessionRef.current!, status: statusRef.current, frameDataUrl: frameUrl,
                 proactive: opts.proactive,
+                recentSubtitles: subtitleLinesRef.current,
                 // 开着出声才教他写停顿和语气声；只打字的时候别让这些标记混进来
                 voiceGuide: voiceOnRef.current && canCinemaSpeak(char, apiConfig) ? buildVoiceActingGuide(char) : undefined,
             });

@@ -352,7 +352,30 @@ export interface CinemaPromptContext {
     proactive?: ProactiveReason;
     /** 开着「出声」时：私聊用的那份语音写法（含用户自定义指南、角色专属语音提示词、固定运行协议） */
     voiceGuide?: string;
+    /** 小插件从 B站 播放器读到的最近几句字幕（CC / AI 字幕） */
+    recentSubtitles?: CinemaSubtitleLine[];
 }
+
+/** 一句字幕。time 是视频里的秒数（读不到就没有）。 */
+export interface CinemaSubtitleLine {
+    time?: number;
+    text: string;
+}
+
+export const CINEMA_SUBTITLES_KEEP = 20;
+export const CINEMA_SUBTITLES_IN_PROMPT = 10;
+
+/** 把小插件新带来的几句接到后面：跟最后一句一样的不重复记，最多留 20 句。 */
+export const appendSubtitleLines = (prev: CinemaSubtitleLine[], incoming: unknown): CinemaSubtitleLine[] => {
+    if (!Array.isArray(incoming)) return prev;
+    const out = [...prev];
+    for (const raw of incoming) {
+        const text = typeof raw?.text === 'string' ? raw.text.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+        if (!text || out[out.length - 1]?.text === text) continue;
+        out.push({ text, ...(typeof raw?.time === 'number' && Number.isFinite(raw.time) ? { time: raw.time } : {}) });
+    }
+    return out.slice(-CINEMA_SUBTITLES_KEEP);
+};
 
 /**
  * 接在正常聊天 system prompt 后面的影院说明。人设、记忆、关系都来自正常那一段，
@@ -363,6 +386,10 @@ export const buildCinemaInstruction = (ctx: CinemaPromptContext): string => {
     const recentNotes = (ctx.notes || []).slice(-CINEMA_NOTES_IN_PROMPT);
     const notesBlock = recentNotes.length
         ? `\n- 最近的画面笔记（助理看截图写的，按时间先后，帮你跟上剧情；只当作你自己看到的画面，不要提到「笔记」或「助理」）：\n${recentNotes.map(n => `  · ${formatVideoTime(n.videoTime) || new Date(n.at).toLocaleTimeString()} ${n.text}`).join('\n')}`
+        : '';
+    const recentSubs = (ctx.recentSubtitles || []).slice(-CINEMA_SUBTITLES_IN_PROMPT);
+    const subtitlesBlock = recentSubs.length
+        ? `\n- 最近的台词（播放器上的字幕，按时间先后；这是剧里人物说的话，不是${userName}说的）：\n${recentSubs.map(l => `  · ${formatVideoTime(l.time) ? `${formatVideoTime(l.time)} ` : ''}${l.text}`).join('\n')}`
         : '';
     const proactiveBlock = proactive
         ? `\n- **这一轮没人跟你说话**（${PROACTIVE_REASON_TEXT[proactive]}），是你自己看着看着想说点什么：可以是感想、吐槽、猜测、提醒对方注意某个细节，或者因为暂停随口问一句。别重复你刚说过的话。**如果这会儿确实没什么想说的，只输出「[安静]」**，不要硬凑。`
@@ -390,7 +417,7 @@ export const buildCinemaInstruction = (ctx: CinemaPromptContext): string => {
 ${hasFrame ? `- 最后一条消息附带了**此刻屏幕上的画面**（电脑截图）。自然地结合画面说话，像${offline ? '坐在旁边' : '一起看'}的人那样，不要描述「我看到一张截图」，也不要解释你是怎么看到的。画面里有字幕的话，字幕就是当下的台词。` : `- 这一轮没有拿到画面，只根据${userName}说的话和你们之前聊到的内容回应，不要编造画面细节。`}
 - ${spoilerRule}
 - 可以有自己的感想、吐槽、偏爱的角色，也可以讲一些更深的东西（镜头、伏笔、隐喻、背景、演员），但一切按你自己的性格和口吻来，不要变成百科或影评腔。
-- 你们在看片，回得**短**一点：通常 1~3 句，口语，像弹幕或${offline ? '凑到耳边' : '贴着话筒'}小声说的话；${userName}认真问问题时可以多说一点。${notesBlock}${proactiveBlock}
+- 你们在看片，回得**短**一点：通常 1~3 句，口语，像弹幕或${offline ? '凑到耳边' : '贴着话筒'}小声说的话；${userName}认真问问题时可以多说一点。${subtitlesBlock}${notesBlock}${proactiveBlock}
 ${format}${ctx.voiceGuide ? `
 
 【影院 · 出声】你在放映室里说的每一句话都会被直接念出来：不用写 <语音> 标签，整段台词就是语音。照下面的语音写法来写（停顿标记、英文语气声都可以用，它们不会显示在屏幕上）；中文（）括起来的小动作照旧单独一行，不会被念出来。

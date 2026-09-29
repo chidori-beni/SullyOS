@@ -135,7 +135,7 @@
       <li>装好后<b>刷新这一页</b>，上面变成「✓ 小插件已装好」就行。</li>
       <li>去视频网站放一下。第一次报进度时 Tampermonkey 可能会问要不要允许连接 <code>workers.dev</code>，选「<b>总是允许</b>」。</li>
     </ol>
-    <p class="hint" id="playerText">还没收到小插件的进度。</p>
+    <p class="hint" id="playerText" style="white-space:pre-line">还没收到小插件的进度。</p>
   </section>
 
   <section class="card">
@@ -529,7 +529,9 @@
     const when = typeof msg.at === 'number' ? new Date(msg.at).toLocaleTimeString() : '';
     const state = msg.paused ? '⏸ 暂停' : '▶ 播放中';
     const time = fmt(msg.time), dur = fmt(msg.duration);
-    $('playerText').textContent = `最近一次（${when}）：${msg.site || ''} ${state} ${time}${dur ? ' / ' + dur : ''}　${msg.title || ''}`;
+    // 读到 B站 字幕（开着 CC / AI 字幕时）就一起显示，方便确认小插件读到了
+    const sub = msg.subtitle ? `\n字幕：${msg.subtitle}` : (msg.site === 'B站' ? '\n字幕：没读到（播放器里的 CC / AI 字幕开着吗？）' : '');
+    $('playerText').textContent = `最近一次（${when}）：${msg.site || ''} ${state} ${time}${dur ? ' / ' + dur : ''}　${msg.title || ''}${sub}`;
   };
 
   // ───────── ③ 试截一张 ─────────

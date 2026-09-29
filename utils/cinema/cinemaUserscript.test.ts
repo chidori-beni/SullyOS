@@ -23,6 +23,8 @@ let videos: FakeVideo[] = [];
 let attrs: Record<string, string> = {};
 let pageStorage: Record<string, string> = {};
 let title = '';
+/** 假网页上 B站 字幕元素：选择器 → 元素（只要 textContent） */
+let subtitleEls: Record<string, { textContent: string }[]> = {};
 
 /** tab：模拟同一个浏览器里的另一个标签页——油猴存储共用（store），网页里的 video 各是各的（videos） */
 const setup = (url: string, stored: Record<string, unknown> = {}, tab?: { store: Map<string, unknown>; videos: FakeVideo[] }) => {
@@ -30,7 +32,7 @@ const setup = (url: string, stored: Record<string, unknown> = {}, tab?: { store:
     const requests: any[] = [];
     const fakeDocument = {
         get title() { return title; },
-        querySelectorAll: () => tab?.videos ?? videos,
+        querySelectorAll: (sel: string) => (sel === 'video' ? (tab?.videos ?? videos) : (subtitleEls[sel] || [])),
         documentElement: {
             setAttribute: (k: string, v: string) => { attrs[k] = v; },
             getAttribute: (k: string) => attrs[k] ?? null,
@@ -64,7 +66,7 @@ const addVideo = (duration: number) => {
 const PAIR = JSON.stringify({ workerUrl: 'https://w.example/', code: 'ABC234', secret: 's3cret' });
 
 describe('暂停同步小插件', () => {
-    beforeEach(() => { vi.useFakeTimers(); videos = []; attrs = {}; pageStorage = {}; title = ''; });
+    beforeEach(() => { vi.useFakeTimers(); videos = []; attrs = {}; pageStorage = {}; title = ''; subtitleEls = {}; });
     afterEach(() => { vi.useRealTimers(); });
 
     it('在观影端页面上把配对信息抄走，并留下「已装好」记号', () => {
@@ -192,5 +194,59 @@ describe('暂停同步小插件', () => {
         expect(b.requests[b.requests.length - 1].body.payload).toMatchObject({ event: 'play', time: 90 });
         vi.advanceTimersByTime(5 * 60_000);
         expect(a.requests.length).toBe(aBefore); // A 暂停着、已经不当班，不再报心跳
+    });
+
+    it('B站 开着字幕：新出现的句子攒起来，随下一次进度一起带走；同一句不重复记', () => {
+        const video = addVideo(1440);
+        const env = setup('https://www.bilibili.com/video/BVsub', { 'sully-watch-pair': PAIR });
+        env.start();
+        video.play();
+        vi.advanceTimersByTime(2000);
+        const before = env.requests.length;
+        const panel = { textContent: '' };
+        subtitleEls['.bpx-player-subtitle-panel-text'] = [panel];
+        panel.textContent = '你到底是谁'; video.v.currentTime = 100; vi.advanceTimersByTime(1000);
+        vi.advanceTimersByTime(1000); // 同一句还在屏幕上，不重复记
+        panel.textContent = '  我是  钟表馆的主人 '; video.v.currentTime = 103; vi.advanceTimersByTime(1000);
+        vi.advanceTimersByTime(15_000);
+        const reports = env.requests.slice(before).map(r => r.body.payload);
+        const withSubs = reports.find(p => p.subtitles);
+        expect(withSubs.subtitles).toEqual([{ time: 100, text: '你到底是谁' }, { time: 103, text: '我是 钟表馆的主人' }]);
+        expect(withSubs.subtitle).toBe('我是 钟表馆的主人');
+        // 带走以后就清空，下一次心跳不再重复带
+        vi.advanceTimersByTime(15_000);
+        expect(env.requests[env.requests.length - 1].body.payload.subtitles).toBeUndefined();
+    });
+
+    it('AI 字幕旁边的「AI」角标不算台词；双语字幕只读主字幕', () => {
+        const video = addVideo(1440);
+        subtitleEls['.bili-subtitle-x-subtitle-panel-text'] = [{
+            textContent: 'AI你好呀',
+            childNodes: [
+                { nodeType: 1, className: 'bili-subtitle-x-ai-badge', textContent: 'AI', childNodes: [] },
+                { nodeType: 3, textContent: '你好呀' },
+            ],
+        } as any];
+        const env = setup('https://www.bilibili.com/video/BVai', { 'sully-watch-pair': PAIR });
+        env.start();
+        video.play();
+        vi.advanceTimersByTime(20_000);
+        const withSub = env.requests.map(r => r.body.payload).find(p => p.subtitle);
+        expect(withSub.subtitle).toBe('你好呀');
+
+        subtitleEls['.bpx-player-subtitle-panel-major-group .bpx-player-subtitle-panel-text'] = [{ textContent: '我回来了' }];
+        subtitleEls['.bpx-player-subtitle-panel-text'] = [{ textContent: '我回来了' }, { textContent: "I'm back" }];
+        vi.advanceTimersByTime(20_000);
+        expect(env.requests[env.requests.length - 1].body.payload.subtitle).toBe('我回来了');
+    });
+
+    it('别的平台不读字幕', () => {
+        const video = addVideo(1440);
+        subtitleEls['.bpx-player-subtitle-panel-text'] = [{ textContent: '不该读到' }];
+        const env = setup('https://v.qq.com/x/cover/abc.html', { 'sully-watch-pair': PAIR });
+        env.start();
+        video.play();
+        vi.advanceTimersByTime(20_000);
+        expect(env.requests.some(r => r.body.payload.subtitle || r.body.payload.subtitles)).toBe(false);
     });
 });

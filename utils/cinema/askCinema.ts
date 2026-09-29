@@ -22,7 +22,7 @@ import { safeFetchJson } from '../safeApi';
 import { attachSnapshotToLatestUserMessage, isVisionInputUnsupportedError } from '../userCameraSnapshot';
 import {
     buildCinemaInstruction, buildProactiveNudge, cleanCinemaReply, isSilentReply, sessionLinesToApiMessages,
-    type CinemaSession, type CinemaStatus, type ProactiveReason,
+    type CinemaSession, type CinemaStatus, type CinemaSubtitleLine, type ProactiveReason,
 } from './cinema';
 
 /** 私聊最近多少条带进放映室。够认出你们最近聊了什么，又不至于拖慢。 */
@@ -95,6 +95,8 @@ export interface AskCinemaInput extends CinemaContextInput {
     proactive?: ProactiveReason;
     /** 开着「出声」时的语音写法（buildVoiceActingGuide），回复里会带停顿标记和语气声 */
     voiceGuide?: string;
+    /** 小插件读到的最近几句 B站 字幕 */
+    recentSubtitles?: CinemaSubtitleLine[];
 }
 
 export interface AskCinemaResult {
@@ -122,7 +124,7 @@ export async function askCharacterInCinema(input: AskCinemaInput): Promise<AskCi
     const send = (messages: any[], hasFrame: boolean, retries: number) => {
         const system = context.systemPrompt + buildCinemaInstruction({
             userName, charName: char.name, session, status: input.status, hasFrame,
-            notes: session.notes, proactive, voiceGuide: input.voiceGuide,
+            notes: session.notes, proactive, voiceGuide: input.voiceGuide, recentSubtitles: input.recentSubtitles,
         });
         const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '');
         return safeFetchJson(`${baseUrl}/chat/completions`, {

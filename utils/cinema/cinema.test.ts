@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    appendSubtitleLines, CINEMA_SUBTITLES_KEEP,
     splitCinemaActions, toCinemaLines, cinemaLineText,
     isPlayerFresh, mergeCinemaStatus, PLAYER_STALE_MS,
     buildCinemaEndCardText, cinemaMessageMetadata,
@@ -239,5 +240,27 @@ describe('影院 · 出声时的写法', () => {
     it('只打字时不带语音写法', () => {
         const text = buildCinemaInstruction({ userName: '千夜', charName: '萧逸', hasFrame: false, status: null, session: { title: 'x', spoiler: 'first' } });
         expect(text).not.toContain('【影院 · 出声】');
+    });
+});
+
+describe('影院 · B站 字幕', () => {
+    it('接上新来的句子，跟最后一句一样的不重复，最多留 20 句', () => {
+        let lines = appendSubtitleLines([], [{ time: 1, text: 'a' }, { time: 2, text: 'a' }, { time: 3, text: ' b ' }, { text: '' }, 'junk']);
+        expect(lines).toEqual([{ time: 1, text: 'a' }, { time: 3, text: 'b' }]);
+        for (let i = 0; i < 30; i += 1) lines = appendSubtitleLines(lines, [{ time: i, text: `句${i}` }]);
+        expect(lines).toHaveLength(CINEMA_SUBTITLES_KEEP);
+        expect(appendSubtitleLines(lines, undefined)).toBe(lines);
+    });
+
+    it('提示词里带上最近的台词，并说明是剧里人物说的', () => {
+        const text = buildCinemaInstruction({
+            userName: '千夜', charName: '萧逸', hasFrame: false, status: null,
+            session: { title: 'x', spoiler: 'first' },
+            recentSubtitles: [{ time: 100, text: '你到底是谁' }, { text: '我是钟表馆的主人' }],
+        });
+        expect(text).toContain('最近的台词');
+        expect(text).toContain('不是千夜说的');
+        expect(text).toContain('1:40 你到底是谁');
+        expect(text).toContain('· 我是钟表馆的主人');
     });
 });
