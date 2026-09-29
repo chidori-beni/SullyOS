@@ -16,16 +16,22 @@ import { runCallMemoryPalacePostFlow } from '../utils/memoryPalace/callPostFlow'
 import { endCinemaPresence, getActiveCinemaPresence, touchCinemaPresence } from '../utils/cinema/cinemaPresence';
 import { getActiveDatePresence } from '../utils/datePresence';
 import {
-    buildCinemaEndCardText, CINEMA_END_SOURCE, cinemaLineText, cinemaMessageMetadata, toCinemaLines,
+    appendCinemaNote, buildCinemaEndCardText, CINEMA_END_SOURCE, cinemaLineText, cinemaMessageMetadata, decideProactive,
+    NOTE_GAP_MS, PROACTIVE_LEVELS, toCinemaLines,
+    type CinemaNote, type CinemaProactiveLevel, type ProactiveReason,
     describeStatus, describeWork, formatVideoTime, isFrameFresh, mergeCinemaStatus, newCinemaSession, workerHostForDisplay,
     type CinemaChatLine, type CinemaFrame, type CinemaMeetMode, type CinemaPairing, type CinemaSession, type CinemaSpoilerMode, type CinemaStatus,
 } from '../utils/cinema/cinema';
 import { clearCinemaPairing, deleteCinemaSession, getCinemaPairing, listCinemaSessions, saveCinemaPairing, saveCinemaSession } from '../utils/cinema/cinemaDb';
 import { createWatchRoom, WatchRoomSocket, type WatchConnState, type WatchMessage } from '../utils/cinema/watchRoomClient';
 import { askCharacterInCinema, warmCinemaContext } from '../utils/cinema/askCinema';
+import { describeFrame, nextNoteModel, NOTE_MODEL_LABEL, noteModelCandidates, NoteVisionUnsupportedError, type NoteModel } from '../utils/cinema/sceneNotes';
 import './cinema/cinema.css';
 
 type View = 'home' | 'pair' | 'room';
+
+/** 主动开口的频率记在本机（每个人习惯不同，不跟着备份走也无所谓）。 */
+const PROACTIVE_LEVEL_KEY = 'cinema_proactive_level';
 
 /** 这么近收到的画面算「就是现在」，发消息时不用再向电脑要一帧。 */
 const RECENT_FRAME_MS = 6000;
@@ -101,6 +107,8 @@ const CinemaApp: React.FC = () => {
             frameRef.current = f;
             setFrame(f);
             setScreenOnline(true);
+            // 自己换镜头发来的帧（不是手机要的）：记一次换场景，顺便让助理写笔记
+            if (!f.requestId) onFrameRef.current(f);
             if (f.requestId) {
                 const waiter = frameWaiters.current.get(f.requestId);
                 if (waiter) { frameWaiters.current.delete(f.requestId); waiter(f); }
@@ -148,7 +156,11 @@ const CinemaApp: React.FC = () => {
         void saveCinemaSession(next).catch(error => console.warn('[cinema] 存进度失败', error));
     };
 
-    useEffect(() => { sessionRef.current = session; }, [session]);
+    // 同一场里 sessionRef 永远比 state 新（updateSession 先改它），这里只在换了一场时跟上，
+    // 免得晚到的渲染把刚写进去的笔记 / 对话用旧快照盖回去
+    useEffect(() => {
+        if (sessionRef.current?.id !== session?.id) sessionRef.current = session;
+    }, [session]);
     // 小插件停了（关了标签页）要能看出来：定时按新鲜度重算一次
     useEffect(() => {
         if (view !== 'room') return;
@@ -225,11 +237,21 @@ const CinemaApp: React.FC = () => {
     const openSession = (s: CinemaSession) => {
         // 散过场的再点进来就是接着看
         if (s.endedAt) { s = { ...s, endedAt: undefined }; void saveCinemaSession(s); }
+        sessionRef.current = s;
         setSession(s);
         setFrame(null); frameRef.current = null;
         setStatus(null); statusRef.current = null;
         screenStatusRef.current = null; playerStatusRef.current = null;
         progressSavedAt.current = 0;
+        // 主动开口的计时从进场这一刻算，免得一进来就开口
+        lastUserAtRef.current = Date.now();
+        lastCharAtRef.current = Date.now();
+        scenesSinceCharRef.current = 0;
+        pauseRef.current = { since: undefined, handled: false };
+        noteBusyRef.current = false;
+        lastNoteAtRef.current = 0;
+        noteModelRef.current = undefined;
+        setLastNote(null);
         setView('room');
     };
 
@@ -269,32 +291,53 @@ const CinemaApp: React.FC = () => {
         });
     };
 
-    const persist = async (next: CinemaSession) => {
+    /**
+     * 改这一场的记录：永远从最新的那份（sessionRef）改起再存。
+     * 助理笔记、进度、对话都会在后台各自往里写，从旧快照改会把别人刚写的覆盖掉。
+     */
+    const updateSession = async (fn: (s: CinemaSession) => CinemaSession): Promise<CinemaSession | null> => {
+        const cur = sessionRef.current;
+        if (!cur) return null;
+        const next = fn(cur);
+        sessionRef.current = next;
         setSession(next);
         try { await saveCinemaSession(next); } catch (error) { console.warn('[cinema] 保存失败', error); }
+        return next;
     };
 
-    const send = async () => {
-        const text = draft.trim();
-        if (!text || !session || !char || thinking) return;
-        setDraft('');
+    const busyRef = useRef(false);
+    const lastUserAtRef = useRef(0);
+    const lastCharAtRef = useRef(0);
+    const scenesSinceCharRef = useRef(0);
+
+    /**
+     * 请角色说一句。两种来路：用户发了消息（userText），或者到了主动开口的时机（proactive）。
+     * 主动开口时角色可以选择「[安静]」，那就什么都不显示。
+     */
+    const speak = async (opts: { userText?: string; proactive?: ProactiveReason }) => {
+        if (!sessionRef.current || !char || busyRef.current) return;
+        busyRef.current = true;
         const videoTime = statusRef.current?.time;
-        const sentAt = Date.now();
-        // 「（靠在你肩上）好困」→ 一行旁白 + 一个气泡
-        const userLines: CinemaChatLine[] = toCinemaLines('user', [text], sentAt, videoTime);
-        let current: CinemaSession = {
-            ...session, lines: [...session.lines, ...userLines], updatedAt: sentAt,
-            lastVideoTime: videoTime ?? session.lastVideoTime,
-        };
-        await persist(current);
-        // 说一句进一句：存进私聊消息库（界面不显示），角色在私聊里也知道你们正在一起看
-        for (const line of userLines) await saveLineToChat(char.id, current, 'user', cinemaLineText(line), videoTime);
-        touchCinemaPresence(char.id, current);
-        void startAmsgChatPresence(char.id, sentAt);
+        let userLines: CinemaChatLine[] = [];
+        if (opts.userText) {
+            const sentAt = Date.now();
+            // 「（靠在你肩上）好困」→ 一行旁白 + 一个气泡
+            userLines = toCinemaLines('user', [opts.userText], sentAt, videoTime);
+            const saved = await updateSession(s => ({
+                ...s, lines: [...s.lines, ...userLines], updatedAt: sentAt,
+                lastVideoTime: videoTime ?? s.lastVideoTime,
+            }));
+            lastUserAtRef.current = sentAt;
+            // 说一句进一句：存进私聊消息库（界面不显示），角色在私聊里也知道你们正在一起看
+            if (saved) for (const line of userLines) await saveLineToChat(char.id, saved, 'user', cinemaLineText(line), videoTime);
+            if (saved) touchCinemaPresence(char.id, saved);
+            void startAmsgChatPresence(char.id, sentAt);
+        }
         setThinking(true);
         try {
             let frameUrl = '';
-            if (withFrame) {
+            // 用户发消息时看「带不带画面」开关；主动开口永远看一眼（用户 09-30 选的）
+            if (opts.proactive || withFrame) {
                 // 几秒内刚收到过画面就直接用，不再等电脑截新的
                 const recent = frameRef.current && Date.now() - frameRef.current.at < RECENT_FRAME_MS ? frameRef.current : null;
                 const fresh = recent || await requestFrame(1500);
@@ -303,27 +346,132 @@ const CinemaApp: React.FC = () => {
             }
             const result = await askCharacterInCinema({
                 char, userProfile, groups, apiConfig, realtimeConfig,
-                session: current, status: statusRef.current, frameDataUrl: frameUrl,
+                session: sessionRef.current!, status: statusRef.current, frameDataUrl: frameUrl,
+                proactive: opts.proactive,
             });
-            if (frameUrl && !result.sawFrame) addToast('当前模型不支持看图，这一轮只发了文字', 'info');
-            if (frameUrl && result.sawFrame) {
-                // 「附画面」标在这一轮最后一句上
-                const marked = userLines[userLines.length - 1];
-                current = { ...current, lines: current.lines.map(l => l === marked ? { ...l, withFrame: true } : l) };
-            }
+            if (frameUrl && !result.sawFrame && !opts.proactive) addToast('当前模型不支持看图，这一轮只发了文字', 'info');
+            // 不管说没说话，这次机会都算用掉了，免得下一秒又叫一次
+            lastCharAtRef.current = Date.now();
+            scenesSinceCharRef.current = 0;
+            if (!result.lines.length) return; // 主动开口时选择了安静
+            const marked = userLines[userLines.length - 1];
             const now = Date.now();
             const replies: CinemaChatLine[] = toCinemaLines('char', result.lines, now);
-            current = { ...current, lines: [...current.lines, ...replies], updatedAt: now };
-            await persist(current);
-            for (const reply of replies) await saveLineToChat(char.id, current, 'assistant', cinemaLineText(reply), videoTime);
+            const saved = await updateSession(s => ({
+                ...s,
+                // 「附画面」标在这一轮用户最后一句上
+                lines: [...s.lines.map(l => (frameUrl && result.sawFrame && l === marked ? { ...l, withFrame: true } : l)), ...replies],
+                updatedAt: now,
+            }));
+            if (saved) for (const reply of replies) await saveLineToChat(char.id, saved, 'assistant', cinemaLineText(reply), videoTime);
+            if (saved && opts.proactive) touchCinemaPresence(char.id, saved);
             // 跟通话一样每轮打脏：云端主动消息那份上下文也跟着知道你们在一起看
             markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
         } catch (error: any) {
-            addToast(`${char.name} 没回上：${error?.message || error}`, 'error');
+            // 主动开口失败不打扰用户（下一次时机再试），用户发的消息失败要说
+            if (opts.proactive) console.warn('[cinema] 主动开口失败', error);
+            else addToast(`${char.name} 没回上：${error?.message || error}`, 'error');
         } finally {
+            busyRef.current = false;
             setThinking(false);
         }
     };
+
+    const send = () => {
+        const text = draft.trim();
+        // busyRef 比 thinking 早一拍：角色刚开始主动开口、界面还没刷新时，别把这句清掉又丢了
+        if (!text || !session || !char || thinking || busyRef.current) return;
+        setDraft('');
+        void speak({ userText: text });
+    };
+
+    // ---- 助理笔记 + 主动开口（交接说明-一起看.md 第九节）----
+    const [level, setLevel] = useState<CinemaProactiveLevel>(() => {
+        try {
+            const saved = localStorage.getItem(PROACTIVE_LEVEL_KEY) as CinemaProactiveLevel | null;
+            return saved && PROACTIVE_LEVELS.some(l => l.id === saved) ? saved : 'normal';
+        } catch { return 'normal'; }
+    });
+    const changeLevel = (next: CinemaProactiveLevel) => {
+        setLevel(next);
+        try { localStorage.setItem(PROACTIVE_LEVEL_KEY, next); } catch { /* ignore */ }
+    };
+    const [lastNote, setLastNote] = useState<CinemaNote | null>(null);
+    const levelRef = useRef(level); levelRef.current = level;
+    const draftRef = useRef(draft); draftRef.current = draft;
+    const viewRef = useRef(view); viewRef.current = view;
+    const onlineRef = useRef(false); onlineRef.current = conn === 'open' && screenOnline;
+    const speakRef = useRef(speak); speakRef.current = speak;
+    const pauseRef = useRef<{ since?: number; handled: boolean }>({ since: undefined, handled: false });
+    const noteBusyRef = useRef(false);
+    const lastNoteAtRef = useRef(0);
+    /** undefined = 还没挑；null = 没有能用的 */
+    const noteModelRef = useRef<NoteModel | null | undefined>(undefined);
+
+    const writeNote = async (f: CinemaFrame) => {
+        if (viewRef.current !== 'room' || !sessionRef.current || noteBusyRef.current) return;
+        if (statusRef.current?.paused) return;
+        if (Date.now() - lastNoteAtRef.current < NOTE_GAP_MS[levelRef.current]) return;
+        const candidates = noteModelCandidates(apiConfig, memoryPalaceConfig?.lightLLM);
+        if (noteModelRef.current === undefined) noteModelRef.current = candidates[0] || null;
+        const model = noteModelRef.current;
+        if (!model) return;
+        noteBusyRef.current = true;
+        lastNoteAtRef.current = Date.now();
+        try {
+            const text = await describeFrame(model, f.dataUrl, char?.name);
+            const note: CinemaNote = { at: Date.now(), videoTime: f.videoTime ?? statusRef.current?.time, text };
+            setLastNote(note);
+            await updateSession(s => ({ ...s, notes: appendCinemaNote(s.notes, note) }));
+        } catch (error) {
+            if (error instanceof NoteVisionUnsupportedError) {
+                const next = nextNoteModel(candidates, model);
+                noteModelRef.current = next;
+                lastNoteAtRef.current = 0;
+                addToast(next
+                    ? `${NOTE_MODEL_LABEL[model.source]}不会看图，画面笔记改用${NOTE_MODEL_LABEL[next.source]}`
+                    : '没有会看图的模型，画面笔记先关掉了', 'info');
+            } else {
+                console.warn('[cinema] 画面笔记失败', error);
+            }
+        } finally {
+            noteBusyRef.current = false;
+        }
+    };
+    const onFrameRef = useRef<(f: CinemaFrame) => void>(() => {});
+    onFrameRef.current = (f) => {
+        if (f.reason === 'scene') scenesSinceCharRef.current += 1;
+        if (f.reason === 'scene' || f.reason === 'tick') void writeNote(f);
+    };
+
+    // 暂停了多久：每次暂停只给角色一次「问一句」的机会
+    const paused = !!status?.paused;
+    useEffect(() => {
+        if (paused && pauseRef.current.since === undefined) pauseRef.current = { since: Date.now(), handled: false };
+        if (!paused && pauseRef.current.since !== undefined) pauseRef.current = { since: undefined, handled: false };
+    }, [paused]);
+
+    // 每 10 秒看一眼该不该主动开口（纯规则，不花钱；真开口了角色还能选择安静）
+    useEffect(() => {
+        if (view !== 'room') return;
+        const timer = setInterval(() => {
+            const reason = decideProactive({
+                level: levelRef.current,
+                now: Date.now(),
+                lastUserAt: lastUserAtRef.current,
+                lastCharAt: lastCharAtRef.current,
+                scenesSinceChar: scenesSinceCharRef.current,
+                paused: !!statusRef.current?.paused,
+                pausedSince: pauseRef.current.since,
+                pauseHandled: pauseRef.current.handled,
+                blocked: busyRef.current || !!draftRef.current.trim() || !onlineRef.current || document.visibilityState !== 'visible',
+            });
+            if (!reason) return;
+            if (reason === 'pause') pauseRef.current = { ...pauseRef.current, handled: true };
+            void speakRef.current({ proactive: reason });
+        }, 10_000);
+        return () => clearInterval(timer);
+    }, [view]);
 
     const saveLineToChat = async (charId: string, s: CinemaSession, role: 'user' | 'assistant', content: string, videoTime?: number) => {
         try {
@@ -340,8 +488,8 @@ const CinemaApp: React.FC = () => {
         setEnding(true);
         try {
             const endedAt = Date.now();
-            const done: CinemaSession = { ...session, endedAt, updatedAt: endedAt };
-            await persist(done);
+            const done: CinemaSession = (await updateSession(s => ({ ...s, endedAt, updatedAt: endedAt })))
+                || { ...session, endedAt, updatedAt: endedAt };
             await DB.saveMessage({
                 charId: char.id, role: 'system', type: 'system',
                 content: buildCinemaEndCardText(done, char.name),
@@ -436,6 +584,15 @@ const CinemaApp: React.FC = () => {
                         </button>
                     </div>
                 </section>
+                <div className="cn-proactive">
+                    <span>主动开口</span>
+                    <div className="cn-seg small">
+                        {PROACTIVE_LEVELS.map(l => (
+                            <button key={l.id} className={level === l.id ? 'on' : ''} onClick={() => changeLevel(l.id)}>{l.label}</button>
+                        ))}
+                    </div>
+                </div>
+                {lastNote && <div className="cn-note">📝 {lastNote.text}</div>}
                 <div className="cn-chat overflow-y-auto" ref={listRef}>
                     {session.lines.length === 0 && (
                         <div className="cn-empty small">

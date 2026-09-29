@@ -20,7 +20,10 @@ import { buildChatRequestPayload } from '../chatRequestPayload';
 import { loadCharacterContextMessages } from '../chatContextRange';
 import { safeFetchJson } from '../safeApi';
 import { attachSnapshotToLatestUserMessage, isVisionInputUnsupportedError } from '../userCameraSnapshot';
-import { buildCinemaInstruction, cleanCinemaReply, sessionLinesToApiMessages, type CinemaSession, type CinemaStatus } from './cinema';
+import {
+    buildCinemaInstruction, buildProactiveNudge, cleanCinemaReply, isSilentReply, sessionLinesToApiMessages,
+    type CinemaSession, type CinemaStatus, type ProactiveReason,
+} from './cinema';
 
 /** 私聊最近多少条带进放映室。够认出你们最近聊了什么，又不至于拖慢。 */
 export const CINEMA_HISTORY_LIMIT = 40;
@@ -84,13 +87,16 @@ export function warmCinemaContext(input: CinemaContextInput): void {
 
 export interface AskCinemaInput extends CinemaContextInput {
     apiConfig: APIConfig;
-    /** 已经包含用户刚发的那句 */
+    /** 已经包含用户刚发的那句（主动开口时没有新的用户句子） */
     session: CinemaSession;
     status?: CinemaStatus | null;
     frameDataUrl?: string;
+    /** 角色自己想开口：不存假的用户消息，只在请求末尾临时补一条「没人说话」的提示 */
+    proactive?: ProactiveReason;
 }
 
 export interface AskCinemaResult {
+    /** 主动开口时角色选择「[安静]」就是空数组 */
     lines: string[];
     /** 这次真的把画面发给模型了（模型不支持看图时是 false） */
     sawFrame: boolean;
@@ -103,12 +109,18 @@ export async function askCharacterInCinema(input: AskCinemaInput): Promise<AskCi
 
     const context = await getCinemaContext({ ...input, sessionId: session.id });
     const sessionMessages = sessionLinesToApiMessages(session.lines);
-    const textMessages = [...context.history, ...sessionMessages];
     const frame = input.frameDataUrl && input.frameDataUrl.startsWith('data:image/') ? input.frameDataUrl : '';
+    const proactive = input.proactive;
+    // 主动开口：接口要求最后一条是 user，图片也要贴在 user 上，所以临时补一条提示（不存、不显示）
+    const withNudge = (hasFrame: boolean) => proactive
+        ? [...context.history, ...sessionMessages, { role: 'user', content: buildProactiveNudge(proactive, hasFrame) }]
+        : [...context.history, ...sessionMessages];
+    const textMessages = withNudge(false);
 
     const send = (messages: any[], hasFrame: boolean, retries: number) => {
         const system = context.systemPrompt + buildCinemaInstruction({
             userName, charName: char.name, session, status: input.status, hasFrame,
+            notes: session.notes, proactive,
         });
         const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '');
         return safeFetchJson(`${baseUrl}/chat/completions`, {
@@ -122,7 +134,7 @@ export async function askCharacterInCinema(input: AskCinemaInput): Promise<AskCi
                 max_tokens: 2000,
                 stream: false,
             }),
-        }, retries, 0, { appName: '影院', charId: char.id, charName: char.name, purpose: hasFrame ? '一起看·带画面' : '一起看' });
+        }, retries, 0, { appName: '影院', charId: char.id, charName: char.name, purpose: `${proactive ? '一起看·主动开口' : '一起看'}${hasFrame ? '·带画面' : ''}` });
     };
 
     let data: any;
@@ -130,7 +142,7 @@ export async function askCharacterInCinema(input: AskCinemaInput): Promise<AskCi
     if (frame) {
         try {
             // 带图那次只试一次：被拒的大图没必要重发三遍
-            data = await send(attachSnapshotToLatestUserMessage(textMessages, frame), true, 0);
+            data = await send(attachSnapshotToLatestUserMessage(withNudge(true), frame), true, 0);
         } catch (error) {
             if (!isVisionInputUnsupportedError(error)) throw error;
             console.warn('[cinema] 模型不收图片，这一轮改为只发文字', error);
@@ -140,7 +152,12 @@ export async function askCharacterInCinema(input: AskCinemaInput): Promise<AskCi
     } else {
         data = await send(textMessages, false, 2);
     }
-    const lines = cleanCinemaReply(data?.choices?.[0]?.message?.content || '');
-    if (!lines.length) throw new Error('角色这次没有回复内容（模型返回为空）');
+    const raw = data?.choices?.[0]?.message?.content || '';
+    if (proactive && isSilentReply(raw)) return { lines: [], sawFrame };
+    const lines = cleanCinemaReply(raw).filter(line => !isSilentReply(line));
+    if (!lines.length) {
+        if (proactive) return { lines: [], sawFrame };
+        throw new Error('角色这次没有回复内容（模型返回为空）');
+    }
     return { lines, sawFrame };
 }

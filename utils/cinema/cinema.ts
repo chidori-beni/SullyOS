@@ -64,7 +64,103 @@ export interface CinemaSession {
     /** 点过「散场」的时间。再点进来接着看会清掉 */
     endedAt?: number;
     lines: CinemaChatLine[];
+    /** 助理看截图写的画面笔记（最多存 CINEMA_NOTES_KEEP 条），角色平时靠它跟剧情 */
+    notes?: CinemaNote[];
 }
+
+/** 一条画面笔记。 */
+export interface CinemaNote {
+    at: number;
+    videoTime?: number;
+    text: string;
+}
+
+export const CINEMA_NOTES_KEEP = 30;
+/** 提示词里带最近几条笔记。 */
+export const CINEMA_NOTES_IN_PROMPT = 8;
+
+export const appendCinemaNote = (notes: CinemaNote[] | undefined, note: CinemaNote): CinemaNote[] =>
+    [...(notes || []), note].slice(-CINEMA_NOTES_KEEP);
+
+/** 主动开口的频率。off = 只在用户说话时回。 */
+export type CinemaProactiveLevel = 'off' | 'quiet' | 'normal' | 'chatty';
+
+export const PROACTIVE_LEVELS: { id: CinemaProactiveLevel; label: string }[] = [
+    { id: 'off', label: '不主动' },
+    { id: 'quiet', label: '安静' },
+    { id: 'normal', label: '适中' },
+    { id: 'chatty', label: '话痨' },
+];
+
+/** 两次开口之间至少隔多久（离角色上一次说话算起）。 */
+export const PROACTIVE_GAP_MS: Record<Exclude<CinemaProactiveLevel, 'off'>, number> = {
+    quiet: 8 * 60_000,
+    normal: 4 * 60_000,
+    chatty: 90_000,
+};
+/** 两条笔记之间至少隔多久：话痨记得勤一点，安静就少记。 */
+export const NOTE_GAP_MS: Record<CinemaProactiveLevel, number> = {
+    off: 3 * 60_000,
+    quiet: 2 * 60_000,
+    normal: 60_000,
+    chatty: 45_000,
+};
+/** 用户刚说过话就别抢话。 */
+export const PROACTIVE_USER_QUIET_MS = 45_000;
+/** 暂停超过这么久，角色可以问一句。 */
+export const PROACTIVE_PAUSE_MS = 15_000;
+
+export type ProactiveReason = 'scene' | 'silence' | 'pause';
+
+export interface ProactiveState {
+    level: CinemaProactiveLevel;
+    now: number;
+    /** 用户最后一次说话；这一场还没说过就用开场时间 */
+    lastUserAt: number;
+    /** 角色最后一次说话（回复或主动都算）；还没说过就用开场时间 */
+    lastCharAt: number;
+    /** 角色上次说话以后，又来了几次换场景 */
+    scenesSinceChar: number;
+    paused: boolean;
+    pausedSince?: number;
+    /** 这次暂停已经问过了 */
+    pauseHandled: boolean;
+    /** 用户正在打字 / 角色正在回 / 电脑没连上 —— 任何一样都不开口 */
+    blocked: boolean;
+}
+
+/**
+ * 这会儿该不该主动开口，该的话是因为什么。纯规则，不花钱。
+ * 真正开口前角色还可以自己选择「[安静]」。
+ */
+export const decideProactive = (st: ProactiveState): ProactiveReason | null => {
+    if (st.level === 'off' || st.blocked) return null;
+    if (st.now - st.lastUserAt < PROACTIVE_USER_QUIET_MS) return null;
+    const sinceChar = st.now - st.lastCharAt;
+    if (st.paused) {
+        const pausedFor = st.pausedSince ? st.now - st.pausedSince : 0;
+        return !st.pauseHandled && pausedFor >= PROACTIVE_PAUSE_MS && sinceChar >= 60_000 ? 'pause' : null;
+    }
+    const gap = PROACTIVE_GAP_MS[st.level];
+    if (sinceChar < gap) return null;
+    if (st.scenesSinceChar > 0) return 'scene';
+    if (sinceChar >= gap * 2 && st.now - st.lastUserAt >= gap * 2) return 'silence';
+    return null;
+};
+
+/** 角色回「[安静]」= 这会儿不想说话。 */
+export const isSilentReply = (raw: string): boolean =>
+    /^[\s\[【（(]*安静[\s\]】）)。.…]*$/.test(String(raw || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim());
+
+const PROACTIVE_REASON_TEXT: Record<ProactiveReason, string> = {
+    scene: '画面换了一个场景',
+    silence: '你们有一阵子没说话了',
+    pause: '对方把视频暂停了',
+};
+
+/** 主动开口那一轮发给模型的「提示用户消息」：不存、不显示，只是让模型知道这一轮没人说话。 */
+export const buildProactiveNudge = (reason: ProactiveReason, hasFrame: boolean): string =>
+    `（这一轮没有人跟你说话。${PROACTIVE_REASON_TEXT[reason]}${hasFrame ? '，这是此刻屏幕上的画面' : ''}。）`;
 
 /** 电脑发来的一帧画面。 */
 export interface CinemaFrame {
@@ -242,6 +338,10 @@ export interface CinemaPromptContext {
     session: Pick<CinemaSession, 'title' | 'episode' | 'spoiler' | 'meet'>;
     status?: CinemaStatus | null;
     hasFrame: boolean;
+    /** 助理笔记（按时间，最近几条） */
+    notes?: CinemaNote[];
+    /** 这一轮是角色自己想开口 */
+    proactive?: ProactiveReason;
 }
 
 /**
@@ -249,7 +349,14 @@ export interface CinemaPromptContext {
  * 这里只交代「你们正在一起看什么、怎么看、怎么说话」。
  */
 export const buildCinemaInstruction = (ctx: CinemaPromptContext): string => {
-    const { userName, charName, session, status, hasFrame } = ctx;
+    const { userName, charName, session, status, hasFrame, proactive } = ctx;
+    const recentNotes = (ctx.notes || []).slice(-CINEMA_NOTES_IN_PROMPT);
+    const notesBlock = recentNotes.length
+        ? `\n- 最近的画面笔记（助理看截图写的，按时间先后，帮你跟上剧情；只当作你自己看到的画面，不要提到「笔记」或「助理」）：\n${recentNotes.map(n => `  · ${formatVideoTime(n.videoTime) || new Date(n.at).toLocaleTimeString()} ${n.text}`).join('\n')}`
+        : '';
+    const proactiveBlock = proactive
+        ? `\n- **这一轮没人跟你说话**（${PROACTIVE_REASON_TEXT[proactive]}），是你自己看着看着想说点什么：可以是感想、吐槽、猜测、提醒对方注意某个细节，或者因为暂停随口问一句。别重复你刚说过的话。**如果这会儿确实没什么想说的，只输出「[安静]」**，不要硬凑。`
+        : '';
     const work = describeWork(session);
     const time = formatVideoTime(status?.time);
     const duration = formatVideoTime(status?.duration);
@@ -273,7 +380,7 @@ export const buildCinemaInstruction = (ctx: CinemaPromptContext): string => {
 ${hasFrame ? `- 最后一条消息附带了**此刻屏幕上的画面**（电脑截图）。自然地结合画面说话，像${offline ? '坐在旁边' : '一起看'}的人那样，不要描述「我看到一张截图」，也不要解释你是怎么看到的。画面里有字幕的话，字幕就是当下的台词。` : `- 这一轮没有拿到画面，只根据${userName}说的话和你们之前聊到的内容回应，不要编造画面细节。`}
 - ${spoilerRule}
 - 可以有自己的感想、吐槽、偏爱的角色，也可以讲一些更深的东西（镜头、伏笔、隐喻、背景、演员），但一切按你自己的性格和口吻来，不要变成百科或影评腔。
-- 你们在看片，回得**短**一点：通常 1~3 句，口语，像弹幕或${offline ? '凑到耳边' : '贴着话筒'}小声说的话；${userName}认真问问题时可以多说一点。
+- 你们在看片，回得**短**一点：通常 1~3 句，口语，像弹幕或${offline ? '凑到耳边' : '贴着话筒'}小声说的话；${userName}认真问问题时可以多说一点。${notesBlock}${proactiveBlock}
 ${format}`;
 };
 
