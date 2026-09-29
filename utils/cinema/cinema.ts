@@ -37,6 +37,8 @@ export interface CinemaChatLine {
     videoTime?: number;
     /** 这句话随附了画面 */
     withFrame?: boolean;
+    /** action = 括号里的小动作（text 不带括号），界面上显示成居中的旁白，不进气泡 */
+    kind?: 'action';
 }
 
 /**
@@ -174,13 +176,57 @@ export const cleanCinemaReply = (raw: string): string[] => {
         .map(line => line.slice(0, 400));
 };
 
+export interface CinemaSegment {
+    kind: 'speech' | 'action';
+    text: string;
+}
+
+const ACTION_AT_START = /^[（(]([^（）()]{1,80})[）)]\s*/;
+const ACTION_AT_END = /\s*[（(]([^（）()]{1,80})[）)]$/;
+
+/**
+ * 把一行拆成「说的话」和「括号里的小动作」：只拆开头和结尾的括号，
+ * 句子中间的括号当作说话的一部分（「那个人（就是穿黑衣服的）好可疑」）。
+ * 「（往你那边靠了靠）这段好吓人」→ 旁白「往你那边靠了靠」+ 气泡「这段好吓人」。
+ */
+export const splitCinemaActions = (line: string): CinemaSegment[] => {
+    let rest = String(line || '').trim();
+    const head: CinemaSegment[] = [];
+    const tail: CinemaSegment[] = [];
+    let m: RegExpMatchArray | null;
+    while ((m = rest.match(ACTION_AT_START))) {
+        head.push({ kind: 'action', text: m[1].trim() });
+        rest = rest.slice(m[0].length).trim();
+    }
+    while (rest && (m = rest.match(ACTION_AT_END))) {
+        tail.unshift({ kind: 'action', text: m[1].trim() });
+        rest = rest.slice(0, rest.length - m[0].length).trim();
+    }
+    return [...head, ...(rest ? [{ kind: 'speech' as const, text: rest }] : []), ...tail].filter(seg => seg.text);
+};
+
+/** 一方这一轮说的几行 → 放映室里的几条记录（小动作单独成条）。 */
+export const toCinemaLines = (role: CinemaChatLine['role'], texts: string[], at: number, videoTime?: number): CinemaChatLine[] =>
+    texts
+        .flatMap(splitCinemaActions)
+        .map((seg, i) => ({
+            role, text: seg.text, at: at + i,
+            ...(videoTime !== undefined ? { videoTime } : {}),
+            ...(seg.kind === 'action' ? { kind: 'action' as const } : {}),
+        }));
+
+/** 存进私聊 / 发给模型时的文字：小动作带回括号，读的人才知道那是动作不是台词。 */
+export const cinemaLineText = (line: Pick<CinemaChatLine, 'text' | 'kind'>): string =>
+    line.kind === 'action' ? `（${line.text}）` : line.text;
+
 /** 放映室里这一场的对话，接在正常聊天上下文后面发给模型。 */
 export const sessionLinesToApiMessages = (lines: CinemaChatLine[], limit = 30): { role: 'user' | 'assistant'; content: string }[] => {
     const recent = lines.slice(-limit);
     const out: { role: 'user' | 'assistant'; content: string }[] = [];
     for (const line of recent) {
         const time = formatVideoTime(line.videoTime);
-        const content = line.role === 'user' && time ? `（放到 ${time}）${line.text}` : line.text;
+        const body = cinemaLineText(line);
+        const content = line.role === 'user' && time && line.kind !== 'action' ? `（放到 ${time}）${body}` : body;
         const role = line.role === 'user' ? 'user' : 'assistant';
         // 连续同一方的几句合成一条，免得有的接口不认连续两条 user
         const last = out[out.length - 1];
@@ -219,7 +265,7 @@ export const buildCinemaInstruction = (ctx: CinemaPromptContext): string => {
         ? `你们正在见面，此刻**并肩坐在一起**看${work}，看的是同一块屏幕。之前见面里是在哪、是什么情形，照历史里的见面记录接着来，不要换地方。`
         : `${userName}在电脑上放${work}，你们**不在一起**，各在各的地方隔着手机同步看。不要写成坐在一起，也不要有碰到对方的动作。`;
     const format = offline
-        ? `- 只输出你要说的话，可以分几行（每行会变成一条气泡）。人就在旁边，可以带一点很轻的小动作，用（）括起来，比如（往你那边靠了靠），一次最多一个、一两句话以内，别写成大段描写。不要加引号或标题。`
+        ? `- 只输出你要说的话，可以分几行（每行会变成一条气泡）。人就在旁边，可以带一点很轻的小动作：**单独写一行，整行用（）括起来**，比如（往你那边靠了靠），它会显示成旁白而不是气泡。一次最多一个、一句话以内，别写成大段描写。${userName}的消息里整行（）括起来的，是${userName}的动作。不要加引号或标题。`
         : `- 只输出你要说的话，可以分几行（每行会变成一条气泡）。不要写动作描写，不要加引号或标题。`;
     return `
 

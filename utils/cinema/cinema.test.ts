@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    splitCinemaActions, toCinemaLines, cinemaLineText,
     isPlayerFresh, mergeCinemaStatus, PLAYER_STALE_MS,
     buildCinemaEndCardText, cinemaMessageMetadata,
     buildCinemaInstruction, cleanCinemaReply, describeStatus, formatVideoTime, isFrameFresh, newCinemaSession,
@@ -178,5 +179,43 @@ describe('影院 · 线上 / 线下', () => {
         expect(cinemaMessageMetadata(session)).toMatchObject({ cinemaMeet: 'offline', dateEncounterId: 'e1' });
         expect(cinemaMessageMetadata({ id: 's1', title: 'x', meet: 'online' as const, dateEncounterId: 'e1' })).not.toHaveProperty('dateEncounterId');
         expect(buildCinemaEndCardText({ ...session, lines: [] }, '萧逸')).toBe('一起看结束（面对面） · 萧逸｜《钟表馆事件》｜聊了0句');
+    });
+});
+
+describe('影院 · 小动作变旁白', () => {
+    it('开头 / 结尾的括号拆出来，说的话留在气泡里', () => {
+        expect(splitCinemaActions('（往你那边靠了靠）这段好吓人')).toEqual([
+            { kind: 'action', text: '往你那边靠了靠' }, { kind: 'speech', text: '这段好吓人' },
+        ]);
+        expect(splitCinemaActions('哈哈哈(笑出声)')).toEqual([
+            { kind: 'speech', text: '哈哈哈' }, { kind: 'action', text: '笑出声' },
+        ]);
+    });
+
+    it('整行都是动作就只有旁白', () => {
+        expect(splitCinemaActions('（轻轻握住你的手）')).toEqual([{ kind: 'action', text: '轻轻握住你的手' }]);
+    });
+
+    it('句子中间的括号算说的话', () => {
+        expect(splitCinemaActions('那个人（穿黑衣服的）好可疑')).toEqual([{ kind: 'speech', text: '那个人（穿黑衣服的）好可疑' }]);
+    });
+
+    it('一轮几行拆成几条记录，旁白带标记；存进私聊时补回括号', () => {
+        const lines = toCinemaLines('char', ['（靠过来）', '别怕'], 100);
+        expect(lines).toEqual([
+            { role: 'char', text: '靠过来', at: 100, kind: 'action' },
+            { role: 'char', text: '别怕', at: 101 },
+        ]);
+        expect(lines.map(cinemaLineText)).toEqual(['（靠过来）', '别怕']);
+    });
+
+    it('发给模型时，你的动作不挂「放到几分」，说的话照挂', () => {
+        const msgs = sessionLinesToApiMessages(toCinemaLines('user', ['（靠在你肩上）好困'], 1, 65));
+        expect(msgs).toEqual([{ role: 'user', content: ['（靠在你肩上）', '（放到 1:05）好困'].join('\n') }]);
+    });
+
+    it('线下提示词让角色把动作单独写一行', () => {
+        const text = buildCinemaInstruction({ userName: '千夜', charName: '萧逸', status: null, hasFrame: false, session: { title: 'x', spoiler: 'first', meet: 'offline' } });
+        expect(text).toContain('单独写一行，整行用（）括起来');
     });
 });

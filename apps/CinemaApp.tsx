@@ -16,7 +16,7 @@ import { runCallMemoryPalacePostFlow } from '../utils/memoryPalace/callPostFlow'
 import { endCinemaPresence, getActiveCinemaPresence, touchCinemaPresence } from '../utils/cinema/cinemaPresence';
 import { getActiveDatePresence } from '../utils/datePresence';
 import {
-    buildCinemaEndCardText, CINEMA_END_SOURCE, cinemaMessageMetadata,
+    buildCinemaEndCardText, CINEMA_END_SOURCE, cinemaLineText, cinemaMessageMetadata, toCinemaLines,
     describeStatus, describeWork, formatVideoTime, isFrameFresh, mergeCinemaStatus, newCinemaSession, workerHostForDisplay,
     type CinemaChatLine, type CinemaFrame, type CinemaMeetMode, type CinemaPairing, type CinemaSession, type CinemaSpoilerMode, type CinemaStatus,
 } from '../utils/cinema/cinema';
@@ -279,16 +279,18 @@ const CinemaApp: React.FC = () => {
         if (!text || !session || !char || thinking) return;
         setDraft('');
         const videoTime = statusRef.current?.time;
-        const userLine: CinemaChatLine = { role: 'user', text, at: Date.now(), videoTime };
+        const sentAt = Date.now();
+        // 「（靠在你肩上）好困」→ 一行旁白 + 一个气泡
+        const userLines: CinemaChatLine[] = toCinemaLines('user', [text], sentAt, videoTime);
         let current: CinemaSession = {
-            ...session, lines: [...session.lines, userLine], updatedAt: Date.now(),
+            ...session, lines: [...session.lines, ...userLines], updatedAt: sentAt,
             lastVideoTime: videoTime ?? session.lastVideoTime,
         };
         await persist(current);
         // 说一句进一句：存进私聊消息库（界面不显示），角色在私聊里也知道你们正在一起看
-        await saveLineToChat(char.id, current, 'user', text, videoTime);
+        for (const line of userLines) await saveLineToChat(char.id, current, 'user', cinemaLineText(line), videoTime);
         touchCinemaPresence(char.id, current);
-        void startAmsgChatPresence(char.id, userLine.at);
+        void startAmsgChatPresence(char.id, sentAt);
         setThinking(true);
         try {
             let frameUrl = '';
@@ -305,13 +307,15 @@ const CinemaApp: React.FC = () => {
             });
             if (frameUrl && !result.sawFrame) addToast('当前模型不支持看图，这一轮只发了文字', 'info');
             if (frameUrl && result.sawFrame) {
-                current = { ...current, lines: current.lines.map(l => l === userLine ? { ...l, withFrame: true } : l) };
+                // 「附画面」标在这一轮最后一句上
+                const marked = userLines[userLines.length - 1];
+                current = { ...current, lines: current.lines.map(l => l === marked ? { ...l, withFrame: true } : l) };
             }
             const now = Date.now();
-            const replies: CinemaChatLine[] = result.lines.map((line, i) => ({ role: 'char', text: line, at: now + i }));
+            const replies: CinemaChatLine[] = toCinemaLines('char', result.lines, now);
             current = { ...current, lines: [...current.lines, ...replies], updatedAt: now };
             await persist(current);
-            for (const reply of replies) await saveLineToChat(char.id, current, 'assistant', reply.text, videoTime);
+            for (const reply of replies) await saveLineToChat(char.id, current, 'assistant', cinemaLineText(reply), videoTime);
             // 跟通话一样每轮打脏：云端主动消息那份上下文也跟着知道你们在一起看
             markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
         } catch (error: any) {
@@ -439,7 +443,9 @@ const CinemaApp: React.FC = () => {
                             {char?.name} 每次回你之前都会看一眼当下的画面。
                         </div>
                     )}
-                    {session.lines.map((line, i) => (
+                    {session.lines.map((line, i) => line.kind === 'action' ? (
+                        <div key={`${line.at}-${i}`} className={`cn-action ${line.role}`}>{line.text}</div>
+                    ) : (
                         <div key={`${line.at}-${i}`} className={`cn-line ${line.role}`}>
                             {line.role === 'char' && char?.avatar && <img className="cn-avatar" src={char.avatar} alt="" />}
                             <div className="cn-bubble">

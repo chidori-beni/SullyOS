@@ -123,3 +123,8 @@
 .cn-end { flex-shrink: 0; height: 30px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--cn-line); background: var(--cn-panel-2); font-size: 13px; }
 .cn-end:disabled { opacity: .45; }
 .cn-hint { font-size: 12px; color: var(--cn-sub); line-height: 1.6; margin: 6px 2px 0; }
+
+/* 括号里的小动作：旁白，不进气泡。角色的靠左一点、你的靠右一点，看得出是谁的动作 */
+.cn-action { margin: 4px 0 10px; padding: 0 16px; font-size: 12.5px; line-height: 1.6; color: var(--cn-sub); font-style: italic; text-align: center; opacity: .9; }
+.cn-action.char { padding-right: 30%; }
+.cn-action.user { padding-left: 30%; }
