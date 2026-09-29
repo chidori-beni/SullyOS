@@ -219,3 +219,25 @@ describe('影院 · 小动作变旁白', () => {
         expect(text).toContain('单独写一行，整行用（）括起来');
     });
 });
+
+describe('影院 · 出声时的写法', () => {
+    it('英文语气声 (laughs) 不是小动作，留在台词里给配音用', () => {
+        expect(splitCinemaActions('(laughs) 这也太离谱了')).toEqual([{ kind: 'speech', text: '(laughs) 这也太离谱了' }]);
+        expect(splitCinemaActions('（笑出声）这也太离谱了')[0]).toEqual({ kind: 'action', text: '笑出声' });
+    });
+
+    it('开着出声：提示词告诉角色整段会被念出来，并附上语音写法', () => {
+        const text = buildCinemaInstruction({
+            userName: '千夜', charName: '萧逸', hasFrame: false, status: null,
+            session: { title: 'x', spoiler: 'first' }, voiceGuide: '### 语音条怎么写（重要）',
+        });
+        expect(text).toContain('【影院 · 出声】');
+        expect(text).toContain('### 语音条怎么写（重要）');
+        expect(text).toContain('不用写 <语音> 标签');
+    });
+
+    it('只打字时不带语音写法', () => {
+        const text = buildCinemaInstruction({ userName: '千夜', charName: '萧逸', hasFrame: false, status: null, session: { title: 'x', spoiler: 'first' } });
+        expect(text).not.toContain('【影院 · 出声】');
+    });
+});

@@ -93,6 +93,8 @@ export interface AskCinemaInput extends CinemaContextInput {
     frameDataUrl?: string;
     /** 角色自己想开口：不存假的用户消息，只在请求末尾临时补一条「没人说话」的提示 */
     proactive?: ProactiveReason;
+    /** 开着「出声」时的语音写法（buildVoiceActingGuide），回复里会带停顿标记和语气声 */
+    voiceGuide?: string;
 }
 
 export interface AskCinemaResult {
@@ -120,7 +122,7 @@ export async function askCharacterInCinema(input: AskCinemaInput): Promise<AskCi
     const send = (messages: any[], hasFrame: boolean, retries: number) => {
         const system = context.systemPrompt + buildCinemaInstruction({
             userName, charName: char.name, session, status: input.status, hasFrame,
-            notes: session.notes, proactive,
+            notes: session.notes, proactive, voiceGuide: input.voiceGuide,
         });
         const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '');
         return safeFetchJson(`${baseUrl}/chat/completions`, {

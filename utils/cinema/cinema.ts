@@ -277,6 +277,7 @@ export interface CinemaSegment {
     text: string;
 }
 
+const isStageDirection = (inner: string): boolean => /[^\x00-\x7f]/.test(inner);
 const ACTION_AT_START = /^[（(]([^（）()]{1,80})[）)]\s*/;
 const ACTION_AT_END = /\s*[（(]([^（）()]{1,80})[）)]$/;
 
@@ -290,11 +291,12 @@ export const splitCinemaActions = (line: string): CinemaSegment[] => {
     const head: CinemaSegment[] = [];
     const tail: CinemaSegment[] = [];
     let m: RegExpMatchArray | null;
-    while ((m = rest.match(ACTION_AT_START))) {
+    // 括号里有中文才算小动作：(laughs) (sighs) 这类英文是给配音用的语气声，得留在台词里
+    while ((m = rest.match(ACTION_AT_START)) && isStageDirection(m[1])) {
         head.push({ kind: 'action', text: m[1].trim() });
         rest = rest.slice(m[0].length).trim();
     }
-    while (rest && (m = rest.match(ACTION_AT_END))) {
+    while (rest && (m = rest.match(ACTION_AT_END)) && isStageDirection(m[1])) {
         tail.unshift({ kind: 'action', text: m[1].trim() });
         rest = rest.slice(0, rest.length - m[0].length).trim();
     }
@@ -342,6 +344,8 @@ export interface CinemaPromptContext {
     notes?: CinemaNote[];
     /** 这一轮是角色自己想开口 */
     proactive?: ProactiveReason;
+    /** 开着「出声」时：私聊用的那份语音写法（含用户自定义指南、角色专属语音提示词、固定运行协议） */
+    voiceGuide?: string;
 }
 
 /**
@@ -381,7 +385,11 @@ ${hasFrame ? `- 最后一条消息附带了**此刻屏幕上的画面**（电脑
 - ${spoilerRule}
 - 可以有自己的感想、吐槽、偏爱的角色，也可以讲一些更深的东西（镜头、伏笔、隐喻、背景、演员），但一切按你自己的性格和口吻来，不要变成百科或影评腔。
 - 你们在看片，回得**短**一点：通常 1~3 句，口语，像弹幕或${offline ? '凑到耳边' : '贴着话筒'}小声说的话；${userName}认真问问题时可以多说一点。${notesBlock}${proactiveBlock}
-${format}`;
+${format}${ctx.voiceGuide ? `
+
+【影院 · 出声】你在放映室里说的每一句话都会被直接念出来：不用写 <语音> 标签，整段台词就是语音。照下面的语音写法来写（停顿标记、英文语气声都可以用，它们不会显示在屏幕上）；中文（）括起来的小动作照旧单独一行，不会被念出来。
+
+${ctx.voiceGuide}` : ''}`;
 };
 
 /** 状态里的播放进度转成人话，给界面上的状态条用。 */

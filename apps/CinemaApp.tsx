@@ -7,7 +7,7 @@
  * （worker/amsg/src/watchRoom.ts）。逻辑见 utils/cinema/，方案见工作区「交接说明-一起看.md」。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowsClockwise, Copy, Eye, FilmSlate, Monitor, PaperPlaneRight, Trash } from '@phosphor-icons/react';
+import { ArrowLeft, ArrowsClockwise, Copy, Eye, FilmSlate, Microphone, Monitor, PaperPlaneRight, SpeakerHigh, SpeakerSlash, Trash } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import type { CharacterProfile } from '../types';
 import { DB } from '../utils/db';
@@ -25,6 +25,10 @@ import {
 import { clearCinemaPairing, deleteCinemaSession, getCinemaPairing, listCinemaSessions, saveCinemaPairing, saveCinemaSession } from '../utils/cinema/cinemaDb';
 import { createWatchRoom, WatchRoomSocket, type WatchConnState, type WatchMessage } from '../utils/cinema/watchRoomClient';
 import { askCharacterInCinema, warmCinemaContext } from '../utils/cinema/askCinema';
+import { buildVoiceActingGuide } from '../utils/chatPrompts';
+import { stripTtsMarkupForDisplay } from '../utils/ttsRouter';
+import { canCinemaSpeak, createCinemaSpeaker, spokenTextOf, type CinemaSpeaker } from '../utils/cinema/cinemaVoice';
+import { isSttSupported, prepareSiliconFlowAudioCapture, startStt, type SttSession } from '../utils/speechToText';
 import { describeFrame, nextNoteModel, NOTE_MODEL_LABEL, noteModelCandidates, NoteVisionUnsupportedError, type NoteModel } from '../utils/cinema/sceneNotes';
 import './cinema/cinema.css';
 
@@ -32,6 +36,8 @@ type View = 'home' | 'pair' | 'room';
 
 /** 主动开口的频率记在本机（每个人习惯不同，不跟着备份走也无所谓）。 */
 const PROACTIVE_LEVEL_KEY = 'cinema_proactive_level';
+/** 角色的话要不要念出来，也记在本机。 */
+const VOICE_ON_KEY = 'cinema_voice_on';
 
 /** 这么近收到的画面算「就是现在」，发消息时不用再向电脑要一帧。 */
 const RECENT_FRAME_MS = 6000;
@@ -256,6 +262,7 @@ const CinemaApp: React.FC = () => {
         noteFailRef.current = 0;
         sceneTimesRef.current = [];
         setLastNote(null);
+        getSpeaker().unlock();
         setView('room');
     };
 
@@ -352,6 +359,8 @@ const CinemaApp: React.FC = () => {
                 char, userProfile, groups, apiConfig, realtimeConfig,
                 session: sessionRef.current!, status: statusRef.current, frameDataUrl: frameUrl,
                 proactive: opts.proactive,
+                // 开着出声才教他写停顿和语气声；只打字的时候别让这些标记混进来
+                voiceGuide: voiceOnRef.current && canCinemaSpeak(char, apiConfig) ? buildVoiceActingGuide(char) : undefined,
             });
             if (frameUrl && !result.sawFrame && !opts.proactive) addToast('当前模型不支持看图，这一轮只发了文字', 'info');
             // 不管说没说话，这次机会都算用掉了，免得下一秒又叫一次
@@ -360,7 +369,11 @@ const CinemaApp: React.FC = () => {
             if (!result.lines.length) return; // 主动开口时选择了安静
             const marked = userLines[userLines.length - 1];
             const now = Date.now();
-            const replies: CinemaChatLine[] = toCinemaLines('char', result.lines, now);
+            // 原话（带 <#0.3#>、(laughs) 这些配音标记）拿去念；屏幕上、聊天记录里只放干净的字
+            const spokenReplies: CinemaChatLine[] = toCinemaLines('char', result.lines, now);
+            const replies: CinemaChatLine[] = spokenReplies
+                .map(r => (r.kind === 'action' ? r : { ...r, text: stripTtsMarkupForDisplay(r.text, apiConfig) }))
+                .filter(r => r.text.trim());
             const saved = await updateSession(s => ({
                 ...s,
                 // 「附画面」标在这一轮用户最后一句上
@@ -368,6 +381,7 @@ const CinemaApp: React.FC = () => {
                 updatedAt: now,
             }));
             if (saved) for (const reply of replies) await saveLineToChat(char.id, saved, 'assistant', cinemaLineText(reply), videoTime);
+            sayAloud(spokenReplies);
             if (saved && opts.proactive) touchCinemaPresence(char.id, saved);
             // 跟通话一样每轮打脏：云端主动消息那份上下文也跟着知道你们在一起看
             markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
@@ -386,6 +400,7 @@ const CinemaApp: React.FC = () => {
         // busyRef 比 thinking 早一拍：角色刚开始主动开口、界面还没刷新时，别把这句清掉又丢了
         if (!text || !session || !char || thinking || busyRef.current) return;
         setDraft('');
+        getSpeaker().unlock();
         void speak({ userText: text });
     };
 
@@ -486,7 +501,7 @@ const CinemaApp: React.FC = () => {
                 paused: !!statusRef.current?.paused,
                 pausedSince: pauseRef.current.since,
                 pauseHandled: pauseRef.current.handled,
-                blocked: busyRef.current || !!draftRef.current.trim() || !onlineRef.current || document.visibilityState !== 'visible',
+                blocked: busyRef.current || listeningRef.current || !!draftRef.current.trim() || !onlineRef.current || document.visibilityState !== 'visible',
             });
             if (!reason) return;
             if (reason === 'pause') pauseRef.current = { ...pauseRef.current, handled: true };
@@ -494,6 +509,121 @@ const CinemaApp: React.FC = () => {
         }, 10_000);
         return () => clearInterval(timer);
     }, [view]);
+
+    // ---- 语音：说话（听写）+ 角色出声（配音）----
+    const [voiceOn, setVoiceOn] = useState(() => { try { return localStorage.getItem(VOICE_ON_KEY) !== '0'; } catch { return true; } });
+    const voiceOnRef = useRef(voiceOn); voiceOnRef.current = voiceOn;
+    const [listening, setListening] = useState(false);
+    const [sttBusy, setSttBusy] = useState(false);
+    const listeningRef = useRef(false);
+    const sttSessionRef = useRef<SttSession | null>(null);
+    const sttTokenRef = useRef(0);
+    const speakerRef = useRef<CinemaSpeaker | null>(null);
+    /** 角色每一轮第一句气泡的时间 → 那一轮的语音，点气泡可以重听 */
+    const lineAudioRef = useRef(new Map<number, string>());
+    const speechProvider = apiConfig.speechRecognitionProvider || 'system';
+    const canSpeak = canCinemaSpeak(char, apiConfig);
+
+    const getSpeaker = () => {
+        if (!speakerRef.current) {
+            speakerRef.current = createCinemaSpeaker(message => console.warn('[cinema] 配音失败', message));
+        }
+        return speakerRef.current;
+    };
+    const toggleVoice = () => {
+        const next = !voiceOn;
+        setVoiceOn(next);
+        try { localStorage.setItem(VOICE_ON_KEY, next ? '1' : '0'); } catch { /* ignore */ }
+        if (next) getSpeaker().unlock(); else getSpeaker().stop();
+    };
+
+    /** 角色这一轮说的话念出来（开着「出声」、没在听你说话的时候）。旁白不念。 */
+    const sayAloud = (replies: CinemaChatLine[]) => {
+        if (!char || !voiceOnRef.current || listeningRef.current || !canCinemaSpeak(char, apiConfig)) return;
+        const text = spokenTextOf(replies);
+        const first = replies.find(r => r.kind !== 'action');
+        if (!text || !first) return;
+        void getSpeaker().say(text, char, apiConfig).then(url => { if (url) lineAudioRef.current.set(first.at, url); });
+    };
+
+    const stopListening = () => {
+        sttTokenRef.current += 1;
+        try { sttSessionRef.current?.stop(); } catch { /* ignore */ }
+        sttSessionRef.current = null;
+        listeningRef.current = false;
+        setListening(false);
+        setSttBusy(false);
+    };
+
+    /**
+     * 点一下开始说话，再点一下（或者说完停顿）结束，听到的话自动发出去。
+     * 开麦时角色先闭嘴：手机喇叭的声音会被自己录进去。电脑那边的片子声音也可能被录进去，戴耳机最好。
+     */
+    const toggleMic = async () => {
+        if (listening) {
+            // 让这次录音正常结束，听到的话还会发出去（token 不作废）
+            try { sttSessionRef.current?.stop(); } catch { /* ignore */ }
+            return;
+        }
+        if (!isSttSupported(speechProvider)) { addToast('这个环境不支持语音输入', 'info'); return; }
+        getSpeaker().stop();
+        const token = ++sttTokenRef.current;
+        let heard = '';
+        try {
+            if (speechProvider !== 'system') prepareSiliconFlowAudioCapture();
+            listeningRef.current = true;
+            setListening(true);
+            setSttBusy(false);
+            const sttSession = await startStt('zh-CN', {
+                onPartial: t => { if (sttTokenRef.current === token) { heard = t; setDraft(t); } },
+                onFinal: t => { if (sttTokenRef.current === token) { heard = t; setDraft(t); } },
+                onError: m => { if (sttTokenRef.current === token && m) addToast(m, 'info'); },
+                onProviderFallback: m => { if (sttTokenRef.current === token) addToast(m, 'info'); },
+                onRecordingEnd: () => {
+                    if (sttTokenRef.current !== token) return;
+                    listeningRef.current = false;
+                    setListening(false);
+                    setSttBusy(speechProvider !== 'system');
+                },
+                onEnd: () => {
+                    if (sttTokenRef.current !== token) return;
+                    listeningRef.current = false;
+                    sttSessionRef.current = null;
+                    setListening(false);
+                    setSttBusy(false);
+                    const text = heard.trim();
+                    // 角色正在回的话先留在输入框里，等他说完你再点发送
+                    if (text && !busyRef.current) {
+                        setDraft('');
+                        void speak({ userText: text });
+                    }
+                },
+            }, {
+                provider: speechProvider,
+                apiKey: apiConfig.siliconFlowSpeechApiKey,
+                stripEmoji: apiConfig.speechRecognitionStripEmoji !== false,
+                fallbackToSenseVoice: true,
+            });
+            if (sttTokenRef.current !== token) { sttSession.stop(); return; }
+            sttSessionRef.current = sttSession;
+        } catch (error: any) {
+            if (sttTokenRef.current !== token) return;
+            stopListening();
+            addToast(error?.message || '无法启动语音输入', 'error');
+        }
+    };
+
+    // 离开放映室：闭嘴、关麦
+    useEffect(() => {
+        if (view === 'room') return;
+        speakerRef.current?.stop();
+        if (listeningRef.current) stopListening();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [view]);
+    useEffect(() => () => {
+        speakerRef.current?.dispose();
+        try { sttSessionRef.current?.stop(); } catch { /* ignore */ }
+    }, []);
 
     const saveLineToChat = async (charId: string, s: CinemaSession, role: 'user' | 'assistant', content: string, videoTime?: number) => {
         try {
@@ -613,6 +743,14 @@ const CinemaApp: React.FC = () => {
                             <button key={l.id} className={level === l.id ? 'on' : ''} onClick={() => changeLevel(l.id)}>{l.label}</button>
                         ))}
                     </div>
+                    <button
+                        className={`cn-voice ${voiceOn && canSpeak ? 'on' : ''}`}
+                        onClick={() => canSpeak ? toggleVoice() : addToast(`${char?.name || '角色'} 还没配音色，去神经链接里给 ta 选一个声音`, 'info')}
+                        aria-label="出声"
+                        title={canSpeak ? (voiceOn ? '角色的话会念出来' : '角色只打字') : '没配音色'}
+                    >
+                        {voiceOn && canSpeak ? <SpeakerHigh size={16} weight="fill" /> : <SpeakerSlash size={16} />}
+                    </button>
                 </div>
                 {lastNote && <div className="cn-note">📝 {lastNote.text}</div>}
                 <div className="cn-chat overflow-y-auto" ref={listRef}>
@@ -627,8 +765,15 @@ const CinemaApp: React.FC = () => {
                     ) : (
                         <div key={`${line.at}-${i}`} className={`cn-line ${line.role}`}>
                             {line.role === 'char' && char?.avatar && <img className="cn-avatar" src={char.avatar} alt="" />}
-                            <div className="cn-bubble">
+                            <div
+                                className="cn-bubble"
+                                onClick={() => {
+                                    const url = line.role === 'char' ? lineAudioRef.current.get(line.at) : undefined;
+                                    if (url) getSpeaker().replay(url);
+                                }}
+                            >
                                 {line.text}
+                                {line.role === 'char' && lineAudioRef.current.has(line.at) && <span className="cn-replay">🔊</span>}
                                 {line.role === 'user' && (line.withFrame || line.videoTime !== undefined) && (
                                     <span className="cn-meta">{line.withFrame ? '附画面' : ''}{line.videoTime !== undefined ? ` ${formatVideoTime(line.videoTime)}` : ''}</span>
                                 )}
@@ -641,11 +786,20 @@ const CinemaApp: React.FC = () => {
                     <button className={`cn-eye ${withFrame ? 'on' : ''}`} onClick={() => setWithFrame(v => !v)} aria-label="带不带画面" title={withFrame ? '发消息时带上画面' : '只发文字'}>
                         <Eye size={20} weight={withFrame ? 'fill' : 'regular'} />
                     </button>
+                    <button
+                        className={`cn-mic ${listening ? 'on' : ''}`}
+                        onClick={() => void toggleMic()}
+                        disabled={sttBusy}
+                        aria-label={listening ? '说完了' : '按一下说话'}
+                        title={listening ? '再点一下结束，听到的话会自动发出去' : '按一下说话'}
+                    >
+                        <Microphone size={20} weight={listening ? 'fill' : 'regular'} />
+                    </button>
                     <textarea
                         value={draft}
                         onChange={e => setDraft(e.target.value)}
                         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }}
-                        placeholder={thinking ? `${char?.name} 在看…` : '边看边说…'}
+                        placeholder={listening ? '在听你说…（再点麦克风结束）' : sttBusy ? '正在转文字…' : thinking ? `${char?.name} 在看…` : '边看边说…'}
                         rows={1}
                     />
                     <button className="cn-send" onClick={() => void send()} disabled={!draft.trim() || thinking} aria-label="发送"><PaperPlaneRight size={20} weight="fill" /></button>

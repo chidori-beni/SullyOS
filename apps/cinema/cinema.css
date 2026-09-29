@@ -134,3 +134,11 @@
 .cn-proactive .cn-seg { flex: 1; }
 .cn-seg.small button { padding: 4px 6px; font-size: 12px; }
 .cn-note { flex-shrink: 0; padding: 5px 12px; font-size: 11.5px; color: var(--cn-sub); background: var(--cn-bg); border-bottom: 1px solid var(--cn-line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 语音：出声开关、麦克风、气泡上的重听小喇叭 */
+.cn-voice { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border-radius: 999px; border: 1px solid var(--cn-line); background: none; color: var(--cn-sub) !important; }
+.cn-voice.on { color: var(--cn-accent) !important; border-color: var(--cn-accent); }
+.cn-mic { width: 40px; height: 40px; flex-shrink: 0; display: grid; place-items: center; border-radius: 999px; border: 0; background: var(--cn-panel-2); color: var(--cn-sub) !important; }
+.cn-mic.on { background: #e0567a; color: #fff !important; box-shadow: 0 0 12px #e0567a99; }
+.cn-mic:disabled { opacity: .45; }
+.cn-replay { margin-left: 6px; font-size: 11px; opacity: .6; }
