@@ -25,6 +25,8 @@ let pageStorage: Record<string, string> = {};
 let title = '';
 /** 假网页上 B站 字幕元素：选择器 → 元素（只要 textContent） */
 let subtitleEls: Record<string, { textContent: string }[]> = {};
+/** 假网页上的「所有元素」（'*'），用来放 shadow root 的宿主 / 侦探要翻的元素 */
+let allEls: any[] = [];
 
 /** tab：模拟同一个浏览器里的另一个标签页——油猴存储共用（store），网页里的 video 各是各的（videos） */
 const setup = (url: string, stored: Record<string, unknown> = {}, tab?: { store: Map<string, unknown>; videos: FakeVideo[] }) => {
@@ -32,7 +34,7 @@ const setup = (url: string, stored: Record<string, unknown> = {}, tab?: { store:
     const requests: any[] = [];
     const fakeDocument = {
         get title() { return title; },
-        querySelectorAll: (sel: string) => (sel === 'video' ? (tab?.videos ?? videos) : (subtitleEls[sel] || [])),
+        querySelectorAll: (sel: string) => (sel === 'video' ? (tab?.videos ?? videos) : sel === '*' ? allEls : (subtitleEls[sel] || [])),
         documentElement: {
             setAttribute: (k: string, v: string) => { attrs[k] = v; },
             getAttribute: (k: string) => attrs[k] ?? null,
@@ -66,7 +68,7 @@ const addVideo = (duration: number) => {
 const PAIR = JSON.stringify({ workerUrl: 'https://w.example/', code: 'ABC234', secret: 's3cret' });
 
 describe('暂停同步小插件', () => {
-    beforeEach(() => { vi.useFakeTimers(); videos = []; attrs = {}; pageStorage = {}; title = ''; subtitleEls = {}; });
+    beforeEach(() => { vi.useFakeTimers(); videos = []; attrs = {}; pageStorage = {}; title = ''; subtitleEls = {}; allEls = []; });
     afterEach(() => { vi.useRealTimers(); });
 
     it('在观影端页面上把配对信息抄走，并留下「已装好」记号', () => {
@@ -238,6 +240,37 @@ describe('暂停同步小插件', () => {
         subtitleEls['.bpx-player-subtitle-panel-text'] = [{ textContent: '我回来了' }, { textContent: "I'm back" }];
         vi.advanceTimersByTime(20_000);
         expect(env.requests[env.requests.length - 1].body.payload.subtitle).toBe('我回来了');
+    });
+
+    it('字幕封在 shadow root（密封盒子）里也能读到（09-30 实测日剧 AI 字幕读不到）', () => {
+        const video = addVideo(1440);
+        const inside: Record<string, any[]> = { '.bili-subtitle-x-subtitle-panel-text': [{ textContent: 'お前は誰だ' }] };
+        allEls = [{ tagName: 'BILI-SUBTITLE-X', className: '', shadowRoot: { querySelectorAll: (sel: string) => (sel === '*' ? [] : inside[sel] || []) } }];
+        const env = setup('https://www.bilibili.com/video/BVshadow', { 'sully-watch-pair': PAIR });
+        env.start();
+        video.play();
+        vi.advanceTimersByTime(20_000);
+        expect(env.requests.map(r => r.body.payload).find(p => p.subtitle)?.subtitle).toBe('お前は誰だ');
+    });
+
+    it('在放却一直读不到字幕：20 秒后当一次侦探，把带 subtitle 的元素列出来报上去', () => {
+        const video = addVideo(1440);
+        allEls = [
+            { tagName: 'DIV', className: 'bpx-player-subtitle-wrap', textContent: '' },
+            { tagName: 'SPAN', className: 'some-new-subtitle-line', textContent: '字幕在这里' },
+            { tagName: 'DIV', className: 'unrelated', textContent: 'x' },
+        ];
+        const env = setup('https://www.bilibili.com/video/BVprobe', { 'sully-watch-pair': PAIR });
+        env.start();
+        video.play();
+        vi.advanceTimersByTime(40_000);
+        const probe = env.requests.map(r => r.body.payload).find(p => p.subtitleProbe)?.subtitleProbe;
+        expect(probe).toContain('div.bpx-player-subtitle-wrap');
+        expect(probe).toContain('span.some-new-subtitle-line「字幕在这里」');
+        expect(probe).not.toContain('unrelated');
+        // 报过一次就不再带，直到下一轮侦探（一分钟最多一次）
+        vi.advanceTimersByTime(20_000);
+        expect(env.requests[env.requests.length - 1].body.payload.subtitleProbe).toBeUndefined();
     });
 
     it('别的平台不读字幕', () => {

@@ -525,13 +525,18 @@
   setTimeout(checkPlugin, 300);
 
   // 放映室会把小插件报来的进度也转给这一页，在这里显示出来方便确认
+  let lastProbe = '';
   const showPlayer = (msg) => {
     const when = typeof msg.at === 'number' ? new Date(msg.at).toLocaleTimeString() : '';
     const state = msg.paused ? '⏸ 暂停' : '▶ 播放中';
     const time = fmt(msg.time), dur = fmt(msg.duration);
     // 读到 B站 字幕（开着 CC / AI 字幕时）就一起显示，方便确认小插件读到了
     const sub = msg.subtitle ? `\n字幕：${msg.subtitle}` : (msg.site === 'B站' ? '\n字幕：没读到（播放器里的 CC / AI 字幕开着吗？）' : '');
-    $('playerText').textContent = `最近一次（${when}）：${msg.site || ''} ${state} ${time}${dur ? ' / ' + dur : ''}　${msg.title || ''}${sub}`;
+    // 字幕侦探的结果一直留着，直到读到字幕为止（截图发给开发的人看）
+    if (msg.subtitle) lastProbe = '';
+    else if (msg.subtitleProbe) lastProbe = String(msg.subtitleProbe);
+    const probe = lastProbe ? `\n字幕侦探：${lastProbe}` : '';
+    $('playerText').textContent = `最近一次（${when}）：${msg.site || ''} ${state} ${time}${dur ? ' / ' + dur : ''}　${msg.title || ''}${sub}${probe}`;
   };
 
   // ───────── ③ 试截一张 ─────────

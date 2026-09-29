@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sully 影院 · 暂停同步
 // @namespace    https://chidori-beni.github.io/SullyOS/
-// @version      0.1.2
+// @version      0.1.3
 // @description  在 B站 / 腾讯视频 / 优酷 / 爱奇艺 看片时，把播放进度、暂停、第几集告诉手机上 Sully 影院里的角色。
 // @author       SullyOS
 // @match        *://www.bilibili.com/video/*
@@ -43,7 +43,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.1.2';
+  const VERSION = '0.1.3';
   const PAIR_KEY = 'sully-watch-pair';
   const TICK_MS = 15000;
   const MIN_GAP_MS = 1500;
@@ -167,7 +167,9 @@
       // 当前这句字幕 + 上次报完以后新出现的几句（只有 B站 开着 CC / AI 字幕时才有）
       subtitle: lastSubtitle || undefined,
       subtitles: pendingSubtitles.length ? pendingSubtitles.splice(0) : undefined,
+      subtitleProbe: pendingProbe || undefined,
     };
+    pendingProbe = '';
     lastSentAt = Date.now();
     GM_xmlhttpRequest({
       method: 'POST',
@@ -245,20 +247,81 @@
     }).join('');
   };
 
+  // 09-30 实测：日剧的 AI 字幕屏幕上有，却读不到。很可能是字幕组件把文字封在 shadow root
+  // （「密封盒子」）里，document.querySelectorAll 伸不进去。所以在播放器里连盒子一起找。
+  const playerRoot = () => (document.querySelector && (document.querySelector('.bpx-player-container')
+    || document.querySelector('#bilibili-player'))) || document;
+
+  /** 在 root 里（连同里面所有 shadow root）找 sel。 */
+  const deepQueryAll = (root, sel) => {
+    const out = [];
+    const visit = (r, depth) => {
+      if (!r || depth > 4) return;
+      try { Array.from(r.querySelectorAll(sel) || []).forEach(el => out.push(el)); } catch (e) { /* 选择器不认 */ }
+      let all = [];
+      try { all = Array.from(r.querySelectorAll('*') || []); } catch (e) { return; }
+      for (const el of all) if (el && el.shadowRoot) visit(el.shadowRoot, depth + 1);
+    };
+    visit(root, 0);
+    return out;
+  };
+
   const readSubtitle = () => {
     if (site !== 'B站') return '';
+    const root = playerRoot();
     for (const sel of SUBTITLE_SELECTORS) {
-      const els = document.querySelectorAll(sel);
-      if (!els || !els.length) continue;
-      const text = Array.from(els).map(textOf).join(' ').replace(/\s+/g, ' ').trim();
+      const els = deepQueryAll(root, sel);
+      if (!els.length) continue;
+      const text = els.map(textOf).join(' ').replace(/\s+/g, ' ').trim();
       if (text) return text.slice(0, 200);
     }
     return '';
   };
 
+  // ───────── 字幕侦探 ─────────
+  // 在放、却一直读不到字幕时，把播放器里所有名字带 subtitle / caption 的东西列个清单，
+  // 随下一次进度一起报上去，观影端会显示出来。用户截那一行，就知道字幕藏在哪了。
+  let noSubtitleSince = 0;
+  let lastProbeAt = 0;
+  let pendingProbe = '';
+
+  const probeSubtitles = () => {
+    const root = playerRoot();
+    const items = [];
+    const visit = (r, depth) => {
+      if (!r || depth > 4) return;
+      let all = [];
+      try { all = Array.from(r.querySelectorAll('*') || []); } catch (e) { return; }
+      for (const el of all) {
+        const cls = typeof el.className === 'string' ? el.className : ((el.getAttribute && el.getAttribute('class')) || '');
+        const tag = String(el.tagName || '').toLowerCase();
+        if (/subtitle|caption/i.test(`${cls} ${tag}`)) {
+          const text = String(el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 16);
+          items.push(`${depth ? '[盒内]' : ''}${tag}.${cls.split(/\s+/).filter(Boolean).slice(0, 2).join('.')}「${text}」`);
+        }
+        if (el.shadowRoot) visit(el.shadowRoot, depth + 1);
+      }
+    };
+    visit(root, 0);
+    let canvases = 0;
+    try { canvases = (root.querySelectorAll('canvas') || []).length; } catch (e) { /* ignore */ }
+    return `${items.slice(0, 10).join(' | ') || '播放器里没找到带 subtitle 的元素'}（canvas ${canvases} 个）`;
+  };
+
   setInterval(() => {
     const text = readSubtitle();
-    if (!text) { lastSubtitle = ''; return; }
+    if (!text) {
+      lastSubtitle = '';
+      if (site === 'B站' && video && !video.paused) {
+        if (!noSubtitleSince) noSubtitleSince = Date.now();
+        if (Date.now() - noSubtitleSince > 20000 && Date.now() - lastProbeAt > 60000) {
+          pendingProbe = probeSubtitles();
+          lastProbeAt = Date.now();
+        }
+      }
+      return;
+    }
+    noSubtitleSince = 0;
     if (text === lastSubtitle) return;
     lastSubtitle = text;
     pendingSubtitles.push({ time: video && isFinite(video.currentTime) ? Math.round(video.currentTime) : undefined, text });
