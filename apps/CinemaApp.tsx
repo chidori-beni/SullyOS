@@ -19,9 +19,10 @@ import {
     appendCinemaNote, buildCinemaEndCardText, CINEMA_END_SOURCE, cinemaLineText, cinemaMessageMetadata, decideProactive,
     NOTE_GAP_MS, PROACTIVE_LEVELS, toCinemaLines,
     type CinemaNote, type CinemaProactiveLevel, type ProactiveReason,
-    describeStatus, describeWork, formatVideoTime, isFrameFresh, mergeCinemaStatus, newCinemaSession, workerHostForDisplay,
+    describeStatus, describeWork, formatVideoTime, isFrameFresh, mergeCinemaStatus, newCinemaSession, sessionRemembers, workerHostForDisplay,
     type CinemaChatLine, type CinemaFrame, type CinemaMeetMode, type CinemaPairing, type CinemaSession, type CinemaSpoilerMode, type CinemaStatus,
 } from '../utils/cinema/cinema';
+import { backfillSessionToChat, removeSessionFromChat } from '../utils/cinema/cinemaDb';
 import { clearCinemaPairing, deleteCinemaSession, getCinemaPairing, listCinemaSessions, saveCinemaPairing, saveCinemaSession } from '../utils/cinema/cinemaDb';
 import { createWatchRoom, WatchRoomSocket, type WatchConnState, type WatchMessage } from '../utils/cinema/watchRoomClient';
 import { askCharacterInCinema, warmCinemaContext } from '../utils/cinema/askCinema';
@@ -65,6 +66,8 @@ const CinemaApp: React.FC = () => {
     const [spoiler, setSpoiler] = useState<CinemaSpoilerMode>('first');
     // 线上 / 线下：用户手动选过就听用户的，没选过就看这个角色此刻在不在见面里
     const [meetChoice, setMeetChoice] = useState<CinemaMeetMode | null>(null);
+    // 这一场记不记：记住 = 说一句进一句、散场整理记忆；不留痕 = 只留在影院里
+    const [remember, setRemember] = useState(true);
 
     // 放映室
     const [session, setSession] = useState<CinemaSession | null>(null);
@@ -280,7 +283,7 @@ const CinemaApp: React.FC = () => {
         if (!charId) { addToast('选一个一起看的人', 'info'); return; }
         if (!title.trim()) { addToast('填一下看什么', 'info'); return; }
         const encounter = meet === 'offline' ? activeEncounterFor(charId) : null;
-        const s = newCinemaSession({ charId, title, episode, spoiler, meet, dateEncounterId: encounter?.encounterId });
+        const s = newCinemaSession({ charId, title, episode, spoiler, meet, dateEncounterId: encounter?.encounterId, remember });
         await saveCinemaSession(s);
         openSession(s);
     };
@@ -626,6 +629,7 @@ const CinemaApp: React.FC = () => {
     }, []);
 
     const saveLineToChat = async (charId: string, s: CinemaSession, role: 'user' | 'assistant', content: string, videoTime?: number) => {
+        if (!sessionRemembers(s)) return; // 不留痕：只留在影院自己的记录里
         try {
             await DB.saveMessage({ charId, role, type: 'text', content, metadata: cinemaMessageMetadata(s, videoTime) });
         } catch (error) {
@@ -633,15 +637,53 @@ const CinemaApp: React.FC = () => {
         }
     };
 
-    /** 散场：落一张卡片进私聊、清掉「正在一起看」、跟通话挂断一样整理记忆。 */
+    /**
+     * 这一场记不记，放映室里随时能改：
+     *   记住 → 不留痕：把已经存进私聊的话（和散场卡）删掉，云端那份上下文作废
+     *   不留痕 → 记住：把这一场到目前为止的话按原来的时间补存进去
+     */
+    const toggleRemember = async () => {
+        const cur = sessionRef.current;
+        if (!cur || !char) return;
+        const next = !sessionRemembers(cur);
+        if (!next && !window.confirm(`改成「不留痕」？\n这一场已经说过的话会从 ${char.name} 的聊天记录里删掉，之后说的也不再存；散场时不留卡片、不整理记忆。\n（如果之前已经散过场、整理进了记忆宫殿，那部分删不掉，要去记忆宫殿里手动删。）`)) return;
+        try {
+            if (next) {
+                const count = await backfillSessionToChat(char.id, cur);
+                markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+                addToast(`改成「记住」了，补存了 ${count} 句进聊天记录`, 'success');
+            } else {
+                const count = await removeSessionFromChat(char.id, cur.id);
+                markAmsgStateDirty({ char, userProfile, groups, realtimeConfig }, 'invalidate');
+                addToast(`改成「不留痕」了${count ? `，从聊天记录里删掉了 ${count} 条` : ''}`, 'success');
+            }
+            await updateSession(s => ({ ...s, remember: next }));
+        } catch (error: any) {
+            addToast(`没改成：${error?.message || error}`, 'error');
+        }
+    };
+
+    /** 散场：记住的话落一张卡片进私聊、跟通话挂断一样整理记忆；不留痕就只收场。 */
     const endScreening = async () => {
         if (!session || !char || ending) return;
-        if (!window.confirm(`散场？\n${char.name} 会记得今天一起看了${describeWork(session)}。之后还可以从「最近看过」点进来接着看。`)) return;
+        const keeps = sessionRemembers(sessionRef.current || session);
+        if (!window.confirm(keeps
+            ? `散场？\n${char.name} 会记得今天一起看了${describeWork(session)}。之后还可以从「最近看过」点进来接着看。`
+            : `散场？\n这一场是「不留痕」，${char.name} 在私聊里不会知道你们看过。之后还可以从「最近看过」点进来接着看。`)) return;
         setEnding(true);
         try {
             const endedAt = Date.now();
             const done: CinemaSession = (await updateSession(s => ({ ...s, endedAt, updatedAt: endedAt })))
                 || { ...session, endedAt, updatedAt: endedAt };
+            if (!keeps) {
+                endCinemaPresence(char.id, done.id);
+                void endAmsgChatPresence(char.id);
+                stopAmsgChatPresence(char.id);
+                addToast('散场了（这一场没有留痕）', 'success');
+                setView('home');
+                void reload();
+                return;
+            }
             await DB.saveMessage({
                 charId: char.id, role: 'system', type: 'system',
                 content: buildCinemaEndCardText(done, char.name),
@@ -743,6 +785,13 @@ const CinemaApp: React.FC = () => {
                             <button key={l.id} className={level === l.id ? 'on' : ''} onClick={() => changeLevel(l.id)}>{l.label}</button>
                         ))}
                     </div>
+                    <button
+                        className={`cn-remember ${sessionRemembers(session) ? 'on' : ''}`}
+                        onClick={() => void toggleRemember()}
+                        title={sessionRemembers(session) ? '这一场会记进聊天记录和记忆' : '这一场不留痕'}
+                    >
+                        {sessionRemembers(session) ? '记住' : '不留痕'}
+                    </button>
                     <button
                         className={`cn-voice ${voiceOn && canSpeak ? 'on' : ''}`}
                         onClick={() => canSpeak ? toggleVoice() : addToast(`${char?.name || '角色'} 还没配音色，去神经链接里给 ta 选一个声音`, 'info')}
@@ -862,6 +911,16 @@ const CinemaApp: React.FC = () => {
                                 : `${char?.name || 'TA'} 现在没在见面里。选线下的话就当作你们坐在一起看，但不会接到哪次见面上。`)
                             : `${char?.name || 'TA'} 知道你们不在一起，是隔着手机同步看。`}
                     </p>
+                    <label className="cn-label">这一场记不记</label>
+                    <div className="cn-seg">
+                        <button className={remember ? 'on' : ''} onClick={() => setRemember(true)}>记住</button>
+                        <button className={!remember ? 'on' : ''} onClick={() => setRemember(false)}>不留痕</button>
+                    </div>
+                    <p className="cn-hint">
+                        {remember
+                            ? `说过的话会记进你和 ${char?.name || 'TA'} 的聊天记录，散场时整理进记忆。`
+                            : `只留在影院里：不存进聊天记录，散场也不整理记忆，${char?.name || 'TA'} 在私聊里不会知道看过。放映室里随时能改。`}
+                    </p>
                     <label className="cn-label">{char?.name || 'TA'} 看过吗</label>
                     <div className="cn-seg">
                         <button className={spoiler === 'first' ? 'on' : ''} onClick={() => setSpoiler('first')}>第一次看</button>
@@ -883,6 +942,7 @@ const CinemaApp: React.FC = () => {
                                             和 {who?.name || '（角色已删除）'} · {new Date(s.updatedAt).toLocaleDateString()}
                                             {s.lastVideoTime !== undefined ? ` · 看到 ${formatVideoTime(s.lastVideoTime)}` : ''}
                                             {` · ${s.lines.length} 句`}
+                                            {s.remember === false ? ' · 不留痕' : ''}
                                             {s.endedAt ? ' · 已散场' : who && getActiveCinemaPresence(who.id)?.sessionId === s.id ? ' · 正在看' : ''}
                                         </small>
                                     </button>

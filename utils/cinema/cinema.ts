@@ -54,6 +54,11 @@ export interface CinemaSession {
     meet?: CinemaMeetMode;
     /** 线下看时，这一场属于哪一次见面（见面那边据此知道「这次见面里一起看过片」） */
     dateEncounterId?: string;
+    /**
+     * false = 不留痕：这一场只留在影院自己的记录里，不存进私聊、散场不留卡片、不整理记忆。
+     * 旧记录没有这个字段，按「记住」算。开场时选，放映室里随时能改（用户 09-30 定）。
+     */
+    remember?: boolean;
     title: string;
     episode?: string;
     spoiler: CinemaSpoilerMode;
@@ -193,12 +198,13 @@ export interface CinemaStatus {
 }
 
 export const newCinemaSession = (
-    input: { charId: string; title: string; episode?: string; spoiler: CinemaSpoilerMode; meet?: CinemaMeetMode; dateEncounterId?: string },
+    input: { charId: string; title: string; episode?: string; spoiler: CinemaSpoilerMode; meet?: CinemaMeetMode; dateEncounterId?: string; remember?: boolean },
     now = Date.now(),
 ): CinemaSession => ({
     id: `${now.toString(36)}${Math.random().toString(36).slice(2, 7)}`,
     charId: input.charId,
     meet: input.meet === 'offline' ? 'offline' : 'online',
+    remember: input.remember !== false,
     ...(input.meet === 'offline' && input.dateEncounterId ? { dateEncounterId: input.dateEncounterId } : {}),
     title: input.title.trim() || '没起名字的片子',
     episode: input.episode?.trim() || undefined,
@@ -465,3 +471,6 @@ export const mergeCinemaStatus = (
     }
     return screen || null;
 };
+
+/** 这一场记不记（旧记录没有字段 = 记）。 */
+export const sessionRemembers = (session: Pick<CinemaSession, 'remember'> | null | undefined): boolean => session?.remember !== false;

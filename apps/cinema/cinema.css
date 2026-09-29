@@ -142,3 +142,7 @@
 .cn-mic.on { background: #e0567a; color: #fff !important; box-shadow: 0 0 12px #e0567a99; }
 .cn-mic:disabled { opacity: .45; }
 .cn-replay { margin-left: 6px; font-size: 11px; opacity: .6; }
+
+/* 这一场记不记 */
+.cn-remember { flex-shrink: 0; height: 30px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--cn-line); background: none; font-size: 12px; color: var(--cn-sub) !important; white-space: nowrap; }
+.cn-remember.on { color: var(--cn-accent) !important; border-color: var(--cn-accent); }
