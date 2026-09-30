@@ -1402,23 +1402,6 @@ const DateSession: React.FC<DateSessionProps> = ({
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z" /></svg>
                         )}
                     </button>
-                    <div className="flex flex-col gap-2">
-                        <button aria-label={showMenu ? '收起见面菜单' : '打开见面菜单'} onClick={(e) => { e.stopPropagation(); setShowMenu(prev => !prev); setShowVoiceLangPicker(false); }} className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all shadow-lg active:scale-95 ${showMenu ? 'bg-white text-black border-white' : 'bg-black/30 backdrop-blur-md border-white/20 text-white hover:bg-white/20'}`}>
-                            {showMenu ? (
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
-                            ) : (
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z" /></svg>
-                            )}
-                        </button>
-                        <button
-                            onClick={(e) => { e.stopPropagation(); setShowInputBox(!showInputBox); setShowMenu(false); setShowVoiceLangPicker(false); }}
-                            className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all shadow-lg active:scale-95 ${showInputBox ? 'bg-primary border-primary text-white' : 'bg-black/30 backdrop-blur-md border-white/20 text-white hover:bg-white/20'}`}
-                            title={showInputBox ? '收起输入框' : '展示输入框'}
-                            aria-label={showInputBox ? '收起输入框' : '展示输入框'}
-                        >
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" /></svg>
-                        </button>
-                    </div>
                 </div>
 
                 {showMenu && (
@@ -1514,9 +1497,11 @@ const DateSession: React.FC<DateSessionProps> = ({
                 )}
             </div>
 
-            {/* 观测协议 OBSERVE — 立绘模式悬浮 HUD（左上角，独立查看可放大） */}
+            {/* 观测协议 OBSERVE — 立绘模式悬浮 HUD（左上，独立查看可放大）。
+                放在右上按钮排（pt-12 + 40px 高）的下方：同一高度时，窄屏上「继续」那排会压住 HUD，
+                按钮层级更高，点观测全被按钮吃掉。 */}
             {observeEnabled && !isNovelMode && hasObservation(displayObservation) && (
-                <div className="absolute top-0 left-0 p-4 pt-12 z-[90] pointer-events-none">
+                <div className="absolute top-0 left-0 p-4 pt-24 z-[90] pointer-events-none">
                     <div className="pointer-events-auto">
                         <ObserveHUD
                             observation={displayObservation}
@@ -1975,14 +1960,13 @@ const DateSession: React.FC<DateSessionProps> = ({
                                         </button>
                                     )}
                                 </div>
-                                <p style={{ fontSize: `${dateFontSize}px` }} className="text-white/90 leading-relaxed font-light drop-shadow-md mt-2">{displayedText}{isTextAnimating && <span className="inline-block w-2 h-4 bg-white/70 ml-1 animate-pulse align-middle"></span>}</p>
                                 {currentSarPair && (
                                     <div className="sar-date-gal-speech-control">
                                         <SARSpeechSwitch truth={sarVisualTruth} moduleTitle={currentSarPair.moduleTitle}
                                             onToggle={() => setSarVisualTruth(value => !value)} />
                                     </div>
                                 )}
-                                <p className="text-white/90 text-[16px] leading-relaxed font-light tracking-wide drop-shadow-md mt-2 whitespace-pre-wrap" data-sar-gal-text>
+                                <p style={{ fontSize: `${dateFontSize}px` }} className="text-white/90 leading-relaxed font-light tracking-wide drop-shadow-md mt-2 whitespace-pre-wrap" data-sar-gal-text>
                                     {galShownText === currentText ? displayedText : galShownText}
                                     {isTextAnimating && galShownText === currentText && <span className="inline-block w-2 h-4 bg-white/70 ml-1 animate-pulse align-middle"></span>}
                                 </p>

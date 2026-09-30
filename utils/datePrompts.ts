@@ -473,6 +473,16 @@ const cleanObserveValue = (raw: string): string => {
 const isObserveOn = (char: CharacterProfile): boolean => char.dateObserve?.enabled === true;
 
 /**
+ * 每轮末尾 System Note 里的观测提醒。观测协议本体在 system prompt 里，但它后面还跟着
+ * 剧情时钟等长段落，末尾的 Note 又强调「每一行都以 [emotion] 开头」——模型第二轮起
+ * 常常只听最后这句，把观测块整段丢掉（首轮 peek 有专门提醒所以不丢）。这里逐轮补一句。
+ */
+const buildObserveTurnReminder = (char: CharacterProfile): string => {
+    if (!isObserveOn(char) || resolveObserveFields(char.dateObserve, char.name).length === 0) return '';
+    return ` 观测协议已开启：整段回复最前面必须先输出 ${OBSERVE_OPEN} … ${OBSERVE_CLOSE} 观测块（每一轮都要，这几行不加 [emotion]），之后另起一行再写 VN 正文。`;
+};
+
+/**
  * 观测协议四个默认维度。`label` 是注入提示词时的**固定线格式字段名**（解析靠它，
  * 不随用户自定义改动），`en`/`glyph` 给 HUD 用，`hint` 是默认生成提示（可被
  * char.dateObserve.fields[key].hint 覆盖；`{name}` 会替换成角色名）。
@@ -1104,9 +1114,13 @@ ${extraBlock ? `\n${extraBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlo
 
         // 每轮轮换的聚焦线索：把注意力推向不同的具体方向，相邻回复天然有差异
         const focusLine = isDigDeeperOn(char.dateStyleConfig) ? ` 本轮线索：${pickFocusHint()}。` : '';
+        const observeLine = buildObserveTurnReminder(char);
+        // 剧情钟规则本体在 system prompt 深处；过场在末尾重申 SCENE_CLOCK 所以时间会走，普通回合没重申，
+        // 模型就几乎从不输出标记，剧情时间一直停在开场。这里只提醒「推进了才写」，不鼓励跳时间。
+        const clockLine = ' 如果本轮正文里剧情时间确实往前走了（哪怕几分钟），在回复最后另起一行输出 [[SCENE_CLOCK: YYYY-MM-DD HH:MM]]；没走就不写。';
         const note = variant === 'send'
-            ? `(System Note: 严格遵守 VN 格式。每一行都要以 [emotion] 开头，根据内容逐行切换情绪标签，不要整段只用同一个。叙述行写具体的感官细节和停顿，不要罗列动作。${focusLine})`
-            : `(System Note: Reroll. 换一个切入角度重写，不要复用上一版的展开思路。依然严格遵守 VN 格式：每一行以 [emotion] 开头并逐行切换情绪，叙述行写具体的感官细节和停顿，不要罗列动作。${focusLine})`;
+            ? `(System Note: 严格遵守 VN 格式。每一行都要以 [emotion] 开头，根据内容逐行切换情绪标签，不要整段只用同一个。叙述行写具体的感官细节和停顿，不要罗列动作。${focusLine}${clockLine}${observeLine})`
+            : `(System Note: Reroll. 换一个切入角度重写，不要复用上一版的展开思路。依然严格遵守 VN 格式：每一行以 [emotion] 开头并逐行切换情绪，叙述行写具体的感官细节和停顿，不要罗列动作。${focusLine}${clockLine}${observeLine})`;
 
         return {
             messages: [
@@ -1167,9 +1181,10 @@ ${rerollLine}
 - 结尾另起一行单独输出 \`[[SCENE_CLOCK: YYYY-MM-DD HH:MM]]\`，表示这段过渡结束时的剧情时刻；这行不会显示给用户。
 - 普通剧情不能自行跳跃；本轮只能按这条过场指令推进，不能生成早于当前剧情时间的时刻。
 `;
+        const observeLine = buildObserveTurnReminder(char);
         const note = input.variant === 'reroll'
-            ? '(System Note: 这是过场重 roll。保留剧情因果与时间目标，换一个更具体、更有画面的演出版本；严格遵守 VN 格式和结尾 SCENE_CLOCK 标签。)'
-            : '(System Note: 这是过场演出，不是普通聊天回复；先演出过程，再停在新的剧情时刻，并输出 SCENE_CLOCK 标签。)';
+            ? `(System Note: 这是过场重 roll。保留剧情因果与时间目标，换一个更具体、更有画面的演出版本；严格遵守 VN 格式和结尾 SCENE_CLOCK 标签。${observeLine})`
+            : `(System Note: 这是过场演出，不是普通聊天回复；先演出过程，再停在新的剧情时刻，并输出 SCENE_CLOCK 标签。${observeLine})`;
         return {
             messages: [
                 { role: 'system', content: `${baseSystemPrompt}${interludeBlock}` },

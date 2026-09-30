@@ -75,6 +75,18 @@ describe('DatePrompts.buildSessionPayload', () => {
         expect(sys).toContain('(chuckle)');
     });
 
+    it('观测开启时每轮末尾 Note 都重申观测块和剧情钟标记（第二轮起不再丢观测/时间不走）', async () => {
+        const lastUser = (messages: Array<{ role: string; content: any }>) => String(messages[messages.length - 1].content);
+        const on = await DatePrompts.buildSessionPayload(baseInput(makeChar({ dateObserve: { enabled: true } })));
+        expect(lastUser(on.messages)).toContain(OBSERVE_OPEN);
+        expect(lastUser(on.messages)).toContain('SCENE_CLOCK');
+        const reroll = await DatePrompts.buildSessionPayload({ ...baseInput(makeChar({ dateObserve: { enabled: true } })), variant: 'reroll' as const });
+        expect(lastUser(reroll.messages)).toContain(OBSERVE_OPEN);
+        const off = await DatePrompts.buildSessionPayload(baseInput(makeChar()));
+        expect(lastUser(off.messages)).not.toContain(OBSERVE_OPEN);
+        expect(lastUser(off.messages)).toContain('SCENE_CLOCK');
+    });
+
     it('按 dateStyleConfig.style 切换风格块', async () => {
         for (const preset of DATE_STYLE_PRESETS) {
             const char = makeChar({ dateStyleConfig: { style: preset.id } });
