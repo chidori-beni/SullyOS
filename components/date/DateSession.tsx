@@ -2061,7 +2061,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                 onChange={(e) => setInput(e.target.value)}
                                 placeholder={backgroundPending ? "等待回应..." : "输入对话..."}
                                 disabled={interactionBusy}
-                                className={`min-w-0 flex-1 tm-input bg-transparent px-3 sm:px-4 py-3 outline-none font-light resize-none max-h-36 no-scrollbar leading-tight ${char.dateLightReading ? 'text-stone-800 placeholder:text-stone-400' : 'text-white placeholder:text-white/30'}`}
+                                className={`min-w-0 flex-1 tm-input overflow-y-auto select-text bg-transparent px-3 sm:px-4 py-3 outline-none font-light resize-none max-h-36 no-scrollbar leading-tight ${char.dateLightReading ? 'text-stone-800 placeholder:text-stone-400' : 'text-white placeholder:text-white/30'}`}
                                 style={{ minHeight: '3.5rem' }}
                                 autoFocus
                             />
@@ -2112,7 +2112,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                             onChange={(event) => setInput(event.target.value)}
                             autoFocus
                             spellCheck
-                            className={`h-full w-full resize-none overflow-y-auto overscroll-contain rounded-2xl border p-4 text-[16px] leading-7 outline-none focus:ring-2 ${char.dateLightReading ? 'border-stone-200 bg-white text-stone-800 focus:ring-primary/20' : 'border-white/10 bg-white/[0.06] text-white focus:ring-primary/40'}`}
+                            className={`h-full w-full resize-none overflow-y-auto select-text overscroll-contain rounded-2xl border p-4 text-[16px] leading-7 outline-none focus:ring-2 ${char.dateLightReading ? 'border-stone-200 bg-white text-stone-800 focus:ring-primary/20' : 'border-white/10 bg-white/[0.06] text-white focus:ring-primary/40'}`}
                             aria-label="全屏见面输入框"
                         />
                     </div>
@@ -2138,7 +2138,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                         value={interludeDescription}
                         onChange={(event) => setInterludeDescription(event.target.value)}
                         placeholder="例如：雨下大了，你们收拾东西换到街角的咖啡店，路上聊起了小时候的事。"
-                        className="h-32 w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm leading-relaxed text-slate-700 outline-none focus:ring-2 focus:ring-indigo-200"
+                        className="h-32 w-full resize-none overflow-y-auto select-text rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm leading-relaxed text-slate-700 outline-none focus:ring-2 focus:ring-indigo-200"
                         autoFocus
                     />
                     <p className="text-[11px] leading-relaxed text-slate-400">可以不填，让角色根据上下文自然演出；一次见面可以插入任意多段过场。</p>
