@@ -482,6 +482,20 @@ const buildObserveTurnReminder = (char: CharacterProfile): string => {
     return ` 观测协议已开启：整段回复最前面必须先输出 ${OBSERVE_OPEN} … ${OBSERVE_CLOSE} 观测块（每一轮都要，这几行不加 [emotion]），之后另起一行再写 VN 正文。`;
 };
 
+/** 重新生成时用户填写的要求上限（和日程重抽同一量级），超出部分截掉。 */
+export const DATE_REROLL_REQUIREMENT_MAX_LENGTH = 300;
+
+/**
+ * 重新生成时用户在弹窗里写的要求（可留空）。它是这一次重写的导演指令：
+ * 只影响本次输出，不落库、不进历史，也不能被角色当成台词复述。
+ */
+const buildRerollRequirementLine = (requirement?: string): string => {
+    const text = (requirement || '').trim().slice(0, DATE_REROLL_REQUIREMENT_MAX_LENGTH);
+    return text
+        ? ` 用户对这次重写的要求（导演指令，只作用于这一次重写；照做，但不要在正文里提及、复述或回应这条要求）：「${text}」。`
+        : '';
+};
+
 /**
  * 观测协议四个默认维度。`label` 是注入提示词时的**固定线格式字段名**（解析靠它，
  * 不随用户自定义改动），`en`/`glyph` 给 HUD 用，`hint` 是默认生成提示（可被
@@ -991,6 +1005,8 @@ export const DatePrompts = {
         allMsgs: Message[];
         emojis: Emoji[];
         useVisionDescriptions?: boolean;
+        /** 重掷开场白时用户写的要求，可空 */
+        rerollRequirement?: string;
     }): { messages: ApiMessage[] } => {
         const { char, userProfile, allMsgs, emojis } = input;
         const charTz = resolveCharTimeZone(char);
@@ -1048,7 +1064,7 @@ ${dateTimeOn ? `当前时间: ${timeStr}\n` : ''}时间上下文: ${gapHint}
 ${extraBlock ? `\n${extraBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlock(char)}` : ''}`;
 
         // 历史已经压进这一条 user 消息里，深度条目就以它为准：深度 0 在它之后，其余在它之前
-        const peekMsg: ApiMessage = { role: 'user', content: `[最近记录 (Previous Context)]:${recentMsgs}${contextSeparator}${peekInstructions}\n\n(Start sensing...)` };
+        const peekMsg: ApiMessage = { role: 'user', content: `[最近记录 (Previous Context)]:${recentMsgs}${contextSeparator}${peekInstructions}${input.rerollRequirement?.trim() ? `\n\n(System Note: 这是开场的重新生成。${buildRerollRequirementLine(input.rerollRequirement).trim()})` : ''}\n\n(Start sensing...)` };
         return {
             messages: [
                 { role: 'system', content: baseContext },
@@ -1069,6 +1085,8 @@ ${extraBlock ? `\n${extraBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlo
         emojis: Emoji[];
         userText: string;
         variant: 'send' | 'reroll';
+        /** variant=reroll 时用户在弹窗里写的要求，可空 */
+        rerollRequirement?: string;
         useVisionDescriptions?: boolean;
         sceneClockAt?: number;
         sceneClockAdvancedMs?: number;
@@ -1120,7 +1138,7 @@ ${extraBlock ? `\n${extraBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlo
         const clockLine = ' 如果本轮正文里剧情时间确实往前走了（哪怕几分钟），在回复最后另起一行输出 [[SCENE_CLOCK: YYYY-MM-DD HH:MM]]；没走就不写。';
         const note = variant === 'send'
             ? `(System Note: 严格遵守 VN 格式。每一行都要以 [emotion] 开头，根据内容逐行切换情绪标签，不要整段只用同一个。叙述行写具体的感官细节和停顿，不要罗列动作。${focusLine}${clockLine}${observeLine})`
-            : `(System Note: Reroll. 换一个切入角度重写，不要复用上一版的展开思路。依然严格遵守 VN 格式：每一行以 [emotion] 开头并逐行切换情绪，叙述行写具体的感官细节和停顿，不要罗列动作。${focusLine}${clockLine}${observeLine})`;
+            : `(System Note: Reroll. 换一个切入角度重写，不要复用上一版的展开思路。依然严格遵守 VN 格式：每一行以 [emotion] 开头并逐行切换情绪，叙述行写具体的感官细节和停顿，不要罗列动作。${focusLine}${buildRerollRequirementLine(input.rerollRequirement)}${clockLine}${observeLine})`;
 
         return {
             messages: [
@@ -1151,6 +1169,8 @@ ${extraBlock ? `\n${extraBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlo
         sceneClockTimeZone?: string;
         useVisionDescriptions?: boolean;
         variant?: 'send' | 'reroll';
+        /** variant=reroll 时用户在弹窗里写的要求，可空 */
+        rerollRequirement?: string;
     }): Promise<{ messages: ApiMessage[] }> => {
         const { char, userProfile, allMsgs, emojis } = input;
         const { clock, historyMsgs, systemPrompt: baseSystemPrompt } = await buildSessionContext({
@@ -1183,7 +1203,7 @@ ${rerollLine}
 `;
         const observeLine = buildObserveTurnReminder(char);
         const note = input.variant === 'reroll'
-            ? `(System Note: 这是过场重 roll。保留剧情因果与时间目标，换一个更具体、更有画面的演出版本；严格遵守 VN 格式和结尾 SCENE_CLOCK 标签。${observeLine})`
+            ? `(System Note: 这是过场重 roll。保留剧情因果与时间目标，换一个更具体、更有画面的演出版本；严格遵守 VN 格式和结尾 SCENE_CLOCK 标签。${buildRerollRequirementLine(input.rerollRequirement)}${observeLine})`
             : `(System Note: 这是过场演出，不是普通聊天回复；先演出过程，再停在新的剧情时刻，并输出 SCENE_CLOCK 标签。${observeLine})`;
         return {
             messages: [

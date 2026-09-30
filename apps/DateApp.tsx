@@ -1410,7 +1410,8 @@ const DateApp: React.FC = () => {
         return content;
     };
 
-    const handleReroll = async (): Promise<string> => {
+    /** requirement：重新生成弹窗里用户写的要求，可空；只作用于这一次请求，不落库。 */
+    const handleReroll = async (requirement?: string): Promise<string> => {
         if (!char || dateMessages.length === 0) throw new Error("No context");
         const requestId = beginDateTurnRequest();
         const currentEncounter = reconcileEncounterFromSceneSnapshot(ensureEncounter());
@@ -1451,6 +1452,7 @@ const DateApp: React.FC = () => {
                 sceneClockTimeZone: currentEncounterSnapshot.sceneClockTimeZone,
                 useVisionDescriptions: apiConfig.visionApi?.enabled === true,
                 variant: 'reroll',
+                rerollRequirement: requirement,
             });
             const rawContent = await callLLM(messages, Math.max(apiConfig.temperature ?? 0.85, 0.9));
             if (!isCurrentDateTurnRequest(requestId, currentEncounterSnapshot.id, currentEncounterSnapshot.sceneClockRevision)) {
@@ -1517,6 +1519,7 @@ const DateApp: React.FC = () => {
                 allMsgs: preparedValidMsgs,
                 emojis,
                 useVisionDescriptions: apiConfig.visionApi?.enabled === true,
+                rerollRequirement: requirement,
             });
             const content = await callLLM(messages, Math.max(apiConfig.temperature ?? 0.85, 0.9));
             if (!isCurrentDateTurnRequest(requestId, currentEncounterSnapshot.id, currentEncounterSnapshot.sceneClockRevision)) {
@@ -1561,6 +1564,7 @@ const DateApp: React.FC = () => {
             emojis,
             userText: lastUserMsg.content,
             variant: 'reroll',
+            rerollRequirement: requirement,
             // 让模型从被替换回复之前的剧情时刻重写，避免 reroll 把旧推进再累计一次。
             sceneClockAt: beforeAt,
             sceneClockAdvancedMs: beforeAdvancedMs,

@@ -87,6 +87,25 @@ describe('DatePrompts.buildSessionPayload', () => {
         expect(lastUser(off.messages)).toContain('SCENE_CLOCK');
     });
 
+    it('重新生成时把用户写的要求带进本轮 Note；留空 / 普通发送都不带', async () => {
+        const lastUser = (messages: Array<{ role: string; content: any }>) => String(messages[messages.length - 1].content);
+        const withReq = await DatePrompts.buildSessionPayload({ ...baseInput(makeChar()), variant: 'reroll' as const, rerollRequirement: '  语气再温柔一点  ' });
+        expect(lastUser(withReq.messages)).toContain('「语气再温柔一点」');
+        expect(sysOf(withReq.messages)).not.toContain('语气再温柔一点');
+        const blank = await DatePrompts.buildSessionPayload({ ...baseInput(makeChar()), variant: 'reroll' as const, rerollRequirement: '   ' });
+        expect(lastUser(blank.messages)).not.toContain('用户对这次重写的要求');
+        const send = await DatePrompts.buildSessionPayload({ ...baseInput(makeChar()), rerollRequirement: '不该出现' });
+        expect(lastUser(send.messages)).not.toContain('不该出现');
+    });
+
+    it('重掷开场白 / 过场也能带要求', async () => {
+        const lastUser = (messages: Array<{ role: string; content: any }>) => String(messages[messages.length - 1].content);
+        const peek = DatePrompts.buildPeekPayload({ char: makeChar(), userProfile: user, allMsgs: [makeMsg()], emojis: [], rerollRequirement: '换成下雨天' });
+        expect(lastUser(peek.messages)).toContain('「换成下雨天」');
+        const interlude = await DatePrompts.buildInterludePayload({ char: makeChar(), userProfile: user, allMsgs: [makeMsg({ role: 'assistant', content: '[normal] 嗯' })], emojis: [], description: '去吃饭', variant: 'reroll', rerollRequirement: '吃火锅' });
+        expect(lastUser(interlude.messages)).toContain('「吃火锅」');
+    });
+
     it('按 dateStyleConfig.style 切换风格块', async () => {
         for (const preset of DATE_STYLE_PRESETS) {
             const char = makeChar({ dateStyleConfig: { style: preset.id } });

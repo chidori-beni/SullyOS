@@ -8,7 +8,7 @@ import ObserveHUD from './ObserveHUD';
 import DateWorldbookSheet from './DateWorldbookSheet';
 import CallApiPresetSheet from '../call/CallApiPresetSheet';
 import { configFromPreset, findActivePresetId } from '../../utils/apiPresetSwitch';
-import { DatePrompts, extractObservation, hasObservation } from '../../utils/datePrompts';
+import { DatePrompts, extractObservation, hasObservation, DATE_REROLL_REQUIREMENT_MAX_LENGTH } from '../../utils/datePrompts';
 import { isBlobRef } from '../../utils/blobRef';
 import { clearDateResumeAttempt } from '../../utils/dateSessionRecovery';
 import {
@@ -74,7 +74,7 @@ interface DateSessionProps {
     onSendMessage: (text: string, kind?: 'continue') => Promise<string | { queued: true; jobId: string }>; // Returns AI content or a queued background turn
     /** 普通见面回复已交给 Worker，期间不允许再开新轮 / 校时 / 结束。 */
     backgroundPending?: boolean;
-    onReroll: () => Promise<string>;
+    onReroll: (requirement?: string) => Promise<string>;
     onInterlude?: (description: string, targetAt?: number) => Promise<string>;
     onSetSceneClock?: (timestamp: number, options?: { silent?: boolean }) => Promise<void>;
     onExit: (currentState: DateState) => void;
@@ -254,6 +254,9 @@ const DateSession: React.FC<DateSessionProps> = ({
     // 见面中快捷切 API 预设 / 开关角色世界书（都是下一条回复生效）
     const [showApiPresetSheet, setShowApiPresetSheet] = useState(false);
     const [showWorldbookSheet, setShowWorldbookSheet] = useState(false);
+    // 重新生成前的要求弹窗（和日程重抽同款：可以写方向，也可以留空直接重来）
+    const [showRerollPrompt, setShowRerollPrompt] = useState(false);
+    const [rerollRequirement, setRerollRequirement] = useState('');
 
     // 顶栏折叠菜单：常驻只留「输入」+「菜单」两钮，低频操作全收进来
     const [showMenu, setShowMenu] = useState(false);
@@ -717,6 +720,10 @@ const DateSession: React.FC<DateSessionProps> = ({
                 setShowSettings(false);
                 return true;
             }
+            if (showRerollPrompt) {
+                setShowRerollPrompt(false);
+                return true;
+            }
             if (showApiPresetSheet || showWorldbookSheet) {
                 setShowApiPresetSheet(false);
                 setShowWorldbookSheet(false);
@@ -743,7 +750,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             return true;
         });
         return unregister;
-    }, [voiceFavoriteTarget, voiceFavoriteBusy, isFullscreenEditor, showSettings, showApiPresetSheet, showWorldbookSheet, showInterludeEditor, showClockEditor, clockBusy, interactionBusy, showMenu, showExitModal, registerBackHandler]);
+    }, [voiceFavoriteTarget, voiceFavoriteBusy, isFullscreenEditor, showSettings, showApiPresetSheet, showWorldbookSheet, showRerollPrompt, showInterludeEditor, showClockEditor, clockBusy, interactionBusy, showMenu, showExitModal, registerBackHandler]);
 
     const dateEmotionKeys = [...REQUIRED_EMOTIONS_SET, ...(char.customDateSprites || [])];
 
@@ -1151,11 +1158,18 @@ const DateSession: React.FC<DateSessionProps> = ({
     const handleSend = () => { void submitTurn(); };
     const handleContinue = () => { void submitTurn('continue'); };
 
-    const handleRerollClick = async () => {
+    /** 所有「重新生成」入口先弹要求框；真正重掷在 runReroll。 */
+    const handleRerollClick = () => {
+        if (historyReplay || interactionBusy) return;
+        setRerollRequirement('');
+        setShowRerollPrompt(true);
+    };
+
+    const runReroll = async (requirement?: string) => {
         if (historyReplay || interactionBusy) return;
         setIsTyping(true);
         try {
-            const aiContent = await onReroll();
+            const aiContent = await onReroll(requirement?.trim() || undefined);
             const { observation: obs, rest } = extractObservation(aiContent, { lenient: observeEnabled, custom: char.dateObserve?.custom });
             if (hasObservation(obs)) setObservation(obs);
             const items = parseDateDialogueForPlayback(rest);
@@ -2245,6 +2259,31 @@ const DateSession: React.FC<DateSessionProps> = ({
                     }}
                 />
             )}
+
+            <Modal
+                isOpen={showRerollPrompt}
+                title="重新生成"
+                onClose={() => setShowRerollPrompt(false)}
+                footer={
+                    <div className="flex w-full gap-3">
+                        <button type="button" onClick={() => setShowRerollPrompt(false)} className="flex-1 rounded-2xl bg-slate-100 py-3 font-bold text-slate-600">取消</button>
+                        <button type="button" disabled={interactionBusy} onClick={() => { const requirement = rerollRequirement; setShowRerollPrompt(false); void runReroll(requirement); }} className="flex-1 rounded-2xl bg-primary py-3 font-bold text-white shadow-lg shadow-indigo-200 disabled:opacity-40">{rerollRequirement.trim() ? '按要求重新生成' : '直接重新生成'}</button>
+                    </div>
+                }
+            >
+                <div className="space-y-2 py-1">
+                    <p className="text-xs leading-relaxed text-slate-500">可以写这次想调整的方向，也可以留空直接重来。要求只影响这一次重新生成，不会写进聊天记录，{char.name}也不会知道你提过。</p>
+                    <textarea
+                        autoFocus
+                        value={rerollRequirement}
+                        onChange={(event) => setRerollRequirement(event.target.value)}
+                        maxLength={DATE_REROLL_REQUIREMENT_MAX_LENGTH}
+                        placeholder="例如：语气再温柔一点；别急着换地点；多写他的小动作；这轮让他主动一些"
+                        className="h-28 w-full resize-none overflow-y-auto select-text rounded-2xl bg-slate-100 p-4 text-sm leading-relaxed text-slate-700 outline-none focus:ring-1 focus:ring-primary/20"
+                    />
+                    <p className="text-right text-[10px] text-slate-400">{rerollRequirement.length}/{DATE_REROLL_REQUIREMENT_MAX_LENGTH}</p>
+                </div>
+            </Modal>
 
             {/* Exit Modal */}
             <Modal
