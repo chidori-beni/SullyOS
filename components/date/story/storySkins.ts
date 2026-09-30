@@ -18,8 +18,10 @@ import atLargeBg from '../../../assets/story-skins/at-large-bg.jpg';
 import atLargeWide from '../../../assets/story-skins/at-large-wide.jpg';
 import memoBg from '../../../assets/story-skins/memo-bg.jpg';
 import memoThumb from '../../../assets/story-skins/memo-thumb.jpg';
+import moonNightBg from '../../../assets/story-skins/moon-night-bg.jpg';
+import moonNightWide from '../../../assets/story-skins/moon-night-wide.jpg';
 
-export type StorySkinId = 'classic' | 'chantilly-noir' | 'otaku-diary' | 'coco' | 'at-large' | 'memo';
+export type StorySkinId = 'classic' | 'chantilly-noir' | 'otaku-diary' | 'coco' | 'at-large' | 'memo' | 'moon-night';
 
 export interface StorySkin {
     id: StorySkinId;
@@ -1027,6 +1029,194 @@ const MEMO_CSS = `
 .story-skin-memo h2.font-serif { font-family: inherit; font-weight: 300; letter-spacing: .14em; }
 `;
 
+/* ── 十三月夜 · Night ─────────────────────────────── */
+
+const MOON_SERIF = `'Songti SC', 'STSong', 'Noto Serif SC', 'Source Han Serif SC', serif`;
+/** 菱格星光带（页眉页脚边缘） */
+const MOON_LATTICE = svg(`<svg xmlns='http://www.w3.org/2000/svg' width='28' height='14' viewBox='0 0 28 14'><path d='M0 7 7 0 14 7 21 0 28 7M0 7 7 14 14 7 21 14 28 7' fill='none' stroke='#9cc3ff' stroke-opacity='.45' stroke-width='.8'/><path d='M14 4.6 14.6 6.4 16.4 7 14.6 7.6 14 9.4 13.4 7.6 11.6 7 13.4 6.4Z' fill='#eaf3ff'/><circle cx='0' cy='7' r='.9' fill='#cfe2ff'/><circle cx='28' cy='7' r='.9' fill='#cfe2ff'/></svg>`);
+/** 细碎星点（字多的页面用，代替整张星空图） */
+const MOON_STARS = svg(`<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><g fill='#dbe8ff'><circle cx='12' cy='20' r='.8' opacity='.7'/><circle cx='58' cy='8' r='.5' opacity='.5'/><circle cx='97' cy='41' r='1' opacity='.8'/><circle cx='140' cy='18' r='.6' opacity='.6'/><circle cx='30' cy='77' r='.5' opacity='.5'/><circle cx='75' cy='102' r='.8' opacity='.7'/><circle cx='121' cy='88' r='.5' opacity='.4'/><circle cx='150' cy='131' r='.9' opacity='.7'/><circle cx='44' cy='140' r='.6' opacity='.6'/><circle cx='102' cy='150' r='.4' opacity='.5'/></g><path d='M97 36.5 97.7 40.3 101.5 41 97.7 41.7 97 45.5 96.3 41.7 92.5 41 96.3 40.3Z' fill='#fff' opacity='.8'/></svg>`);
+/** 新月：透明圆 + 内阴影切出月牙 */
+const MOON_CRESCENT = 'box-shadow: inset 7px -3px 0 0 #dce8ff; filter: drop-shadow(0 0 6px rgba(146, 229, 255, .75));';
+
+const MOON_NIGHT_CSS = `
+.story-skin-moon-night {
+  --story-bg: #0E1A38;
+  --story-surface: #14244A;
+  --story-raised: #1B2F5C;
+  --story-ink: #BAD5EE;
+  --story-muted: #8DA6CC;
+  --story-faint: #5F76A3;
+  --story-line: rgba(110, 139, 195, .45);
+  --story-soft: #22386A;
+  --story-accent: #5772FF;
+  --story-accent-soft: rgba(87, 114, 255, .22);
+  --story-accent-ink: #9CC3FF;
+  color-scheme: dark;
+}
+/* 字多的页面：深蓝夜空 + 细碎星点；剧情进行中铺月夜窗景 */
+.story-skin-moon-night.story-theme-page {
+  background: ${MOON_STARS} 0 0 / 160px 160px, radial-gradient(120% 70% at 70% 0%, #2A4382 0%, #14244A 45%, #0A1430 100%);
+}
+.story-skin-moon-night.story-theme-page > .bg-stone-100 { background-color: transparent !important; }
+.story-skin-moon-night.story-theme-page > .story-session-page.bg-stone-100 {
+  background: #0E1A38 url("${moonNightBg}") center / cover no-repeat !important;
+}
+
+/* 页眉页脚：深蓝玻璃 + 菱格星光带 */
+.story-skin-moon-night .story-safe-header,
+.story-skin-moon-night .story-safe-footer {
+  position: relative;
+  background: rgba(20, 36, 74, .86) !important;
+  border: 0 !important;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+.story-skin-moon-night .story-safe-header::after,
+.story-skin-moon-night .story-safe-footer::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  height: 14px;
+  background: ${MOON_LATTICE} repeat-x center / 28px 14px, linear-gradient(rgba(37, 60, 107, .9), rgba(37, 60, 107, .9));
+  border-top: 1px solid rgba(156, 195, 255, .35);
+  border-bottom: 1px solid rgba(156, 195, 255, .35);
+  pointer-events: none;
+}
+.story-skin-moon-night .story-safe-header::after { bottom: -14px; }
+.story-skin-moon-night .story-safe-footer::before { top: -14px; }
+.story-skin-moon-night .story-safe-header .uppercase {
+  font-family: ${MOON_SERIF};
+  font-weight: 400 !important;
+  letter-spacing: .5em !important;
+  color: #7FA6E8 !important;
+}
+.story-skin-moon-night .story-safe-header h1 { font-family: ${MOON_SERIF}; letter-spacing: .1em; color: #DCE8FF; text-shadow: 0 0 8px rgba(146, 229, 255, .45); }
+
+/* 正文卡：夜色玻璃 + 细光边 + 顶部一弯新月 */
+.story-skin-moon-night .story-turn,
+.story-skin-moon-night .story-opening {
+  position: relative;
+  margin-top: 8px;
+  padding: 30px 18px 20px;
+  background: rgba(7, 19, 51, .74);
+  border: 1px solid rgba(110, 139, 195, .7) !important;
+  border-radius: 4px;
+  box-shadow: 0 0 14px rgba(146, 229, 255, .16), inset 0 0 22px rgba(87, 114, 255, .12);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+.story-skin-moon-night .story-turn::before {
+  content: '';
+  position: absolute;
+  top: -15px; left: 50%;
+  width: 30px; height: 30px;
+  margin-left: -15px;
+  border-radius: 50%;
+  ${MOON_CRESCENT}
+  transform: rotate(-20deg);
+  pointer-events: none;
+}
+.story-skin-moon-night .story-turn::after {
+  content: '✦  ✦';
+  position: absolute;
+  left: 10px; top: 6px;
+  color: #CFE2FF;
+  font-size: 9px;
+  letter-spacing: .3em;
+  text-shadow: 0 0 6px rgba(146, 229, 255, .9);
+  pointer-events: none;
+}
+.story-skin-moon-night .story-prose {
+  font-family: ${MOON_SERIF};
+  color: #D2E4F6 !important;
+  letter-spacing: .03em;
+  text-shadow: 0 0 6px rgba(146, 229, 255, .22);
+}
+
+/* 开场卡：雪松林与流星 */
+.story-skin-moon-night .story-opening { padding-top: 0; overflow: hidden; text-align: center; }
+.story-skin-moon-night .story-opening::before {
+  content: '';
+  display: block;
+  height: 160px;
+  margin: 0 -18px 20px;
+  background: linear-gradient(180deg, rgba(7, 19, 51, 0) 55%, rgba(7, 19, 51, .95)), url("${moonNightWide}") 56% 62% / 175% auto no-repeat;
+}
+.story-skin-moon-night .story-opening > :first-child { font-family: ${MOON_SERIF}; letter-spacing: .5em; color: #7FA6E8 !important; }
+.story-skin-moon-night .story-opening h2 { font-family: ${MOON_SERIF}; letter-spacing: .1em; color: #EAF3FF; text-shadow: 0 0 10px rgba(146, 229, 255, .5); }
+
+/* 对白：发光的蓝色胶囊 */
+.story-skin-moon-night:not(.story-q-color) .story-quote { color: #E6EFFF; }
+.story-skin-moon-night:not(.story-q-bg) .story-quote {
+  background: linear-gradient(180deg, rgba(87, 114, 255, .38), rgba(55, 80, 190, .32));
+  border: 1px solid rgba(156, 195, 255, .5);
+  border-radius: 9px;
+  padding: 1px 6px;
+  margin: 0 2px;
+  box-shadow: 0 0 8px rgba(120, 160, 255, .45);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* 你写下：浅一层的蓝玻璃 + 左侧蓝光竖线 */
+.story-skin-moon-night .story-user-turn,
+.story-skin-moon-night .story-user-turn.border-violet-300 {
+  padding: 12px 16px;
+  border-left: 3px solid #5772FF !important;
+  background: rgba(107, 133, 201, .42);
+  border-radius: 0 4px 4px 0;
+  box-shadow: -2px 0 10px rgba(87, 114, 255, .6);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+.story-skin-moon-night .story-user-turn > div:first-child { color: #9CC3FF !important; letter-spacing: .4em !important; }
+.story-skin-moon-night .story-prose-user { font-family: ${MOON_SERIF}; color: #E3EEFA !important; }
+
+/* 场景卡：代码块式细框 */
+.story-skin-moon-night .story-scene {
+  padding: 12px 14px;
+  border: 1px solid rgba(186, 213, 238, .45) !important;
+  background: rgba(37, 60, 107, .45);
+  border-radius: 2px;
+}
+.story-skin-moon-night .story-scene > div:first-child { font-family: ${MOON_SERIF}; letter-spacing: .5em !important; color: #9CC3FF !important; font-weight: 400 !important; }
+
+/* 输入区与按钮：菱形微光 */
+.story-skin-moon-night .story-compose {
+  background: rgba(7, 19, 51, .8) !important;
+  border: 1px solid rgba(110, 139, 195, .8) !important;
+  border-radius: 4px !important;
+  box-shadow: 0 0 10px rgba(146, 229, 255, .15) !important;
+}
+.story-skin-moon-night .story-compose textarea { color: #D2E4F6; font-family: ${MOON_SERIF}; }
+.story-skin-moon-night .story-compose textarea::placeholder { color: #5F76A3; }
+.story-skin-moon-night .story-send-button:not(.bg-rose-600),
+.story-skin-moon-night .story-quick-preset button {
+  background: radial-gradient(circle at 50% 35%, #3B5CA8, #1B2F5C 70%) !important;
+  color: #EAF3FF !important;
+  border: 1px solid rgba(156, 195, 255, .75);
+  border-radius: 999px !important;
+  box-shadow: 0 0 10px rgba(146, 229, 255, .45), inset 0 0 6px rgba(146, 229, 255, .3) !important;
+}
+.story-skin-moon-night .story-compose .bg-violet-50 { background: rgba(87, 114, 255, .2) !important; border-color: rgba(156, 195, 255, .5) !important; color: #CFE2FF !important; }
+
+/* 配色补丁 */
+.story-skin-moon-night .border-violet-600, .story-skin-moon-night .border-violet-700 { border-color: #9CC3FF !important; }
+.story-skin-moon-night .bg-violet-400 { background-color: #9CC3FF !important; }
+.story-skin-moon-night .accent-violet-600 { accent-color: #5772FF; }
+.story-skin-moon-night .text-violet-900 { color: #EAF3FF !important; }
+.story-skin-moon-night .bg-slate-900 { background-color: #5772FF !important; color: #F4F8FF !important; }
+.story-skin-moon-night .bg-slate-800 { background-color: #22386A !important; }
+.story-skin-moon-night .border-slate-800 { border-color: #22386A !important; }
+.story-skin-moon-night .border-stone-100 { border-color: #14244A !important; }
+.story-skin-moon-night .ring-stone-100 { --tw-ring-color: #14244A !important; }
+.story-skin-moon-night .text-amber-700, .story-skin-moon-night .text-amber-600 { color: #F2D08A !important; }
+.story-skin-moon-night .border-amber-200 { border-color: rgba(242, 208, 138, .3) !important; }
+.story-skin-moon-night .bg-amber-50, .story-skin-moon-night .bg-amber-100 { background-color: rgba(120, 95, 40, .3) !important; }
+.story-skin-moon-night h2.font-serif { font-family: ${MOON_SERIF}; letter-spacing: .06em; }
+`;
+
 export const STORY_SKINS: StorySkin[] = [
     {
         id: 'classic',
@@ -1073,6 +1263,14 @@ export const STORY_SKINS: StorySkin[] = [
         color: 'light',
         thumb: memoThumb,
         css: MEMO_CSS,
+    },
+    {
+        id: 'moon-night',
+        name: '十三月夜',
+        subtitle: 'Night · 星空、新月与菱格微光',
+        color: 'dark',
+        thumb: moonNightWide,
+        css: MOON_NIGHT_CSS,
     },
 ];
 
