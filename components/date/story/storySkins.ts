@@ -16,8 +16,10 @@ import cocoWide from '../../../assets/story-skins/coco-wide.jpg';
 import cocoPlain from '../../../assets/story-skins/coco-plain.webp';
 import atLargeBg from '../../../assets/story-skins/at-large-bg.jpg';
 import atLargeWide from '../../../assets/story-skins/at-large-wide.jpg';
+import memoBg from '../../../assets/story-skins/memo-bg.jpg';
+import memoThumb from '../../../assets/story-skins/memo-thumb.jpg';
 
-export type StorySkinId = 'classic' | 'chantilly-noir' | 'otaku-diary' | 'coco' | 'at-large';
+export type StorySkinId = 'classic' | 'chantilly-noir' | 'otaku-diary' | 'coco' | 'at-large' | 'memo';
 
 export interface StorySkin {
     id: StorySkinId;
@@ -879,6 +881,152 @@ const AT_LARGE_CSS = `
 .story-skin-at-large h2.font-serif { font-family: inherit; font-weight: 900; letter-spacing: .06em; }
 `;
 
+/* ── MEMO · 雾蓝留白 ─────────────────────────────── */
+
+const MEMO_LABEL = `'Avenir Next', 'Helvetica Neue', 'Quicksand', sans-serif`;
+const MEMO_HAND = `'Snell Roundhand', 'Caveat', 'Segoe Script', cursive`;
+/** 十字星点（卡片四角的小 + 号） */
+const MEMO_CROSS = svg(`<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M6 1v10M1 6h10' stroke='#8CABC0' stroke-width='.9'/></svg>`);
+
+const MEMO_CSS = `
+.story-skin-memo {
+  --story-bg: #EAF0F2;
+  --story-surface: #EDF3F2;
+  --story-raised: #F6F9F9;
+  --story-ink: #5E7280;
+  --story-muted: #889AA3;
+  --story-faint: #AFBFC6;
+  --story-line: rgba(140, 171, 192, .45);
+  --story-soft: #DBE8EE;
+  --story-accent: #689187;
+  --story-accent-soft: #DFE9E8;
+  --story-accent-ink: #5F887E;
+  --memo-bar: #BED5E0;
+  color-scheme: light;
+}
+/* 字多的页面：素净雾蓝；剧情进行中才铺壁纸 */
+.story-skin-memo.story-theme-page { background: linear-gradient(180deg, #E4EDF0, #EAF1F0 60%, #E1ECEA); }
+.story-skin-memo.story-theme-page > .bg-stone-100 { background-color: transparent !important; }
+.story-skin-memo.story-theme-page > .story-session-page.bg-stone-100 {
+  background: #E6EEEF url("${memoBg}") center / cover no-repeat !important;
+}
+.story-skin-memo .story-prose,
+.story-skin-memo .story-prose-user { letter-spacing: .06em; }
+
+/* 页眉：雾蓝导航栏 + 细虚线 */
+.story-skin-memo .story-safe-header {
+  background: rgba(234, 240, 242, .94) !important;
+  border-bottom: 1px dashed rgba(140, 171, 192, .8) !important;
+}
+.story-skin-memo .story-safe-header .uppercase {
+  font-family: ${MEMO_LABEL};
+  font-weight: 500 !important;
+  letter-spacing: .32em !important;
+  color: #889AA3 !important;
+}
+.story-skin-memo .story-safe-header h1 { font-weight: 400; letter-spacing: .14em; color: #6A7D8C; }
+.story-skin-memo .story-safe-footer {
+  background: rgba(190, 213, 224, .92) !important;
+  border-top: 0 !important;
+}
+
+/* 正文卡：薄荷灰纸片，无圆角无阴影，四角小十字 */
+.story-skin-memo .story-turn,
+.story-skin-memo .story-opening {
+  position: relative;
+  padding: 26px 20px 22px;
+  background: rgba(223, 233, 232, .9);
+  border: 0 !important;
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+.story-skin-memo .story-turn::before,
+.story-skin-memo .story-turn::after {
+  content: '';
+  position: absolute;
+  width: 12px; height: 12px;
+  background: ${MEMO_CROSS} no-repeat center / contain;
+  pointer-events: none;
+}
+.story-skin-memo .story-turn::before { left: 6px; top: 6px; }
+.story-skin-memo .story-turn::after { right: 6px; bottom: 6px; }
+.story-skin-memo .story-prose { color: #5E7280 !important; }
+
+/* 开场卡：壁纸底部那封系丝带的 SECRET 信 */
+.story-skin-memo .story-opening { padding-top: 0; overflow: hidden; }
+.story-skin-memo .story-opening::before {
+  content: '';
+  display: block;
+  height: 150px;
+  margin: 0 -20px 20px;
+  background: url("${memoBg}") 0 86% / 200% auto no-repeat;
+  border-bottom: 1px dashed rgba(140, 171, 192, .8);
+}
+.story-skin-memo .story-opening > :first-child { font-family: ${MEMO_LABEL}; letter-spacing: .32em; color: #889AA3 !important; }
+.story-skin-memo .story-opening h2 { font-weight: 300; letter-spacing: .2em; color: #6A7D8C; }
+
+/* 引号：左侧薄荷细线 + 斜体 + 下划虚线，和原主题一致 */
+.story-skin-memo:not(.story-q-color) .story-quote { color: #6C9488; }
+.story-skin-memo .story-quote {
+  font-style: italic;
+  border-left: 2px solid #A7C0B8;
+  padding: 0 3px;
+  margin-left: 3px;
+  text-decoration: underline dashed rgba(140, 171, 192, .7);
+  text-underline-offset: 4px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* 你写下：右上角「ME / 你写下」，竖线在右 */
+.story-skin-memo .story-user-turn,
+.story-skin-memo .story-user-turn.border-violet-300 {
+  padding: 10px 14px 10px 18px;
+  border-left: 0 !important;
+  border-right: 2px solid #8CABC0 !important;
+  background: rgba(237, 243, 242, .88);
+}
+.story-skin-memo .story-user-turn > div:first-child { text-align: right; font-family: ${MEMO_LABEL}; font-style: italic; letter-spacing: .3em !important; color: #889AA3 !important; font-weight: 500 !important; }
+.story-skin-memo .story-user-turn > div:first-child::before { content: 'ME / '; }
+.story-skin-memo .story-prose-user { color: #6C9488 !important; font-style: italic; }
+
+/* 场景卡：只留上下两道虚线 */
+.story-skin-memo .story-scene {
+  border-top: 1px dashed rgba(140, 171, 192, .8) !important;
+  border-bottom: 1px dashed rgba(140, 171, 192, .8) !important;
+}
+.story-skin-memo .story-scene > div:first-child {
+  font-family: ${MEMO_HAND};
+  font-size: 15px !important;
+  font-weight: 400 !important;
+  text-transform: none;
+  letter-spacing: .04em !important;
+  color: #689187 !important;
+}
+
+/* 输入区：雾白条 + 只有线条的按钮 */
+.story-skin-memo .story-compose {
+  background: rgba(246, 249, 249, .9) !important;
+  border: 0 !important;
+  border-bottom: 1px solid #8CABC0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+.story-skin-memo .story-compose textarea { letter-spacing: .06em; }
+.story-skin-memo .story-compose textarea::placeholder { color: #9DB0B9; font-style: italic; }
+.story-skin-memo .story-send-button:not(.bg-rose-600) { background: transparent !important; color: #689187 !important; border: 1px solid #689187; border-radius: 0 !important; }
+.story-skin-memo .story-quick-preset button { background: rgba(190, 213, 224, .95) !important; color: #5F887E !important; border-radius: 0 !important; box-shadow: none !important; border: 1px solid #8CABC0; }
+.story-skin-memo .story-compose .bg-violet-50 { background: transparent !important; border-color: #8CABC0 !important; color: #689187 !important; border-radius: 0 !important; }
+
+/* 配色补丁 */
+.story-skin-memo .border-violet-600, .story-skin-memo .border-violet-700 { border-color: #689187 !important; }
+.story-skin-memo .bg-violet-400 { background-color: #8CABC0 !important; }
+.story-skin-memo .accent-violet-600 { accent-color: #689187; }
+.story-skin-memo .bg-slate-900 { background-color: #689187 !important; color: #F6F9F9 !important; }
+.story-skin-memo .ring-stone-100 { --tw-ring-color: #EAF0F2 !important; }
+.story-skin-memo h2.font-serif { font-family: inherit; font-weight: 300; letter-spacing: .14em; }
+`;
+
 export const STORY_SKINS: StorySkin[] = [
     {
         id: 'classic',
@@ -917,6 +1065,14 @@ export const STORY_SKINS: StorySkin[] = [
         color: 'light',
         thumb: atLargeWide,
         css: AT_LARGE_CSS,
+    },
+    {
+        id: 'memo',
+        name: 'MEMO',
+        subtitle: 'My secret · 雾蓝薄荷的留白手记',
+        color: 'light',
+        thumb: memoThumb,
+        css: MEMO_CSS,
     },
 ];
 
