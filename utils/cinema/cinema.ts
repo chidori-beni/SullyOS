@@ -361,6 +361,8 @@ export interface CinemaPromptContext {
     voiceGuide?: string;
     /** 小插件从 B站 播放器读到的最近几句字幕（CC / AI 字幕） */
     recentSubtitles?: CinemaSubtitleLine[];
+    /** 同一部作品之前一起看过的几场（buildWorkRecap） */
+    workRecap?: string;
 }
 
 /** 一句字幕。time 是视频里的秒数（读不到就没有）。 */
@@ -422,7 +424,7 @@ export const buildCinemaInstruction = (ctx: CinemaPromptContext): string => {
 
 【影院 · 一起看】${scene}${userName}的消息是边看边跟你说的。${progress}${pageTitle}${subtitle}
 ${hasFrame ? `- 最后一条消息附带了**此刻屏幕上的画面**（电脑截图）。自然地结合画面说话，像${offline ? '坐在旁边' : '一起看'}的人那样，不要描述「我看到一张截图」，也不要解释你是怎么看到的。画面里有字幕的话，字幕就是当下的台词。` : `- 这一轮没有拿到画面，只根据${userName}说的话和你们之前聊到的内容回应，不要编造画面细节。`}
-- ${spoilerRule}
+- ${spoilerRule}${ctx.workRecap || ''}
 - 可以有自己的感想、吐槽、偏爱的角色，也可以讲一些更深的东西（镜头、伏笔、隐喻、背景、演员），但一切按你自己的性格和口吻来，不要变成百科或影评腔。
 - 你们在看片，回得**短**一点：通常 1~3 句，口语，像弹幕或${offline ? '凑到耳边' : '贴着话筒'}小声说的话；${userName}认真问问题时可以多说一点。${subtitlesBlock}${notesBlock}${proactiveBlock}
 ${format}${ctx.voiceGuide ? `
@@ -603,4 +605,82 @@ export const buildResumeCommand = (
         mode: local ? 'local' : 'site',
         ...(local ? { file: session.lastVideoFile } : { url: session.lastVideoUrl }),
     };
+};
+
+// ---- 片单：同一个角色、同一部作品的几场收成一堆 ----
+
+/** 片名归一：去掉书名号、空白，英文不分大小写。「葬送的芙莉莲」「《葬送的 芙莉莲》」算同一部。 */
+export const normalizeWorkTitle = (title: string): string =>
+    (title || '').replace(/[《》「」『』"“”]/g, '').replace(/\s+/g, '').toLowerCase();
+
+export interface CinemaWork {
+    key: string;
+    charId: string;
+    title: string;
+    /** 新的在前 */
+    sessions: CinemaSession[];
+    latest: CinemaSession;
+}
+
+/** 按「角色 + 片名」归堆；堆和堆之间按最近一次看的时间排，新的在前。 */
+export const groupCinemaWorks = (sessions: CinemaSession[]): CinemaWork[] => {
+    const map = new Map<string, CinemaSession[]>();
+    for (const s of sessions) {
+        const key = `${s.charId}::${normalizeWorkTitle(s.title) || s.id}`;
+        const list = map.get(key);
+        if (list) list.push(s); else map.set(key, [s]);
+    }
+    const works: CinemaWork[] = [];
+    for (const [key, list] of map) {
+        list.sort((a, b) => b.updatedAt - a.updatedAt);
+        works.push({ key, charId: list[0].charId, title: list[0].title, sessions: list, latest: list[0] });
+    }
+    return works.sort((a, b) => b.latest.updatedAt - a.latest.updatedAt);
+};
+
+/**
+ * 下一集：把集数里最后一个数字加一，位数照旧（「第3集」→「第4集」、「EP09」→「EP10」、「S1E03」→「S1E04」）。
+ * 没有数字（「剧场版」「上」）就返回 undefined，让用户自己填。
+ */
+export const nextEpisode = (episode?: string): string | undefined => {
+    const text = (episode || '').trim();
+    const m = text.match(/^(.*?)(\d+)(\D*)$/);
+    if (!m) return undefined;
+    const n = String(Number(m[2]) + 1).padStart(m[2].length, '0');
+    return `${m[1]}${n}${m[3]}`;
+};
+
+/** 前情里带几场、上一场带几条画面笔记。 */
+export const WORK_RECAP_SESSIONS = 6;
+export const WORK_RECAP_NOTES = 5;
+
+/**
+ * 同一部作品之前一起看过的几场，写成角色能读的「前情」，让他知道上回看到哪、发生了什么。
+ * 这一场要记住时，不带「不留痕」的场次，免得角色在会进聊天记录的话里说漏嘴。
+ */
+export const buildWorkRecap = (
+    all: CinemaSession[],
+    current: Pick<CinemaSession, 'id' | 'charId' | 'title' | 'remember'>,
+): string => {
+    const key = normalizeWorkTitle(current.title);
+    if (!key) return '';
+    const currentRemembers = sessionRemembers(current);
+    const prev = all
+        .filter(s => s.id !== current.id && s.charId === current.charId && normalizeWorkTitle(s.title) === key)
+        .filter(s => !currentRemembers || sessionRemembers(s))
+        .filter(s => s.lines.length > 0 || (s.notes?.length || 0) > 0 || typeof s.lastVideoTime === 'number')
+        .sort((a, b) => a.startedAt - b.startedAt)
+        .slice(-WORK_RECAP_SESSIONS);
+    if (!prev.length) return '';
+    const fmtDay = (t: number) => { const d = new Date(t); return `${d.getMonth() + 1}月${d.getDate()}日`; };
+    const rows = prev.map(s => {
+        const time = formatVideoTime(s.lastVideoTime);
+        return `  · ${fmtDay(s.startedAt)}${s.meet === 'offline' ? '（面对面）' : ''}看了${s.episode ? ` ${s.episode}` : ''}${time ? `，看到 ${time}` : ''}${s.endedAt ? '' : '（没散场）'}`;
+    });
+    const last = prev[prev.length - 1];
+    const notes = (last.notes || []).slice(-WORK_RECAP_NOTES);
+    const notesBlock = notes.length
+        ? `\n  上一回最后看到的画面：\n${notes.map(n => `    · ${formatVideoTime(n.videoTime) ? `${formatVideoTime(n.videoTime)} ` : ''}${n.text}`).join('\n')}`
+        : '';
+    return `\n- 这部你们之前一起看过（按时间先后）：\n${rows.join('\n')}${notesBlock}\n  接着之前的印象看，可以自然地提起上回的事；这一场是不是接着上回那一集，以现在的集数和画面为准。`;
 };

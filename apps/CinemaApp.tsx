@@ -16,7 +16,7 @@ import { runCallMemoryPalacePostFlow } from '../utils/memoryPalace/callPostFlow'
 import { endCinemaPresence, getActiveCinemaPresence, touchCinemaPresence } from '../utils/cinema/cinemaPresence';
 import { getActiveDatePresence } from '../utils/datePresence';
 import {
-    appendCinemaNote, appendSubtitleLines, buildCinemaEndCardText, buildResumeCommand, canResume, estimateVideoTime, pickSubtitleWindow, sanitizeExternalSubtitles, CINEMA_END_SOURCE, cinemaLineText, cinemaMessageMetadata, decideProactive,
+    appendCinemaNote, appendSubtitleLines, buildCinemaEndCardText, buildResumeCommand, buildWorkRecap, canResume, groupCinemaWorks, nextEpisode, type CinemaWork, estimateVideoTime, pickSubtitleWindow, sanitizeExternalSubtitles, CINEMA_END_SOURCE, cinemaLineText, cinemaMessageMetadata, decideProactive,
     NOTE_GAP_MS, PROACTIVE_LEVELS, toCinemaLines,
     type CinemaNote, type CinemaProactiveLevel, type ResumeCommand, type CinemaSubtitleLine, type ExternalSubtitles, type ProactiveReason,
     describeStatus, describeWork, formatVideoTime, isFrameFresh, mergeCinemaStatus, newCinemaSession, sessionRemembers, workerHostForDisplay,
@@ -57,6 +57,12 @@ const CinemaApp: React.FC = () => {
     const [view, setView] = useState<View>('home');
     const [pairing, setPairing] = useState<CinemaPairing | null>(null);
     const [sessions, setSessions] = useState<CinemaSession[]>([]);
+    /** 讲话时要翻同一部作品的前几场（前情），speak 里读 ref 拿最新的 */
+    const sessionsRef = useRef<CinemaSession[]>([]);
+    /** 片单里展开的那部（看各场明细） */
+    const [openWork, setOpenWork] = useState<string | null>(null);
+    const startCardRef = useRef<HTMLElement>(null);
+    const episodeInputRef = useRef<HTMLInputElement>(null);
     const [loaded, setLoaded] = useState(false);
 
     // 开一场
@@ -103,6 +109,7 @@ const CinemaApp: React.FC = () => {
         const [p, s] = await Promise.all([getCinemaPairing().catch(() => undefined), listCinemaSessions().catch(() => [])]);
         setPairing(p || null);
         setSessions(s);
+        sessionsRef.current = s;
         setLoaded(true);
     }, []);
     useEffect(() => { void reload(); }, [reload]);
@@ -344,6 +351,24 @@ const CinemaApp: React.FC = () => {
         openSession(s);
     };
 
+    /** 「下一集」：把开一场的表单按这部的最近一场填好（集数 +1），用户看一眼再点开场。 */
+    const prepareNextEpisode = (work: CinemaWork) => {
+        const last = work.latest;
+        const next = nextEpisode(last.episode);
+        setCharId(work.charId);
+        setMeetChoice(null);
+        setTitle(last.title);
+        setEpisode(next || '');
+        setSpoiler(last.spoiler);
+        setRemember(sessionRemembers(last));
+        startCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (next) addToast(`填好了：${describeWork({ title: last.title, episode: next })}，看一眼点「开场」`, 'info');
+        else {
+            addToast('上一场没写第几集，填一下再开场', 'info');
+            setTimeout(() => episodeInputRef.current?.focus(), 400);
+        }
+    };
+
     const removeSession = async (s: CinemaSession) => {
         if (!window.confirm(`删掉这一场的记录？\n${describeWork(s)}`)) return;
         await deleteCinemaSession(s.id);
@@ -424,6 +449,7 @@ const CinemaApp: React.FC = () => {
                 session: sessionRef.current!, status: statusForPrompt, frameDataUrl: frameUrl,
                 proactive: opts.proactive,
                 recentSubtitles: picked ? picked.recent : subtitleLinesRef.current,
+                workRecap: buildWorkRecap(sessionsRef.current, sessionRef.current!),
                 // 开着出声才教他写停顿和语气声；只打字的时候别让这些标记混进来
                 voiceGuide: voiceOnRef.current && canCinemaSpeak(char, apiConfig) ? buildVoiceActingGuide(char) : undefined,
             });
@@ -947,7 +973,7 @@ const CinemaApp: React.FC = () => {
                     )}
                 </section>
 
-                <section className="cn-card">
+                <section className="cn-card" ref={startCardRef}>
                     <div className="cn-card-head"><FilmSlate size={18} /> 开一场</div>
                     <label className="cn-label">和谁一起看</label>
                     <div className="cn-chars">
@@ -960,7 +986,7 @@ const CinemaApp: React.FC = () => {
                     </div>
                     <label className="cn-label">看什么</label>
                     <input className="cn-field" value={title} onChange={e => setTitle(e.target.value)} placeholder="片名，比如：葬送的芙莉莲" />
-                    <input className="cn-field" value={episode} onChange={e => setEpisode(e.target.value)} placeholder="第几集（可以不填）" />
+                    <input className="cn-field" ref={episodeInputRef} value={episode} onChange={e => setEpisode(e.target.value)} placeholder="第几集（可以不填）" />
                     <label className="cn-label">在哪儿看</label>
                     <div className="cn-seg">
                         <button className={meet === 'online' ? 'on' : ''} onClick={() => setMeetChoice('online')}>线上 · 各在各的地方</button>
@@ -993,19 +1019,23 @@ const CinemaApp: React.FC = () => {
 
                 {sessions.length > 0 && (
                     <section className="cn-card">
-                        <div className="cn-card-head">最近看过</div>
-                        {sessions.slice(0, 20).map(s => {
-                            const who = characters.find(c => c.id === s.charId);
-                            return (
+                        <div className="cn-card-head">片单</div>
+                        {groupCinemaWorks(sessions).slice(0, 30).map(work => {
+                            const who = characters.find(c => c.id === work.charId);
+                            const last = work.latest;
+                            const many = work.sessions.length > 1;
+                            const open = openWork === work.key;
+                            const watching = who && getActiveCinemaPresence(who.id)?.sessionId;
+                            const sessionRow = (s: CinemaSession, showTitle: boolean) => (
                                 <div key={s.id} className="cn-session">
                                     <button className="cn-session-main" onClick={() => pairing ? openSession(s) : addToast('先配对电脑', 'info')}>
-                                        <b>{describeWork(s)}</b>
+                                        {showTitle ? <b>{describeWork(s)}</b> : <b>{s.episode || '（没写第几集）'}</b>}
                                         <small>
-                                            和 {who?.name || '（角色已删除）'} · {new Date(s.updatedAt).toLocaleDateString()}
+                                            {showTitle ? `和 ${who?.name || '（角色已删除）'} · ` : ''}{new Date(s.updatedAt).toLocaleDateString()}
                                             {s.lastVideoTime !== undefined ? ` · 看到 ${formatVideoTime(s.lastVideoTime)}` : ''}
                                             {` · ${s.lines.length} 句`}
                                             {s.remember === false ? ' · 不留痕' : ''}
-                                            {s.endedAt ? ' · 已散场' : who && getActiveCinemaPresence(who.id)?.sessionId === s.id ? ' · 正在看' : ''}
+                                            {s.endedAt ? ' · 已散场' : watching === s.id ? ' · 正在看' : ''}
                                         </small>
                                     </button>
                                     {canResume(s) && (
@@ -1014,6 +1044,34 @@ const CinemaApp: React.FC = () => {
                                         </button>
                                     )}
                                     <button className="cn-icon" onClick={() => void removeSession(s)} aria-label="删除"><Trash size={16} /></button>
+                                </div>
+                            );
+                            return (
+                                <div key={work.key} className="cn-work">
+                                    {many ? (
+                                        <div className="cn-session">
+                                            <button className="cn-session-main" onClick={() => setOpenWork(open ? null : work.key)}>
+                                                <b>《{work.title}》<span className="cn-work-count">{work.sessions.length} 场 {open ? '▴' : '▾'}</span></b>
+                                                <small>
+                                                    和 {who?.name || '（角色已删除）'} · 最近{last.episode ? `看到 ${last.episode}` : '一场'}
+                                                    {last.lastVideoTime !== undefined ? ` ${formatVideoTime(last.lastVideoTime)}` : ''}
+                                                    {` · ${new Date(last.updatedAt).toLocaleDateString()}`}
+                                                    {watching && work.sessions.some(s => s.id === watching) ? ' · 正在看' : ''}
+                                                </small>
+                                            </button>
+                                            {canResume(last) && (
+                                                <button className="cn-resume" onClick={() => pairing ? resumeSession(last) : addToast('先配对电脑', 'info')}>
+                                                    ▶ 接着看 {formatVideoTime(last.lastVideoTime)}
+                                                </button>
+                                            )}
+                                        </div>
+                                    ) : sessionRow(last, true)}
+                                    {many && open && <div className="cn-work-list">{work.sessions.map(s => sessionRow(s, false))}</div>}
+                                    {who && (
+                                        <button className="cn-next" onClick={() => prepareNextEpisode(work)}>
+                                            {nextEpisode(last.episode) ? `下一集：${nextEpisode(last.episode)}` : '再开一场'}
+                                        </button>
+                                    )}
                                 </div>
                             );
                         })}

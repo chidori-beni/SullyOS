@@ -97,6 +97,8 @@ export interface AskCinemaInput extends CinemaContextInput {
     voiceGuide?: string;
     /** 小插件读到的最近几句 B站 字幕 */
     recentSubtitles?: CinemaSubtitleLine[];
+    /** 同一部作品之前一起看过的几场（前情） */
+    workRecap?: string;
 }
 
 export interface AskCinemaResult {
@@ -125,6 +127,7 @@ export async function askCharacterInCinema(input: AskCinemaInput): Promise<AskCi
         const system = context.systemPrompt + buildCinemaInstruction({
             userName, charName: char.name, session, status: input.status, hasFrame,
             notes: session.notes, proactive, voiceGuide: input.voiceGuide, recentSubtitles: input.recentSubtitles,
+            workRecap: input.workRecap,
         });
         const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '');
         return safeFetchJson(`${baseUrl}/chat/completions`, {

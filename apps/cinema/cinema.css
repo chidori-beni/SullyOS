@@ -149,3 +149,12 @@
 
 /* 最近看过：接着看 */
 .cn-resume { flex-shrink: 0; padding: 6px 10px; border-radius: 999px; border: 0; background: var(--cn-accent); color: var(--cn-accent-ink) !important; font-size: 12px; font-weight: 700; white-space: nowrap; }
+/* 片单 */
+.cn-work { border-top: 1px solid var(--cn-line); padding-bottom: 8px; }
+.cn-card-head + .cn-work { border-top: 0; }
+.cn-work > .cn-session { border-top: 0; }
+.cn-work-count { margin-left: 6px; font-size: 11px; font-weight: 600; color: var(--cn-sub); }
+.cn-work-list { margin: 0 0 6px 10px; padding-left: 10px; border-left: 2px solid var(--cn-line); }
+.cn-work-list .cn-session { padding: 8px 0; }
+.cn-work-list .cn-session:first-child { border-top: 0; }
+.cn-next { display: inline-block; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--cn-line); background: var(--cn-panel-2); color: var(--cn-accent); font-size: 12px; font-weight: 600; }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     buildResumeCommand, canResume, RESUME_REWIND_SEC,
+    buildWorkRecap, groupCinemaWorks, nextEpisode, normalizeWorkTitle,
     estimateVideoTime, pickSubtitleWindow, sanitizeExternalSubtitles,
     appendSubtitleLines, CINEMA_SUBTITLES_KEEP,
     splitCinemaActions, toCinemaLines, cinemaLineText,
@@ -318,5 +319,66 @@ describe('影院 · 一键接着看', () => {
         expect(canResume({ lastVideoTime: 0, lastVideoUrl: 'https://x' })).toBe(false);
         expect(buildResumeCommand({ title: 'x' })).toBeNull();
         expect(buildResumeCommand({ title: 'x', lastVideoTime: 2, lastVideoUrl: 'https://x' })!.time).toBe(0);
+    });
+});
+
+describe('片单', () => {
+    const mk = (id: string, over: Partial<ReturnType<typeof newCinemaSession>> = {}) => ({
+        ...newCinemaSession({ charId: 'c1', title: '葬送的芙莉莲', spoiler: 'first' }, 1000),
+        id, lines: [{ role: 'user' as const, text: 'hi', at: 1 }], ...over,
+    });
+
+    it('同一个角色、同一部（书名号和空格不算）收成一堆，按最近看的排', () => {
+        const works = groupCinemaWorks([
+            mk('a', { title: '葬送的芙莉莲', updatedAt: 100 }),
+            mk('b', { title: '《葬送的 芙莉莲》', updatedAt: 300 }),
+            mk('c', { title: '孤独摇滚', updatedAt: 200 }),
+            mk('d', { title: '葬送的芙莉莲', charId: 'c2', updatedAt: 50 }),
+        ]);
+        expect(works.map(w => w.sessions.map(s => s.id))).toEqual([['b', 'a'], ['c'], ['d']]);
+        expect(works[0].latest.id).toBe('b');
+        expect(normalizeWorkTitle('《Frieren  X》')).toBe('frierenx');
+    });
+
+    it('下一集：最后一个数字加一，位数不变；没有数字就不猜', () => {
+        expect(nextEpisode('3')).toBe('4');
+        expect(nextEpisode('第3集')).toBe('第4集');
+        expect(nextEpisode('EP09')).toBe('EP10');
+        expect(nextEpisode('S1E03')).toBe('S1E04');
+        expect(nextEpisode('第12话 ')).toBe('第13话');
+        expect(nextEpisode('剧场版')).toBeUndefined();
+        expect(nextEpisode(undefined)).toBeUndefined();
+    });
+
+    it('前情：带之前几场看到哪和上一回最后的画面，不带自己', () => {
+        const d = (m: number, day: number) => new Date(2026, m - 1, day, 20).getTime();
+        const all = [
+            mk('e1', { episode: '第1集', startedAt: d(9, 28), lastVideoTime: 1440, endedAt: 1 }),
+            mk('e2', { episode: '第2集', startedAt: d(9, 29), lastVideoTime: 610, meet: 'offline', notes: [{ at: 1, videoTime: 600, text: '芙莉莲在花田里' }] }),
+            mk('now', { episode: '第3集', startedAt: d(9, 30) }),
+            mk('other', { title: '孤独摇滚', startedAt: d(9, 1) }),
+        ];
+        const recap = buildWorkRecap(all, all[2]);
+        expect(recap).toContain('9月28日看了 第1集，看到 24:00');
+        expect(recap).toContain('9月29日（面对面）看了 第2集，看到 10:10（没散场）');
+        expect(recap).toContain('10:00 芙莉莲在花田里');
+        expect(recap).not.toContain('第3集');
+        expect(recap).not.toContain('孤独摇滚');
+        expect(buildWorkRecap([all[3]], all[3])).toBe('');
+        expect(buildCinemaInstruction({ userName: 'u', charName: 'c', session: all[2], hasFrame: false, workRecap: recap })).toContain('这部你们之前一起看过');
+    });
+
+    it('前情：这一场要记住时不带「不留痕」的场次；这一场也不留痕时可以带', () => {
+        const secret = mk('s', { episode: '第1集', remember: false, lastVideoTime: 60 });
+        const cur = mk('cur', { episode: '第2集' });
+        expect(buildWorkRecap([secret, cur], cur)).toBe('');
+        const curSecret = { ...cur, remember: false };
+        expect(buildWorkRecap([secret, curSecret], curSecret)).toContain('第1集');
+    });
+
+    it('前情：点开没说话、没进度的空场不算', () => {
+        const empty = mk('x', { episode: '第1集', lines: [] });
+        const cur = mk('cur', { episode: '第2集' });
+        expect(buildWorkRecap([empty, cur], cur)).toBe('');
     });
 });
