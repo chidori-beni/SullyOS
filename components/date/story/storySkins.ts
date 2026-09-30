@@ -14,8 +14,10 @@ import otakuDiaryWide from '../../../assets/story-skins/otaku-diary-wide.jpg';
 import cocoBg from '../../../assets/story-skins/coco-bg.jpg';
 import cocoWide from '../../../assets/story-skins/coco-wide.jpg';
 import cocoPlain from '../../../assets/story-skins/coco-plain.webp';
+import atLargeBg from '../../../assets/story-skins/at-large-bg.jpg';
+import atLargeWide from '../../../assets/story-skins/at-large-wide.jpg';
 
-export type StorySkinId = 'classic' | 'chantilly-noir' | 'otaku-diary' | 'coco';
+export type StorySkinId = 'classic' | 'chantilly-noir' | 'otaku-diary' | 'coco' | 'at-large';
 
 export interface StorySkin {
     id: StorySkinId;
@@ -685,6 +687,198 @@ const COCO_CSS = `
 .story-skin-coco h2.font-serif { font-family: ${COCO_DISPLAY}; letter-spacing: .06em; }
 `;
 
+/* ── 在逃共犯 · Wanted ─────────────────────────────── */
+
+const WANTED_MONO = `'Courier Prime', 'American Typewriter', 'Courier New', monospace`;
+/** 条形码 */
+const WANTED_BARCODE = 'repeating-linear-gradient(90deg, #191919 0 2px, transparent 2px 4px, #191919 4px 7px, transparent 7px 9px, #191919 9px 10px, transparent 10px 14px, #191919 14px 17px, transparent 17px 19px)';
+/** 旧纸：中间亮、四周微微发灰 */
+const WANTED_PAPER = 'radial-gradient(120% 130% at 50% 38%, #F4F3EE 30%, #E6E3DA)';
+/** 直角三线框：外粗 3px 墨线 + 2px 纸隙 + 1px 细线 */
+const WANTED_FRAME = 'inset 0 0 0 2px #F4F3EE, inset 0 0 0 3px #191919';
+
+const AT_LARGE_CSS = `
+.story-skin-at-large {
+  --story-bg: #F4F3EE;
+  --story-surface: #EFEDE6;
+  --story-raised: #FAF9F5;
+  --story-ink: #191919;
+  --story-muted: #7D7D7D;
+  --story-faint: #AFAFAF;
+  --story-line: rgba(25, 25, 25, .2);
+  --story-soft: #E4E1D9;
+  --story-accent: #8A3024;
+  --story-accent-soft: rgba(138, 48, 36, .1);
+  --story-accent-ink: #8A3024;
+  --wanted-rust: #8A3024;
+  color-scheme: light;
+}
+/* 列表、编辑等字多的页面用素纸；只有剧情进行中的页面铺卷宗壁纸 */
+.story-skin-at-large.story-theme-page { background: ${WANTED_PAPER}; }
+.story-skin-at-large.story-theme-page::before {
+  opacity: 1;
+  background: repeating-linear-gradient(0deg, rgba(25, 25, 25, .025) 0 1px, transparent 1px 3px);
+}
+.story-skin-at-large.story-theme-page > .bg-stone-100 { background-color: transparent !important; }
+.story-skin-at-large.story-theme-page > .story-session-page.bg-stone-100 {
+  background: #D9D6CE url("${atLargeBg}") center / cover no-repeat !important;
+}
+
+/* 页眉：纸面 + 三线 + 黑色警示条 DO NOT APPROACH */
+.story-skin-at-large .story-safe-header {
+  position: relative;
+  margin-bottom: 16px;
+  background: #F4F3EE !important;
+  border-bottom: 3px solid #191919 !important;
+  box-shadow: 0 3px 0 #F4F3EE, 0 4px 0 #191919;
+}
+.story-skin-at-large .story-safe-header::after {
+  content: 'DO NOT APPROACH';
+  position: absolute;
+  left: 0; right: 0; bottom: -20px;
+  height: 14px;
+  background: #191919;
+  color: #F4F3EE;
+  font: 700 9px/14px ${WANTED_MONO};
+  letter-spacing: .4em;
+  text-align: center;
+  pointer-events: none;
+}
+.story-skin-at-large .story-safe-header .uppercase {
+  font-family: ${WANTED_MONO};
+  letter-spacing: .3em !important;
+  color: #8A3024 !important;
+  font-size: 10px !important;
+}
+.story-skin-at-large .story-safe-header h1 { font-weight: 900; letter-spacing: .06em; }
+.story-skin-at-large .story-safe-footer {
+  background: #F4F3EE !important;
+  border-top: 3px solid #191919 !important;
+  box-shadow: 0 -3px 0 #F4F3EE, 0 -4px 0 #191919;
+}
+
+/* 所有圆角一刀切成直角 */
+.story-skin-at-large .rounded-full:not(img),
+.story-skin-at-large .rounded-2xl,
+.story-skin-at-large .rounded-xl,
+.story-skin-at-large .rounded-lg { border-radius: 0 !important; }
+
+/* 正文卡：卷宗三线框 + 四角取景框 + 顶部锈红图钉 */
+.story-skin-at-large .story-turn,
+.story-skin-at-large .story-opening {
+  position: relative;
+  padding: 28px 20px 24px;
+  border: 3px solid #191919 !important;
+  background: ${WANTED_PAPER};
+  box-shadow: ${WANTED_FRAME}, 6px 8px 18px rgba(0, 0, 0, .28);
+}
+.story-skin-at-large .story-turn::before,
+.story-skin-at-large .story-turn::after {
+  content: '';
+  position: absolute;
+  width: 14px; height: 14px;
+  pointer-events: none;
+}
+.story-skin-at-large .story-turn::before { left: 10px; top: 10px; border-left: 1.5px solid #7D7D7D; border-top: 1.5px solid #7D7D7D; }
+.story-skin-at-large .story-turn::after { right: 10px; bottom: 10px; border-right: 1.5px solid #7D7D7D; border-bottom: 1.5px solid #7D7D7D; }
+
+/* 开场卡：通缉令海报 + 右下角 CASE OPEN 印章 */
+.story-skin-at-large .story-opening { padding-top: 0; padding-bottom: 44px; text-align: center; overflow: hidden; }
+.story-skin-at-large .story-opening::before {
+  content: '';
+  display: block;
+  height: 170px;
+  margin: 0 -20px 18px;
+  border-bottom: 3px double #191919;
+  background: url("${atLargeWide}") center 45% / 175% auto no-repeat;
+}
+.story-skin-at-large .story-opening::after {
+  content: 'CASE OPEN';
+  position: absolute;
+  right: 14px; bottom: 12px;
+  padding: 2px 8px;
+  border: 2px solid #8A3024;
+  color: #8A3024;
+  font: 700 11px/1.2 ${WANTED_MONO};
+  letter-spacing: .2em;
+  transform: rotate(-12deg);
+  opacity: .85;
+  pointer-events: none;
+}
+.story-skin-at-large .story-opening > :first-child { font-family: ${WANTED_MONO}; letter-spacing: .3em; color: #7D7D7D !important; }
+.story-skin-at-large .story-opening h2 { font-family: inherit; font-weight: 900; letter-spacing: .08em; }
+
+/* 正文：墨黑字，对白锈红 */
+.story-skin-at-large .story-prose { color: #191919 !important; }
+.story-skin-at-large:not(.story-q-color) .story-quote { color: #8A3024; }
+
+/* 你写下：灰底口供条 + 左侧墨黑竖线 */
+.story-skin-at-large .story-user-turn,
+.story-skin-at-large .story-user-turn.border-violet-300 {
+  position: relative;
+  padding: 12px 16px;
+  border-left: 5px solid #191919 !important;
+  background: rgba(214, 211, 203, .92);
+  box-shadow: 4px 5px 14px rgba(0, 0, 0, .2);
+}
+.story-skin-at-large .story-user-turn > div:first-child { font-family: ${WANTED_MONO}; letter-spacing: .3em !important; color: #8A3024 !important; }
+.story-skin-at-large .story-user-turn::after {
+  content: 'CONFIDENTIAL';
+  position: absolute;
+  right: 10px; top: 8px;
+  padding: 0 5px;
+  border: 1.5px solid rgba(138, 48, 36, .75);
+  color: rgba(138, 48, 36, .8);
+  font: 700 8px/1.5 ${WANTED_MONO};
+  letter-spacing: .15em;
+  transform: rotate(-6deg);
+  pointer-events: none;
+}
+.story-skin-at-large .story-prose-user { color: #191919 !important; }
+
+/* 场景卡：档案栏 —— 黑底标题条 + 细线框 */
+.story-skin-at-large .story-scene {
+  padding: 0 14px 12px;
+  border: 1px solid #191919 !important;
+  background: rgba(250, 249, 245, .7);
+}
+.story-skin-at-large .story-scene > div:first-child {
+  margin: 0 -14px 0;
+  padding: 4px 14px;
+  background: #191919;
+  color: #F4F3EE !important;
+  font-family: ${WANTED_MONO};
+  letter-spacing: .3em !important;
+}
+.story-skin-at-large .story-scene > div:first-child::after {
+  content: '';
+  margin-left: auto;
+  width: 44px; height: 10px;
+  background: ${WANTED_BARCODE};
+  filter: invert(1);
+}
+.story-skin-at-large .story-scene .text-slate-400 { font-family: ${WANTED_MONO}; letter-spacing: .12em; color: #8A3024 !important; }
+
+/* 输入区：直角纸条 + 墨黑发送键 + 锈红快捷键 */
+.story-skin-at-large .story-compose {
+  background: #FAF9F5 !important;
+  border: 1.5px solid #191919 !important;
+  box-shadow: 3px 3px 0 #191919 !important;
+}
+.story-skin-at-large .story-compose textarea::placeholder { color: #9A968C; font-family: ${WANTED_MONO}; }
+.story-skin-at-large .story-send-button:not(.bg-rose-600) { background: #191919 !important; color: #F4F3EE !important; }
+.story-skin-at-large .story-quick-preset button { background: #8A3024 !important; color: #F4F3EE !important; box-shadow: 3px 3px 0 #191919 !important; }
+.story-skin-at-large .story-compose .bg-violet-50 { background: transparent !important; border-color: #191919 !important; color: #191919 !important; font-family: ${WANTED_MONO}; }
+
+/* 配色补丁 */
+.story-skin-at-large .border-violet-600, .story-skin-at-large .border-violet-700 { border-color: #8A3024 !important; }
+.story-skin-at-large .bg-violet-400 { background-color: #8A3024 !important; }
+.story-skin-at-large .accent-violet-600 { accent-color: #8A3024; }
+.story-skin-at-large .bg-slate-900 { background-color: #191919 !important; color: #F4F3EE !important; }
+.story-skin-at-large .ring-stone-100 { --tw-ring-color: #F4F3EE !important; }
+.story-skin-at-large h2.font-serif { font-family: inherit; font-weight: 900; letter-spacing: .06em; }
+`;
+
 export const STORY_SKINS: StorySkin[] = [
     {
         id: 'classic',
@@ -715,6 +909,14 @@ export const STORY_SKINS: StorySkin[] = [
         color: 'light',
         thumb: cocoBg,
         css: COCO_CSS,
+    },
+    {
+        id: 'at-large',
+        name: '在逃共犯',
+        subtitle: 'Wanted · 黑白卷宗与一抹锈红',
+        color: 'light',
+        thumb: atLargeWide,
+        css: AT_LARGE_CSS,
     },
 ];
 
