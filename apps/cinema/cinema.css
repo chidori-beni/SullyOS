@@ -168,7 +168,8 @@
 .cn-screen img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #000; }
 .cn-screen-empty { aspect-ratio: 16 / 9; display: grid; place-items: center; color: var(--cn-sub); font-size: 13px; letter-spacing: .1em; padding: 0 20px; text-align: center; }
 .cn-screen-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 12px; font-size: 12px; color: var(--cn-sub); background: var(--cn-panel); border-bottom: 1px solid var(--cn-line); }
-.cn-screen-bar button { display: flex; align-items: center; gap: 4px; background: none; border: 1px solid var(--cn-line); border-radius: 999px; padding: 3px 10px; font-size: 12px; }
+.cn-screen-status { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cn-screen-bar button { flex-shrink: 0; white-space: nowrap; display: flex; align-items: center; gap: 4px; background: none; border: 1px solid var(--cn-line); border-radius: 999px; padding: 3px 10px; font-size: 12px; }
 
 .cn-chat { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 14px 8px; -webkit-overflow-scrolling: touch; }
 .cn-line { display: flex; gap: 8px; margin-bottom: 9px; align-items: flex-end; }
@@ -216,7 +217,9 @@
 .cn-proactive .cn-seg button { border-radius: 999px; }
 .cn-proactive .cn-seg button.on { background: var(--cn-accent); color: var(--cn-accent-ink) !important; }
 .cn-seg.small button { padding: 3px 4px; font-size: 12px; white-space: nowrap; }
-.cn-note { flex-shrink: 0; padding: 5px 12px; font-size: 11.5px; line-height: 1.5; color: var(--cn-sub); font-style: italic; background: var(--cn-bg); border-bottom: 1px solid var(--cn-line); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.cn-note { flex-shrink: 0; display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 12px; border: 0; border-bottom: 1px solid var(--cn-line); background: var(--cn-bg); text-align: left; font-size: 11.5px; color: var(--cn-sub) !important; }
+.cn-note-tag { flex-shrink: 0; padding: 0 7px; border: 1px solid var(--cn-gold); border-radius: 999px; font-size: 10.5px; color: var(--cn-gold); font-style: normal; }
+.cn-note-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-style: italic; }
 
 /* 语音：出声开关、麦克风、气泡上的重听小喇叭 */
 .cn-voice { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border-radius: 999px; border: 1px solid var(--cn-line); background: none; color: var(--cn-sub) !important; }
@@ -250,3 +253,30 @@
 .cn-projector-menu small { min-width: 0; margin-left: auto; font-size: 11px; font-weight: 400; color: #7a6650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, Menlo, monospace; }
 .cn-projector-menu p { margin: 0; padding: 6px 12px 8px; font-size: 11.5px; color: #7a6650; line-height: 1.5; border-top: 1px dotted rgba(43, 29, 18, .4); }
 .cn-programme { margin-top: 4px; }
+
+/* ---- 10-01 布局：首页分页、放映室一行工具、聊天全屏、笔记弹窗 ---- */
+.cn-tabs { display: flex; margin: 0 0 16px; border: 1.5px solid var(--cn-line); }
+.cn-tabs button { flex: 1; position: relative; padding: 8px 4px; border: 0; background: none; font-size: 14px; letter-spacing: .25em; text-indent: .25em; color: var(--cn-sub); }
+.cn-tabs button + button { border-left: 1px solid var(--cn-line); }
+.cn-tabs button.on { background: var(--cn-ink); color: var(--cn-bg) !important; font-weight: 700; }
+.cn-tabs small { margin-left: 2px; font-size: 11px; letter-spacing: 0; font-family: var(--cn-en); font-style: italic; }
+.cn-tab-dot { display: inline-block; width: 6px; height: 6px; margin-left: 2px; border-radius: 999px; background: var(--cn-accent); vertical-align: 3px; }
+
+.cn-tools { flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 7px 12px; background: var(--cn-panel); border-bottom: 1px solid var(--cn-line); }
+.cn-tools .cn-projector { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cn-tools-gap { flex: 1; }
+
+.cn-chat-wrap { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
+.cn-full { flex-shrink: 0; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 2px; border: 1px solid var(--cn-gold); background: none; color: var(--cn-gold) !important; }
+.cn-full.on { background: var(--cn-gold); color: var(--cn-accent-ink) !important; }
+
+.cn-sheet-mask { position: absolute; inset: 0; z-index: 50; display: flex; align-items: flex-end; background: rgba(10, 6, 3, .6); }
+.cn-sheet { width: 100%; max-height: 78%; display: flex; flex-direction: column; background: #efe4cc; color: #2b1d12; border-top: 3px double #2b1d12; padding: 12px 16px calc(14px + var(--safe-bottom, 0px)); font-family: var(--cn-serif); }
+.cn-sheet-head { display: flex; align-items: center; justify-content: space-between; font-size: 15px; font-weight: 700; letter-spacing: .2em; color: #8b2a1f; }
+.cn-sheet-hint { margin: 2px 0 8px; font-size: 12px; color: #7a6650; line-height: 1.6; }
+.cn-sheet-list { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.cn-sheet-item { display: flex; gap: 10px; padding: 9px 0; border-top: 1px dotted rgba(43, 29, 18, .35); }
+.cn-sheet-item:first-child { border-top: 0; }
+.cn-sheet-time { flex-shrink: 0; width: 44px; font-family: var(--cn-en); font-style: italic; font-size: 12px; color: #8b2a1f; padding-top: 2px; }
+.cn-sheet-item p { margin: 0; font-size: 13.5px; line-height: 1.7; }
+.cn-sheet .cn-empty { color: #7a6650; }

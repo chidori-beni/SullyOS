@@ -7,7 +7,7 @@
  * （worker/amsg/src/watchRoom.ts）。逻辑见 utils/cinema/，方案见工作区「交接说明-一起看.md」。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowsClockwise, Copy, Eye, Microphone, Monitor, PaperPlaneRight, SpeakerHigh, SpeakerSlash, Trash } from '@phosphor-icons/react';
+import { ArrowLeft, ArrowsClockwise, ArrowsIn, ArrowsOut, Copy, Eye, Microphone, Monitor, PaperPlaneRight, SpeakerHigh, SpeakerSlash, Trash, X } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import type { CharacterProfile } from '../types';
 import { DB } from '../utils/db';
@@ -37,6 +37,13 @@ type View = 'home' | 'pair' | 'room';
 
 /** 主动开口的频率记在本机（每个人习惯不同，不跟着备份走也无所谓）。 */
 const PROACTIVE_LEVEL_KEY = 'cinema_proactive_level';
+/** 主动开口菜单里每档的一句说明（间隔见 PROACTIVE_GAP_MS） */
+const PROACTIVE_LEVEL_HINT: Record<CinemaProactiveLevel, string> = {
+    off: '只在你说话时回',
+    quiet: '大约 8 分钟一句',
+    normal: '大约 3 分钟一句',
+    chatty: '大约 1 分半一句',
+};
 /** 角色的话要不要念出来，也记在本机。 */
 const VOICE_ON_KEY = 'cinema_voice_on';
 
@@ -62,6 +69,12 @@ const CinemaApp: React.FC = () => {
         try { return localStorage.getItem(CINEMA_API_PRESET_KEY); } catch { return null; }
     });
     const [projectorOpen, setProjectorOpen] = useState(false);
+    const [levelOpen, setLevelOpen] = useState(false);
+    /** 首页分三页（10-01 用户嫌一长条）：开一场 → 片单 → 配对。没配对时先停在配对页 */
+    const [homeTab, setHomeTab] = useState<'start' | 'programme' | 'pair'>('start');
+    /** 放映室：聊天铺满（藏起画面和工具行） / 画面笔记全文弹窗 */
+    const [chatFull, setChatFull] = useState(false);
+    const [notesOpen, setNotesOpen] = useState(false);
     const chatApi = cinemaChatApiConfig(apiConfig, apiPresets, apiPresetId);
     const chatApiRef = useRef(chatApi); chatApiRef.current = chatApi;
     const activePreset = apiPresetId ? apiPresets.find(p => p.id === apiPresetId) : undefined;
@@ -121,6 +134,8 @@ const CinemaApp: React.FC = () => {
         setLoaded(true);
     }, []);
     useEffect(() => { void reload(); }, [reload]);
+    // 还没配对的话，一进来先停在「配对」页
+    useEffect(() => { if (loaded && !pairing) setHomeTab('pair'); }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => {
         if (!charId && characters.length) setCharId(characters[0].id);
     }, [characters, charId]);
@@ -320,7 +335,7 @@ const CinemaApp: React.FC = () => {
         if (s.endedAt) { s = { ...s, endedAt: undefined }; void saveCinemaSession(s); }
         sessionRef.current = s;
         setSession(s);
-        setProjectorOpen(false);
+        setProjectorOpen(false); setLevelOpen(false); setNotesOpen(false);
         setFrame(null); frameRef.current = null;
         setStatus(null); statusRef.current = null;
         screenStatusRef.current = null; playerStatusRef.current = null;
@@ -375,13 +390,14 @@ const CinemaApp: React.FC = () => {
     const prepareNextEpisode = (work: CinemaWork) => {
         const last = work.latest;
         const next = nextEpisode(last.episode);
+        setHomeTab('start');
         setCharId(work.charId);
         setMeetChoice(null);
         setTitle(last.title);
         setEpisode(next || '');
         setSpoiler(last.spoiler);
         setRemember(sessionRemembers(last));
-        startCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setTimeout(() => startCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
         if (next) addToast(`填好了：${describeWork({ title: last.title, episode: next })}，看一眼点「开场」`, 'info');
         else {
             addToast('上一场没写第几集，填一下再开场', 'info');
@@ -915,48 +931,33 @@ const CinemaApp: React.FC = () => {
                         <small><span className={`cn-dot-inline ${conn === 'open' && screenOnline ? 'on' : conn === 'open' ? 'wait' : ''}`} title={connLabel} />{char?.name || '?'} {session.meet === 'offline' ? '坐在你旁边' : '和你隔着屏幕'}一起看</small>
                         <h1>{describeWork(session)}</h1>
                     </div>
+                    <button className={`cn-full ${chatFull ? 'on' : ''}`} onClick={() => setChatFull(v => !v)} aria-label={chatFull ? '退出全屏' : '聊天全屏'} title={chatFull ? '退出全屏，看回画面' : '聊天铺满全屏'}>
+                        {chatFull ? <ArrowsIn size={16} /> : <ArrowsOut size={16} />}
+                    </button>
                     <button className="cn-end" onClick={() => void endScreening()} disabled={ending}>散场</button>
                 </header>
                 <div className="cn-strip" aria-hidden="true" />
+                {!chatFull && (<>
                 <section className="cn-screen">
                     {frame
                         ? <img src={frame.dataUrl} alt="电脑上的画面" />
                         : <div className="cn-screen-empty">{screenOnline ? '电脑连上了，等它传画面…' : `${connLabel} · 在电脑上打开观影端`}</div>}
                     <div className="cn-screen-bar">
-                        <span>{statusText || connLabel}</span>
+                        <span className="cn-screen-status">{statusText || connLabel}</span>
                         <button onClick={async () => { const f = await requestFrame(); if (!f) addToast('电脑没回画面（没共享屏幕，或者没连上）', 'info'); }}>
                             <ArrowsClockwise size={14} /> 刷新画面
                         </button>
                     </div>
                 </section>
-                <div className="cn-projector-row">
-                    <button className={`cn-projector ${activePreset ? 'on' : ''}`} onClick={() => setProjectorOpen(v => !v)}>
+                {/* 一行工具：放映机 · 主动开口 · 记不记 · 出声（10-01 用户嫌挤，并成一行，选项点开再看） */}
+                <div className="cn-tools">
+                    <button className={`cn-projector ${activePreset ? 'on' : ''}`} onClick={() => { setLevelOpen(false); setProjectorOpen(v => !v); }}>
                         放映机 · {activePreset ? activePreset.name : '主 API'} {projectorOpen ? '▴' : '▾'}
                     </button>
-                    <span className="cn-projector-model">{chatApi.model || '没填模型'}</span>
-                </div>
-                {projectorOpen && (
-                    <div className="cn-projector-menu">
-                        <div className="cn-projector-head">换一台放映机</div>
-                        <button className={!activePreset ? 'on' : ''} onClick={() => chooseProjector(null)}>
-                            跟着主 API<small>{apiConfig.model || '没填模型'}</small>
-                        </button>
-                        {apiPresets.map(p => (
-                            <button key={p.id} className={activePreset?.id === p.id ? 'on' : ''} onClick={() => chooseProjector(p.id)}>
-                                {p.name || '没起名的预设'}<small>{p.config.model}</small>
-                            </button>
-                        ))}
-                        {apiPresets.length === 0 && <p>还没存 API 预设。去「设置 → API」里存几个，这里就能一键换。</p>}
-                        <p>只换影院里用的，私聊和别的 App 不受影响。</p>
-                    </div>
-                )}
-                <div className="cn-proactive">
-                    <span>主动开口</span>
-                    <div className="cn-seg small">
-                        {PROACTIVE_LEVELS.map(l => (
-                            <button key={l.id} className={level === l.id ? 'on' : ''} onClick={() => changeLevel(l.id)}>{l.label}</button>
-                        ))}
-                    </div>
+                    <button className={`cn-projector ${level !== 'off' ? 'on' : ''}`} onClick={() => { setProjectorOpen(false); setLevelOpen(v => !v); }}>
+                        主动 · {PROACTIVE_LEVELS.find(l => l.id === level)?.label} {levelOpen ? '▴' : '▾'}
+                    </button>
+                    <span className="cn-tools-gap" />
                     <button
                         className={`cn-remember ${sessionRemembers(session) ? 'on' : ''}`}
                         onClick={() => void toggleRemember()}
@@ -973,7 +974,39 @@ const CinemaApp: React.FC = () => {
                         {voiceOn && canSpeak ? <SpeakerHigh size={16} weight="fill" /> : <SpeakerSlash size={16} />}
                     </button>
                 </div>
-                {lastNote && <div className="cn-note">{lastNote.text}</div>}
+                {levelOpen && (
+                    <div className="cn-projector-menu">
+                        <div className="cn-projector-head">主动开口</div>
+                        {PROACTIVE_LEVELS.map(l => (
+                            <button key={l.id} className={level === l.id ? 'on' : ''} onClick={() => { changeLevel(l.id); setLevelOpen(false); }}>
+                                {l.label}<small>{PROACTIVE_LEVEL_HINT[l.id]}</small>
+                            </button>
+                        ))}
+                    </div>
+                )}
+                {projectorOpen && (
+                    <div className="cn-projector-menu">
+                        <div className="cn-projector-head">换一台放映机</div>
+                        <button className={!activePreset ? 'on' : ''} onClick={() => chooseProjector(null)}>
+                            跟着主 API<small>{apiConfig.model || '没填模型'}</small>
+                        </button>
+                        {apiPresets.map(p => (
+                            <button key={p.id} className={activePreset?.id === p.id ? 'on' : ''} onClick={() => chooseProjector(p.id)}>
+                                {p.name || '没起名的预设'}<small>{p.config.model}</small>
+                            </button>
+                        ))}
+                        {apiPresets.length === 0 && <p>还没存 API 预设。去「设置 → API」里存几个，这里就能一键换。</p>}
+                        <p>只换影院里用的，私聊和别的 App 不受影响。</p>
+                    </div>
+                )}
+                {(session.notes?.length || lastNote) && (
+                    <button className="cn-note" onClick={() => setNotesOpen(true)}>
+                        <span className="cn-note-tag">笔记 {session.notes?.length || 1}</span>
+                        <span className="cn-note-text">{(lastNote || session.notes![session.notes!.length - 1]).text}</span>
+                    </button>
+                )}
+                </>)}
+                <div className="cn-chat-wrap">
                 <div className="cn-chat overflow-y-auto" ref={listRef}>
                     {session.lines.length === 0 && (
                         <div className="cn-empty small">
@@ -1006,6 +1039,7 @@ const CinemaApp: React.FC = () => {
                     )}
                     {thinking && <div className="cn-line char"><div className="cn-bubble typing">{char?.name} 在看…</div></div>}
                 </div>
+                </div>
                 <div className="cn-strip" aria-hidden="true" />
                 <footer className="cn-input">
                     <button className={`cn-eye ${withFrame ? 'on' : ''}`} onClick={() => setWithFrame(v => !v)} aria-label="带不带画面" title={withFrame ? '发消息时带上画面' : '只发文字'}>
@@ -1029,6 +1063,26 @@ const CinemaApp: React.FC = () => {
                     />
                     <button className="cn-send" onClick={() => void send()} disabled={!draft.trim() || thinking} aria-label="发送"><PaperPlaneRight size={20} weight="fill" /></button>
                 </footer>
+                {notesOpen && (
+                    <div className="cn-sheet-mask" onClick={() => setNotesOpen(false)}>
+                        <div className="cn-sheet" onClick={e => e.stopPropagation()}>
+                            <div className="cn-sheet-head">
+                                <span>画面笔记 · {session.notes?.length || 0} 条</span>
+                                <button className="cn-icon" onClick={() => setNotesOpen(false)} aria-label="关闭"><X size={18} /></button>
+                            </div>
+                            <p className="cn-sheet-hint">助理看着画面记的，{char?.name || 'TA'} 靠它跟剧情（每次看最近 8 条）。新的在上面。</p>
+                            <div className="cn-sheet-list overflow-y-auto">
+                                {(session.notes || []).slice().reverse().map((n, k) => (
+                                    <div key={`${n.at}-${k}`} className="cn-sheet-item">
+                                        <span className="cn-sheet-time">{formatVideoTime(n.videoTime) || new Date(n.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                        <p>{n.text}</p>
+                                    </div>
+                                ))}
+                                {!session.notes?.length && <div className="cn-empty small">还没有笔记。换场景的时候助理会记一条。</div>}
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
         );
     }
@@ -1047,25 +1101,13 @@ const CinemaApp: React.FC = () => {
                     <div className="cn-mast-zh">影院</div>
                     <div className="cn-mast-rule">{pairing ? '放映机已就位 · 今晚开映' : '先接上放映机 · 才好开映'}</div>
                 </div>
-                <section className="cn-card">
-                    <div className="cn-card-head">电脑</div>
-                    {pairing ? (
-                        <>
-                            <p className="cn-lead">已配对 · 房间 <b>{pairing.code}</b>。电脑上打开观影端就会自动连上。</p>
-                            <div className="cn-row">
-                                <button className="cn-ghost" onClick={() => setView('pair')}>怎么在电脑上打开</button>
-                                <button className="cn-ghost" onClick={() => void startPairing()} disabled={pairBusy}>重新配对</button>
-                                <button className="cn-ghost danger" onClick={() => void forgetPairing()}>解除</button>
-                            </div>
-                        </>
-                    ) : (
-                        <>
-                            <p className="cn-lead">视频在电脑上放，角色在这里陪你看。先把电脑配对上（只要一次）。</p>
-                            <button className="cn-primary" onClick={() => void startPairing()} disabled={pairBusy}>{pairBusy ? '正在开放映室…' : '配对电脑'}</button>
-                        </>
-                    )}
-                </section>
 
+                <nav className="cn-tabs">
+                    <button className={homeTab === 'start' ? 'on' : ''} onClick={() => setHomeTab('start')}>开一场</button>
+                    <button className={homeTab === 'programme' ? 'on' : ''} onClick={() => setHomeTab('programme')}>片单{sessions.length ? <small>{groupCinemaWorks(sessions).length}</small> : null}</button>
+                    <button className={homeTab === 'pair' ? 'on' : ''} onClick={() => setHomeTab('pair')}>配对{!pairing && <i className="cn-tab-dot" />}</button>
+                </nav>
+                {homeTab === 'start' && (
                 <section className="cn-card" ref={startCardRef}>
                     <div className="cn-card-head">开一场</div>
                     <label className="cn-label">和谁一起看</label>
@@ -1107,10 +1149,11 @@ const CinemaApp: React.FC = () => {
                         <button className={spoiler === 'first' ? 'on' : ''} onClick={() => setSpoiler('first')}>第一次看</button>
                         <button className={spoiler === 'seen' ? 'on' : ''} onClick={() => setSpoiler('seen')}>看过（不剧透）</button>
                     </div>
-                    <button className="cn-primary" onClick={() => void startSession()} disabled={!pairing}>{pairing ? '开场' : '先配对电脑'}</button>
+                    <button className="cn-primary" onClick={() => pairing ? void startSession() : setHomeTab('pair')}>{pairing ? '开场' : '先配对电脑'}</button>
                 </section>
-
-                {sessions.length > 0 && (
+                )}
+                {homeTab === 'programme' && sessions.length === 0 && <div className="cn-empty">还没一起看过什么。<br />去「开一场」挑一部吧。</div>}
+                {homeTab === 'programme' && sessions.length > 0 && (
                     <section className="cn-programme">
                         <div className="cn-card-head">片单 <span className="cn-en">Programme</span></div>
                         {groupCinemaWorks(sessions).slice(0, 30).map(work => {
@@ -1176,6 +1219,26 @@ const CinemaApp: React.FC = () => {
                             );
                         })}
                     </section>
+                )}
+                {homeTab === 'pair' && (
+                <section className="cn-card">
+                    <div className="cn-card-head">电脑</div>
+                    {pairing ? (
+                        <>
+                            <p className="cn-lead">已配对 · 房间 <b>{pairing.code}</b>。电脑上打开观影端就会自动连上。</p>
+                            <div className="cn-row">
+                                <button className="cn-ghost" onClick={() => setView('pair')}>怎么在电脑上打开</button>
+                                <button className="cn-ghost" onClick={() => void startPairing()} disabled={pairBusy}>重新配对</button>
+                                <button className="cn-ghost danger" onClick={() => void forgetPairing()}>解除</button>
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            <p className="cn-lead">视频在电脑上放，角色在这里陪你看。先把电脑配对上（只要一次）。</p>
+                            <button className="cn-primary" onClick={() => void startPairing()} disabled={pairBusy}>{pairBusy ? '正在开放映室…' : '配对电脑'}</button>
+                        </>
+                    )}
+                </section>
                 )}
             </main>
         </div>
