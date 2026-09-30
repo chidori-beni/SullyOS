@@ -1379,27 +1379,60 @@ const DateSession: React.FC<DateSessionProps> = ({
                 style={{ backgroundImage: bgImage ? `url(${bgImage})` : 'none' }}
             ></div>
 
-            {/* Menu Layer — 常驻只留「输入」+「菜单」两钮，其余操作收进带文字标签的下拉菜单 */}
-            <div className={`absolute top-0 right-0 p-4 pt-12 z-[100] flex flex-col items-end gap-2 pointer-events-auto ${isNovelMode ? 'hidden' : ''}`}>
-                <div className="flex gap-3">
+            {/* 立绘模式顶栏：左边观测胶囊，右边 继续 / 阅读 / 输入 / 菜单。同一行、同高(h-9)、同一种毛玻璃。
+                整条栏 pointer-events-none，只有胶囊和按钮本身接点击，空白处照旧点屏幕翻台词。
+                观测完整面板和下拉菜单都从这一行下方垂下，互不重叠。 */}
+            <div className={`absolute inset-x-0 top-0 z-[100] flex items-start justify-between gap-2 px-4 pt-12 pointer-events-none ${isNovelMode ? 'hidden' : ''}`}>
+                <div className="flex min-w-0 flex-1">
+                    {observeEnabled && hasObservation(displayObservation) && (
+                        <div className="pointer-events-auto min-w-0 max-w-full">
+                            <ObserveHUD
+                                observation={displayObservation}
+                                variant="hud"
+                                charName={char.name}
+                                config={char.dateObserve}
+                                timeOverride={formatHeaderClock(effectiveSceneClockAt) || undefined}
+                            />
+                        </div>
+                    )}
+                </div>
+            <div className="shrink-0 flex flex-col items-end gap-2 pointer-events-auto">
+                <div className="flex items-center gap-2">
                     {!historyReplay && <button
                         onClick={(e) => { e.stopPropagation(); setShowMenu(false); setShowVoiceLangPicker(false); handleContinue(); }}
                         disabled={interactionBusy}
-                        className="h-10 px-3.5 rounded-full flex items-center gap-1.5 border bg-black/30 backdrop-blur-md border-white/20 text-white text-xs font-bold shadow-lg active:scale-95 transition-all hover:bg-white/20 disabled:opacity-40"
+                        className="h-9 pl-2.5 pr-3 rounded-full flex items-center gap-1 border shadow-lg backdrop-blur-md transition-all active:scale-95 bg-black/35 border-white/15 text-white text-xs font-bold hover:bg-white/20 disabled:opacity-40"
                         title={`本轮不主动行动，让${char.name}继续陪伴并推进见面`}
                         aria-label="继续当前见面"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5"><path fillRule="evenodd" d="M4.5 5.653c0-1.427 1.529-2.33 2.779-1.643l11.54 6.347c1.295.712 1.295 2.573 0 3.286L7.28 19.99c-1.25.687-2.779-.217-2.779-1.643V5.653Z" clipRule="evenodd" /></svg>
                         继续
                     </button>}
-                    {!historyReplay && <button onClick={(e) => { e.stopPropagation(); setShowInputBox(!showInputBox); setShowMenu(false); setShowVoiceLangPicker(false); }} className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all shadow-lg active:scale-95 ${showInputBox ? 'bg-primary border-primary text-white' : 'bg-black/30 backdrop-blur-md border-white/20 text-white hover:bg-white/20'}`}>
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" /></svg>
+                    <button
+                        onClick={(e) => { e.stopPropagation(); setIsNovelMode(true); exitBatchMode(); setShowMenu(false); setShowVoiceLangPicker(false); }}
+                        className="h-9 w-9 rounded-full flex items-center justify-center border shadow-lg backdrop-blur-md transition-all active:scale-95 bg-black/35 border-white/15 text-white hover:bg-white/20"
+                        title="阅读模式"
+                        aria-label="切换到阅读模式"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-[18px] h-[18px]"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" /></svg>
+                    </button>
+                    {!historyReplay && <button
+                        onClick={(e) => { e.stopPropagation(); setShowInputBox(!showInputBox); setShowMenu(false); setShowVoiceLangPicker(false); }}
+                        className={`h-9 w-9 rounded-full flex items-center justify-center border shadow-lg backdrop-blur-md transition-all active:scale-95 ${showInputBox ? 'bg-primary border-primary text-white' : 'bg-black/35 border-white/15 text-white hover:bg-white/20'}`}
+                        title={showInputBox ? '收起输入框' : '展示输入框'}
+                        aria-label={showInputBox ? '收起输入框' : '展示输入框'}
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-[18px] h-[18px]"><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" /></svg>
                     </button>}
-                    <button onClick={(e) => { e.stopPropagation(); setShowMenu(prev => !prev); setShowVoiceLangPicker(false); }} className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all shadow-lg active:scale-95 ${showMenu ? 'bg-white text-black border-white' : 'bg-black/30 backdrop-blur-md border-white/20 text-white hover:bg-white/20'}`}>
+                    <button
+                        onClick={(e) => { e.stopPropagation(); setShowMenu(prev => !prev); setShowVoiceLangPicker(false); }}
+                        className={`h-9 w-9 rounded-full flex items-center justify-center border shadow-lg backdrop-blur-md transition-all active:scale-95 ${showMenu ? 'bg-white text-black border-white' : 'bg-black/35 border-white/15 text-white hover:bg-white/20'}`}
+                        aria-label={showMenu ? '收起见面菜单' : '打开见面菜单'}
+                    >
                         {showMenu ? (
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-[18px] h-[18px]"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
                         ) : (
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z" /></svg>
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-[18px] h-[18px]"><path strokeLinecap="round" strokeLinejoin="round" d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z" /></svg>
                         )}
                     </button>
                 </div>
@@ -1456,15 +1489,6 @@ const DateSession: React.FC<DateSessionProps> = ({
                             </div>
                         )}
 
-                        <button onClick={() => { setIsNovelMode(!isNovelMode); exitBatchMode(); setShowMenu(false); setShowVoiceLangPicker(false); }} className="h-9 px-3.5 rounded-full flex items-center gap-2 text-xs font-bold border shadow-lg active:scale-95 transition-all bg-black/40 backdrop-blur-md border-white/15 text-white hover:bg-white/20">
-                            {isNovelMode ? (
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg>
-                            ) : (
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" /></svg>
-                            )}
-                            {isNovelMode ? '立绘模式' : '阅读模式'}
-                        </button>
-
                         {messages.length > 0 && !isBatchSelectMode && !historyReplay && (
                             <button onClick={startBatchDelete} className="h-9 px-3.5 rounded-full flex items-center gap-2 text-xs font-bold border shadow-lg active:scale-95 transition-all bg-red-500/70 backdrop-blur-md border-white/20 text-white hover:bg-red-600">
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
@@ -1496,23 +1520,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                     </div>
                 )}
             </div>
-
-            {/* 观测协议 OBSERVE — 立绘模式悬浮 HUD（左上，独立查看可放大）。
-                放在右上按钮排（pt-12 + 40px 高）的下方：同一高度时，窄屏上「继续」那排会压住 HUD，
-                按钮层级更高，点观测全被按钮吃掉。 */}
-            {observeEnabled && !isNovelMode && hasObservation(displayObservation) && (
-                <div className="absolute top-0 left-0 p-4 pt-24 z-[90] pointer-events-none">
-                    <div className="pointer-events-auto">
-                        <ObserveHUD
-                            observation={displayObservation}
-                            variant="hud"
-                            charName={char.name}
-                            config={char.dateObserve}
-                            timeOverride={formatHeaderClock(effectiveSceneClockAt) || undefined}
-                        />
-                    </div>
-                </div>
-            )}
+            </div>
 
             {/* Novel Mode View */}
             {isNovelMode && (

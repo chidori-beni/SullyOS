@@ -10,7 +10,7 @@ import { resolveObserveFields } from '../../utils/datePrompts';
  * 字段的展示标签可按 dateObserve.fields[key].label 自定义（不影响解析）。
  *
  * variant:
- *   - 'hud'  : 立绘模式下悬浮在左上角，可折叠；右上角"放大"键展开独立全屏查看
+ *   - 'hud'  : 立绘模式顶栏左侧的胶囊（显示剧情时间），点开垂下完整面板；面板右上"放大"键全屏查看
  *   - 'card' : 阅读（小说）模式下内嵌在每条回复正文上方
  */
 
@@ -282,43 +282,58 @@ const ObserveHUD: React.FC<ObserveHUDProps> = ({ observation, variant = 'hud', c
     }
 
     // ── 立绘模式悬浮 HUD ──
+    // 收起时是一颗和右上按钮同高（h-9）的胶囊，跟按钮排在同一行；点开后完整面板从胶囊下方
+    // 垂下，不占按钮那一行的宽度，窄屏上也不会和「继续」等按钮叠在一起。
+    const timeRow = rows.find(r => r.key === 'time');
     return (
         <>
             {customCssTag}
-            <div
-                onClick={stop}
-                className={`sully-observe-panel sully-observe-hud control-panel relative w-[208px] overflow-hidden animate-fade-in ${theme.containerClass}`}
-                style={theme.container}
-            >
-                {theme.corners && <CornerBrackets theme={theme} />}
-                {theme.topLineClass && <div className={`absolute inset-x-0 top-0 h-px ${theme.topLineClass}`} />}
-                <PanelHeader
-                    theme={theme}
-                    charName={charName}
-                    right={
-                        <div className="flex items-center gap-1 shrink-0">
-                            <button
-                                onClick={() => setExpanded(true)}
-                                aria-label="放大查看"
-                                className={`w-5 h-5 rounded-md flex items-center justify-center transition-colors active:scale-90 ${theme.btnClass}`}
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M20.25 20.25v-4.5m0 4.5h-4.5m4.5 0L15 15M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75v4.5m0-4.5h-4.5m4.5 0L15 9" /></svg>
-                            </button>
-                            <button
-                                onClick={() => setCollapsed(c => !c)}
-                                aria-label={collapsed ? '展开' : '折叠'}
-                                className={`w-5 h-5 rounded-md flex items-center justify-center transition-colors active:scale-90 ${theme.btnClass}`}
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className={`w-3 h-3 transition-transform ${collapsed ? '' : 'rotate-180'}`}><path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" /></svg>
-                            </button>
-                        </div>
-                    }
-                />
+            <div onClick={stop} className="relative min-w-0 max-w-full">
+                <button
+                    type="button"
+                    onClick={() => setCollapsed(c => !c)}
+                    aria-label={collapsed ? '展开观测' : '收起观测'}
+                    aria-expanded={!collapsed}
+                    className={`sully-observe-chip relative flex h-9 max-w-full min-w-0 items-center gap-2 overflow-hidden rounded-full pl-3 pr-2.5 shadow-lg transition-transform active:scale-95 ${theme.fontClass}`}
+                    style={theme.container}
+                >
+                    <span className="relative flex h-1.5 w-1.5 shrink-0">
+                        {theme.pulse && <span className={`absolute inline-flex h-full w-full rounded-full opacity-70 animate-ping ${theme.dotClass}`} />}
+                        <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${theme.dotClass}`} />
+                    </span>
+                    {timeRow ? (
+                        <span className="flex min-w-0 flex-col items-start leading-none">
+                            <span className={`max-w-full truncate text-[7.5px] font-bold tracking-[0.3em] ${theme.headerLabelClass}`}>{theme.headerLabel.replace(/:\/\/.*$/, '')}</span>
+                            <span className={`mt-[3px] max-w-full truncate text-[11px] font-medium tracking-wide ${theme.valueClass}`}>{timeRow.value}</span>
+                        </span>
+                    ) : (
+                        <span className={`min-w-0 truncate text-[10px] font-bold tracking-[0.28em] ${theme.headerLabelClass}`}>{theme.headerLabel}</span>
+                    )}
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className={`h-3 w-3 shrink-0 transition-transform ${theme.enClass} ${collapsed ? '' : 'rotate-180'}`}><path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" /></svg>
+                </button>
                 {!collapsed && (
-                    <>
+                    <div
+                        className={`sully-observe-panel sully-observe-hud control-panel absolute left-0 top-full mt-2 w-[232px] max-w-[calc(100vw-2rem)] overflow-hidden animate-fade-in ${theme.containerClass}`}
+                        style={theme.container}
+                    >
+                        {theme.corners && <CornerBrackets theme={theme} />}
+                        {theme.topLineClass && <div className={`absolute inset-x-0 top-0 h-px ${theme.topLineClass}`} />}
+                        <PanelHeader
+                            theme={theme}
+                            charName={charName}
+                            right={
+                                <button
+                                    onClick={() => setExpanded(true)}
+                                    aria-label="放大查看"
+                                    className={`w-5 h-5 shrink-0 rounded-md flex items-center justify-center transition-colors active:scale-90 ${theme.btnClass}`}
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M20.25 20.25v-4.5m0 4.5h-4.5m4.5 0L15 15M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75v4.5m0-4.5h-4.5m4.5 0L15 9" /></svg>
+                                </button>
+                            }
+                        />
                         {body(true)}
                         {theme.scanline && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-cyan-300/5 to-transparent" />}
-                    </>
+                    </div>
                 )}
             </div>
 
