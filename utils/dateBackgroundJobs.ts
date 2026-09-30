@@ -107,12 +107,34 @@ export const makeDateBackgroundJobId = (encounterId: string, sourceUserMessageId
   `date-${encounterId}-${sourceUserMessageId}`
 );
 
+/**
+ * 角色上次开口之后，历史里有没有它还没「看过」的图片（image_url 等非文字片段）。
+ *
+ * Worker 后台只能收纯文字（normalizeDateBackgroundMessages 会把图片片段丢掉），没开识图 API 时
+ * 图片在历史里是「[User sent an image]」+ 图片本体，上云后只剩前半句——角色知道你发了图却看不到内容。
+ * 所以有未看过的新图时这一轮留在本地生成，图片原样发给模型；角色回应过的旧图不拦，照常上云。
+ */
+export const hasUnseenImageParts = (messages: Array<{ role?: string; content?: unknown }>): boolean => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === 'assistant') return false;
+    if (Array.isArray(message?.content) && message.content.some((part: any) => (
+      part && typeof part === 'object' && part.type && part.type !== 'text'
+    ))) return true;
+  }
+  return false;
+};
+
 export const buildPendingDateBackgroundJob = (args: {
   char: Pick<CharacterProfile, 'id' | 'name'>;
   encounter: Pick<DateEncounterPresence, 'encounterId' | 'startedAt' | 'sceneClockAt' | 'sceneClockAdvancedMs' | 'sceneClockRevision'>;
   sourceUserMessageId: number;
   messages: Array<{ role?: string; content?: unknown }>;
 }): PendingDateBackgroundJob | null => {
+  if (hasUnseenImageParts(args.messages)) {
+    console.info('[DateBackground] 有角色还没看过的新图片，这一轮本地生成（Worker 后台只能收文字）');
+    return null;
+  }
   const jobId = makeDateBackgroundJobId(args.encounter.encounterId, args.sourceUserMessageId);
   const input = buildDateBackgroundJobInput({
     clientJobId: jobId,

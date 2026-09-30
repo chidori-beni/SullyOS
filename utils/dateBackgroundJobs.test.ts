@@ -25,7 +25,7 @@ vi.mock('./amsgLlmCredentials', () => ({
 }));
 
 import { clearActiveDatePresence, setActiveDatePresence } from './datePresence';
-import { applyDateBackgroundResult } from './dateBackgroundJobs';
+import { applyDateBackgroundResult, buildPendingDateBackgroundJob, hasUnseenImageParts } from './dateBackgroundJobs';
 import { DatePrompts } from './datePrompts';
 
 describe('date background result bridge', () => {
@@ -213,5 +213,33 @@ describe('date background result bridge', () => {
       }),
     }));
     clearActiveDatePresence('char-1');
+  });
+});
+
+describe('见面后台生成遇到新图片', () => {
+  const image = (text: string) => ({ role: 'user', content: [{ type: 'text', text }, { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } }] });
+  const encounter = { encounterId: 'enc-1', startedAt: 1_000, sceneClockAt: 2_000, sceneClockAdvancedMs: 0, sceneClockRevision: 0 };
+
+  it('角色上次开口后发的图：不上云，留给本地带图生成', () => {
+    const messages = [
+      { role: 'system', content: '系统' },
+      { role: 'assistant', content: '[normal] 嗯？' },
+      image('[聊天] [User sent an image]'),
+      { role: 'user', content: '我刚给你发了两张图' },
+    ];
+    expect(hasUnseenImageParts(messages)).toBe(true);
+    expect(buildPendingDateBackgroundJob({ char: { id: 'char-1', name: '小满' }, encounter, sourceUserMessageId: 9, messages })).toBeNull();
+  });
+
+  it('角色已经回应过的旧图 / 没有图：照常上云', () => {
+    const seen = [
+      { role: 'system', content: '系统' },
+      image('[聊天] [User sent an image]'),
+      { role: 'assistant', content: '[happy] 这张好看' },
+      { role: 'user', content: '继续' },
+    ];
+    expect(hasUnseenImageParts(seen)).toBe(false);
+    expect(buildPendingDateBackgroundJob({ char: { id: 'char-1', name: '小满' }, encounter, sourceUserMessageId: 9, messages: seen })).not.toBeNull();
+    expect(hasUnseenImageParts([{ role: 'user', content: '你好' }])).toBe(false);
   });
 });
