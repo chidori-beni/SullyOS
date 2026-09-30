@@ -1437,7 +1437,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
                 value={config.serverToken || ''}
                 onChange={(event) => patchConfig({ serverToken: event.target.value })}
                 placeholder="worker 配了 AMSG_SERVER_TOKEN 才需要填"
-                className="flex-1 bg-white/70 border border-slate-200 rounded-2xl px-4 py-3 text-sm"
+                className="flex-1 min-w-0 bg-white/70 border border-slate-200 rounded-2xl px-4 py-3 text-sm"
               />
               <button
                 type="button"
