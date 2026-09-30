@@ -4,13 +4,15 @@
  * 和糯叽机美化不同：这里的 CSS 直接写给剧情页自己的结构（.story-safe-header / .story-turn /
  * .story-scene …），不需要套一层别家的 DOM。所有规则都挂在 .story-skin-<id> 下，只在剧情里生效。
  *
- * 装饰（蕾丝花边、石榴石、角花）全部用内联 SVG / 渐变画，不依赖外部图床——校园网、图床挂掉都不影响。
+ * 装饰（蕾丝花边、石榴石、角花、胶带、贴纸）全部用内联 SVG / 渐变画，不依赖外部图床——校园网、图床挂掉都不影响。
  * 壁纸随 App 一起打包（assets/story-skins/）。
  */
 import chantillyNoirBg from '../../../assets/story-skins/chantilly-noir-bg.jpg';
 import chantillyNoirRose from '../../../assets/story-skins/chantilly-noir-rose.jpg';
+import otakuDiaryBg from '../../../assets/story-skins/otaku-diary-bg.jpg';
+import otakuDiaryWide from '../../../assets/story-skins/otaku-diary-wide.jpg';
 
-export type StorySkinId = 'classic' | 'chantilly-noir';
+export type StorySkinId = 'classic' | 'chantilly-noir' | 'otaku-diary';
 
 export interface StorySkin {
     id: StorySkinId;
@@ -227,6 +229,242 @@ const CHANTILLY_NOIR_CSS = `
 .story-skin-chantilly-noir h2.font-serif { font-family: ${NOIR_SERIF}; letter-spacing: .04em; }
 `;
 
+/* ── 宅女日记 · 多巴胺手账 ─────────────────────────────── */
+
+/** 手绘小星星贴纸（正文卡左下角） */
+const DIARY_STARS = svg(`<svg xmlns='http://www.w3.org/2000/svg' width='60' height='56' viewBox='0 0 60 56'><g transform='translate(26 26)'><path d='M0-12 2.9-3.7 11.5-3.7 4.6 1.7 7.4 10.7 0 6 -7.4 10.7 -4.6 1.7 -11.5-3.7 -2.9-3.7Z' fill='#DCD0F4' stroke='#534A41' stroke-width='1.5' stroke-linejoin='round'/></g><g transform='translate(47 13) rotate(-18)'><path d='M0-6.5 1.5-2 6.2-2 2.5 1 4 5.9 0 3.3 -4 5.9 -2.5 1 -6.2-2 -1.5-2Z' fill='#B8ECD8' stroke='#534A41' stroke-width='1.2' stroke-linejoin='round'/></g><circle cx='8' cy='48' r='3.4' fill='#F4C8D8' stroke='#534A41' stroke-width='1.2'/><circle cx='50' cy='44' r='2.3' fill='#FAF0A8' stroke='#534A41' stroke-width='1.1'/></svg>`);
+/** 手绘小爱心贴纸（你写下的右下角） */
+const DIARY_HEART = svg(`<svg xmlns='http://www.w3.org/2000/svg' width='30' height='28' viewBox='0 0 30 28'><path d='M15 24C6 17.5 2.5 13 2.5 8.5 2.5 5 5.2 2.8 8.3 2.8c2.6 0 4.8 1.5 6.7 4 1.9-2.5 4.1-4 6.7-4 3.1 0 5.8 2.2 5.8 5.7C27.5 13 24 17.5 15 24Z' fill='#F4C8D8' stroke='#534A41' stroke-width='1.5' stroke-linejoin='round'/><path d='M8 7.5c.8-1.2 2-1.7 3-1.6' fill='none' stroke='#fff' stroke-width='1.4' stroke-linecap='round'/></svg>`);
+const DIARY_ROUND = `'ZCOOL KuaiLe', 'Yuanti SC', 'PingFang SC', sans-serif`;
+const DIARY_HAND = `'Caveat', 'Segoe Print', 'Bradley Hand', cursive`;
+/** 彩虹虚线（页眉页脚分隔） */
+const DIARY_DASH = 'repeating-linear-gradient(90deg, #F4C8D8 0 16px, transparent 16px 22px, #B8D8EC 22px 38px, transparent 38px 44px, #B8ECD8 44px 60px, transparent 60px 66px, #FAF0A8 66px 82px, transparent 82px 88px, #DCD0F4 88px 104px, transparent 104px 110px)';
+/** 和纸胶带条纹 */
+const DIARY_TAPE_PINK = 'repeating-linear-gradient(-45deg, rgba(244, 200, 216, .92) 0 5px, rgba(255, 255, 255, .75) 5px 10px)';
+const DIARY_TAPE_BLUE = 'repeating-linear-gradient(90deg, rgba(184, 216, 236, .92) 0 6px, rgba(224, 237, 245, .85) 6px 12px)';
+
+const OTAKU_DIARY_CSS = `
+.story-skin-otaku-diary {
+  --story-bg: #FBF7F0;
+  --story-surface: #FDF4E4;
+  --story-raised: #FFFDF8;
+  --story-ink: #534A41;
+  --story-muted: #8A7A70;
+  --story-faint: #B9ADA3;
+  --story-line: rgba(83, 74, 65, .22);
+  --story-soft: #F0E8DC;
+  --story-accent: #E58FAC;
+  --story-accent-soft: #FBE3EC;
+  --story-accent-ink: #B4577A;
+  --diary-ink: rgba(83, 74, 65, .85);
+  --diary-sketch-1: 255px 15px 225px 15px / 15px 225px 15px 255px;
+  --diary-sketch-2: 15px 225px 15px 255px / 255px 15px 225px 15px;
+  --diary-sketch-3: 80px 25px 80px 25px / 25px 80px 25px 80px;
+  color-scheme: light;
+}
+.story-skin-otaku-diary.story-theme-page {
+  background: #FDF4E4 url("${otakuDiaryBg}") center / cover no-repeat;
+}
+.story-skin-otaku-diary.story-theme-page::before {
+  opacity: 1;
+  background: linear-gradient(180deg, rgba(255, 253, 248, .25), rgba(255, 253, 248, .08) 40%, rgba(255, 253, 248, .3));
+}
+.story-skin-otaku-diary.story-theme-page > .bg-stone-100 { background-color: transparent !important; }
+
+/* 页眉 / 页脚：奶油纸条 + 彩虹虚线 */
+.story-skin-otaku-diary .story-safe-header {
+  position: relative;
+  background: rgba(251, 247, 240, .9) !important;
+  border-bottom: 1.5px solid var(--diary-ink) !important;
+  box-shadow: 0 4px 0 rgba(54, 43, 32, .08);
+}
+.story-skin-otaku-diary .story-safe-header::after,
+.story-skin-otaku-diary .story-safe-footer::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  height: 4px;
+  background: ${DIARY_DASH};
+  pointer-events: none;
+}
+.story-skin-otaku-diary .story-safe-header::after { bottom: 5px; }
+.story-skin-otaku-diary .story-safe-footer {
+  position: relative;
+  background: rgba(251, 247, 240, .92) !important;
+  border-top: 1.5px solid var(--diary-ink) !important;
+}
+.story-skin-otaku-diary .story-safe-footer::before { top: 5px; }
+.story-skin-otaku-diary .story-safe-header .uppercase {
+  font-family: ${DIARY_HAND};
+  text-transform: none;
+  letter-spacing: .02em;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  color: #D8806A !important;
+  line-height: 1;
+}
+.story-skin-otaku-diary .story-safe-header h1,
+.story-skin-otaku-diary h2.font-serif { font-family: ${DIARY_ROUND}; font-weight: 400; letter-spacing: .04em; }
+
+/* 正文卡：横线手账纸 + 手绘歪边 + 顶部粉色胶带 + 左下星星贴纸 */
+.story-skin-otaku-diary .story-turn,
+.story-skin-otaku-diary .story-opening {
+  position: relative;
+  padding: 30px 20px 26px;
+  border: 1.5px solid var(--diary-ink) !important;
+  border-radius: var(--diary-sketch-1);
+  background-color: #FBF7F0;
+  background-image:
+    repeating-linear-gradient(to bottom, transparent 0 31px, rgba(160, 104, 64, .09) 31px 32px),
+    radial-gradient(circle at 85% 88%, rgba(250, 240, 168, .28) 0, transparent 55%),
+    radial-gradient(circle at 12% 12%, rgba(184, 216, 236, .25) 0, transparent 45%);
+  box-shadow: 5px 5px 0 rgba(54, 43, 32, .16), inset 0 1px 0 rgba(255, 255, 255, .7);
+}
+.story-skin-otaku-diary .story-turn::before,
+.story-skin-otaku-diary .story-opening::before {
+  content: '';
+  position: absolute;
+  top: -9px; left: 50%;
+  width: 78px; height: 18px;
+  transform: translateX(-50%) rotate(-3deg);
+  background: ${DIARY_TAPE_PINK};
+  box-shadow: 0 1px 2px rgba(54, 43, 32, .12);
+  pointer-events: none;
+  z-index: 2;
+}
+.story-skin-otaku-diary .story-turn::after {
+  content: '';
+  position: absolute;
+  left: 10%; bottom: -26px;
+  width: 60px; height: 56px;
+  background: ${DIARY_STARS} no-repeat center / contain;
+  pointer-events: none;
+  z-index: 2;
+}
+/* 开场卡：顶部一条水彩画 + 标题荧光笔 */
+.story-skin-otaku-diary .story-opening { padding-top: 0; overflow: hidden; }
+.story-skin-otaku-diary .story-opening::before { top: 8px; }
+.story-skin-otaku-diary .story-opening > :first-child::before {
+  content: '';
+  display: block;
+  height: 96px;
+  margin: 0 -20px 18px;
+  border-bottom: 1.5px dashed rgba(83, 74, 65, .35);
+  background: url("${otakuDiaryWide}") center / cover no-repeat;
+}
+.story-skin-otaku-diary .story-opening h2 {
+  display: inline;
+  background: linear-gradient(to top, rgba(255, 222, 89, .6) 0 45%, transparent 45%);
+  padding: 0 6px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* 正文 */
+.story-skin-otaku-diary .story-prose { color: #4A4139 !important; letter-spacing: .02em; }
+.story-skin-otaku-diary:not(.story-q-color) .story-quote { color: #9A5A76; }
+.story-skin-otaku-diary:not(.story-q-bg) .story-quote {
+  background: repeating-linear-gradient(-48deg, rgba(255, 255, 255, .5) 0 6px, rgba(240, 206, 220, .55) 6px 12px);
+  border: 1.5px solid rgba(200, 100, 140, .35);
+  border-radius: 10px 4px 12px 3px;
+  padding: 1px 5px;
+  margin: 0 2px;
+  box-shadow: 2px 2px 0 rgba(200, 100, 140, .2);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* 你写下：蜜桃横纹便签 + 蓝胶带 + 小爱心 */
+.story-skin-otaku-diary .story-user-turn, .story-skin-otaku-diary .story-user-turn.border-violet-300 {
+  position: relative;
+  margin-left: 12%;
+  padding: 18px 18px 16px;
+  border: 1.5px solid var(--diary-ink) !important;
+  border-radius: var(--diary-sketch-2);
+  background:
+    repeating-linear-gradient(180deg, transparent 0 12px, rgba(255, 255, 255, .32) 12px 13px),
+    #F0D8D2;
+  box-shadow: 5px 5px 0 rgba(54, 43, 32, .15), inset 0 1px 0 rgba(255, 255, 255, .8);
+}
+.story-skin-otaku-diary .story-user-turn::before {
+  content: '';
+  position: absolute;
+  top: -8px; right: 14%;
+  width: 54px; height: 15px;
+  transform: rotate(4deg);
+  background: ${DIARY_TAPE_BLUE};
+  box-shadow: 0 1px 2px rgba(54, 43, 32, .12);
+}
+.story-skin-otaku-diary .story-user-turn::after {
+  content: '';
+  position: absolute;
+  right: -10px; bottom: -12px;
+  width: 30px; height: 28px;
+  transform: rotate(12deg);
+  background: ${DIARY_HEART} no-repeat center / contain;
+}
+.story-skin-otaku-diary .story-user-turn > div:first-child { font-family: ${DIARY_ROUND}; font-weight: 400 !important; font-size: 11px !important; color: #D8806A !important; }
+.story-skin-otaku-diary .story-prose-user { color: #534A41 !important; }
+
+/* 场景卡：浅蓝点点便签 + 抹茶胶带 */
+.story-skin-otaku-diary .story-scene {
+  position: relative;
+  padding: 14px 16px;
+  border: 1.5px solid var(--diary-ink) !important;
+  border-radius: var(--diary-sketch-3);
+  background-color: #E0EDF5;
+  background-image: radial-gradient(circle, rgba(156, 130, 208, .2) 1px, transparent 1px);
+  background-size: 18px 18px;
+  box-shadow: 4px 4px 0 rgba(54, 43, 32, .1);
+}
+.story-skin-otaku-diary .story-scene::before {
+  content: '';
+  position: absolute;
+  top: -8px; left: 50%;
+  width: 44px; height: 13px;
+  transform: translateX(-50%) rotate(-2deg);
+  background: rgba(194, 216, 178, .9);
+  border: 1px solid rgba(54, 43, 32, .15);
+  border-radius: 2px;
+}
+.story-skin-otaku-diary .story-scene > div:first-child {
+  font-family: ${DIARY_HAND};
+  font-size: 16px !important;
+  letter-spacing: .02em !important;
+  text-transform: none;
+  color: #2D5878 !important;
+}
+
+/* 输入区：手绘边便签 + 抹茶发送键 + 柠檬快捷键 */
+.story-skin-otaku-diary .story-compose {
+  background: #FFFDF8 !important;
+  border: 1.5px solid var(--diary-ink) !important;
+  border-radius: 18px 8px 16px 10px !important;
+  box-shadow: 4px 4px 0 rgba(54, 43, 32, .12) !important;
+}
+.story-skin-otaku-diary .story-compose textarea::placeholder { color: #B9ADA3; }
+.story-skin-otaku-diary .story-send-button:not(.bg-rose-600) {
+  background: #C2D8B2 !important;
+  color: #534A41 !important;
+  border: 1.5px solid var(--diary-ink);
+  box-shadow: 2px 2px 0 rgba(54, 43, 32, .18);
+}
+.story-skin-otaku-diary .story-quick-preset button {
+  background: #FAF0A8 !important;
+  color: #534A41 !important;
+  border: 1.5px solid var(--diary-ink);
+  box-shadow: 3px 3px 0 rgba(54, 43, 32, .18) !important;
+}
+
+/* 配色补丁 */
+.story-skin-otaku-diary .border-violet-300 { border-color: #E58FAC !important; }
+.story-skin-otaku-diary .border-violet-600, .story-skin-otaku-diary .border-violet-700 { border-color: #D86C92 !important; }
+.story-skin-otaku-diary .bg-violet-400 { background-color: #E58FAC !important; }
+.story-skin-otaku-diary .accent-violet-600 { accent-color: #E58FAC; }
+.story-skin-otaku-diary .bg-slate-900 { background-color: #534A41 !important; color: #FFFDF8 !important; }
+.story-skin-otaku-diary .ring-stone-100 { --tw-ring-color: #FBF7F0 !important; }
+`;
+
 export const STORY_SKINS: StorySkin[] = [
     {
         id: 'classic',
@@ -241,6 +479,14 @@ export const STORY_SKINS: StorySkin[] = [
         color: 'dark',
         thumb: chantillyNoirRose,
         css: CHANTILLY_NOIR_CSS,
+    },
+    {
+        id: 'otaku-diary',
+        name: '宅女日记',
+        subtitle: 'Dopamine Diary · 手账拼贴',
+        color: 'light',
+        thumb: otakuDiaryBg,
+        css: OTAKU_DIARY_CSS,
     },
 ];
 
