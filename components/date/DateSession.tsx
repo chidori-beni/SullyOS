@@ -5,6 +5,9 @@ import { useOS } from '../../context/OSContext';
 import { DB } from '../../utils/db';
 import DateSettings from './DateSettings';
 import ObserveHUD from './ObserveHUD';
+import DateWorldbookSheet from './DateWorldbookSheet';
+import CallApiPresetSheet from '../call/CallApiPresetSheet';
+import { configFromPreset, findActivePresetId } from '../../utils/apiPresetSwitch';
 import { DatePrompts, extractObservation, hasObservation } from '../../utils/datePrompts';
 import { isBlobRef } from '../../utils/blobRef';
 import { clearDateResumeAttempt } from '../../utils/dateSessionRecovery';
@@ -73,7 +76,7 @@ interface DateSessionProps {
     backgroundPending?: boolean;
     onReroll: () => Promise<string>;
     onInterlude?: (description: string, targetAt?: number) => Promise<string>;
-    onSetSceneClock?: (timestamp: number) => Promise<void>;
+    onSetSceneClock?: (timestamp: number, options?: { silent?: boolean }) => Promise<void>;
     onExit: (currentState: DateState) => void;
     onEnd: (currentState: DateState) => Promise<void>;
     endSuggestedReason?: string;
@@ -172,7 +175,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     onDeleteMessages,
     onSettings
 }) => {
-    const { addToast, registerBackHandler, apiConfig, updateCharacter } = useOS();
+    const { addToast, registerBackHandler, apiConfig, updateCharacter, apiPresets, commitApiConfig } = useOS();
     
     // Core VN State
     const [isNovelMode, setIsNovelMode] = useState(historyReplay);
@@ -193,6 +196,7 @@ const DateSession: React.FC<DateSessionProps> = ({
 
     // 观测协议 OBSERVE：当前批次解析出的结构化观测，驱动全息 HUD
     const observeEnabled = !!char.dateObserve?.enabled;
+    const clockFollowsRealTime = char.dateClockFollowRealTime === true;
     // 阅读与立绘共用一个正文大小设置。旧角色没有该字段时回到糯叽机兼容的 14px。
     const dateFontSize = Math.min(28, Math.max(10, Number(char.dateFontSize) || 14));
     const [observation, setObservation] = useState<DateObservation | null>(initialState?.observation ?? null);
@@ -247,6 +251,9 @@ const DateSession: React.FC<DateSessionProps> = ({
     
     // Settings Overlay State (Internal)
     const [showSettings, setShowSettings] = useState(false);
+    // 见面中快捷切 API 预设 / 开关角色世界书（都是下一条回复生效）
+    const [showApiPresetSheet, setShowApiPresetSheet] = useState(false);
+    const [showWorldbookSheet, setShowWorldbookSheet] = useState(false);
 
     // 顶栏折叠菜单：常驻只留「输入」+「菜单」两钮，低频操作全收进来
     const [showMenu, setShowMenu] = useState(false);
@@ -710,6 +717,11 @@ const DateSession: React.FC<DateSessionProps> = ({
                 setShowSettings(false);
                 return true;
             }
+            if (showApiPresetSheet || showWorldbookSheet) {
+                setShowApiPresetSheet(false);
+                setShowWorldbookSheet(false);
+                return true;
+            }
             if (showInterludeEditor) {
                 if (!interactionBusy) setShowInterludeEditor(false);
                 return true;
@@ -731,7 +743,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             return true;
         });
         return unregister;
-    }, [voiceFavoriteTarget, voiceFavoriteBusy, isFullscreenEditor, showSettings, showInterludeEditor, showClockEditor, clockBusy, interactionBusy, showMenu, showExitModal, registerBackHandler]);
+    }, [voiceFavoriteTarget, voiceFavoriteBusy, isFullscreenEditor, showSettings, showApiPresetSheet, showWorldbookSheet, showInterludeEditor, showClockEditor, clockBusy, interactionBusy, showMenu, showExitModal, registerBackHandler]);
 
     const dateEmotionKeys = [...REQUIRED_EMOTIONS_SET, ...(char.customDateSprites || [])];
 
@@ -1095,6 +1107,18 @@ const DateSession: React.FC<DateSessionProps> = ({
         setIsShowingOpening(false); // First user interaction - opening phase is over
 
         try {
+            // 剧情时间跟随现实：用户边做现实里的事边回，发送前先把落后的剧情钟拨到现在。
+            // 只往前拨（剧情已经演到现实之后就不动），差不到一分钟不动；失败不拦发送。
+            const followNow = Date.now();
+            if (clockFollowsRealTime && onSetSceneClock
+                && Number.isFinite(effectiveSceneClockAt)
+                && followNow - (effectiveSceneClockAt as number) >= 60_000) {
+                try {
+                    await onSetSceneClock(followNow, { silent: true });
+                } catch (error) {
+                    console.warn('[DateSession] 发送前对齐剧情时间失败，按原时间继续', error);
+                }
+            }
             const result = await onSendMessage(text, kind);
             if (typeof result !== 'string') {
                 // 前台只保留轻量的等待状态；是否需要系统通知交给 Service Worker
@@ -1174,6 +1198,20 @@ const DateSession: React.FC<DateSessionProps> = ({
         setClockInput(DatePrompts.formatSceneClockInputValue(effectiveSceneClockAt as number, effectiveSceneClockTimeZone));
         setShowClockEditor(true);
         setShowMenu(false);
+    };
+
+    /** 编辑面板里的「对齐到现在」：一键把剧情钟拨到现实此刻并保存。 */
+    const handleClockSyncNow = async () => {
+        if (!onSetSceneClock) return;
+        setClockBusy(true);
+        try {
+            await onSetSceneClock(Date.now());
+            setShowClockEditor(false);
+        } catch (error: any) {
+            addToast(error?.message || '剧情时间保存失败', 'error');
+        } finally {
+            setClockBusy(false);
+        }
     };
 
     const handleClockSave = async () => {
@@ -1453,7 +1491,7 @@ const DateSession: React.FC<DateSessionProps> = ({
 
                         {!historyReplay && onSetSceneClock && <button onClick={openClockEditor} disabled={interactionBusy} className="h-9 px-3.5 rounded-full flex items-center gap-2 text-xs font-bold border shadow-lg active:scale-95 transition-all bg-black/40 backdrop-blur-md border-white/15 text-white hover:bg-white/20 disabled:opacity-40">
                             <span aria-hidden="true">◷</span>
-                            编辑剧情时间
+                            {clockFollowsRealTime ? '剧情时间 · 跟随现实' : '编辑剧情时间'}
                         </button>}
 
                         {/* 语音：未开启时点击直接开启并展开语种；开启时点击展开/收起语种选择（含关闭项） */}
@@ -1511,6 +1549,16 @@ const DateSession: React.FC<DateSessionProps> = ({
                         {!historyReplay && <button onClick={() => { setShowSettings(true); setShowMenu(false); setShowVoiceLangPicker(false); }} className="h-9 px-3.5 rounded-full flex items-center gap-2 text-xs font-bold border shadow-lg active:scale-95 transition-all bg-black/40 backdrop-blur-md border-white/15 text-white hover:bg-white/20">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 2.555c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.212 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-2.555c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
                             布置场景
+                        </button>}
+
+                        {!historyReplay && <button onClick={() => { setShowApiPresetSheet(true); setShowMenu(false); setShowVoiceLangPicker(false); }} className="h-9 px-3.5 rounded-full flex items-center gap-2 text-xs font-bold border shadow-lg active:scale-95 transition-all bg-black/40 backdrop-blur-md border-white/15 text-white hover:bg-white/20">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" /></svg>
+                            切换 API
+                        </button>}
+
+                        {!historyReplay && <button onClick={() => { setShowWorldbookSheet(true); setShowMenu(false); setShowVoiceLangPicker(false); }} className="h-9 px-3.5 rounded-full flex items-center gap-2 text-xs font-bold border shadow-lg active:scale-95 transition-all bg-black/40 backdrop-blur-md border-white/15 text-white hover:bg-white/20">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" /></svg>
+                            世界书
                         </button>}
 
                         <button onClick={() => { setShowMenu(false); setShowVoiceLangPicker(false); setShowExitModal(true); }} className="h-9 px-3.5 rounded-full flex items-center gap-2 text-xs font-bold border shadow-lg active:scale-95 transition-all bg-red-500/70 backdrop-blur-md border-white/20 text-white hover:bg-red-600">
@@ -1650,8 +1698,10 @@ const DateSession: React.FC<DateSessionProps> = ({
                             <div className="tm-reading-menu mt-2 flex flex-wrap justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
                                 {!historyReplay && !interactionBusy && canReroll && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { setShowMenu(false); void handleRerollClick(); }}>重新生成</button>}
                                 {!historyReplay && onInterlude && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" disabled={interactionBusy} onClick={() => { setShowInterludeEditor(true); setShowMenu(false); }}>⏭ 过场</button>}
-                                {!historyReplay && onSetSceneClock && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" disabled={interactionBusy} onClick={openClockEditor}>◷ 编辑剧情时间</button>}
+                                {!historyReplay && onSetSceneClock && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" disabled={interactionBusy} onClick={openClockEditor}>{clockFollowsRealTime ? '◷ 剧情时间 · 跟随现实' : '◷ 编辑剧情时间'}</button>}
                                 {!historyReplay && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { setShowSettings(true); setShowMenu(false); }}>布置场景</button>}
+                                {!historyReplay && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { setShowApiPresetSheet(true); setShowMenu(false); }}>切换 API</button>}
+                                {!historyReplay && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { setShowWorldbookSheet(true); setShowMenu(false); }}>世界书</button>}
                                 <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { setShowExitModal(true); setShowMenu(false); }}>{historyReplay ? '退出回顾' : '离开 / 结束'}</button>
                                 {!historyReplay && <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { const next = !observeEnabled; updateCharacter(char.id, { dateObserve: { ...char.dateObserve, enabled: next } }); setShowMenu(false); addToast(next ? '观测已开启 · 下条回复生效' : '观测已关闭', 'info'); }}>观测{observeEnabled ? ' · 开' : ' · 关'}</button>}
                                 <button type="button" className="tm-btn-icon rounded-full px-3 py-1.5 text-xs" onClick={() => { updateCharacter(char.id, { dateVoiceEnabled: !voiceEnabled }); setShowMenu(false); setShowVoiceLangPicker(false); addToast(voiceEnabled ? '语音已关闭' : '语音已开启', 'info'); }}>语音{voiceEnabled ? ' · 开' : ' · 关'}</button>
@@ -2116,6 +2166,27 @@ const DateSession: React.FC<DateSessionProps> = ({
                         className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-primary/20"
                     />
                     <p className="text-[11px] text-slate-400">角色当地时间：{formatHeaderClock(effectiveSceneClockAt) || '未设置'}</p>
+                    <button type="button" onClick={() => void handleClockSyncNow()} disabled={clockBusy}
+                        className="w-full rounded-2xl border border-indigo-100 bg-indigo-50 py-3 text-sm font-bold text-indigo-600 active:scale-[0.98] transition disabled:opacity-50">
+                        ◷ 一键对齐到现在（{formatHeaderClock(realNow) || '现实时间'}）
+                    </button>
+                    <div className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50 px-3 py-3">
+                        <div className="min-w-0 flex-1">
+                            <div className="text-sm font-bold text-slate-700">剧情时间跟随现实</div>
+                            <div className="mt-0.5 text-[11px] leading-snug text-slate-400">开着时，每次发送或点「继续」前，剧情时间落后现实就自动对齐到现在（只往前，不往回拨）。</div>
+                        </div>
+                        <button type="button"
+                            onClick={() => {
+                                const next = !clockFollowsRealTime;
+                                updateCharacter(char.id, { dateClockFollowRealTime: next });
+                                addToast(next ? '剧情时间会跟随现实 · 下次发送生效' : '剧情时间不再自动跟随现实', 'info');
+                            }}
+                            aria-label={clockFollowsRealTime ? '关闭剧情时间跟随现实' : '开启剧情时间跟随现实'}
+                            aria-pressed={clockFollowsRealTime}
+                            className={`relative h-6 w-11 shrink-0 rounded-full p-1 transition-colors active:scale-95 ${clockFollowsRealTime ? 'bg-emerald-500' : 'bg-slate-200'}`}>
+                            <span className={`block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${clockFollowsRealTime ? 'translate-x-5' : 'translate-x-0'}`} />
+                        </button>
+                    </div>
                 </div>
             </Modal>
 
@@ -2135,6 +2206,45 @@ const DateSession: React.FC<DateSessionProps> = ({
                 onToggle={() => void toggleDateVoiceFavorite()}
                 onClose={() => { if (!voiceFavoriteBusy) setVoiceFavoriteTarget(null); }}
             />
+
+            {showApiPresetSheet && (
+                <div className="absolute inset-0 z-[250]" onClick={(e) => e.stopPropagation()}>
+                    <CallApiPresetSheet
+                        apiPresets={apiPresets}
+                        apiConfig={apiConfig}
+                        accentColor="#818cf8"
+                        lightTheme={false}
+                        emptyHint={<>还没有保存过 API 预设。<br />离开见面后去「设置 → API」存一条，这里就会出现。</>}
+                        onClose={() => setShowApiPresetSheet(false)}
+                        onApply={(preset) => {
+                            // 和设置页 / 通话里同一条路：主配置 + 云端凭据一起换。见面后台生成排队时读的也是这份。
+                            const wasActive = findActivePresetId(apiPresets, apiConfig) === preset.id;
+                            commitApiConfig(configFromPreset(preset));
+                            setShowApiPresetSheet(false);
+                            addToast(wasActive ? `仍在用「${preset.name}」` : `已切换到「${preset.name}」，下一条回复开始生效`, 'success');
+                        }}
+                    />
+                </div>
+            )}
+            {showWorldbookSheet && (
+                <DateWorldbookSheet
+                    charName={char.name}
+                    books={char.mountedWorldbooks || []}
+                    onClose={() => setShowWorldbookSheet(false)}
+                    onToggle={(bookId) => {
+                        const target = (char.mountedWorldbooks || []).find(book => book.id === bookId);
+                        if (!target) return;
+                        const nextEnabled = target.mountEnabled === false;
+                        // 函数式更新：连点几本时每次都基于最新挂载列表，不会互相覆盖。
+                        updateCharacter(char.id, prev => ({
+                            mountedWorldbooks: (prev.mountedWorldbooks || []).map(book => (
+                                book.id === bookId ? { ...book, mountEnabled: nextEnabled } : book
+                            )),
+                        }));
+                        addToast(nextEnabled ? `已启用「${target.title}」· 下一条回复生效` : `已暂时关闭「${target.title}」`, 'info');
+                    }}
+                />
+            )}
 
             {/* Exit Modal */}
             <Modal

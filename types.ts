@@ -3912,6 +3912,8 @@ export interface CharacterProfile {
   dateStyleConfig?: DateStyleConfig; // 见面模式文风（写作风格 / 叙事人称 / 自定义补充）
   /** 观测协议 OBSERVE：开启后每条回复注入「时间/地点/状态/细节」结构化观测，渲染成全息 HUD（样式/字段可自定义） */
   dateObserve?: DateObserveConfig;
+  /** 见面「剧情时间跟随现实」：开着时每次发送 / 继续前，剧情钟若落后现实就先自动对齐到现在（只往前，不往回拨）。 */
+  dateClockFollowRealTime?: boolean;
 
   savedDateState?: DateState;
   /** 当前仍在进行的线下见面；仅为模式同步/主动消息闸门，不是聊天记录。 */

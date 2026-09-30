@@ -1151,7 +1151,7 @@ const DateApp: React.FC = () => {
     };
 
     /** 手动校时是显式提交：允许往前或往回调，但会使正在飞行的旧请求失效。 */
-    const handleSetSceneClock = async (sceneClockAt: number): Promise<void> => {
+    const handleSetSceneClock = async (sceneClockAt: number, options: { silent?: boolean } = {}): Promise<void> => {
         if (!char || !isFiniteNumber(sceneClockAt)) return;
         beginDateTurnRequest();
         const current = reconcileEncounterFromSceneSnapshot(ensureEncounter());
@@ -1169,6 +1169,8 @@ const DateApp: React.FC = () => {
             console.warn('[DateApp] 更新剧情时钟检查点失败', error);
         }
         markDateTurnDirty({ ...char, activeDateEncounter: getActiveDatePresence(char.id) || undefined });
+        // 「跟随现实」发送前自动对齐是静默的：每句都弹提示太吵，也不算用户手动校时。
+        if (options.silent) return;
         addToast('剧情时间已调整', 'success');
         trackEvent('手动调整见面剧情时间');
     };

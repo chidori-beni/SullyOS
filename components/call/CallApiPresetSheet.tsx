@@ -17,9 +17,11 @@ interface Props {
   lightTheme: boolean;
   onApply: (preset: ApiPreset) => void;
   onClose: () => void;
+  /** 没存过预设时的提示；默认是通话场景的「挂断后去设置」。 */
+  emptyHint?: React.ReactNode;
 }
 
-const CallApiPresetSheet: React.FC<Props> = ({ apiPresets, apiConfig, accentColor, lightTheme, onApply, onClose }) => {
+const CallApiPresetSheet: React.FC<Props> = ({ apiPresets, apiConfig, accentColor, lightTheme, onApply, onClose, emptyHint }) => {
   const activeId = findActivePresetId(apiPresets, apiConfig);
   return (
     <div className="absolute inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-end" onClick={onClose} data-testid="call-api-preset-sheet">
@@ -34,7 +36,7 @@ const CallApiPresetSheet: React.FC<Props> = ({ apiPresets, apiConfig, accentColo
         </p>
         {apiPresets.length === 0 ? (
           <div className="rounded-2xl border border-white/10 px-4 py-5 text-center text-xs text-white/45">
-            还没有保存过 API 预设。<br />挂断后去「设置 → API」存一条，这里就会出现。
+            {emptyHint ?? <>还没有保存过 API 预设。<br />挂断后去「设置 → API」存一条，这里就会出现。</>}
           </div>
         ) : (
           <div className="max-h-[45vh] overflow-y-auto space-y-2 pt-1">
