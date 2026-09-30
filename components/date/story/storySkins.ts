@@ -11,8 +11,10 @@ import chantillyNoirBg from '../../../assets/story-skins/chantilly-noir-bg.jpg';
 import chantillyNoirRose from '../../../assets/story-skins/chantilly-noir-rose.jpg';
 import otakuDiaryBg from '../../../assets/story-skins/otaku-diary-bg.jpg';
 import otakuDiaryWide from '../../../assets/story-skins/otaku-diary-wide.jpg';
+import cocoBg from '../../../assets/story-skins/coco-bg.jpg';
+import cocoWide from '../../../assets/story-skins/coco-wide.jpg';
 
-export type StorySkinId = 'classic' | 'chantilly-noir' | 'otaku-diary';
+export type StorySkinId = 'classic' | 'chantilly-noir' | 'otaku-diary' | 'coco';
 
 export interface StorySkin {
     id: StorySkinId;
@@ -465,6 +467,219 @@ const OTAKU_DIARY_CSS = `
 .story-skin-otaku-diary .ring-stone-100 { --tw-ring-color: #FBF7F0 !important; }
 `;
 
+/* ── 可可小姐 · Mademoiselle ─────────────────────────────── */
+
+/** 粉色花呢（软呢）：噪点颗粒 + 斜纹交织 */
+const COCO_TWEED_GRAIN = svg(`<svg xmlns='http://www.w3.org/2000/svg' width='90' height='90'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' seed='7'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 .97  0 0 0 0 .93  0 0 0 1.1 -.45'/></filter><rect width='90' height='90' filter='url(#n)'/></svg>`);
+const COCO_TWEED = `${COCO_TWEED_GRAIN}, repeating-linear-gradient(45deg, rgba(255, 246, 236, .22) 0 1px, transparent 1px 4px), repeating-linear-gradient(-45deg, rgba(150, 82, 98, .2) 0 1px, transparent 1px 5px), repeating-linear-gradient(0deg, rgba(255, 238, 214, .16) 0 1px, transparent 1px 3px), linear-gradient(#DDA9B4, #D6A0AC)`;
+/** 浅金花呢（引号小标签用） */
+const COCO_TWEED_GOLD = `repeating-linear-gradient(45deg, rgba(255, 255, 255, .45) 0 1px, transparent 1px 3px), repeating-linear-gradient(-45deg, rgba(191, 160, 106, .18) 0 1px, transparent 1px 4px), #F6EEDF`;
+/** 金色珠链 */
+const COCO_CHAIN = svg(`<svg xmlns='http://www.w3.org/2000/svg' width='16' height='10' viewBox='0 0 16 10'><defs><radialGradient id='g' cx='.35' cy='.3' r='.75'><stop offset='0' stop-color='#fff3d1'/><stop offset='.45' stop-color='#dfc28c'/><stop offset='1' stop-color='#886d3b'/></radialGradient></defs><path d='M0 5h16' stroke='#bfa06a' stroke-width='1'/><circle cx='8' cy='5' r='3.6' fill='url(#g)'/><circle cx='0' cy='5' r='1.4' fill='#dfc28c'/><circle cx='16' cy='5' r='1.4' fill='#dfc28c'/></svg>`);
+/** 山茶花线稿（底纹和徽章用） */
+const cocoCamellia = (stroke: string, width: number, opacity = 1): string => svg(`<svg xmlns='http://www.w3.org/2000/svg' width='${width}' height='${width}' viewBox='0 0 40 40'><g fill='none' stroke='${stroke}' stroke-opacity='${opacity}' stroke-width='1.1'><g transform='translate(20 20)'>${[0, 72, 144, 216, 288].map(r => `<path transform='rotate(${r})' d='M0-3C-5-6-7-13 0-15 7-13 5-6 0-3Z'/>`).join('')}${[36, 108, 180, 252, 324].map(r => `<path transform='rotate(${r})' d='M0-2C-3-4-4-8 0-9 4-8 3-4 0-2Z'/>`).join('')}<circle r='2.2'/></g></g></svg>`);
+const COCO_CAMELLIA_TILE = cocoCamellia('#c9ae84', 40, .22);
+const COCO_GOLD = 'radial-gradient(circle at 34% 28%, #fff3d1 0, #f4e3b1 18%, #dfc28c 48%, #bfa06a 78%, #886d3b 100%)';
+const COCO_PEARL = 'radial-gradient(circle at 35% 30%, #fff 0, #fbf6f1 30%, #e8ddd6 70%, #c9b8b0 100%)';
+const COCO_DISPLAY = `'Didot', 'Bodoni 72', 'DM Serif Display', 'Playfair Display', 'Songti SC', serif`;
+
+const COCO_CSS = `
+.story-skin-coco {
+  --story-bg: #F7F3EC;
+  --story-surface: #FBF8F3;
+  --story-raised: #FFFDFA;
+  --story-ink: #1D1D1F;
+  --story-muted: #877564;
+  --story-faint: #BCAB98;
+  --story-line: rgba(191, 160, 106, .35);
+  --story-soft: #F1E8DC;
+  --story-accent: #C98A98;
+  --story-accent-soft: #F6E4E8;
+  --story-accent-ink: #A0606F;
+  --coco-gold: #DBC9AB;
+  --coco-gold-deep: #BFA06A;
+  color-scheme: light;
+}
+.story-skin-coco.story-theme-page {
+  background: #EFD9CF url("${cocoBg}") center 40% / cover no-repeat;
+}
+.story-skin-coco.story-theme-page::before {
+  opacity: 1;
+  background: linear-gradient(180deg, rgba(255, 250, 246, .18), rgba(255, 250, 246, 0) 40%, rgba(255, 250, 246, .22));
+}
+.story-skin-coco.story-theme-page > .bg-stone-100 { background-color: transparent !important; }
+
+/* 页眉 / 页脚：粉色花呢 + 金珠链 */
+.story-skin-coco .story-safe-header,
+.story-skin-coco .story-safe-footer {
+  position: relative;
+  background: ${COCO_TWEED} !important;
+  border: 0 !important;
+  color: #1D1D1F;
+}
+.story-skin-coco .story-safe-header { box-shadow: 0 6px 14px rgba(136, 109, 59, .18); }
+.story-skin-coco .story-safe-header::after,
+.story-skin-coco .story-safe-footer::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  height: 10px;
+  background: ${COCO_CHAIN} repeat-x center / 16px 10px;
+  filter: drop-shadow(0 1px 1px rgba(136, 109, 59, .35));
+  pointer-events: none;
+  z-index: 2;
+}
+.story-skin-coco .story-safe-header::after { bottom: -5px; }
+.story-skin-coco .story-safe-footer::before { top: -5px; }
+.story-skin-coco .story-safe-header .text-slate-400,
+.story-skin-coco .story-safe-footer .text-slate-400 { color: #6E4B53 !important; }
+.story-skin-coco .story-safe-header .text-slate-700 { color: #1D1D1F !important; }
+.story-skin-coco .story-safe-header .uppercase {
+  font-family: ${COCO_DISPLAY};
+  font-style: italic;
+  font-weight: 400 !important;
+  letter-spacing: .3em !important;
+  text-transform: none;
+  font-size: 11px !important;
+  color: #FFFDF8 !important;
+  text-shadow: 0 1px 2px rgba(110, 60, 70, .55);
+}
+.story-skin-coco .story-safe-header h1 { font-family: ${COCO_DISPLAY}; letter-spacing: .08em; font-weight: 700; }
+.story-skin-coco .story-safe-header .text-violet-600 { color: #6E4B53 !important; }
+
+/* 正文卡：象牙衬布 + 花呢包边 + 金线 + 顶部山茶金扣 + 右下珍珠 */
+.story-skin-coco .story-turn,
+.story-skin-coco .story-opening {
+  position: relative;
+  padding: 30px 20px 24px;
+  border: 6px solid transparent !important;
+  border-radius: 18px;
+  background:
+    ${COCO_CAMELLIA_TILE} center / 46px 46px padding-box,
+    linear-gradient(#FBF8F3, #F6F1E9) padding-box,
+    ${COCO_TWEED} border-box;
+  box-shadow: inset 0 0 0 1px var(--coco-gold), inset 0 0 0 4px rgba(255, 253, 250, .9), inset 0 0 0 5px rgba(219, 201, 171, .6), 0 10px 26px rgba(136, 109, 59, .22);
+}
+.story-skin-coco .story-turn::before,
+.story-skin-coco .story-opening::after {
+  content: '';
+  position: absolute;
+  top: -17px; left: 50%;
+  width: 30px; height: 30px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: ${cocoCamellia('#886d3b', 30)} center / 22px 22px no-repeat, ${COCO_GOLD};
+  box-shadow: 0 0 0 2px #FFF8EC, 0 0 0 3px var(--coco-gold-deep), 0 3px 6px rgba(136, 109, 59, .35);
+  pointer-events: none;
+  z-index: 2;
+}
+.story-skin-coco .story-turn::after {
+  content: '';
+  position: absolute;
+  right: 8px; bottom: 8px;
+  width: 22px; height: 14px;
+  background: ${COCO_PEARL} 0 3px / 11px 11px no-repeat, ${COCO_PEARL} 12px 0 / 9px 9px no-repeat;
+  filter: drop-shadow(0 1px 1px rgba(136, 109, 59, .3));
+  pointer-events: none;
+}
+/* 开场卡：顶部一幅山茶珍珠画 */
+.story-skin-coco .story-opening { padding-top: 0; text-align: center; }
+.story-skin-coco .story-opening::before {
+  content: '';
+  display: block;
+  height: 150px;
+  margin: 0 -20px 20px;
+  border-radius: 12px 12px 0 0;
+  border-bottom: 1px solid var(--coco-gold);
+  background: url("${cocoWide}") center 96% / 150% auto no-repeat;
+}
+.story-skin-coco .story-opening::after { top: 133px; }
+.story-skin-coco .story-opening > :first-child { font-family: ${COCO_DISPLAY}; font-style: italic; text-transform: none; letter-spacing: .3em; font-weight: 400; color: var(--coco-gold-deep) !important; }
+.story-skin-coco .story-opening h2 { font-family: ${COCO_DISPLAY}; letter-spacing: .08em; }
+
+/* 正文 */
+.story-skin-coco .story-prose { color: #1D1D1F !important; letter-spacing: .02em; }
+.story-skin-coco:not(.story-q-color) .story-quote { color: #877564; }
+.story-skin-coco:not(.story-q-bg) .story-quote {
+  background: ${COCO_TWEED_GOLD};
+  border: .5px solid var(--coco-gold-deep);
+  border-radius: 5px;
+  padding: 0 5px;
+  margin: 0 2px;
+  box-shadow: inset 0 2px 2px rgba(255, 255, 255, .7), 0 1px 2px rgba(29, 29, 31, .12);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* 你写下：玫瑰粉缎面 + 左侧花呢镶边 */
+.story-skin-coco .story-user-turn,
+.story-skin-coco .story-user-turn.border-violet-300 {
+  position: relative;
+  padding: 14px 16px 14px 20px;
+  border: 1px solid var(--coco-gold) !important;
+  border-radius: 14px;
+  background:
+    linear-gradient(90deg, rgba(209, 162, 172, 0) 0, rgba(255, 255, 255, .35) 60%, rgba(209, 162, 172, 0) 100%),
+    rgba(244, 224, 229, .94);
+  box-shadow: inset 6px 0 0 #D6A0AC, inset 7px 0 0 var(--coco-gold), 0 6px 16px rgba(136, 109, 59, .16);
+}
+.story-skin-coco .story-user-turn > div:first-child { font-family: ${COCO_DISPLAY}; font-style: italic; letter-spacing: .22em !important; color: #A0606F !important; font-weight: 400 !important; }
+.story-skin-coco .story-prose-user { color: #3A2E31 !important; }
+
+/* 场景卡：象牙底 + 金色虚线 */
+.story-skin-coco .story-scene {
+  padding: 12px 14px;
+  border: 1.5px dashed var(--coco-gold) !important;
+  border-radius: 12px;
+  background: rgba(255, 252, 247, .85);
+  box-shadow: inset 0 0 0 3px rgba(255, 255, 255, .6);
+}
+.story-skin-coco .story-scene > div:first-child {
+  font-family: ${COCO_DISPLAY};
+  font-style: italic;
+  font-weight: 400 !important;
+  text-transform: none;
+  letter-spacing: .3em !important;
+  font-size: 11px !important;
+  color: var(--coco-gold-deep) !important;
+}
+
+/* 输入区：象牙小羊皮 + 金扣发送键 + 黑瓷漆快捷键 */
+.story-skin-coco .story-compose {
+  background: rgba(253, 250, 245, .96) !important;
+  border: 1px solid var(--coco-gold-deep) !important;
+  border-radius: 16px !important;
+  box-shadow: inset 0 0 0 3px #FFFDFA, inset 0 0 0 4px rgba(219, 201, 171, .55), 0 4px 12px rgba(136, 109, 59, .15) !important;
+}
+.story-skin-coco .story-compose textarea::placeholder { color: #B79F8E; font-style: italic; }
+.story-skin-coco .story-send-button:not(.bg-rose-600) {
+  background: ${COCO_GOLD} !important;
+  color: #5A4424 !important;
+  border-radius: 999px !important;
+  box-shadow: 0 0 0 2px #FFF8EC, 0 0 0 3px var(--coco-gold-deep), 0 3px 8px rgba(136, 109, 59, .35);
+}
+.story-skin-coco .story-quick-preset button {
+  background: #1D1D1F !important;
+  color: #DFC28C !important;
+  border-radius: 999px !important;
+  box-shadow: 0 0 0 2px var(--coco-gold), 0 4px 12px rgba(29, 29, 31, .35) !important;
+}
+.story-skin-coco .story-compose .bg-violet-50 {
+  background: ${COCO_TWEED} !important;
+  color: #FFFDF8 !important;
+  border-color: var(--coco-gold-deep) !important;
+  text-shadow: 0 1px 2px rgba(90, 40, 52, .75);
+}
+
+/* 配色补丁 */
+.story-skin-coco .border-violet-600, .story-skin-coco .border-violet-700 { border-color: #C98A98 !important; }
+.story-skin-coco .bg-violet-400 { background-color: #D6A0AC !important; }
+.story-skin-coco .accent-violet-600 { accent-color: #C98A98; }
+.story-skin-coco .bg-slate-900 { background-color: #1D1D1F !important; color: #DFC28C !important; }
+.story-skin-coco .ring-stone-100 { --tw-ring-color: #FBF8F3 !important; }
+.story-skin-coco h2.font-serif { font-family: ${COCO_DISPLAY}; letter-spacing: .06em; }
+`;
+
 export const STORY_SKINS: StorySkin[] = [
     {
         id: 'classic',
@@ -487,6 +702,14 @@ export const STORY_SKINS: StorySkin[] = [
         color: 'light',
         thumb: otakuDiaryBg,
         css: OTAKU_DIARY_CSS,
+    },
+    {
+        id: 'coco',
+        name: '可可小姐',
+        subtitle: 'Mademoiselle · 粉色软呢与珍珠',
+        color: 'light',
+        thumb: cocoBg,
+        css: COCO_CSS,
     },
 ];
 
