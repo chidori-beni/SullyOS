@@ -1,8 +1,9 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Moon, Palette, Sparkle, SquaresFour, Sun, X } from '@phosphor-icons/react';
 import { STORY_THEATER_APPEARANCE_STORAGE_KEY } from '../../../utils/storyTheaterBackup';
 import { useOS } from '../../../context/OSContext';
+import { STORY_SKINS, STORY_SKIN_CSS, findStorySkin, readStorySkinId, type StorySkinId } from './storySkins';
 
 export type StoryColorMode = 'light' | 'dark';
 export type StoryDecorMode = 'plain' | 'cinema';
@@ -18,14 +19,9 @@ interface StoryAppearance {
     quoteColor: string;
     quoteBgOn: boolean;
     quoteBg: string;
-    /** 糯叽机「线下」美化 CSS（与见面阅读模式同一套 #this-moment-screen / .tm-* 结构）；空串 = 不用 */
-    customCss: string;
-    /** 当前美化的名字（导入的文件名 / 从见面挑的主题名），只用于面板显示 */
-    customCssName: string;
+    /** 剧情专用主题；'classic' = 原来的明暗 + 装饰 */
+    skin: StorySkinId;
 }
-
-/** 剧情页套上糯叽机线下美化时才用的 CSS；空串表示没开。 */
-export const storyNuoCss = (appearance: Pick<StoryAppearance, 'customCss'>): string => appearance.customCss.trim();
 
 type StoryQuotePatch = Partial<Pick<StoryAppearance, 'quoteBold' | 'quoteColorOn' | 'quoteColor' | 'quoteBgOn' | 'quoteBg'>>;
 
@@ -35,7 +31,7 @@ interface StoryThemeContextValue {
     setDecor: (value: StoryDecorMode) => void;
     setFontSize: (value: number) => void;
     setQuote: (patch: StoryQuotePatch) => void;
-    setCustomCss: (css: string, name?: string) => void;
+    setSkin: (value: StorySkinId) => void;
 }
 
 const STORAGE_KEY = STORY_THEATER_APPEARANCE_STORAGE_KEY;
@@ -56,8 +52,7 @@ const DEFAULT_APPEARANCE: StoryAppearance = {
     quoteColor: DEFAULT_QUOTE_COLOR,
     quoteBgOn: false,
     quoteBg: DEFAULT_QUOTE_BG,
-    customCss: '',
-    customCssName: '',
+    skin: 'classic',
 };
 
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
@@ -84,8 +79,7 @@ function readAppearance(): StoryAppearance {
             quoteColor: readHex(value.quoteColor, DEFAULT_QUOTE_COLOR),
             quoteBgOn: value.quoteBgOn === true,
             quoteBg: readHex(value.quoteBg, DEFAULT_QUOTE_BG),
-            customCss: typeof value.customCss === 'string' ? value.customCss : '',
-            customCssName: typeof value.customCssName === 'string' ? value.customCssName : '',
+            skin: readStorySkinId(value.skin),
         };
     } catch {
         return DEFAULT_APPEARANCE;
@@ -223,8 +217,12 @@ function themeRootProps(appearance: StoryAppearance): { className: string; style
         appearance.quoteColorOn ? 'story-q-color' : '',
         appearance.quoteBgOn ? 'story-q-bg' : '',
     ].filter(Boolean).join(' ');
+    const skin = findStorySkin(appearance.skin);
+    // 主题自带明暗时，明暗 / 装饰跟着主题走（用户原来的选择保留，切回经典就恢复）
+    const color = skin.color ?? appearance.color;
+    const decor = skin.color ? 'plain' : appearance.decor;
     return {
-        className: `story-theme story-theme-${appearance.color} story-decor-${appearance.decor} ${flags}`,
+        className: `story-theme story-theme-${color} story-decor-${decor} story-skin-${skin.id} ${flags}`,
         style: {
             ['--story-font-size' as string]: `${appearance.fontSize}px`,
             ['--story-quote-color' as string]: appearance.quoteColor,
@@ -253,11 +251,7 @@ export const StoryTheaterThemeProvider: React.FC<React.PropsWithChildren> = ({ c
     const [appearance, setAppearance] = useState<StoryAppearance>(readAppearance);
 
     useEffect(() => {
-        try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(appearance));
-        } catch {
-            // 美化 CSS 里塞了超大图片时可能写满 localStorage；本次会话内照样生效，只是不能持久化。
-        }
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(appearance));
     }, [appearance]);
 
     const value = useMemo<StoryThemeContextValue>(() => ({
@@ -266,72 +260,15 @@ export const StoryTheaterThemeProvider: React.FC<React.PropsWithChildren> = ({ c
         setDecor: decor => setAppearance(current => ({ ...current, decor })),
         setFontSize: fontSize => setAppearance(current => ({ ...current, fontSize: clampStoryFontSize(fontSize) })),
         setQuote: patch => setAppearance(current => ({ ...current, ...patch })),
-        setCustomCss: (css, name) => setAppearance(current => ({ ...current, customCss: css, customCssName: css.trim() ? (name ?? current.customCssName) : '' })),
+        setSkin: skin => setAppearance(current => ({ ...current, skin })),
     }), [appearance]);
 
     return <StoryThemeContext.Provider value={value}>
-        <div className={`${themeRootProps(appearance).className} h-full w-full min-h-0`} style={themeRootProps(appearance).style}>
-            <style>{STORY_THEME_CSS}</style>
+        <div className={`${themeRootProps(appearance).className} story-theme-page h-full w-full min-h-0`} style={themeRootProps(appearance).style}>
+            <style>{STORY_THEME_CSS}{STORY_SKIN_CSS}</style>
             {children}
         </div>
     </StoryThemeContext.Provider>;
-};
-
-/** 剧情页读当前外观（是否套了糯叽机美化等）。 */
-export const useStoryAppearance = (): StoryAppearance => useContext(StoryThemeContext)?.appearance ?? DEFAULT_APPEARANCE;
-
-/** 见面里已经存过的阅读美化（每个角色当前在用的 + 各自存的预设），去重后给剧情一键套用。 */
-const useDateReadingThemes = (): Array<{ key: string; name: string; css: string }> => {
-    const { characters } = useOS();
-    return useMemo(() => {
-        const seen = new Set<string>();
-        const list: Array<{ key: string; name: string; css: string }> = [];
-        const push = (name: string, css: string | undefined, owner: string) => {
-            const trimmed = (css || '').trim();
-            if (!trimmed || seen.has(trimmed)) return;
-            seen.add(trimmed);
-            list.push({ key: `${owner}-${list.length}`, name: name || '未命名美化', css: trimmed });
-        };
-        for (const char of characters) {
-            push(char.dateReadingCssThemeName ? `${char.dateReadingCssThemeName}（${char.name}在用）` : `${char.name}在用的美化`, char.dateReadingCustomCss, char.id);
-            for (const preset of char.dateReadingCssPresets || []) push(preset.name, preset.css, char.id);
-        }
-        return list;
-    }, [characters]);
-};
-
-const NuoCssSection: React.FC<{ appearance: StoryAppearance; setCustomCss: (css: string, name?: string) => void }> = ({ appearance, setCustomCss }) => {
-    const { addToast } = useOS();
-    const [draft, setDraft] = useState(appearance.customCss);
-    const fileRef = useRef<HTMLInputElement>(null);
-    const dateThemes = useDateReadingThemes();
-    const current = appearance.customCss.trim();
-    const apply = (css: string, name?: string) => {
-        setDraft(css);
-        setCustomCss(css, name);
-        addToast(css.trim() ? `剧情已套用${name ? `「${name}」` : '美化'}` : '已取消剧情美化', 'success');
-    };
-    const importFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
-        event.target.value = '';
-        if (!file) return;
-        apply(await file.text(), file.name.replace(/\.(css|txt)$/i, ''));
-    };
-    return <div className='py-4 border-t border-slate-200'>
-        <div className='flex items-center gap-2'><span className='min-w-0 flex-1 text-xs font-semibold'>糯叽机线下美化</span>{current && <span className='shrink-0 max-w-[55%] truncate rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700'>在用：{appearance.customCssName || '自定义'}</span>}</div>
-        <p className='mt-1 text-[10px] leading-5 text-slate-500'>和见面「阅读模式」同一种美化：糯叽机「线下 / 此刻」的 CSS 原样可用。套上后背景和文字颜色由美化接管；场景卡、幕后与余波等剧情专属区块垫一层底，保证看得清。</p>
-        {dateThemes.length > 0 && <div className='mt-3'>
-            <div className='text-[10px] font-bold text-slate-400'>从见面里已有的美化挑一个</div>
-            <div className='mt-2 flex flex-wrap gap-2'>{dateThemes.map(theme => <button key={theme.key} type='button' onClick={() => apply(theme.css, theme.name)} className={`max-w-full truncate px-3 py-1.5 rounded-full text-[10px] font-bold border ${current === theme.css ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-slate-600 border-slate-200'}`}>{current === theme.css ? '✓ ' : ''}{theme.name}</button>)}</div>
-        </div>}
-        <textarea value={draft} onChange={event => setDraft(event.target.value)} spellCheck={false} placeholder={'粘贴糯叽机线下美化 CSS\n例如：#this-moment-screen { background: ... }\n.tm-para-char { ... }'} className='mt-3 w-full h-32 resize-none overflow-y-auto select-text rounded-xl border border-slate-200 bg-white p-3 font-mono text-[11px] leading-5 text-slate-700 outline-none' />
-        <input ref={fileRef} type='file' accept='.css,.txt,text/css,text/plain' className='hidden' onChange={event => void importFile(event)} />
-        <div className='mt-2 grid grid-cols-3 gap-2'>
-            <button type='button' onClick={() => fileRef.current?.click()} className='py-2.5 rounded-xl bg-white border border-slate-200 text-[11px] font-bold text-slate-600'>导入文件</button>
-            <button type='button' onClick={() => apply('', '')} disabled={!current && !draft.trim()} className='py-2.5 rounded-xl bg-white border border-slate-200 text-[11px] font-bold text-slate-600 disabled:opacity-40'>清空</button>
-            <button type='button' onClick={() => apply(draft, draft.trim() === current ? appearance.customCssName : '自定义')} className='py-2.5 rounded-xl bg-violet-600 text-[11px] font-bold text-white'>保存应用</button>
-        </div>
-    </div>;
 };
 
 export const StoryAppearanceButton: React.FC<{ className?: string }> = ({ className = '' }) => {
@@ -374,12 +311,13 @@ export const StoryAppearanceButton: React.FC<{ className?: string }> = ({ classN
         };
     }, [closePanel, open, registerBackHandler]);
     if (!context) return null;
-    const { appearance, setColor, setDecor, setFontSize, setQuote, setCustomCss } = context;
+    const { appearance, setColor, setDecor, setFontSize, setQuote, setSkin } = context;
     const rootProps = themeRootProps(appearance);
+    const skinOwnsColor = Boolean(findStorySkin(appearance.skin).color);
 
     return <>
         <button type='button' onClick={() => setOpen(true)} className={`w-9 h-9 rounded-full grid place-items-center ${className}`} title='剧情外观' aria-label='剧情外观'>
-            <Palette size={18} weight={appearance.decor === 'cinema' ? 'fill' : 'regular'} />
+            <Palette size={18} weight={appearance.decor === 'cinema' || appearance.skin !== 'classic' ? 'fill' : 'regular'} />
         </button>
         {open && createPortal(<div
             className={`${rootProps.className} fixed inset-0 z-[90] flex items-end sm:items-center justify-center overflow-y-auto overscroll-contain`}
@@ -399,8 +337,20 @@ export const StoryAppearanceButton: React.FC<{ className?: string }> = ({ classN
                     <button type='button' onClick={closePanel} className='w-10 h-10 shrink-0 rounded-full bg-white border border-slate-200 grid place-items-center' aria-label='关闭剧情外观'><X size={17} /></button>
                 </div>
                 <div className='mt-5 min-h-0 overflow-y-auto overscroll-contain border-t border-slate-200'>
-                    <div className='py-4 flex items-center gap-3'><span className='text-xs font-semibold w-16'>明暗</span><div className='min-w-0 flex-1 grid grid-cols-2 p-1 rounded-xl bg-slate-200'><button onClick={() => setColor('light')} className={`py-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1.5 ${appearance.color === 'light' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500'}`}><Sun size={14} />浅色</button><button onClick={() => setColor('dark')} className={`py-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1.5 ${appearance.color === 'dark' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500'}`}><Moon size={14} />深色</button></div></div>
+                    <div className='py-4'>
+                        <div className='text-xs font-semibold'>主题</div>
+                        <div className='mt-3 grid grid-cols-2 gap-3'>{STORY_SKINS.map(skin => {
+                            const active = appearance.skin === skin.id;
+                            return <button key={skin.id} type='button' onClick={() => setSkin(skin.id)} aria-pressed={active} className={`overflow-hidden rounded-2xl border-2 text-left ${active ? 'border-violet-600' : 'border-slate-200'}`}>
+                                <span className='block h-20 bg-slate-200 bg-cover bg-center' style={skin.thumb ? { backgroundImage: `url("${skin.thumb}")` } : { background: 'linear-gradient(135deg, #f6f4ef 0 50%, #111519 50% 100%)' }} />
+                                <span className='block px-3 py-2 bg-white'><strong className='flex items-center gap-1 text-[11px]'>{active ? '✓ ' : ''}{skin.name}</strong><span className='block mt-0.5 truncate text-[9px] text-slate-500'>{skin.subtitle}</span></span>
+                            </button>;
+                        })}</div>
+                    </div>
+                    {skinOwnsColor ? <p className='py-4 border-t border-slate-200 text-[10px] leading-5 text-slate-500'>当前主题自带配色与壁纸，「明暗 / 装饰」在切回经典后恢复。</p> : <>
+                    <div className='py-4 border-t border-slate-200 flex items-center gap-3'><span className='text-xs font-semibold w-16'>明暗</span><div className='min-w-0 flex-1 grid grid-cols-2 p-1 rounded-xl bg-slate-200'><button onClick={() => setColor('light')} className={`py-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1.5 ${appearance.color === 'light' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500'}`}><Sun size={14} />浅色</button><button onClick={() => setColor('dark')} className={`py-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1.5 ${appearance.color === 'dark' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500'}`}><Moon size={14} />深色</button></div></div>
                     <div className='py-4 border-t border-slate-200 flex items-center gap-3'><span className='text-xs font-semibold w-16'>装饰</span><div className='min-w-0 flex-1 grid grid-cols-2 p-1 rounded-xl bg-slate-200'><button onClick={() => setDecor('plain')} className={`py-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1.5 ${appearance.decor === 'plain' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500'}`}><SquaresFour size={14} />素雅</button><button onClick={() => setDecor('cinema')} className={`py-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1.5 ${appearance.decor === 'cinema' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500'}`}><Sparkle size={14} />花里胡哨</button></div></div>
+                    </>}
                     <div className='py-4 border-t border-slate-200'>
                         <div className='flex items-center gap-3'><span className='text-xs font-semibold w-16'>正文字号</span><input type='range' min={STORY_FONT_SIZE_MIN} max={STORY_FONT_SIZE_MAX} step={1} value={appearance.fontSize} onChange={event => setFontSize(Number(event.target.value))} aria-label='剧情正文字号' className='min-w-0 flex-1 accent-violet-600' /><span className='w-11 shrink-0 text-right text-[11px] font-bold tabular-nums text-violet-700'>{appearance.fontSize}px</span></div>
                         <div className='mt-3 ml-[4.75rem] flex flex-wrap gap-2'>{[13, 14, 15, 16, 18].map(size => <button key={size} type='button' onClick={() => setFontSize(size)} className={`px-3 py-1.5 rounded-full text-[10px] font-bold ${appearance.fontSize === size ? 'bg-violet-600 text-white' : 'bg-white text-slate-500 border border-slate-200'}`}>{size}{size === STORY_FONT_SIZE_DEFAULT ? ' 默认' : ''}</button>)}</div>
@@ -420,7 +370,6 @@ export const StoryAppearanceButton: React.FC<{ className?: string }> = ({ classN
                         </div>
                         <p className='story-prose mt-3 rounded-xl bg-white px-3 py-2 font-serif text-slate-800'>她停下脚步。<span className='story-quote'>“你还记得吗？”</span>风把声音吹散了。<span className='story-quote'>「走吧。」</span></p>
                     </div>
-                    <NuoCssSection appearance={appearance} setCustomCss={setCustomCss} />
                 </div>
             </div>
         </div>, document.body)}

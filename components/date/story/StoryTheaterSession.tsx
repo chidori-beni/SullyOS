@@ -65,82 +65,7 @@ import {
 import { processNewMessagesWithAutoArchive } from '../../../utils/memoryPalace/autoArchive';
 import { incrementDigestRound, runCognitiveDigestion } from '../../../utils/memoryPalace';
 import StoryQuickPresetPanel from './StoryQuickPresetPanel';
-import { StoryAppearanceButton, storyNuoCss, useStoryAppearance } from './StoryTheaterTheme';
-
-/**
- * 剧情套糯叽机「线下」美化时的宿主保底样式（和见面阅读模式同一思路）：
- * 用户 CSS 只管视觉，滚动 / 层级 / 可点区域由这里兜住，免得一条 min-height 把正文撑出屏幕。
- *
- * 颜色策略：剧情自己的 Tailwind 色都走 --story-* 变量。页面根上把这些变量改成 currentColor /
- * 透明，于是美化给 .tm-header-name / .tm-body 定的字色能一路继承下去；美化根本不认识的剧情专属
- * 区块（场景卡、幕后与余波、状态提示、弹窗……）挂 .story-nuo-card 或作为根的浮层，变量恢复成
- * 浅色调色板并垫一层底，保证任何美化下都看得清。
- */
-const STORY_NUO_HOST_CSS = `
-#this-moment-screen.story-nuo {
-  display: flex !important;
-  flex-direction: column !important;
-  min-height: 0 !important;
-  position: relative;
-  isolation: isolate;
-  --story-bg: transparent;
-  --story-surface: transparent;
-  --story-raised: transparent;
-  --story-soft: color-mix(in srgb, currentColor 10%, transparent);
-  --story-ink: currentColor;
-  --story-muted: currentColor;
-  --story-faint: currentColor;
-  --story-line: color-mix(in srgb, currentColor 22%, transparent);
-  --story-accent-ink: currentColor;
-}
-#this-moment-screen.story-nuo > .tm-bg-image,
-#this-moment-screen.story-nuo > .tm-bg-overlay {
-  position: absolute !important;
-  inset: 0 !important;
-  z-index: 0 !important;
-  pointer-events: none !important;
-}
-#this-moment-screen.story-nuo > .tm-header,
-#this-moment-screen.story-nuo > .tm-compose {
-  position: relative !important;
-  z-index: 20 !important;
-  flex: 0 0 auto !important;
-  pointer-events: auto !important;
-}
-#this-moment-screen.story-nuo > .tm-story {
-  position: relative !important;
-  z-index: 10 !important;
-  flex: 1 1 auto !important;
-  min-height: 0 !important;
-  height: auto !important;
-  overflow-y: auto !important;
-}
-#this-moment-screen.story-nuo .tm-para-block { font-size: var(--story-font-size, 15px) !important; }
-#this-moment-screen.story-nuo .story-nuo-card,
-#this-moment-screen.story-nuo > :not(.tm-header):not(.tm-story):not(.tm-compose):not(.tm-bg-image):not(.tm-bg-overlay):not(style) {
-  --story-bg: #f6f4ef;
-  --story-surface: #fffdfa;
-  --story-raised: #ffffff;
-  --story-soft: #e9edf2;
-  --story-ink: #243047;
-  --story-muted: #728097;
-  --story-faint: #aeb7c6;
-  --story-line: #dce1e8;
-  --story-accent-ink: #6d28d9;
-  color: #243047;
-}
-#this-moment-screen.story-nuo .story-nuo-card {
-  position: relative;
-  z-index: 9;
-  background: rgba(255, 253, 250, .92) !important;
-  color: #243047 !important;
-  border-radius: 14px;
-  padding: 10px 14px;
-  box-shadow: 0 4px 18px rgba(0, 0, 0, .16);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
-}
-`;
+import { StoryAppearanceButton } from './StoryTheaterTheme';
 import StoryApiPresetSheet from './StoryApiPresetSheet';
 import { readStoryApiPresetId, resolveStoryApi, writeStoryApiPresetId } from '../../../utils/storyApiPreset';
 import { splitStoryQuotes } from '../../../utils/storyQuoteHighlight';
@@ -307,7 +232,7 @@ const StorySceneRelationships: React.FC<{ inputs: StoryAffinityInput[] }> = ({ i
     })}</div>
 </div>;
 
-const StoryOutput: React.FC<{ content: string; onChoose?: (text: string) => void; affinityInputs: StoryAffinityInput[]; nuo?: boolean }> = ({ content, onChoose, affinityInputs, nuo = false }) => {
+const StoryOutput: React.FC<{ content: string; onChoose?: (text: string) => void; affinityInputs: StoryAffinityInput[] }> = ({ content, onChoose, affinityInputs }) => {
     const blocks = parseStoryDisplayBlocks(content);
     const relationshipSceneIndex = blocks.findIndex(block => block.kind === 'scene');
     const hasScene = relationshipSceneIndex >= 0;
@@ -320,11 +245,12 @@ const StoryOutput: React.FC<{ content: string; onChoose?: (text: string) => void
     const backstageGroups = mergeDisplayGroupsByTitle(groupDisplayLines(backstageLines, '主体', [], ['幕后暗格']));
     const debtGroups = groupDisplayLines(debtLines, '起因', ['镜头债'], ['镜头债', '镜头债 · 后果尚未到账']);
     const hasTrueMonologue = backstageLines.some(line => line.label === '心声' || line.label === '真正的独白');
-    // 美化模式：非正文区块（场景卡 / 幕后 / 小剧场 / 选项……）美化不认识，统一垫一层卡片保证可读。
-    const renderBlock = (block: typeof blocks[number], index: number): React.ReactNode => {
+    return <div className='space-y-6'>
+        {!hasScene && relationship}
+        {blocks.map((block, index) => {
             const lines = splitDisplayLines(block.text);
-            if (block.kind === 'story') return <p key={index} className={nuo ? 'tm-para-block tm-narration story-prose whitespace-pre-wrap' : 'story-prose font-serif text-slate-800 whitespace-pre-wrap'}><QuoteText text={block.text} /></p>;
-            if (block.kind === 'scene') return <section key={index} className='py-4 border-y border-slate-300'>
+            if (block.kind === 'story') return <p key={index} className='story-prose font-serif text-slate-800 whitespace-pre-wrap'><QuoteText text={block.text} /></p>;
+            if (block.kind === 'scene') return <section key={index} className='story-scene py-4 border-y border-slate-300'>
                 <div className='flex items-center gap-2 text-[9px] tracking-[.22em] uppercase font-bold text-violet-600'><FilmSlate size={14} weight='fill' />{block.title}</div>
                 <div className='mt-3 grid grid-cols-2 gap-x-5 gap-y-3'>{lines.map((line, lineIndex) => <div key={lineIndex} className={line.label === '场面' ? 'col-span-2' : ''}><div className='flex items-center gap-1 text-[9px] font-bold text-slate-400'>{line.label === '时间' ? <Clock size={11} /> : line.label === '地点' ? <MapPin size={11} /> : null}{line.label || '场景'}</div><div className='mt-1 text-[12px] leading-5 text-slate-700'>{line.value}</div></div>)}</div>
                 {index === relationshipSceneIndex && relationship}
@@ -371,20 +297,12 @@ const StoryOutput: React.FC<{ content: string; onChoose?: (text: string) => void
                 </details>;
             }
             return <section key={index} className='pl-4 border-l-2 border-slate-300'><div className='text-[10px] font-bold text-slate-500'>{block.title || '附加信息'}</div><div className='mt-2'><LabeledRows lines={lines} /></div></section>;
-    };
-    return <div className='space-y-6'>
-        {!hasScene && relationship && (nuo ? <div className='story-nuo-card'>{relationship}</div> : relationship)}
-        {blocks.map((block, index) => {
-            const node = renderBlock(block, index);
-            if (!nuo || block.kind === 'story' || node === null || node === undefined) return node;
-            return <div key={index} className='story-nuo-card'>{node}</div>;
         })}
     </div>;
 };
 
 const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, onEdit, onOpenVectorMemory, onEntryChange }) => {
     const { characters, userProfile, apiConfig, apiPresets, memoryPalaceConfig, remoteVectorConfig, updateCharacter, addToast, worldbooks } = useOS();
-    const appearance = useStoryAppearance();
     // 剧情专用 API：只记预设 id，在这里和主 API 合成；剧情里所有请求都走 storyApi，主配置不动。
     const [storyApiPresetId, setStoryApiPresetId] = useState<string | null>(readStoryApiPresetId);
     const [showApiSheet, setShowApiSheet] = useState(false);
@@ -1180,29 +1098,19 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
     }).map(actor => actor.id);
     const selectedAffinityActor = actors.find(actor => actor.id === selectedAffinityActorId) || actors[0];
     const selectedAffinityDraft = selectedAffinityActor ? (affinityDrafts[selectedAffinityActor.id] || EMPTY_AFFINITY_DRAFT) : EMPTY_AFFINITY_DRAFT;
-    // 糯叽机线下美化：页面换成见面阅读模式同一套 #this-moment-screen / .tm-* 结构，美化 CSS 原样生效。
-    const nuoCss = storyNuoCss(appearance);
-    const nuo = Boolean(nuoCss);
-    const card = nuo ? ' story-nuo-card' : '';
 
-    return <div id={nuo ? 'this-moment-screen' : undefined} className={nuo ? 'tm-screen story-nuo relative h-full w-full flex flex-col' : 'relative h-full w-full flex flex-col bg-stone-100 text-slate-800'}>
-        {nuo && <>
-            <style>{nuoCss.replace(/<\/style/gi, '<\\/style')}</style>
-            <style>{STORY_NUO_HOST_CSS}</style>
-            <div className='tm-bg-image' aria-hidden='true' />
-            <div className='tm-bg-overlay' aria-hidden='true' />
-        </>}
-        <header className={`story-safe-header shrink-0 z-10 ${nuo ? 'tm-header' : 'bg-stone-100/95 backdrop-blur border-b border-slate-200'}`}>
+    return <div className='relative h-full w-full flex flex-col bg-stone-100 text-slate-800'>
+        <header className='story-safe-header shrink-0 bg-stone-100/95 backdrop-blur border-b border-slate-200 z-10'>
             <div className='h-16 px-4 flex items-center gap-3'>
-                <button onClick={onBack} className='tm-btn-icon w-9 h-9 rounded-full grid place-items-center'><ArrowLeft size={20} /></button>
-                <div className='min-w-0 flex-1'><div className={`tm-top-vs text-[9px] tracking-[.24em] uppercase font-bold${nuo ? '' : ' text-violet-500'}`}>Story theater</div><h1 className='tm-header-name font-serif font-semibold truncate'>{entry.title}</h1></div>
-                {onOpenVectorMemory && <button onClick={onOpenVectorMemory} className={`tm-btn-icon w-9 h-9 rounded-full grid place-items-center${nuo ? '' : ' text-violet-600'}`} title='本剧情向量记忆' aria-label='本剧情向量记忆'><Database size={18} /></button>}
-                <button disabled={exporting || messages.length === 0} onClick={() => void exportStory()} className={`tm-btn-icon w-9 h-9 rounded-full grid place-items-center disabled:opacity-30${nuo ? '' : ' text-violet-600'}`} title='导出全部剧情原文' aria-label='导出全部剧情原文'>{exporting ? <SpinnerGap size={18} className='animate-spin' /> : <DownloadSimple size={18} />}</button>
-                <StoryAppearanceButton className='tm-btn-icon' />
-                <button onClick={onEdit} className='tm-btn-icon w-9 h-9 rounded-full grid place-items-center'><GearSix size={19} /></button>
+                <button onClick={onBack} className='w-9 h-9 rounded-full grid place-items-center'><ArrowLeft size={20} /></button>
+                <div className='min-w-0 flex-1'><div className='text-[9px] tracking-[.24em] uppercase font-bold text-violet-500'>Story theater</div><h1 className='font-serif font-semibold truncate'>{entry.title}</h1></div>
+                {onOpenVectorMemory && <button onClick={onOpenVectorMemory} className='w-9 h-9 rounded-full grid place-items-center text-violet-600' title='本剧情向量记忆' aria-label='本剧情向量记忆'><Database size={18} /></button>}
+                <button disabled={exporting || messages.length === 0} onClick={() => void exportStory()} className='w-9 h-9 rounded-full grid place-items-center text-violet-600 disabled:opacity-30' title='导出全部剧情原文' aria-label='导出全部剧情原文'>{exporting ? <SpinnerGap size={18} className='animate-spin' /> : <DownloadSimple size={18} />}</button>
+                <StoryAppearanceButton />
+                <button onClick={onEdit} className='w-9 h-9 rounded-full grid place-items-center'><GearSix size={19} /></button>
             </div>
-            <details className={nuo ? 'group story-nuo-card mx-3 mb-3 !px-0 !py-0' : 'group'}>
-                <summary className={`list-none cursor-pointer px-5 ${nuo ? 'py-3' : 'pb-3'} flex items-center gap-3`}>
+            <details className='group'>
+                <summary className='list-none cursor-pointer px-5 pb-3 flex items-center gap-3'>
                     <span className='flex -space-x-1.5 shrink-0'>{mask.avatar ? <img src={mask.avatar} alt='' className='w-7 h-7 rounded-full object-cover border-2 border-stone-100 relative z-10' /> : <span className='w-7 h-7 rounded-full bg-violet-100 text-violet-700 border-2 border-stone-100 grid place-items-center text-[9px] font-bold relative z-10'>{mask.name.slice(0, 1)}</span>}{actors.slice(0, 2).map(actor => <img key={actor.id} src={actor.avatar} alt='' className='w-7 h-7 rounded-full object-cover border-2 border-stone-100' />)}</span>
                     <span className='min-w-0 flex-1'><strong className='block truncate text-[11px] text-slate-700'>{youLabel} · 角色：{actors.map(actor => actor.name).join('、')}</strong><span className='block mt-0.5 truncate text-[9px] text-slate-400'>{entry.writesToCharacterMemory ? '真实时间陪伴' : '虚构剧场'}{activeMiniTheater ? ` · ${activeMiniTheater.name.replace(/^\S+小剧场[｜·]?\s*/, '')}` : ''}</span></span>
                     <span className='shrink-0 text-[9px] font-bold text-slate-400' title={displayedTokenInfo.exact ? '本轮实际使用的完整上下文' : '按本轮完整上下文估算'}>{displayedTokenInfo.count > 0 ? `${(displayedTokenInfo.count / 1000).toFixed(displayedTokenInfo.count >= 10000 ? 0 : 1)}k` : '—'}</span>
@@ -1219,17 +1127,17 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             </details>
         </header>
 
-        <main className={`story-page-scroll flex-1 overflow-y-auto px-5 py-7${nuo ? ' tm-story overflow-x-clip' : ''}`}>
-            <div className={`max-w-2xl mx-auto${nuo ? ' tm-story-inner' : ''}`}>
-                {messages.length === 0 ? <section className={nuo ? 'story-nuo-card !py-8' : 'py-10 border-y border-slate-200'}>
+        <main className='story-page-scroll flex-1 overflow-y-auto px-5 py-7'>
+            <div className='max-w-2xl mx-auto'>
+                {messages.length === 0 ? <section className='story-opening py-10 border-y border-slate-200'>
                     <div className='text-[9px] tracking-[.25em] uppercase font-bold text-violet-500'>Opening note</div>
                     <h2 className='mt-3 text-3xl font-serif font-semibold leading-tight'>{entry.title}</h2>
                     <p className='mt-5 text-sm leading-7 text-slate-600 whitespace-pre-wrap'>{entry.premise || (canWriteOpening ? '人物与世界已经就位，可以让故事先写下第一幕。' : '写下第一句话，让人物走进这座只属于本条剧情的剧场。')}</p>
                     <p className='mt-6 text-[10px] text-slate-400'>{canWriteOpening ? '输入框留空，点击推进即可开场' : '这一幕由你先落笔'}</p>
-                </section> : entry.writesToCharacterMemory && <div className={`mb-8 py-3 border-y border-amber-200 text-center text-[11px] text-amber-700${card}`}>和朋友们已经分别相处了一段时间……</div>}
+                </section> : entry.writesToCharacterMemory && <div className='mb-8 py-3 border-y border-amber-200 text-center text-[11px] text-amber-700'>和朋友们已经分别相处了一段时间……</div>}
 
                 {pageCount > 1 && <StoryPagination className='mb-4' page={messagePage} pageCount={pageCount} onChange={setMessagePage} />}
-                {pageArchivedIds.length > 0 && <div className={`mb-7 px-1 flex items-center justify-between gap-3 text-[9px] text-slate-400${card}`}><span>本页 {pageArchivedIds.length} 条归档原文 · 展开时才渲染正文</span><button onClick={togglePageArchives} className='shrink-0 px-3 py-1.5 rounded-full bg-white border border-slate-200 font-bold text-violet-600'>{allPageArchivesExpanded ? '全部收起' : '全部展开'}</button></div>}
+                {pageArchivedIds.length > 0 && <div className='mb-7 px-1 flex items-center justify-between gap-3 text-[9px] text-slate-400'><span>本页 {pageArchivedIds.length} 条归档原文 · 展开时才渲染正文</span><button onClick={togglePageArchives} className='shrink-0 px-3 py-1.5 rounded-full bg-white border border-slate-200 font-bold text-violet-600'>{allPageArchivesExpanded ? '全部收起' : '全部展开'}</button></div>}
 
                 <div className='space-y-8'>
                     {pageMessages.map(message => {
@@ -1241,7 +1149,7 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                                     ? '已存入本剧情向量分区'
                                     : '已收进剧场事件盒';
                             const isExpanded = expandedArchivedIds.has(message.id);
-                            return <details key={message.id} open={isExpanded} onToggle={event => setArchiveExpanded(message.id, event.currentTarget.open)} className={`group border-y border-slate-200${card}`}>
+                            return <details key={message.id} open={isExpanded} onToggle={event => setArchiveExpanded(message.id, event.currentTarget.open)} className='group border-y border-slate-200'>
                                 <summary className='list-none cursor-pointer py-3 flex items-center gap-3 text-slate-400 [&::-webkit-details-marker]:hidden'>
                                     <Archive size={13} className='shrink-0' />
                                     <span className='min-w-0 flex-1'>
@@ -1257,17 +1165,13 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                                 </div>}
                             </details>;
                         }
-                        if (message.role === 'user') {
-                            if (nuo) return <section key={message.id} {...pressHandlersFor(message)} className='tm-para tm-para-user'><div className='tm-body tm-body-user'><div className='text-[9px] tracking-[.16em] font-bold opacity-60'>你写下</div><p className='tm-para-block story-prose-user mt-2 whitespace-pre-wrap'><QuoteText text={message.content} /></p></div></section>;
-                            return <section key={message.id} {...pressHandlersFor(message)} className='pl-4 border-l-2 border-violet-300'><div className='text-[9px] tracking-[.16em] font-bold text-violet-500'>你写下</div><p className='story-prose-user mt-2 text-slate-600 whitespace-pre-wrap'><QuoteText text={message.content} /></p></section>;
-                        }
+                        if (message.role === 'user') return <section key={message.id} {...pressHandlersFor(message)} className='story-user-turn pl-4 border-l-2 border-violet-300'><div className='text-[9px] tracking-[.16em] font-bold text-violet-500'>你写下</div><p className='story-prose-user mt-2 text-slate-600 whitespace-pre-wrap'><QuoteText text={message.content} /></p></section>;
                         const isLatest = message.id === messages[messages.length - 1]?.id;
-                        const output = <StoryOutput content={message.content} onChoose={choice => setInput(choice)} affinityInputs={affinityInputsFromMessage(message, actors)} nuo={nuo} />;
-                        return <article key={message.id} {...pressHandlersFor(message)} className={nuo ? 'tm-para tm-para-char' : undefined}>{nuo ? <div className='tm-body tm-body-char'>{output}</div> : output}{isLatest && <div className='mt-4 flex items-center justify-end gap-2'><span className='w-1.5 h-1.5 rounded-full bg-violet-400' /><button disabled={generationBusy} onClick={() => void send(message)} className={`tm-regen-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-[10px] font-bold text-slate-500 disabled:opacity-40${card}`}>{rerollingId === message.id ? <SpinnerGap size={12} className='animate-spin' /> : <ArrowClockwise size={12} />}换一种写法</button></div>}</article>;
+                        return <article key={message.id} {...pressHandlersFor(message)} className='story-turn'><StoryOutput content={message.content} onChoose={choice => setInput(choice)} affinityInputs={affinityInputsFromMessage(message, actors)} />{isLatest && <div className='mt-4 flex items-center justify-end gap-2'><span className='w-1.5 h-1.5 rounded-full bg-violet-400' /><button disabled={generationBusy} onClick={() => void send(message)} className='inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-[10px] font-bold text-slate-500 disabled:opacity-40'>{rerollingId === message.id ? <SpinnerGap size={12} className='animate-spin' /> : <ArrowClockwise size={12} />}换一种写法</button></div>}</article>;
                     })}
                 </div>
                 {pageCount > 1 && <StoryPagination className='mt-8' page={messagePage} pageCount={pageCount} onChange={setMessagePage} />}
-                {archivedCount > 0 && <div className={`mt-10 flex items-center justify-center gap-2 text-[9px] text-slate-400${card}`}><Archive size={13} />{archivedCount} 条旧内容已归档，仍会通过所选记忆方式参与续写</div>}
+                {archivedCount > 0 && <div className='mt-10 flex items-center justify-center gap-2 text-[9px] text-slate-400'><Archive size={13} />{archivedCount} 条旧内容已归档，仍会通过所选记忆方式参与续写</div>}
                 <div ref={bottomRef} className='h-6' />
             </div>
         </main>
@@ -1278,13 +1182,13 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
             </div>
         </div>
 
-        <footer className={`story-safe-footer shrink-0 px-4 pt-3 ${nuo ? 'tm-compose' : 'bg-stone-100/95 backdrop-blur border-t border-slate-200'}`}>
+        <footer className='story-safe-footer shrink-0 px-4 pt-3 bg-stone-100/95 backdrop-blur border-t border-slate-200'>
             <div className='max-w-2xl mx-auto'>
-                {memoryStatus && <div className={`mb-2${card}`}><div className='flex items-center gap-2 text-[10px] text-violet-600'><SpinnerGap size={13} className='animate-spin' />{memoryStatus}</div></div>}
-                {sending && !backgroundPending && <div className={`mb-2 flex items-center gap-2 text-[10px] text-violet-600${card}`}><SpinnerGap size={13} className='animate-spin' />剧情正在生成，点击右侧方块可以停止</div>}
-                {backgroundPending && <div className={`mb-2 flex items-center gap-2 text-[10px] text-violet-600${card}`}><SpinnerGap size={13} className='animate-spin' />剧情正在后台生成，切到别的页面也会继续；完成后会自动回到这里</div>}
-                {!generationBusy && !memoryStatus && !input.trim() && pendingRetryInput && <div className={`mb-2 text-[10px] text-violet-600${card}`}>上次续写可能中断了，点击推进即可继续</div>}
-                {!generationBusy && !memoryStatus && canWriteOpening && <div className={`mb-2 text-[10px] text-violet-600${card}`}>准备好了，点击推进让故事写下第一幕</div>}
+                {memoryStatus && <div className='mb-2 flex items-center gap-2 text-[10px] text-violet-600'><SpinnerGap size={13} className='animate-spin' />{memoryStatus}</div>}
+                {sending && !backgroundPending && <div className='mb-2 flex items-center gap-2 text-[10px] text-violet-600'><SpinnerGap size={13} className='animate-spin' />剧情正在生成，点击右侧方块可以停止</div>}
+                {backgroundPending && <div className='mb-2 flex items-center gap-2 text-[10px] text-violet-600'><SpinnerGap size={13} className='animate-spin' />剧情正在后台生成，切到别的页面也会继续；完成后会自动回到这里</div>}
+                {!generationBusy && !memoryStatus && !input.trim() && pendingRetryInput && <div className='mb-2 text-[10px] text-violet-600'>上次续写可能中断了，点击推进即可继续</div>}
+                {!generationBusy && !memoryStatus && canWriteOpening && <div className='mb-2 text-[10px] text-violet-600'>准备好了，点击推进让故事写下第一幕</div>}
                 {affinityEnabled && <div className='mb-2 overflow-hidden rounded-2xl border border-rose-200 bg-rose-50/70'>
                     <button type='button' aria-expanded={showAffinityInput} onClick={() => setShowAffinityInput(value => !value)} className='w-full px-3 py-2.5 flex items-center gap-2 text-left'>
                         <HeartStraight size={15} weight={filledAffinityActorIds.length > 0 ? 'fill' : 'regular'} className='text-rose-500' />
@@ -1302,13 +1206,13 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
                         </div>}
                     </div>}
                 </div>}
-                <div className={`flex items-end gap-2 p-2 rounded-2xl ${nuo ? 'tm-compose-row' : 'bg-white border border-slate-200 shadow-sm'}`}>
+                <div className='story-compose flex items-end gap-2 p-2 rounded-2xl bg-white border border-slate-200 shadow-sm'>
                     <button type='button' onClick={() => void send(undefined, true)} disabled={generationBusy || actors.length === 0} className='self-end h-11 shrink-0 px-3 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 text-xs font-bold active:scale-95 transition-transform disabled:opacity-30' title='本轮不主动行动，让剧情按当前预设继续' aria-label='继续当前剧情'>继续</button>
                     <button type='button' onClick={() => setIsFullscreenEditor(true)} disabled={isStopping} className='self-end w-9 h-11 shrink-0 rounded-xl text-slate-400 grid place-items-center active:scale-95 transition-transform disabled:opacity-30' title='全屏编辑推进内容' aria-label='全屏编辑推进内容'><CornersOut size={18} /></button>
-                    <textarea value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void send(); } }} disabled={generationBusy} rows={2} placeholder={pendingRetryInput ? '留空并点击推进，可继续上次中断' : canWriteOpening ? '也可以先写一句；留空推进则由故事开场' : '写下动作、对白、时间跳转，或你希望故事发生的事……'} className={`min-w-0 min-h-12 max-h-36 flex-1 px-2 py-2 bg-transparent text-sm leading-6 resize-none outline-none overflow-y-auto select-text disabled:opacity-50${nuo ? ' tm-input' : ''}`} />
-                    <button type='button' onClick={() => generationBusy ? stopGeneration() : void send()} disabled={isStopping || (!generationBusy && !input.trim() && !pendingRetryInput && !canWriteOpening)} title={generationBusy ? (isStopping ? '正在停止生成…' : '停止生成') : !input.trim() && pendingRetryInput ? '继续上次中断' : canWriteOpening && !input.trim() ? '让故事先开场' : '推进'} aria-label={generationBusy ? '停止剧情生成' : '推进当前剧情'} className={`story-send-button tm-send-btn self-end w-11 h-11 shrink-0 rounded-xl text-white grid place-items-center disabled:opacity-30 ${generationBusy ? 'bg-rose-600' : nuo ? 'bg-black/40' : 'bg-slate-900'}`}>{generationBusy ? <Stop size={18} weight='bold' /> : <PaperPlaneTilt size={18} weight='fill' />}</button>
+                    <textarea value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void send(); } }} disabled={generationBusy} rows={2} placeholder={pendingRetryInput ? '留空并点击推进，可继续上次中断' : canWriteOpening ? '也可以先写一句；留空推进则由故事开场' : '写下动作、对白、时间跳转，或你希望故事发生的事……'} className='min-w-0 min-h-12 max-h-36 flex-1 px-2 py-2 bg-transparent text-sm leading-6 resize-none outline-none disabled:opacity-50' />
+                    <button type='button' onClick={() => generationBusy ? stopGeneration() : void send()} disabled={isStopping || (!generationBusy && !input.trim() && !pendingRetryInput && !canWriteOpening)} title={generationBusy ? (isStopping ? '正在停止生成…' : '停止生成') : !input.trim() && pendingRetryInput ? '继续上次中断' : canWriteOpening && !input.trim() ? '让故事先开场' : '推进'} aria-label={generationBusy ? '停止剧情生成' : '推进当前剧情'} className={`story-send-button self-end w-11 h-11 shrink-0 rounded-xl text-white grid place-items-center disabled:opacity-30 ${generationBusy ? 'bg-rose-600' : 'bg-slate-900'}`}>{generationBusy ? <Stop size={18} weight='bold' /> : <PaperPlaneTilt size={18} weight='fill' />}</button>
                 </div>
-                <div className={`mt-2 flex items-center gap-2${card}`}>
+                <div className='mt-2 flex items-center gap-2'>
                     <button type='button' onClick={() => setShowApiSheet(true)} data-testid='story-api-preset-entry' className={`min-w-0 max-w-[60%] shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold ${storyOwnApi ? 'border-violet-200 bg-violet-50 text-violet-700' : resolvedStoryApi.missing ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-500'}`} title='剧情专用 API' aria-label='切换剧情专用 API'>
                         <Plugs size={12} weight='fill' className='shrink-0' />
                         <span className='truncate'>{resolvedStoryApi.preset ? resolvedStoryApi.preset.name : resolvedStoryApi.missing ? '预设已删 · 主 API' : `主 API${apiConfig.model ? ` · ${apiConfig.model}` : ''}`}</span>
