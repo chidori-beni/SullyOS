@@ -3,7 +3,7 @@ import {
     buildResumeCommand, canResume, RESUME_REWIND_SEC,
     buildWorkRecap, groupCinemaWorks, nextEpisode, normalizeWorkTitle, lastCharTurn,
     estimateVideoTime, pickSubtitleWindow, sanitizeExternalSubtitles,
-    appendSubtitleLines, CINEMA_SUBTITLES_KEEP,
+    appendSubtitleLines, CINEMA_SUBTITLES_KEEP, subtitlesSince,
     splitCinemaActions, toCinemaLines, cinemaLineText,
     isPlayerFresh, mergeCinemaStatus, PLAYER_STALE_MS,
     buildCinemaEndCardText, cinemaMessageMetadata,
@@ -248,9 +248,9 @@ describe('影院 · 出声时的写法', () => {
 
 describe('影院 · B站 字幕', () => {
     it('接上新来的句子，跟最后一句一样的不重复，最多留 20 句', () => {
-        let lines = appendSubtitleLines([], [{ time: 1, text: 'a' }, { time: 2, text: 'a' }, { time: 3, text: ' b ' }, { text: '' }, 'junk']);
-        expect(lines).toEqual([{ time: 1, text: 'a' }, { time: 3, text: 'b' }]);
-        for (let i = 0; i < 30; i += 1) lines = appendSubtitleLines(lines, [{ time: i, text: `句${i}` }]);
+        let lines = appendSubtitleLines([], [{ time: 1, text: 'a' }, { time: 2, text: 'a' }, { time: 3, text: ' b ' }, { text: '' }, 'junk'], 500);
+        expect(lines).toEqual([{ time: 1, text: 'a', at: 500 }, { time: 3, text: 'b', at: 500 }]);
+        for (let i = 0; i < 100; i += 1) lines = appendSubtitleLines(lines, [{ time: i, text: `句${i}` }]);
         expect(lines).toHaveLength(CINEMA_SUBTITLES_KEEP);
         expect(appendSubtitleLines(lines, undefined)).toBe(lines);
     });
@@ -261,7 +261,7 @@ describe('影院 · B站 字幕', () => {
             session: { title: 'x', spoiler: 'first' },
             recentSubtitles: [{ time: 100, text: '你到底是谁' }, { text: '我是钟表馆的主人' }],
         });
-        expect(text).toContain('最近的台词');
+        expect(text).toContain('你上次开口以来的台词');
         expect(text).toContain('不是千夜说的');
         expect(text).toContain('1:40 你到底是谁');
         expect(text).toContain('· 我是钟表馆的主人');
@@ -285,6 +285,16 @@ describe('影院 · 外挂字幕', () => {
         expect(estimateVideoTime({ mode: 'site', time: 100, paused: false, at }, at + 5000)).toBe(105);
         expect(estimateVideoTime({ mode: 'site', time: 100, paused: true, at }, at + 5000)).toBe(100);
         expect(estimateVideoTime({ mode: 'share', sharing: true, at })).toBeUndefined();
+    });
+
+    it('角色开口时带「上次开口以来」的台词：最多 40 句，不够 10 句用最近 10 句垫', () => {
+        const lines = Array.from({ length: 60 }, (_, i) => ({ text: `句${i}`, at: i * 1000 }));
+        // 上次开口在第 5 秒（往前多给 15 秒 → 全部都算），最多 40 句
+        expect(subtitlesSince(lines, 5_000).map(l => l.text)).toEqual(lines.slice(-40).map(l => l.text));
+        // 上次开口在第 50 秒：35 秒起的 25 句
+        expect(subtitlesSince(lines, 50_000)).toHaveLength(25);
+        // 刚开过口：只有 2 句新的 → 垫成最近 10 句
+        expect(subtitlesSince(lines, 74_000).map(l => l.text)).toEqual(lines.slice(-10).map(l => l.text));
     });
 
     it('按进度挑出这一句和最近几句', () => {

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const safeFetchJson = vi.fn();
 vi.mock('../safeApi', () => ({ safeFetchJson: (...args: any[]) => safeFetchJson(...args) }));
 
-const { cleanNote, describeFrame, nextNoteModel, noteModelCandidates, NoteVisionUnsupportedError } = await import('./sceneNotes');
+const { buildNoteInstruction, cleanNote, describeFrame, nextNoteModel, noteModelCandidates, NoteVisionUnsupportedError } = await import('./sceneNotes');
 
 const main = { baseUrl: 'https://main.example/v1/', apiKey: 'k', model: 'big-vision' } as any;
 const light = { baseUrl: 'https://light.example/v1', apiKey: 'l', model: 'small' };
@@ -53,6 +53,27 @@ describe('写一条画面笔记', () => {
 
     it('笔记收拾干净、太长截断', () => {
         expect(cleanNote('<think>嗯</think>  男主  推开门 ')).toBe('男主 推开门');
-        expect(cleanNote('字'.repeat(200))).toHaveLength(80);
+        expect(cleanNote('字'.repeat(500))).toHaveLength(300);
+    });
+
+    it('要求每个人分开写，带上片名、前几条笔记（称呼一致）和此刻台词', async () => {
+        const text = buildNoteInstruction({
+            work: '《葬送的芙莉莲》 第3集',
+            prevNotes: ['n1', 'n2', '银发精灵少女坐在花田里', '费伦在她身后'],
+            subtitles: ['你在想什么'],
+        });
+        expect(text).toContain('每个人分开写');
+        expect(text).toContain('《葬送的芙莉莲》 第3集');
+        expect(text).not.toContain('n1'); // 只带最近 3 条
+        expect(text).toContain('银发精灵少女坐在花田里');
+        expect(text).toContain('你在想什么');
+        expect(buildNoteInstruction()).not.toContain('前面几条笔记');
+
+        safeFetchJson.mockResolvedValue({ choices: [{ message: { content: 'ok' } }] });
+        const [model] = noteModelCandidates(main, light);
+        await describeFrame(model, 'data:image/jpeg;base64,xx', '萧逸', { work: '《孤独摇滚》' });
+        const body = JSON.parse(safeFetchJson.mock.calls[0][1].body);
+        expect(body.messages[0].content[0].text).toContain('《孤独摇滚》');
+        expect(body.max_tokens).toBe(2000);
     });
 });

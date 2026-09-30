@@ -16,7 +16,7 @@ import { runCallMemoryPalacePostFlow } from '../utils/memoryPalace/callPostFlow'
 import { endCinemaPresence, getActiveCinemaPresence, touchCinemaPresence } from '../utils/cinema/cinemaPresence';
 import { getActiveDatePresence } from '../utils/datePresence';
 import {
-    appendCinemaNote, appendSubtitleLines, buildCinemaEndCardText, buildResumeCommand, buildWorkRecap, canResume, cinemaChatApiConfig, CINEMA_API_PRESET_KEY, lastCharTurn, groupCinemaWorks, nextEpisode, type CinemaWork, estimateVideoTime, pickSubtitleWindow, sanitizeExternalSubtitles, CINEMA_END_SOURCE, cinemaLineText, cinemaMessageMetadata, decideProactive,
+    appendCinemaNote, appendSubtitleLines, buildCinemaEndCardText, buildResumeCommand, buildWorkRecap, canResume, cinemaChatApiConfig, CINEMA_API_PRESET_KEY, lastCharTurn, groupCinemaWorks, nextEpisode, type CinemaWork, estimateVideoTime, pickSubtitleWindow, sanitizeExternalSubtitles, subtitlesSince, CINEMA_SUBTITLES_MAX_IN_PROMPT, CINEMA_END_SOURCE, cinemaLineText, cinemaMessageMetadata, decideProactive,
     NOTE_GAP_MS, PROACTIVE_LEVELS, toCinemaLines,
     type CinemaNote, type CinemaProactiveLevel, type ResumeCommand, type CinemaSubtitleLine, type ExternalSubtitles, type ProactiveReason,
     describeStatus, describeWork, formatVideoTime, isFrameFresh, mergeCinemaStatus, newCinemaSession, sessionRemembers, workerHostForDisplay,
@@ -462,13 +462,15 @@ const CinemaApp: React.FC = () => {
             // 有外挂字幕、又读得到进度：用它挑「这一句 + 最近几句」，比 B站 AI 字幕准；否则用 B站 读到的
             const external = externalSubsRef.current;
             const videoNow = estimateVideoTime(statusRef.current);
-            const picked = external && videoNow !== undefined ? pickSubtitleWindow(external, videoNow) : null;
+            // 从他上次开口到现在的台词（至少往前 90 秒），最多 40 句
+            const sinceSec = Math.max(90, (Date.now() - lastCharAtRef.current) / 1000 + 15);
+            const picked = external && videoNow !== undefined ? pickSubtitleWindow(external, videoNow, sinceSec, CINEMA_SUBTITLES_MAX_IN_PROMPT) : null;
             const statusForPrompt = picked && statusRef.current ? { ...statusRef.current, subtitle: picked.current || '' } : statusRef.current;
             const result = await askCharacterInCinema({
                 char, userProfile, groups, apiConfig: chatApiRef.current, realtimeConfig,
                 session: sessionRef.current!, status: statusForPrompt, frameDataUrl: frameUrl,
                 proactive: opts.proactive, mustSpeak: opts.mustSpeak,
-                recentSubtitles: picked ? picked.recent : subtitleLinesRef.current,
+                recentSubtitles: picked ? picked.recent : subtitlesSince(subtitleLinesRef.current, lastCharAtRef.current),
                 workRecap: buildWorkRecap(sessionsRef.current, sessionRef.current!),
                 // 开着出声才教他写停顿和语气声；只打字的时候别让这些标记混进来
                 voiceGuide: voiceOnRef.current && canCinemaSpeak(char, apiConfig) ? buildVoiceActingGuide(char) : undefined,
@@ -578,7 +580,18 @@ const CinemaApp: React.FC = () => {
         noteBusyRef.current = true;
         lastNoteAtRef.current = Date.now();
         try {
-            const text = await describeFrame(model, f.dataUrl, char?.name);
+            // 带上片名、前三条笔记（同一个人叫法一致）和此刻的台词（认出是谁在说话）
+            const cur = sessionRef.current;
+            const ext = externalSubsRef.current;
+            const vt = estimateVideoTime(statusRef.current);
+            const noteSubs = ext && vt !== undefined
+                ? pickSubtitleWindow(ext, vt, 20, 3).recent.map(l => l.text)
+                : subtitleLinesRef.current.slice(-3).map(l => l.text);
+            const text = await describeFrame(model, f.dataUrl, char?.name, {
+                work: cur ? describeWork(cur) : undefined,
+                prevNotes: (cur?.notes || []).slice(-3).map(n => n.text),
+                subtitles: noteSubs,
+            });
             const note: CinemaNote = { at: Date.now(), videoTime: f.videoTime ?? statusRef.current?.time, text };
             setLastNote(note);
             await updateSession(s => ({ ...s, notes: appendCinemaNote(s.notes, note) }));

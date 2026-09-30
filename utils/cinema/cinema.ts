@@ -370,25 +370,38 @@ export interface CinemaPromptContext {
     mustSpeak?: boolean;
 }
 
-/** 一句字幕。time 是视频里的秒数（读不到就没有）。 */
+/** 一句字幕。time 是视频里的秒数（读不到就没有）；at 是手机收到它的时刻，用来挑「上次开口以来」的台词。 */
 export interface CinemaSubtitleLine {
     time?: number;
     text: string;
+    at?: number;
 }
 
-export const CINEMA_SUBTITLES_KEEP = 20;
+export const CINEMA_SUBTITLES_KEEP = 80;
+/** 至少带这么多句（刚开口过、中间没几句台词时，也给点上文）。 */
 export const CINEMA_SUBTITLES_IN_PROMPT = 10;
+/** 最多带这么多句：从角色上次开口到现在的台词（10-01 用户要字幕给全）。 */
+export const CINEMA_SUBTITLES_MAX_IN_PROMPT = 40;
 
-/** 把小插件新带来的几句接到后面：跟最后一句一样的不重复记，最多留 20 句。 */
-export const appendSubtitleLines = (prev: CinemaSubtitleLine[], incoming: unknown): CinemaSubtitleLine[] => {
+/** 把小插件新带来的几句接到后面：跟最后一句一样的不重复记，最多留 CINEMA_SUBTITLES_KEEP 句。 */
+export const appendSubtitleLines = (prev: CinemaSubtitleLine[], incoming: unknown, now = Date.now()): CinemaSubtitleLine[] => {
     if (!Array.isArray(incoming)) return prev;
     const out = [...prev];
     for (const raw of incoming) {
         const text = typeof raw?.text === 'string' ? raw.text.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
         if (!text || out[out.length - 1]?.text === text) continue;
-        out.push({ text, ...(typeof raw?.time === 'number' && Number.isFinite(raw.time) ? { time: raw.time } : {}) });
+        out.push({ text, ...(typeof raw?.time === 'number' && Number.isFinite(raw.time) ? { time: raw.time } : {}), at: now });
     }
     return out.slice(-CINEMA_SUBTITLES_KEEP);
+};
+
+/**
+ * 角色开口时带哪些台词：从他上次开口（往前再多给 15 秒）到现在的全部，最多 40 句；
+ * 不够 10 句就用最近 10 句垫上。
+ */
+export const subtitlesSince = (lines: CinemaSubtitleLine[], since: number): CinemaSubtitleLine[] => {
+    const fresh = lines.filter(l => (l.at ?? 0) >= since - 15_000).slice(-CINEMA_SUBTITLES_MAX_IN_PROMPT);
+    return fresh.length >= CINEMA_SUBTITLES_IN_PROMPT ? fresh : lines.slice(-CINEMA_SUBTITLES_IN_PROMPT);
 };
 
 /**
@@ -401,9 +414,9 @@ export const buildCinemaInstruction = (ctx: CinemaPromptContext): string => {
     const notesBlock = recentNotes.length
         ? `\n- 最近的画面笔记（助理看截图写的，按时间先后，帮你跟上剧情；只当作你自己看到的画面，不要提到「笔记」或「助理」）：\n${recentNotes.map(n => `  · ${formatVideoTime(n.videoTime) || new Date(n.at).toLocaleTimeString()} ${n.text}`).join('\n')}`
         : '';
-    const recentSubs = (ctx.recentSubtitles || []).slice(-CINEMA_SUBTITLES_IN_PROMPT);
+    const recentSubs = (ctx.recentSubtitles || []).slice(-CINEMA_SUBTITLES_MAX_IN_PROMPT);
     const subtitlesBlock = recentSubs.length
-        ? `\n- 最近的台词（播放器上的字幕，按时间先后；这是剧里人物说的话，不是${userName}说的）：\n${recentSubs.map(l => `  · ${formatVideoTime(l.time) ? `${formatVideoTime(l.time)} ` : ''}${l.text}`).join('\n')}`
+        ? `\n- 你上次开口以来的台词（播放器上的字幕，按时间先后；这是剧里人物说的话，不是${userName}说的）：\n${recentSubs.map(l => `  · ${formatVideoTime(l.time) ? `${formatVideoTime(l.time)} ` : ''}${l.text}`).join('\n')}`
         : '';
     const proactiveBlock = proactive
         ? `\n- **这一轮没人跟你说话**（${PROACTIVE_REASON_TEXT[proactive]}），是你自己看着看着想说点什么：可以是感想、吐槽、猜测、提醒对方注意某个细节，或者因为暂停随口问一句。别重复你刚说过的话。${ctx.mustSpeak ? '这一次要说点什么，不要输出「[安静]」。' : '**如果这会儿确实没什么想说的，只输出「[安静]」**，不要硬凑。'}`

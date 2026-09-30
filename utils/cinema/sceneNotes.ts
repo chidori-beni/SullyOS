@@ -48,7 +48,29 @@ export const NOTE_MODEL_LABEL: Record<NoteModelSource, string> = {
     main: '主 API',
 };
 
-const NOTE_INSTRUCTION = '你是观影助理。用一句中文（40 字以内）客观描述这张影视截图：谁在做什么、在什么地方、气氛如何；画面里有字幕就把字幕原文带上。只描述，不评论，不猜剧情，不要加前缀。';
+/** 写笔记时顺手带给助理的参考：片名、前几条笔记（让人物称呼前后一致）、此刻的台词。 */
+export interface NoteContext {
+    work?: string;
+    prevNotes?: string[];
+    subtitles?: string[];
+}
+
+/** 笔记最长多少字（10-01 用户要详细一些、每个人分清楚：从一句 40 字改成两到四句）。 */
+export const NOTE_MAX_CHARS = 300;
+
+export const buildNoteInstruction = (ctx: NoteContext = {}): string => {
+    const prev = (ctx.prevNotes || []).filter(Boolean).slice(-3);
+    const subs = (ctx.subtitles || []).filter(Boolean).slice(-3);
+    return [
+        `你是观影助理，替一个此刻没看屏幕的人记下画面。这是${ctx.work ? ctx.work : '一部影视作品'}的一张截图。用中文写 2~4 句、150 字以内的客观描述：`,
+        '- 画面里的**每个人分开写**：是谁（认得出是这部作品里的哪个角色就写名字；认不出就用稳定的外貌特征称呼，比如「银发精灵少女」「戴眼镜的高个男人」），表情神态、在做什么、在画面哪里、在跟谁互动。',
+        '- 地点、时间、光线和气氛；镜头是特写、近景还是远景。',
+        '- 画面上出现的文字或字幕照原文带上。',
+        '只写看得见的，不评论，不猜后面的剧情。写成一段话，不要分点，不要加「画面中」之类的前缀。',
+        prev.length ? `\n前面几条笔记（同一个人的称呼请跟它们保持一致）：\n${prev.map(n => `· ${n}`).join('\n')}` : '',
+        subs.length ? `\n这会儿播放器上的台词（可以帮你认出是谁在说话）：\n${subs.map(s => `· ${s}`).join('\n')}` : '',
+    ].filter(Boolean).join('\n');
+};
 
 /** 把模型回的话收拾成一句笔记。 */
 export const cleanNote = (raw: string): string => String(raw || '')
@@ -56,7 +78,7 @@ export const cleanNote = (raw: string): string => String(raw || '')
     .replace(/^[「"'\s]+|[」"'\s]+$/g, '')
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, 80);
+    .slice(0, NOTE_MAX_CHARS);
 
 export class NoteVisionUnsupportedError extends Error {
     constructor(readonly source: NoteModelSource, cause: unknown) {
@@ -65,7 +87,7 @@ export class NoteVisionUnsupportedError extends Error {
     }
 }
 
-export async function describeFrame(model: NoteModel, dataUrl: string, charName?: string): Promise<string> {
+export async function describeFrame(model: NoteModel, dataUrl: string, charName?: string, ctx?: NoteContext): Promise<string> {
     let data: any;
     try {
         data = await safeFetchJson(`${model.baseUrl}/chat/completions`, {
@@ -76,12 +98,13 @@ export async function describeFrame(model: NoteModel, dataUrl: string, charName?
                 messages: [{
                     role: 'user',
                     content: [
-                        { type: 'text', text: NOTE_INSTRUCTION },
+                        { type: 'text', text: buildNoteInstruction(ctx) },
                         { type: 'image_url', image_url: { url: dataUrl } },
                     ],
                 }],
                 temperature: 0.3,
-                max_tokens: 200,
+                // 会思考的模型（Gemini 3 等）思考也算在这里面，给小了笔记会被挤断
+                max_tokens: 2000,
                 stream: false,
             }),
         }, 0, 0, { appName: '影院', charName, purpose: `画面笔记（${NOTE_MODEL_LABEL[model.source]}）` });

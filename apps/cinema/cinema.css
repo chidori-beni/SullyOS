@@ -216,7 +216,7 @@
 .cn-proactive .cn-seg button { border-radius: 999px; }
 .cn-proactive .cn-seg button.on { background: var(--cn-accent); color: var(--cn-accent-ink) !important; }
 .cn-seg.small button { padding: 3px 4px; font-size: 12px; white-space: nowrap; }
-.cn-note { flex-shrink: 0; padding: 5px 12px; font-size: 11.5px; color: var(--cn-sub); font-style: italic; background: var(--cn-bg); border-bottom: 1px solid var(--cn-line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cn-note { flex-shrink: 0; padding: 5px 12px; font-size: 11.5px; line-height: 1.5; color: var(--cn-sub); font-style: italic; background: var(--cn-bg); border-bottom: 1px solid var(--cn-line); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 
 /* 语音：出声开关、麦克风、气泡上的重听小喇叭 */
 .cn-voice { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border-radius: 999px; border: 1px solid var(--cn-line); background: none; color: var(--cn-sub) !important; }
