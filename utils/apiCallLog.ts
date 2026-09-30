@@ -89,6 +89,16 @@ export interface ApiCallLogEntry extends ApiCallMeta {
     completionTokens?: number;
     /** 总 token（total_tokens） */
     totalTokens?: number;
+    /** 其中命中缓存的输入 token（cached_tokens 一类字段），中转报了才有 */
+    cachedTokens?: number;
+    /** 模型思考用掉的 token（reasoning_tokens / thoughtsTokenCount），中转报了才有 */
+    reasoningTokens?: number;
+    /**
+     * 中转在 usage 里报的原话（所有数字字段压成一行）。Sully 不自己算 token，只照抄中转报的；
+     * 有的中转报的输入数跟它自己账单对不上（10-01 实测：绒米把缓存重复算进 prompt_tokens），
+     * 留着原话才能对账。
+     */
+    usageRaw?: string;
     /** 请求从发起到响应 / 报错的耗时 ms（NetworkError 类失败时 = 等了多久才断） */
     durationMs?: number;
     /**
@@ -316,6 +326,34 @@ export function extractApiTokenUsage(response: unknown): { prompt?: number; comp
         prompt: num(usage.prompt_tokens ?? usage.input_tokens ?? usage.promptTokenCount),
         completion: num(usage.completion_tokens ?? usage.output_tokens ?? usage.candidatesTokenCount),
         total: num(usage.total_tokens ?? usage.totalTokenCount),
+    };
+}
+
+/**
+ * usage 里的附加信息：缓存命中、思考用量、原话。跟上面分开，免得改动老的那三件套。
+ * 各家字段名不一样：OpenAI 在 *_tokens_details 里，Anthropic 是 cache_read_input_tokens，Gemini 是 cachedContentTokenCount。
+ */
+export function extractApiUsageDetails(response: unknown): { cached?: number; reasoning?: number; raw?: string } {
+    const root = response as any;
+    const usage = root?.usage || root?.usage_metadata || root?.usageMetadata;
+    if (!usage || typeof usage !== 'object') return {};
+    const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined);
+    const flat: string[] = [];
+    const walk = (obj: any, prefix: string, depth: number) => {
+        if (!obj || typeof obj !== 'object' || depth > 2) return;
+        for (const [k, v] of Object.entries(obj)) {
+            if (typeof v === 'number' && Number.isFinite(v)) flat.push(`${prefix}${k}=${v}`);
+            else if (v && typeof v === 'object' && !Array.isArray(v)) walk(v, `${prefix}${k}.`, depth + 1);
+        }
+    };
+    walk(usage, '', 0);
+    const raw = flat.join(', ').slice(0, 400);
+    return {
+        cached: num(usage.prompt_tokens_details?.cached_tokens ?? usage.input_tokens_details?.cached_tokens
+            ?? usage.cache_read_input_tokens ?? usage.cachedContentTokenCount ?? usage.cached_tokens),
+        reasoning: num(usage.completion_tokens_details?.reasoning_tokens ?? usage.output_tokens_details?.reasoning_tokens
+            ?? usage.thoughtsTokenCount ?? usage.reasoning_tokens),
+        ...(raw ? { raw } : {}),
     };
 }
 
@@ -1016,6 +1054,7 @@ export function recordApiCall(input: {
             if (scanned.usage) responseForExtract = { usage: scanned.usage };
         }
         const usage = extractApiTokenUsage(responseForExtract);
+        const usageDetails = extractApiUsageDetails(responseForExtract);
         const entry: ApiCallLogEntry = {
             id: input.requestId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             timestamp: Date.now(),
@@ -1028,6 +1067,9 @@ export function recordApiCall(input: {
             promptTokens: usage.prompt,
             completionTokens: usage.completion,
             totalTokens: usage.total,
+            ...(usageDetails.cached != null ? { cachedTokens: usageDetails.cached } : {}),
+            ...(usageDetails.reasoning != null ? { reasoningTokens: usageDetails.reasoning } : {}),
+            ...(usageDetails.raw ? { usageRaw: usageDetails.raw } : {}),
             durationMs: input.durationMs,
             promptBreakdown: buildPromptBreakdown(input.body),
             appId: meta.appId,

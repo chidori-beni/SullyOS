@@ -99,6 +99,8 @@ export interface AskCinemaInput extends CinemaContextInput {
     recentSubtitles?: CinemaSubtitleLine[];
     /** 同一部作品之前一起看过的几场（前情） */
     workRecap?: string;
+    /** 重来主动开口那一句：这次不许回「[安静]」 */
+    mustSpeak?: boolean;
 }
 
 export interface AskCinemaResult {
@@ -106,6 +108,8 @@ export interface AskCinemaResult {
     lines: string[];
     /** 这次真的把画面发给模型了（模型不支持看图时是 false） */
     sawFrame: boolean;
+    /** 模型说到一半被额度截断了（finish_reason = length），界面提示可以重来 */
+    truncated?: boolean;
 }
 
 export async function askCharacterInCinema(input: AskCinemaInput): Promise<AskCinemaResult> {
@@ -127,7 +131,7 @@ export async function askCharacterInCinema(input: AskCinemaInput): Promise<AskCi
         const system = context.systemPrompt + buildCinemaInstruction({
             userName, charName: char.name, session, status: input.status, hasFrame,
             notes: session.notes, proactive, voiceGuide: input.voiceGuide, recentSubtitles: input.recentSubtitles,
-            workRecap: input.workRecap,
+            workRecap: input.workRecap, mustSpeak: input.mustSpeak,
         });
         const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '');
         return safeFetchJson(`${baseUrl}/chat/completions`, {
@@ -137,8 +141,9 @@ export async function askCharacterInCinema(input: AskCinemaInput): Promise<AskCi
                 model: apiConfig.model,
                 messages: [{ role: 'system', content: system }, ...messages],
                 temperature: 0.9,
-                // Claude 原生接口必填；经 OpenAI→Claude 中转时缺了会被打回（跟通话一致）
-                max_tokens: 2000,
+                // Claude 原生接口必填；经 OpenAI→Claude 中转时缺了会被打回。
+                // 给足：Gemini 3 这类会思考的模型，思考也算在这个额度里，2000 时台词常被挤断（10-01 实测）
+                max_tokens: 8000,
                 stream: false,
             }),
         }, retries, 0, { appName: '影院', charId: char.id, charName: char.name, purpose: `${proactive ? '一起看·主动开口' : '一起看'}${hasFrame ? '·带画面' : ''}` });
@@ -160,11 +165,12 @@ export async function askCharacterInCinema(input: AskCinemaInput): Promise<AskCi
         data = await send(textMessages, false, 2);
     }
     const raw = data?.choices?.[0]?.message?.content || '';
+    const truncated = /^(length|max_tokens|MAX_TOKENS)$/.test(String(data?.choices?.[0]?.finish_reason || ''));
     if (proactive && isSilentReply(raw)) return { lines: [], sawFrame };
     const lines = cleanCinemaReply(raw).filter(line => !isSilentReply(line));
     if (!lines.length) {
-        if (proactive) return { lines: [], sawFrame };
-        throw new Error('角色这次没有回复内容（模型返回为空）');
+        if (proactive && !truncated) return { lines: [], sawFrame };
+        throw new Error(truncated ? '回复被截断了，一个字都没说出来（模型思考用光了额度），再试一次' : '角色这次没有回复内容（模型返回为空）');
     }
-    return { lines, sawFrame };
+    return { lines, sawFrame, truncated };
 }

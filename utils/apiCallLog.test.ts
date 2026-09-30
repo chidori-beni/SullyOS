@@ -5,6 +5,7 @@ import {
     captureApiRequestOnce,
     coreModelName,
     extractApiTokenUsage,
+    extractApiUsageDetails,
     formatApiRequestCaptureTxt,
     getApiCallAmbientContext,
     getApiRequestCaptureSectionContent,
@@ -159,6 +160,20 @@ describe('one-shot full API request capture', () => {
             .toEqual({ prompt: 70, completion: 20, total: undefined });
         expect(extractApiTokenUsage({ usageMetadata: { promptTokenCount: 80, candidatesTokenCount: 10, totalTokenCount: 90 } }))
             .toEqual({ prompt: 80, completion: 10, total: 90 });
+    });
+
+    it('keeps cache hits, thinking tokens and the relay\'s raw usage line for reconciling bills', () => {
+        const d = extractApiUsageDetails({ usage: {
+            prompt_tokens: 190285, completion_tokens: 985, total_tokens: 191270,
+            prompt_tokens_details: { cached_tokens: 57200 }, completion_tokens_details: { reasoning_tokens: 896 },
+        } });
+        expect(d.cached).toBe(57200);
+        expect(d.reasoning).toBe(896);
+        expect(d.raw).toBe('prompt_tokens=190285, completion_tokens=985, total_tokens=191270, prompt_tokens_details.cached_tokens=57200, completion_tokens_details.reasoning_tokens=896');
+        expect(extractApiUsageDetails({ usageMetadata: { promptTokenCount: 80, cachedContentTokenCount: 40, thoughtsTokenCount: 12 } }))
+            .toMatchObject({ cached: 40, reasoning: 12 });
+        expect(extractApiUsageDetails({ usage: { prompt_tokens: 5, prompt_tokens_details: { cached_tokens: 0 } } }).cached).toBeUndefined();
+        expect(extractApiUsageDetails({})).toEqual({});
     });
 
     it('backfills the real response usage into the same one-shot capture', async () => {

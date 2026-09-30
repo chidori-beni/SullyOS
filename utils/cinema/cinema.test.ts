@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     buildResumeCommand, canResume, RESUME_REWIND_SEC,
-    buildWorkRecap, groupCinemaWorks, nextEpisode, normalizeWorkTitle,
+    buildWorkRecap, groupCinemaWorks, nextEpisode, normalizeWorkTitle, lastCharTurn,
     estimateVideoTime, pickSubtitleWindow, sanitizeExternalSubtitles,
     appendSubtitleLines, CINEMA_SUBTITLES_KEEP,
     splitCinemaActions, toCinemaLines, cinemaLineText,
@@ -380,5 +380,31 @@ describe('片单', () => {
         const empty = mk('x', { episode: '第1集', lines: [] });
         const cur = mk('cur', { episode: '第2集' });
         expect(buildWorkRecap([empty, cur], cur)).toBe('');
+    });
+});
+
+describe('重来', () => {
+    const u = (at: number, text = 'u') => ({ role: 'user' as const, text, at });
+    const c = (at: number, text = 'c', kind?: 'action') => ({ role: 'char' as const, text, at, ...(kind ? { kind } : {}) });
+
+    it('最后一轮角色的话：末尾同一时刻的几行（小动作也算）；前面是用户就不是主动开口', () => {
+        expect(lastCharTurn([u(1), c(2, 'a'), c(2, '靠过来', 'action'), c(2, 'b')])).toEqual({ start: 1, at: 2, proactive: false });
+        expect(lastCharTurn([u(1), c(2), c(5)])).toEqual({ start: 2, at: 5, proactive: true });
+        expect(lastCharTurn([c(5)])).toEqual({ start: 0, at: 5, proactive: true });
+        expect(lastCharTurn([c(2), u(3)])).toBeNull();
+        expect(lastCharTurn([])).toBeNull();
+    });
+
+    it('存进私聊时记下是哪一轮，重来时靠它撤', () => {
+        expect(cinemaMessageMetadata({ id: 's1', title: 'x' }, undefined, 1234)).toMatchObject({ cinemaLineAt: 1234 });
+        expect(cinemaMessageMetadata({ id: 's1', title: 'x' })).not.toHaveProperty('cinemaLineAt');
+    });
+
+    it('重来主动开口那一句：不许回安静', () => {
+        const base = { userName: 'u', charName: 'c', session: { title: 'x', spoiler: 'first' as const }, hasFrame: false, proactive: 'silence' as const };
+        expect(buildCinemaInstruction(base)).toContain('只输出「[安静]」');
+        const forced = buildCinemaInstruction({ ...base, mustSpeak: true });
+        expect(forced).toContain('不要输出「[安静]」');
+        expect(forced).not.toContain('只输出「[安静]」');
     });
 });

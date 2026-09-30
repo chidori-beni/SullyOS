@@ -16,13 +16,13 @@ import { runCallMemoryPalacePostFlow } from '../utils/memoryPalace/callPostFlow'
 import { endCinemaPresence, getActiveCinemaPresence, touchCinemaPresence } from '../utils/cinema/cinemaPresence';
 import { getActiveDatePresence } from '../utils/datePresence';
 import {
-    appendCinemaNote, appendSubtitleLines, buildCinemaEndCardText, buildResumeCommand, buildWorkRecap, canResume, groupCinemaWorks, nextEpisode, type CinemaWork, estimateVideoTime, pickSubtitleWindow, sanitizeExternalSubtitles, CINEMA_END_SOURCE, cinemaLineText, cinemaMessageMetadata, decideProactive,
+    appendCinemaNote, appendSubtitleLines, buildCinemaEndCardText, buildResumeCommand, buildWorkRecap, canResume, cinemaChatApiConfig, CINEMA_API_PRESET_KEY, lastCharTurn, groupCinemaWorks, nextEpisode, type CinemaWork, estimateVideoTime, pickSubtitleWindow, sanitizeExternalSubtitles, CINEMA_END_SOURCE, cinemaLineText, cinemaMessageMetadata, decideProactive,
     NOTE_GAP_MS, PROACTIVE_LEVELS, toCinemaLines,
     type CinemaNote, type CinemaProactiveLevel, type ResumeCommand, type CinemaSubtitleLine, type ExternalSubtitles, type ProactiveReason,
     describeStatus, describeWork, formatVideoTime, isFrameFresh, mergeCinemaStatus, newCinemaSession, sessionRemembers, workerHostForDisplay,
     type CinemaChatLine, type CinemaFrame, type CinemaMeetMode, type CinemaPairing, type CinemaSession, type CinemaSpoilerMode, type CinemaStatus,
 } from '../utils/cinema/cinema';
-import { backfillSessionToChat, removeSessionFromChat } from '../utils/cinema/cinemaDb';
+import { backfillSessionToChat, removeLinesFromChat, removeSessionFromChat } from '../utils/cinema/cinemaDb';
 import { clearCinemaPairing, deleteCinemaSession, getCinemaPairing, listCinemaSessions, saveCinemaPairing, saveCinemaSession } from '../utils/cinema/cinemaDb';
 import { createWatchRoom, WatchRoomSocket, type WatchConnState, type WatchMessage } from '../utils/cinema/watchRoomClient';
 import { askCharacterInCinema, warmCinemaContext } from '../utils/cinema/askCinema';
@@ -53,10 +53,18 @@ const copyText = async (text: string) => {
 };
 
 const CinemaApp: React.FC = () => {
-    const { closeApp, characters, apiConfig, userProfile, groups, realtimeConfig, memoryPalaceConfig, updateCharacter, addToast, registerBackHandler } = useOS();
+    const { closeApp, characters, apiConfig, apiPresets, userProfile, groups, realtimeConfig, memoryPalaceConfig, updateCharacter, addToast, registerBackHandler } = useOS();
     const [view, setView] = useState<View>('home');
     const [pairing, setPairing] = useState<CinemaPairing | null>(null);
     const [sessions, setSessions] = useState<CinemaSession[]>([]);
+    /** 放映机：影院自己用哪条 API 预设（null = 跟着主 API）。只存在这台手机上，不动全局设置 */
+    const [apiPresetId, setApiPresetId] = useState<string | null>(() => {
+        try { return localStorage.getItem(CINEMA_API_PRESET_KEY); } catch { return null; }
+    });
+    const [projectorOpen, setProjectorOpen] = useState(false);
+    const chatApi = cinemaChatApiConfig(apiConfig, apiPresets, apiPresetId);
+    const chatApiRef = useRef(chatApi); chatApiRef.current = chatApi;
+    const activePreset = apiPresetId ? apiPresets.find(p => p.id === apiPresetId) : undefined;
     /** 讲话时要翻同一部作品的前几场（前情），speak 里读 ref 拿最新的 */
     const sessionsRef = useRef<CinemaSession[]>([]);
     /** 片单里展开的那部（看各场明细） */
@@ -351,6 +359,17 @@ const CinemaApp: React.FC = () => {
         openSession(s);
     };
 
+    /** 换放映机：只改影院用的 API，存在这台手机上；主 API 和别的 App 不受影响 */
+    const chooseProjector = (id: string | null) => {
+        setApiPresetId(id);
+        try { if (id) localStorage.setItem(CINEMA_API_PRESET_KEY, id); else localStorage.removeItem(CINEMA_API_PRESET_KEY); } catch { /* 无痕模式存不了就只管这一次 */ }
+        // 画面笔记的模型按「识图中转 → 副 API → 放映机」重新挑
+        noteModelRef.current = undefined;
+        setProjectorOpen(false);
+        const name = id ? apiPresets.find(p => p.id === id)?.name : '';
+        addToast(id ? `放映机换成「${name}」，只在影院里用` : '放映机跟着主 API 走', 'info');
+    };
+
     /** 「下一集」：把开一场的表单按这部的最近一场填好（集数 +1），用户看一眼再点开场。 */
     const prepareNextEpisode = (work: CinemaWork) => {
         const last = work.latest;
@@ -409,7 +428,7 @@ const CinemaApp: React.FC = () => {
      * 请角色说一句。两种来路：用户发了消息（userText），或者到了主动开口的时机（proactive）。
      * 主动开口时角色可以选择「[安静]」，那就什么都不显示。
      */
-    const speak = async (opts: { userText?: string; proactive?: ProactiveReason }) => {
+    const speak = async (opts: { userText?: string; proactive?: ProactiveReason; mustSpeak?: boolean }) => {
         if (!sessionRef.current || !char || busyRef.current) return;
         busyRef.current = true;
         const videoTime = statusRef.current?.time;
@@ -424,7 +443,7 @@ const CinemaApp: React.FC = () => {
             }));
             lastUserAtRef.current = sentAt;
             // 说一句进一句：存进私聊消息库（界面不显示），角色在私聊里也知道你们正在一起看
-            if (saved) for (const line of userLines) await saveLineToChat(char.id, saved, 'user', cinemaLineText(line), videoTime);
+            if (saved) for (const line of userLines) await saveLineToChat(char.id, saved, 'user', cinemaLineText(line), videoTime, line.at);
             if (saved) touchCinemaPresence(char.id, saved);
             void startAmsgChatPresence(char.id, sentAt);
         }
@@ -445,9 +464,9 @@ const CinemaApp: React.FC = () => {
             const picked = external && videoNow !== undefined ? pickSubtitleWindow(external, videoNow) : null;
             const statusForPrompt = picked && statusRef.current ? { ...statusRef.current, subtitle: picked.current || '' } : statusRef.current;
             const result = await askCharacterInCinema({
-                char, userProfile, groups, apiConfig, realtimeConfig,
+                char, userProfile, groups, apiConfig: chatApiRef.current, realtimeConfig,
                 session: sessionRef.current!, status: statusForPrompt, frameDataUrl: frameUrl,
-                proactive: opts.proactive,
+                proactive: opts.proactive, mustSpeak: opts.mustSpeak,
                 recentSubtitles: picked ? picked.recent : subtitleLinesRef.current,
                 workRecap: buildWorkRecap(sessionsRef.current, sessionRef.current!),
                 // 开着出声才教他写停顿和语气声；只打字的时候别让这些标记混进来
@@ -457,7 +476,12 @@ const CinemaApp: React.FC = () => {
             // 不管说没说话，这次机会都算用掉了，免得下一秒又叫一次
             lastCharAtRef.current = Date.now();
             scenesSinceCharRef.current = 0;
-            if (!result.lines.length) return; // 主动开口时选择了安静
+            if (!result.lines.length) {
+                // 主动开口时选择了安静；重来时本来就要他说，安静了就告诉一声
+                if (opts.mustSpeak) addToast(`${char.name} 这次还是没开口，可以再点一次重来`, 'info');
+                return;
+            }
+            if (result.truncated) addToast('这句好像没说完就被截断了，可以点「↻ 重来」', 'info');
             const marked = userLines[userLines.length - 1];
             const now = Date.now();
             // 原话（带 <#0.3#>、(laughs) 这些配音标记）拿去念；屏幕上、聊天记录里只放干净的字
@@ -471,7 +495,7 @@ const CinemaApp: React.FC = () => {
                 lines: [...s.lines.map(l => (frameUrl && result.sawFrame && l === marked ? { ...l, withFrame: true } : l)), ...replies],
                 updatedAt: now,
             }));
-            if (saved) for (const reply of replies) await saveLineToChat(char.id, saved, 'assistant', cinemaLineText(reply), videoTime);
+            if (saved) for (const reply of replies) await saveLineToChat(char.id, saved, 'assistant', cinemaLineText(reply), videoTime, reply.at);
             sayAloud(spokenReplies);
             if (saved && opts.proactive) touchCinemaPresence(char.id, saved);
             // 跟通话一样每轮打脏：云端主动消息那份上下文也跟着知道你们在一起看
@@ -484,6 +508,30 @@ const CinemaApp: React.FC = () => {
             busyRef.current = false;
             setThinking(false);
         }
+    };
+
+    /**
+     * 重来：撤掉角色最后一轮的话（放映室里和私聊库里都撤），照原来的样子再请他说一次。
+     * 那一轮是回你的话就接着回；是他主动开的口就再主动一次，这次不许回「[安静]」。
+     */
+    const rerollLast = async () => {
+        const cur = sessionRef.current;
+        if (!cur || !char || busyRef.current) return;
+        const turn = lastCharTurn(cur.lines);
+        if (!turn) return;
+        busyRef.current = true; // 撤的这一会儿别让主动开口插进来
+        getSpeaker().unlock();
+        const old = cur.lines.slice(turn.start);
+        try {
+            await updateSession(s => ({ ...s, lines: s.lines.filter(l => !old.includes(l)) }));
+            for (const l of old) lineAudioRef.current.delete(l.at);
+            if (sessionRemembers(cur)) await removeLinesFromChat(char.id, cur.id, old);
+        } catch (error) {
+            console.warn('[cinema] 重来时撤私聊记录失败', error);
+        } finally {
+            busyRef.current = false;
+        }
+        await speak(turn.proactive ? { proactive: 'silence', mustSpeak: true } : {});
     };
 
     const send = () => {
@@ -522,7 +570,7 @@ const CinemaApp: React.FC = () => {
         if (viewRef.current !== 'room' || !sessionRef.current || noteBusyRef.current) return;
         if (statusRef.current?.paused) return;
         if (Date.now() - lastNoteAtRef.current < NOTE_GAP_MS[levelRef.current]) return;
-        const candidates = noteModelCandidates(apiConfig, memoryPalaceConfig?.lightLLM);
+        const candidates = noteModelCandidates(chatApiRef.current, memoryPalaceConfig?.lightLLM);
         if (noteModelRef.current === undefined) noteModelRef.current = candidates[0] || null;
         const model = noteModelRef.current;
         if (!model) return;
@@ -716,10 +764,10 @@ const CinemaApp: React.FC = () => {
         try { sttSessionRef.current?.stop(); } catch { /* ignore */ }
     }, []);
 
-    const saveLineToChat = async (charId: string, s: CinemaSession, role: 'user' | 'assistant', content: string, videoTime?: number) => {
+    const saveLineToChat = async (charId: string, s: CinemaSession, role: 'user' | 'assistant', content: string, videoTime?: number, lineAt?: number) => {
         if (!sessionRemembers(s)) return; // 不留痕：只留在影院自己的记录里
         try {
-            await DB.saveMessage({ charId, role, type: 'text', content, metadata: cinemaMessageMetadata(s, videoTime) });
+            await DB.saveMessage({ charId, role, type: 'text', content, metadata: cinemaMessageMetadata(s, videoTime, lineAt) });
         } catch (error) {
             console.warn('[cinema] 存进私聊失败（放映室里照常）', error);
         }
@@ -866,6 +914,26 @@ const CinemaApp: React.FC = () => {
                         </button>
                     </div>
                 </section>
+                <div className="cn-projector-row">
+                    <button className={`cn-projector ${activePreset ? 'on' : ''}`} onClick={() => setProjectorOpen(v => !v)}>
+                        放映机 · {activePreset ? activePreset.name : '主 API'} {projectorOpen ? '▴' : '▾'}
+                    </button>
+                    <span className="cn-projector-model">{chatApi.model || '没填模型'}</span>
+                </div>
+                {projectorOpen && (
+                    <div className="cn-projector-menu">
+                        <button className={!activePreset ? 'on' : ''} onClick={() => chooseProjector(null)}>
+                            跟着主 API<small>{apiConfig.model || '没填模型'}</small>
+                        </button>
+                        {apiPresets.map(p => (
+                            <button key={p.id} className={activePreset?.id === p.id ? 'on' : ''} onClick={() => chooseProjector(p.id)}>
+                                {p.name || '没起名的预设'}<small>{p.config.model}</small>
+                            </button>
+                        ))}
+                        {apiPresets.length === 0 && <p>还没存 API 预设。去「设置 → API」里存几个，这里就能一键换。</p>}
+                        <p>只换影院里用的，私聊和别的 App 不受影响。</p>
+                    </div>
+                )}
                 <div className="cn-proactive">
                     <span>主动开口</span>
                     <div className="cn-seg small">
@@ -917,6 +985,9 @@ const CinemaApp: React.FC = () => {
                             </div>
                         </div>
                     ))}
+                    {!thinking && lastCharTurn(session.lines) && (
+                        <button className="cn-reroll" onClick={() => void rerollLast()} title="撤掉这一轮，让 ta 重新说">↻ 重来</button>
+                    )}
                     {thinking && <div className="cn-line char"><div className="cn-bubble typing">{char?.name} 在看…</div></div>}
                 </div>
                 <footer className="cn-input">

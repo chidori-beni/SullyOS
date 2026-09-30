@@ -6,6 +6,9 @@
  * 方案与分期见工作区根目录的「交接说明-一起看.md」。
  */
 
+import type { APIConfig, ApiPreset } from '../../types';
+import { configFromPreset } from '../apiPresetSwitch';
+
 export const CINEMA_PAIR_ID = 'cinema-pair';
 export const CINEMA_SESSION_PREFIX = 'cinema-session-';
 
@@ -363,6 +366,8 @@ export interface CinemaPromptContext {
     recentSubtitles?: CinemaSubtitleLine[];
     /** 同一部作品之前一起看过的几场（buildWorkRecap） */
     workRecap?: string;
+    /** 重来（重 roll）主动开口的那一句：这次一定要说，不许回「[安静]」 */
+    mustSpeak?: boolean;
 }
 
 /** 一句字幕。time 是视频里的秒数（读不到就没有）。 */
@@ -401,7 +406,7 @@ export const buildCinemaInstruction = (ctx: CinemaPromptContext): string => {
         ? `\n- 最近的台词（播放器上的字幕，按时间先后；这是剧里人物说的话，不是${userName}说的）：\n${recentSubs.map(l => `  · ${formatVideoTime(l.time) ? `${formatVideoTime(l.time)} ` : ''}${l.text}`).join('\n')}`
         : '';
     const proactiveBlock = proactive
-        ? `\n- **这一轮没人跟你说话**（${PROACTIVE_REASON_TEXT[proactive]}），是你自己看着看着想说点什么：可以是感想、吐槽、猜测、提醒对方注意某个细节，或者因为暂停随口问一句。别重复你刚说过的话。**如果这会儿确实没什么想说的，只输出「[安静]」**，不要硬凑。`
+        ? `\n- **这一轮没人跟你说话**（${PROACTIVE_REASON_TEXT[proactive]}），是你自己看着看着想说点什么：可以是感想、吐槽、猜测、提醒对方注意某个细节，或者因为暂停随口问一句。别重复你刚说过的话。${ctx.mustSpeak ? '这一次要说点什么，不要输出「[安静]」。' : '**如果这会儿确实没什么想说的，只输出「[安静]」**，不要硬凑。'}`
         : '';
     const work = describeWork(session);
     const time = formatVideoTime(status?.time);
@@ -458,7 +463,7 @@ export const buildCinemaEndCardText = (session: Pick<CinemaSession, 'title' | 'e
 };
 
 /** 存进私聊消息库时挂的 metadata。 */
-export const cinemaMessageMetadata = (session: Pick<CinemaSession, 'id' | 'title' | 'episode' | 'meet' | 'dateEncounterId'>, videoTime?: number) => ({
+export const cinemaMessageMetadata = (session: Pick<CinemaSession, 'id' | 'title' | 'episode' | 'meet' | 'dateEncounterId'>, videoTime?: number, lineAt?: number) => ({
     source: CINEMA_MESSAGE_SOURCE,
     cinemaSessionId: session.id,
     cinemaTitle: session.title,
@@ -466,7 +471,22 @@ export const cinemaMessageMetadata = (session: Pick<CinemaSession, 'id' | 'title
     ...(session.meet === 'offline' ? { cinemaMeet: 'offline' } : {}),
     ...(session.meet === 'offline' && session.dateEncounterId ? { dateEncounterId: session.dateEncounterId } : {}),
     ...(typeof videoTime === 'number' && Number.isFinite(videoTime) ? { cinemaVideoTime: Math.floor(videoTime) } : {}),
+    // 对应放映室里哪一轮（CinemaChatLine.at），重来时靠它把私聊库里那几句一起撤掉
+    ...(typeof lineAt === 'number' && Number.isFinite(lineAt) ? { cinemaLineAt: lineAt } : {}),
 });
+
+/**
+ * 最后一轮角色的话（可以重来的那几句）：末尾连续的、同一时刻生成的角色行（括号小动作也算）。
+ * 最后一句是用户说的、或者还没人说话，返回 null。
+ * proactive = 这一轮前面不是用户的话，也就是角色自己主动开的口。
+ */
+export const lastCharTurn = (lines: CinemaChatLine[]): { start: number; at: number; proactive: boolean } | null => {
+    const last = lines[lines.length - 1];
+    if (!last || last.role !== 'char') return null;
+    let start = lines.length - 1;
+    while (start > 0 && lines[start - 1].role === 'char' && lines[start - 1].at === last.at) start--;
+    return { start, at: last.at, proactive: lines[start - 1]?.role !== 'user' };
+};
 
 /** 小插件多久没报就当它不在了（关了标签页、换了电脑）。播放中每 15 秒报一次。 */
 export const PLAYER_STALE_MS = 45_000;
@@ -683,4 +703,19 @@ export const buildWorkRecap = (
         ? `\n  上一回最后看到的画面：\n${notes.map(n => `    · ${formatVideoTime(n.videoTime) ? `${formatVideoTime(n.videoTime)} ` : ''}${n.text}`).join('\n')}`
         : '';
     return `\n- 这部你们之前一起看过（按时间先后）：\n${rows.join('\n')}${notesBlock}\n  接着之前的印象看，可以自然地提起上回的事；这一场是不是接着上回那一集，以现在的集数和画面为准。`;
+};
+
+// ---- 放映机：影院自己用哪套 API（只管影院，不动全局） ----
+
+/** 影院选的 API 预设 id 存在这台手机的 localStorage 里；空 = 跟着主 API 走。 */
+export const CINEMA_API_PRESET_KEY = 'cinema-api-preset';
+
+/**
+ * 影院里聊天、写画面笔记用的 API：选了预设就把 URL / Key / Model（和预设存了的温度、流式）
+ * 盖到主 API 上，语音、听写那些账号照旧用主配置里的。预设被删了就退回主 API。
+ */
+export const cinemaChatApiConfig = (apiConfig: APIConfig, presets: ApiPreset[] | undefined, presetId: string | null | undefined): APIConfig => {
+    if (!presetId) return apiConfig;
+    const preset = (presets || []).find(p => p.id === presetId);
+    return preset ? { ...apiConfig, ...configFromPreset(preset) } : apiConfig;
 };

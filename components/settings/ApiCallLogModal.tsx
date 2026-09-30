@@ -311,6 +311,19 @@ const ApiCallLogModal: React.FC<ApiCallLogModalProps> = ({ isOpen, onClose }) =>
                                             </span>
                                         </div>
                                     )}
+                                    {(e.cachedTokens != null || e.reasoningTokens != null) && (
+                                        <div className="col-span-2 text-[11px] text-slate-400 leading-snug">
+                                            {e.cachedTokens != null && <>其中缓存 {e.cachedTokens.toLocaleString('en-US')}</>}
+                                            {e.cachedTokens != null && e.reasoningTokens != null && ' · '}
+                                            {e.reasoningTokens != null && <>思考 {e.reasoningTokens.toLocaleString('en-US')}</>}
+                                        </div>
+                                    )}
+                                    {expanded && e.usageRaw && (
+                                        <div className="col-span-2 text-[10px] text-slate-400 leading-snug break-all">
+                                            中转站原话：{e.usageRaw}
+                                            <div className="text-slate-300 mt-0.5">Token 是中转站自己报的，Sully 只是照抄。跟中转站账单对不上时，以账单为准（有的中转会把缓存重复算进输入）。</div>
+                                        </div>
+                                    )}
                                 </div>
                                 {hasBreakdown && (
                                     <div className="mt-1.5 text-[10px] text-slate-300 select-none">
