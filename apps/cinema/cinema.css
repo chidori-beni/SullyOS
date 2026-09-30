@@ -1,174 +1,252 @@
-/* 影院 —— 暗场 + 暖色银幕光。只作用于 .cinema 之内。 */
+/*
+ * 影院 —— 复古老电影（用户 10-01 选定方案 B）。只作用于 .cinema 之内。
+ *   首页 / 配对：旧纸张 + 深棕墨字 + 酒红，片单是电影票（右边带票根）
+ *   放映室（.cn-hall）：深棕放映厅 + 金色，上下胶片孔边，你的话像纸条、角色的话像字幕卡
+ * 中文用系统自带的宋体（iPhone 有 Songti SC），不加载网络字体：离线也一样好看、不拖慢。
+ */
 .cinema {
-    --cn-bg: #16131a;
-    --cn-panel: #221e27;
-    --cn-panel-2: #2c2732;
-    --cn-ink: #f3ece4;
-    --cn-sub: #a79d97;
-    --cn-line: #3a3440;
-    --cn-accent: #e8a45c;
-    --cn-accent-ink: #2a1a0c;
-    --cn-user: #e8a45c;
-    --cn-char: #332d3a;
+    --cn-bg: #efe4cc;
+    --cn-panel: #f6eedb;
+    --cn-panel-2: #e8dbbf;
+    --cn-ink: #2b1d12;
+    --cn-sub: #7a6650;
+    --cn-line: #2b1d12;
+    --cn-faint: rgba(43, 29, 18, .22);
+    --cn-accent: #8b2a1f;
+    --cn-accent-ink: #f6eedb;
+    --cn-gold: #a8813f;
+    --cn-user: #2b1d12;
+    --cn-user-ink: #f6eedb;
+    --cn-char: #f6eedb;
+    --cn-serif: "Songti SC", "STSong", "Noto Serif SC", "Source Han Serif SC", "Source Han Serif CN", "SimSun", serif;
+    --cn-en: "Baskerville", "Didot", "Bodoni 72", "Playfair Display", Georgia, "Times New Roman", serif;
     position: relative; width: 100%; height: 100%; overflow: hidden;
     display: flex; flex-direction: column;
     background: var(--cn-bg);
     color: var(--cn-ink);
+    font-family: var(--cn-serif);
+}
+/* 放映室：灯暗下来 */
+.cinema.cn-hall {
+    --cn-bg: #1f1610;
+    --cn-panel: #281d15;
+    --cn-panel-2: #35281c;
+    --cn-ink: #efe4cc;
+    --cn-sub: #a8927a;
+    --cn-line: #5a4633;
+    --cn-faint: rgba(201, 164, 106, .22);
+    --cn-accent: #c9a46a;
+    --cn-accent-ink: #1f1610;
+    --cn-gold: #c9a46a;
+    --cn-user: #efe4cc;
+    --cn-user-ink: #2b1d12;
+    --cn-char: #2e2218;
 }
 /* :where 让这条不占优先级，下面各按钮自己的字号才生效 */
 :where(.cinema) button { font: inherit; color: inherit; }
+.cn-en { font-family: var(--cn-en); font-style: italic; letter-spacing: .02em; }
+
+/* 胶片孔边 */
+.cn-strip {
+    flex-shrink: 0; height: 12px;
+    background-color: #120c07;
+    background-image: linear-gradient(90deg, #6b5640 0 8px, transparent 8px);
+    background-size: 16px 5px; background-repeat: repeat-x; background-position: 4px center;
+}
 
 .cn-top {
     display: flex; align-items: center; gap: 8px;
-    padding: var(--chrome-top) 14px 10px;
-    border-bottom: 1px solid var(--cn-line);
+    padding: var(--chrome-top) 14px 8px;
+    border-bottom: 3px double var(--cn-line);
     background: var(--cn-bg);
     flex-shrink: 0;
 }
+.cn-hall .cn-top { border-bottom: 0; }
 .cn-top-title { flex: 1; min-width: 0; text-align: center; }
-.cn-top-title small { display: block; font-size: 10px; letter-spacing: .18em; color: var(--cn-sub); }
-.cn-top-title h1 { font-size: 17px; font-weight: 700; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cn-top-title small { display: block; font-family: var(--cn-en); font-style: italic; font-size: 12px; letter-spacing: .04em; color: var(--cn-accent); }
+.cn-top-title h1 { font-size: 17px; font-weight: 700; letter-spacing: .12em; margin: 1px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cn-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 999px; background: none; border: 0; flex-shrink: 0; }
-.cn-icon:active { background: rgba(255,255,255,.08); }
+.cn-icon:active { background: var(--cn-faint); }
 .cn-dot { width: 36px; height: 36px; flex-shrink: 0; position: relative; }
-.cn-dot::after { content: ''; position: absolute; inset: 13px; border-radius: 999px; background: #6b6470; }
-.cn-dot.wait::after { background: #d8b04a; }
-.cn-dot.on::after { background: #5fce7c; box-shadow: 0 0 8px #5fce7c; }
+.cn-dot::after { content: ''; position: absolute; inset: 13px; border-radius: 999px; background: #8a7a68; }
+.cn-dot.wait::after { background: #d8a94a; }
+.cn-dot.on::after { background: #7fb069; }
 
 .cn-scroll { flex: 1; overflow-y: auto; padding: 14px 16px calc(24px + var(--safe-bottom, 0px)); -webkit-overflow-scrolling: touch; }
-.cn-lead { font-size: 13px; color: var(--cn-sub); line-height: 1.6; margin: 0 0 12px; }
+.cn-lead { font-size: 13px; color: var(--cn-sub); line-height: 1.7; margin: 0 0 12px; }
 .cn-lead b { color: var(--cn-ink); letter-spacing: .08em; }
-.cn-empty { text-align: center; color: var(--cn-sub); padding: 48px 12px; font-size: 14px; line-height: 1.8; }
+.cn-empty { text-align: center; color: var(--cn-sub); padding: 48px 12px; font-size: 14px; line-height: 1.9; }
 .cn-empty.small { padding: 24px 12px; font-size: 13px; }
 
-.cn-card { background: var(--cn-panel); border: 1px solid var(--cn-line); border-radius: 16px; padding: 14px; margin-bottom: 14px; }
-.cn-card-head { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 15px; margin-bottom: 10px; }
+/* 首页刊头 */
+.cn-mast { text-align: center; margin: 6px 0 16px; }
+.cn-mast-en { font-family: var(--cn-en); font-style: italic; font-size: 14px; color: var(--cn-accent); }
+.cn-mast-zh { font-size: 32px; font-weight: 700; letter-spacing: .45em; text-indent: .45em; margin-top: 2px; }
+.cn-mast-rule { margin-top: 8px; padding: 4px 0; border-top: 1px solid var(--cn-line); border-bottom: 1px solid var(--cn-line); font-size: 11px; letter-spacing: .3em; color: var(--cn-sub); }
+.cn-top-est { flex: 1; text-align: center; font-family: var(--cn-en); font-style: italic; font-size: 13px; color: var(--cn-sub); }
+
+/* 卡片：双线框，像老戏院的告示 */
+.cn-card { background: transparent; border: 3px double var(--cn-line); border-radius: 2px; padding: 14px; margin-bottom: 16px; }
+.cn-card-head { display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 700; font-size: 13px; letter-spacing: .35em; color: var(--cn-accent); margin-bottom: 12px; }
+.cn-card-head::before, .cn-card-head::after { content: ''; flex: 0 0 22px; height: 1px; background: var(--cn-accent); opacity: .6; }
+.cn-card-head .cn-en { letter-spacing: .02em; font-weight: 400; }
 .cn-row { display: flex; gap: 8px; flex-wrap: wrap; }
-.cn-label { display: block; font-size: 12px; color: var(--cn-sub); margin: 12px 0 6px; }
+.cn-label { display: block; font-size: 12px; letter-spacing: .15em; color: var(--cn-sub); margin: 14px 0 6px; }
 .cn-field {
     width: 100%; box-sizing: border-box; margin-bottom: 8px;
-    background: var(--cn-panel-2); border: 1px solid var(--cn-line); border-radius: 10px;
-    padding: 10px 12px; color: var(--cn-ink); font-size: 15px; outline: none;
+    background: transparent; border: 0; border-bottom: 1px dotted var(--cn-line); border-radius: 0;
+    padding: 8px 2px; color: var(--cn-ink); font-size: 15px; font-family: var(--cn-serif); outline: none;
 }
-.cn-field:focus { border-color: var(--cn-accent); }
+.cn-field::placeholder { color: var(--cn-sub); opacity: .75; }
+.cn-field:focus { border-bottom: 1px solid var(--cn-accent); }
 
 .cn-primary {
-    display: block; width: 100%; margin-top: 12px; padding: 12px; border: 0; border-radius: 12px;
-    background: var(--cn-accent); color: var(--cn-accent-ink) !important; font-weight: 700; font-size: 15px;
+    display: block; width: 100%; margin-top: 14px; padding: 11px; border: 0; border-radius: 2px;
+    background: var(--cn-accent); color: var(--cn-accent-ink) !important; font-weight: 700; font-size: 15px; letter-spacing: .5em; text-indent: .5em;
 }
 .cn-primary:disabled { opacity: .45; }
-.cn-ghost { padding: 7px 12px; border-radius: 999px; border: 1px solid var(--cn-line); background: none; font-size: 13px; }
-.cn-ghost.danger { color: #ef8a8a; }
+.cn-ghost { padding: 6px 12px; border-radius: 2px; border: 1px solid var(--cn-line); background: none; font-size: 13px; }
+.cn-ghost.danger { color: var(--cn-accent) !important; border-color: var(--cn-accent); }
 .cn-ghost:disabled { opacity: .45; }
 
 .cn-chars { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
 .cn-char { display: flex; flex-direction: column; align-items: center; gap: 4px; background: none; border: 0; padding: 0; width: 58px; flex-shrink: 0; font-size: 11px; color: var(--cn-sub); }
-.cn-char img, .cn-char-ph { width: 48px; height: 48px; border-radius: 999px; object-fit: cover; border: 2px solid transparent; display: grid; place-items: center; background: var(--cn-panel-2); font-size: 18px; color: var(--cn-ink); }
+.cn-char img, .cn-char-ph { width: 48px; height: 48px; border-radius: 999px; object-fit: cover; border: 2px solid transparent; display: grid; place-items: center; background: var(--cn-panel-2); font-size: 18px; color: var(--cn-ink); filter: sepia(.25); }
 .cn-char span:last-child { max-width: 58px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cn-char.on img, .cn-char.on .cn-char-ph { border-color: var(--cn-accent); }
-.cn-char.on { color: var(--cn-ink); }
+.cn-char.on img, .cn-char.on .cn-char-ph { border-color: var(--cn-accent); filter: none; }
+.cn-char.on { color: var(--cn-ink); font-weight: 700; }
 
-.cn-seg { display: flex; background: var(--cn-panel-2); border-radius: 10px; padding: 3px; }
-.cn-seg button { flex: 1; padding: 8px; border: 0; background: none; border-radius: 8px; font-size: 13px; color: var(--cn-sub); }
-.cn-seg button.on { background: var(--cn-accent); color: var(--cn-accent-ink); font-weight: 700; }
+.cn-seg { display: flex; border: 1px solid var(--cn-line); border-radius: 2px; padding: 2px; gap: 2px; }
+.cn-seg button { flex: 1; padding: 7px 6px; border: 0; background: none; border-radius: 1px; font-size: 13px; color: var(--cn-sub); }
+.cn-seg button.on { background: var(--cn-ink); color: var(--cn-bg) !important; font-weight: 700; }
 
-.cn-session { display: flex; align-items: center; gap: 6px; border-top: 1px solid var(--cn-line); padding: 10px 0; }
-.cn-session:first-of-type { border-top: 0; }
+.cn-session { display: flex; align-items: center; gap: 6px; border-top: 1px dotted var(--cn-faint); padding: 9px 0; }
 .cn-session-main { flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: 0; }
-.cn-session-main b { display: block; font-size: 14px; }
-.cn-session-main small { display: block; font-size: 12px; color: var(--cn-sub); margin-top: 2px; }
+.cn-session-main b { display: block; font-size: 15px; }
+.cn-session-main small { display: block; font-size: 12px; color: var(--cn-sub); margin-top: 3px; line-height: 1.5; }
+
+/* 片单：一部作品一张电影票，右边是票根 */
+.cn-ticket { position: relative; display: flex; margin-bottom: 18px; border: 1.5px solid var(--cn-line); background: var(--cn-panel); }
+.cn-ticket-main { flex: 1; min-width: 0; padding: 10px 12px 10px; }
+.cn-ticket-main > .cn-session { border-top: 0; padding: 0; }
+.cn-stub {
+    position: relative; flex: 0 0 60px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    border-left: 1.5px dashed var(--cn-line); padding: 8px 4px; font-size: 11px; letter-spacing: .1em;
+}
+.cn-stub b { font-size: 22px; font-weight: 700; letter-spacing: 0; line-height: 1.1; margin: 1px 0; }
+.cn-stub::before, .cn-stub::after {
+    content: ''; position: absolute; left: -8px; width: 14px; height: 14px; border-radius: 999px;
+    background: var(--cn-bg); border: 1.5px solid var(--cn-line);
+}
+.cn-stub::before { top: -8px; }
+.cn-stub::after { bottom: -8px; }
+.cn-ticket-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-top: 8px; }
+.cn-ticket-actions .cn-icon { width: 28px; height: 28px; margin-left: auto; color: var(--cn-sub); }
+.cn-work-count { margin-left: 6px; font-size: 11px; font-weight: 400; color: var(--cn-sub); letter-spacing: .05em; }
+.cn-work-list { margin: 8px 0 0; padding-top: 2px; border-top: 1px solid var(--cn-faint); }
+.cn-work-list .cn-session { padding: 8px 0; }
+.cn-work-list .cn-session:first-child { border-top: 0; }
+.cn-work-list .cn-session-main b { font-size: 14px; }
+
+/* 接着看 / 下一集 */
+.cn-resume { flex-shrink: 0; padding: 4px 10px; border-radius: 2px; border: 0; background: var(--cn-accent); color: var(--cn-accent-ink) !important; font-size: 12px; font-weight: 700; letter-spacing: .08em; white-space: nowrap; }
+.cn-next { padding: 3px 0; border: 0; border-bottom: 1px solid var(--cn-line); border-radius: 0; background: none; color: var(--cn-ink) !important; font-size: 12px; letter-spacing: .08em; }
 
 /* 配对 */
-.cn-steps { margin: 0 0 16px; padding-left: 20px; }
-.cn-steps li { margin-bottom: 18px; font-size: 14px; line-height: 1.6; }
-.cn-copy { display: flex; align-items: center; gap: 6px; margin-top: 6px; background: var(--cn-panel); border: 1px solid var(--cn-line); border-radius: 10px; padding: 8px 10px; }
+.cn-steps { margin: 0 0 16px; padding-left: 22px; }
+.cn-steps li { margin-bottom: 18px; font-size: 14px; line-height: 1.7; }
+.cn-steps li::marker { font-family: var(--cn-en); font-style: italic; color: var(--cn-accent); }
+.cn-copy { display: flex; align-items: center; gap: 6px; margin-top: 6px; background: var(--cn-panel); border: 1px solid var(--cn-line); border-radius: 2px; padding: 8px 10px; }
 .cn-copy code { flex: 1; min-width: 0; word-break: break-all; font-size: 12px; color: var(--cn-accent); }
 .cn-copy button { background: none; border: 0; padding: 4px; }
-.cn-code { font-size: 40px; font-weight: 800; letter-spacing: .12em; color: var(--cn-accent); margin: 8px 0 4px; font-family: ui-monospace, Menlo, monospace; }
-.cn-pair-state { display: flex; align-items: center; gap: 8px; justify-content: center; padding: 12px; border-radius: 12px; background: var(--cn-panel); color: var(--cn-sub); font-size: 14px; }
-.cn-pair-state.ok { color: #5fce7c; }
+.cn-code { font-size: 40px; font-weight: 700; letter-spacing: .15em; color: var(--cn-accent); margin: 8px 0 4px; font-family: var(--cn-en); }
+.cn-pair-state { display: flex; align-items: center; gap: 8px; justify-content: center; padding: 12px; border: 3px double var(--cn-line); border-radius: 2px; color: var(--cn-sub); font-size: 14px; letter-spacing: .1em; }
+.cn-pair-state.ok { color: #4f7a3a; border-color: #4f7a3a; }
 
-/* 放映室 */
+/* ---- 放映室 ---- */
 .cn-screen { flex-shrink: 0; background: #000; position: relative; }
 .cn-screen img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #000; }
-.cn-screen-empty { aspect-ratio: 16 / 9; display: grid; place-items: center; color: var(--cn-sub); font-size: 13px; padding: 0 20px; text-align: center; }
+.cn-screen-empty { aspect-ratio: 16 / 9; display: grid; place-items: center; color: var(--cn-sub); font-size: 13px; letter-spacing: .1em; padding: 0 20px; text-align: center; }
 .cn-screen-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 12px; font-size: 12px; color: var(--cn-sub); background: var(--cn-panel); border-bottom: 1px solid var(--cn-line); }
 .cn-screen-bar button { display: flex; align-items: center; gap: 4px; background: none; border: 1px solid var(--cn-line); border-radius: 999px; padding: 3px 10px; font-size: 12px; }
 
-.cn-chat { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 12px 8px; -webkit-overflow-scrolling: touch; }
-.cn-line { display: flex; gap: 8px; margin-bottom: 8px; align-items: flex-end; }
+.cn-chat { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 14px 8px; -webkit-overflow-scrolling: touch; }
+.cn-line { display: flex; gap: 8px; margin-bottom: 9px; align-items: flex-end; }
 .cn-line.user { justify-content: flex-end; }
-.cn-avatar { width: 28px; height: 28px; border-radius: 999px; object-fit: cover; flex-shrink: 0; }
-.cn-bubble { max-width: 78%; padding: 8px 12px; border-radius: 16px; font-size: 14px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
-.cn-line.user .cn-bubble { background: var(--cn-user); color: var(--cn-accent-ink); border-bottom-right-radius: 4px; }
-.cn-line.char .cn-bubble { background: var(--cn-char); border-bottom-left-radius: 4px; }
+.cn-avatar { width: 28px; height: 28px; border-radius: 999px; object-fit: cover; flex-shrink: 0; border: 1px solid var(--cn-gold); filter: sepia(.2); }
+.cn-bubble { max-width: 78%; padding: 7px 12px; border-radius: 2px; font-size: 14.5px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
+/* 你的话：一张小纸条 */
+.cn-line.user .cn-bubble { background: var(--cn-user); color: var(--cn-user-ink); }
+/* 角色的话：字幕卡，左边一道金线 */
+.cn-line.char .cn-bubble { background: var(--cn-char); border-left: 2px solid var(--cn-gold); }
 .cn-bubble.typing { color: var(--cn-sub); font-style: italic; }
 .cn-meta { display: block; font-size: 10px; opacity: .65; margin-top: 2px; text-align: right; }
 
 .cn-input { flex-shrink: 0; display: flex; align-items: flex-end; gap: 8px; padding: 8px 10px calc(8px + var(--safe-bottom, 0px)); border-top: 1px solid var(--cn-line); background: var(--cn-bg); }
 .cn-input textarea {
     flex: 1; min-width: 0; resize: none; max-height: 96px;
-    background: var(--cn-panel-2); border: 1px solid var(--cn-line); border-radius: 18px;
-    padding: 9px 14px; color: var(--cn-ink); font-size: 15px; outline: none; line-height: 1.4;
+    background: transparent; border: 1px solid var(--cn-line); border-radius: 18px;
+    padding: 9px 14px; color: var(--cn-ink); font-size: 15px; font-family: var(--cn-serif); outline: none; line-height: 1.4;
 }
+.cn-input textarea::placeholder { color: var(--cn-sub); opacity: .75; }
+.cn-input textarea:focus { border-color: var(--cn-gold); }
 .cn-eye, .cn-send { width: 40px; height: 40px; flex-shrink: 0; display: grid; place-items: center; border-radius: 999px; border: 0; background: var(--cn-panel-2); color: var(--cn-sub) !important; }
 .cn-eye.on { color: var(--cn-accent) !important; }
 .cn-send { background: var(--cn-accent); color: var(--cn-accent-ink) !important; }
 .cn-send:disabled { opacity: .4; }
 
 /* 放映室顶栏：连接状态小圆点 + 散场按钮 */
-.cn-dot-inline { display: inline-block; width: 7px; height: 7px; border-radius: 999px; background: #6b6470; margin-right: 5px; vertical-align: 1px; }
-.cn-dot-inline.wait { background: #d8b04a; }
-.cn-dot-inline.on { background: #5fce7c; box-shadow: 0 0 6px #5fce7c; }
-.cn-end { flex-shrink: 0; height: 30px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--cn-line); background: var(--cn-panel-2); font-size: 13px; }
+.cn-dot-inline { display: inline-block; width: 6px; height: 6px; border-radius: 999px; background: #8a7a68; margin-right: 5px; vertical-align: 2px; }
+.cn-dot-inline.wait { background: #d8a94a; }
+.cn-dot-inline.on { background: #7fb069; }
+.cn-end { flex-shrink: 0; height: 30px; padding: 0 12px; border-radius: 2px; border: 1px solid var(--cn-gold); background: none; font-size: 13px; letter-spacing: .3em; text-indent: .3em; color: var(--cn-gold) !important; }
 .cn-end:disabled { opacity: .45; }
-.cn-hint { font-size: 12px; color: var(--cn-sub); line-height: 1.6; margin: 6px 2px 0; }
+.cn-hint { font-size: 12px; color: var(--cn-sub); line-height: 1.7; margin: 6px 2px 0; }
 
 /* 括号里的小动作：旁白，不进气泡。角色的靠左一点、你的靠右一点，看得出是谁的动作 */
-.cn-action { margin: 4px 0 10px; padding: 0 16px; font-size: 12.5px; line-height: 1.6; color: var(--cn-sub); font-style: italic; text-align: center; opacity: .9; }
+.cn-action { margin: 2px 0 10px; padding: 0 16px; font-size: 12.5px; line-height: 1.6; color: var(--cn-sub); font-style: italic; text-align: center; }
+.cn-action::before { content: '— '; opacity: .6; }
+.cn-action::after { content: ' —'; opacity: .6; }
 .cn-action.char { padding-right: 30%; }
 .cn-action.user { padding-left: 30%; }
 
 /* 主动开口频率 + 助理最近一条笔记 */
-.cn-proactive { flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 12px; color: var(--cn-sub); background: var(--cn-panel); border-bottom: 1px solid var(--cn-line); }
-.cn-proactive .cn-seg { flex: 1; }
-.cn-seg.small button { padding: 4px 6px; font-size: 12px; }
-.cn-note { flex-shrink: 0; padding: 5px 12px; font-size: 11.5px; color: var(--cn-sub); background: var(--cn-bg); border-bottom: 1px solid var(--cn-line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cn-proactive { flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 6px 12px 8px; font-size: 12px; color: var(--cn-sub); background: var(--cn-panel); border-bottom: 1px solid var(--cn-line); }
+.cn-proactive .cn-seg { flex: 1; border-radius: 999px; border-color: var(--cn-line); }
+.cn-proactive .cn-seg button { border-radius: 999px; }
+.cn-proactive .cn-seg button.on { background: var(--cn-accent); color: var(--cn-accent-ink) !important; }
+.cn-seg.small button { padding: 3px 4px; font-size: 12px; white-space: nowrap; }
+.cn-note { flex-shrink: 0; padding: 5px 12px; font-size: 11.5px; color: var(--cn-sub); font-style: italic; background: var(--cn-bg); border-bottom: 1px solid var(--cn-line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* 语音：出声开关、麦克风、气泡上的重听小喇叭 */
 .cn-voice { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border-radius: 999px; border: 1px solid var(--cn-line); background: none; color: var(--cn-sub) !important; }
 .cn-voice.on { color: var(--cn-accent) !important; border-color: var(--cn-accent); }
 .cn-mic { width: 40px; height: 40px; flex-shrink: 0; display: grid; place-items: center; border-radius: 999px; border: 0; background: var(--cn-panel-2); color: var(--cn-sub) !important; }
-.cn-mic.on { background: #e0567a; color: #fff !important; box-shadow: 0 0 12px #e0567a99; }
+.cn-mic.on { background: #a33a2b; color: #f6eedb !important; }
 .cn-mic:disabled { opacity: .45; }
 .cn-replay { margin-left: 6px; font-size: 11px; opacity: .6; }
 
 /* 这一场记不记 */
-.cn-remember { flex-shrink: 0; height: 30px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--cn-line); background: none; font-size: 12px; color: var(--cn-sub) !important; white-space: nowrap; }
+.cn-remember { flex-shrink: 0; height: 28px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--cn-line); background: none; font-size: 12px; color: var(--cn-sub) !important; white-space: nowrap; }
 .cn-remember.on { color: var(--cn-accent) !important; border-color: var(--cn-accent); }
 
 /* 重来：撤掉角色最后一轮再说一次 */
-.cn-reroll { display: block; margin: 2px 0 10px 36px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--cn-line); background: none; font-size: 12px; color: var(--cn-sub) !important; }
+.cn-reroll { display: block; margin: 0 0 10px 36px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--cn-line); background: none; font-size: 12px; letter-spacing: .1em; color: var(--cn-sub) !important; }
 
-/* 放映机：影院自己用哪套 API */
-.cn-projector-row { flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 6px 12px 0; background: var(--cn-panel); }
-.cn-projector { flex-shrink: 0; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--cn-line); background: none; font-size: 12px; color: var(--cn-sub) !important; }
+/* 放映机：影院自己用哪套 API。菜单是一张旧纸卡片 */
+.cn-projector-row { flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 7px 12px 0; background: var(--cn-panel); }
+.cn-projector { flex-shrink: 0; padding: 3px 11px; border-radius: 999px; border: 1px solid var(--cn-line); background: none; font-size: 12px; color: var(--cn-sub) !important; }
 .cn-projector.on { color: var(--cn-accent) !important; border-color: var(--cn-accent); }
-.cn-projector-model { min-width: 0; font-size: 11px; color: var(--cn-sub); opacity: .7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, Menlo, monospace; }
-.cn-projector-menu { flex-shrink: 0; max-height: 40vh; overflow-y: auto; padding: 6px 12px 8px; background: var(--cn-panel); border-bottom: 1px solid var(--cn-line); }
-.cn-projector-menu button { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; width: 100%; padding: 8px 10px; margin-top: 4px; border-radius: 10px; border: 1px solid var(--cn-line); background: var(--cn-panel-2); font-size: 13px; text-align: left; }
-.cn-projector-menu button.on { border-color: var(--cn-accent); color: var(--cn-accent) !important; }
-.cn-projector-menu small { min-width: 0; font-size: 11px; color: var(--cn-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, Menlo, monospace; }
-.cn-projector-menu p { margin: 6px 2px 0; font-size: 11.5px; color: var(--cn-sub); line-height: 1.5; }
-
-/* 最近看过：接着看 */
-.cn-resume { flex-shrink: 0; padding: 6px 10px; border-radius: 999px; border: 0; background: var(--cn-accent); color: var(--cn-accent-ink) !important; font-size: 12px; font-weight: 700; white-space: nowrap; }
-/* 片单 */
-.cn-work { border-top: 1px solid var(--cn-line); padding-bottom: 8px; }
-.cn-card-head + .cn-work { border-top: 0; }
-.cn-work > .cn-session { border-top: 0; }
-.cn-work-count { margin-left: 6px; font-size: 11px; font-weight: 600; color: var(--cn-sub); }
-.cn-work-list { margin: 0 0 6px 10px; padding-left: 10px; border-left: 2px solid var(--cn-line); }
-.cn-work-list .cn-session { padding: 8px 0; }
-.cn-work-list .cn-session:first-child { border-top: 0; }
-.cn-next { display: inline-block; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--cn-line); background: var(--cn-panel-2); color: var(--cn-accent); font-size: 12px; font-weight: 600; }
+.cn-projector-model { min-width: 0; font-size: 11px; color: var(--cn-sub); opacity: .75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, Menlo, monospace; }
+.cn-projector-menu {
+    flex-shrink: 0; max-height: 40vh; overflow-y: auto; margin: 8px 14px 6px;
+    background: #efe4cc; color: #2b1d12; border: 1.5px solid var(--cn-gold);
+}
+.cn-projector-head { padding: 6px 10px; text-align: center; font-size: 11px; letter-spacing: .4em; text-indent: .4em; color: #8b2a1f; border-bottom: 1px solid #2b1d12; }
+.cn-projector-menu button { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; width: 100%; padding: 8px 12px; border: 0; border-top: 1px dotted rgba(43, 29, 18, .4); background: none; font-size: 13px; text-align: left; color: #2b1d12 !important; }
+.cn-projector-head + button { border-top: 0; }
+.cn-projector-menu button.on { font-weight: 700; color: #8b2a1f !important; }
+.cn-projector-menu button.on::after { content: '●'; font-size: 9px; margin-left: 4px; }
+.cn-projector-menu small { min-width: 0; margin-left: auto; font-size: 11px; font-weight: 400; color: #7a6650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, Menlo, monospace; }
+.cn-projector-menu p { margin: 0; padding: 6px 12px 8px; font-size: 11.5px; color: #7a6650; line-height: 1.5; border-top: 1px dotted rgba(43, 29, 18, .4); }
+.cn-programme { margin-top: 4px; }

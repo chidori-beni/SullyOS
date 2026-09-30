@@ -316,6 +316,13 @@ const ApiCallLogModal: React.FC<ApiCallLogModalProps> = ({ isOpen, onClose }) =>
                                             {e.cachedTokens != null && <>其中缓存 {e.cachedTokens.toLocaleString('en-US')}</>}
                                             {e.cachedTokens != null && e.reasoningTokens != null && ' · '}
                                             {e.reasoningTokens != null && <>思考 {e.reasoningTokens.toLocaleString('en-US')}</>}
+                                            {/* 10-01 实测绒米：报的输入 = 真实输入 + 缓存×2（两条都跟它账单的「主输入」分毫不差）。
+                                                别家通常只含一次缓存，所以不直接改数字，只把按这个算法得出的数写在旁边 */}
+                                            {e.cachedTokens != null && e.promptTokens != null && e.promptTokens - e.cachedTokens * 2 > 0 && (
+                                                <div className="text-slate-500">
+                                                    如果中转把缓存重复算进了输入（绒米就是），实际输入约 {(e.promptTokens - e.cachedTokens * 2).toLocaleString('en-US')}
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                     {expanded && e.usageRaw && (

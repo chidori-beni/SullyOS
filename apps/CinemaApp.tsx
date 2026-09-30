@@ -7,7 +7,7 @@
  * （worker/amsg/src/watchRoom.ts）。逻辑见 utils/cinema/，方案见工作区「交接说明-一起看.md」。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowsClockwise, Copy, Eye, FilmSlate, Microphone, Monitor, PaperPlaneRight, SpeakerHigh, SpeakerSlash, Trash } from '@phosphor-icons/react';
+import { ArrowLeft, ArrowsClockwise, Copy, Eye, Microphone, Monitor, PaperPlaneRight, SpeakerHigh, SpeakerSlash, Trash } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import type { CharacterProfile } from '../types';
 import { DB } from '../utils/db';
@@ -320,6 +320,7 @@ const CinemaApp: React.FC = () => {
         if (s.endedAt) { s = { ...s, endedAt: undefined }; void saveCinemaSession(s); }
         sessionRef.current = s;
         setSession(s);
+        setProjectorOpen(false);
         setFrame(null); frameRef.current = null;
         setStatus(null); statusRef.current = null;
         screenStatusRef.current = null; playerStatusRef.current = null;
@@ -863,7 +864,7 @@ const CinemaApp: React.FC = () => {
             <div className="cinema">
                 <header className="cn-top">
                     <button className="cn-icon" onClick={() => { setView('home'); void reload(); }} aria-label="返回"><ArrowLeft size={20} /></button>
-                    <div className="cn-top-title"><small>PAIR</small><h1>配对电脑</h1></div>
+                    <div className="cn-top-title"><small>Pairing</small><h1>配对电脑</h1></div>
                     <span className="cn-icon" />
                 </header>
                 <main className="cn-scroll overflow-y-auto">
@@ -894,7 +895,7 @@ const CinemaApp: React.FC = () => {
     if (view === 'room' && session) {
         const statusText = [describeStatus(status), externalSubsName ? `字幕：${externalSubsName}` : ''].filter(Boolean).join(' · ');
         return (
-            <div className="cinema">
+            <div className="cinema cn-hall">
                 <header className="cn-top">
                     <button className="cn-icon" onClick={() => { setView('home'); void reload(); }} aria-label="返回"><ArrowLeft size={20} /></button>
                     <div className="cn-top-title">
@@ -903,6 +904,7 @@ const CinemaApp: React.FC = () => {
                     </div>
                     <button className="cn-end" onClick={() => void endScreening()} disabled={ending}>散场</button>
                 </header>
+                <div className="cn-strip" aria-hidden="true" />
                 <section className="cn-screen">
                     {frame
                         ? <img src={frame.dataUrl} alt="电脑上的画面" />
@@ -922,6 +924,7 @@ const CinemaApp: React.FC = () => {
                 </div>
                 {projectorOpen && (
                     <div className="cn-projector-menu">
+                        <div className="cn-projector-head">换一台放映机</div>
                         <button className={!activePreset ? 'on' : ''} onClick={() => chooseProjector(null)}>
                             跟着主 API<small>{apiConfig.model || '没填模型'}</small>
                         </button>
@@ -957,7 +960,7 @@ const CinemaApp: React.FC = () => {
                         {voiceOn && canSpeak ? <SpeakerHigh size={16} weight="fill" /> : <SpeakerSlash size={16} />}
                     </button>
                 </div>
-                {lastNote && <div className="cn-note">📝 {lastNote.text}</div>}
+                {lastNote && <div className="cn-note">{lastNote.text}</div>}
                 <div className="cn-chat overflow-y-auto" ref={listRef}>
                     {session.lines.length === 0 && (
                         <div className="cn-empty small">
@@ -990,6 +993,7 @@ const CinemaApp: React.FC = () => {
                     )}
                     {thinking && <div className="cn-line char"><div className="cn-bubble typing">{char?.name} 在看…</div></div>}
                 </div>
+                <div className="cn-strip" aria-hidden="true" />
                 <footer className="cn-input">
                     <button className={`cn-eye ${withFrame ? 'on' : ''}`} onClick={() => setWithFrame(v => !v)} aria-label="带不带画面" title={withFrame ? '发消息时带上画面' : '只发文字'}>
                         <Eye size={20} weight={withFrame ? 'fill' : 'regular'} />
@@ -1021,12 +1025,17 @@ const CinemaApp: React.FC = () => {
         <div className="cinema">
             <header className="cn-top">
                 <button className="cn-icon" onClick={closeApp} aria-label="关闭"><ArrowLeft size={20} /></button>
-                <div className="cn-top-title"><small>CINEMA</small><h1>影院</h1></div>
+                <span className="cn-top-est">— Est. 2026 —</span>
                 <span className="cn-icon" />
             </header>
             <main className="cn-scroll overflow-y-auto">
+                <div className="cn-mast">
+                    <div className="cn-mast-en">The Sully Picture House</div>
+                    <div className="cn-mast-zh">影院</div>
+                    <div className="cn-mast-rule">{pairing ? '放映机已就位 · 今晚开映' : '先接上放映机 · 才好开映'}</div>
+                </div>
                 <section className="cn-card">
-                    <div className="cn-card-head"><Monitor size={18} /> 电脑</div>
+                    <div className="cn-card-head">电脑</div>
                     {pairing ? (
                         <>
                             <p className="cn-lead">已配对 · 房间 <b>{pairing.code}</b>。电脑上打开观影端就会自动连上。</p>
@@ -1045,7 +1054,7 @@ const CinemaApp: React.FC = () => {
                 </section>
 
                 <section className="cn-card" ref={startCardRef}>
-                    <div className="cn-card-head"><FilmSlate size={18} /> 开一场</div>
+                    <div className="cn-card-head">开一场</div>
                     <label className="cn-label">和谁一起看</label>
                     <div className="cn-chars">
                         {characters.map(c => (
@@ -1089,60 +1098,67 @@ const CinemaApp: React.FC = () => {
                 </section>
 
                 {sessions.length > 0 && (
-                    <section className="cn-card">
-                        <div className="cn-card-head">片单</div>
+                    <section className="cn-programme">
+                        <div className="cn-card-head">片单 <span className="cn-en">Programme</span></div>
                         {groupCinemaWorks(sessions).slice(0, 30).map(work => {
                             const who = characters.find(c => c.id === work.charId);
                             const last = work.latest;
                             const many = work.sessions.length > 1;
                             const open = openWork === work.key;
                             const watching = who && getActiveCinemaPresence(who.id)?.sessionId;
-                            const sessionRow = (s: CinemaSession, showTitle: boolean) => (
-                                <div key={s.id} className="cn-session">
-                                    <button className="cn-session-main" onClick={() => pairing ? openSession(s) : addToast('先配对电脑', 'info')}>
-                                        {showTitle ? <b>{describeWork(s)}</b> : <b>{s.episode || '（没写第几集）'}</b>}
-                                        <small>
-                                            {showTitle ? `和 ${who?.name || '（角色已删除）'} · ` : ''}{new Date(s.updatedAt).toLocaleDateString()}
-                                            {s.lastVideoTime !== undefined ? ` · 看到 ${formatVideoTime(s.lastVideoTime)}` : ''}
-                                            {` · ${s.lines.length} 句`}
-                                            {s.remember === false ? ' · 不留痕' : ''}
-                                            {s.endedAt ? ' · 已散场' : watching === s.id ? ' · 正在看' : ''}
-                                        </small>
-                                    </button>
-                                    {canResume(s) && (
-                                        <button className="cn-resume" onClick={() => pairing ? resumeSession(s) : addToast('先配对电脑', 'info')}>
-                                            ▶ 接着看 {formatVideoTime(s.lastVideoTime)}
-                                        </button>
-                                    )}
-                                    <button className="cn-icon" onClick={() => void removeSession(s)} aria-label="删除"><Trash size={16} /></button>
-                                </div>
-                            );
+                            const need = () => { if (!pairing) addToast('先配对电脑', 'info'); return !!pairing; };
+                            const flags = (s: CinemaSession) => `${s.remember === false ? ' · 不留痕' : ''}${s.endedAt ? ' · 已散场' : watching === s.id ? ' · 正在看' : ''}`;
                             return (
-                                <div key={work.key} className="cn-work">
-                                    {many ? (
+                                <div key={work.key} className="cn-ticket">
+                                    <div className="cn-ticket-main">
                                         <div className="cn-session">
-                                            <button className="cn-session-main" onClick={() => setOpenWork(open ? null : work.key)}>
-                                                <b>《{work.title}》<span className="cn-work-count">{work.sessions.length} 场 {open ? '▴' : '▾'}</span></b>
+                                            <button className="cn-session-main" onClick={() => many ? setOpenWork(open ? null : work.key) : need() && openSession(last)}>
+                                                <b>《{work.title}》{many && <span className="cn-work-count">{open ? '收起 ▴' : '各场 ▾'}</span>}</b>
                                                 <small>
-                                                    和 {who?.name || '（角色已删除）'} · 最近{last.episode ? `看到 ${last.episode}` : '一场'}
-                                                    {last.lastVideoTime !== undefined ? ` ${formatVideoTime(last.lastVideoTime)}` : ''}
-                                                    {` · ${new Date(last.updatedAt).toLocaleDateString()}`}
-                                                    {watching && work.sessions.some(s => s.id === watching) ? ' · 正在看' : ''}
+                                                    {last.episode ? `${last.episode} · ` : ''}
+                                                    {last.lastVideoTime !== undefined ? `看到 ${formatVideoTime(last.lastVideoTime)} · ` : ''}
+                                                    与{who?.name || '（角色已删除）'} · {new Date(last.updatedAt).toLocaleDateString()}
+                                                    {many ? '' : ` · ${last.lines.length} 句${flags(last)}`}
                                                 </small>
                                             </button>
+                                        </div>
+                                        <div className="cn-ticket-actions">
                                             {canResume(last) && (
-                                                <button className="cn-resume" onClick={() => pairing ? resumeSession(last) : addToast('先配对电脑', 'info')}>
-                                                    ▶ 接着看 {formatVideoTime(last.lastVideoTime)}
+                                                <button className="cn-resume" onClick={() => need() && resumeSession(last)}>▸ 接着看 {formatVideoTime(last.lastVideoTime)}</button>
+                                            )}
+                                            {who && (
+                                                <button className="cn-next" onClick={() => prepareNextEpisode(work)}>
+                                                    {nextEpisode(last.episode) ? `下一集 · ${nextEpisode(last.episode)}` : '再开一场'}
                                                 </button>
                                             )}
+                                            {!many && <button className="cn-icon" onClick={() => void removeSession(last)} aria-label="删除"><Trash size={15} /></button>}
                                         </div>
-                                    ) : sessionRow(last, true)}
-                                    {many && open && <div className="cn-work-list">{work.sessions.map(s => sessionRow(s, false))}</div>}
-                                    {who && (
-                                        <button className="cn-next" onClick={() => prepareNextEpisode(work)}>
-                                            {nextEpisode(last.episode) ? `下一集：${nextEpisode(last.episode)}` : '再开一场'}
-                                        </button>
-                                    )}
+                                        {many && open && (
+                                            <div className="cn-work-list">
+                                                {work.sessions.map(s => (
+                                                    <div key={s.id} className="cn-session">
+                                                        <button className="cn-session-main" onClick={() => need() && openSession(s)}>
+                                                            <b>{s.episode || '（没写第几集）'}</b>
+                                                            <small>
+                                                                {new Date(s.updatedAt).toLocaleDateString()}
+                                                                {s.lastVideoTime !== undefined ? ` · 看到 ${formatVideoTime(s.lastVideoTime)}` : ''}
+                                                                {` · ${s.lines.length} 句${flags(s)}`}
+                                                            </small>
+                                                        </button>
+                                                        {canResume(s) && s.id !== last.id && (
+                                                            <button className="cn-resume" onClick={() => need() && resumeSession(s)}>▸ {formatVideoTime(s.lastVideoTime)}</button>
+                                                        )}
+                                                        <button className="cn-icon" onClick={() => void removeSession(s)} aria-label="删除"><Trash size={15} /></button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="cn-stub">
+                                        <span className="cn-en">No.</span>
+                                        <b>{String(work.sessions.length).padStart(2, '0')}</b>
+                                        <span>场</span>
+                                    </div>
                                 </div>
                             );
                         })}
