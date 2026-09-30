@@ -66,6 +66,11 @@ export interface CinemaSession {
     updatedAt: number;
     /** 最后知道的播放进度（秒），下次打开提示「上次看到哪」 */
     lastVideoTime?: number;
+    /** 上次在哪看的：网站视频的网址（小插件报的），「接着看」时让电脑跳回去 */
+    lastVideoUrl?: string;
+    /** 上次是在观影端里放本地视频（lastVideoFile 是文件名），还是在网站上看 */
+    lastVideoMode?: 'site' | 'local';
+    lastVideoFile?: string;
     /** 点过「散场」的时间。再点进来接着看会清掉 */
     endedAt?: number;
     lines: CinemaChatLine[];
@@ -188,6 +193,8 @@ export interface CinemaStatus {
     mode?: 'share' | 'local' | 'site';
     /** site 模式：哪个平台，比如「B站」 */
     site?: string;
+    /** site 模式：播放页网址（小插件报的） */
+    url?: string;
     title?: string;
     time?: number;
     duration?: number;
@@ -559,4 +566,41 @@ export const pickSubtitleWindow = (
         .slice(-max)
         .map(c => ({ time: Math.max(0, Math.round((c[0] + subs.offsetMs) / 1000)), text: c[2] }));
     return { current, recent };
+};
+
+// ───────── 一键接着看 ─────────
+
+/** 往前退几秒再放，免得漏掉上次停下前的那句。 */
+export const RESUME_REWIND_SEC = 3;
+
+export interface ResumeCommand {
+    type: 'resume';
+    id: string;
+    time: number;
+    title: string;
+    mode: 'site' | 'local';
+    url?: string;
+    file?: string;
+}
+
+/** 这一场能不能「接着看」：要知道看到哪，而且要么有网址、要么是本地视频。 */
+export const canResume = (session: Pick<CinemaSession, 'lastVideoTime' | 'lastVideoUrl' | 'lastVideoMode'>): boolean =>
+    typeof session.lastVideoTime === 'number' && session.lastVideoTime > 0
+    && (!!session.lastVideoUrl || session.lastVideoMode === 'local');
+
+/** 发给电脑的「接着看」指令。 */
+export const buildResumeCommand = (
+    session: Pick<CinemaSession, 'title' | 'episode' | 'lastVideoTime' | 'lastVideoUrl' | 'lastVideoMode' | 'lastVideoFile'>,
+    now = Date.now(),
+): ResumeCommand | null => {
+    if (!canResume(session)) return null;
+    const local = session.lastVideoMode === 'local' || !session.lastVideoUrl;
+    return {
+        type: 'resume',
+        id: `${now.toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+        time: Math.max(0, Math.floor(session.lastVideoTime! - RESUME_REWIND_SEC)),
+        title: describeWork(session),
+        mode: local ? 'local' : 'site',
+        ...(local ? { file: session.lastVideoFile } : { url: session.lastVideoUrl }),
+    };
 };

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sully 影院 · 暂停同步
 // @namespace    https://chidori-beni.github.io/SullyOS/
-// @version      0.2.0
+// @version      0.3.0
 // @description  看片时把播放进度、暂停、第几集告诉手机上 Sully 影院里的角色。B站 / 腾讯视频 / 优酷 / 爱奇艺自动开启，其他网站在油猴菜单里点「在这个网站启用」。
 // @author       SullyOS
 // @match        *://www.bilibili.com/video/*
@@ -18,6 +18,7 @@
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand
+// @grant        GM_addValueChangeListener
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        unsafeWindow
@@ -44,12 +45,19 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.0';
+  const VERSION = '0.3.0';
   const PAIR_KEY = 'sully-watch-pair';
   const TICK_MS = 15000;
   const MIN_GAP_MS = 1500;
 
   const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+  // 「接着看」：观影端 → （这里转达）→ 开着那个视频的标签页。经 GM 存储传话，所有标签页共用
+  const RESUME_KEY = 'sully-resume';
+  const RESUME_ACK_KEY = 'sully-resume-ack';
+  const RESUME_TTL_MS = 5 * 60 * 1000;
+  const onValueChange = (key, fn) => {
+    if (typeof GM_addValueChangeListener === 'function') GM_addValueChangeListener(key, (_k, _old, value) => fn(value));
+  };
   const isWatchPage = /\/watch\.html/.test(location.pathname);
 
   // ───────── 观影端：抄配对信息 ─────────
@@ -65,6 +73,19 @@
     };
     sync();
     setInterval(sync, 2000);
+    // 观影端要「接着看」：记进 GM 存储，开着那个视频的标签页会收到
+    pageWindow.addEventListener('message', (e) => {
+      const d = e && e.data;
+      if (!d || d.sully !== 'resume' || !d.cmd) return;
+      GM_setValue(RESUME_KEY, JSON.stringify({ ...d.cmd, at: Date.now() }));
+    });
+    // 那边跳好了 → 告诉观影端
+    onValueChange(RESUME_ACK_KEY, (value) => {
+      try {
+        const ack = typeof value === 'string' ? JSON.parse(value) : value;
+        if (ack && ack.id) pageWindow.postMessage({ sully: 'resume-ack', id: ack.id }, '*');
+      } catch (e) { /* ignore */ }
+    });
     return;
   }
 
@@ -117,6 +138,9 @@
   if (!isEnabledSite(topHost)) return;
   // 内置网站照旧只在最外层干活（它们的播放器不在 iframe 里，里面的广告 iframe 别来捣乱）
   if (!isTopFrame && isBuiltinSite(location.hostname)) return;
+
+  /** 这个视频所在网页的地址：最外层就是自己；在 iframe 里尽量拿外层（拿不到就用自己的） */
+  const pageUrl = () => (isTopFrame ? location.href : (document.referrer || location.href));
 
   // ───────── 视频网站：报进度 ─────────
   const site = (SITES.find(s => s.re.test(topHost)) || { name: topHost }).name;
@@ -205,7 +229,7 @@
       site,
       // 在 iframe 里读到的是播放器的标题，没意义，就不报了（手机上有这一场的片名）
       title: isTopFrame ? cleanTitle(document.title) : '',
-      url: location.href.split('#')[0],
+      url: pageUrl().split('#')[0],
       time: isFinite(video.currentTime) ? Math.round(video.currentTime * 10) / 10 : undefined,
       duration: isFinite(video.duration) ? Math.round(video.duration) : undefined,
       paused: !!video.paused || !!video.ended,
@@ -247,12 +271,49 @@
     video = next;
     if (video) {
       EVENTS.forEach(ev => video.addEventListener(ev, onEvent));
+      video.addEventListener('loadedmetadata', tryResume);
       report('found');
+      tryResume();
     }
   };
 
+  // ───────── 接着看：跳到观影端说的地方 ─────────
+  /** 是不是同一个视频：同一个网站、同一个路径，B站 分 P 也要一样（忽略 ?t= ?spm_id 这些） */
+  const sameVideo = (a, b) => {
+    try {
+      const x = new URL(a);
+      const y = new URL(b);
+      if (x.hostname.replace(/^www\./, '') !== y.hostname.replace(/^www\./, '')) return false;
+      if (x.pathname.replace(/\/+$/, '') !== y.pathname.replace(/\/+$/, '')) return false;
+      return (x.searchParams.get('p') || '1') === (y.searchParams.get('p') || '1');
+    } catch (e) { return false; }
+  };
+  let pendingResume = null;
+  const tryResume = () => {
+    if (!pendingResume || !video) return;
+    if (!isFinite(video.duration) || !(video.duration > 0)) return; // 视频还没加载好，等 loadedmetadata
+    video.currentTime = pendingResume.time;
+    try { const p = video.play && video.play(); if (p && p.catch) p.catch(() => {}); } catch (e) { /* 浏览器不让自动播放就算了 */ }
+    GM_setValue(RESUME_ACK_KEY, JSON.stringify({ id: pendingResume.id, at: Date.now() }));
+    GM_setValue(RESUME_KEY, null); // 用掉了，别的页面别再跳
+    pendingResume = null;
+    report('resume');
+  };
+  const takeResume = (value) => {
+    let cmd = null;
+    try { cmd = typeof value === 'string' ? JSON.parse(value) : value; } catch (e) { return; }
+    if (!cmd || cmd.mode !== 'site' || typeof cmd.time !== 'number' || !cmd.url) return;
+    if (!cmd.at || Date.now() - cmd.at > RESUME_TTL_MS) return;
+    if (!sameVideo(cmd.url, pageUrl())) return;
+    pendingResume = cmd;
+    tryResume();
+  };
+  onValueChange(RESUME_KEY, takeResume);
+
   // 这些网站都是单页应用：换集时 video 可能被整个换掉，定时重新找一遍
   setInterval(attach, 3000);
+  // 新打开的页面：观影端刚才要「接着看」的就是这个视频的话，找到 video 就跳
+  takeResume(GM_getValue(RESUME_KEY, null));
   attach();
 
   // 播放中定时报；暂停中两分钟报一次，让手机知道还开着

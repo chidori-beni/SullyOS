@@ -16,9 +16,9 @@ import { runCallMemoryPalacePostFlow } from '../utils/memoryPalace/callPostFlow'
 import { endCinemaPresence, getActiveCinemaPresence, touchCinemaPresence } from '../utils/cinema/cinemaPresence';
 import { getActiveDatePresence } from '../utils/datePresence';
 import {
-    appendCinemaNote, appendSubtitleLines, buildCinemaEndCardText, estimateVideoTime, pickSubtitleWindow, sanitizeExternalSubtitles, CINEMA_END_SOURCE, cinemaLineText, cinemaMessageMetadata, decideProactive,
+    appendCinemaNote, appendSubtitleLines, buildCinemaEndCardText, buildResumeCommand, canResume, estimateVideoTime, pickSubtitleWindow, sanitizeExternalSubtitles, CINEMA_END_SOURCE, cinemaLineText, cinemaMessageMetadata, decideProactive,
     NOTE_GAP_MS, PROACTIVE_LEVELS, toCinemaLines,
-    type CinemaNote, type CinemaProactiveLevel, type CinemaSubtitleLine, type ExternalSubtitles, type ProactiveReason,
+    type CinemaNote, type CinemaProactiveLevel, type ResumeCommand, type CinemaSubtitleLine, type ExternalSubtitles, type ProactiveReason,
     describeStatus, describeWork, formatVideoTime, isFrameFresh, mergeCinemaStatus, newCinemaSession, sessionRemembers, workerHostForDisplay,
     type CinemaChatLine, type CinemaFrame, type CinemaMeetMode, type CinemaPairing, type CinemaSession, type CinemaSpoilerMode, type CinemaStatus,
 } from '../utils/cinema/cinema';
@@ -111,7 +111,24 @@ const CinemaApp: React.FC = () => {
     }, [characters, charId]);
 
     // ---- 放映室连接：配对页和放映室都要连（配对页靠它知道电脑连上没有）----
+    // handleMessage 只建一次（useCallback []），要弹提示得通过 ref 拿最新的 addToast
+    const addToastRef = useRef(addToast);
+    addToastRef.current = addToast;
+    /** 点了「接着看」、还在等连上电脑：连上的那一刻发出去 */
+    const pendingResumeRef = useRef<ResumeCommand | null>(null);
+
     const handleMessage = useCallback((msg: WatchMessage) => {
+        if (msg.type === 'resume-result') {
+            // 电脑那边怎么处理的「接着看」
+            const how = String(msg.how || '');
+            const text = how === 'jumped' ? '电脑上已经跳到上次看到的地方了'
+                : how === 'need-click' ? '那个视频没开着：去电脑的观影端点一下「在新标签页打开」'
+                : how === 'local-jumped' ? '观影端里的本地视频已经跳到上次看到的地方了'
+                : how === 'local-need-file' ? '在电脑的观影端里选同一个视频文件，会从上次的地方接着放'
+                : '';
+            if (text) addToastRef.current(text, 'info');
+            return;
+        }
         if (msg.type === 'presence') {
             setScreenOnline(Number(msg.screen) > 0);
         } else if (msg.type === 'frame' && typeof msg.dataUrl === 'string') {
@@ -142,6 +159,7 @@ const CinemaApp: React.FC = () => {
                 mode: isPlayer ? 'site' : msg.mode === 'local' || msg.mode === 'share' ? msg.mode : undefined,
                 site: typeof msg.site === 'string' ? msg.site : undefined,
                 title: typeof msg.title === 'string' ? msg.title : undefined,
+                url: typeof msg.url === 'string' ? msg.url : undefined,
                 time: typeof msg.time === 'number' ? msg.time : undefined,
                 duration: typeof msg.duration === 'number' ? msg.duration : undefined,
                 paused: typeof msg.paused === 'boolean' ? msg.paused : undefined,
@@ -153,7 +171,8 @@ const CinemaApp: React.FC = () => {
             if (isPlayer) playerStatusRef.current = s; else screenStatusRef.current = s;
             refreshStatus();
             if (!isPlayer) setScreenOnline(true);
-            if (isPlayer) rememberProgress(s);
+            // 小插件报的网站进度、观影端里放本地视频的进度，都记下来（「接着看」要用）
+            if (isPlayer || s.mode === 'local') rememberProgress(s);
             if (isPlayer) subtitleLinesRef.current = appendSubtitleLines(subtitleLinesRef.current, msg.subtitles);
         }
     }, []);
@@ -174,7 +193,13 @@ const CinemaApp: React.FC = () => {
         const urgent = s.paused === true;
         if (!urgent && Date.now() - progressSavedAt.current < 60_000) return;
         progressSavedAt.current = Date.now();
-        const next = { ...current, lastVideoTime: s.time };
+        const next: CinemaSession = {
+            ...current,
+            lastVideoTime: s.time,
+            ...(s.mode === 'local'
+                ? { lastVideoMode: 'local' as const, lastVideoFile: s.title || current.lastVideoFile }
+                : { lastVideoMode: 'site' as const, lastVideoUrl: s.url || current.lastVideoUrl }),
+        };
         sessionRef.current = next;
         setSession(next);
         void saveCinemaSession(next).catch(error => console.warn('[cinema] 存进度失败', error));
@@ -198,7 +223,14 @@ const CinemaApp: React.FC = () => {
         if (!needSocket || !pairing) return;
         const socket = new WatchRoomSocket(pairing, {
             onMessage: handleMessage,
-            onState: (state) => { setConn(state); if (state !== 'open') setScreenOnline(false); },
+            onState: (state) => {
+                setConn(state);
+                if (state !== 'open') setScreenOnline(false);
+                if (state === 'open' && pendingResumeRef.current) {
+                    socket.send(pendingResumeRef.current as unknown as WatchMessage);
+                    pendingResumeRef.current = null;
+                }
+            },
         });
         socketRef.current = socket;
         socket.start();
@@ -257,6 +289,16 @@ const CinemaApp: React.FC = () => {
         return () => stopAmsgChatPresence(charIdInRoom);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [charIdInRoom, sessionId]);
+
+    /** 「接着看」：进这一场，连上电脑后让它跳回上次看到的地方 */
+    const resumeSession = (s: CinemaSession) => {
+        const cmd = buildResumeCommand(s);
+        if (!cmd) return;
+        const socket = socketRef.current;
+        if (view === 'room' && session?.id === s.id && socket?.send(cmd as unknown as WatchMessage)) return;
+        pendingResumeRef.current = cmd;
+        openSession(s);
+    };
 
     const openSession = (s: CinemaSession) => {
         // 散过场的再点进来就是接着看
@@ -966,6 +1008,11 @@ const CinemaApp: React.FC = () => {
                                             {s.endedAt ? ' · 已散场' : who && getActiveCinemaPresence(who.id)?.sessionId === s.id ? ' · 正在看' : ''}
                                         </small>
                                     </button>
+                                    {canResume(s) && (
+                                        <button className="cn-resume" onClick={() => pairing ? resumeSession(s) : addToast('先配对电脑', 'info')}>
+                                            ▶ 接着看 {formatVideoTime(s.lastVideoTime)}
+                                        </button>
+                                    )}
                                     <button className="cn-icon" onClick={() => void removeSession(s)} aria-label="删除"><Trash size={16} /></button>
                                 </div>
                             );

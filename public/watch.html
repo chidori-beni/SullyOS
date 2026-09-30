@@ -59,6 +59,16 @@
   <h1>🎬 Sully 影院 · 观影端</h1>
   <p class="lead">视频在这台电脑上放，手机上的角色经这一页看到画面、陪你聊。<br>请用 <b>Chrome</b> 或 <b>360 极速浏览器</b>（要「共享屏幕」功能）。</p>
 
+  <!-- 手机点了「接着看」、而那个视频没开着时出现 -->
+  <section class="card hidden" id="resumeCard" style="border-color: var(--accent)">
+    <h2>▶ 接着看</h2>
+    <p id="resumeText" style="margin:0"></p>
+    <div class="row">
+      <button class="primary" id="resumeOpenBtn">在新标签页打开</button>
+      <button id="resumeDismissBtn">不用了</button>
+    </div>
+  </section>
+
   <!-- ① 连接 -->
   <section class="card" id="pairCard">
     <h2><span class="num">1</span> 连上手机</h2>
@@ -255,6 +265,8 @@
         // 手机刚上线（进了放映室）：把外挂字幕再发一份，它那边是存在内存里的
         if (on && !phoneWasOnline) sendExtSub();
         phoneWasOnline = on;
+      } else if (msg.type === 'resume') {
+        handleResume(msg);
       } else if (msg.type === 'capture-request') {
         captureAndSend('request', msg.requestId);
       }
@@ -388,6 +400,14 @@
   };
   player.addEventListener('loadedmetadata', () => {
     if (!localFile) return;
+    if (pendingLocalResume && (!pendingLocalResume.file || pendingLocalResume.file === localFile.name)) {
+      player.currentTime = pendingLocalResume.time;
+      $('resumeCard').classList.add('hidden');
+      log(`接着看：从 ${fmt(pendingLocalResume.time)} 接着放`);
+      pendingLocalResume = null;
+      pushStatus();
+      return;
+    }
     const saved = Number(lsGet(posKey(localFile)) || 0);
     if (saved > 10 && saved < player.duration - 10) {
       player.currentTime = saved;
@@ -568,6 +588,72 @@
     const probe = lastProbe ? `\n字幕侦探：${lastProbe}` : '';
     $('playerText').textContent = `最近一次（${when}）：${msg.site || ''} ${state} ${time}${dur ? ' / ' + dur : ''}　${msg.title || ''}${sub}${probe}`;
   };
+
+  // ───────── 一键接着看 ─────────
+  // 手机点「接着看」→ 这里收到 {mode, url | file, time, title, id}。
+  //   网站：交给这一页上的小插件，它再通知开着那个视频的标签页跳过去；2.5 秒没回音就说明没开着，
+  //         弹出「在新标签页打开」（浏览器不让网页自己开新标签页，得用户点）。新页面打开后小插件会自动跳。
+  //   本地视频：同一个文件开着就直接跳；没开着就等用户选同一个文件时跳。
+  let pendingLocalResume = null;
+  let resumeWaiting = null;
+
+  const withTime = (url, t) => {
+    try {
+      const u = new URL(url);
+      if (/bilibili\.com$/.test(u.hostname)) u.searchParams.set('t', String(Math.floor(t)));
+      return u.toString();
+    } catch { return url; }
+  };
+  const showResumeCard = (text, url) => {
+    $('resumeText').textContent = text;
+    $('resumeOpenBtn').classList.toggle('hidden', !url);
+    $('resumeOpenBtn').onclick = () => { window.open(url, '_blank'); $('resumeCard').classList.add('hidden'); };
+    $('resumeCard').classList.remove('hidden');
+    $('resumeCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+  $('resumeDismissBtn').onclick = () => $('resumeCard').classList.add('hidden');
+
+  const handleResume = (cmd) => {
+    const t = Number(cmd.time) || 0;
+    const title = cmd.title || '';
+    if (cmd.mode === 'local') {
+      if (mode === 'local' && player.src && (!cmd.file || !localFile || localFile.name === cmd.file)) {
+        player.currentTime = t;
+        player.play().catch(() => {});
+        send({ type: 'resume-result', id: cmd.id, how: 'local-jumped' });
+        log(`接着看：本地视频跳到 ${fmt(t)}`);
+        return;
+      }
+      pendingLocalResume = { file: cmd.file || '', time: t };
+      switchTab('local');
+      showResumeCard(`${title}：在第 2 块「播放本地视频」里选${cmd.file ? `「${cmd.file}」` : '同一个视频文件'}，会从 ${fmt(t)} 接着放。`, '');
+      send({ type: 'resume-result', id: cmd.id, how: 'local-need-file' });
+      return;
+    }
+    if (!cmd.url) return;
+    // 先问开着的标签页（经这一页上的小插件转达）
+    window.postMessage({ sully: 'resume', cmd: { id: cmd.id, url: cmd.url, time: t, mode: 'site' } }, '*');
+    clearTimeout(resumeWaiting && resumeWaiting.timer);
+    resumeWaiting = {
+      id: cmd.id,
+      timer: setTimeout(() => {
+        resumeWaiting = null;
+        showResumeCard(`${title}：那个视频现在没开着。点下面的按钮在新标签页打开，会从 ${fmt(t)} 接着放。`, withTime(cmd.url, t));
+        send({ type: 'resume-result', id: cmd.id, how: 'need-click' });
+        log(`接着看：没找到开着的标签页，等你点「在新标签页打开」`);
+      }, 2500),
+    };
+  };
+  // 小插件回话：开着的标签页已经跳过去了
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (!d || d.sully !== 'resume-ack' || !resumeWaiting || d.id !== resumeWaiting.id) return;
+    clearTimeout(resumeWaiting.timer);
+    send({ type: 'resume-result', id: resumeWaiting.id, how: 'jumped' });
+    resumeWaiting = null;
+    $('resumeCard').classList.add('hidden');
+    log('接着看：开着的标签页已经跳过去了');
+  });
 
   // ───────── ⑤ 外挂字幕 ─────────
   // 解析交给 watch/subtitle-parser.js。字幕整份发给手机一次（手机在放映室时），偏移单独发。

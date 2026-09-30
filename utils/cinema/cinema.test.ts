@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    buildResumeCommand, canResume, RESUME_REWIND_SEC,
     estimateVideoTime, pickSubtitleWindow, sanitizeExternalSubtitles,
     appendSubtitleLines, CINEMA_SUBTITLES_KEEP,
     splitCinemaActions, toCinemaLines, cinemaLineText,
@@ -297,5 +298,25 @@ describe('影院 · 外挂字幕', () => {
         expect(pickSubtitleWindow(later, 4.5).current).toBe('你到底是谁');
         expect(pickSubtitleWindow(later, 7).current).toBe('我是钟表馆的主人');
         expect(pickSubtitleWindow(later, 7).recent.map(l => l.time)).toEqual([3, 6]);
+    });
+});
+
+describe('影院 · 一键接着看', () => {
+    it('网站：带网址，往前退几秒', () => {
+        const cmd = buildResumeCommand({ title: '钟表馆事件', episode: '第2集', lastVideoTime: 1390, lastVideoUrl: 'https://www.bilibili.com/video/BVx', lastVideoMode: 'site' });
+        expect(cmd).toMatchObject({ type: 'resume', mode: 'site', url: 'https://www.bilibili.com/video/BVx', time: 1390 - RESUME_REWIND_SEC, title: '《钟表馆事件》 第2集' });
+        expect(cmd!.id).toBeTruthy();
+    });
+
+    it('本地视频：带文件名', () => {
+        expect(buildResumeCommand({ title: 'x', lastVideoTime: 100, lastVideoMode: 'local', lastVideoFile: 'a.mp4' })).toMatchObject({ mode: 'local', file: 'a.mp4', time: 97 });
+    });
+
+    it('不知道看到哪、或者既没网址也不是本地视频，就不能接着看', () => {
+        expect(canResume({ lastVideoTime: 100 })).toBe(false);
+        expect(canResume({ lastVideoUrl: 'https://x' })).toBe(false);
+        expect(canResume({ lastVideoTime: 0, lastVideoUrl: 'https://x' })).toBe(false);
+        expect(buildResumeCommand({ title: 'x' })).toBeNull();
+        expect(buildResumeCommand({ title: 'x', lastVideoTime: 2, lastVideoUrl: 'https://x' })!.time).toBe(0);
     });
 });

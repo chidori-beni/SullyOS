@@ -27,6 +27,7 @@ let title = '';
 let subtitleEls: Record<string, { textContent: string }[]> = {};
 /** 假网页上的「所有元素」（'*'），用来放 shadow root 的宿主 / 侦探要翻的元素 */
 let allEls: any[] = [];
+const valueListeners = new WeakMap<Map<string, unknown>, { key: string; fn: (k: string, o: unknown, v: unknown) => void }[]>();
 
 /** tab：模拟同一个浏览器里的另一个标签页——油猴存储共用（store），网页里的 video 各是各的（videos） */
 const setup = (url: string, stored: Record<string, unknown> = {}, tab?: { store: Map<string, unknown>; videos: FakeVideo[] }) => {
@@ -40,12 +41,22 @@ const setup = (url: string, stored: Record<string, unknown> = {}, tab?: { store:
             getAttribute: (k: string) => attrs[k] ?? null,
         },
     };
-    const fakeWindow = { localStorage: { getItem: (k: string) => pageStorage[k] ?? null } };
+    // 同一个浏览器里各标签页共用油猴存储，值变了要通知所有标签页（GM_addValueChangeListener）
+    if (!valueListeners.has(store)) valueListeners.set(store, []);
+    const listeners = valueListeners.get(store)!;
+    const pageMessages: any[] = [];
+    const messageHandlers: ((e: { data: any }) => void)[] = [];
+    const fakeWindow = {
+        localStorage: { getItem: (k: string) => pageStorage[k] ?? null },
+        addEventListener: (type: string, fn: any) => { if (type === 'message') messageHandlers.push(fn); },
+        postMessage: (data: any) => { pageMessages.push(data); },
+    };
     const menus: string[] = [];
     const sandbox = {
         GM_registerMenuCommand: (label: string) => { menus.push(label); },
         GM_getValue: (k: string, d: unknown) => (store.has(k) ? store.get(k) : d),
-        GM_setValue: (k: string, v: unknown) => { store.set(k, v); },
+        GM_setValue: (k: string, v: unknown) => { store.set(k, v); listeners.filter(l => l.key === k).forEach(l => l.fn(k, undefined, v)); },
+        GM_addValueChangeListener: (key: string, fn: any) => { listeners.push({ key, fn }); },
         GM_xmlhttpRequest: (req: any) => { requests.push({ ...req, body: JSON.parse(req.data) }); },
         unsafeWindow: fakeWindow,
         window: fakeWindow,
@@ -53,7 +64,12 @@ const setup = (url: string, stored: Record<string, unknown> = {}, tab?: { store:
         location: new URL(url),
     };
     const run = new Function(...Object.keys(sandbox), SCRIPT);
-    return { store, requests, menus, start: () => run(...Object.values(sandbox)) };
+    return {
+        store, requests, menus, pageMessages,
+        /** 模拟观影端网页 postMessage 给这一页 */
+        pageSays: (data: any) => messageHandlers.forEach(fn => fn({ data })),
+        start: () => run(...Object.values(sandbox)),
+    };
 };
 
 const addVideo = (duration: number) => {
@@ -316,5 +332,46 @@ describe('暂停同步小插件', () => {
         vi.advanceTimersByTime(2000);
         expect(env.menus).toEqual([]);
         expect(env.requests.length).toBeGreaterThan(0);
+    });
+
+    it('接着看：观影端要求 → 开着那个视频的标签页跳过去并回话；别的视频的标签页不动', () => {
+        const shared = new Map<string, unknown>([['sully-watch-pair', PAIR]]);
+        pageStorage['sully-watch-pair'] = PAIR;
+        const watchPage = setup('https://chidori-beni.github.io/SullyOS/watch.html', {}, { store: shared, videos: [] });
+        const tabA = { store: shared, videos: [new FakeVideo(5400)] };
+        const tabB = { store: shared, videos: [new FakeVideo(3000)] };
+        const a = setup('https://www.bilibili.com/video/BVaaa?p=2&spm_id_from=x', {}, tabA);
+        const b = setup('https://www.bilibili.com/video/BVbbb', {}, tabB);
+        watchPage.start(); a.start(); b.start();
+        vi.advanceTimersByTime(2000);
+
+        watchPage.pageSays({ sully: 'resume', cmd: { id: 'r1', url: 'https://www.bilibili.com/video/BVaaa/?p=2', time: 1387, mode: 'site' } });
+        expect(tabA.videos[0].currentTime).toBe(1387);
+        expect(tabB.videos[0].currentTime).toBe(0);
+        expect(watchPage.pageMessages).toContainEqual({ sully: 'resume-ack', id: 'r1' });
+    });
+
+    it('接着看：视频没开着时，新打开的页面一找到视频就跳（5 分钟内有效），分 P 不同不跳', () => {
+        const shared = new Map<string, unknown>([['sully-watch-pair', PAIR]]);
+        shared.set('sully-resume', JSON.stringify({ id: 'r2', url: 'https://www.bilibili.com/video/BVccc', time: 600, mode: 'site', at: Date.now() }));
+        const wrongPart = { store: shared, videos: [new FakeVideo(3000)] };
+        setup('https://www.bilibili.com/video/BVccc?p=3', {}, wrongPart).start();
+        vi.advanceTimersByTime(1000);
+        expect(wrongPart.videos[0].currentTime).toBe(0);
+
+        const tab = { store: shared, videos: [new FakeVideo(3000)] };
+        setup('https://www.bilibili.com/video/BVccc?t=600', {}, tab).start();
+        vi.advanceTimersByTime(1000);
+        expect(tab.videos[0].currentTime).toBe(600);
+        expect(shared.get('sully-resume')).toBeNull(); // 用掉了
+    });
+
+    it('接着看：过期的指令不执行', () => {
+        const shared = new Map<string, unknown>([['sully-watch-pair', PAIR]]);
+        shared.set('sully-resume', JSON.stringify({ id: 'old', url: 'https://www.bilibili.com/video/BVddd', time: 900, mode: 'site', at: Date.now() - 10 * 60_000 }));
+        const tab = { store: shared, videos: [new FakeVideo(3000)] };
+        setup('https://www.bilibili.com/video/BVddd', {}, tab).start();
+        vi.advanceTimersByTime(1000);
+        expect(tab.videos[0].currentTime).toBe(0);
     });
 });
