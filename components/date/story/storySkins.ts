@@ -20,8 +20,11 @@ import memoBg from '../../../assets/story-skins/memo-bg.jpg';
 import memoThumb from '../../../assets/story-skins/memo-thumb.jpg';
 import moonNightBg from '../../../assets/story-skins/moon-night-bg.jpg';
 import moonNightWide from '../../../assets/story-skins/moon-night-wide.jpg';
+import opiumCity from '../../../assets/story-skins/opium-city.jpg';
+import opiumGlitter from '../../../assets/story-skins/opium-glitter.jpg';
+import opiumGalaxy from '../../../assets/story-skins/opium-galaxy.jpg';
 
-export type StorySkinId = 'classic' | 'chantilly-noir' | 'otaku-diary' | 'coco' | 'at-large' | 'memo' | 'moon-night';
+export type StorySkinId = 'classic' | 'chantilly-noir' | 'otaku-diary' | 'coco' | 'at-large' | 'memo' | 'moon-night' | 'black-opium';
 
 export interface StorySkin {
     id: StorySkinId;
@@ -1217,6 +1220,175 @@ const MOON_NIGHT_CSS = `
 .story-skin-moon-night h2.font-serif { font-family: ${MOON_SERIF}; letter-spacing: .06em; }
 `;
 
+/* ── 黑鸦片 · Own the night ─────────────────────────────── */
+
+/** 玫瑰 → 紫的霓光渐变（按钮、光边） */
+const OPIUM_NEON = 'linear-gradient(135deg, #D06456 0%, #BF468D 45%, #7752C5 100%)';
+/** 闪粉：随机细点，叠在卡片上 */
+const OPIUM_GLITTER = svg(`<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><g fill='#f3d6e6'><circle cx='9' cy='14' r='.6' opacity='.35'/><circle cx='44' cy='6' r='.4' opacity='.25'/><circle cx='83' cy='27' r='.7' opacity='.4'/><circle cx='111' cy='9' r='.5' opacity='.3'/><circle cx='24' cy='58' r='.5' opacity='.3'/><circle cx='66' cy='73' r='.6' opacity='.35'/><circle cx='101' cy='64' r='.4' opacity='.25'/><circle cx='15' cy='103' r='.7' opacity='.35'/><circle cx='57' cy='112' r='.4' opacity='.25'/><circle cx='93' cy='98' r='.6' opacity='.3'/></g></svg>`);
+
+const BLACK_OPIUM_CSS = `
+.story-skin-black-opium {
+  --story-bg: #141018;
+  --story-surface: #1D1823;
+  --story-raised: #261F27;
+  --story-ink: #D6D0D9;
+  --story-muted: #A39AA8;
+  --story-faint: #6C6270;
+  --story-line: rgba(255, 255, 255, .13);
+  --story-soft: #2C2430;
+  --story-accent: #BF468D;
+  --story-accent-soft: rgba(191, 70, 141, .18);
+  --story-accent-ink: #E08DB7;
+  color-scheme: dark;
+}
+/* 字多的页面：黑色闪粉岩 + 压暗；剧情进行中：城市夜景 */
+.story-skin-black-opium.story-theme-page {
+  background: linear-gradient(rgba(12, 9, 14, .55), rgba(12, 9, 14, .7)), #0E0B10 url("${opiumGlitter}") center / cover no-repeat;
+}
+.story-skin-black-opium.story-theme-page > .bg-stone-100 { background-color: transparent !important; }
+.story-skin-black-opium.story-theme-page > .story-session-page.bg-stone-100 {
+  background: linear-gradient(180deg, rgba(119, 82, 197, .12), rgba(12, 9, 14, 0) 40%), #0B0A0C url("${opiumCity}") center / cover no-repeat !important;
+}
+
+/* 页眉页脚：磨砂黑玻璃 + 底部一道玫瑰紫霓光 */
+.story-skin-black-opium .story-safe-header,
+.story-skin-black-opium .story-safe-footer {
+  position: relative;
+  background: rgba(20, 16, 24, .72) !important;
+  border: 0 !important;
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
+}
+.story-skin-black-opium .story-safe-header::after,
+.story-skin-black-opium .story-safe-footer::before {
+  content: '';
+  position: absolute;
+  left: 8%; right: 8%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #D06456 20%, #BF468D 50%, #7752C5 80%, transparent);
+  box-shadow: 0 0 8px rgba(191, 70, 141, .8);
+  pointer-events: none;
+}
+.story-skin-black-opium .story-safe-header::after { bottom: 0; }
+.story-skin-black-opium .story-safe-footer::before { top: 0; }
+.story-skin-black-opium .story-safe-header .uppercase {
+  font-weight: 600 !important;
+  letter-spacing: .38em !important;
+  background: ${OPIUM_NEON};
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent !important;
+}
+.story-skin-black-opium .story-safe-header h1 { color: #F1EAF3; letter-spacing: .06em; }
+
+/* 正文卡：iOS 圆角磨砂黑卡 + 闪粉 + 霓光描边 */
+.story-skin-black-opium .story-turn,
+.story-skin-black-opium .story-opening {
+  position: relative;
+  padding: 24px 18px 20px;
+  border-radius: 26px;
+  border: 1px solid transparent !important;
+  background:
+    ${OPIUM_GLITTER} 0 0 / 120px 120px padding-box,
+    linear-gradient(-10deg, rgba(184, 92, 120, .16), rgba(35, 35, 35, .55) 12%, rgba(119, 82, 197, .08) 50%, rgba(184, 92, 120, .16)) padding-box,
+    linear-gradient(rgba(22, 18, 25, .8), rgba(22, 18, 25, .8)) padding-box,
+    linear-gradient(135deg, rgba(208, 100, 86, .55), rgba(255, 255, 255, .08) 35%, rgba(255, 255, 255, .06) 65%, rgba(119, 82, 197, .6)) border-box;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .5);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+.story-skin-black-opium .story-prose { color: #DDD6E0 !important; letter-spacing: .02em; }
+
+/* 开场卡：紫色银河雪山 */
+.story-skin-black-opium .story-opening { padding-top: 0; overflow: hidden; text-align: center; }
+.story-skin-black-opium .story-opening::before {
+  content: '';
+  display: block;
+  height: 170px;
+  margin: 0 -18px 20px;
+  background: linear-gradient(180deg, rgba(22, 18, 25, 0) 55%, rgba(22, 18, 25, .95)), url("${opiumGalaxy}") 30% 40% / 190% auto no-repeat;
+}
+.story-skin-black-opium .story-opening::after {
+  content: 'Own the night ...';
+  position: absolute;
+  left: 0; right: 0; top: 134px;
+  color: rgba(255, 240, 248, .85);
+  font: italic 300 12px/1 'Didot', 'DM Serif Display', serif;
+  letter-spacing: .3em;
+  text-shadow: 0 0 10px rgba(191, 70, 141, .9);
+  pointer-events: none;
+}
+.story-skin-black-opium .story-opening > :first-child { letter-spacing: .38em; color: #CD7D84 !important; }
+.story-skin-black-opium .story-opening h2 { color: #F4ECF6; }
+
+/* 对白：玫瑰 → 紫的淡渐变胶囊，和原主题一致 */
+.story-skin-black-opium:not(.story-q-color) .story-quote { color: #D59AB9; }
+.story-skin-black-opium:not(.story-q-bg) .story-quote {
+  padding: 1px .3em;
+  margin: 0 2px;
+  border-radius: 6px;
+  background-image: linear-gradient(100deg, rgba(190, 128, 158, .2), rgba(119, 82, 197, .1) 60%, transparent);
+  box-shadow: 0 0 0 .5px rgba(190, 128, 158, .4);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* 你写下：原主题的用户气泡——深酒紫圆角卡 */
+.story-skin-black-opium .story-user-turn,
+.story-skin-black-opium .story-user-turn.border-violet-300 {
+  margin-left: 14%;
+  padding: 14px 16px;
+  border: 0 !important;
+  border-radius: 22px 22px 6px 22px;
+  background: linear-gradient(-5deg, rgba(103, 51, 90, .92), rgba(119, 82, 197, .55));
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .12);
+}
+.story-skin-black-opium .story-user-turn > div:first-child { color: #F2B7CF !important; letter-spacing: .3em !important; }
+.story-skin-black-opium .story-prose-user { color: #F4EAF1 !important; }
+
+/* 场景卡：更深一层的圆角磨砂块 */
+.story-skin-black-opium .story-scene {
+  padding: 12px 14px;
+  border: .5px solid rgba(255, 255, 255, .15) !important;
+  border-radius: 18px;
+  background: rgba(10, 8, 12, .5);
+}
+.story-skin-black-opium .story-scene > div:first-child { color: #CD7D84 !important; letter-spacing: .3em !important; }
+
+/* 输入区：胶囊磨砂 + 霓光发送键 */
+.story-skin-black-opium .story-compose {
+  background: rgba(20, 16, 24, .8) !important;
+  border: .5px solid rgba(255, 255, 255, .15) !important;
+  border-radius: 24px !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .45) !important;
+}
+.story-skin-black-opium .story-compose textarea { color: #DDD6E0; }
+.story-skin-black-opium .story-compose textarea::placeholder { color: rgba(214, 208, 217, .45); font-style: italic; }
+.story-skin-black-opium .story-send-button:not(.bg-rose-600),
+.story-skin-black-opium .story-quick-preset button {
+  background: ${OPIUM_NEON} !important;
+  color: #FFF4FA !important;
+  border-radius: 999px !important;
+  box-shadow: 0 0 14px rgba(191, 70, 141, .55), inset 0 1px 0 rgba(255, 255, 255, .25) !important;
+}
+.story-skin-black-opium .story-compose .bg-violet-50 { background: rgba(191, 70, 141, .16) !important; border-color: rgba(191, 70, 141, .4) !important; color: #E8A7C6 !important; border-radius: 999px !important; }
+
+/* 配色补丁 */
+.story-skin-black-opium .border-violet-600, .story-skin-black-opium .border-violet-700 { border-color: #BF468D !important; }
+.story-skin-black-opium .bg-violet-400 { background-color: #BF468D !important; }
+.story-skin-black-opium .accent-violet-600 { accent-color: #BF468D; }
+.story-skin-black-opium .text-violet-900 { color: #F4EAF1 !important; }
+.story-skin-black-opium .bg-slate-900 { background: ${OPIUM_NEON} !important; color: #FFF4FA !important; }
+.story-skin-black-opium .bg-slate-800 { background-color: #2C2430 !important; }
+.story-skin-black-opium .border-slate-800 { border-color: #2C2430 !important; }
+.story-skin-black-opium .border-stone-100 { border-color: #1D1823 !important; }
+.story-skin-black-opium .ring-stone-100 { --tw-ring-color: #1D1823 !important; }
+.story-skin-black-opium .text-amber-700, .story-skin-black-opium .text-amber-600 { color: #E8A58F !important; }
+.story-skin-black-opium .border-amber-200 { border-color: rgba(208, 100, 86, .35) !important; }
+.story-skin-black-opium .bg-amber-50, .story-skin-black-opium .bg-amber-100 { background-color: rgba(208, 100, 86, .18) !important; }
+`;
+
 export const STORY_SKINS: StorySkin[] = [
     {
         id: 'classic',
@@ -1271,6 +1443,14 @@ export const STORY_SKINS: StorySkin[] = [
         color: 'dark',
         thumb: moonNightWide,
         css: MOON_NIGHT_CSS,
+    },
+    {
+        id: 'black-opium',
+        name: '黑鸦片',
+        subtitle: 'Own the night · 紫黑闪粉与玫瑰霓光',
+        color: 'dark',
+        thumb: opiumGalaxy,
+        css: BLACK_OPIUM_CSS,
     },
 ];
 
