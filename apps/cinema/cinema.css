@@ -168,6 +168,7 @@
 .cn-screen img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #000; }
 .cn-screen-empty { aspect-ratio: 16 / 9; display: grid; place-items: center; color: var(--cn-sub); font-size: 13px; letter-spacing: .1em; padding: 0 20px; text-align: center; }
 .cn-screen-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 12px; font-size: 12px; color: var(--cn-sub); background: var(--cn-panel); border-bottom: 1px solid var(--cn-line); }
+.cn-subline { padding: 5px 14px 6px; background: #000; color: #f3e6c8; text-align: center; font-size: 13.5px; line-height: 1.5; letter-spacing: .03em; white-space: pre-line; }
 .cn-screen-status { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cn-screen-bar button { flex-shrink: 0; white-space: nowrap; display: flex; align-items: center; gap: 4px; background: none; border: 1px solid var(--cn-line); border-radius: 999px; padding: 3px 10px; font-size: 12px; }
 

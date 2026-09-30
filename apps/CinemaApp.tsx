@@ -124,6 +124,8 @@ const CinemaApp: React.FC = () => {
     /** 观影端第 5 块选的外挂字幕（电脑那边存着，手机进放映室时会再发一份） */
     const externalSubsRef = useRef<ExternalSubtitles | null>(null);
     const [externalSubsName, setExternalSubsName] = useState('');
+    /** 放映室画面下面那行字幕：此刻角色拿到的是哪一句（外挂 SRT 按进度对；没有就用 B站 读到的） */
+    const [subLine, setSubLine] = useState('');
     const listRef = useRef<HTMLDivElement>(null);
 
     const reload = useCallback(async () => {
@@ -134,6 +136,21 @@ const CinemaApp: React.FC = () => {
         setLoaded(true);
     }, []);
     useEffect(() => { void reload(); }, [reload]);
+    // 放映室里每半秒对一下「此刻这句字幕」：外挂 SRT 按估算的进度找，没有就用小插件报的 B站 当前字幕
+    useEffect(() => {
+        if (view !== 'room') { setSubLine(''); return; }
+        const tick = () => {
+            const ext = externalSubsRef.current;
+            const vt = estimateVideoTime(statusRef.current);
+            const text = ext && vt !== undefined
+                ? (pickSubtitleWindow(ext, vt, 0, 1).current || '')
+                : (statusRef.current?.subtitle || '');
+            setSubLine(prev => (prev === text ? prev : text));
+        };
+        tick();
+        const id = window.setInterval(tick, 500);
+        return () => window.clearInterval(id);
+    }, [view]);
     // 还没配对的话，一进来先停在「配对」页
     useEffect(() => { if (loaded && !pairing) setHomeTab('pair'); }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => {
@@ -607,6 +624,8 @@ const CinemaApp: React.FC = () => {
                 work: cur ? describeWork(cur) : undefined,
                 prevNotes: (cur?.notes || []).slice(-3).map(n => n.text),
                 subtitles: noteSubs,
+                // 有 SRT、或小插件两分钟内还在读 B站 字幕：台词以那份为准，笔记别再抄画面上的字幕
+                hasTextSubs: !!ext || subtitleLinesRef.current.some(l => (l.at ?? 0) > Date.now() - 120_000),
             });
             const note: CinemaNote = { at: Date.now(), videoTime: f.videoTime ?? statusRef.current?.time, text };
             setLastNote(note);
@@ -942,6 +961,7 @@ const CinemaApp: React.FC = () => {
                     {frame
                         ? <img src={frame.dataUrl} alt="电脑上的画面" />
                         : <div className="cn-screen-empty">{screenOnline ? '电脑连上了，等它传画面…' : `${connLabel} · 在电脑上打开观影端`}</div>}
+                    {subLine && <div className="cn-subline">{subLine}</div>}
                     <div className="cn-screen-bar">
                         <span className="cn-screen-status">{statusText || connLabel}</span>
                         <button onClick={async () => { const f = await requestFrame(); if (!f) addToast('电脑没回画面（没共享屏幕，或者没连上）', 'info'); }}>

@@ -68,6 +68,10 @@ describe('写一条画面笔记', () => {
         expect(text).toContain('银发精灵少女坐在花田里');
         expect(text).toContain('你在想什么');
         expect(buildNoteInstruction()).not.toContain('前面几条笔记');
+        expect(buildNoteInstruction()).toContain('字幕照原文带上');
+        const withSrt = buildNoteInstruction({ hasTextSubs: true });
+        expect(withSrt).toContain('字幕**不用抄**');
+        expect(withSrt).not.toContain('字幕照原文带上');
 
         safeFetchJson.mockResolvedValue({ choices: [{ message: { content: 'ok' } }] });
         const [model] = noteModelCandidates(main, light);
