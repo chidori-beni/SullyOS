@@ -71,7 +71,7 @@ interface DateSessionProps {
     /** DateApp 生成的统一当前见面显示快照。 */
     sceneSnapshot?: DateSceneSnapshot | null;
     dateTimeAwarenessEnabled?: boolean;
-    onSendMessage: (text: string, kind?: 'continue') => Promise<string | { queued: true; jobId: string }>; // Returns AI content or a queued background turn
+    onSendMessage: (text: string, kind?: 'continue', onLocalGeneration?: () => void) => Promise<string | { queued: true; jobId: string }>; // Returns AI content or a queued background turn
     /** 普通见面回复已交给 Worker，期间不允许再开新轮 / 校时 / 结束。 */
     backgroundPending?: boolean;
     onReroll: (requirement?: string) => Promise<string>;
@@ -206,6 +206,9 @@ const DateSession: React.FC<DateSessionProps> = ({
     const [showInputBox, setShowInputBox] = useState(false);
     const [isTyping, setIsTyping] = useState(false); // Waiting for API
     const interactionBusy = isTyping || backgroundPending;
+    // 生成指示器要分清「交给 Worker 后台」还是「留在手机上生成」（后者要一直开着页面、图片也只有这条路能带上）。
+    // 发送后到选定路线前的那几秒是 preparing。
+    const [generationRoute, setGenerationRoute] = useState<'preparing' | 'local'>('local');
     const [isShowingOpening, setIsShowingOpening] = useState(!historyReplay && !initialState); // True until first user interaction
     const [showExitModal, setShowExitModal] = useState(false);
     const [endingEncounter, setEndingEncounter] = useState(false);
@@ -1126,7 +1129,8 @@ const DateSession: React.FC<DateSessionProps> = ({
                     console.warn('[DateSession] 发送前对齐剧情时间失败，按原时间继续', error);
                 }
             }
-            const result = await onSendMessage(text, kind);
+            setGenerationRoute('preparing');
+            const result = await onSendMessage(text, kind, () => setGenerationRoute('local'));
             if (typeof result !== 'string') {
                 // 前台只保留轻量的等待状态；是否需要系统通知交给 Service Worker
                 // 在真正收到结果时按窗口可见性判断，不在见面页额外提醒。
@@ -1167,7 +1171,7 @@ const DateSession: React.FC<DateSessionProps> = ({
 
     const runReroll = async (requirement?: string) => {
         if (historyReplay || interactionBusy) return;
-        setIsTyping(true);
+        setIsTyping(true); setGenerationRoute('local'); // 重新生成 / 过场只在手机上跑
         try {
             const aiContent = await onReroll(requirement?.trim() || undefined);
             const { observation: obs, rest } = extractObservation(aiContent, { lenient: observeEnabled, custom: char.dateObserve?.custom });
@@ -1189,7 +1193,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         if (historyReplay || interactionBusy || !onInterlude) return;
         const targetAt = catchUpToNow ? realNow : undefined;
         setShowInterludeEditor(false);
-        setIsTyping(true);
+        setIsTyping(true); setGenerationRoute('local'); // 重新生成 / 过场只在手机上跑
         setIsShowingOpening(false);
         try {
             const aiContent = await onInterlude(interludeDescription.trim(), targetAt);
@@ -2057,7 +2061,10 @@ const DateSession: React.FC<DateSessionProps> = ({
                     <div className="absolute bottom-1/2 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-auto">
                         <div className="bg-black/80 backdrop-blur-md px-6 py-3 rounded-full border border-white/20 shadow-2xl animate-pulse flex items-center gap-3">
                              <div className="flex gap-1.5"><div className="w-2 h-2 bg-white rounded-full animate-bounce"></div><div className="w-2 h-2 bg-white rounded-full animate-bounce delay-75"></div><div className="w-2 h-2 bg-white rounded-full animate-bounce delay-150"></div></div>
-                             <span className="text-xs text-white font-bold tracking-widest uppercase">Typing...</span>
+                             <span className="flex flex-col leading-tight">
+                                 <span className="text-xs text-white font-bold tracking-widest">{backgroundPending ? '后台生成中…' : isTyping && generationRoute === 'preparing' ? '正在准备…' : '手机生成中…'}</span>
+                                 {(backgroundPending || generationRoute === 'local' || !isTyping) && <span className="mt-0.5 text-[10px] text-white/60">{backgroundPending ? '可以切走，写好了会通知你' : '请别切走或锁屏'}</span>}
+                             </span>
                         </div>
                     </div>
                 )}

@@ -1254,7 +1254,8 @@ const DateApp: React.FC = () => {
     };
 
     // --- Session API Logic ---
-    const handleSendMessage = async (text: string, kind?: 'continue'): Promise<string | { queued: true; jobId: string }> => {
+    /** onLocalGeneration：确定这一轮留在手机上生成（没交给 Worker）时回调，界面据此显示「手机生成中」。 */
+    const handleSendMessage = async (text: string, kind?: 'continue', onLocalGeneration?: () => void): Promise<string | { queued: true; jobId: string }> => {
         if (!char) throw new Error("No char");
         const requestId = beginDateTurnRequest();
         const encounter = reconcileEncounterFromSceneSnapshot(ensureEncounter());
@@ -1363,6 +1364,7 @@ const DateApp: React.FC = () => {
             }
         }
 
+        onLocalGeneration?.();
         const rawContent = await callLLM(messages, apiConfig.temperature ?? 0.85);
         if (!isCurrentDateTurnRequest(requestId, encounterSnapshot.id, encounterSnapshot.sceneClockRevision)) {
             throw new Error('这轮回复已过期，请按当前剧情时间重新发送');
