@@ -13,6 +13,7 @@ import otakuDiaryBg from '../../../assets/story-skins/otaku-diary-bg.jpg';
 import otakuDiaryWide from '../../../assets/story-skins/otaku-diary-wide.jpg';
 import cocoBg from '../../../assets/story-skins/coco-bg.jpg';
 import cocoWide from '../../../assets/story-skins/coco-wide.jpg';
+import cocoPlain from '../../../assets/story-skins/coco-plain.webp';
 
 export type StorySkinId = 'classic' | 'chantilly-noir' | 'otaku-diary' | 'coco';
 
@@ -500,8 +501,12 @@ const COCO_CSS = `
   --coco-gold-deep: #BFA06A;
   color-scheme: light;
 }
+/* 列表、编辑等页面用纯菱格（字多，背景要素净）；只有剧情进行中的页面铺带徽标的那张 */
 .story-skin-coco.story-theme-page {
-  background: #EFD9CF url("${cocoBg}") center 40% / cover no-repeat;
+  background: #F3DDD2 url("${cocoPlain}") center / cover no-repeat;
+}
+.story-skin-coco.story-theme-page > .story-session-page.bg-stone-100 {
+  background: #EFD9CF url("${cocoBg}") center 40% / cover no-repeat !important;
 }
 .story-skin-coco.story-theme-page::before {
   opacity: 1;
