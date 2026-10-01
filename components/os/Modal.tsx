@@ -1,5 +1,6 @@
 
 import React from 'react';
+import { useUiLocale } from '../../context/UiLocaleContext';
 
 /**
  * 全 App 共用的居中弹窗底座（30 个文件在用）。
@@ -17,6 +18,7 @@ interface ModalProps {
 }
 
 const Modal: React.FC<ModalProps> = ({ isOpen, title, onClose, children, footer }) => {
+    const { t } = useUiLocale();
     if (!isOpen) return null;
 
     return (
@@ -39,7 +41,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, title, onClose, children, footer 
                             onClick={onClose}
                             className="sully-ui-btn-ghost w-full py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 transition-transform"
                         >
-                            关闭
+                            {t('common.close')}
                         </button>
                     </div>
                 )}

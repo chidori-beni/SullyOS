@@ -246,7 +246,9 @@ describe('CompanionHome touch request boundaries', () => {
       expect(lockSource).toContain(`${id}: { eyebrow:`);
       expect(lockCss).toContain(`.companion-themed-lock--${id}`);
     }
-    expect(lockSource).toContain('const copy = LOCK_COPY[variant]');
+    expect(lockSource).toContain('const definition = LOCK_COPY[variant]');
+    expect(lockSource).toContain("line: definition.line ? t(definition.line) : ''");
+    expect(lockSource).toContain('unlock: t(definition.unlock)');
     expect(lockCss).toContain('opacity:var(--lock-theme-opacity,1)');
     expect(lockSource).not.toContain('companion-lock-idol-head');
     expect(lockSource).not.toContain('companion-lock-idol-name');

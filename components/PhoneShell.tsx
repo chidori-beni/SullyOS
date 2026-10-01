@@ -106,7 +106,7 @@ import { UpdateNotificationController, shouldShowUpdateNotification } from './Up
 import { BackupReminderController } from './BackupReminderEvent';
 import IncomingCallOverlay from './call/IncomingCallOverlay';
 import { isBackupOverdue, daysSinceLastBackup } from '../utils/backupReminder';
-import { formatBytes } from '../utils/format';
+import { ImportRecoveryPopup, type ImportRecoveryMarker } from './os/ImportRecoveryPopup';
 import { trackEvent } from '../utils/analytics';
 import { AppID } from '../types';
 import { shellHandlesSafeArea } from '../utils/safeAreaApps';
@@ -238,21 +238,6 @@ class AppErrorBoundary extends Component<{ children: React.ReactNode, onCloseApp
 
 const DISCLAIMER_KEY = 'sullyos_disclaimer_accepted';
 
-type ImportRecoveryMarker = {
-  startedAt?: number;
-  updatedAt?: number;
-  phase?: string;
-  source?: string;
-  sourceSize?: number;
-  current?: string;
-  currentFile?: string;
-  currentFileSize?: number;
-  assetDone?: number;
-  assetTotal?: number;
-  itemDone?: number;
-  itemTotal?: number;
-  error?: string;
-};
 
 const getPendingImportMarker = (): ImportRecoveryMarker | null => {
   try {
@@ -322,78 +307,6 @@ const DisclaimerPopup: React.FC<{ onAccept: () => void }> = ({ onAccept }) => (
   </div>
 );
 
-const ImportRecoveryPopup: React.FC<{
-  marker: ImportRecoveryMarker | null;
-  onLater: () => void;
-  onReimport: () => void;
-}> = ({ marker, onLater, onReimport }) => {
-  if (!marker) return null;
-
-  const phaseLabel = getImportPhaseLabel(marker.phase);
-  const startedAt = marker.startedAt
-    ? new Date(marker.startedAt).toLocaleString('zh-CN')
-    : '';
-  const updatedAt = marker.updatedAt
-    ? new Date(marker.updatedAt).toLocaleString('zh-CN')
-    : '';
-  const sourceSize = formatBytes(marker.sourceSize);
-  const currentFileSize = formatBytes(marker.currentFileSize);
-  const hasAssetProgress = typeof marker.assetTotal === 'number' && marker.assetTotal > 0;
-  const hasItemProgress = typeof marker.itemTotal === 'number' && marker.itemTotal > 0;
-  const hasError = !!marker.error;
-
-  return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-5 animate-fade-in">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-md" />
-      <div className="relative w-full max-w-sm bg-white/95 backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden animate-slide-up">
-        <div className="pt-7 pb-3 px-6 text-center">
-          <h2 className="text-lg font-extrabold text-slate-800">{hasError ? '上次导入失败了' : '上次导入被中断了'}</h2>
-          <p className="text-[11px] text-slate-400 mt-1">{hasError ? '错误信息已记录在本机' : '数据还没有完整恢复'}</p>
-        </div>
-
-        <div className="px-6 pb-4 space-y-3 max-h-[58vh] overflow-y-auto no-scrollbar">
-          <p className="text-[13px] text-slate-600 leading-relaxed">
-            {hasError
-              ? '系统检测到上一次导入过程中发生了错误。请重新导入同一个备份文件，避免数据只恢复了一半。'
-              : '系统检测到上一次导入没有走到完成步骤，可能是浏览器或系统在导入过程中强制重启了。请重新导入同一个备份文件，避免数据只恢复了一半。'}
-          </p>
-          {hasError && (
-            <div className="bg-red-50 border border-red-200 rounded-2xl p-3 text-[12px] text-red-700 leading-relaxed whitespace-pre-wrap break-words select-text">
-              {marker.error}
-            </div>
-          )}
-          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-[12px] text-amber-700 leading-relaxed">
-            <div>中断阶段：{phaseLabel}</div>
-            {marker.current && <div>当前部分：{marker.current}</div>}
-            {hasItemProgress && <div>条目进度：{marker.itemDone || 0}/{marker.itemTotal}</div>}
-            {hasAssetProgress && <div>素材进度：{marker.assetDone || 0}/{marker.assetTotal}</div>}
-            {marker.currentFile && (
-              <div className="break-all">当前文件：{marker.currentFile}{currentFileSize ? ` · ${currentFileSize}` : ''}</div>
-            )}
-            {startedAt && <div>开始时间：{startedAt}</div>}
-            {updatedAt && <div>最后进度：{updatedAt}</div>}
-            {marker.source && <div className="break-all">备份文件：{marker.source}{sourceSize ? ` · ${sourceSize}` : ''}</div>}
-          </div>
-        </div>
-
-        <div className="px-6 pb-7 pt-2 grid grid-cols-2 gap-3">
-          <button
-            onClick={onLater}
-            className="py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl active:scale-95 transition-transform text-sm"
-          >
-            稍后再说
-          </button>
-          <button
-            onClick={onReimport}
-            className="py-3 bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-bold rounded-2xl shadow-lg shadow-emerald-200 active:scale-95 transition-transform text-sm"
-          >
-            去重新导入
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
 
 // App 懒加载占位：关键是「延迟出现」。chunk 命中缓存/快速加载只需几十毫秒，这种时长用户
 // 本就无感——但 Suspense fallback 会立刻渲染，占位一闪反而把无感瞬切变成能被看见的打断
@@ -958,7 +871,7 @@ const PhoneShell: React.FC = () => {
            </div>
            {acnhSkin ? (
                <div className="text-lg tracking-widest opacity-90 mt-2 text-xs font-bold flex items-center justify-center gap-1.5">
-                   <span>🍃</span><span>无人岛生活</span><span>🍃</span>
+                   <span>🍃</span><span>{t('shell.lock.island')}</span><span>🍃</span>
                </div>
            ) : (
                <div className="text-lg tracking-widest opacity-90 mt-2 uppercase text-xs font-bold">SullyOS Simulation</div>
@@ -974,10 +887,10 @@ const PhoneShell: React.FC = () => {
                     <div className="flex-1 min-w-0 text-white text-left">
                         <div className="font-bold text-sm flex justify-between">
                             <span>{unreadChar ? unreadChar.name : 'Message'}</span>
-                            <span className="text-[10px] opacity-70">刚刚</span>
+                            <span className="text-[10px] opacity-70">{t('shell.lock.now')}</span>
                         </div>
                         <div className="text-xs opacity-90 truncate">
-                            {unreadCount > 1 ? `收到 ${unreadCount} 条新消息` : '发来了一条新消息'}
+                            {t(unreadCount > 1 ? 'shell.lock.many' : 'shell.lock.one', { count: unreadCount })}
                         </div>
                     </div>
                 </div>
@@ -986,7 +899,7 @@ const PhoneShell: React.FC = () => {
 
         {!companionLockFrame && <div className="absolute bottom-12 w-full flex flex-col items-center gap-3 animate-pulse opacity-80 drop-shadow-md">
           <div className="w-1 h-8 rounded-full bg-gradient-to-b from-transparent to-current"></div>
-          <span className="text-[10px] tracking-widest uppercase font-semibold">Tap to Unlock</span>
+          <span className="text-[10px] tracking-widest uppercase font-semibold">{t('shell.lock.unlock')}</span>
         </div>}
 
         {/* 锁屏上也要能接电话——真手机就是这样，而且这里还有一条更硬的理由：

@@ -1,4 +1,6 @@
 import React from 'react';
+import { useUiLocale } from '../../context/UiLocaleContext';
+import type { UiMessageKey } from '../../utils/uiLocale';
 import {
   Broadcast,
   Cat,
@@ -23,13 +25,13 @@ type CompanionLockChromeProps = {
   preserveWallpaper?: boolean;
 };
 
-const LOCK_COPY: Record<CompanionFrameStyleId, { eyebrow: string; line: string; unlock: string }> = {
-  tech: { eyebrow: 'ORBITAL COMPANION OS', line: '终端保持在线', unlock: '接入终端' },
-  otome: { eyebrow: 'DAYBOOK · LOCK', line: '晴庭仍为你留着灯', unlock: '轻触进入' },
-  cat: { eyebrow: 'NIGHT COMPANION', line: '正在夜巡', unlock: '跟上脚步' },
-  magazine: { eyebrow: 'PRIVATE HOURS · LOCK ISSUE', line: '今日封面仍在继续', unlock: '翻开本期' },
-  archive: { eyebrow: 'LUMINA CARD ARCHIVE', line: '星愿卡册等待开启', unlock: '解除封印' },
-  idol: { eyebrow: '', line: '', unlock: '轻触解锁' },
+const LOCK_COPY: Record<CompanionFrameStyleId, { eyebrow: string; line?: UiMessageKey; unlock: UiMessageKey }> = {
+  tech: { eyebrow: 'ORBITAL COMPANION OS', line: 'shell.lock.tech.line', unlock: 'shell.lock.tech.unlock' },
+  otome: { eyebrow: 'DAYBOOK · LOCK', line: 'shell.lock.otome.line', unlock: 'shell.lock.otome.unlock' },
+  cat: { eyebrow: 'NIGHT COMPANION', line: 'shell.lock.cat.line', unlock: 'shell.lock.cat.unlock' },
+  magazine: { eyebrow: 'PRIVATE HOURS · LOCK ISSUE', line: 'shell.lock.magazine.line', unlock: 'shell.lock.magazine.unlock' },
+  archive: { eyebrow: 'LUMINA CARD ARCHIVE', line: 'shell.lock.archive.line', unlock: 'shell.lock.archive.unlock' },
+  idol: { eyebrow: '', unlock: 'shell.lock.idol.unlock' },
 };
 
 const CompanionLockChrome: React.FC<CompanionLockChromeProps> = ({
@@ -41,13 +43,15 @@ const CompanionLockChrome: React.FC<CompanionLockChromeProps> = ({
   unreadCount,
   preserveWallpaper = false,
 }) => {
-  const date = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date());
-  const numericDate = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
+  const { locale, t } = useUiLocale();
+  const date = new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date());
+  const numericDate = new Intl.DateTimeFormat(locale, { year: 'numeric', month: '2-digit', day: '2-digit' })
     .format(new Date())
     .replaceAll('/', '.');
   const time = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
   const characterName = activeCharacter?.name || 'Sully';
-  const copy = LOCK_COPY[variant];
+  const definition = LOCK_COPY[variant];
+  const copy = { eyebrow: definition.eyebrow, line: definition.line ? t(definition.line) : '', unlock: t(definition.unlock) };
 
   return (
     <div
@@ -105,8 +109,8 @@ const CompanionLockChrome: React.FC<CompanionLockChromeProps> = ({
           <span className="companion-lock-notice-icon">
             {variant === 'cat' ? <PawPrint weight="fill" /> : variant === 'idol' ? <Broadcast weight="fill" /> : variant === 'archive' ? <Sparkle weight="fill" /> : <ChatCircleDots weight="fill" />}
           </span>
-          <span><strong>{unreadCharacter?.name || 'Message'}</strong><small>{unreadCount > 1 ? `${unreadCount} 条新消息` : '发来了一条新消息'}</small></span>
-          <em>刚刚</em>
+          <span><strong>{unreadCharacter?.name || 'Message'}</strong><small>{t(unreadCount > 1 ? 'shell.lock.companionMany' : 'shell.lock.one', { count: unreadCount })}</small></span>
+          <em>{t('shell.lock.now')}</em>
         </section>
       )}
 

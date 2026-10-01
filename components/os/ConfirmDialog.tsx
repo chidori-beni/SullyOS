@@ -1,5 +1,6 @@
 
 import React from 'react';
+import { useUiLocale } from '../../context/UiLocaleContext';
 
 interface ConfirmDialogProps {
     isOpen: boolean;
@@ -16,12 +17,13 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
     isOpen, 
     title, 
     message, 
-    confirmText = '确认', 
-    cancelText = '取消', 
+    confirmText,
+    cancelText,
     variant = 'info', 
     onConfirm, 
     onCancel 
 }) => {
+    const { t } = useUiLocale();
     if (!isOpen) return null;
 
     const getBtnColor = () => {
@@ -79,13 +81,13 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
                         onClick={onCancel}
                         className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50 transition-colors"
                     >
-                        {cancelText}
+                        {cancelText ?? t('common.cancel')}
                     </button>
                     <button 
                         onClick={onConfirm}
                         className={`px-4 py-2 rounded-xl text-sm font-bold shadow-lg transition-transform active:scale-95 ${getBtnColor()}`}
                     >
-                        {confirmText}
+                        {confirmText ?? t('common.confirm')}
                     </button>
                 </div>
             </div>
