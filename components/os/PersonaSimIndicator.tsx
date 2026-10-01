@@ -1,4 +1,5 @@
 import React from 'react';
+import { useUiLocale } from '../../context/UiLocaleContext';
 import { useOS } from '../../context/OSContext';
 import { AppID } from '../../types';
 import { usePersonaSim, personaSimStore } from '../../utils/personaSimStore';
@@ -6,6 +7,7 @@ import { Sparkle, CaretRight } from '@phosphor-icons/react';
 
 // 全局「人格模拟」生成指示条 —— 挂在 PhoneShell，随处可见，点击深链回到演出。
 const PersonaSimIndicator: React.FC = () => {
+    const { t } = useUiLocale();
     const sim = usePersonaSim();
     const { openApp } = useOS();
 
@@ -28,7 +30,7 @@ const PersonaSimIndicator: React.FC = () => {
                     ? <Sparkle size={16} weight="fill" className="text-white" />
                     : <span className="w-3.5 h-3.5 border-2 border-[#b89bff]/40 border-t-[#b89bff] rounded-full animate-spin" />}
                 <span className={`text-[12px] font-semibold ${ready ? 'text-white' : 'text-white/85'}`}>
-                    {ready ? '演出已就绪 · 进入' : `演出生成中${sim.charName ? ' · ' + sim.charName : ''}`}
+                    {ready ? t('shell.persona.ready') : t(sim.charName ? 'shell.persona.named' : 'shell.persona.loading', { name: sim.charName || '' })}
                 </span>
                 {ready && <CaretRight size={13} weight="bold" className="text-white/90" />}
             </button>

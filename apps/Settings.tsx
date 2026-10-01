@@ -1,7 +1,7 @@
 
 import { getImageGenConfig, isImageGenReady } from '../utils/novelaiImage';
 import ImageGenSettings from '../components/settings/ImageGenSettings';
-import { useFirstUseGuideStep } from '../utils/firstUseGuide';
+import SettingsSection from '../components/settings/SettingsSection';
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { Capacitor } from '@capacitor/core';
@@ -130,43 +130,6 @@ const formatBackupBytes = (bytes: number): string => {
     return `${(bytes / 1024 / 1024).toFixed(bytes >= 100 * 1024 * 1024 ? 0 : 1)} MB`;
 };
 
-/**
- * 设置大板块的折叠外壳：默认收起，标题行常显、点击开合；
- * actions 放右侧动作（配置按钮 / 状态 chip / 问号），点击不触发开合。
- */
-const SettingsSection: React.FC<{
-    icon: React.ReactNode;
-    title: string;
-    badge?: React.ReactNode;
-    actions?: React.ReactNode;
-    sectionProps?: Record<string, any>;
-    children: React.ReactNode;
-}> = ({ icon, title, badge, actions, sectionProps, children }) => {
-    const guideStep = useFirstUseGuideStep();
-    const [open, setOpen] = useState(() => title === 'API 配置' && guideStep === 0);
-    useEffect(() => {
-        const reveal = () => { if (title === 'API 配置' && guideStep === 0) setOpen(true); };
-        reveal();
-        window.addEventListener('sully:guide-navigate', reveal);
-        return () => window.removeEventListener('sully:guide-navigate', reveal);
-    }, [guideStep, title]);
-    return (
-        <section {...sectionProps} className="bg-[#fffefe] rounded-3xl p-5 shadow-[0_8px_24px_rgba(15,23,42,0.05)] border border-slate-200/80">
-            <div className={`flex items-center justify-between gap-2 ${open ? 'mb-4' : ''}`}>
-                <button type="button" onClick={() => setOpen(v => !v)} className="flex items-center gap-2 flex-1 min-w-0 text-left">
-                    {icon}
-                    <h2 className="text-sm font-semibold text-slate-600 tracking-wider">{title}</h2>
-                    {badge}
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className={`w-3 h-3 text-slate-300 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
-                    </svg>
-                </button>
-                {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
-            </div>
-            {open && children}
-        </section>
-    );
-};
 
 let mcpToolConfigSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingMcpToolConfigSync: (() => void) | null = null;
@@ -1007,7 +970,7 @@ const Settings: React.FC = () => {
       // 已经在用这条也照切：「使用中」只看 URL/Key/Model 三件套，温度、流式可能被手调过，
       // 再点一下的语义就是「整套回到这条预设存的样子」。
       commitApiConfig(configFromPreset(preset));
-      addToast(`已切换到「${preset.name}」，立即生效`, 'success');
+      addToast(t('settings.preset.switched', { name: preset.name }), 'success');
   };
 
   const openEditPreset = (preset: typeof apiPresets[0]) => {
@@ -1035,7 +998,7 @@ const Settings: React.FC = () => {
       if (!preset) return;
       const name = editPresetName.trim();
       if (!name) {
-          addToast('预设名称不能为空', 'error');
+          addToast(t('settings.preset.empty'), 'error');
           return;
       }
       const nextConfig = {
@@ -1052,7 +1015,7 @@ const Settings: React.FC = () => {
       // 改的正好是当前生效那条 → 生效配置跟着走，否则界面写着新 Key、请求还在用旧的
       if (wasActive) commitApiConfig(configFromPreset({ ...preset, name, config: nextConfig }));
       setEditingPresetId(null);
-      addToast(wasActive ? `「${name}」已更新，当前配置同步生效` : `「${name}」已更新`, 'success');
+      addToast(t(wasActive ? 'settings.preset.updatedActive' : 'settings.preset.updated', { name }), 'success');
   };
 
   const cancelPresetDelete = useCallback(() => {
@@ -1074,12 +1037,12 @@ const Settings: React.FC = () => {
           cancelPresetDelete();
           removeApiPreset(id);
           setEditingPresetId(current => (current === id ? null : current));
-          addToast(`已删除预设: ${name}`, 'success');
+          addToast(t('settings.preset.deleted', { name }), 'success');
           return;
       }
       cancelPresetDelete();
       setPendingDeletePresetId(id);
-      addToast(`再点一次 × 删除「${name}」`, 'info');
+      addToast(t('settings.preset.armDelete', { name }), 'info');
       presetDeleteTimerRef.current = setTimeout(() => {
           presetDeleteTimerRef.current = null;
           setPendingDeletePresetId(null);
@@ -1088,7 +1051,7 @@ const Settings: React.FC = () => {
 
   const handleSavePreset = () => {
       if (!newPresetName.trim()) {
-          addToast('请输入预设名称', 'error');
+          addToast(t('settings.preset.enterName'), 'error');
           return;
       }
       addApiPreset(newPresetName, {
@@ -1100,7 +1063,7 @@ const Settings: React.FC = () => {
       });
       setNewPresetName('');
       setShowPresetModal(false);
-      addToast('预设已保存', 'success');
+      addToast(t('settings.preset.saved'), 'success');
   };
 
   /**
@@ -1957,7 +1920,7 @@ const Settings: React.FC = () => {
       <div className="bg-[#fffefe] border-b border-slate-200 shrink-0 z-10 sticky top-0" style={{ paddingTop: 'var(--safe-top)' }}>
         <div className="flex items-center px-4 py-3">
         <div className="flex items-center gap-2 w-full">
-            <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-black/5 active:scale-90 transition-transform">
+            <button onClick={closeApp} aria-label={t('common.backToHome')} className="p-2 -ml-2 rounded-full hover:bg-black/5 active:scale-90 transition-transform">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-slate-600">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
                 </svg>
@@ -2004,7 +1967,7 @@ const Settings: React.FC = () => {
 
         {/* AI 连接设置区域 */}
         <SettingsSection
-            title="API 配置"
+            title={t('settings.section.api')}
             sectionProps={{ 'data-guide': 'api' }}
             icon={
                 <div className="p-2 bg-emerald-100/50 rounded-xl text-emerald-600">
@@ -2015,14 +1978,14 @@ const Settings: React.FC = () => {
             }
             actions={
                 <button onClick={() => { setNewPresetName(''); setShowPresetModal(true); }} className="text-[10px] bg-slate-100 text-slate-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
-                    新建预设
+                    {t('settings.preset.new')}
                 </button>
             }
         >
             {/* Presets List */}
             {apiPresets.length > 0 && (
                 <div className="mb-4">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">我的预设 (Presets)</label>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">{t('settings.preset.list')}</label>
                     <div className="flex gap-2 flex-wrap">
                         {apiPresets.map(preset => (
                             <div key={preset.id} className={`flex items-center rounded-lg pl-3 pr-1 py-1 shadow-sm border transition-colors ${
@@ -2031,17 +1994,17 @@ const Settings: React.FC = () => {
                                     : 'bg-white border-slate-200'
                             }`}>
                                 <button type="button" onClick={() => applyPreset(preset)}
-                                    title={`切换到 ${preset.name}`}
+                                    title={t('settings.preset.switch', { name: preset.name })}
                                     className={`text-xs font-medium cursor-pointer mr-1.5 transition-colors ${
                                         activePresetId === preset.id ? 'text-primary' : 'text-slate-600 hover:text-primary'
                                     }`}>
                                     {preset.name}
-                                    {activePresetId === preset.id && <span className="ml-1 text-[9px] font-bold">· 使用中</span>}
+                                    {activePresetId === preset.id && <span className="ml-1 text-[9px] font-bold">{t('settings.preset.active')}</span>}
                                 </button>
                                 <button
                                     type="button"
-                                    aria-label={`编辑预设 ${preset.name}`}
-                                    title="编辑这条预设"
+                                    aria-label={t('settings.preset.editAria', { name: preset.name })}
+                                    title={t('settings.preset.editHint')}
                                     onClick={(event) => { event.stopPropagation(); openEditPreset(preset); }}
                                     className="p-1 rounded-full text-slate-300 hover:bg-primary/10 hover:text-primary transition-colors">
                                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M13.586 3.586a2 2 0 1 1 2.828 2.828l-.793.793-2.828-2.828.793-.793ZM11.379 5.793 3 14.172V17h2.828l8.38-8.379-2.83-2.828Z" /></svg>
@@ -2050,8 +2013,8 @@ const Settings: React.FC = () => {
                                     伪元素不占布局，这一行预设的外观和高度完全不变。 */}
                                 <button
                                     type="button"
-                                    aria-label={`${pendingDeletePresetId === preset.id ? '再点一次 × 删除' : '删除'}预设 ${preset.name}`}
-                                    title={pendingDeletePresetId === preset.id ? '再点一次删除' : '点两次删除'}
+                                    aria-label={t(pendingDeletePresetId === preset.id ? 'settings.preset.deleteAgainAria' : 'settings.preset.deleteAria', { name: preset.name })}
+                                    title={t(pendingDeletePresetId === preset.id ? 'settings.preset.deleteAgain' : 'settings.preset.deleteTwice')}
                                     onClick={(event) => { event.stopPropagation(); handlePresetDeleteTap(preset.id, preset.name); }}
                                     onContextMenu={(event) => event.preventDefault()}
                                     className={`relative p-1 rounded-full transition-colors select-none touch-none
@@ -2065,7 +2028,7 @@ const Settings: React.FC = () => {
                             </div>
                         ))}
                     </div>
-                    <p className="text-[9px] text-slate-300 mt-1.5 pl-1">点名称直接切换并生效；铅笔改这条预设的内容；× 点两次才会删除（第一次只是确认）。</p>
+                    <p className="text-[9px] text-slate-300 mt-1.5 pl-1">{t('settings.preset.listHelp')}</p>
                 </div>
             )}
 
@@ -2233,7 +2196,7 @@ const Settings: React.FC = () => {
 
         {/* 数据备份区域 */}
         <SettingsSection
-            title="备份与恢复 (ZIP)"
+            title={t('settings.section.backup')}
             icon={
                 <div className="p-2 bg-blue-100 rounded-xl text-blue-600">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" /></svg>
@@ -2425,7 +2388,7 @@ const Settings: React.FC = () => {
 
         {/* 云端备份区域 */}
         <SettingsSection
-            title="云端备份"
+            title={t('settings.section.cloud')}
             icon={
                 <div className="p-2 bg-sky-100 rounded-xl text-sky-600">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15a4.5 4.5 0 004.5 4.5H18a3.75 3.75 0 001.332-7.257 3 3 0 00-3.758-3.848 5.25 5.25 0 00-10.233 2.33A4.502 4.502 0 002.25 15z" /></svg>
@@ -2584,7 +2547,7 @@ const Settings: React.FC = () => {
         {/* 角色生图（NovelAI）。面板本体在 components/settings/ImageGenSettings.tsx——
             这份文件已经太长，新功能一律独立成组件，避免每次改一处都要重贴整份。 */}
         <SettingsSection
-            title="角色生图"
+            title={t('settings.section.image')}
             badge={
                 <span className={`text-[9px] font-bold px-2 py-1 rounded-full ${
                     imageGenOn ? 'bg-violet-100 text-violet-600' : 'bg-slate-100 text-slate-400'
@@ -2605,7 +2568,7 @@ const Settings: React.FC = () => {
 
         {/* 独立识图 API：给不支持 image_url 的主模型补视觉能力；可手动从通用模型预设载入。 */}
         <SettingsSection
-            title="识图 API"
+            title={t('settings.section.vision')}
             badge={
                 <span className={`text-[9px] font-bold px-2 py-1 rounded-full ${
                     apiConfig.visionApi?.enabled
@@ -2763,7 +2726,7 @@ const Settings: React.FC = () => {
 
         {/* 其他 API 区域 — 非 LLM 类（语音、写歌等），不会跟随预设切换 */}
         <SettingsSection
-            title="其他 API"
+            title={t('settings.section.other')}
             icon={
                 <div className="p-2 bg-amber-100/50 rounded-xl text-amber-600">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
@@ -3154,7 +3117,7 @@ const Settings: React.FC = () => {
 
         {/* 实时感知配置区域 */}
         <SettingsSection
-            title="实时感知"
+            title={t('settings.section.realtime')}
             icon={
                 <div className="p-2 bg-violet-100/50 rounded-xl text-violet-600">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
@@ -3239,7 +3202,7 @@ const Settings: React.FC = () => {
 
         {/* 美化入口本身被错误 CSS 盖住时，必须有一个完全不经过日记 App 的急救通道。 */}
         <SettingsSection
-            title="外观急救"
+            title={t('settings.section.rescue')}
             badge={hasJournalAppearanceOverride
                 ? <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-bold shrink-0">日记美化已启用</span>
                 : undefined}
@@ -3314,7 +3277,7 @@ const Settings: React.FC = () => {
         {/* VAPID 公私钥：主动消息 2.0 部署 Worker 时用的就是这一对（一键部署自动沿用，手动部署照着填 env）。 */}
         {/* vapidReadyTick: VAPID 弹窗关闭后 +1, 让本节点 re-render 重读 isPushVapidReady(). */}
         <SettingsSection
-            title="推送凭据 (VAPID)"
+            title={t('settings.section.vapid')}
             sectionProps={{ 'data-vapid-tick': vapidReadyTick }}
             icon={
                 <div className="p-2 bg-violet-100/60 rounded-xl text-violet-600">
@@ -3343,7 +3306,7 @@ const Settings: React.FC = () => {
 
         {/* ───────── 推送订阅状态（诊断 + 重置） ───────── */}
         <SettingsSection
-            title="推送订阅状态"
+            title={t('settings.section.subscription')}
             icon={
                 <div className="p-2 bg-sky-100/60 rounded-xl text-sky-600">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
@@ -3358,7 +3321,7 @@ const Settings: React.FC = () => {
         {/* ───────── 主动消息 Push 加速器（开关） ───────── */}
         {SHOW_PROACTIVE_PUSH_ACCEL_UI && ppAvailable && (
         <SettingsSection
-            title="主动消息 Push 加速"
+            title={t('settings.section.acceleration')}
             icon={
                 <div className="p-2 bg-teal-100/60 rounded-xl text-teal-600">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
@@ -3606,7 +3569,7 @@ const Settings: React.FC = () => {
             给个关不掉也没东西可关的开关只会更让人犯嘀咕。 */}
         {isAnalyticsConfigured() && (
         <SettingsSection
-            title="使用统计"
+            title={t('settings.section.analytics')}
             icon={
                 <div className="p-2 bg-slate-100/60 rounded-xl text-slate-500">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
@@ -4120,25 +4083,25 @@ const Settings: React.FC = () => {
       <ApiCallLogModal isOpen={showApiCallLog} onClose={() => setShowApiCallLog(false)} />
 
       {/* Preset Name Modal */}
-      <Modal isOpen={showPresetModal} title="新建预设" onClose={() => setShowPresetModal(false)} footer={<button onClick={handleSavePreset} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">新建</button>}>
+      <Modal isOpen={showPresetModal} title={t('settings.preset.new')} onClose={() => setShowPresetModal(false)} footer={<button onClick={handleSavePreset} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">{t('settings.preset.create')}</button>}>
           <div className="space-y-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase">预设名称 (例如: DeepSeek)</label>
+              <label className="text-[10px] font-bold text-slate-400 uppercase">{t('settings.preset.nameLabel')}</label>
               <input value={newPresetName} onChange={e => setNewPresetName(e.target.value)} className="w-full bg-slate-100 rounded-xl px-4 py-3 text-sm focus:outline-primary" autoFocus placeholder="Name..." />
-              <p className="text-[10px] text-slate-400 leading-relaxed pt-1">会保存上面表单里的 URL / Key / Model，以及高级设置中的流式与温度。</p>
+              <p className="text-[10px] text-slate-400 leading-relaxed pt-1">{t('settings.preset.description')}</p>
           </div>
       </Modal>
 
       {/* 编辑预设：只改这条预设本身；正在用它的话，当前配置一并跟着走 */}
       <Modal
           isOpen={!!editingPresetId}
-          title="编辑预设"
+          title={t('settings.preset.edit')}
           onClose={() => setEditingPresetId(null)}
-          footer={<button onClick={handleUpdatePreset} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">保存</button>}
+          footer={<button onClick={handleUpdatePreset} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">{t('settings.preset.save')}</button>}
       >
           <div className="space-y-3">
               <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">名称</label>
-                  <input value={editPresetName} onChange={e => setEditPresetName(e.target.value)} placeholder="预设名称" className="w-full bg-slate-100 rounded-xl px-4 py-2.5 text-sm focus:outline-primary" />
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{t('settings.preset.name')}</label>
+                  <input value={editPresetName} onChange={e => setEditPresetName(e.target.value)} placeholder={t('settings.preset.namePlaceholder')} className="w-full bg-slate-100 rounded-xl px-4 py-2.5 text-sm focus:outline-primary" />
               </div>
               <div className="space-y-1.5">
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">URL</label>
@@ -4150,17 +4113,17 @@ const Settings: React.FC = () => {
               </div>
               <div className="space-y-1.5">
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Model</label>
-                  <input value={editPresetModel} onChange={e => setEditPresetModel(e.target.value)} placeholder="模型名称" className="w-full bg-slate-100 rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-primary" />
+                  <input value={editPresetModel} onChange={e => setEditPresetModel(e.target.value)} placeholder={t('settings.preset.modelPlaceholder')} className="w-full bg-slate-100 rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-primary" />
               </div>
               <div className="rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-3 space-y-3">
                   <div className="flex items-center justify-between gap-3">
                       <div>
-                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">流式输出 (Stream)</p>
-                          <p className="text-[9px] text-slate-300 mt-0.5">随这条预设独立保存</p>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{t('settings.preset.stream')}</p>
+                          <p className="text-[9px] text-slate-300 mt-0.5">{t('settings.preset.independent')}</p>
                       </div>
                       <button
                           type="button"
-                          aria-label="预设流式输出"
+                          aria-label={t('settings.preset.streamAria')}
                           aria-pressed={editPresetStream}
                           onClick={() => setEditPresetStream(value => !value)}
                           className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${editPresetStream ? 'bg-primary' : 'bg-slate-200'}`}
@@ -4170,7 +4133,7 @@ const Settings: React.FC = () => {
                   </div>
                   <div>
                       <div className="flex items-center justify-between">
-                          <label htmlFor="edit-preset-temperature" className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">温度 (Temperature)</label>
+                          <label htmlFor="edit-preset-temperature" className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{t('settings.preset.temperature')}</label>
                           <span className="text-[10px] font-mono text-slate-400">{editPresetTemperature.toFixed(2)}</span>
                       </div>
                       <input
@@ -4193,16 +4156,16 @@ const Settings: React.FC = () => {
                       setEditPresetModel(localModel);
                       setEditPresetStream(localStream);
                       setEditPresetTemperature(localTemperature);
-                      addToast('已填入当前配置', 'info');
+                      addToast(t('settings.preset.filled'), 'info');
                   }}
                   className="w-full py-2 bg-slate-100 text-slate-500 text-xs font-bold rounded-xl active:scale-95 transition-transform"
               >
-                  用当前完整配置填入
+                  {t('settings.preset.fill')}
               </button>
               <p className="text-[10px] text-slate-400 leading-relaxed">
                   {editingPresetId && activePresetId === editingPresetId
-                      ? '这条正在使用中，保存后当前配置会一起换成新的值。'
-                      : '只改这条预设，当前生效的配置不受影响。'}
+                      ? t('settings.preset.activeHelp')
+                      : t('settings.preset.inactiveHelp')}
               </p>
           </div>
       </Modal>
