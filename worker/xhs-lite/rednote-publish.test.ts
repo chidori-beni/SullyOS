@@ -49,6 +49,9 @@ describe('RedNote image publish', () => {
     expect(json.success).toBe(true);
     expect(json.note_id).toBe('6abea0ab000000001901e0e0');
 
+    const img = calls.find((c) => c.url.hostname === 'img.test')!;
+    expect(img.headers.get('user-agent')).toMatch(/Mozilla/);
+
     const put = calls.find((c) => c.url.hostname === 'upload.rnote.com')!;
     expect(put.method).toBe('PUT');
     expect(put.url.pathname).toBe(`/${FILE_ID}`);

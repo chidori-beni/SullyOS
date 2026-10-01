@@ -2281,7 +2281,10 @@ const XHSLite = (() => {
     throw new Error('获取上传凭证失败（已试多种接口）: ' + lastErr);
   }
   async function uploadImageFromUrl(cookieStr, ck, imgUrl, platform = 'xhs') {
-    const imgResp = await fetch(imgUrl);
+    // 不带 User-Agent 时 catbox 等图床会直接回 520（2026-10-02 实测：同一张图带 UA 能抓到）。
+    const imgHeaders = { 'user-agent': UA, accept: 'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8,*/*;q=0.5' };
+    let imgResp = await fetch(imgUrl, { headers: imgHeaders, redirect: 'follow' });
+    if (!imgResp.ok && imgResp.status >= 500) imgResp = await fetch(imgUrl, { headers: imgHeaders, redirect: 'follow' });
     if (!imgResp.ok) throw new Error(`图片下载失败 ${imgResp.status}: ${imgUrl}`);
     const buf = new Uint8Array(await imgResp.arrayBuffer());
     const mime = imgResp.headers.get('content-type') || 'image/png';
@@ -2448,7 +2451,7 @@ export default {
       const command = apiMatch[1].replace(/\/+$/, '');
       // 探活：前端 testConnection 会先 GET /api/health（不带 cookie），不能要求鉴权
       if (command === 'health') {
-        return jsonResponse({ status: 'ok', backend: 'xhs-lite', signing: 'xhshow-pure-js', rednotePublish: true }, { origin });
+        return jsonResponse({ status: 'ok', backend: 'xhs-lite', signing: 'xhshow-pure-js', rednotePublish: true, imageFetchUa: true }, { origin });
       }
       let body = {};
       if (request.method === 'POST') { try { body = await request.json(); } catch (e) { /* allow empty */ } }
