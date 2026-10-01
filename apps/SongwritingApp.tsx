@@ -2527,20 +2527,23 @@ const SongwritingApp: React.FC = () => {
 
                                 <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-1.5 mb-1">
-                                        <MetaChip className="whitespace-nowrap shrink-0">
-                                            {activeSong.audio?.provider === 'ace-step'
-                                                ? 'ACE-Step'
-                                                : activeSong.audio?.provider === 'tokenhub'
-                                                ? 'MiniMax·腾讯云'
-                                                : activeSong.audio?.provider === 'minimax-paid'
-                                                    ? 'MiniMax'
-                                                    : 'MiniMax · 免费'}
-                                        </MetaChip>
-                                        {activeSong.audio?.generatedAt && (
-                                            <span className="text-[9px] whitespace-nowrap truncate min-w-0" style={{ color: MusicC.faint, fontFamily: 'monospace' }}>
-                                                {new Date(activeSong.audio.generatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                                            </span>
-                                        )}
+                                        {/* 标签和生成时间上下叠放：并排时窄屏放不下，时间会被截成「06...」 */}
+                                        <div className="flex flex-col items-start gap-0.5 shrink-0">
+                                            <MetaChip className="whitespace-nowrap">
+                                                {activeSong.audio?.provider === 'ace-step'
+                                                    ? 'ACE-Step'
+                                                    : activeSong.audio?.provider === 'tokenhub'
+                                                    ? 'MiniMax·腾讯云'
+                                                    : activeSong.audio?.provider === 'minimax-paid'
+                                                        ? 'MiniMax'
+                                                        : 'MiniMax · 免费'}
+                                            </MetaChip>
+                                            {activeSong.audio?.generatedAt && (
+                                                <span className="text-[9px] leading-none whitespace-nowrap pl-0.5" style={{ color: MusicC.faint, fontFamily: 'monospace' }}>
+                                                    {new Date(activeSong.audio.generatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                                </span>
+                                            )}
+                                        </div>
                                         <div className="flex-1" />
                                         {/* ❤︎ 喜欢 → 同步到音乐 App「一起写的歌」 */}
                                         <button
@@ -2563,7 +2566,7 @@ const SongwritingApp: React.FC = () => {
                                         <button
                                             onClick={openCustomPromptModal}
                                             disabled={cooldownSecsLeft > 0}
-                                            className="text-[10px] px-2 py-0.5 rounded-full transition-all active:scale-95 disabled:opacity-40"
+                                            className="text-[10px] px-2 py-0.5 rounded-full transition-all active:scale-95 disabled:opacity-40 whitespace-nowrap shrink-0"
                                             style={{
                                                 color: MusicC.primary,
                                                 background: `${MusicC.glow}15`,
