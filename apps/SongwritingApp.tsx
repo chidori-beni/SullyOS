@@ -78,6 +78,10 @@ const PROVIDER_ICONS: Record<string, React.ComponentType<any>> = {
     'tokenhub':     MusicNotes,
 };
 
+// IndexedDB 读出来的 Blob 在 iPhone 上可能丢了 type，<audio> 认不出格式；补回去。
+const withAudioType = (blob: Blob, mimeType?: string): Blob =>
+    blob.type ? blob : new Blob([blob], { type: mimeType || 'audio/mpeg' });
+
 const SectionBadge: React.FC<{ section: string; small?: boolean }> = ({ section, small }) => {
     const info = SECTION_LABELS[section] || { label: section, color: 'bg-stone-200/60 text-stone-600' };
     return (
@@ -1111,7 +1115,7 @@ const SongwritingApp: React.FC = () => {
         const assetKey = activeSong.audio.assetKey;
         loadSongAudioBlob(assetKey).then(result => {
             if (cancelled || !result) return;
-            const url = URL.createObjectURL(result.blob);
+            const url = URL.createObjectURL(withAudioType(result.blob, result.mimeType));
             setAudioUrl(url);
             currentAudioOwnerRef.current = activeSong.id;
         }).catch(() => { /* ignore — user can regenerate */ });
@@ -1329,15 +1333,35 @@ const SongwritingApp: React.FC = () => {
         setPlayDuration(0);
     }, [audioUrl]);
 
-    const handleTogglePlay = useCallback(() => {
+    // iPhone 上从 IndexedDB 读出来的歌，页面一打开就挂到 <audio> 上常常放不出来
+    // （时间轴 0:00~0:00、点播放没反应、也不报错）；刚生成那份内存里的 blob 没事。
+    // 音乐 App 是在点播放那一刻才读库、换 src、立刻 play，一直能放 —— 这里照做：
+    // 元素还没加载出时长就重新读一次库再播。
+    const handleTogglePlay = useCallback(async () => {
         const el = audioElRef.current;
         if (!el) return;
-        if (el.paused) {
-            el.play().catch(() => { /* autoplay can fail silently */ });
-        } else {
+        if (!el.paused) {
             el.pause();
+            return;
         }
-    }, []);
+        const notLoaded = el.error || el.readyState === 0 || !isFinite(el.duration) || el.duration <= 0;
+        const assetKey = activeSong?.audio?.assetKey;
+        if (notLoaded && assetKey) {
+            const result = await loadSongAudioBlob(assetKey).catch(() => null);
+            if (result) {
+                const oldUrl = el.src;
+                const url = URL.createObjectURL(withAudioType(result.blob, result.mimeType));
+                el.src = url;
+                setAudioUrl(url);
+                currentAudioOwnerRef.current = activeSong?.id ?? null;
+                if (oldUrl.startsWith('blob:')) URL.revokeObjectURL(oldUrl);
+            }
+        }
+        el.play().catch((err) => {
+            console.warn('[Songwriting] audio play failed', err);
+            addToast('播放失败，可以去「音乐」里听这首', 'error');
+        });
+    }, [activeSong?.audio?.assetKey, activeSong?.id, addToast]);
 
     const handleSeek = useCallback((pct: number) => {
         const el = audioElRef.current;
@@ -2486,6 +2510,7 @@ const SongwritingApp: React.FC = () => {
                             onPlay={() => setIsPlaying(true)}
                             onPause={() => setIsPlaying(false)}
                             onLoadedMetadata={(e) => setPlayDuration((e.target as HTMLAudioElement).duration || 0)}
+                            onDurationChange={(e) => { const d = (e.target as HTMLAudioElement).duration; if (isFinite(d) && d > 0) setPlayDuration(d); }}
                             onTimeUpdate={(e) => setPlayProgress((e.target as HTMLAudioElement).currentTime || 0)}
                             onEnded={() => setIsPlaying(false)}
                             preload="metadata"
