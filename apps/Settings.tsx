@@ -51,7 +51,7 @@ import { configFromPreset, findActivePresetId } from '../utils/apiPresetSwitch';
 import type { APIConfig, TtsProvider } from '../types';
 import { describeImageWithVisionApi, VISION_API_TEST_IMAGE_DATA_URL, visionApiConfigFromPreset } from '../utils/visionApi';
 import { useUiLocale } from '../context/UiLocaleContext';
-import type { UiLocale } from '../utils/uiLocale';
+import type { UiLocale, UiStatusMessage } from '../utils/uiLocale';
 import { shareOrDownloadBlob } from '../utils/shareExport';
 
 // hot_news（news.orz.ai）可选热榜平台。key 必须与 API 的 ?platform= 完全一致。
@@ -883,9 +883,9 @@ const Settings: React.FC = () => {
       if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current);
   }, []);
 
-  const [statusMsg, setStatusMsg] = useState('');
+  const [statusMsg, setStatusMsg] = useState<UiStatusMessage | null>(null);
   const [testingApi, setTestingApi] = useState(false);
-  const [testApiResult, setTestApiResult] = useState<string | null>(null);
+  const [testApiResult, setTestApiResult] = useState<(UiStatusMessage & { success: boolean }) | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const avatarModelBackupInputRef = useRef<HTMLInputElement>(null);
   const refreshAvatarModelInventory = useCallback(async () => {
@@ -1082,8 +1082,8 @@ const Settings: React.FC = () => {
     setLocalUrl(nextConfig.baseUrl);
     setLocalModel(nextConfig.model);
     commitApiConfig(nextConfig);
-    setStatusMsg('配置已保存');
-    setTimeout(() => setStatusMsg(''), 2000);
+    setStatusMsg({ key: 'settings.api.saved' });
+    setTimeout(() => setStatusMsg(null), 2000);
   };
 
   const handleSaveVisionApi = (enabled = localVisionEnabled) => {
@@ -1252,9 +1252,9 @@ const Settings: React.FC = () => {
   const fetchModels = async () => {
     const baseUrl = normalizeApiBaseUrl(localUrl);
     const apiKey = normalizeApiCredential(localKey);
-    if (!baseUrl) { setStatusMsg('请先填写 URL'); return; }
+    if (!baseUrl) { setStatusMsg({ key: 'settings.api.urlRequired' }); return; }
     setIsLoadingModels(true);
-    setStatusMsg('正在连接...');
+    setStatusMsg({ key: 'settings.api.connecting' });
     try {
         const response = await fetch(`${baseUrl}/models`, {
             method: 'GET',
@@ -1267,12 +1267,12 @@ const Settings: React.FC = () => {
         if (models.length > 0) {
             setAvailableModels(models);
             if (models.length > 0 && !models.includes(localModel)) setLocalModel(models[0]);
-            setStatusMsg(`获取到 ${models.length} 个模型`);
+            setStatusMsg({ key: 'settings.api.modelsFound', params: { count: models.length } });
             setShowModelModal(true); // Open selector immediately
-        } else { setStatusMsg('模型列表为空或格式不兼容'); }
+        } else { setStatusMsg({ key: 'settings.api.modelsEmpty' }); }
     } catch (error: any) {
         console.error(error);
-        setStatusMsg(`连接失败${error?.message ? `：${error.message}` : ''}`);
+        setStatusMsg({ key: 'settings.api.failed', params: { detail: error?.message ? `：${error.message}` : '' } });
     } finally {
         setIsLoadingModels(false);
     }
@@ -2096,26 +2096,26 @@ const Settings: React.FC = () => {
                 <div className="pt-2">
                      <div className="flex justify-between items-center mb-1.5 pl-1">
                         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Model</label>
-                        <button onClick={fetchModels} disabled={isLoadingModels} className="text-[10px] text-primary font-bold">{isLoadingModels ? 'Fetching...' : '刷新模型列表'}</button>
+                        <button onClick={fetchModels} disabled={isLoadingModels} className="text-[10px] text-primary font-bold">{isLoadingModels ? t('settings.api.fetching') : t('settings.api.refresh')}</button>
                     </div>
                     
                     <button
                         onClick={() => setShowModelModal(true)}
-                        title={localModel || 'Select Model...'}
+                        title={localModel || t('settings.api.select')}
                         className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-3 text-sm text-slate-700 flex justify-between items-center gap-2 active:bg-white transition-all shadow-sm"
                     >
                         <span
                             className="font-mono overflow-hidden whitespace-nowrap min-w-0 flex-1 text-left"
                             style={{ direction: 'rtl', textOverflow: 'ellipsis' }}
                         >
-                            <bdi style={{ direction: 'ltr' }}>{localModel || 'Select Model...'}</bdi>
+                            <bdi style={{ direction: 'ltr' }}>{localModel || t('settings.api.select')}</bdi>
                         </span>
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-slate-400 flex-shrink-0"><path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" /></svg>
                     </button>
                 </div>
 
                 <button onClick={handleSaveApi} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-primary/20 bg-primary active:scale-95 transition-all mt-2">
-                    {statusMsg || '保存配置'}
+                    {statusMsg ? t(statusMsg.key, statusMsg.params) : t('settings.api.save')}
                 </button>
                 {apiPresets.length > 0 && (
                     <p className="text-[9px] text-slate-300 px-1 leading-relaxed">
@@ -2143,13 +2143,13 @@ const Settings: React.FC = () => {
                                 // 走 safeResponseJson —— 它能透明把 SSE 流响应拼成普通 chat/completion 结构
                                 const data = await safeResponseJson(res);
                                 const reply = extractContent(data);
-                                setTestApiResult(`✅ 连接成功 — 模型回复: "${reply.slice(0, 30)}"`);
+                                setTestApiResult({ key: 'settings.api.success', params: { reply: reply.slice(0, 30) }, success: true });
                             } else {
                                 const text = await res.text().catch(() => '');
-                                setTestApiResult(`❌ HTTP ${res.status}: ${text.slice(0, 100)}`);
+                                setTestApiResult({ key: 'settings.api.httpError', params: { status: res.status, detail: text.slice(0, 100) }, success: false });
                             }
                         } catch (err: any) {
-                            setTestApiResult(`❌ 连接失败: ${err.message}`);
+                            setTestApiResult({ key: 'settings.api.testFailed', params: { detail: String(err.message) }, success: false });
                         } finally {
                             setTestingApi(false);
                         }
@@ -2161,14 +2161,14 @@ const Settings: React.FC = () => {
                             : 'border-primary/30 text-primary bg-primary/5 hover:bg-primary/10'
                     }`}
                 >
-                    {testingApi ? '测试中...' : '🧪 测试连接'}
+                    {testingApi ? t('settings.api.testing') : t('settings.api.test')}
                 </button>
 
                 {testApiResult && (
                     <div className={`mt-2 text-xs px-3 py-2 rounded-xl ${
-                        testApiResult.startsWith('✅') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'
+                        testApiResult.success ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'
                     }`}>
-                        {testApiResult}
+                        {t(testApiResult.key, testApiResult.params)}
                     </div>
                 )}
             </div>
@@ -3913,7 +3913,7 @@ const Settings: React.FC = () => {
       </Modal>
 
       {/* 模型选择 Modal */}
-      <Modal isOpen={showModelModal} title="选择模型" onClose={() => setShowModelModal(false)}>
+      <Modal isOpen={showModelModal} title={t('settings.model.title')} onClose={() => setShowModelModal(false)}>
         {(() => {
             const { filtered, commonPrefix } = modelPickerView;
             return (
@@ -3923,14 +3923,14 @@ const Settings: React.FC = () => {
                             type="text"
                             value={localModel}
                             onChange={(e) => setLocalModel(e.target.value)}
-                            placeholder="手动输入模型名称..."
+                            placeholder={t('settings.model.manual')}
                             className="flex-1 bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-primary focus:bg-white transition-all"
                         />
                         <button
                             onClick={() => setShowModelModal(false)}
                             className="px-4 py-2.5 bg-primary text-white text-sm font-bold rounded-xl active:scale-95 transition-all"
                         >
-                            确定
+                            {t('settings.model.confirm')}
                         </button>
                     </div>
                     {availableModels.length > 0 && (
@@ -3939,7 +3939,7 @@ const Settings: React.FC = () => {
                                 type="text"
                                 value={modelFilter}
                                 onChange={(e) => setModelFilter(e.target.value)}
-                                placeholder={`🔍 搜索 ${availableModels.length} 个模型...`}
+                                placeholder={t('settings.model.search', { count: availableModels.length })}
                                 className="w-full bg-slate-50 border border-slate-200/60 rounded-xl px-4 py-2 text-xs focus:outline-primary focus:bg-white transition-all"
                             />
                             {modelFilter && (
@@ -3954,9 +3954,9 @@ const Settings: React.FC = () => {
                     )}
                     {commonPrefix && (
                         <div className="text-[10px] text-slate-400 px-1 flex items-center gap-1 flex-wrap">
-                            <span>共同前缀:</span>
+                            <span>{t('settings.model.prefix')}</span>
                             <code className="font-mono bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded break-all">{commonPrefix}</code>
-                            <span className="text-slate-300">(下方已弱化显示)</span>
+                            <span className="text-slate-300">{t('settings.model.dimmed')}</span>
                         </div>
                     )}
                     <div className="max-h-[40vh] overflow-y-auto overflow-x-hidden no-scrollbar space-y-2">
@@ -3982,8 +3982,8 @@ const Settings: React.FC = () => {
                         }) : (
                             <div className="text-center text-slate-400 py-8 text-xs">
                                 {availableModels.length === 0
-                                    ? '列表为空，可手动输入或点击"刷新模型列表"拉取'
-                                    : `没有匹配 "${modelFilter}" 的模型`}
+                                    ? t('settings.model.empty')
+                                    : t('settings.model.noMatch', { query: modelFilter })}
                             </div>
                         )}
                     </div>

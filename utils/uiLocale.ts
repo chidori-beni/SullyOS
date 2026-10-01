@@ -6,6 +6,29 @@ export const UI_LOCALE_STORAGE_KEY = 'sullyos.uiLocale.v1';
 export type UiMessageParams = Record<string, string | number>;
 
 const ZH_MESSAGES = {
+  'settings.api.saved': "配置已保存",
+  'settings.api.save': "保存配置",
+  'settings.api.urlRequired': "请先填写 URL",
+  'settings.api.connecting': "正在连接...",
+  'settings.api.modelsFound': "获取到 {count} 个模型",
+  'settings.api.modelsEmpty': "模型列表为空或格式不兼容",
+  'settings.api.failed': "连接失败{detail}",
+  'settings.api.refresh': "刷新模型列表",
+  'settings.api.fetching': "Fetching...",
+  'settings.api.select': "Select Model...",
+  'settings.api.testing': "测试中...",
+  'settings.api.test': "🧪 测试连接",
+  'settings.api.success': "✅ 连接成功 — 模型回复: \"{reply}\"",
+  'settings.api.httpError': "❌ HTTP {status}: {detail}",
+  'settings.api.testFailed': "❌ 连接失败: {detail}",
+  'settings.model.title': "选择模型",
+  'settings.model.manual': "手动输入模型名称...",
+  'settings.model.confirm': "确定",
+  'settings.model.search': "🔍 搜索 {count} 个模型...",
+  'settings.model.prefix': "共同前缀:",
+  'settings.model.dimmed': "(下方已弱化显示)",
+  'settings.model.empty': "列表为空，可手动输入或点击\"刷新模型列表\"拉取",
+  'settings.model.noMatch': "没有匹配 \"{query}\" 的模型",
   'settings.section.api': 'API 配置',
   'settings.section.backup': '备份与恢复 (ZIP)',
   'settings.section.cloud': '云端备份',
@@ -214,6 +237,29 @@ const ZH_MESSAGES = {
 } as const;
 
 const JA_MESSAGES = {
+  'settings.api.saved': "設定を保存しました",
+  'settings.api.save': "設定を保存",
+  'settings.api.urlRequired': "先に URL を入力してください",
+  'settings.api.connecting': "接続中…",
+  'settings.api.modelsFound': "{count} 件のモデルを取得しました",
+  'settings.api.modelsEmpty': "モデル一覧が空か、形式に対応していません",
+  'settings.api.failed': "接続に失敗しました{detail}",
+  'settings.api.refresh': "モデル一覧を更新",
+  'settings.api.fetching': "取得中…",
+  'settings.api.select': "モデルを選択…",
+  'settings.api.testing': "テスト中…",
+  'settings.api.test': "🧪 接続をテスト",
+  'settings.api.success': "✅ 接続成功 — モデルの応答: \"{reply}\"",
+  'settings.api.httpError': "❌ HTTP {status}: {detail}",
+  'settings.api.testFailed': "❌ 接続に失敗しました: {detail}",
+  'settings.model.title': "モデルを選択",
+  'settings.model.manual': "モデル名を直接入力…",
+  'settings.model.confirm': "決定",
+  'settings.model.search': "🔍 {count} 件のモデルを検索…",
+  'settings.model.prefix': "共通の接頭辞:",
+  'settings.model.dimmed': "（下では薄く表示しています）",
+  'settings.model.empty': "一覧が空です。直接入力するか「モデル一覧を更新」を押してください",
+  'settings.model.noMatch': "\"{query}\" に一致するモデルはありません",
   'settings.section.api': 'API 設定',
   'settings.section.backup': 'バックアップと復元 (ZIP)',
   'settings.section.cloud': 'クラウドバックアップ',
@@ -422,6 +468,7 @@ const JA_MESSAGES = {
 } as const;
 
 export type UiMessageKey = keyof typeof ZH_MESSAGES;
+export type UiStatusMessage = { key: UiMessageKey; params?: UiMessageParams };
 export type UiTranslationCatalog = Record<UiLocale, Partial<Record<UiMessageKey, string>>>;
 
 export const UI_MESSAGES: UiTranslationCatalog = {
