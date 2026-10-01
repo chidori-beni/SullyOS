@@ -16,6 +16,7 @@ import { resolveMiniMaxApiKey } from './minimaxApiKey';
 import { minimaxFetch } from './minimaxEndpoint';
 import { convertHexAudioToBlob, fetchRemoteAudioBlob } from './minimaxTts';
 import { DB } from './db';
+import { getProxyWorkerUrl } from './proxyWorker';
 
 // ── Types ──
 
@@ -287,6 +288,28 @@ export async function synthesizeSongMinimax(
 export const TOKENHUB_MUSIC_URL = 'https://tokenhub.tencentmaas.com/v1/wand/minimax-music/generation';
 export const TOKENHUB_MUSIC_MODEL = 'minimax-music-v3.0';
 
+// TokenHub 默认回一个腾讯云 COS 的签名下载链接，但那个桶不带 CORS 头，
+// 浏览器 fetch 必被拦（2026-10-02 实测：生成成功、下载 Load failed）。
+// 所以请求里要 output_format: 'hex' 让音频直接装在响应里；万一 TokenHub
+// 不认这个参数仍回链接，先直连试一次，再借代理 Worker 的 /replicate/file
+// 代下载（worker/index.js 里白名单已放行 aigc-output-*.myqcloud.com）。
+const downloadTokenHubAudio = async (audioUrl: string): Promise<Blob> => {
+  try {
+    return await fetchRemoteAudioBlob(audioUrl);
+  } catch (directErr) {
+    console.warn('[TokenHub music] direct download blocked, trying proxy worker', directErr);
+  }
+  const proxied = `${getProxyWorkerUrl()}/replicate/file?url=${encodeURIComponent(audioUrl)}`;
+  const res = await fetch(proxied);
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => '')).slice(0, 150);
+    throw new Error(`歌已生成，但下载被拦：直连被跨域拦截，代理 Worker 也失败 (HTTP ${res.status}) ${detail}`);
+  }
+  const blob = await res.blob();
+  if (!blob.size) throw new Error('歌已生成，但代理 Worker 下载到的是空文件');
+  return blob;
+};
+
 const pickTokenHubAudio = (data: any): string | null => {
   const candidates = [
     data?.data?.audio, data?.data?.audio_url, data?.data?.url,
@@ -332,6 +355,7 @@ export async function synthesizeSongTokenHub(
     prompt: input.prompt,
     lyrics: input.lyrics,
     lyrics_optimizer: !!input.lyricsOptimizer,
+    output_format: 'hex',
     audio_setting: { sample_rate: 44100, bitrate: 256000, format: 'mp3' },
   };
   if (input.isInstrumental) payload.is_instrumental = true;
@@ -376,7 +400,7 @@ export async function synthesizeSongTokenHub(
   let blob: Blob;
   let mimeType = 'audio/mpeg';
   if (/^https?:\/\//i.test(audio)) {
-    blob = await fetchRemoteAudioBlob(audio);
+    blob = await downloadTokenHubAudio(audio);
     mimeType = guessMimeFromUrl(audio);
   } else if (audio.startsWith('data:')) {
     blob = await (await fetch(audio)).blob();

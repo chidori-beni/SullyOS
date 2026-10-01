@@ -3774,11 +3774,13 @@ export default {
         } catch {
           return jsonResponse({ error: 'Invalid URL' }, { status: 400, origin });
         }
-        // 白名单：只放行 replicate 的产物 CDN
+        // 白名单：只放行 replicate 的产物 CDN，外加腾讯云 TokenHub 出歌的 COS 桶
+        // （那个桶不带 CORS 头，写歌 App 的腾讯云出歌靠这里代下载）
         const allowed = (host) => host === 'replicate.delivery'
           || host.endsWith('.replicate.delivery')
           || host === 'pbxt.replicate.com'
-          || host.endsWith('.replicate.com');
+          || host.endsWith('.replicate.com')
+          || (host.startsWith('aigc-output-') && host.endsWith('.myqcloud.com'));
         if (parsed.protocol !== 'https:' || !allowed(parsed.hostname)) {
           return jsonResponse({ error: 'Host not allowed' }, { status: 400, origin });
         }
