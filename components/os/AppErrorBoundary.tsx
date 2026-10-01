@@ -3,17 +3,19 @@ import { isChunkLoadError, tryAutoReloadForChunkError } from '../../utils/chunkL
 import { trackEvent } from '../../utils/analytics';
 import { INSTALLED_APPS, HIDDEN_APP_NAMES } from '../../constants';
 import { AppID } from '../../types';
+import { useUiLocale } from '../../context/UiLocaleContext';
+import type { UiMessageKey, UiMessageParams } from '../../utils/uiLocale';
 
-const ERROR_COPY_LABEL = '\u590d\u5236\u62a5\u9519\u4fe1\u606f';
-const ERROR_COPIED_LABEL = '\u5df2\u590d\u5236';
-const ERROR_MANUAL_COPY_LABEL = '\u8bf7\u624b\u52a8\u590d\u5236';
-const ERROR_PROMPT_LABEL = '\u8bf7\u624b\u52a8\u590d\u5236\u62a5\u9519\u4fe1\u606f';
-const ERROR_TITLE = '\u5e94\u7528\u8fd0\u884c\u9519\u8bef';
-const ERROR_RETURN_LABEL = '\u8fd4\u56de\u684c\u9762';
-const CHUNK_ERROR_TITLE = '\u8d44\u6e90\u52a0\u8f7d\u5931\u8d25';
-const CHUNK_ERROR_HINT = '页面组件未能加载或解析，可能与网络中断或版本更新有关。可以刷新重试；如果仍然报错，请复制报错信息反馈。';
-const CHUNK_ERROR_RELOADING = '\u6b63\u5728\u81ea\u52a8\u5237\u65b0\u6062\u590d\u2026';
-const CHUNK_ERROR_RELOAD_LABEL = '\u5237\u65b0\u91cd\u8bd5';
+const ERROR_COPY_LABEL = 'error.copy';
+const ERROR_COPIED_LABEL = 'error.copied';
+const ERROR_MANUAL_COPY_LABEL = 'error.manual';
+const ERROR_PROMPT_LABEL = 'error.prompt';
+const ERROR_TITLE = 'error.title';
+const ERROR_RETURN_LABEL = 'common.backToHome';
+const CHUNK_ERROR_TITLE = 'error.chunk.title';
+const CHUNK_ERROR_HINT = 'error.chunk.hint';
+const CHUNK_ERROR_RELOADING = 'error.chunk.reloading';
+const CHUNK_ERROR_RELOAD_LABEL = 'error.chunk.reload';
 
 type AppErrorBoundaryProps = {
     children: React.ReactNode;
@@ -21,20 +23,24 @@ type AppErrorBoundaryProps = {
     resetKey: string;
 };
 
+type LocalizedBoundaryProps = AppErrorBoundaryProps & {
+    t: (key: UiMessageKey, params?: UiMessageParams) => string;
+};
+
 type AppErrorBoundaryState = {
     hasError: boolean;
     error: Error | null;
-    copyLabel: string;
+    copyLabel: UiMessageKey;
     /** 懒加载 chunk 失败 (iOS Safari "Importing a module script failed." 等) — 走刷新恢复 UI */
     isChunkError: boolean;
     /** 已发起自动整页刷新, 页面即将重载 */
     autoReloading: boolean;
 };
 
-class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorBoundaryState> {
+class AppErrorBoundary extends Component<LocalizedBoundaryProps, AppErrorBoundaryState> {
     private copyLabelTimer: number | null = null;
 
-    constructor(props: AppErrorBoundaryProps) {
+    constructor(props: LocalizedBoundaryProps) {
         super(props);
         this.state = {
             hasError: false,
@@ -96,7 +102,7 @@ class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorBoundary
         }
     }
 
-    private updateCopyLabel = (label: string) => {
+    private updateCopyLabel = (label: UiMessageKey) => {
         if (this.copyLabelTimer) {
             window.clearTimeout(this.copyLabelTimer);
         }
@@ -145,7 +151,7 @@ class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorBoundary
             // Fall back to manual copy prompt.
         }
 
-        window.prompt(ERROR_PROMPT_LABEL, errText);
+        window.prompt(this.props.t(ERROR_PROMPT_LABEL), errText);
         this.updateCopyLabel(ERROR_MANUAL_COPY_LABEL);
         trackEvent('复制报错信息', { 复制结果: '需手动复制' });
     };
@@ -182,15 +188,15 @@ class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorBoundary
                         alt="error"
                         className="w-10 h-10"
                     />
-                    <h2 className="text-lg font-bold">{CHUNK_ERROR_TITLE}</h2>
+                    <h2 className="text-lg font-bold">{this.props.t(CHUNK_ERROR_TITLE)}</h2>
                     <p className="text-xs text-slate-300 max-w-xs leading-relaxed">
-                        {CHUNK_ERROR_HINT}
+                        {this.props.t(CHUNK_ERROR_HINT)}
                     </p>
                     <p className="text-xs text-slate-300 font-mono bg-black/30 p-3 rounded-2xl max-w-full overflow-auto max-h-40 select-text break-all whitespace-pre-wrap">
                         {this.state.error?.message || 'Unknown Error'}
                     </p>
                     {this.state.autoReloading ? (
-                        <p className="text-sm font-bold text-slate-200">{CHUNK_ERROR_RELOADING}</p>
+                        <p className="text-sm font-bold text-slate-200">{this.props.t(CHUNK_ERROR_RELOADING)}</p>
                     ) : (
                         <div className="flex flex-col gap-3 w-full max-w-xs">
                             <button
@@ -198,21 +204,21 @@ class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorBoundary
                                 onClick={this.handleReload}
                                 className="w-full px-6 py-3 bg-red-600 rounded-full font-bold text-sm shadow-lg active:scale-95 transition-transform"
                             >
-                                {CHUNK_ERROR_RELOAD_LABEL}
+                                {this.props.t(CHUNK_ERROR_RELOAD_LABEL)}
                             </button>
                             <button
                                 type="button"
                                 onClick={this.handleCopy}
                                 className="w-full px-4 py-2 bg-slate-700 rounded-full text-xs font-bold active:scale-95 transition-transform"
                             >
-                                {this.state.copyLabel}
+                                {this.props.t(this.state.copyLabel)}
                             </button>
                             <button
                                 type="button"
                                 onClick={this.handleClose}
                                 className="w-full px-4 py-2 bg-slate-700 rounded-full text-xs font-bold active:scale-95 transition-transform"
                             >
-                                {ERROR_RETURN_LABEL}
+                                {this.props.t(ERROR_RETURN_LABEL)}
                             </button>
                         </div>
                     )}
@@ -227,7 +233,7 @@ class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorBoundary
                     alt="error"
                     className="w-10 h-10"
                 />
-                <h2 className="text-lg font-bold">{ERROR_TITLE}</h2>
+                <h2 className="text-lg font-bold">{this.props.t(ERROR_TITLE)}</h2>
                 <p className="text-xs text-slate-300 font-mono bg-black/30 p-3 rounded-2xl max-w-full overflow-auto max-h-40 select-text break-all whitespace-pre-wrap">
                     {this.state.error?.message || 'Unknown Error'}
                 </p>
@@ -237,14 +243,14 @@ class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorBoundary
                         onClick={this.handleCopy}
                         className="w-full px-4 py-2 bg-slate-700 rounded-full text-xs font-bold active:scale-95 transition-transform"
                     >
-                        {this.state.copyLabel}
+                        {this.props.t(this.state.copyLabel)}
                     </button>
                     <button
                         type="button"
                         onClick={this.handleClose}
                         className="w-full px-6 py-3 bg-red-600 rounded-full font-bold text-sm shadow-lg active:scale-95 transition-transform"
                     >
-                        {ERROR_RETURN_LABEL}
+                        {this.props.t(ERROR_RETURN_LABEL)}
                     </button>
                 </div>
             </div>
@@ -252,4 +258,9 @@ class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorBoundary
     }
 }
 
-export default AppErrorBoundary;
+const LocalizedAppErrorBoundary: React.FC<AppErrorBoundaryProps> = props => {
+    const { t } = useUiLocale();
+    return <AppErrorBoundary {...props} t={t} />;
+};
+
+export default LocalizedAppErrorBoundary;

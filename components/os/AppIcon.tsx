@@ -1,7 +1,8 @@
 
 import React from 'react';
 import { AppConfig } from '../../types';
-import { Icons } from '../../constants';
+import { Icons, getAppDisplayName } from '../../constants';
+import { useUiLocale } from '../../context/UiLocaleContext';
 import { isPaperWallpaper, useOS } from '../../context/OSContext';
 import { useBlobRefUrl } from '../../utils/blobRef';
 import { getAcnhIcon } from './acnhIcons';
@@ -25,6 +26,8 @@ const NOOK_TILE_COLORS: Record<string, string> = {
 
 const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md', hideLabel = false, variant = 'default' }) => {
   const { customIcons, theme } = useOS();
+  const { locale } = useUiLocale();
+  const displayName = getAppDisplayName(app.id, locale);
   const IconComponent = Icons[app.icon] || Icons.Settings;
   const customIconUrl = useBlobRefUrl(customIcons[app.id]);
   const isNook = theme.skin === 'animalcrossing';
@@ -44,6 +47,8 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
     const tileColor = NOOK_TILE_COLORS[app.color] || NOOK_TILE_COLORS.slate;
     return (
       <button
+        aria-label={displayName}
+        title={displayName}
         onClick={onClick}
         onPointerDown={() => preloadApp(app.id)}
         className="flex flex-col items-center gap-1.5 group relative active:scale-95 transition-transform duration-200"
@@ -63,7 +68,7 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
             className={`${size === 'sm' ? 'text-[9px] tracking-wide' : 'text-[10.5px] tracking-wide'} font-bold max-w-full truncate ${variant === 'dock' ? 'hidden' : 'block'}`}
             style={{ color: contentColor }}
           >
-            {app.name}
+            {displayName}
           </span>
         )}
       </button>
@@ -72,6 +77,8 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
 
   return (
     <button
+      aria-label={displayName}
+      title={displayName}
       onClick={onClick}
       onPointerDown={() => preloadApp(app.id)}
       className="flex flex-col items-center gap-1.5 group relative active:scale-95 transition-transform duration-200"
@@ -100,7 +107,7 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
             <img
               src={customIconUrl}
               className={`w-full h-full ${preserveCustomOutline ? 'object-contain' : 'object-cover rounded-[1.2rem]'}`}
-              alt={app.name}
+              alt={displayName}
               loading="lazy"
             />
         ) : (
@@ -120,7 +127,7 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
             className={`${size === 'sm' ? 'text-[8.5px]' : 'text-[10px]'} ${isPaperDesktop ? 'tracking-[0.08em] font-semibold opacity-75' : 'tracking-widest font-bold uppercase opacity-80 text-shadow-md'} transition-opacity max-w-full truncate ${variant === 'dock' ? 'hidden' : 'block'}`}
             style={{ color: contentColor }}
         >
-          {app.name}
+          {displayName}
         </span>
       )}
     </button>

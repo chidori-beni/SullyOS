@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { trackEvent } from '../../utils/analytics';
+import { useUiLocale } from '../../context/UiLocaleContext';
 
 interface ErrorDialogProps {
     isOpen: boolean;
@@ -11,6 +12,7 @@ interface ErrorDialogProps {
 // 全局错误弹窗：toast 一行装不下的长报错走这里 —— 多行 monospace 预览框 + 复制按钮,
 // 手机上没法开 console 时, 用户能直接看清、长按复制原文反馈过来。
 const ErrorDialog: React.FC<ErrorDialogProps> = ({ isOpen, title, details, onClose }) => {
+    const { t } = useUiLocale();
     const [copied, setCopied] = useState(false);
 
     if (!isOpen) return null;
@@ -65,13 +67,13 @@ const ErrorDialog: React.FC<ErrorDialogProps> = ({ isOpen, title, details, onClo
                         onClick={handleCopy}
                         className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-600 active:scale-95 transition-transform"
                     >
-                        {copied ? '已复制' : '复制'}
+                        {t(copied ? 'error.copied' : 'common.copy')}
                     </button>
                     <button
                         onClick={onClose}
                         className="px-4 py-2 bg-red-500 rounded-xl text-sm font-bold text-white shadow-lg shadow-red-200 active:scale-95 transition-transform"
                     >
-                        关闭
+                        {t('common.close')}
                     </button>
                 </div>
             </div>

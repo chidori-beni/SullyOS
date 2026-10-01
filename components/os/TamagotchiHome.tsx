@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { useOS } from '../../context/OSContext';
-import { INSTALLED_APPS, Icons } from '../../constants';
+import { INSTALLED_APPS, Icons, getAppDisplayName } from '../../constants';
+import { useUiLocale } from '../../context/UiLocaleContext';
 import { createPortal } from 'react-dom';
 import { AppID, CharacterProfile, RoomItem, DailySchedule, ScheduleSlot } from '../../types';
 import { DB } from '../../utils/db';
@@ -645,10 +646,11 @@ const DayScroll = React.memo<{ slots: { time: string; text: string; passed: bool
 
 // ─── 右侧世界之门：家园 / 彼方 / 梦境——细线胶囊，跟随界面风格 + ◆连饰 ───
 const WorldPortals = React.memo<{ onHome: () => void; onKanata: () => void; onDream: () => void }>(({ onHome, onKanata, onDream }) => {
+    const { t } = useUiLocale();
     const portals = [
-        { key: 'home', label: '家园', en: 'HOME', icon: ICON.door, onClick: onHome },
-        { key: 'kanata', label: '彼方', en: 'KANATA', icon: <Icons.VRWorld className="w-full h-full" />, onClick: onKanata },
-        { key: 'dream', label: '梦境', en: 'DREAM', icon: ICON.moon, onClick: onDream },
+        { key: 'home', label: t('apps.WorldHome'), en: 'HOME', icon: ICON.door, onClick: onHome },
+        { key: 'kanata', label: t('apps.VRWorld'), en: 'KANATA', icon: <Icons.VRWorld className="w-full h-full" />, onClick: onKanata },
+        { key: 'dream', label: t('launcher.dream'), en: 'DREAM', icon: ICON.moon, onClick: onDream },
     ];
     return (
         <div className="absolute right-3 z-[35] flex flex-col items-center" style={{ top: 'calc(var(--chrome-top, var(--safe-top, 0px)) + 10rem)' }}>
@@ -778,6 +780,7 @@ const DockBtn: React.FC<{ glyph: React.ReactNode; cn: string; en: string; badge?
 
 // ─── 主组件 ───────────────────────────────────────────────────
 const TamagotchiHome: React.FC = () => {
+    const { locale } = useUiLocale();
     const { openApp, characters, activeCharacterId, setActiveCharacterId, virtualTime, unreadMessages, isDataLoaded, lastMsgTimestamp, addToast, userProfile, apiConfig } = useOS();
     const char: CharacterProfile | null = useMemo(
         () => characters.find(c => c.id === activeCharacterId) || characters[0] || null,
@@ -1221,8 +1224,8 @@ const TamagotchiHome: React.FC = () => {
                             style={{ background: PAL.card, border: `1.5px solid ${PAL.frameSoft}`, boxShadow: '0 8px 22px var(--tg-glow35)' }}>
                             <div className="absolute inset-[4px] rounded-[1.45rem] pointer-events-none" style={{ border: '1px solid var(--tg-frame-a22)' }} />
                             <Sparkles items={[[7, 14, 7, PAL.frame, 0.6], [93, 18, 7, PAL.frame, 0.55], [50, -8, 8, PAL.frame, 0.8, true]]} />
-                            <DockBtn glyph={DOCK_GLYPHS.heart} cn="约会" en="DATE" onClick={() => openApp(AppID.Date)} />
-                            <DockBtn glyph={DOCK_GLYPHS.neural} cn="神经链接" en="LINK" onClick={() => openApp(AppID.Character)} />
+                            <DockBtn glyph={DOCK_GLYPHS.heart} cn={locale === 'zh-CN' ? '约会' : getAppDisplayName(AppID.Date, locale)} en="DATE" onClick={() => openApp(AppID.Date)} />
+                            <DockBtn glyph={DOCK_GLYPHS.neural} cn={getAppDisplayName(AppID.Character, locale)} en="LINK" onClick={() => openApp(AppID.Character)} />
                             {/* 中央星徽：点开全部应用抽屉 */}
                             <button onClick={() => setDrawerOpen(true)} className="relative flex flex-col items-center gap-1 -mt-8 active:scale-95 transition-transform">
                                 <div className="relative w-[3.7rem] h-[3.7rem] rounded-full flex items-center justify-center"
@@ -1236,8 +1239,8 @@ const TamagotchiHome: React.FC = () => {
                                     <span className="text-[6px] font-bold" style={{ fontFamily: FONT_PX, color: PAL.fade, letterSpacing: '0.16em' }}>ALL</span>
                                 </div>
                             </button>
-                            <DockBtn glyph={DOCK_GLYPHS.album} cn="记忆" en="MEMORY" onClick={() => openApp(AppID.MemoryPalace)} />
-                            <DockBtn glyph={DOCK_GLYPHS.gear} cn="设置" en="SETTING" onClick={() => openApp(AppID.Settings)} />
+                            <DockBtn glyph={DOCK_GLYPHS.album} cn={locale === 'zh-CN' ? '记忆' : getAppDisplayName(AppID.MemoryPalace, locale)} en="MEMORY" onClick={() => openApp(AppID.MemoryPalace)} />
+                            <DockBtn glyph={DOCK_GLYPHS.gear} cn={getAppDisplayName(AppID.Settings, locale)} en="SETTING" onClick={() => openApp(AppID.Settings)} />
                         </div>
                     </div>
                 </>

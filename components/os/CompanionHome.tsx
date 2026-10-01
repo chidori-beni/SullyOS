@@ -19,7 +19,8 @@ import {
 } from '@phosphor-icons/react';
 import { useOS } from '../../context/OSContext';
 import { AppID, type AvatarTouchRegion, type CompanionStartupPeriod, type CompanionStartupSettings, type CompanionTouchReaction, type CompanionTouchSettings, type DailySchedule } from '../../types';
-import { Icons, INSTALLED_APPS } from '../../constants';
+import { Icons, INSTALLED_APPS, getAppDisplayName } from '../../constants';
+import { useUiLocale } from '../../context/UiLocaleContext';
 import VRMVideoCallStage from '../call/VRMVideoCallStage';
 import { ScheduleFullscreenViewer } from '../schedule/ScheduleHomeWidget';
 import type { AvatarMotionState } from '../call/VRMAvatarCanvas';
@@ -445,6 +446,7 @@ const COMPANION_STAR_APPS: Array<{
   .map(app => ({ id: app.id, label: app.name, icon: app.icon as keyof typeof Icons }));
 
 const CompanionHome: React.FC = () => {
+  const { locale } = useUiLocale();
   const {
     characters,
     activeCharacterId,
@@ -3252,7 +3254,7 @@ const CompanionHome: React.FC = () => {
                   <span className="companion-rail-shape-inner absolute inset-[3px] rounded-[0.55rem] border" style={{ borderColor: `${uiTint}2f` }} />
                   <Icon className="companion-rail-icon relative h-[17px] w-[17px] -rotate-45 text-white/95 sm:h-5 sm:w-5" />
                 </span>
-                <span className="text-[8px] tracking-[0.08em] text-white/90 sm:text-[9px]">{item.label}</span>
+                <span className="text-[8px] tracking-[0.08em] text-white/90 sm:text-[9px]">{locale === 'zh-CN' ? item.label : getAppDisplayName(item.id, locale)}</span>
               </button>
             );
           })}
@@ -4626,7 +4628,7 @@ const CompanionHome: React.FC = () => {
                       >
                         <Icon className="h-[19px] w-[19px]" />
                       </span>
-                      <span className="max-w-full truncate text-[9px] tracking-wide">{item.label}</span>
+                      <span className="max-w-full truncate text-[9px] tracking-wide">{getAppDisplayName(item.id, locale)}</span>
                     </button>
                   );
                 })}

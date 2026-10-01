@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useUiLocale } from '../context/UiLocaleContext';
 
 /**
  * 「家园」全局生成喇叭 —— 任意界面都能看到某个世界正在演绎（推进一段 / 结卷）。
@@ -8,6 +9,7 @@ import React, { useEffect, useRef, useState } from 'react';
 interface WorldGen { worldId: string; worldName: string; storyTime?: string; done: number; total: number; charName?: string; chapter?: number; }
 
 const WorldBroadcast: React.FC = () => {
+    const { t } = useUiLocale();
     const [gen, setGen] = useState<WorldGen | null>(null);
     const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -16,7 +18,7 @@ const WorldBroadcast: React.FC = () => {
         const onStart = (e: Event) => {
             const d = (e as CustomEvent).detail || {};
             clearHide();
-            setGen({ worldId: d.worldId, worldName: d.worldName || '家园', storyTime: d.storyTime, done: 0, total: d.total || 1 });
+            setGen({ worldId: d.worldId, worldName: d.worldName || '', storyTime: d.storyTime, done: 0, total: d.total || 1 });
         };
         const onBeat = (e: Event) => {
             const d = (e as CustomEvent).detail || {};
@@ -47,10 +49,10 @@ const WorldBroadcast: React.FC = () => {
     if (!gen) return null;
     const pct = Math.round((gen.done / Math.max(1, gen.total)) * 100);
     const label = gen.chapter
-        ? `结第 ${gen.chapter} 卷总结中…`
+        ? t('broadcast.world.chapter', { chapter: gen.chapter })
         : gen.charName
-            ? `正在演绎 ${gen.charName} · ${gen.done}/${gen.total}`
-            : '世界引擎运转中…';
+            ? t('broadcast.world.beat', { name: gen.charName, done: gen.done, total: gen.total })
+            : t('broadcast.world.running');
 
     return (
         <div className="fixed left-1/2 -translate-x-1/2 z-[999] pointer-events-none" style={{ top: 'calc(var(--safe-top) + 6px)' }}>
@@ -71,7 +73,7 @@ const WorldBroadcast: React.FC = () => {
                 }} />
                 <span className="relative text-[12px] text-violet-100" style={{ filter: 'drop-shadow(0 0 5px rgba(200,170,255,.6))' }}>⌂</span>
                 <span className="relative text-[11px] tracking-[0.03em] text-white/90 whitespace-nowrap font-light">
-                    <span className="text-amber-200/90">「{gen.worldName}」</span>{label}
+                    <span className="text-amber-200/90">「{gen.worldName || t('broadcast.world.defaultName')}」</span>{label}
                 </span>
                 {!gen.chapter && (
                     <span className="relative w-12 h-1 rounded-full bg-white/15 overflow-hidden">

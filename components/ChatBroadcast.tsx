@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useUiLocale } from '../context/UiLocaleContext';
 import { CHAT_GEN_EVENTS, CHAT_VIEW_CHANGED_EVENT, getChatViewSnapshot } from '../utils/chatGenEvents';
 import { AMSG_INSTANT_CHAT_PENDING_EVENT, listInstantChatPendings } from '../utils/amsgInstantChat';
 import { INSTANT_TOTAL_TIMEOUT_MS } from '../worker/amsg/src/instantChat';
@@ -30,7 +31,6 @@ interface GenEntry { kind: GenKind; charId: string; charName: string; startedAt:
 // 两处必须一起改——不然横幅和徽章会一前一后灭，看着像出了两次故障。
 const TTL_MS: Record<GenKind, number> = { reply: 6 * 60_000, emotion: 2 * 60_000 };
 
-const LABEL: Record<GenKind, string> = { reply: '正在回应', emotion: '正在感受' };
 
 // 即时对话待收条目的兜底 TTL：worker fire 上限 + 一分钟推送在途（与 useChatAI 的
 // cloudEvalTimeoutMs 同一来源推导，worker 调预算两边一起动）。正常熄灭不靠它——
@@ -38,6 +38,7 @@ const LABEL: Record<GenKind, string> = { reply: '正在回应', emotion: '正在
 const INSTANT_PENDING_TTL_MS = INSTANT_TOTAL_TIMEOUT_MS + 60_000;
 
 const ChatBroadcast: React.FC = () => {
+    const { t } = useUiLocale();
     const [entries, setEntries] = useState<GenEntry[]>([]);
     const [, setViewTick] = useState(0);
     // 即时对话的「正在回应」不靠 replyStart/replyEnd 撑：instant 分支 POST 完就 return，
@@ -114,7 +115,7 @@ const ChatBroadcast: React.FC = () => {
     const cur = [...visible].sort((a, b) =>
         (a.kind === b.kind ? a.startedAt - b.startedAt : (a.kind === 'reply' ? 1 : -1))
     )[visible.length - 1];
-    const extra = visible.length > 1 ? ` 等 ${visible.length} 项` : '';
+    const extra = visible.length > 1 ? t('broadcast.chat.count', { count: visible.length }) : '';
 
     const jump = () => {
         try {
@@ -139,7 +140,7 @@ const ChatBroadcast: React.FC = () => {
                     {cur.kind === 'reply' ? '💬' : '🫧'}
                 </span>
                 <span className="relative text-[11px] tracking-[0.04em] text-white/90 whitespace-nowrap font-light">
-                    <span className="text-emerald-200/90 font-normal">{cur.charName}</span>{extra} {LABEL[cur.kind]}
+                    <span className="text-emerald-200/90 font-normal">{cur.charName}</span>{extra} {t(cur.kind === 'reply' ? 'broadcast.chat.reply' : 'broadcast.chat.emotion')}
                 </span>
                 <span className="relative flex gap-1">
                     {[0, 1, 2].map(i => (

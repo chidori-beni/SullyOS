@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useUiLocale } from '../context/UiLocaleContext';
+import type { UiMessageKey } from '../utils/uiLocale';
 
 /**
  * 「彼方」大世界喇叭 —— 当某角色正在登入彼方、调用 API 行动时，
@@ -8,14 +10,15 @@ import React, { useEffect, useRef, useState } from 'react';
 
 interface ActiveSession { charId: string; charName: string; room: string; novelTitle?: string; }
 
-const ROOM_LABEL: Record<string, { name: string }> = {
-    library: { name: '图书馆' },
-    music: { name: '听歌房' },
-    guestbook: { name: '留言簿' },
-    gym: { name: '活动场' },
+const ROOM_LABEL: Record<string, UiMessageKey> = {
+    library: 'broadcast.vr.library',
+    music: 'broadcast.vr.music',
+    guestbook: 'broadcast.vr.guestbook',
+    gym: 'broadcast.vr.gym',
 };
 
 const VRBroadcast: React.FC = () => {
+    const { t } = useUiLocale();
     const [active, setActive] = useState<ActiveSession[]>([]);
     const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -41,8 +44,8 @@ const VRBroadcast: React.FC = () => {
 
     if (active.length === 0) return null;
     const cur = active[active.length - 1];
-    const room = ROOM_LABEL[cur.room] || { name: '彼方' };
-    const extra = active.length > 1 ? ` 等 ${active.length} 人` : '';
+    const room = t(ROOM_LABEL[cur.room] || 'broadcast.vr.defaultRoom');
+    const extra = active.length > 1 ? t('broadcast.vr.count', { count: active.length }) : '';
 
     return (
         <div className="fixed left-1/2 -translate-x-1/2 z-[999] pointer-events-none"
@@ -65,8 +68,8 @@ const VRBroadcast: React.FC = () => {
                 }} />
                 <span className="relative text-[12px] opacity-80" style={{ filter: 'drop-shadow(0 0 5px rgba(180,195,255,.6))' }}>✦</span>
                 <span className="relative text-[11px] tracking-[0.04em] text-white/90 whitespace-nowrap font-light">
-                    <span className="text-amber-200/90 font-normal">{cur.charName}</span>{extra} 正漫游于彼方 · {room.name}
-                    {cur.novelTitle ? ` 读《${cur.novelTitle}》` : ''}
+                    <span className="text-amber-200/90 font-normal">{cur.charName}</span>{extra}{t('broadcast.vr.roaming', { room })}
+                    {cur.novelTitle ? t('broadcast.vr.reading', { title: cur.novelTitle }) : ''}
                 </span>
                 <span className="relative flex gap-1">
                     {[0, 1, 2].map(i => (

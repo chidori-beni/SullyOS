@@ -1,5 +1,6 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
+import { useUiLocale } from '../../context/UiLocaleContext';
 
 interface SuspendedCallBarProps {
   charName: string;
@@ -12,6 +13,7 @@ interface SuspendedCallBarProps {
  * notification card to visually cover the button while another chat was open.
  */
 const SuspendedCallBar: React.FC<SuspendedCallBarProps> = ({ charName, onResume }) => {
+  const { t } = useUiLocale();
   const handleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -27,13 +29,13 @@ const SuspendedCallBar: React.FC<SuspendedCallBarProps> = ({ charName, onResume 
         type="button"
         onClick={handleClick}
         data-testid="suspended-call-return"
-        aria-label={`返回与${charName}的通话`}
+        aria-label={t('shell.call.resume', { name: charName })}
         className="sully-ui-callbar pointer-events-auto flex w-full items-center justify-center gap-2 bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white shadow-md cursor-pointer animate-pulse transition-colors active:bg-emerald-600"
         style={{ touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent' }}
       >
         <span className="h-2 w-2 rounded-full bg-white animate-ping" aria-hidden="true" />
-        <span>通话中 · {charName}</span>
-        <span className="opacity-70">点击返回</span>
+        <span>{t('shell.call.active', { name: charName })}</span>
+        <span className="opacity-70">{t('shell.call.tap')}</span>
       </button>
     </div>
   );

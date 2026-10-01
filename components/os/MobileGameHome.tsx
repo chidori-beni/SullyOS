@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useOS } from '../../context/OSContext';
-import { Icons, INSTALLED_APPS } from '../../constants';
+import { Icons, INSTALLED_APPS, getAppDisplayName } from '../../constants';
+import { useUiLocale } from '../../context/UiLocaleContext';
 import { AppID, CharacterProfile } from '../../types';
 import { DB } from '../../utils/db';
 import { isChatPreviewMessage } from '../../utils/chatMessageVisibility';
@@ -579,6 +580,8 @@ const MobileGameHome: React.FC = () => {
 };
 
 const DockItem: React.FC<{ id: AppID; cn: string; badge?: number; onClick: () => void }> = ({ id, cn, badge = 0, onClick }) => {
+    const { locale } = useUiLocale();
+    const label = locale === 'zh-CN' ? cn : getAppDisplayName(id, locale);
     const iconKey = INSTALLED_APPS.find(a => a.id === id)?.icon || 'Settings';
     return (
         <button onClick={onClick} className="relative flex flex-col items-center gap-1 w-14 active:scale-90 transition-transform">
@@ -591,7 +594,7 @@ const DockItem: React.FC<{ id: AppID; cn: string; badge?: number; onClick: () =>
                     </span>
                 )}
             </div>
-            <span className="text-[10px]" style={{ fontFamily: FONT_CN, color: PAL.grape }}>{cn}</span>
+            <span className="text-[10px]" style={{ fontFamily: FONT_CN, color: PAL.grape }}>{label}</span>
         </button>
     );
 };

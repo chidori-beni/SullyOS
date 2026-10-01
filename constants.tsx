@@ -1,4 +1,5 @@
 import React from 'react';
+import { translateUi, type UiLocale, type UiMessageKey } from './utils/uiLocale';
 import { AppConfig, AppID } from './types';
 import {
   UserCircle,
@@ -131,3 +132,50 @@ export const HIDDEN_APP_NAMES: Partial<Record<AppID, string>> = {
 };
 
 export const DOCK_APPS = [AppID.Chat, AppID.GroupChat, AppID.Social, AppID.Settings];
+
+// Only display text is localized. Registry names remain stable for analytics.
+const APP_DISPLAY_KEYS: Partial<Record<AppID, UiMessageKey>> = {
+  [AppID.Character]: 'apps.Character',
+  [AppID.MemoryPalace]: 'apps.MemoryPalace',
+  [AppID.Chat]: 'apps.Chat',
+  [AppID.Call]: 'apps.Call',
+  [AppID.GroupChat]: 'apps.GroupChat',
+  [AppID.Room]: 'apps.Room',
+  [AppID.WorldHome]: 'apps.WorldHome',
+  [AppID.CheckPhone]: 'apps.CheckPhone',
+  [AppID.Browser]: 'apps.Browser',
+  [AppID.Date]: 'apps.Date',
+  [AppID.User]: 'apps.User',
+  [AppID.Bank]: 'apps.Bank',
+  [AppID.Journal]: 'apps.Journal',
+  [AppID.Handbook]: 'apps.Handbook',
+  [AppID.Social]: 'apps.Social',
+  [AppID.Study]: 'apps.Study',
+  [AppID.Game]: 'apps.Game',
+  [AppID.Novel]: 'apps.Novel',
+  [AppID.Songwriting]: 'apps.Songwriting',
+  [AppID.VRWorld]: 'apps.VRWorld',
+  [AppID.Bookroom]: 'apps.Bookroom',
+  [AppID.Cinema]: 'apps.Cinema',
+  [AppID.Schedule]: 'apps.Schedule',
+  [AppID.Worldbook]: 'apps.Worldbook',
+  [AppID.HotNews]: 'apps.HotNews',
+  [AppID.FAQ]: 'apps.FAQ',
+  [AppID.Gallery]: 'apps.Gallery',
+  [AppID.XhsFreeRoam]: 'apps.XhsFreeRoam',
+  [AppID.XhsStock]: 'apps.XhsStock',
+  [AppID.ThemeMaker]: 'apps.ThemeMaker',
+  [AppID.Appearance]: 'apps.Appearance',
+  [AppID.Settings]: 'apps.Settings',
+  [AppID.Guidebook]: 'apps.Guidebook',
+  [AppID.LifeSim]: 'apps.LifeSim',
+  [AppID.SpecialMoments]: 'apps.SpecialMoments',
+  [AppID.Music]: 'apps.Music',
+  [AppID.CharCreatorDev]: 'apps.CharCreatorDev',
+  [AppID.QQBridge]: 'apps.QQBridge',
+};
+
+export const getAppDisplayName = (id: AppID, locale: UiLocale = 'zh-CN'): string => {
+  const key = APP_DISPLAY_KEYS[id];
+  return key ? translateUi(locale, key) : (INSTALLED_APPS.find(app => app.id === id)?.name ?? HIDDEN_APP_NAMES[id] ?? String(id));
+};
