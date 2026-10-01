@@ -290,20 +290,24 @@ export const TOKENHUB_MUSIC_MODEL = 'minimax-music-v3.0';
 
 // TokenHub 默认回一个腾讯云 COS 的签名下载链接，但那个桶不带 CORS 头，
 // 浏览器 fetch 必被拦（2026-10-02 实测：生成成功、下载 Load failed）。
-// 所以请求里要 output_format: 'hex' 让音频直接装在响应里；万一 TokenHub
-// 不认这个参数仍回链接，先直连试一次，再借代理 Worker 的 /replicate/file
-// 代下载（worker/index.js 里白名单已放行 aigc-output-*.myqcloud.com）。
-const downloadTokenHubAudio = async (audioUrl: string): Promise<Blob> => {
+// 请求里带了 output_format: 'hex'，但实测 TokenHub 不认，照样回链接。
+// 所以腾讯云 COS 的链接直接借代理 Worker 的 /replicate/file 代下载
+// （worker/index.js 白名单已放行 aigc-output-*.myqcloud.com）——别先直连，
+// 直连必失败，还会在网络日志里留一条吓人的 Load failed。其它域名照常直连。
+const isTokenHubCosUrl = (audioUrl: string): boolean => {
   try {
-    return await fetchRemoteAudioBlob(audioUrl);
-  } catch (directErr) {
-    console.warn('[TokenHub music] direct download blocked, trying proxy worker', directErr);
-  }
+    const host = new URL(audioUrl).hostname;
+    return host.startsWith('aigc-output-') && host.endsWith('.myqcloud.com');
+  } catch { return false; }
+};
+
+const downloadTokenHubAudio = async (audioUrl: string): Promise<Blob> => {
+  if (!isTokenHubCosUrl(audioUrl)) return fetchRemoteAudioBlob(audioUrl);
   const proxied = `${getProxyWorkerUrl()}/replicate/file?url=${encodeURIComponent(audioUrl)}`;
   const res = await fetch(proxied);
   if (!res.ok) {
     const detail = (await res.text().catch(() => '')).slice(0, 150);
-    throw new Error(`歌已生成，但下载被拦：直连被跨域拦截，代理 Worker 也失败 (HTTP ${res.status}) ${detail}`);
+    throw new Error(`歌已生成，但代理 Worker 下载失败 (HTTP ${res.status}) ${detail}`);
   }
   const blob = await res.blob();
   if (!blob.size) throw new Error('歌已生成，但代理 Worker 下载到的是空文件');
