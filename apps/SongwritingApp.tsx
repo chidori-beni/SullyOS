@@ -185,7 +185,11 @@ const buildLyricSlots = (song: SongSheet): LyricSlot[] => {
 
 const SongwritingApp: React.FC = () => {
     const { closeApp, openApp, songs, addSong, updateSong, deleteSong, characters, apiConfig, addToast, userProfile, characterGroups } = useOS();
-    const { addLocalSong, removeLocalSong, localAlbumSongs, playSong, current: currentMusicSong, markRegenerating } = useMusic();
+    const {
+        addLocalSong, removeLocalSong, localAlbumSongs, playSong, current: currentMusicSong, markRegenerating,
+        playing: musicPlaying, progress: musicProgress, duration: musicDuration,
+        togglePlay: musicTogglePlay, seek: musicSeek,
+    } = useMusic();
 
     // Navigation
     const [view, setView] = useState<'shelf' | 'create' | 'partner' | 'write' | 'preview'>('shelf');
@@ -255,12 +259,6 @@ const SongwritingApp: React.FC = () => {
     // preferring free MiniMax over paid ACE-Step. Saved per song via SongSheet.musicProvider.
     const [provider, setProvider] = useState<MusicProvider>('minimax-free');
     // Custom shizuku-styled audio player state (replaces <audio controls>)
-    const audioElRef = useRef<HTMLAudioElement | null>(null);
-    // 从库里读出来的歌先留在内存里，点播放时同步换 src —— 见 handleTogglePlay
-    const loadedAudioBlobRef = useRef<{ songId: string; blob: Blob } | null>(null);
-    const [isPlaying, setIsPlaying] = useState(false);
-    const [playProgress, setPlayProgress] = useState(0);
-    const [playDuration, setPlayDuration] = useState(0);
     // Cover confirm modal — opens between ❤︎ click and music-app jump
     type CoverMode = 'char' | 'user' | 'dual' | 'upload';
     const [showCoverConfirm, setShowCoverConfirm] = useState(false);
@@ -1117,9 +1115,7 @@ const SongwritingApp: React.FC = () => {
         const assetKey = activeSong.audio.assetKey;
         loadSongAudioBlob(assetKey).then(result => {
             if (cancelled || !result) return;
-            const typedBlob = withAudioType(result.blob, result.mimeType);
-            loadedAudioBlobRef.current = { songId: activeSong.id, blob: typedBlob };
-            const url = URL.createObjectURL(typedBlob);
+            const url = URL.createObjectURL(withAudioType(result.blob, result.mimeType));
             setAudioUrl(url);
             currentAudioOwnerRef.current = activeSong.id;
         }).catch(() => { /* ignore — user can regenerate */ });
@@ -1328,50 +1324,8 @@ const SongwritingApp: React.FC = () => {
         audioAbortRef.current?.abort();
     };
 
-    // ── Shizuku-styled audio player wiring ──
+    // ── 底栏播放器：改走音乐 App 的全局播放器，见 handleDockPlay ──
 
-    // Reset player state whenever the audio source changes (new render or song switch)
-    useEffect(() => {
-        setIsPlaying(false);
-        setPlayProgress(0);
-        setPlayDuration(0);
-    }, [audioUrl]);
-
-    // iPhone 上从 IndexedDB 读出来的歌，页面一打开就挂到 <audio> 上常常放不出来
-    // （时间轴 0:00~0:00、点播放没反应、也不报错）；刚生成那份内存里的 blob 没事。
-    // 音乐 App 是在点播放那一刻才换 src、立刻 play，一直能放 —— 这里照做：
-    // 元素还没加载出时长，就在点击里同步换一个新 src 再 play。
-    // 第一版先 await 读库再 play，iPhone 照样失败：await 之后已经不算「用户点击」，
-    // 这个 <audio> 又从没被点过，play() 被拒。所以读库挪到进页面时做，blob 留在
-    // loadedAudioBlobRef，点击里不再有任何 await。
-    const handleTogglePlay = useCallback(() => {
-        const el = audioElRef.current;
-        if (!el) return;
-        if (!el.paused) {
-            el.pause();
-            return;
-        }
-        const notLoaded = el.error || el.readyState === 0 || !isFinite(el.duration) || el.duration <= 0;
-        const held = loadedAudioBlobRef.current;
-        if (notLoaded && held && held.songId === activeSong?.id) {
-            // 只动 DOM，不 setAudioUrl：第二版换完 src 又 setAudioUrl，React 重渲染时
-            // 把 src 再赋一遍，刚开始的 play() 被打断，iPhone 报 AbortError。
-            // 旧 URL 也先不 revoke —— <audio> 的 src prop 还指着它，留着无害。
-            el.src = URL.createObjectURL(held.blob);
-            el.load();
-        }
-        el.play().catch((err) => {
-            console.error('[Songwriting] audio play failed', err?.name, err?.message, el.error?.code, el.error?.message);
-            addToast(`播放失败（${err?.name || '未知'}${el.error?.code ? ` / 媒体错误 ${el.error.code}` : ''}），可以去「音乐」里听这首`, 'error');
-        });
-    }, [activeSong?.id, addToast]);
-
-    const handleSeek = useCallback((pct: number) => {
-        const el = audioElRef.current;
-        if (!el || !playDuration) return;
-        el.currentTime = Math.max(0, Math.min(playDuration, pct * playDuration));
-        setPlayProgress(el.currentTime);
-    }, [playDuration]);
 
     const fmtTime = (s: number): string => {
         if (!isFinite(s) || s < 0) return '0:00';
@@ -1457,6 +1411,49 @@ const SongwritingApp: React.FC = () => {
         // Negative range is "free" — netease ids are positive 32/64-bit ints.
         return -1_000_000 - Math.abs(h);
     }, []);
+
+    // ── 底栏播放：借音乐 App 的全局播放器 ──
+    // 写歌自己那个隐藏 <audio> 在 iPhone 上，App 重开后从库里读出的歌怎么都放不出来
+    // （0:00~0:00、点了没声也不报错；2026-10-02 连修三版：await 读库、点击里同步换 src、
+    // 去掉重渲染，都不行），而音乐 App 的播放器放同一首一直正常。所以底栏直接调它，
+    // 进度条也显示它的进度。不在「一起写的歌」里的歌也能放：临时拼一个本地歌条目。
+    const dockLocalId = activeSong ? localSongIdFor(activeSong.id) : null;
+    const dockIsCurrent = dockLocalId !== null && currentMusicSong?.id === dockLocalId;
+    const dockPlaying = dockIsCurrent && musicPlaying;
+    const dockProgress = dockIsCurrent ? musicProgress : 0;
+    const dockDuration = dockIsCurrent && musicDuration > 0 ? musicDuration : (activeSong?.audio?.durationSec ?? 0);
+
+    const handleDockPlay = useCallback(() => {
+        if (!activeSong?.audio?.assetKey || dockLocalId === null) return;
+        if (dockIsCurrent) {
+            musicTogglePlay();
+            return;
+        }
+        const existing = localAlbumSongs.find(s => s.id === dockLocalId);
+        const song: MusicSong = existing ?? {
+            id: dockLocalId,
+            name: activeSong.title || '未命名',
+            artists: [userProfile?.name || '我', collaborator?.name || 'AI'].filter(Boolean).join(' & '),
+            album: '一起写的歌',
+            albumPic: activeSong.coverImage || collaborator?.avatar || '',
+            duration: activeSong.audio.durationSec ?? 0,
+            fee: 0,
+            local: true,
+            localAssetKey: activeSong.audio.assetKey,
+            localMimeType: activeSong.audio.mimeType,
+            localCoverStyle: activeSong.coverStyle,
+            customAuthorCharIds: collaborator?.id ? [collaborator.id] : [],
+            localLyrics: buildMinimaxMusicLyrics(activeSong.lines),
+        };
+        playSong(song).catch(err => {
+            console.error('[Songwriting] music player failed', err);
+            addToast('播放失败，可以去「音乐」里听这首', 'error');
+        });
+    }, [activeSong, dockLocalId, dockIsCurrent, musicTogglePlay, localAlbumSongs, userProfile?.name, collaborator, playSong, addToast]);
+
+    const handleDockSeek = useCallback((pct: number) => {
+        if (dockIsCurrent) musicSeek(pct);
+    }, [dockIsCurrent, musicSeek]);
 
     const isLikedToMusic = useMemo(() => {
         if (!activeSong) return false;
@@ -1604,7 +1601,7 @@ const SongwritingApp: React.FC = () => {
         }
 
         const durationSec = activeSong.audio.durationSec
-            ?? Math.max(playDuration, 0)
+            ?? Math.max(dockDuration, 0)
             ?? 0;
         const lyricsText = buildMinimaxMusicLyrics(activeSong.lines);
 
@@ -2505,21 +2502,6 @@ const SongwritingApp: React.FC = () => {
                         boxShadow: `0 -8px 32px ${MusicC.glow}10`,
                     }}
                 >
-                    {/* Hidden audio element drives our custom shizuku player */}
-                    {audioUrl && (
-                        <audio
-                            ref={audioElRef}
-                            src={audioUrl}
-                            onPlay={() => setIsPlaying(true)}
-                            onPause={() => setIsPlaying(false)}
-                            onLoadedMetadata={(e) => setPlayDuration((e.target as HTMLAudioElement).duration || 0)}
-                            onDurationChange={(e) => { const d = (e.target as HTMLAudioElement).duration; if (isFinite(d) && d > 0) setPlayDuration(d); }}
-                            onTimeUpdate={(e) => setPlayProgress((e.target as HTMLAudioElement).currentTime || 0)}
-                            onEnded={() => setIsPlaying(false)}
-                            preload="metadata"
-                            className="hidden"
-                        />
-                    )}
 
                     <div className="relative px-4 py-3.5">
                         {/* Floating sparkle decorations — pointer-none */}
@@ -2537,7 +2519,7 @@ const SongwritingApp: React.FC = () => {
                                     style={{
                                         background: `radial-gradient(circle at 35% 35%, ${MusicC.accent}, ${MusicC.primary})`,
                                         boxShadow: `0 4px 18px ${MusicC.glow}40, inset 0 1px 0 rgba(255,255,255,0.3)`,
-                                        animation: isPlaying ? 'shizuku-vinyl 6s linear infinite' : 'none',
+                                        animation: dockPlaying ? 'shizuku-vinyl 6s linear infinite' : 'none',
                                     }}
                                 >
                                     <div
@@ -2606,23 +2588,23 @@ const SongwritingApp: React.FC = () => {
                                         </button>
                                     </div>
                                     <GlassProgress
-                                        progress={playProgress}
-                                        duration={playDuration}
+                                        progress={dockProgress}
+                                        duration={dockDuration}
                                         fmtTime={fmtTime}
-                                        onSeek={handleSeek}
+                                        onSeek={handleDockSeek}
                                     />
                                 </div>
 
                                 <button
-                                    onClick={handleTogglePlay}
+                                    onClick={handleDockPlay}
                                     className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 active:scale-95 transition-transform relative"
                                     style={{
                                         background: `linear-gradient(135deg, ${MusicC.primary}, ${MusicC.accent})`,
                                         boxShadow: `0 4px 18px ${MusicC.glow}40, 0 0 40px ${MusicC.glow}15`,
-                                        animation: isPlaying ? 'shizuku-glow 3s ease-in-out infinite' : 'none',
+                                        animation: dockPlaying ? 'shizuku-glow 3s ease-in-out infinite' : 'none',
                                     }}
                                 >
-                                    {isPlaying ? (
+                                    {dockPlaying ? (
                                         <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z" /></svg>
                                     ) : (
                                         <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7L8 5z" /></svg>
