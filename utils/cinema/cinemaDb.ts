@@ -5,7 +5,7 @@
  */
 import { DB, openDB } from '../db';
 import {
-    CINEMA_END_SOURCE, CINEMA_MESSAGE_SOURCE, CINEMA_PAIR_ID, CINEMA_SESSION_PREFIX, cinemaLineText, cinemaMessageMetadata, cinemaSessionKey,
+    CINEMA_END_SOURCE, CINEMA_MESSAGE_SOURCE, CINEMA_PAIR_ID, CINEMA_SESSION_PREFIX, cinemaLineText, cinemaMessageMetadata, cinemaSessionKey, matchLinesToChatMessages,
     type CinemaChatLine, type CinemaPairing, type CinemaSession,
 } from './cinema';
 
@@ -79,24 +79,14 @@ export async function removeSessionFromChat(charId: string, sessionId: string): 
 }
 
 /**
- * 重来：把最后一轮角色那几句从私聊消息库里撤掉，返回撤了几条。
- * 新存的消息带 cinemaLineAt，按它精确找；更早存的没有，就按「这一场、角色说的、同样的字」从新往旧找。
+ * 把放映室里的几句话从私聊消息库里撤掉（重来、长按删除），返回撤了几条。
+ * 怎么对上是哪条见 matchLinesToChatMessages。
  */
 export async function removeLinesFromChat(charId: string, sessionId: string, lines: CinemaChatLine[]): Promise<number> {
     if (!lines.length) return 0;
-    const mine = (await DB.getRecentMessagesByCharIdAndSource(charId, CINEMA_MESSAGE_SOURCE, 200))
-        .filter(m => m.metadata?.cinemaSessionId === sessionId && m.role === 'assistant')
-        .sort((a, b) => b.timestamp - a.timestamp);
-    const ats = new Set(lines.map(l => l.at));
-    let ids = mine.filter(m => typeof m.metadata?.cinemaLineAt === 'number' && ats.has(m.metadata.cinemaLineAt)).map(m => m.id);
-    if (!ids.length) {
-        const used = new Set<number>();
-        for (const line of lines) {
-            const hit = mine.find(m => !used.has(m.id) && m.content === cinemaLineText(line));
-            if (hit) used.add(hit.id);
-        }
-        ids = [...used];
-    }
+    const mine = (await DB.getRecentMessagesByCharIdAndSource(charId, CINEMA_MESSAGE_SOURCE, 400))
+        .filter(m => m.metadata?.cinemaSessionId === sessionId);
+    const ids = matchLinesToChatMessages(mine, lines);
     if (ids.length) await DB.deleteMessages(ids);
     return ids.length;
 }

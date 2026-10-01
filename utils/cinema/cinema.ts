@@ -489,6 +489,28 @@ export const cinemaMessageMetadata = (session: Pick<CinemaSession, 'id' | 'title
 });
 
 /**
+ * 放映室里的几句话对应私聊消息库里的哪几条（撤回 / 删除用），返回消息 id。
+ * 一句对一条：同一个人说的、字一样；有 cinemaLineAt 的（10-01 之后存的）还要对上是哪一轮，
+ * 同一轮里两句一样的字也不会多删。从新往旧找，旧消息没有 cinemaLineAt 就只看字。
+ */
+export const matchLinesToChatMessages = <M extends { id: number; role: string; content: unknown; timestamp: number; metadata?: any }>(
+    messages: M[],
+    lines: Pick<CinemaChatLine, 'role' | 'text' | 'at' | 'kind'>[],
+): number[] => {
+    const sorted = [...messages].sort((a, b) => b.timestamp - a.timestamp);
+    const used = new Set<number>();
+    for (const line of lines) {
+        const role = line.role === 'user' ? 'user' : 'assistant';
+        const text = cinemaLineText(line);
+        const same = (m: M) => !used.has(m.id) && m.role === role && m.content === text;
+        const hit = sorted.find(m => same(m) && m.metadata?.cinemaLineAt === line.at)
+            || sorted.find(m => same(m) && typeof m.metadata?.cinemaLineAt !== 'number');
+        if (hit) used.add(hit.id);
+    }
+    return [...used];
+};
+
+/**
  * 最后一轮角色的话（可以重来的那几句）：末尾连续的、同一时刻生成的角色行（括号小动作也算）。
  * 最后一句是用户说的、或者还没人说话，返回 null。
  * proactive = 这一轮前面不是用户的话，也就是角色自己主动开的口。

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     buildResumeCommand, canResume, RESUME_REWIND_SEC,
-    buildWorkRecap, groupCinemaWorks, nextEpisode, normalizeWorkTitle, lastCharTurn,
+    buildWorkRecap, groupCinemaWorks, nextEpisode, normalizeWorkTitle, lastCharTurn, matchLinesToChatMessages,
     estimateVideoTime, pickSubtitleWindow, sanitizeExternalSubtitles,
     appendSubtitleLines, CINEMA_SUBTITLES_KEEP, subtitlesSince,
     splitCinemaActions, toCinemaLines, cinemaLineText,
@@ -403,6 +403,28 @@ describe('重来', () => {
         expect(lastCharTurn([c(5)])).toEqual({ start: 0, at: 5, proactive: true });
         expect(lastCharTurn([c(2), u(3)])).toBeNull();
         expect(lastCharTurn([])).toBeNull();
+    });
+
+    it('删一句只撤私聊库里对应的那一条：同一轮别的句子、别的轮同样的字都不碰', () => {
+        const msg = (id: number, role: string, content: string, lineAt?: number, timestamp = id) =>
+            ({ id, role, content, timestamp, metadata: lineAt === undefined ? {} : { cinemaLineAt: lineAt } });
+        const messages = [
+            msg(1, 'assistant', '好看', 100),            // 早一轮也说过「好看」
+            msg(2, 'user', '哭了', 200),
+            msg(3, 'assistant', '递纸巾吧', 300),
+            msg(4, 'assistant', '（递纸巾）', 300),
+            msg(5, 'assistant', '好看', 300),
+            msg(6, 'assistant', '旧消息', undefined),   // 10-01 之前存的，没有 cinemaLineAt
+        ];
+        expect(matchLinesToChatMessages(messages, [{ role: 'char', text: '好看', at: 300 }])).toEqual([5]);
+        expect(matchLinesToChatMessages(messages, [{ role: 'char', text: '递纸巾', kind: 'action', at: 300 }])).toEqual([4]);
+        expect(matchLinesToChatMessages(messages, [{ role: 'user', text: '哭了', at: 200 }])).toEqual([2]);
+        expect(matchLinesToChatMessages(messages, [{ role: 'char', text: '旧消息', at: 999 }])).toEqual([6]);
+        // 重来整轮：三句各对一条
+        expect(matchLinesToChatMessages(messages, [
+            { role: 'char', text: '递纸巾吧', at: 300 }, { role: 'char', text: '递纸巾', kind: 'action', at: 300 }, { role: 'char', text: '好看', at: 300 },
+        ]).sort()).toEqual([3, 4, 5]);
+        expect(matchLinesToChatMessages(messages, [{ role: 'user', text: '好看', at: 300 }])).toEqual([]);
     });
 
     it('存进私聊时记下是哪一轮，重来时靠它撤', () => {

@@ -75,6 +75,11 @@ const CinemaApp: React.FC = () => {
     /** 放映室：聊天铺满（藏起画面和工具行） / 画面笔记全文弹窗 */
     const [chatFull, setChatFull] = useState(false);
     const [notesOpen, setNotesOpen] = useState(false);
+    /** 长按某一句 → 问要不要删 */
+    const [pendingDelete, setPendingDelete] = useState<CinemaChatLine | null>(null);
+    const pressTimerRef = useRef<number | null>(null);
+    /** 这次手指抬起前已经触发了长按：别再当成点击（点击是重听语音） */
+    const pressFiredRef = useRef(false);
     const chatApi = cinemaChatApiConfig(apiConfig, apiPresets, apiPresetId);
     const chatApiRef = useRef(chatApi); chatApiRef.current = chatApi;
     const activePreset = apiPresetId ? apiPresets.find(p => p.id === apiPresetId) : undefined;
@@ -570,6 +575,46 @@ const CinemaApp: React.FC = () => {
         await speak(turn.proactive ? { proactive: 'silence', mustSpeak: true } : {});
     };
 
+    /** 长按 0.5 秒（电脑上右键）选中一句；手指一动就算在滑动，不算长按 */
+    const cancelPress = () => {
+        if (pressTimerRef.current !== null) { window.clearTimeout(pressTimerRef.current); pressTimerRef.current = null; }
+    };
+    const pressHandlers = (line: CinemaChatLine) => ({
+        onTouchStart: () => {
+            pressFiredRef.current = false;
+            cancelPress();
+            pressTimerRef.current = window.setTimeout(() => {
+                pressTimerRef.current = null;
+                pressFiredRef.current = true;
+                try { navigator.vibrate?.(15); } catch { /* iPhone 不支持震动，无所谓 */ }
+                setPendingDelete(line);
+            }, 500);
+        },
+        onTouchMove: cancelPress,
+        onTouchEnd: cancelPress,
+        onTouchCancel: cancelPress,
+        onContextMenu: (e: React.MouseEvent) => { e.preventDefault(); setPendingDelete(line); },
+    });
+
+    /** 删掉放映室里的一句：这一场的记录里删，存进过私聊的那条也一起删 */
+    const deleteLine = async (line: CinemaChatLine) => {
+        const cur = sessionRef.current;
+        setPendingDelete(null);
+        if (!cur || !char) return;
+        await updateSession(s => ({ ...s, lines: s.lines.filter(l => l !== line) }));
+        if (sessionRemembers(cur)) {
+            try {
+                await removeLinesFromChat(char.id, cur.id, [line]);
+                markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
+            } catch (error) {
+                console.warn('[cinema] 删私聊里那条失败', error);
+                addToast('放映室里删掉了，但私聊记录里那条没删成，可以去私聊里手动删', 'info');
+                return;
+            }
+        }
+        addToast('删掉了', 'info');
+    };
+
     const send = () => {
         const text = draft.trim();
         // busyRef 比 thinking 早一拍：角色刚开始主动开口、界面还没刷新时，别把这句清掉又丢了
@@ -1035,13 +1080,15 @@ const CinemaApp: React.FC = () => {
                         </div>
                     )}
                     {session.lines.map((line, i) => line.kind === 'action' ? (
-                        <div key={`${line.at}-${i}`} className={`cn-action ${line.role}`}>{line.text}</div>
+                        <div key={`${line.at}-${i}`} className={`cn-action ${line.role}`} {...pressHandlers(line)}>{line.text}</div>
                     ) : (
                         <div key={`${line.at}-${i}`} className={`cn-line ${line.role}`}>
                             {line.role === 'char' && char?.avatar && <img className="cn-avatar" src={char.avatar} alt="" />}
                             <div
                                 className="cn-bubble"
+                                {...pressHandlers(line)}
                                 onClick={() => {
+                                    if (pressFiredRef.current) { pressFiredRef.current = false; return; }
                                     const url = line.role === 'char' ? lineAudioRef.current.get(line.at) : undefined;
                                     if (url) getSpeaker().replay(url);
                                 }}
@@ -1083,6 +1130,20 @@ const CinemaApp: React.FC = () => {
                     />
                     <button className="cn-send" onClick={() => void send()} disabled={!draft.trim() || thinking} aria-label="发送"><PaperPlaneRight size={20} weight="fill" /></button>
                 </footer>
+                {pendingDelete && (
+                    <div className="cn-sheet-mask" onClick={() => setPendingDelete(null)}>
+                        <div className="cn-sheet cn-sheet-small" onClick={e => e.stopPropagation()}>
+                            <div className="cn-sheet-head"><span>删掉这一句？</span></div>
+                            <p className="cn-sheet-quote">{pendingDelete.role === 'user' ? '你' : char?.name || 'TA'}：{pendingDelete.kind === 'action' ? `（${pendingDelete.text}）` : pendingDelete.text}</p>
+                            <p className="cn-sheet-hint">
+                                {sessionRemembers(session) ? `放映室和私聊记录里都会删掉，${char?.name || 'TA'} 之后就不记得这句了。` : '这一场不留痕，只在放映室里删。'}
+                                {' '}已经整理进记忆宫殿的部分删不掉。
+                            </p>
+                            <button className="cn-sheet-danger" onClick={() => void deleteLine(pendingDelete)}>删除这句</button>
+                            <button className="cn-sheet-cancel" onClick={() => setPendingDelete(null)}>取消</button>
+                        </div>
+                    </div>
+                )}
                 {notesOpen && (
                     <div className="cn-sheet-mask" onClick={() => setNotesOpen(false)}>
                         <div className="cn-sheet" onClick={e => e.stopPropagation()}>
