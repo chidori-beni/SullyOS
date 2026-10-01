@@ -256,6 +256,8 @@ const SongwritingApp: React.FC = () => {
     const [provider, setProvider] = useState<MusicProvider>('minimax-free');
     // Custom shizuku-styled audio player state (replaces <audio controls>)
     const audioElRef = useRef<HTMLAudioElement | null>(null);
+    // 从库里读出来的歌先留在内存里，点播放时同步换 src —— 见 handleTogglePlay
+    const loadedAudioBlobRef = useRef<{ songId: string; blob: Blob } | null>(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [playProgress, setPlayProgress] = useState(0);
     const [playDuration, setPlayDuration] = useState(0);
@@ -1115,7 +1117,9 @@ const SongwritingApp: React.FC = () => {
         const assetKey = activeSong.audio.assetKey;
         loadSongAudioBlob(assetKey).then(result => {
             if (cancelled || !result) return;
-            const url = URL.createObjectURL(withAudioType(result.blob, result.mimeType));
+            const typedBlob = withAudioType(result.blob, result.mimeType);
+            loadedAudioBlobRef.current = { songId: activeSong.id, blob: typedBlob };
+            const url = URL.createObjectURL(typedBlob);
             setAudioUrl(url);
             currentAudioOwnerRef.current = activeSong.id;
         }).catch(() => { /* ignore — user can regenerate */ });
@@ -1335,9 +1339,12 @@ const SongwritingApp: React.FC = () => {
 
     // iPhone 上从 IndexedDB 读出来的歌，页面一打开就挂到 <audio> 上常常放不出来
     // （时间轴 0:00~0:00、点播放没反应、也不报错）；刚生成那份内存里的 blob 没事。
-    // 音乐 App 是在点播放那一刻才读库、换 src、立刻 play，一直能放 —— 这里照做：
-    // 元素还没加载出时长就重新读一次库再播。
-    const handleTogglePlay = useCallback(async () => {
+    // 音乐 App 是在点播放那一刻才换 src、立刻 play，一直能放 —— 这里照做：
+    // 元素还没加载出时长，就在点击里同步换一个新 src 再 play。
+    // 第一版先 await 读库再 play，iPhone 照样失败：await 之后已经不算「用户点击」，
+    // 这个 <audio> 又从没被点过，play() 被拒。所以读库挪到进页面时做，blob 留在
+    // loadedAudioBlobRef，点击里不再有任何 await。
+    const handleTogglePlay = useCallback(() => {
         const el = audioElRef.current;
         if (!el) return;
         if (!el.paused) {
@@ -1345,23 +1352,21 @@ const SongwritingApp: React.FC = () => {
             return;
         }
         const notLoaded = el.error || el.readyState === 0 || !isFinite(el.duration) || el.duration <= 0;
-        const assetKey = activeSong?.audio?.assetKey;
-        if (notLoaded && assetKey) {
-            const result = await loadSongAudioBlob(assetKey).catch(() => null);
-            if (result) {
-                const oldUrl = el.src;
-                const url = URL.createObjectURL(withAudioType(result.blob, result.mimeType));
-                el.src = url;
-                setAudioUrl(url);
-                currentAudioOwnerRef.current = activeSong?.id ?? null;
-                if (oldUrl.startsWith('blob:')) URL.revokeObjectURL(oldUrl);
-            }
+        const held = loadedAudioBlobRef.current;
+        if (notLoaded && held && held.songId === activeSong?.id) {
+            const oldUrl = el.src;
+            const url = URL.createObjectURL(held.blob);
+            el.src = url;
+            el.load();
+            setAudioUrl(url);
+            currentAudioOwnerRef.current = held.songId;
+            if (oldUrl.startsWith('blob:')) URL.revokeObjectURL(oldUrl);
         }
         el.play().catch((err) => {
-            console.warn('[Songwriting] audio play failed', err);
-            addToast('播放失败，可以去「音乐」里听这首', 'error');
+            console.error('[Songwriting] audio play failed', err?.name, err?.message, el.error?.code, el.error?.message);
+            addToast(`播放失败（${err?.name || '未知'}${el.error?.code ? ` / 媒体错误 ${el.error.code}` : ''}），可以去「音乐」里听这首`, 'error');
         });
-    }, [activeSong?.audio?.assetKey, activeSong?.id, addToast]);
+    }, [activeSong?.id, addToast]);
 
     const handleSeek = useCallback((pct: number) => {
         const el = audioElRef.current;
