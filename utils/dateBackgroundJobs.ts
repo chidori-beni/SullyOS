@@ -29,6 +29,9 @@ import { extractObservation } from './datePrompts';
 import { resolveDialogueSceneClock } from './dateObservationClock';
 
 const PENDING_KEY = 'sully-date-background-jobs-v1';
+/** 用户手动停掉的 jobId。Worker 那边已经在跑的那次调用叫不回来，迟到的结果按这张表丢弃。 */
+const STOPPED_KEY = 'sully-date-background-stopped-v1';
+const MAX_STOPPED = 40;
 const MAX_PENDING = 8;
 const HEADER = '[date-background]';
 const MAX_JOB_JSON_CHARS = 1_500_000;
@@ -103,9 +106,36 @@ export const updatePendingDateBackgroundJob = (
   return next;
 };
 
-export const makeDateBackgroundJobId = (encounterId: string, sourceUserMessageId: number): string => (
-  `date-${encounterId}-${sourceUserMessageId}`
-);
+const readStoppedJobIds = (): string[] => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STOPPED_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+};
+
+const markDateBackgroundJobStopped = (jobId: string): void => {
+  try {
+    const next = [...readStoppedJobIds().filter(item => item !== jobId), jobId].slice(-MAX_STOPPED);
+    localStorage.setItem(STOPPED_KEY, JSON.stringify(next));
+  } catch { /* private WebView */ }
+};
+
+export const isDateBackgroundJobStopped = (jobId: string): boolean => readStoppedJobIds().includes(jobId);
+
+/**
+ * 同一条 user 消息的 jobId 本来是确定性的（重试复用同一份快照）。但被用户停掉的那个 id
+ * 已经进了丢弃表，重试再用它，新结果也会被一起丢掉——所以停过几次就往后加 -r1、-r2。
+ */
+export const makeDateBackgroundJobId = (encounterId: string, sourceUserMessageId: number): string => {
+  const base = `date-${encounterId}-${sourceUserMessageId}`;
+  const stopped = readStoppedJobIds();
+  if (!stopped.includes(base)) return base;
+  let attempt = 1;
+  while (stopped.includes(`${base}-r${attempt}`)) attempt += 1;
+  return `${base}-r${attempt}`;
+};
 
 /**
  * 角色上次开口之后，历史里有没有它还没「看过」的图片（image_url 等非文字片段）。
@@ -229,16 +259,23 @@ export const schedulePendingDateBackgroundJobs = async (args: {
   }));
 };
 
+/**
+ * 停掉一轮后台见面回复：先拉黑再撕条子。取消请求失败、或 Worker 那次调用已经在路上时，
+ * 迟到的结果也不会再落库。taskUuid 不传时用条子上记的。
+ */
+export const stopDateBackgroundJob = async (jobId: string, taskUuid?: string): Promise<void> => {
+  markDateBackgroundJobStopped(jobId);
+  const uuid = taskUuid || getPendingDateBackgroundJob(jobId)?.taskUuid;
+  removePendingDateBackgroundJob(jobId);
+  if (!uuid) return;
+  try { await ActiveMsgClient.cancelTask(uuid); } catch (error) {
+    console.warn(`${HEADER} 取消远端见面任务失败，迟到结果会按丢弃表扔掉`, jobId, error);
+  }
+};
+
 export const cancelPendingDateBackgroundJobs = async (encounterId: string): Promise<void> => {
   const jobs = listPendingDateBackgroundJobs().filter(job => job.input.encounterId === encounterId);
-  await Promise.all(jobs.map(async job => {
-    if (job.taskUuid) {
-      try { await ActiveMsgClient.cancelTask(job.taskUuid); } catch (error) {
-        console.warn(`${HEADER} 取消远端见面任务失败，结果将由 encounter 闸门丢弃`, job.jobId, error);
-      }
-    }
-    removePendingDateBackgroundJob(job.jobId);
-  }));
+  await Promise.all(jobs.map(job => stopDateBackgroundJob(job.jobId, job.taskUuid)));
 };
 
 const cleanGeneratedText = (raw: string): { content: string; endReason?: string } => {
@@ -271,6 +308,11 @@ export const applyDateBackgroundResult = async (payload: unknown): Promise<boole
   const result = parseDateBackgroundJobResult(payload);
   if (!result) {
     console.warn(`${HEADER} 结果形状不对，销账丢弃`, payload);
+    return true;
+  }
+  if (isDateBackgroundJobStopped(result.clientJobId)) {
+    console.info(`${HEADER} 这一轮已被手动停止，丢弃迟到结果`, result.clientJobId);
+    removePendingDateBackgroundJob(result.clientJobId);
     return true;
   }
 

@@ -25,7 +25,16 @@ vi.mock('./amsgLlmCredentials', () => ({
 }));
 
 import { clearActiveDatePresence, setActiveDatePresence } from './datePresence';
-import { applyDateBackgroundResult, buildPendingDateBackgroundJob, hasUnseenImageParts } from './dateBackgroundJobs';
+import {
+  applyDateBackgroundResult,
+  buildPendingDateBackgroundJob,
+  getPendingDateBackgroundJobForEncounter,
+  hasUnseenImageParts,
+  makeDateBackgroundJobId,
+  savePendingDateBackgroundJob,
+  stopDateBackgroundJob,
+} from './dateBackgroundJobs';
+import { ActiveMsgClient } from './activeMsgClient';
 import { DatePrompts } from './datePrompts';
 
 describe('date background result bridge', () => {
@@ -241,5 +250,47 @@ describe('见面后台生成遇到新图片', () => {
     expect(hasUnseenImageParts(seen)).toBe(false);
     expect(buildPendingDateBackgroundJob({ char: { id: 'char-1', name: '小满' }, encounter, sourceUserMessageId: 9, messages: seen })).not.toBeNull();
     expect(hasUnseenImageParts([{ role: 'user', content: '你好' }])).toBe(false);
+  });
+});
+
+describe('见面手动停止生成', () => {
+  beforeEach(() => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => { store.set(key, value); },
+      removeItem: (key: string) => { store.delete(key); },
+    });
+    vi.stubGlobal('window', { dispatchEvent: vi.fn() });
+    vi.mocked(ActiveMsgClient.cancelTask).mockReset().mockResolvedValue({ uuid: 'task-1', alreadyGone: false });
+    dbMock.saveMessage.mockReset().mockResolvedValue(43);
+  });
+
+  const build = () => buildPendingDateBackgroundJob({
+    char: { id: 'char-1', name: '小满' },
+    encounter: { encounterId: 'enc-1', startedAt: 1_000, sceneClockAt: 2_000, sceneClockAdvancedMs: 0, sceneClockRevision: 3 },
+    sourceUserMessageId: 42,
+    messages: [{ role: 'user', content: '我来了。' }],
+  })!;
+
+  it('停止后撕掉条子、取消远端任务，迟到结果不落库；重试换新 jobId', async () => {
+    const pending = build();
+    expect(pending.jobId).toBe('date-enc-1-42');
+    savePendingDateBackgroundJob({ ...pending, taskUuid: 'task-1', remoteState: 'scheduled' });
+
+    await stopDateBackgroundJob(pending.jobId);
+    expect(ActiveMsgClient.cancelTask).toHaveBeenCalledWith('task-1');
+    expect(getPendingDateBackgroundJobForEncounter('enc-1')).toBeNull();
+
+    await expect(applyDateBackgroundResult({
+      v: 1, resultKind: 'date-reply', clientJobId: 'date-enc-1-42', charId: 'char-1', charName: '小满',
+      encounterId: 'enc-1', encounterStartedAt: 1_000, sourceUserMessageId: 42, turnKind: 'reply',
+      sceneClockAt: 2_000, sceneClockAdvancedMs: 0, sceneClockRevision: 3, text: '[normal] 迟到了。', generatedAt: 2_200,
+    })).resolves.toBe(true);
+    expect(dbMock.saveMessage).not.toHaveBeenCalled();
+
+    expect(build().jobId).toBe('date-enc-1-42-r1');
+    await stopDateBackgroundJob('date-enc-1-42-r1');
+    expect(makeDateBackgroundJobId('enc-1', 42)).toBe('date-enc-1-42-r2');
   });
 });

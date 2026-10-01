@@ -74,6 +74,8 @@ interface DateSessionProps {
     onSendMessage: (text: string, kind?: 'continue', onLocalGeneration?: () => void) => Promise<string | { queued: true; jobId: string }>; // Returns AI content or a queued background turn
     /** 普通见面回复已交给 Worker，期间不允许再开新轮 / 校时 / 结束。 */
     backgroundPending?: boolean;
+    /** 用户手动叫停：掐掉本地请求 / 取消后台任务。停完用户消息还在，可以点「重试」。 */
+    onStopGeneration?: () => Promise<void>;
     onReroll: (requirement?: string) => Promise<string>;
     onInterlude?: (description: string, targetAt?: number) => Promise<string>;
     onSetSceneClock?: (timestamp: number, options?: { silent?: boolean }) => Promise<void>;
@@ -164,6 +166,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     dateTimeAwarenessEnabled = true,
     onSendMessage,
     backgroundPending = false,
+    onStopGeneration,
     onReroll,
     onInterlude,
     onSetSceneClock,
@@ -1152,11 +1155,31 @@ const DateSession: React.FC<DateSessionProps> = ({
         } catch (e: any) {
             // onSendMessage 内部含 API 调用 + 回复后处理, 抛错不一定是网络。用中性文案, 不误导成"连接中断"。
             setPendingRetryText(text);
-            setCurrentText(`(出错了: ${e?.message || '未知错误'})`);
+            setCurrentText(e?.message === '已停止生成'
+                ? '(已停止生成，可以点「重试」重新生成)'
+                : `(出错了: ${e?.message || '未知错误'})`);
             setShowInputBox(true);
         } finally {
             setIsTyping(false);
         }
+    };
+
+    const [stoppingGeneration, setStoppingGeneration] = useState(false);
+    const handleStopGeneration = async () => {
+        if (!onStopGeneration || stoppingGeneration) return;
+        const wasBackground = backgroundPending;
+        setStoppingGeneration(true);
+        try {
+            await onStopGeneration();
+        } finally {
+            setStoppingGeneration(false);
+        }
+        // 本地那一路的 submitTurn / runReroll 会从 catch 里自己收尾；后台那一路要在这里把界面放回可重试。
+        if (wasBackground) {
+            setCurrentText('(已停止生成，可以点「重试」重新生成)');
+            setShowInputBox(true);
+        }
+        addToast('已停止生成', 'info');
     };
 
     const handleSend = () => { void submitTurn(); };
@@ -1183,7 +1206,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         } catch(e: any) {
             // 父级 handleReroll 只抛不提示；这里不给反馈的话，点了「重新生成」
             // 没动静用户会以为没点上（旧版更糟：消息已被删还毫无提示）
-            addToast(`重新生成失败: ${e?.message || '未知错误'}`, 'error');
+            if (e?.message !== '已停止生成') addToast(`重新生成失败: ${e?.message || '未知错误'}`, 'error');
         } finally {
             setIsTyping(false);
         }
@@ -1205,7 +1228,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             if (items.length > 0) processNextDialogue(items[0], items.slice(1), 0);
             setInterludeDescription('');
         } catch (error: any) {
-            addToast(`过场生成失败: ${error?.message || '未知错误'}`, 'error');
+            if (error?.message !== '已停止生成') addToast(`过场生成失败: ${error?.message || '未知错误'}`, 'error');
         } finally {
             setIsTyping(false);
         }
@@ -2066,6 +2089,16 @@ const DateSession: React.FC<DateSessionProps> = ({
                                  {(backgroundPending || generationRoute === 'local' || !isTyping) && <span className="mt-0.5 text-[10px] text-white/60">{backgroundPending ? '可以切走，写好了会通知你' : '请别切走或锁屏'}</span>}
                              </span>
                         </div>
+                        {onStopGeneration && (
+                            <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); void handleStopGeneration(); }}
+                                disabled={stoppingGeneration}
+                                className="rounded-full border border-white/25 bg-black/70 px-4 py-1.5 text-[11px] font-bold tracking-widest text-white/85 shadow-lg backdrop-blur-md active:scale-95 disabled:opacity-50"
+                            >
+                                {stoppingGeneration ? '正在停止…' : '■ 停止生成'}
+                            </button>
+                        )}
                     </div>
                 )}
                 {showInputBox && !historyReplay && (

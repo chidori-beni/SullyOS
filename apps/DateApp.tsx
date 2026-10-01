@@ -37,6 +37,7 @@ import {
     removePendingDateBackgroundJob,
     savePendingDateBackgroundJob,
     schedulePendingDateBackgroundJob,
+    stopDateBackgroundJob,
 } from '../utils/dateBackgroundJobs';
 import { buildInPersonContinueInstruction } from '../utils/meetingContinue';
 import {
@@ -194,6 +195,8 @@ const DateApp: React.FC = () => {
     // 每个异步见面请求都有自己的序号；剧情时钟提交前会再次核对 encounter + revision，
     // 防止旧的过场响应在用户手动校时、切换会话或离开后回写新状态。
     const dateTurnRequestRef = useRef(0);
+    /** 手机本地正在飞的 LLM 请求；「停止生成」靠它把请求掐掉。 */
+    const dateLlmAbortersRef = useRef<Set<AbortController>>(new Set());
 
     const setEncounterRuntime = (runtime: DateEncounterRuntime | null) => {
         activeEncounterRef.current = runtime;
@@ -755,8 +758,22 @@ const DateApp: React.FC = () => {
 
     // peek / send / reroll 共用的 LLM 调用（提示词构建统一在 utils/datePrompts.ts）
     const callLLM = async (messages: ApiMessage[], temperature: number): Promise<string> => {
+        const aborter = new AbortController();
+        dateLlmAbortersRef.current.add(aborter);
+        try {
+            return await callLLMWithSignal(messages, temperature, aborter.signal);
+        } catch (error: any) {
+            if (aborter.signal.aborted) throw new Error('已停止生成');
+            throw error;
+        } finally {
+            dateLlmAbortersRef.current.delete(aborter);
+        }
+    };
+
+    const callLLMWithSignal = async (messages: ApiMessage[], temperature: number, signal: AbortSignal): Promise<string> => {
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
             method: 'POST',
+            signal,
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
             body: JSON.stringify({
                 model: apiConfig.model,
@@ -1150,6 +1167,31 @@ const DateApp: React.FC = () => {
             && current.sceneClockRevision === sceneClockRevision;
     };
 
+    /**
+     * 「停止生成」：渠道超时 / 站子那边已经取消、这边还在转圈时，让用户自己叫停。
+     *
+     * 后台那一路以前叫不停——pending 条子存在 localStorage，划掉 PWA 再进会被恢复路径
+     * 读出来接着等，Worker 那次调用超时后还会自己重试一遍。现在：去 Worker 删任务（拦住
+     * 重试）、撕掉条子、把这个 jobId 拉进丢弃表（已经在路上的那次结果回来也不落库）。
+     * 手机本地那一路直接 abort 请求，并让请求序号失效，晚到的回复不会再写进历史。
+     * 用户那条消息保留着，输入框会出现「重试」。
+     */
+    const handleStopGeneration = async (): Promise<void> => {
+        beginDateTurnRequest();
+        dateLlmAbortersRef.current.forEach(aborter => aborter.abort());
+        dateLlmAbortersRef.current.clear();
+        const encounter = activeEncounterRef.current;
+        setDateBackgroundPendingJobId(null);
+        if (encounter) {
+            try {
+                await cancelPendingDateBackgroundJobs(encounter.id);
+            } catch (error) {
+                console.warn('[DateApp] 停止后台见面生成失败', error);
+            }
+        }
+        trackEvent('见面手动停止生成');
+    };
+
     /** 手动校时是显式提交：允许往前或往回调，但会使正在飞行的旧请求失效。 */
     const handleSetSceneClock = async (sceneClockAt: number, options: { silent?: boolean } = {}): Promise<void> => {
         if (!char || !isFiniteNumber(sceneClockAt)) return;
@@ -1334,6 +1376,10 @@ const DateApp: React.FC = () => {
             sourceUserMessageId,
             messages,
         });
+        // 准备提示词那几秒里用户已经按了「停止」，就别再交给 Worker / 本地生成。
+        if (!isCurrentDateTurnRequest(requestId, encounterSnapshot.id, encounterSnapshot.sceneClockRevision)) {
+            throw new Error('已停止生成');
+        }
         if (pending) {
             const existing = getPendingDateBackgroundJobForEncounter(encounterSnapshot.id);
             if (existing && existing.jobId !== pending.jobId) {
@@ -1352,6 +1398,12 @@ const DateApp: React.FC = () => {
                         char,
                         api: apiConfig,
                     });
+                    if (!isCurrentDateTurnRequest(requestId, encounterSnapshot.id, encounterSnapshot.sceneClockRevision)) {
+                        // 建任务的网络请求还没回来时就按了停止：停止那一刻条子还没 taskUuid，
+                        // 这里补一刀把刚建好的远端任务也取消掉。
+                        await stopDateBackgroundJob(pending.jobId, remote.status === 'queued' ? remote.uuid : undefined);
+                        throw new Error('已停止生成');
+                    }
                     if (remote.status === 'queued' || remote.status === 'uncertain') {
                         setDateBackgroundPendingJobId(pending.jobId);
                         await loadDateMessages(DATE_SESSION_MESSAGE_LIMIT);
@@ -2524,6 +2576,7 @@ const DateApp: React.FC = () => {
                     sceneSnapshot={dateSceneSnapshot}
                     dateTimeAwarenessEnabled={char.dateTimeAwarenessEnabled !== false}
                     backgroundPending={historyReplayGroupId ? false : Boolean(dateBackgroundPendingJobId)}
+                    onStopGeneration={historyReplayGroupId ? undefined : handleStopGeneration}
                     onSendMessage={handleSendMessage}
                     onReroll={handleReroll}
                     onInterlude={historyReplayGroupId ? undefined : handleInterlude}
