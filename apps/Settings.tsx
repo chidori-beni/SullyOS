@@ -472,6 +472,7 @@ const Settings: React.FC = () => {
     apiConfig.minimaxRegion === 'overseas' ? 'overseas' : 'domestic'
   );
   const [localAceStepKey, setLocalAceStepKey] = useState(apiConfig.aceStepApiKey || '');
+  const [localTokenHubKey, setLocalTokenHubKey] = useState(apiConfig.tokenHubApiKey || '');
   const [localTtsProvider, setLocalTtsProvider] = useState<TtsProvider>(
     apiConfig.ttsProvider === 'fishaudio' || apiConfig.ttsProvider === 'elevenlabs'
       ? apiConfig.ttsProvider
@@ -924,6 +925,7 @@ const Settings: React.FC = () => {
       setLocalMiniMaxGroupId(apiConfig.minimaxGroupId || '');
       setLocalMiniMaxRegion(apiConfig.minimaxRegion === 'overseas' ? 'overseas' : 'domestic');
       setLocalAceStepKey(apiConfig.aceStepApiKey || '');
+      setLocalTokenHubKey(apiConfig.tokenHubApiKey || '');
       setLocalTtsProvider(
           apiConfig.ttsProvider === 'fishaudio' || apiConfig.ttsProvider === 'elevenlabs'
               ? apiConfig.ttsProvider
@@ -945,7 +947,7 @@ const Settings: React.FC = () => {
       setLocalVoicePromptElevenLabs(apiConfig.voicePrompts?.elevenlabs || '');
       setLocalVoicePromptDate(apiConfig.voicePrompts?.dateVoice || '');
   }, [
-      apiConfig.minimaxApiKey, apiConfig.minimaxGroupId, apiConfig.minimaxRegion, apiConfig.aceStepApiKey,
+      apiConfig.minimaxApiKey, apiConfig.minimaxGroupId, apiConfig.minimaxRegion, apiConfig.aceStepApiKey, apiConfig.tokenHubApiKey,
       apiConfig.ttsProvider, apiConfig.fishAudioApiKey, apiConfig.fishAudioModel,
       apiConfig.elevenLabsApiKey, apiConfig.elevenLabsModel, apiConfig.elevenLabsStability,
       apiConfig.elevenLabsSimilarityBoost, apiConfig.elevenLabsStyle, apiConfig.elevenLabsUseSpeakerBoost,
@@ -1200,6 +1202,7 @@ const Settings: React.FC = () => {
       minimaxGroupId: localMiniMaxGroupId,
       minimaxRegion: localMiniMaxRegion,
       aceStepApiKey: localAceStepKey,
+      tokenHubApiKey: localTokenHubKey,
       ttsProvider: localTtsProvider,
       fishAudioApiKey: localFishKey,
       fishAudioModel: localFishModel,
@@ -3032,6 +3035,12 @@ const Settings: React.FC = () => {
                             })}
                         </div>
                     )}
+                </div>
+
+                <div className="group">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">写歌 · 腾讯云 TokenHub Key (可选)</label>
+                    <input type="password" name="tokenhub-api-key" autoComplete="new-password" spellCheck={false} value={localTokenHubKey} onChange={(e) => setLocalTokenHubKey(e.target.value)} placeholder="腾讯云 TokenHub 控制台 → API Key 管理（地域选广州）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                    <p className="text-[11px] text-slate-400 mt-1 pl-1">MiniMax 官方音乐接口已不对新用户开放，填这个可以经腾讯云调用同一套 MiniMax 音乐模型（music-3.0，约 ¥1/首，按量后付费）。Key 只存在本机，生成时直接发给腾讯云。</p>
                 </div>
 
                 <div className="group">

@@ -379,6 +379,8 @@ export interface APIConfig {
   };
   // Replicate token (r8_xxx) for ACE-Step song generation in 写歌 App.
   aceStepApiKey?: string;
+  // 腾讯云 TokenHub API Key，写歌 App 走 TokenHub 转售的 MiniMax 音乐用。
+  tokenHubApiKey?: string;
   model: string;
   // Per-API streaming toggle. Some endpoints only support stream:true.
   // Missing → false (默认非流式).
@@ -2665,7 +2667,9 @@ export interface SongArrangement {
 //   - 'minimax-free' → music-2.6-free, free tier, 60s cap
 //   - 'minimax-paid' → music-2.6, Token-Plan price, 60s cap
 //   - 'ace-step'     → Replicate lucataco/ace-step, $0.015/song, 4-min cap
-export type MusicProvider = 'minimax-free' | 'minimax-paid' | 'ace-step';
+//   - 'tokenhub'     → 腾讯云 TokenHub 的 minimax-music-v3.0, ≈¥1/首
+//     （MiniMax 官方音乐接口 2026-08-20 起不再对新用户开放，免费档停服）
+export type MusicProvider = 'minimax-free' | 'minimax-paid' | 'ace-step' | 'tokenhub';
 
 // AI-rendered audio attached to a SongSheet.
 // Audio blob lives in the IndexedDB assets store keyed by `assetKey`,

@@ -34,6 +34,7 @@ import {
 } from '../utils/aceStepApi';
 import {
     synthesizeSongMinimax,
+    synthesizeSongTokenHub,
     buildMinimaxMusicPrompt,
     buildMinimaxMusicLyrics,
     hashMinimaxMusicInputs,
@@ -74,6 +75,7 @@ const PROVIDER_ICONS: Record<string, React.ComponentType<any>> = {
     'minimax-free': Heart,
     'minimax-paid': Diamond,
     'ace-step':     MusicNoteSimple,
+    'tokenhub':     MusicNotes,
 };
 
 const SectionBadge: React.FC<{ section: string; small?: boolean }> = ({ section, small }) => {
@@ -1036,18 +1038,22 @@ const SongwritingApp: React.FC = () => {
     // Provider availability — detected from configured keys
     const hasMiniMaxKey = !!(apiConfig.minimaxApiKey || apiConfig.apiKey);
     const hasReplicateKey = !!apiConfig.aceStepApiKey?.trim();
+    const hasTokenHubKey = !!apiConfig.tokenHubApiKey?.trim();
 
     /** Pick the best default provider given keys + previous song setting. */
     const pickDefaultProvider = useCallback((song?: SongSheet | null): MusicProvider => {
         if (song?.musicProvider) {
             // Honor previous choice if its key is still configured
             if (song.musicProvider === 'ace-step' && hasReplicateKey) return 'ace-step';
-            if (song.musicProvider !== 'ace-step' && hasMiniMaxKey) return song.musicProvider;
+            if (song.musicProvider === 'tokenhub' && hasTokenHubKey) return 'tokenhub';
+            // MiniMax 官方音乐接口已对新用户关闭：配了腾讯云就别再默认回 MiniMax
+            if (song.musicProvider === 'minimax-paid' && hasMiniMaxKey && !hasTokenHubKey) return 'minimax-paid';
         }
+        if (hasTokenHubKey) return 'tokenhub';
         if (hasMiniMaxKey) return 'minimax-free';
         if (hasReplicateKey) return 'ace-step';
         return 'minimax-free'; // best fallback — modal will warn
-    }, [hasMiniMaxKey, hasReplicateKey]);
+    }, [hasMiniMaxKey, hasReplicateKey, hasTokenHubKey]);
 
     // Per-song voice preset persistence + reset provider on song switch
     const voicePresetStorageKey = (songId: string) => `ace-step:voice:${songId}`;
@@ -1135,6 +1141,11 @@ const SongwritingApp: React.FC = () => {
                 addToast('请先在「设置」里填 Replicate API Token', 'error');
                 return;
             }
+        } else if (providerArg === 'tokenhub') {
+            if (!apiConfig.tokenHubApiKey?.trim()) {
+                addToast('请先在「设置」里填腾讯云 TokenHub API Key', 'error');
+                return;
+            }
         } else {
             if (!apiConfig.minimaxApiKey && !apiConfig.apiKey) {
                 addToast('请先在「设置」里填 MiniMax API Key', 'error');
@@ -1209,6 +1220,18 @@ const SongwritingApp: React.FC = () => {
                 resultMime = result.mimeType;
                 cached = result.cached;
                 promptHash = hashSongInputs(input);
+            } else if (providerArg === 'tokenhub') {
+                const lyrics = buildMinimaxMusicLyrics(activeSong.lines);
+                const result = await synthesizeSongTokenHub({ prompt: styleStr, lyrics }, apiConfig, {
+                    signal: ctrl.signal,
+                    onStatus: pushStatus,
+                    forceRegenerate: true,
+                });
+                assetKey = result.assetKey;
+                resultUrl = result.url;
+                resultMime = result.mimeType;
+                cached = result.cached;
+                promptHash = result.assetKey;
             } else {
                 const lyrics = buildMinimaxMusicLyrics(activeSong.lines);
                 const model = providerArg === 'minimax-paid' ? 'music-3.0' : 'music-2.6-free';
@@ -2507,6 +2530,8 @@ const SongwritingApp: React.FC = () => {
                                         <MetaChip>
                                             {activeSong.audio?.provider === 'ace-step'
                                                 ? 'ACE-Step'
+                                                : activeSong.audio?.provider === 'tokenhub'
+                                                ? 'MiniMax · 腾讯云'
                                                 : activeSong.audio?.provider === 'minimax-paid'
                                                     ? 'MiniMax'
                                                     : 'MiniMax · 免费'}
@@ -2965,12 +2990,13 @@ const SongwritingApp: React.FC = () => {
                             </div>
                             {(() => {
                                 const opts: { id: MusicProvider; title: string; sub: string; available: boolean; needs: string }[] = [
-                                    { id: 'minimax-free', title: 'MiniMax 免费版', sub: '不花钱 · 完整长歌', available: hasMiniMaxKey, needs: 'MiniMax Key' },
-                                    { id: 'minimax-paid', title: 'MiniMax 付费版', sub: 'Token Plan · 完整长歌', available: hasMiniMaxKey, needs: 'MiniMax Key' },
+                                    { id: 'tokenhub',     title: '腾讯云 MiniMax', sub: '≈¥1/首 · 完整长歌', available: hasTokenHubKey, needs: 'TokenHub Key' },
                                     { id: 'ace-step',     title: 'ACE-Step',       sub: '~$0.015 · 完整长歌', available: hasReplicateKey, needs: 'Replicate Token' },
+                                    { id: 'minimax-free', title: 'MiniMax 免费版', sub: '官方已停服', available: hasMiniMaxKey, needs: 'MiniMax Key' },
+                                    { id: 'minimax-paid', title: 'MiniMax 付费版', sub: '仅限官方老付费用户', available: hasMiniMaxKey, needs: 'MiniMax Key' },
                                 ];
                                 return (
-                                    <div className="grid grid-cols-3 gap-1.5">
+                                    <div className="grid grid-cols-2 gap-1.5">
                                         {opts.map(opt => {
                                             const isActive = opt.id === provider;
                                             const Ico = PROVIDER_ICONS[opt.id] || Heart;
@@ -3013,6 +3039,8 @@ const SongwritingApp: React.FC = () => {
                             <p className="text-[10px] leading-relaxed pl-1" style={{ color: MusicC.muted }}>
                                 {provider === 'ace-step'
                                     ? '完整长歌（最长 4 分钟）— 自费走 Replicate，约 ¥0.1-0.3/首'
+                                    : provider === 'tokenhub'
+                                    ? '完整长歌 — 经腾讯云调用 MiniMax music-3.0，约 ¥1/首，按量后付费'
                                     : provider === 'minimax-paid'
                                         ? '完整长歌（最长 4-6 分钟）— 出歌更快、不易排队'
                                         : '完整长歌（最长 4-6 分钟）— 完全免费 · 用你已填的 MiniMax Key'}
@@ -3155,6 +3183,8 @@ const SongwritingApp: React.FC = () => {
                             <span>
                                 {provider === 'ace-step'
                                     ? '约 30-60s 出歌 · ~¥0.1-0.3/首'
+                                    : provider === 'tokenhub'
+                                    ? '出歌时间未实测 · ≈¥1/首'
                                     : '约 30-60s 出歌 · 免费完整长歌'}
                             </span>
                         </div>

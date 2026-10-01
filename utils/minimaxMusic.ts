@@ -275,3 +275,125 @@ export async function synthesizeSongMinimax(
     durationMs,
   };
 }
+
+// ── 腾讯云 TokenHub 转售的 MiniMax 音乐 ──
+// MiniMax 官方 2026-08-20 起音乐接口不再对新用户开放（免费档停服），
+// 腾讯云 TokenHub 还在卖同一套模型，约 ¥1/首，用户自己的 TokenHub Key 直连
+// （2026-10-02 实测该端点 CORS 放行 *，浏览器可直接调，不用走 Worker）。
+// 端点和 model 名来自 TokenHub 控制台的调用示例；成功响应长什么样文档没写，
+// 这里按 MiniMax 原生格式（data.audio 为 hex 或 url）解析，再兼容几种常见变体，
+// 都对不上时把原始响应前 300 字塞进报错，方便照着改。
+
+export const TOKENHUB_MUSIC_URL = 'https://tokenhub.tencentmaas.com/v1/wand/minimax-music/generation';
+export const TOKENHUB_MUSIC_MODEL = 'minimax-music-v3.0';
+
+const pickTokenHubAudio = (data: any): string | null => {
+  const candidates = [
+    data?.data?.audio, data?.data?.audio_url, data?.data?.url,
+    data?.audio, data?.audio_url, data?.url,
+    data?.output?.audio, data?.output?.audio_url, data?.result?.audio, data?.result?.audio_url,
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim()) return c.trim();
+  }
+  return null;
+};
+
+export async function synthesizeSongTokenHub(
+  input: Omit<MinimaxMusicInput, 'model'>,
+  apiConfig: APIConfig,
+  options: SynthesizeOptions = {},
+): Promise<MinimaxMusicResult> {
+  const { signal, onStatus } = options;
+  const apiKey = (apiConfig.tokenHubApiKey || '').trim();
+  if (!apiKey) throw new Error('请先在「设置」里填腾讯云 TokenHub API Key');
+  if (!input.prompt && !input.lyrics) throw new Error('风格描述和歌词至少需要一个');
+
+  const cacheKey = 'tokenhub_' + hashMinimaxMusicInputs({ ...input, model: TOKENHUB_MUSIC_MODEL as any });
+  if (!options.forceRegenerate) {
+    const cached = await getCached(cacheKey);
+    if (cached) {
+      onStatus?.('cached');
+      return {
+        url: URL.createObjectURL(cached.blob),
+        blob: cached.blob,
+        mimeType: cached.mimeType,
+        assetKey: cacheKey,
+        cached: true,
+      };
+    }
+  }
+
+  onStatus?.('starting');
+  checkAbort(signal);
+
+  const payload: any = {
+    model: TOKENHUB_MUSIC_MODEL,
+    prompt: input.prompt,
+    lyrics: input.lyrics,
+    lyrics_optimizer: !!input.lyricsOptimizer,
+    audio_setting: { sample_rate: 44100, bitrate: 256000, format: 'mp3' },
+  };
+  if (input.isInstrumental) payload.is_instrumental = true;
+
+  onStatus?.('processing');
+  const res = await fetch(TOKENHUB_MUSIC_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(payload),
+    signal,
+  });
+  const rawText = await res.text();
+  let data: any = null;
+  try { data = JSON.parse(rawText); } catch { /* non-JSON */ }
+
+  // TokenHub 网关错误：{ error: { message, message_zh, code } }
+  const gwErr = data?.error;
+  if (!res.ok || gwErr) {
+    const msg = (typeof gwErr === 'object' ? (gwErr?.message_zh || gwErr?.message) : gwErr)
+      || data?.base_resp?.status_msg
+      || rawText.slice(0, 200)
+      || `HTTP ${res.status}`;
+    const code = typeof gwErr === 'object' && gwErr?.code ? ` [${gwErr.code}]` : '';
+    throw new Error(`腾讯云出歌失败 (HTTP ${res.status})${code}: ${msg}`);
+  }
+
+  const baseResp = data?.base_resp;
+  if (baseResp && baseResp.status_code !== 0 && baseResp.status_code !== undefined) {
+    throw new Error(`腾讯云出歌业务错误: ${baseResp.status_msg || `code=${baseResp.status_code}`}`);
+  }
+
+  const audio = data ? pickTokenHubAudio(data) : null;
+  if (!audio) {
+    console.error('[TokenHub music] no audio in response:', rawText.slice(0, 1000));
+    throw new Error(`腾讯云没返回音频，原始响应: ${rawText.slice(0, 300)}`);
+  }
+
+  onStatus?.('downloading');
+  let blob: Blob;
+  let mimeType = 'audio/mpeg';
+  if (/^https?:\/\//i.test(audio)) {
+    blob = await fetchRemoteAudioBlob(audio);
+    mimeType = guessMimeFromUrl(audio);
+  } else if (audio.startsWith('data:')) {
+    blob = await (await fetch(audio)).blob();
+    mimeType = blob.type || mimeType;
+  } else {
+    blob = convertHexAudioToBlob(audio);
+  }
+
+  saveCached(cacheKey, blob, mimeType).catch(() => { /* ignore */ });
+  onStatus?.('done');
+
+  return {
+    url: URL.createObjectURL(blob),
+    blob,
+    mimeType,
+    assetKey: cacheKey,
+    cached: false,
+    durationMs: data?.extra_info?.music_duration,
+  };
+}
