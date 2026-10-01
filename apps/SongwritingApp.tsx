@@ -2527,17 +2527,17 @@ const SongwritingApp: React.FC = () => {
 
                                 <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-1.5 mb-1">
-                                        <MetaChip>
+                                        <MetaChip className="whitespace-nowrap shrink-0">
                                             {activeSong.audio?.provider === 'ace-step'
                                                 ? 'ACE-Step'
                                                 : activeSong.audio?.provider === 'tokenhub'
-                                                ? 'MiniMax · 腾讯云'
+                                                ? 'MiniMax·腾讯云'
                                                 : activeSong.audio?.provider === 'minimax-paid'
                                                     ? 'MiniMax'
                                                     : 'MiniMax · 免费'}
                                         </MetaChip>
                                         {activeSong.audio?.generatedAt && (
-                                            <span className="text-[9px]" style={{ color: MusicC.faint, fontFamily: 'monospace' }}>
+                                            <span className="text-[9px] whitespace-nowrap truncate min-w-0" style={{ color: MusicC.faint, fontFamily: 'monospace' }}>
                                                 {new Date(activeSong.audio.generatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                                             </span>
                                         )}
