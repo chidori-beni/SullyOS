@@ -1354,13 +1354,11 @@ const SongwritingApp: React.FC = () => {
         const notLoaded = el.error || el.readyState === 0 || !isFinite(el.duration) || el.duration <= 0;
         const held = loadedAudioBlobRef.current;
         if (notLoaded && held && held.songId === activeSong?.id) {
-            const oldUrl = el.src;
-            const url = URL.createObjectURL(held.blob);
-            el.src = url;
+            // 只动 DOM，不 setAudioUrl：第二版换完 src 又 setAudioUrl，React 重渲染时
+            // 把 src 再赋一遍，刚开始的 play() 被打断，iPhone 报 AbortError。
+            // 旧 URL 也先不 revoke —— <audio> 的 src prop 还指着它，留着无害。
+            el.src = URL.createObjectURL(held.blob);
             el.load();
-            setAudioUrl(url);
-            currentAudioOwnerRef.current = held.songId;
-            if (oldUrl.startsWith('blob:')) URL.revokeObjectURL(oldUrl);
         }
         el.play().catch((err) => {
             console.error('[Songwriting] audio play failed', err?.name, err?.message, el.error?.code, el.error?.message);
