@@ -2226,10 +2226,10 @@ const XHSLite = (() => {
     const sig = await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(msg));
     return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('');
   }
-  async function cosUploadSignature(message, fileId, contentLength, host) {
+  async function cosUploadSignature(message, fileId, contentLength, host, path = `/spectrum/${fileId}`) {
     host = host || 'ros-upload.xiaohongshu.com';
     const signKey = await hmacSha1Hex('null', message);
-    const params = await sha1Hex(`put\n/spectrum/${fileId}\n\ncontent-length=${contentLength}&host=${host}\n`);
+    const params = await sha1Hex(`put\n${path}\n\ncontent-length=${contentLength}&host=${host}\n`);
     return hmacSha1Hex(signKey, `sha1\n${message}\n${params}\n`);
   }
   function imageSize(buf) {
@@ -2251,9 +2251,17 @@ const XHSLite = (() => {
     return null;
   }
   // 上传凭证：不同登录态/版本接口名不同，依次尝试，取第一个成功的
-  async function getUploadPermit(cookieStr, ck) {
+  // RedNote 全球站（2026-10-02 按真实网页发帖抓包）：凭证走 creator.rednote.com，
+  // 上传到凭证里给的 upload.rnote.com/<完整 fileId>，发帖走 webapi.rednote.com 并带 x-rap-param。
+  const REDNOTE_CREATOR = 'https://creator.rednote.com';
+  async function getUploadPermit(cookieStr, ck, platform = 'xhs') {
     const params = { biz_name: 'spectrum', scene: 'image', file_count: '1', version: '1', source: 'web' };
-    const candidates = [
+    const rednoteApi = XHS_PLATFORMS.rednote.apiBase;
+    const candidates = platform === 'rednote' ? [
+      { host: REDNOTE_CREATOR, path: '/api/media/v1/upload/creator/permit', origin: REDNOTE_CREATOR, referer: REDNOTE_CREATOR + '/publish/publish?from=menu&target=image' },
+      { host: rednoteApi, path: '/api/media/v1/upload/web/permit', origin: XHS_PLATFORMS.rednote.webBase, referer: XHS_PLATFORMS.rednote.webBase + '/' },
+      { host: rednoteApi, path: '/api/media/v1/upload/creator/permit', origin: REDNOTE_CREATOR, referer: REDNOTE_CREATOR + '/publish/publish' },
+    ] : [
       { host: EDITH, path: '/api/media/v1/upload/web/permit', origin: WWW, referer: WWW + '/' },
       { host: CREATOR, path: '/api/media/v1/upload/creator/permit', origin: CREATOR, referer: CREATOR + '/publish/publish' },
       { host: EDITH, path: '/api/media/v1/upload/creator/permit', origin: CREATOR, referer: CREATOR + '/publish/publish' },
@@ -2263,7 +2271,7 @@ const XHSLite = (() => {
     for (const c of candidates) {
       try {
         const sig = signHeaders('GET', c.path, ck, { params });
-        const resp = await fetch(c.host + c.path + '?' + buildSignedQuery(params), { method: 'GET', headers: { ...baseHeaders(cookieStr), ...sig, origin: c.origin, referer: c.referer } });
+        const resp = await fetch(c.host + c.path + '?' + buildSignedQuery(params), { method: 'GET', headers: { ...baseHeaders(cookieStr, c.host), ...sig, origin: c.origin, referer: c.referer } });
         const j = await resp.json().catch(() => ({}));
         const permit = j?.data?.uploadTempPermits?.[0];
         if (permit) return { permit, xt: sig['x-t'] };
@@ -2272,13 +2280,32 @@ const XHSLite = (() => {
     }
     throw new Error('获取上传凭证失败（已试多种接口）: ' + lastErr);
   }
-  async function uploadImageFromUrl(cookieStr, ck, imgUrl) {
+  async function uploadImageFromUrl(cookieStr, ck, imgUrl, platform = 'xhs') {
     const imgResp = await fetch(imgUrl);
     if (!imgResp.ok) throw new Error(`图片下载失败 ${imgResp.status}: ${imgUrl}`);
     const buf = new Uint8Array(await imgResp.arrayBuffer());
     const mime = imgResp.headers.get('content-type') || 'image/png';
     const { width, height } = imageSize(buf) || { width: 1080, height: 1080 };
-    const { permit, xt } = await getUploadPermit(cookieStr, ck);
+    const { permit, xt } = await getUploadPermit(cookieStr, ck, platform);
+    if (platform === 'rednote') {
+      // 抓包里 fileId 形如 oss-sg/spectrum/xxx，整段就是上传路径，也是发帖时的 file_id。
+      const fullId = String(permit.fileIds[0]).replace(/^\/+/, '');
+      const uploadHost = String(permit.uploadAddr || 'upload.rnote.com').replace(/^https?:\/\//, '').replace(/\/+$/, '');
+      const headers = { accept: '*/*', origin: REDNOTE_CREATOR, referer: REDNOTE_CREATOR + '/', 'user-agent': UA, 'x-cos-security-token': permit.token };
+      let putResp = await fetch(`https://${uploadHost}/${fullId}`, { method: 'PUT', headers, body: buf });
+      if (putResp.status === 401 || putResp.status === 403) {
+        // 抓包是脱敏导出，看不到浏览器有没有带 authorization；只带 token 被拒时，补一次国内那套签名再试。
+        const message = `${String(xt).slice(0, 10)};${String(permit.expireTime).slice(0, 10)}`;
+        const signature = await cosUploadSignature(message, fullId, buf.length, uploadHost, `/${fullId}`);
+        putResp = await fetch(`https://${uploadHost}/${fullId}`, {
+          method: 'PUT',
+          headers: { ...headers, authorization: `q-sign-algorithm=sha1&q-ak=null&q-sign-time=${message}&q-key-time=${message}&q-header-list=content-length;host&q-url-param-list=&q-signature=${signature}` },
+          body: buf,
+        });
+      }
+      if (!putResp.ok) throw new Error(`图片上传失败 ${putResp.status} @${uploadHost}: ${(await putResp.text().catch(() => '')).slice(0, 160)}`);
+      return { fileId: fullId, width, height, file_size: buf.length, mime_type: mime };
+    }
     const fileIds = permit.fileIds[0].split('/').pop();
     const uploadAddr = permit.uploadAddr || 'ros-upload.xiaohongshu.com';
     const uploadHost = uploadAddr.replace(/^https?:\/\//, '');
@@ -2293,26 +2320,37 @@ const XHSLite = (() => {
     if (!putResp.ok) throw new Error(`图片上传失败 ${putResp.status}`);
     return { fileIds, width, height, file_size: buf.length, mime_type: mime };
   }
-  function buildImageNoteData(title, desc, privacyType, fileInfos, hashTags) {
+  function buildImageNoteData(title, desc, privacyType, fileInfos, hashTags, platform = 'xhs') {
     const images = fileInfos.map((f) => ({
-      file_id: `spectrum/${f.fileIds}`, width: f.width, height: f.height, metadata: { source: -1 }, stickers: { version: 2, floating: [] },
+      file_id: f.fileId || `spectrum/${f.fileIds}`, width: f.width, height: f.height, metadata: { source: -1 }, stickers: { version: 2, floating: [] },
       extra_info_json: JSON.stringify({ mimeType: f.mime_type || 'image/png', image_metadata: { bg_color: '', origin_size: (f.file_size || 0) / 1024 } }),
     }));
     const contextJson = JSON.stringify({ recommend_title: { recommend_title_id: '', is_use: 3, used_index: -1 }, recommendTitle: [], recommend_topics: { used: [] } });
+    if (platform === 'rednote') {
+      // 字段形状照抄 RedNote 网页发帖抓包（source 不带 subType，多一个 business_binds）。
+      const businessBinds = JSON.stringify({ version: 1, noteId: 0, bizType: 0, noteOrderBind: {}, notePostTiming: {}, noteCollectionBind: { id: '' }, noteSketchCollectionBind: { id: '' }, noteCopyBind: { copyable: true }, interactionPermissionBind: { commentPermission: 0 }, optionRelationList: [] });
+      return {
+        common: { type: 'normal', note_id: '', source: '{"type":"web","ids":"","extraInfo":"{\\"systemId\\":\\"web\\"}"}', title, desc, ats: [], hash_tag: hashTags, business_binds: businessBinds, privacy_info: { op_type: 1, type: privacyType, user_ids: [] }, goods_info: {}, biz_relations: [], capa_trace_info: { contextJson } },
+        image_info: { images: images.map(({ stickers, ...rest }) => rest) }, video_info: null,
+      };
+    }
     return {
       common: { type: 'normal', title, note_id: '', desc, source: '{"type":"web","ids":"","extraInfo":"{\\"subType\\":\\"official\\",\\"systemId\\":\\"web\\"}"}', ats: [], hash_tag: hashTags, post_loc: {}, privacy_info: { op_type: 1, type: privacyType, user_ids: [] }, goods_info: {}, biz_relations: [], capa_trace_info: { contextJson } },
       image_info: { images }, video_info: null,
     };
   }
-  async function publishNote(cookieStr, { title = '', content = '', images = [], tags = [], isPrivate = false }) {
+  async function publishNote(cookieStr, { title = '', content = '', images = [], tags = [], isPrivate = false, platform = 'xhs' }) {
     const ck = parseCookies(cookieStr);
     const fileInfos = [];
-    for (const imgUrl of images) fileInfos.push(await uploadImageFromUrl(cookieStr, ck, imgUrl));
+    for (const imgUrl of images) fileInfos.push(await uploadImageFromUrl(cookieStr, ck, imgUrl, platform));
     if (!fileInfos.length) return { error: '小红书发帖至少需要一张图片，请提供 images（图床 URL 数组）' };
     let desc = content;
     const hashTags = [];
     for (const t of tags) { const name = String(t).replace(/^#/, ''); desc += ` #${name}[话题]#`; hashTags.push({ id: '', link: '', name, type: 'topic' }); }
-    const r = await signedPost(EDITH, '/web_api/sns/v2/note', buildImageNoteData(title, desc, isPrivate ? 1 : 0, fileInfos, hashTags), cookieStr, ck);
+    const noteData = buildImageNoteData(title, desc, isPrivate ? 1 : 0, fileInfos, hashTags, platform);
+    const r = platform === 'rednote'
+      ? await signedPost(XHS_PLATFORMS.rednote.apiBase, '/web_api/sns/v2/note', noteData, cookieStr, ck, { origin: REDNOTE_CREATOR, referer: REDNOTE_CREATOR + '/' }, true)
+      : await signedPost(EDITH, '/web_api/sns/v2/note', noteData, cookieStr, ck);
     const noteId = r?.data?.id || r?.data?.note_id || r?.data?.note?.id || '';
     // 失败用 error 字段：bridgePost 会据此判定 success=false（无需改 useChatAI）
     if (!(r?.success && noteId)) {
@@ -2355,9 +2393,7 @@ const XHSLite = (() => {
       case 'favorite-feed': result = await favoriteFeed(cookie, body.feed_id, !!body.unfavorite, platform); break;
       case 'user-profile': result = await userProfile(cookie, body.user_id, body.xsec_token, platform); break;
       case 'publish':
-        result = platform === 'rednote'
-          ? { error: 'RedNote 全球后端的图片发布链路尚未验证；搜索、浏览、详情和互动已支持。' }
-          : await publishNote(cookie, { title: body.title, content: body.content, images: body.images || [], tags: body.tags || [], isPrivate: body.visibility === 'private' || !!body.is_private });
+        result = await publishNote(cookie, { title: body.title, content: body.content, images: body.images || [], tags: body.tags || [], isPrivate: body.visibility === 'private' || !!body.is_private, platform });
         break;
       case 'login': result = { error: 'lite 模式用 cookie 登录，无需扫码。请在设置里粘贴 cookie。' }; break;
       case 'get-qrcode': result = { error: 'lite 模式不支持二维码登录，请粘贴 cookie。' }; break;
@@ -2412,7 +2448,7 @@ export default {
       const command = apiMatch[1].replace(/\/+$/, '');
       // 探活：前端 testConnection 会先 GET /api/health（不带 cookie），不能要求鉴权
       if (command === 'health') {
-        return jsonResponse({ status: 'ok', backend: 'xhs-lite', signing: 'xhshow-pure-js' }, { origin });
+        return jsonResponse({ status: 'ok', backend: 'xhs-lite', signing: 'xhshow-pure-js', rednotePublish: true }, { origin });
       }
       let body = {};
       if (request.method === 'POST') { try { body = await request.json(); } catch (e) { /* allow empty */ } }

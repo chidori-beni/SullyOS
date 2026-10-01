@@ -22,7 +22,14 @@ cookie 存在本地，每次请求经 `X-Xhs-Cookie` 头发给 Worker；Worker �
 
 国内小红书和全球 RedNote 是两套不共享会话的后端：前者请求
 `edith.xiaohongshu.com`，后者请求 `webapi.rednote.com`。当前 RedNote 支持搜索、
-浏览、详情、点赞、收藏和评论；图片发布仍只对已验证的国内后端开放。
+浏览、详情、点赞、收藏、评论和图片发布。
+
+RedNote 发帖链路（2026-10-02 按真实网页发帖抓包接入）：上传凭证走
+`creator.rednote.com/api/media/v1/upload/creator/permit`，图片 `PUT` 到凭证给的
+`upload.rnote.com/<完整 fileId>`（fileId 形如 `oss-sg/spectrum/xxx`，发帖时原样作 `file_id`），
+只带 `x-cos-security-token`；被拒时补一次 COS 签名重试。发帖 `POST webapi.rednote.com/web_api/sns/v2/note`，
+Origin 为 `creator.rednote.com`，带 `x-rap-param`。抓包是脱敏导出，看不到 authorization/cookie，
+所以「只带 token 能否上传」「www 站的 cookie 能否拿到 creator 站的凭证」两点待真机确认。
 
 ## 原理
 
