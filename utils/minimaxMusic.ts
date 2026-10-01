@@ -19,7 +19,7 @@ import { DB } from './db';
 
 // ── Types ──
 
-export type MinimaxMusicModel = 'music-2.6' | 'music-2.6-free';
+export type MinimaxMusicModel = 'music-3.0' | 'music-2.6' | 'music-2.6-free';
 
 export interface MinimaxMusicInput {
   model: MinimaxMusicModel;

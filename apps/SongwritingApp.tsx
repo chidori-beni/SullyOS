@@ -1211,7 +1211,7 @@ const SongwritingApp: React.FC = () => {
                 promptHash = hashSongInputs(input);
             } else {
                 const lyrics = buildMinimaxMusicLyrics(activeSong.lines);
-                const model = providerArg === 'minimax-paid' ? 'music-2.6' : 'music-2.6-free';
+                const model = providerArg === 'minimax-paid' ? 'music-3.0' : 'music-2.6-free';
                 const input: MinimaxMusicInput = { model, prompt: styleStr, lyrics };
                 const result = await synthesizeSongMinimax(input, apiConfig, {
                     signal: ctrl.signal,
