@@ -1461,6 +1461,61 @@ const SongwritingApp: React.FC = () => {
         if (dockIsCurrent) musicSeek(pct);
     }, [dockIsCurrent, musicSeek]);
 
+    // ── 用本地音频替换这首歌的版本 ──
+    // 重录时歌词+风格没变，新版本会存到同一个 assetKey、把旧版覆盖掉（2026-10-02 用户
+    // 重录后想要回第一版，手里只剩下载的 mp3）。导入的文件存到独立 key，不会再被重录覆盖。
+    const importAudioInputRef = useRef<HTMLInputElement | null>(null);
+    const handleImportAudio = async (file: File) => {
+        if (!activeSong) return;
+        const looksAudio = file.type.startsWith('audio/') || /\.(mp3|m4a|aac|wav|flac|ogg)$/i.test(file.name);
+        if (!looksAudio) {
+            addToast('请选音频文件（mp3 / m4a / wav）', 'error');
+            return;
+        }
+        if (file.size > 40 * 1024 * 1024) {
+            addToast('音频请控制在 40MB 以内', 'error');
+            return;
+        }
+        try {
+            const mimeType = file.type || 'audio/mpeg';
+            const assetKey = `songimport_${activeSong.id}_${Date.now()}`;
+            const now = Date.now();
+            await DB.saveAssetRaw(assetKey, { blob: file, mimeType, createdAt: now, lastUsedAt: now });
+
+            const prev = activeSong.audio;
+            const audioMeta: SongAudio = {
+                assetKey,
+                mimeType,
+                generatedAt: now,
+                provider: prev?.provider ?? provider,
+                promptHash: 'imported',
+                tagsUsed: prev?.tagsUsed ?? '',
+                lyricsLineCount: prev?.lyricsLineCount ?? activeSong.lines.filter(l => !l.isDraft).length,
+            };
+            const updated = { ...activeSong, audio: audioMeta };
+            setActiveSong(updated);
+            await updateSong(activeSong.id, { audio: audioMeta });
+
+            if (audioUrl) URL.revokeObjectURL(audioUrl);
+            setAudioUrl(URL.createObjectURL(file));
+            currentAudioOwnerRef.current = activeSong.id;
+
+            // 已在「一起写的歌」里 → 条目指向新文件；音乐 App 正在放它就切到新版本
+            const localId = localSongIdFor(activeSong.id);
+            const existing = localAlbumSongs.find(s => s.id === localId);
+            if (existing) {
+                const next: MusicSong = { ...existing, localAssetKey: assetKey, localMimeType: mimeType };
+                addLocalSong(next);
+                if (currentMusicSong?.id === localId) playSong(next, { alsoSetQueue: false });
+            }
+            setShowCustomPrompt(false);
+            addToast('已换成你导入的版本', 'success');
+        } catch (e) {
+            console.error('[Songwriting] import audio failed', e);
+            addToast('导入失败，再试一次', 'error');
+        }
+    };
+
     const isLikedToMusic = useMemo(() => {
         if (!activeSong) return false;
         const localId = localSongIdFor(activeSong.id);
@@ -2517,7 +2572,8 @@ const SongwritingApp: React.FC = () => {
                             <Sparkle size={5} className="absolute bottom-3 right-1/3" color={MusicC.lavender} delay={0.6} />
                         </div>
 
-                        {audioUrl ? (
+                        {/* 重录时 audioUrl 还在：生成中必须优先显示录制状态，否则用户看不到任何进度 */}
+                        {audioUrl && !isGeneratingAudio ? (
                             // ── State A: audio ready — shizuku mini player ──
                             <div className="relative flex items-center gap-3">
                                 <div
@@ -3210,6 +3266,33 @@ const SongwritingApp: React.FC = () => {
                                     ? '出歌时间未实测 · ≈¥1/首'
                                     : '约 30-60s 出歌 · 免费完整长歌'}
                             </span>
+                        </div>
+
+                        {/* 不重录，直接用手里的音频文件（比如之前下载的旧版本）替换 */}
+                        <div className="pt-1">
+                            <input
+                                ref={importAudioInputRef}
+                                type="file"
+                                accept="audio/*,.mp3,.m4a,.wav"
+                                className="hidden"
+                                onChange={(e) => {
+                                    const f = e.target.files?.[0];
+                                    e.target.value = '';
+                                    if (f) handleImportAudio(f);
+                                }}
+                            />
+                            <button
+                                type="button"
+                                onClick={() => importAudioInputRef.current?.click()}
+                                className="w-full py-2 rounded-xl text-[11px] transition-all active:scale-[0.98]"
+                                style={{
+                                    color: MusicC.primary,
+                                    background: 'rgba(255,255,255,0.6)',
+                                    border: `1px dashed ${MusicC.faint}80`,
+                                }}
+                            >
+                                不重录，用本地音频文件替换（不扣费）
+                            </button>
                         </div>
 
                     </div>
