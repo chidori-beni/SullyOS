@@ -24,7 +24,8 @@ export const BUILTIN_APPEARANCE_PRESETS: ReadonlyArray<BuiltinAppearancePresetDe
     //     主色调改成灰可可（hue 360 / 饱和度 10 / 亮度 30），书房排进第三页「写歌」后面。
     // v5：卡片 CSS 升到 chat-card-v6（补上书房汇报卡 bookroom_card）。
     // v6：补上影院图标（icon-32-cinema，用户 10-01 给的小熊端咖啡）。
-    version: 6,
+    // v7：卡片 CSS 升到 chat-card-v7（补上写歌乐谱、日程邀约/已确认、小红书笔记、一起看散场等系统胶囊）。
+    version: 7,
     manifestPath: 'appearance-presets/cocoa-dots/v1/preset.json',
     swatch: 'linear-gradient(rgba(247,245,242,.18),rgba(74,59,49,.18)),url("./appearance-presets/cocoa-dots/v1/wallpaper-desktop.png") center/cover',
   },

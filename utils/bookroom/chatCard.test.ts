@@ -50,12 +50,14 @@ describe('书房卡片能被卡片 CSS 选中', () => {
     it('登记进卡片名录，可可点点内置预设写了它的样式', () => {
         expect(CHAT_CARD_CATALOG.some(e => e.card === 'bookroom_card')).toBe(true);
         // 测试环境里 ?raw 导入读不出内容，直接读文件
-        const css = readFileSync(path.resolve(__dirname, '../../assets/css-presets/cocoa-dots/chat-card-v6.css'), 'utf8');
+        const css = readFileSync(path.resolve(__dirname, '../../assets/css-presets/cocoa-dots/chat-card-v7.css'), 'utf8');
         expect(css).toContain('[data-card="bookroom_card"] .sully-bookroom-card-head');
         expect(css).toContain('.sully-bookroom-card-quote');
-        expect(readFileSync(path.resolve(__dirname, '../chatCardCss.ts'), 'utf8')).toContain('cocoa-dots/chat-card-v6.css?raw');
+        expect(readFileSync(path.resolve(__dirname, '../chatCardCss.ts'), 'utf8')).toContain('cocoa-dots/chat-card-v7.css?raw');
         const preset = JSON.parse(readFileSync(path.resolve(__dirname, '../../public/appearance-presets/cocoa-dots/v1/preset.json'), 'utf8'));
-        expect(preset.theme.chatCardCustomCss).toBe(css);
+        // 仓库里 CSS 文件是 CRLF、预设 JSON 里是 LF，比内容不比换行
+        const lf = (text: string) => text.replace(/\r\n/g, '\n');
+        expect(lf(preset.theme.chatCardCustomCss)).toBe(lf(css));
     });
 });
 
