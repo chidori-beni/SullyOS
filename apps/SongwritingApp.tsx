@@ -246,6 +246,9 @@ const SongwritingApp: React.FC = () => {
     const [audioGenStatus, setAudioGenStatus] = useState<string>('');
     const [audioError, setAudioError] = useState<string | null>(null);
     const audioAbortRef = useRef<AbortController | null>(null);
+    // 出歌锁：按下就锁，出完/失败才放。cooldown 走 React state，同一瞬间连点两下
+    // 两次都读到旧值会一起放行 —— 2026-10-02 腾讯云账单里就多扣过一首说不清来源的。
+    const synthLockRef = useRef(false);
     // Track which song the current blob: URL belongs to so we can revoke it on switch
     const currentAudioOwnerRef = useRef<string | null>(null);
     // Voice preset (per-song, persisted in localStorage)
@@ -1138,6 +1141,7 @@ const SongwritingApp: React.FC = () => {
      */
     const runSynth = async (providerArg: MusicProvider, promptArg: string) => {
         if (!activeSong) return;
+        if (synthLockRef.current) return;
 
         // Provider-specific key check
         if (providerArg === 'ace-step') {
@@ -1171,6 +1175,7 @@ const SongwritingApp: React.FC = () => {
 
         const styleStr = (promptArg || '').trim() || buildAceStepTags(activeSong, voicePresetId);
 
+        synthLockRef.current = true;
         // Stamp the cooldown immediately so a same-second double-tap is blocked
         try { localStorage.setItem(COOLDOWN_KEY, String(Date.now())); } catch { /* ignore */ }
         setCooldownSecsLeft(Math.ceil(COOLDOWN_MS / 1000));
@@ -1313,6 +1318,7 @@ const SongwritingApp: React.FC = () => {
                 addToast(`出歌失败: ${msg.slice(0, 60)}`, 'error');
             }
         } finally {
+            synthLockRef.current = false;
             setIsGeneratingAudio(false);
             audioAbortRef.current = null;
             // Always clear regen state, even on error/abort
@@ -2665,6 +2671,10 @@ const SongwritingApp: React.FC = () => {
                                     </div>
                                     <div className="text-[10px] truncate mt-1 tracking-[0.2em]" style={{ color: MusicC.muted, fontFamily: `'Space Grotesk', monospace` }}>
                                         {audioGenStatus || '处理中'}
+                                    </div>
+                                    {/* 歌在服务商那边生成：这边关 App / 点取消，那边照样做完、照样收钱 */}
+                                    <div className="text-[9.5px] mt-0.5 leading-snug" style={{ color: MusicC.danger }}>
+                                        别关 App、别切走太久 · 中途关掉或取消也照样扣费
                                     </div>
                                 </div>
                                 <button
