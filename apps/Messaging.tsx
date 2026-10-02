@@ -65,6 +65,7 @@ import {
     toggleMomentLike,
 } from '../utils/momentsInteractions';
 import '../components/messaging/MessagingApp.css';
+import { chatCharacterDisplayName } from '../utils/characterRemark';
 
 type MessagingTab = 'chat' | 'moments' | 'favorites' | 'profile';
 
@@ -261,6 +262,12 @@ const Messaging: React.FC = () => {
     const [search, setSearch] = useState('');
     const [summaries, setSummaries] = useState<ChatSummary[]>([]);
     const [posts, setPosts] = useState<SocialPost[]>([]);
+    // 备注（本 fork）：朋友圈里存的是真名快照，显示时按角色 ID 换成当前备注；用户自己 / 路人照原样
+    const shownName = (charId: string | undefined, fallback: string, isUser?: boolean) => {
+        if (isUser || !charId) return fallback;
+        const char = characters.find(item => item.id === charId);
+        return char ? chatCharacterDisplayName(char) : fallback;
+    };
     const [profileGalleryImages, setProfileGalleryImages] = useState<GalleryImage[]>([]);
     const [profileGalleryUrlOpen, setProfileGalleryUrlOpen] = useState(false);
     const [profileGalleryUrl, setProfileGalleryUrl] = useState('');
@@ -591,7 +598,7 @@ const Messaging: React.FC = () => {
                 || (unreadMessages[item.char.id] || 0) > 0
                 || !!proactiveComposingChars[item.char.id]
                 || prefs.pinnedCharacterIds.includes(item.char.id))
-            .filter(item => !needle || item.char.name.toLocaleLowerCase().includes(needle) || cleanPreview(item.last, !!proactiveComposingChars[item.char.id]).toLocaleLowerCase().includes(needle))
+            .filter(item => !needle || item.char.name.toLocaleLowerCase().includes(needle) || chatCharacterDisplayName(item.char).toLocaleLowerCase().includes(needle) || cleanPreview(item.last, !!proactiveComposingChars[item.char.id]).toLocaleLowerCase().includes(needle))
             .sort((a, b) => {
                 const pinDiff = Number(prefs.pinnedCharacterIds.includes(b.char.id)) - Number(prefs.pinnedCharacterIds.includes(a.char.id));
                 if (pinDiff) return pinDiff;
@@ -1331,7 +1338,7 @@ const Messaging: React.FC = () => {
                                 <div className="nj-chat-tab-note-bubble-tail2" aria-hidden="true" />
                             </div>
                             <div className="nj-chat-tab-note-avatar"><div className="nj-chat-tab-note-avatar-img"><img src={char.avatar} alt="" /></div></div>
-                            <div className="nj-chat-tab-note-name">{char.name}</div>
+                            <div className="nj-chat-tab-note-name">{chatCharacterDisplayName(char)}</div>
                         </div>
                     ))}
                 </div>
@@ -1402,7 +1409,7 @@ const Messaging: React.FC = () => {
                                         </div>
                                         <div className="nj-chat-item-body">
                                             <div className="nj-chat-item-row1">
-                                                <div className="nj-chat-item-name">{char.name}</div>
+                                                <div className="nj-chat-item-name">{chatCharacterDisplayName(char)}</div>
                                                 <div className="nj-chat-item-time">{formatListTime(last?.timestamp)}{pinned && <span className="nj-chat-item-pin-mark"><PushPin size={10} weight="fill" /></span>}</div>
                                             </div>
                                             <div className="nj-chat-item-preview">{preview}<BellSlash className="sully-messaging-hidden" /></div>
@@ -1448,7 +1455,7 @@ const Messaging: React.FC = () => {
             {post.likes > 0 && <div className="nj-moments-likes">
                 <Heart className={momentLikeAnimatedId === post.id ? 'like-animate' : ''} />
                 {knownLikers.length > 0 ? <>
-                    {knownLikers.map((reaction, reactionIndex) => <span className="nj-moments-like-name" key={`${reaction.id}-${reaction.timestamp}`}>{reaction.name}{reactionIndex < knownLikers.length - 1 ? ', ' : ''}</span>)}
+                    {knownLikers.map((reaction, reactionIndex) => <span className="nj-moments-like-name" key={`${reaction.id}-${reaction.timestamp}`}>{shownName(reaction.charId, reaction.name, reaction.actorType === 'user')}{reactionIndex < knownLikers.length - 1 ? ', ' : ''}</span>)}
                     {post.likes > knownLikers.length && <span className="nj-moments-like-name">等 {post.likes} 人</span>}
                 </> : <span className="nj-moments-like-name">{post.likes}</span>}
             </div>}
@@ -1469,12 +1476,12 @@ const Messaging: React.FC = () => {
                 onContextMenu={event => { event.preventDefault(); void deleteMomentComment(post.id, comment.id); }}
             >
                 {comment.replyTo ? <>
-                    <span className="nj-moments-comment-author">{comment.authorName}</span>
+                    <span className="nj-moments-comment-author">{shownName(comment.authorCharId, comment.authorName, comment.authorType === 'user')}</span>
                     <span className="nj-moments-comment-reply-word"> 回复 </span>
-                    <span className="nj-moments-comment-target">{comment.replyTo.name}</span>
+                    <span className="nj-moments-comment-target">{shownName(comment.replyTo.authorCharId, comment.replyTo.name, comment.replyTo.authorType === 'user')}</span>
                     <span className="nj-moments-comment-content">：{comment.content}</span>
                 </> : <>
-                    <span className="nj-moments-comment-author">{comment.authorName}</span>
+                    <span className="nj-moments-comment-author">{shownName(comment.authorCharId, comment.authorName, comment.authorType === 'user')}</span>
                     <span className="nj-moments-comment-content">：{comment.content}</span>
                 </>}
             </div>)}
@@ -1494,7 +1501,7 @@ const Messaging: React.FC = () => {
             }, 0);
         };
         return <div className="nj-moments-comment-compose" onBlur={handleComposerBlur}>
-            {momentReplyTarget && <div className="nj-moments-comment-banner"><span>回复 <b>{momentReplyTarget.authorName}</b></span><button type="button" aria-label="取消回复" onClick={() => setMomentReplyTarget(null)}>×</button></div>}
+            {momentReplyTarget && <div className="nj-moments-comment-banner"><span>回复 <b>{shownName(momentReplyTarget.authorCharId, momentReplyTarget.authorName, momentReplyTarget.authorType === 'user')}</b></span><button type="button" aria-label="取消回复" onClick={() => setMomentReplyTarget(null)}>×</button></div>}
             <div className="nj-moments-comment-compose-row">
                 <input id={`comment-input-${postId}`} name="moment-comment" autoComplete="off" autoFocus value={momentCommentText} onChange={event => setMomentCommentText(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void sendMomentComment(); }} placeholder={momentReplyTarget ? `回复 ${momentReplyTarget.authorName}` : '评论'} className="comment-input" />
                 <button type="button" onClick={() => void sendMomentComment()} disabled={!momentCommentText.trim()}>发送</button>
@@ -1529,7 +1536,7 @@ const Messaging: React.FC = () => {
                     return <article className={`nj-moments-post ${post.authorType === 'character' ? 'nj-moments-post-char' : 'nj-moments-post-user'}`} key={post.id} style={style} data-post-kind={post.authorType === 'character' ? 'char' : 'user'} data-index={String(index)} data-img-count={String(images.length)} data-has-img={String(images.length > 0)} data-liked={String(userLiked)} data-like-count={String(post.likes || 0)} data-comment-count={String(post.comments?.length || 0)} data-has-comment={String(!!post.comments?.length)} data-length={messagingLengthBucket(post.content || post.title || '')} data-time-slot={messagingTimeSlot(hour)} data-hour={String(hour)} data-has-location={post.location ? 'true' : undefined}>
                         <div className="nj-moments-post-avatar"><img src={post.authorAvatar} alt="" /></div>
                         <div className="nj-moments-post-body">
-                            <div className="nj-moments-post-name">{post.authorName}</div>
+                            <div className="nj-moments-post-name">{shownName(post.authorCharId, post.authorName, post.authorType === 'user')}</div>
                             <div className="nj-moments-post-text">{post.content || post.title}</div>
                             {!!stickers.length && <div className="nj-moments-post-sticker" aria-label="心情贴纸">{stickers[0]}</div>}
                             {!!images.length && <div className={`nj-moments-post-imgs nj-moments-post-imgs-${images.length}`}>{images.map(({ url, sourceImageIndex }, imageIndex) => <div className="nj-moments-post-img-cell" key={`${post.id}-${imageIndex}`}><img src={url} alt="" role="button" tabIndex={0} onClick={event => { event.stopPropagation(); setMomentImageViewer({ images: images.map(item => item.url), initialIndex: imageIndex }); }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setMomentImageViewer({ images: images.map(item => item.url), initialIndex: imageIndex }); } }} /><button type="button" className="sully-msg-moment-reroll" aria-label="重新生成这张图片" onClick={event => { event.stopPropagation(); openMomentReroll(post, sourceImageIndex); }}><ArrowsClockwise /></button></div>)}</div>}
@@ -1586,7 +1593,7 @@ const Messaging: React.FC = () => {
                     >
                         <div className="nj-favorites-item-avatar"><img src={char.avatar} alt="" loading="lazy" /></div>
                         <div className="nj-favorites-item-author">
-                            {char.name} · {lastTalked ? formatListTime(lastTalked) : '还没聊过'}
+                            {chatCharacterDisplayName(char)} · {lastTalked ? formatListTime(lastTalked) : '还没聊过'}
                             <span className="nj-favorites-item-chip">{relation}</span>
                             {char.narrativeLayer === 'fiction' && <span className="nj-favorites-item-chip">我创作的</span>}
                         </div>
@@ -1751,7 +1758,7 @@ const Messaging: React.FC = () => {
                 <div className="sully-msg-moment-notifications-head"><button type="button" aria-label="返回朋友圈" onClick={() => setMomentNotificationsOpen(false)}><CaretLeft /></button><div>朋友圈消息</div><i /></div>
                 <div className="sully-msg-moment-notifications-list">{momentNotifications.length > 0 && <div className="sully-msg-moment-notifications-card">{momentNotifications.map(notification => <div className="sully-msg-moment-notification" key={notification.id}>
                     <div className="sully-msg-moment-notification-avatar"><img src={notification.avatar || characters.find(char => char.id === notification.charId)?.avatar || userProfile.avatar} alt="" /></div>
-                    <div className="sully-msg-moment-notification-body"><div className="sully-msg-moment-notification-name">{notification.name}</div><div className="sully-msg-moment-notification-content">{notification.type === 'like' ? <><Heart weight="fill" /> 赞了你的动态</> : notification.content || (notification.type === 'reply' ? '回复了你的评论' : '评论了你的动态')}</div><div className="sully-msg-moment-notification-time">{formatMomentNotificationTime(notification.timestamp)}</div></div>
+                    <div className="sully-msg-moment-notification-body"><div className="sully-msg-moment-notification-name">{shownName(notification.charId, notification.name)}</div><div className="sully-msg-moment-notification-content">{notification.type === 'like' ? <><Heart weight="fill" /> 赞了你的动态</> : notification.content || (notification.type === 'reply' ? '回复了你的评论' : '评论了你的动态')}</div><div className="sully-msg-moment-notification-time">{formatMomentNotificationTime(notification.timestamp)}</div></div>
                     <div className="sully-msg-moment-notification-post">{notification.postImage ? <img src={notification.postImage} alt="" /> : <span>{notification.postText.slice(0, 16)}</span>}</div>
                 </div>)}</div>}<div className="sully-msg-moment-notifications-end">以上是全部消息</div></div>
             </div>}

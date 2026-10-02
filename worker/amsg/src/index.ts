@@ -377,6 +377,8 @@ interface SessionCtx {
 interface FireStash {
   session: FireSessionState;
   toolCtx: AgenticToolCtx;
+  /** 本 fork：角色备注（tool_pack.charDisplayName），只给推送横幅标题用。 */
+  contactDisplayName?: string;
   proxyWorkerUrl: string | null;
   xhsCookie: string;
   /** 本次触发时刻（任务行 next_send_at）；透传给每条 push 的 metadata.amsgOccurrenceMs。 */
@@ -2277,6 +2279,7 @@ export const amsgHooks = {
     const stash: FireStash = {
       session: createFireSessionState(),
       toolCtx,
+      contactDisplayName: toolPack.charDisplayName?.trim() || undefined,
       proxyWorkerUrl,
       xhsCookie,
       occurrenceMs,
@@ -2611,7 +2614,8 @@ export const amsgHooks = {
       // ctx.contactName 是排程那一刻冻进任务行的快照，用户改完名字之后，之前排的
       // 任务推送出来横幅还顶着旧名字（上游 update-message 也不让改这个字段）。
       // tool_pack 里没名字时退回任务行那份，别让标题变成「来自 」。
-      contactName: stash.toolCtx.char.name || ctx.contactName,
+      // 本 fork：设了备注就用备注当横幅标题（只是显示，角色提示词里仍是真名）
+      contactName: stash.contactDisplayName || stash.toolCtx.char.name || ctx.contactName,
       avatarUrl: ctx.avatarUrl ?? null,
       taskId,
       messageType,

@@ -1,3 +1,5 @@
+import { chatDisplayNameById } from './characterRemark';
+
 /** Sully 前台内部消息横幅的事件协议。 */
 export const MESSAGE_PREVIEW_EVENT = 'sully-message-preview';
 
@@ -15,7 +17,8 @@ export interface MessagePreviewDetail {
  */
 export const emitMessagePreview = (detail: MessagePreviewDetail): void => {
   if (typeof window === 'undefined') return;
-  const charName = String(detail.charName || '角色').trim() || '角色';
+  // 认得这个角色就显示备注（本 fork）；认不出就用事件里带的名字
+  const charName = String(chatDisplayNameById(detail.charId, detail.charName || '') || '角色').trim() || '角色';
   const body = String(detail.body || '').replace(/\s+/g, ' ').trim();
   if (!body && !detail.charName) return;
   window.dispatchEvent(new CustomEvent<MessagePreviewDetail>(MESSAGE_PREVIEW_EVENT, {

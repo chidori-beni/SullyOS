@@ -3645,7 +3645,7 @@ export interface CharacterProfile {
   videoCallPerformancePersona?: string;
   videoCallPerformancePersonaGeneratedAt?: number;
   description: string;
-  /** 网名：只在线上聊天界面（顶栏、切换会话）显示；见面、通话、提示词里仍用 name。空 = 显示真名。 */
+  /** 备注（37c 时叫「网名」，字段名沿用）：线上的地方显示（聊天、消息列表、首页小窗、朋友圈、通知）；见面、通话、提示词里仍用 name。空 = 显示真名。 */
   chatNickname?: string;
   systemPrompt: string;
   worldview?: string;

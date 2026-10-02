@@ -79,6 +79,7 @@ import { SAR_MODULE_RUNTIME_CHANGED_EVENT, type SarModuleRuntimeChangedDetail } 
 import { markAmsgStateDirty, markAmsgStateDirtyForAll, resumePendingAmsgStateSync, syncAmsgLlmCredentials, syncAmsgToolConfigAndPrompts, wipeAmsgCloudDataForReset } from '../utils/amsgStateSync';
 import { loadMusicPlaybackSnapshot } from './MusicContext';
 import { setCharNameRegistry } from '../utils/charNameRegistry';
+import { chatCharacterDisplayName, chatDisplayNameById, setChatDisplayNames } from '../utils/characterRemark';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
 import { setElevenLabsModel, setTtsProvider, setVoicePromptOverrides } from '../utils/ttsProvider';
 import { LocalNotifications } from '@capacitor/local-notifications';
@@ -1953,7 +1954,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                           // Web Notification
                           if (!Capacitor.isNativePlatform() && window.Notification && Notification.permission === 'granted') {
                               try {
-                                  const notif = new Notification(char.name, {
+                                  const notif = new Notification(chatCharacterDisplayName(char), {
                                       body: dueMessages[0].content,
                                       icon: char.avatar,
                                       silent: false
@@ -2000,9 +2001,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       let awayProactiveCount = 0;
 
        const handler = (e: Event) => {
-           const { charId, charName, body } = (e as CustomEvent).detail as {
+           const { charId, charName: rawCharName, body } = (e as CustomEvent).detail as {
                charId: string; charName: string; body?: string;
            };
+           const charName = chatDisplayNameById(charId, rawCharName);
           // Only mark unread if user is NOT currently viewing this character's chat
           // Always bump timestamp so Chat reloads messages if currently open
           setLastMsgTimestamp(Date.now());
@@ -2059,9 +2061,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       let awayActiveMsgCount = 0;
 
        const handler = (e: Event) => {
-           const { charId, charName, body, avatarUrl, sentAt } = (e as CustomEvent).detail as {
+           const { charId, charName: rawCharName, body, avatarUrl, sentAt } = (e as CustomEvent).detail as {
                charId: string; charName: string; body?: string; avatarUrl?: string; sentAt?: number;
            };
+           const charName = chatDisplayNameById(charId, rawCharName);
           setLastMsgTimestamp(Date.now());
 
           const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId;
@@ -2177,7 +2180,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const charId = typeof detail.charId === 'string' ? detail.charId : '';
           if (!charId) return;
           const char = charactersRef.current.find(item => item.id === charId);
-          const charName = char?.name || detail.charName || '角色';
+          const charName = (char ? chatCharacterDisplayName(char) : '') || detail.charName || '角色';
           const chatView = getChatViewSnapshot();
           const isChattingWithThisChar = chatView.chatOpen && chatView.charId === charId;
           if (isChattingWithThisChar) return;
@@ -2258,7 +2261,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (!isChattingWithThisChar) {
               setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
               if (document.visibilityState === 'visible') {
-                  addToast(`${charName || '角色'} 回复了消息`, 'success');
+                  addToast(`${chatDisplayNameById(charId, charName || '角色')} 回复了消息`, 'success');
               }
           }
       };
@@ -2373,6 +2376,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   // 同步 charId → 角色名 注册表，让 utils 层（群聊背景注入等）能标出真实发言人名。
   useEffect(() => {
     setCharNameRegistry(characters);
+    setChatDisplayNames(characters);
   }, [characters]);
   const apiConfigRef = useRef(apiConfig);
   apiConfigRef.current = apiConfig;

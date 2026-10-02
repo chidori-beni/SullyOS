@@ -28,6 +28,8 @@ export const AMSG_TOOL_CONFIG_KEY = 'tool_config';
 export interface AmsgToolPack {
   v: 1;
   charName: string;
+  /** 本 fork：角色备注。只用于推送横幅标题；提示词里永远是 charName。旧包没有 = 没设备注。 */
+  charDisplayName?: string;
   xhsEnabled: boolean;
   activeMemoryMonths: string[];
   /** 可选：旧包没有这个字段 = 整月。 */
@@ -109,6 +111,7 @@ export const isWorkerReachableUrl = (url: string): boolean => {
 export const buildToolPack = (char: CharacterProfile): AmsgToolPack => ({
   v: 1,
   charName: char.name,
+  ...(char.chatNickname?.trim() ? { charDisplayName: char.chatNickname.trim() } : {}),
   xhsEnabled: !!char.xhsEnabled,
   activeMemoryMonths: char.activeMemoryMonths || [],
   ...(char.recentMemoryDays && char.recentMemoryDays > 0 ? { recentMemoryDays: char.recentMemoryDays } : {}),

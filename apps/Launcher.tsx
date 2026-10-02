@@ -19,6 +19,7 @@ import { resolveCharTimeZone } from '../utils/timezone';
 import { trackEvent } from '../utils/analytics';
 import { chatDetailLaunch } from '../utils/chatDetailLaunch';
 import { isChatPreviewMessage, chatPreviewText } from '../utils/chatMessageVisibility';
+import { chatCharacterDisplayName } from '../utils/characterRemark';
 import { CALENDAR_DATA_UPDATED_EVENT, eventOccursOnDate, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, taskOccursOnDate, taskStartDateKey } from '../utils/calendarIntegration';
 import {
     carouselCloneResetIndex,
@@ -217,7 +218,7 @@ const CharacterWidget = React.memo(({
                         <div className="relative rounded-2xl px-3.5 py-2.5"
                             style={{ background: '#FFFBF2', border: '2px solid #ece0c8', boxShadow: '0 4px 12px -5px rgba(120,90,40,0.25)' }}>
                             <div className="flex items-center gap-1.5 mb-0.5">
-                                <span className="text-[13px] font-extrabold truncate" style={{ color: '#725d42' }}>{char?.name || 'Resident'}</span>
+                                <span className="text-[13px] font-extrabold truncate" style={{ color: '#725d42' }}>{(char && chatCharacterDisplayName(char)) || 'Resident'}</span>
                                 <span className="text-[11px] leading-none">{unreadCount > 0 ? '💬' : '🍃'}</span>
                             </div>
                             <div className="text-[11px] leading-snug line-clamp-2" style={{ color: '#9f8b68' }}>{lastMessage}</div>
@@ -284,7 +285,7 @@ const CharacterWidget = React.memo(({
                      <div className="flex-1 min-w-0 flex flex-col justify-center gap-1" style={{ color: contentColor }}>
                          <div className="flex items-center gap-1.5">
                              <h3 className={`text-[15px] font-bold tracking-wide truncate ${paper ? '' : 'drop-shadow-md'}`}>
-                                 {char?.name || 'NO SIGNAL'}
+                                 {(char && chatCharacterDisplayName(char)) || 'NO SIGNAL'}
                              </h3>
                              {unreadCount > 0 ? (
                                  <div className="px-1.5 py-px rounded-full text-[8px] font-bold uppercase tracking-[0.15em]"
