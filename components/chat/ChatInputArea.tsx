@@ -1,7 +1,7 @@
 import EmojiExportDialog from './EmojiExportDialog';
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import TokenImg from '../os/TokenImg';
-import { Camera, ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, Heartbeat, PencilSimple, Alarm, Sparkle, FadersHorizontal, LinkSimple, Star, Waveform, Lightning, Stop, CornersOut, CornersIn, Briefcase } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, Heartbeat, PencilSimple, Alarm, Sparkle, FadersHorizontal, LinkSimple, Star, Waveform, Lightning, Stop, CornersOut, CornersIn, Briefcase } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { AcnhActionTile } from '../os/acnhIcons';
@@ -942,6 +942,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     )}
                     {/* Actions Panel：按用户设置的顺序分页，每页 8 个内置动作 */}
                     {/* 聊天相机是 portal，放在面板条件之外：拍照途中面板收起也不会把相机一起卸掉。 */}
+                    {/* 隐藏的图片选择框放在面板条件之外：相机里「从相册选择」点它时，面板就算收起了也还在。 */}
+                    <input type="file" ref={chatImageInputRef} className="hidden" accept="image/*" onChange={(e) => handleImageChange(e, 'chat')} />
                     {cameraOpen && <ChatCamera character={characters.find(c => c.id === activeCharacterId)} onClose={() => setCameraOpen(false)} onCapture={onImageSelect} onGallery={() => { chatImageInputRef.current?.click(); setCameraOpen(false); }} />}
                     {showPanel === 'actions' && !actionsContent && (
                         <div
@@ -955,7 +957,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                               列表是按顺序切页的，混进一个不可见元素就会实打实占掉一格，
                               第 1 页会变成 7 个按钮 + 1 个空格子。相册按钮点的是 ref，
                               所以它放哪儿都行。 */}
-                          <input type="file" ref={chatImageInputRef} className="hidden" accept="image/*" onChange={(e) => handleImageChange(e, 'chat')} />
+                          {/* 隐藏的图片选择框已挪到面板外面（见聊天相机那一行上方），相机里的「从相册选择」也点它。 */}
                           {(() => {
                             // 所有内置动作先放进带稳定 ID 的注册表，再按用户设置的顺序取出，
                             // 最后才按每页 8 个切开。这样跨页调整也不会留下空格。
@@ -1027,27 +1029,18 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             </button>
                             ),
 
-                            /* 相册：直接从系统相册挑一张发给角色。
+                            /* 相册：打开聊天相机（上游 011d12d1），相机里既能拍照、也能「从相册选择」，
+                                选好的图照样走 onImageSelect 发给角色。用户 2026-10-03 定：拍照和相册合成这一个按钮，
+                                位置沿用原来的「相册」。
                                 这一块在第 5 批合上游「协同工作台」时被三方合连带删掉过一次，
                                 当时没做删除行核对才漏掉 —— 删了之后 onImageSelect 就彻底没有入口了。 */
                             image: (
-                            <button onClick={() => chatImageInputRef.current?.click()} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                            <button onClick={() => setCameraOpen(true)} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 {acnh ? <AcnhActionTile kind="image" /> : (
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-pink-300 border-pink-400/20' : 'bg-pink-50 text-pink-400 border-pink-100'}`}>
                                     <Image className="w-6 h-6" weight="bold" />
                                 </div>)}
                                 <span className="text-xs font-bold">相册</span>
-                            </button>
-                            ),
-
-                            /* 拍照：打开聊天相机（滤镜 / 贴纸 / 相框），拍完照样走 onImageSelect 发给角色。 */
-                            camera: (
-                            <button onClick={() => setCameraOpen(true)} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
-                                {acnh ? <AcnhActionTile kind="image" /> : (
-                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-rose-300 border-rose-400/20' : 'bg-rose-50 text-rose-400 border-rose-100'}`}>
-                                    <Camera className="w-6 h-6" weight="bold" />
-                                </div>)}
-                                <span className="text-xs font-bold">拍照</span>
                             </button>
                             ),
 

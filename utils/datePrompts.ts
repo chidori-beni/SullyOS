@@ -30,6 +30,7 @@ import { buildCharacterVoicePromptBlock } from './voiceProfile';
 import { selectCharacterContextMessages } from './chatContextRange';
 import { injectWorldbookDepthEntries, resolveWorldbookEntries, type ResolvedWorldbookEntry, type WorldbookScanMessage } from './worldbook';
 import { resolveUserMacroName } from './characterIdentity';
+import { browserHolidayCache, deviceTimeZone, getUserHolidayReminder, insertUserHolidayInProfile, readUserHolidayConfig } from './userHolidays';
 
 export type ApiMessage = { role: string; content: any };
 
@@ -973,15 +974,27 @@ const buildSessionContext = async (input: {
         ? [...historyMsgs, { role: 'user', content: input.worldbookScanTail }]
         : historyMsgs;
     const worldbookEntries = resolveDateWorldbook(input.char, input.userProfile, worldbookScan);
-    const systemPrompt = ContextBuilder.buildCoreContext(
+    // 节假日感知（上游 011d12d1）：见面按**剧情时钟那一天**查，不按现实今天。
+    // 剧情时钟从现实时间起步、只随剧情推进，所以同步现实的见面里这就是今天；剧情演到第二天就按第二天查。
+    // 关掉「线下时间感知」（纯架空）的角色不提。查不到 / 没开节假日感知时是空串，什么都不加。
+    const holidayConfig = readUserHolidayConfig();
+    const sceneHoliday = isDateTimeAwarenessOn(input.char) && holidayConfig?.enabled
+        ? await getUserHolidayReminder(
+            { ...holidayConfig, timeZone: clock.sceneClockTimeZone || deviceTimeZone() },
+            browserHolidayCache,
+            clock.sceneClockAt,
+            input.userProfile?.name,
+        ).catch(() => '')
+        : '';
+    const systemPrompt = insertUserHolidayInProfile(ContextBuilder.buildCoreContext(
         input.char,
         input.userProfile,
         true,
         undefined,
         undefined,
-        // 见面内的真实时间只作为 UI 对照，不允许进入模型的通用时间块。
+        // 见面内的真实时间只作为 UI 对照，不允许进入模型的通用时间块（节假日在上面按剧情日单独补）。
         { skipTimeAwareness: true, conversational: true, worldbookMode: 'offline', resolvedWorldbookEntries: worldbookEntries, depthEntriesInjectedByCaller: true },
-    ) + buildVNModeBlock(input.char, input.userProfile?.name || '', clock.sceneClockAt, clock.sceneClockTimeZone)
+    ), sceneHoliday) + buildVNModeBlock(input.char, input.userProfile?.name || '', clock.sceneClockAt, clock.sceneClockTimeZone)
         + buildContinuityBlock(clock);
     return { clock, historyMsgs, systemPrompt, worldbookEntries };
 };

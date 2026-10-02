@@ -28,9 +28,6 @@ export const CHAT_ACTION_DEFINITIONS = [
     // 旁白（阶段 5.2）。**刻意追加在末尾**：normalizeChatActionOrder 会把新动作
     // 补到老用户已保存排序的末尾，默认顺序也放末尾，新老用户才会在同一格看到它。
     { id: 'narration', label: '旁白' },
-    // 拍照（上游 011d12d1 的聊天相机）。上游是把「相册」按钮改成先开相机；本 fork 保留「相册」
-    // 直接选图发送，另加这个独立入口。同样追加在末尾。
-    { id: 'camera', label: '拍照' },
 ] as const;
 
 export type ChatActionId = typeof CHAT_ACTION_DEFINITIONS[number]['id'];
