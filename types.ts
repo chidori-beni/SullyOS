@@ -3645,8 +3645,8 @@ export interface CharacterProfile {
   videoCallPerformancePersona?: string;
   videoCallPerformancePersonaGeneratedAt?: number;
   description: string;
-  /** Only the chat title uses the remark; the canonical name stays unchanged. */
-  chatShowRemark?: boolean;
+  /** 网名：只在线上聊天界面（顶栏、切换会话）显示；见面、通话、提示词里仍用 name。空 = 显示真名。 */
+  chatNickname?: string;
   systemPrompt: string;
   worldview?: string;
   /** 角色分组：指向 CharacterGroup.id；空或指向已删分组 = 未分组。仅本地组织用，不随角色卡导出 */

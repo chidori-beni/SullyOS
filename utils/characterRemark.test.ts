@@ -1,17 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { characterRemark, chatCharacterDisplayName } from './characterRemark';
+import { chatCharacterDisplayName } from './characterRemark';
 
-describe('chat-only character remark', () => {
-    it('uses a remark only when opted in and preserves identity', () => {
-        const character = { name: '真实名称', description: '我的备注', chatShowRemark: true };
-        expect(chatCharacterDisplayName(character)).toBe('我的备注');
-        expect(character.name).toBe('真实名称');
-        expect(chatCharacterDisplayName({ ...character, chatShowRemark: false })).toBe('真实名称');
+describe('线上聊天显示网名（本 fork）', () => {
+    it('填了网名显示网名，真名不动', () => {
+        const character = { name: '萧逸', chatNickname: 'XY_' };
+        expect(chatCharacterDisplayName(character)).toBe('XY_');
+        expect(character.name).toBe('萧逸');
     });
-    it('falls back for empty remarks and legacy placeholder values', () => {
-        for (const description of ['', '   ', '点击编辑设定...', '点击编辑设定…']) {
-            expect(characterRemark(description)).toBe('');
-            expect(chatCharacterDisplayName({ name: '真实名称', description, chatShowRemark: true })).toBe('真实名称');
+    it('没填或只有空格就显示真名', () => {
+        for (const chatNickname of [undefined, '', '   ']) {
+            expect(chatCharacterDisplayName({ name: '萧逸', chatNickname })).toBe('萧逸');
         }
     });
 });

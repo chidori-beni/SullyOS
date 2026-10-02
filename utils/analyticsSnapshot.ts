@@ -197,7 +197,7 @@ export function collectCharSettings(
     return {
         // ── 开关：默认关的，问有没有人开过 ──
         记忆宫殿: anyOn(x => x.memoryPalaceEnabled),
-        聊天显示备注: anyOn(x => x.chatShowRemark === true),
+        聊天网名: anyOn(x => !!x.chatNickname?.trim()),
         自动归档: anyOn(x => x.autoArchiveEnabled),
         思考过程: anyOn(x => x.showThinkingChain),
         日程与情绪: anyOn(x => x.scheduleFeatureEnabled),

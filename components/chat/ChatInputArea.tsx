@@ -10,6 +10,7 @@ import { trackEvent } from '../../utils/analytics';
 import { findEmojiSuggestions } from '../../utils/emojiSuggestions';
 import ChatCamera from './ChatCamera';
 import { DEFAULT_CHAT_ACTION_ORDER, normalizeChatActionOrder, type ChatActionId } from '../../utils/chatActionOrder';
+import { chatCharacterDisplayName } from '../../utils/characterRemark';
 
 const EMOJI_PAGE_SIZE = 40;
 /** 加号菜单每页放几个动作按钮。页数由按钮总数自动算，不写死。 */
@@ -788,7 +789,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     {showPanel === 'emojis' && (
                         <>
                             {/* Categories Bar */}
-                            <div className={`sully-chat-emoji-categories relative flex shrink-0 ${panelTopBarSurfaceClass}`} style={{ backgroundColor: 'inherit' }}>
+                            <div className={`sully-chat-emoji-categories relative flex shrink-0 ${panelTopBarSurfaceClass} !bg-inherit`}>
                                 {/* touch-action: pan-x —— 显式告诉浏览器"从分组 chip 上起手的触摸就是横向滚动"，
                                     防止 chip 的长按/点击手势让部分浏览器犹豫而吞掉滑动（分组多时滑不到末尾的 +） */}
                                 <div className={panelTopBarClass} style={{ touchAction: 'pan-x' }}>
@@ -1365,19 +1366,19 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 </div>}
                             </div>
                             <div>
-                                <h3 className="text-xs font-bold text-slate-400 px-1 tracking-wider uppercase mb-3">切换会话</h3>
+                                <h3 className="sully-chat-switch-title text-xs font-bold text-slate-400 px-1 tracking-wider uppercase mb-3">切换会话</h3>
                                 <div className="space-y-3">
                                     {characters.map(c => {
                                         const unread = c.id !== activeCharacterId ? (unreadMessages[c.id] || 0) : 0;
                                         return (
-                                        <div key={c.id} onClick={() => onCharSelect(c.id)} className={`flex items-center gap-4 p-3 rounded-[20px] border cursor-pointer ${c.id === activeCharacterId ? 'bg-white border-primary/30 shadow-md' : 'bg-white/50 border-transparent'}`}>
+                                        <div key={c.id} data-active={c.id === activeCharacterId} onClick={() => onCharSelect(c.id)} className={`sully-chat-switch-item flex items-center gap-4 p-3 rounded-[20px] border cursor-pointer ${c.id === activeCharacterId ? 'bg-white border-primary/30 shadow-md' : 'bg-white/50 border-transparent'}`}>
                                             <div className="relative shrink-0">
                                                 <img src={c.avatar} className="w-12 h-12 rounded-2xl object-cover" />
                                                 {unread > 0 && (
                                                     <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center shadow-[0_0_8px_rgba(244,63,94,0.6)] ring-2 ring-white" aria-label={`${unread} 条未读消息`}>{unread > 99 ? '99+' : unread}</span>
                                                 )}
                                             </div>
-                                            <div className="flex-1"><div className="font-bold text-sm text-slate-700">{c.name}</div><div className="text-xs text-slate-400 truncate">{c.description}</div></div>
+                                            <div className="flex-1 min-w-0"><div className="sully-chat-switch-name font-bold text-sm text-slate-700">{chatCharacterDisplayName(c)}</div><div className="sully-chat-switch-description text-xs text-slate-400 truncate">{c.description}</div></div>
                                         </div>
                                         );
                                     })}
