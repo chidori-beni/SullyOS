@@ -24,7 +24,8 @@ describe('私聊旁白 · 加号菜单入口', () => {
     });
 
     it('⭐ 默认顺序里放在**末尾** —— 老用户的排序会把新动作补到末尾，两边得在同一格', () => {
-        expect(DEFAULT_CHAT_ACTION_ORDER[DEFAULT_CHAT_ACTION_ORDER.length - 1]).toBe('narration');
+        // 之后新增的动作（拍照，上游聊天相机）同样追加在末尾，所以旁白是倒数第二个。
+        expect(DEFAULT_CHAT_ACTION_ORDER.slice(-2)).toEqual(['narration', 'camera']);
     });
 
     it('⛔ 老用户存过的排序（没有 narration）不会丢失自定义顺序，只是把旁白补在最后', () => {

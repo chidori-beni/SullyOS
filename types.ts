@@ -611,6 +611,7 @@ export interface CharacterBuff {
 
 // 实时上下文配置 - 让AI角色感知真实世界
 export interface RealtimeConfig {
+    userHolidays?: import('./utils/userHolidays').UserHolidayConfig;
   // 天气配置
   weatherEnabled: boolean;
   weatherApiKey: string;  // OpenWeatherMap API Key（可选；留空走免 key 的 Open-Meteo）

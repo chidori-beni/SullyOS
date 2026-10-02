@@ -136,7 +136,8 @@ import {
   type AmsgToolConfig,
   type AmsgToolPack,
 } from '../../../utils/amsgToolPack';
-import { buildRealtimeWorldBlock } from './realtimeWorld';
+import { buildRealtimeWorldBlock, buildUserHolidayBlock } from './realtimeWorld';
+import { insertUserHolidayInProfile } from '../../../utils/userHolidays';
 import { authorizeSelfUpdate, handleSelfUpdate, resolveScriptName } from './selfUpdate';
 import { ensureSchemaOnce, readSelfUpdateState, recordManualSelfUpdate, runAutoUpdate } from './autoUpdate';
 import { handleCronTriggerRead, handleCronTriggerWrite, isCronTriggerAuthFailure } from './cronTrigger';
@@ -2359,15 +2360,19 @@ export const amsgHooks = {
 
     // 「外面的世界此刻什么样」：今日节日 + 实时天气 + 热搜，到点现拉现填。
     // 拉不到 / 超时都只是返回空串，那一段整个消失，这次触发照常往下走。
-    const realtimeWorldBlock = await buildRealtimeWorldBlock({
+    const worldArgs = {
       toolConfig,
+      userName: pack.targetName,
       timeAwarenessEnabled: toolPack.timeAwarenessEnabled,
       tzId: pack.tzId,
       nowMs: ctx.now.getTime(),
       globalRows,
       globalNamespace: AMSG_GLOBAL_NAMESPACE,
       writeState: ctx.writeState,
-    });
+    };
+    const [realtimeWorldBlock, userHoliday] = await Promise.all([
+      buildRealtimeWorldBlock(worldArgs), buildUserHolidayBlock(worldArgs),
+    ]);
 
     // MCP 说明块 / 「给自己排下一条」说明块：两条路都要，只是挂的位置不同
     // （主动消息接在渲染好的 prompt 后面，即时对话拼进末尾追加的那个 system 块）。
@@ -2448,6 +2453,11 @@ export const amsgHooks = {
         ...pack.chat!.messages.map((m) => ({ role: m.role, content: m.content })),
         ...(timelyBlock ? [{ role: 'system' as const, content: timelyBlock }] : []),
       ];
+      if (userHoliday) {
+        const profileMessage = instantMessages.find(m => m.role === 'system' && typeof m.content === 'string' && m.content.includes('### 互动对象 (User)\n'));
+        if (profileMessage) profileMessage.content = insertUserHolidayInProfile(profileMessage.content as string, userHoliday);
+        else instantMessages.push({ role: 'system', content: `### 互动对象信息补充\n${userHoliday}` });
+      }
 
       // 情绪评估（副 API）：跟主生成**并行**跑，等 onLLMOutput 收尾时 await——那时
       // 多半早就跑完了，等于零额外延迟。挂了返回 null，主回复照发。
@@ -2502,7 +2512,7 @@ export const amsgHooks = {
         pack.pendingAfterBusyAutoReply === true,
       ).prompt}`
       : taskMeta.amsgTaskInstruction as string;
-    const prompt = renderFirePack(pack, ctx.now.getTime(), taskInstruction, {
+    const prompt = insertUserHolidayInProfile(renderFirePack(pack, ctx.now.getTime(), taskInstruction, {
       maxUnansweredSends,
       selfLog,
       taskListBlock,
@@ -2510,7 +2520,7 @@ export const amsgHooks = {
       // 「此刻在做什么」里的钟点跟今日节日同一个开关：关掉时间感知的角色不该从日程块
       // 读到「23:00」——那正是这个开关要挡的东西。日程内容本身照给。
       includeClock: toolPack.timeAwarenessEnabled,
-    }) + mcpBlock + scheduleBlock;
+    }), userHoliday) + mcpBlock + scheduleBlock;
     return {
       messages: [{ role: 'user' as const, content: prompt }],
       ...common,

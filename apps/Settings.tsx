@@ -1,4 +1,6 @@
 
+import UserHolidaySettings from '../components/settings/UserHolidaySettings';
+import type { UserHolidayConfig } from '../utils/userHolidays';
 import { getImageGenConfig, isImageGenReady } from '../utils/novelaiImage';
 import ImageGenSettings from '../components/settings/ImageGenSettings';
 import SettingsSection from '../components/settings/SettingsSection';
@@ -630,6 +632,8 @@ const Settings: React.FC = () => {
   }, [focusProxyConfigOnMount, showProxyConfig]);
 
   // 实时感知配置的本地状态
+  // 节假日感知（上游 011d12d1）：按用户所在国家/地区读公开假日表，节日当天提醒角色。
+  const [rtUserHolidays, setRtUserHolidays] = useState<UserHolidayConfig>(() => ({ ...(realtimeConfig.userHolidays || { enabled: false, countryCode: '' }) }));
   const [rtWeatherEnabled, setRtWeatherEnabled] = useState(realtimeConfig.weatherEnabled);
   const [rtWeatherKey, setRtWeatherKey] = useState(realtimeConfig.weatherApiKey);
   const [rtWeatherCity, setRtWeatherCity] = useState(realtimeConfig.weatherCity);
@@ -1726,8 +1730,10 @@ const Settings: React.FC = () => {
 
   // 保存实时感知配置
   const handleSaveRealtimeConfig = () => {
+      if (rtUserHolidays.enabled && !rtUserHolidays.countryCode) { addToast('请选择生活所在的国家／地区，或关闭节假日感知', 'error'); return; }
       const updates = {
           weatherEnabled: rtWeatherEnabled,
+          userHolidays: { ...rtUserHolidays, introChoice: rtUserHolidays.enabled ? 'configured' as const : 'declined' as const },
           weatherApiKey: rtWeatherKey,
           weatherCity: rtWeatherCity,
           newsEnabled: rtNewsEnabled,
@@ -4273,6 +4279,7 @@ const Settings: React.FC = () => {
           footer={<button onClick={handleSaveRealtimeConfig} className="w-full py-3 bg-violet-500 text-white font-bold rounded-2xl shadow-lg">保存配置</button>}
       >
           <div className="space-y-5 max-h-[60vh] overflow-y-auto overflow-x-hidden no-scrollbar">
+              <UserHolidaySettings value={rtUserHolidays} onChange={setRtUserHolidays} />
               {/* 天气配置 */}
               <div className="bg-emerald-50/50 p-4 rounded-2xl space-y-3">
                   <div className="flex items-center justify-between">

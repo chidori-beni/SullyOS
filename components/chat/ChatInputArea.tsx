@@ -1,13 +1,14 @@
 import EmojiExportDialog from './EmojiExportDialog';
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import TokenImg from '../os/TokenImg';
-import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, Heartbeat, PencilSimple, Alarm, Sparkle, FadersHorizontal, LinkSimple, Star, Waveform, Lightning, Stop, CornersOut, CornersIn, Briefcase } from '@phosphor-icons/react';
+import { Camera, ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, Heartbeat, PencilSimple, Alarm, Sparkle, FadersHorizontal, LinkSimple, Star, Waveform, Lightning, Stop, CornersOut, CornersIn, Briefcase } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { AcnhActionTile } from '../os/acnhIcons';
 import { isIOSStandaloneWebApp } from '../../utils/iosStandalone';
 import { trackEvent } from '../../utils/analytics';
 import { findEmojiSuggestions } from '../../utils/emojiSuggestions';
+import ChatCamera from './ChatCamera';
 import { DEFAULT_CHAT_ACTION_ORDER, normalizeChatActionOrder, type ChatActionId } from '../../utils/chatActionOrder';
 
 const EMOJI_PAGE_SIZE = 40;
@@ -171,6 +172,9 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         return () => document.removeEventListener('pointerdown', blurOnOutsidePointer, true);
     }, [canSwitchToGenerate, isInputFocused]);
     const [actionsPage, setActionsPage] = useState(0);
+    // 聊天相机（上游 011d12d1）：切换角色时收起，免得拍给了另一个人。
+    const [cameraOpen, setCameraOpen] = useState(false);
+    useEffect(() => setCameraOpen(false), [activeCharacterId]);
     // 动作页数由按钮总数算出来，而那个计算发生在下面的 JSX 里；
     // 滑动翻页的上限要用到它，所以渲染时顺手记在 ref 上带出来。
     // （只写 ref、不 setState，不会触发额外渲染。）
@@ -937,6 +941,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                         </div>
                     )}
                     {/* Actions Panel：按用户设置的顺序分页，每页 8 个内置动作 */}
+                    {/* 聊天相机是 portal，放在面板条件之外：拍照途中面板收起也不会把相机一起卸掉。 */}
+                    {cameraOpen && <ChatCamera character={characters.find(c => c.id === activeCharacterId)} onClose={() => setCameraOpen(false)} onCapture={onImageSelect} onGallery={() => { chatImageInputRef.current?.click(); setCameraOpen(false); }} />}
                     {showPanel === 'actions' && !actionsContent && (
                         <div
                             className="overflow-y-auto no-scrollbar"
@@ -1031,6 +1037,17 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                     <Image className="w-6 h-6" weight="bold" />
                                 </div>)}
                                 <span className="text-xs font-bold">相册</span>
+                            </button>
+                            ),
+
+                            /* 拍照：打开聊天相机（滤镜 / 贴纸 / 相框），拍完照样走 onImageSelect 发给角色。 */
+                            camera: (
+                            <button onClick={() => setCameraOpen(true)} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                                {acnh ? <AcnhActionTile kind="image" /> : (
+                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-rose-300 border-rose-400/20' : 'bg-rose-50 text-rose-400 border-rose-100'}`}>
+                                    <Camera className="w-6 h-6" weight="bold" />
+                                </div>)}
+                                <span className="text-xs font-bold">拍照</span>
                             </button>
                             ),
 

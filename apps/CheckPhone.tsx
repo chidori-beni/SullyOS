@@ -1,5 +1,5 @@
 import { loadCharacterContextMessages } from '../utils/chatContextRange';
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { CharacterProfile, PhoneEvidence, PhoneCustomApp, PhoneContact, PhoneSimLog, ConvTopic, AiSession, AiServiceKind, TavernCard, APIConfig } from '../types';
@@ -17,6 +17,7 @@ import { usePersonaSim, personaSimStore } from '../utils/personaSimStore';
 import { trackEvent } from '../utils/analytics';
 import { normalizePhoneEvidence, phoneFieldToText } from '../utils/phoneEvidence';
 import { resolveCharTimeZone } from '../utils/timezone';
+import { normalizePhoneAiSession } from '../utils/phoneTranscript';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
 import { getCheckPhoneApi, resolveCheckPhoneApi, setCheckPhoneApi } from '../utils/checkPhoneApi';
 import {
@@ -468,7 +469,8 @@ const CheckPhone: React.FC = () => {
         ))?.detail
         : undefined;
     // 智能体 App：偷看到的 AI 会话 / 角色卡
-    const aiSessions = targetChar?.phoneState?.aiAgent?.sessions || [];
+    const rawAiSessions = targetChar?.phoneState?.aiAgent?.sessions;
+    const aiSessions = useMemo(() => (rawAiSessions || []).map(normalizePhoneAiSession), [rawAiSessions]);
     const aiCards = targetChar?.phoneState?.aiAgent?.cards || [];
     // 详情页会话从 sessions 实时取（互动续写后自动跟随最新状态）
     const selectedAiSession = aiSessions.find(s => s.id === selectedAiSessionId) || null;
@@ -1187,20 +1189,20 @@ ${AI_VENDOR_LORE}
                 }
                 for (const sess of (obj.sessions || [])) {
                     if (!sess?.transcript) continue;
-                    newSessions.push({
+                    newSessions.push(normalizePhoneAiSession({
                         id: `ai-${now}-${rid()}`, service, serviceName: sess.serviceName || sess.cardName || '酒馆',
                         title: sess.title || '一段扮演', transcript: sess.transcript, cardId: nameToId[normName(sess.cardName || '')], updatedAt: now,
-                    });
+                    }));
                 }
             } else {
                 const parsed = extractJson(content);
                 const arr: any[] = Array.isArray(parsed) ? parsed : [];
                 for (const sess of arr) {
                     if (!sess?.transcript) continue;
-                    newSessions.push({
+                    newSessions.push(normalizePhoneAiSession({
                         id: `ai-${now}-${rid()}`, service, serviceName: sess.serviceName || (service === 'claude' ? 'Claude' : 'AI 助手'),
                         title: sess.title || '一段对话', transcript: sess.transcript, updatedAt: now,
-                    });
+                    }));
                 }
             }
 
@@ -1254,7 +1256,7 @@ ${AI_VENDOR_LORE}
                 ...cur.phoneState, records: cur.phoneState?.records || [],
                 aiAgent: {
                     cards: cur.phoneState?.aiAgent?.cards || [],
-                    sessions: (cur.phoneState?.aiAgent?.sessions || []).map(s => s.id === sessionId ? patch(s) : s),
+                    sessions: (cur.phoneState?.aiAgent?.sessions || []).map(s => s.id === sessionId ? patch(normalizePhoneAiSession(s)) : s),
                 },
             },
         }));
@@ -1524,10 +1526,10 @@ ${olderText}
             const obj: any = extractJson(content) || {};
             if (!obj.transcript) { addToast('没生成出来，再试一次', 'error'); return; }
             const now = Date.now();
-            const sess: AiSession = {
+            const sess: AiSession = normalizePhoneAiSession({
                 id: `ai-${now}-${Math.random().toString(36).slice(2, 6)}`, service: 'tavern',
                 serviceName: card.name, title: obj.title || `与${card.name}的一局`, transcript: obj.transcript, cardId: card.id, updatedAt: now,
-            };
+            });
             updateCharacter(targetChar.id, (cur) => ({
                 phoneState: {
                     ...cur.phoneState, records: cur.phoneState?.records || [],

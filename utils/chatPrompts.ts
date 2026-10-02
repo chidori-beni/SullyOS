@@ -539,6 +539,10 @@ export const ChatPrompts = {
         // 记忆宫殿检索结果现在从 char.memoryPalaceInjection 读取。
         // deferVolatile：时间/宫殿召回/情绪 buff 三块不进 stable，由下面的 volatileState 承接。
         const coreT0 = performance.now();
+        const config = realtimeConfig || defaultRealtimeConfig;
+        if (!forFirePack && !timelyByWorker && char.timeAwarenessEnabled !== false && config.userHolidays?.enabled) {
+            await RealtimeContextManager.getUserHoliday(config, userProfile.name);
+        }
         const context = ContextBuilder.buildCharacterContext({
             char, user: userProfile, history: promptOptions?.history,
             // 小镇：关掉「正在和你说话的人」，该说的由存在感档位（buildModeRule）负责，
@@ -550,6 +554,9 @@ export const ChatPrompts = {
                 // 只需布尔值，所以用最近窗口判断足够——真聊过的话窗口里必然有痕迹；
                 // 窗口空（全新对话）时判为「没聊过」也正是对的。
                 hasExchangedWithHost: hasHostExchange(currentMsgs, userProfile?.name),
+                // 节假日感知（上游 011d12d1）：云端生成的那份由 worker 到点现算，这里不烤。
+                userHolidays: config.userHolidays,
+                skipUserHoliday: forFirePack || timelyByWorker,
             },
             layout: { deferVolatile: true },
         });
@@ -574,7 +581,6 @@ export const ChatPrompts = {
 
         // ── 并发发起所有独立的异步取数（网络 + IndexedDB），下面按原顺序拼接 ──
         // 原来是 7 段串行 await，总耗时 = 各段之和；现在取 max。
-        const config = realtimeConfig || defaultRealtimeConfig;
         // 自定义时区：日历日、当前日程与实时上下文全部按角色所在地折算。
         // 1. 实时世界信息（天气/新闻/时间）
         //

@@ -1,4 +1,5 @@
 
+import { browserHolidayCache, deviceTimeZone, getUserHolidayReminder } from '../utils/userHolidays';
 import { initializeFirstUseGuide } from '../utils/firstUseGuide';
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import type { VRSARActivity } from '../types';
@@ -2395,6 +2396,20 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   groupsRef.current = groups;
   const realtimeConfigRef = useRef(realtimeConfig);
   realtimeConfigRef.current = realtimeConfig;
+
+  // 节假日感知（上游 011d12d1）：提示词里那一行是同步读缓存的，这里每小时 / 回到前台时刷新缓存。
+  useEffect(() => {
+    const refresh = () => {
+      if (realtimeConfig.userHolidays?.enabled) {
+        void getUserHolidayReminder({ ...realtimeConfig.userHolidays, timeZone: deviceTimeZone() }, browserHolidayCache).catch(() => {});
+      }
+    };
+    refresh();
+    const timer = setInterval(refresh, 60 * 60 * 1000);
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); };
+  }, [realtimeConfig.userHolidays]);
   const memoryPalaceConfigRef = useRef(memoryPalaceConfig);
   memoryPalaceConfigRef.current = memoryPalaceConfig;
 

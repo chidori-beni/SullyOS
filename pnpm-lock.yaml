@@ -89,6 +89,9 @@ importers:
       pg:
         specifier: ^8.20.0
         version: 8.22.0
+      pixi-filters:
+        specifier: 6.1.5
+        version: 6.1.5(pixi.js@8.19.0)
       pixi.js:
         specifier: ^8.19.0
         version: 8.19.0
@@ -926,6 +929,9 @@ packages:
   '@types/fs-extra@8.1.5':
     resolution: {integrity: sha512-0dzKcwO+S8s2kuF5Z9oUWatQJj5Uq/iqphEtE3GQJVRRYm/tD1LglU2UnXi2A8jLq5umkGouOXOR9y0n613ZwQ==}
 
+  '@types/gradient-parser@0.1.5':
+    resolution: {integrity: sha512-r7K3NkJz3A95WkVVmjs0NcchhHstC2C/VIYNX4JC6tieviUNo774FFeOHjThr3Vw/WCeMP9kAT77MKbIRlO/4w==}
+
   '@types/node@25.9.0':
     resolution: {integrity: sha512-AOQwYUNolgy3VosiRqXrACUXTN8nJUtPl7FJXMqZVyxiiCLhQuG3jXKvCS1ALr+Y2OmZhzzLVlYPEqJaiqkaJQ==}
 
@@ -1712,6 +1718,11 @@ packages:
 
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
+
+  pixi-filters@6.1.5:
+    resolution: {integrity: sha512-Ewb/J+kxAbaNN+0/ATJbglAJG+skGJfh7BIDP3ILIDdD6wWk1p0pGa25pVf1T8hGBOQSUNVAmwwJBwkj+cyLLA==}
+    peerDependencies:
+      pixi.js: '>=8.0.0-0'
 
   pixi.js@8.19.0:
     resolution: {integrity: sha512-pq1O6emA/GFjjeF+8d3Pb5t7knD8FsnfWGqQcRjYjsqFZ7QdzG1XgjLDUu0DFJRbafjV5+g8iNLFBx0b9649lg==}
@@ -2940,6 +2951,8 @@ snapshots:
     dependencies:
       '@types/node': 25.9.0
 
+  '@types/gradient-parser@0.1.5': {}
+
   '@types/node@25.9.0':
     dependencies:
       undici-types: 7.24.6
@@ -3748,6 +3761,11 @@ snapshots:
       split2: 4.2.0
 
   picocolors@1.1.1: {}
+
+  pixi-filters@6.1.5(pixi.js@8.19.0):
+    dependencies:
+      '@types/gradient-parser': 0.1.5
+      pixi.js: 8.19.0
 
   pixi.js@8.19.0:
     dependencies:
