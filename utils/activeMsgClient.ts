@@ -19,6 +19,7 @@ import {
 } from '../types';
 import { getLastRealUserMessageAt } from './amsg2ExpireGuard';
 import { AMSG_BUNDLE_VERSION } from './amsgBundleVersion';
+import { parseAmsgSelfUpdateState, type AmsgSelfUpdateReport } from './amsgSelfUpdateState';
 import { buildTaskInstruction, resolveSendAtMs } from './amsgFireSchedule';
 import {
   getPendingTasks, isAmsg2EnabledForChar,
@@ -113,6 +114,7 @@ import {
 // 只取一个常量：客户端算 firstSendTime 时要留的提前量，和包装层「把任务行拉到期」
 // 那一步是同一个数，各写各的就会出现「校验说时间要在未来 / cron 说还没到」的死角。
 import type { AmsgEmotionEvalSpec } from '../worker/amsg/src/emotionEval';
+import type { AmsgSarModuleSnapshot } from './vrWorld/sarEnvelopeCore';
 import { listRecallableMonths } from './agenticTools';
 import { ChatPrompts } from './chatPrompts';
 import { nowInTimeZone, resolveCharTimeZone, tzAwarenessNote } from './timezone';
@@ -411,6 +413,23 @@ export const fetchWorkerTickReport = async (): Promise<AmsgTickReportResult> => 
   } catch (error: any) {
     return { ok: false, reason: error?.message || '连不上 Worker。' };
   }
+};
+
+/** probeWorkerVersion 的回执：版本对不对，外加那台 Worker 自动更新的近况。 */
+export interface AmsgWorkerVersionProbe {
+  state: 'current' | 'outdated' | 'unknown';
+  /** 那台 Worker 自报的版本；老 bundle 不报就是 null。 */
+  deployed: string | null;
+  /** 本 App 期望的版本，用来在界面上写「更新到 X」。 */
+  expected: string;
+  /** 自动更新：有没有这个能力 + 最近一次检查。老 bundle 不报这一段就是 null。 */
+  autoUpdate: AmsgSelfUpdateReport | null;
+}
+
+const parseSelfUpdateReport = (raw: unknown): AmsgSelfUpdateReport | null => {
+  const value = raw as { supported?: unknown; state?: unknown } | null;
+  if (!value || typeof value !== 'object' || typeof value.supported !== 'boolean') return null;
+  return { supported: value.supported, state: parseAmsgSelfUpdateState(value.state) };
 };
 
 /**
@@ -1737,6 +1756,21 @@ const fetchWithAuthRaw = async (
   }
 };
 
+/**
+ * 把 `GET /config-check` 这次报的 bundle 版本记进全局配置（`workerBundleVersion`）。
+ * 只在问到答案（200 + success）时调；老 bundle 不报这个字段就记 null（问到了，确实旧）。
+ * 即时对话里需要新协议的回合（SAR 信封）靠这份存量判断能不能上云，所以两处探
+ * /config-check 的地方都顺手记一笔。存不下只是这一次的结论留不到下次，不影响探测本身。
+ */
+const rememberWorkerBundleVersion = async (body: any): Promise<void> => {
+  const deployed = typeof body?.data?.workerVersion === 'string' ? body.data.workerVersion : null;
+  try {
+    await ActiveMsgStore.saveGlobalConfig({ workerBundleVersion: deployed });
+  } catch (error) {
+    console.warn('[AmsgInstantChat] Worker 的 bundle 版本没存下来（下次探测再补）', error);
+  }
+};
+
 const fetchWithAuth = async (path: string, config: ActiveMsg2GlobalConfig, init: RequestInit, phase = '接口') =>
   (await fetchWithAuthRaw(path, config, init, phase)).body;
 
@@ -2192,7 +2226,16 @@ export const ActiveMsgClient = {
     // 而「认不认识后台任务」这个结论是按地址缓存的，不作废就还认着升级前那句「不支持」。
     forgetBackgroundJobProbe();
     await initializeClient(config);
-    await ActiveMsgStore.saveGlobalConfig({ ...config, initializedAt: Date.now() });
+    // 写回的是握手前的配置快照，两样探测结论必须剔掉：握手顺手发起的能力探测
+    // （initializeClient 里那次 probeInstantChatSupport）可能已经抢先落了新结论，
+    // 整份写回会把 instantChatSupported / workerBundleVersion 盖回旧值——
+    // 用户刚更新完 Worker 点「重新连接」，存量却还说它是旧版。
+    const {
+      instantChatSupported: _staleSupported,
+      workerBundleVersion: _staleBundleVersion,
+      ...handshakeConfig
+    } = config;
+    await ActiveMsgStore.saveGlobalConfig({ ...handshakeConfig, initializedAt: Date.now() });
     // 「重新连接并验证」是用户显式的一次对表，按特性位存的能力位也当场探准，别等下次握手。
     // 排在保存之后：上面那句写的是握手前的配置快照，探测结论放它前面会被原样盖回去。
     await this.probeWorkerFeatures();
@@ -2511,7 +2554,7 @@ export const ActiveMsgClient = {
     const pendingOthers = getPendingTasks(config, Date.now())
       .filter((t) => t.taskUuid !== replaceTaskUuid);
     if (!task.internalNatural && pendingOthers.length >= maxActiveTasks) {
-      throw new Error(`该角色同时排着的消息已经有 ${maxActiveTasks} 条了（上限在「主动频率」里调），请先取消或合并已有的。`);
+      throw new Error(`该角色已经排好了 ${maxActiveTasks} 次主动消息，到上限了（上限在「主动频率」里调），请先取消或合并已有的。`);
     }
 
     // 角色的时间参照系：任务行、fire_pack、worker 渲染全用这一个，解析 send_at 也一样。
@@ -3003,6 +3046,11 @@ export const ActiveMsgClient = {
      * 走 taskPayload —— 那份是端到端加密的信封，凭据不会以明文出门。
      */
     emotionEval?: AmsgEmotionEvalSpec;
+    /**
+     * SAR 临时模块的请求时快照（只在角色或用户身上有模块时带）。worker 按它拆信封、
+     * 逐段带回外显，并把它原样挂回最后一条推送，落库侧据此写事件、推进回合。
+     */
+    sarModule?: AmsgSarModuleSnapshot;
     /** 上一条还没被认领的即时对话任务，连发两条时用它顶掉（合并成一起回）。 */
     supersedesUuid?: string;
   }): Promise<{ uuid: string; clientTaskId: string }> {
@@ -3117,6 +3165,9 @@ export const ActiveMsgClient = {
         // 老 worker 那条路还带着副 API 的 apiKey，它只能待在这个加密信封里——worker
         // 组推送前会把它摘掉，一个字节都不许跟着 push 出门。
         ...(emotionEvalSpec ? { amsgEmotionEval: emotionEvalSpec } : {}),
+        // SAR 模块生效 / 恢复期的那一轮：请求时冻结的快照（见 AmsgSarModuleSnapshot）。
+        // 只有收尾用得到的最小字段，不含凭据，worker 原样挂回末条推送。
+        ...(params.sarModule ? { amsgSar: params.sarModule } : {}),
         // 刻意不带 amsgExpirePolicy：防穿帮闸问的是「到点还该不该主动开口」，
         // 对「回一句用户刚说的话」不适用，带上去反而会把用户等着的回复吞掉。
       },
@@ -3134,22 +3185,28 @@ export const ActiveMsgClient = {
     const encryptStateEntries = (updatedAt: number) => encryptPayload(client, {
       entries: stateEntries.map((entry) => ({ ...entry, updatedAt })),
     });
-    const [encryptedTask, initialState] = await Promise.all([
+    // 凭据行随这一轮一起交给 worker，由它在建任务前照这份覆盖——每一轮都带，不看底账。
+    // 底账只记得「这台设备传过什么」，云端那行被别的入口（iOS 上 Safari 和主屏 App 各存
+    // 各的）或别的 Worker 改过时它还写着「传过了」，任务就会一直拿别人留下的凭据跑。
+    // 请求体多几百字节、worker 多写一两行 D1，不多一次往返。
+    const [encryptedTask, initialState, credPayload] = await Promise.all([
       encryptPayload(client, taskPayload),
       encryptStateEntries(stampedAt),
+      credRows.length > 0 ? encryptPayload(client, { credentials: credRows }) : Promise.resolve(undefined),
     ]);
     // 重发那一轮要换成新盖的戳，所以这份是可变的。
     let statePayload = initialState;
 
-    // 凭据行先落地再建任务（上游建任务前会挨个查引用）。只有值变过才真的发请求，
-    // 所以常态下这一步是零请求——不给「用户正等着回复」这条路白加一次往返。
+    // 旧 bundle 的 worker 不认 credPayload，凭据行还得靠这一步单独登记（上游建任务前会
+    // 挨个查引用）。只有值跟底账不一样才真的发请求，常态下是零请求；新 bundle 上它最多是
+    // 值刚变的那一轮多写一遍。
     if (credRows.length > 0) await putLlmCredentialRows(credRows);
 
     const postInstantChat = () => fetchWithAuthRaw('instant-chat', globalConfig, {
       method: 'POST',
       // 外壳是明文：里头两个信封已经加密好，别再给外壳挂加密头（包装层会当它是整体密文）。
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ statePayload, taskPayload: encryptedTask }),
+      body: JSON.stringify({ statePayload, taskPayload: encryptedTask, ...(credPayload ? { credPayload } : {}) }),
     }, '即时对话');
 
     let { status, body } = await postInstantChat();
@@ -3175,6 +3232,9 @@ export const ActiveMsgClient = {
     if (status !== 202 || typeof body?.uuid !== 'string' || !body.uuid) {
       throw new Error(describeInstantChatFailure(status, body));
     }
+    // worker 说凭据行已经照这一轮覆盖过了：底账跟着对齐，后台补传和排程那几条路才不会
+    // 拿一份过期的「传过什么」去判断。旧 bundle 不回这个键，不记。
+    if (body.credentialsSynced === true) rememberCredRows(credRows);
     return { uuid: body.uuid, clientTaskId };
   },
 
@@ -3342,6 +3402,7 @@ export const ActiveMsgClient = {
         // 「那台 Worker 跑不动即时对话」，一律留在 unknown。
         if (status === 200 && body?.success === true) {
           outcome = body?.data?.instantTick === true ? 'supported' : 'unsupported';
+          await rememberWorkerBundleVersion(body);
         }
       } finally {
         if (timer) clearTimeout(timer);
@@ -3498,23 +3559,56 @@ export const ActiveMsgClient = {
    *   - 老 bundle 根本不报这个字段 → outdated（它确实旧，只是旧到还不会自报家门）；
    *   - 网络不通 / 还没连上 → unknown（别在用户断网时催他更新）。
    */
-  async probeWorkerVersion(): Promise<{
-    state: 'current' | 'outdated' | 'unknown';
-    /** 那台 Worker 自报的版本；老 bundle 不报就是 null。 */
-    deployed: string | null;
-    /** 本 App 期望的版本，用来在界面上写「更新到 X」。 */
-    expected: string;
-  }> {
+  async probeWorkerVersion(options?: { timeoutMs?: number }): Promise<AmsgWorkerVersionProbe> {
     const expected = AMSG_BUNDLE_VERSION;
+    // timeoutMs：发消息路上现探时用的护栏（见 resolveInstantChatReadiness 的 ensureBundleVersion），
+    // 超时按 unknown 处理。设置页那次不传。
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const config = await ensureWorkerReady();
-      const { status, body } = await fetchWithAuthRaw('config-check', config, { method: 'GET' }, '后端版本探测');
-      if (status !== 200 || body?.success !== true) return { state: 'unknown', deployed: null, expected };
+      const init: RequestInit = { method: 'GET' };
+      const timeoutMs = options?.timeoutMs;
+      if (typeof timeoutMs === 'number' && timeoutMs > 0 && typeof AbortController !== 'undefined') {
+        const controller = new AbortController();
+        init.signal = controller.signal;
+        timer = setTimeout(() => controller.abort(), timeoutMs);
+      }
+      const { status, body } = await fetchWithAuthRaw('config-check', config, init, '后端版本探测');
+      if (status !== 200 || body?.success !== true) return { state: 'unknown', deployed: null, expected, autoUpdate: null };
+      await rememberWorkerBundleVersion(body);
       const deployed = typeof body?.data?.workerVersion === 'string' ? body.data.workerVersion : null;
-      if (!deployed) return { state: 'outdated', deployed: null, expected };
-      return { state: deployed === expected ? 'current' : 'outdated', deployed, expected };
+      const autoUpdate = parseSelfUpdateReport(body?.data?.selfUpdate);
+      if (!deployed) return { state: 'outdated', deployed: null, expected, autoUpdate };
+      return { state: deployed === expected ? 'current' : 'outdated', deployed, expected, autoUpdate };
     } catch {
-      return { state: 'unknown', deployed: null, expected };
+      return { state: 'unknown', deployed: null, expected, autoUpdate: null };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  },
+
+  /**
+   * 让后端自己看一眼该不该更新（`POST /self-update/check`，见 worker/amsg/src/autoUpdate.ts）。
+   *
+   * App 冷启动时顺手发的（见 utils/amsgAutoUpdateTrigger.ts：版本对不上时走的是 selfUpdateWorker，
+   * 这条只在版本对得上、想让它按指纹再看一眼时用）。只是按一下门铃——worker 回 202 就走人，检查在它那边后台跑，节流也在它那边；结果记进
+   * 它的诊断表，设置页从 probeWorkerVersion 的 autoUpdate 里读。
+   *
+   *   - 'accepted'：worker 收下了（真查不查看它自己的节流）；
+   *   - 'unsupported'：旧版 worker 没这条路（404），或没配 CF_API_TOKEN、没设共享密钥；
+   *   - 'failed'：没连上或别的错。
+   */
+  async requestWorkerUpdateCheck(): Promise<'accepted' | 'unsupported' | 'failed'> {
+    try {
+      const config = await ensureWorkerReady();
+      const { status, body } = await fetchWithAuthRaw('self-update/check', config, { method: 'POST' }, '后端更新检查');
+      if (status === 202 && body?.success === true) return 'accepted';
+      if (status === 404 || body?.error?.code === 'NOT_FOUND') return 'unsupported';
+      const code = body?.error?.code;
+      if (code === 'CF_TOKEN_MISSING' || code === 'SERVER_TOKEN_REQUIRED') return 'unsupported';
+      return 'failed';
+    } catch {
+      return 'failed';
     }
   },
 

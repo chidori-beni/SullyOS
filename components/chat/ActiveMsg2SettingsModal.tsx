@@ -92,7 +92,7 @@ const describePacingSummary = (config: AmsgPacingSettings | undefined): string =
   const limits = resolveAmsgLimits(config);
   const gapMinutes = Math.round(limits.minSendGapMs / 60_000);
   return [
-    Number.isFinite(limits.maxUnansweredSends) ? `没回最多连发 ${limits.maxUnansweredSends} 条` : '没回也不限条数',
+    Number.isFinite(limits.maxUnansweredSends) ? `没回最多连发 ${limits.maxUnansweredSends} 次` : '没回也不限次数',
     gapMinutes > 0 ? `至少隔 ${describeMinutes(gapMinutes)}` : '间隔不限',
     Number.isFinite(limits.dailySendCap) ? `每天最多 ${limits.dailySendCap} 次` : '每天不限',
   ].join(' · ');
@@ -363,12 +363,12 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
     }
 
     if (failed.size) {
-      addToast(`主动频率已保存，但有 ${failed.size} 条重复消息没能取消，可以在任务列表里单独取消。`, 'error');
+      addToast(`主动频率已保存，但 TA 排的重复消息有 ${failed.size} 次没能取消，可以在任务列表里单独取消。`, 'error');
     } else if (!synced) {
       addToast('主动频率已保存在本机，这次没同步到云端，下次同步时会自动带上。', 'error');
     } else {
       addToast(toCancel.length
-        ? `主动频率已保存，TA 排着的 ${toCancel.length} 条重复消息已取消。`
+        ? `主动频率已保存，TA 排过的 ${toCancel.length} 次重复消息已经取消。`
         : '主动频率已保存。', 'info');
     }
     return true;
@@ -591,7 +591,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
             char, config, apiConfig, tasks: otherAiTasks,
           });
           if (refresh.status === 'partial') {
-            addToast(`该角色已有 ${refresh.failed} 条任务的 API 凭据没刷新成功，稍后重新保存可重试。`, 'error');
+            addToast(`该角色排好的主动消息里，有 ${refresh.failed} 次的 API 凭据没刷新成功，稍后重新保存可重试。`, 'error');
           }
         } catch (refreshError) {
           console.warn('[ActiveMsg2Modal] 刷新其余任务的 API 凭据失败', refreshError);
@@ -693,7 +693,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                   这些到点会被跳过。不替用户删，说清楚两条路让用户自己选。 */}
               {selfRecurringTaskCount > 0 && !resolveAmsgLimits(saved).allowSelfRecurring ? (
                 <div className="text-xs text-amber-600 mt-1 leading-relaxed">
-                  TA 之前排的 {selfRecurringTaskCount} 条重复消息不会再发了。想留着，就在「调整」里打开「可以排每天、每周重复的消息」；不要了，可以在下面的列表里取消。
+                  TA 之前排过 {selfRecurringTaskCount} 次重复消息，之后都不会再发了。想留着，就在「调整」里打开「可以排每天、每周重复的消息」；不要了，可以在下面的列表里取消。
                 </div>
               ) : null}
             </div>

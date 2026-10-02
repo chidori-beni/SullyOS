@@ -57,6 +57,14 @@ import { CHAT_GEN_EVENTS } from './chatGenEvents';
 import { DB } from './db';
 import { endCallSession, resetCallLifecycleForTests, startCallSession } from './callSessionLifecycle';
 import { readAllInstantTraces } from './instantTraceLog';
+import {
+  createSARModuleEventMeta,
+  installSARModuleOnCharacter,
+  installSARModuleOnUser,
+  toSARModuleSurfaceSource,
+  type AmsgSarModuleSnapshot,
+} from './vrWorld/sarModuleRuntime';
+import { SAR_MODULE_CATALOG } from './vrWorld/sarModuleShop';
 
 describe('isStaleNaturalMessageFromCall', () => {
   afterEach(() => resetCallLifecycleForTests());
@@ -3242,5 +3250,230 @@ describe('手动补收报的是真上了屏的条数（走真库）', () => {
     expect(swallowedMsgs.some((m: any) => m.role === 'assistant')).toBe(false);
     const landedMsgs = await DB.getRecentMessagesByCharId(landedChar, 20);
     expect(landedMsgs.some((m: any) => m.role === 'assistant')).toBe(true);
+  }, 20000);
+});
+
+// ─── SAR 临时模块 · 即时对话回复的收尾（走真库 + 真 flush）───
+//
+// 云端生成的回复落库时要做和本地路径同样的收尾：每段角色外显写到那一段的气泡上、
+// USER_SURFACE 和事件写回用户消息、模块回合推进一格。回合推进挂在销账块里，同一轮
+// 只进一次——同一轮再冒出一条回复（worker 重试的第二份）也不能再扣。
+describe('即时对话 SAR 临时模块收尾（走真库）', () => {
+  beforeAll(() => {
+    (globalThis as any).window ??= { dispatchEvent: () => true, addEventListener: () => {} };
+  });
+  beforeEach(() => {
+    localStorage.removeItem(AMSG_INSTANT_CHAT_PENDING_LS_KEY);
+    vi.spyOn(ActiveMsgClient, 'listOutboxEntries').mockResolvedValue([]);
+    vi.spyOn(ActiveMsgClient, 'ackOutboxMessages').mockResolvedValue(undefined);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete (globalThis as any).window.umami;
+  });
+
+  it('两段回复：第一段接外显、载具键不进气泡、用户消息拿到外显与事件、回合只推进一次', async () => {
+    const charId = 'char-sar-instant';
+    const uuid = 'uuid-sar-instant';
+    const sessionId = 'sess-sar-instant';
+    const sarModule = SAR_MODULE_CATALOG[0];
+    const now = Date.now();
+    const charModule = installSARModuleOnCharacter(sarModule, now - 60_000);
+    const userModule = installSARModuleOnUser(sarModule, { id: charId, name: '模块角色' }, now - 60_000);
+    await DB.saveCharacter({
+      id: charId, name: '模块角色',
+      vrState: { enabled: true, intervalMinutes: 120, sarModule: charModule },
+    } as any);
+    await DB.saveUserProfile({
+      name: '小明', avatar: '', bio: '', vrState: { enabled: true, sarModule: userModule },
+    } as any);
+    const userMsgId = await DB.saveMessage({
+      charId, role: 'user', type: 'text', content: '晚上一起吃火锅吗', timestamp: now - 5_000,
+    } as any);
+    setInstantChatPending(charId, uuid);
+
+    const snapshot: AmsgSarModuleSnapshot = {
+      v: 1,
+      character: toSARModuleSurfaceSource(charModule),
+      user: toSARModuleSurfaceSource(userModule),
+      events: createSARModuleEventMeta({
+        character: charModule, user: userModule,
+        hasActiveEffect: true, hasAfterglow: false, requiresEnvelope: true,
+      }),
+      userMessageId: userMsgId,
+      userSurfaceTargetIds: [userMsgId],
+      reroll: false,
+    };
+    const charSurfaceMeta = (surface: string) => ({
+      version: 1, runId: charModule.runId, moduleId: charModule.moduleId, moduleTitle: charModule.moduleTitle,
+      target: 'character', phase: 'active', surface,
+      canonicalField: 'content', surfaceField: 'metadata.sarModuleSurface.surface',
+    });
+    const segment = (index: number, body: string, extra: Record<string, unknown>) =>
+      ActiveMsgStore.saveInboxMessage({
+        messageId: `msg-sar-instant-${index}`,
+        charId,
+        charName: '模块角色',
+        body,
+        messageType: 'instant',
+        taskUuid: uuid,
+        receivedAt: now + index,
+        sentAt: now + index,
+        metadata: { charId, sessionId, messageIndex: index, totalMessages: 2, amsgInstantChat: true, ...extra },
+      } as any);
+
+    await segment(1, '好啊，我请客', { amsgSarSurface: charSurfaceMeta('哼，才不要跟你去') });
+    await segment(2, '七点楼下见', {
+      amsgSar: snapshot,
+      amsgSarUserSurface: JSON.stringify([{ id: userMsgId, surface: '晚上想一个人待着' }]),
+    });
+    await flushInboxToChat('SW通知');
+
+    const assistants = (await DB.getRecentMessagesByCharId(charId, 50)).filter((m) => m.role === 'assistant');
+    expect(assistants.map((m) => m.content)).toEqual(['好啊，我请客', '七点楼下见']);
+    // 第一段的外显落在第一段的气泡上；第二段没带外显就没有。
+    expect(assistants[0].metadata?.sarModuleSurface?.surface).toBe('哼，才不要跟你去');
+    expect(assistants[0].metadata?.sarModuleSurface?.runId).toBe(charModule.runId);
+    expect(assistants[1].metadata?.sarModuleSurface).toBeUndefined();
+    // 回程载具键一个都不许留在气泡上。
+    for (const m of assistants) {
+      for (const key of ['amsgSar', 'amsgSarSurface', 'amsgSarUserSurface', 'amsgSarUserSurfaceRef']) {
+        expect(Object.prototype.hasOwnProperty.call(m.metadata || {}, key), `气泡上残留了 ${key}`).toBe(false);
+      }
+    }
+
+    // 用户消息：外显 + 事件快照。
+    const userMsg = await DB.getMessageById(userMsgId);
+    expect(userMsg?.content).toBe('晚上一起吃火锅吗');
+    expect(userMsg?.metadata?.sarModuleSurface).toMatchObject({
+      target: 'user', runId: userModule.runId, surface: '晚上想一个人待着',
+    });
+    expect(userMsg?.metadata?.sarModuleEvents).toEqual(snapshot.events);
+
+    // 回合各推进一格。
+    const charAfter = async () => (await DB.getAllCharacters()).find((c) => c.id === charId)?.vrState?.sarModule;
+    expect((await charAfter())?.remainingTurns).toBe(charModule.remainingTurns - 1);
+    expect((await DB.getUserProfile())?.vrState?.sarModule?.remainingTurns).toBe(userModule.remainingTurns - 1);
+    expect(getInstantChatPending(charId)).toBeNull();
+
+    // 同一轮又来一条带快照的回复（worker 重试的第二份）：落库照常，但账已经销过，不再扣回合。
+    await ActiveMsgStore.saveInboxMessage({
+      messageId: 'msg-sar-instant-dup',
+      charId,
+      charName: '模块角色',
+      body: '七点楼下见哦',
+      messageType: 'instant',
+      taskUuid: uuid,
+      receivedAt: Date.now(),
+      sentAt: Date.now(),
+      metadata: { charId, sessionId: 'sess-sar-instant-retry', messageIndex: 1, totalMessages: 1, amsgSar: snapshot },
+    } as any);
+    await flushInboxToChat('SW通知');
+
+    const landed = (await DB.getRecentMessagesByCharId(charId, 50)).filter((m) => m.role === 'assistant');
+    expect(landed.map((m) => m.content), '第二份照常落库，确认它真的走到了销账那一步').toContain('七点楼下见哦');
+    expect((await charAfter())?.remainingTurns, '同一轮不许扣第二次').toBe(charModule.remainingTurns - 1);
+    expect((await DB.getUserProfile())?.vrState?.sarModule?.remainingTurns).toBe(userModule.remainingTurns - 1);
+  }, 20000);
+
+  it('三份内容都挪进了旁路存储 → 按引用键取回收尾、用完登记删除；外显取不回不进重试', async () => {
+    const charId = 'char-sar-instant-ref';
+    const uuid = 'uuid-sar-instant-ref';
+    const sessionId = 'sess-sar-instant-ref';
+    const sarModule = SAR_MODULE_CATALOG[0];
+    const now = Date.now();
+    const charModule = installSARModuleOnCharacter(sarModule, now - 60_000);
+    const userModule = installSARModuleOnUser(sarModule, { id: charId, name: '模块角色' }, now - 60_000);
+    await DB.saveCharacter({
+      id: charId, name: '模块角色',
+      vrState: { enabled: true, intervalMinutes: 120, sarModule: charModule },
+    } as any);
+    await DB.saveUserProfile({
+      name: '小明', avatar: '', bio: '', vrState: { enabled: true, sarModule: userModule },
+    } as any);
+    const userMsgId = await DB.saveMessage({
+      charId, role: 'user', type: 'text', content: '明天去看海吧', timestamp: now - 5_000,
+    } as any);
+    setInstantChatPending(charId, uuid);
+
+    const snapshot: AmsgSarModuleSnapshot = {
+      v: 1,
+      character: toSARModuleSurfaceSource(charModule),
+      user: toSARModuleSurfaceSource(userModule),
+      events: createSARModuleEventMeta({
+        character: charModule, user: userModule,
+        hasActiveEffect: true, hasAfterglow: false, requiresEnvelope: true,
+      }),
+      userMessageId: userMsgId,
+      userSurfaceTargetIds: [userMsgId],
+      reroll: false,
+    };
+    const surfaceMeta = {
+      version: 1, runId: charModule.runId, moduleId: charModule.moduleId, moduleTitle: charModule.moduleTitle,
+      target: 'character', phase: 'active', surface: '海有什么好看的',
+      canonicalField: 'content', surfaceField: 'metadata.sarModuleSurface.surface',
+    };
+    const keys = {
+      surface1: 'sar_surface:client-task-sar:1',
+      surface2: 'sar_surface:client-task-sar:2',
+      snapshot: 'sar_snapshot:client-task-sar',
+      userSurface: 'sar_user_surface:client-task-sar',
+    };
+    const stored: Record<string, string> = {
+      [keys.surface1]: JSON.stringify(surfaceMeta),
+      // keys.surface2 故意缺席：第二段的外显丢了，这一段显示真实回复，不许因此进重试。
+      [keys.snapshot]: JSON.stringify(snapshot),
+      [keys.userSurface]: JSON.stringify([{ id: userMsgId, surface: '海边人太多了' }]),
+    };
+    const readSpy = vi.spyOn(ActiveMsgClient, 'readClientStateValue')
+      .mockImplementation(async (_ns: string, key: string) => stored[key] ?? null);
+    const clearSpy = vi.spyOn(ActiveMsgClient, 'clearClientStateValue').mockResolvedValue(undefined as any);
+
+    const segment = (index: number, body: string, extra: Record<string, unknown>) =>
+      ActiveMsgStore.saveInboxMessage({
+        messageId: `msg-sar-instant-ref-${index}`,
+        charId,
+        charName: '模块角色',
+        body,
+        messageType: 'instant',
+        taskUuid: uuid,
+        receivedAt: now + index,
+        sentAt: now + index,
+        metadata: { charId, sessionId, messageIndex: index, totalMessages: 2, amsgInstantChat: true, ...extra },
+      } as any);
+    await segment(1, '好啊，我带相机', { amsgSarSurfaceRef: keys.surface1 });
+    await segment(2, '早上八点出发', {
+      amsgSarSurfaceRef: keys.surface2,
+      amsgSarRef: keys.snapshot,
+      amsgSarUserSurfaceRef: keys.userSurface,
+    });
+    await flushInboxToChat('SW通知');
+
+    const ns = amsgStateNamespace(charId);
+    const assistants = (await DB.getRecentMessagesByCharId(charId, 50)).filter((m) => m.role === 'assistant');
+    expect(assistants.map((m) => m.content)).toEqual(['好啊，我带相机', '早上八点出发']);
+    expect(assistants[0].metadata?.sarModuleSurface?.surface).toBe('海有什么好看的');
+    expect(assistants[1].metadata?.sarModuleSurface, '取不回的那段显示真实回复').toBeUndefined();
+    expect(await ActiveMsgStore.listInboxMessages(), '外显丢了不许把消息压回收件箱').toEqual([]);
+    for (const m of assistants) {
+      for (const key of ['amsgSarRef', 'amsgSarSurfaceRef', 'amsgSarUserSurfaceRef']) {
+        expect(Object.prototype.hasOwnProperty.call(m.metadata || {}, key), `气泡上残留了 ${key}`).toBe(false);
+      }
+    }
+
+    const userMsg = await DB.getMessageById(userMsgId);
+    expect(userMsg?.metadata?.sarModuleSurface?.surface).toBe('海边人太多了');
+    expect(userMsg?.metadata?.sarModuleEvents).toEqual(snapshot.events);
+    expect((await DB.getAllCharacters()).find((c) => c.id === charId)?.vrState?.sarModule?.remainingTurns)
+      .toBe(charModule.remainingTurns - 1);
+    expect((await DB.getUserProfile())?.vrState?.sarModule?.remainingTurns).toBe(userModule.remainingTurns - 1);
+
+    for (const key of Object.values(keys)) expect(readSpy).toHaveBeenCalledWith(ns, key);
+    // 取回成功的三份都删；没取回的那份不删（本来就不在）。清理是 fire-and-forget，等一拍。
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(clearSpy).toHaveBeenCalledWith(ns, keys.surface1);
+    expect(clearSpy).toHaveBeenCalledWith(ns, keys.snapshot);
+    expect(clearSpy).toHaveBeenCalledWith(ns, keys.userSurface);
+    expect(clearSpy).not.toHaveBeenCalledWith(ns, keys.surface2);
   }, 20000);
 });

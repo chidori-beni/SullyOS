@@ -26,9 +26,12 @@ describe('supportsClientStateDelete', () => {
 });
 
 describe('pickSidechannelShellKeys', () => {
-  it('三个旁路前缀 + 值为空串 → 是空壳', () => {
+  it('六个旁路前缀 + 值为空串 → 是空壳', () => {
     const entries = AMSG_SIDECHANNEL_KEY_PREFIXES.map((prefix) => ({ key: `${prefix}uuid`, value: '' }));
-    expect(pickSidechannelShellKeys(entries)).toEqual(['reasoning:uuid', 'emotion_update:uuid', 'xhs_session:uuid']);
+    expect(pickSidechannelShellKeys(entries)).toEqual([
+      'reasoning:uuid', 'emotion_update:uuid', 'xhs_session:uuid',
+      'sar_user_surface:uuid', 'sar_snapshot:uuid', 'sar_surface:uuid',
+    ]);
   });
 
   it('旁路键还有内容 → 不是空壳（客户端还没取走）', () => {

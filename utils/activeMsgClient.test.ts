@@ -580,6 +580,33 @@ describe('连接前的 worker 配置自检', () => {
   // 的话，「重新连接并验证」拿回来的还是握着旧密钥的老 client：init-tenant 成功、界面报
   // 「连接成功」，此后每一次加密调用 worker 都解不开（即时对话每发一条挂一条、任务到点
   // 全失败），只有整页刷新能恢复。
+  // 回归守卫：connect() 握手后把配置整份写回，而那份是握手**之前**读的快照。握手顺手发起的
+  // 能力探测可能已经抢先落了新结论（用户刚更新完 Worker 点「重新连接」正是这种时候），
+  // 整份写回会把 instantChatSupported / workerBundleVersion 盖回旧值——SAR 信封回合的版本
+  // 闸门就会拿着过期的「旧版」一直把人挡在本地。
+  it('写回配置时不带两样探测结论（不拿握手前的旧值盖掉刚探到的新结论）', async () => {
+    routeFetch({});
+    reiClient.init.mockReset().mockResolvedValue(undefined);
+    storeConfigExtra.value = { instantChatSupported: false, workerBundleVersion: '2000-01-01', instantChatEnabled: true };
+    const { ActiveMsgStore } = await import('./activeMsgStore');
+    (ActiveMsgStore.saveGlobalConfig as any).mockClear();
+    try {
+      await ActiveMsgClient.connect();
+    } finally {
+      storeConfigExtra.value = {};
+    }
+    const writeBack = (ActiveMsgStore.saveGlobalConfig as any).mock.calls
+      .map((call: any[]) => call[0])
+      .find((update: Record<string, unknown>) => 'initializedAt' in update);
+    expect(writeBack).toBeDefined();
+    // 用户自己的配置照常写回……
+    expect(writeBack.workerUrl).toBe('https://amsg.example.workers.dev');
+    expect(writeBack.instantChatEnabled).toBe(true);
+    // ……探测结论一个都不带。
+    expect(writeBack).not.toHaveProperty('instantChatSupported');
+    expect(writeBack).not.toHaveProperty('workerBundleVersion');
+  });
+
   it('「重新连接并验证」每按一次都真的重新握手（换过 master key 后旧密钥必须被丢掉）', async () => {
     routeFetch({});
     reiClient.init.mockReset().mockResolvedValue(undefined);

@@ -51,7 +51,8 @@ import { AMSG_INSTANT_CHAT_PENDING_EVENT, announceInstantChatRoute, clearInstant
 // 云端 fire 的总时长上限，安全网超时从它推导，worker 调预算时前端自动跟上。
 import { INSTANT_TOTAL_TIMEOUT_MS } from '../worker/amsg/src/instantChat';
 import { appendInstantTraceEntry } from '../utils/instantTraceLog';
-import { AMSG2_TOOL_NAMES, buildAmsg2Tools, createAmsg2ToolSession, executeAmsg2Tool, isAmsg2GlobalReady } from '../utils/amsg2ToolBridge';
+import { AMSG2_TOOL_NAMES, buildAmsg2Tools, createAmsg2ToolSession, executeAmsg2ToolWithOutcome, isAmsg2GlobalReady, type Amsg2ToolOutcome } from '../utils/amsg2ToolBridge';
+import { AMSG2_EMPTY_REPLY_PROMPT, AMSG2_WRAP_UP_PROMPT, createAmsg2StallTracker, extractToolRoundLeadIn, mergeToolRoundLeadIns } from '../utils/amsg2ToolLoop';
 import { buildLimitsBrief, resolveAmsgLimits } from '../utils/amsgLimits';
 import { shouldSendThinkingParams } from '../utils/thinkingGate';
 import { buildClaudeProxyCompatibilityBody, shouldRetryClaudeProxyCompatibility } from '../utils/claudeProxyCompat';
@@ -60,8 +61,10 @@ import { applyEmotionEvalRaw, extractAssistantText } from '../utils/emotionApply
 import { announceChatGen, CHAT_GEN_EVENTS } from '../utils/chatGenEvents';
 import {
     advanceSARModuleAfterReply,
+    buildAmsgSarModuleSnapshot,
     createSARModuleEventMeta,
     createSARModuleSurfaceMeta,
+    findSARTurnUserMessage,
     getSARModuleRuntimePlan,
     parseSARModuleReply,
 } from '../utils/vrWorld/sarModuleRuntime';
@@ -821,17 +824,32 @@ export const useChatAI = ({
         // 本轮里角色自己新排出来的任务。排程现状块每轮现算时靠它把这些点名标出来——不标
         // 的话角色分不清清单上哪条是自己刚排的，回头又排一条一模一样的。
         const amsg2CreatedThisTurn = new Set<string>();
+        // 通用工具循环里，模型在调主动消息工具的同一轮顺手写下的回话。收尾时跟最后一轮的
+        // 正文拼成一条（见 utils/amsg2ToolLoop），不然「话写在工具轮、最后一轮空着」就是空回。
+        const amsg2LeadIns: string[] = [];
         // 这一轮走的是即时对话、并且云端已经受理：收尾时不要再打脏重传一次 fire_pack。
         // POST 上去的那份就是权威的（还多带了 chat 段），再传一遍是同样内容白走一趟网络。
         let instantChatAccepted = false;
         // amsg2 工具在三个工具循环（麦当劳 / 瑞幸 / 通用）里都可能出现，执行方式完全一样，
         // 只有各自的 loopMessages 不同。
-        const runAmsg2ToolCall = async (tc: any, fname: string, args: any, loopMessages: any[]) => {
+        const runAmsg2ToolCall = async (
+            tc: any, fname: string, args: any, loopMessages: any[], round: number,
+        ): Promise<Amsg2ToolOutcome> => {
             setSearchStatus(`正在执行：${fname}...`);
             const taskUuidsBefore = new Set(
                 (amsg2Session.getConfig()?.tasks ?? []).map((t) => t.taskUuid),
             );
-            const result = await executeAmsg2Tool(fname, args, amsg2Session);
+            const { text: result, outcome } = await executeAmsg2ToolWithOutcome(fname, args, amsg2Session);
+            // 本地这条路的每次排程都留一条 trace（调试面板 → amsg2 观察窗能看、能导出）：
+            // 打回全在浏览器里判，请求到不了 worker，不记这一笔的话事后什么都查不到。
+            // 只记工具名和结局枚举，不带参数和聊天内容。
+            appendInstantTraceEntry({
+                ts: new Date().toISOString(),
+                event: 'amsg2-local-tool',
+                charId: char.id,
+                round,
+                ...outcome,
+            });
             // 新增了哪几条不看工具回话（那是给模型读的散文），直接比对清单前后差异——
             // schedule 与 renew 都走这里，补发/替换出来的新任务一并算进去。
             for (const task of amsg2Session.getConfig()?.tasks ?? []) {
@@ -840,6 +858,7 @@ export const useChatAI = ({
             // 带上 name：Gemini 兼容层要求工具结果的 name 非空，缺了会被判 INVALID_ARGUMENT。
             loopMessages.push(buildToolResultMessage(tc, result) as any);
             setSearchStatus('');
+            return outcome;
         };
 
         try {
@@ -911,19 +930,35 @@ export const useChatAI = ({
             // 判据就一句话：这一轮上云会让角色掉能力，那就别上云。留在本地跑，工具照常用。
             // （地址够得着的服务器不受影响，照常上云，worker 自己跑后台 MCP。）
             const mcpWorkerUnreachable = hasWorkerUnreachableMcpServer(char.id);
-            const instantChatVeto: string | null = sarModulePlan.hasActiveEffect || sarModulePlan.hasAfterglow ? 'sar-module'
-                : luckinChatOn ? 'luckin-chat'
-                : mcdMiniOpen ? 'mcd'
-                    : luckinMiniOpen ? 'luckin'
-                        : mcpWorkerUnreachable ? 'mcp-worker-unreachable' : null;
             // 带上 char：角色单独关了即时对话（reason char-disabled）时 ready 直接为
             // false，和「全局没开」同一待遇——下面那条 veto trace 的条件够不到它，
             // 静默走本地。那是用户的主动选择，每条消息刷一遍 warn 就成骚扰了。
-            const instantChatReadiness = await resolveInstantChatReadiness(char);
+            //
+            // SAR 模块生效期的回复是 <SAR_MODULE_OUTPUT> 信封，要由 worker 在分段之前拆开。
+            // 旧 bundle 不认信封，会把它当普通正文切成一串气泡、控制标签直接上屏，比留在本地跑
+            // 糟得多。所以这类回合要求确认那台 Worker 是当前 bundle：存量为空（老用户刚更新 App、
+            // 握手探测还没回来）就当场探一次（带 3 秒超时），探到旧版 → outdated，探不到 →
+            // unverified，两种都留在本地跑。只剩恢复期提示（afterglow）的回合不需要信封，
+            // 任何 Worker 都跑得了，不探也不拦。
+            const instantChatReadiness = await resolveInstantChatReadiness(char, {
+                ensureBundleVersion: sarModulePlan.requiresEnvelope,
+            });
             const instantChatOn = instantChatReadiness.ready;
+            // 只在 ready 时判：没 ready 的那几档（含 config-unreadable）各有自己的收场，
+            // 这里再挂一个否决会把「配置读不出来就明确报错」那档错判成「本来就不走即时对话」。
+            const sarWorkerVeto: string | null = !instantChatOn || !sarModulePlan.requiresEnvelope ? null
+                : instantChatReadiness.workerBundleCurrent === false ? 'sar-module-worker-outdated'
+                    : instantChatReadiness.workerBundleCurrent === undefined ? 'sar-module-worker-unverified'
+                        : null;
+            const instantChatVeto: string | null = sarWorkerVeto
+                ?? (luckinChatOn ? 'luckin-chat'
+                : mcdMiniOpen ? 'mcd'
+                    : luckinMiniOpen ? 'luckin'
+                        : mcpWorkerUnreachable ? 'mcp-worker-unreachable' : null);
             const instantChatRoute = instantChatOn && !instantChatVeto;
             // 「即时对话开着、这一轮却没上云」的所有情形都在这一处留痕，都是留在本地跑：
-            //   · SAR 模块效果：效果与解除提示需要本地解析；
+            //   · SAR 模块生效期、但没能确认那台 Worker 是当前 bundle（探到旧版 / 没探到）：
+            //     旧 bundle 拆不了回复信封（恢复期回合照常上云，见上面那段）；
             //   · 点单流程否决：瑞幸/麦当劳是客户端交互式循环（选城市、确认单），云端接不了
             //     手，这一轮留在本地跑是对的；
             //   · MCP 地址 worker 够不着：同上，留在本地才有工具（见上面那段）。
@@ -933,7 +968,11 @@ export const useChatAI = ({
             if (instantChatOn && !instantChatRoute) {
                 const skipReason = instantChatVeto;
                 console.warn(
-                    skipReason === 'mcp-worker-unreachable'
+                    skipReason === 'sar-module-worker-outdated'
+                        ? '[AmsgInstantChat] 这一轮没上云（SAR 模块生效中，那台 Worker 还是旧 bundle、拆不了模块的回复信封），本地生成。去设置页点「更新 Worker」'
+                        : skipReason === 'sar-module-worker-unverified'
+                        ? '[AmsgInstantChat] 这一轮没上云（SAR 模块生效中，没问到那台 Worker 的版本、确认不了它认得模块的回复信封），本地生成。连上云端探到版本后会自己回到云端'
+                        : skipReason === 'mcp-worker-unreachable'
                         ? '[AmsgInstantChat] 这一轮没上云（有 MCP 服务器填的是本机/内网地址，worker 够不着），本地生成，工具照常可用'
                         : `[AmsgInstantChat] 这一轮没上云（${skipReason} 点单流程需要客户端交互），本地生成`,
                 );
@@ -993,9 +1032,11 @@ export const useChatAI = ({
             // 这一轮到底走了哪条路，播给输入框上方那条小提示。**每轮都发**，包括走成了云端
             // 那一轮（reason=null，提示自己收起来）——只在出问题时发的话，用户会一直盯着一条
             // 早就过期的提示，猜不出来「现在到底恢复了没有」。
+            // 否决原因也一并播出去：提示条自己按名单挑「用户想上云、实际没上」的那几档显示
+            // （SAR 遇上旧 Worker / 版本没探到），点单流程这类本该留在本地的不在名单里、照旧不出声。
             announceInstantChatRoute({
                 charId: char.id,
-                reason: instantChatRoute ? null : (instantChatReadiness.reason ?? null),
+                reason: instantChatRoute ? null : (instantChatReadiness.reason ?? instantChatVeto),
             });
 
             const payload = await stageT('payload', buildChatRequestPayload({
@@ -1367,7 +1408,7 @@ export const useChatAI = ({
             // 走不走这条路，构建 payload 之前的 instantChatRoute 已经算完了，这里只认它
             // 一个值：「这份 prompt 剥没剥时效段」和「这一轮走不走云端」必须是同一个判断，
             // 各算各的话两边总有一天会不同意，剥过的那份 prompt 就落到别的路上去了。
-            // 没上云的那些情形（SAR 模块 / 点单否决 / MCP 地址够不着）在那一段里已经报过 trace，
+            // 没上云的那些情形（SAR 模块遇上旧版或没确认版本的 Worker / 点单否决 / MCP 地址够不着）在那一段里已经报过 trace，
             // 这边不重复报，也不重复拦。
             //
             // MCP 刻意不在排除名单里：worker fire 时自己解析 tool_config、自己跑后台
@@ -1386,6 +1427,13 @@ export const useChatAI = ({
                 const amsg2NoticesBlock = amsg2ToolsInjected && amsg2Notices.length
                     ? buildAmsg2NoticesText(amsg2Notices, resolveCharTimeZone(char), userProfile.name)
                     : null;
+                const amsgSarSnapshot = buildAmsgSarModuleSnapshot({
+                    plan: sarModulePlan,
+                    charId: char.id,
+                    currentMsgs,
+                    historyMsgs: contextMsgs,
+                    reroll: skipEmotionInjection,
+                });
                 const instantChatResult = await sendInstantChatTurn({
                     char,
                     // 云端要发给模型的就是本地这一份，一个字不改（见 fire_pack 的 chat 段）。
@@ -1418,6 +1466,10 @@ export const useChatAI = ({
                     // （见 worker/amsg/src/emotionEval.ts）。放在这里而不是本地 fire 一枪，
                     // 是因为用户发完就能关页面——留在本地的话，页面一关情绪底色就停更了。
                     ...(cloudEmotionEval ? { emotionEval: cloudEmotionEval } : {}),
+                    // SAR 模块的请求时快照：worker 按它拆信封、逐段带回外显，落库侧按它写事件、
+                    // 推进回合（本地路径在回复成功后做的那几件事）。目标消息取自喂给 prompt 的
+                    // 同一份 contextMsgs，和模型看到的 USER_SURFACE 列表是同一批 id。
+                    ...(amsgSarSnapshot ? { sarModule: amsgSarSnapshot } : {}),
                 });
                 if (instantChatResult.ok) {
                     // 这次 POST 已经把权威的那份 fire_pack 传上去了，收尾不必再打脏重传一遍。
@@ -1618,7 +1670,7 @@ export const useChatAI = ({
                         // 又不带 tools, 角色「点单时顺手排个提醒」就永远不会生效。
                         const route = routeMiniAppToolCall(fname, args);
                         if (route === 'amsg2') {
-                            await runAmsg2ToolCall(tc, fname, args, loopMessages);
+                            await runAmsg2ToolCall(tc, fname, args, loopMessages, it);
                             continue;
                         }
                         if (route === 'propose') {
@@ -1728,7 +1780,7 @@ export const useChatAI = ({
                         // 又不带 tools, 角色「点单时顺手排个提醒」就永远不会生效。
                         const route = routeMiniAppToolCall(fname, args);
                         if (route === 'amsg2') {
-                            await runAmsg2ToolCall(tc, fname, args, loopMessages);
+                            await runAmsg2ToolCall(tc, fname, args, loopMessages, it);
                             continue;
                         }
                         if (route === 'propose') {
@@ -1818,6 +1870,9 @@ export const useChatAI = ({
                 const seenMcpOutcomes = new Set<string>();
                 let stalledMcpRounds = 0;
                 let lastMcpCallSignature: string | null = null;
+                const amsg2Stall = createAmsg2StallTracker();
+                let amsg2ToolRounds = 0;
+                let wrapUpKind: 'none' | 'hard-limit' | 'stalled' | 'amsg2-stalled' = 'none';
                 for (let it = 0; it < MAX_LOOPS; it++) {
                     const toolCalls = normalizeToolCallsForCompat(
                         data.choices?.[0]?.message?.tool_calls,
@@ -1835,6 +1890,7 @@ export const useChatAI = ({
                     } as any);
                     let mcpCallsThisRound = 0;
                     let mcpProgressThisRound = false;
+                    const amsg2Outcomes: Amsg2ToolOutcome[] = [];
                     for (const tc of toolCalls) {
                         const fname: string = tc.function?.name || '';
                         let args: any = {};
@@ -1879,7 +1935,7 @@ export const useChatAI = ({
                         }
                         // 主动消息 2.0 工具
                         if (AMSG2_TOOL_NAMES.has(fname)) {
-                            await runAmsg2ToolCall(tc, fname, args, loopMessages);
+                            amsg2Outcomes.push(await runAmsg2ToolCall(tc, fname, args, loopMessages, it));
                             continue;
                         }
                         // 只开了 MCP 没开瑞幸时, 幻觉出的未知工具名直接回错误让模型自我纠正
@@ -1932,9 +1988,23 @@ export const useChatAI = ({
                     if (mcpCallsThisRound > 0) {
                         stalledMcpRounds = mcpProgressThisRound ? 0 : stalledMcpRounds + 1;
                     }
-                    const reachedHardLimit = !!mcpToolResolve && it + 1 >= MAX_LOOPS;
+                    if (amsg2Outcomes.length > 0) {
+                        amsg2ToolRounds += 1;
+                        // 这一轮写下的回话留着（MCP 轮的开场白已经由 persistMcpLeadIn 单独落库了）。
+                        if (mcpCallsThisRound === 0) {
+                            const leadIn = extractToolRoundLeadIn(data.choices?.[0]?.message?.content);
+                            if (leadIn) amsg2LeadIns.push(leadIn);
+                        }
+                    }
+                    const amsg2Stalled = amsg2Stall.record(amsg2Outcomes);
+                    // 转到上限还在要工具的话，最后那份响应里只有 tool_calls、没有正文——所以只要
+                    // 挂着主动消息工具，到上限也得收尾，不能只管 MCP。
+                    const reachedHardLimit = (!!mcpToolResolve || amsg2ToolRounds > 0) && it + 1 >= MAX_LOOPS;
                     const stalled = !!mcpToolResolve && stalledMcpRounds >= MCP_CHAT_MAX_STALLED_ROUNDS;
-                    const forceWrapUp = reachedHardLimit || stalled;
+                    const forceWrapUp = reachedHardLimit || stalled || amsg2Stalled;
+                    if (forceWrapUp) {
+                        wrapUpKind = stalled ? 'stalled' : amsg2Stalled ? 'amsg2-stalled' : 'hard-limit';
+                    }
                     // 继续让角色多步推进 (保留 tools, 允许 query→search→preview 连续走)
                     if (mcpToolResolve) setSearchStatus('正在整理 MCP 工具结果...');
                     // 排程现状现算一次贴上：本轮刚排的任务这时才进得了清单，角色下一轮
@@ -1943,7 +2013,12 @@ export const useChatAI = ({
                     if (forceWrapUp) {
                         followMessages.push({
                             role: 'user',
-                            content: `[系统消息：工具阶段${stalled ? '连续两轮没有产生新结果' : '已到本轮安全上限'}。请停止调用工具，基于已经拿到的结果直接用角色语气回复；如目标仍未完成，请如实说明卡在哪一步。不要输出工具名、参数或这条系统消息。]`,
+                            // 收尾的原因是主动消息工具时换一句话：排程这件事用户看不见，照 MCP 那句
+                            // 「如实说明卡在哪一步」写的话，角色会跟用户交代「我的提醒排不上」。
+                            content: wrapUpKind === 'amsg2-stalled'
+                                || (wrapUpKind === 'hard-limit' && !mcpToolResolve && !payload.flags.luckinChatActive)
+                                ? AMSG2_WRAP_UP_PROMPT
+                                : `[系统消息：工具阶段${stalled ? '连续两轮没有产生新结果' : '已到本轮安全上限'}。请停止调用工具，基于已经拿到的结果直接用角色语气回复；如目标仍未完成，请如实说明卡在哪一步。不要输出工具名、参数或这条系统消息。]`,
                         });
                     }
                     const followBody = { ...baseReqBody, messages: followMessages };
@@ -1957,6 +2032,44 @@ export const useChatAI = ({
                     });
                     updateTokenUsage(data, historyMsgCount, `${payload.flags.luckinChatActive ? 'luckin-chat' : 'mcp-chat'}-${it + 1}`);
                     if (forceWrapUp) break;
+                }
+                // 主动消息工具跑过、模型最后却一个字没说（常见于排成功之后：它觉得话在工具轮
+                // 已经说完了），而工具轮里也没留下话——补一轮不带 tools 的请求让它开口。
+                // 已经逼过一次收尾的不再补，免得一轮聊天无止境地加请求。
+                let emptyRescued = false;
+                if (
+                    amsg2ToolRounds > 0
+                    && wrapUpKind === 'none'
+                    && amsg2LeadIns.length === 0
+                    && !extractToolRoundLeadIn(data.choices?.[0]?.message?.content)
+                    && !data.choices?.[0]?.message?.tool_calls?.length
+                ) {
+                    emptyRescued = true;
+                    const rescueBody = {
+                        ...baseReqBody,
+                        messages: [...withAmsg2TaskContext(loopMessages), { role: 'user', content: AMSG2_EMPTY_REPLY_PROMPT }],
+                    };
+                    delete (rescueBody as any).tools;
+                    delete (rescueBody as any).tool_choice;
+                    data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                        method: 'POST', headers,
+                        body: JSON.stringify(rescueBody),
+                    });
+                    updateTokenUsage(data, historyMsgCount, 'amsg2-empty-rescue');
+                }
+                if (amsg2ToolRounds > 0) {
+                    // 这一轮工具循环怎么收的尾：几轮工具、有没有被逼收尾、有没有补救空回、
+                    // 最后拼出来的回话多长。跟上面每次调用那几条对着看，就知道空回卡在哪一步。
+                    appendInstantTraceEntry({
+                        ts: new Date().toISOString(),
+                        event: 'amsg2-local-tool-loop',
+                        charId: char.id,
+                        toolRounds: amsg2ToolRounds,
+                        wrapUp: wrapUpKind,
+                        emptyRescued,
+                        leadIns: amsg2LeadIns.length,
+                        replyChars: mergeToolRoundLeadIns(amsg2LeadIns, data.choices?.[0]?.message?.content || '').length,
+                    });
                 }
                 if (mcpToolResolve) setSearchStatus('');
             }
@@ -2079,13 +2192,14 @@ export const useChatAI = ({
                 }
                 setMessages(msgs);
             };
-            const rawAiContent = data.choices?.[0]?.message?.content || '';
+            // 工具轮里说过的话拼在最前面（没有工具轮时 amsg2LeadIns 是空的，原样取最后一轮）。
+            const rawAiContent = amsg2LeadIns.length
+                ? mergeToolRoundLeadIns(amsg2LeadIns, data.choices?.[0]?.message?.content || '')
+                : data.choices?.[0]?.message?.content || '';
             // carryTrailingXinsheng：模块生效时心声按提示词写在容器外，拆容器会丢掉容器外的内容，
-            // 这里要求把它接回 canonical，后面的 extractXinsheng 才摘得到（见 sarModuleRuntime）。
+            // 这里要求把它接回 canonical，后面的 extractXinsheng 才摘得到（见 sarEnvelopeCore）。
             const sarReply = parseSARModuleReply(rawAiContent, sarModulePlan, { carryTrailingXinsheng: true });
-            const latestUserMessage = currentMsgs.slice().reverse().find(message => (
-                message.role === 'user' && message.type === 'text'
-            ));
+            const latestUserMessage = findSARTurnUserMessage(currentMsgs);
             const sarModuleEvents = createSARModuleEventMeta(sarModulePlan);
             const userSurfaces = parseSARUserSurfaces(sarReply.userSurface,
                 selectSARUserSurfaceTargets(contextMsgs, char.id, sarModulePlan.user));

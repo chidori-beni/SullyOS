@@ -303,6 +303,13 @@ LLM 日志里的聊天历史动辄几十条，整段塞进 localStorage 很快�
 
 别把它跟 `轮询补收` 搞混：那个是即时对话欠着回复时每 60 秒去**云端账本**捞一圈（要分页拉、还要逐条查任务状态，全是网络），只在欠着回复时才存在。
 
+本地聊天（没走即时对话）时角色调主动消息工具，也记在这套 trace 里。排程规矩是在浏览器里判的，被打回的请求根本到不了 worker，拿 CF token 在服务端什么都查不到，只能看这里。排「角色反复调排程、最后空回」这类问题时看这两种记录：
+
+| 记录 | 字段 | 说明 |
+|---|---|---|
+| `amsg2-local-tool` | `tool` / `round` / `status` / `reason` / `message` | 每调一次记一条。`status`：`done` 办成了，`rejected` 跑了但清单没变，`duplicate` 同名同参第二次没再跑，`error` 抛错。`reason` 是打回原因（`unanswered_limit` 连发额度满、`min_gap` 离排着的太近、`recurring_not_allowed` 不许排重复的，说不清的是 `no_change`）；`message` 只有 `error` 才有，是报错开头一截。不记参数和聊天内容 |
+| `amsg2-local-tool-loop` | `toolRounds` / `wrapUp` / `emptyRescued` / `leadIns` / `replyChars` | 一轮工具循环收尾时记一条。`wrapUp` 是有没有被逼收尾、因为什么（`amsg2-stalled` = 主动消息工具连着两轮没办成事）；`emptyRescued` = 模型最后一个字没说、补了一轮不带工具的请求；`leadIns` 是工具轮里留下了几段话；`replyChars` 是最后拼出来的回复有多长 |
+
 ---
 
 ## 十、容易踩的坑

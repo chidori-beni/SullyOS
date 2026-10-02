@@ -348,7 +348,7 @@ export interface AmsgLastSkip {
    * empty-generation      模型这次没写出任何能发的正文（空输出 / 纯拒答）
    * side-effects-only     模型这次只做了副作用（点赞、写日记之类）却没说话，整条不发
    * stale                 到点时已经过期太久（服务停摆后恢复），不再补发
-   * unanswered-limit      角色自排的任务到点时，用户未回复期间的连发条数已到用户设的上限
+   * unanswered-limit      角色自排的任务到点时，用户未回复期间的连发次数已到用户设的上限
    * schedule-off          角色自排的任务到点时，用户已经不让它排这类消息了（关了 2.0，或关了「可以排重复的」）
    * min-gap               角色自排的任务到点时，离它上一条主动消息还没隔够用户设的间隔
    * recurring-unanswered  重复的任务到点时，用户已经连续几次没回它了（回话后恢复）
@@ -410,7 +410,7 @@ export const describeLastSkip = (skip: AmsgLastSkip, formatTime: (ms: number) =>
       // 照 stale 那支的口径说实话：被闸拦下的那一次是**跳过**，不是排队等着补发。
       // 上游把跳过当成功消费——一次性任务的行当场就删了，循环任务只是快进到下一次。
       // 写成「等你回复后恢复」的话，用户会一直等一条永远不会来的消息。
-      return `${when} 那次主动消息没发——你未回复期间 ta 的连发条数已到你设置的连发上限，`
+      return `${when} 那次主动消息没发——你没回的这段时间 ta 连着找你的次数已到你设的连发上限，`
         + `跳过的这次不会补发；等你回话之后，ta 自己排的后续才会重新开始发。`;
     case 'schedule-off':
       // 两种来由共用这一句：关了主动消息 2.0（这时你自己排的也不发），或者 ta 自己排了
@@ -925,7 +925,7 @@ export const renderSelfLogBlock = (
   // 说实话：到上限之后自排的那几条到点是**跳过**，不补发（一次性的当场就没了）。
   // 写成「暂停、回复后恢复」的话，角色会以为排着的话迟早会说出去，照样许诺。
   const limitHalf = Number.isFinite(maxUnanswered)
-    ? `，上限 ${maxUnanswered} 条，到上限后你自己排的后续到点会直接跳过、不补发，等对方回复才重新计数`
+    ? `，上限 ${maxUnanswered} 次，到上限后你自己排的后续到点会直接跳过、不补发，等对方回复才重新计数`
     : '';
   if (fresh.length === 0) {
     if (sends === 0) return '';
@@ -933,11 +933,11 @@ export const renderSelfLogBlock = (
     return [
       '',
       '',
-      `（对方未回应期间你已连发 ${sends} 条主动消息${limitHalf}。别把已经说过的话换个说法再讲一遍。）`,
+      `（对方未回应期间你已连着主动找了对方 ${sends} 次${limitHalf}。别把已经说过的话换个说法再讲一遍。）`,
     ].join('\n');
   }
   const countLine = sends >= 1
-    ? `（对方一直没回应，其中主动发起的你已连发 ${sends} 条${limitHalf}。往下接着说，别把已经说过的话换个说法再讲一遍，也别假装这些没发生过。）`
+    ? `（对方一直没回应，你已连着主动找了对方 ${sends} 次${limitHalf}。往下接着说，别把已经说过的话换个说法再讲一遍，也别假装这些没发生过。）`
     : '（这几条是你发出去的，对方还没回应。往下接着说，别把已经说过的话换个说法再讲一遍，也别假装这些没发生过。）';
   return [
     '',

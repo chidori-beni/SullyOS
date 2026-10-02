@@ -44,7 +44,8 @@ it('keeps main API requests, raw reply truncation and model identities wired unc
   expect(source).toContain('detail: text.slice(0, 100)');
   expect(source).toContain("messages: [{ role: 'user', content: 'Hi' }]");
   expect(source).toContain('model: localModel.trim()');
-  expect(source).toContain('setLocalModel(m); setShowModelModal(false);');
+  // 上游 3b5fff33：模型弹窗里点一项就保存生效（以前是只填进表单、再手动点保存）。
+  expect(source).toContain('onClick={() => confirmModelPicker(m)}');
   expect(source).toContain('title={m}');
   expect(source).toContain("t('settings.model.noMatch', { query: modelFilter })");
 });

@@ -4684,17 +4684,8 @@ const CompanionHome: React.FC = () => {
               <span className="companion-dock-primary-frame relative flex h-14 w-14 shrink-0 items-center justify-center rounded-full border sm:h-[4.25rem] sm:w-[4.25rem]" style={{ borderColor: `${uiTint}c4`, background: `${palette.panelBottom}f5` }}>
                 <span className="companion-dock-primary-outline absolute inset-[5px] rounded-full border" style={{ borderColor: `${uiTint}60` }} />
                 <span className="companion-dock-primary-core relative flex h-10 w-10 items-center justify-center rounded-full border sm:h-12 sm:w-12" style={{ borderColor: `${uiTint}df`, background: `${uiTint}36` }}>
-                  {frameStyle === 'magazine' ? (
-                    <span className="companion-dock-primary-glyph flex flex-col items-center font-black leading-none">
-                      <span className="text-[13px] tracking-[-0.08em]">ALL</span>
-                      <span className="mt-0.5 text-[5px] tracking-[0.18em]">INDEX</span>
-                    </span>
-                  ) : frameStyle === 'archive' ? (
-                    <span className="companion-dock-primary-glyph font-serif text-[21px] leading-none">集</span>
-                  ) : (
-                    <Sparkle className="companion-dock-primary-glyph relative" size={23} weight="fill" />
-                  )}
-                  <span className="companion-dock-primary-mark absolute right-0.5 top-0.5 text-[6px] text-white/90">{frameStyle === 'idol' ? 'LIVE' : '✦'}</span>
+                  <Sparkle className="companion-dock-primary-glyph relative" size={23} weight="fill" />
+                  <span className="companion-dock-primary-mark absolute right-0.5 top-0.5 text-[6px] text-white/90">✦</span>
                 </span>
               </span>
               <span className="companion-dock-primary-label text-[9px] font-semibold tracking-[0.18em] sm:text-[10px]" style={{ color: uiTint }}>功能</span>

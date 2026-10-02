@@ -11,6 +11,7 @@ import {
   createD1Adapter,
   deriveUserEncryptionKey,
   encryptForStorage,
+  SCHEMA_VERSION,
 } from '@rei-standard/amsg-server/cloudflare';
 import worker, { amsgSerializeKey } from './index';
 import {
@@ -20,6 +21,7 @@ import {
   readRecentFailures,
   readTickFailure,
   recordTickOutcome,
+  writeDiagnosticValue,
   type TickReportDb,
 } from './tickReport';
 
@@ -278,12 +280,30 @@ describe.skipIf(!sqlite)('定时任务细账（真 SQLite）', () => {
       vi.spyOn(console, 'error').mockImplementation(() => {});
       vi.spyOn(console, 'warn').mockImplementation(() => {});
       const d1 = createD1(); // 一张表都没有：上游捞任务那一步必挂
+      // 每跳开头会自己补表（见 autoUpdate.ensureSchemaOnce），先把「这版查过了」的记号
+      // 写好让它跳过，空库才真的空到上游那一步。
+      await writeDiagnosticValue(d1 as unknown as TickReportDb, 'schema_ensured', JSON.stringify({ ensuredFor: SCHEMA_VERSION, failedAtMs: null }));
       await (worker as any).scheduled({ scheduledTime: Date.now(), cron: '* * * * *' }, envWith(d1));
 
       const record = await readTickFailure(d1 as unknown as TickReportDb);
       expect(record?.stage).toBe('tick');
       expect(record?.message).toContain('no such table');
       expect(record?.ongoing).toBe(true);
+    });
+
+    /**
+     * 回归守卫：换过代码之后的第一跳要自己把表补齐。以前靠前端更新完点一次「重新连接」
+     * 建表，后台自动换了代码时页面多半没开着，不自己补的话 cron 会因为缺表每分钟静默挂。
+     */
+    it('空库跑一跳：表由这一跳自己建出来，整轮不报错', async () => {
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const d1 = createD1();
+      await (worker as any).scheduled({ scheduledTime: Date.now(), cron: '* * * * *' }, envWith(d1));
+
+      const tables = d1.raw.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row: any) => row.name);
+      expect(tables).toContain('scheduled_messages');
+      expect(await readTickFailure(d1 as unknown as TickReportDb)).toBeNull();
     });
   });
 

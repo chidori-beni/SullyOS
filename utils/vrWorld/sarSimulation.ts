@@ -7,6 +7,7 @@ import { safeFetchJson } from '../safeApi';
 import { getSARModuleById, readSARGachaState, type SARModuleDefinition } from './sarGacha';
 import { getVRApi, logVRApiCall } from './vrApi';
 import { latestSARDirectorState, normalizeSARDirectorState, SAR_NARRATIVE_RULES, type SARDirectorState } from './sarNarrative';
+import { parseMarketReplyJson } from './marketReplyJson';
 
 export const SAR_SIMULATION_STORAGE_KEY = 'vr_sar_simulations_v1';
 export const SAR_SIMULATION_MAX_INTERACTIONS = 50;
@@ -78,6 +79,8 @@ export type SARIdentityCard = {
     profile: SARIdentityProfile;
     /** v1 推演蓝图迁移而来，原始资料没有独立钢印/代价字段。 */
     legacy?: boolean;
+    /** Retryable deletion across localStorage (index) and IndexedDB (story text). */
+    deletionPending?: boolean;
 };
 
 /** 身份卡可以长期收藏；每一次五十轮生命则是独立实例。 */
@@ -123,6 +126,11 @@ const parseJsonCandidates = (raw: string) => {
     return candidates;
 };
 
+const parseSimulationJson = (candidate: string): any => {
+    try { return JSON.parse(candidate); }
+    catch { return parseMarketReplyJson(candidate); }
+};
+
 export type SARSimulationReply = {
     /** 本轮可感知的旁白；安静的关系场景允许为空。 */
     worldNarration: string;
@@ -139,7 +147,7 @@ export type SARSimulationReply = {
 export const parseSARSimulationReply = (raw: string): SARSimulationReply | null => {
     for (const candidate of parseJsonCandidates(raw)) {
         try {
-            const parsed = JSON.parse(candidate);
+            const parsed = parseSimulationJson(candidate);
             const narration = cleanText(parsed?.worldNarration ?? parsed?.world ?? parsed?.narrator ?? parsed?.gm ?? parsed?.director, 2400);
             const worldNarration = narration === '必要旁白，或空字符串' ? '' : narration;
             const character = cleanText(parsed?.character ?? parsed?.char ?? parsed?.reply, 12000);
@@ -164,7 +172,7 @@ export const getSARWorldNarration = (message: Pick<Message, 'metadata'>) =>
 export const parseSARIdentityProfile = (raw: string): SARIdentityProfile | null => {
     for (const candidate of parseJsonCandidates(raw)) {
         try {
-            const parsed = JSON.parse(candidate);
+            const parsed = parseSimulationJson(candidate);
             const result: SARIdentityProfile = {
                 title: cleanText(parsed?.title, 80),
                 logline: cleanText(parsed?.logline, 240),
@@ -309,9 +317,22 @@ export const saveSARIdentityCard = (card: SARIdentityCard, storage: StorageLike 
     return writeSARSimulationState({ ...current, cards: [card, ...current.cards.filter(item => item.id !== card.id)] }, storage);
 };
 
+/** Keep a retryable index until every story thread has been cleared successfully. */
+export const deleteSARIdentityCard = async (cardId: string, storage: StorageLike | undefined = browserStorage()) => {
+    const current = readSARSimulationState(storage);
+    if (!current.cards.some(card => card.id === cardId)) throw new Error('异格身份卡不存在');
+    const runs = current.runs.filter(run => run.cardId === cardId);
+    if (runs.some(run => generatingRuns.has(run.id))) throw new Error('故事正在生成，请等回复结束后再删除');
+    writeSARSimulationState({ ...current, cards: current.cards.map(card => card.id === cardId ? { ...card, deletionPending: true } : card) }, storage);
+    for (const run of runs) await DB.clearMessages(getSARSimulationThreadId(run.id));
+    const latest = readSARSimulationState(storage);
+    return writeSARSimulationState({ ...latest, cards: latest.cards.filter(card => card.id !== cardId), runs: latest.runs.filter(run => run.cardId !== cardId) }, storage);
+};
+
 export const startSARSimulationRun = (cardId: string, storage: StorageLike | undefined = browserStorage()) => {
     const current = readSARSimulationState(storage);
     if (!current.cards.some(card => card.id === cardId)) throw new Error('异格身份卡不存在');
+    if (current.cards.find(card => card.id === cardId)?.deletionPending) throw new Error('这张档案正在删除，请先完成删除');
     const active = current.runs.find(run => run.cardId === cardId && run.status === 'active');
     if (active) return active;
     const now = Date.now();
@@ -890,7 +911,9 @@ async function generateSARSimulationTurn(input: RunSARSimulationTurnInput) {
     if (!retry && run.status !== 'active') throw new Error('这段推演已经封存');
     if (!retry && run.interactionsUsed >= SAR_SIMULATION_MAX_INTERACTIONS) throw new Error('这段推演已经完成五十次互动');
 
-    const persisted = readSARSimulationState().runs.find(item => item.id === run.id);
+    const persistedState = readSARSimulationState();
+    if (persistedState.cards.find(item => item.id === card.id)?.deletionPending) throw new Error('这张档案正在删除，无法继续生成');
+    const persisted = persistedState.runs.find(item => item.id === run.id);
     if (!persisted || (!retry && persisted.status !== 'active')) throw new Error('这段推演已经封存');
     if (persisted.interactionsUsed !== run.interactionsUsed) throw new Error('推演进度已变化，请重新进入');
 
@@ -947,8 +970,17 @@ async function generateSARSimulationTurn(input: RunSARSimulationTurnInput) {
     }
 
     const parsedReply = parseSARSimulationReply(extractSARAssistantRaw(data));
-    if (!parsedReply?.character) throw new Error('模型没有返回可保存的推演正文，请重试');
+    if (!parsedReply?.character) throw new Error(data?.choices?.[0]?.finish_reason === 'length'
+        ? '模型回复被长度上限截断，未保存，也未消耗互动次数。请重试或让本轮回复简短一些。'
+        : '模型回复格式不完整，未保存，也未消耗互动次数，请重试');
     const reply = parsedReply.character;
+
+    // Another tab may have deleted the archive while this network request was in flight.
+    const latestState = readSARSimulationState();
+    const latestCard = latestState.cards.find(item => item.id === card.id);
+    if (!latestCard || latestCard.deletionPending || !latestState.runs.some(item => item.id === run.id)) {
+        throw new Error('这张档案已删除或正在删除，本轮回复未保存');
+    }
 
     if (retry) {
         await replaceSARSimulationReply(run.id, retry.reply, { content: reply, worldNarration: parsedReply.worldNarration, directorState: parsedReply.directorState });

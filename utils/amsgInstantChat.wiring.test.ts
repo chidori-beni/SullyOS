@@ -93,7 +93,7 @@ describe('useChatAI 的分流接缝', () => {
     const routing = routingSrc();
     // readiness 判定必须带上 char：角色单独关了的话 ready 直接为 false，veto trace 的
     // 条件（instantChatOn && …）够不到它。不带 char 的话角色关了照上云——旧行为回潮。
-    expect(routing).toContain('resolveInstantChatReadiness(char)');
+    expect(routing).toMatch(/resolveInstantChatReadiness\(char[,)]/);
     // 也不许给 char-disabled 单开留痕分支：那是用户的主动选择，和「全局没开」同一待遇，
     // 每条消息刷一遍 warn 就成骚扰了。查的是带引号的字面量——真要按它分支绕不开这个比较；
     // 注释里提一嘴不算。
@@ -139,11 +139,16 @@ describe('useChatAI 的分流接缝', () => {
   });
 
   it('开着即时对话却没上云 —— 每一种情形都在路由段留 trace，就这一处', () => {
-    // 原因都在否决名单里：SAR 模块、点单流程（瑞幸/麦当劳要客户端交互）、MCP 地址够不着，
-    // 这一轮留在本地是对的。哪一种没留痕，都是「开关亮着、消息照常出来」的静默分流，用户查无可查。
+    // 原因都在否决名单里：SAR 模块遇上旧 Worker、点单流程（瑞幸/麦当劳要客户端交互）、
+    // MCP 地址够不着，这一轮留在本地是对的。哪一种没留痕，都是「开关亮着、消息照常出来」的
+    // 静默分流，用户查无可查。
     const routing = routingSrc();
-    // 否决的三个来源和 payload.flags 同源，只是算得更早
-    for (const source of ['luckinChatRef?.current?.active', 'mcdMiniOpen', 'luckinMiniOpen']) {
+    // 点单那三个来源和 payload.flags 同源，只是算得更早；SAR 那一条看的是模块计划 +
+    // 那台 Worker 的 bundle 结论（见下面那条专门的用例）。
+    for (const source of [
+      'luckinChatRef?.current?.active', 'mcdMiniOpen', 'luckinMiniOpen',
+      'sarModulePlan.requiresEnvelope', 'instantChatReadiness.workerBundleCurrent === false',
+    ]) {
       expect(routing).toContain(source);
     }
     expect(routing).toContain('const instantChatVeto');
@@ -206,6 +211,47 @@ describe('useChatAI 的分流接缝', () => {
     const branch = branchSrc();
     expect(branch).not.toContain('markExpiredNoticesNotified');
     expect(branch).toMatch(/instantChatResult\.ok[\s\S]{0,800}stageInstantChatExpiredNotices/);
+  });
+
+  // ★ SAR 模块回合上云的回归守卫。
+  //
+  // 从前角色或用户身上只要有模块（生效或恢复期），这一轮就被整个否决、静默退回本地生成——
+  // 用户开着即时对话却查无可查。现在只有需要信封的回合才看 Worker 版本：确认是当前 bundle
+  // 才上云，存量为空就当场探一次；探到旧版 → outdated，探不到 → unverified。恢复期回合照常上云。
+  it('SAR 模块回合上云：不再整片否决，需要信封时要求确认 Worker 是当前 bundle', () => {
+    const routing = routingSrc();
+    // 裸的 'sar-module' 否决回潮 = 模块回合又一律静默走本地。
+    expect(routing).not.toContain("'sar-module'");
+    expect(routing).not.toMatch(/sarModulePlan\.hasActiveEffect \|\| sarModulePlan\.hasAfterglow \?/);
+    // 需要信封才现探（恢复期回合不探、不多花一次往返）。
+    expect(routing).toMatch(/ensureBundleVersion:\s*sarModulePlan\.requiresEnvelope/);
+    // 两档否决：探到旧版 / 没探到。放行只认 workerBundleCurrent === true。
+    expect(routing).toMatch(/!sarModulePlan\.requiresEnvelope \? null/);
+    expect(routing).toContain("instantChatReadiness.workerBundleCurrent === false ? 'sar-module-worker-outdated'");
+    expect(routing).toContain("instantChatReadiness.workerBundleCurrent === undefined ? 'sar-module-worker-unverified'");
+    // 只在 ready 时判：否则 config-unreadable 那档会被这条否决错判成「本来就不走即时对话」、
+    // 悄悄退回本地，而那一档要的是明确报错。
+    expect(routing).toMatch(/const sarWorkerVeto: string \| null = !instantChatOn \|\|/);
+    // 否决要用到 readiness 的结论，所以 readiness 得先算出来。
+    expect(routing.indexOf('await resolveInstantChatReadiness(char'))
+      .toBeLessThan(routing.indexOf('const sarWorkerVeto'));
+    // 两档都走那条统一的 instant-chat-veto trace（上面「留痕只此一处」那条钉着），warn 各说各的。
+    expect(routing).toContain("skipReason === 'sar-module-worker-outdated'");
+    expect(routing).toContain("skipReason === 'sar-module-worker-unverified'");
+  });
+
+  it('SAR 快照随 sendInstantChatTurn 上云，目标取自喂 prompt 的同一份 contextMsgs', () => {
+    const branch = branchSrc();
+    expect(branch).toContain('buildAmsgSarModuleSnapshot({');
+    expect(branch).toContain('sarModule: amsgSarSnapshot');
+    // USER_SURFACE 目标必须和 buildChatRequestPayload 的 historyMsgs 是同一个变量，
+    // 不然快照里的 id 和模型看到的列表对不上，外显会贴错消息。
+    expect(chatAiSrc).toMatch(/historyMsgs:\s*contextMsgs,\s*\n\s*recentMsgsHint:/);
+    expect(branch).toMatch(/historyMsgs:\s*contextMsgs/);
+    // 重掷：效果照用、不推进回合，和本地路径那句 if (!skipEmotionInjection) 同一个值。
+    expect(branch).toMatch(/reroll:\s*skipEmotionInjection/);
+    // 本轮用户消息的选法两条路共用一个函数，落点不会分家。
+    expect(chatAiSrc).toContain('const latestUserMessage = findSARTurnUserMessage(currentMsgs);');
   });
 
   it('失败时不悄悄回本地生成：分支里没有本地 LLM 请求，走完就 return', () => {

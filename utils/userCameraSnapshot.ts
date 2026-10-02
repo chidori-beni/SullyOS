@@ -6,7 +6,6 @@ export interface UserCameraSnapshotSize {
 export interface CameraChatMessage {
   role: string;
   content: unknown;
-  [key: string]: unknown;
 }
 
 export const fitUserCameraSnapshot = (

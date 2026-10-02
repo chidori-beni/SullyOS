@@ -1438,7 +1438,7 @@ export async function injectMemoryPalace(
                 outcome: eventBox.status === 'error' ? 'error' : eventBox.status === 'miss' ? 'empty' : 'ok',
             });
         }
-        trace.injection.memoryChars = char.memoryPalaceInjection.length;
+        trace.injection.memoryChars = char.memoryPalaceInjection?.length ?? 0;
         trace.stages.push({
             name: 'retrieve',
             durationMs: Math.round(performance.now() - retrieveStartedAt),
@@ -1456,7 +1456,7 @@ export async function injectMemoryPalace(
         console.warn(`🏰 [MemoryPalace] injectMemoryPalace failed: ${e.message}`);
         if (!legacyCompatibilityMode) char.memoryPalaceInjection = '';
         trace.injection.memoryChars = 0;
-        trace.injection.roomPlateChars = char.roomPlatesInjection.length;
+        trace.injection.roomPlateChars = char.roomPlatesInjection?.length ?? 0;
         trace.stages.push({ name: 'finalize', durationMs: 0, outcome: 'error' });
         return finishRecallTrace(trace, 'error', 'injection_exception');
     }

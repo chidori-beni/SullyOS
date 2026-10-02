@@ -47,7 +47,7 @@ import {
     type AvatarModelBackupProgress,
 } from '../utils/avatarModelBackup';
 import { normalizeApiBaseUrl, normalizeApiCredential, normalizeApiModel } from '../utils/apiConfigNormalize';
-import { configFromPreset, findActivePresetId } from '../utils/apiPresetSwitch';
+import { configFromPreset, findActivePresetId, presetDiffersFromConfig, type PresetSwitchPatch } from '../utils/apiPresetSwitch';
 import type { APIConfig, TtsProvider } from '../types';
 import { describeImageWithVisionApi, VISION_API_TEST_IMAGE_DATA_URL, visionApiConfigFromPreset } from '../utils/visionApi';
 import { useUiLocale } from '../context/UiLocaleContext';
@@ -506,6 +506,8 @@ const Settings: React.FC = () => {
   const [newPresetName, setNewPresetName] = useState('');
   // 就地编辑某条预设：只改预设本身；改的正好是当前生效那条时，生效配置一并跟着走
   const [editingPresetId, setEditingPresetId] = useState<string | null>(null);
+  // 保存前在用某条预设、保存后跟它对不上了：记下是哪条和刚存的配置，弹窗问要不要存回去
+  const [presetWriteback, setPresetWriteback] = useState<{ presetId: string; config: PresetSwitchPatch } | null>(null);
   const [editPresetName, setEditPresetName] = useState('');
   const [editPresetUrl, setEditPresetUrl] = useState('');
   const [editPresetKey, setEditPresetKey] = useState('');
@@ -520,6 +522,8 @@ const Settings: React.FC = () => {
   
   // UI States
   const [showModelModal, setShowModelModal] = useState(false);
+  // 打开模型弹窗那一刻的模型名：点 × 关掉时退回它，只有「确定」/点选列表才算数。
+  const modelBeforePickerRef = useRef('');
   const [modelFilter, setModelFilter] = useState('');
   const [showVisionModelModal, setShowVisionModelModal] = useState(false);
   const [visionModelFilter, setVisionModelFilter] = useState('');
@@ -1071,21 +1075,57 @@ const Settings: React.FC = () => {
   /**
    * 保存下面这份表单 = 改「当前生效的配置」，**不会**顺手覆盖任何一条预设。
    * 想把改动存回预设，走预设那排的铅笔（弹窗里可一键填入当前配置）。
+   *
+   * modelOverride：模型弹窗里刚选定的模型。setLocalModel 要到下一次渲染才生效，
+   * 选完立刻保存时得把它直接递进来，不然存进去的还是选之前那个。
    */
-  const handleSaveApi = () => {
+  const handleSaveApi = (modelOverride?: string) => {
     const nextConfig = {
       apiKey: normalizeApiCredential(localKey),
       baseUrl: normalizeApiBaseUrl(localUrl),
-      model: normalizeApiModel(localModel),
+      model: normalizeApiModel(modelOverride ?? localModel),
       stream: localStream,
       temperature: localTemperature,
     };
+    // 「是不是来自某条预设」要在保存之前问，存完值就对不上了
+    const sourcePreset = apiPresets.find(preset => preset.id === activePresetId);
     setLocalKey(nextConfig.apiKey);
     setLocalUrl(nextConfig.baseUrl);
     setLocalModel(nextConfig.model);
     commitApiConfig(nextConfig);
     setStatusMsg({ key: 'settings.api.saved' });
     setTimeout(() => setStatusMsg(null), 2000);
+    if (sourcePreset && presetDiffersFromConfig(sourcePreset, nextConfig)) {
+      setPresetWriteback({ presetId: sourcePreset.id, config: nextConfig });
+    }
+  };
+
+  // 把刚保存的当前配置写回它原来那条预设。当前配置已经生效了，这里只动预设。
+  const confirmPresetWriteback = () => {
+    setPresetWriteback(null);
+    if (!presetWriteback) return;
+    const preset = apiPresets.find(item => item.id === presetWriteback.presetId);
+    if (!preset) return;  // 弹窗开着的时候这条被删了
+    updateApiPreset(preset.id, preset.name, { ...preset.config, ...presetWriteback.config });
+    addToast(`已存回预设「${preset.name}」`, 'success');
+  };
+
+  // 模型弹窗：选定即保存生效（连同表单里的 URL / Key 一起，跟「保存配置」同一条路），
+  // 不留「弹窗里点了确定、其实还没保存」的中间状态。× 关掉 = 放弃这次挑选。
+  const openModelPicker = () => {
+    modelBeforePickerRef.current = localModel;
+    setShowModelModal(true);
+  };
+
+  const cancelModelPicker = () => {
+    setLocalModel(modelBeforePickerRef.current);
+    setShowModelModal(false);
+  };
+
+  const confirmModelPicker = (model: string) => {
+    setLocalModel(model);
+    setShowModelModal(false);
+    handleSaveApi(model);
   };
 
   const handleSaveVisionApi = (enabled = localVisionEnabled) => {
@@ -1269,9 +1309,11 @@ const Settings: React.FC = () => {
         const models = extractModelIds(data);
         if (models.length > 0) {
             setAvailableModels(models);
-            if (models.length > 0 && !models.includes(localModel)) setLocalModel(models[0]);
+            openModelPicker();
+            // 还没填过模型才顺手预选第一个；手填的名字不在列表里也照样保留
+            //（不少中转的 /models 列不全），换不换由用户在弹窗里定。
+            if (!localModel.trim()) setLocalModel(models[0]);
             setStatusMsg({ key: 'settings.api.modelsFound', params: { count: models.length } });
-            setShowModelModal(true); // Open selector immediately
         } else { setStatusMsg({ key: 'settings.api.modelsEmpty' }); }
     } catch (error: any) {
         console.error(error);
@@ -2103,7 +2145,7 @@ const Settings: React.FC = () => {
                     </div>
                     
                     <button
-                        onClick={() => setShowModelModal(true)}
+                        onClick={openModelPicker}
                         title={localModel || t('settings.api.select')}
                         className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-3 text-sm text-slate-700 flex justify-between items-center gap-2 active:bg-white transition-all shadow-sm"
                     >
@@ -2117,9 +2159,15 @@ const Settings: React.FC = () => {
                     </button>
                 </div>
 
-                <button onClick={handleSaveApi} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-primary/20 bg-primary active:scale-95 transition-all mt-2">
+                {/* 带括号调用：handleSaveApi 的第一个参数是「模型名覆盖」，直接传 onClick 会把点击事件当成模型名 */}
+                <button onClick={() => handleSaveApi()} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-primary/20 bg-primary active:scale-95 transition-all mt-2">
                     {statusMsg ? t(statusMsg.key, statusMsg.params) : t('settings.api.save')}
                 </button>
+                {apiPresets.length > 0 && (
+                    <p className="text-[9px] text-slate-300 px-1 leading-relaxed">
+                        这里改的是当前生效的配置。它原本来自某条预设的话，保存后会问你要不要一起存回那条预设。
+                    </p>
+                )}
                 {apiPresets.length > 0 && (
                     <p className="text-[9px] text-slate-300 px-1 leading-relaxed">
                         这里改的是当前生效的配置，不会动上面的预设；要把改动存回某条预设，点它的铅笔。
@@ -3922,7 +3970,7 @@ const Settings: React.FC = () => {
       </Modal>
 
       {/* 模型选择 Modal */}
-      <Modal isOpen={showModelModal} title={t('settings.model.title')} onClose={() => setShowModelModal(false)}>
+      <Modal isOpen={showModelModal} title={t('settings.model.title')} onClose={cancelModelPicker}>
         {(() => {
             const { filtered, commonPrefix } = modelPickerView;
             return (
@@ -3936,7 +3984,7 @@ const Settings: React.FC = () => {
                             className="flex-1 bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-primary focus:bg-white transition-all"
                         />
                         <button
-                            onClick={() => setShowModelModal(false)}
+                            onClick={() => confirmModelPicker(localModel)}
                             className="px-4 py-2.5 bg-primary text-white text-sm font-bold rounded-xl active:scale-95 transition-all"
                         >
                             {t('settings.model.confirm')}
@@ -3975,7 +4023,7 @@ const Settings: React.FC = () => {
                             return (
                                 <button
                                     key={m}
-                                    onClick={() => { setLocalModel(m); setShowModelModal(false); }}
+                                    onClick={() => confirmModelPicker(m)}
                                     title={m}
                                     className={`w-full text-left px-4 py-3 rounded-xl text-sm font-mono flex justify-between items-start gap-2 ${selected ? 'bg-primary/10 text-primary font-bold ring-1 ring-primary/20' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
                                 >
@@ -4175,6 +4223,28 @@ const Settings: React.FC = () => {
                   {editingPresetId && activePresetId === editingPresetId
                       ? t('settings.preset.activeHelp')
                       : t('settings.preset.inactiveHelp')}
+              </p>
+          </div>
+      </Modal>
+
+      {/* 保存后问要不要存回预设 */}
+      <Modal
+          isOpen={!!presetWriteback}
+          title="存回预设？"
+          onClose={() => setPresetWriteback(null)}
+          footer={
+              <>
+                  <button onClick={() => setPresetWriteback(null)} className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 transition-transform">不保存</button>
+                  <button onClick={confirmPresetWriteback} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl active:scale-95 transition-transform">保存</button>
+              </>
+          }
+      >
+          <div className="space-y-2 text-sm text-slate-600 leading-relaxed">
+              <p>
+                  当前配置已经和预设「{apiPresets.find(item => item.id === presetWriteback?.presetId)?.name ?? ''}」不一样了。
+              </p>
+              <p className="text-xs text-slate-400">
+                  若不保存，当前配置为临时配置，切换预设后消失。若保存，则用当前配置覆盖这条预设原来的内容。
               </p>
           </div>
       </Modal>

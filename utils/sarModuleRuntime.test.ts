@@ -6,6 +6,7 @@ import {
     alignSARChatSurfaceChunks,
     advanceSARModuleRuntime,
     advanceSARModuleAfterReply,
+    buildAmsgSarModuleSnapshot,
     endSARModuleRuntime,
     buildSARModulePrompt,
     createSARModuleEventMeta,
@@ -19,6 +20,7 @@ import {
     resolveSARModuleSpeechSource,
 } from './vrWorld/sarModuleRuntime';
 import { SAR_MODULE_CATALOG } from './vrWorld/sarModuleShop';
+import { selectSARUserSurfaceTargets } from './vrWorld/sarUserSurface';
 
 const module = SAR_MODULE_CATALOG[0];
 const baseChar = { id: 'c1', name: '凯', vrState: { enabled: true, intervalMinutes: 120 } } as CharacterProfile;
@@ -323,5 +325,99 @@ ${xinsheng}`;
 <CHAR_TRUE>只有正文</CHAR_TRUE>
 </SAR_MODULE_OUTPUT>`;
         expect(parseSARModuleReply(clean, plan, { carryTrailingXinsheng: true }).canonical).toBe('只有正文');
+    });
+});
+
+// 即时对话上云时随任务走的快照（metadata.amsgSar）。worker 靠它拆信封，落库侧靠它写事件、
+// 推进回合——这些都发生在回复回来之后，所以一切「请求时的东西」必须在这里冻结。
+describe('上云快照 buildAmsgSarModuleSnapshot', () => {
+    const msg = (id: number, role: Message['role'], content: string, timestamp: number, extra: Partial<Message> = {}): Message => ({
+        id, charId: 'c1', role, type: 'text', content, timestamp, ...extra,
+    } as Message);
+
+    it('两边都没有模块 → 不带快照（普通回合的任务 metadata 一个键都不多）', () => {
+        const plan = getSARModuleRuntimePlan(baseChar, baseUser);
+        expect(buildAmsgSarModuleSnapshot({
+            plan, charId: 'c1', currentMsgs: [msg(1, 'user', '在吗', 10)], historyMsgs: [], reroll: false,
+        })).toBeUndefined();
+    });
+
+    it('两侧状态裁成最小形状，事件、本轮用户消息、USER_SURFACE 目标都在请求时算好', () => {
+        const onChar = installSARModuleOnCharacter(module, 5, { keyword: '喵' });
+        const onUser = installSARModuleOnUser(SAR_MODULE_CATALOG[1], baseChar, 5);
+        const char = { ...baseChar, vrState: { ...baseChar.vrState!, sarModule: onChar } };
+        const user = { ...baseUser, vrState: { ...baseUser.vrState!, sarModule: onUser } };
+        const plan = getSARModuleRuntimePlan(char, user);
+        const history = [
+            msg(1, 'user', '装之前说的', 1),
+            msg(2, 'assistant', '回过了', 6),
+            msg(3, 'user', '第一句', 7),
+            msg(4, 'user', '图', 8, { type: 'image' as Message['type'] }),
+            msg(5, 'user', '第二句', 9),
+            msg(6, 'user', '别的会话', 9, { charId: 'c2' }),
+        ];
+        // currentMsgs 是本会话的消息（别的会话那条只混在 history 里，验证目标按 charId 过滤）。
+        const current = [...history.filter(message => message.charId === 'c1'), msg(7, 'system', '系统提示', 11)];
+
+        const snapshot = buildAmsgSarModuleSnapshot({
+            plan, charId: 'c1', currentMsgs: current, historyMsgs: history, reroll: false,
+        })!;
+
+        // 只带组外显 meta 用得到的五个字段：description / effectLabel / configuration 这些
+        // 会随 push 回程，不该跟着出门。
+        expect(snapshot.character).toEqual({
+            runId: onChar.runId, moduleId: onChar.moduleId, moduleTitle: onChar.moduleTitle, target: 'character', phase: 'active',
+        });
+        expect(snapshot.user).toEqual({
+            runId: onUser.runId, moduleId: onUser.moduleId, moduleTitle: onUser.moduleTitle, target: 'user', phase: 'active',
+        });
+        expect(snapshot.v).toBe(1);
+        expect(snapshot.events).toEqual(createSARModuleEventMeta(plan));
+        expect(snapshot.events.map(event => event.target)).toEqual(['character', 'user']);
+        // 和本地收尾同一选法：从后往前第一条 role user、type text（跳过 system / 图片）。
+        expect(snapshot.userMessageId).toBe(5);
+        // 目标和 prompt 里列给模型的是同一份（同一函数、同一份 historyMsgs）。
+        expect(snapshot.userSurfaceTargetIds).toEqual(
+            selectSARUserSurfaceTargets(history, 'c1', onUser).map(message => message.id),
+        );
+        expect(snapshot.userSurfaceTargetIds).toEqual([3, 5]);
+        expect(snapshot.reroll).toBe(false);
+    });
+
+    it('重掷照样带快照（效果照用），但标上 reroll 让落库侧别推进回合', () => {
+        const onChar = installSARModuleOnCharacter(module, 5);
+        const char = { ...baseChar, vrState: { ...baseChar.vrState!, sarModule: onChar } };
+        const snapshot = buildAmsgSarModuleSnapshot({
+            plan: getSARModuleRuntimePlan(char, baseUser), charId: 'c1',
+            currentMsgs: [msg(1, 'user', '在吗', 10)], historyMsgs: [msg(1, 'user', '在吗', 10)], reroll: true,
+        })!;
+        expect(snapshot.reroll).toBe(true);
+        expect(snapshot.user).toBeUndefined();
+        // 用户身上没有模块：没有 USER_SURFACE 目标。
+        expect(snapshot.userSurfaceTargetIds).toEqual([]);
+    });
+
+    it('恢复期（afterglow）也带快照：事件要写、回合要推进，只是不需要信封', () => {
+        const ended = endSARModuleRuntime(installSARModuleOnUser(module, baseChar, 5))!;
+        const user = { ...baseUser, vrState: { ...baseUser.vrState!, sarModule: ended } };
+        const plan = getSARModuleRuntimePlan(baseChar, user);
+        expect(plan.requiresEnvelope).toBe(false);
+        const snapshot = buildAmsgSarModuleSnapshot({
+            plan, charId: 'c1', currentMsgs: [msg(1, 'user', '好了吗', 10)], historyMsgs: [msg(1, 'user', '好了吗', 10)], reroll: false,
+        })!;
+        expect(snapshot.user).toMatchObject({ runId: ended.runId, phase: 'afterglow' });
+        expect(snapshot.events[0]).toMatchObject({ moment: 'ended', endReason: 'manual' });
+        // USER_SURFACE 只在 active 时列目标。
+        expect(snapshot.userSurfaceTargetIds).toEqual([]);
+    });
+
+    it('找不到本轮用户消息时不带 userMessageId（落库侧据此不写事件）', () => {
+        const onChar = installSARModuleOnCharacter(module, 5);
+        const char = { ...baseChar, vrState: { ...baseChar.vrState!, sarModule: onChar } };
+        const snapshot = buildAmsgSarModuleSnapshot({
+            plan: getSARModuleRuntimePlan(char, baseUser), charId: 'c1',
+            currentMsgs: [msg(1, 'assistant', '我先说', 10)], historyMsgs: [], reroll: false,
+        })!;
+        expect('userMessageId' in snapshot).toBe(false);
     });
 });

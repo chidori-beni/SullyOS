@@ -18,17 +18,17 @@ import type { ActiveMsg2CharacterConfig } from '../types';
 
 // ─── 默认值 ───
 
-/** 你没回时，角色最多连发几条（0 = 不限）。 */
+/** 你没回时，角色最多连着主动找你几次（0 = 不限）。一次可以是好几段气泡。 */
 export const DEFAULT_MAX_UNANSWERED_SENDS = 3;
-/** 角色自己排的两条主动消息之间至少隔多少分钟（0 = 不额外限制）。 */
+/** 角色自己排的两次主动消息之间至少隔多少分钟（0 = 不额外限制）。 */
 export const DEFAULT_MIN_SEND_GAP_MINUTES = 10;
 /** 每天最多主动发几次（0 = 不限）。默认不限：这是用户想管钱包时才去开的那道闸。 */
 export const DEFAULT_DAILY_SEND_CAP = 0;
 /** 重复的消息连续几次没回就先停（0 = 不停）。 */
 export const DEFAULT_RECURRING_STOP_AFTER = 3;
-/** 同时最多排着几条（用户和角色共用这些名额）。 */
+/** 同时最多排好几次（用户和角色共用这些名额，重复的只占一个）。 */
 export const DEFAULT_MAX_ACTIVE_TASKS = 5;
-/** 设置里能选到的「同时排着几条」上限。 */
+/** 设置里能选到的「同时排好几次」上限。 */
 export const MAX_ACTIVE_TASKS_CEILING = 10;
 
 /** 用户在面板上能调的那几项（都挂在 ActiveMsg2CharacterConfig 上，没设 = 用默认值）。 */
@@ -344,7 +344,7 @@ export const checkSelfScheduleRules = (input: SelfScheduleRuleInput): SelfSchedu
     return {
       ok: false,
       reason: 'min_gap',
-      message: `离 ${input.formatTime(conflict)} 那条太近了：用户定了两条主动消息之间至少隔 ${describeMinutes(gapMinutes)}。`
+      message: `离 ${input.formatTime(conflict)} 那次太近了：用户定了两次主动消息之间至少隔 ${describeMinutes(gapMinutes)}。`
         + `要排的话最早 ${input.formatTime(earliest)}；没那么要紧的话，这次就别排了。`,
     };
   }
@@ -358,13 +358,13 @@ export const checkSelfScheduleRules = (input: SelfScheduleRuleInput): SelfSchedu
 
 export interface LimitsBriefInput {
   limits: AmsgLimits;
-  /** 用户没回期间已经发了 / 排了几条（前台聊天时用户刚开口，传 0）。 */
+  /** 用户没回期间已经主动找了 / 排了几次（前台聊天时用户刚开口，传 0）。 */
   committedSends: number;
-  /** 现在排着几条（算任务名额）。 */
+  /** 现在挂着几个排程任务（算任务名额）。 */
   activeTasks: number;
   /** 下一条最早能排到几点（已经按间隔算好、说成角色那边的钟）；没有间隔要求时不传。 */
   earliestText?: string;
-  /** 今天还能再主动发几条（到点生成时才知道；前台不传）。 */
+  /** 今天还能再主动找几次（到点生成时才知道；前台不传）。 */
   dailyRemaining?: number;
 }
 
@@ -377,19 +377,19 @@ export const buildLimitsBrief = (input: LimitsBriefInput): string => {
   const lines: string[] = [];
   if (Number.isFinite(limits.maxUnansweredSends)) {
     const left = Math.max(0, limits.maxUnansweredSends - input.committedSends);
-    lines.push(`- 对方没回的时候，你最多连着主动发 ${limits.maxUnansweredSends} 条（排好还没发的也算），`
-      + (left > 0 ? `现在还能再排 ${left} 条。` : '现在一条都不能再排了，等对方回复。'));
+    lines.push(`- 对方没回的时候，你最多连着主动找对方 ${limits.maxUnansweredSends} 次（一次可以说好几句；排好还没发的也算），`
+      + (left > 0 ? `现在还能再排 ${left} 次。` : '现在一次都不能再排了，等对方回复。'));
   }
   if (limits.minSendGapMs > 0) {
-    lines.push(`- 两条主动消息之间至少隔 ${describeMinutes(Math.round(limits.minSendGapMs / 60_000))}`
+    lines.push(`- 两次主动找对方之间至少隔 ${describeMinutes(Math.round(limits.minSendGapMs / 60_000))}`
       + (input.earliestText ? `，这次最早排到 ${input.earliestText}。` : '。'));
   }
   if (input.dailyRemaining !== undefined && Number.isFinite(limits.dailySendCap)) {
     lines.push(input.dailyRemaining > 0
-      ? `- 今天还能再主动发 ${input.dailyRemaining} 条。`
-      : '- 今天的主动消息已经用完了，要排就排到明天。');
+      ? `- 今天还能再主动找对方 ${input.dailyRemaining} 次。`
+      : '- 今天主动找对方的次数已经用完了，要排就排到明天。');
   }
-  lines.push(`- 同时最多排着 ${limits.maxActiveTasks} 条，现在排着 ${input.activeTasks} 条。`);
+  lines.push(`- 同时最多挂 ${limits.maxActiveTasks} 个排程任务，现在挂着 ${input.activeTasks} 个。`);
   if (!limits.allowSelfRecurring) lines.push('- 只能排一次性的，不能排每天/每周重复的。');
   if (!limits.allowSelfForce) lines.push('- 排的消息到点碰上对方正在聊天会自动作罢（转成你在聊天里自然带出），没有「到点必发」。');
   return ['用户给你定的规矩（系统照着执行：超出的排不上，排上了到点也不发）：', ...lines].join('\n');

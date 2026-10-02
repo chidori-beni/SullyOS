@@ -31,6 +31,7 @@ import {
   decryptFromStorage,
   deriveUserEncryptionKey,
   measurePushPayload,
+  SCHEMA_VERSION,
   summarizeErrorCause,
 } from '@rei-standard/amsg-server/cloudflare';
 import { stripReasoningTags } from '@rei-standard/amsg-shared';
@@ -136,7 +137,8 @@ import {
   type AmsgToolPack,
 } from '../../../utils/amsgToolPack';
 import { buildRealtimeWorldBlock } from './realtimeWorld';
-import { handleSelfUpdate } from './selfUpdate';
+import { authorizeSelfUpdate, handleSelfUpdate, resolveScriptName } from './selfUpdate';
+import { ensureSchemaOnce, readSelfUpdateState, recordManualSelfUpdate, runAutoUpdate } from './autoUpdate';
 import { handleCronTriggerRead, handleCronTriggerWrite, isCronTriggerAuthFailure } from './cronTrigger';
 import {
   buildMcpDirectHeaders,
@@ -171,6 +173,13 @@ import {
   processLLMRound,
   type FireSessionState,
 } from './agentic';
+import {
+  amsgSarSnapshotKey,
+  amsgSarSurfaceKey,
+  amsgSarUserSurfaceKey,
+  readSarSnapshot,
+  stripSarSnapshot,
+} from './sarEnvelope';
 import {
   amsgEmotionUpdateKey,
   EMOTION_EVAL_RIDE_ALONG_MS,
@@ -217,6 +226,8 @@ interface Env extends NativeFcmEnv {
   CF_API_TOKEN?: string;
   CF_ACCOUNT_ID?: string;
   CF_SCRIPT_NAME?: string;
+  /** 可选：成品包换个地方取（自己维护成品包的 fork、或拿测试 Worker 试新代码）。见 selfUpdate.resolveBundleUrl。 */
+  AMSG_BUNDLE_URL?: string;
   /**
    * 即时对话的起跳器（Durable Object）。类型上可选是因为老版本 Worker 上真的没有它，
    * 那种情况由 /instant-chat 明确报「需要更新 Worker」，见 instantChat.kickInstantTick。
@@ -615,18 +626,27 @@ interface OffloadBaton {
   field: string;
   /** 挪完留在 metadata 上的引用键字段名，客户端照着它取回。 */
   refField: string;
-  /** client_state 里的存储键（每任务一份，下次触发覆盖）。 */
-  key: (clientTaskId: string) => string;
+  /**
+   * client_state 里的存储键（每任务一份，下次触发覆盖）。第二个参数是这条 push 在本轮里的
+   * 段序号（0 起）：只有每条 push 各挂一份的字段（SAR 外显）要用它编键，别的棒忽略。
+   */
+  key: (clientTaskId: string, segmentIndex: number) => string;
   /** 日志前缀，`wrangler tail` 上一眼看出是哪一棒挪的。 */
   log: string;
 }
 
 /**
- * 挪的顺序：思考链 → 情绪评估结果 → XHS 会话数据。
+ * 挪的顺序：思考链 → 情绪评估结果 → SAR 快照 → SAR 用户外显 → 本段 SAR 外显 → XHS 会话数据。
  *
  * 前两样都是整段模型输出（几百到几千字），超限时多半是它俩撑爆的，而且客户端拿它们
- * 只是渲染卡片 / 落 buff，晚一步取回来不影响这条消息本身；XHS 那份关系到这条消息里的
- * 卡片能不能出来，所以排最后，挪完还是装不下才动它。
+ * 只是渲染卡片 / 落 buff，晚一步取回来不影响这条消息本身。
+ *
+ * SAR 三样（见 ./sarEnvelope）：快照是客户端收尾写事件、推进回合用的，晚一步不影响气泡；
+ * 用户外显（USER_SURFACE 原文，用户这轮写得长它就长）只影响用户自己那条气泡的展示；
+ * 本段外显是这条气泡默认显示的那一版，取回之前界面会先露出真意，所以在三样里排最后。
+ * 本段外显每条 push 各有一份，键里带段序号，同一轮几条互不覆盖。
+ *
+ * XHS 那份关系到这条消息里的卡片能不能出来，所以排最后，挪完还是装不下才动它。
  */
 const OFFLOAD_BATONS: OffloadBaton[] = [
   {
@@ -640,6 +660,24 @@ const OFFLOAD_BATONS: OffloadBaton[] = [
     refField: 'amsgEmotionRef',
     key: amsgEmotionUpdateKey,
     log: '[amsg:emotion] 评估结果旁路存储',
+  },
+  {
+    field: 'amsgSar',
+    refField: 'amsgSarRef',
+    key: amsgSarSnapshotKey,
+    log: '[amsg:sar] 模块快照旁路存储',
+  },
+  {
+    field: 'amsgSarUserSurface',
+    refField: 'amsgSarUserSurfaceRef',
+    key: amsgSarUserSurfaceKey,
+    log: '[amsg:sar] 用户外显旁路存储',
+  },
+  {
+    field: 'amsgSarSurface',
+    refField: 'amsgSarSurfaceRef',
+    key: amsgSarSurfaceKey,
+    log: '[amsg:sar] 本段外显旁路存储',
   },
   {
     field: 'xhsSession',
@@ -661,12 +699,16 @@ const OFFLOAD_BATONS: OffloadBaton[] = [
  * 挪哪几样、按什么顺序挪见 OFFLOAD_BATONS。
  *
  * 存不进去时**抛错**而不是砍内容：抛错走投递失败重试，砍内容则是当场穿帮且无从察觉。
+ *
+ * segmentIndex 是这条 push 在本轮里的段序号（构建 push 时的下标，0 起），每条各挂一份的
+ * 字段靠它编出互不覆盖的存储键。
  */
 export const offloadOversizedPush = async (
   payload: Record<string, unknown>,
   writeState: WriteState | undefined,
   charId: string,
   clientTaskId: string,
+  segmentIndex = 0,
 ): Promise<Record<string, unknown>> => {
   if (pushFits(payload)) return payload;
 
@@ -702,7 +744,7 @@ export const offloadOversizedPush = async (
     const value = meta[baton.field];
     if (!hasOffloadable(value)) continue;
 
-    const key = baton.key(clientTaskId);
+    const key = baton.key(clientTaskId, segmentIndex);
     // 字符串原样存（客户端取回来直接用），对象序列化一份。
     await writeState(amsgStateNamespace(charId), [
       { key, value: typeof value === 'string' ? value : JSON.stringify(value) },
@@ -1353,14 +1395,14 @@ export const runFireScheduleTool = async (
     return {
       ok: false,
       reason: 'unanswered_limit',
-      message: `对方还没回复，这期间你已经发了/排了 ${committedSends} 条，用户设置的连发上限是 ${unansweredLimit} 条——这次别排了，等 ta 回复再说。`,
+      message: `对方还没回复，这期间你已经主动找了 / 排了 ${committedSends} 次，用户设的连发上限是 ${unansweredLimit} 次——这次别排了，等 ta 回复再说。`,
     };
   }
   if (stash.scheduledTasks.length >= MAX_FIRE_SCHEDULES) {
     return {
       ok: false,
       reason: 'fire_limit',
-      message: `这次已经排了 ${MAX_FIRE_SCHEDULES} 条，够了，剩下的话直接写进这条消息里。`,
+      message: `这次已经排了 ${MAX_FIRE_SCHEDULES} 次后续，够了，剩下的话直接写进这条消息里。`,
     };
   }
   // 本轮取消掉的既有任务把名额还回来（提示词教的「取消再重排」才走得通）。
@@ -2565,7 +2607,10 @@ export const amsgHooks = {
       messageType,
       // 摘掉评估配置再交出去：它里头是用户副 API 的 apiKey，而 metadata 会被整个
       // 摊进每条 push 的 payload（见 agentic 的 buildScheduledPush）。见 stripEmotionEvalSpec。
-      metadata: stripEmotionEvalSpec(ctx.metadata),
+      // SAR 快照同样摘掉，单独经 sar 传入：它只随最后一条 push 原样回去一次。
+      metadata: stripSarSnapshot(stripEmotionEvalSpec(ctx.metadata)),
+      // SAR 临时模块快照（形状不对就当没有）。要求信封时 processLLMRound 在分段前拆信封。
+      sar: readSarSnapshot(ctx.metadata),
       occurrenceMs: stash.occurrenceMs,
       // round 1 XHS 工具抓到的笔记 / xsecToken 快照：finish 时按 directive 引用
       // 挑选后随最后一条 push 带回客户端（客户端离线跑不了 round 1，缺这份
@@ -2799,10 +2844,11 @@ export const amsgHooks = {
       // 由库抛 PUSH_PAYLOAD_TOO_LARGE，照样不会静默丢消息。缺了照样走一趟，是为了让
       // offloadOversizedPush 把「为什么没法旁路」吼出来，别只留一个光秃秃的超限错。
       if (stash.charId) {
+        // 下标就是构建 push 时的段序号（前面的挂载都是逐条 map，不增删不换序）。
         const budgeted = [];
-        for (const payload of payloads) {
+        for (const [index, payload] of payloads.entries()) {
           budgeted.push(await offloadOversizedPush(
-            payload, ctx.writeState, stash.charId, stash.clientTaskId));
+            payload, ctx.writeState, stash.charId, stash.clientTaskId, index));
         }
         payloads = budgeted;
       }
@@ -3507,12 +3553,25 @@ export class InstantTickDO extends DurableObject<Env> {
       // 先摘掉这次标记：如果整轮中途被平台回收，下一分钟的 Cron 会重新写入并重试；
       // 不在同一 alarm invocation 里重复跑同一轮。
       await this.ctx.storage.delete(SCHEDULED_TICK_KEY);
+      // 上游（4e53bd22）：换过代码之后的第一跳先补齐这版要的表。本 fork 的 cron 主路径在这个 DO 里，
+      // 所以跟旧部署的兜底路径一样要做（见 worker 默认导出的 scheduled）。
+      await ensureSchemaOnce(this.env.DB as TickReportDb | undefined, SCHEMA_VERSION, () => upstream.ensureSchema(this.env));
       const result = await upstream.scheduled(scheduled, this.env);
       // 上游（06f65bd9）把整轮出错的原因记进库，体检面板的定时任务细账读的是这一份。
       // 本 fork 的 cron 主路径在这个 DO 里跑，所以这里也要记，不能只记旧部署那条兜底路径。
       await recordTickOutcome(this.env.DB as unknown as TickReportDb, result);
       if (result && typeof result === 'object' && 'ok' in result && !(result as { ok?: unknown }).ok) {
         console.warn('[amsg:instant-tick] cron tick 返回失败，等下一分钟重试');
+      }
+      // 上游（4e53bd22）：投递完再看要不要更新自己（有节流，绝大多数跳只读一行就走）。
+      // 成品包地址见 selfUpdate.resolveBundleUrl —— 默认是本 fork 的 chidori-beni/sullyos-workers。
+      try {
+        await runAutoUpdate(this.env, this.env.DB as TickReportDb, {
+          source: 'cron',
+          scriptName: this.env.CF_SCRIPT_NAME?.trim() || null,
+        });
+      } catch (error) {
+        console.warn('[amsg:auto-update] 这一跳的自动更新检查没跑完', error);
       }
     }
 
@@ -3556,14 +3615,16 @@ const readServerVersion = async (request: Request, env: Env) => {
  *   GET  /tick-report   定时任务细账：过期任务各自卡在哪、报错原文、整轮报错（见 ./tickReport，要共享密钥）
  *   POST /instant-chat  即时对话：一个请求受理一轮聊天（见 ./instantChat）
  *   POST /self-update   自己去取最新代码覆盖自己（见 ./selfUpdate，要共享密钥 + CF_API_TOKEN）
+ *   POST /self-update/check  App 冷启动时顺手问一句「该更新了没」，有节流（见 ./autoUpdate，认证同上）
  *   GET/POST /cron-trigger  查看 / 暂停 / 恢复自己的 cron trigger（见 ./cronTrigger，认证同上）
  *   其它请求            配置不全时直接 503 + 说明缺什么，不进上游
  */
-// 两个 handler 都只收 (request/event, env)：CF 还会给第三个参数 ctx，但这里用不上——
-// /instant-chat 回完 202 之后的那一跳，以及 Cron 的整轮扫描，都跑在 InstantTickDO 的
-// alarm 里，不占这个请求的生命周期（waitUntil 只有 30 秒，见 InstantTickDO 的注释）。
+// fetch 收第三个参数 ctx 只为 /self-update/check 一条路：它回 202 之后在 waitUntil 里把检查跑完
+// （几秒的事，30 秒上限够用；被掐了下一轮 cron 会再来）。别的路由都不用 ctx——
+// /instant-chat 回完 202 之后的那一跳跑在 InstantTickDO 的 alarm 里，不占这个请求的
+// 生命周期（waitUntil 只有 30 秒，见 InstantTickDO 的注释）。scheduled 只收 (event, env)。
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx?: { waitUntil(promise: Promise<unknown>): void }): Promise<Response> {
     const pathname = new URL(request.url).pathname.replace(/\/+$/, '') || '/';
     const method = request.method.toUpperCase();
 
@@ -3628,8 +3689,50 @@ export default {
           // 影院放映室中转（/watch-room/*，见 watchRoom.ts）。真能不能用还要看 instantTick。
           watchRoom: true,
           workerVersion: AMSG_BUNDLE_VERSION,
+          // 自动更新：有没有这个能力（配没配 CF_API_TOKEN，不回值）+ 最近一次检查的结果。
+          // 读的是诊断表，D1 没绑上时读不到就是 null，不影响上面那些照常回答。
+          selfUpdate: {
+            supported: Boolean(env.CF_API_TOKEN?.trim()),
+            state: await readSelfUpdateState(env.DB as TickReportDb | undefined),
+          },
         },
       });
+    }
+
+    if (pathname.endsWith('/self-update/check')) {
+      if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
+      if (method !== 'POST') {
+        return jsonWithCors(405, {
+          success: false,
+          error: { code: 'METHOD_NOT_ALLOWED', message: '/self-update/check 只接受 POST' },
+        });
+      }
+      // App 冷启动顺手问的一句「该更新了没」。门跟 /self-update 一样高（它同样能让 Worker
+      // 覆盖自己的代码）。回 202 就走人：检查本身在 waitUntil 里跑，页面关了也不影响；
+      // 结果记进诊断表，设置页从 /config-check 读。节流在 runAutoUpdate 里，这里不重复判。
+      const gate = await authorizeSelfUpdate(request, env);
+      if (!gate.ok) {
+        return jsonWithCors(gate.code === 'CF_TOKEN_MISSING' ? 400 : 401, {
+          success: false,
+          error: { code: gate.code, message: gate.message },
+        });
+      }
+      const db = env.DB as TickReportDb | undefined;
+      if (typeof db?.prepare !== 'function') {
+        return jsonWithCors(503, {
+          success: false,
+          error: { code: 'WORKER_CONFIG_MISSING', message: '没绑 D1，记不下检查结果，先把 DB 绑上。' },
+        });
+      }
+      const check = runAutoUpdate(env, db, {
+        source: 'client',
+        scriptName: resolveScriptName(env, request.url),
+      }).catch((error) => {
+        console.warn('[amsg:auto-update] 冷启动触发的检查没跑完', error);
+      });
+      if (ctx?.waitUntil) ctx.waitUntil(check);
+      else await check;
+      return jsonWithCors(202, { success: true, data: { accepted: true } });
     }
 
     if (pathname.endsWith('/debug')) {
@@ -3664,6 +3767,8 @@ export default {
       // 排在下面那道配置门之前：配置缺了一半正是想更新一版试试的时候，
       // 被门挡住反而没法自救。它自己校验共享密钥，不吃这道门的豁免。
       const result = await handleSelfUpdate(request, env);
+      // 装上的那份指纹是之后自动检查的比对基准；换了代码也要让新代码下一跳重新查表。
+      await recordManualSelfUpdate(env.DB as TickReportDb | undefined, result);
       return jsonWithCors(result.ok ? 200 : 400, {
         success: result.ok,
         data: result.ok ? result : undefined,
@@ -3820,7 +3925,20 @@ export default {
 
     // 兼容尚未建 INSTANT_TICK 的旧部署。新部署一定走上面的轻量路径；旧部署只能
     // 继续原地执行，用户更新 Worker 后就会自动切到 DO。
+    // 换过代码（自更新、Sync fork、wrangler deploy 都算）之后的第一跳先把这版要的表补齐，
+    // 不然缺表缺列会让下面那一跳每分钟静默挂。每个表结构版本只真查一次，见 ensureSchemaOnce。
+    await ensureSchemaOnce(env.DB as TickReportDb | undefined, SCHEMA_VERSION, () => upstream.ensureSchema(env));
     const outcome = await upstream.scheduled(event, env);
     await recordTickOutcome(env.DB as unknown as TickReportDb, outcome);
+    // 投递完再看要不要更新自己（有节流，绝大多数跳在这里只读一行就走）。cron 路上没有
+    // 请求 URL，脚本名只能靠 CF_SCRIPT_NAME——一键部署和「补钥匙」写的都有这一条。
+    try {
+      await runAutoUpdate(env, env.DB as TickReportDb, {
+        source: 'cron',
+        scriptName: env.CF_SCRIPT_NAME?.trim() || null,
+      });
+    } catch (error) {
+      console.warn('[amsg:auto-update] 这一跳的自动更新检查没跑完', error);
+    }
   },
 };

@@ -8,6 +8,9 @@
  *   - 找人代配：每次更新都得再找一次
  * 有了这条，三条路的更新都变成「在 SullyOS 里点一下」，手机上尤其省事。
  *
+ * 在此之上还有「不用点」的那层：配了 CF_API_TOKEN 的 Worker 会自己定期查有没有新代码，
+ * 有就照这里同一套流程换上（见 ./autoUpdate）。这份文件只管「怎么换」，「什么时候换」在那边。
+ *
  * 浏览器为什么不能直接干这事：api.cloudflare.com 不返回 CORS 头，前端 fetch 一律被拦。
  * 而 worker 自己跑在 Cloudflare 上，调 API 没这个问题，所以这活儿只能落在这一侧。
  *
@@ -33,6 +36,23 @@ const BUNDLE_URL =
   // 响亮地失败，好过悄悄回退。
   'https://raw.githubusercontent.com/chidori-beni/sullyos-workers/main/amsg/worker.bundle.js';
 
+/**
+ * 成品包从哪儿取：默认本 fork 的 chidori-beni/sullyos-workers（见上面 BUNDLE_URL，铁律：跟 cfProvision 的 BUNDLE_BASE 指同一个仓库）；配了 AMSG_BUNDLE_URL 就取那儿（自己维护成品包的 fork、
+ * 或者拿一台测试 Worker 试新代码时用）。只认 https，别的一律回落到默认。
+ */
+export function resolveBundleUrl(env: Pick<SelfUpdateEnv, 'AMSG_BUNDLE_URL'>): string {
+  const configured = env.AMSG_BUNDLE_URL?.trim();
+  if (!configured) return BUNDLE_URL;
+  try {
+    const url = new URL(configured);
+    if (url.protocol === 'https:') return url.toString();
+  } catch {
+    // 不是个能解析的地址，按默认走
+  }
+  console.warn('[amsg:self-update] AMSG_BUNDLE_URL 不是 https 地址，改用默认成品包');
+  return BUNDLE_URL;
+}
+
 /** 上传时用的模块名，同时也是 metadata.main_module，两处必须一致。 */
 const MAIN_MODULE = 'worker.bundle.js';
 
@@ -55,6 +75,8 @@ export interface SelfUpdateEnv {
   CF_ACCOUNT_ID?: string;
   /** 可选：不配就从 workers.dev 域名反推。套了代理域名时必须配。 */
   CF_SCRIPT_NAME?: string;
+  /** 可选：成品包换个地方取（见 resolveBundleUrl）。不配就是本 fork 的那份。 */
+  AMSG_BUNDLE_URL?: string;
 }
 
 export interface SelfUpdateResult {
@@ -67,7 +89,7 @@ export interface SelfUpdateResult {
   scriptName?: string;
 }
 
-const fail = (code: string, message: string): SelfUpdateResult => ({ ok: false, code, message });
+const fail = (code: string, message: string): SelfUpdateResult & { ok: false } => ({ ok: false, code, message });
 
 /**
  * 调 Cloudflare API，把 {success, errors, result} 那层信封拆掉。
@@ -203,13 +225,44 @@ export async function locateScript(
   };
 }
 
-/** 取回最新成品包，并确认它确实是 amsg 的 worker 而不是一张错误页。 */
-async function fetchLatestBundle(): Promise<
-  { ok: true; code: string } | { ok: false; message: string }
-> {
+/** 取回来的成品包：正文加上它的指纹，指纹既用来回报也用来判「跟上次装的是不是同一份」。 */
+export interface FetchedBundle {
+  code: string;
+  /** sha-256 前 12 位。跟 SelfUpdateResult.bundleHash 是同一个数。 */
+  hash: string;
+  bytes: number;
+}
+
+/**
+ * 取包的地址后面挂一个随时间变的参数。
+ *
+ * 注意它**绕不开 GitHub raw 自己那层 CDN**（真机看过：换个参数照样 x-cache: HIT，它的缓存键
+ * 不带 query），只能挡住中间别的按完整 URL 存的缓存。新包推上去后几分钟内取回旧包这件事，
+ * 靠 ./autoUpdate 两次检查至少隔半小时来兜（那时缓存早铺开了）。
+ */
+export function bundleFetchUrl(base: string, nowMs = Date.now()): string {
+  const url = new URL(base);
+  url.searchParams.set('t', String(nowMs));
+  return url.toString();
+}
+
+/**
+ * 取回最新成品包，并确认它确实是 amsg 的 worker 而不是一张错误页。
+ *
+ * 能绕的缓存都绕（地址挂时间参数 + `cache: 'no-store'`），但 raw.githubusercontent 自己的
+ * CDN（max-age=300）绕不开：新包推上去之后各节点几分钟内还会吐旧的。所以取回来的包
+ * 不能当成「一定是最新」——自动更新那边两次检查至少隔半小时，到那时缓存早铺开了（见 ./autoUpdate）；
+ * 手动点的那条路不受节流管，刚发布那几分钟内点到旧包就是旧包，下次自动检查会再换回来。
+ */
+export async function fetchLatestBundle(
+  env: Pick<SelfUpdateEnv, 'AMSG_BUNDLE_URL'> = {},
+): Promise<{ ok: true; bundle: FetchedBundle } | { ok: false; message: string }> {
   let res: Response;
   try {
-    res = await fetch(BUNDLE_URL, { headers: { 'User-Agent': 'sullyos-amsg-self-update' } });
+    res = await fetch(bundleFetchUrl(resolveBundleUrl(env)), {
+      headers: { 'User-Agent': 'sullyos-amsg-self-update' },
+      cache: 'no-store',
+    });
   } catch (err) {
     return { ok: false, message: `取不到最新代码：${(err as Error).message}` };
   }
@@ -223,7 +276,8 @@ async function fetchLatestBundle(): Promise<
   if (!code.includes(BUNDLE_FINGERPRINT)) {
     return { ok: false, message: '取回来的文件不像 amsg 的 worker 代码，没有覆盖，当前版本不动。' };
   }
-  return { ok: true, code };
+  const hash = (await sha256Hex(code)).slice(0, 12);
+  return { ok: true, bundle: { code, hash, bytes } };
 }
 
 /**
@@ -303,10 +357,16 @@ export function buildDurableObjectPlan(existing: any[]): DurableObjectPlan {
   };
 }
 
-export async function handleSelfUpdate(
+/**
+ * 自更新的门：共享密钥必须配了且对得上，CF_API_TOKEN 必须在。
+ *
+ * `POST /self-update` 和 `POST /self-update/check` 共用这一道——两条路都能让 Worker
+ * 覆盖自己的代码，门槛不能有高低。
+ */
+export async function authorizeSelfUpdate(
   request: Request,
   env: SelfUpdateEnv,
-): Promise<SelfUpdateResult> {
+): Promise<{ ok: true; token: string } | { ok: false; code: string; message: string }> {
   // ① 没设共享密钥的实例一律不给自更新：那种实例的地址等于全公开，
   //    留这个口子相当于谁都能让别人的后端重新部署一次。
   const serverToken = env.AMSG_SERVER_TOKEN?.trim();
@@ -329,25 +389,27 @@ export async function handleSelfUpdate(
       '没配 CF_API_TOKEN，没法自己更新。去 Cloudflare 建一枚只勾 Workers Scripts → Edit 的 API Token，加进这个 Worker 的变量里。',
     );
   }
+  return { ok: true, token };
+}
 
-  const scriptName = resolveScriptName(env, request.url);
-  if (!scriptName) {
-    return fail(
-      'SCRIPT_NAME_UNKNOWN',
-      '认不出这个 Worker 叫什么（多半是套了代理域名）。给它加一条 CF_SCRIPT_NAME 变量，值填 Worker 的名字。',
-    );
-  }
-
+/**
+ * 把一份已经取回并验过的成品包装到自己身上。
+ *
+ * 门（密钥、token）和「要不要装」的判断都在调用方：手动那条路（handleSelfUpdate）是
+ * 点了就装，自动那条路（./autoUpdate）先比指纹再决定。这里只负责「装」这一步本身。
+ */
+export async function performSelfUpdate(
+  env: SelfUpdateEnv,
+  token: string,
+  scriptName: string,
+  bundle: FetchedBundle,
+): Promise<SelfUpdateResult> {
   // ② 定位自己住在哪个账号下，同时把现有配置读回来：binding、兼容性日期都照搬，
   //    免得自更新顺手改了运行时行为。
   const located = await locateScript(env, token, scriptName);
   if (!located.ok) return fail('SCRIPT_NOT_LOCATED', located.message);
   const account = { id: located.accountId };
   const settings = { result: located.settings };
-
-  // ③ 新代码先拿到手并验明正身，再碰线上的东西。
-  const bundle = await fetchLatestBundle();
-  if (!bundle.ok) return fail('BUNDLE_INVALID', bundle.message);
 
   // 密钥的名字要到运行时才知道（读回来的 binding 列表说了算），所以这里按名取值，
   // 类型上就只能当成一袋 key-value 看。
@@ -400,14 +462,35 @@ export async function handleSelfUpdate(
     return fail('UPLOAD_FAILED', `上传失败（${uploaded.detail}）。当前版本不动。`);
   }
 
-  const hash = (await sha256Hex(bundle.code)).slice(0, 12);
-  const bytes = new TextEncoder().encode(bundle.code).length;
   return {
     ok: true,
     code: 'UPDATED',
     message: '已经更新到最新版本。',
-    bundleHash: hash,
-    bundleBytes: bytes,
+    bundleHash: bundle.hash,
+    bundleBytes: bundle.bytes,
     scriptName,
   };
+}
+
+/** `POST /self-update`：点了就装，不比指纹——手动点的人多半正是想强行重刷一遍。 */
+export async function handleSelfUpdate(
+  request: Request,
+  env: SelfUpdateEnv,
+): Promise<SelfUpdateResult> {
+  const gate = await authorizeSelfUpdate(request, env);
+  if (!gate.ok) return gate;
+
+  const scriptName = resolveScriptName(env, request.url);
+  if (!scriptName) {
+    return fail(
+      'SCRIPT_NAME_UNKNOWN',
+      '认不出这个 Worker 叫什么（多半是套了代理域名）。给它加一条 CF_SCRIPT_NAME 变量，值填 Worker 的名字。',
+    );
+  }
+
+  // ③ 新代码先拿到手并验明正身，再碰线上的东西。
+  const fetched = await fetchLatestBundle(env);
+  if (!fetched.ok) return fail('BUNDLE_INVALID', fetched.message);
+
+  return performSelfUpdate(env, gate.token, scriptName, fetched.bundle);
 }

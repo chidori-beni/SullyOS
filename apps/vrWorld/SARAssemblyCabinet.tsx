@@ -1,4 +1,5 @@
 import { SARFacilityGuide } from './SARFacilityGuide';
+import { SARIdentityDetails } from './SARIdentityDetails';
 import React, { useEffect, useMemo, useState } from 'react';
 import { BookOpen, CaretLeft, Check, CircleNotch, Eye, Fingerprint, Play, X } from '@phosphor-icons/react';
 import type { APIConfig, CharacterProfile, CharacterGroup, GroupProfile, RealtimeConfig, SARCharacterCabinetNoteMeta, UserProfile } from '../../types';
@@ -15,12 +16,11 @@ import {
 } from '../../utils/vrWorld/sarGacha';
 import {
     forgeSARIdentityCard,
+    deleteSARIdentityCard,
     SARIdentitySaveError,
     saveSARIdentityCard,
     readSARSimulationState,
-    resolveSARUserMaskProfile,
     resolveSARWorldlineProfile,
-    resolveSARSimulationModules,
     startSARSimulationRun,
     type SARIdentityCard,
     type SARSimulationRun,
@@ -98,22 +98,28 @@ const IdentityCardView: React.FC<{
     onStartRun: () => void;
     onEnterRun: () => void;
     onAssemble: () => void;
+    onDelete: () => Promise<void>;
     error?: string;
-}> = ({ card, actor, run, onStartRun, onEnterRun, onAssemble, error }) => {
-    const { variant, story } = resolveSARSimulationModules(card);
+}> = ({ card, actor, run, onStartRun, onEnterRun, onAssemble, onDelete, error }) => {
+    const [confirmDelete, setConfirmDelete] = useState(false);
+    const [deleting, setDeleting] = useState(false);
     const worldline = resolveSARWorldlineProfile(card);
-    const userMask = resolveSARUserMaskProfile(card);
     return <main className="sarc-reader-card">
         <div className="sarc-card-reading">
             <div className="sarc-card-byline"><CharacterPortrait char={actor || { name: card.charName, avatar: '' }}/><span>{card.charName}<small>{worldline.worldName}</small></span></div>
             <h2>{card.profile.title}</h2><p className="sarc-card-logline">{card.profile.logline}</p>
             <section className="sarc-card-opening"><h3>故事的开头</h3><p>{card.profile.openingScene}</p><blockquote><span>{card.charName}</span>{card.profile.openingLine}</blockquote></section>
-            <details className="sarc-card-fold"><summary>你们在这里的身份</summary><h3>{card.charName}</h3><p>{card.profile.identity}</p><h3>与你的关系</h3><p>{card.profile.relationship}</p><h3>{userMask.title}</h3><p>{userMask.identity}</p><p>{userMask.lifePatch}</p></details>
-            <details className="sarc-card-fold"><summary>这张卡的背景</summary><h3>来自两枚模块</h3><p>{variant?.title||card.variantId} · {story?.title||card.storyId}</p><h3>这个世界</h3><p>{worldline.worldPremise}</p><h3>已发生的前情</h3><p>{worldline.arrivalPoint}</p><h3>另一段人生</h3><p>{card.profile.lifePatch}</p><h3>角色坚持的事</h3><p>{card.profile.steelSeal}</p><h3>随之而来的代价</h3><p>{card.profile.patchCost}</p><h3>表达与行为</h3><p>{card.profile.behaviorShift}</p></details>
+            <SARIdentityDetails card={card} />
             <p className="sarc-card-limit">一次故事最多五十次互动。你可以探索、陪伴，也可以只过眼前的生活。</p>
             <button type="button" className="sarc-card-another" onClick={onAssemble}>再铸一张异格</button>
+            <button type="button" className="sarc-card-another" disabled={deleting} onClick={() => setConfirmDelete(true)}>{card.deletionPending ? '重试删除档案' : '删除这张档案'}</button>
+            {confirmDelete && <div className="sarc-delete-backdrop"><section role="alertdialog" aria-modal="true" aria-label="删除异格档案" className="sarc-delete-dialog">
+                <h3>删除「{card.profile.title}」？</h3><p>这张身份卡和它的全部故事记录会一并删除，无法撤销。原角色、私聊及收藏的模块不受影响。</p>
+                <button type="button" className="sarc-card-another" disabled={deleting} onClick={() => setConfirmDelete(false)}>取消</button>
+                <button type="button" className="sarc-card-another" disabled={deleting} onClick={async () => { setDeleting(true); try { await onDelete(); } finally { setDeleting(false); } }}>{deleting ? '正在删除…' : '确认删除档案'}</button>
+            </section></div>}
         </div>
-        <footer className="sarc-card-start">{error && <p className="sarc-error" role="alert">{error}</p>}<button type="button" aria-label={!run?'进入故事':run.status==='active'?'继续故事':'重读这段故事'} onClick={run?onEnterRun:onStartRun}><Play size={16} weight="fill"/>{!run?'进入故事':run.status==='active'?'继续故事':'重读这段故事'}{run&&<small>{run.interactionsUsed} / {run.maxInteractions}</small>}</button></footer>
+        <footer className="sarc-card-start">{error && <p className="sarc-error" role="alert">{error}</p>}<button type="button" disabled={deleting || card.deletionPending} aria-label={!run?'进入故事':run.status==='active'?'继续故事':'重读这段故事'} onClick={run?onEnterRun:onStartRun}><Play size={16} weight="fill"/>{!run?'进入故事':run.status==='active'?'继续故事':'重读这段故事'}{run&&<small>{run.interactionsUsed} / {run.maxInteractions}</small>}</button></footer>
     </main>;
 };
 
@@ -314,6 +320,20 @@ export const SARAssemblyCabinetOverlay: React.FC<{
         }
     };
 
+    const deleteCard = async () => {
+        if (!activeCard) return;
+        setError('');
+        try {
+            setSimulationState(await deleteSARIdentityCard(activeCard.id));
+            setActiveCard(null); setView('cards');
+        } catch (cause: any) {
+            const state = readSARSimulationState();
+            setSimulationState(state);
+            setActiveCard(state.cards.find(card => card.id === activeCard.id) || activeCard);
+            setError((cause?.message || '删除失败') + '，请重试删除。');
+        }
+    };
+
     const handleBack = () => {
         if (view === 'cards') onClose();
         else if (view === 'session') setView('card');
@@ -347,7 +367,7 @@ export const SARAssemblyCabinetOverlay: React.FC<{
                 onRunChange={() => setSimulationState(readSARSimulationState())}
                 onThemeChange={setSessionTheme}
                 onBack={handleBack}
-            /> : view === 'card' && activeCard ? <IdentityCardView card={activeCard} actor={characters.find(char => char.id === activeCard.charId)} error={error} run={activeRun} onStartRun={startRun} onEnterRun={() => setView('session')} onAssemble={openAssembly} /> : view === 'note' && activeNote ? <CharacterNoteView note={activeNote} actor={characters.find(char => char.id === activeNote.actorId)} /> : view === 'cards' ? <CabinetRecordsView
+            /> : view === 'card' && activeCard ? <IdentityCardView key={activeCard.id} onDelete={deleteCard} card={activeCard} actor={characters.find(char => char.id === activeCard.charId)} error={error} run={activeRun} onStartRun={startRun} onEnterRun={() => setView('session')} onAssemble={openAssembly} /> : view === 'note' && activeNote ? <CharacterNoteView note={activeNote} actor={characters.find(char => char.id === activeNote.actorId)} /> : view === 'cards' ? <CabinetRecordsView
                 shelf={shelf} onShelfChange={setShelf} characters={characters} characterGroups={characterGroups} selectedCharId={selectedCharId} onSelectChar={setSelectedCharId}
                 cards={simulationState.cards} runs={simulationState.runs} notes={characterNotes} notesLoading={notesLoading}
                 notesError={notesError} onRetryNotes={() => setNotesRetry(value => value + 1)}

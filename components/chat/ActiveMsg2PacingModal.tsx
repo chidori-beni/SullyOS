@@ -26,7 +26,7 @@ interface ActiveMsg2PacingModalProps {
   onClose: () => void;
   /** 当前保存着的设置（没设的项 = 用默认值）。 */
   initial: AmsgPacingSettings;
-  /** TA 现在排着的、每天/每周重复的消息有几条（关掉「可以排重复的」时会一起取消）。 */
+  /** TA 现在排着几次每天/每周重复的消息（关掉「可以排重复的」时会一起取消）。 */
   selfRecurringTaskCount: number;
   /** 保存。返回 true 关掉这一页；false 表示没存成、留在原处（调用方负责提示）。 */
   onSubmit: (next: AmsgPacingSettings) => Promise<boolean>;
@@ -140,20 +140,20 @@ const ActiveMsg2PacingModal: React.FC<ActiveMsg2PacingModalProps> = ({
           <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block pl-1">多久找你一次</label>
 
           <Field
-            label="你没回时，最多连着发几条"
-            hint="TA 自己排的后续都算在里面，你回一句就重新数。到了上限，TA 排的后续到点会直接跳过、不补发。你自己排的不受影响。想让 TA 在你睡着时隔一阵报备一句的话，就调大些。"
-            warning={maxUnanswered === '0' ? '选了不限，你不回的时候 TA 可以一直接着发，每一条都要消耗一次 API 额度。' : null}
+            label="你没回时，最多连着找你几次"
+            hint="一次可以是好几句话。TA 自己排的后续都算在里面，你回一句就重新数。到了上限，TA 排的后续到点会直接跳过、不补发。你自己排的不受影响。想让 TA 在你睡着时隔一阵报备一句的话，就调大些。"
+            warning={maxUnanswered === '0' ? '选了不限，你不回的时候 TA 可以一直接着找你，每一次都要消耗 API 额度。' : null}
           >
             <select value={maxUnanswered} onChange={(e) => setMaxUnanswered(e.target.value)} className={selectClass}>
-              <option value="">默认（{DEFAULT_MAX_UNANSWERED_SENDS} 条）</option>
-              {range(1, 10).map((n) => <option key={n} value={String(n)}>{n} 条</option>)}
+              <option value="">默认（{DEFAULT_MAX_UNANSWERED_SENDS} 次）</option>
+              {range(1, 10).map((n) => <option key={n} value={String(n)}>{n} 次</option>)}
               <option value="0">不限</option>
             </select>
           </Field>
 
           <Field
-            label="两条之间至少隔多久"
-            hint="只管 TA 自己排的，免得一条接一条地刷屏。"
+            label="两次之间至少隔多久"
+            hint="只管 TA 自己排的，免得接连不断地刷屏。"
           >
             <select value={minGap} onChange={(e) => setMinGap(e.target.value)} className={selectClass}>
               <option value="">默认（{describeMinutes(DEFAULT_MIN_SEND_GAP_MINUTES)}）</option>
@@ -184,12 +184,12 @@ const ActiveMsg2PacingModal: React.FC<ActiveMsg2PacingModalProps> = ({
           </Field>
 
           <Field
-            label="最多同时排着几条"
-            hint="你和 TA 排的共用这些名额。"
+            label="最多同时排好几次"
+            hint="你和 TA 排的共用这些名额，每天、每周重复的只算一次。"
           >
             <select value={maxTasks} onChange={(e) => setMaxTasks(e.target.value)} className={selectClass}>
-              <option value="">默认（{DEFAULT_MAX_ACTIVE_TASKS} 条）</option>
-              {range(1, MAX_ACTIVE_TASKS_CEILING).map((n) => <option key={n} value={String(n)}>{n} 条</option>)}
+              <option value="">默认（{DEFAULT_MAX_ACTIVE_TASKS} 次）</option>
+              {range(1, MAX_ACTIVE_TASKS_CEILING).map((n) => <option key={n} value={String(n)}>{n} 次</option>)}
             </select>
           </Field>
         </div>
@@ -203,7 +203,7 @@ const ActiveMsg2PacingModal: React.FC<ActiveMsg2PacingModalProps> = ({
               <div className="text-xs text-slate-400 mt-1 leading-relaxed">关着时 TA 只能排一次性的。</div>
               {willCancelRecurring ? (
                 <div className="text-xs text-amber-600 mt-1 leading-relaxed">
-                  保存后，TA 现在排着的 {selfRecurringTaskCount} 条重复消息会一起取消。
+                  TA 排过 {selfRecurringTaskCount} 次重复消息，保存后会一起取消。
                 </div>
               ) : null}
             </div>

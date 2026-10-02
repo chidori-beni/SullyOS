@@ -816,37 +816,59 @@ export const DB = {
   //
   // 性能：走 [charId, type] 复合索引直取 vr_card，成本只跟该角色 vr_card 条数相关，
   // 跟总消息量无关——上万条聊天的用户也不会把整段历史读进内存。
-  getVRCardsByCharId: async (charId: string): Promise<Message[]> => {
+  getVRCardsByCharId: async (charId: string, limit?: number, accept: (message: Message) => boolean = () => true): Promise<Message[]> => {
     const db = await openDB();
     return new Promise((resolve, reject) => {
       const transaction = db.transaction(STORE_MESSAGES, 'readonly');
       const store = transaction.objectStore(STORE_MESSAGES);
-      if (store.indexNames.contains('charId_type')) {
+      if (store.indexNames.contains('charId_type') && limit === undefined) {
           const idx = store.index('charId_type');
           const req = idx.getAll(IDBKeyRange.only([charId, 'vr_card']));
           req.onsuccess = () => {
-              const results = (req.result || []).filter((m: Message) => !m.groupId && (m as any).metadata?.vrCard);
+              const results = (req.result || []).filter((m: Message) => !m.groupId && (m as any).metadata?.vrCard && accept(m));
               resolve(results);
           };
           req.onerror = () => reject(req.error);
           return;
       }
-      // 兜底：复合索引尚未建好的极少数情况（如升级事务还没跑完），用倒序游标扫，
-      // 凑够 80 条 vr_card 即停——避免 getAll 整段历史。
-      const index = store.index('charId');
+      // 首页限量读取走倒序游标；旧库缺复合索引时回退 charId，默认最多 80 条。
+      const indexed = store.indexNames.contains('charId_type');
+      const index = store.index(indexed ? 'charId_type' : 'charId');
       const collected: Message[] = [];
-      const cursorReq = index.openCursor(IDBKeyRange.only(charId), 'prev');
+      const cursorReq = index.openCursor(IDBKeyRange.only(indexed ? [charId, 'vr_card'] : charId), 'prev');
       cursorReq.onsuccess = () => {
           const cursor = cursorReq.result;
-          if (cursor && collected.length < 80) {
+          if (cursor && collected.length < (limit ?? 80)) {
               const m = cursor.value as Message;
-              if (!m.groupId && m.type === 'vr_card' && (m as any).metadata?.vrCard) collected.push(m);
+              if (!m.groupId && m.type === 'vr_card' && (m as any).metadata?.vrCard && accept(m)) collected.push(m);
               cursor.continue();
           } else {
               resolve(collected);
           }
       };
       cursorReq.onerror = () => reject(cursorReq.error);
+    });
+  },
+
+  // UI 的可见性判断只需要 ID；游标逐条丢弃正文，避免把图片和全量聊天留在内存。
+  getPrivateMessageRefs: async (charId: string, limit: number, afterId = 0): Promise<Pick<Message, 'id' | 'groupId'>[]> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_MESSAGES, 'readonly');
+      const refs: Pick<Message, 'id' | 'groupId'>[] = [];
+      const req = tx.objectStore(STORE_MESSAGES).index('charId').openCursor(IDBKeyRange.only(charId), 'prev');
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor || Number(cursor.primaryKey) <= afterId || refs.length >= limit) {
+          resolve(refs.reverse());
+          return;
+        }
+        const message = cursor.value as Message;
+        if (!message.groupId) refs.push({ id: message.id });
+        cursor.continue();
+      };
+      req.onerror = () => reject(req.error);
+      tx.onabort = () => reject(tx.error || new Error('消息读取中断'));
     });
   },
 

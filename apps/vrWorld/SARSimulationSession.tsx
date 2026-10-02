@@ -3,6 +3,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { Archive, ArrowLeft, ArrowDown, ArrowUp, BookOpenText, CircleNotch, DotsThree, DownloadSimple, Moon, SealCheck, ShareNetwork, Sun, X } from '@phosphor-icons/react';
 import type { APIConfig, CharacterProfile, Message, UserProfile } from '../../types';
 import './sarReading.css';
+import { SARIdentityDetails } from './SARIdentityDetails';
 import { findSARPendingReply, isSARDeletedReply, replaceSARSimulationReply, replaceSARSimulationUserMessage } from '../../utils/vrWorld/sarSimulationEdits';
 import { shareOrDownloadBlob } from '../../utils/shareExport';
 import {
@@ -274,7 +275,7 @@ export const SARSimulationSession: React.FC<{
                             ? <div key={message.id} className="sars-deleted-reply"><span>{messageScene(message)} · 回复已删除</span><button type="button" disabled={sending||!char} onClick={()=>void send(message.id)}>生成这一幕</button></div>
                             : <React.Fragment key={message.id}>
                             {message.role==='assistant'&&getSARWorldNarration(message)&&<article className="sars-narration" aria-label="世界旁白"><p>{getSARWorldNarration(message)}</p></article>}
-                            <article className={`sars-message is-${message.role}`} data-sar-message-id={message.id}><header>{message.role==='user'?userProfile.name:card.charName}<span>{messageScene(message)}</span>{(message.role==='assistant'||message.role==='user')&&<button type="button" className="sars-reply-menu" aria-label={messageScene(message)+(message.role==='user'?'我的消息操作':'回复操作')} disabled={sending} onClick={()=>setReplyAction({message,mode:'menu'})}><DotsThree size={19}/></button>}</header><p>{message.content}</p></article>
+                            <article className={`sars-message is-${message.role}`} data-sar-message-id={message.id}><header>{message.role==='user'?userProfile.name:card.charName}<span>{messageScene(message)}</span>{(message.role==='assistant'||message.role==='user')&&<button type="button" className="sars-reply-menu" aria-label={messageScene(message)+(message.role==='user'?'我的消息操作':'回复操作')} disabled={sending} onClick={()=>setReplyAction({message,mode:'menu'})}>{message.role==='user'?<span>修改</span>:<DotsThree size={19}/>}</button>}</header><p>{message.content}</p></article>
                         </React.Fragment>)}
                         {pendingText&&<article className="sars-message is-user is-pending"><header>{userProfile.name}</header><p>{pendingText}</p></article>}
                         {sending&&<div className="sars-loading" role="status"><CircleNotch size={16} className="animate-spin"/>{streamText||'正在接续这一刻……'}</div>}
@@ -304,8 +305,7 @@ export const SARSimulationSession: React.FC<{
                     <div className="sars-progress"><span>本段互动</span><strong>{run.interactionsUsed}<small> / {run.maxInteractions}</small></strong></div>
                     <p className="sars-detail-note">{active?'每次发送成功后记一次。离开页面可以稍后继续；这段经历将在五十次互动内自然收束。':'本段故事已封存，可以回看、保存全文或分享给角色。'}</p>
                     <button type="button" className="sars-setting-row" onClick={()=>setTheme(value=>value==='light'?'dark':'light')} aria-label={theme==='light'?'切换到深色阅读':'切换到浅色阅读'}><span>{theme==='light'?<Moon size={18}/>:<Sun size={18}/>}阅读外观</span><span>{theme==='light'?'浅色':'深色'}</span></button>
-                    <details><summary>世界与开场</summary><h3>{worldline.worldName}</h3><p>{worldline.worldPremise}</p><h3>开场时的状况</h3><p>{worldline.activeCrisis}</p><h3>角色起初关心的事</h3><p>{worldline.sharedObjective}</p><h3>故事里的时间</h3><p>{worldline.countdown}</p><small>这里是身份卡中的开场资料，后续变化以正文为准。</small></details>
-                    <details><summary>角色与这次身份</summary><h3>{card.charName}</h3><p>{card.profile.identity}</p><h3>与你的关系</h3><p>{card.profile.relationship}</p></details>
+                    <SARIdentityDetails card={card} />
                     {active&&<div className="sars-end-section"><button type="button" disabled={sending} onClick={()=>setArchiveConfirm(true)}><Archive size={17}/>提前封存</button><p>如果只是稍后再玩，直接返回即可。提前封存会结束这段演绎。</p></div>}
                     {error&&<p role="alert" className="sars-error">{error}</p>}
                 </div>

@@ -188,7 +188,7 @@ const simpleHash = (value: string): string => {
 };
 
 export function createQixiFallbackBundle(contextSignature = '', charLayerColor = QIXI_FALLBACK_CHAR_LAYER_COLOR): QixiMemoryBundle {
-    const emptyScenes = Object.fromEntries(QIXI_SCENE_IDS.map(sceneId => [sceneId, {
+    const emptyScenes = Object.fromEntries(QIXI_SCENE_IDS.map((sceneId): [QixiSceneId, QixiScenePayload] => [sceneId, {
         transitionLines: [],
         sharedObject: '',
         memoryLine: '',

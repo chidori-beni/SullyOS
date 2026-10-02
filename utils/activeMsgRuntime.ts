@@ -35,6 +35,7 @@ import {
 } from './amsgInstantChat';
 import { dispatchAmsgResult } from './amsgResults';
 import { reportSlowFlush, startFlushTimer } from './slowFlushProbe';
+import { requestStartupUpdateCheck } from './amsgAutoUpdateTrigger';
 import { flushAmsgState, stopAmsgChatPresence } from './amsgStateSync';
 import { describeInstantChatFailure, pruneStaleTasks, type RemoteTaskLastError } from './amsg2Tasks';
 // 线协议常量的唯一出处是 shared（amsg-sw 只是 re-export 同一份）。
@@ -48,6 +49,13 @@ import {
   getInstantChunkSessionId,
   INSTANT_CHUNK_PACING_MS,
 } from './amsgInstantPacing';
+import {
+  readAmsgSarSurface,
+  resolveAmsgSarSnapshot,
+  resolveAmsgSarSurface,
+  settleSarModuleAfterCloudReply,
+  stripAmsgSarTransportKeys,
+} from './sarModuleCloudSettle';
 
 // 同一个 category，两个 tag——保持 console 里现有的 [ActiveMsg] / [amsg] 标签，
 // 方便用户 / 文档里 grep 历史报错信息。两条 tag 都归 amsg 一类。
@@ -265,7 +273,7 @@ const fetchOffloadedXhsSession = async (
 const fetchOffloadedExtra = async (
   message: ActiveMsg2InboxMessage,
   /** metadata 上的引用键字段名。 */
-  refField: 'amsgEmotionRef' | 'amsgReasoningRef',
+  refField: 'amsgEmotionRef' | 'amsgReasoningRef' | 'amsgSarRef' | 'amsgSarSurfaceRef' | 'amsgSarUserSurfaceRef',
   /** 日志里怎么称呼它 + 取不到时这一轮少了什么。 */
   labels: { what: string; whenMissing: string },
   /** 取回成功时把「这份云端副本可以删了」登记进来，由调用方在处理成功后统一删。 */
@@ -680,6 +688,16 @@ const processInboxMessageWithPostProcessing = async (
     }
   }
 
+  // SAR 临时模块生效时，worker 拆完信封把这一段的角色外显随 push 带回来（已按段对齐）；
+  // 太大时挪进 client_state、只留 amsgSarSurfaceRef。取回的那份登记进本条的 cleanups，
+  // 处理成功后统一删。取不回只 warn、不进重试：外显丢了这一段显示真实回复，可以接受。
+  const sarModuleSurface = await resolveAmsgSarSurface(
+    message.metadata,
+    () => fetchOffloadedExtra(message, 'amsgSarSurfaceRef', {
+      what: 'SAR 角色外显', whenMissing: '这一段显示真实回复',
+    }, offloadedCleanups),
+  );
+
   await applyAssistantPostProcessing(message.body || '', {
     char,
     userProfile,
@@ -721,7 +739,10 @@ const processInboxMessageWithPostProcessing = async (
       // （amsgToolTrace 这类）只有这一条路进 metadata，漏了就静默没了。
       // 注意它排在最后，同名字段会盖掉上面那几个固定的——worker 哪天往 push metadata 里
       // 塞了个叫 source / activeMsg2 的字段，重试认领就会跟着歪。
-      ...(message.metadata || {}),
+      // SAR 临时模块那几个回程载具键（快照 / 这一段的外显 / USER_SURFACE 原文）剔掉：
+      // 外显由下面的 sarModuleSurface 按气泡对齐后写成 metadata.sarModuleSurface，
+      // 快照在销账时一次性收尾，都不该永久挂在每个气泡上。
+      ...stripAmsgSarTransportKeys(message.metadata),
     },
     xhsCaches: pushXhsCaches,
     lastXhsNotesRef: pushLastXhsNotesRef,
@@ -791,6 +812,8 @@ const processInboxMessageWithPostProcessing = async (
     //   3. 送达时人不在场：系统通知已经把整句话完整显示过，他是看着通知点进来的。
     // App 在前台时收到的实时消息照旧慢放——那才是「角色正在你眼前打字」的场景。
     instantRender: shouldRenderInstantly(message.metadata, message.receivedAt, Date.now()),
+    // 交给后处理逐气泡对齐写进 metadata.sarModuleSurface——和本地路径同一处消费。
+    sarModuleSurface,
   });
   markSegment('落库上屏');
   reportSlowFlush(segments);
@@ -1989,7 +2012,12 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
                 sentAt: message.sentAt,
                 receivedAt: message.receivedAt,
               },
-              ...(message.metadata || {}),
+              // 同主路径：SAR 回程载具键不进气泡；这一段的角色外显原稿整段挂上。
+              ...stripAmsgSarTransportKeys(message.metadata),
+              ...(() => {
+                const sarSurface = readAmsgSarSurface(message.metadata);
+                return sarSurface ? { sarModuleSurface: sarSurface } : {};
+              })(),
             },
           });
         } catch (e) {
@@ -2110,6 +2138,13 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
           void sweepSettledInstantRound(message.charId, pendingForChar.uuid);
           // 挂起没传的 fire_pack（销账前挡板拦下的那些）现在可以走了，别等 60s 回看。
           void flushAmsgState('instant-chat-settled');
+          // SAR 临时模块的一轮收尾（USER_SURFACE 写回用户消息、事件快照、推进回合）。
+          // 挂在这里是借销账的「同一 uuid 只进一次」防重复推进；内部各项自己兜错，不连累
+          // 已落库的消息。
+          // 有意为之的取舍：这一轮已经被 failInstantChatPending 判死（60s 点名超时、云端
+          // 回报失败等）之后回复才到时，待收记录早没了、走不进这个块——正文照常落库，但
+          // 不收尾（不推进回合、不写事件 / 用户外显），按「失败不扣回合」处理。
+          await settleInstantChatSarModule(message);
         }
       }
     } catch (stageErr) {
@@ -2137,6 +2172,46 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
     }
   }
   return landedMessageIds;
+};
+
+/**
+ * 即时对话末段落定后的 SAR 临时模块收尾：读末段上的快照（metadata.amsgSar），USER_SURFACE
+ * 原文太大时 worker 挪进了 client_state，这里按引用键取回。取不回只少写用户外显，
+ * 不压回收件箱——重试会把回合再推进一次。
+ */
+const settleInstantChatSarModule = async (message: ActiveMsg2InboxMessage): Promise<void> => {
+  try {
+    const cleanups: OffloadedCleanup[] = [];
+    // 快照太大时 worker 挪进了 client_state、只留 amsgSarRef；取不回就整轮不收尾。
+    const snapshot = await resolveAmsgSarSnapshot(
+      message.metadata,
+      () => fetchOffloadedExtra(message, 'amsgSarRef', {
+        what: 'SAR 快照', whenMissing: '这一轮不做 SAR 收尾，回复照常',
+      }, cleanups),
+    );
+    if (!snapshot) {
+      void runOffloadedCleanups(cleanups);
+      return;
+    }
+    const inlineUserSurface = (message.metadata as any)?.amsgSarUserSurface;
+    const userSurfaceRaw = typeof inlineUserSurface === 'string' && inlineUserSurface
+      ? inlineUserSurface
+      : await fetchOffloadedExtra(message, 'amsgSarUserSurfaceRef', {
+        what: 'SAR 用户外显', whenMissing: '这一轮用户消息不显示外显，回复照常',
+      }, cleanups);
+    const result = await settleSarModuleAfterCloudReply({
+      charId: message.charId,
+      snapshot,
+      userSurfaceRaw,
+    });
+    // 用户消息的 metadata 是在正文落库、'active-msg-received' 之后才改的，推一下让聊天界面重读。
+    if (result.messagesTouched) {
+      window.dispatchEvent(new CustomEvent('active-msg-progress', { detail: { charId: message.charId } }));
+    }
+    void runOffloadedCleanups(cleanups);
+  } catch (error) {
+    console.warn('[SAR·cloud] 即时对话 SAR 收尾失败（消息已落库，不受影响）', { messageId: message.messageId, error });
+  }
 };
 
 /**
@@ -3052,6 +3127,10 @@ export const ActiveMsgRuntime = {
     // 生命周期补收只覆盖「刚启动/刚回前台」；用户连续停在 App 内时也要持续看账本，
     // 否则一次丢掉的 Web Push 会把到点消息和来电一直扣到下一次页面切换。
     scheduleForegroundOutboxCheck();
+    // 顺手把后端更新一下（构建换了、或离上次够久才真的发）：版本对不上就直接更新，跟用户
+    // 点「更新 Worker」一样；对得上就敲一下让它按指纹自查。前端刚更新往往意味着后端也该更新，
+    // 不必干等它 cron 上那几个小时。没配 Worker 的用户在里面就返回了。
+    void requestStartupUpdateCheck();
     // 上次会话发出去、回来前进程就没了的那一轮：指示灯靠 localStorage 记录挂回来，
     // 内容靠云端点名那一步补回来（它自带补收，还顺手把 60s 的点名周期排上）。
     if (listInstantChatPendings().length > 0) {

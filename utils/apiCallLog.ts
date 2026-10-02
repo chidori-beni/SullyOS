@@ -769,7 +769,7 @@ export function buildApiRequestCapture(input: {
     }
 
     messages.forEach((rawMessage, messageIndex) => {
-        const message = rawMessage && typeof rawMessage === 'object' ? rawMessage as Record<string, unknown> : { content: rawMessage };
+        const message: Record<string, unknown> = rawMessage && typeof rawMessage === 'object' ? rawMessage as Record<string, unknown> : { content: rawMessage };
         const role = typeof message.role === 'string' ? message.role : 'unknown';
         const content = message.content;
         const shouldSplit = typeof content === 'string' && (

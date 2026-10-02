@@ -1,5 +1,11 @@
 .sully-boot { position:fixed; inset:0; z-index:9999; overflow:hidden; background:#12121a; color:#eee7ff; cursor:pointer; user-select:none; isolation:isolate; }
 .sully-boot:focus-visible { outline:2px solid #c4b3ff; outline-offset:-6px; }
+.sully-boot-mid-autumn { background:#111115; }
+.sully-boot-poster-scene { position:absolute; inset:0; display:grid; place-items:center; padding:var(--safe-top, 0px) 0 var(--safe-bottom, 0px); }
+.sully-boot-poster-frame { position:relative; width:min(100%, calc((100dvh - var(--safe-top, 0px) - var(--safe-bottom, 0px)) * 942 / 1672)); }
+.sully-boot-poster { display:block; width:100%; height:auto; }
+.sully-boot-poster-greeting { position:absolute; top:25%; left:0; right:0; margin:0; text-align:center; color:#fff4d9; font:400 clamp(12px, min(4.5vw, 2.5dvh), 24px)/1.8 'Noto Serif SC',serif; letter-spacing:.4em; padding-left:.4em; text-shadow:0 2px 12px #000; }
+.sully-boot-mid-autumn .sully-boot-hint { color:#fff4d9; text-shadow:0 1px 5px #000; bottom:max(12px, var(--safe-bottom, 0px)); }
 .sully-boot-scene { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:24px; }
 .sully-boot-halo { position:absolute; width:min(110vw,650px); aspect-ratio:1; border-radius:50%; background:radial-gradient(circle,#9270ef15,transparent 68%); pointer-events:none; }
 .sully-boot-art { position:relative; width:104px; max-width:25vw; aspect-ratio:1; margin-bottom:24px; }

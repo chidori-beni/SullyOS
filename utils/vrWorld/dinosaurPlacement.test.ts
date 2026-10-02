@@ -1,9 +1,9 @@
 import { expect, it } from 'vitest';
-import { createFishingMarketState } from './fishingMarket';
+import { createFishingMarketState, type FishingMarketState } from './fishingMarket';
 import { ensureDinosaurGarden, gardenResidents, editDino, setGardenMap, editGardenProp } from './dinosaurGarden';
 import { beginGardenPlacement, moveGardenPlacement, turnGardenPlacement, previewGardenPlacement, confirmGardenPlacement, placementError } from './dinosaurPlacement';
 const user={id:'user',name:'我',kind:'user' as const};
-const state=()=>{const s=ensureDinosaurGarden(createFishingMarketState(2),user);return {...s,dinosaurGarden:{...s.dinosaurGarden!,maps:s.dinosaurGarden!.maps.map(m=>({...m,props:[]}))}};};
+const state=():FishingMarketState=>{const s=ensureDinosaurGarden(createFishingMarketState(2),user);return {...s,dinosaurGarden:{...s.dinosaurGarden!,maps:s.dinosaurGarden!.maps.map(m=>({...m,props:[]}))}};};
 it('previewing, turning and abandoning a dinosaur never changes storage or history',()=>{
  const s=state(),id=gardenResidents(s)[0].catchId,before=JSON.stringify(s);
  let d=beginGardenPlacement(s,'dino',id);d=moveGardenPlacement(d,{x:0,z:3.15,rotation:0});d=turnGardenPlacement(d,1);

@@ -19,7 +19,7 @@ const MIN = 60_000;
 describe('resolveAmsgLimits — 用户没设时的默认值', () => {
   // 默认值是这次改动的核心承诺：用户什么都不动，角色也不会一分钟一条地刷、不会自己
   // 建每天都响的任务。改默认值要改的是产品决定，不是顺手调参——这条钉住它。
-  it('默认：连发 3 条、隔 10 分钟、每天不限、重复的 3 次没回就停、同时 5 条、不许排重复和到点必发', () => {
+  it('默认：连发 3 次、隔 10 分钟、每天不限、重复的 3 次没回就停、同时 5 个、不许排重复和到点必发', () => {
     expect(resolveAmsgLimits(undefined)).toEqual({
       maxUnansweredSends: 3,
       minSendGapMs: 10 * MIN,
@@ -153,22 +153,22 @@ describe('buildLimitsBrief', () => {
       earliestText: '21:40',
       dailyRemaining: 3,
     });
-    expect(text).toContain('现在还能再排 2 条');
+    expect(text).toContain('现在还能再排 2 次');
     expect(text).toContain('最早排到 21:40');
-    expect(text).toContain('今天还能再主动发 3 条');
-    expect(text).toContain('现在排着 2 条');
+    expect(text).toContain('今天还能再主动找对方 3 次');
+    expect(text).toContain('现在挂着 2 个');
     expect(text).toContain('只能排一次性的');
   });
 
   it('额度用完了直说；不限的项不出现', () => {
     const full = buildLimitsBrief({ limits: resolveAmsgLimits(undefined), committedSends: 3, activeTasks: 0 });
-    expect(full).toContain('一条都不能再排了');
+    expect(full).toContain('一次都不能再排了');
     const loose = buildLimitsBrief({
       limits: resolveAmsgLimits({ maxUnansweredSends: 0, minSendGapMinutes: 0, allowSelfRecurring: true, allowSelfForce: true }),
       committedSends: 9,
       activeTasks: 0,
     });
-    expect(loose).not.toContain('连着主动发');
+    expect(loose).not.toContain('连着主动找对方');
     expect(loose).not.toContain('至少隔');
     expect(loose).not.toContain('只能排一次性的');
     expect(loose).not.toContain('到点必发');

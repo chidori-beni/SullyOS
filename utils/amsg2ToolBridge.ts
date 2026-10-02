@@ -191,19 +191,53 @@ const TOOL_FOLLOW_UP = [
   '前面已经说出去的内容不要重写，接着往下写就行。]',
 ].join('\n');
 
-export const executeAmsg2Tool = async (
+/**
+ * 一次工具调用的结局，给工具循环判断「这一轮有没有进展」、也给 trace 留痕用。
+ *
+ * 不带任何聊天内容：
+ * - done：跑成了（排上 / 取消掉 / 改好 / 列出来了）；
+ * - rejected：跑了但清单一条没变（被规矩打回、没找到任务、远端没确认……），reason 是能说清的那几种；
+ * - duplicate：同名同参第二次，没有再跑；
+ * - error：抛错了，message 是报错原文的开头一截。
+ */
+export interface Amsg2ToolOutcome {
+  tool: string;
+  status: 'done' | 'rejected' | 'duplicate' | 'error';
+  reason?: string;
+  message?: string;
+}
+
+/**
+ * 被打回时的原因码。handler 返回的是给模型读的一句话，原因码走这张表旁路带出来，
+ * 不改 handler 的返回形状。键是本轮的 deps，一次调用读完就删。
+ */
+const rejectionReasons = new WeakMap<Amsg2ToolDeps, string>();
+
+/** handler 打回时用它：记下原因码，原样返回给模型的那句话。 */
+const reject = (deps: Amsg2ToolDeps, reason: string, text: string): string => {
+  rejectionReasons.set(deps, reason);
+  return text;
+};
+
+const taskSignature = (deps: Amsg2ToolDeps): string =>
+  (deps.getConfig()?.tasks ?? []).map((t) => `${t.taskUuid}:${t.status}`).join('|');
+
+/** 执行一次工具调用，连同结局一起返回（工具循环用这个；只要回话的用 executeAmsg2Tool）。 */
+export const executeAmsg2ToolWithOutcome = async (
   toolName: string,
   args: Record<string, any>,
   deps: Amsg2ToolDeps,
-): Promise<string> => {
+): Promise<{ text: string; outcome: Amsg2ToolOutcome }> => {
   const mutating = MUTATING_TOOLS.has(toolName);
   // 同名同参第二次直接打回，一次网络请求都不发。上面那段软提示挡不住时靠它兜底，
   // 与 worker 的 fire 循环同一道闸。只拦**完全一样**的调用——换时间、换方向照常放行，
   // 多轮能力一点不减。
   const fingerprint = mutating ? toolCallFingerprint(toolName, args) : '';
   if (mutating && deps.seenCalls.some((r) => r.fingerprint === fingerprint)) {
-    return buildDuplicateToolMessage(toolName);
+    return { text: buildDuplicateToolMessage(toolName), outcome: { tool: toolName, status: 'duplicate' } };
   }
+  const before = mutating ? taskSignature(deps) : '';
+  rejectionReasons.delete(deps);
   try {
     const result = await (() => {
       switch (toolName) {
@@ -222,11 +256,30 @@ export const executeAmsg2Tool = async (
     // 记账放在跑完之后：抛错的那次等于没跑成（远端没建出东西），把它记下来的话，
     // 角色连一次原样重试的机会都没有。
     if (mutating) deps.seenCalls.push({ name: toolName, fingerprint });
-    return mutating ? `${result}\n${TOOL_FOLLOW_UP}` : result;
+    const reason = rejectionReasons.get(deps);
+    rejectionReasons.delete(deps);
+    // 会改清单的工具看清单变没变：回话是给模型读的散文，拿它判成败靠不住。
+    let outcome: Amsg2ToolOutcome;
+    if (toolName === 'list_active_messages') outcome = { tool: toolName, status: 'done' };
+    else if (!mutating) outcome = { tool: toolName, status: 'rejected', reason: 'unknown_tool' };
+    else if (taskSignature(deps) !== before) outcome = { tool: toolName, status: 'done' };
+    else outcome = { tool: toolName, status: 'rejected', reason: reason ?? 'no_change' };
+    return { text: mutating ? `${result}\n${TOOL_FOLLOW_UP}` : result, outcome };
   } catch (e: any) {
-    return `操作失败：${e?.message || String(e)}`;
+    rejectionReasons.delete(deps);
+    return {
+      text: `操作失败：${e?.message || String(e)}`,
+      // 报错原文只留一小截：多半是这边自己写的话（名额满了、没填地址），排障时一眼能认出是哪道。
+      outcome: { tool: toolName, status: 'error', message: String(e?.message || e).slice(0, 120) },
+    };
   }
 };
+
+export const executeAmsg2Tool = async (
+  toolName: string,
+  args: Record<string, any>,
+  deps: Amsg2ToolDeps,
+): Promise<string> => (await executeAmsg2ToolWithOutcome(toolName, args, deps)).text;
 
 /** tasks 已归一化成数组的 config，下面的 handler 直接 `config.tasks` 即可。 */
 type LoadedConfig = ActiveMsg2CharacterConfig & { tasks: ActiveMsg2TaskRecord[] };
@@ -270,7 +323,7 @@ async function handleSchedule(args: Record<string, any>, deps: Amsg2ToolDeps): P
       .filter((t) => t.source === 'character' && isPendingTask(t, Date.now()))
       .length;
     if (plannedSelfSends + 1 > unansweredLimit) {
-      return `对方还没回复，这期间你已经排了 ${plannedSelfSends} 条后续，用户设置的连发上限是 ${unansweredLimit} 条——这次别排了，等 ta 回复再说。`;
+      return reject(deps, 'unanswered_limit', `对方还没回复，这期间你已经排了 ${plannedSelfSends} 次后续，用户设的连发上限是 ${unansweredLimit} 次——这次别排了，等 ta 回复再说。`);
     }
   }
   // 回话里的时间按角色的钟写：到点 worker 渲染排程清单用的也是角色时区，两边对不上的话
@@ -301,7 +354,7 @@ async function handleSchedule(args: Record<string, any>, deps: Amsg2ToolDeps): P
       earliestMs: now + MIN_SCHEDULE_LEAD_MS,
       formatTime: (ms) => formatTaskTime(ms, charTz),
     });
-    if (!rules.ok) return rules.message;
+    if (!rules.ok) return reject(deps, rules.reason, rules.message);
     // 改期沿用原任务的策略：用户自己排的「到点必发」被角色挪个时间，不该顺手降级。
     if (!args.__replaceTaskUuid) expirePolicy = rules.expirePolicy;
   }

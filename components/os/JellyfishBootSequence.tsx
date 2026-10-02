@@ -7,6 +7,7 @@ import { trackEvent } from '../../utils/analytics';
 const BOOT_SEEN_KEY = 'sullyos_boot_seen_session';
 
 interface Props {
+  poster?: string;
   /** 数据是否已就绪（IndexedDB 加载完）。未就绪时场景持续呼吸等待，不退场。 */
   dataReady: boolean;
   /** 退场动画播完后回调，交还控制权给 PhoneShell。 */
@@ -18,7 +19,10 @@ const prefersReducedMotion = () =>
   !!window.matchMedia &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-const JellyfishBootSequence: React.FC<Props> = ({ dataReady, onDone }) => {
+const JellyfishBootSequence: React.FC<Props> = ({ dataReady, onDone, poster }) => {
+  const [posterLoaded, setPosterLoaded] = useState(false);
+  const [posterFailed, setPosterFailed] = useState(false);
+  const showPoster = !!poster && !posterFailed;
   // 本会话是否首次看到开场：刷新页面仍属同 session → 走极短版。
   const firstThisSession = useMemo(() => {
     try { return !sessionStorage.getItem(BOOT_SEEN_KEY); } catch { return true; }
@@ -45,7 +49,7 @@ const JellyfishBootSequence: React.FC<Props> = ({ dataReady, onDone }) => {
     let raf = 0;
     const tick = () => {
       const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
-      if (dataReady && now - startRef.current >= HOLD) {
+      if (dataReady && (!showPoster || posterLoaded) && now - startRef.current >= HOLD) {
         setPhase('exit');
         // 只报区间不报精确毫秒。注意这里的时长带 HOLD 下限（完整版 2000ms / 极短版 520ms），
         // 真正有信息量的是 3-8s / 8s+ 这条尾巴 —— 数据加载慢才会落到那儿。
@@ -60,7 +64,7 @@ const JellyfishBootSequence: React.FC<Props> = ({ dataReady, onDone }) => {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [dataReady, phase, HOLD]);
+  }, [dataReady, phase, HOLD, showPoster, posterLoaded]);
 
   // 退场动画播完 → 交还控制权。
   useEffect(() => {
@@ -84,7 +88,7 @@ const JellyfishBootSequence: React.FC<Props> = ({ dataReady, onDone }) => {
 
   return (
     <div
-      className="sully-boot"
+      className={`sully-boot${showPoster ? ' sully-boot-mid-autumn' : ''}`}
       data-phase={phase}
       data-cinematic={cinematic}
       onClick={skip}
@@ -94,7 +98,16 @@ const JellyfishBootSequence: React.FC<Props> = ({ dataReady, onDone }) => {
       aria-label="SullyOS，轻触进入"
       style={{ opacity: exiting ? 0 : 1, transition: 'opacity ' + EXIT + 'ms ease-in' }}
     >
-      <div className="sully-boot-scene">
+      {showPoster ? <div className="sully-boot-poster-scene">
+        <div className="sully-boot-poster-frame">
+          <img src={poster} alt="SullyOS 糯米机·中秋，月亮上的猫与玉兔" className="sully-boot-poster" draggable={false}
+            onLoad={() => {
+              startRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
+              setPosterLoaded(true);
+            }} onError={() => setPosterFailed(true)} />
+          <p className="sully-boot-poster-greeting">欢迎回家</p>
+        </div>
+      </div> : <div className="sully-boot-scene">
         <div className="sully-boot-halo" aria-hidden="true" />
         {Array.from({ length: 18 }, (_, i) => (
           <span key={i} className="sully-boot-star" aria-hidden="true" style={{
@@ -115,7 +128,7 @@ const JellyfishBootSequence: React.FC<Props> = ({ dataReady, onDone }) => {
         <div className="sully-boot-wordmark">Sully<span>OS<i /></span><small>糯米机</small></div>
         <div className="sully-boot-rule" aria-hidden="true" />
         <p className="sully-boot-greeting">欢迎回家</p>
-      </div>
+      </div>}
       {cinematic && !exiting && <div className="sully-boot-hint">轻触进入</div>}
     </div>
   );

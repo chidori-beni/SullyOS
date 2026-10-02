@@ -1,52 +1,14 @@
 import type { CharacterProfile, Message, SARModuleRuntimeState, UserProfile } from '../../types';
 import { getSARModuleById, normalizeSARModuleConfiguration, type SARModuleDefinition } from './sarModuleShop';
+import { toSARModuleSurfaceSource, type AmsgSarModuleSnapshot, type SARModuleEventMeta, type SARModuleRuntimePlan } from './sarEnvelopeCore';
+import { selectSARUserSurfaceTargets } from './sarUserSurface';
+
+// 信封解析 / 外显对齐 / 快照形状住在零依赖叶子 sarEnvelopeCore（worker 也 import 那份），这里原样 re-export。
+export * from './sarEnvelopeCore';
 
 export const SAR_CHARACTER_MODULE_TURNS = 10;
 export const SAR_USER_MODULE_TURNS = 5;
 export const SAR_MODULE_AFTERGLOW_TURNS = 3;
-
-export interface SARModuleRuntimePlan {
-    character?: SARModuleRuntimeState;
-    user?: SARModuleRuntimeState;
-    hasActiveEffect: boolean;
-    hasAfterglow: boolean;
-    requiresEnvelope: boolean;
-}
-
-export interface SARModuleParsedReply {
-    canonical: string;
-    assistantSurface?: string;
-    userSurface?: string;
-    enveloped: boolean;
-}
-
-export interface SARModuleSurfaceMeta {
-    version: 1;
-    runId: string;
-    moduleId: string;
-    moduleTitle: string;
-    target: 'character' | 'user';
-    phase: 'active';
-    /** 界面按此外显；上下文/总结把它作为明确标注的历史引文读取，绝不当成真实语义。 */
-    surface: string;
-    canonicalField: 'content';
-    surfaceField: 'metadata.sarModuleSurface.surface';
-}
-
-export interface SARModuleEventMeta {
-    version: 1;
-    runId: string;
-    moduleId: string;
-    moduleTitle: string;
-    target: 'character' | 'user';
-    source: 'user' | 'character';
-    sourceCharacterId?: string;
-    sourceCharacterName?: string;
-    phase: 'active' | 'afterglow';
-    moment: 'installed' | 'active' | 'ended' | 'settling';
-    endReason?: 'manual';
-    configurationKeyword?: string;
-}
 
 const runId = (moduleId: string, now: number) =>
     `sar_mod_${now.toString(36)}_${moduleId.replace(/[^a-z0-9]/gi, '').slice(-10)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -122,7 +84,7 @@ export const endSARModuleRuntime = (state: SARModuleRuntimeState | undefined): S
 /** 请求携带的是旧快照；回复落库时只能推进同一装载、同一阶段的最新状态。 */
 export const advanceSARModuleAfterReply = (
     current: SARModuleRuntimeState | undefined,
-    requested: SARModuleRuntimeState | undefined,
+    requested: Pick<SARModuleRuntimeState, 'runId' | 'phase'> | undefined,
 ): SARModuleRuntimeState | undefined => {
     if (!current || !requested || current.runId !== requested.runId || current.phase !== requested.phase) return current;
     return advanceSARModuleRuntime(current);
@@ -182,6 +144,45 @@ export const createSARModuleEventMeta = (plan: SARModuleRuntimePlan): SARModuleE
         .filter((state): state is SARModuleRuntimeState => !!state)
         .map(moduleEventFromState)
 );
+
+/**
+ * 本轮的用户消息：事件快照（sarModuleEvents）写在它的 metadata 上。
+ * 本地收尾和上云快照都用这一个选法，两条路落点一致。
+ */
+export const findSARTurnUserMessage = (messages: Message[]): Message | undefined => (
+    messages.slice().reverse().find(message => message.role === 'user' && message.type === 'text')
+);
+
+/**
+ * 即时对话上云时随任务走的 SAR 快照（metadata.amsgSar）。角色和用户身上都没有模块时返回 undefined。
+ *
+ * 全部在请求发出那一刻算好：落库时再现算会对不上（最新用户消息可能换了、模块可能被手动结束）。
+ * - historyMsgs 必须是喂给 prompt 的同一份（buildChatRequestPayload 的 historyMsgs），
+ *   USER_SURFACE 的目标 id 才和模型看到的列表一致；
+ * - currentMsgs 用来找本轮用户消息，和本地收尾同一选法（findSARTurnUserMessage）。
+ */
+export const buildAmsgSarModuleSnapshot = (input: {
+    plan: SARModuleRuntimePlan;
+    charId: string;
+    currentMsgs: Message[];
+    historyMsgs: Message[];
+    /** 重掷：效果照用，但成功后不推进回合。 */
+    reroll: boolean;
+}): AmsgSarModuleSnapshot | undefined => {
+    const { plan } = input;
+    if (!plan.character && !plan.user) return undefined;
+    const userMessageId = findSARTurnUserMessage(input.currentMsgs)?.id;
+    return {
+        v: 1,
+        ...(plan.character ? { character: toSARModuleSurfaceSource(plan.character) } : {}),
+        ...(plan.user ? { user: toSARModuleSurfaceSource(plan.user) } : {}),
+        events: createSARModuleEventMeta(plan),
+        ...(typeof userMessageId === 'number' ? { userMessageId } : {}),
+        userSurfaceTargetIds: selectSARUserSurfaceTargets(input.historyMsgs, input.charId, plan.user)
+            .map(message => message.id),
+        reroll: input.reroll,
+    };
+};
 
 const safeEventLabel = (value: unknown, fallback: string, maxLength = 80): string => {
     const clean = String(value ?? '')
@@ -346,119 +347,6 @@ export const buildSARModulePrompt = (
         + `不要按模块扭曲后的外显版本来写。`,
     );
     return `\n\n${lines.join('\n')}\n`;
-};
-
-const isPlainSARChatActionOnlyChunk = (text: string): boolean => {
-    const clean = text.trim();
-    if (!clean) return false;
-    return /^(?:(?:（[^（）]*）|\([^()]*\)|\*[^*\n]+\*)\s*)+[。！？!?…～~—-]*$/s.test(clean);
-};
-
-/** Chat 的动作气泡不应被外显文本覆盖；括号动作被模型从 CHAR_SURFACE 省略时尤其要防止后续台词错位。 */
-export const isSARChatActionOnlyChunk = (text: string): boolean => {
-    const bilingualParts = text.split(/%%BILINGUAL%%/i).map(part => part.trim()).filter(Boolean);
-    return bilingualParts.length > 0 && bilingualParts.every(isPlainSARChatActionOnlyChunk);
-};
-
-const isSARChatHtmlPlaceholder = (text: string): boolean => /^\[HTML\s*卡片\]$/i.test(text.trim());
-
-export const consumeSARChatSurfaceChunk = (
-    canonicalChunk: string,
-    surfaceChunks: string[],
-    startIndex: number,
-): { surface?: string; nextIndex: number } => {
-    let index = Math.max(0, startIndex);
-    // HTML disabled at delivery time becomes a canonical placeholder. It has no
-    // rewritten speech and must not consume the following bubble's surface.
-    if (isSARChatHtmlPlaceholder(canonicalChunk)) {
-        if (surfaceChunks[index] && isSARChatHtmlPlaceholder(surfaceChunks[index])) index += 1;
-        return { nextIndex: index };
-    }
-    if (isSARChatActionOnlyChunk(canonicalChunk)) {
-        // 模型遵守“动作原位复制”时消费掉对应动作；省略动作时则保留指针给下一条台词。
-        if (surfaceChunks[index] && isSARChatActionOnlyChunk(surfaceChunks[index])) index += 1;
-        return { nextIndex: index };
-    }
-    // 外显里若意外多带了动作行，动作仍展示 canonical，跳过它后再取同位台词。
-    while (surfaceChunks[index] && (isSARChatActionOnlyChunk(surfaceChunks[index]) || isSARChatHtmlPlaceholder(surfaceChunks[index]))) index += 1;
-    const surface = surfaceChunks[index];
-    return { surface, nextIndex: surface === undefined ? index : index + 1 };
-};
-
-export const alignSARChatSurfaceChunks = (
-    canonicalChunks: string[],
-    surfaceChunks: string[],
-): Array<string | undefined> => {
-    let index = 0;
-    return canonicalChunks.map(canonical => {
-        const consumed = consumeSARChatSurfaceChunk(canonical, surfaceChunks, index);
-        index = consumed.nextIndex;
-        return consumed.surface;
-    });
-};
-
-const tag = (raw: string, name: string): string | undefined => {
-    const match = raw.match(new RegExp(`<${name}>\\s*([\\s\\S]*?)\\s*</${name}>`, 'i'));
-    const value = match?.[1]?.trim();
-    return value || undefined;
-};
-
-/** 模型不守容器时安全降级：原始输出视为真实回复，不猜、不污染 canonical。 */
-/** 心声 JSON 的起手标记，和 utils/xinsheng/xinshengData.ts 里 extractXinsheng 用的是同一个。 */
-const XINSHENG_MARKER_RE = /\{"t"\s*:\s*"xinsheng"/i;
-
-/**
- * 按提示词要求，心声写在 </SAR_MODULE_OUTPUT> 之后（写进容器会打乱 CHAR_TRUE / CHAR_SURFACE
- * 的气泡逐条对齐）。但拆容器时只取 CHAR_TRUE，容器外的内容会被丢掉 —— 心声因此永远到不了
- * applyAssistantPostProcessing 里的 extractXinsheng。这里把它原样接回 canonical 末尾：
- * extractXinsheng 是全文扫描、不挑位置，会把它摘走并从正文里去掉，不会留成气泡。
- *
- * 只有调用方明确要（聊天路径）才接。见面路径不摘心声，接回去等于把 JSON 显示出来。
- */
-const trailingXinsheng = (raw: string): string => {
-    const close = '</SAR_MODULE_OUTPUT>';
-    const end = raw.toUpperCase().lastIndexOf(close);
-    const outside = end === -1 ? '' : raw.slice(end + close.length);
-    const at = outside.search(XINSHENG_MARKER_RE);
-    return at === -1 ? '' : outside.slice(at).trim();
-};
-
-export const parseSARModuleReply = (
-    raw: string,
-    plan: SARModuleRuntimePlan,
-    options: { carryTrailingXinsheng?: boolean } = {},
-): SARModuleParsedReply => {
-    // 无模块/只有已退场提示时保持原始回复字节不动：不 trim、不解析、不猜测。
-    if (!plan.requiresEnvelope) return { canonical: raw, enveloped: false };
-    const body = tag(raw, 'SAR_MODULE_OUTPUT') || raw;
-    const canonical = tag(body, 'CHAR_TRUE');
-    if (!canonical) return { canonical: raw.trim(), enveloped: false };
-    const carried = options.carryTrailingXinsheng ? trailingXinsheng(raw) : '';
-    return {
-        canonical: carried ? `${canonical}\n${carried}` : canonical,
-        assistantSurface: plan.character?.phase === 'active' ? tag(body, 'CHAR_SURFACE') : undefined,
-        userSurface: plan.user?.phase === 'active' ? tag(body, 'USER_SURFACE') : undefined,
-        enveloped: true,
-    };
-};
-
-export const createSARModuleSurfaceMeta = (
-    state: SARModuleRuntimeState,
-    surface: string,
-): SARModuleSurfaceMeta | undefined => {
-    const clean = surface.trim();
-    if (!clean || state.phase !== 'active') return undefined;
-    return {
-        version: 1,
-        runId: state.runId,
-        moduleId: state.moduleId,
-        moduleTitle: state.moduleTitle,
-        target: state.target,
-        phase: 'active',
-        surface: clean,
-        canonicalField: 'content',
-        surfaceField: 'metadata.sarModuleSurface.surface',
-    };
 };
 
 /** 语音属于当时真正外显出去的表达；TTS 读 surface，但 content 继续作为记忆/总结真意。 */

@@ -83,6 +83,7 @@ import {
   getInstantChatPending,
   getStagedInstantChatExpiredNotices,
   isInstantChatReady,
+  INSTANT_CHAT_REPROBE_TIMEOUT_MS,
   resetInstantChatReprobeCooldown,
   resolveInstantChatReadiness,
   sendInstantChatTurn,
@@ -92,6 +93,9 @@ import {
   stageInstantChatExpiredNotices,
 } from './amsgInstantChat';
 import { FIRE_PACK_VERSION, unpackStateValue } from './amsgFirePack';
+import { AMSG_BUNDLE_VERSION } from './amsgBundleVersion';
+import { ActiveMsgStore } from './activeMsgStore';
+import type { AmsgSarModuleSnapshot } from './vrWorld/sarEnvelopeCore';
 import { ChatPrompts } from './chatPrompts';
 import { DB } from './db';
 
@@ -241,6 +245,38 @@ describe('POST /instant-chat 的形状', () => {
   it('没配情绪评估就不带这个键（不是塞个空对象上去）', async () => {
     const { task } = await postOnce([{ role: 'user', content: '在吗' }]);
     expect(task.metadata.amsgEmotionEval).toBeUndefined();
+  });
+
+  // SAR 模块生效 / 恢复期那一轮：worker 靠 amsgSar 拆信封并原样挂回末条推送，落库侧
+  // 靠它写事件、推进回合。键名是三方约定，改一个字 worker 就当普通回合处理——信封整段上屏。
+  it('SAR 快照原样进任务 metadata.amsgSar（经 sendInstantChatTurn 一路带上去）', async () => {
+    stubFirePackDeps();
+    const calls = mockInstantChatFetch(202, { status: 'accepted', uuid: 'uuid-sar' });
+    const sarModule: AmsgSarModuleSnapshot = {
+      v: 1,
+      character: { runId: 'run-c', moduleId: 'm1', moduleTitle: '模块', target: 'character', phase: 'active' },
+      events: [{
+        version: 1, runId: 'run-c', moduleId: 'm1', moduleTitle: '模块', target: 'character',
+        source: 'user', phase: 'active', moment: 'installed',
+      }],
+      userMessageId: 42,
+      userSurfaceTargetIds: [],
+      reroll: false,
+    };
+    const result = await sendInstantChatTurn({
+      char: CHAR, chatMessages: [{ role: 'user', content: '在吗' }], api: API,
+      userProfile: USER, groups: [], realtimeConfig: {} as any,
+      sarModule,
+    });
+    expect(result.ok).toBe(true);
+    const call = calls.find((c) => String(c.url).includes('/instant-chat'))!;
+    const task = JSON.parse(JSON.parse(String(call.init.body)).taskPayload.encryptedData);
+    expect(task.metadata.amsgSar).toEqual(sarModule);
+  });
+
+  it('没有 SAR 模块的普通回合不带 amsgSar', async () => {
+    const { task } = await postOnce([{ role: 'user', content: '在吗' }]);
+    expect(task.metadata).not.toHaveProperty('amsgSar');
   });
 
   it('凭据带的是调用方给的那份（本地生成会用的同一份）', async () => {
@@ -739,6 +775,102 @@ describe('开关', () => {
   it('探到能跑 → 照常上云', async () => {
     storeState.config = { ...storeState.config, instantChatEnabled: true, instantChatSupported: true };
     expect(await resolveInstantChatReadiness()).toEqual({ ready: true });
+  });
+
+  // ─── 那台 Worker 是不是当前 bundle（workerBundleCurrent）───
+  //
+  // 不参与放行，只给「这一轮要用新协议」的回合做额外否决（SAR 信封：旧 bundle 会把它切碎上屏）。
+  // 三态都要钉：没探过当成「旧」的话，刚装好、还没握手的人一开 SAR 就被踢回本地。
+  it('存量版本等于当前 bundle → workerBundleCurrent: true', async () => {
+    storeState.config = { ...storeState.config, instantChatSupported: true, workerBundleVersion: AMSG_BUNDLE_VERSION };
+    expect(await resolveInstantChatReadiness()).toEqual({ ready: true, workerBundleCurrent: true });
+  });
+
+  it('存量版本不等（含老 bundle 不报版本记下的 null）→ workerBundleCurrent: false，但照常 ready', async () => {
+    storeState.config = { ...storeState.config, instantChatSupported: true, workerBundleVersion: '2000-01-01' };
+    expect(await resolveInstantChatReadiness()).toEqual({ ready: true, workerBundleCurrent: false });
+    storeState.config = { ...storeState.config, workerBundleVersion: null };
+    expect(await resolveInstantChatReadiness()).toEqual({ ready: true, workerBundleCurrent: false });
+  });
+
+  it('从没探过版本（undefined）→ 不给结论，调用方放行', async () => {
+    storeState.config = { ...storeState.config, instantChatSupported: true, workerBundleVersion: undefined };
+    const readiness = await resolveInstantChatReadiness();
+    expect(readiness.ready).toBe(true);
+    expect(readiness).not.toHaveProperty('workerBundleCurrent');
+  });
+
+  // ─── ensureBundleVersion：需要信封的回合，版本没探过就当场问一次 ───
+  //
+  // 老用户刚更新 App、握手探测还没回来就发了一条 SAR 消息：存量是空的。直接放行等于赌那台
+  // Worker 认得信封，赌输了信封整段切碎上屏。
+  describe('ensureBundleVersion（版本存量为空时现探）', () => {
+    const stageUnprobed = (state: 'current' | 'outdated' | 'unknown') => {
+      storeState.config = { ...storeState.config, instantChatSupported: true, workerBundleVersion: undefined };
+      resetInstantChatReprobeCooldown();
+      return vi.spyOn(ActiveMsgClient, 'probeWorkerVersion').mockResolvedValue({
+        state, deployed: state === 'current' ? AMSG_BUNDLE_VERSION : null, expected: AMSG_BUNDLE_VERSION, autoUpdate: null,
+      });
+    };
+
+    it('没探过 + 需要信封 → 带超时现探一次，探到当前版本就放行', async () => {
+      const probe = stageUnprobed('current');
+      expect(await resolveInstantChatReadiness(undefined, { ensureBundleVersion: true }))
+        .toEqual({ ready: true, workerBundleCurrent: true });
+      expect(probe).toHaveBeenCalledTimes(1);
+      // 发消息路上的现探必须带超时，别把用户按在发送键上干等。
+      expect(probe).toHaveBeenCalledWith({ timeoutMs: INSTANT_CHAT_REPROBE_TIMEOUT_MS });
+    });
+
+    it('没探过 + 不需要信封（普通 / 恢复期回合）→ 不探，照旧不给结论', async () => {
+      const probe = stageUnprobed('current');
+      const readiness = await resolveInstantChatReadiness();
+      expect(readiness).toEqual({ ready: true });
+      expect(probe).not.toHaveBeenCalled();
+    });
+
+    it('现探到旧版 → workerBundleCurrent: false（调用方否决 outdated）', async () => {
+      stageUnprobed('outdated');
+      expect(await resolveInstantChatReadiness(undefined, { ensureBundleVersion: true }))
+        .toEqual({ ready: true, workerBundleCurrent: false });
+    });
+
+    it('现探没问到 → 不给结论（调用方否决 unverified，而不是放行）', async () => {
+      stageUnprobed('unknown');
+      const readiness = await resolveInstantChatReadiness(undefined, { ensureBundleVersion: true });
+      expect(readiness.ready).toBe(true);
+      expect(readiness).not.toHaveProperty('workerBundleCurrent');
+    });
+
+    it('存量已有结论 → 不现探', async () => {
+      const probe = stageUnprobed('current');
+      storeState.config = { ...storeState.config, workerBundleVersion: '2000-01-01' };
+      expect(await resolveInstantChatReadiness(undefined, { ensureBundleVersion: true }))
+        .toEqual({ ready: true, workerBundleCurrent: false });
+      expect(probe).not.toHaveBeenCalled();
+    });
+
+    it('没问到之后冷却期内不重复探（连发三条 SAR 消息只探一次）', async () => {
+      const probe = stageUnprobed('unknown');
+      for (let i = 0; i < 3; i += 1) {
+        await resolveInstantChatReadiness(undefined, { ensureBundleVersion: true });
+      }
+      expect(probe).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('现探翻回 ready 时，用的是现探刚记下的版本（不拿探测前那份旧存量）', async () => {
+    storeState.config = {
+      ...storeState.config, instantChatSupported: false, workerBundleVersion: '2000-01-01',
+    };
+    resetInstantChatReprobeCooldown();
+    vi.spyOn(ActiveMsgClient, 'probeInstantChatSupportDetailed').mockImplementation(async () => {
+      // 真的那份会在问到答案时顺手存版本，这里照做。
+      storeState.config = { ...storeState.config, instantChatSupported: true, workerBundleVersion: AMSG_BUNDLE_VERSION };
+      return { outcome: 'supported', supported: true };
+    });
+    vi.spyOn(console, 'info').mockImplementation(() => { /* 静音 */ });
+    expect(await resolveInstantChatReadiness()).toEqual({ ready: true, workerBundleCurrent: true });
   });
 
   // 用户自己没开的时候，「Worker 行不行」根本不该被问——那一档的原因是 disabled，
@@ -1256,5 +1388,45 @@ describe('第一次接上服务端账本', () => {
     expect(ack).not.toHaveBeenCalledWith(['m-missed']);
     // 手动补过一次就算接上了，后面回到自动路径，别下次又把新条目当存量销掉。
     expect(localStorage.getItem(AMSG_OUTBOX_ADOPTED_LS_KEY)).toBeTruthy();
+  });
+});
+
+// ─── 两处探 /config-check 的地方都顺手记下那台 Worker 的 bundle 版本 ───
+//
+// SAR 信封回合要不要上云只看这份存量；只在一处记的话，另一条路（握手 / 设置页）探完
+// 存量还是旧的，用户更新完 Worker 也照样被踢回本地。
+describe('探测顺手记下 bundle 版本（workerBundleVersion）', () => {
+  const configCheck = (status: number, data: Record<string, unknown> | null) => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      status,
+      ok: status >= 200 && status < 300,
+      json: async () => (data ? { success: true, data } : { success: false }),
+      text: async () => JSON.stringify(data ? { success: true, data } : { success: false }),
+      headers: { get: () => 'application/json' },
+    } as any)));
+  };
+  const versionWrites = () => (ActiveMsgStore.saveGlobalConfig as any).mock.calls
+    .map((call: any[]) => call[0])
+    .filter((update: Record<string, unknown>) => 'workerBundleVersion' in update);
+
+  beforeEach(() => { (ActiveMsgStore.saveGlobalConfig as any).mockClear(); });
+
+  it('probeInstantChatSupportDetailed：问到答案就记版本', async () => {
+    configCheck(200, { instantTick: true, workerVersion: '2099-01-01' });
+    await ActiveMsgClient.probeInstantChatSupportDetailed();
+    expect(versionWrites()).toContainEqual({ workerBundleVersion: '2099-01-01' });
+  });
+
+  it('probeWorkerVersion：老 bundle 不报版本 → 记 null（问到了，确实旧）', async () => {
+    configCheck(200, { instantTick: true });
+    await ActiveMsgClient.probeWorkerVersion();
+    expect(versionWrites()).toContainEqual({ workerBundleVersion: null });
+  });
+
+  it('没问到答案（5xx）→ 一个字都不写，存量保持原样', async () => {
+    configCheck(503, null);
+    await ActiveMsgClient.probeWorkerVersion();
+    await ActiveMsgClient.probeInstantChatSupportDetailed();
+    expect(versionWrites()).toEqual([]);
   });
 });

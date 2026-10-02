@@ -287,6 +287,36 @@ const DIAGNOSTICS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS worker_diagnostics (
   value TEXT NOT NULL,
   updated_at INTEGER NOT NULL
 )`;
+
+/**
+ * 读诊断表里的一个键。表还没建、行不在、读不了都当没有——这张表上的每一样都是
+ * 「有就显示、没有就算了」的东西，读不到不该拖累任何主流程。
+ */
+export const readDiagnosticValue = async (db: TickReportDb | undefined, key: string): Promise<string | null> => {
+  if (typeof db?.prepare !== 'function') return null;
+  try {
+    const row = await db
+      .prepare('SELECT value FROM worker_diagnostics WHERE key = ?')
+      .bind(key)
+      .first<{ value: string }>();
+    return typeof row?.value === 'string' ? row.value : null;
+  } catch {
+    return null;
+  }
+};
+
+/** 写（或盖掉）诊断表里的一个键。表不在就顺手建。抛错交给调用方决定要不要认。 */
+export const writeDiagnosticValue = async (db: TickReportDb, key: string, value: string, nowMs = Date.now()): Promise<void> => {
+  await db.prepare(DIAGNOSTICS_TABLE_SQL).run();
+  await db
+    .prepare(
+      `INSERT INTO worker_diagnostics (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    )
+    .bind(key, value, nowMs)
+    .run();
+};
+
 const TICK_FAILURE_KEY = 'tick_failure';
 
 /**
@@ -351,12 +381,7 @@ export const recordTickOutcome = async (db: TickReportDb | undefined, outcome: u
   const failure = pickTickFailure(outcome);
   if (!failure || typeof db?.prepare !== 'function') return;
   try {
-    await db.prepare(DIAGNOSTICS_TABLE_SQL).run();
-    const existing = await db
-      .prepare('SELECT value FROM worker_diagnostics WHERE key = ?')
-      .bind(TICK_FAILURE_KEY)
-      .first<{ value: string }>();
-    const previous = parseStoredTickFailure(existing?.value);
+    const previous = parseStoredTickFailure(await readDiagnosticValue(db, TICK_FAILURE_KEY));
     const sameSeries = previous
       && previous.stage === failure.stage
       && previous.name === failure.name
@@ -368,13 +393,7 @@ export const recordTickOutcome = async (db: TickReportDb | undefined, outcome: u
       lastAt: nowIso,
       count: sameSeries ? previous.count + 1 : 1,
     };
-    await db
-      .prepare(
-        `INSERT INTO worker_diagnostics (key, value, updated_at) VALUES (?, ?, ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-      )
-      .bind(TICK_FAILURE_KEY, JSON.stringify(record), nowMs)
-      .run();
+    await writeDiagnosticValue(db, TICK_FAILURE_KEY, JSON.stringify(record), nowMs);
   } catch (error) {
     console.warn('[amsg:tick-report] 这一跳的报错没记进库', error);
   }
@@ -403,17 +422,9 @@ const parseStoredTickFailure = (raw: string | null | undefined): StoredTickFailu
 
 /** 读最近一次整轮报错。表还没建（从没出过错）或读不了都当没有。 */
 export const readTickFailure = async (db: TickReportDb, nowMs = Date.now()): Promise<AmsgTickFailureRecord | null> => {
-  try {
-    const row = await db
-      .prepare('SELECT value FROM worker_diagnostics WHERE key = ?')
-      .bind(TICK_FAILURE_KEY)
-      .first<{ value: string }>();
-    const record = parseStoredTickFailure(row?.value);
-    if (!record) return null;
-    return { ...record, ongoing: nowMs - Date.parse(record.lastAt) <= TICK_FAILURE_SERIES_GAP_MS };
-  } catch {
-    return null;
-  }
+  const record = parseStoredTickFailure(await readDiagnosticValue(db, TICK_FAILURE_KEY));
+  if (!record) return null;
+  return { ...record, ongoing: nowMs - Date.parse(record.lastAt) <= TICK_FAILURE_SERIES_GAP_MS };
 };
 
 /** GET /tick-report 的完整回执。 */

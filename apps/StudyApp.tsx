@@ -1510,7 +1510,7 @@ Answer in character. Be helpful and clear. If they're confused about a concept, 
                         {selectedChar && (
                             <div className="flex items-center gap-2 mt-2">
                                 <img src={selectedChar.avatar} className="w-8 h-8 rounded-full object-cover" />
-                                <span className="text-xs text-slate-400">{selectedChar.name} 正在出题...</span>
+                                <span className="text-xs text-slate-400">{selectedChar.name} {quizLoading}</span>
                             </div>
                         )}
                     </div>

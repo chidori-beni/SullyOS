@@ -5,7 +5,9 @@ import { ActiveMsg2GlobalConfig, RealtimeConfig } from '../../types';
 import {
   ActiveMsgClient, ActiveMsg2PushStatus, fetchWorkerDiagnostics, fetchWorkerTickReport, readAmsgFailKind,
   type AmsgCronTriggerState,
+  type AmsgWorkerVersionProbe,
 } from '../../utils/activeMsgClient';
+import { describeAmsgSelfUpdate } from '../../utils/amsgSelfUpdateState';
 import {
   AmsgDiagnosticLevel, AmsgDiagnosticsProbe, type AmsgTickReportResult,
   buildAmsgDiagnosticRows, summarizeAmsgDiagnostics,
@@ -249,9 +251,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
    * 用户那台 Worker 上的后端代码是不是最新的（见 ActiveMsgClient.probeWorkerVersion）。
    * null = 还没探到（没填地址 / 正在探）。界面拿它决定更新按钮是高亮催更新还是弱化。
    */
-  const [workerVersion, setWorkerVersion] = useState<
-    { state: 'current' | 'outdated' | 'unknown'; deployed: string | null; expected: string } | null
-  >(null);
+  const [workerVersion, setWorkerVersion] = useState<AmsgWorkerVersionProbe | null>(null);
   /** 自更新成功后 worker 报回来的代码指纹，显示出来好让人确认这次真换了。 */
   const [selfUpdateHash, setSelfUpdateHash] = useState('');
   /**
@@ -640,6 +640,9 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
    *
    * 失败不改判这次更新：代码确实已经换上了，只是库没跟上。分开报，用户才知道该点哪个。
    */
+  /** 自动更新近况那一行；没能力（没钥匙）时是 null。 */
+  const autoUpdateText = describeAmsgSelfUpdate(workerVersion?.autoUpdate ?? null);
+
   const handleSelfUpdateWorker = async () => {
     setLoading(true);
     try {
@@ -1505,9 +1508,20 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
                   后端已经是最新版（<code className="font-mono">{workerVersion.expected}</code>）。
                 </p>
               ) : null}
+              {/*
+                装了钥匙的（一键部署、或补过钥匙）后端会自己定期查新代码，这里报它的近况；
+                没钥匙的沿用原来那段说明。文案出自 describeAmsgSelfUpdate，跟 worker 记的状态同源。
+              */}
+              {autoUpdateText ? (
+                <p className={`text-xs leading-relaxed ${workerVersion?.autoUpdate?.state?.lastOutcome === 'failed' ? 'text-amber-700' : 'text-slate-500'}`}>
+                  {autoUpdateText}
+                </p>
+              ) : null}
               <p className="text-xs leading-relaxed text-slate-500">
                 后端自己去取最新代码覆盖自己，你排好的任务和填过的密钥都不动，更新完会自动验证一次。
-                用一键部署装的可以直接点；老办法装的第一次点会提示补一把钥匙，就在下面补。
+                {autoUpdateText
+                  ? '平时不用管，想立刻更新就点上面这颗。'
+                  : '用一键部署装的可以直接点，装完以后后端还会自己定期更新；老办法装的第一次点会提示补一把钥匙，就在下面补，补完同样自动更新。'}
               </p>
               {selfUpdateHash ? (
                 <p className="text-xs leading-relaxed text-emerald-600">

@@ -74,6 +74,7 @@ import { resolveCharTimeZone } from '../utils/timezone';
 import { ActiveMsgStore, backupHasBackendConnection, exportAmsg2GlobalConfig } from '../utils/activeMsgStore';
 import { charMayHaveCloudState, purgeCharCloudState, purgeCloudCharById } from '../utils/amsg2CharCleanup';
 import { parseCharCredId } from '../utils/amsgLlmCredentials';
+import { SAR_MODULE_RUNTIME_CHANGED_EVENT, type SarModuleRuntimeChangedDetail } from '../utils/sarModuleRuntimeEvents';
 import { markAmsgStateDirty, markAmsgStateDirtyForAll, resumePendingAmsgStateSync, syncAmsgLlmCredentials, syncAmsgToolConfigAndPrompts, wipeAmsgCloudDataForReset } from '../utils/amsgStateSync';
 import { loadMusicPlaybackSnapshot } from './MusicContext';
 import { setCharNameRegistry } from '../utils/charNameRegistry';
@@ -3209,7 +3210,51 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           }));
       };
 
+      // 即时对话的回复在 React 外落库时，activeMsgRuntime 顺手把 SAR 临时模块推进了一回合
+      // （直写 DB）。只把 vrState.sarModule 这一个字段搬回内存：vrState 的其它字段保留内存值，
+      // 模块走完（DB 里已经没有这个键）时内存里也要删掉。不搬的话，下一次 updateCharacter /
+      // updateUserProfile 用旧内存整份写回，回合会被倒回去。
+      // 不打 amsg 脏：模块状态不进 fire_pack，即时对话的快照是发送时现取的。
+      const sarModuleRuntimeChangedHandler = (e: Event) => {
+          const detail = ((e as CustomEvent).detail || {}) as Partial<SarModuleRuntimeChangedDetail>;
+          if (detail.target === 'character') {
+              const charId = detail.charId;
+              if (!charId) return;
+              void DB.getAllCharacters().then(all => {
+                  const fresh = all.find(c => c.id === charId);
+                  if (!fresh) return;
+                  const freshModule = fresh.vrState?.sarModule;
+                  setCharacters(prev => prev.map(c => {
+                      if (c.id !== charId || c.vrState?.sarModule === freshModule) return c;
+                      const base = c.vrState ?? fresh.vrState;
+                      if (!base) return c;
+                      const vrState = { ...base };
+                      if (freshModule) vrState.sarModule = freshModule;
+                      else delete vrState.sarModule;
+                      return { ...c, vrState };
+                  }));
+              }).catch(() => {});
+              return;
+          }
+          if (detail.target === 'user') {
+              void DB.getUserProfile().then(fresh => {
+                  if (!fresh) return;
+                  const freshModule = fresh.vrState?.sarModule;
+                  setUserProfile(prev => {
+                      if (prev.vrState?.sarModule === freshModule) return prev;
+                      const base = prev.vrState ?? fresh.vrState;
+                      if (!base) return prev;
+                      const vrState = { ...base };
+                      if (freshModule) vrState.sarModule = freshModule;
+                      else delete vrState.sarModule;
+                      return { ...prev, vrState };
+                  });
+              }).catch(() => {});
+          }
+      };
+
       window.addEventListener('amsg2-tasks-adopted', tasksAdoptedHandler);
+      window.addEventListener(SAR_MODULE_RUNTIME_CHANGED_EVENT, sarModuleRuntimeChangedHandler);
       const linkedArchiveDeletedHandler = (event: Event) => {
           const detail = (event as CustomEvent<LinkedArchiveDeletionDetail>).detail;
           if (!detail?.charId || !detail.nodeId || !['delete', 'keep'].includes(detail.choice)) return;
@@ -3226,6 +3271,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       window.addEventListener(MEMORY_AUTO_ARCHIVE_SYNC_EVENT, memoryAutoArchiveSyncHandler);
       return () => {
           window.removeEventListener('amsg2-tasks-adopted', tasksAdoptedHandler);
+          window.removeEventListener(SAR_MODULE_RUNTIME_CHANGED_EVENT, sarModuleRuntimeChangedHandler);
           window.removeEventListener(LINKED_ARCHIVE_DELETED, linkedArchiveDeletedHandler);
           window.removeEventListener('char-music-profile-updated', musicProfileSyncHandler);
           window.removeEventListener(MEMORY_AUTO_ARCHIVE_SYNC_EVENT, memoryAutoArchiveSyncHandler);

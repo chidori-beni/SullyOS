@@ -111,7 +111,7 @@ describe('线上产物审计 · 断言', () => {
     const result = auditTrackerFootprint({ scan, websiteId: WEBSITE_ID, scriptUrl: SCRIPT_URL });
 
     expect(failedNames(result)).toContain('线上产物内 tracker 地址唯一且相符');
-    const failure = result.failed.find((f) => f.name === '线上产物内 tracker 地址唯一且相符')!;
+    const failure = result.failed.find((f: { name: string }) => f.name === '线上产物内 tracker 地址唯一且相符')!;
     expect(failure.actual).toContain('https://tracker.evil.test/script.js');
     expect(failure.actual).toContain(SCRIPT_URL);
   });

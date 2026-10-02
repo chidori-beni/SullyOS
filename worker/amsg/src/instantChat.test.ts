@@ -29,6 +29,7 @@ const json = (status: number, body: unknown) =>
 const makeUpstream = (opts: {
   clientState?: { status: number; body?: unknown };
   scheduleMessage?: { status: number; body?: unknown };
+  llmCredentials?: { status: number; body?: unknown };
 } = {}) => {
   const calls: Array<{ method: string; path: string; search: string; headers: Record<string, string>; body: string }> = [];
   const reply = (spec: { status: number; body?: unknown } | undefined, fallback: unknown) =>
@@ -48,6 +49,9 @@ const makeUpstream = (opts: {
       }
       if (url.pathname.endsWith('/schedule-message')) {
         return reply(opts.scheduleMessage, { success: true, data: { uuid: TASK_UUID, id: 42 } });
+      }
+      if (url.pathname.endsWith('/llm-credentials')) {
+        return reply(opts.llmCredentials, { success: true, data: { upserted: 1 } });
       }
       return json(404, { success: false });
     }),
@@ -495,6 +499,81 @@ describe('POST /instant-chat — 云端状态那一步遇到 5xx 会重试', () 
     const { upstream, calls } = makeUpstream();
     expect((await run({ request: post(validBody()), upstream })).status).toBe(202);
     expect(calls.filter((c) => c.path.endsWith('/client-state'))).toHaveLength(1);
+  });
+});
+
+// 凭据行跟任务同一个请求覆盖：客户端那份「传过什么」的底账只代表它自己那个入口，
+// 云端那行被别的入口 / 别的 Worker 改过时底账还写着「传过了」，本地切 API 之后云端
+// 照样拿别人留下的凭据答话。下面钉住「带了就每轮都覆盖、覆盖不上就不落任务」。
+describe('POST /instant-chat — 这一轮的凭据行（credPayload）', () => {
+  it('带了就在建任务之前覆盖凭据行，信封原样搬运，202 回 credentialsSynced', async () => {
+    const { upstream, calls, paths } = makeUpstream();
+    const response = await run({ request: post(validBody({ credPayload: envelope('cred') })), upstream });
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ status: 'accepted', uuid: TASK_UUID, credentialsSynced: true });
+    expect(paths()).toEqual(['PUT /client-state', 'PUT /llm-credentials', 'POST /schedule-message']);
+    const cred = calls.find((c) => c.path.endsWith('/llm-credentials'))!;
+    expect(JSON.parse(cred.body)).toEqual(envelope('cred'));
+    expect(cred.headers['x-payload-encrypted']).toBe('true');
+    expect(cred.headers['x-user-id']).toBe(USER_ID);
+  });
+
+  it('没带（旧客户端）→ 不多转发，202 也不带 credentialsSynced', async () => {
+    const { upstream, paths } = makeUpstream();
+    const response = await run({ request: post(validBody()), upstream });
+    expect(await response.json()).toEqual({ status: 'accepted', uuid: TASK_UUID });
+    expect(paths()).toEqual(['PUT /client-state', 'POST /schedule-message']);
+  });
+
+  it('形状不对 → 400，任何转发之前就挡住', async () => {
+    const { upstream, calls } = makeUpstream();
+    const response = await run({ request: post(validBody({ credPayload: 'sk-plain' })), upstream });
+    expect(response.status).toBe(400);
+    expect((await response.json() as any).error.code).toBe('INVALID_CRED_PAYLOAD');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('凭据写不进去 → 报 llm-credentials 那一步，而且**绝不建任务**', async () => {
+    const { upstream, paths } = makeUpstream({
+      llmCredentials: { status: 400, body: { success: false, error: { code: 'INVALID_CREDENTIAL' } } },
+    });
+    const response = await run({ request: post(validBody({ credPayload: envelope('cred') })), upstream });
+    expect(response.status).toBe(400);
+    const body = await response.json() as any;
+    expect(body.error.code).toBe('INSTANT_CHAT_CREDENTIALS_FAILED');
+    expect(body.error.step).toBe('llm-credentials');
+    expect(paths()).toEqual(['PUT /client-state', 'PUT /llm-credentials']);
+  });
+
+  it('200 包着 success:false 也算失败，不建任务', async () => {
+    const { upstream, paths } = makeUpstream({
+      llmCredentials: { status: 200, body: { success: false, error: { code: 'STORAGE_FAILED' } } },
+    });
+    const response = await run({ request: post(validBody({ credPayload: envelope('cred') })), upstream });
+    expect(response.status).toBe(502);
+    expect((await response.json() as any).error.code).toBe('INSTANT_CHAT_CREDENTIALS_FAILED');
+    expect(paths()).not.toContain('POST /schedule-message');
+  });
+
+  it('5xx 跟云端状态那步一样按梯子重试', async () => {
+    let seen = 0;
+    const upstream = {
+      fetch: vi.fn(async (request: Request) => {
+        const path = new URL(request.url).pathname;
+        if (path.endsWith('/client-state')) return json(200, { success: true, data: {} });
+        if (path.endsWith('/llm-credentials')) {
+          seen += 1;
+          return seen === 1
+            ? json(500, { success: false, error: { code: 'INTERNAL_ERROR', message: '服务器内部错误' } })
+            : json(200, { success: true, data: { upserted: 1 } });
+        }
+        if (path.endsWith('/schedule-message')) return json(200, { success: true, data: { uuid: TASK_UUID } });
+        return json(404, { success: false });
+      }),
+    };
+    const response = await run({ request: post(validBody({ credPayload: envelope('cred') })), upstream: upstream as any });
+    expect(response.status).toBe(202);
+    expect(seen).toBe(2);
   });
 });
 

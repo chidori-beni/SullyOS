@@ -22,14 +22,19 @@ export const supportsClientStateDelete = (features: string[] | null | undefined)
   Array.isArray(features) && features.includes(CLIENT_STATE_DELETE_FEATURE);
 
 /**
- * 旁路存储的三个键前缀。键名由各自的工厂函数拼出来（`<前缀><uuid>`），其中两个在
- * worker 侧、前端 import 不到，这里抄一份字面量：
- *   reasoning:      思考链      worker/amsg/src/index.ts 的 amsgReasoningKey
- *   emotion_update: 情绪评估    worker/amsg/src/emotionEval.ts 的 amsgEmotionUpdateKey
- *   xhs_session:    小红书会话  utils/amsgFirePack.ts 的 amsgXhsSessionKey
- * 那三处改了这里要跟着改。
+ * 旁路存储的六个键前缀。键名由各自的工厂函数拼出来（`<前缀><uuid>`，SAR 角色外显是
+ * `<前缀><uuid>:<段序号>`），除小红书那个外都在 worker 侧、前端 import 不到，这里抄一份字面量：
+ *   reasoning:        思考链           worker/amsg/src/index.ts 的 amsgReasoningKey
+ *   emotion_update:   情绪评估         worker/amsg/src/emotionEval.ts 的 amsgEmotionUpdateKey
+ *   xhs_session:      小红书会话       utils/amsgFirePack.ts 的 amsgXhsSessionKey
+ *   sar_user_surface: SAR 用户外显     worker/amsg/src/sarEnvelope.ts 的 amsgSarUserSurfaceKey
+ *   sar_snapshot:     SAR 模块快照     worker/amsg/src/sarEnvelope.ts 的 amsgSarSnapshotKey
+ *   sar_surface:      SAR 角色外显     worker/amsg/src/sarEnvelope.ts 的 amsgSarSurfaceKey（按段）
+ * 那几处改了这里要跟着改。
  */
-export const AMSG_SIDECHANNEL_KEY_PREFIXES = ['reasoning:', 'emotion_update:', 'xhs_session:'] as const;
+export const AMSG_SIDECHANNEL_KEY_PREFIXES = [
+  'reasoning:', 'emotion_update:', 'xhs_session:', 'sar_user_surface:', 'sar_snapshot:', 'sar_surface:',
+] as const;
 
 /** 这个键是不是旁路存储的（按上面的前缀认）。 */
 export const isSidechannelKey = (key: string): boolean =>

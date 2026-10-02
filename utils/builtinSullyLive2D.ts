@@ -13,7 +13,7 @@ const newDefaultFraming = () => ({ ...BUILTIN_SULLY_DEFAULT_FRAMING });
 const framingMatches = (
   framing: SullyLive2DConfig['framing'],
   expected: NonNullable<SullyLive2DConfig['framing']>,
-): boolean => Boolean(framing)
+): boolean => !!framing
   && Math.abs(framing.scale - expected.scale) <= 0.03
   && Math.abs(framing.offsetX - expected.offsetX) <= 0.015
   && Math.abs(framing.offsetY - expected.offsetY) <= 0.015;

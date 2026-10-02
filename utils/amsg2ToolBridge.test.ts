@@ -12,7 +12,7 @@ vi.mock('./activeMsgStore', () => ({
   ActiveMsgStore: { getGlobalConfig: vi.fn() },
 }));
 
-import { buildAmsg2Tools, createAmsg2ToolSession, executeAmsg2Tool } from './amsg2ToolBridge';
+import { buildAmsg2Tools, createAmsg2ToolSession, executeAmsg2Tool, executeAmsg2ToolWithOutcome } from './amsg2ToolBridge';
 import { resolveAmsgLimits } from './amsgLimits';
 import { isAmsg2EnabledForChar } from './amsg2Tasks';
 import { ActiveMsgClient } from './activeMsgClient';
@@ -466,7 +466,70 @@ describe('连发上限·本地排程闸', () => {
       activeMsg2Config: { enabled: true, maxUnansweredSends: 1, tasks: [selfTask('u1')] },
     });
     const reply = await executeAmsg2Tool('schedule_active_message', { send_at: future(1) }, deps);
-    expect(reply).toContain('连发上限是 1 条');
+    expect(reply).toContain('连发上限是 1 次');
     expect(ActiveMsgClient.scheduleCharacterTask).not.toHaveBeenCalled();
+  });
+});
+
+// 工具循环靠结局判断「这一轮办成事没有」、决定要不要逼模型收尾，trace 也照它记。
+// 回话是给模型读的散文，拿它判成败靠不住，所以结局必须跟清单的真实变化对上。
+describe('工具调用的结局', () => {
+  beforeEach(() => {
+    (ActiveMsgClient.scheduleCharacterTask as any).mockReset();
+    (ActiveMsgClient.scheduleCharacterTask as any).mockImplementation(async () => ({
+      uuid: UUIDS[0], clientTaskId: 'ct-outcome', firstSendAt: RESOLVED_ISO, anchorMs: null,
+    }));
+  });
+
+  const selfTask = (uuid: string, hours = 1) => ({
+    taskUuid: uuid, clientTaskId: `${uuid}-c`, mode: 'auto', recurrenceType: 'none',
+    expirePolicy: 'expire', source: 'character', status: 'scheduled',
+    firstSendTime: new Date(Date.now() + hours * 3600_000).toISOString(), createdAt: Date.now(),
+  });
+
+  it('排上了 → done', async () => {
+    const { deps } = makeSession();
+    const { outcome } = await executeAmsg2ToolWithOutcome('schedule_active_message', { send_at: future(2) }, deps);
+    expect(outcome).toEqual({ tool: 'schedule_active_message', status: 'done' });
+  });
+
+  it('连发额度满了 → rejected，带原因码', async () => {
+    const { deps } = makeSession({
+      activeMsg2Config: { enabled: true, tasks: [selfTask('u1'), selfTask('u2', 2), selfTask('u3', 3)] },
+    });
+    const { outcome } = await executeAmsg2ToolWithOutcome('schedule_active_message', { send_at: future(5) }, deps);
+    expect(outcome).toEqual({ tool: 'schedule_active_message', status: 'rejected', reason: 'unanswered_limit' });
+  });
+
+  it('离排着的太近 → rejected / min_gap', async () => {
+    const { deps } = makeSession({
+      activeMsg2Config: { enabled: true, tasks: [{ ...selfTask('u1'), source: 'user' }] },
+    });
+    const nearby = new Date(Date.now() + 3600_000 + 5 * 60_000).toISOString();
+    const { outcome } = await executeAmsg2ToolWithOutcome('schedule_active_message', { send_at: nearby }, deps);
+    expect(outcome.status).toBe('rejected');
+    expect(outcome.reason).toBe('min_gap');
+  });
+
+  it('同名同参再来一次 → duplicate；排程接口抛错 → error 带报错开头', async () => {
+    const { deps } = makeSession();
+    const args = { send_at: future(2) };
+    await executeAmsg2ToolWithOutcome('schedule_active_message', args, deps);
+    const second = await executeAmsg2ToolWithOutcome('schedule_active_message', { ...args }, deps);
+    expect(second.outcome.status).toBe('duplicate');
+
+    (ActiveMsgClient.scheduleCharacterTask as any).mockRejectedValueOnce(new Error('名额满了'));
+    const failed = await executeAmsg2ToolWithOutcome('schedule_active_message', { send_at: future(4) }, deps);
+    expect(failed.outcome).toEqual({ tool: 'schedule_active_message', status: 'error', message: '名额满了' });
+  });
+
+  it('上一次的打回原因不会串到下一次成功的调用上', async () => {
+    const { deps } = makeSession({
+      activeMsg2Config: { enabled: true, tasks: [{ ...selfTask('u1'), source: 'user' }] },
+    });
+    const nearby = new Date(Date.now() + 3600_000 + 5 * 60_000).toISOString();
+    await executeAmsg2ToolWithOutcome('schedule_active_message', { send_at: nearby }, deps);
+    const ok = await executeAmsg2ToolWithOutcome('schedule_active_message', { send_at: future(3) }, deps);
+    expect(ok.outcome).toEqual({ tool: 'schedule_active_message', status: 'done' });
   });
 });

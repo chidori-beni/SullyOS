@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DB } from './db';
 import { safeFetchJson } from './safeApi';
-import { buildSARArchiveMarkdown, loadSARSimulationMessages, parseSARSimulationReply, runSARSimulationTurn, SAR_SIMULATION_STORAGE_KEY } from './vrWorld/sarSimulation';
+import { buildSARArchiveMarkdown, deleteSARIdentityCard, loadSARSimulationMessages, parseSARSimulationReply, readSARSimulationState, runSARSimulationTurn, startSARSimulationRun, SAR_SIMULATION_STORAGE_KEY } from './vrWorld/sarSimulation';
 import { findSARPendingReply, replaceSARSimulationReply, replaceSARSimulationUserMessage, resolveSARReplyRetry } from './vrWorld/sarSimulationEdits';
 vi.mock('./safeApi', () => ({ safeFetchJson: vi.fn() }));
 vi.mock('./vrWorld/vrApi', () => ({ getVRApi: async () => null, logVRApiCall: vi.fn() }));
@@ -19,6 +19,47 @@ async function seed(completed=false) {
     return {card,run,char:{id:'c',name:'角色',systemPrompt:'温和',vrState:{api:{baseUrl:'https://example.com',model:'test',apiKey:'test'}}} as any,userProfile:{name:'用户'} as any,apiConfig:{baseUrl:'https://example.com',model:'test',apiKey:'test'} as any,userText:'不应使用的新输入'};
 }
 beforeEach(()=>{ vi.mocked(safeFetchJson).mockReset(); });
+
+describe('SAR 档案删除与格式容错', () => {
+    it('删除身份卡及全部实例正文，不动另一张卡和原角色私聊', async () => {
+        const input = await seed();
+        const state = readSARSimulationState();
+        const other = { ...input.card, id: 'other-card' };
+        const second = { ...input.run, id: input.run.id + '-second', status: 'archived' };
+        localStorage.setItem(SAR_SIMULATION_STORAGE_KEY, JSON.stringify({ ...state, cards: [...state.cards, other], runs: [...state.runs, second] }));
+        await DB.saveMessage({ charId: 'sar-simulation:' + second.id, role: 'user', type: 'text', content: '旧旅程', metadata: { source: 'sar_simulation', sarRunId: second.id } });
+        const privateId = await DB.saveMessage({ charId: 'c', role: 'user', type: 'text', content: '私聊保留' });
+        await deleteSARIdentityCard(input.card.id);
+        expect(readSARSimulationState().cards.map(c => c.id)).toEqual(['other-card']);
+        expect(readSARSimulationState().runs).toHaveLength(0);
+        expect(await loadSARSimulationMessages(input.run.id)).toHaveLength(0);
+        expect(await loadSARSimulationMessages(second.id)).toHaveLength(0);
+        expect((await DB.getMessagesByCharId('c')).some(m => m.id === privateId)).toBe(true);
+    });
+
+    it('清理失败保留可重试档案，并阻止继续生成；重试后完成删除', async () => {
+        const input = await seed();
+        const clear = vi.spyOn(DB, 'clearMessages').mockRejectedValueOnce(new Error('数据库忙'));
+        try {
+            await expect(deleteSARIdentityCard(input.card.id)).rejects.toThrow('数据库忙');
+            expect(readSARSimulationState().cards[0].deletionPending).toBe(true);
+            expect(() => startSARSimulationRun(input.card.id)).toThrow('正在删除');
+            await expect(runSARSimulationTurn({ ...input, userText: '继续' })).rejects.toThrow('正在删除');
+            expect(safeFetchJson).not.toHaveBeenCalled();
+            expect(await loadSARSimulationMessages(input.run.id)).toHaveLength(4);
+        } finally { clear.mockRestore(); }
+        await deleteSARIdentityCard(input.card.id);
+        expect(readSARSimulationState().cards).toHaveLength(0);
+        expect(await loadSARSimulationMessages(input.run.id)).toHaveLength(0);
+    });
+
+    it('修复字符串里的原始换行与尾逗号，不改正文标点，不混入导演记录', () => {
+        expect(parseSARSimulationReply('```json\n{"worldNarration":"雨停了。", "character":"第一行\n第二行 , }", "directorState":{"sceneFacts":["秘密",],},}\n```'))
+            .toMatchObject({ worldNarration: '雨停了。', character: '第一行\n第二行 , }' });
+        expect(parseSARSimulationReply('{"character":"未写完", "directorState":{"sceneFacts":["秘密"]}')).toBeNull();
+        expect(parseSARSimulationReply('{"worldNarration":"只有旁白",}')).toBeNull();
+    });
+});
 
 describe('SAR 修改自己的消息', () => {
     it('保存换行和修正文案，保持轮数、消息 ID 和后续剧情；导出和重试都读取新文本', async () => {
