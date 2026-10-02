@@ -23,7 +23,7 @@ const SuspendedCallBar: React.FC<SuspendedCallBarProps> = ({ charName, onResume 
   const content = (
     <div
       className="fixed inset-x-0 z-[1400] flex justify-center pointer-events-none"
-      style={{ top: 'max(1.75rem, calc(var(--safe-top, 0px) + 0.25rem))' }}
+      style={{ top: 'max(1.75rem, calc(var(--chrome-top, var(--safe-top, 0px)) + 0.25rem))' }}
     >
       <button
         type="button"

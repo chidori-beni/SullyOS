@@ -18,7 +18,7 @@ import { useLocalDateKey } from '../hooks/useLocalDateKey';
 import { resolveCharTimeZone } from '../utils/timezone';
 import { trackEvent } from '../utils/analytics';
 import { chatDetailLaunch } from '../utils/chatDetailLaunch';
-import { isChatPreviewMessage } from '../utils/chatMessageVisibility';
+import { isChatPreviewMessage, chatPreviewText } from '../utils/chatMessageVisibility';
 import { CALENDAR_DATA_UPDATED_EVENT, eventOccursOnDate, notifyCalendarDataUpdated, sortTasksForCalendar, taskDateKey, taskOccursOnDate, taskStartDateKey } from '../utils/calendarIntegration';
 import {
     carouselCloneResetIndex,
@@ -1048,8 +1048,7 @@ const Launcher: React.FC = () => {
               const visibleMsgs = msgs.filter(isChatPreviewMessage);
               const last = visibleMsgs[visibleMsgs.length - 1];
               if (last) {
-                  const cleanContent = last.content.replace(/\[.*?\]/g, '').trim();
-                  setLastMessage(cleanContent || (last.type === 'image' ? '[图片]' : '[消息]'));
+                  setLastMessage(chatPreviewText(last));
               } else {
                   setLastMessage(targetChar.description || "System Ready.");
               }

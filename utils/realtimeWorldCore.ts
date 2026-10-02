@@ -284,6 +284,9 @@ const LUNAR_FESTIVAL_DATES: Record<string, string> = {
     '2035-10-09': '重阳节',
 };
 
+/** 这一天（公历 YYYY-MM-DD）是哪个农历节日；表外年份返回 undefined。家乡节日（userHolidays）也查这张表。 */
+export const lunarFestivalOn = (date: string): string | undefined => LUNAR_FESTIVAL_DATES[date];
+
 /**
  * 检查特殊日期（公历节日 + 农历节日）。
  * tz 非空时按角色所在时区判「今天几号」——否则角色会跟着用户的日历过节：

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getUserHolidayReminder, getCachedUserHolidayReminder, hasChosenHolidayIntro, hasHolidaySettingsRequest, requestHolidaySettings, consumeHolidaySettings, insertUserHolidayInProfile, loadHolidayCalendar, parseHolidayCalendar, renderUserHoliday, type UserHolidayConfig } from './userHolidays';
+import { getUserHolidayReminder, getCachedUserHolidayReminder, hasChosenHolidayIntro, hasHolidaySettingsRequest, requestHolidaySettings, consumeHolidaySettings, insertUserHolidayInProfile, loadHolidayCalendar, chineseFestivals, renderHomeFestival, parseHolidayCalendar, renderUserHoliday, type UserHolidayConfig } from './userHolidays';
 import { buildToolConfig, parseToolConfig } from './amsgToolPack';
 import { defaultRealtimeConfig, RealtimeContextManager } from './realtimeContext';
 import { buildUserHolidayBlock } from '../worker/amsg/src/realtimeWorld';
@@ -92,8 +92,9 @@ describe('用户所在地节假日', () => {
         expect(prompt.split(expected)).toHaveLength(2);
         const dateInput = { char, userProfile: user, allMsgs: [], emojis: [] };
         expect(JSON.stringify(DatePrompts.buildPeekPayload(dateInput).messages)).toContain(expected);
-        // 本 fork：见面会话用剧情时钟，现实时间（含现实节假日）刻意不进模型的通用时间块（见 datePrompts.buildSessionContext 的 skipTimeAwareness: true）。
-        expect(JSON.stringify((await DatePrompts.buildSessionPayload({ ...dateInput, userText: '在吗', variant: 'send' })).messages)).not.toContain(expected);
+        // 本 fork：见面会话按剧情时钟那一天查节假日（这里剧情钟从现实此刻起步，所以是同一天）。
+        expect(JSON.stringify((await DatePrompts.buildSessionPayload({ ...dateInput, userText: '在吗', variant: 'send' })).messages)).toContain(expected);
+        expect(JSON.stringify((await DatePrompts.buildSessionPayload({ ...dateInput, char: { ...char, dateTimeAwarenessEnabled: false }, userText: '在吗', variant: 'send' })).messages)).not.toContain(expected);
         expect(JSON.stringify(DatePrompts.buildPeekPayload({ ...dateInput, char: { ...char, dateTimeAwarenessEnabled: false } }).messages)).not.toContain(expected);
         expect(ContextBuilder.buildCharacterContext({ char, user, timeOptions: { skipTimeAwareness: true } }).coreContext).not.toContain('公共假期');
         localStorage.setItem('os_realtime_config', JSON.stringify({ userHolidays: { ...china, enabled: false, introChoice: 'declined' } }));
@@ -114,5 +115,55 @@ describe('用户所在地节假日', () => {
         expect(hasHolidaySettingsRequest()).toBe(true);
         expect(consumeHolidaySettings()).toBe(true);
         expect(hasHolidaySettingsRequest()).toBe(false);
+    });
+});
+
+describe('家乡节日（本 fork：人在外地，家乡过节要能互道问候）', () => {
+    const japanWithChineseHome: UserHolidayConfig = { enabled: true, countryCode: 'JP', homeCountryCode: 'CN', timeZone: 'Asia/Tokyo' };
+    it('中国节日：农历查天文台对照表（含不放假的七夕、除夕），清明冬至按节气算', () => {
+        const names = (date: string) => chineseFestivals(date).map(f => f.name);
+        expect(names('2026-02-16')).toEqual(['除夕']);
+        expect(names('2026-02-17')).toEqual(['春节']);
+        expect(names('2026-03-03')).toEqual(['元宵节']);
+        expect(names('2026-04-05')).toEqual(['清明节']);
+        expect(names('2026-06-19')).toEqual(['端午节']);
+        expect(names('2026-08-19')).toEqual(['七夕']);
+        expect(names('2026-09-25')).toEqual(['中秋节']);
+        expect(names('2026-10-01')).toEqual(['国庆节']);
+        expect(names('2026-12-22')).toEqual(['冬至']);
+        expect(names('2027-02-06')).toEqual(['春节']); // Intl 中国历会算成 2/7，这里以天文台为准
+        expect(names('2031-10-01')).toEqual(['国庆节', '中秋节']);
+        expect(names('2026-09-28')).toEqual([]);
+        expect(names('2040-09-20')).toEqual([]); // 表外年份不猜
+    });
+    it('家乡那行只说过节、不说放假；没设家乡不出现', () => {
+        const line = renderHomeFestival(japanWithChineseHome, '2026-09-25', [], '小桃');
+        expect(line).toBe('小桃的家乡中国 2026-09-25（农历八月十五）是中秋节。这是家乡的节日，不代表小桃今天放假；可以自然地互道一声节日问候。');
+        expect(renderHomeFestival({ ...japanWithChineseHome, homeCountryCode: undefined }, '2026-09-25', [])).toBe('');
+        // 所在地那行已经提过的节，不再重复
+        expect(renderHomeFestival(japanWithChineseHome, '2026-09-25', [], '小桃', '小桃所在地中国 2026-09-25 为中秋节公共假期')).toBe('');
+    });
+    it('所在地日本放假 + 家乡中国过节，两行都进用户信息区；家乡日期跟设备时区', async () => {
+        const fetcher = vi.fn(async () => new Response(JSON.stringify([
+            { date: '2026-09-23', localName: '秋分の日', name: 'Autumnal Equinox Day', countryCode: 'JP', global: true, types: ['Public'] },
+        ])));
+        vi.stubGlobal('fetch', fetcher);
+        const midAutumn = await getUserHolidayReminder(japanWithChineseHome, undefined, Date.parse('2026-09-25T03:00Z'), '小桃');
+        expect(midAutumn).toContain('小桃的家乡中国');
+        expect(midAutumn).not.toContain('所在地');
+        const equinox = await getUserHolidayReminder(japanWithChineseHome, undefined, Date.parse('2026-09-23T03:00Z'), '小桃');
+        expect(equinox).toContain('小桃所在地日本');
+        expect(equinox).not.toContain('家乡');
+        // 东京 9/25 00:30 = 北京 9/24 23:30：按用户设备时区（东京）算，已经是中秋
+        expect(await getUserHolidayReminder(japanWithChineseHome, undefined, Date.parse('2026-09-24T15:30Z'))).toContain('中秋节');
+        const prompt = '角色\n### 互动对象 (User)\n- 名字: 小桃\n';
+        const both = insertUserHolidayInProfile(prompt, ['小桃所在地今天放假。', '小桃的家乡今天过节。'].join('\n- '));
+        expect(both).toContain('### 互动对象 (User)\n- 小桃所在地今天放假。\n- 小桃的家乡今天过节。\n- 名字');
+    });
+    it('只设家乡、关掉总开关：一句都不加', async () => {
+        expect(await getUserHolidayReminder({ ...japanWithChineseHome, enabled: false }, undefined, Date.parse('2026-09-25T03:00Z'))).toBe('');
+        vi.useFakeTimers(); vi.setSystemTime(new Date(2026, 8, 25, 12));
+        localStorage.setItem('os_realtime_config', JSON.stringify({ userHolidays: japanWithChineseHome }));
+        expect(getCachedUserHolidayReminder('小桃')).toContain('小桃的家乡中国');
     });
 });

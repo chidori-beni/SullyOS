@@ -3,6 +3,7 @@ import countries from '../presets/holidays/countries.json';
 import china2026 from '../presets/holidays/cn-2026.json';
 import { nowInTimeZone } from './timezone';
 import { getLocalDateKey } from './localDate';
+import { lunarFestivalOn } from './realtimeWorldCore';
 import { MALAYSIA_HOLIDAY_REGIONS, malaysiaHolidayRegion } from './malaysiaHolidayRegions';
 
 export interface UserHolidayConfig {
@@ -10,6 +11,8 @@ export interface UserHolidayConfig {
     enabled: boolean;
     countryCode: string;
     subdivisionCode?: string;
+    /** 家乡（可选）：只用来互道节日问候，从不表示放假。比如人在日本、家乡是中国。 */
+    homeCountryCode?: string;
     /** Device timezone, captured by browser when syncing to worker. Never the character's timezone. */
     timeZone?: string;
 }
@@ -95,7 +98,24 @@ export function readUserHolidayConfig(): UserHolidayConfig | undefined {
 
 /** Shared synchronous context builders only read prepared calendars, never block prompt assembly on network. */
 export function getCachedUserHolidayReminder(userName?: string, config = readUserHolidayConfig(), now = Date.now()): string {
-    if (!config?.enabled || !HOLIDAY_COUNTRIES.some(c => c.countryCode === config.countryCode)) return '';
+    if (!config?.enabled) return '';
+    const local = new Date(now); // Browser-only entry: date follows the device, not the character.
+    const date = getLocalDateKey(local);
+    const home = config.homeCountryCode;
+    let homeCalendar: HolidayCalendar | undefined;
+    if (home && home !== 'CN') {
+        const key = `${HOLIDAY_CACHE_PREFIX}${home}_${local.getFullYear()}`;
+        homeCalendar = memory.get(key);
+        if (!homeCalendar) {
+            try { const raw = JSON.parse(localStorage.getItem(key) || 'null'); if (validCached(raw, home, local.getFullYear())) homeCalendar = raw; } catch { /* unavailable */ }
+        }
+    }
+    const location = getCachedLocationHoliday(userName, config, now);
+    return joinHolidayLines(location, renderHomeFestival(config, date, homeCalendar?.days || [], userName, location));
+}
+
+function getCachedLocationHoliday(userName: string | undefined, config: UserHolidayConfig, now: number): string {
+    if (!HOLIDAY_COUNTRIES.some(c => c.countryCode === config.countryCode)) return '';
     const local = new Date(now); // This entry is browser-only: date follows the device, not the character.
     const year = local.getFullYear();
     const date = getLocalDateKey(local);
@@ -119,7 +139,54 @@ export function insertUserHolidayInProfile(prompt: string, reminder: string): st
     const heading = '### 互动对象 (User)\n';
     return prompt.includes(heading)
         ? prompt.replace(heading, `${heading}- ${reminder}\n`)
-        : `${prompt}\n\n### 互动对象信息补充\n${reminder}\n`;
+        : `${prompt}\n\n### 互动对象信息补充\n${reminder.includes('\n- ') ? `- ${reminder}` : reminder}\n`;
+}
+
+/** 所在地一行 + 家乡一行；插进用户信息区时各占一个「- 」条目。 */
+const joinHolidayLines = (...lines: string[]) => lines.filter(Boolean).join('\n- ');
+
+// ── 家乡节日（中国）──────────────────────────────────────────
+// 政府放假表只管放不放假；家乡这栏要的是「今天过什么节」。农历节日查 realtimeWorldCore 里
+// 那张香港天文台对照表（2026–2035，表外年份就不提，不瞎猜）；清明、冬至按节气通式算。
+// 没用运行环境自带的 Intl 中国历：实测它把 2027 春节算成 2/7（天文台是 2/6）。
+const LUNAR_LABELS: Record<string, string> = {
+    除夕: '农历除夕', 春节: '农历正月初一', 元宵节: '农历正月十五', 端午节: '农历五月初五',
+    七夕: '农历七月初七', 中秋节: '农历八月十五', 重阳节: '农历九月初九',
+};
+const SOLAR_FESTIVALS: Record<string, string> = { '01-01': '元旦', '05-01': '劳动节', '10-01': '国庆节' };
+/** 21 世纪节气通式 [Y·0.2422 + C] − [Y/4]（Y 取年份后两位）：清明 C=4.81，冬至 C=21.94。 */
+function solarTermDay(year: number, c: number): number {
+    const y = year % 100;
+    return Math.floor(y * 0.2422 + c) - Math.floor(y / 4);
+}
+
+/** 中国的节日（含不放假的七夕、除夕这类），给「家乡节日」用。 */
+export function chineseFestivals(date: string): Array<{ name: string; lunar?: string }> {
+    if (!validDate(date)) return [];
+    const out: Array<{ name: string; lunar?: string }> = [];
+    const year = Number(date.slice(0, 4)), md = date.slice(5);
+    if (SOLAR_FESTIVALS[md]) out.push({ name: SOLAR_FESTIVALS[md] });
+    if (year >= 2001 && year <= 2099) {
+        if (md === `04-0${solarTermDay(year, 4.81)}`) out.push({ name: '清明节' });
+        if (md === `12-${solarTermDay(year, 21.94)}`) out.push({ name: '冬至' });
+    }
+    const lunar = lunarFestivalOn(date);
+    if (lunar) out.push({ name: lunar, lunar: LUNAR_LABELS[lunar] });
+    return out;
+}
+
+/** 家乡节日那一行：只说「是什么节」，明确不代表放假；所在地那行已经提过的节不重复。 */
+export function renderHomeFestival(config: UserHolidayConfig, date: string, homeDays: HolidayDay[], userName?: string, locationLine = ''): string {
+    const home = config.homeCountryCode;
+    if (!home) return '';
+    const festivals: Array<{ name: string; lunar?: string }> = home === 'CN'
+        ? chineseFestivals(date)
+        : homeDays.filter(d => d.date === date && !d.regions).map(d => ({ name: cleanName(d.name) }));
+    const fresh = festivals.filter((f, i) => f.name && !locationLine.includes(f.name) && festivals.findIndex(g => g.name === f.name) === i);
+    if (!fresh.length) return '';
+    const person = cleanName(userName) || '用户';
+    const lunar = fresh.find(f => f.lunar)?.lunar;
+    return `${person}的家乡${holidayCountryName(home)} ${date}${lunar ? `（${lunar}）` : ''}是${fresh.map(f => f.name).join('、')}。这是家乡的节日，不代表${person}今天放假；可以自然地互道一声节日问候。`;
 }
 
 export async function loadHolidayCalendar(country: string, year: number, cache?: HolidayCache, now = Date.now()): Promise<HolidayCalendar | null> {
@@ -172,7 +239,17 @@ export function renderUserHoliday(config: UserHolidayConfig, date: string, days:
 }
 
 export async function getUserHolidayReminder(config?: UserHolidayConfig, cache?: HolidayCache, now = Date.now(), userName?: string): Promise<string> {
-    if (!config?.enabled || !config.countryCode) return '';
+    if (!config?.enabled) return '';
+    const local = nowInTimeZone(config.timeZone, new Date(now));
+    const home = config.homeCountryCode;
+    const [location, homeCalendar] = await Promise.all([
+        config.countryCode ? getLocationHoliday(config, cache, now, userName) : '',
+        home && home !== 'CN' ? loadHolidayCalendar(home, local.getFullYear(), cache, now) : null,
+    ]);
+    return joinHolidayLines(location, renderHomeFestival(config, getLocalDateKey(local), homeCalendar?.days || [], userName, location));
+}
+
+async function getLocationHoliday(config: UserHolidayConfig, cache: HolidayCache | undefined, now: number, userName?: string): Promise<string> {
     const local = nowInTimeZone(config.timeZone, new Date(now));
     const year = local.getFullYear();
     const calendars = await Promise.all([

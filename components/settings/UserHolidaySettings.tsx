@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { browserHolidayCache, deviceTimeZone, HOLIDAY_COUNTRIES, holidayCountryName, loadHolidayCalendar, renderUserHoliday, type HolidayCalendar, type UserHolidayConfig } from '../../utils/userHolidays';
+import { browserHolidayCache, deviceTimeZone, HOLIDAY_COUNTRIES, holidayCountryName, loadHolidayCalendar, renderHomeFestival, renderUserHoliday, type HolidayCalendar, type UserHolidayConfig } from '../../utils/userHolidays';
 import { getLocalDateKey } from '../../utils/localDate';
 import { MALAYSIA_HOLIDAY_REGIONS, malaysiaHolidayRegion } from '../../utils/malaysiaHolidayRegions';
 
@@ -23,6 +23,8 @@ export default function UserHolidaySettings({ value, onChange }: { value: UserHo
     const regions = value.countryCode === 'MY' ? MALAYSIA_HOLIDAY_REGIONS.map(r => r.code)
         : [...new Set(calendar?.days.flatMap(d => d.regions || []) || [])].sort();
     const today = calendar ? renderUserHoliday(value, getLocalDateKey(new Date()), calendar.days) : '';
+    // 家乡预览只给中国（本地按农历算，不用联网）；其它家乡等聊天时再按需取年度日历
+    const homeToday = value.homeCountryCode === 'CN' ? renderHomeFestival(value, getLocalDateKey(new Date()), [], undefined, today) : '';
     const needle = search.trim().toLowerCase();
     return <section className="bg-amber-50/80 border border-amber-100 rounded-2xl p-4 space-y-3">
         <label className="flex items-center justify-between gap-3 text-sm font-bold text-amber-800">
@@ -47,6 +49,15 @@ export default function UserHolidaySettings({ value, onChange }: { value: UserHo
                     })}
                 </select>
             </label>}
+            <label className="block text-xs text-amber-900 space-y-1">
+                <span>家乡（可选）</span>
+                <select aria-label="家乡国家或地区" value={value.homeCountryCode || ''} onChange={e => onChange({ ...value, homeCountryCode: e.target.value || undefined })} className="w-full bg-white border border-amber-100 rounded-xl px-3 py-2 text-sm">
+                    <option value="">不设置</option>
+                    {countryOptions.map(c => <option key={c.code} value={c.code}>{c.label}</option>)}
+                </select>
+                <span className="block text-amber-800/70 leading-relaxed">人在外地时用：家乡过节那天，角色会知道「今天是你家乡的节日」，可以互道问候，但不会以为你放假。家乡选中国时，七夕、除夕、清明、冬至这些也算。</span>
+                {homeToday && <span className="block text-amber-900">{homeToday}</span>}
+            </label>
             <p className="text-xs text-amber-800/70 leading-relaxed">日期跟随你的设备时区（{deviceTimeZone()}），与角色时区分开。实际休息以你的排班、日程为准；角色关闭时间感知时也不会收到这条提醒。</p>
             {value.countryCode && <div role="status" className="text-xs text-amber-900 leading-relaxed">
                 {loading ? '正在读取年度日历…' : calendar ? <>

@@ -25,7 +25,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, title, onClose, children, footer 
     return (
         <div className="sully-ui-layer fixed inset-0 z-[100] flex items-center justify-center p-6 pt-[calc(var(--safe-top,0px)+1rem)] pb-[calc(var(--safe-bottom,0px)+1rem)] max-h-[var(--visual-viewport-height,100dvh)] animate-fade-in">
             <div className="sully-ui-overlay absolute inset-0 bg-black/40" onClick={onClose} />
-            <div className="sully-ui-modal relative w-full max-w-sm max-h-full flex flex-col min-h-0 bg-white rounded-[2.5rem] shadow-2xl border border-white/20 overflow-hidden animate-slide-up">
+            <div className="sully-ui-modal relative w-full max-w-sm max-h-full flex flex-col min-h-0 bg-white text-slate-800 rounded-[2.5rem] shadow-2xl border border-white/20 overflow-hidden animate-slide-up">
                 <div className="sully-ui-head px-6 pt-6 pb-2 shrink-0">
                     <h3 className="sully-ui-title text-lg font-bold text-slate-800 text-center">{title}</h3>
                 </div>
