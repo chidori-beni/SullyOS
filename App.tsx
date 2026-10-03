@@ -10,6 +10,7 @@ import Amsg2DebugPanel from './components/Amsg2DebugPanel';
 import VRBroadcast from './components/VRBroadcast';
 import WorldBroadcast from './components/WorldBroadcast';
 import ChatBroadcast from './components/ChatBroadcast';
+import WebUpdateNotice from './components/WebUpdateNotice';
 import { isIOSStandaloneWebApp } from './utils/iosStandalone';
 import { installDevDebugLifecycleCapture } from './utils/devDebug';
 import { UiLocaleProvider } from './context/UiLocaleContext';
@@ -48,6 +49,7 @@ const App: React.FC = () => {
             <Amsg2DebugPanel />
             {/* 书房「等回复」：角色忙完了补上欠的回复（不渲染东西） */}
             <BookroomPendingRunner />
+            <WebUpdateNotice />
           </OSProvider>
         </div>
       </div>
