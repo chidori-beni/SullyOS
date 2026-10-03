@@ -1249,10 +1249,11 @@ const CompanionHome: React.FC = () => {
     const input = document.createElement('input');
     input.type = 'file';
     input.style.display = 'none';
+    // VRM 不做系统类型过滤，避免 iOS 把模型置灰；saveAvatarModel 会校验扩展名和文件头。
     input.accept = activeCompanionSource === 'upload'
       ? '.png,.gif,image/png,image/gif'
       : character.videoAvatar?.format === 'vrm'
-        ? '.vrm,model/gltf-binary'
+        ? ''
         : '.zip,application/zip';
     document.body.appendChild(input);
     const removeInput = () => { if (input.parentElement) input.remove(); };

@@ -1,3 +1,4 @@
+import { createReplyRun, isReplyStopped, withReplyCancellation, type ReplyRun } from './chatReplyCancellation';
 import { loadCharacterContextMessages } from './chatContextRange';
 import { ActiveMsg2InboxMessage, ActiveMsg2TaskRecord, APIConfig, RealtimeConfig, UserProfile } from '../types';
 import { DB } from './db';
@@ -360,7 +361,7 @@ export const startLateEmotionPoll = (
   charId: string,
   ref: string,
   charName: string,
-  opts?: { intervalMs?: number; maxTries?: number },
+  opts?: { intervalMs?: number; maxTries?: number; taskUuid?: string | null },
 ): void => {
   const intervalMs = opts?.intervalMs ?? LATE_EMOTION_POLL_INTERVAL_MS;
   const maxTries = opts?.maxTries ?? LATE_EMOTION_POLL_MAX_TRIES;
@@ -378,6 +379,7 @@ export const startLateEmotionPoll = (
       logAmsg.warn('晚投情绪补落这一跳没读到（下一跳再试）', { charId, ref, error });
     }
     // await 期间被 cancel / 被新一轮顶替 → 静默退场，别把旧结果落到新 buff 上。
+    if (isReplyStopped(opts?.taskUuid)) { cancelLateEmotionPoll(charId); return; }
     if (lateEmotionPolls.get(charId) !== entry) return;
     if (raw) {
       lateEmotionPolls.delete(charId);
@@ -564,7 +566,9 @@ const processInboxMessageWithPostProcessing = async (
   // 由 flushInboxToChat 按 resolveInboxPersistTimestamp 算好: 离线补收 = sentAt,
   // 在线送达 = undefined (落库走 DB.saveMessage 默认的写库当刻)。
   persistTimestamp?: number,
+  replyRun?: ReplyRun,
 ): Promise<void> => {
+  const replyStep = <T>(operation: () => Promise<T>) => withReplyCancellation(replyRun, operation);
   // 这一趟从云端旁路存储取回来的东西，等整条消息处理成功了再去删（见 OffloadedCleanup）。
   const offloadedCleanups: OffloadedCleanup[] = [];
   // ─── 上屏耗时探针 ───────────────────────────────────────────────
@@ -575,7 +579,7 @@ const processInboxMessageWithPostProcessing = async (
   // 单取这一个角色，别 getAllCharacters()：角色档案里带头像 / 原画质聊天背景（几 MB
   // base64）/ 记忆总结 / 世界书，全角色整读一遍就横在「推送到达 → 第一条气泡上屏」
   // 的最前面，而我们只要其中一个。
-  const char = await DB.getCharacter(message.charId);
+  const char = await replyStep(async () => DB.getCharacter(message.charId));
   if (!char) {
     // 一个角色都读不到，多半是本地存储本身出了问题，而不是「这个角色被删了」——
     // 按可重试的普通失败处理，别把还在用的任务当孤儿取消掉。
@@ -588,22 +592,22 @@ const processInboxMessageWithPostProcessing = async (
   markSegment('角色');
 
   // 这是不是一次重试？是的话先清掉上次的半成品，并决定副作用要不要再跑一遍。
-  const { replayDirectives } = await prepareInboxRetry(message);
+  const { replayDirectives } = await replyStep(async () => prepareInboxRetry(message));
   markSegment('重试检查');
 
-  const userProfile: UserProfile = (await DB.getUserProfile())
+  const userProfile: UserProfile = (await replyStep(async () => DB.getUserProfile()))
     ?? { name: 'User', avatar: '', bio: '' };
   // 按角色可见性过滤表情包：后处理落库时靠 emojis.find(e => e.name === name) 反查 URL，
   // 若传全量表情，名字冲突时会把 A 的 [[SEND_EMOJI: x]] 匹配到 B 名下的同名表情，导致
   // A 发出绑定给 B 的表情包。本地聊天路径喂的是 aiVisibleEmojis（已过滤），主动消息路径
   // 之前漏了这步，这里复用同一套过滤收口（与 activeMsgClient.buildCompletePrompt 对齐）。
   const { emojis, categories } = ChatPrompts.filterVisibleEmojis(
-    await DB.getEmojis(),
-    await DB.getEmojiCategories(),
+    await replyStep(async () => DB.getEmojis()),
+    await replyStep(async () => DB.getEmojiCategories()),
     message.charId,
   );
   markSegment('表情包');
-  const contextMsgs = await loadCharacterContextMessages(char);
+  const contextMsgs = await replyStep(async () => loadCharacterContextMessages(char));
   markSegment('近史');
 
   const apiConfig = loadApiConfigFromLocalStorage();
@@ -638,7 +642,7 @@ const processInboxMessageWithPostProcessing = async (
     const inlineReasoning = (message.metadata as any)?.amsgReasoning;
     const metaReasoning = typeof inlineReasoning === 'string' && inlineReasoning
       ? inlineReasoning
-      : await fetchOffloadedReasoning(message, offloadedCleanups);
+      : await replyStep(async () => fetchOffloadedReasoning(message, offloadedCleanups));
     if (typeof metaReasoning === 'string' && metaReasoning.trim()) {
       reasoningContent = metaReasoning;
     }
@@ -653,7 +657,7 @@ const processInboxMessageWithPostProcessing = async (
   // offloadOversizedPush）。这里按键取回，取到就跟内联那份走同一条落库路径。
   // 取不回来时抛错交给上层重试——静默跳过的话，角色说分享了几张、卡片却少几张。
   const xhsSession = (message.metadata && (message.metadata as any).xhsSession)
-    || await fetchOffloadedXhsSession(message, offloadedCleanups);
+    || await replyStep(async () => fetchOffloadedXhsSession(message, offloadedCleanups));
   if (sessionId && xhsSession && Array.isArray(xhsSession.notes) && xhsSession.notes.length > 0) {
     try {
       const maxIdx = Math.max(...xhsSession.notes.map((e: any) => Number(e?.idx) || 0));
@@ -662,10 +666,10 @@ const processInboxMessageWithPostProcessing = async (
         const i = Number(entry?.idx);
         if (Number.isInteger(i) && i >= 1 && entry?.note) rebuilt[i - 1] = entry.note as XhsNote;
       }
-      await ActiveMsgStore.saveXhsSessionNotes(sessionId, {
+      await replyStep(async () => ActiveMsgStore.saveXhsSessionNotes(sessionId, {
         notes: rebuilt as XhsNote[],
         xsecTokens: Array.isArray(xhsSession.xsecTokens) ? xhsSession.xsecTokens : [],
-      });
+      }));
     } catch (e) {
       console.warn('[ActiveMsg] persist xhsSession from push failed', sessionId, e);
     }
@@ -676,7 +680,7 @@ const processInboxMessageWithPostProcessing = async (
   // 会因 lastXhsNotesRef 为空而静默掉卡片. 持久化优先于内存 (同 session 时两者等价, 重载后只剩持久化).
   if (sessionId) {
     try {
-      const persisted = await ActiveMsgStore.getXhsSessionNotes(sessionId);
+      const persisted = await replyStep(async () => ActiveMsgStore.getXhsSessionNotes(sessionId));
       if (persisted?.notes?.length) {
         pushLastXhsNotesRef.current = persisted.notes as XhsNote[];
         for (const [noteId, token] of (persisted.xsecTokens || [])) {
@@ -691,14 +695,15 @@ const processInboxMessageWithPostProcessing = async (
   // SAR 临时模块生效时，worker 拆完信封把这一段的角色外显随 push 带回来（已按段对齐）；
   // 太大时挪进 client_state、只留 amsgSarSurfaceRef。取回的那份登记进本条的 cleanups，
   // 处理成功后统一删。取不回只 warn、不进重试：外显丢了这一段显示真实回复，可以接受。
-  const sarModuleSurface = await resolveAmsgSarSurface(
+  const sarModuleSurface = await replyStep(async () => resolveAmsgSarSurface(
     message.metadata,
     () => fetchOffloadedExtra(message, 'amsgSarSurfaceRef', {
       what: 'SAR 角色外显', whenMissing: '这一段显示真实回复',
     }, offloadedCleanups),
-  );
+  ));
 
-  await applyAssistantPostProcessing(message.body || '', {
+  await replyStep(async () => applyAssistantPostProcessing(message.body || '', {
+    replyRun,
     char,
     userProfile,
     emojis,
@@ -729,6 +734,7 @@ const processInboxMessageWithPostProcessing = async (
         // 认成"同一轮"，回填 roundId 到还没轮到处理心声那条推送就已经落库的早前气泡上
         // （见 applyAssistantPostProcessing.ts Step 1 附近的 backfillXinshengRoundIdForSession）。
         sessionId,
+        taskUuid: message.taskUuid,
         messageType: message.messageType,
         messageSubtype: message.messageSubtype,
         avatarUrl: message.avatarUrl,
@@ -814,7 +820,7 @@ const processInboxMessageWithPostProcessing = async (
     instantRender: shouldRenderInstantly(message.metadata, message.receivedAt, Date.now()),
     // 交给后处理逐气泡对齐写进 metadata.sarModuleSurface——和本地路径同一处消费。
     sarModuleSurface,
-  });
+  }));
   markSegment('落库上屏');
   reportSlowFlush(segments);
 
@@ -843,13 +849,13 @@ const processInboxMessageWithPostProcessing = async (
   }
   const emotionUpdateRaw = typeof inlineEmotionUpdate === 'string' && inlineEmotionUpdate
     ? inlineEmotionUpdate
-    : (emotionPending ? null : await fetchOffloadedEmotionUpdate(message, offloadedCleanups));
+    : (emotionPending ? null : await replyStep(async () => fetchOffloadedEmotionUpdate(message, offloadedCleanups)));
   if (emotionUpdateRaw) {
-    await landCloudEmotionResult(message.charId, emotionUpdateRaw);
+    await replyStep(async () => landCloudEmotionResult(message.charId, emotionUpdateRaw));
   } else if (emotionPending) {
     const pendingRef = (message.metadata as any)?.amsgEmotionRef;
     if (typeof pendingRef === 'string' && pendingRef) {
-      startLateEmotionPoll(message.charId, pendingRef, message.charName || '');
+      startLateEmotionPoll(message.charId, pendingRef, message.charName || '', { taskUuid: message.taskUuid });
     } else {
       // 标了 pending 却没给引用键（worker bug）：没法轮询，按「有结论但没结果」收尾。
       announceChatGen(CHAT_GEN_EVENTS.emotionFailed, {
@@ -883,7 +889,7 @@ const processInboxMessageWithPostProcessing = async (
   // ─── push 尾段 ───
   // Memory Palace 缓冲区处理在这里跑 (跟本地 fetch 路径 finally 段对齐, 不依赖 React).
   // 情绪评估不在这里跑: 云端已经跟主回复一起跑完, 结果就是上面落的那份.
-  await runPushTailPipeline(message, char, userProfile);
+  await replyStep(async () => runPushTailPipeline(message, char, userProfile));
 
   // 到这里这条消息才算真的落定（上面任何一步抛错都会让它被压回收件箱重试），
   // 这时候删云端那几份旁路副本才是安全的。不 await：删是让 D1 干净点的收尾动作，
@@ -1761,6 +1767,18 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
   // 降级回原来的 "原文一次性 saveMessage" 防止消息丢失。dispatchEvent 始终 fire 一次,
   // 保证 toast / 未读 / 通知语义不变。
   for (const message of pendingMessages) {
+    if (isReplyStopped(message.taskUuid)) {
+      if (message.taskUuid && (message.metadata as any)?.amsgUsage) {
+        settleInstantChatApiLog(message.taskUuid, message.metadata);
+      }
+      continue;
+    }
+    const isInstantReply = message.source === 'instant'
+      || (message.metadata as any)?.amsgInstantChat === true
+      || getInstantChatPending(message.charId)?.uuid === message.taskUuid;
+    const replyRun = isInstantReply && message.taskUuid
+      ? createReplyRun(message.charId, message.taskUuid) : undefined;
+    const replyStep = <T>(operation: () => Promise<T>) => withReplyCancellation(replyRun, operation);
     // 这一层是**整批消息的最后一道防线**：消息在 consumeInboxMessages 那一刻就已经从
     // 收件箱里没了，下面任何一步抛出去的异常都会穿过整个 for 循环，剩下的消息既没落进
     // 聊天记录、也没回到收件箱——用户那边只看到「正在输入…」一直亮到 60s 点名判失败，
@@ -1803,7 +1821,7 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
       // 见上面 isAlreadyPersisted 的注释：这条已经在聊天记录里了（补收先到、真推送迟到，
       // 或重试重跑的重叠段），第二份原样丢弃。
       if (!(message.processAttempts && message.processAttempts > 0)
-        && await isAlreadyPersisted(message.charId, message.messageId)) {
+        && await replyStep(async () => isAlreadyPersisted(message.charId, message.messageId))) {
         log.warn('这条消息已在聊天记录里（补收先到/重试重跑的第二份），丢弃', { messageId: message.messageId, charId: message.charId });
         activeMsgTrace('runtime-inbox-duplicate-dropped', { messageId: message.messageId, charId: message.charId });
         continue;
@@ -1817,7 +1835,7 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
       if (message.messageType === 'emotion_update' || (message.metadata as any)?.emotionRaw) {
         const emotionRaw = (message.metadata as any)?.emotionRaw;
         if (emotionRaw) {
-          await landCloudEmotionResult(message.charId, String(emotionRaw));
+          await replyStep(async () => landCloudEmotionResult(message.charId, String(emotionRaw)));
         } else {
           // worker 端评估失败/空结果时 emotionRaw 是空串（worker 无论成败都推一条用来熄灯）。
           // 过去这里静默跳过 —— 用户只看到「情绪更新中」灭了、情绪没变、无任何报错（真实反馈）。
@@ -1845,10 +1863,10 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
       // 记账排在防穿帮闸**之前**——「这条消息该不该说出口」和「这条任务存不存在」是两回事。
       // 排在闸后面的话，被吞的那条 push 会把任务认领一起带走：面板列不出来、用户取消不掉，
       // 而它照常到点触发；订阅登记和凭据刷新也都够不着它，成了推不出去又删不掉的幽灵。
-      await adoptSelfScheduledTasks(message);
+      await replyStep(async () => adoptSelfScheduledTasks(message));
       // 对称的另一半：角色在 fire 里取消 / 改期掉的既有任务，本地清单跟着消账。
       // 同样排在闸之前——D1 行已经没了（或换了时间），消息被吞不改变这个事实。
-      await applyRemoteTaskMutations(message);
+      await replyStep(async () => applyRemoteTaskMutations(message));
 
       // ─── 防穿帮闸·客户端兜底 ───
       // 只拦定时任务的 push（source==='scheduled' 且带策略字段）；instant 聊天
@@ -1868,12 +1886,12 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
         // 抽进 resolveFireExpireDecision，见其单测。
         let expired: boolean;
         try {
-          expired = await resolveFireExpireDecision(
+          expired = await replyStep(async () => resolveFireExpireDecision(
             expireDecisionByFire,
             fireKey,
             now,
             () => evaluateScheduledPushExpired(message),
-          );
+          ));
         } catch (gateErr) {
           // 判不出来「用户此刻是不是正在跟这个角色聊天」。压回收件箱等本地存储缓过来再判，
           // 别猜——猜错的那一面是角色当着正在进行的对话冒出一句定时问候。
@@ -1881,7 +1899,7 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
           const attempts = (message.processAttempts ?? 0) + 1;
           if (attempts < MAX_INBOX_PROCESS_ATTEMPTS) {
             log.warn('防穿帮闸判定失败，压回收件箱稍后重判', { messageId: message.messageId, attempts, error: gateErr });
-            await requeueForRetry(message, attempts);
+            await replyStep(async () => requeueForRetry(message, attempts));
             notifyInboxProcessFailed(message, 'retrying', '防穿帮闸');
             continue;
           }
@@ -1893,6 +1911,7 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
             messageId: message.messageId,
             charId: message.charId,
             taskId: message.taskId,
+            taskUuid: message.taskUuid,
           });
           notifyInboxProcessFailed(message, 'swallowed', '防穿帮闸');
           continue;
@@ -1903,6 +1922,7 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
             messageId: message.messageId,
             charId: message.charId,
             taskId: message.taskId,
+            taskUuid: message.taskUuid,
           });
           // 吞掉的是「这次要说的话」，云端那份「我说过什么」也得跟着撤，否则下一次到点
           // 角色会接着一句没人看过的话往下说。不 await：这是一次网络往返，不能让它拖住
@@ -1924,18 +1944,19 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
           messageId: message.messageId,
           charId: message.charId,
           taskId: message.taskId,
+          taskUuid: message.taskUuid,
           reason: 'no-policy-field',
         });
       }
 
       // 多段消息的等齐守卫：前面的段还没着落就先扣住这条（见 holdUntilEarlierChunksLand）。
       // 排在防穿帮闸后面——这次 fire 整个被吞掉的话，没必要为它的后半段白等几秒。
-      if (await holdUntilEarlierChunksLand(message, pendingMessages)) continue;
+      if (await replyStep(async () => holdUntilEarlierChunksLand(message, pendingMessages))) continue;
 
       // 落库时间戳按「在线送达 vs 离线补收」二选一（undefined = 交给 DB.saveMessage 默认取
       // 写库当刻），主路径与下面的降级存原稿路径共用这一个值，两条路一个口径。
       // sentAt 缺失时退到 receivedAt（老 worker 的 push 可能不带 sentAt）。
-      const persistTimestamp = await resolveInboxPersistTimestampForMessage(message, Date.now());
+      const persistTimestamp = await replyStep(async () => resolveInboxPersistTimestampForMessage(message, Date.now()));
 
       // 同一即时会话的后续 content push 之间留一点真实感；只影响实时到达，
       // 不改变已经在后台生成好的补收消息。
@@ -1958,9 +1979,10 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
 
       if (looksLikeAssistantText) {
         try {
-          await processInboxMessageWithPostProcessing(processableMessage, persistTimestamp);
+          await replyStep(async () => processInboxMessageWithPostProcessing(processableMessage, persistTimestamp, replyRun));
           routed = true;
         } catch (postErr) {
+          if (replyRun?.signal.aborted || isReplyStopped(message.taskUuid)) continue;
           const attempts = (message.processAttempts ?? 0) + 1;
           const action = resolveInboxFailureAction(postErr, attempts);
 
@@ -1968,14 +1990,14 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
             // 角色都不在了，这条消息没有落点，提醒用户也没有意义。真正该处理的是远端那条
             // 还在到点跑的任务——不取消掉它，以后每到点都会再推一条（而且每次真烧一轮 LLM）。
             log.warn('inbox message 的角色已不存在，丢弃并清理远端孤儿任务', { messageId: message.messageId, charId: message.charId });
-            await cancelOrphanedRemoteTasks(message.charId);
+            await replyStep(async () => cancelOrphanedRemoteTasks(message.charId));
             continue;
           }
 
           if (action === 'retry') {
             // 不就地存原稿：残缺版进了聊天记录是永久的，而这类故障通常是暂时的。
             log.warn('post-processing failed, requeue for retry', { messageId: message.messageId, attempts, error: postErr });
-            await requeueForRetry(message, attempts);
+            await replyStep(async () => requeueForRetry(message, attempts));
             notifyInboxProcessFailed(message, 'retrying', '后处理');
             continue;
           }
@@ -1985,7 +2007,7 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
           // 存原稿前也要清一遍：这一趟同样可能写了几条气泡才挂，不清的话原稿会跟它们并排出现。
           log.error('post-processing failed，重试到上限，退回存原稿', { messageId: message.messageId, attempts, error: postErr });
           try {
-            await purgeInboxArtifacts(message);
+            await replyStep(async () => purgeInboxArtifacts(message));
           } catch (purgeErr) {
             log.warn('存原稿前清理半成品失败（原稿照存，可能与残留气泡并存）', { messageId: message.messageId, error: purgeErr });
           }
@@ -1995,7 +2017,7 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
 
       if (!routed) {
         try {
-          await DB.saveMessage({
+          await replyStep(async () => (replyRun?.saveMessage ?? DB.saveMessage)({
             charId: message.charId,
             role: 'assistant',
             type: 'text',
@@ -2006,6 +2028,7 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
               activeMsg2: {
                 messageId: message.messageId,
                 taskId: message.taskId,
+                taskUuid: message.taskUuid,
                 messageType: message.messageType,
                 messageSubtype: message.messageSubtype,
                 avatarUrl: message.avatarUrl,
@@ -2019,12 +2042,13 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
                 return sarSurface ? { sarModuleSurface: sarSurface } : {};
               })(),
             },
-          });
+          }));
         } catch (e) {
+          if (replyRun?.signal.aborted || isReplyStopped(message.taskUuid)) continue;
           log.warn('saveMessage failed, requeue to inbox', { messageId: message.messageId, error: e });
           retainedInboxMessageIds.add(message.messageId);
           try {
-            await ActiveMsgStore.saveInboxMessage(message);
+            await replyStep(async () => ActiveMsgStore.saveInboxMessage(message));
           } catch (reputErr) {
             // re-put 也挂了 (大概率同一根因, 比如 quota / DB 关停), 没救了, 至少留个日志
             log.error('requeue failed, message lost', { messageId: message.messageId, error: reputErr });
@@ -2052,14 +2076,14 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
           }
           const degradedUpdateRaw = typeof degradedInline === 'string' && degradedInline
             ? degradedInline
-            : (degradedEmotionPending ? null : await fetchOffloadedEmotionUpdate(message, degradedCleanups));
+            : (degradedEmotionPending ? null : await replyStep(async () => fetchOffloadedEmotionUpdate(message, degradedCleanups)));
           if (degradedUpdateRaw) {
-            await landCloudEmotionResult(message.charId, degradedUpdateRaw);
+            await replyStep(async () => landCloudEmotionResult(message.charId, degradedUpdateRaw));
           } else if (degradedEmotionPending) {
             const degradedPendingRef = (message.metadata as any)?.amsgEmotionRef;
             if (typeof degradedPendingRef === 'string' && degradedPendingRef) {
               // 轮询等到结果就落 buff + 熄灯 + 删云端副本；跳数用尽由它自己报失败收尾。
-              startLateEmotionPoll(message.charId, degradedPendingRef, message.charName || '');
+              startLateEmotionPoll(message.charId, degradedPendingRef, message.charName || '', { taskUuid: message.taskUuid });
             } else {
               // 标了 pending 却没给引用键（worker bug）：没法轮询，按「有结论但没结果」收尾。
               announceChatGen(CHAT_GEN_EVENTS.emotionFailed, {
@@ -2144,10 +2168,11 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
           // 有意为之的取舍：这一轮已经被 failInstantChatPending 判死（60s 点名超时、云端
           // 回报失败等）之后回复才到时，待收记录早没了、走不进这个块——正文照常落库，但
           // 不收尾（不推进回合、不写事件 / 用户外显），按「失败不扣回合」处理。
-          await settleInstantChatSarModule(message);
+          await replyStep(async () => settleInstantChatSarModule(message));
         }
       }
     } catch (stageErr) {
+      if (replyRun?.signal.aborted || isReplyStopped(message.taskUuid)) continue;
       // 收尾本身不许再抛（它是最后一道防线），抛了就真的什么都不剩了。
       try {
         await handleInboxStageFailure(message, stageErr);
@@ -2155,6 +2180,12 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger): Promise<string[]> =>
         log.error('inbox message 处理失败后的收尾也挂了，这条到此为止', {
           messageId: message.messageId, error: handlerErr,
         });
+      }
+    } finally {
+      try { await replyRun?.settle(); }
+      catch (error) { log.error('停止回复的本地收尾失败', { messageId: message.messageId, error }); }
+      if (replyRun?.signal.aborted) {
+        window.dispatchEvent(new CustomEvent('active-msg-progress', { detail: { charId: message.charId } }));
       }
     }
   }
@@ -2627,7 +2658,8 @@ const scheduleNextInstantChatStatusCheck = () => {
 
 /**
  * 即时对话的「一直等」状态机。客户端不按时长宣判——worker 一次 fire 最长 10 分钟、
- * 失败重试间隔 2/4/6 分钟，任何固定的客户端超时都会抢在云端结论之前把还在路上的
+ * 生成失败即终止，已入收件箱的回复仍可重试补推（旧 Worker 也可能重试生成）。固定的
+ * 客户端超时会抢在云端结论之前把还在路上的
  * 回复判死（甚至顺手 cancel 掉）。这里的做法是：还欠着回复时，前台每 60s 点名问一次
  * 那条任务行：
  *   pending → 继续等（云端还在跑或在排队重试；nextSendAt 过期是重试中的常态，不当信号）；

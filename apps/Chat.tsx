@@ -1,4 +1,6 @@
 import { IMAGE_GEN_UPDATED_EVENT } from '../utils/novelaiImage';
+import { publishReplyDisplay, stopReplyRuns } from '../utils/chatReplyCancellation';
+import { stopInstantChat } from '../utils/amsgInstantChat';
 import EmojiExportDialog from '../components/chat/EmojiExportDialog';
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
@@ -1200,7 +1202,19 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     //     否则再点发送永远被「角色还在回复上一条消息」挡住，这个会话就彻底说不了话了。
     //     云端那一轮如果还活着，回复到了照样会落库，这里不是"取消云端任务"。
     const handleStopGeneration = () => {
-        const stopped = cancelGeneration();
+        if (!char) return;
+        // 上游的真取消（38 批）：先按 UUID 记停止、通知云端取消任务，再收本机这一轮。
+        // stopInstantChat 一开始就同步读走待收记录，所以必须排在 cancelGeneration（会清掉那条记录）前面。
+        // 已经显示出来的气泡保留，没显示的丢掉；迟到的推送 / 补收按停止记录直接销账。
+        const hadCloudReply = !!getInstantChatPending(char.id);
+        stopReplyRuns(char.id);
+        if (hadCloudReply) {
+            void stopInstantChat(char.id).catch(error => {
+                console.warn('[Chat] remote stop failed', error);
+                addToast('已停止接收回复，但云端取消失败，后台操作可能仍在执行', 'error');
+            });
+        }
+        const stopped = cancelGeneration() || hadCloudReply;
         setInstantChatPending(!!activeCharacterId && !!getInstantChatPending(activeCharacterId));
         addToast(stopped ? '已停止这一轮生成' : '当前没有正在生成的回复', 'info');
     };
@@ -2219,12 +2233,8 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     // 顶栏 ⚡ 手动触发（也是「发完后自动生成」到点时调的那一下）。
     const handleManualTrigger = () => {
         autoReply.cancel();
-        if (isTyping) return;
-        // 即时对话（amsg2）那一轮 POST 完 isTyping 就回 false 了，但云端回复可能还没落库
-        // （instantChatPending 才是这段空窗期的真实状态）。这时候再点⚡会起第二轮独立生成，
-        // 两条任务谁都拦不住谁，最后收到两条内容相近但措辞不同的回复。这里提前挡一道，
-        // triggerAI 内部也补了同一道防线（双保险，见 useChatAI 里 getInstantChatPending 那段）。
-        if (instantChatPending) { addToast('角色还在回复上一条消息，等这条回来再发下一条', 'info'); return; }
+        // 本 fork：正在回复（本机生成或云端待收）时 ⚡ 变成停止键，跟「正在输入」旁的停止键同一个动作。
+        if (isTyping || instantChatPending) { handleStopGeneration(); return; }
         triggerAI(messages);
     };
 
@@ -4342,6 +4352,10 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         return displayMessages.filter(message => !pending.has(message.id));
     }, [displayMessages, streamingBubbles, streamingThinking, streamingHandoverIds, selectionMode]);
 
+    useLayoutEffect(() => {
+        publishReplyDisplay(activeCharacterId, renderedMessages.map(message => message.id), streamingBubbles);
+    }, [activeCharacterId, renderedMessages, streamingBubbles]);
+
     const collapsedCount = Math.max(0, totalMsgCount - displayMessages.length);
     const hasOlderHistoryWindow = windowedFocusMsgId !== null && !!historyWindowRange && historyWindowRange.start > 0;
     const hasNewerHistoryWindow = windowedFocusMsgId !== null && !!historyWindowRange && historyWindowRange.end < chatDisplayMessages.length;
@@ -4945,7 +4959,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 selectedCount={selectedMsgIds.size + Array.from(selectedThinkingMsgIds).filter(id => !selectedMsgIds.has(id)).length}
                 onCancelSelection={() => { setSelectionMode(false); setSelectedMsgIds(new Set()); setSelectedThinkingMsgIds(new Set()); }}
                 activeCharacter={char}
-                isTyping={isTyping}
+                isTyping={isTyping || instantChatPending}
                 isSummarizing={isSummarizing}
                 isEmotionEvaluating={emotionStatus === 'evaluating'}
                 isMemoryPalaceProcessing={!!memoryPalaceStatus}
@@ -4955,6 +4969,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 showTokenUsage={char.showTokenUsage !== false}
                 onClose={onBack || closeApp}
                 onTriggerAI={handleManualTrigger}
+                triggerIcon={isTyping || instantChatPending ? 'stop' : 'lightning'}
                 hideTrigger={inputPreferences.sendButtonGenerates}
                 onShowCharsPanel={() => setShowPanel('chars')}
                 onDeleteBuff={(buffId) => {
@@ -5476,7 +5491,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
 
                 <ChatInputArea
                     input={input} setInput={handleInputChange}
-                    isTyping={isTyping} selectionMode={selectionMode}
+                    isTyping={isTyping || instantChatPending} selectionMode={selectionMode}
                     showPanel={showPanel} setShowPanel={setShowPanel}
                     onSend={handleSendCallback}
                     onOpenVoiceInput={() => { setShowPanel('none'); setUserVoiceInputOpen(true); }}
@@ -5523,6 +5538,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                     showSendButton={osTheme.chatShowSendButton ?? false}
                     showVoiceButton={osTheme.chatShowVoiceButton ?? true}
                     onTriggerAI={handleManualTrigger}
+                    triggerIcon={isTyping || instantChatPending ? 'stop' : 'lightning'}
                     chromeStyle={osTheme.chatChromeStyle}
                     acnh={acnh}
                 />
