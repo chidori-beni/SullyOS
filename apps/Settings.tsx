@@ -2272,50 +2272,50 @@ const Settings: React.FC = () => {
                     className="mt-0.5 shrink-0"
                 />
                 <span className="text-[11px] leading-relaxed text-slate-600">
-                    <span className="font-bold">包含主动消息 2.0 的后端连接</span>
+                    <span className="font-bold">{t('settings.backup.backend')}</span>
                     <span className="block text-slate-400">
-                        换设备恢复时勾上，Worker 地址和密钥会一起带走。
-                        <span className="font-bold text-rose-500">勾着导出的备份不要分享给别人</span>
-                        ——拿到文件的人能连上你那台 Worker，也能解开里面的聊天记录。
+                        {t('settings.backup.backendHelp')}
+                        <span className="font-bold text-rose-500">{t('settings.backup.private')}</span>
+                        {t('settings.backup.privateHelp')}
                     </span>
                 </span>
             </label>
 
             <div className="mb-3">
                 <button onClick={() => handleExport('full')} className="w-full py-4 bg-gradient-to-r from-violet-500 to-purple-600 border border-violet-300 rounded-xl text-xs font-bold text-white shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2 relative overflow-hidden mb-3">
-                    <div className="absolute top-0 right-0 px-1.5 py-0.5 bg-white/20 text-[9px] text-white rounded-bl-lg font-bold">完整</div>
+                    <div className="absolute top-0 right-0 px-1.5 py-0.5 bg-white/20 text-[9px] text-white rounded-bl-lg font-bold">{t('settings.backup.fullBadge')}</div>
                     <div className="p-2 bg-white/20 rounded-full"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5m8.25 3v6.75m0 0-3-3m3 3 3-3M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z" /></svg></div>
-                    <span>整合导出 (文字+媒体)</span>
+                    <span>{t('settings.backup.full')}</span>
                 </button>
             </div>
 
-            <p className="text-[10px] text-slate-400 px-1 mb-3 text-center">以下为分步导出，适合低配设备分次备份</p>
+            <p className="text-[10px] text-slate-400 px-1 mb-3 text-center">{t('settings.backup.steps')}</p>
 
             <div className="grid grid-cols-2 gap-3 mb-3">
                 <button onClick={() => handleExport('text_only')} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2 relative overflow-hidden">
                     <div className="p-2 bg-blue-50 rounded-full text-blue-500"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg></div>
-                    <span>纯文字备份</span>
+                    <span>{t('settings.backup.text')}</span>
                 </button>
                  <button onClick={() => handleExport('media_only')} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2">
                     <div className="p-2 bg-pink-50 rounded-full text-pink-500"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg></div>
-                    <span>媒体与美化素材</span>
+                    <span>{t('settings.backup.media')}</span>
                 </button>
             </div>
 
             <div className="grid grid-cols-1 gap-3 mb-4">
                  <div onClick={() => importInputRef.current?.click()} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2 cursor-pointer hover:bg-emerald-50 hover:border-emerald-200">
                     <div className="p-2 bg-emerald-100 rounded-full text-emerald-600"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg></div>
-                    <span>导入备份 (.zip / .json)</span>
+                    <span>{t('settings.backup.import')}</span>
                 </div>
                 <input type="file" ref={importInputRef} className="hidden" accept=".json,.zip" onChange={handleImport} />
             </div>
 
             <p className="text-[10px] text-slate-400 px-1 mb-4 leading-relaxed">
-                • <b>整合导出</b>: 一次性导出文字与图片媒体；VRM / Live2D 模型请使用下方独立备份。<br/>
-                • <b>纯文字备份</b>: 包含所有聊天记录、角色设定、剧情数据。所有图片会被移除（减小体积）。<br/>
-                • <b>媒体与美化素材</b>: 导出相册、表情包、聊天图片、头像、主题气泡、壁纸、图标等图片资源和外观配置。<br/>
-                • <b>语音范围</b>: 整合/媒体备份仅包含已收藏语音，以及 Live2D 开机、触摸预设实际引用的语音；未收藏的聊天、通话等临时语音不会导出。<br/>
-                • 兼容旧版 JSON 备份文件的导入。
+                {t('settings.backup.fullHelp')}<br/>
+                {t('settings.backup.textHelp')}<br/>
+                {t('settings.backup.mediaHelp')}<br/>
+                {t('settings.backup.voiceHelp')}<br/>
+                {t('settings.backup.legacy')}
             </p>
 
             <div data-testid="avatar-model-backup-section" className="mb-5 border-y border-violet-100 py-4">
@@ -4258,18 +4258,18 @@ const Settings: React.FC = () => {
       </Modal>
 
       {/* 强制导出 Modal */}
-      <Modal isOpen={showExportModal} title="备份下载" onClose={() => { revokeDownloadUrl(); setShowExportModal(false); }} footer={
+      <Modal isOpen={showExportModal} title={t('settings.backup.downloadTitle')} onClose={() => { revokeDownloadUrl(); setShowExportModal(false); }} footer={
           <div className="flex gap-2 w-full">
-               <button onClick={() => { revokeDownloadUrl(); setShowExportModal(false); }} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl">关闭</button>
+               <button onClick={() => { revokeDownloadUrl(); setShowExportModal(false); }} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl">{t('common.close')}</button>
           </div>
       }>
           <div className="space-y-4 text-center py-4">
               <div className="w-16 h-16 bg-green-100 text-green-500 rounded-full flex items-center justify-center mx-auto mb-2">
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-8 h-8"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
               </div>
-              <p className="text-sm font-bold text-slate-700">备份文件已生成！</p>
-              <p className="text-xs text-slate-500">如果浏览器没有自动下载，请点击下方链接。</p>
-              {downloadUrl && <a href={downloadUrl} download={downloadFileName} className="text-primary text-sm underline block py-2">点击手动下载 .zip</a>}
+              <p className="text-sm font-bold text-slate-700">{t('settings.backup.ready')}</p>
+              <p className="text-xs text-slate-500">{t('settings.backup.downloadHelp')}</p>
+              {downloadUrl && <a href={downloadUrl} download={downloadFileName} className="text-primary text-sm underline block py-2">{t('settings.backup.download')}</a>}
           </div>
       </Modal>
 
