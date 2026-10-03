@@ -680,6 +680,19 @@ export const isClientStateDeleteReady = async (): Promise<boolean> => {
  * force 用在「云端说这行不存在」的自愈路径上：那时本地底账是脏的（记着传过、实际没有），
  * 必须绕过指纹。传成功才记账——记早了就会把一次失败的上传当成已生效。
  */
+/**
+ * Worker 报错时，上游会在 error.cause 里附上真正的原因（如 D1_ERROR: …），
+ * 只取 message 的话日志里就只剩一句「服务器内部错误」，查不出是哪一步坏的。
+ */
+const workerErrorText = (error: any, fallback: string): string => {
+  const base = error?.message || fallback;
+  const cause = error?.cause;
+  const detail = cause && typeof cause === 'object'
+    ? [cause.code || cause.name, cause.message].filter(Boolean).join(': ')
+    : typeof cause === 'string' ? cause : '';
+  return detail ? `${base}（${detail.slice(0, 300)}）` : base;
+};
+
 const putLlmCredentialRows = async (
   rows: LlmCredentialRow[],
   options: { force?: boolean } = {},
@@ -691,7 +704,7 @@ const putLlmCredentialRows = async (
   for (const batch of chunkCredRows(pending)) {
     const response = await client.putLlmCredentials(batch);
     if (!response?.success) {
-      throw new Error(response?.error?.message || '登记 LLM 凭据失败。');
+      throw new Error(workerErrorText(response?.error, '登记 LLM 凭据失败。'));
     }
     // 逐批记账：后面那批失败时，前面已经落地的不必再传一遍。
     rememberCredRows(batch);
@@ -2263,7 +2276,7 @@ export const ActiveMsgClient = {
       }, '读取任务列表');
 
       if (!response?.success) {
-        throw new Error(response?.error?.message || '读取主动消息 2.0 任务列表失败。');
+        throw new Error(workerErrorText(response?.error, '读取主动消息 2.0 任务列表失败。'));
       }
 
       const page = await decryptPayload(client, response.data);
