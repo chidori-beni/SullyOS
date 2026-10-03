@@ -2259,32 +2259,68 @@ export const ActiveMsgClient = {
   // 分页全量：循环 messages?limit=100&offset=<n>，每页解密后读 tasks 与 pagination.hasMore，
   // 拉到最后一页为止。任一页失败整体抛错——不能拿半页结果去判「远端不存在」（会误伤没拉到的任务）。
   // 每条任务带上游投影的顶层 charId / clientTaskId，供按角色对账/关闭全部。
-  async listAllTasks(): Promise<any[]> {
+  //
+  // 本 fork（10-03）：上游 GET /messages 逐行解密，**库里只要有一行解不开**（OperationError，多半是
+  // 很早以前换过主密钥留下的旧行），整页就 500，所有用到任务清单的地方一起坏。这时只对**那一页**
+  // 改成一条一条取（limit=1），解不开的那几行跳过、其余照常返回；不删任何数据。
+  // status 只要还会响的任务时传 'pending'——查得少，也基本碰不到那些陈年旧行。
+  async listAllTasks(options: { status?: 'pending' | 'all' } = {}): Promise<any[]> {
     const config = await ensureWorkerReady();
     const client = await initializeClient(config);
-
-    const all: any[] = [];
-    let offset = 0;
-    const limit = 100;
-    while (true) {
-      const response = await fetchWithAuth(`messages?limit=${limit}&offset=${offset}`, config, {
+    const statusQuery = options.status && options.status !== 'all' ? `&status=${options.status}` : '';
+    const readPage = async (limit: number, offset: number) => {
+      const response = await fetchWithAuth(`messages?limit=${limit}&offset=${offset}${statusQuery}`, config, {
         method: 'GET',
         headers: {
           'X-Response-Encrypted': 'true',
           'X-Encryption-Version': '1',
         },
       }, '读取任务列表');
+      if (!response?.success) return { ok: false as const, error: response?.error };
+      return { ok: true as const, page: await decryptPayload(client, response.data) };
+    };
 
-      if (!response?.success) {
-        throw new Error(workerErrorText(response?.error, '读取主动消息 2.0 任务列表失败。'));
+    const all: any[] = [];
+    let offset = 0;
+    const limit = 100;
+    let skipped = 0;
+    while (true) {
+      const result = await readPage(limit, offset);
+      if (result.ok) {
+        const pageTasks: any[] = result.page?.tasks || [];
+        all.push(...pageTasks);
+        if (!result.page?.pagination?.hasMore || pageTasks.length === 0) break;
+        offset += limit;
+        continue;
       }
-
-      const page = await decryptPayload(client, response.data);
-      const pageTasks: any[] = page?.tasks || [];
-      all.push(...pageTasks);
-
-      if (!page?.pagination?.hasMore || pageTasks.length === 0) break;
+      // 不是「某一行解不开」那种服务端错误（比如没授权、地址不对）：照旧整体抛错
+      if (result.error?.code !== 'INTERNAL_ERROR') {
+        throw new Error(workerErrorText(result.error, '读取主动消息 2.0 任务列表失败。'));
+      }
+      // 这一页逐条取：窗口仍是 [offset, offset + limit)，保持和整页取时同样的翻页口径
+      let total: number | null = null;
+      let pageOk = 0;
+      for (let i = offset; i < offset + limit && (total === null || i < total); i++) {
+        const single = await readPage(1, i);
+        if (single.ok) {
+          const task = single.page?.tasks?.[0];
+          if (typeof single.page?.pagination?.total === 'number') total = single.page.pagination.total;
+          if (!task) break; // 已经翻到底
+          all.push(task);
+          pageOk += 1;
+        } else if (single.error?.code === 'INTERNAL_ERROR') {
+          skipped += 1;
+          // 头几条全坏、还不知道总数时最多试满这一页，避免无限往后翻
+        } else {
+          throw new Error(workerErrorText(single.error, '读取主动消息 2.0 任务列表失败。'));
+        }
+      }
+      if (pageOk === 0 && total === null) break; // 整页全是坏行且问不到总数：到此为止
+      if (total === null || offset + limit >= total) break;
       offset += limit;
+    }
+    if (skipped > 0) {
+      console.warn(`${ACTIVE_MSG_RUNTIME_HEADER} 任务清单里有 ${skipped} 条后台解不开的旧任务，已跳过（没有删除）`);
     }
     return all;
   },
@@ -3838,7 +3874,8 @@ export const ActiveMsgClient = {
   }> {
     const characters = (await DB.getAllCharacters()).filter(isAmsg2EnabledForChar);
     if (!characters.length) return { status: 'no-tasks', updated: 0, failed: 0 };
-    const remoteTasks = await this.listAllTasks();
+    // 只刷还会响的任务：下面也只认 pending，用不着把历史任务整份拉下来
+    const remoteTasks = await this.listAllTasks({ status: 'pending' });
     let updated = 0;
     let failed = 0;
     let hasTasks = false;
