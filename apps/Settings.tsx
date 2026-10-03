@@ -466,9 +466,9 @@ const Settings: React.FC = () => {
   const [localVisionModel, setLocalVisionModel] = useState(apiConfig.visionApi?.model || '');
   const [availableVisionModels, setAvailableVisionModels] = useState<string[]>(readStoredVisionModels);
   const [selectedVisionPresetId, setSelectedVisionPresetId] = useState<string | null>(null);
-  const [visionStatusMsg, setVisionStatusMsg] = useState('');
+  const [visionStatusMsg, setVisionStatusMsg] = useState<UiStatusMessage | null>(null);
   const [testingVisionApi, setTestingVisionApi] = useState(false);
-  const [visionTestResult, setVisionTestResult] = useState<string | null>(null);
+  const [visionTestResult, setVisionTestResult] = useState<(UiStatusMessage & { success: boolean }) | null>(null);
   const [localMiniMaxKey, setLocalMiniMaxKey] = useState(apiConfig.minimaxApiKey || '');
   const [localMiniMaxGroupId, setLocalMiniMaxGroupId] = useState(apiConfig.minimaxGroupId || '');
   const [localMiniMaxRegion, setLocalMiniMaxRegion] = useState<'domestic' | 'overseas'>(
@@ -1141,15 +1141,15 @@ const Settings: React.FC = () => {
       model: normalizeApiModel(localVisionModel),
     };
     if (nextVisionApi.enabled && (!nextVisionApi.baseUrl || !nextVisionApi.apiKey || !nextVisionApi.model)) {
-      addToast('开启识图 API 前，请填写完整的 URL、Key 和 Model', 'error');
+      addToast(t('settings.vision.enableIncomplete'), 'error');
       return;
     }
     setLocalVisionUrl(nextVisionApi.baseUrl);
     setLocalVisionKey(nextVisionApi.apiKey);
     setLocalVisionModel(nextVisionApi.model);
     updateApiConfig({ visionApi: nextVisionApi });
-    setVisionStatusMsg(nextVisionApi.enabled ? '识图 API 已接入' : '已关闭，沿用原有识图方式');
-    setTimeout(() => setVisionStatusMsg(''), 2200);
+    setVisionStatusMsg({ key: nextVisionApi.enabled ? 'settings.vision.enabled' : 'settings.vision.disabled' });
+    setTimeout(() => setVisionStatusMsg(null), 2200);
   };
 
   const handleToggleVisionApi = () => {
@@ -1160,11 +1160,11 @@ const Settings: React.FC = () => {
       updateApiConfig({ visionApi: {
         baseUrl: '', apiKey: '', model: '', ...apiConfig.visionApi, enabled: false,
       } });
-      setVisionStatusMsg('已关闭，沿用原有识图方式');
+      setVisionStatusMsg({ key: 'settings.vision.disabled' });
     } else if (normalizeApiBaseUrl(localVisionUrl) && normalizeApiCredential(localVisionKey) && normalizeApiModel(localVisionModel)) {
       handleSaveVisionApi(true);
     } else {
-      setVisionStatusMsg('请填写 URL、Key 和 Model，保存后接入');
+      setVisionStatusMsg({ key: 'settings.vision.incomplete' });
     }
   };
 
@@ -1176,17 +1176,17 @@ const Settings: React.FC = () => {
     setLocalVisionKey(next.apiKey);
     setLocalVisionModel(next.model);
     setVisionTestResult(null);
-    setVisionStatusMsg(`已载入预设：${preset.name}`);
-    setTimeout(() => setVisionStatusMsg(''), 2200);
-    addToast(`已把「${preset.name}」填入识图 API；保存后生效`, 'info');
+    setVisionStatusMsg({ key: 'settings.vision.presetLoaded', params: { name: preset.name } });
+    setTimeout(() => setVisionStatusMsg(null), 2200);
+    addToast(t('settings.vision.presetToast', { name: preset.name }), 'info');
   };
 
   const fetchVisionModels = async () => {
     const baseUrl = normalizeApiBaseUrl(localVisionUrl);
     const apiKey = normalizeApiCredential(localVisionKey);
-    if (!baseUrl) { setVisionStatusMsg('请先填写识图 URL'); return; }
+    if (!baseUrl) { setVisionStatusMsg({ key: 'settings.vision.urlRequired' }); return; }
     setIsLoadingVisionModels(true);
-    setVisionStatusMsg('正在拉取识图模型...');
+    setVisionStatusMsg({ key: 'settings.vision.fetching' });
     setVisionTestResult(null);
     try {
       const response = await fetch(`${baseUrl}/models`, {
@@ -1196,7 +1196,7 @@ const Settings: React.FC = () => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const models = extractModelIds(await safeResponseJson(response));
       if (models.length === 0) {
-        setVisionStatusMsg('模型列表为空或格式不兼容');
+        setVisionStatusMsg({ key: 'settings.api.modelsEmpty' });
         return;
       }
       setAvailableVisionModels(models);
@@ -1205,12 +1205,12 @@ const Settings: React.FC = () => {
         setLocalVisionModel(models[0]);
         setSelectedVisionPresetId(null);
       }
-      setVisionStatusMsg(`获取到 ${models.length} 个识图模型`);
+      setVisionStatusMsg({ key: 'settings.vision.modelsFound', params: { count: models.length } });
       setVisionModelFilter('');
       setShowVisionModelModal(true);
     } catch (error: any) {
       console.error('Fetch Vision Models Error', error);
-      setVisionStatusMsg(`拉取失败${error?.message ? `：${error.message}` : ''}`);
+      setVisionStatusMsg({ key: 'settings.vision.fetchFailed', params: { detail: error?.message ? `：${error.message}` : '' } });
     } finally {
       setIsLoadingVisionModels(false);
     }
@@ -1224,18 +1224,18 @@ const Settings: React.FC = () => {
       model: normalizeApiModel(localVisionModel),
     };
     if (!config.baseUrl || !config.apiKey || !config.model) {
-      setVisionTestResult('❌ 请先填写完整的 URL、Key 和 Model');
+      setVisionTestResult({ key: 'settings.vision.testIncomplete', success: false });
       return;
     }
     setTestingVisionApi(true);
     setVisionTestResult(null);
     try {
       const description = await describeImageWithVisionApi(VISION_API_TEST_IMAGE_DATA_URL, config);
-      setVisionTestResult(`✅ 识图成功 — ${description.slice(0, 80)}`);
+      setVisionTestResult({ key: 'settings.vision.success', params: { description: description.slice(0, 80) }, success: true });
       trackEvent('测试识图 API', { result: '成功' });
     } catch (error: any) {
       console.error('Test Vision API Error', error);
-      setVisionTestResult(`❌ 识图失败：${error?.message || '未知错误'}`);
+      setVisionTestResult(error?.message ? { key: 'settings.vision.failure', params: { detail: String(error.message) }, success: false } : { key: 'settings.vision.unknownFailure', success: false });
       trackEvent('测试识图 API', { result: '失败' });
     } finally {
       setTestingVisionApi(false);
@@ -2634,7 +2634,7 @@ const Settings: React.FC = () => {
                         ? 'bg-violet-100 text-violet-600'
                         : 'bg-slate-100 text-slate-400'
                 }`}>
-                    {apiConfig.visionApi?.enabled ? '已接入' : '未接入'}
+                    {apiConfig.visionApi?.enabled ? t('settings.vision.badgeOn') : t('settings.vision.badgeOff')}
                 </span>
             }
             icon={
@@ -2650,9 +2650,9 @@ const Settings: React.FC = () => {
                 <div className="rounded-2xl border border-violet-100 bg-violet-50/60 p-3.5">
                     <div className="flex items-center justify-between gap-3">
                         <div>
-                            <div className="text-xs font-bold text-slate-600">接入独立识图 API</div>
+                            <div className="text-xs font-bold text-slate-600">{t('settings.vision.switch')}</div>
                             <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
-                                适合 DeepSeek 等不能直接看图的主模型。
+                                {t('settings.vision.help')}
                             </p>
                         </div>
                         <button
@@ -2675,8 +2675,8 @@ const Settings: React.FC = () => {
 
                 <div className="rounded-2xl border border-violet-100 bg-white/70 p-3">
                     <div className="flex items-center justify-between gap-2 mb-2">
-                        <label className="text-[10px] font-bold text-violet-500 uppercase tracking-widest">从模型预设载入</label>
-                        <span className="text-[9px] text-slate-300">不会切换主 API</span>
+                        <label className="text-[10px] font-bold text-violet-500 uppercase tracking-widest">{t('settings.vision.fromPreset')}</label>
+                        <span className="text-[9px] text-slate-300">{t('settings.vision.mainUnchanged')}</span>
                     </div>
                     {apiPresets.length > 0 ? (
                         <div className="flex gap-2 flex-wrap">
@@ -2690,14 +2690,14 @@ const Settings: React.FC = () => {
                                             ? 'bg-violet-100 border-violet-200 text-violet-700'
                                             : 'bg-white border-slate-200 text-slate-500 hover:border-violet-200'
                                     }`}
-                                    title={`${preset.name} · ${preset.config.model || '未配置模型'}`}
+                                    title={`${preset.name} · ${preset.config.model || t('settings.vision.noModel')}`}
                                 >
                                     {preset.name}
                                 </button>
                             ))}
                         </div>
                     ) : (
-                        <p className="text-[10px] text-slate-400 leading-relaxed">还没有模型预设；可先在上方“API 配置”中保存预设，或直接手动填写。</p>
+                        <p className="text-[10px] text-slate-400 leading-relaxed">{t('settings.vision.noPreset')}</p>
                     )}
                 </div>
 
@@ -2733,18 +2733,18 @@ const Settings: React.FC = () => {
                                 disabled={!localVisionEnabled || isLoadingVisionModels}
                                 className="text-[10px] text-violet-600 font-bold disabled:text-slate-300"
                             >
-                                {isLoadingVisionModels ? 'Fetching...' : '刷新模型列表'}
+                                {isLoadingVisionModels ? t('settings.api.fetching') : t('settings.api.refresh')}
                             </button>
                         </div>
                         <button
                             type="button"
                             onClick={() => setShowVisionModelModal(true)}
                             disabled={!localVisionEnabled}
-                            title={localVisionModel || '选择或手动输入模型'}
+                            title={localVisionModel || t('settings.vision.selectTitle')}
                             className="w-full bg-white/60 border border-slate-200/60 rounded-xl px-4 py-3 text-sm text-slate-700 flex justify-between items-center gap-2 active:bg-white transition-all shadow-sm disabled:cursor-not-allowed"
                         >
                             <span className="font-mono overflow-hidden whitespace-nowrap min-w-0 flex-1 text-left text-ellipsis">
-                                {localVisionModel || '选择或手动输入模型...'}
+                                {localVisionModel || t('settings.vision.select')}
                             </span>
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-slate-400 shrink-0"><path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" /></svg>
                         </button>
@@ -2758,7 +2758,7 @@ const Settings: React.FC = () => {
                         disabled={testingVisionApi || !localVisionEnabled || !localVisionUrl.trim() || !localVisionKey.trim() || !localVisionModel.trim()}
                         className="py-3 rounded-2xl font-bold text-violet-600 border border-violet-200 bg-violet-50 active:scale-95 transition-all disabled:opacity-40"
                     >
-                        {testingVisionApi ? '识图测试中…' : '🧪 测试识图'}
+                        {testingVisionApi ? t('settings.vision.testing') : t('settings.vision.test')}
                     </button>
                     <button
                         type="button"
@@ -2766,18 +2766,18 @@ const Settings: React.FC = () => {
                         disabled={isLoadingVisionModels || testingVisionApi}
                         className="py-3 rounded-2xl font-bold text-white shadow-lg shadow-violet-500/20 bg-violet-500 active:scale-95 transition-all disabled:opacity-50"
                     >
-                        保存识图 API
+                        {t('settings.vision.save')}
                     </button>
                 </div>
                 {visionStatusMsg && (
-                    <div className="text-[11px] text-center text-violet-600 bg-violet-50 px-3 py-2 rounded-xl">{visionStatusMsg}</div>
+                    <div className="text-[11px] text-center text-violet-600 bg-violet-50 px-3 py-2 rounded-xl">{t(visionStatusMsg.key, visionStatusMsg.params)}</div>
                 )}
-                <p className="text-[9px] text-slate-300 px-1">测试会发送一张内置紫色圆点图，确认该模型真的能看图，并消耗一次极小请求。</p>
+                <p className="text-[9px] text-slate-300 px-1">{t('settings.vision.testHelp')}</p>
                 {visionTestResult && (
                     <div className={`text-xs px-3 py-2 rounded-xl leading-relaxed ${
-                        visionTestResult.startsWith('✅') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'
+                        visionTestResult.success ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'
                     }`}>
-                        {visionTestResult}
+                        {t(visionTestResult.key, visionTestResult.params)}
                     </div>
                 )}
             </div>
@@ -4058,7 +4058,7 @@ const Settings: React.FC = () => {
       </Modal>
 
       {/* 识图 API 使用独立模型列表，避免覆盖主 API 的模型选择。 */}
-      <Modal isOpen={showVisionModelModal} title="选择识图模型" onClose={() => setShowVisionModelModal(false)}>
+      <Modal isOpen={showVisionModelModal} title={t('settings.vision.title')} onClose={() => setShowVisionModelModal(false)}>
         {(() => {
             const { filtered, commonPrefix } = visionModelPickerView;
             return (
@@ -4072,14 +4072,14 @@ const Settings: React.FC = () => {
                                 setSelectedVisionPresetId(null);
                                 setVisionTestResult(null);
                             }}
-                            placeholder="手动输入视觉模型名称..."
+                            placeholder={t('settings.vision.manual')}
                             className="flex-1 min-w-0 bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-violet-500 focus:bg-white transition-all"
                         />
                         <button
                             onClick={() => setShowVisionModelModal(false)}
                             className="px-4 py-2.5 bg-violet-500 text-white text-sm font-bold rounded-xl active:scale-95 transition-all"
                         >
-                            确定
+                            {t('settings.model.confirm')}
                         </button>
                     </div>
                     {availableVisionModels.length > 0 && (
@@ -4088,7 +4088,7 @@ const Settings: React.FC = () => {
                                 type="text"
                                 value={visionModelFilter}
                                 onChange={(event) => setVisionModelFilter(event.target.value)}
-                                placeholder={`🔍 搜索 ${availableVisionModels.length} 个识图模型...`}
+                                placeholder={t('settings.vision.search', { count: availableVisionModels.length })}
                                 className="w-full bg-slate-50 border border-slate-200/60 rounded-xl px-4 py-2 text-xs focus:outline-violet-500 focus:bg-white transition-all"
                             />
                             {visionModelFilter && (
@@ -4101,9 +4101,9 @@ const Settings: React.FC = () => {
                     )}
                     {commonPrefix && (
                         <div className="text-[10px] text-slate-400 px-1 flex items-center gap-1 flex-wrap">
-                            <span>共同前缀:</span>
+                            <span>{t('settings.model.prefix')}</span>
                             <code className="font-mono bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded break-all">{commonPrefix}</code>
-                            <span className="text-slate-300">(下方已弱化显示)</span>
+                            <span className="text-slate-300">{t('settings.model.dimmed')}</span>
                         </div>
                     )}
                     <div className="max-h-[40vh] overflow-y-auto overflow-x-hidden no-scrollbar space-y-2">
@@ -4134,8 +4134,8 @@ const Settings: React.FC = () => {
                         }) : (
                             <div className="text-center text-slate-400 py-8 text-xs">
                                 {availableVisionModels.length === 0
-                                    ? '列表为空，可手动输入或点击“刷新模型列表”拉取'
-                                    : `没有匹配 "${visionModelFilter}" 的模型`}
+                                    ? t('settings.vision.empty')
+                                    : t('settings.model.noMatch', { query: visionModelFilter })}
                             </div>
                         )}
                     </div>
