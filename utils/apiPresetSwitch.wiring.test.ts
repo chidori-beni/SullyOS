@@ -79,7 +79,7 @@ describe('保存配置不反写预设', () => {
       /const sourcePreset = apiPresets\.find\(preset => preset\.id === activePresetId\);[\s\S]*commitApiConfig\(nextConfig\)/,
     );
     expect(handleSaveApi).toMatch(/presetDiffersFromConfig\(sourcePreset, nextConfig\)[\s\S]*setPresetWriteback\(/);
-    expect(settings).toMatch(/若不保存，当前配置为临时配置，切换预设后消失。/);
+    expect(settings).toContain("t('settings.writeback.help')");
   });
 
   it('改的正好是在用的那条时，当前配置一起跟着走', () => {

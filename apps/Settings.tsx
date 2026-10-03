@@ -1112,7 +1112,7 @@ const Settings: React.FC = () => {
     const preset = apiPresets.find(item => item.id === presetWriteback.presetId);
     if (!preset) return;  // 弹窗开着的时候这条被删了
     updateApiPreset(preset.id, preset.name, { ...preset.config, ...presetWriteback.config });
-    addToast(`已存回预设「${preset.name}」`, 'success');
+    addToast(t('settings.writeback.saved', { name: preset.name }), 'success');
   };
 
   // 模型弹窗：选定即保存生效（连同表单里的 URL / Key 一起，跟「保存配置」同一条路），
@@ -2668,9 +2668,9 @@ const Settings: React.FC = () => {
                 </div>
 
                 <p className="text-[10px] text-slate-400 leading-relaxed px-1">
-                    开启后，聊天图片和实际发送过的表情包都只会交给视觉模型识别一次，并把结果写成
+                    {t('settings.vision.descriptionBefore')}
                     <span className="font-semibold text-violet-600"> [图片：模型看到的内容] </span>
-                    再发给主 API；表情包的画面描述会记在表情库里，换角色、重 roll 或重启后仍直接复用，不会重复识图扣费。
+                    {t('settings.vision.descriptionAfter')}
                 </p>
 
                 <div className="rounded-2xl border border-violet-100 bg-white/70 p-3">
@@ -4238,21 +4238,21 @@ const Settings: React.FC = () => {
       {/* 保存后问要不要存回预设 */}
       <Modal
           isOpen={!!presetWriteback}
-          title="存回预设？"
+          title={t('settings.writeback.title')}
           onClose={() => setPresetWriteback(null)}
           footer={
               <>
-                  <button onClick={() => setPresetWriteback(null)} className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 transition-transform">不保存</button>
-                  <button onClick={confirmPresetWriteback} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl active:scale-95 transition-transform">保存</button>
+                  <button onClick={() => setPresetWriteback(null)} className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 transition-transform">{t('settings.writeback.skip')}</button>
+                  <button onClick={confirmPresetWriteback} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl active:scale-95 transition-transform">{t('settings.preset.save')}</button>
               </>
           }
       >
           <div className="space-y-2 text-sm text-slate-600 leading-relaxed">
               <p>
-                  当前配置已经和预设「{apiPresets.find(item => item.id === presetWriteback?.presetId)?.name ?? ''}」不一样了。
+                  {t('settings.writeback.changed', { name: apiPresets.find(item => item.id === presetWriteback?.presetId)?.name ?? '' })}
               </p>
               <p className="text-xs text-slate-400">
-                  若不保存，当前配置为临时配置，切换预设后消失。若保存，则用当前配置覆盖这条预设原来的内容。
+                  {t('settings.writeback.help')}
               </p>
           </div>
       </Modal>

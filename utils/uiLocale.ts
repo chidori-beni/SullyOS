@@ -6,6 +6,13 @@ export const UI_LOCALE_STORAGE_KEY = 'sullyos.uiLocale.v1';
 export type UiMessageParams = Record<string, string | number>;
 
 const ZH_MESSAGES = {
+  'settings.vision.descriptionBefore': '开启后，聊天图片和实际发送过的表情包都只会交给视觉模型识别一次，并把结果写成',
+  'settings.vision.descriptionAfter': '再发给主 API；表情包的画面描述会记在表情库里，换角色、重 roll 或重启后仍直接复用，不会重复识图扣费。',
+  'settings.writeback.title': '存回预设？',
+  'settings.writeback.skip': '不保存',
+  'settings.writeback.changed': '当前配置已经和预设「{name}」不一样了。',
+  'settings.writeback.help': '若不保存，当前配置为临时配置，切换预设后消失。若保存，则用当前配置覆盖这条预设原来的内容。',
+  'settings.writeback.saved': '已存回预设「{name}」',
   'settings.vision.unknownFailure': '❌ 识图失败：未知错误',
   'settings.vision.enabled': "识图 API 已接入",
   'settings.vision.disabled': "已关闭，沿用原有识图方式",
@@ -269,6 +276,13 @@ const ZH_MESSAGES = {
 } as const;
 
 const JA_MESSAGES = {
+  'settings.vision.descriptionBefore': 'オンにすると、チャットの画像と実際に送信したスタンプを画像認識モデルが一度だけ解析し、結果を次の形式にまとめて',
+  'settings.vision.descriptionAfter': 'メイン API に送信します。スタンプの画像説明はスタンプ一覧に保存され、キャラクターの切り替え、再生成、再起動後も再利用されるため、同じ画像認識で繰り返し課金されません。',
+  'settings.writeback.title': 'プリセットに保存しますか？',
+  'settings.writeback.skip': '保存しない',
+  'settings.writeback.changed': '現在の設定はプリセット「{name}」と異なっています。',
+  'settings.writeback.help': '保存しない場合、現在の設定は一時的なものとなり、プリセットを切り替えると失われます。保存する場合は、現在の設定でこのプリセットの内容を上書きします。',
+  'settings.writeback.saved': 'プリセット「{name}」に保存しました',
   'settings.vision.unknownFailure': '❌ 画像認識に失敗しました：不明なエラー',
   'settings.vision.enabled': "画像認識 API に接続しました",
   'settings.vision.disabled': "オフにしました。従来の画像認識方式を使用します",
