@@ -15,6 +15,7 @@ vi.mock('./activeMsgClient', () => ({
     clearClientState: vi.fn().mockResolvedValue({ deleted: 0, toolConfigRestored: true }),
     registerPushSubscription: vi.fn().mockResolvedValue(undefined),
     deleteRemotePushSubscription: vi.fn().mockResolvedValue(undefined),
+    refreshApiCredentialsForPendingTasks: vi.fn().mockResolvedValue({ status: 'ok', updated: 0, failed: 0 }),
     putLlmCredentials: vi.fn().mockResolvedValue(0),
     deleteLlmCredentials: vi.fn().mockResolvedValue(0),
   },
@@ -117,6 +118,7 @@ beforeEach(() => {
   (ActiveMsgClient.registerPushSubscription as any).mockResolvedValue(undefined);
   (ActiveMsgClient.deleteRemotePushSubscription as any).mockReset();
   (ActiveMsgClient.deleteRemotePushSubscription as any).mockResolvedValue(undefined);
+  vi.mocked(ActiveMsgClient.refreshApiCredentialsForPendingTasks).mockReset().mockResolvedValue({ status: 'ok', updated: 0, failed: 0 });
   (ActiveMsgClient.putLlmCredentials as any).mockReset();
   (ActiveMsgClient.putLlmCredentials as any).mockResolvedValue(0);
   (ActiveMsgClient.deleteLlmCredentials as any).mockReset();
@@ -856,6 +858,53 @@ describe('LLM 凭据行的后台重传', () => {
 
     await vi.advanceTimersByTimeAsync(30_000 + 10);
     expect(ActiveMsgClient.putLlmCredentials).toHaveBeenCalledTimes(2);
+  });
+
+  it('同步还在进行时再次切换 API，上一轮结束后立即同步最新配置', async () => {
+    let release!: () => void;
+    vi.mocked(ActiveMsgClient.refreshApiCredentialsForPendingTasks).mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => { release = resolve; });
+      return { status: 'ok', updated: 1, failed: 0 };
+    });
+    syncAmsgLlmCredentials(API);
+    await vi.advanceTimersByTimeAsync(0);
+    const nextApi = { ...API, apiKey: 'sk-next' };
+    syncAmsgLlmCredentials(nextApi);
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ActiveMsgClient.refreshApiCredentialsForPendingTasks).toHaveBeenLastCalledWith(nextApi);
+    expect(localStorage.getItem(AMSG2_PENDING_CRED_SYNC_LS_KEY)).toBeNull();
+  });
+
+  it('旧任务只迁移成功一部分时保留欠账并重试，旧 Worker 也适用', async () => {
+    vi.mocked(ActiveMsgClient.refreshApiCredentialsForPendingTasks)
+      .mockResolvedValueOnce({ status: 'partial', updated: 1, failed: 1 })
+      .mockResolvedValue({ status: 'ok', updated: 2, failed: 0 });
+    syncAmsgLlmCredentials(API);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(localStorage.getItem(AMSG2_PENDING_CRED_SYNC_LS_KEY)).toBe('1');
+    await vi.advanceTimersByTimeAsync(30_001);
+    expect(ActiveMsgClient.refreshApiCredentialsForPendingTasks).toHaveBeenCalledTimes(2);
+    expect(localStorage.getItem(AMSG2_PENDING_CRED_SYNC_LS_KEY)).toBeNull();
+  });
+
+  it('恢复备份没有本地凭据底账时，也会为启用角色覆盖 chat 行', async () => {
+    vi.mocked(isLlmCredentialsReady).mockResolvedValue(true);
+    syncAmsgLlmCredentials(API);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ActiveMsgClient.putLlmCredentials).toHaveBeenCalledWith([{
+      credId: 'char:char-cred-sync/chat',
+      value: { apiUrl: 'https://api.example.dev/v1/chat/completions', apiKey: 'sk-new', primaryModel: 'gpt-x' },
+    }]);
+  });
+
+  it('升级启动没有欠账标记也会替换旧副 API，并刷新存量任务', async () => {
+    (isLlmCredentialsReady as any).mockResolvedValue(true);
+    primeLedgerWithOldKey();
+    resumePendingAmsgStateSync({ characters: [CHAR], userProfile: {} as any, groups: [], apiConfig: API });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ActiveMsgClient.putLlmCredentials).toHaveBeenCalledTimes(1);
+    expect(ActiveMsgClient.refreshApiCredentialsForPendingTasks).toHaveBeenCalledWith(API);
   });
 
   it('启动补传：上次没传成的按底账重来一次（没给 apiConfig 就跳过这一项）', async () => {

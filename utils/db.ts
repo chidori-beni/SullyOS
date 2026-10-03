@@ -2417,8 +2417,27 @@ export const DB = {
 
   saveDailySchedule: async (schedule: DailySchedule): Promise<void> => {
       const db = await openDB();
-      const transaction = db.transaction(STORE_DAILY_SCHEDULE, 'readwrite');
-      transaction.objectStore(STORE_DAILY_SCHEDULE).put(schedule);
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_DAILY_SCHEDULE, 'readwrite');
+          const store = transaction.objectStore(STORE_DAILY_SCHEDULE);
+          // Generated schedules (including background results) may omit the local cover.
+          // Read and inherit in the same transaction so a concurrent upload is retained.
+          if (schedule.coverImage !== undefined) store.put(schedule);
+          else {
+              const range = IDBKeyRange.bound(`${schedule.charId}_`, `${schedule.charId}_\uffff`);
+              const request = store.openCursor(range, 'prev');
+              request.onsuccess = () => {
+                  const cursor = request.result;
+                  if (!cursor) store.put(schedule);
+                  else if (cursor.value.charId === schedule.charId && cursor.value.coverImage) {
+                      store.put({ ...schedule, coverImage: cursor.value.coverImage });
+                  } else cursor.continue();
+              };
+          }
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+          transaction.onabort = () => reject(transaction.error);
+      });
   },
 
   /** 日程规划只需要最近几张表来避开重复；不把完整历史塞进 LLM prompt。 */
@@ -2508,7 +2527,7 @@ export const DB = {
           if (!db.objectStoreNames.contains(STORE_DAILY_SCHEDULE)) { resolve(null); return; }
           const transaction = db.transaction(STORE_DAILY_SCHEDULE, 'readonly');
           const store = transaction.objectStore(STORE_DAILY_SCHEDULE);
-          const req = store.openCursor();
+          const req = store.openCursor(null, 'prev');
           req.onsuccess = () => {
               const cursor = req.result;
               if (cursor) {
@@ -3003,6 +3022,36 @@ export const DB = {
       });
   },
 
+  getVRNovelSummaries: async (): Promise<import('../types').VRWorldNovelSummary[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_VR_NOVELS)) return [];
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_VR_NOVELS, 'readonly');
+          const summaries: import('../types').VRWorldNovelSummary[] = [];
+          const request = tx.objectStore(STORE_VR_NOVELS).openCursor();
+          request.onsuccess = () => {
+              const cursor = request.result;
+              if (!cursor) { resolve(summaries); return; }
+              const { segments, ...metadata } = cursor.value as VRWorldNovel;
+              summaries.push({ ...metadata, segmentCount: segments.length });
+              cursor.continue();
+          };
+          request.onerror = () => reject(request.error);
+          tx.onabort = () => reject(tx.error || new Error('书目读取中断'));
+      });
+  },
+
+  getVRNovel: async (id: string): Promise<VRWorldNovel | undefined> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_VR_NOVELS, 'readonly');
+          const request = tx.objectStore(STORE_VR_NOVELS).get(id);
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+          tx.onabort = () => reject(tx.error || new Error('书籍读取中断'));
+      });
+  },
+
   getVRNovels: async (): Promise<VRWorldNovel[]> => {
       const db = await openDB();
       if (!db.objectStoreNames.contains(STORE_VR_NOVELS)) return [];
@@ -3152,6 +3201,30 @@ export const DB = {
       if (!db.objectStoreNames.contains(STORE_VR_GUESTBOOK)) return;
       const transaction = db.transaction(STORE_VR_GUESTBOOK, 'readwrite');
       transaction.objectStore(STORE_VR_GUESTBOOK).put({ id: 'board', messages: [], updatedAt: Date.now() });
+  },
+
+  /** Edit/delete against the latest board, without replacing concurrent posts. */
+  editVRGuestbookMessage: async (id: string, content: string | null): Promise<void> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_VR_GUESTBOOK, 'readwrite');
+          const store = tx.objectStore(STORE_VR_GUESTBOOK);
+          const request = store.get('board');
+          request.onsuccess = () => {
+              const board = request.result as VRGuestbookState | undefined;
+              if (!board) return;
+              const messages = content === null
+                  ? board.messages.filter(m => m.id !== id)
+                  : board.messages.map(m => m.id === id ? { ...m, content } : m);
+              store.put({ ...board, messages, updatedAt: Date.now() });
+          };
+          tx.oncomplete = () => {
+              if (typeof window !== 'undefined') window.dispatchEvent(new Event('vr-guestbook-updated'));
+              resolve();
+          };
+          tx.onerror = () => reject(tx.error);
+          tx.onabort = () => reject(tx.error);
+      });
   },
 
   // --- 剧院·投稿剧本库 ---

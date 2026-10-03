@@ -1542,7 +1542,13 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
         userProfile: UserProfile,
         emojis: Emoji[],
         processedExcludeIds?: Set<number>,
-        options?: { useVisionDescriptions?: boolean; skipTimeGap?: boolean; contextHighWaterMark?: number },
+        options?: {
+            useVisionDescriptions?: boolean;
+            skipTimeGap?: boolean;
+            contextHighWaterMark?: number;
+            /** 默认使用聊天时间感知；见面入口传线下开关，控制现实时间戳与互动间隔（剧情时间戳不受影响）。 */
+            timeAwarenessEnabled?: boolean;
+        },
     ) => {
         // Filter Logic
         // 新版上下文范围由 chatContextRange 先按「自适应/拉杆最大范围」取窗；
@@ -1567,6 +1573,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
         // 否则这些旧回复会一直充当"收到图片就先报一句已保存"的示范。
         const assistantRepliesToUserImage = collectAssistantRepliesToUserImage(historySlice);
         const charTz = resolveCharTimeZone(char);
+        const timeAwarenessOn = options?.timeAwarenessEnabled ?? (char.timeAwarenessEnabled !== false);
 
         let timeGapHint = "";
         if (historySlice.length >= 2) {
@@ -1580,8 +1587,8 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     break;
                 }
             }
-            // 时间感知强化开关：默认开启（undefined 视为 true），显式关掉后不再注入「距离上次聊天多久」提示
-            if (lastRealMsg && currentMsg && char.timeAwarenessEnabled !== false && !options?.skipTimeGap) timeGapHint = ChatPrompts.getTimeGapHint(lastRealMsg, currentMsg.timestamp, charTz);
+            // 时间感知关闭时，互动间隔与现实消息时间戳一起遮住（a6723291）。
+            if (lastRealMsg && currentMsg && timeAwarenessOn && !options?.skipTimeGap) timeGapHint = ChatPrompts.getTimeGapHint(lastRealMsg, currentMsg.timestamp, charTz);
         }
 
         return {
@@ -1620,7 +1627,10 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     && Number.isFinite(m.metadata.sceneClockAt)
                     ? m.metadata.sceneClockAt
                     : undefined;
-                const timeStr = `[${ChatPrompts.formatDate(sceneClockAt ?? m.timestamp, charTz)}${sceneClockAt !== undefined ? ' · 剧情时间' : ''}]`;
+                // 剧情时间（见面消息）始终保留；现实时间戳只在时间感知开着时给（a6723291）
+                const timeStr = sceneClockAt !== undefined || timeAwarenessOn
+                    ? `[${ChatPrompts.formatDate(sceneClockAt ?? m.timestamp, charTz)}${sceneClockAt !== undefined ? ' · 剧情时间' : ''}]`
+                    : '';
                 const reactionContext = formatMessageReactionContext(m, char.name || '你', userProfile?.name || '用户');
                 const sourceTag = (() => {
                     const source = m.metadata?.source;
@@ -1668,7 +1678,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                      if (visionDescription) {
                          let textPart = `${timeStr} [图片：${visionDescription}]`;
                          if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') textPart += `\n\n${timeGapHint}`;
-                         return { role: m.role, content: textPart + reactionContext };
+                         return { role: m.role, content: (textPart + reactionContext).trimStart() };
                      }
                      // 向下兼容：如果图片数据缺失（例如只导入了文字备份），不要把空 URL 发给 API，否则会报错无法回应
                      const hasImageData = typeof m.content === 'string' && (m.content.startsWith('data:') || m.content.startsWith('http'));
@@ -1677,9 +1687,9 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                          : `${timeStr} [User sent an image, but the image data is no longer available]`;
                      if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') textPart += `\n\n${timeGapHint}`;
                      if (!hasImageData) {
-                         return { role: m.role, content: textPart + reactionContext };
+                         return { role: m.role, content: (textPart + reactionContext).trimStart() };
                      }
-                     return { role: m.role, content: [{ type: "text", text: textPart + reactionContext }, { type: "image_url", image_url: { url: m.content } }] };
+                     return { role: m.role, content: [{ type: "text", text: (textPart + reactionContext).trimStart() }, { type: "image_url", image_url: { url: m.content } }] };
                 }
                 
                 if (m.type === 'voice') {
@@ -1931,7 +1941,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                 else content = `${timeStr} ${sourceTag} ${content}`;
 
                 if (reactionContext) content = `${content}${reactionContext}`;
-                return { role: m.role, content };
+                return { role: m.role, content: typeof content === 'string' ? content.trimStart() : content };
             }).filter(entry => entry !== IMAGE_SAVE_CLAIM_ONLY_MESSAGE),
             historySlice // Return original slice for Quote lookup
         };

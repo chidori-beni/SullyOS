@@ -153,7 +153,7 @@ describe('排程任务的凭据', () => {
       .toBeLessThan((globalThis.fetch as any).mock.invocationCallOrder.at(-1));
   });
 
-  it('角色开了单独 API → 那行写的是单独 API 的值', async () => {
+  it('旧角色的单独 API 不再参与排程', async () => {
     await schedule({
       enabled: true,
       tasks: [],
@@ -162,7 +162,7 @@ describe('排程任务的凭据', () => {
     });
 
     expect(putRows()[0].value).toEqual({
-      apiUrl: 'https://alt.example.dev/v1/chat/completions', apiKey: 'sk-alt', primaryModel: 'gpt-alt',
+      apiUrl: 'https://api.example.dev/v1/chat/completions', apiKey: 'sk-global', primaryModel: 'gpt-global',
     });
   });
 

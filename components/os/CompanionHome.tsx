@@ -55,7 +55,7 @@ import {
   type AvatarStageFraming,
 } from '../../utils/avatarPerformance';
 import { deleteBlobRef, deleteBlobRefIfUnreferenced, isBlobRef, putImageBlob, useBlobRefUrl } from '../../utils/blobRef';
-import { hslToHex, hueFromGradient, hueFromImage, normalizeHue } from '../../utils/dominantHue';
+import { hslToHex, hueFromGradient, hueFromImage, normalizeHue, rgbToHsl } from '../../utils/dominantHue';
 import { characterHasVoice } from '../../utils/ttsRouter';
 import { resolveTtsProvider } from '../../utils/ttsProvider';
 import { CallAudioFeed } from '../../utils/callAudioFeed';
@@ -149,6 +149,7 @@ import {
 } from '../../utils/builtinSullyLive2D';
 import {
   companionAvatarSource,
+  companionPortraitConfig,
   companionSkinSetPatchValue,
   listCompanionDateOutfits,
   normalizeCompanionSkinSetId,
@@ -468,6 +469,9 @@ const CompanionHome: React.FC = () => {
   const miniMaxTtsActive = resolveTtsProvider(apiConfig) === 'minimax';
   const activeCompanionSource = companionAvatarSource(character);
   const staticCompanionActive = activeCompanionSource === 'upload' || activeCompanionSource === 'date';
+  const [portraitConfigDraft, setPortraitConfigDraft] = useState(() => companionPortraitConfig(character));
+  const [portraitPerformance, setPortraitPerformance] = useState(DEFAULT_AVATAR_PERFORMANCE);
+  useEffect(() => { setPortraitPerformance(DEFAULT_AVATAR_PERFORMANCE); }, [character?.id, activeCompanionSource]);
   const [motionState, setMotionState] = useState<AvatarMotionState>('idle');
   const startupAlreadyPlayed = Boolean(character && companionStartupPlayedThisSession.has(character.id));
   const [performance, setPerformance] = useState<AvatarPerformanceDirection>(() => (
@@ -761,14 +765,16 @@ const CompanionHome: React.FC = () => {
     [backgroundPreset],
   );
   const palette = useMemo(() => {
+    const manual = /^#[0-9a-f]{6}$/i.test(character?.companionThemeColor || '') ? character!.companionThemeColor! : undefined;
+    const manualHsl = manual ? rgbToHsl(parseInt(manual.slice(1, 3), 16), parseInt(manual.slice(3, 5), 16), parseInt(manual.slice(5, 7), 16)) : undefined;
     const baseHue = normalizeHue(theme.hue ?? 267);
-    const saturation = Math.min(74, Math.max(32, theme.saturation ?? 46));
+    const saturation = manualHsl ? manualHsl[1] * 100 : Math.min(74, Math.max(32, theme.saturation ?? 46));
     const sceneHue = backgroundHue ?? presetHue ?? baseHue;
-    const accentHue = charHue ?? sceneHue;
+    const accentHue = manualHsl?.[0] ?? charHue ?? sceneHue;
     const accentLightness = Math.min(78, Math.max(68, (theme.lightness ?? 64) + 7));
     return {
-      accent: hslToHex(accentHue, Math.max(52, saturation), accentLightness),
-      ambient: backgroundPreset?.tint || hslToHex(sceneHue, Math.max(44, saturation), 64),
+      accent: manual || hslToHex(accentHue, Math.max(52, saturation), accentLightness),
+      ambient: manual || backgroundPreset?.tint || hslToHex(sceneHue, Math.max(44, saturation), 64),
       baseTop: hslToHex(baseHue, Math.max(34, saturation - 5), 16),
       baseMid: hslToHex(baseHue, Math.max(28, saturation - 11), 9),
       baseBottom: hslToHex(baseHue, Math.max(24, saturation - 15), 4),
@@ -777,6 +783,7 @@ const CompanionHome: React.FC = () => {
       shadow: hslToHex(accentHue, Math.max(18, saturation - 27), 4),
     };
   }, [
+    character?.companionThemeColor,
     backgroundHue,
     backgroundPreset?.tint,
     charHue,
@@ -944,7 +951,7 @@ const CompanionHome: React.FC = () => {
     transform: (direction: AvatarPerformanceDirection) => AvatarPerformanceDirection = normalizeCompanionStartupPerformance,
   ) => {
     clearCompanionPerformanceCues();
-    if (!cues?.length) return;
+    if (!cues?.length || staticCompanionActive) return;
     expandAvatarPerformanceCueBeats(cues, durationMs).forEach(beat => {
       const direction = transform(beat.direction);
       if (beat.delayMs <= 40) {
@@ -996,6 +1003,7 @@ const CompanionHome: React.FC = () => {
         return;
       }
       setStartupHeadLocked(true);
+      setPortraitPerformance(normalizeCompanionStartupPerformance(cues?.[0]?.direction || startup.performance));
       setLine({ text, translation: translation || undefined, label: '开场演出', kind: 'startup' });
       setPerformance(normalizeCompanionStartupPerformance(cues?.[0]?.direction || startup.performance));
       setMotionState('speaking');
@@ -1014,8 +1022,8 @@ const CompanionHome: React.FC = () => {
 
   const accentColor = palette.accent;
   const staticPortraitValue = useMemo(
-    () => character ? resolveCompanionPortrait(character, performance.emotion, performance.faces || []) : undefined,
-    [character, performance.emotion, performance.faces],
+    () => character ? resolveCompanionPortrait(character, portraitPerformance.emotion, portraitPerformance.faces || []) : undefined,
+    [character, portraitPerformance],
   );
   const touchPackContentLabel = activeCompanionSource === 'upload'
     ? '台词'
@@ -1365,7 +1373,8 @@ const CompanionHome: React.FC = () => {
     setLine(null);
     setPerformance(DEFAULT_AVATAR_PERFORMANCE);
     setMotionState('idle');
-    setEditingPanel(staticCompanionActive ? 'stage' : 'character');
+    setPortraitConfigDraft(companionPortraitConfig(character));
+    setEditingPanel('character');
     setCompositionFramingMode('base');
     setFramingDraft(companionFraming || defaultCompanionFraming);
     setFaceFramingDraft(makeFaceFramingSeed());
@@ -1389,6 +1398,19 @@ const CompanionHome: React.FC = () => {
   };
   const saveCompositionEditor = () => {
     if (!character) return;
+    if (staticCompanionActive) {
+      const source = activeCompanionSource as 'upload' | 'date';
+      updateCharacter(character.id, prev => ({
+        companionAvatar: {
+          version: 1, source, ...prev.companionAvatar,
+          portraitConfigs: { ...prev.companionAvatar?.portraitConfigs, [source]: portraitConfigDraft },
+        },
+      }));
+      setEditing(false);
+      setCompositionEditorCollapsed(false);
+      addToast('当前形象模式的位置已保存', 'success');
+      return;
+    }
     updateCharacter(character.id, prev => (
       prev.videoAvatar ? {
         videoAvatar: {
@@ -1786,6 +1808,7 @@ const CompanionHome: React.FC = () => {
       startupPerformanceCueText,
       startupPerformanceCues,
     ) ? startupPerformanceCues : [];
+    setPortraitPerformance(normalizeCompanionStartupPerformance(cues[0]?.direction || startupPerformance));
     setPerformance(normalizeCompanionStartupPerformance(cues[0]?.direction || startupPerformance));
     setMotionState('speaking');
     scheduleCompanionPerformanceCues(cues, companionLineFallbackDuration(text.length));
@@ -2405,6 +2428,7 @@ const CompanionHome: React.FC = () => {
     // over. This timer never calls the API; repeated taps simply replace it.
     touchDialogueTimerRef.current = window.setTimeout(() => {
       if (!mountedRef.current) return;
+      setPortraitPerformance(reaction.performance || buildImmediateTouchPerformance(hit.zone));
       setLine({ text, translation: translation || undefined, label: `触摸 · ${avatarTouchZoneLabel(hit.zone)}`, kind: 'touch' });
       // 逐拍编排里的每一拍都要过同一条触摸落地管线（力度 + 内置 Sully 特写），
       // 否则手动编排的那几拍会失去按压力度、和没编排的台词表现不一致。
@@ -2919,7 +2943,7 @@ const CompanionHome: React.FC = () => {
           <StaticCompanionPortrait
             value={staticPortraitValue}
             characterName={character.name}
-            spriteConfig={character.spriteConfig}
+            spriteConfig={editing ? portraitConfigDraft : companionPortraitConfig(character)}
             touchEnabled={!editing && !touchSettingsOpen && !wardrobeOpen}
             onAvatarTouch={hit => { void respondToTouch(hit); }}
           />
@@ -4768,7 +4792,17 @@ const CompanionHome: React.FC = () => {
 
               {editingPanel === 'character' && (
                 <div className="mt-3" data-testid="companion-character-crop-editor">
-                  {!character.videoAvatar ? (
+                  {staticCompanionActive ? (
+                    <div className="space-y-4 rounded-2xl border border-white/15 p-4" data-testid="companion-portrait-composition">
+                      <p className="text-xs text-white/70">{activeCompanionSource === 'upload' ? '图片 / GIF' : '见面立绘'}的位置独立保存，不影响其他模式。</p>
+                      {([['scale', '大小', .25, 3, .01], ['x', '左右位置', -100, 100, 1], ['y', '上下位置', -100, 100, 1]] as const).map(([key, label, min, max, step]) => (
+                        <label key={key} className="block text-xs text-white/70">{label} · {portraitConfigDraft[key].toFixed(key === 'scale' ? 2 : 0)}
+                          <input aria-label={label} className="mt-2 block w-full" type="range" min={min} max={max} step={step} value={portraitConfigDraft[key]} onChange={event => setPortraitConfigDraft(current => ({ ...current, [key]: Number(event.target.value) }))} />
+                        </label>
+                      ))}
+                      <button className="rounded-xl border border-white/20 px-3 py-2 text-xs" onClick={() => setPortraitConfigDraft({ scale: 1, x: 0, y: 0 })}>重置当前模式位置</button>
+                    </div>
+                  ) : !character.videoAvatar ? (
                     <div className="rounded-2xl border border-dashed border-white/15 px-4 py-5 text-center">
                       <div className="text-[11px] text-white/70">还没有可裁剪的视频角色</div>
                       <button onClick={() => openApp(AppID.Call)} className="mt-2 rounded-full border border-white/15 px-3 py-1.5 text-[10px] text-white/55">去导入 VRM / Live2D</button>
@@ -5006,6 +5040,19 @@ const CompanionHome: React.FC = () => {
                         <span className="text-[9px] text-rose-200/60">移除</span>
                       </button>
                     )}
+                  </div>
+                  <div className="mt-4 border-t border-white/10 pt-3">
+                    <label className="flex items-center justify-between gap-3 text-xs text-white/80">
+                      自定义主题色
+                      <input type="color" aria-label="自定义主题色" value={uiTint} disabled={!character}
+                        onChange={event => { if (character) updateCharacter(character.id, { companionThemeColor: event.target.value }); }}
+                        className="h-9 w-12 cursor-pointer rounded border border-white/20 bg-transparent" />
+                    </label>
+                    <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-white/50">
+                      <span>{character?.companionThemeColor ? '已使用自选颜色 · 仅对当前角色生效' : '自动取色 · 跟随角色与场景'}</span>
+                      {character?.companionThemeColor && <button type="button" className="shrink-0 rounded-lg border border-white/20 px-2 py-1.5 text-white/80"
+                        onClick={() => updateCharacter(character.id, { companionThemeColor: undefined })}>恢复自动</button>}
+                    </div>
                   </div>
                   <div className="mt-4 border-t border-white/10 pt-3" data-testid="companion-frame-style-picker">
                     <div className="text-[9px] tracking-[0.2em] text-white/40">舞台视觉语言</div>

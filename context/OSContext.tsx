@@ -2509,10 +2509,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               return;
           }
 
-          // Determine which API to use
-          const pCfg = char.proactiveConfig;
-          const useSecondary = pCfg?.useSecondaryApi && pCfg.secondaryApi?.baseUrl;
-          const api = useSecondary ? pCfg!.secondaryApi! : currentApiConfig;
+          // 页面内主动消息也统一使用聊天主 API，忽略旧备份中的副 API 配置。
+          const api = currentApiConfig;
           if (!api.baseUrl) {
               drainQueuedProactive();
               return;
@@ -2520,7 +2518,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
           proactiveRunningRef.current = true;
           setProactiveComposingChars(prev => prev[charId] ? prev : { ...prev, [charId]: true });
-          console.log(`🔔 [Proactive/Global] Trigger fired for ${char.name}${useSecondary ? ' (副API)' : ''}`);
+          console.log(`🔔 [Proactive/Global] Trigger fired for ${char.name}`);
 
           try {
               // 1. Calculate time gap
@@ -3957,21 +3955,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const commitApiConfig = (patch: Partial<APIConfig>) => {
       const nextConfig = normalizeApiConfig({ ...apiConfig, ...patch });
       updateApiConfig(patch);
-      // 支持凭据表的 Worker 上，任务只带引用，换 Key 只要覆盖云端那几行；
-      // 老 Worker 上这句是 no-op，凭据靠下面逐条补刷的老路续命。
+      // 凭据行与存量任务统一从同步队列更新，失败自动重试并留底账供下次启动补传（b3a5531c）。
       syncAmsgLlmCredentials(nextConfig);
-      // 已排程的主动消息 2.0 AI 任务里冻结的是排程那一刻的凭据。换 Key / 模型后
-      // 不重传的话，到点会继续拿旧凭据打请求；这里不阻塞当前保存或切换动作。
-      void ActiveMsgClient.refreshApiCredentialsForPendingTasks(nextConfig)
-          .then((result) => {
-              if (result.status === 'partial') {
-                  addToast(`API 已保存，但有 ${result.failed} 条已排程的主动消息没换上新凭据，稍后再保存一次可重试。`, 'error');
-              }
-          })
-          .catch((error) => {
-              console.warn('[OSContext] 刷新已排程任务的 API 凭据失败', error);
-              addToast('API 已保存，但已排程的主动消息凭据刷新失败，稍后再保存一次可重试。', 'error');
-          });
   };
   const showError = (title: string, details: string) => {
       setErrorDialog({ title, details });

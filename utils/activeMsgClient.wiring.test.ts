@@ -22,14 +22,15 @@ const sliceBetween = (src: string, start: string, end: string): string => {
 };
 
 describe('③ 凭据变更重传接线', () => {
-  it('OSContext.commitApiConfig：换了聊天 API 就触发已排程任务的凭据重传', () => {
+  it('OSContext.commitApiConfig：换了聊天 API 就交给凭据同步队列（b3a5531c 起它也负责存量任务）', () => {
     const src = read('../context/OSContext.tsx');
-    // 设置页保存、预设切换和聊天快捷切换共用 OSContext 的完整提交出口。
+    // 设置页保存、预设切换和聊天快捷切换共用 OSContext 的完整提交出口（本 fork 挪到了 OSContext）。
     const fn = sliceBetween(src, 'const commitApiConfig', 'const showError');
-    expect(fn).toContain('ActiveMsgClient.refreshApiCredentialsForPendingTasks(');
     // 传的是「这次要换过去的配置」，而不是渲染时的旧快照。
     expect(fn).toContain('const nextConfig = normalizeApiConfig({ ...apiConfig, ...patch })');
-    expect(fn).toContain('refreshApiCredentialsForPendingTasks(nextConfig)');
+    expect(fn).toContain('syncAmsgLlmCredentials(nextConfig)');
+    // 逐条补刷的老路已退休，别再并行跑一遍
+    expect(fn).not.toContain('refreshApiCredentialsForPendingTasks(');
 
     const settings = read('../apps/Settings.tsx');
     // 两个设置页入口仍然共用 OSContext 的 commitApiConfig，不自己绕过凭据同步。
@@ -39,7 +40,7 @@ describe('③ 凭据变更重传接线', () => {
       .toContain('commitApiConfig(configFromPreset(preset))');
   });
 
-  it('ActiveMsg2SettingsModal.handleSubmit：角色级 API 保存后刷同角色其余 pending AI 任务', () => {
+  it('ActiveMsg2SettingsModal.handleSubmit：面板保存后刷同角色其余 pending AI 任务', () => {
     const src = read('../components/chat/ActiveMsg2SettingsModal.tsx');
     const fn = sliceBetween(src, 'const handleSubmit', 'return (');
     expect(fn).toContain('ActiveMsgClient.refreshCharPendingAiTaskCredentials(');

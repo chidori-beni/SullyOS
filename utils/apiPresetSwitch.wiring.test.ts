@@ -115,7 +115,7 @@ describe('保存配置不反写预设', () => {
 });
 
 describe('换 API 一定连着换云端凭据', () => {
-  it('commitApiConfig 里三件事齐全', () => {
+  it('commitApiConfig 换配置并交给凭据同步队列', () => {
     const start = osContext.indexOf('const commitApiConfig = ');
     const end = osContext.indexOf('\n  const showError', start);
     expect(start).toBeGreaterThan(-1);
@@ -123,7 +123,8 @@ describe('换 API 一定连着换云端凭据', () => {
     const commitApiConfig = osContext.slice(start, end);
     expect(commitApiConfig).toMatch(/updateApiConfig\(patch\)/);
     expect(commitApiConfig).toMatch(/syncAmsgLlmCredentials\(nextConfig\)/);
-    expect(commitApiConfig).toMatch(/refreshApiCredentialsForPendingTasks\(nextConfig\)/);
+    // b3a5531c 起凭据同步队列也负责存量任务，逐条补刷的老路已退休
+    expect(commitApiConfig).not.toMatch(/refreshApiCredentialsForPendingTasks\(/);
   });
 });
 

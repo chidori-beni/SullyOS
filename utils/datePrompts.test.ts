@@ -12,6 +12,7 @@ import {
 } from './datePrompts';
 import { setVoicePromptOverrides } from './ttsProvider';
 import type { CharacterProfile, UserProfile, Message, MountedWorldbook } from '../types';
+import { buildCharacterResponsePrinciples } from './characterResponsePrinciples';
 
 const makeChar = (overrides: Partial<CharacterProfile> = {}): CharacterProfile => ({
     id: 'char-1',
@@ -40,6 +41,8 @@ const sysOf = (messages: Array<{ role: string; content: any }>): string => {
     const sys = messages.find(m => m.role === 'system');
     return typeof sys?.content === 'string' ? sys.content : '';
 };
+const lastUserOf = (messages: Array<{ role: string; content: any }>) =>
+    messages.filter(m => m.role === 'user').slice(-1)[0];
 
 afterEach(() => {
     setVoicePromptOverrides(undefined);
@@ -140,19 +143,19 @@ describe('DatePrompts.buildSessionPayload', () => {
     it('细节深挖默认开启：方法块进 system，聚焦线索进末尾 note；关闭后两者都消失', async () => {
         const on = await DatePrompts.buildSessionPayload(baseInput(makeChar()));
         expect(sysOf(on.messages)).toContain('深挖，别填充');
-        expect(on.messages[on.messages.length - 1].content).toContain('本轮线索');
+        expect(lastUserOf(on.messages).content).toContain('本轮线索');
 
         const off = await DatePrompts.buildSessionPayload(baseInput(makeChar({ dateStyleConfig: { digDeeper: false } })));
         expect(sysOf(off.messages)).not.toContain('深挖，别填充');
-        expect(off.messages[off.messages.length - 1].content).not.toContain('本轮线索');
+        expect(lastUserOf(off.messages).content).not.toContain('本轮线索');
         // ContextBuilder 的全 App 通用精简版（表达底线）不受 digDeeper 开关影响，常驻
         expect(sysOf(off.messages)).toContain('表达底线');
     });
 
-    it('消息结构为 [system, ...history, user]，末尾带 System Note；reroll 的 note 不同', async () => {
+    it('本轮 user 带 System Note，末尾 system 收束角色原则；reroll 的 note 不同', async () => {
         const send = await DatePrompts.buildSessionPayload(baseInput(makeChar()));
         expect(send.messages[0].role).toBe('system');
-        const lastSend = send.messages[send.messages.length - 1];
+        const lastSend = lastUserOf(send.messages);
         expect(lastSend.role).toBe('user');
         expect(lastSend.content).toContain('我来了');
         expect(lastSend.content).toContain('System Note');
@@ -160,8 +163,13 @@ describe('DatePrompts.buildSessionPayload', () => {
         expect(sysOf(send.messages)).toContain('[[SCENE_CLOCK: YYYY-MM-DD HH:MM]]');
 
         const reroll = await DatePrompts.buildSessionPayload({ ...baseInput(makeChar()), variant: 'reroll' });
-        const lastReroll = reroll.messages[reroll.messages.length - 1];
+        const lastReroll = lastUserOf(reroll.messages);
         expect(lastReroll.content).toContain('Reroll');
+        // 本 fork：回应原则并进 system，最后一条仍是本轮 user（Note 的观测 / 剧情钟提醒要最后被读到）
+        for (const result of [send, reroll]) {
+            expect(result.messages.slice(-1)[0].role).toBe('user');
+            expect(result.messages[0].content).toContain('面对面的角色与回应');
+        }
     });
 
     it('注入剧情时间连续性，现实中离开不会让持续活动瞬间结束', async () => {
@@ -250,6 +258,38 @@ describe('DatePrompts scene clock', () => {
         expect(messages[messages.length - 1].role).toBe('user');
     });
 
+});
+
+// 本 fork：见面接上游的「面对面回应原则」（c523c752），但普通回合 Note 仍是 fork 的（观测 + 剧情钟提醒）
+describe('跨场景角色原则', () => {
+    it('见面发送、重生成、开场末尾都带一次回应原则（含聊天同款的表达总纲）', async () => {
+        const char = makeChar();
+        const allMsgs = [makeMsg({ content: '今天不想出门，就坐会儿吧。' })];
+        const shared = buildCharacterResponsePrinciples(char.name, user.name);
+        const send = await DatePrompts.buildSessionPayload({
+            char, userProfile: user, allMsgs, emojis: [], userText: allMsgs[0].content, variant: 'send',
+        });
+        const reroll = await DatePrompts.buildSessionPayload({
+            char, userProfile: user, allMsgs, emojis: [], userText: allMsgs[0].content, variant: 'reroll',
+        });
+        const peek = DatePrompts.buildPeekPayload({ char, userProfile: user, allMsgs, emojis: [] });
+        for (const messages of [send.messages, reroll.messages, peek.messages]) {
+            const text = messages.map(m => m.content).join('\n');
+            expect(text.split(shared)).toHaveLength(2);
+            // 放在 system 里，最后一条仍是每轮 Note（观测 / 剧情钟提醒靠它）
+            const system = messages[0].content as string;
+            expect(system).toContain(shared);
+            expect(system).toContain('不替对方写下接受、回应或关系升级');
+            expect(messages.slice(-1)[0].role).toBe('user');
+        }
+    });
+
+    it('「让他靠近」开场：角色主动来找用户，不代写用户反应', () => {
+        const peek = DatePrompts.buildPeekPayload({ char: makeChar(), userProfile: user, allMsgs: [makeMsg()], emojis: [], openingMode: 'invite' });
+        const text = peek.messages.map(m => m.content).join('\n');
+        expect(text).toContain('由你主动以合理的方式');
+        expect(text).toContain('此刻由角色主动靠近用户');
+    });
 });
 
 describe('OBSERVE 观测协议', () => {
@@ -493,10 +533,12 @@ describe('见面里的世界书', () => {
         const { messages } = await DatePrompts.buildSessionPayload(sessionInput(char));
         const texts = contents(messages);
 
-        // 深度 0：放在本轮 user 消息之后，整条请求的最后
-        const tail = messages[messages.length - 1];
+        // 深度 0 紧随本轮 user；收尾原则不参与对话深度计数。
+        const tailIndex = texts.indexOf('深度零的文风');
+        const tail = messages[tailIndex];
         expect(tail).toEqual({ role: 'system', content: '深度零的文风' });
-        expect(messages[messages.length - 2].content).toContain('System Note');
+        expect(messages[tailIndex - 1].content).toContain('System Note');
+        expect(tailIndex).toBe(messages.length - 1); // 本 fork：回应原则在 system 里，不在末尾
 
         // 深度 2：插在倒数第 2 条对话之前（[开场白, 第二句, 第三句, 本轮] → 第三句前）
         const deepIndex = texts.indexOf('深度二的思考要求');
@@ -544,12 +586,30 @@ describe('见面里的世界书', () => {
 });
 
 describe('DatePrompts.buildPeekPayload', () => {
+    it('让他靠近读取同一份上下文与世界书，只改变开场发起者，保留用户自主权', () => {
+        const char = makeChar({ mountedWorldbooks: [{
+            id: 'place', title: '常去的店', content: '在街角书店见面', category: '地点', constant: true,
+        }] });
+        const input = { char, userProfile: user, allMsgs: [makeMsg({ content: '我还在书店等你。' })], emojis: [] };
+        const approach = DatePrompts.buildPeekPayload(input);
+        const invite = DatePrompts.buildPeekPayload({ ...input, openingMode: 'invite' });
+        for (const { messages } of [approach, invite]) {
+            expect(JSON.stringify(messages)).toContain('我还在书店等你。');
+            expect(sysOf(messages)).toContain('在街角书店见面');
+            expect(lastUserOf(messages).content).toContain('不强制续接上一句话');
+        }
+        expect(lastUserOf(approach.messages).content).toContain('用户正在悄悄靠近');
+        expect(lastUserOf(invite.messages).content).toContain('由你主动以合理的方式');
+        expect(lastUserOf(invite.messages).content).not.toContain('用户正在悄悄靠近');
+        expect(sysOf(invite.messages)).toContain('不代写用户反应');
+        expect(sysOf(invite.messages)).not.toContain('用户尚未走近');
+    });
     it('描写风格短语跟随风格预设；extra 追加进指令', () => {
         const char = makeChar({ dateStyleConfig: { style: 'plain', extra: '环境描写多一点。' } });
         const { messages } = DatePrompts.buildPeekPayload({
             char, userProfile: user, allMsgs: [makeMsg()], emojis: [],
         });
-        const userMsg = messages[messages.length - 1].content as string;
+        const userMsg = lastUserOf(messages).content as string;
         expect(userMsg).toContain('简洁白描');
         expect(userMsg).toContain('环境描写多一点。');
         // peek 刻意保持第三人称旁观，不注入 pov 人称块
@@ -565,7 +625,7 @@ describe('DatePrompts.buildPeekPayload', () => {
         const { messages } = DatePrompts.buildPeekPayload({
             char: makeChar(), userProfile: user, allMsgs: msgs, emojis: [],
         });
-        const userMsg = messages[messages.length - 1].content as string;
+        const userMsg = lastUserOf(messages).content as string;
         expect(userMsg).not.toContain(rawHtml);
         expect(userMsg).toContain('一张卡片');
     });
@@ -590,7 +650,7 @@ describe('见面世界书注入回归', () => {
         expect(d).toBe(3); // 顶层 system + 前两条历史
         expect(messages[d]).toEqual({ role: 'system', content: 'WB_D' });
         expect(messages[d + 1]).toEqual({ role: 'system', content: 'WB_E' });
-        expect(messages.slice(d + 2)).toHaveLength(4);
+        expect(messages.slice(d + 2)).toHaveLength(4); // 本 fork：末尾没有单独的原则消息
         expect(JSON.stringify(messages).match(/WB_D/g)).toHaveLength(1);
     });
 
@@ -614,6 +674,7 @@ describe('见面世界书注入回归', () => {
             book('disabled', { disable: true }),
             book('miss', { constant: false, key: ['不存在'] }),
             book('instruction', { constant: false, key: ['System Note'] }),
+            book('principles', { constant: false, key: ['面对面的角色与回应'] }),
         ] });
         const result = await DatePrompts.buildSessionPayload({
             char, userProfile: user, allMsgs: [makeMsg({ content: '灯塔' })],
@@ -621,7 +682,7 @@ describe('见面世界书注入回归', () => {
         });
         const json = JSON.stringify(result.messages);
         for (let i = 0; i < 7; i++) expect(json).toContain(`WB_P${i}`);
-        for (const id of ['disabled', 'miss', 'instruction']) expect(json).not.toContain(`WB_${id}`);
+        for (const id of ['disabled', 'miss', 'instruction', 'principles']) expect(json).not.toContain(`WB_${id}`);
     });
 
     it('感知开场由公共上下文带入深度条目，并支持关键词匹配', () => {

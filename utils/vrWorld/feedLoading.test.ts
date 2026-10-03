@@ -50,3 +50,15 @@ describe('彼方动态轻量读取', () => {
         expect(refs.every(ref => !('content' in ref))).toBe(true);
     });
 });
+
+it('lists book metadata without retaining bodies and loads a selected book intact', async () => {
+    const book = { id: 'summary-read', title: 'test', segments: [{ idx: 0, text: '原文'.repeat(50000), chars: 100000 }], totalChars: 100000, createdAt: 1, updatedAt: 1 };
+    await DB.saveVRNovel(book);
+    const summaries = await DB.getVRNovelSummaries();
+    const summary = summaries.find(item => item.id === book.id)!;
+    expect(summary.segmentCount).toBe(1);
+    expect(summary).not.toHaveProperty('segments');
+    expect(JSON.stringify(summary).length).toBeLessThan(250);
+    expect(await DB.getVRNovel(book.id)).toEqual(book);
+    expect(await DB.getVRNovel('missing-summary-read')).toBeUndefined();
+});

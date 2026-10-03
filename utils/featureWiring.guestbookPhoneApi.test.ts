@@ -12,7 +12,7 @@ describe('留言簿定向回复接线', () => {
         // 精确计数），字段名和上游不同，这里断言的是 fork 实际的接线。
         expect(source).toContain('replyToId: replyTo.id, replyToName: replyTo.name');
         expect(source).toContain('boardDirectedAtMe');
-        expect(source).toContain('onClick={() => { setReplyTo(m); setHideChibi(true); }}');
+        expect(source).toContain('onReply={() => { setReplyTo(m); setHideChibi(true); }}'); // 39 批起点一下由 GuestbookMessageButton 转发（长按是编辑/删除）
         expect(source).toContain('aria-label="取消回复"');
     });
 });

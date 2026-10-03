@@ -392,12 +392,6 @@ export interface APIConfig {
 export type ActiveMsg2Mode = 'fixed' | 'auto' | 'prompted';
 export type ActiveMsg2Recurrence = 'none' | 'daily' | 'weekly';
 
-export interface ActiveMsg2ApiConfig {
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-}
-
 export interface ActiveMsg2GlobalConfig {
   userId: string;
   /** 单用户 Cloudflare Worker 地址，例如 https://amsg.your-worker.dev */
@@ -535,8 +529,6 @@ export interface ActiveMsg2CharacterConfig {
   allowSelfRecurring?: boolean;
   /** 角色能不能自己排「到点必发」（用户正在聊天也照发）的消息。没设 = 不能。 */
   allowSelfForce?: boolean;
-  useSecondaryApi?: boolean;
-  secondaryApi?: ActiveMsg2ApiConfig;
   lastSyncedAt?: number;
   lastError?: string;
 }
@@ -733,6 +725,8 @@ export interface CompanionAvatarConfig {
   version: 1;
   /** Shared desktop/video visual source: model uses VRM/Live2D; upload/date use a flat portrait. */
   source: 'model' | 'upload' | 'date';
+  /** Desktop composition is independent for uploaded images and date portraits. */
+  portraitConfigs?: Partial<Record<'upload' | 'date', SpriteConfig>>;
   /** Original PNG / GIF stored in blob_assets. Kept while switching sources. */
   imageRef?: string;
   fileName?: string;
@@ -1394,6 +1388,9 @@ export interface VRWorldNovel {
     createdAt: number;
     updatedAt: number;
 }
+
+/** Lightweight library list entry; fetch the full novel only when opening it. */
+export type VRWorldNovelSummary = Omit<VRWorldNovel, 'segments'> & { segmentCount: number };
 
 export interface VRLibraryCategory { id: string; name: string; }
 
@@ -3626,6 +3623,8 @@ export interface CharacterProfile {
    * 图床直链。空 = 默认时段天光。
    */
   companionBackground?: string;
+  /** 陪伴桌面的手动主题色（#rrggbb）；留空时沿用自动取色。随角色备份。 */
+  companionThemeColor?: string;
   /**
    * 触感陪伴桌面的本地反馈包。用户只在设置中主动生成一次；之后每次触碰
    * 都从这里轮播台词与演出，不再逐次请求主聊天 API。
@@ -4008,9 +4007,8 @@ export interface CharacterProfile {
       pitch?: number;
   };
 
-  // 时间感知强化：开启（默认）时会向上下文注入「距离上次聊天已过去多久」的强化提示，
-  // 让角色强化时间观念、主动匹配现实世界时间。关掉后不再注入这组提示词
-  // （注意：历史消息本身仍带时间戳，关掉后弱化程度取决于模型自身理解）。
+  // 聊天时间感知：默认开启，注入当前真实时间、历史消息时间戳与互动间隔。
+  // 关闭后不再附加这些现实时间信息；消息存档与界面收发时间不变。
   timeAwarenessEnabled?: boolean;
 
   // 自定义时区（异国恋 / 角色身处异国等场景）。与「时间感知强化」完全独立、可任意组合：
@@ -4019,8 +4017,8 @@ export interface CharacterProfile {
   customTimezoneEnabled?: boolean;
   customTimezone?: string; // IANA 时区 id，如 'Asia/Tokyo'
 
-  // 线下时间感知（约会 / 见面 App）：开启（默认）时向见面 system prompt 注入「当前真实时间」。
-  // 关掉后见面场景不再注入时间，让剧情脱离现实时间线。独立开关。
+  // 线下时间感知（约会 / 见面 App）：默认开启，独立控制见面的当前真实时间、
+  // 历史消息时间戳与互动间隔。关闭后按剧情时间衔接，不按现实间隔跳时。
   dateTimeAwarenessEnabled?: boolean;
 
   /**
@@ -4068,12 +4066,6 @@ export interface CharacterProfile {
   proactiveConfig?: {
     enabled: boolean;
     intervalMinutes: number; // 30, 60, 120, 240, etc.
-    useSecondaryApi?: boolean;
-    secondaryApi?: {
-      baseUrl: string;
-      apiKey: string;
-      model: string;
-    };
   };
 
   /**

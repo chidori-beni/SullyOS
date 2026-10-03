@@ -7,6 +7,7 @@ import { pickDateFallbackSprite } from '../../utils/dateSprites';
 import { DATE_STYLE_PRESETS } from '../../utils/datePrompts';
 import ObserveSettings from './ObserveSettings';
 import { shareOrDownloadFile } from '../../utils/shareExport';
+import { DATE_READING_BUILTIN_THEMES, builtinReadingPresetId, type DateReadingBuiltinTheme } from '../../utils/dateReadingBuiltinThemes';
 
 // 标准情绪列表
 const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
@@ -79,6 +80,17 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
         });
         setReadingPresetName('');
         addToast(existing ? `已更新阅读预设「${name}」` : `已保存阅读预设「${name}」`, 'success');
+    };
+
+    // 内置阅读主题（39 批）：当作一份阅读 CSS 应用，之后照样能改、能另存、能恢复默认
+    const applyBuiltinReadingTheme = (theme: DateReadingBuiltinTheme) => {
+        setReadingCssDraft(theme.css);
+        updateCharacter(char.id, {
+            dateReadingCustomCss: theme.css,
+            dateReadingCssThemeName: theme.name,
+            dateReadingCssPresetId: builtinReadingPresetId(theme.id),
+        });
+        addToast(`已切换阅读主题「${theme.name}」`, 'success');
     };
 
     const applyReadingPreset = (preset: DateCssPreset) => {
@@ -406,6 +418,21 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
 
                 <Section title="阅读美化 CSS · 糯叽机兼容">
                     <p className="mb-3 text-[11px] leading-relaxed text-slate-400">可直接粘贴或导入糯叽机“此时此刻”的 CSS。Sully 阅读页按同一套 DOM 合同提供背景层、.tm-story、.tm-para、.tm-para-char、.tm-para-user、.tc-header、.tc-meta-*、.tc-avatar-*、.tc-header-user、.tm-body、.tm-thinking-toggle、.tm-header、.tm-compose、.tm-input、.tm-send-btn 等选择器；字体、布局和伪元素美化可以原样迁移。</p>
+                    <div className="mb-3">
+                        <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">内置阅读主题 · 点一下即可换上</div>
+                        <div className="grid grid-cols-3 gap-2">
+                            {DATE_READING_BUILTIN_THEMES.map(theme => {
+                                const active = char.dateReadingCssPresetId === builtinReadingPresetId(theme.id);
+                                return (
+                                    <button key={theme.id} type="button" onClick={() => applyBuiltinReadingTheme(theme)} aria-pressed={active}
+                                        className={`rounded-xl border-2 px-2 py-2 text-left ${active ? 'border-primary' : 'border-slate-100'}`}>
+                                        <div className="text-xs font-bold text-slate-700">{active ? '✓ ' : ''}{theme.name}</div>
+                                        <div className="mt-0.5 text-[10px] leading-snug text-slate-400">{theme.description}</div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
                     <textarea
                         value={readingCssDraft}
                         onChange={e => setReadingCssDraft(e.target.value)}

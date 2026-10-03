@@ -796,6 +796,30 @@ const DateApp: React.FC = () => {
         return stripFaceToFacePhoneSourceTags(stripMessageReactionTags(content));
     };
 
+    // --- 开新的一场：先选开场方式（39 批，上游 c523c752 的三种入口；「继续上次」照旧） ---
+    //   approach = 靠近他（原来的感知开场）；invite = 让他靠近（角色主动来找你）；direct = 直接见面（不要开场）
+    const [openingChoiceChar, setOpeningChoiceChar] = useState<CharacterProfile | null>(null);
+    const [peekOpeningMode, setPeekOpeningMode] = useState<'approach' | 'invite'>('approach');
+    const chooseOpening = (mode: 'approach' | 'invite' | 'direct') => {
+        const target = openingChoiceChar;
+        if (!target) return;
+        setOpeningChoiceChar(null);
+        trackEvent('选择见面开场方式', { 方式: mode === 'approach' ? '靠近他' : mode === 'invite' ? '让他靠近' : '直接见面' });
+        if (mode === 'direct') { startDirectSession(target); return; }
+        void startPeek(target, { openingMode: mode });
+    };
+    /** 直接见面：不生成开场，建好这一场就进现场（剧情钟照常从现在起步）。 */
+    const startDirectSession = (c: CharacterProfile) => {
+        const encounter = newEncounter(c);
+        setEncounterRuntime(encounter);
+        const presence = activateDateEncounter(c.id, encounter);
+        markDateTurnDirty({ ...c, activeDateEncounter: presence });
+        setActiveCharacterId(c.id);
+        setPeekStatus('');
+        setHasSavedOpening(true);
+        setMode('session');
+    };
+
     // --- Resume / Start Logic ---
     const handleCharClick = (c: CharacterProfile, options: { autoStart?: boolean; meetingInviteMessageId?: number } = {}) => {
         if (c.savedDateState) {
@@ -816,7 +840,8 @@ const DateApp: React.FC = () => {
             trackEvent('恢复进行中的见面');
         } else {
             setPendingMeetingInviteMessageId(undefined);
-            void startPeek(c, options);
+            if (options.autoStart) void startPeek(c, options);
+            else setOpeningChoiceChar(c);
         }
     };
 
@@ -875,12 +900,8 @@ const DateApp: React.FC = () => {
         updateCharacter(pendingSessionChar.id, { savedDateState: undefined });
         trackEvent('选择见面存档处理方式', { choice: 'new' });
         trackEvent('见面存档选重新开始');
-        void startPeek(
-            pendingSessionChar,
-            meetingInviteMessageId === undefined
-                ? {}
-                : { autoStart: true, meetingInviteMessageId },
-        );
+        if (meetingInviteMessageId === undefined) setOpeningChoiceChar(pendingSessionChar);
+        else void startPeek(pendingSessionChar, { autoStart: true, meetingInviteMessageId });
         setPendingSessionChar(null);
         setPendingMeetingInviteMessageId(undefined);
     };
@@ -1013,7 +1034,9 @@ const DateApp: React.FC = () => {
     };
 
     // --- Peek (Generation) Logic ---
-    const startPeek = async (c: CharacterProfile, options: { autoStart?: boolean; meetingInviteMessageId?: number } = {}) => {
+    const startPeek = async (c: CharacterProfile, options: { autoStart?: boolean; meetingInviteMessageId?: number; openingMode?: 'approach' | 'invite' } = {}) => {
+        const openingMode = options.openingMode ?? 'approach';
+        setPeekOpeningMode(openingMode);
         const encounter = newEncounter(c);
         setEncounterRuntime(encounter);
         setActiveCharacterId(c.id);
@@ -1033,6 +1056,7 @@ const DateApp: React.FC = () => {
                 allMsgs: preparedMsgs,
                 emojis,
                 useVisionDescriptions: apiConfig.visionApi?.enabled === true,
+                openingMode,
             });
             const content = await callLLM(messages, apiConfig.temperature ?? 0.85);
             // 过期的感知请求不能覆盖用户已经开始的另一场见面。
@@ -2338,6 +2362,23 @@ const DateApp: React.FC = () => {
                     </div>
                 )}
 
+                <Modal isOpen={!!openingChoiceChar} title="这次怎么见面？" onClose={() => { setOpeningChoiceChar(null); if (cameFromChat) returnToChat(); }}>
+                    <div className="flex flex-col gap-2 py-1">
+                        <button type="button" onClick={() => chooseOpening('approach')} className="w-full rounded-2xl bg-slate-50 px-4 py-3 text-left active:scale-[0.98] transition-transform">
+                            <div className="text-sm font-bold text-slate-700">靠近他</div>
+                            <div className="mt-0.5 text-xs text-slate-400">先看看 {openingChoiceChar?.name} 此刻在做什么，再走过去</div>
+                        </button>
+                        <button type="button" onClick={() => chooseOpening('invite')} className="w-full rounded-2xl bg-slate-50 px-4 py-3 text-left active:scale-[0.98] transition-transform">
+                            <div className="text-sm font-bold text-slate-700">让他靠近</div>
+                            <div className="mt-0.5 text-xs text-slate-400">{openingChoiceChar?.name} 主动来找你，开口第一句</div>
+                        </button>
+                        <button type="button" onClick={() => chooseOpening('direct')} className="w-full rounded-2xl bg-slate-50 px-4 py-3 text-left active:scale-[0.98] transition-transform">
+                            <div className="text-sm font-bold text-slate-700">直接见面</div>
+                            <div className="mt-0.5 text-xs text-slate-400">不要开场描写，直接从你的第一句开始</div>
+                        </button>
+                    </div>
+                </Modal>
+
                 <Modal isOpen={!!pendingSessionChar} title="发现进度" onClose={() => { setPendingSessionChar(null); setPendingMeetingInviteMessageId(undefined); if (cameFromChat) returnToChat(); }} footer={<div className="flex flex-col gap-2 w-full"><div className="flex gap-3 w-full"><button disabled={discardBusy} onClick={handleStartNewSession} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold disabled:opacity-50">新的见面</button><button disabled={discardBusy} onClick={handleResumeSession} className="flex-1 py-3 bg-green-500 text-white rounded-2xl font-bold shadow-lg shadow-green-200 disabled:opacity-50">继续上次</button></div><button disabled={discardBusy} onClick={() => void handleDiscardSession()} className="w-full py-2.5 rounded-2xl text-red-500 text-sm font-bold bg-red-50 disabled:opacity-50">{discardBusy ? '正在丢弃…' : '丢弃这次见面'}</button></div>}>
                     <div className="text-center text-slate-500 text-sm py-4">检测到 {pendingSessionChar?.name} 有未结束的见面。<br/><span className="text-xs text-slate-400 mt-2 block">(存档时间: {pendingSessionChar?.savedDateState?.timestamp ? new Date(pendingSessionChar.savedDateState.timestamp).toLocaleString() : 'Unknown'})</span><span className="text-[11px] text-slate-400 mt-3 block leading-relaxed">只是想测试一下的话，选「丢弃这次见面」：这次的现场记录和结束卡片会一并删掉，角色也会立刻恢复正常的主动联系。</span></div>
                 </Modal>
@@ -2531,8 +2572,8 @@ const DateApp: React.FC = () => {
                         <div className="shrink-0 flex flex-col items-center gap-6">
                              <div className="w-full flex gap-3">
                                  {/* 修改这里：调用 handleEnterSession 确保开场白被保存 */}
-                                 <button onClick={handleEnterSession} className="flex-1 h-14 bg-white text-black rounded-full font-bold tracking-[0.1em] text-sm shadow-[0_0_20px_rgba(255,255,255,0.1)] active:scale-95 transition-transform hover:bg-neutral-200">走过去 (Approach)</button>
-                                 <button onClick={() => { trackEvent('重新感知一次角色状态'); startPeek(char); }} className="w-14 h-14 bg-neutral-800 text-white rounded-full flex items-center justify-center border border-neutral-700 shadow-lg active:scale-90 transition-transform"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg></button>
+                                 <button onClick={handleEnterSession} className="flex-1 h-14 bg-white text-black rounded-full font-bold tracking-[0.1em] text-sm shadow-[0_0_20px_rgba(255,255,255,0.1)] active:scale-95 transition-transform hover:bg-neutral-200">{peekOpeningMode === 'invite' ? '开始见面' : '走过去 (Approach)'}</button>
+                                 <button onClick={() => { trackEvent('重新感知一次角色状态'); startPeek(char, { openingMode: peekOpeningMode }); }} className="w-14 h-14 bg-neutral-800 text-white rounded-full flex items-center justify-center border border-neutral-700 shadow-lg active:scale-90 transition-transform"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg></button>
                              </div>
                              <div className="flex flex-col items-center gap-3 text-[10px] text-neutral-600 font-medium tracking-wider"><button onClick={() => { setPreviousMode('peek'); setMode('settings'); trackEvent('打开见面设置面板', { from: 'peek' }); }} className="hover:text-neutral-400 transition-colors">布置场景 / 设定立绘</button><button onClick={handleBack} className="hover:text-neutral-400 transition-colors">悄悄离开</button></div>
                         </div>
@@ -2543,7 +2584,7 @@ const DateApp: React.FC = () => {
                 {!peekLoading && !peekStatus && (
                     <div className="flex-1 flex flex-col items-center justify-center gap-8 -mt-20 z-10 animate-fade-in">
                         <p className="text-sm font-light text-neutral-500 italic tracking-widest">未能感知到 {char.name} 的状态</p>
-                        <button onClick={() => { trackEvent('重新感知一次角色状态'); startPeek(char); }} className="h-12 px-10 bg-white text-black rounded-full font-bold tracking-[0.1em] text-sm active:scale-95 transition-transform hover:bg-neutral-200">重新感知</button>
+                        <button onClick={() => { trackEvent('重新感知一次角色状态'); startPeek(char, { openingMode: peekOpeningMode }); }} className="h-12 px-10 bg-white text-black rounded-full font-bold tracking-[0.1em] text-sm active:scale-95 transition-transform hover:bg-neutral-200">重新感知</button>
                         <button onClick={handleBack} className="text-[10px] text-neutral-600 font-medium tracking-wider hover:text-neutral-400 transition-colors">悄悄离开</button>
                     </div>
                 )}

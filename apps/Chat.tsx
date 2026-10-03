@@ -5606,8 +5606,6 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                             const cloudConfig = char.activeMsg2Config ?? {
                                 enabled: false,
                                 tasks: [],
-                                useSecondaryApi: char.proactiveConfig?.useSecondaryApi,
-                                secondaryApi: char.proactiveConfig?.secondaryApi,
                             };
                             await ActiveMsgClient.scheduleCharacterTask({
                                 char: nextChar,
