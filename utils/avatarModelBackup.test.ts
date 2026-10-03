@@ -16,7 +16,9 @@ import {
   createAvatarModelBackup,
   getAvatarModelBackupInventory,
   restoreAvatarModelBackup,
+  type AvatarModelBackupProgress,
 } from './avatarModelBackup';
+import { translateUi } from './uiLocale';
 
 const vrmConfig = {
   version: 1 as const,
@@ -63,6 +65,29 @@ describe('avatar model backup', () => {
     const inventory = await getAvatarModelBackupInventory();
     expect(inventory).toMatchObject({ availableCount: 2, missingCount: 0, totalBytes: 7 });
     expect(inventory.models.map(model => model.format)).toEqual(['vrm', 'live2d']);
+  });
+
+  it('adds semantic progress while retaining labels and excluding UI metadata from the archive', async () => {
+    const progress: AvatarModelBackupProgress[] = [];
+    const archive = await createAvatarModelBackup(value => progress.push(value));
+    expect(progress.some(value => value.uiMessage?.key === 'settings.modelBackup.scanCharacter')).toBe(true);
+    expect(progress.some(value => value.uiMessage?.key === 'settings.modelBackup.packing')).toBe(true);
+    for (const value of progress) {
+      expect(value.uiMessage).toBeDefined();
+      expect(translateUi('zh-CN', value.uiMessage!.key, value.uiMessage!.params)).toBe(value.label);
+      expect(translateUi('ja-JP', value.uiMessage!.key, value.uiMessage!.params)).not.toBe(value.label);
+    }
+    const zip = await JSZip.loadAsync(await archive.arrayBuffer());
+    const manifest = await zip.file('manifest.json')!.async('string');
+    expect(manifest).not.toContain('uiMessage');
+    expect(manifest).not.toContain('settings.modelBackup');
+    const restoreProgress: AvatarModelBackupProgress[] = [];
+    await restoreAvatarModelBackup(archive, value => restoreProgress.push(value));
+    expect(restoreProgress.some(value => value.uiMessage?.key === 'settings.modelBackup.restoring')).toBe(true);
+    expect(restoreProgress.some(value => value.uiMessage?.key === 'settings.modelBackup.restoredCharacter')).toBe(true);
+    for (const value of restoreProgress) {
+      expect(translateUi('zh-CN', value.uiMessage!.key, value.uiMessage!.params)).toBe(value.label);
+    }
   });
 
   it('packs multiple character models into one STORE archive without derived runtime cache', async () => {

@@ -550,7 +550,7 @@ const Settings: React.FC = () => {
   const [cloudTesting, setCloudTesting] = useState(false);
   const [avatarModelInventory, setAvatarModelInventory] = useState<AvatarModelBackupInventory | null>(null);
   const [avatarModelBackupBusy, setAvatarModelBackupBusy] = useState(false);
-  const [avatarModelBackupProgress, setAvatarModelBackupProgress] = useState<AvatarModelBackupProgress | null>(null);
+  const [avatarModelBackupProgress, setAvatarModelBackupProgress] = useState<(AvatarModelBackupProgress & { batchPrefix?: string }) | null>(null);
 
   // 「该备份啦」提醒频率（1~30 天）。改动即落 localStorage（backupReminder 模块自管持久化）。
   const [backupReminderDays, setBackupReminderDays] = useState<number>(() => getBackupReminderState().intervalDays);
@@ -1456,16 +1456,16 @@ const Settings: React.FC = () => {
   const handleAvatarModelExport = async () => {
       if (avatarModelBackupBusy) return;
       setAvatarModelBackupBusy(true);
-      setAvatarModelBackupProgress({ phase: 'scan', done: 0, total: 1, label: '正在读取本地模型…' });
+      setAvatarModelBackupProgress({ phase: 'scan', done: 0, total: 1, label: '正在读取本地模型…', uiMessage: { key: 'settings.modelBackup.scanLocal' } });
       try {
           const blob = await createAvatarModelBackup(setAvatarModelBackupProgress);
           const fileName = `Sully_Models_${new Date().toISOString().slice(0, 10)}_${Date.now()}.zip`;
-          await deliverStandaloneBackup(blob, fileName, 'Sully 模型备份');
-          addToast(`模型备份已生成（${formatBackupBytes(blob.size)}）`, 'success');
+          await deliverStandaloneBackup(blob, fileName, t('settings.modelBackup.shareTitle'));
+          addToast(t('settings.modelBackup.exported', { size: formatBackupBytes(blob.size) }), 'success');
       } catch (error: any) {
           const details = error?.stack || error?.message || String(error || '未知错误');
-          showError('模型备份导出失败', details);
-          addToast(error?.message || '模型备份导出失败', 'error');
+          showError(t('settings.modelBackup.exportFailed'), details);
+          addToast(error?.message || t('settings.modelBackup.exportFailed'), 'error');
       } finally {
           setAvatarModelBackupBusy(false);
           setAvatarModelBackupProgress(null);
@@ -1487,6 +1487,7 @@ const Settings: React.FC = () => {
                   setAvatarModelBackupProgress({
                       ...progress,
                       label: files.length > 1 ? `[${fileIndex + 1}/${files.length}] ${progress.label}` : progress.label,
+                      batchPrefix: files.length > 1 ? `[${fileIndex + 1}/${files.length}] ` : '',
                   });
               });
               restored += result.restored;
@@ -1499,14 +1500,14 @@ const Settings: React.FC = () => {
           await refreshAvatarModelInventory();
           addToast(
               skipped > 0
-                  ? `已恢复 ${restored} 个模型，跳过 ${skipped} 个未找到的角色`
-                  : `已顺序恢复 ${restored} 个模型（${formatBackupBytes(restoredBytes)}）`,
+                  ? t('settings.modelBackup.restoredSkipped', { count: restored, skipped })
+                  : t('settings.modelBackup.restored', { count: restored, size: formatBackupBytes(restoredBytes) }),
               skipped > 0 ? 'info' : 'success',
           );
       } catch (error: any) {
           const details = error?.stack || error?.message || String(error || '未知错误');
-          showError('模型备份导入失败', details);
-          addToast(restored > 0 ? `已恢复 ${restored} 个模型后中断` : '模型备份导入失败', 'error');
+          showError(t('settings.modelBackup.importFailed'), details);
+          addToast(restored > 0 ? t('settings.modelBackup.interrupted', { count: restored }) : t('settings.modelBackup.importFailed'), 'error');
       } finally {
           setAvatarModelBackupBusy(false);
           setAvatarModelBackupProgress(null);
@@ -2318,13 +2319,13 @@ const Settings: React.FC = () => {
             <div data-testid="avatar-model-backup-section" className="mb-5 border-y border-violet-100 py-4">
                 <div className="mb-2 flex items-center justify-between gap-3">
                     <div>
-                        <h3 className="text-xs font-bold text-slate-700">视频模型 · 单独备份</h3>
-                        <p className="mt-0.5 text-[10px] text-slate-400">VRM / Live2D 不再混进普通数据包</p>
+                        <h3 className="text-xs font-bold text-slate-700">{t('settings.modelBackup.title')}</h3>
+                        <p className="mt-0.5 text-[10px] text-slate-400">{t('settings.modelBackup.intro')}</p>
                     </div>
                     <span className="shrink-0 rounded-full bg-violet-50 px-2.5 py-1 text-[10px] font-bold text-violet-600">
                         {avatarModelInventory
-                            ? `${avatarModelInventory.availableCount} 个 · ${formatBackupBytes(avatarModelInventory.totalBytes)}`
-                            : '正在扫描…'}
+                            ? t('settings.modelBackup.inventory', { count: avatarModelInventory.availableCount, size: formatBackupBytes(avatarModelInventory.totalBytes) })
+                            : t('settings.modelBackup.scanning')}
                     </span>
                 </div>
 
@@ -2337,7 +2338,7 @@ const Settings: React.FC = () => {
                                     <p className="truncate text-[9px] uppercase tracking-wide text-slate-400">{model.format} · {model.fileName}</p>
                                 </div>
                                 <span className={`shrink-0 text-[10px] font-medium ${model.available ? 'text-emerald-500' : 'text-rose-500'}`}>
-                                    {model.available ? formatBackupBytes(model.byteLength) : '文件缺失'}
+                                    {model.available ? formatBackupBytes(model.byteLength) : t('settings.modelBackup.missing')}
                                 </span>
                             </div>
                         ))}
@@ -2352,7 +2353,7 @@ const Settings: React.FC = () => {
                         className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-violet-600 px-3 text-xs font-bold text-white transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="h-4 w-4"><path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V3.75m0 0 4.5 4.5M12 3.75l-4.5 4.5M3.75 15v4.125c0 .621.504 1.125 1.125 1.125h14.25c.621 0 1.125-.504 1.125-1.125V15" /></svg>
-                        导出模型包
+                        {t('settings.modelBackup.export')}
                     </button>
                     <button
                         type="button"
@@ -2361,7 +2362,7 @@ const Settings: React.FC = () => {
                         className="flex min-h-12 items-center justify-center gap-2 rounded-xl border border-violet-200 bg-white px-3 text-xs font-bold text-violet-600 transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="h-4 w-4"><path strokeLinecap="round" strokeLinejoin="round" d="M12 7.5v12m0 0 4.5-4.5M12 19.5 7.5 15M3.75 9V4.875c0-.621.504-1.125 1.125-1.125h14.25c.621 0 1.125.504 1.125 1.125V9" /></svg>
-                        顺序导入
+                        {t('settings.modelBackup.import')}
                     </button>
                     <input
                         ref={avatarModelBackupInputRef}
@@ -2376,7 +2377,7 @@ const Settings: React.FC = () => {
                 {avatarModelBackupProgress && (
                     <div className="mt-3" aria-live="polite">
                         <div className="mb-1.5 flex items-center justify-between gap-3 text-[10px] text-violet-600">
-                            <span className="truncate">{avatarModelBackupProgress.label}</span>
+                            <span className="truncate">{avatarModelBackupProgress.uiMessage ? `${avatarModelBackupProgress.batchPrefix ?? ''}${t(avatarModelBackupProgress.uiMessage.key, avatarModelBackupProgress.uiMessage.params)}` : avatarModelBackupProgress.label}</span>
                             <span className="shrink-0 font-bold">
                                 {Math.min(100, Math.round((avatarModelBackupProgress.done / Math.max(1, avatarModelBackupProgress.total)) * 100))}%
                             </span>
@@ -2391,11 +2392,11 @@ const Settings: React.FC = () => {
                 )}
 
                 <p className="mt-3 text-[10px] leading-relaxed text-slate-400">
-                    一个 ZIP 可以包含多个角色模型。恢复时请先导入上方普通数据，再导入模型包；系统会逐个读取、逐个写入。一次选择多个模型包时，也会按选择顺序处理。
+                    {t('settings.modelBackup.help')}
                 </p>
                 {avatarModelInventory && avatarModelInventory.missingCount > 0 && (
                     <p className="mt-2 text-[10px] leading-relaxed text-rose-500">
-                        有 {avatarModelInventory.missingCount} 个角色只剩模型索引，本地二进制已经丢失，无法导出。
+                        {t('settings.modelBackup.missingCount', { count: avatarModelInventory.missingCount })}
                     </p>
                 )}
             </div>

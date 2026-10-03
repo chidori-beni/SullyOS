@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import type { UiStatusMessage } from './uiLocale';
 import type { CharacterProfile } from '../types';
 import { DB } from './db';
 import { live2DRuntimeCacheAssetIds } from './avatarModelStore';
@@ -29,6 +30,8 @@ export interface AvatarModelBackupProgress {
   done: number;
   total: number;
   label: string;
+  /** Optional display-only copy; label remains available to existing callers. */
+  uiMessage?: UiStatusMessage;
 }
 
 interface AvatarModelManifestEntry {
@@ -183,7 +186,7 @@ export const createAvatarModelBackup = async (
 
   for (let index = 0; index < candidates.length; index++) {
     const { character, config, slot } = candidates[index];
-    onProgress?.({ phase: 'scan', done: index, total: candidates.length, label: `正在读取 ${character.name} 的模型…` });
+    onProgress?.({ phase: 'scan', done: index, total: candidates.length, label: `正在读取 ${character.name} 的模型…`, uiMessage: { key: 'settings.modelBackup.scanCharacter', params: { name: character.name } } });
     const blob = await DB.getBlobAsset(config.assetId);
     if (!blob) continue;
     const path = modelPath(models.length, config.format);
@@ -197,7 +200,7 @@ export const createAvatarModelBackup = async (
       config: { ...config, byteLength: blob.size },
       slot,
     });
-    onProgress?.({ phase: 'scan', done: index + 1, total: candidates.length, label: `已加入 ${character.name}` });
+    onProgress?.({ phase: 'scan', done: index + 1, total: candidates.length, label: `已加入 ${character.name}`, uiMessage: { key: 'settings.modelBackup.added', params: { name: character.name } } });
   }
 
   if (!models.length) throw new Error('角色资料里有模型索引，但本地模型文件已经丢失。');
@@ -217,6 +220,7 @@ export const createAvatarModelBackup = async (
       done: Math.round(metadata.percent),
       total: 100,
       label: `正在生成模型备份 ${Math.round(metadata.percent)}%…`,
+      uiMessage: { key: 'settings.modelBackup.packing', params: { percent: Math.round(metadata.percent) } },
     }),
   );
 };
@@ -258,6 +262,7 @@ export const restoreAvatarModelBackup = async (
       done: index,
       total: manifest.models.length,
       label: `正在恢复 ${item.characterName}（${index + 1}/${manifest.models.length}）…`,
+      uiMessage: { key: 'settings.modelBackup.restoring', params: { name: item.characterName, current: index + 1, total: manifest.models.length } },
     });
     const bytes = await zip.file(item.path)!.async('uint8array');
     if (bytes.byteLength !== item.byteLength) {
@@ -291,6 +296,7 @@ export const restoreAvatarModelBackup = async (
       done: index + 1,
       total: manifest.models.length,
       label: `已恢复 ${target.name}`,
+      uiMessage: { key: 'settings.modelBackup.restoredCharacter', params: { name: target.name } },
     });
   }
 
