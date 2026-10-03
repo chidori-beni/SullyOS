@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } f
 import { CharacterProfile, Message, DateState, DialogueItem, UserProfile, DateObservation } from '../../types';
 import Modal from '../../components/os/Modal';
 import { useOS } from '../../context/OSContext';
+import { resolveDateReadingCss } from '../../utils/dateReadingBuiltinThemes';
 import { DB } from '../../utils/db';
 import DateSettings from './DateSettings';
 import ObserveHUD from './ObserveHUD';
@@ -1520,7 +1521,9 @@ const DateSession: React.FC<DateSessionProps> = ({
         && !!lastTimelineMessage
         && !isDatePhoneBridge(lastTimelineMessage)
         && lastTimelineMessage.role === 'assistant';
-    const hasReadingTheme = Boolean(char.dateReadingCustomCss?.trim());
+    // 选中内置阅读主题时用代码里的最新版（不用存下的副本），改了主题不用再点一次
+    const readingCss = resolveDateReadingCss(char);
+    const hasReadingTheme = Boolean(readingCss?.trim());
 
     return (
         <div className="h-full w-full relative bg-black overflow-hidden font-sans select-none" onClick={handleScreenClick}>
@@ -1687,7 +1690,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             {/* Novel Mode View */}
             {isNovelMode && (
                 <div id="this-moment-screen" className={`tm-screen absolute inset-0 z-20 flex min-h-0 flex-col overflow-hidden no-scrollbar mask-image-gradient overscroll-contain ${hasReadingTheme ? '' : 'text-white'}`} style={{ ['--sully-date-font-size' as string]: `${dateFontSize}px` }} onClick={(e) => { e.stopPropagation(); if (showMenu) { setShowMenu(false); setShowVoiceLangPicker(false); return; } if (historyReplay) return; if (!(e.target as HTMLElement).closest('button, input, textarea, .tm-header, .tm-compose')) setShowInputBox(true); }}>
-                    {char.dateReadingCustomCss && <style>{char.dateReadingCustomCss.replace(/<\/style/gi, '<\\/style')}</style>}
+                    {readingCss && <style>{readingCss.replace(/<\/style/gi, '<\\/style')}</style>}
                     {/*
                      * 用户主题 CSS 只负责视觉表现。阅读页的滚动和触控层必须由宿主保底，
                      * 否则一个 `min-height: 100%` 或伪元素就会把正文撑出视口、盖住顶栏。
