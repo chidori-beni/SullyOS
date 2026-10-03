@@ -1764,6 +1764,17 @@ const DateApp: React.FC = () => {
         trackEvent('批量删除见面消息');
     };
 
+    /** 立绘模式「编辑当前这句」：只改了那一行，整条消息内容由 DateSession 拼好后交来落库。 */
+    const saveDateMessageContent = async (target: Message, content: string) => {
+        await DB.updateMessage(target.id, content);
+        const applyEdit = (m: Message) => m.id === target.id ? { ...m, content } : m;
+        setDateMessages(prev => prev.map(applyEdit));
+        setHistoryMessages(prev => prev.map(applyEdit));
+        markDateTurnDirty();
+        addToast('已修改这一句', 'success');
+        trackEvent('编辑一条见面消息');
+    };
+
     const confirmEditMessage = async () => {
         if (!editTargetMsg) return;
         await DB.updateMessage(editTargetMsg.id, editContent);
@@ -2626,6 +2637,7 @@ const DateApp: React.FC = () => {
                     onEnd={finishEncounter}
                     endSuggestedReason={endSuggestedReason}
                     onEditMessage={(msg) => { setEditTargetMsg(msg); setEditContent(msg.content); setIsEditModalOpen(true); }}
+                    onSaveMessageContent={saveDateMessageContent}
                     onDeleteMessage={handleDeleteMessage}
                     onDeleteMessages={handleDeleteMessages}
                     onSettings={() => {}} // Removed parent state change, DateSession handles it internally now

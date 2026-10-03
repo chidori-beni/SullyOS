@@ -33,6 +33,7 @@ import {
     protectMiniMaxInterjectionsForTranslation,
 } from '../../utils/dateVoiceMarkup';
 import { planNovelLoadMore } from '../../utils/dateSessionHistory';
+import { locateDateDialogueLine, replaceDateDialogueLine } from '../../utils/dateLineEdit';
 import { getPendingReplyText } from '../../utils/pendingReply';
 import { fetchBlobForShare } from '../../utils/shareExport';
 import type { DateSceneSnapshot } from '../../utils/dateObservationClock';
@@ -83,6 +84,8 @@ interface DateSessionProps {
     onEnd: (currentState: DateState) => Promise<void>;
     endSuggestedReason?: string;
     onEditMessage: (msg: Message) => void;
+    /** 立绘「编辑当前这句」：把改好的整条消息内容落库（可选；没传时退回打开整条编辑）。 */
+    onSaveMessageContent?: (msg: Message, content: string) => Promise<void>;
     onDeleteMessage: (msg: Message) => void;
     onDeleteMessages: (ids: number[]) => Promise<void>;
     onSettings: () => void;
@@ -174,6 +177,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     onEnd,
     endSuggestedReason,
     onEditMessage,
+    onSaveMessageContent,
     onDeleteMessage,
     onDeleteMessages,
     onSettings
@@ -190,6 +194,11 @@ const DateSession: React.FC<DateSessionProps> = ({
     // Dialogue Engine State
     const [dialogueQueue, setDialogueQueue] = useState<DialogueItem[]>([]);
     const [dialogueBatch, setDialogueBatch] = useState<DialogueItem[]>([]); // Current visual-novel batch; never auto-replayed
+    // 立绘「编辑当前这句」：编辑框状态 + 定位到的原文行
+    const [lineEdit, setLineEdit] = useState<{ message: Message; lineIndex: number; prefix: string; draft: string } | null>(null);
+    const [lineEditSaving, setLineEditSaving] = useState(false);
+    // 改完最新那条消息后，下面的同步 effect 会重建台词队列；有这个值就停在被改的那一句，不从头播。
+    const keepDialogueIndexAfterEditRef = useRef<number | null>(null);
     const [currentDialogueIndex, setCurrentDialogueIndex] = useState(-1);
     const currentDialogueIndexRef = useRef(-1);
     currentDialogueIndexRef.current = currentDialogueIndex;
@@ -1014,9 +1023,73 @@ const DateSession: React.FC<DateSessionProps> = ({
         const items = parseDateDialogueForPlayback(rest);
         if (items.length === 0) return;
         setDialogueBatch(items);
+        const keepIndex = keepDialogueIndexAfterEditRef.current;
+        keepDialogueIndexAfterEditRef.current = null;
+        if (keepIndex !== null) {
+            const index = Math.min(Math.max(keepIndex, 0), items.length - 1);
+            processNextDialogue(items[index], items.slice(index + 1), index);
+            setDisplayedText(items[index].text);
+            setIsTextAnimating(false);
+            return;
+        }
         processNextDialogue(items[0], items.slice(1), 0);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [latestAssistantMessage?.id, latestAssistantMessage?.content, historyReplay, interactionBusy]);
+
+    /**
+     * 立绘里正显示的这句 → 它在哪条消息的第几行。台词队列只存了清洗后的文字，所以按
+     * 「同样的解析器把每一行单独解析一遍，看谁吐出这句」来反查；同一句话出现多次时
+     * 按它在本批里是第几次出现去对第几次。查不到（比如还没落库的开场感知）返回 null。
+     */
+    const locateCurrentLine = () => locateDateDialogueLine({
+        messages,
+        batchTexts: dialogueBatch.map(item => item.text),
+        index: currentDialogueIndex,
+        parseLine: parseDateDialogueForPlayback,
+        exclude: isDatePhoneBridge,
+    });
+
+    const openLineEditor = () => {
+        const located = locateCurrentLine();
+        if (!located) {
+            addToast('这句没找到对应的原文（可能是还没存下来的开场），请到阅读模式里修改', 'info');
+            return;
+        }
+        if (!onSaveMessageContent) {
+            onEditMessage(located.message);
+            return;
+        }
+        setLineEdit({ message: located.message, lineIndex: located.lineIndex, prefix: located.prefix, draft: located.body });
+    };
+
+    const saveLineEdit = async () => {
+        if (!lineEdit || !onSaveMessageContent || lineEditSaving) return;
+        const content = replaceDateDialogueLine(lineEdit.message.content, lineEdit.lineIndex, lineEdit.prefix, lineEdit.draft);
+        if (content === null) { addToast('这一句不能留空；想删掉整条请到阅读模式里操作', 'info'); return; }
+        const editedLine = content.split('\n')[lineEdit.lineIndex];
+        setLineEditSaving(true);
+        try {
+            keepDialogueIndexAfterEditRef.current = currentDialogueIndex;
+            await onSaveMessageContent(lineEdit.message, content);
+            // 改的不是最新那条（同步 effect 不会触发）时，就地把这句换掉。
+            if (lineEdit.message.id !== latestAssistantMessage?.id || historyReplay) {
+                keepDialogueIndexAfterEditRef.current = null;
+                const replaced = parseDateDialogueForPlayback(editedLine)[0];
+                if (replaced && currentDialogueIndex >= 0) {
+                    setDialogueBatch(prev => prev.map((existing, index) => index === currentDialogueIndex ? { ...existing, ...replaced } : existing));
+                    setCurrentText(replaced.text);
+                    setDisplayedText(replaced.text);
+                    currentLineSpeechTextRef.current = replaced.speechText;
+                }
+            }
+            setLineEdit(null);
+        } catch (error: any) {
+            keepDialogueIndexAfterEditRef.current = null;
+            addToast(`保存失败：${error?.message || error}`, 'error');
+        } finally {
+            setLineEditSaving(false);
+        }
+    };
 
     // 回顾中允许编辑原消息。消息内容变化后，阅读模式会由 props 立即更新，
     // 立绘播放队列也同步重建，并尽量保留当前所在的条目位置。
@@ -2034,6 +2107,17 @@ const DateSession: React.FC<DateSessionProps> = ({
                             >
                                 <div className="absolute -top-3 left-6 flex items-center gap-2">
                                     <div className="bg-white/90 text-black px-4 py-1 rounded-sm text-xs font-bold tracking-widest uppercase shadow-[0_4px_10px_rgba(0,0,0,0.3)] transform -skew-x-12">{char.name}</div>
+                                    {!isTextAnimating && currentDialogueIndex >= 0 && (
+                                        <button
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); openLineEditor(); }}
+                                            title="编辑这一句"
+                                            aria-label="编辑这一句"
+                                            className="w-6 h-6 rounded-full flex items-center justify-center bg-white/10 text-white/50 hover:bg-white/20 active:scale-90 transition-all"
+                                        >
+                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z" /></svg>
+                                        </button>
+                                    )}
                                     {/* Voice play button next to name */}
                                     {voiceEnabled && !isTextAnimating && !isShowingOpening && isDialogueLine(galShownText) && (
                                         <button
@@ -2299,6 +2383,28 @@ const DateSession: React.FC<DateSessionProps> = ({
                     }}
                 />
             )}
+
+            <Modal
+                isOpen={!!lineEdit}
+                title="编辑这一句"
+                onClose={() => { if (!lineEditSaving) setLineEdit(null); }}
+                footer={
+                    <div className="flex w-full gap-3">
+                        <button type="button" onClick={() => setLineEdit(null)} disabled={lineEditSaving} className="flex-1 rounded-2xl bg-slate-100 py-3 font-bold text-slate-600 disabled:opacity-50">取消</button>
+                        <button type="button" onClick={() => void saveLineEdit()} disabled={lineEditSaving || !lineEdit?.draft.trim()} className="flex-1 rounded-2xl bg-primary py-3 font-bold text-white shadow-lg shadow-indigo-200 disabled:opacity-40">{lineEditSaving ? '保存中…' : '保存'}</button>
+                    </div>
+                }
+            >
+                <div className="space-y-2 py-1">
+                    <p className="text-xs leading-relaxed text-slate-500">只改屏幕上这一句，同一条回复里的其它句子不动。台词记得保留双引号。</p>
+                    <textarea
+                        autoFocus
+                        value={lineEdit?.draft ?? ''}
+                        onChange={(event) => setLineEdit(prev => prev ? { ...prev, draft: event.target.value } : prev)}
+                        className="h-28 w-full resize-none overflow-y-auto select-text rounded-2xl bg-slate-100 p-4 text-sm leading-relaxed text-slate-700 outline-none focus:ring-1 focus:ring-primary/20"
+                    />
+                </div>
+            </Modal>
 
             <Modal
                 isOpen={showRerollPrompt}
