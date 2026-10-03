@@ -21,14 +21,20 @@ it('localizes all ordinary backup labels and privacy warnings', () => {
   expect(translateUi('ja-JP', 'settings.backup.voiceHelp')).toContain('お気に入りに登録していない');
 });
 
-it('does not modify export/import implementations or native security confirmations', () => {
+it('does not modify export/import behavior beyond explicit localized UI copy', () => {
   const current = readFileSync(resolve(process.cwd(), 'apps/Settings.tsx'), 'utf8');
   const baseline = execFileSync('git', ['show', 'HEAD:apps/Settings.tsx'], { encoding: 'utf8' });
   const handlers = (source: string) => source.slice(source.indexOf('const handleExport ='), source.indexOf('const handleImport ='));
-  expect(handlers(current).replace(/\r/g, '')).toBe(handlers(baseline).replace(/\r/g, ''));
+  const normalize = (source: string) => source.replace(/\r/g, '')
+    .replace(/'(?:该导出数据包含了明文密钥[^']*|该导出内容安全，可以用于分享)'|t\('settings\.backup\.export(?:Backend|Keys|Media)'\)/g, "'UI_WARNING'")
+    .replace(/window\.confirm\(`\$\{msg\}[^\x60]*`\)|window\.confirm\(t\('settings\.backup\.exportConfirm', \{ warning: msg \}\)\)/g, "window.confirm('UI_CONFIRM')")
+    .replace(/`这份备份里带着[^\x60]*`\s*\+ '如果这是[^']*'\s*\+ '如果是别人[^']*'\s*\+ '（不连[^']*）'|t\('settings\.backup\.restoreConfirm', \{ workerUrl \}\)/g, "'UI_RESTORE'")
+    .replace(/'导入失败'|t\('settings\.backup\.importFailed'\)/g, "'UI_ERROR_TITLE'")
+    .replace(/'导入失败，错误信息已展开'|t\('settings\.backup\.importFailedToast'\)/g, "'UI_ERROR_TOAST'");
+  expect(normalize(handlers(current))).toBe(normalize(handlers(baseline)));
   const start = current.indexOf('const handleImport =');
   const end = current.indexOf("if (importInputRef.current) importInputRef.current.value = '';", start);
-  expect(current.slice(start, end).replace(/\r/g, '')).toBe(baseline.slice(baseline.indexOf('const handleImport ='), baseline.indexOf("if (importInputRef.current) importInputRef.current.value = '';", baseline.indexOf('const handleImport ='))).replace(/\r/g, ''));
+  expect(normalize(current.slice(start, end))).toBe(normalize(baseline.slice(baseline.indexOf('const handleImport ='), baseline.indexOf("if (importInputRef.current) importInputRef.current.value = '';", baseline.indexOf('const handleImport =')))));
 });
 
 it('preserves file links, format filters, export modes and cleanup callbacks', () => {

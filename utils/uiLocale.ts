@@ -6,6 +6,13 @@ export const UI_LOCALE_STORAGE_KEY = 'sullyos.uiLocale.v1';
 export type UiMessageParams = Record<string, string | number>;
 
 const ZH_MESSAGES = {
+  'settings.backup.exportBackend': "该导出数据包含了明文密钥，以及主动消息 2.0 的后端连接（Worker 地址与主密钥）。拿到这个文件的人可以连上你那台 Worker，请不要发送给任何人",
+  'settings.backup.exportKeys': "该导出数据包含了明文密钥，请不要发送给任何人",
+  'settings.backup.exportMedia': "该导出内容安全，可以用于分享",
+  'settings.backup.exportConfirm': "{warning}\n\n点「确定」继续导出，「取消」中止。",
+  'settings.backup.restoreConfirm': "这份备份里带着一个主动消息 2.0 的后端连接：\n\n{workerUrl}\n\n如果这是你自己导出的备份，点「确定」连上它。\n\n如果是别人给你的，点「取消」——连上去的话，你的 API 密钥和聊天记录会被写进对方那台服务器。\n\n（不连也不影响其它数据导入，之后可以在设置里手动填。）",
+  'settings.backup.importFailed': "导入失败",
+  'settings.backup.importFailedToast': "导入失败，错误信息已展开",
   'settings.backup.backend': "包含主动消息 2.0 的后端连接",
   'settings.backup.backendHelp': "换设备恢复时勾上，Worker 地址和密钥会一起带走。",
   'settings.backup.private': "勾着导出的备份不要分享给别人",
@@ -295,6 +302,13 @@ const ZH_MESSAGES = {
 } as const;
 
 const JA_MESSAGES = {
+  'settings.backup.exportBackend': "このバックアップには平文のキーと、自発メッセージ 2.0 のバックエンド接続情報（Worker のアドレスとマスターキー）が含まれます。このファイルを入手した人はあなたの Worker に接続できます。誰にも送らないでください。",
+  'settings.backup.exportKeys': "このバックアップには平文のキーが含まれます。誰にも送らないでください。",
+  'settings.backup.exportMedia': "この書き出し内容は安全に共有できます。",
+  'settings.backup.exportConfirm': "{warning}\n\n「OK」で書き出しを続け、「キャンセル」で中止します。",
+  'settings.backup.restoreConfirm': "このバックアップには、自発メッセージ 2.0 のバックエンド接続情報が含まれています：\n\n{workerUrl}\n\n自分で書き出したバックアップなら、「OK」で接続してください。\n\n他人から受け取ったものなら「キャンセル」を選んでください。接続すると、あなたの API キーとチャット履歴が相手のサーバーに書き込まれます。\n\n（接続しなくても他のデータは読み込めます。接続情報は後で設定から手動入力できます。）",
+  'settings.backup.importFailed': "読み込みに失敗しました",
+  'settings.backup.importFailedToast': "読み込みに失敗しました。エラーの詳細を表示しています",
   'settings.backup.backend': "自発メッセージ 2.0 のバックエンド接続情報を含める",
   'settings.backup.backendHelp': "別の端末で復元する場合にオンにすると、Worker のアドレスとキーも含まれます。",
   'settings.backup.private': "この項目をオンにして作成したバックアップは他人に共有しないでください",

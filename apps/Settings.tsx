@@ -1367,11 +1367,11 @@ const Settings: React.FC = () => {
               const includesSettings = mode !== 'media_only';
               const includesBackend = includesSettings && exportBackendConnection;
               const msg = includesBackend
-                  ? '该导出数据包含了明文密钥，以及主动消息 2.0 的后端连接（Worker 地址与主密钥）。拿到这个文件的人可以连上你那台 Worker，请不要发送给任何人'
+                  ? t('settings.backup.exportBackend')
                   : includesSettings
-                  ? '该导出数据包含了明文密钥，请不要发送给任何人'
-                  : '该导出内容安全，可以用于分享';
-              if (!window.confirm(`${msg}\n\n点「确定」继续导出，「取消」中止。`)) {
+                  ? t('settings.backup.exportKeys')
+                  : t('settings.backup.exportMedia');
+              if (!window.confirm(t('settings.backup.exportConfirm', { warning: msg }))) {
                   trackEvent('取消导出前的密钥确认', { mode });
                   return;
               }
@@ -1416,10 +1416,7 @@ const Settings: React.FC = () => {
           // 备份里带着 Worker 后端连接时问一句。程序分不清这份文件是自己的还是别人的
           // （换新设备时用户 id 本来就对不上），只有拿着文件的人知道，所以把话问出去。
           confirmBackendRestore: (workerUrl) => window.confirm(
-              `这份备份里带着一个主动消息 2.0 的后端连接：\n\n${workerUrl}\n\n`
-              + '如果这是你自己导出的备份，点「确定」连上它。\n\n'
-              + '如果是别人给你的，点「取消」——连上去的话，你的 API 密钥和聊天记录会被写进对方那台服务器。\n\n'
-              + '（不连也不影响其它数据导入，之后可以在设置里手动填。）',
+              t('settings.backup.restoreConfirm', { workerUrl }),
           ),
       }).catch(err => {
           console.error(err);
@@ -1435,8 +1432,8 @@ const Settings: React.FC = () => {
                   : 'other',
           });
           const details = err?.stack || err?.message || String(err || '未知错误');
-          showError('导入失败', details);
-          addToast('导入失败，错误信息已展开', 'error');
+          showError(t('settings.backup.importFailed'), details);
+          addToast(t('settings.backup.importFailedToast'), 'error');
       });
       
       if (importInputRef.current) importInputRef.current.value = '';
