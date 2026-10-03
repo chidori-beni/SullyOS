@@ -2403,8 +2403,8 @@ const Settings: React.FC = () => {
             {/* 备份提醒频率：糯米机数据只在本机，隔 N 天没导出会弹一次提醒 */}
             <div className="mb-4 p-3.5 bg-gradient-to-br from-rose-50 to-orange-50 border border-rose-100 rounded-xl">
                 <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-bold text-slate-600">备份提醒频率</span>
-                    <span className="text-xs font-bold text-rose-500">每 {backupReminderDays} 天</span>
+                    <span className="text-xs font-bold text-slate-600">{t('settings.reminder.title')}</span>
+                    <span className="text-xs font-bold text-rose-500">{t('settings.reminder.every', { days: backupReminderDays })}</span>
                 </div>
                 <input
                     type="range"
@@ -2420,14 +2420,14 @@ const Settings: React.FC = () => {
                     className="w-full h-2 bg-rose-100 rounded-full appearance-none accent-rose-500"
                 />
                 <div className="flex justify-between text-[9px] text-slate-400 mt-1 px-0.5">
-                    <span>{BACKUP_REMINDER_MIN_DAYS} 天</span>
-                    <span>{BACKUP_REMINDER_MAX_DAYS} 天</span>
+                    <span>{t('settings.reminder.days', { days: BACKUP_REMINDER_MIN_DAYS })}</span>
+                    <span>{t('settings.reminder.days', { days: BACKUP_REMINDER_MAX_DAYS })}</span>
                 </div>
                 <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
-                    超过这个天数没有导出，就会弹窗提醒一次。
+                    {t('settings.reminder.help')}
                     {backupDaysAgo == null
-                        ? ' 你还没有导出过备份，记得留一份哦。'
-                        : ` 上次备份是在 ${backupDaysAgo} 天前。`}
+                        ? t('settings.reminder.never')
+                        : t('settings.reminder.last', { days: backupDaysAgo })}
                 </p>
             </div>
 
@@ -2484,7 +2484,7 @@ const Settings: React.FC = () => {
                         <div className="flex items-center gap-2">
                             <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
                             <span className="text-[11px] text-slate-600 font-medium">
-                                已连接 · {cloudBackupConfig.provider === 'github'
+                                {t('settings.cloud.connected')}{cloudBackupConfig.provider === 'github'
                                     ? `GitHub${cloudBackupConfig.githubOwner ? ` (@${cloudBackupConfig.githubOwner})` : ''}`
                                     : 'WebDAV'}
                             </span>
@@ -2493,7 +2493,7 @@ const Settings: React.FC = () => {
                             onClick={() => cloudBackupConfig.provider === 'github' ? setShowGithubModal(true) : setShowCloudModal(true)}
                             className={`text-[10px] font-medium ${cloudBackupConfig.provider === 'github' ? 'text-slate-600' : 'text-sky-500'}`}
                         >
-                            修改配置
+                            {t('settings.cloud.edit')}
                         </button>
                     </div>
 
@@ -2538,7 +2538,7 @@ const Settings: React.FC = () => {
                     )}
                     {cloudBackupConfig.lastBackupTime && (
                         <p className="text-[10px] text-slate-400 text-center">
-                            上次备份: {new Date(cloudBackupConfig.lastBackupTime).toLocaleString('zh-CN')}
+                            {t('settings.cloud.last', { time: new Date(cloudBackupConfig.lastBackupTime).toLocaleString(locale) })}
                             {cloudBackupConfig.lastBackupSize && ` (${(cloudBackupConfig.lastBackupSize / 1024 / 1024).toFixed(1)} MB)`}
                         </p>
                     )}
@@ -2549,16 +2549,16 @@ const Settings: React.FC = () => {
                             className="py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-1"
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-sky-500"><path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" /></svg>
-                            <span>备份到云端</span>
-                            <span className="text-[9px] text-slate-400">(纯文字)</span>
+                            <span>{t('settings.cloud.toCloud')}</span>
+                            <span className="text-[9px] text-slate-400">{t('settings.cloud.text')}</span>
                         </button>
                         <button
                             onClick={() => handleCloudBackup('full')}
                             className="py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-1"
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-violet-500"><path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" /></svg>
-                            <span>备份到云端</span>
-                            <span className="text-[9px] text-slate-400">(完整)</span>
+                            <span>{t('settings.cloud.toCloud')}</span>
+                            <span className="text-[9px] text-slate-400">{t('settings.cloud.full')}</span>
                         </button>
                     </div>
 
@@ -2567,14 +2567,14 @@ const Settings: React.FC = () => {
                         className="w-full py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex items-center justify-center gap-2"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-emerald-500"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9.75v6.75m0 0l-3-3m3 3l3-3m-8.25 6a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" /></svg>
-                        从云端恢复
+                        {t('settings.cloud.restore')}
                     </button>
                 </div>
             )}
 
             <p className="text-[10px] text-slate-400 px-1 mt-3 leading-relaxed">
-                备份始终存放在你自己的 WebDAV 或 GitHub 账号中，项目不建立用户备份数据库。
-                网页 WebDAV 因跨域限制需要中转；GitHub 默认直连，网络受限时可自行开启中转。
+                {t('settings.cloud.ownership')}
+                {t('settings.cloud.relay')}
             </p>
         </SettingsSection>
 
@@ -3739,7 +3739,7 @@ const Settings: React.FC = () => {
       </Modal>
 
       {/* Cloud Config Modal */}
-      <Modal isOpen={showCloudModal} title="云端备份配置" onClose={() => setShowCloudModal(false)}>
+      <Modal isOpen={showCloudModal} title={t('settings.cloud.config')} onClose={() => setShowCloudModal(false)}>
           <div className="space-y-4 p-1">
               <div className="bg-rose-50 border border-rose-200 rounded-xl p-3">
                   <p className="text-[10px] text-rose-700 leading-relaxed">
@@ -3763,42 +3763,42 @@ const Settings: React.FC = () => {
                   </p>
               </div>
               <div>
-                  <label className="text-[11px] text-slate-500 font-medium mb-1 block">WebDAV 地址</label>
+                  <label className="text-[11px] text-slate-500 font-medium mb-1 block">{t('settings.cloud.url')}</label>
                   <input type="url" value={cbUrl} onChange={(e) => setCbUrl(e.target.value)} placeholder="https://xxx.infini-cloud.net/dav/" className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:border-sky-400 focus:ring-1 focus:ring-sky-200 outline-none" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                   <div>
-                      <label className="text-[11px] text-slate-500 font-medium mb-1 block">用户名</label>
-                      <input type="text" value={cbUsername} onChange={(e) => setCbUsername(e.target.value)} placeholder="邮箱或用户名" className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:border-sky-400 focus:ring-1 focus:ring-sky-200 outline-none" />
+                      <label className="text-[11px] text-slate-500 font-medium mb-1 block">{t('settings.cloud.username')}</label>
+                      <input type="text" value={cbUsername} onChange={(e) => setCbUsername(e.target.value)} placeholder={t('settings.cloud.usernamePlaceholder')} className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:border-sky-400 focus:ring-1 focus:ring-sky-200 outline-none" />
                   </div>
                   <div>
-                      <label className="text-[11px] text-slate-500 font-medium mb-1 block">密码</label>
-                      <input type="password" value={cbPassword} onChange={(e) => setCbPassword(e.target.value)} placeholder="应用专用密码" className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:border-sky-400 focus:ring-1 focus:ring-sky-200 outline-none" />
+                      <label className="text-[11px] text-slate-500 font-medium mb-1 block">{t('settings.cloud.password')}</label>
+                      <input type="password" value={cbPassword} onChange={(e) => setCbPassword(e.target.value)} placeholder={t('settings.cloud.passwordPlaceholder')} className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:border-sky-400 focus:ring-1 focus:ring-sky-200 outline-none" />
                   </div>
               </div>
               <div>
-                  <label className="text-[11px] text-slate-500 font-medium mb-1 block">备份目录</label>
+                  <label className="text-[11px] text-slate-500 font-medium mb-1 block">{t('settings.cloud.directory')}</label>
                   <input type="text" value={cbPath} onChange={(e) => setCbPath(e.target.value)} placeholder="/SullyBackup/" className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:border-sky-400 focus:ring-1 focus:ring-sky-200 outline-none" />
               </div>
               <button onClick={handleTestCloudConnection} disabled={cloudTesting || !cbUrl || !cbUsername || !cbPassword} className="w-full py-2.5 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 disabled:opacity-40">
-                  {cloudTesting ? '测试中...' : '测试连接'}
+                  {cloudTesting ? t('settings.cloud.testing') : t('settings.cloud.test')}
               </button>
               {cloudTestResult && (
                   <p className={`text-[11px] text-center font-medium ${cloudTestResult.startsWith('✓') ? 'text-green-600' : 'text-red-500'}`}>{cloudTestResult}</p>
               )}
               <div className="grid grid-cols-2 gap-3 pt-2">
-                  <button onClick={() => setShowCloudModal(false)} className="py-2.5 bg-slate-100 rounded-xl text-xs font-bold text-slate-500">取消</button>
-                  <button onClick={handleSaveCloudConfig} disabled={!cbUrl || !cbUsername || !cbPassword} className="py-2.5 bg-sky-500 rounded-xl text-xs font-bold text-white disabled:opacity-40">保存配置</button>
+                  <button onClick={() => setShowCloudModal(false)} className="py-2.5 bg-slate-100 rounded-xl text-xs font-bold text-slate-500">{t('common.cancel')}</button>
+                  <button onClick={handleSaveCloudConfig} disabled={!cbUrl || !cbUsername || !cbPassword} className="py-2.5 bg-sky-500 rounded-xl text-xs font-bold text-white disabled:opacity-40">{t('settings.api.save')}</button>
               </div>
               {cloudBackupConfig.enabled && (
-                  <button onClick={() => { trackEvent('关闭云端备份', { provider: cloudBackupConfig.provider === 'github' ? 'github' : 'webdav' }); updateCloudBackupConfig({ enabled: false }); setShowCloudModal(false); addToast('云端备份已关闭', 'info'); }} className="w-full py-2 text-[11px] text-red-400 font-medium">关闭云端备份</button>
+                  <button onClick={() => { trackEvent('关闭云端备份', { provider: cloudBackupConfig.provider === 'github' ? 'github' : 'webdav' }); updateCloudBackupConfig({ enabled: false }); setShowCloudModal(false); addToast(t('settings.cloud.disabled'), 'info'); }} className="w-full py-2 text-[11px] text-red-400 font-medium">{t('settings.cloud.disable')}</button>
               )}
           </div>
       </Modal>
 
       {/* GitHub Backup Modal — minimum-input flow: paste a token, we figure
           out owner via /user and auto-create a private 'sully-backup' repo. */}
-      <Modal isOpen={showGithubModal} title="GitHub 备份" onClose={() => setShowGithubModal(false)}>
+      <Modal isOpen={showGithubModal} title={t('settings.cloud.github')} onClose={() => setShowGithubModal(false)}>
           <div className="space-y-4 p-1">
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
                   <p className="text-[11px] text-slate-700 leading-relaxed">
