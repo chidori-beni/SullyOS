@@ -528,7 +528,7 @@ const CinemaApp: React.FC = () => {
             // 原话（带 <#0.3#>、(laughs) 这些配音标记）拿去念；屏幕上、聊天记录里只放干净的字
             const spokenReplies: CinemaChatLine[] = toCinemaLines('char', result.lines, now);
             const replies: CinemaChatLine[] = spokenReplies
-                .map(r => (r.kind === 'action' ? r : { ...r, text: stripTtsMarkupForDisplay(r.text, apiConfig) }))
+                .map(r => (r.kind === 'action' ? r : { ...r, text: stripTtsMarkupForDisplay(r.text, apiConfig, char) }))
                 .filter(r => r.text.trim());
             const saved = await updateSession(s => ({
                 ...s,

@@ -1,5 +1,6 @@
 /**
- * TTS 服务商路由：按 apiConfig.ttsProvider 分发到 MiniMax、鱼声 Fish Audio 或 ElevenLabs。
+ * TTS 服务商路由：按「角色单独指定 > apiConfig.ttsProvider 全局」分发到 MiniMax、鱼声 Fish Audio 或 ElevenLabs。
+ * 下面每个函数能拿到角色就一定要把角色传进来，否则会退回全局服务商、跟角色的选择对不上。
  *
  * 聊天语音条（Chat）、约会（DateSession）直接用这里的 synthesizeSpeech(Detailed)，
  * 不必关心底层是哪家。CallApp 因为要做分句流式 + 缓存键对齐，单独在自己内部分支。
@@ -34,7 +35,7 @@ export async function synthesizeSpeechDetailed(
   apiConfig: APIConfig,
   options?: SynthOptions,
 ): Promise<TtsResult> {
-  const provider = resolveTtsProvider(apiConfig);
+  const provider = resolveTtsProvider(apiConfig, char);
   if (provider === 'fishaudio') {
     return synthesizeSpeechFishDetailed(text, char, apiConfig, options);
   }
@@ -61,7 +62,7 @@ export async function synthesizeSpeech(
  */
 export const characterHasVoice = (char: CharacterProfile, apiConfig: APIConfig): boolean => {
   const vp = char.voiceProfile;
-  const provider = resolveTtsProvider(apiConfig);
+  const provider = resolveTtsProvider(apiConfig, char);
   if (provider === 'fishaudio') {
     return !!vp?.fishReferenceId;
   }
@@ -76,7 +77,7 @@ export const characterHasVoice = (char: CharacterProfile, apiConfig: APIConfig):
  */
 export const canSynthesizeSpeech = (char: CharacterProfile, apiConfig: APIConfig): boolean => {
   if (!characterHasVoice(char, apiConfig)) return false;
-  const provider = resolveTtsProvider(apiConfig);
+  const provider = resolveTtsProvider(apiConfig, char);
   if (provider === 'fishaudio') return !!resolveFishAudioApiKey(apiConfig);
   if (provider === 'elevenlabs') return !!resolveElevenLabsApiKey(apiConfig);
   return !!resolveMiniMaxApiKey(apiConfig);
@@ -87,21 +88,21 @@ export const canSynthesizeSpeech = (char: CharacterProfile, apiConfig: APIConfig
  *
  * （合上游恐龙咖啡馆那批时补的：Chat.tsx 生成语音前统一走它。）
  */
-export const cleanTextForTtsProvider = (text: string, apiConfig: APIConfig): string => {
-  const provider = resolveTtsProvider(apiConfig);
+export const cleanTextForTtsProvider = (text: string, apiConfig: APIConfig, char?: CharacterProfile | null): string => {
+  const provider = resolveTtsProvider(apiConfig, char);
   if (provider === 'fishaudio') return cleanTextForTtsFish(text);
   if (provider === 'elevenlabs') return cleanTextForTtsElevenLabs(text, resolveElevenLabsModel(apiConfig));
   return cleanTextForTts(text);
 };
 
 /** 按服务商剥掉只给 TTS 看的标记，用于界面显示。 */
-export const stripTtsMarkupForDisplay = (text: string, apiConfig: APIConfig): string => {
-  const provider = resolveTtsProvider(apiConfig);
+export const stripTtsMarkupForDisplay = (text: string, apiConfig: APIConfig, char?: CharacterProfile | null): string => {
+  const provider = resolveTtsProvider(apiConfig, char);
   if (provider === 'fishaudio') return stripFishMarkupForDisplay(text);
   if (provider === 'elevenlabs') return stripElevenLabsMarkupForDisplay(text);
   return cleanVoiceMarkupForDisplay(text);
 };
 
 /** 鱼声 / ElevenLabs 的清洗器需要看到原始 inline cue；MiniMax 用已消毒的 speech。 */
-export const providerUsesRawVoiceMarkup = (apiConfig: APIConfig): boolean =>
-  resolveTtsProvider(apiConfig) !== 'minimax';
+export const providerUsesRawVoiceMarkup = (apiConfig: APIConfig, char?: CharacterProfile | null): boolean =>
+  resolveTtsProvider(apiConfig, char) !== 'minimax';

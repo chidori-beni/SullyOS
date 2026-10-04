@@ -466,7 +466,7 @@ const CompanionHome: React.FC = () => {
     () => characters.find(item => item.id === activeCharacterId) || characters[0] || null,
     [characters, activeCharacterId],
   );
-  const miniMaxTtsActive = resolveTtsProvider(apiConfig) === 'minimax';
+  const miniMaxTtsActive = resolveTtsProvider(apiConfig, character) === 'minimax';
   const activeCompanionSource = companionAvatarSource(character);
   const staticCompanionActive = activeCompanionSource === 'upload' || activeCompanionSource === 'date';
   const [portraitConfigDraft, setPortraitConfigDraft] = useState(() => companionPortraitConfig(character));

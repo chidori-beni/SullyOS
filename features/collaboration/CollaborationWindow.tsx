@@ -1780,7 +1780,7 @@ const CollaborationWindow: React.FC<CollaborationWindowProps> = ({
     }
     setVoiceLoadingIds(previous => new Set(previous).add(message.id));
     try {
-      const spokenText = providerUsesRawVoiceMarkup(chatApi) ? parsed.rawSpeech : parsed.speech;
+      const spokenText = providerUsesRawVoiceMarkup(chatApi, character) ? parsed.rawSpeech : parsed.speech;
       const result = await synthesizeSpeechDetailed(spokenText, character, chatApi, {
         languageBoost: character.chatVoiceLang || undefined,
         groupId: chatApi.minimaxGroupId || undefined,

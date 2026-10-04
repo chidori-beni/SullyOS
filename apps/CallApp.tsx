@@ -30,7 +30,7 @@ import { RealtimeContextManager } from '../utils/realtimeContext';
 import { DB } from '../utils/db';
 import { buildCompanionshipBoundary, companionshipBoundaryOn } from '../utils/companionshipBoundary';
 import { ChatPrompts } from '../utils/chatPrompts';
-import { Message, ChatTheme, AppID, type CharacterProfile } from '../types';
+import { Message, ChatTheme, AppID, type CharacterProfile, type TtsProvider } from '../types';
 import { PRESET_THEMES } from '../components/chat/ChatConstants';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
 import VRMVideoCallStage from '../components/call/VRMVideoCallStage';
@@ -435,19 +435,18 @@ const SoundWaveGlyph = () => (
     ))}
   </span>
 );
-/** 通话提示词里注入哪一份内置语音指南 —— 跟着当前引擎走。 */
-const callVoiceActingGuide = (): string => {
-  const provider = getTtsProvider();
+/** 通话提示词里注入哪一份内置语音指南 —— 跟着这个角色实际用的引擎走（角色单独指定 > 全局）。 */
+const callVoiceActingGuide = (provider: TtsProvider = getTtsProvider()): string => {
   if (provider === 'fishaudio') return FISH_VOICE_ACTING_GUIDE;
   if (provider === 'elevenlabs') return getElevenLabsVoiceActingGuide(getElevenLabsModel());
   return VOICE_ACTING_GUIDE;
 };
-const renderAssistantLine = (text: string, accent = '#8b5cf6') => {
+const renderAssistantLine = (text: string, accent = '#8b5cf6', provider: TtsProvider = getTtsProvider()) => {
   // 朗读用的停顿标记 <#0.4#> 不显示出来
   let trimmed = text.replace(/<#[\d.]+#>/g, '').trim();
   // 鱼声 / ElevenLabs 的 inline cue（[whispering]/[laughs] 等）是演出指令，不该显示给用户。
-  if (getTtsProvider() === 'fishaudio') trimmed = stripFishMarkupForDisplay(trimmed);
-  else if (getTtsProvider() === 'elevenlabs') trimmed = stripElevenLabsMarkupForDisplay(trimmed);
+  if (provider === 'fishaudio') trimmed = stripFishMarkupForDisplay(trimmed);
+  else if (provider === 'elevenlabs') trimmed = stripElevenLabsMarkupForDisplay(trimmed);
   // 按 中文舞台指示（…）、英文语气词标签 (sighs)、换行 切分，前两者作为特殊元素渲染
   const parts = trimmed.split(SOUND_TAG_SPLIT_RE).filter(Boolean);
   return parts.map((part, idx) => {
@@ -491,6 +490,8 @@ const buildCallPrompt = (
   companionshipOn = true,
   /** 角色自己的语音说话方式（神经链接 → 语音），接在通用语音指南后面；没填就是空串。 */
   charVoicePromptBlock = '',
+  /** 这个角色实际用的 TTS 服务商（角色单独指定 > 全局），决定注入哪家的语音标记规则。 */
+  ttsProvider: TtsProvider = getTtsProvider(),
 ) => {
   const resolvedCharName = charName || '你的角色';
   // 电话里角色说的「现在几点 / 今天什么日子」是 ta 那边的时间，跟角色自定义时区走
@@ -590,7 +591,7 @@ ${buildCompanionshipBoundary('call', companionshipOn)}
 
 注意：不要写小说式中文旁白，如”（我靠在椅背上，目光看向远方）”——会被直接删掉，等于白写。
 
-${getVoicePromptOverride(getTtsProvider()) ?? callVoiceActingGuide()}
+${getVoicePromptOverride(ttsProvider) ?? callVoiceActingGuide(ttsProvider)}
 ${charVoicePromptBlock ? `\n${charVoicePromptBlock}\n` : ''}
 ### 历史消息的来源标记（重要）
 
@@ -1427,7 +1428,7 @@ const CallApp: React.FC = () => {
   const resolveModel = () => selectedChar?.voiceProfile?.model?.trim() || 'speech-2.8-hd';
   const resolveGroupId = () => (apiConfig.minimaxGroupId || '').trim();
   // ── TTS 服务商分发：MiniMax 保留电话专用的分段兜底；鱼声 / ElevenLabs 走共享路由。 ──
-  const activeTtsProvider = resolveTtsProvider(apiConfig);
+  const activeTtsProvider = resolveTtsProvider(apiConfig, selectedChar);
   // 当前服务商下，这个角色能否合成语音（决定要不要走 TTS / 给"语音未配置"提示）。
   // 三家的「Key + 音色都齐了吗」判断统一收在 ttsRouter.canSynthesizeSpeech，别再各写一份。
   const hasConfiguredVoice = (): boolean => !!selectedChar && canSynthesizeSpeech(selectedChar, apiConfig);
@@ -2222,6 +2223,7 @@ const CallApp: React.FC = () => {
       incomingOpening,
       companionshipBoundaryOn(selectedChar),
       buildCharacterVoicePromptBlock(selectedChar),
+      resolveTtsProvider(apiConfig, selectedChar),
     );
     const thinkingPrompt = selectedChar.showThinkingChain
       ? [
@@ -2462,6 +2464,7 @@ ${sentencePlan}`;
           incomingOpening,
           companionshipBoundaryOn(selectedChar),
           buildCharacterVoicePromptBlock(selectedChar),
+          resolveTtsProvider(apiConfig, selectedChar),
         )
       : buildCallPrompt(userName, undefined, undefined, voiceLang || undefined, callMode, undefined, callDirection, incomingOpening);
     const thinkingPrompt = selectedChar?.showThinkingChain
@@ -4494,7 +4497,7 @@ ${sentencePlan}`;
                 if (item.role !== 'assistant') return item.text;
                 const { display, voiceText } = extractVoiceTag(item.text);
                 const cleanVoice = cleanVoiceMarkupForDisplay(voiceText);
-                return <>{renderAssistantLine(display, accentColor)}{cleanVoice && <div className="mt-1 text-[10px] text-white/40 italic">{cleanVoice}</div>}</>;
+                return <>{renderAssistantLine(display, accentColor, activeTtsProvider)}{cleanVoice && <div className="mt-1 text-[10px] text-white/40 italic">{cleanVoice}</div>}</>;
               })()}</div>
               {item.role === 'assistant' && (
                 <button
@@ -4858,7 +4861,7 @@ ${sentencePlan}`;
             <div className="line-clamp-2 text-[13px] leading-relaxed text-white/90">
               {latestCallBubble
                 ? latestCallBubble.role === 'assistant'
-                  ? renderAssistantLine(extractVoiceTag(latestCallBubble.text).display, accentColor)
+                  ? renderAssistantLine(extractVoiceTag(latestCallBubble.text).display, accentColor, activeTtsProvider)
                   : latestCallBubble.text
                 : callState === 'connecting'
                   ? '正在接通，请稍等……'
@@ -4942,7 +4945,7 @@ ${sentencePlan}`;
                       <div className="mt-2 whitespace-pre-wrap border-t border-white/8 pt-2 leading-relaxed text-white/60">{bubble.thinkingChain}</div>
                     </details>
                   )}
-                  {renderAssistantLine(display, accentColor)}
+                  {renderAssistantLine(display, accentColor, activeTtsProvider)}
                   {cleanVoice && <div className="mt-1 text-[11px] text-white/45 italic">{cleanVoice}</div>}
                 </>;
               })() : (line || bubble.text)}

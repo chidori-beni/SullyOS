@@ -122,7 +122,7 @@ export const generateAvatarTouchVoicePack = async (options: {
       const task = tasks[cursor++];
       let playableUrl = '';
       try {
-        const spokenText = (resolveTtsProvider(options.apiConfig) === 'minimax' ? task.reaction.ttsText : '')
+        const spokenText = (resolveTtsProvider(options.apiConfig, options.character) === 'minimax' ? task.reaction.ttsText : '')
           || task.reaction.translation
           || task.reaction.text;
         const result = await synthesizeSpeechDetailed(

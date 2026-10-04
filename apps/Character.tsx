@@ -61,6 +61,7 @@ import {
     getExternalMemoryOverLimitMessage,
 } from '../utils/memoryPalace/externalMemory';
 import { mergeCharacterVoiceProfile } from '../utils/voiceProfile';
+import { normalizeTtsProvider, TTS_PROVIDER_LABELS } from '../utils/ttsProvider';
 
 // ── 神经链接 · 列表页视觉件（淡紫留白风）────────────────────
 // 之前的「星点 + 玻璃饰带 + 华丽头像框」看久了眼花、低端机也重绘卡。
@@ -2521,6 +2522,41 @@ ${isInitialGeneration ? `
                                {openSections.voice && (<>
                                <p className="text-[11px] text-slate-500">已有 voice_id 可直接填，不依赖查询。聊天角色配置后，后续接 TTS 可直接读取。</p>
 
+                               {/* 这个角色单独用哪家 TTS：不选 = 跟随设置里的全局服务商。比如中文角色 MiniMax、日文角色鱼声。 */}
+                               <div className="rounded-2xl border border-emerald-200/60 bg-emerald-50/40 p-2.5 space-y-2">
+                                   <div className="flex items-center justify-between gap-2">
+                                       <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">这个角色用哪家语音</span>
+                                       <span className="text-[9px] text-slate-400">全局：{TTS_PROVIDER_LABELS[normalizeTtsProvider(apiConfig.ttsProvider)]}</span>
+                                   </div>
+                                   <div className="grid grid-cols-4 gap-1 rounded-xl bg-white/80 p-1">
+                                       {([
+                                           ['', '跟随全局'],
+                                           ['minimax', 'MiniMax'],
+                                           ['fishaudio', '鱼声'],
+                                           ['elevenlabs', 'Eleven'],
+                                       ] as const).map(([value, label]) => {
+                                           const active = (formData.voiceProfile?.ttsProvider || '') === value;
+                                           return (
+                                               <button
+                                                   key={value || 'global'}
+                                                   type="button"
+                                                   onClick={() => handleChange('voiceProfile', mergeCharacterVoiceProfile(formData.voiceProfile, {
+                                                       ttsProvider: value || undefined,
+                                                   }))}
+                                                   className={`rounded-lg px-1 py-1.5 text-[10px] font-bold transition-colors ${active ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-400'}`}
+                                               >
+                                                   {label}
+                                               </button>
+                                           );
+                                       })}
+                                   </div>
+                                   <p className="text-[10px] text-slate-400 leading-relaxed">
+                                       {formData.voiceProfile?.ttsProvider
+                                           ? `聊天语音、电话、见面都用 ${TTS_PROVIDER_LABELS[normalizeTtsProvider(formData.voiceProfile.ttsProvider)]}，不受设置里的全局选择影响。记得在下面填好这一家的音色，并在设置 → 其他 API 里填好这一家的 Key。`
+                                           : '跟着设置 → 其他 API 里的全局语音服务商走。想让这个角色固定用某一家（比如日文角色用鱼声），点上面对应的按钮。'}
+                                   </p>
+                               </div>
+
                                {/* MiniMax 合成参数档位：不选就是经典档，老角色升级后声音不会变。 */}
                                <div className="rounded-2xl border border-violet-200/60 bg-violet-50/40 p-2.5 space-y-2">
                                    <div className="flex items-center justify-between gap-2">
@@ -2583,7 +2619,7 @@ ${isInitialGeneration ? `
                                    />
                                </div>
 
-                               {/* 鱼声 Fish Audio 音色：仅当全局语音服务商切到鱼声时生效（设置 → 其他 API） */}
+                               {/* 鱼声 Fish Audio 音色：这个角色实际用鱼声时生效（角色单独选 > 全局设置） */}
                                <div className="rounded-2xl border border-sky-200/60 bg-sky-50/40 p-2.5 space-y-1.5">
                                    <div className="text-[10px] font-bold text-sky-600 uppercase tracking-widest">鱼声 Fish 音色</div>
                                    <input
@@ -2595,7 +2631,7 @@ ${isInitialGeneration ? `
                                        className="w-full bg-white rounded-2xl px-3 py-2 text-xs border border-slate-200"
                                        placeholder="粘贴 reference_id 或整条 fish.audio 链接"
                                    />
-                                   <p className="text-[10px] text-slate-400">从 fish.audio 选好音色后，把那一页的链接（含 ?modelId=…）或 32 位 id 直接贴进来都行，会自动识别。设置里语音选「鱼声 Fish」后该角色就用它合成；与上面的 MiniMax voice_id 各存各的。</p>
+                                   <p className="text-[10px] text-slate-400">从 fish.audio 选好音色后，把那一页的链接（含 ?modelId=…）或 32 位 id 直接贴进来都行，会自动识别。上面选「鱼声」（或跟随全局且全局是鱼声）时用它合成；与上面的 MiniMax voice_id 各存各的。</p>
                                </div>
 
                                {/* ElevenLabs 音色：角色独立保存，设置页只负责 Key / 模型。 */}
@@ -2619,7 +2655,7 @@ ${isInitialGeneration ? `
                                        className="w-full bg-white rounded-2xl px-3 py-2 text-xs border border-slate-200"
                                        placeholder="粘贴 Voice ID 或 ElevenLabs 音色页面链接"
                                    />
-                                   <p className="text-[10px] text-slate-400">从 ElevenLabs Voices / Voice Library 复制 Voice ID；也可直接粘贴含 voiceId 的页面链接。设置里语音选 ElevenLabs 后使用，与 MiniMax、鱼声音色分别保存。</p>
+                                   <p className="text-[10px] text-slate-400">从 ElevenLabs Voices / Voice Library 复制 Voice ID；也可直接粘贴含 voiceId 的页面链接。上面选「Eleven」（或跟随全局且全局是 ElevenLabs）时使用，与 MiniMax、鱼声音色分别保存。</p>
                                </div>
 
                                {/* 语速：三家 TTS 共用 voiceProfile.speed */}

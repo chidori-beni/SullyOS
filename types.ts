@@ -3985,6 +3985,8 @@ export interface CharacterProfile {
 
   voiceProfile?: {
       provider?: 'minimax' | 'custom';
+      // 这个角色单独用哪家 TTS（比如中文角色 MiniMax、日文角色鱼声）。缺省/空串 = 跟随全局 apiConfig.ttsProvider。
+      ttsProvider?: TtsProvider | '';
       voiceId?: string;
       // MiniMax 合成参数版本。缺省/legacy 保持历史效果；natural-v2 需由用户主动开启。
       minimaxParamVersion?: 'legacy' | 'natural-v2';

@@ -877,8 +877,8 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         // Parse the structured voice output: spoken text (sanitized) + per-message emotion.
         const parsedVoice = parseVoiceOutput(voiceSourceContent);
         // Fish / ElevenLabs 的适配器需要看到原始 inline cue；MiniMax 使用已消毒的 speech。
-        const ttsProvider = resolveTtsProvider(apiConfig);
-        const preserveRawMarkup = providerUsesRawVoiceMarkup(apiConfig);
+        const ttsProvider = resolveTtsProvider(apiConfig, char);
+        const preserveRawMarkup = providerUsesRawVoiceMarkup(apiConfig, char);
         const voiceTagContent = parsedVoice.hasVoiceTag ? (preserveRawMarkup ? parsedVoice.rawSpeech : parsedVoice.speech) : '';
         const voiceEmotion = parsedVoice.emotion;
 
@@ -939,15 +939,15 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 const bilingualIdx = voiceSourceContent.toLowerCase().indexOf('%%bilingual%%');
                 const hasBilingual = bilingualIdx !== -1;
                 if (hasBilingual && voiceLang) {
-                    const langAText = cleanTextForTtsProvider(voiceSourceContent.substring(0, bilingualIdx), apiConfig);
-                    const langBText = stripTtsMarkupForDisplay(voiceSourceContent.substring(bilingualIdx + '%%BILINGUAL%%'.length), apiConfig);
+                    const langAText = cleanTextForTtsProvider(voiceSourceContent.substring(0, bilingualIdx), apiConfig, char);
+                    const langBText = stripTtsMarkupForDisplay(voiceSourceContent.substring(bilingualIdx + '%%BILINGUAL%%'.length), apiConfig, char);
                     if (!langAText || langAText.length < 2) return null;
                     spokenText = langAText;
                     originalText = langBText || '';
                 } else {
-                    spokenText = cleanTextForTtsProvider(voiceSourceContent, apiConfig);
+                    spokenText = cleanTextForTtsProvider(voiceSourceContent, apiConfig, char);
                     if (!spokenText || spokenText.length < 2) return null;
-                    originalText = stripTtsMarkupForDisplay(spokenText, apiConfig) || spokenText;
+                    originalText = stripTtsMarkupForDisplay(spokenText, apiConfig, char) || spokenText;
                     if (voiceLang) {
                         const langLabel = voiceLanguagePromptLabel(voiceLang);
                         const translated = await llmTranslate(`Translate the following text to ${langLabel}. Output ONLY the translation, nothing else.`, originalText);
@@ -988,7 +988,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             }
             if (blobUrl.startsWith('blob:')) voiceBlobUrlsRef.current.add(blobUrl);
             // 转文字面板只展示实际台词，不展示当前引擎的停顿 / 表演标记。
-            const displaySpoken = stripTtsMarkupForDisplay(spokenText, apiConfig);
+            const displaySpoken = stripTtsMarkupForDisplay(spokenText, apiConfig, char);
             const storedSpokenText = voiceTagContent ? displaySpoken : (voiceLang ? displaySpoken : undefined);
             const storedLang = voiceLang || undefined;
             setVoiceDataMap(prev => ({ ...prev, [msg.id]: { url: blobUrl, originalText, spokenText: storedSpokenText, lang: storedLang } }));
@@ -1023,7 +1023,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         if (!msg) return;
         if (voiceLoading.has(msgId)) return;
         if (!isTtsReady()) {
-            const provider = resolveTtsProvider(apiConfig);
+            const provider = resolveTtsProvider(apiConfig, char);
             addToast(provider === 'fishaudio'
                 ? '该角色未配置鱼声音色或缺少 Fish API Key'
                 : provider === 'elevenlabs'

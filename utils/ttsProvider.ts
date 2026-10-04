@@ -12,14 +12,33 @@ import type { APIConfig, TtsProvider } from '../types';
 export const normalizeTtsProvider = (raw: unknown): TtsProvider =>
   raw === 'fishaudio' ? 'fishaudio' : raw === 'elevenlabs' ? 'elevenlabs' : 'minimax';
 
+/** 界面上显示的服务商名字。 */
+export const TTS_PROVIDER_LABELS: Record<TtsProvider, string> = {
+  minimax: 'MiniMax',
+  fishaudio: '鱼声 Fish',
+  elevenlabs: 'ElevenLabs',
+};
+
 let currentProvider: TtsProvider = 'minimax';
 
 export function setTtsProvider(provider: TtsProvider | string | undefined | null): void {
   currentProvider = normalizeTtsProvider(provider);
 }
 
-export function getTtsProvider(): TtsProvider {
-  return currentProvider;
+/**
+ * 角色可以单独指定 TTS 服务商（voiceProfile.ttsProvider），比如中文角色用 MiniMax、日文角色用鱼声。
+ * 没指定（undefined / 空串）→ 跟随全局设置。
+ */
+type CharTtsSource = { voiceProfile?: { ttsProvider?: TtsProvider | '' } } | null | undefined;
+
+const charTtsOverride = (char: CharTtsSource): TtsProvider | undefined => {
+  const raw = char?.voiceProfile?.ttsProvider;
+  return raw ? normalizeTtsProvider(raw) : undefined;
+};
+
+/** 传了角色就先看角色自己的选择，否则 / 跟随全局时返回全局服务商。 */
+export function getTtsProvider(char?: CharTtsSource): TtsProvider {
+  return charTtsOverride(char) ?? currentProvider;
 }
 
 const DEFAULT_ELEVENLABS_MODEL = 'eleven_flash_v2_5';
@@ -36,9 +55,12 @@ export function getElevenLabsModel(): string {
   return currentElevenLabsModel;
 }
 
-/** 从 apiConfig 解析当前 TTS 服务商（缺省 → minimax）。 */
-export const resolveTtsProvider = (apiConfig?: Pick<APIConfig, 'ttsProvider'> | null): TtsProvider =>
-  normalizeTtsProvider(apiConfig?.ttsProvider);
+/** 解析某个角色实际用的 TTS 服务商：角色单独指定 > apiConfig 全局（缺省 → minimax）。 */
+export const resolveTtsProvider = (
+  apiConfig?: Pick<APIConfig, 'ttsProvider'> | null,
+  char?: CharTtsSource,
+): TtsProvider =>
+  charTtsOverride(char) ?? normalizeTtsProvider(apiConfig?.ttsProvider);
 
 /**
  * 用户自定义「语音表演指南」覆盖。

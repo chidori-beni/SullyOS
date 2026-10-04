@@ -93,7 +93,8 @@ const buildVoiceRuntimeContract = (
 export const buildVoiceActingGuide = (
   char: Pick<CharacterProfile, 'voiceProfile'> & Partial<Pick<CharacterProfile, 'name'>>,
 ): string => {
-  const provider = getTtsProvider();
+  // 角色在角色卡里单独选了 TTS 服务商的话，按角色那家写语音指南（标记格式各家不通用）
+  const provider = getTtsProvider(char);
   const custom = getVoicePromptOverride(provider);
   const defaultGuide = provider === 'fishaudio'
     ? FISH_VOICE_ACTING_GUIDE

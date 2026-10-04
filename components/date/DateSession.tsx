@@ -299,7 +299,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     const scrollToNovelHistoryTopRef = useRef(false);
     const voiceEnabled = !!char.dateVoiceEnabled;
     const voiceLang = char.dateVoiceLang || '';
-    const dateTtsProvider = resolveTtsProvider(apiConfig);
+    const dateTtsProvider = resolveTtsProvider(apiConfig, char);
     const dateMiniMaxModel = resolveMiniMaxModel(char.voiceProfile?.model);
     const canUseDateMiniMaxInterjections = dateTtsProvider === 'minimax'
         && supportsMiniMaxInterjections(dateMiniMaxModel);
@@ -476,8 +476,8 @@ const DateSession: React.FC<DateSessionProps> = ({
         if (!canSynthesizeSpeech(char, apiConfig)) return null;
         try {
             // 按当前服务商清洗（鱼声 / ElevenLabs 保留各自的 inline cue，MiniMax 走原来的清洗）。
-            const provider = resolveTtsProvider(apiConfig);
-            const sourceTtsText = cleanTextForTtsProvider(text, apiConfig);
+            const provider = resolveTtsProvider(apiConfig, char);
+            const sourceTtsText = cleanTextForTtsProvider(text, apiConfig, char);
             let ttsText = sourceTtsText;
             if (!ttsText || ttsText.length < 2) return null;
             if (voiceLang) {
@@ -521,7 +521,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             });
             return {
                 url,
-                spokenText: stripTtsMarkupForDisplay(ttsText, apiConfig),
+                spokenText: stripTtsMarkupForDisplay(ttsText, apiConfig, char),
             };
         } catch (err: any) {
             console.warn('Date TTS failed:', err?.message);

@@ -79,7 +79,7 @@ export const createCinemaSpeaker = (onError?: (message: string) => void): Cinema
             } catch { /* ignore */ }
         },
         say: async (text, char, apiConfig) => {
-            const spoken = cleanTextForTtsProvider(text, apiConfig);
+            const spoken = cleanTextForTtsProvider(text, apiConfig, char);
             if (!spoken || spoken.trim().length < 2) return null;
             const myGeneration = generation;
             try {
