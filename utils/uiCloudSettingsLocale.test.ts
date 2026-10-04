@@ -13,6 +13,18 @@ it('keeps formatted timestamp parameters literal', () => {
   expect(translateUi('ja-JP', 'settings.cloud.last', { time: '日時 {days} 🌸' })).toBe('前回のバックアップ: 日時 {days} 🌸');
   expect(translateUi('ja-JP', 'settings.reminder.never')).not.toBe(translateUi('zh-CN', 'settings.reminder.never'));
 });
+it('localizes provider switching and modal footer without changing their actions', () => {
+  const source = readFileSync(resolve(process.cwd(), 'apps/Settings.tsx'), 'utf8');
+  for (const key of ['switchGithub', 'tryGithub', 'keepWebdav', 'disconnect', 'done'] as const) {
+    expect(source).toContain(`t('settings.github.${key}')`);
+    expect(translateUi('ja-JP', `settings.github.${key}`)).not.toBe(translateUi('zh-CN', `settings.github.${key}`));
+  }
+  expect(source).toContain("cloudBackupConfig.githubToken ? t('settings.github.switchGithub') : t('settings.github.tryGithub')");
+  expect(source).toContain('onClick={switchToGithub}');
+  expect(source).toContain('onClick={handleDisableCloud}');
+  expect(source).toContain("disabled={!cloudBackupConfig.enabled || cloudBackupConfig.provider !== 'github'}");
+  expect(source).toContain("{t('common.close')}</button>");
+});
 it('localizes GitHub form copy without modifying credentials or result handling', () => {
   const source = readFileSync(resolve(process.cwd(), 'apps/Settings.tsx'), 'utf8');
   for (const key of ['createToken', 'tokenHelp', 'connecting', 'connect', 'destination', 'releases', 'collapse', 'advanced', 'repo', 'autoRepo', 'proxy', 'proxyHelp', 'backWebdav', 'useWebdav'] as const) {

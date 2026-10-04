@@ -6,6 +6,7 @@ export const UI_LOCALE_STORAGE_KEY = 'sullyos.uiLocale.v1';
 export type UiMessageParams = Record<string, string | number>;
 
 const ZH_MESSAGES = {
+  'settings.github.tryGithub': '试试 GitHub 备份（不用梯子 · 2GB/份）',
   'settings.reminder.title': "备份提醒频率",
   'settings.reminder.every': "每 {days} 天",
   'settings.reminder.days': "{days} 天",
@@ -393,6 +394,7 @@ const JA_MESSAGES = {
   'settings.github.keepWebdav': "WebDAV の既存バックアップは変更されません。いつでも切り戻せます。",
   'settings.github.backWebdav': "WebDAV に戻す →",
   'settings.github.useWebdav': "WebDAV バックアップに切り替え →",
+  'settings.github.tryGithub': 'GitHub バックアップを試す（VPN 不要・1 件あたり 2GB）',
   'settings.cloud.connected': "接続済み · ",
   'settings.cloud.edit': "設定を変更",
   'settings.cloud.toCloud': "クラウドにバックアップ",
