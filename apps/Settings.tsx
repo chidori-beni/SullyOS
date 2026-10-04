@@ -2533,7 +2533,7 @@ const Settings: React.FC = () => {
                             onClick={switchToWebDAV}
                             className="w-full py-1.5 text-[10px] text-slate-400 hover:text-sky-500 transition-colors"
                         >
-                            {cloudBackupConfig.webdavUrl ? '切换回 WebDAV →' : '改用 WebDAV 备份 →'}
+                            {cloudBackupConfig.webdavUrl ? t('settings.github.backWebdav') : t('settings.github.useWebdav')}
                         </button>
                     )}
                     {cloudBackupConfig.lastBackupTime && (
@@ -3825,7 +3825,7 @@ const Settings: React.FC = () => {
                   onClick={() => trackEvent('跳去 GitHub 创建 Token')}
                   className="block w-full py-3 bg-gradient-to-br from-slate-800 to-slate-900 text-white rounded-xl text-xs font-bold text-center shadow-sm active:scale-95 transition-all"
               >
-                  ① 去 GitHub 创建 Token ↗
+                  {t('settings.github.createToken')}
               </a>
 
               <div>
@@ -3838,8 +3838,7 @@ const Settings: React.FC = () => {
                       className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 font-mono focus:border-slate-500 focus:ring-1 focus:ring-slate-300 outline-none"
                   />
                   <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
-                      Token 保存在本机配置中。GitHub 默认直连；仅当你手动开启下方中转时，
-                      Token 会随 GitHub 请求经过所选 Worker，项目不会主动留存。
+                      {t('settings.github.tokenHelp')}
                   </p>
               </div>
 
@@ -3848,7 +3847,7 @@ const Settings: React.FC = () => {
                   disabled={ghTesting || !ghToken.trim()}
                   className="w-full py-3 bg-gradient-to-r from-emerald-500 to-green-600 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-all disabled:opacity-40"
               >
-                  {ghTesting ? '连接中...' : '③ 测试并连接'}
+                  {ghTesting ? t('settings.github.connecting') : t('settings.github.connect')}
               </button>
               {ghTestResult && (
                   <p className={`text-[11px] text-center font-medium ${ghTestResult.startsWith('✓') ? 'text-green-600' : 'text-red-500'}`}>
@@ -3858,7 +3857,7 @@ const Settings: React.FC = () => {
               {ghTestResult.startsWith('✓') && cloudBackupConfig.githubOwner && (
                   <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-1.5">
                       <p className="text-[11px] text-emerald-800 font-medium">
-                          🎉 备份会上传到这里:
+                          {t('settings.github.destination')}
                       </p>
                       <a
                           href={`https://github.com/${cloudBackupConfig.githubOwner}/${cloudBackupConfig.githubRepo || 'sully-backup'}/releases`}
@@ -3868,7 +3867,7 @@ const Settings: React.FC = () => {
                           github.com/{cloudBackupConfig.githubOwner}/{cloudBackupConfig.githubRepo || 'sully-backup'}/releases ↗
                       </a>
                       <p className="text-[10px] text-emerald-700 leading-relaxed">
-                          每次备份会创建一个新的 release（带时间戳）。想看 / 删除旧备份就去这个网址。
+                          {t('settings.github.releases')}
                       </p>
                   </div>
               )}
@@ -3877,12 +3876,12 @@ const Settings: React.FC = () => {
                   onClick={() => { if (!ghShowAdvanced) trackEvent('展开 GitHub 高级选项'); setGhShowAdvanced(v => !v); }}
                   className="w-full text-[10px] text-slate-400 underline-offset-2 hover:underline"
               >
-                  {ghShowAdvanced ? '收起高级选项 ▲' : '高级选项 ▼'}
+                  {ghShowAdvanced ? t('settings.github.collapse') : t('settings.github.advanced')}
               </button>
               {ghShowAdvanced && (
                   <div className="space-y-3 bg-slate-50 rounded-xl p-3">
                       <div>
-                          <label className="text-[11px] text-slate-500 font-medium mb-1 block">备份仓库名</label>
+                          <label className="text-[11px] text-slate-500 font-medium mb-1 block">{t('settings.github.repo')}</label>
                           <input
                               type="text"
                               value={ghRepo}
@@ -3890,7 +3889,7 @@ const Settings: React.FC = () => {
                               placeholder="sully-backup"
                               className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 font-mono focus:border-slate-500 outline-none"
                           />
-                          <p className="text-[10px] text-slate-400 mt-1">不存在会自动创建为私有仓库。</p>
+                          <p className="text-[10px] text-slate-400 mt-1">{t('settings.github.autoRepo')}</p>
                       </div>
                       <label className="flex items-center gap-2 text-[11px] text-slate-600 cursor-pointer">
                           <input
@@ -3899,11 +3898,10 @@ const Settings: React.FC = () => {
                               onChange={(e) => setGhUseProxy(e.target.checked)}
                               className="rounded"
                           />
-                          <span>使用 Cloudflare 中转（默认关闭 · 直连失败时可开启）</span>
+                          <span>{t('settings.github.proxy')}</span>
                       </label>
                       <p className="text-[10px] text-slate-400 leading-relaxed pl-5">
-                          开启后，GitHub 请求会由所选 Worker 转发，备份仍存放在你的 GitHub 私有仓库；
-                          项目不建立备份数据库，也不主动留存 Token 或备份文件。大于 32MB 时会自动分片，并在全部完成后发布。
+                          {t('settings.github.proxyHelp')}
                       </p>
                   </div>
               )}

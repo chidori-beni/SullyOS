@@ -13,6 +13,20 @@ it('keeps formatted timestamp parameters literal', () => {
   expect(translateUi('ja-JP', 'settings.cloud.last', { time: '日時 {days} 🌸' })).toBe('前回のバックアップ: 日時 {days} 🌸');
   expect(translateUi('ja-JP', 'settings.reminder.never')).not.toBe(translateUi('zh-CN', 'settings.reminder.never'));
 });
+it('localizes GitHub form copy without modifying credentials or result handling', () => {
+  const source = readFileSync(resolve(process.cwd(), 'apps/Settings.tsx'), 'utf8');
+  for (const key of ['createToken', 'tokenHelp', 'connecting', 'connect', 'destination', 'releases', 'collapse', 'advanced', 'repo', 'autoRepo', 'proxy', 'proxyHelp', 'backWebdav', 'useWebdav'] as const) {
+    expect(source).toContain(`t('settings.github.${key}')`);
+    expect(translateUi('ja-JP', `settings.github.${key}`)).not.toBe(translateUi('zh-CN', `settings.github.${key}`));
+  }
+  for (const field of ['ghToken', 'ghRepo']) expect(source).toContain(`value={${field}}`);
+  expect(source).toContain('checked={ghUseProxy}');
+  expect(source).toContain('onClick={handleTestGithub}');
+  expect(source).toContain("ghTestResult.startsWith('✓')");
+  expect(source).toContain('{ghTestResult}');
+  expect(source).toContain("cloudBackupConfig.githubRepo || 'sully-backup'");
+  expect(translateUi('ja-JP', 'settings.github.proxyHelp')).toContain('32MB');
+});
 it('keeps reminder and cloud configuration input wiring and credentials unchanged', () => {
   const source = readFileSync(resolve(process.cwd(), 'apps/Settings.tsx'), 'utf8');
   expect(source).toContain('min={BACKUP_REMINDER_MIN_DAYS}');
