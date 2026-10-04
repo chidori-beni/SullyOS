@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildFallbackNaturalProfile, buildNaturalReplyGuidance, decideNaturalProactive, enrichNaturalProfileForCharacter, naturalCheckWindowMinutes, naturalSilenceIntensity, naturalUnansweredHardCap, NATURAL_BATCH_HARD_CAP, NATURAL_PROACTIVE_TASK_INSTRUCTION, NATURAL_UNANSWERED_HARD_CAP, NATURAL_UNANSWERED_PENALTY_CAP, nextNaturalCheckAt, naturalSleepDeferMinutes, NATURAL_SLEEP_MAX_DEFER_MINUTES } from './naturalProactive';
+import { buildFallbackNaturalProfile, naturalProfileBasisMark, recentMemoriesForProfile, shouldAutoRefreshNaturalProfile, buildNaturalReplyGuidance, decideNaturalProactive, enrichNaturalProfileForCharacter, naturalCheckWindowMinutes, naturalSilenceIntensity, naturalUnansweredHardCap, NATURAL_BATCH_HARD_CAP, NATURAL_PROACTIVE_TASK_INSTRUCTION, NATURAL_UNANSWERED_HARD_CAP, NATURAL_UNANSWERED_PENALTY_CAP, nextNaturalCheckAt, naturalSleepDeferMinutes, NATURAL_SLEEP_MAX_DEFER_MINUTES } from './naturalProactive';
 import type { CharacterProfile, NaturalProactiveProfile } from '../types';
 
 const profile: NaturalProactiveProfile = {
@@ -165,6 +165,68 @@ describe('自然主动决策', () => {
     expect(decide({ profile }).score + 0.15).toBeLessThanOrEqual(
       decide({ profile: enriched }).score,
     );
+  });
+
+  // 用户 2026-10-04 实测：身份选「朋友」、刚加上联系方式，画像却是「恋人牵挂型」。
+  it('身份归属选了朋友 / 不认识我时，卡面再像恋爱也不会被算成恋人', () => {
+    const card = { name: '妮可', description: '偶像。坚持偶像禁止恋爱，曾经被误会有男朋友。', systemPrompt: '', memories: [] };
+    const asFriend = buildFallbackNaturalProfile({ ...card, hostRelation: 'friend' } as unknown as CharacterProfile);
+    expect(asFriend.relationship).not.toBe('romantic');
+    expect(asFriend.archetype).not.toContain('恋人');
+    const asStranger = buildFallbackNaturalProfile({ ...card, hostRelation: 'stranger' } as unknown as CharacterProfile);
+    expect(asStranger.relationship).toBe('neutral');
+  });
+
+  it('话题词「禁止恋爱」本身不再把陪伴角色判成恋人', () => {
+    const p = buildFallbackNaturalProfile({ name: '妮可', description: '偶像，坚持偶像禁止恋爱。', systemPrompt: '', memories: [] } as unknown as CharacterProfile);
+    expect(p.relationship).not.toBe('romantic');
+  });
+
+  it('朋友但 ta 那栏写着偷偷喜欢：算亲近，不算恋人', () => {
+    const p = buildFallbackNaturalProfile({ name: 'A', description: '', systemPrompt: '', memories: [], hostRelation: 'friend', hostBond: { toHost: '已经在偷偷喜欢了' } } as unknown as CharacterProfile);
+    expect(p.relationship).toBe('close');
+  });
+
+  it('已存的旧「恋人」兜底画像，身份改成朋友后下一次打包就按朋友重算', () => {
+    const old = buildFallbackNaturalProfile({ name: 'B', description: '我们是恋人。', systemPrompt: '', memories: [] } as unknown as CharacterProfile);
+    expect(old.relationship).toBe('romantic');
+    const enriched = enrichNaturalProfileForCharacter(old, { name: 'B', description: '我们是恋人。', systemPrompt: '', memories: [], hostRelation: 'friend' } as unknown as CharacterProfile);
+    expect(enriched.relationship).toBe('neutral');
+    expect(enriched.threshold).toBeGreaterThan(old.threshold);
+    expect(enriched.archetype).not.toContain('恋人');
+  });
+
+  it('画像会带上最近的记忆；一条都没有时明说还没共同记忆', () => {
+    const empty = { name: 'A', description: '', systemPrompt: '', memories: [] } as unknown as CharacterProfile;
+    expect(recentMemoriesForProfile(empty)).toContain('还没有任何共同记忆');
+    const withMem = {
+      ...empty,
+      refinedMemories: { '2026-09': '九月：从网友变成了会互道晚安的朋友' },
+      memories: [
+        { id: '2', date: '2026年10月3日', summary: '第一次通电话' },
+        { id: '1', date: '2026年9月28日', summary: '刚加上联系方式' },
+      ],
+    } as unknown as CharacterProfile;
+    const text = recentMemoriesForProfile(withMem);
+    expect(text).toContain('互道晚安');
+    expect(text.indexOf('刚加上联系方式')).toBeLessThan(text.indexOf('第一次通电话'));
+  });
+
+  it('有新记忆且满一天才自动重读画像', () => {
+    const base = { name: 'A', description: '', systemPrompt: '', memories: [] } as unknown as CharacterProfile;
+    const fresh = buildFallbackNaturalProfile(base);
+    const now = fresh.derivedAt;
+    const enabled = (char: CharacterProfile) => ({ ...char, naturalProactiveConfig: { enabled: true, intensity: 'normal', bias: 0, profile: fresh } }) as CharacterProfile;
+    expect(shouldAutoRefreshNaturalProfile(enabled(base), now + 2 * 86_400_000)).toBe(false);
+    const grown = enabled({ ...base, memories: [{ id: '1', date: '2026-10-05', summary: '一起看了电影' }] } as unknown as CharacterProfile);
+    expect(shouldAutoRefreshNaturalProfile(grown, now + 3_600_000)).toBe(false);
+    expect(shouldAutoRefreshNaturalProfile(grown, now + 2 * 86_400_000)).toBe(true);
+    expect(naturalProfileBasisMark(grown)).not.toBe(fresh.basisMark);
+  });
+
+  it('模型已判 neutral 时，关键词不再越过模型改成恋人', () => {
+    const enriched = enrichNaturalProfileForCharacter({ ...profile, relationship: 'neutral', source: 'llm' }, { name: 'B', description: '她有个男朋友叫阿明。', systemPrompt: '', memories: [] } as unknown as CharacterProfile);
+    expect(enriched.relationship).toBe('neutral');
   });
 });
 

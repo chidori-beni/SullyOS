@@ -222,40 +222,140 @@ const textForProfile = (char: CharacterProfile): string => [
   char.writerPersona,
 ].filter(Boolean).join('\n\n').slice(0, 24_000);
 
+// 不从 contextMemories 引：这个文件也被打进 Worker 包，少带依赖。日期兼容 2026-09-05 / 2026/9/5 / 2026年9月5日。
+const memorySortKey = (raw: string): string => {
+  const match = /(\d{4})\s*[-\/年]\s*(\d{1,2})\s*[-\/月]\s*(\d{1,2})/.exec(raw);
+  return match ? `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}` : raw;
+};
+
+/**
+ * 角色卡只是「初见那一刻」，关系是会变的（用户 2026-10-04 提出）。
+ * 画像同时读最近的月度总结 + 日度记忆；一条都没有时明说「还没有共同记忆」，
+ * 这本身就是「刚认识」的证据。
+ */
+export const recentMemoriesForProfile = (char: CharacterProfile, maxChars = 4_000): string => {
+  const monthly = Object.entries(char.refinedMemories || {}).sort().slice(-2)
+    .map(([month, summary]) => `- [${month} 月度] ${summary}`);
+  const daily = [...(char.memories || [])]
+    .sort((a, b) => memorySortKey(a.date).localeCompare(memorySortKey(b.date)))
+    .slice(-15)
+    .map((m) => `- [${m.date}] ${m.summary}`);
+  const lines = [...monthly, ...daily];
+  if (lines.length === 0) return '（还没有任何共同记忆：你们很可能才刚认识不久。）';
+  // 超长时从旧的那头砍，留最近的。
+  let text = lines.join('\n');
+  while (text.length > maxChars && lines.length > 1) { lines.shift(); text = lines.join('\n'); }
+  return text.slice(-maxChars);
+};
+
+/** 画像依据的指纹：记忆、身份、「ta 怎么看你」任何一样变了，画像就该重读。 */
+export const naturalProfileBasisMark = (char: CharacterProfile): string => {
+  const raw = [
+    (char.memories || []).length,
+    (char.memories || []).map((m) => m.date).sort().slice(-1)[0] || '',
+    Object.keys(char.refinedMemories || {}).sort().join(','),
+    char.hostRelation || 'partner',
+    char.hostBond?.toHost || '',
+  ].join('|');
+  let h = 0;
+  for (let i = 0; i < raw.length; i++) h = (h * 31 + raw.charCodeAt(i)) | 0;
+  return `${(char.memories || []).length}:${(h >>> 0).toString(36)}`;
+};
+
+/** 自动重读的最小间隔：有新记忆也最多一天重读一次，免得反复烧模型。 */
+export const NATURAL_PROFILE_AUTO_REFRESH_MS = 24 * 60 * 60 * 1000;
+
+export const shouldAutoRefreshNaturalProfile = (char: CharacterProfile, nowMs = Date.now()): boolean => {
+  const config = char.naturalProactiveConfig;
+  const profile = config?.profile;
+  if (!config?.enabled || !profile) return false;
+  if (nowMs - profile.derivedAt < NATURAL_PROFILE_AUTO_REFRESH_MS) return false;
+  return profile.basisMark !== naturalProfileBasisMark(char);
+};
+
+/**
+ * 「身份归属」里用户亲手选的关系是硬上限。
+ *
+ * 病根（2026-10-04 用户实测）：矢泽妮可选的是「朋友」、两人刚加上联系方式，
+ * 画像却是「恋人牵挂型」——关键词扫的是整张卡，卡里随便出现一次「恋爱」
+ * （比如偶像「禁止恋爱」）就被当成和用户是恋人，身份设置完全没看。
+ */
+const capRelationshipByIdentity = (
+  relationship: NaturalProactiveRelationship,
+  char: CharacterProfile,
+): NaturalProactiveRelationship => {
+  const host = char.hostRelation || 'partner';
+  if (host === 'stranger') return 'neutral';
+  if (host === 'friend' && relationship === 'romantic') return 'neutral';
+  return relationship;
+};
+
 const inferRelationshipHints = (char: CharacterProfile): {
   relationship: NaturalProactiveRelationship;
   longDistance: boolean;
 } => {
   const source = textForProfile(char).toLowerCase();
-  const romantic = /(情侣|恋人|爱人|伴侣|男朋友|女朋友|老公|老婆|未婚夫|未婚妻|恋爱|相爱|暧昧|lover|romantic partner|girlfriend|boyfriend|husband|wife|fiance)/i.test(source);
+  // 只认「关系身份」名词；「恋爱/相爱/暧昧」是话题词，卡里写「禁止恋爱」「不擅长恋爱」也会命中，不再作数。
+  const romanticInCard = /(情侣|恋人|爱人|伴侣|男朋友|女朋友|老公|老婆|未婚夫|未婚妻|lover|romantic partner|girlfriend|boyfriend|husband|wife|fiance)/i.test(source);
+  // 「ta 怎么看你」是专门写给机主的那一栏，这里出现喜欢/爱才是真在说用户。
+  const toHost = (char.hostBond?.toHost || '').toLowerCase();
+  const romanticToHost = /(喜欢|爱|恋|暧昧|心动|crush|love)/i.test(toHost);
   const close = /(亲密|亲近|挚友|知己|家人|最好的朋友|best friend|close friend)/i.test(source);
   const longDistance = /(异地|远距离|远距|两地|跨城|分隔两地|不在身边|只能通过手机|只能靠手机|long[- ]distance|different cities|far apart|apart from)/i.test(source);
+  // 「朋友」但 ta 自己那栏写着偷偷喜欢：不是恋人，但挂念确实更重，算 close。
+  if ((char.hostRelation || 'partner') === 'friend' && romanticToHost) return { relationship: 'close', longDistance };
+  const raw: NaturalProactiveRelationship = romanticInCard || romanticToHost ? 'romantic' : close ? 'close' : 'neutral';
   return {
-    relationship: romantic ? 'romantic' : close ? 'close' : 'neutral',
+    relationship: capRelationshipByIdentity(raw, char),
     longDistance,
   };
 };
 
 /**
- * 给旧画像补上关系信号。关系信息来自角色档案，不需要再调用模型，
- * 因此已经开启自然主动的角色也能在下一次打包状态时获得情侣/异地加权。
+ * 每次打包状态时按当前角色档案校正一遍画像。
+ *
+ * - 画像里已有 relationship（模型判过 / 兜底算过）就以它为准，关键词不再越过模型去改写；
+ *   只有很早的旧画像没有这个字段时才用关键词补。
+ * - 「身份归属」永远是上限：用户后来把角色改成「朋友 / 不认识我」，下一次检查立刻按新身份走，
+ *   不用等「重新理解」。
  */
 export const enrichNaturalProfileForCharacter = (
   profile: NaturalProactiveProfile,
   char: CharacterProfile,
 ): NaturalProactiveProfile => {
   const hints = inferRelationshipHints(char);
-  const romantic = hints.relationship === 'romantic';
-  const longDistanceRomance = romantic && hints.longDistance;
+  const relationship = capRelationshipByIdentity(profile.relationship ?? hints.relationship, char);
+  // 旧的兜底画像是按「恋人」算的数字（门槛、饱和时长都压低了），身份降级后整份按新身份重算。
+  if (profile.source === 'fallback' && profile.relationship === 'romantic' && relationship !== 'romantic') {
+    return { ...buildFallbackNaturalProfile(char), derivedAt: profile.derivedAt };
+  }
+  const romantic = relationship === 'romantic';
+  const longDistance = profile.longDistance === true || hints.longDistance;
+  const longDistanceRomance = romantic && longDistance;
   return {
     ...profile,
-    relationship: hints.relationship !== 'neutral' ? hints.relationship : (profile.relationship ?? 'neutral'),
-    longDistance: profile.longDistance === true || hints.longDistance,
+    relationship,
+    longDistance,
     threshold: romantic ? Math.min(profile.threshold, longDistanceRomance ? 0.48 : 0.54) : profile.threshold,
     silenceSaturationHours: romantic
       ? Math.min(profile.silenceSaturationHours, longDistanceRomance ? 5 : 6)
       : profile.silenceSaturationHours,
   };
+};
+
+/** 给画像模型看的「身份归属」。用户在设置里明说的关系，比从卡面猜的可靠得多。 */
+const identityLinesForProfile = (char: CharacterProfile): string => {
+  const host = char.hostRelation || 'partner';
+  const lines = [
+    host === 'stranger'
+      ? '【身份设定】用户在设置里选了「不认识我」：ta 不认识用户。relationship 只能写 neutral。'
+      : host === 'friend'
+        ? '【身份设定】用户在设置里选了「朋友」：ta 认识用户，但只是朋友，不会发展暧昧。relationship 绝不能写 romantic。'
+        : '【身份设定】ta 是用户的陪伴角色；具体是恋人、朋友还是别的，以档案里对 ta 和用户之间的描写为准。',
+  ];
+  if (char.hostBond?.fromHost?.trim()) lines.push(`【用户怎么看 ta】${char.hostBond.fromHost.trim()}`);
+  if (char.hostBond?.toHost?.trim()) lines.push(`【ta 怎么看用户（ta 自己的内心）】${char.hostBond.toHost.trim()}`);
+  return lines.join('\n');
 };
 
 /** 无 API / 模型格式跑偏时的保守画像；仍会从人设关键词推断亲疏与作息倾向。 */
@@ -291,10 +391,19 @@ export const buildFallbackNaturalProfile = (char: CharacterProfile): NaturalProa
     quietHours: nocturnal ? [4, 10] : [0, 8],
     threshold,
     spontaneousChancePerDay: longDistanceRomance ? 0.9 : romantic ? 0.78 : clingy ? 0.7 : reserved ? 0.18 : 0.4,
+    relationship: relationshipHints.relationship,
+    longDistance: relationshipHints.longDistance,
     derivedAt: Date.now(),
     source: 'fallback',
+    basisMark: naturalProfileBasisMark(char),
   }, char);
 };
+
+/** 兜底画像要在界面上说清楚是粗估的，不然用户只会看到一个莫名其妙的标签。 */
+const markFallback = (profile: NaturalProactiveProfile, why: string): NaturalProactiveProfile => ({
+  ...profile,
+  summary: `${profile.summary}（${why}，这是按人设关键词粗估的，可点「重新理解」再试）`,
+});
 
 const extractJsonObject = (raw: string): Record<string, unknown> | null => {
   const fenced = raw.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
@@ -312,7 +421,7 @@ export const deriveNaturalProfile = async (
   apiConfig: Pick<APIConfig, 'baseUrl' | 'apiKey' | 'model'>,
 ): Promise<NaturalProactiveProfile> => {
   const fallback = buildFallbackNaturalProfile(char);
-  if (!apiConfig.baseUrl?.trim() || !apiConfig.apiKey?.trim() || !apiConfig.model?.trim()) return fallback;
+  if (!apiConfig.baseUrl?.trim() || !apiConfig.apiKey?.trim() || !apiConfig.model?.trim()) return markFallback(fallback, '没有可用的 API 配置');
   try {
     const data = await safeFetchJson(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
       method: 'POST',
@@ -325,22 +434,25 @@ export const deriveNaturalProfile = async (
         messages: [
           {
             role: 'system',
-            content: '你是角色互动产品的行为画像器。只输出 JSON，不写解释。画像描述角色在没有任务指令时，自发联系亲近之人的倾向；请识别角色与用户是否是情侣/恋人/伴侣，以及是否异地或主要只能靠手机联系。情侣和异地应提高挂念与主动联系倾向，但不要把病理化焦虑当成必然骚扰，也不要机械连发。所有小数范围 0..1。',
+            content: '你是角色互动产品的行为画像器。只输出 JSON，不写解释。画像描述角色在没有任务指令时，自发联系亲近之人的倾向；请识别角色与用户是否是情侣/恋人/伴侣（以【身份设定】为准，其次看【最近的共同记忆】——角色档案只是初见时的设定，关系会变，记忆比档案新；档案里写到的恋爱如果说的是 ta 和别人、或是「禁止恋爱」之类的设定，都不算 ta 和用户是恋人），以及是否异地或主要只能靠手机联系。情侣和异地应提高挂念与主动联系倾向，但不要把病理化焦虑当成必然骚扰，也不要机械连发。所有小数范围 0..1。',
           },
           {
             role: 'user',
-            content: `阅读下面角色档案，输出：{"archetype":"短标签","summary":"60字内","relationship":"romantic|close|neutral","longDistance":false,"weights":{"silence":0.34,"timeOfDay":0.12,"emotion":0.14,"pendingTopic":0.26,"spontaneousThought":0.14},"silenceSaturationHours":7,"quietHours":[0,8],"threshold":0.58,"spontaneousChancePerDay":0.4}。relationship 只有在档案有明确依据时才写 romantic（情侣/恋人/伴侣）或 close（亲密关系/挚友），不确定写 neutral；异地、远距离、分隔两地或主要只能靠手机联系时 longDistance=true，否则 false。情侣+异地可以把 threshold 降到 0.35..0.5、silenceSaturationHours 取 2..5，但仍要保留深夜和连续未回复的克制。weights 总和应接近 1；silenceSaturationHours 取 2..24；threshold 取 0.35..0.8；quietHours 是角色通常不打扰对方的本地小时区间。\n\n角色名：${char.name}\n${textForProfile(char)}`,
+            content: `阅读下面角色档案和最近的共同记忆，输出：{"archetype":"短标签","summary":"60字内","relationship":"romantic|close|neutral","longDistance":false,"weights":{"silence":0.34,"timeOfDay":0.12,"emotion":0.14,"pendingTopic":0.26,"spontaneousThought":0.14},"silenceSaturationHours":7,"quietHours":[0,8],"threshold":0.58,"spontaneousChancePerDay":0.4}。relationship 只有在档案有明确依据时才写 romantic（情侣/恋人/伴侣）或 close（亲密关系/挚友），不确定写 neutral；异地、远距离、分隔两地或主要只能靠手机联系时 longDistance=true，否则 false。情侣+异地可以把 threshold 降到 0.35..0.5、silenceSaturationHours 取 2..5，但仍要保留深夜和连续未回复的克制。weights 总和应接近 1；silenceSaturationHours 取 2..24；threshold 取 0.35..0.8；quietHours 是角色通常不打扰对方的本地小时区间。\n\n${identityLinesForProfile(char)}\n\n【最近的共同记忆（旧→新）】\n${recentMemoriesForProfile(char)}\n\n角色名：${char.name}\n${textForProfile(char)}`,
           },
         ],
       }),
     });
     const raw = data?.choices?.[0]?.message?.content;
     const parsed = typeof raw === 'string' ? extractJsonObject(raw) : null;
-    if (!parsed) return fallback;
+    if (!parsed) return markFallback(fallback, '模型这次没按格式回答');
     const weights = (parsed.weights && typeof parsed.weights === 'object' ? parsed.weights : {}) as Record<string, unknown>;
     const quiet = Array.isArray(parsed.quietHours) ? parsed.quietHours : fallback.quietHours;
-    const relationship = parsed.relationship === 'romantic' || parsed.relationship === 'close' || parsed.relationship === 'neutral'
-      ? parsed.relationship : fallback.relationship;
+    const relationship = capRelationshipByIdentity(
+      parsed.relationship === 'romantic' || parsed.relationship === 'close' || parsed.relationship === 'neutral'
+        ? parsed.relationship : (fallback.relationship ?? 'neutral'),
+      char,
+    );
     const longDistance = parsed.longDistance === true || (typeof parsed.longDistance === 'string' && parsed.longDistance.toLowerCase() === 'true');
     return enrichNaturalProfileForCharacter({
       version: 1,
@@ -361,10 +473,12 @@ export const deriveNaturalProfile = async (
       longDistance: longDistance || fallback.longDistance === true,
       derivedAt: Date.now(),
       source: 'llm',
+      basisMark: naturalProfileBasisMark(char),
     }, char);
   } catch (error) {
     console.warn('[NaturalProactive] 人设画像生成失败，使用本地保守画像', error);
-    return fallback;
+    const detail = error instanceof Error ? error.message : String(error);
+    return markFallback(fallback, `调用模型失败：${detail.slice(0, 60)}`);
   }
 };
 

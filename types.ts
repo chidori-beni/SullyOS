@@ -3468,6 +3468,8 @@ export interface NaturalProactiveProfile {
   longDistance?: boolean;
   derivedAt: number;
   source: 'llm' | 'fallback';
+  /** 生成画像时依据的记忆/身份指纹；和当前对不上（且超过一天）就在打开聊天时静默重读。 */
+  basisMark?: string;
 }
 
 export interface NaturalProactiveConfig {

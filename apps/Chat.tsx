@@ -82,7 +82,7 @@ import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } fr
 import { trackEvent, noteMessageSent } from '../utils/analytics';
 import { flushAmsgState, markAmsgStateDirty, markAmsgStateDirtyForAll } from '../utils/amsgStateSync';
 import { ActiveMsgClient } from '../utils/activeMsgClient';
-import { deriveNaturalProfile } from '../utils/naturalProactive';
+import { deriveNaturalProfile, shouldAutoRefreshNaturalProfile } from '../utils/naturalProactive';
 import { AMSG_INSTANT_CHAT_PENDING_EVENT, AMSG_INSTANT_CHAT_PENDING_LS_KEY, getInstantChatPending } from '../utils/amsgInstantChat';
 import { loadChatRecallSubmitHintEnabled, saveChatRecallSubmitHintEnabled } from '../utils/chatRecallSubmitHint';
 import { formatAmsgToolTrace } from '../utils/amsgToolTrace';
@@ -471,6 +471,23 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     useEffect(() => {
         setScheduleTomorrowData(null);
     }, [activeCharacterId, charDateKey]);
+
+    // 自然主动画像跟着关系走：有了新记忆 / 身份改了，且距上次理解满一天，打开聊天时静默重读一次。
+    // 画像随每轮打包上云，存回角色即可，不用重排云端任务。
+    const naturalProfileRefreshingRef = useRef(false);
+    useEffect(() => {
+        if (!char || naturalProfileRefreshingRef.current || !shouldAutoRefreshNaturalProfile(char)) return;
+        naturalProfileRefreshingRef.current = true;
+        const charId = char.id;
+        void deriveNaturalProfile(char, apiConfig)
+            .then((profile) => {
+                const latest = charRef.current;
+                if (!latest || latest.id !== charId || !latest.naturalProactiveConfig?.enabled) return;
+                updateCharacter(charId, { naturalProactiveConfig: { ...latest.naturalProactiveConfig, profile } });
+            })
+            .catch((error) => console.warn('[NaturalProactive] 自动重读画像失败', error))
+            .finally(() => { naturalProfileRefreshingRef.current = false; });
+    }, [char?.id, char?.memories?.length, char?.hostRelation, char?.hostBond?.toHost, char?.naturalProactiveConfig?.profile?.derivedAt]);
     const historyContextRange = useMemo(() => {
         if (!char) return undefined;
         return computeContextRangeSnapshot(
