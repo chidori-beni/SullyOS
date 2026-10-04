@@ -9,7 +9,9 @@ import { workerBundleOptions } from './worker-bundle-options.mjs';
 const resourceFile = (path: string) => /\.(?:html|js|css|json|webmanifest|png|jpe?g|webp|gif|svg|ico|woff2?|ttf|otf|wasm|task|glb|gltf|vrm|moc3|mp3|ogg|wav)$/i.test(path)
   && !/^(?:sw-keep-alive\.js|sullyos-update\.json|amsg-|instant-worker)/.test(path);
 
-export interface Release { buildId: string; appVersion: string }
+// offline: false 时照样从源码打 SW，只是不带清单——SW 不再拦截任何请求（fork 10-04：
+// iPhone 上拦截层让图床图片、网络字体每次都重下，启动慢 30s~1min）。
+export interface Release { buildId: string; appVersion: string; offline?: boolean }
 
 export function makeStaticManifest(release: Release, files: Map<string, Buffer>, extraShell: string[] = []): StaticManifest {
   const entries = [...files].filter(([path]) => resourceFile(path)).sort(([a], [b]) => a.localeCompare(b)).map(([url, bytes]) => ({
@@ -61,6 +63,14 @@ export function staticCachePlugin(release: Release): Plugin {
       // so it keeps the push-only worker copied from public/.
       if (error || config.mode === 'capacitor') return;
       const directory = resolve(config.root, config.build.outDir);
+      if (release.offline === false) {
+        await build({
+          ...workerBundleOptions,
+          entryPoints: [resolve(config.root, 'worker/sw-keep-alive.ts')], outfile: resolve(directory, 'sw-keep-alive.js'),
+        });
+        config.logger.info('Static cache: off (service worker handles push only)');
+        return;
+      }
       const files = new Map<string, Buffer>();
       async function walk(path: string) {
         for (const entry of await readdir(path, { withFileTypes: true })) {

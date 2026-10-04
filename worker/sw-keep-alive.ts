@@ -921,4 +921,8 @@ sw.addEventListener('activate', (event: ExtendableEvent) => {
   // Requests of the page that is about to load are held until this finishes, so it only takes
   // control. Older shells are cleared later, when a started page asks (SULLY_CACHE_TIDY).
   event.waitUntil(sw.clients.claim());
+  // fork：离线缓存关掉的版本顺手删掉之前存下的启动资源/按需资源，不占手机空间。
+  if (!resourceCache) event.waitUntil(sw.caches.keys()
+    .then(names => Promise.all(names.filter(name => name.startsWith('sully-static-')).map(name => sw.caches.delete(name))))
+    .catch(() => {}));
 });

@@ -5,7 +5,8 @@ export default function WebCacheControl() {
   const state = useSyncExternalStore(webUpdateSession.subscribe, webUpdateSession.getSnapshot, webUpdateSession.getSnapshot);
   const [confirmClear, setConfirmClear] = useState(false);
   useEffect(() => { if (state.supported) void webUpdateSession.refreshStats(); }, [state.supported]);
-  if (!state.supported) return null;
+  // 离线缓存关掉的版本（fork）读不到用量，整块不显示。
+  if (!state.supported || !state.stats) return null;
   const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   return (
     <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">

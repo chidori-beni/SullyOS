@@ -84,7 +84,8 @@ export default defineConfig({
   },
   plugins: [
     react(),
-    staticCachePlugin({ buildId: appBuildId, appVersion: APP_VERSION_TAG }),
+    // fork：离线启动缓存关掉（offline: false）。想恢复就删掉这个参数。
+    staticCachePlugin({ buildId: appBuildId, appVersion: APP_VERSION_TAG, offline: false }),
     {
       name: 'bake-voice-middleware',
       configureServer(server) {
