@@ -48,14 +48,14 @@ import SleepCompanionSheet from '../components/call/SleepCompanionSheet';
 import CallApiPresetSheet from '../components/call/CallApiPresetSheet';
 import { configFromPreset, findActivePresetId } from '../utils/apiPresetSwitch';
 import {
-  SLEEP_DREAM_CHECK_INTERVAL_MS,
-  SLEEP_DREAM_MAX_COUNT,
   SLEEP_DREAM_INSTRUCTION,
+  SLEEP_DREAM_LOCAL_LEAD_MS,
+  SLEEP_DREAM_RETRY_MS,
+  SLEEP_DREAM_STALE_MS,
   SLEEP_LULLABY_INSTRUCTION,
   loadSleepAutoHangupMinutes,
+  planSleepDreams,
   saveSleepAutoHangupMinutes,
-  shouldFireSleepDream,
-  shouldScheduleNextSleepDreamCheck,
 } from '../utils/sleepCompanion';
 import CallUpdateAnnouncement from '../components/call/CallUpdateAnnouncement';
 import { deleteAvatarModel, inspectAvatarFile, saveAvatarModel } from '../utils/avatarModelStore';
@@ -152,12 +152,12 @@ import {
   saveSleepCompanionSession,
   summarizeCallKeepsake,
   updateSleepCompanionSession,
+  type SleepDreamPlanEntry,
 } from '../utils/sleepCompanionSession';
 import {
   buildCallBackgroundInput,
   cancelAllPendingCallBackgroundJobs,
   cancelPendingCallBackgroundJob,
-  listPendingCallBackgroundJobs,
   makeCallBackgroundJobId,
   savePendingCallBackgroundJob,
   schedulePendingCallBackgroundJob,
@@ -3425,6 +3425,9 @@ ${sentencePlan}`;
       const detail = (event as CustomEvent).detail || {};
       if (detail.backgroundCall !== true || detail.charId !== selectedCharId) return;
       void loadCallRecords(selectedCharId);
+      if (detail.phase === 'dream' && typeof detail.jobId === 'string') {
+        void showBackgroundDreamLiveRef.current(detail.jobId);
+      }
     };
     window.addEventListener('active-msg-progress', handleBackgroundCallProgress);
     return () => window.removeEventListener('active-msg-progress', handleBackgroundCallProgress);
@@ -3603,7 +3606,11 @@ ${sentencePlan}`;
   const idleNudgeBusyRef = useRef(false);
   // 定时器里只调 ref：通话中途切了 API 预设，等到点时要用的是最新的 apiConfig，不是挂定时器那一刻的。
   const fireIdleNudgeRef = useRef<() => Promise<void>>(async () => {});
-  const fireSleepLineRef = useRef<(phase: 'lullaby' | 'dream') => Promise<boolean>>(async () => false);
+  const fireSleepLineRef = useRef<(
+    phase: 'lullaby' | 'dream',
+    planned?: { jobId: string; dreamIndex: number },
+  ) => Promise<boolean>>(async () => false);
+  const showBackgroundDreamLiveRef = useRef<(jobId: string) => Promise<void>>(async () => {});
   const fireIdleNudge = async () => {
     if (!callPreferences.idleNudgeEnabled || idleNudgeBusyRef.current || !selectedChar?.id) return;
     if (document.visibilityState === 'hidden') return;
@@ -3714,13 +3721,58 @@ ${sentencePlan}`;
     }
   };
   fireIdleNudgeRef.current = fireIdleNudge;
-  const fireSleepLine = async (phase: 'lullaby' | 'dream'): Promise<boolean> => {
+  // 梦话（排期制，2026-10-08）用 jobId 把本地生成和 Worker 那份对上：同一句只落库一次。
+  // 本地已接手/已显示过的 jobId 记在这里，Worker 结果迟到时不再重复上屏。
+  const sleepDreamHandledJobIdsRef = useRef<Set<string>>(new Set());
+  const speakSleepBubble = async (
+    sessionId: string,
+    bubbleId: string,
+    text: string,
+    speechEmotion?: string,
+    performanceCues?: AvatarPerformanceCue[],
+  ): Promise<void> => {
+    let playbackStarted = false;
+    if (callPreferences.voiceAutoPlay && canSpeakVoice()) {
+      try {
+        const { url } = await takeOrSynthesizeCallAudio(text, speechEmotion);
+        if (!isLiveCallSession(sessionId)) return;
+        if (url) {
+          trackBlobUrl(url);
+          setAudioUrl(url);
+          setBubbles(previous => previous.map(bubble => bubble.id === bubbleId ? { ...bubble, audioUrl: url } : bubble));
+          window.setTimeout(() => playAudio(url, performanceCues, estimateSpeechMs(text)), 0);
+          playbackStarted = true;
+        }
+      } catch {
+        // 拿不到语音就留文字，走下面的降级——陪睡时台词往往很长，宁可保留文字也别整段丢掉。
+      }
+    }
+    if (!playbackStarted) {
+      if (callMode === 'video' && callPreferences.voiceAutoPlay) {
+        playSilentAvatarSpeech(text, performanceCues);
+      } else {
+        setCallState('listening');
+      }
+    }
+  };
+  const fireSleepLine = async (
+    phase: 'lullaby' | 'dream',
+    planned?: { jobId: string; dreamIndex: number },
+  ): Promise<boolean> => {
     if (sleepBusyRef.current || !selectedChar?.id) return false;
     if (document.visibilityState === 'hidden') return false; // 后台时先跳过，等下一次检查窗口再试
     const sleepSessionId = currentSessionId;
     if (viewMode !== 'in-call' || !isLiveCallSession(sleepSessionId)) return false;
+    if (planned && sleepDreamHandledJobIdsRef.current.has(planned.jobId)) return true;
     sleepBusyRef.current = true;
     try {
+      if (planned) {
+        // Worker 那份可能已经先到了（页面刚从冻结里醒来）；那就不再花一次 API。
+        const existing = (await DB.getMessagesByCharId(selectedChar.id, true))
+          .find(message => message.metadata?.backgroundJobId === planned.jobId);
+        if (existing) return true;
+        sleepDreamHandledJobIdsRef.current.add(planned.jobId);
+      }
       setCallState('thinking');
       const instruction = phase === 'lullaby' ? SLEEP_LULLABY_INSTRUCTION : SLEEP_DREAM_INSTRUCTION;
       const reply = prepareCallAssistantReply(
@@ -3752,6 +3804,7 @@ ${sentencePlan}`;
           source: 'call',
           callSessionId: sleepSessionId,
           sleepPhase: phase,
+          ...(planned ? { backgroundJobId: planned.jobId, dreamIndex: planned.dreamIndex } : {}),
           ...(reply.thinkingChain ? { thinkingChain: reply.thinkingChain } : {}),
           avatarPerformance: reply.performance,
           avatarPerformanceCues: reply.performanceCues,
@@ -3762,32 +3815,10 @@ ${sentencePlan}`;
       setBubbles(previous => previous.map(bubble => bubble.id === sleepBubble.id ? { ...bubble, dbId } : bubble));
       markCallTurnDirty();
       runCallMemoryPalaceHook(selectedChar);
-
-      let playbackStarted = false;
-      if (callPreferences.voiceAutoPlay && canSpeakVoice()) {
-        try {
-          const { url } = await takeOrSynthesizeCallAudio(reply.text, reply.speechEmotion);
-          if (!isLiveCallSession(sleepSessionId)) return false;
-          if (url) {
-            trackBlobUrl(url);
-            setAudioUrl(url);
-            setBubbles(previous => previous.map(bubble => bubble.id === sleepBubble.id ? { ...bubble, audioUrl: url } : bubble));
-            window.setTimeout(() => playAudio(url, reply.performanceCues, estimateSpeechMs(reply.text)), 0);
-            playbackStarted = true;
-          }
-        } catch {
-          // 拿不到语音就留文字，走下面的降级——陪睡时台词往往很长，宁可保留文字也别整段丢掉。
-        }
-      }
-      if (!playbackStarted) {
-        if (callMode === 'video' && callPreferences.voiceAutoPlay) {
-          playSilentAvatarSpeech(reply.text, reply.performanceCues);
-        } else {
-          setCallState('listening');
-        }
-      }
+      await speakSleepBubble(sleepSessionId, sleepBubble.id, reply.text, reply.speechEmotion, reply.performanceCues);
       return true;
     } catch {
+      if (planned) sleepDreamHandledJobIdsRef.current.delete(planned.jobId);
       if (!isLiveCallSession(sleepSessionId)) return false;
       setCallState(previous => previous === 'thinking' ? 'listening' : previous);
       return false;
@@ -3796,42 +3827,96 @@ ${sentencePlan}`;
     }
   };
   fireSleepLineRef.current = fireSleepLine;
+  // Worker 在前台期间把梦话送回来（本地那次没赶上/失败了）：直接上屏并念出来，
+  // 而不是只悄悄写进通话记录——以前这样等于「生成了也听不到」。
+  const showBackgroundDreamLive = async (jobId: string) => {
+    const sessionId = currentSessionId;
+    if (!selectedChar?.id || !sleepModeRef.current) return;
+    if (viewMode !== 'in-call' || !isLiveCallSession(sessionId)) return;
+    if (sleepDreamHandledJobIdsRef.current.has(jobId)) return;
+    const saved = (await DB.getMessagesByCharId(selectedChar.id, true))
+      .find(message => message.metadata?.backgroundJobId === jobId
+        && String(message.metadata?.callSessionId || '') === sessionId);
+    if (!saved || !isLiveCallSession(sessionId) || sleepDreamHandledJobIdsRef.current.has(jobId)) return;
+    sleepDreamHandledJobIdsRef.current.add(jobId);
+    const persisted = loadSleepCompanionSession();
+    if (persisted?.sessionId === sessionId) sleepDreamCountRef.current = persisted.dreamCount;
+    const text = sanitizeAssistantOutput(String(saved.content || ''));
+    const cues = saved.metadata?.avatarPerformanceCues as AvatarPerformanceCue[] | undefined;
+    const bubbleId = `db-${saved.id}`;
+    setBubbles(previous => previous.some(bubble => bubble.dbId === saved.id) ? previous : [...previous, {
+      id: bubbleId,
+      dbId: saved.id,
+      role: 'assistant',
+      text,
+      time: formatTimeByTs(saved.timestamp),
+      timestamp: saved.timestamp,
+      performance: saved.metadata?.avatarPerformance as AvatarPerformanceDirection | undefined,
+      performanceTimeline: cues,
+      sleepPhase: 'dream',
+    }]);
+    scheduleSleepDreamCheck();
+    if (document.visibilityState === 'hidden') return;
+    await speakSleepBubble(sessionId, bubbleId, text, undefined, cues);
+  };
+  showBackgroundDreamLiveRef.current = showBackgroundDreamLive;
+  const markPlannedDreamDone = (jobId: string) => {
+    const persisted = loadSleepCompanionSession();
+    if (!persisted?.dreamPlan) return;
+    updateSleepCompanionSession({
+      dreamPlan: persisted.dreamPlan.map(entry => entry.jobId === jobId ? { ...entry, done: true } : entry),
+    });
+  };
+  // 到点由前台自己说：页面亮着时（陪睡时用户常把屏幕调暗放着）本地生成能当场念出来；
+  // 比 Worker 的时刻早一点动手，成功后撤掉 Worker 那份。页面在后台就整句交给 Worker。
+  const runPlannedSleepDream = async (jobId: string) => {
+    if (!sleepModeRef.current) return;
+    const persisted = loadSleepCompanionSession();
+    const entry = persisted?.sessionId === currentSessionId
+      ? persisted.dreamPlan?.find(item => item.jobId === jobId && !item.done)
+      : undefined;
+    if (!entry) { scheduleSleepDreamCheck(); return; }
+    if (document.visibilityState === 'hidden') return; // 回前台时 reconcileSleepTimers 会重排
+    if (Date.now() - entry.dueAt > SLEEP_DREAM_STALE_MS) {
+      // 页面被冻过、错过太久：Worker 那份要么已经回来、要么还在补收，本地不追发。
+      markPlannedDreamDone(jobId);
+      scheduleSleepDreamCheck();
+      return;
+    }
+    const created = await fireSleepLineRef.current('dream', { jobId, dreamIndex: entry.dreamIndex });
+    if (!sleepModeRef.current) return;
+    if (created) {
+      markPlannedDreamDone(jobId);
+      void cancelPendingCallBackgroundJob(jobId);
+      const all = selectedChar?.id ? await DB.getMessagesByCharId(selectedChar.id, true) : [];
+      sleepDreamCountRef.current = all.filter(message => message.metadata?.source === 'call'
+        && String(message.metadata?.callSessionId || '') === currentSessionId
+        && message.metadata?.sleepPhase === 'dream').length;
+      updateSleepCompanionSession({ dreamCount: sleepDreamCountRef.current });
+      scheduleSleepDreamCheck();
+      return;
+    }
+    // 正在说话 / 正在生成 / 网络抖了：过两分钟再试；Worker 那份到点也会兜底。
+    clearSleepDreamTimer();
+    sleepDreamTimerRef.current = window.setTimeout(() => {
+      sleepDreamTimerRef.current = null;
+      void runPlannedSleepDream(jobId);
+    }, SLEEP_DREAM_RETRY_MS);
+  };
   const scheduleSleepDreamCheck = () => {
     clearSleepDreamTimer();
-    if (!sleepModeRef.current) return;
-    if (!shouldScheduleNextSleepDreamCheck(sleepDreamCountRef.current, callPreferences.sleepDreamEnabled)) return;
-    // 能力探测可能在首次入睡时失败；页面重新回前台后全局 pending 补交成功时，
-    // 不要再让本地 setTimeout 与已经排在 Worker 的梦话各生成一遍。
-    if (listPendingCallBackgroundJobs().some(job => (
-      job.input.sessionId === currentSessionId
-      && job.input.phase === 'dream'
-      && !!job.taskUuid
-    ))) {
-      sleepBackgroundJobsActiveRef.current = true;
-    }
+    if (!sleepModeRef.current || !callPreferences.sleepDreamEnabled) return;
     const persisted = loadSleepCompanionSession();
-    const dueAt = persisted?.sessionId === currentSessionId && persisted.nextDreamCheckAt
-      ? persisted.nextDreamCheckAt
-      : Date.now() + SLEEP_DREAM_CHECK_INTERVAL_MS;
-    sleepDreamTimerRef.current = window.setTimeout(async () => {
+    if (!persisted || persisted.sessionId !== currentSessionId) return;
+    const next = (persisted.dreamPlan || [])
+      .filter(entry => !entry.done)
+      .sort((a, b) => a.dueAt - b.dueAt)[0];
+    updateSleepCompanionSession({ nextDreamCheckAt: next ? next.dueAt : null });
+    if (!next) return;
+    sleepDreamTimerRef.current = window.setTimeout(() => {
       sleepDreamTimerRef.current = null;
-      if (!sleepModeRef.current) return;
-      if (sleepBackgroundJobsActiveRef.current) {
-        // 未来检查点已经在 Worker；前台不再重复调用模型。结果落库后，结束卡会从
-        // IndexedDB 统计实际梦话数量。
-        updateSleepCompanionSession({ nextDreamCheckAt: Date.now() + SLEEP_DREAM_CHECK_INTERVAL_MS });
-        return;
-      }
-      if (shouldFireSleepDream(sleepDreamCountRef.current, callPreferences.sleepDreamEnabled, Math.random()) && !sleepBusyRef.current) {
-        const created = await fireSleepLineRef.current('dream');
-        if (created) {
-          sleepDreamCountRef.current += 1;
-          updateSleepCompanionSession({ dreamCount: sleepDreamCountRef.current });
-        }
-      }
-      updateSleepCompanionSession({ nextDreamCheckAt: Date.now() + SLEEP_DREAM_CHECK_INTERVAL_MS });
-      scheduleSleepDreamCheck();
-    }, Math.max(1000, dueAt - Date.now()));
+      void runPlannedSleepDream(next.jobId);
+    }, Math.max(1000, next.dueAt - SLEEP_DREAM_LOCAL_LEAD_MS - Date.now()));
   };
   const scheduleSleepAutoHangup = (minutes: number) => {
     clearSleepAutoHangupTimer();
@@ -3841,21 +3926,20 @@ ${sentencePlan}`;
       if (sleepModeRef.current) void finishCall();
     }, minutes * 60 * 1000);
   };
+  // 已经抽好签的那几句交给 Worker 当后备：页面被冻住/被划掉时由它生成，结果回到通话记录。
   const queueSleepDreamJobs = async (session: {
     sessionId: string;
-    startedAt: number;
     autoHangupAt: number | null;
+    plan: SleepDreamPlanEntry[];
   }) => {
-    if (!selectedChar?.id || !callPreferences.sleepDreamEnabled) return;
+    if (!selectedChar?.id || !callPreferences.sleepDreamEnabled || session.plan.length === 0) return;
     const snapshot = await buildBackgroundCallSnapshot(SLEEP_DREAM_INSTRUCTION);
     if (!snapshot) return;
     let scheduledCount = 0;
-    for (let dreamIndex = 0; dreamIndex < SLEEP_DREAM_MAX_COUNT; dreamIndex += 1) {
-      const dueAt = Date.now() + (dreamIndex + 1) * SLEEP_DREAM_CHECK_INTERVAL_MS;
-      if (session.autoHangupAt && dueAt >= session.autoHangupAt) break;
-      const jobId = makeCallBackgroundJobId(session.sessionId, undefined, `dream-${dreamIndex}`);
+    for (const entry of session.plan) {
+      const firstSendTime = new Date(entry.dueAt).toISOString();
       savePendingCallBackgroundJob({
-        jobId,
+        jobId: entry.jobId,
         input: buildCallBackgroundInput({
           charId: selectedChar.id,
           charName: selectedChar.name,
@@ -3865,16 +3949,17 @@ ${sentencePlan}`;
           systemPrompt: snapshot.systemPrompt,
           messages: snapshot.messages,
           autoHangupAt: session.autoHangupAt,
-          dreamIndex,
+          dreamIndex: entry.dreamIndex,
+          dreamChance: 100,
         }),
-        firstSendTime: new Date(dueAt).toISOString(),
+        firstSendTime,
         createdAt: Date.now(),
       });
       const scheduled = await schedulePendingCallBackgroundJob({
-        jobId,
+        jobId: entry.jobId,
         char: selectedChar,
         api: apiConfig,
-        firstSendTime: new Date(dueAt).toISOString(),
+        firstSendTime,
       });
       if (scheduled) scheduledCount += 1;
     }
@@ -3885,8 +3970,16 @@ ${sentencePlan}`;
     setSleepMode(true);
     sleepModeRef.current = true;
     sleepDreamCountRef.current = 0;
+    sleepDreamHandledJobIdsRef.current = new Set();
     setShowSleepPanel(false);
     const now = Date.now();
+    const autoHangupAt = sleepAutoHangupMinutes > 0 ? now + sleepAutoHangupMinutes * 60 * 1000 : null;
+    const dreamPlan: SleepDreamPlanEntry[] = callPreferences.sleepDreamEnabled
+      ? planSleepDreams(now, autoHangupAt).map(slot => ({
+        ...slot,
+        jobId: makeCallBackgroundJobId(currentSessionId, undefined, `dream-${slot.dreamIndex}`),
+      }))
+      : [];
     saveSleepCompanionSession({
       charId: selectedChar?.id || selectedCharId,
       charName: selectedChar?.name || '对方',
@@ -3894,21 +3987,22 @@ ${sentencePlan}`;
       sessionId: currentSessionId,
       startedAt: callStartedAt || now,
       callMode,
-      autoHangupAt: sleepAutoHangupMinutes > 0 ? now + sleepAutoHangupMinutes * 60 * 1000 : null,
+      autoHangupAt,
       dreamEnabled: callPreferences.sleepDreamEnabled,
       dreamCount: 0,
-      nextDreamCheckAt: callPreferences.sleepDreamEnabled ? now + SLEEP_DREAM_CHECK_INTERVAL_MS : null,
+      nextDreamCheckAt: dreamPlan[0]?.dueAt ?? null,
+      dreamPlan,
     });
     scheduleSleepAutoHangup(sleepAutoHangupMinutes);
     trackEvent('开启陪睡模式', { 自动挂断分钟: sleepAutoHangupMinutes || 0 });
     await fireSleepLine('lullaby');
-    // 哄睡正文先落库，再把带有这段现场上下文的未来梦话检查交给 Worker；页面锁屏/被
+    // 哄睡正文先落库，再把带有这段现场上下文的梦话交给 Worker 当后备；页面锁屏/被
     // 系统回收时，Worker 这条路独立继续，结果由 outbox handler 幂等落库。
     if (sleepModeRef.current) {
       void queueSleepDreamJobs({
         sessionId: currentSessionId,
-        startedAt: callStartedAt || now,
-        autoHangupAt: sleepAutoHangupMinutes > 0 ? now + sleepAutoHangupMinutes * 60 * 1000 : null,
+        autoHangupAt,
+        plan: dreamPlan,
       }).catch(error => console.warn('[sleep-companion] background dream queue failed:', error));
     }
     if (sleepModeRef.current) scheduleSleepDreamCheck();

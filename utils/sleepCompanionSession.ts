@@ -15,8 +15,32 @@ export interface PersistedSleepCompanionSession {
   dreamEnabled: boolean;
   dreamCount: number;
   nextDreamCheckAt: number | null;
+  /** 入睡时抽好的整夜梦话时刻（见 planSleepDreams）。done 表示这一句已经说过或已放弃。 */
+  dreamPlan?: SleepDreamPlanEntry[];
   updatedAt: number;
 }
+
+export interface SleepDreamPlanEntry {
+  dreamIndex: number;
+  dueAt: number;
+  jobId: string;
+  done?: boolean;
+}
+
+const parseDreamPlan = (raw: unknown): SleepDreamPlanEntry[] | undefined => {
+  if (!Array.isArray(raw)) return undefined;
+  return raw
+    .filter((item: any) => item
+      && Number.isSafeInteger(item.dreamIndex)
+      && isFiniteTimestamp(item.dueAt)
+      && typeof item.jobId === 'string' && item.jobId)
+    .map((item: any) => ({
+      dreamIndex: item.dreamIndex,
+      dueAt: item.dueAt,
+      jobId: item.jobId,
+      ...(item.done === true ? { done: true } : {}),
+    }));
+};
 
 export interface RecoveredSleepCompanionResult {
   created: boolean;
@@ -66,6 +90,7 @@ export const loadSleepCompanionSession = (): PersistedSleepCompanionSession | nu
       dreamEnabled: parsed.dreamEnabled !== false,
       dreamCount: Math.max(0, Math.floor(Number(parsed.dreamCount) || 0)),
       nextDreamCheckAt: isFiniteTimestamp(parsed.nextDreamCheckAt) ? parsed.nextDreamCheckAt : null,
+      ...(parseDreamPlan(parsed.dreamPlan) ? { dreamPlan: parseDreamPlan(parsed.dreamPlan) } : {}),
       updatedAt: isFiniteTimestamp(parsed.updatedAt) ? parsed.updatedAt : parsed.startedAt,
     };
   } catch {

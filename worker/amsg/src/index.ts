@@ -3673,6 +3673,9 @@ export default {
           // 后台任务基础设施先于通话/陪睡任务上线。单独报这一位，避免只有旧的
           // plate handler 的 Worker 被新前端误认为能接收 call-reply / sleep-dream。
           callBackgroundJobs: true,
+          // 梦话 job 认 dreamChance（前台已抽好签，传 100 就必说）。没有这一位的老 Worker
+          // 仍按 25% 再抽一次，前台据此决定要不要多排几句兜底。
+          sleepDreamPlan: true,
           // 见面普通回复使用独立的 date-reply handler，必须单独回显能力位；旧 Worker
           // 即使已有通话后台，也不能接收见面 prompt 快照。
           dateBackgroundJobs: true,

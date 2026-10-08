@@ -1,9 +1,10 @@
 /**
  * 陪睡 · 哄睡（通话内的睡前模式）。
  *
- * 照搬糯叽机的机制：开启后先让角色说一整段哄睡的话（lullaby），之后每隔一小时
- * 检查一次，25% 概率补一句深夜梦话（dream），最多两次——所以整夜通常只调用
- * 1～3 次 API，不会一直生成。这个文件只放纯逻辑（提示词文案 + 可测的调度判定 +
+ * 开启后先让角色说一整段哄睡的话（lullaby），之后按 planSleepDreams 排好的时刻
+ * 补一到三句深夜梦话（dream）——整夜通常只调用 2～4 次 API，不会一直生成。
+ * （最早照搬糯叽机「每小时 25%」，实际几乎听不到，2026-10-08 改成排期制；
+ * 下面 shouldFireSleepDream 那组旧判定只留给老测试，CallApp 已不用。）这个文件只放纯逻辑（提示词文案 + 可测的调度判定 +
  * 一个持久化的定时挂断分钟数），真正的计时器 / 消息发送留在 CallApp.tsx 里，
  * 因为那边才拿得到 bubbles / requestAssistantReply 这些通话状态。
  */
@@ -52,6 +53,54 @@ export const shouldScheduleNextSleepDreamCheck = (
   dreamCount: number,
   dreamEnabled: boolean,
 ): boolean => dreamEnabled && dreamCount < SLEEP_DREAM_MAX_COUNT;
+
+/**
+ * 2026-10-08 起的梦话排期：一进陪睡就把整夜的梦话时刻抽好。
+ *
+ * 旧做法是「第 1、2 小时各抽一次 25%」，前台和 Worker 还各抽一层，一整夜有一半以上的
+ * 概率一句都没有——用户连续两晚亮着屏幕放了三四个小时都是「今晚没有生成梦话」。
+ * 现在第一句必出，落在入睡后 45～90 分钟；后面两句看运气，落在用户半夜醒来之前。
+ * 设了定时挂断时，挂断前放不下的时段就丢掉；一个都放不下但通话够 20 分钟的，
+ * 就在后半段塞一句，保证「开着陪睡睡过去」总能留下一句梦话。
+ */
+export interface SleepDreamSlot {
+  dreamIndex: number;
+  dueAt: number;
+}
+
+const SLEEP_DREAM_WINDOWS: Array<{ fromMin: number; toMin: number; chance: number }> = [
+  { fromMin: 45, toMin: 90, chance: 1 },
+  { fromMin: 100, toMin: 160, chance: 0.7 },
+  { fromMin: 170, toMin: 230, chance: 0.5 },
+];
+/** 页面亮着时，前台比 Worker 早这么久自己生成，成功后撤掉 Worker 那份。 */
+export const SLEEP_DREAM_LOCAL_LEAD_MS = 90 * 1000;
+/** 前台这次没说成（正在说话/网络抖）时，隔多久再试。 */
+export const SLEEP_DREAM_RETRY_MS = 2 * 60 * 1000;
+/** 页面被冻住、错过梦话时刻超过这么久，前台就不再追发（交给 Worker 那份）。 */
+export const SLEEP_DREAM_STALE_MS = 10 * 60 * 1000;
+/** 距离定时挂断至少留这么久，免得梦话刚生成好电话就挂了。 */
+const SLEEP_DREAM_HANGUP_MARGIN_MS = 3 * 60 * 1000;
+
+export const planSleepDreams = (
+  startAt: number,
+  autoHangupAt: number | null,
+  random: () => number = Math.random,
+): SleepDreamSlot[] => {
+  const minute = 60 * 1000;
+  const latest = autoHangupAt ? autoHangupAt - SLEEP_DREAM_HANGUP_MARGIN_MS : Infinity;
+  const slots: SleepDreamSlot[] = [];
+  SLEEP_DREAM_WINDOWS.forEach((window, index) => {
+    const dueAt = startAt + (window.fromMin + random() * (window.toMin - window.fromMin)) * minute;
+    const hit = random() < window.chance;
+    if (hit && dueAt <= latest) slots.push({ dreamIndex: index, dueAt: Math.round(dueAt) });
+  });
+  if (slots.length === 0 && autoHangupAt && autoHangupAt - startAt >= 20 * minute) {
+    const span = autoHangupAt - startAt;
+    slots.push({ dreamIndex: 0, dueAt: Math.round(startAt + span * (0.5 + random() * 0.3)) });
+  }
+  return slots;
+};
 
 const AUTO_HANGUP_KEY = 'sully-call-sleep-autohangup-v1';
 

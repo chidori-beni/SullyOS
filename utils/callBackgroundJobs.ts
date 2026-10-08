@@ -121,6 +121,7 @@ export const buildCallBackgroundInput = (args: {
   sourceUserMessageId?: number;
   autoHangupAt?: number | null;
   dreamIndex?: number;
+  dreamChance?: number;
 }): CallJobInput => ({
   v: 1,
   charId: args.charId,
@@ -133,6 +134,7 @@ export const buildCallBackgroundInput = (args: {
   ...(args.sourceUserMessageId ? { sourceUserMessageId: args.sourceUserMessageId } : {}),
   ...(args.autoHangupAt !== undefined ? { autoHangupAt: args.autoHangupAt } : {}),
   ...(args.dreamIndex !== undefined ? { dreamIndex: args.dreamIndex } : {}),
+  ...(args.dreamChance !== undefined ? { dreamChance: args.dreamChance } : {}),
   createdAt: Date.now(),
 });
 
@@ -326,7 +328,11 @@ export const applyCallBackgroundResult = async (payload: unknown): Promise<boole
     const dreamCount = all.filter(message => message.metadata?.source === 'call'
       && String(message.metadata?.callSessionId || '') === result.sessionId
       && message.metadata?.sleepPhase === 'dream').length + 1;
-    updateSleepCompanionSession({ dreamCount, nextDreamCheckAt: Date.now() });
+    const plan = loadSleepCompanionSession()?.dreamPlan;
+    updateSleepCompanionSession({
+      dreamCount,
+      ...(plan ? { dreamPlan: plan.map(entry => entry.jobId === result.jobId ? { ...entry, done: true } : entry) } : {}),
+    });
   }
   removePendingCallBackgroundJob(result.jobId);
   if (typeof window !== 'undefined') {
@@ -336,6 +342,7 @@ export const applyCallBackgroundResult = async (payload: unknown): Promise<boole
         callSessionId: result.sessionId,
         backgroundCall: true,
         phase: result.phase,
+        jobId: result.jobId,
       },
     }));
   }

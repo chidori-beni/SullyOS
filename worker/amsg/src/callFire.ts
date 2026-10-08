@@ -101,9 +101,11 @@ const buildHandler = (kind: typeof CALL_BACKGROUND_REPLY_KIND | typeof SLEEP_DRE
       await discardJob(ctx.writeState, jobId);
       return { skip: true, reason: 'sleep-auto-hangup-reached' };
     }
-    // 陪睡梦话沿用前台 25% 的机会，但在 Worker 决定，页面锁屏也不会因为 setTimeout
-    // 停摆而把“是否说梦话”变成永远不触发。jobId 固定，所以重试不会重新抽到另一面。
-    if (job.phase === 'dream' && (hash32(`${jobId}|${job.dreamIndex ?? 0}`) % 100) >= 25) {
+    // 老前端排的梦话 job 没有 dreamChance，沿用 25% 机会、在 Worker 决定；jobId 固定，
+    // 重试不会重新抽到另一面。2026-10-08 起新前端在排期时就抽好签，只把要说的那几句
+    // 交过来并带 dreamChance: 100——以前两层各抽一次 25%，一整夜常常一句都没有。
+    const dreamChance = typeof job.dreamChance === 'number' ? job.dreamChance : 25;
+    if (job.phase === 'dream' && (hash32(`${jobId}|${job.dreamIndex ?? 0}`) % 100) >= dreamChance) {
       await discardJob(ctx.writeState, jobId);
       return { skip: true, reason: 'sleep-dream-chance-missed' };
     }

@@ -36,6 +36,11 @@ export interface CallJobInput {
   autoHangupAt?: number | null;
   /** 只是防止同一个陪睡窗口的梦话任务互相覆盖，不参与业务判断。 */
   dreamIndex?: number;
+  /**
+   * 梦话这一条真正说出口的概率（0～100）。前台排期时已经抽过签、只把要说的那几句交给
+   * Worker，所以新前端一律传 100；老 job 没有这个字段，Worker 沿用旧的 25。
+   */
+  dreamChance?: number;
   createdAt: number;
 }
 
@@ -106,6 +111,9 @@ export const parseCallJobInput = (raw: unknown): CallJobInput | null => {
   const dreamIndex = typeof row.dreamIndex === 'number'
     && Number.isSafeInteger(row.dreamIndex) && row.dreamIndex >= 0
     ? row.dreamIndex : undefined;
+  const dreamChance = typeof row.dreamChance === 'number'
+    && Number.isFinite(row.dreamChance) && row.dreamChance >= 0 && row.dreamChance <= 100
+    ? row.dreamChance : undefined;
 
   return {
     v: 1,
@@ -119,6 +127,7 @@ export const parseCallJobInput = (raw: unknown): CallJobInput | null => {
     ...(sourceUserMessageId ? { sourceUserMessageId } : {}),
     autoHangupAt,
     ...(dreamIndex !== undefined ? { dreamIndex } : {}),
+    ...(dreamChance !== undefined ? { dreamChance } : {}),
     createdAt,
   };
 };

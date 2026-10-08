@@ -5,6 +5,7 @@ import {
   SLEEP_DREAM_INSTRUCTION,
   SLEEP_LULLABY_INSTRUCTION,
   loadSleepAutoHangupMinutes,
+  planSleepDreams,
   saveSleepAutoHangupMinutes,
   shouldFireSleepDream,
   shouldScheduleNextSleepDreamCheck,
@@ -104,5 +105,36 @@ describe('定时挂断分钟数持久化', () => {
     });
     expect(() => saveSleepAutoHangupMinutes(60)).not.toThrow();
     expect(loadSleepAutoHangupMinutes()).toBe(0);
+  });
+});
+
+describe('planSleepDreams（梦话排期）', () => {
+  const MIN = 60 * 1000;
+  const start = 1_000_000_000_000;
+
+  it('不挂断时第一句必出，落在入睡后 45～90 分钟', () => {
+    for (const r of [0, 0.3, 0.999]) {
+      const plan = planSleepDreams(start, null, () => r);
+      expect(plan[0].dreamIndex).toBe(0);
+      expect(plan[0].dueAt).toBeGreaterThanOrEqual(start + 45 * MIN);
+      expect(plan[0].dueAt).toBeLessThanOrEqual(start + 90 * MIN);
+    }
+  });
+
+  it('运气好时一夜三句，都在 4 小时内（用户半夜醒之前）', () => {
+    const plan = planSleepDreams(start, null, () => 0);
+    expect(plan).toHaveLength(3);
+    plan.forEach(slot => expect(slot.dueAt).toBeLessThanOrEqual(start + 240 * MIN));
+  });
+
+  it('定时挂断之后的时段不排；30 分钟挂断也会在后半段塞一句', () => {
+    const plan = planSleepDreams(start, start + 30 * MIN, () => 0.5);
+    expect(plan).toHaveLength(1);
+    expect(plan[0].dueAt).toBeGreaterThan(start + 14 * MIN);
+    expect(plan[0].dueAt).toBeLessThan(start + 27 * MIN);
+  });
+
+  it('挂断太短（不到 20 分钟）就不排梦话', () => {
+    expect(planSleepDreams(start, start + 10 * MIN, () => 0)).toEqual([]);
   });
 });

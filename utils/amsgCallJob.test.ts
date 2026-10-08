@@ -23,6 +23,12 @@ const job: CallJobInput = {
 };
 
 describe('通话后台任务契约', () => {
+  it('梦话 job 带上 dreamChance 能往返，越界值被丢掉', () => {
+    expect(parseCallJobInput({ ...job, dreamChance: 100 })?.dreamChance).toBe(100);
+    expect(parseCallJobInput({ ...job, dreamChance: 150 })?.dreamChance).toBeUndefined();
+    expect(parseCallJobInput(job)?.dreamChance).toBeUndefined();
+  });
+
   it('job/result 可以跨浏览器与 Worker 往返', () => {
     expect(parseCallJobInput(JSON.stringify(job))).toEqual(job);
     const result = buildCallJobResult({ jobId: 'job-1', job, text: '唔……别走。', generatedAt: 2 });

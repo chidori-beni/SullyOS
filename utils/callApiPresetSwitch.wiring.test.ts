@@ -28,7 +28,7 @@ describe('通话中切换 API 预设', () => {
 
   it('定时器里调的是最新一版函数', () => {
     expect(callApp).toContain('void fireIdleNudgeRef.current()');
-    expect(callApp).toContain("await fireSleepLineRef.current('dream')");
+    expect(callApp).toContain("await fireSleepLineRef.current('dream', { jobId, dreamIndex: entry.dreamIndex })");
     expect(callApp).toContain('fireIdleNudgeRef.current = fireIdleNudge;');
     expect(callApp).toContain('fireSleepLineRef.current = fireSleepLine;');
     expect(callApp).not.toMatch(/setTimeout\(\(\) => \{ void fireIdleNudge\(\); \}/);
