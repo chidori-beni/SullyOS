@@ -4,6 +4,7 @@ import { MESSAGE_PREVIEW_EVENT, MessagePreviewDetail } from '../utils/messagePre
 import { useOS } from '../context/OSContext';
 import { sanitizeMessageBannerCss } from '../utils/messageBannerCss';
 import MessageBannerCard, { MESSAGE_BANNER_CARD_GUARD_CSS } from './MessageBannerCard';
+import { getCharChatAvatar } from '../utils/charChatAvatar';
 
 interface VisiblePreview extends Required<Pick<MessagePreviewDetail, 'charName' | 'body'>> {
     charId?: string;
@@ -25,7 +26,7 @@ const formatTime = (timestamp: number) => {
  * 复用同一份标记，改一处两边都同步。
  */
 const MessagePreviewBanner: React.FC = () => {
-    const { theme } = useOS();
+    const { theme, characters } = useOS();
     const [preview, setPreview] = useState<VisiblePreview | null>(null);
     const [shown, setShown] = useState(false);
     const sequenceRef = useRef(0);
@@ -67,6 +68,9 @@ const MessagePreviewBanner: React.FC = () => {
     };
 
     const customCss = theme.messageBannerCustomCss?.trim() || '';
+    // 横幅是「聊天软件」的通知：角色设了聊天头像就用它，后台推送带来的头像快照只作兜底
+    const previewChar = preview.charId ? characters.find(char => char.id === preview.charId) : undefined;
+    const bannerAvatar = (previewChar && getCharChatAvatar(previewChar)) || preview.avatarUrl;
 
     return createPortal((
         <div
@@ -93,7 +97,7 @@ const MessagePreviewBanner: React.FC = () => {
             <MessageBannerCard
                 key={preview.sequence}
                 charName={preview.charName}
-                avatarUrl={preview.avatarUrl}
+                avatarUrl={bannerAvatar}
                 body={preview.body}
                 time={formatTime(preview.timestamp)}
                 onClick={openChat}

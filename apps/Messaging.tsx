@@ -66,6 +66,7 @@ import {
 } from '../utils/momentsInteractions';
 import '../components/messaging/MessagingApp.css';
 import { chatCharacterDisplayName } from '../utils/characterRemark';
+import { getCharChatAvatar } from '../utils/charChatAvatar';
 
 type MessagingTab = 'chat' | 'moments' | 'favorites' | 'profile';
 
@@ -267,6 +268,12 @@ const Messaging: React.FC = () => {
         if (isUser || !charId) return fallback;
         const char = characters.find(item => item.id === charId);
         return char ? chatCharacterDisplayName(char) : fallback;
+    };
+    // 头像同理：朋友圈存的是发帖时的头像快照，角色后来换了聊天头像，旧动态也跟着换
+    const shownAvatar = (charId: string | undefined, fallback: string | undefined, isUser?: boolean) => {
+        if (isUser || !charId) return fallback || '';
+        const char = characters.find(item => item.id === charId);
+        return (char && getCharChatAvatar(char)) || fallback || '';
     };
     const [profileGalleryImages, setProfileGalleryImages] = useState<GalleryImage[]>([]);
     const [profileGalleryUrlOpen, setProfileGalleryUrlOpen] = useState(false);
@@ -927,7 +934,7 @@ const Messaging: React.FC = () => {
         try {
             const userName = profile.name || userProfile.name || '用户';
             const actors: MomentActor[] = eligibleCharacters.map(char => ({
-                id: char.id, charId: char.id, name: char.name, avatar: char.avatar, actorType: 'character',
+                id: char.id, charId: char.id, name: char.name, avatar: getCharChatAvatar(char), actorType: 'character',
             }));
             const blocks = await Promise.all(eligibleCharacters.map(async char => {
                 const recent = await DB.getRecentMessagesByCharId(char.id, 12, true).catch(() => [] as Message[]);
@@ -1029,7 +1036,7 @@ const Messaging: React.FC = () => {
                 nextPosts.push({
                     id: `moment-char-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
                     authorName: char.name,
-                    authorAvatar: char.avatar,
+                    authorAvatar: getCharChatAvatar(char),
                     title: '',
                     content,
                     images,
@@ -1337,7 +1344,7 @@ const Messaging: React.FC = () => {
                                 <div className="nj-chat-tab-note-bubble-tail1" aria-hidden="true" />
                                 <div className="nj-chat-tab-note-bubble-tail2" aria-hidden="true" />
                             </div>
-                            <div className="nj-chat-tab-note-avatar"><div className="nj-chat-tab-note-avatar-img"><img src={char.avatar} alt="" /></div></div>
+                            <div className="nj-chat-tab-note-avatar"><div className="nj-chat-tab-note-avatar-img"><img src={getCharChatAvatar(char)} alt="" /></div></div>
                             <div className="nj-chat-tab-note-name">{chatCharacterDisplayName(char)}</div>
                         </div>
                     ))}
@@ -1373,7 +1380,7 @@ const Messaging: React.FC = () => {
                                 const style = {
                                     '--nj-item-index': String(index),
                                     '--nj-item-unread': String(unread),
-                                    '--nj-item-avatar-url': `url(${JSON.stringify(char.avatar)})`,
+                                    '--nj-item-avatar-url': `url(${JSON.stringify(getCharChatAvatar(char))})`,
                                 } as CSSProperties;
                                 return (
                                     <div
@@ -1404,7 +1411,7 @@ const Messaging: React.FC = () => {
                                         <div className="nj-chat-item-avatar nj-chat-item-avatar-char">
                                             {/* 糯叽机 4.71 把圆角和 overflow 放在这层内包裹上，外层只负责定位与角标。
                                                 主题会对外层写 overflow: visible（置顶缺口），少了这层头像会变成方图。 */}
-                                            <div className="nj-chat-item-avatar-img"><img src={char.avatar} alt="" /></div>
+                                            <div className="nj-chat-item-avatar-img"><img src={getCharChatAvatar(char)} alt="" /></div>
                                             {unread > 0 && <span className="nj-chat-item-unread-badge">{unread > 99 ? '99+' : unread}</span>}
                                         </div>
                                         <div className="nj-chat-item-body">
@@ -1521,7 +1528,7 @@ const Messaging: React.FC = () => {
             <div className="nj-moments-decor-top" aria-hidden="true" />
             <div className="nj-moments-cover-wrap"><div className="nj-moments-cover" style={profile.cover ? { backgroundImage: `url(${JSON.stringify(profile.cover)})` } : undefined}><div className="nj-moments-cover-gradient" /></div><div className="nj-moments-cover-userinfo"><div className="nj-moments-cover-username">{profile.name || '我'}</div><div className="nj-moments-cover-avatar"><img src={profile.avatar || userProfile.avatar} alt="" /></div></div></div>
             {!!unseenMomentNotifications.length && <div className="nj-moments-notif-entry" role="button" tabIndex={0} onClick={openMomentNotifications} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') openMomentNotifications(); }}>
-                <div className="nj-moments-notif-avatar"><img src={unseenMomentNotifications[0].avatar || characters.find(char => char.id === unseenMomentNotifications[0].charId)?.avatar || userProfile.avatar} alt="" /><span>{unseenMomentNotifications.length > 99 ? '99+' : unseenMomentNotifications.length}</span></div>
+                <div className="nj-moments-notif-avatar"><img src={shownAvatar(unseenMomentNotifications[0].charId, unseenMomentNotifications[0].avatar) || userProfile.avatar} alt="" /><span>{unseenMomentNotifications.length > 99 ? '99+' : unseenMomentNotifications.length}</span></div>
                 <div className="nj-moments-notif-summary">{`${unseenMomentNotifications.length} 条新消息`}</div>
                 <CaretLeft className="nj-moments-notif-caret" />
             </div>}
@@ -1532,9 +1539,10 @@ const Messaging: React.FC = () => {
                     const stickers = (post.images || []).filter(value => !isImageSource(value) && !value.startsWith('txt:'));
                     const hour = new Date(post.timestamp).getHours();
                     const userLiked = post.isLiked || (post.likeUsers || []).some(reaction => reaction.actorType === 'user');
-                    const style = { '--nj-item-index': String(index), '--nj-post-img-count': String(images.length), '--nj-post-like-count': String(post.likes || 0), '--nj-post-comment-count': String(post.comments?.length || 0), '--nj-item-avatar-url': `url(${JSON.stringify(post.authorAvatar)})` } as CSSProperties;
+                    const postAvatar = shownAvatar(post.authorCharId, post.authorAvatar, post.authorType !== 'character');
+                    const style = { '--nj-item-index': String(index), '--nj-post-img-count': String(images.length), '--nj-post-like-count': String(post.likes || 0), '--nj-post-comment-count': String(post.comments?.length || 0), '--nj-item-avatar-url': `url(${JSON.stringify(postAvatar)})` } as CSSProperties;
                     return <article className={`nj-moments-post ${post.authorType === 'character' ? 'nj-moments-post-char' : 'nj-moments-post-user'}`} key={post.id} style={style} data-post-kind={post.authorType === 'character' ? 'char' : 'user'} data-index={String(index)} data-img-count={String(images.length)} data-has-img={String(images.length > 0)} data-liked={String(userLiked)} data-like-count={String(post.likes || 0)} data-comment-count={String(post.comments?.length || 0)} data-has-comment={String(!!post.comments?.length)} data-length={messagingLengthBucket(post.content || post.title || '')} data-time-slot={messagingTimeSlot(hour)} data-hour={String(hour)} data-has-location={post.location ? 'true' : undefined}>
-                        <div className="nj-moments-post-avatar"><img src={post.authorAvatar} alt="" /></div>
+                        <div className="nj-moments-post-avatar"><img src={postAvatar} alt="" /></div>
                         <div className="nj-moments-post-body">
                             <div className="nj-moments-post-name">{shownName(post.authorCharId, post.authorName, post.authorType === 'user')}</div>
                             <div className="nj-moments-post-text">{post.content || post.title}</div>
@@ -1591,7 +1599,7 @@ const Messaging: React.FC = () => {
                         onClick={() => openChat(char.id)}
                         onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openChat(char.id); } }}
                     >
-                        <div className="nj-favorites-item-avatar"><img src={char.avatar} alt="" loading="lazy" /></div>
+                        <div className="nj-favorites-item-avatar"><img src={getCharChatAvatar(char)} alt="" loading="lazy" /></div>
                         <div className="nj-favorites-item-author">
                             {chatCharacterDisplayName(char)} · {lastTalked ? formatListTime(lastTalked) : '还没聊过'}
                             <span className="nj-favorites-item-chip">{relation}</span>
@@ -1674,7 +1682,7 @@ const Messaging: React.FC = () => {
                 <div className="sully-msg-modal-title">生成角色动态</div>
                 <label className="sully-msg-field-label">角色选择</label>
                 <div className="sully-msg-segmented"><button className={momentGenerateMode === 'random' ? 'active' : ''} onClick={() => setMomentGenerateMode('random')} disabled={momentGenerating}>随机角色</button><button className={momentGenerateMode === 'select' ? 'active' : ''} onClick={() => setMomentGenerateMode('select')} disabled={momentGenerating}>指定角色</button></div>
-                {momentGenerateMode === 'select' && <div className="sully-msg-character-picker">{characters.map(char => <button key={char.id} className={momentSelectedIds.includes(char.id) ? 'selected' : ''} onClick={() => setMomentSelectedIds(current => current.includes(char.id) ? current.filter(id => id !== char.id) : [...current, char.id])} disabled={momentGenerating}><img src={char.avatar} alt="" /><span>{char.name}</span><i>{momentSelectedIds.includes(char.id) ? '✓' : ''}</i></button>)}</div>}
+                {momentGenerateMode === 'select' && <div className="sully-msg-character-picker">{characters.map(char => <button key={char.id} className={momentSelectedIds.includes(char.id) ? 'selected' : ''} onClick={() => setMomentSelectedIds(current => current.includes(char.id) ? current.filter(id => id !== char.id) : [...current, char.id])} disabled={momentGenerating}><img src={getCharChatAvatar(char)} alt="" /><span>{char.name}</span><i>{momentSelectedIds.includes(char.id) ? '✓' : ''}</i></button>)}</div>}
                 <label className="sully-msg-field-label">生成数量 <b>{momentGenerateCount}</b></label>
                 <input className="sully-msg-range" type="range" min="1" max="6" value={momentGenerateCount} onChange={event => setMomentGenerateCount(Number(event.target.value))} disabled={momentGenerating} />
                 {momentProgress && <div className="sully-msg-progress">{momentProgress}</div>}
@@ -1697,7 +1705,7 @@ const Messaging: React.FC = () => {
                 return <div className="sully-msg-modal-layer" onClick={() => !momentShareBusy && closeMomentShare()}><div className="sully-msg-modal-card" onClick={event => event.stopPropagation()}>
                     <div className="sully-msg-modal-title">分享到聊天</div>
                     <div className="sully-msg-share-preview">
-                        <img src={sharePost.authorAvatar} alt="" />
+                        <img src={shownAvatar(sharePost.authorCharId, sharePost.authorAvatar, sharePost.authorType !== 'character')} alt="" />
                         <div>
                             <b>{sharePost.authorName}</b>
                             <p>{preview || '（这条动态只有配图）'}</p>
@@ -1709,7 +1717,7 @@ const Messaging: React.FC = () => {
                         className={momentShareTargetIds.includes(char.id) ? 'selected' : ''}
                         disabled={momentShareBusy}
                         onClick={() => setMomentShareTargetIds(current => current.includes(char.id) ? current.filter(id => id !== char.id) : [...current, char.id])}
-                    ><img src={char.avatar} alt="" /><span>{char.name}</span><i>{momentShareTargetIds.includes(char.id) ? '✓' : ''}</i></button>)}</div>
+                    ><img src={getCharChatAvatar(char)} alt="" /><span>{char.name}</span><i>{momentShareTargetIds.includes(char.id) ? '✓' : ''}</i></button>)}</div>
                     {!characters.length && <div className="sully-msg-progress">还没有好友，先去神经链接创建角色</div>}
                     <label className="sully-msg-field-label">附言（可选）</label>
                     <textarea className="sully-msg-small-textarea" value={momentShareNote} onChange={event => setMomentShareNote(event.target.value)} placeholder="想跟他说点什么，比如「你看这个」" disabled={momentShareBusy} />
@@ -1757,7 +1765,7 @@ const Messaging: React.FC = () => {
             {momentNotificationsOpen && <div className="sully-msg-moment-notifications" role="dialog" aria-modal="true" aria-label="朋友圈消息">
                 <div className="sully-msg-moment-notifications-head"><button type="button" aria-label="返回朋友圈" onClick={() => setMomentNotificationsOpen(false)}><CaretLeft /></button><div>朋友圈消息</div><i /></div>
                 <div className="sully-msg-moment-notifications-list">{momentNotifications.length > 0 && <div className="sully-msg-moment-notifications-card">{momentNotifications.map(notification => <div className="sully-msg-moment-notification" key={notification.id}>
-                    <div className="sully-msg-moment-notification-avatar"><img src={notification.avatar || characters.find(char => char.id === notification.charId)?.avatar || userProfile.avatar} alt="" /></div>
+                    <div className="sully-msg-moment-notification-avatar"><img src={shownAvatar(notification.charId, notification.avatar) || userProfile.avatar} alt="" /></div>
                     <div className="sully-msg-moment-notification-body"><div className="sully-msg-moment-notification-name">{shownName(notification.charId, notification.name)}</div><div className="sully-msg-moment-notification-content">{notification.type === 'like' ? <><Heart weight="fill" /> 赞了你的动态</> : notification.content || (notification.type === 'reply' ? '回复了你的评论' : '评论了你的动态')}</div><div className="sully-msg-moment-notification-time">{formatMomentNotificationTime(notification.timestamp)}</div></div>
                     <div className="sully-msg-moment-notification-post">{notification.postImage ? <img src={notification.postImage} alt="" /> : <span>{notification.postText.slice(0, 16)}</span>}</div>
                 </div>)}</div>}<div className="sully-msg-moment-notifications-end">以上是全部消息</div></div>

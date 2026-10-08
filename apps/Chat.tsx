@@ -193,6 +193,7 @@ const isVisibleChatMessage = (message: Message, hideSystemLogs = false) => (
 );
 
 import { useChatAutoReply } from '../hooks/useChatAutoReply';
+import { getCharChatAvatar } from '../utils/charChatAvatar';
 /** 即时对话那一轮回复「推送陆续到齐」的宽限时间，也就是自动合成的补扫窗口有多长（见下面的 auto-TTS effect）。 */
 const INSTANT_VOICE_SCAN_WINDOW_MS = 30_000;
 
@@ -5233,7 +5234,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                             isLastInGroup={breaksWithNext}
                             groupXinshengRoundId={groupXinshengRoundId}
                             activeTheme={activeTheme}
-                            charAvatar={char.avatar}
+                            charAvatar={getCharChatAvatar(char)}
                             charName={char.name}
                             userAvatar={userProfile.perCharAvatars?.[char.id] || userProfile.avatar}
                             isLatestMessage={!nextMessage}
@@ -5336,7 +5337,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                                     isFirstInGroup={i === 0}
                                     isLastInGroup={i === streamingBubbles.length - 1}
                                     activeTheme={activeTheme}
-                                    charAvatar={char.avatar}
+                                    charAvatar={getCharChatAvatar(char)}
                                     charName={char.name}
                                     userAvatar={userProfile.perCharAvatars?.[char.id] || userProfile.avatar}
                                     onLongPress={() => {}}
@@ -5359,7 +5360,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 {/* instantChatPending：这一轮在云端跑，本机可以关页面，指示灯靠落盘记录活着。 */}
                 {(isTyping || instantChatPending || visibleRecallSubmitStatus || recallStatus || searchStatus || diaryStatus || isProactiveComposing) && !selectionMode && (
                     <div className="sully-typing-indicator flex items-end gap-3 px-3 mb-6 animate-fade-in">
-                        <img src={char.avatar} className={`sully-typing-avatar ${chatPendingAvatarClass}`} />
+                        <img src={getCharChatAvatar(char)} className={`sully-typing-avatar ${chatPendingAvatarClass}`} />
                         <div className="sully-typing-bubble bg-white px-4 py-3 rounded-2xl shadow-sm">
                             {visibleRecallSubmitStatus ? (
                                 <div
@@ -6024,7 +6025,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                                     onClick={() => handleForwardToCharacter(c.id)}
                                     className="w-full flex items-center gap-3 p-3 rounded-2xl bg-slate-50 hover:bg-slate-100 active:scale-[0.98] transition-all border border-slate-100"
                                 >
-                                    <img src={c.avatar} className="w-10 h-10 rounded-xl object-cover" />
+                                    <img src={getCharChatAvatar(c)} className="w-10 h-10 rounded-xl object-cover" />
                                     <div className="flex-1 text-left">
                                         <div className="font-bold text-sm text-slate-700">{c.name}</div>
                                         <div className="text-[10px] text-slate-400 truncate">{c.description}</div>

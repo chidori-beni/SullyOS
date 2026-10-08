@@ -3485,7 +3485,13 @@ export type ChatTriggerPlacement = 'header' | 'input';
 export interface CharacterProfile {
   id: string;
   name: string;
+  /** 角色本人的照片（神经链接上传）。 */
   avatar: string;
+  /**
+   * 角色在聊天软件里用的头像（私聊/群聊/信息 App/朋友圈）。不设置 = 用 avatar。
+   * 读取一律走 utils/charChatAvatar.ts 的 getCharChatAvatar。
+   */
+  chatAvatar?: string;
   /**
    * 视频通话使用的本地 VRM / Live2D 形象。模型二进制包保存在 IndexedDB
    * blob_assets，角色资料只保存轻量索引，避免把数 MB 的模型塞进

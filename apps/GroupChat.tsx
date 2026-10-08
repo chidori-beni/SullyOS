@@ -1,5 +1,6 @@
 import { loadCharacterContextMessages } from '../utils/chatContextRange';
 import { avatarDecorationImageStyle, isAnniversaryFrame } from '../utils/anniversaryGifts';
+import { getCharChatAvatar } from '../utils/charChatAvatar';
 
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
 import TokenImg from '../components/os/TokenImg';
@@ -166,7 +167,7 @@ const GroupMessageItem = React.memo(({
     messageSpacing?: 'compact' | 'default' | 'spacious',
     showTimestamp?: 'always' | 'hover' | 'never',
 }) => {
-    const avatar = isUser ? userAvatar : char?.avatar;
+    const avatar = isUser ? userAvatar : getCharChatAvatar(char);
     const name = isUser ? '我' : char?.name || '未知成员';
 
     const spacingClass = messageSpacing === 'compact'
@@ -1668,7 +1669,7 @@ ${buildCharBondNote(member, characters.filter(c => activeGroup?.members.includes
                                     <div className="grid grid-cols-2 gap-0.5 p-0.5 w-full h-full bg-slate-200">
                                         {g.members.slice(0, 4).map(mid => {
                                             const c = characters.find(char => char.id === mid);
-                                            return <img key={mid} src={c?.avatar} className="w-full h-full object-cover rounded-sm bg-white" />;
+                                            return <img key={mid} src={getCharChatAvatar(c)} className="w-full h-full object-cover rounded-sm bg-white" />;
                                         })}
                                     </div>
                                 )}
@@ -1701,7 +1702,7 @@ ${buildCharBondNote(member, characters.filter(c => activeGroup?.members.includes
                             <div className="grid grid-cols-4 gap-2 max-h-48 overflow-y-auto pr-1">
                                 {filterCharactersByGroup(characters, characterGroups, memberGroupId).map(c => (
                                     <div key={c.id} onClick={() => toggleMemberSelection(c.id)} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all cursor-pointer ${selectedMembers.has(c.id) ? 'border-violet-500 bg-violet-50 ring-1 ring-violet-500' : 'border-slate-100 bg-white hover:border-slate-300'}`}>
-                                        <img src={c.avatar} className="w-10 h-10 rounded-full object-cover" />
+                                        <img src={getCharChatAvatar(c)} className="w-10 h-10 rounded-full object-cover" />
                                         <span className="text-[9px] text-slate-600 truncate w-full text-center font-medium">{c.name}</span>
                                     </div>
                                 ))}
@@ -1812,7 +1813,7 @@ ${buildCharBondNote(member, characters.filter(c => activeGroup?.members.includes
                 activeCharacter={{
                     id: activeGroup?.id || 'group',
                     name: activeGroup?.name || '群聊',
-                    avatar: activeGroup?.avatar || characters.find(c => c.id === activeGroup?.members[0])?.avatar || '',
+                    avatar: activeGroup?.avatar || getCharChatAvatar(characters.find(c => c.id === activeGroup?.members[0])),
                     activeBuffs: [],
                 }}
                 isTyping={isTyping}
@@ -2308,7 +2309,7 @@ ${buildCharBondNote(member, characters.filter(c => activeGroup?.members.includes
                                     return (
                                         <div key={mid} onClick={() => setNarrationTo(on ? '' : c.name)}
                                             className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all cursor-pointer ${on ? 'border-violet-500 bg-violet-50 ring-1 ring-violet-500' : 'border-slate-100 bg-white'}`}>
-                                            <img src={c.avatar} className="w-9 h-9 rounded-full object-cover" />
+                                            <img src={getCharChatAvatar(c)} className="w-9 h-9 rounded-full object-cover" />
                                             <span className="text-[9px] text-slate-600 truncate w-full text-center font-medium">{c.name}</span>
                                         </div>
                                     );
@@ -2364,7 +2365,7 @@ ${buildCharBondNote(member, characters.filter(c => activeGroup?.members.includes
                                     if (!c) return null;
                                     return (
                                         <div key={mid} onClick={() => setPacketTargetId(mid)} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all cursor-pointer ${packetTargetId === mid ? 'border-orange-500 bg-orange-50 ring-1 ring-orange-500' : 'border-slate-100 bg-white hover:border-slate-300'}`}>
-                                            <img src={c.avatar} className="w-10 h-10 rounded-full object-cover" />
+                                            <img src={getCharChatAvatar(c)} className="w-10 h-10 rounded-full object-cover" />
                                             <span className="text-[9px] text-slate-600 truncate w-full text-center font-medium">{c.name}</span>
                                         </div>
                                     );
@@ -2406,7 +2407,7 @@ ${buildCharBondNote(member, characters.filter(c => activeGroup?.members.includes
                             {meta.claims.length > 0 && (
                                 <div className="space-y-2 max-h-44 overflow-y-auto">
                                     {meta.claims.map((c, i) => {
-                                        const avatar = c.claimantId === 'user' ? userProfile.avatar : characters.find(ch => ch.id === c.claimantId)?.avatar;
+                                        const avatar = c.claimantId === 'user' ? userProfile.avatar : getCharChatAvatar(characters.find(ch => ch.id === c.claimantId));
                                         return (
                                             <div key={i} className="flex items-center gap-3 bg-slate-50 rounded-xl px-3 py-2">
                                                 <img src={avatar} className="w-8 h-8 rounded-full object-cover" />

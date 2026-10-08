@@ -3,9 +3,10 @@ import { createPortal } from 'react-dom';
 import { CaretLeft, Lightning, Stop } from '@phosphor-icons/react';
 import { CharacterBuff, CharacterProfile } from '../../types';
 import { chatCharacterDisplayName } from '../../utils/characterRemark';
+import { getCharChatAvatar } from '../../utils/charChatAvatar';
 
 /** header 实际只用到这些字段——放宽类型让群聊传合成对象（群名/群头像）复用本组件 */
-type HeaderCharacter = Pick<CharacterProfile, 'id' | 'name' | 'avatar'> & { activeBuffs?: CharacterBuff[] };
+type HeaderCharacter = Pick<CharacterProfile, 'id' | 'name' | 'avatar' | 'chatAvatar'> & { activeBuffs?: CharacterBuff[] };
 
 interface TokenBreakdown {
     prompt: number;
@@ -358,7 +359,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
 
     const renderCenteredInfo = () => (
         <div className="flex w-full min-w-0 max-w-full flex-col items-center text-center">
-            <img src={activeCharacter.avatar} className={`sully-chat-avatar w-10 h-10 object-cover shadow-sm ${avatarRadiusClass}`} alt="avatar" />
+            <img src={getCharChatAvatar(activeCharacter)} className={`sully-chat-avatar w-10 h-10 object-cover shadow-sm ${avatarRadiusClass}`} alt="avatar" />
             <div className={`sully-chat-name mt-1 font-bold ${primaryTextClass}`}>{chatCharacterDisplayName(activeCharacter)}</div>
             <div className="sully-chat-status flex items-center justify-center gap-2 flex-wrap">
                 {onlineStatusNode}
@@ -373,7 +374,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
 
     const renderStandardInfo = () => (
         <>
-            <img src={activeCharacter.avatar} className={`sully-chat-avatar w-10 h-10 object-cover shadow-sm ${avatarRadiusClass}`} alt="avatar" />
+            <img src={getCharChatAvatar(activeCharacter)} className={`sully-chat-avatar w-10 h-10 object-cover shadow-sm ${avatarRadiusClass}`} alt="avatar" />
             <div className="sully-chat-info flex-1 min-w-0 flex flex-col items-start text-left">
                 <div className={`sully-chat-name font-bold ${primaryTextClass}`}>{chatCharacterDisplayName(activeCharacter)}</div>
                 <div className="sully-chat-status flex items-center gap-2 flex-wrap">

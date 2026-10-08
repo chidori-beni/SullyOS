@@ -5,6 +5,7 @@ import { CharacterProfile, Message, Emoji, EmojiCategory, DailySchedule, Schedul
 import ChatInputSettings from './ChatInputSettings';
 import ChatActionOrderSettings from './ChatActionOrderSettings';
 import ChatSettingsSection from './ChatSettingsSection';
+import CharChatAvatarSetting from './CharChatAvatarSetting';
 import type { ChatInputPreferences } from '../../utils/chatInputPreferences';
 import type { ChatActionOrder } from '../../utils/chatActionOrder';
 import ScheduleCard from '../schedule/ScheduleCard';
@@ -511,6 +512,10 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                              </div>
                          </ChatSettingsSection>
                      )}
+
+                     <ChatSettingsSection title="ta 的聊天头像" summary={activeCharacter.chatAvatar ? '已单独设置，和本人照片分开' : '未设置 · 聊天里沿用神经链接的本人照片'}>
+                         <CharChatAvatarSetting character={activeCharacter} />
+                     </ChatSettingsSection>
 
                      {/* 合上游新增：输入与发送。 */}
                      <ChatSettingsSection title="输入与发送" summary="发送键行为、回车、自动回复">

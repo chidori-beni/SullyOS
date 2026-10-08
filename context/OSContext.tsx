@@ -80,6 +80,7 @@ import { markAmsgStateDirty, markAmsgStateDirtyForAll, resumePendingAmsgStateSyn
 import { loadMusicPlaybackSnapshot } from './MusicContext';
 import { setCharNameRegistry } from '../utils/charNameRegistry';
 import { chatCharacterDisplayName, chatDisplayNameById, setChatDisplayNames } from '../utils/characterRemark';
+import { getCharChatAvatar } from '../utils/charChatAvatar';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
 import { setElevenLabsModel, setTtsProvider, setVoicePromptOverrides } from '../utils/ttsProvider';
 import { LocalNotifications } from '@capacitor/local-notifications';
@@ -1956,7 +1957,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                               try {
                                   const notif = new Notification(chatCharacterDisplayName(char), {
                                       body: dueMessages[0].content,
-                                      icon: char.avatar,
+                                      icon: getCharChatAvatar(char),
                                       silent: false
                                   });
                                   notif.onclick = () => {
