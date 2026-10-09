@@ -297,9 +297,12 @@ describe('CallApp runtime references', () => {
     expect(source).toContain('const audioOutputRouteRef = useRef<SiliconFlowAudioRoute>(audioOutputRoute)');
     expect(source).toContain('setSiliconFlowAudioRoute(audioOutputRouteRef.current)');
     expect(source).toContain('audio.muted = false;');
-    expect(source).toContain("const nextRoute: SiliconFlowAudioRoute = isSpeakerOn ? 'receiver' : 'speaker'");
-    expect(source).toContain('当前为外放，点击切换到听筒');
-    expect(source).toContain('当前为听筒，点击切换到外放');
+    expect(source).toContain('const nextRoute: SiliconFlowAudioRoute = nextCallAudioRoute(audioOutputRoute)');
+    expect(source).toContain("const CALL_AUDIO_ROUTE_ORDER: SiliconFlowAudioRoute[] = ['speaker', 'receiver', 'headphones']");
+    expect(source).toContain('当前为${audioRouteLabel.zh}，点击切换到${nextAudioRouteLabel.zh}');
+    // 检测到耳机自动切到耳机路线；用户手动改过就别再抢。
+    expect(source).toContain("mediaDevices?.addEventListener?.('devicechange', onDeviceChange)");
+    expect(source).toContain('manualRouteSinceDeviceChangeRef.current = true;');
     expect(source).toContain("document.addEventListener('visibilitychange', reassertVisibleCallRoute)");
     expect(source).toContain("audioSession?.addEventListener?.('statechange', reassertVisibleCallRoute)");
     expect(source).not.toContain('if (!next && isAudioPlaying) pauseAudio();');

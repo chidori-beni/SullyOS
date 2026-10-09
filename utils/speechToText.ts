@@ -184,11 +184,38 @@ let siliconFlowMicrophoneGeneration = 0;
  * phone-call/receiver attempt.  Keep this preference in one module so the
  * microphone boundary and every later TTS turn use the same choice.
  */
-export type SiliconFlowAudioRoute = 'speaker' | 'receiver';
+export type SiliconFlowAudioRoute = 'speaker' | 'receiver' | 'headphones';
 let siliconFlowAudioRoute: SiliconFlowAudioRoute = 'speaker';
 
+/**
+ * 「耳机」路线（2026-10-08）：
+ *
+ * WebKit 只要还握着一条活的麦克风流，AVAudioSession 就停在 play-and-record
+ * （VideoChat 模式、AllowBluetooth=HFP、DefaultToSpeaker，并把 getUserMedia
+ * 选中的那支麦设成 preferredInput）。戴蓝牙耳机时这就是两种坏结果：
+ *   - 首选输入是机身麦 → HFP 链路断开 → 声音按 DefaultToSpeaker 走公放；
+ *   - 偶尔系统挑了 HFP → 耳机里有声，但那是「打电话」的窄带音质。
+ * 网页层没有 overrideOutputAudioPort，唯一能让耳机拿到 A2DP 高音质的办法是：
+ * 角色说话时**根本没有采集**，会话回到 playback，交给 iOS 按系统规则选路
+ * （连着耳机就走耳机，没连就走扬声器）。
+ *
+ * 所以耳机路线每轮录完就把麦克风流彻底 stop()，下次点麦克风再重新申请。
+ * 代价：iOS 的 WebKit 在采集停止约 1 分钟后会清掉授权缓存，两次开口隔得久
+ * 可能会再弹一次麦克风权限。外放 / 听筒路线仍沿用「整通电话复用一条流」。
+ */
+const isMediaRoute = (route: SiliconFlowAudioRoute): boolean => route !== 'receiver';
+
 const audioSessionTypeForRoute = (route: SiliconFlowAudioRoute): WebAudioSessionType =>
-  route === 'speaker' ? 'playback' : 'play-and-record';
+  isMediaRoute(route) ? 'playback' : 'play-and-record';
+
+/** 停掉缓存的麦克风流，但不作废进行中的申请（那是 releaseSiliconFlowMicrophone 的事）。 */
+const dropHeldMicrophone = (stream: MediaStream | null = siliconFlowMicrophone): void => {
+  if (!stream) return;
+  if (siliconFlowMicrophone === stream) siliconFlowMicrophone = null;
+  stream.getTracks().forEach(track => {
+    try { track.stop(); } catch { /* already stopped */ }
+  });
+};
 
 const getWebAudioSessionType = getAudioSessionType;
 
@@ -209,11 +236,21 @@ const setWebAudioSessionType = setAudioSessionType;
  */
 export const setSiliconFlowAudioRoute = (route: SiliconFlowAudioRoute): void => {
   siliconFlowAudioRoute = route;
+  // 切到耳机时手里还攥着上一轮留下的（已禁用的）麦克风流：立刻放掉，
+  // 否则这条流会把会话钉在 play-and-record，耳机照样拿不到声音。
+  // 正在录音时不动，等这一轮录完由 pauseSiliconFlowMicrophone 处理。
+  if (route === 'headphones'
+    && hasLiveMicrophoneTrack(siliconFlowMicrophone)
+    && !hasCapturingMicrophoneTrack(siliconFlowMicrophone)) {
+    dropHeldMicrophone();
+    restoreSpeakerAudioOutput();
+    return;
+  }
   // While the recorder is actually capturing, stay in `auto` so a route click
   // cannot kill the live input. Once the track is disabled between turns,
   // `playback` is the strongest web-level request for the selected speaker.
   setWebAudioSessionType(
-    route === 'speaker' && hasCapturingMicrophoneTrack(siliconFlowMicrophone)
+    isMediaRoute(route) && hasCapturingMicrophoneTrack(siliconFlowMicrophone)
       ? 'auto'
       : audioSessionTypeForRoute(route),
   );
@@ -224,7 +261,7 @@ export const getSiliconFlowAudioRoute = (): SiliconFlowAudioRoute => siliconFlow
 /** Reassert the selected media route immediately before call TTS playback. */
 export const prepareSiliconFlowAudioPlayback = (): void => {
   setWebAudioSessionType(
-    siliconFlowAudioRoute === 'speaker' && hasCapturingMicrophoneTrack(siliconFlowMicrophone)
+    isMediaRoute(siliconFlowAudioRoute) && hasCapturingMicrophoneTrack(siliconFlowMicrophone)
       ? 'auto'
       : audioSessionTypeForRoute(siliconFlowAudioRoute),
   );
@@ -246,7 +283,7 @@ export const prepareSiliconFlowAudioCapture = (): void => {
     // `play-and-record` in prepareSiliconFlowMicrophone(). Starting directly
     // in play-and-record is what makes the next playback inherit the handset
     // receiver route on affected iOS versions.
-    siliconFlowAudioRoute === 'speaker' ? 'auto' : 'play-and-record',
+    isMediaRoute(siliconFlowAudioRoute) ? 'auto' : 'play-and-record',
   );
 };
 
@@ -262,7 +299,7 @@ const hasCapturingMicrophoneTrack = (stream: MediaStream | null): stream is Medi
 
 const prepareSiliconFlowMicrophone = (stream: MediaStream, preserveOutputRoute = false) => {
   const keepCaptureCompatibleAuto = preserveOutputRoute
-    && siliconFlowAudioRoute === 'speaker'
+    && isMediaRoute(siliconFlowAudioRoute)
     && hasLiveMicrophoneTrack(stream)
     && getWebAudioSessionType() === 'auto';
   if (!keepCaptureCompatibleAuto) setWebAudioSessionType('play-and-record');
@@ -287,7 +324,12 @@ const pauseSiliconFlowMicrophone = (stream: MediaStream) => {
   // then actually re-activates the session with a fresh silent output-only
   // element, which is the code equivalent of the manual 「上滑再滑回来」.
   // The user's speaker/receiver choice stays in siliconFlowAudioRoute.
-  if (siliconFlowAudioRoute === 'speaker') {
+  if (siliconFlowAudioRoute === 'headphones') {
+    // 耳机：这一轮录完就整条放掉，角色说话时没有采集，会话才能落回 playback
+    // 走 A2DP（见 isMediaRoute 上方的说明）。
+    dropHeldMicrophone(stream);
+    restoreSpeakerAudioOutput();
+  } else if (siliconFlowAudioRoute === 'speaker') {
     restoreSpeakerAudioOutput();
   } else {
     // Receiver is the native default for play-and-record. Do not run the
@@ -315,7 +357,7 @@ const getSiliconFlowMicrophone = async (): Promise<MediaStream> => {
   // is `auto`, matching WebKit bug 282939's workaround; the resolved stream
   // then enters `play-and-record` in prepareSiliconFlowMicrophone().
   noteAudioCaptureStarting();
-  setWebAudioSessionType(siliconFlowAudioRoute === 'speaker' ? 'auto' : 'play-and-record');
+  setWebAudioSessionType(isMediaRoute(siliconFlowAudioRoute) ? 'auto' : 'play-and-record');
   request = navigator.mediaDevices.getUserMedia({
     audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
   }).then(stream => {
@@ -354,7 +396,7 @@ export const releaseSiliconFlowMicrophone = (restoreAudioSession = true) => {
   // A suspended call is different: its shared player may still be speaking,
   // so preserve the selected output route while releasing only the input.
   if (!restoreAudioSession) prepareSiliconFlowAudioPlayback();
-  else if (siliconFlowAudioRoute === 'speaker') restoreSpeakerAudioOutput();
+  else if (isMediaRoute(siliconFlowAudioRoute)) restoreSpeakerAudioOutput();
   else setWebAudioSessionType('auto');
 };
 
@@ -435,7 +477,7 @@ const startWeb = (lang: string, cb: SttCallbacks): SttSession => {
   // 系统 SpeechRecognition 同样会让 iOS 进入 play-and-record，识别完必须和
   // SiliconFlow 那条路一样把输出路由踢回扬声器，否则角色语音照样走听筒。
   const restoreOutputRoute = () => {
-    if (getSiliconFlowAudioRoute() === 'speaker') restoreSpeakerAudioOutput();
+    if (isMediaRoute(getSiliconFlowAudioRoute())) restoreSpeakerAudioOutput();
   };
   noteAudioCaptureStarting();
 

@@ -168,4 +168,68 @@ describe('SiliconFlow transcription request', () => {
     // `auto` — `auto` after a capture is exactly the receiver regression.
     expect(audioSessionTypes.at(-1)).toBe('playback');
   });
+  it('headphones route releases the microphone after every recording so playback can use A2DP', async () => {
+    const tracks: Array<{ enabled: boolean; readyState: MediaStreamTrackState; stop: ReturnType<typeof vi.fn>; addEventListener: ReturnType<typeof vi.fn> }> = [];
+    const getUserMedia = vi.fn(async () => {
+      const track = {
+        enabled: true,
+        readyState: 'live' as MediaStreamTrackState,
+        stop: vi.fn(() => { track.readyState = 'ended'; }),
+        addEventListener: vi.fn(),
+      };
+      tracks.push(track);
+      return { getAudioTracks: () => [track], getTracks: () => [track] } as unknown as MediaStream;
+    });
+    let audioSessionType = 'playback';
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia },
+      audioSession: {
+        get type() { return audioSessionType; },
+        set type(value: string) { audioSessionType = value; },
+      },
+    });
+    class FakeMediaRecorder {
+      static isTypeSupported = () => false;
+      state: RecordingState = 'inactive';
+      mimeType = 'audio/webm';
+      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor(_stream: MediaStream) {}
+      start() { this.state = 'recording'; }
+      stop() {
+        if (this.state === 'inactive') return;
+        this.state = 'inactive';
+        this.ondataavailable?.({ data: new Blob(['audio'], { type: 'audio/webm' }) });
+        this.onstop?.();
+      }
+    }
+    vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ text: '识别成功' }), { status: 200 })));
+
+    const runRecording = async () => {
+      let finish!: () => void;
+      const ended = new Promise<void>(resolve => { finish = resolve; });
+      prepareSiliconFlowAudioCapture();
+      const session = await startStt('zh-CN', { onEnd: finish }, { provider: 'siliconflow-sensevoice', apiKey: 'sf-test-key' });
+      session.stop();
+      await ended;
+    };
+
+    // 先在外放路线录一轮：流被缓存（只禁用），然后切到耳机要立刻放掉。
+    setSiliconFlowAudioRoute('speaker');
+    await runRecording();
+    expect(tracks[0].stop).not.toHaveBeenCalled();
+    setSiliconFlowAudioRoute('headphones');
+    expect(tracks[0].stop).toHaveBeenCalledOnce();
+    expect(audioSessionType).toBe('playback');
+
+    // 耳机路线：每轮录完都整条放掉，下一轮重新申请。
+    await runRecording();
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
+    expect(tracks[1].stop).toHaveBeenCalledOnce();
+    expect(audioSessionType).toBe('playback');
+    setSiliconFlowAudioRoute('speaker');
+  });
+
 });

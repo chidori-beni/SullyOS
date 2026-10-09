@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   __resetAudioOutputRouteForTests,
   acquirePlaybackAudio,
+  classifyExternalAudioDevices,
   getAudioSessionType,
   noteAudioCaptureStarting,
   notePlaybackStarted,
@@ -137,5 +138,26 @@ describe('prepareSpeakerPlayback', () => {
     vi.stubGlobal('navigator', {});
     expect(() => prepareSpeakerPlayback()).not.toThrow();
     expect(setAudioSessionType('playback')).toBe(false);
+  });
+});
+
+describe('headphone detection', () => {
+  it('needs device labels before it can tell', () => {
+    expect(classifyExternalAudioDevices([{ kind: 'audioinput', label: '' }])).toBeNull();
+    expect(classifyExternalAudioDevices([])).toBeNull();
+  });
+
+  it('treats the iPhone built-in microphone as no headphones', () => {
+    expect(classifyExternalAudioDevices([{ kind: 'audioinput', label: 'iPhone 麦克风' }])).toBe(false);
+    expect(classifyExternalAudioDevices([{ kind: 'audioinput', label: 'iPhone Microphone' }])).toBe(false);
+  });
+
+  it('spots Bluetooth and wired headsets', () => {
+    expect(classifyExternalAudioDevices([
+      { kind: 'audioinput', label: 'iPhone 麦克风' },
+      { kind: 'audioinput', label: '颜千夜的AirPods Pro' },
+    ])).toBe(true);
+    expect(classifyExternalAudioDevices([{ kind: 'audioinput', label: '耳机麦克风' }])).toBe(true);
+    expect(classifyExternalAudioDevices([{ kind: 'videoinput', label: 'Front Camera' }])).toBeNull();
   });
 });

@@ -224,6 +224,37 @@ export const notePlaybackStarted = (): void => {
   stopSilentPlaybackPrimer();
 };
 
+// ── 耳机检测 ──────────────────────────────────────────────────────────────
+
+/** iPhone 机身自带的麦克风 / 扬声器名字。其余有名字的音频设备都当成外接耳机。 */
+const BUILT_IN_AUDIO_LABEL = /iphone|ipad|built-?in|内建|内置/i;
+
+/**
+ * 根据 enumerateDevices() 的结果判断是否连着耳机（蓝牙 / 有线）。
+ *
+ * iOS 会把带麦克风的耳机（AirPods 等走 HFP 的、有线耳机的线控麦）列成
+ * audioinput。但设备名只有拿到过麦克风授权后才给；全是空名字时返回 null
+ * 表示「看不出来」，调用方不要据此改路由。不带麦的纯听歌蓝牙耳机看不到，
+ * 这种情况只能用户手动点到「耳机」。
+ */
+export const classifyExternalAudioDevices = (
+  devices: ReadonlyArray<Pick<MediaDeviceInfo, 'kind' | 'label'>>,
+): boolean | null => {
+  const labelled = devices.filter(device =>
+    (device.kind === 'audioinput' || device.kind === 'audiooutput') && device.label.trim());
+  if (!labelled.length) return null;
+  return labelled.some(device => !BUILT_IN_AUDIO_LABEL.test(device.label));
+};
+
+export const detectExternalAudioDevice = async (): Promise<boolean | null> => {
+  try {
+    const devices = await navigator.mediaDevices?.enumerateDevices?.();
+    return devices ? classifyExternalAudioDevices(devices) : null;
+  } catch {
+    return null;
+  }
+};
+
 /** 仅供测试：把模块状态复位。 */
 export const __resetAudioOutputRouteForTests = (): void => {
   stopSilentPlaybackPrimer();

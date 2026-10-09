@@ -1,6 +1,6 @@
 import { loadCharacterContextMessages } from '../utils/chatContextRange';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Microphone, SpeakerHigh, PhoneDisconnect, Translate, Gear, Clock, CaretLeft, CaretRight, Phone, VideoCamera, VideoCameraSlash, Cube, FolderOpen, FileZip, Moon, Sun, Check, Plugs, ArrowsClockwise } from '@phosphor-icons/react';
+import { Microphone, SpeakerHigh, Headphones, PhoneDisconnect, Translate, Gear, Clock, CaretLeft, CaretRight, Phone, VideoCamera, VideoCameraSlash, Cube, FolderOpen, FileZip, Moon, Sun, Check, Plugs, ArrowsClockwise } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { extractContent, safeFetchJson } from '../utils/safeApi';
 import { minimaxFetch } from '../utils/minimaxEndpoint';
@@ -17,7 +17,7 @@ import { getElevenLabsVoiceActingGuide, stripElevenLabsMarkupForDisplay } from '
 import { canSynthesizeSpeech, synthesizeSpeechDetailed as synthesizeSpeechRoutedDetailed } from '../utils/ttsRouter';
 import { chatDetailLaunch } from '../utils/chatDetailLaunch';
 import { VOICE_LANGUAGE_OPTIONS } from '../utils/voiceLanguage';
-import { notePlaybackStarted } from '../utils/audioOutputRoute';
+import { detectExternalAudioDevice, notePlaybackStarted } from '../utils/audioOutputRoute';
 import { startStt, isSttSupported, prepareSiliconFlowAudioCapture, prepareSiliconFlowAudioPlayback, setSiliconFlowAudioRoute, releaseSiliconFlowMicrophone, type SiliconFlowAudioRoute, type SttSession } from '../utils/speechToText';
 import { ContextBuilder } from '../utils/context';
 import { resolveCharTimeZone } from '../utils/timezone';
@@ -246,11 +246,20 @@ const loadUserCameraPreviewSize = (): UserCameraPreviewSize => {
 const loadCallAudioRoute = (): SiliconFlowAudioRoute => {
   try {
     const saved = localStorage.getItem(CALL_AUDIO_ROUTE_KEY);
-    return saved === 'receiver' ? 'receiver' : 'speaker';
+    return saved === 'receiver' || saved === 'headphones' ? saved : 'speaker';
   } catch {
     return 'speaker';
   }
 };
+// 右下角按钮依次切换：外放 → 听筒 → 耳机 → 外放。耳机排最后，从耳机点一下就回外放。
+const CALL_AUDIO_ROUTE_ORDER: SiliconFlowAudioRoute[] = ['speaker', 'receiver', 'headphones'];
+const CALL_AUDIO_ROUTE_LABELS: Record<SiliconFlowAudioRoute, { zh: string; en: string }> = {
+  speaker: { zh: '外放', en: 'SPEAKER' },
+  receiver: { zh: '听筒', en: 'RECEIVER' },
+  headphones: { zh: '耳机', en: 'HEADPHONES' },
+};
+const nextCallAudioRoute = (route: SiliconFlowAudioRoute): SiliconFlowAudioRoute =>
+  CALL_AUDIO_ROUTE_ORDER[(CALL_AUDIO_ROUTE_ORDER.indexOf(route) + 1) % CALL_AUDIO_ROUTE_ORDER.length];
 const buildMiniMaxErrorMessage = (rawMessage: string, traceId?: string): string => {
   const msg = (rawMessage || '').trim();
   if (/insufficient\s*balance/i.test(msg)) return 'MiniMax 余额不足，请到 MiniMax 控制台充值后重试。';
@@ -713,7 +722,10 @@ const CallApp: React.FC = () => {
   // TTS response cannot silently turn a speaker call into a receiver call.
   const [audioOutputRoute, setAudioOutputRoute] = useState<SiliconFlowAudioRoute>(loadCallAudioRoute);
   const audioOutputRouteRef = useRef<SiliconFlowAudioRoute>(audioOutputRoute);
-  const isSpeakerOn = audioOutputRoute === 'speaker';
+  const audioRouteLabel = CALL_AUDIO_ROUTE_LABELS[audioOutputRoute];
+  const nextAudioRouteLabel = CALL_AUDIO_ROUTE_LABELS[nextCallAudioRoute(audioOutputRoute)];
+  // 用户连着耳机时手动选了别的路线，就别再自动切回耳机，直到下一次插拔耳机。
+  const manualRouteSinceDeviceChangeRef = useRef(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [callStartedAt, setCallStartedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -781,6 +793,26 @@ const CallApp: React.FC = () => {
     // call enters the in-call view and again at every playback boundary.
     if (viewMode === 'in-call') setSiliconFlowAudioRoute(audioOutputRoute);
   }, [audioOutputRoute, viewMode]);
+  // iPhone 上检测到外接耳机就自动切到「耳机」路线。只切进不切出：耳机路线没连耳机时
+  // 本来就从扬声器出声，拔耳机时不去猜（播放类别下 iOS 不一定列出蓝牙麦，容易误判成
+  // 「拔了」再把麦克风钉回来）。设备名要拿到过麦克风授权才有，所以每轮录完也查一次。
+  const syncHeadphoneRoute = async (deviceChanged: boolean) => {
+    if (!nativeCallAudioOnly) return;
+    if (deviceChanged) manualRouteSinceDeviceChangeRef.current = false;
+    const external = await detectExternalAudioDevice();
+    if (!external || manualRouteSinceDeviceChangeRef.current) return;
+    if (audioOutputRouteRef.current === 'headphones') return;
+    applyAudioOutputRoute('headphones');
+    addToast('检测到耳机，声音改走耳机', 'info');
+  };
+  useEffect(() => {
+    if (viewMode !== 'in-call' || !nativeCallAudioOnly) return;
+    const mediaDevices = navigator.mediaDevices;
+    const onDeviceChange = () => { void syncHeadphoneRoute(true); };
+    void syncHeadphoneRoute(false);
+    mediaDevices?.addEventListener?.('devicechange', onDeviceChange);
+    return () => mediaDevices?.removeEventListener?.('devicechange', onDeviceChange);
+  }, [viewMode]);
   useEffect(() => {
     if (viewMode !== 'in-call') return;
     const reassertVisibleCallRoute = () => {
@@ -1741,6 +1773,7 @@ const CallApp: React.FC = () => {
           if (sttStartTokenRef.current !== startToken) return;
           setIsListening(false);
           setIsSttProcessing(speechProvider !== 'system');
+          void syncHeadphoneRoute(false);
         },
         onProviderFallback: (m) => { if (sttStartTokenRef.current === startToken) addToast(m, 'info'); },
         onEnd: () => {
@@ -5143,10 +5176,11 @@ ${sentencePlan}`;
             </span>
             <span className="text-[10px] text-white/70">结束通话</span>
           </button>
-          {/* speaker */}
+          {/* output route: speaker / receiver / headphones */}
           <button
             onClick={() => {
-              const nextRoute: SiliconFlowAudioRoute = isSpeakerOn ? 'receiver' : 'speaker';
+              const nextRoute: SiliconFlowAudioRoute = nextCallAudioRoute(audioOutputRoute);
+              manualRouteSinceDeviceChangeRef.current = true;
               applyAudioOutputRoute(nextRoute);
               // Re-apply the route to the currently playing element without
               // stopping the turn.  The next generated reply will use the
@@ -5157,17 +5191,19 @@ ${sentencePlan}`;
                 primeCallAudioFromGesture(true);
               }
             }}
-            title={isSpeakerOn ? '当前为外放，点击切换到听筒' : '当前为听筒，点击切换到外放'}
+            title={`当前为${audioRouteLabel.zh}，点击切换到${nextAudioRouteLabel.zh}`}
             className={`flex flex-col items-center transition active:scale-95 ${callMode === 'video' ? 'gap-0.5' : 'gap-1.5'}`}
           >
             <span className={`${callControlSize} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
-              style={isSpeakerOn ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.15)' }}>
-              {isSpeakerOn
-                ? <SpeakerHigh size={22} weight="fill" className="text-white/90" />
-                : <Phone size={22} weight="fill" className="text-white/70" />}
+              style={audioOutputRoute !== 'receiver' ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.15)' }}>
+              {audioOutputRoute === 'headphones'
+                ? <Headphones size={22} weight="fill" className="text-white/90" />
+                : audioOutputRoute === 'speaker'
+                  ? <SpeakerHigh size={22} weight="fill" className="text-white/90" />
+                  : <Phone size={22} weight="fill" className="text-white/70" />}
             </span>
-            <span className="text-[10px] text-white/70">{isSpeakerOn ? '外放' : '听筒'}</span>
-            {callMode !== 'video' && <span className="text-[8px] tracking-[0.15em]" style={{ color: isSpeakerOn ? accentColor : 'rgba(255,255,255,0.5)' }}>{isSpeakerOn ? 'SPEAKER' : 'RECEIVER'}</span>}
+            <span className="text-[10px] text-white/70">{audioRouteLabel.zh}</span>
+            {callMode !== 'video' && <span className="text-[8px] tracking-[0.15em]" style={{ color: audioOutputRoute !== 'receiver' ? accentColor : 'rgba(255,255,255,0.5)' }}>{audioRouteLabel.en}</span>}
           </button>
         </div>
       </div>
