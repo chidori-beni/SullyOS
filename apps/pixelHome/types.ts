@@ -178,4 +178,6 @@ export interface PixelAssetPreset {
   palette: string[];
   width: number;
   height: number;
+  /** 可选以兼容旧预设；地毯分类决定层级与角色碰撞。 */
+  tags?: string[];
 }

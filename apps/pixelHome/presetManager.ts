@@ -56,6 +56,7 @@ export async function exportPreset(
       palette: a.palette,
       width: a.width,
       height: a.height,
+      tags: a.tags,
     }));
 
   const preset: PixelHomePreset = {
@@ -123,7 +124,9 @@ export async function importPreset(
             ...presetAsset,
             originalImage: presetAsset.pixelImage, // 没有原图，用像素图代替
             createdAt: Date.now(),
-            tags: ['imported'],
+            tags: [...new Set(['imported', ...(Array.isArray(presetAsset.tags)
+              ? presetAsset.tags.filter((tag): tag is string => typeof tag === 'string')
+              : [])])],
           };
           await PixelAssetDB.save(fullAsset);
           assetsImported++;
