@@ -173,9 +173,10 @@ const VRWorldApp: React.FC = () => {
     // 日程资格是动态的：跨过 busy/sleep 边界后，房间在场名单也要随之更新。
     // 空 Map 按“未知”处理，先隐藏角色；真正的活动仍由 runVRSession 现场硬检查。
     const [vrEligibility, setVrEligibility] = useState<Map<string, VRActivityEligibility>>(new Map());
-    const [loadError, setLoadError] = useState(false);
+    const [loadError, setLoadError] = useState<string[]>([]);
+    const reloadGeneration = useRef(0);
     const feedLoadGeneration = useRef(0);
-    useEffect(() => () => { feedLoadGeneration.current++; }, []);
+    useEffect(() => () => { feedLoadGeneration.current++; reloadGeneration.current++; }, []);
 
     // 邮局徽标：本地待寄出/待发送 + 后端待收取的回信（best-effort 探测）
     const refreshPoBadge = useCallback(async () => {
@@ -416,8 +417,10 @@ const VRWorldApp: React.FC = () => {
     const reloadAll = useCallback(async () => {
         // Background refresh must not unmount the library and reset its filter/selection.
         // Initial loading is already true until the first load finishes.
+        const generation = ++reloadGeneration.current;
         const results = await Promise.allSettled([loadNovels(), loadFeed()]);
-        setLoadError(results.some(result => result.status === 'rejected'));
+        if (generation !== reloadGeneration.current) return;
+        setLoadError(results.flatMap((result, index) => result.status === 'rejected' ? [index === 0 ? '书库' : '动态'] : []));
         setLoading(false);
     }, [loadNovels, loadFeed]);
 
@@ -688,11 +691,12 @@ const VRWorldApp: React.FC = () => {
 
             {/* 滚动容器不同于浮动 dock：滚到底时最后一条内容贴 viewport bottom = 屏幕底，必须 + safe-bottom 让位 home 条，否则翻页按钮被压（即原 #158 报的问题）。 */}
             <div className="vr-world-scroll relative flex-1 overflow-y-auto vr-reader-scroll px-4 z-10" style={{ paddingTop: '1rem', paddingBottom: `calc(1rem + ${VR_SAFE_BOTTOM})` }}>
-                {loadError && <div role="alert" className="px-5 py-3 text-center text-xs text-white/70">
-                    部分本地数据读取失败，请重试。已有数据不会被清除。
+                {loading && <p role="status" className="px-5 py-2 text-center text-xs text-white/40">正在读取本地书库与动态，其他功能可先使用。</p>}
+                {loadError.length > 0 && <div role="alert" className="px-5 py-3 text-center text-xs text-white/70">
+                    {loadError.join('、')}读取未完成，请重试；持续失败时请关闭其他糯米机页面后重新打开。无需清理记忆或角色数据。
                     <button className="ml-3 underline" onClick={() => void reloadAll()}>重新载入</button>
                 </div>}
-                {loading ? (
+                {loading && tab === 'library' ? (
                     <div className="text-center text-white/40 text-[13px] tracking-[0.2em] py-12" style={{ fontFamily: `'Noto Serif SC',serif` }}>载入彼方…</div>
                 ) : tab === 'sar' ? (
                     <SARWorldPage occupants={occupantsByRoom.sar || []} npcEnabled={sarState.npcPreference === 'show'} caianMet={sarState.caianMet}
@@ -4039,7 +4043,7 @@ const VRApiSettings: React.FC<{ apiPresets: ApiPreset[]; chatApi: APIConfig; add
 
     const choose = (cfg: APIConfig | null) => {
         void setVRApi(cfg); setVr(cfg); setTestResult(null);
-        addToast?.(cfg ? '已切换彼方 API' : '彼方改为跟随聊天默认', 'success');
+        addToast?.(cfg ? '已切换彼方 API' : '彼方改为角色回复跟随角色 API，未设置则跟随全局', 'success');
     };
 
     const test = async () => {
@@ -4084,17 +4088,17 @@ const VRApiSettings: React.FC<{ apiPresets: ApiPreset[]; chatApi: APIConfig; add
     return (
         <div className="space-y-3">
             <p className="text-[11px] text-indigo-300/60 leading-relaxed">
-                彼方里的角色会自主、按间隔登入触发模型调用，比较费 API。你可以在这里给彼方<b className="text-indigo-200">单独指定一份 API</b>（和「设置」里保存的预设共用同一批），不设则跟随聊天默认。
+                彼方里的角色会自主、按间隔登入触发模型调用，比较费 API。你可以在这里给彼方<b className="text-indigo-200">单独指定一份 API</b>（和「设置」里保存的预设共用同一批），不设则角色回复跟随角色 API，未设置则跟随全局。
             </p>
 
             {/* 当前生效 */}
             <div className="rounded-2xl p-3.5" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
                 <div className="text-[10px] tracking-[0.2em] text-indigo-200/60 mb-1.5" style={{ fontFamily: `'Noto Serif SC',serif` }}>当前生效</div>
-                <div className="text-[12.5px] text-white/90 font-semibold">{effective?.model || '未配置'}</div>
-                <div className="text-[10px] text-white/40 mt-0.5">{host(effective?.baseUrl)} · {follow ? '跟随聊天默认' : '彼方独立'}</div>
+                <div className="text-[12.5px] text-white/90 font-semibold">{follow ? '按角色使用模型' : effective?.model || '未配置'}</div>
+                <div className="text-[10px] text-white/40 mt-0.5">{follow ? `全局备用：${chatApi.model || '未配置'} · ${host(chatApi.baseUrl)}` : `${host(effective?.baseUrl)} · 彼方独立`}</div>
                 <button onClick={test} disabled={testing} className="mt-2.5 text-[11px] px-3 py-1.5 rounded-full font-semibold disabled:opacity-50"
                     style={{ background: 'rgba(120,180,255,.16)', color: '#bcd4ff', border: '1px solid rgba(140,180,255,.3)' }}>
-                    {testing ? '测试中…' : '测试连接'}
+                    {testing ? '测试中…' : follow ? '测试全局备用 API' : '测试连接'}
                 </button>
                 {testResult && <div className={`mt-2 text-[10.5px] px-2.5 py-1.5 rounded-lg leading-snug ${testResult.startsWith('连接成功') ? 'text-emerald-300' : 'text-rose-300'}`} style={{ background: 'rgba(0,0,0,.25)' }}>{testResult}</div>}
             </div>
@@ -4106,7 +4110,7 @@ const VRApiSettings: React.FC<{ apiPresets: ApiPreset[]; chatApi: APIConfig; add
                     className="w-full flex items-center gap-2 rounded-xl p-3 mb-1.5 text-left active:scale-[0.99] transition-transform"
                     style={{ background: follow ? 'rgba(120,180,255,.12)' : 'rgba(255,255,255,.04)', border: `1px solid ${follow ? 'rgba(140,180,255,.4)' : 'rgba(255,255,255,.07)'}` }}>
                     <div className="flex-1 min-w-0">
-                        <div className="text-[12px] text-white/90 font-semibold">跟随聊天默认</div>
+                        <div className="text-[12px] text-white/90 font-semibold">跟随角色设置</div>
                         <div className="text-[10px] text-white/40 truncate">{chatApi?.model || '未配置'} · {host(chatApi?.baseUrl)}</div>
                     </div>
                     {follow && <span className="text-[10px] text-sky-300 font-bold shrink-0">✓ 使用中</span>}

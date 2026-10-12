@@ -1,3 +1,4 @@
+import { buildModelPickerView } from '../utils/modelPickerView';
 
 import UserHolidaySettings from '../components/settings/UserHolidaySettings';
 import type { UserHolidayConfig } from '../utils/userHolidays';
@@ -92,27 +93,6 @@ const readStoredVisionModels = (): string[] => {
     } catch {
         return [];
     }
-};
-
-const buildModelPickerView = (models: unknown[], filter: string) => {
-    const q = filter.trim().toLowerCase();
-    const safeModels = normalizeModelIds(models);
-    const filtered = q ? safeModels.filter(model => model.toLowerCase().includes(q)) : safeModels;
-    let commonPrefix = '';
-    if (filtered.length >= 2) {
-        let prefix = filtered[0];
-        for (let index = 1; index < filtered.length; index += 1) {
-            const candidate = filtered[index];
-            let cursor = 0;
-            while (cursor < prefix.length && cursor < candidate.length && prefix[cursor] === candidate[cursor]) cursor += 1;
-            prefix = prefix.slice(0, cursor);
-            if (!prefix) break;
-        }
-        const cut = Math.max(prefix.lastIndexOf('/'), prefix.lastIndexOf('-'));
-        if (cut > 3) prefix = prefix.slice(0, cut + 1);
-        if (prefix.length >= 4) commonPrefix = prefix;
-    }
-    return { filtered, commonPrefix };
 };
 
 const DiagRow: React.FC<{ label: string; value: string; bad?: boolean }> = ({ label, value, bad }) => (
@@ -503,10 +483,11 @@ const Settings: React.FC = () => {
   const [showAceStepGuide, setShowAceStepGuide] = useState(false);
   const [otherStatusMsg, setOtherStatusMsg] = useState('');
   // 高级设置（流式/温度）默认折叠 — 大多数用户不需要碰
-  const [showApiAdvanced, setShowApiAdvanced] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [isLoadingVisionModels, setIsLoadingVisionModels] = useState(false);
   const [newPresetName, setNewPresetName] = useState('');
+  const [newPresetGroup, setNewPresetGroup] = useState('');
+  const [editPresetGroup, setEditPresetGroup] = useState('');
   // 就地编辑某条预设：只改预设本身；改的正好是当前生效那条时，生效配置一并跟着走
   const [editingPresetId, setEditingPresetId] = useState<string | null>(null);
   // 保存前在用某条预设、保存后跟它对不上了：记下是哪条和刚存的配置，弹窗问要不要存回去
@@ -527,7 +508,9 @@ const Settings: React.FC = () => {
   const [showModelModal, setShowModelModal] = useState(false);
   // 打开模型弹窗那一刻的模型名：点 × 关掉时退回它，只有「确定」/点选列表才算数。
   const modelBeforePickerRef = useRef('');
+  // fork：模型弹窗与「高级设置」仍在本页（上游拆成 ModelPicker / DialogueApiFields 组件，fork 设置页做了日语化，没跟）
   const [modelFilter, setModelFilter] = useState('');
+  const [showApiAdvanced, setShowApiAdvanced] = useState(false);
   const [showVisionModelModal, setShowVisionModelModal] = useState(false);
   const [visionModelFilter, setVisionModelFilter] = useState('');
   const [showExportModal, setShowExportModal] = useState(false); // Used for completion now
@@ -989,6 +972,7 @@ const Settings: React.FC = () => {
       const isActive = activePresetId === preset.id;
       setEditingPresetId(preset.id);
       setEditPresetName(preset.name);
+      setEditPresetGroup(preset.group || '');
       setEditPresetUrl(preset.config.baseUrl || '');
       setEditPresetKey(preset.config.apiKey || '');
       setEditPresetModel(preset.config.model || '');
@@ -1022,7 +1006,7 @@ const Settings: React.FC = () => {
       };
       // 「正在用的就是这条」要在改之前问，改完值就对不上了
       const wasActive = activePresetId === preset.id;
-      updateApiPreset(preset.id, name, nextConfig);
+      updateApiPreset(preset.id, name, nextConfig, editPresetGroup);
       // 改的正好是当前生效那条 → 生效配置跟着走，否则界面写着新 Key、请求还在用旧的
       if (wasActive) commitApiConfig(configFromPreset({ ...preset, name, config: nextConfig }));
       setEditingPresetId(null);
@@ -1071,8 +1055,9 @@ const Settings: React.FC = () => {
         model: normalizeApiModel(localModel),
         stream: localStream,
         temperature: localTemperature,
-      });
+      }, newPresetGroup);
       setNewPresetName('');
+      setNewPresetGroup('');
       setShowPresetModal(false);
       addToast(t('settings.preset.saved'), 'success');
   };
@@ -2164,6 +2149,10 @@ const Settings: React.FC = () => {
                     </button>
                 </div>
 
+                <p className="text-xs text-slate-500 leading-relaxed break-words">
+                    {t('settings.api.characterApis', { names: characters.filter(c => c.dialogueApi).map(c => c.name).join('、') || t('settings.api.characterApisNone') })}
+                </p>
+
                 {/* 带括号调用：handleSaveApi 的第一个参数是「模型名覆盖」，直接传 onClick 会把点击事件当成模型名 */}
                 <button onClick={() => handleSaveApi()} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-primary/20 bg-primary active:scale-95 transition-all mt-2">
                     {statusMsg ? t(statusMsg.key, statusMsg.params) : t('settings.api.save')}
@@ -2599,6 +2588,10 @@ const Settings: React.FC = () => {
             <p className="text-xs text-slate-500 leading-relaxed">
                 角色到点自动给你发消息，App 关着也能收。需要你自己部署一个 Cloudflare Worker（自带 D1 数据库 + 定时触发），在配置里填地址即可。聊天上云（即时对话）与定时主动消息都由它承担。
             </p>
+            <button type="button" onClick={() => setShowAmsgCloudData(true)} className="mt-3 w-full rounded-2xl border border-violet-100 bg-violet-50/60 px-4 py-3 text-left text-xs text-violet-700">
+                <span className="block font-semibold">云端数据管理</span>
+                <span className="mt-1 block text-[11px] text-slate-500">查看 Worker 实际保存的数据，按项清理或彻底移除角色。</span>
+            </button>
         </section>
 
         {/* 角色生图（NovelAI）。面板本体在 components/settings/ImageGenSettings.tsx——
@@ -4148,6 +4141,9 @@ const Settings: React.FC = () => {
           <div className="space-y-2">
               <label className="text-[10px] font-bold text-slate-400 uppercase">{t('settings.preset.nameLabel')}</label>
               <input value={newPresetName} onChange={e => setNewPresetName(e.target.value)} className="w-full bg-slate-100 rounded-xl px-4 py-3 text-sm focus:outline-primary" autoFocus placeholder="Name..." />
+              <label className="text-[10px] font-bold text-slate-400 block">{t('settings.preset.groupLabel')}</label>
+              <input aria-label={t('settings.preset.groupLabel')} value={newPresetGroup} onChange={e => setNewPresetGroup(e.target.value)} list="newPresetGroup-options" placeholder={t('settings.preset.groupPlaceholder')} className="w-full bg-slate-100 rounded-xl px-4 py-2.5 text-sm focus:outline-primary" />
+              <datalist id="newPresetGroup-options">{[...new Set(apiPresets.map(p => p.group).filter(Boolean))].map(group => <option key={group} value={group} />)}</datalist>
               <p className="text-[10px] text-slate-400 leading-relaxed pt-1">{t('settings.preset.description')}</p>
           </div>
       </Modal>
@@ -4163,6 +4159,9 @@ const Settings: React.FC = () => {
               <div className="space-y-1.5">
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{t('settings.preset.name')}</label>
                   <input value={editPresetName} onChange={e => setEditPresetName(e.target.value)} placeholder={t('settings.preset.namePlaceholder')} className="w-full bg-slate-100 rounded-xl px-4 py-2.5 text-sm focus:outline-primary" />
+                  <label className="text-[10px] font-bold text-slate-400 block">{t('settings.preset.groupLabel')}</label>
+              <input aria-label={t('settings.preset.groupLabel')} value={editPresetGroup} onChange={e => setEditPresetGroup(e.target.value)} list="editPresetGroup-options" placeholder={t('settings.preset.groupPlaceholder')} className="w-full bg-slate-100 rounded-xl px-4 py-2.5 text-sm focus:outline-primary" />
+              <datalist id="editPresetGroup-options">{[...new Set(apiPresets.map(p => p.group).filter(Boolean))].map(group => <option key={group} value={group} />)}</datalist>
               </div>
               <div className="space-y-1.5">
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">URL</label>

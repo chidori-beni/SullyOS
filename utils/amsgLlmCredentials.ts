@@ -1,3 +1,4 @@
+import { resolveDialogueApi } from './characterApi';
 /**
  * 主动消息 2.0 的「LLM 凭据引用」（credRefs）：本地这一侧的命名、取值与变更侦测。
  *
@@ -58,7 +59,7 @@ export const normalizeChatApiUrl = (baseUrl: string): string =>
 /**
  * 一个角色名下的凭据用途。配置变更时覆盖行，存量排程迁移时可调整 chat 引用。
  *
- *   chat     定时主动消息，使用当前聊天主 API。
+ *   chat     定时主动消息，使用角色默认对话 API；未设置则使用全局。
  *   instant  即时对话，使用当轮请求终值（包括 -thinking 模型后缀）。
  *            与 chat 分开，防止刷新配置时覆盖正在生成的这一轮请求。
  *   emotion  即时对话那一轮的情绪评估（副 API；没单独配就回落到全局聊天 API）
@@ -105,13 +106,13 @@ export const toCredentialValue = (
   return isUsableCredentialValue(value) ? value : null;
 };
 
-/** 定时主动消息统一使用聊天主 API；旧备份里的单独 API 字段不再参与取值。 */
+/** 定时主动消息跟随角色默认对话 API，未设置时跟随全局；旧主动消息副 API 字段不参与取值。 */
 export const buildCharChatCredRow = (
-  char: Pick<CharacterProfile, 'id'>,
+  char: Pick<CharacterProfile, 'id' | 'dialogueApi'>,
   _config: ActiveMsg2CharacterConfig | undefined,
   apiConfig: Pick<APIConfig, 'baseUrl' | 'apiKey' | 'model'>,
 ): LlmCredentialRow | null => {
-  const value = toCredentialValue(apiConfig);
+  const value = toCredentialValue(resolveDialogueApi(apiConfig, char));
   return value ? { credId: charCredId(char.id, 'chat'), value } : null;
 };
 

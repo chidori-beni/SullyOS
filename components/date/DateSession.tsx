@@ -2333,7 +2333,7 @@ const DateSession: React.FC<DateSessionProps> = ({
 
             {/* Settings Overlay */}
             {showSettings && (
-                <div className="absolute inset-0 z-[200] animate-slide-up bg-white">
+                <div className="absolute inset-0 z-[200] bg-white">
                     <DateSettings char={char} onBack={() => setShowSettings(false)} />
                 </div>
             )}

@@ -6,6 +6,8 @@ import { processImage } from '../../utils/file';
 import { pickDateFallbackSprite } from '../../utils/dateSprites';
 import { DATE_STYLE_PRESETS } from '../../utils/datePrompts';
 import ObserveSettings from './ObserveSettings';
+import DateExtraPresets from './DateExtraPresets';
+import DateExtraEditor from './DateExtraEditor';
 import { shareOrDownloadFile } from '../../utils/shareExport';
 import { DATE_READING_BUILTIN_THEMES, builtinReadingPresetId, type DateReadingBuiltinTheme } from '../../utils/dateReadingBuiltinThemes';
 
@@ -123,6 +125,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
     // 文风与叙事（即时生效：system prompt 每次请求重建，存上就影响下一条回复）
     const styleConfig = char.dateStyleConfig || {};
     const [extraDraft, setExtraDraft] = useState(styleConfig.extra || '');
+    const [extraEditorOpen, setExtraEditorOpen] = useState(false);
     useEffect(() => { setExtraDraft(char.dateStyleConfig?.extra || ''); }, [char.id]);
     const patchStyleConfig = (patch: Partial<DateStyleConfig>) => {
         updateCharacter(char.id, { dateStyleConfig: { ...(char.dateStyleConfig || {}), ...patch } });
@@ -538,13 +541,21 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                     {/* 自定义补充 */}
                     <div>
                         <label className="text-[11px] text-slate-500 font-bold mb-2 block">自定义补充（可选）</label>
+                        <DateExtraPresets key={char.id} presets={char.dateExtraPresets || []} value={extraDraft}
+                            onApply={content => { setExtraDraft(content); patchStyleConfig({ extra: content }); }}
+                            onChange={dateExtraPresets => updateCharacter(char.id, { dateExtraPresets })} />
+                        <div className="relative">
                         <textarea
+                            aria-label="自定义补充"
                             value={extraDraft}
                             onChange={e => setExtraDraft(e.target.value)}
                             onBlur={saveExtraDraft}
                             placeholder="比如：多写环境互动；不要写心理活动；对话占比多一些……"
-                            className="w-full h-20 px-4 py-3 bg-slate-100 rounded-xl text-sm resize-none focus:ring-1 focus:ring-primary/30 outline-none transition-all leading-relaxed"
+                            className="w-full h-28 px-4 pt-3 pb-11 bg-slate-100 rounded-xl text-sm resize-none focus:ring-1 focus:ring-primary/30 outline-none transition-all leading-relaxed"
                         />
+                        <button type="button" aria-label="展开自定义补充" onClick={() => setExtraEditorOpen(true)}
+                            className="absolute bottom-2 right-2 px-3 py-1.5 rounded-lg bg-white text-xs font-semibold text-primary shadow-sm">↗ 展开</button>
+                        </div>
                         <p className="text-[10px] text-slate-300 mt-1">点别处会自动保存；这段会照原样用上，比上面的风格优先。</p>
                     </div>
                 </Section>
@@ -735,6 +746,9 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
 
                 <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
             </div>
+
+            {extraEditorOpen && <DateExtraEditor key={char.id} value={extraDraft} onChange={setExtraDraft}
+                onClose={() => { saveExtraDraft(); setExtraEditorOpen(false); }} />}
 
             {/* URL Input Modal */}
             {showUrlModal && (

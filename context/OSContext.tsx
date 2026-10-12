@@ -1,3 +1,5 @@
+import { retireCloudCharacter } from '../utils/amsgCloudRetirement';
+import { resolveDialogueApi } from '../utils/characterApi';
 
 import { browserHolidayCache, deviceTimeZone, getUserHolidayReminder } from '../utils/userHolidays';
 import { initializeFirstUseGuide } from '../utils/firstUseGuide';
@@ -315,8 +317,8 @@ const normalizeMemoryPalaceConfig = (value?: Partial<MemoryPalaceGlobalConfig> |
   featureFlags: { ...defaultMemoryPalaceConfig.featureFlags, ...(value?.featureFlags || {}) },
 });
 
-/** deleteCharacter 的结果：cloud-cleanup-failed = 云端还有任务没清掉，本地没删。 */
-export type DeleteCharacterResult = { status: 'deleted' } | { status: 'cloud-cleanup-failed' };
+/** 云端未确认时保留本地；已受理但未完成的操作由云端继续。 */
+export type DeleteCharacterResult = { status: 'deleted'; cloudPending?: boolean; cloudUnconfirmed?: boolean } | { status: 'cloud-cleanup-failed' };
 
 /**
  * resetSystem 的结果。
@@ -411,8 +413,8 @@ interface OSContextType {
   
   // API Presets
   apiPresets: ApiPreset[];
-  addApiPreset: (name: string, config: APIConfig) => void;
-  updateApiPreset: (id: string, name: string, config: APIConfig) => void;
+  addApiPreset: (name: string, config: APIConfig, group?: string) => void;
+  updateApiPreset: (id: string, name: string, config: APIConfig, group?: string) => void;
   removeApiPreset: (id: string) => void;
 
   // 实时配置 (天气、新闻、Notion等)
@@ -1694,8 +1696,13 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
             }
         };
 
+        let charactersReadSucceeded = false;
         const [dbChars, dbThemes, dbUser, dbGroups, dbWorldbooks, dbNovels, dbSongs, dbCharGroups] = await Promise.all([
-            settle(DB.getAllCharacters().then(chars => { initializeFirstUseGuide(chars.length); return chars; }), 'characters', [] as CharacterProfile[]),
+            settle(DB.getAllCharacters().then(chars => {
+                initializeFirstUseGuide(chars.length);
+                charactersReadSucceeded = true;
+                return chars;
+            }), 'characters', [] as CharacterProfile[]),
             settle(DB.getThemes(), 'themes', [] as ChatTheme[]),
             settle(DB.getUserProfile(), 'userProfile', null as UserProfile | null),
             settle(DB.getGroups(), 'groups', [] as GroupProfile[]),
@@ -1707,7 +1714,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
         let finalChars = dbChars;
 
-        if (!finalChars.some(c => c.id === sullyV2.id)) {
+        // A failed read is not an empty installation: never overwrite the saved Sully with defaults.
+        if (charactersReadSucceeded && !finalChars.some(c => c.id === sullyV2.id)) {
             await DB.saveCharacter(sullyV2);
             finalChars = [...finalChars, sullyV2];
         } else {
@@ -1805,10 +1813,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           } else {
             setActiveCharacterId(finalChars[0].id);
           }
-        } else {
+        } else if (charactersReadSucceeded) {
           await DB.saveCharacter(initialCharacter);
           setCharacters([initialCharacter]);
           setActiveCharacterId(initialCharacter.id);
+        } else {
+          addToast('角色资料读取未完成，未写入默认角色。请重新打开应用重试，无需清理数据。', 'error');
         }
 
         setGroups(dbGroups);
@@ -2510,8 +2520,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               return;
           }
 
-          // 页面内主动消息也统一使用聊天主 API，忽略旧备份中的副 API 配置。
-          const api = currentApiConfig;
+          // 页面内主动消息与私聊使用同一角色默认；旧主动消息副 API 不再参与取值。
+          const api = resolveDialogueApi(currentApiConfig, char);
           if (!api.baseUrl) {
               drainQueuedProactive();
               return;
@@ -2652,7 +2662,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               // 4. API call
               const baseUrl = api.baseUrl.replace(/\/+$/, '');
               const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${api.apiKey || 'sk-none'}` };
-              const reqBody: any = { model: api.model, messages: fullMessages, temperature: 0.85, stream: false };
+              const reqBody: any = { model: api.model, messages: fullMessages, temperature: api.temperature ?? 0.85, stream: api.stream ?? false };
               // 思考链开启时显式向后端请求 extended thinking — 与 useChatAI 同步,
               // 不同代理认不同入口,全都试一遍,代理不识别的会自动忽略
               if (payload.flags.thinkingActive) {
@@ -3580,8 +3590,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       setAvailableModels(safeModels);
       localStorage.setItem('os_available_models', JSON.stringify(safeModels));
   };
-  const addApiPreset = (name: string, config: APIConfig) => { setApiPresets(prev => { const next = [...prev, normalizeApiPreset({ id: Date.now().toString(), name, config })]; localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
-  const updateApiPreset = (id: string, name: string, config: APIConfig) => { setApiPresets(prev => { const next = prev.map(p => p.id === id ? normalizeApiPreset({ ...p, name, config }) : p); localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
+  const addApiPreset = (name: string, config: APIConfig, group?: string) => { setApiPresets(prev => { const next = [...prev, normalizeApiPreset({ id: crypto.randomUUID(), name, config, group: group?.trim() })]; localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
+  const updateApiPreset = (id: string, name: string, config: APIConfig, group?: string) => { setApiPresets(prev => { const next = prev.map(p => p.id === id ? normalizeApiPreset({ ...p, name, config, group: group === undefined ? p.group : group.trim() }) : p); localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
   const removeApiPreset = (id: string) => { setApiPresets(prev => { const next = prev.filter(p => p.id !== id); localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
   const savePresets = (presets: ApiPreset[]) => { const normalized = presets.map(normalizeApiPreset); setApiPresets(normalized); localStorage.setItem('os_api_presets', JSON.stringify(normalized)); };
   const addCharacter = async () => {
@@ -3619,6 +3629,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         // markDirty 内部自带「没开 2.0 / 没挂 AI 任务就 return」的门，普通角色零成本。
         DB.saveCharacter(target).then(() => {
           markAmsgStateDirty({ char: target, userProfile, groups, realtimeConfig });
+          if (JSON.stringify(before?.dialogueApi) !== JSON.stringify(target.dialogueApi)) {
+            // Fresh snapshot also distinguishes consecutive role-only changes during an upload.
+            syncAmsgLlmCredentials({ ...apiConfig });
+          }
           // 时区和名字是另一条路：它们冻在远端任务行里，fire_pack 刷新盖不到。
           // 上游按任务行的 tzId 推进循环任务的下次触发时刻；fixed 模式的推送标题也直接
           // 读任务行的 contactName。只刷真的变了的那几项，别搭别的操作的便车。
@@ -3636,10 +3650,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   };
   const deleteCharacter = async (id: string, options?: { force?: boolean }): Promise<DeleteCharacterResult> => {
     const target = characters.find(c => c.id === id);
+    const retirement = target ? await retireCloudCharacter(target) : { status: 'skipped' as const };
+    const managed = retirement.status === 'accepted' || retirement.status === 'failed';
+    if (retirement.status === 'failed' && !options?.force) return { status: 'cloud-cleanup-failed' };
+    // 新 Worker 在接受删除前先阻止旧请求写回；旧 Worker 保留有限兼容路径。
     // 主动消息 2.0 的任务活在用户自己的 worker 上，不随本地角色删除消失：留着的话
     // 到点照样跑一整轮生成 + 推送，用户会收到一个已经删掉的角色发来的消息（还每次
     // 真烧一轮 LLM）。本地记录一删就再没有 uuid 可取消，所以必须赶在删除之前清。
-    // 没排过任务的角色不发任何请求。
+    // 新协议按云端归属处理，不以本地有没有排过任务决定是否清理。
     const localTaskUuids = (target?.activeMsg2Config?.tasks ?? [])
       .map(t => t.taskUuid);
 
@@ -3647,7 +3665,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     // 任务残留下来，之后「已删角色」的推送还会弹出来。名下真有任务（本地清单有、或远端
     // 查得到）的角色才付这次等待，清不掉就先不删本地、把选择权交回给调用方；
     // 从没配过 2.0 或没填 worker 地址的角色一个请求都不发，路径跟原来一样快。
-    if (!options?.force && charMayHaveCloudState(target)) {
+    if (!managed && !options?.force && charMayHaveCloudState(target)) {
       let workerConfigured = false;
       try {
         workerConfigured = Boolean((await ActiveMsgStore.getGlobalConfig()).workerUrl?.trim());
@@ -3688,25 +3706,25 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
             const cloudCleanup = await purgeCharCloudState(target);
             if (cloudCleanup.status === 'failed') {
               console.warn('[deleteCharacter] 云端状态清理失败（角色照常删除）', cloudCleanup.error);
-              addToast('ta 在云端的聊天上下文没能清掉，可以去设置里「清除云端状态」兜一下', 'error');
+              addToast('ta 在云端的聊天上下文没能清掉，可以去设置 → 主动消息 2.0 → 云端数据管理中检查', 'error');
             }
           })();
         }
       }
-    } else if (options?.force && charMayHaveCloudState(target)) {
+    } else if (!managed && options?.force && charMayHaveCloudState(target)) {
       // 「仍然删除」放行后仍旧尽力清一次：能清掉多少算多少，失败只提示、不再拦。
       void (async () => {
         try {
           if (localTaskUuids.length > 0) {
             const { failed } = await ActiveMsgClient.cancelAllTasksForChar(id, localTaskUuids);
             if (failed.size > 0) {
-              addToast(`ta 还有 ${failed.size} 个主动消息任务留在远端没取消掉，可能仍会到点推送——可以去设置里「清除云端状态」兜一下`, 'error');
+              addToast(`ta 还有 ${failed.size} 个主动消息任务留在远端没取消掉，可能仍会到点推送——可以去设置 → 主动消息 2.0 → 云端数据管理中检查`, 'error');
             }
           }
           const cloudCleanup = await purgeCharCloudState(target);
           if (cloudCleanup.status === 'failed') {
             console.warn('[deleteCharacter] 云端状态清理失败（角色照常删除）', cloudCleanup.error);
-            addToast('ta 在云端的聊天上下文没能清掉，可以去设置里「清除云端状态」兜一下', 'error');
+            addToast('ta 在云端的聊天上下文没能清掉，可以去设置 → 主动消息 2.0 → 云端数据管理中检查', 'error');
           }
         } catch (err) {
           console.warn('[deleteCharacter] 远端主动消息任务清理失败', err);
@@ -3733,7 +3751,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     } catch (err) {
         console.warn('[deleteCharacter] 表情包残留清理失败（不影响角色删除）', err);
     }
-    return { status: 'deleted' };
+    return { status: 'deleted', cloudPending: retirement.status === 'accepted' && !retirement.completed, cloudUnconfirmed: retirement.status === 'failed' };
   };
 
   // 角色分组方法（神经链接"文件夹"）
@@ -4413,6 +4431,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const cloneForInPlace = <T,>(v: T): T => (mode === 'text_only' ? v : deepCloneForExport(v));
 
           const backupData: Partial<FullBackupData> = {
+              contentFavoritesIndex: mode === 'text_only'
+                  ? stripBackupImages(await DB.getAssetRaw('content_favorites_index_v1')) : undefined,
               timestamp: Date.now(),
               version: 3,
               apiConfig: (mode === 'text_only' || mode === 'full') ? apiConfig : undefined,

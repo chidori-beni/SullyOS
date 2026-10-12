@@ -2486,7 +2486,7 @@ const CompanionHome: React.FC = () => {
   const activeCompanionFraming = editing ? compositionFramingDraft : (companionFraming || defaultCompanionFraming);
   const activeCompanionCrop = editing ? cropDraft : (companionCrop || DEFAULT_STAGE_CROP);
   const cropAdjusted = !cropIsDefault(activeCompanionCrop);
-  const framingScaleMin = character.videoAvatar?.format === 'live2d' ? 0.55 : 0.5;
+  const framingScaleMin = character.videoAvatar?.format === 'live2d' ? 0.55 : 0.1;
   const framingScaleMax = character.videoAvatar?.format === 'live2d' ? 6 : 4;
   const framingOffsetXMax = character.videoAvatar?.format === 'live2d' ? 1.4 : 0.9;
   const framingOffsetYMax = character.videoAvatar?.format === 'live2d' ? 3.2 : 0.9;

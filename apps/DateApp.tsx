@@ -1,3 +1,4 @@
+import { resolveDialogueApi } from '../utils/characterApi';
 import { loadCharacterContextMessages } from '../utils/chatContextRange';
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
@@ -757,11 +758,11 @@ const DateApp: React.FC = () => {
     const formatTime = () => `${virtualTime.hours.toString().padStart(2, '0')}:${virtualTime.minutes.toString().padStart(2, '0')}`;
 
     // peek / send / reroll 共用的 LLM 调用（提示词构建统一在 utils/datePrompts.ts）
-    const callLLM = async (messages: ApiMessage[], temperature: number): Promise<string> => {
+    const callLLM = async (messages: ApiMessage[], temperature: number, speaker = char): Promise<string> => {
         const aborter = new AbortController();
         dateLlmAbortersRef.current.add(aborter);
         try {
-            return await callLLMWithSignal(messages, temperature, aborter.signal);
+            return await callLLMWithSignal(messages, temperature, aborter.signal, speaker);
         } catch (error: any) {
             if (aborter.signal.aborted) throw new Error('已停止生成');
             throw error;
@@ -770,20 +771,21 @@ const DateApp: React.FC = () => {
         }
     };
 
-    const callLLMWithSignal = async (messages: ApiMessage[], temperature: number, signal: AbortSignal): Promise<string> => {
-        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+    const callLLMWithSignal = async (messages: ApiMessage[], temperature: number, signal: AbortSignal, speaker = char): Promise<string> => {
+        const dialogueApi = resolveDialogueApi(apiConfig, speaker);
+        const response = await fetch(`${dialogueApi.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
             method: 'POST',
             signal,
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${dialogueApi.apiKey}` },
             body: JSON.stringify({
-                model: apiConfig.model,
+                model: dialogueApi.model,
                 messages,
                 temperature,
                 // max_tokens 是 Claude 原生 API 的必填字段；缺了它，糯米机/Csy 等
                 // OpenAI→Claude 中转会被上游打回，再包成 502 / bad_response_status_code。
                 // 与私聊 (useChatAI.ts) 对齐，统一带 8000。
                 max_tokens: 8000,
-                stream: apiConfig.stream ?? false,
+                stream: dialogueApi.stream ?? false,
             })
         });
         if (!response.ok) throw new Error(`API Error ${response.status}`);
@@ -1058,7 +1060,7 @@ const DateApp: React.FC = () => {
                 useVisionDescriptions: apiConfig.visionApi?.enabled === true,
                 openingMode,
             });
-            const content = await callLLM(messages, apiConfig.temperature ?? 0.85);
+            const content = await callLLM(messages, resolveDialogueApi(apiConfig, c).temperature ?? 0.85, c);
             // 过期的感知请求不能覆盖用户已经开始的另一场见面。
             if (activeEncounterRef.current?.id !== encounter.id) return;
             setPeekStatus(content);
@@ -1441,7 +1443,7 @@ const DateApp: React.FC = () => {
         }
 
         onLocalGeneration?.();
-        const rawContent = await callLLM(messages, apiConfig.temperature ?? 0.85);
+        const rawContent = await callLLM(messages, resolveDialogueApi(apiConfig, char).temperature ?? 0.85);
         if (!isCurrentDateTurnRequest(requestId, encounterSnapshot.id, encounterSnapshot.sceneClockRevision)) {
             throw new Error('这轮回复已过期，请按当前剧情时间重新发送');
         }
@@ -1532,7 +1534,7 @@ const DateApp: React.FC = () => {
                 variant: 'reroll',
                 rerollRequirement: requirement,
             });
-            const rawContent = await callLLM(messages, Math.max(apiConfig.temperature ?? 0.85, 0.9));
+            const rawContent = await callLLM(messages, Math.max(resolveDialogueApi(apiConfig, char).temperature ?? 0.85, 0.9));
             if (!isCurrentDateTurnRequest(requestId, currentEncounterSnapshot.id, currentEncounterSnapshot.sceneClockRevision)) {
                 throw new Error('这段过场已过期，请按当前剧情时间重新生成');
             }
@@ -1599,7 +1601,7 @@ const DateApp: React.FC = () => {
                 useVisionDescriptions: apiConfig.visionApi?.enabled === true,
                 rerollRequirement: requirement,
             });
-            const content = await callLLM(messages, Math.max(apiConfig.temperature ?? 0.85, 0.9));
+            const content = await callLLM(messages, Math.max(resolveDialogueApi(apiConfig, char).temperature ?? 0.85, 0.9));
             if (!isCurrentDateTurnRequest(requestId, currentEncounterSnapshot.id, currentEncounterSnapshot.sceneClockRevision)) {
                 throw new Error('这轮回复已过期，请按当前剧情时间重新生成');
             }
@@ -1652,7 +1654,7 @@ const DateApp: React.FC = () => {
             useVisionDescriptions: apiConfig.visionApi?.enabled === true,
         });
         // Reroll 略调高温度求多样性，但绝不低于用户配置的基线。
-        const rawContent = await callLLM(messages, Math.max(apiConfig.temperature ?? 0.85, 0.9));
+        const rawContent = await callLLM(messages, Math.max(resolveDialogueApi(apiConfig, char).temperature ?? 0.85, 0.9));
         if (!isCurrentDateTurnRequest(requestId, currentEncounterSnapshot.id, currentEncounterSnapshot.sceneClockRevision)) {
             throw new Error('这轮回复已过期，请按当前剧情时间重新生成');
         }

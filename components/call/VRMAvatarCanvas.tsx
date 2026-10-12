@@ -524,7 +524,7 @@ const VRMAvatarCanvas: React.FC<VRMAvatarCanvasProps> = ({
         // 用户构图叠加在导演机位之上：scale 缩短相机距离，offset 换算成
         // 目标距离处的世界坐标平移，保证拖拽时模型 1:1 跟手。
         const activeFraming = anchored || userFraming;
-        const zoom = Math.max(0.4, Math.min(4.5, activeFraming.scale || 1));
+        const zoom = Math.max(0.1, Math.min(4.5, activeFraming.scale || 1));
         const cameraDistance = (avatarHeight * cameraZFactor) / zoom;
         const viewWorldHeight = 2 * Math.tan((camera.fov * Math.PI) / 360) * cameraDistance;
         const panX = activeFraming.offsetX * viewWorldHeight * camera.aspect;

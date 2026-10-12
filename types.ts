@@ -332,6 +332,9 @@ export interface VisionApiConfig {
   model: string;
 }
 
+/** A complete dialogue endpoint, separate from TTS/vision configuration. */
+export type DialogueApiConfig = Pick<APIConfig, 'baseUrl' | 'apiKey' | 'model' | 'stream' | 'temperature'>;
+
 export interface APIConfig {
   baseUrl: string;
   apiKey: string;
@@ -536,7 +539,7 @@ export interface ActiveMsg2CharacterConfig {
 /** 任务「没了」的回执台账（amsg-local IDB kv，按角色一条数组）。 */
 export interface Amsg2ExpiredNoticeRecord {
   /**
-   * 防穿帮闸作废：一次性任务 = taskUuid，循环任务 = `${taskUuid}:${occurrenceMs}`；
+   * 到点没发：一次性任务 = taskUuid，循环任务 = `${taskUuid}:${occurrenceMs}`；
    * 用户手动取消 = `${taskUuid}:cancelled`（同一条任务可能两件事都发生过，各占一条）。
    */
   id: string;
@@ -546,10 +549,12 @@ export interface Amsg2ExpiredNoticeRecord {
   promptHint?: string;
   recurrenceType: ActiveMsg2Recurrence;
   /**
-   * 这条回执是怎么来的：闸自动作废（缺省）还是用户在面板里手动取消。
-   * 两者给角色的交代不一样——作废可以续期补上，手动取消是用户不要了。
+   * 这条回执是怎么来的：到点没发（缺省）还是用户在面板里手动取消。
+   * 两者给角色的交代不一样——没发的可以续期补上，手动取消是用户不要了。
    */
   kind?: 'expired' | 'user-cancelled';
+  /** 到点没发的原因，云端给的（见 utils/amsgFireSkipResult）。手动取消的没有。 */
+  reason?: import('./utils/amsgFireSkipResult').AmsgFireSkipReason;
   /** 已注入过排程现状块（角色已知情），不再重复注入。 */
   notifiedAt?: number;
   createdAt: number;
@@ -586,6 +591,7 @@ export interface ActiveMsg2InboxMessage {
 }
 
 export interface ApiPreset {
+  group?: string;
   id: string;
   name: string;
   config: APIConfig;
@@ -3483,6 +3489,8 @@ export interface NaturalProactiveConfig {
 export type ChatTriggerPlacement = 'header' | 'input';
 
 export interface CharacterProfile {
+  /** Local default for this character's dialogue; absent means follow Settings. Never shared in cards. */
+  dialogueApi?: DialogueApiConfig;
   id: string;
   name: string;
   /** 角色本人的照片（神经链接上传）。 */
@@ -3867,6 +3875,7 @@ export interface CharacterProfile {
 
   mountedWorldbooks?: MountedWorldbook[];
 
+  /** 角色对用户的私密印象；其中的性格、MBTI 和喜好属于用户，不是角色本人。 */
   impression?: UserImpression;
 
   bubbleStyle?: string;
@@ -3935,6 +3944,7 @@ export interface CharacterProfile {
   dateSkinSets?: SkinSet[];     // Multiple skin sets for portrait mode
   activeSkinSetId?: string;     // Currently active skin set ID
   dateStyleConfig?: DateStyleConfig; // 见面模式文风（写作风格 / 叙事人称 / 自定义补充）
+  dateExtraPresets?: Array<{ id: string; name: string; content: string }>; // 当前角色的见面自定义补充预设
   /** 观测协议 OBSERVE：开启后每条回复注入「时间/地点/状态/细节」结构化观测，渲染成全息 HUD（样式/字段可自定义） */
   dateObserve?: DateObserveConfig;
   /** 见面「剧情时间跟随现实」：开着时每次发送 / 继续前，剧情钟若落后现实就先自动对齐到现在（只往前，不往回拨）。 */
@@ -5068,6 +5078,8 @@ export interface Emoji {
 }
 
 export interface FullBackupData {
+    /** 纯文字备份单独携带收藏索引，不覆盖整个资源库。 */
+    contentFavoritesIndex?: unknown;
     timestamp: number;
     version: number;
     theme?: OSTheme;

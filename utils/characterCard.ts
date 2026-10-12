@@ -18,6 +18,7 @@ import { CharacterProfile } from '../types';
  */
 export const CARD_STRIPPED_FIELDS = [
   // 1) 凭据（含 apiKey，灾难级泄漏）
+  'dialogueApi',
   'emotionConfig',
   'embeddingConfig',
   'proactiveConfig',
@@ -48,6 +49,7 @@ export const CARD_STRIPPED_FIELDS = [
   'chatVoiceEnabled',
   'chatVoiceAutoPlay',
   'dateVoiceEnabled',
+  'dateExtraPresets',        // 用户私有补充预设随系统备份保存，不随角色卡分享
   'memoryPalaceWaterline', // 发卡人的使用节奏；接收方按自己的聊天习惯选择
 
   // 4) 运行时状态残留

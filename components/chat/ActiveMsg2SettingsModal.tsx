@@ -145,7 +145,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
     status?: string;
     lastError: RemoteTaskLastError | null;
   }> | null>(null);
-  // 防穿帮闸最近一次跳过的记录（worker 写的）。null = 没有记录 / 没读到。
+  // 最近一次到点没发的记录（worker 写的）。null = 没有记录 / 没读到。
   const [lastSkip, setLastSkip] = useState<AmsgLastSkip | null>(null);
   // 今天主动找了几次（worker 每次发完累加的那份）。null = 没有记录 / 没读到。
   const [dailySends, setDailySends] = useState<AmsgDailySends | null>(null);
@@ -383,7 +383,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
    * 给角色留一句「这几条被人工取消了」。
    *
    * 聊天历史里那句「明早八点叫你～」是角色自己许的承诺，任务在面板里被删掉之后它并不
-   * 知道——下次聊天照旧说「放心我叫你」。所以取消也写进作废回执台账（按 id 幂等），
+   * 知道——下次聊天照旧说「放心我叫你」。所以取消也写进回执台账（按 id 幂等），
    * 下一轮的排程现状块会把它读出来告诉角色。写失败不打断取消本身：任务确实已经没了。
    */
   const writeCancelledNotices = async (cancelled: ActiveMsg2TaskRecord[]) => {
@@ -820,8 +820,8 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">到点时用户正在聊天</label>
                 <div className="grid grid-cols-2 gap-2">
                   {([
-                    { id: 'expire', label: '自动作废', desc: '转为对话里自然带出' },
-                    { id: 'force', label: '强制发送', desc: '闹钟型，照发' },
+                    { id: 'expire', label: '看情况', desc: 'ta 看着对话决定说不说' },
+                    { id: 'force', label: '到点必发', desc: '闹钟型，照发' },
                   ] as const).map((option) => (
                     <button
                       key={option.id}
