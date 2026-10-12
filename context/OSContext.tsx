@@ -8,6 +8,7 @@ import type { VRSARActivity } from '../types';
 import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, CharacterGroup, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile, MemoryPalaceFeatureFlags } from '../types';
 import { DB } from '../utils/db';
 import { SLOW_FLUSH_TIMING_EVENT } from '../utils/slowFlushProbe';
+import { reportDatabaseFailure } from '../utils/databaseHealth';
 import type { AvatarTouchRecord } from '../utils/avatarTouch';
 import { clampClaudeTemperature, modelRejectsSamplingParams, stripSamplingParams } from '../utils/samplingParamCompat';
 import { extractImagesInPlace, deepCloneForExport, stripBackupImages, parseImageDataUrlForBackup, type BackupObjectPath } from '../utils/backupExport';
@@ -1702,7 +1703,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                 initializeFirstUseGuide(chars.length);
                 charactersReadSucceeded = true;
                 return chars;
-            }), 'characters', [] as CharacterProfile[]),
+            }).catch(error => { reportDatabaseFailure(error); throw error; }), 'characters', [] as CharacterProfile[]),
             settle(DB.getThemes(), 'themes', [] as ChatTheme[]),
             settle(DB.getUserProfile(), 'userProfile', null as UserProfile | null),
             settle(DB.getGroups(), 'groups', [] as GroupProfile[]),
@@ -1712,6 +1713,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
             settle(DB.getCharacterGroups(), 'characterGroups', [] as CharacterGroup[])
         ]);
 
+        // Never continue seeding, migrations or cloud sync after a failed core read.
+        if (!charactersReadSucceeded) return;
         let finalChars = dbChars;
 
         // A failed read is not an empty installation: never overwrite the saved Sully with defaults.

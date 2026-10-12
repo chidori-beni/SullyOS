@@ -143,7 +143,7 @@ import {
 import { buildRealtimeWorldBlock, buildUserHolidayBlock } from './realtimeWorld';
 import { insertUserHolidayInProfile } from '../../../utils/userHolidays';
 import { authorizeSelfUpdate, handleSelfUpdate, resolveScriptName } from './selfUpdate';
-import { ensureSchemaOnce, readSelfUpdateState, recordManualSelfUpdate, runAutoUpdate } from './autoUpdate';
+import { ensureSchemaOnce, readSelfUpdateState, recordManualSelfUpdate, runAutoUpdate, runScheduledAfterUpdate } from './autoUpdate';
 import { handleCronTriggerRead, handleCronTriggerWrite, isCronTriggerAuthFailure } from './cronTrigger';
 import {
   buildMcpDirectHeaders,
@@ -3635,24 +3635,23 @@ export class InstantTickDO extends DurableObject<Env> {
       await this.ctx.storage.delete(SCHEDULED_TICK_KEY);
       // 上游（4e53bd22）：换过代码之后的第一跳先补齐这版要的表。本 fork 的 cron 主路径在这个 DO 里，
       // 所以跟旧部署的兜底路径一样要做（见 worker 默认导出的 scheduled）。
-      await ensureSchemaOnce(this.env.DB as TickReportDb | undefined, SCHEMA_VERSION, () => upstream.ensureSchema(this.env));
-      const result = await upstream.scheduled(scheduled, this.env);
-      // 上游（06f65bd9）把整轮出错的原因记进库，体检面板的定时任务细账读的是这一份。
-      // 本 fork 的 cron 主路径在这个 DO 里跑，所以这里也要记，不能只记旧部署那条兜底路径。
-      await recordTickOutcome(this.env.DB as unknown as TickReportDb, result);
-      if (result && typeof result === 'object' && 'ok' in result && !(result as { ok?: unknown }).ok) {
-        console.warn('[amsg:instant-tick] cron tick 返回失败，等下一分钟重试');
-      }
-      // 上游（4e53bd22）：投递完再看要不要更新自己（有节流，绝大多数跳只读一行就走）。
+      // 上游（6bb9e472）：更新检查先走，数据库维护失败时仍有机会换上修复包。
       // 成品包地址见 selfUpdate.resolveBundleUrl —— 默认是本 fork 的 chidori-beni/sullyos-workers。
-      try {
-        await runAutoUpdate(this.env, this.env.DB as TickReportDb, {
+      await runScheduledAfterUpdate(
+        () => runAutoUpdate(this.env, this.env.DB as TickReportDb, {
           source: 'cron',
           scriptName: this.env.CF_SCRIPT_NAME?.trim() || null,
-        });
-      } catch (error) {
-        console.warn('[amsg:auto-update] 这一跳的自动更新检查没跑完', error);
-      }
+        }),
+        async () => {
+          await ensureSchemaOnce(this.env.DB as TickReportDb | undefined, SCHEMA_VERSION, () => upstream.ensureSchema(this.env));
+          const result = await upstream.scheduled(scheduled, this.env);
+          // 上游（06f65bd9）把整轮出错的原因记进库，体检面板的定时任务细账读的是这一份。
+          await recordTickOutcome(this.env.DB as unknown as TickReportDb, result);
+          if (result && typeof result === 'object' && 'ok' in result && !(result as { ok?: unknown }).ok) {
+            console.warn('[amsg:instant-tick] cron tick 返回失败，等下一分钟重试');
+          }
+        },
+      );
     }
 
     if (!uuid) return;
@@ -4008,20 +4007,19 @@ export default {
 
     // 兼容尚未建 INSTANT_TICK 的旧部署。新部署一定走上面的轻量路径；旧部署只能
     // 继续原地执行，用户更新 Worker 后就会自动切到 DO。
-    // 换过代码（自更新、Sync fork、wrangler deploy 都算）之后的第一跳先把这版要的表补齐，
-    // 不然缺表缺列会让下面那一跳每分钟静默挂。每个表结构版本只真查一次，见 ensureSchemaOnce。
-    await ensureSchemaOnce(env.DB as TickReportDb | undefined, SCHEMA_VERSION, () => upstream.ensureSchema(env));
-    const outcome = await upstream.scheduled(event, env);
-    await recordTickOutcome(env.DB as unknown as TickReportDb, outcome);
-    // 投递完再看要不要更新自己（有节流，绝大多数跳在这里只读一行就走）。cron 路上没有
-    // 请求 URL，脚本名只能靠 CF_SCRIPT_NAME——一键部署和「补钥匙」写的都有这一条。
-    try {
-      await runAutoUpdate(env, env.DB as TickReportDb, {
+    // 更新检查先走，数据库维护失败时仍有机会换上修复包。
+    await runScheduledAfterUpdate(
+      () => runAutoUpdate(env, env.DB as TickReportDb, {
         source: 'cron',
         scriptName: env.CF_SCRIPT_NAME?.trim() || null,
-      });
-    } catch (error) {
-      console.warn('[amsg:auto-update] 这一跳的自动更新检查没跑完', error);
-    }
+      }),
+      async () => {
+        // 新版需要的表和索引只补一次，自动更新后的第一跳也能补齐。
+        await ensureSchemaOnce(env.DB as TickReportDb | undefined, SCHEMA_VERSION, () => upstream.ensureSchema(env));
+        const outcome = await upstream.scheduled(event, env);
+        // 投递错误记进体检面板；正常的一跳不写诊断记录。
+        await recordTickOutcome(env.DB as unknown as TickReportDb, outcome);
+      },
+    );
   },
 };
