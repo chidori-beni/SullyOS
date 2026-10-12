@@ -62,3 +62,9 @@ it('lists book metadata without retaining bodies and loads a selected book intac
     expect(await DB.getVRNovel(book.id)).toEqual(book);
     expect(await DB.getVRNovel('missing-summary-read')).toBeUndefined();
 });
+
+it('market deduplication returns only event IDs, not old card bodies', async()=>{
+  await DB.saveMessage({charId:'market-id-projection',role:'assistant',type:'vr_card',content:'大正文'.repeat(1000),metadata:{vrCard:true,marketEventId:'legacy-event'}});
+  await DB.saveMessage({charId:'market-id-projection',role:'assistant',type:'text',content:'不是动态',metadata:{marketEventId:'ignore'}});
+  expect(await DB.getVRMarketEventIds('market-id-projection')).toEqual(['legacy-event']);
+});

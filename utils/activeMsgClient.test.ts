@@ -46,6 +46,7 @@ import {
 import {
   AMSG_FIRE_PACK_KEY,
   AMSG_SLOT_CURRENT_TIME, AMSG_SLOT_REALTIME_WORLD, AMSG_SLOT_SCENE,
+  AMSG_SILENT_MARK, AMSG_SLOT_LIVE_CHAT,
   AMSG_SLOT_TASK_LIST, AMSG_SLOT_TIME_SINCE_USER, AMSG_SLOT_USER_CLOCK,
 } from './amsgFirePack';
 import { clearInstantChatPending, setInstantChatPending } from './amsgInstantChat';
@@ -1094,6 +1095,18 @@ describe('buildFirePack 的时区参照系与模板（①）', () => {
     const { template } = await pack(baseChar());
     expect(template).toContain('日子也在往前过');
     expect(template).toContain('关心别变成查岗');
+  });
+
+  // 到点说不说由角色看着最新对话自己判。模板得把三样东西交到它手上：正聊着时那行事实的
+  // 落点、「正聊着不等于不说」这条分寸、决定不说时写什么。缺了标记，角色的「不说」就只能
+  // 是空输出，跟模型没写出来分不开。
+  it('【开口之前】带上正聊着的落点、默认是说的分寸、和不说时的标记', async () => {
+    const { template } = await pack(baseChar());
+    const section = template.slice(template.indexOf('【开口之前】'));
+    expect(section).toContain(AMSG_SLOT_LIVE_CHAT);
+    expect(section).toContain('默认是照常说');
+    expect(section).toContain('正聊着不等于不说');
+    expect(section).toContain(`只写 ${AMSG_SILENT_MARK} 这一个标记`);
   });
 
   // 回归守卫：timeAwarenessEnabled=false 的架空角色在前台连今天几号都读不到

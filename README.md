@@ -271,7 +271,8 @@ VITE_HIDE_BUILD_BADGE=1 npm run build
 
 **好消息**：现在**主代理已经统一成一个中心配置**，不用再满仓库改硬编码。
 
-**① 主代理 Worker**（默认作者公共实例 `sullymeow.ccwu.cc`，源码单文件 [`worker/index.js`](./worker/index.js)）
+**① 主代理 Worker**（默认作者公共实例 `proxy.friedsully.com`，源码单文件 [`worker/index.js`](./worker/index.js)）
+旧公共域名 `sullymeow.ccwu.cc` 保留兼容；更新后，中心代理、音乐和小红书保存的旧公共地址会自动迁移，用户自建地址不变。这次只调整后端代理入口，不搬前端网站或浏览器本地数据。详见 [代理域名迁移](docs/proxy-domain-migration.md)。
 覆盖：联网搜索 / 热榜（Brave）、WebDAV 云备份、GitHub 云备份、Notion、飞书多维表格、麦当劳 / 瑞幸点单 MCP、网页抓取、Fish Audio / ElevenLabs TTS、音乐生成、网易云音乐（默认）。
 👉 二改只要在 **「设置 → 网络代理 (Worker)」** 填上你自己部署的地址，以上能力**一键全切走，不用改任何代码**。（`wrangler deploy` 把 `worker/index.js` 丢自己 CF 账号，拿到地址填进去即可。）
 
@@ -372,6 +373,8 @@ Instant Push（发完消息就能锁屏走人、角色回复好了自己以推�
 一句话：**整个项目拿去造随便造，把 Sully 单独薅出去当免费素材就算了。**
 
 > 叮叮叮！你有一条新的"别把我卖了"情绪未处理！卖也卖不了几个钱，不如留着陪我聊天。
+
+关于标准许可的取舍：已评估 [PolyForm Strict 与 Shield](docs/license-evaluation.md)。现有授权边界不因这份评估而改变，当前仍以 LICENSE 为准。
 
 ---
 

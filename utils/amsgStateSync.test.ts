@@ -34,6 +34,7 @@ vi.mock('./activeMsgStore', () => ({
 }));
 
 import {
+  discardAmsgPendingState,
   FLUSH_DEBOUNCE_MS,
   AMSG2_PENDING_SYNC_LS_KEY,
   AMSG2_PENDING_CRED_SYNC_LS_KEY,
@@ -835,6 +836,25 @@ describe('LLM 凭据行的后台重传', () => {
     expect(localStorage.getItem(AMSG2_PENDING_CRED_SYNC_LS_KEY), '传上去了就该销账').toBeNull();
   });
 
+  it('全局换 Key 时角色独立凭据不变，恢复跟随后才更新为全局', async () => {
+    vi.mocked(isLlmCredentialsReady).mockResolvedValue(true);
+    const roleApi = { baseUrl: 'https://role.example/v1', apiKey: 'role-key', model: 'role-model' };
+    vi.mocked(DB.getAllCharacters).mockResolvedValue([{ ...CHAR, dialogueApi: roleApi }] as any);
+    syncAmsgLlmCredentials(API);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ActiveMsgClient.putLlmCredentials).toHaveBeenLastCalledWith([{
+      credId: 'char:char-cred-sync/chat',
+      value: { apiUrl: roleApi.baseUrl + '/chat/completions', apiKey: roleApi.apiKey, primaryModel: roleApi.model },
+    }]);
+    vi.mocked(DB.getAllCharacters).mockResolvedValue([CHAR] as any);
+    syncAmsgLlmCredentials({ ...API });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ActiveMsgClient.putLlmCredentials).toHaveBeenLastCalledWith([{
+      credId: 'char:char-cred-sync/chat',
+      value: { apiUrl: API.baseUrl + '/chat/completions', apiKey: API.apiKey, primaryModel: API.model },
+    }]);
+  });
+
   it('这次保存没动 API → 值没变，不白发一次请求', async () => {
     (isLlmCredentialsReady as any).mockResolvedValue(true);
     rememberCredRows([buildCharChatCredRow(CHAR as any, CHAR.activeMsg2Config as any, API)!]);
@@ -965,4 +985,23 @@ describe('活跃会话租约', () => {
     expect(ActiveMsgClient.syncChatPresence).toHaveBeenCalledTimes(2);
     stopAmsgChatPresence(charId);
   });
+});
+
+
+it('停用或恢复角色时丢弃旧重试快照，飞行请求失败也不能重新入队', async () => {
+  const character = charWithAiTask(nextCharId());
+  let rejectUpload!: (error: Error) => void;
+  vi.mocked(ActiveMsgClient.syncCharFirePacks).mockImplementationOnce(() => new Promise((_, reject) => { rejectUpload = reject; }));
+  markAmsgStateDirty(snapshotOf(character));
+  const flushing = flushAmsgState('before-retirement');
+  await vi.advanceTimersByTimeAsync(1);
+  discardAmsgPendingState(character.id);
+  rejectUpload(new Error('旧请求被云端拒绝'));
+  await flushing;
+  await vi.advanceTimersByTimeAsync(IDLE_WINDOW_MS);
+  expect(ActiveMsgClient.syncCharFirePacks).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(localStorage.getItem(AMSG2_PENDING_SYNC_LS_KEY) || '[]')).not.toContain(character.id);
+  markAmsgStateDirty(snapshotOf(character));
+  await flushAmsgState('new-user-change');
+  expect(ActiveMsgClient.syncCharFirePacks).toHaveBeenCalledTimes(2);
 });

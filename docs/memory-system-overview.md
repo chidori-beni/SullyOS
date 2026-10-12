@@ -71,6 +71,8 @@
 
 ## 系统二：向量化记忆宫殿（主系统，仿大脑结构）
 
+检索评分对旧档或远程候选中的缺失／非法 `room` 使用客厅评分参数兜底，与提取入口一致；衰减和房间权重共用 `resolveMemoryScoringRoom`。仅在评分时兜底，不改写记忆正文、向量或原房间，不因一条异常记录中断整轮召回。合法七房间的评分保持原样。回归测试见 `utils/memoryPalace/roomScoring.test.ts`。
+
 ### AI 原文范围（各入口共用）
 
 `utils/chatContextRange.ts` 是角色原文可见范围的唯一入口：
