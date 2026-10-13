@@ -15,6 +15,7 @@ import { Capacitor, CapacitorHttp } from '@capacitor/core';
 
 import { CloudBackupConfig, CloudBackupFile } from '../types';
 import { getProxyWorkerUrl } from './proxyWorker';
+import type { UiStatusMessage } from './uiLocale';
 
 // 经 CF Worker 代理上传（web 路径）的请求体上限。Cloudflare Worker 免费版单次请求体约 100MB，
 // 超了会被 Worker/平台直接拒（返回 413 之类），且大请求体上行还可能撞 ~42s 上行超时。所以在发起
@@ -139,7 +140,7 @@ const webdavRequest = async (
 /**
  * Test WebDAV connection by doing a PROPFIND on the remote path
  */
-export const testConnection = async (config: CloudBackupConfig): Promise<{ ok: boolean; message: string }> => {
+export const testConnection = async (config: CloudBackupConfig): Promise<{ ok: boolean; message: string; uiMessage?: UiStatusMessage }> => {
     try {
         const res = await webdavRequest(config, config.remotePath, 'PROPFIND', {
             depth: '0',
@@ -147,16 +148,16 @@ export const testConnection = async (config: CloudBackupConfig): Promise<{ ok: b
             body: '<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>',
         });
 
-        if (res.status === 207 || res.status === 200) return { ok: true, message: '连接成功' };
-        if (res.status === 401) return { ok: false, message: '认证失败：请检查用户名和密码' };
+        if (res.status === 207 || res.status === 200) return { ok: true, message: '连接成功', uiMessage: { key: 'settings.webdavResult.connected' } };
+        if (res.status === 401) return { ok: false, message: '认证失败：请检查用户名和密码', uiMessage: { key: 'settings.webdavResult.auth' } };
         if (res.status === 404) {
             const mkcolOk = await createDirectory(config);
-            if (mkcolOk) return { ok: true, message: '连接成功（已自动创建备份目录）' };
-            return { ok: false, message: '备份目录不存在且无法创建' };
+            if (mkcolOk) return { ok: true, message: '连接成功（已自动创建备份目录）', uiMessage: { key: 'settings.webdavResult.created' } };
+            return { ok: false, message: '备份目录不存在且无法创建', uiMessage: { key: 'settings.webdavResult.directory' } };
         }
-        return { ok: false, message: `服务器返回 ${res.status}` };
+        return { ok: false, message: `服务器返回 ${res.status}`, uiMessage: { key: 'settings.webdavResult.status', params: { status: res.status } } };
     } catch (e: any) {
-        return { ok: false, message: `连接失败: ${e.message}` };
+        return { ok: false, message: `连接失败: ${e.message}`, uiMessage: { key: 'settings.webdavResult.network', params: { error: String(e.message) } } };
     }
 };
 

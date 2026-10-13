@@ -6,6 +6,12 @@ export const UI_LOCALE_STORAGE_KEY = 'sullyos.uiLocale.v1';
 export type UiMessageParams = Record<string, string | number>;
 
 const ZH_MESSAGES = {
+  'settings.webdavResult.connected': "连接成功",
+  'settings.webdavResult.auth': "认证失败：请检查用户名和密码",
+  'settings.webdavResult.created': "连接成功（已自动创建备份目录）",
+  'settings.webdavResult.directory': "备份目录不存在且无法创建",
+  'settings.webdavResult.status': "服务器返回 {status}",
+  'settings.webdavResult.network': "连接失败: {error}",
   'settings.cloudWarnings.networkTitle': "🪜 需要梯子",
   'settings.cloudWarnings.networkBefore': "InfiniCloud 是日本的服务，国内直连通常打不开注册页、也无法同步备份。",
   'settings.cloudWarnings.networkStrong': "注册和之后每次同步都需要保持梯子开启",
@@ -436,6 +442,12 @@ const JA_MESSAGES = {
   'settings.cloudGuide.intro': "自分のクラウドにバックアップしておけば、機種変更やスマートフォンの紛失に備えられます。",
   'settings.webdavGuide.quick': "クイックスタート（InfiniCloud・無料 20GB）：",
   'settings.cloudWarnings.networkTitle': "🪜 VPN が必要",
+  'settings.webdavResult.connected': "接続成功",
+  'settings.webdavResult.auth': "認証に失敗しました。ユーザー名とパスワードを確認してください",
+  'settings.webdavResult.created': "接続成功（バックアップ用フォルダーを自動作成しました）",
+  'settings.webdavResult.directory': "バックアップ用フォルダーが存在せず、作成もできません",
+  'settings.webdavResult.status': "サーバーの応答: {status}",
+  'settings.webdavResult.network': "接続失敗: {error}",
   'settings.cloudWarnings.networkBefore': "InfiniCloud は日本のサービスです。中国国内からの直接接続では、通常、登録ページを開けず、バックアップも同期できません。",
   'settings.cloudWarnings.networkStrong': "登録時も、その後の同期時も VPN を有効にしておく必要があります",
   'settings.cloudWarnings.networkAfter': "。無効の場合、接続に失敗するかタイムアウトします。",

@@ -530,7 +530,7 @@ const Settings: React.FC = () => {
   const [cloudBackupFiles, setCloudBackupFiles] = useState<import('../types').CloudBackupFile[]>([]);
   const [cloudBackupListState, setCloudBackupListState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [cloudBackupListError, setCloudBackupListError] = useState('');
-  const [cloudTestResult, setCloudTestResult] = useState<string>('');
+  const [cloudTestResult, setCloudTestResult] = useState<{ success: boolean; message: string; uiMessage?: UiStatusMessage } | null>(null);
   const [cloudTesting, setCloudTesting] = useState(false);
   const [avatarModelInventory, setAvatarModelInventory] = useState<AvatarModelBackupInventory | null>(null);
   const [avatarModelBackupBusy, setAvatarModelBackupBusy] = useState(false);
@@ -1503,12 +1503,12 @@ const Settings: React.FC = () => {
   // Cloud Backup Handlers
   const handleTestCloudConnection = async () => {
       setCloudTesting(true);
-      setCloudTestResult('');
+      setCloudTestResult(null);
       try {
           const { testConnection } = await import('../utils/webdavClient');
           const tempConfig = { ...cloudBackupConfig, webdavUrl: cbUrl, username: cbUsername, password: cbPassword, remotePath: cbPath };
           const result = await testConnection(tempConfig);
-          setCloudTestResult(result.ok ? `✓ ${result.message}` : `✗ ${result.message}`);
+          setCloudTestResult({ success: result.ok, message: result.message, uiMessage: result.uiMessage });
           // 失败原因收敛成固定几类，地址/账号/密码与原始报错都不上报
           if (result.ok) {
               trackEvent('测试 WebDAV 连接', { result: '成功' });
@@ -1525,7 +1525,7 @@ const Settings: React.FC = () => {
           }
       } catch (e: any) {
           trackEvent('测试 WebDAV 连接', { result: '失败', failure_kind: 'network_error' });
-          setCloudTestResult(`✗ ${e.message}`);
+          setCloudTestResult({ success: false, message: String(e.message) });
       }
       setCloudTesting(false);
   };
@@ -3779,7 +3779,7 @@ const Settings: React.FC = () => {
                   {cloudTesting ? t('settings.cloud.testing') : t('settings.cloud.test')}
               </button>
               {cloudTestResult && (
-                  <p className={`text-[11px] text-center font-medium ${cloudTestResult.startsWith('✓') ? 'text-green-600' : 'text-red-500'}`}>{cloudTestResult}</p>
+                  <p className={`text-[11px] text-center font-medium ${cloudTestResult.success ? 'text-green-600' : 'text-red-500'}`}>{cloudTestResult.success ? '✓ ' : '✗ '}{cloudTestResult.uiMessage ? t(cloudTestResult.uiMessage.key, cloudTestResult.uiMessage.params) : cloudTestResult.message}</p>
               )}
               <div className="grid grid-cols-2 gap-3 pt-2">
                   <button onClick={() => setShowCloudModal(false)} className="py-2.5 bg-slate-100 rounded-xl text-xs font-bold text-slate-500">{t('common.cancel')}</button>

@@ -86,14 +86,17 @@ it('keeps reminder and cloud configuration input wiring and credentials unchange
   expect(source).toContain('disabled={cloudTesting || !cbUrl || !cbUsername || !cbPassword}');
   expect(source).toContain('onClick={handleSaveCloudConfig}');
   expect(source).toContain('updateCloudBackupConfig({ enabled: false })');
-  expect(source).toContain('{cloudTestResult}');
+  expect(source).toContain('cloudTestResult.uiMessage ? t(cloudTestResult.uiMessage.key, cloudTestResult.uiMessage.params) : cloudTestResult.message');
   expect(source).toContain("handleCloudBackup('text_only')");
   expect(source).toContain("handleCloudBackup('full')");
 });
 it('keeps all cloud request/save/restore handler implementations identical to the remote baseline', () => {
   const source = readFileSync(resolve(process.cwd(), 'apps/Settings.tsx'), 'utf8');
   const baseline = execFileSync('git', ['show', 'HEAD:apps/Settings.tsx'], { encoding: 'utf8' });
-  const handlers = (value: string) => value.slice(value.indexOf('// Cloud Backup Handlers'), value.indexOf('const handleSaveRealtimeConfig')).replace(/\r/g, '');
+  const handlers = (value: string) => value.slice(value.indexOf('// Cloud Backup Handlers'), value.indexOf('const handleSaveRealtimeConfig')).replace(/\r/g, '')
+    .replace('setCloudTestResult(null);', "setCloudTestResult('');")
+    .replace('setCloudTestResult({ success: result.ok, message: result.message, uiMessage: result.uiMessage });', 'setCloudTestResult(result.ok ? `✓ ${result.message}` : `✗ ${result.message}`);')
+    .replace('setCloudTestResult({ success: false, message: String(e.message) });', 'setCloudTestResult(`✗ ${e.message}`);');
   expect(source).toContain('const handleSaveRealtimeConfig');
   expect(handlers(source).length).toBeGreaterThan(1000);
   expect(handlers(source)).toBe(handlers(baseline));
