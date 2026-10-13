@@ -1,0 +1,22 @@
+import { expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import ts from 'typescript';
+import { translateUi } from './uiLocale';
+it.each(['zh-CN', 'ja-JP'] as const)('keeps display markers out of persisted recovery metadata in %s', locale => {
+  const source = readFileSync(resolve(process.cwd(), 'context/OSContext.tsx'), 'utf8');
+  const start = source.indexOf("let lastCurrent = '解析备份文件';");
+  const end = source.indexOf('const countZipAssetFiles =', start);
+  const body = source.slice(start, end) + '\nreturn showImportProgress;';
+  const js = ts.transpileModule(body, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
+  const persist = vi.fn(), display = vi.fn();
+  const show = new Function('lastProgress', 'sourceName', 'sourceSize', 'restoredAssetFiles', 'totalAssetFiles', 'markImportInProgress', 'setSysOperation', 'formatBytes', 'translateUi', 'loadUiLocale', js)(0, 'backup{field}.zip', 3, new Set(), 0, persist, display, () => '3 B', translateUi, () => locale);
+  const update = { current: '分片 memory_vectors', currentFile: 'raw{field}', itemDone: 1, itemTotal: 3 };
+  show('parsing', 'headline', 5, update, { key: 'settings.importCurrent.shard', params: { field: 'memory_vectors' } });
+  expect(persist.mock.calls[0][2]).toEqual({ sourceSize: 3, assetDone: 0, assetTotal: undefined, ...update });
+  expect(display.mock.calls[0][0].message).toContain(translateUi(locale, 'settings.importCurrent.shard', { field: 'memory_vectors' }));
+  expect(display.mock.calls[0][0].message).toContain('raw{field}');
+  show('assets', 'next', 6, { current: 'raw category' });
+  expect(display.mock.calls[1][0].message).toContain('raw category');
+  expect(display.mock.calls[1][0].message).not.toContain(translateUi(locale, 'settings.importCurrent.shard', { field: 'memory_vectors' }));
+});

@@ -16,6 +16,17 @@ it('keeps complete import logic, phase persistence and exceptions unchanged beyo
   const baseline = execFileSync('git', ['show', 'HEAD:context/OSContext.tsx'], { encoding: 'utf8' });
   const slice = (value: string) => value.slice(value.indexOf('const importSystem ='), value.indexOf('把这台设备和它名下的云端数据一起归零')).replace(/\r/g, '');
   let actual = slice(source);
+  const baselineSlice = slice(baseline);
+  if (!baselineSlice.includes('let lastCurrentUi:')) actual = actual
+    .replace('      let lastCurrentUi: UiStatusMessage | undefined;\n', '')
+    .replace("{ current: lastCurrentUi ? translateUi(loadUiLocale(), lastCurrentUi.key, lastCurrentUi.params) : current }", '{ current }')
+    .replace('update: ImportProgressUpdate = {},\n          currentUi?: UiStatusMessage', 'update: ImportProgressUpdate = {}')
+    .replace('if (update.current !== undefined) { lastCurrent = update.current; lastCurrentUi = currentUi; }', 'if (update.current !== undefined) lastCurrent = update.current;')
+    .replace(", { key: 'settings.importCurrent.parsing' }", '')
+    .replace(", { key: 'settings.importCurrent.shard', params: { field } }", '')
+    .replace(", { key: 'settings.importCurrent.database' }", '')
+    .replace(", { key: 'settings.importCurrent.collaboration' }", '')
+    .replace(", { key: 'settings.importCurrent.settings' }", '');
   const pairs = [
     ["translateUi(loadUiLocale(), 'settings.importOperation.current', { current })", '`当前部分：${current}`'],
     ["translateUi(loadUiLocale(), 'settings.importOperation.items', { done: update.itemDone || 0, total: update.itemTotal })", '`条目：${update.itemDone || 0}/${update.itemTotal}`'],

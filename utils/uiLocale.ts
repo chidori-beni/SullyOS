@@ -6,6 +6,11 @@ export const UI_LOCALE_STORAGE_KEY = 'sullyos.uiLocale.v1';
 export type UiMessageParams = Record<string, string | number>;
 
 const ZH_MESSAGES = {
+  'settings.importCurrent.parsing': "解析备份文件",
+  'settings.importCurrent.shard': "分片 {field}",
+  'settings.importCurrent.database': "准备写入数据库",
+  'settings.importCurrent.collaboration': "协同窗口与文件",
+  'settings.importCurrent.settings': "系统设置",
   'settings.importOperation.parsing': "正在解析备份文件...",
   'settings.importOperation.shards': "正在解析备份分片...",
   'settings.importOperation.assets': "正在恢复素材...",
@@ -501,6 +506,11 @@ const JA_MESSAGES = {
   'settings.cloud.saved': 'クラウドバックアップ設定を保存しました',
   'settings.cloudOperation.pack': "バックアップデータを準備中...",
   'settings.exportOperation.init': "バックアップ作成エンジンを初期化中...",
+  'settings.importCurrent.parsing': "バックアップファイルの解析",
+  'settings.importCurrent.shard': "分割データ {field}",
+  'settings.importCurrent.database': "データベースへの書き込み準備",
+  'settings.importCurrent.collaboration': "共同作業ウィンドウとファイル",
+  'settings.importCurrent.settings': "システム設定",
   'settings.importOperation.parsing': "バックアップファイルを解析中...",
   'settings.importOperation.shards': "バックアップの分割データを解析中...",
   'settings.importOperation.assets': "素材を復元中...",

@@ -1,5 +1,6 @@
 import { handleLocalBack } from '../utils/localBackHandlers';
 import { loadUiLocale, translateUi } from '../utils/uiLocale';
+import type { UiStatusMessage } from '../utils/uiLocale';
 import {isHomeAssetDisposal} from '../utils/homeAssetCancellation';
 import { processHomeMemoryAfterSave } from '../utils/homeMemoryPostHook';
 import { retireCloudCharacter } from '../utils/amsgCloudRetirement';
@@ -5170,6 +5171,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       let totalAssetFiles = 0;
       let lastProgress = 0;
       let lastCurrent = '解析备份文件';
+      let lastCurrentUi: UiStatusMessage | undefined;
       let lastCurrentFile: string | undefined;
       let lastCurrentFileSize: number | undefined;
 
@@ -5178,7 +5180,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const current = update.current ?? lastCurrent;
           const currentFile = update.currentFile ?? lastCurrentFile;
           const currentFileSize = update.currentFileSize ?? lastCurrentFileSize;
-          if (current) lines.push(translateUi(loadUiLocale(), 'settings.importOperation.current', { current }));
+          if (current) lines.push(translateUi(loadUiLocale(), 'settings.importOperation.current', { current: lastCurrentUi ? translateUi(loadUiLocale(), lastCurrentUi.key, lastCurrentUi.params) : current }));
           if (typeof update.itemTotal === 'number' && update.itemTotal > 0) {
               lines.push(translateUi(loadUiLocale(), 'settings.importOperation.items', { done: update.itemDone || 0, total: update.itemTotal }));
           }
@@ -5197,9 +5199,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           phase: string,
           headline: string,
           progress: number,
-          update: ImportProgressUpdate = {}
+          update: ImportProgressUpdate = {},
+          currentUi?: UiStatusMessage
       ) => {
-          if (update.current !== undefined) lastCurrent = update.current;
+          if (update.current !== undefined) { lastCurrent = update.current; lastCurrentUi = currentUi; }
           if (update.currentFile !== undefined) lastCurrentFile = update.currentFile;
           if (update.currentFileSize !== undefined) lastCurrentFileSize = update.currentFileSize;
           lastProgress = Math.max(lastProgress, Math.min(99, Math.max(0, progress)));
@@ -5226,7 +5229,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           return Math.max(0, Math.floor(base64.length * 3 / 4) - padding);
       };
 
-      showImportProgress('parsing', translateUi(loadUiLocale(), 'settings.importOperation.parsing'), 1, { current: '解析备份文件', sourceSize });
+      showImportProgress('parsing', translateUi(loadUiLocale(), 'settings.importOperation.parsing'), 1, { current: '解析备份文件', sourceSize }, { key: 'settings.importCurrent.parsing' });
       try {
           let data: FullBackupData;
           let zip: JSZipLike | null = null;
@@ -5264,7 +5267,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                               onShardProgress: (field, idx, total) => {
                                   showImportProgress('parsing', translateUi(loadUiLocale(), 'settings.importOperation.shards'),
                                       5 + Math.floor((idx / Math.max(1, total)) * 25),
-                                      { current: `分片 ${field}` });
+                                      { current: `分片 ${field}` }, { key: 'settings.importCurrent.shard', params: { field } });
                               },
                           },
                       ) as FullBackupData;
@@ -5430,7 +5433,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               );
           }
 
-          showImportProgress('database', translateUi(loadUiLocale(), 'settings.importOperation.database'), 50, { current: '准备写入数据库', currentFile: '' });
+          showImportProgress('database', translateUi(loadUiLocale(), 'settings.importOperation.database'), 50, { current: '准备写入数据库', currentFile: '' }, { key: 'settings.importCurrent.database' });
           await DB.importFullData(data, {
               allowBackendConnection,
               beforeWrite: restoreAssetsInPlace,
@@ -5457,7 +5460,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               || data.collaborationSettings !== undefined
               || collaborationAssetRecords !== undefined;
           if (hasCollaborationBackup) {
-              showImportProgress('database', translateUi(loadUiLocale(), 'settings.importOperation.collaboration'), 91, { current: '协同窗口与文件', currentFile: '' });
+              showImportProgress('database', translateUi(loadUiLocale(), 'settings.importOperation.collaboration'), 91, { current: '协同窗口与文件', currentFile: '' }, { key: 'settings.importCurrent.collaboration' });
               const { CollaborationStore } = await import('../features/collaboration/store');
               await CollaborationStore.importBackup({
                   sessions: data.collaborationSessions,
@@ -5470,7 +5473,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               });
           }
           
-          showImportProgress('settings', translateUi(loadUiLocale(), 'settings.importOperation.settings'), 92, { current: '系统设置', currentFile: '' });
+          showImportProgress('settings', translateUi(loadUiLocale(), 'settings.importOperation.settings'), 92, { current: '系统设置', currentFile: '' }, { key: 'settings.importCurrent.settings' });
           if (data.sarLocalState) await restoreAssetsInPlace(data.sarLocalState, 'SAR 存档');
           restoreSARLocalBackup(data.sarLocalState, { replaceMissing: replacesPrimaryHistory });
           if (data.chatInputPreferences !== undefined) saveChatInputPreferences(data.chatInputPreferences);
