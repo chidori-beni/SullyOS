@@ -17,6 +17,7 @@ it('keeps complete import logic, phase persistence and exceptions unchanged beyo
   const slice = (value: string) => value.slice(value.indexOf('const importSystem ='), value.indexOf('把这台设备和它名下的云端数据一起归零')).replace(/\r/g, '');
   let actual = slice(source);
   const baselineSlice = slice(baseline);
+  if (!baselineSlice.includes('}, progress.uiMessage ?')) actual = actual.replace("}, progress.uiMessage ? (progress.stage === 'done'\n                      ? { key: 'settings.importDb.done', params: { label: translateUi(loadUiLocale(), progress.uiMessage.key, progress.uiMessage.params) } }\n                      : progress.uiMessage) : undefined);", '});');
   if (!baselineSlice.includes("currentUi?: UiStatusMessage): Promise<void>")) {
     actual = actual.replace("label = '数据', currentUi?: UiStatusMessage", "label = '数据'")
       .split('}, currentUi);').join('});');

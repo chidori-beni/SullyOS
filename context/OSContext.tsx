@@ -5450,7 +5450,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       currentFile: '',
                       itemDone: progress.itemDone,
                       itemTotal: progress.itemTotal,
-                  });
+                  }, progress.uiMessage ? (progress.stage === 'done'
+                      ? { key: 'settings.importDb.done', params: { label: translateUi(loadUiLocale(), progress.uiMessage.key, progress.uiMessage.params) } }
+                      : progress.uiMessage) : undefined);
               },
           });
 

@@ -1,4 +1,5 @@
 import { readLocalCursor } from './localRead';
+import type { UiStatusMessage } from './uiLocale';
 import { reportDatabaseFailure } from './databaseHealth';
 import { associateDatabaseOpen, beginDatabaseOpen } from './databaseOpenDiagnostics';
 import { persistCharacterWithHomeMessages } from './homeMessageBridge';
@@ -4086,9 +4087,10 @@ export const DB = {
   importFullData: async (
       data: FullBackupData,
       options: {
-          beforeWrite?: (root: any, label: string) => Promise<void>;
+          beforeWrite?: (root: any, label: string, uiMessage?: UiStatusMessage) => Promise<void>;
           onProgress?: (progress: {
               label: string;
+              uiMessage?: UiStatusMessage;
               stage: 'start' | 'items' | 'done';
               sectionDone: number;
               sectionTotal: number;
@@ -4237,6 +4239,8 @@ export const DB = {
       ];
       const sectionTotal = Math.max(1, plannedSections.filter(Boolean).length);
       let sectionDone = 0;
+      let sectionUi: UiStatusMessage | undefined;
+      let sectionLabel: string | undefined;
 
       const report = (
           label: string,
@@ -4246,6 +4250,7 @@ export const DB = {
       ) => {
           options.onProgress?.({
               label,
+              uiMessage: label === sectionLabel ? sectionUi : undefined,
               stage,
               sectionDone,
               sectionTotal,
@@ -4258,19 +4263,22 @@ export const DB = {
           label: string,
           present: boolean,
           work: () => Promise<void>,
-          itemTotal?: number
+          itemTotal?: number,
+          uiMessage?: UiStatusMessage
       ) => {
           if (!present) return;
+          sectionUi = uiMessage;
+          sectionLabel = label;
           report(label, 'start', 0, itemTotal);
           await work();
           sectionDone += 1;
           report(label, 'done', itemTotal, itemTotal);
       };
 
-      const beforeWrite = async (root: any, label: string, restoreAssets: boolean) => {
+      const beforeWrite = async (root: any, label: string, restoreAssets: boolean, uiMessage?: UiStatusMessage) => {
           if (!restoreAssets || root === undefined || root === null) return;
           if (!options.beforeWrite) return;
-          await options.beforeWrite(root, label);
+          await options.beforeWrite(root, label, uiMessage || (label === sectionLabel ? sectionUi : undefined));
       };
 
       const clearStore = async (storeName: string) => {
@@ -4358,7 +4366,7 @@ export const DB = {
       await runSection('角色资料', data.characters !== undefined || data.mediaAssets !== undefined, async () => {
           if (data.characters) {
               if (data.mediaAssets) {
-                  await beforeWrite(data.mediaAssets, '角色媒体', true);
+                  await beforeWrite(data.mediaAssets, '角色媒体', true, { key: 'settings.importDb.media' });
                   const mediaAssets = data.mediaAssets;
                   data.characters = data.characters.map(c => {
                       const media = mediaAssets.find(m => m.charId === c.id);
@@ -4367,7 +4375,7 @@ export const DB = {
               }
               await clearAndAdd(STORE_CHARACTERS, data.characters, '角色资料', true);
           } else if (data.mediaAssets && hasStore(STORE_CHARACTERS)) {
-              await beforeWrite(data.mediaAssets, '角色媒体', true);
+              await beforeWrite(data.mediaAssets, '角色媒体', true, { key: 'settings.importDb.media' });
               const mediaAssets = data.mediaAssets;
               const existingChars = await getAllFromStore<CharacterProfile>(STORE_CHARACTERS);
               if (existingChars.length > 0) {
@@ -4380,12 +4388,12 @@ export const DB = {
           }
           data.characters = undefined as any;
           data.mediaAssets = undefined as any;
-      }, data.characters?.length || data.mediaAssets?.length || 0);
+      }, data.characters?.length || data.mediaAssets?.length || 0, { key: 'settings.importDb.characters' });
 
       await runSection('角色分组', data.characterGroups !== undefined, async () => {
           await mergeStore(STORE_CHAR_GROUPS, data.characterGroups, '角色分组', false);
           data.characterGroups = undefined as any;
-      }, data.characterGroups?.length || 0);
+      }, data.characterGroups?.length || 0, { key: 'settings.importDb.groups' });
 
       await runSection('聊天记录', data.messages !== undefined, async () => {
           if (!hasStore(STORE_MESSAGES)) return;
@@ -4400,7 +4408,7 @@ export const DB = {
               // 分批导入中途失败也可能已覆盖旧记录；中途读取建立的缓存必须作废。
               invalidateStoryTimelineRepair(db);
           }
-      }, data.messages?.length || 0);
+      }, data.messages?.length || 0, { key: 'settings.importDb.messages' });
 
       await runSection('聊天主题', data.customThemes !== undefined, async () => {
           await mergeStore(STORE_THEMES, data.customThemes, '聊天主题', true);
