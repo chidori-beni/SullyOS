@@ -4685,19 +4685,19 @@ export const DB = {
       await runSection('歌曲', data.songs !== undefined, async () => {
           await clearAndAdd(STORE_SONGS, data.songs, '歌曲', false);
           data.songs = undefined as any;
-      }, data.songs?.length || 0);
+      }, data.songs?.length || 0, { key: 'settings.importDb.songs' });
       await runSection('练习本', data.quizSessions !== undefined, async () => {
           await clearAndAdd(STORE_QUIZZES, data.quizSessions, '练习本', false);
           data.quizSessions = undefined as any;
-      }, data.quizSessions?.length || 0);
+      }, data.quizSessions?.length || 0, { key: 'settings.importDb.quiz' });
       await runSection('攻略本', data.guidebookSessions !== undefined, async () => {
           await clearAndAdd(STORE_GUIDEBOOK, data.guidebookSessions, '攻略本', false);
           data.guidebookSessions = undefined as any;
-      }, data.guidebookSessions?.length || 0);
+      }, data.guidebookSessions?.length || 0, { key: 'settings.importDb.guidebook' });
       await runSection('定时消息', data.scheduledMessages !== undefined, async () => {
           await clearAndAdd(STORE_SCHEDULED, data.scheduledMessages || [], '定时消息', false);
           data.scheduledMessages = undefined as any;
-      }, data.scheduledMessages?.length || 0);
+      }, data.scheduledMessages?.length || 0, { key: 'settings.importDb.scheduled' });
       await runSection('人生模拟', data.lifeSimState !== undefined, async () => {
           if (!hasStore(STORE_LIFE_SIM)) return;
           await beforeWrite(data.lifeSimState, '人生模拟', true);
@@ -4708,29 +4708,29 @@ export const DB = {
               }
           });
           data.lifeSimState = undefined as any;
-      }, data.lifeSimState ? 1 : 0);
+      }, data.lifeSimState ? 1 : 0, { key: 'settings.importDb.lifeSim' });
       await runSection('银行流水', data.bankTransactions !== undefined, async () => {
           await clearAndAdd(STORE_BANK_TX, data.bankTransactions, '银行流水', false);
           data.bankTransactions = undefined as any;
-      }, data.bankTransactions?.length || 0);
+      }, data.bankTransactions?.length || 0, { key: 'settings.importDb.bankTx' });
       await runSection('小红书活动', data.xhsActivities !== undefined, async () => {
           await clearAndAdd(STORE_XHS_ACTIVITIES, data.xhsActivities, '小红书活动', false);
           data.xhsActivities = undefined as any;
-      }, data.xhsActivities?.length || 0);
+      }, data.xhsActivities?.length || 0, { key: 'settings.importDb.xhsActivities' });
       await runSection('角色小红书主页', data.xhsOwnedPosts !== undefined, async () => {
           await clearAndAdd(STORE_XHS_OWNED_POSTS, data.xhsOwnedPosts, '角色小红书主页', false);
           data.xhsOwnedPosts = undefined as any;
-      }, data.xhsOwnedPosts?.length || 0);
+      }, data.xhsOwnedPosts?.length || 0, { key: 'settings.importDb.xhsOwned' });
       await runSection('小红书图库', data.xhsStockImages !== undefined, async () => {
           await clearAndAdd(STORE_XHS_STOCK, data.xhsStockImages, '小红书图库', true);
           data.xhsStockImages = undefined as any;
-      }, data.xhsStockImages?.length || 0);
+      }, data.xhsStockImages?.length || 0, { key: 'settings.importDb.xhsImages' });
 
       // Memory Palace (记忆宫殿)
       await runSection('记忆节点', data.memoryNodes !== undefined, async () => {
           await clearAndAdd('memory_nodes', data.memoryNodes, '记忆节点', false);
           data.memoryNodes = undefined as any;
-      }, data.memoryNodes?.length || 0);
+      }, data.memoryNodes?.length || 0, { key: 'settings.importDb.memoryNodes' });
       await runSection('记忆向量', data.memoryVectors !== undefined, async () => {
           if (!data.memoryVectors || !hasStore('memory_vectors')) {
               data.memoryVectors = undefined as any;
@@ -4755,87 +4755,87 @@ export const DB = {
               report('记忆向量', 'items', end, total);
           }
           data.memoryVectors = undefined as any;
-      }, data.memoryVectors?.length || 0);
+      }, data.memoryVectors?.length || 0, { key: 'settings.importDb.memoryVectors' });
       await runSection('记忆关系', data.memoryLinks !== undefined, async () => {
           await clearAndAdd('memory_links', data.memoryLinks, '记忆关系', false);
           data.memoryLinks = undefined as any;
-      }, data.memoryLinks?.length || 0);
+      }, data.memoryLinks?.length || 0, { key: 'settings.importDb.memoryLinks' });
       await runSection('话题盒', data.topicBoxes !== undefined, async () => {
           await clearAndAdd('topic_boxes', data.topicBoxes, '话题盒', false);
           data.topicBoxes = undefined as any;
-      }, data.topicBoxes?.length || 0);
+      }, data.topicBoxes?.length || 0, { key: 'settings.importDb.topics' });
       await runSection('期待事项', data.anticipations !== undefined, async () => {
           await clearAndAdd('anticipations', data.anticipations, '期待事项', false);
           data.anticipations = undefined as any;
-      }, data.anticipations?.length || 0);
+      }, data.anticipations?.length || 0, { key: 'settings.importDb.anticipations' });
       await runSection('事件盒', data.eventBoxes !== undefined, async () => {
           await clearAndAdd('event_boxes', data.eventBoxes, '事件盒', false);
           data.eventBoxes = undefined as any;
-      }, data.eventBoxes?.length || 0);
+      }, data.eventBoxes?.length || 0, { key: 'settings.importDb.events' });
       await runSection('房间门牌', data.roomPlates !== undefined, async () => {
           await clearAndAdd('room_plates', data.roomPlates, '房间门牌', false);
           data.roomPlates = undefined as any;
-      }, data.roomPlates?.length || 0);
+      }, data.roomPlates?.length || 0, { key: 'settings.importDb.plates' });
       await runSection('消化日志', data.digestReports !== undefined, async () => {
           await clearAndAdd('digest_reports', data.digestReports, '消化日志', false);
           data.digestReports = undefined as any;
-      }, data.digestReports?.length || 0);
+      }, data.digestReports?.length || 0, { key: 'settings.importDb.digests' });
       await runSection('记忆批次', data.memoryBatches !== undefined, async () => {
           await clearAndAdd('memory_batches', data.memoryBatches, '记忆批次', false);
           data.memoryBatches = undefined as any;
-      }, data.memoryBatches?.length || 0);
+      }, data.memoryBatches?.length || 0, { key: 'settings.importDb.batches' });
 
       // 角色日程表（每日日程 + 意识流）
       await runSection('每日程', data.dailySchedules !== undefined, async () => {
           await clearAndAdd(STORE_DAILY_SCHEDULE, data.dailySchedules, '每日程', false);
           data.dailySchedules = undefined as any;
-      }, data.dailySchedules?.length || 0);
+      }, data.dailySchedules?.length || 0, { key: 'settings.importDb.dailySchedules' });
 
       // 手账（跨角色聚合留痕本）
       await runSection('手账', data.handbooks !== undefined, async () => {
           await clearAndAdd(STORE_HANDBOOK, data.handbooks, '手账', false);
           data.handbooks = undefined as any;
-      }, data.handbooks?.length || 0);
+      }, data.handbooks?.length || 0, { key: 'settings.importDb.handbooks' });
 
       // 手账 Tracker（健康/生活打卡引擎）
       await runSection('打卡项目', data.trackers !== undefined, async () => {
           await clearAndAdd(STORE_TRACKERS, data.trackers, '打卡项目', false);
           data.trackers = undefined as any;
-      }, data.trackers?.length || 0);
+      }, data.trackers?.length || 0, { key: 'settings.importDb.trackers' });
       await runSection('打卡记录', data.trackerEntries !== undefined, async () => {
           await clearAndAdd(STORE_TRACKER_ENTRIES, data.trackerEntries, '打卡记录', false);
           data.trackerEntries = undefined as any;
-      }, data.trackerEntries?.length || 0);
+      }, data.trackerEntries?.length || 0, { key: 'settings.importDb.trackerEntries' });
 
       // 生活记录（档案 App：生理期/药盒/锻炼 + 药盒计划 + 设置）
       await runSection('生活记录', data.lifeRecords !== undefined, async () => {
           await clearAndAdd(STORE_LIFE_RECORDS, data.lifeRecords, '生活记录', false);
           data.lifeRecords = undefined as any;
-      }, data.lifeRecords?.length || 0);
+      }, data.lifeRecords?.length || 0, { key: 'settings.importDb.lifeRecords' });
       await runSection('药盒计划', data.medPlans !== undefined, async () => {
           await clearAndAdd(STORE_MED_PLANS, data.medPlans, '药盒计划', false);
           data.medPlans = undefined as any;
-      }, data.medPlans?.length || 0);
+      }, data.medPlans?.length || 0, { key: 'settings.importDb.medPlans' });
       await runSection('生活记录设置', data.lifeRecordSettings !== undefined, async () => {
           await clearAndAdd(STORE_LIFE_SETTINGS, data.lifeRecordSettings, '生活记录设置', false);
           data.lifeRecordSettings = undefined as any;
-      }, data.lifeRecordSettings?.length || 0);
+      }, data.lifeRecordSettings?.length || 0, { key: 'settings.importDb.lifeSettings' });
 
       // 热点快照（全角色共享缓存）
       await runSection('热点快照', data.hotNewsSnapshots !== undefined, async () => {
           await clearAndAdd(STORE_HOTNEWS, data.hotNewsSnapshots, '热点快照', false);
           data.hotNewsSnapshots = undefined as any;
-      }, data.hotNewsSnapshots?.length || 0);
+      }, data.hotNewsSnapshots?.length || 0, { key: 'settings.importDb.hotNews' });
 
       // Pixel Home（小屋像素界面）
       await runSection('像素小屋素材', data.pixelHomeAssets !== undefined, async () => {
           await clearAndAdd('pixel_home_assets', data.pixelHomeAssets, '像素小屋素材', true);
           data.pixelHomeAssets = undefined as any;
-      }, data.pixelHomeAssets?.length || 0);
+      }, data.pixelHomeAssets?.length || 0, { key: 'settings.importDb.pixelAssets' });
       await runSection('像素小屋布局', data.pixelHomeLayouts !== undefined, async () => {
           await clearAndAdd('pixel_home_layouts', data.pixelHomeLayouts, '像素小屋布局', false);
           data.pixelHomeLayouts = undefined as any;
-      }, data.pixelHomeLayouts?.length || 0);
+      }, data.pixelHomeLayouts?.length || 0, { key: 'settings.importDb.pixelLayouts' });
 
       await runSection('用户资料', data.userProfile !== undefined, async () => {
           if (!hasStore(STORE_USER)) return;
@@ -4847,7 +4847,7 @@ export const DB = {
               }
           });
           data.userProfile = undefined as any;
-      }, data.userProfile ? 1 : 0);
+      }, data.userProfile ? 1 : 0, { key: 'settings.importDb.user' });
 
       await runSection('银行状态', data.bankState !== undefined || data.bankDollhouse !== undefined, async () => {
           if (!hasStore(STORE_BANK_DATA)) return;
@@ -4863,7 +4863,7 @@ export const DB = {
           });
           data.bankState = undefined as any;
           data.bankDollhouse = undefined as any;
-      }, (data.bankState ? 1 : 0) + (data.bankDollhouse ? 1 : 0));
+      }, (data.bankState ? 1 : 0) + (data.bankDollhouse ? 1 : 0), { key: 'settings.importDb.bank' });
       // 导入会覆盖相同 ID 的旧记录，不能复用导入前或中途建立的校正缓存。
       invalidateStoryTimelineRepair(db);
       await ensureStoryTimelineRepair(db);
