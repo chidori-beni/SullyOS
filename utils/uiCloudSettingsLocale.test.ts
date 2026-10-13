@@ -13,6 +13,18 @@ it('keeps formatted timestamp parameters literal', () => {
   expect(translateUi('ja-JP', 'settings.cloud.last', { time: '日時 {days} 🌸' })).toBe('前回のバックアップ: 日時 {days} 🌸');
   expect(translateUi('ja-JP', 'settings.reminder.never')).not.toBe(translateUi('zh-CN', 'settings.reminder.never'));
 });
+it('keeps WebDAV tutorial control names and signup link unchanged in both languages', () => {
+  const source = readFileSync(resolve(process.cwd(), 'apps/Settings.tsx'), 'utf8');
+  for (const key of ['quick', 'register', 'email', 'step2', 'step3', 'step4'] as const) {
+    expect(source).toContain(`t('settings.webdavGuide.${key}')`);
+    expect(translateUi('ja-JP', `settings.webdavGuide.${key}`)).not.toBe(translateUi('zh-CN', `settings.webdavGuide.${key}`));
+  }
+  for (const locale of ['zh-CN', 'ja-JP'] as const) {
+    expect(translateUi(locale, 'settings.webdavGuide.step2')).toContain('Turn on Apps Connection');
+    for (const name of ['WebDAV URL', 'Connection ID', 'Apps Password']) expect(translateUi(locale, 'settings.webdavGuide.step3')).toContain(name);
+  }
+  expect(source).toContain('href="https://infini-cloud.net/"');
+});
 it('localizes introductory copy while preserving provider names and repository input', () => {
   const source = readFileSync(resolve(process.cwd(), 'apps/Settings.tsx'), 'utf8');
   for (const key of ['intro', 'china', 'chinaTail', 'recommended', 'githubHint', 'webdavHint', 'steps', 'step1', 'step2', 'step3a', 'step3b', 'step3c'] as const) {

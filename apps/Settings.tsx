@@ -3744,11 +3744,11 @@ const Settings: React.FC = () => {
               </div>
               <div className="bg-sky-50 rounded-xl p-3">
                   <p className="text-[10px] text-sky-700 leading-relaxed">
-                      <b>快速上手 (InfiniCloud, 免费 20GB):</b><br/>
-                      1. 注册 <a href="https://infini-cloud.net/" target="_blank" rel="noopener noreferrer" className="text-sky-600 underline font-bold hover:text-sky-800">infini-cloud.net ↗</a>（邮箱验证）<br/>
-                      2. 登录后 <b>My Page</b> 最底 → 勾选 <b>Turn on Apps Connection</b><br/>
-                      3. 顶栏 <b>Apps</b> → 复制 <b>WebDAV URL</b> / <b>Connection ID</b> / <b>Apps Password</b><br/>
-                      4. 用户名填 <b>Connection ID</b>（不是邮箱），密码填 <b>Apps Password</b>
+                      <b>{t('settings.webdavGuide.quick')}</b><br/>
+                      {t('settings.webdavGuide.register')}<a href="https://infini-cloud.net/" target="_blank" rel="noopener noreferrer" className="text-sky-600 underline font-bold hover:text-sky-800">infini-cloud.net ↗</a>{t('settings.webdavGuide.email')}<br/>
+                      {t('settings.webdavGuide.step2')}<br/>
+                      {t('settings.webdavGuide.step3')}<br/>
+                      {t('settings.webdavGuide.step4')}
                   </p>
               </div>
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">

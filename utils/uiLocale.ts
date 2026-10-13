@@ -6,6 +6,12 @@ export const UI_LOCALE_STORAGE_KEY = 'sullyos.uiLocale.v1';
 export type UiMessageParams = Record<string, string | number>;
 
 const ZH_MESSAGES = {
+  'settings.webdavGuide.quick': "快速上手 (InfiniCloud, 免费 20GB):",
+  'settings.webdavGuide.register': "1. 注册 ",
+  'settings.webdavGuide.email': "（邮箱验证）",
+  'settings.webdavGuide.step2': "2. 登录后 My Page 最底 → 勾选 Turn on Apps Connection",
+  'settings.webdavGuide.step3': "3. 顶栏 Apps → 复制 WebDAV URL / Connection ID / Apps Password",
+  'settings.webdavGuide.step4': "4. 用户名填 Connection ID（不是邮箱），密码填 Apps Password",
   'settings.cloudGuide.intro': "把备份上传到你自己的云端，换设备、丢手机都不怕。",
   'settings.cloudGuide.china': "国内推荐 ",
   'settings.cloudGuide.chinaTail': "（不用梯子，2GB/份）。",
@@ -412,6 +418,12 @@ const JA_MESSAGES = {
   'settings.github.useWebdav': "WebDAV バックアップに切り替え →",
   'settings.github.tryGithub': 'GitHub バックアップを試す（VPN 不要・1 件あたり 2GB）',
   'settings.cloudGuide.intro': "自分のクラウドにバックアップしておけば、機種変更やスマートフォンの紛失に備えられます。",
+  'settings.webdavGuide.quick': "クイックスタート（InfiniCloud・無料 20GB）：",
+  'settings.webdavGuide.register': "1. 登録：",
+  'settings.webdavGuide.email': "（メール認証）",
+  'settings.webdavGuide.step2': "2. ログイン後、My Page の最下部で Turn on Apps Connection にチェックを入れます",
+  'settings.webdavGuide.step3': "3. 上部の Apps で WebDAV URL / Connection ID / Apps Password をコピーします",
+  'settings.webdavGuide.step4': "4. ユーザー名には Connection ID（メールアドレスではありません）、パスワードには Apps Password を入力します",
   'settings.cloudGuide.china': "中国国内では ",
   'settings.cloudGuide.chinaTail': " を推奨（VPN 不要・1 件あたり 2GB）。",
   'settings.cloudGuide.recommended': "おすすめ",
