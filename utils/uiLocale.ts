@@ -6,6 +6,9 @@ export const UI_LOCALE_STORAGE_KEY = 'sullyos.uiLocale.v1';
 export type UiMessageParams = Record<string, string | number>;
 
 const ZH_MESSAGES = {
+  'settings.cloud.saved': '云端备份配置已保存',
+  'settings.cloudRestore.blocked': '这个备份上传未完成，暂时不能恢复',
+  'settings.cloudRestore.errorTitle': '云端恢复失败',
   'settings.cloudRestore.loading': "正在加载云端备份列表...",
   'settings.cloudRestore.failed': "获取云端备份列表失败",
   'settings.cloudRestore.reload': "重新加载",
@@ -470,6 +473,9 @@ const JA_MESSAGES = {
   'settings.cloudWarnings.networkTitle': "🪜 VPN が必要",
   'settings.webdavResult.connected': "接続成功",
   'settings.githubResult.verified': "GitHub に接続しました",
+  'settings.cloud.saved': 'クラウドバックアップ設定を保存しました',
+  'settings.cloudRestore.blocked': 'このバックアップはアップロード未完了のため、まだ復元できません',
+  'settings.cloudRestore.errorTitle': 'クラウドからの復元に失敗しました',
   'settings.cloudRestore.loading': "クラウドバックアップ一覧を読み込み中...",
   'settings.cloudRestore.failed': "クラウドバックアップ一覧の取得に失敗しました",
   'settings.cloudRestore.reload': "再読み込み",

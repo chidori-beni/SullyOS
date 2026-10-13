@@ -115,7 +115,12 @@ it('keeps all cloud request/save/restore handler implementations identical to th
     .replace("setGhTestResult({ success: false, message: '请先粘贴 Token', uiMessage: { key: 'settings.githubResult.pasteToken' } });", "setGhTestResult('✗ 请先粘贴 Token');")
     .replace('setGhTestResult(null);', "setGhTestResult('');")
     .replace('setGhTestResult({ success: result.ok, message: result.message, uiMessage: result.uiMessage });', 'setGhTestResult(result.ok ? `✓ ${result.message}` : `✗ ${result.message}`);')
-    .replace("setGhTestResult({ success: false, message: e?.message || '连接失败', uiMessage: e?.message ? undefined : { key: 'settings.githubResult.failed' } });", "setGhTestResult(`✗ ${e?.message || '连接失败'}`);");
+    .replace("setGhTestResult({ success: false, message: e?.message || '连接失败', uiMessage: e?.message ? undefined : { key: 'settings.githubResult.failed' } });", "setGhTestResult(`✗ ${e?.message || '连接失败'}`);")
+    .replace("t('settings.cloud.saved')", "'云端备份配置已保存'")
+    .replace("t('settings.cloudRestore.failed')", "'获取云端备份列表失败'")
+    .replace("t('settings.cloudRestore.blocked')", "'这个备份上传未完成，暂时不能恢复'")
+    .replace("t('settings.cloudRestore.errorTitle')", "'云端恢复失败'")
+    .replace("t('settings.cloud.disabled')", "'云端备份已关闭'");
   expect(source).toContain('const handleSaveRealtimeConfig');
   expect(handlers(source).length).toBeGreaterThan(1000);
   expect(handlers(source)).toBe(handlers(baseline));

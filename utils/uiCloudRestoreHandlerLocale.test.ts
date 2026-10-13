@@ -1,0 +1,27 @@
+import { expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import ts from 'typescript';
+import { translateUi, type UiLocale, type UiMessageKey } from './uiLocale';
+const source = readFileSync(resolve(process.cwd(), 'apps/Settings.tsx'), 'utf8');
+const body = source.slice(source.indexOf('const handleCloudRestore ='), source.indexOf('// GitHub backup handlers'));
+it.each(['zh-CN', 'ja-JP'] as const)('preserves restore guard, success and raw errors in %s', async (locale: UiLocale) => {
+  const addToast = vi.fn(), close = vi.fn(), restore = vi.fn(), track = vi.fn(), showError = vi.fn();
+  const js = ts.transpileModule(body + '\nreturn handleCloudRestore;', { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
+  const handler = new Function('addToast', 'setShowCloudRestoreModal', 'cloudRestoreFromWebDAV', 'trackEvent', 'cloudBackupConfig', 'showError', 't', js)(addToast, close, restore, track, { provider: 'github' }, showError, (key: UiMessageKey) => translateUi(locale, key));
+  await handler({ status: 'incomplete', name: 'backup.zip' });
+  expect(addToast).toHaveBeenLastCalledWith(translateUi(locale, 'settings.cloudRestore.blocked'), 'error');
+  expect(restore).not.toHaveBeenCalled();
+  expect(close).not.toHaveBeenCalled();
+  await handler({ status: 'incomplete', statusMessage: 'raw {error}' });
+  expect(addToast).toHaveBeenLastCalledWith('raw {error}', 'error');
+  const file = { name: 'backup{error}.zip' };
+  await handler(file);
+  expect(restore).toHaveBeenCalledWith(file);
+  expect(close).toHaveBeenCalledWith(false);
+  const error = new Error('恢复失败: raw');
+  restore.mockRejectedValueOnce(error);
+  await handler(file);
+  expect(showError).toHaveBeenCalledWith(translateUi(locale, 'settings.cloudRestore.errorTitle'), error.stack);
+  expect(track).toHaveBeenCalledWith('从云端恢复失败', { provider: 'github', stage: 'import' });
+});

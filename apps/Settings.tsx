@@ -1537,7 +1537,7 @@ const Settings: React.FC = () => {
           webdavUrl: cbUrl, username: cbUsername, password: cbPassword,
           remotePath: cbPath,
       });
-      addToast('云端备份配置已保存', 'success');
+      addToast(t('settings.cloud.saved'), 'success');
       setShowCloudModal(false);
   };
 
@@ -1583,7 +1583,7 @@ const Settings: React.FC = () => {
           setCloudBackupListState('ready');
           trackEvent('加载云端备份列表', { provider: cloudBackupConfig.provider === 'github' ? 'github' : 'webdav', result: '成功' });
       } catch (error: any) {
-          const message = error?.message || '获取云端备份列表失败';
+          const message = error?.message || t('settings.cloudRestore.failed');
           setCloudBackupListError(message);
           setCloudBackupListState('error');
           trackEvent('加载云端备份列表', { provider: cloudBackupConfig.provider === 'github' ? 'github' : 'webdav', result: '失败' });
@@ -1594,7 +1594,7 @@ const Settings: React.FC = () => {
   const handleCloudRestore = async (file: import('../types').CloudBackupFile) => {
       // 分片没传完的那种备份点了也只会中途失败，直接挡在门外并说明原因。
       if (file.status === 'incomplete') {
-          addToast(file.statusMessage || '这个备份上传未完成，暂时不能恢复', 'error');
+          addToast(file.statusMessage || t('settings.cloudRestore.blocked'), 'error');
           return;
       }
       setShowCloudRestoreModal(false);
@@ -1607,7 +1607,7 @@ const Settings: React.FC = () => {
               stage: /^恢复失败/.test(String(err?.message || '')) ? 'import' : 'download',
           });
           const details = err?.stack || err?.message || String(err || '未知错误');
-          showError('云端恢复失败', details);
+          showError(t('settings.cloudRestore.errorTitle'), details);
       }
   };
 
@@ -1658,7 +1658,7 @@ const Settings: React.FC = () => {
       updateCloudBackupConfig({ enabled: false });
       setShowCloudModal(false);
       setShowGithubModal(false);
-      addToast('云端备份已关闭', 'info');
+      addToast(t('settings.cloud.disabled'), 'info');
   };
 
   // One-click provider switch — if the target provider was already configured
