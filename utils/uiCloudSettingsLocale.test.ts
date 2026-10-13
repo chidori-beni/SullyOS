@@ -70,8 +70,8 @@ it('localizes GitHub form copy without modifying credentials or result handling'
   for (const field of ['ghToken', 'ghRepo']) expect(source).toContain(`value={${field}}`);
   expect(source).toContain('checked={ghUseProxy}');
   expect(source).toContain('onClick={handleTestGithub}');
-  expect(source).toContain("ghTestResult.startsWith('✓')");
-  expect(source).toContain('{ghTestResult}');
+  expect(source).toContain('ghTestResult?.success && cloudBackupConfig.githubOwner');
+  expect(source).toContain('ghTestResult.uiMessage ? t(ghTestResult.uiMessage.key, ghTestResult.uiMessage.params) : ghTestResult.message');
   expect(source).toContain("cloudBackupConfig.githubRepo || 'sully-backup'");
   expect(translateUi('ja-JP', 'settings.github.proxyHelp')).toContain('32MB');
 });
@@ -96,7 +96,11 @@ it('keeps all cloud request/save/restore handler implementations identical to th
   const handlers = (value: string) => value.slice(value.indexOf('// Cloud Backup Handlers'), value.indexOf('const handleSaveRealtimeConfig')).replace(/\r/g, '')
     .replace('setCloudTestResult(null);', "setCloudTestResult('');")
     .replace('setCloudTestResult({ success: result.ok, message: result.message, uiMessage: result.uiMessage });', 'setCloudTestResult(result.ok ? `✓ ${result.message}` : `✗ ${result.message}`);')
-    .replace('setCloudTestResult({ success: false, message: String(e.message) });', 'setCloudTestResult(`✗ ${e.message}`);');
+    .replace('setCloudTestResult({ success: false, message: String(e.message) });', 'setCloudTestResult(`✗ ${e.message}`);')
+    .replace("setGhTestResult({ success: false, message: '请先粘贴 Token', uiMessage: { key: 'settings.githubResult.pasteToken' } });", "setGhTestResult('✗ 请先粘贴 Token');")
+    .replace('setGhTestResult(null);', "setGhTestResult('');")
+    .replace('setGhTestResult({ success: result.ok, message: result.message, uiMessage: result.uiMessage });', 'setGhTestResult(result.ok ? `✓ ${result.message}` : `✗ ${result.message}`);')
+    .replace("setGhTestResult({ success: false, message: e?.message || '连接失败', uiMessage: e?.message ? undefined : { key: 'settings.githubResult.failed' } });", "setGhTestResult(`✗ ${e?.message || '连接失败'}`);");
   expect(source).toContain('const handleSaveRealtimeConfig');
   expect(handlers(source).length).toBeGreaterThan(1000);
   expect(handlers(source)).toBe(handlers(baseline));

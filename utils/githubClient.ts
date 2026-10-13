@@ -22,6 +22,7 @@ import { Capacitor, CapacitorHttp } from '@capacitor/core';
 
 import { CloudBackupConfig, CloudBackupFile } from '../types';
 import { getProxyWorkerUrl } from './proxyWorker';
+import type { UiStatusMessage } from './uiLocale';
 
 const API_HOST = 'https://api.github.com';
 const UPLOAD_HOST = 'https://uploads.github.com';
@@ -319,7 +320,7 @@ export const verifyToken = async (
     token: string,
     useProxyOverride?: boolean,
     proxyConsentVersion?: number,
-): Promise<{ ok: boolean; login?: string; message: string }> => {
+): Promise<{ ok: boolean; login?: string; message: string; uiMessage?: UiStatusMessage }> => {
     try {
         const tempConfig: CloudBackupConfig = {
             enabled: false, webdavUrl: '', username: '', password: '', remotePath: '',
@@ -332,13 +333,13 @@ export const verifyToken = async (
         });
         if (res.status === 200) {
             const data = await res.json();
-            return { ok: true, login: data.login, message: '已连接 GitHub' };
+            return { ok: true, login: data.login, message: '已连接 GitHub', uiMessage: { key: 'settings.githubResult.verified' } };
         }
-        if (res.status === 401) return { ok: false, message: 'Token 无效或已过期' };
-        if (res.status === 403) return { ok: false, message: '权限不足，请确认 Token 勾选了 repo 范围' };
-        return { ok: false, message: `GitHub 返回 ${res.status}` };
+        if (res.status === 401) return { ok: false, message: 'Token 无效或已过期', uiMessage: { key: 'settings.githubResult.invalid' } };
+        if (res.status === 403) return { ok: false, message: '权限不足，请确认 Token 勾选了 repo 范围', uiMessage: { key: 'settings.githubResult.permissions' } };
+        return { ok: false, message: `GitHub 返回 ${res.status}`, uiMessage: { key: 'settings.githubResult.status', params: { status: res.status } } };
     } catch (e: any) {
-        return { ok: false, message: `连接失败: ${e?.message || '网络错误'}` };
+        return { ok: false, message: `连接失败: ${e?.message || '网络错误'}`, uiMessage: e?.message ? { key: 'settings.githubResult.network', params: { error: String(e.message) } } : { key: 'settings.githubResult.networkUnknown' } };
     }
 };
 
@@ -346,18 +347,18 @@ export const verifyToken = async (
  * Step 2: ensure the backup repo exists. If not, auto-create it as private
  * with auto_init=true (we need at least one commit so releases can tag it).
  */
-export const ensureRepo = async (config: CloudBackupConfig): Promise<{ ok: boolean; message: string }> => {
+export const ensureRepo = async (config: CloudBackupConfig): Promise<{ ok: boolean; message: string; uiMessage?: UiStatusMessage }> => {
     const token = config.githubToken;
     const owner = config.githubOwner;
     const repo = repoName(config);
-    if (!token || !owner) return { ok: false, message: 'Token 或用户名未设置' };
+    if (!token || !owner) return { ok: false, message: 'Token 或用户名未设置', uiMessage: { key: 'settings.githubResult.missingAccount' } };
 
     try {
         const get = await ghRequest(config, `${API_HOST}/repos/${owner}/${repo}`, 'GET', {
             headers: authHeaders(token),
         });
-        if (get.status === 200) return { ok: true, message: '仓库已就绪' };
-        if (get.status !== 404) return { ok: false, message: `检查仓库失败 (${get.status})` };
+        if (get.status === 200) return { ok: true, message: '仓库已就绪', uiMessage: { key: 'settings.githubResult.ready' } };
+        if (get.status !== 404) return { ok: false, message: `检查仓库失败 (${get.status})`, uiMessage: { key: 'settings.githubResult.check', params: { status: get.status } } };
 
         const create = await ghRequest(config, `${API_HOST}/user/repos`, 'POST', {
             headers: authHeaders(token, { 'Content-Type': 'application/json' }),
@@ -368,12 +369,12 @@ export const ensureRepo = async (config: CloudBackupConfig): Promise<{ ok: boole
                 auto_init: true,
             }),
         });
-        if (create.status === 201) return { ok: true, message: '已自动创建私有仓库' };
-        if (create.status === 422) return { ok: false, message: `仓库名 "${repo}" 已被占用，请换一个` };
-        if (create.status === 403) return { ok: false, message: '权限不足，Token 需要 repo 范围' };
-        return { ok: false, message: `创建仓库失败 (${create.status})` };
+        if (create.status === 201) return { ok: true, message: '已自动创建私有仓库', uiMessage: { key: 'settings.githubResult.created' } };
+        if (create.status === 422) return { ok: false, message: `仓库名 "${repo}" 已被占用，请换一个`, uiMessage: { key: 'settings.githubResult.taken', params: { repo } } };
+        if (create.status === 403) return { ok: false, message: '权限不足，Token 需要 repo 范围', uiMessage: { key: 'settings.githubResult.repoPermissions' } };
+        return { ok: false, message: `创建仓库失败 (${create.status})`, uiMessage: { key: 'settings.githubResult.create', params: { status: create.status } } };
     } catch (e: any) {
-        return { ok: false, message: `连接失败: ${e?.message || '网络错误'}` };
+        return { ok: false, message: `连接失败: ${e?.message || '网络错误'}`, uiMessage: e?.message ? { key: 'settings.githubResult.network', params: { error: String(e.message) } } : { key: 'settings.githubResult.networkUnknown' } };
     }
 };
 
@@ -383,18 +384,18 @@ export const ensureRepo = async (config: CloudBackupConfig): Promise<{ ok: boole
  */
 export const testConnection = async (
     config: CloudBackupConfig,
-): Promise<{ ok: boolean; message: string; login?: string }> => {
+): Promise<{ ok: boolean; message: string; login?: string; uiMessage?: UiStatusMessage }> => {
     const token = config.githubToken;
-    if (!token) return { ok: false, message: '请先填写 Token' };
+    if (!token) return { ok: false, message: '请先填写 Token', uiMessage: { key: 'settings.githubResult.missingToken' } };
 
     const ver = await verifyToken(token, config.githubUseProxy, config.githubProxyConsentVersion);
-    if (!ver.ok) return { ok: false, message: ver.message };
+    if (!ver.ok) return { ok: false, message: ver.message, uiMessage: ver.uiMessage };
 
     const cfg = { ...config, githubOwner: ver.login };
     const repo = await ensureRepo(cfg);
-    if (!repo.ok) return { ok: false, message: repo.message, login: ver.login };
+    if (!repo.ok) return { ok: false, message: repo.message, login: ver.login, uiMessage: repo.uiMessage };
 
-    return { ok: true, message: `已连接 @${ver.login} → ${repoName(cfg)}`, login: ver.login };
+    return { ok: true, message: `已连接 @${ver.login} → ${repoName(cfg)}`, login: ver.login, uiMessage: { key: 'settings.githubResult.connected', params: { login: String(ver.login), repo: repoName(cfg) } } };
 };
 
 /**

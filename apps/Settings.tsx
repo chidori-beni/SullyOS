@@ -596,7 +596,7 @@ const Settings: React.FC = () => {
   );
   const [ghShowAdvanced, setGhShowAdvanced] = useState(false);
   const [ghTesting, setGhTesting] = useState(false);
-  const [ghTestResult, setGhTestResult] = useState<string>('');
+  const [ghTestResult, setGhTestResult] = useState<{ success: boolean; message: string; uiMessage?: UiStatusMessage } | null>(null);
 
   // 主代理 Worker 地址（联网搜索 / 备份代理 / Notion / 飞书 / MCD·瑞幸 MCP / 网页抓取 / 出图都走它）。
   // 入口刻意低调：默认折叠，普通用户不需要碰，开箱即用。
@@ -1616,11 +1616,11 @@ const Settings: React.FC = () => {
   const handleTestGithub = async () => {
       if (!ghToken.trim()) {
           trackEvent('测试并连接 GitHub', { result: '失败', failure_stage: 'no_token' });
-          setGhTestResult('✗ 请先粘贴 Token');
+          setGhTestResult({ success: false, message: '请先粘贴 Token', uiMessage: { key: 'settings.githubResult.pasteToken' } });
           return;
       }
       setGhTesting(true);
-      setGhTestResult('');
+      setGhTestResult(null);
       try {
           const { testConnection } = await import('../utils/githubClient');
           const result = await testConnection({
@@ -1630,7 +1630,7 @@ const Settings: React.FC = () => {
               githubUseProxy: ghUseProxy,
               githubProxyConsentVersion: ghUseProxy ? 1 : undefined,
           });
-          setGhTestResult(result.ok ? `✓ ${result.message}` : `✗ ${result.message}`);
+          setGhTestResult({ success: result.ok, message: result.message, uiMessage: result.uiMessage });
           // 失败时只报卡在哪一步：token 校验没过 → 没有 login，仓库准备没过 → 有 login
           trackEvent('测试并连接 GitHub', result.ok
               ? { result: '成功' }
@@ -1648,7 +1648,7 @@ const Settings: React.FC = () => {
           }
       } catch (e: any) {
           trackEvent('测试并连接 GitHub', { result: '失败', failure_stage: 'exception' });
-          setGhTestResult(`✗ ${e?.message || '连接失败'}`);
+          setGhTestResult({ success: false, message: e?.message || '连接失败', uiMessage: e?.message ? undefined : { key: 'settings.githubResult.failed' } });
       }
       setGhTesting(false);
   };
@@ -3845,11 +3845,11 @@ const Settings: React.FC = () => {
                   {ghTesting ? t('settings.github.connecting') : t('settings.github.connect')}
               </button>
               {ghTestResult && (
-                  <p className={`text-[11px] text-center font-medium ${ghTestResult.startsWith('✓') ? 'text-green-600' : 'text-red-500'}`}>
-                      {ghTestResult}
+                  <p className={`text-[11px] text-center font-medium ${ghTestResult.success ? 'text-green-600' : 'text-red-500'}`}>
+                      {ghTestResult.success ? '✓ ' : '✗ '}{ghTestResult.uiMessage ? t(ghTestResult.uiMessage.key, ghTestResult.uiMessage.params) : ghTestResult.message}
                   </p>
               )}
-              {ghTestResult.startsWith('✓') && cloudBackupConfig.githubOwner && (
+              {ghTestResult?.success && cloudBackupConfig.githubOwner && (
                   <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-1.5">
                       <p className="text-[11px] text-emerald-800 font-medium">
                           {t('settings.github.destination')}
