@@ -4509,12 +4509,12 @@ export const DB = {
       await runSection('相册分类', hasGalleryAlbumsBackup, async () => {
           await clearAndAdd(STORE_GALLERY_ALBUMS, data.galleryAlbums, '相册分类', false);
           data.galleryAlbums = undefined as any;
-      }, data.galleryAlbums?.length || 0);
+      }, data.galleryAlbums?.length || 0, { key: 'settings.importDb.galleryAlbums' });
 
       await runSection('相册分类顺序', hasGalleryCategoryOrdersBackup, async () => {
           await clearAndAdd(STORE_GALLERY_CATEGORY_ORDERS, data.galleryCategoryOrders, '相册分类顺序', false);
           data.galleryCategoryOrders = undefined as any;
-      }, data.galleryCategoryOrders?.length || 0);
+      }, data.galleryCategoryOrders?.length || 0, { key: 'settings.importDb.galleryOrder' });
 
       await runSection('相册图片', data.galleryImages !== undefined, async () => {
           const images = Array.isArray(data.galleryImages)
@@ -4522,27 +4522,27 @@ export const DB = {
               : [];
           await clearAndAdd(STORE_GALLERY, images, '相册图片', true);
           data.galleryImages = undefined as any;
-      }, data.galleryImages?.length || 0);
+      }, data.galleryImages?.length || 0, { key: 'settings.importDb.galleryImages' });
       await runSection('日记', data.diaries !== undefined, async () => {
           await clearAndAdd(STORE_DIARIES, data.diaries, '日记', true);
           data.diaries = undefined as any;
-      }, data.diaries?.length || 0);
+      }, data.diaries?.length || 0, { key: 'settings.importDb.diaries' });
       await runSection('任务', data.tasks !== undefined, async () => {
           await clearAndAdd(STORE_TASKS, data.tasks, '任务', false);
           data.tasks = undefined as any;
-      }, data.tasks?.length || 0);
+      }, data.tasks?.length || 0, { key: 'settings.importDb.tasks' });
       await runSection('纪念日', data.anniversaries !== undefined, async () => {
           await clearAndAdd(STORE_ANNIVERSARIES, data.anniversaries, '纪念日', false);
           data.anniversaries = undefined as any;
-      }, data.anniversaries?.length || 0);
+      }, data.anniversaries?.length || 0, { key: 'settings.importDb.anniversaries' });
       await runSection('房间待办', data.roomTodos !== undefined, async () => {
           await clearAndAdd(STORE_ROOM_TODOS, data.roomTodos, '房间待办', false);
           data.roomTodos = undefined as any;
-      }, data.roomTodos?.length || 0);
+      }, data.roomTodos?.length || 0, { key: 'settings.importDb.roomTodos' });
       await runSection('房间便签', data.roomNotes !== undefined, async () => {
           await clearAndAdd(STORE_ROOM_NOTES, data.roomNotes, '房间便签', false);
           data.roomNotes = undefined as any;
-      }, data.roomNotes?.length || 0);
+      }, data.roomNotes?.length || 0, { key: 'settings.importDb.roomNotes' });
       await runSection('群聊资料', data.groups !== undefined, async () => {
           await clearAndAdd(STORE_GROUPS, data.groups, '群聊资料', true);
           data.groups = undefined as any;

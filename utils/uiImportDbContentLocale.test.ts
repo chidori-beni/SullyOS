@@ -3,7 +3,10 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { translateUi } from './uiLocale';
-const categories = [['chatThemes', '聊天主题'], ['emojis', '表情包'], ['emojiCategories', '表情分类'], ['assets', '系统资源'], ['favorites', '聊天收藏'], ['journalStickers', '日记贴纸']] as const;
+const categories = [
+  ['chatThemes', '聊天主题'], ['emojis', '表情包'], ['emojiCategories', '表情分类'], ['assets', '系统资源'], ['favorites', '聊天收藏'], ['journalStickers', '日记贴纸'],
+  ['galleryAlbums', '相册分类'], ['galleryOrder', '相册分类顺序'], ['galleryImages', '相册图片'], ['diaries', '日记'], ['tasks', '任务'], ['anniversaries', '纪念日'], ['roomTodos', '房间待办'], ['roomNotes', '房间便签'],
+] as const;
 const source = readFileSync(resolve(process.cwd(), 'utils/db.ts'), 'utf8');
 it.each(categories)('adds explicit display marker while keeping label: %s', (key, label) => {
   expect(source).toContain(`await runSection('${label}'`);
