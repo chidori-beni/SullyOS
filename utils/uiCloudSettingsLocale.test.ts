@@ -13,6 +13,21 @@ it('keeps formatted timestamp parameters literal', () => {
   expect(translateUi('ja-JP', 'settings.cloud.last', { time: '日時 {days} 🌸' })).toBe('前回のバックアップ: 日時 {days} 🌸');
   expect(translateUi('ja-JP', 'settings.reminder.never')).not.toBe(translateUi('zh-CN', 'settings.reminder.never'));
 });
+it('localizes restore list shell while preserving files, raw errors and selection guards', () => {
+  const source = readFileSync(resolve(process.cwd(), 'apps/Settings.tsx'), 'utf8');
+  const list = source.slice(source.indexOf('{/* Cloud Restore Modal */}'), source.indexOf('{/* 模型选择 Modal */}'));
+  for (const key of ['loading', 'failed', 'reload', 'empty', 'choose', 'incomplete', 'unrestorable', 'unknownTime', 'viewGithub'] as const) {
+    expect(list).toContain(`t('settings.cloudRestore.${key}')`);
+    expect(translateUi('ja-JP', `settings.cloudRestore.${key}`)).not.toBe(translateUi('zh-CN', `settings.cloudRestore.${key}`));
+  }
+  expect(list).toContain("file.status === 'incomplete'");
+  expect(list).toContain('onClick={() => handleCloudRestore(file)}');
+  expect(list).toContain('cloudBackupListError ||');
+  expect(list).toContain('file.statusMessage ||');
+  expect(list.match(/new Date\(file.lastModified\).toLocaleString\(locale\)/g)).toHaveLength(2);
+  expect(list).toContain('{file.name}');
+  expect(list).toContain('file.size / 1024 / 1024');
+});
 it('localizes cloud warnings without changing control names or permission links', () => {
   const source = readFileSync(resolve(process.cwd(), 'apps/Settings.tsx'), 'utf8');
   for (const key of ['networkTitle', 'networkBefore', 'networkStrong', 'networkAfter', 'passwordTitle', 'passwordHelp', 'githubTitle', 'expiryBefore', 'expiryLabel', 'expiryStrong', 'expiryAfter', 'expiryWarning', 'permissionsBefore', 'permissionsAfter', 'generateBefore', 'generateAfter'] as const) {

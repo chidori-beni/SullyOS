@@ -3919,37 +3919,37 @@ const Settings: React.FC = () => {
       </Modal>
 
       {/* Cloud Restore Modal */}
-      <Modal isOpen={showCloudRestoreModal} title="从云端恢复" onClose={() => setShowCloudRestoreModal(false)}>
+      <Modal isOpen={showCloudRestoreModal} title={t('settings.cloud.restore')} onClose={() => setShowCloudRestoreModal(false)}>
           <div className="space-y-2 p-1">
               {cloudBackupListState === 'loading' ? (
-                  <div className="text-center py-8"><p className="text-[11px] text-slate-400">正在加载云端备份列表...</p></div>
+                  <div className="text-center py-8"><p className="text-[11px] text-slate-400">{t('settings.cloudRestore.loading')}</p></div>
               ) : cloudBackupListState === 'error' ? (
                   <div className="text-center py-7 px-3 space-y-3">
-                      <p className="text-[11px] text-red-500 leading-relaxed">{cloudBackupListError || '获取云端备份列表失败'}</p>
-                      <button onClick={handleOpenCloudRestore} className="px-4 py-2 rounded-xl bg-slate-800 text-white text-[11px] font-bold">重新加载</button>
+                      <p className="text-[11px] text-red-500 leading-relaxed">{cloudBackupListError || t('settings.cloudRestore.failed')}</p>
+                      <button onClick={handleOpenCloudRestore} className="px-4 py-2 rounded-xl bg-slate-800 text-white text-[11px] font-bold">{t('settings.cloudRestore.reload')}</button>
                   </div>
               ) : cloudBackupListState === 'ready' && cloudBackupFiles.length === 0 ? (
-                  <div className="text-center py-8"><p className="text-[11px] text-slate-400">云端还没有备份</p></div>
+                  <div className="text-center py-8"><p className="text-[11px] text-slate-400">{t('settings.cloudRestore.empty')}</p></div>
               ) : (
                   <>
-                      <p className="text-[10px] text-slate-400 mb-2">选择要恢复的备份文件:</p>
+                      <p className="text-[10px] text-slate-400 mb-2">{t('settings.cloudRestore.choose')}</p>
                       <div className="max-h-[50vh] overflow-y-auto overflow-x-hidden space-y-2">
                           {cloudBackupFiles.map((file, i) => file.status === 'incomplete' ? (
                               <div key={file.href || i} className="w-full p-3 bg-amber-50/70 border border-amber-200 rounded-xl text-left">
                                   <div className="flex items-start justify-between gap-2">
                                       <p className="text-[11px] text-slate-700 font-medium truncate">{file.name}</p>
-                                      <span className="shrink-0 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[9px] font-bold">上传未完成</span>
+                                      <span className="shrink-0 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[9px] font-bold">{t('settings.cloudRestore.incomplete')}</span>
                                   </div>
-                                  <p className="text-[10px] text-amber-700 mt-1 leading-relaxed">{file.statusMessage || '附件不完整，不能恢复'}</p>
+                                  <p className="text-[10px] text-amber-700 mt-1 leading-relaxed">{file.statusMessage || t('settings.cloudRestore.unrestorable')}</p>
                                   <div className="flex items-center justify-between gap-3 mt-2">
-                                      <span className="text-[10px] text-slate-400">{file.lastModified ? new Date(file.lastModified).toLocaleString('zh-CN') : '未知时间'}</span>
+                                      <span className="text-[10px] text-slate-400">{file.lastModified ? new Date(file.lastModified).toLocaleString(locale) : t('settings.cloudRestore.unknownTime')}</span>
                                       {cloudBackupConfig.provider === 'github' && cloudBackupConfig.githubOwner && (
                                           <a
                                               href={`https://github.com/${cloudBackupConfig.githubOwner}/${cloudBackupConfig.githubRepo || 'sully-backup'}/releases`}
                                               target="_blank"
                                               rel="noopener noreferrer"
                                               className="text-[10px] text-amber-700 font-semibold hover:underline"
-                                          >去 GitHub 查看 ↗</a>
+                                          >{t('settings.cloudRestore.viewGithub')}</a>
                                       )}
                                   </div>
                               </div>
@@ -3957,7 +3957,7 @@ const Settings: React.FC = () => {
                               <button key={file.href || i} onClick={() => handleCloudRestore(file)} className="w-full p-3 bg-white border border-slate-200 rounded-xl text-left hover:bg-sky-50 hover:border-sky-200 transition-colors active:scale-[0.98]">
                                   <p className="text-[11px] text-slate-700 font-medium truncate">{file.name}</p>
                                   <div className="flex items-center gap-3 mt-1">
-                                      <span className="text-[10px] text-slate-400">{file.lastModified ? new Date(file.lastModified).toLocaleString('zh-CN') : '未知时间'}</span>
+                                      <span className="text-[10px] text-slate-400">{file.lastModified ? new Date(file.lastModified).toLocaleString(locale) : t('settings.cloudRestore.unknownTime')}</span>
                                       <span className="text-[10px] text-slate-400">{file.size > 0 ? `${(file.size / 1024 / 1024).toFixed(1)} MB` : ''}</span>
                                   </div>
                               </button>
