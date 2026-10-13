@@ -1,4 +1,5 @@
 import { handleLocalBack } from '../utils/localBackHandlers';
+import { loadUiLocale, translateUi } from '../utils/uiLocale';
 import {isHomeAssetDisposal} from '../utils/homeAssetCancellation';
 import { processHomeMemoryAfterSave } from '../utils/homeMemoryPostHook';
 import { retireCloudCharacter } from '../utils/amsgCloudRetirement';
@@ -3510,16 +3511,16 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const cloudBackupToWebDAV = async (mode: 'text_only' | 'media_only' | 'full') => {
       const { uploadBackup, cleanupOldBackups } = await loadBackupProvider();
       try {
-          setSysOperation({ status: 'processing', message: '正在打包备份数据...', progress: 0 });
+          setSysOperation({ status: 'processing', message: translateUi(loadUiLocale(), 'settings.cloudOperation.pack'), progress: 0 });
           // ⚠️ 本 fork：云备份照旧带上主动消息 2.0 的后端连接。上游（e4e46f8a）把「导出默认
           // 不带」做成了防分享泄露；但云备份只进用户自己的私有仓库，本来就含 API Key，
           // 不带的话换设备从云端恢复后主动消息连不上。手动导出仍按上游默认不带、可勾选。
           const blob = await exportSystem(mode, { includeBackendConnection: true });
 
-          setSysOperation({ status: 'processing', message: '正在上传到云端...', progress: 50 });
+          setSysOperation({ status: 'processing', message: translateUi(loadUiLocale(), 'settings.cloudOperation.upload'), progress: 50 });
           const filename = `Sully_Backup_${mode}_${Date.now()}.zip`;
           const result = await uploadBackup(cloudBackupConfig, blob, filename, (pct) => {
-              setSysOperation(prev => ({ ...prev, message: `上传中 ${pct}%...`, progress: 50 + pct * 0.45 }));
+              setSysOperation(prev => ({ ...prev, message: translateUi(loadUiLocale(), 'settings.cloudOperation.uploadProgress', { pct }), progress: 50 + pct * 0.45 }));
           });
 
           if (!result.ok) {
@@ -3533,7 +3534,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           await cleanupOldBackups(cloudBackupConfig, 5).catch(() => {});
 
           setSysOperation({ status: 'idle', message: '', progress: 100 });
-          addToast('云端备份完成', 'success');
+          addToast(translateUi(loadUiLocale(), 'settings.cloudOperation.done'), 'success');
           // provider / mode 都是代码里写死的枚举；连接地址、账号、错误原文一概不带。
           trackEvent('上传备份到云端', {
               provider: cloudBackupConfig.provider === 'github' ? 'github' : 'webdav',
@@ -3542,7 +3543,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           });
       } catch (e: any) {
           setSysOperation({ status: 'idle', message: '', progress: 0 });
-          addToast(`云端备份失败: ${e.message}`, 'error');
+          addToast(translateUi(loadUiLocale(), 'settings.cloudOperation.backupFailed', { error: String(e.message) }), 'error');
           trackEvent('上传备份到云端', {
               provider: cloudBackupConfig.provider === 'github' ? 'github' : 'webdav',
               mode,
@@ -3555,20 +3556,20 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const cloudRestoreFromWebDAV = async (file: CloudBackupFile) => {
       const { downloadBackup } = await loadBackupProvider();
       try {
-          setSysOperation({ status: 'processing', message: '正在从云端下载...', progress: 0 });
+          setSysOperation({ status: 'processing', message: translateUi(loadUiLocale(), 'settings.cloudOperation.download'), progress: 0 });
           const blob = await downloadBackup(cloudBackupConfig, file, (pct) => {
-              setSysOperation(prev => ({ ...prev, message: `下载中 ${pct}%...`, progress: pct * 0.5 }));
+              setSysOperation(prev => ({ ...prev, message: translateUi(loadUiLocale(), 'settings.cloudOperation.downloadProgress', { pct }), progress: pct * 0.5 }));
           });
 
           if (!blob) throw new Error('下载失败');
 
-          setSysOperation({ status: 'processing', message: '正在恢复数据...', progress: 50 });
+          setSysOperation({ status: 'processing', message: translateUi(loadUiLocale(), 'settings.cloudOperation.restore'), progress: 50 });
           const zipFile = new File([blob], file.name, { type: 'application/zip' });
           // 同上：云端备份来自用户自己的私有仓库，里面的后端连接就是自己的，直接还原。
           await importSystem(zipFile, { confirmBackendRestore: () => true });
       } catch (e: any) {
           setSysOperation({ status: 'idle', message: '', progress: 0 });
-          addToast(`云端恢复失败: ${e.message}`, 'error');
+          addToast(translateUi(loadUiLocale(), 'settings.cloudOperation.restoreFailed', { error: String(e.message) }), 'error');
           throw e;
       }
   };
