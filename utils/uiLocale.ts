@@ -6,6 +6,12 @@ export const UI_LOCALE_STORAGE_KEY = 'sullyos.uiLocale.v1';
 export type UiMessageParams = Record<string, string | number>;
 
 const ZH_MESSAGES = {
+  'settings.importDb.chatThemes': "聊天主题",
+  'settings.importDb.emojis': "表情包",
+  'settings.importDb.emojiCategories': "表情分类",
+  'settings.importDb.assets': "系统资源",
+  'settings.importDb.favorites': "聊天收藏",
+  'settings.importDb.journalStickers': "日记贴纸",
   'settings.importDb.characters': "角色资料",
   'settings.importDb.groups': "角色分组",
   'settings.importDb.messages': "聊天记录",
@@ -518,6 +524,12 @@ const JA_MESSAGES = {
   'settings.cloudOperation.pack': "バックアップデータを準備中...",
   'settings.exportOperation.init': "バックアップ作成エンジンを初期化中...",
   'settings.importDb.characters': "キャラクター情報",
+  'settings.importDb.chatThemes': "チャットテーマ",
+  'settings.importDb.emojis': "スタンプ",
+  'settings.importDb.emojiCategories': "スタンプのカテゴリ",
+  'settings.importDb.assets': "システム素材",
+  'settings.importDb.favorites': "チャットのお気に入り",
+  'settings.importDb.journalStickers': "日記のステッカー",
   'settings.importDb.groups': "キャラクターのグループ",
   'settings.importDb.messages': "チャット履歴",
   'settings.importDb.media': "キャラクターのメディア",

@@ -4413,26 +4413,26 @@ export const DB = {
       await runSection('聊天主题', data.customThemes !== undefined, async () => {
           await mergeStore(STORE_THEMES, data.customThemes, '聊天主题', true);
           data.customThemes = undefined as any;
-      }, data.customThemes?.length || 0);
+      }, data.customThemes?.length || 0, { key: 'settings.importDb.chatThemes' });
       await runSection('表情包', data.savedEmojis !== undefined, async () => {
           await mergeStore(STORE_EMOJIS, data.savedEmojis, '表情包', true);
           data.savedEmojis = undefined as any;
-      }, data.savedEmojis?.length || 0);
+      }, data.savedEmojis?.length || 0, { key: 'settings.importDb.emojis' });
       await runSection('表情分类', data.emojiCategories !== undefined, async () => {
           await mergeStore(STORE_EMOJI_CATEGORIES, data.emojiCategories, '表情分类', false);
           data.emojiCategories = undefined as any;
-      }, data.emojiCategories?.length || 0);
+      }, data.emojiCategories?.length || 0, { key: 'settings.importDb.emojiCategories' });
       await runSection('系统资源', data.assets !== undefined, async () => {
           await clearAndAdd(STORE_ASSETS, data.assets || [], '系统资源', true);
           data.assets = undefined as any;
-      }, data.assets?.length || 0);
+      }, data.assets?.length || 0, { key: 'settings.importDb.assets' });
       await runSection('聊天收藏', data.contentFavoritesIndex != null, async () => {
           await DB.saveAssetRaw('content_favorites_index_v1', data.contentFavoritesIndex);
-      });
+      }, undefined, { key: 'settings.importDb.favorites' });
       await runSection('日记贴纸', data.savedJournalStickers !== undefined, async () => {
           await mergeStore(STORE_JOURNAL_STICKERS, data.savedJournalStickers, '日记贴纸', true);
           data.savedJournalStickers = undefined as any;
-      }, data.savedJournalStickers?.length || 0);
+      }, data.savedJournalStickers?.length || 0, { key: 'settings.importDb.journalStickers' });
 
       // 子相册是独立元数据；字段缺失代表旧备份，不代表“没有子相册”。
       // 旧备份导入到已经分类过的设备时，尽量按 imageId + charId 复用现有归属，避免
