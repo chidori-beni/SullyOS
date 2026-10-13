@@ -4596,61 +4596,61 @@ export const DB = {
       await runSection('听歌房', data.vrMusicRoom !== undefined, async () => {
           if (hasStore(STORE_VR_MUSIC) && data.vrMusicRoom) await DB.saveVRMusicRoom(data.vrMusicRoom);
           data.vrMusicRoom = undefined as any;
-      }, 1);
+      }, 1, { key: 'settings.importDb.musicRoom' });
       await runSection('留言簿', data.vrGuestbook !== undefined, async () => {
           if (hasStore(STORE_VR_GUESTBOOK) && data.vrGuestbook) await DB.saveVRGuestbook(data.vrGuestbook);
           data.vrGuestbook = undefined as any;
-      }, 1);
+      }, 1, { key: 'settings.importDb.guestbook' });
       await runSection('剧院剧本', data.vrScripts !== undefined, async () => {
           if (hasStore(STORE_VR_SCRIPTS) && Array.isArray(data.vrScripts)) for (const s of data.vrScripts) await DB.saveVRScript(s);
           data.vrScripts = undefined as any;
-      }, data.vrScripts?.length || 0);
+      }, data.vrScripts?.length || 0, { key: 'settings.importDb.scripts' });
       await runSection('历史舞台剧', data.vrStagedPlays !== undefined, async () => {
           if (hasStore(STORE_VR_PLAYS) && Array.isArray(data.vrStagedPlays)) for (const p of data.vrStagedPlays) await DB.saveVRStagedPlay(p);
           data.vrStagedPlays = undefined as any;
-      }, data.vrStagedPlays?.length || 0);
+      }, data.vrStagedPlays?.length || 0, { key: 'settings.importDb.plays' });
       await runSection('剧院预设', (data as any).vrPresets !== undefined, async () => {
           if (hasStore(STORE_VR_PRESETS) && Array.isArray((data as any).vrPresets)) for (const p of (data as any).vrPresets) await DB.saveVRPreset(p);
           (data as any).vrPresets = undefined as any;
-      }, (data as any).vrPresets?.length || 0);
+      }, (data as any).vrPresets?.length || 0, { key: 'settings.importDb.vrPresets' });
       await runSection('邮局信件', data.vrLetters !== undefined, async () => {
           await clearAndAdd(STORE_VR_LETTERS, data.vrLetters, '邮局信件', false);
           data.vrLetters = undefined as any;
-      }, data.vrLetters?.length || 0);
+      }, data.vrLetters?.length || 0, { key: 'settings.importDb.letters' });
       await runSection('彼方设置', data.vrSettings !== undefined, async () => {
           if (hasStore(STORE_VR_SETTINGS) && Array.isArray(data.vrSettings)) {
               for (const rec of data.vrSettings) await DB.saveVRSettingRecord(rec);
           }
           data.vrSettings = undefined as any;
-      }, data.vrSettings?.length || 0);
+      }, data.vrSettings?.length || 0, { key: 'settings.importDb.vrSettings' });
       await runSection('邮局身份', (data as any).vrPostOffice !== undefined, async () => {
           importPostOfficeLocal((data as any).vrPostOffice);
           (data as any).vrPostOffice = undefined;
-      }, 1);
+      }, 1, { key: 'settings.importDb.postOffice' });
       await runSection('信号坠落处', (data as any).vrSignal !== undefined, async () => {
           importSignalLocal((data as any).vrSignal);
           (data as any).vrSignal = undefined;
-      }, 1);
+      }, 1, { key: 'settings.importDb.signal' });
       await runSection('家园世界', data.worlds !== undefined, async () => {
           await clearAndAdd(STORE_WORLDS, data.worlds, '家园世界', false);
           data.worlds = undefined as any;
-      }, data.worlds?.length || 0);
+      }, data.worlds?.length || 0, { key: 'settings.importDb.worlds' });
       await runSection('家园演绎历史', data.worldEpisodes !== undefined, async () => {
           await clearAndAdd(STORE_WORLD_EPISODES, data.worldEpisodes, '家园演绎历史', false);
           data.worldEpisodes = undefined as any;
-      }, data.worldEpisodes?.length || 0);
+      }, data.worldEpisodes?.length || 0, { key: 'settings.importDb.episodes' });
       await runSection('家园本机配置', (data as any).worldHomeLocal !== undefined, async () => {
           importWorldHomeLocal((data as any).worldHomeLocal); // 全局 API + 文风收藏
           (data as any).worldHomeLocal = undefined;
-      }, 1);
+      }, 1, { key: 'settings.importDb.homeLocal' });
       await runSection('瑞幸配置', (data as any).luckinLocal !== undefined, async () => {
           importLuckinLocal((data as any).luckinLocal); // token + 启用状态
           (data as any).luckinLocal = undefined;
-      }, 1);
+      }, 1, { key: 'settings.importDb.luckin' });
       await runSection('麦当劳配置', (data as any).mcdLocal !== undefined, async () => {
           importMcdLocal((data as any).mcdLocal); // token + 启用状态
           (data as any).mcdLocal = undefined;
-      }, 1);
+      }, 1, { key: 'settings.importDb.mcd' });
       await runSection('3D 家园本机偏好', data.home3DLocal !== undefined, async () => {
           importHome3DLocal(data.home3DLocal);
           // Imported assets may contain an older localStorage mirror. Do not let
@@ -4662,12 +4662,12 @@ export const DB = {
               await DB.saveAssetRaw('ls_mirror_v1', {...mirror, data: {...values, ...exportHome3DLocal()}});
           }
           data.home3DLocal = undefined;
-      });
+      }, undefined, { key: 'settings.importDb.home3d' });
 
       await runSection('MCP 服务器配置', (data as any).mcpLocal !== undefined, async () => {
           importMcpLocal((data as any).mcpLocal); // 用户自配的 MCP 服务器列表
           (data as any).mcpLocal = undefined;
-      }, 1);
+      }, 1, { key: 'settings.importDb.mcp' });
       await runSection('主动消息配置', (data as any).amsg2GlobalConfig !== undefined, async () => {
           // 必须在 OSContext 那段「导入后跟云端对一次账」之前落地：那段的第一道门是
           // 「本机有没有 Worker 地址」，地址还没写回去的话它会整段跳过，旧档角色留在
@@ -4677,11 +4677,11 @@ export const DB = {
               { allowBackendConnection: options.allowBackendConnection },
           );
           (data as any).amsg2GlobalConfig = undefined;
-      }, 1);
+      }, 1, { key: 'settings.importDb.amsg' });
       await runSection('桌面皮肤偏好', (data as any).desktopSkinLocal !== undefined, async () => {
           await importDesktopSkinLocal((data as any).desktopSkinLocal); // 界面配色 + 看板 banner（data URL→本机 blob）
           (data as any).desktopSkinLocal = undefined;
-      }, 1);
+      }, 1, { key: 'settings.importDb.skin' });
       await runSection('歌曲', data.songs !== undefined, async () => {
           await clearAndAdd(STORE_SONGS, data.songs, '歌曲', false);
           data.songs = undefined as any;

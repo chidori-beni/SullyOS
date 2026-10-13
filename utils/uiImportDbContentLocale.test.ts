@@ -4,6 +4,24 @@ import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { translateUi } from './uiLocale';
 const categories = [
+  ['musicRoom', '听歌房'],
+  ['guestbook', '留言簿'],
+  ['scripts', '剧院剧本'],
+  ['plays', '历史舞台剧'],
+  ['vrPresets', '剧院预设'],
+  ['letters', '邮局信件'],
+  ['vrSettings', '彼方设置'],
+  ['postOffice', '邮局身份'],
+  ['signal', '信号坠落处'],
+  ['worlds', '家园世界'],
+  ['episodes', '家园演绎历史'],
+  ['homeLocal', '家园本机配置'],
+  ['luckin', '瑞幸配置'],
+  ['mcd', '麦当劳配置'],
+  ['home3d', '3D 家园本机偏好'],
+  ['mcp', 'MCP 服务器配置'],
+  ['amsg', '主动消息配置'],
+  ['skin', '桌面皮肤偏好'],
   ['groupChats', '群聊资料'],
   ['posts', '动态帖子'],
   ['courses', '学习课程'],
@@ -30,7 +48,7 @@ it('keeps the complete database module identical apart from the six display argu
   const baseline = execFileSync('git', ['show', 'HEAD:utils/db.ts'], { encoding: 'utf8' }).replace(/\r/g, '');
   let actual = source.replace(/\r/g, '');
   for (const [key] of categories) {
-    const addition = `${key === 'favorites' ? ', undefined' : ''}, { key: 'settings.importDb.${key}' }`;
+    const addition = `${key === 'favorites' || key === 'home3d' ? ', undefined' : ''}, { key: 'settings.importDb.${key}' }`;
     if (!baseline.includes(addition)) actual = actual.replace(addition, '');
   }
   expect(actual).toBe(baseline);
