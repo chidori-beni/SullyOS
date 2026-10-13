@@ -13,6 +13,17 @@ it('keeps formatted timestamp parameters literal', () => {
   expect(translateUi('ja-JP', 'settings.cloud.last', { time: '日時 {days} 🌸' })).toBe('前回のバックアップ: 日時 {days} 🌸');
   expect(translateUi('ja-JP', 'settings.reminder.never')).not.toBe(translateUi('zh-CN', 'settings.reminder.never'));
 });
+it('localizes introductory copy while preserving provider names and repository input', () => {
+  const source = readFileSync(resolve(process.cwd(), 'apps/Settings.tsx'), 'utf8');
+  for (const key of ['intro', 'china', 'chinaTail', 'recommended', 'githubHint', 'webdavHint', 'steps', 'step1', 'step2', 'step3a', 'step3b', 'step3c'] as const) {
+    expect(source).toContain(`t('settings.cloudGuide.${key}')`);
+    expect(translateUi('ja-JP', `settings.cloudGuide.${key}`)).not.toBe(translateUi('zh-CN', `settings.cloudGuide.${key}`));
+  }
+  expect(source).toContain("{ghRepo || 'sully-backup'}</code>");
+  expect(source).toContain("provider: 'github'");
+  expect(source).toContain("provider: 'webdav'");
+  expect(source).toContain('https://github.com/settings/tokens/new?scopes=repo&description=Sully%20%E5%A4%87%E4%BB%BD');
+});
 it('localizes provider switching and modal footer without changing their actions', () => {
   const source = readFileSync(resolve(process.cwd(), 'apps/Settings.tsx'), 'utf8');
   for (const key of ['switchGithub', 'tryGithub', 'keepWebdav', 'disconnect', 'done'] as const) {

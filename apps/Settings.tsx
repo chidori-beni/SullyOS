@@ -2446,18 +2446,18 @@ const Settings: React.FC = () => {
             {!cloudBackupConfig.enabled ? (
                 <div className="space-y-3 py-2">
                     <p className="text-[11px] text-slate-400 leading-relaxed text-center">
-                        把备份上传到你自己的云端，换设备、丢手机都不怕。<br/>
-                        国内推荐 <b>GitHub</b>（不用梯子，2GB/份）。
+                        {t('settings.cloudGuide.intro')}<br/>
+                        {t('settings.cloudGuide.china')}<b>GitHub</b>{t('settings.cloudGuide.chinaTail')}
                     </p>
                     <div className="grid grid-cols-2 gap-2">
                         <button
                             onClick={() => { trackEvent('连接云端备份服务商', { provider: 'github' }); setShowGithubModal(true); }}
                             className="py-3 px-2 bg-gradient-to-br from-slate-800 to-slate-900 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-all flex flex-col items-center gap-1.5 relative"
                         >
-                            <span className="absolute top-1 right-1.5 text-[8px] bg-amber-300 text-slate-800 px-1.5 py-0.5 rounded-full font-bold">推荐</span>
+                            <span className="absolute top-1 right-1.5 text-[8px] bg-amber-300 text-slate-800 px-1.5 py-0.5 rounded-full font-bold">{t('settings.cloudGuide.recommended')}</span>
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.203 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0022 12.017C22 6.484 17.522 2 12 2z" /></svg>
                             <span>GitHub</span>
-                            <span className="text-[9px] text-slate-300 font-normal">不用梯子 · 2GB</span>
+                            <span className="text-[9px] text-slate-300 font-normal">{t('settings.cloudGuide.githubHint')}</span>
                         </button>
                         <button
                             onClick={() => { trackEvent('连接云端备份服务商', { provider: 'webdav' }); setShowCloudModal(true); }}
@@ -2465,7 +2465,7 @@ const Settings: React.FC = () => {
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15a4.5 4.5 0 004.5 4.5H18a3.75 3.75 0 001.332-7.257 3 3 0 00-3.758-3.848 5.25 5.25 0 00-10.233 2.33A4.502 4.502 0 002.25 15z" /></svg>
                             <span>WebDAV</span>
-                            <span className="text-[9px] text-sky-100 font-normal">日本/NAS · 需梯子</span>
+                            <span className="text-[9px] text-sky-100 font-normal">{t('settings.cloudGuide.webdavHint')}</span>
                         </button>
                     </div>
                 </div>
@@ -3797,10 +3797,10 @@ const Settings: React.FC = () => {
           <div className="space-y-4 p-1">
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
                   <p className="text-[11px] text-slate-700 leading-relaxed">
-                      <b>三步搞定，不用梯子：</b><br/>
-                      ① 点下面按钮跳到 GitHub 创建 Token<br/>
-                      ② 复制 token，回来粘到下面框里<br/>
-                      ③ 点 <b>测试并连接</b> — 我们会自动帮你建好私有仓库 <code className="bg-white px-1 rounded">{ghRepo || 'sully-backup'}</code>
+                      <b>{t('settings.cloudGuide.steps')}</b><br/>
+                      {t('settings.cloudGuide.step1')}<br/>
+                      {t('settings.cloudGuide.step2')}<br/>
+                      {t('settings.cloudGuide.step3a')}<b>{t('settings.cloudGuide.step3b')}</b>{t('settings.cloudGuide.step3c')}<code className="bg-white px-1 rounded">{ghRepo || 'sully-backup'}</code>
                   </p>
               </div>
 
