@@ -349,7 +349,7 @@ export interface ImportSystemOptions {
 
 export type ResetSystemResult =
   | { status: 'done' }
-  | { status: 'cloud-cleanup-failed'; workerUrl: string; detail: string }
+  | { status: 'cloud-cleanup-failed'; workerUrl: string; detail: string; uiReasons?: UiStatusMessage[] }
   | { status: 'failed' };
 
 interface OSContextType {
@@ -5778,7 +5778,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     try {
       const cleanup = await wipeAmsgCloudDataForReset();
       if (!options?.force && cleanup.status === 'failed') {
-        return { status: 'cloud-cleanup-failed', workerUrl: cleanup.workerUrl, detail: cleanup.detail };
+        return { status: 'cloud-cleanup-failed', workerUrl: cleanup.workerUrl, detail: cleanup.detail, uiReasons: cleanup.uiReasons };
       }
       await DB.deleteDB();
       await ActiveMsgStore.deleteDB();
@@ -5787,7 +5787,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       return { status: 'done' };
     } catch (e) {
       console.error(e);
-      addToast('重置失败，请手动清除浏览器数据', 'error');
+      addToast(translateUi(loadUiLocale(), 'settings.resetResult.failed'), 'error');
       return { status: 'failed' };
     }
   };

@@ -519,7 +519,7 @@ const Settings: React.FC = () => {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
   /** 云端没清干净时停在这里：本地还一个字节都没动，等用户决定重试还是照样重置。 */
-  const [resetCloudFailure, setResetCloudFailure] = useState<{ workerUrl: string; detail: string } | null>(null);
+  const [resetCloudFailure, setResetCloudFailure] = useState<{ workerUrl: string; detail: string; uiReasons?: UiStatusMessage[] } | null>(null);
   const [showPresetModal, setShowPresetModal] = useState(false);
   const [showApiCallLog, setShowApiCallLog] = useState(false);
   const [showRealtimeModal, setShowRealtimeModal] = useState(false);
@@ -1694,7 +1694,7 @@ const Settings: React.FC = () => {
           const result = await resetSystem();
           if (result.status === 'cloud-cleanup-failed') {
               setShowResetConfirm(false);
-              setResetCloudFailure({ workerUrl: result.workerUrl, detail: result.detail });
+              setResetCloudFailure({ workerUrl: result.workerUrl, detail: result.detail, ...(result.uiReasons ? { uiReasons: result.uiReasons } : {}) });
           } else if (result.status === 'failed') {
               setShowResetConfirm(false);
           }
@@ -4732,7 +4732,7 @@ const Settings: React.FC = () => {
           }
       >
           <div className="flex flex-col gap-3 py-2 text-sm text-slate-600">
-              <p>{resetCloudFailure?.detail}{t('settings.reset.untouched')}</p>
+              <p>{resetCloudFailure?.uiReasons?.length ? resetCloudFailure.uiReasons.map(reason => t(reason.key, reason.params)).join('、') : resetCloudFailure?.detail}{t('settings.reset.untouched')}</p>
               <p className="text-xs text-slate-400 break-all">
                   {t('settings.reset.worker')}{resetCloudFailure?.workerUrl}
               </p>

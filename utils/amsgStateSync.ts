@@ -821,12 +821,14 @@ export const wipeAmsgCloudData = async (
   return { tasks, stateDeleted, toolConfigRestored, llmCredentialsDeleted, push };
 };
 
+import type { UiStatusMessage } from './uiLocale';
+
 /** wipeAmsgCloudDataForReset 的结果，failed 时带上 worker 地址供界面转告用户。 */
 export type AmsgResetCloudWipe =
   /** 压根没配过 worker，云端一个字节都没写过。 */
   | { status: 'skipped' }
   | { status: 'cleared' }
-  | { status: 'failed'; workerUrl: string; detail: string };
+  | { status: 'failed'; workerUrl: string; detail: string; uiReasons?: UiStatusMessage[] };
 
 /**
  * 「重置全部数据」专用的云端收尾：不补传工具凭据、不重新登记推送，清完就是清完。
@@ -852,11 +854,20 @@ export const wipeAmsgCloudDataForReset = async (): Promise<AmsgResetCloudWipe> =
   });
 
   const reasons: string[] = [];
-  if (!result.tasks.listed) reasons.push('读不到云端任务清单');
-  else if (result.tasks.failed > 0) reasons.push(`${result.tasks.failed} 个定时任务没取消掉`);
-  if (result.stateDeleted === null) reasons.push('角色上下文没清掉');
+  const uiReasons: UiStatusMessage[] = [];
+  if (!result.tasks.listed) {
+    reasons.push('读不到云端任务清单');
+    uiReasons.push({ key: 'settings.resetResult.tasks' });
+  } else if (result.tasks.failed > 0) {
+    reasons.push(`${result.tasks.failed} 个定时任务没取消掉`);
+    uiReasons.push({ key: 'settings.resetResult.cancel', params: { count: result.tasks.failed } });
+  }
+  if (result.stateDeleted === null) {
+    reasons.push('角色上下文没清掉');
+    uiReasons.push({ key: 'settings.resetResult.context' });
+  }
   if (reasons.length === 0) return { status: 'cleared' };
-  return { status: 'failed', workerUrl, detail: reasons.join('、') };
+  return { status: 'failed', workerUrl, detail: reasons.join('、'), uiReasons };
 };
 
 const writeChatPresence = (charId: string, lastUserMessageAt: number | null) => {

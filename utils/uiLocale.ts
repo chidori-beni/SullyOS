@@ -6,6 +6,10 @@ export const UI_LOCALE_STORAGE_KEY = 'sullyos.uiLocale.v1';
 export type UiMessageParams = Record<string, string | number>;
 
 const ZH_MESSAGES = {
+  'settings.resetResult.tasks': "读不到云端任务清单",
+  'settings.resetResult.cancel': "{count} 个定时任务没取消掉",
+  'settings.resetResult.context': "角色上下文没清掉",
+  'settings.resetResult.failed': "重置失败，请手动清除浏览器数据",
   'settings.reset.button': "格式化系统 (出厂设置)",
   'settings.reset.warning': "系统警告",
   'settings.reset.busy': "清理中…",
@@ -626,6 +630,10 @@ const JA_MESSAGES = {
   'settings.exportOperation.init': "バックアップ作成エンジンを初期化中...",
   'settings.importDb.characters': "キャラクター情報",
   'settings.reset.button': "システムを初期化（工場出荷状態）",
+  'settings.resetResult.tasks': "クラウドのタスク一覧を取得できません",
+  'settings.resetResult.cancel': "予約タスク {count} 件をキャンセルできませんでした",
+  'settings.resetResult.context': "キャラクターのコンテキストを削除できませんでした",
+  'settings.resetResult.failed': "初期化に失敗しました。ブラウザーのデータを手動で消去してください",
   'settings.reset.warning': "システム警告",
   'settings.reset.busy': "削除処理中…",
   'settings.reset.confirm': "初期化を実行",

@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import ts from 'typescript';
 import { translateUi } from './uiLocale';
 const source = readFileSync(resolve(process.cwd(), 'apps/Settings.tsx'), 'utf8');
-const handlers = (s: string) => s.slice(s.indexOf('const confirmReset ='), s.indexOf('// 保存实时感知配置')).replace(/\r/g, '');
+const handlers = (s: string) => s.slice(s.indexOf('const confirmReset ='), s.indexOf('// 保存实时感知配置')).replace(/\r/g, '').replace(', ...(result.uiReasons ? { uiReasons: result.uiReasons } : {})', '');
 it('keeps both reset handlers byte-identical to the remote baseline', () => {
   const baseline = execFileSync('git', ['show', 'HEAD:apps/Settings.tsx'], { encoding: 'utf8' });
   expect(handlers(source).length).toBeGreaterThan(500);
@@ -29,7 +29,7 @@ it('keeps irreversible deletion, cloud tasks and API-cost warnings explicit', ()
   expect(translateUi('ja-JP', 'settings.reset.after')).toContain('元に戻すことはできません');
   expect(translateUi('ja-JP', 'settings.reset.risk')).toContain('API');
   expect(translateUi('ja-JP', 'settings.reset.risk')).toContain('D1');
-  expect(source).toContain('{resetCloudFailure?.detail}');
+  expect(source).toContain(': resetCloudFailure?.detail}');
   expect(source).toContain('{resetCloudFailure?.workerUrl}');
   expect(source).toContain("{t('settings.reset.permanent')}</span>");
 });

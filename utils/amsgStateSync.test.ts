@@ -749,6 +749,7 @@ describe('重置全部数据的云端收尾', () => {
     if (result.status !== 'failed') throw new Error('unreachable');
     expect(result.workerUrl).toBe('https://amsg.example.dev');
     expect(result.detail).toContain('任务清单');
+    expect(result.uiReasons).toContainEqual({ key: 'settings.resetResult.tasks' });
   });
 
   it('有任务取消失败也算没清干净（它们会继续到点烧 API 额度）', async () => {
@@ -762,6 +763,7 @@ describe('重置全部数据的云端收尾', () => {
     expect(result.status).toBe('failed');
     if (result.status !== 'failed') throw new Error('unreachable');
     expect(result.detail).toContain('1 个定时任务');
+    expect(result.uiReasons).toContainEqual({ key: 'settings.resetResult.cancel', params: { count: 1 } });
   });
 
   it('角色上下文清不掉算没清干净（那是聊天原文）', async () => {
@@ -772,6 +774,7 @@ describe('重置全部数据的云端收尾', () => {
     expect(result.status).toBe('failed');
     if (result.status !== 'failed') throw new Error('unreachable');
     expect(result.detail).toContain('角色上下文');
+    expect(result.uiReasons).toContainEqual({ key: 'settings.resetResult.context' });
   });
 
   // 老 worker 上压根没有凭据表，这一步注定失败。拿它当判据会把一批根本没东西可清的人
