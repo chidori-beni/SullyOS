@@ -4297,7 +4297,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       exportOptions: { includeBackendConnection?: boolean } = {},
   ): Promise<Blob> => {
       try {
-          setSysOperation({ status: 'processing', message: '正在初始化打包引擎...', progress: 0 });
+          setSysOperation({ status: 'processing', message: translateUi(loadUiLocale(), 'settings.exportOperation.init'), progress: 0 });
           
           const JSZip = await loadJSZip();
           const zip = new JSZip();
@@ -4850,7 +4850,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               currentStep++;
               setSysOperation({
                   status: 'processing',
-                  message: `正在打包: ${storeName} ...`,
+                  message: translateUi(loadUiLocale(), 'settings.exportOperation.store', { store: storeName }),
                   progress: (currentStep / totalSteps) * 100
               });
 
@@ -5097,7 +5097,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
           // 进度条停在 70% 让用户看到接下来的"压缩中 X%"实际推进，而不是卡在 95% 干等。
           // text_only 用 level 6；媒体/全量仍用 level 9，具体见 generateAsync 配置。
-          setSysOperation({ status: 'processing', message: '正在生成压缩包...', progress: 70 });
+          setSysOperation({ status: 'processing', message: translateUi(loadUiLocale(), 'settings.exportOperation.zip'), progress: 70 });
 
           // --- v2 分片序列化（替代老的单根 data.json）---
           // 不再把所有数据拼成一根 data.json：单根字符串逼近 ~512M 会确定性 RangeError。
@@ -5135,7 +5135,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       lastReportedPercent = p;
                       setSysOperation({
                           status: 'processing',
-                          message: `正在压缩备份数据 ${p.toFixed(0)}%...`,
+                          message: translateUi(loadUiLocale(), 'settings.exportOperation.compress', { pct: p.toFixed(0) }),
                           progress: Math.min(99, 70 + Math.floor(p * 0.29)),
                       });
                   }
@@ -5147,7 +5147,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           markBackupDone();
           if (malformedImageCount > 0) {
               console.warn(`[Backup] 备份已完成，但有 ${malformedImageCount} 处损坏图片未写入素材文件`, malformedImageLocations);
-              addToast(`备份已生成，但有 ${malformedImageCount} 处原本就损坏的图片无法打包；其他数据已正常保存`, 'info');
+              addToast(translateUi(loadUiLocale(), 'settings.exportOperation.damaged', { count: malformedImageCount }), 'info');
           }
           return content;
 

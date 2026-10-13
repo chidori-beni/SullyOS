@@ -6,6 +6,11 @@ export const UI_LOCALE_STORAGE_KEY = 'sullyos.uiLocale.v1';
 export type UiMessageParams = Record<string, string | number>;
 
 const ZH_MESSAGES = {
+  'settings.exportOperation.init': "正在初始化打包引擎...",
+  'settings.exportOperation.store': "正在打包: {store} ...",
+  'settings.exportOperation.zip': "正在生成压缩包...",
+  'settings.exportOperation.compress': "正在压缩备份数据 {pct}%...",
+  'settings.exportOperation.damaged': "备份已生成，但有 {count} 处原本就损坏的图片无法打包；其他数据已正常保存",
   'settings.cloudOperation.pack': "正在打包备份数据...",
   'settings.cloudOperation.upload': "正在上传到云端...",
   'settings.cloudOperation.uploadProgress': "上传中 {pct}%...",
@@ -484,6 +489,11 @@ const JA_MESSAGES = {
   'settings.githubResult.verified': "GitHub に接続しました",
   'settings.cloud.saved': 'クラウドバックアップ設定を保存しました',
   'settings.cloudOperation.pack': "バックアップデータを準備中...",
+  'settings.exportOperation.init': "バックアップ作成エンジンを初期化中...",
+  'settings.exportOperation.store': "バックアップに追加中: {store} ...",
+  'settings.exportOperation.zip': "圧縮ファイルを作成中...",
+  'settings.exportOperation.compress': "バックアップデータを圧縮中 {pct}%...",
+  'settings.exportOperation.damaged': "バックアップを作成しましたが、元から破損していた画像 {count} 件は追加できませんでした。ほかのデータは正常に保存されています",
   'settings.cloudOperation.upload': "クラウドにアップロード中...",
   'settings.cloudOperation.uploadProgress': "アップロード中 {pct}%...",
   'settings.cloudOperation.done': "クラウドバックアップ完了",
