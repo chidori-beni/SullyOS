@@ -17,6 +17,11 @@ it('keeps complete import logic, phase persistence and exceptions unchanged beyo
   const slice = (value: string) => value.slice(value.indexOf('const importSystem ='), value.indexOf('把这台设备和它名下的云端数据一起归零')).replace(/\r/g, '');
   let actual = slice(source);
   const baselineSlice = slice(baseline);
+  if (!baselineSlice.includes("currentUi?: UiStatusMessage): Promise<void>")) {
+    actual = actual.replace("label = '数据', currentUi?: UiStatusMessage", "label = '数据'")
+      .split('}, currentUi);').join('});');
+    for (const key of ['sar', 'theme', 'icons', 'appearance', 'social', 'room']) actual = actual.replace(`, { key: 'settings.importAsset.${key}' }`, '');
+  }
   if (!baselineSlice.includes('let lastCurrentUi:')) actual = actual
     .replace('      let lastCurrentUi: UiStatusMessage | undefined;\n', '')
     .replace("{ current: lastCurrentUi ? translateUi(loadUiLocale(), lastCurrentUi.key, lastCurrentUi.params) : current }", '{ current }')
@@ -39,6 +44,7 @@ it('keeps complete import logic, phase persistence and exceptions unchanged beyo
   ];
   expect(actual.length).toBeGreaterThan(10000);
   for (const [localized, original] of pairs) if (!slice(baseline).includes(localized)) {
+    if (localized === "translateUi(loadUiLocale(), 'settings.importOperation.current', { current })" && baselineSlice.includes('lastCurrentUi ? translateUi')) continue;
     expect(actual).toContain(localized);
     actual = actual.split(localized).join(original);
   }

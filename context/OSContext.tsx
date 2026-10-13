@@ -5337,7 +5337,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const hadCustomIconsBackup = data.customIcons !== undefined;
           const hadAppearancePresetsBackup = data.appearancePresets !== undefined;
 
-          const restoreAssetsInPlace = async (root: any, label = '数据'): Promise<void> => {
+          const restoreAssetsInPlace = async (root: any, label = '数据', currentUi?: UiStatusMessage): Promise<void> => {
               if (!zip) return;
 
               type Ref = { parent: any; key: string | number; filename: string };
@@ -5389,7 +5389,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       currentFileSize: hintedSize,
                       assetDone: restoredAssetFiles.size,
                       assetTotal: totalAssetFiles || entries.length,
-                  });
+                  }, currentUi);
 
                   try {
                       if (!fileInZip) {
@@ -5414,7 +5414,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                           currentFileSize: decodedSize,
                           assetDone: restoredAssetFiles.size,
                           assetTotal: totalAssetFiles || entries.length,
-                      });
+                      }, currentUi);
                   } catch {
                       console.warn(`Failed to restore asset: assets/${filename}`);
                   }
@@ -5474,11 +5474,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           }
           
           showImportProgress('settings', translateUi(loadUiLocale(), 'settings.importOperation.settings'), 92, { current: '系统设置', currentFile: '' }, { key: 'settings.importCurrent.settings' });
-          if (data.sarLocalState) await restoreAssetsInPlace(data.sarLocalState, 'SAR 存档');
+          if (data.sarLocalState) await restoreAssetsInPlace(data.sarLocalState, 'SAR 存档', { key: 'settings.importAsset.sar' });
           restoreSARLocalBackup(data.sarLocalState, { replaceMissing: replacesPrimaryHistory });
           if (data.chatInputPreferences !== undefined) saveChatInputPreferences(data.chatInputPreferences);
           if (data.theme) {
-              await restoreAssetsInPlace(data.theme, '系统主题');
+              await restoreAssetsInPlace(data.theme, '系统主题', { key: 'settings.importAsset.theme' });
               await updateTheme(data.theme);
           }
           if (data.apiConfig) updateApiConfig(data.apiConfig);
@@ -5489,8 +5489,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (data.memoryPalaceConfig) updateMemoryPalaceConfig(data.memoryPalaceConfig); // 恢复记忆宫殿全局配置
 
           if (data.customIcons !== undefined || data.appearancePresets !== undefined) {
-              await restoreAssetsInPlace(data.customIcons, '应用图标');
-              await restoreAssetsInPlace(data.appearancePresets, '外观预设');
+              await restoreAssetsInPlace(data.customIcons, '应用图标', { key: 'settings.importAsset.icons' });
+              await restoreAssetsInPlace(data.appearancePresets, '外观预设', { key: 'settings.importAsset.appearance' });
               const existingAssets = await DB.getAllAssets();
               if (Array.isArray(existingAssets)) {
                   for (const asset of existingAssets) {
@@ -5605,7 +5605,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           }
           
           if (data.socialAppData) {
-              await restoreAssetsInPlace(data.socialAppData, '动态设置');
+              await restoreAssetsInPlace(data.socialAppData, '动态设置', { key: 'settings.importAsset.social' });
               if (data.socialAppData.charHandles) localStorage.setItem('spark_char_handles', JSON.stringify(data.socialAppData.charHandles));
               if (data.socialAppData.userId) localStorage.setItem('spark_user_id', data.socialAppData.userId);
               
@@ -5616,7 +5616,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           
           // Restore Room Custom Assets to DB (migrate old format on import)
           if (data.roomCustomAssets) {
-              await restoreAssetsInPlace(data.roomCustomAssets, '房间自定义素材');
+              await restoreAssetsInPlace(data.roomCustomAssets, '房间自定义素材', { key: 'settings.importAsset.room' });
               const migratedAssets = data.roomCustomAssets.map((a: any) => ({
                   ...a,
                   id: a.id || `asset_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
