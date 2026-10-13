@@ -13,6 +13,19 @@ it('keeps formatted timestamp parameters literal', () => {
   expect(translateUi('ja-JP', 'settings.cloud.last', { time: '日時 {days} 🌸' })).toBe('前回のバックアップ: 日時 {days} 🌸');
   expect(translateUi('ja-JP', 'settings.reminder.never')).not.toBe(translateUi('zh-CN', 'settings.reminder.never'));
 });
+it('localizes cloud warnings without changing control names or permission links', () => {
+  const source = readFileSync(resolve(process.cwd(), 'apps/Settings.tsx'), 'utf8');
+  for (const key of ['networkTitle', 'networkBefore', 'networkStrong', 'networkAfter', 'passwordTitle', 'passwordHelp', 'githubTitle', 'expiryBefore', 'expiryLabel', 'expiryStrong', 'expiryAfter', 'expiryWarning', 'permissionsBefore', 'permissionsAfter', 'generateBefore', 'generateAfter'] as const) {
+    expect(source).toContain(`t('settings.cloudWarnings.${key}')`);
+    expect(translateUi('ja-JP', `settings.cloudWarnings.${key}`)).not.toBe(translateUi('zh-CN', `settings.cloudWarnings.${key}`));
+  }
+  for (const locale of ['zh-CN', 'ja-JP'] as const) {
+    for (const name of ['Apps Password', 'Apps', 'WebDAV URL', 'Connection ID', '401']) expect(translateUi(locale, 'settings.cloudWarnings.passwordHelp')).toContain(name);
+    expect(translateUi(locale, 'settings.cloudWarnings.expiryStrong')).toContain('No expiration');
+  }
+  for (const name of ['Expiration', 'repo', 'Generate token']) expect(source).toContain(`<b>${name}</b>`);
+  expect(source).toContain('https://github.com/settings/tokens/new?scopes=repo&description=Sully%20%E5%A4%87%E4%BB%BD');
+});
 it('keeps WebDAV tutorial control names and signup link unchanged in both languages', () => {
   const source = readFileSync(resolve(process.cwd(), 'apps/Settings.tsx'), 'utf8');
   for (const key of ['quick', 'register', 'email', 'step2', 'step3', 'step4'] as const) {

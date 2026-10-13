@@ -3738,8 +3738,8 @@ const Settings: React.FC = () => {
           <div className="space-y-4 p-1">
               <div className="bg-rose-50 border border-rose-200 rounded-xl p-3">
                   <p className="text-[10px] text-rose-700 leading-relaxed">
-                      <b>🪜 需要梯子</b><br/>
-                      InfiniCloud 是日本的服务，国内直连通常打不开注册页、也无法同步备份。<b>注册和之后每次同步都需要保持梯子开启</b>，否则会连接失败或超时。
+                      <b>{t('settings.cloudWarnings.networkTitle')}</b><br/>
+                      {t('settings.cloudWarnings.networkBefore')}<b>{t('settings.cloudWarnings.networkStrong')}</b>{t('settings.cloudWarnings.networkAfter')}
                   </p>
               </div>
               <div className="bg-sky-50 rounded-xl p-3">
@@ -3753,8 +3753,8 @@ const Settings: React.FC = () => {
               </div>
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
                   <p className="text-[10px] text-amber-800 leading-relaxed">
-                      <b>⚠️ Apps Password ≠ 登录密码</b><br/>
-                      <b>Apps Password</b> 是 <b>Apps</b> 页面里显示在 <b>WebDAV URL</b>、<b>Connection ID</b> <b>下方</b>的一串<b>可复制</b>的应用专用密码，往下滚就能看到。直接把它复制粘贴到上面的"密码"框即可，用账号登录密码会 401。
+                      <b>{t('settings.cloudWarnings.passwordTitle')}</b><br/>
+                      {t('settings.cloudWarnings.passwordHelp')}
                   </p>
               </div>
               <div>
@@ -3806,11 +3806,11 @@ const Settings: React.FC = () => {
 
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
                   <p className="text-[10px] text-amber-800 leading-relaxed">
-                      <b>⚠️ 在 GitHub 那一页只改一处:</b><br/>
-                      把 <b>Expiration</b>(有效期)下拉框 <b>从 90天 改成 No expiration</b>（永不过期）。
-                      不改的话 90 天后 token 过期，备份会突然 401。<br/>
-                      其它都别动 —— Note 已经填好「Sully 备份」，<b>repo</b> 权限已经勾上了，
-                      直接拉到最底点绿色 <b>Generate token</b> 即可。
+                      <b>{t('settings.cloudWarnings.githubTitle')}</b><br/>
+                      {t('settings.cloudWarnings.expiryBefore')}<b>Expiration</b>{t('settings.cloudWarnings.expiryLabel')}<b>{t('settings.cloudWarnings.expiryStrong')}</b>{t('settings.cloudWarnings.expiryAfter')}
+                      {t('settings.cloudWarnings.expiryWarning')}<br/>
+                      {t('settings.cloudWarnings.permissionsBefore')}<b>repo</b>{t('settings.cloudWarnings.permissionsAfter')}
+                      {t('settings.cloudWarnings.generateBefore')}<b>Generate token</b>{t('settings.cloudWarnings.generateAfter')}
                   </p>
               </div>
 
