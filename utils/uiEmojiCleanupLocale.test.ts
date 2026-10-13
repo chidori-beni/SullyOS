@@ -1,0 +1,24 @@
+import { expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import ts from 'typescript';
+import { translateUi, type UiMessageKey, type UiMessageParams } from './uiLocale';
+const source = readFileSync(resolve(process.cwd(), 'apps/Settings.tsx'), 'utf8');
+const body = source.slice(source.indexOf('const handleCleanupResidue ='), source.indexOf('const handleExport ='));
+it.each(['zh-CN', 'ja-JP'] as const)('keeps dry-run, cancellation and deletion order in %s', async locale => {
+  const scan = { removedCategories: [{ name: 'raw{count}' }], fixedCategories: [{ name: 'name 🌸' }], removedEmojiCount: 2 };
+  const cleanup = vi.fn(async (..._args: unknown[]) => scan), toast = vi.fn(), busy = vi.fn(), confirm = vi.fn((_message: string) => false);
+  const js = ts.transpileModule(body + '\nreturn handleCleanupResidue;', { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
+  const handler = new Function('isCleaningResidue', 'setIsCleaningResidue', 'DB', 'addToast', 'window', 't', js)(false, busy, { getAllCharacters: async () => [{ id: 'c1' }], cleanupEmojiResidue: cleanup }, toast, { confirm }, (key: UiMessageKey, params?: UiMessageParams) => translateUi(locale, key, params));
+  await handler();
+  expect(cleanup).toHaveBeenCalledTimes(1);
+  expect(cleanup).toHaveBeenCalledWith(['c1'], { dryRun: true });
+  expect(confirm.mock.calls[0][0]).toContain('raw{count}');
+  expect(confirm.mock.calls[0][0]).toContain(locale === 'ja-JP' ? '元に戻せません' : '不可撤销');
+  expect(busy).toHaveBeenLastCalledWith(false);
+  confirm.mockReturnValue(true);
+  await handler();
+  expect(cleanup).toHaveBeenCalledTimes(3);
+  expect(cleanup).toHaveBeenLastCalledWith(['c1']);
+  expect(toast).toHaveBeenLastCalledWith(translateUi(locale, 'settings.emojiCleanup.done', { categories: 1, emojis: 2, fixed: translateUi(locale, 'settings.emojiCleanup.fixed', { count: 1 }) }), 'success');
+});

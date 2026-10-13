@@ -1326,20 +1326,20 @@ const Settings: React.FC = () => {
           const validIds = (await DB.getAllCharacters()).map(c => c.id);
           const scan = await DB.cleanupEmojiResidue(validIds, { dryRun: true });
           if (scan.removedCategories.length === 0 && scan.fixedCategories.length === 0 && scan.removedEmojiCount === 0) {
-              addToast('很干净，没有发现表情包残留 ✨', 'success');
+              addToast(t('settings.emojiCleanup.clean'), 'success');
               return;
           }
           const lines = [
-              scan.removedCategories.length > 0 ? `• 删除 ${scan.removedCategories.length} 个失效专属分类：${scan.removedCategories.map(c => `「${c.name}」`).join('、')}` : '',
-              scan.removedEmojiCount > 0 ? `• 删除 ${scan.removedEmojiCount} 个随分类失效/无主的表情` : '',
-              scan.fixedCategories.length > 0 ? `• 修复 ${scan.fixedCategories.length} 个分类里指向已删角色的绑定：${scan.fixedCategories.map(c => `「${c.name}」`).join('、')}` : '',
+              scan.removedCategories.length > 0 ? t('settings.emojiCleanup.categories', { count: scan.removedCategories.length, names: scan.removedCategories.map(c => `「${c.name}」`).join('、') }) : '',
+              scan.removedEmojiCount > 0 ? t('settings.emojiCleanup.emojis', { count: scan.removedEmojiCount }) : '',
+              scan.fixedCategories.length > 0 ? t('settings.emojiCleanup.bindings', { count: scan.fixedCategories.length, names: scan.fixedCategories.map(c => `「${c.name}」`).join('、') }) : '',
           ].filter(Boolean).join('\n');
-          if (!window.confirm(`扫描到以下残留（角色已删除但表情包还在）：\n\n${lines}\n\n点「确定」清理，此操作不可撤销。`)) return;
+          if (!window.confirm(t('settings.emojiCleanup.confirm', { lines }))) return;
           const report = await DB.cleanupEmojiResidue(validIds);
-          addToast(`清理完成：删除 ${report.removedCategories.length} 个分类、${report.removedEmojiCount} 个表情${report.fixedCategories.length > 0 ? `，修复 ${report.fixedCategories.length} 处绑定` : ''}`, 'success');
+          addToast(t('settings.emojiCleanup.done', { categories: report.removedCategories.length, emojis: report.removedEmojiCount, fixed: report.fixedCategories.length > 0 ? t('settings.emojiCleanup.fixed', { count: report.fixedCategories.length }) : '' }), 'success');
       } catch (err) {
           console.error('[Settings] 表情包残留清理失败', err);
-          addToast('清理失败，请重试', 'error');
+          addToast(t('settings.emojiCleanup.failed'), 'error');
       } finally {
           setIsCleaningResidue(false);
       }
@@ -2424,10 +2424,10 @@ const Settings: React.FC = () => {
             </div>
 
             <button onClick={handleCleanupResidue} disabled={isCleaningResidue} className="w-full py-3 mb-2 bg-amber-50 border border-amber-100 text-amber-600 rounded-xl text-xs font-bold flex items-center justify-center gap-2 active:scale-95 transition-all disabled:opacity-50">
-                {isCleaningResidue ? '正在扫描…' : '一键清理表情包残留'}
+                {isCleaningResidue ? t('settings.emojiCleanup.scanning') : t('settings.emojiCleanup.button')}
             </button>
             <p className="text-[10px] text-slate-400 px-1 mb-4 leading-relaxed">
-                清理已删除角色遗留的「幽灵表情包」：专属分类的角色没了之后，单聊表情面板看不到它、群聊面板却还冒出来。先扫描列出结果，确认后才会删除。
+                {t('settings.emojiCleanup.help')}
             </p>
 
             <button onClick={() => setShowResetConfirm(true)} className="w-full py-3 bg-red-50 border border-red-100 text-red-500 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
