@@ -1,4 +1,6 @@
 
+import type { UiStatusMessage } from './utils/uiLocale';
+
 export enum AppID {
   Launcher = 'launcher',
   Settings = 'settings',
@@ -5354,6 +5356,8 @@ export interface CloudBackupFile {
     /** GitHub can expose an interrupted draft/release without a restorable asset set. */
     status?: 'ready' | 'incomplete';
     statusMessage?: string;
+    statusUiMessage?: UiStatusMessage;
+    statusUiReasons?: UiStatusMessage[];
     /** Expected GitHub asset sizes, in the same order as the ids encoded in href. */
     partSizes?: number[];
 }

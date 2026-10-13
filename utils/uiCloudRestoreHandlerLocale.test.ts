@@ -3,12 +3,13 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ts from 'typescript';
 import { translateUi, type UiLocale, type UiMessageKey } from './uiLocale';
+import { formatCloudBackupStatus } from './uiCloudBackupStatus';
 const source = readFileSync(resolve(process.cwd(), 'apps/Settings.tsx'), 'utf8');
 const body = source.slice(source.indexOf('const handleCloudRestore ='), source.indexOf('// GitHub backup handlers'));
 it.each(['zh-CN', 'ja-JP'] as const)('preserves restore guard, success and raw errors in %s', async (locale: UiLocale) => {
   const addToast = vi.fn(), close = vi.fn(), restore = vi.fn(), track = vi.fn(), showError = vi.fn();
   const js = ts.transpileModule(body + '\nreturn handleCloudRestore;', { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
-  const handler = new Function('addToast', 'setShowCloudRestoreModal', 'cloudRestoreFromWebDAV', 'trackEvent', 'cloudBackupConfig', 'showError', 't', js)(addToast, close, restore, track, { provider: 'github' }, showError, (key: UiMessageKey) => translateUi(locale, key));
+  const handler = new Function('addToast', 'setShowCloudRestoreModal', 'cloudRestoreFromWebDAV', 'trackEvent', 'cloudBackupConfig', 'showError', 't', 'formatCloudBackupStatus', 'locale', js)(addToast, close, restore, track, { provider: 'github' }, showError, (key: UiMessageKey) => translateUi(locale, key), formatCloudBackupStatus, locale);
   await handler({ status: 'incomplete', name: 'backup.zip' });
   expect(addToast).toHaveBeenLastCalledWith(translateUi(locale, 'settings.cloudRestore.blocked'), 'error');
   expect(restore).not.toHaveBeenCalled();

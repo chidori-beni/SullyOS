@@ -861,6 +861,7 @@ export const listBackups = async (config: CloudBackupConfig): Promise<CloudBacku
                     href: `${rel.id}:`,
                     status: 'incomplete',
                     statusMessage: rel.draft ? '上传中断：Release 仍是草稿且没有可用附件' : '上传未完成：没有可用的 ZIP 附件',
+                    statusUiMessage: { key: rel.draft ? 'settings.cloudStatus.draftEmpty' : 'settings.cloudStatus.empty' },
                 });
                 continue;
             }
@@ -882,12 +883,23 @@ export const listBackups = async (config: CloudBackupConfig): Promise<CloudBacku
                 const ids = group.parts.map(p => p.asset.id).join(',');
                 const lastModified = group.parts[group.parts.length - 1].asset.updated_at || rel.created_at || '';
                 const incompleteReasons: string[] = [];
-                if (rel.draft) incompleteReasons.push('Release 仍是草稿');
+                const statusUiReasons: UiStatusMessage[] = [];
+                if (rel.draft) {
+                    incompleteReasons.push('Release 仍是草稿');
+                    statusUiReasons.push({ key: 'settings.cloudStatus.draft' });
+                }
                 if (group.totalMismatch || !hasEveryIndex || group.parts.length !== group.total) {
                     incompleteReasons.push(`分片不完整（${indexes.size}/${group.total || '?'}）`);
+                    statusUiReasons.push({ key: 'settings.cloudStatus.parts', params: { done: indexes.size, total: group.total || '?' } });
                 }
-                if (!assetsReady) incompleteReasons.push('包含 0 字节或 GitHub 未完成附件');
-                if (isTransactional && !hasCompletionManifest) incompleteReasons.push('缺少完成标记');
+                if (!assetsReady) {
+                    incompleteReasons.push('包含 0 字节或 GitHub 未完成附件');
+                    statusUiReasons.push({ key: 'settings.cloudStatus.unready' });
+                }
+                if (isTransactional && !hasCompletionManifest) {
+                    incompleteReasons.push('缺少完成标记');
+                    statusUiReasons.push({ key: 'settings.cloudStatus.manifest' });
+                }
                 files.push({
                     name,
                     size: totalSize,
@@ -895,6 +907,7 @@ export const listBackups = async (config: CloudBackupConfig): Promise<CloudBacku
                     href: `${rel.id}:${ids}`,
                     status: isComplete ? 'ready' : 'incomplete',
                     statusMessage: isComplete ? undefined : `上传未完成：${incompleteReasons.join('；') || '附件状态异常'}`,
+                    statusUiReasons: isComplete ? undefined : (statusUiReasons.length ? statusUiReasons : [{ key: 'settings.cloudStatus.abnormal' }]),
                     partSizes: group.parts.map(part => Math.max(0, Number(part.asset.size) || 0)),
                 });
             }

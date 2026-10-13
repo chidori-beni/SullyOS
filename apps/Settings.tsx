@@ -1,4 +1,5 @@
 import NavigationBallSettings from '../components/settings/NavigationBallSettings';
+import { formatCloudBackupStatus } from '../utils/uiCloudBackupStatus';
 import { buildModelPickerView } from '../utils/modelPickerView';
 
 import UserHolidaySettings from '../components/settings/UserHolidaySettings';
@@ -1594,7 +1595,7 @@ const Settings: React.FC = () => {
   const handleCloudRestore = async (file: import('../types').CloudBackupFile) => {
       // 分片没传完的那种备份点了也只会中途失败，直接挡在门外并说明原因。
       if (file.status === 'incomplete') {
-          addToast(file.statusMessage || t('settings.cloudRestore.blocked'), 'error');
+          addToast(formatCloudBackupStatus(locale, file) || t('settings.cloudRestore.blocked'), 'error');
           return;
       }
       setShowCloudRestoreModal(false);
@@ -3940,7 +3941,7 @@ const Settings: React.FC = () => {
                                       <p className="text-[11px] text-slate-700 font-medium truncate">{file.name}</p>
                                       <span className="shrink-0 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[9px] font-bold">{t('settings.cloudRestore.incomplete')}</span>
                                   </div>
-                                  <p className="text-[10px] text-amber-700 mt-1 leading-relaxed">{file.statusMessage || t('settings.cloudRestore.unrestorable')}</p>
+                                  <p className="text-[10px] text-amber-700 mt-1 leading-relaxed">{formatCloudBackupStatus(locale, file) || t('settings.cloudRestore.unrestorable')}</p>
                                   <div className="flex items-center justify-between gap-3 mt-2">
                                       <span className="text-[10px] text-slate-400">{file.lastModified ? new Date(file.lastModified).toLocaleString(locale) : t('settings.cloudRestore.unknownTime')}</span>
                                       {cloudBackupConfig.provider === 'github' && cloudBackupConfig.githubOwner && (

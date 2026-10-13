@@ -23,7 +23,7 @@ it('localizes restore list shell while preserving files, raw errors and selectio
   expect(list).toContain("file.status === 'incomplete'");
   expect(list).toContain('onClick={() => handleCloudRestore(file)}');
   expect(list).toContain('cloudBackupListError ||');
-  expect(list).toContain('file.statusMessage ||');
+  expect(list).toContain('formatCloudBackupStatus(locale, file) ||');
   expect(list.match(/new Date\(file.lastModified\).toLocaleString\(locale\)/g)).toHaveLength(2);
   expect(list).toContain('{file.name}');
   expect(list).toContain('file.size / 1024 / 1024');
@@ -120,7 +120,8 @@ it('keeps all cloud request/save/restore handler implementations identical to th
     .replace("t('settings.cloudRestore.failed')", "'获取云端备份列表失败'")
     .replace("t('settings.cloudRestore.blocked')", "'这个备份上传未完成，暂时不能恢复'")
     .replace("t('settings.cloudRestore.errorTitle')", "'云端恢复失败'")
-    .replace("t('settings.cloud.disabled')", "'云端备份已关闭'");
+    .replace("t('settings.cloud.disabled')", "'云端备份已关闭'")
+    .replace('formatCloudBackupStatus(locale, file)', 'file.statusMessage');
   expect(source).toContain('const handleSaveRealtimeConfig');
   expect(handlers(source).length).toBeGreaterThan(1000);
   expect(handlers(source)).toBe(handlers(baseline));
