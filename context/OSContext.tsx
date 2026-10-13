@@ -5178,17 +5178,17 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const current = update.current ?? lastCurrent;
           const currentFile = update.currentFile ?? lastCurrentFile;
           const currentFileSize = update.currentFileSize ?? lastCurrentFileSize;
-          if (current) lines.push(`当前部分：${current}`);
+          if (current) lines.push(translateUi(loadUiLocale(), 'settings.importOperation.current', { current }));
           if (typeof update.itemTotal === 'number' && update.itemTotal > 0) {
-              lines.push(`条目：${update.itemDone || 0}/${update.itemTotal}`);
+              lines.push(translateUi(loadUiLocale(), 'settings.importOperation.items', { done: update.itemDone || 0, total: update.itemTotal }));
           }
           if (currentFile) {
               const sizeText = formatBytes(currentFileSize);
-              lines.push(`当前文件：${currentFile}${sizeText ? ` · ${sizeText}` : ''}`);
+              lines.push(translateUi(loadUiLocale(), 'settings.importOperation.file', { file: currentFile, size: sizeText ? ` · ${sizeText}` : '' }));
           }
           if (sourceName !== 'json' && update.current === '解析备份文件') {
               const sizeText = formatBytes(sourceSize);
-              lines.push(`备份：${sourceName}${sizeText ? ` · ${sizeText}` : ''}`);
+              lines.push(translateUi(loadUiLocale(), 'settings.importOperation.backup', { name: sourceName, size: sizeText ? ` · ${sizeText}` : '' }));
           }
           return lines.join('\n');
       };
@@ -5226,7 +5226,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           return Math.max(0, Math.floor(base64.length * 3 / 4) - padding);
       };
 
-      showImportProgress('parsing', '正在解析备份文件...', 1, { current: '解析备份文件', sourceSize });
+      showImportProgress('parsing', translateUi(loadUiLocale(), 'settings.importOperation.parsing'), 1, { current: '解析备份文件', sourceSize });
       try {
           let data: FullBackupData;
           let zip: JSZipLike | null = null;
@@ -5262,7 +5262,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                           {
                               onYield: () => new Promise<void>(r => setTimeout(r, 0)),
                               onShardProgress: (field, idx, total) => {
-                                  showImportProgress('parsing', '正在解析备份分片...',
+                                  showImportProgress('parsing', translateUi(loadUiLocale(), 'settings.importOperation.shards'),
                                       5 + Math.floor((idx / Math.max(1, total)) * 25),
                                       { current: `分片 ${field}` });
                               },
@@ -5380,7 +5380,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               for (const [filename, refs] of entries) {
                   const fileInZip = zip.file(`assets/${filename}`) as (JSZipFileLike & { _data?: { compressedSize?: number; uncompressedSize?: number } }) | null;
                   const hintedSize = fileInZip?._data?.uncompressedSize || fileInZip?._data?.compressedSize;
-                  showImportProgress('assets', '正在恢复素材...', 35 + Math.floor((restoredAssetFiles.size / Math.max(1, totalAssetFiles || entries.length)) * 35), {
+                  showImportProgress('assets', translateUi(loadUiLocale(), 'settings.importOperation.assets'), 35 + Math.floor((restoredAssetFiles.size / Math.max(1, totalAssetFiles || entries.length)) * 35), {
                       current: label,
                       currentFile: filename,
                       currentFileSize: hintedSize,
@@ -5405,7 +5405,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       }
                       const decodedSize = estimateBase64Bytes(base64);
                       restoredAssetFiles.add(filename);
-                      showImportProgress('assets', '正在恢复素材...', 35 + Math.floor((restoredAssetFiles.size / Math.max(1, totalAssetFiles || entries.length)) * 35), {
+                      showImportProgress('assets', translateUi(loadUiLocale(), 'settings.importOperation.assets'), 35 + Math.floor((restoredAssetFiles.size / Math.max(1, totalAssetFiles || entries.length)) * 35), {
                           current: label,
                           currentFile: filename,
                           currentFileSize: decodedSize,
@@ -5430,7 +5430,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               );
           }
 
-          showImportProgress('database', '正在写入数据库...', 50, { current: '准备写入数据库', currentFile: '' });
+          showImportProgress('database', translateUi(loadUiLocale(), 'settings.importOperation.database'), 50, { current: '准备写入数据库', currentFile: '' });
           await DB.importFullData(data, {
               allowBackendConnection,
               beforeWrite: restoreAssetsInPlace,
@@ -5442,7 +5442,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       ? ((progress.itemDone || 0) / progress.itemTotal) / progress.sectionTotal
                       : 0;
                   const dbProgress = 50 + Math.floor(Math.min(1, sectionRatio + itemRatio) * 40);
-                  showImportProgress('database', '正在写入数据库...', dbProgress, {
+                  showImportProgress('database', translateUi(loadUiLocale(), 'settings.importOperation.database'), dbProgress, {
                       current: progress.stage === 'done' ? `${progress.label}完成` : progress.label,
                       currentFile: '',
                       itemDone: progress.itemDone,
@@ -5457,7 +5457,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               || data.collaborationSettings !== undefined
               || collaborationAssetRecords !== undefined;
           if (hasCollaborationBackup) {
-              showImportProgress('database', '正在恢复协同工作...', 91, { current: '协同窗口与文件', currentFile: '' });
+              showImportProgress('database', translateUi(loadUiLocale(), 'settings.importOperation.collaboration'), 91, { current: '协同窗口与文件', currentFile: '' });
               const { CollaborationStore } = await import('../features/collaboration/store');
               await CollaborationStore.importBackup({
                   sessions: data.collaborationSessions,
@@ -5470,7 +5470,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               });
           }
           
-          showImportProgress('settings', '正在恢复系统设置...', 92, { current: '系统设置', currentFile: '' });
+          showImportProgress('settings', translateUi(loadUiLocale(), 'settings.importOperation.settings'), 92, { current: '系统设置', currentFile: '' });
           if (data.sarLocalState) await restoreAssetsInPlace(data.sarLocalState, 'SAR 存档');
           restoreSARLocalBackup(data.sarLocalState, { replaceMissing: replacesPrimaryHistory });
           if (data.chatInputPreferences !== undefined) saveChatInputPreferences(data.chatInputPreferences);
@@ -5734,7 +5734,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
           setSysOperation({ status: 'idle', message: '', progress: 100 });
           clearImportInProgress();
-          addToast('恢复成功，系统即将重启...', 'success');
+          addToast(translateUi(loadUiLocale(), 'settings.importOperation.done'), 'success');
           setTimeout(() => window.location.reload(), 1500);
 
       } catch (e: any) {
