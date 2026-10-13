@@ -812,3 +812,5 @@ const ScheduleApp: React.FC = () => {
 };
 
 export default ScheduleApp;
+import { useAppShortcut } from '../utils/appShortcutLaunch';
+import { AppID as ShortcutAppID } from '../types';

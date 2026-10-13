@@ -4,6 +4,7 @@ import App from './App';
 import DatabaseGuard from './components/DatabaseGuard';
 import { openDB } from './utils/db';
 import { checkDatabaseReadable } from './utils/databaseHealth';
+import { startDatabaseOpenDiagnostics, releaseDatabaseDiagnosticPersistence, recordDatabaseOpen } from './utils/databaseOpenDiagnostics';
 import { installTranslateCrashGuard } from './utils/translateCrashGuard';
 import { ActiveMsgRuntime } from './utils/activeMsgRuntime';
 import { KeepAlive } from './utils/keepAlive';
@@ -24,10 +25,14 @@ if (import.meta.env.VITE_AMSG_NATIVE_PUSH === 'true' && Capacitor.isNativePlatfo
   }
 }
 
-// Register the keep-alive Service Worker early so it's ready before any AI calls
-KeepAlive.init().then(async () => {
-  // Do not resume background work with an unreadable local archive.
-  await checkDatabaseReadable(openDB);
+// Prepare storage and the SW in parallel. Only background writers wait for both;
+// DatabaseGuard shares this read check and never waits for the SW/offline downloads.
+startDatabaseOpenDiagnostics();
+const databaseReady = checkDatabaseReadable(openDB);
+void databaseReady.then(releaseDatabaseDiagnosticPersistence, releaseDatabaseDiagnosticPersistence);
+const keepAliveReady = KeepAlive.init();
+Promise.all([databaseReady, keepAliveReady]).then(() => {
+  recordDatabaseOpen('background-ready');
   // 自然主动已取代旧固定间隔：升级后撤掉手机 / SW / 旧唤醒 worker 里的遗留计划。
   ProactiveChat.retireFixedSchedules();
   // Resume 「彼方」 autonomous-login schedules
@@ -57,6 +62,6 @@ if (!rootElement) {
 const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
-    <DatabaseGuard><App /></DatabaseGuard>
+    <DatabaseGuard readiness={databaseReady}><App /></DatabaseGuard>
   </React.StrictMode>
 );

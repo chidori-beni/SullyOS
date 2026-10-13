@@ -1,4 +1,7 @@
+import { chatCharacterDisplayName } from '../utils/characterRemark';
 import { IMAGE_GEN_UPDATED_EVENT } from '../utils/novelaiImage';
+import ChatRuntimeStyle from '../components/chat/ChatRuntimeStyle';
+import {homePhoneAppearance,HOME_PHONE_BUBBLES} from './room3d/homePhoneAppearance';
 import { publishReplyDisplay, stopReplyRuns } from '../utils/chatReplyCancellation';
 import { stopInstantChat } from '../utils/amsgInstantChat';
 import EmojiExportDialog from '../components/chat/EmojiExportDialog';
@@ -188,6 +191,7 @@ const isVisibleChatMessage = (message: Message, hideSystemLogs = false) => (
     message.metadata?.source !== 'date'
     && message.metadata?.source !== 'call'
     && message.metadata?.source !== 'cinema'
+    && message.metadata?.source !== 'home'
     && message.metadata?.source !== 'story_theater_memory'
     && !message.metadata?.proactiveHint
     && !(hideSystemLogs && message.role === 'system' && message.type !== 'score_card')
@@ -198,13 +202,18 @@ import { getCharChatAvatar } from '../utils/charChatAvatar';
 /** 即时对话那一轮回复「推送陆续到齐」的宽限时间，也就是自动合成的补扫窗口有多长（见下面的 auto-TTS effect）。 */
 const INSTANT_VOICE_SCAN_WINDOW_MS = 30_000;
 
+/** 3D 家园屋内小手机：把这个聊天页嵌进小屋里（上游 cb25226d）。 */
+export interface HomePhoneChatProps {characterId:string;getContext:()=>string;onBack:()=>void}
+
 interface ChatProps {
     /** Message 好友列表嵌套聊天时返回列表；独立打开时仍关闭 App。 */
     onBack?: () => void;
+    homePhone?: HomePhoneChatProps;
 }
 
-const Chat: React.FC<ChatProps> = ({ onBack }) => {
-    const { activeApp, updateUserProfile, characters, activeCharacterId, setActiveCharacterId, addCharacter, availableModels, addCustomTheme, addWorldbook, saveAppearancePreset, updateCharacter, apiConfig, commitApiConfig, apiPresets, addApiPreset, closeApp, openApp, customThemes, removeCustomTheme, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: globalTheme, updateTheme, proactiveComposingChars, openDateWithChar } = useOS();
+const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
+    const { activeApp, updateUserProfile, characters, activeCharacterId: osActiveCharacterId, setActiveCharacterId, addCharacter, availableModels, addCustomTheme, addWorldbook, saveAppearancePreset, updateCharacter, apiConfig, commitApiConfig, apiPresets, addApiPreset, closeApp, openApp, customThemes, removeCustomTheme, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: globalTheme, updateTheme, proactiveComposingChars, openDateWithChar } = useOS();
+    const activeCharacterId = homePhone?.characterId ?? osActiveCharacterId;
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
     const localDateKey = useLocalDateKey();
 
@@ -456,8 +465,8 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
      * 要拿**全局原值**的地方（装扮抽屉的「所有聊天」页）请显式用 globalTheme。
      */
     const osTheme = useMemo(
-        () => resolveChatAppearance(globalTheme, char),
-        [globalTheme, char?.chatAppearance, char?.chatFineTune?.enabled],
+        () => homePhone ? homePhoneAppearance(globalTheme) : resolveChatAppearance(globalTheme, char),
+        [globalTheme, char?.chatAppearance, char?.chatFineTune?.enabled, !!homePhone],
     );
     const memoryRepairRound = useMemo(() => {
         let assistantIndex = -1;
@@ -551,8 +560,8 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     const currentThemeId = char?.bubbleStyle || 'default';
     // 解析逻辑抽到 utils/groupChat/theme.ts（群聊共用），行为不变
     const activeTheme = useMemo(
-        () => resolveChatTheme(currentThemeId, customThemes, PRESET_THEMES),
-        [currentThemeId, customThemes],
+        () => homePhone?HOME_PHONE_BUBBLES:resolveChatTheme(currentThemeId, customThemes, PRESET_THEMES),
+        [currentThemeId, customThemes,!!homePhone],
     );
     const draftKey = `chat_draft_${activeCharacterId}`;
 
@@ -600,6 +609,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     // --- Initialize Hook ---
     const { isTyping, streamingBubbles, streamingThinking, streamingHandoverIds, inboxStatus, recallStatus, recallSubmitStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, cancelGeneration, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
         char,
+        homePhoneContext:homePhone?.getContext,
         userProfile,
         apiConfig,
         groups,
@@ -1799,7 +1809,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 // 回合首条即响：距上一条气泡 >3s 视为新回合，立刻响一次；同一轮后续气泡只刷新计时、不再响。
                 const now = Date.now();
                 if (sync.lastAt == null || now - sync.lastAt > SOUND_ROUND_GAP_MS) {
-                    playWhiteboxSound(resolveActiveSound(char?.chromeCustomCss, char?.chatSound, osTheme.chatChromeCustomCss, osTheme.chatSound));
+                    !homePhone && playWhiteboxSound(resolveActiveSound(char?.chromeCustomCss, char?.chatSound, osTheme.chatChromeCustomCss, osTheme.chatSound));
                 }
                 sync.lastAt = now;
             }
@@ -3565,6 +3575,16 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
         }
     };
 
+    useEffect(() => {
+        const refresh=(event:Event)=>{
+            const owner=(event as CustomEvent).detail?.charId;
+            if(!char || owner && owner!==char.id)return;
+            void reloadMessages(visibleCount);
+        };
+        window.addEventListener('home-secrets-updated',refresh);
+        return()=>window.removeEventListener('home-secrets-updated',refresh);
+    },[char?.id,visibleCount,reloadMessages]);
+
     // --- Message Management ---
     const handleDeleteMessage = async () => {
         if (!selectedMessage) return;
@@ -4474,14 +4494,14 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
     const autoReply = useChatAutoReply({
         enabled: inputPreferences.autoReply,
         conversationId: activeCharacterId || null,
-        active: activeApp === AppID.Chat && !!char,
+        active: (activeApp === AppID.Chat || !!homePhone) && !!char,
         blocked: isInputFocused || !!input.trim() || showPanel !== 'none' || modalType !== 'none'
             || selectionMode || isSummarizing || collaborationOpen
             || showProactiveModal || showActiveMsg2Modal || showThinkingChainModal,
         generating: isTyping || instantChatPending || isProactiveComposing,
         onGenerate: handleManualTrigger,
     });
-    const mergedFineTune = useMemo(() => mergeChatFineTune(osTheme, char?.chatFineTune), [osTheme, char?.chatFineTune]);
+    const mergedFineTune = useMemo(() => mergeChatFineTune(osTheme, homePhone ? undefined : char?.chatFineTune), [osTheme, char?.chatFineTune, !!homePhone]);
     const chatFineTuneCss = useMemo(() => buildChatFineTuneCss(mergedFineTune), [mergedFineTune]);
     // 兜底：正常情况下 OSContext 启动时一定会保底一个角色，char 不该为空。
     // 但若 init 期间某个 store 读取失败（数据其实还在 IndexedDB 里），characters 可能暂时为空，
@@ -4576,13 +4596,14 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             className={`sully-chat-root ${finalRootClass}`}
             style={finalRootStyle}
         >
+             <ChatRuntimeStyle />
              {/* 聊天细节微调（外观 App 可视化设置生成）：排在用户自定义 CSS 之前——
                  同为 !important 时后写的胜，手写美化代码永远可覆盖可视化设置。 */}
              {chatFineTuneCss && <style>{chatFineTuneCss}</style>}
              {/* 白框自定义 CSS：全局默认在前、角色专属在后（后者叠加覆盖）。作用于 .sully-chat-* 各零件。
                  守护样式统一放在气泡主题 customCss 之后（见下），保证对所有用户 CSS 都能兜底。 */}
              {osTheme.chatChromeCustomCss && <style>{osTheme.chatChromeCustomCss}</style>}
-             {char.chromeCustomCss && <style>{char.chromeCustomCss}</style>}
+             {!homePhone && char.chromeCustomCss && <style>{char.chromeCustomCss}</style>}
              {/* 聊天弹窗 CSS：「＋」菜单点开的那些设置框 / 抽屉（.sully-ui-* 钩子）。
                  注在这里而不是 PhoneShell —— 它只在聊天页挂载，退出聊天就卸载，
                  于是外观 App、设置页里的同款弹窗不会被顺带改掉。
@@ -4602,7 +4623,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                  排在白框之后：白框 CSS 里若也写了卡片选择器，同 !important 时以这里为准。 */}
              {osTheme.chatCardCustomCss && <style>{osTheme.chatCardCustomCss}</style>}
              {/* 角色专属卡片 CSS：排在全局之后 → 冲突时角色那份赢。 */}
-             {char.chatCardCustomCss && <style>{char.chatCardCustomCss}</style>}
+             {!homePhone && char.chatCardCustomCss && <style>{char.chatCardCustomCss}</style>}
              {scheduleChangeNotice && (
                <ScheduleChangeNotice
                  key={scheduleChangeNotice.eventId}
@@ -4611,7 +4632,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                />
              )}
              {/* 角色「登场」过场：切换/进入时以 ta 的头像氛围铺底登场，再推进穿过进入聊天。key 切换即重放。 */}
-             {showEntry && char && (
+             {!homePhone && showEntry && char && (
                <CharacterEntryTransition
                  key={`character-entry:${activeCharacterId}`}
                  name={char.name}
@@ -4636,7 +4657,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                  pointer-events:none 时，用户会遇到「点输入框没反应、键盘唤不起来」或退不出聊天，
                  且重启、重新导入备份都无解。有了兜底，至少能退出去「外观→聊天装扮→还原白框」清掉坏 CSS。
                  不锁位置与配色，正常美化不受影响。 */}
-             {(osTheme.chatChromeCustomCss || char.chromeCustomCss || osTheme.chatCardCustomCss || activeTheme.customCss || (char as any).thinkingChainCustomCss) && (
+             {!homePhone && (osTheme.chatChromeCustomCss || char.chromeCustomCss || osTheme.chatCardCustomCss || activeTheme.customCss || (char as any).thinkingChainCustomCss) && (
                <style>{`
                  .sully-chat-back{visibility:visible!important;opacity:1!important;pointer-events:auto!important;}
                  .sully-chat-inputbar{visibility:visible!important;opacity:1!important;pointer-events:auto!important;}
@@ -4856,6 +4877,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 confirmText="关闭，发送原文" cancelText="保留卡片"
                 onConfirm={() => answerLinkCard(false)} onCancel={() => answerLinkCard(true)} />
              <ChatModals
+                compactHome={!!homePhone}
                 settingsInputPreferences={settingsInputPreferences} setSettingsInputPreferences={setSettingsInputPreferences}
                 settingsChatActionOrder={settingsChatActionOrder} setSettingsChatActionOrder={setSettingsChatActionOrder}
                 modalType={modalType} setModalType={setModalType}
@@ -5002,7 +5024,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 document.body,
              )}
 
-             <ChatHeader
+             {homePhone?<header className="home-phone-chat-header"><span className="home-phone-chat-avatar" aria-hidden="true">{char.name.slice(0,1)}</span><div><strong>{chatCharacterDisplayName(char)}</strong><small>{isTyping||instantChatPending?'正在输入…':'在家，也想给你发消息'}</small></div><button onClick={handleManualTrigger} disabled={isTyping} aria-label="让对方回复">↗</button></header>:<ChatHeader
                 selectionMode={selectionMode}
                 selectedCount={selectedMsgIds.size + Array.from(selectedThinkingMsgIds).filter(id => !selectedMsgIds.has(id)).length}
                 onCancelSelection={() => { setSelectionMode(false); setSelectedMsgIds(new Set()); setSelectedThinkingMsgIds(new Set()); }}
@@ -5035,7 +5057,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 chromeStyle={osTheme.chatChromeStyle}
                 hideBuffs={osTheme.chatHideHeaderBuffs}
                 acnh={acnh}
-             />
+             />}
 
             {/* 认知消化结果弹窗 — 全屏玻璃拟态 */}
             {lastDigestResult && (() => {
@@ -5543,6 +5565,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
                 <InstantChatRouteNotice charId={activeCharacterId} />
 
                 <ChatInputArea
+                    compactHome={!!homePhone}
                     input={input} setInput={handleInputChange}
                     isTyping={isTyping || instantChatPending} selectionMode={selectionMode}
                     showPanel={showPanel} setShowPanel={setShowPanel}
@@ -5942,6 +5965,7 @@ const Chat: React.FC<ChatProps> = ({ onBack }) => {
             {/* 🍔 麦当劳小程序 - MCP 数据流按钮驱动, 协同聊天走主 pipeline (完整人设/记忆/日程) */}
             {memoryRepairOpen && char && (
                 <MemoryRepairPortal
+                    inline={!!homePhone}
                     char={char}
                     user={userProfile}
                     apiConfig={apiConfig}

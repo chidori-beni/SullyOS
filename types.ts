@@ -152,7 +152,11 @@ export interface OSTheme {
   /** 桌面整体皮肤。'animalcrossing' = 动森风格（NookPhone 彩色圆角图标 + 暖色界面）；
    *  'mobilegame' = 二次元手游首页风格（角色卡 + 等级经验条 + 货币栏 + 网格卡 + 罗盘 dock）；
    *  'tamagotchi' = 电子宠物养成机（桌面即角色的小屋舞台 + 四颗糖果实体键）。默认 'default'。 */
-  skin?: 'default' | 'animalcrossing' | 'mobilegame' | 'tamagotchi' | 'companion';
+  skin?: 'default' | 'animalcrossing' | 'mobilegame' | 'tamagotchi' | 'companion' | 'homely';
+  /** 居家桌面配色；旧存档默认奶油杏橙，随主题保存。 */
+  homelyPalette?: 'apricot' | 'blue' | 'rose' | 'lilac' | 'oat';
+  /** 锁定居家陪伴对象；不跟随其他 App 的当前聊天角色切换。 */
+  homelyLockedCharacterId?: string;
   /** 默认桌面的视觉版本：纸感是现行默认，nostalgia 是用户主动选择的最初粉绿白玻璃界面。 */
   desktopVariant?: 'paper' | 'nostalgia';
   desktopClockStyle?: 'serif' | 'bold' | 'system';
@@ -598,6 +602,8 @@ export interface ApiPreset {
 }
 
 export interface CharacterBuff {
+  homeBehavior?: {energy:number;approach:number;interaction:number};
+  homeBehaviorAt?: number;
   id: string;
   name: string;      // internal key, e.g. 'reconciliation_fragile'
   label: string;     // display text, e.g. '脆弱的和好'
@@ -829,6 +835,7 @@ export interface ScheduleSlot {
     inviteId?: string;
     /** 用户处理邀约后的状态；未出现在邀约里的普通日程不设此字段。 */
     inviteStatus?: 'pending' | 'accepted' | 'declined';
+    homePosition?: { kind: 'home'; roomId: string } | { kind: 'away' };
     innerThought?: string; // 该时段的内心独白，生成时由AI写好，运行时直接注入
     theater?: SlotTheater; // 该时段的小剧场（窥视演出），按需生成并缓存
 }
@@ -1193,7 +1200,7 @@ export interface SimScript {
     buff?: { name?: string; label: string; emoji?: string; color?: string; intensity?: 1 | 2 | 3; description?: string };
 }
 
-// 「人格模拟」演出结束后写入「生活记录」的一条留存（角色不记得，仅作为用户的体验档案）
+// 「人格模拟」生成后写入「生活记录」的剧本与播放进度（角色不记得，仅作为用户的体验档案）
 export interface PhoneSimLog {
     id: string;
     mode: 'daily' | 'event';
@@ -1206,6 +1213,8 @@ export interface PhoneSimLog {
     memoryText?: string;  // 演出可读梗概，作为回忆发给角色时用（让角色真的"知道"发生了什么）
     timestamp: number;
     script?: SimScript;   // 完整脚本快照——存在则「生活记录」可原样重播（旧记录没有，仅可发送）
+    playback?: { beatIndex: number; status: 'ready' | 'playing' | 'completed' };
+    completedAt?: number; // 首次播到结尾的时间；重播不再应用情绪效果。无 playback 的旧记录视为已完成。
 }
 
 // ============================================================
@@ -2898,6 +2907,14 @@ export interface StoryTheaterArchive {
     /** summary 策略的事件盒正文；vector 策略留空，由独立 charId 分区召回。 */
     summary?: string;
     createdAt: number;
+    /** 用户主动转为角色记忆的回执；与聊天高水位无关，随整机备份保留。 */
+    memoryConversions?: Record<string, {
+        date: string;
+        convertedAt: number;
+        destination: 'palace' | 'neural';
+        memoryIds: string[];
+        skipped: number;
+    }>;
 }
 
 /** 剧场里用户所扮演的身份；已有角色按 characterId 动态读取，自定义身份来自面具箱。 */
@@ -3032,6 +3049,11 @@ export interface ChibiStudioData {
     room?: ChibiStudioSlot;
     vr?: ChibiStudioSlot;
     like520?: ChibiStudioSlot;
+    home3D?: HomeFigureSlot;
+}
+
+export interface HomeFigureSlot extends ChibiStudioSlot {
+    hair: import('./apps/room3d/chibi/types').HairSettings;
 }
 
 // --- BANK / SHOP GAME TYPES (NEW) ---
@@ -3869,6 +3891,8 @@ export interface CharacterProfile {
    * 未设置 / 0 = 整月（旧行为）。只管自动带进上下文的那部分；角色自己 [[RECALL]] 翻日记时仍是整月。
    */
   recentMemoryDays?: number;
+  /** fork：为 true 时隐藏 ChatApp 的按月 RECALL 指令提示（默认不隐藏，与上游相反）；不禁用指令解析。 */
+  hideMonthlyRecallPrompt?: boolean;
   
   writerPersona?: string;
   writerPersonaGeneratedAt?: number;
@@ -3966,6 +3990,11 @@ export interface CharacterProfile {
       bio?: string;
   };
 
+  /** 模块化 3D 小屋，独立于原有 2D 房间；随完整备份保存。 */
+  home3D?: import('./apps/room3d/types').Home3DState;
+  /** Local journal → shared message history migration marker. */
+  homeContextBridgeVersion?: 1 | 2 | 3;
+  homeDefinition?: import('./apps/room3d/homeDefinition').HomeDefinition;
   roomConfig?: {
       bgImage?: string;
       wallImage?: string;
@@ -4347,6 +4376,8 @@ export interface CharacterExportData extends Omit<CharacterProfile, 'id' | 'memo
 }
 
 export interface UserProfile {
+    wardrobeOutfits?: import('./apps/room3d/chibi/outfitLibrary').SavedOutfit[];
+    chibiStudio?: { home3D?: HomeFigureSlot };
     name: string;
     avatar: string;
     bio: string;
@@ -5040,7 +5071,7 @@ export interface GameSession {
     lastPlayedAt: number;
 }
 
-export type MessageType = 'text' | 'image' | 'emoji' | 'voice' | 'collaboration_file' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'luckin_card' | 'html_card' | 'news_card' | 'vr_card' | 'trpg_card' | 'novel_card' | 'world_card' | 'sim_card' | 'phone_card' | 'webpage_card' | 'theater_card' | 'room_card' | 'life_card' | 'expense_card' | 'group_topic_card' | 'schedule_invite' | 'schedule_invite_reply';
+export type MessageType = 'secret_note' | 'text' | 'image' | 'emoji' | 'voice' | 'collaboration_file' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'luckin_card' | 'html_card' | 'news_card' | 'vr_card' | 'trpg_card' | 'novel_card' | 'world_card' | 'sim_card' | 'phone_card' | 'webpage_card' | 'theater_card' | 'room_card' | 'life_card' | 'expense_card' | 'group_topic_card' | 'schedule_invite' | 'schedule_invite_reply';
 
 export interface Message {
     id: number;
@@ -5153,6 +5184,7 @@ export interface FullBackupData {
     worldHomeLocal?: Record<string, string>;   // 家园本机配置：全局 API + 文风收藏（存 localStorage）
     luckinLocal?: Record<string, string>;      // 瑞幸：token + 启用状态（存 localStorage）
     mcdLocal?: Record<string, string>;         // 麦当劳：token + 启用状态（存 localStorage）
+    home3DLocal?: Record<string, string>;    // 3D 家园显示偏好与拍照滤镜收藏
     mcpLocal?: Record<string, string>;         // 通用 MCP：用户自配的服务器列表（存 localStorage）
     chatInputPreferences?: import('./utils/chatInputPreferences').ChatInputPreferences;
     desktopSkinLocal?: Record<string, string>; // 桌面皮肤偏好：电子宠物/手游风的界面配色 + 看板 banner（存 localStorage；看板图令牌导出时解析为 data URL）

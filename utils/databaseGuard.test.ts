@@ -17,10 +17,10 @@ afterEach(async () => {
   host?.remove(); root = undefined; mocks.check.mockReset();
 });
 
-async function mount(child: React.ReactNode) {
+async function mount(child: React.ReactNode, readiness?: Promise<void>) {
   host = document.createElement('div'); document.body.append(host);
   root = createRoot(host);
-  await act(async () => root!.render(React.createElement(DatabaseGuard, { children: child })));
+  await act(async () => root!.render(React.createElement(DatabaseGuard, { children: child, readiness })));
 }
 
 it('does not mount default-seeding/sync providers until storage is readable, including an empty installation', async () => {
@@ -36,6 +36,20 @@ it('does not mount default-seeding/sync providers until storage is readable, inc
   expect(host.textContent).toBe('桌面');
 });
 
+it('shares the entry check through StrictMode and mounts the desktop without waiting for the SW', async () => {
+  let readable!: () => void;
+  const readiness = new Promise<void>(resolve => { readable = resolve; });
+  host = document.createElement('div'); document.body.append(host);
+  root = createRoot(host);
+  await act(async () => root!.render(React.createElement(React.StrictMode, null,
+    React.createElement(DatabaseGuard, { readiness, children: React.createElement('p', { 'data-testid': 'desktop' }, '桌面') }))));
+  expect(mocks.check).not.toHaveBeenCalled();
+  expect(host.querySelector('[data-testid=desktop]')).toBeNull();
+  await act(async () => readable());
+  expect(host.textContent).toBe('桌面');
+  expect(mocks.check).not.toHaveBeenCalled();
+});
+
 it('shows actionable index-conflict diagnostics instead of an empty desktop and does not alter saved settings', async () => {
   localStorage.setItem('os_api_config', 'secret-preserve');
   mocks.check.mockRejectedValue(new DOMException('Index with the same ID already exists', 'UnknownError'));
@@ -45,6 +59,7 @@ it('shows actionable index-conflict diagnostics instead of an empty desktop and 
   expect(mounted).not.toHaveBeenCalled();
   expect(host.textContent).toContain('读取失败不代表数据已被清空');
   expect(host.textContent).toContain('内部索引冲突');
+  expect(host.textContent).not.toContain('如果其他页面');
   expect(host.querySelector('textarea')!.value).toContain('UnknownError');
   expect(host.querySelector('textarea')!.value).not.toContain('secret-preserve');
   expect(localStorage.getItem('os_api_config')).toBe('secret-preserve');

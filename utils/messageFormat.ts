@@ -17,6 +17,7 @@ import { formatQixiEventCardForContext, tryParseQixiEventChatCard } from './qixi
 import { formatTransferRecord } from './transferFormat';
 import { formatSocialCardForContext } from './socialShareCard';
 import { formatStatCount } from './videoParser';
+import {secretNoteContext} from './secretNote';
 import { formatSARModuleEventsForContext } from './vrWorld/sarModuleRuntime';
 import { formatBankExpenseShareForContext, readBankExpenseCardData } from './bankExpenseCard';
 
@@ -128,6 +129,7 @@ export function normalizeMessageContent(
     userName: string,
 ): string {
     const type = msg.type as string;
+    if (type === 'secret_note') return secretNoteContext(msg.content);
 
     // 纯视觉类给占位；语音优先使用配套转写，避免把音频资源地址送进上下文。
     if (type === 'image') return '[图片]';

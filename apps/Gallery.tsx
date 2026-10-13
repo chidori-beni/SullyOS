@@ -12,6 +12,11 @@ const Gallery: React.FC = () => {
     const { closeApp, characters, apiConfig, addToast } = useOS();
     const [view, setView] = useState<'albums' | 'grid' | 'detail'>('albums');
     const [activeCharId, setActiveCharId] = useState<string | null>(null);
+    useAppShortcut(ShortcutAppID.Gallery, intent => {
+        if (activeCharId !== intent.characterId) setImages([]);
+        setSelectedImage(null); setActiveCharId(intent.characterId || null);
+        setView(intent.characterId ? 'grid' : 'albums');
+    });
     const [images, setImages] = useState<GalleryImage[]>([]);
     const [albums, setAlbums] = useState<GalleryAlbum[]>([]);
     /** null = 全部；GALLERY_UNFILED_ID = 未分类；其它值为真实子相册 id。 */
@@ -928,3 +933,5 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
 };
 
 export default Gallery;
+import { useAppShortcut } from '../utils/appShortcutLaunch';
+import { AppID as ShortcutAppID } from '../types';

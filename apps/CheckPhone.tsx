@@ -14,6 +14,8 @@ import {
 } from '../utils/relationshipChat';
 import PersonaSim, { LifeLog, generatePersonaScript } from './PersonaSim';
 import { usePersonaSim, personaSimStore } from '../utils/personaSimStore';
+import { createPersonaSimLog, getPersonaSimBeatIndex } from '../utils/personaSimLog';
+import { getLastInnerState } from '../utils/emotionApply';
 import { trackEvent } from '../utils/analytics';
 import { normalizePhoneEvidence, phoneFieldToText } from '../utils/phoneEvidence';
 import { resolveCharTimeZone } from '../utils/timezone';
@@ -555,6 +557,11 @@ const CheckPhone: React.FC = () => {
         setEvidenceBackAppId('home');
         setPage(0);
     };
+    useAppShortcut(ShortcutAppID.CheckPhone, intent => {
+        const target = characters.find(c => c.id === intent.characterId);
+        if (!target) { setView('select'); return; }
+        handleSelectChar(target); setActiveAppId(intent.entryId || 'home');
+    });
 
     const apiHost = (url?: string) => {
         try { return url ? new URL(url).host : '未配置'; }
@@ -781,6 +788,7 @@ const CheckPhone: React.FC = () => {
 
     // --- Core Generation Logic ---
     const handleGenerate = async (type: string, customPrompt?: string, layout?: LayoutId) => {
+
         if (!targetChar || !effectiveApiConfig.apiKey) {
             addToast('配置错误', 'error');
             return;
@@ -926,7 +934,7 @@ ${realCharRule}
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${effectiveApiConfig.apiKey}` },
                 body: JSON.stringify({
                     model: effectiveApiConfig.model,
-                    messages: ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: "user", content: fullPrompt }]),
+                    messages: (await ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: "user", content: fullPrompt }])),
                     temperature: 0.8
                 })
             });
@@ -1078,9 +1086,9 @@ ${realCharRule}
     // 裸 LLM 调用（智能体生成 / 互动续写共用）
     const callLLM = async (prompt: string, temperature = 0.85, withCharacter = true): Promise<string> => {
         const recent = withCharacter && targetChar ? await loadCharacterContextMessages(targetChar) : [];
-        const messages = withCharacter && targetChar ? ContextBuilder.buildCharacterRequest({
+        const messages = withCharacter && targetChar ? (await ContextBuilder.buildCharacterRequest({
             char: targetChar, user: userProfile, timeOptions: { lastInteractionTs: recent[recent.length - 1]?.timestamp },
-        }, [{ role: 'user', content: prompt }]) : [{ role: 'user', content: prompt }];
+        }, [{ role: 'user', content: prompt }])) : [{ role: 'user', content: prompt }];
         const response = await fetch(`${effectiveApiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${effectiveApiConfig.apiKey}` },
@@ -1107,6 +1115,7 @@ ${realCharRule}
 
     // 生成：偷看机主在某个 AI 服务里的使用记录
     const handleGenerateAiAgent = async (service: AiServiceKind) => {
+
         if (!targetChar || !effectiveApiConfig.apiKey) { addToast('配置错误', 'error'); return; }
         setIsLoading(true);
         trackEvent('偷看 AI 助手使用记录', { service });
@@ -1314,6 +1323,7 @@ ${olderText}
 
     // 互动续写：assistant/claude = 你替机主问、AI 答；tavern = 你以卡片身份回、机主本色反应
     const handleAiSend = async () => {
+
         const session = selectedAiSession;
         const text = aiInput.trim();
         if (!session || !text || !targetChar || !effectiveApiConfig.apiKey) return;
@@ -1372,6 +1382,7 @@ ${olderText}
 
     // 自然推进：不用 user 开口，让 LLM 接着剧情自己往下写一轮（双方都由 AI 演）
     const handleAiAutoContinue = async () => {
+
         const session = selectedAiSession;
         if (!session || !targetChar || !effectiveApiConfig.apiKey || aiSending) return;
         const isTavern = session.service === 'tavern';
@@ -1511,6 +1522,7 @@ ${olderText}
 
     // 用指定的卡开一局：生成一段以这张卡为对手的酒馆剧情（卡片本身不新增、不顶掉）
     const handlePlayCard = async (card: TavernCard) => {
+
         if (!targetChar || !effectiveApiConfig.apiKey) { addToast('配置错误', 'error'); return; }
         setIsLoading(true);
         trackEvent('用角色卡开一局');
@@ -2069,7 +2081,14 @@ ${olderText}
             const generated = await generatePersonaScript({
                 char: targetChar, userProfile, apiConfig: effectiveApiConfig as any, mode: m, theme: t, userPresence: presence, tone,
             });
-            personaSimStore.set({ status: 'ready', mode: m, theme: t, script: generated, charId: cid, charName: cname });
+            const log = createPersonaSimLog(generated, m, t);
+            updateCharacter(cid, cur => ({
+                phoneState: {
+                    ...cur.phoneState, records: cur.phoneState?.records || [],
+                    simLogs: [log, ...(cur.phoneState?.simLogs || [])],
+                },
+            }));
+            personaSimStore.set({ status: 'ready', mode: m, theme: t, script: generated, logId: log.id, charId: cid, charName: cname });
             addToast('演出已就绪', 'success');
         } catch (e) {
             console.error(e);
@@ -4081,16 +4100,16 @@ ${olderText}
                     {activeAppId === 'aiagent' && renderAiAgent()}
                     {activeAppId === 'ai_session' && renderAiSession()}
                     {activeAppId === 'persona' && targetChar && (
-                        <PersonaSim targetChar={targetChar} onExit={() => setActiveAppId('home')} openLifeLog={() => setActiveAppId('lifelog')}
-                            sim={sim} onStart={runSim} onConsumed={() => personaSimStore.reset()} />
+                        <PersonaSim key={targetChar.id} targetChar={targetChar} onExit={() => setActiveAppId('home')} openLifeLog={() => setActiveAppId('lifelog')}
+                            sim={sim.charId === targetChar.id ? sim : { status: 'idle' }} onStart={runSim} onConsumed={() => personaSimStore.reset()} />
                     )}
                     {activeAppId === 'lifelog' && targetChar && (
                         <LifeLog targetChar={targetChar} onBack={() => setActiveAppId('home')}
                             onRequestDelete={requestDeleteSimLog}
-                            onReplay={(log) => {
+                            onReplay={(log, action) => {
                                 if (!log.script) return;
                                 // 用存下来的脚本快照原样回放——直接喂给全局 store 的 ready 态
-                                personaSimStore.set({ status: 'ready', mode: log.mode, theme: log.theme, script: log.script, replay: true, charId: targetChar.id, charName: targetChar.name });
+                                personaSimStore.set({ status: 'ready', mode: log.mode, theme: log.theme, script: log.script, logId: log.id, startIndex: action === 'resume' ? getPersonaSimBeatIndex(log) : 0, charId: targetChar.id, charName: targetChar.name });
                                 setActiveAppId('persona');
                             }} />
                     )}
@@ -4408,3 +4427,5 @@ ${olderText}
 };
 
 export default CheckPhone;
+import { useAppShortcut } from '../utils/appShortcutLaunch';
+import { AppID as ShortcutAppID } from '../types';

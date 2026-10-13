@@ -1,3 +1,4 @@
+import NavigationBallSettings from '../components/settings/NavigationBallSettings';
 import { buildModelPickerView } from '../utils/modelPickerView';
 
 import UserHolidaySettings from '../components/settings/UserHolidaySettings';
@@ -1967,6 +1968,7 @@ const Settings: React.FC = () => {
 
       <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-5 space-y-6 no-scrollbar pb-20">
 
+        <NavigationBallSettings characters={characters} loadWorlds={() => DB.getWorlds()} />
         <SettingsSection
             title={t('settings.language.title')}
             icon={

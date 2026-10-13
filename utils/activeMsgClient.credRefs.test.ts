@@ -291,6 +291,13 @@ describe('即时对话的凭据与情绪评估', () => {
     });
   });
 
+  it('秘密请求编号随加密评估配置保留，凭据引用仍不携带副 API key', async () => {
+    await send({emotionEval: {...EVAL_SPEC, homeSecretRequestId: 'secret-request'}});
+    expect(scheduledTask().metadata.amsgEmotionEval).toEqual({
+      prompt: EVAL_SPEC.prompt, homeSecretRequestId: 'secret-request',
+    });
+  });
+
   it('这一轮不评估 → 只带聊天那个引用（绝不出现单挂 emotion 的空壳）', async () => {
     await send();
 

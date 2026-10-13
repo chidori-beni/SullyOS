@@ -7,6 +7,7 @@ import { resolveCharTimeZone, tzShortLabel } from '../../utils/timezone';
 import { useOS } from '../../context/OSContext';
 import { resolveScheduleCardPalette } from '../../utils/scheduleAppearance';
 import ScheduleAppearanceButton, { ScheduleCustomCssStyle } from './ScheduleAppearanceButton';
+import {homePositionLabel} from '../../utils/homeSchedule';
 
 interface ScheduleCardProps {
     schedule: DailySchedule | null;
@@ -70,6 +71,7 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
     const [editDesc, setEditDesc] = useState('');
     const [editEmoji, setEditEmoji] = useState('');
     const [editBusyLevel, setEditBusyLevel] = useState<NonNullable<ScheduleSlot['busyLevel']>>('free');
+    const [editHomePosition, setEditHomePosition] = useState('');
     const coverInputRef = useRef<HTMLInputElement>(null);
 
     // 长按菜单状态：记录哪一条日程被长按触发 action sheet（修改 / 删除）
@@ -128,6 +130,7 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
         setEditEndTime(slot.endTime || '');
         setEditActivity(slot.activity);
         setEditDesc(slot.description || '');
+        setEditHomePosition(slot.homePosition?.kind === 'away' ? '__away' : slot.homePosition?.kind === 'home' ? slot.homePosition.roomId : '');
         setEditEmoji(slot.emoji || '');
         setEditBusyLevel(slot.busyLevel || 'free');
     };
@@ -143,6 +146,8 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
                 description: editDesc || undefined,
                 emoji: editEmoji || undefined,
                 busyLevel: editBusyLevel,
+                homePosition: editHomePosition === '__away' ? {kind: 'away'} : character?.home3D?.rooms.some(room => room.id === editHomePosition) ? {kind: 'home', roomId: editHomePosition} : undefined,
+                location: editHomePosition === '__away' ? '外出' : character?.home3D?.rooms.find(room => room.id === editHomePosition)?.name,
             });
         }
         setEditingIdx(null);
@@ -359,6 +364,7 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
                                             placeholder="描述 (可选)"
                                             className="w-full bg-white/10 rounded-lg px-2 py-1 text-xs border border-white/10 focus:outline-none opacity-70"
                                         />
+                                        {!!character?.home3D?.rooms.length && <select aria-label="日程所在房间" value={editHomePosition} onChange={event => setEditHomePosition(event.target.value)} className="w-full text-slate-800 bg-white rounded-lg px-2 py-2 text-xs mt-2"><option value="">位置待补全</option><option value="__away">外出</option>{character.home3D.rooms.map(room => <option key={room.id} value={room.id}>{room.name}</option>)}</select>}
                                         <div className="flex gap-2 mt-2">
                                             <button onClick={saveEdit} className="text-[10px] font-bold px-3 py-1 rounded-lg bg-white/20 hover:bg-white/30 transition-colors">保存</button>
                                             <button onClick={() => setEditingIdx(null)} className="text-[10px] font-bold px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 transition-colors opacity-60">取消</button>
@@ -434,6 +440,7 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
                                                 </span>
                                             )}
                                         </div>
+                                        {slot.homePosition && <p className="text-[11px] opacity-60 mt-1">{homePositionLabel(slot, character)}</p>}
                                         {slot.description && (
                                             <p className="sully-schedule-description text-[11px] opacity-50 mt-0.5 leading-tight">{slot.description}</p>
                                         )}

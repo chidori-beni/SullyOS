@@ -179,8 +179,17 @@ const Character: React.FC = () => {
           .catch(() => {});
   }, []);
   useEffect(() => {
-      characterLaunch.consume();
-  }, []);
+      const apply = () => {
+          const intent = characterLaunch.consume();
+          if (!intent) return;
+          if (!characters.some(character => character.id === intent.charId)) { setView('list'); return; }
+          setEditingId(intent.charId); setView('detail');
+          setDetailTab(intent.detailTab || (intent.openChibiStudio ? 'chibi' : 'identity'));
+          setShowChibiStudio(!!intent.openChibiStudio);
+      };
+      apply();
+      return characterLaunch.subscribe(apply);
+  }, [characters]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cardImportRef = useRef<HTMLInputElement>(null);
   
@@ -904,6 +913,7 @@ const Character: React.FC = () => {
    *                        没提供则退回到当前 selectedPromptId
    */
   const handleForceArchiveDate = async (dateStr: string, overridePromptId?: string): Promise<void> => {
+
       if (!apiConfig.apiKey || !formData) { addToast('请先配置 API Key', 'error'); return; }
       const targetId = formData.id;
       try {
@@ -925,7 +935,6 @@ const Character: React.FC = () => {
           const effectivePromptId = overridePromptId || selectedPromptId;
           const templateObj = archivePrompts.find(p => p.id === effectivePromptId) || DEFAULT_ARCHIVE_PROMPTS[0];
           const characterContextInput = { char: formData, user: userProfile };
-
           let prompt = '' + '\n\n' + templateObj.content;
           const sarMemoryBoundary = buildSARMemoryBoundaryInstruction(rawLog);
           if (sarMemoryBoundary) prompt = `${sarMemoryBoundary}\n\n${prompt}`;
@@ -937,7 +946,7 @@ const Character: React.FC = () => {
           const data = await safeFetchJson(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-              body: JSON.stringify({ model: apiConfig.model, messages: ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: 'user', content: prompt }]), temperature: 0.5, max_tokens: 8000, stream: false }),
+              body: JSON.stringify({ model: apiConfig.model, messages: (await ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: 'user', content: prompt }])), temperature: 0.5, max_tokens: 8000, stream: false }),
           }, 0);
           let summary = extractContent(data).replace(/^["']|["']$/g, '');
           if (!summary) throw new Error('空响应');
@@ -1066,6 +1075,7 @@ const Character: React.FC = () => {
   };
   
   const handleBatchSummarize = async () => {
+
         if (!apiConfig.apiKey || !formData) return;
         
         const targetId = formData.id; // LOCK ID
@@ -1098,7 +1108,6 @@ const Character: React.FC = () => {
             await injectMemoryPalace(formData);
             const characterContextInput = { char: formData, user: userProfile };
 
-
             for (let i = 0; i < dates.length; i++) {
                 const date = dates[i];
                 setBatchProgress(`Processing ${date} (${i+1}/${dates.length})`);
@@ -1126,7 +1135,7 @@ const Character: React.FC = () => {
                         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
                         body: JSON.stringify({
                             model: apiConfig.model,
-                            messages: ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: "user", content: prompt }]),
+                            messages: (await ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: "user", content: prompt }])),
                             max_tokens: 8000,
                             temperature: 0.5
                         })
@@ -1189,6 +1198,7 @@ const Character: React.FC = () => {
     };
 
   const handleGenerateImpression = async (type: 'initial' | 'update') => {
+
       if (!formData || !apiConfig.apiKey) {
           addToast('请先配置 API Key', 'error');
           return;
@@ -1312,7 +1322,7 @@ ${isInitialGeneration ? `
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
               body: JSON.stringify({
                   model: apiConfig.model,
-                  messages: ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: "user", content: prompt }]),
+                  messages: (await ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: "user", content: prompt }])),
                   max_tokens: 8000,
                   temperature: 0.5,
                   // 与「设置 → API → 流式输出」保持一致，不在印象功能里强制覆盖用户选择。
@@ -2858,6 +2868,19 @@ ${isInitialGeneration ? `
                    
                    {detailTab === 'memory' && (
                        <div className="space-y-4 animate-fade-in">
+                           <details className="rounded-2xl border border-slate-100 bg-white shadow-sm">
+                               <summary className="cursor-pointer px-4 py-3 text-xs font-semibold text-slate-600">记忆设置</summary>
+                               <label className="flex items-center justify-between gap-4 border-t border-slate-100 px-4 py-3">
+                               <span className="min-w-0">
+                                   <span className="block text-sm font-semibold text-slate-700">隐藏 RECALL 指令提示</span>
+                                   <span className="mt-1 block text-xs leading-relaxed text-slate-400">聊天时不再提示角色按月份调阅旧版记忆（默认关闭：照常提示）。</span>
+                               </span>
+                               <span className="shrink-0">
+                                   <input type="checkbox" role="switch" aria-label="隐藏 RECALL 指令提示" checked={formData.hideMonthlyRecallPrompt === true} onChange={e => handleChange('hideMonthlyRecallPrompt', e.target.checked)} className="peer sr-only" />
+                                   <span aria-hidden="true" className="relative block h-6 w-11 rounded-full bg-slate-200 transition-colors peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary peer-focus-visible:ring-offset-2 after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:after:translate-x-5" />
+                               </span>
+                               </label>
+                           </details>
                            <div className="flex justify-center gap-2 mb-4">
                                <button onClick={() => { setShowBatchModal(true); trackEvent('打开批量记忆总结弹窗'); }} className="px-4 py-2 bg-white rounded-full text-xs font-semibold text-slate-500 shadow-sm border border-slate-100">批量总结（可指定日期）</button>
                                <button onClick={() => setShowImportModal(true)} className="px-4 py-2 bg-white rounded-full text-xs font-semibold text-slate-500 shadow-sm border border-slate-100">导入/清洗</button>

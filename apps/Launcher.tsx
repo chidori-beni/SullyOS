@@ -63,6 +63,7 @@ import { resolveLauncherDropKey, type LauncherDropCandidate } from '../utils/lau
 import { useUiLocale } from '../context/UiLocaleContext';
 
 const CompanionHome = React.lazy(() => import('../components/os/CompanionHome'));
+const HomelyHome = React.lazy(() => import('../components/os/HomelyHome'));
 
 // 页面 id 和组件 key 都是我们自己生成的安全字符（字母数字和 _ . : -）。
 // CSS.escape 在 Safari 10+ 都有；万一没有，就把不安全字符剔掉当兜底。
@@ -2199,6 +2200,10 @@ const Launcher: React.FC = () => {
   // 电子宠物主题：桌面即养成机——角色真实小屋做舞台 + 四颗糖果实体键（独立组件自渲染）。
   if (theme.skin === 'tamagotchi') {
     return <TamagotchiHome />;
+  }
+
+  if (theme.skin === 'homely') {
+    return <React.Suspense fallback={<div className="h-full w-full bg-[#dce3d5]" role="status">正在回家…</div>}><HomelyHome /></React.Suspense>;
   }
 
   if (theme.skin === 'companion') {

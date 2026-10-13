@@ -25,6 +25,14 @@ import {
 } from './worldbook';
 import { resolveUserMacroName, expandCharBodyMacros, buildChatPartnerNote, buildHostBondNote, buildCharBondNote, buildGiftTasteNote, buildGiftHistoryNote } from './characterIdentity';
 import { buildSARModulePrompt } from './vrWorld/sarModuleRuntime';
+import { getDailyScheduleForChar } from './dailySchedule';
+import { getLastInnerState } from './emotionState';
+import { buildHomePetContext } from './homePetContext';
+import { buildHomeDefinitionContext } from './homeDefinitionContext';
+
+// 3D 家园（上游 cb25226d）要用的情绪入口选项。fork 的核心上下文保持同步、原有注入规则不变，
+// 这两个工具只给家园等显式调用方用（见 buildEmotionContext / buildCurrentScheduleContext）。
+export interface EmotionContextOptions { surface?: 'chat' | 'home'; innerState?: string }
 
 /**
  * Memory Central
@@ -52,8 +60,26 @@ export const ContextBuilder = {
     buildSARModuleContext: (
         char: CharacterProfile,
         user: UserProfile,
-        surface: 'chat' | 'date',
+        surface: 'chat' | 'date' | 'home',
     ): string => buildSARModulePrompt(char, user, surface),
+
+    /** 3D 家园用：只读取现有日程，不触发生成；按角色当地日期读取。fork 不把它塞进所有入口的核心上下文。 */
+    buildCurrentScheduleContext: async (char: CharacterProfile, allowScheduleChange = false, snapshot?: Promise<DailySchedule | null>): Promise<string> => {
+        if (!isScheduleFeatureOn(char)) return '';
+        const schedule = await (snapshot ?? getDailyScheduleForChar(char));
+        if (!schedule) return '';
+        return buildScheduleInjectionText(schedule, undefined, nowInTimeZone(resolveCharTimeZone(char)), {
+            includeFullDay: true, includeClock: char.timeAwarenessEnabled !== false,
+            includeChangeInstruction: allowScheduleChange,
+        });
+    },
+    /** 3D 家园用：情绪 buff + 最近一次内心想法。 */
+    buildEmotionContext: (char: CharacterProfile, options?: EmotionContextOptions): string => {
+        if ((options?.surface !== 'chat' && options?.surface !== 'home') || !isScheduleFeatureOn(char) || !char.emotionConfig?.enabled) return '';
+        const inner = options.innerState ?? getLastInnerState(char.id);
+        return (char.buffInjection ? char.buffInjection + '\n\n' : '')
+            + (inner.trim() ? '### 当前内心想法\n' + inner.trim() + '\n（这是你的内心状态，不是台词，不必说出口；让它自然影响你的回应。）\n\n' : '');
+    },
 
     /**
      * 构建角色设定+记忆上下文（角色名、核心指令、世界观 + 月度总结 & 当月日度总结）
@@ -706,6 +732,10 @@ const renderCoreContext = (
                 if (holiday) context += `- ${holiday}\n\n`;
             }
         }
+
+        // 家园背景（上游 cb25226d）由所有入口共用，未设置时不注入。秘密纸条那份要读库，fork 的核心上下文是同步的，不在这里带。
+        context += buildHomeDefinitionContext(char.homeDefinition, user.name);
+        context += buildHomePetContext(char.home3D);
 
         // 4. [NEW] 印象档案 (Private Impression)
         // 这是角色对用户的私密看法，只有角色知道

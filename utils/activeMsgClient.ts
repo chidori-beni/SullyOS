@@ -3170,7 +3170,10 @@ export const ActiveMsgClient = {
     const inlineCreds = !credRefs.chat;
     // 评估配置：凭据走引用时只留提示词模板，副 API 的 apiKey 一个字节都不进任务 metadata。
     const emotionEvalSpec = params.emotionEval
-      ? (credRefs.emotion ? { prompt: params.emotionEval.prompt } : params.emotionEval)
+      ? (credRefs.emotion ? {
+          prompt: params.emotionEval.prompt,
+          ...(params.emotionEval.homeSecretRequestId ? {homeSecretRequestId: params.emotionEval.homeSecretRequestId} : {}),
+        } : params.emotionEval)
       : undefined;
 
     const remoteAvatarUrl = toRemoteAvatarUrl(char.avatar);

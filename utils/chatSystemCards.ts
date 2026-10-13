@@ -94,7 +94,8 @@ export const filterChatMessages = <T extends {
       const encounterId = dateEncounterIdOf(message);
       return !encounterId || !popupEncounterIds.has(encounterId);
     }
-    return source !== 'call' && source !== 'cinema' && source !== 'story_theater_memory';
+    // 3D 家园的场景记录（source 'home'）只进上下文，不在聊天里显示（上游 cb25226d）
+    return source !== 'call' && source !== 'cinema' && source !== 'home' && source !== 'story_theater_memory';
   }));
 };
 

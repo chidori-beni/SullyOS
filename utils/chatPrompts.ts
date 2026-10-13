@@ -1,4 +1,7 @@
+import {secretNoteContext} from './secretNote';
+import { hasReliableMessageTimestamp, protectPendingChatTurn } from './storyTheaterTimeline';
 import { sarPublicContext } from './vrWorld/kanataPublicContext';
+import { expandHomeContextHistory } from './homeContextSegments';
 import { kanataTitleContext } from './vrWorld/kanataTitle';
 import { selectCharacterContextMessages } from './chatContextRange';
 
@@ -266,6 +269,8 @@ export const detectChatModeTransition = (messages: readonly Message[]): ChatMode
             return (mode === 'call' || mode === 'video') && hasAbruptCallEndBehind(messages, index) ? mode : null;
         }
 
+        // 刚送达的定时主动消息不是对待回复输入的回答，也不代表线上格式已经切换。
+        if (message.role === 'assistant' && message.metadata?.activeMsg2?.taskId != null) continue;
         if (message.role === 'assistant') return null;
         if (message.role === 'user') hasPendingChatInput = true;
     }
@@ -324,6 +329,8 @@ const hasHostExchange = (msgs: readonly any[] | null | undefined, hostName?: str
 };
 
 export interface PromptBuildOptions {
+    /** 3D 家园等其他对话界面只替换「聊天 App 行为规范」；共享上下文和末尾提醒保持一致（上游 cb25226d）。 */
+    appRules?: string;
     /** 已完成清洗的实际消息，由公共上下文管线统一处理世界书。 */
     history?: import('./context').ContextMessage[];
     forFirePack?: boolean;
@@ -867,7 +874,7 @@ ${groupLogStr}\n`;
             );
             if (musicBlock) {
                 volatileState += `\n${musicBlock}\n`;
-                if (userListeningContext) {
+                if (userListeningContext && promptOptions?.appRules === undefined) {
                     volatileState += `\n${ContextBuilder.buildMusicActionGuide(isListeningTogether)}\n`;
                 }
             }
@@ -913,6 +920,11 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
             }
         }
 
+        // 3D 家园用 appRules 时不走聊天 App 的语音频率统计；下面 recencyTail 还要读它，所以声明在分支外。
+        let voiceUsageStats: ReturnType<typeof countRecentVoiceUsage> | null = null;
+        if (promptOptions?.appRules !== undefined) {
+            baseSystemPrompt += promptOptions.appRules;
+        } else {
         const emojiContextStr = ChatPrompts.buildEmojiContext(emojis, categories);
         // 生图：只有用户真的配好了 NovelAI 才把这条命令告诉角色。没配就一个字都不提——
         // 否则角色会写出永远变不成图的 [[SEND_IMAGE:]]，用户看到的是一堆降级文字。
@@ -1007,8 +1019,7 @@ ${imageGenGuide}
    - 转账: 必须使用且只使用 \`[[ACTION:TRANSFER|to=user|amount=100]]\`（to 固定写 user，金额只写数字）；不要写成 \`[系统: 你向某人转账 100]\` 等系统日志文本。
    - **处理用户转账**: 当历史里出现 \`[[记录:TRANSFER|to=char|...|status=待处理]]\`（用户转给你、还没处理）时，你可以决定收下或退回。收下: \`[[ACTION:TRANSFER_ACCEPT]]\`；退回: \`[[ACTION:TRANSFER_RETURN]]\`。请结合人设和情境自然选择（比如害羞地退回、开心地收下），并配上一句话。
    - **【重要】\`[[记录:...]]\` 是系统日志**: 历史里以 \`[[记录:\` 开头的标签是已经发生的事实（谁转给谁、什么状态），只供你了解，**严禁**在回复里照抄输出。你要做动作时只能用 \`[[ACTION:...]]\`。
-   - 调取记忆: \`[[RECALL: YYYY-MM]]\`，请注意，当用户提及具体某个月份时，或者当你想仔细想某个月份的事情时，欢迎你随时使该动作
-   - **添加纪念日**: 如果你觉得今天是个值得纪念的日子（或者你们约定了某天），你可以**主动**将它添加到用户的日历中。单独起一行输出: \`[[ACTION:ADD_EVENT | 标题(Title) | YYYY-MM-DD]]\`。
+${forFirePack || char.hideMonthlyRecallPrompt !== true ? "   - 调取记忆: `[[RECALL: YYYY-MM]]`，请注意，当用户提及具体某个月份时，或者当你想仔细想某个月份的事情时，欢迎你随时使该动作\n" : ''}   - **添加纪念日**: 如果你觉得今天是个值得纪念的日子（或者你们约定了某天），你可以**主动**将它添加到用户的日历中。单独起一行输出: \`[[ACTION:ADD_EVENT | 标题(Title) | YYYY-MM-DD]]\`。
    - **📞 打电话给对方（这是一个真动作，不是台词）**: 单独起一行输出 \`[[ACTION:CALL | voice | 接通后你想说的第一句]]\`。
      第二格填 \`voice\`（语音）或 \`video\`（视频），你自己挑；第三格可留空，留空就到时候现说。
      **只有这一行会让 ${userProfile.name} 的手机真的响起来。**
@@ -1339,7 +1350,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
         // forFirePack 跳过：模板打包这一刻的用量，到主动消息真正触发时早就过期了。
         // voiceUsageStats 留到下面 recencyTail 那块再用一次——连着发太多时那边会追加一条硬性
         // 禁令，放在整段 prompt 的最后一句（模型开口前读到的最后内容），比塞在这里管用得多。
-        const voiceUsageStats = (char.chatVoiceEnabled && !forFirePack) ? countRecentVoiceUsage(currentMsgs) : null;
+        voiceUsageStats = (char.chatVoiceEnabled && !forFirePack) ? countRecentVoiceUsage(currentMsgs) : null;
         if (voiceUsageStats) {
             volatileState += buildVoiceUsageHint(voiceUsageStats);
         }
@@ -1432,6 +1443,8 @@ ${buildVoiceActingGuide(char)}`;
         } else {
             // Voice is disabled — explicitly prohibit voice tags to prevent inertia from call/date history
             baseSystemPrompt += `\n\n[系统提示: 语音消息功能当前未开启。严禁使用 <语音>...</语音> 和 <字幕>...</字幕> 标签。所有回复必须是纯文字消息。]`;
+        }
+
         }
 
         // ── 心声 ──
@@ -1549,6 +1562,8 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
             contextHighWaterMark?: number;
             /** 默认使用聊天时间感知；见面入口传线下开关，控制现实时间戳与互动间隔（剧情时间戳不受影响）。 */
             timeAwarenessEnabled?: boolean;
+            /** 线上请求兜底旧剧情副本的错序，见面自身历史不启用。 */
+            protectPendingChatTurn?: boolean;
         },
     ) => {
         // Filter Logic
@@ -1569,7 +1584,9 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
         if (processedExcludeIds && processedExcludeIds.size > 0) {
             effectiveHistory = effectiveHistory.filter(m => !processedExcludeIds.has(m.id));
         }
-        const historySlice = effectiveHistory.slice(-limit);
+        const orderedHistory = options?.protectPendingChatTurn ? protectPendingChatTurn(effectiveHistory) : effectiveHistory;
+        const expandedHistory = expandHomeContextHistory(orderedHistory.slice(-limit));
+        const historySlice = options?.protectPendingChatTurn ? protectPendingChatTurn(expandedHistory) : expandedHistory;
         // 紧跟用户图片的角色回复：prompt 副本里要摘掉模板化的存图确认句，
         // 否则这些旧回复会一直充当"收到图片就先报一句已保存"的示范。
         const assistantRepliesToUserImage = collectAssistantRepliesToUserImage(historySlice);
@@ -1583,17 +1600,18 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
             let lastRealMsg: Message | undefined;
             for (let i = historySlice.length - 2; i >= 0; i--) {
                 const m = historySlice[i];
-                if (!m.metadata?.proactiveHint && !(m.role === 'assistant' && i > 0 && historySlice[i - 1]?.metadata?.proactiveHint)) {
+                if (hasReliableMessageTimestamp(m) && !m.metadata?.proactiveHint && !(m.role === 'assistant' && i > 0 && historySlice[i - 1]?.metadata?.proactiveHint)) {
                     lastRealMsg = m;
                     break;
                 }
             }
             // 时间感知关闭时，互动间隔与现实消息时间戳一起遮住（a6723291）。
-            if (lastRealMsg && currentMsg && timeAwarenessOn && !options?.skipTimeGap) timeGapHint = ChatPrompts.getTimeGapHint(lastRealMsg, currentMsg.timestamp, charTz);
+            if (lastRealMsg && currentMsg && timeAwarenessOn && !options?.skipTimeGap && hasReliableMessageTimestamp(currentMsg)) timeGapHint = ChatPrompts.getTimeGapHint(lastRealMsg, currentMsg.timestamp, charTz);
         }
 
         return {
             apiMessages: historySlice.map((m, index) => {
+                    if (m.type === 'secret_note') return {role: m.role, content: secretNoteContext(m.content)};
                 // ── 阶段 5.2：旁白 ──
                 // ⛔ 必须在这里就把 role 改成 'system' 并套上旁白框。
                 // 旁白存库时是 role:'system' 的消息，但**内容是用户写的原话**——
@@ -1629,7 +1647,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     ? m.metadata.sceneClockAt
                     : undefined;
                 // 剧情时间（见面消息）始终保留；现实时间戳只在时间感知开着时给（a6723291）
-                const timeStr = sceneClockAt !== undefined || timeAwarenessOn
+                const timeStr = sceneClockAt !== undefined || (timeAwarenessOn && hasReliableMessageTimestamp(m))
                     ? `[${ChatPrompts.formatDate(sceneClockAt ?? m.timestamp, charTz)}${sceneClockAt !== undefined ? ' · 剧情时间' : ''}]`
                     : '';
                 const reactionContext = formatMessageReactionContext(m, char.name || '你', userProfile?.name || '用户');
@@ -1637,6 +1655,7 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     const source = m.metadata?.source;
                     if (source === 'call') return '[通话]';
                     if (source === 'date') return '[约会]';
+                    if (source === 'home') return '[家园]';
                     if (source === 'cinema') return `[一起看${m.metadata?.cinemaMeet === 'offline' ? '（面对面）' : ''}：${m.metadata?.cinemaTitle || '影片'}]`;
                     // This is internal prompt metadata, not a label the character should quote.
                     // Keep it terse and machine-like; the output sanitizer also accepts the old label.

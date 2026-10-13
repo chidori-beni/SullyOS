@@ -1,5 +1,10 @@
 import { SARUpdatePopup } from './os/SARUpdatePopup';
 import { SAR_UPDATE_KEY, SAR_CHANGELOG, sarLaunch } from '../utils/sarUpdate';
+import HomeUpdatePopup from './os/HomeUpdatePopup';
+import { HOME_UPDATE_KEY, HOME_CHANGELOG } from '../utils/homeUpdate';
+import { roomLaunch } from '../utils/roomLaunch';
+import NavigationBallNotice, { NAVIGATION_BALL_NOTICE_KEY } from './os/NavigationBallNotice';
+import { requestSettingsFocus } from '../utils/settingsNavigation';
 /**
  * 全局版本更新提醒。
  *
@@ -581,8 +586,27 @@ const SARUpdateAnnouncement: React.FC<UpdatePopupProps> = ({ onDone, onExit }) =
     }}/>;
 };
 
+const HomeUpdateAnnouncement: React.FC<UpdatePopupProps> = ({ onDone, onExit }) => {
+    const { openApp } = useOS();
+    return <HomeUpdatePopup onDone={onDone} onVisit={() => {
+        roomLaunch.request({ tab: 'home3D' }); openApp(AppID.Room); onExit();
+    }} onGuide={() => {
+        try { sessionStorage.setItem(FAQ_TARGET_SECTION_KEY, HOME_CHANGELOG); } catch { /* 手册首页仍可打开 */ }
+        openApp(AppID.FAQ); onExit();
+    }}/>;
+};
+
+const NavigationBallAnnouncement: React.FC<UpdatePopupProps> = ({ onDone, onExit }) => {
+    const { openApp } = useOS();
+    return <NavigationBallNotice onDone={onDone} onConfigure={() => {
+        requestSettingsFocus('navigation'); openApp(AppID.Settings); onExit();
+    }} />;
+};
+
 const UPDATE_QUEUE: { key: string; render: (props: UpdatePopupProps) => React.ReactNode }[] = [
     { key: UPDATE_NOTIFICATION_KEY_2026_08_30, render: (props) => <CollaborationUpdatePopup {...props} /> },
+    { key: NAVIGATION_BALL_NOTICE_KEY, render: props => <NavigationBallAnnouncement {...props} /> },
+    { key: HOME_UPDATE_KEY, render: props => <HomeUpdateAnnouncement {...props} /> },
     { key: SAR_UPDATE_KEY, render: (props) => <SARUpdateAnnouncement {...props} /> },
     { key: NETWORK_TRANSIT_NOTICE_KEY_2026_08, render: (props) => <NetworkTransitNoticePopup {...props} /> },
     { key: UPDATE_NOTIFICATION_KEY_2026_08_10, render: (props) => <Live2DUpdatePopup {...props} /> },

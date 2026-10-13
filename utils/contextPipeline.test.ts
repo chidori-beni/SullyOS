@@ -72,3 +72,5 @@ it('世界书底层处理只允许 ContextBuilder 调用；旧文本调用点不
     expect(violations).toEqual([]);
     expect(actual).toEqual(legacyTextCalls);
 });
+
+// fork：ContextBuilder 保持同步（上游 3D 家园那版改成了 async），上游这条「必须 await」守卫不适用。

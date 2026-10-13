@@ -157,6 +157,13 @@ type DesktopSkinOption = { id: string; name: string; desc: string; swatch: strin
 
 const DESKTOP_SKINS: DesktopSkinOption[] = [
   {
+    id: 'homely',
+    name: '居家',
+    desc: '小屋日常同步 · 面对面聊天 · 家园小手机',
+    swatch: 'linear-gradient(90deg,#ebc2a1 0%,#f4dfcc 48%,#faf3e7 48%,#fffaf2 100%)',
+    config: { skin: 'homely', wallpaper: 'linear-gradient(180deg,#faf3e7,#ebc2a1)', contentColor: '#695344' },
+  },
+  {
     id: 'animalcrossing',
     name: '动森风格',
     desc: 'NookPhone 彩色图标 · 草地天空 · 暖色界面',
@@ -569,6 +576,7 @@ const Appearance: React.FC = () => {
   // 全摊开就是原来那条滚不完的长列表。展开状态只活在本次进入 App 期间。
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ style: true, wallpaper: false, widgets: false, motion: false });
   const toggleGroup = (key: string) => setOpenGroups(prev => ({ ...prev, [key]: !prev[key] }));
+  useAppShortcut(ShortcutAppID.Appearance, intent => setActiveTab((intent.entryId || 'theme') as typeof activeTab));
   const wallpaperInputRef = useRef<HTMLInputElement>(null);
   const [wallpaperUrl, setWallpaperUrl] = useState('');
   const lockWallpaperInputRef = useRef<HTMLInputElement>(null);
@@ -1825,3 +1833,5 @@ const Appearance: React.FC = () => {
 };
 
 export default Appearance;
+import { useAppShortcut } from '../utils/appShortcutLaunch';
+import { AppID as ShortcutAppID } from '../types';

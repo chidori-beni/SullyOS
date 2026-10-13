@@ -5,6 +5,10 @@ import { DB, openDB } from './db';
 import { encodeVectorsForBackup, encodeVectorsForBackupChunked, MemoryVectorDB } from './memoryPalace/db';
 import { writeV2Backup, assembleV2Backup, shardFileName, type ShardLimits } from './backupFormat';
 import { ActiveMsgStore } from './activeMsgStore';
+import {loadCreatorPartsForRender} from './creatorPartsBlob';
+import {homeFigureSeed} from './homeFigureSeed';
+import {healLocalStorageMirror} from './lsMirror';
+import {readPhotoLooks,PHOTO_LOOK_LIBRARY_KEY} from '../apps/room3d/photoLookStorage';
 
 // fake-indexeddb 已通过 test-setup.ts 注入。
 // 这组用例走「真实链路」：writeV2Backup → assembleV2Backup → DB.importFullData，钉死 v2 改造

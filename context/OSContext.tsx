@@ -1,3 +1,6 @@
+import { handleLocalBack } from '../utils/localBackHandlers';
+import {isHomeAssetDisposal} from '../utils/homeAssetCancellation';
+import { processHomeMemoryAfterSave } from '../utils/homeMemoryPostHook';
 import { retireCloudCharacter } from '../utils/amsgCloudRetirement';
 import { resolveDialogueApi } from '../utils/characterApi';
 
@@ -58,7 +61,8 @@ import {
 } from '../utils/chatContextRange';
 import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import { evaluateEmotionBackground } from '../hooks/useChatAI';
-import { CHAT_GEN_EVENTS, getChatViewSnapshot, setChatViewSnapshot } from '../utils/chatGenEvents';
+import {HOME_SECRETS_UPDATED} from '../utils/homeSecrets';
+import { CHAT_GEN_EVENTS, getChatViewSnapshot, setChatViewSnapshot, isEmbeddedChatVisible } from '../utils/chatGenEvents';
 import { buildChatRequestPayload } from '../utils/chatRequestPayload';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { extractHtmlBlocks } from '../utils/htmlPrompt';
@@ -100,6 +104,7 @@ import { exportWorldHomeLocal } from '../utils/worldHome/localBackup';
 import { exportLuckinLocal } from '../utils/luckinMcpClient';
 import { exportMcdLocal } from '../utils/mcdMcpClient';
 import { exportMcpLocal } from '../utils/mcpClient';
+import { exportHome3DLocal } from '../utils/home3DBackup';
 import { exportDesktopSkinLocal } from '../utils/desktopSkinBackup';
 import { assertSupportedSullyBackup } from '../utils/backupImportPolicy';
 import { createBuiltinSullyLive2DConfig, isBuiltinSullyLive2D, upgradeBuiltinSullyLive2DDefaults } from '../utils/builtinSullyLive2D';
@@ -1384,6 +1389,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               }
               return response;
           } catch (err: any) {
+              const requestSignal = (sendArgs[1] as RequestInit | undefined)?.signal || (sendArgs[0] instanceof Request ? sendArgs[0].signal : undefined);
+              if (isHomeAssetDisposal(err, requestSignal, urlStr)) throw err;
               // Network Failure
               if (urlStr.includes('/chat/completions')) {
                   updateApiRequestCaptureUsage({ captureId: apiRequestCaptureId, ok: false });
@@ -1680,6 +1687,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
         await loadSettings();
 
+        // 旧剧情副本曾把设定日期写成现实收发时间。先校正，再让历史/记忆/云端读取。
+        const storyTimelineRepair = await DB.ensureStoryTheaterTimestamps().catch(error => {
+            console.error('剧情收发时间校正失败，将在读取历史时重试', error);
+            return { repairedCharacterIds: [] as string[] };
+        });
+
         // 老用户库存的鲨盘图链接就地改写成 jsDelivr（幂等、跑一次）。放在读 characters 之前，
         // 让下面 getAllCharacters 拿到的就是改好的数据。见 utils/sharkpanAssetMigration.ts。
         await migrateSharkpanAssets();
@@ -1838,13 +1851,19 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         try {
           const savedRealtime = localStorage.getItem('os_realtime_config');
           const savedApiRaw = localStorage.getItem('os_api_config');
+          const restoredRealtime = savedRealtime
+            ? { ...defaultRealtimeConfig, ...JSON.parse(savedRealtime) }
+            : defaultRealtimeConfig;
+          for (const char of finalChars) {
+            if (storyTimelineRepair.repairedCharacterIds.includes(char.id)) {
+              markAmsgStateDirty({ char, userProfile: dbUser ?? defaultUserProfile, groups: dbGroups, realtimeConfig: restoredRealtime });
+            }
+          }
           resumePendingAmsgStateSync({
             characters: finalChars,
             userProfile: dbUser ?? defaultUserProfile,
             groups: dbGroups,
-            realtimeConfig: savedRealtime
-              ? { ...defaultRealtimeConfig, ...JSON.parse(savedRealtime) }
-              : defaultRealtimeConfig,
+            realtimeConfig: restoredRealtime,
             // 上次没传成功的 LLM 凭据行按这份重算补传；没有就跳过那一项。
             apiConfig: savedApiRaw ? JSON.parse(savedApiRaw) : undefined,
           });
@@ -2023,7 +2042,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // Always bump timestamp so Chat reloads messages if currently open
           setLastMsgTimestamp(Date.now());
 
-           const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId;
+           const isChattingWithThisChar = (activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId) || isEmbeddedChatVisible(charId);
            if (!isChattingWithThisChar) {
                const isVisible = document.visibilityState === 'visible';
                const char = characters.find(c => c.id === charId);
@@ -2081,7 +2100,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
            const charName = chatDisplayNameById(charId, rawCharName);
           setLastMsgTimestamp(Date.now());
 
-          const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId;
+          const isChattingWithThisChar = (activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId) || isEmbeddedChatVisible(charId);
            if (!isChattingWithThisChar) {
                const isVisible = document.visibilityState === 'visible';
                const preview = formatAmsgPreviewBody(body);
@@ -2271,7 +2290,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const { charId, charName } = ((e as CustomEvent).detail || {}) as { charId?: string; charName?: string };
           if (!charId) return;
           setLastMsgTimestamp(Date.now());
-          const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId;
+          const isChattingWithThisChar = (activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId) || isEmbeddedChatVisible(charId);
           if (!isChattingWithThisChar) {
               setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
               if (document.visibilityState === 'visible') {
@@ -2346,6 +2365,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       window.addEventListener('active-msg-progress', progressHandler);
       window.addEventListener(INCOMING_CALL_MISSED_EVENT, missedCallHandler);
       window.addEventListener('active-msg-open', openHandler);
+      const secretSyncHandler = (event: Event) => {
+          const charId = (event as CustomEvent).detail?.charId;
+          const char = charactersRef.current.find(c => c.id === charId);
+          if (char) markAmsgStateDirty({char, userProfile: userProfileRef.current, groups: groupsRef.current, realtimeConfig: realtimeConfigRef.current});
+      };
+      window.addEventListener(HOME_SECRETS_UPDATED, secretSyncHandler);
       window.addEventListener('emotion-updated', buffSyncHandler);
       window.addEventListener(CHAT_GEN_EVENTS.replyArrived, chatReplyArrivedHandler);
       window.addEventListener(CHAT_GEN_EVENTS.replyEnd, chatReplyEndHandler);
@@ -2368,6 +2393,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           window.removeEventListener('active-msg-progress', progressHandler);
           window.removeEventListener(INCOMING_CALL_MISSED_EVENT, missedCallHandler);
           window.removeEventListener('active-msg-open', openHandler);
+          window.removeEventListener(HOME_SECRETS_UPDATED, secretSyncHandler);
           window.removeEventListener('emotion-updated', buffSyncHandler);
           window.removeEventListener(CHAT_GEN_EVENTS.replyArrived, chatReplyArrivedHandler);
           window.removeEventListener(CHAT_GEN_EVENTS.replyEnd, chatReplyEndHandler);
@@ -2622,8 +2648,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   charId,
               );
 
-              // 上一轮缓存的意识流独白 —— 主路径用 React state，主动消息这里用 ref Map
-              const cachedInnerState = proactiveInnerStateRef.current.get(charId) || undefined;
+              // 主动私聊也使用共享内心状态，不用独立 ref 缓存覆盖它。
+              // 内心状态由 ContextBuilder 读取角色共享缓存。
 
               const payload = await buildChatRequestPayload({
                   char, userProfile: currentUserProfile!, groups: currentGroups,
@@ -2632,7 +2658,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   contextLimit: Math.max(1, allMsgs.length),
                   recallEntryPoint: 'proactive_chat',
                   realtimeConfig: currentRealtimeConfig,
-                  innerState: cachedInnerState,
+                  innerState: undefined,
                   // 实时音乐播放状态 —— OSContext 在 MusicProvider 上层用不了 useMusic()，
                   // 走 MusicContext 暴露的模块级快照（Provider mount 后会持续写入）
                   musicSnapshot: loadMusicPlaybackSnapshot(),
@@ -3631,6 +3657,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         // 汇到这里，不打的话云端 fire_pack 停在上一轮聊天，角色到点拿旧世界说话。
         // markDirty 内部自带「没开 2.0 / 没挂 AI 任务就 return」的门，普通角色零成本。
         DB.saveCharacter(target).then(() => {
+          void processHomeMemoryAfterSave(before, target, memoryPalaceConfigRef.current, apiConfig, userProfile?.name || '').catch(error => {
+            console.error('[Home3D MemoryPalace] 后台处理失败', error);
+            addToast('家园记忆整理失败', 'error');
+          });
           markAmsgStateDirty({ char: target, userProfile, groups, realtimeConfig });
           if (JSON.stringify(before?.dialogueApi) !== JSON.stringify(target.dialogueApi)) {
             // Fresh snapshot also distinguishes consecutive role-only changes during an upload.
@@ -4590,6 +4620,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               worldHomeLocal: (mode === 'text_only' || mode === 'full') ? exportWorldHomeLocal() : undefined,
               luckinLocal: (mode === 'text_only' || mode === 'full') ? exportLuckinLocal() : undefined,
               mcdLocal: (mode === 'text_only' || mode === 'full') ? exportMcdLocal() : undefined,
+              home3DLocal: (mode === 'text_only' || mode === 'full') ? exportHome3DLocal() : undefined,
               mcpLocal: (mode === 'text_only' || mode === 'full') ? exportMcpLocal() : undefined,
 
               // 梦境盲盒收藏册（账号级 localStorage，不挂在角色上，需单独随备份带走）
@@ -5787,6 +5818,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   }, []);
 
   const handleBack = useCallback(() => {
+      if (handleLocalBack()) return;
       if (backHandlerRef.current) {
           const handled = backHandlerRef.current();
           if (handled) return;

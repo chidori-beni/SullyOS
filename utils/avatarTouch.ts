@@ -437,6 +437,7 @@ export const requestAvatarTouchReply = async (options: {
   hit: AvatarTouchHit;
   modelActions?: AvatarTouchModelAction[];
 }): Promise<AvatarTouchReply> => {
+
   const {
     character,
     user,
@@ -492,11 +493,11 @@ export const requestAvatarTouchReply = async (options: {
     },
     body: JSON.stringify({
       model: apiConfig.model,
-      messages: ContextBuilder.buildCharacterRequest(characterContextInput, [
+      messages: (await ContextBuilder.buildCharacterRequest(characterContextInput, [
         { role: 'system', content: systemPrompt },
         ...apiMessages,
         { role: 'user', content: eventText },
-      ]),
+      ])),
       temperature: 0.9,
       max_tokens: 1200,
       stream: false,
@@ -838,6 +839,7 @@ export const requestAvatarTouchReactionPack = async (options: {
    */
   allowPartial?: boolean;
 }): Promise<AvatarTouchReactionPack> => {
+
   const {
     character,
     user,
@@ -896,11 +898,11 @@ export const requestAvatarTouchReactionPack = async (options: {
     },
     body: JSON.stringify({
       model: apiConfig.model,
-      messages: ContextBuilder.buildCharacterRequest(characterContextInput, [
+      messages: (await ContextBuilder.buildCharacterRequest(characterContextInput, [
         { role: 'system', content: systemPrompt },
         ...apiMessages,
         { role: 'user', content: eventText },
-      ]),
+      ])),
       temperature: 0.92,
       // 每条反馈 = 中文原文 + 译文 + TTS 语法 + 一整套 performance，实测 200~300 token。
       // 固定 4800 在选满 5 个部位（20 条）时必被截断，解析出来的包永远缺项，

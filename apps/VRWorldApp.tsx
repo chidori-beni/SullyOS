@@ -24,7 +24,7 @@ import { SARModuleShopOverlay } from './vrWorld/SARModuleShop';
 import { FishingMarketOverlay } from './vrWorld/FishingMarketOverlay';
 import { SARHubPanels, type SARHubPanel } from './vrWorld/SARHubPanels';
 const DinosaurGarden = React.lazy(() => import('./vrWorld/dinosaur/DinosaurGarden').then(m=>({default:m.DinosaurGarden})));
-import { CreatorIframe, type ChibiResult } from '../components/Like520Event';
+import { CreatorIframe, sullyPresets, type ChibiResult } from '../components/Like520Event';
 import { useMusic, type Song } from '../context/MusicContext';
 import { DB } from '../utils/db';
 import { LibraryView, NovelPreferenceModal } from './vrWorld/VRLibrary';
@@ -199,6 +199,14 @@ const VRWorldApp: React.FC = () => {
     }, []);
 
     const [enterRoom, setEnterRoom] = useState<VRRoomId | null>(null);
+    useAppShortcut(ShortcutAppID.VRWorld, intent => {
+        setReaderNovel(null); setReaderJump(null); setShowUpload(false); setShowHelp(false);
+        setShowFishingMarket(null); setSarHubPanel(null); setShowSarModuleShop(false); setShowSarCabinet(false); setShowSarGacha(false); setShowSarDialogue(false); setFamiliarity(null);
+        const id = intent.entryId || 'world';
+        const isTab = ['world', 'library', 'sar', 'settings', 'api'].includes(id);
+        setTab(isTab ? id as Tab : 'world');
+        setEnterRoom(isTab ? null : id as VRRoomId);
+    });
     const [readerNovel, setReaderNovel] = useState<VRWorldNovel | null>(null);
     const [readerJump, setReaderJump] = useState<{ novel: VRWorldNovel; seg: number } | null>(null);
     const [showUpload, setShowUpload] = useState(false);
@@ -3553,7 +3561,7 @@ const ChibiEditor: React.FC<{
 
     const isSully = (char.name || '').toLowerCase().includes('sully');
     // 回填：捏人器 init 读 presets（扁平 map），用上次导出的 state.selected
-    const presets = existing?.state?.selected || (isSully ? { skin: 'skin_1', fronthair: 'fronthair_99', eyes: 'eyes_99' } : undefined);
+    const presets = existing?.state?.selected || (isSully ? sullyPresets() : undefined);
 
     const onConfirm = (r: ChibiResult) => {
         setImg(r.transparentDataUrl);
@@ -4226,3 +4234,5 @@ const VRStyleTag: React.FC = () => (
 );
 
 export default VRWorldApp;
+import { useAppShortcut } from '../utils/appShortcutLaunch';
+import { AppID as ShortcutAppID } from '../types';

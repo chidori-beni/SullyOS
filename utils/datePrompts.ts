@@ -13,7 +13,7 @@
  *     日记等工具块）——这些是线上聊天专属指令，面对面场景里输出会破坏 VN 格式。
  *   - 不注入：实时天气 / 新闻、群聊背景、Notion / 飞书日记标题——见面是高沉浸短会话，
  *     这些背景块收益低，还会稀释 VN 格式指令的权重。
- *   - 日程 / 音乐氛围目前也不进见面场景；以后要加请在这里统一加，别在组件里散拼。
+ *   - 日程由 ContextBuilder 统一读取，所有入口遵守角色总开关；音乐氛围仍为私聊额外内容。
  *   - 角色表达原则与 ChatApp 共用；三条路径均在世界书和模式指令之后追加 system 收尾。
  *     收尾不参与世界书关键词扫描或对话深度计数，也不按模型供应商分流。
  *
@@ -1029,7 +1029,7 @@ export const DatePrompts = {
      * 历史以纯文本块塞进 user 消息（保持"你不在和用户对话"的框定），
      * 但文本本身来自 buildMessageHistory，卡片/媒体已压成短摘要。
      */
-    buildPeekPayload: (input: {
+    buildPeekPayload: async (input: {
         char: CharacterProfile;
         userProfile: UserProfile;
         allMsgs: Message[];
@@ -1039,7 +1039,8 @@ export const DatePrompts = {
         rerollRequirement?: string;
         /** 本 fork：「重新开始」时选的开场方式。approach=靠近他（原感知）；invite=让他靠近 */
         openingMode?: 'approach' | 'invite';
-    }): { messages: ApiMessage[] } => {
+    }): Promise<{ messages: ApiMessage[] }> => {
+
         const { char, userProfile, allMsgs, emojis } = input;
         const charTz = resolveCharTimeZone(char);
         const dateTimeOn = isDateTimeAwarenessOn(char);
@@ -1136,6 +1137,7 @@ ${extraBlock ? `\n${extraBlock}` : ''}${isObserveOn(char) ? `\n${buildObserveBlo
         sceneClockUpdatedAt?: number;
         sceneClockTimeZone?: string;
     }): Promise<{ messages: ApiMessage[] }> => {
+
         const { char, userProfile, allMsgs, emojis, userText, variant } = input;
         const { clock, historyMsgs, systemPrompt: baseSystemPrompt, worldbookEntries } = await buildSessionContext({
             ...input,

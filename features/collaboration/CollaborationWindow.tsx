@@ -1628,6 +1628,7 @@ const CollaborationWindow: React.FC<CollaborationWindowProps> = ({
   const [uploadStatus, setUploadStatus] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [streamingText, setStreamingText] = useState('');
+  const [toolStatus, setToolStatus] = useState('');
   const [loaded, setLoaded] = useState(false);
   const [actionDialog, setActionDialog] = useState<CollaborationDialogState | null>(null);
   const [editingMessage, setEditingMessage] = useState<CollaborationMessage | null>(null);
@@ -2228,6 +2229,7 @@ const CollaborationWindow: React.FC<CollaborationWindowProps> = ({
     const abortController = new AbortController();
     abortRef.current = abortController;
     setIsGenerating(true);
+    setToolStatus('');
     setStreamingText('');
     const taskText = collaborationMessageTaskText(latestUserMessage);
     let startedSession = sessionAtStart;
@@ -2310,6 +2312,9 @@ const CollaborationWindow: React.FC<CollaborationWindowProps> = ({
         messages: requestMessages,
         signal: abortController.signal,
         onDelta: setStreamingText,
+        characterId: character.id,
+        userName: user.name,
+        onStatus: setToolStatus,
         makerKind: startedSession.makerKind,
         chatContextSnapshot: liveChatContext,
         thinkingEnabled: !!character.showThinkingChain,
@@ -2374,6 +2379,7 @@ const CollaborationWindow: React.FC<CollaborationWindowProps> = ({
     } finally {
       if (abortRef.current === abortController) abortRef.current = null;
       setIsGenerating(false);
+      setToolStatus('');
       setStreamingText('');
     }
   };
@@ -2720,7 +2726,7 @@ const CollaborationWindow: React.FC<CollaborationWindowProps> = ({
                     ? streamingRichOutput.text
                       ? <CollaborationMarkdownView content={streamingRichOutput.text} />
                       : <span className="flex items-center gap-2 text-sm text-slate-400"><SpinnerGap size={16} className="animate-spin" />{streamingRichLabel}</span>
-                    : <span className="flex items-center gap-2 text-sm text-slate-400"><SpinnerGap size={16} className="animate-spin" />{character.name} 正在处理</span>}
+                    : <span className="flex items-center gap-2 text-sm text-slate-400"><SpinnerGap size={16} className="animate-spin" />{toolStatus || `${character.name} 正在处理`}</span>}
                 </div>
               </div>
             )}

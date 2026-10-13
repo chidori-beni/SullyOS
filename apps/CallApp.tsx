@@ -643,6 +643,12 @@ const CallApp: React.FC = () => {
   // losing where the user expects the next Back action to land.
   const returnToChatRef = useRef(initialCallLaunchIntentRef.current?.returnTo === 'chat');
   const [viewMode, setViewMode] = useState<ViewMode>('role-select');
+  useAppShortcut(ShortcutAppID.Call, intent => {
+    if (callState !== 'idle') { addToast('请先结束当前通话，再切换快捷入口', 'info'); return; }
+    const index = characters.findIndex(c => c.id === intent.characterId);
+    if (index >= 0) { setSelectedCharId(characters[index].id); setRoleGroupId(GROUP_FILTER_ALL); setRolePage(Math.floor(index / ROLES_PER_PAGE)); }
+    setViewMode(intent.entryId === 'history' ? 'history' : 'role-select');
+  });
   const [selectedCharId, setSelectedCharId] = useState<string>(initialCallLaunchIntentRef.current?.charId || activeCharacterId || characters[0]?.id || '');
   const ROLES_PER_PAGE = 6;
   const [roleGroupId, setRoleGroupId] = useState<string>(GROUP_FILTER_ALL); // 选人页的分组筛选
@@ -2335,6 +2341,7 @@ const CallApp: React.FC = () => {
     performancePersonaAttemptedRef.current.add(character.id);
 
     const task = (async (): Promise<string | null> => {
+
       try {
         const directorApi = resolvePerformanceDirectorApi(character);
         const baseUrl = directorApi.baseUrl?.replace(/\/+$/, '');
@@ -2350,7 +2357,7 @@ const CallApp: React.FC = () => {
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${directorApi.apiKey || 'sk-none'}` },
           body: JSON.stringify({
             model: directorApi.model,
-            messages: ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: 'user', content: prompt }]),
+            messages: (await ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: 'user', content: prompt }])),
             temperature: 0.25,
             max_tokens: AVATAR_PERFORMANCE_PERSONA_MAX_TOKENS,
             stream: false,
@@ -5381,3 +5388,5 @@ ${sentencePlan}`;
   );
 };
 export default CallApp;
+import { useAppShortcut } from '../utils/appShortcutLaunch';
+import { AppID as ShortcutAppID } from '../types';

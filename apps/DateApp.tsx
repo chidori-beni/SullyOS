@@ -1052,14 +1052,14 @@ const DateApp: React.FC = () => {
             const msgs = await loadCharacterContextMessages(c);
             const preparedMsgs = await materializeVisionDescriptions(msgs, apiConfig.visionApi);
             const emojis = await DB.getEmojis();
-            const { messages } = DatePrompts.buildPeekPayload({
+            const { messages } = (await DatePrompts.buildPeekPayload({
                 char: c,
                 userProfile,
                 allMsgs: preparedMsgs,
                 emojis,
                 useVisionDescriptions: apiConfig.visionApi?.enabled === true,
                 openingMode,
-            });
+            }));
             const content = await callLLM(messages, resolveDialogueApi(apiConfig, c).temperature ?? 0.85, c);
             // 过期的感知请求不能覆盖用户已经开始的另一场见面。
             if (activeEncounterRef.current?.id !== encounter.id) return;
@@ -1593,14 +1593,14 @@ const DateApp: React.FC = () => {
         // 新消息也不带 isOpening，阅读模式会从上一次见面的开场开始切片，表现为
         // 「新见面只有立绘模式是新剧情，阅读模式全是旧剧情」。
         if (lastMsg.metadata?.isOpening === true) {
-            const { messages } = DatePrompts.buildPeekPayload({
+            const { messages } = (await DatePrompts.buildPeekPayload({
                 char,
                 userProfile,
                 allMsgs: preparedValidMsgs,
                 emojis,
                 useVisionDescriptions: apiConfig.visionApi?.enabled === true,
                 rerollRequirement: requirement,
-            });
+            }));
             const content = await callLLM(messages, Math.max(resolveDialogueApi(apiConfig, char).temperature ?? 0.85, 0.9));
             if (!isCurrentDateTurnRequest(requestId, currentEncounterSnapshot.id, currentEncounterSnapshot.sceneClockRevision)) {
                 throw new Error('这轮回复已过期，请按当前剧情时间重新生成');
@@ -2161,6 +2161,24 @@ const DateApp: React.FC = () => {
         // openHistoryReplay 只负责这次回顾导航；列表数据变化不应重复打开。
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [mode, historyFocusEncounterId, historyGroups]);
+    useAppShortcut(ShortcutAppID.Date, (intent, isCurrent) => {
+        setCameFromChat(false);
+        setMeetSurface(intent.entryId === 'story' ? 'story' : 'companion');
+        const target = characters.find(c => c.id === intent.characterId);
+        if (!target) { setMode('select'); return; }
+        setActiveCharacterId(target.id);
+        setPreviousMode('select');
+        if (intent.entryId === 'history') {
+            setHistoryMessages([]); setMode('history');
+            setHistoryView('encounter'); setHistorySortOrder('newest'); setHistoryLoadLimit(DATE_HISTORY_MESSAGE_LIMIT);
+            void DB.getRecentMessagesByCharIdAndSource(target.id, 'date', DATE_HISTORY_MESSAGE_LIMIT).then(msgs => {
+                if (isCurrent()) { setHistoryMessages(msgs); setHistoryReachedEnd(msgs.length < DATE_HISTORY_MESSAGE_LIMIT); }
+            }).catch(() => { if (isCurrent()) addToast('见面记录读取失败，请重试', 'error'); });
+        } else if (intent.entryId === 'settings') setMode('settings');
+        // fork：进门（继续上次 / 新的见面 / 丢弃）走选角色后的流程，快捷入口只停在选人页，
+        // 不动已有见面存档、不生成开场。
+        else setMode('select');
+    });
 
     const handleLoadMoreHistory = async () => {
         if (!char || historyBusy || historyReachedEnd) return;
@@ -2795,3 +2813,5 @@ const DateApp: React.FC = () => {
 };
 
 export default DateApp;
+import { useAppShortcut } from '../utils/appShortcutLaunch';
+import { AppID as ShortcutAppID } from '../types';

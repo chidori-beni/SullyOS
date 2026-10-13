@@ -19,6 +19,7 @@ import {
     normalizeScheduleRequirement,
 } from './schedulePlanner';
 import { fillMissingScheduleEndTimes, validateGeneratedSchedule } from './scheduleValidation';
+import {buildHomeSchedulePrompt, hasHomeSchedulePositions, parseHomePosition} from './homeSchedule';
 
 export { getFlowNarrativeKey, isScheduleFeatureOn } from './scheduleFeature';
 
@@ -286,6 +287,7 @@ export async function generateDailyScheduleForChar(
         now?: Date;
     },
 ): Promise<DailySchedule | null> {
+
     // 总开关关闭时直接短路，避免副 API / 兜底调用
     if (!isScheduleFeatureOn(char)) return null;
 
@@ -413,9 +415,11 @@ export async function generateDailyScheduleForChar(
     const targetDayOfWeek = ['日', '一', '二', '三', '四', '五', '六'][targetWeekday];
 
     const style = char.scheduleStyle || 'lifestyle';
-    const prompt = style === 'mindful'
+    // 3D 家园：有房间的角色在日程里带上「在家哪个房间 / 外出」（上游 cb25226d）
+    const homePrompt = buildHomeSchedulePrompt(char);
+    const prompt = (style === 'mindful'
         ? buildMindfulPrompt(baseContext, char, userProfile, targetDate, targetDayOfWeek, chatHistoryBlock, schedulePlanBlock, { planningAhead })
-        : buildLifestylePrompt(baseContext, char, userProfile, targetDate, targetDayOfWeek, chatHistoryBlock, schedulePlanBlock, { planningAhead });
+        : buildLifestylePrompt(baseContext, char, userProfile, targetDate, targetDayOfWeek, chatHistoryBlock, schedulePlanBlock, { planningAhead })) + homePrompt;
 
     const requestSchedule = async (requestPrompt: string): Promise<{
         slots: ScheduleSlot[];
@@ -449,18 +453,21 @@ export async function generateDailyScheduleForChar(
             console.error('[Schedule] Generation failed: 无法从模型输出解析出JSON:', content.slice(0, 200));
             return null;
         }
-        const slots: ScheduleSlot[] = (Array.isArray(parsed.slots) ? parsed.slots : []).map((s: any) => ({
+        const slots: ScheduleSlot[] = (Array.isArray(parsed.slots) ? parsed.slots : []).map((s: any) => {
+            const homePosition = parseHomePosition(s.homePosition, char);
+            return {
             startTime: typeof s.startTime === 'string' ? s.startTime : '00:00',
             endTime: typeof s.endTime === 'string' ? s.endTime : undefined,
             activity: typeof s.activity === 'string' ? s.activity.trim() : '',
             description: s.description,
             emoji: s.emoji,
-            location: s.location,
+            location: homePosition?.kind === 'home' ? char.home3D?.rooms.find(room => room.id === homePosition.roomId)?.name : typeof s.location === 'string' ? s.location : homePosition?.kind === 'away' ? '外出' : undefined,
+            homePosition,
             busyLevel: ['free', 'light', 'busy', 'sleep'].includes(s.busyLevel) ? s.busyLevel : 'free',
             withUser: s.withUser === true,
             inviteKind: ['voice', 'video', 'watch', 'other'].includes(s.inviteKind) ? s.inviteKind : undefined,
             innerThought: s.innerThought,
-        })).filter((s: ScheduleSlot) => s.activity);
+        };}).filter((s: ScheduleSlot) => s.activity);
 
         if (slots.length === 0) return null;
         slots.sort((a, b) => a.startTime.localeCompare(b.startTime));
@@ -535,6 +542,8 @@ ${validation.errors.join('；')}
         // 真实业务请求如果在网络等待期间跨过角色午夜，目标“明天”可能已经变成昨天；
         // 这种陈旧结果宁可不落库，也不覆盖新的一天。测试注入 now 时跳过这条实时竞态检查。
         if (!options?.now && targetDate < getScheduleDateKey(char)) return null;
+        // Missing or stale room IDs must not overwrite a usable old schedule.
+        if (homePrompt && !hasHomeSchedulePositions(schedule, char)) return null;
         await DB.saveDailySchedule(schedule);
         return schedule;
     } catch (e) {

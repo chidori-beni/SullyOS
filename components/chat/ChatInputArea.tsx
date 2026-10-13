@@ -20,6 +20,10 @@ const ACTION_PAGE_SIZE = 8;
 const MAX_INPUT_HEIGHT = 144;
 
 interface ChatInputAreaProps {
+    compactHome?: boolean;
+
+    /** Initial page for static decoration previews; does not run menu actions. */
+    previewActionsPage?: number;
     input: string;
     setInput: (v: string) => void;
     isTyping: boolean;
@@ -105,7 +109,7 @@ interface ChatInputAreaProps {
 }
 
 const ChatInputArea: React.FC<ChatInputAreaProps> = ({
-    input, setInput, isTyping, selectionMode,
+    input, setInput, isTyping, selectionMode, compactHome = false,
     showPanel, setShowPanel, onSend, onTriggerAI, onOpenVoiceInput, onDeleteSelected, onForwardSelected, onFavoriteSelected, selectedCount,
     favoriteEligibleCount = 0, favoriteSkippedCount = 0, favoriteSaving = false,
     sendButtonGenerates = false, enterToSend = true, onGenerate,

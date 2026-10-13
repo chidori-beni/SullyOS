@@ -468,6 +468,7 @@ export const requestCompanionStartupDraft = async (options: {
   timePeriod?: CompanionStartupPeriod;
   recentMessageLimit?: number;
 }): Promise<CompanionStartupDraft> => {
+
   const {
     character,
     user,

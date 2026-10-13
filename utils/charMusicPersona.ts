@@ -230,7 +230,7 @@ export const CharMusicPersona = {
             throw new Error('未配置 API（baseUrl 或 model 为空）');
         }
 
-        const { sys, usr } = buildPersonaPrompt(char, userProfile);
+        const { sys, usr } = (await buildPersonaPrompt(char, userProfile));
         const rawText = await callLlm(apiConfig, sys, usr);
         if (!rawText || !rawText.trim()) {
             throw new Error('LLM 返回为空');
