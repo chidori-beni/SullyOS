@@ -4546,53 +4546,53 @@ export const DB = {
       await runSection('群聊资料', data.groups !== undefined, async () => {
           await clearAndAdd(STORE_GROUPS, data.groups, '群聊资料', true);
           data.groups = undefined as any;
-      }, data.groups?.length || 0);
+      }, data.groups?.length || 0, { key: 'settings.importDb.groupChats' });
       await runSection('动态帖子', data.socialPosts !== undefined, async () => {
           await clearAndAdd(STORE_SOCIAL_POSTS, data.socialPosts, '动态帖子', true);
           data.socialPosts = undefined as any;
-      }, data.socialPosts?.length || 0);
+      }, data.socialPosts?.length || 0, { key: 'settings.importDb.posts' });
       await runSection('学习课程', data.courses !== undefined, async () => {
           await clearAndAdd(STORE_COURSES, data.courses, '学习课程', false);
           data.courses = undefined as any;
-      }, data.courses?.length || 0);
+      }, data.courses?.length || 0, { key: 'settings.importDb.courses' });
       await runSection('游戏记录', data.games !== undefined, async () => {
           await clearAndAdd(STORE_GAMES, data.games, '游戏记录', false);
           data.games = undefined as any;
-      }, data.games?.length || 0);
+      }, data.games?.length || 0, { key: 'settings.importDb.games' });
       await runSection('世界书', data.worldbooks !== undefined, async () => {
           await clearAndAdd(STORE_WORLDBOOKS, data.worldbooks, '世界书', false);
           data.worldbooks = undefined as any;
-      }, data.worldbooks?.length || 0);
+      }, data.worldbooks?.length || 0, { key: 'settings.importDb.worldbooks' });
       await runSection('剧情剧场', data.storyTheaters !== undefined, async () => {
           await clearAndAdd(STORE_STORY_THEATERS, data.storyTheaters, '剧情剧场', false);
           data.storyTheaters = undefined as any;
-      }, data.storyTheaters?.length || 0);
+      }, data.storyTheaters?.length || 0, { key: 'settings.importDb.theaters' });
       await runSection('剧情预设', data.storyTheaterPresets !== undefined, async () => {
           await clearAndAdd(STORE_STORY_THEATER_PRESETS, data.storyTheaterPresets, '剧情预设', false);
           data.storyTheaterPresets = undefined as any;
-      }, data.storyTheaterPresets?.length || 0);
+      }, data.storyTheaterPresets?.length || 0, { key: 'settings.importDb.theaterPresets' });
       await runSection('剧场面具箱', data.storyTheaterMasks !== undefined, async () => {
           await clearAndAdd(STORE_STORY_THEATER_MASKS, data.storyTheaterMasks, '剧场面具箱', true);
           data.storyTheaterMasks = undefined as any;
-      }, data.storyTheaterMasks?.length || 0);
+      }, data.storyTheaterMasks?.length || 0, { key: 'settings.importDb.masks' });
       await runSection('小说', data.novels !== undefined, async () => {
           await clearAndAdd(STORE_NOVELS, data.novels, '小说', false);
           data.novels = undefined as any;
-      }, data.novels?.length || 0);
+      }, data.novels?.length || 0, { key: 'settings.importDb.novels' });
       await runSection('彼方小说库', data.vrNovels !== undefined, async () => {
           await clearAndAdd(STORE_VR_NOVELS, data.vrNovels, '彼方小说库', false);
           data.vrNovels = undefined as any;
-      }, data.vrNovels?.length || 0);
+      }, data.vrNovels?.length || 0, { key: 'settings.importDb.vrNovels' });
       await runSection('彼方批注', data.vrAnnotations !== undefined, async () => {
           await clearAndAdd(STORE_VR_ANNOTATIONS, data.vrAnnotations, '彼方批注', false);
           data.vrAnnotations = undefined as any;
-      }, data.vrAnnotations?.length || 0);
+      }, data.vrAnnotations?.length || 0, { key: 'settings.importDb.annotations' });
       await runSection('捏脸自定义部件', data.customCreatorParts !== undefined, async () => {
           // restoreAssets=true：部件 src/shadowSrc 是 data:image，media/full 导出时被抽进 zip，
           // 导入必须经 beforeWrite 把 assets/*.png 路径还原回 base64，否则部件图裂成死链。
           await clearAndAdd(STORE_CC_PARTS, data.customCreatorParts, '捏脸自定义部件', true);
           data.customCreatorParts = undefined as any;
-      }, data.customCreatorParts?.length || 0);
+      }, data.customCreatorParts?.length || 0, { key: 'settings.importDb.creatorParts' });
       await runSection('听歌房', data.vrMusicRoom !== undefined, async () => {
           if (hasStore(STORE_VR_MUSIC) && data.vrMusicRoom) await DB.saveVRMusicRoom(data.vrMusicRoom);
           data.vrMusicRoom = undefined as any;
