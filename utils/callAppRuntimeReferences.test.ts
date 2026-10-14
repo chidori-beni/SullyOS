@@ -50,7 +50,7 @@ describe('CallApp runtime references', () => {
 
     expect(source).toContain("onFinal: (t) => { if (sttStartTokenRef.current === startToken) setDraftInput(t); }");
     expect(source).toMatch(/await requestAssistantReply\(\s*input,\s*userDbId,\s*pendingTouchesForTurn,\s*true,\s*userCameraSnapshotForTurn/);
-    expect(source).toContain("{sendingBusy ? '…' : '发送'}");
+    expect(source).toContain("{sendingBusy ? '…' : uiT('call.main.send')}");
     expect(source).toMatch(/const beginSelectedCall[\s\S]*?setViewMode\('in-call'\);\s+setCallStartedAt\(Date\.now\(\)\);\s+setCallState\('listening'\);/);
     expect(source).toContain('fireIdleNudge');
     expect(source).toContain('idleNudgeCountRef');
@@ -59,9 +59,9 @@ describe('CallApp runtime references', () => {
     expect(source).toContain('callPreferences.idleNudgeEnabled');
     expect(preferenceSource).toContain('characterInitiative: true');
     expect(preferenceSource).toContain('idleNudgeEnabled: false');
-    expect(preferenceSheetSource).toContain('谁先开口');
-    expect(preferenceSheetSource).toContain('对方先说');
-    expect(preferenceSheetSource).toContain('我先说');
+    expect(preferenceSheetSource).toContain("uiT('call.main.first')");
+    expect(preferenceSheetSource).toContain("uiT('call.main.characterFirst')");
+    expect(preferenceSheetSource).toContain("uiT('call.main.userFirst')");
   });
 
   it('does not invalidate the active STT token before MediaRecorder transcribes the second tap', () => {
@@ -86,8 +86,8 @@ describe('CallApp runtime references', () => {
     expect(source).toContain('按需生成并播放通话语音');
     expect(source).toContain('shouldKeepNativeCallAudio');
     expect(source).not.toContain('<audio');
-    expect(preferenceSheetSource).toContain('不改变聊天页的语音设置');
-    expect(preferenceSheetSource).toContain('语音和视频通话都只在你点“播放语音”时才生成');
+    expect(preferenceSheetSource).toContain("uiT('call.main.preferencesHelp')");
+    expect(preferenceSheetSource).toContain("uiT('call.main.autoplayHelp')");
   });
 
   it('announces the call update once and spotlights the lower-left preferences entry', () => {
@@ -299,7 +299,7 @@ describe('CallApp runtime references', () => {
     expect(source).toContain('audio.muted = false;');
     expect(source).toContain('const nextRoute: SiliconFlowAudioRoute = nextCallAudioRoute(audioOutputRoute)');
     expect(source).toContain("const CALL_AUDIO_ROUTE_ORDER: SiliconFlowAudioRoute[] = ['speaker', 'receiver', 'headphones']");
-    expect(source).toContain('当前为${audioRouteLabel.zh}，点击切换到${nextAudioRouteLabel.zh}');
+    expect(source).toContain("uiT('call.main.switchRoute'");
     // 检测到耳机自动切到耳机路线；用户手动改过就别再抢。
     expect(source).toContain("mediaDevices?.addEventListener?.('devicechange', onDeviceChange)");
     expect(source).toContain('manualRouteSinceDeviceChangeRef.current = true;');

@@ -1,3 +1,4 @@
+import { useUiLocale } from '../../context/UiLocaleContext';
 import React, { useEffect, useRef, useState } from 'react';
 import { Phone, PhoneDisconnect, VideoCamera } from '@phosphor-icons/react';
 import { useOS } from '../../context/OSContext';
@@ -38,6 +39,7 @@ import {
 const BACKGROUND_HOLD_MS = 5 * 60_000;
 
 const IncomingCallOverlay: React.FC = () => {
+  const { t: uiT } = useUiLocale();
   const { openApp, characters } = useOS();
   const [call, setCall] = useState<PendingIncomingCall | null>(() => getPendingIncomingCall());
   // 接听/拒接/超时会在同一帧里被触发两次（点按 + 看门狗同时到），落两条未接记录。
@@ -189,14 +191,14 @@ const IncomingCallOverlay: React.FC = () => {
         <h1 className="text-[26px] font-semibold tracking-wide">{name}</h1>
         <p className="mt-2 flex items-center gap-1.5 text-[13px] tracking-[0.18em] text-white/55">
           {isVideo ? <VideoCamera size={15} weight="fill" /> : <Phone size={15} weight="fill" />}
-          {isVideo ? '邀请你视频通话…' : '来电…'}
+          {isVideo ? uiT('call.main.incomingVideo') : uiT('call.main.incomingVoice')}
         </p>
       </div>
 
       <div className="relative flex w-full max-w-xs shrink-0 items-center justify-between px-6">
         <button
           type="button"
-          aria-label="拒接"
+          aria-label={uiT('call.main.decline')}
           onClick={() => { void settle('declined'); }}
           className="flex h-[68px] w-[68px] items-center justify-center rounded-full bg-[#ff3b30] shadow-lg shadow-[#ff3b30]/25 active:scale-95 transition-transform"
         >
@@ -204,7 +206,7 @@ const IncomingCallOverlay: React.FC = () => {
         </button>
         <button
           type="button"
-          aria-label="接听"
+          aria-label={uiT('call.main.accept')}
           onClick={() => { void settle('accept'); }}
           className="flex h-[68px] w-[68px] animate-bounce-slow items-center justify-center rounded-full bg-[#34c759] shadow-lg shadow-[#34c759]/25 active:scale-95 transition-transform"
         >

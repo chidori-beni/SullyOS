@@ -3,6 +3,7 @@ import { loadCharacterContextMessages } from '../utils/chatContextRange';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Microphone, SpeakerHigh, Headphones, PhoneDisconnect, Translate, Gear, Clock, CaretLeft, CaretRight, Phone, VideoCamera, VideoCameraSlash, Cube, FolderOpen, FileZip, Moon, Sun, Check, Plugs, ArrowsClockwise } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
+import { useUiLocale } from '../context/UiLocaleContext';
 import { extractContent, safeFetchJson } from '../utils/safeApi';
 import { minimaxFetch } from '../utils/minimaxEndpoint';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
@@ -635,6 +636,7 @@ ${charVoicePromptBlock ? `\n${charVoicePromptBlock}\n` : ''}
   return [coreContext, timeContext, callPrompt, voiceLangPrompt].filter(Boolean).join('\n\n');
 };
 const CallApp: React.FC = () => {
+  const { t: uiT } = useUiLocale();
   const { closeApp, openApp, characters, activeCharacterId, addToast, apiConfig, apiPresets, commitApiConfig, userProfile, customThemes, suspendCall, suspendedCall, clearSuspendedCall, updateCharacter, characterGroups, groups, realtimeConfig, memoryPalaceConfig, registerBackHandler } = useOS();
 
   const initialCallLaunchIntentRef = useRef(callLaunch.peek());
@@ -730,6 +732,7 @@ const CallApp: React.FC = () => {
   const [audioOutputRoute, setAudioOutputRoute] = useState<SiliconFlowAudioRoute>(loadCallAudioRoute);
   const audioOutputRouteRef = useRef<SiliconFlowAudioRoute>(audioOutputRoute);
   const audioRouteLabel = CALL_AUDIO_ROUTE_LABELS[audioOutputRoute];
+  const audioRouteUiLabel = uiT(audioOutputRoute === 'headphones' ? 'call.main.headphones' : audioOutputRoute === 'speaker' ? 'call.main.speaker' : 'call.main.receiver');
   const nextAudioRouteLabel = CALL_AUDIO_ROUTE_LABELS[nextCallAudioRoute(audioOutputRoute)];
   // 用户连着耳机时手动选了别的路线，就别再自动切回耳机，直到下一次插拔耳机。
   const manualRouteSinceDeviceChangeRef = useRef(false);
@@ -4279,7 +4282,7 @@ ${sentencePlan}`;
               想找谁聊聊？
               <span className="text-sm mt-1" style={{ color: accentColor, textShadow: `0 0 10px ${accentColor}` }}>✦</span>
             </h1>
-            <p className="text-sm text-white/45 mt-1">选一个人，拨过去吧。</p>
+            <p className="text-sm text-white/45 mt-1">{uiT('call.main.choosePerson')}</p>
           </div>
 
           {/* 分组筛选（没建分组时不渲染） */}
@@ -4342,14 +4345,14 @@ ${sentencePlan}`;
                 onClick={() => setCallMode('voice')}
                 className={`flex-1 flex items-center justify-center gap-2 rounded-xl py-2 text-xs font-medium transition ${callMode === 'voice' ? 'bg-white/12 text-white' : 'text-white/40'}`}
               >
-                <Phone size={15} weight={callMode === 'voice' ? 'fill' : 'regular'} /> 语音
+                <Phone size={15} weight={callMode === 'voice' ? 'fill' : 'regular'} /> {uiT('call.main.voice')}
               </button>
               <button
                 onClick={() => setCallMode('video')}
                 className={`flex-1 flex items-center justify-center gap-2 rounded-xl py-2 text-xs font-medium transition ${callMode === 'video' ? 'bg-white/12 text-white' : 'text-white/40'}`}
                 style={callMode === 'video' ? { boxShadow: `inset 0 0 0 1px ${accentColor}55` } : undefined}
               >
-                <VideoCamera size={15} weight={callMode === 'video' ? 'fill' : 'regular'} /> 视频
+                <VideoCamera size={15} weight={callMode === 'video' ? 'fill' : 'regular'} /> {uiT('call.main.video')}
               </button>
             </div>
             {callMode === 'video' && (
@@ -4362,7 +4365,7 @@ ${sentencePlan}`;
                     <Cube size={15} weight="fill" />
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block text-[10px] tracking-[0.16em] text-white/35">角色形象 · {selectedVisualSource === 'upload' ? '静态图片' : selectedVisualSource === 'date' ? '见面立绘' : selectedChar?.videoAvatar?.format === 'live2d' ? 'LIVE2D' : selectedChar?.videoAvatar?.format === 'vrm' ? 'VRM' : '未选择'}</span>
+                    <span className="block text-[10px] tracking-[0.16em] text-white/35">角色形象 · {selectedVisualSource === 'upload' ? uiT('call.main.staticImage') : selectedVisualSource === 'date' ? uiT('call.main.datePortrait') : selectedChar?.videoAvatar?.format === 'live2d' ? 'LIVE2D' : selectedChar?.videoAvatar?.format === 'vrm' ? 'VRM' : uiT('call.main.notSelected')}</span>
                     <span className="mt-0.5 block truncate text-xs text-white/70">{selectedVisualSource === 'upload' ? selectedChar?.companionAvatar?.fileName || 'PNG / GIF' : selectedVisualSource === 'date' ? selectedDateOutfit?.name || '按通话情绪切换表情' : selectedChar?.videoAvatar?.fileName || '动态模型、静态图片或见面立绘'}</span>
                   </span>
                   <span className="text-xs text-white/30">{hasSelectedVideoVisual ? '设置' : '引导'}</span>
@@ -4482,20 +4485,20 @@ ${sentencePlan}`;
               <span className="absolute left-5 top-1/2 -translate-y-1/2 text-xs" style={{ color: accentColor }}>✦</span>
               <span className="absolute right-5 top-1/2 -translate-y-1/2 text-xs text-white/60">✦</span>
               <span className="relative text-white/90 text-[15px]">
-                {selectedChar ? <>{callMode === 'video' ? '视频接通 ' : '拨给 '}<span className="font-serif italic text-xl align-baseline" style={{ textShadow: `0 0 12px ${accentColor}` }}>{selectedChar.name}</span></> : '开始通话'}
+                {selectedChar ? <>{callMode === 'video' ? uiT('call.main.videoConnect') : uiT('call.main.callTo')}<span className="font-serif italic text-xl align-baseline" style={{ textShadow: `0 0 12px ${accentColor}` }}>{selectedChar.name}</span></> : uiT('call.main.startCall')}
               </span>
             </button>
             <button onClick={() => { setViewMode('history'); trackEvent('打开通话记录'); }}
               className="relative w-full py-3 rounded-2xl border border-white/15 bg-white/[0.04] backdrop-blur-md text-white/80 flex items-center justify-center gap-2 transition active:scale-[0.98] hover:bg-white/[0.08]">
-              <Clock size={16} weight="bold" style={{ color: accentColor }} /> 通话记录
+              <Clock size={16} weight="bold" style={{ color: accentColor }} /> {uiT('call.main.history')}
             </button>
             <div className="flex items-center justify-between pt-1">
-              <button onClick={openCallPreferencesPanel} title="通话偏好" data-testid="call-preferences-entry"
+              <button onClick={openCallPreferencesPanel} title={uiT('call.main.preferences')} data-testid="call-preferences-entry"
                 className="w-9 h-9 rounded-full border border-white/15 bg-white/[0.04] flex items-center justify-center text-white/60 active:scale-90 transition">
                 <Gear size={16} weight="fill" />
               </button>
               <button onClick={closeApp} className="flex items-center gap-2 text-sm text-white/45 active:scale-95 transition">
-                <span style={{ color: accentColor }}>✦</span> 关闭 <span style={{ color: accentColor }}>✦</span>
+                <span style={{ color: accentColor }}>✦</span> {uiT('call.main.close')} <span style={{ color: accentColor }}>✦</span>
               </button>
               <button onClick={() => setCallTheme(lightTheme ? 'dark' : 'light')} title={lightTheme ? '切换到深色主题' : '切换到浅色主题'}
                 className="w-9 h-9 rounded-full border border-white/15 bg-white/[0.04] flex items-center justify-center text-white/60 active:scale-90 transition">
@@ -4530,7 +4533,7 @@ ${sentencePlan}`;
         {lightTheme && <style>{CALL_LIGHT_THEME_CSS}</style>}
         <div className="flex items-center justify-between">
           <button onClick={() => { returnToChatRef.current = false; setViewMode('role-select'); }} className="text-sm text-white/45">← 返回</button>
-          <h1 className="text-lg font-medium">通话记录</h1>
+          <h1 className="text-lg font-medium">{uiT('call.main.history')}</h1>
           <button onClick={() => { returnToChatRef.current = false; setViewMode('role-select'); }} className="text-sm font-medium" style={{ color: accentColor }}>新通话</button>
         </div>
         <div className="mt-4 flex-1 overflow-y-auto space-y-3">
@@ -4549,7 +4552,7 @@ ${sentencePlan}`;
                 <div className="w-10 h-10 rounded-full border border-white/20 flex items-center justify-center text-sm" style={{ backgroundColor: `${accentColor}35` }}>{record.characterName[0] || '角'}</div>
                 <div className="min-w-0 flex-1">
                   <div className="font-medium text-sm">{record.characterName}</div>
-                  <div className="text-xs text-white/45 mt-0.5">{record.sleepCompanion ? '陪睡' : record.mode === 'video' ? '视频' : record.mode === 'voice' ? '语音' : '通话'} · {formatDuration(record.durationSec)} · {turnCount}轮对话</div>
+                  <div className="text-xs text-white/45 mt-0.5">{record.sleepCompanion ? uiT('call.main.sleep') : record.mode === 'video' ? uiT('call.main.video') : record.mode === 'voice' ? uiT('call.main.voice') : uiT('call.main.call')} · {formatDuration(record.durationSec)} · {turnCount}轮对话</div>
                 </div>
                 <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(record); }} className="text-xs px-2 py-1 rounded-lg text-white/35 transition hover:text-rose-300">删除</button>
               </div>
@@ -4571,7 +4574,7 @@ ${sentencePlan}`;
               <div className="text-base font-semibold text-white">删除通话记录？</div>
               <p className="mt-2 text-sm text-white/55 leading-relaxed">和 {deleteConfirmRecord.characterName} 的这通通话将被永久删除。</p>
               <div className="mt-5 grid grid-cols-2 gap-2">
-                <button onClick={() => setDeleteConfirmRecord(null)} className="py-2.5 rounded-2xl border border-white/20 text-white/80 transition active:scale-[0.97]">取消</button>
+                <button onClick={() => setDeleteConfirmRecord(null)} className="py-2.5 rounded-2xl border border-white/20 text-white/80 transition active:scale-[0.97]">{uiT('call.main.cancel')}</button>
                 <button onClick={confirmDeleteRecord} className="keep-white py-2.5 rounded-2xl bg-rose-500/80 text-white font-semibold transition active:scale-[0.97]">删除</button>
               </div>
             </div>
@@ -4670,12 +4673,12 @@ ${sentencePlan}`;
           }}
           className="keep-white w-full py-3 rounded-2xl mt-4 font-medium text-white transition active:scale-[0.98]"
           style={{ backgroundColor: accentColor }}
-        >再打一通</button>
+        >{uiT('call.main.again')}</button>
         <VoiceFavoriteActionSheet
           open={!!voiceFavoriteTarget}
           favorited={voiceFavoriteSaved}
           busy={voiceFavoriteBusy}
-          title="通话语音"
+          title={uiT('call.main.callVoice')}
           preview={voiceFavoriteTarget ? (stripCallTextFormatting(extractVoiceTag(voiceFavoriteTarget.bubble.text).display) || cleanVoiceMarkupForDisplay(extractVoiceTag(voiceFavoriteTarget.bubble.text).voiceText)) : ''}
           onToggle={() => void toggleCallVoiceFavorite()}
           onClose={() => { if (!voiceFavoriteBusy) setVoiceFavoriteTarget(null); }}
@@ -4684,14 +4687,14 @@ ${sentencePlan}`;
     );
   }
   const waveActive = displayCallState === 'speaking' || displayCallState === 'thinking';
-  const connSub = callState === 'connecting' ? '正在建立加密通讯…'
-    : callState === 'error' ? '通讯出现波动'
-    : '通讯连接稳定';
-  const analyzeLabel = displayCallState === 'speaking' ? { cn: '说话中', en: 'SPEAKING' }
-    : displayCallState === 'thinking' ? { cn: '思考中', en: 'VOICE ANALYZING' }
-    : displayCallState === 'connecting' ? { cn: '接通中', en: 'CONNECTING' }
-    : displayCallState === 'error' ? { cn: '连接异常', en: 'SIGNAL ERROR' }
-    : { cn: '聆听中', en: 'LISTENING' };
+  const connSub = callState === 'connecting' ? uiT('call.main.connecting')
+    : callState === 'error' ? uiT('call.main.unstable')
+    : uiT('call.main.stable');
+  const analyzeLabel = displayCallState === 'speaking' ? { cn: uiT('call.main.speaking'), en: 'SPEAKING' }
+    : displayCallState === 'thinking' ? { cn: uiT('call.main.thinking'), en: 'VOICE ANALYZING' }
+    : displayCallState === 'connecting' ? { cn: uiT('call.main.connectingState'), en: 'CONNECTING' }
+    : displayCallState === 'error' ? { cn: uiT('call.main.signalError'), en: 'SIGNAL ERROR' }
+    : { cn: uiT('call.main.listening'), en: 'LISTENING' };
   const latestCallBubble = bubbles[bubbles.length - 1];
   const compactVideoTranscript = callMode === 'video' && videoCallLayout === 'stage' && !videoTranscriptExpanded;
   const videoStageSize = videoCallLayout === 'stage'
@@ -4766,8 +4769,8 @@ ${sentencePlan}`;
         <button
           type="button"
           onClick={() => setShowSleepPanel(true)}
-          title="陪睡 · 哄睡"
-          aria-label="陪睡 · 哄睡"
+          title={uiT('call.main.sleepTitle')}
+          aria-label={uiT('call.main.sleepTitle')}
           className="absolute right-5 flex h-7 w-7 items-center justify-center rounded-full border backdrop-blur-md transition active:scale-90"
           style={{
             top: 'calc(max(2.25rem, var(--safe-top)) + 22px)',
@@ -4782,8 +4785,8 @@ ${sentencePlan}`;
         <button
           type="button"
           onClick={() => setShowApiPresetPicker(true)}
-          title="切换 API"
-          aria-label="切换 API"
+          title={uiT('call.main.switchApi')}
+          aria-label={uiT('call.main.switchApi')}
           data-testid="call-api-preset-entry"
           className="absolute flex h-7 w-7 items-center justify-center rounded-full border backdrop-blur-md transition active:scale-90"
           style={{
@@ -4798,7 +4801,7 @@ ${sentencePlan}`;
         {/* name block */}
         <div className={`${callMode === 'video' ? 'pt-3' : 'pt-7'} text-center`}>
           {callMode !== 'video' && <div className="text-sm" style={{ color: `${accentColor}cc`, textShadow: `0 0 12px ${accentColor}` }}>❀</div>}
-          <h1 className={`font-serif leading-none tracking-wide text-white ${callMode === 'video' ? 'text-[1.55rem]' : 'mt-0.5 text-[2.6rem]'}`} style={{ textShadow: `0 0 26px ${accentColor}aa, 0 0 6px ${accentColor}66` }}>{selectedChar?.name || '未选择'}</h1>
+          <h1 className={`font-serif leading-none tracking-wide text-white ${callMode === 'video' ? 'text-[1.55rem]' : 'mt-0.5 text-[2.6rem]'}`} style={{ textShadow: `0 0 26px ${accentColor}aa, 0 0 6px ${accentColor}66` }}>{selectedChar?.name || uiT('call.main.notSelected')}</h1>
           {callMode === 'video' ? (
             <div className="mt-1 flex items-center justify-center gap-2 text-[8px] tracking-[0.18em] text-white/48">
               <span>{connSub}</span><span style={{ color: accentColor }}>◆</span><span className="tabular-nums text-[13px] font-light" style={{ color: accentColor }}>{formatDuration(elapsedSeconds)}</span>
@@ -4830,7 +4833,7 @@ ${sentencePlan}`;
           )}
           {sleepMode && (
             <div className="mt-1.5 inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[10px]" style={{ borderColor: `${accentColor}55`, background: `${accentColor}14`, color: accentColor }}>
-              🌙 陪睡中 · 你可以安心睡了
+              {uiT('call.main.sleepBanner')}
             </div>
           )}
         </div>
@@ -4845,7 +4848,7 @@ ${sentencePlan}`;
           <span className="pointer-events-none absolute bottom-3 right-3 z-20 text-[7px] text-white/55" aria-hidden>✦</span>
           {/* The action editor owns its own WebGL preview; suspend this one. */}
           <VRMVideoCallStage
-            characterName={selectedChar?.name || '未选择'}
+            characterName={selectedChar?.name || uiT('call.main.notSelected')}
             fallbackAvatar={selectedChar?.avatar}
             model={!showLive2DSettings && selectedVisualSource === 'model' ? selectedChar?.videoAvatar : undefined}
             staticAvatarSource={staticVideoAvatarActive ? selectedVisualSource : undefined}
@@ -4887,7 +4890,7 @@ ${sentencePlan}`;
                     : <div className="flex h-full w-full items-center justify-center text-[8px] text-white/35">NO IMAGE</div>
                   : <video ref={userCameraVideoRef} muted playsInline autoPlay className="h-full w-full object-cover" style={{ transform: userCameraFacing === 'user' ? 'scaleX(-1)' : undefined }} />}
                 {(userCameraMode === 'emotion' || userCameraMode === 'snapshot') && <button
-                  type="button" aria-label="切换前后摄像头" title="切换前后摄像头"
+                  type="button" aria-label={uiT('call.main.switchCamera')} title={uiT('call.main.switchCamera')}
                   disabled={userCameraLoading}
                   onClick={() => void startUserCamera(userCameraMode, userCameraFacing === 'user' ? 'environment' : 'user')}
                   className="absolute right-1 top-1 z-20 flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white disabled:opacity-40"
@@ -4901,7 +4904,7 @@ ${sentencePlan}`;
                 <div
                   className="absolute bottom-1.5 left-1/2 flex -translate-x-1/2 items-center rounded-full border border-white/15 bg-black/55 p-0.5 backdrop-blur-md"
                   data-testid="user-camera-preview-size-picker"
-                  aria-label="用户镜头大小"
+                  aria-label={uiT('call.main.cameraSize')}
                 >
                   {USER_CAMERA_PREVIEW_SIZES.map(option => (
                     <button
@@ -5004,26 +5007,26 @@ ${sentencePlan}`;
                   : `${selectedChar?.name || '对方'}在等你开口。`}
             </div>
           </div>
-          <button onClick={() => setVideoTranscriptExpanded(true)} className="shrink-0 rounded-full border border-white/12 px-2.5 py-1.5 text-[9px] text-white/52 active:scale-95">记录</button>
+          <button onClick={() => setVideoTranscriptExpanded(true)} className="shrink-0 rounded-full border border-white/12 px-2.5 py-1.5 text-[9px] text-white/52 active:scale-95">{uiT('call.main.record')}</button>
         </div>
       ) : (
       <div ref={callScrollableRef} className="flex-1 min-h-0 overflow-y-auto no-scrollbar mx-4 mb-2 px-4 py-3 space-y-3 rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-md" style={{ boxShadow: `inset 0 1px 0 ${accentColor}33` }}>
         {callMode === 'video' && videoCallLayout === 'stage' && videoTranscriptExpanded && (
           <div className="sticky top-0 z-10 -mx-1 flex justify-end pb-1">
-            <button onClick={() => setVideoTranscriptExpanded(false)} className="rounded-full border border-white/10 bg-black/35 px-2.5 py-1 text-[9px] text-white/48 backdrop-blur">收成字幕</button>
+            <button onClick={() => setVideoTranscriptExpanded(false)} className="rounded-full border border-white/10 bg-black/35 px-2.5 py-1 text-[9px] text-white/48 backdrop-blur">{uiT('call.main.subtitle')}</button>
           </div>
         )}
         {!bubbles.length && (
           <div className="flex flex-col items-center justify-center py-6 text-center">
-            <p className="text-base text-white/85">电话已接通</p>
+            <p className="text-base text-white/85">{uiT('call.main.connected')}</p>
             <p className="text-sm text-white/55 mt-2">
               {callState === 'connecting'
-                ? `${selectedChar?.name || '对方'}正在接听……`
-                : selectedChar?.name ? `${selectedChar.name}在等你开口……` : '对方在等你开口……'}
+                ? uiT('call.main.personAnswering', { name: selectedChar?.name || uiT('call.main.other') })
+                : uiT('call.main.personWaiting', { name: selectedChar?.name || uiT('call.main.other') })}
             </p>
             {callState === 'connecting'
-              ? <p className="text-xs text-white/35 mt-4 animate-pulse">请稍等</p>
-              : <p className="text-xs text-white/35 mt-4">在下方输入你想说的话</p>}
+              ? <p className="text-xs text-white/35 mt-4 animate-pulse">{uiT('call.main.wait')}</p>
+              : <p className="text-xs text-white/35 mt-4">{uiT('call.main.inputHint')}</p>}
           </div>
         )}
         {bubbles.map((bubble, index) => {
@@ -5077,7 +5080,7 @@ ${sentencePlan}`;
                 return <>
                   {bubble.thinkingChain && (
                     <details className="group mb-2 rounded-xl border border-white/10 bg-white/[0.035] px-2.5 py-2 text-[11px] text-white/55">
-                      <summary className="cursor-pointer list-none select-none text-[10px] tracking-[0.16em] text-white/45 before:mr-1 before:content-['＋'] group-open:before:content-['－']">心象</summary>
+                      <summary className="cursor-pointer list-none select-none text-[10px] tracking-[0.16em] text-white/45 before:mr-1 before:content-['＋'] group-open:before:content-['－']">{uiT('call.main.innerImage')}</summary>
                       <div className="mt-2 whitespace-pre-wrap border-t border-white/8 pt-2 leading-relaxed text-white/60">{bubble.thinkingChain}</div>
                     </details>
                   )}
@@ -5102,10 +5105,10 @@ ${sentencePlan}`;
                       ? '重播语音'
                       : '播放语音'}
                 </button>
-                {bubble.audioUrl && <button onClick={() => handleDownloadCallAudio(bubble.audioUrl, bubble.timestamp)} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15">下载</button>}
+                {bubble.audioUrl && <button onClick={() => handleDownloadCallAudio(bubble.audioUrl, bubble.timestamp)} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15">{uiT('call.main.download')}</button>}
                 {/* 改词：长按角色气泡是「收藏语音」，所以编辑得单独给个入口。
                     改完会丢掉已合成的音频，点「播放语音」按新文本重新合成。 */}
-                <button onClick={() => startEditBubble(bubble)} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15">改词</button>
+                <button onClick={() => startEditBubble(bubble)} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15">{uiT('call.main.editWords')}</button>
                 {isLatest && <button onClick={() => handleRerollAssistant(bubble)} disabled={!!rerollingBubbleId} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15 disabled:opacity-40">{rerollingBubbleId === bubble.id ? '换一种说法…' : '换个说法'}</button>}
               </div>
             )}
@@ -5121,7 +5124,7 @@ ${sentencePlan}`;
               <button
                 onClick={toggleStt}
                 disabled={sendingBusy || isSttProcessing}
-                title={isListening ? '结束语音输入' : '按一下开始说话'}
+                title={isListening ? uiT('call.main.stopVoice') : uiT('call.main.startVoice')}
                 className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition active:scale-90 disabled:opacity-40"
                 style={isListening ? { background: '#f0569f', boxShadow: '0 0 14px #f0569f99' } : { background: 'rgba(255,255,255,0.08)' }}
               >
@@ -5134,13 +5137,13 @@ ${sentencePlan}`;
               value={draftInput}
               onChange={(e) => setDraftInput(e.target.value)}
               className="flex-1 min-w-0 min-h-9 max-h-36 resize-none bg-transparent px-2 py-2 text-sm leading-5 outline-none placeholder:text-white/35"
-              placeholder={isListening ? '在听你说……' : isSttProcessing ? '正在转录……' : sendingBusy ? `${selectedChar?.name || '对方'}正在想……` : pendingCallRetryText ? '上次回复中断，可直接重试' : `想对${selectedChar?.name || '对方'}说什么？`}
+              placeholder={isListening ? uiT('call.main.hearing') : isSttProcessing ? uiT('call.main.transcribing') : sendingBusy ? uiT('call.main.personThinking', { name: selectedChar?.name || uiT('call.main.other') }) : pendingCallRetryText ? uiT('call.main.retryHint') : uiT('call.main.sayTo', { name: selectedChar?.name || uiT('call.main.other') })}
             />
-            <button onClick={handleTurn} disabled={sendingBusy || isListening || isSttProcessing} className="keep-white shrink-0 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-40 transition active:scale-95" style={{ backgroundColor: accentColor, boxShadow: `0 0 16px ${accentColor}66` }}>{sendingBusy ? '…' : '发送'}</button>
+            <button onClick={handleTurn} disabled={sendingBusy || isListening || isSttProcessing} className="keep-white shrink-0 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-40 transition active:scale-95" style={{ backgroundColor: accentColor, boxShadow: `0 0 16px ${accentColor}66` }}>{sendingBusy ? '…' : uiT('call.main.send')}</button>
           </div>
-          {!sendingBusy && pendingCallRetryText && !draftInput.trim() && <div className="text-[10px] text-amber-200/70 mt-1 px-1">上一句话还没得到回复，点击重试即可继续</div>}
-          {isListening && <div className="text-[10px] text-white/40 mt-1 px-1 animate-pulse">正在聆听，点麦克风结束</div>}
-          {isSttProcessing && <div className="text-[10px] text-cyan-100/65 mt-1 px-1 animate-pulse">正在把录音转成文字…</div>}
+          {!sendingBusy && pendingCallRetryText && !draftInput.trim() && <div className="text-[10px] text-amber-200/70 mt-1 px-1">{uiT('call.main.retryNotice')}</div>}
+          {isListening && <div className="text-[10px] text-white/40 mt-1 px-1 animate-pulse">{uiT('call.main.listenHint')}</div>}
+          {isSttProcessing && <div className="text-[10px] text-cyan-100/65 mt-1 px-1 animate-pulse">{uiT('call.main.transcribeHint')}</div>}
         </div>
       )}
       <div className={`shrink-0 ${callMode === 'video' ? 'px-3 pb-2 pt-0.5' : 'px-7 pb-2 pt-1.5'}`} data-testid={callMode === 'video' ? 'video-call-compact-controls' : undefined}>
@@ -5154,27 +5157,27 @@ ${sentencePlan}`;
               style={showInputPanel ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.15)' }}>
               <Microphone size={22} weight="fill" className="text-white/90" />
             </span>
-            <span className="text-[10px] text-white/70">麦克风</span>
+            <span className="text-[10px] text-white/70">{uiT('call.main.microphone')}</span>
             {callMode !== 'video' && <span className="text-[8px] tracking-[0.15em]" style={{ color: showInputPanel ? accentColor : 'rgba(255,255,255,0.3)' }}>{showInputPanel ? 'ON' : 'OFF'}</span>}
           </button>
           {callMode === 'video' && (
-            <button onClick={() => setShowUserCameraModePicker(true)} title="选择用户摄像头方式" className="flex flex-col items-center gap-0.5 transition active:scale-95">
+            <button onClick={() => setShowUserCameraModePicker(true)} title={uiT('call.main.cameraMode')} className="flex flex-col items-center gap-0.5 transition active:scale-95">
               <span className={`${callControlSize} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
                 style={userCameraMode !== 'off' ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.15)' }}>
                 {userCameraMode !== 'off'
                   ? <VideoCamera size={21} weight="fill" className="text-white/90" />
                   : <VideoCameraSlash size={21} weight="fill" className={userCameraLoading ? 'animate-pulse text-white/70' : 'text-white/48'} />}
               </span>
-              <span className="text-[10px] text-white/70">{userCameraLoading ? '准备中' : userCameraMode === 'fake' ? '假机位' : userCameraMode === 'emotion' ? '情绪' : userCameraMode === 'snapshot' ? '快照' : '用户画面'}</span>
+              <span className="text-[10px] text-white/70">{userCameraLoading ? uiT('call.main.preparing') : userCameraMode === 'fake' ? uiT('call.main.fakeCamera') : userCameraMode === 'emotion' ? uiT('call.main.emotion') : userCameraMode === 'snapshot' ? uiT('call.main.snapshot') : uiT('call.main.userVideo')}</span>
             </button>
           )}
           {/* translate */}
-          <button onClick={() => setShowLangPicker(prev => !prev)} title="语音语种" className={`flex flex-col items-center transition active:scale-95 ${callMode === 'video' ? 'gap-0.5' : 'gap-1.5'}`}>
+          <button onClick={() => setShowLangPicker(prev => !prev)} title={uiT('call.main.language')} className={`flex flex-col items-center transition active:scale-95 ${callMode === 'video' ? 'gap-0.5' : 'gap-1.5'}`}>
             <span className={`${callControlSize} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
               style={voiceLang ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.15)' }}>
               <Translate size={22} weight="fill" className="text-white/90" />
             </span>
-            <span className="text-[10px] text-white/70">翻译</span>
+            <span className="text-[10px] text-white/70">{uiT('call.main.translate')}</span>
             {callMode !== 'video' && <span className="text-[8px] tracking-[0.15em]" style={{ color: voiceLang ? accentColor : 'rgba(255,255,255,0.3)' }}>{voiceLang ? 'ON' : 'OFF'}</span>}
           </button>
           {/* end call */}
@@ -5183,7 +5186,7 @@ ${sentencePlan}`;
               style={{ background: 'rgba(244,63,94,0.12)', borderColor: 'rgba(251,113,133,0.4)' }}>
               <PhoneDisconnect size={22} weight="fill" className="text-rose-300/90" />
             </span>
-            <span className="text-[10px] text-white/70">结束通话</span>
+            <span className="text-[10px] text-white/70">{uiT('call.main.end')}</span>
           </button>
           {/* output route: speaker / receiver / headphones */}
           <button
@@ -5200,7 +5203,7 @@ ${sentencePlan}`;
                 primeCallAudioFromGesture(true);
               }
             }}
-            title={`当前为${audioRouteLabel.zh}，点击切换到${nextAudioRouteLabel.zh}`}
+            title={uiT('call.main.switchRoute', { current: audioRouteUiLabel, next: uiT(nextCallAudioRoute(audioOutputRoute) === 'headphones' ? 'call.main.headphones' : nextCallAudioRoute(audioOutputRoute) === 'speaker' ? 'call.main.speaker' : 'call.main.receiver') })}
             className={`flex flex-col items-center transition active:scale-95 ${callMode === 'video' ? 'gap-0.5' : 'gap-1.5'}`}
           >
             <span className={`${callControlSize} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
@@ -5211,7 +5214,7 @@ ${sentencePlan}`;
                   ? <SpeakerHigh size={22} weight="fill" className="text-white/90" />
                   : <Phone size={22} weight="fill" className="text-white/70" />}
             </span>
-            <span className="text-[10px] text-white/70">{audioRouteLabel.zh}</span>
+            <span className="text-[10px] text-white/70">{audioRouteUiLabel}</span>
             {callMode !== 'video' && <span className="text-[8px] tracking-[0.15em]" style={{ color: audioOutputRoute !== 'receiver' ? accentColor : 'rgba(255,255,255,0.5)' }}>{audioRouteLabel.en}</span>}
           </button>
         </div>
@@ -5232,8 +5235,8 @@ ${sentencePlan}`;
       {showBgPicker && (
         <div className="absolute inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-end" onClick={() => setShowBgPicker(false)}>
           <div className={`w-full border-t border-white/10 rounded-t-3xl p-5 space-y-3 ${lightTheme ? 'bg-[#f6f4fc]' : 'bg-[#120c22]'}`} onClick={e => e.stopPropagation()}>
-            <div className="text-sm text-white/80 font-medium">视频背景</div>
-            <p className="text-xs text-white/40">本地图片保存在你自己的设备里（IndexedDB，随备份导出）；图床直链则每次在线加载。</p>
+            <div className="text-sm text-white/80 font-medium">{uiT('call.main.background')}</div>
+            <p className="text-xs text-white/40">{uiT('call.main.backgroundHelp')}</p>
             <button onClick={chooseStageBackgroundFile} className="w-full py-2.5 rounded-2xl border border-white/15 bg-white/[0.06] text-sm text-white/85 transition active:scale-[0.98]">
               选择本地图片
             </button>
@@ -5241,10 +5244,10 @@ ${sentencePlan}`;
               <input
                 value={bgUrlInput}
                 onChange={e => setBgUrlInput(e.target.value)}
-                placeholder="https:// 图片直链"
+                placeholder={uiT('call.main.imageUrl')}
                 className="flex-1 min-w-0 bg-black/30 rounded-xl px-3 py-2.5 text-sm outline-none placeholder:text-white/30 border border-white/10"
               />
-              <button onClick={() => void applyBgUrlInput()} className="keep-white shrink-0 px-4 rounded-xl text-sm font-medium text-white transition active:scale-95" style={{ backgroundColor: accentColor }}>使用</button>
+              <button onClick={() => void applyBgUrlInput()} className="keep-white shrink-0 px-4 rounded-xl text-sm font-medium text-white transition active:scale-95" style={{ backgroundColor: accentColor }}>{uiT('call.main.use')}</button>
             </div>
             {selectedChar?.videoCallBackground && (
               <button onClick={() => { void applyStageBackground(undefined); setShowBgPicker(false); addToast('已恢复默认背景', 'success'); }} className="w-full py-2 text-xs text-white/45 transition active:opacity-60">
@@ -5257,8 +5260,8 @@ ${sentencePlan}`;
       {showLangPicker && (
         <div className="absolute inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-end" onClick={() => setShowLangPicker(false)}>
           <div className={`w-full border-t border-white/10 rounded-t-3xl p-5 space-y-3 ${lightTheme ? 'bg-[#f6f4fc]' : 'bg-[#120c22]'}`} onClick={e => e.stopPropagation()}>
-            <div className="text-sm text-white/80 font-medium">语音语种</div>
-            <p className="text-xs text-white/40">选择后，角色会用中文回复，语音则用对应语种朗读</p>
+            <div className="text-sm text-white/80 font-medium">{uiT('call.main.language')}</div>
+            <p className="text-xs text-white/40">{uiT('call.main.languageHelp')}</p>
             <div className="flex flex-wrap gap-2 pt-1">
               {VOICE_LANGUAGE_OPTIONS.map(opt => (
                 <button key={opt.value} onClick={() => { setVoiceLang(opt.value); if (selectedChar) updateCharacter(selectedChar.id, { callVoiceLang: opt.value }); setShowLangPicker(false); trackEvent('设置通话语音语种', { lang: opt.value }); }}
@@ -5303,8 +5306,8 @@ ${sentencePlan}`;
       {showHangupConfirm && (
         <div className="absolute inset-0 z-[70] bg-black/70 backdrop-blur-sm flex items-center justify-center px-6">
           <div className={`w-full max-w-sm rounded-3xl border border-white/15 bg-gradient-to-b p-5 shadow-2xl ${lightTheme ? 'from-white to-[#f0edf9]' : 'from-[#1a1130] to-[#0a0613]'}`}>
-            <div className="text-lg font-semibold text-white">要挂了吗？</div>
-            <p className="mt-2 text-sm text-white/65 leading-relaxed">和{selectedChar?.name || '对方'}聊了 {formatDuration(elapsedSeconds)}，这通电话会好好保存下来。</p>
+            <div className="text-lg font-semibold text-white">{uiT('call.main.hangupAsk')}</div>
+            <p className="mt-2 text-sm text-white/65 leading-relaxed">{uiT('call.main.hangupSummary', { name: selectedChar?.name || uiT('call.main.other'), duration: formatDuration(elapsedSeconds) })}</p>
             <div className="mt-5 space-y-2">
               <button onClick={() => {
                 setShowHangupConfirm(false);
@@ -5326,11 +5329,11 @@ ${sentencePlan}`;
                   trackEvent('挂起通话到后台');
                 }
               }} className="keep-white w-full py-2.5 rounded-2xl bg-emerald-500/80 text-white font-semibold transition active:scale-[0.97] flex items-center justify-center gap-2">
-                <span>先忙别的</span><span className="text-xs opacity-70">（挂起通话）</span>
+                <span>{uiT('call.main.suspend')}</span><span className="text-xs opacity-70">{uiT('call.main.suspendNote')}</span>
               </button>
               <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => setShowHangupConfirm(false)} className="py-2.5 rounded-2xl border border-white/20 text-white/80 transition active:scale-[0.97]">再聊会儿</button>
-                <button onClick={finishCall} className="py-2.5 rounded-2xl bg-rose-500/20 border border-rose-300/40 text-rose-200 font-semibold transition active:scale-[0.97]">挂了吧</button>
+                <button onClick={() => setShowHangupConfirm(false)} className="py-2.5 rounded-2xl border border-white/20 text-white/80 transition active:scale-[0.97]">{uiT('call.main.keepTalking')}</button>
+                <button onClick={finishCall} className="py-2.5 rounded-2xl bg-rose-500/20 border border-rose-300/40 text-rose-200 font-semibold transition active:scale-[0.97]">{uiT('call.main.hangup')}</button>
               </div>
             </div>
           </div>
@@ -5342,7 +5345,7 @@ ${sentencePlan}`;
             <div className="text-sm text-white/70">
               {editingBubble.role === 'assistant' ? `改一下${selectedChar?.name || '对方'}这句台词` : '改一下刚才说的话'}
             </div>
-            <textarea value={editingText} onChange={(e) => setEditingText(e.target.value)} className="w-full h-24 bg-black/30 rounded-xl p-3 text-sm outline-none resize-none placeholder:text-white/30" placeholder="重新措辞……" autoFocus />
+            <textarea value={editingText} onChange={(e) => setEditingText(e.target.value)} className="w-full h-24 bg-black/30 rounded-xl p-3 text-sm outline-none resize-none placeholder:text-white/30" placeholder={uiT('call.main.reword')} autoFocus />
             {editingBubble.role === 'assistant' && (
               <p className="text-[11px] text-white/40 leading-relaxed">
                 改完这条已经合成的语音会被丢掉，点「播放语音」才按新文本重新合成。
@@ -5351,8 +5354,8 @@ ${sentencePlan}`;
               </p>
             )}
             <div className="flex gap-2">
-              <button onClick={() => setEditingBubble(null)} className="flex-1 py-2.5 rounded-xl border border-white/15 text-white/70 transition active:scale-[0.97]">算了</button>
-              <button onClick={saveEditedBubble} className="keep-white flex-1 py-2.5 rounded-xl font-medium text-white transition active:scale-[0.97]" style={{ backgroundColor: accentColor }}>就这样</button>
+              <button onClick={() => setEditingBubble(null)} className="flex-1 py-2.5 rounded-xl border border-white/15 text-white/70 transition active:scale-[0.97]">{uiT('call.main.forget')}</button>
+              <button onClick={saveEditedBubble} className="keep-white flex-1 py-2.5 rounded-xl font-medium text-white transition active:scale-[0.97]" style={{ backgroundColor: accentColor }}>{uiT('call.main.saveWords')}</button>
             </div>
           </div>
         </div>
@@ -5361,7 +5364,7 @@ ${sentencePlan}`;
         open={!!voiceFavoriteTarget}
         favorited={voiceFavoriteSaved}
         busy={voiceFavoriteBusy}
-        title="通话语音"
+        title={uiT('call.main.callVoice')}
         preview={voiceFavoriteTarget ? (stripCallTextFormatting(extractVoiceTag(voiceFavoriteTarget.bubble.text).display) || cleanVoiceMarkupForDisplay(extractVoiceTag(voiceFavoriteTarget.bubble.text).voiceText)) : ''}
         onToggle={() => void toggleCallVoiceFavorite()}
         onClose={() => { if (!voiceFavoriteBusy) setVoiceFavoriteTarget(null); }}
