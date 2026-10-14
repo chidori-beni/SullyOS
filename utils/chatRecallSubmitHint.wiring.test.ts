@@ -13,9 +13,9 @@ describe('聊天召回/提交状态提示接线', () => {
         const hook = read('hooks/useChatAI.ts');
 
         expect(chat).toContain('visibleRecallSubmitStatus');
-        expect(chat).toContain('正在召回记忆…');
-        expect(chat).toContain('记忆准备完成，正在提交云端…');
-        expect(chat).toContain('云端任务已接收，现在可以切后台');
+        expect(chat).toContain("uiT('chat.pending.recalling')");
+        expect(chat).toContain("uiT('chat.pending.submitting')");
+        expect(chat).toContain("uiT('chat.pending.accepted')");
         expect(chat).toContain('aria-live="polite"');
         expect(chat).toContain('settingsShowTokenUsage={settingsShowTokenUsage}');
         expect(chat).toContain('showTokenUsage={char.showTokenUsage !== false}');

@@ -6,6 +6,16 @@ export const UI_LOCALE_STORAGE_KEY = 'sullyos.uiLocale.v1';
 export type UiMessageParams = Record<string, string | number>;
 
 const ZH_MESSAGES = {
+  'chat.pending.inbox': '正在接收刚到的消息…',
+  'chat.pending.recalling': '正在召回记忆…',
+  'chat.pending.local': 'SAR 模块生效中，本轮在本机生成（不走云端，请留在页面）',
+  'chat.pending.degraded': '可用记忆已准备，正在提交云端…',
+  'chat.pending.skipped': '上下文准备完成，正在提交云端…',
+  'chat.pending.submitting': '记忆准备完成，正在提交云端…',
+  'chat.pending.accepted': '云端任务已接收，现在可以切后台',
+  'chat.pending.sent': '云端请求已发出，可切后台',
+  'chat.pending.proactive': '{name} 在给你写消息…',
+  'chat.pending.stop': '停止本轮生成',
   'call.main.personAnswering': '{name}正在接听……',
   'call.main.personWaiting': '{name}在等你开口……',
   'call.main.send': '发送',
@@ -1087,6 +1097,16 @@ const ZH_MESSAGES = {
 } as const;
 
 const JA_MESSAGES = {
+  'chat.pending.inbox': '届いたメッセージを受信中…',
+  'chat.pending.recalling': '記憶を呼び出しています…',
+  'chat.pending.local': 'SAR モジュールが有効です。この返信は端末で生成します（クラウドは使いません。この画面を開いたままにしてください）',
+  'chat.pending.degraded': '利用可能な記憶を準備しました。クラウドに送信中…',
+  'chat.pending.skipped': 'コンテキストの準備が完了しました。クラウドに送信中…',
+  'chat.pending.submitting': '記憶の準備が完了しました。クラウドに送信中…',
+  'chat.pending.accepted': 'クラウドが処理を受け付けました。バックグラウンドに切り替えられます',
+  'chat.pending.sent': 'クラウドへのリクエストを送信しました。バックグラウンドに切り替えられます',
+  'chat.pending.proactive': '{name}があなたにメッセージを書いています…',
+  'chat.pending.stop': '今回の生成を停止',
   'call.main.personAnswering': '{name}が応答しています……',
   'call.main.personWaiting': '{name}があなたの言葉を待っています……',
   'call.main.send': '送信',
@@ -2090,7 +2110,7 @@ const JA_MESSAGES = {
   'terminal.network.five': '一部の機能だけ失敗する場合は、設定のサービス URL を確認してください。https:// の欠落、余分な空白、末尾のスラッシュに注意してください。',
   'terminal.network.help': 'ログの「初判」と「连通性复检」の行で原因が絞り込まれています。まずこの 2 行を確認してください。',
   'terminal.empty': 'システムは正常です。エラーログはありません。',
-  'apps.Character': 'ニューラルリンク',
+  'apps.Character': 'キャラクター',
   'apps.MemoryPalace': '記憶の宮殿',
   'apps.Chat': 'Message',
   'apps.Call': '電話',

@@ -6,6 +6,7 @@ import { publishReplyDisplay, stopReplyRuns } from '../utils/chatReplyCancellati
 import { stopInstantChat } from '../utils/amsgInstantChat';
 import EmojiExportDialog from '../components/chat/EmojiExportDialog';
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
+import { useUiLocale } from '../context/UiLocaleContext';
 import { createPortal } from 'react-dom';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
@@ -212,6 +213,7 @@ interface ChatProps {
 }
 
 const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
+    const { t: uiT } = useUiLocale();
     const { activeApp, updateUserProfile, characters, activeCharacterId: osActiveCharacterId, setActiveCharacterId, addCharacter, availableModels, addCustomTheme, addWorldbook, saveAppearancePreset, updateCharacter, apiConfig, commitApiConfig, apiPresets, addApiPreset, closeApp, openApp, customThemes, removeCustomTheme, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: globalTheme, updateTheme, proactiveComposingChars, openDateWithChar } = useOS();
     const activeCharacterId = homePhone?.characterId ?? osActiveCharacterId;
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
@@ -5417,7 +5419,7 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
                             {inboxStatus ? (
                                 <div role="status" className="flex items-center gap-2 text-xs text-slate-500 font-medium">
                                     <span className="h-3 w-3 shrink-0 rounded-full border-2 border-slate-300 border-t-slate-500 animate-spin" aria-hidden="true" />
-                                    {inboxStatus}
+                                    {uiT('chat.pending.inbox')}
                                 </div>
                             ) : visibleRecallSubmitStatus ? (
                                 <div
@@ -5442,24 +5444,24 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
                                     )}
                                     <span>
                                         {visibleRecallSubmitStatus.phase === 'recalling'
-                                            ? '正在召回记忆…'
+                                            ? uiT('chat.pending.recalling')
                                             : visibleRecallSubmitStatus.phase === 'local'
-                                                ? 'SAR 模块生效中，本轮在本机生成（不走云端，请留在页面）'
+                                                ? uiT('chat.pending.local')
                                             : visibleRecallSubmitStatus.phase === 'submitting'
                                                 ? visibleRecallSubmitStatus.recall === 'degraded'
-                                                    ? '可用记忆已准备，正在提交云端…'
+                                                    ? uiT('chat.pending.degraded')
                                                     : visibleRecallSubmitStatus.recall === 'skipped'
-                                                        ? '上下文准备完成，正在提交云端…'
-                                                        : '记忆准备完成，正在提交云端…'
+                                                        ? uiT('chat.pending.skipped')
+                                                        : uiT('chat.pending.submitting')
                                                 : visibleRecallSubmitStatus.phase === 'accepted'
-                                                    ? '云端任务已接收，现在可以切后台'
-                                                    : '云端请求已发出，可切后台'}
+                                                    ? uiT('chat.pending.accepted')
+                                                    : uiT('chat.pending.sent')}
                                     </span>
                                 </div>
                             ) : isProactiveComposing && !isTyping && !recallStatus && !searchStatus && !diaryStatus ? (
                                 <div className="flex items-center gap-2 text-xs text-teal-600 font-medium">
                                     <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                                    {char.name} 在给你写消息…
+                                    {uiT('chat.pending.proactive', { name: char.name })}
                                 </div>
                             ) : searchStatus ? (
                                 <div className="flex items-center gap-2 text-xs text-emerald-500 font-medium">
@@ -5497,8 +5499,8 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
                         {(isTyping || instantChatPending) && (
                             <button
                                 onClick={handleStopGeneration}
-                                title="停止本轮生成"
-                                aria-label="停止本轮生成"
+                                title={uiT('chat.pending.stop')}
+                                aria-label={uiT('chat.pending.stop')}
                                 style={stopBtnInkStyle}
                                 className="shrink-0 mb-0.5 flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 border border-primary/20 transition-colors hover:bg-primary/20 active:scale-95"
                             >
