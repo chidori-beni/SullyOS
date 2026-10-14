@@ -282,6 +282,8 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
   >(null);
   /** 「暂停后台任务」的确认框开着没有。恢复不用确认。 */
   const [pauseConfirmOpen, setPauseConfirmOpen] = useState(false);
+  /** 「换一个独立的云端身份」确认框。 */
+  const [newIdentityConfirmOpen, setNewIdentityConfirmOpen] = useState(false);
   // 这台 worker 认不认 /instant-chat。即时对话的**唯一**版本门槛就在这儿，
   // 别处不做逐调用预检——每发一条消息多探一次网络，探失败还分不清是旧版还是网抖。
   const [instantChatSupported, setInstantChatSupported] = useState(false);
@@ -653,6 +655,21 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
     } finally {
       setProvisioning(false);
       setProvisionStep('');
+    }
+  };
+
+  const handleNewCloudIdentity = async () => {
+    setNewIdentityConfirmOpen(false);
+    setLoading(true);
+    try {
+      const { warnings } = await ActiveMsgClient.switchToNewCloudIdentity();
+      await refresh();
+      addToast('已换成独立的云端身份。这台设备的角色要用后台功能，请把它们的主动消息设置重新保存一次。', 'success');
+      warnings.forEach((warning) => addToast(warning.message, 'info'));
+    } catch (error: any) {
+      addToast(error?.message || '换云端身份失败。', 'error');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -1785,6 +1802,22 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
                   <span className="font-semibold text-slate-700">X-User-Id</span>
                   <span className="font-mono text-violet-600">{maskActiveMsgUserId(config.userId)}</span>
                 </div>
+                {config.workerUrl?.trim() ? (
+                  <>
+                    <p className="text-[11px] leading-relaxed text-slate-500">
+                      两个 PWA 用同一个用户 ID 时共用一份云端：一边删角色，另一边同名角色的后台功能也会被停掉。
+                      导入别的 App 的备份做展示 / 测试时，在<b>那个新 App</b>里点下面这个，常用的 App 里别点。
+                    </p>
+                    <button
+                      type="button"
+                      disabled={loading}
+                      onClick={() => setNewIdentityConfirmOpen(true)}
+                      className="w-full py-2 bg-white border border-violet-200 text-violet-700 font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-50"
+                    >
+                      让这台设备单独用一份云端
+                    </button>
+                  </>
+                ) : null}
               </div>
               <p className="text-[11px] leading-relaxed text-slate-500">
                 Worker 侧的环境变量清单见上面「部署 Worker」一节。发布的 Worker 代码默认 CORS 全开
@@ -1820,6 +1853,15 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
       variant="warning"
       onConfirm={() => void applyCronTrigger(false)}
       onCancel={() => setPauseConfirmOpen(false)}
+    />
+    <ConfirmDialog
+      isOpen={newIdentityConfirmOpen}
+      title="单独用一份云端"
+      message="这台设备会换一个新的用户 ID，从此和别的 PWA 互不影响。旧 ID 下的云端数据原样留着，常用的 App 照常用。这台设备上已经排好的主动消息不会带过来，换完要把角色的主动消息设置重新保存一次。只在展示 / 测试用的那个 App 里点。"
+      confirmText="换"
+      variant="warning"
+      onConfirm={() => void handleNewCloudIdentity()}
+      onCancel={() => setNewIdentityConfirmOpen(false)}
     />
     </>
   );

@@ -701,24 +701,65 @@ const workerErrorText = (error: any, fallback: string): string => {
   return detail ? `${base}（${detail.slice(0, 300)}）` : base;
 };
 
+// 云端「停用」了的角色（云端数据管理里清过 / 删角色时退休过），或者本机记的代次跟
+// 云端对不上：它那一行凭据 Worker 一律拒收，而且整批一起拒（事务），连带所有角色的
+// 新 Key 都传不上去，日志里只剩一句 CLOUD_OWNER_RETIRED 无限重试。这里把它们挑出来
+// 记住、剩下的照传。会话内有效；用户在云端数据管理里「允许重新写入」时清掉。
+const cloudBlockedCredChars = new Set<string>();
+const credRowCharId = (row: LlmCredentialRow): string | undefined => parseCharCredId(row.credId)?.charId;
+const isCloudOwnerRetiredError = (error: any): boolean =>
+  error?.code === 'CLOUD_OWNER_RETIRED' || error?.cause?.code === 'CLOUD_OWNER_RETIRED';
+
+const findCloudBlockedCredChars = async (client: ReiClient, rows: LlmCredentialRow[]): Promise<Array<{ id: string; label: string }>> => {
+  const result = await client.listCloudDataOwners().catch(() => null);
+  if (!result?.success || !result.data) return [];
+  const blocked = new Map<string, string>();
+  for (const row of rows) {
+    const charId = credRowCharId(row);
+    if (!charId || blocked.has(charId)) continue;
+    const generation = stampCloudWrite(client, row).ownerGeneration ?? 0;
+    const state = result.data.owners.find(item => item.owner.type === 'character' && item.owner.id === charId);
+    // 跟 Worker 的判定同一口径：有记录要「在用且代次相同」，没记录只认代次 0。
+    const ok = state ? !state.retired && state.generation === generation : generation === 0;
+    if (!ok) blocked.set(charId, state?.owner.label || charId);
+  }
+  return [...blocked].map(([id, label]) => ({ id, label }));
+};
+
 const putLlmCredentialRows = async (
   rows: LlmCredentialRow[],
   options: { force?: boolean; client?: ReiClient } = {},
 ): Promise<number> => {
   const assertWriteCurrent = captureCloudWriteCheck(rows.flatMap(row => { const owner = parseCharCredId(row.credId); return owner ? [owner.charId] : []; }));
-  const pending = options.force ? rows : pickChangedCredRows(rows);
+  const notBlocked = (row: LlmCredentialRow) => { const id = credRowCharId(row); return !id || !cloudBlockedCredChars.has(id); };
+  const pending = (options.force ? rows : pickChangedCredRows(rows)).filter(notBlocked);
   if (pending.length === 0) return 0;
   const client = options.client ?? await initializeClient(await ensureWorkerReady());
   assertWriteCurrent();
-  for (const batch of chunkCredRows(pending)) {
-    const response = await client.putLlmCredentials(batch.map(row => stampCloudWrite(client, row)));
+  let written = 0;
+  for (let batch of chunkCredRows(pending)) {
+    let response = await client.putLlmCredentials(batch.map(row => stampCloudWrite(client, row)));
+    if (!response?.success && isCloudOwnerRetiredError(response?.error)) {
+      const blocked = await findCloudBlockedCredChars(client, batch);
+      if (blocked.length > 0) {
+        blocked.forEach(item => cloudBlockedCredChars.add(item.id));
+        console.warn(
+          `[amsg2] 这些角色在云端是「停用」状态，它们的 API 凭据先不上传（其余角色照常）：${blocked.map(item => `「${item.label}」`).join('、')}。`
+          + '要让它们重新用后台功能，到 设置 → 云端数据管理 里点「允许重新写入」。',
+        );
+        batch = batch.filter(notBlocked);
+        if (batch.length === 0) continue;
+        response = await client.putLlmCredentials(batch.map(row => stampCloudWrite(client, row)));
+      }
+    }
     if (!response?.success) {
       throw new Error(workerErrorText(response?.error, '登记 LLM 凭据失败。'));
     }
+    written += batch.length;
     // 逐批记账：后面那批失败时，前面已经落地的不必再传一遍。
     rememberCredRows(batch);
   }
-  return pending.length;
+  return written;
 };
 
 const formatHistoryLine =(role: string, content: any, char: CharacterProfile, userProfile: UserProfile) => {
@@ -2207,6 +2248,23 @@ export const ActiveMsgClient = {
       console.warn('[ActiveMsg] 连接后补登记推送订阅失败', error);
       return 'failed';
     }
+  },
+
+  /**
+   * 让这台设备在同一台 Worker 上换一个新的用户 ID，从此单独用一份云端。
+   *
+   * 给「拿常用 App 的备份导进另一个 PWA 做展示 / 测试」这种场景用：备份连同用户 ID 一起
+   * 带过来的话，两边写的是同一份云端——这边删角色会把那边同 id 的角色在云端停用
+   * （CLOUD_OWNER_RETIRED），推送订阅也只有一行、谁后登记归谁。换 ID 之后各管各的。
+   * 旧 ID 下的云端数据一行不动（常用 App 还在用），本机只忘掉跟旧 ID 绑定的凭据底账。
+   */
+  async switchToNewCloudIdentity(): Promise<{ warnings: Array<{ message: string }> }> {
+    const config = await ActiveMsgStore.getGlobalConfig();
+    if (!config.workerUrl?.trim()) throw new Error('还没连 Worker，不需要换。');
+    await ActiveMsgStore.saveGlobalConfig({ userId: crypto.randomUUID(), initializedAt: undefined });
+    invalidateClientCache();
+    forgetAllCredIds();
+    return this.connect();
   },
 
   // 单用户「连接」：先 POST /init-tenant 让 worker 在自己的 D1 里幂等建表
@@ -3821,6 +3879,7 @@ export const ActiveMsgClient = {
     return createCloudDataSession(client, { workerUrl: config.workerUrl, userId: config.userId }, {
       onRestored: async state => {
         invalidateCloudOwnerWrites(state.owner);
+        if (state.owner.type === 'character') cloudBlockedCredChars.delete(state.owner.id);
         if (state.owner.type === 'character') (await import('./amsgStateSync')).discardAmsgPendingState(state.owner.id);
         rememberCloudOwnerGeneration(config, state.owner, state.generation);
         forgetAllCredIds();
