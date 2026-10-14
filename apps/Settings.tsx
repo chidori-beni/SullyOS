@@ -1,4 +1,5 @@
 import NavigationBallSettings from '../components/settings/NavigationBallSettings';
+import { formatXhsConnectionStatus, type UiXhsConnectionInfo } from '../utils/uiXhsConnectionStatus';
 import { formatCloudBackupStatus } from '../utils/uiCloudBackupStatus';
 import { buildModelPickerView } from '../utils/modelPickerView';
 
@@ -639,19 +640,8 @@ const Settings: React.FC = () => {
   // lite 模式走中心配置的主代理 worker（/api 是 worker/index.js 里的 XHSLite 桥）。
   // 用户改了「自定义网络代理」，lite 模式自动跟着切到新 worker。
   const XHS_LITE_URL = `${getProxyWorkerUrl()}/api`;
-  const XHS_RISK_TEXT = '使用提示：Lite 通过网页接口连接小红书，平台规则变化时可能出现登录失效或功能暂时不可用。建议先用小号体验，并在发布或互动前确认内容。';
-  const XHS_COOKIE_GUIDE = [
-    '【获取小红书 cookie 教程】',
-    '1. 用电脑浏览器(Chrome/Edge)登录实际分配给你的站点：www.xiaohongshu.com 或 www.rednote.com',
-    '2. 按 F12 打开开发者工具，切到「Network/网络」标签',
-    '3. 刷新页面，点列表最上面那条「explore」(document 类型，发给当前网站的主请求)',
-    '4. 右侧切到「Headers/标头」，往下滚到「Request Headers/请求标头」',
-    '5. 找到 cookie: 开头那一行(很长一串)',
-    '6. 复制它后面整段的值：可把 Request Headers 右边的「Raw」开关打开看纯文本更好选，或在值上右键 Copy value，或选中后 Ctrl+C',
-    '7. 确认这串里有 a1= 和 web_session= 两个字段(最关键)，粘到「小红书 Lite」的 cookie 框',
-    'Lite 会自动判断这串 Cookie 属于国内小红书还是全球 RedNote；不用自己补 gid、bRequestId 等会随站点变化的字段。',
-    '注意：别用 Console 的 document.cookie，拿不到 web_session(httpOnly)。cookie 数天~数周会过期，失效重复制即可。',
-  ].join('\n');
+  const XHS_RISK_TEXT = t('settings.xhs.risk');
+  const XHS_COOKIE_GUIDE = t('settings.xhs.guide');
   const _xhsCfgUrl = realtimeConfig.xhsMcpConfig?.serverUrl || '';
   // 部署模式与协议分开保存：本地 Skills 和云端 Lite 都是 /api，不能再凭路径判断。
   const _xhsStoredMode = resolveXhsDeploymentMode(realtimeConfig.xhsMcpConfig, XHS_LITE_URL);
@@ -664,7 +654,14 @@ const Settings: React.FC = () => {
   const [rtXhsCookie, setRtXhsCookie] = useState(realtimeConfig.xhsMcpConfig?.cookie || '');
   const [rtXhsPlatform, setRtXhsPlatform] = useState<'xhs' | 'rednote' | undefined>(realtimeConfig.xhsMcpConfig?.platform);
   const [rtXhsGuideOpen, setRtXhsGuideOpen] = useState(false);
-  const [rtTestStatus, setRtTestStatus] = useState('');
+  const [rtTestStatus, setRawRtTestStatus] = useState('');
+  const [rtTestUi, setRtTestUi] = useState<UiStatusMessage | null>(null);
+  const [rtXhsTestInfo, setRtXhsTestInfo] = useState<UiXhsConnectionInfo | null>(null);
+  const setRtTestStatus = (message: string, uiMessage?: UiStatusMessage) => {
+      setRawRtTestStatus(message);
+      setRtTestUi(uiMessage || null);
+      setRtXhsTestInfo(null);
+  };
 
   // 麦当劳 MCP (token / 启用态都直接存 localStorage, 不进 realtimeConfig)
   const [mcdToken, setMcdTokenState] = useState(() => getMcdToken());
@@ -1716,7 +1713,7 @@ const Settings: React.FC = () => {
 
   // 保存实时感知配置
   const handleSaveRealtimeConfig = () => {
-      if (rtUserHolidays.enabled && !rtUserHolidays.countryCode) { addToast('请选择生活所在的国家／地区，或关闭节假日感知', 'error'); return; }
+      if (rtUserHolidays.enabled && !rtUserHolidays.countryCode) { addToast(t('settings.realtime.countryRequired'), 'error'); return; }
       const updates = {
           weatherEnabled: rtWeatherEnabled,
           userHolidays: { ...rtUserHolidays, introChoice: rtUserHolidays.enabled ? 'configured' as const : 'declined' as const },
@@ -1751,17 +1748,17 @@ const Settings: React.FC = () => {
       const nextRealtimeConfig = { ...realtimeConfig, ...updates };
       // 云端凭据 + 按配置裁剪过的提示词一起刷，否则角色到点会照着旧提示词调已关掉的工具。
       syncAmsgToolConfigAndPrompts(nextRealtimeConfig, { characters, userProfile, groups });
-      addToast('实时感知配置已保存', 'success');
+      addToast(t('settings.realtime.saved'), 'success');
       setShowRealtimeModal(false);
   };
 
   // 测试天气API连接：填了 key 测 OpenWeatherMap，没填测免费的 Open-Meteo
   const testWeatherApi = async () => {
       if (!rtWeatherCity) {
-          setRtTestStatus('请先填写城市');
+          setRtTestStatus('请先填写城市', { key: 'settings.realtime.cityRequired' });
           return;
       }
-      setRtTestStatus('正在测试...');
+      setRtTestStatus('正在测试...', { key: 'settings.realtime.testing' });
       try {
           const weather = rtWeatherKey
               ? await fetchOwmWeather(rtWeatherCity, rtWeatherKey)
@@ -1769,44 +1766,44 @@ const Settings: React.FC = () => {
           const source = rtWeatherKey ? 'OpenWeatherMap' : 'Open-Meteo';
           // 刻意不带数据源名：那等价于「有没有填天气 key」，属于配置状态
           trackEvent('测试天气数据源连接', { result: 'ok' });
-          setRtTestStatus(`连接成功！(${source}) ${weather.city}: ${weather.description}, ${weather.temp}°C`);
+          setRtTestStatus(`连接成功！(${source}) ${weather.city}: ${weather.description}, ${weather.temp}°C`, { key: 'settings.realtime.weatherSuccess', params: { source, city: weather.city, description: weather.description, temp: weather.temp } });
       } catch (e: any) {
           trackEvent('测试天气数据源连接', { result: 'failed' });
-          setRtTestStatus(`连接失败: ${e.message}`);
+          setRtTestStatus(`连接失败: ${e.message}`, { key: 'settings.realtime.connectionFailed', params: { error: String(e.message) } });
       }
   };
 
   // 测试Notion连接
   const testNotionApi = async () => {
       if (!rtNotionKey || !rtNotionDbId) {
-          setRtTestStatus('请填写 Notion API Key 和 Database ID');
+          setRtTestStatus('请填写 Notion API Key 和 Database ID', { key: 'settings.realtime.notionRequired' });
           return;
       }
-      setRtTestStatus('正在测试 Notion 连接...');
+      setRtTestStatus('正在测试 Notion 连接...', { key: 'settings.realtime.notionTesting' });
       try {
           const result = await NotionManager.testConnection(rtNotionKey, rtNotionDbId);
           trackEvent('测试 Notion 连接', { result: result.success ? 'ok' : 'failed' });
           setRtTestStatus(result.message);
       } catch (e: any) {
           trackEvent('测试 Notion 连接', { result: 'network-error' });
-          setRtTestStatus(`网络错误: ${e.message}`);
+          setRtTestStatus(`网络错误: ${e.message}`, { key: 'settings.realtime.networkError', params: { error: String(e.message) } });
       }
   };
 
   // 测试飞书连接
   const testFeishuApi = async () => {
       if (!rtFeishuAppId || !rtFeishuAppSecret || !rtFeishuBaseId || !rtFeishuTableId) {
-          setRtTestStatus('请填写飞书 App ID、App Secret、多维表格 ID 和数据表 ID');
+          setRtTestStatus('请填写飞书 App ID、App Secret、多维表格 ID 和数据表 ID', { key: 'settings.realtime.feishuRequired' });
           return;
       }
-      setRtTestStatus('正在测试飞书连接...');
+      setRtTestStatus('正在测试飞书连接...', { key: 'settings.realtime.feishuTesting' });
       try {
           const result = await FeishuManager.testConnection(rtFeishuAppId, rtFeishuAppSecret, rtFeishuBaseId, rtFeishuTableId);
           trackEvent('测试飞书连接', { result: result.success ? 'ok' : 'failed' });
           setRtTestStatus(result.message);
       } catch (e: any) {
           trackEvent('测试飞书连接', { result: 'network-error' });
-          setRtTestStatus(`网络错误: ${e.message}`);
+          setRtTestStatus(`网络错误: ${e.message}`, { key: 'settings.realtime.networkError', params: { error: String(e.message) } });
       }
   };
 
@@ -1815,14 +1812,14 @@ const Settings: React.FC = () => {
       const urlToUse = rtXhsMode === 'lite' ? XHS_LITE_URL : rtXhsLocalUrl;
       const cookieToUse = rtXhsMode === 'lite' ? (rtXhsCookie.trim() || undefined) : undefined;
       if (!urlToUse) {
-          setRtTestStatus('请填写服务器 URL');
+          setRtTestStatus('请填写服务器 URL', { key: 'settings.xhs.urlRequired' });
           return;
       }
       if (rtXhsMode === 'lite' && !cookieToUse) {
-          setRtTestStatus('请先粘贴小红书 cookie');
+          setRtTestStatus('请先粘贴小红书 cookie', { key: 'settings.xhs.cookieRequired' });
           return;
       }
-      setRtTestStatus('正在连接...');
+      setRtTestStatus('正在连接...', { key: 'settings.xhs.connecting' });
       try {
           const result = await XhsMcpClient.testConnection(
               urlToUse,
@@ -1838,6 +1835,7 @@ const Settings: React.FC = () => {
                   ? `${platformInfo} | ${result.nickname ? `账号: ${result.nickname}` : '已登录'}${result.userId ? ` (ID: ${result.userId})` : ''}${tokenInfo}`
                   : ' | 未登录，请检查 cookie 或登录小红书';
               setRtTestStatus(`连接成功! ${toolCount} 个功能可用${loginInfo}`);
+              setRtXhsTestInfo({ count: toolCount, loggedIn: Boolean(result.loggedIn), nickname: result.nickname, userId: result.userId, platform: result.platform, hasXsecToken: Boolean(result.xsecToken) });
               // 自动填充：只在用户未手动填写时覆盖
               if (result.nickname && !rtXhsNickname) setRtXhsNickname(result.nickname);
               if (result.userId && !rtXhsUserId) setRtXhsUserId(result.userId);
@@ -1859,11 +1857,11 @@ const Settings: React.FC = () => {
               syncAmsgToolConfigAndPrompts(nextConfig, { characters, userProfile, groups });
           } else {
               trackEvent('测试小红书桥接连接', { mode: rtXhsMode === 'lite' ? 'lite' : 'local', result: 'failed' });
-              setRtTestStatus(`连接失败: ${result.error}`);
+              setRtTestStatus(`连接失败: ${result.error}`, { key: 'settings.realtime.connectionFailed', params: { error: String(result.error) } });
           }
       } catch (e: any) {
           trackEvent('测试小红书桥接连接', { mode: rtXhsMode === 'lite' ? 'lite' : 'local', result: 'network-error' });
-          setRtTestStatus(`网络错误: ${e.message}`);
+          setRtTestStatus(`网络错误: ${e.message}`, { key: 'settings.realtime.networkError', params: { error: String(e.message) } });
       }
   };
 
@@ -2585,7 +2583,7 @@ const Settings: React.FC = () => {
                     onClick={() => { trackEvent('打开主动消息2.0配置'); setShowAmsg2Modal(true); }}
                     className="text-[10px] bg-violet-100 text-violet-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform"
                 >
-                    配置
+                    {t('settings.realtime.configure')}
                 </button>
             </div>
             <p className="text-xs text-slate-500 leading-relaxed">
@@ -3191,17 +3189,17 @@ const Settings: React.FC = () => {
             }
         >
             <p className="text-xs text-slate-500 mb-3 leading-relaxed">
-                让AI角色感知真实世界：天气、新闻热点、当前时间。角色可以根据天气关心你、聊聊最近的热点话题。
+                {t('settings.realtime.intro')}
             </p>
 
             <div className="grid grid-cols-5 gap-2 text-center">
                 <div className={`py-3 rounded-xl text-xs font-bold ${rtWeatherEnabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-50 text-slate-400'}`}>
                     <div className="text-lg mb-1">{rtWeatherEnabled ? <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/2600.png" className="w-5 h-5 inline" alt="" /> : <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f32b.png" className="w-5 h-5 inline" alt="" />}</div>
-                    天气
+                    {t('settings.realtime.weather')}
                 </div>
                 <div className={`py-3 rounded-xl text-xs font-bold ${rtNewsEnabled ? 'bg-blue-50 text-blue-600' : 'bg-slate-50 text-slate-400'}`}>
                     <div className="text-lg mb-1">{rtNewsEnabled ? <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4f0.png" className="w-5 h-5 inline" alt="" /> : <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4c4.png" className="w-5 h-5 inline" alt="" />}</div>
-                    新闻
+                    {t('settings.realtime.news')}
                 </div>
                 <div className={`py-3 rounded-xl text-xs font-bold ${rtNotionEnabled ? 'bg-orange-50 text-orange-600' : 'bg-slate-50 text-slate-400'}`}>
                     <div className="text-lg mb-1">{rtNotionEnabled ? <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4dd.png" className="w-5 h-5 inline" alt="" /> : <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4cb.png" className="w-5 h-5 inline" alt="" />}</div>
@@ -3209,11 +3207,11 @@ const Settings: React.FC = () => {
                 </div>
                 <div className={`py-3 rounded-xl text-xs font-bold ${rtFeishuEnabled ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-50 text-slate-400'}`}>
                     <div className="text-lg mb-1">{rtFeishuEnabled ? <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4d2.png" className="w-5 h-5 inline" alt="" /> : <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4cb.png" className="w-5 h-5 inline" alt="" />}</div>
-                    飞书
+                    {t('settings.realtime.feishu')}
                 </div>
                 <div className={`py-3 rounded-xl text-xs font-bold ${rtXhsEnabled ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-400'}`}>
                     <div className="text-lg mb-1">{rtXhsEnabled ? <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4d5.png" className="w-5 h-5 inline" alt="" /> : <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4cb.png" className="w-5 h-5 inline" alt="" />}</div>
-                    小红书
+                    {t('settings.realtime.xhs')}
                 </div>
             </div>
         </SettingsSection>
@@ -4274,9 +4272,9 @@ const Settings: React.FC = () => {
       {/* 实时感知配置 Modal */}
       <Modal
           isOpen={showRealtimeModal}
-          title="实时感知配置"
+          title={t('settings.realtime.title')}
           onClose={() => setShowRealtimeModal(false)}
-          footer={<button onClick={handleSaveRealtimeConfig} className="w-full py-3 bg-violet-500 text-white font-bold rounded-2xl shadow-lg">保存配置</button>}
+          footer={<button onClick={handleSaveRealtimeConfig} className="w-full py-3 bg-violet-500 text-white font-bold rounded-2xl shadow-lg">{t('settings.realtime.save')}</button>}
       >
           <div className="space-y-5 max-h-[60vh] overflow-y-auto overflow-x-hidden no-scrollbar">
               <UserHolidaySettings value={rtUserHolidays} onChange={setRtUserHolidays} />
@@ -4285,7 +4283,7 @@ const Settings: React.FC = () => {
                   <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                           <Sun size={20} weight="fill" />
-                          <span className="text-sm font-bold text-emerald-700">天气感知</span>
+                          <span className="text-sm font-bold text-emerald-700">{t('settings.realtime.weatherTitle')}</span>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer">
                           <input type="checkbox" checked={rtWeatherEnabled} onChange={e => setRtWeatherEnabled(e.target.checked)} className="sr-only peer" />
@@ -4295,14 +4293,14 @@ const Settings: React.FC = () => {
                   {rtWeatherEnabled && (
                       <div className="space-y-2">
                           <div>
-                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">OpenWeatherMap API Key（可选）</label>
-                              <input type="password" value={rtWeatherKey} onChange={e => setRtWeatherKey(e.target.value)} className="w-full bg-white/80 border border-emerald-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="留空则用免费的 Open-Meteo，无需注册" />
+                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">{t('settings.realtime.owm')}</label>
+                              <input type="password" value={rtWeatherKey} onChange={e => setRtWeatherKey(e.target.value)} className="w-full bg-white/80 border border-emerald-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder={t('settings.realtime.owmPlaceholder')} />
                           </div>
                           <div>
-                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">城市</label>
+                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">{t('settings.realtime.city')}</label>
                               <input type="text" value={rtWeatherCity} onChange={e => setRtWeatherCity(e.target.value)} className="w-full bg-white/80 border border-emerald-200 rounded-xl px-3 py-2 text-sm" placeholder="北京 / Beijing / Shanghai" />
                           </div>
-                          <button onClick={testWeatherApi} className="w-full py-2 bg-emerald-100 text-emerald-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试天气API</button>
+                          <button onClick={testWeatherApi} className="w-full py-2 bg-emerald-100 text-emerald-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">{t('settings.realtime.weatherTest')}</button>
                       </div>
                   )}
               </div>
@@ -4312,7 +4310,7 @@ const Settings: React.FC = () => {
                   <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                           <Newspaper size={20} weight="fill" />
-                          <span className="text-sm font-bold text-blue-700">新闻热点</span>
+                          <span className="text-sm font-bold text-blue-700">{t('settings.realtime.newsTitle')}</span>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer">
                           <input type="checkbox" checked={rtNewsEnabled} onChange={e => setRtNewsEnabled(e.target.checked)} className="sr-only peer" />
@@ -4321,7 +4319,7 @@ const Settings: React.FC = () => {
                   </div>
                   {rtNewsEnabled && (
                       <div className="space-y-2">
-                          <p className="text-xs text-blue-600/70">默认主源：中文多平台热榜（免鉴权，聊天时角色会自动捕捉热点）。选择要关注的平台：</p>
+                          <p className="text-xs text-blue-600/70">{t('settings.realtime.platforms')}</p>
                           <div className="flex flex-wrap gap-1.5">
                               {HOTNEWS_PLATFORM_OPTIONS.map(p => {
                                   const active = rtNewsPlatforms.includes(p.key);
@@ -4338,20 +4336,20 @@ const Settings: React.FC = () => {
                               })}
                           </div>
                           {rtNewsPlatforms.length === 0 && (
-                              <p className="text-[10px] text-rose-500/80">未选任何平台时会回落到 Brave / Hacker News。</p>
+                              <p className="text-[10px] text-rose-500/80">{t('settings.realtime.noPlatforms')}</p>
                           )}
                           <details className="border-t border-blue-200/50 pt-2 mt-1 group">
                               <summary className="text-[10px] font-bold text-slate-400 uppercase cursor-pointer select-none list-none flex items-center gap-1.5">
                                   <span className="transition-transform group-open:rotate-90">›</span>
-                                  Brave Search（回落源 · <span className="text-rose-400">不建议配置</span>）
+                                  {t('settings.realtime.braveBefore')}<span className="text-rose-400">{t('settings.realtime.notRecommended')}</span>）
                               </summary>
                               <div className="mt-2 space-y-1.5">
                                   <p className="text-[10px] text-slate-400/90 leading-relaxed">
-                                      上面的中文热榜在国内场景比 Brave 好用一万倍，<b className="text-slate-500">基本不需要配这个</b>。
-                                      它只是热榜彻底拉不到时的英文回落，配了反而可能盖掉中文热点。除非你清楚自己在做什么，否则留空即可。
+                                      {t('settings.realtime.braveIntro')}<b className="text-slate-500">{t('settings.realtime.braveStrong')}</b>。
+                                      {t('settings.realtime.braveHelp')}
                                   </p>
-                                  <input type="password" value={rtNewsApiKey} onChange={e => setRtNewsApiKey(e.target.value)} className="w-full bg-white/60 border border-slate-200 rounded-xl px-3 py-2 text-sm font-mono text-slate-500" placeholder="（不建议）brave.com/search/api" />
-                                  <p className="text-[10px] text-slate-400/70">仅当中文热榜拉取失败时才启用；都不可用时再兜底 Hacker News（英文）。</p>
+                                  <input type="password" value={rtNewsApiKey} onChange={e => setRtNewsApiKey(e.target.value)} className="w-full bg-white/60 border border-slate-200 rounded-xl px-3 py-2 text-sm font-mono text-slate-500" placeholder={t('settings.realtime.bravePlaceholder')} />
+                                  <p className="text-[10px] text-slate-400/70">{t('settings.realtime.fallback')}</p>
                               </div>
                           </details>
                       </div>
@@ -4363,7 +4361,7 @@ const Settings: React.FC = () => {
                   <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                           <NotePencil size={20} weight="fill" />
-                          <span className="text-sm font-bold text-orange-700">Notion 日记</span>
+                          <span className="text-sm font-bold text-orange-700">{t('settings.realtime.notionTitle')}</span>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer">
                           <input type="checkbox" checked={rtNotionEnabled} onChange={e => setRtNotionEnabled(e.target.checked)} className="sr-only peer" />
@@ -4374,25 +4372,25 @@ const Settings: React.FC = () => {
                       <div className="space-y-2">
                           <div>
                               <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Notion Integration Token</label>
-                              <input type="password" value={rtNotionKey} onChange={e => setRtNotionKey(e.target.value)} className="w-full bg-white/80 border border-orange-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="ntn_... 或 secret_..." />
+                              <input type="password" value={rtNotionKey} onChange={e => setRtNotionKey(e.target.value)} className="w-full bg-white/80 border border-orange-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder={t('settings.realtime.notionToken')} />
                           </div>
                           <div>
                               <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Database ID</label>
-                              <input type="text" value={rtNotionDbId} onChange={e => setRtNotionDbId(e.target.value)} className="w-full bg-white/80 border border-orange-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="从数据库URL复制" />
+                              <input type="text" value={rtNotionDbId} onChange={e => setRtNotionDbId(e.target.value)} className="w-full bg-white/80 border border-orange-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder={t('settings.realtime.notionDbPlaceholder')} />
                           </div>
-                          <button onClick={testNotionApi} className="w-full py-2 bg-orange-100 text-orange-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试Notion连接</button>
+                          <button onClick={testNotionApi} className="w-full py-2 bg-orange-100 text-orange-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">{t('settings.realtime.notionTest')}</button>
                           <div className="border-t border-orange-200/50 pt-2 mt-2">
-                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">笔记数据库 ID（可选）</label>
-                              <input type="text" value={rtNotionNotesDbId} onChange={e => setRtNotionNotesDbId(e.target.value)} className="w-full bg-white/80 border border-orange-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="用户日常笔记的数据库ID" />
+                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">{t('settings.realtime.notesId')}</label>
+                              <input type="text" value={rtNotionNotesDbId} onChange={e => setRtNotionNotesDbId(e.target.value)} className="w-full bg-white/80 border border-orange-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder={t('settings.realtime.notesPlaceholder')} />
                               <p className="text-[10px] text-orange-500/60 leading-relaxed mt-1">
-                                  填写后角色可以偶尔看到你的笔记标题，温馨地提起你写的内容。留空则不启用。
+                                  {t('settings.realtime.notesHelp')}
                               </p>
                           </div>
                           <p className="text-[10px] text-orange-500/70 leading-relaxed">
-                               1. 在 <a href="https://www.notion.so/my-integrations" target="_blank" className="underline">Notion开发者</a> 创建Integration（新版 Token 以 ntn_ 开头，老版以 secret_ 开头，都能用）<br/>
-                               2. 创建一个日记数据库，添加"Name"(标题)和"Date"(日期)属性<br/>
-                               3. 在数据库右上角菜单中 Connect 你的 Integration<br/>
-                               Token 保存在本机配置中；启用后，所选数据库的请求会由网络 Worker 转发，项目不主动留存日记内容。
+                               {t('settings.realtime.notion1before')}<a href="https://www.notion.so/my-integrations" target="_blank" className="underline">{t('settings.realtime.notionLink')}</a>{t('settings.realtime.notion1after')}<br/>
+                               {t('settings.realtime.notion2')}<br/>
+                               {t('settings.realtime.notion3')}<br/>
+                               {t('settings.realtime.notionPrivacy')}
                           </p>
                       </div>
                   )}
@@ -4403,8 +4401,8 @@ const Settings: React.FC = () => {
                   <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                           <Notebook size={20} weight="fill" />
-                          <span className="text-sm font-bold text-indigo-700">飞书日记</span>
-                          <span className="text-[9px] bg-indigo-100 text-indigo-500 px-1.5 py-0.5 rounded-full">中国区</span>
+                          <span className="text-sm font-bold text-indigo-700">{t('settings.realtime.feishuTitle')}</span>
+                          <span className="text-[9px] bg-indigo-100 text-indigo-500 px-1.5 py-0.5 rounded-full">{t('settings.realtime.china')}</span>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer">
                           <input type="checkbox" checked={rtFeishuEnabled} onChange={e => setRtFeishuEnabled(e.target.checked)} className="sr-only peer" />
@@ -4412,37 +4410,37 @@ const Settings: React.FC = () => {
                       </label>
                   </div>
                   <p className="text-[10px] text-indigo-500/70 leading-relaxed">
-                      Notion 的中国区替代方案，无需翻墙。使用飞书多维表格存储日记。
+                      {t('settings.realtime.feishuHelp')}
                   </p>
                   {rtFeishuEnabled && (
                       <div className="space-y-2">
                           <div>
-                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">飞书 App ID</label>
+                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">{t('settings.realtime.appId')}</label>
                               <input type="text" value={rtFeishuAppId} onChange={e => setRtFeishuAppId(e.target.value)} className="w-full bg-white/80 border border-indigo-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="cli_xxxxxxxx" />
                           </div>
                           <div>
-                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">飞书 App Secret</label>
+                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">{t('settings.realtime.appSecret')}</label>
                               <input type="password" value={rtFeishuAppSecret} onChange={e => setRtFeishuAppSecret(e.target.value)} className="w-full bg-white/80 border border-indigo-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="xxxxxxxxxxxxxxxx" />
                           </div>
                           <div>
-                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">多维表格 App Token</label>
-                              <input type="text" value={rtFeishuBaseId} onChange={e => setRtFeishuBaseId(e.target.value)} className="w-full bg-white/80 border border-indigo-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="从多维表格URL中获取" />
+                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">{t('settings.realtime.appToken')}</label>
+                              <input type="text" value={rtFeishuBaseId} onChange={e => setRtFeishuBaseId(e.target.value)} className="w-full bg-white/80 border border-indigo-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder={t('settings.realtime.basePlaceholder')} />
                           </div>
                           <div>
-                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">数据表 Table ID</label>
+                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">{t('settings.realtime.tableId')}</label>
                               <input type="text" value={rtFeishuTableId} onChange={e => setRtFeishuTableId(e.target.value)} className="w-full bg-white/80 border border-indigo-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="tblxxxxxxxx" />
                           </div>
-                           <button onClick={testFeishuApi} className="w-full py-2 bg-indigo-100 text-indigo-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试读取连接</button>
+                           <button onClick={testFeishuApi} className="w-full py-2 bg-indigo-100 text-indigo-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">{t('settings.realtime.feishuTest')}</button>
                            <p className="rounded-xl bg-amber-50 px-3 py-2 text-[10px] leading-relaxed text-amber-700">
-                               测试不会新增记录，只验证凭据、读取权限和 Table ID。读取成功但写入提示 Forbidden，说明还缺新增记录权限。
+                               {t('settings.realtime.feishuTestHelp')}
                            </p>
                            <p className="text-[10px] text-indigo-500/70 leading-relaxed">
-                                1. 在 <a href="https://open.feishu.cn/app" target="_blank" className="underline">飞书开放平台</a> 创建企业自建应用，获取 App ID 和 Secret<br/>
-                                2. 开通「查看、评论、编辑和管理多维表格」权限，创建并发布新版本，完成管理员审批<br/>
-                                3. 在目标多维表格的「添加文档应用」中加入该应用，并授予可编辑权限（开了高级权限时也要允许新增记录）<br/>
-                                4. 添加字段: 标题(文本)、内容(文本)、日期(日期)、心情(文本)、角色(文本)<br/>
-                                5. 从多维表格 URL 中获取 App Token 和 Table ID<br/>
-                                App Secret 保存在本机配置中；启用后，多维表格请求会由网络 Worker 转发，项目不主动留存表格内容。
+                                {t('settings.realtime.feishu1before')}<a href="https://open.feishu.cn/app" target="_blank" className="underline">{t('settings.realtime.feishuLink')}</a>{t('settings.realtime.feishu1after')}<br/>
+                                {t('settings.realtime.feishu2')}<br/>
+                                {t('settings.realtime.feishu3')}<br/>
+                                {t('settings.realtime.feishu4')}<br/>
+                                {t('settings.realtime.feishu5')}<br/>
+                                {t('settings.realtime.feishuPrivacy')}
                            </p>
                       </div>
                   )}
@@ -4453,8 +4451,8 @@ const Settings: React.FC = () => {
                   <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                           <Book size={20} weight="fill" />
-                          <span className="text-sm font-bold text-red-700">小红书 · 本地</span>
-                          <span className="text-[9px] bg-red-100 text-red-500 px-1.5 py-0.5 rounded-full">MCP 兼容 / Skills</span>
+                          <span className="text-sm font-bold text-red-700">{t('settings.xhs.local')}</span>
+                          <span className="text-[9px] bg-red-100 text-red-500 px-1.5 py-0.5 rounded-full">{t('settings.xhs.compat')}</span>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer">
                           <input type="checkbox" checked={rtXhsMcpEnabled && rtXhsMode === 'local'} onChange={e => { if (e.target.checked) { setRtXhsMcpEnabled(true); setRtXhsEnabled(true); setRtXhsMode('local'); } else { setRtXhsMcpEnabled(false); setRtXhsEnabled(false); } }} className="sr-only peer" />
@@ -4462,29 +4460,29 @@ const Settings: React.FC = () => {
                       </label>
                   </div>
                   <p className="text-[10px] text-red-500/70 leading-relaxed">
-                      本地模式继续可用：xiaohongshu-mcp 走 MCP 协议，xhs-bridge / Skills 走本地 /api。MCP 保留兼容，但不再承诺随其上游版本持续适配；新配置建议使用下方持续维护的 Lite。
+                      {t('settings.xhs.localHelp')}
                   </p>
                   {rtXhsMcpEnabled && rtXhsMode === 'local' && (
                       <div className="space-y-2">
                           <div>
-                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">服务器 URL</label>
+                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">{t('settings.xhs.url')}</label>
                               <input value={rtXhsLocalUrl} onChange={e => setRtXhsLocalUrl(e.target.value)} className="w-full bg-white/80 border border-red-200 rounded-xl px-3 py-2 text-[11px] font-mono" placeholder="http://localhost:18060/mcp" />
                           </div>
-                          <button onClick={testXhsMcp} className="w-full py-2 bg-red-100 text-red-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试连接</button>
+                          <button onClick={testXhsMcp} className="w-full py-2 bg-red-100 text-red-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">{t('settings.xhs.test')}</button>
                           <div className="grid grid-cols-2 gap-2">
                               <div>
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">小红书昵称</label>
-                                  <input value={rtXhsNickname} onChange={e => setRtXhsNickname(e.target.value)} className="w-full bg-white/80 border border-red-200 rounded-xl px-3 py-2 text-[11px]" placeholder="手动填写" />
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">{t('settings.xhs.nickname')}</label>
+                                  <input value={rtXhsNickname} onChange={e => setRtXhsNickname(e.target.value)} className="w-full bg-white/80 border border-red-200 rounded-xl px-3 py-2 text-[11px]" placeholder={t('settings.xhs.manual')} />
                               </div>
                               <div>
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">用户 ID</label>
-                                  <input value={rtXhsUserId} onChange={e => setRtXhsUserId(e.target.value)} className="w-full bg-white/80 border border-red-200 rounded-xl px-3 py-2 text-[11px] font-mono" placeholder="可选，用于查看主页" />
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">{t('settings.xhs.userId')}</label>
+                                  <input value={rtXhsUserId} onChange={e => setRtXhsUserId(e.target.value)} className="w-full bg-white/80 border border-red-200 rounded-xl px-3 py-2 text-[11px] font-mono" placeholder={t('settings.xhs.userOptional')} />
                               </div>
                           </div>
                           <p className="text-[10px] text-red-500/70 leading-relaxed">
-                              <b>MCP 模式:</b> 下载 xiaohongshu-mcp + 运行脚本，URL 填 http://localhost:18060/mcp（代理则 18061/mcp）<br/>
-                              <b>Skills 模式:</b> URL 填 http://localhost:18061/api（需 Python + xhs-bridge.mjs，额外支持视频/长文）<br/>
-                              系统按 URL 结尾自动判断（/mcp 或 /api）。
+                              <b>{t('settings.xhs.mcpLabel')}</b>{t('settings.xhs.mcpHelp')}<br/>
+                              <b>{t('settings.xhs.skillsLabel')}</b>{t('settings.xhs.skillsHelp')}<br/>
+                              {t('settings.xhs.detect')}
                           </p>
                       </div>
                   )}
@@ -4495,46 +4493,46 @@ const Settings: React.FC = () => {
                   <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                           <Book size={20} weight="fill" />
-                          <span className="text-sm font-bold text-rose-700">小红书 Lite</span>
-                          <span className="text-[9px] bg-rose-100 text-rose-500 px-1.5 py-0.5 rounded-full">持续维护</span>
+                          <span className="text-sm font-bold text-rose-700">{t('settings.xhs.lite')}</span>
+                          <span className="text-[9px] bg-rose-100 text-rose-500 px-1.5 py-0.5 rounded-full">{t('settings.xhs.maintained')}</span>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer">
-                          <input type="checkbox" checked={rtXhsMcpEnabled && rtXhsMode === 'lite'} onChange={e => { if (e.target.checked) { if (!window.confirm(XHS_RISK_TEXT + '\n\n确定要开启吗？')) return; setRtXhsMcpEnabled(true); setRtXhsEnabled(true); setRtXhsMode('lite'); } else { setRtXhsMcpEnabled(false); setRtXhsEnabled(false); } }} className="sr-only peer" />
+                          <input type="checkbox" checked={rtXhsMcpEnabled && rtXhsMode === 'lite'} onChange={e => { if (e.target.checked) { if (!window.confirm(XHS_RISK_TEXT + '\n\n' + t('settings.xhs.enable'))) return; setRtXhsMcpEnabled(true); setRtXhsEnabled(true); setRtXhsMode('lite'); } else { setRtXhsMcpEnabled(false); setRtXhsEnabled(false); } }} className="sr-only peer" />
                           <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-rose-500"></div>
                       </label>
                   </div>
                   <p className="text-[10px] text-rose-500/70 leading-relaxed">
-                      免电脑、免扫码：粘贴一次小红书 / RedNote cookie，即可搜索、浏览、看详情、互动和发帖(带图)。地址已内置，无需填写。
+                      {t('settings.xhs.liteHelp')}
                   </p>
                   <p className="text-[10px] text-amber-700 leading-relaxed bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">{XHS_RISK_TEXT}</p>
                   {rtXhsMcpEnabled && rtXhsMode === 'lite' && (
                       <div className="space-y-2">
                           <div>
-                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">小红书 Cookie</label>
-                              <textarea value={rtXhsCookie} onChange={e => { setRtXhsCookie(e.target.value); setRtXhsPlatform(undefined); }} rows={2} className="w-full bg-white/80 border border-rose-200 rounded-xl px-3 py-2 text-[10px] font-mono resize-y" placeholder="a1=...; web_session=...; （从浏览器登录后复制完整 cookie）" />
+                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">{t('settings.xhs.cookie')}</label>
+                              <textarea value={rtXhsCookie} onChange={e => { setRtXhsCookie(e.target.value); setRtXhsPlatform(undefined); }} rows={2} className="w-full bg-white/80 border border-rose-200 rounded-xl px-3 py-2 text-[10px] font-mono resize-y" placeholder={t('settings.xhs.cookiePlaceholder')} />
                           </div>
-                          <button onClick={testXhsMcp} className="w-full py-2 bg-rose-100 text-rose-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试连接</button>
+                          <button onClick={testXhsMcp} className="w-full py-2 bg-rose-100 text-rose-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">{t('settings.xhs.test')}</button>
                           <div className="grid grid-cols-2 gap-2">
                               <div>
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">小红书昵称</label>
-                                  <input value={rtXhsNickname} onChange={e => setRtXhsNickname(e.target.value)} className="w-full bg-white/80 border border-rose-200 rounded-xl px-3 py-2 text-[11px]" placeholder="测试连接后自动获取" />
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">{t('settings.xhs.nickname')}</label>
+                                  <input value={rtXhsNickname} onChange={e => setRtXhsNickname(e.target.value)} className="w-full bg-white/80 border border-rose-200 rounded-xl px-3 py-2 text-[11px]" placeholder={t('settings.xhs.autoAfter')} />
                               </div>
                               <div>
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">用户 ID</label>
-                                  <input value={rtXhsUserId} onChange={e => setRtXhsUserId(e.target.value)} className="w-full bg-white/80 border border-rose-200 rounded-xl px-3 py-2 text-[11px] font-mono" placeholder="自动获取" />
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">{t('settings.xhs.userId')}</label>
+                                  <input value={rtXhsUserId} onChange={e => setRtXhsUserId(e.target.value)} className="w-full bg-white/80 border border-rose-200 rounded-xl px-3 py-2 text-[11px] font-mono" placeholder={t('settings.xhs.auto')} />
                               </div>
                           </div>
                           <div>
-                              <button type="button" onClick={() => { if (!rtXhsGuideOpen) trackEvent('展开获取 cookie 教程'); setRtXhsGuideOpen(v => !v); }} className="text-[11px] font-bold text-rose-600 underline">📖 点击获取 cookie 教程 {rtXhsGuideOpen ? '▲' : '▼'}</button>
+                              <button type="button" onClick={() => { if (!rtXhsGuideOpen) trackEvent('展开获取 cookie 教程'); setRtXhsGuideOpen(v => !v); }} className="text-[11px] font-bold text-rose-600 underline">{t('settings.xhs.guideButton')}{rtXhsGuideOpen ? '▲' : '▼'}</button>
                               {rtXhsGuideOpen && (
                                   <div className="mt-1 bg-white/70 rounded-lg p-2 space-y-1.5">
                                       <pre className="text-[10px] text-slate-600 whitespace-pre-wrap font-sans leading-relaxed">{XHS_COOKIE_GUIDE}</pre>
-                                      <button type="button" onClick={async () => { try { await navigator.clipboard.writeText(XHS_COOKIE_GUIDE); trackEvent('复制 cookie 教程文本', { result: 'copied' }); addToast('教程已复制，可粘贴去问别的 AI', 'success'); } catch { trackEvent('复制 cookie 教程文本', { result: 'clipboard-failed' }); addToast('复制失败，请长按手动选择', 'error'); } }} className="w-full py-1.5 bg-rose-100 text-rose-600 text-[11px] font-bold rounded-lg active:scale-95 transition-transform">复制教程</button>
+                                      <button type="button" onClick={async () => { try { await navigator.clipboard.writeText(XHS_COOKIE_GUIDE); trackEvent('复制 cookie 教程文本', { result: 'copied' }); addToast(t('settings.xhs.copied'), 'success'); } catch { trackEvent('复制 cookie 教程文本', { result: 'clipboard-failed' }); addToast(t('settings.xhs.copyFailed'), 'error'); } }} className="w-full py-1.5 bg-rose-100 text-rose-600 text-[11px] font-bold rounded-lg active:scale-95 transition-transform">{t('settings.xhs.copy')}</button>
                                   </div>
                               )}
                           </div>
                           <p className="text-[10px] text-slate-400 leading-relaxed bg-slate-100/60 rounded-lg px-2 py-1.5">
-                              使用说明：Cookie 保存在本机配置中；使用 Lite 时会随请求发送到网络 Worker，用于登录校验和接口签名，当前开源 Worker 不主动留存。建议使用小号，并在退出账号或 Cookie 失效后及时更新。
+                              {t('settings.xhs.privacy')}
                           </p>
                       </div>
                   )}
@@ -4623,7 +4621,7 @@ const Settings: React.FC = () => {
               {/* 测试状态 */}
               {rtTestStatus && (
                   <div className={`p-3 rounded-xl text-xs font-medium text-center ${rtTestStatus.includes('成功') ? 'bg-emerald-100 text-emerald-700' : rtTestStatus.includes('失败') || rtTestStatus.includes('错误') ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-600'}`}>
-                      {rtTestStatus}
+                      {rtXhsTestInfo ? formatXhsConnectionStatus(locale, rtXhsTestInfo) : rtTestUi ? t(rtTestUi.key, rtTestUi.params) : rtTestStatus}
                   </div>
               )}
           </div>

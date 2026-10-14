@@ -41,11 +41,13 @@ it('clears previous localized status when another tool returns an unknown raw me
   const body = source.slice(start, source.indexOf('\n  };', start) + 5);
   const js = ts.transpileModule(body + '\nreturn setRtTestStatus;', { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
   const raw = vi.fn(), ui = vi.fn();
-  const setter = new Function('setRawRtTestStatus', 'setRtTestUi', js)(raw, ui);
+  const xhs = vi.fn();
+  const setter = new Function('setRawRtTestStatus', 'setRtTestUi', 'setRtXhsTestInfo', js)(raw, ui, xhs);
   setter('正在测试...', { key: 'settings.realtime.testing' });
   setter('raw service message');
   expect(raw).toHaveBeenLastCalledWith('raw service message');
   expect(ui).toHaveBeenLastCalledWith(null);
+  expect(xhs).toHaveBeenLastCalledWith(null);
 });
 it('keeps service field names, links and all form values unchanged', () => {
   for (const field of ['rtWeatherKey', 'rtWeatherCity', 'rtNewsApiKey', 'rtNotionKey', 'rtNotionDbId', 'rtNotionNotesDbId', 'rtFeishuAppId', 'rtFeishuAppSecret', 'rtFeishuBaseId', 'rtFeishuTableId']) expect(source).toContain(`value={${field}}`);
@@ -54,5 +56,5 @@ it('keeps service field names, links and all form values unchanged', () => {
   for (const name of ['标题', '内容', '日期', '心情', '角色']) expect(translateUi('ja-JP', 'settings.realtime.feishu4')).toContain(name);
   for (const name of ['Name', 'Date']) expect(translateUi('ja-JP', 'settings.realtime.notion2')).toContain(name);
   expect(source).toContain("rtTestStatus.includes('成功')");
-  expect(source).toContain('{rtTestUi ? t(rtTestUi.key, rtTestUi.params) : rtTestStatus}');
+  expect(source).toContain('rtTestUi ? t(rtTestUi.key, rtTestUi.params) : rtTestStatus}');
 });
