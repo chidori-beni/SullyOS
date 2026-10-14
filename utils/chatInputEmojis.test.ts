@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, createElement, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import ChatInputArea from '../components/chat/ChatInputArea';
+import { UiLocaleProvider } from '../context/UiLocaleContext';
 import type { Emoji } from '../types';
 import { DB } from './db';
 import { dataUrlToBlob, putImageBlob } from './blobRef';
@@ -48,7 +49,7 @@ function clickLabel(label: string) {
     act(() => container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!.click());
 }
 async function render(emojis: Emoji[]) {
-    await act(async () => { root.render(createElement(Panel, { emojis })); });
+    await act(async () => { root.render(createElement(UiLocaleProvider, null, createElement(Panel, { emojis }))); });
 }
 
 beforeEach(() => {
@@ -68,7 +69,7 @@ describe('表情面板的记录身份与图片复用', () => {
         const ref = await putImageBlob(dataUrlToBlob(PNG));
         const emojis = [{name: '缓存', url: ref, categoryId: 'a'}];
         const show = async (showPanel: 'none'|'emojis'|'actions') => {
-            await act(async () => { root.render(createElement(Panel, {emojis, showPanel})); });
+            await act(async () => { root.render(createElement(UiLocaleProvider, null, createElement(Panel, {emojis, showPanel}))); });
         };
         await show('none'); expect(thumbnails()).toHaveLength(0);
         await show('emojis');

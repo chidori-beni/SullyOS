@@ -1,3 +1,4 @@
+import { useUiLocale } from '../../context/UiLocaleContext';
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CaretLeft, Lightning, Stop } from '@phosphor-icons/react';
@@ -101,6 +102,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     chromeStyle = 'soft',
     acnh = false,
 }) => {
+    const { t: uiT } = useUiLocale();
     const buffs: CharacterBuff[] = hideBuffs ? [] : (activeCharacter.activeBuffs || []);
     const [openBuff, setOpenBuff] = useState<CharacterBuff | null>(null);
     const [isBuffListExpanded, setIsBuffListExpanded] = useState(false);
@@ -263,15 +265,15 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     // 在线状态由独立的外观设置决定，头部风格不能覆盖它。
     const onlineStatusNode = statusStyle === 'pill' ? (
             <div className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold border ${isDarkHeader ? 'bg-emerald-500/20 text-emerald-200 border-emerald-400/20' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/25' : 'bg-emerald-50 text-emerald-500 border-emerald-100'}`}>
-                {statusText ?? 'online'}
+                {statusText ?? uiT('chat.main.online')}
             </div>
         ) : statusStyle === 'dot' ? (
             <div className={`flex items-center gap-1 text-[10px] ${secondaryTextClass}`}>
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                <span>{statusText ?? 'Online'}</span>
+                <span>{statusText ?? uiT('chat.main.online')}</span>
             </div>
         ) : (
-            <div className={`text-[10px] uppercase ${secondaryTextClass}`}>{statusText ?? 'Online'}</div>
+            <div className={`text-[10px] uppercase ${secondaryTextClass}`}>{statusText ?? uiT('chat.main.online')}</div>
         );
 
     const triggerIconNode = triggerIcon === 'stop'
@@ -308,7 +310,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                         <button
                             onClick={(e) => { e.stopPropagation(); setIsBuffListExpanded((prev) => !prev); }}
                             className={`shrink-0 min-w-[22px] text-[8px] leading-none px-1 py-[3px] rounded-[10px] font-bold border transition-colors ${acnh ? 'border-[#e6dab4] text-[#6b5a3e] bg-[#fbf4de]' : 'border-slate-300 text-slate-500 bg-slate-100/90 hover:bg-slate-200/80'}`}
-                            title="查看全部状态"
+                            title={uiT('chat.main.allStates')}
                         >
                             +{hiddenBuffCount}
                         </button>
@@ -346,12 +348,12 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
             )}
             {isEmotionEvaluating && (
                 <div className={`text-[9px] px-1.5 py-0.5 rounded-md font-semibold border animate-pulse ${isDarkHeader ? 'bg-violet-500/15 text-violet-200 border-violet-400/20' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/20' : 'bg-violet-50/95 text-violet-500 border-violet-200'}`}>
-                    情绪分析中
+                    {uiT('chat.main.emotionActive')}
                 </div>
             )}
             {isMemoryPalaceProcessing && (
                 <div className={`text-[9px] px-1.5 py-0.5 rounded-md font-semibold border animate-pulse ${isDarkHeader ? 'bg-indigo-500/15 text-indigo-200 border-indigo-400/20' : isPixelHeader ? 'bg-[#f5f3ff] text-[#4338ca] border-[#4338ca]/20' : 'bg-indigo-50/95 text-indigo-600 border-indigo-200'}`}>
-                    {memoryPalaceStatusText || '记忆整理中'}
+                    {memoryPalaceStatusText || uiT('chat.main.memoryProcessing')}
                 </div>
             )}
         </div>
@@ -386,7 +388,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                     )}
                     {isEmotionEvaluating && (
                         <div className={`text-[9px] px-1.5 py-0.5 rounded-md font-semibold border animate-pulse ${isDarkHeader ? 'bg-violet-500/15 text-violet-200 border-violet-400/20' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/20' : 'bg-violet-50 text-violet-500 border-violet-200'}`}>
-                            情绪分析中
+                            {uiT('chat.main.emotionActive')}
                         </div>
                     )}
                 </div>
@@ -413,8 +415,8 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
             )}
             {selectionMode ? (
                 <div className="flex items-center justify-between w-full">
-                    <button onClick={onCancelSelection} className={`text-sm font-bold px-2 py-1 ${secondaryTextClass}`}>取消</button>
-                    <span className={`text-sm font-bold ${primaryTextClass}`}>已选 {selectedCount} 项</span>
+                    <button onClick={onCancelSelection} className={`text-sm font-bold px-2 py-1 ${secondaryTextClass}`}>{uiT('chat.main.cancel')}</button>
+                    <span className={`text-sm font-bold ${primaryTextClass}`}>{uiT('chat.main.selected', { count: selectedCount })}</span>
                     <div className="w-10" />
                 </div>
             ) : useCenteredLayout ? (
@@ -436,7 +438,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                     </div>
 
                     {showTrigger && !hideTrigger && (
-                        <button data-guide="generate" onClick={onTriggerAI} className={`sully-chat-trigger absolute right-0 bottom-2 p-2 ${actionButtonClass}`} title={triggerIcon === 'stop' ? '停止生成' : '触发 AI'}>
+                        <button data-guide="generate" onClick={onTriggerAI} className={`sully-chat-trigger absolute right-0 bottom-2 p-2 ${actionButtonClass}`} title={triggerIcon === 'stop' ? uiT('chat.main.stop') : uiT('chat.main.trigger')}>
                             {triggerIconNode}
                         </button>
                     )}
@@ -463,7 +465,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                         </button>
                     )}
                     {showTrigger && (
-                        <button data-guide="generate" onClick={onTriggerAI} className={`sully-chat-trigger p-2 ${extraAction ? '' : 'ml-auto'} ${actionButtonClass}`} title={triggerIcon === 'stop' ? '停止生成' : '触发 AI'}>
+                        <button data-guide="generate" onClick={onTriggerAI} className={`sully-chat-trigger p-2 ${extraAction ? '' : 'ml-auto'} ${actionButtonClass}`} title={triggerIcon === 'stop' ? uiT('chat.main.stop') : uiT('chat.main.trigger')}>
                             {triggerIconNode}
                         </button>
                     )}
@@ -472,7 +474,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
 
             {isBuffListExpanded && hiddenBuffCount > 0 && (
                 <div ref={buffPanelRef} className="absolute top-full left-4 right-4 mt-1 bg-white rounded-xl shadow-lg border border-slate-200 p-3 z-40">
-                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">全部状态</div>
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">{uiT('chat.main.allStates')}</div>
                     <div className="max-h-36 overflow-y-auto pr-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                         <div className="flex flex-wrap gap-1.5">
                             {buffs.map((buff) => (
@@ -507,7 +509,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                             </span>
                             <div className="text-xs font-bold tracking-wide" style={{ color: openBuff.color || '#db2777' }}>
                                 {intensityDots(openBuff.intensity)}{' '}
-                                {normalizeIntensity(openBuff.intensity) === 1 ? '轻微' : normalizeIntensity(openBuff.intensity) === 2 ? '中等' : '强烈'}
+                                {normalizeIntensity(openBuff.intensity) === 1 ? uiT('chat.main.mild') : normalizeIntensity(openBuff.intensity) === 2 ? uiT('chat.main.medium') : uiT('chat.main.strong')}
                             </div>
                         </div>
                         <button onClick={() => setOpenBuff(null)} className="text-slate-300 hover:text-slate-500 text-lg leading-none px-1">
@@ -517,7 +519,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                     {openBuff.description ? (
                         <p className="text-sm text-slate-600 leading-relaxed">{openBuff.description}</p>
                     ) : (
-                        <p className="text-xs text-slate-400 italic">暂无详情</p>
+                        <p className="text-xs text-slate-400 italic">{uiT('chat.main.noDetails')}</p>
                     )}
                 </div>
             )}
@@ -529,11 +531,11 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                             <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-rose-100 to-red-100 text-xl shadow-inner">
                                 {confirmDeleteBuff.emoji || '🗑'}
                             </div>
-                            <div className="font-bold text-slate-800 text-sm">删除情绪状态</div>
+                            <div className="font-bold text-slate-800 text-sm">{uiT('chat.main.deleteBuff')}</div>
                             <div className="text-xs text-slate-500 mt-1 leading-relaxed">
-                                确定要删除“{confirmDeleteBuff.label}”吗？
+                                {uiT('chat.main.deleteBuffConfirm', { name: confirmDeleteBuff.label })}
                                 <br />
-                                对应的提示也会一起移除。
+                                {uiT('chat.main.buffPrompt')}
                             </div>
                         </div>
                         <div className="flex gap-2.5">
@@ -541,13 +543,13 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                                 onClick={() => setConfirmDeleteBuff(null)}
                                 className="flex-1 py-2.5 text-sm font-semibold text-slate-600 bg-slate-100 rounded-2xl hover:bg-slate-200 transition-colors"
                             >
-                                取消
+                                {uiT('chat.main.cancel')}
                             </button>
                             <button
                                 onClick={handleConfirmDelete}
                                 className="flex-1 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-rose-500 to-red-500 rounded-2xl hover:from-rose-600 hover:to-red-600 shadow-lg shadow-red-200/80 transition-all"
                             >
-                                删除
+                                {uiT('chat.main.delete')}
                             </button>
                         </div>
                     </div>

@@ -1,4 +1,5 @@
 import EmojiExportDialog from './EmojiExportDialog';
+import { useUiLocale } from '../../context/UiLocaleContext';
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import TokenImg from '../os/TokenImg';
 import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, Heartbeat, PencilSimple, Alarm, Sparkle, FadersHorizontal, LinkSimple, Star, Waveform, Lightning, Stop, CornersOut, CornersIn, Briefcase } from '@phosphor-icons/react';
@@ -140,6 +141,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     chromeStyle = 'soft',
     acnh = false,
 }) => {
+    const { t: uiT } = useUiLocale();
     const chatImageInputRef = useRef<HTMLInputElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fullscreenTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -644,16 +646,16 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         {exportEmojis && <EmojiExportDialog emojis={exportEmojis} onClose={() => setExportEmojis(null)} />}
         {/* 辅助提示保持在输入栏外，避免改变社区 CSS 的 > div:first-child / nth-child 目标。 */}
         {suggestedEmojis.length > 0 && (
-            <div ref={suggestionsRef} role="region" aria-label="表情包联想"
+            <div ref={suggestionsRef} role="region" aria-label={uiT('chat.main.suggestions')}
                 className={`sully-chat-emoji-suggestions sully-emoji-suggestions shrink-0 relative z-40 ${shellClass} border-b px-4 pb-2 pt-2 ${isDiscordStyle ? 'border-white/10 bg-slate-900 text-slate-300' : isPixelStyle ? 'border-[#8f674a]/20 text-[#8f674a]' : 'border-slate-100 text-slate-500'}`}>
                 <div className="flex items-center justify-between gap-2">
-                    <span className="text-[10px]">表情联想 · 点击发送</span>
-                    <button type="button" aria-label="收起表情联想" onClick={() => setDismissedSuggestionInput(input)}
+                    <span className="text-[10px]">{uiT('chat.main.suggestionsHelp')}</span>
+                    <button type="button" aria-label={uiT('chat.main.hideSuggestions')} onClick={() => setDismissedSuggestionInput(input)}
                         className="-mr-2 flex h-8 w-8 items-center justify-center rounded-full text-base hover:bg-slate-400/10">×</button>
                 </div>
                 <div className="flex gap-2 overflow-x-auto overscroll-x-contain pb-1">
                     {suggestedEmojis.map(emoji => (
-                        <button key={emoji.url} type="button" aria-label={`发送表情：${emoji.name}`} title={emoji.name}
+                        <button key={emoji.url} type="button" aria-label={uiT('chat.main.sendEmoji', { name: emoji.name })} title={emoji.name}
                             onMouseDown={event => event.preventDefault()}
                             onClick={() => {
                                 setDismissedSuggestionInput(input);
@@ -670,8 +672,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         )}
         {autoReplySeconds !== null && !selectionMode && (
             <div className={`sully-chat-auto-reply shrink-0 relative z-40 flex min-h-10 items-center justify-center gap-1 px-4 text-xs text-slate-500 ${shellClass}`}>
-                <span role="status">即将回复 · {autoReplySeconds} 秒</span>
-                <button type="button" onClick={onCancelAutoReply} className="min-h-11 px-3 font-bold text-primary" aria-label="取消自动回复">取消</button>
+                <span role="status">{uiT('chat.main.autoReply', { seconds: autoReplySeconds ?? 0 })}</span>
+                <button type="button" onClick={onCancelAutoReply} className="min-h-11 px-3 font-bold text-primary" aria-label={uiT('chat.main.cancelAuto')}>{uiT('chat.main.cancel')}</button>
             </div>
         )}
         <div className={`sully-chat-inputbar ${shellClass} pb-safe shrink-0 z-40 relative`}>
@@ -682,11 +684,11 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             type="button"
                             onClick={() => { void onFavoriteSelected?.(); trackEvent('收藏选中的内容'); }}
                             disabled={favoriteSaving || favoriteEligibleCount === 0}
-                            title={favoriteSkippedCount > 0 ? `将收藏 ${favoriteEligibleCount} 条内容，跳过 ${favoriteSkippedCount} 条暂不支持的消息` : undefined}
+                            title={favoriteSkippedCount > 0 ? uiT('chat.main.favoriteHelp', { count: favoriteEligibleCount, skipped: favoriteSkippedCount }) : undefined}
                             className={`flex-1 min-w-[7.2rem] py-3 font-bold rounded-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-1.5 ${favoriteSaving || favoriteEligibleCount === 0 ? 'bg-amber-100 text-amber-400 shadow-none' : 'bg-gradient-to-r from-amber-400 to-orange-500 text-white shadow-amber-200'}`}
                         >
                             <Star className="w-5 h-5" weight="fill" />
-                            {favoriteSaving ? '收藏中…' : favoriteEligibleCount > 1 ? `收藏为一组 (${favoriteEligibleCount})` : '收藏内容 (1)'}
+                            {favoriteSaving ? uiT('chat.main.savingFavorite') : favoriteEligibleCount > 1 ? uiT('chat.main.favoriteGroup', { count: favoriteEligibleCount }) : uiT('chat.main.favoriteOne')}
                         </button>
                     )}
                     {onForwardSelected && (
@@ -696,7 +698,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             className={`flex-1 py-3 font-bold rounded-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 ${selectedCount === 0 ? 'bg-slate-200 text-slate-400 shadow-none' : 'bg-gradient-to-r from-blue-500 to-indigo-500 text-white shadow-blue-200'}`}
                         >
                             <ShareNetwork className="w-5 h-5" weight="bold" />
-                            转发 ({selectedCount})
+                            {uiT('chat.main.forwardSelected', { count: selectedCount })}
                         </button>
                     )}
                     <button
@@ -704,16 +706,16 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                         className={`${onForwardSelected ? 'flex-1' : 'w-full'} py-3 bg-red-500 text-white font-bold rounded-xl shadow-lg active:scale-95 transition-transform flex items-center justify-center gap-2`}
                     >
                         <Trash className="w-5 h-5" weight="bold" />
-                        删除 ({selectedCount})
+                        {uiT('chat.main.deleteSelected', { count: selectedCount })}
                     </button>
                 </div>
             ) : (
                 <div className="sully-chat-composer p-3 px-4 flex gap-2 items-end relative">
-                    <button type="button" onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className={`sully-chat-actions-button ${actionButtonClass}`} aria-label="更多功能">
+                    <button type="button" onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className={`sully-chat-actions-button ${actionButtonClass}`} aria-label={uiT('chat.main.more')}>
                         <Plus className="w-5 h-5" weight="bold" />
                     </button>
                     {onOpenVoiceInput && showVoiceButton && (
-                        <button type="button" onClick={onOpenVoiceInput} className={actionButtonClass} title="发送语音" aria-label="发送语音">
+                        <button type="button" onClick={onOpenVoiceInput} className={actionButtonClass} title={uiT('chat.main.voiceSend')} aria-label={uiT('chat.main.voiceSend')}>
                             <Waveform className="w-5 h-5" weight="bold" />
                         </button>
                     )}
@@ -735,14 +737,14 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 autoCorrect="on"
                                 autoCapitalize="sentences"
                                 className={`sully-chat-textarea flex-1 min-w-0 bg-transparent px-3 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-36 overscroll-contain ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`}
-                                placeholder="Message..."
+                                placeholder={uiT('chat.main.messagePlaceholder')}
                                 /* 高度完全交给 syncTextareaHeight 命令式管理。这里再写 inline height
                                    会和它打架（React 重渲染时把量好的高度冲回 auto，出现半行/撑高的抽风）。
                                    只保留一个最小高度兜底，保证字体没量准时 placeholder 也不会被裁。 */
                                 style={{ minHeight: '2.75rem' }}
                             />
                             {isInputOverflowing && (
-                                <button type="button" onClick={openFullscreenEditor} className={actionButtonClass} title="放大编辑" aria-label="放大编辑">
+                                <button type="button" onClick={openFullscreenEditor} className={actionButtonClass} title={uiT('chat.main.expandEditor')} aria-label={uiT('chat.main.expandEditor')}>
                                     <CornersOut className="w-5 h-5" weight="bold" />
                                 </button>
                             )}
@@ -751,15 +753,15 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                     type="button"
                                     onClick={onTriggerAI}
                                     className={actionButtonClass}
-                                    title={triggerIcon === 'stop' ? '停止生成' : '触发 AI'}
-                                    aria-label={triggerIcon === 'stop' ? '停止生成' : '触发 AI'}
+                                    title={triggerIcon === 'stop' ? uiT('chat.main.stop') : uiT('chat.main.trigger')}
+                                    aria-label={triggerIcon === 'stop' ? uiT('chat.main.stop') : uiT('chat.main.trigger')}
                                 >
                                     {triggerIcon === 'stop'
                                         ? <Stop className="w-5 h-5" weight="fill" />
                                         : <Lightning className="w-5 h-5" weight="bold" />}
                                 </button>
                             )}
-                            <button type="button" onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={actionButtonClass} title="表情包" aria-label="表情包">
+                            <button type="button" onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={actionButtonClass} title={uiT('chat.main.emojis')} aria-label={uiT('chat.main.emojis')}>
                                 <Smiley className="w-5 h-5" weight="bold" />
                             </button>
                         </div>
@@ -772,11 +774,11 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             onClick={isGenerateButton ? onGenerate : sendFromComposer}
                             disabled={primaryButtonDisabled}
                             className={`sully-chat-send-button ${sendButtonClass} ${primaryButtonDisabled ? 'opacity-45 shadow-none' : ''}`}
-                            aria-label={isGenerateButton ? (isTyping ? '正在生成回复' : '生成回复') : '发送'}
-                            title={isGenerateButton ? (isTyping ? '正在生成回复' : '让对方回复已发送的消息') : '发送文字'}
+                            aria-label={isGenerateButton ? (isTyping ? uiT('chat.main.generatingReply') : uiT('chat.main.generateReply')) : uiT('chat.main.send')}
+                            title={isGenerateButton ? (isTyping ? uiT('chat.main.generatingReply') : uiT('chat.main.replySent')) : uiT('chat.main.sendText')}
                         >
                             {sendButtonStyle === 'pill'
-                                ? <span>{isGenerateButton ? (isTyping ? '生成中' : '生成') : '发送'}</span>
+                                ? <span>{isGenerateButton ? (isTyping ? uiT('chat.main.generating') : uiT('chat.main.generate')) : uiT('chat.main.send')}</span>
                                 : isGenerateButton
                                     ? <Lightning className={`w-5 h-5 ${isTyping ? 'animate-pulse' : ''}`} weight="fill" />
                                     : <PaperPlaneTilt className="w-5 h-5" weight="fill" />}
@@ -853,7 +855,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                     <div className="flex h-10 shrink-0 items-center pl-1 pr-3">
                                         <button
                                             onClick={(e) => { e.stopPropagation(); setEmojiSelectionMode(true); }}
-                                            aria-label="批量管理表情"
+                                            aria-label={uiT('chat.main.manageEmojis')}
                                             className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors shadow-sm ${
                                                 isPixelStyle ? 'bg-[#c99872] text-[#fff7ed] hover:bg-[#b07d57]' :
                                                 isDiscordStyle ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' :
@@ -878,7 +880,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                                 }
                                             }} 
                                             disabled={selectedEmojis.length === 0}
-                                            aria-label="删除选中的表情"
+                                            aria-label={uiT('chat.main.deleteEmojis')}
                                             className={`${emojiImportTileClass} !bg-red-50 !border-red-400 !text-red-500 ${selectedEmojis.length === 0 ? 'opacity-40 cursor-not-allowed' : 'active:scale-95'}`}
                                         >
                                             <Trash className="w-8 h-8" weight="fill" />
@@ -886,7 +888,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                     ) : (
                                         <button onClick={() => onPanelAction('emoji-import')} className={emojiImportTileClass}>+</button>
                                     )}
-                                    {emojiSelectionMode && <button onClick={() => setExportEmojis([...selectedEmojis])} disabled={!selectedEmojis.length} aria-label="下载选中的表情" className={`${emojiImportTileClass} text-xs disabled:opacity-40`}>下载原图</button>}
+                                    {emojiSelectionMode && <button onClick={() => setExportEmojis([...selectedEmojis])} disabled={!selectedEmojis.length} aria-label={uiT('chat.main.downloadEmojis')} className={`${emojiImportTileClass} text-xs disabled:opacity-40`}>{uiT('chat.main.downloadOriginal')}</button>}
                                     {retainedEmojis.map((e) => {
                                         const isSelected = selectedEmojiNames.has(e.name);
                                         const hidden = !visibleEmojiNames.has(e.name);
@@ -925,7 +927,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                     <div className={`py-3 flex items-center justify-center gap-3 text-[10px] ${emojiLabelClass}`}>
                                         <button
                                             type="button"
-                                            aria-label="上一页表情"
+                                            aria-label={uiT('chat.main.prevEmojis')}
                                             disabled={emojiPage === 0}
                                             onClick={() => setEmojiPaging({category: activeCategory, page: Math.max(0, emojiPage - 1)})}
                                             className="w-8 h-7 rounded-full border border-current/20 disabled:opacity-30 active:scale-95"
@@ -933,11 +935,11 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                             ‹
                                         </button>
                                         <span>
-                                            {emojiPage + 1}/{emojiPageCount} 页 · {emojiPageStart + 1}-{Math.min(emojiPageStart + EMOJI_PAGE_SIZE, emojis.length)}/{emojis.length}
+                                            {uiT('chat.main.emojiPage', { page: emojiPage + 1, pages: emojiPageCount, start: emojiPageStart + 1, end: Math.min(emojiPageStart + EMOJI_PAGE_SIZE, emojis.length), total: emojis.length })}
                                         </span>
                                         <button
                                             type="button"
-                                            aria-label="下一页表情"
+                                            aria-label={uiT('chat.main.nextEmojis')}
                                             disabled={emojiPage >= emojiPageCount - 1}
                                             onClick={() => setEmojiPaging({category: activeCategory, page: Math.min(emojiPageCount - 1, emojiPage + 1)})}
                                             className="w-8 h-7 rounded-full border border-current/20 disabled:opacity-30 active:scale-95"
@@ -985,7 +987,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${acnh ? 'bg-white/70 border-[#e6dab4] text-[#c08a2e]' : isDiscordStyle ? 'bg-slate-800 text-amber-300 border-amber-400/20' : 'bg-amber-50 text-amber-500 border-amber-100'}`}>
                                     <PencilSimple className="w-6 h-6" weight="fill" />
                                 </div>
-                                <span className="text-xs font-bold">旁白</span>
+                                <span className="text-xs font-bold">{uiT('chat.main.narration')}</span>
                             </button>
                             ),
 
@@ -994,7 +996,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${acnh ? 'bg-white/70 border-[#e6dab4] text-[#7c6ee6]' : isDiscordStyle ? 'bg-slate-800 text-indigo-300 border-indigo-400/20' : 'bg-indigo-50 text-indigo-500 border-indigo-100'}`}>
                                     <Briefcase className="w-6 h-6" weight="fill" />
                                 </div>
-                                <span className="text-xs font-bold">协同工作</span>
+                                <span className="text-xs font-bold">{uiT('chat.main.collaborate')}</span>
                             </button>
                             ),
 
@@ -1004,7 +1006,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-violet-300 border-violet-400/20' : 'bg-violet-50 text-violet-500 border-violet-100'}`}>
                                     <Sparkle className="w-6 h-6" weight="fill" />
                                 </div>
-                                <span className="text-xs font-bold">见面</span>
+                                <span className="text-xs font-bold">{uiT('chat.main.meet')}</span>
                             </button>
                             ),
 
@@ -1014,7 +1016,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-orange-300 border-orange-400/20' : 'bg-orange-50 text-orange-400 border-orange-100'}`}>
                                     <Money className="w-6 h-6" weight="bold" />
                                 </div>)}
-                                <span className="text-xs font-bold">转账</span>
+                                <span className="text-xs font-bold">{uiT('chat.main.transfer')}</span>
                             </button>
                             ),
 
@@ -1022,7 +1024,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             <button onClick={() => onPanelAction('poke')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 {acnh ? <AcnhActionTile kind="poke" /> : (
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 border-sky-400/20' : 'bg-sky-50 border-sky-100'}`}><img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f449.png" alt="poke" className="w-6 h-6" /></div>)}
-                                <span className="text-xs font-bold">戳一戳</span>
+                                <span className="text-xs font-bold">{uiT('chat.main.poke')}</span>
                             </button>
                             ),
 
@@ -1032,7 +1034,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-indigo-300 border-indigo-400/20' : 'bg-indigo-50 text-indigo-400 border-indigo-100'}`}>
                                     <BookOpenText className="w-6 h-6" weight="bold" />
                                 </div>)}
-                                <span className="text-xs font-bold">{isSummarizing ? '归档中...' : '记忆归档'}</span>
+                                <span className="text-xs font-bold">{isSummarizing ? uiT('chat.main.archiving') : uiT('chat.main.archive')}</span>
                             </button>
                             ),
 
@@ -1041,7 +1043,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 {acnh ? <AcnhActionTile kind="settings" /> : (
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-slate-300 border-white/10' : 'bg-slate-50 text-slate-500 border-slate-100'}`}>
                                     <GearSix className="w-6 h-6" weight="bold" /></div>)}
-                                <span className="text-xs font-bold">设置</span>
+                                <span className="text-xs font-bold">{uiT('chat.main.settings')}</span>
                             </button>
                             ),
 
@@ -1056,7 +1058,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-pink-300 border-pink-400/20' : 'bg-pink-50 text-pink-400 border-pink-100'}`}>
                                     <Image className="w-6 h-6" weight="bold" />
                                 </div>)}
-                                <span className="text-xs font-bold">相册</span>
+                                <span className="text-xs font-bold">{uiT('chat.main.gallery')}</span>
                             </button>
                             ),
 
@@ -1067,7 +1069,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${canReroll ? (isDiscordStyle ? 'bg-slate-800 text-emerald-300 border-emerald-400/20' : 'bg-emerald-50 text-emerald-400 border-emerald-100') : (isDiscordStyle ? 'bg-slate-800 text-slate-600 border-white/10' : 'bg-slate-50 text-slate-300 border-slate-100')}`}>
                                     <ArrowsClockwise className="w-6 h-6" weight="bold" />
                                 </div>)}
-                                <span className="text-xs font-bold">重新生成</span>
+                                <span className="text-xs font-bold">{uiT('chat.main.reroll')}</span>
                             </button>
                             ),
 
@@ -1081,7 +1083,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-cyan-300 border-cyan-400/20' : 'bg-cyan-50 text-cyan-500 border-cyan-100'}`}>
                                     <CalendarBlank className="w-6 h-6" weight="bold" />
                                 </div>)}
-                                <span className="text-xs font-bold">日程/情绪</span>
+                                <span className="text-xs font-bold">{uiT('chat.main.schedule')}</span>
                             </button>
                             ),
 
@@ -1092,7 +1094,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isProactiveActive ? (isDiscordStyle ? 'bg-violet-500/15 text-violet-300 border-violet-400/30' : 'bg-violet-50 text-violet-500 border-violet-200') : (isDiscordStyle ? 'bg-slate-800 text-slate-400 border-white/10' : 'bg-slate-50 text-slate-400 border-slate-100')}`}>
                                     <ChatCircleDots className="w-6 h-6" weight="bold" />
                                 </div>)}
-                                <span className="text-xs font-bold">自然主动</span>
+                                <span className="text-xs font-bold">{uiT('chat.main.natural')}</span>
                                 {isProactiveActive && <span className={`absolute top-0 right-1 w-2.5 h-2.5 rounded-full border-2 ${isDiscordStyle ? 'bg-violet-400 border-slate-900' : 'bg-violet-500 border-white'}`} />}
                             </button>
                             ),
@@ -1104,7 +1106,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-indigo-300 border-indigo-400/20' : 'bg-indigo-50 text-indigo-500 border-indigo-100'}`}>
                                     <Alarm className="w-6 h-6" weight="bold" />
                                 </div>)}
-                                <span className="text-xs font-bold">主动消息 2.0</span>
+                                <span className="text-xs font-bold">{uiT('chat.main.proactive')}</span>
                             </button>
                             ),
 
@@ -1125,7 +1127,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                   <ForkKnife className="w-6 h-6" weight="bold" />
                                   {mcdActivated && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-yellow-300 border-slate-900' : 'bg-yellow-500 border-white'}`} />}
                               </div>)}
-                              <span className="text-xs font-bold">{mcdActivated ? '结束麦请求' : '麦当劳'}</span>
+                              <span className="text-xs font-bold">{mcdActivated ? uiT('chat.main.endMcd') : uiT('chat.main.mcd')}</span>
                             </button>
                             ),
 
@@ -1146,7 +1148,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                   <Coffee className="w-6 h-6" weight="bold" />
                                   {luckinActivated && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-[#C6A15B] border-slate-900' : 'bg-[#C6A15B] border-white'}`} />}
                               </div>
-                              <span className="text-xs font-bold">{luckinActivated ? '结束瑞一杯' : '瑞一杯'}</span>
+                              <span className="text-xs font-bold">{luckinActivated ? uiT('chat.main.endLuckin') : uiT('chat.main.luckin')}</span>
                             </button>
                             ),
 
@@ -1166,7 +1168,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                   <Code className="w-6 h-6" weight="bold" />
                                   {htmlModeEnabled && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-fuchsia-400 border-slate-900' : 'bg-fuchsia-500 border-white'}`} />}
                               </div>)}
-                              <span className="text-xs font-bold">{htmlModeEnabled ? 'HTML已开' : 'HTML模式'}</span>
+                              <span className="text-xs font-bold">{htmlModeEnabled ? uiT('chat.main.htmlOn') : uiT('chat.main.html')}</span>
                             </button>
                             ),
 
@@ -1185,7 +1187,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                   <Brain className="w-6 h-6" weight="bold" />
                                   {showThinkingChain && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-indigo-400 border-slate-900' : 'bg-indigo-500 border-white'}`} />}
                               </div>)}
-                              <span className="text-xs font-bold">{showThinkingChain ? '思考已开' : '展示思考'}</span>
+                              <span className="text-xs font-bold">{showThinkingChain ? uiT('chat.main.thinkingOn') : uiT('chat.main.thinking')}</span>
                             </button>
                             ),
 
@@ -1203,7 +1205,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                   <Heartbeat className="w-6 h-6" weight="bold" />
                                   {xinshengEnabled && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-rose-400 border-slate-900' : 'bg-rose-500 border-white'}`} />}
                               </div>
-                              <span className="text-xs font-bold">{xinshengEnabled ? '心声已开' : '心声'}</span>
+                              <span className="text-xs font-bold">{xinshengEnabled ? uiT('chat.main.innerOn') : uiT('chat.main.inner')}</span>
                             </button>
                             ),
 
@@ -1219,7 +1221,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                               <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${acnh ? 'bg-white/70 border-[#e6dab4] text-[#5fae6e]' : isDiscordStyle ? 'bg-slate-800 text-teal-300 border-teal-400/20' : 'bg-teal-50 text-teal-500 border-teal-100'}`}>
                                   <FadersHorizontal className="w-6 h-6" weight="bold" />
                               </div>
-                              <span className="text-xs font-bold">装扮</span>
+                              <span className="text-xs font-bold">{uiT('chat.main.dress')}</span>
                             </button>
                             ),
 
@@ -1233,7 +1235,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                               <span className={`w-14 h-14 rounded-2xl grid place-items-center shadow-sm border ${acnh ? 'bg-white/70 border-[#e6dab4] text-[#3f8f7a]' : isDiscordStyle ? 'bg-slate-800 text-emerald-300 border-emerald-400/20' : 'bg-emerald-50 text-emerald-500 border-emerald-100'}`}>
                                 <Waveform className="w-6 h-6" weight="bold" />
                               </span>
-                              <span className="text-xs font-bold">语音</span>
+                              <span className="text-xs font-bold">{uiT('chat.main.voice')}</span>
                             </button>
                             ) : null,
 
@@ -1246,7 +1248,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                               <span className={`w-14 h-14 rounded-2xl grid place-items-center shadow-sm border ${acnh ? 'bg-white/70 border-[#e6dab4] text-[#8f674a]' : isDiscordStyle ? 'bg-slate-800 text-purple-300 border-purple-400/20' : 'bg-purple-50 text-purple-500 border-purple-100'}`}>
                                 <LinkSimple className="w-6 h-6" weight="bold" />
                               </span>
-                              <span className="text-xs font-bold">记忆链接</span>
+                              <span className="text-xs font-bold">{uiT('chat.main.memoryLink')}</span>
                             </button>
                             ),
 
@@ -1258,7 +1260,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                               <span className={`w-14 h-14 rounded-2xl grid place-items-center shadow-sm border ${acnh ? 'bg-white/70 border-[#e6dab4] text-[#c17b42]' : isDiscordStyle ? 'bg-slate-800 text-amber-300 border-amber-400/20' : 'bg-amber-50 text-amber-600 border-amber-100'}`}>
                                 <Star className="w-6 h-6" weight="bold" />
                               </span>
-                              <span className="text-xs font-bold">收藏</span>
+                              <span className="text-xs font-bold">{uiT('chat.main.favorite')}</span>
                             </button>
                             ),
                             };
@@ -1284,7 +1286,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                   <button
                                     key={i}
                                     type="button"
-                                    aria-label={`第 ${i + 1} 页`}
+                                    aria-label={uiT('chat.main.actionPage', { page: i + 1 })}
                                     onClick={() => setActionsPage(i)}
                                     className={`w-2 h-2 rounded-full transition-all ${page === i ? (isDiscordStyle ? 'bg-slate-200 w-5' : 'bg-slate-500 w-5') : (isDiscordStyle ? 'bg-slate-600' : 'bg-slate-300')}`}
                                   />
@@ -1304,20 +1306,20 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                     className="w-full flex items-center justify-between gap-3 px-1 py-1 text-left"
                                 >
                                     <span>
-                                        <span className="block text-xs font-bold text-slate-400 tracking-wider uppercase">气泡样式 · 当前角色</span>
-                                        <span className="block mt-1 text-[10px] text-slate-400">{isBubbleSectionOpen ? '选择或管理当前角色的气泡' : '已折叠 · 点此展开'}</span>
+                                        <span className="block text-xs font-bold text-slate-400 tracking-wider uppercase">{uiT('chat.main.bubbleTitle')}</span>
+                                        <span className="block mt-1 text-[10px] text-slate-400">{isBubbleSectionOpen ? uiT('chat.main.bubbleChoose') : uiT('chat.main.bubbleCollapsed')}</span>
                                     </span>
                                     <span className={`text-slate-400 transition-transform ${isBubbleSectionOpen ? 'rotate-180' : ''}`} aria-hidden>⌄</span>
                                 </button>
                                 {isBubbleSectionOpen && <div className="mt-3">
                                 <div className="flex justify-end px-1 mb-2">
-                                    <span className="text-[10px] text-slate-400">新气泡去「气泡工坊」App 制作</span>
+                                    <span className="text-[10px] text-slate-400">{uiT('chat.main.bubbleApp')}</span>
                                 </div>
                                 {customThemes.length > 6 && (
                                     <input
                                         value={bubbleSearch}
                                         onChange={e => setBubbleSearch(e.target.value)}
-                                        placeholder="搜索我的气泡…"
+                                        placeholder={uiT('chat.main.bubbleSearch')}
                                         className="w-full mb-2.5 px-3 py-2 rounded-xl bg-white/70 border border-slate-200 text-xs focus:outline-none focus:border-indigo-300"
                                     />
                                 )}
@@ -1347,7 +1349,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                                         {t.name}
                                                         {activeThemeId === t.id && <span aria-hidden>✓</span>}
                                                         {inUseCount > 0 && activeThemeId !== t.id && (
-                                                            <span className="text-[9px] font-normal opacity-70">{inUseCount}人在用</span>
+                                                            <span className="text-[9px] font-normal opacity-70">{uiT('chat.main.themeUsers', { count: inUseCount })}</span>
                                                         )}
                                                     </button>
                                                     {/* 删除两步确认：第一下变红色「确删」，3 秒不点自动还原 */}
@@ -1356,7 +1358,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                                             onClick={(e) => { e.stopPropagation(); setPendingDeleteThemeId(null); onRemoveTheme(t.id); }}
                                                             className="px-2 py-2 text-[10px] font-bold bg-red-500 text-white self-stretch"
                                                         >
-                                                            确删
+                                                            {uiT('chat.main.confirmDelete')}
                                                         </button>
                                                     ) : (
                                                         <button
@@ -1365,7 +1367,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                                                 setPendingDeleteThemeId(t.id);
                                                                 setTimeout(() => setPendingDeleteThemeId(cur => (cur === t.id ? null : cur)), 3000);
                                                             }}
-                                                            aria-label={`删除气泡 ${t.name}`}
+                                                            aria-label={uiT('chat.main.deleteTheme', { name: t.name })}
                                                             className={`pr-2.5 pl-1 py-2 text-sm leading-none opacity-45 hover:opacity-100 transition-opacity ${activeThemeId === t.id ? 'text-white' : 'text-indigo-400'}`}
                                                         >
                                                             ×
@@ -1375,13 +1377,13 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                             );
                                         })}
                                     {bubbleSearch.trim() && customThemes.every(t => !(t.name || '').toLowerCase().includes(bubbleSearch.trim().toLowerCase())) && (
-                                        <div className="text-[11px] text-slate-400 px-1 py-2">没有叫「{bubbleSearch.trim()}」的气泡～</div>
+                                        <div className="text-[11px] text-slate-400 px-1 py-2">{uiT('chat.main.noTheme', { name: bubbleSearch.trim() })}</div>
                                     )}
                                 </div>
                                 </div>}
                             </div>
                             <div>
-                                <h3 className="sully-chat-switch-title text-xs font-bold text-slate-400 px-1 tracking-wider uppercase mb-3">切换会话</h3>
+                                <h3 className="sully-chat-switch-title text-xs font-bold text-slate-400 px-1 tracking-wider uppercase mb-3">{uiT('chat.main.switchChat')}</h3>
                                 <div className="space-y-3">
                                     {characters.map(c => {
                                         const unread = c.id !== activeCharacterId ? (unreadMessages[c.id] || 0) : 0;
@@ -1390,7 +1392,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                             <div className="relative shrink-0">
                                                 <img src={c.avatar} className="w-12 h-12 rounded-2xl object-cover" />
                                                 {unread > 0 && (
-                                                    <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center shadow-[0_0_8px_rgba(244,63,94,0.6)] ring-2 ring-white" aria-label={`${unread} 条未读消息`}>{unread > 99 ? '99+' : unread}</span>
+                                                    <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center shadow-[0_0_8px_rgba(244,63,94,0.6)] ring-2 ring-white" aria-label={uiT('chat.main.unread', { count: unread })}>{unread > 99 ? '99+' : unread}</span>
                                                 )}
                                             </div>
                                             <div className="flex-1 min-w-0"><div className="sully-chat-switch-name font-bold text-sm text-slate-700">{chatCharacterDisplayName(c)}</div><div className="sully-chat-switch-description text-xs text-slate-400 truncate">{c.description}</div></div>
@@ -1418,15 +1420,15 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                 style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
                 role="dialog"
                 aria-modal="true"
-                aria-label="全屏编辑消息"
+                aria-label={uiT('chat.main.fullscreen')}
             >
                 <div className={`shrink-0 flex items-center gap-3 border-b px-4 py-3 ${
                     isDiscordStyle ? 'border-white/10' : isPixelStyle ? 'border-[#8f674a]/30' : 'border-slate-200'
                 }`}>
-                    <button type="button" onClick={() => setIsFullscreenEditor(false)} className={actionButtonClass} title="退出全屏编辑" aria-label="退出全屏编辑">
+                    <button type="button" onClick={() => setIsFullscreenEditor(false)} className={actionButtonClass} title={uiT('chat.main.exitFullscreen')} aria-label={uiT('chat.main.exitFullscreen')}>
                         <CornersIn className="w-5 h-5" weight="bold" />
                     </button>
-                    <div className="flex-1 text-center text-sm font-semibold">编辑消息</div>
+                    <div className="flex-1 text-center text-sm font-semibold">{uiT('chat.main.edit')}</div>
                     <div className="w-9 shrink-0" aria-hidden="true" />
                 </div>
                 <div className="flex-1 min-h-0 p-4">
@@ -1448,7 +1450,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 ? 'border-[#8f674a]/30 bg-[#fff7ed] text-[#6a4c35] focus:ring-[#a16207]/30'
                                 : 'border-slate-200 bg-slate-50 text-slate-700 focus:ring-primary/20'
                         }`}
-                        aria-label="全屏消息编辑框"
+                        aria-label={uiT('chat.main.fullscreenInput')}
                     />
                 </div>
             </div>

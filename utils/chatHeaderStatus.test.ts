@@ -3,15 +3,16 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import ChatHeaderShell from '../components/chat/ChatHeaderShell';
+import { UiLocaleProvider } from '../context/UiLocaleContext';
 
 let container: HTMLDivElement, root: Root;
 type Props = React.ComponentProps<typeof ChatHeaderShell>;
-const render = (patch: Partial<Props>) => act(() => root.render(React.createElement(ChatHeaderShell, {
+const render = (patch: Partial<Props>) => act(() => root.render(React.createElement(UiLocaleProvider, null, React.createElement(ChatHeaderShell, {
     activeCharacter: { id: 'qa', name: '测试角色', avatar: '' },
     selectionMode: false, selectedCount: 0, onCancelSelection() {},
     isTyping: false, isSummarizing: false, lastTokenUsage: null,
     onClose() {}, onTriggerAI() {}, onShowCharsPanel() {}, ...patch,
-})));
+}))));
 beforeEach(() => {
     (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement('div'); document.body.append(container);
