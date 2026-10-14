@@ -666,13 +666,23 @@ const Settings: React.FC = () => {
   // 麦当劳 MCP (token / 启用态都直接存 localStorage, 不进 realtimeConfig)
   const [mcdToken, setMcdTokenState] = useState(() => getMcdToken());
   const [mcdEnabled, setMcdEnabledState] = useState(() => isMcdEnabled());
-  const [mcdTestStatus, setMcdTestStatus] = useState('');
+  const [mcdTestStatus, setRawMcdTestStatus] = useState('');
+  const [mcdTestUi, setMcdTestUi] = useState<UiStatusMessage | null>(null);
+  const setMcdTestStatus = (message: string, uiMessage?: UiStatusMessage) => {
+      setRawMcdTestStatus(message);
+      setMcdTestUi(uiMessage || null);
+  };
   const [mcdTesting, setMcdTesting] = useState(false);
 
   // 瑞幸 MCP (与麦当劳同构)
   const [luckinToken, setLuckinTokenState] = useState(() => getLuckinToken());
   const [luckinEnabled, setLuckinEnabledState] = useState(() => isLuckinEnabled());
-  const [luckinTestStatus, setLuckinTestStatus] = useState('');
+  const [luckinTestStatus, setRawLuckinTestStatus] = useState('');
+  const [luckinTestUi, setLuckinTestUi] = useState<UiStatusMessage | null>(null);
+  const setLuckinTestStatus = (message: string, uiMessage?: UiStatusMessage) => {
+      setRawLuckinTestStatus(message);
+      setLuckinTestUi(uiMessage || null);
+  };
   const [luckinTesting, setLuckinTesting] = useState(false);
 
   // Proactive Push 加速器（Worker URL / VAPID 公钥写死在 proactivePushConfig.ts 常量里）
@@ -1878,22 +1888,22 @@ const Settings: React.FC = () => {
       if (!v) resetMcdSession();
   };
   const testMcdApi = async () => {
-      if (!mcdToken.trim()) { setMcdTestStatus('请先填写 MCP Token'); return; }
+      if (!mcdToken.trim()) { setMcdTestStatus('请先填写 MCP Token', { key: 'settings.order.tokenRequired' }); return; }
       setMcdTesting(true);
-      setMcdTestStatus('正在连接麦当劳 MCP...');
+      setMcdTestStatus('正在连接麦当劳 MCP...', { key: 'settings.order.mcdConnecting' });
       try {
           const r = await testMcdConnection();
           if (r.ok) {
               trackEvent('测试点单 MCP 连接', { provider: 'mcdonalds', result: 'ok' });
               const names = (r.tools || []).map(t => t.name).slice(0, 6).join(', ');
-              setMcdTestStatus(`✅ ${r.message}${names ? `\n工具: ${names}${(r.tools || []).length > 6 ? ' ...' : ''}` : ''}`);
+              setMcdTestStatus(`✅ ${r.message}${names ? `\n工具: ${names}${(r.tools || []).length > 6 ? ' ...' : ''}` : ''}`, { key: names ? 'settings.order.connectedTools' : 'settings.order.connectedEmpty', params: { count: (r.tools || []).length, names: names + ((r.tools || []).length > 6 ? ' ...' : '') } });
           } else {
               trackEvent('测试点单 MCP 连接', { provider: 'mcdonalds', result: 'failed' });
-              setMcdTestStatus(`❌ ${r.message}`);
+              setMcdTestStatus(`❌ ${r.message}`, { key: 'settings.order.failed', params: { detail: r.message } });
           }
       } catch (e: any) {
           trackEvent('测试点单 MCP 连接', { provider: 'mcdonalds', result: 'exception' });
-          setMcdTestStatus(`❌ ${e?.message || String(e)}`);
+          setMcdTestStatus(`❌ ${e?.message || String(e)}`, { key: 'settings.order.failed', params: { detail: e?.message || String(e) } });
       } finally {
           setMcdTesting(false);
       }
@@ -1912,22 +1922,22 @@ const Settings: React.FC = () => {
       if (!v) resetLuckinSession();
   };
   const testLuckinApi = async () => {
-      if (!luckinToken.trim()) { setLuckinTestStatus('请先填写 MCP Token'); return; }
+      if (!luckinToken.trim()) { setLuckinTestStatus('请先填写 MCP Token', { key: 'settings.order.tokenRequired' }); return; }
       setLuckinTesting(true);
-      setLuckinTestStatus('正在连接瑞幸 MCP...');
+      setLuckinTestStatus('正在连接瑞幸 MCP...', { key: 'settings.order.luckinConnecting' });
       try {
           const r = await testLuckinConnection();
           if (r.ok) {
               trackEvent('测试点单 MCP 连接', { provider: 'luckin', result: 'ok' });
               const names = (r.tools || []).map(t => t.name).slice(0, 6).join(', ');
-              setLuckinTestStatus(`✅ ${r.message}${names ? `\n工具: ${names}${(r.tools || []).length > 6 ? ' ...' : ''}` : ''}`);
+              setLuckinTestStatus(`✅ ${r.message}${names ? `\n工具: ${names}${(r.tools || []).length > 6 ? ' ...' : ''}` : ''}`, { key: names ? 'settings.order.connectedTools' : 'settings.order.connectedEmpty', params: { count: (r.tools || []).length, names: names + ((r.tools || []).length > 6 ? ' ...' : '') } });
           } else {
               trackEvent('测试点单 MCP 连接', { provider: 'luckin', result: 'failed' });
-              setLuckinTestStatus(`❌ ${r.message}`);
+              setLuckinTestStatus(`❌ ${r.message}`, { key: 'settings.order.failed', params: { detail: r.message } });
           }
       } catch (e: any) {
           trackEvent('测试点单 MCP 连接', { provider: 'luckin', result: 'exception' });
-          setLuckinTestStatus(`❌ ${e?.message || String(e)}`);
+          setLuckinTestStatus(`❌ ${e?.message || String(e)}`, { key: 'settings.order.failed', params: { detail: e?.message || String(e) } });
       } finally {
           setLuckinTesting(false);
       }
@@ -4543,36 +4553,36 @@ const Settings: React.FC = () => {
                   <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                           <ForkKnife size={20} weight="fill" className="text-yellow-600" />
-                          <span className="text-sm font-bold text-yellow-700">麦当劳</span>
-                          <span className="text-[9px] bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full">官方 MCP</span>
+                          <span className="text-sm font-bold text-yellow-700">{t('settings.order.mcd')}</span>
+                          <span className="text-[9px] bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full">{t('settings.order.official')}</span>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer">
-                          <input type="checkbox" checked={mcdEnabled} onChange={e => handleMcdEnabledChange(e.target.checked)} className="sr-only peer" />
+                          <input type="checkbox" aria-label={t('settings.order.mcd')} checked={mcdEnabled} onChange={e => handleMcdEnabledChange(e.target.checked)} className="sr-only peer" />
                           <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-yellow-500"></div>
                       </label>
                   </div>
                   <p className="text-[10px] text-yellow-700/70 leading-relaxed">
-                      启用后，在聊天里点 + 号 → 第二页 → 麦当劳，发送"麦请求"激活，角色就能为你查菜单、查门店、点麦乐送/到店取餐/团餐、积分兑券、查活动。
+                      {t('settings.order.mcdHelp')}
                   </p>
                   {mcdEnabled && (
                       <div className="space-y-2">
                           <div>
-                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">MCP Token (个人)</label>
-                              <input type="password" value={mcdToken} onChange={e => handleMcdTokenChange(e.target.value)} className="w-full bg-white/80 border border-yellow-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="去 open.mcd.cn/mcp 申请" />
+                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">{t('settings.order.token')}</label>
+                              <input type="password" aria-label={t('settings.order.token')} value={mcdToken} onChange={e => handleMcdTokenChange(e.target.value)} className="w-full bg-white/80 border border-yellow-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder={t('settings.order.mcdPlaceholder')} />
                           </div>
                           <button onClick={testMcdApi} disabled={mcdTesting} className="w-full py-2 bg-yellow-100 text-yellow-700 text-xs font-bold rounded-xl active:scale-95 transition-transform disabled:opacity-60">
-                              {mcdTesting ? '测试中…' : '测试连接'}
+                              {t(mcdTesting ? 'settings.order.testing' : 'settings.order.test')}
                           </button>
                           {mcdTestStatus && (
                               <div className={`p-2 rounded-lg text-[11px] whitespace-pre-line leading-relaxed ${mcdTestStatus.startsWith('✅') ? 'bg-emerald-50 text-emerald-700' : mcdTestStatus.startsWith('❌') ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-600'}`}>
-                                  {mcdTestStatus}
+                                  {mcdTestUi ? t(mcdTestUi.key, mcdTestUi.params) : mcdTestStatus}
                               </div>
                           )}
                           <p className="text-[10px] text-yellow-700/70 leading-relaxed">
-                              1. 访问 <a href="https://open.mcd.cn/mcp" target="_blank" className="underline">open.mcd.cn/mcp</a> 用麦当劳账号登录申请 Token<br/>
-                              2. Token 保存在本机配置中；使用点单功能时会随 MCP 请求由网络 Worker 转发，项目不主动留存<br/>
-                              3. 下单类操作涉及真实支付，角色会先复述清单等你确认再下单<br/>
-                              4. 仅中国大陆 (不含港澳台)
+                              {t('settings.order.visit')}<a href="https://open.mcd.cn/mcp" target="_blank" className="underline">open.mcd.cn/mcp</a>{t('settings.order.mcdLogin')}<br/>
+                              {t('settings.order.privacy')}<br/>
+                              {t('settings.order.payment')}<br/>
+                              {t('settings.order.mainland')}
                           </p>
                       </div>
                   )}
@@ -4583,36 +4593,36 @@ const Settings: React.FC = () => {
                   <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                           <Coffee size={20} weight="fill" className="text-blue-600" />
-                          <span className="text-sm font-bold text-blue-700">瑞幸咖啡</span>
-                          <span className="text-[9px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">官方 MCP</span>
+                          <span className="text-sm font-bold text-blue-700">{t('settings.order.luckin')}</span>
+                          <span className="text-[9px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">{t('settings.order.official')}</span>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer">
-                          <input type="checkbox" checked={luckinEnabled} onChange={e => handleLuckinEnabledChange(e.target.checked)} className="sr-only peer" />
+                          <input type="checkbox" aria-label={t('settings.order.luckin')} checked={luckinEnabled} onChange={e => handleLuckinEnabledChange(e.target.checked)} className="sr-only peer" />
                           <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
                       </label>
                   </div>
                   <p className="text-[10px] text-blue-700/70 leading-relaxed">
-                      启用后，在聊天里点 + 号 → 第二页 → 瑞一杯，发送"瑞一杯"激活，角色就能为你查门店、搜咖啡、选规格、下单到店自提、查取餐码。
+                      {t('settings.order.luckinHelp')}
                   </p>
                   {luckinEnabled && (
                       <div className="space-y-2">
                           <div>
-                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">MCP Token (个人)</label>
-                              <input type="password" value={luckinToken} onChange={e => handleLuckinTokenChange(e.target.value)} className="w-full bg-white/80 border border-blue-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="去 open.lkcoffee.com 登录后复制" />
+                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">{t('settings.order.token')}</label>
+                              <input type="password" aria-label={t('settings.order.token')} value={luckinToken} onChange={e => handleLuckinTokenChange(e.target.value)} className="w-full bg-white/80 border border-blue-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder={t('settings.order.luckinPlaceholder')} />
                           </div>
                           <button onClick={testLuckinApi} disabled={luckinTesting} className="w-full py-2 bg-blue-100 text-blue-700 text-xs font-bold rounded-xl active:scale-95 transition-transform disabled:opacity-60">
-                              {luckinTesting ? '测试中…' : '测试连接'}
+                              {t(luckinTesting ? 'settings.order.testing' : 'settings.order.test')}
                           </button>
                           {luckinTestStatus && (
                               <div className={`p-2 rounded-lg text-[11px] whitespace-pre-line leading-relaxed ${luckinTestStatus.startsWith('✅') ? 'bg-emerald-50 text-emerald-700' : luckinTestStatus.startsWith('❌') ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-600'}`}>
-                                  {luckinTestStatus}
+                                  {luckinTestUi ? t(luckinTestUi.key, luckinTestUi.params) : luckinTestStatus}
                               </div>
                           )}
                           <p className="text-[10px] text-blue-700/70 leading-relaxed">
-                              1. 访问 <a href="https://open.lkcoffee.com" target="_blank" className="underline">open.lkcoffee.com</a> 用瑞幸账号登录，复制 Token（有效期约 1 个月）<br/>
-                              2. Token 保存在本机配置中；使用点单功能时会随 MCP 请求由网络 Worker 转发，项目不主动留存<br/>
-                              3. 下单类操作涉及真实支付，角色会先复述清单等你确认再下单<br/>
-                              4. 上游需经 Worker 代理 (/mcp/luckin)，请确保已部署最新 worker
+                              {t('settings.order.visit')}<a href="https://open.lkcoffee.com" target="_blank" className="underline">open.lkcoffee.com</a>{t('settings.order.luckinLogin')}<br/>
+                              {t('settings.order.privacy')}<br/>
+                              {t('settings.order.payment')}<br/>
+                              {t('settings.order.proxy')}
                           </p>
                       </div>
                   )}
