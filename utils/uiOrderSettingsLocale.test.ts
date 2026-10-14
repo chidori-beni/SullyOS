@@ -16,9 +16,9 @@ it.each(['Mcd', 'Luckin'])('preserves %s token storage, toggles, reset and analy
   for (const name of [`handle${provider}TokenChange`, `handle${provider}EnabledChange`]) {
     expect(block(source, name)).toBe(block(baseline, name));
   }
-  const normalized = block(source, `test${provider}Api`)
+  const normalized = (s: string) => block(s, `test${provider}Api`)
     .replace(/, \{ key: (?:names \? 'settings\.order\.[^']+' : )?'settings\.order\.[^']+'(?:, params: \{[^\n]*?\})? \}/g, '');
-  expect(normalized).toBe(block(baseline, `test${provider}Api`));
+  expect(normalized(source)).toBe(normalized(baseline));
 });
 
 it.each(['Mcd', 'Luckin'])('runs %s test handler with fake responses only', async provider => {

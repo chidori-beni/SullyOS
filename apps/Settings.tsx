@@ -3229,7 +3229,7 @@ const Settings: React.FC = () => {
         {/* 通用 MCP，独立于实时感知 */}
         <SettingsSection
             title="MCP"
-            badge={<span className="text-[9px] bg-violet-100 text-violet-600 px-1.5 py-0.5 rounded-full font-bold shrink-0">本机配置</span>}
+            badge={<span className="text-[9px] bg-violet-100 text-violet-600 px-1.5 py-0.5 rounded-full font-bold shrink-0">{t('settings.mcp.localConfig')}</span>}
             icon={
                 <div className="p-2 bg-violet-100/60 rounded-xl text-violet-600">
                     <PlugsConnected size={16} weight="fill" />
@@ -3239,20 +3239,20 @@ const Settings: React.FC = () => {
                 <>
                     <button
                         onClick={() => { trackEvent('打开「MCP 是什么」说明弹窗'); setShowMcpHelp(true); }}
-                        aria-label="MCP 是什么？"
+                        aria-label={t('settings.mcp.what')}
                         className="w-7 h-7 rounded-full border border-slate-200 bg-white text-[12px] font-bold text-slate-400 active:scale-90 transition-all"
                     >?</button>
                     <button onClick={() => { trackEvent('打开MCP工具服务器配置'); setShowMcpModal(true); }} className="text-[10px] bg-violet-100 text-violet-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
-                        管理
+                        {t('settings.mcp.manage')}
                     </button>
                 </>
             }
         >
             <p className="text-xs text-slate-500 leading-relaxed">
-                连接标准 MCP 服务器，让聊天可以调用资料库、搜索、笔记或智能家居等工具。
+                {t('settings.mcp.entryHelp')}
             </p>
             <p className="text-[10px] text-slate-400 mt-2 leading-relaxed border-l-2 border-violet-200 pl-2">
-                需要自行准备 Streamable HTTP 服务；不配置不会影响内置 Sully、记忆或普通聊天。
+                {t('settings.mcp.entryRequirement')}
             </p>
             {(() => {
                 const list = loadMcpServers();
@@ -3261,7 +3261,7 @@ const Settings: React.FC = () => {
                 const toolCount = on.reduce((n, s) => n + (s.tools?.length || 0), 0);
                 return (
                     <p className="text-[10px] text-slate-400 mt-2">
-                        已配置 {list.length} 个服务器 · {on.length} 个启用中{toolCount ? ` · 共 ${toolCount} 个工具` : ''}
+                        {t('settings.mcp.configured', { count: list.length, enabled: on.length })}{toolCount ? t('settings.mcp.totalTools', { count: toolCount }) : ''}
                     </p>
                 );
             })()}
@@ -4652,34 +4652,29 @@ const Settings: React.FC = () => {
       </Modal>
 
       {/* MCP 帮助 Modal —— 面向完全不懂 MCP 的用户，讲清用途与部署方式 */}
-      <Modal isOpen={showMcpHelp} title="MCP 是什么？" onClose={() => setShowMcpHelp(false)}>
+      <Modal isOpen={showMcpHelp} title={t('settings.mcp.what')} onClose={() => setShowMcpHelp(false)}>
           <div className="space-y-3 text-xs text-slate-600 leading-relaxed">
               <div className="bg-violet-50/60 rounded-xl p-3 space-y-1.5">
-                  <p className="font-bold text-violet-700">MCP 工具服务器</p>
+                  <p className="font-bold text-violet-700">{t('settings.mcp.title')}</p>
                   <p>
-                      MCP（Model Context Protocol）是一套开放协议。接上资料库、联网搜索、笔记或智能家居后，
-                      Sully 可以在聊天中调用它们。MCP 配置不会覆盖角色设定、关系或记忆。
+                      {t('settings.mcp.definition')}
                   </p>
               </div>
               <div className="bg-sky-50/60 rounded-xl p-3 space-y-1.5">
-                  <p className="font-bold text-sky-700">🏠 为什么服务器要自己准备？</p>
+                  <p className="font-bold text-sky-700">{t('settings.mcp.why')}</p>
                   <p>
-                      SullyOS 的核心前端可以静态部署，也没有强制所有 MCP 流量经过项目方的中央代理。
-                      URL 和凭据默认留在本机，工具服务器需要你自己准备，三选一：
+                      {t('settings.mcp.hostHelp')}
                   </p>
                   <p>
-                      ☁️ <b>用现成的云端 MCP 服务</b>：对方给你一个公网 https 地址（可能还有 Token），直接填进配置即可。<br/>
-                      🖥️ <b>跑在自己电脑上</b>：电脑上的浏览器直接填 <code className="bg-white/80 px-1 rounded">http://localhost:端口</code>；
-                      想在手机上也能用，再配个内网穿透（如 Cloudflare Tunnel）。<br/>
-                      🚀 <b>自己部署到云上</b>：VPS / Cloudflare / Zeabur 等，任何设备随时可用。
+                      ☁️ <b>{t('settings.mcp.cloudTitle')}</b>{t('settings.mcp.cloudHelp')}<br/>
+                      🖥️ <b>{t('settings.mcp.pcTitle')}</b>{t('settings.mcp.pcHelp')}<code className="bg-white/80 px-1 rounded">{t('settings.mcp.localExample')}</code>{t('settings.mcp.tunnelHelp')}<br/>
+                      🚀 <b>{t('settings.mcp.deployTitle')}</b>{t('settings.mcp.deployHelp')}
                   </p>
               </div>
               <div className="bg-amber-50/60 rounded-xl p-3 space-y-1.5">
-                  <p className="font-bold text-amber-700">🚧 测试连接报「Failed to fetch」？</p>
+                  <p className="font-bold text-amber-700">{t('settings.mcp.fetchTitle')}</p>
                   <p>
-                      八成是浏览器的 CORS 跨域拦截（静态网页的另一个代价）。能改服务器就在服务器端配好 CORS；
-                      改不了就在配置里填「代理 URL」——本地跑一个小代理，或把仓库里的 Worker 代理部署到你自己的
-                      Cloudflare 账号，教程里都有现成步骤。
+                      {t('settings.mcp.fetchHelp')}
                   </p>
               </div>
               <div className="space-y-2">
@@ -4689,17 +4684,17 @@ const Settings: React.FC = () => {
                       rel="noopener noreferrer"
                       onClick={() => trackEvent('跳转 MCP 完整教程')}
                       className="block w-full py-2.5 bg-violet-500 text-white text-center text-xs font-bold rounded-xl active:scale-95 transition-transform"
-                  >📖 打开完整教程（含部署示例）</a>
+                  >{t('settings.mcp.guide')}</a>
                   <button
                       type="button"
                       onClick={async () => {
-                          const text = `请阅读这份教程，然后一步一步教我把 MCP 工具服务器接入 SullyOS。先问清楚我想接什么工具、准备部署在哪（云端/本地电脑/本地+内网穿透），再给对应路线的步骤：\n${MCP_USER_GUIDE_URL}`;
-                          try { await navigator.clipboard.writeText(text); trackEvent('复制 MCP 部署指引给 AI', { result: 'copied' }); addToast('已复制，去粘贴给你的 AI 吧', 'success'); }
-                          catch { trackEvent('复制 MCP 部署指引给 AI', { result: 'clipboard-failed' }); addToast('复制失败，请手动复制教程链接', 'error'); }
+                          const text = t('settings.mcp.aiPrompt', { url: MCP_USER_GUIDE_URL });
+                          try { await navigator.clipboard.writeText(text); trackEvent('复制 MCP 部署指引给 AI', { result: 'copied' }); addToast(t('settings.mcp.copied'), 'success'); }
+                          catch { trackEvent('复制 MCP 部署指引给 AI', { result: 'clipboard-failed' }); addToast(t('settings.mcp.copyFailed'), 'error'); }
                       }}
                       className="w-full py-2.5 bg-violet-100 text-violet-700 text-xs font-bold rounded-xl active:scale-95 transition-transform"
-                  >🤖 复制链接给你的 AI，让它带你部署</button>
-                  <p className="text-[10px] text-slate-400 text-center">教程是自包含的，任何 AI 助手读完都能带你走完全程。</p>
+                  >{t('settings.mcp.copyAi')}</button>
+                  <p className="text-[10px] text-slate-400 text-center">{t('settings.mcp.guideHelp')}</p>
               </div>
           </div>
       </Modal>

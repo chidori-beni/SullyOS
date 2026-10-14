@@ -10,6 +10,8 @@ import {
     WarningCircle,
 } from '@phosphor-icons/react';
 import { useOS } from '../../context/OSContext';
+import { useUiLocale } from '../../context/UiLocaleContext';
+import type { UiLocale, UiMessageKey, UiStatusMessage } from '../../utils/uiLocale';
 import { trackEvent } from '../../utils/analytics';
 import {
     createMcpServer,
@@ -26,6 +28,7 @@ import {
 type TestState = {
     tone: 'running' | 'ok' | 'error' | 'stale';
     message: string;
+    uiMessage?: UiStatusMessage;
 };
 
 const FieldLabel: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -52,18 +55,18 @@ const PortToggle: React.FC<{
     </label>
 );
 
-const stageCopy = (stage: McpConnectionStage): string => (
-    stage === 'initialize' ? '正在协商协议与会话…' : '握手完成，正在读取工具清单…'
+const stageCopy = (stage: McpConnectionStage): UiMessageKey => (
+    stage === 'initialize' ? 'settings.mcp.initialize' : 'settings.mcp.readingTools'
 );
 
 const endpointChanged = (patch: Partial<McpServerConfig>): boolean => (
     ['url', 'token', 'customHeaders', 'proxyUrl', 'proxyKey'] as const
 ).some(key => Object.prototype.hasOwnProperty.call(patch, key));
 
-const formatTestTime = (timestamp?: number): string => {
+const formatTestTime = (locale: UiLocale, timestamp?: number): string => {
     if (!timestamp) return '';
     try {
-        return new Intl.DateTimeFormat('zh-CN', {
+        return new Intl.DateTimeFormat(locale, {
             month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
         }).format(timestamp);
     } catch { return ''; }
@@ -80,6 +83,7 @@ const McpConnectionConsole: React.FC<{
     onMcpConfigChanged?: () => void;
 }> = ({ addToast, onMcpConfigChanged }) => {
     const { characters, groups } = useOS();
+    const { locale, t } = useUiLocale();
     const [servers, setServers] = useState<McpServerConfig[]>(() => loadMcpServers());
     const [expandedId, setExpandedId] = useState<string | null>(() => loadMcpServers()[0]?.id || null);
     const [testingId, setTestingId] = useState<string | null>(null);
@@ -112,7 +116,7 @@ const McpConnectionConsole: React.FC<{
             resetMcpSession(id);
             setTestStates(current => ({
                 ...current,
-                [id]: { tone: 'stale', message: '连接参数已变化，请重新测试后再启用。' },
+                [id]: { tone: 'stale', message: '连接参数已变化，请重新测试后再启用。', uiMessage: { key: 'settings.mcp.stale' } },
             }));
         }
     };
@@ -125,7 +129,7 @@ const McpConnectionConsole: React.FC<{
     };
 
     const removeServer = (server: McpServerConfig) => {
-        if (!window.confirm(`删除「${server.name || '未命名服务器'}」？\n\n本机保存的 URL、凭据和工具清单会一并删除。`)) return;
+        if (!window.confirm(t('settings.mcp.removeConfirm', { name: server.name || t('settings.mcp.unnamed') }))) return;
         resetMcpSession(server.id);
         persist(servers.filter(item => item.id !== server.id));
         setExpandedId(current => current === server.id ? null : current);
@@ -134,28 +138,32 @@ const McpConnectionConsole: React.FC<{
 
     const discover = async (server: McpServerConfig) => {
         if (!server.url.trim()) {
-            addToast('先填写 MCP 端点 URL', 'error');
+            addToast(t('settings.mcp.urlRequired'), 'error');
             return;
         }
         setTestingId(server.id);
         setTestStates(current => ({
             ...current,
-            [server.id]: { tone: 'running', message: '正在建立连接…' },
+            [server.id]: { tone: 'running', message: '正在建立连接…', uiMessage: { key: 'settings.mcp.connecting' } },
         }));
         try {
             const result = await testMcpConnection(server, stage => {
                 setTestStates(current => ({
                     ...current,
-                    [server.id]: { tone: 'running', message: stageCopy(stage) },
+                    [server.id]: { tone: 'running', message: stage === 'initialize' ? '正在协商协议与会话…' : '握手完成，正在读取工具清单…', uiMessage: { key: stageCopy(stage) } },
                 }));
             });
             if (result.ok && result.tools && result.connection) {
                 update(server.id, { tools: result.tools, lastConnection: result.connection });
+                const uiMessage: UiStatusMessage = {
+                    key: result.tools.length ? 'settings.mcp.connectedTools' : 'settings.mcp.connectedEmpty',
+                    params: { name: result.connection.serverName ? `${result.connection.serverName}${result.connection.serverVersion ? ` ${result.connection.serverVersion}` : ''}` : '', protocol: result.connection.protocolVersion, count: result.tools.length },
+                };
                 setTestStates(current => ({
                     ...current,
-                    [server.id]: { tone: 'ok', message: result.message },
+                    [server.id]: { tone: 'ok', message: result.message, uiMessage },
                 }));
-                addToast(`${server.name || 'MCP 服务器'}已连接`, 'success');
+                addToast(t('settings.mcp.connectedToast', { name: server.name || t('settings.mcp.serverFallback') }), 'success');
                 trackEvent('测试 MCP 服务器连接', {
                     result: result.tools.length ? 'connected' : 'connected-no-tools',
                     protocol: result.connection.protocolVersion,
@@ -186,10 +194,10 @@ const McpConnectionConsole: React.FC<{
             <header className="border-b border-violet-100 bg-violet-50/60 px-4 py-4">
                 <div className="flex items-start justify-between gap-4">
                     <div>
-                        <h3 className="text-sm font-bold text-slate-800">MCP 工具服务器</h3>
+                        <h3 className="text-sm font-bold text-slate-800">{t('settings.mcp.title')}</h3>
                         <p className="mt-1 max-w-[250px] text-[10px] leading-relaxed text-slate-500">
-                            连接 MCP，让角色在聊天时使用你接入的工具。
-                            <span className="mt-1 block text-slate-400">支持 Streamable HTTP</span>
+                            {t('settings.mcp.description')}
+                            <span className="mt-1 block text-slate-400">{t('settings.mcp.streamable')}</span>
                         </p>
                     </div>
                     <button
@@ -197,28 +205,28 @@ const McpConnectionConsole: React.FC<{
                         onClick={addServer}
                         className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-violet-100 px-3 text-[10px] font-bold text-violet-700 transition-transform active:scale-95"
                     >
-                        <Plus size={14} weight="bold" /> 添加服务器
+                        <Plus size={14} weight="bold" /> {t('settings.mcp.add')}
                     </button>
                 </div>
                 <div className="mt-3 flex items-center gap-3 text-[10px] text-slate-500">
-                    <span><b className="text-violet-700">{summary.live}</b> 个已启用</span>
-                    <span><b className="text-slate-700">{summary.tools}</b> 个工具</span>
-                    <span className="ml-auto">配置保存在本机</span>
+                    <span><b className="text-violet-700">{summary.live}</b>{t('settings.mcp.enabledSuffix')}</span>
+                    <span><b className="text-slate-700">{summary.tools}</b>{t('settings.mcp.toolsSuffix')}</span>
+                    <span className="ml-auto">{t('settings.mcp.stored')}</span>
                 </div>
             </header>
 
             <section className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
                 <div className="min-w-0">
                     <div className="flex items-center gap-2 text-[11px] font-bold">
-                        原生 tools 工具调用
-                        <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[8px] font-bold text-emerald-700">推荐</span>
+                        {t('settings.mcp.native')}
+                        <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[8px] font-bold text-emerald-700">{t('settings.mcp.recommended')}</span>
                     </div>
                     <p className="mt-0.5 text-[9px] leading-relaxed text-slate-400">
-                        默认使用 tools / function calling；只有中转明确不支持时才关闭。
+                        {t('settings.mcp.nativeHelp')}
                     </p>
                 </div>
                 <PortToggle
-                    label="标准工具通道"
+                    label={t('settings.mcp.nativeToggle')}
                     checked={useNativeTools}
                     onChange={next => {
                         setUseNativeToolsState(next);
@@ -235,8 +243,8 @@ const McpConnectionConsole: React.FC<{
                         <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-violet-50 text-violet-500">
                             <Plus size={20} />
                         </div>
-                        <p className="text-xs font-bold text-slate-700">还没有 MCP 服务器</p>
-                        <p className="mt-1 text-[10px] leading-relaxed text-slate-400">添加一个 Streamable HTTP 地址即可开始配置。</p>
+                        <p className="text-xs font-bold text-slate-700">{t('settings.mcp.empty')}</p>
+                        <p className="mt-1 text-[10px] leading-relaxed text-slate-400">{t('settings.mcp.emptyHelp')}</p>
                     </div>
                 )}
 
@@ -256,21 +264,21 @@ const McpConnectionConsole: React.FC<{
                                     <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${live ? 'bg-emerald-500' : ready ? 'bg-slate-300' : 'border border-slate-300'}`}>
                                     </span>
                                     <span className="min-w-0 flex-1">
-                                        <span className="block truncate text-xs font-bold text-slate-700">{server.name || '未命名服务器'}</span>
+                                        <span className="block truncate text-xs font-bold text-slate-700">{server.name || t('settings.mcp.unnamed')}</span>
                                         <span className="mt-0.5 block truncate text-[9px] text-slate-400">
-                                            {live ? '已启用' : ready ? '已连接，未启用' : '尚未测试'}
-                                            {ready ? ` · ${server.tools?.length} 个工具` : ''}
+                                            {t(live ? 'settings.mcp.enabled' : ready ? 'settings.mcp.ready' : 'settings.mcp.untested')}
+                                            {ready ? t('settings.mcp.toolsCount', { count: server.tools?.length || 0 }) : ''}
                                             {server.lastConnection?.protocolVersion ? ` · ${server.lastConnection.protocolVersion}` : ''}
                                         </span>
                                     </span>
                                     <CaretDown size={14} className={`shrink-0 text-slate-400 transition-transform ${expanded ? 'rotate-180' : ''}`} />
                                 </button>
                                 <PortToggle
-                                    label={`启用 ${server.name}`}
+                                    label={t('settings.mcp.enable', { name: server.name })}
                                     checked={server.enabled}
                                     onChange={next => {
                                         if (next && !ready) {
-                                            addToast('请先测试连接并读取工具，再启用这个服务器', 'error');
+                                            addToast(t('settings.mcp.enableFirst'), 'error');
                                             return;
                                         }
                                         update(server.id, { enabled: next });
@@ -284,21 +292,21 @@ const McpConnectionConsole: React.FC<{
                                         <span className="pt-6 text-[9px] font-bold text-violet-400">01</span>
                                         <div className="space-y-3">
                                             <div>
-                                                <FieldLabel>服务器名称</FieldLabel>
-                                                <input className={inputClass} value={server.name} onChange={event => update(server.id, { name: event.target.value })} placeholder="例如：我的资料库" />
+                                                <FieldLabel>{t('settings.mcp.name')}</FieldLabel>
+                                                <input className={inputClass} value={server.name} onChange={event => update(server.id, { name: event.target.value })} placeholder={t('settings.mcp.namePlaceholder')} />
                                             </div>
                                             <div>
-                                                <FieldLabel>Streamable HTTP 端点</FieldLabel>
+                                                <FieldLabel>{t('settings.mcp.endpoint')}</FieldLabel>
                                                 <input className={`${inputClass} font-mono`} value={server.url} onChange={event => update(server.id, { url: event.target.value.trim() })} placeholder="https://example.com/mcp" />
                                             </div>
                                         </div>
 
                                         <span className="pt-6 text-[9px] font-bold text-violet-400">02</span>
                                         <div className="space-y-3 border-t border-slate-200 pt-4">
-                                            <div className="flex items-center gap-2 text-[11px] font-bold"><LockKey size={14} /> 鉴权</div>
+                                            <div className="flex items-center gap-2 text-[11px] font-bold"><LockKey size={14} /> {t('settings.mcp.auth')}</div>
                                             <div>
-                                                <FieldLabel>Bearer Token · 可选</FieldLabel>
-                                                <input type="password" className={`${inputClass} font-mono`} value={server.token || ''} onChange={event => update(server.id, { token: event.target.value.trim() })} placeholder="只保存在本机" />
+                                                <FieldLabel>{t('settings.mcp.token')}</FieldLabel>
+                                                <input type="password" className={`${inputClass} font-mono`} value={server.token || ''} onChange={event => update(server.id, { token: event.target.value.trim() })} placeholder={t('settings.mcp.localOnly')} />
                                             </div>
                                             {(server.customHeaders || []).map((header, index) => (
                                                 <div key={index} className="grid grid-cols-[0.8fr_1fr_34px] gap-1.5">
@@ -307,7 +315,7 @@ const McpConnectionConsole: React.FC<{
                                                         value={header.name}
                                                         onChange={event => update(server.id, { customHeaders: (server.customHeaders || []).map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) })}
                                                         placeholder="X-API-Key"
-                                                        aria-label={`自定义请求头 ${index + 1} 名称`}
+                                                        aria-label={t('settings.mcp.headerName', { index: index + 1 })}
                                                     />
                                                     <input
                                                         type="password"
@@ -315,38 +323,38 @@ const McpConnectionConsole: React.FC<{
                                                         value={header.value}
                                                         onChange={event => update(server.id, { customHeaders: (server.customHeaders || []).map((item, itemIndex) => itemIndex === index ? { ...item, value: event.target.value } : item) })}
                                                         placeholder="value"
-                                                        aria-label={`自定义请求头 ${index + 1} 值`}
+                                                        aria-label={t('settings.mcp.headerValue', { index: index + 1 })}
                                                     />
-                                                    <button type="button" onClick={() => update(server.id, { customHeaders: (server.customHeaders || []).filter((_, itemIndex) => itemIndex !== index) })} className="rounded-xl border border-slate-200 text-slate-400" aria-label={`删除请求头 ${index + 1}`}>×</button>
+                                                    <button type="button" onClick={() => update(server.id, { customHeaders: (server.customHeaders || []).filter((_, itemIndex) => itemIndex !== index) })} className="rounded-xl border border-slate-200 text-slate-400" aria-label={t('settings.mcp.removeHeader', { index: index + 1 })}>×</button>
                                                 </div>
                                             ))}
-                                            <button type="button" onClick={() => update(server.id, { customHeaders: [...(server.customHeaders || []), { name: '', value: '' }] })} className="text-[10px] font-bold text-violet-600">+ 添加自定义请求头</button>
+                                            <button type="button" onClick={() => update(server.id, { customHeaders: [...(server.customHeaders || []), { name: '', value: '' }] })} className="text-[10px] font-bold text-violet-600">{t('settings.mcp.addHeader')}</button>
                                             <details className="group border-t border-dashed border-slate-200 pt-3">
                                                 <summary className="flex cursor-pointer list-none items-center gap-2 text-[10px] font-bold text-slate-500">
-                                                    <GlobeHemisphereWest size={14} /> 跨域代理（可选）
+                                                    <GlobeHemisphereWest size={14} /> {t('settings.mcp.proxy')}
                                                     <CaretDown size={12} className="ml-auto transition-transform group-open:rotate-180" />
                                                 </summary>
                                                 <div className="mt-3 space-y-3">
                                                     <div>
-                                                        <FieldLabel>代理 URL · 留空为直连</FieldLabel>
-                                                        <input className={`${inputClass} font-mono`} value={server.proxyUrl || ''} onChange={event => update(server.id, { proxyUrl: event.target.value.trim() })} placeholder="http://localhost:18061 或你的 Worker" />
+                                                        <FieldLabel>{t('settings.mcp.proxyUrl')}</FieldLabel>
+                                                        <input className={`${inputClass} font-mono`} value={server.proxyUrl || ''} onChange={event => update(server.id, { proxyUrl: event.target.value.trim() })} placeholder={t('settings.mcp.proxyPlaceholder')} />
                                                     </div>
                                                     {!!server.proxyUrl?.trim() && (
                                                         <div>
-                                                            <FieldLabel>代理密钥 · 可选</FieldLabel>
+                                                            <FieldLabel>{t('settings.mcp.proxyKey')}</FieldLabel>
                                                             <input type="password" className={`${inputClass} font-mono`} value={server.proxyKey || ''} onChange={event => update(server.id, { proxyKey: event.target.value.trim() })} placeholder="PROXY_KEY" />
                                                         </div>
                                                     )}
-                                                    <p className="text-[9px] leading-relaxed text-slate-400">用于解决浏览器 CORS 限制。代理由你自行部署，SullyOS 不强制经过中央服务器。</p>
+                                                    <p className="text-[9px] leading-relaxed text-slate-400">{t('settings.mcp.proxyHelp')}</p>
                                                 </div>
                                             </details>
                                         </div>
 
                                         <span className="pt-6 text-[9px] font-bold text-violet-400">03</span>
                                         <div className="border-t border-slate-200 pt-4">
-                                            <div className="mb-2 text-[11px] font-bold">适用聊天</div>
+                                            <div className="mb-2 text-[11px] font-bold">{t('settings.mcp.chats')}</div>
                                             <div className="flex flex-wrap gap-1.5">
-                                                <button type="button" onClick={() => update(server.id, { charIds: [] })} className={`rounded-lg border px-2.5 py-1 text-[9px] font-bold ${!server.charIds?.length ? 'border-violet-500 bg-violet-500 text-white' : 'border-slate-200 bg-white text-slate-500'}`}>全部聊天</button>
+                                                <button type="button" onClick={() => update(server.id, { charIds: [] })} className={`rounded-lg border px-2.5 py-1 text-[9px] font-bold ${!server.charIds?.length ? 'border-violet-500 bg-violet-500 text-white' : 'border-slate-200 bg-white text-slate-500'}`}>{t('settings.mcp.allChats')}</button>
                                                 {characters.map(character => {
                                                     const selected = !!server.charIds?.includes(character.id);
                                                     return <button key={character.id} type="button" onClick={() => {
@@ -374,23 +382,23 @@ const McpConnectionConsole: React.FC<{
                                             className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-violet-500 py-2.5 text-[10px] font-bold text-white transition-transform active:scale-[0.98] disabled:opacity-60"
                                         >
                                             {testingId === server.id ? <SpinnerGap size={14} className="animate-spin" /> : <CheckCircle size={14} weight="bold" />}
-                                            {testingId === server.id ? '正在测试连接' : ready ? '重新测试连接' : '测试并读取工具'}
+                                            {t(testingId === server.id ? 'settings.mcp.testing' : ready ? 'settings.mcp.retest' : 'settings.mcp.test')}
                                         </button>
-                                        <button type="button" onClick={() => removeServer(server)} className="flex w-11 items-center justify-center rounded-xl border border-rose-200 bg-white text-rose-500" aria-label="删除服务器"><Trash size={15} /></button>
+                                        <button type="button" onClick={() => removeServer(server)} className="flex w-11 items-center justify-center rounded-xl border border-rose-200 bg-white text-rose-500" aria-label={t('settings.mcp.remove')}><Trash size={15} /></button>
                                     </div>
 
                                     {state && (
                                         <div className={`mt-3 flex items-start gap-2 rounded-lg px-3 py-2 text-[9px] leading-relaxed ${state.tone === 'ok' ? 'bg-emerald-50 text-emerald-700' : state.tone === 'running' ? 'bg-sky-50 text-sky-700' : state.tone === 'stale' ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-600'}`}>
                                             {state.tone === 'ok' ? <CheckCircle size={13} className="mt-0.5 shrink-0" /> : state.tone === 'running' ? <SpinnerGap size={13} className="mt-0.5 shrink-0 animate-spin" /> : <WarningCircle size={13} className="mt-0.5 shrink-0" />}
-                                            <span>{state.message}</span>
+                                            <span>{state.uiMessage ? t(state.uiMessage.key, { ...state.uiMessage.params, name: state.uiMessage.params?.name || t('settings.mcp.serverFallback') }) : state.message}</span>
                                         </div>
                                     )}
 
                                     {ready && (
                                         <div className="mt-4 border-t border-slate-200 pt-3">
                                             <div className="flex items-center justify-between text-[9px] font-bold text-slate-400">
-                                                <span>工具列表</span>
-                                                <span>{formatTestTime(server.lastConnection?.testedAt)}</span>
+                                                <span>{t('settings.mcp.toolList')}</span>
+                                                <span>{formatTestTime(locale, server.lastConnection?.testedAt)}</span>
                                             </div>
                                             <div className="mt-2 divide-y divide-slate-100 border-y border-slate-100">
                                                 {(server.tools || []).slice(0, 12).map(tool => (
@@ -400,7 +408,7 @@ const McpConnectionConsole: React.FC<{
                                                     </div>
                                                 ))}
                                             </div>
-                                            {(server.tools?.length || 0) > 12 && <p className="mt-2 text-right text-[9px] text-slate-400">另有 {(server.tools?.length || 0) - 12} 个工具</p>}
+                                            {(server.tools?.length || 0) > 12 && <p className="mt-2 text-right text-[9px] text-slate-400">{t('settings.mcp.moreTools', { count: (server.tools?.length || 0) - 12 })}</p>}
                                         </div>
                                     )}
                                 </div>
@@ -411,7 +419,7 @@ const McpConnectionConsole: React.FC<{
             </div>
 
             <footer className="border-t border-slate-100 bg-slate-50/60 px-4 py-3 text-[9px] leading-relaxed text-slate-400">
-                URL、Token 与自定义请求头保存在本机。使用自己的代理时，请求只经过你指定的转接点。
+                {t('settings.mcp.privacy')}
             </footer>
         </div>
     );
