@@ -3581,17 +3581,17 @@ const Settings: React.FC = () => {
                 </div>
 
                 <div className="text-[10px] text-slate-500 bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-2 mb-3 leading-relaxed">
-                    <b>一般无需修改这里。</b>默认地址负责静态网页环境中需要跨域转发的联网功能；
-                    GitHub 备份仍默认直连，只有你在备份设置中主动开启中转后才会使用 Worker。
-                    如果你部署了自己的 <b>worker/index.js</b>，可以在这里换成自己的实例。
+                    <b>{t('settings.proxyGuide.unchanged')}</b>{t('settings.proxyGuide.defaultHelp')}
+                    {t('settings.proxyGuide.githubHelp')}
+                    {t('settings.proxyGuide.ownBefore')}<b>worker/index.js</b>{t('settings.proxyGuide.ownAfter')}
                 </div>
 
                 <div className="mb-3 rounded-xl border border-sky-100 bg-sky-50/80 px-3 py-2.5 text-[10px] leading-relaxed text-sky-900">
-                    <p className="mb-1.5 font-bold">部署自己的 Worker</p>
+                    <p className="mb-1.5 font-bold">{t('settings.proxyGuide.deploy')}</p>
                     <ol className="space-y-1">
-                        <li><b>1.</b> 在 Cloudflare 控制台进入 Workers &amp; Pages，新建一个 Worker。</li>
-                        <li><b>2.</b> 打开并复制完整的 <a href={PROXY_WORKER_SOURCE_URL} target="_blank" rel="noreferrer" className="font-bold underline underline-offset-2">worker/index.js 源码</a>，替换编辑器里的默认代码，然后部署。</li>
-                        <li><b>3.</b> 复制部署得到的 <b>https://xxx.workers.dev</b> 地址，粘贴到下方并保存。</li>
+                        <li><b>1.</b>{t('settings.proxyGuide.step1')}</li>
+                        <li><b>2.</b>{t('settings.proxyGuide.step2before')}<a href={PROXY_WORKER_SOURCE_URL} target="_blank" rel="noreferrer" className="font-bold underline underline-offset-2">{t('settings.proxyGuide.source')}</a>{t('settings.proxyGuide.step2after')}</li>
+                        <li><b>3.</b>{t('settings.proxyGuide.step3before')}<b>https://xxx.workers.dev</b>{t('settings.proxyGuide.step3after')}</li>
                     </ol>
                 </div>
 
@@ -3616,9 +3616,9 @@ const Settings: React.FC = () => {
                 </div>
 
                 <p className="text-[10px] text-slate-400 px-1 mt-2 leading-relaxed">
-                    只填到域名（如 <b>{DEFAULT_PROXY_WORKER}</b>），不要带 /search、/webdav、/api 等路径。
-                    联网搜索 / 备份代理 / Notion / 飞书 / 点单 / 网页抓取 / 出图 / 小红书 Lite / 音乐 都会切到这里填的 Worker。
-                    （音乐播放器里还留了一个独立地址框，单独填了就以那个为准。）
+                    {t('settings.proxyGuide.domainBefore')}<b>{DEFAULT_PROXY_WORKER}</b>{t('settings.proxyGuide.domainAfter')}
+                    {t('settings.proxyGuide.routes')}
+                    {t('settings.proxyGuide.music')}
                 </p>
             </section>
         )}

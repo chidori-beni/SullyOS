@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ts from 'typescript';
 import { translateUi, type UiMessageKey } from './uiLocale';
+import { execFileSync } from 'node:child_process';
 const source = readFileSync(resolve(process.cwd(), 'apps/Settings.tsx'), 'utf8');
 const start = source.indexOf('const handleSaveProxyWorker =');
 const body = source.slice(start, source.indexOf('const handleCloudBackup =', start));
@@ -32,4 +33,17 @@ it('keeps owner names literal in cloud switch messages', () => {
   expect(translateUi('ja-JP', 'settings.proxy.github', { owner: 'raw{owner}' })).toBe('GitHub @raw{owner} に切り替えました');
   expect(source).toContain('placeholder={DEFAULT_PROXY_WORKER}');
   expect(source).toContain('value={proxyWorkerInput}');
+});
+it('localizes proxy guide while keeping URLs, controls and all handlers unchanged', () => {
+  for (const key of ['unchanged', 'defaultHelp', 'githubHelp', 'ownBefore', 'ownAfter', 'deploy', 'step1', 'step2before', 'source', 'step2after', 'step3before', 'step3after', 'domainBefore', 'domainAfter', 'routes', 'music'] as const) {
+    expect(source).toContain(`t('settings.proxyGuide.${key}')`);
+    expect(translateUi('ja-JP', `settings.proxyGuide.${key}`)).not.toBe(translateUi('zh-CN', `settings.proxyGuide.${key}`));
+  }
+  const baseline = execFileSync('git', ['show', 'HEAD:apps/Settings.tsx'], { encoding: 'utf8' });
+  const allHandlers = (value: string) => value.slice(value.indexOf('// Cloud Backup Handlers'), value.indexOf('const handleSaveRealtimeConfig')).replace(/\r/g, '');
+  expect(allHandlers(source)).toBe(allHandlers(baseline));
+  expect(source).toContain('href={PROXY_WORKER_SOURCE_URL}');
+  expect(source).toContain('<b>https://xxx.workers.dev</b>');
+  expect(translateUi('ja-JP', 'settings.proxyGuide.step1')).toContain('Workers & Pages');
+  for (const path of ['/search', '/webdav', '/api']) expect(translateUi('ja-JP', 'settings.proxyGuide.domainAfter')).toContain(path);
 });
