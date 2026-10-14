@@ -8,6 +8,7 @@ import ts from 'typescript';
 import { translateUi, type UiLocale, type UiMessageKey, type UiMessageParams, type UiStatusMessage } from './uiLocale';
 import McpConnectionConsole from '../components/settings/McpConnectionConsole';
 import type { McpServerConfig } from './mcpClient';
+import { getServiceConnectionUi } from './uiServiceConnectionStatus';
 
 const state = vi.hoisted(() => ({ locale: 'zh-CN' as UiLocale, servers: [] as McpServerConfig[] }));
 vi.mock('../context/UiLocaleContext', () => ({ useUiLocale: () => ({ locale: state.locale, t: (key: UiMessageKey, params?: UiMessageParams) => translateUi(state.locale, key, params) }) }));
@@ -44,7 +45,8 @@ it('preserves storage, default persisted names, native tools switch and endpoint
   const start = 'const endpointChanged =';
   const end = 'const formatTestTime =';
   expect(source.slice(source.indexOf(start), source.indexOf(end))).toBe(baseline.slice(baseline.indexOf(start), baseline.indexOf(end)));
-  expect(block(source, 'update').replace(", uiMessage: { key: 'settings.mcp.stale' }", '')).toBe(block(baseline, 'update'));
+  const update = (s: string) => block(s, 'update').replace(", uiMessage: { key: 'settings.mcp.stale' }", '');
+  expect(update(source)).toBe(update(baseline));
   const toggle = (s: string) => s.slice(s.indexOf('onChange={next => {'), s.indexOf('trackEvent(\'切换原生工具调用\'') + 77);
   expect(toggle(source)).toBe(toggle(baseline));
   for (const text of ['token: event.target.value.trim()', 'url: event.target.value.trim()', 'proxyUrl: event.target.value.trim()', 'proxyKey: event.target.value.trim()', 'name: event.target.value', 'charIds: []', 'update(server.id, { enabled: next })']) expect(source).toContain(text);
@@ -58,7 +60,7 @@ it.each(['zh-CN', 'ja-JP'] as const)('tests connection stages and raw failures i
     const testing = vi.fn(), update = vi.fn(), toast = vi.fn(), track = vi.fn();
     const connection = vi.fn(async (_s: unknown, stage: (s: string) => void) => { stage('initialize'); stage('tools'); return result; });
     const setStates = (setter: (current: unknown) => Record<string, typeof states[number]>) => { states.push(setter({})[server.id]); };
-    const handler = new Function('t', 'addToast', 'setTestingId', 'setTestStates', 'testMcpConnection', 'stageCopy', 'update', 'trackEvent', js)(t, toast, testing, setStates, connection, (stage: string) => stage === 'initialize' ? 'settings.mcp.initialize' : 'settings.mcp.readingTools', update, track);
+    const handler = new Function('t', 'addToast', 'setTestingId', 'setTestStates', 'testMcpConnection', 'stageCopy', 'update', 'trackEvent', 'getServiceConnectionUi', js)(t, toast, testing, setStates, connection, (stage: string) => stage === 'initialize' ? 'settings.mcp.initialize' : 'settings.mcp.readingTools', update, track, getServiceConnectionUi);
     return { handler, states, testing, update, toast, track, connection };
   };
   const missing = make(null);
@@ -82,7 +84,7 @@ it.each(['zh-CN', 'ja-JP'] as const)('tests connection stages and raw failures i
   const detail = '鉴权失败 HTTP 401 {detail}';
   const failed = make({ ok: false, message: detail });
   await failed.handler(server);
-  expect(failed.states.at(-1)).toEqual({ tone: 'error', message: detail });
+  expect(failed.states.at(-1)).toEqual({ tone: 'error', message: detail, uiMessage: undefined });
   expect(failed.update).not.toHaveBeenCalled();
   expect(failed.track).toHaveBeenCalledWith('测试 MCP 服务器连接', { result: 'failed', failureKind: 'auth-failed' });
   expect(failed.testing).toHaveBeenLastCalledWith(null);

@@ -7,7 +7,7 @@ import { translateUi, type UiMessageKey, type UiMessageParams } from './uiLocale
 const source = readFileSync(resolve(process.cwd(), 'apps/Settings.tsx'), 'utf8');
 it('keeps configuration, requests and prompt synchronization unchanged beyond explicit UI copy', () => {
   const baseline = execFileSync('git', ['show', 'HEAD:apps/Settings.tsx'], { encoding: 'utf8' });
-  const slice = (s: string) => s.slice(s.indexOf('const handleSaveRealtimeConfig ='), s.indexOf('// 测试小红书 Bridge 连接')).replace(/\r/g, '');
+  const slice = (s: string) => s.slice(s.indexOf('const handleSaveRealtimeConfig ='), s.indexOf('// 测试小红书 Bridge 连接')).replace(/\r/g, '').replace(/, getServiceConnectionUi\('(notion|feishu)', result.message\)/g, '');
   let actual = slice(source);
   if (!slice(baseline).includes("t('settings.realtime.saved')")) actual = actual.replace("t('settings.realtime.saved')", "'实时感知配置已保存'");
   if (!slice(baseline).includes("t('settings.realtime.countryRequired')")) actual = actual.replace("t('settings.realtime.countryRequired')", "'请选择生活所在的国家／地区，或关闭节假日感知'");

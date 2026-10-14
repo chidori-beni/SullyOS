@@ -1,5 +1,6 @@
 import NavigationBallSettings from '../components/settings/NavigationBallSettings';
 import { formatXhsConnectionStatus, type UiXhsConnectionInfo } from '../utils/uiXhsConnectionStatus';
+import { getServiceConnectionUi } from '../utils/uiServiceConnectionStatus';
 import { formatCloudBackupStatus } from '../utils/uiCloudBackupStatus';
 import { buildModelPickerView } from '../utils/modelPickerView';
 
@@ -1793,7 +1794,7 @@ const Settings: React.FC = () => {
       try {
           const result = await NotionManager.testConnection(rtNotionKey, rtNotionDbId);
           trackEvent('测试 Notion 连接', { result: result.success ? 'ok' : 'failed' });
-          setRtTestStatus(result.message);
+          setRtTestStatus(result.message, getServiceConnectionUi('notion', result.message));
       } catch (e: any) {
           trackEvent('测试 Notion 连接', { result: 'network-error' });
           setRtTestStatus(`网络错误: ${e.message}`, { key: 'settings.realtime.networkError', params: { error: String(e.message) } });
@@ -1810,7 +1811,7 @@ const Settings: React.FC = () => {
       try {
           const result = await FeishuManager.testConnection(rtFeishuAppId, rtFeishuAppSecret, rtFeishuBaseId, rtFeishuTableId);
           trackEvent('测试飞书连接', { result: result.success ? 'ok' : 'failed' });
-          setRtTestStatus(result.message);
+          setRtTestStatus(result.message, getServiceConnectionUi('feishu', result.message));
       } catch (e: any) {
           trackEvent('测试飞书连接', { result: 'network-error' });
           setRtTestStatus(`网络错误: ${e.message}`, { key: 'settings.realtime.networkError', params: { error: String(e.message) } });
@@ -3271,7 +3272,7 @@ const Settings: React.FC = () => {
         <SettingsSection
             title={t('settings.section.rescue')}
             badge={hasJournalAppearanceOverride
-                ? <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-bold shrink-0">日记美化已启用</span>
+                ? <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-bold shrink-0">{t('settings.rescue.journalActive')}</span>
                 : undefined}
             icon={
                 <div className="p-2 bg-amber-100/70 rounded-xl text-amber-700">
@@ -3280,7 +3281,7 @@ const Settings: React.FC = () => {
             }
         >
             <p className="text-xs text-slate-500 leading-relaxed">
-                如果交换日记的自定义 CSS 把返回键、设置键遮住或变得无法点击，可以从这里直接清除日记主题与 CSS，不影响日记内容。
+                {t('settings.rescue.journalHelp')}
             </p>
             <button
                 type="button"
@@ -3288,27 +3289,27 @@ const Settings: React.FC = () => {
                 onClick={handleJournalAppearanceEmergencyReset}
                 className="mt-3 w-full rounded-xl bg-amber-600 px-4 py-3 text-xs font-bold text-white shadow-sm transition active:scale-[.98] disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none"
             >
-                {hasJournalAppearanceOverride ? '重置交换日记美化' : '交换日记当前为原版'}
+                {t(hasJournalAppearanceOverride ? 'settings.rescue.journalReset' : 'settings.rescue.journalOriginal')}
             </button>
 
             <div className="mt-4 border-t border-slate-100 pt-4">
                 <p className="text-xs text-slate-500 leading-relaxed">
-                    聊天白框 CSS 导致界面异常、连角色的「装扮」都打不开时，从这里还原全局及全部角色的白框美化，其他聊天外观设置不受影响。
+                    {t('settings.rescue.chromeHelp')}
                 </p>
                 <button
                     type="button"
-                    onClick={() => { if (window.confirm('确定还原全部聊天白框美化？将清空「全局」以及「每个角色」的自定义 CSS（其它聊天外观设置不受影响）。')) resetAllChromeCss(); }}
+                    onClick={() => { if (window.confirm(t('settings.rescue.chromeConfirm'))) resetAllChromeCss(); }}
                     className="mt-3 w-full rounded-xl bg-amber-600 px-4 py-3 text-xs font-bold text-white shadow-sm transition active:scale-[.98]"
                 >
-                    一键还原全部聊天白框美化（救援）
+                    {t('settings.rescue.chromeReset')}
                 </button>
             </div>
 
             <div className="mt-4 border-t border-slate-100 pt-4">
-                <h3 className="text-xs font-bold text-rose-500 uppercase tracking-widest mb-2">一键还原外观</h3>
+                <h3 className="text-xs font-bold text-rose-500 uppercase tracking-widest mb-2">{t('settings.rescue.appearanceTitle')}</h3>
                 <p className="text-[11px] text-slate-500 mb-3 leading-relaxed">
-                    把主题色、壁纸、字体、应用图标、桌面小组件、装饰贴纸全部还原成最初始状态。在不同版本之间反复导入预设导致图标错乱时使用。<br/>
-                    <span className="text-slate-400">已保存的外观预设不会被删除，随时还能切回去。</span>
+                    {t('settings.rescue.appearanceHelp')}<br/>
+                    <span className="text-slate-400">{t('settings.rescue.presetsSafe')}</span>
                 </p>
                 {!confirmAppearanceReset ? (
                     <button
@@ -3316,7 +3317,7 @@ const Settings: React.FC = () => {
                         onClick={() => setConfirmAppearanceReset(true)}
                         className="w-full rounded-xl border border-rose-200 bg-white px-4 py-3 text-xs font-bold text-rose-500 transition active:scale-[.98]"
                     >
-                        还原全部外观
+                        {t('settings.rescue.appearanceReset')}
                     </button>
                 ) : (
                     <div className="flex gap-2">
@@ -3325,7 +3326,7 @@ const Settings: React.FC = () => {
                             onClick={() => setConfirmAppearanceReset(false)}
                             className="flex-1 rounded-xl bg-slate-100 px-4 py-3 text-xs font-bold text-slate-500 transition active:scale-[.98]"
                         >
-                            取消
+                            {t('common.cancel')}
                         </button>
                         <button
                             type="button"
@@ -3333,7 +3334,7 @@ const Settings: React.FC = () => {
                             onClick={handleAppearanceEmergencyReset}
                             className="flex-1 rounded-xl bg-rose-500 px-4 py-3 text-xs font-bold text-white shadow-sm transition active:scale-[.98] disabled:bg-slate-200 disabled:text-slate-400"
                         >
-                            {resettingAppearance ? '还原中…' : '确认还原'}
+                            {t(resettingAppearance ? 'settings.rescue.restoring' : 'settings.rescue.confirm')}
                         </button>
                     </div>
                 )}
@@ -3647,7 +3648,7 @@ const Settings: React.FC = () => {
         >
             <div className="space-y-3">
                 <div className="flex items-center justify-between gap-3">
-                    <span className="text-sm font-bold text-slate-600">参与使用统计</span>
+                    <span className="text-sm font-bold text-slate-600">{t('settings.analytics.participate')}</span>
                     <label className="relative inline-flex items-center cursor-pointer shrink-0">
                         <input
                             type="checkbox"
@@ -3662,19 +3663,13 @@ const Settings: React.FC = () => {
                     </label>
                 </div>
                 <p className="text-xs text-slate-500 leading-relaxed">
-                    只数「哪个页面被打开了、哪个功能被用了一次」，记忆条数 / 角色数落在哪个区间，
-                    以及你这台设备打开页面花了多久（浏览器自己测的毫秒数）。
-                    不碰你和角色的任何对话、记忆、设定，不碰你输入的任何文字，不碰 API 和 MCP 配置。
+                    {t('settings.analytics.data')}
                 </p>
                 <p className="text-xs text-slate-500 leading-relaxed">
-                    SullyOS 的功能已经多到我们自己也扫不完，但「哪些真的有人用、大家配置时卡在哪一步」
-                    基本靠猜。留着这个开关开着能帮我们看清这些，好把精力放在有人用的地方。
-                    不想参与就关掉，功能一点不受影响。
+                    {t('settings.analytics.why')}
                 </p>
                 <p className="text-[10px] text-slate-400 leading-relaxed">
-                    浏览器开了 Do Not Track 的话，不用动这个开关也会自动跳过。
-                    关掉之后当场就不再发，下次启动连统计脚本都不会加载。想自己核实的话，按 F12 打开 Network 面板，
-                    这个页面发出的每一个请求装了什么都在你自己的浏览器里。
+                    {t('settings.analytics.dnt')}
                 </p>
             </div>
         </SettingsSection>
@@ -4308,7 +4303,7 @@ const Settings: React.FC = () => {
                           </div>
                           <div>
                               <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">{t('settings.realtime.city')}</label>
-                              <input type="text" value={rtWeatherCity} onChange={e => setRtWeatherCity(e.target.value)} className="w-full bg-white/80 border border-emerald-200 rounded-xl px-3 py-2 text-sm" placeholder="北京 / Beijing / Shanghai" />
+                              <input type="text" value={rtWeatherCity} onChange={e => setRtWeatherCity(e.target.value)} className="w-full bg-white/80 border border-emerald-200 rounded-xl px-3 py-2 text-sm" placeholder={t('settings.realtime.cityPlaceholder')} />
                           </div>
                           <button onClick={testWeatherApi} className="w-full py-2 bg-emerald-100 text-emerald-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">{t('settings.realtime.weatherTest')}</button>
                       </div>

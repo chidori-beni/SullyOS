@@ -12,6 +12,7 @@ import {
 import { useOS } from '../../context/OSContext';
 import { useUiLocale } from '../../context/UiLocaleContext';
 import type { UiLocale, UiMessageKey, UiStatusMessage } from '../../utils/uiLocale';
+import { getServiceConnectionUi } from '../../utils/uiServiceConnectionStatus';
 import { trackEvent } from '../../utils/analytics';
 import {
     createMcpServer,
@@ -171,7 +172,7 @@ const McpConnectionConsole: React.FC<{
             } else {
                 setTestStates(current => ({
                     ...current,
-                    [server.id]: { tone: 'error', message: result.message },
+                    [server.id]: { tone: 'error', message: result.message, uiMessage: getServiceConnectionUi('mcp', result.message) },
                 }));
                 const message = result.message || '';
                 const failureKind = /超时/.test(message) ? 'timeout'
