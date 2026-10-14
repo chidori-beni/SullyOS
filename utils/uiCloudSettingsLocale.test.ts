@@ -121,7 +121,12 @@ it('keeps all cloud request/save/restore handler implementations identical to th
     .replace("t('settings.cloudRestore.blocked')", "'这个备份上传未完成，暂时不能恢复'")
     .replace("t('settings.cloudRestore.errorTitle')", "'云端恢复失败'")
     .replace("t('settings.cloud.disabled')", "'云端备份已关闭'")
-    .replace('formatCloudBackupStatus(locale, file)', 'file.statusMessage');
+    .replace('formatCloudBackupStatus(locale, file)', 'file.statusMessage')
+    .replace("t('settings.proxy.invalid')", "'地址必须以 http:// 或 https:// 开头'")
+    .split("t('settings.proxy.restored')").join("'已恢复为默认 Worker'")
+    .replace("t('settings.proxy.saved')", "'Worker 地址已保存'")
+    .replace("t('settings.proxy.github', { owner: cloudBackupConfig.githubOwner })", '`已切换到 GitHub @${cloudBackupConfig.githubOwner}`')
+    .replace("t('settings.proxy.webdav')", "'已切换回 WebDAV，旧备份依旧在'");
   expect(source).toContain('const handleSaveRealtimeConfig');
   expect(handlers(source).length).toBeGreaterThan(1000);
   expect(handlers(source)).toBe(handlers(baseline));

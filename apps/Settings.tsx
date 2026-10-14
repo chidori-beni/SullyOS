@@ -1548,7 +1548,7 @@ const Settings: React.FC = () => {
   const handleSaveProxyWorker = () => {
       const raw = proxyWorkerInput.trim();
       if (raw && !/^https?:\/\//i.test(raw)) {
-          addToast('地址必须以 http:// 或 https:// 开头', 'error');
+          addToast(t('settings.proxy.invalid'), 'error');
           trackEvent('代理地址格式被拒');
           return;
       }
@@ -1558,7 +1558,7 @@ const Settings: React.FC = () => {
       // 上云那份的 proxyWorkerUrl 是现算的（读 getProxyWorkerUrl），所以要在生效之后再传。
       syncAmsgToolConfig(realtimeConfig);
       if (applied === DEFAULT_PROXY_WORKER) trackEvent('恢复默认代理 Worker', { via: 'save-empty' });
-      addToast(applied === DEFAULT_PROXY_WORKER ? '已恢复为默认 Worker' : 'Worker 地址已保存', 'success');
+      addToast(applied === DEFAULT_PROXY_WORKER ? t('settings.proxy.restored') : t('settings.proxy.saved'), 'success');
   };
 
   const handleResetProxyWorker = () => {
@@ -1566,7 +1566,7 @@ const Settings: React.FC = () => {
       setProxyWorkerInput(getProxyWorkerUrl());
       syncAmsgToolConfig(realtimeConfig);
       trackEvent('恢复默认代理 Worker', { via: 'reset-button' });
-      addToast('已恢复为默认 Worker', 'info');
+      addToast(t('settings.proxy.restored'), 'info');
   };
 
   const handleCloudBackup = async (mode: 'text_only' | 'full') => {
@@ -1671,7 +1671,7 @@ const Settings: React.FC = () => {
       trackEvent('切换云端备份服务商', { to: 'github' });
       if (cloudBackupConfig.githubToken && cloudBackupConfig.githubOwner) {
           updateCloudBackupConfig({ provider: 'github' });
-          addToast(`已切换到 GitHub @${cloudBackupConfig.githubOwner}`, 'success');
+          addToast(t('settings.proxy.github', { owner: cloudBackupConfig.githubOwner }), 'success');
       } else {
           setShowGithubModal(true);
       }
@@ -1680,7 +1680,7 @@ const Settings: React.FC = () => {
       trackEvent('切换云端备份服务商', { to: 'webdav' });
       if (cloudBackupConfig.webdavUrl && cloudBackupConfig.username) {
           updateCloudBackupConfig({ provider: 'webdav' });
-          addToast('已切换回 WebDAV，旧备份依旧在', 'success');
+          addToast(t('settings.proxy.webdav'), 'success');
       } else {
           setShowCloudModal(true);
       }
@@ -3571,13 +3571,13 @@ const Settings: React.FC = () => {
                 onClick={() => setShowProxyConfig(true)}
                 className="w-full text-center text-[10px] text-slate-300 hover:text-slate-400 py-1 transition-colors"
             >
-                · 自定义网络代理 ·
+                {t('settings.proxy.entry')}
             </button>
         ) : (
             <section ref={proxyConfigSectionRef} className="scroll-mt-4 bg-white/60 rounded-2xl p-4 border border-slate-100">
                 <div className="flex items-center justify-between mb-2">
-                    <h2 className="text-xs font-semibold text-slate-500">自定义网络代理 (Worker)</h2>
-                    <button onClick={() => { setShowProxyConfig(false); setProxyWorkerInput(getProxyWorkerUrl()); }} className="text-[10px] text-slate-400">收起</button>
+                    <h2 className="text-xs font-semibold text-slate-500">{t('settings.proxy.title')}</h2>
+                    <button onClick={() => { setShowProxyConfig(false); setProxyWorkerInput(getProxyWorkerUrl()); }} className="text-[10px] text-slate-400">{t('settings.proxy.collapse')}</button>
                 </div>
 
                 <div className="text-[10px] text-slate-500 bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-2 mb-3 leading-relaxed">
@@ -3608,10 +3608,10 @@ const Settings: React.FC = () => {
 
                 <div className="grid grid-cols-2 gap-2">
                     <button onClick={handleResetProxyWorker} className="py-2 bg-slate-100 rounded-xl text-[11px] font-bold text-slate-500 active:scale-95 transition-transform">
-                        恢复默认
+                        {t('settings.proxy.default')}
                     </button>
                     <button onClick={handleSaveProxyWorker} className="py-2 bg-slate-700 rounded-xl text-[11px] font-bold text-white active:scale-95 transition-transform">
-                        保存
+                        {t('settings.api.save')}
                     </button>
                 </div>
 
