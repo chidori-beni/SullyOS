@@ -172,6 +172,7 @@ import {
 import { flattenContentPartsToText } from '../utils/promptMessageCleanup';
 import { injectWorldbookDepthEntries, resolveWorldbookEntries } from '../utils/worldbook';
 import { endCallSession, enqueueCallSessionWrite, isCallSessionEnded, startCallSession } from '../utils/callSessionLifecycle';
+import { normalizeCallAccentColor } from '../utils/callAccentColor';
 type CallState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'ended' | 'error';
 type CallMode = 'voice' | 'video';
 /** 这通电话是谁打的。'incoming' = 角色打给用户、用户接了起来。 */
@@ -687,6 +688,11 @@ const CallApp: React.FC = () => {
     catch { return 'dark'; }
   });
   const lightTheme = callTheme === 'light';
+  // 内联样式里的「白色中性色」不吃 callLightTheme 的 class 覆盖，浅色主题下会变成白底白字；
+  // 统一走这三个：fill=底色、line=描边、text=文字/图标，浅色时翻成墨色。
+  const callFill = (alpha: number) => lightTheme ? `rgba(38,34,57,${(alpha * 1.3).toFixed(3)})` : `rgba(255,255,255,${alpha})`;
+  const callLine = (alpha: number) => lightTheme ? `rgba(38,34,57,${(alpha * 1.5).toFixed(3)})` : `rgba(255,255,255,${alpha})`;
+  const callText = (alpha: number) => lightTheme ? `rgba(38,34,57,${Math.min(1, alpha + 0.08).toFixed(2)})` : `rgba(255,255,255,${alpha})`;
   useEffect(() => {
     try { localStorage.setItem('sully-call-theme-v1', callTheme); } catch { /* localStorage may be unavailable */ }
   }, [callTheme]);
@@ -1443,18 +1449,9 @@ const CallApp: React.FC = () => {
   const accentColor = useMemo(() => {
     const themeId = selectedChar?.bubbleStyle || 'default';
     const theme: ChatTheme | undefined = customThemes?.find((t: ChatTheme) => t.id === themeId) || PRESET_THEMES[themeId];
-    const raw = (theme?.user?.backgroundColor || '#8b5cf6').trim();
-    // 通话界面靠 accent 做发光/描边/光环——主题色太暗（如纯黑）会让这些全部"消失"，
-    // 按键也没了漂亮的边。这里给最低亮度兜底：太暗就回落到亮紫，保证每个角色都有边。
-    const m = /^#?([0-9a-f]{6})$/i.exec(raw) || /^#?([0-9a-f]{3})$/i.exec(raw);
-    if (m) {
-      let hex = m[1];
-      if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
-      const r = parseInt(hex.slice(0, 2), 16), g = parseInt(hex.slice(2, 4), 16), b = parseInt(hex.slice(4, 6), 16);
-      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-      if (lum < 90) return '#a78bfa';
-    }
-    return raw;
+    // 通话界面靠 accent 做发光/描边/光环，且到处拼 `${accent}66`——透明、半透明、
+    // 渐变、太暗的主题色都会让图标/角色名/边框「消失」，统一洗成 #rrggbb。
+    return normalizeCallAccentColor(theme?.user?.backgroundColor || '#8b5cf6');
   }, [selectedChar?.bubbleStyle, customThemes]);
   const callScrollableRef = useRef<HTMLDivElement | null>(null);
   const draftInputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -4298,17 +4295,17 @@ ${sentencePlan}`;
                   className="relative w-full rounded-3xl px-4 py-3.5 text-left border backdrop-blur-md transition active:scale-[0.99]"
                   style={selected
                     ? { borderColor: accentColor, background: `${accentColor}22`, boxShadow: `0 0 18px ${accentColor}55, inset 0 0 18px ${accentColor}1f` }
-                    : { borderColor: 'rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.04)' }}>
+                    : { borderColor: callLine(0.1), background: callFill(0.04) }}>
                   <div className="flex items-center gap-3.5">
                     <div className="w-12 h-12 rounded-full overflow-hidden border flex items-center justify-center font-semibold shrink-0"
-                      style={{ borderColor: selected ? accentColor : 'rgba(255,255,255,0.25)', backgroundColor: `${accentColor}40` }}>
+                      style={{ borderColor: selected ? accentColor : callLine(0.25), backgroundColor: `${accentColor}40` }}>
                       {char.avatar ? <img src={char.avatar} alt={char.name} className="w-full h-full object-cover" /> : (char.name?.[0] || '角')}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="font-semibold text-[15px] truncate" style={selected ? { color: accentColor } : undefined}>{char.name}</div>
                       <div className="text-xs text-white/45 mt-0.5 truncate">{char.description || '点击编辑设定...'}</div>
                     </div>
-                    <span className="text-base shrink-0" style={{ color: selected ? accentColor : 'rgba(255,255,255,0.25)' }}>✦</span>
+                    <span className="text-base shrink-0" style={{ color: selected ? accentColor : callText(0.25) }}>✦</span>
                   </div>
                 </button>
               );
@@ -4328,7 +4325,7 @@ ${sentencePlan}`;
               <div className="flex items-center gap-1.5">
                 {Array.from({ length: totalPages }).map((_, i) => (
                   <button key={i} onClick={() => setRolePage(i)} aria-label={`第${i + 1}页`}
-                    className="rounded-full transition-all" style={{ width: i === page ? 16 : 6, height: 6, background: i === page ? accentColor : 'rgba(255,255,255,0.25)' }} />
+                    className="rounded-full transition-all" style={{ width: i === page ? 16 : 6, height: 6, background: i === page ? accentColor : callFill(0.25) }} />
                 ))}
               </div>
               <button disabled={page >= totalPages - 1} onClick={() => setRolePage(p => Math.min(totalPages - 1, p + 1))}
@@ -4436,7 +4433,7 @@ ${sentencePlan}`;
                       <div className="text-[10px] tracking-[0.14em] text-white/40">动作排练</div>
                       <div className="mt-0.5 text-[9px] text-white/25">每个角色单独保存</div>
                     </div>
-                    <span className="text-[9px]" style={{ color: selectedChar?.videoCallPerformanceQuality === 'high' ? accentColor : 'rgba(255,255,255,.32)' }}>
+                    <span className="text-[9px]" style={{ color: selectedChar?.videoCallPerformanceQuality === 'high' ? accentColor : callText(0.32) }}>
                       {selectedChar?.videoCallPerformanceQuality === 'high' ? 'DIRECTOR' : 'BASIC'}
                     </span>
                   </div>
@@ -4462,7 +4459,7 @@ ${sentencePlan}`;
                           className="rounded-xl border px-2 py-2 text-left transition active:scale-[0.98]"
                           style={active
                             ? { borderColor: `${accentColor}88`, background: `${accentColor}1f`, boxShadow: `inset 0 0 12px ${accentColor}16` }
-                            : { borderColor: 'rgba(255,255,255,.08)', background: 'rgba(255,255,255,.025)' }}
+                            : { borderColor: callLine(0.08), background: callFill(0.025) }}
                         >
                           <span className="block text-[11px] font-medium text-white/80">{option.label}</span>
                           <span className="mt-0.5 block text-[8px] text-white/30">{option.detail}</span>
@@ -4760,7 +4757,7 @@ ${sentencePlan}`;
           信号良好
           <span className="flex items-end gap-[2px] h-2.5 ml-0.5">
             {[4, 6, 8, 10].map((h, i) => (
-              <span key={i} className="w-[2px] rounded-full" style={{ height: `${h}px`, background: i < 3 ? 'rgba(255,255,255,.65)' : accentColor }} />
+              <span key={i} className="w-[2px] rounded-full" style={{ height: `${h}px`, background: i < 3 ? callFill(0.65) : accentColor }} />
             ))}
           </span>
           <span style={{ color: accentColor }}>✦</span>
@@ -4774,12 +4771,12 @@ ${sentencePlan}`;
           className="absolute right-5 flex h-7 w-7 items-center justify-center rounded-full border backdrop-blur-md transition active:scale-90"
           style={{
             top: 'calc(max(2.25rem, var(--safe-top)) + 22px)',
-            background: sleepMode ? `${accentColor}33` : 'rgba(255,255,255,0.06)',
-            borderColor: sleepMode ? `${accentColor}88` : 'rgba(255,255,255,0.15)',
+            background: sleepMode ? `${accentColor}33` : callFill(0.06),
+            borderColor: sleepMode ? `${accentColor}88` : callLine(0.15),
             boxShadow: sleepMode ? `0 0 14px ${accentColor}55` : 'none',
           }}
         >
-          <Moon size={14} weight="fill" style={{ color: sleepMode ? accentColor : 'rgba(255,255,255,0.6)' }} />
+          <Moon size={14} weight="fill" style={{ color: sleepMode ? accentColor : callText(0.6) }} />
         </button>
         {/* 快捷切换 API 预设：跟月亮并排，不用挂断再去设置里换。 */}
         <button
@@ -4792,11 +4789,11 @@ ${sentencePlan}`;
           style={{
             right: 'calc(1.25rem + 36px)',
             top: 'calc(max(2.25rem, var(--safe-top)) + 22px)',
-            background: 'rgba(255,255,255,0.06)',
-            borderColor: 'rgba(255,255,255,0.15)',
+            background: callFill(0.06),
+            borderColor: callLine(0.15),
           }}
         >
-          <Plugs size={14} weight="fill" style={{ color: 'rgba(255,255,255,0.6)' }} />
+          <Plugs size={14} weight="fill" style={{ color: callText(0.6) }} />
         </button>
         {/* name block */}
         <div className={`${callMode === 'video' ? 'pt-3' : 'pt-7'} text-center`}>
@@ -5126,7 +5123,7 @@ ${sentencePlan}`;
                 disabled={sendingBusy || isSttProcessing}
                 title={isListening ? uiT('call.main.stopVoice') : uiT('call.main.startVoice')}
                 className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition active:scale-90 disabled:opacity-40"
-                style={isListening ? { background: '#f0569f', boxShadow: '0 0 14px #f0569f99' } : { background: 'rgba(255,255,255,0.08)' }}
+                style={isListening ? { background: '#f0569f', boxShadow: '0 0 14px #f0569f99' } : { background: callFill(0.08) }}
               >
                 <Microphone size={18} weight="fill" className={isListening ? 'text-white animate-pulse' : 'text-white/70'} />
               </button>
@@ -5154,16 +5151,16 @@ ${sentencePlan}`;
           {/* mic */}
           <button onClick={() => setShowInputPanel(prev => !prev)} className={`flex flex-col items-center transition active:scale-95 ${callMode === 'video' ? 'gap-0.5' : 'gap-1.5'}`}>
             <span className={`${callControlSize} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
-              style={showInputPanel ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.15)' }}>
+              style={showInputPanel ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: callFill(0.06), borderColor: callLine(0.15) }}>
               <Microphone size={22} weight="fill" className="text-white/90" />
             </span>
             <span className="text-[10px] text-white/70">{uiT('call.main.microphone')}</span>
-            {callMode !== 'video' && <span className="text-[8px] tracking-[0.15em]" style={{ color: showInputPanel ? accentColor : 'rgba(255,255,255,0.3)' }}>{showInputPanel ? 'ON' : 'OFF'}</span>}
+            {callMode !== 'video' && <span className="text-[8px] tracking-[0.15em]" style={{ color: showInputPanel ? accentColor : callText(0.3) }}>{showInputPanel ? 'ON' : 'OFF'}</span>}
           </button>
           {callMode === 'video' && (
             <button onClick={() => setShowUserCameraModePicker(true)} title={uiT('call.main.cameraMode')} className="flex flex-col items-center gap-0.5 transition active:scale-95">
               <span className={`${callControlSize} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
-                style={userCameraMode !== 'off' ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.15)' }}>
+                style={userCameraMode !== 'off' ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: callFill(0.06), borderColor: callLine(0.15) }}>
                 {userCameraMode !== 'off'
                   ? <VideoCamera size={21} weight="fill" className="text-white/90" />
                   : <VideoCameraSlash size={21} weight="fill" className={userCameraLoading ? 'animate-pulse text-white/70' : 'text-white/48'} />}
@@ -5174,11 +5171,11 @@ ${sentencePlan}`;
           {/* translate */}
           <button onClick={() => setShowLangPicker(prev => !prev)} title={uiT('call.main.language')} className={`flex flex-col items-center transition active:scale-95 ${callMode === 'video' ? 'gap-0.5' : 'gap-1.5'}`}>
             <span className={`${callControlSize} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
-              style={voiceLang ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.15)' }}>
+              style={voiceLang ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: callFill(0.06), borderColor: callLine(0.15) }}>
               <Translate size={22} weight="fill" className="text-white/90" />
             </span>
             <span className="text-[10px] text-white/70">{uiT('call.main.translate')}</span>
-            {callMode !== 'video' && <span className="text-[8px] tracking-[0.15em]" style={{ color: voiceLang ? accentColor : 'rgba(255,255,255,0.3)' }}>{voiceLang ? 'ON' : 'OFF'}</span>}
+            {callMode !== 'video' && <span className="text-[8px] tracking-[0.15em]" style={{ color: voiceLang ? accentColor : callText(0.3) }}>{voiceLang ? 'ON' : 'OFF'}</span>}
           </button>
           {/* end call */}
           <button onClick={handleHangup} className={`flex flex-col items-center transition active:scale-95 ${callMode === 'video' ? 'gap-0.5' : 'gap-1.5'}`}>
@@ -5207,7 +5204,7 @@ ${sentencePlan}`;
             className={`flex flex-col items-center transition active:scale-95 ${callMode === 'video' ? 'gap-0.5' : 'gap-1.5'}`}
           >
             <span className={`${callControlSize} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
-              style={audioOutputRoute !== 'receiver' ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.15)' }}>
+              style={audioOutputRoute !== 'receiver' ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: callFill(0.06), borderColor: callLine(0.15) }}>
               {audioOutputRoute === 'headphones'
                 ? <Headphones size={22} weight="fill" className="text-white/90" />
                 : audioOutputRoute === 'speaker'
@@ -5215,7 +5212,7 @@ ${sentencePlan}`;
                   : <Phone size={22} weight="fill" className="text-white/70" />}
             </span>
             <span className="text-[10px] text-white/70">{audioRouteUiLabel}</span>
-            {callMode !== 'video' && <span className="text-[8px] tracking-[0.15em]" style={{ color: audioOutputRoute !== 'receiver' ? accentColor : 'rgba(255,255,255,0.5)' }}>{audioRouteLabel.en}</span>}
+            {callMode !== 'video' && <span className="text-[8px] tracking-[0.15em]" style={{ color: audioOutputRoute !== 'receiver' ? accentColor : callText(0.5) }}>{audioRouteLabel.en}</span>}
           </button>
         </div>
       </div>

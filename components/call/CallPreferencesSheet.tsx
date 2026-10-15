@@ -118,7 +118,7 @@ const CallPreferencesSheet: React.FC<CallPreferencesSheetProps> = ({
                 : { background: lightTheme ? 'rgba(38,34,57,.07)' : 'rgba(255,255,255,.06)', borderColor: lightTheme ? 'rgba(38,34,57,.14)' : 'rgba(255,255,255,.13)' }}
             >
               <span
-                className="absolute top-[3px] h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200"
+                className="absolute top-[3px] h-5 w-5 rounded-full bg-[#fff] shadow-sm transition-transform duration-200"
                 style={{ left: 3, transform: preferences.voiceAutoPlay ? 'translateX(20px)' : 'translateX(0)' }}
               />
             </button>
@@ -147,7 +147,7 @@ const CallPreferencesSheet: React.FC<CallPreferencesSheetProps> = ({
                 : { background: lightTheme ? 'rgba(38,34,57,.07)' : 'rgba(255,255,255,.06)', borderColor: lightTheme ? 'rgba(38,34,57,.14)' : 'rgba(255,255,255,.13)' }}
             >
               <span
-                className="absolute top-[3px] h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200"
+                className="absolute top-[3px] h-5 w-5 rounded-full bg-[#fff] shadow-sm transition-transform duration-200"
                 style={{ left: 3, transform: preferences.idleNudgeEnabled ? 'translateX(20px)' : 'translateX(0)' }}
               />
             </button>
@@ -176,7 +176,7 @@ const CallPreferencesSheet: React.FC<CallPreferencesSheetProps> = ({
                 : { background: lightTheme ? 'rgba(38,34,57,.07)' : 'rgba(255,255,255,.06)', borderColor: lightTheme ? 'rgba(38,34,57,.14)' : 'rgba(255,255,255,.13)' }}
             >
               <span
-                className="absolute top-[3px] h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200"
+                className="absolute top-[3px] h-5 w-5 rounded-full bg-[#fff] shadow-sm transition-transform duration-200"
                 style={{ left: 3, transform: preferences.sleepDreamEnabled ? 'translateX(20px)' : 'translateX(0)' }}
               />
             </button>
