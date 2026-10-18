@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { readShareFile } from '../../../utils/pngShare';
-import { Archive, ArrowLeft, Database, DownloadSimple, FilmSlate, Plus, SpinnerGap, Trash, UploadSimple, UsersThree, X } from '@phosphor-icons/react';
+import { Archive, ArrowLeft, CaretLeft, CaretRight, Database, DownloadSimple, FilmSlate, Plus, SpinnerGap, Trash, UploadSimple, UsersThree, X } from '@phosphor-icons/react';
 import { useOS } from '../../../context/OSContext';
 import type { StoryTheaterEntry, StoryTheaterMask, StoryTheaterMaskSelection, StoryTheaterPreset } from '../../../types';
 import { DB } from '../../../utils/db';
@@ -34,6 +34,20 @@ interface Props {
 
 type View = 'list' | 'editor' | 'session' | 'preset' | 'masks' | 'vectors' | 'archives';
 
+// 剧情列表每页条数。剧情一多整页就拖得很长，翻页比一直往下滑好找。
+const STORY_PAGE_SIZE = 8;
+
+// 「最近更新」= 设置改动和最后一条剧情楼层里更晚的那个。光看 updatedAt 不够：
+// 正常推进剧情（发消息、后台生成）并不会改剧情条目本身。
+const readStoryLastActivity = async (entry: StoryTheaterEntry): Promise<number> => {
+    try {
+        const [last] = await DB.getRecentMessagesByCharIdAndSource(storyTheaterThreadId(entry.id), 'story_theater', 1);
+        return Math.max(entry.updatedAt || 0, last?.timestamp || 0);
+    } catch {
+        return entry.updatedAt || 0;
+    }
+};
+
 const StoryTheaterContent: React.FC<Props> = ({ initialStoryId, onSwitchCompanion, onClose }) => {
     const { characters, userProfile, addToast, remoteVectorConfig, worldbooks } = useOS();
     const [view, setView] = useState<View>('list');
@@ -46,14 +60,35 @@ const StoryTheaterContent: React.FC<Props> = ({ initialStoryId, onSwitchCompanio
     const [deletingEntry, setDeletingEntry] = useState<StoryTheaterEntry | null>(null);
     const [deletingStory, setDeletingStory] = useState(false);
     const importInput = useRef<HTMLInputElement>(null);
+    const listScroll = useRef<HTMLElement>(null);
+    const listTop = useRef<HTMLElement>(null);
     const initialStoryHandled = useRef<string | null>(null);
     const mirrorRepairDone = useRef(false);
+    const [lastActivity, setLastActivity] = useState<Record<string, number>>({});
+    const [page, setPage] = useState(0);
     const presets = useMemo(() => withBuiltInStoryPresets(customPresets), [customPresets]);
+    const activityOf = useCallback((entry: StoryTheaterEntry) => Math.max(entry.updatedAt || 0, lastActivity[entry.id] || 0), [lastActivity]);
+    const sortedEntries = useMemo(() => [...entries].sort((a, b) => activityOf(b) - activityOf(a)), [activityOf, entries]);
+    const pageCount = Math.max(1, Math.ceil(sortedEntries.length / STORY_PAGE_SIZE));
+    const currentPage = Math.min(page, pageCount - 1);
+    const pagedEntries = sortedEntries.slice(currentPage * STORY_PAGE_SIZE, (currentPage + 1) * STORY_PAGE_SIZE);
+
+    const goToPage = useCallback((next: number) => {
+        setPage(next);
+        const scroller = listScroll.current, top = listTop.current;
+        if (scroller && top) scroller.scrollTo({ top: Math.max(0, scroller.scrollTop + top.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 12), behavior: 'smooth' });
+    }, []);
+
+    const refreshActivity = useCallback(async (targets: StoryTheaterEntry[]) => {
+        const pairs = await Promise.all(targets.map(async entry => [entry.id, await readStoryLastActivity(entry)] as const));
+        setLastActivity(current => ({ ...current, ...Object.fromEntries(pairs) }));
+    }, []);
 
     const reload = useCallback(async () => {
         const [storedEntries, storedPresets, storedMasks] = await Promise.all([DB.getStoryTheaters(), DB.getStoryTheaterPresets(), DB.getStoryTheaterMasks()]);
         const normalizedEntries = storedEntries.map(normalizeStoryTheater);
         setEntries([...normalizedEntries].sort((a, b) => b.updatedAt - a.updatedAt));
+        void refreshActivity(normalizedEntries);
         setCustomPresets(storedPresets.filter(preset => !preset.builtIn).sort((a, b) => b.updatedAt - a.updatedAt));
         setMasks(storedMasks.sort((a, b) => b.updatedAt - a.updatedAt));
         // 旧版本的后台生成会无视「虚构剧场」，把剧情正文镜像进角色聊天：那些消息界面里看不见、
@@ -67,7 +102,7 @@ const StoryTheaterContent: React.FC<Props> = ({ initialStoryId, onSwitchCompanio
         } catch (error: any) {
             console.error('[StoryTheater] fiction mirror repair failed', error);
         }
-    }, [addToast, characters]);
+    }, [addToast, characters, refreshActivity]);
 
     useEffect(() => { void reload(); }, [reload]);
     useEffect(() => {
@@ -240,7 +275,7 @@ const StoryTheaterContent: React.FC<Props> = ({ initialStoryId, onSwitchCompanio
     if (view === 'session' && activeEntry) {
         const preset = presets.find(item => item.id === activeEntry.presetId) || BUILTIN_NIGHT_SCREENING_PRESET;
         const hasVectorArchive = (!activeEntry.writesToCharacterMemory && activeEntry.archiveStrategy === 'vector') || activeEntry.archives.some(archive => archive.strategy === 'vector');
-        return <StoryTheaterSession entry={activeEntry} preset={preset} masks={masks} onBack={() => { setActiveEntry(null); setView('list'); }} onEdit={() => void openEntryEditor(activeEntry)} onOpenArchives={() => setView('archives')} onOpenVectorMemory={hasVectorArchive ? () => setView('vectors') : undefined} onEntryChange={persistEntryInSession} />;
+        return <StoryTheaterSession entry={activeEntry} preset={preset} masks={masks} onBack={() => { const played = activeEntry; setActiveEntry(null); setView('list'); setPage(0); void refreshActivity([played]); }} onEdit={() => void openEntryEditor(activeEntry)} onOpenArchives={() => setView('archives')} onOpenVectorMemory={hasVectorArchive ? () => setView('vectors') : undefined} onEntryChange={persistEntryInSession} />;
     }
 
     return <div className='h-full w-full flex flex-col bg-stone-100 text-slate-800'>
@@ -257,15 +292,15 @@ const StoryTheaterContent: React.FC<Props> = ({ initialStoryId, onSwitchCompanio
             </div>
         </header>
 
-        <main className='story-page-scroll flex-1 overflow-y-auto px-5 py-6 pb-24'>
+        <main ref={listScroll} className='story-page-scroll flex-1 overflow-y-auto px-5 py-6 pb-24'>
             <div className='max-w-2xl mx-auto'>
                 <section className='story-cinema-rule pb-6 border-b border-slate-200'>
                     <div className='text-[9px] tracking-[.24em] uppercase font-bold text-violet-500'>Your theaters</div>
                     <div className='mt-2 flex items-end justify-between gap-5'><div><h2 className='text-3xl font-serif font-semibold'>很多条剧情，<br />各自拥有一条时间线。</h2><p className='mt-3 text-[11px] leading-5 text-slate-500'>角色在新增时一次选定。世界书、记忆与预设的改动都只发生在这只沙盒里。</p></div><FilmSlate size={48} weight='duotone' className='shrink-0 text-violet-300' /></div>
                 </section>
 
-                <section className='py-6'>
-                    {entries.length === 0 ? <button onClick={() => { setMaskLocked(false); setActiveEntry({ ...createStoryTheaterDraft(), presetId: presets[0]?.id }); setView('editor'); }} className='w-full py-14 rounded-3xl border border-dashed border-slate-300 text-center'><span className='block text-sm font-semibold'>新增第一条剧情</span><span className='block mt-2 text-[10px] text-slate-400'>选择多位角色、记忆方式、世界书与原生预设</span></button> : <div className='divide-y divide-slate-200'>{entries.map(item => {
+                <section ref={listTop} className='py-6'>
+                    {entries.length === 0 ? <button onClick={() => { setMaskLocked(false); setActiveEntry({ ...createStoryTheaterDraft(), presetId: presets[0]?.id }); setView('editor'); }} className='w-full py-14 rounded-3xl border border-dashed border-slate-300 text-center'><span className='block text-sm font-semibold'>新增第一条剧情</span><span className='block mt-2 text-[10px] text-slate-400'>选择多位角色、记忆方式、世界书与原生预设</span></button> : <><div className='divide-y divide-slate-200'>{pagedEntries.map(item => {
                         const cast = characters.filter(char => item.characterIds.includes(char.id));
                         const mask = resolveStoryTheaterMask(item.mask, userProfile, characters, masks);
                         const youLabel = mask.selection.type === 'user' ? '你' : `你（${mask.name}）`;
@@ -275,13 +310,18 @@ const StoryTheaterContent: React.FC<Props> = ({ initialStoryId, onSwitchCompanio
                             <button onClick={() => { setActiveEntry(item); setView('session'); }} className='min-w-0 flex-1 flex items-center gap-4 text-left'>
                                 <div className='flex -space-x-2'>{mask.avatar ? <img src={mask.avatar} alt='' className='w-10 h-10 rounded-full object-cover border-2 border-slate-800 relative z-10' /> : <span className='w-10 h-10 rounded-full bg-slate-800 text-white grid place-items-center border-2 border-slate-800 relative z-10 text-xs font-serif'>{mask.name.slice(0, 1)}</span>}{cast.slice(0, 2).map(char => <img key={char.id} src={char.avatar} alt='' className='w-10 h-10 rounded-full object-cover border-2 border-stone-100' />)}{cast.length === 0 && <span className='w-10 h-10 rounded-full bg-slate-200 grid place-items-center'><UsersThree size={18} /></span>}</div>
                                 <div className='min-w-0 flex-1'><h3 className='font-serif font-semibold truncate'>{item.title}</h3><p className='mt-1 text-[10px] text-slate-400 truncate'>{youLabel} · 角色：{cast.map(char => char.name).join('、') || '暂无'} · {item.writesToCharacterMemory ? '进入角色记忆' : vectorEnabled ? '独立向量剧场' : '独立事件盒'}</p></div>
-                                <time className='text-[9px] text-slate-400'>{new Date(item.updatedAt).toLocaleDateString()}</time>
+                                <time className='text-[9px] text-slate-400'>{new Date(activityOf(item)).toLocaleDateString()}</time>
                             </button>
                             {item.archives.some(archive => archive.summary) && <button onClick={() => { setActiveEntry(item); setView('archives'); }} className='w-10 h-10 shrink-0 rounded-full bg-white border border-slate-200 grid place-items-center text-violet-600' title='查看本剧情事件盒' aria-label='查看本剧情事件盒'><Archive size={17} /></button>}
                             {hasVectorArchive && <button onClick={() => { setActiveEntry(item); setView('vectors'); }} className='w-10 h-10 shrink-0 rounded-full bg-white border border-slate-200 grid place-items-center text-violet-600' title='查看本剧情向量记忆' aria-label='查看本剧情向量记忆'><Database size={17} /></button>}
                             <button onClick={() => setDeletingEntry(item)} className='w-10 h-10 shrink-0 rounded-full grid place-items-center text-rose-400 active:bg-rose-50' title='删除整个剧情' aria-label={`删除剧情 ${item.title}`}><Trash size={17} /></button>
                         </div>;
-                    })}</div>}
+                    })}</div>
+                    {pageCount > 1 && <nav className='mt-4 flex items-center justify-between gap-3' aria-label='剧情翻页'>
+                        <button disabled={currentPage === 0} onClick={() => goToPage(currentPage - 1)} className='h-10 px-4 rounded-full bg-white border border-slate-200 flex items-center gap-1 text-xs font-bold text-slate-600 disabled:opacity-30'><CaretLeft size={14} weight='bold' />上一页</button>
+                        <span className='text-[11px] text-slate-400'>第 {currentPage + 1} / {pageCount} 页 · 共 {sortedEntries.length} 条</span>
+                        <button disabled={currentPage >= pageCount - 1} onClick={() => goToPage(currentPage + 1)} className='h-10 px-4 rounded-full bg-white border border-slate-200 flex items-center gap-1 text-xs font-bold text-slate-600 disabled:opacity-30'>下一页<CaretRight size={14} weight='bold' /></button>
+                    </nav>}</>}
                 </section>
 
                 <section className='pt-6 border-t border-slate-200'>
