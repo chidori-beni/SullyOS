@@ -72,6 +72,8 @@ interface ChatInputAreaProps {
     builtInActionOrder?: readonly ChatActionId[];
     onPanelAction: (type: string, payload?: any) => void;
     onImageSelect: (file: File) => void;
+    /** 相册一次多选时整批交过来（按选择顺序）；不传就逐张走 onImageSelect。 */
+    onImagesSelect?: (files: File[]) => void;
     isSummarizing: boolean;
     // Categories Support
     categories?: EmojiCategory[];
@@ -121,7 +123,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     customThemes = [], onUpdateTheme = () => {}, onRemoveTheme = () => {}, activeThemeId = '',
     actionsContent,
     builtInActionOrder = DEFAULT_CHAT_ACTION_ORDER,
-    onPanelAction, onImageSelect, isSummarizing,
+    onPanelAction, onImageSelect, onImagesSelect, isSummarizing,
     categories = [], activeCategory = 'default',
     onReroll, canReroll,
     isProactiveActive,
@@ -237,10 +239,11 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     };
 
     const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>, type: 'chat' | 'bg') => {
-        const file = e.target.files?.[0];
-        if (file) {
-            onImageSelect(file);
-        }
+        // 相册可以一次多选（用户 2026-10-19 提：以前每张都要重开一次相册）。
+        const files = Array.from(e.target.files || []);
+        if (files.length > 1 && onImagesSelect) onImagesSelect(files);
+        else if (files.length > 1) files.forEach(f => onImageSelect(f));
+        else if (files[0]) onImageSelect(files[0]);
         if (e.target) e.target.value = ''; // Reset
     };
 
@@ -961,7 +964,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     {/* Actions Panel：按用户设置的顺序分页，每页 8 个内置动作 */}
                     {/* 聊天相机是 portal，放在面板条件之外：拍照途中面板收起也不会把相机一起卸掉。 */}
                     {/* 隐藏的图片选择框放在面板条件之外：相机里「从相册选择」点它时，面板就算收起了也还在。 */}
-                    <input type="file" ref={chatImageInputRef} className="hidden" accept="image/*" onChange={(e) => handleImageChange(e, 'chat')} />
+                    <input type="file" ref={chatImageInputRef} className="hidden" accept="image/*" multiple onChange={(e) => handleImageChange(e, 'chat')} />
                     {cameraOpen && <ChatCamera character={characters.find(c => c.id === activeCharacterId)} onClose={() => setCameraOpen(false)} onCapture={onImageSelect} onGallery={() => { chatImageInputRef.current?.click(); setCameraOpen(false); }} />}
                     {showPanel === 'actions' && !actionsContent && (
                         <div

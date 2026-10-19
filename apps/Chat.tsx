@@ -1826,7 +1826,7 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
 
     // --- Actions ---
 
-    const sendText = async (customContent?: string, customType?: MessageType, metadata?: any) => {
+    const sendText = async (customContent?: string, customType?: MessageType, metadata?: any, opts?: { batchFollower?: boolean }) => {
         if (!char || (!input.trim() && !customContent)) return;
         // 只累加内存里的计数，这里不发任何请求；页面切走时才按区间报一次。见 utils/analytics.ts
         noteMessageSent();
@@ -1888,7 +1888,8 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
                 savedDate: localDateKey,
                 chatContext: recentChat
             });
-            addToast('图片已保存至相册', 'info');
+            // 相册多选时只在第一张提示一次。
+            if (!opts?.batchFollower) addToast('图片已保存至相册', 'info');
         }
 
         // Blob 只存 IndexedDB 资产，不塞进消息 metadata，避免消息序列化、同步和上下文膨胀。
@@ -1897,7 +1898,8 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
         if (persistedMetadata) delete persistedMetadata._voiceBlob;
         const msgPayload: any = { charId: char.id, role: 'user', type, content: text, metadata: persistedMetadata };
         
-        if (replyTarget) {
+        // 相册多选的后几张拿的是同一个闭包里的旧 replyTarget，引用只挂在第一张上。
+        if (replyTarget && !opts?.batchFollower) {
             msgPayload.replyTo = {
                 id: replyTarget.id,
                 content: replyTarget.content,
@@ -2067,10 +2069,10 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
         return true;
     };
 
-    const handleSendText = async (customContent?: string, customType?: MessageType, metadata?: any) => {
+    const handleSendText = async (customContent?: string, customType?: MessageType, metadata?: any, opts?: { batchFollower?: boolean }) => {
         const finish = autoReply.beginSend(char?.id || null);
         try {
-            const sent = await sendText(customContent, customType, metadata);
+            const sent = await sendText(customContent, customType, metadata, opts);
             finish(sent === true && (!customType || ['text', 'image', 'emoji'].includes(customType)));
         } catch (error) {
             finish(false);
@@ -2334,6 +2336,33 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
         } finally {
             // 是否真正发出由 handleSendText 标记；这里仅解除图片处理期间的暂停。
             finishImage(false);
+        }
+    };
+
+    // 相册一次多选：按选择顺序一张张发。外层先占住自动回复，整批发完才开始倒计时，
+    // 免得发到第二张角色就抢着回第一张。
+    const MAX_IMAGES_PER_PICK = 9;
+    const handleImagesSelect = async (files: File[]) => {
+        const picked = files.slice(0, MAX_IMAGES_PER_PICK);
+        if (files.length > picked.length) addToast(`一次最多发 ${MAX_IMAGES_PER_PICK} 张，只发了前 ${MAX_IMAGES_PER_PICK} 张`, 'info');
+        const finishBatch = autoReply.beginSend(char?.id || null);
+        let failed = 0;
+        let sentAny = false;
+        try {
+            for (const file of picked) {
+                try {
+                    const base64 = await processImage(file, { maxWidth: 600, quality: 0.6, forceJpeg: true });
+                    await handleSendText(base64, 'image', undefined, { batchFollower: sentAny });
+                    sentAny = true;
+                } catch (err: any) {
+                    failed++;
+                    console.warn('[相册多选] 一张图没发出去', err);
+                }
+            }
+            if (!inputPreferences.autoReply) setShowPanel('none');
+            if (failed) addToast(`${failed} 张图片处理失败`, 'error');
+        } finally {
+            finishBatch(false);
         }
     };
 
@@ -5598,6 +5627,7 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
                     onRemoveTheme={removeCustomTheme} activeThemeId={currentThemeId}
                     onPanelAction={handlePanelAction}
                     onImageSelect={handleImageSelect}
+                    onImagesSelect={handleImagesSelect}
                     isSummarizing={isSummarizing}
                     categories={visibleCategories}
                     activeCategory={activeCategory}

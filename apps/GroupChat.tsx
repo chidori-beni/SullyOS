@@ -958,17 +958,22 @@ const GroupChat: React.FC = () => {
     const handleImageFile = async (file: File) => {
         try {
             const base64 = await processImage(file, { maxWidth: 600, quality: 0.7, forceJpeg: true });
-            handleSendMessage(base64, 'image');
+            await handleSendMessage(base64, 'image');
         } catch (err) {
             addToast('图片发送失败', 'error');
         }
     };
 
+    // 相册可以一次多选，按选择顺序一张张发（最多 9 张）。
+    const handleImageFiles = async (files: File[]) => {
+        if (files.length > 9) addToast('一次最多发 9 张，只发了前 9 张', 'info');
+        for (const file of files.slice(0, 9)) await handleImageFile(file);
+    };
+
     const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        await handleImageFile(file);
+        const files = Array.from(e.target.files || []);
         if (e.target) e.target.value = '';
+        await handleImageFiles(files);
     };
 
     // --- Logic: 红包 2.0 ---
@@ -1947,6 +1952,7 @@ ${buildCharBondNote(member, characters.filter(c => activeGroup?.members.includes
                 activeCategory={activeEmojiCategory}
                 onPanelAction={handlePanelAction}
                 onImageSelect={handleImageFile}
+                onImagesSelect={(files) => { void handleImageFiles(files); }}
                 isSummarizing={isSummarizing}
                 onReroll={handleReroll}
                 canReroll={canReroll}
@@ -1964,7 +1970,7 @@ ${buildCharBondNote(member, characters.filter(c => activeGroup?.members.includes
                             </div>
                             <span className="text-xs font-bold">相册</span>
                         </button>
-                        <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleImageUpload} />
+                        <input type="file" ref={fileInputRef} className="hidden" accept="image/*" multiple onChange={handleImageUpload} />
 
                         <button onClick={() => { setModalType('transfer'); setShowPanel('none'); trackEvent('打开发红包面板'); }} className="flex flex-col items-center gap-2 active:scale-95 transition-transform text-slate-600">
                             <div className="w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border bg-orange-50 text-orange-400 border-orange-100">
