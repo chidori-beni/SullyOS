@@ -965,7 +965,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     {/* 聊天相机是 portal，放在面板条件之外：拍照途中面板收起也不会把相机一起卸掉。 */}
                     {/* 隐藏的图片选择框放在面板条件之外：相机里「从相册选择」点它时，面板就算收起了也还在。 */}
                     <input type="file" ref={chatImageInputRef} className="hidden" accept="image/*" multiple onChange={(e) => handleImageChange(e, 'chat')} />
-                    {cameraOpen && <ChatCamera character={characters.find(c => c.id === activeCharacterId)} onClose={() => setCameraOpen(false)} onCapture={onImageSelect} onGallery={() => { chatImageInputRef.current?.click(); setCameraOpen(false); }} />}
+                    {cameraOpen && <ChatCamera character={characters.find(c => c.id === activeCharacterId)} onClose={() => setCameraOpen(false)} onCapture={onImageSelect} onCaptureMany={onImagesSelect} onGallery={() => { chatImageInputRef.current?.click(); setCameraOpen(false); }} />}
                     {showPanel === 'actions' && !actionsContent && (
                         <div
                             className="overflow-y-auto no-scrollbar"

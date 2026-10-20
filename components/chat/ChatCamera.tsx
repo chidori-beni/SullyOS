@@ -20,8 +20,10 @@ const Live2DAvatarCanvas = lazy(() => import('../call/Live2DAvatarCanvas'));
 
 type Sticker = { id: number; text: string; x: number; y: number; size: number; angle: number; image?: HTMLCanvasElement; light?: boolean; lightStrength?: number; rim?: number; softness?: number; skinWarmth?: number; opacity?: number; glow?: boolean };
 
-export default function ChatCamera({ onClose, onCapture, character }: {
-    onClose: () => void; onGallery?: () => void; onCapture: (file: File) => void; character?: CharacterProfile;
+export default function ChatCamera({ onClose, onCapture, onCaptureMany, character }: {
+    onClose: () => void; onGallery?: () => void; onCapture: (file: File) => void;
+    /** 相册一次勾了多张：跳过装饰，整批按顺序直接发（用户 2026-10-19 提）。 */
+    onCaptureMany?: (files: File[]) => void; character?: CharacterProfile;
 }) {
     const [mode, setMode] = useState<'choose' | 'camera'>('choose');
     const [trackCamera] = useState(createCameraAnalytics);
@@ -355,7 +357,12 @@ export default function ChatCamera({ onClose, onCapture, character }: {
     };
     return createPortal(<div className="chat-camera-backdrop" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
         <div className={`chat-camera ${mode === 'choose' ? 'chat-camera-chooser' : ''}`} ref={dialog} role="dialog" aria-modal="true" aria-label={mode === 'choose' ? '选择图片来源' : '拍照'} tabIndex={-1} onKeyDown={keyboard}>
-            <input ref={galleryInput} type="file" hidden accept="image/*" aria-label="从相册选择照片" onChange={e => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ''; void loadGalleryPhoto(file); }} />
+            <input ref={galleryInput} type="file" hidden accept="image/*" multiple={!!onCaptureMany} aria-label="从相册选择照片" onChange={e => {
+                // 只勾一张照旧进装饰；勾了多张就不逐张装饰了，直接整批发出去。
+                const files = Array.from(e.currentTarget.files || []); e.currentTarget.value = '';
+                if (files.length > 1 && onCaptureMany) { onCaptureMany(files); onClose(); return; }
+                void loadGalleryPhoto(files[0]);
+            }} />
             <header><strong><Camera size={20} weight="duotone" />{mode === 'choose' ? '分享照片' : photo ? '装饰照片' : '相机'}</strong><div>{photo && <button type="button" title="按住查看原图" aria-label="按住查看原图" onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); setCompareOriginal(true); }} onPointerUp={() => setCompareOriginal(false)} onPointerCancel={() => setCompareOriginal(false)} onBlur={() => setCompareOriginal(false)} onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setCompareOriginal(true); } }} onKeyUp={() => setCompareOriginal(false)}><Eye size={22} /></button>}<button type="button" aria-label="关闭相机" title="关闭" onClick={onClose}><X size={22} /></button></div></header>
             {mode === 'choose' ? <div className="chat-camera-sources">
                 <button type="button" onClick={() => { trackCamera('camera'); setMode('camera'); }}><Camera size={28} /><span>拍照</span></button>
