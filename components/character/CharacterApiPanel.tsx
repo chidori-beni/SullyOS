@@ -106,7 +106,7 @@ export default function CharacterApiPanel({ character, onChange }: {
       {draft && <div className="space-y-4">
         {apiPresets.length > 0 && <div className="space-y-2">
           <h4 className="text-[10px] font-bold text-slate-400 tracking-widest">API 预设</h4>
-          <ApiPresetGroups presets={apiPresets}>{preset => <button key={preset.id} type="button"
+          <ApiPresetGroups presets={apiPresets} activeId={activePreset}>{preset => <button key={preset.id} type="button"
             onClick={() => changeDraft(configFromPreset(preset))}
             className={`rounded-lg px-3 py-2 text-xs border ${activePreset === preset.id ? 'bg-primary/5 border-primary/30 text-primary' : 'bg-white border-slate-200 text-slate-600'}`}>
             {preset.name}{activePreset === preset.id ? ' · 已选' : ''}

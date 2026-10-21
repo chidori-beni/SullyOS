@@ -61,6 +61,7 @@ import { describeImageWithVisionApi, VISION_API_TEST_IMAGE_DATA_URL, visionApiCo
 import { useUiLocale } from '../context/UiLocaleContext';
 import type { UiLocale, UiStatusMessage } from '../utils/uiLocale';
 import { shareOrDownloadBlob } from '../utils/shareExport';
+import ApiPresetGroups from '../components/settings/ApiPresetGroups';
 
 // hot_news（news.orz.ai）可选热榜平台。key 必须与 API 的 ?platform= 完全一致。
 const HOTNEWS_PLATFORM_OPTIONS: { key: string; label: string }[] = [
@@ -2033,8 +2034,8 @@ const Settings: React.FC = () => {
             {apiPresets.length > 0 && (
                 <div className="mb-4">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">{t('settings.preset.list')}</label>
-                    <div className="flex gap-2 flex-wrap">
-                        {apiPresets.map(preset => (
+                    <ApiPresetGroups presets={apiPresets} activeId={activePresetId}>
+                        {preset => (
                             <div key={preset.id} className={`flex items-center rounded-lg pl-3 pr-1 py-1 shadow-sm border transition-colors ${
                                 activePresetId === preset.id
                                     ? 'bg-primary/5 border-primary/30'
@@ -2073,8 +2074,8 @@ const Settings: React.FC = () => {
                                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" /></svg>
                                 </button>
                             </div>
-                        ))}
-                    </div>
+                        )}
+                    </ApiPresetGroups>
                     <p className="text-[9px] text-slate-300 mt-1.5 pl-1">{t('settings.preset.listHelp')}</p>
                 </div>
             )}
@@ -2682,8 +2683,8 @@ const Settings: React.FC = () => {
                         <span className="text-[9px] text-slate-300">{t('settings.vision.mainUnchanged')}</span>
                     </div>
                     {apiPresets.length > 0 ? (
-                        <div className="flex gap-2 flex-wrap">
-                            {apiPresets.map(preset => (
+                        <ApiPresetGroups presets={apiPresets} activeId={selectedVisionPresetId}>
+                            {preset => (
                                 <button
                                     key={preset.id}
                                     type="button"
@@ -2697,8 +2698,8 @@ const Settings: React.FC = () => {
                                 >
                                     {preset.name}
                                 </button>
-                            ))}
-                        </div>
+                            )}
+                        </ApiPresetGroups>
                     ) : (
                         <p className="text-[10px] text-slate-400 leading-relaxed">{t('settings.vision.noPreset')}</p>
                     )}
