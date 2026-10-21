@@ -1,3 +1,4 @@
+import { useUiLocale } from '../../context/UiLocaleContext';
 import React from 'react';
 import { Check } from '@phosphor-icons/react';
 import type { APIConfig, ApiPreset } from '../../types';
@@ -22,21 +23,22 @@ interface Props {
 }
 
 const CallApiPresetSheet: React.FC<Props> = ({ apiPresets, apiConfig, accentColor, lightTheme, onApply, onClose, emptyHint }) => {
+  const { t: uiT } = useUiLocale();
   const activeId = findActivePresetId(apiPresets, apiConfig);
   return (
     <div className="absolute inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-end" onClick={onClose} data-testid="call-api-preset-sheet">
       <div className={`w-full border-t border-white/10 rounded-t-3xl p-5 space-y-3 ${lightTheme ? 'bg-[#f6f4fc]' : 'bg-[#120c22]'}`}
         style={{ paddingBottom: 'max(1.25rem, var(--safe-bottom, 0px))' }}
         onClick={e => e.stopPropagation()}>
-        <div className="text-sm text-white/80 font-medium">切换 API</div>
+        <div className="text-sm text-white/80 font-medium">{uiT('call.detail.label081')}</div>
         <p className="text-xs text-white/40">
           {activeId
-            ? '点一下立即生效，下一句就用新的 API；和设置里的是同一份预设。'
-            : `当前用的是手填配置${apiConfig.model ? `（${apiConfig.model}）` : ''}，不在预设里。点一条即可切过去。`}
+            ? uiT('call.detail.label082')
+            : uiT('call.detail.manualApi', { model: apiConfig.model ? `（${apiConfig.model}）` : '' })}
         </p>
         {apiPresets.length === 0 ? (
           <div className="rounded-2xl border border-white/10 px-4 py-5 text-center text-xs text-white/45">
-            {emptyHint ?? <>还没有保存过 API 预设。<br />挂断后去「设置 → API」存一条，这里就会出现。</>}
+            {emptyHint ?? <>{uiT('call.detail.label083')}<br />{uiT('call.detail.label084')}</>}
           </div>
         ) : (
           <div className="max-h-[45vh] overflow-y-auto space-y-2 pt-1">
@@ -51,11 +53,11 @@ const CallApiPresetSheet: React.FC<Props> = ({ apiPresets, apiConfig, accentColo
                     : { borderColor: 'rgba(255,255,255,.1)', background: lightTheme ? 'rgba(38,34,57,0.05)' : 'rgba(255,255,255,.04)' }}>
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[13px] font-medium text-white/85">{preset.name}</div>
-                    <div className="mt-0.5 truncate text-[10px] text-white/40">{preset.config.model || '未填模型'}</div>
+                    <div className="mt-0.5 truncate text-[10px] text-white/40">{preset.config.model || uiT('call.detail.label085')}</div>
                   </div>
                   {active && (
                     <span className="flex shrink-0 items-center gap-1 text-[10px]" style={{ color: accentColor }}>
-                      <Check size={12} weight="bold" /> 使用中
+                      <Check size={12} weight="bold" /> {uiT('call.detail.label068')}
                     </span>
                   )}
                 </button>

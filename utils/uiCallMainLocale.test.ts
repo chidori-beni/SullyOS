@@ -55,7 +55,7 @@ it('keeps missed-call persistence and incoming lifecycle unchanged', () => {
 });
 it('does not translate role prompts or call-generation/hangup logic', () => {
   const source = readFileSync(files[0], 'utf8'), original = execFileSync('git', ['show', `HEAD:${files[0]}`], { encoding: 'utf8' });
-  const prefix = (s: string) => s.slice(0, s.indexOf("  if (viewMode === 'role-select')")).replace(/\r/g, '').replace("import { useUiLocale } from '../context/UiLocaleContext';\n", '').replace('  const { t: uiT } = useUiLocale();\n', '').replace(/  const audioRouteUiLabel =[^\n]+\n/, '');
+  const prefix = (s: string) => s.slice(0, s.indexOf('  const avatarImportOverlay =')).replace(/\r/g, '').replace("import { useUiLocale } from '../context/UiLocaleContext';\n", '').replace("import { formatCallDetailText } from '../utils/callDetailLocale';\n", '').replace('  const { t: uiT } = useUiLocale();\n', '').replace(/  const audioRouteUiLabel =[^\n]+\n/, '');
   // All lifecycle and prompt code lives before the UI views; only a pure route display binding was added.
   expect(prefix(source)).toBe(prefix(original));
   expect(translateUi('ja-JP', 'call.main.sayTo', { name: '原名{name}' })).toContain('原名{name}');

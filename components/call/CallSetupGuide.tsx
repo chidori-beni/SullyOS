@@ -1,3 +1,5 @@
+import { useUiLocale } from '../../context/UiLocaleContext';
+import { formatCallDetailText } from '../../utils/callDetailLocale';
 import React, { useEffect, useRef } from 'react';
 import { ArrowLeft, ArrowRight, Check, Cube, FileZip, FolderOpen, Gear, ImageSquare, X } from '@phosphor-icons/react';
 import type { UserCameraMode } from './UserCameraModePicker';
@@ -69,6 +71,7 @@ const CallSetupGuide: React.FC<CallSetupGuideProps> = ({
   onStart,
   onClose,
 }) => {
+  const { t: uiT } = useUiLocale();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const ink = lightTheme ? '#292638' : '#f8f6ff';
   const muted = lightTheme ? 'rgba(41,38,56,.5)' : 'rgba(248,246,255,.48)';
@@ -87,10 +90,10 @@ const CallSetupGuide: React.FC<CallSetupGuideProps> = ({
   const fakeImageMissing = cameraMode === 'fake' && !hasFakeImage;
   const visualAvailable = avatarSource === 'model' ? Boolean(modelName) : avatarSource === 'upload' ? Boolean(staticImageName) : hasDatePortraits;
   const visualName = avatarSource === 'upload'
-    ? staticImageName || '尚未导入静态图片'
+    ? staticImageName || uiT('call.detail.label126')
     : avatarSource === 'date'
-      ? dateOutfitName || '尚未准备见面立绘'
-      : modelName || '尚未绑定动态模型';
+      ? dateOutfitName || uiT('call.detail.label127')
+      : modelName || uiT('call.detail.label128');
   const visualDetail = avatarSource === 'upload'
     ? 'PNG / GIF · 单图保持原样'
     : avatarSource === 'date'
@@ -101,7 +104,7 @@ const CallSetupGuide: React.FC<CallSetupGuideProps> = ({
 
   return (
     <div className="absolute inset-0 z-[80] flex items-end bg-[#08050f]/72 backdrop-blur-sm" data-testid="call-setup-guide">
-      <button type="button" aria-label="关闭通话准备引导" className="absolute inset-0" onClick={onClose} />
+      <button type="button" aria-label={uiT('call.detail.label086')} className="absolute inset-0" onClick={onClose} />
       <div
         ref={panelRef}
         role="dialog"
@@ -119,26 +122,26 @@ const CallSetupGuide: React.FC<CallSetupGuideProps> = ({
             <div>
               <div className="text-[9px] font-semibold tracking-[0.28em]" style={{ color: muted }}>VIDEO LINK / PREPARATION</div>
               <h2 id="call-setup-guide-title" className="mt-1.5 text-[23px] font-semibold leading-none">
-                {step === 'model' ? '选择对方的视频形象。' : '你要怎样入镜？'}
+                {step === 'model' ? uiT('call.detail.label087') : uiT('call.detail.label088')}
               </h2>
               <p className="mt-2 text-[11px] leading-5" style={{ color: muted }}>
                 {step === 'model'
-                  ? `动态模型、静态图片和见面立绘都在这里切换，桌面与视频通话共用同一选择。`
-                  : '选择只对本次通话生效；下次打开仍从关闭开始。'}
+                  ? uiT('call.detail.label134')
+                  : uiT('call.detail.label089')}
               </p>
             </div>
-            <button type="button" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border active:scale-90" style={{ borderColor: line }} aria-label="关闭">
+            <button type="button" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border active:scale-90" style={{ borderColor: line }} aria-label={uiT('call.main.close')}>
               <X size={15} weight="bold" />
             </button>
           </div>
 
           <div className="mt-5 grid grid-cols-[1fr_auto_1fr] items-center gap-2 text-[9px] font-medium tracking-[0.12em]" style={{ color: muted }}>
             <button type="button" onClick={() => onStepChange('model')} className="flex items-center gap-2 text-left" style={{ color: step === 'model' ? accentColor : undefined }}>
-              <span className="flex h-6 w-6 items-center justify-center rounded-full border" style={{ borderColor: step === 'model' ? accentColor : line }}>01</span> 对方形象
+              <span className="flex h-6 w-6 items-center justify-center rounded-full border" style={{ borderColor: step === 'model' ? accentColor : line }}>01</span> {uiT('call.detail.label090')}
             </button>
             <span className="h-px w-10" style={{ background: line }} />
             <button type="button" onClick={() => onStepChange('camera')} className="flex items-center justify-end gap-2 text-right" style={{ color: step === 'camera' ? accentColor : undefined }}>
-              <span className="flex h-6 w-6 items-center justify-center rounded-full border" style={{ borderColor: step === 'camera' ? accentColor : line }}>02</span> 我的镜头
+              <span className="flex h-6 w-6 items-center justify-center rounded-full border" style={{ borderColor: step === 'camera' ? accentColor : line }}>02</span> {uiT('call.detail.label091')}
             </button>
           </div>
         </header>
@@ -154,7 +157,7 @@ const CallSetupGuide: React.FC<CallSetupGuideProps> = ({
                   <div className="min-w-0 flex-1">
                     <div className="text-[9px] font-semibold tracking-[0.2em]" style={{ color: muted }}>CURRENT CAST</div>
                     <div className="mt-1 truncate text-[14px] font-medium">{visualName}</div>
-                    <div className="mt-0.5 text-[10px]" style={{ color: muted }}>{visualDetail}</div>
+                    <div className="mt-0.5 text-[10px]" style={{ color: muted }}>{formatCallDetailText(uiT, visualDetail)}</div>
                   </div>
                   {visualAvailable && <Check size={17} weight="bold" style={{ color: accentColor }} />}
                 </div>
@@ -163,9 +166,9 @@ const CallSetupGuide: React.FC<CallSetupGuideProps> = ({
               <section className="border-t" style={{ borderColor: line }}>
                 <div className="grid grid-cols-3 gap-1.5 border-b p-2" style={{ borderColor: line }}>
                   {([
-                    ['model', '动态模型'],
-                    ['upload', '静态图片'],
-                    ['date', '见面立绘'],
+                    ['model', uiT('call.detail.label092')],
+                    ['upload', uiT('call.detail.label093')],
+                    ['date', uiT('call.detail.label094')],
                   ] as const).map(([source, label]) => {
                     const active = avatarSource === source;
                     return (
@@ -177,7 +180,7 @@ const CallSetupGuide: React.FC<CallSetupGuideProps> = ({
                         className="rounded-xl border px-2 py-2 text-[10px] font-medium transition active:scale-[.98]"
                         style={{ borderColor: active ? `${accentColor}88` : line, color: active ? accentColor : muted, background: active ? `${accentColor}12` : undefined }}
                       >
-                        {active && <Check size={10} weight="bold" className="mr-1 inline" />}{label}
+                        {active && <Check size={10} weight="bold" className="mr-1 inline" />}{formatCallDetailText(uiT, label)}
                       </button>
                     );
                   })}
@@ -187,18 +190,18 @@ const CallSetupGuide: React.FC<CallSetupGuideProps> = ({
                   <>
                     <button type="button" onClick={onChooseModelFile} className="grid w-full grid-cols-[2.5rem_1fr_auto] items-center gap-3 border-b px-5 py-3.5 text-left active:bg-current/[.035]" style={{ borderColor: line }}>
                       <FileZip size={18} style={{ color: accentColor }} />
-                      <span><span className="block text-[13px] font-medium">模型文件</span><span className="mt-0.5 block text-[10px]" style={{ color: muted }}>Live2D ZIP 或 VRM；.vroid 会提示先导出</span></span>
+                      <span><span className="block text-[13px] font-medium">{uiT('call.detail.label095')}</span><span className="mt-0.5 block text-[10px]" style={{ color: muted }}>{uiT('call.detail.label096')}</span></span>
                       <ArrowRight size={14} style={{ color: muted }} />
                     </button>
                     <button type="button" onClick={onChooseLive2DFolder} className="grid w-full grid-cols-[2.5rem_1fr_auto] items-center gap-3 border-b px-5 py-3.5 text-left active:bg-current/[.035]" style={{ borderColor: line }}>
                       <FolderOpen size={18} style={{ color: accentColor }} />
-                      <span><span className="block text-[13px] font-medium">Live2D 完整文件夹</span><span className="mt-0.5 block text-[10px]" style={{ color: muted }}>选择包含 model3.json 的整个目录</span></span>
+                      <span><span className="block text-[13px] font-medium">{uiT('call.detail.label097')}</span><span className="mt-0.5 block text-[10px]" style={{ color: muted }}>{uiT('call.detail.label098')}</span></span>
                       <ArrowRight size={14} style={{ color: muted }} />
                     </button>
                     {modelFormat === 'live2d' && onConfigureLive2D && (
                       <button type="button" onClick={onConfigureLive2D} className="grid w-full grid-cols-[2.5rem_1fr_auto] items-center gap-3 px-5 py-3.5 text-left active:bg-current/[.035]">
                         <Gear size={18} style={{ color: accentColor }} />
-                        <span><span className="block text-[13px] font-medium">校准构图、动作与真·衣橱</span><span className="mt-0.5 block text-[10px]" style={{ color: muted }}>预览保持常驻，动作与参数在悬浮设置窗里调整</span></span>
+                        <span><span className="block text-[13px] font-medium">{uiT('call.detail.label099')}</span><span className="mt-0.5 block text-[10px]" style={{ color: muted }}>{uiT('call.detail.label100')}</span></span>
                         <ArrowRight size={14} style={{ color: muted }} />
                       </button>
                     )}
@@ -206,13 +209,13 @@ const CallSetupGuide: React.FC<CallSetupGuideProps> = ({
                 ) : avatarSource === 'upload' ? (
                   <button type="button" onClick={onChooseStaticImage} className="grid w-full grid-cols-[2.5rem_1fr_auto] items-center gap-3 px-5 py-4 text-left active:bg-current/[.035]">
                     <ImageSquare size={18} style={{ color: accentColor }} />
-                    <span><span className="block text-[13px] font-medium">{staticImageName ? '更换 PNG / GIF' : '导入 PNG / GIF'}</span><span className="mt-0.5 block text-[10px]" style={{ color: muted }}>同一张图会同时用于陪伴桌面与视频通话</span></span>
+                    <span><span className="block text-[13px] font-medium">{staticImageName ? uiT('call.detail.label101') : uiT('call.detail.label102')}</span><span className="mt-0.5 block text-[10px]" style={{ color: muted }}>{uiT('call.detail.label103')}</span></span>
                     <ArrowRight size={14} style={{ color: muted }} />
                   </button>
                 ) : (
                   <button type="button" onClick={onManageDatePortraits} className="grid w-full grid-cols-[2.5rem_1fr_auto] items-center gap-3 px-5 py-4 text-left active:bg-current/[.035]">
                     <ImageSquare size={18} style={{ color: accentColor }} />
-                    <span><span className="block text-[13px] font-medium">{hasDatePortraits ? '管理见面立绘表情' : '添加见面立绘'}</span><span className="mt-0.5 block text-[10px]" style={{ color: muted }}>沿用见面模式的服装与表情；AI 只按通话情绪切同套表情</span></span>
+                    <span><span className="block text-[13px] font-medium">{hasDatePortraits ? uiT('call.detail.label104') : uiT('call.detail.label105')}</span><span className="mt-0.5 block text-[10px]" style={{ color: muted }}>{uiT('call.detail.label106')}</span></span>
                     <ArrowRight size={14} style={{ color: muted }} />
                   </button>
                 )}
@@ -220,10 +223,10 @@ const CallSetupGuide: React.FC<CallSetupGuideProps> = ({
 
               <p className="border-t px-5 py-3 text-[10px] leading-5" style={{ borderColor: line, color: muted }}>
                 {avatarSource === 'model'
-                  ? '导入 Live2D 后会自动进入动作与衣橱设置。衣橱动作强制仅手动；VRM 目前仍是测试功能。'
+                  ? uiT('call.detail.label107')
                   : avatarSource === 'date'
-                    ? '见面立绘使用静态表情管线，不会调用 Live2D 动作；服装仍由你手动选择。'
-                    : '单张 PNG / GIF 不切换表情；需要情绪表情时可选择见面立绘。'}
+                    ? uiT('call.detail.label108')
+                    : uiT('call.detail.label109')}
               </p>
             </>
           ) : (
@@ -244,15 +247,15 @@ const CallSetupGuide: React.FC<CallSetupGuideProps> = ({
                   >
                     <span className="flex h-9 w-9 items-center justify-center rounded-full border text-[12px] font-semibold" style={{ borderColor: active ? accentColor : line, color: active ? accentColor : muted }}>{option.index}</span>
                     <span className="min-w-0">
-                      <span className="block text-[13px] font-medium">{option.title}</span>
-                      <span className="mt-0.5 block text-[10px] leading-4" style={{ color: muted }}>{option.detail}</span>
+                      <span className="block text-[13px] font-medium">{formatCallDetailText(uiT, option.title)}</span>
+                      <span className="mt-0.5 block text-[10px] leading-4" style={{ color: muted }}>{formatCallDetailText(uiT, option.detail)}</span>
                     </span>
-                    <span className="text-right text-[9px] font-medium tracking-[.08em]" style={{ color: active ? accentColor : muted }}>{needsImage ? '选图片' : option.data}</span>
+                    <span className="text-right text-[9px] font-medium tracking-[.08em]" style={{ color: active ? accentColor : muted }}>{needsImage ? uiT('call.detail.label069') : formatCallDetailText(uiT, option.data)}</span>
                   </button>
                 );
               })}
               <p className="border-t px-5 py-3 text-[10px] leading-5" style={{ borderColor: line, color: muted }}>
-                本地情绪只注入“识别到的情绪”文字，不上传摄像头画面；每轮快照会在点击发送时截取一帧，并仅在本机记录保留最近 3 轮。静态机位永远不随消息发送。
+                {uiT('call.detail.label110')}
               </p>
             </section>
           )}
@@ -261,10 +264,10 @@ const CallSetupGuide: React.FC<CallSetupGuideProps> = ({
         <footer className="grid grid-cols-[auto_1fr] gap-2.5 px-5 pt-4">
           {step === 'camera' ? (
             <button type="button" onClick={() => onStepChange('model')} className="flex min-h-12 items-center justify-center gap-1.5 rounded-2xl border px-4 text-[12px] font-medium active:scale-[.98]" style={{ borderColor: line, color: muted }}>
-              <ArrowLeft size={14} /> 模型
+              <ArrowLeft size={14} /> {uiT('call.detail.label111')}
             </button>
           ) : (
-            <button type="button" onClick={onClose} className="min-h-12 rounded-2xl border px-4 text-[12px] font-medium active:scale-[.98]" style={{ borderColor: line, color: muted }}>稍后</button>
+            <button type="button" onClick={onClose} className="min-h-12 rounded-2xl border px-4 text-[12px] font-medium active:scale-[.98]" style={{ borderColor: line, color: muted }}>{uiT('call.detail.label112')}</button>
           )}
           <button
             type="button"
@@ -273,7 +276,7 @@ const CallSetupGuide: React.FC<CallSetupGuideProps> = ({
             className="flex min-h-12 items-center justify-center gap-2 rounded-2xl px-4 text-[13px] font-semibold text-white transition active:scale-[.98] disabled:opacity-40"
             style={{ background: `linear-gradient(100deg, ${accentColor}c8, ${accentColor})`, boxShadow: `0 10px 28px ${accentColor}2f` }}
           >
-            {step === 'model' ? '下一步：设置我的镜头' : fakeImageMissing ? '先选择静态图片' : '按这个方案接通'} <ArrowRight size={15} weight="bold" />
+            {step === 'model' ? uiT('call.detail.label113') : fakeImageMissing ? uiT('call.detail.label114') : uiT('call.detail.label115')} <ArrowRight size={15} weight="bold" />
           </button>
         </footer>
       </div>

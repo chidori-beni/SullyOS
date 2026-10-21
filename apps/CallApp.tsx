@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Microphone, SpeakerHigh, Headphones, PhoneDisconnect, Translate, Gear, Clock, CaretLeft, CaretRight, Phone, VideoCamera, VideoCameraSlash, Cube, FolderOpen, FileZip, Moon, Sun, Check, Plugs, ArrowsClockwise } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { useUiLocale } from '../context/UiLocaleContext';
+import { formatCallDetailText } from '../utils/callDetailLocale';
 import { extractContent, safeFetchJson } from '../utils/safeApi';
 import { minimaxFetch } from '../utils/minimaxEndpoint';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
@@ -4170,7 +4171,7 @@ ${sentencePlan}`;
       <div className="max-w-[20rem]">
         <span className="mx-auto mb-4 block h-9 w-9 animate-spin rounded-full border-2 border-white/15 border-t-violet-300" />
         <div className="text-sm leading-relaxed text-white/85">{avatarImportStatus}</div>
-        <div className="mt-3 text-[10px] leading-relaxed text-white/40">包含 8K 贴图的模型首次导入可能需要 10–30 秒。请保持当前页面打开，不要重复点击按钮；完成后会自动进入动作权限页面。</div>
+        <div className="mt-3 text-[10px] leading-relaxed text-white/40">{uiT('call.detail.label001')}</div>
       </div>
     </div>
   ) : null;
@@ -4203,7 +4204,7 @@ ${sentencePlan}`;
         {showCallSetupGuide && (
           <CallSetupGuide
             step={callSetupGuideStep}
-            characterName={selectedChar?.name || '当前角色'}
+            characterName={selectedChar?.name || uiT('call.detail.label002')}
             modelName={selectedChar?.videoAvatar?.fileName}
             modelFormat={selectedChar?.videoAvatar?.format}
             avatarSource={selectedVisualSource}
@@ -4276,7 +4277,7 @@ ${sentencePlan}`;
           <div className="shrink-0">
             <div className="text-[10px] tracking-[0.42em] text-white/35 font-semibold">CHAT WITH</div>
             <h1 className="mt-1 text-[2rem] font-bold leading-tight inline-flex items-start gap-1.5">
-              想找谁聊聊？
+              {uiT('call.detail.label003')}
               <span className="text-sm mt-1" style={{ color: accentColor, textShadow: `0 0 10px ${accentColor}` }}>✦</span>
             </h1>
             <p className="text-sm text-white/45 mt-1">{uiT('call.main.choosePerson')}</p>
@@ -4303,7 +4304,7 @@ ${sentencePlan}`;
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="font-semibold text-[15px] truncate" style={selected ? { color: accentColor } : undefined}>{char.name}</div>
-                      <div className="text-xs text-white/45 mt-0.5 truncate">{char.description || '点击编辑设定...'}</div>
+                      <div className="text-xs text-white/45 mt-0.5 truncate">{char.description || uiT('call.detail.label004')}</div>
                     </div>
                     <span className="text-base shrink-0" style={{ color: selected ? accentColor : callText(0.25) }}>✦</span>
                   </div>
@@ -4311,7 +4312,7 @@ ${sentencePlan}`;
               );
             })}
             {!groupChars.length && (
-              <div className="text-center py-10 text-white/40 text-sm">{characters.length ? '该分组下没有角色' : '还没有角色，先去创建一个吧'}</div>
+              <div className="text-center py-10 text-white/40 text-sm">{characters.length ? uiT('call.detail.label005') : uiT('call.detail.label006')}</div>
             )}
           </div>
 
@@ -4324,7 +4325,7 @@ ${sentencePlan}`;
               </button>
               <div className="flex items-center gap-1.5">
                 {Array.from({ length: totalPages }).map((_, i) => (
-                  <button key={i} onClick={() => setRolePage(i)} aria-label={`第${i + 1}页`}
+                  <button key={i} onClick={() => setRolePage(i)} aria-label={uiT('call.detail.page', { count: i + 1 })}
                     className="rounded-full transition-all" style={{ width: i === page ? 16 : 6, height: 6, background: i === page ? accentColor : callFill(0.25) }} />
                 ))}
               </div>
@@ -4362,27 +4363,27 @@ ${sentencePlan}`;
                     <Cube size={15} weight="fill" />
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block text-[10px] tracking-[0.16em] text-white/35">角色形象 · {selectedVisualSource === 'upload' ? uiT('call.main.staticImage') : selectedVisualSource === 'date' ? uiT('call.main.datePortrait') : selectedChar?.videoAvatar?.format === 'live2d' ? 'LIVE2D' : selectedChar?.videoAvatar?.format === 'vrm' ? 'VRM' : uiT('call.main.notSelected')}</span>
-                    <span className="mt-0.5 block truncate text-xs text-white/70">{selectedVisualSource === 'upload' ? selectedChar?.companionAvatar?.fileName || 'PNG / GIF' : selectedVisualSource === 'date' ? selectedDateOutfit?.name || '按通话情绪切换表情' : selectedChar?.videoAvatar?.fileName || '动态模型、静态图片或见面立绘'}</span>
+                    <span className="block text-[10px] tracking-[0.16em] text-white/35">{uiT('call.detail.label007')} {selectedVisualSource === 'upload' ? uiT('call.main.staticImage') : selectedVisualSource === 'date' ? uiT('call.main.datePortrait') : selectedChar?.videoAvatar?.format === 'live2d' ? 'LIVE2D' : selectedChar?.videoAvatar?.format === 'vrm' ? 'VRM' : uiT('call.main.notSelected')}</span>
+                    <span className="mt-0.5 block truncate text-xs text-white/70">{selectedVisualSource === 'upload' ? selectedChar?.companionAvatar?.fileName || 'PNG / GIF' : selectedVisualSource === 'date' ? selectedDateOutfit?.name || uiT('call.detail.label008') : selectedChar?.videoAvatar?.fileName || uiT('call.detail.label009')}</span>
                   </span>
-                  <span className="text-xs text-white/30">{hasSelectedVideoVisual ? '设置' : '引导'}</span>
+                  <span className="text-xs text-white/30">{hasSelectedVideoVisual ? uiT('call.detail.label010') : uiT('call.detail.label011')}</span>
                 </button>
                 <details className="group rounded-2xl border border-white/10 bg-black/15 p-2" data-testid="video-call-advanced-settings">
                   <summary className="flex cursor-pointer list-none items-center justify-between rounded-xl px-2 py-1.5 text-[10px] text-white/42">
-                    <span>模型画质、导入与动作排练</span>
+                    <span>{uiT('call.detail.label012')}</span>
                     <span className="transition-transform group-open:rotate-45">＋</span>
                   </summary>
                   <div className="mt-2 space-y-2">
                   {selectedBuiltinSullyAvatar && (
                   <div className="rounded-2xl border border-white/10 bg-black/20 p-2.5" data-testid="builtin-sully-quality-picker">
                     <div className="flex items-center justify-between px-0.5">
-                      <span className="text-[10px] tracking-[0.14em] text-white/40">内置模型画质</span>
-                      <span className="text-[9px] text-white/28">默认 2K · 省约 48 MB 显存</span>
+                      <span className="text-[10px] tracking-[0.14em] text-white/40">{uiT('call.detail.label013')}</span>
+                      <span className="text-[9px] text-white/28">{uiT('call.detail.label014')}</span>
                     </div>
                     <div className="mt-2 grid grid-cols-2 gap-1.5">
                       {([
-                        { value: 'balanced' as const, label: '轻量 2K', detail: '推荐' },
-                        { value: 'hd' as const, label: '高清 4K', detail: '高性能设备' },
+                        { value: 'balanced' as const, label: uiT('call.detail.label015'), detail: uiT('call.detail.label016') },
+                        { value: 'hd' as const, label: uiT('call.detail.label017'), detail: uiT('call.detail.label018') },
                       ]).map(option => {
                         const active = selectedBuiltinSullyAvatar.builtinQuality === option.value;
                         return (
@@ -4405,14 +4406,14 @@ ${sentencePlan}`;
                     <FileZip size={12} weight="bold" /> VRM / L2D ZIP
                   </button>
                   <button onClick={chooseLive2DDirectory} className="flex items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.04] py-1.5 text-[10px] text-white/50 active:scale-[0.98]">
-                    <FolderOpen size={12} weight="bold" /> L2D 文件夹
+                    <FolderOpen size={12} weight="bold" /> {uiT('call.detail.label019')}
                   </button>
                 </div>
-                <p className="px-1 text-[9px] leading-relaxed text-white/30">L2D 文件夹：选择包含 *.model3.json 的整个文件夹；不要只选择 model3.json。ZIP：把这个模型文件夹整体压缩后选择 ZIP。</p>
+                <p className="px-1 text-[9px] leading-relaxed text-white/30">{uiT('call.detail.label020')}</p>
                 {selectedChar?.videoAvatar?.format === 'live2d' && (
                   <details className="group border-t border-white/[0.07] pt-2">
                     <summary className="flex cursor-pointer list-none items-center justify-between px-1 py-1 text-[10px] text-white/35">
-                      <span>Live2D 高级工具</span>
+                      <span>{uiT('call.detail.label021')}</span>
                       <span className="transition group-open:rotate-45">＋</span>
                     </summary>
                     <button
@@ -4420,8 +4421,8 @@ ${sentencePlan}`;
                       className="mt-1 flex w-full items-center justify-between rounded-xl border border-white/10 bg-white/[0.035] px-3 py-2 text-left active:scale-[0.99]"
                     >
                       <span>
-                        <span className="block text-[11px] text-white/65">动作权限与参数实验台</span>
-                        <span className="mt-0.5 block text-[9px] text-white/28">预览、禁用模型动作，或手动组合参数</span>
+                        <span className="block text-[11px] text-white/65">{uiT('call.detail.label022')}</span>
+                        <span className="mt-0.5 block text-[9px] text-white/28">{uiT('call.detail.label023')}</span>
                       </span>
                       <Gear size={14} className="text-white/30" />
                     </button>
@@ -4430,8 +4431,8 @@ ${sentencePlan}`;
                 <div className="rounded-2xl border border-white/10 bg-black/20 p-2.5">
                   <div className="flex items-center justify-between px-0.5">
                     <div>
-                      <div className="text-[10px] tracking-[0.14em] text-white/40">动作排练</div>
-                      <div className="mt-0.5 text-[9px] text-white/25">每个角色单独保存</div>
+                      <div className="text-[10px] tracking-[0.14em] text-white/40">{uiT('call.detail.label024')}</div>
+                      <div className="mt-0.5 text-[9px] text-white/25">{uiT('call.detail.label025')}</div>
                     </div>
                     <span className="text-[9px]" style={{ color: selectedChar?.videoCallPerformanceQuality === 'high' ? accentColor : callText(0.32) }}>
                       {selectedChar?.videoCallPerformanceQuality === 'high' ? 'DIRECTOR' : 'BASIC'}
@@ -4439,8 +4440,8 @@ ${sentencePlan}`;
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-1.5">
                     {([
-                      { value: 'basic' as const, label: '基础版', detail: '零额外请求' },
-                      { value: 'high' as const, label: '高质量版', detail: '副 API 排练' },
+                      { value: 'basic' as const, label: uiT('call.detail.label026'), detail: uiT('call.detail.label027') },
+                      { value: 'high' as const, label: uiT('call.detail.label028'), detail: uiT('call.detail.label029') },
                     ]).map(option => {
                       const active = (selectedChar?.videoCallPerformanceQuality || 'basic') === option.value;
                       return (
@@ -4468,7 +4469,7 @@ ${sentencePlan}`;
                     })}
                   </div>
                   <p className="mt-2 px-0.5 text-[9px] leading-relaxed text-white/30">
-                    高质量版只把本轮定稿台词和角色性格交给情绪 Buff 的 API，不读取聊天上下文；未单独配置副 API 时回退主 API。
+                    {uiT('call.detail.label030')}
                   </p>
                 </div>
                   </div>
@@ -4497,7 +4498,7 @@ ${sentencePlan}`;
               <button onClick={closeApp} className="flex items-center gap-2 text-sm text-white/45 active:scale-95 transition">
                 <span style={{ color: accentColor }}>✦</span> {uiT('call.main.close')} <span style={{ color: accentColor }}>✦</span>
               </button>
-              <button onClick={() => setCallTheme(lightTheme ? 'dark' : 'light')} title={lightTheme ? '切换到深色主题' : '切换到浅色主题'}
+              <button onClick={() => setCallTheme(lightTheme ? 'dark' : 'light')} title={lightTheme ? uiT('call.detail.label031') : uiT('call.detail.label032')}
                 className="w-9 h-9 rounded-full border border-white/15 bg-white/[0.04] flex items-center justify-center text-white/60 active:scale-90 transition">
                 {lightTheme ? <Moon size={16} weight="fill" /> : <Sun size={16} weight="fill" />}
               </button>
@@ -4529,15 +4530,15 @@ ${sentencePlan}`;
       <div className={`h-full w-full bg-gradient-to-b text-white px-5 pb-6 flex flex-col ${lightTheme ? 'sully-call-light from-[#f5f2fd] via-[#eef0f8] to-[#eef0f8]' : 'from-[#140d28] via-[#0a0613] to-[#0a0613]'}`} style={{ paddingTop: 'max(2.5rem, var(--safe-top))' }}>
         {lightTheme && <style>{CALL_LIGHT_THEME_CSS}</style>}
         <div className="flex items-center justify-between">
-          <button onClick={() => { returnToChatRef.current = false; setViewMode('role-select'); }} className="text-sm text-white/45">← 返回</button>
+          <button onClick={() => { returnToChatRef.current = false; setViewMode('role-select'); }} className="text-sm text-white/45">{uiT('call.detail.label033')}</button>
           <h1 className="text-lg font-medium">{uiT('call.main.history')}</h1>
-          <button onClick={() => { returnToChatRef.current = false; setViewMode('role-select'); }} className="text-sm font-medium" style={{ color: accentColor }}>新通话</button>
+          <button onClick={() => { returnToChatRef.current = false; setViewMode('role-select'); }} className="text-sm font-medium" style={{ color: accentColor }}>{uiT('call.detail.label034')}</button>
         </div>
         <div className="mt-4 flex-1 overflow-y-auto space-y-3">
           {!callRecords.length && (
             <div className="flex flex-col items-center justify-center py-10 text-center">
-              <p className="text-base text-white/45">还没有通话记录</p>
-              <p className="text-sm text-white/35 mt-1">每一通电话都会留在这里</p>
+              <p className="text-base text-white/45">{uiT('call.detail.label035')}</p>
+              <p className="text-sm text-white/35 mt-1">{uiT('call.detail.label036')}</p>
             </div>
           )}
           {callRecords.map(record => {
@@ -4549,14 +4550,14 @@ ${sentencePlan}`;
                 <div className="w-10 h-10 rounded-full border border-white/20 flex items-center justify-center text-sm" style={{ backgroundColor: `${accentColor}35` }}>{record.characterName[0] || '角'}</div>
                 <div className="min-w-0 flex-1">
                   <div className="font-medium text-sm">{record.characterName}</div>
-                  <div className="text-xs text-white/45 mt-0.5">{record.sleepCompanion ? uiT('call.main.sleep') : record.mode === 'video' ? uiT('call.main.video') : record.mode === 'voice' ? uiT('call.main.voice') : uiT('call.main.call')} · {formatDuration(record.durationSec)} · {turnCount}轮对话</div>
+                  <div className="text-xs text-white/45 mt-0.5">{record.sleepCompanion ? uiT('call.main.sleep') : record.mode === 'video' ? uiT('call.main.video') : record.mode === 'voice' ? uiT('call.main.voice') : uiT('call.main.call')} · {formatDuration(record.durationSec)} · {turnCount}{uiT('call.detail.label037')}</div>
                 </div>
-                <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(record); }} className="text-xs px-2 py-1 rounded-lg text-white/35 transition hover:text-rose-300">删除</button>
+                <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(record); }} className="text-xs px-2 py-1 rounded-lg text-white/35 transition hover:text-rose-300">{uiT('call.detail.label038')}</button>
               </div>
               <div className="text-xs text-white/60 mt-2.5 italic leading-relaxed line-clamp-2">{keepsake}</div>
               {record.sleepCompanion && (
                 <div className={`mt-2 text-[11px] ${record.dreamCount > 0 ? 'text-indigo-200/75' : 'text-white/35'}`}>
-                  {record.dreamCount > 0 ? `梦话 ${record.dreamCount} 句 · 点开可回听` : '今晚没有生成梦话'}
+                  {record.dreamCount > 0 ? uiT('call.detail.dreamCount', { count: record.dreamCount }) : uiT('call.detail.label039')}
                 </div>
               )}
               <div className="text-[10px] text-white/30 mt-1.5">{record.createdAt}</div>
@@ -4568,11 +4569,11 @@ ${sentencePlan}`;
         {deleteConfirmRecord && (
           <div className="absolute inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center px-6">
             <div className={`w-full max-w-sm rounded-3xl border border-white/15 bg-gradient-to-b p-5 shadow-2xl ${lightTheme ? 'from-white to-[#f0edf9]' : 'from-[#1a1130] to-[#0a0613]'}`}>
-              <div className="text-base font-semibold text-white">删除通话记录？</div>
-              <p className="mt-2 text-sm text-white/55 leading-relaxed">和 {deleteConfirmRecord.characterName} 的这通通话将被永久删除。</p>
+              <div className="text-base font-semibold text-white">{uiT('call.detail.label040')}</div>
+              <p className="mt-2 text-sm text-white/55 leading-relaxed">{uiT('call.detail.deleteRecord', { name: deleteConfirmRecord.characterName })}</p>
               <div className="mt-5 grid grid-cols-2 gap-2">
                 <button onClick={() => setDeleteConfirmRecord(null)} className="py-2.5 rounded-2xl border border-white/20 text-white/80 transition active:scale-[0.97]">{uiT('call.main.cancel')}</button>
-                <button onClick={confirmDeleteRecord} className="keep-white py-2.5 rounded-2xl bg-rose-500/80 text-white font-semibold transition active:scale-[0.97]">删除</button>
+                <button onClick={confirmDeleteRecord} className="keep-white py-2.5 rounded-2xl bg-rose-500/80 text-white font-semibold transition active:scale-[0.97]">{uiT('call.detail.label038')}</button>
               </div>
             </div>
           </div>
@@ -4585,9 +4586,9 @@ ${sentencePlan}`;
       <div className={`h-full w-full bg-gradient-to-b text-white px-5 pb-6 flex flex-col ${lightTheme ? 'sully-call-light from-[#f5f2fd] via-[#eef0f8] to-[#eef0f8]' : 'from-[#140d28] via-[#0a0613] to-[#0a0613]'}`} style={{ paddingTop: 'max(2.5rem, var(--safe-top))' }}>
         {lightTheme && <style>{CALL_LIGHT_THEME_CSS}</style>}
         <div className="flex items-center justify-between">
-          <button onClick={returnFromCallRecords} className="text-sm text-white/45">← 返回</button>
+          <button onClick={returnFromCallRecords} className="text-sm text-white/45">{uiT('call.detail.label033')}</button>
           <div className="text-sm text-white/80 font-medium">{recordDetail.characterName}</div>
-          <div className="text-xs text-white/35">{recordDetail.mode === 'video' ? '视频 · ' : recordDetail.mode === 'voice' ? '语音 · ' : ''}{formatDuration(recordDetail.durationSec)}</div>
+          <div className="text-xs text-white/35">{recordDetail.mode === 'video' ? uiT('call.detail.label041') : recordDetail.mode === 'voice' ? uiT('call.detail.label042') : ''}{formatDuration(recordDetail.durationSec)}</div>
         </div>
         <div className="mt-2 text-center">
           <p className="text-xs text-white/35 italic">{recordDetail.createdAt}</p>
@@ -4626,7 +4627,7 @@ ${sentencePlan}`;
               className={`rounded-2xl px-3.5 py-2.5 border border-white/10 backdrop-blur-md ${item.role === 'user' ? 'bg-white/[0.07] ml-6' : 'bg-white/[0.03] mr-6'}`}
             >
               <div className="text-[10px] text-white/45">
-                {item.role === 'user' ? '你' : item.sleepPhase === 'dream' ? `${recordDetail.characterName}的梦话` : item.sleepPhase === 'lullaby' ? `${recordDetail.characterName}的哄睡` : recordDetail.characterName} · {item.time}
+                {item.role === 'user' ? uiT('call.detail.label043') : item.sleepPhase === 'dream' ? uiT('call.detail.dreamBy', { name: recordDetail.characterName }) : item.sleepPhase === 'lullaby' ? uiT('call.detail.lullabyBy', { name: recordDetail.characterName }) : recordDetail.characterName} · {item.time}
               </div>
               {item.role === 'user' && <CallSnapshotImage imageRef={item.cameraSnapshotRef} expired={item.cameraSnapshotExpired} />}
               <div className="text-sm mt-1 leading-relaxed">{(() => {
@@ -4646,10 +4647,10 @@ ${sentencePlan}`;
                   className="mt-2 text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/60 transition hover:bg-white/15 disabled:opacity-40"
                 >
                   {generatingAudioBubbleId === item.id
-                    ? '生成语音…'
+                    ? uiT('call.detail.label044')
                     : resolveReusableCallAudioUrl(item.audioUrl, sessionBlobUrlsRef.current)
-                      ? '重播语音'
-                      : '播放语音'}
+                      ? uiT('call.detail.label045')
+                      : uiT('call.detail.label046')}
                 </button>
               )}
             </div>
@@ -4754,7 +4755,7 @@ ${sentencePlan}`;
           </div>
         </div>
         <div className="absolute right-5 flex items-center gap-1 text-[9px] tracking-[0.2em] text-white/45 font-medium" style={{ top: 'max(2.25rem, var(--safe-top))' }}>
-          信号良好
+          {uiT('call.detail.label047')}
           <span className="flex items-end gap-[2px] h-2.5 ml-0.5">
             {[4, 6, 8, 10].map((h, i) => (
               <span key={i} className="w-[2px] rounded-full" style={{ height: `${h}px`, background: i < 3 ? callFill(0.65) : accentColor }} />
@@ -4816,16 +4817,16 @@ ${sentencePlan}`;
                   key={option.id}
                   onClick={() => chooseVideoCallLayout(option.id)}
                   className={`flex items-center justify-center gap-1 rounded-full py-1 text-[9px] font-medium transition active:scale-95 ${videoCallLayout === option.id ? 'bg-white/14 text-white' : 'text-white/38'}`}
-                  title={option.hint}
+                  title={formatCallDetailText(uiT, option.hint)}
                 >
-                  {videoCallLayout === option.id && <Check size={9} weight="bold" style={{ color: accentColor }} />}{option.name}
+                  {videoCallLayout === option.id && <Check size={9} weight="bold" style={{ color: accentColor }} />}{formatCallDetailText(uiT, option.name)}
                 </button>
               ))}
             </div>
           )}
           {memoryPalaceStatus && (
             <div className="mt-1 text-[10px] text-white/55 animate-pulse">
-              记忆整理 · {memoryPalaceStatus}
+              {uiT('call.detail.label048')} {memoryPalaceStatus}
             </div>
           )}
           {sleepMode && (
@@ -4870,7 +4871,7 @@ ${sentencePlan}`;
             maxFps={30}
           />
           <AvatarTouchFeedback
-            characterName={selectedChar?.name || '对方'}
+            characterName={selectedChar?.name || uiT('call.detail.label049')}
             accentColor={accentColor}
             effects={avatarTouchEffects}
             lightTheme={lightTheme}
@@ -4883,7 +4884,7 @@ ${sentencePlan}`;
               >
                 {userCameraMode === 'fake'
                   ? fakeUserCameraUrl
-                    ? <img src={fakeUserCameraUrl} alt="用户静态画面" className="h-full w-full object-cover" />
+                    ? <img src={fakeUserCameraUrl} alt={uiT('call.detail.label050')} className="h-full w-full object-cover" />
                     : <div className="flex h-full w-full items-center justify-center text-[8px] text-white/35">NO IMAGE</div>
                   : <video ref={userCameraVideoRef} muted playsInline autoPlay className="h-full w-full object-cover" style={{ transform: userCameraFacing === 'user' ? 'scaleX(-1)' : undefined }} />}
                 {(userCameraMode === 'emotion' || userCameraMode === 'snapshot') && <button
@@ -4907,7 +4908,7 @@ ${sentencePlan}`;
                     <button
                       key={option.id}
                       type="button"
-                      aria-label={`用户镜头${option.label}号`}
+                      aria-label={uiT('call.detail.cameraSize', { size: formatCallDetailText(uiT, option.label) })}
                       aria-pressed={userCameraPreviewSize === option.id}
                       data-testid={`user-camera-preview-size-${option.id}`}
                       onClick={() => chooseUserCameraPreviewSize(option.id)}
@@ -4927,7 +4928,7 @@ ${sentencePlan}`;
               style={{ animation: 'sully-camera-emotion-readout 2.6s ease-out both' }}
               data-testid="user-camera-emotion-readout"
             >
-              识别到情绪 — <span className="text-white/80">{detectedUserEmotion.label}</span>
+              {uiT('call.detail.label051')} <span className="text-white/80">{detectedUserEmotion.label}</span>
             </div>
           )}
         </div>
@@ -4936,7 +4937,7 @@ ${sentencePlan}`;
         <button
           type="button"
           className="relative h-40 w-40 touch-none select-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-          aria-label={`戳戳${selectedChar?.name || '对方'}`}
+          aria-label={uiT('call.detail.poke', { name: selectedChar?.name || uiT('call.main.other') })}
           onPointerDown={handleVoiceAvatarPointerDown}
           onPointerMove={handleVoiceAvatarPointerMove}
           onPointerUp={handleVoiceAvatarPointerUp}
@@ -4958,7 +4959,7 @@ ${sentencePlan}`;
               ? <img src={selectedChar.avatar} alt={selectedChar.name} draggable={false} className="relative z-10 h-full w-full rounded-full object-cover" style={{ boxShadow: `0 0 30px ${accentColor}55` }} />
               : <div className="relative z-10 flex h-full w-full items-center justify-center rounded-full text-4xl font-serif" style={{ backgroundColor: `${accentColor}55` }}>{selectedChar?.name?.[0] || '角'}</div>}
             <AvatarTouchFeedback
-              characterName={selectedChar?.name || '对方'}
+              characterName={selectedChar?.name || uiT('call.detail.label049')}
               accentColor={accentColor}
               effects={avatarTouchEffects}
               lightTheme={lightTheme}
@@ -4987,11 +4988,11 @@ ${sentencePlan}`;
           data-testid="video-call-subtitle"
         >
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/12 bg-white/[.06] text-[11px]" style={{ color: accentColor }}>
-            {latestCallBubble?.role === 'user' ? '你' : selectedChar?.name?.[0] || '角'}
+            {latestCallBubble?.role === 'user' ? uiT('call.detail.label043') : selectedChar?.name?.[0] || '角'}
           </span>
           <div className="min-w-0 flex-1">
             <div className="mb-1 flex items-center gap-1.5 text-[8px] font-semibold tracking-[0.15em]" style={{ color: `${accentColor}dd` }}>
-              {latestCallBubble?.role === 'user' ? '你刚刚说' : displayCallState === 'thinking' ? '正在想怎么回答' : `${selectedChar?.name || '对方'} · LIVE`}
+              {latestCallBubble?.role === 'user' ? uiT('call.detail.label052') : displayCallState === 'thinking' ? uiT('call.detail.label053') : `${selectedChar?.name || uiT('call.detail.label049')} · LIVE`}
               {waveActive && <span className="h-1.5 w-1.5 animate-pulse rounded-full" style={{ background: accentColor }} />}
             </div>
             <div className="line-clamp-2 text-[13px] leading-relaxed text-white/90">
@@ -5000,8 +5001,8 @@ ${sentencePlan}`;
                   ? renderAssistantLine(extractVoiceTag(latestCallBubble.text).display, accentColor, activeTtsProvider)
                   : latestCallBubble.text
                 : callState === 'connecting'
-                  ? '正在接通，请稍等……'
-                  : `${selectedChar?.name || '对方'}在等你开口。`}
+                  ? uiT('call.detail.label054')
+                  : uiT('call.detail.waiting', { name: selectedChar?.name || uiT('call.main.other') })}
             </div>
           </div>
           <button onClick={() => setVideoTranscriptExpanded(true)} className="shrink-0 rounded-full border border-white/12 px-2.5 py-1.5 text-[9px] text-white/52 active:scale-95">{uiT('call.main.record')}</button>
@@ -5066,7 +5067,7 @@ ${sentencePlan}`;
           >
             <div className={`text-[10px] text-white/45 mb-1 flex items-center gap-1 ${bubble.role === 'user' ? 'justify-end' : ''}`}>
               {bubble.role !== 'user' && <span className="text-[8px]" style={{ color: accentColor }}>◍</span>}
-              <span style={bubble.role !== 'user' ? { color: `${accentColor}dd` } : undefined}>{bubble.role === 'user' ? '你' : selectedChar?.name}</span>
+              <span style={bubble.role !== 'user' ? { color: `${accentColor}dd` } : undefined}>{bubble.role === 'user' ? uiT('call.detail.label043') : selectedChar?.name}</span>
               <span>· {bubble.time}</span>
             </div>
             {bubble.role === 'user' && <CallSnapshotImage imageRef={bubble.cameraSnapshotRef} expired={bubble.cameraSnapshotExpired} compact />}
@@ -5097,16 +5098,16 @@ ${sentencePlan}`;
                   className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15 disabled:opacity-40"
                 >
                   {generatingAudioBubbleId === bubble.id
-                    ? '生成语音…'
+                    ? uiT('call.detail.label044')
                     : resolveReusableCallAudioUrl(bubble.audioUrl, sessionBlobUrlsRef.current)
-                      ? '重播语音'
-                      : '播放语音'}
+                      ? uiT('call.detail.label045')
+                      : uiT('call.detail.label046')}
                 </button>
                 {bubble.audioUrl && <button onClick={() => handleDownloadCallAudio(bubble.audioUrl, bubble.timestamp)} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15">{uiT('call.main.download')}</button>}
                 {/* 改词：长按角色气泡是「收藏语音」，所以编辑得单独给个入口。
                     改完会丢掉已合成的音频，点「播放语音」按新文本重新合成。 */}
                 <button onClick={() => startEditBubble(bubble)} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15">{uiT('call.main.editWords')}</button>
-                {isLatest && <button onClick={() => handleRerollAssistant(bubble)} disabled={!!rerollingBubbleId} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15 disabled:opacity-40">{rerollingBubbleId === bubble.id ? '换一种说法…' : '换个说法'}</button>}
+                {isLatest && <button onClick={() => handleRerollAssistant(bubble)} disabled={!!rerollingBubbleId} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15 disabled:opacity-40">{rerollingBubbleId === bubble.id ? uiT('call.detail.label055') : uiT('call.detail.label056')}</button>}
               </div>
             )}
           </div>
@@ -5235,7 +5236,7 @@ ${sentencePlan}`;
             <div className="text-sm text-white/80 font-medium">{uiT('call.main.background')}</div>
             <p className="text-xs text-white/40">{uiT('call.main.backgroundHelp')}</p>
             <button onClick={chooseStageBackgroundFile} className="w-full py-2.5 rounded-2xl border border-white/15 bg-white/[0.06] text-sm text-white/85 transition active:scale-[0.98]">
-              选择本地图片
+              {uiT('call.detail.label057')}
             </button>
             <div className="flex gap-2">
               <input
@@ -5248,7 +5249,7 @@ ${sentencePlan}`;
             </div>
             {selectedChar?.videoCallBackground && (
               <button onClick={() => { void applyStageBackground(undefined); setShowBgPicker(false); addToast('已恢复默认背景', 'success'); }} className="w-full py-2 text-xs text-white/45 transition active:opacity-60">
-                恢复默认背景
+                {uiT('call.detail.label058')}
               </button>
             )}
           </div>
@@ -5264,7 +5265,7 @@ ${sentencePlan}`;
                 <button key={opt.value} onClick={() => { setVoiceLang(opt.value); if (selectedChar) updateCharacter(selectedChar.id, { callVoiceLang: opt.value }); setShowLangPicker(false); trackEvent('设置通话语音语种', { lang: opt.value }); }}
                   className={`text-xs px-3 py-2 rounded-full font-medium transition-colors text-white ${voiceLang === opt.value ? 'keep-white' : ''}`}
                   style={voiceLang === opt.value ? { backgroundColor: accentColor } : lightTheme ? { background: 'rgba(38,34,57,0.08)' } : { background: 'rgba(255,255,255,0.1)' }}>
-                  {opt.label}
+                  {formatCallDetailText(uiT, opt.label)}
                 </button>
               ))}
             </div>
@@ -5290,7 +5291,7 @@ ${sentencePlan}`;
       )}
       {showSleepPanel && (
         <SleepCompanionSheet
-          charName={selectedChar?.name || '对方'}
+          charName={selectedChar?.name || uiT('call.detail.label049')}
           sleepMode={sleepMode}
           autoHangupMinutes={sleepAutoHangupMinutes}
           accentColor={accentColor}
@@ -5340,14 +5341,13 @@ ${sentencePlan}`;
         <div className="absolute inset-0 bg-black/60 flex items-end z-50">
           <div className={`w-full border-t border-white/10 p-5 space-y-3 ${lightTheme ? 'bg-[#f6f4fc]' : 'bg-[#120c22]'}`}>
             <div className="text-sm text-white/70">
-              {editingBubble.role === 'assistant' ? `改一下${selectedChar?.name || '对方'}这句台词` : '改一下刚才说的话'}
+              {editingBubble.role === 'assistant' ? uiT('call.detail.editLine', { name: selectedChar?.name || uiT('call.main.other') }) : uiT('call.detail.label059')}
             </div>
             <textarea value={editingText} onChange={(e) => setEditingText(e.target.value)} className="w-full h-24 bg-black/30 rounded-xl p-3 text-sm outline-none resize-none placeholder:text-white/30" placeholder={uiT('call.main.reword')} autoFocus />
             {editingBubble.role === 'assistant' && (
               <p className="text-[11px] text-white/40 leading-relaxed">
-                改完这条已经合成的语音会被丢掉，点「播放语音」才按新文本重新合成。
-                想去掉念出来很怪的标记（<code className="text-white/55">{'<#0.5#>'}</code>、
-                <code className="text-white/55">(sighs)</code> 之类）在这里直接删掉即可。
+                {uiT('call.detail.label060')}<code className="text-white/55">{'<#0.5#>'}</code>、
+                <code className="text-white/55">(sighs)</code> {uiT('call.detail.label061')}
               </p>
             )}
             <div className="flex gap-2">

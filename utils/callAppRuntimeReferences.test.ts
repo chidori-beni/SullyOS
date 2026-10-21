@@ -101,10 +101,10 @@ describe('CallApp runtime references', () => {
     expect(preferenceSource).toContain("CALL_UPDATE_ANNOUNCEMENT_KEY = 'sully-call-update-preferences-2026-08-v2'");
     expect(announcementSource).toContain('data-testid="call-update-announcement"');
     expect(announcementSource).toContain('data-testid="call-settings-spotlight"');
-    expect(announcementSource).toContain('通话偏好现在有三项');
-    expect(announcementSource).toContain('可以设置谁先开口');
-    expect(announcementSource).toContain('两种通话都不会提前生成语音');
-    expect(announcementSource).toContain('沉默后主动接话改为按需开启');
+    expect(announcementSource).toContain("uiT('call.detail.label136')");
+    expect(announcementSource).toContain("uiT('call.detail.label138')");
+    expect(announcementSource).toContain("uiT('call.detail.label141')");
+    expect(announcementSource).toContain("uiT('call.detail.label142')");
   });
 
   it('offers game-like video layouts and a collapsible immersive subtitle', () => {
@@ -135,7 +135,7 @@ describe('CallApp runtime references', () => {
     expect(source).toContain('min-h-[5rem] flex-1 overflow-y-auto overscroll-contain');
     expect(source).not.toContain('min-h-[5rem] max-h-[15rem]');
     expect(source).toContain('data-testid="video-call-advanced-settings"');
-    expect(source).toContain('模型画质、导入与动作排练');
+    expect(source).toContain("uiT('call.detail.label012')");
   });
 
   it('pins voice and video setup actions to the same viewport bottom edge', () => {
@@ -233,12 +233,12 @@ describe('CallApp runtime references', () => {
     expect(source).toContain("selectedVisualSource !== 'model'");
     expect(source).toContain('staticPortraitValue={staticVideoPortrait}');
     expect(guideSource).toContain('data-testid="call-setup-guide"');
-    expect(guideSource).toContain("['upload', '静态图片']");
-    expect(guideSource).toContain("['date', '见面立绘']");
-    expect(guideSource).toContain('校准构图、动作与真·衣橱');
-    expect(guideSource).toContain('下次打开仍从关闭开始');
-    expect(guideSource).toContain('本地情绪只注入');
-    expect(guideSource).toContain('静态机位永远不随消息发送');
+    expect(guideSource).toContain("['upload', uiT('call.detail.label093')]");
+    expect(guideSource).toContain("['date', uiT('call.detail.label094')]");
+    expect(guideSource).toContain("uiT('call.detail.label099')");
+    expect(guideSource).toContain("uiT('call.detail.label089')");
+    expect(guideSource).toContain("uiT('call.detail.label110')");
+    expect(guideSource).toContain("uiT('call.detail.label110')");
     expect(stageSource).toContain('testId="video-call-static-portrait-stage"');
     expect(stageSource).toContain('staticAvatarActive ? `static-${staticAvatarSource}`');
   });
