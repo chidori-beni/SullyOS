@@ -17,6 +17,8 @@ import { trackEvent } from '../../utils/analytics';
 import MessageReactionBar from './MessageReactionBar';
 import { getMessageReactions } from '../../utils/messageReactions';
 import { findActivePresetId } from '../../utils/apiPresetSwitch';
+import ApiPresetGroups from '../settings/ApiPresetGroups';
+import ApiConnectionTestButton from '../settings/ApiConnectionTestButton';
 import { normalizeScheduleRequirement, SCHEDULE_REROLL_REQUIREMENT_MAX_LENGTH } from '../../utils/schedulePlanner';
 import { isBroadcastableMessage } from '../../utils/messageBroadcast';
 import { CANTONESE_VOICE_SUPPORT_NOTE, VOICE_LANGUAGE_OPTIONS } from '../../utils/voiceLanguage';
@@ -483,8 +485,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                          >
                              <div className="rounded-2xl border border-sky-200 bg-sky-50 p-3.5">
                                  {apiPresets.length > 0 ? (
-                                     <div className="flex flex-wrap gap-2">
-                                         {apiPresets.map(preset => {
+                                     <ApiPresetGroups presets={apiPresets} activeId={activeMainPresetId}>
+                                         {preset => {
                                              const isActive = preset.id === activeMainPresetId;
                                              return (
                                                  <button
@@ -503,8 +505,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                                      </span>
                                                  </button>
                                              );
-                                         })}
-                                     </div>
+                                         }}
+                                     </ApiPresetGroups>
                                  ) : (
                                      <p className="rounded-xl border border-dashed border-sky-200 bg-white/50 px-3 py-2 text-[10px] leading-relaxed text-sky-700/70">
                                          还没有主 API 预设，请到主设置页的「API 配置」中创建。
@@ -513,6 +515,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                  <p className="mt-3 text-[10px] leading-relaxed text-sky-700/70">
                                      点击预设会立即切换，和下方的“保存设置”无关。已单独配置的情绪副 API 不会被覆盖；未配置副 API 时，情绪评估会跟随主 API。
                                  </p>
+                                 <ApiConnectionTestButton api={apiConfig} className="mt-3" />
                              </div>
                          </ChatSettingsSection>
                      )}

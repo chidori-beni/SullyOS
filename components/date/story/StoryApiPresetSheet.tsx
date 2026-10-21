@@ -2,6 +2,8 @@ import React, { useEffect } from 'react';
 import { Check, Plugs, X } from '@phosphor-icons/react';
 import type { APIConfig, ApiPreset } from '../../../types';
 import { useOS } from '../../../context/OSContext';
+import ApiPresetGroups from '../../settings/ApiPresetGroups';
+import ApiConnectionTestButton from '../../settings/ApiConnectionTestButton';
 
 /**
  * 剧情专用 API 选择。
@@ -11,7 +13,7 @@ import { useOS } from '../../../context/OSContext';
  */
 interface Props {
     apiPresets: ApiPreset[];
-    mainApi: Pick<APIConfig, 'model'>;
+    mainApi: Pick<APIConfig, 'baseUrl' | 'apiKey' | 'model' | 'stream'>;
     selectedId: string | null;
     onSelect: (presetId: string | null) => void;
     onClose: () => void;
@@ -20,6 +22,8 @@ interface Props {
 const StoryApiPresetSheet: React.FC<Props> = ({ apiPresets, mainApi, selectedId, onSelect, onClose }) => {
     const { registerBackHandler } = useOS();
     useEffect(() => registerBackHandler(() => { onClose(); return true; }), [onClose, registerBackHandler]);
+    // 测的是剧情现在实际会用的那个：选了预设测预设，没选测主 API
+    const testedApi = apiPresets.find(preset => preset.id === selectedId)?.config ?? mainApi;
 
     const row = (key: string, active: boolean, title: string, sub: string, onClick: () => void) => (
         <button key={key} type='button' onClick={onClick} className={`w-full py-3.5 flex items-center gap-3 text-left ${active ? 'text-violet-700' : ''}`}>
@@ -43,9 +47,14 @@ const StoryApiPresetSheet: React.FC<Props> = ({ apiPresets, mainApi, selectedId,
             </div>
             <div className='mt-4 min-h-0 overflow-y-auto overscroll-contain border-t border-slate-200 divide-y divide-slate-200'>
                 {row('__main__', !selectedId, '跟随主 API', mainApi.model ? `现在是 ${mainApi.model}` : '设置里当前用的那个', () => onSelect(null))}
-                {apiPresets.map(preset => row(preset.id, preset.id === selectedId, preset.name, preset.config.model || '未填模型', () => onSelect(preset.id)))}
+                {apiPresets.length > 0 && <div className='py-3'>
+                    <ApiPresetGroups presets={apiPresets} activeId={selectedId} layout='list' itemsClassName='divide-y divide-slate-200'>
+                        {preset => row(preset.id, preset.id === selectedId, preset.name, preset.config.model || '未填模型', () => onSelect(preset.id))}
+                    </ApiPresetGroups>
+                </div>}
                 {apiPresets.length === 0 && <div className='py-6 text-center text-[11px] leading-5 text-slate-400'>还没有保存过 API 预设。<br />去「设置 → API」存一条，这里就会出现。</div>}
             </div>
+            <ApiConnectionTestButton api={testedApi} label='测试剧情当前 API 连接' className='shrink-0 pt-3 pb-2' />
         </div>
     </div>;
 };

@@ -3,6 +3,8 @@ import React from 'react';
 import { Check } from '@phosphor-icons/react';
 import type { APIConfig, ApiPreset } from '../../types';
 import { findActivePresetId } from '../../utils/apiPresetSwitch';
+import ApiPresetGroups from '../settings/ApiPresetGroups';
+import ApiConnectionTestButton from '../settings/ApiConnectionTestButton';
 
 /**
  * 通话中快捷切换主 API 预设。
@@ -13,7 +15,7 @@ import { findActivePresetId } from '../../utils/apiPresetSwitch';
  */
 interface Props {
   apiPresets: ApiPreset[];
-  apiConfig: Pick<APIConfig, 'baseUrl' | 'apiKey' | 'model'>;
+  apiConfig: Pick<APIConfig, 'baseUrl' | 'apiKey' | 'model' | 'stream'>;
   accentColor: string;
   lightTheme: boolean;
   onApply: (preset: ApiPreset) => void;
@@ -41,8 +43,8 @@ const CallApiPresetSheet: React.FC<Props> = ({ apiPresets, apiConfig, accentColo
             {emptyHint ?? <>{uiT('call.detail.label083')}<br />{uiT('call.detail.label084')}</>}
           </div>
         ) : (
-          <div className="max-h-[45vh] overflow-y-auto space-y-2 pt-1">
-            {apiPresets.map(preset => {
+          <div className="max-h-[45vh] overflow-y-auto pt-1">
+            <ApiPresetGroups presets={apiPresets} activeId={activeId} tone="dark" layout="list">{preset => {
               const active = preset.id === activeId;
               return (
                 <button key={preset.id} type="button"
@@ -62,9 +64,10 @@ const CallApiPresetSheet: React.FC<Props> = ({ apiPresets, apiConfig, accentColo
                   )}
                 </button>
               );
-            })}
+            }}</ApiPresetGroups>
           </div>
         )}
+        <ApiConnectionTestButton api={apiConfig} tone="dark" />
       </div>
     </div>
   );

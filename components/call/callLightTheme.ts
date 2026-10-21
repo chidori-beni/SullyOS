@@ -64,6 +64,8 @@ pair('.text-rose-300', 'color:#e11d48', 'color:#fda4af');
 pair('.text-rose-300\\/90', 'color:#e11d48', 'color:rgba(253,164,175,0.9)');
 pair('.text-rose-300\\/80', 'color:rgba(225,29,72,0.85)', 'color:rgba(253,164,175,0.8)');
 pair('.text-rose-300\\/65', 'color:rgba(225,29,72,0.7)', 'color:rgba(253,164,175,0.65)');
+// 成功提示的浅绿在浅底上看不清（API 测试连接用）
+pair('.text-emerald-300', 'color:#059669', 'color:#6ee7b7');
 
 // 实色底按钮（accent/绿/红）不论主题都要白字
 rules.push('.sully-call-light .keep-white{color:#fff !important}');

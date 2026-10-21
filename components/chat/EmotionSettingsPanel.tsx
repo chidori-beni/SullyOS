@@ -2,6 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { CharacterProfile, ApiPreset, APIConfig, CharacterBuff } from '../../types';
 import { isScheduleFeatureOn } from '../../utils/scheduleGenerator';
+import ApiPresetGroups from '../settings/ApiPresetGroups';
+import ApiConnectionTestButton from '../settings/ApiConnectionTestButton';
 
 interface EmotionSettingsPanelProps {
     char: CharacterProfile;
@@ -93,8 +95,8 @@ const EmotionSettingsPanel: React.FC<EmotionSettingsPanelProps> = ({
             {apiPresets.length > 0 && (
                 <div>
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">我的预设</label>
-                    <div className="flex gap-2 flex-wrap">
-                        {apiPresets.map(preset => (
+                    <ApiPresetGroups presets={apiPresets} activeId={apiPresets.find(p => p.config.baseUrl === url && p.config.apiKey === key && p.config.model === model)?.id}>
+                        {preset => (
                             <button
                                 key={preset.id}
                                 onClick={() => loadPreset(preset)}
@@ -103,8 +105,8 @@ const EmotionSettingsPanel: React.FC<EmotionSettingsPanelProps> = ({
                                 {preset.name}
                                 <span className="ml-1.5 text-slate-300">{preset.config.model}</span>
                             </button>
-                        ))}
-                    </div>
+                        )}
+                    </ApiPresetGroups>
                 </div>
             )}
 
@@ -170,6 +172,9 @@ const EmotionSettingsPanel: React.FC<EmotionSettingsPanelProps> = ({
                         className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all"
                     />
                 </div>
+
+                {/* 副 API 留空时走主 API，测主 API 用上面「主 API」那栏的按钮 */}
+                {url.trim() && <ApiConnectionTestButton api={{ baseUrl: url, apiKey: key, model }} label="测试副 API 连接" />}
 
                 <button
                     onClick={handleSave}
