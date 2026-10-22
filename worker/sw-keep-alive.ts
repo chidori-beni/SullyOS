@@ -92,7 +92,9 @@ const staticManifest = typeof __STATIC_CACHE_MANIFEST__ === 'undefined' ? undefi
  *            _blob 信封、reasoning、tool_request 三条路线随 Instant Push 移除。
  */
 // 1.20.0: 静态资源缓存、离线启动、用户确认更新；保留原推送注册。
-const SW_VERSION = '1.20.0';
+// 1.21.0: 每次推送都必须弹出通知。页面在前台时库会压掉横幅，iOS 把这算作「静默推送」，
+//         累计 3 次就收回订阅（「通知权限自己关了」）。现在压掉的那次补一条通知再立刻收起。
+const SW_VERSION = '1.21.0';
 
 /** 这条推送是不是一通来电（旗子由 worker/amsg/src/agentic.ts 立在 notification.data 上）。 */
 function isIncomingCallNotificationData(data: any): boolean {
@@ -263,6 +265,63 @@ function traceSw(event: string, payload?: any, extra: Record<string, any> = {}) 
   // 不 await：trace 是旁路，写库慢了 / 挂了都不能拖住推送处理本身。
   void appendSwTrace(entry).catch(() => { /* trace 写不进去就算了 */ });
 }
+
+// ─── 每次推送都要有通知：防 iOS 收回订阅 ──────────────────────────────────────
+// WebKit 的规矩（userVisibleOnly）：一次 push 处理完没调用过 showNotification，就记一次
+// 「静默推送」，同一个订阅满 3 次直接收回，而且不发 pushsubscriptionchange。用户看到的是
+// 「通知权限 / 即时对话自己关了」，角色消息照常进收件箱，就是不弹。
+//
+// 静默推送的来源不止一处，都在库里面：页面可见时压掉 when-hidden 横幅（见面、通话、
+// 前台租约过期的即时对话）、重复推送去重、多段推送的中间片。逐条去改判定改不完，所以
+// 在 push 事件这一层兜底：库处理完以后，这次 push 期间一条通知都没弹成功的，补一条再
+// 立刻收起。页面在前台时横幅大多来不及出现；就算闪一下，也比订阅被收回好。
+//
+// 这个监听必须先于 installReiSW 注册：它要在库调用 event.waitUntil 之前把 waitUntil
+// 包一层，拿到库的处理 promise，才知道「库处理完了」是什么时候。
+const PUSH_ACK_TAG = 'sully-push-ack';
+let notificationsShown = 0;
+{
+  const registration = sw.registration;
+  const originalShow = registration.showNotification.bind(registration);
+  registration.showNotification = (title: string, options?: NotificationOptions) => {
+    const shown = originalShow(title, options);
+    // 计成功弹出的：被拒的那次 WebKit 一样按静默算。
+    shown.then(() => { notificationsShown += 1; }, () => {});
+    return shown;
+  };
+}
+
+sw.addEventListener('push', (event: PushEvent) => {
+  const libraryWork: Promise<unknown>[] = [];
+  const realWaitUntil = event.waitUntil.bind(event);
+  (event as any).waitUntil = (promise: Promise<unknown>) => {
+    libraryWork.push(Promise.resolve(promise));
+    realWaitUntil(promise);
+  };
+  const shownBefore = notificationsShown;
+  realWaitUntil((async () => {
+    // 宏任务才能保证同一次派发里排在后面的库监听已经跑过（微任务会插在两个监听之间）。
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await Promise.allSettled(libraryWork);
+    if (notificationsShown !== shownBefore) return;
+    traceSw('push-ack-notification');
+    try {
+      await sw.registration.showNotification('Sully', {
+        body: '收到一条新消息',
+        tag: PUSH_ACK_TAG,
+        silent: true,
+        icon: './icons/icon-192.png',
+        badge: './icons/icon-192.png',
+      });
+      const acks = await sw.registration.getNotifications({ tag: PUSH_ACK_TAG });
+      for (const notification of acks) notification.close();
+    } catch (error) {
+      traceSw('push-ack-notification-error', undefined, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  })());
+});
 
 installReiSW(sw, {
   defaultIcon: './icons/icon-192.png',

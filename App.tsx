@@ -11,6 +11,7 @@ import VRBroadcast from './components/VRBroadcast';
 import WorldBroadcast from './components/WorldBroadcast';
 import ChatBroadcast from './components/ChatBroadcast';
 import WebUpdateNotice from './components/WebUpdateNotice';
+import PushRevokedNotice from './components/PushRevokedNotice';
 import { isIOSStandaloneWebApp } from './utils/iosStandalone';
 import { installDevDebugLifecycleCapture } from './utils/devDebug';
 import { UiLocaleProvider } from './context/UiLocaleContext';
@@ -50,6 +51,7 @@ const App: React.FC = () => {
             {/* 书房「等回复」：角色忙完了补上欠的回复（不渲染东西） */}
             <BookroomPendingRunner />
             <WebUpdateNotice />
+            <PushRevokedNotice />
           </OSProvider>
         </div>
       </div>

@@ -43,6 +43,7 @@ import { MULTIPART_FAILURE_REASON } from '@rei-standard/amsg-shared';
 import { appendInstantTraceEntry } from './instantTraceLog';
 import { captureSwRegistrationSnapshot, probeSwChannel } from './swChannelProbe';
 import { trackEvent } from './analytics';
+import { amsgPushRevokeHeal } from './amsgPushRevokeHeal';
 import {
   getInstantChunkIndex,
   getInstantChunkPacingDelay,
@@ -2985,6 +2986,8 @@ export const ActiveMsgRuntime = {
         // 记时刻 + flush + 上线补收 + 即时对话点名 + 待写日记 + pending tool calls，
         // 这几件共通的事上游已经抽成一个入口，冷启动那条路也复用它。
         handlePageBecameVisible();
+        // iOS 收回订阅不会通知任何人，只能回前台时自己看一眼（见 amsgPushRevokeHeal）。
+        void amsgPushRevokeHeal.check();
       });
       // 冷启动那一下（点通知才把 App 拉起来）没有 visibilitychange 可听，这里补一次：
       // 不补的话「回到前台的时刻」一直是 0，从通知进来的第一条判不出「送达时人不在」。
@@ -3011,7 +3014,7 @@ export const ActiveMsgRuntime = {
     // 这两个可能跟 visibilitychange 撞在一起重复触发，但收件箱是「取出即删」、冲刷又都
     // 走同一条串行链，重复最多是多数一次个数，不会把同一条消息演两遍。
     if (typeof window !== 'undefined') {
-      window.addEventListener('pageshow', () => { void sweepLocalInbox(); });
+      window.addEventListener('pageshow', () => { void sweepLocalInbox(); void amsgPushRevokeHeal.check(); });
       window.addEventListener('focus', () => { void sweepLocalInbox(); });
     }
 
@@ -3027,6 +3030,7 @@ export const ActiveMsgRuntime = {
     // （页面没开着）时，启动这里把它消费掉。fire-and-forget——它要打网络请求，
     // 不能拦着下面的 inbox flush。
     void refreshPushSubscriptionIfMarked();
+    void amsgPushRevokeHeal.check();
 
     // SW→页面通道体检：拍一张注册关系的快照，再用推送真正走的那条路探一次通不通。
     // 这条通道断了之后主动消息不会消失、只会慢几十秒（兜底轮询还在捞），表面上一切
