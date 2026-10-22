@@ -4103,8 +4103,19 @@ ${sentencePlan}`;
     };
   }, [currentSessionId]);
 
-  // 用户在舞台上拖拽/缩放后的构图，写回角色的 videoAvatar 持久化。
+  // 用户在舞台上拖拽/缩放后的构图持久化：立绘写进 companionAvatar.videoFramings（按来源分开），
+  // 动态模型写回 videoAvatar。
   const handleStageFramingChange = (framing: AvatarStageFraming) => {
+    if (selectedChar && staticVideoAvatarActive) {
+      const source = selectedVisualSource as 'upload' | 'date';
+      updateCharacter(selectedChar.id, prev => ({
+        companionAvatar: {
+          version: 1, source, ...prev.companionAvatar,
+          videoFramings: { ...prev.companionAvatar?.videoFramings, [source]: framing },
+        },
+      }));
+      return;
+    }
     if (!selectedChar?.videoAvatar) return;
     updateCharacter(selectedChar.id, { videoAvatar: { ...selectedChar.videoAvatar, framing } });
   };
@@ -4852,7 +4863,8 @@ ${sentencePlan}`;
             staticAvatarSource={staticVideoAvatarActive ? selectedVisualSource : undefined}
             staticPortraitValue={staticVideoPortrait}
             staticExpressionKey={staticVideoExpressionKey}
-            staticSpriteConfig={selectedChar?.spriteConfig}
+            staticSpriteConfig={selectedVisualSource === 'date' ? selectedChar?.spriteConfig : undefined}
+            staticFraming={staticVideoAvatarActive ? selectedChar?.companionAvatar?.videoFramings?.[selectedVisualSource as 'upload' | 'date'] : undefined}
             motionState={displayCallState}
             emotion={avatarEmotion}
             audioFeed={getAudioFeed()}

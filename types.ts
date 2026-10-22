@@ -741,6 +741,11 @@ export interface CompanionAvatarConfig {
   source: 'model' | 'upload' | 'date';
   /** Desktop composition is independent for uploaded images and date portraits. */
   portraitConfigs?: Partial<Record<'upload' | 'date', SpriteConfig>>;
+  /**
+   * 视频通话舞台里拖动/捏合调出的立绘构图（叠在见面 spriteConfig 之上）。
+   * 与桌面 portraitConfigs 互不影响；offsetX/Y 是舞台宽/高的比例。
+   */
+  videoFramings?: Partial<Record<'upload' | 'date', { scale: number; offsetX: number; offsetY: number }>>;
   /** Original PNG / GIF stored in blob_assets. Kept while switching sources. */
   imageRef?: string;
   fileName?: string;

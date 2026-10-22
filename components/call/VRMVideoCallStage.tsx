@@ -19,7 +19,7 @@ import {
   type AvatarTouchRequest,
   type AvatarTouchZone,
 } from '../../utils/avatarTouch';
-import StaticCompanionPortrait from '../os/StaticCompanionPortrait';
+import StaticCompanionPortrait, { buildPortraitTouchHit } from '../os/StaticCompanionPortrait';
 
 interface VRMVideoCallStageProps {
   characterName: string;
@@ -30,6 +30,8 @@ interface VRMVideoCallStageProps {
   staticPortraitValue?: string;
   staticExpressionKey?: string;
   staticSpriteConfig?: CharacterProfile['spriteConfig'];
+  /** 立绘在视频舞台里的构图（拖动/捏合调出来的），手势结束经 onFramingChange 回写。 */
+  staticFraming?: AvatarStageFraming;
   motionState: AvatarMotionState;
   emotion?: string;
   audioFeed?: CallAudioFeed;
@@ -82,6 +84,8 @@ interface VRMVideoCallStageProps {
 const FRAMING_LIMITS = {
   vrm: { scale: [0.1, 4] as [number, number], offsetX: [-0.9, 0.9] as [number, number], offsetY: [-0.9, 0.9] as [number, number] },
   live2d: { scale: [0.55, 6] as [number, number], offsetX: [-1.4, 1.4] as [number, number], offsetY: [-3.2, 3.2] as [number, number] },
+  // 立绘：offset 是舞台宽/高的比例，缩放以立绘脚底为原点；放到 4 倍足够拉成脸部特写。
+  static: { scale: [0.3, 4] as [number, number], offsetX: [-1, 1] as [number, number], offsetY: [-1, 1.2] as [number, number] },
 };
 
 const stateLabel = (state: AvatarMotionState): string => {
@@ -100,6 +104,7 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
   staticPortraitValue,
   staticExpressionKey = 'normal',
   staticSpriteConfig,
+  staticFraming,
   motionState,
   emotion,
   audioFeed,
@@ -132,6 +137,8 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
   maxFps,
 }) => {
   const canAdjustFraming = !touchRegionEditingZone && (framingEditable ?? !companionMode);
+  const staticAvatarActive = staticAvatarSource === 'upload' || staticAvatarSource === 'date';
+  const restingFraming = (staticAvatarActive ? staticFraming : baseFraming || model?.framing) || DEFAULT_STAGE_FRAMING;
   // 动作/表情快捷按钮默认收起——一排药丸浮在模型上视觉太吵，想用再展开。
   const [actionChipsOpen, setActionChipsOpen] = useState(() => {
     try { return localStorage.getItem('sully-call-action-chips-v1') === 'open'; } catch { return false; }
@@ -152,7 +159,7 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
   const [touchRequest, setTouchRequest] = useState<AvatarTouchRequest | null>(null);
 
   // ── 舞台构图：拖拽移动、双指捏合/滚轮缩放，手势结束时统一提交持久化 ──
-  const [framing, setFraming] = useState<AvatarStageFraming>(baseFraming || model?.framing || DEFAULT_STAGE_FRAMING);
+  const [framing, setFraming] = useState<AvatarStageFraming>(restingFraming);
   const framingRef = useRef(framing);
   const framingDirtyRef = useRef(false);
   const stageBoxRef = useRef<HTMLDivElement | null>(null);
@@ -170,17 +177,18 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
     pinchDist: number;
   }>({ pointers: new Map(), pinchDist: 0 });
   const wheelCommitTimerRef = useRef<number | null>(null);
-  const framingLimits = model?.format === 'live2d' ? FRAMING_LIMITS.live2d : FRAMING_LIMITS.vrm;
+  const framingLimits = staticAvatarActive
+    ? FRAMING_LIMITS.static
+    : model?.format === 'live2d' ? FRAMING_LIMITS.live2d : FRAMING_LIMITS.vrm;
 
   // 跟随外部构图变化（换模型、设置面板滑杆保存）。舞台自己提交的构图写回
   // 角色后也会流回这里，值相同因此不会造成抖动或循环。
   useEffect(() => {
     if (gestureRef.current.pointers.size) return; // 手势进行中以本地为准
     if (calibratingFaceRef.current) return; // 脸部校准中以本地为准
-    const next = baseFraming || model?.framing || DEFAULT_STAGE_FRAMING;
-    framingRef.current = next;
-    setFraming(next);
-  }, [model?.assetId, model?.framing, baseFraming]);
+    framingRef.current = restingFraming;
+    setFraming(restingFraming);
+  }, [model?.assetId, model?.framing, baseFraming, staticAvatarActive, staticAvatarSource, staticFraming]);
   useEffect(() => () => {
     if (wheelCommitTimerRef.current !== null) window.clearTimeout(wheelCommitTimerRef.current);
   }, []);
@@ -312,6 +320,23 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
       const y = event.clientY - rect.top;
       const durationMs = Math.max(0, window.performance.now() - pointer.startedAt);
       if (x < 0 || y < 0 || x > rect.width || y > rect.height) return;
+      if (staticAvatarActive) {
+        // 立绘没有画布做命中检测：只有点在图片本身上才算摸到 ta。
+        const image = stageBoxRef.current?.querySelector('img');
+        if (!image || !onAvatarTouch) return;
+        const imageRect = image.getBoundingClientRect();
+        if (event.clientX < imageRect.left || event.clientX > imageRect.right || event.clientY < imageRect.top || event.clientY > imageRect.bottom) return;
+        onAvatarTouch(buildPortraitTouchHit(
+          image,
+          stageBoxRef.current!,
+          event.clientX,
+          event.clientY,
+          Math.max(pointer.maxPressure, Math.max(0, Math.min(1, event.pressure || 0))),
+          durationMs,
+          pointer.pointerType || 'unknown',
+        ));
+        return;
+      }
       setTouchRequest({
         nonce: Date.now() + Math.random(),
         x,
@@ -395,7 +420,6 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
     onModelError?.(message);
   };
 
-  const staticAvatarActive = staticAvatarSource === 'upload' || staticAvatarSource === 'date';
   const hasRenderableModel = Boolean(model && !modelError && (model.format === 'live2d' || modelUrl));
   const hasRenderableAvatar = staticAvatarActive || hasRenderableModel;
 
@@ -446,20 +470,21 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
               : 'vrm-stage-arrive 520ms ease-out both',
             clipPath: cropAdjusted ? `inset(${cropInset} round 1.4rem)` : undefined,
           }}
-          onPointerDown={staticAvatarActive ? undefined : handleStagePointerDown}
-          onPointerMove={staticAvatarActive ? undefined : handleStagePointerMove}
-          onPointerUp={staticAvatarActive ? undefined : handleStagePointerEnd}
-          onPointerCancel={staticAvatarActive ? undefined : handleStagePointerEnd}
-          onWheel={staticAvatarActive ? undefined : handleStageWheel}
+          onPointerDown={handleStagePointerDown}
+          onPointerMove={handleStagePointerMove}
+          onPointerUp={handleStagePointerEnd}
+          onPointerCancel={handleStagePointerEnd}
+          onWheel={handleStageWheel}
         >
           {staticAvatarActive ? (
             <StaticCompanionPortrait
               value={staticPortraitValue}
               characterName={characterName}
               spriteConfig={staticSpriteConfig}
+              stageFraming={framing}
               expressionKey={staticExpressionKey}
               touchEnabled={Boolean(onAvatarTouch)}
-              onAvatarTouch={onAvatarTouch}
+              /* 拖动/缩放和轻点都由舞台统一接管，立绘自己不再抢指针 */
               surfaceLabel="视频形象"
               testId="video-call-static-portrait-stage"
             />
@@ -653,7 +678,7 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
                     {model?.faceFraming && <span className="text-[8px] text-amber-200/55">已设置</span>}
                   </button>
                 )}
-                {!staticAvatarActive && framingAdjusted && (
+                {framingAdjusted && (
                   <button
                     onClick={() => { resetFraming(); setStageToolsOpen(false); }}
                     className="flex w-full items-center gap-2.5 py-2.5 text-left text-[10px] text-white/62 active:text-white"

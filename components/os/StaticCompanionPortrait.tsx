@@ -7,10 +7,45 @@ import {
 } from '../../utils/avatarTouch';
 import { useBlobRefUrl } from '../../utils/blobRef';
 
+/** 把一次轻点换算成立绘触摸命中；舞台自己接管手势时也走这里，保证两边判定一致。 */
+export const buildPortraitTouchHit = (
+  image: Element,
+  stage: Element,
+  clientX: number,
+  clientY: number,
+  pressure: number,
+  durationMs: number,
+  pointerType: string,
+): AvatarTouchHit => {
+  const rect = image.getBoundingClientRect();
+  const stageRect = stage.getBoundingClientRect();
+  const portraitX = Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(1, rect.width)));
+  const portraitY = Math.max(0, Math.min(1, (clientY - rect.top) / Math.max(1, rect.height)));
+  const normalizedX = Math.max(0, Math.min(1, (clientX - stageRect.left) / Math.max(1, stageRect.width)));
+  const normalizedY = Math.max(0, Math.min(1, (clientY - stageRect.top) / Math.max(1, stageRect.height)));
+  const target = resolveAvatarTouchTarget([], portraitY, portraitX);
+  return {
+    nonce: Date.now() + Math.random(),
+    x: clientX - rect.left,
+    y: clientY - rect.top,
+    normalizedX,
+    normalizedY,
+    pressure,
+    durationMs,
+    pointerType: pointerType === 'mouse' || pointerType === 'touch' || pointerType === 'pen' ? pointerType : 'unknown',
+    zone: target.zone,
+    part: target.part,
+    source: 'portrait-bounds',
+    rawAreas: [],
+  };
+};
+
 interface StaticCompanionPortraitProps {
   value?: string;
   characterName: string;
   spriteConfig?: { scale: number; x: number; y: number };
+  /** 视频通话舞台构图：整块立绘层的平移（舞台宽/高比例）与缩放，叠在 spriteConfig 之上。 */
+  stageFraming?: { scale: number; offsetX: number; offsetY: number };
   /** Accepted for callers that track expressions; the image must not be keyed/remounted by it. */
   expressionKey?: string;
   touchEnabled?: boolean;
@@ -23,6 +58,7 @@ const StaticCompanionPortrait: React.FC<StaticCompanionPortraitProps> = ({
   value,
   characterName,
   spriteConfig,
+  stageFraming,
   touchEnabled = false,
   onAvatarTouch,
   surfaceLabel = '桌面形象',
@@ -48,7 +84,14 @@ const StaticCompanionPortrait: React.FC<StaticCompanionPortraitProps> = ({
   );
 
   return (
-    <div className="pointer-events-none absolute inset-0 flex items-end justify-center overflow-hidden px-[4%] pb-[2%]" data-testid={testId}>
+    <div className="pointer-events-none absolute inset-0 overflow-hidden" data-testid={testId}>
+      <div
+        className="absolute inset-0 flex items-end justify-center px-[4%] pb-[2%]"
+        style={stageFraming ? {
+          transform: `translate(${stageFraming.offsetX * 100}%, ${stageFraming.offsetY * 100}%) scale(${stageFraming.scale})`,
+          transformOrigin: 'bottom center',
+        } : undefined}
+      >
       <img
         src={imageUrl}
         alt={`${characterName}的${surfaceLabel}`}
@@ -84,29 +127,19 @@ const StaticCompanionPortrait: React.FC<StaticCompanionPortraitProps> = ({
           if (!onAvatarTouch || !pointer || pointer.id !== event.pointerId) return;
           const durationMs = Date.now() - pointer.startedAt;
           if (!isAvatarTouchGesture(pointer.maxDistance, durationMs, true)) return;
-          const rect = event.currentTarget.getBoundingClientRect();
-          const stageRect = event.currentTarget.parentElement?.getBoundingClientRect() || rect;
-          const portraitX = Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width)));
-          const portraitY = Math.max(0, Math.min(1, (event.clientY - rect.top) / Math.max(1, rect.height)));
-          const normalizedX = Math.max(0, Math.min(1, (event.clientX - stageRect.left) / Math.max(1, stageRect.width)));
-          const normalizedY = Math.max(0, Math.min(1, (event.clientY - stageRect.top) / Math.max(1, stageRect.height)));
-          const target = resolveAvatarTouchTarget([], portraitY, portraitX);
-          onAvatarTouch({
-            nonce: Date.now() + Math.random(),
-            x: event.clientX - rect.left,
-            y: event.clientY - rect.top,
-            normalizedX,
-            normalizedY,
-            pressure: pointer.pressure,
+          const stage = event.currentTarget.closest(`[data-testid="${testId}"]`) || event.currentTarget;
+          onAvatarTouch(buildPortraitTouchHit(
+            event.currentTarget,
+            stage,
+            event.clientX,
+            event.clientY,
+            pointer.pressure,
             durationMs,
-            pointerType: event.pointerType === 'mouse' || event.pointerType === 'touch' || event.pointerType === 'pen' ? event.pointerType : 'unknown',
-            zone: target.zone,
-            part: target.part,
-            source: 'portrait-bounds',
-            rawAreas: [],
-          });
+            event.pointerType,
+          ));
         }}
       />
+      </div>
     </div>
   );
 };
