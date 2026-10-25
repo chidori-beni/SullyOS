@@ -688,6 +688,22 @@ export const DB = {
     });
   },
 
+  /**
+   * 见面自动存档只改 savedDateState 这一个字段。不走 saveCharacter：那条会顺带扫消息表、
+   * 读家园记录、发家园提交事件，而且会用组件里那份（可能是旧的）整角色覆盖库里的。
+   */
+  saveCharacterDateState: async (charId: string, savedDateState: CharacterProfile['savedDateState']): Promise<void> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_CHARACTERS, 'readwrite');
+      const store = tx.objectStore(STORE_CHARACTERS), get = store.get(charId);
+      get.onsuccess = () => {if (get.result) store.put({...get.result, savedDateState});};
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error('见面进度保存失败'));
+    });
+  },
+
   ensureStoryTheaterTimestamps: async () => ensureStoryTimelineRepair(await openDB()),
 
   ensureHomeContextMessages: async (charId: string): Promise<void> => {

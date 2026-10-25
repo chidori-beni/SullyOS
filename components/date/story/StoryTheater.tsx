@@ -64,6 +64,10 @@ const StoryTheaterContent: React.FC<Props> = ({ initialStoryId, onSwitchCompanio
     const listTop = useRef<HTMLElement>(null);
     const initialStoryHandled = useRef<string | null>(null);
     const mirrorRepairDone = useRef(false);
+    // reload 只在一次性的镜像清理里用到角色列表。别让它跟着 characters 变：角色资料随时会被
+    // 后台更新，每变一次就把全部剧情、预设、面具和每条剧情的最后一楼重读一遍，看剧情时也在背后跑。
+    const charactersRef = useRef(characters);
+    charactersRef.current = characters;
     const [lastActivity, setLastActivity] = useState<Record<string, number>>({});
     const [page, setPage] = useState(0);
     const presets = useMemo(() => withBuiltInStoryPresets(customPresets), [customPresets]);
@@ -95,14 +99,14 @@ const StoryTheaterContent: React.FC<Props> = ({ initialStoryId, onSwitchCompanio
         // 删不掉，却会被注入角色上下文。进列表时顺手清一次，清完才算真的没污染。
         if (!mirrorRepairDone.current) try {
             mirrorRepairDone.current = true;
-            const repaired = await repairStoryTheaterFictionMirrors(normalizedEntries, characters.map(char => char.id));
+            const repaired = await repairStoryTheaterFictionMirrors(normalizedEntries, charactersRef.current.map(char => char.id));
             if (repaired.deletedMessageCount > 0) {
                 addToast(`已清除 ${repaired.deletedMessageCount} 条误写进角色记忆的虚构剧情（${repaired.storyTitles.join('、')}）`, 'success');
             }
         } catch (error: any) {
             console.error('[StoryTheater] fiction mirror repair failed', error);
         }
-    }, [addToast, characters, refreshActivity]);
+    }, [addToast, refreshActivity]);
 
     useEffect(() => { void reload(); }, [reload]);
     useEffect(() => {

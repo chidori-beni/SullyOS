@@ -141,8 +141,6 @@ const CHANTILLY_NOIR_CSS = `
   border-radius: 3px;
   background: ${NOIR_TULLE} repeat, var(--noir-card);
   box-shadow: inset 0 0 0 4px rgba(19, 16, 17, .7), inset 0 0 0 5px rgba(194, 189, 191, .1), 0 10px 30px rgba(0, 0, 0, .45);
-  -webkit-backdrop-filter: blur(3px);
-  backdrop-filter: blur(3px);
 }
 .story-skin-chantilly-noir .story-turn::before,
 .story-skin-chantilly-noir .story-turn::after,
@@ -942,8 +940,6 @@ const MEMO_CSS = `
   padding: 26px 20px 22px;
   background: rgba(223, 233, 232, .9);
   border: 0 !important;
-  -webkit-backdrop-filter: blur(2px);
-  backdrop-filter: blur(2px);
 }
 .story-skin-memo .story-turn::before,
 .story-skin-memo .story-turn::after {
@@ -1106,8 +1102,6 @@ const MOON_NIGHT_CSS = `
   border: 1px solid rgba(110, 139, 195, .7) !important;
   border-radius: 4px;
   box-shadow: 0 0 14px rgba(146, 229, 255, .16), inset 0 0 22px rgba(87, 114, 255, .12);
-  -webkit-backdrop-filter: blur(3px);
-  backdrop-filter: blur(3px);
 }
 .story-skin-moon-night .story-turn::before {
   content: '';
@@ -1170,8 +1164,6 @@ const MOON_NIGHT_CSS = `
   background: rgba(107, 133, 201, .42);
   border-radius: 0 4px 4px 0;
   box-shadow: -2px 0 10px rgba(87, 114, 255, .6);
-  -webkit-backdrop-filter: blur(3px);
-  backdrop-filter: blur(3px);
 }
 .story-skin-moon-night .story-user-turn > div:first-child { color: #9CC3FF !important; letter-spacing: .4em !important; }
 .story-skin-moon-night .story-prose-user { font-family: ${MOON_SERIF}; color: #E3EEFA !important; }
@@ -1295,8 +1287,6 @@ const BLACK_OPIUM_CSS = `
     linear-gradient(rgba(22, 18, 25, .8), rgba(22, 18, 25, .8)) padding-box,
     linear-gradient(135deg, rgba(208, 100, 86, .55), rgba(255, 255, 255, .08) 35%, rgba(255, 255, 255, .06) 65%, rgba(119, 82, 197, .6)) border-box;
   box-shadow: 0 14px 34px rgba(0, 0, 0, .5);
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
 }
 .story-skin-black-opium .story-prose { color: #DDD6E0 !important; letter-spacing: .02em; }
 
@@ -1454,6 +1444,10 @@ export const STORY_SKINS: StorySkin[] = [
     },
 ];
 
+// 别给 .story-turn / .story-opening / .story-user-turn 这类正文卡片加 backdrop-filter。
+// 一张卡就是一整段长回复，iPhone 要为每张卡单独开一块和卡片一样高的显存去做模糊，
+// 停在页面上看久了会把整机显存吃满、直接退到锁屏（2026-10-25 用户报，四款主题都去掉了）。
+// 顶栏 / 底栏这种又小又固定的条可以留。
 export const STORY_SKIN_CSS = STORY_SKINS.map(skin => skin.css).join('\n');
 
 export const readStorySkinId = (value: unknown): StorySkinId =>

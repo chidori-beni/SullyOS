@@ -47,6 +47,7 @@ import { ArrowLeft, CornersIn, CornersOut } from '@phosphor-icons/react';
 import { MEETING_CONTINUE_DISPLAY_TEXT } from '../../utils/meetingContinue';
 import { SARSpeechSwitch } from '../sar/SARSpeechSwitch';
 import { resolveSARDateSpeech } from '../../utils/sarDatePresentation';
+import { dateStateSaveSignature, releaseDateVoiceCache, trimDateVoiceCache } from '../../utils/dateMemoryGuards';
 
 const getSARSurface = (message: Message): string | undefined => {
     const value = message.metadata?.sarModuleSurface?.surface;
@@ -296,6 +297,11 @@ const DateSession: React.FC<DateSessionProps> = ({
     const [novelVisibleCount, setNovelVisibleCount] = useState(NOVEL_MESSAGE_WINDOW_SIZE);
     const [novelHistoryLoading, setNovelHistoryLoading] = useState(false);
     const dateAudioRef = useRef<HTMLAudioElement | null>(null);
+    // 离开见面时停掉播放并释放全部语音 blob，不然它们会一直占着内存直到整页重开。
+    useEffect(() => () => {
+        if (dateAudioRef.current) { dateAudioRef.current.pause(); dateAudioRef.current.removeAttribute('src'); }
+        releaseDateVoiceCache(voiceCacheRef.current);
+    }, []);
     const scrollToNovelHistoryTopRef = useRef(false);
     const voiceEnabled = !!char.dateVoiceEnabled;
     const voiceLang = char.dateVoiceLang || '';
@@ -555,7 +561,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                 if (cancelled) return;
                 setGalVoiceLoading(false);
                 if (!speech) return;
-                voiceCacheRef.current[cacheKey] = speech;
+                voiceCacheRef.current[cacheKey] = speech; trimDateVoiceCache(voiceCacheRef.current, dateAudioRef.current?.src);
             }
             if (cancelled) return;
             if (!dateAudioRef.current) dateAudioRef.current = new Audio();
@@ -585,7 +591,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             speech = await translateAndSpeak(speechText, currentLineEmotionRef.current) || undefined;
             setGalVoiceLoading(false);
             if (!speech) { addToast('语音合成失败，请稍后重试', 'error'); return; }
-            voiceCacheRef.current[cacheKey] = speech;
+            voiceCacheRef.current[cacheKey] = speech; trimDateVoiceCache(voiceCacheRef.current, dateAudioRef.current?.src);
         }
         if (!dateAudioRef.current) dateAudioRef.current = new Audio();
         dateAudioRef.current.src = speech.url;
@@ -619,7 +625,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         const speech = await translateAndSpeak(sourceText, voiceEmotion);
         setNovelVoiceLoading(prev => { const n = new Set(prev); n.delete(lineKey); return n; });
         if (!speech) { addToast('语音合成失败，请稍后重试', 'error'); return; }
-        voiceCacheRef.current[sourceText] = speech;
+        voiceCacheRef.current[sourceText] = speech; trimDateVoiceCache(voiceCacheRef.current, dateAudioRef.current?.src);
         if (!dateAudioRef.current) dateAudioRef.current = new Audio();
         dateAudioRef.current.src = speech.url;
         dateAudioRef.current.onended = () => setNovelPlayingId(null);
@@ -697,7 +703,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             let speech: DateSpeechResult | undefined = voiceCacheRef.current[sourceText];
             if (!speech) {
                 speech = await translateAndSpeak(sourceText, target.voiceEmotion) || undefined;
-                if (speech) voiceCacheRef.current[sourceText] = speech;
+                if (speech) { voiceCacheRef.current[sourceText] = speech; trimDateVoiceCache(voiceCacheRef.current, dateAudioRef.current?.src); }
             }
             if (!speech) throw new Error('语音合成失败，请稍后重试');
             const blob = await fetchBlobForShare(speech.url, 'audio/mpeg');
@@ -1401,11 +1407,16 @@ const DateSession: React.FC<DateSessionProps> = ({
             return () => { clearDateResumeAttempt(); };
         }
         // Direct DB save — works during beforeunload when React state updates are useless
+        // 只在快照真的变了时写，且只写 savedDateState 一个字段（见 utils/dateMemoryGuards.ts）。
+        let lastSavedSignature: string | null = null;
         const saveStateToDB = () => {
             if (endingEncounterRef.current) return;
             try {
                 const state = stateRef.current();
-                DB.saveCharacter({ ...charRef.current, savedDateState: state });
+                const signature = dateStateSaveSignature(state);
+                if (signature === lastSavedSignature) return;
+                lastSavedSignature = signature;
+                DB.saveCharacterDateState(charRef.current.id, state).catch(() => { lastSavedSignature = null; });
             } catch (e) { /* best-effort */ }
         };
 
