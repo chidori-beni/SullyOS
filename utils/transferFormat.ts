@@ -68,6 +68,7 @@ export function formatTransferRecord(input: TransferRecordInput): string {
         ? (receipt === 'accepted' ? '已收下' : '已退回')
         : input.status === 'accepted' ? '已收下'
         : input.status === 'returned' ? '已退回'
+        : input.status === 'failed' ? '余额不足未转出'
         : '待处理';
     const amountPart = (amount !== undefined && amount !== null && String(amount).trim() !== '')
         ? `|amount=${amount}`

@@ -200,6 +200,8 @@ const isVisibleChatMessage = (message: Message, hideSystemLogs = false) => (
 
 import { useChatAutoReply } from '../hooks/useChatAutoReply';
 import { getCharChatAvatar } from '../utils/charChatAvatar';
+import { checkWalletSpend } from '../utils/wallet/walletDb';
+import { formatWalletMoney, toAmount, WALLET_USER_ID } from '../utils/wallet/wallet';
 /** 即时对话那一轮回复「推送陆续到齐」的宽限时间，也就是自动合成的补扫窗口有多长（见下面的 auto-TTS effect）。 */
 const INSTANT_VOICE_SCAN_WINDOW_MS = 30_000;
 
@@ -4938,7 +4940,15 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
                 newEmojiName={newEmojiName} setNewEmojiName={setNewEmojiName} onRenameEmoji={handleRenameEmoji}
                 selectedCategory={selectedCategory}
 
-                onTransfer={() => { if(transferAmt) handleSendText(`[转账]`, 'transfer', { amount: transferAmt, note: transferNote.trim() || undefined, status: 'pending' }); setTransferNote(''); setModalType('none'); }}
+                onTransfer={async () => {
+                    if (transferAmt) {
+                        // 钱包设了余额就不许透支（没设过余额的不拦，见 utils/wallet/wallet.ts）
+                        const spend = await checkWalletSpend(WALLET_USER_ID, toAmount(transferAmt), characters.map(c => c.id));
+                        if (!spend.ok) { addToast(`余额不足：钱包里只剩 ₩${formatWalletMoney(spend.balance)}，可以去「钱包」里改余额`, 'error'); return; }
+                        handleSendText(`[转账]`, 'transfer', { amount: transferAmt, note: transferNote.trim() || undefined, status: 'pending' });
+                    }
+                    setTransferNote(''); setModalType('none');
+                }}
                 onImportEmoji={handleImportEmoji}
                 onSaveSettings={saveSettings}
                 onOpenHistoryCleanup={() => { setModalType('none'); setShowHistoryCleanup(true); }} onArchive={handleFullArchive}

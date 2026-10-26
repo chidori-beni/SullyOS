@@ -359,6 +359,14 @@ const CheckPhone: React.FC = () => {
     const [targetChar, setTargetChar] = useState<CharacterProfile | null>(null);
     // 查手机属于角色的设备：角色开了自定义时区时，界面上的钟都按该时区显示。
     const charTimeZone = resolveCharTimeZone(targetChar);
+    // 「钱包」App 里给这个角色设过余额，就以那边为准（两边数字别对不上）
+    const [linkedWalletBalance, setLinkedWalletBalance] = useState<number | undefined>(undefined);
+    useEffect(() => {
+        let alive = true;
+        setLinkedWalletBalance(undefined);
+        if (targetChar) getWalletBalanceOf(targetChar.id).then(b => { if (alive) setLinkedWalletBalance(b); });
+        return () => { alive = false; };
+    }, [targetChar?.id]);
     const [isLoading, setIsLoading] = useState(false);
     const [page, setPage] = useState(0); // 0 = home, 1 = custom apps
     const [selectPage, setSelectPage] = useState(0); // Target Device 选人界面的翻页（每页 6 人）
@@ -907,6 +915,9 @@ ${realCharRule}
                     promptInstruction = `生成 10-14 条该角色手机钱包里的近期流水，混合日常消费、转账、收入和订阅，金额与场景要真实，避免重复流水或整齐的测试数据。
     格式JSON对象: { "balance": "8642.50", "rows": [{ "name": "便利店早餐", "amount": "-38.00", "time": "今天 08:20", "category": "餐饮", "note": "可选备注" }, ...] }
     amount 必须是带正负号的字符串；balance、name、time、category、note 都是字符串。`;
+                    const linked = await getWalletBalanceOf(targetChar.id);
+                    if (linked !== undefined) promptInstruction += `
+    **余额已定**：你现在的余额就是 ${linked.toFixed(2)}，balance 必须原样填这个数，流水要和这个余额说得通。`;
                     logPrefix = "钱包";
                 } else if (type === 'browser') {
                     promptInstruction = `生成 8-12 条该角色浏览器里的近期浏览记录，混合 search、article、video、product、social、image 类型，查询和网页内容要像真实生活留下的痕迹。
@@ -2252,7 +2263,7 @@ ${olderText}
         : 'no orders yet';
 
     const notesSub = noteRecords.length ? `${noteRecords.length} 条记录` : '暂无记录';
-    const walletBalance = walletRecords.map(r => phoneMetaText(r, 'balance')).find(Boolean) || '';
+    const walletBalance = linkedWalletBalance !== undefined ? formatWalletMoney(linkedWalletBalance) : (walletRecords.map(r => phoneMetaText(r, 'balance')).find(Boolean) || '');
     const walletSub = walletBalance ? `余额 ¥${walletBalance}` : walletRecords.length ? `${walletRecords.length} 条流水` : '暂无流水';
     const browserSub = browserRecords.length ? `${browserRecords.length} 条浏览记录` : '暂无记录';
     const taobaoSub = orderRecords.length ? `${orderRecords.length} items in cart` : 'cart is empty';
@@ -4428,4 +4439,6 @@ ${olderText}
 
 export default CheckPhone;
 import { useAppShortcut } from '../utils/appShortcutLaunch';
+import { getWalletBalanceOf } from '../utils/wallet/walletDb';
+import { formatWalletMoney } from '../utils/wallet/wallet';
 import { AppID as ShortcutAppID } from '../types';

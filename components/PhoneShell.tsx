@@ -61,6 +61,7 @@ const VRWorldApp = lazyApp(() => import('../apps/VRWorldApp'));
 const WorldHomeApp = lazyApp(() => import('../apps/WorldHomeApp'));
 const BookroomApp = lazyApp(() => import('../apps/BookroomApp'));
 const CinemaApp = lazyApp(() => import('../apps/CinemaApp'));
+const WalletApp = lazyApp(() => import('../apps/WalletApp'));
 const CharCreatorDevApp = lazyApp(() => import('../apps/CharCreatorDevApp'));
 const SpecialMomentsApp = lazyApp(() => import('./ValentineEvent').then(m => ({ default: m.SpecialMomentsApp })));
 
@@ -70,7 +71,7 @@ const APP_IDLE_PRELOAD_ORDER: PreloadableLazy[] = [
   Messaging, Character, Settings, Appearance, GroupChat, RoomApp, CheckPhone,
   JournalApp, ScheduleApp, SocialApp, MusicApp, CallApp, Gallery, DateApp, UserApp,
   StudyApp, GameApp, NovelApp, BankApp, WorldbookApp, MemoryPalaceApp, HandbookApp,
-  VRWorldApp, WorldHomeApp, BookroomApp, CinemaApp, LifeSimApp, SongwritingApp, GuidebookApp, FAQApp, HotNewsApp,
+  VRWorldApp, WorldHomeApp, BookroomApp, CinemaApp, WalletApp, LifeSimApp, SongwritingApp, GuidebookApp, FAQApp, HotNewsApp,
   XhsStockApp, XhsFreeRoamApp, BrowserApp, VoiceDesignerApp, ThemeMaker, QQBridge,
   SpecialMomentsApp, CharCreatorDevApp,
 ];
@@ -94,7 +95,7 @@ const APP_BY_ID: Partial<Record<AppID, PreloadableLazy>> = {
   [AppID.Guidebook]: GuidebookApp, [AppID.LifeSim]: LifeSimApp, [AppID.MemoryPalace]: MemoryPalaceApp,
   [AppID.Handbook]: HandbookApp, [AppID.QQBridge]: QQBridge, [AppID.HotNews]: HotNewsApp,
   [AppID.VRWorld]: VRWorldApp, [AppID.CharCreatorDev]: CharCreatorDevApp, [AppID.SpecialMoments]: SpecialMomentsApp,
-  [AppID.WorldHome]: WorldHomeApp, [AppID.Bookroom]: BookroomApp, [AppID.Cinema]: CinemaApp,
+  [AppID.WorldHome]: WorldHomeApp, [AppID.Bookroom]: BookroomApp, [AppID.Cinema]: CinemaApp, [AppID.Wallet]: WalletApp,
 };
 // AppIcon 的 pointerdown 只预取用户正在点的 App；失败时由 preloadableLazy 清缓存，点击可正常重试。
 setAppPayloadWarmer((id: AppID) => APP_BY_ID[id]?.preload());
@@ -952,6 +953,7 @@ const PhoneShell: React.FC = () => {
       case AppID.WorldHome: return <WorldHomeApp />;
       case AppID.Bookroom: return <BookroomApp />;
       case AppID.Cinema: return <CinemaApp />;
+      case AppID.Wallet: return <WalletApp />;
       case AppID.CharCreatorDev: return <CharCreatorDevApp />;
       case AppID.Launcher:
       default: return <Launcher />;

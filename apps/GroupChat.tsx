@@ -1015,10 +1015,13 @@ const GroupChat: React.FC = () => {
         await refreshMessages(activeGroup.id);
     };
 
-    const handleSendPacket = () => {
+    const handleSendPacket = async () => {
         if (!activeGroup) return;
         const total = parseFloat(transferAmount);
         if (!Number.isFinite(total) || total <= 0) { addToast('请输入有效金额', 'error'); return; }
+        // 钱包设了余额就不许透支（没设过余额的不拦）
+        const spend = await checkWalletSpend(WALLET_USER_ID, total, characters.map(c => c.id));
+        if (!spend.ok) { addToast(`余额不足：钱包里只剩 ₩${formatWalletMoney(spend.balance)}，可以去「钱包」里改余额`, 'error'); return; }
         let meta: GroupPacketMeta;
         if (packetTab === 'lucky') {
             const shares = parseInt(packetShares, 10);
@@ -2588,4 +2591,6 @@ ${buildCharBondNote(member, characters.filter(c => activeGroup?.members.includes
 
 export default GroupChat;
 import { useAppShortcut } from '../utils/appShortcutLaunch';
+import { checkWalletSpend } from '../utils/wallet/walletDb';
+import { formatWalletMoney, WALLET_USER_ID } from '../utils/wallet/wallet';
 import { AppID as ShortcutAppID } from '../types';

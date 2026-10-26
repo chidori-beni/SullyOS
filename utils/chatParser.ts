@@ -9,6 +9,8 @@ import { executeLifeDirectives } from './lifeRecords';
 import { wallClockToTimestamp } from './timezone';
 import { addReactionToMetadata, extractMessageReactionCommands, findReactionTarget } from './messageReactions';
 import { CollaborationStore } from '../features/collaboration/store';
+import { checkWalletSpend, listAllCharacterIds } from './wallet/walletDb';
+import { toAmount } from './wallet/wallet';
 import {
     collaborationFileMessageMetadata,
     extractCollaborationFileDirectives,
@@ -292,7 +294,13 @@ export const ChatParser = {
             if (ev.kind === 'send') {
                 // role 固定 'assistant' —— 方向不由文本决定，文本里的方向信息只在
                 // transferFormat 里做过校验（伪造的已被丢弃）。
-                await replyStep(async () => persist({ charId, role: 'assistant', type: 'transfer', content: '[转账]', metadata: { amount: ev.amount, status: 'pending' } }));
+                // 钱包设了余额就不许透支：卡片照样落库（用户看得到 ta 想转），但标成 failed、不动钱，
+                // 历史里渲染成「余额不足未转出」，角色下一轮就知道这笔没转成。
+                const spend = await replyStep(async () => checkWalletSpend(charId, toAmount(ev.amount), await listAllCharacterIds()));
+                const transferMeta = spend.ok
+                    ? { amount: ev.amount, status: 'pending' }
+                    : { amount: ev.amount, status: 'failed', failReason: 'insufficient', balanceAtFail: spend.balance };
+                await replyStep(async () => persist({ charId, role: 'assistant', type: 'transfer', content: '[转账]', metadata: transferMeta }));
             } else {
                 await replyStep(async () => resolveUserTransfer(ev.kind === 'accept' ? 'accepted' : 'returned'));
             }

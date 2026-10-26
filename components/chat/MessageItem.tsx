@@ -814,7 +814,7 @@ const ForwardCard: React.FC<{
 // 转账卡片：点开看精美详情，可接收 / 退回；回执则渲染成小卡
 // ============================================================
 
-type TransferStatus = 'pending' | 'accepted' | 'returned';
+type TransferStatus = 'pending' | 'accepted' | 'returned' | 'failed';
 
 const SullyPayMark: React.FC<{ className?: string }> = ({ className }) => (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={className}>
@@ -1129,7 +1129,7 @@ const TransferCard: React.FC<{
     // 用户是「收到方」才出现接收/退回入口：即这条是角色发来的、且仍待处理。
     const canResolve = !isUser && !resolved && !!onResolveTransfer;
 
-    const statusBadge = status === 'accepted' ? '已收款' : status === 'returned' ? '已退还' : '';
+    const statusBadge = status === 'accepted' ? '已收款' : status === 'returned' ? '已退还' : status === 'failed' ? '余额不足' : '';
 
     const handleResolve = (action: 'accepted' | 'returned') => {
         onResolveTransfer?.(m, action);
@@ -1143,7 +1143,7 @@ const TransferCard: React.FC<{
                 <div
                     onClick={(e) => { if (selectionMode) return; e.stopPropagation(); setOpen(true); }}
                     data-status={status} className={`sully-chat-transfer-card w-64 rounded-2xl p-4 text-white shadow-lg relative overflow-hidden cursor-pointer active:scale-[0.98] transition-transform ${
-                        resolved ? 'bg-gradient-to-br from-amber-300/80 to-orange-400/80' : 'bg-gradient-to-br from-amber-400 to-orange-500'
+                        status === 'failed' ? 'bg-gradient-to-br from-slate-300 to-slate-400' : resolved ? 'bg-gradient-to-br from-amber-300/80 to-orange-400/80' : 'bg-gradient-to-br from-amber-400 to-orange-500'
                     }`}
                 >
                     <div className="sully-chat-transfer-watermark absolute top-0 right-0 p-4 opacity-20"><SullyPayMark className="w-12 h-12" /></div>
@@ -1200,9 +1200,9 @@ const TransferCard: React.FC<{
                             <div className="flex items-center justify-between text-xs">
                                 <span className="text-slate-400">状态</span>
                                 <span className={`font-medium ${
-                                    status === 'accepted' ? 'text-emerald-600' : status === 'returned' ? 'text-slate-500' : 'text-amber-600'
+                                    status === 'accepted' ? 'text-emerald-600' : status === 'returned' || status === 'failed' ? 'text-slate-500' : 'text-amber-600'
                                 }`}>
-                                    {status === 'accepted' ? '已收款' : status === 'returned' ? '已退还' : '等待对方处理'}
+                                    {status === 'accepted' ? '已收款' : status === 'returned' ? '已退还' : status === 'failed' ? `余额不足，没转出去${meta.balanceAtFail !== undefined ? `（当时只有 ₩${meta.balanceAtFail}）` : ''}` : '等待对方处理'}
                                 </span>
                             </div>
 

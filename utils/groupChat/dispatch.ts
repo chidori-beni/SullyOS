@@ -15,6 +15,7 @@ import {
 } from './redpacket';
 import { normalizeAssistantEmojiFormatting } from '../assistantActionFormat';
 import { extractHtmlBlocks } from '../htmlPrompt';
+import { checkWalletSpend } from '../wallet/walletDb';
 
 interface EmojiItem { name: string; url: string; categoryId?: string }
 
@@ -237,6 +238,12 @@ async function executePacketCommand(
         if (cmd.send.packetType === 'direct') {
             packetTargetId = resolvePacketTarget(cmd.send.targetName || '', ctx);
             if (!packetTargetId) return; // 名字解析不出来，不落半成品红包
+        }
+        // 钱包设了余额就不许透支：发不起的红包直接不发（正文已在调用方保住）
+        const spend = await checkWalletSpend(actorId, cmd.send.totalAmount, characters.map(c => c.id));
+        if (!spend.ok) {
+            console.warn(`[Wallet] ${actorName} 想发 ₩${cmd.send.totalAmount} 红包，但余额只有 ₩${spend.balance}，已拦下`);
+            return;
         }
         const meta = makePacketMeta({
             packetType: cmd.send.packetType,
