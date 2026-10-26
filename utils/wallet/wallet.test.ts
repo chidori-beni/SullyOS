@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Message } from '../../types';
-import { buildWalletEntries, canSpend, formatWalletMoney, parseGeneratedBalance, summarizePair, walletBalance, type WalletState } from './wallet';
+import { buildBankEntries, buildWalletEntries, canSpend, formatWalletMoney, parseGeneratedBalance, summarizePair, walletBalance, type WalletState } from './wallet';
 
 let nextId = 1;
 const msg = (p: Partial<Message> & { metadata?: any }): Message => ({
@@ -103,5 +103,31 @@ describe('杂项', () => {
         expect(parseGeneratedBalance({ balance: '¥12,000.5', reason: '打工人' })).toEqual({ balance: 12000.5, reason: '打工人' });
         expect(parseGeneratedBalance({ balance: -1 })).toBeNull();
         expect(parseGeneratedBalance('x')).toBeNull();
+    });
+});
+
+describe('存钱罐记账', () => {
+    const tx = (id: string, amount: number, timestamp: number) => ({ id, amount, category: 'general', note: '午饭', timestamp, dateStr: '2026-10-26' });
+
+    it('设余额之后记的消费从我的余额里扣，之前记的不扣', () => {
+        const entries = buildBankEntries([tx('a', 30, 500), tx('b', 25.5, 2000), tx('c', 10, 3000)]);
+        const s = state({ user: { balance: 1000, setAt: 1000 } });
+        expect(walletBalance('user', s, entries)).toBe(964.5);
+    });
+
+    it('和转账一起算；扣到不够时转账被拦', () => {
+        const entries = [
+            ...buildWalletEntries([msg({ timestamp: 2000, metadata: { amount: 50 } })]),
+            ...buildBankEntries([tx('a', 40, 1500)]),
+        ];
+        const s = state({ user: { balance: 100, setAt: 1000 } });
+        expect(walletBalance('user', s, entries)).toBe(10);
+        expect(canSpend('user', 11, s, entries).ok).toBe(false);
+    });
+
+    it('金额填负数当进账；坏数据跳过', () => {
+        const entries = buildBankEntries([tx('a', -20, 2000), { ...tx('b', 0, 2000) }, { ...tx('', 5, 2000) }]);
+        expect(entries).toHaveLength(1);
+        expect(entries[0].delta).toBe(20);
     });
 });

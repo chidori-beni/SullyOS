@@ -2,6 +2,8 @@
  * 钱包 —— 私聊转账 + 群红包的账本。余额（基准）存 vr_settings，流水从转账消息现算，
  * 算法与规则见 utils/wallet/wallet.ts 文件头。
  *
+ * 存钱罐记的消费也从「我的余额」里扣（首页开关，缺省开），流水里显示成「记账」。
+ *
  * 两层页面：首页（我的余额 + 各角色往来 + 最近流水）→ 点角色进详情（ta 的余额、改余额、按人设生成、往来流水）。
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -11,10 +13,10 @@ import Modal from '../components/os/Modal';
 import type { CharacterProfile } from '../types';
 import { getCharChatAvatar } from '../utils/charChatAvatar';
 import {
-    formatWalletMoney, monthStart, summarizePair, walletBalance, WALLET_USER_ID,
+    formatWalletMoney, isBankLinked, monthStart, summarizePair, walletBalance, WALLET_USER_ID,
     type WalletEntry, type WalletState,
 } from '../utils/wallet/wallet';
-import { getWalletState, loadWalletEntries, setWalletBalance, WALLET_UPDATED_EVENT } from '../utils/wallet/walletDb';
+import { getWalletState, loadWalletEntries, setWalletBalance, setWalletBankLinked, WALLET_UPDATED_EVENT } from '../utils/wallet/walletDb';
 import { generateBalanceByPersona } from '../utils/wallet/walletGenerate';
 
 const money = (n: number | undefined) => `₩${formatWalletMoney(n)}`;
@@ -35,7 +37,7 @@ interface FlowRow {
     from: string;
     to?: string;
     amount: number;
-    status: '待处理' | '已收下' | '已退回' | '红包' | '抢到红包';
+    status: '待处理' | '已收下' | '已退回' | '红包' | '抢到红包' | '记账';
     note?: string;
     isPacket: boolean;
 }
@@ -48,7 +50,15 @@ function buildRows(entries: WalletEntry[]): FlowRow[] {
         byMsg.set(e.msgId, list);
     }
     const rows: FlowRow[] = [];
-    for (const list of byMsg.values()) {
+    for (const e of entries) {
+        if (e.kind !== 'bank_expense') continue;
+        // 存钱罐的账：from = 我（花出去）；金额填负数的那种算进账，to = 我
+        rows.push(e.delta < 0
+            ? { key: e.key, at: e.at, from: WALLET_USER_ID, amount: -e.delta, status: '记账', note: e.note, isPacket: false }
+            : { key: e.key, at: e.at, from: 'bank', to: WALLET_USER_ID, amount: e.delta, status: '记账', note: e.note, isPacket: false });
+    }
+    for (const [msgId, list] of byMsg) {
+        if (!msgId) continue;
         const out = list.find(e => e.kind === 'transfer_out' || e.kind === 'packet_out');
         if (!out) continue;
         const isPacket = out.kind === 'packet_out';
@@ -70,6 +80,7 @@ const STATUS_COLOR: Record<FlowRow['status'], string> = {
     '已退回': 'text-slate-500 bg-slate-100',
     '红包': 'text-rose-500 bg-rose-50',
     '抢到红包': 'text-rose-500 bg-rose-50',
+    '记账': 'text-lime-700 bg-lime-50',
 };
 
 const WalletApp: React.FC = () => {
@@ -83,7 +94,8 @@ const WalletApp: React.FC = () => {
 
     const reload = useCallback(async () => {
         try {
-            const [s, e] = await Promise.all([getWalletState(), loadWalletEntries(characters.map(c => c.id))]);
+            const s = await getWalletState();
+            const e = await loadWalletEntries(characters.map(c => c.id), s);
             setState(s);
             setEntries(e);
         } catch (err: any) {
@@ -162,14 +174,16 @@ const WalletApp: React.FC = () => {
     const renderRow = (r: FlowRow, viewer: string) => {
         const outgoing = r.from === viewer;
         const incoming = r.to === viewer;
-        const title = r.status === '抢到红包'
+        const title = r.status === '记账'
+            ? `存钱罐 · ${r.note || '一笔账'}`
+            : r.status === '抢到红包'
             ? `${nameOf(r.to)} 抢到 ${nameOf(r.from)} 的红包`
             : `${nameOf(r.from)} → ${r.isPacket && !r.to ? '群红包' : nameOf(r.to)}`;
         return (
             <div key={r.key} className="flex items-center gap-3 py-3 border-b border-slate-100 last:border-0">
                 <div className="flex-1 min-w-0">
                     <div className="text-[13px] text-slate-700 truncate">{title}</div>
-                    <div className="text-[11px] text-slate-400 mt-0.5 truncate">{fmtTime(r.at)}{r.note ? ` · ${r.note}` : ''}</div>
+                    <div className="text-[11px] text-slate-400 mt-0.5 truncate">{fmtTime(r.at)}{r.note && r.status !== '记账' ? ` · ${r.note}` : ''}</div>
                 </div>
                 <div className="text-right shrink-0">
                     <div className={`text-[15px] font-semibold tabular-nums ${outgoing ? 'text-slate-800' : incoming ? 'text-emerald-600' : 'text-slate-400'}`}>
@@ -288,10 +302,27 @@ const WalletApp: React.FC = () => {
             <div className="flex-1 overflow-y-auto no-scrollbar px-4 pt-4" style={{ paddingBottom: 'calc(var(--safe-bottom, 0px) + 24px)' }}>
                 {balanceCard(WALLET_USER_ID, '我的余额',
                     <div className="flex gap-4 mt-3 text-[12px] text-white/90">
-                        <span>本月转出 {money(userMonth.out)}</span>
-                        <span>收到 {money(userMonth.inn)}</span>
+                        <span>本月支出 {money(userMonth.out)}</span>
+                        <span>收入 {money(userMonth.inn)}</span>
                     </div>,
                 )}
+
+                <button
+                    onClick={async () => {
+                        const next = !isBankLinked(state);
+                        await setWalletBankLinked(next);
+                        addToast(next ? '存钱罐的记账会从我的余额里扣' : '存钱罐的记账不再影响余额', 'success');
+                    }}
+                    className="mt-3 w-full flex items-center gap-3 bg-white rounded-2xl px-4 py-3 shadow-sm text-left active:bg-slate-50"
+                >
+                    <div className="flex-1 min-w-0">
+                        <div className="text-[13px] text-slate-700">存钱罐记账也从余额里扣</div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">设好余额之后在存钱罐记的每一笔消费都会扣掉；删掉那笔账，钱就退回来</div>
+                    </div>
+                    <span className={`shrink-0 w-11 h-6 rounded-full p-0.5 transition-colors ${isBankLinked(state) ? 'bg-orange-500' : 'bg-slate-300'}`}>
+                        <span className={`block w-5 h-5 rounded-full bg-white shadow transition-transform ${isBankLinked(state) ? 'translate-x-5' : ''}`} />
+                    </span>
+                </button>
 
                 <div className="mt-5 text-[12px] text-slate-400 px-1">角色</div>
                 <div className="mt-2 bg-white rounded-2xl shadow-sm overflow-hidden">

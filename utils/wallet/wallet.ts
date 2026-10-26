@@ -15,8 +15,10 @@
  *   私聊：发出当时就从付款方扣（待处理也算扣了）；对方收下 → 进对方；退回 → 回到付款方
  *   群红包：发出扣全额；每份被抢 → 进抢到的人；退回 / 过期 → 剩下的退给发包人
  *   余额不足没转成的（status:'failed'）不动钱
+ *   存钱罐记的每一笔消费（bank_transactions）：按记账时刻从用户余额里扣——用户把钱包余额同步成
+ *   现实余额，存钱罐当记账本用。可以在钱包里关掉（state.bankLinked === false）；删掉那笔账，扣的钱自然回来
  */
-import type { Message } from '../../types';
+import type { BankTransaction, Message } from '../../types';
 import { effectivePacketStatus, type GroupPacketMeta } from '../groupChat/redpacket';
 
 export const WALLET_USER_ID = 'user';
@@ -34,7 +36,11 @@ export interface WalletState {
     id: typeof WALLET_STATE_ID;
     /** key = 'user' 或 charId */
     owners: Record<string, WalletBaseline>;
+    /** 存钱罐记账是否从用户余额里扣；缺省 = 扣 */
+    bankLinked?: boolean;
 }
+
+export const isBankLinked = (state: WalletState) => state.bankLinked !== false;
 
 export const WALLET_STATE_ID = 'wallet-state';
 
@@ -46,7 +52,8 @@ export type WalletEntryKind =
     | 'transfer_back'  // 被退回，钱回到付款方（私聊）
     | 'packet_out'     // 发红包
     | 'packet_in'      // 抢到红包
-    | 'packet_back';   // 红包退回 / 过期，剩余退给发包人
+    | 'packet_back'    // 红包退回 / 过期，剩余退给发包人
+    | 'bank_expense';  // 存钱罐记的一笔消费
 
 /** 一笔进出。delta 正 = 进账，负 = 出账，都是对 owner 而言 */
 export interface WalletEntry {
@@ -57,7 +64,10 @@ export interface WalletEntry {
     delta: number;
     at: number;
     kind: WalletEntryKind;
+    /** 转账消息 id；存钱罐的账没有消息，是 0 */
     msgId: number;
+    /** 存钱罐那笔账的 id */
+    bankTxId?: string;
     charId?: string;
     groupId?: string;
     note?: string;
@@ -144,6 +154,20 @@ export function buildWalletEntries(messages: Message[], now: number = Date.now()
         out.push(...(m.metadata?.packet ? packetEntries(m, now) : m.groupId ? [] : privateEntries(m)));
     }
     return out.sort((a, b) => b.at - a.at);
+}
+
+/** 存钱罐的账 → 用户的出账（金额填负数的当作进账，原样取反） */
+export function buildBankEntries(txs: BankTransaction[]): WalletEntry[] {
+    const out: WalletEntry[] = [];
+    for (const t of txs) {
+        const amount = typeof t?.amount === 'number' ? t.amount : parseFloat(String(t?.amount ?? ''));
+        if (!t?.id || !Number.isFinite(amount) || amount === 0) continue;
+        out.push({
+            key: `bank:${t.id}`, owner: WALLET_USER_ID, delta: roundMoney(-amount), at: t.timestamp || 0,
+            kind: 'bank_expense', msgId: 0, bankTxId: t.id, note: t.note,
+        });
+    }
+    return out;
 }
 
 /** 当前余额；没设过基准 → undefined（不限额） */

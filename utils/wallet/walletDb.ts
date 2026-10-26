@@ -5,10 +5,10 @@
  * 读转账消息走 messages 的 [charId, type] 复合索引，成本只跟转账条数有关，跟聊天总量无关。
  * 私聊里用户发的消息 charId 是角色 id；群聊里用户发的是 'user'——所以「每个角色 + 'user'」就是全部。
  */
-import { openDB } from '../db';
+import { DB, openDB } from '../db';
 import type { Message } from '../../types';
 import {
-    buildWalletEntries, canSpend, emptyWalletState, walletBalance, WALLET_STATE_ID, WALLET_USER_ID,
+    buildBankEntries, buildWalletEntries, canSpend, emptyWalletState, isBankLinked, walletBalance, WALLET_STATE_ID, WALLET_USER_ID,
     type SpendCheck, type WalletBaseline, type WalletEntry, type WalletState,
 } from './wallet';
 
@@ -65,11 +65,22 @@ async function transferMessagesOf(charId: string): Promise<Message[]> {
     });
 }
 
-/** 全部人的全部进出（从新到旧） */
-export async function loadWalletEntries(charIds: string[]): Promise<WalletEntry[]> {
+/** 存钱罐记账要不要从我的余额里扣（钱包首页的开关） */
+export async function setWalletBankLinked(linked: boolean): Promise<void> {
+    const state = await getWalletState();
+    state.bankLinked = linked;
+    await saveWalletState(state);
+}
+
+/** 全部人的全部进出（从新到旧）。传了 state 且开着存钱罐联动时，把存钱罐的账也算进来 */
+export async function loadWalletEntries(charIds: string[], state?: WalletState): Promise<WalletEntry[]> {
     const ids = Array.from(new Set([...charIds, WALLET_USER_ID]));
-    const lists = await Promise.all(ids.map(id => transferMessagesOf(id).catch(() => [] as Message[])));
-    return buildWalletEntries(lists.flat());
+    const [lists, bank] = await Promise.all([
+        Promise.all(ids.map(id => transferMessagesOf(id).catch(() => [] as Message[]))),
+        state && isBankLinked(state) ? DB.getAllTransactions().catch(() => []) : Promise.resolve([]),
+    ]);
+    const entries = [...buildWalletEntries(lists.flat()), ...buildBankEntries(bank)];
+    return entries.sort((a, b) => b.at - a.at);
 }
 
 /**
@@ -81,7 +92,7 @@ export async function checkWalletSpend(owner: string, amount: number, charIds: s
     try {
         const state = await getWalletState();
         if (!state.owners[owner]) return { ok: true };
-        const entries = await loadWalletEntries(charIds);
+        const entries = await loadWalletEntries(charIds, state);
         return canSpend(owner, amount, state, entries);
     } catch (e) {
         console.warn('[Wallet] 查余额失败，放行这笔转账:', e);
@@ -105,7 +116,7 @@ export async function getWalletBalanceOf(owner: string): Promise<number | undefi
     try {
         const state = await getWalletState();
         if (!state.owners[owner]) return undefined;
-        return walletBalance(owner, state, await loadWalletEntries(await listAllCharacterIds()));
+        return walletBalance(owner, state, await loadWalletEntries(await listAllCharacterIds(), state));
     } catch {
         return undefined;
     }
