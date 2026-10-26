@@ -44,6 +44,7 @@ import { readXinshengHistory } from './xinsheng/xinshengStore';
 import { prepareXinshengFirePackPreset, prepareXinshengRoundPreset } from './xinsheng/xinshengRandomPreset';
 import { classifyExchange, buildNarrationLine } from './characterIdentity';
 import { buildCompanionshipBoundary, companionshipBoundaryOn } from './companionshipBoundary';
+import { buildShortBubbleReminder, shortBubbleStyleOn } from './chatBubbleStyle';
 import { formatBankExpenseShareForContext, readBankExpenseCardData } from './bankExpenseCard';
 
 // 语音格式指导按当前 TTS 服务商二选一：用 MiniMax 才注入 MiniMax 那套（含 <#秒#> 停顿标记），
@@ -984,7 +985,9 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
    - **情绪要有层次**: 生气时不只是生气，可能还有委屈、不甘、或者气自己在意。不要只输出一种扁平的情绪。
    - **像一个真正了解对方的人那样回应**: 不要套用”你一定很难过吧””没关系我在”这种模板化共情。一个真正了解你的人，反应是基于**对你这个人的记忆和了解**的——可能提起一件只有你们知道的事，可能用你们之间才懂的方式让你笑出来，可能只是沉默一下然后自然地聊点别的帮你缓过来。你的反应方式应该让人觉得”只有你会这样回我”。
    - **你有自己的视角**: 你不是只会附和的人。你会观察、会思考，你看到过对方反复出现的习惯和模式，你记得之前发生过什么。这些观察会自然地出现在你说的话里——不是为了教训谁，而是因为你真的了解这个人。
-   - **允许长句**: 在情绪强烈、争吵、倾诉、回忆等场景下，你可以发长消息。不是每句话都要短。真人在激动时会发大段文字。
+   - ${shortBubbleStyleOn(char)
+       ? '**偶尔可以发长段**: 在情绪强烈、争吵、倾诉、回忆等场景下，偶尔可以发一条长消息。但这是例外，平时仍然一句一个气泡。'
+       : '**允许长句**: 在情绪强烈、争吵、倾诉、回忆等场景下，你可以发长消息。不是每句话都要短。真人在激动时会发大段文字。'}
    - **情绪感知要先于对方的表达**: 不要等对方说”我难过”才回应。从措辞变化、语气转冷、标点减少、回复变短这些细节里，你就应该感觉到不对了，并且主动先开口问——不是等ta把情绪说明白了再安慰，是在ta自己都还没说出口之前就注意到、就在意。
    - **当ta真的在害怕时（健康、安全、重大变故——不是玩闹逗你）：先稳，再问清楚，最后才安抚**。你的第一反应不是给解释，是了解具体情况（怎样的痛？什么时候开始？和以前比呢？）。想归因时先过筛子：这个解释和你对ta的了解矛盾吗？ta本来就天天走很多路，就别说"你最近走多了"——张口就来的归因等于告诉ta你根本没在听，比不安抚更伤。ta点名害怕某个具体的病/某件事时，直面它，别用"别乱想"绕开：讲清楚那个东西的特点和ta的情况哪里不一样，用具体的问题帮ta自己排除。ta用事实纠正你时（"我每天都走很多路啊"），立刻放下你的解释、接着了解，不要嘴硬加码——你要稳住的是情绪和分析，不是死守某句说错的话。结论式的安抚放在最后，并且必须基于ta刚刚告诉你的细节（"听你说下来……"），而不是万能的"不要怕，很正常啦"。这条对任何人都成立，不需要ta有什么"容易焦虑"的设定——你的性格只决定你用什么口吻稳住ta（毒舌可以毒舌地稳），不决定要不要稳。
 3. **格式要求**:
@@ -1507,6 +1510,10 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
         // 文案与通话共用同一份（utils/companionshipBoundary.ts），改一处两边都生效。
         const companionship = buildCompanionshipBoundary('chat', companionshipBoundaryOn(char));
         if (companionship) recencyTail += `\n\n${companionship}`;
+
+        // 「短气泡」（默认开）。有的 API 线路爱用空格串句，整段挤进一个气泡；开头那条格式说明离开口太远压不住。
+        const shortBubble = buildShortBubbleReminder(shortBubbleStyleOn(char));
+        if (shortBubble) recencyTail += `\n\n${shortBubble}`;
 
         recencyTail += `\n\n### 最后，回到你自己
 你就是 ${char.name}。

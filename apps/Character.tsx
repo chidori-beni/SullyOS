@@ -2365,6 +2365,7 @@ ${isInitialGeneration ? `
                                            : '时区跟随本机',
                                        `聊天时间感知${formData.timeAwarenessEnabled !== false ? '开' : '关'}`,
                                        `陪伴不监督${formData.companionshipBoundaryEnabled !== false ? '开' : '关'}`,
+                                       `短气泡${formData.shortBubbleStyleEnabled !== false ? '开' : '关'}`,
                                        `见面时间感知${formData.dateTimeAwarenessEnabled !== false ? '开' : '关'}`,
                                    ].join(' · ')}
                                />
@@ -2404,6 +2405,26 @@ ${isInitialGeneration ? `
                                            className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ${formData.companionshipBoundaryEnabled !== false ? 'bg-primary' : 'bg-slate-200'}`}
                                        >
                                            <div className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow-md transition-transform ${formData.companionshipBoundaryEnabled !== false ? 'translate-x-5' : 'translate-x-0.5'}`}></div>
+                                       </button>
+                                   </div>
+                               </div>
+
+                               {/* 1c. 短气泡（聊天里一句一个气泡） */}
+                               <div className="border-t border-slate-100 pt-3">
+                                   <div className="flex items-center justify-between gap-3">
+                                       <div className="min-w-0">
+                                           <p className="text-xs font-bold text-slate-700">短气泡</p>
+                                           <p className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">
+                                               默认开。聊天里像平时上网那样，大部分时候一句话一个气泡，只有偶尔才发一长段——
+                                               有的 API 线路爱把几句话用空格串成一大坨，开着能压住一些。
+                                               <br />这个角色本来就爱发长文就关掉。
+                                           </p>
+                                       </div>
+                                       <button
+                                           onClick={() => handleChange('shortBubbleStyleEnabled', formData.shortBubbleStyleEnabled === false)}
+                                           className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ${formData.shortBubbleStyleEnabled !== false ? 'bg-primary' : 'bg-slate-200'}`}
+                                       >
+                                           <div className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow-md transition-transform ${formData.shortBubbleStyleEnabled !== false ? 'translate-x-5' : 'translate-x-0.5'}`}></div>
                                        </button>
                                    </div>
                                </div>

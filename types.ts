@@ -4094,6 +4094,12 @@ export interface CharacterProfile {
    */
   companionshipBoundaryEnabled?: boolean;
 
+  /**
+   * 「短气泡」：聊天里大部分时候一句一个气泡，偶尔才发长段（见 `utils/chatBubbleStyle.ts`）。
+   * 缺省开（`undefined` 视为 true）。爱发长文的角色关掉即可。
+   */
+  shortBubbleStyleEnabled?: boolean;
+
   // ─── 生活记录注入（档案 App「生活记录」→ 聊天提示词，per-character）───
   // 总开关：默认关（opt-in）。开启后才注入「用户生活记录」section（潜意识背景约束 +
   // 各模块今日摘要 + [[LIFE:...]] 代记指令说明）。关闭时连指令说明都不给角色看。
