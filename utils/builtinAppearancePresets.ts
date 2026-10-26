@@ -28,7 +28,8 @@ export const BUILTIN_APPEARANCE_PRESETS: ReadonlyArray<BuiltinAppearancePresetDe
     // v8：桌面图标按用户 10-02 的新排序（第二页：自由活动/小红书图库/热点/SPARK + 书房/影院/音乐/写歌；
     //     第三页：攻略本/TRPG/特别时光/都市人生/笔友会/自习室/外观/气泡工坊/使用帮助）。
     // v9：卡片 CSS 升到 chat-card-v8（转账卡重做成可可小票：修浅底白字看不见，回执条和详情弹窗一起换色）。
-    version: 9,
+    // v10：补上钱包图标（icon-33-wallet，用户 10-26 给的圆点底小熊抱抱枕），钱包排在第三页「使用帮助」后面。
+    version: 10,
     manifestPath: 'appearance-presets/cocoa-dots/v1/preset.json',
     swatch: 'linear-gradient(rgba(247,245,242,.18),rgba(74,59,49,.18)),url("./appearance-presets/cocoa-dots/v1/wallpaper-desktop.png") center/cover',
   },
