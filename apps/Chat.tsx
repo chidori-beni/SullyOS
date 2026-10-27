@@ -65,6 +65,7 @@ import type { ChatCleanupPlan } from '../utils/chatHistoryCleanup';
 import Modal from '../components/os/Modal';
 import MemoryContextSelfCheck from '../components/chat/MemoryContextSelfCheck';
 import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
+import { formatNaturalError } from '../utils/naturalProactiveLocale';
 import ActiveMsg2SettingsModal from '../components/chat/ActiveMsg2SettingsModal';
 import ThinkingChainSettingsModal from '../components/chat/ThinkingChainSettingsModal';
 import XinshengCardModal from '../components/chat/xinsheng/XinshengCardModal';
@@ -5693,15 +5694,15 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
                                 ...(char.proactiveConfig ? { proactiveConfig: { ...char.proactiveConfig, enabled: false } } : {}),
                             });
                             try { await ActiveMsgClient.cancelNaturalProactiveTasks(char.id); } catch (error) { console.warn('清理自然主动脉冲失败', error); }
-                            addToast('已关闭自然主动', 'info');
+                            addToast(uiT('natural.off'), 'info');
                             return;
                         }
                         if (!await ActiveMsgClient.probeNaturalProactiveSupport()) {
                             const error = new Error('云端 Worker 还不是支持自然主动的新版本。请先按我稍后给你的步骤重新部署 Worker。');
-                            addToast(error.message, 'error');
+                            addToast(formatNaturalError(uiT, error.message), 'error');
                             throw error;
                         }
-                        addToast(refreshProfile || !config.profile ? `正在理解 ${char.name} 的联络习惯…` : '正在连接自然主动…', 'info');
+                        addToast(refreshProfile || !config.profile ? uiT('natural.reading', { name: char.name }) : uiT('natural.connecting'), 'info');
                         const profile = refreshProfile || !config.profile
                             ? await deriveNaturalProfile(char, apiConfig)
                             : config.profile;
@@ -5741,12 +5742,12 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
                             });
                             trackEvent('启动自然主动', { intensity: config.intensity, bias: config.bias, profileSource: profile.source });
                             addToast(refreshProfile
-                                ? `已重新理解 ${char.name}：联络画像已更新，之后会按新画像自然联系你`
-                                : `已开启：${char.name} 会按人设自然决定何时联系你`, 'success');
+                                ? uiT('natural.updated', { name: char.name })
+                                : uiT('natural.on', { name: char.name }), 'success');
                         } catch (error) {
                             updateCharacter(char.id, { naturalProactiveConfig: { ...nextConfig, enabled: false } });
                             const message = error instanceof Error ? error.message : String(error);
-                            addToast(`自然主动没能开启：${message}`, 'error');
+                            addToast(uiT('natural.failed', { message: formatNaturalError(uiT, message) }), 'error');
                             throw error;
                         }
                     }}
@@ -5758,7 +5759,7 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
                         });
                         const result = await ActiveMsgClient.cancelNaturalProactiveTasks(char.id);
                         if (result.failed.size) throw new Error(`还有 ${result.failed.size} 个云端检查没有取消成功，请稍后再试。`);
-                        addToast('已停止自然主动；主动消息 2.0 的约定没有受影响', 'info');
+                        addToast(uiT('natural.stopped'), 'info');
                     }}
                 />
             )}
