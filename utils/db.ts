@@ -2201,6 +2201,64 @@ export const DB = {
       transaction.objectStore(STORE_GALLERY).delete(id);
   },
 
+  /** 在同一个事务中删除多张同角色照片；有任何一张不存在或不属于该角色则全部回滚。 */
+  deleteGalleryImages: async (charId: string, ids: readonly string[]): Promise<number> => {
+      const normalizedCharId = charId.trim();
+      const uniqueIds = [...new Set(ids.map(id => id.trim()).filter(Boolean))];
+      if (!normalizedCharId || uniqueIds.length === 0) return 0;
+
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_GALLERY, 'readwrite');
+          const imageStore = transaction.objectStore(STORE_GALLERY);
+          let failed = false;
+          let deletedCount = 0;
+          const fail = (error: unknown) => {
+              if (failed) return;
+              failed = true;
+              try { transaction.abort(); } catch { /* ignore */ }
+              reject(error instanceof Error ? error : new Error(String(error)));
+          };
+
+          let remaining = uniqueIds.length;
+          uniqueIds.forEach(id => {
+              const request = imageStore.get(id);
+              request.onsuccess = () => {
+                  if (failed) return;
+                  const image = request.result as GalleryImage | undefined;
+                  if (!image) {
+                      fail(new Error('批量删除时发现照片不存在'));
+                      return;
+                  }
+                  if (image.charId !== normalizedCharId) {
+                      fail(new Error('只能批量删除当前角色的照片'));
+                      return;
+                  }
+                  remaining -= 1;
+                  if (remaining > 0) return;
+                  try {
+                      for (const targetId of uniqueIds) {
+                          const deleteRequest = imageStore.delete(targetId);
+                          deleteRequest.onerror = () => fail(deleteRequest.error || new Error('批量删除照片失败'));
+                      }
+                      deletedCount = uniqueIds.length;
+                  } catch (error) {
+                      fail(error);
+                  }
+              };
+              request.onerror = () => fail(request.error || new Error('读取批量删除照片失败'));
+          });
+
+          transaction.oncomplete = () => { if (!failed) resolve(deletedCount); };
+          transaction.onerror = () => {
+              if (!failed) reject(transaction.error || new Error('deleteGalleryImages failed'));
+          };
+          transaction.onabort = () => {
+              if (!failed) reject(transaction.error || new Error('deleteGalleryImages aborted'));
+          };
+      });
+  },
+
   // --- XHS Stock Images ---
   getXhsStockImages: async (): Promise<XhsStockImage[]> => {
       const db = await openDB();

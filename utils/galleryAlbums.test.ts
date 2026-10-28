@@ -168,6 +168,28 @@ describe('角色相册子相册', () => {
         expect((await DB.getGalleryCategoryOrder(CHAR_ID))?.categoryIds).not.toContain(batchAlbum.id);
     });
 
+    it('批量删除照片使用单事务，混入别的角色或不存在的照片时一张都不删', async () => {
+        const first: GalleryImage = { id: 'gallery-batch-delete-1', charId: CHAR_ID, url: 'data:image/png;base64,del-1', timestamp: 6 };
+        const second: GalleryImage = { id: 'gallery-batch-delete-2', charId: CHAR_ID, url: 'data:image/png;base64,del-2', timestamp: 7 };
+        const kept: GalleryImage = { id: 'gallery-batch-delete-kept', charId: CHAR_ID, url: 'data:image/png;base64,del-kept', timestamp: 8 };
+        const otherCharImage: GalleryImage = { id: 'gallery-batch-delete-other', charId: OTHER_CHAR_ID, url: 'data:image/png;base64,del-other', timestamp: 9 };
+        imageIds.push(first.id, second.id, kept.id, otherCharImage.id);
+        await Promise.all([first, second, kept, otherCharImage].map(image => DB.saveGalleryImage(image)));
+        const idsOf = async (charId: string) => (await DB.getGalleryImages(charId)).map(image => image.id);
+
+        await expect(DB.deleteGalleryImages(CHAR_ID, [first.id, otherCharImage.id])).rejects.toThrow('当前角色');
+        await expect(DB.deleteGalleryImages(CHAR_ID, [first.id, 'missing-image'])).rejects.toThrow('照片不存在');
+        expect(await idsOf(CHAR_ID)).toEqual(expect.arrayContaining([first.id, second.id, kept.id]));
+        expect(await idsOf(OTHER_CHAR_ID)).toContain(otherCharImage.id);
+
+        await expect(DB.deleteGalleryImages(CHAR_ID, [first.id, second.id, first.id])).resolves.toBe(2);
+        const remaining = await idsOf(CHAR_ID);
+        expect(remaining).not.toContain(first.id);
+        expect(remaining).not.toContain(second.id);
+        expect(remaining).toContain(kept.id);
+        await expect(DB.deleteGalleryImages(CHAR_ID, [])).resolves.toBe(0);
+    });
+
     it('完整备份 round-trip 会恢复子相册定义和照片归属', async () => {
         const album = await DB.createGalleryAlbum(CHAR_ID, '备份分类');
         albumIds.push(album.id);

@@ -30,6 +30,7 @@ const Gallery: React.FC = () => {
     const [isSelectingImages, setIsSelectingImages] = useState(false);
     const [selectedImageIds, setSelectedImageIds] = useState<Set<string>>(new Set());
     const [isBatchMoving, setIsBatchMoving] = useState(false);
+    const [isBatchDeleting, setIsBatchDeleting] = useState(false);
 
     const [albumManagerOpen, setAlbumManagerOpen] = useState(false);
     const [albumManagerMode, setAlbumManagerMode] = useState<'manage' | 'sort'>('manage');
@@ -256,6 +257,36 @@ const Gallery: React.FC = () => {
         } finally {
             setIsBatchMoving(false);
         }
+    };
+
+    const requestBatchDelete = () => {
+        if (!activeCharId || isBatchDeleting || isBatchMoving || selectedImageIds.size === 0) return;
+        const charId = activeCharId;
+        const selectedIds = [...selectedImageIds];
+        setConfirmDialog({
+            isOpen: true,
+            title: '删除照片',
+            message: `确定要删除选中的 ${selectedIds.length} 张照片吗？此操作无法撤销。`,
+            variant: 'danger',
+            onConfirm: async () => {
+                setConfirmDialog(null);
+                setIsBatchDeleting(true);
+                const loadSeqAtStart = galleryLoadSeq.current;
+                try {
+                    const deletedCount = await DB.deleteGalleryImages(charId, selectedIds);
+                    if (activeCharIdRef.current !== charId || loadSeqAtStart !== galleryLoadSeq.current) return;
+                    const selectedIdSet = new Set(selectedIds);
+                    setImages(current => current.filter(image => !selectedIdSet.has(image.id)));
+                    exitImageSelection();
+                    addToast(`已删除 ${deletedCount} 张照片`, 'success');
+                    trackEvent('批量删除照片');
+                } catch (error: any) {
+                    if (activeCharIdRef.current === charId) addToast(`批量删除照片失败：${error?.message || error}`, 'error');
+                } finally {
+                    setIsBatchDeleting(false);
+                }
+            }
+        });
     };
 
     const openCreateAlbum = () => {
@@ -656,7 +687,7 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
                             aria-label="批量加入子相册"
                             value=""
                             onChange={event => { void handleBatchMove(event.target.value); }}
-                            disabled={selectedImageIds.size === 0 || isBatchMoving}
+                            disabled={selectedImageIds.size === 0 || isBatchMoving || isBatchDeleting}
                             className="min-w-0 flex-1 bg-slate-100 text-slate-700 border border-slate-200 rounded-xl px-2.5 py-2 text-[11px] outline-none disabled:opacity-50"
                         >
                             <option value="">{isBatchMoving ? '移动中…' : '加入子相册…'}</option>
@@ -664,6 +695,14 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
                                 <option key={categoryId} value={categoryId}>{categoryId === GALLERY_UNFILED_ID ? '移到未分类' : `移入「${categoryLabel(categoryId)}」`}</option>
                             ))}
                         </select>
+                        <button
+                            type="button"
+                            onClick={requestBatchDelete}
+                            disabled={selectedImageIds.size === 0 || isBatchMoving || isBatchDeleting}
+                            className="shrink-0 bg-red-50 text-red-600 border border-red-200 rounded-xl px-3 py-2 text-[11px] font-semibold active:scale-95 transition-transform disabled:opacity-50"
+                        >
+                            {isBatchDeleting ? '删除中…' : '删除'}
+                        </button>
                     </div>
                     <div className="text-[10px] text-slate-400 mt-1">只操作当前角色、当前分类中的照片；每张照片只属于一个子相册。</div>
                 </div>
