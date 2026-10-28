@@ -53,7 +53,11 @@ it('preserves panel handlers, stable config values and effect/save/stop logic', 
   const actual = readFileSync(file, 'utf8'), original = execFileSync('git', ['show', `HEAD:${file}`], { encoding: 'utf8' });
   const attrs = (text: string) => {
     const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX), result: string[] = [];
-    const visit = (node: ts.Node) => { if (ts.isJsxAttribute(node) && (/^on[A-Z]/.test(node.name.getText(sf)) || ['disabled', 'value', 'min', 'max', 'step'].includes(node.name.getText(sf)))) result.push(node.getText(sf)); ts.forEachChild(node, visit); }; visit(sf); return result;
+    const visit = (node: ts.Node) => {
+      // The new display-only retry button is not one of the original config controls.
+      if (ts.isJsxOpeningElement(node) && node.getText(sf).includes('onClick={display.retry}')) return;
+      if (ts.isJsxAttribute(node) && (/^on[A-Z]/.test(node.name.getText(sf)) || ['disabled', 'value', 'min', 'max', 'step'].includes(node.name.getText(sf)))) result.push(node.getText(sf)); ts.forEachChild(node, visit);
+    }; visit(sf); return result;
   };
   expect(attrs(actual)).toEqual(attrs(original));
   const logic = (text: string) => text.slice(text.indexOf('  const [enabled,'), text.indexOf('  const profile =')).replace(/\r/g, '');

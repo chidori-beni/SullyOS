@@ -6,6 +6,10 @@ export const UI_LOCALE_STORAGE_KEY = 'sullyos.uiLocale.v1';
 export type UiMessageParams = Record<string, string | number>;
 
 const ZH_MESSAGES = {
+  'natural.translationLoading': '正在翻译日语显示副本，首次会调用当前模型…',
+  'natural.translationError': '日语翻译失败，暂时显示原文：{message}',
+  'natural.translationRetry': '重试日语翻译',
+  'natural.translationApi': '显示日语画像需要可用的主 API 配置，暂时显示原文。',
   'natural.unsupported': '云端 Worker 还不是支持自然主动的新版本。请先按我稍后给你的步骤重新部署 Worker。',
   'natural.cancelFailed': '还有 {count} 个旧的自然主动检查没有取消成功。为防止重复发消息，这次没有重新安排；请稍后重试。',
   'natural.low': "克制",
@@ -1319,6 +1323,10 @@ const ZH_MESSAGES = {
 } as const;
 
 const JA_MESSAGES = {
+  'natural.translationLoading': '日本語の表示用コピーを翻訳中です。初回は現在のモデルを呼び出します…',
+  'natural.translationError': '日本語への翻訳に失敗したため、原文を表示しています：{message}',
+  'natural.translationRetry': '日本語への翻訳を再試行',
+  'natural.translationApi': '日本語の連絡傾向を表示するには、有効なメイン API 設定が必要です。現在は原文を表示しています。',
   'natural.unsupported': 'クラウド Worker が自然な連絡に対応したバージョンではありません。案内する手順に従って、先に Worker を再デプロイしてください。',
   'natural.cancelFailed': '以前の連絡チェックが{count}件、取り消せていません。重複送信を防ぐため、今回は再設定しませんでした。しばらくしてから再試行してください。',
   'natural.low': "控えめ",

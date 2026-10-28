@@ -5,6 +5,8 @@ import Modal from '../os/Modal';
 import type { CharacterProfile, NaturalProactiveConfig, NaturalProactiveIntensity } from '../../types';
 import { type AmsgNaturalLastCheck } from '../../utils/amsgFirePack';
 import { ActiveMsgClient } from '../../utils/activeMsgClient';
+import { useNaturalProfileDisplay } from '../../hooks/useNaturalProfileDisplay';
+import type { ProfileTranslationApi } from '../../utils/naturalProfileTranslation';
 
 interface Props {
   isOpen: boolean;
@@ -13,6 +15,7 @@ interface Props {
   isNaturalActive: boolean;
   onSave: (config: NaturalProactiveConfig, refreshProfile: boolean) => Promise<void>;
   onStop: () => Promise<void>;
+  apiConfig?: ProfileTranslationApi;
 }
 
 const INTENSITIES: Array<{ value: NaturalProactiveIntensity; label: import('../../utils/uiLocale').UiMessageKey; hint: import('../../utils/uiLocale').UiMessageKey }> = [
@@ -21,7 +24,7 @@ const INTENSITIES: Array<{ value: NaturalProactiveIntensity; label: import('../.
   { value: 'high', label: 'natural.high', hint: 'natural.highHint' },
 ];
 
-const ProactiveSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, isNaturalActive, onSave, onStop }) => {
+const ProactiveSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, isNaturalActive, onSave, onStop, apiConfig }) => {
   const { t: uiT, locale } = useUiLocale();
   const [enabled, setEnabled] = useState(char.naturalProactiveConfig?.enabled ?? false);
   const [intensity, setIntensity] = useState<NaturalProactiveIntensity>(char.naturalProactiveConfig?.intensity ?? 'normal');
@@ -62,6 +65,7 @@ const ProactiveSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, isNatu
   };
 
   const profile = char.naturalProactiveConfig?.profile;
+  const display = useNaturalProfileDisplay(isOpen && enabled, locale, char.id, profile, apiConfig);
   return <Modal isOpen={isOpen} title={uiT('natural.title')} onClose={onClose} footer={<>
     <button disabled={busy} onClick={onClose} className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl disabled:opacity-50">{uiT('natural.cancel')}</button>
     {isNaturalActive && <button disabled={busy} onClick={() => void stop()} className="sully-ui-btn-danger flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl disabled:opacity-50">{uiT('natural.stop')}</button>}
@@ -82,7 +86,10 @@ const ProactiveSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, isNatu
       {enabled && <>
         <div><label className="text-sm font-bold text-slate-700 block mb-2">{uiT('natural.intensity')}</label><div className="grid grid-cols-3 gap-2">{INTENSITIES.map((item) => <button key={item.value} onClick={() => setIntensity(item.value)} className={`py-2 px-2 rounded-xl text-xs font-bold ${intensity === item.value ? 'bg-violet-500 text-white' : 'bg-slate-100 text-slate-500'}`}>{uiT(item.label)}</button>)}</div><p className="text-[11px] text-slate-400 mt-2">{INTENSITIES.find((item) => item.value === intensity) && uiT(INTENSITIES.find((item) => item.value === intensity)!.hint)}</p></div>
         <div><div className="flex justify-between text-sm font-bold text-slate-700 mb-2"><span>{uiT('natural.bias')}</span><span className="text-violet-500">{bias > 0 ? '+' : ''}{bias}</span></div><input type="range" min={-20} max={20} step={5} value={bias} onChange={(e) => setBias(Number(e.target.value))} className="w-full accent-violet-500" /><div className="flex justify-between text-[10px] text-slate-400"><span>{uiT('natural.less')}</span><span>{uiT('natural.zero')}</span><span>{uiT('natural.more')}</span></div></div>
-        <div className="rounded-2xl bg-slate-50 p-3 border border-slate-100"><div className="flex items-center justify-between gap-3"><div className="min-w-0"><div className="text-xs font-bold text-slate-600">{profile ? uiT('natural.profile', { name: profile.archetype }) : uiT('natural.first')}</div><p className="text-[11px] text-slate-400 leading-relaxed mt-1">{profile?.summary ?? uiT('natural.fallback')}</p>{profile?.derivedAt && <p className="text-[10px] text-slate-300 mt-1">{uiT('natural.understood', { time: new Date(profile.derivedAt).toLocaleString(locale) })}</p>}</div>{profile && <button disabled={busy} onClick={() => void save(true)} className="shrink-0 text-[11px] font-bold text-violet-500 px-2 py-1.5 bg-white rounded-lg border border-violet-100">{uiT('natural.refresh')}</button>}</div></div>
+        <div className="rounded-2xl bg-slate-50 p-3 border border-slate-100"><div className="flex items-center justify-between gap-3"><div className="min-w-0"><div className="text-xs font-bold text-slate-600">{profile ? uiT('natural.profile', { name: display.text?.archetype ?? profile.archetype }) : uiT('natural.first')}</div><p className="text-[11px] text-slate-400 leading-relaxed mt-1">{display.text?.summary ?? uiT('natural.fallback')}</p>{profile?.derivedAt && <p className="text-[10px] text-slate-300 mt-1">{uiT('natural.understood', { time: new Date(profile.derivedAt).toLocaleString(locale) })}</p>}</div>{profile && <button disabled={busy} onClick={() => void save(true)} className="shrink-0 text-[11px] font-bold text-violet-500 px-2 py-1.5 bg-white rounded-lg border border-violet-100">{uiT('natural.refresh')}</button>}</div></div>
+        {display.loading && <p role="status" className="text-[11px] text-slate-400">{uiT('natural.translationLoading')}</p>}
+        {display.missingApi && <p className="text-[11px] text-amber-500">{uiT('natural.translationApi')}</p>}
+        {display.error && <div className="text-[11px] text-amber-600"><p role="status">{uiT('natural.translationError', { message: display.error })}</p><button type="button" onClick={display.retry} disabled={display.loading} className="mt-1 underline">{uiT('natural.translationRetry')}</button></div>}
         <p className="text-[11px] text-amber-500 leading-relaxed">{uiT('natural.note')}</p>
       </>}
     </div>

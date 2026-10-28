@@ -5681,6 +5681,7 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
             {/* Proactive Settings Modal */}
             {char && (
                 <ProactiveSettingsModal
+                    apiConfig={apiConfig}
                     isOpen={showProactiveModal}
                     onClose={() => setShowProactiveModal(false)}
                     char={char}
