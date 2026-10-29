@@ -268,6 +268,25 @@ export const prepareSiliconFlowAudioPlayback = (): void => {
 };
 
 /**
+ * 进通话时把会话类别**真正重写一遍**（2026-10-29，iOS 26 上发现）。
+ *
+ * `setAudioSessionType` 带同值保护：页面里读到的 `audioSession.type` 已经是
+ * `playback` 就不写。可 iOS 26 在两通电话之间会把系统那边的会话类别悄悄还原，
+ * 页面里的值却还停在 `playback` —— 于是新一通电话一次都没真正申请过媒体播放，
+ * 角色语音被当成提示音，静音键一开就没声。用户在通话里把路线按钮切一圈
+ * （经过「听筒」= play-and-record 再回来）就好了，正是因为那样绕开了同值保护。
+ *
+ * 这里在每通电话开始时代码复现那一圈：先落到 `auto` 再回到 `playback`，两次都是
+ * 真实的值变化。正在录音时不动（别把采集掐掉），听筒路线本来就是 play-and-record。
+ */
+export const refreshSiliconFlowAudioRoute = (): void => {
+  setSiliconFlowAudioRoute(siliconFlowAudioRoute);
+  if (!isMediaRoute(siliconFlowAudioRoute) || hasCapturingMicrophoneTrack(siliconFlowMicrophone)) return;
+  setWebAudioSessionType('auto', true);
+  setWebAudioSessionType('playback', true);
+};
+
+/**
  * Reassert a capture-compatible category in the originating mic-button turn.
  * The speaker route deliberately starts from `auto`, matching WebKit's route
  * reset workaround; the first resolved stream is moved to `play-and-record`

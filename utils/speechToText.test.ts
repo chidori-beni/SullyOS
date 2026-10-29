@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanSpeechTranscript, prepareSiliconFlowAudioCapture, prepareSiliconFlowAudioPlayback, releaseSiliconFlowMicrophone, setSiliconFlowAudioRoute, startStt, transcribeWithSiliconFlow } from './speechToText';
+import { cleanSpeechTranscript, prepareSiliconFlowAudioCapture, prepareSiliconFlowAudioPlayback, refreshSiliconFlowAudioRoute, releaseSiliconFlowMicrophone, setSiliconFlowAudioRoute, startStt, transcribeWithSiliconFlow } from './speechToText';
 
 describe('speech-to-text transcript cleaning', () => {
   it('removes SenseVoice control tags and emotion emoji by default', () => {
@@ -67,6 +67,34 @@ describe('SiliconFlow transcription request', () => {
     // Reassigning the same category is observable on WebKit and can make the
     // system briefly re-pick the route / show the volume HUD.
     expect(audioSessionTypes).toEqual(['play-and-record', 'playback']);
+  });
+
+  it('really rewrites playback at call start even when the page already reads playback', () => {
+    // iOS 26: between calls the native category is reset while audioSession.type
+    // still reads `playback`; the same-value guard would then never re-apply it.
+    const audioSessionTypes: string[] = [];
+    let audioSessionType = 'playback';
+    vi.stubGlobal('navigator', {
+      audioSession: {
+        get type() { return audioSessionType; },
+        set type(value: string) { audioSessionType = value; audioSessionTypes.push(value); },
+      },
+    });
+
+    setSiliconFlowAudioRoute('headphones');
+    expect(audioSessionTypes).toEqual([]);
+    refreshSiliconFlowAudioRoute();
+    expect(audioSessionTypes).toEqual(['auto', 'playback']);
+    expect(audioSessionType).toBe('playback');
+
+    audioSessionTypes.length = 0;
+    setSiliconFlowAudioRoute('receiver');
+    audioSessionTypes.length = 0;
+    refreshSiliconFlowAudioRoute();
+    // 听筒路线本来就是 play-and-record，不绕 auto。
+    expect(audioSessionTypes).toEqual([]);
+    expect(audioSessionType).toBe('play-and-record');
+    setSiliconFlowAudioRoute('speaker');
   });
 
   it('moves to a capture-compatible category before a microphone request', () => {

@@ -21,7 +21,7 @@ import { canSynthesizeSpeech, synthesizeSpeechDetailed as synthesizeSpeechRouted
 import { chatDetailLaunch } from '../utils/chatDetailLaunch';
 import { VOICE_LANGUAGE_OPTIONS } from '../utils/voiceLanguage';
 import { detectExternalAudioDevice, notePlaybackStarted } from '../utils/audioOutputRoute';
-import { startStt, isSttSupported, prepareSiliconFlowAudioCapture, prepareSiliconFlowAudioPlayback, setSiliconFlowAudioRoute, releaseSiliconFlowMicrophone, type SiliconFlowAudioRoute, type SttSession } from '../utils/speechToText';
+import { startStt, isSttSupported, prepareSiliconFlowAudioCapture, prepareSiliconFlowAudioPlayback, refreshSiliconFlowAudioRoute, setSiliconFlowAudioRoute, releaseSiliconFlowMicrophone, type SiliconFlowAudioRoute, type SttSession } from '../utils/speechToText';
 import { ContextBuilder } from '../utils/context';
 import { resolveCharTimeZone } from '../utils/timezone';
 import {
@@ -2021,7 +2021,10 @@ const CallApp: React.FC = () => {
 
     // Apply the route in the same user-gesture stack that unlocks the media
     // element.  Do not force speaker here: receiver is a valid user choice.
+    // 每通电话都真正重写一次会话类别：iOS 26 会在两通之间把系统那边还原，
+    // 同值保护会让 playback 一次都没申请上，静音键一开角色就没声。
     setSiliconFlowAudioRoute(audioOutputRouteRef.current);
+    refreshSiliconFlowAudioRoute();
 
     // Desktop/Android may use WebAudio for real-time lip sync. Invoke resume()
     // directly in the click stack; never wait for React onPlay/useEffect.
