@@ -79,3 +79,44 @@ it('bounds persistent cache and rejects missing API without a network request', 
   expect(JSON.parse(raw)).toHaveLength(32);
   expect(raw.length * 2).toBeLessThanOrEqual(256 * 1024);
 });
+
+it('accepts complete tagged translations with quotes and newlines without JSON escaping', async () => {
+  const content = '<profile_label>「気になる」タイプ</profile_label>\n<profile_summary>「元気？」と考えます。\nただし "必ず" 連絡するわけではありません。</profile_summary>';
+  const fetch = vi.fn().mockResolvedValue({ choices: [{ message: { content }, finish_reason: 'stop' }] });
+  const service = createProfileTranslator(fetch, memory);
+  await expect(service.translate('a', source, api)).resolves.toEqual({ archetype: '「気になる」タイプ', summary: '「元気？」と考えます。\nただし "必ず" 連絡するわけではありません。' });
+  const body = JSON.parse(fetch.mock.calls[0][1].body);
+  expect(body.max_tokens).toBe(4000);
+  expect(body.messages[0].content).toContain('<profile_label>');
+  expect(body).not.toHaveProperty('response_format');
+});
+it.each([
+  '<profile_label>分類</profile_label><profile_summary>途中',
+  '<profile_label>分類</profile_label><profile_summary>説明</profile_summary>追記',
+  '<profile_label>分類</profile_label><profile_label>重複</profile_label><profile_summary>説明</profile_summary>',
+  '{"archetype":"分類","summary":"途中',
+])('rejects incomplete/ambiguous model text and labels the failure stage: %s', async content => {
+  const fetch = vi.fn().mockResolvedValue({ choices: [{ message: { content } }] }), service = createProfileTranslator(fetch, memory);
+  await expect(service.translate('a', source, api)).rejects.toThrow('MODEL_TEXT');
+  expect(service.read(profileTranslationKey('a', source))).toBeUndefined();
+  await expect(service.translate('a', source, api)).rejects.toThrow('MODEL_TEXT');
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+it('rejects length-truncated responses even when text looks complete', async () => {
+  const data = { ...response(), choices: [{ ...response().choices[0], finish_reason: 'length' }] };
+  const service = createProfileTranslator(vi.fn().mockResolvedValue(data), memory);
+  await expect(service.translate('a', source, api)).rejects.toThrow('OUTPUT_TRUNCATED');
+  expect(service.read(profileTranslationKey('a', source))).toBeUndefined();
+});
+it('distinguishes an outer API-response parse failure without repeating the request', async () => {
+  const fetch = vi.fn().mockRejectedValue(new Error('JSON Parse error: Unterminated string'));
+  const service = createProfileTranslator(fetch, memory);
+  await expect(service.translate('a', source, api)).rejects.toThrow('API_RESPONSE');
+  await expect(service.translate('a', source, api)).rejects.toThrow('Unterminated string');
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+it('still accepts a complete fenced JSON result from an older provider', async () => {
+  const data = { choices: [{ message: { content: '```json\n' + JSON.stringify(japanese) + '\n```' } }] };
+  const service = createProfileTranslator(vi.fn().mockResolvedValue(data), memory);
+  await expect(service.translate('a', source, api)).resolves.toEqual(japanese);
+});
