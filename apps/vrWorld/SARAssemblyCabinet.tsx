@@ -1,7 +1,7 @@
 import { SARFacilityGuide } from './SARFacilityGuide';
 import { SARIdentityDetails } from './SARIdentityDetails';
 import React, { useEffect, useMemo, useState } from 'react';
-import { BookOpen, CaretLeft, Check, CircleNotch, Eye, Fingerprint, Play, X } from '@phosphor-icons/react';
+import { BookOpen, CaretLeft, Check, CircleNotch, Copy, Eye, Fingerprint, Play, X } from '@phosphor-icons/react';
 import type { APIConfig, CharacterProfile, CharacterGroup, GroupProfile, RealtimeConfig, SARCharacterCabinetNoteMeta, UserProfile } from '../../types';
 import TokenImg from '../../components/os/TokenImg';
 import { DB } from '../../utils/db';
@@ -182,7 +182,14 @@ const CabinetRecordsView: React.FC<{
     </main>;
 };
 
-const CharacterNoteView: React.FC<{ note: CharacterCabinetNoteRecord; actor?: CharacterProfile }> = ({ note, actor }) => (
+const CharacterNoteView: React.FC<{ note: CharacterCabinetNoteRecord; actor?: CharacterProfile }> = ({ note, actor }) => {
+    const [copyState, setCopyState] = useState('');
+    const copyAll = async () => {
+        const text = [note.title, `${note.variantTitle} × ${note.storyTitle}`, note.highlight, note.story, `${note.actorName} 的随笔：\n${note.notes}`].filter(Boolean).join('\n\n');
+        try { await navigator.clipboard.writeText(text); setCopyState('已复制全文'); }
+        catch { setCopyState('复制失败，请检查剪贴板权限'); }
+    };
+    return (
     <main className="sarc-note-view">
         <article>
             <header>
@@ -193,10 +200,12 @@ const CharacterNoteView: React.FC<{ note: CharacterCabinetNoteRecord; actor?: Ch
             <blockquote>{note.highlight}</blockquote>
             <section><small>WHAT HAPPENED</small><h3>事情怎么变成这样的</h3><p>{note.story}</p></section>
             <section className="is-handwritten"><small>PRIVATE MARGIN NOTES</small><h3>{note.actorName} 留在柜子里的随笔</h3><p>{note.notes}</p></section>
+            <button type="button" className="sarc-card-another" onClick={() => void copyAll()}><Copy size={15}/> {copyState || '复制全文'}</button>
             <footer>这篇记录来自 {note.actorName} 自己的彼方自由活动，不属于 User 的五十轮推演史册。</footer>
         </article>
     </main>
-);
+    );
+};
 
 export const SARAssemblyCabinetOverlay: React.FC<{
     onClose: () => void;

@@ -1,6 +1,6 @@
 import { trackSARFeature } from '../../utils/sarAnalytics';
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Archive, ArrowLeft, ArrowDown, ArrowUp, BookOpenText, CircleNotch, DotsThree, DownloadSimple, Moon, SealCheck, ShareNetwork, Sun, X } from '@phosphor-icons/react';
+import { Archive, ArrowLeft, ArrowDown, ArrowUp, BookOpenText, CircleNotch, Copy, DotsThree, DownloadSimple, Moon, SealCheck, ShareNetwork, Sun, X } from '@phosphor-icons/react';
 import type { APIConfig, CharacterProfile, Message, UserProfile } from '../../types';
 import './sarReading.css';
 import { SARIdentityDetails } from './SARIdentityDetails';
@@ -209,6 +209,21 @@ export const SARSimulationSession: React.FC<{
             setArchiveAction('已复制这条回复'); setReplyAction(null);
         } catch { setError('复制失败，请检查剪贴板权限'); }
     };
+    // 一键复制整段故事的纯文字（不带档案编号、轮次这些 Markdown 档案头），方便直接贴到别处读
+    const copyAllText = async () => {
+        const parts = [card.profile.title, card.profile.openingScene, `${card.charName}：${card.profile.openingLine}`];
+        for (const message of messages) {
+            if (isSARDeletedReply(message)) continue;
+            if (message.role === 'user') { parts.push(`${userProfile.name}：${message.content}`); continue; }
+            const narration = getSARWorldNarration(message);
+            if (narration) parts.push(narration);
+            parts.push(`${card.charName}：${message.content}`);
+        }
+        try {
+            await navigator.clipboard.writeText(parts.filter(Boolean).join('\n\n'));
+            setArchiveAction('全文已复制');
+        } catch { setError('复制失败，请检查剪贴板权限'); }
+    };
 
     const archive = () => {
         try {
@@ -282,7 +297,7 @@ export const SARSimulationSession: React.FC<{
                         {!active&&!pendingReply&&<section className="sars-sealed">
                             <SealCheck size={28} weight="light"/><h2>{run.archiveReason==='completed'?'这一段故事，已收好':'故事暂存于此'}</h2>
                             <p>{run.archiveReason==='completed'?'这段共同经历已经结束，原文留在这里，随时可以回来。':`保留到第 ${run.interactionsUsed} 次互动。封存后可以阅读和导出，当前无法直接续写。`}</p>
-                            <div className="sars-archive-actions"><button type="button" onClick={reread}><BookOpenText size={17}/>从头重读</button><button type="button" onClick={()=>void downloadArchive()}><DownloadSimple size={17}/>保存全文</button><button type="button" disabled={sharing||!!run.sharedAt} onClick={()=>void shareToCharacter()}><ShareNetwork size={17}/>{run.sharedAt?'已分享':sharing?'正在分享…':`分享给${card.charName}`}</button></div>
+                            <div className="sars-archive-actions"><button type="button" onClick={reread}><BookOpenText size={17}/>从头重读</button><button type="button" onClick={()=>void copyAllText()}><Copy size={17}/>复制全文</button><button type="button" onClick={()=>void downloadArchive()}><DownloadSimple size={17}/>保存全文</button><button type="button" disabled={sharing||!!run.sharedAt} onClick={()=>void shareToCharacter()}><ShareNetwork size={17}/>{run.sharedAt?'已分享':sharing?'正在分享…':`分享给${card.charName}`}</button></div>
                             {archiveAction&&<output role="status">{archiveAction}</output>}
                         </section>}
                     </div>
@@ -305,6 +320,7 @@ export const SARSimulationSession: React.FC<{
                     <div className="sars-progress"><span>本段互动</span><strong>{run.interactionsUsed}<small> / {run.maxInteractions}</small></strong></div>
                     <p className="sars-detail-note">{active?'每次发送成功后记一次。离开页面可以稍后继续；这段经历将在五十次互动内自然收束。':'本段故事已封存，可以回看、保存全文或分享给角色。'}</p>
                     <button type="button" className="sars-setting-row" onClick={()=>setTheme(value=>value==='light'?'dark':'light')} aria-label={theme==='light'?'切换到深色阅读':'切换到浅色阅读'}><span>{theme==='light'?<Moon size={18}/>:<Sun size={18}/>}阅读外观</span><span>{theme==='light'?'浅色':'深色'}</span></button>
+                    <button type="button" className="sars-setting-row" disabled={loading} onClick={()=>void copyAllText()}><span><Copy size={18}/>复制全文</span><span>{archiveAction==='全文已复制'?'已复制':'纯文字'}</span></button>
                     <SARIdentityDetails card={card} />
                     {active&&<div className="sars-end-section"><button type="button" disabled={sending} onClick={()=>setArchiveConfirm(true)}><Archive size={17}/>提前封存</button><p>如果只是稍后再玩，直接返回即可。提前封存会结束这段演绎。</p></div>}
                     {error&&<p role="alert" className="sars-error">{error}</p>}
