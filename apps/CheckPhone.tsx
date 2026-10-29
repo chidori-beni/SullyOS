@@ -351,6 +351,26 @@ const HomeCard: React.FC<{
     </button>
 );
 
+// 查手机出错时把真实原因带给用户：中转的报错原文 / 模型拒答原文。
+// 以前一律显示「解析失败，请重试」，被 Google 内容审核拦下（PROHIBITED_CONTENT）也这么说，查不出是哪儿的问题。
+async function phoneApiFailure(response: Response): Promise<Error> {
+    const body = await response.text().catch(() => '');
+    let msg: string = body;
+    try {
+        const j = JSON.parse(body);
+        msg = j?.error?.message || j?.message || body;
+    } catch { /* 不是 JSON，就用原文 */ }
+    return new Error(`HTTP ${response.status}${msg ? `：${String(msg).slice(0, 300)}` : ''}`);
+}
+
+function phoneFailureText(e: unknown): string {
+    const raw = String((e as any)?.message || e || '未知错误');
+    const blocked = /PROHIBITED_CONTENT|sensitive words|Prohibited Use|内容策略|content policy|SAFETY/i.test(raw);
+    return blocked
+        ? `模型的内容审核拦下了这次请求（人设 / 记忆 / 最近聊天里有它不接受的内容），可以在查手机的 API 设置里换个模型再试。原文：${raw.slice(0, 160)}`
+        : `生成没成功：${raw}`;
+}
+
 const CheckPhone: React.FC = () => {
     const { closeApp, characters, activeCharacterId, updateCharacter, apiConfig, apiPresets, addToast, userProfile, characterGroups } = useOS();
     const [view, setView] = useState<'select' | 'phone'>('select');
@@ -950,12 +970,14 @@ ${realCharRule}
                 })
             });
 
-            if (!response.ok) throw new Error('API Error');
+            if (!response.ok) throw await phoneApiFailure(response);
             const data = await safeResponseJson(response);
             // extractContent + extractJson：兼容 Claude 返回格式（正文在 reasoning_content、
             // 包 ```json 代码块、夹散文、尾逗号、内层未转义引号…），裸 JSON.parse 解不出来会丢空。
             const content = extractContent(data);
             const parsed = extractJson(content);
+            // 中转把模型拒答原样当正文返回（HTTP 200）时，这里会解不出 JSON——把原文报出来，别让人以为是格式问题
+            if (parsed == null) throw new Error(`模型没按格式回复：${(content || '（空回复）').slice(0, 200)}`);
             const { rows: jsonRows, root: jsonRoot } = unwrapPhoneRows(parsed);
 
             const newRecordsToAdd: PhoneEvidence[] = [];
@@ -1081,7 +1103,7 @@ ${realCharRule}
 
         } catch (e: any) {
             console.error(e);
-            addToast('解析失败，请重试', 'error');
+            addToast(phoneFailureText(e), 'error');
         } finally {
             setIsLoading(false);
         }
@@ -1105,7 +1127,7 @@ ${realCharRule}
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${effectiveApiConfig.apiKey}` },
             body: JSON.stringify({ model: effectiveApiConfig.model, messages, temperature }),
         });
-        if (!response.ok) throw new Error('API Error');
+        if (!response.ok) throw await phoneApiFailure(response);
         const data = await safeResponseJson(response);
         // 用 extractContent 而非裸读 message.content：兼容 Claude/思考类模型把正文放在
         // reasoning_content、或正文里夹 <think> 块的情况，否则前端拿到空串（"后台出字前端没内容"）。
