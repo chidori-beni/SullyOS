@@ -33,6 +33,8 @@ export interface CinemaPairing {
 export type CinemaSpoilerMode = 'first' | 'seen';
 
 export interface CinemaChatLine {
+    /** Requested generation language, not a language detector. */
+    contentLocale?: 'zh-CN' | 'ja-JP';
     role: 'user' | 'char';
     text: string;
     at: number;

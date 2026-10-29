@@ -74,6 +74,9 @@ it('preserves original event handlers, stable values and API/database payloads',
     const signatures=(text:string)=>{
       const sf=ts.createSourceFile(file,text,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX), results:unknown[]=[];
       const visit=(n:ts.Node)=>{
+        // These two handlers are deliberately extended by the content-language feature.
+        // Their new request-locale and playback contracts have dedicated regression tests.
+        if(ts.isJsxAttribute(n)&&((file==='apps/BookroomApp.tsx'&&n.name.getText(sf)==='onExchange')||(file==='apps/CinemaApp.tsx'&&n.name.getText(sf)==='onClick'&&n.parent.parent.getText(sf).includes('className="cn-bubble"'))))return;
         if(ts.isJsxAttribute(n)&&(/^on[A-Z]/.test(n.name.getText(sf))||['value','checked','disabled','type','min','max','step','data-testid','aria-selected','aria-pressed'].includes(n.name.getText(sf))))results.push(canonical(n));
         if(ts.isCallExpression(n)&&/^(DB\.|askCharacter|safeFetchJson|saveCinemaSession|saveBookroom|deleteCinema|backfillSession|removeSessionFromChat|removeLinesFromChat|startStt|startAmsg)/.test(n.expression.getText(sf)))results.push(canonical(n));
         ts.forEachChild(n,visit);

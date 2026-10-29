@@ -61,6 +61,8 @@ describe('等回复队列', () => {
         expect(rec.notes![0].waiting).toEqual([]);
         expect(rec.reviews!.chars).toEqual([expect.objectContaining({ charId: 'c1', rating: 4, text: '好书' })]);
         expect(rec.reviews!.waiting).toEqual([]);
+        expect(rec.reviews!.chars![0].contentLocale).toBe('zh-CN');
+        expect(asks.find(a=>a.kind==='review').outputLocale).toBe('zh-CN');
         // 用的是用户当时附的话，带着「几点分享、那时在忙什么」
         const hl = asks.find(a => a.kind === 'highlight');
         expect(hl.message).toContain('哭死');

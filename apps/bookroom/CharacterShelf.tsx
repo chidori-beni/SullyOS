@@ -1,4 +1,5 @@
 import { useBookCinemaText } from '../../utils/bookCinemaLocale';
+import { LocalizedCharacterText } from '../../components/LocalizedCharacterText';
 /**
  * 角色书单：ta 在读哪些书、读到哪；ta 留下的话（彼方批注 / 划线回应 / 书评）；ta 推荐的书。
  * 每条留言都能「在书里看」原文、也能删除；顶部可以清空 ta 的阅读记录。
@@ -18,6 +19,7 @@ type TraceKind = '批注' | '回应' | '书评';
 interface CharTrace {
     key: string; at: number; book: ShelfBook; quote: string; content: string; kind: TraceKind;
     segIdx?: number; rating?: number;
+    contentLocale?: 'zh-CN' | 'ja-JP';
     remove: () => Promise<void>;
 }
 
@@ -76,7 +78,7 @@ export const CharacterShelf: React.FC<{
         const rv = b.record.reviews?.chars?.find(r => r.charId === char.id);
         if (rv) {
             traces.push({
-                key: `v-${b.novelId}`, at: rv.at, book: b, kind: '书评', quote: '', content: rv.text, rating: rv.rating,
+                key: `v-${b.novelId}`, at: rv.at, book: b, kind: '书评', quote: '', content: rv.text, rating: rv.rating, contentLocale: rv.contentLocale,
                 remove: () => onSaveRecord({ ...b.record, reviews: { ...b.record.reviews, chars: (b.record.reviews?.chars || []).filter(x => x.charId !== char.id) }, updatedAt: Date.now() }),
             });
         }
@@ -158,7 +160,7 @@ export const CharacterShelf: React.FC<{
                                             <small><span>《{t.book.title}》{ci >= 0 ? ` · ${chapters[ci].title}` : ''} · {uiText(t.kind)}</span><time>{formatStamp(t.at).full}</time></small>
                                             {t.quote && <blockquote className={expanded ? '' : 'is-clamped'} onClick={() => toggle(t.key)}>{t.quote}</blockquote>}
                                             {t.quote && t.quote.length > 60 && <button className="bk-link-btn" onClick={() => toggle(t.key)}>{expanded ? uiText("收起原文") : uiText("展开原文")}</button>}
-                                            <p className="bk-note-reply"><b>{char.name}</b>{t.rating ? <> <Stars n={t.rating} /></> : null}：{t.content}</p>
+                                            <p className="bk-note-reply"><b>{char.name}</b>{t.rating ? <> <Stars n={t.rating} /></> : null}：{t.kind === '书评' ? <LocalizedCharacterText record={{ id: JSON.stringify([t.book.novelId, char.id, t.at]), scope: 'review', text: t.content, locale: t.contentLocale }} /> : t.content}</p>
                                             <div className="bk-note-foot">
                                                 {t.book.novel && t.segIdx != null && <button onClick={() => onRead(t.book.novelId, t.segIdx!)}><BookOpenText size={13} /> {uiText(" 在书里看")}</button>}
                                                 <button onClick={() => onOpenBook(t.book.novelId)}>{uiText("去这本书")}</button>

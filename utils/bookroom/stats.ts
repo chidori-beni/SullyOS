@@ -48,6 +48,8 @@ export interface BookReview {
 }
 
 export interface CharBookReview extends BookReview {
+    /** Requested generation language, absent on legacy reviews. */
+    contentLocale?: 'zh-CN' | 'ja-JP';
     charId: string;
     charName: string;
 }

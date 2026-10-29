@@ -14,6 +14,8 @@ import { isScheduleFeatureOn } from '../scheduleFeature';
 import { getDailyScheduleForChar } from '../dailySchedule';
 import { createScheduleContextSnapshot, type ScheduleContextSnapshot } from '../scheduleContext';
 import { normalizeBusyLevel } from '../busyAutoReply';
+import { loadUiLocale, type UiLocale } from '../uiLocale';
+import { contentLanguageRule } from '../characterContentLocale';
 
 export function buildHighlightMessage(input: { bookTitle: string; chapter?: string; quote: string; comment?: string }): string {
     const where = input.chapter ? `《${input.bookTitle}》「${input.chapter.length > 24 ? `${input.chapter.slice(0, 24)}…` : input.chapter}」` : `《${input.bookTitle}》`;
@@ -107,6 +109,7 @@ export interface AskCharacterContext {
  * 两条都是普通可见消息。调用方用 instruction 说明这一次要 ta 写什么。
  */
 export async function askCharacterInBookroom(input: AskCharacterContext & {
+    outputLocale?: UiLocale;
     message: string;
     instruction: string;
     kind: string;
@@ -122,6 +125,7 @@ export async function askCharacterInBookroom(input: AskCharacterContext & {
     onUserMessageSaved?: () => void;
 }): Promise<string> {
     const { char, userProfile, apiConfig } = input;
+    const outputLocale = input.outputLocale ?? loadUiLocale();
     if (!apiConfig.baseUrl) throw new Error('还没有配置聊天 API');
     const userName = userProfile?.name || '用户';
 
@@ -158,7 +162,7 @@ export async function askCharacterInBookroom(input: AskCharacterContext & {
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey || 'sk-none'}` },
         body: JSON.stringify({
             model: apiConfig.model,
-            messages: [{ role: 'system', content: payload.systemPrompt + input.instruction + (input.deferred ? DEFERRED_NOTE(userName, input.deferred.since, input.deferred.activity) : '') }, ...payload.cleanedApiMessages],
+            messages: [{ role: 'system', content: payload.systemPrompt + input.instruction + (input.deferred ? DEFERRED_NOTE(userName, input.deferred.since, input.deferred.activity) : '') + (input.kind === 'review' ? contentLanguageRule('review', outputLocale) : '') }, ...payload.cleanedApiMessages],
             temperature: 0.9, stream: false,
         }),
     }, 2, 0, { appName: '书房', charId: char.id, charName: char.name, purpose: input.purpose });

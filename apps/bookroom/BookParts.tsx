@@ -1,4 +1,5 @@
 import { useBookCinemaText } from '../../utils/bookCinemaLocale';
+import { LocalizedCharacterText } from '../../components/LocalizedCharacterText';
 /** 书的详情页用到的卡片：封面、笔记、书评。 */
 import React, { useRef, useState } from 'react';
 import { ArrowSquareOut, BookOpenText, ChatCircleText, FileArrowUp, Highlighter, HourglassMedium, ImageSquare, NotePencil, Trash } from '@phosphor-icons/react';
@@ -167,7 +168,7 @@ export const ReviewsCard: React.FC<{ book: ShelfBook; onReview: () => void; onSa
             {theirs.map(r => (
                 <div key={r.charId} className="bk-review">
                     <div className="bk-review-head"><b>{r.charName}</b><Stars n={r.rating} /><button className="bk-link-btn" onClick={() => removeChar(r.charId, r.charName)} aria-label={uiText("删除{0}的书评", r.charName)}><Trash size={13} /></button></div>
-                    <p>{r.text}</p>
+                    <p><LocalizedCharacterText record={{ id: JSON.stringify([book.novelId, r.charId, r.at]), scope: 'review', text: r.text, locale: r.contentLocale }} /></p>
                 </div>
             ))}
             <button className="bk-secondary" style={{ marginTop: 10 }} onClick={onReview}><NotePencil size={15} /> {mine ? uiText("改我的书评 / 再请 ta 写一篇") : uiText("写书评")}</button>

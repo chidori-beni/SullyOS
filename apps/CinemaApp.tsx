@@ -1,4 +1,8 @@
 import { describeCinemaUiStatus, useBookCinemaText } from '../utils/bookCinemaLocale';
+import { useUiLocale } from '../context/UiLocaleContext';
+import { LocalizedCharacterText } from '../components/LocalizedCharacterText';
+import { characterDisplayKey, contentTranslator, requestCharacterText, type CharacterDisplayRecord } from '../utils/characterContentLocale';
+import { createLocalizedPlayback } from '../utils/cinema/localizedPlayback';
 /**
  * 影院 —— 电脑上放视频，手机里的角色同步看画面、陪你聊。
  *
@@ -7,7 +11,7 @@ import { describeCinemaUiStatus, useBookCinemaText } from '../utils/bookCinemaLo
  * 电脑那边是 public/watch.html（观影端），两边经用户自己的 amsg Worker 中转
  * （worker/amsg/src/watchRoom.ts）。逻辑见 utils/cinema/，方案见工作区「交接说明-一起看.md」。
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowsClockwise, ArrowsIn, ArrowsOut, Copy, Eye, Microphone, Monitor, PaperPlaneRight, SpeakerHigh, SpeakerSlash, Trash, X } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import type { CharacterProfile } from '../types';
@@ -61,6 +65,7 @@ const copyText = async (text: string) => {
 };
 
 const CinemaApp: React.FC = () => {
+    const { locale } = useUiLocale();
     const uiText = useBookCinemaText();
     const { closeApp, characters, apiConfig, apiPresets, userProfile, groups, realtimeConfig, memoryPalaceConfig, updateCharacter, addToast, registerBackHandler } = useOS();
     const [view, setView] = useState<View>('home');
@@ -528,7 +533,7 @@ const CinemaApp: React.FC = () => {
             const marked = userLines[userLines.length - 1];
             const now = Date.now();
             // 原话（带 <#0.3#>、(laughs) 这些配音标记）拿去念；屏幕上、聊天记录里只放干净的字
-            const spokenReplies: CinemaChatLine[] = toCinemaLines('char', result.lines, now);
+            const spokenReplies: CinemaChatLine[] = toCinemaLines('char', result.lines, now).map(line => ({ ...line, contentLocale: result.contentLocale }));
             const replies: CinemaChatLine[] = spokenReplies
                 .map(r => (r.kind === 'action' ? r : { ...r, text: stripTtsMarkupForDisplay(r.text, apiConfig, char) }))
                 .filter(r => r.text.trim());
@@ -539,7 +544,7 @@ const CinemaApp: React.FC = () => {
                 updatedAt: now,
             }));
             if (saved) for (const reply of replies) await saveLineToChat(char.id, saved, 'assistant', cinemaLineText(reply), videoTime, reply.at);
-            sayAloud(spokenReplies);
+            sayAloud(spokenReplies, replies);
             if (saved && opts.proactive) touchCinemaPresence(char.id, saved);
             // 跟通话一样每轮打脏：云端主动消息那份上下文也跟着知道你们在一起看
             markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
@@ -567,7 +572,7 @@ const CinemaApp: React.FC = () => {
         const old = cur.lines.slice(turn.start);
         try {
             await updateSession(s => ({ ...s, lines: s.lines.filter(l => !old.includes(l)) }));
-            for (const l of old) lineAudioRef.current.delete(l.at);
+            playbackRef.current?.invalidate(true);
             if (sessionRemembers(cur)) await removeLinesFromChat(char.id, cur.id, old);
         } catch (error) {
             console.warn('[cinema] 重来时撤私聊记录失败', error);
@@ -600,6 +605,7 @@ const CinemaApp: React.FC = () => {
 
     /** 删掉放映室里的一句：这一场的记录里删，存进过私聊的那条也一起删 */
     const deleteLine = async (line: CinemaChatLine) => {
+        playbackRef.current?.invalidate(true);
         const cur = sessionRef.current;
         setPendingDelete(null);
         if (!cur || !char) return;
@@ -755,7 +761,9 @@ const CinemaApp: React.FC = () => {
     const sttTokenRef = useRef(0);
     const speakerRef = useRef<CinemaSpeaker | null>(null);
     /** 角色每一轮第一句气泡的时间 → 那一轮的语音，点气泡可以重听 */
-    const lineAudioRef = useRef(new Map<number, string>());
+    const playbackRef = useRef<ReturnType<typeof createLocalizedPlayback> | null>(null);
+    const playbackIdentity = JSON.stringify([locale, view, session?.id, char?.id, char?.voiceProfile, apiConfig, listening]);
+    const playbackIdentityRef = useRef(playbackIdentity); playbackIdentityRef.current = playbackIdentity;
     const speechProvider = apiConfig.speechRecognitionProvider || 'system';
     const canSpeak = canCinemaSpeak(char, apiConfig);
 
@@ -769,16 +777,44 @@ const CinemaApp: React.FC = () => {
         const next = !voiceOn;
         setVoiceOn(next);
         try { localStorage.setItem(VOICE_ON_KEY, next ? '1' : '0'); } catch { /* ignore */ }
-        if (next) getSpeaker().unlock(); else getSpeaker().stop();
+        if (next) getSpeaker().unlock(); else { playbackRef.current?.invalidate(); getSpeaker().stop(); }
     };
 
     /** 角色这一轮说的话念出来（开着「出声」、没在听你说话的时候）。旁白不念。 */
-    const sayAloud = (replies: CinemaChatLine[]) => {
+    const getPlayback = () => {
+        if (!playbackRef.current) playbackRef.current = createLocalizedPlayback(getSpeaker, () => speakerRef.current?.stop());
+        return playbackRef.current;
+    };
+    useLayoutEffect(() => { playbackRef.current?.invalidate(true); return () => playbackRef.current?.invalidate(true); }, [playbackIdentity]);
+    const displayRecord = (line: CinemaChatLine): CharacterDisplayRecord => ({ id: JSON.stringify([session?.id, char?.id, line.at]), scope: 'cinema', text: line.text, locale: line.contentLocale });
+    const replayLine = async (line: CinemaChatLine) => {
+        if (!char || listeningRef.current || !canCinemaSpeak(char, apiConfig)) return;
+        const snapshot = playbackIdentity;
+        const record = displayRecord(line);
+        getSpeaker().unlock();
+        try {
+            await getPlayback().play({ identity: record.id, locale, char, api: apiConfig,
+                current: () => playbackIdentityRef.current === snapshot && !listeningRef.current && viewRef.current === 'room' && !!sessionRef.current?.lines.some(candidate => candidate.at === line.at && candidate.text === line.text && candidate.role === 'char'),
+                resolve: () => {
+                    const cached = locale === 'ja-JP' ? contentTranslator.read(characterDisplayKey(record))?.summary : undefined;
+                    const request = locale === 'ja-JP' && !cached && line.contentLocale !== 'ja-JP' ? requestCharacterText(record, apiConfig) : { promise: Promise.resolve(cached ?? line.text), cancel: () => {} };
+                    return { promise: request.promise.then(text => spokenTextOf([{ ...line, text }])), cancel: request.cancel };
+                },
+            });
+        } catch (error) { if (playbackIdentityRef.current === snapshot) addToast(error instanceof Error ? error.message : String(error), 'error'); }
+    };
+    const sayAloud = (replies: CinemaChatLine[], displayReplies: CinemaChatLine[]) => {
         if (!char || !voiceOnRef.current || listeningRef.current || !canCinemaSpeak(char, apiConfig)) return;
         const text = spokenTextOf(replies);
         const first = replies.find(r => r.kind !== 'action');
         if (!text || !first) return;
-        void getSpeaker().say(text, char, apiConfig).then(url => { if (url) lineAudioRef.current.set(first.at, url); });
+        if (first.contentLocale !== locale) return;
+        const snapshot = playbackIdentity;
+        const record = displayRecord(displayReplies.find(r => r.kind !== 'action') ?? first);
+        void getPlayback().play({ identity: record.id, locale, char, api: apiConfig,
+            current: () => playbackIdentityRef.current === snapshot && voiceOnRef.current && !listeningRef.current && viewRef.current === 'room',
+            resolve: () => ({ promise: Promise.resolve(text), cancel: () => {} }),
+        }).catch(error => console.warn('[cinema] 配音失败', error));
     };
 
     const stopListening = () => {
@@ -801,6 +837,7 @@ const CinemaApp: React.FC = () => {
             return;
         }
         if (!isSttSupported(speechProvider)) { addToast(uiText("这个环境不支持语音输入"), 'info'); return; }
+        playbackRef.current?.invalidate();
         getSpeaker().stop();
         const token = ++sttTokenRef.current;
         let heard = '';
@@ -1080,7 +1117,7 @@ const CinemaApp: React.FC = () => {
                             {char?.name} {uiText(" 每次回你之前都会看一眼当下的画面。 ")}</div>
                     )}
                     {session.lines.map((line, i) => line.kind === 'action' ? (
-                        <div key={`${line.at}-${i}`} className={`cn-action ${line.role}`} {...pressHandlers(line)}>{line.text}</div>
+                        <div key={`${line.at}-${i}`} className={`cn-action ${line.role}`} {...pressHandlers(line)}>{line.role === 'char' ? <LocalizedCharacterText record={displayRecord(line)} /> : line.text}</div>
                     ) : (
                         <div key={`${line.at}-${i}`} className={`cn-line ${line.role}`}>
                             {line.role === 'char' && char?.avatar && <img className="cn-avatar" src={char.avatar} alt="" />}
@@ -1089,12 +1126,11 @@ const CinemaApp: React.FC = () => {
                                 {...pressHandlers(line)}
                                 onClick={() => {
                                     if (pressFiredRef.current) { pressFiredRef.current = false; return; }
-                                    const url = line.role === 'char' ? lineAudioRef.current.get(line.at) : undefined;
-                                    if (url) getSpeaker().replay(url);
+                                    if (line.role === 'char') void replayLine(line);
                                 }}
                             >
-                                {line.text}
-                                {line.role === 'char' && lineAudioRef.current.has(line.at) && <span className="cn-replay">🔊</span>}
+                                {line.role === 'char' ? <LocalizedCharacterText record={displayRecord(line)} /> : line.text}
+                                {line.role === 'char' && canCinemaSpeak(char, apiConfig) && <span className="cn-replay">🔊</span>}
                                 {line.role === 'user' && (line.withFrame || line.videoTime !== undefined) && (
                                     <span className="cn-meta">{line.withFrame ? uiText("附画面") : ''}{line.videoTime !== undefined ? ` ${formatVideoTime(line.videoTime)}` : ''}</span>
                                 )}

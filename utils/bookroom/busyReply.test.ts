@@ -34,6 +34,14 @@ const ask = (kind: string, extra: Record<string, unknown> = {}, char: any = base
 
 beforeEach(() => { saved.length = 0; requests.length = 0; slot = null; });
 
+it.each(['ja-JP','zh-CN'] as const)('applies only the review language override in %s',async outputLocale=>{
+    await ask('review',{outputLocale});
+    expect(requests[0].messages[0].content).toContain(outputLocale==='ja-JP'?'自然日语':'简体中文');
+    expect(saved[0].role).toBe('user');expect(saved[1].role).toBe('assistant');
+    requests.length=0;await ask('highlight',{outputLocale});
+    expect(requests[0].messages[0].content).not.toContain('仅本次书评');
+});
+
 describe('书房请角色回话：忙就先不回', () => {
     it('空闲：照常回，回复卡片带书名', async () => {
         slot = { activity: '看书', busyLevel: 'free' };

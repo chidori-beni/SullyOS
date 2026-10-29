@@ -1,4 +1,5 @@
 import { useBookCinemaText } from '../utils/bookCinemaLocale';
+import { loadUiLocale, type UiLocale } from '../utils/uiLocale';
 /**
  * 书房 —— 在 Reeden 里读，回来告诉 Sully 读到了哪；也能在这里直接翻书。
  *
@@ -78,7 +79,7 @@ const BookroomApp: React.FC = () => {
 
     const saveMeta = async (next: BookroomMeta) => { await saveBookroomMeta(next); setMeta(next); };
     // 请角色说点什么（书评 / 荐书 / 年度寄语）：统一走书房的共用流程
-    const ask = (char: CharacterProfile, req: { message: string; instruction: string; kind: string; purpose: string; novelId?: string; bookTitle?: string }) =>
+    const ask = (char: CharacterProfile, req: { message: string; instruction: string; kind: string; purpose: string; novelId?: string; bookTitle?: string; outputLocale?: UiLocale }) =>
         askCharacterInBookroom({ char, userProfile, groups, apiConfig, realtimeConfig, memoryPalaceConfig, ...req });
 
     const books = useMemo<ShelfBook[]>(() => {
@@ -343,9 +344,10 @@ const BookroomApp: React.FC = () => {
                         const hasRead = bm != null && bm > 0;
                         const hasFinished = hasRead && bm! >= book.segCount;
                         const message = buildReviewMessage(book.title, mine);
+                        const outputLocale = loadUiLocale();
                         let reply: string;
                         try {
-                            reply = await ask(char, { message, instruction: REVIEW_INSTRUCTION(userProfile?.name || '用户', hasFinished, hasRead), kind: 'review', purpose: '交换书评', novelId: book.novelId, bookTitle: book.title });
+                            reply = await ask(char, { message, instruction: REVIEW_INSTRUCTION(userProfile?.name || '用户', hasFinished, hasRead), kind: 'review', purpose: '交换书评', novelId: book.novelId, bookTitle: book.title, outputLocale });
                         } catch (e) {
                             if (e instanceof BookroomBusyError) {
                                 // ta 在忙：先不写，记进「等回复」，有空了再认真写一篇
@@ -355,7 +357,7 @@ const BookroomApp: React.FC = () => {
                             throw e;
                         }
                         const parsed = parseRatedReview(reply);
-                        const charReview = { charId: char.id, charName: char.name, text: parsed.text, rating: parsed.rating, at: Date.now() };
+                        const charReview = { charId: char.id, charName: char.name, text: parsed.text, rating: parsed.rating, at: Date.now(), contentLocale: outputLocale };
                         // 用刚存好的那份书评做底，别用渲染时的旧记录（不然会把刚写的「我的书评」盖掉）
                         const reviews = { ...savedReviews, chars: [...(savedReviews.chars || []).filter(r => r.charId !== char.id), charReview], waiting: (savedReviews.waiting || []).filter(w => w.charId !== char.id) };
                         await saveRecord({ ...book.record, reviews, updatedAt: Date.now() });

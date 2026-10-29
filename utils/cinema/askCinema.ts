@@ -1,3 +1,5 @@
+import { loadUiLocale } from '../uiLocale';
+import { contentLanguageRule } from '../characterContentLocale';
 /**
  * 请角色在放映室里说一句。
  *
@@ -40,6 +42,7 @@ export interface CinemaContextInput {
 }
 
 interface PreparedContext {
+    // The cached context deliberately does not include the current UI language.
     systemPrompt: string;
     history: any[];
     at: number;
@@ -104,6 +107,7 @@ export interface AskCinemaInput extends CinemaContextInput {
 }
 
 export interface AskCinemaResult {
+    contentLocale?: import('../uiLocale').UiLocale;
     /** 主动开口时角色选择「[安静]」就是空数组 */
     lines: string[];
     /** 这次真的把画面发给模型了（模型不支持看图时是 false） */
@@ -113,6 +117,7 @@ export interface AskCinemaResult {
 }
 
 export async function askCharacterInCinema(input: AskCinemaInput): Promise<AskCinemaResult> {
+    const contentLocale = loadUiLocale();
     const { char, userProfile, apiConfig, session } = input;
     if (!apiConfig.baseUrl) throw new Error('还没有配置聊天 API');
     const userName = userProfile?.name || '用户';
@@ -132,7 +137,7 @@ export async function askCharacterInCinema(input: AskCinemaInput): Promise<AskCi
             userName, charName: char.name, session, status: input.status, hasFrame,
             notes: session.notes, proactive, voiceGuide: input.voiceGuide, recentSubtitles: input.recentSubtitles,
             workRecap: input.workRecap, mustSpeak: input.mustSpeak,
-        });
+        }) + contentLanguageRule('cinema', contentLocale);
         const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '');
         return safeFetchJson(`${baseUrl}/chat/completions`, {
             method: 'POST',
@@ -166,11 +171,11 @@ export async function askCharacterInCinema(input: AskCinemaInput): Promise<AskCi
     }
     const raw = data?.choices?.[0]?.message?.content || '';
     const truncated = /^(length|max_tokens|MAX_TOKENS)$/.test(String(data?.choices?.[0]?.finish_reason || ''));
-    if (proactive && isSilentReply(raw)) return { lines: [], sawFrame };
+    if (proactive && isSilentReply(raw)) return { lines: [], sawFrame, contentLocale };
     const lines = cleanCinemaReply(raw).filter(line => !isSilentReply(line));
     if (!lines.length) {
-        if (proactive && !truncated) return { lines: [], sawFrame };
+        if (proactive && !truncated) return { lines: [], sawFrame, contentLocale };
         throw new Error(truncated ? '回复被截断了，一个字都没说出来（模型思考用光了额度），再试一次' : '角色这次没有回复内容（模型返回为空）');
     }
-    return { lines, sawFrame, truncated };
+    return { lines, sawFrame, truncated, contentLocale };
 }

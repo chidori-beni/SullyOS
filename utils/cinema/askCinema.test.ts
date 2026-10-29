@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { saveUiLocale } from '../uiLocale';
 
 const buildChatRequestPayload = vi.fn();
 const safeFetchJson = vi.fn();
@@ -78,5 +79,13 @@ describe('影院 · 主动开口', () => {
     it('角色回「[安静]」就是这次不说话，不算出错', async () => {
         const result = await ask('b', '[安静]');
         expect(result.lines).toEqual([]);
+    });
+    it('uses the current language on every request even with a cached cinema context',async()=>{
+        saveUiLocale('ja-JP');const jp=await ask('same-language-cache','日本語');
+        expect(jp.contentLocale).toBe('ja-JP');
+        expect(JSON.parse(safeFetchJson.mock.calls.at(-1)![1].body).messages[0].content).toContain('自然日语');
+        saveUiLocale('zh-CN');const cn=await ask('same-language-cache','中文');
+        expect(cn.contentLocale).toBe('zh-CN');
+        expect(JSON.parse(safeFetchJson.mock.calls.at(-1)![1].body).messages[0].content).toContain('简体中文');
     });
 });

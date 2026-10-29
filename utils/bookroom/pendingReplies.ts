@@ -10,6 +10,7 @@ import type { BookroomRecord, BookroomWaiting } from './bookroom';
 import { getBookroomRecord, listBookroomRecords, saveBookroomRecord, type MemoryConfigLike } from './bookroomDb';
 import { askCharacterAboutHighlight, askCharacterInBookroom, buildHighlightMessage, buildReviewMessage, checkCharBusy, REVIEW_INSTRUCTION } from './highlightReply';
 import { parseRatedReview } from './stats';
+import { loadUiLocale } from '../uiLocale';
 
 /** 失败后隔多久再试 */
 const RETRY_MS = 10 * 60 * 1000;
@@ -139,14 +140,16 @@ export async function processPendingReplies(ctx: PendingContext, now = Date.now(
                 const bm = char.vrState?.novelBookmarks?.[job.novelId];
                 const total = record.segCount ?? record.archived?.segCount ?? Infinity;
                 const hasRead = bm != null && bm > 0;
+                const outputLocale = loadUiLocale();
                 const reply = await askCharacterInBookroom({
                     ...base, ...once, novelId: job.novelId, bookTitle, deferred,
                     message: buildReviewMessage(bookTitle, mine),
                     instruction: REVIEW_INSTRUCTION(userName, hasRead && bm! >= total, hasRead),
                     kind: 'review', purpose: '交换书评（忙完补回）',
+                    outputLocale,
                 });
                 const parsed = parseRatedReview(reply);
-                const charReview = { charId: char.id, charName: char.name, text: parsed.text, rating: parsed.rating, at: Date.now() };
+                const charReview = { charId: char.id, charName: char.name, text: parsed.text, rating: parsed.rating, at: Date.now(), contentLocale: outputLocale };
                 await updateRecord(job.novelId, r => ({
                     ...r, updatedAt: Date.now(),
                     reviews: {
