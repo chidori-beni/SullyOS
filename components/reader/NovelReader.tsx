@@ -1,3 +1,4 @@
+import { useBookCinemaText } from '../../utils/bookCinemaLocale';
 /**
  * 小说阅读器：翻页 / 滚动、主题字号、目录、角色批注。
  * 2026-09-27 从 apps/VRWorldApp.tsx 原样搬出（彼方书库和书房共用），并加了「删除批注」。
@@ -43,19 +44,22 @@ const SegBlock: React.FC<{
     seg: { idx: number; text: string }; anns: VRNovelAnnotation[];
     theme: ReaderTheme; fontSize: number; nameOf: (id: string) => string | undefined; highlight?: boolean;
     onDelete?: (a: VRNovelAnnotation) => void;
-}> = ({ seg, anns, theme, fontSize, nameOf, highlight, onDelete }) => (
+}> = ({ seg, anns, theme, fontSize, nameOf, highlight, onDelete }) => {
+    const uiText = useBookCinemaText();
+    return (
     <div data-seg={seg.idx} className="mb-5 rounded-lg transition-colors" style={highlight ? { background: `${theme.accent}1f`, boxShadow: `0 0 0 2px ${theme.accent}66`, padding: '8px 10px', margin: '0 -10px 20px' } : undefined}>
         <p className="whitespace-pre-wrap" style={{ color: theme.text, fontSize, lineHeight: 1.9, textIndent: '2em' }}>{seg.text}</p>
         {anns.map(a => (
             <div key={a.id} className="mt-2 ml-2 rounded-lg px-3 py-2" style={{ background: theme.annBg, borderLeft: `3px solid ${theme.accent}` }}>
                 <span className="font-bold" style={{ color: theme.accent, fontSize: fontSize - 3 }}>{nameOf(a.authorId) || a.authorName}</span>
-                {a.targetAnnotationId && <span style={{ color: theme.sub, fontSize: fontSize - 3 }}> 回应</span>}
+                {a.targetAnnotationId && <span style={{ color: theme.sub, fontSize: fontSize - 3 }}> {uiText(" 回应")}</span>}
                 <span style={{ color: theme.text, fontSize: fontSize - 3 }}>：<AnnotationText annotation={a} /></span>
-                {onDelete && <button onClick={() => onDelete(a)} className="ml-2 align-middle opacity-60 active:opacity-100" style={{ color: theme.sub, fontSize: fontSize - 5 }} aria-label="删除这条批注">删除</button>}
+                {onDelete && <button onClick={() => onDelete(a)} className="ml-2 align-middle opacity-60 active:opacity-100" style={{ color: theme.sub, fontSize: fontSize - 5 }} aria-label={uiText("删除这条批注")}>{uiText("删除")}</button>}
             </div>
         ))}
     </div>
 );
+};
 
 /**
  * 小说阅读器（彼方书库与书房共用）。
@@ -63,6 +67,7 @@ const SegBlock: React.FC<{
  * allowDeleteAnnotations = 批注旁显示「删除」。
  */
 export const NovelReader: React.FC<{ novel: VRWorldNovel; characters: CharacterProfile[]; onClose: () => void; initialSeg?: number; peek?: boolean; allowDeleteAnnotations?: boolean; }> = ({ novel, characters, onClose, initialSeg, peek, allowDeleteAnnotations }) => {
+    const uiText = useBookCinemaText();
     const PAGE_SIZE = 8;
     const total = novel.segments.length;
     // peek（查看某条批注）时落在 initialSeg，且全程不写用户书签
@@ -193,7 +198,7 @@ export const NovelReader: React.FC<{ novel: VRWorldNovel; characters: CharacterP
     const annBySeg = useMemo(() => groupAnnotationsBySeg(annotations), [annotations]);
     const nameOf = (id: string) => characters.find(c => c.id === id)?.name;
     const deleteAnnotation = (a: VRNovelAnnotation) => {
-        if (!window.confirm(`删掉 ${nameOf(a.authorId) || a.authorName} 的这条批注？删了找不回来。`)) return;
+        if (!window.confirm(uiText("删掉 {0} 的这条批注？删了找不回来。", nameOf(a.authorId) || a.authorName))) return;
         void DB.deleteVRAnnotation(a.id).then(() => setAnnotations(list => list.filter(x => x.id !== a.id)));
     };
     const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -212,14 +217,13 @@ export const NovelReader: React.FC<{ novel: VRWorldNovel; characters: CharacterP
                         {curChapter >= 0 && !chaptersGuessed ? `${chapters[curChapter].title} · ` : ''}{Math.round((curSeg / Math.max(1, total)) * 100)}%
                     </div>
                 </div>
-                <button onClick={() => setShowToc(true)} className="p-1.5 rounded-full active:bg-black/5" style={{ color: theme.accent }} aria-label="目录"><ListBullets size={19} weight="bold" /></button>
+                <button onClick={() => setShowToc(true)} className="p-1.5 rounded-full active:bg-black/5" style={{ color: theme.accent }} aria-label={uiText("目录")}><ListBullets size={19} weight="bold" /></button>
                 <button onClick={() => setShowCtl(s => !s)} className="p-1.5 rounded-full active:bg-black/5" style={{ color: theme.accent }}><Palette size={18} weight="bold" /></button>
             </div>
 
             {peek && (
                 <div className="px-4 py-1.5 shrink-0 text-[11px] text-center" style={{ background: `${theme.accent}1a`, color: theme.accent }}>
-                    正在查看批注位置 · 不会改动你的书签
-                </div>
+                    {uiText(" 正在查看批注位置 · 不会改动你的书签 ")}</div>
             )}
 
             {/* 控制条：主题 / 字号 / 模式 */}
@@ -232,7 +236,7 @@ export const NovelReader: React.FC<{ novel: VRWorldNovel; characters: CharacterP
                                 <button key={t.id} onClick={() => setThemeId(t.id)}
                                     className="flex-1 h-8 rounded-lg flex items-center justify-center text-[10px] font-bold transition-all"
                                     style={{ background: t.paper, color: t.text, border: themeId === t.id ? `2px solid ${t.accent}` : `1px solid ${t.accent}33` }}>
-                                    {t.name}
+                                    {uiText(t.name)}
                                 </button>
                             ))}
                         </div>
@@ -254,12 +258,12 @@ export const NovelReader: React.FC<{ novel: VRWorldNovel; characters: CharacterP
                                 <button key={m} onClick={() => switchMode(m)}
                                     className="px-2.5 h-7 rounded-lg text-[11px] font-bold transition-all"
                                     style={{ background: mode === m ? theme.accent : 'transparent', color: mode === m ? theme.paper : theme.sub, border: `1px solid ${theme.accent}44` }}>
-                                    {m === 'page' ? '翻页' : '滚动'}
+                                    {m === 'page' ? uiText("翻页") : uiText("滚动")}
                                 </button>
                             ))}
                         </div>
                     </div>
-                    <div className="text-[10px] leading-snug pt-0.5" style={{ color: theme.sub }}>书里的批注都是角色自己留的；你可以翻看，暂时还不能亲自写批注。</div>
+                    <div className="text-[10px] leading-snug pt-0.5" style={{ color: theme.sub }}>{uiText("书里的批注都是角色自己留的；你可以翻看，暂时还不能亲自写批注。")}</div>
                 </div>
             )}
 
@@ -267,7 +271,7 @@ export const NovelReader: React.FC<{ novel: VRWorldNovel; characters: CharacterP
             <div ref={scrollRef} onScroll={mode === 'scroll' ? onScroll : undefined}
                 className="flex-1 overflow-y-auto vr-reader-scroll px-5 py-4" style={{ background: theme.bg, fontFamily: `'Noto Serif SC','Songti SC','Noto Serif','Georgia',serif` }}>
                 {mode === 'scroll' && winStart > 0 && (
-                    <div className="text-center text-[10px] mb-3" style={{ color: theme.sub }}>—— 上滑加载更早内容 ——</div>
+                    <div className="text-center text-[10px] mb-3" style={{ color: theme.sub }}>{uiText("—— 上滑加载更早内容 ——")}</div>
                 )}
                 {renderSegs.map(seg => (
                     <SegBlock key={seg.idx} seg={seg} anns={annBySeg.get(seg.idx) || []} theme={theme} fontSize={fontSize} nameOf={nameOf} highlight={peek && seg.idx === initialSeg} onDelete={allowDeleteAnnotations ? deleteAnnotation : undefined} />
@@ -278,10 +282,10 @@ export const NovelReader: React.FC<{ novel: VRWorldNovel; characters: CharacterP
             {showToc && (
                 <div className="fixed inset-0 z-[60] flex flex-col" style={{ background: theme.bg }}>
                     <div className="flex items-center gap-2 px-4 pb-2 shrink-0" style={{ borderBottom: `1px solid ${theme.accent}22`, paddingTop: VR_TOP }}>
-                        <button onClick={() => setShowToc(false)} className="p-1.5 -ml-1.5 rounded-full active:bg-black/5" style={{ color: theme.text }} aria-label="关闭目录"><X size={20} weight="bold" /></button>
+                        <button onClick={() => setShowToc(false)} className="p-1.5 -ml-1.5 rounded-full active:bg-black/5" style={{ color: theme.text }} aria-label={uiText("关闭目录")}><X size={20} weight="bold" /></button>
                         <div className="min-w-0 flex-1">
-                            <div className="text-[14px] font-bold truncate" style={{ color: theme.text }}>目录</div>
-                            <div className="text-[10px]" style={{ color: theme.sub }}>{chaptersGuessed ? '没认出章节标题，按位置分段' : `共 ${chapters.length} 章`}</div>
+                            <div className="text-[14px] font-bold truncate" style={{ color: theme.text }}>{uiText("目录")}</div>
+                            <div className="text-[10px]" style={{ color: theme.sub }}>{chaptersGuessed ? uiText("没认出章节标题，按位置分段") : uiText("共 {0} 章", chapters.length)}</div>
                         </div>
                     </div>
                     <div className="flex-1 overflow-y-auto vr-reader-scroll px-3 py-2" ref={tocListRef}>
@@ -290,7 +294,7 @@ export const NovelReader: React.FC<{ novel: VRWorldNovel; characters: CharacterP
                                 className="w-full flex items-center gap-2 text-left px-3 py-3 rounded-lg active:opacity-70"
                                 style={{ borderBottom: `1px solid ${theme.accent}14`, background: i === curChapter ? `${theme.accent}1a` : 'transparent' }}>
                                 <span className="flex-1 min-w-0 truncate text-[14px]" style={{ color: i === curChapter ? theme.accent : i < curChapter ? theme.sub : theme.text, fontWeight: i === curChapter ? 700 : 400 }}>{c.title}</span>
-                                {i === curChapter && <span className="text-[10px] px-2 py-0.5 rounded-full shrink-0" style={{ background: theme.accent, color: theme.paper }}>在读</span>}
+                                {i === curChapter && <span className="text-[10px] px-2 py-0.5 rounded-full shrink-0" style={{ background: theme.accent, color: theme.paper }}>{uiText("在读")}</span>}
                                 <span className="text-[10px] shrink-0" style={{ color: theme.sub }}>{Math.round((c.segIdx / Math.max(1, total)) * 100)}%</span>
                             </button>
                         ))}
@@ -301,15 +305,15 @@ export const NovelReader: React.FC<{ novel: VRWorldNovel; characters: CharacterP
             {/* 底栏 */}
             {mode === 'page' ? (
                 <div className="flex items-center justify-between px-5 py-2.5 shrink-0" style={{ background: theme.paper, borderTop: `1px solid ${theme.accent}22`, paddingBottom: vrBottomPad('0.625rem') }}>
-                    <button disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))} className="text-[12px] disabled:opacity-30 font-semibold" style={{ color: theme.accent }}>‹ 上一页</button>
+                    <button disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))} className="text-[12px] disabled:opacity-30 font-semibold" style={{ color: theme.accent }}>{uiText("‹ 上一页")}</button>
                     <span className="text-[11px]" style={{ color: theme.sub }}>{page + 1} / {totalPages}</span>
-                    <button disabled={page >= totalPages - 1} onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} className="text-[12px] disabled:opacity-30 font-semibold" style={{ color: theme.accent }}>下一页 ›</button>
+                    <button disabled={page >= totalPages - 1} onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} className="text-[12px] disabled:opacity-30 font-semibold" style={{ color: theme.accent }}>{uiText("下一页 ›")}</button>
                 </div>
             ) : (
                 <div className="flex items-center justify-center gap-4 px-5 py-2 shrink-0" style={{ background: theme.paper, borderTop: `1px solid ${theme.accent}22`, paddingBottom: vrBottomPad('0.5rem') }}>
                     <button onClick={() => { setWinStart(0); setWinEnd(Math.min(total, 30)); setTopSeg(0); if (scrollRef.current) scrollRef.current.scrollTop = 0; }}
-                        className="text-[11px] font-semibold" style={{ color: theme.accent }}>↑ 从头</button>
-                    <span className="text-[10px]" style={{ color: theme.sub }}>滚动阅读 · 自动记录位置</span>
+                        className="text-[11px] font-semibold" style={{ color: theme.accent }}>{uiText("↑ 从头")}</button>
+                    <span className="text-[10px]" style={{ color: theme.sub }}>{uiText("滚动阅读 · 自动记录位置")}</span>
                 </div>
             )}
         </div>

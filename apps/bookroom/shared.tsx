@@ -1,3 +1,4 @@
+import { useBookCinemaText } from '../../utils/bookCinemaLocale';
 /** 书房各页面共用的小组件与类型。 */
 import React from 'react';
 import { Star } from '@phosphor-icons/react';
@@ -38,9 +39,12 @@ export const Bar: React.FC<{ ratio: number; tone?: 'me' | 'char' }> = ({ ratio, 
     <span className={`bk-bar bk-bar-${tone}`}><span style={{ width: `${Math.round(ratio * 100)}%` }} /></span>
 );
 
-export const Stars: React.FC<{ n?: number; size?: number }> = ({ n, size = 12 }) => n ? (
-    <span className="bk-stars" aria-label={`${n} 星`}>{[1, 2, 3, 4, 5].map(i => <Star key={i} size={size} weight={i <= n ? 'fill' : 'regular'} />)}</span>
+export const Stars: React.FC<{ n?: number; size?: number }> = ({ n, size = 12 }) => {
+    const uiText = useBookCinemaText();
+    return n ? (
+    <span className="bk-stars" aria-label={uiText("{0} 星", n)}>{[1, 2, 3, 4, 5].map(i => <Star key={i} size={size} weight={i <= n ? 'fill' : 'regular'} />)}</span>
 ) : null;
+};
 
 /** 日期 + 时间：今年的写「9/27 21:05」，往年的带上年份。 */
 export function formatStamp(at: number): { date: string; time: string; full: string } {
@@ -55,11 +59,12 @@ export function formatStamp(at: number): { date: string; time: string; full: str
 
 /** 页面里的小标签（子分类）。 */
 export function SubTabs<T extends string>({ tabs, value, onChange, className = '' }: { tabs: { id: T; label: string; badge?: number }[]; value: T; onChange: (id: T) => void; className?: string }) {
+    const uiText = useBookCinemaText();
     return (
         <nav className={`bk-subtabs ${className}`} role="tablist">
             {tabs.map(t => (
                 <button key={t.id} role="tab" aria-selected={t.id === value} onClick={() => onChange(t.id)}>
-                    {t.label}{t.badge ? <small>{t.badge}</small> : null}
+                    {uiText(t.label)}{t.badge ? <small>{t.badge}</small> : null}
                 </button>
             ))}
         </nav>

@@ -1,3 +1,4 @@
+import { useBookCinemaText } from '../../utils/bookCinemaLocale';
 /** 书房的底部弹窗：报进度、划线给 ta 看、书评、导入。 */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ImageSquare, MagnifyingGlass, Star, X } from '@phosphor-icons/react';
@@ -26,6 +27,7 @@ export const ReportSheet: React.FC<{
     book: ShelfBook; characters: CharacterProfile[]; preset?: BookChapter; presetNote?: BookNote;
     onClose: () => void; onDone: (rec: BookroomRecord, text: string, tellIds: string[]) => Promise<void>;
 }> = ({ book, characters, preset, presetNote, onClose, onDone }) => {
+    const uiText = useBookCinemaText();
     const novel = book.novel!;
     const detected = useMemo(() => book.record.chapters || detectChapters(novel.segments), [novel, book.record.chapters]);
     const chapters = detected.length ? detected : fallbackSections(novel.segments.length);
@@ -101,49 +103,49 @@ export const ReportSheet: React.FC<{
 
     return (
         <div className="bk-sheet-backdrop" onClick={onClose}>
-            <section className="bk-sheet" role="dialog" aria-label="报进度" onClick={e => e.stopPropagation()}>
-                <header><h2>读到哪了？</h2><button className="bk-icon" onClick={onClose} aria-label="关闭"><X size={18} /></button></header>
+            <section className="bk-sheet" role="dialog" aria-label={uiText("报进度")} onClick={e => e.stopPropagation()}>
+                <header><h2>{uiText("读到哪了？")}</h2><button className="bk-icon" onClick={onClose} aria-label={uiText("关闭")}><X size={18} /></button></header>
                 <nav className="bk-tabs">
-                    <button aria-pressed={tab === 'chapter'} onClick={() => setTab('chapter')}>选章节</button>
-                    <button aria-pressed={tab === 'sentence'} onClick={() => setTab('sentence')}>粘一句原文</button>
+                    <button aria-pressed={tab === 'chapter'} onClick={() => setTab('chapter')}>{uiText("选章节")}</button>
+                    <button aria-pressed={tab === 'sentence'} onClick={() => setTab('sentence')}>{uiText("粘一句原文")}</button>
                 </nav>
                 <div className="bk-sheet-body overflow-y-auto">
-                    {finishedBook ? <p className="bk-note">记为「读完了」。</p> : tab === 'chapter' ? (<>
-                        <div className="bk-seg2" role="group" aria-label="这章读完了吗">
-                            <button aria-pressed={chapterDone} onClick={() => setChapterDone(true)}>读完了这章</button>
-                            <button aria-pressed={!chapterDone} onClick={() => setChapterDone(false)}>读到这章中间</button>
+                    {finishedBook ? <p className="bk-note">{uiText("记为「读完了」。")}</p> : tab === 'chapter' ? (<>
+                        <div className="bk-seg2" role="group" aria-label={uiText("这章读完了吗")}>
+                            <button aria-pressed={chapterDone} onClick={() => setChapterDone(true)}>{uiText("读完了这章")}</button>
+                            <button aria-pressed={!chapterDone} onClick={() => setChapterDone(false)}>{uiText("读到这章中间")}</button>
                         </div>
                         <ol className="bk-toc bk-toc-pick" ref={listRef}>
                             {chapters.map((c, i) => (
                                 <li key={`${c.segIdx}-${i}`} className={i === chapterIdx ? 'is-picked' : i === current ? 'is-here' : ''}>
-                                    <button onClick={() => setChapterIdx(i)}><span>{c.title}</span>{i === current && <em>上次</em>}{i === chapterIdx && <Check size={14} weight="bold" />}</button>
+                                    <button onClick={() => setChapterIdx(i)}><span>{c.title}</span>{i === current && <em>{uiText("上次")}</em>}{i === chapterIdx && <Check size={14} weight="bold" />}</button>
                                 </li>
                             ))}
                         </ol>
-                        {finished && <p className="bk-note">这是最后一章，会记为「读完了这本」。</p>}
+                        {finished && <p className="bk-note">{uiText("这是最后一章，会记为「读完了这本」。")}</p>}
                     </>) : (
                         <div className="bk-sentence">
-                            <p className="bk-hint">在 Reeden 里长按你停下的那句，复制，粘到这里。</p>
-                            <textarea value={sentence} onChange={e => { setSentence(e.target.value); setMatches(null); setPicked(null); }} placeholder="粘贴一句原文…" rows={3} />
-                            <button className="bk-secondary" disabled={sentence.trim().length < 6} onClick={search}><MagnifyingGlass size={15} /> 在书里找</button>
-                            {matches && !matches.length && <p className="bk-warn">书里没找到这句。换一句长一点、没有省略的试试；或者改用「选章节」。</p>}
-                            {matches && matches.length > 1 && <p className="bk-hint">找到 {matches.length} 处，点一下你停下的那处：</p>}
+                            <p className="bk-hint">{uiText("在 Reeden 里长按你停下的那句，复制，粘到这里。")}</p>
+                            <textarea value={sentence} onChange={e => { setSentence(e.target.value); setMatches(null); setPicked(null); }} placeholder={uiText("粘贴一句原文…")} rows={3} />
+                            <button className="bk-secondary" disabled={sentence.trim().length < 6} onClick={search}><MagnifyingGlass size={15} /> {uiText(" 在书里找")}</button>
+                            {matches && !matches.length && <p className="bk-warn">{uiText("书里没找到这句。换一句长一点、没有省略的试试；或者改用「选章节」。")}</p>}
+                            {matches && matches.length > 1 && <p className="bk-hint">{uiText("找到 ")}{matches.length} {uiText(" 处，点一下你停下的那处：")}</p>}
                             {matches?.map(m => {
                                 const ci = chapterIndexAt(chapters, m.segIdx);
                                 return (
                                     <button key={m.segIdx} className={`bk-match ${picked?.segIdx === m.segIdx ? 'is-picked' : ''}`} onClick={() => setPicked(m)}>
-                                        <small>{ci >= 0 ? chapters[ci].title : ''} · {formatPercent(progressRatio(m.segIdx, novel.segments.length))}{m.exact ? '' : ' · 只对上了一部分'}</small>
+                                        <small>{ci >= 0 ? chapters[ci].title : ''} · {formatPercent(progressRatio(m.segIdx, novel.segments.length))}{m.exact ? '' : uiText(" · 只对上了一部分")}</small>
                                         <span>{m.context}</span>
                                     </button>
                                 );
                             })}
                         </div>
                     )}
-                    <label className="bk-check"><input type="checkbox" checked={finishedBook} onChange={e => setFinished(e.target.checked)} /> 我读完了这本</label>
-                    <textarea className="bk-thought" value={thought} onChange={e => setThought(e.target.value)} placeholder="想说点什么？（可以不写）" rows={2} maxLength={500} />
+                    <label className="bk-check"><input type="checkbox" checked={finishedBook} onChange={e => setFinished(e.target.checked)} /> {uiText(" 我读完了这本")}</label>
+                    <textarea className="bk-thought" value={thought} onChange={e => setThought(e.target.value)} placeholder={uiText("想说点什么？（可以不写）")} rows={2} maxLength={500} />
                     {characters.length > 0 && (
                         <div className="bk-tell">
-                            <small>告诉谁（会发进 ta 的私聊，进记忆）</small>
+                            <small>{uiText("告诉谁（会发进 ta 的私聊，进记忆）")}</small>
                             <div className="bk-pick">
                                 {characters.filter(c => book.record.companionIds.includes(c.id) || tell.includes(c.id)).concat(characters.filter(c => !book.record.companionIds.includes(c.id) && !tell.includes(c.id))).slice(0, 12).map(c => {
                                     const on = tell.includes(c.id);
@@ -153,7 +155,7 @@ export const ReportSheet: React.FC<{
                         </div>
                     )}
                 </div>
-                <footer><button className="bk-primary" disabled={!canSave} onClick={() => void save()}>{busy ? '保存中…' : tell.length ? '记下，并告诉 ta' : '记下'}</button></footer>
+                <footer><button className="bk-primary" disabled={!canSave} onClick={() => void save()}>{busy ? uiText("保存中…") : tell.length ? uiText("记下，并告诉 ta") : uiText("记下")}</button></footer>
             </section>
         </div>
     );
@@ -164,6 +166,7 @@ export const HighlightSheet: React.FC<{
     onClose: () => void;
     onAsk: (char: CharacterProfile, quote: string, comment: string, chapter: string | undefined, segIdx: number | undefined) => Promise<string>;
 }> = ({ book, characters, note, onClose, onAsk }) => {
+    const uiText = useBookCinemaText();
     const companions = characters.filter(c => book.record.companionIds.includes(c.id));
     const ordered = [...companions, ...characters.filter(c => !book.record.companionIds.includes(c.id))];
     const [charId, setCharId] = useState(ordered[0]?.id || '');
@@ -192,7 +195,7 @@ export const HighlightSheet: React.FC<{
             }
             setReply(await onAsk(char, quote.trim(), comment.trim(), chapter || undefined, segIdx));
         } catch (e) {
-            if (e instanceof BookroomBusyError) { setBusyNote(waitingText(e.brief, '回你')); setReply(' '); }
+            if (e instanceof BookroomBusyError) { setBusyNote(uiText('{0}，先不打扰 ta。\n等 ta 按日程有空了，会认真{1}：回复挂在书房这里，也会发进你们的私聊。\n（要小手机开着的时候才会补上。）', e.brief, uiText('回你'))); setReply(' '); }
             else setError(e instanceof Error ? e.message : String(e));
         }
         finally { setBusy(false); }
@@ -200,29 +203,29 @@ export const HighlightSheet: React.FC<{
 
     return (
         <div className="bk-sheet-backdrop" onClick={busy ? undefined : onClose}>
-            <section className="bk-sheet" role="dialog" aria-label="划线给 ta 看" onClick={e => e.stopPropagation()}>
-                <header><h2>划线给 ta 看</h2><button className="bk-icon" onClick={onClose} disabled={busy} aria-label="关闭"><X size={18} /></button></header>
+            <section className="bk-sheet" role="dialog" aria-label={uiText("划线给 ta 看")} onClick={e => e.stopPropagation()}>
+                <header><h2>{uiText("划线给 ta 看")}</h2><button className="bk-icon" onClick={onClose} disabled={busy} aria-label={uiText("关闭")}><X size={18} /></button></header>
                 <div className="bk-sheet-body overflow-y-auto">
                     {note ? <blockquote className="bk-quote">{note.quote}</blockquote>
-                        : <textarea value={quote} onChange={e => setQuote(e.target.value)} placeholder="粘贴你划的那一句…" rows={3} />}
-                    <textarea value={comment} onChange={e => setComment(e.target.value)} placeholder="想跟 ta 说什么？（可以不写）" rows={2} maxLength={500} />
+                        : <textarea value={quote} onChange={e => setQuote(e.target.value)} placeholder={uiText("粘贴你划的那一句…")} rows={3} />}
+                    <textarea value={comment} onChange={e => setComment(e.target.value)} placeholder={uiText("想跟 ta 说什么？（可以不写）")} rows={2} maxLength={500} />
                     <div className="bk-tell">
-                        <small>给谁看</small>
+                        <small>{uiText("给谁看")}</small>
                         <div className="bk-pick">
                             {ordered.slice(0, 12).map(c => (
                                 <button key={c.id} aria-pressed={c.id === charId} onClick={() => setCharId(c.id)}><Avatar char={c} size={20} /><span>{c.name}</span>{c.id === charId && <Check size={13} weight="bold" />}</button>
                             ))}
                         </div>
                     </div>
-                    <p className="bk-hint">这句和 ta 的回应都会进你们的私聊和 ta 的记忆。每次点会调用一次聊天 API。</p>
+                    <p className="bk-hint">{uiText("这句和 ta 的回应都会进你们的私聊和 ta 的记忆。每次点会调用一次聊天 API。")}</p>
                     {reply.trim() && <div className="bk-reply"><b>{char?.name}</b><p>{reply}</p></div>}
                     {busyNote && <p className="bk-note" style={{ whiteSpace: 'pre-wrap' }}>{busyNote}</p>}
                     {error && <p className="bk-warn">{error}</p>}
                 </div>
                 <footer>
                     {reply
-                        ? <button className="bk-primary" onClick={onClose}>好</button>
-                        : <button className="bk-primary" disabled={busy || !char || !quote.trim()} onClick={() => void ask()}>{busy ? `${char?.name || 'ta'} 正在看…` : '给 ta 看'}</button>}
+                        ? <button className="bk-primary" onClick={onClose}>{uiText("好")}</button>
+                        : <button className="bk-primary" disabled={busy || !char || !quote.trim()} onClick={() => void ask()}>{busy ? uiText("{0} 正在看…", char?.name || 'ta') : uiText("给 ta 看")}</button>}
                 </footer>
             </section>
         </div>
@@ -237,6 +240,7 @@ export const ReviewSheet: React.FC<{
     onSaveMine: (text: string, rating?: number) => Promise<NonNullable<BookroomRecord['reviews']>>;
     onExchange: (char: CharacterProfile, mine: { text: string; rating?: number }, savedReviews: NonNullable<BookroomRecord['reviews']>) => Promise<{ charName: string; text: string; rating?: number }>;
 }> = ({ book, characters, onClose, onSaveMine, onExchange }) => {
+    const uiText = useBookCinemaText();
     const prev = book.record.reviews?.user;
     const [rating, setRating] = useState<number | undefined>(prev?.rating);
     const [text, setText] = useState(prev?.text || '');
@@ -257,7 +261,7 @@ export const ReviewSheet: React.FC<{
             if (exchange && char) setResult(await onExchange(char, { text: text.trim(), rating }, saved));
             else onClose();
         } catch (e) {
-            if (e instanceof BookroomBusyError) setWaiting(waitingText(e.brief, '写一篇和你交换'));
+            if (e instanceof BookroomBusyError) setWaiting(uiText('{0}，先不打扰 ta。\n等 ta 按日程有空了，会认真{1}：回复挂在书房这里，也会发进你们的私聊。\n（要小手机开着的时候才会补上。）', e.brief, uiText('写一篇和你交换')));
             else setError(e instanceof Error ? e.message : String(e));
         }
         finally { setBusy(false); }
@@ -265,32 +269,32 @@ export const ReviewSheet: React.FC<{
 
     return (
         <div className="bk-sheet-backdrop" onClick={busy ? undefined : onClose}>
-            <section className="bk-sheet" role="dialog" aria-label="写书评" onClick={e => e.stopPropagation()}>
-                <header><h2>《{book.title}》书评</h2><button className="bk-icon" onClick={onClose} disabled={busy} aria-label="关闭"><X size={18} /></button></header>
+            <section className="bk-sheet" role="dialog" aria-label={uiText("写书评")} onClick={e => e.stopPropagation()}>
+                <header><h2>《{book.title}{uiText("》书评")}</h2><button className="bk-icon" onClick={onClose} disabled={busy} aria-label={uiText("关闭")}><X size={18} /></button></header>
                 <div className="bk-sheet-body overflow-y-auto">
                     {waiting ? <p className="bk-note" style={{ whiteSpace: 'pre-wrap' }}>{waiting}</p> : result ? (
                         <div className="bk-review"><div className="bk-review-head"><b>{result.charName}</b><Stars n={result.rating} size={14} /></div><p>{result.text}</p></div>
                     ) : <>
                         <div className="bk-rate">{[1, 2, 3, 4, 5].map(i => (
-                            <button key={i} aria-label={`${i} 星`} onClick={() => setRating(rating === i ? undefined : i)}><Star size={26} weight={rating && i <= rating ? 'fill' : 'regular'} /></button>
+                            <button key={i} aria-label={uiText("{0} 星", i)} onClick={() => setRating(rating === i ? undefined : i)}><Star size={26} weight={rating && i <= rating ? 'fill' : 'regular'} /></button>
                         ))}</div>
-                        <textarea value={text} onChange={e => setText(e.target.value)} placeholder="读完的感受、喜欢和不喜欢的地方……" rows={7} maxLength={3000} />
+                        <textarea value={text} onChange={e => setText(e.target.value)} placeholder={uiText("读完的感受、喜欢和不喜欢的地方……")} rows={7} maxLength={3000} />
                         <div className="bk-tell">
-                            <small>和谁交换（ta 会写一篇自己的，发进你们的私聊）</small>
+                            <small>{uiText("和谁交换（ta 会写一篇自己的，发进你们的私聊）")}</small>
                             <div className="bk-pick">
                                 {ordered.slice(0, 12).map(c => (
                                     <button key={c.id} aria-pressed={c.id === charId} onClick={() => setCharId(c.id)}><Avatar char={c} size={20} /><span>{c.name}</span>{c.id === charId && <Check size={13} weight="bold" />}</button>
                                 ))}
                             </div>
                         </div>
-                        <p className="bk-hint">ta 没在彼方读完这本的话，会老实说只读到哪、只评读过的部分。交换会调用一次聊天 API。</p>
+                        <p className="bk-hint">{uiText("ta 没在彼方读完这本的话，会老实说只读到哪、只评读过的部分。交换会调用一次聊天 API。")}</p>
                     </>}
                     {error && <p className="bk-warn">{error}</p>}
                 </div>
                 <footer className="bk-footer-row">
-                    {result || waiting ? <button className="bk-primary" onClick={onClose}>好</button> : <>
-                        <button className="bk-secondary" disabled={busy || !text.trim()} onClick={() => void submit(false)}>只存我的</button>
-                        <button className="bk-primary" disabled={busy || !text.trim() || !char} onClick={() => void submit(true)}>{busy ? `${char?.name || 'ta'} 正在写…` : '存下并交换'}</button>
+                    {result || waiting ? <button className="bk-primary" onClick={onClose}>{uiText("好")}</button> : <>
+                        <button className="bk-secondary" disabled={busy || !text.trim()} onClick={() => void submit(false)}>{uiText("只存我的")}</button>
+                        <button className="bk-primary" disabled={busy || !text.trim() || !char} onClick={() => void submit(true)}>{busy ? uiText("{0} 正在写…", char?.name || 'ta') : uiText("存下并交换")}</button>
                     </>}
                 </footer>
             </section>
@@ -304,6 +308,7 @@ export const ImportSheet: React.FC<{
     records: BookroomRecord[]; onClose: () => void;
     onImported: (novelId: string) => Promise<void>; onError: (msg: string) => void;
 }> = ({ records, onClose, onImported, onError }) => {
+    const uiText = useBookCinemaText();
     const [title, setTitle] = useState('');
     const [author, setAuthor] = useState('');
     const [summary, setSummary] = useState('');
@@ -324,7 +329,7 @@ export const ImportSheet: React.FC<{
             let content: string;
             let nextToc: { title: string; anchor: string }[] = [];
             if (/\.epub$/i.test(f.name) || f.type === 'application/epub+zip') {
-                setStatus('正在拆开 EPUB…');
+                setStatus(uiText("正在拆开 EPUB…"));
                 const book = await parseEpub(buf, baseName);
                 content = book.text;
                 nextToc = book.toc;
@@ -335,17 +340,17 @@ export const ImportSheet: React.FC<{
                     try { setCover(await compressCover(book.cover)); } catch { /* 封面坏了不影响导入 */ }
                 }
             } else if (isPdfFile(f)) {
-                const result = await extractPdfText(buf, { onProgress: ({ page, totalPages }) => setStatus(`正在提取 PDF 文字… ${page}/${totalPages}`) });
+                const result = await extractPdfText(buf, { onProgress: ({ page, totalPages }) => setStatus(uiText("正在提取 PDF 文字… {0}/{1}", page, totalPages)) });
                 content = result.text.trim();
-                if (!content) { onError('PDF 里没有可提取的文字，可能是扫描件'); return; }
+                if (!content) { onError(uiText("PDF 里没有可提取的文字，可能是扫描件")); return; }
             } else if (/\.txt$/i.test(f.name) || f.type.startsWith('text/')) {
                 content = decodeBytes(buf).text;
-            } else { onError('目前支持 .epub、.txt 和 .pdf'); return; }
+            } else { onError(uiText("目前支持 .epub、.txt 和 .pdf")); return; }
             setText(content);
             setToc(nextToc);
             if (!title.trim() && !nextToc.length) setTitle(baseName);
-            setStatus(`读好了，共 ${content.length.toLocaleString()} 字${nextToc.length ? `，自带目录 ${nextToc.length} 章` : ''}`);
-        } catch (e) { onError(`读取失败：${e instanceof Error ? e.message : String(e)}`); setStatus(''); }
+            setStatus(uiText("读好了，共 {0} 字{1}", content.length.toLocaleString(), nextToc.length ? uiText('，自带目录 {0} 章', nextToc.length) : ''));
+        } catch (e) { onError(uiText("读取失败：{0}", e instanceof Error ? e.message : String(e))); setStatus(''); }
         finally { setBusy(false); if (fileRef.current) fileRef.current.value = ''; }
     };
 
@@ -357,8 +362,8 @@ export const ImportSheet: React.FC<{
     const commit = async () => {
         setBusy(true);
         try {
-            const novel = await buildNovelAsync(title, text, { author, summary, onProgress: r => setStatus(`切分中… ${Math.round(r * 100)}%`) });
-            if (!novel.segments.length) { onError('正文是空的'); return; }
+            const novel = await buildNovelAsync(title, text, { author, summary, onProgress: r => setStatus(uiText("切分中… {0}%", Math.round(r * 100))) });
+            if (!novel.segments.length) { onError(uiText("正文是空的")); return; }
             if (archived) {
                 const mapped = toc.length ? chaptersFromAnchors(novel.segments, toc) : [];
                 await restoreArchivedBook(novel, archived, { chapters: mapped.length ? mapped : undefined, cover });
@@ -368,32 +373,32 @@ export const ImportSheet: React.FC<{
                 await saveImportExtras(novel, { toc, cover });
                 await onImported(novel.id);
             }
-        } catch (e) { onError(`导入失败：${e instanceof Error ? e.message : String(e)}`); }
+        } catch (e) { onError(uiText("导入失败：{0}", e instanceof Error ? e.message : String(e))); }
         finally { setBusy(false); }
     };
 
     return (
         <div className="bk-sheet-backdrop" onClick={onClose}>
-            <section className="bk-sheet" role="dialog" aria-label="导入书" onClick={e => e.stopPropagation()}>
-                <header><h2>导入一本书</h2><button className="bk-icon" onClick={onClose} aria-label="关闭"><X size={18} /></button></header>
+            <section className="bk-sheet" role="dialog" aria-label={uiText("导入书")} onClick={e => e.stopPropagation()}>
+                <header><h2>{uiText("导入一本书")}</h2><button className="bk-icon" onClick={onClose} aria-label={uiText("关闭")}><X size={18} /></button></header>
                 <div className="bk-sheet-body overflow-y-auto">
-                    <p className="bk-hint">用来认目录、找句子。和 Reeden 里那本用同一个文件最准。EPUB 只取文字和封面，插图排版留在 Reeden 里看。导入后彼方书库里也会出现。</p>
+                    <p className="bk-hint">{uiText("用来认目录、找句子。和 Reeden 里那本用同一个文件最准。EPUB 只取文字和封面，插图排版留在 Reeden 里看。导入后彼方书库里也会出现。")}</p>
                     <input ref={fileRef} type="file" accept=".epub,.txt,.pdf,application/epub+zip,text/plain,application/pdf" hidden onChange={e => { const f = e.target.files?.[0]; if (f) void pickFile(f); }} />
-                    <button className="bk-secondary" disabled={busy} onClick={() => fileRef.current?.click()}>选择 EPUB / TXT / PDF 文件</button>
+                    <button className="bk-secondary" disabled={busy} onClick={() => fileRef.current?.click()}>{uiText("选择 EPUB / TXT / PDF 文件")}</button>
                     {status && <p className="bk-hint">{status}</p>}
                     <div className="bk-import-row">
-                        <button className="bk-cover-pick" onClick={() => coverRef.current?.click()} aria-label={cover ? '换封面' : '上传封面'}>
-                            {cover ? <img src={cover} alt="封面" /> : <span><ImageSquare size={20} /><br />封面</span>}
+                        <button className="bk-cover-pick" onClick={() => coverRef.current?.click()} aria-label={cover ? uiText("换封面") : uiText("上传封面")}>
+                            {cover ? <img src={cover} alt={uiText("封面")} /> : <span><ImageSquare size={20} /><br />{uiText("封面")}</span>}
                         </button>
                         <input ref={coverRef} type="file" accept="image/*" hidden onChange={e => { const f = e.target.files?.[0]; if (f) void pickCover(f); }} />
                         <div className="bk-import-fields">
-                            <input className="bk-input" value={title} onChange={e => setTitle(e.target.value)} placeholder="书名" />
-                            <input className="bk-input" value={author} onChange={e => setAuthor(e.target.value)} placeholder="作者（可不填）" />
+                            <input className="bk-input" value={title} onChange={e => setTitle(e.target.value)} placeholder={uiText("书名")} />
+                            <input className="bk-input" value={author} onChange={e => setAuthor(e.target.value)} placeholder={uiText("作者（可不填）")} />
                         </div>
                     </div>
-                    {archived && <p className="bk-note">书房里有一本归档的《{archived.archived!.title}》，导入后会接回它的进度、目录和角色批注。</p>}
+                    {archived && <p className="bk-note">{uiText("书房里有一本归档的《")}{archived.archived!.title}{uiText("》，导入后会接回它的进度、目录和角色批注。")}</p>}
                 </div>
-                <footer><button className="bk-primary" disabled={busy || !text.trim() || !title.trim()} onClick={() => void commit()}>{busy ? '处理中…' : archived ? '导入并接回记录' : '放上书架'}</button></footer>
+                <footer><button className="bk-primary" disabled={busy || !text.trim() || !title.trim()} onClick={() => void commit()}>{busy ? uiText("处理中…") : archived ? uiText("导入并接回记录") : uiText("放上书架")}</button></footer>
             </section>
         </div>
     );

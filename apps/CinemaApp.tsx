@@ -1,3 +1,4 @@
+import { describeCinemaUiStatus, useBookCinemaText } from '../utils/bookCinemaLocale';
 /**
  * 影院 —— 电脑上放视频，手机里的角色同步看画面、陪你聊。
  *
@@ -60,6 +61,7 @@ const copyText = async (text: string) => {
 };
 
 const CinemaApp: React.FC = () => {
+    const uiText = useBookCinemaText();
     const { closeApp, characters, apiConfig, apiPresets, userProfile, groups, realtimeConfig, memoryPalaceConfig, updateCharacter, addToast, registerBackHandler } = useOS();
     const [view, setView] = useState<View>('home');
     const [pairing, setPairing] = useState<CinemaPairing | null>(null);
@@ -173,10 +175,10 @@ const CinemaApp: React.FC = () => {
         if (msg.type === 'resume-result') {
             // 电脑那边怎么处理的「接着看」
             const how = String(msg.how || '');
-            const text = how === 'jumped' ? '电脑上已经跳到上次看到的地方了'
-                : how === 'need-click' ? '那个视频没开着：去电脑的观影端点一下「在新标签页打开」'
-                : how === 'local-jumped' ? '观影端里的本地视频已经跳到上次看到的地方了'
-                : how === 'local-need-file' ? '在电脑的观影端里选同一个视频文件，会从上次的地方接着放'
+            const text = how === 'jumped' ? uiText("电脑上已经跳到上次看到的地方了")
+                : how === 'need-click' ? uiText("那个视频没开着：去电脑的观影端点一下「在新标签页打开」")
+                : how === 'local-jumped' ? uiText("观影端里的本地视频已经跳到上次看到的地方了")
+                : how === 'local-need-file' ? uiText("在电脑的观影端里选同一个视频文件，会从上次的地方接着放")
                 : '';
             if (text) addToastRef.current(text, 'info');
             return;
@@ -314,7 +316,7 @@ const CinemaApp: React.FC = () => {
     };
 
     const forgetPairing = async () => {
-        if (!window.confirm('解除配对？电脑那边要重新输入配对码才能再连上。')) return;
+        if (!window.confirm(uiText("解除配对？电脑那边要重新输入配对码才能再连上。"))) return;
         await clearCinemaPairing();
         setPairing(null);
     };
@@ -388,9 +390,9 @@ const CinemaApp: React.FC = () => {
     const meet: CinemaMeetMode = meetChoice || (meetingNow ? 'offline' : 'online');
 
     const startSession = async () => {
-        if (!pairing) { addToast('先配对电脑', 'info'); return; }
-        if (!charId) { addToast('选一个一起看的人', 'info'); return; }
-        if (!title.trim()) { addToast('填一下看什么', 'info'); return; }
+        if (!pairing) { addToast(uiText("先配对电脑"), 'info'); return; }
+        if (!charId) { addToast(uiText("选一个一起看的人"), 'info'); return; }
+        if (!title.trim()) { addToast(uiText("填一下看什么"), 'info'); return; }
         const encounter = meet === 'offline' ? activeEncounterFor(charId) : null;
         const s = newCinemaSession({ charId, title, episode, spoiler, meet, dateEncounterId: encounter?.encounterId, remember });
         await saveCinemaSession(s);
@@ -405,7 +407,7 @@ const CinemaApp: React.FC = () => {
         noteModelRef.current = undefined;
         setProjectorOpen(false);
         const name = id ? apiPresets.find(p => p.id === id)?.name : '';
-        addToast(id ? `放映机换成「${name}」，只在影院里用` : '放映机跟着主 API 走', 'info');
+        addToast(id ? uiText("放映机换成「{0}」，只在影院里用", name) : uiText("放映机跟着主 API 走"), 'info');
     };
 
     /** 「下一集」：把开一场的表单按这部的最近一场填好（集数 +1），用户看一眼再点开场。 */
@@ -420,15 +422,15 @@ const CinemaApp: React.FC = () => {
         setSpoiler(last.spoiler);
         setRemember(sessionRemembers(last));
         setTimeout(() => startCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
-        if (next) addToast(`填好了：${describeWork({ title: last.title, episode: next })}，看一眼点「开场」`, 'info');
+        if (next) addToast(uiText("填好了：{0}，看一眼点「开场」", describeWork({ title: last.title, episode: next })), 'info');
         else {
-            addToast('上一场没写第几集，填一下再开场', 'info');
+            addToast(uiText("上一场没写第几集，填一下再开场"), 'info');
             setTimeout(() => episodeInputRef.current?.focus(), 400);
         }
     };
 
     const removeSession = async (s: CinemaSession) => {
-        if (!window.confirm(`删掉这一场的记录？\n${describeWork(s)}`)) return;
+        if (!window.confirm(uiText("删掉这一场的记录？\n{0}", describeWork(s)))) return;
         await deleteCinemaSession(s.id);
         void reload();
     };
@@ -513,16 +515,16 @@ const CinemaApp: React.FC = () => {
                 // 开着出声才教他写停顿和语气声；只打字的时候别让这些标记混进来
                 voiceGuide: voiceOnRef.current && canCinemaSpeak(char, apiConfig) ? buildVoiceActingGuide(char) : undefined,
             });
-            if (frameUrl && !result.sawFrame && !opts.proactive) addToast('当前模型不支持看图，这一轮只发了文字', 'info');
+            if (frameUrl && !result.sawFrame && !opts.proactive) addToast(uiText("当前模型不支持看图，这一轮只发了文字"), 'info');
             // 不管说没说话，这次机会都算用掉了，免得下一秒又叫一次
             lastCharAtRef.current = Date.now();
             scenesSinceCharRef.current = 0;
             if (!result.lines.length) {
                 // 主动开口时选择了安静；重来时本来就要他说，安静了就告诉一声
-                if (opts.mustSpeak) addToast(`${char.name} 这次还是没开口，可以再点一次重来`, 'info');
+                if (opts.mustSpeak) addToast(uiText("{0} 这次还是没开口，可以再点一次重来", char.name), 'info');
                 return;
             }
-            if (result.truncated) addToast('这句好像没说完就被截断了，可以点「↻ 重来」', 'info');
+            if (result.truncated) addToast(uiText("这句好像没说完就被截断了，可以点「↻ 重来」"), 'info');
             const marked = userLines[userLines.length - 1];
             const now = Date.now();
             // 原话（带 <#0.3#>、(laughs) 这些配音标记）拿去念；屏幕上、聊天记录里只放干净的字
@@ -544,7 +546,7 @@ const CinemaApp: React.FC = () => {
         } catch (error: any) {
             // 主动开口失败不打扰用户（下一次时机再试），用户发的消息失败要说
             if (opts.proactive) console.warn('[cinema] 主动开口失败', error);
-            else addToast(`${char.name} 没回上：${error?.message || error}`, 'error');
+            else addToast(uiText("{0} 没回上：{1}", char.name, error?.message || error), 'error');
         } finally {
             busyRef.current = false;
             setThinking(false);
@@ -608,11 +610,11 @@ const CinemaApp: React.FC = () => {
                 markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
             } catch (error) {
                 console.warn('[cinema] 删私聊里那条失败', error);
-                addToast('放映室里删掉了，但私聊记录里那条没删成，可以去私聊里手动删', 'info');
+                addToast(uiText("放映室里删掉了，但私聊记录里那条没删成，可以去私聊里手动删"), 'info');
                 return;
             }
         }
-        addToast('删掉了', 'info');
+        addToast(uiText("删掉了"), 'info');
     };
 
     const send = () => {
@@ -681,8 +683,8 @@ const CinemaApp: React.FC = () => {
                 noteModelRef.current = next;
                 lastNoteAtRef.current = 0;
                 addToast(next
-                    ? `${NOTE_MODEL_LABEL[model.source]}不会看图，画面笔记改用${NOTE_MODEL_LABEL[next.source]}`
-                    : '没有会看图的模型，画面笔记先关掉了', 'info');
+                    ? uiText("{0}不会看图，画面笔记改用{1}", uiText(NOTE_MODEL_LABEL[model.source]), uiText(NOTE_MODEL_LABEL[next.source]))
+                    : uiText("没有会看图的模型，画面笔记先关掉了"), 'info');
             } else {
                 // 09-30 实测「没有笔记」：以前失败了只写日志，用户看不见。现在第一次失败就把原话报出来；
                 // 同一个模型连着失败两次（有的接口不认图片但报错不说「图片」），换下一个模型试
@@ -694,9 +696,9 @@ const CinemaApp: React.FC = () => {
                     noteModelRef.current = next;
                     noteFailRef.current = 0;
                     lastNoteAtRef.current = 0;
-                    addToast(`画面笔记用${NOTE_MODEL_LABEL[model.source]}连续失败，改用${NOTE_MODEL_LABEL[next.source]}。报错：${message}`, 'info');
+                    addToast(uiText("画面笔记用{0}连续失败，改用{1}。报错：{2}", uiText(NOTE_MODEL_LABEL[model.source]), uiText(NOTE_MODEL_LABEL[next.source]), message), 'info');
                 } else if (noteFailRef.current === 1) {
-                    addToast(`画面笔记没写成（${NOTE_MODEL_LABEL[model.source]}）：${message}`, 'error');
+                    addToast(uiText("画面笔记没写成（{0}）：{1}", uiText(NOTE_MODEL_LABEL[model.source]), message), 'error');
                 }
             }
         } finally {
@@ -798,7 +800,7 @@ const CinemaApp: React.FC = () => {
             try { sttSessionRef.current?.stop(); } catch { /* ignore */ }
             return;
         }
-        if (!isSttSupported(speechProvider)) { addToast('这个环境不支持语音输入', 'info'); return; }
+        if (!isSttSupported(speechProvider)) { addToast(uiText("这个环境不支持语音输入"), 'info'); return; }
         getSpeaker().stop();
         const token = ++sttTokenRef.current;
         let heard = '';
@@ -842,7 +844,7 @@ const CinemaApp: React.FC = () => {
         } catch (error: any) {
             if (sttTokenRef.current !== token) return;
             stopListening();
-            addToast(error?.message || '无法启动语音输入', 'error');
+            addToast(error?.message || uiText("无法启动语音输入"), 'error');
         }
     };
 
@@ -876,20 +878,20 @@ const CinemaApp: React.FC = () => {
         const cur = sessionRef.current;
         if (!cur || !char) return;
         const next = !sessionRemembers(cur);
-        if (!next && !window.confirm(`改成「不留痕」？\n这一场已经说过的话会从 ${char.name} 的聊天记录里删掉，之后说的也不再存；散场时不留卡片、不整理记忆。\n（如果之前已经散过场、整理进了记忆宫殿，那部分删不掉，要去记忆宫殿里手动删。）`)) return;
+        if (!next && !window.confirm(uiText("改成「不留痕」？\n这一场已经说过的话会从 {0} 的聊天记录里删掉，之后说的也不再存；散场时不留卡片、不整理记忆。\n（如果之前已经散过场、整理进了记忆宫殿，那部分删不掉，要去记忆宫殿里手动删。）", char.name))) return;
         try {
             if (next) {
                 const count = await backfillSessionToChat(char.id, cur);
                 markAmsgStateDirty({ char, userProfile, groups, realtimeConfig });
-                addToast(`改成「记住」了，补存了 ${count} 句进聊天记录`, 'success');
+                addToast(uiText("改成「记住」了，补存了 {0} 句进聊天记录", count), 'success');
             } else {
                 const count = await removeSessionFromChat(char.id, cur.id);
                 markAmsgStateDirty({ char, userProfile, groups, realtimeConfig }, 'invalidate');
-                addToast(`改成「不留痕」了${count ? `，从聊天记录里删掉了 ${count} 条` : ''}`, 'success');
+                addToast(uiText("改成「不留痕」了{0}", count ? uiText('，从聊天记录里删掉了 {0} 条', count) : ''), 'success');
             }
             await updateSession(s => ({ ...s, remember: next }));
         } catch (error: any) {
-            addToast(`没改成：${error?.message || error}`, 'error');
+            addToast(uiText("没改成：{0}", error?.message || error), 'error');
         }
     };
 
@@ -898,8 +900,8 @@ const CinemaApp: React.FC = () => {
         if (!session || !char || ending) return;
         const keeps = sessionRemembers(sessionRef.current || session);
         if (!window.confirm(keeps
-            ? `散场？\n${char.name} 会记得今天一起看了${describeWork(session)}。之后还可以从「最近看过」点进来接着看。`
-            : `散场？\n这一场是「不留痕」，${char.name} 在私聊里不会知道你们看过。之后还可以从「最近看过」点进来接着看。`)) return;
+            ? uiText("散场？\n{0} 会记得今天一起看了{1}。之后还可以从「最近看过」点进来接着看。", char.name, describeWork(session))
+            : uiText("散场？\n这一场是「不留痕」，{0} 在私聊里不会知道你们看过。之后还可以从「最近看过」点进来接着看。", char.name))) return;
         setEnding(true);
         try {
             const endedAt = Date.now();
@@ -909,7 +911,7 @@ const CinemaApp: React.FC = () => {
                 endCinemaPresence(char.id, done.id);
                 void endAmsgChatPresence(char.id);
                 stopAmsgChatPresence(char.id);
-                addToast('散场了（这一场没有留痕）', 'success');
+                addToast(uiText("散场了（这一场没有留痕）"), 'success');
                 setView('home');
                 void reload();
                 return;
@@ -933,11 +935,11 @@ const CinemaApp: React.FC = () => {
                 getLiveChar: () => characters.find(c => c.id === char.id) || null,
                 memoryPalaceConfig, apiConfig, userName: userProfile?.name, updateCharacter,
             }).catch(error => console.warn('[cinema] 散场后整理记忆失败', error));
-            addToast('散场了，这一场已经记下', 'success');
+            addToast(uiText("散场了，这一场已经记下"), 'success');
             setView('home');
             void reload();
         } catch (error: any) {
-            addToast(`散场没成功：${error?.message || error}`, 'error');
+            addToast(uiText("散场没成功：{0}", error?.message || error), 'error');
         } finally {
             setEnding(false);
         }
@@ -945,8 +947,8 @@ const CinemaApp: React.FC = () => {
 
     // ---- 页面 ----
     const connLabel = conn === 'open'
-        ? (screenOnline ? '电脑在线' : '等电脑连上')
-        : conn === 'connecting' ? '连接中…' : '没连上';
+        ? (screenOnline ? uiText("电脑在线") : uiText("等电脑连上"))
+        : conn === 'connecting' ? uiText("连接中…") : uiText("没连上");
 
     if (!loaded) return <div className="cinema"><div className="cn-empty">…</div></div>;
 
@@ -956,117 +958,116 @@ const CinemaApp: React.FC = () => {
         return (
             <div className="cinema">
                 <header className="cn-top">
-                    <button className="cn-icon" onClick={() => { setView('home'); void reload(); }} aria-label="返回"><ArrowLeft size={20} /></button>
-                    <div className="cn-top-title"><small>Pairing</small><h1>配对电脑</h1></div>
+                    <button className="cn-icon" onClick={() => { setView('home'); void reload(); }} aria-label={uiText("返回")}><ArrowLeft size={20} /></button>
+                    <div className="cn-top-title"><small>Pairing</small><h1>{uiText("配对电脑")}</h1></div>
                     <span className="cn-icon" />
                 </header>
                 <main className="cn-scroll overflow-y-auto">
                     <ol className="cn-steps">
                         <li>
-                            <b>在电脑上用 Chrome 或 360 极速浏览器打开</b>
-                            <div className="cn-copy"><code>{url}</code><button onClick={async () => addToast(await copyText(url) ? '已复制' : '复制失败，手动抄一下', 'info')}><Copy size={16} /></button></div>
+                            <b>{uiText("在电脑上用 Chrome 或 360 极速浏览器打开")}</b>
+                            <div className="cn-copy"><code>{url}</code><button onClick={async () => addToast(await copyText(url) ? uiText("已复制") : uiText("复制失败，手动抄一下"), 'info')}><Copy size={16} /></button></div>
                         </li>
                         <li>
-                            <b>第一次打开会问 Worker 地址，填这个</b>
-                            <div className="cn-copy"><code>{host}</code><button onClick={async () => addToast(await copyText(host) ? '已复制' : '复制失败，手动抄一下', 'info')}><Copy size={16} /></button></div>
+                            <b>{uiText("第一次打开会问 Worker 地址，填这个")}</b>
+                            <div className="cn-copy"><code>{host}</code><button onClick={async () => addToast(await copyText(host) ? uiText("已复制") : uiText("复制失败，手动抄一下"), 'info')}><Copy size={16} /></button></div>
                         </li>
                         <li>
-                            <b>再输入配对码</b>
+                            <b>{uiText("再输入配对码")}</b>
                             <div className="cn-code">{pairing.code.slice(0, 3)} {pairing.code.slice(3)}</div>
-                            <p className="cn-lead">10 分钟内有效，只能用一次。配好以后电脑会记住，下次打开直接连。</p>
+                            <p className="cn-lead">{uiText("10 分钟内有效，只能用一次。配好以后电脑会记住，下次打开直接连。")}</p>
                         </li>
                     </ol>
                     <div className={`cn-pair-state ${screenOnline ? 'ok' : ''}`}>
-                        <Monitor size={18} /> {screenOnline ? '电脑已经连上了！' : conn === 'open' ? '等电脑输入配对码…' : connLabel}
+                        <Monitor size={18} /> {screenOnline ? uiText("电脑已经连上了！") : conn === 'open' ? uiText("等电脑输入配对码…") : connLabel}
                     </div>
-                    {screenOnline && <button className="cn-primary" onClick={() => { setView('home'); void reload(); }}>好了，回去开场</button>}
+                    {screenOnline && <button className="cn-primary" onClick={() => { setView('home'); void reload(); }}>{uiText("好了，回去开场")}</button>}
                 </main>
             </div>
         );
     }
 
     if (view === 'room' && session) {
-        const statusText = [describeStatus(status), externalSubsName ? `字幕：${externalSubsName}` : ''].filter(Boolean).join(' · ');
+        const statusText = [describeCinemaUiStatus(status, uiText), externalSubsName ? uiText('字幕：{0}', externalSubsName) : ''].filter(Boolean).join(' · ');
         return (
             <div className="cinema cn-hall">
                 <header className="cn-top">
-                    <button className="cn-icon" onClick={() => { setView('home'); void reload(); }} aria-label="返回"><ArrowLeft size={20} /></button>
+                    <button className="cn-icon" onClick={() => { setView('home'); void reload(); }} aria-label={uiText("返回")}><ArrowLeft size={20} /></button>
                     <div className="cn-top-title">
-                        <small><span className={`cn-dot-inline ${conn === 'open' && screenOnline ? 'on' : conn === 'open' ? 'wait' : ''}`} title={connLabel} />{char?.name || '?'} {session.meet === 'offline' ? '坐在你旁边' : '和你隔着屏幕'}一起看</small>
+                        <small><span className={`cn-dot-inline ${conn === 'open' && screenOnline ? 'on' : conn === 'open' ? 'wait' : ''}`} title={connLabel} />{char?.name || '?'} {session.meet === 'offline' ? uiText("坐在你旁边") : uiText("和你隔着屏幕")}{uiText("一起看")}</small>
                         <h1>{describeWork(session)}</h1>
                     </div>
-                    <button className={`cn-full ${chatFull ? 'on' : ''}`} onClick={() => setChatFull(v => !v)} aria-label={chatFull ? '退出全屏' : '聊天全屏'} title={chatFull ? '退出全屏，看回画面' : '聊天铺满全屏'}>
+                    <button className={`cn-full ${chatFull ? 'on' : ''}`} onClick={() => setChatFull(v => !v)} aria-label={chatFull ? uiText("退出全屏") : uiText("聊天全屏")} title={chatFull ? uiText("退出全屏，看回画面") : uiText("聊天铺满全屏")}>
                         {chatFull ? <ArrowsIn size={16} /> : <ArrowsOut size={16} />}
                     </button>
-                    <button className="cn-end" onClick={() => void endScreening()} disabled={ending}>散场</button>
+                    <button className="cn-end" onClick={() => void endScreening()} disabled={ending}>{uiText("散场")}</button>
                 </header>
                 <div className="cn-strip" aria-hidden="true" />
                 {!chatFull && (<>
                 <section className="cn-screen">
                     {frame
-                        ? <img src={frame.dataUrl} alt="电脑上的画面" />
-                        : <div className="cn-screen-empty">{screenOnline ? '电脑连上了，等它传画面…' : `${connLabel} · 在电脑上打开观影端`}</div>}
+                        ? <img src={frame.dataUrl} alt={uiText("电脑上的画面")} />
+                        : <div className="cn-screen-empty">{screenOnline ? uiText("电脑连上了，等它传画面…") : uiText("{0} · 在电脑上打开观影端", connLabel)}</div>}
                     {subLine && <div className="cn-subline">{subLine}</div>}
                     <div className="cn-screen-bar">
                         <span className="cn-screen-status">{statusText || connLabel}</span>
-                        <button onClick={async () => { const f = await requestFrame(); if (!f) addToast('电脑没回画面（没共享屏幕，或者没连上）', 'info'); }}>
-                            <ArrowsClockwise size={14} /> 刷新画面
-                        </button>
+                        <button onClick={async () => { const f = await requestFrame(); if (!f) addToast(uiText("电脑没回画面（没共享屏幕，或者没连上）"), 'info'); }}>
+                            <ArrowsClockwise size={14} /> {uiText(" 刷新画面 ")}</button>
                     </div>
                 </section>
                 {/* 一行工具：放映机 · 主动开口 · 记不记 · 出声（10-01 用户嫌挤，并成一行，选项点开再看） */}
                 <div className="cn-tools">
                     <button className={`cn-projector ${activePreset ? 'on' : ''}`} onClick={() => { setLevelOpen(false); setProjectorOpen(v => !v); }}>
-                        放映机 · {activePreset ? activePreset.name : '主 API'} {projectorOpen ? '▴' : '▾'}
+                        {uiText(" 放映机 · ")}{activePreset ? activePreset.name : uiText("主 API")} {projectorOpen ? '▴' : '▾'}
                     </button>
                     <button className={`cn-projector ${level !== 'off' ? 'on' : ''}`} onClick={() => { setProjectorOpen(false); setLevelOpen(v => !v); }}>
-                        主动 · {PROACTIVE_LEVELS.find(l => l.id === level)?.label} {levelOpen ? '▴' : '▾'}
+                        {uiText(" 主动 · ")}{uiText(PROACTIVE_LEVELS.find(l => l.id === level)?.label ?? '')} {levelOpen ? '▴' : '▾'}
                     </button>
                     <span className="cn-tools-gap" />
                     <button
                         className={`cn-remember ${sessionRemembers(session) ? 'on' : ''}`}
                         onClick={() => void toggleRemember()}
-                        title={sessionRemembers(session) ? '这一场会记进聊天记录和记忆' : '这一场不留痕'}
+                        title={sessionRemembers(session) ? uiText("这一场会记进聊天记录和记忆") : uiText("这一场不留痕")}
                     >
-                        {sessionRemembers(session) ? '记住' : '不留痕'}
+                        {sessionRemembers(session) ? uiText("记住") : uiText("不留痕")}
                     </button>
                     <button
                         className={`cn-voice ${voiceOn && canSpeak ? 'on' : ''}`}
-                        onClick={() => canSpeak ? toggleVoice() : addToast(`${char?.name || '角色'} 还没配音色，去神经链接里给 ta 选一个声音`, 'info')}
-                        aria-label="出声"
-                        title={canSpeak ? (voiceOn ? '角色的话会念出来' : '角色只打字') : '没配音色'}
+                        onClick={() => canSpeak ? toggleVoice() : addToast(uiText("{0} 还没配音色，去神经链接里给 ta 选一个声音", char?.name || uiText("角色")), 'info')}
+                        aria-label={uiText("出声")}
+                        title={canSpeak ? (voiceOn ? uiText("角色的话会念出来") : uiText("角色只打字")) : uiText("没配音色")}
                     >
                         {voiceOn && canSpeak ? <SpeakerHigh size={16} weight="fill" /> : <SpeakerSlash size={16} />}
                     </button>
                 </div>
                 {levelOpen && (
                     <div className="cn-projector-menu">
-                        <div className="cn-projector-head">主动开口</div>
+                        <div className="cn-projector-head">{uiText("主动开口")}</div>
                         {PROACTIVE_LEVELS.map(l => (
                             <button key={l.id} className={level === l.id ? 'on' : ''} onClick={() => { changeLevel(l.id); setLevelOpen(false); }}>
-                                {l.label}<small>{PROACTIVE_LEVEL_HINT[l.id]}</small>
+                                {uiText(l.label)}<small>{uiText(PROACTIVE_LEVEL_HINT[l.id])}</small>
                             </button>
                         ))}
                     </div>
                 )}
                 {projectorOpen && (
                     <div className="cn-projector-menu">
-                        <div className="cn-projector-head">换一台放映机</div>
+                        <div className="cn-projector-head">{uiText("换一台放映机")}</div>
                         <button className={!activePreset ? 'on' : ''} onClick={() => chooseProjector(null)}>
-                            跟着主 API<small>{apiConfig.model || '没填模型'}</small>
+                            {uiText(" 跟着主 API")}<small>{apiConfig.model || uiText("没填模型")}</small>
                         </button>
                         {apiPresets.map(p => (
                             <button key={p.id} className={activePreset?.id === p.id ? 'on' : ''} onClick={() => chooseProjector(p.id)}>
-                                {p.name || '没起名的预设'}<small>{p.config.model}</small>
+                                {p.name || uiText("没起名的预设")}<small>{p.config.model}</small>
                             </button>
                         ))}
-                        {apiPresets.length === 0 && <p>还没存 API 预设。去「设置 → API」里存几个，这里就能一键换。</p>}
-                        <p>只换影院里用的，私聊和别的 App 不受影响。</p>
+                        {apiPresets.length === 0 && <p>{uiText("还没存 API 预设。去「设置 → API」里存几个，这里就能一键换。")}</p>}
+                        <p>{uiText("只换影院里用的，私聊和别的 App 不受影响。")}</p>
                     </div>
                 )}
                 {(session.notes?.length || lastNote) && (
                     <button className="cn-note" onClick={() => setNotesOpen(true)}>
-                        <span className="cn-note-tag">笔记 {session.notes?.length || 1}</span>
+                        <span className="cn-note-tag">{uiText("笔记 ")}{session.notes?.length || 1}</span>
                         <span className="cn-note-text">{(lastNote || session.notes![session.notes!.length - 1]).text}</span>
                     </button>
                 )}
@@ -1075,9 +1076,8 @@ const CinemaApp: React.FC = () => {
                 <div className="cn-chat overflow-y-auto" ref={listRef}>
                     {session.lines.length === 0 && (
                         <div className="cn-empty small">
-                            开场了。电脑上开始放以后，想说什么就说。<br />
-                            {char?.name} 每次回你之前都会看一眼当下的画面。
-                        </div>
+                            {uiText(" 开场了。电脑上开始放以后，想说什么就说。")}<br />
+                            {char?.name} {uiText(" 每次回你之前都会看一眼当下的画面。 ")}</div>
                     )}
                     {session.lines.map((line, i) => line.kind === 'action' ? (
                         <div key={`${line.at}-${i}`} className={`cn-action ${line.role}`} {...pressHandlers(line)}>{line.text}</div>
@@ -1096,28 +1096,28 @@ const CinemaApp: React.FC = () => {
                                 {line.text}
                                 {line.role === 'char' && lineAudioRef.current.has(line.at) && <span className="cn-replay">🔊</span>}
                                 {line.role === 'user' && (line.withFrame || line.videoTime !== undefined) && (
-                                    <span className="cn-meta">{line.withFrame ? '附画面' : ''}{line.videoTime !== undefined ? ` ${formatVideoTime(line.videoTime)}` : ''}</span>
+                                    <span className="cn-meta">{line.withFrame ? uiText("附画面") : ''}{line.videoTime !== undefined ? ` ${formatVideoTime(line.videoTime)}` : ''}</span>
                                 )}
                             </div>
                         </div>
                     ))}
                     {!thinking && lastCharTurn(session.lines) && (
-                        <button className="cn-reroll" onClick={() => void rerollLast()} title="撤掉这一轮，让 ta 重新说">↻ 重来</button>
+                        <button className="cn-reroll" onClick={() => void rerollLast()} title={uiText("撤掉这一轮，让 ta 重新说")}>{uiText("↻ 重来")}</button>
                     )}
-                    {thinking && <div className="cn-line char"><div className="cn-bubble typing">{char?.name} 在看…</div></div>}
+                    {thinking && <div className="cn-line char"><div className="cn-bubble typing">{char?.name} {uiText(" 在看…")}</div></div>}
                 </div>
                 </div>
                 <div className="cn-strip" aria-hidden="true" />
                 <footer className="cn-input">
-                    <button className={`cn-eye ${withFrame ? 'on' : ''}`} onClick={() => setWithFrame(v => !v)} aria-label="带不带画面" title={withFrame ? '发消息时带上画面' : '只发文字'}>
+                    <button className={`cn-eye ${withFrame ? 'on' : ''}`} onClick={() => setWithFrame(v => !v)} aria-label={uiText("带不带画面")} title={withFrame ? uiText("发消息时带上画面") : uiText("只发文字")}>
                         <Eye size={20} weight={withFrame ? 'fill' : 'regular'} />
                     </button>
                     <button
                         className={`cn-mic ${listening ? 'on' : ''}`}
                         onClick={() => void toggleMic()}
                         disabled={sttBusy}
-                        aria-label={listening ? '说完了' : '按一下说话'}
-                        title={listening ? '再点一下结束，听到的话会自动发出去' : '按一下说话'}
+                        aria-label={listening ? uiText("说完了") : uiText("按一下说话")}
+                        title={listening ? uiText("再点一下结束，听到的话会自动发出去") : uiText("按一下说话")}
                     >
                         <Microphone size={20} weight={listening ? 'fill' : 'regular'} />
                     </button>
@@ -1125,22 +1125,21 @@ const CinemaApp: React.FC = () => {
                         value={draft}
                         onChange={e => setDraft(e.target.value)}
                         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }}
-                        placeholder={listening ? '在听你说…（再点麦克风结束）' : sttBusy ? '正在转文字…' : thinking ? `${char?.name} 在看…` : '边看边说…'}
+                        placeholder={listening ? uiText("在听你说…（再点麦克风结束）") : sttBusy ? uiText("正在转文字…") : thinking ? uiText("{0} 在看…", char?.name) : uiText("边看边说…")}
                         rows={1}
                     />
-                    <button className="cn-send" onClick={() => void send()} disabled={!draft.trim() || thinking} aria-label="发送"><PaperPlaneRight size={20} weight="fill" /></button>
+                    <button className="cn-send" onClick={() => void send()} disabled={!draft.trim() || thinking} aria-label={uiText("发送")}><PaperPlaneRight size={20} weight="fill" /></button>
                 </footer>
                 {pendingDelete && (
                     <div className="cn-sheet-mask" onClick={() => setPendingDelete(null)}>
                         <div className="cn-sheet cn-sheet-small" onClick={e => e.stopPropagation()}>
-                            <div className="cn-sheet-head"><span>删掉这一句？</span></div>
-                            <p className="cn-sheet-quote">{pendingDelete.role === 'user' ? '你' : char?.name || 'TA'}：{pendingDelete.kind === 'action' ? `（${pendingDelete.text}）` : pendingDelete.text}</p>
+                            <div className="cn-sheet-head"><span>{uiText("删掉这一句？")}</span></div>
+                            <p className="cn-sheet-quote">{pendingDelete.role === 'user' ? uiText("你") : char?.name || 'TA'}：{pendingDelete.kind === 'action' ? `（${pendingDelete.text}）` : pendingDelete.text}</p>
                             <p className="cn-sheet-hint">
-                                {sessionRemembers(session) ? `放映室和私聊记录里都会删掉，${char?.name || 'TA'} 之后就不记得这句了。` : '这一场不留痕，只在放映室里删。'}
-                                {' '}已经整理进记忆宫殿的部分删不掉。
-                            </p>
-                            <button className="cn-sheet-danger" onClick={() => void deleteLine(pendingDelete)}>删除这句</button>
-                            <button className="cn-sheet-cancel" onClick={() => setPendingDelete(null)}>取消</button>
+                                {sessionRemembers(session) ? uiText("放映室和私聊记录里都会删掉，{0} 之后就不记得这句了。", char?.name || 'TA') : uiText("这一场不留痕，只在放映室里删。")}
+                                {' '}{uiText("已经整理进记忆宫殿的部分删不掉。 ")}</p>
+                            <button className="cn-sheet-danger" onClick={() => void deleteLine(pendingDelete)}>{uiText("删除这句")}</button>
+                            <button className="cn-sheet-cancel" onClick={() => setPendingDelete(null)}>{uiText("取消")}</button>
                         </div>
                     </div>
                 )}
@@ -1148,10 +1147,10 @@ const CinemaApp: React.FC = () => {
                     <div className="cn-sheet-mask" onClick={() => setNotesOpen(false)}>
                         <div className="cn-sheet" onClick={e => e.stopPropagation()}>
                             <div className="cn-sheet-head">
-                                <span>画面笔记 · {session.notes?.length || 0} 条</span>
-                                <button className="cn-icon" onClick={() => setNotesOpen(false)} aria-label="关闭"><X size={18} /></button>
+                                <span>{uiText("画面笔记 · ")}{session.notes?.length || 0} {uiText(" 条")}</span>
+                                <button className="cn-icon" onClick={() => setNotesOpen(false)} aria-label={uiText("关闭")}><X size={18} /></button>
                             </div>
-                            <p className="cn-sheet-hint">助理看着画面记的，{char?.name || 'TA'} 靠它跟剧情（每次看最近 8 条）。新的在上面。</p>
+                            <p className="cn-sheet-hint">{uiText("助理看着画面记的，{0} 靠它跟剧情（每次看最近 8 条）。新的在上面。", char?.name || 'TA')}</p>
                             <div className="cn-sheet-list overflow-y-auto">
                                 {(session.notes || []).slice().reverse().map((n, k) => (
                                     <div key={`${n.at}-${k}`} className="cn-sheet-item">
@@ -1159,7 +1158,7 @@ const CinemaApp: React.FC = () => {
                                         <p>{n.text}</p>
                                     </div>
                                 ))}
-                                {!session.notes?.length && <div className="cn-empty small">还没有笔记。换场景的时候助理会记一条。</div>}
+                                {!session.notes?.length && <div className="cn-empty small">{uiText("还没有笔记。换场景的时候助理会记一条。")}</div>}
                             </div>
                         </div>
                     </div>
@@ -1172,26 +1171,26 @@ const CinemaApp: React.FC = () => {
     return (
         <div className="cinema">
             <header className="cn-top">
-                <button className="cn-icon" onClick={closeApp} aria-label="关闭"><ArrowLeft size={20} /></button>
+                <button className="cn-icon" onClick={closeApp} aria-label={uiText("关闭")}><ArrowLeft size={20} /></button>
                 <span className="cn-top-est">— Est. 2026 —</span>
                 <span className="cn-icon" />
             </header>
             <main className="cn-scroll overflow-y-auto">
                 <div className="cn-mast">
                     <div className="cn-mast-en">The Sully Picture House</div>
-                    <div className="cn-mast-zh">影院</div>
-                    <div className="cn-mast-rule">{pairing ? '放映机已就位 · 今晚开映' : '先接上放映机 · 才好开映'}</div>
+                    <div className="cn-mast-zh">{uiText("影院")}</div>
+                    <div className="cn-mast-rule">{pairing ? uiText("放映机已就位 · 今晚开映") : uiText("先接上放映机 · 才好开映")}</div>
                 </div>
 
                 <nav className="cn-tabs">
-                    <button className={homeTab === 'start' ? 'on' : ''} onClick={() => setHomeTab('start')}>开一场</button>
-                    <button className={homeTab === 'programme' ? 'on' : ''} onClick={() => setHomeTab('programme')}>片单{sessions.length ? <small>{groupCinemaWorks(sessions).length}</small> : null}</button>
-                    <button className={homeTab === 'pair' ? 'on' : ''} onClick={() => setHomeTab('pair')}>配对{!pairing && <i className="cn-tab-dot" />}</button>
+                    <button className={homeTab === 'start' ? 'on' : ''} onClick={() => setHomeTab('start')}>{uiText("开一场")}</button>
+                    <button className={homeTab === 'programme' ? 'on' : ''} onClick={() => setHomeTab('programme')}>{uiText("片单")}{sessions.length ? <small>{groupCinemaWorks(sessions).length}</small> : null}</button>
+                    <button className={homeTab === 'pair' ? 'on' : ''} onClick={() => setHomeTab('pair')}>{uiText("配对")}{!pairing && <i className="cn-tab-dot" />}</button>
                 </nav>
                 {homeTab === 'start' && (
                 <section className="cn-card" ref={startCardRef}>
-                    <div className="cn-card-head">开一场</div>
-                    <label className="cn-label">和谁一起看</label>
+                    <div className="cn-card-head">{uiText("开一场")}</div>
+                    <label className="cn-label">{uiText("和谁一起看")}</label>
                     <div className="cn-chars">
                         {characters.map(c => (
                             <button key={c.id} className={`cn-char ${c.id === charId ? 'on' : ''}`} onClick={() => { setCharId(c.id); setMeetChoice(null); }}>
@@ -1200,92 +1199,92 @@ const CinemaApp: React.FC = () => {
                             </button>
                         ))}
                     </div>
-                    <label className="cn-label">看什么</label>
-                    <input className="cn-field" value={title} onChange={e => setTitle(e.target.value)} placeholder="片名，比如：葬送的芙莉莲" />
-                    <input className="cn-field" ref={episodeInputRef} value={episode} onChange={e => setEpisode(e.target.value)} placeholder="第几集（可以不填）" />
-                    <label className="cn-label">在哪儿看</label>
+                    <label className="cn-label">{uiText("看什么")}</label>
+                    <input className="cn-field" value={title} onChange={e => setTitle(e.target.value)} placeholder={uiText("片名，比如：葬送的芙莉莲")} />
+                    <input className="cn-field" ref={episodeInputRef} value={episode} onChange={e => setEpisode(e.target.value)} placeholder={uiText("第几集（可以不填）")} />
+                    <label className="cn-label">{uiText("在哪儿看")}</label>
                     <div className="cn-seg">
-                        <button className={meet === 'online' ? 'on' : ''} onClick={() => setMeetChoice('online')}>线上 · 各在各的地方</button>
-                        <button className={meet === 'offline' ? 'on' : ''} onClick={() => setMeetChoice('offline')}>线下 · 坐在一起</button>
+                        <button className={meet === 'online' ? 'on' : ''} onClick={() => setMeetChoice('online')}>{uiText("线上 · 各在各的地方")}</button>
+                        <button className={meet === 'offline' ? 'on' : ''} onClick={() => setMeetChoice('offline')}>{uiText("线下 · 坐在一起")}</button>
                     </div>
                     <p className="cn-hint">
                         {meet === 'offline'
                             ? (meetingNow
-                                ? `你们正在见面，这一场会记在这次见面里。回到见面后 ${char?.name || 'TA'} 记得刚一起看了什么；看片用掉的时间，用见面里的「过场」往后推。`
-                                : `${char?.name || 'TA'} 现在没在见面里。选线下的话就当作你们坐在一起看，但不会接到哪次见面上。`)
-                            : `${char?.name || 'TA'} 知道你们不在一起，是隔着手机同步看。`}
+                                ? uiText("你们正在见面，这一场会记在这次见面里。回到见面后 {0} 记得刚一起看了什么；看片用掉的时间，用见面里的「过场」往后推。", char?.name || 'TA')
+                                : uiText("{0} 现在没在见面里。选线下的话就当作你们坐在一起看，但不会接到哪次见面上。", char?.name || 'TA'))
+                            : uiText("{0} 知道你们不在一起，是隔着手机同步看。", char?.name || 'TA')}
                     </p>
-                    <label className="cn-label">这一场记不记</label>
+                    <label className="cn-label">{uiText("这一场记不记")}</label>
                     <div className="cn-seg">
-                        <button className={remember ? 'on' : ''} onClick={() => setRemember(true)}>记住</button>
-                        <button className={!remember ? 'on' : ''} onClick={() => setRemember(false)}>不留痕</button>
+                        <button className={remember ? 'on' : ''} onClick={() => setRemember(true)}>{uiText("记住")}</button>
+                        <button className={!remember ? 'on' : ''} onClick={() => setRemember(false)}>{uiText("不留痕")}</button>
                     </div>
                     <p className="cn-hint">
                         {remember
-                            ? `说过的话会记进你和 ${char?.name || 'TA'} 的聊天记录，散场时整理进记忆。`
-                            : `只留在影院里：不存进聊天记录，散场也不整理记忆，${char?.name || 'TA'} 在私聊里不会知道看过。放映室里随时能改。`}
+                            ? uiText("说过的话会记进你和 {0} 的聊天记录，散场时整理进记忆。", char?.name || 'TA')
+                            : uiText("只留在影院里：不存进聊天记录，散场也不整理记忆，{0} 在私聊里不会知道看过。放映室里随时能改。", char?.name || 'TA')}
                     </p>
-                    <label className="cn-label">{char?.name || 'TA'} 看过吗</label>
+                    <label className="cn-label">{char?.name || 'TA'} {uiText(" 看过吗")}</label>
                     <div className="cn-seg">
-                        <button className={spoiler === 'first' ? 'on' : ''} onClick={() => setSpoiler('first')}>第一次看</button>
-                        <button className={spoiler === 'seen' ? 'on' : ''} onClick={() => setSpoiler('seen')}>看过（不剧透）</button>
+                        <button className={spoiler === 'first' ? 'on' : ''} onClick={() => setSpoiler('first')}>{uiText("第一次看")}</button>
+                        <button className={spoiler === 'seen' ? 'on' : ''} onClick={() => setSpoiler('seen')}>{uiText("看过（不剧透）")}</button>
                     </div>
-                    <button className="cn-primary" onClick={() => pairing ? void startSession() : setHomeTab('pair')}>{pairing ? '开场' : '先配对电脑'}</button>
+                    <button className="cn-primary" onClick={() => pairing ? void startSession() : setHomeTab('pair')}>{pairing ? uiText("开场") : uiText("先配对电脑")}</button>
                 </section>
                 )}
-                {homeTab === 'programme' && sessions.length === 0 && <div className="cn-empty">还没一起看过什么。<br />去「开一场」挑一部吧。</div>}
+                {homeTab === 'programme' && sessions.length === 0 && <div className="cn-empty">{uiText("还没一起看过什么。")}<br />{uiText("去「开一场」挑一部吧。")}</div>}
                 {homeTab === 'programme' && sessions.length > 0 && (
                     <section className="cn-programme">
-                        <div className="cn-card-head">片单 <span className="cn-en">Programme</span></div>
+                        <div className="cn-card-head">{uiText("片单 ")}<span className="cn-en">Programme</span></div>
                         {groupCinemaWorks(sessions).slice(0, 30).map(work => {
                             const who = characters.find(c => c.id === work.charId);
                             const last = work.latest;
                             const many = work.sessions.length > 1;
                             const open = openWork === work.key;
                             const watching = who && getActiveCinemaPresence(who.id)?.sessionId;
-                            const need = () => { if (!pairing) addToast('先配对电脑', 'info'); return !!pairing; };
-                            const flags = (s: CinemaSession) => `${s.remember === false ? ' · 不留痕' : ''}${s.endedAt ? ' · 已散场' : watching === s.id ? ' · 正在看' : ''}`;
+                            const need = () => { if (!pairing) addToast(uiText("先配对电脑"), 'info'); return !!pairing; };
+                            const flags = (s: CinemaSession) => `${s.remember === false ? uiText(' · 不留痕') : ''}${s.endedAt ? uiText(' · 已散场') : watching === s.id ? uiText(' · 正在看') : ''}`;
                             return (
                                 <div key={work.key} className="cn-ticket">
                                     <div className="cn-ticket-main">
                                         <div className="cn-session">
                                             <button className="cn-session-main" onClick={() => many ? setOpenWork(open ? null : work.key) : need() && openSession(last)}>
-                                                <b>《{work.title}》{many && <span className="cn-work-count">{open ? '收起 ▴' : '各场 ▾'}</span>}</b>
+                                                <b>《{work.title}》{many && <span className="cn-work-count">{open ? uiText("收起 ▴") : uiText("各场 ▾")}</span>}</b>
                                                 <small>
                                                     {last.episode ? `${last.episode} · ` : ''}
-                                                    {last.lastVideoTime !== undefined ? `看到 ${formatVideoTime(last.lastVideoTime)} · ` : ''}
-                                                    与{who?.name || '（角色已删除）'} · {new Date(last.updatedAt).toLocaleDateString()}
-                                                    {many ? '' : ` · ${last.lines.length} 句${flags(last)}`}
+                                                    {last.lastVideoTime !== undefined ? uiText("看到 {0} · ", formatVideoTime(last.lastVideoTime)) : ''}
+                                                    {uiText(" 与")}{who?.name || uiText("（角色已删除）")} · {new Date(last.updatedAt).toLocaleDateString()}
+                                                    {many ? '' : uiText(" · {0} 句{1}", last.lines.length, flags(last))}
                                                 </small>
                                             </button>
                                         </div>
                                         <div className="cn-ticket-actions">
                                             {canResume(last) && (
-                                                <button className="cn-resume" onClick={() => need() && resumeSession(last)}>▸ 接着看 {formatVideoTime(last.lastVideoTime)}</button>
+                                                <button className="cn-resume" onClick={() => need() && resumeSession(last)}>{uiText("▸ 接着看 ")}{formatVideoTime(last.lastVideoTime)}</button>
                                             )}
                                             {who && (
                                                 <button className="cn-next" onClick={() => prepareNextEpisode(work)}>
-                                                    {nextEpisode(last.episode) ? `下一集 · ${nextEpisode(last.episode)}` : '再开一场'}
+                                                    {nextEpisode(last.episode) ? uiText("下一集 · {0}", nextEpisode(last.episode)) : uiText("再开一场")}
                                                 </button>
                                             )}
-                                            {!many && <button className="cn-icon" onClick={() => void removeSession(last)} aria-label="删除"><Trash size={15} /></button>}
+                                            {!many && <button className="cn-icon" onClick={() => void removeSession(last)} aria-label={uiText("删除")}><Trash size={15} /></button>}
                                         </div>
                                         {many && open && (
                                             <div className="cn-work-list">
                                                 {work.sessions.map(s => (
                                                     <div key={s.id} className="cn-session">
                                                         <button className="cn-session-main" onClick={() => need() && openSession(s)}>
-                                                            <b>{s.episode || '（没写第几集）'}</b>
+                                                            <b>{s.episode || uiText("（没写第几集）")}</b>
                                                             <small>
                                                                 {new Date(s.updatedAt).toLocaleDateString()}
-                                                                {s.lastVideoTime !== undefined ? ` · 看到 ${formatVideoTime(s.lastVideoTime)}` : ''}
-                                                                {` · ${s.lines.length} 句${flags(s)}`}
+                                                                {s.lastVideoTime !== undefined ? uiText(" · 看到 {0}", formatVideoTime(s.lastVideoTime)) : ''}
+                                                                {uiText(" · {0} 句{1}", s.lines.length, flags(s))}
                                                             </small>
                                                         </button>
                                                         {canResume(s) && s.id !== last.id && (
                                                             <button className="cn-resume" onClick={() => need() && resumeSession(s)}>▸ {formatVideoTime(s.lastVideoTime)}</button>
                                                         )}
-                                                        <button className="cn-icon" onClick={() => void removeSession(s)} aria-label="删除"><Trash size={15} /></button>
+                                                        <button className="cn-icon" onClick={() => void removeSession(s)} aria-label={uiText("删除")}><Trash size={15} /></button>
                                                     </div>
                                                 ))}
                                             </div>
@@ -1294,7 +1293,7 @@ const CinemaApp: React.FC = () => {
                                     <div className="cn-stub">
                                         <span className="cn-en">No.</span>
                                         <b>{String(work.sessions.length).padStart(2, '0')}</b>
-                                        <span>场</span>
+                                        <span>{uiText("场")}</span>
                                     </div>
                                 </div>
                             );
@@ -1303,20 +1302,20 @@ const CinemaApp: React.FC = () => {
                 )}
                 {homeTab === 'pair' && (
                 <section className="cn-card">
-                    <div className="cn-card-head">电脑</div>
+                    <div className="cn-card-head">{uiText("电脑")}</div>
                     {pairing ? (
                         <>
-                            <p className="cn-lead">已配对 · 房间 <b>{pairing.code}</b>。电脑上打开观影端就会自动连上。</p>
+                            <p className="cn-lead">{uiText("已配对 · 房间 ")}<b>{pairing.code}</b>{uiText("。电脑上打开观影端就会自动连上。")}</p>
                             <div className="cn-row">
-                                <button className="cn-ghost" onClick={() => setView('pair')}>怎么在电脑上打开</button>
-                                <button className="cn-ghost" onClick={() => void startPairing()} disabled={pairBusy}>重新配对</button>
-                                <button className="cn-ghost danger" onClick={() => void forgetPairing()}>解除</button>
+                                <button className="cn-ghost" onClick={() => setView('pair')}>{uiText("怎么在电脑上打开")}</button>
+                                <button className="cn-ghost" onClick={() => void startPairing()} disabled={pairBusy}>{uiText("重新配对")}</button>
+                                <button className="cn-ghost danger" onClick={() => void forgetPairing()}>{uiText("解除")}</button>
                             </div>
                         </>
                     ) : (
                         <>
-                            <p className="cn-lead">视频在电脑上放，角色在这里陪你看。先把电脑配对上（只要一次）。</p>
-                            <button className="cn-primary" onClick={() => void startPairing()} disabled={pairBusy}>{pairBusy ? '正在开放映室…' : '配对电脑'}</button>
+                            <p className="cn-lead">{uiText("视频在电脑上放，角色在这里陪你看。先把电脑配对上（只要一次）。")}</p>
+                            <button className="cn-primary" onClick={() => void startPairing()} disabled={pairBusy}>{pairBusy ? uiText("正在开放映室…") : uiText("配对电脑")}</button>
                         </>
                     )}
                 </section>

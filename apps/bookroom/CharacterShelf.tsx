@@ -1,3 +1,4 @@
+import { useBookCinemaText } from '../../utils/bookCinemaLocale';
 /**
  * 角色书单：ta 在读哪些书、读到哪；ta 留下的话（彼方批注 / 划线回应 / 书评）；ta 推荐的书。
  * 每条留言都能「在书里看」原文、也能删除；顶部可以清空 ta 的阅读记录。
@@ -33,6 +34,7 @@ export const CharacterShelf: React.FC<{
     onRecStatus: (id: string, status: 'want' | 'read' | 'pass') => void;
     onRecDelete: (id: string) => void;
 }> = ({ char, books, onBack, onOpenBook, onRead, onSaveRecord, onClearAll, recommendations, onRecommend, onRecStatus, onRecDelete }) => {
+    const uiText = useBookCinemaText();
     const [tab, setTab] = useState<CharTab>('books');
     const [recBusy, setRecBusy] = useState(false);
     const [recError, setRecError] = useState('');
@@ -85,8 +87,8 @@ export const CharacterShelf: React.FC<{
     const toggle = (key: string) => setOpen(s => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n; });
 
     const clearAll = async () => {
-        if (!window.confirm(`清空 ${char.name} 的全部阅读记录？\n\nta 在每本书上的书签都会清零，下次从头读。`)) return;
-        const alsoAnn = window.confirm(`要不要连 ${char.name} 写过的 ${countOf('批注')} 条批注一起删掉？\n\n点「确定」一起删；点「取消」只清书签、批注留着。`);
+        if (!window.confirm(uiText("清空 {0} 的全部阅读记录？\n\nta 在每本书上的书签都会清零，下次从头读。", char.name))) return;
+        const alsoAnn = window.confirm(uiText("要不要连 {0} 写过的 {1} 条批注一起删掉？\n\n点「确定」一起删；点「取消」只清书签、批注留着。", char.name, countOf('批注')));
         await onClearAll(alsoAnn);
         if (alsoAnn) setAnnotations([]);
     };
@@ -101,9 +103,9 @@ export const CharacterShelf: React.FC<{
                 <Cover title={book.title} cover={book.record.cover} archived={!!book.record.archived} />
                 <span className="bk-book-body">
                     <strong>{book.title}</strong>
-                    <small>{ratio == null ? '还没在彼方翻开 · 和你一起读' : ratio >= 1 ? '读完了' : ch >= 0 ? chapters[ch].title : '已开始'}</small>
+                    <small>{ratio == null ? uiText("还没在彼方翻开 · 和你一起读") : ratio >= 1 ? uiText("读完了") : ch >= 0 ? chapters[ch].title : uiText("已开始")}</small>
                     <span className="bk-mini-row"><em>ta</em><Bar ratio={ratio ?? 0} tone="char" /><em>{ratio == null ? '—' : formatPercent(ratio)}</em></span>
-                    <span className="bk-mini-row"><em>我</em><Bar ratio={me ?? 0} /><em>{me == null ? '未开始' : formatPercent(me)}</em></span>
+                    <span className="bk-mini-row"><em>{uiText("我")}</em><Bar ratio={me ?? 0} /><em>{me == null ? uiText("未开始") : formatPercent(me)}</em></span>
                 </span>
             </button>
         );
@@ -112,40 +114,40 @@ export const CharacterShelf: React.FC<{
     return (
         <>
             <header className="bk-top">
-                <button className="bk-icon" onClick={onBack} aria-label="返回"><ArrowLeft size={20} /></button>
-                <div className="bk-top-title"><small>READING LIST</small><h1>{char.name} 的书单</h1></div>
+                <button className="bk-icon" onClick={onBack} aria-label={uiText("返回")}><ArrowLeft size={20} /></button>
+                <div className="bk-top-title"><small>READING LIST</small><h1>{char.name} {uiText(" 的书单")}</h1></div>
                 <span className="bk-icon" />
             </header>
             <main className="bk-scroll overflow-y-auto">
                 <section className="bk-char-hero">
                     <Avatar char={char} size={56} />
                     <div>
-                        <p className="bk-char-stats"><b>{reading.length}</b> 在读 · <b>{finished.length}</b> 读完 · <b>{traces.length}</b> 条留言</p>
-                        <p className="bk-hint">彼方里：{readingPreferenceLabel(char)} · {READING_PACE_LABEL[readingPaceOf(char)]}{char.vrState?.enabled ? '' : ' · 还没接入彼方，不会自己去读书'}</p>
-                        <button className="bk-link-btn" onClick={() => void clearAll()}><Eraser size={13} /> 清空阅读记录</button>
+                        <p className="bk-char-stats"><b>{reading.length}</b> {uiText(" 在读 · ")}<b>{finished.length}</b> {uiText(" 读完 · ")}<b>{traces.length}</b> {uiText(" 条留言")}</p>
+                        <p className="bk-hint">{uiText("彼方里：")}{readingPreferenceLabel(char)} · {READING_PACE_LABEL[readingPaceOf(char)]}{char.vrState?.enabled ? '' : uiText(" · 还没接入彼方，不会自己去读书")}</p>
+                        <button className="bk-link-btn" onClick={() => void clearAll()}><Eraser size={13} /> {uiText(" 清空阅读记录")}</button>
                     </div>
                 </section>
 
                 <SubTabs<CharTab> className="bk-subtabs-sticky" value={tab} onChange={setTab} tabs={[
-                    { id: 'books', label: '书单', badge: rows.length },
-                    { id: 'traces', label: '留下的话', badge: traces.length },
-                    { id: 'recs', label: '推荐', badge: recommendations.length },
+                    { id: 'books', label: uiText("书单"), badge: rows.length },
+                    { id: 'traces', label: uiText("留下的话"), badge: traces.length },
+                    { id: 'recs', label: uiText("推荐"), badge: recommendations.length },
                 ]} />
 
                 <div className="bk-tabpanel">
                     {tab === 'books' && <>
-                        {reading.length > 0 && <><h3 className="bk-section">在读</h3><div className="bk-shelf">{reading.map(x => <BookRow key={x.book.novelId} book={x.book} ratio={x.ratio} />)}</div></>}
-                        {finished.length > 0 && <><h3 className="bk-section">读完了</h3><div className="bk-shelf">{finished.map(x => <BookRow key={x.book.novelId} book={x.book} ratio={x.ratio} />)}</div></>}
-                        {notYet.length > 0 && <><h3 className="bk-section">约好一起读、还没翻开</h3><div className="bk-shelf">{notYet.map(x => <BookRow key={x.book.novelId} book={x.book} ratio={null} />)}</div></>}
-                        {!rows.length && <p className="bk-empty-sm">{char.name} 还没读过书架上的书。</p>}
+                        {reading.length > 0 && <><h3 className="bk-section">{uiText("在读")}</h3><div className="bk-shelf">{reading.map(x => <BookRow key={x.book.novelId} book={x.book} ratio={x.ratio} />)}</div></>}
+                        {finished.length > 0 && <><h3 className="bk-section">{uiText("读完了")}</h3><div className="bk-shelf">{finished.map(x => <BookRow key={x.book.novelId} book={x.book} ratio={x.ratio} />)}</div></>}
+                        {notYet.length > 0 && <><h3 className="bk-section">{uiText("约好一起读、还没翻开")}</h3><div className="bk-shelf">{notYet.map(x => <BookRow key={x.book.novelId} book={x.book} ratio={null} />)}</div></>}
+                        {!rows.length && <p className="bk-empty-sm">{char.name} {uiText(" 还没读过书架上的书。")}</p>}
                     </>}
 
                     {tab === 'traces' && <>
                         <nav className="bk-chips">
-                            <button aria-pressed={kind === 'all'} onClick={() => setKind('all')}>全部 {traces.length}</button>
-                            {(['批注', '回应', '书评'] as const).map(k => countOf(k) > 0 && <button key={k} aria-pressed={kind === k} onClick={() => setKind(k)}>{k} {countOf(k)}</button>)}
+                            <button aria-pressed={kind === 'all'} onClick={() => setKind('all')}>{uiText("全部 ")}{traces.length}</button>
+                            {(['批注', '回应', '书评'] as const).map(k => countOf(k) > 0 && <button key={k} aria-pressed={kind === k} onClick={() => setKind(k)}>{uiText(k)} {countOf(k)}</button>)}
                         </nav>
-                        {annotations == null ? <p className="bk-empty-sm">读取中…</p> : !shownTraces.length ? <p className="bk-empty-sm">还没有。ta 在彼方读书时会在页边写批注；你划线给 ta 看、交换书评时，ta 的话也会记在这里。</p> : (
+                        {annotations == null ? <p className="bk-empty-sm">{uiText("读取中…")}</p> : !shownTraces.length ? <p className="bk-empty-sm">{uiText("还没有。ta 在彼方读书时会在页边写批注；你划线给 ta 看、交换书评时，ta 的话也会记在这里。")}</p> : (
                             <ul className="bk-notes">
                                 {shownTraces.map(t => {
                                     const expanded = open.has(t.key);
@@ -153,14 +155,14 @@ export const CharacterShelf: React.FC<{
                                     const ci = t.segIdx != null ? chapterIndexAt(chapters, t.segIdx) : -1;
                                     return (
                                         <li key={t.key} className="bk-note-item bk-ann">
-                                            <small><span>《{t.book.title}》{ci >= 0 ? ` · ${chapters[ci].title}` : ''} · {t.kind}</span><time>{formatStamp(t.at).full}</time></small>
+                                            <small><span>《{t.book.title}》{ci >= 0 ? ` · ${chapters[ci].title}` : ''} · {uiText(t.kind)}</span><time>{formatStamp(t.at).full}</time></small>
                                             {t.quote && <blockquote className={expanded ? '' : 'is-clamped'} onClick={() => toggle(t.key)}>{t.quote}</blockquote>}
-                                            {t.quote && t.quote.length > 60 && <button className="bk-link-btn" onClick={() => toggle(t.key)}>{expanded ? '收起原文' : '展开原文'}</button>}
+                                            {t.quote && t.quote.length > 60 && <button className="bk-link-btn" onClick={() => toggle(t.key)}>{expanded ? uiText("收起原文") : uiText("展开原文")}</button>}
                                             <p className="bk-note-reply"><b>{char.name}</b>{t.rating ? <> <Stars n={t.rating} /></> : null}：{t.content}</p>
                                             <div className="bk-note-foot">
-                                                {t.book.novel && t.segIdx != null && <button onClick={() => onRead(t.book.novelId, t.segIdx!)}><BookOpenText size={13} /> 在书里看</button>}
-                                                <button onClick={() => onOpenBook(t.book.novelId)}>去这本书</button>
-                                                <button onClick={() => { if (window.confirm(`删掉 ${char.name} 的这条${t.kind}？删了找不回来。`)) void t.remove(); }}>删除</button>
+                                                {t.book.novel && t.segIdx != null && <button onClick={() => onRead(t.book.novelId, t.segIdx!)}><BookOpenText size={13} /> {uiText(" 在书里看")}</button>}
+                                                <button onClick={() => onOpenBook(t.book.novelId)}>{uiText("去这本书")}</button>
+                                                <button onClick={() => { if (window.confirm(uiText("删掉 {0} 的这条{1}？删了找不回来。", char.name, uiText(t.kind)))) void t.remove(); }}>{uiText("删除")}</button>
                                             </div>
                                         </li>
                                     );
@@ -170,7 +172,7 @@ export const CharacterShelf: React.FC<{
                     </>}
 
                     {tab === 'recs' && <section>
-                        {!recommendations.length && <p className="bk-empty-sm">请 ta 按自己的口味和对你的了解推荐一本。推荐会发进你们的私聊。</p>}
+                        {!recommendations.length && <p className="bk-empty-sm">{uiText("请 ta 按自己的口味和对你的了解推荐一本。推荐会发进你们的私聊。")}</p>}
                         <ul className="bk-recs">
                             {[...recommendations].reverse().map(r => (
                                 <li key={r.id} className={r.status === 'pass' ? 'is-pass' : ''}>
@@ -178,9 +180,9 @@ export const CharacterShelf: React.FC<{
                                     <p>{r.reason}</p>
                                     <div className="bk-note-foot">
                                         {(['want', 'read', 'pass'] as const).map(st => (
-                                            <button key={st} aria-pressed={r.status === st} onClick={() => onRecStatus(r.id, st)}>{{ want: '想读', read: '读过了', pass: '不感兴趣' }[st]}</button>
+                                            <button key={st} aria-pressed={r.status === st} onClick={() => onRecStatus(r.id, st)}>{{ want: uiText("想读"), read: uiText("读过了"), pass: uiText("不感兴趣") }[st]}</button>
                                         ))}
-                                        <button onClick={() => { if (window.confirm('删掉这条推荐？')) onRecDelete(r.id); }}>删除</button>
+                                        <button onClick={() => { if (window.confirm(uiText("删掉这条推荐？"))) onRecDelete(r.id); }}>{uiText("删除")}</button>
                                     </div>
                                 </li>
                             ))}
@@ -190,7 +192,7 @@ export const CharacterShelf: React.FC<{
                             setRecBusy(true); setRecError('');
                             try { await onRecommend(); } catch (e) { setRecError(e instanceof Error ? e.message : String(e)); }
                             finally { setRecBusy(false); }
-                        }}><Sparkle size={15} /> {recBusy ? `${char.name} 正在想…` : `请 ${char.name} 推荐一本`}</button>
+                        }}><Sparkle size={15} /> {recBusy ? uiText("{0} 正在想…", char.name) : uiText("请 {0} 推荐一本", char.name)}</button>
                     </section>}
                 </div>
             </main>

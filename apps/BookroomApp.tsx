@@ -1,3 +1,4 @@
+import { useBookCinemaText } from '../utils/bookCinemaLocale';
 /**
  * 书房 —— 在 Reeden 里读，回来告诉 Sully 读到了哪；也能在这里直接翻书。
  *
@@ -37,6 +38,7 @@ const HOME_TABS: { id: HomeTab; label: string; icon: React.ReactNode; title: str
 ];
 
 const BookroomApp: React.FC = () => {
+    const uiText = useBookCinemaText();
     const { closeApp, characters, updateCharacter, apiConfig, memoryPalaceConfig, userProfile, groups, realtimeConfig, addToast, registerBackHandler } = useOS();
     const [novels, setNovels] = useState<VRWorldNovel[]>([]);
     const [records, setRecords] = useState<BookroomRecord[]>([]);
@@ -157,35 +159,35 @@ const BookroomApp: React.FC = () => {
                 onPullBack={char => {
                     const userSeg = book.record.progress?.segIdx;
                     if (userSeg == null) return;
-                    if (!window.confirm(`把 ${char.name} 在《${book.title}》的书签挪回到你的位置？\n\nta 之前写的批注都还在；之后 ta 会从你这里接着读，最多读到你这一章的结尾。`)) return;
+                    if (!window.confirm(uiText("把 {0} 在《{1}》的书签挪回到你的位置？\n\nta 之前写的批注都还在；之后 ta 会从你这里接着读，最多读到你这一章的结尾。", char.name, book.title))) return;
                     setBookmark(char, book.novelId, userSeg);
-                    addToast(`${char.name} 的书签已挪回你的位置`, 'success');
+                    addToast(uiText("{0} 的书签已挪回你的位置", char.name), 'success');
                 }}
                 onClearBookmark={char => {
-                    if (!window.confirm(`清空 ${char.name} 在《${book.title}》的阅读进度？\n\nta 下次会从头读这本；批注不受影响（要删批注去「批注」页）。`)) return;
+                    if (!window.confirm(uiText("清空 {0} 在《{1}》的阅读进度？\n\nta 下次会从头读这本；批注不受影响（要删批注去「批注」页）。", char.name, book.title))) return;
                     setBookmark(char, book.novelId, undefined);
-                    addToast(`已清空 ${char.name} 在这本书的进度`, 'success');
+                    addToast(uiText("已清空 {0} 在这本书的进度", char.name), 'success');
                 }}
                 onArchive={async () => {
                     if (!book.novel) return;
                     const pending = unfinishedReaders(book.novel, book.record, characters);
-                    const warn = pending.length ? `\n\n还没读完的：${pending.join('、')}。归档后角色就没法接着读这本了。` : '';
-                    if (!window.confirm(`归档《${book.title}》？\n\n会删掉正文来省空间，进度、目录、角色批注和聊天里的记忆都保留。以后重新导入同名的书，记录会自动接回。${warn}`)) return;
+                    const warn = pending.length ? uiText('\n\n还没读完的：{0}。归档后角色就没法接着读这本了。', pending.join('、')) : '';
+                    if (!window.confirm(uiText("归档《{0}》？\n\n会删掉正文来省空间，进度、目录、角色批注和聊天里的记忆都保留。以后重新导入同名的书，记录会自动接回。{1}", book.title, warn))) return;
                     try {
                         const next = await archiveBook(book.novel, { ...book.record, chapters: book.record.chapters || detectChapters(book.novel.segments) });
                         setRecords(rs => [...rs.filter(r => r.novelId !== next.novelId), next]);
                         setNovels(ns => ns.filter(n => n.id !== book.novelId));
-                        addToast('已归档，记录都还在', 'success');
+                        addToast(uiText("已归档，记录都还在"), 'success');
                     } catch (e) { addToast(e instanceof Error ? e.message : String(e), 'error'); }
                 }}
                 onDelete={async () => {
-                    if (!window.confirm(`彻底删除《${book.title}》？\n\n正文、角色在书上的批注、你的进度、读书记录和封面都会删掉，不能恢复。\n\n已经发进聊天的进度消息和角色的记忆不受影响。\n\n只想省空间的话，用「归档」更好。`)) return;
+                    if (!window.confirm(uiText("彻底删除《{0}》？\n\n正文、角色在书上的批注、你的进度、读书记录和封面都会删掉，不能恢复。\n\n已经发进聊天的进度消息和角色的记忆不受影响。\n\n只想省空间的话，用「归档」更好。", book.title))) return;
                     try {
                         await deleteBookCompletely(book.novelId);
                         setRecords(rs => rs.filter(r => r.novelId !== book.novelId));
                         setNovels(ns => ns.filter(n => n.id !== book.novelId));
                         setOpenId(null);
-                        addToast('已删除', 'success');
+                        addToast(uiText("已删除"), 'success');
                     } catch (e) { addToast(e instanceof Error ? e.message : String(e), 'error'); }
                 }}
             />
@@ -204,7 +206,7 @@ const BookroomApp: React.FC = () => {
                         const mine = (await DB.getVRAnnotations()).filter(a => a.authorId === viewedChar.id);
                         for (const a of mine) await DB.deleteVRAnnotation(a.id);
                     }
-                    addToast(alsoAnnotations ? `已清空 ${viewedChar.name} 的阅读记录和批注` : `已清空 ${viewedChar.name} 的阅读记录`, 'success');
+                    addToast(alsoAnnotations ? uiText("已清空 {0} 的阅读记录和批注", viewedChar.name) : uiText("已清空 {0} 的阅读记录", viewedChar.name), 'success');
                 }}
                 recommendations={meta.recommendations.filter(r => r.charId === viewedChar.id)}
                 onRecommend={async () => {
@@ -234,9 +236,9 @@ const BookroomApp: React.FC = () => {
         page = (
             <>
                 <header className="bk-top">
-                    <button className="bk-icon" onClick={closeApp} aria-label="返回"><ArrowLeft size={20} /></button>
-                    <div className="bk-top-title">{homeTab === 'shelf' && <small>BOOKROOM</small>}<h1>{current.title}</h1></div>
-                    {homeTab === 'shelf' ? <button className="bk-icon" onClick={() => setImporting(true)} aria-label="导入书"><Plus size={20} /></button> : <span className="bk-icon" />}
+                    <button className="bk-icon" onClick={closeApp} aria-label={uiText("返回")}><ArrowLeft size={20} /></button>
+                    <div className="bk-top-title">{homeTab === 'shelf' && <small>BOOKROOM</small>}<h1>{uiText(current.title)}</h1></div>
+                    {homeTab === 'shelf' ? <button className="bk-icon" onClick={() => setImporting(true)} aria-label={uiText("导入书")}><Plus size={20} /></button> : <span className="bk-icon" />}
                 </header>
                 <main className="bk-scroll bk-scroll-tabbed overflow-y-auto">
                     {homeTab === 'shelf' && <ShelfView books={books} characters={characters} categories={categories} loaded={loaded} onOpen={id => openBook(id)} onImport={() => setImporting(true)} />}
@@ -251,7 +253,7 @@ const BookroomApp: React.FC = () => {
                 <nav className="bk-tabbar" role="tablist">
                     {HOME_TABS.map(t => (
                         <button key={t.id} role="tab" aria-selected={homeTab === t.id} onClick={() => switchHome(t.id)}>
-                            {t.icon}<span>{t.label}</span>
+                            {t.icon}<span>{uiText(t.label)}</span>
                         </button>
                     ))}
                 </nav>
@@ -281,9 +283,9 @@ const BookroomApp: React.FC = () => {
                             await sendProgressToCharacters({ text, novelId: book.novelId, characters: tell, apiConfig, memoryPalaceConfig, userName: userProfile?.name || '' });
                         }
                         setReporting(null);
-                        addToast(tell.length ? `记好了，也告诉了 ${tell.map(c => c.name).join('、')}` : '进度记好了', 'success');
+                        addToast(tell.length ? uiText("记好了，也告诉了 {0}", tell.map(c => c.name).join('、')) : uiText("进度记好了"), 'success');
                         const finishedNow = rec.progress && rec.progress.segIdx >= book.segCount - 1;
-                        if (finishedNow && !rec.reviews?.user && window.confirm(`读完《${book.title}》啦！要写一篇书评，和 ta 交换吗？`)) { setBookTab('reviews'); setReviewing(true); }
+                        if (finishedNow && !rec.reviews?.user && window.confirm(uiText("读完《{0}》啦！要写一篇书评，和 ta 交换吗？", book.title))) { setBookTab('reviews'); setReviewing(true); }
                     }}
                 />
             )}
