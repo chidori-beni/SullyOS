@@ -120,3 +120,13 @@ it('still accepts a complete fenced JSON result from an older provider', async (
   const service = createProfileTranslator(vi.fn().mockResolvedValue(data), memory);
   await expect(service.translate('a', source, api)).resolves.toEqual(japanese);
 });
+
+it('keeps optional note cache/prompt isolated without changing profile defaults', async () => {
+  const fetch = vi.fn().mockResolvedValue(response()), store = memory();
+  const notes = createProfileTranslator(fetch, () => store, { cacheKey: 'notes-only', systemPrompt: 'Translate only this note' });
+  await notes.translate('a', source, api);
+  expect(store.getItem('notes-only')).toBeTruthy();
+  expect(store.getItem(PROFILE_TRANSLATION_CACHE)).toBeNull();
+  expect(JSON.parse(fetch.mock.calls[0][1].body).messages[0].content).toBe('Translate only this note');
+  expect(createProfileTranslator(fetch, () => store).read(profileTranslationKey('a', source))).toBeUndefined();
+});

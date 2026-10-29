@@ -3,11 +3,11 @@
  * 2026-09-27 从 apps/VRWorldApp.tsx 原样搬出（彼方书库和书房共用），并加了「删除批注」。
  */
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { AnnotationText } from './AnnotationText';
 import { ListBullets, Palette, TextAa, X } from '@phosphor-icons/react';
 import type { CharacterProfile, VRNovelAnnotation, VRWorldNovel } from '../../types';
 import { DB } from '../../utils/db';
 import { groupAnnotationsBySeg } from '../../utils/vrWorld/novel';
-import { stripLeakedAttrs } from '../../utils/vrWorld/prompts';
 import { chapterIndexAt, detectChapters, fallbackSections, type BookChapter } from '../../utils/bookroom/bookroom';
 import { getBookroomRecord } from '../../utils/bookroom/bookroomDb';
 
@@ -50,7 +50,7 @@ const SegBlock: React.FC<{
             <div key={a.id} className="mt-2 ml-2 rounded-lg px-3 py-2" style={{ background: theme.annBg, borderLeft: `3px solid ${theme.accent}` }}>
                 <span className="font-bold" style={{ color: theme.accent, fontSize: fontSize - 3 }}>{nameOf(a.authorId) || a.authorName}</span>
                 {a.targetAnnotationId && <span style={{ color: theme.sub, fontSize: fontSize - 3 }}> 回应</span>}
-                <span style={{ color: theme.text, fontSize: fontSize - 3 }}>：{stripLeakedAttrs(a.content)}</span>
+                <span style={{ color: theme.text, fontSize: fontSize - 3 }}>：<AnnotationText annotation={a} /></span>
                 {onDelete && <button onClick={() => onDelete(a)} className="ml-2 align-middle opacity-60 active:opacity-100" style={{ color: theme.sub, fontSize: fontSize - 5 }} aria-label="删除这条批注">删除</button>}
             </div>
         ))}

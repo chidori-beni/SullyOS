@@ -1,4 +1,6 @@
 import { resolveDialogueApi } from '../characterApi';
+import { loadUiLocale, type UiLocale } from '../uiLocale';
+import { annotationLanguageRule } from './annotationLocale';
 import { acquireCharacterModule, consumeCharacterModule, characterModuleAllowance, characterModuleCount } from './sarCharacterCommerce';
 import { rollSARActivity, sarActivityPool } from './activityChoices';
 import type { VRSARActivity } from '../../types';
@@ -410,6 +412,7 @@ async function runVRSessionUnlocked(deps: VRSessionDeps): Promise<VRSessionResul
         // 在 buildChatRequestPayload 之前算好，让向量召回能带上"对面这些人是谁"，
         // 角色才记得起自己跟他们的关系，而不是只按聊天历史召回。
         let roomTurn: string;
+        let libraryLocale: UiLocale = 'zh-CN';
         let novel: VRWorldNovel | null = null;
         let win: ReturnType<typeof getReadingWindow> | null = null;
         let allAnn: Awaited<ReturnType<typeof DB.getVRAnnotations>> = [];
@@ -464,7 +467,8 @@ async function runVRSessionUnlocked(deps: VRSessionDeps): Promise<VRSessionResul
             win = clampWindow(getReadingWindow(novel, bm >= novel.segments.length ? 0 : bm, READING_PACE_CHARS[readingPaceOf(char)]), paceCaps.get(novel.id));
             allAnn = await DB.getVRAnnotations(novel.id);
             const windowAnn = allAnn.filter(a => a.segIdx >= win!.from && a.segIdx < win!.to);
-            roomTurn = buildLibraryRoomTurn(novel, win, windowAnn, char.id);
+            libraryLocale = loadUiLocale();
+            roomTurn = buildLibraryRoomTurn(novel, win, windowAnn, char.id) + annotationLanguageRule(libraryLocale);
             recallExtra.push(`小说《${novel.title}》`);
             windowAnn.forEach(a => { if (a.authorId !== char.id) recallNames.add(a.authorName); });
         } else if (room.id === 'music') {
@@ -747,7 +751,7 @@ async function runVRSessionUnlocked(deps: VRSessionDeps): Promise<VRSessionResul
                 if (pa.segIdx < win!.from || pa.segIdx >= win!.to) continue;
                 const targetId = pa.refLabel ? label2id.get(pa.refLabel) : undefined;
                 const ann = buildAnnotation({ novelId: novel!.id, segIdx: pa.segIdx, authorId: char.id, authorName: char.name, content: pa.content, targetAnnotationId: targetId });
-                await DB.saveVRAnnotation(ann);
+                await DB.saveVRAnnotation({ ...ann, contentLocale: libraryLocale });
                 label2id.set(ann.id.slice(-4), ann.id);
                 const ex = pa.content.length > 60 ? pa.content.slice(0, 60) + '…' : pa.content;
                 savedExcerpts.push(ex);

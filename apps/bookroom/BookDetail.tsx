@@ -3,10 +3,10 @@
  * 归档、彻底删除收在右上角「⋯」里，免得误点。
  */
 import React, { useEffect, useMemo, useState } from 'react';
+import { AnnotationText } from '../../components/reader/AnnotationText';
 import { ArrowLeft, Archive, BookOpenText, Check, DotsThree, Trash } from '@phosphor-icons/react';
 import type { CharacterProfile, VRNovelAnnotation } from '../../types';
 import { DB } from '../../utils/db';
-import { stripLeakedAttrs } from '../../utils/vrWorld/prompts';
 import { chapterIndexAt, detectChapters, fallbackSections, formatPercent, progressRatio, type BookChapter, type BookroomRecord } from '../../utils/bookroom/bookroom';
 import type { BookNote } from '../../utils/bookroom/reedenNotes';
 import { Avatar, Bar, charRatio, SubTabs, type ShelfBook, formatStamp } from './shared';
@@ -259,7 +259,7 @@ const AnnotationsPanel: React.FC<{
                             <small><span>{nameOf(a)} · {ci >= 0 ? chapters[ci].title : '书里某处'}{a.targetAnnotationId ? ' · 回应别人' : ''}</span><time>{formatStamp(a.createdAt).full}</time></small>
                             {quote && <blockquote className={expanded ? '' : 'is-clamped'} onClick={() => toggle(a.id)}>{quote}</blockquote>}
                             {quote && quote.length > 60 && <button className="bk-link-btn" onClick={() => toggle(a.id)}>{expanded ? '收起原文' : '展开原文'}</button>}
-                            <p className="bk-note-reply"><b>{nameOf(a)}</b>：{stripLeakedAttrs(a.content)}</p>
+                            <p className="bk-note-reply"><b>{nameOf(a)}</b>：<AnnotationText annotation={a} /></p>
                             <div className="bk-note-foot">
                                 {book.novel && <button onClick={() => onRead(a.segIdx, true)}><BookOpenText size={13} /> 在书里看</button>}
                                 <button onClick={() => void remove([a.id], `删掉 ${nameOf(a)} 的这条批注？删了找不回来。`)}>删除</button>

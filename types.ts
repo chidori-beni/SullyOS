@@ -1432,6 +1432,8 @@ export interface VRNovelSegment {
  * 全局存在 VRWorldNovel 之外的独立集合里——见 db 的 vr_annotations 字段。
  */
 export interface VRNovelAnnotation {
+    /** Requested generation language; absent on historical/user notes. Not language detection. */
+    contentLocale?: 'zh-CN' | 'ja-JP';
     id: string;
     novelId: string;
     /** 批注锚定的段落索引 */

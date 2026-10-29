@@ -6,6 +6,11 @@ export const UI_LOCALE_STORAGE_KEY = 'sullyos.uiLocale.v1';
 export type UiMessageParams = Record<string, string | number>;
 
 const ZH_MESSAGES = {
+  'annotation.loading': '正在翻译显示副本（首次调用当前主模型）…',
+  'annotation.failed': '翻译失败，保留原文：{message}',
+  'annotation.translate': '翻译为日语显示副本',
+  'annotation.retry': '重试翻译',
+  'annotation.api': '请先配置可用的主 API，暂时显示原文。',
   'natural.translationLoading': '正在翻译日语显示副本，首次会调用当前模型…',
   'natural.translationError': '日语翻译失败，暂时显示原文：{message}',
   'natural.translationRetry': '重试日语翻译',
@@ -1323,6 +1328,11 @@ const ZH_MESSAGES = {
 } as const;
 
 const JA_MESSAGES = {
+  'annotation.loading': '表示用コピーを翻訳中（初回は現在のメインモデルを使用）…',
+  'annotation.failed': '翻訳に失敗したため原文を表示しています：{message}',
+  'annotation.translate': '日本語の表示用コピーに翻訳',
+  'annotation.retry': '翻訳を再試行',
+  'annotation.api': '有効なメイン API を設定してください。現在は原文を表示しています。',
   'natural.translationLoading': '日本語の表示用コピーを翻訳中です。初回は現在のモデルを呼び出します…',
   'natural.translationError': '日本語への翻訳に失敗したため、原文を表示しています：{message}',
   'natural.translationRetry': '日本語への翻訳を再試行',
