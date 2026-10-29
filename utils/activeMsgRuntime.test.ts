@@ -882,6 +882,35 @@ describe('flushInboxToChat 落库时间戳（走真库）', () => {
     expect(Date.now() - t0, '人不在场时该跳过打字延迟').toBeLessThan(400);
   }, 20000);
 
+  // 页面还在后台时 SW 就把消息喊过来了（iOS 会给后台页面留几秒活头）：这时开始的处理
+  // 判不出「缺席」（页面上次回前台早于送达），以前照样慢放，定时器又被系统冻住，
+  // 用户看着通知点进来才接着一条条冒。现在后台开始处理的一律一次放完。
+  it('页面在后台时开始处理 → 跳过慢放（不等用户回来接着演）', async () => {
+    const charId = 'char-pace-hidden';
+    await DB.saveCharacter({ id: charId, name: '后台送达角色' } as any);
+    const receivedAt = Date.now();
+    await ActiveMsgStore.saveInboxMessage(inboxMsg({
+      messageId: 'msg-pace-hidden',
+      charId,
+      messageType: 'text',
+      body: '还没睡吗\n---\n早点休息\n---\n明天见',
+      sentAt: receivedAt,
+      receivedAt,
+    }));
+
+    notePageBecameVisible(receivedAt - 60_000); // 用户之前在场，送达时已切走
+    vi.stubGlobal('document', { visibilityState: 'hidden' });
+    const t0 = Date.now();
+    try {
+      await flushInboxToChat('SW通知');
+    } finally {
+      vi.unstubAllGlobals();
+      notePageBecameVisible(0);
+    }
+
+    expect(Date.now() - t0, '后台开始处理时该跳过打字延迟').toBeLessThan(400);
+  }, 20000);
+
   // 同一条推送的「第二次到达」（outbox 补收先落库、被推送服务延迟的原始 push 几分钟后
   // 才送达；或补收销账时 cancelTask 没拦住、worker 重试重跑复用同 messageId）不该再上
   // 屏一遍：落库前按聊天近史里的 activeMsg2.messageId 去重。

@@ -1095,10 +1095,17 @@ export const isFreshInboxDelivery = (
 // APP 后还要等旧消息慢慢播放。
 const instantChunkPacingAt = new Map<string, number>();
 
-const waitForInstantChunkPacing = async (message: ActiveMsg2InboxMessage): Promise<void> => {
+const waitForInstantChunkPacing = async (
+  message: ActiveMsg2InboxMessage,
+  skipSignal?: AbortSignal,
+): Promise<void> => {
   if (message.source !== 'instant' && message.messageType !== 'instant') return;
   const now = Date.now();
   if (!isFreshInboxDelivery(message.receivedAt, now)) return;
+  // 段间间隔和气泡间的打字停顿是同一种「慢放」，跳过的判据也得一样：人不在场 / 补收的，
+  // 通知早把整段话念完了。以前这里只看「新不新」，看着通知点进来仍要每段干等 1.5 秒。
+  // 不占槽位直接返回：后面还在实时到的段落从「现在」重新起算，不会被这几条推迟。
+  if (skipSignal?.aborted || shouldRenderInstantly(message.metadata, message.receivedAt, now)) return;
   const sessionId = getInstantChunkSessionId(message as any);
   const messageIndex = getInstantChunkIndex(message as any);
   if (!sessionId) return;
@@ -1112,8 +1119,22 @@ const waitForInstantChunkPacing = async (message: ActiveMsg2InboxMessage): Promi
     : Math.max(now, previousAt + INSTANT_CHUNK_PACING_MS);
   instantChunkPacingAt.set(sessionId, scheduledAt);
   const delay = messageIndex <= 1 ? 0 : getInstantChunkPacingDelay(scheduledAt, now, 0);
-  if (delay > 0) await new Promise<void>(resolve => setTimeout(resolve, delay));
+  if (delay > 0) {
+    await new Promise<void>(resolve => {
+      const finish = () => {
+        clearTimeout(timer);
+        skipSignal?.removeEventListener('abort', finish);
+        resolve();
+      };
+      const timer = setTimeout(finish, delay);
+      skipSignal?.addEventListener('abort', finish, { once: true });
+    });
+  }
 };
+
+/** 页面此刻不在前台（切走 / 锁屏）。非浏览器环境当作在前台。 */
+const isPageHiddenNow = (): boolean =>
+  typeof document !== 'undefined' && document.visibilityState === 'hidden';
 
 const markInstantChunkShown = (message: ActiveMsg2InboxMessage): void => {
   if (message.source !== 'instant' && message.messageType !== 'instant') return;
@@ -1663,7 +1684,9 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger, charId?: string): Pro
     const replyStep = <T>(operation: () => Promise<T>) => withReplyCancellation(replyRun, operation);
     const typingController = new AbortController();
     activeInboxTyping = typingController;
-    if (inboxPreparationWaiters > 0) typingController.abort();
+    // 页面在后台时开始处理的也一次放完：iOS 会冻住后台页面的定时器，慢放到一半停住，
+    // 等用户看着通知点进来才接着一条条冒——通知早就把整段话显示完了。
+    if (inboxPreparationWaiters > 0 || isPageHiddenNow()) typingController.abort();
     // 这一层是**整批消息的最后一道防线**：消息在 consumeInboxMessages 那一刻就已经从
     // 收件箱里没了，下面任何一步抛出去的异常都会穿过整个 for 循环，剩下的消息既没落进
     // 聊天记录、也没回到收件箱——用户那边只看到「正在输入…」一直亮到 60s 点名判失败，
@@ -1769,7 +1792,7 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger, charId?: string): Pro
 
       // 同一即时会话的后续 content push 之间留一点真实感；只影响实时到达，
       // 不改变已经在后台生成好的补收消息。
-      await waitForInstantChunkPacing(message);
+      await waitForInstantChunkPacing(message, typingController.signal);
 
       // 白名单制: AI 文本类型基本封闭 (amsg-shared MESSAGE_TYPE 4 个 + SullyOS 3 个 legacy 别名);
       // 非 AI 类型 (forum / event / system / 未来扩展) 不可枚举, 不进 post-processing 防把它们当 AI 输出乱解析.
@@ -2979,6 +3002,10 @@ export const ActiveMsgRuntime = {
         activeMsgTrace('runtime-page-visibility', { state: document.visibilityState });
         if (document.visibilityState !== 'visible') {
           stopForegroundOutboxCheck();
+          // 人走了：正在慢放的那条立刻放完，别冻在半路等他回来再接着演。
+          // 同一批里排在后面的，开始处理时页面还在后台就同样跳过（见 flush 循环），
+          // 回来后才开始的则按「送达早于回到前台」判缺席跳过。
+          activeInboxTyping?.abort();
           return;
         }
         scheduleForegroundOutboxCheck();
