@@ -33,6 +33,7 @@ import {
   sweepLocalInbox,
   shouldRenderInstantly,
   isOutboxBackfill,
+  mayContainQuote,
 } from './activeMsgRuntime';
 import { MULTIPART_FAILURE_REASON } from '@rei-standard/amsg-shared';
 import * as Analytics from './analytics';
@@ -1609,6 +1610,21 @@ describe('认领角色自排任务后广播 amsg2-tasks-adopted', () => {
 // ─── ⑤ 多段消息的等齐守卫 ───
 // 一次生成拆成几条 push，Web Push 不保证按序到达；App 开着时每条 push 各触发一次 flush，
 // 两段落进两批的话「同批按段序排」根本够不着——显示顺序按自增 id，后段先到就永久颠倒。
+describe('mayContainQuote（推送路径要不要为引用读上下文）', () => {
+  it('几种引用写法都认得出来——漏判就是引用落空', () => {
+    expect(mayContainQuote('[[QUOTE: 你吃饭了吗]] 吃了')).toBe(true);
+    expect(mayContainQuote('[QUATE:你吃饭了吗] 吃了')).toBe(true);
+    expect(mayContainQuote('[引用：你吃饭了吗] 吃了')).toBe(true);
+    expect(mayContainQuote('[回复 "你吃饭了吗"]：吃了')).toBe(true);
+    expect(mayContainQuote('[萧逸引用了你说的「你吃饭了吗」，并回复了 ↓] 吃了')).toBe(true);
+  });
+
+  it('普通的话不读', () => {
+    expect(mayContainQuote('刚下班，路上看到一只猫')).toBe(false);
+    expect(mayContainQuote('')).toBe(false);
+  });
+});
+
 describe('findPersistedChunkIndexes / findMissingChunkIndexes', () => {
   const bubble = (sessionId: string, messageIndex: number, role = 'assistant') => ({
     role,
@@ -1694,6 +1710,27 @@ describe('多段消息跨批到达的等齐守卫（走真库）', () => {
 
     expect(await bodies(charId)).toEqual(['……你说呢']);
     expect(await ActiveMsgStore.listInboxMessages()).toEqual([]);
+  }, 20000);
+
+  // 2026-10-30 用户导出的 trace：一轮七段，每段三十来字却要 3~16 秒，七条排着一条条冒。
+  // 大头是每段都把近史（含内联 base64 图片）重读好几遍。同一趟冲刷里同一个角色
+  // 只许整读一次，之后只现读末尾几条。
+  it('同一趟冲刷里一轮多段只整读一次近史，顺序照旧', async () => {
+    const charId = 'char-chunk-one-read';
+    const sessionId = 'sess-one-read';
+    await DB.saveCharacter({ id: charId, name: '分段角色' } as any);
+    const texts = ['在吗', '刚下班', '路上看到一只猫', '它跟了我一路', '我给它买了根火腿肠', '你猜它吃没吃'];
+    for (const [i, text] of texts.entries()) await chunk(charId, sessionId, i + 1, texts.length, text);
+
+    const reads = vi.spyOn(DB, 'getRecentMessagesByCharId');
+    try {
+      await flushInboxToChat('SW通知');
+      const fullReads = reads.mock.calls.filter(([id, limit]) => id === charId && limit >= 60);
+      expect(fullReads.length, '整读近史一趟只该一次').toBe(1);
+    } finally {
+      reads.mockRestore();
+    }
+    expect(await bodies(charId)).toEqual(texts);
   }, 20000);
 
   it('第一段（messageIndex=1）从不扣，单条 push 也照常直接落库', async () => {

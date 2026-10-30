@@ -1,6 +1,6 @@
 import { createReplyRun, isReplyStopped, withReplyCancellation, type ReplyRun } from './chatReplyCancellation';
 import { loadCharacterContextMessages } from './chatContextRange';
-import { ActiveMsg2InboxMessage, ActiveMsg2TaskRecord, APIConfig, RealtimeConfig, UserProfile } from '../types';
+import { ActiveMsg2InboxMessage, ActiveMsg2TaskRecord, APIConfig, Emoji, EmojiCategory, Message, RealtimeConfig, UserProfile } from '../types';
 import { DB } from './db';
 import { ChatPrompts } from './chatPrompts';
 import { ActiveMsgStore } from './activeMsgStore';
@@ -535,6 +535,7 @@ const processInboxMessageWithPostProcessing = async (
   persistTimestamp?: number,
   replyRun?: ReplyRun,
   skipTypingSignal?: AbortSignal,
+  flushCache?: InboxFlushCache,
 ): Promise<void> => {
   const replyStep = <T>(operation: () => Promise<T>) => withReplyCancellation(replyRun, operation);
   // 这一趟从云端旁路存储取回来的东西，等整条消息处理成功了再去删（见 OffloadedCleanup）。
@@ -563,19 +564,23 @@ const processInboxMessageWithPostProcessing = async (
   const { replayDirectives } = await replyStep(async () => prepareInboxRetry(message));
   markSegment('重试检查');
 
-  const userProfile: UserProfile = (await replyStep(async () => DB.getUserProfile()))
+  const userProfile: UserProfile = (await replyStep(async () => loadFlushUserProfile(flushCache)))
     ?? { name: 'User', avatar: '', bio: '' };
   // 按角色可见性过滤表情包：后处理落库时靠 emojis.find(e => e.name === name) 反查 URL，
   // 若传全量表情，名字冲突时会把 A 的 [[SEND_EMOJI: x]] 匹配到 B 名下的同名表情，导致
   // A 发出绑定给 B 的表情包。本地聊天路径喂的是 aiVisibleEmojis（已过滤），主动消息路径
   // 之前漏了这步，这里复用同一套过滤收口（与 activeMsgClient.buildCompletePrompt 对齐）。
+  const [allEmojis, allEmojiCategories] = await replyStep(async () => loadFlushEmojiSources(flushCache));
   const { emojis, categories } = ChatPrompts.filterVisibleEmojis(
-    await replyStep(async () => DB.getEmojis()),
-    await replyStep(async () => DB.getEmojiCategories()),
+    allEmojis,
+    allEmojiCategories,
     message.charId,
   );
   markSegment('表情包');
-  const contextMsgs = await replyStep(async () => loadCharacterContextMessages(char));
+  // 后处理在这条路上只拿上下文给引用找原句（见 mayContainQuote）；没有引用就不读。
+  const contextMsgs = mayContainQuote(typeof message.body === 'string' ? message.body : '')
+    ? await replyStep(async () => loadCharacterContextMessages(char))
+    : [];
   markSegment('近史');
 
   const apiConfig = loadApiConfigFromLocalStorage();
@@ -792,6 +797,8 @@ const processInboxMessageWithPostProcessing = async (
   }));
   markSegment('落库上屏');
   reportSlowFlush(segments);
+  // 同一份分段耗时也进 trace：toast 一闪就没了，导出 trace 才翻得到是哪一步慢。
+  activeMsgTrace('runtime-flush-timing', { messageId: message.messageId, segments });
 
   // ─── 即时对话（amsg2）的情绪评估结果 ───
   // 云端跟主回复并行跑完的那份，挂在最后一条 push 的 metadata 上（装不下时挪进
@@ -1265,17 +1272,25 @@ export const resolveBackfillTimestamp = (
  * 一条 inbox 消息最终的落库时间戳：先取 sentAt，再看本地有没有更晚的消息（有就退回
  * 写库当刻，防时间戳倒挂）。
  *
- * 每条都要查一次近史——后处理管线随后也会读同一份（contextMsgs），多这一次游标读可忽略。
+ * 冲刷路径传 flushCache：近史快照一趟只读一次，每条只现读末尾几条（见 InboxFlushCache）。
  * 查不到近史时沿用 sentAt（宁可标 sentAt，也别把隔夜的消息标成现在）。
  */
 const resolveInboxPersistTimestampForMessage = async (
   message: ActiveMsg2InboxMessage,
   now: number,
+  flushCache?: InboxFlushCache,
 ): Promise<number | undefined> => {
   const persistTimestamp = resolveInboxPersistTimestamp(message.sentAt || message.receivedAt, now);
   if (persistTimestamp === undefined) return undefined;
   try {
-    const recent = await DB.getRecentMessagesByCharId(message.charId, 200);
+    // 有本趟快照就用快照 + 现读最新几条：快照之后才写进来的（这一趟刚落的、用户刚说的）
+    // 一定排在最末尾，读最后几条就够了，不用每条消息都再扫 200 条。
+    const recent = flushCache
+      ? [
+        ...await loadFlushRecent(flushCache, message.charId),
+        ...await DB.getRecentMessagesByCharId(message.charId, FLUSH_TAIL_RECHECK_MESSAGES),
+      ]
+      : await DB.getRecentMessagesByCharId(message.charId, 200);
     // 取最大值而不是最后一条：本地消息按自增 id 排，时间戳本来就可能不是单调的。
     const latest = recent.reduce(
       (max, m) => (typeof m.timestamp === 'number' && m.timestamp > max ? m.timestamp : max),
@@ -1411,6 +1426,7 @@ export const findMissingChunkIndexes = (messageIndex: number, seen: Set<number>)
 const holdUntilEarlierChunksLand = async (
   message: ActiveMsg2InboxMessage,
   batch: ActiveMsg2InboxMessage[],
+  flushCache?: InboxFlushCache,
 ): Promise<boolean> => {
   const sessionId = getInstantSessionId(message);
   const messageIndex = getInstantMessageIndex(message);
@@ -1424,9 +1440,19 @@ const holdUntilEarlierChunksLand = async (
         seen.add(getInstantMessageIndex(other));
       }
     }
-    const recent = await DB.getRecentMessagesByCharId(message.charId, 200);
-    for (const idx of findPersistedChunkIndexes(recent, sessionId)) seen.add(idx);
+    // 先拿本趟快照凑：前面的段多半就在同一批里，或者快照里已经有了，一次库都不用读。
+    // 凑不齐才现读——快照之后才落库的那几段只有现读看得到，不能凭快照就扣住。
+    if (flushCache) {
+      for (const idx of findPersistedChunkIndexes(await loadFlushRecent(flushCache, message.charId), sessionId)) {
+        seen.add(idx);
+      }
+    }
     missing = findMissingChunkIndexes(messageIndex, seen);
+    if (missing.length > 0 || !flushCache) {
+      const recent = await DB.getRecentMessagesByCharId(message.charId, 200);
+      for (const idx of findPersistedChunkIndexes(recent, sessionId)) seen.add(idx);
+      missing = findMissingChunkIndexes(messageIndex, seen);
+    }
   } catch (e) {
     log.warn('等齐守卫查不到近史，这条照常落库', { messageId: message.messageId, error: e });
     inboxOrderHolds.delete(message.messageId);
@@ -1579,6 +1605,81 @@ const handleInboxStageFailure = async (
 const DEDUPE_LOOKBACK_MESSAGES = 60;
 
 /**
+ * 一趟冲刷里各条消息共用的读库结果。
+ *
+ * 一轮回复常被拆成五六条 push，以前每条都把同一批东西重读一遍：去重 60 条、等齐守卫
+ * 200 条、时间戳 200 条、再加整段 AI 上下文（自适应模式下是记忆水位线之后的全部原文），
+ * 图片又是内联 base64。2026-10-30 用户导出的 trace：三十来字的一条要 3~16 秒，七条排着
+ * 一条条冒，通知早就念完了。
+ *
+ * 只缓存「这一趟里不会变」或「变了也能靠现读末尾补上」的东西：
+ *   - 近史快照：每个角色读一次 200 条。之后才写进来的消息（本趟刚落的、用户刚说的）
+ *     一定排在末尾，用到时现读最后几条补上（见 FLUSH_TAIL_RECHECK_MESSAGES）；
+ *   - 用户资料、表情包：一趟冲刷就几秒，期间没人会去改。
+ * 角色档案不缓存：后处理会改它（情绪 buff 等），下一条得读到新的。
+ */
+interface InboxFlushCache {
+  recentByChar: Map<string, Promise<Message[]>>;
+  userProfile?: Promise<UserProfile | null | undefined>;
+  emojiSources?: Promise<[Emoji[], EmojiCategory[]]>;
+}
+
+/** 快照之后补读末尾几条：足够盖住这一趟刚落的气泡和用户刚发的话。 */
+const FLUSH_TAIL_RECHECK_MESSAGES = 8;
+
+const createInboxFlushCache = (): InboxFlushCache => ({ recentByChar: new Map() });
+
+/** 读失败不留在缓存里，同一趟后面的消息还能再试一次。 */
+const rememberUntilRejected = <T>(promise: Promise<T>, forget: () => void): Promise<T> => {
+  promise.catch(forget);
+  return promise;
+};
+
+const loadFlushRecent = (cache: InboxFlushCache, charId: string): Promise<Message[]> => {
+  const cached = cache.recentByChar.get(charId);
+  if (cached) return cached;
+  const read: Promise<Message[]> = rememberUntilRejected(
+    DB.getRecentMessagesByCharId(charId, 200),
+    () => { if (cache.recentByChar.get(charId) === read) cache.recentByChar.delete(charId); },
+  );
+  cache.recentByChar.set(charId, read);
+  return read;
+};
+
+const loadFlushUserProfile = (cache: InboxFlushCache | undefined) => {
+  if (!cache) return DB.getUserProfile();
+  if (!cache.userProfile) {
+    const read = rememberUntilRejected(DB.getUserProfile(), () => {
+      if (cache.userProfile === read) cache.userProfile = undefined;
+    });
+    cache.userProfile = read;
+  }
+  return cache.userProfile;
+};
+
+const loadFlushEmojiSources = (cache: InboxFlushCache | undefined): Promise<[Emoji[], EmojiCategory[]]> => {
+  const readBoth = () => Promise.all([DB.getEmojis(), DB.getEmojiCategories()]);
+  if (!cache) return readBoth();
+  if (!cache.emojiSources) {
+    const read = rememberUntilRejected(readBoth(), () => {
+      if (cache.emojiSources === read) cache.emojiSources = undefined;
+    });
+    cache.emojiSources = read;
+  }
+  return cache.emojiSources;
+};
+
+/**
+ * 正文里有没有可能带引用（[[QUOTE:]] / [引用:] / [回复 "…"] / 模仿渲染格式的「引用了」）。
+ *
+ * 推送路径的后处理只拿 AI 上下文做一件事：给引用找原句。没有引用就不必为它整段读上下文
+ * ——那是这条路上最重的一读。宁可多判（多读一次），不可漏判（引用落空）：
+ * 关键字是 applyAssistantPostProcessing 那几条引用正则的公共部分。
+ */
+export const mayContainQuote = (body: string): boolean =>
+  /QU[OA]TE|引用|\[回复/i.test(body);
+
+/**
  * 这一趟冲刷是谁发起的。
  *
  * 「SW通知」是唯一的实时路径——推送一到就喊页面。其余全是兜底：轮询、回前台、启动、
@@ -1648,11 +1749,13 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger, charId?: string): Pro
   // 不重放 directives。只对首次处理（processAttempts=0）做——重试那几条的半成品
   // 气泡刚被 prepareInboxRetry 清场，近史里查到的正是「该重跑」的证据，不能误杀。
   const persistedIdsByChar = new Map<string, Set<string>>();
+  const flushCache = createInboxFlushCache();
   const isAlreadyPersisted = async (charId: string, messageId: string): Promise<boolean> => {
     if (!messageId) return false;
     let ids = persistedIdsByChar.get(charId);
     if (!ids) {
-      const recent = await DB.getRecentMessagesByCharId(charId, DEDUPE_LOOKBACK_MESSAGES);
+      // 跟等齐守卫 / 时间戳共用同一份快照，只取末尾那一截（见 DEDUPE_LOOKBACK_MESSAGES）。
+      const recent = (await loadFlushRecent(flushCache, charId)).slice(-DEDUPE_LOOKBACK_MESSAGES);
       ids = new Set(
         recent
           .map((m: any) => m?.metadata?.activeMsg2?.messageId)
@@ -1782,13 +1885,15 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger, charId?: string): Pro
         });
       }
 
+      const prepStartedAt = Date.now();
       // 后段先到仍要等前段，保持原有的保序与有限重试。
-      if (await replyStep(async () => holdUntilEarlierChunksLand(message, pendingMessages))) continue;
+      if (await replyStep(async () => holdUntilEarlierChunksLand(message, pendingMessages, flushCache))) continue;
 
       // 落库时间戳按「在线送达 vs 离线补收」二选一（undefined = 交给 DB.saveMessage 默认取
       // 写库当刻），主路径与下面的降级存原稿路径共用这一个值，两条路一个口径。
       // sentAt 缺失时退到 receivedAt（老 worker 的 push 可能不带 sentAt）。
-      const persistTimestamp = await replyStep(async () => resolveInboxPersistTimestampForMessage(message, Date.now()));
+      const persistTimestamp = await replyStep(async () => resolveInboxPersistTimestampForMessage(message, Date.now(), flushCache));
+      activeMsgTrace('runtime-inbox-prep', { messageId: message.messageId, ms: Date.now() - prepStartedAt });
 
       // 同一即时会话的后续 content push 之间留一点真实感；只影响实时到达，
       // 不改变已经在后台生成好的补收消息。
@@ -1811,7 +1916,7 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger, charId?: string): Pro
 
       if (looksLikeAssistantText) {
         try {
-          await replyStep(async () => processInboxMessageWithPostProcessing(processableMessage, persistTimestamp, replyRun, typingController.signal));
+          await replyStep(async () => processInboxMessageWithPostProcessing(processableMessage, persistTimestamp, replyRun, typingController.signal, flushCache));
           routed = true;
         } catch (postErr) {
           if (replyRun?.signal.aborted || isReplyStopped(message.taskUuid)) continue;
