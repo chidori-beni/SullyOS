@@ -3093,23 +3093,23 @@ const MessageItem = React.memo(({
             const card = (
                 <div className="w-64">
                     {/* 用原生 <details> 折叠：默认收起，点头部展开（无需 React state，避免在分支里用 hook） */}
-                    <details className="group relative rounded-2xl overflow-hidden border shadow-[0_8px_24px_rgba(10,12,20,0.5)] [&_summary]:list-none [&::-webkit-details-marker]:hidden"
+                    <details data-ai-service={svc} className="sully-ai-card group relative rounded-2xl overflow-hidden border shadow-[0_8px_24px_rgba(10,12,20,0.5)] [&_summary]:list-none [&::-webkit-details-marker]:hidden"
                         style={{ borderColor: `${mm.accent}44`, background: mm.bg }}>
-                        <div className="absolute -top-8 -right-6 w-28 h-28 rounded-full blur-2xl pointer-events-none" style={{ background: `radial-gradient(circle, ${mm.accent}55, transparent 70%)` }} />
-                        <summary className="relative px-3 pt-2.5 pb-2 flex items-center gap-2 border-b cursor-pointer select-none" style={{ borderColor: `${mm.accent}22` }}>
-                            <span className="w-6 h-6 rounded-lg flex items-center justify-center text-[13px] shrink-0" style={{ background: `${mm.accent}22` }}>{mm.glyph}</span>
+                        <div className="sully-ai-card-glow absolute -top-8 -right-6 w-28 h-28 rounded-full blur-2xl pointer-events-none" style={{ background: `radial-gradient(circle, ${mm.accent}55, transparent 70%)` }} />
+                        <summary className="sully-ai-card-head relative px-3 pt-2.5 pb-2 flex items-center gap-2 border-b cursor-pointer select-none" style={{ borderColor: `${mm.accent}22` }}>
+                            <span className="sully-ai-card-glyph w-6 h-6 rounded-lg flex items-center justify-center text-[13px] shrink-0" style={{ background: `${mm.accent}22` }}>{mm.glyph}</span>
                             <div className="flex-1 min-w-0">
-                                <div className="text-[9px] tracking-[0.22em] font-bold uppercase" style={{ color: mm.accent }}>智能体 · {mm.label}</div>
-                                <div className="text-[12px] text-white/90 font-semibold truncate">{pc.serviceName ? `${pc.serviceName} · ${pc.title || ''}` : (pc.title || '一段对话')}</div>
+                                <div className="sully-ai-card-kicker text-[9px] tracking-[0.22em] font-bold uppercase" style={{ color: mm.accent }}>智能体 · {mm.label}</div>
+                                <div className="sully-ai-card-title text-[12px] text-white/90 font-semibold truncate">{pc.serviceName ? `${pc.serviceName} · ${pc.title || ''}` : (pc.title || '一段对话')}</div>
                             </div>
-                            <span className="shrink-0 text-[12px] font-bold leading-none transition-transform group-open:rotate-90" style={{ color: mm.accent }}>›</span>
+                            <span className="sully-ai-card-arrow shrink-0 text-[12px] font-bold leading-none transition-transform group-open:rotate-90" style={{ color: mm.accent }}>›</span>
                         </summary>
-                        <div className="relative px-3 py-2.5">
-                            <p className="text-[12px] leading-[1.7] text-white/65 whitespace-pre-wrap max-h-40 overflow-y-auto no-scrollbar">{pc.detail || ''}</p>
+                        <div className="sully-ai-card-body relative px-3 py-2.5">
+                            <p className="sully-ai-card-detail text-[12px] leading-[1.7] text-white/65 whitespace-pre-wrap max-h-40 overflow-y-auto no-scrollbar">{pc.detail || ''}</p>
                         </div>
-                        <div className="relative px-3 py-1.5 border-t flex items-center justify-between" style={{ borderColor: `${mm.accent}1e` }}>
-                            <span className="text-[9px] italic text-white/35">TA 自己手机上的 AI · {timeStr}</span>
-                            <span className="text-[9px] font-bold tracking-wide" style={{ color: mm.accent }}>来自查手机</span>
+                        <div className="sully-ai-card-foot relative px-3 py-1.5 border-t flex items-center justify-between" style={{ borderColor: `${mm.accent}1e` }}>
+                            <span className="sully-ai-card-note text-[9px] italic text-white/35">TA 自己手机上的 AI · {timeStr}</span>
+                            <span className="sully-ai-card-tag text-[9px] font-bold tracking-wide" style={{ color: mm.accent }}>来自查手机</span>
                         </div>
                     </details>
                 </div>

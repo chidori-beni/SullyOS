@@ -31,7 +31,7 @@ export const BUILTIN_APPEARANCE_PRESETS: ReadonlyArray<BuiltinAppearancePresetDe
     // v10：补上钱包图标（icon-33-wallet，用户 10-26 给的圆点底小熊抱抱枕），钱包排在第三页「使用帮助」后面。
     // v11：桌面图标按用户 10-26 截图重排（第一页：存钱罐后面接钱包、交换日记，彼方移到第二页「自由活动」后面；
     //      小红书图库移到第三页「气泡工坊」后面、「使用帮助」前面）。
-    version: 11,
+    version: 12,
     manifestPath: 'appearance-presets/cocoa-dots/v1/preset.json',
     swatch: 'linear-gradient(rgba(247,245,242,.18),rgba(74,59,49,.18)),url("./appearance-presets/cocoa-dots/v1/wallpaper-desktop.png") center/cover',
   },
