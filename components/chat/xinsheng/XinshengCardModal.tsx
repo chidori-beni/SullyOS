@@ -96,7 +96,24 @@ const flattenEntryFields = (entry: XinshengEntry | null): Array<{ key: string; v
     return out;
 };
 
-const characterPresetSnapshot = (char: CharacterProfile): XinshengEntryPreset => ({
+/**
+ * 「复制」用：只要正文，不带字段名——用户是拿去别处贴的，`talk1:` 这种字段名对人没意义。
+ * 顺序和全文页一致，段与段之间空一行。
+ */
+const entryCopyText = (entry: XinshengEntry | null): string =>
+    flattenEntryFields(entry).map(f => f.value.trim()).filter(Boolean).join('\n\n');
+
+const copyText = async (text: string): Promise<boolean> => {
+    try { await navigator.clipboard.writeText(text); return true; } catch { /* 降级到 execCommand */ }
+    try {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        const ok = document.execCommand('copy'); document.body.removeChild(ta); return ok;
+    } catch { return false; }
+};
+
+const characterPresetSnapshot =(char: CharacterProfile): XinshengEntryPreset => ({
     name: '角色当前设置',
     displayMode: char.xinshengDisplayMode === 'layout' ? 'layout' : 'planner',
     layout: char.xinshengLayout || '',
@@ -132,6 +149,9 @@ export const XinshengCardModal: React.FC<Props> = ({
     // 预设攒到几十个时，这个选择器一行一个要滑很久：加搜索 + 每行两个的紧凑格子，
     // 置顶的（预设库里点过 ★ 的）由 listXinshengPresets 保证排在最前面。
     const [presetQuery, setPresetQuery] = useState('');
+    // 复制结果的短暂提示（按钮上直接变字，1.5 秒后复原）
+    const [copyState, setCopyState] = useState<'idle' | 'ok' | 'fail'>('idle');
+    const copyTimer = useRef<number | null>(null);
     const touchStart = useRef<{ x: number; y: number } | null>(null);
     const presetSavingRef = useRef(false);
 
@@ -256,7 +276,17 @@ export const XinshengCardModal: React.FC<Props> = ({
     }, [isOpen]);
     // 切筛选后旧的 index 可能越界
     useEffect(() => { setIndex(i => Math.min(i, Math.max(0, ids.length - 1))); }, [ids.length]);
-    useEffect(() => { setPresetNotice(null); }, [currentId]);
+    useEffect(() => { setPresetNotice(null); setCopyState('idle'); }, [currentId]);
+    useEffect(() => () => { if (copyTimer.current) window.clearTimeout(copyTimer.current); }, []);
+
+    const copyCurrent = useCallback(async () => {
+        const text = entryCopyText(current);
+        const ok = !!text && await copyText(text);
+        setCopyState(ok ? 'ok' : 'fail');
+        if (copyTimer.current) window.clearTimeout(copyTimer.current);
+        copyTimer.current = window.setTimeout(() => setCopyState('idle'), 1500);
+    }, [current]);
+    const copyLabel = copyState === 'ok' ? '已复制' : copyState === 'fail' ? '复制失败' : '复制';
 
     // 目标记录被外部删除或用户通过其它入口切走时，不要让选择器继续指向旧 roundId。
     useEffect(() => {
@@ -441,6 +471,10 @@ export const XinshengCardModal: React.FC<Props> = ({
                                 className="px-4 h-10 rounded-full bg-white/15 text-white text-[12px] active:scale-95 transition-transform"
                             >全文</button>
                             <button
+                                onClick={() => void copyCurrent()}
+                                className={`px-4 h-10 rounded-full text-[12px] active:scale-95 transition-transform ${copyState === 'ok' ? 'bg-emerald-500 text-white' : copyState === 'fail' ? 'bg-rose-500 text-white' : 'bg-white/15 text-white'}`}
+                            >{copyLabel}</button>
+                            <button
                                 onClick={openPresetPicker}
                                 className="px-4 h-10 rounded-full bg-white/15 text-white text-[12px] active:scale-95 transition-transform"
                             >换预设</button>
@@ -543,6 +577,10 @@ export const XinshengCardModal: React.FC<Props> = ({
                             className="w-9 h-9 rounded-full bg-white/10 text-white text-[18px] leading-none disabled:opacity-25 active:scale-95 transition-transform"
                             aria-label="下一条"
                         >›</button>
+                        <button
+                            onClick={() => void copyCurrent()}
+                            className={`px-3 h-9 rounded-full text-[11px] active:scale-95 transition-transform ${copyState === 'ok' ? 'bg-emerald-500 text-white' : copyState === 'fail' ? 'bg-rose-500 text-white' : 'bg-white/10 text-white'}`}
+                        >{copyLabel}</button>
                         <button
                             onClick={() => { setShowFullText(false); openPresetPicker(); }}
                             className="px-3 h-9 rounded-full bg-white/10 text-white text-[11px] active:scale-95 transition-transform"
