@@ -1,4 +1,5 @@
 import { useBookCinemaText } from '../../utils/bookCinemaLocale';
+import { LocalizedCharacterText } from '../../components/LocalizedCharacterText';
 /** 书房的底部弹窗：报进度、划线给 ta 看、书评、导入。 */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ImageSquare, MagnifyingGlass, Star, X } from '@phosphor-icons/react';
@@ -234,11 +235,20 @@ export const HighlightSheet: React.FC<{
 
 // ============ 书评 ============
 
+export interface BookReviewExchangeResult {
+    charName: string;
+    text: string;
+    rating?: number;
+    charId?: string;
+    at?: number;
+    contentLocale?: 'zh-CN' | 'ja-JP';
+}
+
 export const ReviewSheet: React.FC<{
     book: ShelfBook; characters: CharacterProfile[];
     onClose: () => void;
     onSaveMine: (text: string, rating?: number) => Promise<NonNullable<BookroomRecord['reviews']>>;
-    onExchange: (char: CharacterProfile, mine: { text: string; rating?: number }, savedReviews: NonNullable<BookroomRecord['reviews']>) => Promise<{ charName: string; text: string; rating?: number }>;
+    onExchange: (char: CharacterProfile, mine: { text: string; rating?: number }, savedReviews: NonNullable<BookroomRecord['reviews']>) => Promise<BookReviewExchangeResult>;
 }> = ({ book, characters, onClose, onSaveMine, onExchange }) => {
     const uiText = useBookCinemaText();
     const prev = book.record.reviews?.user;
@@ -250,7 +260,10 @@ export const ReviewSheet: React.FC<{
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
     const [waiting, setWaiting] = useState('');
-    const [result, setResult] = useState<{ charName: string; text: string; rating?: number } | null>(null);
+    const [result, setResult] = useState<BookReviewExchangeResult | null>(null);
+    // The requested generation language is not proof of the returned text's language.
+    // Resolve a display copy here even when the model ignored the Japanese request.
+    // The identity matches ReviewsCard/CharacterShelf, so an existing copy is reused.
     const char = characters.find(c => c.id === charId);
 
     const submit = async (exchange: boolean) => {
@@ -273,7 +286,7 @@ export const ReviewSheet: React.FC<{
                 <header><h2>《{book.title}{uiText("》书评")}</h2><button className="bk-icon" onClick={onClose} disabled={busy} aria-label={uiText("关闭")}><X size={18} /></button></header>
                 <div className="bk-sheet-body overflow-y-auto">
                     {waiting ? <p className="bk-note" style={{ whiteSpace: 'pre-wrap' }}>{waiting}</p> : result ? (
-                        <div className="bk-review"><div className="bk-review-head"><b>{result.charName}</b><Stars n={result.rating} size={14} /></div><p>{result.text}</p></div>
+                        <div className="bk-review"><div className="bk-review-head"><b>{result.charName}</b><Stars n={result.rating} size={14} /></div><p><LocalizedCharacterText record={{ id: JSON.stringify([book.novelId, result.charId ?? char?.id, result.at ?? 0]), scope: 'review', text: result.text }} /></p></div>
                     ) : <>
                         <div className="bk-rate">{[1, 2, 3, 4, 5].map(i => (
                             <button key={i} aria-label={uiText("{0} 星", i)} onClick={() => setRating(rating === i ? undefined : i)}><Star size={26} weight={rating && i <= rating ? 'fill' : 'regular'} /></button>

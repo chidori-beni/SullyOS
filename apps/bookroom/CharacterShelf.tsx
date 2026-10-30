@@ -160,7 +160,7 @@ export const CharacterShelf: React.FC<{
                                             <small><span>《{t.book.title}》{ci >= 0 ? ` · ${chapters[ci].title}` : ''} · {uiText(t.kind)}</span><time>{formatStamp(t.at).full}</time></small>
                                             {t.quote && <blockquote className={expanded ? '' : 'is-clamped'} onClick={() => toggle(t.key)}>{t.quote}</blockquote>}
                                             {t.quote && t.quote.length > 60 && <button className="bk-link-btn" onClick={() => toggle(t.key)}>{expanded ? uiText("收起原文") : uiText("展开原文")}</button>}
-                                            <p className="bk-note-reply"><b>{char.name}</b>{t.rating ? <> <Stars n={t.rating} /></> : null}：{t.kind === '书评' ? <LocalizedCharacterText record={{ id: JSON.stringify([t.book.novelId, char.id, t.at]), scope: 'review', text: t.content, locale: t.contentLocale }} /> : t.content}</p>
+                                            <p className="bk-note-reply"><b>{char.name}</b>{t.rating ? <> <Stars n={t.rating} /></> : null}：{t.kind === '书评' ? <LocalizedCharacterText record={{ id: JSON.stringify([t.book.novelId, char.id, t.at]), scope: 'review', text: t.content }} /> : t.content}</p>
                                             <div className="bk-note-foot">
                                                 {t.book.novel && t.segIdx != null && <button onClick={() => onRead(t.book.novelId, t.segIdx!)}><BookOpenText size={13} /> {uiText(" 在书里看")}</button>}
                                                 <button onClick={() => onOpenBook(t.book.novelId)}>{uiText("去这本书")}</button>

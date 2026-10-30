@@ -168,7 +168,7 @@ export const ReviewsCard: React.FC<{ book: ShelfBook; onReview: () => void; onSa
             {theirs.map(r => (
                 <div key={r.charId} className="bk-review">
                     <div className="bk-review-head"><b>{r.charName}</b><Stars n={r.rating} /><button className="bk-link-btn" onClick={() => removeChar(r.charId, r.charName)} aria-label={uiText("删除{0}的书评", r.charName)}><Trash size={13} /></button></div>
-                    <p><LocalizedCharacterText record={{ id: JSON.stringify([book.novelId, r.charId, r.at]), scope: 'review', text: r.text, locale: r.contentLocale }} /></p>
+                    <p><LocalizedCharacterText record={{ id: JSON.stringify([book.novelId, r.charId, r.at]), scope: 'review', text: r.text }} /></p>
                 </div>
             ))}
             <button className="bk-secondary" style={{ marginTop: 10 }} onClick={onReview}><NotePencil size={15} /> {mine ? uiText("改我的书评 / 再请 ta 写一篇") : uiText("写书评")}</button>
