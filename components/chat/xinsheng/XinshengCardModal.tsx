@@ -474,10 +474,7 @@ export const XinshengCardModal: React.FC<Props> = ({
                                 onClick={() => void copyCurrent()}
                                 className={`px-4 h-10 rounded-full text-[12px] active:scale-95 transition-transform ${copyState === 'ok' ? 'bg-emerald-500 text-white' : copyState === 'fail' ? 'bg-rose-500 text-white' : 'bg-white/15 text-white'}`}
                             >{copyLabel}</button>
-                            <button
-                                onClick={openPresetPicker}
-                                className="px-4 h-10 rounded-full bg-white/15 text-white text-[12px] active:scale-95 transition-transform"
-                            >换预设</button>
+                            {/* 「换预设」只留卡片上方那一个：底排再放一个就挤成两行，而且重复 */}
                             <button
                                 onClick={() => go(1)}
                                 disabled={index >= ids.length - 1}
