@@ -162,7 +162,7 @@ export async function askCharacterInBookroom(input: AskCharacterContext & {
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey || 'sk-none'}` },
         body: JSON.stringify({
             model: apiConfig.model,
-            messages: [{ role: 'system', content: payload.systemPrompt + input.instruction + (input.deferred ? DEFERRED_NOTE(userName, input.deferred.since, input.deferred.activity) : '') + (input.kind === 'review' ? contentLanguageRule('review', outputLocale) : '') }, ...payload.cleanedApiMessages],
+            messages: [{ role: 'system', content: payload.systemPrompt + input.instruction + (input.deferred ? DEFERRED_NOTE(userName, input.deferred.since, input.deferred.activity) : '') + (input.kind === 'review' || input.kind === 'recommend' ? contentLanguageRule(input.kind, outputLocale) : '') }, ...payload.cleanedApiMessages],
             temperature: 0.9, stream: false,
         }),
     }, 2, 0, { appName: '书房', charId: char.id, charName: char.name, purpose: input.purpose });

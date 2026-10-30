@@ -42,6 +42,16 @@ it.each(['ja-JP','zh-CN'] as const)('applies only the review language override i
     expect(requests[0].messages[0].content).not.toContain('仅本次书评');
 });
 
+it.each(['ja-JP','zh-CN'] as const)('applies recommendation reason language without translating field labels in %s',async outputLocale=>{
+    await ask('recommend',{outputLocale});
+    const system=requests[0].messages[0].content;
+    expect(system).toContain(outputLocale==='ja-JP'?'自然日语':'简体中文');
+    expect(system).toContain('只有“理由”正文');
+    expect(system).toContain('“书名：”“作者：”“理由：”');
+    expect(system).toContain('书名、作者保持准确原始写法');
+    expect(saved[1].metadata.bookroomKind).toBe('recommend-reply');
+});
+
 describe('书房请角色回话：忙就先不回', () => {
     it('空闲：照常回，回复卡片带书名', async () => {
         slot = { activity: '看书', busyLevel: 'free' };

@@ -1,0 +1,51 @@
+// @vitest-environment jsdom
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
+import { CharacterShelf } from '../apps/bookroom/CharacterShelf';
+import { MeView } from '../apps/bookroom/HomeTabs';
+import { emptyMeta, parseRecommendation, type BookRecommendation } from './bookroom/stats';
+import { translateUi, type UiLocale, type UiMessageKey, type UiMessageParams } from './uiLocale';
+const state=vi.hoisted(()=>({locale:'ja-JP' as UiLocale,read:vi.fn(),subscribe:vi.fn()}));
+vi.mock('../context/UiLocaleContext',()=>({useUiLocale:()=>({locale:state.locale,t:(key:UiMessageKey,params?:UiMessageParams)=>translateUi(state.locale,key,params)})}));
+vi.mock('../context/OSContext',()=>({useOS:()=>({apiConfig:{baseUrl:'https://example.invalid',apiKey:'fake',model:'test'}})}));
+vi.mock('./db',()=>({DB:{getVRAnnotations:vi.fn().mockResolvedValue([])}}));
+vi.mock('./safeApi',()=>({safeFetchJson:vi.fn()}));
+vi.mock('./characterContentLocale',async original=>({...await original<typeof import('./characterContentLocale')>(),contentTranslator:{read:state.read},subscribeCharacterText:state.subscribe}));
+const element=document.createElement('div');let root=createRoot(element);
+let observe!:(entries:Array<{isIntersecting:boolean}>)=>void;
+beforeAll(()=>{vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);vi.stubGlobal('IntersectionObserver',class{constructor(callback:typeof observe){observe=callback;}observe(){}disconnect(){}});});
+afterAll(()=>vi.unstubAllGlobals());
+afterEach(async()=>{await act(async()=>root.unmount());root=createRoot(element);vi.resetAllMocks();state.locale='ja-JP';});
+const rec:BookRecommendation={id:'rec-1',charId:'char',charName:'三浦 紗季',title:'人間失格',author:'太宰治',reason:'看你认真思考幸的定义，我想推荐这本。',at:1,status:'want'};
+const char={id:'char',name:'三浦 紗季',vrState:{enabled:true,preferredNovelIds:['book'],readingPace:'normal'}} as unknown as React.ComponentProps<typeof CharacterShelf>['char'];
+it('translates only the recommendation reason in the actual character recommended-books tab',async()=>{
+  let done!:(text:string)=>void;state.subscribe.mockImplementation((_record,_api,callback)=>{done=callback;return vi.fn();});
+  const action=vi.fn(),before=JSON.stringify(rec);
+  const props={char,books:[],recommendations:[rec],onBack:action,onOpenBook:action,onRead:action,onSaveRecord:action,onClearAll:action,onRecommend:action,onRecStatus:action,onRecDelete:action};
+  await act(async()=>root.render(React.createElement(CharacterShelf,props)));
+  expect(element.textContent).toContain('優先1冊 · 標準');
+  const tab=[...element.querySelectorAll('button')].find(b=>b.textContent?.startsWith('おすすめ'))!;
+  expect(tab).toBeTruthy();await act(async()=>tab.click());
+  expect(state.subscribe).not.toHaveBeenCalled();await act(async()=>observe([{isIntersecting:true}]));
+  expect(state.subscribe.mock.calls[0][0]).toEqual({id:rec.id,scope:'recommend',text:rec.reason});
+  await act(async()=>done('幸せについて考えているあなたに、この本をすすめたい。'));
+  expect(element.textContent).toContain('幸せについて考えているあなたに、この本をすすめたい。');
+  expect(element.textContent).toContain('人間失格');expect(element.textContent).toContain('太宰治');
+  expect(action).not.toHaveBeenCalled();expect(JSON.stringify(rec)).toBe(before);
+  state.locale='zh-CN';await act(async()=>root.render(React.createElement(CharacterShelf,props)));
+  expect(element.textContent).toContain(rec.reason);expect(element.textContent).toContain('优先 1 本 · 正常');
+});
+it('uses the same recommendation identity in the home want-to-read list without changing status or metadata',async()=>{
+  const meta={...emptyMeta(),recommendations:[rec]},before=JSON.stringify(meta),action=vi.fn();
+  state.read.mockReturnValue({summary:'同じおすすめ理由の訳文'});
+  await act(async()=>root.render(React.createElement(MeView,{records:[],meta,onCheckin:action,onYear:action})));
+  expect(element.textContent).toContain('同じおすすめ理由の訳文');
+  expect(element.textContent).toContain('人間失格');expect(element.textContent).toContain('太宰治');
+  expect(state.read).toHaveBeenCalledWith(JSON.stringify(['v1','ja-JP',JSON.stringify(['annotation','recommend',rec.id]),'読書メモ',rec.reason]));
+  expect(state.subscribe).not.toHaveBeenCalled();expect(action).not.toHaveBeenCalled();expect(JSON.stringify(meta)).toBe(before);
+});
+it('parses Japanese recommendation reasons under the unchanged Chinese protocol fields',()=>{
+  const parsed=parseRecommendation('书名：《人間失格》\n作者：太宰治\n理由：今のあなたに読んでほしい一冊です。');
+  expect(parsed).toMatchObject({title:'人間失格',author:'太宰治',reason:'今のあなたに読んでほしい一冊です。'});
+});

@@ -1,4 +1,5 @@
 import { useBookCinemaText } from '../../utils/bookCinemaLocale';
+import { LocalizedCharacterText } from '../../components/LocalizedCharacterText';
 /**
  * 书房首页的四个标签：书架 / 笔记 / 书友 / 足迹。
  */
@@ -232,7 +233,7 @@ export const MeView: React.FC<{
             <h3 className="bk-section">{uiText("想读清单")}</h3>
             {!want.length ? <p className="bk-empty-sm">{uiText("角色推荐的书里，标了「想读」的会列在这里。")}</p> : (
                 <ul className="bk-recs">
-                    {want.map(r => <li key={r.id}><strong>《{r.title}》</strong>{r.author && <small> {r.author}</small>}<p>{r.charName} {uiText(" 推荐：")}{r.reason}</p></li>)}
+                    {want.map(r => <li key={r.id}><strong>《{r.title}》</strong>{r.author && <small> {r.author}</small>}<p>{r.charName} {uiText(" 推荐：")}<LocalizedCharacterText record={{ id: r.id, scope: 'recommend', text: r.reason }} /></p></li>)}
                 </ul>
             )}
         </>

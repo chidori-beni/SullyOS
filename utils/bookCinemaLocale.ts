@@ -6,6 +6,12 @@ import type { UiLocale } from './uiLocale';
 
 // Exact, fixed UI copy only. Unknown/custom/generated content passes through unchanged.
 export const BOOK_CINEMA_JA: Record<string, string> = {
+  "优先 {0} 本": "優先{0}冊",
+  "按 {0} 个分类轮换": "{0}分類から順に選択",
+  "自动轮换全部": "すべての本から自動選択",
+  "细读": "じっくり",
+  "正常": "標準",
+  "快读": "速め",
   "删掉 {0} 在这本书的全部批注": "{0}のこの本の書き込みをすべて削除",
   "{0} {1}，有空了会认真{2}": "{0}は{1}。時間ができたら、きちんと{2}します",
   "助理看着画面记的，{0} 靠它跟剧情（每次看最近 8 条）。新的在上面。": "アシスタントが映像を見て書いたメモです。{0}は直近8件を参照して展開を把握します。新しいメモが上です。",

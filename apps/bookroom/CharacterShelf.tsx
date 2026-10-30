@@ -37,6 +37,10 @@ export const CharacterShelf: React.FC<{
     onRecDelete: (id: string) => void;
 }> = ({ char, books, onBack, onOpenBook, onRead, onSaveRecord, onClearAll, recommendations, onRecommend, onRecStatus, onRecDelete }) => {
     const uiText = useBookCinemaText();
+    const preference = readingPreferenceLabel(char);
+    const preferredCount = /^优先 (\d+) 本$/.exec(preference);
+    const categoryCount = /^按 (\d+) 个分类轮换$/.exec(preference);
+    const shownPreference = preferredCount ? uiText('优先 {0} 本', preferredCount[1]) : categoryCount ? uiText('按 {0} 个分类轮换', categoryCount[1]) : uiText(preference);
     const [tab, setTab] = useState<CharTab>('books');
     const [recBusy, setRecBusy] = useState(false);
     const [recError, setRecError] = useState('');
@@ -125,7 +129,7 @@ export const CharacterShelf: React.FC<{
                     <Avatar char={char} size={56} />
                     <div>
                         <p className="bk-char-stats"><b>{reading.length}</b> {uiText(" 在读 · ")}<b>{finished.length}</b> {uiText(" 读完 · ")}<b>{traces.length}</b> {uiText(" 条留言")}</p>
-                        <p className="bk-hint">{uiText("彼方里：")}{readingPreferenceLabel(char)} · {READING_PACE_LABEL[readingPaceOf(char)]}{char.vrState?.enabled ? '' : uiText(" · 还没接入彼方，不会自己去读书")}</p>
+                        <p className="bk-hint">{uiText("彼方里：")}{shownPreference} · {uiText(READING_PACE_LABEL[readingPaceOf(char)])}{char.vrState?.enabled ? '' : uiText(" · 还没接入彼方，不会自己去读书")}</p>
                         <button className="bk-link-btn" onClick={() => void clearAll()}><Eraser size={13} /> {uiText(" 清空阅读记录")}</button>
                     </div>
                 </section>
@@ -179,7 +183,7 @@ export const CharacterShelf: React.FC<{
                             {[...recommendations].reverse().map(r => (
                                 <li key={r.id} className={r.status === 'pass' ? 'is-pass' : ''}>
                                     <strong>《{r.title}》</strong>{r.author && <small> {r.author}</small>}
-                                    <p>{r.reason}</p>
+                                    <p><LocalizedCharacterText record={{ id: r.id, scope: 'recommend', text: r.reason }} /></p>
                                     <div className="bk-note-foot">
                                         {(['want', 'read', 'pass'] as const).map(st => (
                                             <button key={st} aria-pressed={r.status === st} onClick={() => onRecStatus(r.id, st)}>{{ want: uiText("想读"), read: uiText("读过了"), pass: uiText("不感兴趣") }[st]}</button>
