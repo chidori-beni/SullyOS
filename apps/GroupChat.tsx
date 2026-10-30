@@ -25,6 +25,7 @@ import { parseDirectorActions, stripSkipMarker, parseGroupTopicBox } from '../ut
 import { GroupPacketMeta, PacketReceiptMeta, ClaimResult, claimPacket, effectivePacketStatus, makePacketMeta } from '../utils/groupChat/redpacket';
 import { messageLogText } from '../utils/groupChat/format';
 import { trackEvent } from '../utils/analytics';
+import { copyTextToClipboard, getMessageCopyText } from '../utils/messageCopyText';
 import { markAmsgStateDirty, type AmsgDirtyReason } from '../utils/amsgStateSync';
 import { buildMemberTimeline, DEFAULT_MEMBER_TIMELINE_CAP } from '../utils/groupChat/timeline';
 import { buildGroupHostAwarenessLine, buildCharBondNote } from '../utils/characterIdentity';
@@ -152,7 +153,7 @@ const GroupMessageItem = React.memo(({
     selectionMode: boolean,
     isSelected: boolean,
     onToggleSelect: (id: number) => void,
-    onLongPress: (id: number) => void,
+    onLongPress: (id: number, el?: HTMLElement | null) => void,
     onReply: (msg: Message) => void,
     nameOf: (id: string) => string,
     onPacketClick: (msg: Message) => void,
@@ -205,6 +206,7 @@ const GroupMessageItem = React.memo(({
     // pointer-event 手势（对齐私聊 MessageItem 的方案）：600ms 长按 → 操作菜单；
     // 触屏左滑 ≤-52px → 引用回复（带位移动画）；鼠标右键 → 操作菜单
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pressTargetRef = useRef<HTMLElement | null>(null);
     const startPos = useRef({ x: 0, y: 0 });
     const activePointerId = useRef<number | null>(null);
     const activePointerType = useRef<string>('');
@@ -234,6 +236,7 @@ const GroupMessageItem = React.memo(({
         activePointerId.current = e.pointerId;
         activePointerType.current = e.pointerType;
         startPos.current = { x: e.clientX, y: e.clientY };
+        pressTargetRef.current = e.currentTarget;
         document.getSelection()?.removeAllRanges();
 
         clearLongPressTimer();
@@ -242,7 +245,7 @@ const GroupMessageItem = React.memo(({
             activePointerId.current = null;
             activePointerType.current = '';
             resetReplyGesture();
-            onLongPress(msg.id);
+            onLongPress(msg.id, pressTargetRef.current);
         }, 600);
     };
 
@@ -453,7 +456,7 @@ const GroupMessageItem = React.memo(({
                         activePointerId.current = null;
                         activePointerType.current = '';
                         resetReplyGesture();
-                        onLongPress(msg.id);
+                        onLongPress(msg.id, e.currentTarget);
                     }}
                     onDragStart={(e) => e.preventDefault()}
                     onClick={handleClick}
@@ -461,7 +464,8 @@ const GroupMessageItem = React.memo(({
                     {!isUser && isFirstInGroup && (
                         <span className="sully-chat-message-sender text-[10px] text-slate-400 ml-1 mb-1">{name}</span>
                     )}
-                    <div className={selectionMode ? 'pointer-events-none' : ''}>
+                    {/* data-copy-root：长按「复制文字」只取这里面的字，不带发送人名字和时间 */}
+                    <div className={selectionMode ? 'pointer-events-none' : ''} data-copy-root="">
                         {renderContent()}
                     </div>
                     {isLastInGroup && showTimestamp !== 'never' && (
@@ -543,6 +547,8 @@ const GroupChat: React.FC = () => {
     const [modalType, setModalType] = useState<'none' | 'create' | 'settings' | 'transfer' | 'member_select' | 'message-options' | 'edit-message' | 'packet-detail' | 'chrome-css' | 'chrome-sound' | 'html-prompt' | 'help' | 'narration'>('none');
     const [tempHtmlPrompt, setTempHtmlPrompt] = useState('');
     const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
+    // 长按那一刻从卡片上取好的文字
+    const [selectedCopyText, setSelectedCopyText] = useState('');
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
     const [editContent, setEditContent] = useState('');
     const [preserveContext, setPreserveContext] = useState(true);
@@ -701,22 +707,23 @@ const GroupChat: React.FC = () => {
 
     // --- Logic: Selection & Deletion ---
 
-    const handleMessageLongPress = useCallback((id: number) => {
+    const handleMessageLongPress = useCallback((id: number, el?: HTMLElement | null) => {
         const msg = messagesRef.current.find(m => m.id === id);
         if (msg) {
             setSelectedMessage(msg);
+            setSelectedCopyText(getMessageCopyText(msg, el));
             setModalType('message-options');
         }
         setShowPanel('none');
     }, []);
 
-    const handleCopyMessage = () => {
-        if (!selectedMessage) return;
-        navigator.clipboard.writeText(selectedMessage.content);
+    const handleCopyMessage = async () => {
+        if (!selectedMessage || !selectedCopyText) return;
+        const ok = await copyTextToClipboard(selectedCopyText);
         setModalType('none');
         setSelectedMessage(null);
-        addToast('已复制到剪贴板', 'success');
-        trackEvent('复制一条群消息文字');
+        addToast(ok ? '已复制到剪贴板' : '复制失败，请重试', ok ? 'success' : 'error');
+        if (ok) trackEvent('复制一条群消息文字');
     };
 
     const handleEnterSelectionMode = () => {
@@ -2266,7 +2273,7 @@ ${buildCharBondNote(member, characters.filter(c => activeGroup?.members.includes
                     <button onClick={handleEnterSelectionMode} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
                         多选 / 批量删除
                     </button>
-                    {selectedMessage?.type === 'text' && (
+                    {!!selectedCopyText && (
                         <button onClick={handleCopyMessage} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
                             复制文字
                         </button>

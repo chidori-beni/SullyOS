@@ -86,6 +86,7 @@ import { resolveActiveSound, playWhiteboxSound, unlockWhiteboxAudio, parseWhiteb
 import { normalizeTranslationLangLabel, isTranslationLangPreset } from '../utils/translationLang';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
 import { trackEvent, noteMessageSent } from '../utils/analytics';
+import { copyTextToClipboard, getMessageCopyText } from '../utils/messageCopyText';
 import { flushAmsgState, markAmsgStateDirty, markAmsgStateDirtyForAll } from '../utils/amsgStateSync';
 import { ActiveMsgClient } from '../utils/activeMsgClient';
 import { deriveNaturalProfile, shouldAutoRefreshNaturalProfile } from '../utils/naturalProactive';
@@ -400,6 +401,8 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
         waterlineAlreadyAhead: boolean;
     } | null>(null);
     const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
+    // 长按那一刻从卡片上取好的文字（卡片关菜单后 DOM 可能已经变了，所以当场取）
+    const [selectedCopyText, setSelectedCopyText] = useState('');
     type BroadcastDraft = { sourceMessageId: number; sourceCharId: string; text: string };
     const [broadcastDraft, setBroadcastDraft] = useState<BroadcastDraft | null>(null);
     const broadcastInFlightRef = useRef(false);
@@ -3665,13 +3668,13 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
         setModalType('none');
     };
 
-    const handleCopyMessage = () => {
-        if (!selectedMessage) return;
-        navigator.clipboard.writeText(selectedMessage.content);
+    const handleCopyMessage = async () => {
+        if (!selectedMessage || !selectedCopyText) return;
+        const ok = await copyTextToClipboard(selectedCopyText);
         setModalType('none');
         setSelectedMessage(null);
-        addToast('已复制到剪贴板', 'success');
-        trackEvent('复制一条消息');
+        addToast(ok ? '已复制到剪贴板' : '复制失败，请重试', ok ? 'success' : 'error');
+        if (ok) trackEvent('复制一条消息');
     };
 
     const handleDeleteEmoji = async () => {
@@ -3754,8 +3757,9 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
     }, []);
 
     // Memoized callbacks for MessageItem to avoid busting React.memo
-    const handleMessageLongPress = useCallback((msg: Message) => {
+    const handleMessageLongPress = useCallback((msg: Message, el?: HTMLElement | null) => {
         setSelectedMessage(msg);
+        setSelectedCopyText(getMessageCopyText(msg, el));
         setModalType('message-options');
     }, []);
 
@@ -4957,7 +4961,7 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
                 onSetHistoryStart={handleSetHistoryStart} onRestoreAdaptiveContext={restoreAdaptiveContext} onJumpToMessageInChat={handleJumpToMessageInChat} onOpenBroadcast={handleOpenBroadcast} onEnterSelectionMode={handleEnterSelectionMode}
                 onReplyMessage={handleReplyMessage} onEditMessageStart={() => { if (selectedMessage) { setEditContent(selectedMessage.content); setModalType('edit-message'); } }}
                 reactionShortcuts={reactionShortcuts} onMessageReaction={handleUserMessageReaction} onChangeReactionShortcuts={handleChangeReactionShortcuts}
-                onConfirmEditMessage={confirmEditMessage} onDeleteMessage={handleDeleteMessage} onCopyMessage={handleCopyMessage} onDeleteEmoji={handleDeleteEmoji} onMoveEmojiToFront={handleMoveEmojiToFront} onDeleteCategory={handleDeleteCategory}
+                onConfirmEditMessage={confirmEditMessage} onDeleteMessage={handleDeleteMessage} onCopyMessage={handleCopyMessage} canCopyMessage={!!selectedCopyText} onDeleteEmoji={handleDeleteEmoji} onMoveEmojiToFront={handleMoveEmojiToFront} onDeleteCategory={handleDeleteCategory}
                 onRenameCategory={handleRenameCategory} onDownloadCategory={handleDownloadCategory}
                 allCharacters={characters} onSaveCategoryVisibility={handleSaveCategoryVisibility}
                 translationEnabled={translationEnabled}

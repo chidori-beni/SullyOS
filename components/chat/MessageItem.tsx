@@ -1561,7 +1561,8 @@ interface MessageItemProps {
     isLatestMessage?: boolean;
     /** 图片完成解码并确定高度后，通知聊天列表重新校准贴底位置。 */
     onMediaLoad?: (messageId: number) => void;
-    onLongPress: (m: Message) => void;
+    /** el：长按时手指下的消息容器，卡片的「复制文字」从它显示的内容里取字。 */
+    onLongPress: (m: Message, el?: HTMLElement | null) => void;
     onReply: (m: Message) => void;
     selectionMode: boolean;
     isSelected: boolean;
@@ -1720,6 +1721,7 @@ const MessageItem = React.memo(({
     // 于是气泡列底恒等于气泡尖角——头像贴 bottom-0 就始终对齐：
     // 组末/组中、时间戳开或关都一样，发新消息也不会因参考高度变化而位移。
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pressTargetRef = useRef<HTMLElement | null>(null);
     const startPos = useRef({ x: 0, y: 0 });
     const activePointerId = useRef<number | null>(null);
     const activePointerType = useRef<string>('');
@@ -1756,6 +1758,7 @@ const MessageItem = React.memo(({
         activePointerId.current = e.pointerId;
         activePointerType.current = e.pointerType;
         startPos.current = { x: e.clientX, y: e.clientY };
+        pressTargetRef.current = e.currentTarget;
         longPressFiredRef.current = false;
         document.getSelection()?.removeAllRanges();
 
@@ -1766,7 +1769,7 @@ const MessageItem = React.memo(({
             activePointerType.current = '';
             longPressFiredRef.current = true;
             resetReplyGesture();
-            onLongPress(m);
+            onLongPress(m, pressTargetRef.current);
         }, 600);
     };
 
@@ -1843,7 +1846,7 @@ const MessageItem = React.memo(({
             activePointerId.current = null;
             activePointerType.current = '';
             resetReplyGesture();
-            onLongPress(m);
+            onLongPress(m, e.currentTarget as HTMLElement);
         },
         onDragStart: (e: React.DragEvent) => e.preventDefault(),
         onClick: handleClick
@@ -2420,7 +2423,8 @@ const MessageItem = React.memo(({
                         {...interactionProps}
                     >
                     {!centerModules && thinkingChainNode}
-                    <div className={selectionMode ? 'pointer-events-none' : ''}>
+                    {/* data-copy-root：长按「复制文字」只取这里面的字，不带心象、表情回应 */}
+                    <div className={selectionMode ? 'pointer-events-none' : ''} data-copy-root="">
                         {content}
                     </div>
                     {reactionGroups.length > 0 && (

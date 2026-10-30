@@ -109,6 +109,8 @@ interface ChatModalsProps {
     onConfirmEditMessage: () => void;
     onDeleteMessage: () => void;
     onCopyMessage: () => void;
+    /** 这条消息有没有能复制的文字（文字消息和带字的卡片都算）。 */
+    canCopyMessage?: boolean;
     reactionShortcuts: string[];
     onMessageReaction: (emoji: string) => void;
     onChangeReactionShortcuts: (emojis: string[]) => void;
@@ -305,7 +307,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     onTransfer, onImportEmoji, onSaveSettings,
     onOpenHistoryCleanup,
     onArchive, onCreatePrompt, onEditPrompt, onSavePrompt, onDeletePrompt,
-    onSetHistoryStart, onRestoreAdaptiveContext, onJumpToMessageInChat, onOpenBroadcast, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onCopyMessage,
+    onSetHistoryStart, onRestoreAdaptiveContext, onJumpToMessageInChat, onOpenBroadcast, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onCopyMessage, canCopyMessage,
     reactionShortcuts, onMessageReaction, onChangeReactionShortcuts,
     onDeleteEmoji, onMoveEmojiToFront, onDeleteCategory, onRenameCategory, onDownloadCategory,
     allCharacters = [], onSaveCategoryVisibility,
@@ -1161,7 +1163,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                             编辑内容
                         </button>
                     )}
-                    {selectedMessage?.type === 'text' && (
+                    {canCopyMessage && (
                         <button onClick={onCopyMessage} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
                             复制文字
                         </button>
