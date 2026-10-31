@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMock = vi.hoisted(() => ({
   getMessagesByCharId: vi.fn(),
+  getMessagesByCharIdAndSource: vi.fn(),
   saveMessage: vi.fn(),
   updateMessageMetadata: vi.fn(),
 }));
@@ -21,11 +22,19 @@ import { endCallSession, resetCallLifecycleForTests, startCallSession } from './
 
 describe('call background result bridge', () => {
   const values = new Map<string, string>();
+  // 模拟按来源索引读取：只返回指定来源的消息。
+  const setRows = (rows: any[]) => {
+    dbMock.getMessagesByCharIdAndSource.mockImplementation(async (_charId: string, source: string) => (
+      rows.filter(row => row.metadata?.source === source)
+    ));
+  };
 
   beforeEach(() => {
     resetCallLifecycleForTests();
     values.clear();
     dbMock.getMessagesByCharId.mockReset();
+    dbMock.getMessagesByCharIdAndSource.mockReset();
+    setRows([]);
     dbMock.saveMessage.mockReset();
     dbMock.updateMessageMetadata.mockReset();
     dbMock.saveMessage.mockResolvedValue(88);
@@ -54,7 +63,7 @@ describe('call background result bridge', () => {
   });
 
   it('把 Worker 结果保存成 call assistant，并可被再次通知幂等去重', async () => {
-    dbMock.getMessagesByCharId.mockResolvedValue([
+    setRows([
       { id: 10, charId: 'char-1', role: 'user', type: 'text', content: '你在吗？', timestamp: 1_000, metadata: { source: 'call', callSessionId: 'session-1' } },
     ]);
 
@@ -67,7 +76,7 @@ describe('call background result bridge', () => {
       }),
     }));
 
-    dbMock.getMessagesByCharId.mockResolvedValue([
+    setRows([
       { id: 88, charId: 'char-1', role: 'assistant', type: 'text', content: '我还在。', timestamp: 2_000, metadata: { source: 'call', callSessionId: 'session-1', backgroundJobId: 'call-job-1' } },
     ]);
     dbMock.saveMessage.mockClear();
@@ -76,7 +85,7 @@ describe('call background result bridge', () => {
   });
 
   it('正常结束卡拦住取消竞态的迟到结果', async () => {
-    dbMock.getMessagesByCharId.mockResolvedValue([
+    setRows([
       { id: 20, charId: 'char-1', role: 'system', type: 'system', content: '通话结束', timestamp: 1_900, metadata: { source: 'call-end-popup', callSessionId: 'session-1', sleepEndReason: 'normal' } },
     ]);
 
@@ -85,7 +94,7 @@ describe('call background result bridge', () => {
   });
 
   it('Worker 回显的 [通话] 标记不会进入历史气泡', async () => {
-    dbMock.getMessagesByCharId.mockResolvedValue([
+    setRows([
       { id: 10, charId: 'char-1', role: 'user', type: 'text', content: '你在吗？', timestamp: 1_000, metadata: { source: 'call', callSessionId: 'session-1' } },
     ]);
 
@@ -96,15 +105,15 @@ describe('call background result bridge', () => {
   it('结束墓碑先于结束卡片写入时也拦住迟到结果', async () => {
     startCallSession('char-1', 'session-1');
     endCallSession('char-1', 'session-1');
-    dbMock.getMessagesByCharId.mockResolvedValue([]);
+    setRows([]);
 
     await expect(applyCallBackgroundResult(reply())).resolves.toBe(true);
-    expect(dbMock.getMessagesByCharId).not.toHaveBeenCalled();
+    expect(dbMock.getMessagesByCharIdAndSource).not.toHaveBeenCalled();
     expect(dbMock.saveMessage).not.toHaveBeenCalled();
   });
 
   it('中断/恢复卡允许梦话迟到，并更新卡片的实际梦话数量', async () => {
-    dbMock.getMessagesByCharId.mockResolvedValue([
+    setRows([
       { id: 21, charId: 'char-1', role: 'assistant', type: 'text', content: '晚安。', timestamp: 1_500, metadata: { source: 'call', callSessionId: 'session-1', sleepPhase: 'lullaby' } },
       { id: 22, charId: 'char-1', role: 'system', type: 'system', content: '陪睡通话已结束', timestamp: 1_800, metadata: { source: 'call-end-popup', callSessionId: 'session-1', callInterrupted: true, sleepRecovered: true, sleepDreamCount: 0 } },
     ]);
@@ -115,5 +124,13 @@ describe('call background result bridge', () => {
     expect(dbMock.updateMessageMetadata).toHaveBeenCalledWith(22, expect.any(Function));
     const update = dbMock.updateMessageMetadata.mock.calls[0][1];
     expect(update({ sleepDreamCount: 0 })).toEqual(expect.objectContaining({ sleepCompanion: true, sleepDreamCount: 1 }));
+  });
+
+  it('只按来源读通话消息，不把整段聊天历史读进内存', async () => {
+    setRows([]);
+    await expect(applyCallBackgroundResult(reply())).resolves.toBe(true);
+    expect(dbMock.getMessagesByCharId).not.toHaveBeenCalled();
+    expect(dbMock.getMessagesByCharIdAndSource).toHaveBeenCalledWith('char-1', 'call');
+    expect(dbMock.getMessagesByCharIdAndSource).toHaveBeenCalledWith('char-1', 'call-end-popup');
   });
 });

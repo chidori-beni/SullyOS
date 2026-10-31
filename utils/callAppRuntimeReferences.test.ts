@@ -39,7 +39,9 @@ describe('CallApp runtime references', () => {
     const source = readFileSync(path.resolve(__dirname, '../apps/CallApp.tsx'), 'utf8');
 
     expect(source).not.toContain('runMemoryPalacePostHook');
-    expect(source).toContain('const runCallMemoryPalaceHook = (char: CharacterProfile) =>');
+    expect(source).toContain('const runCallMemoryPalaceHook = (char: CharacterProfile, finalCheck = false) =>');
+    // 挂断那一下必须强制整理；通话中按间隔节流（见 IN_CALL_MEMORY_PALACE_INTERVAL_MS）。
+    expect(source).toContain('runCallMemoryPalaceHook(selectedChar, true);');
     expect(source.match(/runCallMemoryPalaceHook\(selectedChar\)/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
   });
 

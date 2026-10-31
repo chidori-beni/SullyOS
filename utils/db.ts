@@ -921,6 +921,35 @@ export const DB = {
     });
   },
 
+  // 通话专用：走 [charId, metadata.source] 复合索引，只读这一种来源的消息。
+  // 通话每一轮都要找本通的快照、后台任务结果；以前用 getMessagesByCharId(..., true)
+  // 把这个角色从第一天起的全部聊天（含内联图片）整段读进内存，聊十几分钟 iPhone 就会
+  // 因为内存把整个 PWA 杀掉（2026-10-31）。limit 给了就从最新往回只收 N 条。结果按 id 升序。
+  getMessagesByCharIdAndSource: async (charId: string, source: string, limit?: number): Promise<Message[]> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_MESSAGES, 'readonly');
+      const store = transaction.objectStore(STORE_MESSAGES);
+      const max = typeof limit === 'number' && limit > 0 ? Math.floor(limit) : Infinity;
+      const collected: Message[] = [];
+      const useSourceIndex = store.indexNames.contains('charId_source');
+      const cursorReq = useSourceIndex
+        ? store.index('charId_source').openCursor(IDBKeyRange.only([charId, source]), 'prev')
+        : store.index('charId').openCursor(IDBKeyRange.only(charId), 'prev');
+      cursorReq.onsuccess = () => {
+          const cursor = cursorReq.result;
+          if (cursor && collected.length < max) {
+              const m = cursor.value as Message;
+              if (!m.groupId && m.metadata?.source === source) collected.push(m);
+              cursor.continue();
+          } else {
+              resolve(collected.reverse());
+          }
+      };
+      cursorReq.onerror = () => reject(cursorReq.error);
+    });
+  },
+
   // 彼方动态专用：捞某角色全部 vr_card，不受"最近 N 条窗口"、记忆宫殿高水位
   // （mp_lastMsgId）、归档隐藏起点（char.hideBeforeMessageId）影响。
   // 这些机制只管「LLM 上下文能否看到」；彼方动态是用户自己的浏览界面，

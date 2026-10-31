@@ -269,7 +269,12 @@ export const applyCallBackgroundResult = async (payload: unknown): Promise<boole
     removePendingCallBackgroundJob(result.jobId);
     return true;
   }
-  const all = await DB.getMessagesByCharId(result.charId, true);
+  // 只读通话消息与结束卡（这里用到的全部来源），别把整段聊天历史读进内存。
+  const [callMessages, endPopups] = await Promise.all([
+    DB.getMessagesByCharIdAndSource(result.charId, 'call'),
+    DB.getMessagesByCharIdAndSource(result.charId, 'call-end-popup'),
+  ]);
+  const all = [...callMessages, ...endPopups];
   const duplicate = all.find(message => message.metadata?.backgroundJobId === result.jobId);
   if (duplicate) {
     removePendingCallBackgroundJob(result.jobId);

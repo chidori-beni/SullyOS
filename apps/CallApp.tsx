@@ -220,6 +220,7 @@ const CALL_SETUP_GUIDE_KEY = 'sully-call-setup-guide-v2';
 const CALL_AUDIO_ROUTE_KEY = 'sully-call-audio-route-v1';
 // Four 8-bit PCM silent samples. Playing this exact call audio element from the
 // user's “接通” gesture primes iOS media playback before the async TTS response arrives.
+const IN_CALL_MEMORY_PALACE_INTERVAL_MS = 10 * 60 * 1000;
 const SILENT_CALL_AUDIO_DATA_URL = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAACAgICA';
 const VIDEO_CALL_LAYOUTS: Array<{ id: VideoCallLayout; name: string; hint: string }> = [
   { id: 'stage', name: '沉浸', hint: '角色最大，聊天收成字幕' },
@@ -1145,7 +1146,14 @@ const CallApp: React.FC = () => {
   useEffect(() => { charactersRef.current = characters; }, [characters]);
   // 通话轮次后的水位线整理（与聊天/见面同一套流程；全局「正在整理记忆」
   // 提示由 pipeline 广播、OSContext 统一弹，这里只兜完成/失败的反馈）。
-  const runCallMemoryPalaceHook = (char: CharacterProfile) => {
+  // 通话进行中的整理检查最多每 10 分钟一次；挂断那一下（finalCheck）总是跑。
+  // 记忆宫殿判断要不要整理时会把这个角色的全部历史（含图片）读进内存，
+  // 以前每说一轮就读一遍，聊十几分钟 iPhone 就因为内存把整个 PWA 杀掉（2026-10-31）。
+  const lastInCallMemoryPalaceRunRef = useRef(0);
+  const runCallMemoryPalaceHook = (char: CharacterProfile, finalCheck = false) => {
+    const now = Date.now();
+    if (!finalCheck && now - lastInCallMemoryPalaceRunRef.current < IN_CALL_MEMORY_PALACE_INTERVAL_MS) return;
+    lastInCallMemoryPalaceRunRef.current = now;
     let lastStatus = '';
     void runCallMemoryPalacePostFlow({
       char,
@@ -1877,14 +1885,18 @@ const CallApp: React.FC = () => {
     }
     // includeProcessed=true：通话消息与聊天消息同存一个 store，记忆宫殿处理后会推进
     // 高水位标记 mp_lastMsgId_<charId>，默认的 getMessagesByCharId 会过滤掉水位线之前的
-    // 消息——这会导致继续聊天后通话记录被"清空"。这里必须读取全部消息。
-    const all = await DB.getMessagesByCharId(charId, true);
-    const callMsgs = all
-      .filter(m => m.metadata?.source === 'call' && m.metadata?.callSessionId)
+    // 消息——这会导致继续聊天后通话记录被"清空"。这里必须读取全部通话消息。
+    // 只按来源索引读通话与结束卡，别把整段聊天（含图片）读进内存。
+    const [callSourceMsgs, endPopups] = await Promise.all([
+      DB.getMessagesByCharIdAndSource(charId, 'call'),
+      DB.getMessagesByCharIdAndSource(charId, 'call-end-popup'),
+    ]);
+    const callMsgs = callSourceMsgs
+      .filter(m => m.metadata?.callSessionId)
       .sort((a, b) => a.timestamp - b.timestamp);
     const callEnds = new Map<string, Message>();
-    all.forEach(message => {
-      if (message.metadata?.source !== 'call-end-popup' || !message.metadata?.callSessionId) return;
+    endPopups.forEach(message => {
+      if (!message.metadata?.callSessionId) return;
       callEnds.set(String(message.metadata.callSessionId), message);
     });
     const grouped = new Map<string, Message[]>();
@@ -1944,8 +1956,9 @@ const CallApp: React.FC = () => {
     setCallRecordsLoadedFor(charId);
   };
   const pruneCallSnapshots = async (charId: string, sessionId: string) => {
-    const all = await DB.getMessagesByCharId(charId, true);
-    const expired = findExpiredCallSnapshots(all, sessionId);
+    // 每轮都会跑：只读通话消息，不读整段聊天历史（见 getMessagesByCharIdAndSource）。
+    const callMessages = await DB.getMessagesByCharIdAndSource(charId, 'call');
+    const expired = findExpiredCallSnapshots(callMessages, sessionId);
     if (!expired.length) return;
     for (const snapshot of expired) {
       await DB.updateMessageMetadata(snapshot.messageId, (previous: any) => {
@@ -2124,10 +2137,9 @@ const CallApp: React.FC = () => {
       // 结束卡也走 session 写入队列：已开始的通话写入先完成，挂断后的旧写入则在
       // 队列里看到墓碑后直接丢弃，避免出现“结束卡后又冒出通话气泡”。
       await enqueueCallSessionWrite(sessionId, async () => {
-        const allMessages = await DB.getMessagesByCharId(selectedChar.id, true);
-        const savedTranscript = allMessages
-          .filter(message => message.metadata?.source === 'call'
-            && String(message.metadata?.callSessionId || '') === sessionId)
+        const callMessages = await DB.getMessagesByCharIdAndSource(selectedChar.id, 'call');
+        const savedTranscript = callMessages
+          .filter(message => String(message.metadata?.callSessionId || '') === sessionId)
           .sort((a, b) => a.timestamp - b.timestamp);
         const transcript = savedTranscript.length
           ? savedTranscript.map(message => ({ role: message.role, content: message.content } as Pick<Message, 'role' | 'content'>))
@@ -2185,7 +2197,7 @@ const CallApp: React.FC = () => {
       // 挂断这一下最要紧：用户多半接着就把 App 关了，得把这最后一条也打脏——
       // 打脏即传，微任务内就会冲刷上传。
       markCallTurnDirty();
-      runCallMemoryPalaceHook(selectedChar);
+      runCallMemoryPalaceHook(selectedChar, true);
     }
     clearPersistedCallSession(sessionId);
     clearSuspendedCall();
@@ -3364,7 +3376,8 @@ ${sentencePlan}`;
       // 一份角色回复。结果处理器和这里共用同一个 job id，前台赢则取消远端，Worker 赢则
       // 直接复用已落库的那条。
       if (backgroundJobId) {
-        const existingBackground = (await DB.getMessagesByCharId(selectedChar.id, true))
+        // 本轮的后台结果只可能在最新几条通话消息里；别为了它整段读历史（每轮都跑）。
+        const existingBackground = (await DB.getMessagesByCharIdAndSource(selectedChar.id, 'call', 50))
           .find(message => message.metadata?.backgroundJobId === backgroundJobId);
         if (!isLiveCallSession(turnSessionId)) {
           void cancelPendingCallBackgroundJob(backgroundJobId);
@@ -3814,7 +3827,7 @@ ${sentencePlan}`;
     try {
       if (planned) {
         // Worker 那份可能已经先到了（页面刚从冻结里醒来）；那就不再花一次 API。
-        const existing = (await DB.getMessagesByCharId(selectedChar.id, true))
+        const existing = (await DB.getMessagesByCharIdAndSource(selectedChar.id, 'call', 50))
           .find(message => message.metadata?.backgroundJobId === planned.jobId);
         if (existing) return true;
         sleepDreamHandledJobIdsRef.current.add(planned.jobId);
@@ -3880,7 +3893,7 @@ ${sentencePlan}`;
     if (!selectedChar?.id || !sleepModeRef.current) return;
     if (viewMode !== 'in-call' || !isLiveCallSession(sessionId)) return;
     if (sleepDreamHandledJobIdsRef.current.has(jobId)) return;
-    const saved = (await DB.getMessagesByCharId(selectedChar.id, true))
+    const saved = (await DB.getMessagesByCharIdAndSource(selectedChar.id, 'call', 50))
       .find(message => message.metadata?.backgroundJobId === jobId
         && String(message.metadata?.callSessionId || '') === sessionId);
     if (!saved || !isLiveCallSession(sessionId) || sleepDreamHandledJobIdsRef.current.has(jobId)) return;
@@ -3934,9 +3947,8 @@ ${sentencePlan}`;
     if (created) {
       markPlannedDreamDone(jobId);
       void cancelPendingCallBackgroundJob(jobId);
-      const all = selectedChar?.id ? await DB.getMessagesByCharId(selectedChar.id, true) : [];
-      sleepDreamCountRef.current = all.filter(message => message.metadata?.source === 'call'
-        && String(message.metadata?.callSessionId || '') === currentSessionId
+      const callMessages = selectedChar?.id ? await DB.getMessagesByCharIdAndSource(selectedChar.id, 'call') : [];
+      sleepDreamCountRef.current = callMessages.filter(message => String(message.metadata?.callSessionId || '') === currentSessionId
         && message.metadata?.sleepPhase === 'dream').length;
       updateSleepCompanionSession({ dreamCount: sleepDreamCountRef.current });
       scheduleSleepDreamCheck();
