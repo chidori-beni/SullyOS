@@ -17,6 +17,9 @@ import {
     SpeakerHigh, SpeakerSlash, MagnifyingGlass, ShieldCheck, MagicWand,
 } from '@phosphor-icons/react';
 import TheaterPanel from './theater/TheaterPanel';
+import CopyTextButton from '../components/vrWorld/CopyTextButton';
+import { feedItemCopyText, letterCopyText, guestbookCopyText } from '../utils/vrWorld/copyText';
+import { copyTextToClipboard } from '../utils/messageCopyText';
 import { SARCaianDialogue, SARClubStage, SARUpdateModal } from './vrWorld/SARClubEvent';
 import { SARGachaOverlay } from './vrWorld/SARGacha';
 import { SARAssemblyCabinetOverlay } from './vrWorld/SARAssemblyCabinet';
@@ -1145,6 +1148,7 @@ const PendingLetterRow: React.FC<{ l: VRLetter; onMenu: (l: VRLetter) => void }>
             <div className="flex items-center gap-1.5 mb-0.5">
                 <span className="text-amber-200/90 font-bold text-[10.5px]">{l.pen}</span>
                 <span className={`ml-auto text-[9px] ${over ? 'text-red-300 font-semibold' : 'text-white/25'}`}>{over ? `${len}/${MAX_LETTER_CHARS} 超长·需精简` : '长按编辑/删除'}</span>
+                <CopyTextButton getText={() => letterCopyText(l)} size={12} className="-my-1 h-6 w-6 text-amber-100/45" />
             </div>
             <p className="leading-snug whitespace-pre-wrap">{l.content}</p>
         </div>
@@ -1390,7 +1394,7 @@ const InboxLetterRow: React.FC<{ l: VRLetter; onMenu: (l: VRLetter) => void; onL
     return (
         <div {...handlers} className={`rounded-lg p-2 mb-1.5 text-[11px] text-white/80 leading-snug transition-transform ${pressing ? 'scale-[0.97]' : ''}`}
             style={{ background: pressing ? 'rgba(125,211,252,0.16)' : 'rgba(255,255,255,.04)', border: `1px solid ${pressing ? 'rgba(125,211,252,0.4)' : 'transparent'}` }}>
-            <div className="flex items-center gap-1.5 mb-0.5"><span className="text-sky-200/80 font-bold text-[10.5px]">{l.pen}</span></div>
+            <div className="flex items-center gap-1.5 mb-0.5"><span className="text-sky-200/80 font-bold text-[10.5px]">{l.pen}</span><CopyTextButton getText={() => letterCopyText(l)} size={12} className="ml-auto -my-1 h-6 w-6 text-sky-100/45" /></div>
             <ExpandText text={l.content} limit={90} />
             <div className="flex items-center gap-3 mt-1.5 text-[10px]">
                 <span className="text-white/30">阅 {l.views ?? 0}</span>
@@ -1718,6 +1722,7 @@ const FeedCard: React.FC<{ item: FeedItem; onJump: (novelId: string | undefined,
                     <span className="font-bold text-amber-200">{item.charName}</span>
                     <span className="text-indigo-300/50">{room.name}</span>
                     <span className="ml-auto text-indigo-300/40 text-[9px] shrink-0">{new Date(item.timestamp).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                    {!manageMode && <CopyTextButton getText={() => feedItemCopyText(item, room.name, { activity: s => stripSelfName(s, item.charName), annotation: stripLeakedAttrs })} size={12} className="-my-1 -mr-1 h-6 w-6 text-indigo-200/45" />}
                 </div>
                 <p className="text-[11.5px] text-indigo-50/90 mt-0.5 leading-snug">{stripSelfName(item.meta.activity, item.charName)}</p>
                 {item.meta.behavior && <p className="text-[10.5px] text-pink-200/80 mt-1 leading-snug">{stripSelfName(item.meta.behavior, item.charName)}</p>}
@@ -2078,6 +2083,7 @@ const PostOfficePanel: React.FC<{ addToast?: (m: string, t?: any) => void; chara
                                             <div key={l.id} className="rounded-lg p-2 mb-1.5" style={{ background: 'rgba(255,255,255,.05)' }}>
                                                 <div className="flex items-start gap-1.5 mb-1">
                                                     <p className="flex-1 min-w-0 text-[10.5px] text-white/55 leading-snug">原信（{l.pen}）：<ExpandText text={l.content} limit={80} /></p>
+                                                    <CopyTextButton getText={() => letterCopyText(l)} size={12} className="-mt-1 h-6 w-6 text-amber-100/45" />
                                                     <button onClick={() => setReplyMenu(l)} className="shrink-0 text-white/35 text-[14px] leading-none px-1 -mt-0.5 active:text-white/70">···</button>
                                                 </div>
                                                 <p className="text-[11.5px] text-amber-50/90 leading-snug whitespace-pre-wrap">回信（{l.reply!.pen}）：{l.reply!.content}</p>
@@ -2099,6 +2105,7 @@ const PostOfficePanel: React.FC<{ addToast?: (m: string, t?: any) => void; chara
                                     <div className="flex items-center gap-1.5 mb-1">
                                         <span className="text-sky-200/70 text-[9.5px]">来自 {l.pen}</span>
                                         <span className="text-[8px] text-emerald-200/70 border border-emerald-300/30 rounded-full px-1.5 leading-tight">已发出</span>
+                                        <CopyTextButton getText={() => letterCopyText(l)} size={12} className="ml-auto -my-1 h-6 w-6 text-amber-100/45" />
                                     </div>
                                     <p className="text-[10.5px] text-white/55 leading-snug mb-1">原信：<ExpandText text={l.content} limit={80} /></p>
                                     <p className="text-[11.5px] text-amber-50/90 leading-snug whitespace-pre-wrap pl-2 border-l-2 border-amber-300/40">回信（{l.reply!.pen}）：{l.reply!.content}{l.reply!.userNote ? `\n——\n${l.reply!.userNote}` : ''}</p>
@@ -2122,6 +2129,7 @@ const PostOfficePanel: React.FC<{ addToast?: (m: string, t?: any) => void; chara
                                 <div key={l.id} className="rounded-lg p-2 mb-1.5 text-[11px]" style={{ background: 'rgba(255,255,255,.04)' }}>
                                     <div className="flex items-start gap-1.5">
                                         <div className="flex-1 min-w-0 text-white/70 leading-snug"><ExpandText text={l.content} limit={70} /></div>
+                                        <CopyTextButton getText={() => letterCopyText(l)} size={12} className="-mt-1 h-6 w-6 text-amber-100/45" />
                                         <button onClick={() => setSentMenu(l)} className="shrink-0 text-white/35 text-[14px] leading-none px-1 -mt-0.5 active:text-white/70">···</button>
                                     </div>
                                     {l.released && <span className="inline-block mt-1 text-[8px] text-white/45 border border-white/15 rounded-full px-1.5 leading-tight">已停止传播</span>}
@@ -2139,7 +2147,8 @@ const PostOfficePanel: React.FC<{ addToast?: (m: string, t?: any) => void; chara
                                         <span className="text-amber-200/70 text-[9.5px]">{l.pen}的信</span>
                                         {l.status === 'sealed' && <span className="text-[8px] text-amber-200/60 border border-amber-300/30 rounded-full px-1.5 leading-tight">已封存</span>}
                                         {l.released && <span className="text-[8px] text-white/45 border border-white/15 rounded-full px-1.5 leading-tight">已停止传播</span>}
-                                        <button onClick={() => setSentMenu(l)} className="ml-auto shrink-0 text-white/35 text-[14px] leading-none px-1 active:text-white/70">···</button>
+                                        <CopyTextButton getText={() => letterCopyText(l)} size={12} className="ml-auto -my-1 h-6 w-6 text-amber-100/45" />
+                                        <button onClick={() => setSentMenu(l)} className="shrink-0 text-white/35 text-[14px] leading-none px-1 active:text-white/70">···</button>
                                     </div>
                                     <div className="text-amber-50/80 leading-snug mb-1"><ExpandText text={l.content} limit={70} /></div>
                                     {statLine(l.remoteId)}
@@ -2944,6 +2953,8 @@ const RoomScene: React.FC<{
     const [gbPage, setGbPage] = useState(0);          // 留言墙翻页：0 = 最新一页
     const [confirmClear, setConfirmClear] = useState(false); // 一键清空二次确认
     const [messageMenu, setMessageMenu] = useState<VRGuestbookMessage | null>(null);
+    // 复制时的名字和墙上显示的一致：角色改过名就用现在的名字
+    const gbNameOf = (m: VRGuestbookMessage) => m.authorId === 'user' ? m.authorName : (characters.find(c => c.id === m.authorId)?.name || m.authorName);
     const [editingMessage, setEditingMessage] = useState<VRGuestbookMessage | null>(null);
     const [messageDraft, setMessageDraft] = useState('');
     const [deletingMessage, setDeletingMessage] = useState<VRGuestbookMessage | null>(null);
@@ -3102,13 +3113,16 @@ const RoomScene: React.FC<{
                             <div className="flex items-center gap-2 px-3 py-2 border-b border-white/10">
                                 <span className="text-[10px] tracking-[0.25em] text-sky-200/70" style={{ fontFamily: `'Noto Serif SC',serif` }}>留言墙</span>
                                 {all.length > 0 && <span className="text-[9px] text-white/30 tabular-nums">{all.length} 条</span>}
+                                {all.length > 0 && <CopyTextButton label="复制全部" getText={() => guestbookCopyText(all, gbNameOf)} size={11}
+                                    onResult={ok => addToast?.(ok ? `已复制 ${all.length} 条留言` : '复制失败', ok ? 'success' : 'error')}
+                                    className={`${confirmClear ? '' : 'ml-auto'} text-[10px] px-2.5 py-0.5 rounded-full text-sky-100/85 bg-white/5 border border-sky-300/20`} />}
                                 {all.length > 0 && (confirmClear ? (
                                     <span className="ml-auto flex items-center gap-1.5">
                                         <button onClick={submitClear} className="text-[10px] px-2 py-0.5 rounded-full text-white font-semibold" style={{ background: 'rgba(244,63,94,.85)' }}>确认清空</button>
                                         <button onClick={() => setConfirmClear(false)} className="text-[10px] px-2 py-0.5 rounded-full text-white/70 bg-white/10">取消</button>
                                     </span>
                                 ) : (
-                                    <button onClick={() => setConfirmClear(true)} className="ml-auto text-[10px] px-2.5 py-0.5 rounded-full text-rose-200/90 bg-white/5 border border-rose-300/20 active:bg-white/10">一键清空</button>
+                                    <button onClick={() => setConfirmClear(true)} className="text-[10px] px-2.5 py-0.5 rounded-full text-rose-200/90 bg-white/5 border border-rose-300/20 active:bg-white/10">一键清空</button>
                                 ))}
                             </div>
                             <div className="flex-1 overflow-y-auto vr-reader-scroll px-3 py-3 space-y-3">
@@ -3176,6 +3190,7 @@ const RoomScene: React.FC<{
 
                 {/* 邮局：信件管理面板 */}
                 <ActionSheet open={!!messageMenu} title={messageMenu?.authorName} onClose={() => setMessageMenu(null)} actions={[
+                    { label: '复制这条', onClick: () => { const m = messageMenu; setMessageMenu(null); if (m) void copyTextToClipboard(guestbookCopyText([m], gbNameOf)).then(ok => addToast?.(ok ? '已复制' : '复制失败', ok ? 'success' : 'error')); } },
                     { label: '编辑留言', onClick: () => { setEditingMessage(messageMenu); setMessageDraft(messageMenu?.content || ''); setMessageMenu(null); } },
                     { label: '删除留言', danger: true, onClick: () => { setDeletingMessage(messageMenu); setMessageMenu(null); } },
                 ]} />

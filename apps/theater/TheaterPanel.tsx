@@ -21,6 +21,8 @@ import { getChibi } from '../../utils/vrWorld/chibi';
 import { CreatorIframe } from '../../components/Like520Event';
 import type { VRScript, VRStagedPlay, VRCastAssign, VRActorNote, VRStageMode, VRPlayRole, Emoji, EmojiCategory, CharacterProfile } from '../../types';
 import { shareOrDownloadFile } from '../../utils/shareExport';
+import CopyTextButton from '../../components/vrWorld/CopyTextButton';
+import { scriptCopyText, stagedPlayCopyText } from '../../utils/vrWorld/copyText';
 
 const tid = (p: string) => `${p}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 const SERIF = `'Noto Serif SC',serif`;
@@ -218,7 +220,8 @@ const ScriptView: React.FC<{ script: VRScript; onBack: () => void; onStage: () =
         <div className="flex items-center gap-2 mb-2">
             <button onClick={onBack} style={{ color: TH.goldSoft, padding: 4, marginLeft: -4 }}><CaretLeft size={18} /></button>
             <span style={{ fontSize: 14, fontWeight: 800, color: TH.text, fontFamily: SERIF }} className="truncate">《{script.title}》</span>
-            <button onClick={onDelete} style={{ marginLeft: 'auto', color: TH.crimson, padding: 4, opacity: .8 }}><Trash size={15} /></button>
+            <CopyTextButton getText={() => scriptCopyText(script)} label="复制" size={13} style={{ marginLeft: 'auto', color: TH.goldSoft, fontSize: 11, padding: 4 }} />
+            <button onClick={onDelete} style={{ color: TH.crimson, padding: 4, opacity: .8 }}><Trash size={15} /></button>
         </div>
         {script.logline && <p style={{ fontSize: 11.5, color: TH.sub, marginBottom: 8, fontStyle: 'italic' }}>{script.logline}</p>}
         <div style={{ fontSize: 10.5, color: TH.goldSoft, marginBottom: 8 }}>登场：{script.roles.map(r => `${r.name}（${r.persona}）`).join('、') || '—'}</div>
@@ -469,6 +472,7 @@ const PlaybackView: React.FC<{ play: VRStagedPlay; characters: CharacterProfile[
                 <span style={{ fontSize: 14, fontWeight: 800, color: TH.text, fontFamily: SERIF }} className="truncate">《{play.title}》</span>
                 <span className="ml-auto" style={{ fontSize: 11, fontWeight: 800, color: TH.warn }}>{play.rating?.split(/\s/)[0]}</span>
                 <button onClick={() => setShowScript(s => !s)} title="看终本" style={{ color: showScript ? TH.gold : TH.goldSoft, padding: 4, fontSize: 16 }}>📜</button>
+                <CopyTextButton getText={() => stagedPlayCopyText(play)} size={15} style={{ color: TH.goldSoft, padding: 4 }} />
                 <button onClick={() => setConfirmDel(true)} title="删除这场演出" style={{ color: TH.crimson, padding: 4, opacity: .8 }}><Trash size={15} /></button>
             </div>
 
