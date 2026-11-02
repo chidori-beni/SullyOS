@@ -8,6 +8,7 @@
  */
 import type { APIConfig } from '../../types';
 import { safeFetchJson } from '../safeApi';
+import { loadUiLocale, type UiLocale } from '../uiLocale';
 import { isVisionInputUnsupportedError } from '../userCameraSnapshot';
 
 export type NoteModelSource = 'vision' | 'light' | 'main';
@@ -60,11 +61,11 @@ export interface NoteContext {
 /** 笔记最长多少字（10-01 用户要详细一些、每个人分清楚：从一句 40 字改成两到四句）。 */
 export const NOTE_MAX_CHARS = 300;
 
-export const buildNoteInstruction = (ctx: NoteContext = {}): string => {
+export const buildNoteInstruction = (ctx: NoteContext = {}, locale: UiLocale = loadUiLocale()): string => {
     const prev = (ctx.prevNotes || []).filter(Boolean).slice(-3);
     const subs = (ctx.subtitles || []).filter(Boolean).slice(-3);
     return [
-        `你是观影助理，替一个此刻没看屏幕的人记下画面。这是${ctx.work ? ctx.work : '一部影视作品'}的一张截图。用中文写 2~4 句、150 字以内的客观描述：`,
+        `你是观影助理，替一个此刻没看屏幕的人记下画面。这是${ctx.work ? ctx.work : '一部影视作品'}的一张截图。用${locale === 'ja-JP' ? '自然的日语' : '中文'}写 2~4 句、150 字以内的客观描述：`,
         '- 画面里的**每个人分开写**：是谁（认得出是这部作品里的哪个角色就写名字；认不出就用稳定的外貌特征称呼，比如「银发精灵少女」「戴眼镜的高个男人」），表情神态、在做什么、在画面哪里、在跟谁互动。',
         '- 地点、时间、光线和气氛；镜头是特写、近景还是远景。',
         ctx.hasTextSubs
@@ -73,6 +74,7 @@ export const buildNoteInstruction = (ctx: NoteContext = {}): string => {
         '只写看得见的，不评论，不猜后面的剧情。写成一段话，不要分点，不要加「画面中」之类的前缀。',
         prev.length ? `\n前面几条笔记（同一个人的称呼请跟它们保持一致）：\n${prev.map(n => `· ${n}`).join('\n')}` : '',
         subs.length ? `\n这会儿播放器上的台词（可以帮你认出是谁在说话）：\n${subs.map(s => `· ${s}`).join('\n')}` : '',
+        locale === 'ja-JP' ? '今回のメモ本文は必ず自然な日本語で書いてください。以前のメモや参考資料が中国語でも、その言語を引き継がないでください。人物の呼び方は同じ人物だと分かるように日本語にし、作品名・人名・画面内の文字や字幕の引用は正確な原表記を保ってください。' : '',
     ].filter(Boolean).join('\n');
 };
 

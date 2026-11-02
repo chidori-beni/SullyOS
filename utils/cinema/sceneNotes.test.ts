@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const safeFetchJson = vi.fn();
+const locale = vi.hoisted(() => ({ value: 'zh-CN' }));
+vi.mock('../uiLocale', () => ({ loadUiLocale: () => locale.value }));
 vi.mock('../safeApi', () => ({ safeFetchJson: (...args: any[]) => safeFetchJson(...args) }));
 
 const { buildNoteInstruction, cleanNote, describeFrame, nextNoteModel, noteModelCandidates, NoteVisionUnsupportedError } = await import('./sceneNotes');
@@ -30,7 +32,26 @@ describe('助理用哪个模型', () => {
 
 describe('写一条画面笔记', () => {
     // 花括号不能省：箭头函数直接返回 mock 的话，vitest 会把它当成收尾函数再调一次
-    beforeEach(() => { safeFetchJson.mockReset(); });
+    beforeEach(() => { safeFetchJson.mockReset(); locale.value = 'zh-CN'; });
+
+    it('每次请求读取语言：日语笔记不沿用旧中文，切回中文恢复中文要求', async () => {
+        safeFetchJson.mockResolvedValue({ choices: [{ message: { content: '少女が窓辺に立っている。' } }] });
+        const [model] = noteModelCandidates(main, light);
+        locale.value = 'ja-JP';
+        const context = { work: '作品原名', prevNotes: ['少女站在窗前'], subtitles: ['原文台词'], hasTextSubs: true };
+        expect(await describeFrame(model, 'data:image/jpeg;base64,xx', '角色', context)).toBe('少女が窓辺に立っている。');
+        const japanese = JSON.parse(safeFetchJson.mock.calls[0][1].body).messages[0].content[0].text;
+        expect(japanese).toContain('用自然的日语写');
+        expect(japanese).not.toContain('用中文写');
+        expect(japanese).toContain('以前のメモや参考資料が中国語でも');
+        expect(japanese).toContain('少女站在窗前');
+        expect(japanese).toContain('字幕**不用抄**');
+        locale.value = 'zh-CN';
+        await describeFrame(model, 'data:image/jpeg;base64,xx');
+        const chinese = JSON.parse(safeFetchJson.mock.calls[1][1].body).messages[0].content[0].text;
+        expect(chinese).toContain('用中文写');
+        expect(chinese).not.toContain('必ず自然な日本語');
+    });
 
     it('只发一张图和一句指令（不带人设和聊天记录）', async () => {
         safeFetchJson.mockResolvedValue({ choices: [{ message: { content: '「女主在雨夜的钟楼里翻日记」' } }] });
