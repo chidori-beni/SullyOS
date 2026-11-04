@@ -19,7 +19,7 @@ const {
     getXinshengPresetSortOrder, setXinshengPresetSortOrder,
     appendXinshengFirePackPreset, readXinshengFirePackPresetLog,
     readXinshengFirePackPresetAt, selectFirePackPresetAt, XINSHENG_FIRE_PACK_PRESET_CAP,
-    isPresetRandomEnabled, setPresetRandomEnabled, pickRandomPreset,
+    isPresetRandomEnabled, setPresetRandomEnabled, pickRandomPreset, setXinshengPresetCharIds,
 } = await import('./xinshengStore');
 
 const entry = (innerVoice: string) => ({
@@ -423,21 +423,68 @@ describe('随机预设', () => {
     });
 
     it('空库返回 null；只有一个时就返回它', async () => {
-        expect(await pickRandomPreset()).toBeNull();
+        expect(await pickRandomPreset('c1')).toBeNull();
         await saveXinshengPreset('唯一', { customCss: '', customPrompt: '', layout: '', displayMode: 'planner', aiVisibleFields: '' });
-        expect((await pickRandomPreset())!.name).toBe('唯一');
-        expect((await pickRandomPreset())!.name).toBe('唯一');
+        expect((await pickRandomPreset('c1'))!.name).toBe('唯一');
+        expect((await pickRandomPreset('c1'))!.name).toBe('唯一');
     });
 
     it('两个以上时永远避开上一次抽中的那个', async () => {
         for (const n of ['甲', '乙', '丙']) {
             await saveXinshengPreset(n, { customCss: '', customPrompt: '', layout: '', displayMode: 'planner', aiVisibleFields: '' });
         }
-        let last = (await pickRandomPreset())!.id;
+        let last = (await pickRandomPreset('c1'))!.id;
         for (let i = 0; i < 20; i++) {
-            const next = (await pickRandomPreset())!;
+            const next = (await pickRandomPreset('c1'))!;
             expect(next.id).not.toBe(last);
             last = next.id;
         }
+    });
+
+    describe('适用范围', () => {
+        const body = { customCss: '', customPrompt: '', layout: '', displayMode: 'planner' as const, aiVisibleFields: '' };
+
+        it('专属预设永远抽不到别的角色头上，通用预设谁都抽得到', async () => {
+            await saveXinshengPreset('通用', body);
+            const onlyId = (await saveXinshengPreset('萧逸专属', body))!;
+            await setXinshengPresetCharIds(onlyId, ['xiaoyi']);
+
+            const seenByOther = new Set<string>();
+            const seenByXiaoyi = new Set<string>();
+            for (let i = 0; i < 20; i++) {
+                seenByOther.add((await pickRandomPreset('other'))!.name);
+                seenByXiaoyi.add((await pickRandomPreset('xiaoyi'))!.name);
+            }
+            expect([...seenByOther]).toEqual(['通用']);
+            expect(seenByXiaoyi.has('萧逸专属')).toBe(true);
+        });
+
+        it('这个角色一个都抽不到时返回 null（退回角色自己的设置）', async () => {
+            const id = (await saveXinshengPreset('萧逸专属', body))!;
+            await setXinshengPresetCharIds(id, ['xiaoyi']);
+            expect(await pickRandomPreset('other')).toBeNull();
+        });
+
+        it('传空数组 = 回到全部角色', async () => {
+            const id = (await saveXinshengPreset('甲', body))!;
+            await setXinshengPresetCharIds(id, ['xiaoyi']);
+            await setXinshengPresetCharIds(id, []);
+            expect((await pickRandomPreset('other'))!.name).toBe('甲');
+            expect((await listXinshengPresets())[0].charIds).toBeUndefined();
+        });
+
+        it('覆盖预设内容后范围还在', async () => {
+            const id = (await saveXinshengPreset('甲', body))!;
+            await setXinshengPresetCharIds(id, ['xiaoyi']);
+            await updateXinshengPreset(id, '甲', { ...body, customCss: '.x{}' });
+            expect((await listXinshengPresets())[0].charIds).toEqual(['xiaoyi']);
+        });
+
+        it('导入时丢掉范围、导出文件不带范围：角色 id 换台设备就对不上了', async () => {
+            const { saved } = await importXinshengPresets([{ name: '外来', charIds: ['别人的角色'] }]);
+            expect(saved[0].charIds).toBeUndefined();
+            const file = JSON.parse(buildPresetExportFile(normalizePreset({ name: '甲', charIds: ['xiaoyi'] })));
+            expect(file.preset.charIds).toBeUndefined();
+        });
     });
 });

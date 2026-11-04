@@ -51,7 +51,7 @@ export const prepareXinshengRoundPreset = async (char: CharacterProfile): Promis
         // 不然模型这轮实际收到的指令会在两次 prompt 之间不一致。
         const pending = roundPresets.get(char.id);
         if (pending) return pending;
-        const picked = await pickRandomPreset();
+        const picked = await pickRandomPreset(char.id);
         if (picked) roundPresets.set(char.id, picked);
         else roundPresets.delete(char.id);
         return picked;
@@ -116,7 +116,7 @@ export const prepareXinshengFirePackPreset = async (
 ): Promise<XinshengPreset | null> => {
     if (!char?.id || !char.xinshengEnabled) return null;
     try {
-        const picked = (await isPresetRandomEnabled()) ? await pickRandomPreset() : null;
+        const picked = (await isPresetRandomEnabled()) ? await pickRandomPreset(char.id) : null;
         await appendXinshengFirePackPreset(char.id, picked ? toEntryPreset(picked) : characterEntryPreset(char));
         return picked;
     } catch (e) {

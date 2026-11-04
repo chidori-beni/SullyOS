@@ -192,11 +192,26 @@ export interface XinshengPreset {
     updatedAt?: number;
     /** 置顶。预设攒到几十个之后，常用的那几个要能一直待在最上面。 */
     pinned?: boolean;
+    /**
+     * 随机时的适用范围：没有 = 全部角色；有值 = 只有这些角色随机时才抽得到。
+     * 只管随机，手动「载入」不受限。角色 id 只在这台设备上有意义，所以不进导出文件。
+     */
+    charIds?: string[];
 }
 
 /** 糯叽机导出文件的信封。导入时按这个校验。 */
 export const XINSHENG_PRESET_FILE_TYPE = 'nuojiji.xinsheng.preset';
 export const XINSHENG_PRESET_FILE_VERSION = 2;
+
+/** 空列表和没有是一回事（全部角色），统一存成 undefined。 */
+const normalizePresetCharIds = (raw: unknown): string[] | undefined => {
+    if (!Array.isArray(raw)) return undefined;
+    const ids = [...new Set(raw.filter((id): id is string => typeof id === 'string' && id.length > 0))];
+    return ids.length > 0 ? ids : undefined;
+};
+
+export const isPresetAvailableForChar = (preset: XinshengPreset, charId: string): boolean =>
+    !preset.charIds?.length || preset.charIds.includes(charId);
 
 const newPresetId = (seed = 0): string =>
     `xp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${seed}`;
@@ -222,6 +237,7 @@ export const normalizePreset = (raw: any, index = 0): XinshengPreset => {
         createdAt: typeof raw?.createdAt === 'number' ? raw.createdAt : Date.now(),
         updatedAt: typeof raw?.updatedAt === 'number' ? raw.updatedAt : undefined,
         pinned: raw?.pinned === true,
+        charIds: normalizePresetCharIds(raw?.charIds),
     };
 };
 
@@ -339,6 +355,21 @@ export const toggleXinshengPresetPinned = async (id: string): Promise<XinshengPr
     }
 };
 
+/** 改随机时的适用范围，传空数组 = 全部角色。其余字段一个字不动。 */
+export const setXinshengPresetCharIds = async (id: string, charIds: string[]): Promise<boolean> => {
+    try {
+        const list = await readRawPresets();
+        const idx = list.findIndex(p => p.id === id);
+        if (idx < 0) return false;
+        list[idx] = { ...list[idx], charIds: normalizePresetCharIds(charIds) };
+        await savePresets(list);
+        return true;
+    } catch (e) {
+        console.warn('[xinsheng] 保存适用范围失败:', e);
+        return false;
+    }
+};
+
 /** 只改名字，布局 / CSS / 提示词一个字不动。返回排好序的新列表。 */
 export const renameXinshengPreset = async (id: string, name: string): Promise<XinshengPreset[]> => {
     const clean = name.trim().slice(0, 60);
@@ -367,7 +398,7 @@ export const importXinshengPresets = async (
     if (!Array.isArray(incoming) || incoming.length === 0) return { count: 0, saved: [] };
     const normalized = incoming
         .filter(p => p && typeof p === 'object')
-        .map((p, i) => normalizePreset({ ...p, id: newPresetId(i) }, i));
+        .map((p, i) => normalizePreset({ ...p, id: newPresetId(i), charIds: undefined }, i));
     if (normalized.length === 0) return { count: 0, saved: [] };
 
     if (mode === 'replace') {
@@ -584,12 +615,13 @@ export const readXinshengFirePackPresetAt = async (
     selectFirePackPresetAt(await readXinshengFirePackPresetLog(charId), atMs, entryFields);
 
 /**
- * 抽一个预设。会避开「上一次抽中的那个」——只有一个预设时除外。
+ * 给这个角色抽一个预设，只在它适用的范围里抽；一个都不适用时返回 null，
+ * 调用方会退回角色自己的心声设置。会避开「上一次抽中的那个」——只有一个可抽时除外。
  * 不避的话两个预设来回抽，用户平均每两轮就看到一次重复，随机的意义就没了。
  */
-export const pickRandomPreset = async (): Promise<XinshengPreset | null> => {
+export const pickRandomPreset = async (charId: string): Promise<XinshengPreset | null> => {
     try {
-        const list = await listXinshengPresets();
+        const list = (await listXinshengPresets()).filter(p => isPresetAvailableForChar(p, charId));
         if (list.length === 0) return null;
         if (list.length === 1) return list[0];
 

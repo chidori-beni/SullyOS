@@ -67,6 +67,7 @@ describe('prepareXinshengRoundPreset', () => {
 
         const first = await prepareXinshengRoundPreset(CHAR);
         expect(first).toEqual(presetA);
+        expect(pickRandomPreset).toHaveBeenCalledWith('c1'); // 按角色抽，适用范围才管得住
 
         // 模拟二轮 LLM：即使 pickRandomPreset 这次会抽中不同的 B，也不该被用上
         pickRandomPreset.mockResolvedValue(presetB);

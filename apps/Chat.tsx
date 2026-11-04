@@ -5835,6 +5835,7 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
                     isOpen={xinshengSettingsOpen}
                     onClose={() => setXinshengSettingsOpen(false)}
                     char={char}
+                    characters={characters}
                     addToast={addToast}
                     onSave={(v) => {
                         updateCharacter(char.id, {

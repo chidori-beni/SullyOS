@@ -23,6 +23,7 @@ import {
     renameXinshengPreset,
     saveXinshengPreset,
     setPresetRandomEnabled,
+    setXinshengPresetCharIds,
     setXinshengPresetSortOrder,
     sortXinshengPresets,
     toggleXinshengPresetPinned,
@@ -56,6 +57,8 @@ interface Props {
     isOpen: boolean;
     onClose: () => void;
     char: CharacterProfile;
+    /** 全部角色：预设库里设「适用范围」时列出来勾选。 */
+    characters: CharacterProfile[];
     /** 保存时回写到角色档案（调用方负责落库 + 刷新）。 */
     onSave: (value: XinshengSettingsValue) => void | Promise<void>;
     addToast?: (msg: string, kind?: 'success' | 'error' | 'info') => void;
@@ -83,7 +86,7 @@ const Field: React.FC<{ label: React.ReactNode; hint?: React.ReactNode; action?:
 
 const codeArea = 'w-full px-3 py-2.5 rounded-2xl bg-slate-50 border border-slate-200 text-[12px] font-mono leading-relaxed focus:outline-none focus:border-indigo-300 resize-y';
 
-export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, onSave, addToast }) => {
+export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, characters, onSave, addToast }) => {
     const [tab, setTab] = useState<TabKey>('general');
     const [value, setValue] = useState<XinshengSettingsValue>(() => readSettings(char));
     const [presets, setPresets] = useState<XinshengPreset[]>([]);
@@ -206,6 +209,59 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
         toast(p.pinned ? `已取消置顶「${p.name}」` : `已置顶「${p.name}」`, 'success');
     };
 
+    // 当前角色排最前：给这个角色定制预设时不用在几十个名字里找它。
+    const scopeCharacters = useMemo(
+        () => [char, ...characters.filter(c => c.id !== char.id)],
+        [char, characters],
+    );
+
+    /** 列表和展开卡片上的范围小字。全部角色时不显示，免得满屏都是同一句。 */
+    const presetScopeLabel = (p: XinshengPreset): string | null => {
+        if (!p.charIds?.length) return null;
+        const names = scopeCharacters.filter(c => p.charIds!.includes(c.id)).map(c => c.name);
+        if (names.length === 0) return '指定的角色已删除';
+        return names.length === 1 ? `仅${names[0]}` : `${names.length} 个角色`;
+    };
+
+    // 先改界面再落库：连点几个角色时，每一下都要基于上一下的结果，不能等写库回来。
+    const changePresetScope = async (p: XinshengPreset, charIds: string[]) => {
+        setPresets(list => list.map(x => (x.id === p.id ? { ...x, charIds: charIds.length > 0 ? charIds : undefined } : x)));
+        if (!(await setXinshengPresetCharIds(p.id, charIds))) {
+            setPresets(await listXinshengPresets());
+            toast('适用范围保存失败', 'error');
+        }
+    };
+
+    const togglePresetScopeChar = (p: XinshengPreset, charId: string) => {
+        // 顺手清掉已删除角色的 id，不然取消最后一个勾之后还留着幽灵范围，回不到「全部角色」
+        const current = (p.charIds ?? []).filter(id => scopeCharacters.some(c => c.id === id));
+        void changePresetScope(p, current.includes(charId) ? current.filter(id => id !== charId) : [...current, charId]);
+    };
+
+    const scopeChip = (on: boolean) => `max-w-full truncate px-2.5 py-1 rounded-full text-[11px] border ${on ? 'bg-indigo-500 text-white border-indigo-500' : 'bg-white text-slate-500 border-slate-200'}`;
+
+    const renderPresetScope = (p: XinshengPreset) => (
+        <div className="mt-2.5 pt-2 border-t border-indigo-100">
+            <div className="mb-1.5 text-[11px] text-slate-500">
+                <span className="font-semibold">随机时谁能抽到</span>
+                {p.charIds?.length && !scopeCharacters.some(c => p.charIds!.includes(c.id))
+                    ? <span className="text-rose-500"> · 指定的角色已删除，现在谁都抽不到</span>
+                    : <span className="text-slate-400"> · 点一下就生效，手动载入不受限</span>}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+                <button onClick={() => void changePresetScope(p, [])} className={scopeChip(!p.charIds?.length)}>全部角色</button>
+                {scopeCharacters.map(c => (
+                    <button
+                        key={c.id}
+                        onClick={() => togglePresetScopeChar(p, c.id)}
+                        aria-pressed={!!p.charIds?.includes(c.id)}
+                        className={scopeChip(!!p.charIds?.includes(c.id))}
+                    >{c.name}</button>
+                ))}
+            </div>
+        </div>
+    );
+
     const renderPresetGrid = (list: XinshengPreset[]) => (
         <div className="grid grid-cols-2 gap-1.5">
             {list.map(p => (p.id === openPresetId ? (
@@ -266,6 +322,7 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
                         <button onClick={() => setOpenPresetId(null)} className="px-2.5 py-1 rounded-full bg-white text-slate-400 text-[11px] border border-slate-200">收起</button>
                     </div>
                     )}
+                    {renamingId !== p.id && renderPresetScope(p)}
                 </div>
             ) : (
                 <div
@@ -279,8 +336,11 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
                     >{p.pinned ? '★' : '☆'}</button>
                     <button
                         onClick={() => setOpenPresetId(p.id)}
-                        className="flex-1 min-w-0 py-2 text-left text-[12px] text-slate-700 truncate"
-                    >{p.name}</button>
+                        className="flex-1 min-w-0 py-2 text-left text-[12px] text-slate-700"
+                    >
+                        <span className="block truncate">{p.name}</span>
+                        {presetScopeLabel(p) && <span className="block truncate text-[10px] text-indigo-400">{presetScopeLabel(p)}</span>}
+                    </button>
                 </div>
             )))}
         </div>
@@ -477,6 +537,7 @@ export const XinshengSettingsModal: React.FC<Props> = ({ isOpen, onClose, char, 
                                     <span className="block text-[13px] font-semibold text-slate-700">每次生成随机套一个预设</span>
                                     <span className="block text-[11px] text-slate-400 leading-relaxed mt-0.5">
                                         开启后，每轮回复前从预设库随机挑一个（避开上一次那个）套到当前角色上：CSS + 提示词 + 布局一起换。
+                                        想让某个预设只给特定角色用：点开它，在「随机时谁能抽到」里选角色。没有可抽的预设时，这个角色用自己的心声设置。
                                     </span>
                                 </span>
                             </label>
