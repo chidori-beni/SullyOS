@@ -536,6 +536,8 @@ const processInboxMessageWithPostProcessing = async (
   replyRun?: ReplyRun,
   skipTypingSignal?: AbortSignal,
   flushCache?: InboxFlushCache,
+  // true = 这条属于「离开期间」那一批：不逐泡刷新界面，整批落完由冲刷循环统一刷一次。
+  quietUi?: boolean,
 ): Promise<void> => {
   const replyStep = <T>(operation: () => Promise<T>) => withReplyCancellation(replyRun, operation);
   // 这一趟从云端旁路存储取回来的东西，等整条消息处理成功了再去删（见 OffloadedCleanup）。
@@ -593,6 +595,7 @@ const processInboxMessageWithPostProcessing = async (
   // 不 fire toast / 不增加未读。
   // 单条 inbox message 进来时 fire 一次 'active-msg-received' 即可保证 toast / 未读 / 通知一次发生。
   const dispatchProgress = () => {
+    if (quietUi) return;
     window.dispatchEvent(new CustomEvent('active-msg-progress', {
       detail: { charId: message.charId },
     }));
@@ -1219,6 +1222,23 @@ export const shouldRenderInstantly = (
   || wasDeliveredWhileAway(receivedAt, becameVisibleAt);
 
 /**
+ * 这条是不是用户不在场时就已经发出 / 送达的（true = 跟同批的一起整批亮出来，不逐条刷屏）。
+ *
+ * 比 shouldRenderInstantly 多看一个发送时刻：账本补回来的到达时间是「现在」，只能靠发送
+ * 时刻判。也**故意不看**补收标记：用户开着 App 时 Worker 不发推送，实时回复本来就走账本，
+ * 那些是「人在场时发来的」，得照旧一条条出现（用户明确要的时间差）。
+ * 纯函数，边界值见 activeMsgRuntime.landing.test.ts。
+ */
+export const isLandingForAbsentUser = (
+  message: { sentAt?: number; receivedAt?: number },
+  now: number,
+  becameVisibleAt: number = pageBecameVisibleAt,
+): boolean =>
+  !isFreshInboxDelivery(message.receivedAt, now)
+  || wasDeliveredWhileAway(message.receivedAt, becameVisibleAt)
+  || wasDeliveredWhileAway(message.sentAt, becameVisibleAt);
+
+/**
  * 算一条 inbox 消息落库该用的时间戳：一律取 sentAt（云端真正把这句话发出去的那一刻）。
  * 返回 undefined = 不指定，走 DB.saveMessage 默认的写库当刻（Date.now()）。
  *
@@ -1719,7 +1739,11 @@ const inFlightInboxCharacters = new Map<string, number>();
 const isAwaitingInboxTimer = (message: ActiveMsg2InboxMessage): boolean =>
   (message.processAttempts ?? 0) > 0 || inboxOrderHolds.has(message.messageId);
 
+/** 整批上屏期间，最久隔多久也要刷一次界面（只在某一条卡住时才碰得到）。 */
+const QUIET_LANDING_MAX_GAP_MS = 5_000;
+
 const flushInboxToChatImpl = async (trigger: FlushTrigger, charId?: string): Promise<string[]> => {
+  const flushStartedAt = Date.now();
   inboxClaimsInProgress += 1;
   let pendingMessages: ActiveMsg2InboxMessage[];
   try {
@@ -1750,6 +1774,20 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger, charId?: string): Pro
   // 气泡刚被 prepareInboxRetry 清场，近史里查到的正是「该重跑」的证据，不能误杀。
   const persistedIdsByChar = new Map<string, Set<string>>();
   const flushCache = createInboxFlushCache();
+  // ─── 离开期间的消息整批亮出来 ───
+  // 这批消息用户已经在系统通知里看过了，打开 App 应该「已经在那儿」。以前每落一个气泡就
+  // 让聊天界面重读一遍库、重画一遍整个列表：既是一条条往外冒的观感来源，又跟落库抢资源
+  // 把整批拖得更慢（十几条要一分钟）。现在攒着，落完统一刷一次。
+  const quietDirtyChars = new Set<string>();
+  let lastQuietRefreshAt = Date.now();
+  const refreshQuietLanding = () => {
+    lastQuietRefreshAt = Date.now();
+    if (typeof window === 'undefined') return;
+    for (const id of quietDirtyChars) {
+      window.dispatchEvent(new CustomEvent('active-msg-progress', { detail: { charId: id } }));
+    }
+    quietDirtyChars.clear();
+  };
   const isAlreadyPersisted = async (charId: string, messageId: string): Promise<boolean> => {
     if (!messageId) return false;
     let ids = persistedIdsByChar.get(charId);
@@ -1790,6 +1828,15 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger, charId?: string): Pro
     // 页面在后台时开始处理的也一次放完：iOS 会冻住后台页面的定时器，慢放到一半停住，
     // 等用户看着通知点进来才接着一条条冒——通知早就把整段话显示完了。
     if (inboxPreparationWaiters > 0 || isPageHiddenNow()) typingController.abort();
+    const quietUi = typingController.signal.aborted || isLandingForAbsentUser(message, Date.now());
+    if (quietUi) {
+      // 发送早于回到前台、推送却晚到的那种，shouldRenderInstantly 判不出来，这里一并跳过慢放。
+      typingController.abort();
+      quietDirtyChars.add(message.charId);
+    } else {
+      // 接下来是用户在场时收到的：先把前面攒着的亮出来，再让这条照常一句句出现。
+      refreshQuietLanding();
+    }
     // 这一层是**整批消息的最后一道防线**：消息在 consumeInboxMessages 那一刻就已经从
     // 收件箱里没了，下面任何一步抛出去的异常都会穿过整个 for 循环，剩下的消息既没落进
     // 聊天记录、也没回到收件箱——用户那边只看到「正在输入…」一直亮到 60s 点名判失败，
@@ -1916,7 +1963,7 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger, charId?: string): Pro
 
       if (looksLikeAssistantText) {
         try {
-          await replyStep(async () => processInboxMessageWithPostProcessing(processableMessage, persistTimestamp, replyRun, typingController.signal, flushCache));
+          await replyStep(async () => processInboxMessageWithPostProcessing(processableMessage, persistTimestamp, replyRun, typingController.signal, flushCache, quietUi));
           routed = true;
         } catch (postErr) {
           if (replyRun?.signal.aborted || isReplyStopped(message.taskUuid)) continue;
@@ -2052,6 +2099,8 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger, charId?: string): Pro
           body: cleanedPreviewBody || cleanedBody,
           avatarUrl: message.avatarUrl,
           sentAt: eventSentAt,
+          // 未读照常记；界面刷新和前台横幅交给整批收尾（见 OSContext）。
+          quietUi,
         },
       }));
       activeMsgTrace('runtime-active-msg-received-dispatched', {
@@ -2120,6 +2169,8 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger, charId?: string): Pro
       }
     } finally {
       if (activeInboxTyping === typingController) activeInboxTyping = null;
+      // 保险：某一条卡在网络上（取旁路存储等）时，别让已经落好的那些一直不出现。
+      if (Date.now() - lastQuietRefreshAt >= QUIET_LANDING_MAX_GAP_MS) refreshQuietLanding();
       try { await replyRun?.settle(); }
       catch (error) { log.error('停止回复的本地收尾失败', { messageId: message.messageId, error }); }
       if (replyRun?.signal.aborted) {
@@ -2132,6 +2183,16 @@ const flushInboxToChatImpl = async (trigger: FlushTrigger, charId?: string): Pro
       const remaining = (inFlightInboxCharacters.get(id) ?? 1) - 1;
       if (remaining > 0) inFlightInboxCharacters.set(id, remaining);
       else inFlightInboxCharacters.delete(id);
+    }
+    refreshQuietLanding();
+    // 量「打开 App 到整批上屏」要用：这一趟处理几条、总共多久。
+    if (pendingMessages.length > 0) {
+      activeMsgTrace('runtime-flush-end', {
+        trigger,
+        count: pendingMessages.length,
+        landed: landedMessageIds.length,
+        ms: Date.now() - flushStartedAt,
+      });
     }
     // 有着落的那些去云端账本上销账。这一步是纯收尾：销不掉只是下次会再拉回来一趟，
     // 落库那层的去重会把它挡下，所以不 await、失败也只 warn，不连累已经落库的事实。
@@ -2208,6 +2269,36 @@ const sweepSettledInstantRound = async (charId: string, uuid: string): Promise<v
 //      从根上消除跨轮 B 抢在 A 前面入库 (用户看到的 "B+A").
 // 每段都吞掉自身异常, 保证链不被一个失败的 flush 卡死.
 let flushChain: Promise<unknown> = Promise.resolve();
+
+// ─── 打开 App：先看账本，再落库 ───
+// 聊天流的先后只看写库先后。推送丢了的那几条（苹果的推送服务在设备不方便收时只留最新的，
+// 丢的往往是早的）只在云端账本上，以前开 App 先把本机收件箱冲进聊天流、再去拉账本，
+// 用户就看到「下午最先发的那条排在最末尾」。这里让冲刷先等账本读回来，两边合成一批，
+// 再由 consumeInboxMessages 统一按发送时间排。
+//
+// 等待必须有上限：网络差时不能让用户对着旧界面干等。超时就先放本机这批，账本上的
+// 随后补进来（顺序可能还是错的，但消息不迟到）。
+export const OUTBOX_GATE_MAX_WAIT_MS = 3_000;
+let outboxGate: { promise: Promise<void>; close: (outcome: string) => void } | null = null;
+
+const openOutboxGate = (): void => {
+  if (outboxGate) return;
+  const openedAt = Date.now();
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => { release = resolve; });
+  const close = (outcome: string) => {
+    clearTimeout(timer);
+    if (outboxGate === gate) outboxGate = null;
+    activeMsgTrace('runtime-outbox-gate', { outcome, waitedMs: Date.now() - openedAt });
+    release();
+  };
+  const timer = setTimeout(() => close('timeout'), OUTBOX_GATE_MAX_WAIT_MS);
+  const gate = { promise, close };
+  outboxGate = gate;
+};
+
+const closeOutboxGate = (): void => { outboxGate?.close('ledger-read'); };
+
 /**
  * 排空收件箱、把里面的消息冲进聊天流。
  *
@@ -2227,6 +2318,7 @@ let flushChain: Promise<unknown> = Promise.resolve();
 export const flushInboxToChat = (trigger: FlushTrigger, charId?: string): Promise<string[]> => {
   const next = flushChain.then(async () => {
     try {
+      await outboxGate?.promise;
       return await flushInboxToChatImpl(trigger, charId);
     } catch (e) {
       log.warn('flushInboxToChat failed', { trigger, error: e });
@@ -2447,7 +2539,11 @@ const drainOutboxAndFlush = (trigger: FlushTrigger): Promise<AmsgOutboxEntry[] |
   run = (async () => {
     lastOutboxDrainAt = Date.now();
     try {
-      const { written, ackNow, entries, staleDropped } = await drainOutbox();
+      let drained: Awaited<ReturnType<typeof drainOutbox>>;
+      // 账本上的已经进了收件箱（或者读失败了）：在等的冲刷可以走了。必须排在下面那次
+      // flush 之前——那次 flush 同样要过闸门，等它就是自己等自己。
+      try { drained = await drainOutbox(); } finally { closeOutboxGate(); }
+      const { written, ackNow, entries, staleDropped } = drained;
       // 不打算走聊天流的那些当场销账，免得每趟都把它们捞回来。纯收尾，不 await。
       if (ackNow.length > 0) {
         void ActiveMsgClient.ackOutboxMessages(ackNow).catch((e) => {
@@ -2535,18 +2631,25 @@ export const catchUpMissedPushes = async (
     return 'throttled';
   }
 
-  // 没配过 Worker 的用户一个请求都不该发。不靠 ensureWorkerReady 抛错来兜：那条路每次
-  // 回前台都会 warn 一行，控制台会被刷满，而「没配」根本不是异常。
+  // 这一句必须在第一个 await 之前：调用方紧接着就要 flush，闸门得已经立好。
+  // 已经有一趟在拉就不立了——那一趟可能正等着 flush，再立闸门就是互相等到超时。
+  if (trigger !== 'manual' && !outboxDrainInFlight) openOutboxGate();
   try {
-    const config = await ActiveMsgStore.getGlobalConfig();
-    if (!config?.workerUrl?.trim()) return 'worker-unset';
-  } catch (e) {
-    log.warn('读不到主动消息配置，这趟补收先跳过', { error: e });
-    return 'failed';
-  }
+    // 没配过 Worker 的用户一个请求都不该发。不靠 ensureWorkerReady 抛错来兜：那条路每次
+    // 回前台都会 warn 一行，控制台会被刷满，而「没配」根本不是异常。
+    try {
+      const config = await ActiveMsgStore.getGlobalConfig();
+      if (!config?.workerUrl?.trim()) return 'worker-unset';
+    } catch (e) {
+      log.warn('读不到主动消息配置，这趟补收先跳过', { error: e });
+      return 'failed';
+    }
 
-  const entries = await drainOutboxAndFlush(trigger === 'manual' ? '手动补收' : '上线补收');
-  return entries === null ? 'failed' : 'drained';
+    const entries = await drainOutboxAndFlush(trigger === 'manual' ? '手动补收' : '上线补收');
+    return entries === null ? 'failed' : 'drained';
+  } finally {
+    closeOutboxGate();
+  }
 };
 
 /**
@@ -2650,9 +2753,10 @@ const INSTANT_STATUS_CHECK_MAX_FAILURES = 5;
  */
 export const handlePageBecameVisible = (): void => {
   notePageBecameVisible();
+  // 补收排在 flush 前面：它一开始就立好闸门，flush 才会等账本（见 openOutboxGate）。
+  void catchUpMissedPushes('foreground');
   void (async () => {
     await flushInboxToChat('回到前台');
-    void catchUpMissedPushes('foreground');
     void runInstantChatStatusCheck();
     void drainPendingDiaries(loadRealtimeConfigFromLocalStorage(), (charId) => {
       window.dispatchEvent(new CustomEvent('active-msg-progress', { detail: { charId } }));
@@ -3002,6 +3106,10 @@ export const ActiveMsgRuntime = {
           });
         }
         if (type === 'active-msg-received') {
+          // 页面在后台就不落库：消息安全地躺在收件箱里，等人回来跟账本合成一批按序上屏。
+          // iOS 会短暂解冻后台页面，这时落了的话，推送丢在路上的那些早消息就只能排到后面。
+          // 回前台的入口、本地巡查都会接手（巡查也是同样只在可见时动手）。
+          if (isPageHiddenNow()) return;
           void flushInboxToChat('SW通知');
           return;
         }
@@ -3179,12 +3287,13 @@ export const ActiveMsgRuntime = {
       }
     })();
 
-    // 启动兜底: 先 flush 落库 (含上次被杀进程时卡在 inbox 的消息).
-    await flushInboxToChat('启动');
     // 上次不在线时丢掉的推送去账本上捞回来。**这一趟无条件跑**：定时主动消息的推送
     // 丢了之后，本地不会留下任何「有条消息没到」的痕迹，账本是唯一的线索来源
     // （见 catchUpMissedPushes）。没配 Worker 的用户在里面就返回了，不打网络。
+    // 排在 flush 前面：它一开始就立好闸门，两边的消息才能合成一批按序落库（见 openOutboxGate）。
     void catchUpMissedPushes('startup');
+    // 启动兜底: flush 落库 (含上次被杀进程时卡在 inbox 的消息).
+    await flushInboxToChat('启动');
     // 生命周期补收只覆盖「刚启动/刚回前台」；用户连续停在 App 内时也要持续看账本，
     // 否则一次丢掉的 Web Push 会把到点消息和来电一直扣到下一次页面切换。
     scheduleForegroundOutboxCheck();

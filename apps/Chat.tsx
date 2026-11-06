@@ -1,4 +1,5 @@
 import { chatCharacterDisplayName } from '../utils/characterRemark';
+import { nextStickToBottom, shouldFollowNewMessage } from '../utils/chatStickToBottom';
 import { IMAGE_GEN_UPDATED_EVENT } from '../utils/novelaiImage';
 import ChatRuntimeStyle from '../components/chat/ChatRuntimeStyle';
 import {homePhoneAppearance,HOME_PHONE_BUBBLES} from './room3d/homePhoneAppearance';
@@ -287,6 +288,9 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
 
     const scrollRef = useRef<HTMLDivElement>(null);
     const lastMsgIdRef = useRef<number | null>(null);
+    // 用户是不是停在底部附近。往上翻着看的时候，角色的新消息不许把屏幕拽回去。
+    const stickToBottomRef = useRef(true);
+    const lastScrollTopRef = useRef(0);
     // 最新图片在移动端异步解码后会把消息列表继续向下撑开。记录这一条，等真实高度
     // 确定后再补一次贴底；用户一旦主动向上翻，就清掉它，绝不抢滚动位置。
     const pendingMediaAutoScrollIdRef = useRef<number | null>(null);
@@ -1479,7 +1483,14 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
             // 即说明该角色的单聊消息已全部在手，此时把总数钳到实际可展示的条数。
             const exhausted = recent.length < fetchLimit;
             setTotalMsgCount(exhausted ? chatScopeMsgs.length : totalCount);
-            setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
+            // 用户翻上去看着的时候不挤掉最上面的消息：iPhone 的 Safari 没有滚动锚定，
+            // 顶上少一条，正在读的内容就会往上跳。回到底部后的下一次刷新自然收回窗口。
+            setMessages(prev => {
+                const wanted = chatScopeMsgs.slice(-requestedVisibleCount);
+                if (stickToBottomRef.current || prev.length === 0 || prev[0].charId !== charIdAtStart) return wanted;
+                const keepFrom = chatScopeMsgs.findIndex(m => m.id === prev[0].id);
+                return keepFrom >= 0 && keepFrom < chatScopeMsgs.length - wanted.length ? chatScopeMsgs.slice(keepFrom) : wanted;
+            });
         };
         try {
             const { messages: recent, totalCount } = await DB.getRecentMessagesWithCount(activeCharacterId, fetchLimit, accept);
@@ -1548,6 +1559,8 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
             setVisibleCount(30);
             visibleCountRef.current = 30;
             lastMsgIdRef.current = null;
+            stickToBottomRef.current = true;
+            lastScrollTopRef.current = 0;
             scrollThrottleRef.current = 0;
             setLastTokenUsage(null);
             setReplyTarget(null);
@@ -1715,11 +1728,19 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
         // not when loading older history or updating existing messages in-place.
         // windowed 模式下用户在翻旧消息，不要被新消息打断滚走。
         if (currentLastId !== lastMsgIdRef.current) {
-            if (windowedFocusMsgId === null) {
+            const lastIsFromUser = messages[messages.length - 1]?.role === 'user';
+            if (windowedFocusMsgId === null && shouldFollowNewMessage(stickToBottomRef.current, lastMsgIdRef.current, lastIsFromUser)) {
                 pendingMediaAutoScrollIdRef.current = currentLastId;
+                stickToBottomRef.current = true;
                 scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
             } else {
                 pendingMediaAutoScrollIdRef.current = null;
+                // 没跟着滚：窗口跟着放宽，显示层的 slice(-visibleCount) 才不会把顶上那条裁掉（见 reloadMessages）。
+                // 在绘制之前同步生效，用户看不到中间那一帧。
+                if (windowedFocusMsgId === null && messages.length > visibleCountRef.current) {
+                    visibleCountRef.current = messages.length;
+                    setVisibleCount(messages.length);
+                }
             }
             lastMsgIdRef.current = currentLastId;
         }
@@ -1763,11 +1784,24 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
         historyWindowLoadingRef.current = false;
     }, [historyWindowRange]);
 
+    // 切走再回来算新的一次打开：离开期间的消息落完要看到最新的，不停在上次翻到的地方。
+    useEffect(() => {
+        const onVisibility = () => {
+            if (document.visibilityState === 'hidden') stickToBottomRef.current = true;
+        };
+        document.addEventListener('visibilitychange', onVisibility);
+        return () => document.removeEventListener('visibilitychange', onVisibility);
+    }, []);
+
     const handleChatScroll = useCallback(() => {
         const scroller = scrollRef.current;
         if (!scroller) return;
         const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
         if (distanceFromBottom > 96) pendingMediaAutoScrollIdRef.current = null;
+        stickToBottomRef.current = nextStickToBottom(
+            stickToBottomRef.current, scroller.scrollTop, lastScrollTopRef.current, distanceFromBottom,
+        );
+        lastScrollTopRef.current = scroller.scrollTop;
 
         if (historyWindowScrollEnabledRef.current && historyWindowRangeRef.current) {
             if (scroller.scrollTop <= 96) extendHistoryWindow('older');
@@ -1786,7 +1820,7 @@ const Chat: React.FC<ChatProps> = ({ onBack, homePhone }) => {
     }, [windowedFocusMsgId]);
 
     useEffect(() => {
-        if (isTyping && scrollRef.current && !selectionMode && windowedFocusMsgId === null) {
+        if (isTyping && stickToBottomRef.current && scrollRef.current && !selectionMode && windowedFocusMsgId === null) {
             const now = Date.now();
             if (now - scrollThrottleRef.current > 150) {
                 scrollThrottleRef.current = now;

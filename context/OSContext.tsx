@@ -2096,25 +2096,29 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       let awayActiveMsgCount = 0;
 
        const handler = (e: Event) => {
-           const { charId, charName: rawCharName, body, avatarUrl, sentAt } = (e as CustomEvent).detail as {
-               charId: string; charName: string; body?: string; avatarUrl?: string; sentAt?: number;
+           const { charId, charName: rawCharName, body, avatarUrl, sentAt, quietUi } = (e as CustomEvent).detail as {
+               charId: string; charName: string; body?: string; avatarUrl?: string; sentAt?: number; quietUi?: boolean;
            };
            const charName = chatDisplayNameById(charId, rawCharName);
-          setLastMsgTimestamp(Date.now());
+          // quietUi = 离开期间那一批（已经弹过系统通知）：整批落完 runtime 会统一发一次
+          // active-msg-progress 刷新界面，这里不逐条刷，也不逐条弹前台横幅，未读照记。
+          if (!quietUi) setLastMsgTimestamp(Date.now());
 
           const isChattingWithThisChar = (activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId) || isEmbeddedChatVisible(charId);
            if (!isChattingWithThisChar) {
                const isVisible = document.visibilityState === 'visible';
                const preview = formatAmsgPreviewBody(body);
                if (isVisible) {
-                   const char = charactersRef.current.find(c => c.id === charId);
-                   emitMessagePreview({
-                       charId,
-                       charName,
-                       avatarUrl: avatarUrl || char?.avatar,
-                       body: preview,
-                       timestamp: sentAt || Date.now(),
-                   });
+                   if (!quietUi) {
+                       const char = charactersRef.current.find(c => c.id === charId);
+                       emitMessagePreview({
+                           charId,
+                           charName,
+                           avatarUrl: avatarUrl || char?.avatar,
+                           body: preview,
+                           timestamp: sentAt || Date.now(),
+                       });
+                   }
                } else {
                    awayActiveMsgCount += 1;
                }
