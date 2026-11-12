@@ -1,5 +1,6 @@
 import { resolveDialogueApi } from '../utils/characterApi';
 import { loadCharacterContextMessages } from '../utils/chatContextRange';
+import { callTrace, localStorageKchars, nextCallTraceTurn, summarizeRequestMessages, summarizeStoredMessages } from '../utils/callCrashTrace';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Microphone, SpeakerHigh, Headphones, PhoneDisconnect, Translate, Gear, Clock, CaretLeft, CaretRight, Phone, VideoCamera, VideoCameraSlash, Cube, FolderOpen, FileZip, Moon, Sun, Check, Plugs, ArrowsClockwise } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
@@ -1154,6 +1155,7 @@ const CallApp: React.FC = () => {
     const now = Date.now();
     if (!finalCheck && now - lastInCallMemoryPalaceRunRef.current < IN_CALL_MEMORY_PALACE_INTERVAL_MS) return;
     lastInCallMemoryPalaceRunRef.current = now;
+    callTrace('palace-start', { finalCheck });
     let lastStatus = '';
     void runCallMemoryPalacePostFlow({
       char,
@@ -1168,7 +1170,10 @@ const CallApp: React.FC = () => {
     }).catch(e => {
       console.error('❌ [CallApp MemoryPalace] 后台处理异常:', e?.message || e);
       addToast('记忆整理失败', 'error');
-    }).finally(() => setMemoryPalaceStatus(''));
+    }).finally(() => {
+      callTrace('palace-end', { status: lastStatus.slice(0, 40) });
+      setMemoryPalaceStatus('');
+    });
   };
   const recordDetail = useMemo(() => callRecords.find(r => r.id === recordDetailId) || null, [callRecords, recordDetailId]);
   useEffect(() => {
@@ -2497,8 +2502,14 @@ ${sentencePlan}`;
     let callMsgs: Message[] = [];
     if (selectedChar) {
       // 改用全 App 统一的上下文范围；callMsgs 在外层已用 let 声明，这里只赋值。
+      callTrace('reply-load-context', { mode: selectedChar.contextRangeMode || 'manual', limit: selectedChar.contextLimit });
       callMsgs = await loadCharacterContextMessages(selectedChar);
+      callTrace('reply-context-loaded', summarizeStoredMessages(callMsgs));
       await injectMemoryPalace(selectedChar, callMsgs);
+      callTrace('reply-palace-injected', {
+        memoryKchars: Math.round((selectedChar.memoryPalaceInjection?.length || 0) / 1000),
+        platesKchars: Math.round((selectedChar.roomPlatesInjection?.length || 0) / 1000),
+      });
     }
     const touchContext = selectedChar
       ? buildPendingAvatarTouchContext(
@@ -2509,6 +2520,7 @@ ${sentencePlan}`;
       : '';
     // 历史先建好：世界书关键词要扫它，「聊天记录指定深度」的条目也要插进它
     const messages = await buildHistoryMessages(input, skipDbId, touchContext, selectedChar ? callMsgs : undefined);
+    callTrace('reply-history-built', summarizeRequestMessages(messages));
     const baseCallPrompt = selectedChar
       ? buildCallPrompt(
           userName,
@@ -2588,10 +2600,8 @@ ${sentencePlan}`;
       nextSystemPrompt: string,
       maxRetries: number,
       purpose: string,
-    ) => safeFetchJson(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${dialogueApi.apiKey || 'sk-none'}` },
-      body: JSON.stringify({
+    ) => {
+      const body = JSON.stringify({
         model: dialogueApi.model,
         messages: [{ role: 'system', content: nextSystemPrompt }, ...nextMessages],
         temperature: dialogueApi.temperature ?? 0.85,
@@ -2599,8 +2609,18 @@ ${sentencePlan}`;
         // 上游打回，包成 502 / bad_response_status_code。与私聊 (useChatAI.ts) 对齐。
         max_tokens: 8000,
         stream: dialogueApi.stream ?? false,
-      }),
-    }, maxRetries, 0, { appName: '电话', charId: selectedChar?.id, charName: selectedChar?.name, purpose });
+      });
+      callTrace('reply-request', {
+        bodyKchars: Math.round(body.length / 1000),
+        systemKchars: Math.round(nextSystemPrompt.length / 1000),
+        stream: dialogueApi.stream ?? false,
+      });
+      return safeFetchJson(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${dialogueApi.apiKey || 'sk-none'}` },
+        body,
+      }, maxRetries, 0, { appName: '电话', charId: selectedChar?.id, charName: selectedChar?.name, purpose });
+    };
     let chatData: any;
     try {
       // Do not repeat a rejected base64 frame three times. Text-only calls keep
@@ -2621,6 +2641,7 @@ ${sentencePlan}`;
       chatData?.choices?.[0]?.message,
       !!selectedChar?.showThinkingChain,
     );
+    callTrace('reply-received', { textChars: parsed.text.length });
     if (!parsed.text.trim()) throw new Error('文本接口返回为空，或只返回了思考内容');
     const preparedForAudio = prepareCallAssistantReply(parsed);
     prefetchCallAudio(preparedForAudio.text, preparedForAudio.speechEmotion);
@@ -3159,6 +3180,12 @@ ${sentencePlan}`;
     primeCallAudioFromGesture();
     idleNudgeCountRef.current = 0;
     const pendingTouchesForTurn = pendingAvatarTouchesRef.current.slice();
+    callTrace('turn-start', {
+      turn: nextCallTraceTurn(),
+      mode: callMode,
+      bubbles: bubbles.length,
+      pendingJobsKchars: localStorageKchars('sully-call-background-jobs-v1'),
+    });
     const latestBubble = bubbles[bubbles.length - 1];
     const retryBubble = latestBubble?.role === 'user' && latestBubble.text.trim() === input
       ? latestBubble
@@ -3307,6 +3334,7 @@ ${sentencePlan}`;
               }),
               createdAt: Date.now(),
             });
+            callTrace('reply-job-saved', { pendingJobsKchars: localStorageKchars('sully-call-background-jobs-v1') });
             // 正常前台请求先给一点时间完成；用户一旦切到后台则立即排队，避免页面冻结
             // 后再也没有机会把提示词快照上传到 Worker。
             window.setTimeout(() => {
@@ -3456,7 +3484,9 @@ ${sentencePlan}`;
       return;
     }
     try {
+      callTrace('tts-start', { textChars: assistantText.length });
       const { url: finalUrl, traceIds } = await takeOrSynthesizeCallAudio(assistantText, turnSpeechEmotion);
+      callTrace('tts-done', { blob: finalUrl.startsWith('blob:'), blobUrlsHeld: sessionBlobUrlsRef.current.size });
       if (!isLiveCallSession(turnSessionId)) return;
       if (!finalUrl) throw new Error('未获得可播放音频');
       trackBlobUrl(finalUrl);
