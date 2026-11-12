@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMock = vi.hoisted(() => ({
   getMessagesByCharId: vi.fn(),
+  // 生产代码只按来源读；测试仍用 getMessagesByCharId 准备整段数据，这里按来源筛给它
+  getMessagesByCharIdAndSource: vi.fn(async (charId: string, source: string) => (
+    ((await dbMock.getMessagesByCharId(charId, true)) || []).filter((m: any) => m.metadata?.source === source)
+  )),
   saveMessage: vi.fn(),
 }));
 

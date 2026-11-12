@@ -1,6 +1,20 @@
 import type { Message } from '../types';
 import { DB } from './db';
 
+/**
+ * 恢复结束卡只需要这个角色的「通话」和「通话结束卡」两种消息。
+ * 以前这里 getMessagesByCharId(..., true) 把角色从第一天起的全部聊天（含内联图片）
+ * 读进内存——而它恰好跑在「通话把 App 撑崩之后的下一次启动」，于是一启动又崩，
+ * Safari 显示「重复出现问题」（2026-11-12）。走 charId_source 索引只读这两种。
+ */
+export const loadCallSessionMessages = async (charId: string): Promise<Message[]> => {
+  const [call, endCards] = await Promise.all([
+    DB.getMessagesByCharIdAndSource(charId, 'call'),
+    DB.getMessagesByCharIdAndSource(charId, 'call-end-popup'),
+  ]);
+  return [...call, ...endCards];
+};
+
 const SLEEP_SESSION_KEY = 'sully-call-sleep-session-v2';
 
 export interface PersistedSleepCompanionSession {
@@ -153,7 +167,8 @@ export async function recoverInterruptedSleepCompanionSession(
   if (!session) return null;
   if (hasFutureBackgroundDreamJob(session.sessionId, now)) return null;
 
-  const all = await DB.getMessagesByCharId(session.charId, true);
+  // 只读通话/结束卡两种来源，别整段读历史（见 callSessionRecovery.loadCallSessionMessages）
+  const all = await loadCallSessionMessages(session.charId);
   const existing = all.find(message => (
     message.metadata?.source === 'call-end-popup'
     && String(message.metadata?.callSessionId || '') === session.sessionId

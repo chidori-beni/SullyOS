@@ -8,7 +8,9 @@
 
 import type { Message } from '../types';
 import { DB } from './db';
-import { loadSleepCompanionSession } from './sleepCompanionSession';
+import { loadCallSessionMessages, loadSleepCompanionSession } from './sleepCompanionSession';
+
+export { loadCallSessionMessages };
 
 const CALL_SESSION_KEY = 'sully-call-session-v1';
 
@@ -105,7 +107,7 @@ export const recoverInterruptedCallSession = async (now = Date.now()): Promise<R
   // 恢复器不能在它返回「暂缓」时抢先写一张中断卡，否则 OSContext 随后会把未来梦话
   // 任务一并取消。只要睡眠 session 标记仍在，就把决定权留给 sleepCompanionSession。
   if (loadSleepCompanionSession()?.sessionId === session.sessionId) return null;
-  const all = await DB.getMessagesByCharId(session.charId, true);
+  const all = await loadCallSessionMessages(session.charId);
   const existing = all.find(message => message.metadata?.source === 'call-end-popup'
     && String(message.metadata?.callSessionId || '') === session.sessionId);
   if (existing) {

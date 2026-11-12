@@ -2217,10 +2217,13 @@ const CallApp: React.FC = () => {
     input: string,
     skipDbId?: number,
     touchContext = '',
+    // 调用方手上已经有本轮读好的上下文就传进来：每轮读两遍（最多 500 条、含内联图片）
+    // 等于内存峰值翻倍，通话聊久了 iPhone 会把整个页面杀掉（2026-11-12）。
+    preloadedMsgs?: Message[],
   ): Promise<any[]> => {
     if (!selectedChar?.id) return [{ role: 'user', content: input }];
     const [allMsgs, emojis] = await Promise.all([
-      loadCharacterContextMessages(selectedChar),
+      preloadedMsgs ? Promise.resolve(preloadedMsgs) : loadCharacterContextMessages(selectedChar),
       DB.getEmojis().catch(() => []),
     ]);
     const filtered = allMsgs.filter(m => !(skipDbId && m.id === skipDbId));
@@ -2504,7 +2507,7 @@ ${sentencePlan}`;
         )
       : '';
     // 历史先建好：世界书关键词要扫它，「聊天记录指定深度」的条目也要插进它
-    const messages = await buildHistoryMessages(input, skipDbId, touchContext);
+    const messages = await buildHistoryMessages(input, skipDbId, touchContext, selectedChar ? callMsgs : undefined);
     const baseCallPrompt = selectedChar
       ? buildCallPrompt(
           userName,
