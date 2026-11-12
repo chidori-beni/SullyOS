@@ -212,6 +212,7 @@ import type { ActiveMsg2TaskRecord } from '../../../types';
 import { createHybridPushTransport, isFcmConfigured, type NativeFcmEnv } from './nativeFcm';
 import { configureSkipDiagnostics, isDebugFlagOn, logSkipDiagnostic } from './skipDiagnostics';
 import { handleWatchRoomDoClose, handleWatchRoomDoFetch, handleWatchRoomDoMessage, handleWatchRoomRoute, type WatchRoomNamespace } from './watchRoom';
+import { forwardHeavyRequest, isForwardedHeavyRequest, isHeavyRoute } from './heavyRequestDo';
 
 interface Env extends NativeFcmEnv {
   AMSG_MASTER_KEY: string;
@@ -3600,6 +3601,9 @@ export class InstantTickDO extends DurableObject<Env> {
    * 各用各的实例、互不相干。复用这个类是为了不碰 DO migration，见 watchRoom.ts 开头。
    */
   async fetch(request: Request): Promise<Response> {
+    // Worker 本体转进来的大包请求（PUT /client-state、POST /instant-chat）：在这里走一遍
+    // 同一个入口，就不吃 Worker 每请求 10ms CPU 的限额了。见 ./heavyRequestDo。
+    if (isForwardedHeavyRequest(request)) return amsgWorker.fetch(request, this.env);
     return handleWatchRoomDoFetch(this.ctx, request);
   }
 
@@ -3702,7 +3706,7 @@ const readServerVersion = async (request: Request, env: Env) => {
 // （几秒的事，30 秒上限够用；被掐了下一轮 cron 会再来）。别的路由都不用 ctx——
 // /instant-chat 回完 202 之后的那一跳跑在 InstantTickDO 的 alarm 里，不占这个请求的
 // 生命周期（waitUntil 只有 30 秒，见 InstantTickDO 的注释）。scheduled 只收 (event, env)。
-export default {
+const amsgWorker = {
   async fetch(request: Request, env: Env, ctx?: { waitUntil(promise: Promise<unknown>): void }): Promise<Response> {
     const pathname = new URL(request.url).pathname.replace(/\/+$/, '') || '/';
     const method = request.method.toUpperCase();
@@ -3732,6 +3736,8 @@ export default {
           ...inspectWorkerEnv(env),
           instantChat: true,
           instantTick: !!env.INSTANT_TICK,
+          // 大包写入（PUT /client-state、POST /instant-chat）挪进 DO 跑，躲开免费计划 10ms CPU（见 ./heavyRequestDo）。
+          heavyRequestsInDo: !!env.INSTANT_TICK,
           // 这份代码认不认识「后台任务」（metadata.amsgKind → handler，见 fireKinds.ts）。
           // 老 bundle 没有这个字段，前端据此不去建那种任务——老 worker 会把它当聊天任务
           // 跑，然后卡在「本次任务指令缺失」终态失败：任务行不在用户的清单里，面板一片
@@ -3910,6 +3916,13 @@ export default {
       });
     }
 
+    // 带整份 fire_pack 的两条写入挪进 Durable Object 处理（免费计划 Worker 每请求只有 10ms CPU，
+    // 500KB 的包稳定超限被掐，前端只看到 "Load failed"）。转不了（没绑 DO）就照旧就地处理。
+    if (isHeavyRoute(pathname, method) && !isForwardedHeavyRequest(request)) {
+      const forwarded = await forwardHeavyRequest(request, env.INSTANT_TICK, jsonWithCors);
+      if (forwarded) return forwarded;
+    }
+
     // 定时任务细账。排在配置门之后：要读库、要主密钥解出是哪个角色的任务。
     // 跟 /debug 不一样，这里会回报错原文和角色名，所以跟上游其它端点同一道门：
     // 配了共享密钥就必须带对。
@@ -4023,3 +4036,5 @@ export default {
     );
   },
 };
+
+export default amsgWorker;

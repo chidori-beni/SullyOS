@@ -4833,6 +4833,116 @@ describe('即时对话的接线', () => {
     });
   });
 
+  describe('大包写入转进 Durable Object（免费计划 Worker 10ms CPU 会把 500KB 的 fire_pack 掐掉）', () => {
+    const makeHeavyTick = () => {
+      const seen: Array<{ name: string; url: string; method: string; forwarded: string | null; userId: string | null; body: string }> = [];
+      let lastName = '';
+      return {
+        seen,
+        INSTANT_TICK: {
+          idFromName: (name: string) => { lastName = name; return name; },
+          get: (name: string) => ({
+            kick: async () => {},
+            fetch: async (req: Request) => {
+              seen.push({
+                name,
+                url: req.url,
+                method: req.method,
+                forwarded: req.headers.get('X-Sully-Heavy-Forwarded'),
+                userId: req.headers.get('X-User-Id'),
+                body: await req.text(),
+              });
+              return new Response(JSON.stringify({ success: true, via: 'do' }), { status: 200 });
+            },
+          }),
+          get lastName() { return lastName; },
+        },
+      };
+    };
+
+    it('PUT /client-state 原样交给按用户分的 DO 实例，Worker 本体不碰 body', async () => {
+      const tick = makeHeavyTick();
+      const response = await call(
+        'https://w.example/client-state',
+        { method: 'PUT', headers: { 'X-User-Id': 'u-1' }, body: '{"big":"payload"}' },
+        { ...fullEnv, INSTANT_TICK: tick.INSTANT_TICK },
+      );
+      expect(await response.json()).toEqual({ success: true, via: 'do' });
+      expect(tick.seen).toEqual([{
+        name: 'heavy:u-1',
+        url: 'https://w.example/client-state',
+        method: 'PUT',
+        forwarded: '1',
+        userId: 'u-1',
+        body: '{"big":"payload"}',
+      }]);
+    });
+
+    it('POST /instant-chat 同样转进 DO', async () => {
+      const tick = makeHeavyTick();
+      await call('https://w.example/instant-chat', { method: 'POST', body: '{}' }, { ...fullEnv, INSTANT_TICK: tick.INSTANT_TICK });
+      expect(tick.seen.map((r) => [r.method, new URL(r.url).pathname])).toEqual([['POST', '/instant-chat']]);
+    });
+
+    it('已经转过的请求不再转（DO 里就地处理，不套娃）', async () => {
+      const tick = makeHeavyTick();
+      await call(
+        'https://w.example/client-state',
+        { method: 'PUT', headers: { 'X-Sully-Heavy-Forwarded': '1' }, body: '{}' },
+        { ...fullEnv, INSTANT_TICK: tick.INSTANT_TICK },
+      );
+      expect(tick.seen).toEqual([]);
+    });
+
+    it('读请求、预检不转', async () => {
+      const tick = makeHeavyTick();
+      const env = { ...fullEnv, INSTANT_TICK: tick.INSTANT_TICK };
+      await call('https://w.example/client-state', { method: 'OPTIONS' }, env);
+      await call('https://w.example/instant-chat', { method: 'OPTIONS' }, env);
+      expect(tick.seen).toEqual([]);
+    });
+
+    it('DO 那头炸了 → 回带 CORS 的 503 和原因，而不是让浏览器只看到 Load failed', async () => {
+      const env = {
+        ...fullEnv,
+        INSTANT_TICK: {
+          idFromName: () => ({}),
+          get: () => ({ kick: async () => {}, fetch: async () => { throw new Error('do down'); } }),
+        },
+      };
+      const response = await call('https://w.example/client-state', { method: 'PUT', body: '{}' }, env);
+      expect(response.status).toBe(503);
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+      const body = await response.json();
+      expect(body.error.code).toBe('HEAVY_FORWARD_FAILED');
+      expect(body.error.message).toContain('do down');
+    });
+
+    it('DO 里收到转来的请求会走同一个入口（不是当成放映室请求）', async () => {
+      const seen: string[] = [];
+      const original = (worker as any).fetch;
+      (worker as any).fetch = async (req: Request) => { seen.push(new URL(req.url).pathname); return new Response('ok'); };
+      try {
+        const doInstance = new workerEntry.InstantTickDO({ storage: {} } as any, fullEnv);
+        const response = await doInstance.fetch(new Request('https://w.example/client-state', {
+          method: 'PUT',
+          headers: { 'X-Sully-Heavy-Forwarded': '1' },
+          body: '{}',
+        }));
+        expect(await response.text()).toBe('ok');
+        expect(seen).toEqual(['/client-state']);
+      } finally {
+        (worker as any).fetch = original;
+      }
+    });
+
+    it('/config-check 报能力位 heavyRequestsInDo', async () => {
+      const tick = makeHeavyTick();
+      const body = await (await call('https://w.example/config-check', {}, { ...fullEnv, INSTANT_TICK: tick.INSTANT_TICK })).json();
+      expect(body.data.heavyRequestsInDo).toBe(true);
+    });
+  });
+
   it('/config-check 绑定在就是 true', async () => {
     const withTick = { ...fullEnv, INSTANT_TICK: { idFromName: () => ({}), get: () => ({ kick: async () => {} }) } };
     const body = await (await call('https://w.example/config-check', {}, withTick)).json();
