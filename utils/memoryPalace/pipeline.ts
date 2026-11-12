@@ -2093,7 +2093,13 @@ export async function processNewMessages(
         // 1. 加载全部消息（含已处理的），计算热区和缓冲区
         //    过滤：保留任何有语义的消息类型（文字、带转写的语音、卡片、系统事件等），
         //    只排除纯视觉资源和无转写的纯音频，避免 URL / base64 污染 LLM。
-        const allMessages = await DB.getMessagesByCharId(charId, true, options.drainBuffer === true);
+        // 日常路径只需要水位线之后的消息：热区是「最近 N 条」、缓冲区是「水位线之后、热区之前」，
+        // 水位线之前的原文一条都用不上。以前这里把角色从第一天起的全部聊天（含内联图片）整段读进来，
+        // 通话里每 10 分钟跑一次，iPhone 直接把页面杀掉（2026-11-12）。一键存入要按全部原文算边界，仍整读。
+        const lastProcessedId = await getReliableMemoryPalaceHighWaterMark(charId);
+        const allMessages = options.drainBuffer === true
+            ? await DB.getMessagesByCharId(charId, true, true)
+            : (await DB.getMessagesFromId(charId, lastProcessedId + 1)).messages;
         const privateMessages = allMessages
             .filter(message => !message.groupId)
             .sort((a, b) => a.id - b.id);
@@ -2102,7 +2108,6 @@ export async function processNewMessages(
             .sort((a, b) => a.id - b.id);
 
         const totalCount = textMessages.length;
-        const lastProcessedId = await getReliableMemoryPalaceHighWaterMark(charId);
         const drainBuffer = options.drainBuffer === true;
         const waterline = await loadCharacterWaterline(charId, options.waterline);
         const hotZoneSize = waterline.hotZoneSize;

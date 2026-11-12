@@ -2265,7 +2265,8 @@ const CallApp: React.FC = () => {
   } | null> => {
     if (!selectedChar?.id) return null;
     const userName = userProfile?.name?.trim() || '用户';
-    const callMsgs = await DB.getMessagesByCharId(selectedChar.id);
+    // 与每轮回复同一个上下文范围（最多 500 条），别整段读水位线后的全部历史。
+    const callMsgs = await loadCharacterContextMessages(selectedChar);
     await injectMemoryPalace(selectedChar, callMsgs);
     const baseCallPrompt = buildCallPrompt(
       userName,
@@ -2298,7 +2299,7 @@ const CallApp: React.FC = () => {
       callMode === 'video' ? buildAvatarPerformancePrompt(allowedModelActions) : '',
       thinkingPrompt,
     ].filter(Boolean).join('\n\n');
-    return { systemPrompt, messages: injectCallWorldbookDepth(await buildHistoryMessages(instruction)) };
+    return { systemPrompt, messages: injectCallWorldbookDepth(await buildHistoryMessages(instruction, undefined, '', callMsgs)) };
   };
   const getAllowedModelActions = (): Array<{
     id: string;
