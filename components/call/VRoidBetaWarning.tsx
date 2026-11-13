@@ -1,3 +1,5 @@
+import { useUiLocale } from '../../context/UiLocaleContext';
+import { formatCallStageText } from '../../utils/callStageLocale';
 import React, { useEffect, useRef } from 'react';
 import { Flask, WarningCircle } from '@phosphor-icons/react';
 
@@ -16,6 +18,8 @@ const VRoidBetaWarning: React.FC<VRoidBetaWarningProps> = ({
   onCancel,
   onContinue,
 }) => {
+  const { locale } = useUiLocale();
+  const stageText = (text: string) => formatCallStageText(locale, text);
   const dialogRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -31,7 +35,7 @@ const VRoidBetaWarning: React.FC<VRoidBetaWarningProps> = ({
     <div className="fixed inset-0 z-[260] flex items-end justify-center bg-[#05030b]/76 px-4 pb-[max(1rem,var(--safe-bottom))] pt-[max(1rem,var(--safe-top))] backdrop-blur-sm sm:items-center">
       <button
         type="button"
-        aria-label="关闭 VRoid 测试版说明"
+        aria-label={stageText("关闭 VRoid 测试版说明")}
         className="absolute inset-0 cursor-default"
         disabled={busy}
         onClick={onCancel}
@@ -53,7 +57,7 @@ const VRoidBetaWarning: React.FC<VRoidBetaWarningProps> = ({
             <div className="min-w-0 flex-1">
               <span className="text-[10px] font-semibold tracking-[0.24em] text-violet-200/65">VRoid / VRM · TEST BUILD</span>
               <h2 id="vroid-beta-title" className="mt-1.5 text-[19px] font-semibold leading-tight text-white">
-                {projectFile ? '这是 VRoid 工程文件' : '导入功能仍在测试中'}
+                {projectFile ? stageText("这是 VRoid 工程文件") : stageText("导入功能仍在测试中")}
               </h2>
               <p className="mt-2 break-all text-[11px] leading-relaxed text-white/42">{fileName}</p>
             </div>
@@ -62,18 +66,18 @@ const VRoidBetaWarning: React.FC<VRoidBetaWarningProps> = ({
           <div className="mt-5 border-y border-white/10 py-4 text-[13px] leading-6 text-white/70">
             {projectFile ? (
               <>
-                SullyOS 目前不能直接读取 <strong className="font-semibold text-white">.vroid 工程</strong>。请先在 VRoid Studio 中导出 VRM，再回来选择导出的文件。
+                {stageText("SullyOS 目前不能直接读取")} <strong className="font-semibold text-white">{stageText(".vroid 工程")}</strong>{stageText("。请先在 VRoid Studio 中导出 VRM，再回来选择导出的文件。")}
               </>
             ) : (
               <>
-                VRoid / VRM 并不是本次版本的开发重点，当前只作为测试功能开放，<strong className="font-semibold text-amber-100">可能存在各种 Bug</strong>。
+                {stageText("VRoid / VRM 并不是本次版本的开发重点，当前只作为测试功能开放，")}<strong className="font-semibold text-amber-100">{stageText("可能存在各种 Bug")}</strong>。
               </>
             )}
           </div>
 
           {!projectFile && (
             <p className="mt-3 text-[11px] leading-5 text-white/42">
-              不同模型的骨骼、表情、材质和移动端显存占用差异很大；导入失败不会覆盖角色当前已绑定的模型。
+              {stageText("不同模型的骨骼、表情、材质和移动端显存占用差异很大；导入失败不会覆盖角色当前已绑定的模型。")}
             </p>
           )}
 
@@ -84,7 +88,7 @@ const VRoidBetaWarning: React.FC<VRoidBetaWarningProps> = ({
               onClick={onCancel}
               className="min-h-11 rounded-2xl border border-white/12 bg-white/[0.035] px-4 text-[13px] font-medium text-white/64 transition active:scale-[0.98] disabled:opacity-45"
             >
-              {projectFile ? '我知道了' : '暂不导入'}
+              {projectFile ? stageText("我知道了") : stageText("暂不导入")}
             </button>
             {!projectFile && onContinue && (
               <button
@@ -93,7 +97,7 @@ const VRoidBetaWarning: React.FC<VRoidBetaWarningProps> = ({
                 onClick={onContinue}
                 className="min-h-11 rounded-2xl border border-violet-200/25 bg-violet-400/18 px-4 text-[13px] font-semibold text-violet-50 transition active:scale-[0.98] disabled:opacity-55"
               >
-                {busy ? '正在导入…' : '仍要测试'}
+                {busy ? stageText("正在导入…") : stageText("仍要测试")}
               </button>
             )}
           </div>
