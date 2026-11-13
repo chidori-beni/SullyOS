@@ -1,3 +1,5 @@
+import { loadUiLocale } from '../utils/uiLocale';
+import { formatCallProgressText } from '../utils/callProgressLocale';
 import { resolveDialogueApi } from '../utils/characterApi';
 import { loadCharacterContextMessages } from '../utils/chatContextRange';
 import { callTrace, localStorageKchars, nextCallTraceTurn, summarizeRequestMessages, summarizeStoredMessages } from '../utils/callCrashTrace';
@@ -640,7 +642,7 @@ ${charVoicePromptBlock ? `\n${charVoicePromptBlock}\n` : ''}
   return [coreContext, timeContext, callPrompt, voiceLangPrompt].filter(Boolean).join('\n\n');
 };
 const CallApp: React.FC = () => {
-  const { t: uiT } = useUiLocale();
+  const { t: uiT, locale: uiLocale } = useUiLocale();
   const { closeApp, openApp, characters, activeCharacterId, addToast, apiConfig, apiPresets, commitApiConfig, userProfile, customThemes, suspendCall, suspendedCall, clearSuspendedCall, updateCharacter, characterGroups, groups, realtimeConfig, memoryPalaceConfig, registerBackHandler } = useOS();
 
   const initialCallLaunchIntentRef = useRef(callLaunch.peek());
@@ -1166,7 +1168,7 @@ const CallApp: React.FC = () => {
       updateCharacter,
       onStatus: text => { lastStatus = text; setMemoryPalaceStatus(text); },
     }).then(() => {
-      if (lastStatus.includes('完成')) addToast(lastStatus, 'success');
+      if (lastStatus.includes('完成')) addToast(formatCallProgressText(loadUiLocale(), lastStatus), 'success');
     }).catch(e => {
       console.error('❌ [CallApp MemoryPalace] 后台处理异常:', e?.message || e);
       addToast('记忆整理失败', 'error');
@@ -4230,7 +4232,7 @@ ${sentencePlan}`;
     <div className="sully-stage-dark absolute inset-0 z-[120] flex items-center justify-center bg-[#07050c]/88 px-8 text-center backdrop-blur-xl">
       <div className="max-w-[20rem]">
         <span className="mx-auto mb-4 block h-9 w-9 animate-spin rounded-full border-2 border-white/15 border-t-violet-300" />
-        <div className="text-sm leading-relaxed text-white/85">{avatarImportStatus}</div>
+        <div className="text-sm leading-relaxed text-white/85">{formatCallProgressText(uiLocale, avatarImportStatus)}</div>
         <div className="mt-3 text-[10px] leading-relaxed text-white/40">{uiT('call.detail.label001')}</div>
       </div>
     </div>
@@ -4886,7 +4888,7 @@ ${sentencePlan}`;
           )}
           {memoryPalaceStatus && (
             <div className="mt-1 text-[10px] text-white/55 animate-pulse">
-              {uiT('call.detail.label048')} {memoryPalaceStatus}
+              {uiT('call.detail.label048')} {formatCallProgressText(uiLocale, memoryPalaceStatus)}
             </div>
           )}
           {sleepMode && (

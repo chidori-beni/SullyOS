@@ -55,8 +55,13 @@ it('keeps missed-call persistence and incoming lifecycle unchanged', () => {
 });
 it('does not translate role prompts or call-generation/hangup logic', () => {
   const source = readFileSync(files[0], 'utf8'), original = execFileSync('git', ['show', `HEAD:${files[0]}`], { encoding: 'utf8' });
-  const prefix = (s: string) => s.slice(0, s.indexOf('  const avatarImportOverlay =')).replace(/\r/g, '').replace("import { useUiLocale } from '../context/UiLocaleContext';\n", '').replace("import { formatCallDetailText } from '../utils/callDetailLocale';\n", '').replace('  const { t: uiT } = useUiLocale();\n', '').replace(/  const audioRouteUiLabel =[^\n]+\n/, '');
-  // All lifecycle and prompt code lives before the UI views; only a pure route display binding was added.
+  const prefix = (s: string) => s.slice(0, s.indexOf('  const avatarImportOverlay =')).replace(/\r/g, '').replace("import { useUiLocale } from '../context/UiLocaleContext';\n", '').replace("import { formatCallDetailText } from '../utils/callDetailLocale';\n", '').replace('  const { t: uiT } = useUiLocale();\n', '').replace(/  const audioRouteUiLabel =[^\n]+\n/, '')
+    .replace("import { loadUiLocale } from '../utils/uiLocale';\n", '')
+    .replace("import { formatCallProgressText } from '../utils/callProgressLocale';\n", '')
+    .replace('  const { t: uiT, locale: uiLocale } = useUiLocale();\n', '')
+    .replace('formatCallProgressText(loadUiLocale(), lastStatus)', 'lastStatus');
+  // Normalize only display bindings and the completion-toast formatter. The raw completion check, prompts and lifecycle must stay identical.
+  // callProgressLocale.test.ts additionally compares the entire file outside these exact display substitutions.
   expect(prefix(source)).toBe(prefix(original));
   expect(translateUi('ja-JP', 'call.main.sayTo', { name: '原名{name}' })).toContain('原名{name}');
 });
