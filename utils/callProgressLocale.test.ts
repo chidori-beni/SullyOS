@@ -1,6 +1,7 @@
 const stripNoticeDisplay = (source: string): string => source
-  .replace(/callNoticeText\(loadUiLocale\(\), ('(?:[^'\\]|\\.)*')\)/g, '$1')
-  .replace(/import \{ callNoticeText \} from '\.\.\/utils\/callNoticeLocale';\r?\n/, '');
+  .replace(/callNoticeTemplate\(loadUiLocale\(\)\)/g, '')
+  .replace(/callNoticeText\(loadUiLocale\(\), ('(?:未知错误|对方)')\)/g, '$1')
+  .replace(/import \{ callNoticeTemplate \} from '\.\.\/utils\/callNoticeTemplates';\r?\n/, '');
 import { expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';

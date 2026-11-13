@@ -71,7 +71,9 @@ export const CALL_NOTICE_JA: Record<string, string> = {
   "已开启高质量动作排练：每轮会多调用一次情绪 Buff API": "高品質のモーション演出を有効にしました。毎ターン、感情 Buff API を追加で 1 回呼び出します",
   "已切换基础动作排练": "基本のモーション演出に切り替えました",
   "已恢复默认背景": "背景を初期設定に戻しました",
-  "通话已挂起，点击顶部绿色条可随时回来": "通話を最小化しました。上部の緑色のバーから戻れます"
+  "通话已挂起，点击顶部绿色条可随时回来": "通話を最小化しました。上部の緑色のバーから戻れます",
+  "未知错误": "不明なエラー",
+  "对方": "相手"
 };
 
 // Called only around explicit built-in literals; provider errors are never passed here.

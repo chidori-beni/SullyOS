@@ -1,3 +1,4 @@
+import { callNoticeTemplate } from '../utils/callNoticeTemplates';
 import { callNoticeText } from '../utils/callNoticeLocale';
 import { loadUiLocale } from '../utils/uiLocale';
 import { formatCallProgressText } from '../utils/callProgressLocale';
@@ -1218,8 +1219,8 @@ const CallApp: React.FC = () => {
     if (callSetupGuideOpenRef.current) setCallSetupGuideStep('camera');
     addToast(
       videoAvatar.format === 'live2d'
-        ? `${videoAvatar.fileName} 导入完成：请标记哪些按键动作属于服装切换`
-        : `${videoAvatar.fileName} 已绑定给 ${character.name}`,
+        ? callNoticeTemplate(loadUiLocale())`${videoAvatar.fileName} 导入完成：请标记哪些按键动作属于服装切换`
+        : callNoticeTemplate(loadUiLocale())`${videoAvatar.fileName} 已绑定给 ${character.name}`,
       'success',
     );
     if (previous?.assetId !== videoAvatar.assetId && previous?.format !== videoAvatar.format) {
@@ -1266,7 +1267,7 @@ const CallApp: React.FC = () => {
         setCallMode('video');
         if (callSetupGuideOpenRef.current) setCallSetupGuideStep('camera');
         trackEvent('导入桌面静态形象', { 格式: file.type === 'image/gif' ? 'GIF' : 'PNG' });
-        addToast(`${file.name} 已设为桌面与视频通话形象`, 'success');
+        addToast(callNoticeTemplate(loadUiLocale())`${file.name} 已设为桌面与视频通话形象`, 'success');
       } catch (error: any) {
         addToast(error?.message || callNoticeText(loadUiLocale(), '静态形象导入失败'), 'error');
       } finally {
@@ -2866,7 +2867,7 @@ ${sentencePlan}`;
     } catch (error: any) {
       setCallState('listening');
       setErrorMessage(error?.message || callNoticeText(loadUiLocale(), '语音生成失败'));
-      addToast(`语音生成失败：${error?.message || '未知错误'}`, 'error');
+      addToast(callNoticeTemplate(loadUiLocale())`语音生成失败：${error?.message || callNoticeText(loadUiLocale(), '未知错误')}`, 'error');
       return null;
     } finally {
       setGeneratingAudioBubbleId(null);
@@ -3178,7 +3179,7 @@ ${sentencePlan}`;
     const retryInput = getPendingReplyText(bubbles);
     const input = typedInput || retryInput;
     if (!input) return addToast(callNoticeText(loadUiLocale(), '说点什么吧'), 'info');
-    if (['connecting', 'thinking'].includes(callState)) return addToast(`${selectedChar?.name || '对方'}还在想，等一等`, 'info');
+    if (['connecting', 'thinking'].includes(callState)) return addToast(callNoticeTemplate(loadUiLocale())`${selectedChar?.name || callNoticeText(loadUiLocale(), '对方')}还在想，等一等`, 'info');
     if (isAudioPlaying) pauseAudio();
     primeCallAudioFromGesture();
     idleNudgeCountRef.current = 0;
@@ -3387,7 +3388,7 @@ ${sentencePlan}`;
         // 继续生成，用户回到应用后会从 outbox/通知收到结果。
         void schedulePendingCallBackgroundJob({ jobId: backgroundJobId, char: selectedChar, api: apiConfig });
       }
-      return addToast(`文本回复失败：${err?.message || '未知错误'}`, 'error');
+      return addToast(callNoticeTemplate(loadUiLocale())`文本回复失败：${err?.message || callNoticeText(loadUiLocale(), '未知错误')}`, 'error');
     }
     if (!isLiveCallSession(turnSessionId)) {
       if (backgroundJobId) void cancelPendingCallBackgroundJob(backgroundJobId);
@@ -3507,7 +3508,7 @@ ${sentencePlan}`;
       setErrorMessage(e?.message || callNoticeText(loadUiLocale(), '语音生成失败'));
       if (callMode === 'video') playSilentAvatarSpeech(assistantText, turnPerformanceCues);
       else setCallState('listening');
-      addToast(`TTS失败：${e?.message || callNoticeText(loadUiLocale(), '语音生成失败')}，已保留文本并启用无声表演`, 'info');
+      addToast(callNoticeTemplate(loadUiLocale())`TTS失败：${e?.message || callNoticeText(loadUiLocale(), '语音生成失败')}，已保留文本并启用无声表演`, 'info');
     }
   };
   const sendingBusy = ['connecting', 'thinking'].includes(callState);
@@ -3691,7 +3692,7 @@ ${sentencePlan}`;
     } catch (e: any) {
       if (!isLiveCallSession(rerollSessionId)) return;
       setCallState('error');
-      addToast(`重 roll 失败：${e?.message || '未知错误'}`, 'error');
+      addToast(callNoticeTemplate(loadUiLocale())`重 roll 失败：${e?.message || callNoticeText(loadUiLocale(), '未知错误')}`, 'error');
     } finally {
       setRerollingBubbleId(null);
     }
@@ -4580,7 +4581,7 @@ ${sentencePlan}`;
                 updateCharacter(selectedChar.id, { videoAvatar: config });
                 setShowLive2DSettings(false);
                 setLive2DWardrobeOnboarding(false);
-                addToast(`已保存：衣橱 ${config.actions.filter(action => action.wardrobe).length} 套 · AI 可用 ${getLive2DAIActions(config).length} 个动作`, 'success');
+                addToast(callNoticeTemplate(loadUiLocale())`已保存：衣橱 ${config.actions.filter(action => action.wardrobe).length} 套 · AI 可用 ${getLive2DAIActions(config).length} 个动作`, 'success');
               }}
             />
           </div>
@@ -5348,7 +5349,7 @@ ${sentencePlan}`;
             const wasActive = findActivePresetId(apiPresets, apiConfig) === preset.id;
             commitApiConfig(configFromPreset(preset));
             setShowApiPresetPicker(false);
-            addToast(wasActive ? `仍在用「${preset.name}」` : `已切换到「${preset.name}」，下一句开始生效`, 'success');
+            addToast(wasActive ? callNoticeTemplate(loadUiLocale())`仍在用「${preset.name}」` : callNoticeTemplate(loadUiLocale())`已切换到「${preset.name}」，下一句开始生效`, 'success');
             trackEvent('通话中切换API预设');
           }}
         />
@@ -5442,7 +5443,7 @@ ${sentencePlan}`;
               updateCharacter(selectedChar.id, { videoAvatar: config });
               setShowLive2DSettings(false);
               setLive2DWardrobeOnboarding(false);
-              addToast(`动作库已保存：衣橱 ${config.actions.filter(action => action.wardrobe).length} 套 · AI 可用 ${getLive2DAIActions(config).length} 个动作`, 'success');
+              addToast(callNoticeTemplate(loadUiLocale())`动作库已保存：衣橱 ${config.actions.filter(action => action.wardrobe).length} 套 · AI 可用 ${getLive2DAIActions(config).length} 个动作`, 'success');
             }}
           />
         </div>

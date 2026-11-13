@@ -22,8 +22,8 @@ it('wraps explicit built-in literals only and preserves every other source byte 
    expect(CALL_NOTICE_JA).toHaveProperty((n.arguments[1] as ts.StringLiteral).text);count++;
   }
   ts.forEachChild(n,visit);
- };visit(sf);expect(count).toBe(79);
- const restored=source.replace(/callNoticeText\(loadUiLocale\(\), ('(?:[^'\\]|\\.)*')\)/g,'$1').replace("import { callNoticeText } from '../utils/callNoticeLocale';\n",'');
+ };visit(sf);expect(count).toBe(83);
+ const restored=source.replace(/callNoticeTemplate\(loadUiLocale\(\)\)/g, '').replace(/callNoticeText\(loadUiLocale\(\), ('(?:未知错误|对方)')\)/g, '$1').replace("import { callNoticeTemplate } from '../utils/callNoticeTemplates';\n", '');
  expect(restored).toBe(original);
  expect(source).toContain("setErrorMessage(error?.message || callNoticeText(loadUiLocale(), '语音生成失败'))");
  expect(source).toContain("addToast(inspection.reason, 'error')");
