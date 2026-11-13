@@ -1,3 +1,4 @@
+import { describeLocalizedLive2DParameter, formatLive2DParameterText } from '../../utils/live2dParameterLocale';
 import { useUiLocale } from '../../context/UiLocaleContext';
 import { formatLive2DActionText } from '../../utils/live2dActionLocale';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -5,7 +6,6 @@ import { Check, FadersHorizontal, HandTap, PencilSimple, Play, Plus, Prohibit, R
 import { inferLive2DActionTags, type Live2DAction, type Live2DActionPermission, type Live2DAvatarConfig } from '../../utils/live2dModelStore';
 import { live2dActionDisplayName, live2dActionRenamed, live2dActionSetName } from '../../utils/live2dActionNaming';
 import {
-  describeLive2DParameter,
   groupLive2DParameters,
   live2DParameterPosition,
 } from '../../utils/live2dParameterSemantics';
@@ -41,6 +41,7 @@ const Live2DActionSettings: React.FC<Live2DActionSettingsProps> = ({
 }) => {
   const { locale } = useUiLocale();
   const actionText = (text: string, params?: Record<string, string | number>) => formatLive2DActionText(locale, text, params);
+  const describeLive2DParameter = (id: string) => describeLocalizedLive2DParameter(id, locale);
   const defaultFraming = isBuiltinSullyLive2D(config)
     ? { ...BUILTIN_SULLY_DEFAULT_FRAMING }
     : { scale: 1, offsetX: 0, offsetY: 0 };
@@ -638,7 +639,7 @@ const Live2DActionSettings: React.FC<Live2DActionSettingsProps> = ({
                   >
                     {!meta && <option value={param.id}>{param.id}</option>}
                     {groupedParameters.map(group => (
-                      <optgroup key={group.area} label={group.label}>
+                      <optgroup key={group.area} label={formatLive2DParameterText(locale, group.label)}>
                         {group.parameters.map(item => {
                           const itemSemantics = describeLive2DParameter(item.id);
                           return (
