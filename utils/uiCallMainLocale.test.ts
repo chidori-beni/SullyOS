@@ -1,3 +1,6 @@
+const stripNoticeDisplay = (source: string): string => source
+  .replace(/callNoticeText\(loadUiLocale\(\), ('(?:[^'\\]|\\.)*')\)/g, '$1')
+  .replace(/import \{ callNoticeText \} from '\.\.\/utils\/callNoticeLocale';\r?\n/, '');
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, it, vi } from 'vitest';
@@ -29,7 +32,7 @@ it.each(['zh-CN', 'ja-JP'] as const)('renders sleep presets and preferences in %
 });
 it('keeps every event, stable mode/input value and disabled gate identical to remote', () => {
   for (const path of files) {
-    const source = readFileSync(path, 'utf8'), original = execFileSync('git', ['show', `HEAD:${path}`], { encoding: 'utf8' });
+    const source = stripNoticeDisplay(readFileSync(path, 'utf8')), original = execFileSync('git', ['show', `HEAD:${path}`], { encoding: 'utf8' });
     const attrs = (text: string) => {
       const sf = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX), result: string[] = [];
       const visit = (node: ts.Node) => {
@@ -47,14 +50,14 @@ it('keeps every event, stable mode/input value and disabled gate identical to re
   }
 });
 it('keeps missed-call persistence and incoming lifecycle unchanged', () => {
-  const path = files[1], source = readFileSync(path, 'utf8'), original = execFileSync('git', ['show', `HEAD:${path}`], { encoding: 'utf8' });
+  const path = files[1], source = stripNoticeDisplay(readFileSync(path, 'utf8')), original = execFileSync('git', ['show', `HEAD:${path}`], { encoding: 'utf8' });
   const persisted = (s: string) => s.slice(s.indexOf('export const persistMissedCall')).replace(/\r/g, '');
   expect(persisted(source)).toBe(persisted(original));
   const lifecycle = (s: string) => s.slice(s.indexOf('const { openApp, characters }'), s.indexOf('if (!call) return null;')).replace(/\r/g, '');
   expect(lifecycle(source)).toBe(lifecycle(original));
 });
 it('does not translate role prompts or call-generation/hangup logic', () => {
-  const source = readFileSync(files[0], 'utf8'), original = execFileSync('git', ['show', `HEAD:${files[0]}`], { encoding: 'utf8' });
+  const source = stripNoticeDisplay(readFileSync(files[0], 'utf8')), original = execFileSync('git', ['show', `HEAD:${files[0]}`], { encoding: 'utf8' });
   const prefix = (s: string) => s.slice(0, s.indexOf('  const avatarImportOverlay =')).replace(/\r/g, '').replace("import { useUiLocale } from '../context/UiLocaleContext';\n", '').replace("import { formatCallDetailText } from '../utils/callDetailLocale';\n", '').replace('  const { t: uiT } = useUiLocale();\n', '').replace(/  const audioRouteUiLabel =[^\n]+\n/, '')
     .replace("import { loadUiLocale } from '../utils/uiLocale';\n", '')
     .replace("import { formatCallProgressText } from '../utils/callProgressLocale';\n", '')

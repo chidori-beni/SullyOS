@@ -1,3 +1,6 @@
+const stripNoticeDisplay = (source: string): string => source
+  .replace(/callNoticeText\(loadUiLocale\(\), ('(?:[^'\\]|\\.)*')\)/g, '$1')
+  .replace(/import \{ callNoticeText \} from '\.\.\/utils\/callNoticeLocale';\r?\n/, '');
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, it, vi } from 'vitest';
@@ -38,7 +41,7 @@ it.each(['zh-CN', 'ja-JP'] as const)('renders camera privacy/modes, both guide s
 });
 it('preserves all events, stable values, privacy/permission gates and main call lifecycle', () => {
  for(const file of ['apps/CallApp.tsx','components/call/UserCameraModePicker.tsx','components/call/CallSetupGuide.tsx','components/call/CallApiPresetSheet.tsx','components/call/CallUpdateAnnouncement.tsx']) {
-  const actual = readFileSync(file,'utf8'), original = execFileSync('git',['show',`HEAD:${file}`],{encoding:'utf8'});
+  const actual = stripNoticeDisplay(readFileSync(file,'utf8')), original = execFileSync('git',['show',`HEAD:${file}`],{encoding:'utf8'});
   const attrs = (text: string) => {
    const sf = ts.createSourceFile(file,text,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX), result:string[]=[];
    const visit=(node:ts.Node)=>{if(ts.isJsxAttribute(node)&&(/^on[A-Z]/.test(node.name.getText(sf))||['value','disabled','checked','aria-checked','type','data-testid','min','max'].includes(node.name.getText(sf)))) result.push(node.getText(sf).replace(/\r/g,'')); ts.forEachChild(node,visit);};visit(sf);return result;

@@ -1,3 +1,4 @@
+import { callNoticeText } from '../utils/callNoticeLocale';
 import { loadUiLocale } from '../utils/uiLocale';
 import { formatCallProgressText } from '../utils/callProgressLocale';
 import { resolveDialogueApi } from '../utils/characterApi';
@@ -652,7 +653,7 @@ const CallApp: React.FC = () => {
   const returnToChatRef = useRef(initialCallLaunchIntentRef.current?.returnTo === 'chat');
   const [viewMode, setViewMode] = useState<ViewMode>('role-select');
   useAppShortcut(ShortcutAppID.Call, intent => {
-    if (callState !== 'idle') { addToast('请先结束当前通话，再切换快捷入口', 'info'); return; }
+    if (callState !== 'idle') { addToast(callNoticeText(loadUiLocale(), '请先结束当前通话，再切换快捷入口'), 'info'); return; }
     const index = characters.findIndex(c => c.id === intent.characterId);
     if (index >= 0) { setSelectedCharId(characters[index].id); setRoleGroupId(GROUP_FILTER_ALL); setRolePage(Math.floor(index / ROLES_PER_PAGE)); }
     setViewMode(intent.entryId === 'history' ? 'history' : 'role-select');
@@ -824,7 +825,7 @@ const CallApp: React.FC = () => {
     if (!external || manualRouteSinceDeviceChangeRef.current) return;
     if (audioOutputRouteRef.current === 'headphones') return;
     applyAudioOutputRoute('headphones');
-    addToast('检测到耳机，声音改走耳机', 'info');
+    addToast(callNoticeText(loadUiLocale(), '检测到耳机，声音改走耳机'), 'info');
   };
   useEffect(() => {
     if (viewMode !== 'in-call' || !nativeCallAudioOnly) return;
@@ -904,7 +905,7 @@ const CallApp: React.FC = () => {
   const startUserCamera = async (nextMode: Extract<UserCameraMode, 'emotion' | 'snapshot'>, facing = userCameraFacing) => {
     if (userCameraLoading) return;
     if (!navigator.mediaDevices?.getUserMedia) {
-      addToast('当前浏览器不支持摄像头，或页面不是安全连接', 'error');
+      addToast(callNoticeText(loadUiLocale(), '当前浏览器不支持摄像头，或页面不是安全连接'), 'error');
       return;
     }
     const requestId = ++userCameraRequestRef.current;
@@ -938,7 +939,7 @@ const CallApp: React.FC = () => {
         void preloadUserCameraEmotionDetector().catch(error => {
           console.warn('[camera-emotion] local detector preload failed:', error);
           if (userCameraStreamRef.current === stream && stream.active) {
-            addToast('摄像头已开启，但本地情绪识别加载失败；本轮不会注入识别结果', 'info');
+            addToast(callNoticeText(loadUiLocale(), '摄像头已开启，但本地情绪识别加载失败；本轮不会注入识别结果'), 'info');
           }
         });
       } else {
@@ -947,7 +948,7 @@ const CallApp: React.FC = () => {
     } catch (error: any) {
       if (requestId !== userCameraRequestRef.current) return;
       const denied = error?.name === 'NotAllowedError' || error?.name === 'PermissionDeniedError';
-      addToast(denied ? '没有获得摄像头权限' : (error?.message || '摄像头开启失败'), 'error');
+      addToast(denied ? callNoticeText(loadUiLocale(), '没有获得摄像头权限') : (error?.message || callNoticeText(loadUiLocale(), '摄像头开启失败')), 'error');
       stopUserCamera();
     } finally {
       if (requestId === userCameraRequestRef.current) setUserCameraLoading(false);
@@ -966,7 +967,7 @@ const CallApp: React.FC = () => {
       if (!file) return removeInput();
       try {
         if (file.size > 12 * 1024 * 1024) {
-          addToast('静态画面超过 12 MB，请换一张小一点的图片', 'error');
+          addToast(callNoticeText(loadUiLocale(), '静态画面超过 12 MB，请换一张小一点的图片'), 'error');
           return;
         }
         const nextRef = await putImageBlob(file);
@@ -979,9 +980,9 @@ const CallApp: React.FC = () => {
         }
         try { localStorage.setItem(FAKE_USER_CAMERA_IMAGE_KEY, nextRef); } catch { /* private WebView */ }
         if (previous && previous !== nextRef) await deleteBlobRef(previous);
-        addToast(activate ? '假摄像头已启用；这张图只用于画面，不会发送给角色' : '静态机位已准备；确认接通后才会启用', 'success');
+        addToast(activate ? callNoticeText(loadUiLocale(), '假摄像头已启用；这张图只用于画面，不会发送给角色') : callNoticeText(loadUiLocale(), '静态机位已准备；确认接通后才会启用'), 'success');
       } catch (error: any) {
-        addToast(error?.message || '静态画面导入失败', 'error');
+        addToast(error?.message || callNoticeText(loadUiLocale(), '静态画面导入失败'), 'error');
       } finally {
         removeInput();
       }
@@ -994,7 +995,7 @@ const CallApp: React.FC = () => {
     try { localStorage.removeItem(FAKE_USER_CAMERA_IMAGE_KEY); } catch { /* private WebView */ }
     if (userCameraMode === 'fake') setUserCameraMode('off');
     if (previous) await deleteBlobRef(previous);
-    addToast('已移除假摄像头图片', 'success');
+    addToast(callNoticeText(loadUiLocale(), '已移除假摄像头图片'), 'success');
   };
   const selectUserCameraMode = (nextMode: UserCameraMode) => {
     trackEvent('选择用户摄像头模式', {
@@ -1022,7 +1023,7 @@ const CallApp: React.FC = () => {
       if (nextMode === 'emotion') {
         void preloadUserCameraEmotionDetector().catch(error => {
           console.warn('[camera-emotion] local detector preload failed:', error);
-          addToast('本地情绪识别加载失败；画面仍可使用', 'info');
+          addToast(callNoticeText(loadUiLocale(), '本地情绪识别加载失败；画面仍可使用'), 'info');
         });
       } else {
         releaseUserCameraEmotionDetector();
@@ -1171,7 +1172,7 @@ const CallApp: React.FC = () => {
       if (lastStatus.includes('完成')) addToast(formatCallProgressText(loadUiLocale(), lastStatus), 'success');
     }).catch(e => {
       console.error('❌ [CallApp MemoryPalace] 后台处理异常:', e?.message || e);
-      addToast('记忆整理失败', 'error');
+      addToast(callNoticeText(loadUiLocale(), '记忆整理失败'), 'error');
     }).finally(() => {
       callTrace('palace-end', { status: lastStatus.slice(0, 40) });
       setMemoryPalaceStatus('');
@@ -1228,7 +1229,7 @@ const CallApp: React.FC = () => {
 
   const chooseStaticAvatarImage = () => {
     if (!selectedChar) {
-      addToast('先选择一个角色', 'info');
+      addToast(callNoticeText(loadUiLocale(), '先选择一个角色'), 'info');
       return;
     }
     const character = selectedChar;
@@ -1244,11 +1245,11 @@ const CallApp: React.FC = () => {
       if (!file) return removeInput();
       const extension = file.name.split('.').pop()?.toLowerCase();
       if (!['png', 'gif'].includes(extension || '') || !['image/png', 'image/gif'].includes(file.type)) {
-        addToast('静态形象仅支持 PNG / GIF', 'error');
+        addToast(callNoticeText(loadUiLocale(), '静态形象仅支持 PNG / GIF'), 'error');
         return removeInput();
       }
       if (file.size > 20 * 1024 * 1024) {
-        addToast('图片超过 20 MB，请压缩后再导入', 'error');
+        addToast(callNoticeText(loadUiLocale(), '图片超过 20 MB，请压缩后再导入'), 'error');
         return removeInput();
       }
       try {
@@ -1267,7 +1268,7 @@ const CallApp: React.FC = () => {
         trackEvent('导入桌面静态形象', { 格式: file.type === 'image/gif' ? 'GIF' : 'PNG' });
         addToast(`${file.name} 已设为桌面与视频通话形象`, 'success');
       } catch (error: any) {
-        addToast(error?.message || '静态形象导入失败', 'error');
+        addToast(error?.message || callNoticeText(loadUiLocale(), '静态形象导入失败'), 'error');
       } finally {
         removeInput();
       }
@@ -1286,7 +1287,7 @@ const CallApp: React.FC = () => {
       return;
     }
     if (source === 'date' && !hasDatePortraits(selectedChar)) {
-      addToast('还没有见面立绘，先去见面模式补一套表情', 'info');
+      addToast(callNoticeText(loadUiLocale(), '还没有见面立绘，先去见面模式补一套表情'), 'info');
       openApp(AppID.Date);
       return;
     }
@@ -1298,13 +1299,13 @@ const CallApp: React.FC = () => {
       },
     });
     setCallMode('video');
-    addToast(source === 'model' ? '视频通话已使用动态模型' : source === 'date' ? '视频通话已沿用见面立绘' : '视频通话已使用静态图片', 'success');
+    addToast(source === 'model' ? callNoticeText(loadUiLocale(), '视频通话已使用动态模型') : source === 'date' ? callNoticeText(loadUiLocale(), '视频通话已沿用见面立绘') : callNoticeText(loadUiLocale(), '视频通话已使用静态图片'), 'success');
   };
 
   const chooseBuiltinSullyQuality = (quality: BuiltinSullyLive2DQuality) => {
     if (!selectedChar || !selectedBuiltinSullyAvatar || selectedBuiltinSullyAvatar.builtinQuality === quality) return;
     updateCharacter(selectedChar.id, { videoAvatar: setBuiltinSullyLive2DQuality(selectedBuiltinSullyAvatar, quality) });
-    addToast(quality === 'hd' ? '已切换到 Sully 高清 4K；显存占用会明显增加' : '已切回 Sully 轻量 2K', quality === 'hd' ? 'info' : 'success');
+    addToast(quality === 'hd' ? callNoticeText(loadUiLocale(), '已切换到 Sully 高清 4K；显存占用会明显增加') : callNoticeText(loadUiLocale(), '已切回 Sully 轻量 2K'), quality === 'hd' ? 'info' : 'success');
   };
 
   // 老版本把无法从文件名猜出情绪的动作留在“仅手动”。升级后安全的模型
@@ -1335,7 +1336,7 @@ const CallApp: React.FC = () => {
 
   const chooseAvatarModel = () => {
     if (!selectedChar) {
-      addToast('先选择一个角色', 'info');
+      addToast(callNoticeText(loadUiLocale(), '先选择一个角色'), 'info');
       return;
     }
     const character = selectedChar;
@@ -1357,7 +1358,7 @@ const CallApp: React.FC = () => {
         if (/\.zip$/i.test(file.name)) {
           if (file.size > 200 * 1024 * 1024) {
             trackEvent('导入通话形象', { 来源: source, 结果: '体积超限' });
-            addToast('Live2D ZIP 超过 200 MB，移动端很可能无法稳定解压加载', 'error');
+            addToast(callNoticeText(loadUiLocale(), 'Live2D ZIP 超过 200 MB，移动端很可能无法稳定解压加载'), 'error');
             return;
           }
           void preloadLive2DRuntime().catch(() => { /* loading UI will surface a retryable error */ });
@@ -1381,14 +1382,14 @@ const CallApp: React.FC = () => {
         }
         if (file.size > 80 * 1024 * 1024) {
           trackEvent('导入通话形象', { 来源: source, 结果: '体积超限' });
-          addToast('模型超过 80 MB，移动端通话可能无法稳定加载，请在导出时降低纹理尺寸', 'error');
+          addToast(callNoticeText(loadUiLocale(), '模型超过 80 MB，移动端通话可能无法稳定加载，请在导出时降低纹理尺寸'), 'error');
           return;
         }
         // VRM 到这里只是通过体检，真正落库在确认 beta 提示之后，成功与否由 confirmVRoidImport 记。
         setPendingVRoidImport({ file, characterId: character.id, projectFile: false });
       } catch (error: any) {
         trackEvent('导入通话形象', { 来源: source, 结果: '失败' });
-        addToast(error?.message || '模型导入失败', 'error');
+        addToast(error?.message || callNoticeText(loadUiLocale(), '模型导入失败'), 'error');
       } finally {
         setAvatarImportStatus('');
         removeInput();
@@ -1403,7 +1404,7 @@ const CallApp: React.FC = () => {
     const character = charactersRef.current.find(item => item.id === pending.characterId);
     if (!character) {
       setPendingVRoidImport(null);
-      addToast('原角色已不存在，已取消导入', 'error');
+      addToast(callNoticeText(loadUiLocale(), '原角色已不存在，已取消导入'), 'error');
       return;
     }
     setVRoidImportBusy(true);
@@ -1415,7 +1416,7 @@ const CallApp: React.FC = () => {
       setPendingVRoidImport(null);
     } catch (error: any) {
       trackEvent('导入通话形象', { 来源: 'VRM', 结果: '失败' });
-      addToast(error?.message || 'VRM 测试模型导入失败；原模型未被覆盖', 'error');
+      addToast(error?.message || callNoticeText(loadUiLocale(), 'VRM 测试模型导入失败；原模型未被覆盖'), 'error');
     } finally {
       setAvatarImportStatus('');
       setVRoidImportBusy(false);
@@ -1424,7 +1425,7 @@ const CallApp: React.FC = () => {
 
   const chooseLive2DDirectory = () => {
     if (!selectedChar) {
-      addToast('先选择一个角色', 'info');
+      addToast(callNoticeText(loadUiLocale(), '先选择一个角色'), 'info');
       return;
     }
     void preloadLive2DRuntime().catch(() => { /* loading UI will surface a retryable error */ });
@@ -1445,7 +1446,7 @@ const CallApp: React.FC = () => {
         const totalSize = files.reduce((sum, file) => sum + file.size, 0);
         if (totalSize > 250 * 1024 * 1024) {
           trackEvent('导入通话形象', { 来源: 'Live2D 文件夹', 结果: '体积超限' });
-          addToast('Live2D 文件夹超过 250 MB，请先压缩纹理尺寸或删掉无关文件', 'error');
+          addToast(callNoticeText(loadUiLocale(), 'Live2D 文件夹超过 250 MB，请先压缩纹理尺寸或删掉无关文件'), 'error');
           return;
         }
         setAvatarImportStatus(`已选择 ${files.length} 个文件，正在扫描模型…`);
@@ -1453,7 +1454,7 @@ const CallApp: React.FC = () => {
         trackEvent('导入通话形象', { 来源: 'Live2D 文件夹', 结果: '成功' });
       } catch (error: any) {
         trackEvent('导入通话形象', { 来源: 'Live2D 文件夹', 结果: '失败' });
-        addToast(error?.message || 'Live2D 文件夹导入失败', 'error');
+        addToast(error?.message || callNoticeText(loadUiLocale(), 'Live2D 文件夹导入失败'), 'error');
       } finally {
         setAvatarImportStatus('');
         removeInput();
@@ -1608,8 +1609,8 @@ const CallApp: React.FC = () => {
     } catch (singleErr: any) {
       const textChunks = splitTextForTts(speechText, 120);
       if (!textChunks.length) throw singleErr;
-      if (textChunks.length > 1) addToast('语音生成中，稍等一下', 'info');
-      if (textChunks.length > 20) addToast('这段话比较长，多等一会儿', 'info');
+      if (textChunks.length > 1) addToast(callNoticeText(loadUiLocale(), '语音生成中，稍等一下'), 'info');
+      if (textChunks.length > 20) addToast(callNoticeText(loadUiLocale(), '这段话比较长，多等一会儿'), 'info');
       console.warn('[call] tts single-shot failed, fallback to chunk mode', singleErr?.message || singleErr);
 
       for (let idx = 0; idx < textChunks.length; idx += 1) {
@@ -1708,7 +1709,7 @@ const CallApp: React.FC = () => {
     clearPendingIncomingCall();
     const target = characters.find(c => c.id === incoming.charId);
     if (!target) {
-      addToast('这个角色已经不在了', 'info');
+      addToast(callNoticeText(loadUiLocale(), '这个角色已经不在了'), 'info');
       return;
     }
     setSelectedCharId(target.id);
@@ -1776,7 +1777,7 @@ const CallApp: React.FC = () => {
       trackEvent('切换语音输入', { action: 'stop' });
       return;
     }
-    if (!sttSupported) { addToast('当前环境不支持语音输入', 'info'); return; }
+    if (!sttSupported) { addToast(callNoticeText(loadUiLocale(), '当前环境不支持语音输入'), 'info'); return; }
     const startToken = ++sttStartTokenRef.current;
     sttStartPendingRef.current = true;
     try {
@@ -1824,22 +1825,22 @@ const CallApp: React.FC = () => {
       setIsSttProcessing(false);
       sttSessionRef.current = null;
       sttStartPendingRef.current = false;
-      addToast(e?.message || '无法启动语音输入', 'error');
+      addToast(e?.message || callNoticeText(loadUiLocale(), '无法启动语音输入'), 'error');
     }
   };
   // 下载某条通话语音：移动端优先调系统分享/保存，避免 WebView 的 <a download> 假成功。
   const handleDownloadCallAudio = async (url?: string, ts?: number) => {
-    if (!url) { addToast('这条还没有语音', 'error'); return; }
+    if (!url) { addToast(callNoticeText(loadUiLocale(), '这条还没有语音'), 'error'); return; }
     try {
       const fname = `${(selectedChar?.name || '通话').replace(/[\\/:*?"<>|]/g, '_')}_语音_${ts || Date.now()}.mp3`;
       const blob = await fetchBlobForShare(url, 'audio/mpeg');
       const result = await shareOrDownloadBlob({ blob, fileName: fname, shareTitle: `${selectedChar?.name || '通话'}的语音` });
       if (result === 'cancelled') return;
-      addToast(result === 'shared' ? '已打开系统保存/分享' : '语音已开始下载', 'success');
+      addToast(result === 'shared' ? callNoticeText(loadUiLocale(), '已打开系统保存/分享') : callNoticeText(loadUiLocale(), '语音已开始下载'), 'success');
       trackEvent('下载一条通话语音');
     } catch (error) {
       console.error('[Call] download audio failed', error);
-      addToast('语音文件已失效或无法读取，请重新生成后再下载', 'error');
+      addToast(callNoticeText(loadUiLocale(), '语音文件已失效或无法读取，请重新生成后再下载'), 'error');
     }
   };
   useEffect(() => {
@@ -2211,7 +2212,7 @@ const CallApp: React.FC = () => {
     resetCurrentCall();
     setViewMode('history');
     setShowHangupConfirm(false);
-    addToast('通话记录已保存', 'success');
+    addToast(callNoticeText(loadUiLocale(), '通话记录已保存'), 'success');
   };
   const handleHangup = () => {
     setShowHangupConfirm(true);
@@ -2567,7 +2568,7 @@ ${sentencePlan}`;
       ? (userCameraSnapshotForTurn ?? captureUserCameraSnapshotContext())
       : '';
     if (includeUserCameraContext && callMode === 'video' && userCameraMode === 'snapshot' && !userCameraSnapshot && userCameraSnapshotForTurn === undefined) {
-      addToast('摄像头画面还没准备好，本轮已只发送文字', 'info');
+      addToast(callNoticeText(loadUiLocale(), '摄像头画面还没准备好，本轮已只发送文字'), 'info');
     }
     const baseSystemPrompt = [
       baseCallPrompt,
@@ -2636,7 +2637,7 @@ ${sentencePlan}`;
     } catch (error) {
       if (!userCameraSnapshot || !isVisionInputUnsupportedError(error)) throw error;
       console.warn('[camera-snapshot] provider rejected vision input; retrying text-only:', error);
-      addToast('当前模型不支持图片；本轮已自动改为只发文字', 'info');
+      addToast(callNoticeText(loadUiLocale(), '当前模型不支持图片；本轮已自动改为只发文字'), 'info');
       chatData = await sendChatRequest(textOnlyMessages, baseSystemPrompt, 2, '视频通话·快照降级为文字');
     }
     const parsed = parseCallAssistantMessage(
@@ -2821,7 +2822,7 @@ ${sentencePlan}`;
           if (callMode === 'video') playSilentAvatarSpeech('', cues, estimatedDurationMs);
           else setCallState('listening');
           if (!suppressFailureToast) {
-            addToast(forceAudible ? '播放失败，请再点一次“重播语音”' : '浏览器拦截了本次自动播放；点“重播语音”即可恢复', 'info');
+            addToast(forceAudible ? callNoticeText(loadUiLocale(), '播放失败，请再点一次“重播语音”') : callNoticeText(loadUiLocale(), '浏览器拦截了本次自动播放；点“重播语音”即可恢复'), 'info');
           }
           return false;
         });
@@ -2831,7 +2832,7 @@ ${sentencePlan}`;
       if (callMode === 'video') playSilentAvatarSpeech('', cues, estimatedDurationMs);
       else setCallState('listening');
       if (!suppressFailureToast) {
-        addToast(forceAudible ? '播放失败，请再点一次“重播语音”' : '浏览器拦截了本次自动播放；点“重播语音”即可恢复', 'info');
+        addToast(forceAudible ? callNoticeText(loadUiLocale(), '播放失败，请再点一次“重播语音”') : callNoticeText(loadUiLocale(), '浏览器拦截了本次自动播放；点“重播语音”即可恢复'), 'info');
       }
       return Promise.resolve(false);
     }
@@ -2840,7 +2841,7 @@ ${sentencePlan}`;
     if (bubble.role !== 'assistant' || generatingAudioBubbleId) return null;
     if (bubble.audioUrl && !forceRegenerate) return bubble.audioUrl;
     if (!hasConfiguredVoice()) {
-      addToast('还没有配置这个角色的语音', 'info');
+      addToast(callNoticeText(loadUiLocale(), '还没有配置这个角色的语音'), 'info');
       return null;
     }
     setGeneratingAudioBubbleId(bubble.id);
@@ -2864,7 +2865,7 @@ ${sentencePlan}`;
       return url;
     } catch (error: any) {
       setCallState('listening');
-      setErrorMessage(error?.message || '语音生成失败');
+      setErrorMessage(error?.message || callNoticeText(loadUiLocale(), '语音生成失败'));
       addToast(`语音生成失败：${error?.message || '未知错误'}`, 'error');
       return null;
     } finally {
@@ -2915,7 +2916,7 @@ ${sentencePlan}`;
       if (voiceFavoriteSaved) {
         await removeVoiceFavorite('call', sourceKey);
         setVoiceFavoriteSaved(false);
-        addToast('已取消收藏语音', 'info');
+        addToast(callNoticeText(loadUiLocale(), '已取消收藏语音'), 'info');
         return;
       }
 
@@ -2949,17 +2950,17 @@ ${sentencePlan}`;
         blob,
       });
       setVoiceFavoriteSaved(true);
-      addToast('已收藏通话语音', 'success');
+      addToast(callNoticeText(loadUiLocale(), '已收藏通话语音'), 'success');
       trackEvent('收藏通话语音');
     } catch (error: any) {
-      addToast(error?.message || '收藏失败，请检查浏览器存储空间', 'error');
+      addToast(error?.message || callNoticeText(loadUiLocale(), '收藏失败，请检查浏览器存储空间'), 'error');
     } finally {
       setVoiceFavoriteBusy(false);
     }
   };
   const resumeAudio = () => {
     if (!audioRef.current || !audioUrl) return;
-    startCallAudioElement(audioRef.current).catch(() => addToast('继续播放失败，请点击重播', 'error'));
+    startCallAudioElement(audioRef.current).catch(() => addToast(callNoticeText(loadUiLocale(), '继续播放失败，请点击重播'), 'error'));
   };
   const pauseAudio = () => {
     if (!audioRef.current) return;
@@ -3059,7 +3060,7 @@ ${sentencePlan}`;
       } catch (error: any) {
         if (!isLiveCallSession(greetingSessionId)) return;
         setCallState('error');
-        setErrorMessage(error?.message || '开场白生成失败');
+        setErrorMessage(error?.message || callNoticeText(loadUiLocale(), '开场白生成失败'));
       }
     })();
   }, [viewMode, currentSessionId, callPreferences.characterInitiative]);
@@ -3176,7 +3177,7 @@ ${sentencePlan}`;
     const typedInput = draftInput.trim();
     const retryInput = getPendingReplyText(bubbles);
     const input = typedInput || retryInput;
-    if (!input) return addToast('说点什么吧', 'info');
+    if (!input) return addToast(callNoticeText(loadUiLocale(), '说点什么吧'), 'info');
     if (['connecting', 'thinking'].includes(callState)) return addToast(`${selectedChar?.name || '对方'}还在想，等一等`, 'info');
     if (isAudioPlaying) pauseAudio();
     primeCallAudioFromGesture();
@@ -3197,7 +3198,7 @@ ${sentencePlan}`;
       ? captureUserCameraSnapshotContext()
       : '';
     if (callMode === 'video' && userCameraMode === 'snapshot' && !userCameraSnapshotForTurn) {
-      addToast('摄像头画面还没准备好，本轮已只发送文字', 'info');
+      addToast(callNoticeText(loadUiLocale(), '摄像头画面还没准备好，本轮已只发送文字'), 'info');
     }
     let newSnapshotRef: string | undefined;
     if (userCameraSnapshotForTurn) {
@@ -3210,7 +3211,7 @@ ${sentencePlan}`;
         trackEvent('保存视频通话单帧快照');
       } catch (error) {
         console.warn('[camera-snapshot] failed to save the local call-record frame:', error);
-        addToast('快照仍会交给角色，但未能写入本地通话记录', 'info');
+        addToast(callNoticeText(loadUiLocale(), '快照仍会交给角色，但未能写入本地通话记录'), 'info');
       }
     }
     const nowTs = Date.now();
@@ -3379,7 +3380,7 @@ ${sentencePlan}`;
         if (backgroundJobId) void cancelPendingCallBackgroundJob(backgroundJobId);
         return;
       }
-      setErrorMessage(err?.message || '文本回复失败');
+      setErrorMessage(err?.message || callNoticeText(loadUiLocale(), '文本回复失败'));
       setCallState('error');
       if (backgroundJobId && selectedChar) {
         // 前台请求已明确失败时不必等下一次 visibilitychange；把同一份快照交给 Worker
@@ -3482,7 +3483,7 @@ ${sentencePlan}`;
       } else {
         setCallState('listening');
       }
-      addToast('语音未配置，先用文字聊吧', 'info');
+      addToast(callNoticeText(loadUiLocale(), '语音未配置，先用文字聊吧'), 'info');
       return;
     }
     try {
@@ -3503,10 +3504,10 @@ ${sentencePlan}`;
       if (!isLiveCallSession(turnSessionId)) return;
       setCallState('listening');
     } catch (e: any) {
-      setErrorMessage(e?.message || '语音生成失败');
+      setErrorMessage(e?.message || callNoticeText(loadUiLocale(), '语音生成失败'));
       if (callMode === 'video') playSilentAvatarSpeech(assistantText, turnPerformanceCues);
       else setCallState('listening');
-      addToast(`TTS失败：${e?.message || '语音生成失败'}，已保留文本并启用无声表演`, 'info');
+      addToast(`TTS失败：${e?.message || callNoticeText(loadUiLocale(), '语音生成失败')}，已保留文本并启用无声表演`, 'info');
     }
   };
   const sendingBusy = ['connecting', 'thinking'].includes(callState);
@@ -3585,7 +3586,7 @@ ${sentencePlan}`;
       setViewMode('history');
     }
     await loadCallRecords(record.characterId);
-    addToast('通话记录已删除', 'success');
+    addToast(callNoticeText(loadUiLocale(), '通话记录已删除'), 'success');
     trackEvent('删除一条通话记录');
   };
   const startEditBubble = (bubble: CallBubble) => {
@@ -3597,7 +3598,7 @@ ${sentencePlan}`;
   const saveEditedBubble = async () => {
     if (!editingBubble) return;
     const next = editingText.trim();
-    if (!next) return addToast('内容不能为空', 'error');
+    if (!next) return addToast(callNoticeText(loadUiLocale(), '内容不能为空'), 'error');
     const isAssistant = editingBubble.role === 'assistant';
     // 改了角色的台词就必须把这条已经合成好的语音丢掉：留着的话点「重播语音」放的还是旧音频，
     // 改词等于白改。清掉之后按钮会变回「播放语音」，点一下按新文本重新合成。
@@ -3615,7 +3616,7 @@ ${sentencePlan}`;
     if (editingBubble.dbId) await DB.updateMessage(editingBubble.dbId, next);
     setEditingBubble(null);
     setEditingText('');
-    addToast(isAssistant ? '已改词，点「播放语音」按新文本重新合成' : '已更新发言', 'success');
+    addToast(isAssistant ? callNoticeText(loadUiLocale(), '已改词，点「播放语音」按新文本重新合成') : callNoticeText(loadUiLocale(), '已更新发言'), 'success');
     trackEvent(isAssistant ? '修改角色的通话台词' : '修改自己的通话发言');
   };
   const handleRerollAssistant = async (bubble: CallBubble) => {
@@ -3660,7 +3661,7 @@ ${sentencePlan}`;
           return next;
         });
       }
-      addToast('台词已重 roll', 'success');
+      addToast(callNoticeText(loadUiLocale(), '台词已重 roll'), 'success');
       runCallMemoryPalaceHook(selectedChar);
 
       // Synthesize immediately only when automatic call voice is enabled.
@@ -3679,7 +3680,7 @@ ${sentencePlan}`;
           }
         } catch (ttsErr: any) {
           console.warn('[call] reroll TTS failed:', ttsErr?.message);
-          addToast('语音合成失败，已保留文本', 'info');
+          addToast(callNoticeText(loadUiLocale(), '语音合成失败，已保留文本'), 'info');
         }
       }
       if (!rerollAudioPlayed && callMode === 'video' && callPreferences.voiceAutoPlay) {
@@ -4174,7 +4175,7 @@ ${sentencePlan}`;
   const handleFaceAnchorChange = (faceFraming: AvatarStageFraming | null) => {
     if (!selectedChar?.videoAvatar) return;
     updateCharacter(selectedChar.id, { videoAvatar: { ...selectedChar.videoAvatar, faceFraming: faceFraming || undefined } });
-    addToast(faceFraming ? '脸部锚点已保存，AI 拉近镜头会落到这里' : '脸部锚点已清除', 'success');
+    addToast(faceFraming ? callNoticeText(loadUiLocale(), '脸部锚点已保存，AI 拉近镜头会落到这里') : callNoticeText(loadUiLocale(), '脸部锚点已清除'), 'success');
   };
   // ── 视频舞台自定义背景：blobref 令牌（本地图片）或 http(s) 图床直链 ──
   const stageBackgroundUrl = useBlobRefUrl(selectedChar?.videoCallBackground);
@@ -4198,14 +4199,14 @@ ${sentencePlan}`;
       if (!file) return removeInput();
       try {
         if (file.size > 20 * 1024 * 1024) {
-          addToast('图片超过 20 MB，请压缩后再用作背景', 'error');
+          addToast(callNoticeText(loadUiLocale(), '图片超过 20 MB，请压缩后再用作背景'), 'error');
           return;
         }
         await applyStageBackground(await putImageBlob(file));
         setShowBgPicker(false);
-        addToast('视频背景已更新', 'success');
+        addToast(callNoticeText(loadUiLocale(), '视频背景已更新'), 'success');
       } catch (error: any) {
-        addToast(error?.message || '背景导入失败', 'error');
+        addToast(error?.message || callNoticeText(loadUiLocale(), '背景导入失败'), 'error');
       } finally {
         removeInput();
       }
@@ -4220,12 +4221,12 @@ ${sentencePlan}`;
   const applyBgUrlInput = async () => {
     const url = bgUrlInput.trim();
     if (!/^https?:\/\//i.test(url)) {
-      addToast('请输入 http(s) 开头的图片直链', 'error');
+      addToast(callNoticeText(loadUiLocale(), '请输入 http(s) 开头的图片直链'), 'error');
       return;
     }
     await applyStageBackground(url);
     setShowBgPicker(false);
-    addToast('视频背景已更新', 'success');
+    addToast(callNoticeText(loadUiLocale(), '视频背景已更新'), 'success');
   };
 
   const avatarImportOverlay = avatarImportStatus ? (
@@ -4514,8 +4515,8 @@ ${sentencePlan}`;
                             updateCharacter(selectedChar.id, { videoCallPerformanceQuality: option.value });
                             addToast(
                               option.value === 'high'
-                                ? '已开启高质量动作排练：每轮会多调用一次情绪 Buff API'
-                                : '已切换基础动作排练',
+                                ? callNoticeText(loadUiLocale(), '已开启高质量动作排练：每轮会多调用一次情绪 Buff API')
+                                : callNoticeText(loadUiLocale(), '已切换基础动作排练'),
                               'success',
                             );
                           }}
@@ -5311,7 +5312,7 @@ ${sentencePlan}`;
               <button onClick={() => void applyBgUrlInput()} className="keep-white shrink-0 px-4 rounded-xl text-sm font-medium text-white transition active:scale-95" style={{ backgroundColor: accentColor }}>{uiT('call.main.use')}</button>
             </div>
             {selectedChar?.videoCallBackground && (
-              <button onClick={() => { void applyStageBackground(undefined); setShowBgPicker(false); addToast('已恢复默认背景', 'success'); }} className="w-full py-2 text-xs text-white/45 transition active:opacity-60">
+              <button onClick={() => { void applyStageBackground(undefined); setShowBgPicker(false); addToast(callNoticeText(loadUiLocale(), '已恢复默认背景'), 'success'); }} className="w-full py-2 text-xs text-white/45 transition active:opacity-60">
                 {uiT('call.detail.label058')}
               </button>
             )}
@@ -5386,7 +5387,7 @@ ${sentencePlan}`;
                     voiceLang,
                     pendingAvatarTouches: pendingAvatarTouchesRef.current,
                   });
-                  addToast('通话已挂起，点击顶部绿色条可随时回来', 'success');
+                  addToast(callNoticeText(loadUiLocale(), '通话已挂起，点击顶部绿色条可随时回来'), 'success');
                   trackEvent('挂起通话到后台');
                 }
               }} className="keep-white w-full py-2.5 rounded-2xl bg-emerald-500/80 text-white font-semibold transition active:scale-[0.97] flex items-center justify-center gap-2">

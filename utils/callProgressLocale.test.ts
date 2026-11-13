@@ -1,3 +1,6 @@
+const stripNoticeDisplay = (source: string): string => source
+  .replace(/callNoticeText\(loadUiLocale\(\), ('(?:[^'\\]|\\.)*')\)/g, '$1')
+  .replace(/import \{ callNoticeText \} from '\.\.\/utils\/callNoticeLocale';\r?\n/, '');
 import { expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -39,12 +42,7 @@ it('keeps unknown messages and near-matching errors intact',()=>{
  for(const source of ['constructor','__proto__','模型读取失败：Error GPU123','前缀正在整理 50 条对话...','正在整理 50 条对话... 错误','用户自写内容',''])expect(formatCallProgressText('ja-JP',source)).toBe(source);
 });
 it('preserves all call behavior and raw completion classification outside display substitutions',()=>{
- const file='apps/CallApp.tsx';let current=readFileSync(file,'utf8').replace(/\r/g,'');
+ const file='apps/CallApp.tsx';let current=stripNoticeDisplay(readFileSync(file,'utf8')).replace(/\r/g,'');
  const original=execFileSync('git',['show',`HEAD:${file}`],{encoding:'utf8'}).replace(/\r/g,'');
- current=current.replace("import { loadUiLocale } from '../utils/uiLocale';\n",'').replace("import { formatCallProgressText } from '../utils/callProgressLocale';\n",'')
- .replace('const { t: uiT, locale: uiLocale } = useUiLocale();','const { t: uiT } = useUiLocale();')
- .replace('formatCallProgressText(uiLocale, avatarImportStatus)','avatarImportStatus')
- .replace('formatCallProgressText(uiLocale, memoryPalaceStatus)','memoryPalaceStatus')
- .replace('formatCallProgressText(loadUiLocale(), lastStatus)','lastStatus');
  expect(current).toBe(original);
 });
