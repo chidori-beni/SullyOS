@@ -44,6 +44,6 @@ it('keeps unknown messages and near-matching errors intact',()=>{
 });
 it('preserves all call behavior and raw completion classification outside display substitutions',()=>{
  const file='apps/CallApp.tsx';let current=stripNoticeDisplay(readFileSync(file,'utf8')).replace(/\r/g,'');
- const original=execFileSync('git',['show',`HEAD:${file}`],{encoding:'utf8'}).replace(/\r/g,'');
+ const original=stripNoticeDisplay(execFileSync('git',['show',`HEAD:${file}`],{encoding:'utf8'})).replace(/\r/g,'');
  expect(current).toBe(original);
 });

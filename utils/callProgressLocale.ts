@@ -11,11 +11,30 @@ const FIXED: Record<string, string> = {
   "聊天原文边界已同步": "チャット原文の処理範囲を同期しました",
   "记忆整理完成，本段没有新增长期记忆": "記憶の整理が完了しました。この区間に新しい長期記憶はありません",
   "正在审视记忆…": "記憶を振り返っています…",
-  "正在整理门牌…": "記憶の部屋の表示を整理中…"
+  "正在整理门牌…": "記憶の部屋の表示を整理中…",
+  "正在从内置缓存恢复 Sully…": "内蔵キャッシュから Sully を復元中…",
+  "正在读取免解压模型包…": "展開不要のモデルデータを読み込み中…",
+  "首次优化旧模型：正在低内存解包并建立运行缓存…": "旧モデルの初回最適化：省メモリで展開し、動作用キャッシュを作成中…",
+  "角色已就绪": "キャラクターの準備ができました",
+  "正在读取 Sully 内置高清模型…": "Sully 内蔵高画質モデルを読み込み中…",
+  "正在从内存缓存恢复高清 4K模型…": "メモリキャッシュから高画質 4Kモデルを復元中…",
+  "正在读取已优化的高清 4K运行缓存…": "最適化済みの高画質 4K動作用キャッシュを読み込み中…",
+  "正在读取高清 4K运行缓存…": "高画質 4K動作用キャッシュを読み込み中…",
+  "正在从源包逐张生成高清 4K运行纹理…": "元データから高画質 4K動作用テクスチャを順に作成中…",
+  "Sully 内置高清模型就绪": "Sully 内蔵高画質モデルの準備ができました",
+  "正在读取 Sully 内置轻量模型…": "Sully 内蔵軽量モデルを読み込み中…",
+  "正在从内存缓存恢复轻量 2K模型…": "メモリキャッシュから軽量 2Kモデルを復元中…",
+  "正在读取已优化的轻量 2K运行缓存…": "最適化済みの軽量 2K動作用キャッシュを読み込み中…",
+  "正在读取轻量 2K运行缓存…": "軽量 2K動作用キャッシュを読み込み中…",
+  "正在从源包逐张生成轻量 2K运行纹理…": "元データから軽量 2K動作用テクスチャを順に作成中…",
+  "Sully 内置轻量模型就绪": "Sully 内蔵軽量モデルの準備ができました"
 };
 
 // Only anchored built-in progress templates; captured names/paths/numbers stay exact.
 const RULES: Array<[RegExp, (...parts: string[]) => string]> = [
+  [/^Sully 预热完成：清单 (\d+(?:\.\d+)?(?:ms|s))，贴图 (\d+(?:\.\d+)?(?:ms|s))$/, (manifest,texture) => `Sully の事前読み込み完了：一覧 ${manifest}、テクスチャ ${texture}`],
+  [/^模型预热完成：包 (\d+(?:\.\d+)?(?:ms|s))，贴图 (\d+(?:\.\d+)?(?:ms|s))$/, (bundle,texture) => `モデルの事前読み込み完了：データ ${bundle}、テクスチャ ${texture}`],
+  [/^缓存就绪：模型包 (\d+(?:\.\d+)?(?:ms|s))，贴图 (\d+(?:\.\d+)?(?:ms|s))$/, (bundle,texture) => `キャッシュの準備完了：モデルデータ ${bundle}、テクスチャ ${texture}`],
   [/^已选择 (\d+) 个文件，正在扫描模型…$/, n => `${n} 個のファイルを選択しました。モデルをスキャン中…`],
   [/^正在读取模型配置 (\d+) 个…$/, n => `モデル設定を ${n} 個読み込み中…`],
   [/^正在扫描 (\d+) 个文件和 VTube Studio 热键…$/, n => `${n} 個のファイルと VTube Studio のホットキーをスキャン中…`],
@@ -32,7 +51,7 @@ const RULES: Array<[RegExp, (...parts: string[]) => string]> = [
   [/^([\s\S]+)闭上眼睛，开始整理内心…$/, name => `${name}は目を閉じ、心の中を整理し始めました…`],
 ];
 
-export const formatCallProgressText = (locale: UiLocale, text: string): string => {
+const formatCallProgressCoreText = (locale: UiLocale, text: string): string => {
   if (locale !== 'ja-JP') return text;
   if (Object.prototype.hasOwnProperty.call(FIXED, text)) return FIXED[text];
   for (const [pattern, render] of RULES) {
@@ -40,4 +59,15 @@ export const formatCallProgressText = (locale: UiLocale, text: string): string =
     if (match) return render(...match.slice(1));
   }
   return text;
+};
+
+// Unwrap only one authored prefix, and translate it only when its inner progress is known.
+export const formatCallProgressText = (locale: UiLocale, text: string): string => {
+  const prefix = '首次优化模型：';
+  if (locale === 'ja-JP' && text.startsWith(prefix)) {
+    const inner = text.slice(prefix.length);
+    const display = formatCallProgressCoreText(locale, inner);
+    return display === inner ? text : `モデルの初回最適化：${display}`;
+  }
+  return formatCallProgressCoreText(locale, text);
 };

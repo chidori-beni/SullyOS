@@ -1,3 +1,4 @@
+import { formatCallProgressText } from './callProgressLocale';
 import type { UiLocale } from './uiLocale';
 
 // Display only: unknown renderer progress/errors pass through unchanged.
@@ -71,4 +72,5 @@ export const CALL_STAGE_JA: Record<string, string> = {
 };
 
 export const formatCallStageText = (locale: UiLocale, text: string): string =>
-  locale === 'ja-JP' ? CALL_STAGE_JA[text] ?? text : text;
+  locale === 'ja-JP' && Object.prototype.hasOwnProperty.call(CALL_STAGE_JA, text)
+    ? CALL_STAGE_JA[text] : formatCallProgressText(locale, text);
