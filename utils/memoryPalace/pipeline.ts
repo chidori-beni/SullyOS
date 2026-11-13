@@ -83,7 +83,7 @@ import { expandAndFormat } from './formatter';
 import { runConsolidation } from './consolidation';
 import { rerankDocuments } from './rerank';
 // 认知消化由用户在记忆宫殿 App 手动触发，不在聊天管线中自动运行
-import { MemoryNodeDB, MemoryVectorDB, MemoryLinkDB, AnticipationDB, EventBoxDB } from './db';
+import { MemoryNodeDB, MemoryVectorDB, MemoryLinkDB, AnticipationDB, EventBoxDB, probeRecallSize } from './db';
 import { DB } from '../db';
 import { appendInstantTraceEntry } from '../instantTraceLog';
 import { isMessageSemanticallyRelevant, formatMessageForPrompt } from '../messageFormat';
@@ -647,12 +647,16 @@ export async function retrieveMemories(
             const useRemoteVector = !!(
                 remoteVectorConfig?.enabled && remoteVectorConfig.initialized && !isRemoteSearchBroken()
             );
+            recallTrace('memory-recall-loading', { queries: queriesToEmbed.length, remoteVector: useRemoteVector });
             const [queryVectors, allNodes, allVectors, allEventBoxes] = await Promise.all([
-                tRetrieve(`getEmbeddings(${queriesToEmbed.length})`, 'NET', getEmbeddings(queriesToEmbed, embeddingConfig)),
-                tRetrieve('MemoryNodeDB.getByCharId', 'IDB', MemoryNodeDB.getByCharId(charId)),
+                tRetrieve(`getEmbeddings(${queriesToEmbed.length})`, 'NET', getEmbeddings(queriesToEmbed, embeddingConfig))
+                    .then(r => { recallTrace('memory-recall-embeddings-done'); return r; }),
+                tRetrieve('MemoryNodeDB.getByCharId', 'IDB', MemoryNodeDB.getByCharId(charId))
+                    .then(r => { recallTrace('memory-recall-nodes-done', { count: r.length }); return r; }),
                 useRemoteVector
                     ? Promise.resolve(undefined)
-                    : tRetrieve('MemoryVectorDB.getAllByCharId', 'IDB', MemoryVectorDB.getAllByCharId(charId)),
+                    : tRetrieve('MemoryVectorDB.getAllByCharId', 'IDB', MemoryVectorDB.getAllByCharId(charId))
+                        .then(r => { recallTrace('memory-recall-vectors-done', { count: r.length }); return r; }),
                 recallOptions?.explicitEntityAnalysis?.hasSignals || eventBoxRouterSpikes.length > 0
                     ? tRetrieve('EventBoxDB.getByCharId(recall)', 'IDB', EventBoxDB.getByCharId(charId))
                     : Promise.resolve(undefined),
@@ -1186,7 +1190,74 @@ function getEmbeddingConfig(charEmbeddingConfig?: any): EmbeddingConfig | null {
     return null;
 }
 
+// ─── 召回崩溃护栏（2026-11-13） ───────────────────────
+// 用户语音通话第一句就白屏「重复出现问题」，trace 停在召回里（整读记忆/向量那一刻）。
+// 进召回前插一面旗，正常走完拔掉；下次进来旗还在 = 上次召回把页面撑爆了，
+// 这个角色接下来 RECALL_CRASH_COOLDOWN_MS 内跳过召回，先让通话能打通，规模写进 trace。
+const RECALL_INFLIGHT_KEY = 'sully-recall-inflight-v1';
+const RECALL_CRASHED_KEY = 'sully-recall-crashed-v1';
+const RECALL_INFLIGHT_STALE_MS = 10 * 60 * 1000;
+const RECALL_CRASH_COOLDOWN_MS = 30 * 60 * 1000;
+
+const readJsonKey = (key: string): any => {
+    try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; }
+};
+const recallTrace = (event: string, details: Record<string, unknown> = {}) => {
+    appendInstantTraceEntry({ ts: new Date().toISOString(), event, ...details });
+};
+
+/** 返回 true = 这次别召回（上次召回中途页面被杀，冷却中）。 */
+function shouldSkipRecallAfterCrash(charId: string): boolean {
+    const now = Date.now();
+    const inflight = readJsonKey(RECALL_INFLIGHT_KEY);
+    if (inflight?.charId === charId && typeof inflight.at === 'number' && now - inflight.at < RECALL_INFLIGHT_STALE_MS) {
+        try { localStorage.setItem(RECALL_CRASHED_KEY, JSON.stringify({ charId, at: now })); } catch { /* ignore */ }
+        try { localStorage.removeItem(RECALL_INFLIGHT_KEY); } catch { /* ignore */ }
+        recallTrace('memory-recall-crash-detected', { sinceMs: now - inflight.at });
+    }
+    const crashed = readJsonKey(RECALL_CRASHED_KEY);
+    return crashed?.charId === charId && typeof crashed.at === 'number' && now - crashed.at < RECALL_CRASH_COOLDOWN_MS;
+}
+
 export async function injectMemoryPalace(
+    char: { memoryPalaceEnabled?: boolean; embeddingConfig?: any; activeBuffs?: any[]; personalityStyle?: string; ruminationTendency?: number; interactionAccommodation?: CharacterAccommodationPolicy; id: string; name?: string; memoryPalaceInjection?: string; roomPlatesInjection?: string },
+    recentMessages?: Message[],
+    queryHint?: string,
+    userName?: string,
+    traceContext?: { entryPoint?: RecallEntryPoint; formatterMaxOutputItems?: number },
+): Promise<RecallTrace> {
+    if (!char.memoryPalaceEnabled) {
+        return injectMemoryPalaceInner(char, recentMessages, queryHint, userName, traceContext);
+    }
+    if (shouldSkipRecallAfterCrash(char.id)) {
+        recallTrace('memory-recall-skipped-after-crash', { entry: traceContext?.entryPoint });
+        char.memoryPalaceInjection = '';
+        char.roomPlatesInjection = '';
+        const skipped = createRecallTrace({
+            charId: char.id,
+            entryPoint: traceContext?.entryPoint,
+            recentMessageCount: recentMessages?.length ?? null,
+            hasQueryHint: Boolean(queryHint?.trim()),
+            clearedPreviousMemory: false,
+            clearedPreviousRoomPlates: false,
+        });
+        return finishRecallTrace(skipped, 'error', 'injection_exception');
+    }
+    try {
+        const size = await probeRecallSize(char.id);
+        recallTrace('memory-recall-start', { entry: traceContext?.entryPoint, ...size });
+    } catch { /* 体检失败不影响召回 */ }
+    try { localStorage.setItem(RECALL_INFLIGHT_KEY, JSON.stringify({ charId: char.id, at: Date.now() })); } catch { /* ignore */ }
+    try {
+        const result = await injectMemoryPalaceInner(char, recentMessages, queryHint, userName, traceContext);
+        recallTrace('memory-recall-done', { outcome: result.outcome, memoryKchars: Math.round((char.memoryPalaceInjection?.length || 0) / 1000) });
+        return result;
+    } finally {
+        try { localStorage.removeItem(RECALL_INFLIGHT_KEY); } catch { /* ignore */ }
+    }
+}
+
+async function injectMemoryPalaceInner(
     char: { memoryPalaceEnabled?: boolean; embeddingConfig?: any; activeBuffs?: any[]; personalityStyle?: string; ruminationTendency?: number; interactionAccommodation?: CharacterAccommodationPolicy; id: string; name?: string; memoryPalaceInjection?: string; roomPlatesInjection?: string },
     recentMessages?: Message[],
     queryHint?: string,
@@ -1379,7 +1450,9 @@ export async function injectMemoryPalace(
     let roomPlateOutcome: RecallTraceStage['outcome'] = 'ok';
     try {
         const { buildRoomPlatesInjection } = await import('./roomPlates');
+        recallTrace('memory-recall-plates-start');
         char.roomPlatesInjection = await buildRoomPlatesInjection(char.id, resolvedUserName);
+        recallTrace('memory-recall-plates-done', { kchars: Math.round(char.roomPlatesInjection.length / 1000) });
     } catch {
         char.roomPlatesInjection = '';
         roomPlateOutcome = 'error';

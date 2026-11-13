@@ -336,6 +336,42 @@ function isLegacyVec(vec: unknown): boolean {
     return Array.isArray(vec);
 }
 
+/**
+ * 召回前的「体检」：这个角色有多少条记忆 / 向量、向量是新格式还是旧 number[]、几维。
+ * 只用 count() 和读**一条**向量，绝不整读——它要在整读之前把规模写进 trace，
+ * 万一接下来整读把页面撑爆，至少留下数字（2026-11-13 通话闪退排查）。
+ */
+export async function probeRecallSize(charId: string): Promise<{
+    nodes: number; vectors: number; vectorFormat: string; dims: number;
+}> {
+    const db = await openDB();
+    const count = (storeName: string) => new Promise<number>((resolve) => {
+        try {
+            const req = db.transaction(storeName, 'readonly').objectStore(storeName)
+                .index('charId').count(IDBKeyRange.only(charId));
+            req.onsuccess = () => resolve(req.result || 0);
+            req.onerror = () => resolve(-1);
+        } catch { resolve(-1); }
+    });
+    const sample = new Promise<{ vectorFormat: string; dims: number }>((resolve) => {
+        try {
+            const req = db.transaction(STORE_MEMORY_VECTORS, 'readonly').objectStore(STORE_MEMORY_VECTORS)
+                .index('charId').openCursor(IDBKeyRange.only(charId));
+            req.onsuccess = () => {
+                const vec = (req.result?.value as MemoryVector | undefined)?.vector as unknown;
+                if (!vec) return resolve({ vectorFormat: 'none', dims: 0 });
+                if (Array.isArray(vec)) return resolve({ vectorFormat: 'legacy-array', dims: vec.length });
+                if (vec instanceof Uint8Array) return resolve({ vectorFormat: 'uint8', dims: vec.byteLength >>> 2 });
+                if (vec instanceof Float32Array) return resolve({ vectorFormat: 'float32', dims: vec.length });
+                resolve({ vectorFormat: typeof vec, dims: 0 });
+            };
+            req.onerror = () => resolve({ vectorFormat: 'error', dims: 0 });
+        } catch { resolve({ vectorFormat: 'error', dims: 0 }); }
+    });
+    const [nodes, vectors, shape] = await Promise.all([count(STORE_MEMORY_NODES), count(STORE_MEMORY_VECTORS), sample]);
+    return { nodes, vectors, ...shape };
+}
+
 // ─── MemoryVector CRUD ────────────────────────────────
 
 export const MemoryVectorDB = {
