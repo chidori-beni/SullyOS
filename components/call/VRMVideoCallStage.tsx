@@ -1,3 +1,5 @@
+import { useUiLocale } from '../../context/UiLocaleContext';
+import { formatCallStageText } from '../../utils/callStageLocale';
 import React, { useEffect, useRef, useState } from 'react';
 import { ArrowClockwise, ArrowsOutCardinal, CaretDown, FileZip, FolderOpen, ImageSquare, Play, SlidersHorizontal, UploadSimple, WarningCircle } from '@phosphor-icons/react';
 import type { AvatarTouchRegion, CharacterProfile } from '../../types';
@@ -136,6 +138,8 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
   onTouchRegionsChange,
   maxFps,
 }) => {
+  const { locale } = useUiLocale();
+  const stageText = (text: string) => formatCallStageText(locale, text);
   const canAdjustFraming = !touchRegionEditingZone && (framingEditable ?? !companionMode);
   const staticAvatarActive = staticAvatarSource === 'upload' || staticAvatarSource === 'date';
   const restingFraming = (staticAvatarActive ? staticFraming : baseFraming || model?.framing) || DEFAULT_STAGE_FRAMING;
@@ -485,7 +489,7 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
               expressionKey={staticExpressionKey}
               touchEnabled={Boolean(onAvatarTouch)}
               /* 拖动/缩放和轻点都由舞台统一接管，立绘自己不再抢指针 */
-              surfaceLabel="视频形象"
+              surfaceLabel={stageText("视频形象")}
               testId="video-call-static-portrait-stage"
             />
           ) : model?.format === 'live2d' ? (
@@ -552,17 +556,17 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
             <div className="flex h-28 w-28 items-center justify-center rounded-full border border-white/15 text-5xl font-light" style={{ background: `${accentColor}22`, color: accentColor }}>{characterName[0] || '角'}</div>
           )}
           <div className={`${companionMode ? 'mt-5' : 'mt-3'} text-sm font-medium text-white/85`}>
-            {modelMissing ? '模型文件已丢失，需要重新导入' : modelError ? '模型暂时加载失败' : companionMode ? '给 ta 换上陪伴形象' : '给这个角色装上视频模型'}
+            {modelMissing ? stageText("模型文件已丢失，需要重新导入") : modelError ? stageText("模型暂时加载失败") : companionMode ? stageText("给 ta 换上陪伴形象") : stageText("给这个角色装上视频模型")}
           </div>
           <p className="mt-1.5 max-w-[17rem] text-xs leading-relaxed text-white/45">
-            {modelError && !modelMissing ? '模型仍保存在本地，可以直接重新建立渲染，不必重复导入。' : companionMode && !modelMissing ? '图片或 GIF 可以在「外观」中设置，也能沿用见面立绘。想使用动态模型，可以在这里导入。' : '支持 VRM 0.x / 1.0，以及 Cubism model3.json 文件夹或 ZIP。'}
+            {modelError && !modelMissing ? stageText("模型仍保存在本地，可以直接重新建立渲染，不必重复导入。") : companionMode && !modelMissing ? stageText("图片或 GIF 可以在「外观」中设置，也能沿用见面立绘。想使用动态模型，可以在这里导入。") : stageText("支持 VRM 0.x / 1.0，以及 Cubism model3.json 文件夹或 ZIP。")}
           </p>
           {model?.format === 'live2d' && modelError && !modelMissing ? (
             <div className={`${companionMode ? 'mt-4' : 'mt-2.5'} flex items-center gap-2`}>
               <button onClick={retryLive2D} className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 py-2.5 text-[11px] font-medium text-white transition active:scale-95">
-                <ArrowClockwise size={15} weight="bold" /> 重新加载模型
+                <ArrowClockwise size={15} weight="bold" /> {stageText("重新加载模型")}
               </button>
-              <button onClick={onChooseModel} className="px-2 py-2 text-[10px] text-white/40">重新导入</button>
+              <button onClick={onChooseModel} className="px-2 py-2 text-[10px] text-white/40">{stageText("重新导入")}</button>
             </div>
           ) : onChooseLive2DFolder ? (
             <div className={`${companionMode ? 'mt-4' : 'mt-2.5'} grid w-full max-w-[18rem] grid-cols-1 gap-2 sm:grid-cols-2`}>
@@ -570,13 +574,13 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
                 <FileZip size={15} weight="bold" /> VRM / L2D ZIP
               </button>
               <button onClick={onChooseLive2DFolder} className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 text-[11px] font-medium text-white transition active:scale-95">
-                <FolderOpen size={15} weight="bold" /> L2D 整个文件夹
+                <FolderOpen size={15} weight="bold" /> {stageText("L2D 整个文件夹")}
               </button>
-              <p className="col-span-full text-[9px] leading-relaxed text-white/35">文件夹导入要选择包含 model3.json 的整个文件夹，不要只点 model3.json。</p>
+              <p className="col-span-full text-[9px] leading-relaxed text-white/35">{stageText("文件夹导入要选择包含 model3.json 的整个文件夹，不要只点 model3.json。")}</p>
             </div>
           ) : (
             <button onClick={onChooseModel} className="mt-4 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 py-2 text-xs font-medium text-white transition active:scale-95">
-              <UploadSimple size={15} weight="bold" /> 导入模型
+              <UploadSimple size={15} weight="bold" /> {stageText("导入模型")}
             </button>
           )}
         </div>
@@ -597,7 +601,7 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
           <span className="absolute -right-px -top-px h-5 w-5 rounded-tr-[1.4rem] border-r-2 border-t-2" style={{ borderColor: accentColor }} />
           <span className="absolute -bottom-px -left-px h-5 w-5 rounded-bl-[1.4rem] border-b-2 border-l-2" style={{ borderColor: accentColor }} />
           <span className="absolute -bottom-px -right-px h-5 w-5 rounded-br-[1.4rem] border-b-2 border-r-2" style={{ borderColor: accentColor }} />
-          <span className="absolute left-3 top-3 rounded-full border border-white/20 bg-black/55 px-2 py-1 text-[8px] tracking-[0.14em] text-white/75 backdrop-blur">角色可视区</span>
+          <span className="absolute left-3 top-3 rounded-full border border-white/20 bg-black/55 px-2 py-1 text-[8px] tracking-[0.14em] text-white/75 backdrop-blur">{stageText("角色可视区")}</span>
         </div>
       )}
 
@@ -605,32 +609,32 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="max-w-[19rem] px-5 text-center text-white/70">
             <span className="mx-auto mb-3 block h-7 w-7 animate-spin rounded-full border-2 border-white/15 border-t-white/80" />
-            <div className="text-xs leading-relaxed">{modelLoadingStage}</div>
-            <div className="mt-2 text-[9px] leading-relaxed text-white/35">大模型第一次读取会比较慢。看到这个提示时请继续等待，不要重复点击导入或退出通话。</div>
+            <div className="text-xs leading-relaxed">{stageText(modelLoadingStage)}</div>
+            <div className="mt-2 text-[9px] leading-relaxed text-white/35">{stageText("大模型第一次读取会比较慢。看到这个提示时请继续等待，不要重复点击导入或退出通话。")}</div>
           </div>
         </div>
       )}
 
       {!companionMode && <div className="absolute left-3 top-3 z-30 flex items-center gap-2 rounded-full border border-white/10 bg-black/35 px-3 py-1.5 backdrop-blur-md">
         <span className={`h-1.5 w-1.5 rounded-full ${motionState === 'speaking' ? 'animate-pulse' : ''}`} style={{ background: accentColor, boxShadow: `0 0 8px ${accentColor}` }} />
-        <span className="text-[10px] tracking-[0.14em] text-white/65">{stateLabel(motionState)}</span>
+        <span className="text-[10px] tracking-[0.14em] text-white/65">{stageText(stateLabel(motionState))}</span>
       </div>}
 
       {!companionMode && hasRenderableModel && !modelLoading && calibratingFace && (
         <div className="absolute inset-x-3 top-12 z-40 rounded-2xl border border-amber-200/25 bg-black/55 px-3 py-2 backdrop-blur-md">
           <div className="text-[10px] leading-relaxed text-amber-100/90">
-            锚定脸部：拖动 / 缩放，把<b>脸</b>摆到画面中心的理想特写位置，之后 AI 拉近镜头都会精确落到这里。
+            {stageText("锚定脸部：拖动 / 缩放，把")}<b>{stageText("脸")}</b>{stageText("摆到画面中心的理想特写位置，之后 AI 拉近镜头都会精确落到这里。")}
           </div>
           <div className="mt-1.5 flex items-center gap-1.5">
             <button onClick={() => endFaceCalibration(true)} className="rounded-full bg-amber-300/25 border border-amber-200/40 px-3 py-1 text-[10px] font-medium text-amber-50 active:scale-95">
-              保存锚点
+              {stageText("保存锚点")}
             </button>
             <button onClick={() => endFaceCalibration(false)} className="rounded-full border border-white/15 px-3 py-1 text-[10px] text-white/60 active:scale-95">
-              取消
+              {stageText("取消")}
             </button>
             {model?.faceFraming && (
               <button onClick={() => endFaceCalibration(false, true)} className="ml-auto px-2 py-1 text-[10px] text-rose-300/75 active:scale-95">
-                清除锚点
+                {stageText("清除锚点")}
               </button>
             )}
           </div>
@@ -642,7 +646,7 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
           <button
             onClick={() => setStageToolsOpen(open => !open)}
             className={`flex h-9 w-9 items-center justify-center rounded-full border backdrop-blur-md transition active:scale-90 ${stageToolsOpen ? 'border-white/20 bg-white/15 text-white' : 'border-white/10 bg-black/35 text-white/65'}`}
-            title={stageToolsOpen ? '收起舞台工具' : '舞台工具'}
+            title={stageToolsOpen ? stageText("收起舞台工具") : stageText("舞台工具")}
             aria-expanded={stageToolsOpen}
           >
             <SlidersHorizontal size={16} weight="bold" />
@@ -652,10 +656,10 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
             <div className="mt-2 w-[13.5rem] overflow-hidden rounded-2xl border border-white/10 bg-[#090a10]/90 px-3 py-2.5 shadow-2xl backdrop-blur-xl">
               <div className="flex items-center justify-between border-b border-white/[0.07] pb-2">
                 <div>
-                  <div className="text-[10px] font-medium text-white/75">舞台工具</div>
+                  <div className="text-[10px] font-medium text-white/75">{stageText("舞台工具")}</div>
                   <div className="mt-0.5 max-w-[10rem] truncate text-[8px] text-white/28">{model?.fileName}</div>
                 </div>
-                <span className="text-[8px] text-white/25">直接拖动角色可调构图</span>
+                <span className="text-[8px] text-white/25">{stageText("直接拖动角色可调构图")}</span>
               </div>
 
               <div className="divide-y divide-white/[0.06]">
@@ -665,7 +669,7 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
                     className="flex w-full items-center gap-2.5 py-2.5 text-left text-[10px] text-white/62 active:text-white"
                   >
                     <ImageSquare size={14} weight="fill" className="text-white/35" />
-                    <span className="flex-1">更换舞台背景</span>
+                    <span className="flex-1">{stageText("更换舞台背景")}</span>
                   </button>
                 )}
                 {!staticAvatarActive && (
@@ -674,8 +678,8 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
                     className="flex w-full items-center gap-2.5 py-2.5 text-left text-[10px] text-white/62 active:text-white"
                   >
                     <span className={`flex w-3.5 justify-center text-xs ${model?.faceFraming ? 'text-amber-200' : 'text-white/35'}`}>◎</span>
-                    <span className="flex-1">{model?.faceFraming ? '重新锚定脸部' : '锚定脸部特写'}</span>
-                    {model?.faceFraming && <span className="text-[8px] text-amber-200/55">已设置</span>}
+                    <span className="flex-1">{model?.faceFraming ? stageText("重新锚定脸部") : stageText("锚定脸部特写")}</span>
+                    {model?.faceFraming && <span className="text-[8px] text-amber-200/55">{stageText("已设置")}</span>}
                   </button>
                 )}
                 {framingAdjusted && (
@@ -684,7 +688,7 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
                     className="flex w-full items-center gap-2.5 py-2.5 text-left text-[10px] text-white/62 active:text-white"
                   >
                     <ArrowsOutCardinal size={14} weight="bold" className="text-white/35" />
-                    <span className="flex-1">恢复默认构图</span>
+                    <span className="flex-1">{stageText("恢复默认构图")}</span>
                   </button>
                 )}
                 {model?.format === 'live2d' && onConfigureActions && (
@@ -693,8 +697,8 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
                     className="flex w-full items-center gap-2.5 py-2.5 text-left text-[10px] text-white/62 active:text-white"
                   >
                     <SlidersHorizontal size={14} weight="bold" className="text-white/35" />
-                    <span className="flex-1">动作与参数</span>
-                    <span className="text-[8px] text-white/25">高级</span>
+                    <span className="flex-1">{stageText("动作与参数")}</span>
+                    <span className="text-[8px] text-white/25">{stageText("高级")}</span>
                   </button>
                 )}
                 {model?.format === 'live2d' && model.actions.some(action => action.permission !== 'blocked' && !action.wardrobe) && (
@@ -704,7 +708,7 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
                     className="flex w-full items-center gap-2.5 py-2.5 text-left text-[10px] text-white/62 active:text-white"
                   >
                     <Play size={13} weight="fill" className="text-white/35" />
-                    <span className="flex-1">{actionChipsOpen ? '收起手动动作' : '展开手动动作'}</span>
+                    <span className="flex-1">{actionChipsOpen ? stageText("收起手动动作") : stageText("展开手动动作")}</span>
                     <span className="text-[8px] text-white/25">{model.actions.filter(action => action.permission !== 'blocked' && !action.wardrobe).length}</span>
                   </button>
                 )}
@@ -713,7 +717,7 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
                   className="flex w-full items-center gap-2.5 py-2.5 text-left text-[10px] text-white/62 active:text-white"
                 >
                   <UploadSimple size={14} weight="bold" className="text-white/35" />
-                  <span className="flex-1">更换角色形象</span>
+                  <span className="flex-1">{stageText("更换角色形象")}</span>
                 </button>
               </div>
             </div>
@@ -726,7 +730,7 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
           <button
             onClick={toggleActionChips}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/10 bg-black/40 text-white/55 backdrop-blur-md active:scale-95"
-            title="收起手动动作"
+            title={stageText("收起手动动作")}
           >
             <CaretDown size={10} weight="bold" />
           </button>
@@ -737,7 +741,7 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
                 data-live2d-manual-action={action.id}
                 onClick={() => setManualAction({ id: action.id, nonce: Date.now() + Math.random() })}
                 className="flex shrink-0 items-center gap-1 rounded-full border border-white/10 bg-black/40 px-2.5 py-1 text-[9px] text-white/65 backdrop-blur-md transition active:scale-95"
-                title={`${action.permission === 'ai' ? 'AI 可用 / ' : '仅手动 / '}${action.kind === 'motion' ? '动作' : action.kind === 'params' ? '参数动作' : '表情'}`}
+                title={`${action.permission === 'ai' ? stageText("AI 可用 / ") : stageText("仅手动 / ")}${action.kind === 'motion' ? stageText("动作") : action.kind === 'params' ? stageText("参数动作") : stageText("表情")}`}
               >
                 <Play size={9} weight="fill" /> {action.name}
               </button>
