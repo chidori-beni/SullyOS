@@ -85,6 +85,7 @@ import { rerankDocuments } from './rerank';
 // 认知消化由用户在记忆宫殿 App 手动触发，不在聊天管线中自动运行
 import { MemoryNodeDB, MemoryVectorDB, MemoryLinkDB, AnticipationDB, EventBoxDB } from './db';
 import { DB } from '../db';
+import { appendInstantTraceEntry } from '../instantTraceLog';
 import { isMessageSemanticallyRelevant, formatMessageForPrompt } from '../messageFormat';
 import { sanitizeQuerySourceMessages } from './querySanitizer';
 import { getLocalDateKey } from '../localDate';
@@ -658,6 +659,16 @@ export async function retrieveMemories(
             ]);
             explicitNodesSnapshot = allNodes;
             explicitEventBoxesSnapshot = allEventBoxes;
+            // 远端排障用：召回一次要动多少记忆、多少向量、每条几维。只记数字，不记内容。
+            appendInstantTraceEntry({
+                ts: new Date().toISOString(),
+                event: 'memory-recall-loaded',
+                nodes: allNodes?.length ?? 0,
+                vectors: allVectors?.length ?? -1,
+                dims: (allVectors?.[0]?.vector as { length?: number } | undefined)?.length ?? 0,
+                searchPaths: searchPaths.length,
+                rerank: doRerank,
+            });
 
             const pathPromises = searchPaths.map((path, i) =>
                 hybridSearch(path.text, charId, embeddingConfig, PER_QUERY_TOP_K, remoteVectorConfig, {

@@ -160,14 +160,14 @@ export async function vectorSearch(
     let scored: { memoryId: string; similarity: number }[];
     const w = getWorker();
 
-    if (w) {
-        // 当 vectors 来自 prefetch 时，同一份数组会被 K 路 vectorSearch 并发
-        // 消费；Transfer list 会 neuter 首个调用的 buffer，后续调用读到全 0
-        // 静默返空。这种情况下禁止把候选向量 buffer 列入 transfer list，
-        // 改走 postMessage 的 structured clone（内部 memcpy）。query 向量
-        // 是单路独占，始终可以 transfer。
-        const canTransferCandidates = !prefetchedVectors;
-        scored = await runInWorker(w, queryVector, vectors, threshold, topK, canTransferCandidates);
+    // prefetch 场景（召回时 K 路检索 + 上下文 + rerank pool 共用同一份全部向量）一律在主线程算，
+    // 不交给 Worker：那样每一路都要 structured clone 整份向量，K 路并发 = 主线程 + Worker 里
+    // 同时躺着 K 份全部记忆向量。记忆多的角色在 iPhone 上一次召回就把页面撑爆，语音通话
+    // 第一句还没说出口就白屏「重复出现问题」（2026-11-12 trace 实锤停在 injectMemoryPalace）。
+    // 主线程算余弦是纯乘加，几千条 × 千维也就几十毫秒，换来零拷贝。
+    if (w && !prefetchedVectors) {
+        // 单路独占的向量（自己从 DB 读的），可以整份 transfer 给 Worker，零拷贝。
+        scored = await runInWorker(w, queryVector, vectors, threshold, topK, true);
     } else {
         scored = mainThreadSearch(queryVector, vectors, threshold, topK);
     }
