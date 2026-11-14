@@ -24,7 +24,7 @@ import { loadCharacterContextMessages } from '../chatContextRange';
  */
 
 import type { CharacterAccommodationPolicy, MemoryPalaceWaterlineConfig, Message } from '../../types';
-import type { EmbeddingConfig, EventBox, MemoryNode, PersonalityStyle, RemoteVectorConfig, ScoredMemory } from './types';
+import type { EmbeddingConfig, EventBox, MemoryNode, MemoryVector, PersonalityStyle, RemoteVectorConfig, ScoredMemory } from './types';
 import {
     countOneShotPendingMessages,
     countUnprocessedBufferMessages,
@@ -831,13 +831,25 @@ export async function retrieveMemories(
             const useRemoteVector = !!(
                 remoteVectorConfig?.enabled && remoteVectorConfig.initialized && !isRemoteSearchBroken()
             );
+            // 记忆节点 / 向量先读一次，主搜和 rerank pool 共用。以前两路各自从库里整读一遍，
+            // 开场白（还没有用户消息，必走这里）一次召回就读两份全部记忆（2026-11-14）。
+            recallTrace('memory-recall-fallback-start', { remoteVector: useRemoteVector, rerank: doRerank });
+            let fallbackPrefetch: { allNodes: MemoryNode[]; allVectors?: MemoryVector[] } | undefined;
+            if (!useRemoteVector) {
+                const [fbNodes, fbVectors] = await Promise.all([
+                    MemoryNodeDB.getByCharId(charId),
+                    MemoryVectorDB.getAllByCharId(charId),
+                ]);
+                fallbackPrefetch = { allNodes: fbNodes, allVectors: fbVectors };
+                recallTrace('memory-recall-fallback-loaded', { nodes: fbNodes.length, vectors: fbVectors.length });
+            }
             // 先 fire fallback 主搜 + rerank pipeline，两个独立管线并行
-            const fallbackSearchPromise = hybridSearch(fallbackQuery, charId, embeddingConfig, FINAL_TOP_K, remoteVectorConfig);
+            const fallbackSearchPromise = hybridSearch(fallbackQuery, charId, embeddingConfig, FINAL_TOP_K, remoteVectorConfig, fallbackPrefetch);
             if (doRerank) {
                 rerankApiPromise = (async (): Promise<RerankApiResult | null> => {
                     const rrT0 = performance.now();
                     try {
-                        const pool = await hybridSearch(joinedUserQuery, charId, embeddingConfig, RERANK_POOL_SIZE, remoteVectorConfig, undefined);
+                        const pool = await hybridSearch(joinedUserQuery, charId, embeddingConfig, RERANK_POOL_SIZE, remoteVectorConfig, fallbackPrefetch);
                         if (pool.length === 0) {
                             console.log(`🎯 [Rerank] 独立检索候选池为空，跳过 rerank`);
                             retrieveTimings.push({ label: 'rerankDocuments(skip)', kind: 'NET', ms: Math.round(performance.now() - rrT0) });
@@ -865,6 +877,7 @@ export async function retrieveMemories(
                 useRemoteVector ? 'NET' : 'CPU',
                 fallbackSearchPromise,
             );
+            recallTrace('memory-recall-fallback-done', { hits: results.length });
             console.groupCollapsed(`🏰 [Retrieve] 单 query 兜底命中 ${results.length} 条（无末尾 user 消息）`);
             results.forEach((r, i) => console.log(fmt(r, `#${i + 1} `)));
             console.groupEnd();

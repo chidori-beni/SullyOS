@@ -14,6 +14,10 @@ import type { MemoryNode, MemoryVector, RemoteVectorConfig } from './types';
 import { MemoryNodeDB, MemoryVectorDB, ensureFloat32 } from './db';
 import { cosineSimilarity } from './embedding';
 import { searchVectors as remoteSearch } from './supabaseVector';
+import { appendInstantTraceEntry } from '../instantTraceLog';
+
+/** 不超过这么多条向量时在主线程直接算，不进 Worker。 */
+const MAIN_THREAD_MAX_VECTORS = 5000;
 
 export interface VectorSearchResult {
     node: MemoryNode;
@@ -165,7 +169,18 @@ export async function vectorSearch(
     // 同时躺着 K 份全部记忆向量。记忆多的角色在 iPhone 上一次召回就把页面撑爆，语音通话
     // 第一句还没说出口就白屏「重复出现问题」（2026-11-12 trace 实锤停在 injectMemoryPalace）。
     // 主线程算余弦是纯乘加，几千条 × 千维也就几十毫秒，换来零拷贝。
-    if (w && !prefetchedVectors) {
+    // 几千条以内一律主线程算：1000 条 × 1024 维 ≈ 一百万次乘加，iPhone 上几毫秒，
+    // 交给 Worker 反而要多一份拷贝 + 一次跨线程。2026-11-14 用户 1007 条向量，
+    // 通话开场白走这条（非 prefetch）路径后页面被杀，先把 Worker 从嫌疑里摘掉。
+    const useWorker = !!w && !prefetchedVectors && vectors.length > MAIN_THREAD_MAX_VECTORS;
+    appendInstantTraceEntry({
+        ts: new Date().toISOString(),
+        event: 'memory-vector-search',
+        vectors: vectors.length,
+        worker: useWorker,
+        prefetched: !!prefetchedVectors,
+    });
+    if (useWorker && w) {
         // 单路独占的向量（自己从 DB 读的），可以整份 transfer 给 Worker，零拷贝。
         scored = await runInWorker(w, queryVector, vectors, threshold, topK, true);
     } else {
