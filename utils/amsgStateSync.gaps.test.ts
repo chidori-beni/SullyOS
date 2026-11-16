@@ -149,7 +149,9 @@ describe('其余打脏入口接线', () => {
     // 接通后不再自动生成开场白，必须等用户明确发送。
     expect(src.match(/markCallTurnDirty\(\)/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
     const finishCall = sliceBetween(src, 'const finishCall = async', 'const handleHangup');
-    expect(finishCall, '挂断这一下最要紧（用户接着就关 App）').toContain('markCallTurnDirty()');
+    // 2026-11-16：通话中每轮只记待传，挂断时 flushCallTurnDirty 一次性打脏上传（每轮重打 fire_pack 是内存尖峰）。
+    expect(finishCall, '挂断这一下最要紧（用户接着就关 App）').toContain('flushCallTurnDirty()');
+    expect(src, '通话中攒着的那笔要在挂断时真的打脏').toMatch(/const flushCallTurnDirty = \(\) => \{[\s\S]*?markAmsgStateDirty\(/);
   });
 
   it('GroupChat：群消息 / 一轮收尾 / 话题盒归档都对成员打脏', () => {

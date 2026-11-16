@@ -226,6 +226,8 @@ const CALL_AUDIO_ROUTE_KEY = 'sully-call-audio-route-v1';
 // Four 8-bit PCM silent samples. Playing this exact call audio element from the
 // user's “接通” gesture primes iOS media playback before the async TTS response arrives.
 const IN_CALL_MEMORY_PALACE_INTERVAL_MS = 10 * 60 * 1000;
+/** 通话里最多同时攥着几段语音 blob（见 trackBlobUrl）。 */
+const CALL_BLOB_URLS_KEPT = 6;
 const SILENT_CALL_AUDIO_DATA_URL = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAACAgICA';
 const VIDEO_CALL_LAYOUTS: Array<{ id: VideoCallLayout; name: string; hint: string }> = [
   { id: 'stage', name: '沉浸', hint: '角色最大，聊天收成字幕' },
@@ -1085,12 +1087,34 @@ const CallApp: React.FC = () => {
     setUserCameraPreviewSize(size);
     try { localStorage.setItem(USER_CAMERA_PREVIEW_SIZE_KEY, size); } catch { /* private WebView */ }
   };
-  // All blob: URLs created this call session. Kept alive so 重播/下载 work on every
-  // bubble; revoked together only when leaving/resetting the call (not per-turn).
+  // blob: URLs created this call session. 以前整通电话一条都不放，2026-11-16 用户打到
+  // 第 20 轮（攥着 23 段语音）页面被 iOS 杀掉。现在只留最近 CALL_BLOB_URLS_KEPT 段；
+  // 更早的气泡点「重播」会走 ensureCallBubbleAudio 重新取（TTS 有本地缓存，不重新花钱）。
   const sessionBlobUrlsRef = useRef<Set<string>>(new Set());
   const trackBlobUrl = (url?: string) => {
     const normalized = registerCallAudioBlobUrl(url);
-    if (normalized?.startsWith('blob:')) sessionBlobUrlsRef.current.add(normalized);
+    if (!normalized?.startsWith('blob:')) return;
+    const kept = sessionBlobUrlsRef.current;
+    kept.delete(normalized);
+    kept.add(normalized);
+    if (kept.size <= CALL_BLOB_URLS_KEPT) return;
+    const playing = audioRef.current?.src || '';
+    const evicted: string[] = [];
+    for (const old of kept) {
+      if (kept.size - evicted.length <= CALL_BLOB_URLS_KEPT) break;
+      if (old === normalized || old === playing) continue;
+      evicted.push(old);
+    }
+    if (!evicted.length) return;
+    const evictedSet = new Set(evicted);
+    evicted.forEach(old => {
+      kept.delete(old);
+      revokeCallAudioBlobUrl(old);
+    });
+    setBubbles(previous => previous.map(bubble => (
+      bubble.audioUrl && evictedSet.has(bubble.audioUrl) ? { ...bubble, audioUrl: undefined } : bubble
+    )));
+    callTrace('audio-evicted', { evicted: evicted.length, kept: kept.size });
   };
   const revokeSessionBlobs = () => {
     sessionBlobUrlsRef.current.forEach(u => revokeCallAudioBlobUrl(u));
@@ -1119,10 +1143,25 @@ const CallApp: React.FC = () => {
       : hasDatePortraits(selectedChar);
   // 通话与普通聊天共用主动消息的云端快照。每个落库点都打脏，微任务会把同一轮
   // 的多次调用合并；这样用户通话后立刻关 App，也不会让角色漏掉刚发生的内容。
+  // 通话中每轮只记一笔「云端那份该刷新了」，不当场重打 fire_pack（几百 KB 的整包，
+  // 每轮重打一次是内存尖峰，2026-11-16 崩溃正落在用户开口后这一下）。挂断时一次性打脏上传；
+  // 云端的「用户在场」锚点由 startAmsgChatPresence 每轮单独续，不靠这个包。
+  const callAmsgDirtyPendingRef = useRef(false);
   const markCallTurnDirty = () => {
     if (!selectedChar) return;
+    callAmsgDirtyPendingRef.current = true;
+  };
+  const flushCallTurnDirty = () => {
+    if (!selectedChar) return;
+    callAmsgDirtyPendingRef.current = false;
     markAmsgStateDirty({ char: selectedChar, userProfile, groups, realtimeConfig });
   };
+  // 不是按挂断离开的（切走 App、陪睡自动收尾等）也别把攒着的那笔丢了：卸载时补传。
+  const flushCallTurnDirtyRef = useRef(flushCallTurnDirty);
+  flushCallTurnDirtyRef.current = flushCallTurnDirty;
+  useEffect(() => () => {
+    if (callAmsgDirtyPendingRef.current) flushCallTurnDirtyRef.current();
+  }, []);
   const selectedAvatar = selectedChar?.videoAvatar;
   const selectedBuiltinSullyAvatar = isBuiltinSullyLive2D(selectedAvatar) ? selectedAvatar : null;
   // 高质量视频通话的短“表演人格”：每个角色只从完整 ContextBuilder 提炼一次。
@@ -2204,8 +2243,8 @@ const CallApp: React.FC = () => {
       await loadCallRecords(selectedChar.id);
       trackEvent('结束一通通话', { 模式: callMode === 'video' ? '视频' : '语音' });
       // 挂断这一下最要紧：用户多半接着就把 App 关了，得把这最后一条也打脏——
-      // 打脏即传，微任务内就会冲刷上传。
-      markCallTurnDirty();
+      // 打脏即传，微任务内就会冲刷上传。通话中攒着没传的也在这一次补上。
+      flushCallTurnDirty();
       runCallMemoryPalaceHook(selectedChar, true);
     }
     clearPersistedCallSession(sessionId);
@@ -3266,6 +3305,7 @@ ${sentencePlan}`;
           return;
         }
         userDbId = savedUserDbId;
+        callTrace('turn-user-saved');
         if (!isLiveCallSession(turnSessionId)) return;
         setBubbles(prev => prev.map(b => (b.id === userBubble.id ? { ...b, dbId: userDbId } : b)));
         markCallTurnDirty();
@@ -3299,6 +3339,7 @@ ${sentencePlan}`;
         }
       }
       await pruneCallSnapshots(selectedChar.id, turnSessionId);
+      callTrace('turn-pruned');
       if (!isLiveCallSession(turnSessionId)) return;
     }
     if (!callStartedAt) setCallStartedAt(Date.now());
