@@ -35,6 +35,7 @@ import { buildVoiceActingGuide } from '../utils/chatPrompts';
 import { stripTtsMarkupForDisplay } from '../utils/ttsRouter';
 import { canCinemaSpeak, createCinemaSpeaker, spokenTextOf, type CinemaSpeaker } from '../utils/cinema/cinemaVoice';
 import { isSttSupported, prepareSiliconFlowAudioCapture, startStt, type SttSession } from '../utils/speechToText';
+import ApiPresetGroups from '../components/settings/ApiPresetGroups';
 import { describeFrame, nextNoteModel, NOTE_MODEL_LABEL, noteModelCandidates, NoteVisionUnsupportedError, type NoteModel } from '../utils/cinema/sceneNotes';
 import './cinema/cinema.css';
 
@@ -1093,11 +1094,13 @@ const CinemaApp: React.FC = () => {
                         <button className={!activePreset ? 'on' : ''} onClick={() => chooseProjector(null)}>
                             {uiText(" 跟着主 API")}<small>{apiConfig.model || uiText("没填模型")}</small>
                         </button>
-                        {apiPresets.map(p => (
+                        <div className="cn-projector-groups">
+                        <ApiPresetGroups presets={apiPresets} activeId={activePreset?.id} itemsClassName="">{p => (
                             <button key={p.id} className={activePreset?.id === p.id ? 'on' : ''} onClick={() => chooseProjector(p.id)}>
                                 {p.name || uiText("没起名的预设")}<small>{p.config.model}</small>
                             </button>
-                        ))}
+                        )}</ApiPresetGroups>
+                        </div>
                         {apiPresets.length === 0 && <p>{uiText("还没存 API 预设。去「设置 → API」里存几个，这里就能一键换。")}</p>}
                         <p>{uiText("只换影院里用的，私聊和别的 App 不受影响。")}</p>
                     </div>

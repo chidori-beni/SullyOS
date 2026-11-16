@@ -4,6 +4,7 @@ import { CheckSquare, FloppyDisk, Gear, Square, X } from '@phosphor-icons/react'
 import { useOS } from '../../context/OSContext';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../../components/character/CharacterGroupFilter';
 import { trackEvent } from '../../utils/analytics';
+import ApiPresetGroups from '../../components/settings/ApiPresetGroups';
 
 type LifeSimApiDraft = Pick<APIConfig, 'baseUrl' | 'apiKey' | 'model'>;
 
@@ -237,8 +238,7 @@ const LifeSimSettingsPanel: React.FC<{
                                     <div style={{ fontSize: 9, fontWeight: 700, color: '#7b7289', marginBottom: 5 }}>
                                         预设
                                     </div>
-                                    <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-                                        {apiPresets.map(preset => (
+                                    <ApiPresetGroups presets={apiPresets} itemsClassName="flex gap-2 overflow-x-auto no-scrollbar pb-1">{preset => (
                                             <button
                                                 key={preset.id}
                                                 onClick={() => handleLoadPreset(preset)}
@@ -252,8 +252,7 @@ const LifeSimSettingsPanel: React.FC<{
                                             >
                                                 {preset.name} · {preset.config.model}
                                             </button>
-                                        ))}
-                                    </div>
+                                        )}</ApiPresetGroups>
                                 </div>
                             )}
 

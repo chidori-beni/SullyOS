@@ -48,6 +48,7 @@ import { parseCollaborationRichOutput, resolveCollaborationEmoji, sanitizeCollab
 import { canSynthesizeSpeech, providerUsesRawVoiceMarkup, synthesizeSpeechDetailed } from '../../utils/ttsRouter';
 import { CollaborationStore } from './store';
 import { changeMakerSelection } from './makerSelection';
+import ApiPresetGroups from '../../components/settings/ApiPresetGroups';
 import { COLLABORATION_LIBRARY_GROUP_LABELS, collaborationLibraryGroupOf, type CollaborationLibraryGroup } from './chatLibrary';
 import {
   buildInstallablePreviewDocument,
@@ -843,7 +844,7 @@ const ApiSettingsPanel: React.FC<{
                   <span className="mt-0.5 block truncate text-[10px] text-slate-400">{chatApi.model || '尚未选择模型'} · {chatApi.baseUrl || '尚未配置连接'}</span>
                 </span>
               </button>
-              {apiPresets.map(preset => {
+              {apiPresets.length > 0 && <div className="px-2 py-2"><ApiPresetGroups presets={apiPresets} itemsClassName="" activeId={profile.source === 'preset' ? profile.sourceId : null}>{preset => {
                 const active = profile.source === 'preset' && profile.sourceId === preset.id;
                 return (
                   <button
@@ -861,7 +862,7 @@ const ApiSettingsPanel: React.FC<{
                     </span>
                   </button>
                 );
-              })}
+              }}</ApiPresetGroups></div>}
               {apiPresets.length === 0 && <p className="px-4 py-3 text-[10px] leading-relaxed text-slate-400">其它连接可以先在「设置 → API 预设」保存，之后会出现在这里。</p>}
             </div>
           </section>

@@ -4090,7 +4090,7 @@ ${olderText}
 
                         {apiPresets.length === 0 ? (
                             <p className="px-1 text-[10.5px] leading-relaxed text-slate-400">“设置”里还没有保存的 API 预设。先保存预设，这里就能单独选择。</p>
-                        ) : apiPresets.map(preset => {
+                        ) : <ApiPresetGroups presets={apiPresets} layout="list" activeId={apiPresets.find(p => isSamePhoneApi(p.config))?.id}>{preset => {
                             const active = isSamePhoneApi(preset.config);
                             return (
                                 <button key={preset.id} onClick={() => choosePhoneApi(preset.config)}
@@ -4104,7 +4104,7 @@ ${olderText}
                                     </div>
                                 </button>
                             );
-                        })}
+                        }}</ApiPresetGroups>}
                     </div>
                 </Modal>
             </div>
@@ -4464,3 +4464,4 @@ import { useAppShortcut } from '../utils/appShortcutLaunch';
 import { getWalletBalanceOf } from '../utils/wallet/walletDb';
 import { formatWalletMoney } from '../utils/wallet/wallet';
 import { AppID as ShortcutAppID } from '../types';
+import ApiPresetGroups from '../components/settings/ApiPresetGroups';

@@ -1,6 +1,7 @@
 import { ContextBuilder } from '../utils/context';
 
 import MemoryMaintenancePanel from '../components/chat/MemoryMaintenancePanel';
+import ApiPresetGroups from '../components/settings/ApiPresetGroups';
 import ChatHistoryCleanupModal from '../components/chat/ChatHistoryCleanupModal';
 import { MemoryTimeText } from '../components/MemoryTimeText';
 import { relativeTimeEdit } from '../utils/memoryPalace/relativeTime';
@@ -3219,21 +3220,26 @@ export default function MemoryPalaceApp() {
                     {apiPresets.length > 0 && (
                         <div style={{ marginBottom: 10 }}>
                             <label className={labelClass}>从预设导入</label>
-                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                                {apiPresets.map(p => (
-                                    <button key={p.id} onClick={() => {
+                            {/* 按设置里的 API 分组折叠；没人分过组时仍是原来的横排小标签 */}
+                            <ApiPresetGroups presets={apiPresets}
+                                itemsClassName="flex flex-wrap gap-1.5"
+                                activeId={apiPresets.find(p => p.config.baseUrl === lightUrl && p.config.apiKey === lightKey && p.config.model === lightModel)?.id}>
+                                {p => {
+                                    const active = p.config.baseUrl === lightUrl && p.config.apiKey === lightKey && p.config.model === lightModel;
+                                    return <button key={p.id} type="button" onClick={() => {
                                         setLightUrl(p.config.baseUrl);
                                         setLightKey(p.config.apiKey);
                                         setLightModel(p.config.model);
                                     }} style={{
                                         padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 600,
-                                        border: '1px solid #bbf7d0', background: 'white', color: '#166534',
+                                        border: `1px solid ${active ? '#16a34a' : '#bbf7d0'}`,
+                                        background: active ? '#dcfce7' : 'white', color: '#166534',
                                         cursor: 'pointer',
                                     }}>
                                         {p.name}
-                                    </button>
-                                ))}
-                            </div>
+                                    </button>;
+                                }}
+                            </ApiPresetGroups>
                         </div>
                     )}
 

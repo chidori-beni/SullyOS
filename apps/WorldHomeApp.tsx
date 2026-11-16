@@ -43,6 +43,7 @@ import { safeFetchJson } from '../utils/safeApi';
 import { WORLD_API_KEY, WORLD_CUSTOM_STYLE_KEY } from '../utils/worldHome/localBackup';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
 import { trackEvent } from '../utils/analytics';
+import ApiPresetGroups from '../components/settings/ApiPresetGroups';
 import type { WorldProfile, WorldEpisode, WorldHomeMode, WorldTimeMode, WorldHouse, WorldThread, WorldChatMessage, WorldNarrativeStyle, CharacterProfile, WorldCharBeat, APIConfig, ApiPreset } from '../types';
 
 /**
@@ -102,7 +103,7 @@ const WorldApiSettings: React.FC<{
                 </button>
                 {apiPresets.length === 0 ? (
                     <p className="text-[10.5px] text-stone-400 px-1 py-1.5">「设置」里还没有保存的 API 预设——去设置里存几个模型，这里就能直接选。</p>
-                ) : apiPresets.map(p => {
+                ) : <ApiPresetGroups presets={apiPresets} itemsClassName="" activeId={apiPresets.find(p => sameAs(p.config))?.id}>{p => {
                     const on = sameAs(p.config);
                     return (
                         <button key={p.id} onClick={() => onChoose({ baseUrl: p.config.baseUrl, apiKey: p.config.apiKey, model: p.config.model })}
@@ -114,7 +115,7 @@ const WorldApiSettings: React.FC<{
                             {on && <span className="text-[10px] font-bold shrink-0">✓ 使用中</span>}
                         </button>
                     );
-                })}
+                }}</ApiPresetGroups>}
             </div>
         </div>
     );

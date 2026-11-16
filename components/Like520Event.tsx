@@ -24,6 +24,7 @@ import {
     Like520TucaoKey,
 } from '../utils/like520/prompts';
 import { shareOrDownloadBlob } from '../utils/shareExport';
+import ApiPresetGroups from './settings/ApiPresetGroups';
 
 // ============================================================
 // 日期判定 / 持久化 key
@@ -3648,8 +3649,7 @@ const Like520InlineApiSetup: React.FC<{ onDone: () => void; onBack: () => void }
                     {apiPresets.length > 0 && (
                         <div>
                             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">我的预设</label>
-                            <div className="flex gap-2 flex-wrap">
-                                {apiPresets.map(preset => (
+                            <ApiPresetGroups presets={apiPresets}>{preset => (
                                     <button
                                         key={preset.id}
                                         onClick={() => loadPreset(preset)}
@@ -3657,8 +3657,7 @@ const Like520InlineApiSetup: React.FC<{ onDone: () => void; onBack: () => void }
                                     >
                                         {preset.name}
                                     </button>
-                                ))}
-                            </div>
+                                )}</ApiPresetGroups>
                         </div>
                     )}
 
