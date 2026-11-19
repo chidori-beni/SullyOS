@@ -289,8 +289,8 @@ const fetchOffloadedReasoning = (
  */
 const landCloudEmotionResult = async (charId: string, raw: string): Promise<void> => {
   try {
-    const chars = await DB.getAllCharacters();
-    const ch = chars.find((c) => c.id === charId);
+    // 只取这一个角色，别整读全部角色（头像 / 原画质聊天背景都是 base64，2026-11-19）
+    const ch = await DB.getCharacter(charId);
     if (!ch) return;
     const innerState = await applyEmotionEvalRaw(raw, ch);
     if (innerState) {
@@ -910,7 +910,7 @@ async function adoptSelfScheduledTasks(message: ActiveMsg2InboxMessage): Promise
   if (typeof charId !== 'string' || !charId) return;
 
   try {
-    const char = (await DB.getAllCharacters()).find((c) => c.id === charId);
+    const char = await DB.getCharacter(charId);
     if (!char) return;
     const existing = char.activeMsg2Config?.tasks ?? [];
     const known = new Set(existing.map((t: ActiveMsg2TaskRecord) => t.taskUuid));
@@ -957,7 +957,7 @@ async function applyRemoteTaskMutations(message: ActiveMsg2InboxMessage): Promis
   if (typeof charId !== 'string' || !charId) return;
 
   try {
-    const char = (await DB.getAllCharacters()).find((c) => c.id === charId);
+    const char = await DB.getCharacter(charId);
     const existing = char?.activeMsg2Config?.tasks ?? [];
     if (!char || existing.length === 0) return;
 

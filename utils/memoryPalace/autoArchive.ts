@@ -68,8 +68,8 @@ export function persistAutoArchiveResult(
     }
 
     return enqueuePersist(charId, async () => {
-        const allCharacters = await DB.getAllCharacters();
-        const character = allCharacters.find(item => item.id === charId);
+        // 只取这一个角色：getAllCharacters 会把所有角色的头像/聊天背景（原画质 base64）全反序列化进内存（2026-11-19 通话闪退）
+        const character = await DB.getCharacter(charId);
         if (!character?.memoryPalaceEnabled || !character.autoArchiveEnabled) {
             return { fragments: 0, changed: false };
         }
@@ -153,11 +153,11 @@ export function repairMissingAutoArchiveMemories(
     charId: string,
 ): Promise<{ fragments: number; changed: boolean }> {
     return enqueuePersist(charId, async () => {
-        const [allCharacters, nodes] = await Promise.all([
-            DB.getAllCharacters(),
+        // 只取这一个角色：getAllCharacters 会把所有角色的头像/聊天背景（原画质 base64）全反序列化进内存（2026-11-19 通话闪退）
+        const [character, nodes] = await Promise.all([
+            DB.getCharacter(charId),
             MemoryNodeDB.getByCharId(charId),
         ]);
-        const character = allCharacters.find(item => item.id === charId);
         if (!character?.memoryPalaceEnabled || !character.autoArchiveEnabled) {
             return { fragments: 0, changed: false };
         }

@@ -1721,8 +1721,8 @@ async function loadCharacterWaterline(
 ) {
     if (override) return resolveMemoryPalaceWaterline(override);
     try {
-        const characters = await DB.getAllCharacters();
-        const character = characters.find(item => item.id === charId);
+        // 只取这一个角色：getAllCharacters 会把所有角色的头像/聊天背景（原画质 base64）全反序列化进内存（2026-11-19 通话闪退）
+        const character = await DB.getCharacter(charId);
         return resolveMemoryPalaceWaterline(character?.memoryPalaceWaterline);
     } catch (error) {
         console.warn('🏰 [Pipeline] 读取角色水位档位失败，回退默认 200/100', error);
@@ -1855,8 +1855,8 @@ async function extractAndStoreMemories(
         let charContext = '';
         let relatedMemoryRefs: RelatedMemoryRef[] = [];
         try {
-            const chars = await DB.getAllCharacters();
-            const charProfile = chars.find(c => c.id === charId);
+            // 只取这一个角色：getAllCharacters 会把所有角色的头像/聊天背景（原画质 base64）全反序列化进内存（2026-11-19 通话闪退）
+            const charProfile = await DB.getCharacter(charId);
             const userProfile = await DB.getUserProfile();
 
             // 5a. 精简角色档案（姓名、设定、世界观）

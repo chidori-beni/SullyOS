@@ -4,7 +4,7 @@ import { loadUiLocale } from '../utils/uiLocale';
 import { formatCallProgressText } from '../utils/callProgressLocale';
 import { resolveDialogueApi } from '../utils/characterApi';
 import { loadCharacterContextMessages } from '../utils/chatContextRange';
-import { callTrace, localStorageKchars, nextCallTraceTurn, summarizeRequestMessages, summarizeStoredMessages } from '../utils/callCrashTrace';
+import { callTrace, localStorageKchars, nextCallTraceTurn, summarizeCharactersForTrace, summarizeRequestMessages, summarizeStoredMessages } from '../utils/callCrashTrace';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Microphone, SpeakerHigh, Headphones, PhoneDisconnect, Translate, Gear, Clock, CaretLeft, CaretRight, Phone, VideoCamera, VideoCameraSlash, Cube, FolderOpen, FileZip, Moon, Sun, Check, Plugs, ArrowsClockwise } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
@@ -1892,6 +1892,7 @@ const CallApp: React.FC = () => {
   // 下次启动会用这份标记和 sessionId 补一张通话结束卡。
   useEffect(() => {
     if (viewMode !== 'in-call' || !selectedChar?.id || !callStartedAt || !currentSessionId) return;
+    callTrace('baseline', summarizeCharactersForTrace(charactersRef.current as any, selectedChar?.id));
     savePersistedCallSession({
       charId: selectedChar.id,
       charName: selectedChar.name,

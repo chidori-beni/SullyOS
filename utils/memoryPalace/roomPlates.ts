@@ -183,8 +183,8 @@ async function consolidatePlates(
     let identityContext = '';
     try {
         const { DB } = await import('../db');
-        const chars = await DB.getAllCharacters();
-        const profile = chars.find(c => c.id === charId);
+        // 只取这一个角色：getAllCharacters 会把所有角色的头像/聊天背景（原画质 base64）全反序列化进内存（2026-11-19 通话闪退）
+        const profile = await DB.getCharacter(charId);
         const up = await DB.getUserProfile();
         if (profile && up) identityContext = (await ContextBuilder.buildCoreContext(profile, up, false));
     } catch { /* 拿不到就裸跑，prompt 里仍有名字与身份确认段 */ }

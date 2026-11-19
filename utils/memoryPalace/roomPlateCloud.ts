@@ -475,8 +475,8 @@ export const applyPlateConsolidateResult = async (
   // 里面装着那个角色蒸馏出来的全部认知，而删除确认框跟用户说的是「记忆将被清空」。
   try {
     const { DB } = await import('../db');
-    const chars = await DB.getAllCharacters();
-    if (!chars.some((c) => c.id === charId)) {
+    // 只取这一个角色：getAllCharacters 会把所有角色的头像/聊天背景（原画质 base64）全反序列化进内存（2026-11-19 通话闪退）
+    if (!(await DB.getCharacter(charId))) {
       console.warn(`${HEADER} 这份结果的角色已经被删掉了，丢弃（job ${result.jobId}）`);
       settle(false);
       releaseGate();

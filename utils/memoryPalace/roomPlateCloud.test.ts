@@ -54,7 +54,11 @@ vi.mock('./db', () => {
 });
 // 结果落地前要确认角色还在（删掉的角色不许被一份迟到的结果重新长出四块门牌）。
 vi.mock('../db', () => ({
-  DB: { getAllCharacters: vi.fn(async () => charStore.chars) },
+  DB: {
+    getAllCharacters: vi.fn(async () => charStore.chars),
+    // 生产代码只按 id 单取一个角色（2026-11-19 不再整读全部角色）
+    getCharacter: vi.fn(async (id: string) => charStore.chars.find((c: any) => c.id === id)),
+  },
 }));
 // 落地成功要广播一条「门牌更新了」，node 上没有 window。
 vi.stubGlobal('window', { dispatchEvent: vi.fn() });
@@ -410,7 +414,7 @@ describe('角色已经删掉的结果不落地', () => {
   it('角色库读不出来 → 不结论也不落地，账留着下次再来', async () => {
     await submit();
     const { DB } = await import('../db');
-    vi.mocked(DB.getAllCharacters).mockRejectedValueOnce(new Error('IDB 打不开'));
+    vi.mocked(DB.getCharacter).mockRejectedValueOnce(new Error('IDB 打不开'));
 
     const acked = await applyPlateConsolidateResult(twoRoomResult(lastJobId()));
 

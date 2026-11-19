@@ -77,3 +77,46 @@ export const localStorageKchars = (key: string): number => {
     return -1;
   }
 };
+
+/** 对象里所有字符串加起来多少字符（只读 length，不序列化）。深度封顶，防环。 */
+const countChars = (value: unknown, depth = 0): number => {
+  if (typeof value === 'string') return value.length;
+  if (!value || typeof value !== 'object' || depth > 6) return 0;
+  let total = 0;
+  if (Array.isArray(value)) {
+    for (const item of value) total += countChars(item, depth + 1);
+    return total;
+  }
+  for (const key of Object.keys(value as Record<string, unknown>)) {
+    total += countChars((value as Record<string, unknown>)[key], depth + 1);
+  }
+  return total;
+};
+
+/**
+ * 通话开始时内存里的角色有多重：一共几个角色、全部加起来多少千字符、
+ * 当前角色最大的几个字段（字段名 + 千字符，不含内容）。角色档案里的头像 / 聊天背景 /
+ * 立绘都是 base64，整份常驻在页面内存里——这是「手机打电话前就已经很满」的头号嫌疑。
+ */
+export const summarizeCharactersForTrace = (
+  characters: Array<Record<string, unknown> & { id?: string }>,
+  selectedId?: string,
+) => {
+  let totalChars = 0;
+  for (const char of characters) totalChars += countChars(char);
+  const selected = characters.find(char => char.id === selectedId);
+  const topFields = selected
+    ? Object.keys(selected)
+      .map(key => [key, countChars(selected[key])] as const)
+      .filter(([, size]) => size > 20_000)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([key, size]) => `${key}:${Math.round(size / 1000)}k`)
+    : [];
+  return {
+    characters: characters.length,
+    allCharsKchars: Math.round(totalChars / 1000),
+    selectedKchars: selected ? Math.round(countChars(selected) / 1000) : 0,
+    selectedTopFields: topFields.join(' '),
+  };
+};
