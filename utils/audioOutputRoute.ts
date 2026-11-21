@@ -37,7 +37,35 @@
  * 参考：<https://bugs.webkit.org/show_bug.cgi?id=218012>
  */
 
+import { appendInstantTraceEntry } from './instantTraceLog';
+
 export type WebAudioSessionType = 'auto' | 'playback' | 'play-and-record';
+
+/**
+ * 排查闪退用的总开关（2026-11-22）：开着时**完全不改** iPhone 的音频会话类别、也不放静音兜底元素。
+ *
+ * 背景：萧逸档案瘦到 286 万字符后，两通电话仍然在「开场白回来、语音即将开播」那几秒被系统杀掉，
+ * 之前几次晚期崩溃也都落在音频会话切换点附近（播完开始收音 / 用户开口停收音）。而 10-29 为 iOS 26
+ * 静音键加了「每通电话强写 auto→playback」，用户 10-31 开始报通话闪退——时间上吻合，但都是推断。
+ * 这个开关让用户一通电话就能对照：开着不崩 = 就是它。代价：开着时静音键可能把角色语音静掉、
+ * 用过麦克风后可能从听筒出声。单独一个 localStorage 键（不跟调试面板的会话级开关），崩溃重启后仍生效。
+ */
+export const AUDIO_SESSION_KILL_SWITCH_KEY = 'sully-call-no-audio-session-v1';
+
+export const isAudioSessionKillSwitchOn = (): boolean => {
+  try { return localStorage.getItem(AUDIO_SESSION_KILL_SWITCH_KEY) === '1'; } catch { return false; }
+};
+
+export const setAudioSessionKillSwitch = (on: boolean): void => {
+  try {
+    if (on) localStorage.setItem(AUDIO_SESSION_KILL_SWITCH_KEY, '1');
+    else localStorage.removeItem(AUDIO_SESSION_KILL_SWITCH_KEY);
+  } catch { /* ignore */ }
+};
+
+const audioTrace = (event: string, details: Record<string, unknown> = {}) => {
+  appendInstantTraceEntry({ ts: new Date().toISOString(), event, ...details });
+};
 
 /** 静音兜底元素最长播多久（毫秒）。正常情况下真正的语音开始播时就会被停掉。 */
 const PRIMER_MAX_HOLD_MS = 60_000;
@@ -69,6 +97,13 @@ export const setAudioSessionType = (type: WebAudioSessionType, force = false): b
     const audioSession = getAudioSession();
     if (!audioSession) return false;
     if (!force && audioSession.type === type) return true;
+    if (isAudioSessionKillSwitchOn()) {
+      audioTrace('audio-session-skip', { to: type, force });
+      return false;
+    }
+    const from = audioSession.type;
+    // 写之前先记：要是这一写把页面写崩了，最后一条就是它
+    audioTrace('audio-session-set', { from, to: type, force });
     audioSession.type = type;
     return audioSession.type === type;
   } catch {
@@ -152,6 +187,8 @@ export const stopSilentPlaybackPrimer = (): void => {
 
 const startSilentPlaybackPrimer = (): void => {
   stopSilentPlaybackPrimer();
+  if (isAudioSessionKillSwitchOn()) return;
+  audioTrace('audio-primer-start');
   const audio = createAudioElement();
   if (!audio) return;
   const url = getSilentClipUrl();

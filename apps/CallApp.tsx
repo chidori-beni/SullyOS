@@ -1825,6 +1825,7 @@ const CallApp: React.FC = () => {
       // it to a capture-compatible category in the same mic-button gesture,
       // before getUserMedia evaluates the request.
       if (isAudioPlaying) pauseAudio();
+      callTrace('stt-start', { provider: speechProvider });
       if (speechProvider !== 'system') prepareSiliconFlowAudioCapture();
       setIsListening(true);
       setIsSttProcessing(false);
@@ -1834,6 +1835,7 @@ const CallApp: React.FC = () => {
         onFinal: (t) => { if (sttStartTokenRef.current === startToken) setDraftInput(t); },
         onError: (m) => { if (sttStartTokenRef.current === startToken && m) addToast(m, 'info'); },
         onRecordingEnd: () => {
+          callTrace('stt-end');
           if (sttStartTokenRef.current !== startToken) return;
           setIsListening(false);
           setIsSttProcessing(speechProvider !== 'system');
@@ -2758,6 +2760,7 @@ ${sentencePlan}`;
     const handlePlay = () => {
       if (audioPrimingRef.current) return;
       clearSilentSpeechTimer();
+      callTrace('audio-playing');
       setIsAudioPlaying(true);
       setCallState('speaking');
       const pending = pendingCueScheduleRef.current;
@@ -2771,6 +2774,7 @@ ${sentencePlan}`;
     };
     const handleStop = (event?: Event) => {
       if (audioPrimingRef.current) return;
+      callTrace('audio-stop', { why: event?.type || 'manual' });
       if (event?.type === 'ended') setCallAudioResumeIntent(false);
       setIsAudioPlaying(false);
       clearPerformanceCueTimers();
@@ -2801,6 +2805,7 @@ ${sentencePlan}`;
     // then re-apply the same route immediately before and just after play().
     // `forceAudible` is retained for the manual replay call site, but route
     // selection itself must never be implemented by muting the element.
+    callTrace('audio-play-call', { route: audioOutputRouteRef.current, blob: String(audio.currentSrc || audio.src || '').startsWith('blob:') });
     setSiliconFlowAudioRoute(audioOutputRouteRef.current);
     prepareSiliconFlowAudioPlayback();
     setCallAudioResumeIntent(true);

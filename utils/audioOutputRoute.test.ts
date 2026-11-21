@@ -8,6 +8,7 @@ import {
   notePlaybackStarted,
   prepareSpeakerPlayback,
   restoreSpeakerAudioOutput,
+  setAudioSessionKillSwitch,
   setAudioSessionType,
 } from './audioOutputRoute';
 
@@ -159,5 +160,22 @@ describe('headphone detection', () => {
     ])).toBe(true);
     expect(classifyExternalAudioDevices([{ kind: 'audioinput', label: '耳机麦克风' }])).toBe(true);
     expect(classifyExternalAudioDevices([{ kind: 'videoinput', label: 'Front Camera' }])).toBeNull();
+  });
+});
+
+describe('排查闪退总开关', () => {
+  afterEach(() => setAudioSessionKillSwitch(false));
+
+  it('开着时一次都不写音频会话、也不放静音兜底元素；关掉恢复', () => {
+    const session = stubAudioSession('play-and-record');
+    setAudioSessionKillSwitch(true);
+    noteAudioCaptureStarting();
+    restoreSpeakerAudioOutput();
+    prepareSpeakerPlayback();
+    expect(session.writes).toEqual([]);
+    expect(FakeAudio.created).toHaveLength(0);
+    setAudioSessionKillSwitch(false);
+    prepareSpeakerPlayback();
+    expect(session.writes).toEqual(['playback']);
   });
 });

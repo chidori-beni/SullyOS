@@ -19,6 +19,7 @@ import { BUILD_LABEL } from '../utils/buildInfo';
 import { trackEvent } from '../utils/analytics';
 import type { DevDebugCaptureCategory, DevDebugFlags, DevDebugFloatingPosition } from '../utils/devDebug';
 import { shareOrDownloadFile } from '../utils/shareExport';
+import { isAudioSessionKillSwitchOn, setAudioSessionKillSwitch } from '../utils/audioOutputRoute';
 
 const FLOATING_BUTTON_SIZE = 44;
 const FLOATING_SAFE_MARGIN = 16;
@@ -147,6 +148,8 @@ const LogActionButton: React.FC<{
 
 const DevDebugPanel: React.FC = () => {
     const [open, setOpen] = useState(false);
+    // 单独存在 localStorage 里（不跟本面板的会话级开关走），崩溃重启后仍生效
+    const [noAudioSession, setNoAudioSession] = useState(() => isAudioSessionKillSwitchOn());
     const [available, setAvailable] = useState(() => isDevDebugAvailable());
     const [flags, setFlags] = useState<DevDebugFlags>(() => readDevDebugFlags());
     const [logCount, setLogCount] = useState(() => readDevDebugLog().length);
@@ -427,6 +430,13 @@ const DevDebugPanel: React.FC = () => {
                             <div className="h-px bg-white/10" />
                         </>}
                         {/* 只是入口：打开后由 Amsg2DebugPanel 自己在页面上挂小窗，本面板不渲染它的内容。 */}
+                        <ToggleRow
+                            title="通话不切换音频模式（排查闪退）"
+                            detail="开着时打电话不改 iPhone 的音频模式。用来对照闪退是不是它引起的；代价是静音键可能把角色语音静掉、用过麦克风后可能从听筒出声。重启 App 也保持。"
+                            checked={noAudioSession}
+                            onChange={(checked) => { setAudioSessionKillSwitch(checked); setNoAudioSession(checked); }}
+                        />
+                        <div className="h-px bg-white/10" />
                         <ToggleRow
                             title="amsg2 任务观察窗"
                             detail="右上角常驻小窗：任务倒计时、cron 实际触发时刻、通道 trace。"
