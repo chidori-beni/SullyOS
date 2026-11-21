@@ -5,8 +5,8 @@
  * 档案 708 万字符，其中立绘 455 万、见面背景 105 万（通话 trace `call-baseline`）。每次读写
  * 这个角色（推送落库、记忆整理、存档）都要把这一整箱图搬一遍，iPhone 上通话时页面被系统杀掉。
  *
- * 做法：一张一张重新编码（能用 WebP 就用 WebP，保留透明；不透明的用 JPEG；都不行就把 PNG
- * 缩小一点），只有确实变小 15% 以上才替换。**原图不丢**：存进 blob_assets（独立的图片仓，
+ * 做法：一张一张重新编码（能用 WebP 就用 WebP，保留透明；不透明的用 JPEG；透明又没有 WebP 时
+ * 用 256 色 PNG 或把 PNG 缩小一点，取最小的），只有确实变小 15% 以上才替换。**原图不丢**：存进 blob_assets（独立的图片仓，
  * 不在角色档案里、平时不进内存），清单记在 assets 的 `char-image-slim-backup:<charId>`，
  * 「还原原图」时原样写回。
  *
@@ -16,6 +16,7 @@
 import type { CharacterProfile, SkinSet } from '../types';
 import { DB } from './db';
 import { getBlobForRef, putImageBlob } from './blobRef';
+import { canEncodePng8, rgbaToPng8DataUrl } from './png8';
 
 export type SlimKind = 'sprite' | 'background';
 
@@ -155,7 +156,14 @@ export async function slimOneImage(dataUrl: string, kind: SlimKind): Promise<str
         if (!transparent) {
             candidates.push(canvas.toDataURL('image/jpeg', 0.85));
         } else if (!canEncodeWebp()) {
-            // 透明立绘又编不了 WebP：只能保持 PNG，把最长边再收到 1024
+            // 透明立绘又编不了 WebP（iPhone Safari 就是这样，2026-11-21 真机 trace：立绘只从 455 万降到 378 万）：
+            // ① 256 色 PNG（分辨率不变、保留透明、抖动防色带），通常只剩真彩 PNG 的三成上下
+            if (canEncodePng8()) {
+                try {
+                    candidates.push(await rgbaToPng8DataUrl(ctx.getImageData(0, 0, width, height).data, width, height));
+                } catch { /* 编不出来就只剩下面的缩小 PNG */ }
+            }
+            // ② 保持真彩 PNG，把最长边再收到 1024
             const s2 = Math.min(1, 1024 / Math.max(width, height));
             if (s2 < 1) {
                 const c2 = document.createElement('canvas');
