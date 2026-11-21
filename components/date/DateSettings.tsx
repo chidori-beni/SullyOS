@@ -6,6 +6,7 @@ import { processImage } from '../../utils/file';
 import { pickDateFallbackSprite } from '../../utils/dateSprites';
 import { DATE_STYLE_PRESETS } from '../../utils/datePrompts';
 import ObserveSettings from './ObserveSettings';
+import DateImageSlimCard from './DateImageSlimCard';
 import DateExtraPresets from './DateExtraPresets';
 import DateExtraEditor from './DateExtraEditor';
 import { shareOrDownloadFile } from '../../utils/shareExport';
@@ -559,6 +560,8 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                         <p className="text-[10px] text-slate-300 mt-1">点别处会自动保存；这段会照原样用上，比上面的风格优先。</p>
                     </div>
                 </Section>
+
+                <DateImageSlimCard char={char} />
 
                 <Section title="背景 (Background)">
                     <div 
